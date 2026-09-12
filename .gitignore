@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+.vite/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+coverage/
+*.tsbuildinfo
+.pnpm-store/
+.claude/settings.local.json
+# private UX materials never enter the repo
+uxkit/

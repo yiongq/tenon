@@ -1,0 +1,12 @@
+Tenon
+Copyright 2026 Yiong (yiongq)
+
+This product includes software developed by third parties under the Apache License 2.0.
+Files copied or adapted from the following projects keep their original copyright headers:
+
+- DeepChat (ThinkInAIXYZ/deepchat) — Apache-2.0
+- Goose (aaif-goose/goose, formerly block/goose) — Apache-2.0
+- sandbox-runtime (anthropic-experimental/sandbox-runtime) — Apache-2.0
+- knowledge-work-plugins (anthropics/knowledge-work-plugins) — Apache-2.0
+
+No code from AGPL-licensed or proprietary sources is included.
