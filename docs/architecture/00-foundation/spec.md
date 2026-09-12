@@ -15,7 +15,7 @@ Tenon 是一个 Electron + TypeScript 的桌面 Agent 工作台，目标是对�
 3. `HostAdapter` 接口定稿并有 desktop 实现；kernel 通过它做的第一件事是 spawn 一个 MCP stdio server（`@modelcontextprotocol/server-everything`）、列出 tools、调用一次。
 4. 所有持久化路径和键都带 `tenantId`；本地一个 profile = 一个 `(userId, tenantId)` 目录。
 5. 一个能流式对话的最小窗口：Electron 壳 + 设计令牌 + 基础组件 + 壳层布局 + Composer 最小态 + 消息流基础。
-6. 门禁：hooks 在交接前跑 format / lint / typecheck / test；CI 在 PR 上跑同样的东西；GitHub secret scanning + push protection 开启。
+6. 门禁：git hooks（lefthook）在提交前跑 format / lint / typecheck，commitlint 校验提交信息；CI 在 PR 上跑同样的东西；GitHub secret scanning + push protection 开启。门禁对 Claude Code、Codex 和人一视同仁。
 
 ## 非目标
 
@@ -188,7 +188,7 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 4. desktop 启动后能向一个 Anthropic-compatible endpoint 发一条消息并流式渲染回复；中途点停止能中断流（`AbortSignal` 传到 fetch）。
 5. 两个 profile（不同 `tenantId`）分别写入 `config.json`，路径不同，互不可见。
 6. renderer 发送一条不符合 schema 的 IPC 消息，main 返回结构化校验错误，进程不崩。
-7. `.claude/settings.json` 的 hooks 在 Stop 时跑 `pnpm lint && pnpm typecheck`；CI 在 PR 上跑第 1 条；仓库开启 secret scanning + push protection（截图或设置页确认）。
+7. lefthook 的 pre-commit 在提交前跑 format + lint + typecheck、commit-msg 跑 commitlint（对 Claude Code、Codex 和人都生效）；`.claude/settings.json` 的 Stop hook 额外跑 `pnpm lint && pnpm typecheck`；CI 在 PR 上跑第 1 条；仓库开启 secret scanning + push protection。
 8. `git log` 无 AI co-author 尾注；commit 通过 commitlint。
 
 ## 开放问题

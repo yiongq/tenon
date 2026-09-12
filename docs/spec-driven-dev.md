@@ -54,7 +54,8 @@
 - 开工一句话：「按 `docs/architecture/<goal>/spec.md` 实现，进度记在同目录 `plan.md`」。
 - agent 读 `AGENTS.md`（硬规则）→ 读 spec → 维护 plan → 跑门禁 → 标 status。
 - spec 不够用时 agent 应停下来说缺什么，而不是自己补架构。缺的部分回到 Claude Desktop 项目里讨论后补进 spec。
-- 门禁（format / lint / typecheck / test）由 hooks 强制，不依赖 agent 自觉。
+- 门禁（format / lint / typecheck / test）由 git hooks（lefthook）和 CI 强制，对 Claude Code、Codex 和人一视同仁，不依赖 agent 自觉。
+- **Claude Code 与 Codex 交叉开发**：两边互不记得对方的会话，`plan.md` 是唯一的交接面。每次停下之前必须把"做完的 / 做到一半的（代码停在什么状态）/ 下一步"写进 `plan.md`；同一个 worktree 同一时间只让一个 agent 干活，并行用 `git worktree`。
 
 ## 主参考与 spec 的关系
 
