@@ -6,8 +6,9 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 
 - Substantial work — a new module, a cross-module change, a data migration, a public contract — starts from `docs/architecture/<goal>/spec.md`. Read it before writing code. Do not invent architecture the spec does not describe; if the spec is insufficient, stop and say exactly what is missing.
 - `plan.md` next to the spec is the only progress tracker. Update it as you go. Never create `tasks.md` or any other todo file.
+- Starting without instructions ("继续", "开工", or nothing at all): the active work is the lowest-numbered `docs/architecture/NN-*/spec.md` whose `Status` is `ready` and whose `plan.md` still has unchecked steps. Continue from its first unchecked step, or from the half-done state its handoff notes describe. Say which spec and step you picked before touching anything; ask only if two spec folders share the same number or the handoff notes contradict the code.
 - Acceptance criteria in the spec define "done". When they all pass, set `Status: implemented` at the top of the spec.
-- Changing a decision means writing a new spec that supersedes the old one. Never rewrite history inside an existing spec; mark it `Status: superseded by <link>`.
+- Changing a decision once the spec is `implemented` (or once code depends on the contract) means writing a new spec that supersedes the old one; mark the old one `Status: superseded by <link>`. Before that, a `draft`/`ready` spec may be revised in place only if the change is recorded in its top `Revisions:` line — see `docs/spec-driven-dev.md`.
 - Trivial changes (style, copy, localized logic with one obvious owner) need no spec.
 - The architecture reference is `docs/architecture/master-reference.md`. Mechanism-level notes on the projects we learn from are in `docs/reference/`. Process details: `docs/spec-driven-dev.md`.
 - UX specs live in `docs/ux/`. They are derived from a private teardown kit at `../tenon-uxkit/` (outside this repo). You may read `../tenon-uxkit/interactions.md` for behavior; never copy its files, class names, token values or font names into this repository.
