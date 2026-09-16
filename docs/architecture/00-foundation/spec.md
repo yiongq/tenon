@@ -3,6 +3,7 @@
 Status: ready
 Phase: 0 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
+Revisions: 2026-09-17 新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节
 
 ## 背景与问题
 
@@ -24,6 +25,7 @@ Tenon 是一个 Electron + TypeScript 的桌面 Agent 工作台，目标是对�
 - 不做沙箱（阶段 4）——但 `HostAdapter.sandbox` 的接口形状现在就定，desktop 实现先是直通（no-op wrap）。
 - 不做 `apps/server`（阶段 6b）——只建目录占位。
 - 不做视觉定稿；令牌值用临时皮肤，键名按最终结构。
+- 不做 `zh-CN` / `en` 之外的语言；不做拼音搜索；不按界面语言强制模型的回复语言。
 
 ## 仓库形状
 
@@ -128,13 +130,27 @@ export interface ConfirmRequest {
   requestId: string
   sessionId: string
   kind: 'tool' | 'file' | 'command' | 'network'
-  display: { title: string; detail: string; redacted?: unknown }
+  reason: ConfirmReason               // 界面据此选文案；kernel 不产生句子（见「国际化」）
+  facts: Record<string, string>       // 填槽用的事实；每个 reason 的必填键见下表
+  redacted?: unknown                  // 不给界面渲染的原始载荷（阶段 2 定用途），只进日志
 }
+// 阶段 0 只列审批卡需要区分的几类原因；阶段 2 的权限引擎按需扩展，只增不删
+export type ConfirmReason = 'irreversible' | 'outside-workspace' | 'network' | 'elevated' | 'default'
 
 export interface HostClock { now(): number; setTimeout(fn: () => void, ms: number): () => void }
 
 export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 ```
+
+`facts` 的必填键按 `reason` 定（阶段 2 扩展 reason 时同表追加）：
+
+| reason | 必填键 |
+|---|---|
+| `irreversible` | `toolName`；`kind=file` 时加 `path`，`kind=command` 时加 `command` |
+| `outside-workspace` | `path`、`workspace` |
+| `network` | `host`、`toolName` |
+| `elevated` | `command` |
+| `default` | `toolName` |
 
 不变量：
 
@@ -142,6 +158,7 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 - `HostProcess.spawn` 的 `argv[0]` 必须是绝对路径；相对路径直接抛错。
 - `HostSandbox.wrap` 在 `profile: 'full-access'` 下原样返回 argv/env；其他档在阶段 0 也原样返回但打日志 `sandbox: passthrough`——阶段 4 替换实现时接口不变。
 - `HostIdentity.tenantId` 非空；所有 kernel 内的持久化 key 由 `keyFor(identity, ...parts)` 生成，禁止手拼。
+- `packages/contracts` 的 `ConfirmRequest` schema 按 `reason` 校验上表的必填键，缺键即 parse 失败、请求不投递；界面文案的槽位只取必填键，审批卡永远不渲染未填充的 `{slot}`。
 
 ## 契约层
 
@@ -180,6 +197,25 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 - Composer 最小态：文本、发送、生成中停止。
 - 消息流：用户消息、助手消息（Streamdown 流式渲染）、错误态。block 渲染器做成类型注册表（`text` 一种先），不做 markdown 特例分支。
 
+## 国际化（2026-09-17 补充）
+
+界面语言支持 `zh-CN` 与 `en`（AGENTS.md 已定），阶段 0 把形状定下来，之后每个阶段的文案都走这套。
+
+- **默认跟随系统，英文兜底**：主进程用 `app.getPreferredSystemLanguages()` 解析：按列表顺序取第一个能匹配的，以 `zh` 开头 → `zh-CN`，以 `en` 开头 → `en`，都没有 → `en`；用户可在账号菜单「语言」里覆盖，覆盖值写 `config.json` 的 `locale: 'auto' | 'zh-CN' | 'en'`。主进程解析一次，renderer 通过 IPC 事件 `config.locale` 拿同一个结果，不各自猜。
+- **目录**：`apps/desktop/src/i18n/`，`locales/zh-CN/*.json` 与 `locales/en/*.json`，ICU MessageFormat（i18next + i18next-icu，英文复数靠它）。主进程（应用菜单、托盘、原生对话框、通知）和 renderer 用同一份目录、各自一个实例。阶段 6b 的 `apps/server` 需要时再抽成包，现在不抽。
+- **内核不产生用户可见的句子**：`packages/kernel` 与 `packages/contracts` 只传代码和事实（枚举、路径、命令、主机名），文案由界面层按代码查目录。`ConfirmRequest` 因此改为 `reason + facts`；阶段 2 的停止原因、失败类型、Tenon 在审批卡和任务小结上多出来的那几句话，都走同一条路。
+- **字体按语言回落**：衬线令牌的 CJK 回落为系统无衬线（PingFang SC / Microsoft YaHei / Noto Sans CJK SC），不用中文衬线体——屏幕上小字号宋体可读性差，且中英字重难对齐。于是 §8.1「界面无衬线 / 助手正文衬线」的区分在 `en` 下由字族承担，在 `zh-CN` 下字族对中文字符不再区分，改由排版承担：助手正文 16px / 28px，界面文字 14px / 20px（临时皮肤值，§8.3 定稿时可改），正文里的拉丁文字仍走衬线。两种语言下「谁在说话」都必须可辨。`<html lang>` 跟界面语言走。
+- **格式一律走 Intl**：相对时间、日期、数字用 `Intl.RelativeTimeFormat` / `DateTimeFormat` / `NumberFormat`，列表排序用 `Intl.Collator`，locale 取上面解析出的那个；不手写格式化。引号、顿号等标点写在目录里（中文「」，英文 ""），不在代码里拼。
+- **输入法**：Composer 收到 Enter 时若 `KeyboardEvent.isComposing === true` 或 `keyCode === 229`，视为输入法选字，不发送。
+- **模型语言与界面语言分开**：system prompt 与工具描述保持英文；阶段 2 在 system prompt 里附一句用户的界面语言作为提示，让模型按用户书写的语言回复，不强制。
+- **英文更长**：界面文字在两种语言下都不换行不截断。阶段 0 覆盖侧栏导航项与 Composer（同验收 12）；右面板、设置项等按 §8.5 的阶段映射出现时纳入同一回归。用 Playwright 双语言截图 + DOM 断言做回归，不靠肉眼。
+
+不变量：
+
+- 两份目录键集完全一致，`pnpm i18n:check` 挂在 `pnpm lint` 里，缺键即失败。
+- renderer 与主进程的 JSX / 菜单模板里不出现字面量用户文案（lint：JSX 文本节点与 `label:` 字段必须来自 `t()`）。
+- `packages/kernel`、`packages/contracts` 不依赖 i18n，也不 import 任何目录文件。
+
 ## 验收标准
 
 1. `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test` 在干净 clone 上全过。
@@ -190,6 +226,10 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 6. renderer 发送一条不符合 schema 的 IPC 消息，main 返回结构化校验错误，进程不崩。
 7. lefthook 的 pre-commit 在提交前跑 format + lint + typecheck、commit-msg 跑 commitlint（对 Claude Code、Codex 和人都生效）；`.claude/settings.json` 的 Stop hook 额外跑 `pnpm lint && pnpm typecheck`；CI 在 PR 上跑第 1 条；仓库开启 secret scanning + push protection。
 8. `git log` 无 AI co-author 尾注；commit 通过 commitlint。
+9. 系统语言为中文时首次启动界面为中文，英文系统为英文；在账号菜单切换语言后，应用菜单、窗口标题、侧栏与 Composer 文字即时切换，重启后保持。
+10. 从 `locales/en` 删掉任意一个键，`pnpm lint` 失败并指出缺失的键名。
+11. 中文输入法组合状态下按 Enter 不发送消息；组合结束后 Enter 发送。
+12. Playwright 在 `zh-CN` 与 `en` 下各截一张 1280×800 壳层截图，侧栏导航项、Composer 内的文字无换行、无截断（DOM 断言，截图作为回归基线）。
 
 ## 开放问题
 
