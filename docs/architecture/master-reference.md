@@ -671,6 +671,8 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 **B 有一个 A 给不了的东西**：几周内有真的在用的产品，用它发现真实问题。所以更准确的做法：**A 是主线，但可以在阶段 2 用 OpenCode 当"对照组"**——你的循环和它跑同一个任务，看差在哪。这比闷头写强。
 
+**2026-09-17 改**：主对照组换成用户机器上的 Claude Desktop 本身（对话对 Chat、任务对 Cowork），同题两边跑、录屏对比；OpenCode 保留为第二对照。见 §13 阶段 2「提示层」。
+
 ## 8. UX 策略：交互参考 Claude，视觉做自己的
 
 | 层次 | 内容 | 策略 | 理由 |
@@ -731,7 +733,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 | 层 | 做成什么样 | 规格来源 | 能不能进仓库 |
 |---|---|---|---|
-| 信息架构 | 与 Claude Desktop **一致**：左侧栏 264px（品牌行 + 双模式切换 → 主导航 → Scheduled → Projects 两级树 → Chats and tasks → 账号行）、顶栏、右侧面板（Artifacts / Cowork 两种）、Settings 模态、Customize / Projects / Artifacts / Scheduled 四个页面 | uxkit `interactions.md` §1、§4 | 规格可进，DOM 快照不进 |
+| 信息架构 | 与 Claude Desktop **一致**：左侧栏 264px（品牌行 + 双模式切换 → 主导航 → Scheduled → Projects 两级树 → Chats and tasks → 账号行）、顶栏、右侧面板（Artifacts / Cowork 两种）、Settings 模态、Customize / Projects / Artifacts / Scheduled 四个页面。**2026-09-17 注**：对话 / 任务切换在 Tenon 里放首页输入框内，不在侧栏品牌行，以 UX 画布 v18 为准（见 `docs/ux/parity-audit-2026-09-12.md`） | uxkit `interactions.md` §1、§4 | 规格可进，DOM 快照不进 |
 | 交互行为 | **1:1**：Composer 状态机与 `+` 菜单（Chat / Cowork 差异）、6 种工具块、产物块、版本切换、审批 / 中断 / 引用 / 流式态、行菜单、快捷键表、空 / 加载 / 错误态、响应式断点、动效目录（含 reduced-motion 降级） | `interactions.md` §2、§3、§5–7 + `animations.json` | 规格可进 |
 | 设计令牌的**结构** | 同样的语义分层：surface / text / border / fill / alpha / radius / h-control / weight / ease / dur / z，亮暗两套，壳层背景独立一层 | `tokens.css` 的**键名**与分层 | 键名可进，**值不进** |
 | 设计令牌的**值** | 自己的：一个主色 + 中性色阶（避开暖橙系）、开源字体（测中英混排）、保留"界面无衬线 / 助手正文衬线"的区分 | §8.1 临时皮肤 → §8.3 定稿 | 自己的值进 |
@@ -869,9 +871,12 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 按 §4.8.1 实现主循环
 - 上下文管理：先只做 D（大响应落盘）和 B（摘要 + 锚点），A/C 后补
 - **权限引擎**：`approvalBroker`（照 DeepChat）+ 等待模型用 **"写进 transcript、Run 暂停、回答后新 Run"**（不用内存 `Map<id, Promise>`——服务端 host 的会话沙箱可能被回收，内存等待失效）+ 决策顺序见 §4.11 末表 + `Inspector` 接口（为 railguard 等留位）
+- **审批原因码**（2026-09-17 补）：权限引擎只输出 `ConfirmReason` + 事实槽位（形状见阶段 0 spec，`irreversible / outside-workspace / network / elevated / default`，只增不删），界面据此渲染审批卡上「为什么停、能不能还原」那句人话；kernel 不产生句子。六层判决留在内核，界面不露层号
+- **停止即杀**（2026-09-17 补）：用户点停止，正在跑的命令经 `HostProcess.kill` 结束整棵进程树，不等它跑完（Claude 实测命令会继续跑完）；任务小结写「已停，后续写入未发生」
+- **提示层**（2026-09-17 补，明确交付物）：(1) 对话 / 任务两个 profile 各一份系统提示，从 Anthropic 公开发布的 claude.ai 系统提示与 Claude Code 文档学，不抄原文；(2) 工具集形状贴 Claude Code——读 / 写 / 编辑 / 命令 / 查找 / 子 agent，名字与参数语义一致（模型对这套形状有先验），其余能力走 MCP；(3) 扩展思考、提示缓存、服务端网络搜索与代码执行直接用 API 功能，不自造；(4) 对照组改为用户机器上的 Claude Desktop 本身：同一题两边跑、录屏对比、差在哪改哪（OpenCode 降为第二对照）；(5) 固定 20–30 个任务的评测集，改系统提示或工具描述必跑，结果记 `docs/evals/`
 - **读**：DeepChat `src/main/tool/`（`ToolPermissionBroker`）、`docs/architecture/tool-system.md`、Cline `auto-approve.mdx` + `sdk/`、OpenCode agent loop
 - **对照组**：用 OpenCode 跑同一个任务，看循环差在哪
-- **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试
+- **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试；每个 `ConfirmReason` 在 zh-CN 与 en 下各有一条文案且槽位齐全；点停止后 1 秒内无子进程存活；评测集每题有基线记录；与 Claude Desktop 同题对比至少 10 题有记录（差异与原因）
 
 ### 阶段 3：MCP host 完整版（2–3 周）
 
@@ -888,8 +893,11 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 违规回传：`SandboxViolationStore.subscribe()` 推 UI，`annotateStderrWithSandboxFailures` 把 `<sandbox_violations>` 喂给模型，`deniedDomainReasons` 写给模型看的替代方案
 - 文件桥：路径归属校验（symlink / `..` 归一化）、宿主↔沙箱双向映射、**mtime 守卫**
 - 读/写/删/执行拆成独立可授予单位；删除运行期单独申请
+- **任务模式成型**（2026-09-17 补，对齐 Cowork 本地模式）：任务会话 = 工作文件夹 + 沙箱 `workspace-write` 档 + 内联审批卡；主栏折叠头 + 活动时间线，右面板 进度 / 产物 / 上下文；界面以 UX 画布 v18 与 `docs/ux/parity-audit-2026-09-12.md` 为准。定时任务与 Projects 页仍在阶段 6
+- **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示
+- **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开
 - **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/file/`（✅ 存在：adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts` ✅
-- **验收**：sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过
+- **验收**：sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过；端到端：选文件夹 → 发一个会写文件的任务 → 审批一次写入 → 完成并看到小结 → 点还原后文件内容与 mtime 回到任务前，`git status` 干净
 
 ### 阶段 5：扩展层 + MCP Apps + Artifacts（4–6 周）
 
@@ -909,8 +917,9 @@ Claude Desktop 的概念 → Tenon 的实现：
 - §10 清单逐条
 - 会话列表、编辑重发、分支
 - 记忆、知识库按 §6.3 简化版；本地版定时任务；Projects 页
+- **Research（深度检索）**（2026-09-17 补；此前 parity 审计误归为「不做」，并非 owner 决定）：编排者 + 并行子 agent + 引用后置，架构照 Anthropic 公开的多 agent 检索系统文章（orchestrator-worker、子 agent 各自独立上下文、按题目复杂度定并行度与预算、引用由单独一步补），内部提示词不公开，自己写；数据源 = 网络搜索 + 已授权连接器；UI 照 `docs/ux/parity-audit-2026-09-12.md` 的「深度检索卡 / 检索面板」四行与录屏 02；前置：阶段 2 子 agent 契约与提示层、阶段 5 连接器与右面板；成本约为普通对话十倍以上，必须提示缓存 + 单次预算上限
 - **读**：§9 拆解方法、§10 打磨清单
-- **验收**：§10 清单逐项打钩；键盘可达性与 reduced-motion 降级通过检查；空 / 加载 / 错误态每个界面各有截图对照
+- **验收**：§10 清单逐项打钩；键盘可达性与 reduced-motion 降级通过检查；空 / 加载 / 错误态每个界面各有截图对照；一个需要 5 次以上检索的问题得到带引用的报告，来源面板可下钻到正文上标；中途停止保留已收集的来源与部分报告
 
 ### 阶段 6b：云端 host 与多租户（对齐 Cowork 云端模式；周期待定，至少 4–6 周）
 

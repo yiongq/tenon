@@ -35,6 +35,7 @@
 - **验收标准描述可观察的结果或可独立验证的契约**，不描述实现。好：「应用重启后未回答的权限弹窗仍在且可回答」；坏：「权限状态持久化到 SQLite」。
 - 开放问题写清"什么时候、依据什么能定"，而不是留白。
 - 顶部一行 `Status:`——`draft` / `ready` / `implemented` / `superseded by <link>`。
+- 顶部可选一行 `Revisions:`——记录同一份 spec 内的就地修订：日期 + 改了哪个字段 + 旧的是什么 + 为什么。`Status: implemented` 之后不再使用。
 
 ## plan 怎么维护
 
@@ -47,11 +48,13 @@
 
 不改旧 spec。新建一个 spec 说明改了什么、为什么、旧的哪些部分作废，旧 spec 顶部标 `Status: superseded by <link>`。决策记录只追加不改写，半年后仍能看到"当时为什么那么定、后来为什么推翻"。
 
+例外：spec 还是 `draft` / `ready`、且尚无代码依赖该契约时，可以就地修订，条件是在顶部 `Revisions:` 写清日期、改了什么、旧的是什么、为什么改。一旦 `Status: implemented` 或已有代码依赖，只能新建 spec supersede。
+
 跨阶段的技术选型另外写 ADR 放 `docs/adr/`，格式见 `adr-001`。
 
 ## 和代码 agent 的交接
 
-- 开工一句话：「按 `docs/architecture/<goal>/spec.md` 实现，进度记在同目录 `plan.md`」。
+- 开工不需要指令。agent 自己找当前阶段：序号最小、`Status: ready`、`plan.md` 里还有未勾选步骤的那份 spec，从第一个未勾选的步骤（或交接记录里写的半成品状态）接着做，动手前说一句选了哪份 spec 哪一步。要指定别的目标时才说「按 `docs/<...>/spec.md` 实现」。
 - agent 读 `AGENTS.md`（硬规则）→ 读 spec → 维护 plan → 跑门禁 → 标 status。
 - spec 不够用时 agent 应停下来说缺什么，而不是自己补架构。缺的部分回到 Claude Desktop 项目里讨论后补进 spec。
 - 门禁（format / lint / typecheck / test）由 git hooks（lefthook）和 CI 强制，对 Claude Code、Codex 和人一视同仁，不依赖 agent 自觉。
