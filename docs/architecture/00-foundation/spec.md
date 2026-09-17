@@ -1,6 +1,7 @@
 # 00 · 地基（Foundation）
 
 Status: implemented
+Amended by: [01-provider-and-tape](../01-provider-and-tape/spec.md)（2026-09-17：`HostAdapter` 增加 `network` 成员；技术选型的 better-sqlite3 限定为 13.x。只增不改，全文与理由在该 spec）
 Phase: 0 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Revisions: 2026-09-17 验收 3 的措辞由「完成 MCP v2 协议协商」改为「用 MCP v2 SDK 的客户端与它完成协议协商」——参考服务器 server-everything 2026.8.31 基于 sdk ^1.30（v1 协议），v2 客户端走默认的 legacy 握手，能观察到的只有这一点（owner 确认）；同日新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节
