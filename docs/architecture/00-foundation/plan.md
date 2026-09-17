@@ -77,4 +77,4 @@
 ## 仓库公开（2026-09-17）
 
 - 仓库已转公开（owner 决定）。第 13 步随之完成，见上。日常 PR 进 `dev`，`main` 只收发布分支。
-- 许可证维持 Apache-2.0（LICENSE / NOTICE 自首个 commit 起存在）；盈利模式与 CLA 的决定见 master-reference §7 之后的 owner 讨论，未定之前不接受外部代码贡献。
+- 许可证、CLA、商业模式边界已定，见 [ADR-002](../../adr/adr-002-license-and-business-model.md)。CLA 文本与 cla-assistant 在第一个外部 PR 出现前完成；在此之前外部 PR 只审不合。
