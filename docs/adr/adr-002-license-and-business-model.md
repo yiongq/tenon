@@ -9,7 +9,7 @@
 ## 决策
 
 1. **本仓库全部内容维持 Apache-2.0**（`LICENSE` 自首个 commit 起存在）。`packages/kernel`、`packages/contracts`、`apps/desktop`、`examples/`、`docs/` 永远开源，不改为 AGPL 或 source-available。
-2. **付费能力与开源核心物理分开。** 付费部分（多租户服务端、管理员策略控制台、SSO、审计导出、计费）不放在 Apache-2.0 的目录树里，放独立目录 `ee/`（自带 `LICENSE`，源码可见、使用需授权，照 OpenWork `/ee`、n8n `/packages/@n8n/*-ee` 的做法）或独立仓库；具体在阶段 6b 开工时定。`apps/server` 目前的占位属于开源部分，是单租户 / 自托管的服务端核心。
+2. **付费能力与开源核心物理分开。** 付费部分（管理员策略控制台、SSO、审计导出、计费、组织管理界面）不放在 Apache-2.0 的目录树里，放独立目录 `ee/`（自带 `LICENSE`，源码可见、使用需授权，照 OpenWork `/ee`、n8n `/packages/@n8n/*-ee` 的做法）或独立仓库；具体在阶段 6b 开工时定。`apps/server` 属于开源部分，是服务端 host 本身，**含多租户隔离机制**（`tenantId` 贯穿与跨租户隔离测试是 AGENTS.md 硬规则与 6b 硬门禁，不能放进付费层）；付费层只做管理与合规能力，不持有隔离机制。（同日修订：初稿写「单租户 / 自托管核心」，与 master-reference §13 阶段 6b、AGENTS.md 的「多租户云端 host」矛盾，以本句为准。）
 3. **外部贡献必须签 CLA**（个人 + 企业两版，文本取自 Apache ICLA / CCLA 改写，走 cla-assistant）。CLA 上线前不合并任何外部 PR。版权持有人为 Yiong（yiongq），日后可整体转给公司。
 4. **商标不随许可证授出**（Apache-2.0 §6 已排除）。「Tenon」名称与 Logo 由 owner 保留；修改版不得以 Tenon 名义发布。注册与否在阶段 7 定。
 5. **商业模式方向：开源核心（open core）。** 桌面端与内核永久免费；收费面是团队 / 企业服务端：私有部署、管理员策略、审计、SSO、境内模型接入与合规。**不做**桌面端订阅、广告、模型 token 转售（后者若做只作便利功能，不作收入）。定价、计费、SSO、审计日志按主参考 §13 阶段 7 处理。
