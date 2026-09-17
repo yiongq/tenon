@@ -290,6 +290,272 @@ type DeepChatProviderAttemptOrigin = 'initial' | 'transient_retry'
 
 **付出：** JSON 表达式索引多、查询靠 `json_extract`；三族事实混一张表，靠 name namespace（`reservedNamespaces.ts`）防伪造；domain 层两万多行——**这是全仓库最重的抽象，第一版可以只抄"append-only + provenance_key + 投影表"三件事，Journal 的恢复分类等阶段 4 再上。**
 
+## 二之补：ViewManifest / 保留命名空间 / entry_id 并发 / 分支 / 删除 / Execution Journal
+
+> 复核 commit `c66b36d65b59251ef1cf109e2f608387cabaeea3`（2026-09-17 15:36:29 +0800，`fix(provider): initialize validation drafts (#2316)`，package `1.1.2-beta.5`），比本笔记其余部分所依据的 `4443587` 晚 6 天。
+> 只补上文「二、Tape」未覆盖的部分：表结构、provenance_key、投影表、tool-call identity、compaction anchor 见上文。
+> 主要文档：`docs/architecture/tape-system.md`（454 行）、`docs/architecture/durable-execution-journal/spec.md`（363 行）。
+> 本节的并发行为与命名空间断言是在 Node v22.22.0 / macOS arm64 上用 `better-sqlite3-multiple-ciphers@13.0.3`（DeepChat 自己 pin 的版本）与 esbuild 打包后的原函数实测的，不是推断。
+
+### 1. ViewManifest：一次 provider 请求的全部凭据
+
+**字段**（`src/shared/types/tape-view-manifest.ts:112-130`）**[码]**。Base 共 18 个字段：
+
+```ts
+viewId, sessionId, messageId, requestSeq, taskType, policy, policyVersion,
+contextBuilderVersion, latestEntryId, anchorEntryIds, reconstructionAnchorEntryId?,
+included[], excluded[], excludedRanges?, tokenBudget, hashes, meta, assembledAt
+```
+
+- `taskType`：`chat | resume | tool_loop`；`policy` 7 个枚举（`cache_aware_context_v2/v1`、`legacy_context_v1`、`legacy_context_shadow`、`resume_shadow`、`tool_loop_shadow`、`context_pressure_recovery_shadow`）
+- `included[]` 每项 = `{ entryId|null, messageId|null, orderSeq|null, role, source: 'tape'|'synthetic', reason, sourceEntryIds?, contentHash? }`，`reason` 10 种（`system_prompt`/`summary_checkpoint`/`reconstruction_checkpoint`/`memory_context`/`directive_context`/`pinned_first_user`/`selected_history`/`new_user_input`/`resume_target`/`tool_loop_message`）
+- `excluded[]` 的 7 种理由（`before_summary_cursor`/`compaction_indicator`/`pending_not_context_history`/`out_of_budget`/`empty_after_formatting`/`superseded`/`retracted`），连续区间压成 `excludedRanges`
+- `tokenBudget` 6 个数（contextLength / requestedMaxTokens / effectiveMaxTokens / reserveTokens / toolReserveTokens / estimatedPromptTokens）
+- `hashes` = `{ promptHash, toolDefinitionsHash, manifestHash }`；`meta` = `{ providerId, modelId, summaryCursorOrderSeq, supportsVision, supportsAudioInput, traceDebugEnabled }`
+
+schema 演进是叠加而非改列（同文件 `:133-222`）：1–4 legacy → 5（`hashVersion: 3`，`executionContract` **必填**）→ 6（`hashVersion: 4`，+`runId` +`tapeIncarnationId` +`skillContexts`，`executionContract` 转为可选）→ 7（`hashVersion: 5`，runtime-view skillContext 多一个 `executionRef`）。
+
+**什么时候写一条**：每份**确定的 provider payload** 写一条 `view/assembled`（`viewManifest.ts:52`），以 requestSeq 标识；context recovery 改变 payload 就新 requestSeq + 新 manifest，**transient retry 复用原 manifest**（`tape-system.md:263-266`）**[文]**。落盘信封是 `source = { type:'runtime_event', id: messageId, seq: requestSeq }`、`created_at = assembledAt`、`idempotent: true`，payload `{ name, data:{ manifest } }`（`viewReplayService.ts:577-600`）**[码]**。
+
+**requestSeq 不是 Tape 分配的**：它是 LoopRun 的计数器，`advanceRequestSequence(run)` 自增时同步把 `physicalAttempt` 归零、解绑 activeRequestContract / View / ToolSurface（`loopRun.ts:514-525`）；调用点 `contextCoordinator.ts:1109`，前后各一次 "Provider request sequence changed during View assembly" 的 compare 检查（`:1107`、`:1111`）。所以 requestSeq 是 **Run 内序号，不跨 Run 唯一**，Journal 的 operation identity 必须带 runId 才能定位。**[码]**
+
+**provenance_key 两种形态**（`viewReplayService.ts:49-71`）**[码]**：
+
+```
+schema ≤5 : view:${sessionId}:${messageId}:${requestSeq}:${manifestHash}
+schema 6/7: view6:|view7: + hashJsonData({ sessionId, tapeIncarnationId, runId, requestSeq })
+```
+
+后者**不含 manifestHash**——同一 `(incarnation, run, requestSeq)` 只允许一条 Skill-bearing manifest，重复写必须逐字节相等，否则 `Conflicting Skill-bearing ViewManifest binding.`（`:618`），连 kind/source/created_at/payload/meta 的物理信封都逐项比对（`requireEqualSkillManifestRow` `:603-628`、`requireSkillManifestEnvelope` `:629-658`）。
+
+**失败策略分叉**（`contextCoordinator.ts:1158-1241`）**[码]**：`failurePolicy` 的条件是 `input.strictViewContract || input.requireDurableManifest || requiresDurableSkillManifest` → `fail-closed`，否则 `fail-open`。普通请求写不进去时的降级是**把 executionContract 置 null 继续**，并记 "ExecutionContract disabled for request N because durable provider View provenance could not be confirmed"。
+
+**replay 怎么用它**：manifest 只存引用与证明，不存正文（"manifest 只保存引用与证明，不成为内容 sidecar"，`tape-system.md:15`）。join 键是 `included[]` 的 entryId/messageId/orderSeq + contentHash；synthetic contribution 只留 `sourceEntryIds` + `contentHash`，原文不复制。事实侧由 `buildEffectiveTapeView`（`effectiveView.ts:181`）从 kind ∈ {message, tool_call, tool_result, anchor} 加上 `message/retracted` 折叠出 effective 视图（`effectiveSemantics.ts:6, 23-28`），`getViewManifestSourceMaps` 提供四张查找表：entryIdByMessageId / messageContentHashByMessageId / toolCallEntryIdByToolId / toolResultEntryIdByToolId，外加 latestEntryId、anchorEntryIds 与 reconstruction anchor（`viewReplayService.ts:304-360`）。replay 的硬约束在 `tape-system.md:428-431`：必须保住 entry order、role、tool call/result 配对、anchor cursor、policy version、builder version、synthetic provenance；原则一句话在 `:389`——"replay 从 manifest 和 facts 重建 provider-visible context，不从 renderer block 猜测执行语义"。
+
+> ⚠️ 仓库里**没有**"喂一个 manifest 就吐回 provider messages 数组"的函数。`TapeViewReplayService` 的 20 个方法全是 reader / append / 绑定校验；连 docs 点名的纯逻辑文件 `src/main/tape/domain/replay.ts`（301 行）也只导出 `isTapeViewManifest` / `normalizeStoredTapeViewManifest` / `hashString` / `isPositiveInteger` / `collectEntryIds` 五个校验与规范化函数。replay 侧只有 reader + 完整性校验：`verifyTapeViewManifestHash` 返回 `valid | invalid | unverified`，hashable = stored 字段去掉 `assembledAt`/`viewId`、`hashes` 缩成 `{promptHash, toolDefinitionsHash}`（`tape-system.md:433-435`）。被篡改的 manifest 会被标 `invalid` 但**照样返回**（测试名：`test/main/session/data/tapeViewReplay.test.ts:1320` "annotates read records with hash integrity without dropping tampered manifests"）。**[码]**
+
+### 2. reservedNamespaces：一个 139 行的文件挡住**大部分**伪造
+
+`src/main/tape/domain/reservedNamespaces.ts` **[码]**。六个 slice，每个声明 `names / kind? / reservesName? / auditEvents / 两条拒绝文案`（:22-87）：
+
+| slice | 保留的 name | 绑定 kind | 前缀保留 | audit（默认排除出 view/search） |
+|---|---|---|---|---|
+| `execution` | `execution/{run_started,dispatch_committed,tool_outcome,run_terminal}` | — | `startsWith('execution/')` | 是 |
+| `contract` | `contract/{task_frozen,evaluated}` | — | `startsWith('contract/')` | 是 |
+| `tool-surface` | `view/{tool_catalog,tool_surface,programmatic_tool_surface}` | — | 否（仅精确名） | 是 |
+| `skill-materialized` | `skill/materialized` | **`context` 整个 kind** | 否 | 否（kind 本身就被读者跳过） |
+| `provider-attempt` | `provider/attempt_completed` | — | 否 | **否**（最新一条要喂 `tape_info` 的 cache 指标） |
+| `compaction-usage` | `compaction/model_call_completed` | — | 否 | 是 |
+
+防伪造是**双向**的，一个函数 `assertTapeAppendAuthorized(input, authorizedNamespace)`（:104-118）：strict writer（带 namespace）只能写自己声明的 name 且 kind 匹配，越界抛 `Unsupported ${strictRejection}: ${name}.`；generic append（namespace = null）命中任一 slice 就拒，命中方式三种——精确 name、`reservesName` 前缀、保留 kind。
+
+**把这个函数 bundle 出来实际跑了一遍**，结果如下（`ALLOWED` = 该 generic append 不会被这层挡住）：
+
+```
+REJECTED | generic append of execution/run_started      -> The execution/* namespace is reserved ...
+REJECTED | generic append of UNKNOWN execution/foo      -> The execution/* namespace is reserved ...
+REJECTED | generic append of contract/whatever          -> The contract/* namespace is reserved ...
+REJECTED | generic append of view/tool_surface          -> The View Tool Surface namespace is reserved ...
+ALLOWED  | generic append of view/tool_MADEUP
+ALLOWED  | generic append of view/assembled (ViewManifest)
+REJECTED | generic append of ANY context kind
+REJECTED | generic append of provider/attempt_completed
+REJECTED | generic append of compaction/model_call_completed
+REJECTED | execution writer appending contract/task_frozen -> Unsupported Execution Journal event name: ...
+REJECTED | skill writer appending skill/materialized on kind=event -> Unsupported Skill materialization fact: ...
+ALLOWED  | generic append of message/retracted
+```
+
+**要点：`view/assembled` 不在任何保留 slice 里**，`view/*` 没有前缀保留（只有 `execution/*` 和 `contract/*` 有），`message/retracted` 也不在。也就是说保留命名空间挡的是 Journal / Contract / tool-surface / materialization / provider-attempt / compaction-usage 这六类**审计与执行证据**，**ViewManifest 与 retraction 靠的是别的机制**：manifest 的 `manifestHash` 自校验 + Skill-bearing 的信封逐项比对，retraction 靠它本来就没有 provenance key、幂等为 false、只影响 fold。设计上说得通（manifest 伪造会被 hash 校验标 `invalid`），但**不要**把「有 reservedNamespaces 就没法伪造任何 fact」写进 Tenon 的 spec。
+
+谁能拿到 strict writer：`appendInternal(input, namespace)` 是 **protected**，public 的 `append()` 永远传 `null`（`tapeEntryStore.ts:851-853`）；能传 namespace 的只有两类——基类上的专用方法（`appendSkillMaterialization(...,'skill-materialized')` :946-966、`appendProviderAttemptEvent` :1002、`appendCompactionModelCallEvent` :1024、`appendToolSurfaceEvent` :1046），和**独立子类**：`DeepChatExecutionJournalStore extends DeepChatTapeEntriesTable` 只多一个 `appendExecutionJournalEvent(...,'execution')`（:1927, :2299-2319），`DeepChatContractStore` 同理（:2322-2340）。这两个方法在 port 层也确实**不在** `TapeEntryStore`（`ports/storage.ts:57-151`）上，而在 `ExecutionJournalPersistenceStore`（:197-226）和 `ContractPersistenceStore`（:229-235）上——journal spec:118-120 的 "The native append operation is absent from the generic `TapeEntryStore` capability." 是真的。注释也写明这个断言跑在"每个 Tape store 实现，包括 test double"里。
+
+**模型侧根本没有 append 能力**：`tape-system.md:391-399` 说模型只可调用 `tape_search`（授权 view 内查找）和 `tape_context`（读周边上下文），`tape_info`/`tape_anchors` 是 diagnostic，`tape_handoff` 是 runtime-only，五个名字全 reserved、MCP 不能 shadow。**[文]** 这才是"工具/插件伪造不了 fact"的第一道也是最强的一道门——它们拿不到写入面。
+
+审计位是声明式的：`RESERVED_AUDIT_TAPE_EVENT_NAMES` 由带 `auditEvents` 的 slice `flatMap` 出来（:95-97），实测正好 10 个名字（execution 4 + contract 2 + tool-surface 3 + compaction 1）。
+
+### 3. entry_id 分配与并发写者
+
+**分配**：`entry_id = MAX(entry_id) WHERE session_id = ? + 1`，读与 INSERT 在同一个 `this.db.transaction(...)` 里（`tapeEntryStore.ts:855-873`、`getMaxEntryId` :1635-1644）**[码]**。**per-session 单调，非全局**；主键 `PRIMARY KEY (session_id, entry_id)`（:820）。reset 后从 1 重新开始——所以跨"世代"的引用必须配 `tapeIncarnationId`，那是 bootstrap anchor（`session/start`）meta 里的 `randomUUID()`（`ensureBootstrapAnchor` :1063-1098，key 名见 `domain/entry.ts:9`）。
+
+**幂等**：带 `idempotent:true` 且有 provenance_key 时，事务内**先查一次、INSERT 抛错后再查一次**，命中即返回既有行（:862-924）。兜底是唯一索引 `idx_deepchat_tape_entries_session_provenance ON (session_id, provenance_key) WHERE provenance_key IS NOT NULL`（:249-251）。
+
+**两个写者**：DeepChat 结构上不存在这个场景——单实例锁（`appMain.ts:84`）、主进程一条共享 SQLite 连接（`tape-system.md:56` mermaid 的 `Shared Session SQLite connection`）、better-sqlite3 全同步，进程内不会交错；`test/main/session/data/` 下 11 个 tape 测试文件里没有并发 append 测试。
+
+我用 **`better-sqlite3-multiple-ciphers@13.0.3` 本体**、按 `connectionConfig.ts` 的 pragma（WAL + `synchronous=NORMAL` + `cache_size=-65536`）、按 `db.transaction()` 实际用的 `BEGIN`（= DEFERRED，见 `lib/methods/transaction.js:42`）复现了"真有两个连接"的行为 **（执行验证）**：
+
+```
+Case 1  两个 DEFERRED 事务同读 MAX=0，都要写 entry_id=1，provenance 不同
+        A committed entry_id 1
+        B failed after 0ms: SQLITE_BUSY_SNAPSHOT - database is locked
+Case 2  B 整个事务重来：saw max 1 -> committed entry_id 2        （重试即正确）
+Case 3  顺序写入同一个 provenance_key
+        SQLITE_CONSTRAINT_UNIQUE - ... deepchat_tape_entries.session_id, provenance_key
+Case 3' 顺序写入同一个 (session_id, entry_id)、provenance 不同
+        SQLITE_CONSTRAINT_PRIMARYKEY - ... deepchat_tape_entries.session_id, entry_id
+Case 4  A 持有 BEGIN IMMEDIATE，B 也 BEGIN IMMEDIATE
+        B blocked 5188ms then: SQLITE_BUSY - database is locked
+```
+
+三条结论，**都和直觉不一样，值得抄进 Tenon 的 storage port 设计**：
+
+1. WAL 下真正挡住 MAX+1 竞争的**不是复合主键，是快照检查**：B 的读快照在 A 提交后已过期，升写锁时直接 `SQLITE_BUSY_SNAPSHOT`，INSERT 根本没发出去，主键约束没机会触发。主键只在"顺序两次写同一个 entry_id"时才报 `SQLITE_CONSTRAINT_PRIMARYKEY`。
+2. **better-sqlite3 默认的 5000ms busy timeout 对这种冲突完全无效**——0ms 就失败了（SQLite 对 `SQLITE_BUSY_SNAPSHOT` 不调用 busy handler，等待也没用）。只有纯锁争用（Case 4）才真的等满 5s。所以"有 busy timeout 就能自动扛并发"是错的。
+3. 不会写坏，但**也不会自动重试**——DeepChat 没有重试循环，因为它假定单写者。Tenon 若要支持两个写者，重试必须**整个事务重来**（Case 2），不能只重发 INSERT。
+
+**事务纪律**：`runInTransaction` 直接 `db.transaction(op)()`（:842-844），可嵌套并自动退化为 SAVEPOINT——`clearMessages` 就靠它把 Tape reset 挂进外层事务（`tape-system.md:109-110`）。Execution Journal 反过来**拒绝**加入宿主事务：`if (table.isInTransaction()) throw new ExecutionJournalError('Cannot persist ${name} inside an active host transaction.', 'persistence_failed')`（`executionJournalService.ts:456-461`），理由是"它记录已越过外部副作用边界的事实"（`tape-system.md:97-100`，配 `:128-136` 的事务纪律表）。
+
+**索引**（`tapeEntryStore.ts:175-252`）共 **11 个** **[码]**：
+
+- 4 个普通复合：`session+kind+entry`、`session+name+entry`、`session+created_at+entry`、`session+source_type+source_id+source_seq`
+- 6 个局部索引，其中 **4 个是 `json_extract` 表达式索引**（compaction attempt、provider context-pressure、execution operation payload、execution message payload），**2 个是纯列局部索引**：`idx_..._event_name ON (name, session_id, entry_id) WHERE kind='event'`，以及 `idx_..._execution_run ON (name, session_id, source_id, entry_id) WHERE kind='event' AND source_type='runtime_event'`
+- 1 个唯一局部索引：`(session_id, provenance_key) WHERE provenance_key IS NOT NULL`
+
+注意 `execution_run` 这个**恢复扫描用的索引走的是列（`source_id` = runId），不是 JSON**——这正是把 runId/requestSeq 放进 `source_id`/`source_seq` 列而不是只放 payload 的回报；`execution_operation_payload` / `execution_message_payload` 才是 `json_extract('$.data.operation.runId')` 之类的表达式索引，属于后来按需补的查询加速。
+
+### 4. 分支：DeepChat 现在没有分支
+
+三条路各自的表示 **[码]**：
+
+| 操作 | 路由 | Tape 表示 |
+|---|---|---|
+| 编辑并重发 | `sessions.editUserMessage`（`sessions.routes.ts:611-621`） | 同一个 `messageId` 追加一条 correction message fact（`name = message/${role}`、`meta.correction = true`、`meta.reason = 'message_content_updated'`、`revisionKind = 'record'`、`idempotent: true`），effective view 取最新（`transcript.ts:607-620` → `factPersistence.ts:569-630`） |
+| 重新生成 / 重试 | `sessions.retryMessage` | 算 `retryFromOrderSeq`（target 是 user 则 `orderSeq + 1`，保住原 prompt），`deleteFromOrderSeq` 把其后消息**逐条 retract**，再跑新 Run（`transcriptMutations.ts:43-99`、`transcript.ts:653-664`） |
+| Fork | `sessions.fork` | **新建一个 Session**（`lifecycle.ts:488-558`），复制 `status='sent'` 且非 compaction 的前缀，每条**重新 `nanoid()`、order_seq 从 1 稠密重排**，再逐条 `commitRecord` append 成新 Session Tape 的 message fact（`transcript.ts:769-810, 919-923`） |
+
+所以：没有 `source_type:'fork'` 的新写入，Tape 里没有 parent 指针，旧回答也不作为"版本"留存。`DeepChatTapeSourceType` 枚举里确实还留着 `'fork'` 和 `'subagent'`（`domain/entry.ts:11-21`），但全仓 `fork/` 的出现位置只有 4 处，**全部是读路径**：`lineageService.ts:222` 解析历史 `fork/merge`、`traceInspectorProjection.ts:54,317,321,953` 做 lineage family 归类、`tapeEntryStore.ts:1411` 一条 `name IN ('subagent/tape_linked','fork/merge')` 的读 SQL。**没有任何写入方。[码]**
+
+**Session ↔ Tape 是 1:1**：`create` 后立刻 `initializeSessionTape(id)`、`delete` 时 `deleteSessionTape(id)`（`session/data/settings.ts:166,173-176`），表按 `session_id` 分区，全仓**没有 `tape_id` 这个标识符**。Subagent 同样是"独立 Session + 独立 Tape + 父 Tape 一条 frozen head link"（`tape-system.md:406-416`）。
+
+**UI 的"版本翻页"是死代码**：`MessageItemAssistant.vue:415-431` 还留着 `variants` / `is_variant` 的翻页与计数，但 `useDisplayMessages.ts:128,199` 把 `is_variant` 硬编码为 `0`，`DeepChatMessageRow`（`tables/deepchatMessages.ts:4-16`）根本没有这一列——`parent_id` + `is_variant` 只属于旧 `messages` 表（`tables/messages.ts:17,26`），是 legacy import 的遗留。**[码]**
+
+**值得抄的一段告诫**（`tape-system.md:418-424`）**[文]**：v1.0.5–v1.0.9 的 `fork/merge` / `fork/discard` 只作只读兼容；而真正的同 Tape 内并行探索（`fork/start` anchor + 复制 delta + merge receipt）"从未接入产品路径，其 merge 语义也未覆盖后来新增的 reserved namespace，已整体移除；若将来需要，必须为每个 reserved namespace 重新定义合并语义，而不是恢复旧实现"。——append-only + 多命名空间的 store 里，分支合并不是加个 parent 指针的事。
+
+### 5. 删除与保留：三层，语义完全不同
+
+**[码]**
+
+| 操作 | transcript 投影表 | Tape |
+|---|---|---|
+| 删单条 / 删某 orderSeq 之后 | 物理 DELETE | 追加 `message/retracted` 事件，**每条一个** |
+| `clearMessages`（清空会话消息） | `deleteBySession` 清 9 张投影表（`transcript.ts:626-636`） | **物理 reset**：删光 entry + mutation/search projection，再写新 bootstrap anchor（新 incarnation UUID） |
+| 删整个 Session | — | **物理 DELETE**：`DELETE FROM deepchat_tape_entries WHERE session_id = ?` |
+
+tombstone 只存在于第一层：`appendMessageRetractionToTape` 写 `data = { messageId, orderSeq, role, reason }`、meta `{ source:'live', correction:true }`、`provenanceKey: null`、`idempotent:false`（`factPersistence.ts:632-661`），reason 目前两种：`message_deleted`、`messages_deleted_from_order_seq`（`transcript.ts:637-651`）。`message/retracted` 是**唯一**参与 effective fold 的 event（`effectiveSemantics.ts:6-14`），SQL 判定是"存在 entry_id 更大、且 ≤ 快照 head 的同 messageId retraction"（`tapeEntryStore.ts:539-548`）。`deleteFromOrderSeq` 先逐条写 retraction，**再无条件 range delete 投影行**，注释说明 range delete 是这个方法一贯的表级保证（`transcript.ts:658-663`）。
+
+会话级不是 append-only：`resetTapeGeneration` / `deleteTapeGeneration` 是真删（`generationLifecycle.ts:8-29` → `tapeLifecycleAdapter.ts:10-16`），docs 明说"reset 物理删除当前 Session Tape 后重新 bootstrap；本阶段没有 archive-on-reset，**不能把 reset 解释成 append-only 运行语义的一部分**"（`tape-system.md:123-124`）。
+
+**保留策略 / 无痕会话：没有。[码]** `src/main` 与 `docs/architecture` 全量 grep `incognito|ephemeral session|privateMode|temporary chat` **零命中**；`retention` 只命中 settings activity（2000 条上限）、memory audit 索引名、skill draft（7 天）、background exec session（5 分钟）这些无关模块。Tape 没有 TTL、没有归档、没有导出脱敏；隐私依赖的是 SQLCipher 整库加密 + 删除即真删。
+
+### 6. Execution Journal：事件、边界与恢复分类
+
+**四个事件名与字段**（`src/main/tape/domain/executionJournal.ts:8-13, 125-183`）**[码]**。公共信封 `ExecutionFactBase` = `{ protocolVersion, type, sessionId, runId, messageId, entryId, createdAt }`，各自追加：
+
+| event | 追加字段 |
+|---|---|
+| `execution/run_started` | `runKind: 'loop' \| 'deferred_tool'` |
+| `execution/dispatch_committed`（T1） | `operation{runId,requestSeq,providerToolCallId}`、`toolName`、`toolSource: 'agent'\|'mcp'`、`argumentsHash`、`target{serverName,originalName?,ownerPluginId?}`；v2 nested 多 `childOrdinal` + `definitionHash` + `capabilityHash` |
+| `execution/tool_outcome`（T2） | `operation`、`responseHash`、`isError` |
+| `execution/run_terminal` | `outcome: completed\|paused\|aborted\|error`、`stopReason`（**必填 string**）、`errorHash?` |
+
+**只存哈希不存正文**：dispatch 不存原始参数，outcome 不存 response text / MCP envelope / 图片 base64 / offload 路径，terminal error 只存 hash（journal spec:76-82）。理由写得很好："T2 proves that a particular outcome was received without creating a second durable copy of potentially sensitive output"。
+
+**落盘信封**（`executionJournalService.ts:106-200`）**[码]**：`kind='event'`，`source = { type:'runtime_event', id: runId, seq: requestSeq }`（run_started 的 seq=0），provenance_key（`executionJournal.ts:501-521`，注意 v1 用的是 legacy `hashJson` 不是 `hashJsonData`）：
+
+```
+execution:v1:run:<hashJson({runId})>:started|terminal
+execution:v1:operation:<opKey>:dispatch|outcome
+execution:v2:parent:<parentKey>:operation:<nestedKey>:dispatch|outcome
+```
+
+**T1 相对权限门和真实副作用的位置**——这条可以在代码里精确读出来 **[码]**：
+
+```
+tool/index.ts:1050  permissionBroker.authorizeExecution(...)              ← 权限二次校验
+tool/index.ts:1060  observeToolExecution / subagent policy / enabledServerIds
+tool/index.ts:1072  assertExecutionContractDispatchAllowed
+tool/index.ts:838   guardedCommitDispatch 内：tool-surface + target + 当前 runtime authority 再校验一遍
+   ↓ 作为 commitDispatch 回调传进 mcpService.callTool（tool/index.ts:1085）
+mcp/toolManager.ts:1081  access?.commitDispatch?.({ toolName, toolSource:'mcp', normalizedArguments, target })  ← T1
+mcp/toolManager.ts:1097  notifyComputerUsePreview('started', previewCall)                                        （唯一插在中间的东西）
+mcp/toolManager.ts:1103  targetClient.callTool(originalName, preparedArgs.args, ...)                             ← 真实副作用
+```
+
+spec 把这写成硬规则："Place dispatch commits **after** local validation, permission, policy, binding, target, and abort gates and **immediately before** the resolved side-effect boundary"（journal spec:41-42），以及 "Journal writes remain synchronous with the existing SQLite transaction model so no **asynchronous** gap is introduced between a fact commit and its local side-effect boundary"（:269-270）。dispatch 回执若 `created === false`（已存在），立刻抛 `ExecutionJournalDuplicateDispatchError`——**重复 claim 即阻止第二次物理调用**（`runtime/dispatch.ts:2160-2176`，错误类定义 `executionJournal.ts:226-234`）。
+
+**重启恢复分类** `classifyExecutionJournalRows`（`executionJournal.ts:997-1161`）**[码]**，优先级是硬编码的四级（表达式在 :1142-1149）：
+
+```
+reasons 非空            -> corruption
+否则 有 dispatch 缺 outcome -> indeterminate
+否则 dispatch 数 == 0    -> not_dispatched
+否则                    -> completed
+```
+
+`reasons` 共 **19 种**——18 个固定串（`reasons.add(...)` 18 处，:1018–1136）加 1 个动态串 `` malformed_fact:${entry_id}:${message} ``（:1049-1050）：
+
+- 身份/重复类 7：`message_identity_mismatch`、`duplicate_dispatch`、`duplicate_outcome`、`duplicate_run_started`、`duplicate_run_terminal`、`missing_run_started`、`run_identity_reused_across_sessions`
+- 顺序类 4：`fact_before_run_started`、`fact_after_run_terminal`、`outcome_without_dispatch`、`outcome_before_dispatch`
+- **nested（v2）类 7**：`nested_dispatch_without_parent`、`nested_dispatch_before_parent`、`nested_dispatch_after_parent_outcome`、`nested_outcome_without_parent`、`parent_outcome_with_unsettled_nested`、`parent_outcome_before_nested_outcome`、`terminal_with_unsettled_nested`
+- 解析类 1（动态）：`malformed_fact:<entryId>:<msg>`
+
+**所有顺序判定都用 `entry_id` 比较**（如 `outcome.entryId <= dispatch.entryId`、`fact.entryId <= startEntryId`，:1078-1088）——entry_id 的单调性本身就是因果顺序的证据，没有单独的时间戳判定。
+
+处置：`indeterminate` / `corruption` / 缺 terminal 一律输出结构化 `parked` 诊断，**不自动重放**；明细日志最多 100 条并清控制字符；Journal 读取失败直接阻止 harness 构造。`parked` 是 recovery disposition，不是新的持久化 Session 状态；后续继续执行必须**创建新 Run**（`tape-system.md:169-174`，journal spec:160-163）。**[文]**
+
+#### Journal 是零 schema 迁移加进去的：它靠的五个前提
+
+**[文]** Journal 是在一个**已经上线的 Tape** 上零 schema 迁移加进去的。journal spec:211-212 原文——
+
+> "The existing `deepchat_tape_entries` schema and row format remain compatible. Journal records use existing event rows and **add only a query index** for unterminated-Run recovery reads."
+
+它能做到这一点，靠的是 entry 模型里早就有的五样东西（这份归纳是本笔记的，不是 DeepChat 文档的原话）：
+
+1. **通用 `event` kind**，payload 是自由 JSON（kind 共六个：`event/anchor/message/tool_call/tool_result/context`，`domain/entry.ts:1-7`）；
+2. **name 是带 `/` 的字符串命名空间**，并且有一个能**按前缀整体保留**的机制（`reservesName`），没有它，新增的 `execution/xxx` 会被旧的 generic append 伪造——上面第 2 节实测过：有前缀保留的 `execution/foo` 被拒，没前缀保留的 `view/tool_MADEUP` 放行；
+3. **一组可索引的「外部身份」列** `(source_type, source_id, source_seq)`——Journal 把 runId 放 `source_id`、requestSeq 放 `source_seq`，恢复扫描的 `idx_..._execution_run` 才能走纯列索引而不是解析 JSON；
+4. **`provenance_key` + `UNIQUE(session_id, provenance_key)`**——幂等、"同 identity 同 payload 返回既有回执 / 异 payload 报 corruption" 全靠它；
+5. **`entry_id` 在 session 内严格单调**，因果顺序可比（Journal 的全部顺序判定都只用它）。
+
+另加一条 kind 之外的：**`payload_json` 里的字段可以后加，列不行**。DeepChat 唯一真正改过物理结构的是 `ensureProvenanceColumns()`——四个列 `source_type / source_id / source_seq / provenance_key` 是用 `ALTER TABLE ADD COLUMN` 补上的（`tapeEntryStore.ts:1912-1924`），靠 `hasColumn` 幂等判断；而这张表**根本没有版本化迁移**：`getMigrationSQL()` 恒返回 `null`、`getLatestVersion()` 恒 `0`（同文件 :835-841）。补列这条路走得通，但它是"没有迁移框架时的权宜"，不是可以反复用的手段。
+
+### 7. 哈希链 / 签名 / 副作用分级 / run 分组 / snapshot
+
+- **prev_hash / entry_hash 链：没有。[码]** `src/main/tape/` 下 grep `prev_hash|prevHash|chainHash|createHmac|hmac|signature|sign(` **零命中**。唯一的整行哈希是 `computeTapeIdentity(row)`（`domain/tapeIdentity.ts:4-22`，sha256 over 11 个列组成的 JSON 数组），但它只用于三处 lineage/contract 场景，对象是**child Tape 的第一条 entry**，语义是"这条 Tape 还是不是我当初引用的那条"，不是相邻 entry 之间的链（`lineageService.ts:350,406`、`taskContractService.ts:303`、`taskEvaluationService.ts:118`）。docs 自己把 Tape 里的 hash 分两类——fact 信封/payload 的自校验，和把 Tape 之外的对象绑定到 entry 的凭据——并明确后者"**不是对不可变 entry 的双重保证**，entryId 无法替代它们"（`tape-system.md:441-444`）。
+- **签名：没有。[码]** 防篡改靠 SQLCipher 整库加密 + 单进程写者；篡改后的 manifest 只会被标 `invalid` 且照常返回给 Inspector。
+- **工具副作用分级：只有 `read` / `write` 两级，且不进 Journal。[码]** `ToolEffect` = `'read' | 'write'`，配 `mode: sequential | parallel`，合法组合只有三种（read+parallel / read+sequential / write+sequential，`executionContract.ts:325-334` 的 `normalizeExecution` 与 :658-664 的 `isStoredExecutionPolicy`），偏序判定 `isToolEffectWithinCeiling`（:840-846：`effect === 'read' || ceiling === 'write'`）。它冻在 ViewManifest v5+ 的 ExecutionContract ceilings 里，dispatch 时做 typed meet。**没有 external / blocked 这两级**（grep `'external'|'blocked'` 在该文件零命中）；Journal 的 dispatch fact 只记 `toolName / toolSource('agent'|'mcp') / argumentsHash / target`，**不记 effect**。"哪些工具要写 dispatch fact"是散文规则而非枚举（journal spec:190-203）：MCP 的最终 client 边界、能跨持久化或外部副作用边界的内置 agent 工具、批准后的 deferred 执行要写；纯校验、权限弹窗、提问工具、context 读、ViewManifest 写不写。未知 MCP 工具一律保守处理，"their remote behavior cannot be inferred from local annotations"——与上文第五节的注解不可信一致。
+- **run 分组 id：四层 + 一个横切。[码]** `runId`（每个 physical Run 一个 UUID，`requireExecutionRunId` 强制 canonical UUID，spec:86-87 "never depends on a process-local counter"）→ `requestSeq`（LoopRun 自增，一次确定的 provider payload）→ `logicalRound` / `physicalAttempt`（provider 重试维度；`provider/attempt_completed` 的 provenance key 是 `provider-attempt:${sessionId}:${messageId}:${requestSeq}:${physicalAttempt}`，`providerAttempt.ts:22-28`）→ `providerToolCallId`（v2 再加 `childOrdinal`）。横切的第五个是 `tapeIncarnationId`，标识 Tape 的"这一世"。
+- **snapshot id：没有独立实体，用 `(tapeIncarnationId, maxEntryId)` 当快照坐标。[码]** 全仓 `snapshotId|snapshot_id` 在 `src/main/tape/` 零命中；Inspector 分页全部带 `snapshotMaxEntryId` 并在 SQL 里 `AND entry_id <= ?`（`tapeEntryStore.ts:164-171`、`shared/types/tape-inspector.ts:104,111,118,164,171`）；head watcher 的相等判定就是 `left.tapeIncarnationId === right.tapeIncarnationId && left.maxEntryId === right.maxEntryId`（`traceInspectorHeadWatcher.ts:35`）；投影游标同理，`deepchat_transcript_projection_meta(session_id PK, tape_incarnation_id, max_entry_id, projection_version, updated_at)`（`tables/deepchatTranscriptProjectionMeta.ts:25-31`）。
+
+### 关键路径（补充）
+
+| 内容 | 路径 |
+|---|---|
+| ViewManifest 全部类型与 schema 1–7 | `src/shared/types/tape-view-manifest.ts`（234 行） |
+| manifest 事件名 / 构建输入 / hash 校验 | `src/main/tape/domain/viewManifest.ts:52` |
+| manifest 纯逻辑校验与规范化 | `src/main/tape/domain/replay.ts`（301 行，5 个导出） |
+| manifest append、provenance key、Skill binding 校验 | `src/main/tape/application/viewReplayService.ts:49-71, 539-673` |
+| manifest 组装与 fail-open/closed 分叉 | `src/main/agent/deepchat/loop/contextCoordinator.ts:1100-1250` |
+| requestSeq / logicalRound 计数器 | `src/main/agent/deepchat/loop/loopRun.ts:505-525` |
+| **保留命名空间与双向断言** | `src/main/tape/domain/reservedNamespaces.ts`（139 行，可整份照抄） |
+| entry_id 分配 / 幂等 / 索引 / 建表 / 补列 | `src/main/tape/infrastructure/sqlite/tapeEntryStore.ts:175-252, 806-944, 1063-1098, 1635-1644, 1912-1924` |
+| strict writer 子类 | `tapeEntryStore.ts:1927(Journal), 2299-2319, 2322-2340(Contract)` |
+| 存储 port 的能力切分 | `src/main/tape/ports/storage.ts:57-151(TapeEntryStore), 197-226, 229-235` |
+| effective fold 的输入 kind 与 retraction | `src/main/tape/domain/effectiveSemantics.ts:6, 23-28`；`effectiveView.ts:181` |
+| Journal 事实模型 + provenance key + 恢复分类 | `src/main/tape/domain/executionJournal.ts:8-13, 125-183, 226-234, 501-521, 997-1161` |
+| Journal 写入与"拒绝宿主事务" | `src/main/tape/application/executionJournalService.ts:106-200, 447-470` |
+| T1 与真实 MCP 调用的相邻三行 | `src/main/mcp/toolManager.ts:1081, 1097, 1103` |
+| T1 前的权限/契约门 | `src/main/tool/index.ts:838-866, 1040-1090` |
+| 消息 correction / retraction 事实 | `src/main/tape/application/factPersistence.ts:569-661` |
+| 编辑 / 重试 / fork 的 transcript 侧 | `src/main/session/transcriptMutations.ts:33-99`、`src/main/session/data/transcript.ts:607-664, 769-810, 919-940`、`src/main/session/lifecycle.ts:488-558` |
+| Tape 物理删除与 reset | `src/main/tape/application/generationLifecycle.ts:8-29`、`infrastructure/sqlite/tapeLifecycleAdapter.ts:10-16` |
+| SQLite 连接参数 | `src/main/data/connectionConfig.ts:15-31`（无 `busy_timeout`） |
+| 设计文档 | `docs/architecture/tape-system.md`、`docs/architecture/durable-execution-journal/{spec,plan,tasks}.md`、`docs/architecture/tape-layering/`、`docs/architecture/tape-contract-lineage/` |
+
+### Tenon 的取舍
+
+不写在这里。本节只留机制证据；Tenon 据此做的决定（entry 模型、删除语义、`entry_id` 分配、命名空间白名单、哈希链）见 [01-provider-and-tape/spec.md](../architecture/01-provider-and-tape/spec.md)。
+
 ---
 
 # 三、Agent 循环
