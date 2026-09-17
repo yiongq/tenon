@@ -17,7 +17,8 @@
     "i18n:check": "node scripts/i18n-check.mjs apps/desktop/src/i18n/locales",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "hooks": "lefthook run pre-commit --force",
-    "colors:check": "node scripts/check-colors.mjs"
+    "colors:check": "node scripts/check-colors.mjs",
+    "dev": "pnpm --filter @tenon-app/desktop dev"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.2",

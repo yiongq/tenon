@@ -11,12 +11,12 @@
 - [x] 7. `packages/contracts`：`registerRoute` + 第一批 IPC schema（发送消息 / 流事件 / 停止 / 读写 config）；验收 6 的测试
 - [x] 8. Electron 壳：窗口 webPreferences 按 spec；preload 只暴露 contracts 通道；profile 目录布局
 - [x] 9. 最小 Anthropic 流式调用（不抽象），`AbortSignal` 贯穿到 fetch
-- [ ] 10. UI：令牌（键名按 §8.5，值按 §8.1）、基础组件、壳层、Composer 最小态、消息流（block 注册表 + `text`）
+- [x] 10. UI：令牌（键名按 §8.5，值按 §8.1）、基础组件、壳层、Composer 最小态、消息流（block 注册表 + `text`）
   - [x] 10.1 `apps/desktop/src/i18n/`：i18next + i18next-icu，主进程与 renderer 各一个实例共用 `locales/zh-CN`、`locales/en`；系统语言解析 + `config.json` `locale` 覆盖；IPC 事件 `config.locale`；账号菜单「语言」项
   - [x] 10.2 `pnpm i18n:check`（两份目录键集一致）挂进 `pnpm lint`；JSX 字面量文案 lint
-  - [ ] 10.3 字体令牌两套值：界面无衬线、正文衬线，CJK 回落系统无衬线；zh-CN 下「谁在说话」由正文 16/28 vs 界面 14/20 承担；`<html lang>` 跟界面语言
-  - [ ] 10.4 Composer：IME 组合中 Enter 不发送；时间 / 数字 / 排序全走 Intl
-  - [ ] 10.5 Playwright：`zh-CN` / `en` 双语言壳层截图 + 无换行断言（验收 12）
+  - [x] 10.3 字体令牌两套值：界面无衬线、正文衬线，CJK 回落系统无衬线；zh-CN 下「谁在说话」由正文 16/28 vs 界面 14/20 承担；`<html lang>` 跟界面语言
+  - [x] 10.4 Composer：IME 组合中 Enter 不发送；时间 / 数字 / 排序全走 Intl
+  - [x] 10.5 Playwright：`zh-CN` / `en` 双语言壳层截图 + 无换行断言（验收 12）
   - [x] 10.6 界面 → shadcn/ui 组件映射表 `docs/ux/components.md`：按 `../tenon-uxkit/interactions.md` 的界面清单逐条对应（§8.5 要求，只写组件名不抄 class）
   - [x] 10.7 令牌值替换表 `docs/ux/tokens.md`：键名按 §8.5 分层，值为 Tenon 自己的临时皮肤，不含任何 uxkit 值（§8.5 要求）
 - [x] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
@@ -98,7 +98,19 @@
 - 第 5 / 6 / 8 / 9 步已落并提交（`9252736`、`ad8c221`）：desktop `host/{process,secrets,confirm,index}.ts`；kernel `mcp/{stdio-transport,connection}.ts`（stderr 必须排水，否则子进程会被堵死；close 时两路 reader 都 cancel，避免孙进程继承的管道拖住）；contracts `registry.ts`（`ROUTE_CHANNELS` / `EVENT_CHANNELS`），preload 只转发表内通道；main 装配 host、注册 `config.*` 与 `chat.*` 路由；`chat.ts` 用 `@anthropic-ai/sdk` 0.126.0，模型默认 `claude-opus-5`（`TENON_MODEL` 可覆盖），API key 先查钥匙串 `keyFor(identity,'provider','anthropic','apiKey')` 再回落 SDK 自己的环境变量；阶段 0 没有设置 UI，验收 4 靠 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量。
 - 10.1 / 10.2 已落（`3554514`）：`apps/desktop/src/i18n/{resources,create-instance,resolve-locale}.ts` + `locales/{en,zh-CN}/{common,menu}.json`（静态打包进两个进程，各自 `createInstance()`）；主进程 `locale.ts` 解析一次并广播 `config.locale`，`menu.ts` 按目录重建应用菜单，窗口标题同步；renderer 通过 `additionalArguments: --tenon-locale=` 在首帧前拿到语言，再跟随事件；`TENON_LOCALE` 环境变量可覆盖系统语言（测试用）。oxlint renderer 覆盖里开了 `react/jsx-no-literals`。
 - 已验证的验收（2026-09-17）：1（干净 clone 到草稿目录，五条命令全过，hooks 随 install 装上）、2、3、4 的机制（本机没有 Anthropic 凭据，用 `test/support/fake-anthropic.ts` 假 SSE 端点：流式增量、`chat.stop` 后服务端看到连接关闭、401 → `auth` 代码；真实端点需 owner 设 `ANTHROPIC_API_KEY`）、5、6、7（lefthook 与 commitlint 都实际拦过提交）、8（尚需最终 `git log` 复核）、10；9 的语言解析与菜单/标题切换已由 e2e 覆盖，账号菜单切换与重启保持等壳层 UI 落地后补；11、12 等 Composer / 壳层。
-- 下一步：第 10 步余下部分（令牌 CSS / 基础组件 / 壳层 / Composer / 消息流 / 10.3–10.5）→ 第 14 步逐条验收 → 15 / 16。
+- **第 10 步已落（`03fcb71`）**，UI 技术栈全部先在草稿目录实测再整合：
+  - **shadcn CLI 4.21（Base UI 版）**：`init -b base -p nova`；依赖是 `@base-ui/react` 1.8.0（不是停在 rc 的 `@base-ui-components/react`）、`cn` 0.3.0（v4 起取代 clsx + tailwind-merge，组件直接 `import { cn } from 'cn'`）、`class-variance-authority`、`lucide-react`；devDeps `shadcn`（`theme.css` 要 `@import 'shadcn/tailwind.css'`）、`tw-animate-css`、`tailwindcss` / `@tailwindcss/vite` 4.3.3。生成的 14 个组件在 `apps/desktop/src/renderer/src/components/ui/`，已改成只走令牌（高度用 `ctl-h*` 工具类、无任意值颜色）；用 Base UI 的 `render` 属性，不是 Radix 的 `asChild`。再跑 CLI 要注意：它读**根** tsconfig 的 `paths`，读不到会把文件写进字面目录 `@/`。
+  - **`shadcn/tailwind.css` 是承重的**：它把 `data-horizontal` / `data-vertical` 映射到 Base UI 实际写的 `[data-orientation=…]`；删掉它 Separator 高度变 0、滚动条变 2px（不是「动画没了」）。
+  - **令牌**：`src/styles/tokens.css` 逐表誊抄 `docs/ux/tokens.md`（三块：`:root`、跟随系统的暗色、`[data-theme=dark]`，外加减动效）；`theme.css` 的 `@theme inline` 先 `--color-*: initial`（Tailwind 自带调色板类编译为零字节），再把 shadcn 语义名与 Tenon 键名都接到 `--t-*`；`--container-xs/sm` 也接管成 4px 单位的倍数；`ThemeProvider` 总是在 `<html>` 盖 `data-theme`（阶段 0 只跟随系统）。zh 下三档字重各降一档（CJK 同字重更显重），字族不换。
+  - **Streamdown**：Tailwind 只扫源码树，必须 `@source '../../node_modules/streamdown/dist/*.js'`，否则 markdown 全无样式；它自带的 mermaid 错误 / 图片悬浮层用的是 Tailwind 调色板类，被 `--color-*: initial` 清掉了——阶段 0 只有文本，接受；`<Streamdown>` 会丢弃未知 props（testid 挂外层 div），className 里的任意字号要写 `text-[length:…]`。
+  - **assistant-ui 0.15.20**：`useLocalRuntime` + 自写 `ChatModelAdapter`（`runtime/tenon-chat-adapter.ts`）：先订阅 `chat.event` 再 `chat.send`，按 sessionId 过滤，yield 累积文本，abort 时发 `chat.stop` 并本地关流；错误用带 `code` 的 `ChatStreamError`，`ThreadError` 经 `useAuiState` 读 `status.error.code` 再查目录（不用 `ErrorPrimitive.Message`，它会把 message 直接上屏）。块注册表 = `MessagePrimitive.Parts` 的 `components`：`Text` 一个真渲染器，其余槽位全指向可见占位（注册表是全的，未知块不会静默消失）；用户消息用 `PlainText`。`ComposerPrimitive.Input` 自己只拦 `isComposing`，`keyCode === 229` 靠 `guardImeEnter` 补。「新对话」= 换 sessionId 让 `ChatProvider` 重挂（主进程按 sessionId 记历史）。
+  - **zod 与 CSP**：zod v4 会用 `new Function('')` 探测 JIT，在 `script-src 'self'` 下每次加载报一条 CSP 违规；`renderer/src/zod-csp.ts` 设 `jitless` 并在入口最先 import。e2e 断言违规数为 0。
+  - **electron-vite 5**：`externalizeDepsPlugin` 已废弃，用 `build.externalizeDeps`；**preload 必须 `externalizeDeps: false`**——sandbox 下 preload 只能 `require('electron')`，任何外置依赖都会让 preload 整个加载失败（实测：把 zod 加进 dependencies 后界面全白）。main 保留外置但排除两个 workspace 包。
+  - **lint 新增**：`scripts/check-colors.mjs`（`apps/desktop/src` 下除 `tokens.css` 外禁止颜色字面量与 Tailwind 调色板类）挂进 `pnpm lint`；`import/no-unassigned-import` 只放行 `*.css` 与 `zod-csp`。
+  - **e2e（10 条，本机 + CI）**：`helpers/text-fit.ts` 的 `expectSingleLineUnclipped`（按文本宿主量行盒并按纵向重叠合并、逐轴找裁剪盒、跳过可滚动容器）；`helpers/launch.ts` 用 `--user-data-dir` 隔离 profile、`setContentSize` 定 1280×800（`page.setViewportSize` 对 Electron 无效且会把 DPR 压成 1）；`TENON_LOCALE` 现在是「系统语言列表」的种子（逗号分隔，仅未打包时生效，见 `main/preferred-languages.ts`），不是最终语言。截图基线只提交 darwin（`e2e/__screenshots__/darwin/`），其他平台把截图作为附件，门禁靠 DOM 断言。IME 用 CDP `Input.imeSetComposition` 驱动。
+  - 10.4 的「时间 / 数字 / 排序走 Intl」：阶段 0 的界面还没有任何时间、数字或排序，无代码可落；规则留给出现相对时间的那一步。
+  - 阶段 0 有意不放的入口：侧栏底部的搜索 / 设置、账号菜单里的「设置」——`components.md` 要求入口与功能同批出现。项目 / 产物 / 定时任务 / 技能与连接器四行是无动作的占位行，只为让双语言回归从第一天覆盖这些文案。
+- 下一步：第 14 步逐条验收（对抗性评审进行中）→ 15 清理 → 16 改 spec 状态。
 
 ## Open
 
