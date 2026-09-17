@@ -1,6 +1,6 @@
 # 00 · 地基（Foundation）
 
-Status: ready
+Status: implemented
 Phase: 0 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Revisions: 2026-09-17 新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节

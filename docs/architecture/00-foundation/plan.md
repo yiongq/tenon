@@ -22,9 +22,9 @@
 - [x] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
 - [x] 12. `.github/workflows/ci.yml`：PR 触发 install / build / lint / typecheck / test
 - [x] 13. 仓库设置：secret scanning + push protection、`main` 分支保护（2026-09-17 转公开后完成：两项扫描已启用；`main` 要求经 PR 合并、禁 force push 与删除；CI 建好后再加 required status checks）
-- [ ] 14. 对照 spec 当前全部验收标准逐条验证并记录结果
-- [ ] 15. 清理临时探针与测试
-- [ ] 16. spec 顶部改 `Status: implemented`
+- [x] 14. 对照 spec 当前全部验收标准逐条验证并记录结果
+- [x] 15. 清理临时探针与测试
+- [x] 16. spec 顶部改 `Status: implemented`
 
 ## 交接（2026-09-12）
 
@@ -110,7 +110,26 @@
   - **e2e（10 条，本机 + CI）**：`helpers/text-fit.ts` 的 `expectSingleLineUnclipped`（按文本宿主量行盒并按纵向重叠合并、逐轴找裁剪盒、跳过可滚动容器）；`helpers/launch.ts` 用 `--user-data-dir` 隔离 profile、`setContentSize` 定 1280×800（`page.setViewportSize` 对 Electron 无效且会把 DPR 压成 1）；`TENON_LOCALE` 现在是「系统语言列表」的种子（逗号分隔，仅未打包时生效，见 `main/preferred-languages.ts`），不是最终语言。截图基线只提交 darwin（`e2e/__screenshots__/darwin/`），其他平台把截图作为附件，门禁靠 DOM 断言。IME 用 CDP `Input.imeSetComposition` 驱动。
   - 10.4 的「时间 / 数字 / 排序走 Intl」：阶段 0 的界面还没有任何时间、数字或排序，无代码可落；规则留给出现相对时间的那一步。
   - 阶段 0 有意不放的入口：侧栏底部的搜索 / 设置、账号菜单里的「设置」——`components.md` 要求入口与功能同批出现。项目 / 产物 / 定时任务 / 技能与连接器四行是无动作的占位行，只为让双语言回归从第一天覆盖这些文案。
-- 下一步：第 14 步逐条验收（对抗性评审进行中）→ 15 清理 → 16 改 spec 状态。
+- **对抗性评审（2026-09-17）**：6 个维度各一名评审 + 一名专职反驳者，37 条发现里 23 条被复现确认、14 条被驳回；确认项全部修掉（`cec41f8`）。要点：窗口钉死在应用文档上（`will-navigate` / `will-frame-navigate` / webview / 权限请求一律拒绝——此前 renderer 一旦跳到远程源，远程页面会带着 preload 桥拿到整套 IPC）；`shell.openExternal` 只放行 http / https / mailto；`confirm.request` 事件不再携带 `redacted`；MCP server 的 spawn 先过 `HostSandbox.wrap`（`McpStdioServerSpec.sandbox` 必填）；`McpConnection.close()` 总是回收子进程，流坏掉时传输层自己收尸；聊天路由——stop 先于建流也能取消、被停止的那轮保留已出的部分回复、失败的那轮留在记录里且同文重发视为重试、缺密钥报 `auth`、先释放会话再发终止事件；错误态加重试钮、消息加读屏说话人标题、hover 过渡接到动效令牌；新增 `scripts/check-copy.mjs`（主进程原生 UI 字段与 renderer 文本属性必须走 `t()`）；AI co-author 检查挪到 lefthook 独立 job（commitlint 会整体跳过 merge / revert / fixup 消息）并在 CI 的 PR 范围内再查一遍；所有 e2e 用隔离 profile；placeholder 也纳入不截断度量。
+
+## 第 14 步：验收记录（2026-09-17）
+
+| # | 结果 | 证据 |
+|---|---|---|
+| 1 | 通过 | 干净 clone 到草稿目录：`pnpm install --frozen-lockfile && pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test` 全过；CI 同样 |
+| 2 | 通过 | kernel 的 `src/` 与 `test/` 各放一个 `import 'electron'`：`pnpm lint` 失败并报 `eslint(no-restricted-imports)`；`node:fs`、`document`、`@tenon-app/contracts` 同样被拦 |
+| 3 | 通过（措辞见 Open） | `packages/kernel/test/mcp/everything.test.ts`：内存 host + 注入的 node 版 `HostProcess`，经 `sandbox.wrap` → `process.spawn` 起 server-everything，协商成功、`tools/list` 非空、`echo` 回显、stdin EOF 后以 0 退出 |
+| 4 | 机制通过，真实端点未跑 | 本机与 CI 都没有 Anthropic 凭据。`test/chat.test.ts` + `e2e/chat.spec.ts` 对本地 Anthropic 兼容 SSE 端点：流式渲染、点停止后服务端看到连接关闭、错误码本地化、重试、CSP 零违规 |
+| 5 | 通过 | `apps/desktop/test/profile.test.ts`（真实临时目录）+ kernel 的内存版同款用例 |
+| 6 | 通过 | `packages/contracts/test/route.test.ts`：畸形消息 → `{ ok:false, error:{ code:'invalid-request', issues } }`，handler 未被调用、不抛错；preload 另拒绝未声明通道（e2e） |
+| 7 | 通过 | lefthook 实际拦过本分支的提交（格式、lint、标题超长、大写开头）；Stop hook 两条分支手测；CI 三个 job 三次全绿；secret scanning / push protection 见第 13 步 |
+| 8 | 通过 | `git log origin/dev..HEAD` 无 co-author 尾注；`commitlint --from origin/dev --to HEAD` 0 problems |
+| 9 | 通过 | e2e：全新 profile 按系统语言列表（`TENON_LOCALE` 种子，含 `fr-FR` 在前的回落）出中文 / 英文；账号菜单切换后 `<html lang>`、应用菜单、窗口标题即时变化，同一 profile 重启后保持。真实 OS 语言设置无法在测试里改，靠 `resolve-locale` 单测兜底 |
+| 10 | 通过 | 清空 `locales/en/common.json`：`pnpm lint` 失败并点名 `common:app.name` |
+| 11 | 通过 | e2e 用 CDP `Input.imeSetComposition` 驱动真实输入法状态：组合中 Enter 不发送，提交后 Enter 发送 |
+| 12 | 通过 | e2e：1280×800、zh-CN 与 en，侧栏 5 个导航行、Composer 的 placeholder / 发送钮 / 免责行、账号行均单行不截断；darwin 截图基线已入库 |
+
+第 15 步：仓库内无临时探针、无调试输出（`git ls-files` 与 `console.log` 检索为空）；研究与评审的探针都在会话草稿目录，未入库。
 
 ## Open
 
