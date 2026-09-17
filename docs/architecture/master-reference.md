@@ -864,6 +864,15 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 按 §4.8.4 定消息数据模型：append-only Tape + `provenance_key` 幂等 + 同事务投影表；压缩用 `anchor` 事实（不用 `visibleTo`）；工具调用身份 `(runId, requestSeq, providerToolCallId)`、`requestSeq`/`physicalAttempt` 分离；所有键带 `tenantId`
 - 接第二个 provider（比如 Ollama）验证抽象
 - **读**：[goose-mechanisms](../reference/goose-mechanisms.md) §一、[deepchat-mechanisms](../reference/deepchat-mechanisms.md) §二
+- **开工前裁决**（2026-09-17 五题覆盖审阅的结论；机制层已有 deepchat 笔记 §二，缺的是 Tenon 自己的决定）：
+  - 执行日志（Execution Journal）排阶段 2 还是 4——deepchat 笔记说等阶段 4，但阶段 2 已有真实写文件与 `HostProcess.kill`；无论排哪，阶段 1 的 entry 模型先预留 kind 与命名空间
+  - 是否现在就留 `prev_hash` / `entry_hash` 列：6b 的签名链要证明更早的历史未被改，不留则补不上
+  - 删除 / 保留期 / 无痕模式在 append-only 下的语义：物理删、分区删还是 tombstone；retention days 与 legal hold 列是否第一天进 schema
+  - 本地主键形状（`tenant_id` 恒定时是否仍作前缀），以及「同一套 DDL 本地 SQLite 与服务端库通用」是否为真——阶段 1 就验证，不留到 6b
+  - 阶段 4 反推的字段现在进 entry 模型：副作用分类（读 / 写 / 外呼 / 拦截）、`runId` 归组、快照号；否则「任务小结由 Tape 投影、不另存」做不到
+  - 分支 / 编辑重发是同 session 的 fork entry 还是新 session，决定 `Session ↔ Tape 一一对应` 是否成立
+  - `packages/contracts/bridge/` 的帧类型骨架此时定：AGENTS.md 规定桥只走 contracts，空到 6b 等于把一个公开契约推到最后
+  - 补读半天：DeepChat `docs/architecture/tape-system.md` 的 ViewManifest 字段与产生时机、`reservedNamespaces.ts` 规则、`entry_id` 分配与并发写策略，以增补写回 deepchat 笔记 §二，不新建笔记
 - **验收**：第二个 provider 不改任何调用方代码即可接入；从 Tape 重放能重建 provider 上下文且与投影表一致；换 profile 后另一个 profile 的数据不可见
 
 ### 阶段 2：Agent loop（2–3 周）
@@ -876,6 +885,17 @@ Claude Desktop 的概念 → Tenon 的实现：
 - **提示层**（2026-09-17 补，明确交付物）：(1) 对话 / 任务两个 profile 各一份系统提示，从 Anthropic 公开发布的 claude.ai 系统提示与 Claude Code 文档学，不抄原文；(2) 工具集形状贴 Claude Code——读 / 写 / 编辑 / 命令 / 查找 / 子 agent，名字与参数语义一致（模型对这套形状有先验），其余能力走 MCP；(3) 扩展思考、提示缓存、服务端网络搜索与代码执行直接用 API 功能，不自造；(4) 对照组改为用户机器上的 Claude Desktop 本身：同一题两边跑、录屏对比、差在哪改哪（OpenCode 降为第二对照）；(5) 固定 20–30 个任务的评测集，改系统提示或工具描述必跑，结果记 `docs/evals/`
 - **读**：DeepChat `src/main/tool/`（`ToolPermissionBroker`）、`docs/architecture/tool-system.md`、Cline `auto-approve.mdx` + `sdk/`、OpenCode agent loop
 - **对照组**：用 OpenCode 跑同一个任务，看循环差在哪
+- **开工前裁决**（2026-09-17 审阅结论；DeepChat broker 与 Goose 四层已有逐路径笔记，不需要新笔记，需要的是拍板）：
+  - 严格度定位：工具级「以后都允许」第一版有没有、存哪、怎么撤销。§4.11 第 3 行说有（键 `tenantId / serverId / toolName`），UX 画布 v18 与 parity 审计 09-16 补记说审批只「本次会话内有效」、「以后都允许」只出现在文件夹与连接器授权弹窗——两者必须合成一份
+  - 可逆性判定规则：输入是什么（内置工具白名单 / host 判定 / MCP 注解按硬规则不可信），未知 MCP 工具默认哪档；UX 四档刻度（可撤销 / 有快照 / 不可逆 / 未知）到 `ConfirmReason` 的映射，阶段 2 尚无快照时「有快照」档怎么显示
+  - blocked 是「从发给模型的工具列表过滤掉」还是「调用前拦截」，及其对提示缓存与 Tape 记录的影响
+  - §4.13 的四级查找顺序（租户策略 → 用户默认 → 会话 → 单次）与 §4.11 六层表对账成一份，避免实现出两套作用域
+  - 租户策略在接口上的落座点：`HostAdapter` 第七个成员、kernel 侧 store 由桥喂、还是 contracts 里的 schema。`HostAdapter` 已在阶段 0 冻结，改动按 spec-driven-dev 的 Revisions 规则处理
+  - 第 1 层真值表：策略 allow 撞用户 Never、策略 deny 撞用户 Allow always、个人租户第 1 层是否求值。表行 1「不可放宽到低于用户设定」、表行 2「只有租户策略或用户显式 Allow always 能放开」与总结句「策略与用户可放宽」目前三者打架
+  - 策略拒绝需要的 `ConfirmReason` 新值与 facts 键（policyId 等）回填阶段 0 spec 的必填键表
+  - Inspector 接口形状与合议规则（多个 inspector 冲突取最严还是按 confidence）、超时与抛错是否 fail-closed；LLM 判官是否在本阶段交付
+  - 拒绝路径：回给模型的 tool result 形状、能否换参重试、连续拒绝是否计入 no-progress guard；判决 trace 的内部形状（验收要求每行一个测试，但界面不露层号）
+  - 补读各半页并入上面的「读」：Cline `requires_approval` 实际怎么传；OpenCode 的审批路径（§15.1 #1 至今无核实路径）
 - **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试；每个 `ConfirmReason` 在 zh-CN 与 en 下各有一条文案且槽位齐全；点停止后 1 秒内无子进程存活；评测集每题有基线记录；与 Claude Desktop 同题对比至少 10 题有记录（差异与原因）
 
 ### 阶段 3：MCP host 完整版（2–3 周）
@@ -897,6 +917,13 @@ Claude Desktop 的概念 → Tenon 的实现：
 - **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示
 - **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开
 - **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/file/`（✅ 存在：adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts` ✅
+- **开工前裁决**（2026-09-17 审阅结论；sandbox-runtime 笔记是全仓最扎实的一份，不需要新笔记）：
+  - 沙箱档位与网络是一个枚举还是两个轴：`SandboxRequest.profile` 只有三档没有网络字段，而 UX 要「档位 / 网络 / 跑完自动降回」三件事；若改 `SandboxRequest`，按 Revisions 规则回改 00-foundation
+  - 沙箱不可用时的降级阶梯（Linux 缺 bwrap / socat、userns 被关、Windows 未提权、平台不支持）：抛错、直通加告警、还是拒绝执行任何工具；fail-closed 的边界
+  - 「跑完自动降回」的确切时机与对象；Tenon 自己的 profileDir（含 Tape 与密钥引用）必须进 denyRead
+  - 长驻 MCP stdio server 的档位与换工作区时的生命周期（FS 规则不热更新）；「仅包管理器」预设的域名表
+  - 快照与一键还原单独立题：staging 目录 / 整目录预快照 / git 三选一——它反过来决定 workspace-write 的 allowWrite 指向工作区还是 staging
+  - 补查 sandbox-runtime 三点，以 Revisions 追加进现有笔记：`customConfig` 在 macOS / Linux 能否放宽 FS、模块级单例下多工作区并发的实际行为、三个 helper 的 arch 覆盖矩阵
 - **验收**：sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过；端到端：选文件夹 → 发一个会写文件的任务 → 审批一次写入 → 完成并看到小结 → 点还原后文件内容与 mtime 回到任务前，`git status` 干净
 
 ### 阶段 5：扩展层 + MCP Apps + Artifacts（4–6 周）
@@ -928,6 +955,14 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 管理员策略下发 → 本地权限查找顺序的"租户策略"层生效
 - 云端沙箱选型（容器 vs microVM）在此阶段定，依据是租户隔离强度和单会话成本
 - **读**：§4.13 参考表（OpenHands SDK、Managed Agents self-hosted sandbox 文档、LibreChat 访问控制、better-auth organization）
+- **开工前裁决**（2026-09-17 审阅结论；本阶段四个参照全部停留在链接与一句话，证据等级最低）：
+  - 先补两份机制笔记，按 goose / deepchat / sandbox-runtime 三份的标准（clone 到具体 commit、逐路径核实、写清文件名与签名）：`docs/reference/openhands-agent-server-mechanisms.md`（`BaseWorkspace` 三实现、agent_server 的端点与事件形状、Agent 规格序列化、EventLog + `base_state.json` 恢复流程）；`docs/reference/tenancy-and-acl-mechanisms.md`（better-auth organization 的表与活跃组织在 session 里的表达、LibreChat ACL 的真实表结构与 principal 解析、Dify tenants 只读对照，并给出服务端数据库选型与 RLS vs 查询层过滤的结论）
+  - 桥协议传输选型（出站长轮询 / WebSocket / REST + WS）、断线续传、至少一次 vs 恰好一次、`provenance_key` 是否跨桥延伸
+  - 租户策略层零参照、需自研（LibreChat 无租户隔离、better-auth 只给身份、Dify 一行不抄）：策略文档 schema（扁平 MDM 键 vs 规则列表）、server 标识（目录 ID / 命令 / URL）、下发协议（推拉、版本号、回滚）、缓存 TTL 与离线 fail-open / fail-closed、本地缓存防篡改、会话中途变更与租户切换的行为、策略对沙箱档位与网络白名单的钳制点、§4.12 安装优先级与 §4.11 调用优先级的分工、策略挂 org 还是 team、策略拒绝进 Tape 的形状
+  - 服务端会话生命周期：每会话一进程还是热池、空闲回收阈值、回收后从 Tape 恢复的流程、每租户并发上限与计量
+  - 桥的安全模型：文件夹授权粒度与撤销、worker 凭据与轮转、多设备派发与吊销；「桌面 worker 离线」的具体语义（超时、Run 暂停还是报错、重连是否补跑）
+  - 本地 → 云端迁移的过程（导出格式、冲突规则、既有 profile 能否挂到已有租户）
+  - 云端沙箱选型（容器 / microVM / 托管）是几周的评估工作不是 spec 篇幅，计入工期；开工时只能写成「开放问题 + 什么时候依据什么能定」
 - **验收**：同一份 `packages/kernel` 在 desktop 和 server 两个 host 上跑通同一组 e2e；跨租户读不到任何数据的测试作为硬门禁；桌面 worker 离线时云端会话的本地工具调用有明确的失败语义
 
 ### 阶段 7：决定做产品时
