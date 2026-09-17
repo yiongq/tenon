@@ -85,7 +85,7 @@ describe('chat routes', () => {
 
   it('chat.stop aborts the in-flight request all the way to the socket', async () => {
     fake = await startFakeAnthropic({
-      chunks: Array.from({ length: 50 }, (_, i) => `w${i} `),
+      chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 40,
     })
     process.env['ANTHROPIC_BASE_URL'] = fake.baseURL
@@ -100,7 +100,7 @@ describe('chat routes', () => {
     const done = await out.waitFor('done')
     expect(done).toEqual({ type: 'done', sessionId: 's1', stopReason: 'aborted' })
     await expect.poll(() => fake.aborted, { timeout: 3000 }).toBe(true)
-    expect(fake.chunksSent).toBeLessThan(50)
+    expect(fake.chunksSent).toBeLessThan(500)
     expect(await ipc.call('chat.stop', { sessionId: 's1' })).toEqual({
       ok: true,
       data: { stopped: false },
@@ -136,7 +136,7 @@ describe('chat routes', () => {
 
   it('keeps the partial reply of a stopped turn in the transcript the model sees', async () => {
     fake = await startFakeAnthropic({
-      chunks: Array.from({ length: 50 }, (_, i) => `w${i} `),
+      chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 30,
     })
     process.env['ANTHROPIC_BASE_URL'] = fake.baseURL

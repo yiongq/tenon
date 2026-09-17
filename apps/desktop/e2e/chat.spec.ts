@@ -58,7 +58,9 @@ test('a reply streams into the thread as rendered markdown', async () => {
 })
 
 test('Stop aborts the in-flight reply down to the socket and keeps the partial text', async () => {
-  const chunks = Array.from({ length: 80 }, (_, i) => `word${String(i)} `)
+  // Far longer than the test needs (30 s): Stop must find the reply still streaming even on
+  // a slow CI runner. The abort ends the stream early, so the test never waits for it.
+  const chunks = Array.from({ length: 600 }, (_, i) => `word${String(i)} `)
   fake = await startFakeAnthropic({ chunks, delayMs: 50 })
   const userData = makeUserDataDir('chat-stop')
   seedConfig(userData, { locale: 'en' })
