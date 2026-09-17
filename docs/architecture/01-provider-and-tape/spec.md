@@ -3,7 +3,7 @@
 Status: draft
 Phase: 1 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
-Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，机制待 owner 确认，见「对 00-foundation 的修补」与开放问题 1
+Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，按 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」的 amend 规则（2026-09-17 owner 确认），全文见「对 00-foundation 的修补」
 
 ## 背景与问题
 
@@ -33,6 +33,7 @@ Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选�
 - `apps/server`、Postgres 实现、RLS、保留期清扫、链签名（阶段 6b）。阶段 1 只交付 Postgres 方言的 DDL 文件与一致性检查，不运行它。
 - 静态加密（SQLCipher 或同类）。**哈希链只让篡改可被发现，不提供保密性**；阶段 1 的保密性靠 OS 磁盘加密与 keychain。
 - 分支 / 编辑重发 / 重新生成 / 删除单条消息的界面（阶段 6）。阶段 1 只定它们在 Tape 里的表示与折叠规则。
+- 无痕会话的入口与 store 路由（阶段 6）。阶段 1 只保证端口形状支持它：kernel 服务接的是一个 `TapeStore` 实例，换实现不改 kernel 代码。
 - 会话列表界面、搜索、FTS 投影（阶段 6）。会话的导出 / 导入与「本地 → 云端」迁移演练（6b）。
 - token 计数、ToolShim、OAuth / device-code 登录流、定价展示、完整的 canonical model registry。`ConfigKey` 声明这些标志位，只实现 API key 配置。
 - 在 CI 里调用任何真实 provider。真实端点只由手动的 `pnpm test:live` 覆盖。
@@ -63,7 +64,7 @@ packages/kernel/src/
   tape/                    entry · names · provenance · canonical-json · hash
                            store（端口）· memory-store · projection · replay · tape（门面）
   session/                 service.ts                     # 建会话、写消息事实、跑一次请求
-packages/kernel/testing/   fake-network · tape-conformance  # 导出为 @tenon-app/kernel/testing
+  testing/                 fake-network · tape-conformance  # 导出为 @tenon-app/kernel/testing
 packages/contracts/src/
   ipc/provider.ts  ipc/session.ts                          # 新 IPC
   bridge/frame.ts                                          # 帧骨架
@@ -76,6 +77,8 @@ scripts/check-tape-schema.mjs                              # 挂进 pnpm lint
 
 - 依赖方向不变：`apps/* → packages/contracts → packages/kernel`。kernel 不 import contracts；IPC 可见的那部分类型由 contracts 用 zod 重述，并有一个类型级测试断言两边可互相赋值。
 - `better-sqlite3` 是 `apps/desktop` 的依赖，**永不**出现在 `packages/kernel`。`@anthropic-ai/sdk` 从 `apps/desktop` 移到 `packages/kernel`，`openai` 是 kernel 的新依赖；两者都钉精确版本。
+- `@tenon-app/kernel/testing` 是 kernel `package.json` 里新增的 `./testing` 子路径，与 `.` 同形（`development` 指 `src/testing/index.ts`，`types` / `import` 指 `dist`）。它住在 `src/` 之下，因此受 kernel 的 lint 闸约束：`fakeNetwork` 不用定时器，「慢流」由调用方推进或经传入的 `HostClock`。
+- **id 从哪来**：`runId`、`messageId`、`incarnationId` 都是 canonical UUID，一律由构造 kernel 服务时传入的 `ids: { uuid(): string }` 提供（`createSessionService({ host, tape, ids })`）。desktop 传 `crypto.randomUUID()`，测试传确定性的计数器——否则夹具与 conformance 套不可复现。kernel 自己不取随机数；`ids` 刻意不进 `HostAdapter`。
 - `TapeStore` **不是** `HostAdapter` 的成员。`HostAdapter` 装的是运行环境级的能力（文件、进程、网络）；store 是构造 kernel 服务时传入的端口（`createSessionService({ host, tape })`），因为同一个进程里要同时存在多个 store（普通会话用 SQLite，无痕会话用内存），一个 `host.tape` 成员表达不了。
 
 ## 对 00-foundation 的修补：`HostAdapter.network`
@@ -102,28 +105,28 @@ export class HostNetworkDeniedError extends Error {}
 
 - provider 只从 `ProviderDefinition.create({ network, … })` 拿到它，捕获在实例上。不许模块级 `fetch`，不许 `globalThis.fetch ?? network.fetch` 式回落——回落正是「desktop 上能跑、服务端 host 上坏掉」的那种 bug。
 - desktop 实现是一行：`{ fetch: (input, init) => globalThis.fetch(input, init) }`。阶段 4 的出网收口、6b 的出口白名单都在 host 实现里做（拒绝即 reject `HostNetworkDeniedError`），不拓宽这个接口。
-- lint：kernel override 里 `fetch` 的禁用规则**已经存在**，阶段 1 只把提示语改为「走 HostAdapter.network」；同一处新增禁用全局 `WebSocket`、`EventSource`、`XMLHttpRequest`，禁止 import `undici`、`node-fetch`、`axios`、`got`、`ky`、`ws`、`better-sqlite3`。
+- lint：kernel override 里 `fetch` 的禁用规则**已经存在**，阶段 1 只把提示语改为「走 HostAdapter.network」；同一处新增禁用全局 `WebSocket`、`EventSource`、`XMLHttpRequest`，`process` 与 `crypto`（凭据与配置只从 `ProviderDefinition.create()` 进来，kernel 永不读 `process.env`；随机数走 `ids`），禁止 import `undici`、`node-fetch`、`axios`、`got`、`ky`、`ws`、`better-sqlite3`。
 - 内存版 host 的 `network.fetch` 默认抛错；测试用 `@tenon-app/kernel/testing` 的 `fakeNetwork(script)`，它只用 web 标准 API（`Response` + `ReadableStream`）回放录制好的 SSE 帧、响应 `init.signal`、记录发出的请求体，所以 kernel 的测试在任何 realm 里都能跑、永不碰 socket。基于 `node:http` 的假服务器只留在 `apps/desktop/test/support/`，给 host 层的集成测试用。
 
 ### 这次修补怎么记录
 
-现有规则对这种情况没有答案，而且彼此不一致：[spec-driven-dev](../../spec-driven-dev.md) 说 `Revisions:` 在 `implemented` 之后不再使用、改决定只能整体 supersede；AGENTS.md 同此；主参考 §13 阶段 2 与阶段 4 却写「`HostAdapter` 已在阶段 0 冻结，改动按 spec-driven-dev 的 Revisions 规则处理」。加一个成员没有推翻阶段 0 的任何决定，为此作废整份阶段 0 spec 不成比例；「部分 supersede」会让旧 spec 一半有效、却没有规则说是哪一半；静默改旧文则丢掉「当时为什么这么定」。
+阶段 0 的 spec 已是 `implemented`。加一个成员没有推翻阶段 0 的任何决定，为此作废整份 spec 不成比例；「部分 supersede」会让旧 spec 一半有效、却没有规则说是哪一半；静默改旧文则丢掉「当时为什么这么定」。原有规则对这种情况没有答案：spec-driven-dev 与 AGENTS.md 只允许整体 supersede，主参考 §13 阶段 2 却写「`HostAdapter` … 改动按 Revisions 规则处理」，阶段 4 对 `SandboxRequest` 也这么写。
 
-本 spec 提议一条窄的第三种机制，**由 owner 在把本 spec 标为 `ready` 时一并确认，确认之前三处文字都不动**（开放问题 1；plan 第 1 步）：
+owner 于 2026-09-17 确认了一条窄的第三种机制——**修补（amend）**，规则写在 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」与 AGENTS.md「How we work」，已落地：
 
-1. `00-foundation/spec.md` 顶部 `Status: implemented` 之下加一行 `Amended by: 01-provider-and-tape（HostAdapter 增加 network 成员；技术选型的 better-sqlite3 限定为 13.x）`。`Status` 不变，正文一字不改。
-2. 修补的全文、日期、理由写在做修补的那份 spec 里——也就是本节，以及「SQLite 实现约束」里关于 better-sqlite3 版本的那一条。
-3. `docs/spec-driven-dev.md`「改变决定」一节增补一段：`implemented` 的 spec 可以被后续阶段的 spec **修补（amend）**，条件是只增不改——新增接口成员、新增枚举值、收紧一个原本未限定的选型——且不推翻任何既有决定、不改变任何既有成员的形状；做法是上面两条。凡是改动或移除既有内容，仍须 supersede。主参考 §13 里两处「按 Revisions 规则处理」相应改为「按 amend 规则处理」。
+1. `00-foundation/spec.md` 顶部 `Status: implemented` 之下有一行 `Amended by:` 指向本 spec。`Status` 不变，正文一字未改。
+2. 修补的全文、日期、理由写在做修补的这份 spec 里：本节，以及「SQLite 实现约束」里把 better-sqlite3 限定为 13.x 的那一条。
+3. 适用条件是只增不改——新增接口成员、新增枚举值、收紧一个原本未限定的选型——且不推翻任何既有决定、不改变任何既有成员的形状。凡是改动或移除既有内容，仍须 supersede。主参考 §13 阶段 2 与阶段 4 的两处措辞已相应改为按 amend 规则处理。
 
-阶段 2 的租户策略落座点、阶段 4 的 `SandboxRequest` 改动都会再碰到同一个问题，所以值得现在定成规则而不是特例。
+阶段 2 的租户策略落座点、阶段 4 的 `SandboxRequest` 改动都会再碰到同一个问题，所以定成了规则而不是特例。
 
 ## Provider 层
 
 ### 选型：官方 SDK，不用 Vercel AI SDK，不手写 SSE
 
-- `@anthropic-ai/sdk@0.126.0` 与 `openai@7` 的 `ClientOptions.fetch` 都能完整接管出网（所有探针里全局 `fetch` 调用数为 0），并且在只有 web 全局对象的 realm 里能跑通流式。SDK 白送 SSE 分帧、`retry-after` 解析、类型化错误和逐请求的 `AbortSignal`。
+- `@anthropic-ai/sdk@0.126.0` 与 `openai@7.17.0` 的 `ClientOptions.fetch` 都能完整接管出网（所有探针里全局 `fetch` 调用数为 0），并且在只有 web 全局对象的 realm 里能跑通流式。SDK 白送 SSE 分帧、类型化错误（带 `status` 与 `headers`）和逐请求的 `AbortSignal`。
 - 不用 `ai`（Vercel AI SDK）作核心抽象，理由是具体的：`ai@7.0.105` 静态 import `@ai-sdk/gateway → @vercel/oidc`，后者在模块顶层 `require('fs' | 'path' | 'os')`，无法做到 host 无关；它的 unified stop reason 把 `pause_turn → stop`、`refusal → content-filter` 折叠掉，调用方反正要读 raw；`@ai-sdk/openai-compatible` 无条件回传 `reasoning_content`，而「回不回传、用哪个字段名」是 Tenon 必须按模型拥有的策略（Ollama 的输入字段叫 `reasoning`）；Tenon 需要的是带 `requestSeq` / `physicalAttempt` 的 Tape 形状事件流，不是 UI 形状的。公平地说，v7 确实能往返 thinking 签名、`redactedData` 和带 ttl 的 `cacheControl`。
-- host 无关性的准确说法：两家 SDK 的根入口都**不会静态到达任何 `node:` 内置模块**。`openai@7` 在 `--platform=neutral` 下直接可打包。`@anthropic-ai/sdk@0.126.0` 经两处**动态 import**（文件凭据链、EnvironmentWorker 工具集）能到达九个 `node:` 模块；显式传入凭据时它们永不执行。它还静态 import 一个纯 JS 包 `standardwebhooks`。将来的非 Node host 必须用 `--platform=browser`（或 `--conditions=browser` 加 `--main-fields=module,main`）打包。
+- host 无关性的准确说法：两家 SDK 的根入口都**不会静态到达任何 `node:` 内置模块**。`openai@7.17.0` 在 `--platform=neutral` 下直接可打包。`@anthropic-ai/sdk@0.126.0` 经两处**动态 import**（文件凭据链、EnvironmentWorker 工具集）能到达九个 `node:` 模块；显式传入凭据时它们永不执行。它还静态 import 一个纯 JS 包 `standardwebhooks`。将来的非 Node host 必须用 `--platform=browser` 打包：把 `internal/node.mjs` 换成桩靠的是 SDK 顶层的旧式 `browser` 字段，只有 `--platform=browser` 会应用它；`--platform=neutral --conditions=browser --main-fields=module,main` 实测仍在那九个模块上失败。
 
 ### 接口
 
@@ -180,6 +183,19 @@ export interface ProviderRequest {
   maxTokens?: number
   temperature?: number
   thinking?: { enabled: boolean; budgetTokens?: number }
+}
+
+export interface ToolSpec { name: string; description: string; inputSchema: Record<string, unknown> }
+
+/** 厂商特有的计数进事实的 `meta`，不进 `Usage`。 */
+export interface Usage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+  /** 一次流可以有多条 usage（Anthropic 在 message_start 与 message_delta 各发一条）。只有 final 的那条进 Tape。 */
+  final: boolean
 }
 
 export interface SendContext {
@@ -262,10 +278,12 @@ export type ContentBlock =
   | { type: 'thinking'; text: string; signature: string; provider: ProviderId; providerModel: string }
   | { type: 'redacted-thinking'; data: string; provider: ProviderId; providerModel: string }
   | { type: 'tool-request'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool-response'; id: string; content: Array<TextBlock | ImageBlock>; isError: boolean }
+  | { type: 'tool-response'; id: string; content: Array<Extract<ContentBlock, { type: 'text' | 'image' }>>; isError: boolean }
   | { type: 'image'; mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'; data: string }
 export interface InternalMessage { role: 'user' | 'assistant'; content: ContentBlock[] }
 ```
+
+`encode()` 的 `max_tokens` 取 `req.maxTokens ?? model.maxOutputTokens`，永不为 `undefined`（Anthropic 线协议里它是必填项）。
 
 `provider` 与 `providerModel` 记在 thinking 块**本身**上——没有它们，thinking 守卫无从比较，主参考 §4.8.3 的「换模型时丢弃或降级上一个模型的 thinking block」就无法实现。
 
@@ -298,9 +316,11 @@ export type ProviderErrorCode =
 ### 中止、重试、错误
 
 - 两个 SDK 客户端都设 `maxRetries: 0`。默认值 2 意味着 kernel 看不见的三次物理请求（实测：3 次 fetch 对 1 次），这会毁掉 §4.8.4 的 `requestSeq` / `physicalAttempt` 区分。重试属于阶段 2 的循环：每次重发 `physicalAttempt + 1`，载荷变了才 `requestSeq + 1` 并把 `physicalAttempt` 归 1，依据是 `error` 事件的 `{ retryable, retryAfterMs }`。阶段 1 每次请求都带上这三个身份字段并记入 Tape，但不实现重试。
-- 两家 SDK 遇到流中途的 error 帧都是**抛出**而不是 yield（Anthropic 嵌在 `err.error.error.type`，OpenAI 在 `err.error.code`，`status` 为 `undefined`）。每个适配器把 `for await` 包进 try/catch，把抛出的错误映射成 `error` 事件。只有程序员错误（配置缺失、参数非法）才抛。`network.fetch` 以 `HostNetworkDeniedError` reject 时映射为 `error{ code: 'egress-denied', retryable: false }`，其余连接层失败是 `network`、可重试。
+- 两家 SDK 遇到流中途的 error 帧都是**抛出**而不是 yield（Anthropic 嵌在 `err.error.error.type`，OpenAI 在 `err.error.code`，`status` 为 `undefined`）。每个适配器把 `for await` 包进 try/catch，把抛出的错误映射成 `error` 事件。只有程序员错误（配置缺失、参数非法）才抛。SDK 里解析 `retry-after` 的代码只在它自己的重试路径上，随 `maxRetries: 0` 一起关掉了，所以 `retryAfterMs` 由适配器从 `err.headers` 取：`retry-after-ms`（毫秒）优先，否则 `retry-after`（秒 ×1000；非数字按 HTTP-date 减 `HostClock.now()`），都没有就不带。`network.fetch` 以 `HostNetworkDeniedError` reject 时映射为 `error{ code: 'egress-denied', retryable: false }`，其余连接层失败是 `network`、可重试。
 - 中止有**两条路径**：流中途中止时迭代器静默结束，不抛；调用时 signal 已经中止则 SDK 抛 `APIUserAbortError` 且不触网。适配器把两者都归一成 `stop{ reason: 'aborted' }`。阶段 2 的「停止即杀」依赖这一条。
-- 凭据永远显式传入（未使用的那个字段传 `null`），SDK 的环境变量 / 文件凭据链永不运行——那是 Anthropic SDK 唯一会懒加载文件系统的地方。
+- 凭据永远显式传入，SDK 的环境变量 / 文件凭据链永不运行。两家 SDK 的规则不同，都实测过：
+  - `anthropic-messages`：`apiKey` 与 `authToken` 两个都显式传，未配置的传 `null`，且**至少一个非 null**——两个都为 `null` 时 SDK 会去建 credentials / config / profile 链，那是它唯一会懒加载文件系统的地方；传 `undefined` 会让它读 `ANTHROPIC_API_KEY`。
+  - `openai-chat`：`apiKey` 必须是**非空字符串**。`null` 与 `''` 抛 `Missing credentials`，`undefined` 会让 SDK 读 `OPENAI_API_KEY`。所以不需要 key 的 `ollama` 定义也带一个有默认值的 `apiKey` 配置项。
 
 ### thinking 守卫
 
@@ -322,7 +342,7 @@ export type ProviderErrorCode =
 |---|---|---|---|---|
 | `anthropic` | anthropic-messages | `https://api.anthropic.com` | `apiKey`（机密，primary）、`authToken`（机密，Bearer 式兼容网关用）、`baseURL` | 阶段 0 的现有路径；`baseURL` 可指向任何 Anthropic 兼容端点 |
 | `zhipu` | openai-chat | `https://open.bigmodel.cn/api/paas/v4/`（SDK 会归一化尾斜杠，原样存） | `apiKey`（机密）、`baseURL` | **第二个 provider**：`reasoning_content`、`include_usage`、经 `requestParams` 透传的非 OpenAI `thinking` 参数、`(0,1)` 开区间的 temperature，线上格式稳定 |
-| `ollama` | openai-chat | `http://localhost:11434/v1/` | `baseURL`（无需 key） | **第三个**：以**另一种方式**偏离——没有 `tool_choice`、输入输出都用 `reasoning` 字段、工具参数整段一次给出。两个互相不一致的 OpenAI 兼容厂商，比一个听话的更能检验抽象 |
+| `ollama` | openai-chat | `http://localhost:11434/v1/` | `baseURL`、`apiKey`（非机密、非必填，默认 `'ollama'`：Ollama 不校验它，但 SDK 要一个非空串） | **第三个**：以**另一种方式**偏离——没有 `tool_choice`、输入输出都用 `reasoning` 字段、工具参数整段一次给出。两个互相不一致的 OpenAI 兼容厂商，比一个听话的更能检验抽象 |
 
 `ModelInfo` 各字段在实现时按厂商**当时**的文档填，不照抄研究报告；凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔。Ollama 的流式工具调用只从源码与已合并的 PR 核实过，写 `supportsStreamingToolCalls: true` 之前要对本地实例实测一次。
 
@@ -365,11 +385,14 @@ export interface TapeEntry {
 | kind | name | source | provenance_key | payload |
 |---|---|---|---|---|
 | `anchor` | `session/start` | `session` / sessionId / 0 | `session:v1:start:<incarnationId>` | `{ incarnationId, forkedFrom?: { sessionId, incarnationId, entryId, entryHash } }`（带 `entryHash`：血缘要能对着链验，而不只是一个裸指针；父会话被删之后它仍然成立） |
-| `message` | `message/user`、`message/assistant` | `message` / messageId / revision | `message:v1:<messageId>:<revision>` | `{ messageId, revision, role, content: ContentBlock[], runId?, status }` |
+| `message` | `message/user`、`message/assistant` | `message` / messageId / revision | `message:v1:<messageId>:<revision>` | `{ messageId, revision, role, content: ContentBlock[], runId?, status: MessageStatus }` |
 | `event` | `message/retracted` | `message` / messageId / null | `message:v1:<messageId>:retracted` | `{ messageId, reason }` |
 | `event` | `session/model_selected` | `session` / sessionId / null | `session:v1:model:<runId>` | `{ providerId, modelId }` |
-| `event` | `provider/attempt_completed` | `runtime_event` / runId / requestSeq | `provider:v1:attempt:<runId>:<requestSeq>:<physicalAttempt>` | `{ providerId, modelId, promptHash, toolDefinitionsHash, thinkingDecisions, usage, stop \| error }` |
+| `event` | `provider/attempt_completed` | `runtime_event` / runId / requestSeq | `provider:v1:attempt:<runId>:<requestSeq>:<physicalAttempt>` | `{ providerId, modelId, contextAtEntryId, promptHash, toolDefinitionsHash, thinkingDecisions, usage, stop \| error }` |
 
+- **谁在什么时候写**：每个 `message/*` 事实只在终态写一次。`MessageStatus = 'complete' | 'aborted' | 'error'`，只增词表，新值不改变既有值的含义；阶段 1 只写前两个。`session/model_selected` 在一次 run 开始时写，记录该 run 实际使用的 provider / model——设置卡里的 `provider.select` 只改 `config.json`，不写 Tape 事实；将来一次 run 内换模型，键补一段 `:<requestSeq>`。`provider/attempt_completed` 的 `contextAtEntryId` 是组装这次请求的上下文时钉住的快照上界，`usage` 是 `final: true` 的那一条。
+- **重试与失败的表示**：`chat.send` 的 schema 不变，`messageId` 由主进程分配——折叠后的最后一条若是同文本、后面还没有 assistant 回复的 user 消息，就复用它的 `messageId` 与 `revision`（这次 append 因而是幂等的空操作），否则新 `messageId`、`revision: 0`。同一 `messageId` 的第二次写入只发生在编辑重发，且 `revision` 必须 +1。**失败的一轮不写 assistant 消息**：失败的证据是 `provider/attempt_completed` 的 `error`；只有中止且已收到部分文本时才写 `message/assistant`（`status: 'aborted'`）。内容为空的 assistant 消息永不写入，重放因此永不产出空的 assistant 轮次（Anthropic 会以 400 拒绝它）。
+- **工具事实的身份现在就定，形状留给阶段 2**：阶段 2 的 `tool_call` / `tool_result` 事实同样用 `sourceType = 'runtime_event'`、`sourceId = runId`、`sourceSeq = requestSeq`，`providerToolCallId` 与阶段 4 的 `childOrdinal` 放在 payload 的固定路径，配对键是 `(runId, requestSeq, providerToolCallId)`。`readBySource` 因此取得到「一个 runId 下按身份列归组的全部事实」。`TapeSourceType` 里的 `tool_call` / `tool_result` 留给「以某次工具调用本身为主语」的事实（`sourceId = providerToolCallId`）。对 provider 上下文，工具事实是权威；对渲染，message 的内容块是权威。它们的 name、payload 字段与折叠规则由阶段 2 定，阶段 1 的折叠不处理这两个 kind。
 - **`provenance_key` 的语法**：`<namespace>:v<n>:<稳定身份>`，不含进程内计数器、时间戳、随机数。kernel 提供 builder 与校验器，store 拒收不合语法的键。这样同一逻辑事实经 6b 的桥「至少一次」重放时键不变，幂等自然成立。代价要说出口：合法地会重复出现的事实必须自己在键里放区分量，否则第二次静默返回 `created: false`。
 - **`SideEffectClass = 'read' | 'write' | 'external' | 'blocked'`**：词表现在定，位置固定为 `execution/tool_outcome` 的 `payload.effect`，阶段 1 无人写入。
 - `session/parent_link`（阶段 2 的 subagent：独立 session + 父 Tape 里一条冻结的链接事实）现在只保留名字。`TapeSourceType` 里的 `subagent`、`migration`、`summary` 同理：值先占住，写入方在后续阶段。
@@ -411,20 +434,25 @@ export interface TapeStore {
    * 一个事务：逐条分配 entryId、接链、插入、应用投影；整批要么全成要么全不成。
    * 只有这一个写入形状——单条就是长度为 1 的批。租户不是参数：store 构造时绑定
    * HostAdapter.identity，漏掉租户谓词因此是不可能的，而不只是不提倡的。
+   * incarnationId 由 kernel 铸造并随每批传入：session 还没有 head 行时，store 用它建行
+   * （kernel 保证新 incarnation 的第一条是 session/start）；已有 head 行而 id 不符，
+   * 抛 TapeStaleIncarnationError。store 因此从不自己铸 id，也从不自己拼保留名下的事实。
    */
-  append(batch: { sessionId: string; entries: readonly NewEntry[] }): Promise<AppendResult[]>
+  append(batch: { sessionId: string; incarnationId: string; entries: readonly NewEntry[] }): Promise<AppendResult[]>
 
   readRange(q: {
     sessionId: string
     fromEntryId?: number // 含
     atEntryId?: number // 快照上界（含）。分页时钉住它，翻页期间的新 append 不会混进来
+    incarnationId?: string // 分页时把上一页返回的值原样传回；与 head 不符即抛 TapeStaleIncarnationError
     kinds?: readonly TapeKind[]
     limit: number // 必填，≤ MAX_READ_LIMIT（1000）。端口上没有无界扫描
-  }): Promise<{ entries: TapeEntry[]; nextFromEntryId: number | null }>
-  /** 阶段 2 崩溃恢复要用的读法：一个 runId 的全部事实，只走索引。 */
+  }): Promise<{ entries: TapeEntry[]; incarnationId: string; nextFromEntryId: number | null }>
+  /** 阶段 2 崩溃恢复要用的读法：一个 runId 下按身份列归组的全部事实，按 entry_id 升序，只走索引。 */
   readBySource(q: { sessionId: string; sourceType: TapeSourceType; sourceId: string; limit: number }): Promise<TapeEntry[]>
   head(sessionId: string): Promise<SessionHead | null>
-  verifyChain(q: { sessionId: string; fromEntryId?: number; limit: number }): Promise<{
+  verifyChain(q: { sessionId: string; fromEntryId?: number; incarnationId?: string; limit: number }): Promise<{
+    incarnationId: string
     checked: number
     firstBadEntryId: number | null
     nextFromEntryId: number | null
@@ -432,11 +460,15 @@ export interface TapeStore {
 
   // 投影读取（界面读的是这些，不是 tape_entry）
   listSessions(q: { limit: number; updatedBefore?: number }): Promise<SessionSummary[]>
-  listMessages(q: { sessionId: string; limit: number; afterOrderSeq?: number }): Promise<MessageRow[]>
+  /** 不带游标时返回最新的 limit 条（界面默认读尾部）。 */
+  listMessages(q: { sessionId: string; limit: number; afterOrderSeq?: number; beforeOrderSeq?: number }): Promise<MessageRow[]>
   rebuildProjections(sessionId: string): Promise<void>
 
-  /** 物理重置。entryId 继续往上走，不从 1 重来；返回新 incarnation。 */
-  resetSession(sessionId: string, at: number): Promise<{ incarnationId: string; bootstrapEntryId: number }>
+  /**
+   * 物理重置，一个事务：删掉该 session 的全部事实与投影，head 换成新 incarnation
+   * （last_entry_id 不减，last_hash 置 NULL，entry_count 归 0），再写入 kernel 拼好的新 session/start。
+   */
+  resetSession(q: { sessionId: string; incarnationId: string; start: NewEntry }): Promise<AppendResult>
   /** 物理删除：事实、head、投影、游标。 */
   deleteSession(sessionId: string): Promise<void>
   close(): Promise<void>
@@ -444,20 +476,23 @@ export interface TapeStore {
 
 export interface SessionHead {
   tenantId: string; sessionId: string; incarnationId: string
-  lastEntryId: number; lastHash: Uint8Array | null /* 刚建或刚重置 */; entryCount: number
+  lastEntryId: number; lastHash: Uint8Array | null /* 刚建或刚重置 */
+  entryCount: number // 当前 incarnation 的事实条数
   createdAt: number; updatedAt: number
 }
 ```
 
-端口暴露的每个过滤条件都有索引，每个索引都有端口方法用它：`readRange` 走主键与 `tape_entry_by_kind`，`readBySource` 走 `tape_entry_by_source`。按 `name` 过滤阶段 1 不提供，所以也不建那个索引。
+`MessageRow` 与 `SessionSummary` 的字段就是 `message_projection` 与 `session_projection` 的列（去掉 `tenant_id`，camelCase，`content_json` 解析成 `ContentBlock[]`）；contracts 按该 DDL 写 zod。
 
-错误（kernel 定义，host 无关）：`TapeProvenanceConflictError`（同键、**不同**内容——不是重试，是 bug 或损坏，循环永不吞掉它）、`TapeTenantMismatchError`、`TapeStaleIncarnationError`（读游标带的 incarnation 已不是当前的）、`TapeIntegerRangeError`、`TapeBusyError`（写锁等到超时；**重试归调用方**，做法是整个 `append` 重来，store 不自动重试）、`TapeReadLimitError`。
+端口暴露的每个过滤条件都有索引，每个索引都有端口方法用它：`readRange` 按单个 `kind` 过滤走 `tape_entry_by_kind`，多个 kind 走主键的区间扫描；`readBySource` 走 `tape_entry_by_source`。按 `name` 过滤阶段 1 不提供，所以也不建那个索引。
+
+错误（kernel 定义，host 无关）：`TapeProvenanceConflictError`（同键、**不同**内容——不是重试，是 bug 或损坏，循环永不吞掉它）、`TapeTenantMismatchError`、`TapeStaleIncarnationError`（调用方带的 incarnation 已不是 head 上当前的那个）、`TapeIntegerRangeError`、`TapeBusyError`（写锁等到超时；**重试归调用方**，做法是整个 `append` 重来，store 不自动重试）、`TapeReadLimitError`。
 
 端口合同里必须写明的几条：
 
-- **异步**。服务端实现不可能同步；desktop 上异步没有可测的代价（10 万次插入：同步 336 ms 对异步端口 316 ms）。驱动是同步的，调用仍会阻塞调用线程，所以端口只暴露有界操作。两种绑定都已验证能在 `utilityProcess` 与 `worker_thread` 里加载，主线程阻塞真成问题时不换绑定就能搬走。
-- **`entryId` 的分配留在端口后面**，kernel 只看到「append 返回一个严格递增、永不复用的 entryId」，不假设无空洞。实现从 `session_head.last_entry_id` 这个高水位分配，不用 DeepChat 的 `MAX(entry_id)+1`：物理重置后 `MAX+1` 会复用 id，让一个陈旧引用指向另一条事实；而高水位的 UPSERT … RETURNING 在两种方言里逐字相同，Postgres 上同一 session 的并发写者在一行上串行，不同 session 互不阻塞。
-- **幂等的判定**：`INSERT … ON CONFLICT (tenant_id, session_id, provenance_key) DO NOTHING`，`changes === 0` 即「没插进去」，随后读回既有行比较 `content_hash`：一致返回 `created: false` 与**原来的** `entryId`，不一致抛 `TapeProvenanceConflictError`。`created: false` 时 `last_entry_id` 不动、投影不再写。
+- **异步**。服务端实现不可能同步；desktop 上异步没有可测的代价（10 万次插入放在一个事务里：better-sqlite3 同步 404 ms 对异步端口 358 ms，复核实测，差值在噪声内；逐条一事务约是它的 5 倍，代价在事务粒度而不在 `await`）。驱动是同步的，调用仍会阻塞调用线程，所以端口只暴露有界操作。两种绑定都已验证能在 `utilityProcess` 与 `worker_thread` 里加载，主线程阻塞真成问题时不换绑定就能搬走。
+- **`entryId` 的分配留在端口后面**，kernel 只看到「append 返回一个严格递增、永不复用的 entryId」，不假设无空洞。实现从 `session_head.last_entry_id` 这个高水位分配，不用 DeepChat 的 `MAX(entry_id)+1`：物理重置后 `MAX+1` 会复用 id，让一个陈旧引用指向另一条事实；而高水位的分配（两条语句，见「SQLite 实现约束」的语句顺序）在两种方言里逐字相同，Postgres 上同一 session 的并发写者在一行上串行，不同 session 互不阻塞。
+- **幂等的判定**：append 事务先按 `provenance_key` 查重，不分配 id。命中后比较既有行的 `content_hash` **以及** `kind`、`name`、`source_type`、`source_id`、`source_seq`：全部一致返回 `created: false` 与**原来的** `entryId`、`entryHash`，任一不同抛 `TapeProvenanceConflictError`。`created_at` 刻意不比——带着更晚的时钟重放同一条事实仍算幂等。`created: false` 时 `last_entry_id` 不动、投影不再写。写入语句的 `ON CONFLICT … DO NOTHING` 只是兜底。同一批里出现重复的 `provenanceKey` 视为调用方 bug，整批抛 `TapeProvenanceConflictError`。
 - **不把 host 类型漏进 kernel**：BLOB 一律以 `Uint8Array` 过端口（better-sqlite3 返回的是 Node `Buffer`，要 `new Uint8Array(buf)`）；整数一律是安全范围内的 `number`，没有 `bigint` 过端口。
 
 ### 哈希链
@@ -479,7 +514,7 @@ entry_hash   = SHA-256( field("tenon.tape.v" + hash_ver)
 - **长度前缀拼接**，不是分隔符拼接，也不依赖任何 JSON 转义规则：两条字段内容不同的 entry 不可能拼出同一串字节，任何语言照这几行都能复算。开头的域分隔串带着 `hash_ver`。
 - 原像覆盖**每一个**有语义的列，包括三个身份列与 `incarnation_id`：少了身份列，一条改写 `source_id` 的裸 `UPDATE` 之后链照样验得过；少了 `incarnation_id`，同一 session 的两代就哈希不可分。由此得出一条规矩：**以后往 payload 里加字段随便加，往 `tape_entry` 加有语义的列则要升 `hash_ver`**——所以本 spec 不为阶段 4 的字段加列（R5）。
 - `payload_json`、`meta_json` 是**存进去的那串文本本身**：kernel 用 `canonicalJson`（键按字典序、无多余空白、拒绝 `NaN` / `Infinity` / `undefined` / `bigint`）序列化一次，store 原样落盘，校验时对存储字节做哈希，永不重新序列化——JSON 规范化因此不在信任面里。所以 Postgres 上这两列也必须是 `TEXT`，不是 `JSONB`（JSONB 会重排键）。
-- **内容哈希单独成列**，entry 哈希只绑它的摘要。它在阶段 1 就有读者：幂等冲突的判定比的就是它。它同时是 R2 与 R3 的调和点：将来要对单条事实做内容擦除（合规删除、误贴的密钥）时，可以把 `payload_json` / `meta_json` 换成擦除标记而保留 `content_hash`，链照样可验——行不删，链不断。阶段 1 不实现擦除，只让配方不挡路。
+- **内容哈希单独成列**，entry 哈希只绑它的摘要。它在阶段 1 就有读者：幂等冲突的判定比的就是它。它同时是 R2 与 R3 的调和点：将来要对单条事实做内容擦除（合规删除、误贴的密钥）时，可以把 `payload_json` / `meta_json` 换成擦除标记而保留 `content_hash`，链照样可验——行不删，链不断。阶段 1 不实现擦除，只让配方不挡路；6b 真做擦除时还要把 `BEFORE UPDATE` 触发器改成带闸的，那是一次无数据风险的触发器迁移，阶段 1 的 `UPDATE` 仍然无条件中止。
 - **谁来算**：配方是 kernel 的一个同步纯函数 `hashEntry(fields)`；store 在 append 事务里调用它，因为只有那里才知道 `entry_id` 与 `prev_hash`。各 host 各写一份，SQLite 与 Postgres 的链就会分叉，本地 → 云端迁移就断了。
 - **SHA-256 用 `@noble/hashes`**（MIT、零依赖、经审计的纯 JS、**同步**），这是 kernel 的新依赖。`node:crypto` 在 kernel 里被 lint 禁用；WebCrypto 的 `digest()` 是异步的，而哈希必须在 better-sqlite3 的同步事务**里面**算。`apps/desktop` 的测试里放一条与 `node:crypto` 的逐字节对拍。
 - `hash_ver` 是真的列，能从行上读出来：以后配方要变，是新行用新版本、校验器按行选配方，不是静默断链，也不用两种配方都试一遍。
@@ -491,18 +526,18 @@ entry_hash   = SHA-256( field("tenon.tape.v" + hash_ver)
 | 操作 | 投影 | Tape |
 |---|---|---|
 | 删单条消息 | 物理删该行 | 追加一条 `message/retracted`。**事实还在**：在清空或删除会话之前，被撤回消息的内容仍在磁盘上。以后的界面文案不得把「删除这条消息」说成已抹除 |
-| 清空会话 `resetSession` | 清该 session 的投影与游标 | 物理删除该 session 的全部事实，换新 `incarnation_id`，写一条新的 `session/start`。`entry_id` 继续递增 |
+| 清空会话 `resetSession` | 清该 session 的投影与游标 | 物理删除该 session 的全部事实，换新 `incarnation_id`，写入 kernel 拼好的新 `session/start`。`entry_id` 继续递增，`entry_count` 归 0 后变 1 |
 | 删会话 `deleteSession` | 同上 | 物理删除事实与 `session_head` |
-| 无痕会话 | — | 这个会话拿到的是内存 store，从不写进 `sessions.db`。不是一个列：WAL、页缓存都会留下字节，做成列是两头不讨好 |
+| 无痕会话（入口与 store 路由在阶段 6） | — | 这个会话拿到的是内存 store，从不写进 `sessions.db`。不是一个列：WAL、页缓存都会留下字节，做成列是两头不讨好 |
 
 两条物理路径都要在同一事务里先向 `tape_maintenance` 插一行「开闸」，删完再关；`BEFORE DELETE` 触发器在没有开闸行时中止。这让「只追加，除了两个具名的生命周期操作」是可强制的，而不是一句约定。`BEFORE UPDATE` 触发器无条件中止——合法的原地更新不存在。6b 加 legal hold 时，只需在开闸表上加一个检查 `session_head.legal_hold` 的触发器。
 
 ### 投影与重放
 
-- **kernel 拥有 reducer，store 拥有事务。** `project(entry): ProjectionOp[]` 是 kernel 里的纯函数；`ProjectionOp = { table: 'message' | 'session'; op: 'upsert' | 'delete'; key; values? }`，只有标量、固定的表清单、没有表达式。每个 store 在 append 的同一事务里应用这些 op 并推进 `projection_cursor`。不放在 host 侧的理由：验收 2 是 kernel 层的性质，reducer 若住在 `apps/desktop`，kernel 的测试套测不到它，服务端 host 还得再实现一遍，必然漂移。
-- 阶段 1 的两张投影表：`message_projection`（界面读消息）与 `session_projection`（标题、当前 provider / model、消息数、最后活动时间、`forked_from`）。它们可由 `tape_entry` 随时重建，所以故意不加只追加触发器；`PROJECTION_VERSION` 变了就重建。
-- **折叠规则**（`effectiveMessages(entries)`，kernel 纯函数）：同 `messageId` 取最大 `revision`；存在更大 `entry_id` 的 `message/retracted` 则该消息不可见；输入 kind 只有 `message`、`tool_call`、`tool_result`、`anchor`，其余 kind 是只穿透的证据。
-- **重放** `rebuildProviderContext(store, sessionId, target): Promise<InternalMessage[]>`：分页读 `readRange`，应用折叠规则，不从渲染层的 block 猜语义。阶段 2 加上「从最近的压缩 anchor 往后」。
+- **kernel 拥有 reducer，store 拥有事务。** `project(entry): ProjectionOp[]` 是 kernel 里的纯函数；`ProjectionOp` 是 `{ table: 'message' | 'session'; op: 'upsert'; key; values; insertOnly? }` 或 `{ table; op: 'delete'; key }`，只有标量、固定的表清单、没有表达式。`insertOnly` 里的列只在插入时写，冲突更新时不碰——`created_at` 与 `order_seq` 靠它保持不变，reducer 因此不需要读到当前行。每个 store 在 append 的同一事务里应用这些 op 并推进 `projection_cursor`。不放在 host 侧的理由：验收 3（不变量 12）是 kernel 层的性质，reducer 若住在 `apps/desktop`，kernel 的测试套测不到它，服务端 host 还得再实现一遍，必然漂移。
+- 阶段 1 的两张投影表：`message_projection`（界面读消息）与 `session_projection`（当前 provider / model、最后活动时间、`forked_from`）。`order_seq` 是该 `messageId` 第一条 `message/*` 事实的 `entry_id`，修订与撤回都不改它，编辑一条旧消息因此不会让它在界面上挪位置。阶段 1 不写 `title`（列留给阶段 6 的自动命名），界面用首条 user 消息的开头。消息数不做成列：逐条处理、无表达式的 reducer 算不出累计值，要用时从 `message_projection` 现数。两张表可由 `tape_entry` 随时重建，所以故意不加只追加触发器；`PROJECTION_VERSION` 变了就重建。
+- **折叠规则**（`effectiveMessages(entries)`，kernel 纯函数）：同 `messageId` 取最大 `revision`；存在更大 `entry_id` 的 `message/retracted` 则该消息不可见。阶段 1 的输入是 `message`、`anchor`，外加 `event` 里的 `message/retracted`（撤回墓碑）；其余 kind 与其余 event 名是只穿透的证据。`tool_call` / `tool_result` 的折叠随它们的形状一起在阶段 2 定。
+- **重放** `rebuildProviderContext(store, q: { sessionId: string; atEntryId?: number; target: ModelInfo }): Promise<InternalMessage[]>`：分页读 `readRange`（`atEntryId` 原样传下去），应用折叠规则，不从渲染层的 block 猜语义；`target` 交给 thinking 守卫。一次请求的上下文是 Tape 的一个**前缀**而不是整条 Tape，所以每条 `provider/attempt_completed` 记下自己的 `contextAtEntryId`。阶段 2 加上「从最近的压缩 anchor 往后」。
 
 ### SQLite 实现约束（`apps/desktop`）
 
@@ -510,9 +545,9 @@ entry_hash   = SHA-256( field("tenon.tape.v" + hash_ver)
 - **v13 是硬要求**：它把 Node-API 预编译产物放在 npm 包内，文件名不含 ABI，一次 `pnpm install` 同时服务 ABI 127（vitest）与 ABI 149（Electron），不需要 `@electron/rebuild`；v12 在 Electron 44 里会报 `NODE_MODULE_VERSION` 不匹配。**这个版本号同时钉住了 SQLite 引擎版本，改它等于一次影响 schema 的变更**。阶段 0 spec 的技术选型一节只写了 `better-sqlite3`；「限定为 13.x」按上文的 amend 机制记在阶段 0 spec 的 `Amended by:` 行上，正文在这里。
 - pnpm：把 `better-sqlite3` 追加进 `pnpm-workspace.yaml` 已有的 `ignoredBuiltDependencies`；`strictDepBuilds: true` 与 `onlyBuiltDependencies: []` 不动。
 - 每次打开连接依次执行：`journal_mode = WAL`、`synchronous = NORMAL`、`busy_timeout = 5000`、`foreign_keys = ON`、`cache_size = -16000`。`cache_size` 要显式写：两种绑定的默认值差 8 倍，留成隐式等于让绑定选择偷偷决定页缓存。`synchronous = NORMAL` 的含义要写明——断电可能丢最后几个已提交事务；Tape 的持久性靠的是链加重放，不是逐次 fsync。
-- 一次 append 在事务里的语句顺序是定死的（两名评审各自执行过别的顺序，都会坏）：① 先按 `provenance_key` 查重，命中就走幂等分支，**不分配 id**，否则每个重复都会烧掉一个 id 并把 head 写脏；② `UPDATE session_head SET last_entry_id = last_entry_id + 1, entry_count = entry_count + 1, updated_at = ? WHERE … RETURNING last_entry_id, last_hash`——新 id 与**尚未改动的** `prev_hash` 在同一把锁下一起拿到（session 的第一条先 `INSERT … ON CONFLICT DO NOTHING` 建 head 行）；③ 调 `hashEntry`；④ `INSERT INTO tape_entry`；⑤ 第二条 `UPDATE` 写回 `last_hash`；⑥ 应用投影 op。**永远不要**把新哈希当作分配语句的绑定输入：那是个环。
+- 一次 append 在事务里的语句顺序是定死的（两名评审各自执行过别的顺序，都会坏）：① 先按 `provenance_key` 查重，命中就走幂等分支，**不分配 id**，否则每个重复都会烧掉一个 id 并把 head 写脏；② `UPDATE session_head SET last_entry_id = last_entry_id + 1, entry_count = entry_count + 1, updated_at = ? WHERE … RETURNING last_entry_id, last_hash, incarnation_id`——新 id、**尚未改动的** `prev_hash` 与 incarnation 在同一把锁下一起拿到（session 的第一批先用传入的 `incarnationId` 以 `INSERT … ON CONFLICT DO NOTHING` 建 head 行，这条语句不带 `RETURNING`：冲突时 `RETURNING` 不返回任何行）；③ 调 `hashEntry`；④ `INSERT INTO tape_entry`；⑤ 第二条 `UPDATE` 写回 `last_hash`；⑥ 应用投影 op。**永远不要**把新哈希当作分配语句的绑定输入：那是个环。
 - 每次写都是 `BEGIN IMMEDIATE … COMMIT`，catch 里显式 `ROLLBACK`——**每个 store 方法自己负责回滚**。两种绑定都不会自动回滚；触发器 `ABORT` 之后事务仍然开着。`busy_timeout` 对 `BEGIN IMMEDIATE` 之间的锁竞争有效；对 deferred 事务的快照过期（`SQLITE_BUSY_SNAPSHOT`）无效，那种情况 0 ms 就失败——这是必须用 `IMMEDIATE` 的原因。
-- 读 `entry_id`、`created_at` 与任何计数器的语句一律 `safeIntegers(true)`，读出后断言在 `Number.MAX_SAFE_INTEGER` 以内再转 `number`，越界抛 `TapeIntegerRangeError`。这是 better-sqlite3 唯一会静默丢数据的地方（超过 2^53 时截断而不报错）。
+- 读 `entry_id`、`created_at` 与任何计数器的语句一律 `safeIntegers(true)`，读出后断言在 `Number.MAX_SAFE_INTEGER` 以内再转 `number`，越界抛 `TapeIntegerRangeError`。这是 better-sqlite3 会静默丢数据的地方（超过 2^53 时截断而不报错）。
 - 绑定参数里的 `undefined` 显式映射成 `null`（better-sqlite3 会静默绑成 NULL，`node:sqlite` 会抛）；只用位置参数或不带前缀的具名参数。
 - 迁移：版本记在 `schema_version` **表**里，两种方言同一条代码路径，不用 `PRAGMA user_version`。迁移编号、只前进、各自一个事务、在任何其他语句之前执行；文件版本高于程序认识的版本时**拒绝打开且不写任何东西**。
 - 文件位置 `<profileDir>/sessions.db`（阶段 0 的持久化布局已留这个名字），一个 profile 一个文件。首次创建时写入 `tape_meta.tenant_id`；以后用不同 `tenantId` 的 identity 打开即抛 `TapeTenantMismatchError`。store 在每条语句上绑定 `HostAdapter.identity.tenantId`。
@@ -521,8 +556,8 @@ entry_hash   = SHA-256( field("tenon.tape.v" + hash_ver)
 ### DDL（SQLite 方言）
 
 ```sql
-CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at INTEGER NOT NULL) STRICT;
-CREATE TABLE tape_meta (tenant_id TEXT NOT NULL) STRICT;
+CREATE TABLE schema_version (version INTEGER NOT NULL PRIMARY KEY, applied_at INTEGER NOT NULL) STRICT;  -- 每条迁移插一行；当前版本 = MAX(version)
+CREATE TABLE tape_meta (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), tenant_id TEXT NOT NULL) STRICT;  -- 恰好一行
 
 CREATE TABLE tape_entry (
   tenant_id      TEXT    NOT NULL,
@@ -547,7 +582,8 @@ CREATE TABLE tape_entry (
 ) STRICT;
 
 CREATE INDEX tape_entry_by_kind   ON tape_entry (tenant_id, session_id, kind, entry_id);
-CREATE INDEX tape_entry_by_source ON tape_entry (tenant_id, session_id, source_type, source_id, source_seq);
+-- 末列是 entry_id 而不是 source_seq：readBySource 要按 entry_id 排序，末列换成 source_seq 时规划器会退回主键或加临时 B 树（实测）
+CREATE INDEX tape_entry_by_source ON tape_entry (tenant_id, session_id, source_type, source_id, entry_id);
 
 CREATE TABLE session_head (
   tenant_id      TEXT    NOT NULL,
@@ -595,7 +631,7 @@ CREATE INDEX message_projection_by_order ON message_projection (tenant_id, sessi
 CREATE TABLE session_projection (
   tenant_id TEXT NOT NULL, session_id TEXT NOT NULL,
   title TEXT, provider_id TEXT, model_id TEXT,
-  message_count INTEGER NOT NULL, last_message_at INTEGER,
+  last_message_at INTEGER,
   forked_from_session_id TEXT,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   PRIMARY KEY (tenant_id, session_id)
@@ -617,7 +653,7 @@ CREATE INDEX session_projection_by_updated ON session_projection (tenant_id, upd
 | 触发器 `WHEN NOT EXISTS (子查询)` + `RAISE(ABORT)` | PG 触发器的 `WHEN` 不许含子查询，检查移进 plpgsql 函数体 |
 | `?` 占位符 | `$n`（端口只负责渲染占位符，别的方言差异一概不碰） |
 
-两边逐字相同、只写一次的：`INSERT … ON CONFLICT (cols) DO NOTHING`、head 的 UPSERT 带 `excluded.*`、`RETURNING`。schema 里不出现 `AUTOINCREMENT`、`WITHOUT ROWID`、`INSERT OR IGNORE`、`json_extract()`、生成列。
+两边逐字相同、只写一次的：`INSERT … ON CONFLICT (cols) DO NOTHING`、head 的两条分配语句、`UPDATE … RETURNING`。`ON CONFLICT DO NOTHING` 与 `RETURNING` 永不出现在同一条语句里。schema 里不出现 `AUTOINCREMENT`、`WITHOUT ROWID`、`INSERT OR IGNORE`、`json_extract()`、生成列。
 
 `scripts/check-tape-schema.mjs` 解析两份文件，断言表名、列名与顺序、主键、唯一约束、索引定义在一张登记在案的方言映射表之外完全一致（触发器比的是映射表里登记的**语义**，不是文本——谁也不许为了「消除分叉」而削弱 SQLite 那一侧的触发器）；只改一边即 `pnpm lint` 失败并点名分叉的对象。**这份可移植性证明是静态的**：阶段 1 的 CI 不跑 Postgres。运行时验证属于 6b。
 
@@ -657,13 +693,14 @@ const envelope = z.object({
 
 - `chat.ts` 删掉内存里的 `history` Map 与直接构造的 SDK 客户端，改为：`ProviderRegistry` 取定义 → desktop 从 `HostAdapter.secrets`（`keyFor(identity, 'provider', <id>, <configKey>)`）读机密、从 `config.json` 读非机密 → `create()` → kernel 的 session service 写 `message/user`、跑一次 `stream`、把增量转成既有的 `chat.event`、结束时写 `message/assistant` 与 `provider/attempt_completed`。
 - 阶段 0 的行为全部保留，并改由 Tape 承载：运行在第一个 `await` 之前登记；停止后保留已收到的部分文本（`status: 'aborted'`）；失败的一轮留在记录里（`status: 'error'`）；失败后重发同样的文本是同一条 user 消息的重试而不是第二轮；终态事件发出之前先释放 in-flight。
-- `chat.send` / `chat.stop` / `chat.event` 的 schema 不变。`ProviderErrorCode` 到 `chat.event` 错误码的映射：`network → network`、`auth → auth`、`rate-limit | overloaded → rate-limit`、`invalid-request | context-overflow | server → provider`、其余 `unknown`。
+- `chat.send` / `chat.stop` / `chat.event` 的 schema 不变。`ProviderErrorCode` 到 `chat.event` 错误码的映射：`network → network`、`auth → auth`、`rate-limit | overloaded → rate-limit`、`invalid-request | context-overflow | server → provider`、其余 `unknown`。`StopReason` 到 `done.stopReason` 的映射：`end-turn | stop-sequence | tool-use → 'end-turn'`、`aborted → 'aborted'`、其余（`max-tokens`、`refusal`、`content-filter`、`pause-turn`、`context-overflow`、`unknown`）→ `'error'`；原始的 `StopReason` 记在 `provider/attempt_completed` 里。给这几种情况各自的界面文案要扩这个枚举，留给阶段 6。
 - 新 IPC（`packages/contracts/src/ipc/`）：
-  - `session.latest` → `{ sessionId, messages } | null`；`session.messages({ sessionId, limit, afterOrderSeq? })`。渲染端启动时恢复最近一个会话；`chat.new` 照旧开新会话。会话列表界面不在阶段 1。
+  - `session.latest({ limit })` → `{ sessionId, messages } | null`，返回最新的 `limit` 条；`session.messages({ sessionId, limit, afterOrderSeq?, beforeOrderSeq? })`。渲染端默认读尾部，启动时恢复最近一个会话；`chat.new` 照旧开新会话。会话列表界面不在阶段 1。
   - `provider.list` → 每个定义的 `{ id, nameKey, configKeys, models, configured: boolean }`（**永不回传机密值**）；`provider.configure({ id, values })`（机密进 keychain，其余进 `config.json`）；`provider.select({ providerId, modelId })`。
-  - `config.json` 增加 `provider: { id, modelId }`。
+  - `config.json` 增加 `provider: { id: string; modelId: string }` 与 `providerConfig: Record<ProviderId, Record<string, string>>`（键名即 `ConfigKey.name`，只放 `secret: false` 的值）；`provider.configure` 对 `providerConfig[id]` 逐键合并。
 - 一张由 `ConfigKey[]` 渲染的最小设置卡（账号菜单 → 模型与密钥）：provider 选择、每个 `ConfigKey` 一个输入框（`secret` 用密码框）、模型下拉。文案全部来自 `labelKey` / `nameKey` 对应的目录键。**加一个 provider 不碰渲染端代码**，只在两份 locale 目录里加键。
-- 开发期回落保留：keychain 里没有时，desktop（不是 kernel）读环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` 与 `TENON_MODEL`，新增 `TENON_PROVIDER`、`ZHIPU_API_KEY`。`pnpm test:live` 增加一条走 `zhipu` 定义（OpenAI 兼容端点）的用例，仍然只在 `TENON_LIVE=1` 时运行。
+- **e2e 的机密接缝**：desktop 的 `HostSecrets` 只有真 OS keychain 一条路，而 CI 的 Linux 上没有 Secret Service，开发机上则会往登录钥匙串里写条目。`createDesktopHost` 在 `!app.isPackaged` 且 `TENON_SECRETS=memory` 时换成进程内的内存实现，与现有的 `TENON_DEV_ENV=off` 是同一类开关，由 e2e helper 设置。真 keychain 路径由手动的 `pnpm test:live` 与日常使用覆盖。
+- 开发期回落保留：keychain 里没有时，desktop（不是 kernel）读环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` 与 `TENON_MODEL`、`TENON_MAX_TOKENS`（后者覆盖 `ProviderRequest.maxTokens`），新增 `TENON_PROVIDER`、`ZHIPU_API_KEY`。`TENON_MODEL` 命中该定义的 `builtinModels` 时取那份 `ModelInfo`；未命中时 desktop 合成一份保守的（能力位全 `false`、`thinkingPreservationFormat: 'drop'`、`contextLimit` / `maxOutputTokens` 取该定义的默认值）并记一条 warn——owner 日常就是用 Anthropic 兼容端点跑一个不在内置表里的模型。`pnpm test:live` 增加一条走 `zhipu` 定义（OpenAI 兼容端点）的用例，仍然只在 `TENON_LIVE=1` 时运行。
 
 ## 不变量
 
@@ -671,14 +708,14 @@ const envelope = z.object({
 
 Provider：
 
-1. 每个流**恰好以一个**终态事件结束（`stop` 或 `error`），它是最后一个事件；`usage` 总在它之前。（Anthropic 线上是 usage 先于 stop，OpenAI 线上是 usage 跟在 `finish_reason` 之后的尾块里——适配器把 `stop` 压到迭代器结束时才发，消费方不必知道。）
+1. 每个流**恰好以一个**终态事件结束（`stop` 或 `error`），它是最后一个事件；`usage` 总在它之前，且写进 `provider/attempt_completed` 的是 `final: true` 的那一条。（Anthropic 线上是 usage 先于 stop，OpenAI 线上是 usage 跟在 `finish_reason` 之后的尾块里——适配器把 `stop` 压到迭代器结束时才发，消费方不必知道。）
 2. 中止——无论发生在调用前还是流中途——产出 `stop{ reason: 'aborted' }`，不抛、不产出 `error`；调用前已中止时不触网。
 3. `stream()` 不因线上错误 reject；SDK 抛出的错误（含流中途的 error 帧）都变成 `error` 事件。
 4. 工具调用按 `index` 归位；适配器保证同一 `index` 的 `tool-call-start` 先于它的任何 `tool-call-args-delta`（OpenAI 线上参数片段可能先于 id 到达，适配器缓冲到 id 与 name 齐了再放行）。
 5. 没有 `tool-call-end` 的工具调用**永不执行**。被 `max_tokens` 截断的工具调用在 Anthropic 线上没有 `content_block_stop`，因此没有 `tool-call-end`。
 6. 空的工具入参是 `{}`，永不是 `null`，永不是 JSON 字符串。
 7. thinking 签名永不改写、永不合成；编码后的请求体里出现的签名，逐字节等于存储的签名。`encode()` 无 I/O 且确定。
-8. `packages/kernel/src` 的 provider 文件里没有模块级 `fetch`，没有 `process.env`；SDK 客户端一律 `maxRetries: 0`、凭据显式传入。
+8. `packages/kernel/src` 的 provider 文件里没有模块级 `fetch`，没有 `process.env`（lint 禁用全局 `process`）；SDK 客户端一律 `maxRetries: 0`、凭据显式传入——provider 的构造与请求测试在清空了 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 的环境下跑，请求头里的凭据恰好等于传入值。
 
 Tape：
 
@@ -697,18 +734,18 @@ Tape：
 
 1. **第二个 provider 不改调用方。** 一个参数化测试用**同一条** kernel 调用路径依次驱动 `anthropic`、`zhipu`、`ollama` 三个定义（`fakeNetwork` 回放录制的 SSE），各自产出符合不变量 1–6 的事件序列与同形的 Tape 事实。同一个测试再在测试文件内现场注册第四个定义并走同一条路径——证明接入一个 provider 需要的只有一份定义。
 2. **`encode()` 是纯的。** 同一请求调用两次，`body` 逐字节相同、`promptHash` 与 `toolDefinitionsHash` 相同；`fakeNetwork` 记录到的调用数为 0；`thinkingDecisions` 与守卫规则表逐项一致。
-3. **从 Tape 重放能重建 provider 上下文，且与投影一致。** 对一个含 user / assistant 消息、一条修订、一条撤回、一对**合成的** `tool_call` / `tool_result`（阶段 1 没有它们的写入方，折叠规则用夹具覆盖）的会话：`rebuildProviderContext()` 的结果经 `encode()` 得到的 `promptHash`，等于该会话最后一条 `provider/attempt_completed` 记录的 `promptHash`；`rebuildProjections()` 之后的投影表与增量写出的逐行相等。这组断言写在共享的 conformance 套里，对内存 store 与 SQLite store 各跑一遍。
+3. **从 Tape 重放能重建 provider 上下文，且与投影一致。** 对一个含 user / assistant 消息、一条修订、一条撤回、两轮对话的会话：把 `rebuildProviderContext()` 钉在每条 `provider/attempt_completed` 自己记下的 `contextAtEntryId` 上，其结果经 `encode()` 得到的 `promptHash` 等于该条记录的 `promptHash`；重放永不产出空的 assistant 轮次；`rebuildProjections()` 之后的投影表与增量写出的逐行相等。这组断言写在共享的 conformance 套里，对内存 store 与 SQLite store 各跑一遍。
 4. **另一个 profile 的数据不可见。** 两个 `tenantId` 不同的 profile 各写一个会话：`sessions.db` 路径不同，各自的 `listSessions` 只见自己的；用 A 的 identity 打开 B 的文件抛 `TapeTenantMismatchError`。更强的一条（服务端预演）：同一个库文件里放两个 `tenant_id` 的行，以 A 绑定的 store 的每个读 API（`readRange`、`readBySource`、`head`、`listSessions`、`listMessages`、`verifyChain`）对 B 的 sessionId 都返回空 / `null`，`resetSession` 与 `deleteSession` 改动 0 行。去掉代码里的租户谓词，这个测试必须变红。
 5. 重启 desktop 后，上一次会话的消息仍然显示，继续对话时模型看得到此前的上下文（Playwright：假 provider 服务器断言第二次启动后的请求体含第一次的消息）。
-6. 在设置卡里把 provider 从 `anthropic` 换成 `zhipu` 并填入 key 后，下一条消息发往 OpenAI 兼容端点并流式渲染；`provider.list` 的返回里不含任何机密值（Playwright + 假服务器）。阶段 0 验收 4（流式 + 停止）在新路径上继续通过。
+6. 在设置卡里把 provider 从 `anthropic` 换成 `zhipu` 并填入 key 后，下一条消息发往 OpenAI 兼容端点并流式渲染；`provider.list` 的返回里不含任何机密值（Playwright + 假服务器，机密走 `TENON_SECRETS=memory` 接缝）。另有一个 desktop 单测遍历 `ProviderRegistry.list()`，断言每个 `nameKey` 与每个 `ConfigKey.labelKey` 在两份 locale 目录里都解析得到非空串——「加 provider 只加目录键」否则没有任何门禁守着。阶段 0 验收 4（流式 + 停止）在新路径上继续通过。
 7. **中止与终态事实。** 流式很慢的 `fakeNetwork` 下，在随机的 200 个时点中止：每次迭代器都正常结束、恰好产出一个终态事件 `stop{ reason: 'aborted' }`、累积的部分文本恰好是中止前收到的；调用前已中止的 signal 产出同样的终态且 `fakeNetwork` 调用数为 0。该请求的 `(runId, requestSeq, physicalAttempt)` 在 Tape 里恰好有一条 `provider/attempt_completed`。
-8. **kernel 的 host 无关性。** 在 `packages/kernel/src` 任意文件加一行裸 `fetch(…)`、`new WebSocket(…)`、`import 'undici'` 或 `import 'node:https'`，`pnpm lint` 失败并点出规则名。另有一个测试用 esbuild 以 `--bundle --format=esm --platform=browser` 打包 kernel 入口并断言成功——它抓的是 lint 看不见的、经传递依赖**静态**到达 `node:` 内置模块的情况。用 `browser` 而不是 `neutral`：`neutral` 会在 Anthropic SDK 动态 import 的那几个 `node:` 模块上失败（已实测），`browser` 平台则借 SDK 顶层的旧式 `browser` 字段换成了桩。`packages/kernel/package.json` 不依赖 `better-sqlite3` 与 `electron`。
+8. **kernel 的 host 无关性。** 在 `packages/kernel/src` 任意文件加一行裸 `fetch(…)`、`new WebSocket(…)`、`process.env['X']`、`import 'undici'` 或 `import 'node:https'`，`pnpm lint` 失败并点出规则名。另有一个测试用 esbuild 以 `--bundle --format=esm --platform=browser` 打包 kernel 入口并断言成功——它抓的是 lint 看不见的、经传递依赖**静态**到达 `node:` 内置模块的情况。用 `browser` 而不是 `neutral`：`neutral` 会在 Anthropic SDK 动态 import 的那几个 `node:` 模块上失败（已实测），`browser` 平台则借 SDK 顶层的旧式 `browser` 字段换成了桩。`packages/kernel/package.json` 不依赖 `better-sqlite3` 与 `electron`。
 9. **只追加由数据库强制，且 store 自己负责回滚。** 对 `tape_entry` 的裸 `UPDATE` 与未开闸的裸 `DELETE` 都报错，行还在；随后同一个 store 上的 `append` 仍然成功（触发器 `ABORT` 不会回滚外层事务，这证明 store 自己做了 `ROLLBACK`）。`resetSession` 与 `deleteSession` 经开闸行删除成功，闸的 `mode` 分别是 `reset` 与 `delete`，事务结束后开闸表为空。
-10. **`entry_id` 是因果时钟。** append 5 条、`resetSession`、再 append：新 `entryId` 大于重置前的所有 id，`incarnationId` 已变，新的 `session/start` 存在，`last_entry_id` 从未减小，带旧 incarnation 的读游标抛 `TapeStaleIncarnationError`。两个连接按**显式编排的交错顺序**对同一 session 各 append N 条：所有 `entryId` 互不相同且严格递增、没有丢行、`verifyChain` 通过。`TapeBusyError` 是另一个单独的测试，用一把强制持有的写锁触发——不写「要么等到、要么报忙」这种对时序竞态取或的断言。
-11. **幂等回执与冲突。** 不变量 11 的两个分支各一个测试；幂等分支另断言 id 序列无空洞、reducer 上的计数器只加了一次。
+10. **`entry_id` 是因果时钟。** append 5 条、`resetSession`、再 append：新 `entryId` 大于重置前的所有 id，`incarnationId` 已变，新的 `session/start` 存在，`last_entry_id` 从未减小，带旧 `incarnationId` 的 `append` 与带旧 `incarnationId` 的分页 `readRange` 都抛 `TapeStaleIncarnationError`。两个连接按**显式编排的交错顺序**对同一 session 各 append N 条：所有 `entryId` 互不相同且严格递增、没有丢行、`verifyChain` 通过。`TapeBusyError` 是另一个单独的测试，用一把强制持有的写锁触发——不写「要么等到、要么报忙」这种对时序竞态取或的断言。
+11. **幂等回执与冲突。** 不变量 11 的两个分支各一个测试；幂等分支另断言 id 序列无空洞、投影只应用了一次（对 reducer 应用次数的 spy）；「同键同 payload、但 kind / name / source 不同」走冲突分支；同一批内重复的键整批抛错。
 12. **哈希链。** `hashEntry` 有一组固定向量把配方钉死，其中一对向量的字段在朴素拼接下会相撞、在长度前缀下不相撞。写入 1 万条后分页 `verifyChain` 报告零坏链，`session_head.last_hash` 等于最后一条的 `entry_hash`；用测试专用手段（去掉触发器）改掉某条 `payload_json` 的一个字节后，`firstBadEntryId` 正是那一条；还原该字节后再次通过。`apps/desktop` 里有一条 `@noble/hashes` 与 `node:crypto` 的对拍。
 13. **保留命名空间。** 通用 append 写精确的保留名（`execution/run_started`）、保留前缀下未声明的兄弟名（`execution/anything`、`tool/anything`、`fs/anything`、`view/assembled`、`message/retracted`）、`context` kind 都被拒；slice 写入器只能写自己 slice 声明过的名字与 kind，写别的 slice 的名字被拒。
-14. **恢复读取路径存在且只走索引。** `readBySource({ sourceType: 'runtime_event', sourceId: runId })` 按 `entry_id` 顺序返回该 run 的事实；对生成的 SQL 做 `EXPLAIN QUERY PLAN`，结果里含 `tape_entry_by_source`（字符串匹配——以后谁把索引改名或把查询改成了扫描，这个测试就红）。
+14. **恢复读取路径存在且只走索引。** `readBySource({ sourceType: 'runtime_event', sourceId: runId })` 按 `entry_id` 顺序返回该 run 的事实；对生成的、带 `ORDER BY entry_id` 的 SQL 做 `EXPLAIN QUERY PLAN`，结果里含 `tape_entry_by_source` 且**不含** `TEMP B-TREE`（字符串匹配——以后谁把索引改名、改了列序或把查询改成了扫描，这个测试就红）。
 15. **有界读取与整数安全。** 不带 `limit` 的 `readRange` 是类型检查失败（类型测试夹具）；`limit > 1000` 抛 `TapeReadLimitError`；5000 条的会话钉住 `atEntryId` 逐页读完，拼起来与事先的全量快照相同，翻页之间发生的 append 不混入。`entry_id` 被强行写成超过 2^53 的值时读取抛 `TapeIntegerRangeError` 而不是截断；过端口的值里没有 `Buffer` 与 `bigint`。
 16. **thinking 守卫。** 七条判定规则一张表测试，每条断言 `action` 与 `reason`；任何分支下，编码后请求体里出现的签名都与存储的逐字节相同。
 17. **两份方言、一套逻辑 schema。** 只改 `tape.sqlite.sql` 的一列、一个索引或一个键而不改 `tape.postgres.sql`，`pnpm lint` 失败并点名分叉的对象。
@@ -719,11 +756,10 @@ Tape：
 
 ## 开放问题
 
-1. **`implemented` 的 spec 能否被「修补（amend）」。** 见「这次修补怎么记录」。AGENTS.md 与 spec-driven-dev 只允许整体 supersede，主参考 §13 阶段 2、阶段 4 却写「按 Revisions 规则处理」，三处现在互不一致。**owner 在把本 spec 标 `ready` 时定**：同意，则 plan 第 1 步落地那三处文字；不同意，替代做法是新开一份只含 HostAdapter 与技术选型两节的 spec 去 supersede 阶段 0 的对应内容，本 spec 的其余部分不受影响。在此之前实现方不动 `00-foundation/spec.md`、`spec-driven-dev.md`、`AGENTS.md`。
-2. **两家 SDK 每次请求都带 `x-stainless-*` 头**（arch、os、运行时及版本、包版本、重试计数）。可经 `defaultHeaders` 去掉，但没测过对服务端重试记账的副作用。阶段 6 做隐私盘点时定；在那之前保持默认。
-3. **GLM / Qwen 是否接受回传的 `reasoning_content`** 没有实测，阶段 1 按文档里「仅展示用」的说法设为 `drop`。哪天智谱改用 DeepSeek 式规则，是 `ModelInfo` 的一行改动。接入时用 `pnpm test:live` 探一次。
-4. **Windows / Linux 上 `synchronous = NORMAL` 的 fsync 行为**与 macOS 差别不小，本 spec 的耗时数字都来自一台 macOS arm64。不影响选型；做打包 spec 时在三个平台各跑一次 append 基准。
-5. **主线程上的同步 SQLite。** 阶段 1 留在主进程。什么时候搬：Playwright 里出现可测的输入延迟，或单次 `append` 的 p99 超过 8 ms。搬的方式是 `utilityProcess`，端口不变。
+1. **两家 SDK 每次请求都带 `x-stainless-*` 头**（arch、os、运行时及版本、包版本、重试计数）。可经 `defaultHeaders` 去掉，但没测过对服务端重试记账的副作用。阶段 6 做隐私盘点时定；在那之前保持默认。
+2. **GLM / Qwen 是否接受回传的 `reasoning_content`** 没有实测，阶段 1 按文档里「仅展示用」的说法设为 `drop`。哪天智谱改用 DeepSeek 式规则，是 `ModelInfo` 的一行改动。接入时用 `pnpm test:live` 探一次。
+3. **Windows / Linux 上 `synchronous = NORMAL` 的 fsync 行为**与 macOS 差别不小，本 spec 的耗时数字都来自一台 macOS arm64。不影响选型；做打包 spec 时在三个平台各跑一次 append 基准。
+4. **主线程上的同步 SQLite。** 阶段 1 留在主进程。什么时候搬：Playwright 里出现可测的输入延迟，或单次 `append` 的 p99 超过 8 ms。搬的方式是 `utilityProcess`，端口不变。
 
 ## 被否决的方案
 
