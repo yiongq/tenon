@@ -2,13 +2,13 @@
 
 对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。
 
-- [ ] 1. `pnpm init` monorepo：`pnpm-workspace.yaml`、`tsconfig.base.json`、oxlint / oxfmt 配置、`.editorconfig`、commitlint、**lefthook**（pre-commit: format + lint + typecheck；commit-msg: commitlint）
-- [ ] 2. 建 `packages/kernel`、`packages/contracts`、`apps/desktop` 三个包，空实现能 build
-- [ ] 3. lint 规则：`packages/kernel` 禁 `electron` / `node:fs` / `node:child_process` / `keytar` import；包边界规则 `apps → contracts → kernel`
-- [ ] 4. `HostAdapter` 接口按 spec 落到 `packages/kernel/src/host/`；`keyFor(identity, ...parts)`；内存版假实现（测试用）
+- [x] 1. `pnpm init` monorepo：`pnpm-workspace.yaml`、`tsconfig.base.json`、oxlint / oxfmt 配置、`.editorconfig`、commitlint、**lefthook**（pre-commit: format + lint + typecheck；commit-msg: commitlint）
+- [x] 2. 建 `packages/kernel`、`packages/contracts`、`apps/desktop` 三个包，空实现能 build
+- [x] 3. lint 规则：`packages/kernel` 禁 `electron` / `node:fs` / `node:child_process` / `keytar` import；包边界规则 `apps → contracts → kernel`
+- [x] 4. `HostAdapter` 接口按 spec 落到 `packages/kernel/src/host/`；`keyFor(identity, ...parts)`；内存版假实现（测试用）
 - [ ] 5. `DesktopHostAdapter`：fs / secrets（keychain）/ process（spawn + 进程树 kill）/ sandbox（passthrough + 日志）/ confirm（投递到 IPC 事件）/ clock
 - [ ] 6. kernel：最小 MCP host——用 `@modelcontextprotocol/client@2.0.0` + `HostProcess.spawn` 连 `server-everything`，`tools/list`，调 `echo`；对应验收 3 的测试
-- [ ] 7. `packages/contracts`：`registerRoute` + 第一批 IPC schema（发送消息 / 流事件 / 停止 / 读写 config）；验收 6 的测试
+- [x] 7. `packages/contracts`：`registerRoute` + 第一批 IPC schema（发送消息 / 流事件 / 停止 / 读写 config）；验收 6 的测试
 - [ ] 8. Electron 壳：窗口 webPreferences 按 spec；preload 只暴露 contracts 通道；profile 目录布局
 - [ ] 9. 最小 Anthropic 流式调用（不抽象），`AbortSignal` 贯穿到 fetch
 - [ ] 10. UI：令牌（键名按 §8.5，值按 §8.1）、基础组件、壳层、Composer 最小态、消息流（block 注册表 + `text`）
@@ -17,10 +17,10 @@
   - [ ] 10.3 字体令牌两套值：界面无衬线、正文衬线，CJK 回落系统无衬线；zh-CN 下「谁在说话」由正文 16/28 vs 界面 14/20 承担；`<html lang>` 跟界面语言
   - [ ] 10.4 Composer：IME 组合中 Enter 不发送；时间 / 数字 / 排序全走 Intl
   - [ ] 10.5 Playwright：`zh-CN` / `en` 双语言壳层截图 + 无换行断言（验收 12）
-  - [ ] 10.6 界面 → shadcn/ui 组件映射表 `docs/ux/components.md`：按 `../tenon-uxkit/interactions.md` 的界面清单逐条对应（§8.5 要求，只写组件名不抄 class）
-  - [ ] 10.7 令牌值替换表 `docs/ux/tokens.md`：键名按 §8.5 分层，值为 Tenon 自己的临时皮肤，不含任何 uxkit 值（§8.5 要求）
-- [ ] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
-- [ ] 12. `.github/workflows/ci.yml`：PR 触发 install / build / lint / typecheck / test
+  - [x] 10.6 界面 → shadcn/ui 组件映射表 `docs/ux/components.md`：按 `../tenon-uxkit/interactions.md` 的界面清单逐条对应（§8.5 要求，只写组件名不抄 class）
+  - [x] 10.7 令牌值替换表 `docs/ux/tokens.md`：键名按 §8.5 分层，值为 Tenon 自己的临时皮肤，不含任何 uxkit 值（§8.5 要求）
+- [x] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
+- [x] 12. `.github/workflows/ci.yml`：PR 触发 install / build / lint / typecheck / test
 - [x] 13. 仓库设置：secret scanning + push protection、`main` 分支保护（2026-09-17 转公开后完成：两项扫描已启用；`main` 要求经 PR 合并、禁 force push 与删除；CI 建好后再加 required status checks）
 - [ ] 14. 对照 spec 当前全部验收标准逐条验证并记录结果
 - [ ] 15. 清理临时探针与测试
@@ -78,3 +78,27 @@
 
 - 仓库已转公开（owner 决定）。第 13 步随之完成，见上。日常 PR 进 `dev`，`main` 只收发布分支。
 - 许可证、CLA、商业模式边界已定，见 [ADR-002](../../adr/adr-002-license-and-business-model.md)。CLA 文本与 cla-assistant 在第一个外部 PR 出现前完成；在此之前外部 PR 只审不合。
+
+## 第 1–4、7、11、12 步完成交接（2026-09-17，Claude Code）
+
+- 分支 `feat/foundation-monorepo`（自 `dev`），PR 目标 `dev`。`pnpm install && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build` 全绿；`pnpm test:e2e`（Playwright 起 Electron）本机通过。负向验证已做：kernel 任意文件 `import 'electron'` → `eslint(no-restricted-imports)`；kernel `src/**` 里 `node:fs` / `document` / `@tenon-app/contracts` 各自被拦；删 `locales/en` 键 → `i18n:check` 点名缺键；类型错误、坏 commit message、未格式化文件各自失败。
+- **工具链（全部实测后定，版本精确钉死）**：TypeScript 7.0.2（原生编译器；无 tsserver，编辑器需支持 TS7 的 LSP）、oxlint 1.83.0、oxfmt 0.68.0、lefthook 2.1.14、commitlint 21.2.2、vitest 5.0.1、**vite 7.3.6**（electron-vite 5.0.0 只接受 vite ≤7，`@vitejs/plugin-react` 因此钉 5.2.0；升 vite 8 必须同时升 electron-vite）、electron 44.4.1（内嵌 Node 24.21 / Chrome 152；electron-vite 5 的版本表止于 39，所以 `electron.vite.config.ts` 显式写 `node24` / `chrome152`）、zod 4.6.5、react 19.3.0。共享版本走 `pnpm-workspace.yaml` 的 `catalog:`。
+- **pnpm 10 构建脚本策略**：`strictDepBuilds: true`、`onlyBuiltDependencies: []`、`ignoredBuiltDependencies: [esbuild, lefthook]`——全仓只有这两个包带 postinstall，且都不需要真的跑（esbuild 平台二进制是 optionalDependencies；lefthook 的 postinstall 在 pnpm 缓存下只对第一个仓库生效，所以 hooks 由根 `prepare` 脚本装，带 git 目录守卫）。electron 44 没有 postinstall，二进制由 `apps/desktop` 自己的 `postinstall: install-electron` 拉取；CI 的 `ci` job 用 `--ignore-scripts` 跳过下载，`e2e` job 缓存 `~/.cache/electron`。新增带 postinstall 的依赖会让 install 硬失败，需审后加进列表并 `rm -f node_modules/.modules.yaml && pnpm install`。`pnpm-workspace.yaml` 不要写注释（pnpm 一改写就清空并重排键）。
+- **TypeScript 布局**：根 `tsconfig.json` 是 solution，引用 kernel / kernel.test / contracts / contracts.test / desktop（node / web / e2e 三个子工程）；`pnpm typecheck` = `tsc -b`，**引用列表就是整个 typecheck 门禁**，漏一条会静默变绿。kernel / contracts 用 `lib: [es2024, dom]` + `types: []`——dom 只为 Web Streams / TextEncoder 类型，DOM 全局由 oxlint `no-restricted-globals` 拦；kernel 与 contracts 的 `src/**` 还禁 `import/no-nodejs-modules`、`setTimeout` / `fetch` 全局。包 `exports` 的 `development` 条件必须排第一：vitest 与 `electron-vite dev` 据此直接读 `src/`，`vite build` 与 tsc 读 `dist/`（所以 `pnpm build` 按拓扑顺序先建 kernel / contracts）。`erasableSyntaxOnly` 开着：不能用构造器参数属性。
+- **oxlint**：只有根 `.oxlintrc.json`，所有脚本带 `--disable-nested-config`（嵌套配置会整段替换根配置，边界规则就没了；CI 还有一步禁止嵌套 `.oxlintrc.json` / `.oxfmtrc.json` / `.editorconfig`）。`react/react-in-jsx-scope: off` 是因为开了 `suspicious` 类别，两者绑定。没开 `--type-aware`（要多装 oxlint-tsgolint，阶段 0 不值）。
+- **oxfmt**：`**/*.md` 不格式化（docs 由 owner 在 Claude Desktop 里写，避免 churn），`pnpm-lock.yaml` 排除；未知配置键会被静默忽略，改 `.oxfmtrc.json` 后要拿文件验一下。
+- **lefthook / commitlint**：pre-commit 跑整仓 `format:check` → `lint`（含 `i18n:check`）→ `typecheck`；commit-msg 跑 commitlint：`header-max-length: 50`（整行 `type(scope): subject` ≤ 50，按 master-reference §13 的写法）+ 自定义规则 `no-ai-coauthor`（拦 Co-Authored-By 含 claude / codex / anthropic / openai / copilot / cursor / gemini；故意不含 `\bai\b`，会误伤人名）。`LEFTHOOK=0` 可绕过；CI 显式设置。
+- **kernel（第 4 步）**：`src/host/adapter.ts` 接口按 spec 逐字，另有 `CONFIRM_FACT_KEYS`；`keyFor(identity, ...parts)` = `<tenantId>:<part>:...`（拒绝空 tenantId、tenantId 含 `:`、空 part）；`profileDirFor(root, userId, tenantId)` = `<root>/profiles/<userId>/<tenantId>`，id 限 `[A-Za-z0-9][A-Za-z0-9._-]*`；`createMemoryHost()` 是纯内存 fake（fs 要求父目录存在、secrets Map、sandbox 直通并记 `sandbox: passthrough` 日志、confirm 只记录、clock 手动推进），`process.spawn` 默认抛错，验收 3 的测试要注入一个基于 node 的 `HostProcess`（放 `packages/kernel/test/support/`，kernel 的 `test/**` 允许 node 内置模块，仍禁 electron）。
+- **contracts（第 7 步）**：`defineRoute` / `defineEvent`；`registerRoute(ipcMainLike, route, handler)` 请求、响应双向校验，listener 永不抛错，返回 `{ ok, data } | { ok: false, error: { code: 'invalid-request' | 'invalid-response' | 'handler-failed', issues? } }`；`invokeRoute` 是 renderer 侧对应物。首批通道：`chat.send` / `chat.stop` / `chat.event`（`text-delta` / `done` / `error`，错误只给代码）/ `config.get` / `config.set` / `config.locale` / `confirm.request`；`confirmRequestSchema` 按 `reason` × `kind` 校验必填 `facts`，空串算未填。
+- **desktop 已落**：electron-vite 骨架（main ESM、preload 强制 CJS——sandbox 下 `.mjs` preload 加载不了、renderer React 19）；`BrowserWindow` 按 spec 三项 webPreferences；工作区包打进 main / preload（`externalizeDepsPlugin({ exclude })`，打包后没有 node_modules）；`src/main/host/{fs,sandbox,clock,profile}.ts`；Playwright 冒烟测试；`src/i18n/locales/{en,zh-CN}/common.json` 占位。**未落**：`HostProcess`（第 5 步，实测结论：不能用 `Readable.toWeb`——消费方取消时会以未捕获异常打崩主进程，要自写 ~30 行 `readableToWeb`；`exited` 听 `exit` 不听 `close`；进程树 = `detached: true` + `process.kill(-pid)`，Windows 用 `taskkill /T /F`；`kill()` 只投递信号，升级 SIGTERM→SIGKILL 由 kernel 借 HostClock 做；stdin 的 WritableStream 在子进程正常退出时会带 AbortError，持 writer 的一方要 `void writer.closed.catch(() => {})`）、`HostSecrets`（选 `@napi-rs/keyring` 2.1.0：无构建脚本、N-API 预编译；只用 `AsyncEntry`，同步版会阻塞主进程 ~6s；`getPassword` 运行时返回 null 而非类型声明的 undefined，`?? null` 必须保留；**macOS 钥匙串 ACL 绑定创建条目的二进制**：开发版未签名 Electron 与 node 互读对方写的条目都会弹窗 / 被拒，正式版靠代码签名解决，`findCredentials` 会静默漏掉无权条目且每条阻塞 ~5s，不要拿它枚举）、`HostConfirm`（投递到 IPC 事件 `confirm.request`）、profile 目录接入 main、preload 只暴露 contracts 声明的通道（现在是通用 `invoke(channel)`，第 8 步要按 contracts 的路由表做 allowlist）。
+- **MCP（第 6 步）实测结论**：`@modelcontextprotocol/client@2.0.0` 根入口不含任何 `node:` 导入（只有 `./stdio` 子路径用），kernel 可以直接依赖；`Transport` 接口与 `serializeMessage` / `deserializeMessage`（换行分帧）都从 client 包导出；自定义传输层用 `ChildHandle` 的 Web Streams 实现，spike 已跑通 `listTools` 非空 + `echo` 回显；server-everything 走 v1 协议，`Client.connect` 默认 legacy 协商模式即可（`auto` 会先探测，对会在未初始化时退出的服务器不安全）。启动方式：`argv = [process.execPath, <server-everything 的 bin 绝对路径>, 'stdio']`，pnpm 的 `.bin/*` 是 shell shim 不是软链，要通过 package.json 的 `bin` 字段解析真实文件。关闭顺序：先关 stdin（server-everything 收到 EOF 以 0 退出）→ 等宽限 → 再 SIGTERM。
+- **i18n（第 10.1 步）实测结论**：i18next 26.4.2 + i18next-icu 2.4.4 + **显式 intl-messageformat 11.2.15**（icu 无 runtime 依赖、按裸名导入，不显式钉会被 pnpm 自动装未钉版本）+ react-i18next 17.0.14；两个进程各 `createInstance()`，renderer 保留 `<I18nextProvider>`（`initReactI18next` 是进程级全局 setter，第二个实例会静默抢走无 provider 的 `useTranslation`）；renderer 用 `import.meta.glob('.../locales/*/*.json', { eager: true, import: 'default' })`，`import: 'default'` 是正确性要求；`new ICU({ memoize: true, parseErrorHandler })` 必须配 handler，否则 ICU 解析错误静默渲染原文；ICU 变量名不能叫 `ns` / `lng` / `lngs`；locale 解析按主子标签 `/^([A-Za-z]{2,3})(?:[-_]|$)/`（`\b` 会漏 `zh_CN`）；`escapeValue` 在 ICU 下无效，要转义得给插件 `escapeVariables: true`。`scripts/i18n-check.mjs` 已就位（`--strict-args` 可加查 ICU 参数漂移）。
+- **第 9 步决定**：`HostAdapter` 没有网络成员，阶段 0 的 Anthropic 流式调用放 `apps/desktop` 主进程，不进 kernel；用官方 `@anthropic-ai/sdk`（0.126.0）而不是手写 fetch——`baseURL` 可配以满足「Anthropic-compatible endpoint」，`RequestOptions.signal` / `MessageStream.abort()` 已核实能贯穿到 fetch。Provider 层形状仍按 spec 留给阶段 1。
+- **CI**：`.github/workflows/ci.yml` 已写但只在 PR 上才第一次真跑；`ci-ok` 是将来 branch protection 要 require 的唯一 check。actions 版本（checkout@v7 / pnpm/action-setup@v6 / setup-node@v7 / cache@v6 / upload-artifact@v7）是 agent 实测查到的，如 PR 上报错先查这些。
+- 下一步：第 5 步（process / secrets / confirm）→ 第 6 步（kernel MCP host + 验收 3 测试）→ 第 8 步（preload allowlist、profile 接入、config 路由）→ 第 9 步 → 第 10 步。
+
+## Open
+
+- 第 6 步的验收 3 写的是「完成 MCP v2 协议协商」，但 server-everything 2026.8.31 依赖 sdk ^1.30（v1 协议），只能观察到 v1 协商成功；spec 需在 owner 侧改措辞（记忆里 2026-09-12 评审已指出）。
+- 第 5 步钥匙串：开发期未签名 Electron 每换一次二进制都可能触发 macOS 钥匙串弹窗（2026-09-17 owner 已见到研究 agent 的弹窗）；正式解决在阶段 7 签名，开发期先接受。
+- `HostAdapter` 缺网络能力：阶段 1 定 provider 形状时一并决定是加 `HostAdapter.net` 还是 provider 以注入方式拿 fetch。

@@ -1,0 +1,33 @@
+{
+  "name": "@tenon-app/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tenon desktop host (Electron)",
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc -b",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tenon-app/contracts": "workspace:*",
+    "@tenon-app/kernel": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "5.2.0",
+    "electron": "44.4.1",
+    "electron-vite": "5.0.0",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
