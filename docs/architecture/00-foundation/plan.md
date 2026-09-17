@@ -21,7 +21,7 @@
   - [ ] 10.7 令牌值替换表 `docs/ux/tokens.md`：键名按 §8.5 分层，值为 Tenon 自己的临时皮肤，不含任何 uxkit 值（§8.5 要求）
 - [ ] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
 - [ ] 12. `.github/workflows/ci.yml`：PR 触发 install / build / lint / typecheck / test
-- [ ] 13. 仓库设置：secret scanning + push protection、`main` 分支保护
+- [x] 13. 仓库设置：secret scanning + push protection、`main` 分支保护（2026-09-17 转公开后完成：两项扫描已启用；`main` 要求经 PR 合并、禁 force push 与删除；CI 建好后再加 required status checks）
 - [ ] 14. 对照 spec 当前全部验收标准逐条验证并记录结果
 - [ ] 15. 清理临时探针与测试
 - [ ] 16. spec 顶部改 `Status: implemented`
@@ -73,3 +73,8 @@
 - 当前普通 Chat 更多菜单实测为 Open in new window / Pin / Rename / Add to project / Move to group / Delete；筛选菜单为 Type / Status / Last activity / Group by / Sort by。尚缺这些操作的完整状态转换视频，以及侧栏宽度拖动、分区折叠、View all、项目/产物/Customize 等入口全流程。
 - 已有连续证据主要为侧栏折叠/悬停/展开、搜索命中/空态/键盘退出、切换任务及运行/待答/待审批/未读状态、Scheduled 定义及历史运行。下一步侧栏专项按菜单→子菜单→操作结果→返回状态逐项补录，使用演示任务避免操作真实任务。
 - 无产品修改；仅追加本 plan 复核交接，保留未跟踪 UX audit。
+
+## 仓库公开（2026-09-17）
+
+- 仓库已转公开（owner 决定）。第 13 步随之完成，见上。日常 PR 进 `dev`，`main` 只收发布分支。
+- 许可证维持 Apache-2.0（LICENSE / NOTICE 自首个 commit 起存在）；盈利模式与 CLA 的决定见 master-reference §7 之后的 owner 讨论，未定之前不接受外部代码贡献。
