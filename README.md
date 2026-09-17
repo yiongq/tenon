@@ -4,7 +4,7 @@ A desktop agent workbench — one agent kernel, three surfaces (chat, long-runni
 
 Built with Electron + TypeScript. Apache-2.0.
 
-> Early stage. Nothing runnable yet — the repository currently holds the architecture and the phase-0 spec. See `docs/architecture/master-reference.md` for the full reference and `docs/architecture/00-foundation/spec.md` for what is being built first.
+> Early stage. Phase 0 (the foundation) runs: a sandboxed Electron shell that streams a chat reply, a kernel that can drive an MCP stdio server through its host adapter, and the gates around them. No agent loop, permissions or sandbox yet. See `docs/architecture/master-reference.md` for the full reference and `docs/architecture/00-foundation/spec.md` for what phase 0 covers.
 
 ## Layout
 
@@ -20,6 +20,15 @@ docs/                architecture, ADRs, mechanism notes on the projects we lear
 ## Working on it
 
 Read `AGENTS.md` and `docs/spec-driven-dev.md`. Coding agents (Claude Code, Codex) read the same files.
+
+```sh
+pnpm install          # Node >= 22.12, pnpm 10; installs git hooks and the Electron binary
+pnpm dev              # desktop app with hot reload
+pnpm check            # format:check, lint, typecheck, unit tests
+pnpm build && pnpm test:e2e
+```
+
+The phase-0 chat talks to the Anthropic API or any compatible endpoint. Copy `.env.example` to `.env.local` (gitignored), fill in the key, and `pnpm dev` picks it up; `pnpm test:live` then runs the real-endpoint e2e (streaming, multi-turn context, stop). Both cost tokens, so CI never runs them. When starting Electron from inside an Electron-hosted terminal, unset `ELECTRON_RUN_AS_NODE` first.
 
 ## Name
 

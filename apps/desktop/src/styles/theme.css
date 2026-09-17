@@ -1,0 +1,213 @@
+/* Tenon 主题层 —— 把 tokens.css 的 --t-* 接进 Tailwind 4 的命名空间。
+   这个文件不含任何颜色值，只有键名到键名的映射。
+
+   `@import 'shadcn/tailwind.css'` 是必需的：它定义了
+   `@custom-variant data-horizontal { &:where([data-orientation="horizontal"]) }`
+   与 data-vertical 的同款。Base UI 写的是 data-orientation 而不是 data-vertical，
+   删掉这行之后 Tailwind 原生的 data-* variant 会编译成 [data-vertical]，永不命中——
+   Separator 会变成高度 0（实测），ScrollArea 滚动条从 10px 掉到 2px。 */
+
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import './tokens.css';
+
+/* Tailwind 只扫描源码树；Streamdown 的 class 在 node_modules 里，必须显式声明来源，
+   否则它渲染出来的 markdown 没有任何样式（实测：删掉这行 CSS 少 60%）。 */
+@source '../../node_modules/streamdown/dist/*.js';
+
+/* tokens.md：默认跟随系统，显式切换两个方向都要压得住。
+   第二个分支让 dark: 工具类在「跟随系统 + 尚未落 data-theme」的首帧也成立，
+   与 tokens.css 里 prefers-color-scheme 那一块同一条判据。 */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  /* 清空 Tailwind 自带调色板与几个会带死值的命名空间 */
+  --color-*: initial;
+  --shadow-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+
+  /* ---------- shadcn/ui 语义层（组件源码只认这些名字） ---------- */
+  --color-background: var(--t-surface-0);
+  --color-foreground: var(--t-text-primary);
+  --color-card: var(--t-surface-1);
+  --color-card-foreground: var(--t-text-primary);
+  --color-popover: var(--t-surface-overlay);
+  --color-popover-foreground: var(--t-text-primary);
+  --color-primary: var(--t-fill-accent);
+  --color-primary-foreground: var(--t-text-on-accent);
+  --color-primary-hover: var(--t-fill-accent-hover);
+  --color-secondary: var(--t-fill-neutral);
+  --color-secondary-foreground: var(--t-text-primary);
+  --color-secondary-hover: var(--t-fill-neutral-hover);
+  --color-muted: var(--t-surface-2);
+  --color-muted-foreground: var(--t-text-muted);
+  --color-accent: var(--t-fill-neutral);
+  --color-accent-foreground: var(--t-text-primary);
+  --color-destructive: var(--t-fill-danger);
+  --color-destructive-foreground: var(--t-text-on-danger);
+  --color-border: var(--t-border-default);
+  --color-input: var(--t-border-default);
+  --color-ring: var(--t-border-focus);
+  --color-scrim: var(--t-scrim);
+
+  /* ---------- Tenon 自己的键名（应用层用这些） ---------- */
+  --color-shell-bg: var(--t-shell-bg);
+  --color-shell-row-hover: var(--t-shell-row-hover);
+  --color-shell-row-selected: var(--t-shell-row-selected);
+
+  --color-surface-0: var(--t-surface-0);
+  --color-surface-1: var(--t-surface-1);
+  --color-surface-2: var(--t-surface-2);
+  --color-surface-3: var(--t-surface-3);
+  --color-surface-panel: var(--t-surface-panel);
+  --color-surface-overlay: var(--t-surface-overlay);
+  --color-surface-inverse: var(--t-surface-inverse);
+
+  --color-text-primary: var(--t-text-primary);
+  --color-text-secondary: var(--t-text-secondary);
+  --color-text-muted: var(--t-text-muted);
+  --color-text-disabled: var(--t-text-disabled);
+  --color-text-accent: var(--t-text-accent);
+  --color-text-danger: var(--t-text-danger);
+  --color-text-success: var(--t-text-success);
+  --color-text-warning: var(--t-text-warning);
+  --color-text-on-accent: var(--t-text-on-accent);
+  --color-text-on-danger: var(--t-text-on-danger);
+
+  --color-border-subtle: var(--t-border-subtle);
+  --color-border-default: var(--t-border-default);
+  --color-border-strong: var(--t-border-strong);
+  --color-border-focus: var(--t-border-focus);
+
+  --color-fill-brand: var(--t-fill-brand);
+  --color-fill-brand-quiet: var(--t-fill-brand-quiet);
+  --color-fill-accent: var(--t-fill-accent);
+  --color-fill-accent-hover: var(--t-fill-accent-hover);
+  --color-fill-neutral: var(--t-fill-neutral);
+  --color-fill-neutral-hover: var(--t-fill-neutral-hover);
+  --color-fill-danger: var(--t-fill-danger);
+
+  --color-alpha-1: var(--t-alpha-1);
+  --color-alpha-2: var(--t-alpha-2);
+  --color-alpha-3: var(--t-alpha-3);
+
+  --color-role-user-bubble: var(--t-role-user-bubble);
+  --color-role-code-bg: var(--t-role-code-bg);
+  --color-role-tooltip-bg: var(--t-role-tooltip-bg);
+  --color-role-tooltip-fg: var(--t-role-tooltip-fg);
+
+  /* ---------- 几何 ---------- */
+  --spacing: var(--t-space-unit);
+
+  --radius-xs: var(--t-radius-xs);
+  --radius-sm: var(--t-radius-sm);
+  --radius-md: var(--t-radius-md);
+  --radius-lg: var(--t-radius-md);
+  --radius-xl: var(--t-radius-lg);
+  --radius-4xl: var(--t-radius-pill);
+  --radius-pill: var(--t-radius-pill);
+
+  /* shadcn 的 max-w-xs / max-w-sm（dialog / alert-dialog / tooltip）走 --container-*。
+     以 4px 单位接管：xs = 80 单位、sm = 96 单位，与 §8.1「间距 4 的倍数」一致。 */
+  --container-*: initial;
+  --container-xs: calc(var(--t-space-unit) * 80);
+  --container-sm: calc(var(--t-space-unit) * 96);
+
+  /* ---------- 字体 ---------- */
+  --font-sans: var(--t-font-sans);
+  --font-serif: var(--t-font-serif);
+  --font-mono: var(--t-font-mono);
+  --font-heading: var(--t-font-sans);
+
+  --font-weight-regular: var(--t-weight-regular);
+  --font-weight-medium: var(--t-weight-medium);
+  --font-weight-semibold: var(--t-weight-semibold);
+  --font-weight-bold: var(--t-weight-bold);
+
+  /* --text-* 配 --text-*--line-height：一个类同时给字号和行高 */
+  --text-micro: var(--t-size-micro);
+  --text-micro--line-height: var(--t-leading-micro);
+  --text-ui-sm: var(--t-size-ui-sm);
+  --text-ui-sm--line-height: var(--t-leading-ui-sm);
+  --text-ui: var(--t-size-ui);
+  --text-ui--line-height: var(--t-leading-ui);
+  --text-body: var(--t-size-body);
+  --text-body--line-height: var(--t-leading-body);
+  --text-h3: var(--t-size-h3);
+  --text-h3--line-height: var(--t-leading-h3);
+  --text-h2: var(--t-size-h2);
+  --text-h2--line-height: var(--t-leading-h2);
+
+  /* shadcn 组件源码里的 text-xs / text-sm / text-base 落在 Tenon 的档位上 */
+  --text-xs: var(--t-size-micro);
+  --text-xs--line-height: var(--t-leading-micro);
+  --text-sm: var(--t-size-ui);
+  --text-sm--line-height: var(--t-leading-ui);
+  --text-base: var(--t-size-body);
+  --text-base--line-height: var(--t-leading-body);
+
+  /* ---------- 节奏 ---------- */
+  --ease-snap: var(--t-ease-snap);
+  --ease-out: var(--t-ease-out);
+  --ease-in-out: var(--t-ease-in-out);
+  --ease-overshoot: var(--t-ease-overshoot);
+
+  /* ---------- 阴影（Tailwind 默认阴影写死 rgb(0 0 0 /…)，换成 alpha 令牌） ---------- */
+  --shadow-xs: 0 1px 2px 0 var(--t-alpha-1);
+  --shadow-sm: 0 1px 3px 0 var(--t-alpha-2);
+  --shadow-md: 0 4px 12px -2px var(--t-alpha-2);
+  --shadow-lg: 0 10px 24px -4px var(--t-alpha-3);
+}
+
+/* h-control 与 z 没有 Tailwind 命名空间，用 Tenon 自己的工具类补 */
+@utility ctl-h-inline {
+  height: var(--t-h-control-inline);
+}
+@utility ctl-h-nested {
+  height: var(--t-h-control-nested);
+}
+@utility ctl-h-compact {
+  height: var(--t-h-control-compact);
+}
+@utility ctl-h {
+  height: var(--t-h-control);
+}
+@utility ctl-h-lg {
+  height: var(--t-h-control-lg);
+}
+
+/* spec「国际化」：<html lang> 跟界面语言走。CJK 字面在同一 font-weight 下比拉丁
+   视觉更重，zh 下把三档非正文字重各降一档——值仍是 tokens.md weight 表里的那四档，
+   只是整体下移一格；字族不换、不引入任何字体文件。
+   data-lang 是给 Playwright 双语言回归（验收 12）用的等价钩子。
+   注意：切换 lang 之后必须跨一个任务再读 getComputedStyle，同一任务内读到的是旧值。 */
+html[lang^='zh'],
+html[data-lang='zh'] {
+  --t-weight-medium: 400;
+  --t-weight-semibold: 500;
+  --t-weight-bold: 600;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply font-sans;
+    color-scheme: light dark;
+  }
+  body {
+    @apply bg-background text-foreground text-ui;
+  }
+}

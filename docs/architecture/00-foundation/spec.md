@@ -1,9 +1,9 @@
 # 00 · 地基（Foundation）
 
-Status: ready
+Status: implemented
 Phase: 0 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
-Revisions: 2026-09-17 新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节
+Revisions: 2026-09-17 验收 3 的措辞由「完成 MCP v2 协议协商」改为「用 MCP v2 SDK 的客户端与它完成协议协商」——参考服务器 server-everything 2026.8.31 基于 sdk ^1.30（v1 协议），v2 客户端走默认的 legacy 握手，能观察到的只有这一点（owner 确认）；同日新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节
 
 ## 背景与问题
 
@@ -220,7 +220,7 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 
 1. `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test` 在干净 clone 上全过。
 2. 在 `packages/kernel` 任意文件加一行 `import 'electron'`，`pnpm lint` 失败并指出规则名。
-3. `pnpm --filter @tenon-app/kernel test` 里有一个测试：用内存版 `HostAdapter` 假实现，kernel 能 spawn `server-everything`（通过 `HostProcess.spawn`），完成 MCP v2 协议协商，`tools/list` 返回非空，调用 `echo` 工具得到回显。
+3. `pnpm --filter @tenon-app/kernel test` 里有一个测试：用内存版 `HostAdapter` 假实现，kernel 能 spawn `server-everything`（通过 `HostProcess.spawn`），用 MCP v2 SDK 的客户端（`@modelcontextprotocol/client@2.0.0`）与它完成协议协商，`tools/list` 返回非空，调用 `echo` 工具得到回显。
 4. desktop 启动后能向一个 Anthropic-compatible endpoint 发一条消息并流式渲染回复；中途点停止能中断流（`AbortSignal` 传到 fetch）。
 5. 两个 profile（不同 `tenantId`）分别写入 `config.json`，路径不同，互不可见。
 6. renderer 发送一条不符合 schema 的 IPC 消息，main 返回结构化校验错误，进程不崩。

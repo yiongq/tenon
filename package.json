@@ -1,0 +1,41 @@
+{
+  "name": "tenon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "if git rev-parse --git-dir > /dev/null 2>&1; then lefthook install; fi",
+    "build": "pnpm -r run build",
+    "lint": "oxlint --disable-nested-config --format=stylish --max-warnings=0 && pnpm i18n:check && pnpm colors:check && pnpm copy:check",
+    "lint:fix": "oxlint --disable-nested-config --format=stylish --fix",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check --disable-nested-config .",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm --filter @tenon-app/desktop test:e2e",
+    "i18n:check": "node scripts/i18n-check.mjs apps/desktop/src/i18n/locales",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "hooks": "lefthook run pre-commit --force",
+    "colors:check": "node scripts/check-colors.mjs",
+    "dev": "pnpm --filter @tenon-app/desktop dev",
+    "copy:check": "node scripts/check-copy.mjs",
+    "test:live": "pnpm build && pnpm --filter @tenon-app/desktop test:live"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.2",
+    "@commitlint/config-conventional": "21.2.2",
+    "@types/node": "catalog:",
+    "lefthook": "2.1.14",
+    "oxfmt": "0.68.0",
+    "oxlint": "1.83.0",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.12",
+    "pnpm": ">=10.30"
+  },
+  "packageManager": "pnpm@10.30.2"
+}

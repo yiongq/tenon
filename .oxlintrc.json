@@ -1,0 +1,240 @@
+// One config for the whole monorepo. Never add a nested .oxlintrc.json: a nested file
+// REPLACES this one for its subtree and its override globs re-root there, which would
+// silently switch the kernel boundary gate off. Every lint script therefore passes
+// --disable-nested-config.
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise", "react", "jsx-a11y"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "env": {
+    "builtin": true
+  },
+  "settings": {
+    "react": {
+      "version": "19.3.0"
+    }
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/out/**",
+    "**/build/**",
+    "**/.vite/**",
+    "**/coverage/**",
+    "**/playwright-report/**",
+    "**/test-results/**",
+    "**/*.d.ts"
+  ],
+  "rules": {
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-console": ["error", { "allow": ["warn", "error"] }],
+    "no-debugger": "error",
+    "import/no-cycle": "error",
+    "import/no-duplicates": "error",
+    "import/no-self-import": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/consistent-type-imports": ["error", { "prefer": "type-imports" }],
+    "unicorn/prefer-node-protocol": "error",
+    // CSS entry points and the zod CSP shim exist only for their side effects.
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css", "**/zod-csp"] }],
+    // React 19 automatic runtime. react-in-jsx-scope lives in `suspicious` (enabled above),
+    // so this "off" is load-bearing.
+    "react/react-in-jsx-scope": "off",
+    // `suspicious` also enables the React-Compiler twin of react-hooks/exhaustive-deps;
+    // keep the classic rule from `correctness` and silence the duplicate.
+    "react/exhaustive-effect-dependencies": "off",
+    // `.then(() => { sideEffect() })` is the normal shape for fire-and-forget promise chains.
+    "promise/always-return": "off"
+  },
+  "overrides": [
+    {
+      // AGENTS.md hard rule, part 1: no electron or keychain anywhere in kernel/contracts,
+      // tests included (acceptance 2: `import 'electron'` in ANY kernel file fails lint).
+      "files": ["packages/kernel/**/*.ts", "packages/contracts/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "message": "kernel/contracts never import electron; go through HostAdapter."
+              },
+              { "name": "electron/main", "message": "kernel/contracts never import electron." },
+              { "name": "electron/renderer", "message": "kernel/contracts never import electron." },
+              { "name": "keytar", "message": "secrets go through HostAdapter.secrets." },
+              { "name": "@napi-rs/keyring", "message": "secrets go through HostAdapter.secrets." }
+            ],
+            "patterns": [
+              {
+                "group": ["electron/*", "keytar/*"],
+                "message": "kernel/contracts never import electron/keytar subpaths."
+              },
+              {
+                "group": ["**/apps/**", "@tenon-app/desktop", "@tenon-app/server"],
+                "message": "dependencies point inward only: apps -> contracts -> kernel."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Part 2: shipped kernel/contracts code is host-independent. No Node built-ins, no
+      // filesystem, no child processes, no DOM globals (lib.dom is on only for Web Streams
+      // types), no reaching into apps/*.
+      "files": ["packages/kernel/src/**/*.ts", "packages/contracts/src/**/*.ts"],
+      "rules": {
+        "import/no-nodejs-modules": "error",
+        "no-restricted-globals": [
+          "error",
+          {
+            "name": "document",
+            "message": "kernel/contracts are host-independent: no DOM globals."
+          },
+          { "name": "window", "message": "kernel/contracts are host-independent: no DOM globals." },
+          {
+            "name": "navigator",
+            "message": "kernel/contracts are host-independent: no DOM globals."
+          },
+          {
+            "name": "localStorage",
+            "message": "kernel/contracts are host-independent: no DOM globals."
+          },
+          {
+            "name": "sessionStorage",
+            "message": "kernel/contracts are host-independent: no DOM globals."
+          },
+          {
+            "name": "fetch",
+            "message": "network access is a host capability; phase 1 decides its HostAdapter shape."
+          },
+          { "name": "setTimeout", "message": "time goes through HostClock." },
+          { "name": "setInterval", "message": "time goes through HostClock." }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "message": "kernel/contracts never import electron; go through HostAdapter."
+              },
+              { "name": "electron/main", "message": "kernel/contracts never import electron." },
+              { "name": "electron/renderer", "message": "kernel/contracts never import electron." },
+              { "name": "keytar", "message": "secrets go through HostAdapter.secrets." },
+              { "name": "@napi-rs/keyring", "message": "secrets go through HostAdapter.secrets." },
+              { "name": "fs", "message": "files go through HostAdapter.fs." },
+              { "name": "node:fs", "message": "files go through HostAdapter.fs." },
+              { "name": "fs/promises", "message": "files go through HostAdapter.fs." },
+              { "name": "node:fs/promises", "message": "files go through HostAdapter.fs." },
+              { "name": "child_process", "message": "processes go through HostAdapter.process." },
+              {
+                "name": "node:child_process",
+                "message": "processes go through HostAdapter.process."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["electron/*", "keytar/*"],
+                "message": "kernel/contracts never import electron/keytar subpaths."
+              },
+              {
+                "group": ["**/apps/**", "@tenon-app/desktop", "@tenon-app/server"],
+                "message": "dependencies point inward only: apps -> contracts -> kernel."
+              },
+              {
+                "group": ["../../*", "../../../*", "../../../../*"],
+                "message": "do not escape the package with relative imports; import the workspace package by name."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Part 3: kernel is the innermost package; contracts depends on kernel, never the reverse.
+      "files": ["packages/kernel/src/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "electron",
+                "message": "kernel never imports electron; go through HostAdapter."
+              },
+              { "name": "keytar", "message": "secrets go through HostAdapter.secrets." },
+              { "name": "@napi-rs/keyring", "message": "secrets go through HostAdapter.secrets." },
+              { "name": "fs", "message": "files go through HostAdapter.fs." },
+              { "name": "node:fs", "message": "files go through HostAdapter.fs." },
+              { "name": "fs/promises", "message": "files go through HostAdapter.fs." },
+              { "name": "node:fs/promises", "message": "files go through HostAdapter.fs." },
+              { "name": "child_process", "message": "processes go through HostAdapter.process." },
+              {
+                "name": "node:child_process",
+                "message": "processes go through HostAdapter.process."
+              },
+              {
+                "name": "@tenon-app/contracts",
+                "message": "kernel is the innermost package; contracts depends on kernel, never the reverse."
+              }
+            ],
+            "patterns": [
+              {
+                "group": ["electron/*", "keytar/*"],
+                "message": "kernel never imports electron/keytar subpaths."
+              },
+              {
+                "group": ["**/apps/**", "@tenon-app/desktop", "@tenon-app/server"],
+                "message": "dependencies point inward only."
+              },
+              {
+                "group": ["../../*", "../../../*", "../../../../*"],
+                "message": "do not escape the package with relative imports."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // Sandboxed renderer: reach main only through the preload bridge.
+      "files": ["apps/desktop/src/renderer/**/*.ts", "apps/desktop/src/renderer/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["electron", "electron/*", "node:*", "keytar", "@napi-rs/keyring"],
+                "message": "the renderer is sandboxed: talk to main through the preload bridge."
+              }
+            ]
+          }
+        ],
+        // i18n gate: user-visible copy comes from the catalogue via t(), never JSX literals.
+        "react/jsx-no-literals": ["error", { "noStrings": true, "ignoreProps": true }]
+      }
+    },
+    {
+      // Repo scripts are CLIs: stdout is their output.
+      "files": ["scripts/**/*.mjs"],
+      "rules": {
+        "no-console": "off"
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "plugins": ["vitest"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "no-console": "off"
+      }
+    }
+  ]
+}

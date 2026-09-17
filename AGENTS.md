@@ -27,7 +27,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 
 ## Development
 
-- Package manager: pnpm. Node >= 20.11 (sandbox-runtime requirement).
+- Package manager: pnpm 10. Node >= 22.12 (the floor of vitest 5, Electron 44 and commitlint 21; sandbox-runtime alone would accept 20.11). `.nvmrc` pins the version CI uses.
 - Layout: `packages/kernel` (agent loop, provider, tape, permission broker, MCP host), `packages/contracts` (zod schemas for IPC/bridge), `apps/desktop` (Electron host), `apps/server` (multi-tenant cloud host, later phases), `examples/plugins`.
 - Before handoff run: format, lint, typecheck, and the smallest relevant test suite. The shared gate is git hooks (lefthook: pre-commit runs format+lint+typecheck, commit-msg runs commitlint) plus CI — they apply to every agent and every human. Claude Code's `.claude/settings.json` hooks are an extra layer, not the only one. Never bypass hooks (`--no-verify`).
 - Tests are regression protection, not scaffolding. Commit only durable tests for user-visible behavior, documented contracts, persistence/migration, concurrency, recovery and security boundaries.
