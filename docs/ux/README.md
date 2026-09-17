@@ -23,5 +23,6 @@ Tenon 的交互行为对齐 Claude Desktop（信息架构、状态机、快捷�
 - `tokens.md` — 令牌的键名与分层（surface / text / border / fill / alpha / radius / h-control / weight / ease / dur / z，亮暗两套，壳层背景独立一层）以及 Tenon 自己的值。阶段 0。
 - `components.md` — 每个界面到 shadcn/ui 组件的映射表。阶段 0。
 - `shell.md` / `composer.md` / `message-stream.md` / `pages.md` — 各界面的状态机与验收点，在对应阶段从私有规格派生，去掉一切第三方标识。
+- `parity-audit-2026-09-12.md`（已有）— UX 画板与私有 fixture 的结构对照、2026-09-13 简化决定、09-16 录屏对齐、09-17 Research 排期。画板本身在 owner 的 Claude Design 画布里，不入库；Tenon 与 Claude 相同的页面以 fixture 为规格，画板只画 Tenon 不同或特有的部分。
 
 派生规则：**行为可以一致，标识必须自己的。** 写"侧栏折叠后左上角有悬停触发区，悬停浮出临时侧栏，移开即收"是规格；写它的 class 名或颜色值不是。

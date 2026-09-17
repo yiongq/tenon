@@ -17,7 +17,7 @@
   - [ ] 10.3 字体令牌两套值：界面无衬线、正文衬线，CJK 回落系统无衬线；zh-CN 下「谁在说话」由正文 16/28 vs 界面 14/20 承担；`<html lang>` 跟界面语言
   - [ ] 10.4 Composer：IME 组合中 Enter 不发送；时间 / 数字 / 排序全走 Intl
   - [ ] 10.5 Playwright：`zh-CN` / `en` 双语言壳层截图 + 无换行断言（验收 12）
-  - [ ] 10.6 界面 → shadcn/ui 组件映射表 `docs/ux/component-map.md`：按 `../tenon-uxkit/interactions.md` 的界面清单逐条对应（§8.5 要求，只写组件名不抄 class）
+  - [ ] 10.6 界面 → shadcn/ui 组件映射表 `docs/ux/components.md`：按 `../tenon-uxkit/interactions.md` 的界面清单逐条对应（§8.5 要求，只写组件名不抄 class）
   - [ ] 10.7 令牌值替换表 `docs/ux/tokens.md`：键名按 §8.5 分层，值为 Tenon 自己的临时皮肤，不含任何 uxkit 值（§8.5 要求）
 - [ ] 11. `.claude/settings.json`：Stop hook 跑 `pnpm lint && pnpm typecheck`（Claude Code 专属的附加层；共享门禁是第 1 步的 lefthook）
 - [ ] 12. `.github/workflows/ci.yml`：PR 触发 install / build / lint / typecheck / test
