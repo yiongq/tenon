@@ -12,8 +12,8 @@
 - [x] 8. Electron 壳：窗口 webPreferences 按 spec；preload 只暴露 contracts 通道；profile 目录布局
 - [x] 9. 最小 Anthropic 流式调用（不抽象），`AbortSignal` 贯穿到 fetch
 - [ ] 10. UI：令牌（键名按 §8.5，值按 §8.1）、基础组件、壳层、Composer 最小态、消息流（block 注册表 + `text`）
-  - [ ] 10.1 `apps/desktop/src/i18n/`：i18next + i18next-icu，主进程与 renderer 各一个实例共用 `locales/zh-CN`、`locales/en`；系统语言解析 + `config.json` `locale` 覆盖；IPC 事件 `config.locale`；账号菜单「语言」项
-  - [ ] 10.2 `pnpm i18n:check`（两份目录键集一致）挂进 `pnpm lint`；JSX 字面量文案 lint
+  - [x] 10.1 `apps/desktop/src/i18n/`：i18next + i18next-icu，主进程与 renderer 各一个实例共用 `locales/zh-CN`、`locales/en`；系统语言解析 + `config.json` `locale` 覆盖；IPC 事件 `config.locale`；账号菜单「语言」项
+  - [x] 10.2 `pnpm i18n:check`（两份目录键集一致）挂进 `pnpm lint`；JSX 字面量文案 lint
   - [ ] 10.3 字体令牌两套值：界面无衬线、正文衬线，CJK 回落系统无衬线；zh-CN 下「谁在说话」由正文 16/28 vs 界面 14/20 承担；`<html lang>` 跟界面语言
   - [ ] 10.4 Composer：IME 组合中 Enter 不发送；时间 / 数字 / 排序全走 Intl
   - [ ] 10.5 Playwright：`zh-CN` / `en` 双语言壳层截图 + 无换行断言（验收 12）
@@ -96,7 +96,9 @@
 - **第 9 步决定**：`HostAdapter` 没有网络成员，阶段 0 的 Anthropic 流式调用放 `apps/desktop` 主进程，不进 kernel；用官方 `@anthropic-ai/sdk`（0.126.0）而不是手写 fetch——`baseURL` 可配以满足「Anthropic-compatible endpoint」，`RequestOptions.signal` / `MessageStream.abort()` 已核实能贯穿到 fetch。Provider 层形状仍按 spec 留给阶段 1。
 - **CI**：`.github/workflows/ci.yml` 已写但只在 PR 上才第一次真跑；`ci-ok` 是将来 branch protection 要 require 的唯一 check。actions 版本（checkout@v7 / pnpm/action-setup@v6 / setup-node@v7 / cache@v6 / upload-artifact@v7）是 agent 实测查到的，如 PR 上报错先查这些。
 - 第 5 / 6 / 8 / 9 步已落并提交（`9252736`、`ad8c221`）：desktop `host/{process,secrets,confirm,index}.ts`；kernel `mcp/{stdio-transport,connection}.ts`（stderr 必须排水，否则子进程会被堵死；close 时两路 reader 都 cancel，避免孙进程继承的管道拖住）；contracts `registry.ts`（`ROUTE_CHANNELS` / `EVENT_CHANNELS`），preload 只转发表内通道；main 装配 host、注册 `config.*` 与 `chat.*` 路由；`chat.ts` 用 `@anthropic-ai/sdk` 0.126.0，模型默认 `claude-opus-5`（`TENON_MODEL` 可覆盖），API key 先查钥匙串 `keyFor(identity,'provider','anthropic','apiKey')` 再回落 SDK 自己的环境变量；阶段 0 没有设置 UI，验收 4 靠 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量。
-- 下一步：第 10 步（10.1 i18n → 10.2 lint → 令牌 / 基础组件 / 壳层 / Composer / 消息流 → 10.5 Playwright）→ 第 14 步逐条验收。
+- 10.1 / 10.2 已落（`3554514`）：`apps/desktop/src/i18n/{resources,create-instance,resolve-locale}.ts` + `locales/{en,zh-CN}/{common,menu}.json`（静态打包进两个进程，各自 `createInstance()`）；主进程 `locale.ts` 解析一次并广播 `config.locale`，`menu.ts` 按目录重建应用菜单，窗口标题同步；renderer 通过 `additionalArguments: --tenon-locale=` 在首帧前拿到语言，再跟随事件；`TENON_LOCALE` 环境变量可覆盖系统语言（测试用）。oxlint renderer 覆盖里开了 `react/jsx-no-literals`。
+- 已验证的验收（2026-09-17）：1（干净 clone 到草稿目录，五条命令全过，hooks 随 install 装上）、2、3、4 的机制（本机没有 Anthropic 凭据，用 `test/support/fake-anthropic.ts` 假 SSE 端点：流式增量、`chat.stop` 后服务端看到连接关闭、401 → `auth` 代码；真实端点需 owner 设 `ANTHROPIC_API_KEY`）、5、6、7（lefthook 与 commitlint 都实际拦过提交）、8（尚需最终 `git log` 复核）、10；9 的语言解析与菜单/标题切换已由 e2e 覆盖，账号菜单切换与重启保持等壳层 UI 落地后补；11、12 等 Composer / 壳层。
+- 下一步：第 10 步余下部分（令牌 CSS / 基础组件 / 壳层 / Composer / 消息流 / 10.3–10.5）→ 第 14 步逐条验收 → 15 / 16。
 
 ## Open
 
