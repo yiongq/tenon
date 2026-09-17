@@ -4,6 +4,7 @@ Status: draft
 Phase: 1 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，按 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」的 amend 规则（2026-09-17 owner 确认），全文见「对 00-foundation 的修补」
+Revisions: 2026-09-17 首版草稿经一轮五角度对抗审查与一轮执行复核后就地修订（尚无代码依赖）。主要改动：`incarnationId` 由 kernel 铸造并随批传入（原为 store 自铸）；`session_projection` 去掉 `message_count`（逐条标量 reducer 算不出累计值）；`tape_entry_by_source` 末列由 `source_seq` 改为 `entry_id`（原列序下恢复读取要临时排序）；补齐 `Usage` / `ToolSpec` / `MessageStatus`；凭据规则按线协议分开；重放增加 `atEntryId`；失败轮次不写 assistant 消息；amend 机制由提议改为记录
 
 ## 背景与问题
 
@@ -79,7 +80,7 @@ scripts/check-tape-schema.mjs                              # 挂进 pnpm lint
 - `better-sqlite3` 是 `apps/desktop` 的依赖，**永不**出现在 `packages/kernel`。`@anthropic-ai/sdk` 从 `apps/desktop` 移到 `packages/kernel`，`openai` 是 kernel 的新依赖；两者都钉精确版本。
 - `@tenon-app/kernel/testing` 是 kernel `package.json` 里新增的 `./testing` 子路径，与 `.` 同形（`development` 指 `src/testing/index.ts`，`types` / `import` 指 `dist`）。它住在 `src/` 之下，因此受 kernel 的 lint 闸约束：`fakeNetwork` 不用定时器，「慢流」由调用方推进或经传入的 `HostClock`。
 - **id 从哪来**：`runId`、`messageId`、`incarnationId` 都是 canonical UUID，一律由构造 kernel 服务时传入的 `ids: { uuid(): string }` 提供（`createSessionService({ host, tape, ids })`）。desktop 传 `crypto.randomUUID()`，测试传确定性的计数器——否则夹具与 conformance 套不可复现。kernel 自己不取随机数；`ids` 刻意不进 `HostAdapter`。
-- `TapeStore` **不是** `HostAdapter` 的成员。`HostAdapter` 装的是运行环境级的能力（文件、进程、网络）；store 是构造 kernel 服务时传入的端口（`createSessionService({ host, tape })`），因为同一个进程里要同时存在多个 store（普通会话用 SQLite，无痕会话用内存），一个 `host.tape` 成员表达不了。
+- `TapeStore` **不是** `HostAdapter` 的成员。`HostAdapter` 装的是运行环境级的能力（文件、进程、网络）；store 是构造 kernel 服务时传入的端口（同一个 `createSessionService({ host, tape, ids })`），因为同一个进程里要同时存在多个 store（普通会话用 SQLite，无痕会话用内存），一个 `host.tape` 成员表达不了。
 
 ## 对 00-foundation 的修补：`HostAdapter.network`
 
@@ -385,13 +386,13 @@ export interface TapeEntry {
 | kind | name | source | provenance_key | payload |
 |---|---|---|---|---|
 | `anchor` | `session/start` | `session` / sessionId / 0 | `session:v1:start:<incarnationId>` | `{ incarnationId, forkedFrom?: { sessionId, incarnationId, entryId, entryHash } }`（带 `entryHash`：血缘要能对着链验，而不只是一个裸指针；父会话被删之后它仍然成立） |
-| `message` | `message/user`、`message/assistant` | `message` / messageId / revision | `message:v1:<messageId>:<revision>` | `{ messageId, revision, role, content: ContentBlock[], runId?, status: MessageStatus }` |
+| `message` | `message/user`、`message/assistant` | `message` / messageId / revision | `message:v1:<messageId>:<revision>` | `{ messageId, revision, role, content: ContentBlock[], status: MessageStatus }`，`message/assistant` 另带 `runId` |
 | `event` | `message/retracted` | `message` / messageId / null | `message:v1:<messageId>:retracted` | `{ messageId, reason }` |
 | `event` | `session/model_selected` | `session` / sessionId / null | `session:v1:model:<runId>` | `{ providerId, modelId }` |
-| `event` | `provider/attempt_completed` | `runtime_event` / runId / requestSeq | `provider:v1:attempt:<runId>:<requestSeq>:<physicalAttempt>` | `{ providerId, modelId, contextAtEntryId, promptHash, toolDefinitionsHash, thinkingDecisions, usage, stop \| error }` |
+| `event` | `provider/attempt_completed` | `runtime_event` / runId / requestSeq | `provider:v1:attempt:<runId>:<requestSeq>:<physicalAttempt>` | `{ providerId, modelId, contextAtEntryId, request: { systemHash, maxTokens, temperature?, thinking? }, promptHash, toolDefinitionsHash, thinkingDecisions, usage, stop \| error }` |
 
-- **谁在什么时候写**：每个 `message/*` 事实只在终态写一次。`MessageStatus = 'complete' | 'aborted' | 'error'`，只增词表，新值不改变既有值的含义；阶段 1 只写前两个。`session/model_selected` 在一次 run 开始时写，记录该 run 实际使用的 provider / model——设置卡里的 `provider.select` 只改 `config.json`，不写 Tape 事实；将来一次 run 内换模型，键补一段 `:<requestSeq>`。`provider/attempt_completed` 的 `contextAtEntryId` 是组装这次请求的上下文时钉住的快照上界，`usage` 是 `final: true` 的那一条。
-- **重试与失败的表示**：`chat.send` 的 schema 不变，`messageId` 由主进程分配——折叠后的最后一条若是同文本、后面还没有 assistant 回复的 user 消息，就复用它的 `messageId` 与 `revision`（这次 append 因而是幂等的空操作），否则新 `messageId`、`revision: 0`。同一 `messageId` 的第二次写入只发生在编辑重发，且 `revision` 必须 +1。**失败的一轮不写 assistant 消息**：失败的证据是 `provider/attempt_completed` 的 `error`；只有中止且已收到部分文本时才写 `message/assistant`（`status: 'aborted'`）。内容为空的 assistant 消息永不写入，重放因此永不产出空的 assistant 轮次（Anthropic 会以 400 拒绝它）。
+- **谁在什么时候写**：`message/user` 在跑 run **之前**写；`message/assistant` 只在终态写一次。`MessageStatus = 'complete' | 'aborted' | 'error'`，只增词表，新值不改变既有值的含义；阶段 1 只写前两个。`session/model_selected` 在一次 run 开始时写，记录该 run 实际使用的 provider / model——设置卡里的 `provider.select` 只改 `config.json`，不写 Tape 事实；将来一次 run 内换模型，键补一段 `:<requestSeq>`。`provider/attempt_completed` 的 `contextAtEntryId` 是组装这次请求的上下文时钉住的快照上界（含），`request` 是消息之外决定请求体的那几个参数的快照——`maxTokens` 可能来自 Tape 上没有的环境变量，不记下来这条记录以后就无法复核；`usage` 是 `final: true` 的那一条。
+- **重试与失败的表示**：`chat.send` 的 schema 不变，`messageId` 由主进程分配——折叠后的最后一条若是同文本、后面还没有 assistant 回复的 user 消息，就复用它的 `messageId` 与 `revision`（这次 append 因而是幂等的空操作），否则新 `messageId`、`revision: 0`。为了让这条成立，`message/user` 的 payload 与 meta 不得含任何随 run 变化的字段（`runId` 只出现在 `message/assistant` 上）——否则重发就成了「同键不同内容」，抛的是永不被吞掉的 `TapeProvenanceConflictError`。同一 `messageId` 的第二次写入只发生在编辑重发，且 `revision` 必须 +1。**失败的一轮不写 assistant 消息**：失败的证据是 `provider/attempt_completed` 的 `error`；只有中止且已收到部分文本时才写 `message/assistant`（`status: 'aborted'`）。内容为空的 assistant 消息永不写入，重放因此永不产出空的 assistant 轮次（Anthropic 会以 400 拒绝它）。
 - **工具事实的身份现在就定，形状留给阶段 2**：阶段 2 的 `tool_call` / `tool_result` 事实同样用 `sourceType = 'runtime_event'`、`sourceId = runId`、`sourceSeq = requestSeq`，`providerToolCallId` 与阶段 4 的 `childOrdinal` 放在 payload 的固定路径，配对键是 `(runId, requestSeq, providerToolCallId)`。`readBySource` 因此取得到「一个 runId 下按身份列归组的全部事实」。`TapeSourceType` 里的 `tool_call` / `tool_result` 留给「以某次工具调用本身为主语」的事实（`sourceId = providerToolCallId`）。对 provider 上下文，工具事实是权威；对渲染，message 的内容块是权威。它们的 name、payload 字段与折叠规则由阶段 2 定，阶段 1 的折叠不处理这两个 kind。
 - **`provenance_key` 的语法**：`<namespace>:v<n>:<稳定身份>`，不含进程内计数器、时间戳、随机数。kernel 提供 builder 与校验器，store 拒收不合语法的键。这样同一逻辑事实经 6b 的桥「至少一次」重放时键不变，幂等自然成立。代价要说出口：合法地会重复出现的事实必须自己在键里放区分量，否则第二次静默返回 `created: false`。
 - **`SideEffectClass = 'read' | 'write' | 'external' | 'blocked'`**：词表现在定，位置固定为 `execution/tool_outcome` 的 `payload.effect`，阶段 1 无人写入。
@@ -467,6 +468,8 @@ export interface TapeStore {
   /**
    * 物理重置，一个事务：删掉该 session 的全部事实与投影，head 换成新 incarnation
    * （last_entry_id 不减，last_hash 置 NULL，entry_count 归 0），再写入 kernel 拼好的新 session/start。
+   * 本租户下没有这个 session 的 head 行时什么都不写，抛 TapeSessionNotFoundError——
+   * 重置不能凭空造出一个会话。
    */
   resetSession(q: { sessionId: string; incarnationId: string; start: NewEntry }): Promise<AppendResult>
   /** 物理删除：事实、head、投影、游标。 */
@@ -486,7 +489,7 @@ export interface SessionHead {
 
 端口暴露的每个过滤条件都有索引，每个索引都有端口方法用它：`readRange` 按单个 `kind` 过滤走 `tape_entry_by_kind`，多个 kind 走主键的区间扫描；`readBySource` 走 `tape_entry_by_source`。按 `name` 过滤阶段 1 不提供，所以也不建那个索引。
 
-错误（kernel 定义，host 无关）：`TapeProvenanceConflictError`（同键、**不同**内容——不是重试，是 bug 或损坏，循环永不吞掉它）、`TapeTenantMismatchError`、`TapeStaleIncarnationError`（调用方带的 incarnation 已不是 head 上当前的那个）、`TapeIntegerRangeError`、`TapeBusyError`（写锁等到超时；**重试归调用方**，做法是整个 `append` 重来，store 不自动重试）、`TapeReadLimitError`。
+错误（kernel 定义，host 无关）：`TapeProvenanceConflictError`（同键、**不同**内容——不是重试，是 bug 或损坏，循环永不吞掉它）、`TapeTenantMismatchError`、`TapeStaleIncarnationError`（调用方带的 incarnation 已不是 head 上当前的那个）、`TapeIntegerRangeError`、`TapeSessionNotFoundError`、`TapeBusyError`（写锁等到超时；**重试归调用方**，做法是整个 `append` 重来，store 不自动重试）、`TapeReadLimitError`。
 
 端口合同里必须写明的几条：
 
@@ -514,7 +517,7 @@ entry_hash   = SHA-256( field("tenon.tape.v" + hash_ver)
 - **长度前缀拼接**，不是分隔符拼接，也不依赖任何 JSON 转义规则：两条字段内容不同的 entry 不可能拼出同一串字节，任何语言照这几行都能复算。开头的域分隔串带着 `hash_ver`。
 - 原像覆盖**每一个**有语义的列，包括三个身份列与 `incarnation_id`：少了身份列，一条改写 `source_id` 的裸 `UPDATE` 之后链照样验得过；少了 `incarnation_id`，同一 session 的两代就哈希不可分。由此得出一条规矩：**以后往 payload 里加字段随便加，往 `tape_entry` 加有语义的列则要升 `hash_ver`**——所以本 spec 不为阶段 4 的字段加列（R5）。
 - `payload_json`、`meta_json` 是**存进去的那串文本本身**：kernel 用 `canonicalJson`（键按字典序、无多余空白、拒绝 `NaN` / `Infinity` / `undefined` / `bigint`）序列化一次，store 原样落盘，校验时对存储字节做哈希，永不重新序列化——JSON 规范化因此不在信任面里。所以 Postgres 上这两列也必须是 `TEXT`，不是 `JSONB`（JSONB 会重排键）。
-- **内容哈希单独成列**，entry 哈希只绑它的摘要。它在阶段 1 就有读者：幂等冲突的判定比的就是它。它同时是 R2 与 R3 的调和点：将来要对单条事实做内容擦除（合规删除、误贴的密钥）时，可以把 `payload_json` / `meta_json` 换成擦除标记而保留 `content_hash`，链照样可验——行不删，链不断。阶段 1 不实现擦除，只让配方不挡路；6b 真做擦除时还要把 `BEFORE UPDATE` 触发器改成带闸的，那是一次无数据风险的触发器迁移，阶段 1 的 `UPDATE` 仍然无条件中止。
+- **内容哈希单独成列**，entry 哈希只绑它的摘要。它在阶段 1 就有读者：幂等冲突的判定比的就是它。它同时是 R2 与 R3 的调和点：将来要对单条事实做内容擦除（合规删除、误贴的密钥）时，可以把 `payload_json` / `meta_json` 换成擦除标记而保留 `content_hash`：`entry_hash` 的链接仍然可验，行不删，链不断。阶段 1 的 `verifyChain` 从存储的 `payload_json` / `meta_json` **重算** `content_hash`（否则验收 12 的字节翻转永远测不出来），所以它会把一条被擦除的行报成坏链。6b 真做擦除时要补两样：一个显式的「已擦除」标记，让校验器对这种行改用 `content_hash` 列；以及把 `BEFORE UPDATE` 触发器改成带闸的。两样都不用升 `hash_ver`、不动已有数据——阶段 1 保证的是这个，不是「擦除免费」。
 - **谁来算**：配方是 kernel 的一个同步纯函数 `hashEntry(fields)`；store 在 append 事务里调用它，因为只有那里才知道 `entry_id` 与 `prev_hash`。各 host 各写一份，SQLite 与 Postgres 的链就会分叉，本地 → 云端迁移就断了。
 - **SHA-256 用 `@noble/hashes`**（MIT、零依赖、经审计的纯 JS、**同步**），这是 kernel 的新依赖。`node:crypto` 在 kernel 里被 lint 禁用；WebCrypto 的 `digest()` 是异步的，而哈希必须在 better-sqlite3 的同步事务**里面**算。`apps/desktop` 的测试里放一条与 `node:crypto` 的逐字节对拍。
 - `hash_ver` 是真的列，能从行上读出来：以后配方要变，是新行用新版本、校验器按行选配方，不是静默断链，也不用两种配方都试一遍。
@@ -692,7 +695,7 @@ const envelope = z.object({
 ## desktop 接线
 
 - `chat.ts` 删掉内存里的 `history` Map 与直接构造的 SDK 客户端，改为：`ProviderRegistry` 取定义 → desktop 从 `HostAdapter.secrets`（`keyFor(identity, 'provider', <id>, <configKey>)`）读机密、从 `config.json` 读非机密 → `create()` → kernel 的 session service 写 `message/user`、跑一次 `stream`、把增量转成既有的 `chat.event`、结束时写 `message/assistant` 与 `provider/attempt_completed`。
-- 阶段 0 的行为全部保留，并改由 Tape 承载：运行在第一个 `await` 之前登记；停止后保留已收到的部分文本（`status: 'aborted'`）；失败的一轮留在记录里（`status: 'error'`）；失败后重发同样的文本是同一条 user 消息的重试而不是第二轮；终态事件发出之前先释放 in-flight。
+- 阶段 0 的行为全部保留，并改由 Tape 承载：运行在第一个 `await` 之前登记；停止后保留已收到的部分文本（`status: 'aborted'`）；失败的一轮留在记录里（user 消息还在，证据是 `provider/attempt_completed` 的 `error`，不写 assistant 消息）；失败后重发同样的文本是同一条 user 消息的重试而不是第二轮；终态事件发出之前先释放 in-flight。
 - `chat.send` / `chat.stop` / `chat.event` 的 schema 不变。`ProviderErrorCode` 到 `chat.event` 错误码的映射：`network → network`、`auth → auth`、`rate-limit | overloaded → rate-limit`、`invalid-request | context-overflow | server → provider`、其余 `unknown`。`StopReason` 到 `done.stopReason` 的映射：`end-turn | stop-sequence | tool-use → 'end-turn'`、`aborted → 'aborted'`、其余（`max-tokens`、`refusal`、`content-filter`、`pause-turn`、`context-overflow`、`unknown`）→ `'error'`；原始的 `StopReason` 记在 `provider/attempt_completed` 里。给这几种情况各自的界面文案要扩这个枚举，留给阶段 6。
 - 新 IPC（`packages/contracts/src/ipc/`）：
   - `session.latest({ limit })` → `{ sessionId, messages } | null`，返回最新的 `limit` 条；`session.messages({ sessionId, limit, afterOrderSeq?, beforeOrderSeq? })`。渲染端默认读尾部，启动时恢复最近一个会话；`chat.new` 照旧开新会话。会话列表界面不在阶段 1。
@@ -700,7 +703,7 @@ const envelope = z.object({
   - `config.json` 增加 `provider: { id: string; modelId: string }` 与 `providerConfig: Record<ProviderId, Record<string, string>>`（键名即 `ConfigKey.name`，只放 `secret: false` 的值）；`provider.configure` 对 `providerConfig[id]` 逐键合并。
 - 一张由 `ConfigKey[]` 渲染的最小设置卡（账号菜单 → 模型与密钥）：provider 选择、每个 `ConfigKey` 一个输入框（`secret` 用密码框）、模型下拉。文案全部来自 `labelKey` / `nameKey` 对应的目录键。**加一个 provider 不碰渲染端代码**，只在两份 locale 目录里加键。
 - **e2e 的机密接缝**：desktop 的 `HostSecrets` 只有真 OS keychain 一条路，而 CI 的 Linux 上没有 Secret Service，开发机上则会往登录钥匙串里写条目。`createDesktopHost` 在 `!app.isPackaged` 且 `TENON_SECRETS=memory` 时换成进程内的内存实现，与现有的 `TENON_DEV_ENV=off` 是同一类开关，由 e2e helper 设置。真 keychain 路径由手动的 `pnpm test:live` 与日常使用覆盖。
-- 开发期回落保留：keychain 里没有时，desktop（不是 kernel）读环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` 与 `TENON_MODEL`、`TENON_MAX_TOKENS`（后者覆盖 `ProviderRequest.maxTokens`），新增 `TENON_PROVIDER`、`ZHIPU_API_KEY`。`TENON_MODEL` 命中该定义的 `builtinModels` 时取那份 `ModelInfo`；未命中时 desktop 合成一份保守的（能力位全 `false`、`thinkingPreservationFormat: 'drop'`、`contextLimit` / `maxOutputTokens` 取该定义的默认值）并记一条 warn——owner 日常就是用 Anthropic 兼容端点跑一个不在内置表里的模型。`pnpm test:live` 增加一条走 `zhipu` 定义（OpenAI 兼容端点）的用例，仍然只在 `TENON_LIVE=1` 时运行。
+- 开发期回落保留：keychain 里没有时，desktop（不是 kernel）读环境变量 `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` 与 `TENON_MODEL`、`TENON_MAX_TOKENS`（后者覆盖 `ProviderRequest.maxTokens`），新增 `TENON_PROVIDER`、`ZHIPU_API_KEY`。`TENON_MODEL` 命中该定义的 `builtinModels` 时取那份 `ModelInfo`；未命中时 desktop 合成一份保守的（能力位全 `false`、`thinkingPreservationFormat: 'drop'`、`contextLimit` / `maxOutputTokens` 取该定义 `builtinModels` 里各自的最小值，`builtinModels` 为空时取 128000 / 4096）并记一条 warn——owner 日常就是用 Anthropic 兼容端点跑一个不在内置表里的模型。`pnpm test:live` 增加一条走 `zhipu` 定义（OpenAI 兼容端点）的用例，仍然只在 `TENON_LIVE=1` 时运行。
 
 ## 不变量
 
@@ -734,13 +737,13 @@ Tape：
 
 1. **第二个 provider 不改调用方。** 一个参数化测试用**同一条** kernel 调用路径依次驱动 `anthropic`、`zhipu`、`ollama` 三个定义（`fakeNetwork` 回放录制的 SSE），各自产出符合不变量 1–6 的事件序列与同形的 Tape 事实。同一个测试再在测试文件内现场注册第四个定义并走同一条路径——证明接入一个 provider 需要的只有一份定义。
 2. **`encode()` 是纯的。** 同一请求调用两次，`body` 逐字节相同、`promptHash` 与 `toolDefinitionsHash` 相同；`fakeNetwork` 记录到的调用数为 0；`thinkingDecisions` 与守卫规则表逐项一致。
-3. **从 Tape 重放能重建 provider 上下文，且与投影一致。** 对一个含 user / assistant 消息、一条修订、一条撤回、两轮对话的会话：把 `rebuildProviderContext()` 钉在每条 `provider/attempt_completed` 自己记下的 `contextAtEntryId` 上，其结果经 `encode()` 得到的 `promptHash` 等于该条记录的 `promptHash`；重放永不产出空的 assistant 轮次；`rebuildProjections()` 之后的投影表与增量写出的逐行相等。这组断言写在共享的 conformance 套里，对内存 store 与 SQLite store 各跑一遍。
-4. **另一个 profile 的数据不可见。** 两个 `tenantId` 不同的 profile 各写一个会话：`sessions.db` 路径不同，各自的 `listSessions` 只见自己的；用 A 的 identity 打开 B 的文件抛 `TapeTenantMismatchError`。更强的一条（服务端预演）：同一个库文件里放两个 `tenant_id` 的行，以 A 绑定的 store 的每个读 API（`readRange`、`readBySource`、`head`、`listSessions`、`listMessages`、`verifyChain`）对 B 的 sessionId 都返回空 / `null`，`resetSession` 与 `deleteSession` 改动 0 行。去掉代码里的租户谓词，这个测试必须变红。
+3. **从 Tape 重放能重建 provider 上下文，且与投影一致。** 对一个含 user / assistant 消息、一条修订、一条撤回、两轮对话的会话：把 `rebuildProviderContext()` 钉在每条 `provider/attempt_completed` 自己记下的 `contextAtEntryId` 上，其结果配上该条记录的 `request` 快照与夹具里固定的 system / tools，经 `encode()` 得到的 `promptHash` 等于该条记录的 `promptHash`；重放永不产出空的 assistant 轮次；`rebuildProjections()` 之后的投影表与增量写出的逐行相等。这组断言写在共享的 conformance 套里，对内存 store 与 SQLite store 各跑一遍。
+4. **另一个 profile 的数据不可见。** 两个 `tenantId` 不同的 profile 各写一个会话：`sessions.db` 路径不同，各自的 `listSessions` 只见自己的；用 A 的 identity 打开 B 的文件抛 `TapeTenantMismatchError`。更强的一条（服务端预演）：同一个库文件里放两个 `tenant_id` 的行，以 A 绑定的 store 的每个读 API（`readRange`、`readBySource`、`head`、`listSessions`、`listMessages`、`verifyChain`）对 B 的 sessionId 都返回空 / `null`，`deleteSession` 改动 0 行，`resetSession` 抛 `TapeSessionNotFoundError` 且改动 0 行。去掉代码里的租户谓词，这个测试必须变红。
 5. 重启 desktop 后，上一次会话的消息仍然显示，继续对话时模型看得到此前的上下文（Playwright：假 provider 服务器断言第二次启动后的请求体含第一次的消息）。
 6. 在设置卡里把 provider 从 `anthropic` 换成 `zhipu` 并填入 key 后，下一条消息发往 OpenAI 兼容端点并流式渲染；`provider.list` 的返回里不含任何机密值（Playwright + 假服务器，机密走 `TENON_SECRETS=memory` 接缝）。另有一个 desktop 单测遍历 `ProviderRegistry.list()`，断言每个 `nameKey` 与每个 `ConfigKey.labelKey` 在两份 locale 目录里都解析得到非空串——「加 provider 只加目录键」否则没有任何门禁守着。阶段 0 验收 4（流式 + 停止）在新路径上继续通过。
 7. **中止与终态事实。** 流式很慢的 `fakeNetwork` 下，在随机的 200 个时点中止：每次迭代器都正常结束、恰好产出一个终态事件 `stop{ reason: 'aborted' }`、累积的部分文本恰好是中止前收到的；调用前已中止的 signal 产出同样的终态且 `fakeNetwork` 调用数为 0。该请求的 `(runId, requestSeq, physicalAttempt)` 在 Tape 里恰好有一条 `provider/attempt_completed`。
 8. **kernel 的 host 无关性。** 在 `packages/kernel/src` 任意文件加一行裸 `fetch(…)`、`new WebSocket(…)`、`process.env['X']`、`import 'undici'` 或 `import 'node:https'`，`pnpm lint` 失败并点出规则名。另有一个测试用 esbuild 以 `--bundle --format=esm --platform=browser` 打包 kernel 入口并断言成功——它抓的是 lint 看不见的、经传递依赖**静态**到达 `node:` 内置模块的情况。用 `browser` 而不是 `neutral`：`neutral` 会在 Anthropic SDK 动态 import 的那几个 `node:` 模块上失败（已实测），`browser` 平台则借 SDK 顶层的旧式 `browser` 字段换成了桩。`packages/kernel/package.json` 不依赖 `better-sqlite3` 与 `electron`。
-9. **只追加由数据库强制，且 store 自己负责回滚。** 对 `tape_entry` 的裸 `UPDATE` 与未开闸的裸 `DELETE` 都报错，行还在；随后同一个 store 上的 `append` 仍然成功（触发器 `ABORT` 不会回滚外层事务，这证明 store 自己做了 `ROLLBACK`）。`resetSession` 与 `deleteSession` 经开闸行删除成功，闸的 `mode` 分别是 `reset` 与 `delete`，事务结束后开闸表为空。
+9. **只追加由数据库强制，且 store 自己负责回滚。** 对 `tape_entry` 的裸 `UPDATE` 与未开闸的裸 `DELETE` 都报错，行还在。回滚另测：让一次写在 **store 自己打开的事务里**失败（一个 `append` 批的第二条抛 `TapeProvenanceConflictError`），断言该批第一条没有落盘、head 没动，随后同一个 store 上的 `append` 仍然成功——裸语句跑在 autocommit 下，引擎会自己收尾，测不出 store 有没有 `ROLLBACK`。`resetSession` 与 `deleteSession` 经开闸行删除成功，闸的 `mode` 分别是 `reset` 与 `delete`，事务结束后开闸表为空。
 10. **`entry_id` 是因果时钟。** append 5 条、`resetSession`、再 append：新 `entryId` 大于重置前的所有 id，`incarnationId` 已变，新的 `session/start` 存在，`last_entry_id` 从未减小，带旧 `incarnationId` 的 `append` 与带旧 `incarnationId` 的分页 `readRange` 都抛 `TapeStaleIncarnationError`。两个连接按**显式编排的交错顺序**对同一 session 各 append N 条：所有 `entryId` 互不相同且严格递增、没有丢行、`verifyChain` 通过。`TapeBusyError` 是另一个单独的测试，用一把强制持有的写锁触发——不写「要么等到、要么报忙」这种对时序竞态取或的断言。
 11. **幂等回执与冲突。** 不变量 11 的两个分支各一个测试；幂等分支另断言 id 序列无空洞、投影只应用了一次（对 reducer 应用次数的 spy）；「同键同 payload、但 kind / name / source 不同」走冲突分支；同一批内重复的键整批抛错。
 12. **哈希链。** `hashEntry` 有一组固定向量把配方钉死，其中一对向量的字段在朴素拼接下会相撞、在长度前缀下不相撞。写入 1 万条后分页 `verifyChain` 报告零坏链，`session_head.last_hash` 等于最后一条的 `entry_hash`；用测试专用手段（去掉触发器）改掉某条 `payload_json` 的一个字节后，`firstBadEntryId` 正是那一条；还原该字节后再次通过。`apps/desktop` 里有一条 `@noble/hashes` 与 `node:crypto` 的对拍。
@@ -764,7 +767,7 @@ Tape：
 ## 被否决的方案
 
 - **Vercel AI SDK 作为核心抽象**：见「选型」。
-- **手写 SSE 解析与各家线协议**：SDK 已经把分帧、`retry-after`、类型化错误做对了，手写只会重新踩一遍；host 无关性这个唯一的顾虑已被实测排除。
+- **手写 SSE 解析与各家线协议**：SDK 已经把分帧、类型化错误做对了，手写只会重新踩一遍；host 无关性这个唯一的顾虑已被实测排除。
 - **`node:sqlite`**：零依赖很诱人，但测试与生产跑的是两个不同的 SQLite 引擎，且在声明的 Node 下限上还要 flag。两种绑定在探针里由同一个约 40 行的包装驱动，哪天 `node:sqlite` 稳定且两个运行时的引擎收敛了，换过去是端口后面一天的活。
 - **`TapeStore` 做成 `HostAdapter` 的成员**：见「所有权与依赖方向」。
 - **`MAX(entry_id) + 1` 分配**：物理重置后复用 id；两种方言的并发形状也会分叉。
