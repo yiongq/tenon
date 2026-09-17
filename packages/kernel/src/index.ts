@@ -26,3 +26,12 @@ export {
 } from './host/profile.js'
 export { createMemoryHost } from './host/memory.js'
 export type { MemoryHost, MemoryHostOptions } from './host/memory.js'
+export { ChildStdioTransport } from './mcp/stdio-transport.js'
+export type { ChildStdioTransportOptions } from './mcp/stdio-transport.js'
+export { connectStdioServer } from './mcp/connection.js'
+export type {
+  McpCallToolResult,
+  McpConnection,
+  McpStdioServerSpec,
+  McpToolList,
+} from './mcp/connection.js'
