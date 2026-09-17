@@ -14,6 +14,8 @@ export interface FakeAnthropicOptions {
   delayMs?: number
   /** Respond with this HTTP status and an error body instead of streaming. */
   failWith?: { status: number; type: string; message: string }
+  /** With `failWith`: fail only this many requests, then stream normally. Default: always fail. */
+  failTimes?: number
 }
 
 export interface FakeAnthropic {
@@ -46,7 +48,10 @@ export async function startFakeAnthropic(options: FakeAnthropicOptions): Promise
         res.writeHead(404).end()
         return
       }
-      if (options.failWith) {
+      const shouldFail =
+        options.failWith !== undefined &&
+        (options.failTimes === undefined || state.requests.length <= options.failTimes)
+      if (options.failWith && shouldFail) {
         res.writeHead(options.failWith.status, { 'content-type': 'application/json' })
         res.end(
           JSON.stringify({

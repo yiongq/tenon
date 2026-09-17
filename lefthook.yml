@@ -22,6 +22,15 @@ pre-commit:
 
 commit-msg:
   jobs:
+    # commitlint skips merge / revert / fixup! messages entirely, so the trailer rule also
+    # runs here, on every message shape.
+    - name: no-ai-coauthor
+      run: |
+        if grep -qiE '^[[:space:]]*co-authored-by:.*(claude|codex|anthropic|openai|copilot|cursor|gemini)' {1}; then
+          grep -iE '^[[:space:]]*co-authored-by:' {1}
+          exit 1
+        fi
+      fail_text: 'Remove the AI co-author trailer (this also applies to merge, revert and fixup commits).'
     - name: commitlint
       run: pnpm exec commitlint --edit {1}
       fail_text: 'Conventional Commits, header <= 50 chars, no AI co-author trailers.'

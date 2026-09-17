@@ -1,6 +1,7 @@
-import { useAuiState } from '@assistant-ui/react'
+import { ActionBarPrimitive, useAuiState } from '@assistant-ui/react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import type { ChatErrorCode } from '../../runtime/tenon-chat-adapter'
 
 const ERROR_KEY = {
@@ -38,9 +39,14 @@ export function ThreadError(): JSX.Element | null {
       role="alert"
       data-testid="message-error"
       data-error-code={code}
-      className="mt-2 w-full rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
+      className="mt-2 flex w-full items-center justify-between gap-3 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
     >
-      {t(ERROR_KEY[code])}
+      <span data-testid="message-error-text">{t(ERROR_KEY[code])}</span>
+      <ActionBarPrimitive.Reload asChild>
+        <Button variant="secondary" size="sm" data-testid="message-retry">
+          {t('error.retry')}
+        </Button>
+      </ActionBarPrimitive.Reload>
     </div>
   )
 }

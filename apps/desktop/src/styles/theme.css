@@ -116,6 +116,7 @@
   --radius-lg: var(--t-radius-md);
   --radius-xl: var(--t-radius-lg);
   --radius-4xl: var(--t-radius-pill);
+  --radius-pill: var(--t-radius-pill);
 
   /* shadcn 的 max-w-xs / max-w-sm（dialog / alert-dialog / tooltip）走 --container-*。
      以 4px 单位接管：xs = 80 单位、sm = 96 单位，与 §8.1「间距 4 的倍数」一致。 */

@@ -30,29 +30,46 @@ export function requiredFactKeys(
  * Rejects a request whose `facts` lack a required slot, so the approval card
  * can never render an unfilled `{slot}`.
  */
-export const confirmRequestSchema = z
-  .object({
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    kind: confirmKindSchema,
-    reason: confirmReasonSchema,
-    facts: z.record(z.string(), z.string()),
-    redacted: z.unknown().optional(),
-  })
-  .superRefine((req, ctx) => {
-    for (const key of requiredFactKeys(req.reason, req.kind)) {
-      const value = req.facts[key]
-      if (value === undefined || value.length === 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['facts', key],
-          message: `facts.${key} is required for reason "${req.reason}"`,
-        })
-      }
+const confirmRequestObject = z.object({
+  requestId: z.string().min(1),
+  sessionId: z.string().min(1),
+  kind: confirmKindSchema,
+  reason: confirmReasonSchema,
+  facts: z.record(z.string(), z.string()),
+  redacted: z.unknown().optional(),
+})
+
+function checkRequiredFacts(
+  req: { reason: ConfirmReason; kind: ConfirmRequest['kind']; facts: Record<string, string> },
+  ctx: z.RefinementCtx,
+): void {
+  for (const key of requiredFactKeys(req.reason, req.kind)) {
+    const value = req.facts[key]
+    if (value === undefined || value.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['facts', key],
+        message: `facts.${key} is required for reason "${req.reason}"`,
+      })
     }
-  })
+  }
+}
+
+/**
+ * Rejects a request whose `facts` lack a required slot, so the approval card can never
+ * render an unfilled `{slot}`.
+ */
+export const confirmRequestSchema = confirmRequestObject.superRefine(checkRequiredFacts)
+
+/**
+ * What actually crosses to the renderer: everything except `redacted`, the raw payload the
+ * spec keeps away from the UI. zod strips the unknown key on parse.
+ */
+export const confirmRequestEventPayloadSchema = confirmRequestObject
+  .omit({ redacted: true })
+  .superRefine(checkRequiredFacts)
 
 export type ConfirmRequestInput = z.infer<typeof confirmRequestSchema>
 
 /** main → renderer: a request the kernel wants the user to answer. */
-export const confirmRequestEvent = defineEvent('confirm.request', confirmRequestSchema)
+export const confirmRequestEvent = defineEvent('confirm.request', confirmRequestEventPayloadSchema)

@@ -173,6 +173,9 @@ export class ChildStdioTransport implements Transport {
       }
     } catch (error) {
       this.onerror?.(error as Error)
+      // A stream that failed (oversized frame, broken pipe) will not recover: bring the
+      // child down now instead of waiting for someone to call close().
+      void this.close()
     } finally {
       this.#finish()
     }

@@ -13,7 +13,8 @@
     "expand": "Expand sidebar",
     "search": "Search",
     "settings": "Settings",
-    "chatsEmpty": "No chats yet"
+    "chatsEmpty": "No chats yet",
+    "navigation": "Main navigation"
   },
   "account": {
     "menu": "Account",

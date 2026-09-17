@@ -40,7 +40,7 @@ test('a reply streams into the thread as rendered markdown', async () => {
 
     await page.getByTestId('composer-input').fill('hi')
     await page.keyboard.press('Enter')
-    await expect(page.getByTestId('user-message')).toHaveText('hi')
+    await expect(page.getByTestId('user-message').getByTestId('user-text')).toHaveText('hi')
     await expect(page.getByTestId('assistant-message').getByTestId('assistant-text')).toHaveText(
       'Hello world from Tenon',
     )
@@ -96,7 +96,36 @@ test('a provider failure shows localized copy chosen by its error code', async (
     await page.keyboard.press('Enter')
     const error = page.getByTestId('message-error')
     await expect(error).toHaveAttribute('data-error-code', 'auth')
-    await expect(error).toHaveText('API 密钥被拒绝，请检查供应商设置。')
+    await expect(error.getByTestId('message-error-text')).toHaveText(
+      'API 密钥被拒绝，请检查供应商设置。',
+    )
+    await expect(error.getByTestId('message-retry')).toHaveText('重试')
+  } finally {
+    await app.close()
+  }
+})
+
+test('Retry re-sends the failed turn once and the reply then streams', async () => {
+  fake = await startFakeAnthropic({
+    chunks: ['All ', 'good'],
+    delayMs: 20,
+    // 400 is not retried by the SDK, so the failure reaches the UI as an error card.
+    failWith: { status: 400, type: 'invalid_request_error', message: 'boom' },
+    failTimes: 1,
+  })
+  const userData = makeUserDataDir('chat-retry')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await page.getByTestId('composer-input').fill('question')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('message-error')).toHaveAttribute('data-error-code', 'provider')
+    await page.getByTestId('message-retry').click()
+    await expect(page.getByTestId('assistant-message').getByTestId('assistant-text')).toHaveText(
+      'All good',
+    )
+    const last = fake.requests.at(-1)?.body as { messages: Array<{ role: string }> }
+    expect(last.messages.map((m) => m.role)).toEqual(['user'])
   } finally {
     await app.close()
   }

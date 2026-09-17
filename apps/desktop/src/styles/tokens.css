@@ -56,6 +56,12 @@
   --t-dur-sheet: 320ms;
   --t-dur-slow: 480ms;
 
+  /* Tailwind's bare `transition-*` utilities read these two. Pointing them at the tokens
+     puts every hover/focus transition on the token scale and under the reduced-motion
+     blocks below, with no per-component branches. */
+  --default-transition-duration: var(--t-dur-fast);
+  --default-transition-timing-function: var(--t-ease-snap);
+
   /* ---- ease ---- */
   --t-ease-snap: cubic-bezier(0.3, 0.84, 0.36, 1);
   --t-ease-out: cubic-bezier(0.14, 0.7, 0.28, 1);

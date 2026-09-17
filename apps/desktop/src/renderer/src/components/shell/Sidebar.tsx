@@ -67,7 +67,7 @@ export function Sidebar({
         onClick={onNewChat}
         testId="nav-item"
       />
-      <nav aria-label={t('sidebar.chats')} className="flex flex-col gap-0.5">
+      <nav aria-label={t('sidebar.navigation')} className="flex flex-col gap-0.5">
         <NavItem icon={<FolderKanbanIcon />} label={t('sidebar.projects')} />
         <NavItem icon={<PackageIcon />} label={t('sidebar.artifacts')} />
         <NavItem icon={<CalendarClockIcon />} label={t('sidebar.scheduled')} />

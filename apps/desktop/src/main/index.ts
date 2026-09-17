@@ -1,13 +1,15 @@
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { chatNew, configLocale } from '@tenon-app/contracts'
 import { absolutePath } from '@tenon-app/kernel'
-import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
 import { registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { createDesktopHost } from './host/index.js'
 import { readConfig } from './host/profile.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
+import { hardenWebContents } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
@@ -21,6 +23,13 @@ function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
+}
+
+/** The one document a Tenon window may show: the dev server in development, the built file otherwise. */
+function appUrl(): string {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (!app.isPackaged && devUrl) return devUrl
+  return pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
 }
 
 function createWindow(locale: string, title: string): BrowserWindow {
@@ -44,22 +53,22 @@ function createWindow(locale: string, title: string): BrowserWindow {
   win.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error('[preload-error]', preloadPath, error.message)
   })
-  win.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
-
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (!app.isPackaged && devUrl) {
-    void win.loadURL(devUrl)
-  } else {
-    void win.loadFile(join(import.meta.dirname, '../renderer/index.html'))
-  }
+  void win.loadURL(appUrl())
   return win
 }
 
+// Every webContents, including ones created later, is pinned to the app document.
+app.on('web-contents-created', (_event, contents) => {
+  hardenWebContents(contents, appUrl(), (url) => void shell.openExternal(url))
+})
+
 async function main(): Promise<void> {
   await app.whenReady()
+  // Phase 0 needs no web permissions (camera, geolocation, notifications…): deny them all.
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false),
+  )
+  session.defaultSession.setPermissionCheckHandler(() => false)
   const host = await createDesktopHost({
     userDataDir: absolutePath(app.getPath('userData')),
     userId: LOCAL_USER_ID,

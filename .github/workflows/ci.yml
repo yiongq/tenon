@@ -24,6 +24,14 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: No AI co-author trailers
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          if git log --format=%B "origin/${{ github.base_ref }}..HEAD" | grep -iE '^[[:space:]]*co-authored-by:.*(claude|codex|anthropic|openai|copilot|cursor|gemini)'; then
+            echo "AI co-author trailer found in this pull request"; exit 1
+          fi
       # pnpm must be on PATH before setup-node's `cache: pnpm` runs `pnpm store path`.
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7

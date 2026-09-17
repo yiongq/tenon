@@ -13,7 +13,8 @@
     "expand": "展开侧栏",
     "search": "搜索",
     "settings": "设置",
-    "chatsEmpty": "还没有对话"
+    "chatsEmpty": "还没有对话",
+    "navigation": "主导航"
   },
   "account": {
     "menu": "账号",

@@ -107,6 +107,94 @@ describe('chat routes', () => {
     })
   })
 
+  it('a stop that lands before the stream exists still cancels the run', async () => {
+    fake = await startFakeAnthropic({ chunks: ['never'], delayMs: 5 })
+    process.env['ANTHROPIC_BASE_URL'] = fake.baseURL
+    const ipc = fakeIpc()
+    const out = collector()
+    // A keychain that answers slowly: the window in which the UI already shows Stop.
+    const host = createMemoryHost()
+    const keychain = Promise.withResolvers<string | null>()
+    host.secrets.get = () => keychain.promise
+    registerChatRoutes({ host, send: out.send, ipcMain: ipc.ipcMain })
+
+    const sending = ipc.call('chat.send', { sessionId: 's1', text: 'hi' })
+    expect(await ipc.call('chat.stop', { sessionId: 's1' })).toEqual({
+      ok: true,
+      data: { stopped: true },
+    })
+    keychain.resolve(null)
+    await sending
+    expect(await out.waitFor('done')).toMatchObject({ stopReason: 'aborted' })
+    expect(fake.requests).toHaveLength(0)
+    // The session is free again.
+    expect(await ipc.call('chat.stop', { sessionId: 's1' })).toEqual({
+      ok: true,
+      data: { stopped: false },
+    })
+  })
+
+  it('keeps the partial reply of a stopped turn in the transcript the model sees', async () => {
+    fake = await startFakeAnthropic({
+      chunks: Array.from({ length: 50 }, (_, i) => `w${i} `),
+      delayMs: 30,
+    })
+    process.env['ANTHROPIC_BASE_URL'] = fake.baseURL
+    const ipc = fakeIpc()
+    const out = collector()
+    registerChatRoutes({ host: createMemoryHost(), send: out.send, ipcMain: ipc.ipcMain })
+
+    await ipc.call('chat.send', { sessionId: 's1', text: 'first' })
+    await out.waitFor('text-delta')
+    await ipc.call('chat.stop', { sessionId: 's1' })
+    await out.waitFor('done')
+    out.events.length = 0
+
+    await ipc.call('chat.send', { sessionId: 's1', text: 'keep going' })
+    await out.waitFor('text-delta')
+    await ipc.call('chat.stop', { sessionId: 's1' })
+    const second = fake.requests[1]?.body as { messages: Array<{ role: string; content: unknown }> }
+    expect(second.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    expect(String(second.messages[1]?.content)).toContain('w0')
+  })
+
+  it('treats the same text after a failure as a retry and keeps a failed turn as context', async () => {
+    fake = await startFakeAnthropic({
+      chunks: ['ok'],
+      delayMs: 5,
+      // 400 is not retried by the SDK, so the failure reaches the caller.
+      failWith: { status: 400, type: 'invalid_request_error', message: 'boom' },
+      failTimes: 1,
+    })
+    process.env['ANTHROPIC_BASE_URL'] = fake.baseURL
+    const ipc = fakeIpc()
+    const out = collector()
+    registerChatRoutes({ host: createMemoryHost(), send: out.send, ipcMain: ipc.ipcMain })
+
+    await ipc.call('chat.send', { sessionId: 's1', text: 'question' })
+    expect(await out.waitFor('error')).toMatchObject({ code: 'provider' })
+    out.events.length = 0
+
+    await ipc.call('chat.send', { sessionId: 's1', text: 'question' })
+    await out.waitFor('done')
+    const retry = fake.requests.at(-1)?.body as { messages: Array<{ role: string }> }
+    expect(retry.messages.map((m) => m.role)).toEqual(['user'])
+  }, 20_000)
+
+  it('reports a missing credential as auth before making any request', async () => {
+    fake = await startFakeAnthropic({ chunks: ['never'] })
+    process.env['ANTHROPIC_BASE_URL'] = fake.baseURL
+    delete process.env['ANTHROPIC_API_KEY']
+    delete process.env['ANTHROPIC_AUTH_TOKEN']
+    const ipc = fakeIpc()
+    const out = collector()
+    registerChatRoutes({ host: createMemoryHost(), send: out.send, ipcMain: ipc.ipcMain })
+
+    await ipc.call('chat.send', { sessionId: 's1', text: 'hi' })
+    expect(await out.waitFor('error')).toMatchObject({ code: 'auth' })
+    expect(fake.requests).toHaveLength(0)
+  })
+
   it('maps provider failures to error codes, never to sentences', async () => {
     fake = await startFakeAnthropic({
       chunks: [],

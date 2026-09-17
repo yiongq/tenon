@@ -37,6 +37,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
 
       // Every sidebar row and every Composer string: one line, nothing clipped.
       await expectSingleLineUnclipped(page.getByTestId('nav-item'), NAV_ITEM_COUNT)
+      await expectSingleLineUnclipped(page.getByTestId('composer-input'))
       await expectSingleLineUnclipped(page.getByTestId('composer-send'))
       await expectSingleLineUnclipped(page.getByTestId('composer-disclaimer'))
       await expectSingleLineUnclipped(page.getByTestId('account-row'))
@@ -66,7 +67,10 @@ test('acceptance 9: the account menu switches language and it survives a relaunc
     await expect(first.page.locator('html')).toHaveAttribute('lang', 'en')
 
     await first.page.getByTestId('account-row').click()
-    await first.page.getByTestId('account-language').click()
+    // Open the submenu from the keyboard: a mouse click races the trigger's own
+    // open-on-hover and can toggle it shut again.
+    await first.page.getByTestId('account-language').focus()
+    await first.page.keyboard.press('ArrowRight')
     await first.page.getByTestId('account-language-zh-CN').click()
 
     // Main owns the switch: the application menu, the window title and the renderer all
@@ -126,7 +130,7 @@ test('acceptance 11: Enter during IME composition does not send; after the commi
 
     await page.keyboard.press('Enter')
     await expect(messages).toHaveCount(1)
-    await expect(messages.first()).toHaveText('你好')
+    await expect(messages.first().getByTestId('user-text')).toHaveText('你好')
   } finally {
     await app.close()
   }

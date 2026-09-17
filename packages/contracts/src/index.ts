@@ -41,6 +41,7 @@ export {
   confirmKindSchema,
   confirmReasonSchema,
   confirmRequestEvent,
+  confirmRequestEventPayloadSchema,
   confirmRequestSchema,
   requiredFactKeys,
 } from './ipc/confirm.js'

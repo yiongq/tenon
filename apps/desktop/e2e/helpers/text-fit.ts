@@ -13,6 +13,10 @@ export interface TextFitMetrics {
   /** `scrollWidth - clientWidth`, worst over the element and every non-scrollable descendant. */
   readonly scrollOverflowX: number
   readonly scrollOverflowY: number
+  /** Width the placeholder of an empty input/textarea needs beyond its content box, else 0. */
+  readonly placeholderOverflowX: number
+  /** True when the only text the element shows is its placeholder. */
+  readonly placeholderOnly: boolean
   /** False when the element (or an ancestor) is not rendered at all. */
   readonly visible: boolean
 }
@@ -134,6 +138,30 @@ export async function measureTextFit(locator: Locator): Promise<TextFitMetrics[]
         }
       }
 
+      // A placeholder is not a text node: it has no line boxes and never shows up in
+      // scrollWidth, so a long one is clipped silently. Measure it with the element's own font.
+      let placeholderOverflowX = 0
+      let placeholderOnly = false
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        const placeholder = el.placeholder
+        if (placeholder !== '' && el.value === '') {
+          placeholderOnly = true
+          const style = getComputedStyle(el)
+          const context = document.createElement('canvas').getContext('2d')
+          if (context !== null) {
+            context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+            const available =
+              el.clientWidth -
+              Number.parseFloat(style.paddingLeft) -
+              Number.parseFloat(style.paddingRight)
+            placeholderOverflowX = Math.max(
+              0,
+              Math.round((context.measureText(placeholder).width - available) * 100) / 100,
+            )
+          }
+        }
+      }
+
       return {
         label:
           el.getAttribute('data-testid') ??
@@ -145,6 +173,8 @@ export async function measureTextFit(locator: Locator): Promise<TextFitMetrics[]
         overflowY: Math.round(overflowY * 100) / 100,
         scrollOverflowX,
         scrollOverflowY,
+        placeholderOverflowX,
+        placeholderOnly,
         visible: el.getClientRects().length > 0,
       }
     }),
@@ -159,6 +189,9 @@ export function textFitViolations(m: TextFitMetrics): string[] {
   const where = `${m.label} ${JSON.stringify(m.text)}`
   if (!m.visible) return [`${where} is not rendered (no client rects)`]
   const out: string[] = []
+  if (m.placeholderOverflowX > TOLERANCE_PX)
+    out.push(`${where} placeholder is clipped horizontally by ${String(m.placeholderOverflowX)}px`)
+  if (m.placeholderOnly) return out
   if (m.lineCount !== 1) out.push(`${where} renders on ${String(m.lineCount)} lines, expected 1`)
   if (m.scrollOverflowX > 0)
     out.push(`${where} is clipped horizontally by ${String(m.scrollOverflowX)}px`)

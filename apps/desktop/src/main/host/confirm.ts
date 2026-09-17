@@ -1,5 +1,9 @@
 import type { ConfirmRequest, HostConfirm } from '@tenon-app/kernel'
-import { confirmRequestEvent, confirmRequestSchema } from '@tenon-app/contracts'
+import {
+  confirmRequestEvent,
+  confirmRequestEventPayloadSchema,
+  confirmRequestSchema,
+} from '@tenon-app/contracts'
 
 export type EventSender = (channel: string, payload: unknown) => void
 
@@ -21,6 +25,7 @@ export class IpcConfirm implements HostConfirm {
       const issues = parsed.error.issues.map((i) => i.path.join('.')).join(', ')
       throw new Error(`confirm request ${req.requestId} rejected: ${issues}`)
     }
-    this.send(confirmRequestEvent.channel, parsed.data)
+    // `redacted` never crosses to the renderer; phase 2 decides where it is logged.
+    this.send(confirmRequestEvent.channel, confirmRequestEventPayloadSchema.parse(parsed.data))
   }
 }
