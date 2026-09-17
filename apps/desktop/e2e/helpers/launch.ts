@@ -62,7 +62,13 @@ export interface LaunchedApp {
  */
 export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> {
   const { ELECTRON_RUN_AS_NODE: _ignored, ...rest } = process.env
-  const env: Record<string, string> = { ...(rest as Record<string, string>), ...options.env }
+  // TENON_DEV_ENV=off: the app must not pick up a developer's `.env.local` during tests;
+  // a spec that wants real credentials passes them explicitly through `options.env`.
+  const env: Record<string, string> = {
+    ...(rest as Record<string, string>),
+    TENON_DEV_ENV: 'off',
+    ...options.env,
+  }
   if (options.systemLanguages !== undefined && options.systemLanguages.length > 0) {
     env['TENON_LOCALE'] = options.systemLanguages.join(',')
   }

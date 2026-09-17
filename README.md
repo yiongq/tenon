@@ -28,7 +28,7 @@ pnpm check            # format:check, lint, typecheck, unit tests
 pnpm build && pnpm test:e2e
 ```
 
-The phase-0 chat talks to the Anthropic API (or a compatible endpoint): export `ANTHROPIC_API_KEY`, and optionally `ANTHROPIC_BASE_URL` / `TENON_MODEL`, before `pnpm dev`. When starting Electron from inside an Electron-hosted terminal, unset `ELECTRON_RUN_AS_NODE` first.
+The phase-0 chat talks to the Anthropic API or any compatible endpoint. Copy `.env.example` to `.env.local` (gitignored), fill in the key, and `pnpm dev` picks it up; `pnpm test:live` then runs the real-endpoint e2e (streaming, multi-turn context, stop). Both cost tokens, so CI never runs them. When starting Electron from inside an Electron-hosted terminal, unset `ELECTRON_RUN_AS_NODE` first.
 
 ## Name
 

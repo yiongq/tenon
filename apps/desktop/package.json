@@ -12,7 +12,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc -b",
     "test:e2e": "playwright test",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:live": "TENON_LIVE=1 playwright test e2e/live-provider.spec.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.126.0",

@@ -5,6 +5,7 @@ import { absolutePath } from '@tenon-app/kernel'
 import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
 import { registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
+import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
 import { readConfig } from './host/profile.js'
 import { createLocaleController } from './locale.js'
@@ -63,6 +64,8 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 async function main(): Promise<void> {
+  const devEnv = loadDevEnv()
+  if (devEnv) console.warn('[dev-env] loaded', devEnv)
   await app.whenReady()
   // Phase 0 needs no web permissions (camera, geolocation, notifications…): deny them all.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>

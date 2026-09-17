@@ -24,6 +24,12 @@ import type { EventSender } from './host/index.js'
 export const DEFAULT_MODEL = 'claude-opus-5'
 const MAX_TOKENS = 64_000
 
+/** `TENON_MAX_TOKENS` caps one reply (and its cost); anything that is not a positive integer is ignored. */
+function maxTokens(): number {
+  const configured = Number(process.env['TENON_MAX_TOKENS'])
+  return Number.isInteger(configured) && configured > 0 ? configured : MAX_TOKENS
+}
+
 export const ANTHROPIC_API_KEY_SECRET = ['provider', 'anthropic', 'apiKey'] as const
 
 /** Diagnostic only (never rendered): why the run ended before any request was made. */
@@ -77,7 +83,8 @@ export function registerChatRoutes({ host, send, ipcMain }: ChatDeps): void {
 
       // The SDK reports a missing credential as a plain Error, not an AuthenticationError;
       // decide it here so first-run users are told to configure a key.
-      const envKey = process.env['ANTHROPIC_API_KEY'] ?? process.env['ANTHROPIC_AUTH_TOKEN']
+      // `||`, not `??`: an empty ANTHROPIC_API_KEY= line must not hide a filled-in token.
+      const envKey = process.env['ANTHROPIC_API_KEY'] || process.env['ANTHROPIC_AUTH_TOKEN']
       if (!apiKey && !envKey) {
         release()
         emit({ type: 'error', sessionId, code: 'auth', detail: NO_API_KEY })
@@ -94,7 +101,7 @@ export function registerChatRoutes({ host, send, ipcMain }: ChatDeps): void {
       const stream = client.messages.stream(
         {
           model: process.env['TENON_MODEL'] ?? DEFAULT_MODEL,
-          max_tokens: MAX_TOKENS,
+          max_tokens: maxTokens(),
           messages,
         },
         { signal: run.controller.signal },
