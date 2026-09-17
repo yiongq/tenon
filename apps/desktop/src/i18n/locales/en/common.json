@@ -1,5 +1,46 @@
 {
   "app": {
     "name": "Tenon"
+  },
+  "sidebar": {
+    "newChat": "New chat",
+    "projects": "Projects",
+    "artifacts": "Artifacts",
+    "scheduled": "Scheduled tasks",
+    "customize": "Skills and connectors",
+    "chats": "Chats and tasks",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar",
+    "search": "Search",
+    "settings": "Settings"
+  },
+  "account": {
+    "menu": "Account",
+    "localUser": "Local profile",
+    "language": "Language",
+    "languageAuto": "Follow system",
+    "languageZhCN": "中文",
+    "languageEn": "English"
+  },
+  "composer": {
+    "placeholder": "Ask Tenon anything",
+    "send": "Send",
+    "stop": "Stop",
+    "disclaimer": "Tenon can make mistakes. Check important details."
+  },
+  "thread": {
+    "empty": "Start a conversation",
+    "you": "You",
+    "assistant": "Tenon",
+    "generating": "Generating…",
+    "unknownBlock": "Unsupported content: {kind}"
+  },
+  "error": {
+    "network": "Could not reach the model service. Check your connection.",
+    "auth": "The API key was rejected. Check your provider settings.",
+    "rate-limit": "The model service is rate-limiting requests. Try again in a moment.",
+    "provider": "The model service returned an error.",
+    "unknown": "Something went wrong.",
+    "retry": "Retry"
   }
 }

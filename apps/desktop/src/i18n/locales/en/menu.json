@@ -1,0 +1,39 @@
+{
+  "app": {
+    "about": "About Tenon",
+    "hide": "Hide Tenon",
+    "hideOthers": "Hide Others",
+    "showAll": "Show All",
+    "quit": "Quit Tenon"
+  },
+  "file": {
+    "title": "File",
+    "newChat": "New Chat",
+    "closeWindow": "Close Window"
+  },
+  "edit": {
+    "title": "Edit",
+    "undo": "Undo",
+    "redo": "Redo",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "selectAll": "Select All"
+  },
+  "view": {
+    "title": "View",
+    "reload": "Reload",
+    "toggleDevTools": "Toggle Developer Tools",
+    "toggleFullscreen": "Toggle Full Screen"
+  },
+  "window": {
+    "title": "Window",
+    "minimize": "Minimize",
+    "zoom": "Zoom",
+    "front": "Bring All to Front"
+  },
+  "help": {
+    "title": "Help",
+    "learnMore": "Learn More"
+  }
+}

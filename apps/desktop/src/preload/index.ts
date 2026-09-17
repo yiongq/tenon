@@ -6,7 +6,11 @@ import { contextBridge, ipcRenderer } from 'electron'
  * refused here, before they reach main; payloads are validated by main (registerRoute)
  * and by the renderer (invokeRoute).
  */
+const localeArg = process.argv.find((a) => a.startsWith('--tenon-locale='))
+
 const api = {
+  /** Interface language resolved by main before this window was created. */
+  initialLocale: localeArg ? localeArg.slice('--tenon-locale='.length) : 'en',
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> => {
     if (!isRouteChannel(channel)) {
       return Promise.reject(new Error(`ipc: "${channel}" is not a declared route`))

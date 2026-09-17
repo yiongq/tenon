@@ -6,11 +6,11 @@
 - [x] 2. 建 `packages/kernel`、`packages/contracts`、`apps/desktop` 三个包，空实现能 build
 - [x] 3. lint 规则：`packages/kernel` 禁 `electron` / `node:fs` / `node:child_process` / `keytar` import；包边界规则 `apps → contracts → kernel`
 - [x] 4. `HostAdapter` 接口按 spec 落到 `packages/kernel/src/host/`；`keyFor(identity, ...parts)`；内存版假实现（测试用）
-- [ ] 5. `DesktopHostAdapter`：fs / secrets（keychain）/ process（spawn + 进程树 kill）/ sandbox（passthrough + 日志）/ confirm（投递到 IPC 事件）/ clock
-- [ ] 6. kernel：最小 MCP host——用 `@modelcontextprotocol/client@2.0.0` + `HostProcess.spawn` 连 `server-everything`，`tools/list`，调 `echo`；对应验收 3 的测试
+- [x] 5. `DesktopHostAdapter`：fs / secrets（keychain）/ process（spawn + 进程树 kill）/ sandbox（passthrough + 日志）/ confirm（投递到 IPC 事件）/ clock
+- [x] 6. kernel：最小 MCP host——用 `@modelcontextprotocol/client@2.0.0` + `HostProcess.spawn` 连 `server-everything`，`tools/list`，调 `echo`；对应验收 3 的测试
 - [x] 7. `packages/contracts`：`registerRoute` + 第一批 IPC schema（发送消息 / 流事件 / 停止 / 读写 config）；验收 6 的测试
-- [ ] 8. Electron 壳：窗口 webPreferences 按 spec；preload 只暴露 contracts 通道；profile 目录布局
-- [ ] 9. 最小 Anthropic 流式调用（不抽象），`AbortSignal` 贯穿到 fetch
+- [x] 8. Electron 壳：窗口 webPreferences 按 spec；preload 只暴露 contracts 通道；profile 目录布局
+- [x] 9. 最小 Anthropic 流式调用（不抽象），`AbortSignal` 贯穿到 fetch
 - [ ] 10. UI：令牌（键名按 §8.5，值按 §8.1）、基础组件、壳层、Composer 最小态、消息流（block 注册表 + `text`）
   - [ ] 10.1 `apps/desktop/src/i18n/`：i18next + i18next-icu，主进程与 renderer 各一个实例共用 `locales/zh-CN`、`locales/en`；系统语言解析 + `config.json` `locale` 覆盖；IPC 事件 `config.locale`；账号菜单「语言」项
   - [ ] 10.2 `pnpm i18n:check`（两份目录键集一致）挂进 `pnpm lint`；JSX 字面量文案 lint
@@ -95,7 +95,8 @@
 - **i18n（第 10.1 步）实测结论**：i18next 26.4.2 + i18next-icu 2.4.4 + **显式 intl-messageformat 11.2.15**（icu 无 runtime 依赖、按裸名导入，不显式钉会被 pnpm 自动装未钉版本）+ react-i18next 17.0.14；两个进程各 `createInstance()`，renderer 保留 `<I18nextProvider>`（`initReactI18next` 是进程级全局 setter，第二个实例会静默抢走无 provider 的 `useTranslation`）；renderer 用 `import.meta.glob('.../locales/*/*.json', { eager: true, import: 'default' })`，`import: 'default'` 是正确性要求；`new ICU({ memoize: true, parseErrorHandler })` 必须配 handler，否则 ICU 解析错误静默渲染原文；ICU 变量名不能叫 `ns` / `lng` / `lngs`；locale 解析按主子标签 `/^([A-Za-z]{2,3})(?:[-_]|$)/`（`\b` 会漏 `zh_CN`）；`escapeValue` 在 ICU 下无效，要转义得给插件 `escapeVariables: true`。`scripts/i18n-check.mjs` 已就位（`--strict-args` 可加查 ICU 参数漂移）。
 - **第 9 步决定**：`HostAdapter` 没有网络成员，阶段 0 的 Anthropic 流式调用放 `apps/desktop` 主进程，不进 kernel；用官方 `@anthropic-ai/sdk`（0.126.0）而不是手写 fetch——`baseURL` 可配以满足「Anthropic-compatible endpoint」，`RequestOptions.signal` / `MessageStream.abort()` 已核实能贯穿到 fetch。Provider 层形状仍按 spec 留给阶段 1。
 - **CI**：`.github/workflows/ci.yml` 已写但只在 PR 上才第一次真跑；`ci-ok` 是将来 branch protection 要 require 的唯一 check。actions 版本（checkout@v7 / pnpm/action-setup@v6 / setup-node@v7 / cache@v6 / upload-artifact@v7）是 agent 实测查到的，如 PR 上报错先查这些。
-- 下一步：第 5 步（process / secrets / confirm）→ 第 6 步（kernel MCP host + 验收 3 测试）→ 第 8 步（preload allowlist、profile 接入、config 路由）→ 第 9 步 → 第 10 步。
+- 第 5 / 6 / 8 / 9 步已落并提交（`9252736`、`ad8c221`）：desktop `host/{process,secrets,confirm,index}.ts`；kernel `mcp/{stdio-transport,connection}.ts`（stderr 必须排水，否则子进程会被堵死；close 时两路 reader 都 cancel，避免孙进程继承的管道拖住）；contracts `registry.ts`（`ROUTE_CHANNELS` / `EVENT_CHANNELS`），preload 只转发表内通道；main 装配 host、注册 `config.*` 与 `chat.*` 路由；`chat.ts` 用 `@anthropic-ai/sdk` 0.126.0，模型默认 `claude-opus-5`（`TENON_MODEL` 可覆盖），API key 先查钥匙串 `keyFor(identity,'provider','anthropic','apiKey')` 再回落 SDK 自己的环境变量；阶段 0 没有设置 UI，验收 4 靠 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 环境变量。
+- 下一步：第 10 步（10.1 i18n → 10.2 lint → 令牌 / 基础组件 / 壳层 / Composer / 消息流 → 10.5 Playwright）→ 第 14 步逐条验收。
 
 ## Open
 

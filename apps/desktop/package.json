@@ -11,15 +11,20 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc -b",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.126.0",
     "@napi-rs/keyring": "2.1.0",
     "@tenon-app/contracts": "workspace:*",
     "@tenon-app/kernel": "workspace:*",
+    "i18next": "26.4.2",
+    "i18next-icu": "2.4.4",
+    "intl-messageformat": "11.2.15",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "react-i18next": "17.0.14"
   },
   "devDependencies": {
     "@playwright/test": "catalog:",
@@ -30,6 +35,7 @@
     "electron": "44.4.1",
     "electron-vite": "5.0.0",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

@@ -1,0 +1,39 @@
+{
+  "app": {
+    "about": "关于 Tenon",
+    "hide": "隐藏 Tenon",
+    "hideOthers": "隐藏其他",
+    "showAll": "全部显示",
+    "quit": "退出 Tenon"
+  },
+  "file": {
+    "title": "文件",
+    "newChat": "新对话",
+    "closeWindow": "关闭窗口"
+  },
+  "edit": {
+    "title": "编辑",
+    "undo": "撤销",
+    "redo": "重做",
+    "cut": "剪切",
+    "copy": "复制",
+    "paste": "粘贴",
+    "selectAll": "全选"
+  },
+  "view": {
+    "title": "视图",
+    "reload": "重新加载",
+    "toggleDevTools": "开发者工具",
+    "toggleFullscreen": "全屏"
+  },
+  "window": {
+    "title": "窗口",
+    "minimize": "最小化",
+    "zoom": "缩放",
+    "front": "前置全部窗口"
+  },
+  "help": {
+    "title": "帮助",
+    "learnMore": "了解更多"
+  }
+}

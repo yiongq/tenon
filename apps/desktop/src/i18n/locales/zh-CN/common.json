@@ -1,5 +1,46 @@
 {
   "app": {
     "name": "Tenon"
+  },
+  "sidebar": {
+    "newChat": "新对话",
+    "projects": "项目",
+    "artifacts": "产物",
+    "scheduled": "定时任务",
+    "customize": "技能与连接器",
+    "chats": "对话与任务",
+    "collapse": "收起侧栏",
+    "expand": "展开侧栏",
+    "search": "搜索",
+    "settings": "设置"
+  },
+  "account": {
+    "menu": "账号",
+    "localUser": "本机配置",
+    "language": "语言",
+    "languageAuto": "跟随系统",
+    "languageZhCN": "中文",
+    "languageEn": "English"
+  },
+  "composer": {
+    "placeholder": "想让 Tenon 做什么",
+    "send": "发送",
+    "stop": "停止",
+    "disclaimer": "Tenon 可能会出错，重要信息请核实。"
+  },
+  "thread": {
+    "empty": "开始对话",
+    "you": "你",
+    "assistant": "Tenon",
+    "generating": "生成中…",
+    "unknownBlock": "不支持的内容：{kind}"
+  },
+  "error": {
+    "network": "连不上模型服务，请检查网络。",
+    "auth": "API 密钥被拒绝，请检查供应商设置。",
+    "rate-limit": "模型服务限流中，请稍后再试。",
+    "provider": "模型服务返回了错误。",
+    "unknown": "出了点问题。",
+    "retry": "重试"
   }
 }
