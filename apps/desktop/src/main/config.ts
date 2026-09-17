@@ -1,11 +1,10 @@
 import { configGet, configSet, registerRoute } from '@tenon-app/contracts'
-import type { Config } from '@tenon-app/contracts'
+import type { Config, IpcMainLike } from '@tenon-app/contracts'
 import type { HostAdapter } from '@tenon-app/kernel'
-import type { IpcMain } from 'electron'
 import { readConfig, writeConfig } from './host/profile.js'
 
 export function registerConfigRoutes(
-  ipcMain: IpcMain,
+  ipcMain: IpcMainLike,
   host: HostAdapter,
   onChange: (next: Config) => void,
 ): void {

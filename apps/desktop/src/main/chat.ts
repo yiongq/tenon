@@ -7,10 +7,9 @@ import Anthropic, {
 } from '@anthropic-ai/sdk'
 import type { MessageStream } from '@anthropic-ai/sdk/lib/MessageStream'
 import { chatEvent, chatSend, chatStop, registerRoute } from '@tenon-app/contracts'
-import type { ChatEvent } from '@tenon-app/contracts'
+import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import { keyFor } from '@tenon-app/kernel'
 import type { HostAdapter } from '@tenon-app/kernel'
-import type { IpcMain } from 'electron'
 import type { EventSender } from './host/index.js'
 
 /**
@@ -29,7 +28,7 @@ type MessageParam = Anthropic.MessageParam
 export interface ChatDeps {
   host: HostAdapter
   send: EventSender
-  ipcMain: IpcMain
+  ipcMain: IpcMainLike
 }
 
 export function registerChatRoutes({ host, send, ipcMain }: ChatDeps): void {
