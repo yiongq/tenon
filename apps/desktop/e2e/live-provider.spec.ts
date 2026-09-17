@@ -10,20 +10,30 @@ import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
  */
 const LIVE = process.env['TENON_LIVE'] === '1'
 const ENV_FILE = resolve(process.cwd(), '../../.env.local')
-const PASSED_ON = [
-  'ANTHROPIC_BASE_URL',
-  'ANTHROPIC_AUTH_TOKEN',
-  'ANTHROPIC_API_KEY',
-  'TENON_MODEL',
-  'TENON_MAX_TOKENS',
-]
-
+/**
+ * One key serves both manual use and these tests; what differs is the model. The tests read
+ * their own `TENON_LIVE_*` settings first, so `TENON_MODEL` can stay on the model you like to
+ * chat with while the suite runs on a cheap (or free) one. Replies are always capped.
+ */
 function liveEnv(): Record<string, string> {
   const fromFile = existsSync(ENV_FILE) ? parseEnv(readFileSync(ENV_FILE, 'utf8')) : {}
+  const pick = (...names: string[]): string | undefined => {
+    for (const name of names) {
+      const value = process.env[name] || fromFile[name]
+      if (value) return value
+    }
+    return undefined
+  }
+  const wanted: Record<string, string | undefined> = {
+    ANTHROPIC_BASE_URL: pick('ANTHROPIC_BASE_URL'),
+    ANTHROPIC_AUTH_TOKEN: pick('TENON_LIVE_AUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'),
+    ANTHROPIC_API_KEY: pick('ANTHROPIC_API_KEY'),
+    TENON_MODEL: pick('TENON_LIVE_MODEL', 'TENON_MODEL'),
+    TENON_MAX_TOKENS: pick('TENON_LIVE_MAX_TOKENS', 'TENON_MAX_TOKENS') ?? '2048',
+  }
   const env: Record<string, string> = {}
-  for (const name of PASSED_ON) {
-    const value = process.env[name] || fromFile[name]
-    if (value) env[name] = value
+  for (const [name, value] of Object.entries(wanted)) {
+    if (value !== undefined) env[name] = value
   }
   return env
 }
