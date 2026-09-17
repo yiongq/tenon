@@ -133,6 +133,11 @@
 
 ## Open
 
-- 第 6 步的验收 3 写的是「完成 MCP v2 协议协商」，但 server-everything 2026.8.31 依赖 sdk ^1.30（v1 协议），只能观察到 v1 协商成功；spec 需在 owner 侧改措辞（记忆里 2026-09-12 评审已指出）。
-- 第 5 步钥匙串：开发期未签名 Electron 每换一次二进制都可能触发 macOS 钥匙串弹窗（2026-09-17 owner 已见到研究 agent 的弹窗）；正式解决在阶段 7 签名，开发期先接受。
-- `HostAdapter` 缺网络能力：阶段 1 定 provider 形状时一并决定是加 `HostAdapter.net` 还是 provider 以注入方式拿 fetch。
+- **验收 3 的措辞**：spec 写「完成 MCP v2 协议协商」，但参考服务器 server-everything 2026.8.31 基于 sdk ^1.30（v1 协议），v2 客户端走的是默认的 legacy（2025 版 `initialize`）握手；能观察到的只有「v2 SDK 客户端与它协商成功」。需要 owner 改 spec 措辞。
+- **验收 4 的真实端点**：owner 把 key 填进仓库根的 `.env.local`（已 gitignore，模板是 `.env.example`；开发构建由 `main/dev-env.ts` 自动加载，e2e 用 `TENON_DEV_ENV=off` 关掉）后跑 `pnpm test:live`——三条真实端点用例：流式回复、同一会话的多轮上下文、停止真的停。`TENON_MODEL` 选模型，`TENON_MAX_TOKENS` 限单条回复上限（也是花费上限）。阶段 0 没有设置界面，密钥只能来自环境变量或钥匙串条目 `<tenantId>:provider:anthropic:apiKey`。
+- **钥匙串与签名**：开发期未签名 Electron 读别的二进制写入的钥匙串条目会弹窗或被拒（2026-09-17 owner 已见到）；正式解决在阶段 7 签名。
+- **`HostAdapter` 缺网络能力**：阶段 1 定 provider 形状时一并决定是加 `HostAdapter.net` 还是给 provider 注入 fetch；在那之前 kernel 的 `src/` 由 lint 禁用全局 `fetch`。
+- **未在 Windows / Linux 桌面验证**：进程树 kill 的 `taskkill` 分支、`@napi-rs/keyring` 的 Credential Manager / Secret Service 行为只有文档依据；CI 的 Linux 只证明了「钥匙串不可用时回落环境变量」。
+- **已知但接受的边角**（评审中被驳回为「当前不可达」）：`writeConfig` 是非原子的读-改-写，同一事件循环轮次内并发两次才会写坏，现有调用方做不到；profile id 在大小写不敏感文件系统上可能相撞（`Acme` / `acme`），等租户 id 来自服务端（阶段 6b）时一起约束；Dependabot 的提交标题会超过 50 字符，但 GitHub 上的合并不经过本地 commit-msg 钩子。
+- **TypeScript 7 与编辑器**：TS 7 没有 tsserver（只有 LSP）。编辑器若悄悄回落到内置的 5.x 语言服务，会接受 tsc 7 直接报错的配置项，出现「编辑器绿、CI 红」；贡献者需确认编辑器走的是 TS 7 的语言服务。
+- **branch protection**：`ci-ok` 已可作为 `main` / `dev` 的 required status check，需要 owner 在仓库设置里加（第 13 步的遗留）。
