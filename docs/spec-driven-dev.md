@@ -36,6 +36,7 @@
 - 开放问题写清"什么时候、依据什么能定"，而不是留白。
 - 顶部一行 `Status:`——`draft` / `ready` / `implemented` / `superseded by <link>`。
 - 顶部可选一行 `Revisions:`——记录同一份 spec 内的就地修订：日期 + 改了哪个字段 + 旧的是什么 + 为什么。`Status: implemented` 之后不再使用。
+- 顶部可选一行 `Amends:` / `Amended by:`——后续 spec 对一份 `implemented` spec 做只增不改的修补时，两边各写一行互指，规则见「改变决定」。
 
 ## plan 怎么维护
 
@@ -49,6 +50,8 @@
 不改旧 spec。新建一个 spec 说明改了什么、为什么、旧的哪些部分作废，旧 spec 顶部标 `Status: superseded by <link>`。决策记录只追加不改写，半年后仍能看到"当时为什么那么定、后来为什么推翻"。
 
 例外：spec 还是 `draft` / `ready`、且尚无代码依赖该契约时，可以就地修订，条件是在顶部 `Revisions:` 写清日期、改了什么、旧的是什么、为什么改。一旦 `Status: implemented` 或已有代码依赖，只能新建 spec supersede。
+
+第二个例外——**修补（amend）**（2026-09-17 owner 确认）：`implemented` 的 spec 可以被后续阶段的 spec 修补，条件是**只增不改**——新增接口成员、新增枚举值、收紧一个原本未限定的选型——且不推翻任何既有决定、不改变任何既有成员的形状。做法：被修补的 spec 在 `Status:` 之下加一行 `Amended by: <link>（日期：增了什么）`，`Status` 不变、正文一字不改；修补的全文、日期与理由写在做修补的那份 spec 里，它的顶部用 `Amends:` 指回去。凡是改动或移除既有内容，仍须 supersede。为加一个成员而作废整份旧 spec 不成比例，「部分 supersede」又会让旧 spec 一半有效却没有规则说是哪一半，所以单列这一条。
 
 跨阶段的技术选型另外写 ADR 放 `docs/adr/`，格式见 `adr-001`。
 

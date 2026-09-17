@@ -873,6 +873,7 @@ Claude Desktop 的概念 → Tenon 的实现：
   - 分支 / 编辑重发是同 session 的 fork entry 还是新 session，决定 `Session ↔ Tape 一一对应` 是否成立
   - `packages/contracts/bridge/` 的帧类型骨架此时定：AGENTS.md 规定桥只走 contracts，空到 6b 等于把一个公开契约推到最后
   - 补读半天：DeepChat `docs/architecture/tape-system.md` 的 ViewManifest 字段与产生时机、`reservedNamespaces.ts` 规则、`entry_id` 分配与并发写策略，以增补写回 deepchat 笔记 §二，不新建笔记
+  - **裁决结果**（2026-09-17）：八条逐条写在 [01-provider-and-tape/spec.md](01-provider-and-tape/spec.md) 的「开工前裁决」一节；补读已写回 deepchat 笔记 §二之补
 - **验收**：第二个 provider 不改任何调用方代码即可接入；从 Tape 重放能重建 provider 上下文且与投影表一致；换 profile 后另一个 profile 的数据不可见
 
 ### 阶段 2：Agent loop（2–3 周）
@@ -890,7 +891,7 @@ Claude Desktop 的概念 → Tenon 的实现：
   - 可逆性判定规则：输入是什么（内置工具白名单 / host 判定 / MCP 注解按硬规则不可信），未知 MCP 工具默认哪档；UX 四档刻度（可撤销 / 有快照 / 不可逆 / 未知）到 `ConfirmReason` 的映射，阶段 2 尚无快照时「有快照」档怎么显示
   - blocked 是「从发给模型的工具列表过滤掉」还是「调用前拦截」，及其对提示缓存与 Tape 记录的影响
   - §4.13 的四级查找顺序（租户策略 → 用户默认 → 会话 → 单次）与 §4.11 六层表对账成一份，避免实现出两套作用域
-  - 租户策略在接口上的落座点：`HostAdapter` 第七个成员、kernel 侧 store 由桥喂、还是 contracts 里的 schema。`HostAdapter` 已在阶段 0 冻结，改动按 spec-driven-dev 的 Revisions 规则处理
+  - 租户策略在接口上的落座点：`HostAdapter` 的新成员、kernel 侧 store 由桥喂、还是 contracts 里的 schema。`HostAdapter` 已在阶段 0 冻结：只增成员按 spec-driven-dev 的 amend 规则修补（阶段 1 的 `network` 是先例），改动既有成员须 supersede
   - 第 1 层真值表：策略 allow 撞用户 Never、策略 deny 撞用户 Allow always、个人租户第 1 层是否求值。表行 1「不可放宽到低于用户设定」、表行 2「只有租户策略或用户显式 Allow always 能放开」与总结句「策略与用户可放宽」目前三者打架
   - 策略拒绝需要的 `ConfirmReason` 新值与 facts 键（policyId 等）回填阶段 0 spec 的必填键表
   - Inspector 接口形状与合议规则（多个 inspector 冲突取最严还是按 confidence）、超时与抛错是否 fail-closed；LLM 判官是否在本阶段交付
@@ -918,7 +919,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开
 - **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/file/`（✅ 存在：adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts` ✅
 - **开工前裁决**（2026-09-17 审阅结论；sandbox-runtime 笔记是全仓最扎实的一份，不需要新笔记）：
-  - 沙箱档位与网络是一个枚举还是两个轴：`SandboxRequest.profile` 只有三档没有网络字段，而 UX 要「档位 / 网络 / 跑完自动降回」三件事；若改 `SandboxRequest`，按 Revisions 规则回改 00-foundation
+  - 沙箱档位与网络是一个枚举还是两个轴：`SandboxRequest.profile` 只有三档没有网络字段，而 UX 要「档位 / 网络 / 跑完自动降回」三件事；若改 `SandboxRequest`：只增字段按 amend 规则修补 00-foundation，改既有字段须 supersede
   - 沙箱不可用时的降级阶梯（Linux 缺 bwrap / socat、userns 被关、Windows 未提权、平台不支持）：抛错、直通加告警、还是拒绝执行任何工具；fail-closed 的边界
   - 「跑完自动降回」的确切时机与对象；Tenon 自己的 profileDir（含 Tape 与密钥引用）必须进 denyRead
   - 长驻 MCP stdio server 的档位与换工作区时的生命周期（FS 规则不热更新）；「仅包管理器」预设的域名表
