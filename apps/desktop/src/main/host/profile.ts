@@ -1,6 +1,6 @@
 import type { AbsolutePath, HostFs, HostIdentity } from '@tenon-app/kernel'
 import { PROFILE_CONFIG_FILE, PROFILE_SUBDIRS, joinPath, profileDirFor } from '@tenon-app/kernel'
-import type { Config } from '@tenon-app/contracts'
+import type { Config, ConfigPatch } from '@tenon-app/contracts'
 import { configSchema } from '@tenon-app/contracts'
 
 /**
@@ -40,9 +40,11 @@ export async function readConfig(fs: HostFs, identity: HostIdentity): Promise<Co
 export async function writeConfig(
   fs: HostFs,
   identity: HostIdentity,
-  patch: Partial<Config>,
+  patch: ConfigPatch,
 ): Promise<Config> {
-  const next = configSchema.parse({ ...(await readConfig(fs, identity)), ...patch })
+  // An explicit `undefined` in the patch means "leave it alone", not "reset to default".
+  const changes = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+  const next = configSchema.parse({ ...(await readConfig(fs, identity)), ...changes })
   await fs.writeFile(configPath(identity), `${JSON.stringify(next, null, 2)}\n`)
   return next
 }

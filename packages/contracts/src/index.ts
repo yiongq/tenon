@@ -23,12 +23,13 @@ export type { ChatEvent } from './ipc/chat.js'
 export {
   configGet,
   configLocale,
+  configPatchSchema,
   configSchema,
   configSet,
   localeSchema,
   localeSettingSchema,
 } from './ipc/config.js'
-export type { Config, Locale, LocaleSetting } from './ipc/config.js'
+export type { Config, ConfigPatch, Locale, LocaleSetting } from './ipc/config.js'
 export {
   confirmKindSchema,
   confirmReasonSchema,
@@ -37,3 +38,11 @@ export {
   requiredFactKeys,
 } from './ipc/confirm.js'
 export type { ConfirmRequestInput } from './ipc/confirm.js'
+export {
+  EVENT_CHANNELS,
+  ROUTE_CHANNELS,
+  ipcEvents,
+  ipcRoutes,
+  isEventChannel,
+  isRouteChannel,
+} from './registry.js'

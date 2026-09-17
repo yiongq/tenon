@@ -10,6 +10,8 @@ const DEFAULT_GRACE_MS = 2000
 export interface ChildStdioTransportOptions {
   readonly maxBufferChars?: number
   readonly graceMs?: number
+  /** Receives each stderr line. Default: discard. stderr is always drained, else the child blocks. */
+  readonly onStderr?: (line: string) => void
 }
 
 /**
@@ -26,9 +28,11 @@ export class ChildStdioTransport implements Transport {
   readonly #clock: HostClock
   readonly #maxBufferChars: number
   readonly #graceMs: number
+  readonly #onStderr: (line: string) => void
   readonly #encoder = new TextEncoder()
   #writer?: WritableStreamDefaultWriter<Uint8Array>
   #reader?: ReadableStreamDefaultReader<Uint8Array>
+  #stderrReader?: ReadableStreamDefaultReader<Uint8Array>
   #started = false
   #closing = false
   #finished = false
@@ -39,6 +43,7 @@ export class ChildStdioTransport implements Transport {
     this.#clock = clock
     this.#maxBufferChars = options?.maxBufferChars ?? DEFAULT_MAX_BUFFER_CHARS
     this.#graceMs = options?.graceMs ?? DEFAULT_GRACE_MS
+    this.#onStderr = options?.onStderr ?? (() => {})
   }
 
   get protocolVersion(): string | undefined {
@@ -57,7 +62,9 @@ export class ChildStdioTransport implements Transport {
     // as an unhandled rejection.
     void this.#writer.closed.catch(() => {})
     this.#reader = this.#child.stdout.getReader()
+    this.#stderrReader = this.#child.stderr.getReader()
     void this.#readLoop()
+    void this.#drainStderr()
     void this.#child.exited.then(() => this.#finish())
   }
 
@@ -86,12 +93,33 @@ export class ChildStdioTransport implements Transport {
         await this.#child.exited
       }
     }
-    try {
-      await this.#reader?.cancel()
-    } catch {
-      /* already cancelled */
-    }
+    // Cancel both readers: a descendant that inherited a pipe keeps it open past `exited`.
+    await Promise.allSettled([this.#reader?.cancel(), this.#stderrReader?.cancel()])
     this.#finish()
+  }
+
+  async #drainStderr(): Promise<void> {
+    const reader = this.#stderrReader
+    if (!reader) return
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    try {
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let nl: number
+        while ((nl = buffer.indexOf('\n')) !== -1) {
+          this.#onStderr(buffer.slice(0, nl).replace(/\r$/, ''))
+          buffer = buffer.slice(nl + 1)
+        }
+        if (buffer.length > this.#maxBufferChars) buffer = buffer.slice(-this.#maxBufferChars)
+      }
+      if (buffer.length > 0) this.#onStderr(buffer)
+    } catch {
+      /* stderr errors never fail the connection */
+    }
   }
 
   #exitedWithin(ms: number): Promise<boolean> {

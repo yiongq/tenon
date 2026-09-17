@@ -14,6 +14,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.126.0",
     "@napi-rs/keyring": "2.1.0",
     "@tenon-app/contracts": "workspace:*",
     "@tenon-app/kernel": "workspace:*",

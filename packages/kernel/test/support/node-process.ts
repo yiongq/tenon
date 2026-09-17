@@ -61,27 +61,32 @@ export function createNodeProcess(): HostProcess {
 
 function readableToWeb(r: Readable): ReadableStream<Uint8Array> {
   let done = false
-  let controller: ReadableStreamDefaultController<Uint8Array>
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined
   const finish = (err?: Error): void => {
     if (done) return
     done = true
-    if (err) controller.error(err)
-    else controller.close()
+    if (err) controller?.error(err)
+    else controller?.close()
   }
   return new ReadableStream<Uint8Array>({
     start(c) {
       controller = c
+      if (r.destroyed || r.readableEnded) {
+        finish(r.errored instanceof Error ? r.errored : undefined)
+        return
+      }
       r.pause()
       r.on('data', (chunk: Buffer) => {
         if (done) return
-        controller.enqueue(new Uint8Array(chunk))
-        if ((controller.desiredSize ?? 0) <= 0) r.pause()
+        controller?.enqueue(new Uint8Array(chunk))
+        if ((controller?.desiredSize ?? 0) <= 0) r.pause()
       })
       r.on('end', () => finish())
       r.on('close', () => finish())
       r.on('error', (e: Error) => finish(e))
     },
     pull() {
+      if (done) return
       r.resume()
     },
     cancel(reason) {

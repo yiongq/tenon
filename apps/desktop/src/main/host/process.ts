@@ -58,26 +58,21 @@ export async function spawnChild(spec: SpawnSpec, signal?: AbortSignal): Promise
     shell: false,
   })
 
-  // A permanent 'error' listener so a post-spawn error is never an uncaught exception;
-  // 'spawn' vs 'error' decides the result of spawn() itself.
+  // Race 'spawn' against 'error'. The 'error' listener is permanent so a post-spawn
+  // error (EPIPE from kill, for instance) is never an uncaught exception.
   let settled = false
-  let pendingReject: ((e: unknown) => void) | null = null
-  child.on('error', (err: Error) => {
-    if (!settled && pendingReject) {
-      settled = true
-      pendingReject(err)
-    }
-  })
   await new Promise<void>((resolve, reject) => {
-    pendingReject = reject
+    child.on('error', (err: Error) => {
+      if (settled) return
+      settled = true
+      reject(err)
+    })
     child.once('spawn', () => {
-      if (!settled) {
-        settled = true
-        resolve()
-      }
+      if (settled) return
+      settled = true
+      resolve()
     })
   })
-  pendingReject = null
 
   const pid = child.pid
   if (pid === undefined) throw new Error('child spawned without a pid')
@@ -138,28 +133,34 @@ function pipeStreams(child: ChildProcess): Pick<ChildHandle, 'stdin' | 'stdout' 
 /** Node Readable → web ReadableStream<Uint8Array>, cancel-safe (see file header). */
 export function readableToWeb(r: Readable): ReadableStream<Uint8Array> {
   let done = false
-  let controller: ReadableStreamDefaultController<Uint8Array>
+  let controller: ReadableStreamDefaultController<Uint8Array> | undefined
   const finish = (err?: Error): void => {
     if (done) return
     done = true
-    if (err) controller.error(err)
-    else controller.close()
+    if (err) controller?.error(err)
+    else controller?.close()
   }
   return new ReadableStream<Uint8Array>(
     {
       start(c) {
         controller = c
+        // A stream that already finished never emits 'end'/'close' again.
+        if (r.destroyed || r.readableEnded) {
+          finish(r.errored instanceof Error ? r.errored : undefined)
+          return
+        }
         r.pause()
         r.on('data', (chunk: Buffer) => {
           if (done) return
-          controller.enqueue(new Uint8Array(chunk))
-          if ((controller.desiredSize ?? 0) <= 0) r.pause()
+          controller?.enqueue(new Uint8Array(chunk))
+          if ((controller?.desiredSize ?? 0) <= 0) r.pause()
         })
         r.on('end', () => finish())
         r.on('close', () => finish())
         r.on('error', (e: Error) => finish(e))
       },
       pull() {
+        if (done) return
         r.resume()
       },
       cancel(reason) {

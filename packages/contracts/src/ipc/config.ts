@@ -18,8 +18,11 @@ export const configGet = defineRoute('config.get', {
   response: configSchema,
 })
 
+export const configPatchSchema = configSchema.partial()
+export type ConfigPatch = z.infer<typeof configPatchSchema>
+
 export const configSet = defineRoute('config.set', {
-  request: configSchema.partial(),
+  request: configPatchSchema,
   response: configSchema,
 })
 

@@ -1,13 +1,22 @@
+import { isEventChannel, isRouteChannel } from '@tenon-app/contracts'
 import { contextBridge, ipcRenderer } from 'electron'
 
 /**
- * The only surface the renderer sees. Channels are the ones declared in
- * @tenon-app/contracts; the renderer validates envelopes with invokeRoute.
+ * The only surface the renderer sees. Channels not declared in @tenon-app/contracts are
+ * refused here, before they reach main; payloads are validated by main (registerRoute)
+ * and by the renderer (invokeRoute).
  */
 const api = {
-  invoke: (channel: string, ...args: unknown[]): Promise<unknown> =>
-    ipcRenderer.invoke(channel, ...args),
+  invoke: (channel: string, ...args: unknown[]): Promise<unknown> => {
+    if (!isRouteChannel(channel)) {
+      return Promise.reject(new Error(`ipc: "${channel}" is not a declared route`))
+    }
+    return ipcRenderer.invoke(channel, ...args)
+  },
   on: (channel: string, listener: (payload: unknown) => void): (() => void) => {
+    if (!isEventChannel(channel)) {
+      throw new Error(`ipc: "${channel}" is not a declared event`)
+    }
     const wrapped = (_event: unknown, payload: unknown): void => listener(payload)
     ipcRenderer.on(channel, wrapped)
     return () => ipcRenderer.removeListener(channel, wrapped)
