@@ -139,4 +139,12 @@
 - **未在 Windows / Linux 桌面验证**：进程树 kill 的 `taskkill` 分支、`@napi-rs/keyring` 的 Credential Manager / Secret Service 行为只有文档依据；CI 的 Linux 只证明了「钥匙串不可用时回落环境变量」。
 - **已知但接受的边角**（评审中被驳回为「当前不可达」）：`writeConfig` 是非原子的读-改-写，同一事件循环轮次内并发两次才会写坏，现有调用方做不到；profile id 在大小写不敏感文件系统上可能相撞（`Acme` / `acme`），等租户 id 来自服务端（阶段 6b）时一起约束；Dependabot 的提交标题会超过 50 字符，但 GitHub 上的合并不经过本地 commit-msg 钩子。
 - **TypeScript 7 与编辑器**：TS 7 没有 tsserver（只有 LSP）。编辑器若悄悄回落到内置的 5.x 语言服务，会接受 tsc 7 直接报错的配置项，出现「编辑器绿、CI 红」；贡献者需确认编辑器走的是 TS 7 的语言服务。
-- **branch protection**：`ci-ok` 已可作为 `main` / `dev` 的 required status check，需要 owner 在仓库设置里加（第 13 步的遗留）。
+
+## 合并与收尾（2026-09-17）
+
+- PR #8 已合入 `dev`（merge commit `2305d32`），分支已删除。
+- 第 13 步的遗留项完成：`main` 与 `dev` 都把 `ci-ok` 设为 required status check；`main` 仍要求经 PR 合并，两者都禁 force push 与删除，管理员不强制（owner 可在紧急时绕过）。此后对 `dev` 的改动一律走 PR。
+- 验收 3 的措辞已随 PR #8 改掉并记入 spec 的 `Revisions:`。
+- 阶段 0 的推导式讲解页（owner 私有 artifact）：https://claude.ai/artifact/EbWST7rAKWhDv4kD9VZrL1
+- 下一步不在本 spec 内：写 `docs/architecture/01-*/spec.md`。动笔前要定三件事——provider 层自写还是用统一库、kernel 如何联网（`HostAdapter` 加网络成员）、会话存储作为 host 提供的端口（SQLite 是原生模块，kernel 不能直接依赖）。
+
