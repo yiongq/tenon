@@ -27,8 +27,8 @@ describe('desktop profiles', () => {
 
     expect(configPath(a)).not.toBe(configPath(b))
     expect(configPath(a)).toBe(join(root, 'profiles', 'local', 'tenant-a', 'config.json'))
-    expect(await readConfig(fs, a)).toEqual({ locale: 'zh-CN' })
-    expect(await readConfig(fs, b)).toEqual({ locale: 'en' })
+    expect(await readConfig(fs, a)).toMatchObject({ locale: 'zh-CN' })
+    expect(await readConfig(fs, b)).toMatchObject({ locale: 'en' })
 
     // Neither profile directory contains anything of the other.
     expect(await readdir(a.profileDir)).toEqual(['config.json', 'logs', 'mcp', 'plugins', 'skills'])
@@ -39,10 +39,10 @@ describe('desktop profiles', () => {
   it('falls back to defaults when config.json is missing or corrupt', async () => {
     const fs = new DesktopFs()
     const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
-    expect(await readConfig(fs, identity)).toEqual({ locale: 'auto' })
+    expect(await readConfig(fs, identity)).toMatchObject({ locale: 'auto' })
     await fs.writeFile(configPath(identity), '{not json')
-    expect(await readConfig(fs, identity)).toEqual({ locale: 'auto' })
+    expect(await readConfig(fs, identity)).toMatchObject({ locale: 'auto' })
     await fs.writeFile(configPath(identity), '{"locale":"klingon"}')
-    expect(await readConfig(fs, identity)).toEqual({ locale: 'auto' })
+    expect(await readConfig(fs, identity)).toMatchObject({ locale: 'auto' })
   })
 })

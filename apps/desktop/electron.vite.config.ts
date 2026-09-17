@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig } from 'electron-vite'
 
 // Workspace packages are bundled into main/preload: a packaged app has no node_modules
 // next to out/, so a bare `import ... from '@tenon-app/kernel'` would fail there.
@@ -13,8 +14,8 @@ const chromeTarget = 'chrome152'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: workspaceDeps })],
     build: {
+      externalizeDeps: { exclude: workspaceDeps },
       target: nodeTarget,
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/main/index.ts') },
@@ -22,8 +23,10 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: workspaceDeps })],
     build: {
+      // A sandboxed preload can only require 'electron' and a few built-ins, so every
+      // dependency (contracts, zod) must be bundled into it.
+      externalizeDeps: false,
       target: nodeTarget,
       rollupOptions: {
         input: { index: resolve(__dirname, 'src/preload/index.ts') },
@@ -35,7 +38,10 @@ export default defineConfig({
   renderer: {
     root: 'src/renderer',
     resolve: {
-      alias: { '@renderer': resolve(__dirname, 'src/renderer/src') },
+      alias: {
+        '@': resolve(__dirname, 'src/renderer/src'),
+        '@renderer': resolve(__dirname, 'src/renderer/src'),
+      },
     },
     build: {
       target: chromeTarget,
@@ -43,6 +49,6 @@ export default defineConfig({
         input: { index: resolve(__dirname, 'src/renderer/index.html') },
       },
     },
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
   },
 })

@@ -11,6 +11,7 @@ describe('ipc registry', () => {
     ])
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
       'chat.event',
+      'chat.new',
       'config.locale',
       'confirm.request',
     ])

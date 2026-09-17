@@ -33,3 +33,6 @@ export const chatEventSchema = z.discriminatedUnion('type', [
 export type ChatEvent = z.infer<typeof chatEventSchema>
 
 export const chatEvent = defineEvent('chat.event', chatEventSchema)
+
+/** main → renderer: start a fresh session (application menu / shortcut). */
+export const chatNew = defineEvent('chat.new', z.object({}))

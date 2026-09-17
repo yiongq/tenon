@@ -12,7 +12,8 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar",
     "search": "Search",
-    "settings": "Settings"
+    "settings": "Settings",
+    "chatsEmpty": "No chats yet"
   },
   "account": {
     "menu": "Account",
@@ -33,7 +34,8 @@
     "you": "You",
     "assistant": "Tenon",
     "generating": "Generating…",
-    "unknownBlock": "Unsupported content: {kind}"
+    "unknownBlock": "Unsupported content: {kind}",
+    "scrollToBottom": "Jump to latest"
   },
   "error": {
     "network": "Could not reach the model service. Check your connection.",

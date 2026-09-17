@@ -39,8 +39,15 @@ export function registerChatRoutes({ host, send, ipcMain }: ChatDeps): void {
   registerRoute(ipcMain, chatSend, async ({ sessionId, text }) => {
     if (inFlight.has(sessionId)) throw new Error('a reply is already streaming for this session')
 
-    // Keychain first (kernel-scoped key), then the SDK's own env resolution.
-    const apiKey = await host.secrets.get(keyFor(host.identity, ...ANTHROPIC_API_KEY_SECRET))
+    // Keychain first (kernel-scoped key), then the SDK's own env resolution. An unreadable
+    // store (locked keychain, no Secret Service on a headless Linux box) is logged and the
+    // environment stays in charge; a missing key then surfaces as the `auth` error code.
+    const apiKey = await host.secrets
+      .get(keyFor(host.identity, ...ANTHROPIC_API_KEY_SECRET))
+      .catch((error: unknown) => {
+        console.warn('[chat] keychain unavailable, falling back to environment:', describe(error))
+        return null
+      })
     const client = new Anthropic(apiKey ? { apiKey } : {})
     const messages = history.get(sessionId) ?? []
     messages.push({ role: 'user', content: text })

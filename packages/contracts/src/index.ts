@@ -18,7 +18,14 @@ export type {
   RouteRequest,
   RouteResponse,
 } from './route.js'
-export { chatEvent, chatEventSchema, chatSend, chatStop, sessionIdSchema } from './ipc/chat.js'
+export {
+  chatEvent,
+  chatEventSchema,
+  chatNew,
+  chatSend,
+  chatStop,
+  sessionIdSchema,
+} from './ipc/chat.js'
 export type { ChatEvent } from './ipc/chat.js'
 export {
   configGet,

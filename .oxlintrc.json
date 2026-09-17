@@ -39,6 +39,8 @@
     "typescript/no-explicit-any": "error",
     "typescript/consistent-type-imports": ["error", { "prefer": "type-imports" }],
     "unicorn/prefer-node-protocol": "error",
+    // CSS entry points and the zod CSP shim exist only for their side effects.
+    "import/no-unassigned-import": ["error", { "allow": ["**/*.css", "**/zod-csp"] }],
     // React 19 automatic runtime. react-in-jsx-scope lives in `suspicious` (enabled above),
     // so this "off" is load-bearing.
     "react/react-in-jsx-scope": "off",

@@ -11,7 +11,7 @@
     "lib": ["es2024", "dom", "dom.iterable"],
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "paths": { "@renderer/*": ["./src/renderer/src/*"] }
+    "paths": { "@/*": ["./src/renderer/src/*"], "@renderer/*": ["./src/renderer/src/*"] }
   },
   "include": [
     "src/renderer/**/*.ts",

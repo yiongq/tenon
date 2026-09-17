@@ -1,4 +1,4 @@
-import { chatEvent, chatSend, chatStop } from './ipc/chat.js'
+import { chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
 
@@ -7,7 +7,7 @@ import { confirmRequestEvent } from './ipc/confirm.js'
  * channels listed here; main only registers handlers for routes listed here.
  */
 export const ipcRoutes = { chatSend, chatStop, configGet, configSet } as const
-export const ipcEvents = { chatEvent, configLocale, confirmRequestEvent } as const
+export const ipcEvents = { chatEvent, chatNew, configLocale, confirmRequestEvent } as const
 
 export const ROUTE_CHANNELS: readonly string[] = Object.values(ipcRoutes).map((r) => r.channel)
 export const EVENT_CHANNELS: readonly string[] = Object.values(ipcEvents).map((e) => e.channel)

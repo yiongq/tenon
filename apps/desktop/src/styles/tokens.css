@@ -1,0 +1,245 @@
+/* Tenon 设计令牌 —— docs/ux/tokens.md 的逐表誊抄。
+   纯自定义属性，不 import tailwind。
+   块 1 `:root`（与主题无关的层 + 亮色）
+   块 2 `@media (prefers-color-scheme: dark)` 下的 `:root:not([data-theme="light"])`
+   块 3 `[data-theme="dark"]`
+   块 4/5 减动效（tokens.md「dur / ease」小节要求，只重写五个 --t-dur-*） */
+
+:root {
+  /* ---- radius（与主题无关） ---- */
+  --t-radius-xs: 3px;
+  --t-radius-sm: 6px;
+  --t-radius-md: 12px;
+  --t-radius-lg: 18px;
+  --t-radius-pill: 9999px;
+
+  /* ---- h-control（与主题无关） ---- */
+  --t-h-control-inline: 20px;
+  --t-h-control-nested: 24px;
+  --t-h-control-compact: 28px;
+  --t-h-control: 36px;
+  --t-h-control-lg: 44px;
+
+  /* ---- space ---- */
+  --t-space-unit: 4px;
+
+  /* ---- type：字族 ---- */
+  --t-font-sans:
+    'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif;
+  --t-font-serif: 'Source Serif 4', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', serif;
+  --t-font-mono: ui-monospace, monospace;
+
+  /* ---- type：字号与行高 ---- */
+  --t-size-micro: 12px;
+  --t-leading-micro: 16px;
+  --t-size-ui-sm: 13px;
+  --t-leading-ui-sm: 20px;
+  --t-size-ui: 14px;
+  --t-leading-ui: 20px;
+  --t-size-body: 16px;
+  --t-leading-body: 28px;
+  --t-size-h3: 18px;
+  --t-leading-h3: 28px;
+  --t-size-h2: 20px;
+  --t-leading-h2: 28px;
+
+  /* ---- weight ---- */
+  --t-weight-regular: 400;
+  --t-weight-medium: 500;
+  --t-weight-semibold: 600;
+  --t-weight-bold: 700;
+
+  /* ---- dur ---- */
+  --t-dur-fast: 80ms;
+  --t-dur-snap: 160ms;
+  --t-dur-base: 240ms;
+  --t-dur-sheet: 320ms;
+  --t-dur-slow: 480ms;
+
+  /* ---- ease ---- */
+  --t-ease-snap: cubic-bezier(0.3, 0.84, 0.36, 1);
+  --t-ease-out: cubic-bezier(0.14, 0.7, 0.28, 1);
+  --t-ease-in-out: cubic-bezier(0.62, 0.04, 0.34, 1);
+  --t-ease-overshoot: cubic-bezier(0.3, 1.42, 0.62, 1);
+
+  /* ---- z ---- */
+  --t-z-sticky: 10;
+  --t-z-popover: 100;
+  --t-z-modal: 200;
+  --t-z-tooltip: 300;
+  --t-z-toast: 400;
+
+  /* ================= 亮色 ================= */
+
+  /* ---- shell ---- */
+  --t-shell-bg: #dfdcd0;
+  --t-shell-row-hover: #cfcbc1;
+  --t-shell-row-selected: #c6c3b9;
+
+  /* ---- surface ---- */
+  --t-surface-0: #f0ece0;
+  --t-surface-1: #f6f4ec;
+  --t-surface-2: #e8e4d8;
+  --t-surface-3: #d7d3c9;
+  --t-surface-panel: #f3f0e6;
+  --t-surface-overlay: #fbf9f6;
+  --t-surface-inverse: #1f1e1d;
+
+  /* ---- text ---- */
+  --t-text-primary: #1f1e1d;
+  --t-text-secondary: #403f3c;
+  --t-text-muted: #62605b;
+  --t-text-disabled: #a5a29a;
+  --t-text-accent: #a05339;
+  --t-text-danger: #972b2e;
+  --t-text-success: #22774a;
+  --t-text-warning: #775b22;
+  --t-text-on-accent: #ffffff;
+  --t-text-on-danger: #ffffff;
+
+  /* ---- border ---- */
+  --t-border-subtle: #d7d3c9;
+  --t-border-default: #c6c3b9;
+  --t-border-strong: #83817b;
+  --t-border-focus: #c96442;
+
+  /* ---- fill ---- */
+  --t-fill-brand: #c96442;
+  --t-fill-brand-quiet: #ead6c7;
+  --t-fill-accent: #b55c3e;
+  --t-fill-accent-hover: #a05339;
+  --t-fill-neutral: #d7d3c9;
+  --t-fill-neutral-hover: #cfcbc1;
+  --t-fill-danger: #af3136;
+
+  /* ---- alpha ---- */
+  --t-alpha-1: rgb(31 30 29 / 0.04);
+  --t-alpha-2: rgb(31 30 29 / 0.08);
+  --t-alpha-3: rgb(31 30 29 / 0.16);
+  --t-scrim: rgb(31 30 29 / 0.48);
+
+  /* ---- role（别名层） ---- */
+  --t-role-user-bubble: var(--t-surface-2);
+  --t-role-code-bg: var(--t-surface-3);
+  --t-role-tooltip-bg: var(--t-surface-inverse);
+  --t-role-tooltip-fg: #f0ece0;
+}
+
+/* ================= 暗色：跟随系统 ================= */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --t-shell-bg: #131211;
+    --t-shell-row-hover: #1f1e1d;
+    --t-shell-row-selected: #302e2d;
+
+    --t-surface-0: #1f1e1d;
+    --t-surface-1: #302e2d;
+    --t-surface-2: #272625;
+    --t-surface-3: #383734;
+    --t-surface-panel: #191817;
+    --t-surface-overlay: #403f3c;
+    --t-surface-inverse: #f0ece0;
+
+    --t-text-primary: #f0ece0;
+    --t-text-secondary: #cfcbc1;
+    --t-text-muted: #adaaa2;
+    --t-text-disabled: #6a6863;
+    --t-text-accent: #d28568;
+    --t-text-danger: #d77073;
+    --t-text-success: #58d090;
+    --t-text-warning: #d0a858;
+    --t-text-on-accent: #1f1e1d;
+    --t-text-on-danger: #ffffff;
+
+    --t-border-subtle: #383734;
+    --t-border-default: #494744;
+    --t-border-strong: #8c8982;
+    --t-border-focus: #d28568;
+
+    --t-fill-brand: #c96442;
+    --t-fill-brand-quiet: #412c24;
+    --t-fill-accent: #ce7455;
+    --t-fill-accent-hover: #d28568;
+    --t-fill-neutral: #383734;
+    --t-fill-neutral-hover: #403f3c;
+    --t-fill-danger: #af3136;
+
+    --t-alpha-1: rgb(240 236 224 / 0.06);
+    --t-alpha-2: rgb(240 236 224 / 0.1);
+    --t-alpha-3: rgb(240 236 224 / 0.18);
+    --t-scrim: rgb(0 0 0 / 0.6);
+
+    --t-role-user-bubble: var(--t-surface-2);
+    --t-role-code-bg: var(--t-surface-3);
+    --t-role-tooltip-bg: var(--t-surface-inverse);
+    --t-role-tooltip-fg: #1f1e1d;
+  }
+}
+
+/* ================= 暗色：显式切换 ================= */
+[data-theme='dark'] {
+  --t-shell-bg: #131211;
+  --t-shell-row-hover: #1f1e1d;
+  --t-shell-row-selected: #302e2d;
+
+  --t-surface-0: #1f1e1d;
+  --t-surface-1: #302e2d;
+  --t-surface-2: #272625;
+  --t-surface-3: #383734;
+  --t-surface-panel: #191817;
+  --t-surface-overlay: #403f3c;
+  --t-surface-inverse: #f0ece0;
+
+  --t-text-primary: #f0ece0;
+  --t-text-secondary: #cfcbc1;
+  --t-text-muted: #adaaa2;
+  --t-text-disabled: #6a6863;
+  --t-text-accent: #d28568;
+  --t-text-danger: #d77073;
+  --t-text-success: #58d090;
+  --t-text-warning: #d0a858;
+  --t-text-on-accent: #1f1e1d;
+  --t-text-on-danger: #ffffff;
+
+  --t-border-subtle: #383734;
+  --t-border-default: #494744;
+  --t-border-strong: #8c8982;
+  --t-border-focus: #d28568;
+
+  --t-fill-brand: #c96442;
+  --t-fill-brand-quiet: #412c24;
+  --t-fill-accent: #ce7455;
+  --t-fill-accent-hover: #d28568;
+  --t-fill-neutral: #383734;
+  --t-fill-neutral-hover: #403f3c;
+  --t-fill-danger: #af3136;
+
+  --t-alpha-1: rgb(240 236 224 / 0.06);
+  --t-alpha-2: rgb(240 236 224 / 0.1);
+  --t-alpha-3: rgb(240 236 224 / 0.18);
+  --t-scrim: rgb(0 0 0 / 0.6);
+
+  --t-role-user-bubble: var(--t-surface-2);
+  --t-role-code-bg: var(--t-surface-3);
+  --t-role-tooltip-bg: var(--t-surface-inverse);
+  --t-role-tooltip-fg: #1f1e1d;
+}
+
+/* ================= 减动效 ================= */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-dur-fast: 1ms;
+    --t-dur-snap: 1ms;
+    --t-dur-base: 1ms;
+    --t-dur-sheet: 1ms;
+    --t-dur-slow: 1ms;
+  }
+}
+
+[data-reduce-motion] {
+  --t-dur-fast: 1ms;
+  --t-dur-snap: 1ms;
+  --t-dur-base: 1ms;
+  --t-dur-sheet: 1ms;
+  --t-dur-slow: 1ms;
+}

@@ -10,6 +10,7 @@ export type LocaleSetting = z.infer<typeof localeSettingSchema>
 /** Non-secret settings stored in `<profileDir>/config.json`. */
 export const configSchema = z.object({
   locale: localeSettingSchema.default('auto'),
+  sidebarCollapsed: z.boolean().default(false),
 })
 export type Config = z.infer<typeof configSchema>
 

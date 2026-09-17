@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { configLocale } from '@tenon-app/contracts'
+import { chatNew, configLocale } from '@tenon-app/contracts'
 import { absolutePath } from '@tenon-app/kernel'
 import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron'
 import { registerChatRoutes } from './chat.js'
@@ -8,6 +8,7 @@ import { createDesktopHost } from './host/index.js'
 import { readConfig } from './host/profile.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
+import { preferredSystemLanguages } from './preferred-languages.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -67,9 +68,7 @@ async function main(): Promise<void> {
     log: (line) => console.warn(line),
   })
 
-  const preferred = process.env['TENON_LOCALE']
-    ? [process.env['TENON_LOCALE']]
-    : app.getPreferredSystemLanguages()
+  const preferred = preferredSystemLanguages()
   const locale = await createLocaleController(
     await readConfig(host.fs, host.identity),
     preferred,
@@ -77,8 +76,13 @@ async function main(): Promise<void> {
   )
   const appTitle = (): string => locale.i18n.t('app.name')
   const openWindow = (): BrowserWindow => createWindow(locale.current, appTitle())
+  const newChat = (): void => {
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (target) target.webContents.send(chatNew.channel, {})
+    else openWindow()
+  }
   const installMenu = (): void => {
-    Menu.setApplicationMenu(buildApplicationMenu(locale.i18n, openWindow))
+    Menu.setApplicationMenu(buildApplicationMenu(locale.i18n, newChat))
   }
   locale.onChange(() => {
     installMenu()
