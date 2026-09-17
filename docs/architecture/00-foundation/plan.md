@@ -119,7 +119,7 @@
 | 1 | 通过 | 干净 clone 到草稿目录：`pnpm install --frozen-lockfile && pnpm format:check && pnpm build && pnpm lint && pnpm typecheck && pnpm test` 全过；CI 同样 |
 | 2 | 通过 | kernel 的 `src/` 与 `test/` 各放一个 `import 'electron'`：`pnpm lint` 失败并报 `eslint(no-restricted-imports)`；`node:fs`、`document`、`@tenon-app/contracts` 同样被拦 |
 | 3 | 通过（措辞见 Open） | `packages/kernel/test/mcp/everything.test.ts`：内存 host + 注入的 node 版 `HostProcess`，经 `sandbox.wrap` → `process.spawn` 起 server-everything，协商成功、`tools/list` 非空、`echo` 回显、stdin EOF 后以 0 退出 |
-| 4 | 机制通过，真实端点未跑 | 本机与 CI 都没有 Anthropic 凭据。`test/chat.test.ts` + `e2e/chat.spec.ts` 对本地 Anthropic 兼容 SSE 端点：流式渲染、点停止后服务端看到连接关闭、错误码本地化、重试、CSP 零违规 |
+| 4 | 通过 | 真实端点：2026-09-17 owner 填入智谱 key 后 `pnpm test:live` 三条全过（`https://open.bigmodel.cn/api/anthropic`，免费档 `glm-4.7-flash`）：流式回复、同一会话多轮上下文、停止后文字不再增长。机制层另有 `test/chat.test.ts` + `e2e/chat.spec.ts` 对本地兼容 SSE 端点：停止后服务端看到连接关闭、错误码本地化、重试、CSP 零违规 |
 | 5 | 通过 | `apps/desktop/test/profile.test.ts`（真实临时目录）+ kernel 的内存版同款用例 |
 | 6 | 通过 | `packages/contracts/test/route.test.ts`：畸形消息 → `{ ok:false, error:{ code:'invalid-request', issues } }`，handler 未被调用、不抛错；preload 另拒绝未声明通道（e2e） |
 | 7 | 通过 | lefthook 实际拦过本分支的提交（格式、lint、标题超长、大写开头）；Stop hook 两条分支手测；CI 三个 job 三次全绿；secret scanning / push protection 见第 13 步 |
@@ -134,7 +134,7 @@
 ## Open
 
 - **验收 3 的措辞**：spec 写「完成 MCP v2 协议协商」，但参考服务器 server-everything 2026.8.31 基于 sdk ^1.30（v1 协议），v2 客户端走的是默认的 legacy（2025 版 `initialize`）握手；能观察到的只有「v2 SDK 客户端与它协商成功」。需要 owner 改 spec 措辞。
-- **验收 4 的真实端点**：owner 把 key 填进仓库根的 `.env.local`（已 gitignore，模板是 `.env.example`；开发构建由 `main/dev-env.ts` 自动加载，e2e 用 `TENON_DEV_ENV=off` 关掉）后跑 `pnpm test:live`——三条真实端点用例：流式回复、同一会话的多轮上下文、停止真的停。`TENON_MODEL` 选模型，`TENON_MAX_TOKENS` 限单条回复上限（也是花费上限）。阶段 0 没有设置界面，密钥只能来自环境变量或钥匙串条目 `<tenantId>:provider:anthropic:apiKey`。
+- **真实端点的日常用法**：key 在仓库根的 `.env.local`（已 gitignore，模板 `.env.example`；开发构建由 `main/dev-env.ts` 自动加载，e2e 用 `TENON_DEV_ENV=off` 关掉）。`TENON_MODEL` / `TENON_MAX_TOKENS` 管 `pnpm dev`，`TENON_LIVE_MODEL` / `TENON_LIVE_MAX_TOKENS` 管 `pnpm test:live`，同一个 key 两边共用。已验证智谱的免费 `glm-4.7-flash` 可走 Anthropic 兼容端点。注意智谱 Coding Plan 的 key 条款上只限其指定工具，Tenon 应使用普通按量 key。阶段 0 没有设置界面，密钥只能来自环境变量或钥匙串条目 `<tenantId>:provider:anthropic:apiKey`。
 - **钥匙串与签名**：开发期未签名 Electron 读别的二进制写入的钥匙串条目会弹窗或被拒（2026-09-17 owner 已见到）；正式解决在阶段 7 签名。
 - **`HostAdapter` 缺网络能力**：阶段 1 定 provider 形状时一并决定是加 `HostAdapter.net` 还是给 provider 注入 fetch；在那之前 kernel 的 `src/` 由 lint 禁用全局 `fetch`。
 - **未在 Windows / Linux 桌面验证**：进程树 kill 的 `taskkill` 分支、`@napi-rs/keyring` 的 Credential Manager / Secret Service 行为只有文档依据；CI 的 Linux 只证明了「钥匙串不可用时回落环境变量」。
