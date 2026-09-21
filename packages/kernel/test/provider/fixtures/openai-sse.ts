@@ -395,6 +395,21 @@ export const NO_FINISH_REASON_FRAMES: readonly string[] = [
   DONE,
 ]
 
+/**
+ * A vendor that states the usage EARLY — zhipu documents usage as a field of the streaming chunk
+ * rather than as a trailing `stream_options` chunk — followed by two text chunks. It exists so a test
+ * can drop the connection after the first delta with a usage reading already consumed: a turn that was
+ * billed and then broke must not be recorded as a free one.
+ */
+export const USAGE_BEFORE_TEXT_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  usageChunk(),
+  chunk({ content: PLAIN_TEXT[0] }),
+  chunk({ content: PLAIN_TEXT[1] }),
+  chunk({}, 'stop'),
+  DONE,
+]
+
 export const MID_STREAM_TEXT = 'Working on '
 export const MID_STREAM_ERROR_CODE = 'server_error'
 export const MID_STREAM_ERROR_MESSAGE = 'upstream failed mid-stream'

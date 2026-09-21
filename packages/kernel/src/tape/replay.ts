@@ -98,10 +98,54 @@ export function effectiveMessages(entries: readonly TapeEntry[]): EffectiveMessa
   return visible
 }
 
-export interface RebuildProviderContextQuery {
+export interface ReadEffectiveMessagesQuery {
   sessionId: string
   /** Inclusive snapshot upper bound — normally a recorded `contextAtEntryId`. */
   atEntryId?: number
+}
+
+/**
+ * The fold, read out of a store: pages `readRange` over the three replay kinds and applies
+ * `effectiveMessages`.
+ *
+ * `atEntryId` is pinned for every page and the first page's `incarnationId` is handed back on all of
+ * them, so a reset mid-read is a `TapeStaleIncarnationError` rather than a silently mixed history and
+ * appends between pages cannot leak in.
+ *
+ * It keeps `messageId`, `revision` and `orderSeq`, which is what separates it from
+ * `rebuildProviderContext`: a caller that has to name a message — phase 6's edit and retract, a
+ * reader checking a revision — needs its identity, not just its content. A caller that only wants the
+ * LAST message should read `listMessages` instead: the projection is this same fold, already folded,
+ * and this function pages the whole prefix.
+ */
+export async function readEffectiveMessages(
+  store: TapeReader,
+  q: ReadEffectiveMessagesQuery,
+): Promise<EffectiveMessage[]> {
+  const entries: TapeEntry[] = []
+  let fromEntryId: number | undefined
+  let incarnationId: string | undefined
+  for (;;) {
+    const query: TapeReadRangeQuery = {
+      sessionId: q.sessionId,
+      kinds: REPLAY_KINDS,
+      limit: MAX_READ_LIMIT,
+      ...(fromEntryId === undefined ? {} : { fromEntryId }),
+      ...(q.atEntryId === undefined ? {} : { atEntryId: q.atEntryId }),
+      ...(incarnationId === undefined ? {} : { incarnationId }),
+    }
+    // Paging is sequential by nature: the next cursor IS this page's answer.
+    // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's answer
+    const page = await store.readRange(query)
+    entries.push(...page.entries)
+    incarnationId = page.incarnationId
+    if (page.nextFromEntryId === null) break
+    fromEntryId = page.nextFromEntryId
+  }
+  return effectiveMessages(entries)
+}
+
+export interface RebuildProviderContextQuery extends ReadEffectiveMessagesQuery {
   /**
    * The model this context is being assembled FOR. Replay does not consult it (see the note below);
    * it stays in the signature because the spec puts it there and because the day the thinking guard
@@ -111,11 +155,8 @@ export interface RebuildProviderContextQuery {
 }
 
 /**
- * Rebuilds the provider context from the tape.
- *
- * Pages `readRange` with `atEntryId` pinned and the returned `incarnationId` handed back on every
- * page, so a reset mid-replay is a `TapeStaleIncarnationError` rather than a silently mixed context,
- * and appends between pages cannot leak in.
+ * Rebuilds the provider context from the tape: `readEffectiveMessages` (which owns the paging and the
+ * pinning) minus everything a provider must not see — the ids, the ordinals and the empty turns.
  *
  * **Thinking blocks pass through UNCHANGED.** The guard (`decideThinking`) runs only inside
  * `encode()`, per the decision recorded in plan.md 「Open」: the guard's rule 4 needs to know whether
@@ -141,27 +182,8 @@ export async function rebuildProviderContext(
   store: TapeReader,
   q: RebuildProviderContextQuery,
 ): Promise<InternalMessage[]> {
-  const entries: TapeEntry[] = []
-  let fromEntryId: number | undefined
-  let incarnationId: string | undefined
-  for (;;) {
-    const query: TapeReadRangeQuery = {
-      sessionId: q.sessionId,
-      kinds: REPLAY_KINDS,
-      limit: MAX_READ_LIMIT,
-      ...(fromEntryId === undefined ? {} : { fromEntryId }),
-      ...(q.atEntryId === undefined ? {} : { atEntryId: q.atEntryId }),
-      ...(incarnationId === undefined ? {} : { incarnationId }),
-    }
-    // Paging is sequential by nature: the next cursor IS this page's answer.
-    // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's answer
-    const page = await store.readRange(query)
-    entries.push(...page.entries)
-    incarnationId = page.incarnationId
-    if (page.nextFromEntryId === null) break
-    fromEntryId = page.nextFromEntryId
-  }
-  return effectiveMessages(entries)
+  const messages = await readEffectiveMessages(store, q)
+  return messages
     .filter((message) => message.content.length > 0)
     .map((message) => ({ role: message.role, content: [...message.content] }))
 }

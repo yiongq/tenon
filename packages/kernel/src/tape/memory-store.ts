@@ -61,6 +61,7 @@ import {
   TapeSessionNotFoundError,
   TapeStaleIncarnationError,
   assertBatchAllowed,
+  assertBatchOpensIncarnation,
   assertCurrentIncarnation,
   assertEntryAllowed,
   assertReadKinds,
@@ -401,11 +402,14 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
         }
         const first = batch.entries[0]
         if (first === undefined) return []
+        // No head row: only a batch that OPENS with `session/start` may create one, so an append
+        // racing a `deleteSession` cannot resurrect a session without its anchor.
+        if (existing === undefined) assertBatchOpensIncarnation(batch.sessionId, first)
         const tx: SessionState =
           existing === undefined
             ? {
-                // No head row: create it with the incarnation the kernel minted. The store never
-                // mints one and never fabricates the `session/start` that must open it.
+                // Create the head row with the incarnation the kernel minted. The store never mints
+                // one and never fabricates the `session/start` that must open it.
                 head: {
                   incarnationId: batch.incarnationId,
                   lastEntryId: 0,

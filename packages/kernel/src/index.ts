@@ -284,3 +284,28 @@ export {
   ollamaDefinition,
 } from './provider/definitions/ollama.js'
 export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'
+
+// The kernel session service (step 12): creates / resets / deletes sessions, writes the phase-1
+// facts and runs ONE provider request. Facts only — no loop, no retry, no tool dispatch (phase 2).
+// It takes the store as an INSTANCE and wraps it in the Tape facade itself, so no caller above it
+// holds `TapeStore.append`.
+export { createSessionService } from './session/service.js'
+export type {
+  CreateSessionQuery,
+  LatestSession,
+  ListMessagesQuery,
+  RunRequestQuery,
+  RunResult,
+  SessionIncarnation,
+  SessionService,
+  SessionServiceOptions,
+  UserTurn,
+} from './session/service.js'
+// The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
+// revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
+export { readEffectiveMessages } from './tape/replay.js'
+export type { ReadEffectiveMessagesQuery } from './tape/replay.js'
+// One more port rule every store owes (it belongs beside `assertBatchAllowed` above; it is here so
+// the two tracks writing this file can be merged): only a batch that opens with `session/start` may
+// create a session's head row.
+export { assertBatchOpensIncarnation } from './tape/store.js'

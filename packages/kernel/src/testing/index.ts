@@ -27,3 +27,12 @@ export type {
   TapeStoreFactory,
   TapeStoreFactoryOptions,
 } from './tape-conformance.js'
+
+// A scripted provider: the real Anthropic wire encode() with a stream a case writes down. What the
+// session service's tape properties are checked with, here and in the conformance suite.
+export { createScriptedProvider, scriptedTurn, stopEvent } from './scripted-provider.js'
+export type {
+  ScriptedProvider,
+  ScriptedProviderOptions,
+  ScriptedTurnOptions,
+} from './scripted-provider.js'

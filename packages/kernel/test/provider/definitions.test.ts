@@ -5,8 +5,10 @@
  * that proves is the claim the spec makes about the abstraction: adding a provider is adding a
  * definition, and nothing else.
  *
- * The other half of acceptance 1 — that the four produce the same-shaped Tape facts — belongs to
- * the session service (step 12). Nothing here writes to a Tape.
+ * The other half of acceptance 1 — that the four produce the same-shaped Tape facts — is the second
+ * parameterised test at the bottom: the same four definitions, the same fixtures, driven through the
+ * kernel session service into a memory store, asserting that the five facts of a turn and the key set
+ * of every payload are identical whichever provider produced them. Only the values differ.
  *
  * Plus the definition data itself: the config keys the spec's table fixes, the default base URLs,
  * ollama's default key reaching the Authorization header, and the i18n keys being keys rather than
@@ -23,7 +25,9 @@ import {
   ZHIPU_DEFAULT_BASE_URL,
   anthropicDefinition,
   createBlockAccumulator,
+  createMemoryTapeStore,
   createProviderRegistry,
+  createSessionService,
   ollamaDefinition,
   OpenAIChatProvider,
   registerBuiltinProviders,
@@ -34,11 +38,13 @@ import type {
   ModelInfo,
   ProviderDefinition,
   ProviderRegistry,
+  RunResult,
   StopReason,
   StreamEvent,
+  TapeEntry,
   Usage,
 } from '../../src/index.js'
-import { fakeNetwork } from '../../src/testing/index.js'
+import { createCounterIds, fakeNetwork } from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
 import * as anthropicFixture from './fixtures/anthropic-sse.js'
 import * as openAIFixture from './fixtures/openai-sse.js'
@@ -315,6 +321,132 @@ function isPlainObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+const TAPE_IDENTITY = {
+  userId: 'acceptance-1-user',
+  tenantId: 'acceptance-1-tenant',
+  profileDir: '/tenon/acceptance-1',
+}
+
+interface TapeDrive {
+  readonly entries: TapeEntry[]
+  readonly result: RunResult
+  readonly model: ModelInfo
+}
+
+/**
+ * THE call path again, one layer up: the same definition, the same fixture, through the kernel session
+ * service into a memory store. Nothing in it names a provider either.
+ */
+async function driveThroughTape(
+  registry: ProviderRegistry,
+  testCase: DriveCase,
+): Promise<TapeDrive> {
+  const definition = registry.get(testCase.definition.id)
+  if (definition === null) throw new Error(`${testCase.definition.id} is not registered`)
+  const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
+  const provider = definition.create({
+    network: net,
+    clock: { now: () => NOW },
+    config: applyDefaults(definition, testCase.config),
+    secrets: testCase.secrets,
+  })
+  const model = (await provider.models())[0]
+  if (model === undefined) throw new Error(`${definition.id} has no builtin model`)
+  const store = createMemoryTapeStore({ identity: TAPE_IDENTITY })
+  let clock = NOW
+  const service = createSessionService({
+    host: {
+      clock: {
+        now: (): number => {
+          clock += 1000
+          return clock
+        },
+      },
+    },
+    tape: store,
+    ids: createCounterIds(),
+  })
+  const { sessionId } = await service.createSession()
+  const result = await service.runRequest({
+    sessionId,
+    user: { text: 'read /tmp/a.ts' },
+    provider,
+    model,
+    system: 'be brief',
+    tools: [TOOL],
+  })
+  const page = await store.readRange({ sessionId, limit: 100 })
+  await store.close()
+  return { entries: page.entries, result, model }
+}
+
+/** A fact minus its values: what has to be identical whichever provider produced the turn. */
+function describeFact(entry: TapeEntry): unknown {
+  return {
+    name: entry.name,
+    kind: entry.kind,
+    sourceType: entry.sourceType,
+    sourceSeq: entry.sourceSeq,
+    payloadKeys: Object.keys(entry.payload).toSorted(),
+    meta: entry.meta,
+  }
+}
+
+/** The five facts of one turn. */
+const TURN_SHAPE: readonly unknown[] = [
+  {
+    name: 'session/start',
+    kind: 'anchor',
+    sourceType: 'session',
+    sourceSeq: 0,
+    payloadKeys: ['incarnationId'],
+    meta: {},
+  },
+  {
+    name: 'message/user',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'messageId', 'revision', 'role', 'status'],
+    meta: {},
+  },
+  {
+    name: 'session/model_selected',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['modelId', 'providerId'],
+    meta: {},
+  },
+  {
+    name: 'message/assistant',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'messageId', 'revision', 'role', 'runId', 'status'],
+    meta: {},
+  },
+  {
+    name: 'provider/attempt_completed',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: [
+      'contextAtEntryId',
+      'error',
+      'modelId',
+      'promptHash',
+      'providerId',
+      'request',
+      'stop',
+      'thinkingDecisions',
+      'toolDefinitionsHash',
+      'usage',
+    ],
+    meta: {},
+  },
+]
+
 describe('acceptance 1 — one call path, four providers', () => {
   const registry = createProviderRegistry()
   registerBuiltinProviders(registry)
@@ -339,6 +471,37 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(request?.headers[testCase.credential.name]).toBe(testCase.credential.value)
       // The model the definition offered is the model that went on the wire.
       expect((request?.body as { model?: string } | undefined)?.model).toBe(result.model.id)
+    })
+  }
+
+  for (const testCase of CASES) {
+    it(`writes the same-shaped Tape facts for ${testCase.name}`, async () => {
+      const { entries, result, model } = await driveThroughTape(registry, testCase)
+      // The shape: which facts a turn writes, in which order, with which identity columns and which
+      // payload keys. Identical for all four — a provider that needed a sixth fact, a different
+      // ordering or an extra payload key would be a provider the tape's readers have to branch on.
+      expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
+      // …and the values, which are the only thing that may differ.
+      const [, , modelSelected, assistant, attempt] = entries
+      expect(modelSelected?.payload).toEqual({
+        providerId: testCase.definition.id,
+        modelId: model.id,
+      })
+      expect(assistant?.payload['content']).toEqual(testCase.content)
+      expect(assistant?.payload['status']).toBe('complete')
+      expect(assistant?.payload['runId']).toBe(result.identity.runId)
+      expect(attempt?.payload['providerId']).toBe(testCase.definition.id)
+      expect(attempt?.payload['modelId']).toBe(model.id)
+      expect(attempt?.payload['stop']).toEqual(testCase.stop)
+      expect(attempt?.payload['usage']).toEqual(testCase.usage)
+      expect(attempt?.payload['error']).toBeNull()
+      expect(attempt?.payload['request']).toEqual({
+        systemHash: expect.any(String),
+        maxTokens: model.maxOutputTokens,
+      })
+      // The prefix this request was assembled from is the head after the two pre-run facts.
+      expect(attempt?.payload['contextAtEntryId']).toBe(modelSelected?.entryId)
+      expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${result.identity.runId}:1:1`)
     })
   }
 

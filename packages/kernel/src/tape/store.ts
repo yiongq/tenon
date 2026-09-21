@@ -163,10 +163,12 @@ export interface SessionSummary {
 export interface TapeAppendBatch {
   sessionId: string
   /**
-   * Minted by the kernel and carried with EVERY batch. No head row yet ⇒ the store creates one
-   * with this id (the kernel guarantees a new incarnation opens with `session/start`); a head row
-   * carrying a different id ⇒ `TapeStaleIncarnationError`. A store therefore never mints an id of
-   * its own and never assembles a fact under a reserved name.
+   * Minted by the kernel and carried with EVERY batch. No head row yet ⇒ the store creates one with
+   * this id, and ONLY for a batch that opens with `session/start` (`assertBatchOpensIncarnation`) —
+   * the rule is enforced rather than promised, because the caller that guarantees it cannot see a
+   * `deleteSession` land between its head read and its append. A head row carrying a different id ⇒
+   * `TapeStaleIncarnationError`. A store therefore never mints an id of its own and never assembles
+   * a fact under a reserved name.
    */
   incarnationId: string
   entries: readonly NewEntry[]
@@ -378,6 +380,27 @@ export function assertBatchAllowed(entries: readonly NewEntry[]): void {
       )
     }
     seen.add(entry.provenanceKey)
+  }
+}
+
+/**
+ * The gate on CREATING a head row, owed by every implementation for the same reason
+ * `assertBatchAllowed` is (§存储端口): a batch that does not OPEN with `session/start` may not bring
+ * a session into existence.
+ *
+ * Without it the parenthetical in `TapeAppendBatch` — 「kernel 保证新 incarnation 的第一条是
+ * session/start」 — is a promise no reader can rely on: a caller that read the head, was overtaken by
+ * a `deleteSession` and then appended would silently RESURRECT the session, with its first fact a
+ * `message/assistant`, a projection row under no anchor, and a reused `incarnationId` whose entry ids
+ * restart at 1 — the very reuse `resetSession` refuses. A kernel-side re-read cannot close that
+ * window; this can, because it runs inside the same transaction as the insert.
+ */
+export function assertBatchOpensIncarnation(sessionId: string, first: NewEntry): void {
+  if (first.name !== 'session/start') {
+    throw new TapeSessionNotFoundError(
+      `session "${sessionId}" has no head row, and a batch opening with "${first.name}" ` +
+        'may not create one: an incarnation opens with session/start',
+    )
   }
 }
 

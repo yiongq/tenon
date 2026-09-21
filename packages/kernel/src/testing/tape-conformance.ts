@@ -14,10 +14,13 @@
  * written incrementally. **Anything this file does not pin is free to differ between the two stores**,
  * and §删除语义 routes live (incognito) sessions to the memory store, so both contracts ship.
  *
- * Two things are NOT covered here, on purpose:
+ * The cases at the bottom drive the kernel SESSION SERVICE (acceptance 3 in full, acceptance 7's tape
+ * half). They use a scripted provider whose `encode()` is the real Anthropic wire encoder — a
+ * recorded `promptHash` is only worth re-deriving against the encoder that produced it — and no
+ * network double at all, which is what keeps them portable.
  *
- *   - acceptance 3's `promptHash` half needs `encode()` from the provider track and is wired at step
- *     12 — faking it would prove nothing about the real encoder;
+ * One thing is NOT covered here, on purpose:
+ *
  *   - acceptance 12's tamper detection. `verifyChain`'s POSITIVE half is here (a healthy chain reports
  *     no bad link, page by page); its negative half needs a way to corrupt a stored row, which the
  *     spec gives only to SQLite (「用测试专用手段（去掉触发器）」) and which no port method offers. The
@@ -25,12 +28,22 @@
  *     rejection branches unit-tested in `test/tape/hash.test.ts`, and step 7 owns the byte flip.
  */
 import type { HostIdentity } from '../host/adapter.js'
+import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
+import { encodeAnthropicMessages } from '../provider/wire/anthropic-messages.js'
+import { systemHash } from '../provider/wire/shared.js'
+import { createSessionService } from '../session/service.js'
+import type { RunResult, SessionService } from '../session/service.js'
 import type { AppendResult, NewEntry, TapeEntry, TapeKind } from '../tape/entry.js'
 import { bytesToHex, contentHash, hashEntry } from '../tape/hash.js'
 import type { SliceEntryFields, TapeSlice } from '../tape/names.js'
 import { TapeAppendAuthorizationError, createEntryWriter } from '../tape/names.js'
-import type { ProjectionOp, ProjectionReducer } from '../tape/projection.js'
+import type {
+  ProjectionOp,
+  ProjectionReducer,
+  TapeAttemptCompletedPayload,
+} from '../tape/projection.js'
 import { project } from '../tape/projection.js'
+import { rebuildProviderContext } from '../tape/replay.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import {
   TapeProvenanceSyntaxError,
@@ -49,6 +62,8 @@ import {
   TapeStaleIncarnationError,
 } from '../tape/store.js'
 import { createCounterIds } from './fake-ids.js'
+import { createScriptedProvider, scriptedTurn } from './scripted-provider.js'
+import type { ScriptedProvider } from './scripted-provider.js'
 
 export interface TapeStoreFactoryOptions {
   /** The store binds its tenant to this; the suite never passes a tenant to a method. */
@@ -373,6 +388,166 @@ async function readAll(
     if (page.nextFromEntryId === null) return entries
     fromEntryId = page.nextFromEntryId
   }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Session-service fixtures — a scripted provider, one fixed model, one fixed system prompt and tool
+// -------------------------------------------------------------------------------------------------
+
+/** The provider id the scripted provider answers to; the encoder refuses a foreign model. */
+const SCRIPT_PROVIDER_ID = 'anthropic'
+
+const SCRIPT_MODEL: ModelInfo = {
+  id: 'claude-conformance-1',
+  providerId: SCRIPT_PROVIDER_ID,
+  contextLimit: 200_000,
+  maxOutputTokens: 1024,
+  reasoning: false,
+  supportsToolCalling: true,
+  supportsStreamingToolCalls: true,
+  supportsVision: false,
+  supportsCacheControl: false,
+  thinkingPreservationFormat: 'drop',
+  usageNeedsOptIn: false,
+}
+
+/** Fixed for every run, so acceptance 3's re-encode has the two inputs the tape does not hold. */
+const SCRIPT_SYSTEM = 'be brief'
+const SCRIPT_TOOL: ToolSpec = {
+  name: 'read_file',
+  description: 'Read a file',
+  inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+}
+
+const SCRIPT_USAGE: Usage = {
+  inputTokens: 11,
+  outputTokens: 7,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  reasoningTokens: 0,
+  final: true,
+}
+
+interface ServiceFixture {
+  readonly fixture: Fixture
+  readonly service: SessionService
+  readonly provider: ScriptedProvider
+}
+
+/** The service under its own constructor shape: a store instance, an id source, a clock reading. */
+async function openService(open: OpenFixture): Promise<ServiceFixture> {
+  const fixture = await open()
+  return {
+    fixture,
+    provider: createScriptedProvider({ id: SCRIPT_PROVIDER_ID, models: [SCRIPT_MODEL] }),
+    service: createSessionService({
+      host: { clock: { now: fixture.at } },
+      tape: fixture.store,
+      ids: fixture.ids,
+    }),
+  }
+}
+
+/** One turn through the service, with the fixture's fixed system prompt and tool. */
+function runTurn(ctx: ServiceFixture, sessionId: string, text: string): Promise<RunResult> {
+  return ctx.service.runRequest({
+    sessionId,
+    user: { text },
+    provider: ctx.provider,
+    model: SCRIPT_MODEL,
+    system: SCRIPT_SYSTEM,
+    tools: [SCRIPT_TOOL],
+  })
+}
+
+/** The text of a folded turn, for comparing what was persisted against what arrived. */
+function textOf(content: readonly ContentBlock[]): string {
+  return content
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+}
+
+/**
+ * Reads a `provider/attempt_completed` payload as the type the tape binds for it. The four type
+ * parameters are already bound (`TapeAttemptCompletedPayload`), so this checks the two fields every
+ * case below asserts on and hands the record over — a payload off a disk is data, and a bare cast
+ * would turn a corrupt row into a confusing assertion failure two screens later.
+ */
+function attemptPayloadOf(entry: TapeEntry): TapeAttemptCompletedPayload {
+  const payload = entry.payload as unknown as TapeAttemptCompletedPayload
+  if (typeof payload.contextAtEntryId !== 'number' || typeof payload.promptHash !== 'string') {
+    fail(`entry ${entry.entryId} is not an attempt record: ${describeValue(entry.payload)}`)
+  }
+  return payload
+}
+
+async function attemptFacts(store: TapeStore, sessionId: string): Promise<TapeEntry[]> {
+  const entries = await readAll(store, sessionId)
+  return entries.filter((entry) => entry.name === 'provider/attempt_completed')
+}
+
+/**
+ * Acceptance 3 for ONE attempt fact: replay pinned at the `contextAtEntryId` that fact recorded, plus
+ * that fact's own request snapshot, plus the fixture's fixed system prompt and tool, re-encoded through
+ * the real wire encoder, hashes to the `promptHash` the fact recorded.
+ *
+ * Nothing outside the fact and the tape goes into it, which is the point: if the pin, the snapshot or
+ * the encoder disagreed with what was sent, the recorded hash could never be recomputed again.
+ */
+async function assertAttemptReEncodes(
+  store: TapeStore,
+  sessionId: string,
+  entry: TapeEntry,
+): Promise<void> {
+  const fact = attemptPayloadOf(entry)
+  const messages = await rebuildProviderContext(store, {
+    sessionId,
+    atEntryId: fact.contextAtEntryId,
+    target: SCRIPT_MODEL,
+  })
+  assertTrue(messages.length > 0, `the context of attempt ${entry.entryId} is not empty`)
+  assertEqual(
+    messages.filter((message) => message.content.length === 0),
+    [],
+    'replay never yields an empty turn, in either role',
+  )
+  // Phase 1's other safety property, worth pinning while the pin is in hand: a request always ends on
+  // the user's turn. The retry rule keeps it that way, and plan.md 「Open」 relies on it — an assistant
+  // turn at the end is a prefill, which newer models answer with a 400.
+  assertEqual(
+    messages.at(-1)?.role,
+    'user',
+    `attempt ${entry.entryId} was assembled from a prefix ending on the user's turn`,
+  )
+  const encoded = encodeAnthropicMessages(
+    {
+      model: SCRIPT_MODEL,
+      messages,
+      system: SCRIPT_SYSTEM,
+      tools: [SCRIPT_TOOL],
+      maxTokens: fact.request.maxTokens,
+      ...(fact.request.temperature === undefined ? {} : { temperature: fact.request.temperature }),
+      ...(fact.request.thinking === undefined ? {} : { thinking: fact.request.thinking }),
+    },
+    SCRIPT_PROVIDER_ID,
+  )
+  assertEqual(
+    encoded.promptHash,
+    fact.promptHash,
+    `the promptHash recorded by attempt ${entry.entryId} recomputes from the tape`,
+  )
+  assertEqual(
+    encoded.toolDefinitionsHash,
+    fact.toolDefinitionsHash,
+    `the toolDefinitionsHash recorded by attempt ${entry.entryId}`,
+  )
+  assertEqual(
+    fact.request.systemHash,
+    systemHash(SCRIPT_SYSTEM),
+    'the snapshot names the system prompt the fixture fixed',
+  )
+  assertEqual(fact.modelId, SCRIPT_MODEL.id, 'the fact names the model that went on the wire')
 }
 
 function countingReducer(counts: Map<string, number>): ProjectionReducer {
@@ -1492,6 +1667,53 @@ export function tapeConformanceCases(
     await fixture.store.deleteSession(fixture.ids.uuid())
   })
 
+  add('an append that does not open with session/start never creates a session', async (open) => {
+    const fixture = await open()
+    const messageId = fixture.ids.uuid()
+    // The port promises that a session's first fact is its anchor (§存储端口: 「kernel 保证新
+    // incarnation 的第一条是 session/start」). A caller cannot keep that promise on its own — a
+    // `deleteSession` can land between its head read and its append — so the store enforces it, or a
+    // run overtaken by a delete would RESURRECT the session with a `message/*` as the first fact of
+    // an incarnation whose entry ids restart at 1, with no anchor to replay and every snapshot
+    // coordinate into it now naming a different fact.
+    await assertRejects(
+      () => appendAll(fixture, [userMessage(fixture, messageId, 0, 'no anchor above me')]),
+      TapeSessionNotFoundError,
+      'an append with no anchor and no head row',
+    )
+    assertEqual(await fixture.store.head(fixture.sessionId), null, 'no head row was created')
+    assertEqual((await readAll(fixture.store, fixture.sessionId)).length, 0, 'and no facts')
+    assertEqual(
+      (await fixture.store.listSessions({ limit: MAX_READ_LIMIT })).filter(
+        (row) => row.sessionId === fixture.sessionId,
+      ).length,
+      0,
+      'the session is absent from listSessions',
+    )
+    assertEqual(
+      (await fixture.store.listMessages({ sessionId: fixture.sessionId, limit: 10 })).length,
+      0,
+      'and no orphan message row was projected',
+    )
+    // The same batch is fine once the incarnation has been opened: this is a rule about CREATING a
+    // head row, not about which facts may follow one.
+    await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+    await appendAll(fixture, [userMessage(fixture, messageId, 0, 'no anchor above me')])
+    assertEqual(
+      (await readAll(fixture.store, fixture.sessionId)).map((entry) => entry.name),
+      ['session/start', 'message/user'],
+      'the anchor still opens the incarnation',
+    )
+    // A session deleted after it was opened goes back to the same rule.
+    await fixture.store.deleteSession(fixture.sessionId)
+    await assertRejects(
+      () => appendAll(fixture, [userMessage(fixture, messageId, 0, 'no anchor above me')]),
+      TapeSessionNotFoundError,
+      'an append after the session was deleted',
+    )
+    assertEqual(await fixture.store.head(fixture.sessionId), null, 'the session stayed deleted')
+  })
+
   add('a session this store cannot see reads as absent, never as an error', async (open) => {
     const fixture = await open()
     await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
@@ -1559,6 +1781,372 @@ export function tapeConformanceCases(
       rows.map((row) => row.sessionId),
       ['B-1', 'a-1'],
       'uppercase sorts before lowercase, as SQLite BINARY does',
+    )
+  })
+
+  // ----- acceptance 3 in full: the session service writes it, replay re-derives it ---------------
+
+  add(
+    'every attempt fact re-encodes to its own promptHash, pinned at its own contextAtEntryId',
+    async (open) => {
+      const ctx = await openService(open)
+      const store = ctx.fixture.store
+      const created = await ctx.service.createSession()
+      const sessionId = created.sessionId
+
+      ctx.provider.script(scriptedTurn({ deltas: ['first ', 'answer'], usage: SCRIPT_USAGE }))
+      const first = await runTurn(ctx, sessionId, 'first question')
+      assertEqual(first.status, 'complete', 'a normal stop persists the answer')
+      if (first.assistantMessageId === null) fail('the first turn wrote no assistant message')
+
+      // An edit of the first question and a retraction of the first answer, BETWEEN the two turns, so
+      // the second request's context differs from the first's by more than one message. Phase 1 has no
+      // writer for either (edit and delete are phase 6, regenerate retracts and runs with new ids), so
+      // the facts go in through the same slice writer that phase will use.
+      await store.append({
+        sessionId,
+        incarnationId: created.incarnationId,
+        entries: [
+          userMessage(ctx.fixture, first.userMessageId, 1, 'first question, edited'),
+          retraction(ctx.fixture, first.assistantMessageId),
+        ],
+      })
+
+      ctx.provider.script(scriptedTurn({ deltas: ['second answer'], usage: SCRIPT_USAGE }))
+      const second = await runTurn(ctx, sessionId, 'second question')
+      assertEqual(second.status, 'complete', 'the second turn persists its answer too')
+
+      // What each request actually saw. The first one is pinned BELOW the revision and the retraction,
+      // so it still replays the question as it was sent; the second sees the edit, does not see the
+      // retracted answer, and therefore opens on two adjacent user turns — which replay is specified
+      // to leave exactly as it found them.
+      const firstContext = await rebuildProviderContext(store, {
+        sessionId,
+        atEntryId: first.contextAtEntryId,
+        target: SCRIPT_MODEL,
+      })
+      assertEqual(
+        firstContext,
+        [{ role: 'user', content: [{ type: 'text', text: 'first question' }] }],
+        'the first request replays the question as it was sent, not as it was later edited',
+      )
+      const secondContext = await rebuildProviderContext(store, {
+        sessionId,
+        atEntryId: second.contextAtEntryId,
+        target: SCRIPT_MODEL,
+      })
+      assertEqual(
+        secondContext,
+        [
+          { role: 'user', content: [{ type: 'text', text: 'first question, edited' }] },
+          { role: 'user', content: [{ type: 'text', text: 'second question' }] },
+        ],
+        'the second request sees the revision and not the retracted answer',
+      )
+
+      const attempts = await attemptFacts(store, sessionId)
+      assertEqual(attempts.length, 2, 'one attempt fact per run')
+      for (const entry of attempts) {
+        // oxlint-disable-next-line no-await-in-loop -- one attempt fact at a time, in tape order
+        await assertAttemptReEncodes(store, sessionId, entry)
+        const fact = attemptPayloadOf(entry)
+        assertEqual(fact.error, null, 'a completed turn records a stop, not an error')
+        assertEqual(fact.usage, SCRIPT_USAGE, 'the final usage reading reached the fact')
+      }
+      assertTrue(
+        attempts.every((entry) => entry.sourceType === 'runtime_event' && entry.sourceSeq === 1),
+        'an attempt fact is identified by (runtime_event, runId, requestSeq)',
+      )
+
+      // The projection half of the same acceptance: what was written incrementally and what a rebuild
+      // derives from the facts are the same rows.
+      const incremental = await store.listMessages({ sessionId, limit: MAX_READ_LIMIT })
+      assertEqual(
+        incremental.map((row) => [row.role, textOf(row.content)]),
+        [
+          ['user', 'first question, edited'],
+          ['user', 'second question'],
+          ['assistant', 'second answer'],
+        ],
+        'the retracted answer is gone and order_seq still orders by first appearance',
+      )
+      const summaryBefore = (await store.listSessions({ limit: MAX_READ_LIMIT })).find(
+        (row) => row.sessionId === sessionId,
+      )
+      if (summaryBefore === undefined) fail('the session summary is missing')
+      assertEqual(summaryBefore.providerId, SCRIPT_PROVIDER_ID, 'the run recorded its provider')
+      assertEqual(summaryBefore.modelId, SCRIPT_MODEL.id, 'the run recorded its model')
+      await store.rebuildProjections(sessionId)
+      assertEqual(
+        await store.listMessages({ sessionId, limit: MAX_READ_LIMIT }),
+        incremental,
+        'message_projection rebuilt from the facts, row by row',
+      )
+      assertEqual(
+        (await store.listSessions({ limit: MAX_READ_LIMIT })).find(
+          (row) => row.sessionId === sessionId,
+        ),
+        summaryBefore,
+        'session_projection rebuilt from the facts',
+      )
+    },
+  )
+
+  // ----- acceptance 7, the tape half ------------------------------------------------------------
+
+  add(
+    'an abort at any point leaves one attempt fact and exactly the text that arrived',
+    async (open) => {
+      const ctx = await openService(open)
+      const store = ctx.fixture.store
+      const { sessionId } = await ctx.service.createSession()
+      const deltas = ['a', 'b', 'c', 'd', 'e', 'f']
+      const runIds: string[] = []
+      // k = 0 is the pre-aborted signal (the source is never created, invariant 2); k > 0 aborts from
+      // inside `onEvent`, right after the k-th event was forwarded — deterministic, and no timers.
+      for (let k = 0; k <= deltas.length; k += 1) {
+        ctx.provider.script(scriptedTurn({ deltas, usage: SCRIPT_USAGE }))
+        const controller = new AbortController()
+        if (k === 0) controller.abort()
+        const startsBefore = ctx.provider.starts
+        let seen = 0
+        // oxlint-disable-next-line no-await-in-loop -- one run at a time: the tape is the assertion
+        const result = await ctx.service.runRequest({
+          sessionId,
+          user: { text: `abort after ${k}` },
+          provider: ctx.provider,
+          model: SCRIPT_MODEL,
+          system: SCRIPT_SYSTEM,
+          tools: [SCRIPT_TOOL],
+          signal: controller.signal,
+          onEvent: (): void => {
+            seen += 1
+            if (seen === k) controller.abort()
+          },
+        })
+        runIds.push(result.identity.runId)
+        const expected = deltas.slice(0, k).join('')
+        assertEqual(
+          result.stop,
+          { reason: 'aborted', providerReason: null },
+          `run ${k} ends aborted`,
+        )
+        assertEqual(result.error, null, `run ${k}: an abort is never an error`)
+        assertEqual(textOf(result.content), expected, `run ${k} kept exactly what arrived`)
+        assertEqual(result.usage, null, `run ${k}: the final reading never arrived`)
+        if (k === 0) {
+          assertEqual(
+            ctx.provider.starts,
+            startsBefore,
+            'an already-aborted signal never starts a stream',
+          )
+          assertEqual(result.assistantMessageId, null, 'nothing arrived, so no assistant message')
+          assertEqual(result.status, null, 'and no status was written')
+        } else {
+          assertEqual(result.status, 'aborted', `run ${k} persists the partial turn as aborted`)
+          // oxlint-disable-next-line no-await-in-loop -- the row this run just wrote
+          const rows = await store.listMessages({ sessionId, limit: MAX_READ_LIMIT })
+          const row = rows.find((candidate) => candidate.messageId === result.assistantMessageId)
+          if (row === undefined) fail(`run ${k}: the partial assistant message was not persisted`)
+          assertEqual(textOf(row.content), expected, `run ${k}: the persisted text is what arrived`)
+          assertEqual(row.status, 'aborted', `run ${k}: the row carries the aborted status`)
+        }
+        // Exactly one attempt fact per (runId, requestSeq, physicalAttempt), reachable by the identity
+        // columns alone — which is the read phase 2's recovery is built on.
+        // oxlint-disable-next-line no-await-in-loop -- this run's facts, by its own runId
+        const facts = await store.readBySource({
+          sessionId,
+          sourceType: 'runtime_event',
+          sourceId: result.identity.runId,
+          limit: MAX_READ_LIMIT,
+        })
+        assertEqual(facts.length, 1, `run ${k}: exactly one provider/attempt_completed`)
+        const fact = facts[0]
+        if (fact === undefined) fail(`run ${k}: readBySource returned no fact`)
+        assertEqual(fact.name, 'provider/attempt_completed', `run ${k}: the fact's name`)
+        assertEqual(
+          fact.provenanceKey,
+          attemptCompletedKey(result.identity.runId, 1, 1),
+          `run ${k}: the attempt key carries requestSeq and physicalAttempt`,
+        )
+        assertEqual(
+          attemptPayloadOf(fact).stop,
+          { reason: 'aborted', providerReason: null },
+          `run ${k}: the fact records the abort`,
+        )
+      }
+      assertEqual(new Set(runIds).size, runIds.length, 'every run has its own runId')
+      assertEqual(
+        (await attemptFacts(store, sessionId)).length,
+        runIds.length,
+        'one attempt fact per run and no more',
+      )
+    },
+  )
+
+  // ----- the retry rule, and a failed turn ------------------------------------------------------
+
+  add('a resend after a failure is the same user message; a new text is not', async (open) => {
+    const ctx = await openService(open)
+    const store = ctx.fixture.store
+    const { sessionId } = await ctx.service.createSession()
+
+    // A failed turn: partial text arrived, and none of it is persisted — the evidence of the failure
+    // is the attempt fact's `error`, and the user's message stays so a resend can be recognised.
+    ctx.provider.script(
+      scriptedTurn({
+        deltas: ['half an '],
+        terminal: {
+          type: 'error',
+          code: 'overloaded',
+          retryable: true,
+          providerCode: 'overloaded_error',
+          detail: 'upstream said no',
+        },
+      }),
+    )
+    const failed = await runTurn(ctx, sessionId, 'same question')
+    assertEqual(failed.assistantMessageId, null, 'a failed turn writes no assistant message')
+    assertEqual(failed.status, null, 'and no status')
+    assertEqual(failed.stop, null, 'an error and a stop are exclusive')
+    assertEqual(failed.error?.code, 'overloaded', 'the error is on the run result')
+    assertEqual(failed.userMessageCreated, true, 'the first send created the user message')
+
+    // The same text again: the SAME messageId and revision, so the append is the idempotent no-op.
+    ctx.provider.script(scriptedTurn({ deltas: ['an answer'], usage: SCRIPT_USAGE }))
+    const retried = await runTurn(ctx, sessionId, 'same question')
+    assertEqual(retried.userMessageId, failed.userMessageId, 'a resend reuses the messageId')
+    assertEqual(retried.userMessageCreated, false, 'the second append is the idempotent no-op')
+    assertTrue(retried.identity.runId !== failed.identity.runId, 'two runs, two runIds')
+    for (const result of [failed, retried]) {
+      // oxlint-disable-next-line no-await-in-loop -- one run's facts at a time
+      const facts = await store.readBySource({
+        sessionId,
+        sourceType: 'runtime_event',
+        sourceId: result.identity.runId,
+        limit: MAX_READ_LIMIT,
+      })
+      assertEqual(facts.length, 1, 'each run recorded its own attempt')
+    }
+    assertEqual(
+      (await attemptFacts(store, sessionId)).length,
+      2,
+      'a retry is one user message and TWO attempts',
+    )
+
+    // The rule only holds because a user message carries nothing run-scoped: a `runId` in the payload
+    // or the meta would make the second append "same key, different content".
+    const entries = await readAll(store, sessionId)
+    const userFacts = entries.filter((entry) => entry.name === 'message/user')
+    assertEqual(userFacts.length, 1, 'the resend wrote no second row')
+    const userFact = userFacts[0]
+    if (userFact === undefined) fail('the user message is missing')
+    assertEqual(userFact.payload['runId'], undefined, 'a user message payload has no runId')
+    assertEqual(userFact.meta, {}, 'and no meta either')
+
+    // A different text is a different message.
+    ctx.provider.script(scriptedTurn({ deltas: ['another answer'], usage: SCRIPT_USAGE }))
+    const third = await runTurn(ctx, sessionId, 'another question')
+    assertTrue(third.userMessageId !== retried.userMessageId, 'a new text mints a new messageId')
+    assertEqual(third.userMessageCreated, true, 'and creates a row')
+    assertEqual(
+      (await store.listMessages({ sessionId, limit: MAX_READ_LIMIT })).map((row) => [
+        row.role,
+        textOf(row.content),
+      ]),
+      [
+        ['user', 'same question'],
+        ['assistant', 'an answer'],
+        ['user', 'another question'],
+        ['assistant', 'another answer'],
+      ],
+      'the transcript holds one question per text and one answer per successful run',
+    )
+  })
+
+  // ----- two runs at once: the desktop prevents it, the service survives it ----------------------
+
+  add('two concurrent runs on one session leave the tape consistent', async (open) => {
+    const ctx = await openService(open)
+    const store = ctx.fixture.store
+    const { sessionId } = await ctx.service.createSession()
+    // Preventing this is the desktop's job (it registers a run before its first await). The service's
+    // job is that it cannot corrupt anything when it happens: two runIds, two `session/model_selected`
+    // keys, two attempt keys and an interleaving that is VISIBLE — the facts of the two runs may
+    // alternate on the tape — but complete. Which answer belongs to which run is not asserted: the
+    // scripts are handed out in the order the two runs reach the provider.
+    ctx.provider.script(scriptedTurn({ deltas: ['left answer'], usage: SCRIPT_USAGE }))
+    ctx.provider.script(scriptedTurn({ deltas: ['right answer'], usage: SCRIPT_USAGE }))
+    const [left, right] = await Promise.all([
+      runTurn(ctx, sessionId, 'left question'),
+      runTurn(ctx, sessionId, 'right question'),
+    ])
+    if (left === undefined || right === undefined) fail('a concurrent run returned nothing')
+    assertTrue(left.identity.runId !== right.identity.runId, 'each run minted its own runId')
+    assertTrue(left.userMessageId !== right.userMessageId, 'different texts are different messages')
+    for (const result of [left, right]) {
+      // oxlint-disable-next-line no-await-in-loop -- one run's facts at a time
+      const facts = await store.readBySource({
+        sessionId,
+        sourceType: 'runtime_event',
+        sourceId: result.identity.runId,
+        limit: MAX_READ_LIMIT,
+      })
+      assertEqual(facts.length, 1, 'each concurrent run recorded exactly one attempt')
+    }
+    const entries = await readAll(store, sessionId)
+    assertTrue(
+      entries.every(
+        (entry, index) => index === 0 || entry.entryId > (entries[index - 1]?.entryId ?? 0),
+      ),
+      'entry ids stayed strictly increasing through the interleaving',
+    )
+    assertEqual(
+      new Set(entries.map((entry) => entry.provenanceKey)).size,
+      entries.length,
+      'no two facts share a provenance key',
+    )
+    const verified = await store.verifyChain({ sessionId, limit: MAX_READ_LIMIT })
+    assertEqual(verified.firstBadEntryId, null, 'the chain is intact after the interleaving')
+    assertEqual(verified.checked, entries.length, 'every entry was checked')
+    // And each attempt still re-encodes from its OWN pinned prefix: the pin is what keeps the other
+    // run's later facts out of this one's audit, however the two interleaved.
+    for (const entry of await attemptFacts(store, sessionId)) {
+      // oxlint-disable-next-line no-await-in-loop -- one attempt fact at a time
+      await assertAttemptReEncodes(store, sessionId, entry)
+    }
+    // The pin is this run's OWN pre-run batch, not the session head: the head is shared, so a bound
+    // read from it could sit above the other run's question — or above its whole answer, which would
+    // make the request a prefill — and the audit would then describe a request that was never sent.
+    // `session/model_selected` is keyed by runId, so each run's own receipt is identifiable.
+    const modelFacts = new Map(
+      entries
+        .filter((entry) => entry.name === 'session/model_selected')
+        .map((entry) => [entry.provenanceKey, entry.entryId]),
+    )
+    for (const result of [left, right]) {
+      const attempt = entries.find(
+        (entry) =>
+          entry.name === 'provider/attempt_completed' && entry.sourceId === result.identity.runId,
+      )
+      if (attempt === undefined) fail('a concurrent run wrote no attempt fact')
+      assertEqual(
+        attemptPayloadOf(attempt).contextAtEntryId,
+        modelFacts.get(modelSelectedKey(result.identity.runId)),
+        "the pin is the run's own pre-run batch, not the shared head",
+      )
+    }
+    const rows = await store.listMessages({ sessionId, limit: MAX_READ_LIMIT })
+    assertEqual(
+      rows.map((row) => row.role),
+      ['user', 'user', 'assistant', 'assistant'],
+      'both questions and both answers are in the transcript',
+    )
+    await store.rebuildProjections(sessionId)
+    assertEqual(
+      await store.listMessages({ sessionId, limit: MAX_READ_LIMIT }),
+      rows,
+      'a rebuild reproduces the interleaved projection',
     )
   })
 

@@ -5,7 +5,7 @@
  * sessions, the memory store for incognito ones.
  *
  * The factory gives every case its own profile directory, so every case gets its own `sessions.db`.
- * Honouring the suite's `identity.profileDir` would put all 22 cases in one file, where case 2 would
+ * Honouring the suite's `identity.profileDir` would put every case in one file, where case 2 would
  * read case 1's rows. The suite closes every store it opened, pass or fail, so the only thing left to
  * clean up is the directories.
  */
@@ -32,7 +32,7 @@ describe('tape conformance (SQLite store)', () => {
 
   it('runs every case the kernel suite defines', () => {
     // A suite that silently shrank would otherwise look like a passing run.
-    expect(cases.length).toBe(24)
+    expect(cases.length).toBe(29)
   })
 
   for (const conformanceCase of cases) {

@@ -78,6 +78,7 @@ import {
   TapeStaleIncarnationError,
   TapeTenantMismatchError,
   assertBatchAllowed,
+  assertBatchOpensIncarnation,
   assertCurrentIncarnation,
   assertEntryAllowed,
   assertReadKinds,
@@ -775,13 +776,24 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
           return []
         }
         return transact(() => {
-          // No head row yet ⇒ create it with the incarnation the kernel minted. No RETURNING on this
-          // statement: on conflict it would return no row at all.
-          prepare(
-            'INSERT INTO session_head (tenant_id, session_id, incarnation_id, last_entry_id, ' +
-              'last_hash, entry_count, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, ?, ?) ' +
-              'ON CONFLICT (tenant_id, session_id) DO NOTHING',
-          ).run([tenantId, batch.sessionId, batch.incarnationId, first.createdAt, first.createdAt])
+          // No head row yet ⇒ create it with the incarnation the kernel minted, and ONLY for a batch
+          // that opens with `session/start`: the read and the insert are in the write transaction, so
+          // an append racing a `deleteSession` cannot resurrect a session without its anchor. No
+          // RETURNING on the insert: on conflict it would return no row at all.
+          if (selectHead(batch.sessionId) === undefined) {
+            assertBatchOpensIncarnation(batch.sessionId, first)
+            prepare(
+              'INSERT INTO session_head (tenant_id, session_id, incarnation_id, last_entry_id, ' +
+                'last_hash, entry_count, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, ?, ?) ' +
+                'ON CONFLICT (tenant_id, session_id) DO NOTHING',
+            ).run([
+              tenantId,
+              batch.sessionId,
+              batch.incarnationId,
+              first.createdAt,
+              first.createdAt,
+            ])
+          }
           const head = selectHead(batch.sessionId)
           if (head === undefined) {
             throw new TapeSessionNotFoundError(
