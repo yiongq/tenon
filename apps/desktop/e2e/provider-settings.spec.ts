@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { expect, test } from './helpers/test.js'
 
 /**
  * Acceptance 6 in the real shell: switch the provider in the settings card, type a key, save —
@@ -17,6 +17,12 @@ import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
  */
 const ZHIPU_KEY = 'e2e-zhipu-key-4c81'
 const ZHIPU_MODEL = 'glm-4.6'
+/**
+ * The zhipu reply in two halves, with the fake holding the second one back. Distinctive strings
+ * rather than words, so "visible" cannot be a coincidence of some other copy on the page.
+ */
+const ZHIPU_HEAD = 'zhipu-head-8f2a'
+const ZHIPU_TAIL = 'zhipu-tail-31d7'
 
 let anthropic: FakeAnthropic | undefined
 let zhipu: FakeOpenAI | undefined
@@ -30,7 +36,11 @@ test.afterEach(async () => {
 
 test('acceptance 6: the settings card switches the provider the next message goes to', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['from ', 'anthropic'], delayMs: 10 })
-  zhipu = await startFakeOpenAI({ chunks: ['from ', 'zhipu'], delayMs: 10 })
+  zhipu = await startFakeOpenAI({
+    chunks: [`${ZHIPU_HEAD} `, ZHIPU_TAIL],
+    delayMs: 10,
+    holdAfter: 1,
+  })
   const first = anthropic
   const second = zhipu
   const userData = makeUserDataDir('provider-card')
@@ -71,9 +81,15 @@ test('acceptance 6: the settings card switches the provider the next message goe
 
     await page.getByTestId('composer-input').fill('and now?')
     await page.keyboard.press('Enter')
-    await expect(
-      page.getByTestId('assistant-message').nth(1).getByTestId('assistant-text'),
-    ).toHaveText('from zhipu')
+    const reply = page.getByTestId('assistant-message').nth(1).getByTestId('assistant-text')
+    // 并流式渲染 on THIS wire, not just "the right text arrived": the fake is holding the tail on
+    // its side of the socket, so the head is on screen at a moment when the rest of the reply
+    // does not exist anywhere. Catches a main process that buffered `text-delta` events until the
+    // terminal one — which the final-text assertion below would happily pass.
+    await expect(reply).toHaveText(ZHIPU_HEAD)
+    expect(second.chunksSent).toBe(1)
+    second.release()
+    await expect(reply).toHaveText(`${ZHIPU_HEAD} ${ZHIPU_TAIL}`)
 
     // The request landed on the OpenAI-compatible endpoint, with the key that was typed.
     expect(second.requests).toHaveLength(1)

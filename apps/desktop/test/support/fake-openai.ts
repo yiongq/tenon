@@ -20,6 +20,13 @@ export interface FakeOpenAIOptions {
   chunks: string[]
   /** Delay between chunks in ms. */
   delayMs?: number
+  /**
+   * Send this many chunks, then HOLD the connection open — nothing more goes onto the socket
+   * until `release()` is called. What a test buys with it: an assertion that the early text was
+   * already on screen at a moment when the rest of the reply did not exist yet, which a client
+   * that buffered the whole reply could not satisfy.
+   */
+  holdAfter?: number
   /** Respond with this HTTP status and an error body instead of streaming. */
   failWith?: { status: number; code: string; message: string }
 }
@@ -37,16 +44,20 @@ export interface FakeOpenAI {
   /** True once a client closed the connection before the stream ended. */
   aborted: boolean
   chunksSent: number
+  /** Lets a stream held by `holdAfter` finish. A no-op when nothing is held. */
+  release(): void
   close(): Promise<void>
 }
 
 export async function startFakeOpenAI(options: FakeOpenAIOptions): Promise<FakeOpenAI> {
   const delayMs = options.delayMs ?? 30
+  const hold = Promise.withResolvers<void>()
   const state: FakeOpenAI = {
     baseURL: '',
     requests: [],
     aborted: false,
     chunksSent: 0,
+    release: () => hold.resolve(),
     close: async () => {},
   }
 
@@ -98,6 +109,12 @@ export async function startFakeOpenAI(options: FakeOpenAIOptions): Promise<FakeO
           if (res.destroyed) return
           if (!chunk({ content: text })) return
           state.chunksSent += 1
+          if (state.chunksSent !== options.holdAfter) continue
+          // The tail waits here, on the socket's side of everything: nothing the app could have
+          // buffered contains it yet.
+          // oxlint-disable-next-line no-await-in-loop
+          await hold.promise
+          if (res.destroyed) return
         }
         chunk({}, 'stop')
         frame({
@@ -127,6 +144,9 @@ export async function startFakeOpenAI(options: FakeOpenAIOptions): Promise<FakeO
   state.baseURL = `http://127.0.0.1:${address.port}/v1`
   state.close = () =>
     new Promise<void>((resolve) => {
+      // Releasing first: a stream still parked on `holdAfter` would otherwise leave its loop
+      // awaiting forever, and `server.close` waits for handlers to finish.
+      hold.resolve()
       server.closeAllConnections()
       server.close(() => resolve())
     })

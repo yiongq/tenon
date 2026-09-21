@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseEnv } from 'node:util'
-import { expect, test } from '@playwright/test'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { expect, test } from './helpers/test.js'
 
 /**
  * Acceptances 4 and 21 against REAL endpoints — the only automated coverage the spec gives the
@@ -15,7 +15,8 @@ import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
  *        TENON_LIVE_MODEL=…       a cheap model for the Anthropic-wire cases
  *        ZHIPU_API_KEY=…          enables the zhipu group (acceptance 21); absent ⇒ it skips
  *        TENON_LIVE_ZHIPU_MODEL=… defaults to the first model the zhipu definition declares
- *   2. `pnpm test:live` (which is `TENON_LIVE=1 playwright test e2e/live-provider.spec.ts`).
+ *   2. `pnpm test:live`, the ONLY command that selects `playwright.live.config.ts` — the default
+ *      config ignores this file, so `pnpm test:e2e` cannot collect it whatever is in your shell.
  *
  * It spends a few thousand tokens per run and writes into the login keychain, which is why it is
  * manual. Do not point it at an endpoint you do not own.

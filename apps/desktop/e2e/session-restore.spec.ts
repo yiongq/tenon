@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { expect, test } from './helpers/test.js'
 
 /**
  * Acceptance 5: restart the desktop and the last conversation is still there — on screen AND in

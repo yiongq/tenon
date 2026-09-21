@@ -9,6 +9,7 @@ import type { ProjectionOp, TapeEntry } from '@tenon-app/kernel'
 import {
   TapeBusyError,
   TapeIntegerRangeError,
+  TapeProvenanceConflictError,
   TapeSessionNotFoundError,
   TapeTenantMismatchError,
   project,
@@ -829,6 +830,67 @@ describe('append-only and rollback (acceptance 9)', () => {
     ).toThrow(/maintenance gate/)
     raw.exec('ROLLBACK')
     expect(countFacts(raw, 'tenant-a')).toBe(1)
+    raw.close()
+    await opened.store.close()
+  })
+})
+
+// -------------------------------------------------------------------------------------------------
+// Invariant 11 · a refused batch writes nothing, measured on the FILE
+// -------------------------------------------------------------------------------------------------
+
+describe('a rejected batch leaves the library byte for byte unchanged (invariant 11)', () => {
+  it('writes not one byte for a provenance conflict or an in-batch duplicate', async () => {
+    // 「库内容逐字节不变」 is a claim about the FILE, and the port can only ever say that no read
+    // shows a change. Something that burned an id, dirtied `session_head`, opened a maintenance
+    // gate or appended a row and rolled it back forward would read exactly the same. So: digest
+    // sessions.db, provoke both refusals, digest again.
+    const opened = openStore({ label: 'conflict-bytes' })
+    const seq = ids(1)
+    const at = clockFrom()
+    const sessionId = seq.uuid()
+    const incarnationId = seq.uuid()
+    const messageId = seq.uuid()
+    await opened.store.append({
+      sessionId,
+      incarnationId,
+      entries: [startFact(sessionId, incarnationId, at), userFact(messageId, 0, 'first', at)],
+    })
+
+    // Everything committed so far has to be IN the file rather than in the -wal, or the digest
+    // would be of a database that has not been written yet. A checkpoint from a second connection
+    // moves it across and truncates the log; the same call runs again before the second digest,
+    // so the two are taken in the same physical shape.
+    const raw = rawConnection(opened.file)
+    const checkpoint = (): void => {
+      raw.pragma('wal_checkpoint(TRUNCATE)')
+    }
+    checkpoint()
+    const before = fileDigest(opened.file)
+
+    // ① Same provenance key, different content: corruption or a bug, never a retry.
+    await expect(
+      opened.store.append({
+        sessionId,
+        incarnationId,
+        entries: [userFact(messageId, 0, 'rewritten', at)],
+      }),
+    ).rejects.toThrow(TapeProvenanceConflictError)
+
+    // ② The same key twice inside ONE batch, refused before any of it is applied — including the
+    // first, valid entry standing in front of the duplicate.
+    await expect(
+      opened.store.append({
+        sessionId,
+        incarnationId,
+        entries: [extFact(sessionId, 1, at), extFact(sessionId, 1, at)],
+      }),
+    ).rejects.toThrow(TapeProvenanceConflictError)
+
+    checkpoint()
+    // Catches a conflict path that writes before it throws — an id allocated ahead of the
+    // duplicate check, an entry inserted and then undone by anything less than a full ROLLBACK.
+    expect(fileDigest(opened.file)).toBe(before)
     raw.close()
     await opened.store.close()
   })

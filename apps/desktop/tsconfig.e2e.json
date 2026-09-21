@@ -11,5 +11,11 @@
     "lib": ["es2024", "dom"],
     "types": ["node"]
   },
-  "include": ["e2e/**/*.ts", "playwright.config.ts", "src/preload/index.d.ts"]
+  "include": [
+    "e2e/**/*.ts",
+    "playwright.config.ts",
+    "playwright.live.config.ts",
+    "playwright.shared.ts",
+    "src/preload/index.d.ts"
+  ]
 }

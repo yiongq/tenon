@@ -13,7 +13,7 @@
     "typecheck": "tsc -b",
     "test:e2e": "playwright test",
     "test": "vitest run",
-    "test:live": "TENON_LIVE=1 playwright test e2e/live-provider.spec.ts"
+    "test:live": "TENON_LIVE=1 playwright test --config=playwright.live.config.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.20",
