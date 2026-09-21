@@ -150,6 +150,6 @@ export type {
   BlockAccumulatorOptions,
   TerminalStreamOptions,
 } from './provider/base.js'
-export { applyThinkingDecision, decideThinking } from './provider/thinking.js'
+export { applyThinkingDecision, decideThinking, thinkingModelId } from './provider/thinking.js'
 export type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from './provider/thinking.js'
 export { createProviderRegistry } from './provider/registry.js'

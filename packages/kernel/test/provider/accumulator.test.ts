@@ -174,12 +174,17 @@ describe('block accumulator', () => {
     ).toThrow(ProviderInvalidArgumentError)
   })
 
-  it('copies the input, so a later mutation of the event cannot reach the block', () => {
+  it('copies the input one level deep, in and out', () => {
+    // Deep enough to detach the block from the event object and from the block handed to an
+    // earlier caller; not a clone of nested objects, which the doc comment says as much.
     const input = { path: '/tmp/a' }
     const blocks = fold([
       { type: 'tool-call-end', index: 0, id: 'toolu_1', name: 'read_file', input },
     ])
     input['path'] = '/etc/passwd'
+    const first = blocks.content()[0]
+    if (first?.type !== 'tool-request') throw new Error('expected a tool request')
+    first.input['injected'] = true
     expect(blocks.content()).toEqual([
       { type: 'tool-request', id: 'toolu_1', name: 'read_file', input: { path: '/tmp/a' } },
     ])
@@ -201,6 +206,18 @@ describe('block accumulator', () => {
     expect(createBlockAccumulator(STAMP).message()).toBeNull()
     // An empty text delta is not content: it would turn an aborted run into an assistant turn.
     expect(fold([{ type: 'text-delta', index: 0, text: '' }]).message()).toBeNull()
+    // Nor is an empty, unsigned thinking slot: nothing to render, nothing to replay.
+    expect(fold([{ type: 'thinking-delta', index: 0, text: '' }]).message()).toBeNull()
+    // A signature alone IS content: it is what makes the block replayable.
+    expect(fold([{ type: 'thinking-signature', index: 0, signature: 'sig' }]).content()).toEqual([
+      {
+        type: 'thinking',
+        text: '',
+        signature: 'sig',
+        provider: STAMP.provider,
+        providerModel: STAMP.providerModel,
+      },
+    ])
     // Nor is a tool call that never ended.
     expect(
       fold([

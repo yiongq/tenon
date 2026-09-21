@@ -56,7 +56,9 @@ export interface HeaderLookup {
  * The SDKs parse `retry-after` only on their own retry path, which `maxRetries: 0` turns
  * off, so each adapter reads it here instead. `retry-after-ms` (already ms) wins over
  * `retry-after` (seconds); a non-numeric `retry-after` is an HTTP-date, and the kernel has
- * no clock global, so `now` (a HostClock.now() reading) comes from the caller.
+ * no clock global, so `now` (a HostClock.now() reading) comes from the caller. Note that
+ * `ProviderDefinition.create()` hands an adapter network, config and secrets but no clock —
+ * whoever wires step 10 needs a reading to reach here without a `Date.now()` in the kernel.
  *
  * A date already in the past clamps to 0 — "retry now" — rather than a negative delay.
  */
@@ -68,6 +70,11 @@ export function retryAfterMs(headers: HeaderLookup | null | undefined, now: numb
   if (seconds !== null) return clampDelay(seconds * 1000)
   const raw = headers.get('retry-after')?.trim()
   if (raw === undefined || raw === '') return null
+  // A value that starts like a number but failed NUMERIC_HEADER ('-5', '+5', '5-') is a
+  // mangled delta-seconds, not an HTTP-date — every HTTP-date form starts with a weekday.
+  // Date.parse() would happily read '-5' as the year 2001 and clamp it to "retry now",
+  // which is the one answer that makes the phase 2 loop resend immediately.
+  if (LOOKS_NUMERIC.test(raw)) return null
   const at = Date.parse(raw)
   if (Number.isNaN(at)) return null
   return clampDelay(at - now)
@@ -101,6 +108,9 @@ const RETRYABLE_BY_DEFAULT: Readonly<Record<ProviderErrorCode, boolean>> = {
 /** Digits with an optional fraction only: `Number('')` is 0 and `Number('Wed')` is NaN. */
 const NUMERIC_HEADER = /^\d+(?:\.\d+)?$/
 
+/** Anything a proxy might have mangled out of delta-seconds, rather than an HTTP-date. */
+const LOOKS_NUMERIC = /^[+\-.\d]/
+
 function numericHeader(headers: HeaderLookup, name: string): number | null {
   const raw = headers.get(name)?.trim()
   if (raw === undefined || !NUMERIC_HEADER.test(raw)) return null
@@ -108,7 +118,16 @@ function numericHeader(headers: HeaderLookup, name: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+/**
+ * The ceiling on a delay. A timer clamps anything above 2^31-1 to 1 ms, so an absurd
+ * `retry-after` ('99999999999' — about 3170 years) would reach the phase 2 loop as "resend
+ * immediately", the same inversion the mangled delta-seconds guard above exists to prevent.
+ * Clamped rather than dropped: a server asking for a preposterous wait is still asking to
+ * wait, and 2^31-1 ms is as long as a loop can actually sleep.
+ */
+const MAX_RETRY_AFTER_MS = 2 ** 31 - 1
+
 function clampDelay(ms: number): number | null {
   if (!Number.isFinite(ms)) return null
-  return Math.max(0, Math.round(ms))
+  return Math.min(Math.max(0, Math.round(ms)), MAX_RETRY_AFTER_MS)
 }

@@ -4,7 +4,12 @@
  * swallowed while the partial content is kept.
  */
 import { describe, expect, it } from 'vitest'
-import { BaseProvider } from '../../src/index.js'
+import {
+  BaseProvider,
+  ProviderInvalidArgumentError,
+  decideThinking,
+  thinkingModelId,
+} from '../../src/index.js'
 import type {
   EncodedRequest,
   ModelInfo,
@@ -44,8 +49,8 @@ function usageOf(outputTokens: number, final: boolean): Usage {
   }
 }
 
-function requestOf(): ProviderRequest {
-  return { model: MODEL, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
+function requestOf(model: ModelInfo = MODEL): ProviderRequest {
+  return { model, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }
 }
 
 /** Replays a fixed event list; `encode()` is pure and records what `stream()` was handed. */
@@ -119,6 +124,17 @@ describe('BaseProvider.complete', () => {
     expect((await descending.complete(requestOf(), CONTEXT)).usage).toEqual(usageOf(9, true))
   })
 
+  it('reports no usage at all when only a non-final reading arrived', async () => {
+    // The message_start-then-abort case. Invariant 1 lets only the `final: true` reading into
+    // provider/attempt_completed, so a non-final one must not be able to reach a caller that
+    // writes `result.usage` straight into the fact.
+    const provider = new ScriptedProvider([
+      { type: 'usage', usage: usageOf(1, false) },
+      { type: 'stop', reason: 'aborted', providerReason: null },
+    ])
+    expect((await provider.complete(requestOf(), CONTEXT)).usage).toBeNull()
+  })
+
   it('surfaces an error and keeps the content that arrived', async () => {
     const error: Extract<StreamEvent, { type: 'error' }> = {
       type: 'error',
@@ -152,22 +168,55 @@ describe('BaseProvider.complete', () => {
     expect(result.message.content).toEqual([{ type: 'text', text: 'partial' }])
   })
 
-  it('stamps thinking blocks with the provider id and the encoded model id', async () => {
+  // Acceptance 16's cheapest guard: the stamp comes from the exact fields decideThinking()
+  // compares, so a block straight out of complete() replays with a byte-identical signature
+  // instead of looking like a model change. The resale case is the one that pins it: the wire
+  // model id and the guard's model identity differ there.
+  it.each([
+    { name: 'the model it was configured with', model: MODEL },
+    {
+      name: 'a resale endpoint in front of the same upstream model',
+      model: { ...MODEL, id: 'eu.scripted.claude-x-v1:0', canonicalId: 'claude-x' },
+    },
+  ])('stamps thinking blocks that round-trip as replay — $name', async ({ model }) => {
+    const signature = 'EqoBCkgIARABGAIiQL2+/wK3Zg=='
     const provider = new ScriptedProvider([
       { type: 'thinking-delta', index: 0, text: 'hmm' },
-      { type: 'thinking-signature', index: 0, signature: 'sig' },
+      { type: 'thinking-signature', index: 0, signature },
       { type: 'stop', reason: 'end-turn', providerReason: 'end_turn' },
     ])
-    const result = await provider.complete(requestOf(), CONTEXT)
+    const result = await provider.complete(requestOf(model), CONTEXT)
     expect(result.message.content).toEqual([
       {
         type: 'thinking',
         text: 'hmm',
-        signature: 'sig',
-        provider: 'scripted',
-        providerModel: MODEL.id,
+        signature,
+        provider: model.providerId,
+        providerModel: thinkingModelId(model),
       },
     ])
+    const block = result.message.content[0]
+    if (block?.type !== 'thinking') throw new Error('expected a thinking block')
+    expect(decideThinking(block, { model, hasTools: false })).toEqual({
+      action: 'replay',
+      reason: 'same-model',
+    })
+    expect(block.signature).toBe(signature)
+  })
+
+  it('refuses a ModelInfo that belongs to another provider', async () => {
+    // Without this check the stamp and the guard both read the caller's `providerId`, so rule
+    // 1 compares a field against itself: a mis-keyed ModelInfo would get this provider's
+    // signed thinking stamped as someone else's, and every later turn would replay it to an
+    // endpoint that never signed it. An illegal argument, so it throws (a programmer error).
+    const provider = new ScriptedProvider([
+      { type: 'stop', reason: 'end-turn', providerReason: 'end_turn' },
+    ])
+    await expect(
+      provider.complete(requestOf({ ...MODEL, providerId: 'someone-else' }), CONTEXT),
+    ).rejects.toThrow(ProviderInvalidArgumentError)
+    // Nothing went out: the payload is not encoded, let alone streamed.
+    expect(provider.encoded).toHaveLength(0)
   })
 
   it('reports an empty turn as empty content rather than inventing one', async () => {

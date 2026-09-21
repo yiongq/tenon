@@ -8,6 +8,7 @@
  * iterable the adapter supplies, the accumulator is pure and synchronous.
  */
 import { ProviderInvalidArgumentError } from './errors.js'
+import { thinkingModelId } from './thinking.js'
 import type {
   CompleteResult,
   ContentBlock,
@@ -41,17 +42,35 @@ export abstract class BaseProvider implements Provider {
    * content that did arrive is kept: `message` holds the partial turn either way.
    */
   async complete(req: ProviderRequest, ctx: SendContext): Promise<CompleteResult> {
+    // A ModelInfo that names another provider is an illegal argument, and a silent one if it
+    // gets through: the guard compares a block's `provider` against the target model's
+    // `providerId`, so stamping from the same caller-supplied field would make rule 1 compare
+    // a value with itself. Then a mis-keyed ModelInfo would label THIS provider's signed
+    // thinking as someone else's, and a later turn would replay a signature to an endpoint
+    // that never issued it — the Anthropic 400 invariant 7 exists to prevent.
+    if (req.model.providerId !== this.id) {
+      throw new ProviderInvalidArgumentError(
+        `model ${req.model.id} belongs to provider "${req.model.providerId}", not "${this.id}"`,
+      )
+    }
     const encoded = this.encode(req)
-    const blocks = createBlockAccumulator({ provider: this.id, providerModel: encoded.modelId })
+    // Stamped from the provider that actually streamed, plus the guard's model identity (not
+    // `EncodedRequest.modelId`, which is the wire id), so a block this accumulator produces
+    // round-trips through decideThinking() as `replay / same-model` rather than looking like
+    // a model change.
+    const blocks = createBlockAccumulator({
+      provider: this.id,
+      providerModel: thinkingModelId(req.model),
+    })
     let usage: Usage | null = null
     let stop: CompleteResult['stop'] = null
     let error: CompleteResult['error'] = null
     for await (const event of this.stream(encoded, ctx)) {
       switch (event.type) {
         case 'usage':
-          // Only `final: true` reaches the Tape (invariant 1), so a final reading is never
-          // replaced by a later non-final one, whatever order they arrive in.
-          if (usage?.final !== true || event.usage.final) usage = event.usage
+          // Only `final: true` reaches the Tape (invariant 1), so only a final reading is
+          // kept here: a `message_start` reading must not be able to reach the fact.
+          if (event.usage.final) usage = event.usage
           break
         case 'stop':
           stop = { reason: event.reason, providerReason: event.providerReason }
@@ -96,7 +115,11 @@ export abstract class BaseProvider implements Provider {
 export interface BlockAccumulatorOptions {
   /** Stamped onto every thinking / redacted-thinking block: the guard compares on it. */
   readonly provider: ProviderId
-  /** The wire model id this response came from, i.e. EncodedRequest.modelId. */
+  /**
+   * The model identity to stamp: `thinkingModelId(model)`, NOT `EncodedRequest.modelId` —
+   * the guard compares on the canonical model, so a resale endpoint must not read as a
+   * model change. Anyone building an accumulator outside complete() picks the same pair.
+   */
   readonly providerModel: string
 }
 
@@ -253,15 +276,20 @@ class BlockFold implements BlockAccumulator {
           if (slot.text !== '') blocks.push({ type: 'text', text: slot.text })
           break
         case 'thinking':
-          blocks.push({
-            type: 'thinking',
-            text: slot.text,
-            // Still empty when no signature arrived — the guard then drops the block as
-            // missing-signature. Nothing is invented here.
-            signature: slot.signature ?? '',
-            provider: this.#provider,
-            providerModel: this.#providerModel,
-          })
+          // Nothing to render and nothing to replay is not content either: an empty,
+          // unsigned thinking slot would turn an aborted run into an assistant turn, the
+          // same reason the empty text slot above is skipped.
+          if (slot.text !== '' || slot.signature !== null) {
+            blocks.push({
+              type: 'thinking',
+              text: slot.text,
+              // Still empty when no signature arrived — the guard then drops the block as
+              // missing-signature. Nothing is invented here.
+              signature: slot.signature ?? '',
+              provider: this.#provider,
+              providerModel: this.#providerModel,
+            })
+          }
           break
         case 'redacted':
           blocks.push({
@@ -279,7 +307,9 @@ class BlockFold implements BlockAccumulator {
               type: 'tool-request',
               id: slot.end.id,
               name: slot.end.name,
-              input: slot.end.input,
+              // Copied again on the way out: a caller that mutates a block it was handed
+              // must not be able to reach the slot a later content() call reads.
+              input: { ...slot.end.input },
             })
           }
           break
@@ -305,6 +335,10 @@ function conflict(index: number, expected: string, found: BlockSlot): ProviderIn
  * Invariant 6: empty arguments are `{}`, never null and never a JSON string. Absent input
  * is the documented empty case; anything else means the adapter forgot to parse, which is
  * a bug we refuse to pass on as a tool call.
+ *
+ * The copy is one level deep: it detaches the block from the event object, not from nested
+ * objects the adapter parsed. An adapter that keeps mutating the arguments it already handed
+ * over is out of contract — the fold cannot defend against that without cloning every call.
  */
 function toolInput(
   event: Extract<StreamEvent, { type: 'tool-call-end' }>,
@@ -322,15 +356,24 @@ function toolInput(
 export interface TerminalStreamOptions {
   /** Turns whatever the SDK threw into the `error` event that replaces it (invariant 3). */
   readonly mapError: (error: unknown) => Extract<StreamEvent, { type: 'error' }>
-  /** SendContext.signal, if the caller has one. */
-  readonly signal?: AbortSignal | undefined
+  /**
+   * `SendContext.signal` — required, nullable on purpose: with exactOptionalPropertyTypes an
+   * adapter has to write `signal: ctx.signal` rather than forget it. This signal is the
+   * wrapper's ONLY abort oracle, so every cancellation path (phase 2's "stop = kill"
+   * included) must go through it; a stream that just ends with no aborted signal is a
+   * truncated body, and is reported as `error{ network }`, not as `stop{ aborted }`.
+   */
+  readonly signal: AbortSignal | undefined
 }
 
 /**
  * Wraps an adapter's raw event stream into one that satisfies invariants 1-4.
  *
  * - exactly one terminal event (`stop` or `error`), and it is the last event; anything the
- *   source produces after its own terminal is dropped, so `usage` always precedes it;
+ *   source produces after its own terminal is dropped, so `usage` always precedes it. An
+ *   adapter whose wire puts usage AFTER the finish reason (the OpenAI shape) must therefore
+ *   defer its own terminal to the end of the iterator, which is what invariant 1 asks of it:
+ *   a reading that arrives after the terminal is gone, not reordered in front of it;
  * - a throw becomes an `error` event through the adapter's `mapError`;
  * - an aborted signal — before the call or mid-stream — becomes `stop{ reason: 'aborted' }`,
  *   never an error and never a rejection;
@@ -350,11 +393,21 @@ export async function* withTerminalEvent(
     yield abortedStop()
     return
   }
-  const iterator = source()[Symbol.asyncIterator]()
+  let iterator: AsyncIterator<StreamEvent>
+  try {
+    iterator = source()[Symbol.asyncIterator]()
+  } catch (error) {
+    // An adapter that builds its SDK stream eagerly in the factory throws here rather than
+    // from next(); invariant 3 holds either way, so it takes the same route.
+    yield isAborted(signal) ? abortedStop() : options.mapError(error)
+    return
+  }
   const started = new Set<number>()
   const held = new Map<number, Array<Extract<StreamEvent, { type: 'tool-call-args-delta' }>>>()
   // The default covers a source that simply ran out: see streamEndedEarly().
   let terminal: Extract<StreamEvent, { type: 'stop' | 'error' }> = streamEndedEarly()
+  // Set when the abort race left a pull outstanding: see the close in the finally.
+  let abandoned = false
   try {
     for (;;) {
       // Caught here when the abort landed while the consumer was processing an event.
@@ -365,7 +418,15 @@ export async function* withTerminalEvent(
       let step: IteratorResult<StreamEvent>
       try {
         // oxlint-disable-next-line no-await-in-loop -- a stream is sequential by nature
-        step = await iterator.next()
+        const pulled = await pullOrAbort(iterator, signal)
+        if (pulled === ABORTED) {
+          // The signal beat the source. Its pull is still outstanding, which is what the
+          // close below has to account for.
+          abandoned = true
+          terminal = abortedStop()
+          break
+        }
+        step = pulled
       } catch (error) {
         // An abort is a stop, not an error, whether the SDK threw APIUserAbortError or the
         // body stream errored underneath it.
@@ -389,6 +450,17 @@ export async function* withTerminalEvent(
         else queue.push(event)
         continue
       }
+      if (event.type === 'tool-call-end') {
+        // Fragments still held for this index are dropped, and the end event goes through.
+        // Refusing the shape instead would throw out of this generator, past the `yield
+        // terminal` below, and leave a complete turn — text, a fully specified tool call,
+        // the final usage, the stop reason — with no terminal event at all (invariant 1).
+        // The fragments are the cheap thing to lose: the fold never reads them (the parsed
+        // input rides on `tool-call-end`), and a start-less end is a shape real endpoints
+        // produce — Ollama hands a call over in one piece, and an OpenAI-compatible wire
+        // that only reveals the tool id in its last chunk arrives fragments-first.
+        held.delete(event.index)
+      }
       if (event.type === 'tool-call-start') {
         started.add(event.index)
         yield event
@@ -402,11 +474,50 @@ export async function* withTerminalEvent(
       yield event
     }
   } finally {
-    await closeQuietly(iterator)
+    // A pull we walked away from is still pending, and an async iterator queues `return()`
+    // behind it: awaiting the close would hand a stalled source back the power the abort race
+    // just took away from it. The close is still requested, so the body is released the
+    // moment the source lets go.
+    if (abandoned) void closeQuietly(iterator)
+    else await closeQuietly(iterator)
   }
-  // Fragments still held belong to an index that never started: without a start there is
-  // no tool-call-end either, so nothing could have materialised from them (invariant 5).
+  // Fragments still held belong to an index that never started; whether it ended or not, no
+  // tool request could have materialised from them, so nothing downstream can tell they
+  // existed. The one thing that always arrives is this terminal event.
   yield terminal
+}
+
+/** What a pull returns when the signal beat the source to it. */
+const ABORTED = 'aborted-by-signal'
+
+/**
+ * Awaits the next event, but gives up the moment the signal aborts.
+ *
+ * Polling `signal.aborted` around the pull is not enough: a source parked on a socket that
+ * has gone quiet (a half-open connection, a stalling proxy) never settles, and a Stop would
+ * then wait on the very thing it is cancelling. Racing makes the signal the abort oracle the
+ * wrapper claims to be, whether or not the SDK propagated it into its own fetch.
+ */
+async function pullOrAbort(
+  iterator: AsyncIterator<StreamEvent>,
+  signal: AbortSignal | undefined,
+): Promise<IteratorResult<StreamEvent> | typeof ABORTED> {
+  if (signal === undefined) return iterator.next()
+  if (signal.aborted) return ABORTED
+  let onAbort: (() => void) | null = null
+  // Built before the pull starts: a source that aborts synchronously inside its own next()
+  // would otherwise fire the event before anyone listens, and the race would never settle.
+  const aborted = new Promise<typeof ABORTED>((resolve) => {
+    onAbort = () => resolve(ABORTED)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([iterator.next(), aborted])
+  } finally {
+    // One listener per pull, removed here: a long stream must not pile up reactions on a
+    // promise that only ever settles if the run is cancelled.
+    if (onAbort !== null) signal.removeEventListener('abort', onAbort)
+  }
 }
 
 /**

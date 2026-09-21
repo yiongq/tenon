@@ -37,6 +37,17 @@ describe('retryAfterMs', () => {
     expect(retryAfterMs(headersOf({ 'retry-after': at }), NOW)).toBe(0)
   })
 
+  it('clamps an absurd delay to what a timer can actually sleep', () => {
+    // setTimeout clamps anything above 2^31-1 to 1 ms, so an unclamped '99999999999' would
+    // reach the phase 2 loop as "resend immediately" — the very inversion the mangled
+    // delta-seconds rows below guard against.
+    const ceiling = 2 ** 31 - 1
+    expect(retryAfterMs(headersOf({ 'retry-after': '99999999999' }), NOW)).toBe(ceiling)
+    expect(retryAfterMs(headersOf({ 'retry-after-ms': '9007199254740991' }), NOW)).toBe(ceiling)
+    const farFuture = new Date(NOW + 400 * 24 * 3600 * 1000).toUTCString()
+    expect(retryAfterMs(headersOf({ 'retry-after': farFuture }), NOW)).toBe(ceiling)
+  })
+
   it('says nothing when the response did not', () => {
     expect(retryAfterMs(headersOf({}), NOW)).toBeNull()
     expect(retryAfterMs(undefined, NOW)).toBeNull()
@@ -44,6 +55,11 @@ describe('retryAfterMs', () => {
     // Neither an empty value nor a garbage one is a delay of 0 seconds.
     expect(retryAfterMs(headersOf({ 'retry-after': '' }), NOW)).toBeNull()
     expect(retryAfterMs(headersOf({ 'retry-after': 'soon' }), NOW)).toBeNull()
+    // A mangled delta-seconds is not an HTTP-date either: Date.parse reads '-5' as the year
+    // 2001 and a past date clamps to 0, i.e. "resend now" — never an answer we invent.
+    for (const mangled of ['-5', '+5', '5-', '5.5.5', '.5']) {
+      expect(retryAfterMs(headersOf({ 'retry-after': mangled }), NOW)).toBeNull()
+    }
     expect(retryAfterMs(headersOf({ 'retry-after-ms': 'soon', 'retry-after': '2' }), NOW)).toBe(
       2000,
     )

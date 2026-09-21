@@ -101,6 +101,38 @@ const CASES: readonly GuardCase[] = [
     target: targetOf(modelOf()),
     expected: { action: 'drop', reason: 'model-changed' },
   },
+  {
+    // A resale channel (Bedrock / Azure) in front of the same upstream model: the spec says
+    // the thinking rules are computed from `canonicalId`, so swapping the endpoint in is not
+    // a model change.
+    name: 'rule 2: a block from the upstream model behind a resale endpoint',
+    block: thinkingOf({ providerModel: 'model-a' }),
+    target: targetOf(modelOf({ id: 'eu.anthropic.model-a-v1:0', canonicalId: 'model-a' })),
+    expected: { action: 'replay', reason: 'same-model' },
+  },
+  {
+    // And the converse: a block stamped with the wire id of the resale endpoint does not
+    // match the canonical identity the guard compares on.
+    name: 'rule 2: a block stamped with a resale wire id is a model change',
+    block: thinkingOf({ providerModel: 'eu.anthropic.model-a-v1:0' }),
+    target: targetOf(modelOf({ id: 'eu.anthropic.model-a-v1:0', canonicalId: 'model-a' })),
+    expected: { action: 'drop', reason: 'model-changed' },
+  },
+  {
+    // A blank `canonicalId` is not a mapping. Kept as the identity it would collapse every
+    // model on the provider to the empty string, so two different models would compare equal
+    // at rule 2 and a signature would replay to a model that never issued it.
+    name: 'rule 2: a blank canonicalId falls back to the model id',
+    block: thinkingOf({ providerModel: 'model-a' }),
+    target: targetOf(modelOf({ id: 'model-a', canonicalId: '   ' })),
+    expected: { action: 'replay', reason: 'same-model' },
+  },
+  {
+    name: 'rule 2: a block stamped with a blank model id is a model change',
+    block: thinkingOf({ providerModel: '' }),
+    target: targetOf(modelOf({ id: 'model-a', canonicalId: '' })),
+    expected: { action: 'drop', reason: 'model-changed' },
+  },
   // Rule 3 — the target keeps nothing.
   {
     name: 'rule 3: the target drops thinking',
@@ -182,6 +214,10 @@ const CASES: readonly GuardCase[] = [
     expected: { action: 'drop', reason: 'missing-signature' },
   },
   {
+    // A declared deviation: the spec's rule 6 says 「签名为空」, and this reads a
+    // whitespace-only signature as empty too. Unreachable from a real response (signatures
+    // are base64), and the stricter of the two readings — replaying whitespace is the 400
+    // the guard exists to prevent. Cheap to relax if the owner rules the other way.
     name: 'rule 6: signed-blocks with a blank signature',
     block: thinkingOf({ signature: '   ' }),
     target: targetOf(modelOf()),

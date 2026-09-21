@@ -27,13 +27,31 @@ export interface ThinkingTarget {
   readonly hasTools: boolean
 }
 
+/**
+ * The model identity the guard compares on, and therefore the one stamped onto a thinking
+ * block: `canonicalId` when a resale channel declares one, else `id`. The spec's rule for
+ * `canonicalId` is that pricing AND the thinking rules are computed from it, so swapping a
+ * Bedrock / Azure endpoint in front of the same upstream model must not read as a model
+ * change. `EncodedRequest.modelId` stays the wire id and is never used here.
+ */
+export function thinkingModelId(model: ModelInfo): string {
+  const canonical = model.canonicalId
+  // A blank `canonicalId` is not a mapping. `??` would keep it, and every model on the
+  // provider carrying one would collapse to the same identity: two different models would
+  // then compare equal at rule 2, and a signature would replay to a model that never issued
+  // it. A non-blank value is returned as it stands — trimming it would rewrite an identity.
+  if (canonical === undefined || canonical.trim() === '') return model.id
+  return canonical
+}
+
 export function decideThinking(block: ThinkingBlock, target: ThinkingTarget): ThinkingDecision {
   const { model } = target
   // 1. Another provider's history is never replayed, whatever the target would do with it.
   if (block.provider !== model.providerId) return { action: 'drop', reason: 'foreign-provider' }
   // 2. Same provider, different model: the signature is bound to the model that signed it.
-  //    Compared against `model.id`, the id that goes on the wire — not `canonicalId`.
-  if (block.providerModel !== model.id) return { action: 'drop', reason: 'model-changed' }
+  if (block.providerModel !== thinkingModelId(model)) {
+    return { action: 'drop', reason: 'model-changed' }
+  }
   const redacted = block.type === 'redacted-thinking'
   switch (model.thinkingPreservationFormat) {
     // 3. The target keeps no reasoning at all.
@@ -53,6 +71,9 @@ export function decideThinking(block: ThinkingBlock, target: ThinkingTarget): Th
         : { action: 'downgrade', reason: 'same-model' }
     // 6. Signed blocks without a signature cannot be replayed, and one is never invented.
     //    A redacted block carries no signature and needs none: it replays opaque.
+    //    Declared deviation: the spec says 「签名为空」 and this reads whitespace-only as empty
+    //    too — the stricter reading, since replaying whitespace is the 400 this rule exists
+    //    to avoid, and unreachable from a real response (signatures are base64).
     case 'signed-blocks':
       if (!redacted && block.signature.trim() === '') {
         return { action: 'drop', reason: 'missing-signature' }

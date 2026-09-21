@@ -118,6 +118,9 @@ export interface Provider {
 
 export interface EncodedRequest {
   readonly providerId: ProviderId
+  /** The model id that goes on the wire: always `ProviderRequest.model.id`, never
+   * `canonicalId` (the endpoint only knows its own name). The thinking guard compares on
+   * `thinkingModelId(model)` instead, so the two are free to differ. */
   readonly modelId: string
   readonly body: unknown // the wire payload handed to the SDK
   readonly promptHash: string // SHA-256 (hex) of canonicalJson(body)
@@ -139,7 +142,12 @@ export interface ThinkingDecision {
 }
 
 export interface CompleteResult {
+  /** The assistant turn, partial content included. Empty `content` means there is nothing
+   * to persist: a caller writing it anyway would produce the empty assistant turn that
+   * replay must never yield (and that Anthropic rejects with a 400). */
   message: InternalMessage
+  /** The `final: true` reading, or null when the stream carried none: only a final reading
+   * may reach `provider/attempt_completed` (invariant 1). */
   usage: Usage | null
   stop: { reason: StopReason; providerReason: string | null } | null
   /** Without these two the default complete() would swallow errors and aborts. */
