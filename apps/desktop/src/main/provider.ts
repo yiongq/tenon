@@ -14,13 +14,18 @@
  *     named here, the same way `dev-env.ts` and the secrets seam refuse once packaged. Otherwise
  *     an `ANTHROPIC_BASE_URL` in a user's shell would redirect a shipped Tenon — key included.
  *
- * Nothing here decides WHICH provider: step 13 wires `anthropic`, and `provider.select`,
- * `TENON_PROVIDER` and the settings card are step 14's. What it does decide is what happens to a
- * model id that is not in a builtin table — the owner's daily setup — see `selectModel`.
+ * WHICH provider is `selectProviderId`: `config.json`'s `provider.id` (written by the settings
+ * card's `provider.select`), then `TENON_PROVIDER` on a dev build, then the spec's first builtin.
+ * What happens to a model id that is not in a builtin table — the owner's daily setup — is
+ * `selectModel`.
  */
-import { ProviderConfigMissingError, keyFor } from '@tenon-app/kernel'
+import {
+  ANTHROPIC_PROVIDER_ID,
+  ProviderConfigMissingError,
+  ZHIPU_PROVIDER_ID,
+  keyFor,
+} from '@tenon-app/kernel'
 import type {
-  ConfigKey,
   HostAdapter,
   ModelInfo,
   Provider,
@@ -30,21 +35,33 @@ import type {
 } from '@tenon-app/kernel'
 
 /**
- * The environment a dev build falls back to, per provider and per `ConfigKey.name`. Step 14 adds
- * `ZHIPU_API_KEY` here; there is no generic `TENON_<ID>_<KEY>` scheme on purpose — a variable name
- * that composes is a variable name nobody can grep for.
+ * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
+ * §desktop 接线, 「开发期回落保留」). There is no generic `TENON_<ID>_<KEY>` scheme on purpose — a
+ * variable name that composes is a variable name nobody can grep for. A provider without a row
+ * here is configured through the settings card and nowhere else.
  */
 export const DEV_ENV_FALLBACK: Readonly<Record<ProviderId, Readonly<Record<string, string>>>> = {
-  anthropic: {
+  [ANTHROPIC_PROVIDER_ID]: {
     apiKey: 'ANTHROPIC_API_KEY',
     authToken: 'ANTHROPIC_AUTH_TOKEN',
     baseURL: 'ANTHROPIC_BASE_URL',
+  },
+  [ZHIPU_PROVIDER_ID]: {
+    apiKey: 'ZHIPU_API_KEY',
   },
 }
 
 /** What a caller hands `ProviderRequest.maxTokens` when the model table's own limit is too big. */
 export const MAX_TOKENS_ENV = 'TENON_MAX_TOKENS'
 export const MODEL_ENV = 'TENON_MODEL'
+/** The dev fallback for the provider choice itself; `config.json` wins over it. */
+export const PROVIDER_ENV = 'TENON_PROVIDER'
+
+/**
+ * The provider a run uses when nothing was ever chosen. The spec's first builtin, and the one
+ * phase 0 shipped — an empty `config.json` must still reach a working chat path.
+ */
+export const DEFAULT_PROVIDER_ID: ProviderId = ANTHROPIC_PROVIDER_ID
 
 /**
  * Phase 0's cap on one reply — and on its cost — kept (spec 01 §desktop 接线, 「阶段 0 的行为全部
@@ -66,10 +83,81 @@ export interface ResolveProviderOptions {
   readonly providerId: ProviderId
   /** `config.json`'s `providerConfig[providerId]`, when the user has saved any. */
   readonly settings?: Readonly<Record<string, string>> | undefined
+  /** `config.json`'s `provider.modelId`. `TENON_MODEL` only fills what this leaves empty. */
+  readonly modelId?: string | null | undefined
   readonly env?: EnvLike
   /** `app.isPackaged`. The environment fallback below is a DEV build's, and only a dev build's. */
   readonly isPackaged?: boolean
   readonly log?: (line: string) => void
+}
+
+/**
+ * The environment the development fallbacks read — `{}` once packaged, because a shipped Tenon
+ * takes no credential, endpoint or provider choice from the ambient shell (「开发期回落」). Every
+ * reader of a `TENON_*` / vendor variable in this process goes through here.
+ */
+export function devEnv(options: { isPackaged?: boolean; env?: EnvLike | undefined }): EnvLike {
+  return options.isPackaged === true ? {} : (options.env ?? process.env)
+}
+
+/**
+ * Which provider a run uses: what the settings card saved, else the dev fallback, else the
+ * default. The dev variable only FILLS what the config lacks — a chosen provider is never
+ * overridden by a variable in someone's shell.
+ */
+export function selectProviderId(selected: string | null | undefined, env: EnvLike): ProviderId {
+  return trimmed(selected) ?? fromEnv(env, PROVIDER_ENV) ?? DEFAULT_PROVIDER_ID
+}
+
+/** A definition's non-secret config and its secrets, as `ProviderDefinition.create()` takes them. */
+export interface ProviderInputs {
+  readonly config: Record<string, string>
+  readonly secrets: Record<string, string>
+}
+
+export interface ReadInputsOptions {
+  readonly host: HostAdapter
+  readonly definition: ProviderDefinition
+  readonly settings?: Readonly<Record<string, string>> | undefined
+  /** Already narrowed by `devEnv`; pass `{}` to read only what is STORED. */
+  readonly env: EnvLike
+  readonly log: (line: string) => void
+}
+
+/**
+ * Everything a definition declares, resolved from where the host keeps it: secrets from the
+ * keychain, the rest from `config.json`, then the declared default, with the development
+ * environment filling only what neither supplied.
+ *
+ * Separate from `resolveChatProvider` because `provider.configure` needs the same answer without
+ * the environment, to decide whether what the user just typed can build a client at all.
+ */
+export async function readProviderInputs(options: ReadInputsOptions): Promise<ProviderInputs> {
+  const { host, definition, env, log } = options
+  const fallback = DEV_ENV_FALLBACK[definition.id] ?? {}
+  // One pass over the declared keys, secrets read together: a definition declares two or three,
+  // and a keychain round trip is the slowest thing on the send path before the request itself.
+  const resolved = await Promise.all(
+    definition.configKeys.map(async (key) => ({
+      key,
+      value: key.secret
+        ? ((await readProviderSecret(host, definition.id, key.name, log)) ??
+          fromEnv(env, fallback[key.name]))
+        : // `key.default` last: `create()` is documented to receive the non-secret config with
+          // defaults already applied, so a definition that does not re-apply its own still works.
+          (trimmed(options.settings?.[key.name]) ??
+          fromEnv(env, fallback[key.name]) ??
+          trimmed(key.default)),
+    })),
+  )
+  const secrets: Record<string, string> = {}
+  const config: Record<string, string> = {}
+  for (const { key, value } of resolved) {
+    if (value === null) continue
+    if (key.secret) secrets[key.name] = value
+    else config[key.name] = value
+  }
+  return { config, secrets }
 }
 
 export interface ResolvedProvider {
@@ -92,37 +180,20 @@ export async function resolveChatProvider(
   options: ResolveProviderOptions,
 ): Promise<ResolvedProvider> {
   const { host, providers, providerId } = options
-  // A packaged build reads no environment at all here: `{}`, not `process.env`.
-  const env: EnvLike = options.isPackaged === true ? {} : (options.env ?? process.env)
+  const env = devEnv(options)
   const log = options.log ?? ((line: string): void => console.warn(line))
   const definition = providers.get(providerId)
   if (definition === null) {
     throw new ProviderConfigMissingError(providerId, 'a registered provider definition')
   }
 
-  const fallback = DEV_ENV_FALLBACK[providerId] ?? {}
-  // One pass over the declared keys, secrets read together: a definition declares two or three,
-  // and a keychain round trip is the slowest thing on the send path before the request itself.
-  const resolvedKeys = await Promise.all(
-    definition.configKeys.map(async (key) => ({
-      key,
-      value: key.secret
-        ? ((await readSecret(host, providerId, key, log)) ?? fromEnv(env, fallback[key.name]))
-        : // `key.default` last: `create()` is documented to receive the non-secret config with
-          // defaults already applied, so a definition that does not re-apply its own still works.
-          (trimmed(options.settings?.[key.name]) ??
-          fromEnv(env, fallback[key.name]) ??
-          trimmed(key.default)),
-    })),
-  )
-  const secrets: Record<string, string> = {}
-  const config: Record<string, string> = {}
-  for (const { key, value } of resolvedKeys) {
-    if (value === null) continue
-    if (key.secret) secrets[key.name] = value
-    else config[key.name] = value
-  }
-
+  const { config, secrets } = await readProviderInputs({
+    host,
+    definition,
+    settings: options.settings,
+    env,
+    log,
+  })
   const provider = definition.create({
     network: host.network,
     // A reading, never a timer: `retryAfterMs` needs the wall clock, retrying does not belong
@@ -131,7 +202,8 @@ export async function resolveChatProvider(
     config,
     secrets,
   })
-  const model = selectModel(definition, fromEnv(env, MODEL_ENV), log)
+  // The saved choice first; `TENON_MODEL` fills only what it left empty.
+  const model = selectModel(definition, trimmed(options.modelId) ?? fromEnv(env, MODEL_ENV), log)
   const asked = positiveInteger(env[MAX_TOKENS_ENV])
   return {
     provider,
@@ -185,18 +257,31 @@ export function selectModel(
   }
 }
 
-async function readSecret(
+/** The keychain key a provider's secret lives under (spec 01 §desktop 接线). */
+export function providerSecretKey(
   host: HostAdapter,
   providerId: ProviderId,
-  key: ConfigKey,
+  keyName: string,
+): string {
+  return keyFor(host.identity, 'provider', providerId, keyName)
+}
+
+/**
+ * A stored secret, or `null` for "there is none here". An UNREADABLE keychain (locked, no Secret
+ * Service) is logged and also reads as null: the environment stays in charge on a dev build, and
+ * the settings card shows the key as not configured rather than claiming one it cannot see.
+ */
+export async function readProviderSecret(
+  host: HostAdapter,
+  providerId: ProviderId,
+  keyName: string,
   log: (line: string) => void,
 ): Promise<string | null> {
-  const name = keyFor(host.identity, 'provider', providerId, key.name)
   try {
-    return trimmed(await host.secrets.get(name))
+    return trimmed(await host.secrets.get(providerSecretKey(host, providerId, keyName)))
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error)
-    log(`[provider] keychain unavailable for ${providerId}.${key.name}: ${cause}`)
+    log(`[provider] keychain unavailable for ${providerId}.${keyName}: ${cause}`)
     return null
   }
 }

@@ -23,8 +23,17 @@ export function makeUserDataDir(tag: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), `tenon-e2e-${tag}-`)))
 }
 
+/** What a seeded `config.json` may carry: the fields a user could have chosen before a launch. */
+export interface SeededConfig {
+  readonly locale: LocaleSetting
+  /** The provider and model a run uses, as `provider.select` writes it. */
+  readonly provider?: { readonly id: string; readonly modelId: string }
+  /** Non-secret provider settings, as `provider.configure` writes them. Never a credential. */
+  readonly providerConfig?: Readonly<Record<string, Readonly<Record<string, string>>>>
+}
+
 /** Seeds `config.json` before the first launch, as if the user had already chosen. */
-export function seedConfig(userData: string, config: { locale: LocaleSetting }): void {
+export function seedConfig(userData: string, config: SeededConfig): void {
   const file = configPathIn(userData)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)

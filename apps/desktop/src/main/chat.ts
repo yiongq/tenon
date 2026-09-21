@@ -15,7 +15,7 @@ import type {
 } from '@tenon-app/kernel'
 import type { EventSender } from './host/index.js'
 import { readConfig } from './host/profile.js'
-import { resolveChatProvider } from './provider.js'
+import { devEnv, resolveChatProvider, selectProviderId } from './provider.js'
 import type { EnvLike, ResolvedProvider } from './provider.js'
 
 /**
@@ -44,9 +44,6 @@ import type { EnvLike, ResolvedProvider } from './provider.js'
  * that id on first use rather than keeping a renderer-id → tape-id map — the in-process state this
  * step exists to delete.
  */
-
-/** Step 13 wires one provider; `provider.select` and `TENON_PROVIDER` are step 14's. */
-const PROVIDER_ID = 'anthropic'
 
 /** How the interface names a failure. Never a sentence: the renderer owns the copy. */
 type ChatErrorCode = Extract<ChatEvent, { type: 'error' }>['code']
@@ -177,14 +174,20 @@ export function registerChatRoutes(deps: ChatDeps): void {
       if (!isCanonicalUuid(sessionId)) return fail('unknown', NOT_A_SESSION_ID)
 
       const config = await readConfig(host.fs, host.identity)
+      // The SELECTED provider: what the settings card saved, else the development fallback, else
+      // the default. Read per send, so a provider chosen while the window is open takes effect on
+      // the next message rather than at the next launch.
+      const env = devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
+      const providerId = selectProviderId(config.provider?.id, env)
       let resolved: ResolvedProvider
       try {
         resolved = await resolveChatProvider({
           host,
           providers,
-          providerId: PROVIDER_ID,
-          settings: config.providerConfig[PROVIDER_ID],
-          ...(deps.env === undefined ? {} : { env: deps.env }),
+          providerId,
+          settings: config.providerConfig[providerId],
+          modelId: config.provider?.modelId,
+          env,
           isPackaged: deps.isPackaged === true,
           log,
         })

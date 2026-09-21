@@ -1,6 +1,7 @@
 import { chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
+import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
 import { sessionLatest, sessionMessages } from './ipc/session.js'
 
 /**
@@ -12,6 +13,9 @@ export const ipcRoutes = {
   chatStop,
   configGet,
   configSet,
+  providerConfigure,
+  providerList,
+  providerSelect,
   sessionLatest,
   sessionMessages,
 } as const

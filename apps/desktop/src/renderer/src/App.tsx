@@ -27,6 +27,7 @@ export function App(): JSX.Element {
   const [config, setConfig] = useState<Config>({
     locale: 'auto',
     sidebarCollapsed: false,
+    provider: null,
     providerConfig: {},
   })
 
@@ -67,7 +68,9 @@ export function App(): JSX.Element {
     }
   }, [startFresh])
 
-  const patch = useCallback((changes: Partial<Config>) => {
+  // The fields this side owns: the provider settings travel through their own routes, which are
+  // the only ones that check a value against a definition.
+  const patch = useCallback((changes: Partial<Pick<Config, 'locale' | 'sidebarCollapsed'>>) => {
     setConfig((current) => ({ ...current, ...changes }))
     void invokeRoute(window.tenon, configSet, changes).then((result) => {
       if (result.ok) setConfig(result.data)

@@ -96,3 +96,25 @@ export {
   sessionMessages,
 } from './ipc/session.js'
 export type { ContentBlockContract, MessageRowContract } from './ipc/session.js'
+
+// Provider settings (spec 01 step 14): what the settings card reads and writes. A secret value
+// has no field to travel in — see ipc/provider.ts.
+export {
+  PROVIDER_VALUE_MAX_LENGTH,
+  providerConfigKeySchema,
+  providerConfigure,
+  providerEntrySchema,
+  providerList,
+  providerModelSchema,
+  providerSelect,
+  providerWriteErrorCodeSchema,
+  providerWriteResultSchema,
+} from './ipc/provider.js'
+export type {
+  ProviderConfigKeyContract,
+  ProviderEntryContract,
+  ProviderWriteErrorCode,
+  ProviderWriteResult,
+} from './ipc/provider.js'
+export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js'
+export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'

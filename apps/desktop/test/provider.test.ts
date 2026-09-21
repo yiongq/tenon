@@ -24,10 +24,13 @@ import type {
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_MAX_TOKENS,
+  DEFAULT_PROVIDER_ID,
   MAX_TOKENS_ENV,
   MODEL_ENV,
+  PROVIDER_ENV,
   resolveChatProvider,
   selectModel,
+  selectProviderId,
 } from '../src/main/provider.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
@@ -97,6 +100,18 @@ describe('selectModel', () => {
     const empty: ProviderDefinition = { ...anthropic(), builtinModels: [] }
     const model = selectModel(empty, 'anything', () => {})
     expect([model.contextLimit, model.maxOutputTokens]).toEqual([128_000, 4096])
+  })
+})
+
+describe('selectProviderId', () => {
+  it('prefers the saved choice, then the development variable, then the default', () => {
+    // The ordering the spec fixes: a variable in someone's shell FILLS a gap, it never overrides
+    // a provider the user chose in the settings card.
+    expect(selectProviderId('zhipu', { [PROVIDER_ENV]: 'ollama' })).toBe('zhipu')
+    expect(selectProviderId(null, { [PROVIDER_ENV]: 'ollama' })).toBe('ollama')
+    expect(selectProviderId(null, {})).toBe(DEFAULT_PROVIDER_ID)
+    // Blank is not a choice, in either place.
+    expect(selectProviderId('  ', { [PROVIDER_ENV]: '  ' })).toBe(DEFAULT_PROVIDER_ID)
   })
 })
 
@@ -265,6 +280,25 @@ describe('resolveChatProvider', () => {
     })
     expect(packaged.model).toBe(anthropic().builtinModels[0])
     expect(packaged.maxTokens).toBe(DEFAULT_MAX_TOKENS)
+  })
+
+  it('runs the model the settings saved, with TENON_MODEL filling only what it left empty', async () => {
+    const host = createMemoryHost()
+    await host.secrets.set(
+      keyFor(host.identity, 'provider', ANTHROPIC_PROVIDER_ID, 'apiKey'),
+      'from-keychain',
+    )
+    const resolve = (modelId: string | null): ReturnType<typeof resolveChatProvider> =>
+      resolveChatProvider({
+        host,
+        providers: registry(),
+        providerId: ANTHROPIC_PROVIDER_ID,
+        modelId,
+        env: { [MODEL_ENV]: 'claude-haiku-4-5-20251001' },
+        log: () => {},
+      })
+    expect((await resolve('claude-sonnet-5')).model.id).toBe('claude-sonnet-5')
+    expect((await resolve(null)).model.id).toBe('claude-haiku-4-5-20251001')
   })
 
   it('keeps the environment in charge when the keychain cannot be read', async () => {

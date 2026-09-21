@@ -34,7 +34,27 @@ export async function readConfig(fs: HostFs, identity: HostIdentity): Promise<Co
     return configSchema.parse({})
   }
   const parsed = configSchema.safeParse(raw)
-  return parsed.success ? parsed.data : configSchema.parse({})
+  return parsed.success ? parsed.data : fieldwise(raw)
+}
+
+/**
+ * One bad field costs that field, not the file.
+ *
+ * Whole-object rejection was survivable while every setting was a scalar, but `provider` is
+ * all-or-nothing (`{ id, modelId }`), so a half-written or hand-edited entry would drop the
+ * language and the sidebar state too — and the next save would persist those defaults over what
+ * the user had chosen. Each declared key is validated on its own and the failures fall back to
+ * their declared defaults; an unknown key is dropped, as the schema always did.
+ */
+function fieldwise(raw: unknown): Config {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return configSchema.parse({})
+  const source = raw as Record<string, unknown>
+  const kept: Record<string, unknown> = {}
+  for (const [name, field] of Object.entries(configSchema.shape)) {
+    const value = source[name]
+    if (value !== undefined && field.safeParse(value).success) kept[name] = value
+  }
+  return configSchema.parse(kept)
 }
 
 export async function writeConfig(

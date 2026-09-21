@@ -18,6 +18,7 @@ import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
 import { hardenWebContents } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
+import { registerProviderRoutes } from './provider-routes.js'
 import { registerSessionRoutes } from './session.js'
 import { openSessionStore } from './tape/open.js'
 
@@ -153,6 +154,7 @@ async function main(): Promise<void> {
     isPackaged: app.isPackaged,
   })
   registerSessionRoutes({ ipcMain, sessions })
+  registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
 
   const win = openWindow()
   win.webContents.on('did-finish-load', () => {

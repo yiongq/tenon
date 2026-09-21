@@ -9,19 +9,23 @@
  */
 import { randomUUID } from 'node:crypto'
 import {
+  ZHIPU_PROVIDER_ID,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  keyFor,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { HostAdapter, MessageRow, SessionService } from '@tenon-app/kernel'
+import type { AbsolutePath, HostAdapter, MessageRow, SessionService } from '@tenon-app/kernel'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
 import { registerChatRoutes } from '../src/main/chat.js'
+import { writeConfig } from '../src/main/host/profile.js'
 import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
+import { startFakeOpenAI } from './support/fake-openai.js'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
@@ -403,6 +407,42 @@ describe('chat routes', () => {
     win.reload()
     expect(await out.waitFor('done')).toMatchObject({ stopReason: 'aborted' })
     await expect.poll(() => fake.aborted, { timeout: 3000 }).toBe(true)
+  })
+
+  it('sends to the provider config.json selected, not to the default one', async () => {
+    // The point of step 14: which provider a send uses is a SETTING, and the whole path — the
+    // other wire, another vendor's credential header, the model that definition declares — comes
+    // from `config.json` plus the keychain, with no code here naming any of it.
+    fake = await startFakeAnthropic({ chunks: ['never'] })
+    const openai = await startFakeOpenAI({ chunks: ['你好', '，Tenon'], delayMs: 5 })
+    try {
+      const host = createMemoryHost({
+        network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      })
+      await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+      await writeConfig(host.fs, host.identity, {
+        provider: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-4.6' },
+        providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: openai.baseURL } },
+      })
+      await host.secrets.set(
+        keyFor(host.identity, 'provider', ZHIPU_PROVIDER_ID, 'apiKey'),
+        'zhipu-key',
+      )
+      const { ipc, out, sessions, sessionId } = harness({ host, env: withKey(fake.baseURL) })
+
+      await ipc.call('chat.send', { sessionId, text: 'hi' })
+      expect(await out.waitFor('done')).toMatchObject({ stopReason: 'end-turn' })
+      expect(textOf(out.events)).toBe('你好，Tenon')
+      expect(fake.requests).toHaveLength(0)
+      expect(openai.requests).toHaveLength(1)
+      expect(openai.requests[0]?.path).toBe('/v1/chat/completions')
+      expect(openai.requests[0]?.headers['authorization']).toBe('Bearer zhipu-key')
+      expect(openai.requests[0]?.body).toMatchObject({ model: 'glm-4.6', stream: true })
+      const assistant = (await sessions.listMessages({ sessionId, limit: 10 })).at(-1)
+      expect(said(assistant as MessageRow)).toBe('你好，Tenon')
+    } finally {
+      await openai.close()
+    }
   })
 
   it('answers every chat route when the session store could not be opened', async () => {
