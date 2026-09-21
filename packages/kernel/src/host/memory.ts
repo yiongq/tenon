@@ -7,6 +7,7 @@ import type {
   HostConfirm,
   HostFs,
   HostIdentity,
+  HostNetwork,
   HostProcess,
   HostSandbox,
   HostSecrets,
@@ -18,12 +19,14 @@ import { absolutePath } from './path.js'
 
 /**
  * In-memory HostAdapter for tests. Everything is deterministic and inspectable;
- * nothing touches the real machine. `process.spawn` is not available unless a
- * HostProcess is injected — the memory host has no way to run a program.
+ * nothing touches the real machine. `process.spawn` and `network.fetch` are not
+ * available unless injected — the memory host neither runs programs nor opens sockets.
  */
 export interface MemoryHostOptions {
   identity?: Partial<HostIdentity>
   process?: HostProcess
+  /** Tests inject `fakeNetwork()` from @tenon-app/kernel/testing; the default rejects. */
+  network?: HostNetwork
   /** Initial clock reading in ms since epoch. Default 0. */
   now?: number
 }
@@ -147,6 +150,12 @@ const noProcess: HostProcess = {
   },
 }
 
+const noNetwork: HostNetwork = {
+  fetch: async () => {
+    throw new Error('MemoryHost: network.fetch is unavailable; inject a HostNetwork (fakeNetwork)')
+  },
+}
+
 class PassthroughSandbox implements HostSandbox {
   readonly log: string[] = []
   async wrap(request: SandboxRequest): Promise<{ argv: string[]; env: Record<string, string> }> {
@@ -226,6 +235,7 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
     sandbox,
     confirm,
     clock,
+    network: options.network ?? noNetwork,
     files: fs.files,
     confirmRequests: confirm.requests,
     sandboxLog: sandbox.log,

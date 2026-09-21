@@ -4,6 +4,10 @@
  * The kernel depends on this interface alone and never learns whether it runs
  * inside Electron or inside a server-side sandbox. Shapes are fixed by
  * docs/architecture/00-foundation/spec.md §HostAdapter; change them there first.
+ *
+ * `network` is the eighth member, added by the amendment in
+ * docs/architecture/01-provider-and-tape/spec.md ("the HostAdapter.network patch
+ * to 00-foundation"). The phase 0 seven members are unchanged.
  */
 
 /** A string that has been checked to be an absolute filesystem path. */
@@ -17,6 +21,7 @@ export interface HostAdapter {
   readonly sandbox: HostSandbox
   readonly confirm: HostConfirm
   readonly clock: HostClock
+  readonly network: HostNetwork
 }
 
 export interface HostIdentity {
@@ -139,3 +144,23 @@ export interface HostClock {
   now(): number
   setTimeout(fn: () => void, ms: number): () => void
 }
+
+/**
+ * The full web signature. Narrowing `input` to string stops it satisfying either SDK's
+ * `ClientOptions.fetch`.
+ */
+export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+/**
+ * The kernel's only way out. A property rather than a method: method shorthand is
+ * bivariant under strictFunctionTypes.
+ */
+export interface HostNetwork {
+  readonly fetch: FetchLike
+}
+
+/**
+ * Rejected by the host when its egress policy refuses a request; providers normalise it
+ * to a non-retryable `egress-denied`.
+ */
+export class HostNetworkDeniedError extends Error {}

@@ -3,6 +3,7 @@ import { SystemClock } from './clock.js'
 import { IpcConfirm } from './confirm.js'
 import type { EventSender } from './confirm.js'
 import { DesktopFs } from './fs.js'
+import { createDesktopNetwork } from './network.js'
 import { createHostProcess } from './process.js'
 import { openProfile } from './profile.js'
 import { PassthroughSandbox } from './sandbox.js'
@@ -30,6 +31,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<Ho
     sandbox: new PassthroughSandbox(options.log),
     confirm: new IpcConfirm(options.send),
     clock: new SystemClock(),
+    network: createDesktopNetwork(),
   }
 }
 
@@ -39,6 +41,7 @@ export type { EventSender } from './confirm.js'
 export { KeychainSecrets, KEYCHAIN_SERVICE } from './secrets.js'
 export { PassthroughSandbox } from './sandbox.js'
 export { SystemClock } from './clock.js'
+export { createDesktopNetwork } from './network.js'
 export {
   createHostProcess,
   spawnChild,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createMemoryHost } from '../../src/host/memory.js'
 import { absolutePath, joinPath } from '../../src/host/path.js'
 import { PROFILE_CONFIG_FILE, profileDirFor } from '../../src/host/profile.js'
+import { fakeNetwork } from '../../src/testing/index.js'
 
 describe('MemoryHost fs', () => {
   it('requires the parent directory to exist, like a real filesystem', async () => {
@@ -101,6 +102,26 @@ describe('MemoryHost secrets, sandbox, confirm', () => {
     await expect(
       host.process.spawn({ argv: ['/bin/true'], cwd: absolutePath('/'), env: {}, stdio: 'pipe' }),
     ).rejects.toThrow(/inject/)
+  })
+})
+
+describe('MemoryHost network', () => {
+  it('has no way out unless a HostNetwork is injected', async () => {
+    const host = createMemoryHost()
+    await expect(host.network.fetch('https://api.example.test/v1')).rejects.toThrow(/inject/)
+  })
+
+  it('uses the injected network and nothing else', async () => {
+    const net = fakeNetwork({ kind: 'json', body: { ok: true } })
+    const host = createMemoryHost({ network: net })
+    const response = await host.network.fetch('https://api.example.test/v1', {
+      method: 'POST',
+      body: '{"model":"m"}',
+    })
+    expect(await response.json()).toEqual({ ok: true })
+    expect(net.requests).toMatchObject([
+      { url: 'https://api.example.test/v1', method: 'POST', body: { model: 'm' } },
+    ])
   })
 })
 
