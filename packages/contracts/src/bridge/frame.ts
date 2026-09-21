@@ -98,8 +98,11 @@ export function isProtocolFrameType(type: string): type is ProtocolFrameType {
  * `isProtocolFrameType` answers that.
  *
  * Only the syntax half of rule 4 lives here. The prefix-reservation half — which namespaces are
- * first-party — is Tape's name table in `packages/kernel`; when that validator exists this
- * classifier imports it instead of restating the list, so the two syntaxes cannot diverge.
+ * first-party — is Tape's name table in `packages/kernel` (`RESERVED_NAMESPACES`), and this
+ * classifier deliberately does not consult it: a frame type is classified by shape, and its bound is
+ * the transport's frame size, while a tape name is bounded by what an index and a log line can carry.
+ * What the two must share is the per-segment syntax, and `test/frame-tape-syntax.test.ts` is the only
+ * thing holding them together — tighten either regex and that test goes red.
  */
 export type FrameTypeKind = 'reserved' | 'namespaced' | 'malformed'
 

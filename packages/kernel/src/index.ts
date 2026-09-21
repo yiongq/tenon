@@ -39,3 +39,79 @@ export type {
   McpStdioServerSpec,
   McpToolList,
 } from './mcp/connection.js'
+
+// Tape — the pure core: entry model, canonical JSON, hash chain, provenance keys, name table.
+export type {
+  AppendResult,
+  AssistantMessagePayload,
+  AttemptCompletedPayload,
+  AttemptRequestSnapshot,
+  ForkOrigin,
+  MessagePayload,
+  MessageRetractedPayload,
+  MessageStatus,
+  ModelSelectedPayload,
+  NewEntry,
+  SessionStartPayload,
+  SideEffectClass,
+  SnapshotCoordinate,
+  TapeEntry,
+  TapeKind,
+  TapeSourceType,
+  UserMessagePayload,
+} from './tape/entry.js'
+export { TAPE_KINDS, TAPE_SOURCE_TYPES, TapeIntegerRangeError } from './tape/entry.js'
+export {
+  CANONICAL_JSON_MAX_DEPTH,
+  CanonicalJsonError,
+  canonicalJson,
+} from './tape/canonical-json.js'
+export {
+  HASH_BYTE_LENGTH,
+  HASH_VER,
+  KNOWN_HASH_VERS,
+  TapeHashRecipeError,
+  bytesEqual,
+  bytesToHex,
+  contentHash,
+  hashEntry,
+  hexToBytes,
+  isKnownHashVer,
+  sha256Hex,
+} from './tape/hash.js'
+export type { HashEntryFields } from './tape/hash.js'
+export {
+  DECLARED_TAPE_NAMES,
+  EXT_NAMESPACE,
+  RESERVED_NAMESPACES,
+  TAPE_NAME_MAX_LENGTH,
+  TapeAppendAuthorizationError,
+  TapeNameSyntaxError,
+  assertAppendAuthorized,
+  assertTapeName,
+  createEntryWriter,
+  declaredTapeName,
+  isReservedNamespace,
+} from './tape/names.js'
+export type {
+  AppendAuthorizationInput,
+  DeclaredSourceSeq,
+  DeclaredTapeName,
+  DeclaredTapeNameId,
+  SliceEntryFields,
+  TapeEntryWriter,
+  TapeSlice,
+} from './tape/names.js'
+export {
+  PROVENANCE_KEY_MAX_LENGTH,
+  TapeProvenanceSyntaxError,
+  assertProvenanceKey,
+  attemptCompletedKey,
+  isValidProvenanceKey,
+  messageRetractedKey,
+  messageRevisionKey,
+  modelSelectedKey,
+  parseProvenanceKey,
+  sessionStartKey,
+} from './tape/provenance.js'
+export type { ParsedProvenanceKey } from './tape/provenance.js'
