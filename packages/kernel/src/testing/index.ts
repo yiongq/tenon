@@ -19,3 +19,11 @@ export type {
   StreamGate,
   TextExchange,
 } from './fake-network.js'
+
+// The shared TapeStore conformance suite: framework-free cases a vitest file maps onto it().
+export { TapeConformanceFailure, tapeConformanceCases } from './tape-conformance.js'
+export type {
+  TapeConformanceCase,
+  TapeStoreFactory,
+  TapeStoreFactoryOptions,
+} from './tape-conformance.js'

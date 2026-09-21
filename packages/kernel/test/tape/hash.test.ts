@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { bytesToHex } from '@noble/hashes/utils.js'
-import type { HashEntryFields } from '../../src/tape/hash.js'
+import type { HashEntryFields, StoredEntryFields } from '../../src/tape/hash.js'
 import {
   HASH_BYTE_LENGTH,
   HASH_VER,
@@ -17,6 +17,7 @@ import {
   contentHash,
   hashEntry,
   isKnownHashVer,
+  isStoredEntryProvable,
   sha256Hex,
 } from '../../src/tape/hash.js'
 import { TapeIntegerRangeError } from '../../src/tape/entry.js'
@@ -238,5 +239,71 @@ describe('sha256Hex and bytesEqual', () => {
     expect(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 3]))).toBe(false)
     expect(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3]))).toBe(false)
     expect(bytesEqual(startContent, startContent)).toBe(true)
+  })
+})
+
+/**
+ * `isStoredEntryProvable` is the predicate every store's `verifyChain` is built from, so its FALSE
+ * branches are what acceptance 12's byte flip exercises through SQLite — and they are unreachable
+ * through the port (nothing can corrupt a stored row from outside). Unit-testing them here is what
+ * keeps a store from shipping a `verifyChain` that trusts the `content_hash` column, forgets to link
+ * the rows, or quietly blesses a `hash_ver` it cannot compute (plan.md 「Open」: report it as the bad
+ * entry).
+ */
+describe('isStoredEntryProvable', () => {
+  const storedFirst: StoredEntryFields = {
+    ...first,
+    payloadJson: START_PAYLOAD,
+    metaJson: '{}',
+    entryHash: hashEntry(first),
+  }
+  const storedSecond: StoredEntryFields = {
+    ...chained,
+    payloadJson: USER_PAYLOAD,
+    metaJson: '{}',
+    entryHash: hashEntry(chained),
+  }
+
+  it('accepts a healthy chain', () => {
+    expect(isStoredEntryProvable(storedFirst, null)).toBe(true)
+    expect(isStoredEntryProvable(storedSecond, storedFirst.entryHash)).toBe(true)
+  })
+
+  it('rejects a payload byte that changed under an intact content_hash column', () => {
+    const flipped: StoredEntryFields = {
+      ...storedFirst,
+      payloadJson: START_PAYLOAD.replace('1111-1111', '1111-1112'),
+    }
+    expect(isStoredEntryProvable(flipped, null)).toBe(false)
+    // …and the meta column is covered by the same digest.
+    expect(isStoredEntryProvable({ ...storedFirst, metaJson: '{"a":1}' }, null)).toBe(false)
+  })
+
+  it('rejects a broken link even when both rows are individually intact', () => {
+    expect(isStoredEntryProvable(storedSecond, null)).toBe(false)
+    expect(isStoredEntryProvable(storedSecond, storedSecond.entryHash)).toBe(false)
+    expect(isStoredEntryProvable(storedFirst, storedSecond.entryHash)).toBe(false)
+  })
+
+  it('rejects a broken seal, including one hiding a rewritten identity column', () => {
+    expect(isStoredEntryProvable({ ...storedFirst, entryHash: userContent }, null)).toBe(false)
+    // A bare UPDATE of source_id: the text and the content hash still agree, the seal does not.
+    expect(isStoredEntryProvable({ ...storedFirst, sourceId: 'another-session' }, null)).toBe(false)
+    expect(isStoredEntryProvable({ ...storedFirst, createdAt: 1_700_000_000_001 }, null)).toBe(
+      false,
+    )
+  })
+
+  it('rejects a hash_ver this build cannot compute rather than blessing it', () => {
+    expect(isStoredEntryProvable({ ...storedFirst, hashVer: HASH_VER + 1 }, null)).toBe(false)
+  })
+
+  it('rejects a row the recipe cannot hash at all instead of throwing at the caller', () => {
+    // A prev_hash that is not 32 bytes and matches the previous row byte for byte: the link check
+    // passes, so what fails is the recipe itself. A verifier must still name the row.
+    const short = new Uint8Array(HASH_BYTE_LENGTH - 1)
+    expect(isStoredEntryProvable({ ...storedSecond, prevHash: short }, short)).toBe(false)
+    // An entry_id outside the safe range is the same class of unusable row.
+    expect(isStoredEntryProvable({ ...storedFirst, entryId: 2 ** 60 }, null)).toBe(false)
   })
 })

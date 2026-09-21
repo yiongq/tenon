@@ -206,6 +206,50 @@ export function hashEntry(fields: HashEntryFields): Uint8Array {
 }
 
 /**
+ * One stored row, as a verifier sees it: the semantic columns plus the two JSON columns AS STORED and
+ * the row's own seal. `contentHash` here is the COLUMN, which is exactly what makes a mismatch with
+ * the recomputed digest detectable.
+ */
+export interface StoredEntryFields extends HashEntryFields {
+  readonly payloadJson: string
+  readonly metaJson: string
+  readonly entryHash: Uint8Array
+}
+
+/**
+ * Is one link of the chain provable from what is on disk? Every store's `verifyChain` is this
+ * predicate plus paging, so the recipe AND its verification live in the kernel: a host that wrote its
+ * own check could trust the `content_hash` column, or forget to link the rows, and still look healthy.
+ *
+ * Four things must hold. The content digest matches the STORED text (spec 01 §哈希链: phase 1
+ * recomputes it, or acceptance 12's flipped payload byte would hide behind an intact column),
+ * `prev_hash` is the previous row's `entry_hash`, the row's own seal matches, and this build knows the
+ * row's `hash_ver`. An unknown version and a row this recipe cannot hash at all (a digest column of
+ * the wrong length) both count as NOT provable: the port's result shape has no third state, and
+ * calling such a row healthy is the dangerous half of the guess (decision recorded in plan.md 「Open」).
+ */
+export function isStoredEntryProvable(
+  row: StoredEntryFields,
+  previousHash: Uint8Array | null,
+): boolean {
+  if (!isKnownHashVer(row.hashVer)) return false
+  if (row.prevHash === null || previousHash === null) {
+    if (row.prevHash !== previousHash) return false
+  } else if (!bytesEqual(row.prevHash, previousHash)) return false
+  try {
+    const recomputed = contentHash(row.payloadJson, row.metaJson)
+    if (!bytesEqual(recomputed, row.contentHash)) return false
+    return bytesEqual(hashEntry({ ...row, contentHash: recomputed }), row.entryHash)
+  } catch (error) {
+    // A row whose digest column is not 32 bytes, or whose integers are out of range, cannot be
+    // resealed. That is a fact about the row, so it is reported as the bad link rather than thrown
+    // out of a paging loop. A bug in the recipe itself would fail the fixed vectors, not land here.
+    if (error instanceof TapeHashRecipeError || error instanceof TapeIntegerRangeError) return false
+    throw error
+  }
+}
+
+/**
  * SHA-256 as lowercase hex. The provider layer's `promptHash` / `toolDefinitionsHash` are this
  * over `canonicalJson(body)`; hex because those two travel inside a payload, and a payload is
  * JSON (no room for bytes).

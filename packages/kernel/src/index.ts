@@ -77,9 +77,10 @@ export {
   hashEntry,
   hexToBytes,
   isKnownHashVer,
+  isStoredEntryProvable,
   sha256Hex,
 } from './tape/hash.js'
-export type { HashEntryFields } from './tape/hash.js'
+export type { HashEntryFields, StoredEntryFields } from './tape/hash.js'
 export {
   DECLARED_TAPE_NAMES,
   EXT_NAMESPACE,
@@ -153,3 +154,70 @@ export type {
 export { applyThinkingDecision, decideThinking, thinkingModelId } from './provider/thinking.js'
 export type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from './provider/thinking.js'
 export { createProviderRegistry } from './provider/registry.js'
+
+// Tape — the storage port, the in-memory store, the projection reducer, folding, replay, the facade.
+export {
+  MAX_READ_LIMIT,
+  TapeBusyError,
+  TapeProvenanceConflictError,
+  TapeReadLimitError,
+  TapeSessionNotFoundError,
+  TapeStaleIncarnationError,
+  TapeTenantMismatchError,
+  assertReadKinds,
+  assertReadLimit,
+} from './tape/store.js'
+export type {
+  MessageRow,
+  SessionHead,
+  SessionSummary,
+  TapeAppendBatch,
+  TapeListMessagesQuery,
+  TapeListSessionsQuery,
+  TapeReadBySourceQuery,
+  TapeReadRangePage,
+  TapeReadRangeQuery,
+  TapeReader,
+  TapeResetSessionQuery,
+  TapeStore,
+  TapeVerifyChainPage,
+  TapeVerifyChainQuery,
+} from './tape/store.js'
+export {
+  PROJECTION_TABLES,
+  PROJECTION_VERSION,
+  TapeProjectionError,
+  parseMessagePayload,
+  parseRetractedMessageId,
+  project,
+} from './tape/projection.js'
+export type {
+  MessageProjectionInsertOnly,
+  MessageProjectionKey,
+  MessageProjectionValues,
+  ProjectionOp,
+  ProjectionReducer,
+  ProjectionTable,
+  SessionProjectionInsertOnly,
+  SessionProjectionKey,
+  SessionProjectionValues,
+  TapeAssistantMessagePayload,
+  TapeAttemptCompletedPayload,
+  TapeAttemptError,
+  TapeAttemptStop,
+  TapeMessagePayload,
+  TapePayloadByName,
+  TapeUserMessagePayload,
+} from './tape/projection.js'
+export { REPLAY_KINDS, effectiveMessages, rebuildProviderContext } from './tape/replay.js'
+export type { EffectiveMessage, RebuildProviderContextQuery } from './tape/replay.js'
+export { createMemoryTapeStore } from './tape/memory-store.js'
+export type { MemoryTapeStoreOptions } from './tape/memory-store.js'
+export { createTape } from './tape/tape.js'
+export type {
+  Tape,
+  TapeAppendEntriesBatch,
+  TapeFact,
+  TapeWriteBatch,
+  TapeWriter,
+} from './tape/tape.js'
