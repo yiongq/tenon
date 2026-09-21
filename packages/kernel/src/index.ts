@@ -232,3 +232,27 @@ export {
   idempotentAppendResult,
 } from './tape/store.js'
 export type { StoredEntryIdentity } from './tape/store.js'
+// The two wire protocols' pure encode() halves, plus the request-snapshot helpers the session
+// service shares with them (step 9; the adapter classes of steps 10 and 11 delegate here).
+export { encodeAnthropicMessages } from './provider/wire/anthropic-messages.js'
+export type {
+  AnthropicContentBlock,
+  AnthropicResultBlock,
+  AnthropicToolDefinition,
+  AnthropicWireMessage,
+} from './provider/wire/anthropic-messages.js'
+export { encodeOpenAIChat } from './provider/wire/openai-chat.js'
+export type {
+  OpenAIAssistantMessage,
+  OpenAIContent,
+  OpenAIContentPart,
+  OpenAIToolCall,
+  OpenAIToolDefinition,
+  OpenAIWireMessage,
+} from './provider/wire/openai-chat.js'
+export {
+  NO_SYSTEM_PROMPT_HASH,
+  effectiveMaxTokens,
+  requestSnapshot,
+  systemHash,
+} from './provider/wire/shared.js'
