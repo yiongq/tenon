@@ -7,8 +7,9 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
+// `(?<!\.)`: `error.message : 'x'` in a ternary is a property read, not an object-literal key.
 const MAIN_FIELDS =
-  /\b(label|sublabel|title|message|detail|toolTip|placeholder|checkboxLabel|buttonLabel)\s*:\s*(['"`])((?:(?!\2).)+)\2/g
+  /(?<!\.)\b(label|sublabel|title|message|detail|toolTip|placeholder|checkboxLabel|buttonLabel)\s*:\s*(['"`])((?:(?!\2).)+)\2/g
 const MAIN_BUTTONS = /\bbuttons\s*:\s*\[[^\]]*(['"`])(?:(?!\1).)+\1/g
 const JSX_PROPS = /\b(aria-label|aria-description|placeholder|title|alt)=(["'])((?:(?!\2).)+)\2/g
 
