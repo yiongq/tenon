@@ -71,9 +71,6 @@ importers:
 
   apps/desktop:
     dependencies:
-      '@anthropic-ai/sdk':
-        specifier: 0.126.0
-        version: 0.126.0(zod@4.6.5)
       '@assistant-ui/react':
         specifier: 0.15.20
         version: 0.15.20(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0))

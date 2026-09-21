@@ -7,10 +7,18 @@ export type Locale = z.infer<typeof localeSchema>
 export const localeSettingSchema = z.enum(['auto', 'zh-CN', 'en'])
 export type LocaleSetting = z.infer<typeof localeSettingSchema>
 
-/** Non-secret settings stored in `<profileDir>/config.json`. */
+/**
+ * Non-secret settings stored in `<profileDir>/config.json`.
+ *
+ * `providerConfig` is keyed by `ProviderId`, then by `ConfigKey.name`, and holds ONLY the keys a
+ * definition declares `secret: false` (spec 01 §desktop 接线) — a secret lives in the OS keychain
+ * and never in this file. Which provider is selected is `provider`, which arrives with the
+ * settings card.
+ */
 export const configSchema = z.object({
   locale: localeSettingSchema.default('auto'),
   sidebarCollapsed: z.boolean().default(false),
+  providerConfig: z.record(z.string(), z.record(z.string(), z.string())).default({}),
 })
 export type Config = z.infer<typeof configSchema>
 

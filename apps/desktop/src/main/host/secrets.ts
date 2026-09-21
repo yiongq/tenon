@@ -47,3 +47,27 @@ export class KeychainSecrets implements HostSecrets {
     await this.entry(key).deleteCredential()
   }
 }
+
+/**
+ * Secrets that live and die with this process (spec 01 §desktop 接线, 「e2e 的机密接缝」).
+ *
+ * The real path is the only one a packaged Tenon has, and it is the only one that survives a
+ * restart — but an automated run must not be the thing that writes into a developer's login
+ * keychain, and CI's Linux box has no Secret Service to write to at all. `createDesktopHost`
+ * swaps this in for a dev build that asked for it, the same class of switch as `TENON_DEV_ENV=off`.
+ */
+export class MemorySecrets implements HostSecrets {
+  readonly #values = new Map<string, string>()
+
+  async get(key: string): Promise<string | null> {
+    return this.#values.get(key) ?? null
+  }
+
+  async set(key: string, value: string): Promise<void> {
+    this.#values.set(key, value)
+  }
+
+  async delete(key: string): Promise<void> {
+    this.#values.delete(key)
+  }
+}

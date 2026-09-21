@@ -42,6 +42,13 @@ export interface LaunchOptions {
   readonly systemLanguages?: readonly string[]
   /** Extra environment for the app process (e.g. a fake provider endpoint). */
   readonly env?: Readonly<Record<string, string>>
+  /**
+   * Where the app keeps credentials. `memory` (the default) is the e2e seam; `keychain` is the
+   * real path, which the spec assigns to the manual `pnpm test:live` and to daily use — an
+   * unattended run must never write into a developer's login keychain, and CI's Linux has no
+   * Secret Service at all.
+   */
+  readonly secrets?: 'memory' | 'keychain'
   /** CSS pixels of the web contents, not of the window: macOS puts a 32px title bar inside the bounds. */
   readonly contentSize?: { readonly width: number; readonly height: number }
 }
@@ -64,9 +71,15 @@ export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> 
   const { ELECTRON_RUN_AS_NODE: _ignored, ...rest } = process.env
   // TENON_DEV_ENV=off: the app must not pick up a developer's `.env.local` during tests;
   // a spec that wants real credentials passes them explicitly through `options.env`.
+  // TENON_SECRETS=memory: and it must not read or write the real OS keychain either — on macOS
+  // an unsigned dev build asking for one pops a system dialog, and CI's Linux has no Secret
+  // Service at all. Credentials for a test therefore always travel through `options.env`. The
+  // one exception is the opt-in live suite, which asks for `keychain` and so keeps the real
+  // path covered by something (spec 01 §desktop 接线, 「e2e 的机密接缝」).
   const env: Record<string, string> = {
     ...(rest as Record<string, string>),
     TENON_DEV_ENV: 'off',
+    TENON_SECRETS: options.secrets ?? 'memory',
     ...options.env,
   }
   if (options.systemLanguages !== undefined && options.systemLanguages.length > 0) {

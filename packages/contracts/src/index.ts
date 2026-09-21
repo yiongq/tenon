@@ -85,3 +85,14 @@ export {
   isEventChannel,
   isRouteChannel,
 } from './registry.js'
+
+// Reading the stored conversation (spec 01 step 13): the two session routes and the message
+// shapes they carry. Writing stays on `chat.send`.
+export {
+  SESSION_READ_LIMIT_MAX,
+  contentBlockSchema,
+  messageRowSchema,
+  sessionLatest,
+  sessionMessages,
+} from './ipc/session.js'
+export type { ContentBlockContract, MessageRowContract } from './ipc/session.js'

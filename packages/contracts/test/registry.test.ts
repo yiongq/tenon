@@ -8,6 +8,8 @@ describe('ipc registry', () => {
       'chat.stop',
       'config.get',
       'config.set',
+      'session.latest',
+      'session.messages',
     ])
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
       'chat.event',

@@ -1,7 +1,13 @@
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chatNew, configLocale } from '@tenon-app/contracts'
-import { absolutePath } from '@tenon-app/kernel'
+import {
+  absolutePath,
+  createProviderRegistry,
+  createSessionService,
+  registerBuiltinProviders,
+} from '@tenon-app/kernel'
 import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
 import { registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
@@ -12,10 +18,15 @@ import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
 import { hardenWebContents } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
+import { registerSessionRoutes } from './session.js'
+import { openSessionStore } from './tape/open.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
 const LOCAL_TENANT_ID = 'personal'
+
+/** Read by the preload (the literal is repeated there, as `--tenon-locale=` already is). */
+const NEW_CHAT_ARG = '--tenon-new-chat'
 
 // Placeholders, not implemented in phase 0: app.requestSingleInstanceLock() and the
 // `tenon://` deep-link registration.
@@ -33,7 +44,13 @@ function appUrl(): string {
   return pathToFileURL(join(import.meta.dirname, '../renderer/index.html')).href
 }
 
-function createWindow(locale: string, title: string): BrowserWindow {
+/**
+ * `fresh` = this window must open on an EMPTY conversation instead of restoring the newest one.
+ * It rides the same channel as the locale because it has to be true before the renderer's first
+ * paint: "New Chat" with no window open opens one, and a window that then restored the previous
+ * conversation would be the opposite of what was asked for.
+ */
+function createWindow(locale: string, title: string, fresh: boolean): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -46,7 +63,7 @@ function createWindow(locale: string, title: string): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       // The resolved locale reaches the renderer before its first paint.
-      additionalArguments: [`--tenon-locale=${locale}`],
+      additionalArguments: [`--tenon-locale=${locale}`, ...(fresh ? [NEW_CHAT_ARG] : [])],
     },
   })
 
@@ -78,7 +95,28 @@ async function main(): Promise<void> {
     tenantId: LOCAL_TENANT_ID,
     send: broadcast,
     log: (line) => console.warn(line),
+    isPackaged: app.isPackaged,
   })
+
+  // The conversation store, the provider table and the one kernel service that writes facts. The
+  // store is handed straight to the service and no reference is kept: `apps/*` never calls
+  // `TapeStore.append` itself (spec 01 §保留命名空间). Ids are drawn HERE — the kernel takes an
+  // `IdSource` precisely so that it draws no randomness of its own.
+  const tape = openSessionStore({
+    identity: host.identity,
+    now: () => host.clock.now(),
+    log: (line) => console.error(line),
+  })
+  const providers = createProviderRegistry()
+  registerBuiltinProviders(providers)
+  const sessions =
+    tape === null
+      ? null
+      : createSessionService({ host, tape, ids: { uuid: (): string => randomUUID() } })
+  if (tape !== null) {
+    // WAL: the last connection to close is what checkpoints the file.
+    app.on('will-quit', () => void tape.close())
+  }
 
   const preferred = preferredSystemLanguages()
   const locale = await createLocaleController(
@@ -87,11 +125,14 @@ async function main(): Promise<void> {
     broadcast,
   )
   const appTitle = (): string => locale.i18n.t('app.name')
-  const openWindow = (): BrowserWindow => createWindow(locale.current, appTitle())
+  const openWindow = (fresh = false): BrowserWindow =>
+    createWindow(locale.current, appTitle(), fresh)
   const newChat = (): void => {
     const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (target) target.webContents.send(chatNew.channel, {})
-    else openWindow()
+    // No window to tell (macOS keeps the menu bar alive after the last one closed): open one, and
+    // tell it up front that it is a new chat, or it would restore the conversation just left.
+    else openWindow(true)
   }
   const installMenu = (): void => {
     Menu.setApplicationMenu(buildApplicationMenu(locale.i18n, newChat))
@@ -103,7 +144,15 @@ async function main(): Promise<void> {
   installMenu()
 
   registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
-  registerChatRoutes({ host, send: broadcast, ipcMain })
+  registerChatRoutes({
+    host,
+    send: broadcast,
+    ipcMain,
+    sessions,
+    providers,
+    isPackaged: app.isPackaged,
+  })
+  registerSessionRoutes({ ipcMain, sessions })
 
   const win = openWindow()
   win.webContents.on('did-finish-load', () => {

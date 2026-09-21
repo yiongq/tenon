@@ -54,7 +54,10 @@ test.describe('live provider', () => {
   async function open(tag: string): ReturnType<typeof launchTenon> {
     const userData = makeUserDataDir(`live-${tag}`)
     seedConfig(userData, { locale: 'en' })
-    return launchTenon({ userData, env })
+    // The real keychain, because this manual suite is the only automated coverage the spec gives
+    // that path: the credentials still arrive through `env`, so what is exercised is
+    // `KeychainSecrets` being built and read — the step that CI's Linux cannot do at all.
+    return launchTenon({ userData, env, secrets: 'keychain' })
   }
 
   test('a real reply streams into the thread', async () => {
