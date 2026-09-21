@@ -115,3 +115,41 @@ export {
   sessionStartKey,
 } from './tape/provenance.js'
 export type { ParsedProvenanceKey } from './tape/provenance.js'
+export type {
+  CompleteResult,
+  ConfigKey,
+  ContentBlock,
+  EncodedRequest,
+  InternalMessage,
+  ModelInfo,
+  Provider,
+  ProviderDefinition,
+  ProviderErrorCode,
+  ProviderId,
+  ProviderRegistry,
+  ProviderRequest,
+  RequestIdentity,
+  SendContext,
+  StopReason,
+  StreamEvent,
+  ThinkingDecision,
+  ToolSpec,
+  Usage,
+} from './provider/types.js'
+export {
+  ProviderAlreadyRegisteredError,
+  ProviderConfigMissingError,
+  ProviderInvalidArgumentError,
+  isRetryableByDefault,
+  retryAfterMs,
+} from './provider/errors.js'
+export type { HeaderLookup } from './provider/errors.js'
+export { BaseProvider, createBlockAccumulator, withTerminalEvent } from './provider/base.js'
+export type {
+  BlockAccumulator,
+  BlockAccumulatorOptions,
+  TerminalStreamOptions,
+} from './provider/base.js'
+export { applyThinkingDecision, decideThinking } from './provider/thinking.js'
+export type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from './provider/thinking.js'
+export { createProviderRegistry } from './provider/registry.js'
