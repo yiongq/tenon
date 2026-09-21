@@ -815,6 +815,11 @@ async function abortAfter(stopAfter: number): Promise<Run> {
 
 describe('AnthropicMessagesProvider request (invariant 8)', () => {
   it('sends exactly the credentials it was given, whatever the environment says', async () => {
+    // Both directions, under a decoy env: key-only must carry no `authorization`, token-only no
+    // `x-api-key`. What this holds up is the adapter's `defaultHeaders` pin — delete that block and
+    // the decoy key travels. It does NOT hold up the explicit `null` constructor arguments: the pin
+    // wins over the SDK's env fallback either way, so `apiKey ?? undefined` is invisible from here
+    // and from anywhere else on the wire (see the note in anthropic-messages.ts).
     for (const env of [{}, DECOY_ENV]) {
       // oxlint-disable-next-line no-await-in-loop -- process.env is global: one case at a time
       await withCredentialEnv(env, async () => {

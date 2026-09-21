@@ -236,6 +236,25 @@ describe('the closed kind and sourceType vocabularies', () => {
 })
 
 describe('generic append (slice = null)', () => {
+  /**
+   * WHICH guard each reason names, as its own message reads. Asserting only that SOMETHING was
+   * thrown leaves the generic path's guards covering for each other: delete the reserved-prefix
+   * check and every reserved name is still caught by "must be under ext/", delete that one and a
+   * two-segment name is still caught by "needs an owner segment". The message is the only thing
+   * that tells one rejection from another, so every row names the guard it exists to hold up.
+   *
+   * This makes guard ORDER part of the asserted contract, deliberately: swapping two guards changes
+   * no verdict, only which message a rejected name gets, and reds these rows. That is the price of
+   * telling the guards apart at all — a reorder is a reviewable change to what a caller is told.
+   */
+  const guardMessage: Readonly<Record<string, RegExp>> = {
+    'a declared reserved name': /reserved prefix/,
+    'an undeclared sibling': /reserved prefix/,
+    'not ext/': /generic append may only write ext\/<owner>/,
+    'no owner segment': /missing an owner segment/,
+    'kind context': /kind 'context' is reserved/,
+  }
+
   const rejected: ReadonlyArray<readonly [TapeKind, string, string]> = [
     // An exact reserved name…
     ['event', 'execution/run_started', 'a declared reserved name'],
@@ -257,22 +276,41 @@ describe('generic append (slice = null)', () => {
     ['event', 'session/anything', 'an undeclared sibling'],
     ['event', 'message/anything', 'an undeclared sibling'],
     ['event', 'provider/anything', 'an undeclared sibling'],
-    // A namespace that is neither first-party nor ext.
+    // A namespace that is neither first-party nor ext. The two-segment one is caught by the owner
+    // guard as well, so the THREE-segment ones are what the "must be under ext/" guard alone holds
+    // back: well-formed names a vendor could plausibly reach for, under a namespace nobody reserved.
     ['event', 'other/thing', 'not ext/'],
+    ['event', 'other/acme/thing', 'not ext/'],
+    ['event', 'acme/vendor/note', 'not ext/'],
+    ['message', 'vendor/acme/message', 'not ext/'],
+    // A namespace that merely BEGINS with `ext`, and one `ext` begins with: the guard is an exact
+    // namespace match, not containment either way. Catches `namespace !== EXT_NAMESPACE` weakened
+    // to `!namespace.startsWith(EXT_NAMESPACE)` (which would let `extra/` and `extension/` write)
+    // and to `!EXT_NAMESPACE.startsWith(namespace)` (which would let `ex/` write).
+    ['event', 'extra/acme/thing', 'not ext/'],
+    ['event', 'extension/acme/note', 'not ext/'],
+    ['event', 'ex/acme/thing', 'not ext/'],
     ['event', 'ext/note', 'no owner segment'],
     // The context kind is reserved wholesale for skill/.
     ['context', 'ext/acme/note', 'kind context'],
-    ['context', 'skill/note', 'kind context'],
+    // Not the context guard: `skill` IS the namespace that kind belongs to, so what stops this one
+    // is the reserved prefix — generic append writes no skill/ name, whatever its kind.
+    ['context', 'skill/note', 'an undeclared sibling'],
     ['context', 'message/user', 'kind context'],
   ]
   for (const [kind, name, why] of rejected) {
     it(`rejects ${kind} ${name} (${why})`, () => {
+      const guard = guardMessage[why]
+      if (guard === undefined) throw new Error(`no guard message declared for "${why}"`)
       expect(() => assertAppendAuthorized(ask(kind, name), null)).toThrow(
         TapeAppendAuthorizationError,
       )
+      // The guard that fired, not merely that one did.
+      expect(() => assertAppendAuthorized(ask(kind, name), null)).toThrow(guard)
       expect(() => createEntryWriter(null)(name, { ...fields, kind })).toThrow(
         TapeAppendAuthorizationError,
       )
+      expect(() => createEntryWriter(null)(name, { ...fields, kind })).toThrow(guard)
     })
   }
 

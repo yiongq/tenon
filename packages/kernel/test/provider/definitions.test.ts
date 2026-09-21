@@ -44,7 +44,7 @@ import type {
   TapeEntry,
   Usage,
 } from '../../src/index.js'
-import { createCounterIds, fakeNetwork } from '../../src/testing/index.js'
+import { createCounterIds, createStreamGate, fakeNetwork } from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
 import * as anthropicFixture from './fixtures/anthropic-sse.js'
 import * as openAIFixture from './fixtures/openai-sse.js'
@@ -268,6 +268,60 @@ async function drive(registry: ProviderRegistry, testCase: DriveCase): Promise<D
   return { events, content: blocks.content(), net, model }
 }
 
+/** The one terminal event a cancelled run may end on, whichever definition produced it. */
+const ABORTED_STOP: StreamEvent = { type: 'stop', reason: 'aborted', providerReason: null }
+
+/**
+ * THE call path once more, with a signal — and still no branch on the provider id. Invariant 2 has
+ * two halves: a signal already aborted when `stream()` is called never reaches the wire, and one
+ * aborted mid-stream ends the run on the same single terminal event as every other provider's.
+ *
+ * `'mid-stream'` releases every frame but the last, so the source can never reach its own
+ * end-of-stream marker (`message_stop` / `[DONE]`): the run can only finish through the abort, and
+ * it does so without a timer.
+ */
+async function driveWithAbort(
+  registry: ProviderRegistry,
+  testCase: DriveCase,
+  when: 'before' | 'mid-stream',
+): Promise<{ events: StreamEvent[]; net: FakeNetwork }> {
+  const definition = registry.get(testCase.definition.id)
+  if (definition === null) throw new Error(`${testCase.definition.id} is not registered`)
+  const gate = createStreamGate()
+  const net = fakeNetwork({ kind: 'sse', frames: testCase.frames, gate })
+  const provider = definition.create({
+    network: net,
+    clock: { now: () => NOW },
+    config: applyDefaults(definition, testCase.config),
+    secrets: testCase.secrets,
+  })
+  const model = (await provider.models())[0]
+  if (model === undefined) throw new Error(`${definition.id} has no builtin model`)
+  const encoded = provider.encode({
+    model,
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'read /tmp/a.ts' }] }],
+  })
+  const controller = new AbortController()
+  if (when === 'before') controller.abort()
+  const stream = provider.stream(encoded, { identity: IDENTITY, signal: controller.signal })
+  const iterator = stream[Symbol.asyncIterator]()
+  const events: StreamEvent[] = []
+  if (when === 'mid-stream') {
+    gate.release(testCase.frames.length - 1)
+    const first = await iterator.next()
+    if (first.done === true) throw new Error(`${definition.id}: the stream ended before any event`)
+    events.push(first.value)
+    controller.abort()
+  }
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- draining a stream is sequential by nature
+    const step = await iterator.next()
+    if (step.done === true) break
+    events.push(step.value)
+  }
+  return { events, net }
+}
+
 /** What the caller of `create()` owes it: non-secret items with their declared defaults applied. */
 function applyDefaults(
   definition: ProviderDefinition,
@@ -471,6 +525,30 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(request?.headers[testCase.credential.name]).toBe(testCase.credential.value)
       // The model the definition offered is the model that went on the wire.
       expect((request?.body as { model?: string } | undefined)?.model).toBe(result.model.id)
+    })
+  }
+
+  for (const testCase of CASES) {
+    it(`ends ${testCase.name} on one aborted stop, before the wire and mid-stream`, async () => {
+      // Invariant 2, from the same four definitions and with no per-provider branch: an abort is a
+      // `stop`, never an `error` and never a rejection. Catches a withTerminalEvent that maps an
+      // aborted signal onto its `mapError` path — the whole suite's abort cases are otherwise
+      // written per wire, and none of them asserts the terminal's TYPE across all four.
+      const before = await driveWithAbort(registry, testCase, 'before')
+      expect(before.events).toEqual([ABORTED_STOP])
+      // The other half of invariant 2: an already-aborted signal never touches the wire.
+      expect(before.net.callCount).toBe(0)
+
+      const mid = await driveWithAbort(registry, testCase, 'mid-stream')
+      const terminals = mid.events.filter(
+        (event) => event.type === 'stop' || event.type === 'error',
+      )
+      expect(terminals).toEqual([ABORTED_STOP])
+      // Exactly one, and LAST: nothing the source had queued behind the abort may follow it.
+      expect(mid.events.at(-1)).toBe(terminals[0])
+      // And it really was mid-stream: content arrived before the abort, from a live request.
+      expect(mid.events.length).toBeGreaterThan(1)
+      expect(mid.net.callCount).toBe(1)
     })
   }
 

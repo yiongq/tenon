@@ -10,8 +10,11 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  ANTHROPIC_DEFAULT_BASE_URL,
   NO_SYSTEM_PROMPT_HASH,
   ProviderInvalidArgumentError,
+  ZHIPU_DEFAULT_BASE_URL,
+  anthropicDefinition,
   canonicalJson,
   decideThinking,
   encodeAnthropicMessages,
@@ -19,11 +22,14 @@ import {
   requestSnapshot,
   sha256Hex,
   systemHash,
+  zhipuDefinition,
 } from '../../../src/index.js'
 import type {
   ContentBlock,
   EncodedRequest,
+  HostNetwork,
   ModelInfo,
+  Provider,
   ProviderRequest,
   ThinkingBlock,
   ThinkingDecision,
@@ -105,27 +111,49 @@ function richOpenAIRequest(): ProviderRequest {
   }
 }
 
+/** A clock reading, for the provider instances the network test builds. Nothing here reads it. */
+const CLOCK = { now: (): number => Date.parse('2026-09-21T00:00:00.000Z') }
+
+/** Configured so the adapter constructs at all; nothing is ever sent, so it is no credential. */
+const CONFIGURED_KEY = 'test-key-not-a-real-credential'
+
 const WIRES: readonly {
   name: string
   encode: (req: ProviderRequest) => EncodedRequest
   request: () => ProviderRequest
   providerId: string
+  /** This wire's builtin definition, as the only thing that builds an instance HOLDING a network. */
+  provider: (network: HostNetwork) => Provider
 }[] = [
   {
     name: 'anthropic-messages',
     encode: (req) => encodeAnthropicMessages(req, 'anthropic'),
     request: richRequest,
     providerId: 'anthropic',
+    provider: (network) =>
+      anthropicDefinition.create({
+        network,
+        clock: CLOCK,
+        config: { baseURL: ANTHROPIC_DEFAULT_BASE_URL },
+        secrets: { apiKey: CONFIGURED_KEY },
+      }),
   },
   {
     name: 'openai-chat',
     encode: (req) => encodeOpenAIChat(req, 'zhipu'),
     request: richOpenAIRequest,
     providerId: 'zhipu',
+    provider: (network) =>
+      zhipuDefinition.create({
+        network,
+        clock: CLOCK,
+        config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
+        secrets: { apiKey: CONFIGURED_KEY },
+      }),
   },
 ]
 
-describe.each(WIRES)('$name encode() is pure', ({ encode, request, providerId }) => {
+describe.each(WIRES)('$name encode() is pure', ({ encode, request, providerId, provider }) => {
   it('encodes the same request to identical bytes, hashes and decisions', () => {
     const req = request()
     const first = encode(req)
@@ -147,12 +175,29 @@ describe.each(WIRES)('$name encode() is pure', ({ encode, request, providerId })
   })
 
   it('touches no network', () => {
-    // The fake is handed to nobody: encode() takes a request and returns bytes, and there is no
-    // seam through which it could reach a socket. The lint gate and the bundling test cover the
-    // rest of the boundary (acceptance 8).
+    // Through a REAL provider, because the provider is the only object that HOLDS the network:
+    // `create()` hands it the fake, and two `encode()` calls still leave it untouched. Catches an
+    // `encode()` that reaches for its own `network.fetch(...)`; handing the fake to nobody watched
+    // a seam no production code can see. The lint gate and the bundling test cover the rest of the
+    // boundary (acceptance 8).
     const net = fakeNetwork([])
+    // Counted the instant `fetch` is ENTERED: fakeNetwork records a call only after its first
+    // await, so `callCount` alone would still read 0 inside this synchronous test.
+    let entered = 0
+    const watched: HostNetwork = {
+      fetch: (input, init) => {
+        entered += 1
+        return net.fetch(input, init)
+      },
+    }
+    const instance = provider(watched)
+    instance.encode(request())
+    instance.encode(request())
+    expect(entered).toBe(0)
+    expect(net.callCount).toBe(0)
+    // And the free function behind it, for the same reason.
     encode(request())
-    encode(request())
+    expect(entered).toBe(0)
     expect(net.requests).toHaveLength(0)
   })
 

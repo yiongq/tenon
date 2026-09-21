@@ -62,7 +62,7 @@ import {
   TapeStaleIncarnationError,
 } from '../tape/store.js'
 import { createCounterIds } from './fake-ids.js'
-import { createScriptedProvider, scriptedTurn } from './scripted-provider.js'
+import { createScriptedProvider, scriptedTurn, stopEvent } from './scripted-provider.js'
 import type { ScriptedProvider } from './scripted-provider.js'
 
 export interface TapeStoreFactoryOptions {
@@ -428,6 +428,20 @@ const SCRIPT_USAGE: Usage = {
   final: true,
 }
 
+/**
+ * A reading that is NOT the attempt's: on the Anthropic wire `message_start` reports the prompt
+ * before a token has been generated. Zeros everywhere, so a fact that took it would be
+ * indistinguishable from a free turn.
+ */
+const NON_FINAL_USAGE: Usage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  reasoningTokens: 0,
+  final: false,
+}
+
 interface ServiceFixture {
   readonly fixture: Fixture
   readonly service: SessionService
@@ -501,6 +515,7 @@ async function assertAttemptReEncodes(
   entry: TapeEntry,
 ): Promise<void> {
   const fact = attemptPayloadOf(entry)
+  await assertPinIsThisRunsOwnBatch(store, sessionId, entry, fact)
   const messages = await rebuildProviderContext(store, {
     sessionId,
     atEntryId: fact.contextAtEntryId,
@@ -548,6 +563,48 @@ async function assertAttemptReEncodes(
     'the snapshot names the system prompt the fixture fixed',
   )
   assertEqual(fact.modelId, SCRIPT_MODEL.id, 'the fact names the model that went on the wire')
+}
+
+/**
+ * The pin, tied to facts the tape can NAME rather than to a bare number.
+ *
+ * The re-encode above cannot see a pin that is one too LOW: one lower is this run's own
+ * `message/user` fact, whose prefix holds the very same messages, so the promptHash still recomputes
+ * and every fixture stays green while the recorded pin describes a prefix the request was not
+ * assembled from. What does catch it is the identity the service commits to: the pin is the top of
+ * THIS run's pre-run batch, and `session/model_selected` is keyed by `runId` and therefore always
+ * newly appended — so it is that batch's largest id, and the relation is an equality.
+ */
+async function assertPinIsThisRunsOwnBatch(
+  store: TapeStore,
+  sessionId: string,
+  entry: TapeEntry,
+  fact: TapeAttemptCompletedPayload,
+): Promise<void> {
+  const runId = entry.sourceId
+  if (runId === null) fail(`attempt ${entry.entryId} carries no runId to pin against`)
+  const entries = await readAll(store, sessionId)
+  const receipt = entries.find((candidate) => candidate.provenanceKey === modelSelectedKey(runId))
+  if (receipt === undefined) {
+    fail(`attempt ${entry.entryId}: no session/model_selected for run ${runId}`)
+  }
+  assertEqual(
+    fact.contextAtEntryId,
+    receipt.entryId,
+    `attempt ${entry.entryId} pinned the top of its own pre-run batch`,
+  )
+  // The other fact of that batch: the question this request answered is INSIDE the prefix, which is
+  // what makes the pin describe a request that could be sent at all.
+  const question = entries.find(
+    (candidate) => candidate.name === 'message/user' && candidate.entryId <= fact.contextAtEntryId,
+  )
+  if (question === undefined) {
+    fail(`attempt ${entry.entryId}: the pinned prefix holds no message/user fact`)
+  }
+  assertTrue(
+    fact.contextAtEntryId >= question.entryId,
+    `attempt ${entry.entryId} pinned at or above the question it answered`,
+  )
 }
 
 function countingReducer(counts: Map<string, number>): ProjectionReducer {
@@ -1891,6 +1948,37 @@ export function tapeConformanceCases(
       )
     },
   )
+
+  // ----- invariant 1: which usage reading becomes a fact -----------------------------------------
+
+  add('an attempt records the reading marked final, not the last one to arrive', async (open) => {
+    const ctx = await openService(open)
+    const store = ctx.fixture.store
+    const { sessionId } = await ctx.service.createSession()
+    // A stream that reports usage twice and ends on the NON-final reading. Both shapes are real —
+    // the Anthropic wire opens with a `message_start` reading that describes the prompt — and
+    // nothing in invariant 1 fixes where a non-final reading sits relative to the final one. Only
+    // `final: true` is a fact: a service that kept whichever reading came LAST would record this
+    // turn as zero tokens, and an attempt fact is not correctable afterwards.
+    ctx.provider.script([
+      { type: 'text-delta', index: 0, text: 'an answer' },
+      { type: 'usage', usage: SCRIPT_USAGE },
+      { type: 'usage', usage: NON_FINAL_USAGE },
+      stopEvent('end-turn', 'end_turn'),
+    ])
+    const result = await runTurn(ctx, sessionId, 'how many tokens did that cost?')
+    assertEqual(result.status, 'complete', 'the turn completed')
+    assertEqual(result.usage, SCRIPT_USAGE, 'the run result reports the reading marked final')
+    const attempts = await attemptFacts(store, sessionId)
+    assertEqual(attempts.length, 1, 'one attempt fact')
+    const entry = attempts[0]
+    if (entry === undefined) fail('the attempt fact is missing')
+    assertEqual(
+      attemptPayloadOf(entry).usage,
+      SCRIPT_USAGE,
+      'the fact holds the final reading, not the last one that arrived',
+    )
+  })
 
   // ----- acceptance 7, the tape half ------------------------------------------------------------
 

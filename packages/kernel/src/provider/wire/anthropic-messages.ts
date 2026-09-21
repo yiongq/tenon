@@ -369,7 +369,11 @@ export interface AnthropicMessagesProviderOptions {
  * - both credentials are passed explicitly, with `null` for the unconfigured one. `null` for
  *   BOTH would send the SDK into its credentials / config / profile chain — its only lazy
  *   filesystem path — and `undefined` would make it read ANTHROPIC_API_KEY, so a provider with
- *   neither is refused here, before a client exists;
+ *   neither is refused here, before a client exists. Redundant on purpose, and no test can say
+ *   otherwise: the header pin below wins over whatever the SDK resolved, so relaxing these two
+ *   to `?? undefined` changes not one recorded byte. Green tests are not coverage of this line —
+ *   what it buys is that an env credential is never resolved in the first place, which matters
+ *   the day the SDK grows a path that reads `client.apiKey` without going through a header;
  * - the two credential headers are pinned through `defaultHeaders` as well, because passing the
  *   credential is not enough: the SDK reads ANTHROPIC_CUSTOM_HEADERS by itself and merges it as
  *   `{ ...envLines, ...defaultHeaders }`, so an `x-api-key:` line in that variable would

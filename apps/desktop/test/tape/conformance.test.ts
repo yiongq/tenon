@@ -32,7 +32,7 @@ describe('tape conformance (SQLite store)', () => {
 
   it('runs every case the kernel suite defines', () => {
     // A suite that silently shrank would otherwise look like a passing run.
-    expect(cases.length).toBe(29)
+    expect(cases.length).toBe(30)
   })
 
   for (const conformanceCase of cases) {
