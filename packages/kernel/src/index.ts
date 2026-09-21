@@ -221,3 +221,14 @@ export type {
   TapeWriteBatch,
   TapeWriter,
 } from './tape/tape.js'
+
+// The port's own rules, as functions every store implementation calls instead of re-deriving them:
+// the append gate, the batch gate, the idempotency comparison and the incarnation check (§存储端口).
+export {
+  assertBatchAllowed,
+  assertCurrentIncarnation,
+  assertEntryAllowed,
+  assertTapeId,
+  idempotentAppendResult,
+} from './tape/store.js'
+export type { StoredEntryIdentity } from './tape/store.js'

@@ -534,6 +534,42 @@ export function tapeConformanceCases(
     assertEqual(entries.length, 1, 'the refused append wrote nothing')
   })
 
+  add('an EMPTY batch still answers the stale-incarnation question', async (open) => {
+    const fixture = await open()
+    await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+    // An empty batch writes nothing, so both stores are free to shortcut it — but they must shortcut
+    // it the SAME way, and the guard is cheaper than the divergence: a caller holding a stale
+    // incarnation learns it is stale on the call it made, not two calls later. Reported by a reviewer
+    // as a real divergence between the two stores (SQLite resolved to [], memory threw).
+    await assertRejects(
+      () =>
+        fixture.store.append({
+          sessionId: fixture.sessionId,
+          incarnationId: fixture.ids.uuid(),
+          entries: [],
+        }),
+      TapeStaleIncarnationError,
+      'an empty batch carrying an incarnation the head does not have',
+    )
+    assertEqual(
+      await appendAll(fixture, []),
+      [],
+      'an empty batch on the current incarnation is an empty answer',
+    )
+    // And on a session that does not exist yet: nothing to be stale against, and nothing created.
+    const unborn = fixture.ids.uuid()
+    assertEqual(
+      await fixture.store.append({
+        sessionId: unborn,
+        incarnationId: fixture.ids.uuid(),
+        entries: [],
+      }),
+      [],
+      'an empty batch never creates a head row',
+    )
+    assertEqual(await fixture.store.head(unborn), null, 'no head row was conjured up')
+  })
+
   add('resetSession on an unknown session throws and writes nothing', async (open) => {
     const fixture = await open()
     const unknown = fixture.ids.uuid()
@@ -1488,6 +1524,41 @@ export function tapeConformanceCases(
       await fixture.store.listMessages({ sessionId: unknown, limit: 10 }),
       [],
       'listMessages of an unknown session',
+    )
+  })
+
+  add('listSessions breaks a tie on session id by code unit, not by locale', async (open) => {
+    const fixture = await open()
+    // Equal `updatedAt` is the only case where the tie-break is observable, and the two stores must
+    // agree: SQLite orders TEXT with BINARY collation, so the memory store compares code units rather
+    // than calling `localeCompare` (whose answer here is ['a-1', 'B-1'] and also depends on the
+    // runtime's ICU build). The port accepts any non-empty string as a session id, so this is
+    // reachable without a non-canonical UUID.
+    const at = 1_700_000_777_000
+    for (const sessionId of ['a-1', 'B-1']) {
+      const incarnationId = fixture.ids.uuid()
+      // oxlint-disable-next-line no-await-in-loop -- one session per transaction, in order
+      await fixture.store.append({
+        sessionId,
+        incarnationId,
+        entries: [
+          write('session', 'session/start', {
+            sourceType: 'session',
+            sourceId: sessionId,
+            sourceSeq: 0,
+            provenanceKey: sessionStartKey(incarnationId),
+            payload: { incarnationId },
+            // The SAME timestamp for both, or there is no tie to break.
+            createdAt: at,
+          }),
+        ],
+      })
+    }
+    const rows = await fixture.store.listSessions({ limit: MAX_READ_LIMIT })
+    assertEqual(
+      rows.map((row) => row.sessionId),
+      ['B-1', 'a-1'],
+      'uppercase sorts before lowercase, as SQLite BINARY does',
     )
   })
 

@@ -21,6 +21,12 @@
  *    which an implementation must convert), integers are `number` inside `Number.MAX_SAFE_INTEGER`,
  *    and nothing is a `bigint` (invariant 17).
  *
+ * The rules every implementation owes are FUNCTIONS at the bottom of this file, not prose: the read
+ * limit, the kinds filter, the append gate, the batch gate, the idempotency comparison and the
+ * incarnation check. A store keeps its own row shape and its own SQL; what it may not keep is its own
+ * answer to one of these questions, or the two stores drift apart exactly where the conformance suite
+ * assumes they cannot.
+ *
  * The tenant is never a parameter. A store is constructed bound to a `HostIdentity`, so forgetting
  * the tenant predicate is impossible rather than merely discouraged. And a store is NOT a
  * `HostAdapter` member: the adapter carries environment capabilities, while one process holds
@@ -31,6 +37,7 @@
  * name would break every `instanceof`.
  */
 import type { ContentBlock } from '../provider/types.js'
+import { canonicalJson } from './canonical-json.js'
 import type {
   AppendResult,
   MessageStatus,
@@ -39,6 +46,10 @@ import type {
   TapeKind,
   TapeSourceType,
 } from './entry.js'
+import { TapeIntegerRangeError } from './entry.js'
+import { bytesEqual, contentHash } from './hash.js'
+import { assertAppendAuthorized, declaredTapeName } from './names.js'
+import { assertProvenanceKey } from './provenance.js'
 
 /**
  * The upper bound on every read. There is no unbounded scan on this port (invariant 16): a store
@@ -297,5 +308,140 @@ export function assertReadLimit(limit: number, label = 'limit'): number {
 export function assertReadKinds(kinds: readonly TapeKind[] | undefined): void {
   if (kinds !== undefined && kinds.length === 0) {
     throw new TypeError('readRange: kinds must not be empty; omit it to read every kind')
+  }
+}
+
+/**
+ * An integer a store may keep. `createdAt` and `sourceSeq` arrive from a caller, so they are checked
+ * before they are stored rather than after they come back — SQLite would keep a 2^60 timestamp
+ * happily and hand it back as a truncated double.
+ */
+export function assertSafeInteger(value: number, label: string): number {
+  if (!Number.isSafeInteger(value)) {
+    throw new TapeIntegerRangeError(`${label} must be a safe integer, got ${String(value)}`)
+  }
+  return value
+}
+
+/**
+ * An id on the port. A `TypeError`, not one of the seven tape errors: an empty id is a programmer
+ * error at the call site, not a condition of the tape, and widening a named error to cover it would
+ * blunt what catching that error tells a caller.
+ */
+export function assertTapeId(value: string, label: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new TypeError(`${label} must be a non-empty string`)
+  }
+  return value
+}
+
+/**
+ * The store's own append gate (spec 01 §保留命名空间). Looking the declaration up and checking the
+ * name against ITS OWN slice is exactly as strict as the facade for everything a store can know: a
+ * declared name must carry its declared kind and identity triple, and an undeclared one must be
+ * `ext/<owner>/…` under no reserved prefix. Only "this slice may not write another slice's names" is
+ * beyond a store — it never learns who called — and that half is the facade's.
+ *
+ * It lives on the port next to the two read gates because EVERY implementation owes it: the reason
+ * §哈希链 gives for keeping the recipe in the kernel (「各 host 各写一份 … 链就会分叉」) holds for the
+ * port's rules too, and a Postgres host in 6b would otherwise write a third copy of them.
+ */
+export function assertEntryAllowed(entry: NewEntry): void {
+  assertProvenanceKey(entry.provenanceKey)
+  assertAppendAuthorized(
+    {
+      kind: entry.kind,
+      name: entry.name,
+      sourceType: entry.sourceType,
+      ...(entry.sourceId === undefined ? {} : { sourceId: entry.sourceId }),
+      ...(entry.sourceSeq === undefined ? {} : { sourceSeq: entry.sourceSeq }),
+    },
+    declaredTapeName(entry.name)?.slice ?? null,
+  )
+  assertSafeInteger(entry.createdAt, `${entry.name}.createdAt`)
+  if (entry.sourceSeq !== undefined) assertSafeInteger(entry.sourceSeq, `${entry.name}.sourceSeq`)
+}
+
+/**
+ * The WHOLE batch is validated before a single fact can reach storage: a batch is one transaction, so
+ * one bad entry keeps the good ones out. A repeated `provenanceKey` inside one batch is a caller bug
+ * (§存储端口), not an idempotent replay, and rejects the batch.
+ */
+export function assertBatchAllowed(entries: readonly NewEntry[]): void {
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    assertEntryAllowed(entry)
+    if (seen.has(entry.provenanceKey)) {
+      throw new TapeProvenanceConflictError(
+        `provenanceKey "${entry.provenanceKey}" appears twice in one batch; ` +
+          'a batch is one transaction, so the whole batch is rejected',
+      )
+    }
+    seen.add(entry.provenanceKey)
+  }
+}
+
+/**
+ * The minimum a stored row has to expose for the idempotency comparison — the same trick
+ * `StoredEntryFields` plays for the chain predicate, so a store keeps its own row shape and still
+ * cannot answer the question its own way.
+ */
+export interface StoredEntryIdentity {
+  readonly entryId: number
+  readonly entryHash: Uint8Array
+  readonly kind: TapeKind
+  readonly name: string
+  readonly sourceType: TapeSourceType
+  readonly sourceId: string | null
+  readonly sourceSeq: number | null
+  readonly contentHash: Uint8Array
+}
+
+/**
+ * The idempotency comparison (§存储端口 「幂等的判定」, a rule the port must state): `content_hash`
+ * AND the five identity columns. `created_at` is deliberately NOT compared — replaying the same fact
+ * with a later clock is still the same fact. The receipt carries the ORIGINAL `entryId` and
+ * `entryHash`, copied so no caller holds a window into a store's own state.
+ */
+export function idempotentAppendResult(hit: StoredEntryIdentity, entry: NewEntry): AppendResult {
+  const payloadJson = canonicalJson(entry.payload)
+  const metaJson = canonicalJson(entry.meta ?? {})
+  const differences: string[] = []
+  if (!bytesEqual(contentHash(payloadJson, metaJson), hit.contentHash)) {
+    differences.push('payload/meta')
+  }
+  if (entry.kind !== hit.kind) differences.push(`kind ${entry.kind} != ${hit.kind}`)
+  if (entry.name !== hit.name) differences.push(`name ${entry.name} != ${hit.name}`)
+  if (entry.sourceType !== hit.sourceType) {
+    differences.push(`sourceType ${entry.sourceType} != ${hit.sourceType}`)
+  }
+  if ((entry.sourceId ?? null) !== hit.sourceId) {
+    differences.push(`sourceId ${String(entry.sourceId ?? null)} != ${String(hit.sourceId)}`)
+  }
+  if ((entry.sourceSeq ?? null) !== hit.sourceSeq) {
+    differences.push(`sourceSeq ${String(entry.sourceSeq ?? null)} != ${String(hit.sourceSeq)}`)
+  }
+  if (differences.length > 0) {
+    throw new TapeProvenanceConflictError(
+      `provenanceKey "${entry.provenanceKey}" already exists with different content ` +
+        `(${differences.join('; ')}); this is corruption or a bug, never a retry`,
+    )
+  }
+  return { entryId: hit.entryId, entryHash: new Uint8Array(hit.entryHash), created: false }
+}
+
+/**
+ * A paging caller carries the incarnation it started on; a mismatch means the session was reset under
+ * it, and answering with the new generation's rows would splice two histories into one page.
+ */
+export function assertCurrentIncarnation(
+  sessionId: string,
+  head: { readonly incarnationId: string },
+  incarnationId: string | undefined,
+): void {
+  if (incarnationId !== undefined && incarnationId !== head.incarnationId) {
+    throw new TapeStaleIncarnationError(
+      `session "${sessionId}" is at incarnation ${head.incarnationId}, not ${incarnationId}`,
+    )
   }
 }

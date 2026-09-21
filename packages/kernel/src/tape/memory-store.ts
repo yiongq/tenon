@@ -34,9 +34,7 @@ import type {
   TapeKind,
   TapeSourceType,
 } from './entry.js'
-import { TapeIntegerRangeError } from './entry.js'
-import { HASH_VER, bytesEqual, contentHash, hashEntry, isStoredEntryProvable } from './hash.js'
-import { assertAppendAuthorized, declaredTapeName } from './names.js'
+import { HASH_VER, contentHash, hashEntry, isStoredEntryProvable } from './hash.js'
 import type { ProjectionOp, ProjectionReducer, ProjectionTable } from './projection.js'
 import {
   PROJECTION_TABLES,
@@ -44,7 +42,6 @@ import {
   TapeProjectionError,
   project,
 } from './projection.js'
-import { assertProvenanceKey } from './provenance.js'
 import type {
   MessageRow,
   SessionHead,
@@ -61,11 +58,16 @@ import type {
   TapeVerifyChainQuery,
 } from './store.js'
 import {
-  TapeProvenanceConflictError,
   TapeSessionNotFoundError,
   TapeStaleIncarnationError,
+  assertBatchAllowed,
+  assertCurrentIncarnation,
+  assertEntryAllowed,
   assertReadKinds,
   assertReadLimit,
+  assertSafeInteger,
+  assertTapeId,
+  idempotentAppendResult,
 } from './store.js'
 
 export interface MemoryTapeStoreOptions {
@@ -158,23 +160,10 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(bytes)
 }
 
-function assertSafeInteger(value: number, label: string): number {
-  if (!Number.isSafeInteger(value)) {
-    throw new TapeIntegerRangeError(`${label} must be a safe integer, got ${String(value)}`)
-  }
-  return value
-}
-
-/**
- * A `TypeError`, not one of the seven tape errors: an empty id is a programmer error at the call
- * site, not a condition of the tape, and widening a named error to cover it would blunt what
- * catching that error tells a caller.
- */
-function assertId(value: string, label: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new TypeError(`${label} must be a non-empty string`)
-  }
-  return value
+/** SQLite's BINARY collation on the ASCII / BMP ids the port sees: plain code-unit order. */
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0
+  return left < right ? -1 : 1
 }
 
 /**
@@ -279,45 +268,6 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
   const reduce: ProjectionReducer = options.project ?? project
   const sessions = new Map<string, SessionState>()
 
-  /**
-   * A store's own gate, independent of which slice a caller claimed to be. Looking the declaration
-   * up and checking the name against ITS OWN slice is exactly as strict as the facade for everything
-   * a store can know: a declared name must carry its declared kind and identity triple, and an
-   * undeclared one must be `ext/<owner>/…` under no reserved prefix. Only "this slice may not write
-   * another slice's names" is beyond a store — it never learns who called — and that half is the
-   * facade's (spec 01 §保留命名空间: the memory store passes through the same assertion).
-   */
-  function assertEntryAllowed(entry: NewEntry): void {
-    assertProvenanceKey(entry.provenanceKey)
-    assertAppendAuthorized(
-      {
-        kind: entry.kind,
-        name: entry.name,
-        sourceType: entry.sourceType,
-        ...(entry.sourceId === undefined ? {} : { sourceId: entry.sourceId }),
-        ...(entry.sourceSeq === undefined ? {} : { sourceSeq: entry.sourceSeq }),
-      },
-      declaredTapeName(entry.name)?.slice ?? null,
-    )
-    assertSafeInteger(entry.createdAt, `${entry.name}.createdAt`)
-    if (entry.sourceSeq !== undefined) assertSafeInteger(entry.sourceSeq, `${entry.name}.sourceSeq`)
-  }
-
-  /** Phase (a): the WHOLE batch is validated before a single fact can reach storage. */
-  function assertBatchAllowed(entries: readonly NewEntry[]): void {
-    const seen = new Set<string>()
-    for (const entry of entries) {
-      assertEntryAllowed(entry)
-      if (seen.has(entry.provenanceKey)) {
-        throw new TapeProvenanceConflictError(
-          `provenanceKey "${entry.provenanceKey}" appears twice in one batch; ` +
-            'a batch is one transaction, so the whole batch is rejected',
-        )
-      }
-      seen.add(entry.provenanceKey)
-    }
-  }
-
   function toTapeEntry(sessionId: string, stored: StoredEntry): TapeEntry {
     return {
       tenantId,
@@ -398,37 +348,6 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     return { entryId, entryHash: copyBytes(stored.entryHash), created: true }
   }
 
-  /**
-   * The idempotency comparison: `content_hash` AND the five identity columns. `created_at` is
-   * deliberately NOT compared — replaying the same fact with a later clock is still the same fact.
-   */
-  function idempotentResult(hit: StoredEntry, entry: NewEntry): AppendResult {
-    const payloadJson = canonicalJson(entry.payload)
-    const metaJson = canonicalJson(entry.meta ?? {})
-    const differences: string[] = []
-    if (!bytesEqual(contentHash(payloadJson, metaJson), hit.contentHash)) {
-      differences.push('payload/meta')
-    }
-    if (entry.kind !== hit.kind) differences.push(`kind ${entry.kind} != ${hit.kind}`)
-    if (entry.name !== hit.name) differences.push(`name ${entry.name} != ${hit.name}`)
-    if (entry.sourceType !== hit.sourceType) {
-      differences.push(`sourceType ${entry.sourceType} != ${hit.sourceType}`)
-    }
-    if ((entry.sourceId ?? null) !== hit.sourceId) {
-      differences.push(`sourceId ${String(entry.sourceId ?? null)} != ${String(hit.sourceId)}`)
-    }
-    if ((entry.sourceSeq ?? null) !== hit.sourceSeq) {
-      differences.push(`sourceSeq ${String(entry.sourceSeq ?? null)} != ${String(hit.sourceSeq)}`)
-    }
-    if (differences.length > 0) {
-      throw new TapeProvenanceConflictError(
-        `provenanceKey "${entry.provenanceKey}" already exists with different content ` +
-          `(${differences.join('; ')}); this is corruption or a bug, never a retry`,
-      )
-    }
-    return { entryId: hit.entryId, entryHash: copyBytes(hit.entryHash), created: false }
-  }
-
   function rebuildInto(tx: SessionState, sessionId: string): void {
     tx.messages = new Map()
     tx.session = null
@@ -470,8 +389,8 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
   return {
     append(batch: TapeAppendBatch): Promise<AppendResult[]> {
       return run(() => {
-        assertId(batch.sessionId, 'sessionId')
-        assertId(batch.incarnationId, 'incarnationId')
+        assertTapeId(batch.sessionId, 'sessionId')
+        assertTapeId(batch.incarnationId, 'incarnationId')
         assertBatchAllowed(batch.entries)
         const existing = sessions.get(batch.sessionId)
         if (existing !== undefined && existing.head.incarnationId !== batch.incarnationId) {
@@ -508,7 +427,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
           results.push(
             hit === undefined
               ? insertEntry(tx, batch.sessionId, entry)
-              : idempotentResult(hit, entry),
+              : idempotentAppendResult(hit, entry),
           )
         }
         sessions.set(batch.sessionId, tx)
@@ -524,7 +443,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
         // An unknown session reads as empty rather than throwing: a store cannot tell "another
         // tenant's session" from "never existed", and acceptance 4 requires the first to look absent.
         if (state === undefined) return { entries: [], incarnationId: '', nextFromEntryId: null }
-        assertIncarnation(state, q.sessionId, q.incarnationId)
+        assertCurrentIncarnation(q.sessionId, state.head, q.incarnationId)
         const entries: TapeEntry[] = []
         for (const stored of state.entries) {
           if (q.fromEntryId !== undefined && stored.entryId < q.fromEntryId) continue
@@ -584,7 +503,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
         if (state === undefined) {
           return { incarnationId: '', checked: 0, firstBadEntryId: null, nextFromEntryId: null }
         }
-        assertIncarnation(state, q.sessionId, q.incarnationId)
+        assertCurrentIncarnation(q.sessionId, state.head, q.incarnationId)
         let start = 0
         if (q.fromEntryId !== undefined) {
           while (start < state.entries.length) {
@@ -629,11 +548,15 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
           if (q.updatedBefore !== undefined && row.updatedAt >= q.updatedBefore) continue
           rows.push({ sessionId, ...row })
         }
-        // Newest first, with the session id as the tie-break so the order is total.
+        // Newest first, with the session id as the tie-break so the order is total. Compared by CODE
+        // UNIT, not `localeCompare`: SQLite's `ORDER BY … session_id ASC` is BINARY collation, and
+        // the point of the tie-break is that both stores return the SAME total order. `localeCompare`
+        // would also make the order depend on the runtime's ICU build. (Ids outside the BMP would
+        // still differ — UTF-8 byte order is not UTF-16 code-unit order — but phase 1 mints UUIDs.)
         return rows
           .toSorted((left, right) =>
             right.updatedAt === left.updatedAt
-              ? left.sessionId.localeCompare(right.sessionId)
+              ? compareCodeUnits(left.sessionId, right.sessionId)
               : right.updatedAt - left.updatedAt,
           )
           .slice(0, limit)
@@ -678,8 +601,8 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
 
     resetSession(q: TapeResetSessionQuery): Promise<AppendResult> {
       return run(() => {
-        assertId(q.sessionId, 'sessionId')
-        assertId(q.incarnationId, 'incarnationId')
+        assertTapeId(q.sessionId, 'sessionId')
+        assertTapeId(q.incarnationId, 'incarnationId')
         assertEntryAllowed(q.start)
         // A `TypeError` like `assertId`'s: handing a reset something other than the anchor is a
         // programmer error at the call site, not a condition of the tape, and it is not the
@@ -737,18 +660,6 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
       // gate either — that would need an eighth error class the port does not define.
       return Promise.resolve()
     },
-  }
-}
-
-function assertIncarnation(
-  state: SessionState,
-  sessionId: string,
-  incarnationId: string | undefined,
-): void {
-  if (incarnationId !== undefined && incarnationId !== state.head.incarnationId) {
-    throw new TapeStaleIncarnationError(
-      `session "${sessionId}" is at incarnation ${state.head.incarnationId}, not ${incarnationId}`,
-    )
   }
 }
 
