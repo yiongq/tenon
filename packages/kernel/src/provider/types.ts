@@ -7,7 +7,7 @@
  * payloads to `ContentBlock[]` later, and a value import either way would make that a
  * dependency cycle instead of a shared vocabulary.
  */
-import type { HostNetwork } from '../host/adapter.js'
+import type { HostClock, HostNetwork } from '../host/adapter.js'
 
 /** 'anthropic' | 'zhipu' | 'ollama' … is data, not a union type. */
 export type ProviderId = string
@@ -163,6 +163,13 @@ export interface ProviderDefinition {
   /** Host capabilities enter only through here. */
   create(args: {
     network: HostNetwork
+    /**
+     * A clock reading is the one host capability `retryAfterMs()` needs: the HTTP-date branch
+     * of `retry-after` is an absolute time, and the kernel has no `Date.now()` (lint gate).
+     * `Pick<…, 'now'>` rather than the whole HostClock on purpose — an adapter must not get a
+     * timer through this door, because retrying is the phase 2 loop's job, not the provider's.
+     */
+    clock: Pick<HostClock, 'now'>
     config: Record<string, string> // non-secret items, defaults already applied
     secrets: Record<string, string> // read from HostAdapter.secrets by the caller
   }): Provider

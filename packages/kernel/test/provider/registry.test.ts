@@ -94,7 +94,12 @@ describe('createProviderRegistry', () => {
     registry.list()
     expect(calls).toEqual([])
 
-    const args = { network: NETWORK, config: { baseURL: 'https://api.example.test' }, secrets: {} }
+    const args = {
+      network: NETWORK,
+      clock: { now: () => 0 },
+      config: { baseURL: 'https://api.example.test' },
+      secrets: {},
+    }
     expect(() => definition.create(args)).toThrow('not built in this test')
     expect(calls).toEqual([args])
   })

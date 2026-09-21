@@ -59,6 +59,7 @@ describe('encodeAnthropicMessages', () => {
     expect(body).toEqual({
       model: 'claude-test-4',
       max_tokens: 2048,
+      stream: true,
       system: 'You are terse.',
       temperature: 0.2,
       thinking: { type: 'enabled', budget_tokens: 1024 },
@@ -94,8 +95,10 @@ describe('encodeAnthropicMessages', () => {
     })
   })
 
-  it('leaves stream to the SDK', () => {
-    expect(Object.hasOwn(bodyOf(requestOf(anthropicModel())), 'stream')).toBe(false)
+  it('carries the stream flag inside the hashed body', () => {
+    // The endpoint needs it to answer with SSE and the adapter sends the body unchanged, so it
+    // belongs to what promptHash covers: what was hashed is what goes out (spec §接口).
+    expect(bodyOf(requestOf(anthropicModel())).stream).toBe(true)
   })
 
   it('writes only the optional keys the request carried', () => {
@@ -106,6 +109,7 @@ describe('encodeAnthropicMessages', () => {
     expect(body).toEqual({
       model: 'claude-test-4',
       max_tokens: 8192,
+      stream: true,
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
     })
   })
@@ -352,8 +356,8 @@ describe('encodeAnthropicMessages and requestParams', () => {
   })
 
   it('refuses to let requestParams take over a key this wire reserves', () => {
-    // Every key the encoder writes, plus `stream` (the SDK sets it) and the two the SDK moves out
-    // of the body into headers. `system` / `temperature` / `thinking` / `tools` are also what the
+    // Every key the encoder writes — `stream` included — plus the two the SDK moves out of the
+    // body into headers. `system` / `temperature` / `thinking` / `tools` are also what the
     // `provider/attempt_completed` snapshot and `toolDefinitionsHash` are taken over: a table that
     // swapped one would leave the recorded fact describing a request nobody sent.
     for (const key of [

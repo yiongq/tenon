@@ -43,6 +43,29 @@ async function bundleErrors(entry: string): Promise<string[]> {
   }
 }
 
+/** The same build, for a dependency no kernel file imports yet. */
+async function bundleImportErrors(module: string): Promise<string[]> {
+  try {
+    const result = await build({
+      stdin: {
+        contents: `import mod from '${module}'\nexport default mod\n`,
+        resolveDir: kernelDir,
+        sourcefile: 'dependency-probe.ts',
+        loader: 'ts',
+      },
+      absWorkingDir: kernelDir,
+      bundle: true,
+      format: 'esm',
+      platform: 'browser',
+      write: false,
+      logLevel: 'silent',
+    })
+    return result.errors.map((e) => e.text)
+  } catch (error) {
+    return errorTexts(error)
+  }
+}
+
 describe('kernel host independence', () => {
   it('bundles the public entry with no node: built-in reachable', async () => {
     expect(await bundleErrors('src/index.ts')).toEqual([])
@@ -50,6 +73,14 @@ describe('kernel host independence', () => {
 
   it('bundles the testing entry with no node: built-in reachable', async () => {
     expect(await bundleErrors('src/testing/index.ts')).toEqual([])
+  }, 60_000)
+
+  it('bundles the pinned provider SDKs, including one no entry reaches yet', async () => {
+    // `openai` is a kernel dependency from step 10 on, but nothing imports it until the
+    // OpenAI-compatible adapter's stream() lands — so the pin would otherwise sit unproven
+    // against acceptance 8 until then, which is exactly when a `node:` reach would be expensive.
+    expect(await bundleImportErrors('openai')).toEqual([])
+    expect(await bundleImportErrors('@anthropic-ai/sdk')).toEqual([])
   }, 60_000)
 
   it('depends on neither better-sqlite3 nor electron', () => {

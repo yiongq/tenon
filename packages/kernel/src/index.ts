@@ -256,3 +256,8 @@ export {
   requestSnapshot,
   systemHash,
 } from './provider/wire/shared.js'
+
+// The Anthropic Messages adapter's I/O half (step 10): the SDK client, the raw-event
+// normalisation and the error mapping. The provider definition that constructs it is step 11's.
+export { AnthropicMessagesProvider } from './provider/wire/anthropic-messages.js'
+export type { AnthropicMessagesProviderOptions } from './provider/wire/anthropic-messages.js'
