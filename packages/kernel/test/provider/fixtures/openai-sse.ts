@@ -113,9 +113,13 @@ export const REASONING_ANSWER = 'It is a TypeScript module.'
  * The usage rides on the finish-reason chunk rather than in a trailing empty-`choices` one, because
  * the trailing chunk is what `stream_options.include_usage` buys and zhipu's reference documents no
  * such parameter (see the `usageNeedsOptIn` note on its ModelInfo rows): it lists `usage` as a field
- * of the chunk and says nothing about which chunk. That placement is therefore a GUESS, and the
- * narrower one — whoever diffs a real zhipu stream against this file should record which it is. The
- * trailing shape is exercised by the ollama fixture, whose `include_usage` support is documented.
+ * of the chunk and says nothing about which chunk. That placement was a guess when this was written
+ * and is now CONFIRMED against a real stream (glm-4.6 on open.bigmodel.cn/api/paas/v4, 2026-09-22):
+ * the usage arrives on the finish-reason chunk with no opt-in, `stream_options.include_usage` is
+ * accepted and changes nothing, and the stream ends on `[DONE]`. Two details the real wire adds that
+ * this fixture does not model, neither of which the adapter reads: every delta repeats `role`, and
+ * the finish-reason chunk's delta carries a `content` key. The trailing shape is exercised by the
+ * ollama fixture, whose `include_usage` support is documented.
  */
 export const REASONING_CONTENT_FRAMES: readonly string[] = [
   ROLE_CHUNK,
