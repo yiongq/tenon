@@ -9,17 +9,26 @@
  * Every key is written only when it has a value — canonicalJson (and therefore `promptHash`)
  * refuses an undefined-valued key, and the wire's notion of "absent" is a missing key.
  */
-import Anthropic, { APIConnectionError } from '@anthropic-ai/sdk'
+import Anthropic, { APIConnectionError, APIError } from '@anthropic-ai/sdk'
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
-import { HostNetworkDeniedError } from '../../host/adapter.js'
 import { BaseProvider, withTerminalEvent } from '../base.js'
 import {
   ProviderConfigMissingError,
   ProviderInvalidArgumentError,
+  causeChain,
+  errorDetail,
+  errorHeaders,
+  errorMessage,
+  errorStatus,
+  hasEgressDenial,
   isRetryableByDefault,
+  looksLikeContextOverflow,
+  objectField,
+  redactCredentials,
   retryAfterMs,
+  statusErrorCode,
+  stringField,
 } from '../errors.js'
-import type { HeaderLookup } from '../errors.js'
 import type { ThinkingApplication } from '../thinking.js'
 import type {
   ContentBlock,
@@ -50,6 +59,13 @@ import {
   thinkingTargetFor,
 } from './shared.js'
 import type { ImageContentBlock } from './shared.js'
+import {
+  assertBaseUrl,
+  configuredValue,
+  fetchThroughHost,
+  parseToolArguments,
+  tokenCount,
+} from './transport.js'
 
 const WIRE = 'anthropic-messages'
 
@@ -161,8 +177,13 @@ export function encodeAnthropicMessages(
  * The documented bounds for this form are checked here too — an integer, at least 1024, and
  * strictly below `max_tokens`. All three are 400s a pure function can see coming, and the spec's
  * dev fallback lets `TENON_MAX_TOKENS` move `max_tokens` independently of the budget, so the pair
- * really can arrive inconsistent. (Which thinking SHAPE the newer models take is a `ModelInfo`
- * question this step cannot answer — see plan.md's Open.)
+ * really can arrive inconsistent.
+ *
+ * Which thinking SHAPE a given model takes is a `ModelInfo` question neither this step nor step 11
+ * can answer: the vendor now has two modes (this one, and adaptive thinking steered by
+ * `output_config.effort`), and `ModelInfo` has no field that distinguishes them. Reported for
+ * plan.md's Open rather than settled here — inventing the field would be architecture the spec does
+ * not describe.
  */
 function thinkingParam(
   model: ModelInfo,
@@ -378,8 +399,8 @@ export class AnthropicMessagesProvider extends BaseProvider {
     // A blank string is "not configured", not a credential: the SDK would send an empty
     // `x-api-key` header and the endpoint would answer 401, which reads as a wrong key rather
     // than a missing one.
-    const apiKey = configured(options.apiKey)
-    const authToken = configured(options.authToken)
+    const apiKey = configuredValue(options.apiKey)
+    const authToken = configuredValue(options.authToken)
     if (apiKey === null && authToken === null) {
       // Named after the primary ConfigKey of the `anthropic` definition (spec §内置 provider);
       // `authToken` is the alternative, and the message says so.
@@ -388,11 +409,11 @@ export class AnthropicMessagesProvider extends BaseProvider {
         'apiKey (or authToken; at least one must be configured)',
       )
     }
-    const baseURL = configured(options.baseURL)
+    const baseURL = configuredValue(options.baseURL)
     if (baseURL === null) {
       throw new ProviderConfigMissingError(options.id, 'baseURL')
     }
-    assertBaseUrl(options.id, baseURL)
+    assertBaseUrl(options.id, baseURL, { wire: WIRE, refuseV1Suffix: true })
     this.id = options.id
     this.#clock = options.clock
     this.#models = [...options.models]
@@ -480,85 +501,49 @@ export class AnthropicMessagesProvider extends BaseProvider {
       // gone quiet must not be able to outlive a Stop.
       signal: ctx.signal,
     })
-    yield* normaliseAnthropicEvents(stream)
+    yield* normaliseAnthropicEvents(readBody(stream))
   }
 }
 
 /**
- * A configured credential or URL, or null when the value is absent / blank.
+ * The SDK's raw events, with a failure raised while READING the body marked for what it is.
  *
- * `undefined` reads as "not configured" too, not as a crash: with `noUncheckedIndexedAccess` a
- * caller reading `secrets['apiKey']` holds `string | undefined`, and a provider that HAS an
- * authToken must not be refused by a TypeError raised over the credential it does not have.
+ * Both SDKs wrap a rejected `fetch` in `APIConnectionError`, but only on the connect path: once the
+ * response exists, a failure in the body stream is rethrown verbatim, so a dropped connection
+ * arrives as a bare `TypeError('terminated')` or an errno `Error`. Unmarked it would classify as
+ * `unknown` — never retried — while the same connection dropping on a frame boundary ends the
+ * iterator cleanly and `withTerminalEvent` calls it `error{ code: 'network', retryable: true }`. One
+ * physical event, one verdict. An `APIError` is the vendor speaking and passes through untouched.
  */
-function configured(value: string | null | undefined): string | null {
-  if (value == null) return null
-  const trimmed = value.trim()
-  return trimmed === '' ? null : value
-}
-
-/**
- * Refuses a base URL that would send every request to `/v1/v1/messages`.
- *
- * The SDK concatenates `baseURL` with this wire's fixed `/v1/messages` path (collapsing only a
- * doubled slash), so a gateway URL pasted with the `/v1` suffix that every OpenAI-compatible
- * relay documents answers 404 — which reads as a dead gateway or a bad model name rather than as
- * a mistyped setting. Any other base path is left alone: a relay may live under any prefix.
- */
-function assertBaseUrl(providerId: ProviderId, baseURL: string): void {
-  let url: URL
+async function* readBody(
+  events: AsyncIterable<Anthropic.RawMessageStreamEvent>,
+): AsyncIterable<Anthropic.RawMessageStreamEvent> {
+  const iterator = events[Symbol.asyncIterator]()
   try {
-    url = new URL(baseURL)
-  } catch {
-    throw new ProviderInvalidArgumentError(
-      `provider ${providerId}: baseURL "${baseURL}" is not an absolute http(s) URL`,
-    )
-  }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new ProviderInvalidArgumentError(
-      `provider ${providerId}: baseURL "${baseURL}" is not an absolute http(s) URL`,
-    )
-  }
-  const segments = url.pathname.split('/').filter((segment) => segment !== '')
-  if (segments.at(-1) === 'v1') {
-    throw new ProviderInvalidArgumentError(
-      `provider ${providerId}: baseURL "${baseURL}" already ends in /v1, and ${WIRE} appends /v1/messages; drop the suffix`,
-    )
-  }
-}
-
-/**
- * The host's `fetch`, with an egress denial rewrapped so the SDK cannot lose it.
- *
- * The SDK decides a rejected fetch "timed out" by string-matching the error AND its `cause`, and
- * the `APIConnectionTimeoutError` it then throws carries no `cause` at all — so a denial whose
- * message happens to mention a timeout, or a host that rejects with an abort-shaped error, would
- * reach the mapper as an ordinary connection failure and the phase 2 loop would resend a request
- * the host's egress policy just refused. This wrapper's own message says nothing timeout-like and
- * keeps the denial off `cause`, out of reach of that match; `causeChain` follows it instead.
- */
-async function fetchThroughHost(
-  network: HostNetwork,
-  input: string | URL | Request,
-  init: RequestInit | undefined,
-): Promise<Response> {
-  try {
-    return await network.fetch(input, init)
-  } catch (error) {
-    if (error instanceof HostNetworkDeniedError) throw new EgressDeniedError(error)
-    throw error
-  }
-}
-
-/** Carries a HostNetworkDeniedError through the SDK's connection layer. Never exported. */
-class EgressDeniedError extends Error {
-  /** The host's own rejection. NOT on `cause` — see fetchThroughHost. */
-  readonly denial: HostNetworkDeniedError
-
-  constructor(denial: HostNetworkDeniedError) {
-    super('the host refused this request on egress policy')
-    this.name = 'EgressDeniedError'
-    this.denial = denial
+    for (;;) {
+      let step: IteratorResult<Anthropic.RawMessageStreamEvent>
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- a stream is sequential by nature
+        step = await iterator.next()
+      } catch (error) {
+        throw error instanceof APIError
+          ? error
+          : new APIConnectionError({
+              message: 'the response body failed before the stream ended',
+              cause: error instanceof Error ? error : undefined,
+            })
+      }
+      if (step.done === true) return
+      yield step.value
+    }
+  } finally {
+    // The SDK stream's own `return()` releases the HTTP body. A throwing close is swallowed: it
+    // must not replace the failure we are reporting.
+    try {
+      await iterator.return?.()
+    } catch {
+      // The body is gone either way.
+    }
   }
 }
 
@@ -835,23 +820,6 @@ function createSlots() {
   }
 }
 
-/**
- * Invariant 6: empty arguments are `{}`. Null when the fragments do not form a JSON object,
- * which is a truncated or garbled body rather than an empty call.
- */
-function parseToolArguments(json: string): Record<string, unknown> | null {
-  // The wire sends no `input_json_delta` at all for a call with no arguments.
-  if (json.trim() === '') return {}
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(json)
-  } catch {
-    return null
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-  return parsed as Record<string, unknown>
-}
-
 /** The fields the two usage shapes of this wire share; `message_delta`'s are all nullable. */
 interface AnthropicWireUsage {
   readonly input_tokens?: number | null
@@ -883,11 +851,6 @@ function usageEvent(usage: AnthropicWireUsage, final: boolean, base: Usage | nul
       tokenCount(usage.output_tokens_details?.thinking_tokens) ?? base?.reasoningTokens ?? 0,
     final,
   }
-}
-
-/** The number the wire stated, or null when it stated nothing usable. */
-function tokenCount(value: number | null | undefined): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 /**
@@ -932,17 +895,17 @@ function mapAnthropicError(
 ): Extract<StreamEvent, { type: 'error' }> {
   const chain = causeChain(error)
   const providerCode = providerCodeOf(error)
-  const status = statusOf(error)
+  const status = errorStatus(error)
   const code = classifyAnthropicError(error, chain, status, providerCode)
   const event: Extract<StreamEvent, { type: 'error' }> = {
     type: 'error',
     code,
     retryable: isRetryableByDefault(code),
     providerCode,
-    detail: detailOf(chain, ctx.redact),
+    detail: errorDetail(chain, ctx.redact),
   }
   if (status !== undefined) event.status = status
-  const delay = retryAfterMs(headersOf(error), ctx.now)
+  const delay = retryAfterMs(errorHeaders(error), ctx.now)
   if (delay !== null) event.retryAfterMs = delay
   return event
 }
@@ -955,46 +918,24 @@ function classifyAnthropicError(
 ): ProviderErrorCode {
   // First, and anywhere in the chain: the host refused to let the request out. The SDK wraps a
   // rejected fetch as `new APIConnectionError({ cause })`, so the denial arrives one or two
-  // links down, and `HostNetworkDeniedError` is a bare `extends Error` whose `name` is still
-  // 'Error' — instanceof is the only way to recognise it (see plan.md, step 2). The adapter's own
-  // EgressDeniedError counts too: it is how the denial survives the SDK's timeout branch.
-  if (chain.some(isEgressDenial)) return 'egress-denied'
-  if (status !== undefined) return statusCode(status, messageOf(error))
+  // links down.
+  if (hasEgressDenial(chain)) return 'egress-denied'
+  if (status !== undefined) return statusErrorCode(status, errorMessage(error))
   if (providerCode !== null && Object.hasOwn(ERROR_TYPES, providerCode)) {
     const code = ERROR_TYPES[providerCode as AnthropicErrorType]
-    return code === 'invalid-request' && looksLikeContextOverflow(messageOf(error))
+    return code === 'invalid-request' && looksLikeContextOverflow(errorMessage(error))
       ? 'context-overflow'
       : code
   }
-  // A failed connection, including the SDK's own timeout (a subclass of this one). A bare
-  // TypeError — what a web `fetch` rejects with — is deliberately NOT read as one: the SDK wraps
-  // every rejected fetch in APIConnectionError, so a TypeError that reaches here was raised by
-  // this adapter's own normalisation, and advertising our bug as retryable would have the phase 2
-  // loop resend a request nothing was wrong with.
+  // A failed connection, including the SDK's own timeout (a subclass of this one) and a body that
+  // failed while being read (readBody rewraps those, because the SDK rethrows them verbatim). A
+  // bare TypeError is deliberately NOT read as one: everything the transport can raise has been
+  // marked by the time it reaches here, so what is left was raised by this adapter's own
+  // normalisation, and advertising our bug as retryable would have the phase 2 loop resend a
+  // request nothing was wrong with.
   if (chain.some((link) => link instanceof APIConnectionError)) return 'network'
   // Not classified, so not resent: `unknown` is the one code that is never retryable by
   // default, and a payload whose failure we could not explain is the wrong thing to repeat.
-  return 'unknown'
-}
-
-function isEgressDenial(link: unknown): boolean {
-  return link instanceof HostNetworkDeniedError || link instanceof EgressDeniedError
-}
-
-function statusCode(status: number, message: string): ProviderErrorCode {
-  if (status === 401 || status === 403) return 'auth'
-  if (status === 429) return 'rate-limit'
-  if (status === 529) return 'overloaded'
-  if (status >= 500) return 'server'
-  if (status === 400 && looksLikeContextOverflow(message)) return 'context-overflow'
-  // The two 4xx that resending does fix. The vendor's own `timeout_error` reads as `server` when
-  // no status accompanies it (see ERROR_TYPES), and gaining a status must not turn a transient
-  // timeout into a permanent refusal.
-  if (status === 408 || status === 425) return 'server'
-  // Every other 4xx is a request this payload cannot fix by being sent again: a bad model name
-  // (404), an unsupported field (422), a body too large (413).
-  if (status >= 400) return 'invalid-request'
-  // A 2xx / 3xx that still produced an error is a shape we do not understand.
   return 'unknown'
 }
 
@@ -1027,118 +968,10 @@ const ERROR_TYPES: Readonly<Record<AnthropicErrorType, ProviderErrorCode>> = {
   billing_error: 'invalid-request',
 }
 
-/**
- * A context-window refusal, which the wire reports as an ordinary invalid request. Matched on
- * the vendor's documented wording ("prompt is too long: N tokens > M maximum") plus the two
- * phrasings compatible gateways use, so the phase 2 loop can tell "trim the context and retry"
- * apart from "this request is malformed".
- */
-const CONTEXT_OVERFLOW = /prompt is too long|too many tokens|context[ _-]?(?:window|length)/i
-
-function looksLikeContextOverflow(message: string): boolean {
-  return CONTEXT_OVERFLOW.test(message)
-}
-
-/** How deep a `cause` chain is followed. Two links is the SDK's own depth; five is slack. */
-const MAX_CAUSE_DEPTH = 5
-
-/** The error and its `cause` chain, bounded and cycle-safe. */
-function causeChain(error: unknown): unknown[] {
-  const chain: unknown[] = []
-  let current: unknown = error
-  while (current !== null && current !== undefined && chain.length < MAX_CAUSE_DEPTH) {
-    if (chain.includes(current)) break
-    chain.push(current)
-    current = nextLink(current)
-  }
-  return chain
-}
-
-/** The next link down: `cause`, or the denial an EgressDeniedError carries beside it. */
-function nextLink(error: unknown): unknown {
-  if (error instanceof EgressDeniedError) return error.denial
-  return error instanceof Error ? error.cause : undefined
-}
-
 /** The `error.type` the vendor named, from either the typed field or the nested error body. */
 function providerCodeOf(error: unknown): string | null {
   const direct = stringField(error, 'type')
   if (direct !== null) return direct
   const body = objectField(error, 'error')
   return stringField(objectField(body, 'error'), 'type')
-}
-
-function statusOf(error: unknown): number | undefined {
-  if (error === null || typeof error !== 'object') return undefined
-  const status: unknown = (error as { status?: unknown }).status
-  return typeof status === 'number' && Number.isFinite(status) ? status : undefined
-}
-
-/** `err.headers` when it is a Headers-like object; `retryAfterMs()` only needs `get()`. */
-function headersOf(error: unknown): HeaderLookup | null {
-  const headers = objectField(error, 'headers')
-  if (headers === null) return null
-  return typeof (headers as { get?: unknown }).get === 'function' ? (headers as HeaderLookup) : null
-}
-
-/**
- * The text the classifier reads: the thrown error's message plus the vendor's own message out of
- * the error body, because a 400's explanation lives in the body and the SDK's message is a
- * summary of it.
- */
-function messageOf(error: unknown): string {
-  const own = error instanceof Error ? error.message : ''
-  const nested = stringField(objectField(objectField(error, 'error'), 'error'), 'message') ?? ''
-  return `${own} ${nested}`
-}
-
-function stringField(value: unknown, key: string): string | null {
-  if (value === null || typeof value !== 'object') return null
-  const field: unknown = (value as Record<string, unknown>)[key]
-  return typeof field === 'string' && field !== '' ? field : null
-}
-
-function objectField(value: unknown, key: string): object | null {
-  if (value === null || typeof value !== 'object') return null
-  const field: unknown = (value as Record<string, unknown>)[key]
-  return field !== null && typeof field === 'object' ? field : null
-}
-
-/** The ceiling on `detail`: a log line, not a transcript of the vendor's body. */
-const MAX_DETAIL_LENGTH = 500
-
-/**
- * `detail` is for logs only and is never rendered — see the StreamEvent definition.
- *
- * Redacted BEFORE the cap, never after: a credential that straddles the 500-character boundary
- * would otherwise survive as the prefix the cap left behind, and a prefix of a key is still a key
- * in a log. A gateway that echoes the request into a long error message is the realistic case.
- */
-function detailOf(chain: readonly unknown[], redact: (text: string) => string): string {
-  const text = redact(chain.map(describeLink).join(' <- '))
-  return text.length <= MAX_DETAIL_LENGTH ? text : `${text.slice(0, MAX_DETAIL_LENGTH)}…`
-}
-
-function describeLink(link: unknown): string {
-  if (link instanceof Error) {
-    // `name` is 'Error' for most SDK classes (they do not set it), hence the constructor name.
-    return `${link.constructor.name}: ${link.message}`
-  }
-  return String(link)
-}
-
-/**
- * Removes the configured credentials from a message before it becomes `detail`.
- *
- * Nothing in the SDK puts a key in an error message today; this exists because `detail` is the
- * one field of the event that carries free text out of the SDK, and "today" is not a property
- * the pin can guarantee. Replacing rather than dropping the whole message keeps the diagnosis.
- */
-function redactCredentials(text: string, credentials: readonly string[]): string {
-  let out = text
-  for (const credential of credentials) {
-    if (credential === '') continue
-    out = out.split(credential).join('[redacted]')
-  }
-  return out
 }

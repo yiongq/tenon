@@ -261,3 +261,26 @@ export {
 // normalisation and the error mapping. The provider definition that constructs it is step 11's.
 export { AnthropicMessagesProvider } from './provider/wire/anthropic-messages.js'
 export type { AnthropicMessagesProviderOptions } from './provider/wire/anthropic-messages.js'
+
+// The OpenAI-compatible adapter's I/O half plus the three builtin provider definitions (step 11).
+// A definition is data and a `create()`: registering one is all it takes to add a provider
+// (acceptance 1), which is why nothing below this line is a switch over provider ids.
+export { OpenAIChatProvider } from './provider/wire/openai-chat.js'
+export type { OpenAIChatProviderOptions } from './provider/wire/openai-chat.js'
+export {
+  ANTHROPIC_DEFAULT_BASE_URL,
+  ANTHROPIC_PROVIDER_ID,
+  anthropicDefinition,
+} from './provider/definitions/anthropic.js'
+export {
+  ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_PROVIDER_ID,
+  zhipuDefinition,
+} from './provider/definitions/zhipu.js'
+export {
+  OLLAMA_DEFAULT_API_KEY,
+  OLLAMA_DEFAULT_BASE_URL,
+  OLLAMA_PROVIDER_ID,
+  ollamaDefinition,
+} from './provider/definitions/ollama.js'
+export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'

@@ -655,6 +655,46 @@ describe('AnthropicMessagesProvider stream() error mapping', () => {
     expect(terminal.retryable).toBe(true)
   })
 
+  it('maps a connection dropped MID-BODY to the same retryable network error', async () => {
+    // The SDK wraps a rejected fetch in APIConnectionError only on the connect path: a failure
+    // raised while READING the body is rethrown verbatim, so the commonest transient streaming
+    // failure arrives as a bare TypeError / errno Error. Unmarked it would classify as `unknown` —
+    // never retried — while the same connection dropping on a frame boundary is the retryable
+    // `network` error the case above asserts. One physical event, one verdict, on both wires.
+    for (const error of [
+      Object.assign(new TypeError('terminated'), { cause: new Error('closed') }),
+      Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+    ]) {
+      const gate = createStreamGate()
+      const net = fakeNetwork({ kind: 'sse', frames: fixture.PLAIN_TEXT_FRAMES, gate })
+      const iterator = providerOf(net).stream(encodedRequest(), CONTEXT)[Symbol.asyncIterator]()
+      // message_start (one usage event), content_block_start, ping, one text delta.
+      gate.release(4)
+      const events: StreamEvent[] = []
+      for (let pulled = 0; pulled < 2; pulled += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- a stream is consumed one event at a time
+        const step = await iterator.next()
+        if (step.done === true) throw new Error('the fixture ran out of frames')
+        events.push(step.value)
+      }
+      gate.fail(error)
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- draining the terminal event
+        const step = await iterator.next()
+        if (step.done === true) break
+        events.push(step.value)
+      }
+      checkStreamInvariants(events)
+      const terminal = events.at(-1)
+      if (terminal?.type !== 'error') throw new Error('expected a terminal error event')
+      expect(terminal.code).toBe('network')
+      expect(terminal.retryable).toBe(true)
+      // What arrived is kept, opening usage reading included.
+      expect(textOf(events)).toBe(fixture.PLAIN_TEXT[0])
+      expect(events.filter((event) => event.type === 'usage')).toHaveLength(1)
+    }
+  })
+
   it('never redacts less than the whole credential out of detail', async () => {
     // The SDK puts the response body's message in the error message, so a server that echoed
     // the key back is the realistic leak this guards.
