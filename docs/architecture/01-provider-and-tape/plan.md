@@ -17,9 +17,9 @@
 - [x] 13. 重接 `apps/desktop/src/main/chat.ts`：删内存 `history` 与直接构造的 SDK；保留阶段 0 注释里写明的行为（先登记后 await、停止保留部分文本、失败轮次留存、同文本重发 = 重试、先释放再发终态）；`session.latest` / `session.messages` 与渲染端启动恢复（验收 5；阶段 0 验收 4 不回退）
 - [x] 14. `provider.list` / `provider.configure` / `provider.select`、`config.json` 的 `provider` 字段、由 `ConfigKey[]` 渲染的最小设置卡（两份 locale 目录加键）、`TENON_SECRETS=memory` 的 e2e 机密接缝、locale 键存在性单测、开发期环境变量回落（`TENON_MODEL` 未命中内置表时合成保守 `ModelInfo`、`TENON_MAX_TOKENS` 保留）与 `TENON_PROVIDER`、`pnpm test:live` 的 zhipu 用例（验收 6、21）
 - [x] 15. `packages/contracts/src/bridge/frame.ts`：信封、五种协议帧、版本协商、未知帧路径（验收 19）
-- [ ] 16. 对照 spec 全部验收标准逐条验证，把每条的结果与命令记在本文件；记下 5000 条分页与 1 万条校验链的耗时
-- [ ] 17. 清理临时探针与非持久的夹具；确认 `packages/kernel/src` 够不着任何 `node:http` 假服务器
-- [ ] 18. spec 顶部改 `Status: implemented`，写交接
+- [x] 16. 对照 spec 全部验收标准逐条验证，把每条的结果与命令记在本文件；记下 5000 条分页与 1 万条校验链的耗时
+- [x] 17. 清理临时探针与非持久的夹具；确认 `packages/kernel/src` 够不着任何 `node:http` 假服务器
+- [ ] 18. spec 顶部改 `Status: implemented`，写交接——**卡在两条需要 owner 动手的验收上，见「交接」**
 
 进度吃紧时的砍法，按这个顺序：先砍第 15 步（桥骨架），再砍第 14 步里的设置卡（IPC 与 `config.json` 字段保留，界面并入阶段 3 的设置工作）。**第 3–7 步不能砍**——它们是以后补不了的那部分。
 
@@ -54,12 +54,71 @@
 
 - 流程：harness 自建的 worktree 是从 `main` 拉的而不是当前分支，三个 agent 各自 `--ff-only` 到了 `cc1075f` 才开工；后续并行轨道的 worktree 由编排方自己 `git worktree add` 建。`.claude/worktrees/` 已进 `.gitignore`（嵌套检出会被主检出的 oxlint 扫到）。
 
+## 验收记录（第 16 步，2026-09-21）
+
+做法：4 名独立审计员各管一组、各用一个 worktree，外加一名完整性批评者。通过的标准不是「有个同名测试是绿的」，而是：读过测试、确认它断言的是验收原文；实际跑过；凡便宜处都把生产代码改坏、看它变红。结果 41 项（21 条验收 + 18 条不变量 + 第 17 步两项）**0 项失败**；批评者另核了 6 条目标、非目标清单、R1–R8 每条的「阶段 1 落地」所在文件，以及 AGENTS.md 的硬规则，均通过。审计找到的缺口都是「测试不够锋利」（改坏生产代码后仍绿），没有功能缺陷；已在 `b716e63` / `7e64756` / `bc3e6d7` 补上，每个新断言都在对应变异下亲眼见红，并由独立验证者换一种改法再验了一遍。
+
+命令均相对仓库根；e2e 需先 `pnpm build`，在 Claude Code 里要加 `env -u ELECTRON_RUN_AS_NODE`。
+
+| # | 结论 | 复跑命令 |
+|---|---|---|
+| 1 | 通过 | `pnpm vitest run --project kernel test/provider/definitions.test.ts`（四个定义同一条路径，含中止；Tape 事实同形） |
+| 2 | 通过 | `pnpm vitest run --project kernel test/provider/wire/encode.test.ts`（「零网络调用」现经真实 provider 实例断言） |
+| 3 | 通过 | `pnpm vitest run --project kernel test/tape/memory-store.test.ts -t "re-encodes"` 与 `pnpm vitest run --project desktop test/tape/conformance.test.ts -t "re-encodes"`（共享套，两个 store） |
+| 4 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "acceptance 4"`（全部 21 处租户谓词加 `tape_meta` 比较的变异扫描 22/22 见红） |
+| 5 | 通过 | `cd apps/desktop && pnpm exec playwright test e2e/session-restore.spec.ts` |
+| 6 | 通过 | `cd apps/desktop && pnpm exec playwright test e2e/provider-settings.spec.ts e2e/chat.spec.ts`；`pnpm vitest run --project desktop test/provider-catalogue.test.ts`（OpenAI 线的流式渲染现在在尾块放行**之前**断言首块已上屏） |
+| 7 | 通过 | `pnpm vitest run --project kernel test/provider/wire/anthropic-stream.test.ts -t abort`（200 个确定性中止点，部分文本逐字节比对；预先中止 `callCount === 0`）；Tape 一半在共享套 |
+| 8 | 通过 | lint 一半：`pnpm vitest run --project scripts scripts/lint-gate.test.mjs`（**新增的持久测试**：按 override「整条替换」的语义算出 kernel 路径的生效配置并断言禁用清单，另外真跑 oxlint 验证验收原文点名的五种形式）；打包一半：`pnpm vitest run --project kernel test/host-independence.test.ts` |
+| 9 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "acceptance 9"` |
+| 10 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "two connections"`；重置与陈旧 incarnation 在共享套 |
+| 11 | 通过 | 共享套（两个 store）；冲突后「库文件逐字节不变」另有 SQLite 文件摘要测试 |
+| 12 | 通过 | `pnpm vitest run --project kernel test/tape/hash.test.ts`；`pnpm vitest run --project desktop test/tape/chain.test.ts` |
+| 13 | 通过 | `pnpm vitest run --project kernel test/tape/names.test.ts`（通用路径四道闸各删一道都见红，并断言是哪道闸拦的） |
+| 14 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "acceptance 14"`（`EXPLAIN QUERY PLAN` 跑在 store 实际用的那个 SQL 常量上） |
+| 15 | 通过 | `pnpm typecheck`（类型夹具里的 `@ts-expect-error` 删掉即编译失败）；`-t "acceptance 15"` |
+| 16 | 通过 | `pnpm vitest run --project kernel test/provider/thinking.test.ts`（25 行规则表，`action` 与 `reason` 整体比对） |
+| 17 | 通过 | `pnpm tape:check`（单边改列 / 索引 / 键 / 触发器共六种变异，各自退出 1 并点名对象） |
+| 18 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "acceptance 18"` |
+| 19 | 通过 | `pnpm vitest run --project contracts test/frame.test.ts test/frame-tape-syntax.test.ts` |
+| 20 | **通过一半** | 干净 clone 里 `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e` 逐条退出 0（install 5.3 秒、无编译）；Electron 主进程里能打开库由 e2e 的消息经 `sessions.db` 往返证明。**「CI 的 Linux 上免编译加载」本机（macOS）证明不了**：包里确实带 linux-x64 / arm64 / musl 预编译产物，但只有一次 CI 运行能证明 |
+| 21 | **未运行** | 手动项 `pnpm test:live`，需要真实的智谱 key。用例存在（一次流式对话 + 一次停止），现在由单独的 `playwright.live.config.ts` 选中，默认的 `pnpm test:e2e` 即使 shell 里导出了 `TENON_LIVE=1` 也收集不到它 |
+
+**耗时**（macOS arm64，Node 22.22.0）：5000 条分页读 9 ms；1 万条分页 `verifyChain` 72 ms。
+
+审计后仍然成立、如实保留的几条：
+- 不变量 8 的「凭据传 `null` 而不是 `undefined`」无法用测试钉住，因为它**没有可观察效果**：适配器的 `defaultHeaders` 已用显式 `null` 把两个凭据头钉死，SDK 从环境变量解析到什么都会在发出前被覆盖（把那段钉子删掉，现有测试会红）。显式 `null` 是第二道、冗余的防线。
+- 验收 1 / 7 跑的 SSE 夹具是照文档手写的，不是录制的（见实施记录）。
+- 验收 4 较强的那一半只有单元测试：发布的应用只有一个固定租户，端到端测不到租户谓词，要等 6b 有第二个租户。
+- 新的 e2e 用例必须从 `./helpers/test.js` 而不是 `@playwright/test` 导入 `test`，否则它的临时 profile 不会被清理；目前没有机制强制这一点。
+
+## 清理记录（第 17 步，2026-09-21）
+
+- 分支 diff（`git diff dev...HEAD`）里没有遗留探针、`.only`、调试输出或不属于本 spec 的文件；新增的两处 `console.log` 分别是 `scripts/` 里 CLI 的输出与 `chain.test.ts` 打印的耗时（plan 要求记录）。
+- `packages/kernel/src` 够不着任何 `node:http` 假服务器：grep 无 import，lint 闸也会拒绝；两个假服务器只在 `apps/desktop/test/support/`。
+- `packages/contracts/test/frame-tape-syntax.test.ts` 里的一个裸 NUL 字节（让 git 把该文件当二进制）已改成 `\x00` 转义，运行时字符串不变。
+- e2e 的临时 profile 目录原先从不清理，系统临时目录里积了 410 个 / 675 MB：helper 现在登记每个根目录、用例通过即删（失败保留供排查），历史遗留的已手工删除。
+- 各轮并行用的 worktree 目录均已移除。它们的本地分支（`worktree-wf_*`、`wt/01-*`）保留未删——AGENTS.md 规定不经要求不删分支；内容都已并入功能分支，owner 可自行清理。
+
 ## 起草记录（2026-09-17）
 
 - spec 由 Claude Code 按 owner 的「你来做」起草；owner 于 2026-09-18 认可并指示改为 `Status: ready`、合并后开工。
 - 草稿经过一轮五个角度的对抗审查（各配一名反驳者）：64 条里 45 条成立并已修进 spec，4 条高危分别是 incarnation id 无处传入、OpenAI SDK 的凭据规则、`Usage` 未定义且 Anthropic 一个流发两条 usage、amend 状态过期。随后一轮执行复核（照修订后的文本实现 store 并逐条跑不变量，外加修复落地核对）确认 45 条全部落地，又找到 11 条并已修：对不存在的 session 做 `resetSession` 会凭空建会话、`runId` 进了 `message/user` 的 payload 会让重试变冲突、原验收 9 测不出 store 有没有回滚、`promptHash` 缺请求参数快照无法复核，等等。
 - 依据：三项实测（SQLite 绑定、两家 SDK 的 fetch 注入与流形状、DeepChat Tape 补读），各经一轮独立的对抗复核；三套独立设计（最小不后悔 / 服务端与审计优先 / 循环与恢复优先）加两名评审逐条裁决，评审实际执行了各方案的 DDL 与分配语句。探针与中间产物不入库。
 - R8 已在起草同一个 PR 里完成：`docs/reference/deepchat-mechanisms.md` §二之补。
+
+## 交接（2026-09-21）
+
+分支 `feat/01-provider-and-tape`（自 `dev` 分出，**仅本地，未 push，未开 PR**），第 1–17 步完成，门禁全绿：`pnpm format:check` / `lint` / `typecheck`、`pnpm test`（54 个文件 / 845 个用例）、`pnpm build`、`pnpm test:e2e`（16 通过）。
+
+**第 18 步没有做，spec 仍是 `Status: ready`。** AGENTS.md 的规则是验收标准全部通过才标 `implemented`，还差两条，都需要 owner 动手：
+
+1. **验收 21**：配一个真实的智谱 key 后跑 `pnpm test:live`。跑的时候顺手做两件事——拿真实的智谱 / Anthropic 流与 `packages/kernel/test/provider/fixtures/` 里手写的夹具对一遍；定下智谱的 `usageNeedsOptIn`（见 Open）。
+2. **验收 20 的另一半**：push 分支、开 PR 到 `dev`，让 CI 在 ubuntu 上证明 `better-sqlite3@13.0.3` 免编译加载。
+
+两条都过了之后：spec 顶部改 `Status: implemented`，勾掉第 18 步。
+
+下一个接手的人先读本文件的 Open：有几条是 spec 缺口或自相矛盾，需要 owner 在 Claude Desktop 项目里裁决后回写 spec（多数要在 `Revisions:` 记一笔）。按对后续阶段的影响排序：Anthropic 的 thinking 形状已过时（阶段 2 之前必须给 `ModelInfo` 加 thinking 模式字段）；`promptHash` 的可复核性依赖不进 Tape 的模型表；`create()` 参数里加的 `clock`；「撤回后再修订」时 `order_seq` 的矛盾；已存的 key 可被静默指向新的 `baseURL`；「恢复最近一个会话」里「最近」的定义。
 
 ## Open
 
