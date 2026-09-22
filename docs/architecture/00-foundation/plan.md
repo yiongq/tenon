@@ -53,6 +53,21 @@
 
 ## UX 场景缺口复核（2026-09-13）
 
+### UX 续录核验（2026-09-22）
+
+- 用户明确要求继续 UX 补录，本轮沿用此 UX 交接位置，不启动其他开发 spec。
+- 9 月 13 日第 07 段（侧栏管理）为 409.07 秒，全片解码通过；第 08 段缺少 moov atom，原文件保留但不能计作可用素材，需重录。
+- 本日整屏测试录到其他应用；改用 ScreenCaptureKit 独立窗口采集后，10 段虽生成 314.41 秒 MP4，但 120 秒与 280 秒画面仍停在同一旧 Skills 列表，与实时 AX 页面不一致。11 段同样仅作诊断，不计新增覆盖。单帧非黑屏不足以证明连续录制成功，已更正此前口头“已录到”的判断。
+- 已通过 UI 查看 Skills 详情/Contents、连接器逐工具权限、Engineering 插件详情、Quick task 草稿、Artifacts 网格/列表和共享空态；均不能据此宣称有有效视频。没有安装、发布、修改权限或发送快速任务。
+- 下一步：需 Claude 主窗口实际显示在当前桌面；先录短片，验证两次页面切换均出现在视频内，再补 Customize、Quick task、More 和第 08 段相关路径。Raise、Show Main Window、Bring All to Front 未解决旧画面问题，不再盲录长片。
+- 本轮仅此交接文档修改，无产品代码变更、无提交或推送；私有核验记录位于 uxkit 的 recordings/2026-09-22/README.md。
+- 10/11 两个窗口录制进程均已自动正常退出；git diff --check 通过。此次仅交接文档变动，未新增产品测试。
+- 再次“继续”后的短测：截图已变为 Artifacts / More，但点击 Edit sidebar、Escape 未呈现实时变化；坐标点击返回 `noWindowsAvailable`。尝试 Window → Move to LG HDR 4K 后仍未恢复。25 秒录制探针未生成输出且未自动返回，已中断退出（130），没有遗留录屏进程或新增有效视频。需用户在当前桌面手动激活 Claude，再验证动态录屏；不要把新截图当作恢复成功。
+- 用户确认无遮挡后的复查：工具截图显示完整 Claude，无其他窗口遮挡；因此不能继续将故障归因于遮挡。CUA 重置并重新绑定后，Customize 点击和 Cmd+K 仍无可见响应，坐标点击仍报 `noWindowsAvailable`。当前阻塞为控制/窗口识别异常，根因未定；未启动新录制。下一步用用户手动切换一个页面确认采集是否同步，再决定是否需要重启控制连接。
+- 用户手动切到 Customize 后，AX 和截图均同步到 Skills Discover，确认画面读取可更新。自动点击 Connectors 仍无响应；原生 View → Exit Full Screen 成功显示普通窗口边框，但坐标点击依然报 `noWindowsAvailable`。已排除“只需移走遮挡窗口”的判断；控制端故障仍在，未新增录制。CUA 会话重置已试过，后续应恢复控制服务再做短片动态验证。
+- 后续诊断：复测坐标点击仍报相同错误。按官方文档只读检查系统设置，Codex Computer Use 的 Accessibility 与 Screen & System Audio Recording 均为 on；没有修改权限。系统设置按钮及 Claude 原生菜单可操作，Claude 网页页签点击仍无即时反馈。原生 View → Reload 后当前主窗口暂为空白壳，需恢复页面加载后再继续；未启动录屏，不新增有效覆盖。不能把故障归因为用户没有授权或有窗口遮挡。
+- 用户重启 Claude 后首页恢复；点击 Customize 的截图出现加载骨架，但 AX 仍停在首页，坐标点击继续报 `noWindowsAvailable`。90 秒采集探针 `/private/tmp/ux12-restarted.mp4` 自动退出成功，ffprobe 实际仅 0.066667 秒、61,373 字节，不能作为连续视频。没有遗留录屏进程。已在私有 round-3 补 README.md 和 index.html，索引仅收录可用第 07 段，明确第 08 段损坏及 09–11 无效；后续应先恢复控制与连续采集，不再让用户重复移动/重启窗口碰运气。
+
 - 对照现有 UX 审计、9 月 13 日简化决定、主参考范围与视频覆盖清单，完成只读缺口分析；本轮没有继续操作 Claude 或更改产品决策。
 - 下一轮建议优先核验：拒绝审批及再次申请、已记住授权的撤销；工具执行/部分写入/待反问时停止；关闭重开后的任务恢复；切换任务后的后台运行与未读提醒；编辑/重试/版本切换；产物二次修改与旧文件关系；项目上下文全链路；MCP 连接/工具失败后的恢复。部分场景旧素材有静态画面，但缺连续状态转换证据，不应统称全无素材。
 - Tenon 专有的一键还原、完成结算、从标题菜单查看本次记录，以及多 provider 密钥/错误体验，需要自己的后续 UX spec 与实现验收，不能靠 Claude 补录替代。
@@ -147,4 +162,3 @@
 - 验收 3 的措辞已随 PR #8 改掉并记入 spec 的 `Revisions:`。
 - 阶段 0 的推导式讲解页（owner 私有 artifact）：https://claude.ai/artifact/EbWST7rAKWhDv4kD9VZrL1
 - 下一步不在本 spec 内：写 `docs/architecture/01-*/spec.md`。动笔前要定三件事——provider 层自写还是用统一库、kernel 如何联网（`HostAdapter` 加网络成员）、会话存储作为 host 提供的端口（SQLite 是原生模块，kernel 不能直接依赖）。
-
