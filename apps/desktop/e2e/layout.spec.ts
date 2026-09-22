@@ -7,22 +7,23 @@ import { expect, test } from './helpers/test.js'
 /**
  * The shell must never scroll: only the thread viewport does.
  *
- * REGRESSION. Every message renders `<h3 className="sr-only">` (its accessible name) and an
- * `<output className="sr-only" />`, and Tailwind's `sr-only` is `position: absolute`. While the
- * thread viewport and every ancestor up to `<body>` were `position: static`, those boxes took
- * the INITIAL containing block instead, so the viewport's `overflow-y: auto` never clipped them
- * and they stretched `document.documentElement.scrollHeight` past `innerHeight` (measured:
- * 780 -> 1060 in a 780px window after four short replies). The document became scrollable, and a
- * wheel past the bottom of the thread chained into it: the whole shell, sidebar included, slid
- * up and the body background showed underneath.
+ * REGRESSION. Every message renders `<h3 className="sr-only">` (its accessible name), and user
+ * messages add an `<output className="sr-only" />`; Tailwind's `sr-only` is `position: absolute`.
+ * While the thread viewport and every ancestor up to `<body>` were `position: static`, those
+ * boxes took the INITIAL containing block instead, so the viewport's `overflow-y: auto` never
+ * clipped them and they stretched `document.documentElement.scrollHeight` past `innerHeight`
+ * (measured: 780 -> 1060 in a 780px window after four short replies). The document became
+ * scrollable, and a wheel past the bottom of the thread chained into it: the whole shell,
+ * sidebar included, slid up and the body background showed underneath.
  *
  * Two independent defences: the viewport is `relative`, so those boxes are positioned and
  * clipped INSIDE the scroller; and app-root is `relative` + `overflow-hidden`, so nothing in
  * the shell can extend the document. MEASURED, by reverting one class at a time and rebuilding:
- * this spec passes with EITHER one alone, and fails only when both are gone (`scrollHeight`
- * 1060 vs `innerHeight` 780, then `scrollY` 280 and app-root's rect top -280 after the wheel).
- * So do not read a green run as proof that both classes are still there — the comment at each
- * site is what keeps the pair together.
+ * the LAYOUT assertions below pass with EITHER one alone, and fail only when both are gone
+ * (`scrollHeight` 1060 vs `innerHeight` 780, then `scrollY` 280 and app-root's rect top -280
+ * after the wheel). Because either class can therefore go missing behind a green behaviour
+ * check, the computed `position` of both elements is asserted too, so dropping one turns this
+ * spec red on its own.
  */
 let fake: FakeAnthropic | undefined
 
@@ -49,6 +50,8 @@ interface ViewportMetrics {
   readonly viewportScrollTop: number
   readonly viewportScrollHeight: number
   readonly viewportClientHeight: number
+  readonly viewportPosition: string
+  readonly appRootPosition: string
 }
 
 /** One round trip, so every number below describes the same layout. */
@@ -67,6 +70,8 @@ function readMetrics(page: Page): Promise<ViewportMetrics> {
       viewportScrollTop: viewport.scrollTop,
       viewportScrollHeight: viewport.scrollHeight,
       viewportClientHeight: viewport.clientHeight,
+      viewportPosition: getComputedStyle(viewport).position,
+      appRootPosition: getComputedStyle(appRoot).position,
     }
   })
 }
@@ -92,17 +97,27 @@ test('a thread taller than the window scrolls itself, never the shell', async ()
       ).toContainText('Done.')
     }
 
-    // (a) The document is exactly one window tall the moment the last reply lands - before any
+    // assistant-ui still auto-scrolls to the newest message. It pins from a resize callback that
+    // defers through `requestAnimationFrame`, so the reply can be readable one frame before the
+    // scroll lands: poll the distance to the bottom instead of snapshotting it once.
+    await expect
+      .poll(async () => {
+        const pinned = await readMetrics(page)
+        return pinned.viewportScrollHeight - pinned.viewportClientHeight - pinned.viewportScrollTop
+      })
+      .toBeLessThanOrEqual(2)
+    await expect(page.getByTestId('scroll-to-bottom')).toBeDisabled()
+
+    // (a) The document is exactly one window tall once the last reply has landed - before any
     // wheel, because this is the state the wheel then acts on.
     const settled = await readMetrics(page)
     expect(settled.docScrollHeight).toBe(settled.innerHeight)
     // The premise of the whole test: the conversation really is taller than its viewport.
     expect(settled.viewportScrollHeight).toBeGreaterThan(settled.viewportClientHeight)
-    // assistant-ui still auto-scrolls to the newest message, so its button is at rest.
-    expect(settled.viewportScrollTop + settled.viewportClientHeight).toBeGreaterThanOrEqual(
-      settled.viewportScrollHeight - 2,
-    )
-    await expect(page.getByTestId('scroll-to-bottom')).toBeDisabled()
+    // Each defence on its own: the layout assertions survive losing either one, so removing a
+    // single `relative` would otherwise leave this spec green and the bug one edit away.
+    expect(settled.viewportPosition).toBe('relative')
+    expect(settled.appRootPosition).toBe('relative')
 
     // Back to the top, by script: the scroll-to-bottom button must notice.
     await page.evaluate(() => {
