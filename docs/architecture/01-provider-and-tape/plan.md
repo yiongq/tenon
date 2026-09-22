@@ -19,7 +19,7 @@
 - [x] 15. `packages/contracts/src/bridge/frame.ts`：信封、五种协议帧、版本协商、未知帧路径（验收 19）
 - [x] 16. 对照 spec 全部验收标准逐条验证，把每条的结果与命令记在本文件；记下 5000 条分页与 1 万条校验链的耗时
 - [x] 17. 清理临时探针与非持久的夹具；确认 `packages/kernel/src` 够不着任何 `node:http` 假服务器
-- [ ] 18. spec 顶部改 `Status: implemented`，写交接——**卡在两条需要 owner 动手的验收上，见「交接」**
+- [x] 18. spec 顶部改 `Status: implemented`，写交接
 
 进度吃紧时的砍法，按这个顺序：先砍第 15 步（桥骨架），再砍第 14 步里的设置卡（IPC 与 `config.json` 字段保留，界面并入阶段 3 的设置工作）。**第 3–7 步不能砍**——它们是以后补不了的那部分。
 
@@ -81,7 +81,7 @@
 | 17 | 通过 | `pnpm tape:check`（单边改列 / 索引 / 键 / 触发器共六种变异，各自退出 1 并点名对象） |
 | 18 | 通过 | `pnpm vitest run --project desktop test/tape/sqlite-store.test.ts -t "acceptance 18"` |
 | 19 | 通过 | `pnpm vitest run --project contracts test/frame.test.ts test/frame-tape-syntax.test.ts` |
-| 20 | **通过一半** | 干净 clone 里 `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e` 逐条退出 0（install 5.3 秒、无编译）；Electron 主进程里能打开库由 e2e 的消息经 `sessions.db` 往返证明。**「CI 的 Linux 上免编译加载」本机（macOS）证明不了**：包里确实带 linux-x64 / arm64 / musl 预编译产物，但只有一次 CI 运行能证明 |
+| 20 | 通过（本地 + PR #11 的 CI，2026-09-22） | 干净 clone 里 `pnpm install && pnpm build && pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e` 逐条退出 0（install 5.3 秒、无编译）；Electron 主进程里能打开库由 e2e 的消息经 `sessions.db` 往返证明。**「CI 的 Linux 上免编译加载」本机（macOS）证明不了**：包里确实带 linux-x64 / arm64 / musl 预编译产物，但只有一次 CI 运行能证明 |
 | 21 | 通过（2026-09-22） | `pnpm test:live`（owner 的智谱 key）：Anthropic 线 3 个用例 + zhipu 的 OpenAI 兼容线 2 个用例（一次流式对话、一次停止）均通过，详见下方「live 运行记录」 |
 
 **live 运行记录（验收 21，2026-09-22）**：owner 的 key 是智谱的 key，`.env.local` 里以 `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` 的形式存在，没有 `ZHIPU_API_KEY`；本次运行经进程环境把同一个 key 作为 `ZHIPU_API_KEY` 传入（不落盘）。要让 `pnpm test:live` 以后自己就能跑 zhipu 组，在 `.env.local` 里加一行 `ZHIPU_API_KEY=` 同一个值，并设 `TENON_LIVE_ZHIPU_MODEL=glm-4.6`。
@@ -117,14 +117,9 @@
 
 ## 交接（2026-09-21）
 
-分支 `feat/01-provider-and-tape`（自 `dev` 分出，**仅本地，未 push，未开 PR**），第 1–17 步完成，门禁全绿：`pnpm format:check` / `lint` / `typecheck`、`pnpm test`（54 个文件 / 845 个用例）、`pnpm build`、`pnpm test:e2e`（16 通过）。
+分支 `feat/01-provider-and-tape`（已经 PR #11 于 2026-09-22 合并进 `dev`），第 1–17 步完成，门禁全绿：`pnpm format:check` / `lint` / `typecheck`、`pnpm test`（54 个文件 / 845 个用例）、`pnpm build`、`pnpm test:e2e`（16 通过）。
 
-**第 18 步没有做，spec 仍是 `Status: ready`。** AGENTS.md 的规则是验收标准全部通过才标 `implemented`，还差一条，需要 owner 同意 push：
-
-1. ~~验收 21~~：**已通过（2026-09-22）**，见验收记录里的「live 运行记录」。
-2. **验收 20 的另一半**：push 分支、开 PR 到 `dev`，让 CI 在 ubuntu 上证明 `better-sqlite3@13.0.3` 免编译加载。
-
-它过了之后：spec 顶部改 `Status: implemented`，勾掉第 18 步。
+**第 18 步已完成（2026-09-22）**：验收 20 的另一半由 PR #11 的 CI 证明（ubuntu-latest：`ci` 59 s、`e2e` 1 m 32 s 全绿，`better-sqlite3@13.0.3` 免编译加载）；验收 21 已在真实智谱端点通过。spec 顶部已改 `Status: implemented`。
 
 下一个接手的人先读本文件的 Open：有几条是 spec 缺口或自相矛盾，需要 owner 在 Claude Desktop 项目里裁决后回写 spec（多数要在 `Revisions:` 记一笔）。按对后续阶段的影响排序：Anthropic 的 thinking 形状已过时（阶段 2 之前必须给 `ModelInfo` 加 thinking 模式字段）；`promptHash` 的可复核性依赖不进 Tape 的模型表；`create()` 参数里加的 `clock`；「撤回后再修订」时 `order_seq` 的矛盾；已存的 key 可被静默指向新的 `baseURL`；「恢复最近一个会话」里「最近」的定义。
 
