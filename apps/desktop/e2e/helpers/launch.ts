@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { _electron as electron } from '@playwright/test'
@@ -12,19 +12,56 @@ export function configPathIn(userData: string): string {
   return join(userData, 'profiles', 'local', 'personal', 'config.json')
 }
 
+/** Roots this worker made since the last sweep. Drained by the auto fixture in `test.ts`. */
+const createdRoots: string[] = []
+
 /**
  * A fresh, empty profile root. Keep the handle: acceptance 9 relaunches into it.
  *
  * realpathSync matters: on macOS mkdtemp hands back `/var/folders/...` while
  * `app.getPath('userData')` reports the resolved `/private/var/folders/...`, so an
  * un-resolved path makes every equality assertion fail for the wrong reason.
+ *
+ * Every root is REGISTERED, because each one carries a `sessions.db` and nothing in the OS temp
+ * directory ever expires on its own: left alone these grew to hundreds of profiles and hundreds
+ * of megabytes. `sweepUserDataDirs` removes them once the test that made them has passed.
  */
 export function makeUserDataDir(tag: string): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), `tenon-e2e-${tag}-`)))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), `tenon-e2e-${tag}-`)))
+  createdRoots.push(root)
+  return root
+}
+
+/**
+ * Forgets every registered root, and deletes them when `remove` is true — a FAILED test keeps its
+ * profile (its `sessions.db` and `config.json` are the evidence) while a passing one leaves
+ * nothing behind. Never touches a directory this process did not create: the pre-existing ones
+ * are someone else's to sweep.
+ */
+export function sweepUserDataDirs(remove: boolean): void {
+  for (const root of createdRoots.splice(0)) {
+    if (!remove) continue
+    // A launch that outlived its test would hold files open; losing the directory is not worth
+    // failing a green test over, so the next sweep-by-hand can have it.
+    try {
+      rmSync(root, { recursive: true, force: true })
+    } catch {
+      // ignored on purpose
+    }
+  }
+}
+
+/** What a seeded `config.json` may carry: the fields a user could have chosen before a launch. */
+export interface SeededConfig {
+  readonly locale: LocaleSetting
+  /** The provider and model a run uses, as `provider.select` writes it. */
+  readonly provider?: { readonly id: string; readonly modelId: string }
+  /** Non-secret provider settings, as `provider.configure` writes them. Never a credential. */
+  readonly providerConfig?: Readonly<Record<string, Readonly<Record<string, string>>>>
 }
 
 /** Seeds `config.json` before the first launch, as if the user had already chosen. */
-export function seedConfig(userData: string, config: { locale: LocaleSetting }): void {
+export function seedConfig(userData: string, config: SeededConfig): void {
   const file = configPathIn(userData)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
@@ -42,6 +79,13 @@ export interface LaunchOptions {
   readonly systemLanguages?: readonly string[]
   /** Extra environment for the app process (e.g. a fake provider endpoint). */
   readonly env?: Readonly<Record<string, string>>
+  /**
+   * Where the app keeps credentials. `memory` (the default) is the e2e seam; `keychain` is the
+   * real path, which the spec assigns to the manual `pnpm test:live` and to daily use — an
+   * unattended run must never write into a developer's login keychain, and CI's Linux has no
+   * Secret Service at all.
+   */
+  readonly secrets?: 'memory' | 'keychain'
   /** CSS pixels of the web contents, not of the window: macOS puts a 32px title bar inside the bounds. */
   readonly contentSize?: { readonly width: number; readonly height: number }
 }
@@ -64,9 +108,15 @@ export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> 
   const { ELECTRON_RUN_AS_NODE: _ignored, ...rest } = process.env
   // TENON_DEV_ENV=off: the app must not pick up a developer's `.env.local` during tests;
   // a spec that wants real credentials passes them explicitly through `options.env`.
+  // TENON_SECRETS=memory: and it must not read or write the real OS keychain either — on macOS
+  // an unsigned dev build asking for one pops a system dialog, and CI's Linux has no Secret
+  // Service at all. Credentials for a test therefore always travel through `options.env`. The
+  // one exception is the opt-in live suite, which asks for `keychain` and so keeps the real
+  // path covered by something (spec 01 §desktop 接线, 「e2e 的机密接缝」).
   const env: Record<string, string> = {
     ...(rest as Record<string, string>),
     TENON_DEV_ENV: 'off',
+    TENON_SECRETS: options.secrets ?? 'memory',
     ...options.env,
   }
   if (options.systemLanguages !== undefined && options.systemLanguages.length > 0) {

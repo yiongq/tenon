@@ -45,4 +45,28 @@ describe('desktop profiles', () => {
     await fs.writeFile(configPath(identity), '{"locale":"klingon"}')
     expect(await readConfig(fs, identity)).toMatchObject({ locale: 'auto' })
   })
+
+  it('lets one bad field cost that field and nothing else', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    // `provider` is all-or-nothing (`{ id, modelId }`), so a half-written or hand-edited entry
+    // used to discard the whole file — and the next save persisted those defaults over what the
+    // user had chosen.
+    await fs.writeFile(
+      configPath(identity),
+      '{"locale":"zh-CN","sidebarCollapsed":true,"provider":{"id":"zhipu"},"providerConfig":7}',
+    )
+    expect(await readConfig(fs, identity)).toEqual({
+      locale: 'zh-CN',
+      sidebarCollapsed: true,
+      provider: null,
+      providerConfig: {},
+    })
+    // And a save from that state keeps what survived.
+    await writeConfig(fs, identity, { sidebarCollapsed: false })
+    expect(await readConfig(fs, identity)).toMatchObject({
+      locale: 'zh-CN',
+      sidebarCollapsed: false,
+    })
+  })
 })

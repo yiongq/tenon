@@ -1,7 +1,9 @@
 import { absolutePath } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { IpcConfirm } from '../src/main/host/confirm.js'
+import { useMemorySecrets } from '../src/main/host/index.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
+import { MemorySecrets } from '../src/main/host/secrets.js'
 
 describe('PassthroughSandbox', () => {
   const base = {
@@ -52,5 +54,28 @@ describe('IpcConfirm', () => {
     const confirm = new IpcConfirm((_channel, payload) => sent.push(payload))
     await expect(confirm.request({ ...request, facts: {} })).rejects.toThrow(/facts\.command/)
     expect(sent).toEqual([])
+  })
+})
+
+/**
+ * The e2e secrets seam (spec 01 §desktop 接线). It is a security boundary in both directions: a
+ * packaged build must never take its credential store from the environment, and an automated run
+ * must never write into the developer's login keychain.
+ */
+describe('the secrets seam', () => {
+  it('leaves the OS keychain in place unless a dev build asks for memory', () => {
+    expect(useMemorySecrets(false, {})).toBe(false)
+    expect(useMemorySecrets(false, { TENON_SECRETS: 'memory' })).toBe(true)
+    expect(useMemorySecrets(false, { TENON_SECRETS: 'keychain' })).toBe(false)
+    expect(useMemorySecrets(true, { TENON_SECRETS: 'memory' })).toBe(false)
+  })
+
+  it('keeps memory secrets in this process and forgets a deleted one', async () => {
+    const secrets = new MemorySecrets()
+    expect(await secrets.get('tenant:provider:anthropic:apiKey')).toBeNull()
+    await secrets.set('tenant:provider:anthropic:apiKey', 'k')
+    expect(await secrets.get('tenant:provider:anthropic:apiKey')).toBe('k')
+    await secrets.delete('tenant:provider:anthropic:apiKey')
+    expect(await secrets.get('tenant:provider:anthropic:apiKey')).toBeNull()
   })
 })

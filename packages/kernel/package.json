@@ -9,6 +9,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "development": "./src/testing/index.ts",
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "files": [
@@ -20,11 +25,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/client": "2.0.0"
+    "@anthropic-ai/sdk": "0.126.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@noble/hashes": "2.4.0",
+    "openai": "7.17.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/server-everything": "2026.8.31",
     "@types/node": "catalog:",
+    "esbuild": "0.28.2",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

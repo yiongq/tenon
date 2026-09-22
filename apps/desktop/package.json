@@ -13,15 +13,15 @@
     "typecheck": "tsc -b",
     "test:e2e": "playwright test",
     "test": "vitest run",
-    "test:live": "TENON_LIVE=1 playwright test e2e/live-provider.spec.ts"
+    "test:live": "TENON_LIVE=1 playwright test --config=playwright.live.config.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.126.0",
     "@assistant-ui/react": "0.15.20",
     "@base-ui/react": "1.8.0",
     "@napi-rs/keyring": "2.1.0",
     "@tenon-app/contracts": "workspace:*",
     "@tenon-app/kernel": "workspace:*",
+    "better-sqlite3": "13.0.3",
     "class-variance-authority": "0.7.1",
     "cn": "0.3.0",
     "i18next": "26.4.2",
@@ -37,6 +37,7 @@
   "devDependencies": {
     "@playwright/test": "catalog:",
     "@tailwindcss/vite": "4.3.3",
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",

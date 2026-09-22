@@ -111,10 +111,81 @@
           },
           {
             "name": "fetch",
-            "message": "network access is a host capability; phase 1 decides its HostAdapter shape."
+            "message": "the kernel's only way out is HostAdapter.network.fetch, taken from ProviderDefinition.create()."
+          },
+          {
+            "name": "WebSocket",
+            "message": "the kernel's only way out is HostAdapter.network.fetch."
+          },
+          {
+            "name": "EventSource",
+            "message": "SSE is parsed off a Response body from HostAdapter.network.fetch."
+          },
+          {
+            "name": "XMLHttpRequest",
+            "message": "the kernel's only way out is HostAdapter.network.fetch."
+          },
+          {
+            "name": "process",
+            "message": "credentials and config arrive through ProviderDefinition.create(); the kernel never reads process.env."
+          },
+          {
+            "name": "crypto",
+            "message": "randomness comes from the injected ids: { uuid() }; hashing uses @noble/hashes."
           },
           { "name": "setTimeout", "message": "time goes through HostClock." },
           { "name": "setInterval", "message": "time goes through HostClock." }
+        ],
+        // no-restricted-globals only matches bare identifiers, so `globalThis.fetch` would
+        // slip through it — and `globalThis.fetch ?? network.fetch` is the exact fallback
+        // the 01 spec forbids ("runs on desktop, breaks on a server host"). Same list.
+        "no-restricted-properties": [
+          "error",
+          { "object": "globalThis", "property": "document", "message": "no DOM globals." },
+          { "object": "globalThis", "property": "window", "message": "no DOM globals." },
+          { "object": "globalThis", "property": "navigator", "message": "no DOM globals." },
+          { "object": "globalThis", "property": "localStorage", "message": "no DOM globals." },
+          { "object": "globalThis", "property": "sessionStorage", "message": "no DOM globals." },
+          {
+            "object": "globalThis",
+            "property": "fetch",
+            "message": "the kernel's only way out is HostAdapter.network.fetch; no globalThis fallback."
+          },
+          {
+            "object": "globalThis",
+            "property": "WebSocket",
+            "message": "the kernel's only way out is HostAdapter.network.fetch."
+          },
+          {
+            "object": "globalThis",
+            "property": "EventSource",
+            "message": "SSE is parsed off a Response body from HostAdapter.network.fetch."
+          },
+          {
+            "object": "globalThis",
+            "property": "XMLHttpRequest",
+            "message": "the kernel's only way out is HostAdapter.network.fetch."
+          },
+          {
+            "object": "globalThis",
+            "property": "process",
+            "message": "credentials and config arrive through ProviderDefinition.create()."
+          },
+          {
+            "object": "globalThis",
+            "property": "crypto",
+            "message": "randomness comes from the injected ids: { uuid() }."
+          },
+          {
+            "object": "globalThis",
+            "property": "setTimeout",
+            "message": "time goes through HostClock."
+          },
+          {
+            "object": "globalThis",
+            "property": "setInterval",
+            "message": "time goes through HostClock."
+          }
         ],
         "no-restricted-imports": [
           "error",
@@ -136,6 +207,16 @@
               {
                 "name": "node:child_process",
                 "message": "processes go through HostAdapter.process."
+              },
+              { "name": "undici", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "node-fetch", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "axios", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "got", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "ky", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "ws", "message": "the kernel never opens a socket of its own." },
+              {
+                "name": "better-sqlite3",
+                "message": "better-sqlite3 belongs to apps/desktop; the kernel knows only the TapeStore port."
               }
             ],
             "patterns": [
@@ -146,6 +227,10 @@
               {
                 "group": ["**/apps/**", "@tenon-app/desktop", "@tenon-app/server"],
                 "message": "dependencies point inward only: apps -> contracts -> kernel."
+              },
+              {
+                "group": ["**/testing", "**/testing/*", "@tenon-app/kernel/testing"],
+                "message": "@tenon-app/kernel/testing is for tests; shipped kernel/contracts code never imports it."
               },
               {
                 "group": ["../../*", "../../../*", "../../../../*"],
@@ -182,6 +267,18 @@
               {
                 "name": "@tenon-app/contracts",
                 "message": "kernel is the innermost package; contracts depends on kernel, never the reverse."
+              },
+              // A later override REPLACES an earlier one's rule config for the files it matches,
+              // so this list is repeated here on purpose: kernel/src is matched by three overrides.
+              { "name": "undici", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "node-fetch", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "axios", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "got", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "ky", "message": "the only way out is HostAdapter.network.fetch." },
+              { "name": "ws", "message": "the kernel never opens a socket of its own." },
+              {
+                "name": "better-sqlite3",
+                "message": "better-sqlite3 belongs to apps/desktop; the kernel knows only the TapeStore port."
               }
             ],
             "patterns": [
@@ -192,6 +289,12 @@
               {
                 "group": ["**/apps/**", "@tenon-app/desktop", "@tenon-app/server"],
                 "message": "dependencies point inward only."
+              },
+              // Repeated from the override above for the same replacement reason: shipped
+              // kernel code never reaches for the test fixtures in src/testing.
+              {
+                "group": ["**/testing", "**/testing/*", "@tenon-app/kernel/testing"],
+                "message": "@tenon-app/kernel/testing is for tests; shipped kernel code never imports it."
               },
               {
                 "group": ["../../*", "../../../*", "../../../../*"],

@@ -6,7 +6,7 @@
   "scripts": {
     "prepare": "if git rev-parse --git-dir > /dev/null 2>&1; then lefthook install; fi",
     "build": "pnpm -r run build",
-    "lint": "oxlint --disable-nested-config --format=stylish --max-warnings=0 && pnpm i18n:check && pnpm colors:check && pnpm copy:check",
+    "lint": "oxlint --disable-nested-config --format=stylish --max-warnings=0 && pnpm i18n:check && pnpm colors:check && pnpm copy:check && pnpm tape:check",
     "lint:fix": "oxlint --disable-nested-config --format=stylish --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check --disable-nested-config .",
@@ -20,6 +20,7 @@
     "colors:check": "node scripts/check-colors.mjs",
     "dev": "pnpm --filter @tenon-app/desktop dev",
     "copy:check": "node scripts/check-copy.mjs",
+    "tape:check": "node scripts/check-tape-schema.mjs",
     "test:live": "pnpm build && pnpm --filter @tenon-app/desktop test:live"
   },
   "devDependencies": {

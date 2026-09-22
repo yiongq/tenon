@@ -12,6 +12,8 @@ coverage/
 *.tsbuildinfo
 .pnpm-store/
 .claude/settings.local.json
+# agent worktrees (parallel work per AGENTS.md); nested checkouts must not be linted or formatted
+.claude/worktrees/
 # private UX materials never enter the repo
 uxkit/
 # build + test output

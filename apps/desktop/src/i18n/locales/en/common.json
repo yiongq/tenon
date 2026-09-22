@@ -19,10 +19,59 @@
   "account": {
     "menu": "Account",
     "localUser": "Local profile",
+    "providers": "Models and keys",
     "language": "Language",
     "languageAuto": "Follow system",
     "languageZhCN": "中文",
     "languageEn": "English"
+  },
+  "settings": {
+    "providers": {
+      "title": "Models and keys",
+      "description": "Choose the provider and model for new messages. Keys are kept in the system keychain, never in a settings file.",
+      "close": "Close",
+      "loading": "Loading…",
+      "provider": "Provider",
+      "model": "Model",
+      "stored": "A key is stored. Type a new one to replace it.",
+      "notStored": "No key stored yet.",
+      "willRemove": "Cleared: saving removes the stored key.",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "error": {
+        "invalidValue": "That value cannot be used. Check it and try again.",
+        "unknownProvider": "That provider is no longer available.",
+        "unknownKey": "That setting is not part of this provider.",
+        "unknownModel": "That model is not part of this provider.",
+        "noModel": "This provider offers no model, so it cannot be selected.",
+        "unavailable": "Settings could not be saved. Try again."
+      }
+    }
+  },
+  "provider": {
+    "anthropic": {
+      "name": "Anthropic",
+      "config": {
+        "apiKey": "API key",
+        "authToken": "Auth token (Bearer-style gateway)",
+        "baseURL": "Endpoint"
+      }
+    },
+    "zhipu": {
+      "name": "Zhipu GLM",
+      "config": {
+        "apiKey": "API key",
+        "baseURL": "Endpoint"
+      }
+    },
+    "ollama": {
+      "name": "Ollama (local)",
+      "config": {
+        "apiKey": "API key (ignored by Ollama)",
+        "baseURL": "Endpoint"
+      }
+    }
   },
   "composer": {
     "placeholder": "Ask Tenon anything",

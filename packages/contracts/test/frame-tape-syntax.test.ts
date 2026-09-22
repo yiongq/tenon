@@ -1,0 +1,77 @@
+/**
+ * The cross-package gate spec 01 §桥帧骨架 rule 4 needs: a bridge frame `type` and a tape name live
+ * in the SAME name space, and each package classifies segments with its own regex
+ * (`TYPE_SEGMENT` in `bridge/frame.ts`, `NAME_SEGMENT` in the kernel's `tape/names.ts`). Neither
+ * imports the other — contracts must classify a frame type without inheriting the tape's length and
+ * segment bounds, which are index concerns — so nothing but this test holds the two syntaxes
+ * together. Tighten or loosen one regex and this goes red.
+ *
+ * The bounds are deliberately NOT compared: a frame type is bounded by the transport's frame size, a
+ * tape name by what an index and a log line carry. Only the per-segment character rule is shared.
+ */
+import { describe, expect, it } from 'vitest'
+import { assertTapeName } from '@tenon-app/kernel'
+import { classifyFrameType } from '../src/bridge/frame.js'
+
+/** Accepted and rejected segment spellings, each judged by both classifiers below. */
+const segments: readonly string[] = [
+  // Accepted by both.
+  'user',
+  'start',
+  'note_2',
+  'a',
+  'tool_result',
+  'x0',
+  'a_b_c',
+  // Rejected by both.
+  '',
+  'User',
+  'USER',
+  'user-1',
+  'user.1',
+  '1user',
+  '_user',
+  'user ',
+  ' user',
+  'user!',
+  'ünser',
+  'user\n',
+  'user/',
+  'us\x00er',
+]
+
+/** The tape's verdict on one segment, asked through a two-segment name so the bounds do not bite. */
+function tapeAcceptsSegment(segment: string): boolean {
+  try {
+    assertTapeName(`ext/${segment}`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The frame classifier's verdict on the same segment, asked through a two-segment type. */
+function frameAcceptsSegment(segment: string): boolean {
+  return classifyFrameType(`ext/${segment}`) !== 'malformed'
+}
+
+describe('frame type and tape name segment syntax', () => {
+  for (const segment of segments) {
+    it(`agrees on ${JSON.stringify(segment)}`, () => {
+      expect(frameAcceptsSegment(segment)).toBe(tapeAcceptsSegment(segment))
+    })
+  }
+
+  it('is a two-sided table: some segments are accepted and some rejected', () => {
+    const accepted = segments.filter((segment) => tapeAcceptsSegment(segment))
+    expect(accepted.length).toBeGreaterThan(0)
+    expect(accepted.length).toBeLessThan(segments.length)
+  })
+
+  it('agrees that a first-party tape name is a well-formed namespaced frame type', () => {
+    for (const name of ['session/start', 'message/user', 'provider/attempt_completed']) {
+      expect(classifyFrameType(name)).toBe('namespaced')
+      expect(() => assertTapeName(name)).not.toThrow()
+    }
+  })
+})

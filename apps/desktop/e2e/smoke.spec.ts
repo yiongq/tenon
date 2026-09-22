@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { expect, test } from '@playwright/test'
 import { applicationMenuLabels, launchTenon, makeUserDataDir } from './helpers/launch.js'
+import { expect, test } from './helpers/test.js'
 
 // Every launch gets its own profile directory: a developer's real config.json (for example a
 // language chosen in `pnpm dev`) must never decide whether these tests pass.

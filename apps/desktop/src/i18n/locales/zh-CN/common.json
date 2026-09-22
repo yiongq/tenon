@@ -19,10 +19,59 @@
   "account": {
     "menu": "账号",
     "localUser": "本机配置",
+    "providers": "模型与密钥",
     "language": "语言",
     "languageAuto": "跟随系统",
     "languageZhCN": "中文",
     "languageEn": "English"
+  },
+  "settings": {
+    "providers": {
+      "title": "模型与密钥",
+      "description": "选择新消息使用的供应商与模型。密钥存在系统钥匙串里，不写进任何配置文件。",
+      "close": "关闭",
+      "loading": "加载中…",
+      "provider": "供应商",
+      "model": "模型",
+      "stored": "已存有密钥。要更换请直接填入新的。",
+      "notStored": "还没有存密钥。",
+      "willRemove": "已清空：保存后会删除存着的密钥。",
+      "save": "保存",
+      "saving": "保存中…",
+      "cancel": "取消",
+      "error": {
+        "invalidValue": "这个值用不了，请检查后重试。",
+        "unknownProvider": "这个供应商已经不可用了。",
+        "unknownKey": "这个设置项不属于该供应商。",
+        "unknownModel": "这个模型不属于该供应商。",
+        "noModel": "这个供应商没有可选的模型，选不了。",
+        "unavailable": "没能保存设置，请重试。"
+      }
+    }
+  },
+  "provider": {
+    "anthropic": {
+      "name": "Anthropic",
+      "config": {
+        "apiKey": "API 密钥",
+        "authToken": "Auth Token（Bearer 式网关）",
+        "baseURL": "接口地址"
+      }
+    },
+    "zhipu": {
+      "name": "智谱 GLM",
+      "config": {
+        "apiKey": "API 密钥",
+        "baseURL": "接口地址"
+      }
+    },
+    "ollama": {
+      "name": "Ollama（本机）",
+      "config": {
+        "apiKey": "API 密钥（Ollama 不校验）",
+        "baseURL": "接口地址"
+      }
+    }
   },
   "composer": {
     "placeholder": "想让 Tenon 做什么",

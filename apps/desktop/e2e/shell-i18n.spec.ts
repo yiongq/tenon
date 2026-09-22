@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs'
-import { expect, test } from '@playwright/test'
 import {
   applicationMenuLabels,
   configPathIn,
@@ -8,6 +7,7 @@ import {
   seedConfig,
 } from './helpers/launch.js'
 import type { Locale } from './helpers/launch.js'
+import { expect, test } from './helpers/test.js'
 import { expectSingleLineUnclipped } from './helpers/text-fit.js'
 
 /**
