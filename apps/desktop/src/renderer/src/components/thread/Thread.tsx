@@ -15,9 +15,12 @@ export function Thread(): JSX.Element {
       data-testid="thread"
       className="flex h-full flex-col bg-surface-0 text-text-primary"
     >
+      {/* `relative`: each message's `sr-only` label is position:absolute and a STATIC scroller is
+          not its containing block, so it escaped this overflow, stretched the document and let a
+          wheel scroll the whole shell — the same trap any future absolute content would hit. */}
       <ThreadPrimitive.Viewport
         data-testid="thread-viewport"
-        className="flex-1 overflow-y-auto overflow-x-hidden px-6 pt-8"
+        className="relative flex-1 overflow-y-auto overflow-x-hidden px-6 pt-8"
       >
         <div className="mx-auto w-full max-w-[720px]">
           <ThreadPrimitive.Empty>

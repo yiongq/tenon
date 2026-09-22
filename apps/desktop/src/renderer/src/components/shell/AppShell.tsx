@@ -13,12 +13,21 @@ export interface AppShellProps {
   children: ReactNode
 }
 
-/** Sidebar + top bar + content column; the right panel is an empty, hidden shell in phase 0. */
+/**
+ * Sidebar + top bar + content column; the right panel is an empty, hidden shell in phase 0.
+ *
+ * `relative` on the root is the second line of defence against the `sr-only` escape fixed in
+ * Thread.tsx: positioned, it is the containing block of last resort, so no absolutely
+ * positioned descendant can extend the document past `overflow-hidden` and scroll the shell.
+ */
 export function AppShell(props: AppShellProps): JSX.Element {
   const { collapsed, onCollapsedChange, onNewChat, locale, onLocaleChange, children } = props
   const { t } = useTranslation()
   return (
-    <div data-testid="app-root" className="flex h-screen w-screen overflow-hidden bg-shell-bg">
+    <div
+      data-testid="app-root"
+      className="relative flex h-screen w-screen overflow-hidden bg-shell-bg"
+    >
       {collapsed ? null : (
         <Sidebar
           onCollapse={() => onCollapsedChange(true)}
