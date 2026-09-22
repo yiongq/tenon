@@ -97,6 +97,9 @@
 - 验收 4 较强的那一半只有单元测试：发布的应用只有一个固定租户，端到端测不到租户谓词，要等 6b 有第二个租户。
 - 新的 e2e 用例必须从 `./helpers/test.js` 而不是 `@playwright/test` 导入 `test`，否则它的临时 profile 不会被清理；目前没有机制强制这一点。
 
+- **顺手修的阶段 0 界面 bug**（2026-09-22，`a3a0fdc` + `f353e4d`，owner 实机 100% 复现）：会话高过视口后，滚轮滚过消息列表底部会把**整个壳**（含侧栏）推上去、露出 body 背景。根因：每条消息里给读屏软件的 `<h3 class="sr-only">`（`position: absolute`）在 `position: static` 的滚动容器里以整个文档为定位基准，逃出 `overflow` 裁剪，把 `document.scrollHeight` 撑到比窗口高（1280×780 下四条短回复后 780 → 1060），文档因此可滚、滚动链接管。修法：`ThreadPrimitive.Viewport` 与 app-root 各加 `relative`（两道防线各自单独也够）。回归测试 `apps/desktop/e2e/layout.spec.ts`：四条 markdown 回复后断言文档高度 = 窗口高度、滚轮后 `scrollY === 0` 且 viewport 自己滚了、两处 `position` 都是 `relative`（撤掉任一处即红）。此前几轮探针没复现是因为单条超长回复的隐藏标题在视口内，要**多条消息**、后面几条的开头落在视口外才触发。
+- **「回复不是流式的」不是代码问题**（2026-09-22 实测）：智谱的 Anthropic 兼容入口（`/api/anthropic`）把整段回复攒成 2 大块吐出（31 KB 分 7 块，前 4 块同一毫秒到达，两块间隔 1.7 s）；同一个模型走 OpenAI 兼容入口是 110 个小块、3.9 s 内逐字到达。owner 的 `.env.local` 已改为 `TENON_PROVIDER=zhipu` + `ZHIPU_API_KEY`（同一个 key），`.env.example` 同步记录。
+
 ## 清理记录（第 17 步，2026-09-21）
 
 - 分支 diff（`git diff dev...HEAD`）里没有遗留探针、`.only`、调试输出或不属于本 spec 的文件；新增的两处 `console.log` 分别是 `scripts/` 里 CLI 的输出与 `chain.test.ts` 打印的耗时（plan 要求记录）。
