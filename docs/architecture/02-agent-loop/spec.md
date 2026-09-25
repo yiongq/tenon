@@ -5,7 +5,7 @@ Phase: 2 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project（82 条开工前裁决，2026-09-25 owner 拍板）; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter、§本地持久化布局、§国际化（裁决 D4、D5、D8、D12、E1、E4、F3、H9、A13）；[01-provider-and-tape](../01-provider-and-tape/spec.md) §所有权与依赖方向、§Provider 层、§Tape、§desktop 接线（裁决 A1–A9、A11、A12、A14、A15、B1–B6、B8、B14、B18、D11、F1、F3、H1、H3、H8、H10–H13、M3、M5、M6、M8）。只增不改（裁决 A4），全文见 §对 00-foundation 的修补、§对 01-provider-and-tape 的修补；不属纯粹只增的在后者第 9 小节点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（Provider 层选型与厂商分档，与本 spec 同时起草）
-Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。
+Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。
 
 ## 背景与问题
 
@@ -2274,7 +2274,7 @@ export const INSPECTOR_TIMEOUT_MS = { 'local-rule': 2_000, model: 30_000 } as co
 
 - **调用前挂点**（`beforeCall`）的输入：这次调用（工具名、参数、host 判定的可逆性），加一份只读的会话视图；会话视图不含任何工具结果原文，字段只增（裁决 F10）。
 - **会话视图从 Tape 现算**，不在内存里累积（裁决 F10）。读取范围是当前 incarnation 从 `session/start` 起的全部事实，不看 `compaction/anchor`；撤回（B2）的调用照样计入。污点只在清空会话时归零，摘要压缩不影响它（读取范围 owner 已确认）。
-- **「你的消息」只算真人写的 `message/user`**（裁决 F5、H5）：子会话（`session/profile_set` 带 `subagentOf`）第一条 `message/user` 是父模型写的 Agent `prompt`，不算，所以子会话的 `firstUserText`、`recentUserTexts` 为空，URL 豁免只剩「出现在 WebSearch 结果里」（owner 已确认）；`message/continuation` 也不算。
+- **「你的消息」只算真人写的 `message/user`**（裁决 F5、H5）：子会话（`session/profile_set` 带 `subagentOf`）第一条 `message/user` 是父模型写的 Agent `prompt`，不算，所以子会话的 `firstUserText`、`recentUserTexts` 为空，URL 豁免只剩「出现在父、子两边 WebSearch 结果里」（owner 已确认；§授权、工作区与外带检查的继承）；`message/continuation` 也不算。
 - **不可信来源按来源标记，不扫内容**：02 里 WebSearch、WebFetch 的结果直接算不可信（裁决 F10、F5）。
 - **`searchHitUrls`**：结果正文可能已落盘，所以 `tool/result` 载荷只增 `searchHitUrls?: readonly string[]`（裁决 F5、H9、M1）：只由 WebSearch 的正常结果写（`kernelAuthored` 为假）；取 `SearchHit.url` 不为 null 的各项，按下文比较规则规范化成 `href`，解析不了的丢掉，去重后按命中顺序；与结果同批写，不受落盘影响。类型成员在 ① 随载荷类型声明，写入方在 ③ 随 WebSearch 落地。
 - **结果后挂点**（`afterResult`）只能交回标记，由 `permission/` 写成 `tool/result_marked`（02 只保留、不写入）。标记只能让后面的调用判得更严，不能改结果、给模型加话或放行；只有 WebSearch、WebFetch 的挂点输入带结果原文。写入方随第一个做内容检测的 inspector 上线（裁决 F10）。
@@ -2293,7 +2293,7 @@ export interface SessionView {
   readonly nonReadOnlyCalls: readonly { readonly toolName: string; readonly reversibility: Reversibility }[] // 已派发、可逆性不是 read-only 的调用
   readonly untrustedSources: readonly string[] // 结果来自不可信来源的工具名，去重；02 里只可能是 WebSearch、WebFetch
   readonly touchedPrivateData: boolean         // 定义见本节「外带检查」
-  readonly fetchUrlVouched?: boolean           // 只在 WebFetch 调用时有：URL 出现在真人 message/user 里，或在本会话 WebSearch 结果的 searchHitUrls 里
+  readonly fetchUrlVouched?: boolean           // 只在 WebFetch 调用时有：URL 出现在本会话真人 message/user 里，或在本会话 WebSearch 结果的 searchHitUrls 里；子会话只算父、子两边的 searchHitUrls
 }
 export interface AfterResultInput {
   readonly call: InspectedCall
@@ -2308,7 +2308,7 @@ export interface ResultMarker { readonly code: string } // 例：'looks-like-inj
 - **两个条件都按来源从 Tape 算，不扫内容**（裁决 F5、F10），「已派发」指有 `execution/dispatch_committed`：
   - **碰过私有数据**：本会话有任一 Read 或 Grep 已派发且目标不在本会话落盘目录下，或有任一 Bash 已派发（不看结果）。Glob 只返回路径，不算。
   - **读进过不可信内容**：本会话有任一 WebSearch 或 WebFetch 已派发；被拒、被拦、没轮到派发的不算。
-- **豁免**：`fetchUrlVouched` 为真时照常按域名授权，条件是 URL 出现在本会话某条真人 `message/user` 的文本里，或某次 WebSearch 结果的 `searchHitUrls` 里。模型自己拼的 URL（包括写进 Agent `prompt` 的）和网页里的链接都不豁免（裁决 F5、H5）。算法（owner 已确认）：
+- **豁免**：`fetchUrlVouched` 为真时照常按域名授权，条件是 URL 出现在本会话某条真人 `message/user` 的文本里，或某次 WebSearch 结果的 `searchHitUrls` 里（子会话的来源见 §授权、工作区与外带检查的继承）。模型自己拼的 URL（包括写进 Agent `prompt` 的）和网页里的链接都不豁免（裁决 F5、H5）。算法（owner 已确认）：
   - 从消息文本取 URL：只认 `http://` 或 `https://` 开头的片段，不分大小写；片段延伸到第一个空白、全角标点（，。、；：！？（）【】「」《》“”‘’）或 `<>"'` 之前，再去掉结尾的 `.,;:!?)]}`。不带 scheme 的（如 `example.com/x`）不算。
   - 比较：两边都按 WHATWG URL 解析，去掉 `#` 片段后比较 `href`，逐字相等才算出现；解析不了的不算。
 - **只管 WebFetch**（WebSearch 调用本身、命令、写入都不触发）。**对话形态**里「碰过私有数据」永远不成立（裁决 F5、H1）。
@@ -2533,7 +2533,7 @@ export interface AgentToolInput {
 - 父会话的会话授权（D1 从答复记录推出的那些，包括 H8 的搜索和按域名的抓取）和工作区（D11 的 `session/workspace_set`）只往下继承（裁决 H5 ①）。继承现算、不拍快照：子会话每次判定都读父会话 Tape 此刻的状态，父会话中途移除文件夹，子会话里对它的写授权同样作废（裁决 D11）。
 - 子会话不写自己的 `workspace_set`；工作区判定、命令的 cwd、Glob / Grep 省略 `path` 时的 `folders[0]`，都读父会话最新的那条。子会话没有文件夹 chip，不能加文件夹。
 - 子会话里批的会话授权只在子会话有效，不回流父会话（裁决 H5）；撤不回的动作本来就不生成授权（裁决 D10）。靠继承放行的那一步，判决记 `basis.inherited: true`，界面摘要不变（裁决 F8）。
-- 外带检查跨父子三条：子会话里，F5 的两个条件父或子任一边成立就算成立；`fetchUrlVouched` 的来源只有根会话里你真正发出的 `message/user`，以及父、子两边 WebSearch 结果的 `searchHitUrls`，子会话的第一条 `message/user`（父模型写的 prompt）不算；反向，Agent 调用的结果写回之后，子会话里成立的条件同样计入父会话。
+- 外带检查跨父子三条：子会话里，F5 的两个条件父或子任一边成立就算成立；子会话里 `fetchUrlVouched` 的来源只有父、子两边 WebSearch 结果的 `searchHitUrls`：子会话不认根会话的真人 `message/user`（开放问题 11），它自己的第一条 `message/user`（父模型写的 prompt）也不算；反向，Agent 调用的结果写回之后，子会话里成立的条件同样计入父会话。
 
 ### 暂停、转发、排队与期限
 
