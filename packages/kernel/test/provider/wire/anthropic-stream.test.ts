@@ -30,7 +30,7 @@ import type {
 import { createStreamGate, fakeNetwork } from '../../../src/testing/index.js'
 import type { FakeExchange, FakeNetwork } from '../../../src/testing/index.js'
 import * as fixture from '../fixtures/anthropic-sse.js'
-import { TOOL, anthropicModel, requestOf } from './fixtures.js'
+import { TOOL, anthropicModel, globalFetchCallsDuring, requestOf } from './fixtures.js'
 
 const PROVIDER_ID = 'anthropic'
 const BASE_URL = 'https://api.anthropic.test'
@@ -860,6 +860,23 @@ describe('AnthropicMessagesProvider request (invariant 8)', () => {
     // re-encodes or augments the payload on its way out.
     expect(recorded?.bodyText).toBe(JSON.stringify(request.body))
     expect((recorded?.body as Record<string, unknown> | undefined)?.stream).toBe(true)
+  })
+
+  it('never reaches the global fetch, under either credential', async () => {
+    // The injected host fetch is the only way out: drop the adapter's `fetch` option and the SDK
+    // takes the platform one, which this counts. Re-run whenever the SDK pin moves.
+    const calls = await globalFetchCallsDuring(async () => {
+      const byKey = await run(sse(fixture.PLAIN_TEXT_FRAMES))
+      const byToken = await run(sse(fixture.PLAIN_TEXT_FRAMES), {
+        apiKey: null,
+        authToken: AUTH_TOKEN,
+      })
+      for (const { events, net } of [byKey, byToken]) {
+        expect(net.callCount).toBe(1)
+        expect(terminalsOf(events)).toMatchObject([{ type: 'stop' }])
+      }
+    })
+    expect(calls).toBe(0)
   })
 
   it('appends /v1/messages to whatever base path the gateway lives under', async () => {

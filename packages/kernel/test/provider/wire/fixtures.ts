@@ -96,3 +96,25 @@ export function requestOf(
 ): ProviderRequest {
   return { model, messages: [user({ type: 'text', text: 'hello' })], ...overrides }
 }
+
+/**
+ * Runs `body` with the global `fetch` replaced by a stub that counts and rejects, restores it, and
+ * returns the count. For the stream tests' invariant 8 half: both SDKs fall back to the platform
+ * `fetch` when a client is built without one, and fakeNetwork only ever sees the requests it
+ * served — a second request made past it would be invisible there. Build the provider inside
+ * `body`, so a client that captures the global at construction is caught too.
+ */
+export async function globalFetchCallsDuring(body: () => Promise<void>): Promise<number> {
+  const real = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = () => {
+    calls += 1
+    return Promise.reject(new Error('the global fetch was reached'))
+  }
+  try {
+    await body()
+  } finally {
+    globalThis.fetch = real
+  }
+  return calls
+}

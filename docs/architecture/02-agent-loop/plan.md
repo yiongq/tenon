@@ -74,7 +74,7 @@
     - 实测（有条件）：T8，`/api/anthropic` 对服务端工具、`cache_control` 的反应，外加一次 tool_use 往返；评测专用 glm-5.3 行收不收 `thinking`、`display`、`output_config.effort` 同批测。
     - owner 核对 S1、T10 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣，`/reader` 怎么计费；顺带记下一次 quark 结果进上下文的实际 token 数。
   - 暂定与待定：`supportsVision` 定之前两行为 false（01:706 保守合成）。T6：不计费维持 A；计费就在 C（只改数据：各行 `requestParams` 加 `clear_thinking:false`）与 D（新加一档加守卫规则，属 01 修补，最晚第 6 步前定）之间选；02 implemented 时还没结论就维持 A。插话推理明显断掉时二选一：插话推迟到本轮结束，或插话时带 `clear_thinking:false`（与 T6 一起定），最晚第 17 步前。T8 不跑时同模型列留在 `/paas/v4`，评测专用行不带 `thinkingSpec`、只开工具。开放问题 8、22。
-- [ ] 3. **SDK 升级**（裁决 A16、M3；按 ADR-003 当「SDK 现实」变更，不走 SDD）
+- [x] 3. **SDK 升级**（裁决 A16、M3；按 ADR-003 当「SDK 现实」变更，不走 SDD）
   - 读：01 修补 4；ADR-003。
   - 交付物：`@anthropic-ai/sdk` 0.126→0.128，`openai` 7.17→7.23；五项全过才升，任一项不过就留在旧版、只加 Opus 5.5 一行，结论记进实施记录。发出两个以上 beta 值之前必须完成。
   - 验收：3。
@@ -125,13 +125,13 @@
   - 暂定与待定：T6 若计费并选 D，最晚本步前定（第 2 步）。原样块取乙（投影出主进程前剥掉 `vendor` 块，contracts 不变；以后改甲是只增）。5.3 系不声明 `medium`（按底表应当报错；实测可选，第 21 步）。
 - [ ] 7. **出网与错误**（裁决 A4、A5、A6、A12、H8、H10、H12）
   - 读：01 修补 2（clock）、4、5、6「chat.event」；§结束原因词表。
-  - 交付物：`create()` 的 clock 加 `setTimeout`（desktop provider.ts:197、provider-routes.ts:276 与测试替身同改，两处「只给读数」的注释改写，01 修补 9 (h)）；首字节超时；字节级空闲看门狗（`fetchThroughHost` 第四个参数、transport.ts 导出 `StreamIdleTimeoutError`）；导出的请求头白名单函数，协议必需头按第 3 步列出的清单；`ProviderErrorCode` 只增 `quota-exhausted`、`account-config` 与各厂商分类表；`error.timeout` / `resetAt`；`ProviderDefinition.finishReasons` 与智谱两个映射；Anthropic 顶层 `cache_control`；`chat.event` 的 `thinking-delta`、`tool-call`（按 `callKey`）、`attempt-discarded` 三个变体（`done.endReason` 与 17 个结束码键在第 13 步，`tool-outcome` 在第 14 步，它们要的类型那时才有）；chat.ts 的 ERROR_CODE 补 `quota-exhausted`、`account-config` 两行，都为 `unknown`（01 修补 5；`satisfies Record<ProviderErrorCode, …>` 要求同步改）。
+  - 交付物：`create()` 的 clock 加 `setTimeout`（desktop provider.ts:197、provider-routes.ts:276 与测试替身同改，两处「只给读数」的注释改写，01 修补 9 (h)）；首字节超时；字节级空闲看门狗（`fetchThroughHost` 第四个参数、transport.ts 导出 `StreamIdleTimeoutError`）；导出的请求头白名单函数，协议必需头按第 3 步列出的清单，环境变量改写协议头的值也要拦住（第 3 步记录的第 3、5 项）；`ProviderErrorCode` 只增 `quota-exhausted`、`account-config` 与各厂商分类表；`error.timeout` / `resetAt`；`ProviderDefinition.finishReasons` 与智谱两个映射；Anthropic 顶层 `cache_control`；`chat.event` 的 `thinking-delta`、`tool-call`（按 `callKey`）、`attempt-discarded` 三个变体（`done.endReason` 与 17 个结束码键在第 13 步，`tool-outcome` 在第 14 步，它们要的类型那时才有）；chat.ts 的 ERROR_CODE 补 `quota-exhausted`、`account-config` 两行，都为 `unknown`（01 修补 5；`satisfies Record<ProviderErrorCode, …>` 要求同步改）。
   - 验收：8、9（结束码与 `tool-outcome` 那部分在第 13、14 步）；不变量 3。
   - 测试要点：
     - 旧 48：假时钟下空闲阈值对 `api.anthropic.com` 为 180 000 毫秒、其他端点 300 000；一直有字节到达（只有 ping 也算）就复位不触发；空闲超过阈值，流以 `error{ code: 'network', timeout: 'idle' }` 结束，而不是 `stop{ aborted }`。首字节：只对 `api.anthropic.com` 给 SDK 传 180 000 + ceil(bodyBytes / 32 768) × 1000 毫秒，其他端点不传；首字节超时后紧接着的那次重发带 `firstByteTimeout: false`，也不传。
     - 旧 103：首字节超时的流以 `error{ code: 'network', retryable: true, timeout: 'first-byte' }` 结束，没有 `stop{ aborted }`；空闲超时时调用方的 signal 从没被 abort，响应体读完或取消时 `setTimeout` 返回的取消函数已被调用；desktop 两处 `create()` 漏传 `setTimeout` 时 typecheck 失败。
     - 旧 102：`supportsCacheControl` 为 true 的 Anthropic 行，body 顶层有 `cache_control: { type: 'ephemeral' }`、不带 ttl；合成行与智谱行没有这个键。
-    - 旧 104：设了 `ANTHROPIC_CUSTOM_HEADERS` / `OPENAI_CUSTOM_HEADERS`（含 `anthropic-beta` 与 `x-foo`）时，fakeNetwork 记到的头里两者都没有；凭据头的值恰好等于传入的值；`x-stainless-*` 仍在（搜索后端过同一函数在第 28 步验）。
+    - 旧 104：设了 `ANTHROPIC_CUSTOM_HEADERS` / `OPENAI_CUSTOM_HEADERS`（含 `anthropic-beta` 与 `x-foo`）时，fakeNetwork 记到的头里两者都没有；两个变量里写 `anthropic-version: 1999-01-01`、`user-agent: evil`、`accept: text/html`（openai 线用后两行）时，fakeNetwork 记到的这几个头的值与不设变量时相同；凭据头的值恰好等于传入的值；`x-stainless-*` 仍在（搜索后端过同一函数在第 28 步验）。
     - 旧 47：三个 finish_reason 夹具：`sensitive` 读成 `content-filter`；`model_context_window_exceeded` 读成 `context-overflow`；`network_error` 读成 `unknown`，`providerReason` 保留原值（循环按瞬时错误重发在第 13 步验）。
     - 旧 105：Anthropic 429 且 `enforced_spend_limit_reached`、400 且消息以 `You have reached your specified` 开头，都归 `quota-exhausted`、不可重试，chat.event 上为 `unknown`，前者的 `resetAt` 为下月 1 日 00:00 UTC；智谱 1113、1308、1310、1316 归 `quota-exhausted`，1302、1305 仍可重试。
     - 旧 106（本步部分）：阶段 1 的 `stopReason` 映射不变（`tool-use` 仍归 `end-turn`）；`thinking-delta`、`tool-call`、`attempt-discarded` 都通过 `chatEventSchema`；ERROR_CODE 对两个新码给出 `unknown`。
@@ -620,6 +620,32 @@
     - Q：一次 `search_pro_quark` 默认 10 条、都带链接，映射后进上下文约 2.5K token（本步测试要点最后一条的「顺带」）；结果给模型的实际格式在第 28 步定，到时按那时的格式复核一次。
     - 留给后面步骤的厂商事实（2026-09-26 核对时发现，spec 不动）：Anthropic 的数据保留页写的是「组织或工作区」开启 30 天保留，spec §内置模型表的数据改动 的 Fable 5.1 菜单文案写「需要组织开启」，第 19 步写本地化文案时按厂商措辞；Opus 5.5 对以 assistant 轮结尾（prefill）的请求返回 400，与第 6 步「末轮须为 user」一致；`cacheWritePerMTok` 按 spec 只填了 Opus 5.5，其余四个 Anthropic 行没有写缓存价，第 25 步算评测费用前补上或在费用口径里注明。
   - owner 还要核：S1、T10 的次日账单（原有）；flash 当天实际按标准价还是「限时五折」扣。已并进 Open 的第一条与 M8 那条。
+- **2026-09-26 · 第 3 步（SDK 升级）**，分支 `wt/02-step3`，完成（format、lint、typecheck、全部单测 54 个文件 858 个用例、`pnpm build` 过；一个提交）。五项检查两个 SDK 都过，两个都升；验收 3 满足。
+  - 改了什么：packages/kernel/package.json 的精确版本 `@anthropic-ai/sdk` 0.126.0 → 0.128.0、`openai` 7.17.0 → 7.23.0，pnpm-lock.yaml 只换这两个包（传递依赖不变：Anthropic 仍只依赖 json-schema-to-ts、standardwebhooks；openai 的 peer / optional 依赖不变）。检查 2 原来没有持久测试，补了两个用例和一个测试工具（见下）。`RESERVED_KEYS` 与它上面的注释（anthropic-messages.ts:78-103）不改：集合没变（检查 4）。探针脚本与输出不入库。
+  - 文件：`packages/kernel/package.json`、`pnpm-lock.yaml`、`packages/kernel/test/provider/wire/fixtures.ts`、`packages/kernel/test/provider/wire/anthropic-stream.test.ts`、`packages/kernel/test/provider/wire/openai-stream.test.ts`、本文件。
+  - 五项检查（证据是 0.128.0 / 7.23.0 装好后的测试结果、`node_modules` 里新旧两版运行时 `.mjs` 的逐文件 diff，以及一次经 fakeNetwork、以适配器同样的构造参数跑的探针，新旧各跑一遍、带不带诱饵环境各一遍）：
+    1. browser 打包：`packages/kernel/test/host-independence.test.ts` 四个用例全过（两个入口，外加两个 SDK 单独打包，`platform: 'browser'` 零错误）；`pnpm build`（含 desktop 的 electron-vite）过。0.127 在 exports 表里加了 `"./lib/internal/*": null`，kernel 只从包根导入（anthropic-messages.ts:12、openai-chat.ts:18），不受影响。
+    2. 全局 fetch 0 次：新用例 anthropic-stream.test.ts「never reaches the global fetch, under either credential」、openai-stream.test.ts「never reaches the global fetch」，用 fixtures.ts 新导出的 `globalFetchCallsDuring`：先把 `globalThis.fetch` 换成计数并拒绝的桩，再建 provider、跑一次流，断言 fakeNetwork 收到 1 次、全局 0 次。删掉适配器的 `fetch:` 选项两条都变红（试过，已还原）。源码：两个包里退回全局 fetch 的调用点新旧逐一相同，都是 `options.fetch ?? Shims.getDefaultFetch()` 一类，只在没传 `fetch` 时或 Tenon 不走的认证路径（Anthropic 凭据链，openai 的 x509 / workload identity）上生效。探针新旧都是 0 次。
+    3. 环境变量诱饵：anthropic-stream.test.ts、openai-stream.test.ts 的 invariant 8 诱饵用例都过。源码：两个包里 `readEnv(...)` 读的变量集合新旧完全相同（Anthropic 24 个名字，openai 14 个；openai 7.20 的「environment-variable vault credentials」是 agents vault 的 API 资源，不是 SDK 读环境变量）。探针用比测试更宽的诱饵（另加 `ANTHROPIC_WORKSPACE_ID`、`ANTHROPIC_PROFILE`、`ANTHROPIC_CONFIG_DIR`、`ANTHROPIC_BETA`、`ANTHROPIC_BETAS`）走一遍，新旧版的线上差别只有已知残留（01 开放问题 1），但它比「多出几个非凭据头名」更宽：`*_CUSTOM_HEADERS` 的行还能改写 SDK 自己协议头的值。两个 SDK 都把解析出的行并进 `defaultHeaders`（Anthropic client.mjs `{ ...parsed, ...options.defaultHeaders }`，openai client.mjs `buildHeaders([parsed, options.defaultHeaders])`），`buildHeaders` 又在 SDK 那组协议头之后才套 `defaultHeaders`，所以 `accept`、`user-agent`、`anthropic-version`、任一 `x-stainless-*`（含 `retry-count`、`timeout`、`os`、`arch`）都换成环境给的值，kernel 不设 beta 时环境的 `anthropic-beta` 也出去。守得住的只有凭据头（适配器钉在 `defaultHeaders`）和 `content-type`（body 头在 `defaultHeaders` 之后合并）。探针（0.128.0 / 7.23.0，裸 SDK、适配器同样的 `defaultHeaders`）：`ANTHROPIC_CUSTOM_HEADERS` 里的 `anthropic-version: 1999-01-01`、`user-agent: evil`、`x-stainless-retry-count: 9`、`anthropic-beta: sneaky` 原样出去，`x-api-key: stolen`、`content-type: text/plain` 没出去；`OPENAI_CUSTOM_HEADERS` 的 `user-agent: decoy-ua`、`accept: text/html` 同样出去。旧版同理，不挡本次升级；但只按头名放行的白名单收不住它，第 7 步的做法见第 5 项末尾。
+    4. SDK 保留键：0.128 的 `messages.create` 与 `countTokens` 仍是 `const { user_profile_id, workspace_id, ...body } = params`（resources/messages/messages.mjs 新旧逐字相同），beta 资源另剥一个 `betas`（Tenon 不用 beta 资源）；探针里这两个键被挪进 `anthropic-user-profile-id`、`anthropic-workspace-id` 两个头，body 里没有。集合没变，不改。非 beta 的 Messages 类型只在 `Model` 联合里加了 `'claude-opus-5-5'`；0.128 的 inline tool definitions、MCP tool-list pinning 只在 beta 资源里，不给非 beta 请求加字段。
+    5. 新版实际发出的请求头（经 fakeNetwork 抓，头名小写；第 7 步的白名单按这张表定）：
+       - Anthropic 线 `messages.create`：协议头 `accept: application/json`、`content-type: application/json`、`anthropic-version: 2023-06-01`；凭据头 `x-api-key`（配 key 时）或 `authorization: Bearer …`（配 token 时），只出一个；`user-agent: Anthropic/JS 0.128.0`；`x-stainless-*` 八个：`x-stainless-arch`、`x-stainless-lang`、`x-stainless-os`、`x-stainless-package-version`、`x-stainless-retry-count`（恒为 `0`）、`x-stainless-runtime`、`x-stainless-runtime-version`、`x-stainless-timeout`（秒，默认 `600`；第 7 步给 SDK 传首字节超时后跟着变）；带 beta 时加 `anthropic-beta`。现在不出、条件满足才出的：`anthropic-dangerous-direct-browser-access`（只在 `dangerouslyAllowBrowser`，Tenon 不设）、`x-stainless-helper` 与 `x-stainless-helper-method`（只在用 SDK helper 建工具或用 `messages.stream()` 时）、`anthropic-user-profile-id` 与 `anthropic-workspace-id`（对应的保留键被 encode() 拒掉）。
+       - `anthropic-beta` 给两个值时怎么拼（0.128 实测，与 0.126 相同）：单次请求 `headers: { 'anthropic-beta': ['a', 'b'] }` → `a, b`（逗号加空格，`Headers.append` 拼的）；传逗号串 `'a,b'` → 原样 `a,b`；`beta.messages.create({ betas: ['a', 'b'] })` → `a,b`（`betas.toString()`），URL 加 `?beta=true`，body 里没有 `betas`；`defaultHeaders` 与单次请求里都有 `anthropic-beta` 时不合并，单次请求的整条替换（`APPEND_HEADERS` 里只有 `x-stainless-helper`）。0.127 CHANGELOG 的「join multiple anthropic-beta values with a comma and no space」只改了 `prepareRequest` 里凭据链 OAuth 那条路径（`apiKey == null` 且有 token cache 时追加 OAuth beta），Tenon 总是显式传 key 或 token，走不到；数组那种拼法照旧是 `, `。第 7 步自己拼好一个串再交给 SDK，就不受这几种拼法的差别影响。
+       - openai 线（7.23）：`accept`、`content-type`、`authorization`、`user-agent: OpenAI/JS 7.23.0`，`x-stainless-*` 七个（同上，没有 `x-stainless-timeout`）；`openai-organization`、`openai-project` 钉成 null，不出。
+       - 头名集合新旧相同，只有两处版本号变了。表里只有 SDK 交给 host fetch 的头；host 的 fetch 在这之后才加的传输层头（如 `host`、`content-length`）不在表里，`fetchThroughHost` 里的白名单函数也看不到它们。
+       - 这张表只定头名，不够第 7 步用：按第 3 项，环境变量能改表里头的值，只查名字的白名单会放过 `anthropic-version: 1999-01-01` 这类行。第 7 步还得管值，两条路选一：在两个适配器的 `defaultHeaders` 里把协议头的值也钉住（凭据头现在就这么钉的；`x-stainless-retry-count`、`x-stainless-timeout` 每次请求都变，要另想办法），或者让白名单函数把协议头的值与 SDK、kernel 设的值对上。
+  - openai 7.23 的结论：升。fetch 注入、诱饵、body 逐字节相同（`sends the encoded body byte for byte` 用例）都过；SDK 不往 body 里加东西：探针用裸 client 发 `{model, messages, stream}`，出去的字节与传入的 JSON 相同，没有默认的 `stream_options`（encode() 自己写的 `stream_options` 照旧原样出去）；头见上面第 5 项。
+  - CHANGELOG 里碰到 Tenon 的条目，逐条对过装好的源码：
+    - Anthropic 0.127「don't retry requests whose body is a stream or iterator」：client.mjs 新增 `isStreamBody()`，body 是流时把 `maxRetries` 压成 0。Tenon 的 body 是 JSON，`maxRetries` 本来就是 0，无影响；「stream() error mapping」各用例的「只发一次」照过。
+    - Anthropic 0.127 beta 头拼接：见第 5 项。
+    - Anthropic 0.127「skip formatting request details when debug logging is off」：新的 `debugLogRequestDetails()` 只在 debug 级别才格式化；Tenon 是 `logLevel: 'off'`，无影响。
+    - Anthropic 0.127 exports 表：见第 1 项。
+    - Anthropic 0.128「claude-opus-5-5、inline tool definitions、MCP tool-list pinning」：只有类型与 beta 资源在变；resources/messages/messages.mjs、internal/constants.mjs 新旧逐字相同，anthropic-messages.ts 注释里说的两行 `console.warn`（`MODELS_TO_WARN_WITH_THINKING_ENABLED` 仍是 claude-mythos-preview、claude-opus-4-6）照旧。internal/stainless-helper-header.mjs 新认 `tool_addition` 块里 helper 建的工具定义，Tenon 发纯 JSON，不出这个头（探针带工具的请求里也没有）。其余（tool runner、middleware、BetaMessageStream、dreams、transform-json-schema）Tenon 不用。
+    - openai 7.21「preserve model choices and improve request handling」：`chat.completions.create` 把请求选项包进 Promise（`resolveResourceRequestOptions`），body、`stream`、`__security` 不变；「abort (invariant 2)」的中止用例照过。
+    - openai client：`maxRetries` 改经 `_normalizeRetries()`（非负安全整数照用，其余当 2），Tenon 传 0 仍是 0，「stream() error mapping」的「只发一次」照过；logger 包了一层脱敏，debug 细节只在 `logLevel === 'debug'` 时格式化，Tenon 是 `'off'`，无影响。
+    - openai 7.18「preserve header defaults」：只在新加的 `_buildWebSocketHeaders()`（WebSocket 握手），HTTP 请求头不变。其余条目是新的 API 资源（admin、safety、webhooks、Responses WebSocket 等），Tenon 不用。
+  - 测试要点：旧 44 → host-independence.test.ts 四个用例；两条线新加的「never reaches the global fetch」；两条线原有的诱饵用例（anthropic-stream.test.ts 的 `DECOY_ENV` 在 :66，openai-stream.test.ts 在 :67）。旧 232 → 本条记录的五项、openai 结论与 CHANGELOG 核对。请求头白名单本身、「白名单外的头一个都出不去」的测试归第 7 步，本步只记表。
+  - 没做的：本步没有要官方 key 的项，没有待办。头是经 fakeNetwork 抓的，没对真实的 `api.anthropic.com` 发过请求（第 5 项要的正是 SDK 交给 host 的那一份）。
 
 ## 验收记录
 
@@ -638,7 +664,7 @@
 
 ## 交接
 
-第 2 步完成（2026-09-26，分支 `feat/02-step2-model-table`，合进 dev 后生效）。下一步是第 3 步「SDK 升级」：`@anthropic-ai/sdk` 0.126→0.128、`openai` 7.17→7.23，五项检查全过才升，任一项不过就留在旧版，结论记进实施记录；第 4 步的代码部分（`fakeNetwork` 选项、`assertToolPairing`、`liveEnv()` 分开官方 key）不依赖官方 key，可与第 3 步并行，账号类型与「不发工具会不会 400」的实测等官方 key。T6 已定 A（owner 2026-09-26，见实施记录的 T6+），第 6 步不再等它。owner 2026-09-26 让实现者自行推进到 02 完成：每段（第 0 步、①、②、③、收尾）一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，按纪律排到同段最后，记进 Open 再往下走。
+第 3 步完成（2026-09-26，分支 `wt/02-step3`，合进 `feat/02-step0-prep` 后生效）：`@anthropic-ai/sdk` 0.128.0、`openai` 7.23.0，五项检查全过；请求头表与「环境变量能改协议头的值」记在实施记录，第 7 步的白名单按它定（名与值都管）。下一步是第 4 步「测试接缝与官方 key 准备」，它的代码部分在 `wt/02-step4` 与本步并行做，账号类型与「不发工具会不会 400」的实测等官方 key；两步都合进来后，下一步是第 5 步。T6 已定 A（owner 2026-09-26，见实施记录的 T6+），第 6 步不再等它。owner 2026-09-26 让实现者自行推进到 02 完成：每段（第 0 步、①、②、③、收尾）一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，按纪律排到同段最后，记进 Open 再往下走。
 
 ## Open
 

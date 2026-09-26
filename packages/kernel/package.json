@@ -25,10 +25,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.126.0",
+    "@anthropic-ai/sdk": "0.128.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@noble/hashes": "2.4.0",
-    "openai": "7.17.0"
+    "openai": "7.23.0"
   },
   "devDependencies": {
     "@modelcontextprotocol/server-everything": "2026.8.31",
