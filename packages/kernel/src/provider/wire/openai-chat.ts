@@ -15,7 +15,7 @@
  * Every key is written only when it has a value: canonicalJson (and therefore `promptHash`)
  * refuses an undefined-valued key.
  */
-import OpenAI, { APIConnectionError, APIError } from 'openai'
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError } from 'openai'
 import { VERSION as SDK_VERSION } from 'openai/version'
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import { BaseProvider, withTerminalEvent } from '../base.js'
@@ -73,14 +73,30 @@ import {
 } from './shared.js'
 import type { EncoderInfo, ImageContentBlock } from './shared.js'
 import {
+  StreamIdleTimeoutError,
+  allowedRequestInit,
   assertBaseUrl,
   configuredValue,
   fetchThroughHost,
+  idleMsFor,
   parseToolArguments,
   tokenCount,
 } from './transport.js'
+import type { HeaderAllowList } from './transport.js'
 
 const WIRE = 'openai-chat'
+
+/**
+ * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, the credential, the
+ * `x-stainless-*` group. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot
+ * rewrite them.
+ */
+const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+  names: Object.freeze(['content-type', 'authorization']),
+  prefixes: Object.freeze(['x-stainless-']),
+  pinned: Object.freeze({ accept: 'application/json', 'user-agent': `OpenAI/JS ${SDK_VERSION}` }),
+})
 
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
@@ -439,7 +455,7 @@ export interface OpenAIChatProviderOptions {
   readonly id: ProviderId
   readonly network: HostNetwork
   /** Only `now()`: see ProviderDefinition.create(). Read when an error is mapped. */
-  readonly clock: Pick<HostClock, 'now'>
+  readonly clock: Pick<HostClock, 'now' | 'setTimeout'>
   /**
    * The credential, which on this wire is never absent: `null` and `''` make the SDK throw
    * `Missing credentials`, and `undefined` makes it read OPENAI_API_KEY. A provider that needs no
@@ -449,6 +465,11 @@ export interface OpenAIChatProviderOptions {
   /** Always explicit: a blank baseURL makes the SDK fall back to api.openai.com — see below. */
   readonly baseURL: string
   readonly models: readonly ModelInfo[]
+  /**
+   * Spec 02, 01 修补 2: the definition's `finishReasons`, added to this wire's own table. A value
+   * the table already maps is refused here: a definition may only add.
+   */
+  readonly finishReasons?: Readonly<Record<string, StopReason>>
 }
 
 /**
@@ -490,8 +511,10 @@ export interface OpenAIChatProviderOptions {
 export class OpenAIChatProvider extends BaseProvider {
   readonly id: ProviderId
   readonly #client: OpenAI
-  readonly #clock: Pick<HostClock, 'now'>
+  readonly #clock: Pick<HostClock, 'now' | 'setTimeout'>
   readonly #models: readonly ModelInfo[]
+  /** This wire's finish_reason table plus the definition's additions (01 修补 5). */
+  readonly #stopReasons: Readonly<Record<string, StopReason>>
   /** The credential value, for redacting it out of an error `detail` that reaches logs. */
   readonly #credentials: readonly string[]
 
@@ -508,6 +531,7 @@ export class OpenAIChatProvider extends BaseProvider {
     this.#clock = options.clock
     this.#models = [...options.models]
     this.#credentials = [apiKey]
+    this.#stopReasons = stopReasonTable(options.id, options.finishReasons)
     // Called through a closure rather than handed over as a bare property: the SDK invokes it
     // with `undefined` as the receiver, so a host whose `fetch` is a method would lose its
     // `this`. The reference is captured on this instance and nowhere else.
@@ -522,7 +546,13 @@ export class OpenAIChatProvider extends BaseProvider {
       webhookSecret: null,
       logLevel: 'off',
       defaultHeaders: { authorization: `Bearer ${apiKey}` },
-      fetch: (input, init) => fetchThroughHost(network, input, init),
+      // Spec 02, 01 修补 4: every request through the header allowlist, every body under the idle
+      // watchdog (300 s: this wire never reaches the official Anthropic endpoint).
+      fetch: (input, init) =>
+        fetchThroughHost(network, input, allowedRequestInit(init, ALLOWED_HEADERS), {
+          clock: options.clock,
+          idleMs: idleMsFor(baseURL),
+        }),
     })
   }
 
@@ -582,7 +612,7 @@ export class OpenAIChatProvider extends BaseProvider {
       // gone quiet must not be able to outlive a Stop.
       signal: ctx.signal,
     })
-    yield* normaliseOpenAIChunks(readBody(stream))
+    yield* normaliseOpenAIChunks(readBody(stream), this.#stopReasons)
   }
 }
 
@@ -723,6 +753,7 @@ interface OpenAIWireUsage {
  */
 async function* normaliseOpenAIChunks(
   chunks: AsyncIterable<ChunkView>,
+  stopReasons: Readonly<Record<string, StopReason>>,
 ): AsyncIterable<StreamEvent> {
   const slots = createChunkSlots()
   /** The latest usage reading. Both this wire's readings are cumulative, so a later one wins. */
@@ -761,7 +792,7 @@ async function* normaliseOpenAIChunks(
       // The first finish reason wins: a wire that restates it is not ending the turn twice.
       if (typeof finish === 'string' && finish !== '' && stop === null) {
         yield* slots.flush(finish)
-        stop = { type: 'stop', reason: stopReasonOf(finish), providerReason: finish }
+        stop = { type: 'stop', reason: stopReasonOf(finish, stopReasons), providerReason: finish }
       }
     }
   } finally {
@@ -1026,10 +1057,29 @@ const STOP_REASONS: Readonly<
   content_filter: 'content-filter',
 }
 
-function stopReasonOf(raw: string): StopReason {
-  return Object.hasOwn(STOP_REASONS, raw)
-    ? STOP_REASONS[raw as NonNullable<OpenAI.ChatCompletionChunk.Choice['finish_reason']>]
-    : 'unknown'
+function stopReasonOf(raw: string, table: Readonly<Record<string, StopReason>>): StopReason {
+  return Object.hasOwn(table, raw) ? (table[raw] ?? 'unknown') : 'unknown'
+}
+
+/**
+ * This wire's table plus a definition's additions (spec 02, 01 修补 5; decisions A12, M2, M6):
+ * zhipu's `sensitive` and `model_context_window_exceeded`. Overriding a value the wire already maps
+ * is a table error.
+ */
+function stopReasonTable(
+  providerId: ProviderId,
+  extra: Readonly<Record<string, StopReason>> | undefined,
+): Readonly<Record<string, StopReason>> {
+  const table: Record<string, StopReason> = { ...STOP_REASONS }
+  for (const [raw, reason] of Object.entries(extra ?? {})) {
+    if (Object.hasOwn(STOP_REASONS, raw)) {
+      throw new ProviderInvalidArgumentError(
+        `provider ${providerId}: finishReasons may only add values; "${raw}" is already mapped`,
+      )
+    }
+    table[raw] = reason
+  }
+  return Object.freeze(table)
 }
 
 interface OpenAIErrorContext {
@@ -1067,6 +1117,11 @@ function mapOpenAIError(
   if (status !== undefined) event.status = status
   const delay = retryAfterMs(errorHeaders(error), ctx.now)
   if (delay !== null) event.retryAfterMs = delay
+  // Spec 02, 01 修补 4 (A5): which limit ended the stream — the SDK's own connection timeout, or the
+  // byte-level watchdog. Both already classify as a retryable `network`.
+  if (chain.some((link) => link instanceof StreamIdleTimeoutError)) event.timeout = 'idle'
+  else if (chain.some((link) => link instanceof APIConnectionTimeoutError))
+    event.timeout = 'first-byte'
   return event
 }
 
@@ -1124,7 +1179,22 @@ const ERROR_VOCABULARY: Readonly<Record<string, ProviderErrorCode>> = {
   context_length_exceeded: 'context-overflow',
   model_context_window_exceeded: 'context-overflow',
   '1261': 'context-overflow',
-  '1113': 'invalid-request',
+  // Spec 02, 01 修补 5 (H12): zhipu's exhausted balance, quota and plan codes. 1302 and 1305 stay
+  // retryable (1305 reaches the status table as a 429).
+  '1113': 'quota-exhausted',
+  '1308': 'quota-exhausted',
+  '1309': 'quota-exhausted',
+  '1310': 'quota-exhausted',
+  '1311': 'quota-exhausted',
+  '1313': 'quota-exhausted',
+  '1314': 'quota-exhausted',
+  '1315': 'quota-exhausted',
+  '1316': 'quota-exhausted',
+  '1317': 'quota-exhausted',
+  '1318': 'quota-exhausted',
+  '1319': 'quota-exhausted',
+  '1320': 'quota-exhausted',
+  '1321': 'quota-exhausted',
   '1302': 'rate-limit',
   invalid_api_key: 'auth',
   invalid_authentication: 'auth',

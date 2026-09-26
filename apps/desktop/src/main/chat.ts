@@ -60,6 +60,9 @@ const ERROR_CODE = {
   server: 'provider',
   'egress-denied': 'unknown',
   unknown: 'unknown',
+  // Spec 02, 01 修补 5: the same as 01's fallback; the finer reason travels as the Run's endReason.
+  'quota-exhausted': 'unknown',
+  'account-config': 'unknown',
 } as const satisfies Record<ProviderErrorCode, ChatErrorCode>
 
 /**

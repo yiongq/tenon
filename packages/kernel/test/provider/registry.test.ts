@@ -96,7 +96,7 @@ describe('createProviderRegistry', () => {
 
     const args = {
       network: NETWORK,
-      clock: { now: () => 0 },
+      clock: { now: () => 0, setTimeout: () => () => undefined },
       config: { baseURL: 'https://api.example.test' },
       secrets: {},
     }

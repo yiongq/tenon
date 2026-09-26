@@ -60,6 +60,8 @@ describe('encodeAnthropicMessages', () => {
       model: 'claude-test-4',
       max_tokens: 2048,
       stream: true,
+      // Spec 02, 01 修补 3: a row that supports cache control gets the top-level automatic form.
+      cache_control: { type: 'ephemeral' },
       system: 'You are terse.',
       temperature: 0.2,
       thinking: { type: 'enabled', budget_tokens: 1024 },
@@ -110,6 +112,7 @@ describe('encodeAnthropicMessages', () => {
       model: 'claude-test-4',
       max_tokens: 8192,
       stream: true,
+      cache_control: { type: 'ephemeral' },
       messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
     })
   })

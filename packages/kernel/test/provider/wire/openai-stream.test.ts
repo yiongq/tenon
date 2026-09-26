@@ -81,7 +81,7 @@ function providerOf(net: FakeNetwork, overrides: Partial<Options> = {}): OpenAIC
   return new OpenAIChatProvider({
     id: PROVIDER_ID,
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     apiKey: API_KEY,
     baseURL: BASE_URL,
     models: [openAIModel()],
@@ -542,10 +542,11 @@ const ERROR_CASES: readonly ErrorCase[] = [
   },
   {
     // The vendor's code beats the status here, and only in this direction: 429 alone would be a
-    // retryable rate limit, and the phase 2 loop would resend an empty account for ever.
+    // retryable rate limit, and the phase 2 loop would resend an empty account for ever. Spec 02
+    // (01 修补 5) names the class: an exhausted quota, not an invalid request.
     name: "429 whose vendor code says 欠费 (zhipu's 1113)",
     fixture: fixture.OUT_OF_CREDIT,
-    code: 'invalid-request',
+    code: 'quota-exhausted',
     retryable: false,
     providerCode: '1113',
     retryAfterMs: fixture.RETRY_AFTER_SECONDS * 1000,
@@ -805,11 +806,9 @@ describe('OpenAIChatProvider request (invariant 8)', () => {
           if (name === 'x-decoy') continue
           expect(value).not.toContain('decoy')
         }
-        // The residual, pinned rather than hidden: a NON-credential OPENAI_CUSTOM_HEADERS line
-        // still reaches the wire. Only the keys this adapter sets explicitly can win, and deciding
-        // which other header names the kernel allows is the spec's open question 1 (the same
-        // decision as the `x-stainless-*` headers). Whoever closes it should see this line fail.
-        expect(headers['x-decoy']).toBe(env === DECOY_ENV ? 'decoy' : undefined)
+        // Closed by spec 02's header allowlist (01 修补 4; decision A6): a NON-credential
+        // OPENAI_CUSTOM_HEADERS line no longer reaches the wire. This line used to pin the leak.
+        expect(headers['x-decoy']).toBeUndefined()
         // The baseURL too: OPENAI_BASE_URL must not be able to redirect the request.
         expect(net.requests[0]?.url).toBe(`${BASE_URL}chat/completions`)
       })

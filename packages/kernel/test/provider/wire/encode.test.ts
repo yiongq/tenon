@@ -112,7 +112,10 @@ function richOpenAIRequest(): ProviderRequest {
 }
 
 /** A clock reading, for the provider instances the network test builds. Nothing here reads it. */
-const CLOCK = { now: (): number => Date.parse('2026-09-21T00:00:00.000Z') }
+const CLOCK = {
+  now: (): number => Date.parse('2026-09-21T00:00:00.000Z'),
+  setTimeout: () => () => undefined,
+}
 
 /** Configured so the adapter constructs at all; nothing is ever sent, so it is no credential. */
 const CONFIGURED_KEY = 'test-key-not-a-real-credential'

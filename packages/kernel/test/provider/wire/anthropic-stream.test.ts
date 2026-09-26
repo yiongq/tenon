@@ -84,7 +84,7 @@ function providerOf(
   return new AnthropicMessagesProvider({
     id: PROVIDER_ID,
     network,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     apiKey: API_KEY,
     authToken: null,
     baseURL: BASE_URL,
@@ -615,7 +615,9 @@ describe('AnthropicMessagesProvider stream() error mapping', () => {
         ...(testCase.fixture.headers === undefined ? {} : { headers: testCase.fixture.headers }),
       }
       const overrides =
-        testCase.now === undefined ? {} : { clock: { now: () => testCase.now as number } }
+        testCase.now === undefined
+          ? {}
+          : { clock: { now: () => testCase.now as number, setTimeout: () => () => undefined } }
       const { events, net } = await run(exchange, overrides)
       checkStreamInvariants(events)
       // Exactly one physical request: maxRetries is 0, so a 500 is one call, not three.

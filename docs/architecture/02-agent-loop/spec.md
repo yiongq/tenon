@@ -771,7 +771,7 @@ export function assertToolPairing(request: RecordedRequest): void
 | 智谱 | 1302、1305 | 保持可重试（现状都读成 `rate-limit`） |
 | Ollama | `/v1` 流既没有 `finish_reason` 也没有 `[DONE]` 就断了 | 服务错误：`streamEndedEarly`（provider/base.ts:543）已报成可重试的 `network`，适配器不改，循环按「模型服务出错」计 |
 
-- 两个新值在 `chat.event` 的 `error.code` 上按 01 spec.md:699 的兜底「其余 → `unknown`」映射。desktop 的 `ERROR_CODE` 表（apps/desktop/src/main/chat.ts:53，`satisfies Record<ProviderErrorCode, …>`，随 §主进程与 kernel 的循环接口 移到 run-events.ts）只增 `quota-exhausted`、`account-config` 两行，都映射为 `unknown`，输出与兜底相同，其余行一字不改；细分原因由 done 的 `endReason` 承担（error 变体的 `endReason` 见开放问题 16）。
+- 两个新值在 `chat.event` 的 `error.code` 上按 01 spec.md:699 的兜底「其余 → `unknown`」映射。desktop 的 `ERROR_CODE` 表（apps/desktop/src/main/chat.ts:53，`satisfies Record<ProviderErrorCode, …>`，随 §主进程与 kernel 的循环接口 移到 run-events.ts）只增 `quota-exhausted`、`account-config` 两行，都映射为 `unknown`，输出与兜底相同，其余行一字不改；细分原因由 done 与 error 的 `endReason` 承担（开放问题 16 已定）。
 - finish_reason（裁决 A12、H10）：智谱定义声明 `finishReasons: { sensitive: 'content-filter', model_context_window_exceeded: 'context-overflow' }`；`network_error` 不声明，仍读成 `unknown`，原值留在 `providerReason`，由循环判为可重试。已存的事实不动。
 - 02 主对话不发服务端工具，没有 pause_turn 续发；万一收到，按阶段 1 的 `pause-turn` → `error` 以「模型服务出错」结束本轮（裁决 H12、A2）。
 

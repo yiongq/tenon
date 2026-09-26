@@ -249,7 +249,7 @@ async function drive(registry: ProviderRegistry, testCase: DriveCase): Promise<D
   const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -294,7 +294,7 @@ async function driveWithAbort(
   const net = fakeNetwork({ kind: 'sse', frames: testCase.frames, gate })
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -403,7 +403,7 @@ async function driveThroughTape(
   const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -695,7 +695,7 @@ describe('builtin provider definitions', () => {
     const net = fakeNetwork({ kind: 'sse', frames: openAIFixture.PLAIN_TEXT_FRAMES })
     const provider = ollamaDefinition.create({
       network: net,
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: { apiKey: '', baseURL: OLLAMA_DEFAULT_BASE_URL },
       secrets: {},
     })
@@ -718,7 +718,7 @@ describe('builtin provider definitions', () => {
     const net = fakeNetwork({ kind: 'sse', frames: openAIFixture.NO_USAGE_FRAMES })
     const provider = zhipuDefinition.create({
       network: net,
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: {},
       secrets: { apiKey: API_KEY },
     })
@@ -788,7 +788,7 @@ describe('builtin provider definitions', () => {
   it('hands out models a caller cannot edit through the provider', async () => {
     const provider = zhipuDefinition.create({
       network: fakeNetwork([]),
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
       secrets: { apiKey: API_KEY },
     })
@@ -943,7 +943,7 @@ describe('the model rows spec 02 changes', () => {
     it(`echoes ${id}'s own reasoning_content when the request carries tools, and only then`, async () => {
       const provider = zhipuDefinition.create({
         network: fakeNetwork([]),
-        clock: { now: () => NOW },
+        clock: { now: () => NOW, setTimeout: () => () => undefined },
         config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
         secrets: { apiKey: API_KEY },
       })

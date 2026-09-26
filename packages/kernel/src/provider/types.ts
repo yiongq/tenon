@@ -149,6 +149,11 @@ export interface Usage {
 export interface SendContext {
   signal?: AbortSignal
   identity: RequestIdentity // read-only for the provider, never modified
+  /**
+   * Spec 02, 01 修补 4 (decision A5): false = no first-byte limit on this send. The loop passes it
+   * only on the resend right after a first-byte timeout; absent = the adapter's own rule.
+   */
+  firstByteTimeout?: boolean
 }
 
 export interface Provider {
@@ -225,16 +230,22 @@ export interface ProviderDefinition {
   wire: 'anthropic-messages' | 'openai-chat'
   configKeys: ConfigKey[]
   builtinModels: ModelInfo[]
+  /**
+   * Spec 02, 01 修补 2 (decisions A12, M2, M6): finish_reason values the openai-chat wire's own table
+   * does not know, as data. A definition may only ADD values: one the table already maps is refused
+   * when the provider is built. The anthropic-messages wire does not read it.
+   */
+  finishReasons?: Readonly<Record<string, StopReason>>
   /** Host capabilities enter only through here. */
   create(args: {
     network: HostNetwork
     /**
-     * A clock reading is the one host capability `retryAfterMs()` needs: the HTTP-date branch
-     * of `retry-after` is an absolute time, and the kernel has no `Date.now()` (lint gate).
-     * `Pick<…, 'now'>` rather than the whole HostClock on purpose — an adapter must not get a
-     * timer through this door, because retrying is the phase 2 loop's job, not the provider's.
+     * `now` is what `retryAfterMs()` needs: the HTTP-date branch of `retry-after` is an absolute
+     * time, and the kernel has no `Date.now()` (lint gate). `setTimeout` (spec 02, 01 修补 2 and 4)
+     * is for the byte-level idle watchdog only: retrying is still the loop's job, and the
+     * first-byte limit runs on the SDK's own timer.
      */
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string> // non-secret items, defaults already applied
     secrets: Record<string, string> // read from HostAdapter.secrets by the caller
   }): Provider
@@ -345,6 +356,10 @@ export type StreamEvent =
       status?: number
       providerCode: string | null
       detail: string /* logs only, never rendered */
+      /** Spec 02, 01 修补 4 (A5): which limit ended the stream — no first byte, or no byte for too long. */
+      timeout?: 'first-byte' | 'idle'
+      /** Spec 02, 01 修补 2 (H12): epoch ms when an exhausted quota resets, when the vendor says. */
+      resetAt?: number
     }
 
 export type StopReason =
@@ -369,3 +384,7 @@ export type ProviderErrorCode =
   | 'egress-denied'
   | 'server'
   | 'unknown'
+  /** Spec 02, 01 修补 5 (H12): an exhausted quota or spend limit; not retryable. */
+  | 'quota-exhausted'
+  /** Spec 02, 01 修补 5 (H12): the account or organisation is not set up for this; not retryable. */
+  | 'account-config'

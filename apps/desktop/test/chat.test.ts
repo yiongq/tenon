@@ -311,6 +311,22 @@ describe('chat routes', () => {
     expect(afterRetry[0]?.messageId).toBe(afterFailure[0]?.messageId)
   }, 20_000)
 
+  it('shows an exhausted spend limit as the unknown error code (spec 02, 01 修补 5)', async () => {
+    fake = await startFakeAnthropic({
+      chunks: ['ok'],
+      delayMs: 5,
+      failWith: {
+        status: 400,
+        type: 'invalid_request_error',
+        message: 'You have reached your specified API usage limits.',
+      },
+    })
+    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    await ipc.call('chat.send', { sessionId, text: 'question' })
+    // quota-exhausted maps to 01's fallback; the finer reason travels as the Run's endReason.
+    expect(await out.waitFor('error')).toMatchObject({ code: 'unknown' })
+  }, 20_000)
+
   it('releases the session before the terminal event goes out', async () => {
     fake = await startFakeAnthropic({ chunks: ['done'], delayMs: 5 })
     const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })

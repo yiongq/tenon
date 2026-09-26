@@ -565,7 +565,7 @@ describe('a connection dropped mid-body', () => {
     })
     const provider = zhipuDefinition.create({
       network: net,
-      clock: { now: () => clock },
+      clock: { now: () => clock, setTimeout: () => () => undefined },
       config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
       secrets: { apiKey: 'test-key-not-a-real-credential' },
     })

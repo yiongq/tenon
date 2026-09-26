@@ -6,7 +6,7 @@
  * The encoders' shared helpers live in ./shared.ts, which is pure. This file is where the host's
  * `fetch` is touched — and nowhere else in the provider layer.
  */
-import type { HostNetwork } from '../../host/adapter.js'
+import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import { HostNetworkDeniedError } from '../../host/adapter.js'
 import { EgressDeniedError, ProviderInvalidArgumentError } from '../errors.js'
 import type { ProviderId } from '../types.js'
@@ -89,21 +89,190 @@ export function assertBaseUrl(
   }
 }
 
+/** The one host where the vendor's own limits are known (spec 02, 01 修补 4; decision A5). */
+export const ANTHROPIC_OFFICIAL_HOST = 'api.anthropic.com'
+
+/**
+ * How long the byte-level watchdog waits for the next byte (01 修补 4): 180 s on the official
+ * endpoint, 300 s everywhere else — the latter is Tenon's own value, to be calibrated by 02 plan
+ * step 7's live measurement.
+ */
+export const IDLE_MS_OFFICIAL = 180_000
+export const IDLE_MS_OTHER = 300_000
+
+/** The idle limit for a provider whose requests go to `baseURL`. */
+export function idleMsFor(baseURL: string): number {
+  return hostOf(baseURL) === ANTHROPIC_OFFICIAL_HOST ? IDLE_MS_OFFICIAL : IDLE_MS_OTHER
+}
+
+/**
+ * The first-byte limit handed to the SDK as a per-request `timeout` (01 修补 4): only for the
+ * official Anthropic endpoint, 180 s plus one second per started 32 KiB of request body. Null
+ * everywhere else, and on the resend right after a first-byte timeout (`firstByteTimeout: false`):
+ * the SDK's own ten-minute default then stands.
+ */
+export function firstByteTimeoutMs(
+  baseURL: string,
+  body: unknown,
+  firstByteTimeout: boolean | undefined,
+): number | null {
+  if (firstByteTimeout === false || hostOf(baseURL) !== ANTHROPIC_OFFICIAL_HOST) return null
+  const bodyBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength
+  return 180_000 + Math.ceil(bodyBytes / 32_768) * 1000
+}
+
+function hostOf(baseURL: string): string | null {
+  try {
+    return new URL(baseURL).hostname.toLowerCase()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The byte-level idle watchdog ran out (01 修补 4): no byte of the response body, not even a ping,
+ * arrived for `idleMs`. Both adapters map it to `error{ code: 'network', retryable: true,
+ * timeout: 'idle' }`; the caller's AbortSignal is never touched.
+ */
+export class StreamIdleTimeoutError extends Error {
+  readonly idleMs: number
+
+  constructor(idleMs: number) {
+    super(`no byte of the response arrived for ${idleMs} ms`)
+    this.name = 'StreamIdleTimeoutError'
+    this.idleMs = idleMs
+  }
+}
+
+/** fetchThroughHost()'s fourth parameter: arm the idle watchdog on the response body. */
+export interface IdleWatchdog {
+  readonly clock: Pick<HostClock, 'setTimeout'>
+  readonly idleMs: number
+}
+
 /**
  * The host's `fetch`, with an egress denial rewrapped so an SDK cannot lose it. Every byte either
  * adapter sends goes through here (invariant 8).
+ *
+ * With a `watchdog` (spec 02, 01 修补 4) the timer starts when the response headers arrive, is reset
+ * by every chunk of the body, and is torn down when the body is read to the end, cancelled or
+ * fails. When it fires, the underlying body is cancelled and the body the caller reads fails with
+ * StreamIdleTimeoutError.
  */
 export async function fetchThroughHost(
   network: HostNetwork,
   input: string | URL | Request,
   init: RequestInit | undefined,
+  watchdog?: IdleWatchdog,
 ): Promise<Response> {
+  let response: Response
   try {
-    return await network.fetch(input, init)
+    response = await network.fetch(input, init)
   } catch (error) {
     if (error instanceof HostNetworkDeniedError) throw new EgressDeniedError(error)
     throw error
   }
+  if (watchdog === undefined || response.body === null) return response
+  return new Response(watchedBody(response.body, watchdog), {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+}
+
+function watchedBody(
+  body: ReadableStream<Uint8Array>,
+  watchdog: IdleWatchdog,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader()
+  let cancelTimer: (() => void) | null = null
+  let settled = false
+  const disarm = (): void => {
+    cancelTimer?.()
+    cancelTimer = null
+  }
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const arm = (): void => {
+        disarm()
+        cancelTimer = watchdog.clock.setTimeout(() => {
+          cancelTimer = null
+          if (settled) return
+          settled = true
+          const error = new StreamIdleTimeoutError(watchdog.idleMs)
+          // The failure the caller sees is ours; the cancel only releases the socket.
+          reader.cancel(error).catch(() => undefined)
+          controller.error(error)
+        }, watchdog.idleMs)
+      }
+      arm()
+      const pump = async (): Promise<void> => {
+        for (;;) {
+          let step: ReadableStreamReadResult<Uint8Array>
+          try {
+            // oxlint-disable-next-line no-await-in-loop -- a body is read chunk by chunk
+            step = await reader.read()
+          } catch (error) {
+            if (settled) return
+            settled = true
+            disarm()
+            controller.error(error)
+            return
+          }
+          if (settled) return
+          if (step.done) {
+            settled = true
+            disarm()
+            controller.close()
+            return
+          }
+          arm()
+          controller.enqueue(step.value)
+        }
+      }
+      void pump()
+    },
+    cancel(reason) {
+      settled = true
+      disarm()
+      return reader.cancel(reason)
+    },
+  })
+}
+
+/**
+ * What the request-header allowlist lets out (spec 02, 01 修补 4; decision A6): exact names, name
+ * prefixes (the `x-stainless-*` group, let through until phase 6), and the protocol headers whose
+ * value is fixed — re-set to that value whatever the SDK merged in, because `*_CUSTOM_HEADERS` env
+ * lines can replace the value of an allowed header, not only add a name (02 plan step 3, checks 3
+ * and 5). The kernel decides `anthropic-beta` itself; 02's list is empty, so it is not allowed.
+ */
+export interface HeaderAllowList {
+  readonly names: readonly string[]
+  readonly prefixes: readonly string[]
+  readonly pinned: Readonly<Record<string, string>>
+}
+
+/**
+ * The request as it may leave: every header outside `allow` stripped, every pinned header set to
+ * its pinned value. Header names compare lowercased. The search backends (02 §搜索与抓取) call this
+ * too before they touch `network.fetch`.
+ */
+export function allowedRequestInit(
+  init: RequestInit | undefined,
+  allow: HeaderAllowList,
+): RequestInit {
+  const incoming = new Headers(init?.headers)
+  const out = new Headers()
+  incoming.forEach((value, name) => {
+    const lower = name.toLowerCase()
+    if (Object.hasOwn(allow.pinned, lower)) return
+    if (allow.names.includes(lower) || allow.prefixes.some((prefix) => lower.startsWith(prefix))) {
+      out.set(lower, value)
+    }
+  })
+  for (const [name, value] of Object.entries(allow.pinned)) out.set(name, value)
+  return { ...init, headers: out }
 }
 
 /**

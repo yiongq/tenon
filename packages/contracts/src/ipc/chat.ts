@@ -29,6 +29,20 @@ export const chatEventSchema = z.discriminatedUnion('type', [
     code: z.enum(['network', 'auth', 'rate-limit', 'provider', 'unknown']),
     detail: z.string().optional(),
   }),
+  // Spec 02, 01 修补 6 (decisions H12, H3, A11, B1): only-added variants. `done.endReason` comes with
+  // step 13 and `tool-outcome` with step 14, when the types they carry exist.
+  z.object({ type: z.literal('thinking-delta'), sessionId: sessionIdSchema, delta: z.string() }),
+  z.object({
+    type: z.literal('tool-call'),
+    sessionId: sessionIdSchema,
+    /** `<runId>:<requestSeq>:<i>`, the same shape as the tool facts' key; the UI compares it only. */
+    callKey: z.string().min(1),
+    providerToolCallId: z.string(),
+    name: z.string(),
+    input: z.record(z.string(), z.unknown()),
+  }),
+  /** This attempt writes no assistant message (discarded or failed): drop what it streamed. */
+  z.object({ type: z.literal('attempt-discarded'), sessionId: sessionIdSchema }),
 ])
 export type ChatEvent = z.infer<typeof chatEventSchema>
 

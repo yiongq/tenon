@@ -275,7 +275,7 @@ function buildable(definition: ProviderDefinition, host: HostAdapter, inputs: In
   try {
     definition.create({
       network: host.network,
-      clock: { now: () => host.clock.now() },
+      clock: { now: () => host.clock.now(), setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms) },
       config: inputs.config,
       secrets,
     })

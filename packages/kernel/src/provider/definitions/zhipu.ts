@@ -183,15 +183,23 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   },
 ])
 
+const FINISH_REASONS = Object.freeze({
+  sensitive: 'content-filter',
+  model_context_window_exceeded: 'context-overflow',
+} as const)
+
 export const zhipuDefinition: ProviderDefinition = {
   id: ZHIPU_PROVIDER_ID,
   nameKey: 'provider.zhipu.name',
   wire: 'openai-chat',
   configKeys: [...CONFIG_KEYS],
   builtinModels: [...MODELS],
+  // Spec 02, 01 修补 5 (A12, H10): the two finish_reason values this vendor adds. `network_error` is
+  // not declared: it stays `unknown` with its raw value in providerReason, and the loop resends.
+  finishReasons: FINISH_REASONS,
   create(args: {
     network: HostNetwork
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string>
     secrets: Record<string, string>
   }): Provider {
@@ -206,6 +214,7 @@ export const zhipuDefinition: ProviderDefinition = {
       // '', and a key with a default is never missing.
       baseURL: configuredValue(args.config['baseURL']) ?? ZHIPU_DEFAULT_BASE_URL,
       models: MODELS,
+      finishReasons: FINISH_REASONS,
     })
   },
 }

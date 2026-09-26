@@ -69,10 +69,14 @@ function instance(definition: ProviderDefinition): {
 } {
   const net = fakeNetwork([])
   let calls = 0
-  const clock: Pick<HostClock, 'now'> = {
+  const clock: Pick<HostClock, 'now' | 'setTimeout'> = {
     now: () => {
       calls += 1
       return 0
+    },
+    setTimeout: () => {
+      calls += 1
+      return () => undefined
     },
   }
   const baseURL =

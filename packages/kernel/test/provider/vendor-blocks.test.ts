@@ -73,7 +73,7 @@ async function session(streams: readonly (readonly string[])[]): Promise<Session
   )
   const provider = anthropicDefinition.create({
     network: net,
-    clock: { now: () => 0 },
+    clock: { now: () => 0, setTimeout: () => () => undefined },
     config: { baseURL: 'https://api.anthropic.test' },
     secrets: { apiKey: 'test-key-not-a-real-credential' },
   })

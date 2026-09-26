@@ -10,6 +10,7 @@ import type {
   EncodedRequest,
   ModelInfo,
   Provider,
+  ProviderDefinition,
   ProviderRequest,
   StreamEvent,
 } from '../../src/index.js'
@@ -104,5 +105,15 @@ describe('the Provider interface', () => {
     expect(provider.managesOwnContext()).toBe(false)
     // Truly optional and truly absent.
     expect(provider.countTokens).toBeUndefined()
+  })
+})
+
+describe('ProviderDefinition.create() (spec 02, 01 修补 2 and 4)', () => {
+  it('requires a clock with setTimeout, so a host that forgets the watchdog timer fails to compile', () => {
+    type CreateArgs = Parameters<ProviderDefinition['create']>[0]
+    const readingOnly = { now: () => 0 }
+    // @ts-expect-error — `now` alone no longer satisfies create()'s clock
+    const args: CreateArgs['clock'] = readingOnly
+    expect(args).toBe(readingOnly)
   })
 })

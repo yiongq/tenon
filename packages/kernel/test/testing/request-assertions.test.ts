@@ -374,7 +374,7 @@ describe('assertToolPairing as a checkRequest behind a real provider', () => {
     const provider = new AnthropicMessagesProvider({
       id: 'anthropic',
       network: net,
-      clock: { now: () => 0 },
+      clock: { now: () => 0, setTimeout: () => () => undefined },
       apiKey: 'test-key-not-a-real-credential',
       authToken: null,
       baseURL: 'https://api.anthropic.com',

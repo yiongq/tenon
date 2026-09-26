@@ -231,7 +231,7 @@ export const anthropicDefinition: ProviderDefinition = {
   builtinModels: [...MODELS],
   create(args: {
     network: HostNetwork
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string>
     secrets: Record<string, string>
   }): Provider {

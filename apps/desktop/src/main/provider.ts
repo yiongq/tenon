@@ -196,9 +196,9 @@ export async function resolveChatProvider(
   })
   const provider = definition.create({
     network: host.network,
-    // A reading, never a timer: `retryAfterMs` needs the wall clock, retrying does not belong
-    // to a provider (spec 01 §Provider 层).
-    clock: { now: () => host.clock.now() },
+    // A reading for `retryAfterMs`, and a timer for the byte-level idle watchdog only (spec 02,
+    // 01 修补 2 and 4): retrying still does not belong to a provider.
+    clock: { now: () => host.clock.now(), setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms) },
     config,
     secrets,
   })

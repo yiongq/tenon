@@ -9,7 +9,11 @@
  * Every key is written only when it has a value — canonicalJson (and therefore `promptHash`)
  * refuses an undefined-valued key, and the wire's notion of "absent" is a missing key.
  */
-import Anthropic, { APIConnectionError, APIError } from '@anthropic-ai/sdk'
+import Anthropic, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+} from '@anthropic-ai/sdk'
 import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import { BaseProvider, withTerminalEvent } from '../base.js'
@@ -68,14 +72,35 @@ import {
 } from './shared.js'
 import type { EncoderInfo, ImageContentBlock } from './shared.js'
 import {
+  StreamIdleTimeoutError,
+  allowedRequestInit,
   assertBaseUrl,
   configuredValue,
   fetchThroughHost,
+  firstByteTimeoutMs,
+  idleMsFor,
   parseToolArguments,
   tokenCount,
 } from './transport.js'
+import type { HeaderAllowList } from './transport.js'
 
 const WIRE = 'anthropic-messages'
+
+/**
+ * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, one credential, the
+ * `x-stainless-*` group. The fixed protocol values are pinned, so an `ANTHROPIC_CUSTOM_HEADERS` line
+ * cannot rewrite them; `anthropic-beta` is the kernel's to decide and 02 decides none.
+ */
+const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+  names: Object.freeze(['content-type', 'x-api-key', 'authorization']),
+  prefixes: Object.freeze(['x-stainless-']),
+  pinned: Object.freeze({
+    accept: 'application/json',
+    'anthropic-version': '2023-06-01',
+    'user-agent': `Anthropic/JS ${SDK_VERSION}`,
+  }),
+})
 
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
@@ -199,6 +224,9 @@ export function encodeAnthropicMessages(
     if (thinking !== null) body.thinking = thinking
     if (req.effort !== undefined) body.output_config = { effort: req.effort }
   }
+  // Spec 02, 01 修补 3 (decisions H8, M8): the automatic-caching form, 5-minute tier, no ttl. In the
+  // body, so promptHash covers it; a synthesised row (supportsCacheControl false) writes none.
+  if (req.model.supportsCacheControl) body.cache_control = { type: 'ephemeral' }
   mergeRequestParams(body, req.model, RESERVED_KEYS)
   const encoded = sealEncoded(providerId, req.model.id, body, tools, decisions, ENCODER)
   // Last, so every refusal 01 already made still comes first with 01's own error (01 修补 3).
@@ -487,7 +515,7 @@ export interface AnthropicMessagesProviderOptions {
   readonly id: ProviderId
   readonly network: HostNetwork
   /** Only `now()`: see ProviderDefinition.create(). Read when an error is mapped. */
-  readonly clock: Pick<HostClock, 'now'>
+  readonly clock: Pick<HostClock, 'now' | 'setTimeout'>
   /** `null` = not configured. `apiKey` and `authToken` are never both absent — see below. */
   readonly apiKey: string | null
   readonly authToken: string | null
@@ -533,7 +561,9 @@ export interface AnthropicMessagesProviderOptions {
 export class AnthropicMessagesProvider extends BaseProvider {
   readonly id: ProviderId
   readonly #client: Anthropic
-  readonly #clock: Pick<HostClock, 'now'>
+  readonly #clock: Pick<HostClock, 'now' | 'setTimeout'>
+  /** Where requests go: it decides the first-byte and idle limits (01 修补 4). */
+  readonly #baseURL: string
   readonly #models: readonly ModelInfo[]
   /** The credential values, for redacting them out of an error `detail` that reaches logs. */
   readonly #credentials: readonly string[]
@@ -560,6 +590,7 @@ export class AnthropicMessagesProvider extends BaseProvider {
     assertBaseUrl(options.id, baseURL, { wire: WIRE, refuseV1Suffix: true })
     this.id = options.id
     this.#clock = options.clock
+    this.#baseURL = baseURL
     this.#models = [...options.models]
     this.#credentials = [apiKey, authToken].filter((value): value is string => value !== null)
     // Called through a closure rather than handed over as a bare property: the SDK invokes it
@@ -580,7 +611,13 @@ export class AnthropicMessagesProvider extends BaseProvider {
         'x-api-key': apiKey,
         authorization: authToken === null ? null : `Bearer ${authToken}`,
       },
-      fetch: (input, init) => fetchThroughHost(network, input, init),
+      // Spec 02, 01 修补 4: every request through the header allowlist, every body under the idle
+      // watchdog (180 s on the official endpoint, 300 s elsewhere).
+      fetch: (input, init) =>
+        fetchThroughHost(network, input, allowedRequestInit(init, ALLOWED_HEADERS), {
+          clock: options.clock,
+          idleMs: idleMsFor(baseURL),
+        }),
     })
   }
 
@@ -614,7 +651,10 @@ export class AnthropicMessagesProvider extends BaseProvider {
     // the endpoint had failed — and `EncodedRequest.body` is typed `unknown`, which phase 2 will
     // rebuild from a Tape.
     const params = streamParams(encoded)
-    return withTerminalEvent(() => this.#events(params, ctx), {
+    // Spec 02, 01 修补 4 (A5): the first-byte limit, for the official endpoint only; null leaves the
+    // SDK's own default. Runs on the SDK's timer, not the host clock.
+    const timeout = firstByteTimeoutMs(this.#baseURL, encoded.body, ctx.firstByteTimeout)
+    return withTerminalEvent(() => this.#events(params, ctx, timeout), {
       // Read when the error happens, not when the stream is built: a `retry-after` HTTP-date is
       // relative to now.
       mapError: (error) =>
@@ -640,12 +680,14 @@ export class AnthropicMessagesProvider extends BaseProvider {
   async *#events(
     params: Anthropic.MessageCreateParamsStreaming,
     ctx: SendContext,
+    timeout: number | null,
   ): AsyncIterable<StreamEvent> {
     const stream = await this.#client.messages.create(params, {
       // The SDK's own AbortController is chained to this one, so an abort reaches the fetch the
       // host performed. `withTerminalEvent` still races the signal itself: a socket that has
       // gone quiet must not be able to outlive a Stop.
       signal: ctx.signal,
+      ...(timeout === null ? {} : { timeout }),
     })
     yield* normaliseAnthropicEvents(readBody(stream))
   }
@@ -1195,7 +1237,44 @@ function mapAnthropicError(
   if (status !== undefined) event.status = status
   const delay = retryAfterMs(errorHeaders(error), ctx.now)
   if (delay !== null) event.retryAfterMs = delay
+  // Spec 02, 01 修补 4 (A5): which limit ended the stream. Both are connection failures the
+  // classifier already reads as a retryable `network`.
+  const timeout = timeoutKindOf(chain)
+  if (timeout !== null) event.timeout = timeout
+  // Spec 02, 01 修补 2 (H12): the monthly spend limit resets at 00:00 UTC on the 1st.
+  if (code === 'quota-exhausted' && isSpendLimit(error))
+    event.resetAt = startOfNextMonthUtc(ctx.now)
   return event
+}
+
+/** The first-byte limit is the SDK's own timeout; the idle one is the watchdog's (01 修补 4). */
+export function timeoutKindOf(chain: readonly unknown[]): 'first-byte' | 'idle' | null {
+  if (chain.some((link) => link instanceof StreamIdleTimeoutError)) return 'idle'
+  if (chain.some((link) => link instanceof APIConnectionTimeoutError)) return 'first-byte'
+  return null
+}
+
+/** 429 with `error.details.error_code = enforced_spend_limit_reached` (01 修补 5). */
+function isSpendLimit(error: unknown): boolean {
+  const body = objectField(error, 'error')
+  const inner = objectField(body, 'error')
+  const details = objectField(inner, 'details') ?? objectField(body, 'details')
+  return stringField(details, 'error_code') === 'enforced_spend_limit_reached'
+}
+
+/** The vendor's own `error.message`, not the SDK's `<status> <body>` summary. */
+function vendorMessage(error: unknown): string {
+  const body = objectField(error, 'error')
+  return (
+    stringField(objectField(body, 'error'), 'message') ??
+    stringField(body, 'message') ??
+    ''
+  ).trim()
+}
+
+function startOfNextMonthUtc(now: number): number {
+  const date = new Date(now)
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)
 }
 
 function classifyAnthropicError(
@@ -1208,6 +1287,12 @@ function classifyAnthropicError(
   // rejected fetch as `new APIConnectionError({ cause })`, so the denial arrives one or two
   // links down.
   if (hasEgressDenial(chain)) return 'egress-denied'
+  // Spec 02, 01 修补 5 (H12): the two spend limits, before the status table reads them as a
+  // retryable rate limit or a plain invalid request.
+  if (status === 429 && isSpendLimit(error)) return 'quota-exhausted'
+  if (status === 400 && vendorMessage(error).startsWith('You have reached your specified')) {
+    return 'quota-exhausted'
+  }
   if (status !== undefined) return statusErrorCode(status, errorMessage(error))
   if (providerCode !== null && Object.hasOwn(ERROR_TYPES, providerCode)) {
     const code = ERROR_TYPES[providerCode as AnthropicErrorType]
