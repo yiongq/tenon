@@ -154,7 +154,7 @@
     - 旧 117：故意让 `approval_resolved(allowed)` 那次 append 失败，答复、新 Run 的 `run_started` 与 `session/model_selected` 都不在 Tape 里，待批行还在；问人的判决与 `run_terminal(paused)` 同样一起写入或一起不在。
     - 旧 118：同一个 system 与同一组工具定义跨多次请求，`view/content` 里每份内容恰好一条。
     - 旧 123：主页上先选模型再建会话，第 0 条 `model_choice_set` 与 `session/start` 同批；两次很快的 `session.selectModel` 得到 n=0、n=1，没有 `TapeProvenanceConflictError`（本步只测写入器；建会话前暂存随第 18 步、选模型随第 19 步补跑）。
-  - 暂定与待定：开放问题 6（`carry`）owner 2026-09-25 已确认按修补处理。开放问题 15、16 的第一轮（owner 2026-09-26）要进本步的声明：`ClosureSource` 带 `invalid-input`，名字总表与重放读取带 `message/environment`（`EnvironmentPayload`）；第二、三轮（owner 2026-09-26）同样要进本步：`ClosureSource` 带 `timed-out`，`RunEndReason` 带 `time-limit`（18 个结束码）；第四轮若再加视图或载荷字段，同样在本步声明（开工前先看 spec 顶部 Revisions）。
+  - 暂定与待定：开放问题 6（`carry`）owner 2026-09-25 已确认按修补处理。开放问题 15、16 的第一轮（owner 2026-09-26）要进本步的声明：`ClosureSource` 带 `invalid-input`，名字总表与重放读取带 `message/environment`（`EnvironmentPayload`）；第二、三轮（owner 2026-09-26）同样要进本步：`ClosureSource` 带 `timed-out`，`RunEndReason` 带 `time-limit`（18 个结束码）；第四到六轮（owner 2026-09-26）要进本步的：`ToolResultPayload.question`（`AskAnswerRecord`）；第 9 步声明的 `ToolOutcomeView` 只增可选的 `question`、`handoff`（开工前先看 spec 顶部 Revisions）。
 - [ ] 9. **所有权骨架**（裁决 F1、F10、D4、A14、H15）
   - 读：§所有权与依赖方向（含 §主进程与 kernel 的循环接口）；01 修补 6「kernel 服务的构造参数」；01 修补 9 (v)；[models/README.md](models/README.md)（mailbox、租约、队列的并发测试照模型的场景与不变量写；实现中要改这些规则，先改模型、两个都跑到 0 违例）。
   - 交付物：`SessionServiceOptions.host` 改为完整 `HostAdapter`，只增 `inspectors`（desktop 先传 []）、`connector`、`protectedFiles`、`onUnansweredCall`、`log`，六处调用同改；删 `runRequest`、`RunRequestQuery`、`RunResult`（请求体挪进 `loop/` 内部），tape-conformance、service.test、definitions.test 改走 `send`，tape-conformance.ts:2157 改成两个会话（01 修补 9 (v)）。第 10、13、18 步之前，`send` 开的 Run 只发一次请求，不带 system 与 tools，写 `run_started`（`run_terminal` 自第 13 步起），回复里有 tool-use 照阶段 1 结束本轮；三组测试随之改：conformance 的重编码不带 `SCRIPT_SYSTEM`、`SCRIPT_TOOL`，`systemHash` 断言改为本 Run 实际发出的 system，definitions.test 的 `TURN_SHAPE` 加 `run_started`；kernel/src/index.ts:297-298 删两个导出；chat.ts 的 `chat.send` / `chat.stop` 改转 `send` / `stop`，emit、ERROR_CODE 与 STOP_REASON 映射挪进 run-events.ts；建 `tools/` 目录（`permission/`、`loop/` 第 5、8 步已建）；按 §主进程与 kernel 的循环接口「冻结」声明全部类型与命令方法（`bindLoop`、`LoopPorts`、`RunConnector`、`RunAssembly`、`SessionEvent`、各命令，③ 才实现的路径也在这里声明，M1），它们引用、第 8 步还没声明的类型（`ToolOutcomeView`、`AnswerCommand`、`SearchBackend` 连同 `SearchOutcome` / `SearchHit`、`McpToolSource`、`RunAbortCause`（loop/ports）、`SessionDraft` 占位），以及 `inspectors` 成员要的 `InspectorRegistration` 连同它引用的 `AskOpinion` / `DenyOpinion` / `BeforeCallInput` / `InspectedCall` / `AfterResultInput` / `ResultMarker`（permission/inspector）、`SessionView`（session-view）与 `ToolTableItem`（tools/registry），只声明、按 spec 原文，后面的步骤实现、不改形状；读写事实的方法随各自路由那一步加（第 15、16、18、19 步）；写 mailbox 与命令骨架；desktop 的 `run-assembly.ts`（由 `resolveChatProvider` 拆出）、`run-events.ts`、`queue.ts` 骨架；`RunRegistry` 取代 `inFlight`（chat.ts:132）并实现 `LoopPorts.leases`，`locale` 与 `localDate`（开放问题 16，owner 2026-09-26：desktop 按本机时区算 `YYYY-MM-DD`）两个端口与 `commandShell`（开放问题 17，owner 2026-09-26；desktop 先传 `{ path: '/bin/sh', env: async () => ({}) }` 占位，第 22 步换成 `shell-env.ts`）也在这一步，`createTestLoopPorts` 的日期与 shell 可设；index.ts 接 `connector`、`protectedFiles`（第 11 步之前传 `[]`）与 `bindLoop`；`queue.ts` 这一步就以内存实现 `LoopPorts.queue` 的四个方法（`enqueue` / `peek` / `take`（含按 `queuedId`）/ `restore`；自动发出、`sendNow`、`queue.act` 与 `chat.queue` 事件在第 17 步）；第 17 步之前 `chat.send` 在这个根会话有活租约（含已中止、还在收尾的）时仍回 `ALREADY_STREAMING`，kernel `send` 返回 `queued` 时 desktop 撤下这一项、同样回 `ALREADY_STREAMING`（`approval.resume` 之后紧跟的发送、可续跑的会话里发消息都会走到），免得消息进了还不会自动发出的队列；`@tenon-app/kernel/testing` 导出 `createTestLoopPorts`。
@@ -165,7 +165,7 @@
     - 旧 238：调 `createSessionService` 不传 `inspectors`、`connector` 或 `protectedFiles` 编译失败（`@ts-expect-error`）；六处现有调用都显式传入，其中四处改为传完整的 HostAdapter。
     - 旧 225（前半）：`SessionService` 上没有 `runRequest`，kernel 不导出 `RunRequestQuery`、`RunResult`（`@ts-expect-error`）；给 `send` 传 `system` 或 `tools` 编译失败（`@ts-expect-error`）；apps/desktop 的 `pnpm typecheck` 通过；`bindLoop` 之前调 `send` 返回 `{ status: 'refused', code: 'not-bound' }`，`continueRun`、`answer`、`resume` 返回 `refused`，`stop` 返回 `{ stopped: false }`，都不写事实；再调一次 `bindLoop` 抛错。
     - 两个会话各跑一个 Run 的 conformance 用例在内存与 SQLite 两个 store 上都通过；同一根会话连发两次 `send`（第二条在第一条预建时到达、先进 mailbox），第二条入队、只有一个 `run_started`，记录型租约没有第二次 `begin`（有就抛错）。
-  - 暂定与待定：开放问题 1、2 已定（2026-09-25）；开放问题 26 已定（2026-09-25 owner：全部按默认），要进本步类型的几条（端口只加可选成员、直接发送的 held、「继续」的 held）照 spec 现写法声明；`SessionDraft` 形状随开放问题 16，先占位；desktop 的 run-events.ts 只转根会话的事件。
+  - 暂定与待定：开放问题 1、2 已定（2026-09-25）；开放问题 26 已定（2026-09-25 owner：全部按默认），要进本步类型的几条（端口只加可选成员、直接发送的 held、「继续」的 held）照 spec 现写法声明；`send` 不收 `create`（开放问题 16 已定：草稿放 kernel），会话不存在时第一次开 Run 的 `send` 按对话形态建会话，取代 chat.ts:288 的 `ensureSession`（草稿、形态事实在第 18 步）；`CommandShell` 在本步声明；desktop 的 run-events.ts 只转根会话的事件。
 - [ ] 10. **工具注册表与工具表冻结**（裁决 H4、E2、A3、A14、A15、D12、H7、H6）
   - 读：§内置工具与工具来源；§工具目录与冻结；§组装清单与内容寄存；§名字总表。
   - 交付物：`packages/kernel/src/prompts/` 的骨架（`fill()` 与按 spec 形状声明的 `MODEL_NOTES`，还没写的成员与 `closure` 的来源键先标可选、写齐后去掉；第 10–15 步各自加上本步写给模型的键与格，如被禁、inspector 超时与出错、截断与步数上限、续写提示；`closure` 余下的格在第 14 步随 `closure.test.ts` 一次写齐）；`BUILTIN_SERVER_ID`、`ToolTableItem`（第 9 步已声明）、按 §工具来源、命名与权限键「命名规则」映射名字的函数与开表断言；十个内置 inputSchema 与描述；参数校验（`@modelcontextprotocol/client` 的 `CfWorkerJsonSchemaValidator`，内置与 MCP 共用；来源码 `invalid-input`；三条附加检查；连接器 schema 用不了记 `tool-unavailable`，开放问题 16 已定）；按 `ProviderId` 查的每请求工具数常量；`@tenon-app/kernel/testing` 的 `createTestSessionService` 与 `TestToolRegistry`（十个内置名缺省配假执行器，可设 `'real'` 或 `null`，spec §主进程与 kernel 的循环接口「测试与 6b」；每个内置工具进产品工具表之前，kernel 测试经它执行调用）；「会话 × provider」冻结、排序、排除码；`view/content` / `view/tool_table` / `view/tools_withheld` / `view/assembled` 同批写入与从 Tape 重建；desktop `run-assembly.ts` 的 Ollama 范围规则与 `toolsWithheld`；同一 provider 换到不发工具的模型；注册 Everything 夹具、只读 `_meta` 那一个键；elicitation 一律拒绝（`Client` 不声明能力）。
@@ -211,7 +211,7 @@
     - 旧 160：悬空链接 `ws/dangling` 指向外面不存在的路径时，对它 Write 判为工作区外；内存 host 上溯到根仍为 null 的判为工作区外；`realpath` 抛错（如 EACCES）判为工作区外，`real` 取规范化后的路径；desktop host 对大小写写错的已存在路径返回磁盘上的写法；desktop 真实临时目录上 `realpath` 对不存在的路径、普通文件下的路径返回 null，对悬空链接、链接环抛错，内存 host 结果相同；指向保护名单的链接判 `protected`；硬链接写入只记回归基线、不断言拦下。内存宿主要能表示链接。
     - 主原因顺序逐例测：多条原因同时命中取最前一条；命令工具固定为 `command`（curl POST 得 `command` 加 `irreversible`）；WebFetch 三要素齐备时 `flagged` 排在 `network` 前；`policy` 与 `interaction-required` 同时成立取 `policy`。
     - 不变量 20 在 02 只断言前半句（内置工具只产生 `once` / `session`），阶段 3 持久存储那半句不测。
-  - 暂定与待定：开放问题 11 的权限读法已确认；shell 配置清单为用户目录下 `.zshrc`、`.zshenv`、`.zprofile`、`.bashrc`、`.bash_profile`、`.profile`；还不存在的余下段保留模型给的写法、逐码元比较（暂定）；对话形态越界的拦截码按开放问题 13，定之前 `protected`。
+  - 暂定与待定：开放问题 11 的权限读法已确认；shell 配置清单为用户目录下 `.zshrc`、`.zshenv`、`.zprofile`、`.bashrc`、`.bash_profile`、`.profile`；还不存在的余下段保留模型给的写法、逐码元比较（暂定）；对话形态越界的拦截码 `protected`（开放问题 13 已定），回执键 `blocked.chatReadScope` 在第 20 步。
 - [ ] 12. **Inspector 与判决记录**（裁决 F1、F8、F9、F10）
   - 读：§权限引擎 · Inspector 与判决记录。
   - 交付物：`inspector.ts`、`session-view.ts`、第一段运行器（时限、超时与出错的折算、停止时不写判决事实）、contracts `ipc/approval.ts` 的 `DecisionSummary` schema、假 inspector（类型第 8、9 步已声明，`summarize` 在第 11 步）；注册时带 `afterResult` 就在构造服务时抛错；desktop 单测断言注册的 inspector 全是 `ceiling: 'ask'`。
@@ -225,7 +225,7 @@
   - 暂定与待定：`INSPECTOR_TIMEOUT_MS` 暂定 local-rule 2000、model 30000，待校准（第 34 步）；`recentUserTexts` 暂取 8 条；会话视图的读取范围按开放问题 11（已确认）。
 - [ ] 13. **循环骨架与 Run 的结束**（裁决 H11、H12、A2、A5、F2、F3、M1、B1、M3）
   - 读：§主循环与 Run 的结束；01 修补 5；§工具调用的收口「崩溃、服务端调用块与兜底」。
-  - 交付物：一个 Run 多次请求（`requestSeq` / `physicalAttempt`，取代 service.ts:84-85 钉成 1 的写法）；每轮 5 步；分流表（含三种作废，01 修补 9 (m)）；零可执行调用与只有服务端块的回复；18 个结束码与 `runEndReasonSchema`（开放问题 18 加了 `time-limit`），`chat.event` 的 `done.endReason` 与 `error` 变体只增的可选 `endReason`（开放问题 16 的暂定做法，run-events 映射与 parse 测试同步）、两份 locale 的 18 个结束码键（从第 7 步移来）；kernel 从 `signal.reason` 读 `RunAbortCause`，定 `user-stopped` 与 `shutdown-aborted`；按请求计的重试与退避；步数上限、原地打转、连续被拦截（计数从 Tape 推出）；token 上限；截断收口与「继续」（`chat.continue` 路由与 `message/continuation`）；三种作废与每次整轮重发前发 `attempt-discarded`，`tool-outcome` 在 `tool/result` 与 `tool_outcome` 提交之后才发；`loop/limits.ts` 的常量（STOP 三个先声明，校准在第 23 步）。
+  - 交付物：一个 Run 多次请求（`requestSeq` / `physicalAttempt`，取代 service.ts:84-85 钉成 1 的写法）；每轮 5 步；分流表（含三种作废，01 修补 9 (m)）；零可执行调用与只有服务端块的回复；18 个结束码与 `runEndReasonSchema`（开放问题 18 加了 `time-limit`），`chat.event` 的 `done.endReason` 与 `error` 变体只增的可选 `endReason`（开放问题 16 已定，run-events 映射与 parse 测试同步；凡不写 assistant 的 attempt 都发一次 `attempt-discarded`）、两份 locale 的 18 个结束码键（从第 7 步移来）；kernel 从 `signal.reason` 读 `RunAbortCause`，定 `user-stopped` 与 `shutdown-aborted`；按请求计的重试与退避；步数上限、原地打转、连续被拦截（计数从 Tape 推出）；token 上限；截断收口与「继续」（`chat.continue` 路由与 `message/continuation`）；三种作废与每次整轮重发前发 `attempt-discarded`，`tool-outcome` 在 `tool/result` 与 `tool_outcome` 提交之后才发；`loop/limits.ts` 的常量（STOP 三个先声明，校准在第 23 步）。
   - 验收：15、16、17（「继续」按钮在第 20 步）。
   - 测试要点：
     - 旧 12：夹具分别回放 Anthropic 的 `server_tool_use` 与智谱的 `tool_calls[type=mcp]`：不派发、不补结果，注入的 `log` 被调一次；原样块存进 Tape，下一轮请求体里没有它；与一个客户端调用同在时，客户端调用照常执行并通过配对断言；回复里只有服务端块时，Run 以 `{ code: 'provider-error', errorCode: null }` 结束，不停在「有调用、没结果」上。
@@ -295,7 +295,7 @@
     - 立即发送与自动发出（kernel，`createTestLoopPorts`）：按下时的 runId 已结束、这条已被自动发出带走，send-now 返回 `not-found`，新 Run 不被中止；`chat.sendNow` 的 runId 已结束，这条按普通发送处理；`completed` 之后自动发出时 `RunAssembly.provider()` 抛 `ProviderConfigMissingError`（`assemble` 正常 resolve）：Tape 不变、排队项按原顺序还在、`run-ended{ recorded: false }`；自动发出预建期间对被取走的项按「立即发送」，返回 `not-found`、新 Run 不被中止；自动发出的 `resolveChoice` 返回 `needsConfirm`：fakeNetwork 0 次、排队项还在、发 `queue-held`（放出在第 19 步验）；记录型租约上 `run-ended` 之前 `finish` 已调，`finish` 与自动发出的 `begin` 之间没有空档；自动发出预建期间来的 `send` 入队、排在取走的项之后，取走的项先发出，只有一次 `begin`；子会话的 Run 在父 Run 租约下结束时没有 `finish`（第 31 步补跑）；队列项的立即发送：Run 已结束时按原 seq 带上前面的项发出，缺 key 时这一项留在原位；新一轮的直接发送只带走它到达之前入队的项；直接发送碰上间接切公网：`send` 返回 `held`，这条留在队列，发 `queue-held{ host }`；有排队项时直接发送碰上缺 key：返回 `not-sent`，Tape 不变，排队项还在；`chat.stop` 之后、被中止的 Run 写终态之前 `chat.send`，这条在 `user-stopped` 之后开新 Run；Run 已决定 `completed`、提交之前 `chat.stop`：终态为 `user-stopped`，不自动发出非 urgent 项；预建中的 `send` 被 `chat.stop` 中止后到的 `send` 照空闲开新一轮；两次 `send` 按到达先后写进 Tape（前一条在预建、后一条先进 mailbox 也一样）；直接发送碰上间接切公网之后，另一次没有 `needsConfirm` 的新一轮开出：发 `queue-held{ host: null }`，之后的 `selectModel` 不取任何项（第 19 步补跑）；held 那条被撤回后 `selectModel` 只清 held、不发出别的项（第 19 步补跑）。
     - `user-message`：新变体通过 `chatEventSchema`；run-events.ts 只转根会话的，子会话的不转。
     - 旧 132：插入之前排队消息不写 `message/user`；两条同文本的排队消息成为两条 messageId 不同的 `message/user`；Run 正常结束时排队消息自动开新 Run，暂停时保持排队；带插话的续发不触发摘要压缩；「立即发送」时正在跑的 Bash 在 1 秒内进程树清空，Run 以 `user-stopped` 结束，没执行的调用按收口表收口，再发出这条消息。
-  - 暂定与待定：开放问题 1 已定（2026-09-25）；排队项由主进程内存持有、退出即丢弃，立即发送时其余排队项保持排队，等审批或等提问时 Cmd/Ctrl+Enter 同按发送（旧开放问题 97）；以 completed、user-rejected、paused 以外的原因结束时保持排队、不自动发出（旧开放问题 49，结合 owner 补录 H13 #1 复核）；智谱插话：第 2 步 INT 推理没有明显断掉，H13 照现写法；开放问题 16 的 `user-message` 怎么交给渲染端最晚本步前定。
+  - 暂定与待定：开放问题 1 已定（2026-09-25）；排队项由主进程内存持有、退出即丢弃，立即发送时其余排队项保持排队，等审批或等提问时 Cmd/Ctrl+Enter 同按发送（旧开放问题 97）；以 completed、user-rejected、paused 以外的原因结束时保持排队、不自动发出（旧开放问题 49，结合 owner 补录 H13 #1 复核）；智谱插话：第 2 步 INT 推理没有明显断掉，H13 照现写法；`user-message` 进 chat.event、只增同名变体（开放问题 16 已定）。
 - [ ] 18. **会话形态、工作区、读工具与提示层**（裁决 H1、D11、D8、A13、H15、A11）
   - 读：§会话形态、工作区与模型选择「会话形态」「工作区」；§内置工具与参数；§提示层与评测「提示层」「思考的默认与显示」；§对 00-foundation 的修补「§国际化」。
   - 交付物：形态事实与建立前暂存；阶段 1 旧会话读作 `chat`；两套候选工具集；`workspace.ts` 与 `workspace.*` 路由（写路由接启动恢复的闸）；专用文件夹；工作区事实与中途增删；Read / Glob / Grep 执行器（Read、Glob、Grep 这时才进产品工具表）；`prompts/` 补上两份系统提示初版、`LOCALE_HINT`、`PROMPT_LAYER_VERSION` / `HASH` 与 version 测试（`fill()` 与 `MODEL_NOTES` 骨架在第 10 步，closure 测试在第 14 步）；思考默认（Anthropic 线 `display: 'summarized'`，默认不传 effort）。
@@ -303,6 +303,8 @@
   - 测试要点：
     - 旧 180：没选文件夹的任务会话，工作区事实只有 `<home>/Tenon/workspaces/<userId>/<tenantId>/<sessionId>/`，来源 `dedicated`；第一次 Write 或 Bash 之前这个目录不存在；Bash 的 cwd 等于它（Bash 在第 22 步补跑）；有多个文件夹时 cwd 取第一个，事实记变化后的整张有序列表。
     - 旧 181：对文件夹 X 下的 f 批过本会话写授权，移除 X 后再写 f 出卡（`outside-workspace`，没有「本会话」期限），把 X 加回来仍出卡，重启重建授权后结果相同；第一个文件夹被移除、cwd 变了之后，同一条已批准的 Bash 命令再出卡；工作区变化后下一次边界请求的 system 与 tools 逐字节不变，messages 多一条 `message/environment`（全量新列表）。
+    - 草稿（开放问题 16）：发送后紧接着选模型，写成 n=1、不丢；会话建立后 `selectProfile` 返回 `established`；缺 key 时不建会话、草稿留着，补 key 再发仍同批带上；从任务切回对话丢掉草稿里的文件夹；`session.facts` 对草稿、已建会话、01 的旧会话各答一次。
+    - Read 限长（开放问题 24）：Read 一个 10 万字符的文件，结果不超过阈值，末尾写明下一段的 offset，照着读下去能拼回全文；第一行有 5 万字符时，只给这一行的前一部分并标明截断，下一段的 offset 是 2；没到文件末尾就不加末尾说明的反例；对话形态 Read 被拦时回执取 `blocked.chatReadScope`（第 20 步验文案）。
     - 环境说明（开放问题 16）：工具结果续发、没插入排队消息的 `resume`、写摘要的请求之前都不写；插话之后的那次请求会写；压缩之后补写一条全量；对话形态只有日期一行；文件夹名带换行或 `</environment>` 时，写出的仍是一行一个 JSON 字符串；子会话读父会话的工作区。实测：智谱 `/paas/v4`（flashx）与 Ollama 能不能接受相邻的两条 user 消息，结论写回 spec §提示层「环境说明」。
     - 旧 182：`lastWorkspaceFolders` 有值、用户没点确认时，工作区仍是专用文件夹，读预填路径下的文件按工作区外处理；所选列表变化后 `lastWorkspaceFolders` 等于新列表，回落到专用文件夹时不变；`workspace.pick`、`workspace.usePrefill` 的请求体只有 sessionId，带别的字段解析失败；`remove` 一个不在列表里的路径返回 `not-in-list`，列表与事实都不变；对话形态（含暂存的形态）返回 `not-cowork`；目录对话框里取消，原样返回、不写事实。
     - 旧 183：发第一条消息前选任务形态、选一个文件夹、选 glm-5.3-flash 再发送：`session/start`、形态事实、工作区事实、`session/model_choice_set` 属同一批，第一个 Run 的 `session/model_selected` 是 glm-5.3-flash（选模型那半随第 19 步）。
@@ -311,7 +313,7 @@
     - 旧 225（后半）：system 只由 kernel 按 `session/profile_set` 的形态与 `LoopPorts.locale({ sessionId })` 取的语言组装（这个端口只在组装 system 时读），写进 `view/content(system)`；`kernelAuthored` 为真的结果、`message/continuation` 的 content、anchor 的 `summary` 重放时都取存下的原文，升提示层版本之后旧事实复算的 promptHash 不变。
     - 旧 226（请求体）：默认不带 effort；Anthropic 线思考开着时带 `display: 'summarized'`，关着时不带；Haiku 4.5 只在预算式思考时带；智谱线默认不带 `reasoning_effort`，选了 high 的会话带 `'high'`（选档在第 19 步补跑）。
     - 语言提示取本 incarnation 第一次请求时的界面语言；会话中途改界面语言，system 逐字节不变；新会话才用新的语言。
-  - 暂定与待定：开放问题 16：建立前暂存形态的路由、已建会话读形态与工作区的路由，定下之前这几小步不开工（增删与权限重算照做）；工作区变化与日期经 `message/environment` 告诉模型（开放问题 16，owner 2026-09-26 已定），本步写入与模板；开放问题 13（对话形态越界拦截码）；开放问题 24（删除会话时不删专用文件夹）；Glob 按路径码元升序、不跟随指向工作区外的链接（暂定，引擎与正则方言在第 22 步按评测定，两条底线不变）；开放问题 11（文件夹只经主进程、cwd 一变授权作废，已确认）。
+  - 暂定与待定：开放问题 16 已定（owner 2026-09-26）：建会话前的草稿放 kernel（`session/draft.ts`，mailbox 读写，上限 16 份），本步做 `session.selectProfile`、`session.facts` 两条路由与草稿的生命周期，预填读 `config.get`；工作区变化与日期经 `message/environment` 告诉模型，本步写入与模板；开放问题 13 已定（`protected`，对话专用回执）；开放问题 24 已定（删会话不删专用文件夹；所有 Read 按整行限长、从不落盘，`SPILL_THRESHOLD_CHARS` 与计数函数提前到本步）；Glob 按路径码元升序、不跟随指向工作区外的链接（暂定，引擎与正则方言在第 22 步按评测定，两条底线不变）；开放问题 11（文件夹只经主进程、cwd 一变授权作废，已确认）。
 - [ ] 19. **模型选择与手填模型 ID**（裁决 M5、M6、A11、A15、A16、B14、A9、A14，约 1.3–2 步）
   - 读：§模型选择；§思考档位；§表外模型与不发工具；01 修补 6；§模型菜单与输入框。
   - 交付物：`session.selectModel` / `session.modelChoice`、`session/model_choice_set`、`defaultModelByProfile` 与 `lastWorkspaceFolders`、五层读取顺序；「已配置」的算法；key 绑定主机（`provider.configure` 的拒绝、发送前核对）；`provider.list` 的 `mark` / `listing` / `purposeKey` / `effortLevels` / `defaultEffort` / `endpoint`；ModelMenu 与 EffortSubmenu、目标主机与本机切公网的确认；设置卡改名（common.json 两个键）与写键规则；三条跨厂商回放测试的前两条；`provider.select` 撤掉 `unknown-model` 拒收（01 修补 9 (c)）、`source: 'user'`、菜单「更多模型 ›」与设置卡的手填输入、手填模型不发工具；run-assembly.ts 的 `resolveChoice`（②–⑤ 与数据去向检查，间接切公网返回 `needsConfirm`）；`session.selectModel` 接启动恢复的闸，写下选择后放出 held 的排队项；contracts 为会话选择写双向互赋断言（验收 13）。一步内修不完跨厂商回放就按砍法退到 M5-B。
@@ -334,7 +336,7 @@
     - 旧 41：Ollama 会话在两种形态下，fakeNetwork 断言请求里都没有 `tools`。
     - 旧 82（common.json 那半）：两种语言的 `settings.providers.model` 为「新会话默认模型 / Default model for new chats」，`settings.providers.description` 前半句提到新会话；locale 键存在性测试仍通过。
     - 旧 235（只在触发 M5-B 降级时）：在已有历史的会话里点别家厂商的模型行，会话的模型选择不变，行上显示原因；点「用新模型开新会话」会新建一个用该模型的会话；同一厂商内换模型照常生效。
-  - 暂定与待定：开放问题 3、4 已确认按修补；开放问题 16：key 的主机绑定记录存哪（定下之前 A9 的保存记录与发送前核对不开工），`listing` 暂定主进程一张表；02 之前已存、没有绑定记录的 key，升级后第一次用到时绑到当时生效的主机并记一行日志（暂定）；开放问题 23（内置行改 baseURL 暂标 `verified`）；私网算本机一侧（开放问题 11，已确认）；tool call id 不规整（官方 key 那次前缀测试再定，第 33 步）。
+  - 暂定与待定：开放问题 3、4 已确认按修补；开放问题 16 已定（owner 2026-09-26）：key 绑定不另存（绑定主机 = 已存 baseURL 的主机，改主机那次保存先无条件删 key、再写配置、再写新 key，钥匙串出错就整次拒绝；每个 profile 一把主进程锁），`listing` 是 `ModelInfo` 的可选字段（本步给 Opus 5 行写 `listing: 'more'`，断言每个定义的第一行不是 `more`），`selectModel` 的草稿分支并返回它实际用的形态；开放问题 23 已定（zhipu、anthropic 内置行改 baseURL 仍标 `verified`）；测试要点补：改主机的保存在写新机密时失败，该定义没有已存机密、config.json 是新地址、发送按缺 key 拒绝、fakeNetwork 0 次；删完之后写 config.json 失败，没有 key、仍是旧主机；改主机时给一个超过 2560 字节的 key，没有 key、新主机、0 次请求；钥匙串锁着时改主机被拒；两次 configure 重叠时 key 与地址仍配对；私网算本机一侧（开放问题 11，已确认）；tool call id 不规整（官方 key 那次前缀测试再定，第 33 步）。
 - [ ] 20. **界面最小正式版**（裁决 H3、F6、B18、B15、H12、D10、H13、H6、A11）
   - 读：§界面范围；§离开会话；§启动恢复与发送防护「恢复完成前不能发送」。
   - 交付物：先做 runtime 的 spike（继续用 `useLocalRuntime`，还是换成由 Tape 投影驱动的 external-store runtime；依据：「暂停 → 答复 → 续跑」「生成中入队」「重启后重画」三个 e2e 不绕过 runtime 就能通过，「重试」仍对应阶段 1 的 Reload）；contracts 的 `calls`（kernel 投影组装、desktop 只转交）、`approval.current` 的 `callKey` / `anchorCallKey` / `allowScope`；ToolRow、ThinkingBlock、TurnSummaryLine、FailureCard（「继续」「重试」规则）、BlockedNotice、最小审批卡（先做工作区外读；对象行转义、按 `requestId` 去重、点击保护）、排队中行、PendingApprovalBanner、LeaveRunDialog、渲染端按 id 切会话（切到后调 `approval.resume`）、`attempt-discarded` 撤回已流出的内容、`chat.queue` 事件带 `held` 时打开模型菜单的确认页、横幅的 `resume` 行与自动恢复会话末尾的「继续」行（可续跑状态都读 `approval.list` 里当前会话的 `resume` 行，停止钮这时也显示）、自绘停止钮与适配器 `onAbort` 只关本地通道、恢复完成前禁发、ModeSwitch 与 FolderChip、待批时的输入框提示、排队气泡；文案覆盖单测与双语回归；开放问题 16 的 `error.endReason` 定下后，写进 01 修补 6、9 (o) 与 01 spec 的 Amended by 行（或按定下的做法撤回第 13 步的改动）。
@@ -362,7 +364,7 @@
     - 旧 222：任务形态里 Read Tenon profile 目录下的文件，那一行下面出现 BlockedNotice，原因取自 `blocked.protected` 并填好 target 槽位，没有放行入口；一轮里夹一次审批（写 → 允许 → 再读几次）只出一行 TurnSummaryLine，在最后一个 Run 结束后出现，计数覆盖两个 Run，暂停时不出（写入在第 22 步补跑）。
     - 旧 226（ThinkingBlock）：收起显示首句、展开显示摘要或 reasoning_content；流式时收起态显示用时，重启后重放的历史消息不显示用时；zh-CN、en 各一例。
     - 旧 27（界面）：`step-limit` 结束后界面出现「继续」。
-  - 暂定与待定：开放问题 16（主进程怎么把 Run 状态交给渲染端；定下之前离开确认、停止钮的状态接线与立即发送带的 runId 不开工；`error.endReason` 按暂定已在第 13 步做，最晚本步前定；`user-message` 已在第 17 步前定）；开放问题 26（「继续」行，已定）；多个文件夹时工作区外卡的 `facts.workspace` 填第一个（暂定）；新卡不抢焦点；`APPROVAL_CLICK_GUARD_MS` 按 Cowork 09-17 修过的叠卡行为自测取值，结果写进 components.md 的带日期补记；横幅 `approval.list` 的 `limit` 暂取 20（第 34 步校准）；开放问题 11 的界面读法；连接器卡参数默认展开（开放问题 15，已定），components.md 已有带日期补记。
+  - 暂定与待定：开放问题 16 已定（owner 2026-09-26）：Run 状态用推送事件 `run.state`（contracts `ipc/run.ts` 与 registry 登记；RunRegistry 记 runId 并推送；每个窗口 `did-finish-load` 补推 `run.state` 与不为空的 `chat.queue`；渲染端状态表在 main.tsx 里作为静态 import 放在 `startRendererI18n` 之前），测试要点补：答复开的 Run、自动发出（预建期间 running 为真、runId 为 null）、子会话答复开的 Run 都推送；收交接时 runId 换成父会话的 Run；abort 后 running 为假、runId 仍在；finish 后 runId 为 null；同一同步段里的 finish 与 begin 只推一次；重载后新文档收到补推；`error.endReason` 已定（第 13 步做）；`user-message` 已定（第 17 步）；开放问题 26（「继续」行，已定）；多个文件夹时工作区外卡的 `facts.workspace` 填第一个（暂定）；新卡不抢焦点；`APPROVAL_CLICK_GUARD_MS` 按 Cowork 09-17 修过的叠卡行为自测取值，结果写进 components.md 的带日期补记；横幅 `approval.list` 的 `limit` 暂取 20（第 34 步校准）；开放问题 11 的界面读法；连接器卡参数默认展开（开放问题 15，已定），components.md 已有带日期补记。
 - [ ] 21. **① 的 live**（〔智谱 live〕；裁决 M2、A12、A1、H4、F3、H10、A2）
   - 读：§验收标准 第 39 条；§实测记录。
   - 交付物：`pnpm test:live` 的智谱 agent 用例（flashx 与 flash 各一遍）；实测结果写进本文件的 live 记录。
@@ -416,7 +418,7 @@
     - 旧 23：「读 a、读 b、写 c、读 d」，a、b、d 都在工作区内：a、b 并行，两者的派发都早于任一个完成；c 出卡，d 排在 c 后面，拒绝 c 后 d 记 not-run；让 b 先于 a 完成，Tape 里的结果仍按调用顺序排。
     - 旧 126：d 没有被派发；`tool/result` 与 `tool_outcome` 按 a、b、c、d 的顺序出现；本会话即使已允许过搜索与域名，同批里 WebSearch、WebFetch、Bash、Write、MCP 工具也从不同时在途；对话形态里连续的 Read 逐个派发。
     - 不变量 13：假工具记录执行区间，只有最前面那组 Read / Glob / Grep 的区间允许重叠。
-  - 暂定与待定：开放问题 24（Read 读落盘文件时单次结果又超过阈值；默认只返回阈值以内的整行并注明下一段的 `offset`）；删目录失败不在启动时清扫；阈值与预览在第 34 步校准。
+  - 暂定与待定：开放问题 24 已定（所有 Read 自己限长，第 18 步已做，阈值常量与计数函数已在）；对话形态 Read 一个落盘文件、超过阈值时不再落盘；删目录失败不在启动时清扫；阈值与预览在第 34 步校准。
 - [ ] 25. **评测运行器与小横评**（裁决 H15、M8、D7）
   - 读：§评测集与测试宿主；§记录格式与费用口径；§同题对比。
   - 交付物：`apps/desktop/evals/`（测试宿主、task 与 record 的 zod、checks、费用函数、models.ts 的评测专用行），根 vitest 的 `evals` project 与 `pnpm eval` / `pnpm evals:gate` 脚本，评测集前 5 题（01–05）；循环跑通后马上做 GLM 小横评。
@@ -441,7 +443,7 @@
     - 旧 133：等提问时发送，输入的原文写成 AskUserQuestion 的结果，再开新 Run；排队消息在下一次请求前插入。
     - 旧 175：等提问时重启，`approval.current` 返回提问；跳过的题得到「无偏好」标记；多选 `['x', 'y']` 成为 `'x, y'`；未知的答案键返回 `invalid`、不写事实；等提问时 `chat.send` 成为打字回答（answers 为 {}，response 为原文），不写 `message/user`；停止记 `unanswered`。
     - 旧 176：在「其他」里打的字放进 `answers[题目原文]`；tool_result 文本来自固定模板，重放逐字不变；审批与提问同时待答时先出审批卡，审批答完才出提问卡。
-  - 暂定与待定：开放问题 18 的汇总卡数据从哪读，定下之前汇总卡这一小步不开工（2026-09-26 已随第四轮交 owner）；`unanswered` 标 is_error（开放问题 11，已确认）；子会话工具表里没有它（第 31 步验）。
+  - 暂定与待定：开放问题 18 的汇总卡数据已定（owner 2026-09-26）：`ToolResultPayload.question` 与视图的 `question`，只有 `approval.respond` 路径把没答的题补成 null，打字回复保留原文；测试要点补：重启后汇总卡与 live 一致；多选的 label 自带「, 」时仍分项显示；`unanswered` 标 is_error（开放问题 11，已确认）；子会话工具表里没有它（第 31 步验）。
 - [ ] 27. **本机抓取与 WebFetch**（裁决 H8、F10、E4、D5、F2、H9；最后一个可砍项）
   - 读：§本机抓取器；§审批、授权与费用；01 修补 4（`fetchUntrusted`）；01 修补 9 (p)。
   - 交付物：`HostNetwork.fetchUntrusted` 修补与 desktop `host/fetch-untrusted.ts`（DNS 解析一次、判地址、钉地址、3xx 原样返回、`createDesktopNetwork(seams?)` 测试接缝），内存 host 与 fakeNetwork 同改；WebFetch 的字面判定、逐跳重定向、HTML 转 Markdown、落盘、审批与主机名授权、host 拒绝的收口。外带检查（第 29 步）接上之前，WebFetch 不进工具表：本步的 kernel 测试与 desktop 集成测试经 `createTestSessionService` 的注册表把 WebFetch 设为 `'real'`。
@@ -454,7 +456,7 @@
     - 旧 210：DNS 层被拒，WebFetch 的收口为 not-run、来源 `protected`，facts 为 `{ toolName: 'WebFetch', target: <主机名> }`，结果 is_error，出拦截回执、没有放行入口；连续 3 个这样的调用以 `blocked-repeatedly` 结束。
     - 旧 211：`text/plain` 原样返回，`application/octet-stream` 回 is_error 并带类型；超过阈值的页面按 H9 落盘，结果只有预览、路径和大小；HTML 转 Markdown 的验收等库定下后补。
     - 旧 212（WebFetch 部分）：第一次访问 a.example.com 出卡，target 为完整 URL；同主机再抓不出卡；b.example.com、sub.a.example.com 都要出卡；`grant.key` 等于 `grantKey(BUILTIN_SERVER_ID, 'WebFetch', { kind: 'domain', host })`；`A.Example.COM.` 规范化为 `a.example.com`。
-  - 暂定与待定：开放问题 12（外带检查怎么接，spec 定的期限是 ③ 的搜索与抓取开工前）最晚本步前定；开放问题 5（`fetchUntrusted`）已确认按修补；开放问题 18 的 HTML 转换已定（owner 2026-09-26）：kernel 的 `tools/builtin/web-fetch` 用 `@mdream/js` 1.7.2（钉死），packages/kernel 加这个依赖，host-independence.test.ts 加它的 browser 平台打包探针；转换前按 charset 用 `TextDecoder` 解码，正文超过 `FETCH_CONVERT_MAX_BYTES`（暂取 1 MB）回 is_error 带字节数；测试要点补：script、style 的内容不进结果，相对链接按最终 URL 转绝对，表格转成 Markdown 表，5000 层嵌套不抛错，GBK 页面不乱码，超上限的正文不转换；开放问题 22（智谱线改不改走 `/reader`）；跳数上限暂取 20（第 34 步校准）；同主机跳转之后那一跳被 host 拒绝的算拦截（`protected`，计入 F2，出回执；暂定）；CGNAT 等地址段不拦（阶段 4）。
+  - 暂定与待定：开放问题 12 已定（kernel 等价规则，第 29 步）；开放问题 21、22 已定（按默认；两条线都本机抓取，WebFetch 不设时限、按精确主机名授权）；开放问题 5（`fetchUntrusted`）已确认按修补；开放问题 18 的 HTML 转换已定（owner 2026-09-26）：kernel 的 `tools/builtin/web-fetch` 用 `@mdream/js` 1.7.2（钉死），packages/kernel 加这个依赖，host-independence.test.ts 加它的 browser 平台打包探针；转换前按 charset 用 `TextDecoder` 解码，正文超过 `FETCH_CONVERT_MAX_BYTES`（暂取 1 MB）回 is_error 带字节数；测试要点补：script、style 的内容不进结果，相对链接按最终 URL 转绝对，表格转成 Markdown 表，5000 层嵌套不抛错，GBK 页面不乱码，超上限的正文不转换；开放问题 22（智谱线改不改走 `/reader`）；跳数上限暂取 20（第 34 步校准）；同主机跳转之后那一跳被 host 拒绝的算拦截（`protected`，计入 F2，出回执；暂定）；CGNAT 等地址段不拦（阶段 4）。
 - [ ] 28. **智谱与 Anthropic 搜索后端**（裁决 H8、A6、A9、M4、M2、E1、D1、F5）
   - 读：§工具形状与后端选择；§智谱后端；§Anthropic 后端；§审批、授权与费用。
   - 交付物：`tools/search/` 的类型、智谱后端（`search_pro_quark`、70 码点截断、1701–1703）、Anthropic 后端（非流式子请求、按 `forcedToolChoice` 挑型号、多块合并）；run-assembly 按主机选后端并做 key 绑定主机的检查；WebSearch 工具（域名参数随后端的 `domainFilter`）；每个根会话 200 次；审批与后端域名授权；写 `searchHitUrls`；WebSearch 在本步进产品工具表。官方 key 没到手时 Anthropic 线不提供 WebSearch，记为保证档待补。
@@ -473,14 +475,13 @@
   - 暂定与待定：开放问题 20（官方 key，最晚本步前）、21（搜索细节，定之前按 spec 现写法：没链接的命中保留、不传 `count` 与 `search_recency_filter`、不设时限不重试、不做净化、没有配额和缓存）；默认档 `search_pro_quark` 已确认（开放问题 8），账单待核；`max_uses` 暂定 1，`max_tokens` 由 owner 按官方 key 的探测取值，在第 33 步定稿。
 - [ ] 29. **外带检查**（裁决 F5、F10、F1、H5）
   - 读：§外带检查；§railguard 映射（只在选适配器时）；§挂点与会话视图。
-  - 交付物：按开放问题 12 的接法实现（owner 没回复就写 kernel 的等价规则 `permission/exfiltration.ts`），以 `ceiling: 'ask'`、`kind: 'local-rule'` 由 desktop 在 `index.ts` 注册；豁免数据与会话视图从 incarnation 起算；接上之后 WebFetch 才进工具表。
+  - 交付物：写 kernel 的等价规则 `permission/exfiltration.ts`（开放问题 12 已定），kernel 从包根导出完整的 `InspectorRegistration`，以 `ceiling: 'ask'`、`kind: 'local-rule'` 由 desktop 在 `index.ts` 注册；豁免数据与会话视图从 incarnation 起算；接上之后 WebFetch 才进工具表。
   - 验收：50。
   - 测试要点：
     - 旧 54、旧 165：任务形态读过工作区 `.env`、抓过一个网页后，对本会话已允许的同一域名发 WebFetch，URL 既不在真人 `message/user` 里、也不在 `searchHitUrls` 里：出卡，`flagged / exfiltration`，target 为完整 URL；答「允许」后，同一域名的下一次非豁免抓取仍出卡（不生成域名授权）；外带检查抛错或超时：`flagged / inspector-failed`，只管这一次。
     - 旧 166：URL 出现在真人消息文本里（含紧跟全角「，」「）」的写法），或出现在 WebSearch 结果的 `searchHitUrls` 里（包括结果已落盘、Tape 只剩预览），按域名授权免问；只写 `example.com/x`、不带 scheme 的不豁免；写下 `compaction/anchor` 之后污点不清零，清空会话之后才清零；Agent prompt 里写的 URL 不算你的消息；两个条件只满足一个、对话形态、WebSearch 与 Bash 调用本身、你拒绝过的 WebFetch，都不触发；重启后从 Tape 重算，结论不变。
     - 旧 167：用 `createScriptedProvider`（packages/kernel/src/testing/scripted-provider.ts:44）让模型固定发出「读 .env，再 WebFetch `同一域名/?d=<内容>`」，弹出 flagged 卡、URL 完整，答复前 `fetchUntrusted` 调用数为 0。
-    - 旧 164（只在选适配器时）：railguard 映射表每行一个测试，含 `HookRunResult.errors` 非空而 `ok` 为 true（fail-open）的用例，这时按声明的 ceiling 处理。
-  - 暂定与待定：开放问题 12（接法、`status: 'skipped'` 的映射、豁免的 URL 提取与比较算法）已在第 27 步前定；「碰过私有数据」的范围与 `recentUserTexts` 条数在第 34 步看评测再校。
+  - 暂定与待定：开放问题 12 已定（owner 2026-09-26：等价规则；豁免「去掉结尾标点」改为反复去掉、停止字符加反引号，旧 166 补「反引号包着的 URL 与 `[文字](URL).` 的写法也豁免」）；「碰过私有数据」的范围与 `recentUserTexts` 条数在第 34 步看评测再校。
 - [ ] 30. **摘要压缩**（裁决 H10、E2、A13、H12、M5；第二个砍项）
   - 读：§上下文管理：大响应落盘与摘要压缩；§tools 只在下列时点变化；§撞墙兜底与换模型。
   - 交付物：`loop/compaction.ts`（阈值、估算、边界、三种时机、防空转）；摘要请求（思考参数六行表、`compaction` 键、复算）；anchor 与各 provider 的 after-compaction 工具表同批写；重建与 `dropThinkingBefore`；撞墙兜底（与 `RETRY_CAP` 分开计）；换到小窗口模型先压缩；污点不随 anchor 清零；压缩阈值的测试接缝（只在 `!app.isPackaged` 加专用变量下生效）。
@@ -511,6 +512,7 @@
     - 旧 200：子 agent 在跑时发出的消息，不出现在子会话任何一条 `view/assembled` 引用的请求里，而是出现在父会话写下 Agent 结果之后的第一次请求里；子会话转上来的卡被允许，不会让它插入。
     - 旧 25、旧 201：子 agent 到步数上限：交接 outcome 为 `partial`、`childEndReason` 为 `step-limit`，发给父模型的正文带状态行与调用清单，子会话里没有 `message/continuation`；用固定 usage 的夹具：写下交接的父 Run 的 `run_terminal.usage` 等于它自己各 attempt 的行，加上子会话各 Run 的行（origin 为 `subagent`）；答复处理器写下的交接（停止、被新消息取代），用量不出现在任何 `run_terminal` 里；同一个子 agent 的用量不计入因它暂停的那个父 Run。
     - 旧 202：子 agent 执行调用时崩溃：重启后先恢复子会话、再恢复父会话；子会话在途的调用和父会话的 Agent 调用都记 uncertain，交接为 `uncertain`、带 finalReply 与 calls，没有调用被自动重跑；`subagentElapsedMs` 不计从暂停到答复的时段，也不计「写完问人判决、还没写 paused 终态」时崩溃到重启的时段；同一份 Tape 在重启前后算出的值相同。
+    - 两次写入之间崩溃（开放问题 25 已定：一律 uncertain）：① 子 Run 的 `run_terminal(completed)` 提交后、父会话结果写入前杀进程；② 子会话在跑时点停止，子 Run `user-stopped` 提交后杀进程；③ 子会话等审批时点停止，子会话 `cancelled-by-stop` 写完后杀进程；④ 父会话写完 dispatch 与 `parent_link`、子会话还没 `session/start` 时杀进程。①②在子会话用父 Run 租约、用自己租约两种情况下各跑一遍。重启后父会话的 Agent 调用都记 uncertain / crashed，`childEndReason` 依次为 `completed`、`user-stopped`、null、null（状态行填 `none`），交接带 `finalReply` 与 `calls`，没有调用被重跑。
     - 旧 230（SUBAGENT 部分）：两个常量只在 Revisions 记下 owner 给的数之后才声明，且 `SUBAGENT_STEP_LIMIT < STEP_LIMIT`。
     - 旧 24（子 agent）：子 agent 的工具表里没有 AskUserQuestion。
     - 子会话可续跑时点停止：子会话写不发请求的 Run 收掉同批剩下的，父会话的 Agent 调用记 aborted / `stopped`、交接 `aborted`，同批其余 not-run；之后没有在等的 Agent 调用，下一次 `send` 过配对检查。
@@ -518,7 +520,7 @@
     - 握着自己租约的子 Run 的 `run_terminal(completed)` 在 append 途中时点停止：`stopped: true`，不开父会话收交接的 Run，父会话的 Agent 调用记 aborted / `stopped`，交接 `childEndReason` 为 `completed`，fakeNetwork 不多调一次；停止改在交接生成（读子会话 Tape）途中到达，结果相同；子 Run 的 `run_terminal(paused)` 在 append 途中点停止：子会话写 `cancelled-by-stop`，父会话的 Agent 调用记 aborted / `stopped`，卡片消失，不开 Run。
     - 子会话可续跑时在根会话里发消息：先开子会话的续跑，这条留在父会话的队列，出现在父会话收交接的 Run 处理完同批后的第一次请求里，不出现在子会话的任何请求里；收交接的结果与父会话新 Run 的 `run_started`、`model_selected` 在同一次 append 里。
     - 子会话可续跑（含单调用批）：子会话的待批在启动时被收紧，`recover()` 把它列在根会话名下，父会话的 Agent 调用不补写、不生成交接；不打开再重启一次，Agent 调用仍按第 2 类保留；`approval.resume(root)` 开子会话的新 Run 处理同批剩下的，交接之后父会话续跑。
-  - 暂定与待定：开放问题 19（owner 给数之前这一步不开工）；开放问题 18 的到期与其余结局已定（owner 2026-09-26）：每次新 `requestSeq` 的主请求前查，满 300 秒不发、子 Run 以 `time-limit` 结束，交接 `partial`、不标 is_error；以其余原因结束一律 `partial`、不标 is_error、带 `childEndReason`；测试要点补：子会话累计 300 秒后下一次新请求不发，交接 partial、childEndReason 为 time-limit；子会话以 provider-error 结束时交接 partial、不标 is_error；子会话卡上「本会话」的措辞仍待 owner（2026-09-26 随第四轮交出）；子会话用任务形态那份系统提示；先写子会话再写父会话之间崩溃，父会话的 Agent 调用暂一律记 `uncertain`（开放问题 25，最晚本步前定）；开放问题 11 的子 agent 读法已确认。
+  - 暂定与待定：开放问题 19（owner 给数之前这一步不开工）；开放问题 18 的到期与其余结局已定（owner 2026-09-26）：每次新 `requestSeq` 的主请求前查，满 300 秒不发、子 Run 以 `time-limit` 结束，交接 `partial`、不标 is_error；以其余原因结束一律 `partial`、不标 is_error、带 `childEndReason`；测试要点补：子会话累计 300 秒后下一次新请求不发，交接 partial、childEndReason 为 time-limit；子会话以 provider-error 结束时交接 partial、不标 is_error；子会话卡上期限写「本次子任务」（开放问题 18 已定）；子会话用任务形态那份系统提示；先写子会话再写父会话之间崩溃，父会话的 Agent 调用一律记 `uncertain`（开放问题 25 已定，2026-09-26）；开放问题 11 的子 agent 读法已确认。
 - [ ] 32. **砍法落定**（裁决 M1）
   - 读：本文件开头的砍法；spec §验收标准 开头的删条目对照；§文档同步「砍的时候再改」。
   - 交付物：owner 定下砍不砍、砍哪些。如果砍：spec 顶部 Revisions 记下砍掉的目标和验收；§13 阶段 2 加带日期注记，指向新的 features spec（砍压缩连带 :881 的 B 与 :900「压缩重试 ≤ 2」；砍子 agent 注明 :886 (2) 由哪份 spec 实现、写进 :948 Research 的前置）；建好那份 spec 的骨架。触发过 M5-B 降级的，确认 Revisions 已逐条记下。
@@ -699,14 +701,14 @@
 
 - 第 5 步：已完成并并进 `feat/02-seg1`（评审两个视角的五条发现已改，第五种 `ConfirmTarget` 已加，见实施记录；突变视角没跑）。
 - 第 6、8 步：实现 agent 中途失败，`.claude/worktrees/t67`（`wt/02-step6-7`）与 `.claude/worktrees/t8`（`wt/02-step8`）里留有未提交的半成品，**不可信**，接手时先看 `git diff` 再决定用不用；第 7 步没开始。
-- owner 2026-09-26 定了开放问题的第一轮（都按推荐）：15 加第五种形态 `{ type: 'tool'; serverId; toolName }`；连接器卡参数默认展开；16 的「工作区变化与日期」新增 `message/environment`（每次用户消息、含插话之前检查，变了才追加全量，含本地日期）；16 的参数校验用 `@modelcontextprotocol/client` 自带的 cf-worker 校验器，失败记新来源码 `invalid-input`。这四条已写回 spec 并记 Revisions（2026-09-26）。第二、三轮（Bash、HTML 转换、子 agent 到期与其余结局、搜索次数上限）也已定并写回 spec（2026-09-26）。第四到六轮 owner 同日也都按推荐定了，**还没写回 spec**：16 的建会话前草稿放 kernel（删 `send` 的 `create` 参数，新增 `session.selectProfile`、`session.facts`；改之前先给 models/ 的 model1 加任何时刻都能发的选模型、选形态动作，两个模型跑到 0 违例）；21 全按默认；13 记 `protected` 加对话专用回执；16 的出错收尾撤回屏上半截（凡不写 assistant 的 attempt 都发 `attempt-discarded`，`error` 变体只增可选 `endReason`）；16 的 Run 状态用推送事件 `run.state`；24 所有 Read 自己按整行限长、不落盘；16 的 key 绑定不另存（绑定主机 = 已存 baseURL 的主机，改主机先删 key，写配置加锁）；16 的 listing 做成 `ModelInfo` 的可选字段；12、22、23、24(a)、25 按默认；12 的 URL 豁免放宽两处；18 的汇总卡与交接视图只增可选的 `question`、`handoff`；18 的子会话卡期限写「本次子任务」。各条的改法与核查意见在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
+- owner 2026-09-26 定了开放问题的第一轮（都按推荐）：15 加第五种形态 `{ type: 'tool'; serverId; toolName }`；连接器卡参数默认展开；16 的「工作区变化与日期」新增 `message/environment`（每次用户消息、含插话之前检查，变了才追加全量，含本地日期）；16 的参数校验用 `@modelcontextprotocol/client` 自带的 cf-worker 校验器，失败记新来源码 `invalid-input`。这四条已写回 spec 并记 Revisions（2026-09-26）。第二到六轮 owner 同日也都按推荐定了，已全部写回 spec 并记 Revisions（2026-09-26，(4)–(9)），plan 相关各步的「暂定与待定」与测试要点同步改了；开放问题 12–18、21–25 都已定，余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
 ## Open
 
 只列 owner 在仓库外要做的事：
 
-- 核对 S1、T10 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣，`/paas/v4/reader` 怎么计费（第 2 步；spec 开放问题 8、22）。
+- 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。
 - Anthropic 官方 key：起草时（2026-09-25）owner 已同意开，还没到手；在所在地区能不能开、怎么付款未核实；在 Console 预付少量 credits（预付本身就是花费上限，第 4 步）。到手后不进 `.env.local`、不进 shell profile，只经那一次 `pnpm test:live` 的进程环境以 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入（第 4 步）。最晚在第 28 步之前确认，开不了按 spec §Anthropic 保证档的退路 走 Revisions（开放问题 20）。
 - 给数：`SUBAGENT_STEP_LIMIT`、`SUBAGENT_TOKEN_LIMIT`（步数须小于 100），第 31 步开工前（开放问题 19）。
 - owner 补录：B1 #2（审批卡挂着时点停止，Cowork 作废还是保留卡片），最晚第 15 步前（开放问题 14）；F11 与 H13 #1（审批卡挂着时发新消息）；D7 三项（手动档下跑 `ls` 会不会先弹卡、新账号的初始审批档、覆盖已连接文件夹里的已有文件是否也不逐次问）；F6 #5（多张审批卡是否来自同一批、能否跳着答、拒绝一张后其余怎样）；F7 #3（子 agent 的审批卡出现在哪、会不会超时）；B3（停在任务页直接 Cmd+Q 再启动，落在首页还是该任务；落在任务页就按 B3-A 的改判重比 A 和 D）；H1 自查（自己的 Claude 消息框里还有没有 Chat / Cowork 选项）；Cowork 覆盖已有文件、跑 shell 命令时弹不弹卡。除 B1 #2 外都在同题对比开跑前补齐（第 34 步），补录后更新 docs/evals/README.md 已知差异清单的第 1 条和第 8 条。
