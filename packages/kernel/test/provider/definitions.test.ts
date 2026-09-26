@@ -13,7 +13,8 @@
  * Plus the definition data itself: the config keys the spec's table fixes, the default base URLs,
  * ollama's default key reaching the Authorization header, and the i18n keys being keys rather than
  * sentences (the kernel produces no prose). Whether those keys RESOLVE in both locale directories
- * is a desktop test (step 14).
+ * is a desktop test (step 14). The model rows spec 02 changes (§内置模型表的数据改动) are pinned
+ * at the bottom, the zhipu reasoning echo through each row's own `encode()`.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -35,6 +36,7 @@ import {
 } from '../../src/index.js'
 import type {
   ContentBlock,
+  InternalMessage,
   ModelInfo,
   ProviderDefinition,
   ProviderRegistry,
@@ -608,6 +610,10 @@ describe('builtin provider definitions', () => {
     expect(registry.get('zhipu')).toBe(zhipuDefinition)
     expect(registry.get('ollama')).toBe(ollamaDefinition)
     expect(registry.get('openai')).toBeNull()
+    // Spec 02 changes rows, not providers, and leaves ollama's one row able to call tools.
+    expect(
+      ollamaDefinition.builtinModels.map((model) => [model.id, model.supportsToolCalling]),
+    ).toEqual([['qwen3:8b', true]])
   })
 
   it('declares the wires and default base URLs of the spec table', () => {
@@ -683,11 +689,11 @@ describe('builtin provider definitions', () => {
   })
 
   it('records no usage for zhipu on an endpoint that gates it behind the opt-in', async () => {
-    // The falsifiable half of `usageNeedsOptIn: false` (see the note on zhipu's ModelInfo rows): the
-    // vendor's reference documents no `stream_options`, so no zhipu request asks for usage. If the
-    // live probe acceptance 21 requires finds that this endpoint reports usage only on request, THIS
-    // is what every `provider/attempt_completed` would then record — a zero indistinguishable from a
-    // free turn. Pinned so the choice is visible rather than assumed.
+    // The falsifiable half of `usageNeedsOptIn: false` (see the note on zhipu's ModelInfo rows): no
+    // zhipu request asks for usage. 01's live record (2026-09-22) found the vendor reports it
+    // without the opt-in; an endpoint that gated it would make THIS what every
+    // `provider/attempt_completed` records — a zero indistinguishable from a free turn. Pinned so
+    // the choice stays visible rather than assumed.
     const net = fakeNetwork({ kind: 'sse', frames: openAIFixture.NO_USAGE_FRAMES })
     const provider = zhipuDefinition.create({
       network: net,
@@ -783,6 +789,213 @@ describe('builtin provider definitions', () => {
       ;(row.requestParams as Record<string, unknown>)['thinking'] = 'off'
     }).toThrow(TypeError)
     expect(zhipuDefinition.builtinModels[0]?.contextLimit).toBe(limit)
+  })
+})
+
+/** Spec 02 §内置模型表的数据改动: the zhipu table, in order. */
+const ZHIPU_ROWS: readonly string[] = ['glm-5.3', 'glm-5.3-flash', 'glm-5.3-flashx', 'glm-4.6']
+
+const REASONING = 'the user wants the file; read it first'
+
+/** One tool round trip whose reasoning was produced by `modelId`, as the Tape would replay it. */
+function toolRoundTrip(modelId: string): InternalMessage[] {
+  return [
+    { role: 'user', content: [{ type: 'text', text: 'read /tmp/a.ts' }] },
+    {
+      role: 'assistant',
+      content: [
+        // The OpenAI wire's fold leaves the signature empty: this vendor issues none.
+        {
+          type: 'thinking',
+          text: REASONING,
+          signature: '',
+          provider: 'zhipu',
+          providerModel: modelId,
+        },
+        { type: 'tool-request', id: 'call_1', name: TOOL.name, input: { path: '/tmp/a.ts' } },
+      ],
+    },
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'tool-response',
+          id: 'call_1',
+          content: [{ type: 'text', text: 'export {}' }],
+          isError: false,
+        },
+      ],
+    },
+  ]
+}
+
+/** The assistant turn of `toolRoundTrip()` on the wire, without its reasoning. */
+const WIRE_CALL = {
+  role: 'assistant',
+  tool_calls: [
+    {
+      id: 'call_1',
+      type: 'function',
+      function: { name: TOOL.name, arguments: '{"path":"/tmp/a.ts"}' },
+    },
+  ],
+}
+
+describe('the model rows spec 02 changes', () => {
+  it('keeps glm-5.3 first and adds the flash pair ahead of glm-4.6', () => {
+    // The first row is the fallback for a user who never picked a model (02 decision M5).
+    expect(zhipuDefinition.builtinModels.map((model) => model.id)).toEqual(ZHIPU_ROWS)
+  })
+
+  it('gives every zhipu row tools, the reasoning echo and tool_stream', () => {
+    expect(
+      zhipuDefinition.builtinModels.map((model) => ({
+        id: model.id,
+        reasoning: model.reasoning,
+        supportsCacheControl: model.supportsCacheControl,
+        usageNeedsOptIn: model.usageNeedsOptIn,
+        supportsToolCalling: model.supportsToolCalling,
+        supportsStreamingToolCalls: model.supportsStreamingToolCalls,
+        thinkingPreservationFormat: model.thinkingPreservationFormat,
+        reasoningEchoField: model.reasoningEchoField,
+        requestParams: model.requestParams,
+      })),
+    ).toEqual(
+      ZHIPU_ROWS.map((id) => ({
+        id,
+        reasoning: true,
+        // Caching is implicit on this vendor, and usage arrives without the opt-in (01 live record).
+        supportsCacheControl: false,
+        usageNeedsOptIn: false,
+        supportsToolCalling: true,
+        // Probe TS (2026-09-26): all four streamed argument fragments with `tool_stream: true` and
+        // none refused it. A row that refused it would be false here and send no `tool_stream`.
+        supportsStreamingToolCalls: true,
+        thinkingPreservationFormat: 'reasoning-content',
+        reasoningEchoField: 'reasoning_content',
+        // Exactly these: `clear_thinking` stays at the vendor default by never being sent.
+        requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+      })),
+    )
+  })
+
+  it('gives the flash pair 1M / 128K and image input, and keeps the other two text-only', () => {
+    expect(
+      zhipuDefinition.builtinModels.map((model) => [
+        model.id,
+        model.contextLimit,
+        model.maxOutputTokens,
+        model.supportsVision,
+      ]),
+    ).toEqual([
+      ['glm-5.3', 1_000_000, 128_000, false],
+      // Probe V (2026-09-26): both named the colour of a base64 PNG; glm-5.3 answered 400.
+      ['glm-5.3-flash', 1_000_000, 128_000, true],
+      ['glm-5.3-flashx', 1_000_000, 128_000, true],
+      ['glm-4.6', 200_000, 128_000, false],
+    ])
+  })
+
+  it('prices the zhipu rows in CNY and leaves glm-4.6, which the vendor does not list, unpriced', () => {
+    // No `cacheWritePerMTok`: the vendor quotes no cache-write price, only hourly storage.
+    expect(
+      Object.fromEntries(zhipuDefinition.builtinModels.map((model) => [model.id, model.pricing])),
+    ).toEqual({
+      'glm-5.3': { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
+      'glm-5.3-flash': {
+        inputPerMTok: 0.8,
+        outputPerMTok: 2.8,
+        cacheReadPerMTok: 0.23,
+        currency: 'CNY',
+      },
+      'glm-5.3-flashx': {
+        inputPerMTok: 2,
+        outputPerMTok: 7,
+        cacheReadPerMTok: 0.57,
+        currency: 'CNY',
+      },
+      'glm-4.6': undefined,
+    })
+  })
+
+  for (const id of ZHIPU_ROWS) {
+    it(`echoes ${id}'s own reasoning_content when the request carries tools, and only then`, async () => {
+      const provider = zhipuDefinition.create({
+        network: fakeNetwork([]),
+        clock: { now: () => NOW },
+        config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
+        secrets: { apiKey: API_KEY },
+      })
+      const model = (await provider.models()).find((row) => row.id === id)
+      if (model === undefined) throw new Error(`zhipu has no ${id} row`)
+      const history = toolRoundTrip(id)
+
+      // Rule 4 of the guard: the second turn's assistant message carries the same model's reasoning.
+      const withTools = provider.encode({ model, messages: history, tools: [TOOL] })
+      expect((withTools.body as { messages: unknown[] }).messages[1]).toEqual({
+        ...WIRE_CALL,
+        reasoning_content: REASONING,
+      })
+      expect(withTools.thinkingDecisions).toEqual([{ action: 'echo', reason: 'same-model' }])
+
+      // The same history with no tools: nothing is echoed, and the audit says why.
+      const without = provider.encode({ model, messages: history })
+      expect((without.body as { messages: unknown[] }).messages[1]).toEqual(WIRE_CALL)
+      expect(without.thinkingDecisions).toEqual([{ action: 'drop', reason: 'no-tools' }])
+      expect(JSON.stringify(without.body)).not.toContain(REASONING)
+
+      // Another row's reasoning is never echoed, tools or not: the four are four models.
+      const sibling = ZHIPU_ROWS.find((other) => other !== id) ?? id
+      const foreign = provider.encode({ model, messages: toolRoundTrip(sibling), tools: [TOOL] })
+      expect(foreign.thinkingDecisions).toEqual([{ action: 'drop', reason: 'model-changed' }])
+      expect(JSON.stringify(foreign.body)).not.toContain(REASONING)
+
+      // Both bodies carry the row's own parameters and nothing else of the vendor's.
+      for (const encoded of [withTools, without]) {
+        const body = encoded.body as Record<string, unknown>
+        expect(body['thinking']).toEqual({ type: 'enabled' })
+        expect(body['tool_stream']).toBe(true)
+      }
+    })
+  }
+
+  it('puts Sonnet 5 first and Opus 5.5 second until the prefix acceptance passes', () => {
+    // 02 decision A16's ownerNote: the order changes once an official key passes, not before.
+    expect(anthropicDefinition.builtinModels.map((model) => model.id)).toEqual([
+      'claude-sonnet-5',
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-haiku-4-5-20251001',
+      'claude-fable-5-1',
+    ])
+    const opus = anthropicDefinition.builtinModels[1]
+    expect(opus).toMatchObject({
+      id: 'claude-opus-5-5',
+      providerId: 'anthropic',
+      contextLimit: 1_000_000,
+      maxOutputTokens: 128_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: true,
+      supportsCacheControl: true,
+      thinkingPreservationFormat: 'signed-blocks',
+      usageNeedsOptIn: false,
+    })
+    // Exact, so no `currency` key: absent reads as USD, like every sibling on this vendor.
+    expect(opus?.pricing).toEqual({
+      inputPerMTok: 4,
+      outputPerMTok: 20,
+      cacheReadPerMTok: 0.2,
+      cacheWritePerMTok: 5,
+    })
+    expect(anthropicDefinition.builtinModels.map((model) => model.pricing?.currency)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ])
   })
 })
 

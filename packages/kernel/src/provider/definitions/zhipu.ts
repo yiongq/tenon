@@ -11,9 +11,19 @@
  * reference (https://docs.bigmodel.cn/api-reference/模型-api/对话补全) and
  * https://docs.bigmodel.cn/cn/guide/capabilities/stream-tool.
  *
- * Two rows only, and on purpose: each one is a model whose own documentation page was read. The
- * catalogue is larger (GLM-5.2, GLM-5.1, GLM-5-Turbo, GLM-4.7 and the free Flash tiers), and
- * adding a row is data, not code.
+ * Re-read on 2026-09-26 for spec 02 (§内置模型表的数据改动): the flash pair's one shared page
+ * https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash (model codes
+ * `glm-5.3-flash/glm-5.3-flashx`, 1M / 128K for both; there is no separate FlashX page), the model
+ * overview and the chat-completions reference again, the pricing table
+ * https://docs.bigmodel.cn/cn/guide/start/pricing with its landing page
+ * https://open.bigmodel.cn/pricing, and the thinking pages
+ * https://docs.bigmodel.cn/cn/guide/capabilities/thinking-mode and .../thinking. The same day's
+ * live probes (TS, R46, V) are recorded in 02 plan.md, step 2.
+ *
+ * Four rows, each a model whose own documentation page was read. glm-5.3 stays first because the
+ * first row is only the fallback for a user who never picked one (02 decision M5), and moving it
+ * is not a data change 02 asked for. The catalogue is larger (GLM-5.2, GLM-5.1, GLM-5-Turbo,
+ * GLM-4.7 and the free Flash tiers), and adding a row is data, not code.
  */
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import type { ConfigKey, ModelInfo, Provider, ProviderDefinition } from '../types.js'
@@ -50,29 +60,49 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 /**
  * The fields that need saying out loud:
  *
- * - `thinkingPreservationFormat: 'drop'` is fixed by the spec (open question 2): the vendor
- *   documents `reasoning_content` as display-only and nothing has tested whether it accepts one
- *   back, so a reasoning block from a previous turn is dropped rather than echoed. A `pnpm
- *   test:live` probe is what would change this line.
+ * - `thinkingPreservationFormat: 'reasoning-content'` under `reasoning_content` on every row,
+ *   replacing 01's `'drop'` (02 decision A12, closing 01's open question 2): the vendor's
+ *   thinking-mode page says interleaved thinking with tools must keep the reasoning and send it
+ *   back with the tool results. Probed: T6 (2026-09-25, glm-5.3 and flashx) and R46 (2026-09-26,
+ *   glm-4.6) — an echoed `reasoning_content` is accepted, counted in `prompt_tokens` and changes no
+ *   answer, and leaving it out is no 400 either. The guard's rule 4 echoes only when the request
+ *   carries tools. `clear_thinking` is not sent, so the vendor default holds (`true`: reasoning
+ *   from turns before the last user message is stripped server side), although the flash page
+ *   recommends `false`. The T6 extension of 2026-09-26 found glm-5.3 counting only the current
+ *   turn's echo and flash counting every echoed turn; whether that changes the row (02 plan,
+ *   step 2: A, C or D) waits for the owner's bill.
  * - `requestParams.thinking` is the seam the spec chose for this vendor's non-OpenAI parameter. It
  *   states the vendor's own default (`enabled`), so it changes no behaviour — what it buys is that
  *   `promptHash` covers the statement. Note the consequence: `requestParams` is per MODEL, not per
  *   request, so `ProviderRequest.thinking` cannot turn this off (the attempt snapshot still records
- *   what was asked for). GLM-5.3 could not be turned off anyway — its page says thinking is always
- *   enabled.
+ *   what was asked for). The GLM-5.3 family could not be turned off anyway — the vendor says
+ *   `disabled` is refused there — and on glm-4.6 `enabled` means the model decides for itself.
+ * - `requestParams.tool_stream: true` on every row, probe TS (2026-09-26): with it, a streamed tool
+ *   call's `function.arguments` arrived in 5–6 fragments on all four models (without it, in one on
+ *   glm-5.3 and glm-4.6), and each joined into parseable JSON, so `supportsStreamingToolCalls`
+ *   stays true. A request with no tools and `tool_stream: true` returned 200 / `stop` on all four,
+ *   which is what makes a per-model parameter safe on tool-less requests. The reference's text
+ *   schema lists GLM-5.3 and GLM-4.6 for it; its vision schema, where the flash pair sits, has no
+ *   such property, but the flash page recommends it and the probe is what these rows follow.
  * - `supportsCacheControl: false` everywhere on this wire: the vendor's context caching is
  *   automatic and there is no `cache_control` parameter to place, so there is nothing for a caller
  *   to control.
- * - `usageNeedsOptIn: false`, re-read on 2026-09-21: the chat-completions reference still lists no
- *   `stream_options` parameter at all, while documenting `usage` as a field of the streamed chunk.
- *   The spec's provider table names `include_usage` among the things this vendor was chosen to
- *   exercise, so the two disagree, and the vendor's own documentation is what plan step 11 says to
- *   fill from. Sending an undocumented parameter risks a 400 on EVERY request; being wrong this way
- *   costs the usage of a recorded attempt, which a case in test/provider/definitions.test.ts makes
- *   visible instead of assumed. The `pnpm test:live` probe acceptance 21 already requires settles
- *   it: if that endpoint reports no usage without the opt-in, this line becomes `true`.
- * - `supportsVision: false`: the GLM-5.3 page says it handles text only; vision is a separate
- *   model family (GLM-4.6V / GLM-5.3V), which is a row nobody has read the page for yet.
+ * - `usageNeedsOptIn: false` is settled: 01's live record (01 plan.md, acceptance 21, 2026-09-22)
+ *   found the usage on the finish-reason chunk with no `stream_options`, and the opt-in accepted
+ *   but changing nothing; probe TS (2026-09-26) saw usage on all four rows without it.
+ * - `supportsVision`, probe V (2026-09-26): glm-5.3-flash and glm-5.3-flashx each named the colour
+ *   of a 64×64 red and a blue PNG sent as a base64 `image_url` part (200), and their page documents
+ *   image, video and file input, so both are true. glm-5.3 refused the same request with `400 1210
+ *   messages.content.type 参数非法，取值范围 ['text']` and its page says text only; glm-4.6's page
+ *   says text only too. Both stay false.
+ * - `pricing` is CNY per million tokens at the standard price in the pricing table (2026-09-26).
+ *   The three priced rows are flat: one row each, no input-length tier and no time-of-day tier.
+ *   There is no `cacheWritePerMTok` because the vendor quotes no write price: its only other cache
+ *   charge is storage, per million tokens per HOUR, free for a limited time with the later price
+ *   unpublished. glm-4.6 has no per-token price on either pricing page (only a private-instance
+ *   rate), so its row has none. The landing page's FAQ claims a limited-time 50% discount on
+ *   glm-5.3-flash (0.4 / 1.4, cache hit 0.115) with no dates, and no price card shows it; the bill
+ *   decides, and until then the row keeps the standard price.
  */
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
@@ -85,9 +115,45 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsStreamingToolCalls: true,
     supportsVision: false,
     supportsCacheControl: false,
-    thinkingPreservationFormat: 'drop',
+    thinkingPreservationFormat: 'reasoning-content',
+    reasoningEchoField: 'reasoning_content',
     usageNeedsOptIn: false,
-    requestParams: { thinking: { type: 'enabled' } },
+    pricing: { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
+    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+  },
+  {
+    // The daily model (02 §模型与密钥).
+    id: 'glm-5.3-flash',
+    providerId: ZHIPU_PROVIDER_ID,
+    contextLimit: 1_000_000,
+    maxOutputTokens: 128_000,
+    reasoning: true,
+    supportsToolCalling: true,
+    supportsStreamingToolCalls: true,
+    supportsVision: true,
+    supportsCacheControl: false,
+    thinkingPreservationFormat: 'reasoning-content',
+    reasoningEchoField: 'reasoning_content',
+    usageNeedsOptIn: false,
+    pricing: { inputPerMTok: 0.8, outputPerMTok: 2.8, cacheReadPerMTok: 0.23, currency: 'CNY' },
+    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+  },
+  {
+    // The speed tier the live suite runs on (02 §模型与密钥).
+    id: 'glm-5.3-flashx',
+    providerId: ZHIPU_PROVIDER_ID,
+    contextLimit: 1_000_000,
+    maxOutputTokens: 128_000,
+    reasoning: true,
+    supportsToolCalling: true,
+    supportsStreamingToolCalls: true,
+    supportsVision: true,
+    supportsCacheControl: false,
+    thinkingPreservationFormat: 'reasoning-content',
+    reasoningEchoField: 'reasoning_content',
+    usageNeedsOptIn: false,
+    pricing: { inputPerMTok: 2, outputPerMTok: 7, cacheReadPerMTok: 0.57, currency: 'CNY' },
+    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
   },
   {
     id: 'glm-4.6',
@@ -99,9 +165,10 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsStreamingToolCalls: true,
     supportsVision: false,
     supportsCacheControl: false,
-    thinkingPreservationFormat: 'drop',
+    thinkingPreservationFormat: 'reasoning-content',
+    reasoningEchoField: 'reasoning_content',
     usageNeedsOptIn: false,
-    requestParams: { thinking: { type: 'enabled' } },
+    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
   },
 ])
 

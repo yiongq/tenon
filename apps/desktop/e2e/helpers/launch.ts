@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { _electron as electron } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
+import { appEnvironment } from './app-env.js'
 
 export type Locale = 'zh-CN' | 'en'
 export type LocaleSetting = 'auto' | Locale
@@ -101,27 +102,16 @@ export interface LaunchedApp {
  * - `--user-data-dir` is a Chromium switch Electron forwards: `app.getPath('userData')`
  *   returns it, so no main-process flag parsing is needed (measured on Electron 44.4.1,
  *   against this repo's own `out/main/index.js`).
- * - ELECTRON_RUN_AS_NODE is set inside Electron-hosted terminals and would turn the
- *   electron binary into plain Node.
+ * - The environment is `appEnvironment`'s: the runner's own minus every provider credential and
+ *   endpoint variable, with TENON_DEV_ENV=off (no developer `.env.local`) and TENON_SECRETS=memory
+ *   (no real OS keychain: on macOS an unsigned dev build asking for one pops a system dialog, and
+ *   CI's Linux has no Secret Service at all). Credentials for a test therefore always travel
+ *   through `options.env`. The one exception is the opt-in live suite's zhipu group, which asks for
+ *   `keychain` and so keeps the real path covered by something (spec 01 §desktop 接线,
+ *   「e2e 的机密接缝」).
  */
 export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> {
-  const { ELECTRON_RUN_AS_NODE: _ignored, ...rest } = process.env
-  // TENON_DEV_ENV=off: the app must not pick up a developer's `.env.local` during tests;
-  // a spec that wants real credentials passes them explicitly through `options.env`.
-  // TENON_SECRETS=memory: and it must not read or write the real OS keychain either — on macOS
-  // an unsigned dev build asking for one pops a system dialog, and CI's Linux has no Secret
-  // Service at all. Credentials for a test therefore always travel through `options.env`. The
-  // one exception is the opt-in live suite, which asks for `keychain` and so keeps the real
-  // path covered by something (spec 01 §desktop 接线, 「e2e 的机密接缝」).
-  const env: Record<string, string> = {
-    ...(rest as Record<string, string>),
-    TENON_DEV_ENV: 'off',
-    TENON_SECRETS: options.secrets ?? 'memory',
-    ...options.env,
-  }
-  if (options.systemLanguages !== undefined && options.systemLanguages.length > 0) {
-    env['TENON_LOCALE'] = options.systemLanguages.join(',')
-  }
+  const env = appEnvironment(process.env, options)
 
   const app = await electron.launch({
     args: ['./out/main/index.js', `--user-data-dir=${options.userData}`],

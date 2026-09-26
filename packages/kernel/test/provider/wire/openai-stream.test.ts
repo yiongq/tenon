@@ -30,7 +30,7 @@ import type {
 import { createStreamGate, fakeNetwork } from '../../../src/testing/index.js'
 import type { FakeExchange, FakeNetwork } from '../../../src/testing/index.js'
 import * as fixture from '../fixtures/openai-sse.js'
-import { TOOL, openAIModel, requestOf } from './fixtures.js'
+import { TOOL, globalFetchCallsDuring, openAIModel, requestOf } from './fixtures.js'
 
 const PROVIDER_ID = 'zhipu'
 const BASE_URL = 'https://open.bigmodel.test/api/paas/v4/'
@@ -813,6 +813,17 @@ describe('OpenAIChatProvider request (invariant 8)', () => {
     expect(body?.stream).toBe(true)
     // The usage opt-in this model declares, in the hashed body rather than added by stream().
     expect(body?.stream_options).toEqual({ include_usage: true })
+  })
+
+  it('never reaches the global fetch', async () => {
+    // The injected host fetch is the only way out: drop the adapter's `fetch` option and the SDK
+    // takes the platform one, which this counts. Re-run whenever the SDK pin moves.
+    const calls = await globalFetchCallsDuring(async () => {
+      const { events, net } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
+      expect(net.callCount).toBe(1)
+      expect(terminalsOf(events)).toMatchObject([{ type: 'stop' }])
+    })
+    expect(calls).toBe(0)
   })
 
   it('sends a pasted credential and base URL without the whitespace around them', async () => {

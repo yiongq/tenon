@@ -45,7 +45,15 @@ export interface ModelInfo {
   reasoningEchoField?: 'reasoning_content' | 'reasoning'
   /** The OpenAI wire protocol only reports usage when stream_options.include_usage is set. */
   usageNeedsOptIn: boolean
-  pricing?: { inputPerMTok: number; outputPerMTok: number; cacheReadPerMTok?: number }
+  pricing?: {
+    inputPerMTok: number
+    outputPerMTok: number
+    cacheReadPerMTok?: number
+    /** Spec 02, 01 修补 2. Absent reads as USD: every price 01 filled in is in dollars. */
+    currency?: 'USD' | 'CNY'
+    /** Spec 02, 01 修补 2: the price of writing the cache. */
+    cacheWritePerMTok?: number
+  }
   /** Merged into the request body verbatim — the insurance against one vendor breaking
    * the abstraction. */
   requestParams?: Record<string, unknown>

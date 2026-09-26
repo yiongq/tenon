@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseEnv } from 'node:util'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { compact, emulationGroup, officialGroup } from './helpers/live-env.js'
+import type { LiveGroup } from './helpers/live-env.js'
 import { expect, test } from './helpers/test.js'
 
 /**
@@ -10,30 +12,29 @@ import { expect, test } from './helpers/test.js'
  *
  * HOW TO RUN IT
  *
- *   1. Put credentials in the repo-root `.env.local` (gitignored, never read by any other test):
- *        ANTHROPIC_AUTH_TOKEN=…   (or ANTHROPIC_API_KEY), optionally ANTHROPIC_BASE_URL
- *        TENON_LIVE_MODEL=…       a cheap model for the Anthropic-wire cases
- *        ZHIPU_API_KEY=…          enables the zhipu group (acceptance 21); absent ⇒ it skips
- *        TENON_LIVE_ZHIPU_MODEL=… defaults to the first model the zhipu definition declares
- *   2. `pnpm test:live`, the ONLY command that selects `playwright.live.config.ts` — the default
+ *   1. Put the non-official credentials in the repo-root `.env.local` (gitignored, never read by
+ *      any other test):
+ *        ANTHROPIC_BASE_URL=…      Zhipu's Anthropic-compatible endpoint (…/api/anthropic)
+ *        ANTHROPIC_AUTH_TOKEN=…    the Zhipu key; with the base URL, enables the emulation group
+ *        TENON_LIVE_MODEL=…        its model, glm-4.7-flash (spec 02 §模型与密钥)
+ *        ZHIPU_API_KEY=…           enables the zhipu group (acceptance 21); absent ⇒ it skips
+ *        TENON_LIVE_ZHIPU_MODEL=…  glm-5.3-flashx (unset ⇒ glm-4.6); never the emulation group's
+ *                                  free model, which 1302-limits a second group on the same key
+ *   2. The official Anthropic key, when there is one, NEVER goes into `.env.local` or a shell
+ *      profile. Hand it to this one run only, as TENON_LIVE_ANTHROPIC_OFFICIAL_KEY in the command's
+ *      environment (from a password manager, not typed into the command line); absent ⇒ the
+ *      official group skips. TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL picks its model (default: the
+ *      definition's first row). helpers/live-env.ts says why the two Anthropic groups cannot mix.
+ *   3. `pnpm test:live`, the ONLY command that selects `playwright.live.config.ts` — the default
  *      config ignores this file, so `pnpm test:e2e` cannot collect it whatever is in your shell.
  *
- * It spends a few thousand tokens per run and writes into the login keychain, which is why it is
- * manual. Do not point it at an endpoint you do not own.
+ * It spends a few thousand tokens per group and run, and the zhipu group goes through the real
+ * login keychain, which is why it is manual. Do not point it at an endpoint you do not own.
  *
- * WHAT THE FIRST RUNNER OWES THE REPOSITORY (plan.md 「Open」):
- *
- *   - **Diff a real stream against the hand-built fixtures.** Neither wire's SSE fixtures were
- *     recorded (`packages/kernel/test/provider/fixtures/*.ts` say so in their headers): they were
- *     written from the vendors' documentation because no agent in this phase was allowed to touch
- *     real credentials. Capture one real stream per wire, compare frame by frame, and correct the
- *     fixtures — or record in plan.md that they match.
- *   - **Settle zhipu's `usageNeedsOptIn`.** It is `false` because the vendor's chat-completions
- *     reference documents no `stream_options` parameter at all, while the spec's provider table
- *     names `include_usage` among the reasons this vendor was chosen. If a real streamed turn
- *     reports no usage without the opt-in, that one line in `definitions/zhipu.ts` becomes `true`
- *     — and if sending the parameter is rejected, the current value is confirmed. Either way,
- *     write down which, because a run recorded with no usage cannot be costed afterwards.
+ * STILL OWED: the Anthropic-wire SSE fixtures (packages/kernel/test/provider/fixtures/
+ * anthropic-sse.ts) were written from the documentation and only ever met Zhipu's emulation. The
+ * first run of the official group should diff one real stream against them, frame by frame, and
+ * record the result (01 plan.md, live record of 2026-09-22).
  */
 const LIVE = process.env['TENON_LIVE'] === '1'
 const ENV_FILE = resolve(process.cwd(), '../../.env.local')
@@ -52,100 +53,103 @@ function pick(...names: string[]): string | undefined {
   return undefined
 }
 
-function compact(wanted: Record<string, string | undefined>): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [name, value] of Object.entries(wanted)) {
-    if (value !== undefined) env[name] = value
-  }
-  return env
+const MAX_TOKENS = pick('TENON_LIVE_MAX_TOKENS', 'TENON_MAX_TOKENS') ?? '2048'
+const NOT_LIVE: LiveGroup = { kind: 'absent', reason: 'opt-in' }
+
+/**
+ * The Anthropic wire twice, on two endpoints that never share a key: Zhipu's emulation (the
+ * adapter swallows it; not the guarantee tier) and the official API (spec 02 §模型与密钥).
+ */
+const ANTHROPIC_GROUPS: readonly { title: string; tag: string; group: LiveGroup }[] = [
+  {
+    title: 'live provider · anthropic emulation',
+    tag: 'live',
+    group: LIVE ? emulationGroup(pick, MAX_TOKENS) : NOT_LIVE,
+  },
+  {
+    title: 'live provider · anthropic official',
+    tag: 'live-official',
+    group: LIVE ? officialGroup(process.env, fromFile, pick, MAX_TOKENS) : NOT_LIVE,
+  },
+]
+
+for (const { title, tag, group } of ANTHROPIC_GROUPS) {
+  test.describe(title, () => {
+    test.skip(!LIVE, 'opt-in: run `pnpm test:live` with credentials in .env.local')
+    test.skip(
+      LIVE && group.kind === 'absent',
+      `skipped: ${group.kind === 'absent' ? group.reason : ''} (see the header of this file)`,
+    )
+    test.describe.configure({ timeout: 180_000 })
+
+    test.beforeAll(() => {
+      // A setup that could send a key to the wrong host fails the group rather than skipping it.
+      if (group.kind === 'refused') throw new Error(`${title}: ${group.reason}`)
+    })
+
+    async function open(name: string): ReturnType<typeof launchTenon> {
+      const userData = makeUserDataDir(`${tag}-${name}`)
+      seedConfig(userData, { locale: 'en' })
+      const env = group.kind === 'ready' ? group.env : {}
+      // In-memory secrets: the real keychain would be read AHEAD of these variables, so a key
+      // saved through the settings card in daily use would ride along (helpers/live-env.ts).
+      return launchTenon({ userData, env, secrets: 'memory' })
+    }
+
+    test('a real reply streams into the thread', async () => {
+      const { app, page } = await open('stream')
+      try {
+        await page.getByTestId('composer-input').fill('Reply with the single word: pong')
+        await page.keyboard.press('Enter')
+        const reply = page.getByTestId('assistant-message').getByTestId('assistant-text')
+        await expect(reply).toContainText(/pong/i, { timeout: 90_000 })
+        await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 90_000 })
+        await expect(page.getByTestId('message-error')).toHaveCount(0)
+      } finally {
+        await app.close()
+      }
+    })
+
+    test('the model sees the earlier turns of the same session', async () => {
+      const { app, page } = await open('context')
+      try {
+        const input = page.getByTestId('composer-input')
+        await input.fill('My codeword is tenon-42. Just answer: OK')
+        await page.keyboard.press('Enter')
+        await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 90_000 })
+        await expect(page.getByTestId('assistant-message')).toHaveCount(1)
+
+        await input.fill('What is my codeword? Answer with the codeword only.')
+        await page.keyboard.press('Enter')
+        const second = page.getByTestId('assistant-message').nth(1).getByTestId('assistant-text')
+        await expect(second).toContainText('tenon-42', { timeout: 90_000 })
+      } finally {
+        await app.close()
+      }
+    })
+
+    test('Stop really stops a long reply', async () => {
+      const { app, page } = await open('stop')
+      try {
+        await page
+          .getByTestId('composer-input')
+          .fill('Count from 1 to 400, one number per line, nothing else.')
+        await page.keyboard.press('Enter')
+        const reply = page.getByTestId('assistant-message').getByTestId('assistant-text')
+        await expect(reply).toContainText('3', { timeout: 90_000 })
+        await page.getByTestId('composer-cancel').click()
+        await expect(page.getByTestId('composer-send')).toBeVisible()
+
+        const stoppedAt = await reply.innerText()
+        await page.waitForTimeout(2500)
+        expect(await reply.innerText()).toBe(stoppedAt)
+        expect(stoppedAt).not.toContain('400')
+      } finally {
+        await app.close()
+      }
+    })
+  })
 }
-
-function liveEnv(): Record<string, string> {
-  const wanted: Record<string, string | undefined> = {
-    ANTHROPIC_BASE_URL: pick('ANTHROPIC_BASE_URL'),
-    ANTHROPIC_AUTH_TOKEN: pick('TENON_LIVE_AUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN'),
-    ANTHROPIC_API_KEY: pick('ANTHROPIC_API_KEY'),
-    TENON_MODEL: pick('TENON_LIVE_MODEL', 'TENON_MODEL'),
-    TENON_MAX_TOKENS: pick('TENON_LIVE_MAX_TOKENS', 'TENON_MAX_TOKENS') ?? '2048',
-  }
-  return compact(wanted)
-}
-
-test.describe('live provider', () => {
-  test.skip(!LIVE, 'opt-in: run `pnpm test:live` with credentials in .env.local')
-  test.describe.configure({ timeout: 180_000 })
-
-  const env = LIVE ? liveEnv() : {}
-
-  test.beforeAll(() => {
-    expect(
-      env['ANTHROPIC_AUTH_TOKEN'] ?? env['ANTHROPIC_API_KEY'],
-      `no key found: fill in ANTHROPIC_AUTH_TOKEN (or ANTHROPIC_API_KEY) in ${ENV_FILE}`,
-    ).toBeTruthy()
-  })
-
-  async function open(tag: string): ReturnType<typeof launchTenon> {
-    const userData = makeUserDataDir(`live-${tag}`)
-    seedConfig(userData, { locale: 'en' })
-    // The real keychain, because this manual suite is the only automated coverage the spec gives
-    // that path: the credentials still arrive through `env`, so what is exercised is
-    // `KeychainSecrets` being built and read — the step that CI's Linux cannot do at all.
-    return launchTenon({ userData, env, secrets: 'keychain' })
-  }
-
-  test('a real reply streams into the thread', async () => {
-    const { app, page } = await open('stream')
-    try {
-      await page.getByTestId('composer-input').fill('Reply with the single word: pong')
-      await page.keyboard.press('Enter')
-      const reply = page.getByTestId('assistant-message').getByTestId('assistant-text')
-      await expect(reply).toContainText(/pong/i, { timeout: 90_000 })
-      await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 90_000 })
-      await expect(page.getByTestId('message-error')).toHaveCount(0)
-    } finally {
-      await app.close()
-    }
-  })
-
-  test('the model sees the earlier turns of the same session', async () => {
-    const { app, page } = await open('context')
-    try {
-      const input = page.getByTestId('composer-input')
-      await input.fill('My codeword is tenon-42. Just answer: OK')
-      await page.keyboard.press('Enter')
-      await expect(page.getByTestId('composer-send')).toBeVisible({ timeout: 90_000 })
-      await expect(page.getByTestId('assistant-message')).toHaveCount(1)
-
-      await input.fill('What is my codeword? Answer with the codeword only.')
-      await page.keyboard.press('Enter')
-      const second = page.getByTestId('assistant-message').nth(1).getByTestId('assistant-text')
-      await expect(second).toContainText('tenon-42', { timeout: 90_000 })
-    } finally {
-      await app.close()
-    }
-  })
-
-  test('Stop really stops a long reply', async () => {
-    const { app, page } = await open('stop')
-    try {
-      await page
-        .getByTestId('composer-input')
-        .fill('Count from 1 to 400, one number per line, nothing else.')
-      await page.keyboard.press('Enter')
-      const reply = page.getByTestId('assistant-message').getByTestId('assistant-text')
-      await expect(reply).toContainText('3', { timeout: 90_000 })
-      await page.getByTestId('composer-cancel').click()
-      await expect(page.getByTestId('composer-send')).toBeVisible()
-
-      const stoppedAt = await reply.innerText()
-      await page.waitForTimeout(2500)
-      expect(await reply.innerText()).toBe(stoppedAt)
-      expect(stoppedAt).not.toContain('400')
-    } finally {
-      await app.close()
-    }
-  })
-})
 
 /**
  * Acceptance 21: the `zhipu` definition — the OpenAI-compatible wire — against the real endpoint,

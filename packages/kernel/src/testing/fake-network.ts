@@ -4,6 +4,10 @@
  * socket. It owns no timers: a slow stream is advanced by the caller through a StreamGate,
  * which is what makes "abort at frame N and assert the partial text" deterministic.
  *
+ * Two seams ride on the optional second argument (spec 02, 01 修补 4): a `checkRequest` hook that
+ * vets every request body without failing the fetch, and a separate script for `fetchUntrusted`.
+ * The request-body assertions that hook is meant for live in request-assertions.ts.
+ *
  * node:http fake servers stay in apps/desktop/test/support/, for host-level tests.
  */
 import { HostNetworkDeniedError } from '../host/adapter.js'
@@ -78,11 +82,42 @@ export interface RecordedRequest {
   readonly body: unknown
 }
 
+/**
+ * The optional second argument of `fakeNetwork` (spec 02 §对 01-provider-and-tape 的修补, 「测试接缝」).
+ * Only adds: `fakeNetwork(script)` without it behaves exactly as before.
+ */
+export interface FakeNetworkOptions {
+  /**
+   * Runs on every `fetch` call (never on `fetchUntrusted`), before playback. What it throws goes
+   * into `checkFailures` and playback carries on, so a provider's retry cannot swallow it.
+   */
+  checkRequest?: (request: RecordedRequest) => void
+  /**
+   * The script `fetchUntrusted` replays, counted apart from `fetch`'s. Without it every
+   * `fetchUntrusted` call rejects.
+   */
+  untrusted?: FakeExchange | readonly FakeExchange[]
+}
+
 export interface FakeNetwork extends HostNetwork {
   /** Every invocation in order, including ones rejected because the signal was already aborted. */
   readonly requests: readonly RecordedRequest[]
   /** `requests.length` — the "fakeNetwork was never called" assertion. */
   readonly callCount: number
+  /**
+   * What `checkRequest` threw, in call order — one entry per failing `fetch`. Kept here instead of
+   * rethrown: a fetch that throws becomes a provider error the loop may retry, which would turn an
+   * assertion failure into a passing retry. `expect(net.checkFailures).toEqual([])`.
+   */
+  readonly checkFailures: readonly unknown[]
+  /** Every `fetchUntrusted` invocation in order, including the refused ones. */
+  readonly untrustedRequests: readonly RecordedRequest[]
+  /**
+   * Replays `options.untrusted` with its own cursor — `fetch`'s script and `requests` never see
+   * these calls. Without that option every call is recorded and then rejects. (`HostNetwork` gains
+   * the member itself in plan step 27; until then only this double has it.)
+   */
+  readonly fetchUntrusted: FetchLike
 }
 
 /**
@@ -197,16 +232,69 @@ class FrameGate implements StreamGate {
  * Replays `script` in call order. Running out of exchanges is an error, not a repeat:
  * a test that fires one request more than it scripted should say so.
  */
-export function fakeNetwork(script: FakeExchange | readonly FakeExchange[]): FakeNetwork {
-  const exchanges: readonly FakeExchange[] = 'kind' in script ? [script] : script
+export function fakeNetwork(
+  script: FakeExchange | readonly FakeExchange[],
+  options?: FakeNetworkOptions,
+): FakeNetwork {
   const requests: RecordedRequest[] = []
-  let cursor = 0
+  const checkFailures: unknown[] = []
+  const untrustedRequests: RecordedRequest[] = []
+  const check = options?.checkRequest
+  const untrusted = options?.untrusted
 
-  const fetchImpl: FetchLike = async (input, init) => {
+  const fetchImpl = replayer(asList(script), requests, 'call', (request) => {
+    if (check === undefined) return
+    try {
+      check(request)
+    } catch (error) {
+      checkFailures.push(error)
+    }
+  })
+  const fetchUntrusted: FetchLike =
+    untrusted === undefined
+      ? async (input, init) => {
+          // Recorded like any other call, so "the fetcher never ran" stays assertable.
+          untrustedRequests.push((await recordRequest(input, init)).request)
+          throw new Error(
+            'fakeNetwork: fetchUntrusted has no script; pass options.untrusted to replay one',
+          )
+        }
+      : replayer(asList(untrusted), untrustedRequests, 'untrusted call', () => undefined)
+
+  return {
+    fetch: fetchImpl,
+    fetchUntrusted,
+    requests,
+    checkFailures,
+    untrustedRequests,
+    get callCount(): number {
+      return requests.length
+    },
+  }
+}
+
+function asList(script: FakeExchange | readonly FakeExchange[]): readonly FakeExchange[] {
+  return 'kind' in script ? [script] : script
+}
+
+/**
+ * One replaying fetch: its own script, its own cursor, its own request log. `inspect` sees each
+ * recorded request before anything can throw, and must not throw itself.
+ */
+function replayer(
+  exchanges: readonly FakeExchange[],
+  requests: RecordedRequest[],
+  noun: string,
+  inspect: (request: RecordedRequest) => void,
+): FetchLike {
+  let cursor = 0
+  return async (input, init) => {
     const signal = init?.signal ?? (isRequestLike(input) ? input.signal : undefined) ?? undefined
     // Record before anything can throw: a call the fake refuses still has to be visible.
     const recording = await recordRequest(input, init)
     requests.push(recording.request)
+    // Before playback and before every refusal below, so a check sees each call the caller made.
+    inspect(recording.request)
     if (recording.bodyError !== undefined) throw recording.bodyError
     // Like a real fetch: an already-aborted signal never reaches the wire, so it also
     // does not consume an exchange.
@@ -217,7 +305,7 @@ export function fakeNetwork(script: FakeExchange | readonly FakeExchange[]): Fak
       // Numbered by invocations, not by the script cursor: a pre-aborted call is recorded
       // without consuming an exchange, so only this ordinal matches what `requests` shows.
       throw new Error(
-        `fakeNetwork: no exchange scripted for call ${requests.length} (${last?.method} ${last?.url})`,
+        `fakeNetwork: no exchange scripted for ${noun} ${requests.length} (${last?.method} ${last?.url})`,
       )
     }
     cursor += 1
@@ -233,14 +321,6 @@ export function fakeNetwork(script: FakeExchange | readonly FakeExchange[]): Fak
       case 'sse':
         return sseResponse(exchange, signal)
     }
-  }
-
-  return {
-    fetch: fetchImpl,
-    requests,
-    get callCount(): number {
-      return requests.length
-    },
   }
 }
 

@@ -5,14 +5,22 @@
  * here: the wire adapter owns encoding, streaming and — deliberately — credential validation, so
  * that every provider on this wire refuses a missing key the same way and in the same place.
  *
- * `builtinModels` was filled on 2026-09-21 from the vendor's own model overview
- * (https://platform.claude.com/docs/en/about-claude/models/overview): the model ids, context
- * windows, output limits, pricing and the statement that "all current models support text and
- * image input, text output, multilingual capabilities, vision, and tool use" come from that page,
- * and the cache-read rates from its pricing footnote (10% of the base input price, 2.5% on
- * Claude Fable 5.1). The order is the vendor's own recommendation: Opus 5 first, which is what the
- * page says to start with. Whatever a caller does with this table, it is data — a host that wants
- * another model passes its own `ModelInfo`.
+ * `builtinModels` was filled on 2026-09-21 from the vendor's own model overview (then at
+ * .../about-claude/models/overview, now https://platform.claude.com/docs/en/models/overview): the
+ * model ids, context windows, output limits, pricing and the statement that "all current models
+ * support text and image input, text output, multilingual capabilities, vision, and tool use" come
+ * from that page, and the cache-read rates from its pricing footnote. The `claude-opus-5-5` row
+ * was added on 2026-09-26 for spec 02 (§内置模型表的数据改动) from
+ * https://platform.claude.com/docs/en/models/opus-5-5/overview and the pricing page
+ * https://platform.claude.com/docs/en/about-claude/pricing; the same day the footnote read "10% of
+ * the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1, 5% on Claude Opus 5.5)",
+ * and the four older rows were re-checked against their own pages and still match.
+ *
+ * The order is the owner's, not the vendor's (02 decision A16): Sonnet 5 first and Opus 5.5 second
+ * until an official key passes the Anthropic group's prefix acceptance, then Opus 5.5 first. The
+ * first row is only the fallback for a user who never picked a model (02 decision M5); the
+ * overview itself now says to start with Opus 5.5. Whatever a caller does with this table, it is
+ * data — a host that wants another model passes its own `ModelInfo`.
  */
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import type { ConfigKey, ModelInfo, Provider, ProviderDefinition } from '../types.js'
@@ -64,31 +72,20 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
  * takes, and on this vendor those have diverged. Read on 2026-09-21 at
  * https://platform.claude.com/docs/en/build-with-claude/extended-thinking: the manual
  * `thinking: { type: 'enabled', budget_tokens }` shape `encode()` writes "returns a 400 error" on
- * Claude Opus 4.7 and later, which covers three of the four rows below (Opus 5, Sonnet 5, Fable
- * 5.1); those models take `thinking: { type: 'adaptive' }` with `output_config: { effort }` instead.
- * Only `claude-haiku-4-5-20251001` still takes the budget form — and takes nothing else.
+ * Claude Opus 4.7 and later, which covers four of the five rows below (Opus 5.5, Opus 5, Sonnet 5,
+ * Fable 5.1); those models take `thinking: { type: 'adaptive' }` with `output_config: { effort }`
+ * instead, and Opus 5.5 and Fable 5.1 also refuse `disabled`. Only `claude-haiku-4-5-20251001`
+ * still takes the budget form — and takes nothing else.
  *
- * `ModelInfo` has no field for that difference and this step may not invent one, so no row here
- * enables thinking and nothing in the kernel does either: `ProviderRequest.thinking` is a caller's
- * choice, and a caller that makes it on one of the three gets the vendor's 400 rather than a quiet
- * downgrade. `thinkingEffortSupport()` answering `'budget'` for all four is the same gap seen from
- * the other side. Reported for plan.md's Open; it is one `ModelInfo` line once the spec says which.
+ * 01's `ModelInfo` had no field for that difference. Spec 02 adds one — `ThinkingSpec`, through 01
+ * 修补 2 — and 02 plan.md fills it in on these rows at step 6. Until then no row makes the kernel
+ * send a thinking parameter: `ProviderRequest.thinking` is a caller's choice, and a caller that
+ * makes it on one of the four gets the vendor's 400 rather than a quiet downgrade.
+ * `thinkingEffortSupport()` answering `'budget'` for all five is the same gap seen from the other
+ * side. Note that the vendor already has thinking on by default on those four, with no thinking
+ * parameter sent (https://platform.claude.com/docs/en/build-with-claude/thinking, 2026-09-26).
  */
 const MODELS: readonly ModelInfo[] = frozenModels([
-  {
-    id: 'claude-opus-5',
-    providerId: ANTHROPIC_PROVIDER_ID,
-    contextLimit: 1_000_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: true,
-    supportsCacheControl: true,
-    thinkingPreservationFormat: 'signed-blocks',
-    usageNeedsOptIn: false,
-    pricing: { inputPerMTok: 5, outputPerMTok: 25, cacheReadPerMTok: 0.5 },
-  },
   {
     id: 'claude-sonnet-5',
     providerId: ANTHROPIC_PROVIDER_ID,
@@ -104,8 +101,46 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     pricing: { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2 },
   },
   {
+    // A fixed id with no date suffix; the alias is the same string. The 5-minute cache-write price
+    // is the one recorded (the 1-hour tier is $8). Its thinking fields — always on, five effort
+    // levels from low to max with medium the default, no forced `tool_choice`, sampling parameters
+    // at their defaults only — arrive with `ThinkingSpec` (02 plan.md, step 6).
+    id: 'claude-opus-5-5',
+    providerId: ANTHROPIC_PROVIDER_ID,
+    contextLimit: 1_000_000,
+    maxOutputTokens: 128_000,
+    reasoning: true,
+    supportsToolCalling: true,
+    supportsStreamingToolCalls: true,
+    supportsVision: true,
+    supportsCacheControl: true,
+    thinkingPreservationFormat: 'signed-blocks',
+    usageNeedsOptIn: false,
+    pricing: { inputPerMTok: 4, outputPerMTok: 20, cacheReadPerMTok: 0.2, cacheWritePerMTok: 5 },
+  },
+  {
+    // Legacy ("still available") since Opus 5.5; the deprecations page still lists it as Active,
+    // retiring not sooner than 2027-07-24. It moves under 更多模型 › once `listing` exists (02 A16).
+    id: 'claude-opus-5',
+    providerId: ANTHROPIC_PROVIDER_ID,
+    contextLimit: 1_000_000,
+    maxOutputTokens: 128_000,
+    reasoning: true,
+    supportsToolCalling: true,
+    supportsStreamingToolCalls: true,
+    supportsVision: true,
+    supportsCacheControl: true,
+    thinkingPreservationFormat: 'signed-blocks',
+    usageNeedsOptIn: false,
+    pricing: { inputPerMTok: 5, outputPerMTok: 25, cacheReadPerMTok: 0.5 },
+  },
+  {
     // The dated snapshot rather than the `claude-haiku-4-5` alias: a pinned id is what makes a
-    // recorded `provider/attempt_completed` fact mean one model for ever.
+    // recorded `provider/attempt_completed` fact mean one model for ever. Tentative retirement:
+    // "not sooner than October 15, 2026", and the vendor gives "at least 60 days' notice before
+    // model retirement" (https://platform.claude.com/docs/en/about-claude/model-deprecations, read
+    // 2026-09-26, when no notice for this model was listed). 02 decision A16 drops the row once a
+    // deprecation notice appears.
     id: 'claude-haiku-4-5-20251001',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 200_000,
