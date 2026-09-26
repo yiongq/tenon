@@ -123,7 +123,7 @@
     - 旧 42：改一行模型表后复核一条旧记录：`modelWireHash` 与按新表算的不同，报「模型表已变」而不是「被篡改」；用组装清单里的 ModelInfo 原文仍能复算原来的 `promptHash`（组装清单在第 10 步写）。
     - openai-chat 线 `tool_calls[type=mcp]` 在 :790 读不到名字、在 :831 被静默丢掉只是读代码推断：先用夹具证实这条丢弃路径，再改成在 :742 与 `custom` 并列识别。
   - 暂定与待定：T6 若计费并选 D，最晚本步前定（第 2 步）。原样块取乙（投影出主进程前剥掉 `vendor` 块，contracts 不变；以后改甲是只增）。5.3 系不声明 `medium`（按底表应当报错；实测可选，第 21 步）。
-- [ ] 7. **出网与错误**（裁决 A4、A5、A6、A12、H8、H10、H12）
+- [x] 7. **出网与错误**（裁决 A4、A5、A6、A12、H8、H10、H12）
   - 读：01 修补 2（clock）、4、5、6「chat.event」；§结束原因词表。
   - 交付物：`create()` 的 clock 加 `setTimeout`（desktop provider.ts:197、provider-routes.ts:276 与测试替身同改，两处「只给读数」的注释改写，01 修补 9 (h)）；首字节超时；字节级空闲看门狗（`fetchThroughHost` 第四个参数、transport.ts 导出 `StreamIdleTimeoutError`）；导出的请求头白名单函数，协议必需头按第 3 步列出的清单，环境变量改写协议头的值也要拦住（第 3 步记录的第 3、5 项）；`ProviderErrorCode` 只增 `quota-exhausted`、`account-config` 与各厂商分类表；`error.timeout` / `resetAt`；`ProviderDefinition.finishReasons` 与智谱两个映射；Anthropic 顶层 `cache_control`；`chat.event` 的 `thinking-delta`、`tool-call`（按 `callKey`）、`attempt-discarded` 三个变体（`done.endReason` 与 17 个结束码键在第 13 步，`tool-outcome` 在第 14 步，它们要的类型那时才有）；chat.ts 的 ERROR_CODE 补 `quota-exhausted`、`account-config` 两行，都为 `unknown`（01 修补 5；`satisfies Record<ProviderErrorCode, …>` 要求同步改）。
   - 验收：8、9（结束码与 `tool-outcome` 那部分在第 13、14 步）；不变量 3。
@@ -684,6 +684,21 @@
   - 测试要点：旧 98 → thinking-shapes.test.ts「rows with no thinkingSpec encode exactly as 01 did」；旧 45、旧 99 → 同文件「the Anthropic wire’s four thinking branches」；旧 100、旧 46 → 「the OpenAI-compatible wire’s effort-only rule」；旧 88 → definitions.test.ts 的三条行数据用例；旧 43、旧 101 → vendor-blocks.test.ts 前两组，另有 desktop session-projection.test.ts（剥掉原样块后通过 `messageRowSchema`，只剩原样块的行留空 content；把剥离改掉两条都变红）；旧 112、旧 42 → vendor-blocks.test.ts「the attempt says which encoder and which model fields」（含 Proxy 断言 encode() 只读 `WIRE_MODEL_FIELDS`）；openai-chat `tool_calls[type=mcp]` → openai-stream.test.ts「OpenAIChatProvider vendor blocks」；02 不变量 1、2 → thinking-shapes.test.ts 同名两组；01 编码测试里以 assistant 轮结尾、断言成功的用例已补尾部 user 轮。
   - 等后面步骤的：验收 7 的复算 promptHash 与 02 不变量 33 要第 10 步的组装清单（`view/assembled`、`assemblyRef`），整条在第 10 步勾；验收 6 的首行调序在第 33 步。
 
+- **2026-09-26 · 第 7 步（出网与错误）**，分支 `wt/02-step7` → `feat/02-seg1`，完成（format、lint、typecheck、全部单测过；一个提交 `3cb1249`）。**独立评审待补**（本会话直接写，撞上用量上限时没跑三视角，① 的 PR 合并前补跑）。验收 8 满足（A5 实测记录见下）；验收 9 的结束码与 `tool-outcome` 部分在第 13、14 步。
+  - 改了什么：`create()` 的 clock 为 `Pick<HostClock, 'now' | 'setTimeout'>`，desktop 两处调用与测试替身同改，「只给读数」的注释改写；transport.ts 导出 `ANTHROPIC_OFFICIAL_HOST`、`idleMsFor`（官方 180 000、其他 300 000）、`firstByteTimeoutMs`（180 000 + ceil(bodyBytes / 32 768) × 1000）、`StreamIdleTimeoutError`、字节级 `IdleWatchdog`（`fetchThroughHost` 第四个参数，包住响应体，读完或取消时撤掉定时器）与请求头白名单 `allowedRequestInit`（两条线各一张 `ALLOWED_HEADERS`，协议头的值钉死：Anthropic `accept`、`anthropic-version: 2023-06-01`、`user-agent: Anthropic/JS <SDK 版本>`，凭据头取传入值，`x-stainless-*` 整组放行）；`SendContext.firstByteTimeout`；`ProviderErrorCode` 只增 `quota-exhausted`、`account-config`，`error.timeout` / `resetAt`；Anthropic 两种花费上限归 `quota-exhausted`（429 的 `resetAt` 为下月 1 日 00:00 UTC），智谱 1113、1308–1311、1313–1321 归 `quota-exhausted`，1302、1305 仍可重试；`ProviderDefinition.finishReasons` 与智谱两个映射（重定义已知值时构造就拒）；Anthropic 行 `supportsCacheControl` 为真时 body 顶层写 `cache_control: { type: 'ephemeral' }`；contracts 的 `chat.event` 只增 `thinking-delta`、`tool-call`、`attempt-discarded`；desktop chat.ts 的 `ERROR_CODE` 补两行、都为 `unknown`。
+  - 测试要点：旧 48、103、102、104、47、105 → kernel `provider/wire/network-seams.test.ts`（16 个用例，假时钟）；旧 106 本步部分 → contracts `chat-event.test.ts` 与 desktop chat.test.ts 的 quota 用例；clock 的 `setTimeout` 漏传时 typecheck 失败 → types.test.ts。01 已有的 Anthropic body、1113、`x-decoy` 头用例按新行为改写。
+  - 实测 A5（2026-09-26，owner 的智谱 key，探针脚本与原始输出不入库；长输出两行用 glm-5.3、max_tokens 16 000，工具两行用 glm-5.3-flash、max_tokens 32 000、思考开）：
+
+    | 线 | 场景 | 首字节 | 块间最长间隔 | 总时长 |
+    |---|---|---|---|---|
+    | OpenAI 线 `/paas/v4` | 长思考长输出（`reasoning_effort: max`） | 775 ms | 1 120 ms | 230 s |
+    | `/api/anthropic` | 同一道题，不带 effort | 920 ms | 409 ms | 279 s |
+    | OpenAI 线 | 约 2 万 token 参数的工具调用，`tool_stream: false` | 6.7 s | 72 256 ms | 410 s |
+    | OpenAI 线 | 同上，`tool_stream: true` | 5.8 s | 643 ms | 385 s |
+
+    最坏的 72 秒远低于 300 秒，两条线的阈值都不改，spec 不动。`tool_stream` 关着时参数整块憋到最后才下发，是最长间隔的来源；模型表各行已带 `tool_stream: true`（裁决 A12）。第 2 步记下的 glm-5.3 `500 code 1234` 按现表读成可重试的 `server`，本步不改。
+  - 等后面步骤的：官方端点的 ping 间隔在第 33 步；1308、1310 的 `resetAt` 等报文原文（Open）；`done.endReason` 与 18 个结束码键在第 13 步，`tool-outcome` 在第 14 步。
+
 - **2026-09-26 · 第 8 步（Tape 修补与新名字）**，分支 `wt/02-step8` → `feat/02-seg1`，完成（format、lint 含 `tape:check`、typecheck、全部单测 62 个文件 1051 个用例过；一个提交 `7aa3b5d`）。**独立评审待补**（同第 6 步：实现 agent 撞上用量上限时留下一份能编过、能跑过的草稿，本会话接手；评审三视角没跑，① 的 PR 合并前补跑）。
   - 接手时做的：草稿是在第 5 步合进来之前写的，rebase 到 `feat/02-seg1` 时 `host/adapter.ts` 的 `Reversibility` / `ConfirmTarget` 与 `permission/inspector.ts` 冲突，都取第 5 步的写法（五种形态），`inspector.ts` 保留第 5 步的两个类别并加上本步的 `InspectorFinding`，kernel 入口去掉重复导出。按开放问题第一到六轮的答复补声明：`ClosureSource` 只增 `invalid-input`、`timed-out`；`RunEndReason` 只增 `time-limit`；名字总表加 `message/environment`（slice / kind message，身份 message、messageId、0）与 `EnvironmentPayload`，重放把它和 `message/continuation` 一起读成 user 轮，投影不产行；`ToolResultPayload` 只增 `question?: AskAnswerRecord`；`HASH_VER` 注释写上 B6 的规则（升 `hash_ver` 必同时升 schema 版本）。补了两条测试（重放按顺序读出两种 user 轮，把 `message/environment` 从折叠里去掉就变红；投影对它不产行），修了草稿里五处 lint。
   - 草稿已做的（逐项对过 plan 第 8 步交付物）：§载荷 引用的类型按 spec 原文只声明（`loop/closure.ts`、`loop/terminal.ts`、`loop/subagent.ts`、`loop/spill.ts`、`permission/decide.ts`、`permission/record.ts`、`permission/inspector.ts`）；`TapeSlice` 只增 `tool`、`view`、`compaction`，02 的名字按总表登记；载荷类型与 `TapePayloadByName`；`REPLAY_KINDS` 只增 `tool_call`、`tool_result`；撤回即终局与 `TapeMessageRetractedError`；`TapeClosedError`；`readBySource` 的 `fromEntryId`；`resetSession` 的 `carry`；待批投影表（含 `wait_kind`）、两个 store、`listPendingApprovals`、`PROJECTION_VERSION` 为 2、第 2 号迁移两份 DDL 与 `MIGRATIONS`；`check-tape-schema` 按迁移号锚定。
@@ -706,7 +721,7 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5、6、7、8 步已并进这个分支，下一步是第 9 步「所有权骨架」（在 `feat/02-seg1` 上新开 worktree 做）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–8 步已并进这个分支（都已勾），下一步是第 9 步「所有权骨架」（在 `feat/02-seg1` 上新开 worktree 做）。
 
 - **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7 步由本会话直接写；这三步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
