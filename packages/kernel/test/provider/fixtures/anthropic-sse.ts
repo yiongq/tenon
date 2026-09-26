@@ -504,3 +504,39 @@ export const SERVER_EXECUTED_FRAMES: readonly string[] = [
 
 /** The model `messageStart()` names; spec 02 reports it as the `response-model` event. */
 export const RESPONSE_MODEL_ID = MODEL_ID
+
+/** A client call as a fixture turn carries it: its id, its name and its arguments' JSON text. */
+export interface FixtureCall {
+  readonly id: string
+  readonly name: string
+  readonly args: string
+}
+
+/**
+ * A turn of text chunks, then client calls, ended by `stopReason` (spec 02 plan step 14's stop sweep):
+ * each text chunk one delta, each call's arguments one fragment.
+ */
+export function turnFrames(
+  texts: readonly string[],
+  calls: readonly FixtureCall[],
+  stopReason: string,
+): readonly string[] {
+  const frames = [messageStart()]
+  let index = 0
+  if (texts.length > 0) {
+    frames.push(blockStart(index, TEXT_START))
+    for (const text of texts) frames.push(blockDelta(index, { type: 'text_delta', text }))
+    frames.push(blockStop(index))
+    index += 1
+  }
+  for (const call of calls) {
+    frames.push(
+      blockStart(index, toolStart(call.id, call.name)),
+      blockDelta(index, { type: 'input_json_delta', partial_json: call.args }),
+      blockStop(index),
+    )
+    index += 1
+  }
+  frames.push(messageDelta(stopReason), MESSAGE_STOP)
+  return frames
+}

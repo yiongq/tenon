@@ -2,10 +2,21 @@
  * Spec 02, 01 修补 6 (step 7, 旧 106): `chat.event` only adds variants. The three that step 7 adds
  * parse; phase 1's variants are unchanged.
  */
-import type { RunEndReason } from '@tenon-app/kernel'
+import type {
+  ClosureSource,
+  ExecutionState,
+  RunEndReason,
+  ToolOutcomeView,
+} from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
+import type { z } from 'zod'
 import { chatContinue, chatEventSchema, ipcRoutes, runEndReasonSchema } from '../src/index.js'
-import type { RunEndReasonContract } from '../src/index.js'
+import type {
+  RunEndReasonContract,
+  ToolOutcomeViewContract,
+  closureSourceSchema,
+  executionStateSchema,
+} from '../src/index.js'
 
 type Assert<T extends true> = T
 type Extends<A, B> = [A] extends [B] ? true : false
@@ -13,6 +24,14 @@ type Extends<A, B> = [A] extends [B] ? true : false
 // Exported so `noUnusedLocals` keeps them; nothing imports them.
 export type ContractReasonIsKernelReason = Assert<Extends<RunEndReasonContract, RunEndReason>>
 export type KernelReasonIsContractReason = Assert<Extends<RunEndReason, RunEndReasonContract>>
+export type StatesMatch = Assert<Extends<z.infer<typeof executionStateSchema>, ExecutionState>>
+export type KernelStatesMatch = Assert<
+  Extends<ExecutionState, z.infer<typeof executionStateSchema>>
+>
+export type SourcesMatch = Assert<Extends<z.infer<typeof closureSourceSchema>, ClosureSource>>
+export type KernelSourcesMatch = Assert<Extends<ClosureSource, z.infer<typeof closureSourceSchema>>>
+// One way only: the kernel brands ConfirmTarget's paths, which the wire carries as plain strings.
+export type KernelViewCrosses = Assert<Extends<ToolOutcomeView, ToolOutcomeViewContract>>
 
 /** One of each of the 18 end codes, every slot filled (spec 02 §结束原因词表). */
 const END_REASONS: readonly RunEndReason[] = [
@@ -111,5 +130,55 @@ describe('chat.continue', () => {
       chatContinue.response.safeParse({ status: 'held', host: 'api.example.com' }).success,
     ).toBe(true)
     expect(chatContinue.response.safeParse({ status: 'refused' }).success).toBe(false)
+  })
+})
+
+describe('tool-outcome (旧 106)', () => {
+  const base = {
+    type: 'tool-outcome',
+    sessionId: SESSION,
+    callKey: '00000000-0000-4000-8000-000000000001:1:0',
+    providerToolCallId: 'toolu_1',
+  }
+
+  it('carries a closed call as the kernel views it, by callKey', () => {
+    const events = [
+      { ...base, effect: 'external', state: 'completed', source: null, output: 'ok' },
+      {
+        ...base,
+        effect: 'blocked',
+        state: 'not-run',
+        source: 'protected',
+        facts: { toolName: 'Read', target: '/etc/passwd' },
+        output: 'blocked',
+        permission: {
+          verdict: 'deny',
+          code: 'protected',
+          facts: { toolName: 'Read' },
+        },
+      },
+      {
+        ...base,
+        effect: 'write',
+        state: 'uncertain',
+        source: 'stopped',
+        output: '',
+        approval: {
+          outcome: 'allowed',
+          scope: 'once',
+          target: { type: 'path', path: '/work/a.ts' },
+        },
+      },
+    ]
+    for (const event of events) expect(chatEventSchema.parse(event)).toEqual(event)
+  })
+
+  it('refuses a state or a source outside the vocabulary, and an explicit undefined', () => {
+    const ok = { ...base, effect: 'blocked', state: 'not-run', source: 'stopped', output: '' }
+    expect(chatEventSchema.safeParse(ok).success).toBe(true)
+    expect(chatEventSchema.safeParse({ ...ok, state: 'maybe' }).success).toBe(false)
+    expect(chatEventSchema.safeParse({ ...ok, source: 'crash' }).success).toBe(false)
+    expect(chatEventSchema.safeParse({ ...ok, callKey: '' }).success).toBe(false)
+    expect(chatEventSchema.safeParse({ ...ok, facts: undefined }).success).toBe(false)
   })
 })

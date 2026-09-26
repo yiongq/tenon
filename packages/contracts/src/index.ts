@@ -25,11 +25,15 @@ export {
   chatNew,
   chatSend,
   chatStop,
+  closureSourceSchema,
+  executionStateSchema,
   providerErrorCodeSchema,
   runEndReasonSchema,
   sessionIdSchema,
+  toolOutcomeViewSchema,
+  toolOutcomeViewShape,
 } from './ipc/chat.js'
-export type { ChatEvent, RunEndReasonContract } from './ipc/chat.js'
+export type { ChatEvent, RunEndReasonContract, ToolOutcomeViewContract } from './ipc/chat.js'
 export {
   configGet,
   configLocale,

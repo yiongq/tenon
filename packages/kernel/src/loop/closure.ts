@@ -185,6 +185,35 @@ export function notRunFacts(q: {
   })
 }
 
+/**
+ * The fallback closure (§崩溃、服务端调用块与兜底「兜底」, §原因码表 `repair`): a call with no result
+ * reached a request. Not-run and blocked when it was never dispatched; uncertain, with the effect its
+ * tool would have had, when it was.
+ */
+export function repairFacts(q: {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly call: CallRef
+  readonly dispatched: boolean
+  readonly effect: SideEffectClass
+  readonly writer: FactWriter
+}): NewEntry[] {
+  const state: ExecutionState = q.dispatched ? 'uncertain' : 'not-run'
+  return resultFacts({
+    tape: q.tape,
+    now: q.now,
+    call: q.call,
+    content: closureContent({ source: 'repair', state }),
+    isError: true,
+    kernelAuthored: true,
+    effect: q.dispatched ? q.effect : 'blocked',
+    state,
+    source: 'repair',
+    reversibility: 'unknown',
+    writer: q.writer,
+  })
+}
+
 const BLOCK_REASONS: ReadonlySet<string> = new Set(Object.keys(BLOCKED_FACT_KEYS))
 
 export function isBlockReason(source: ClosureSource | null): source is BlockReason {

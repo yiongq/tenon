@@ -137,6 +137,10 @@ async function main(): Promise<void> {
             log: (line) => console.warn(line),
           }),
           protectedFiles: [],
+          // A call reaching a request with no result: a thrown bug in development, a repair closure
+          // and a log line in the packaged build (spec 02 §崩溃、服务端调用块与兜底).
+          onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
+          log: (line) => console.error(line),
         })
   const loop =
     sessions === null

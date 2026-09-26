@@ -49,6 +49,7 @@ import {
   runTerminalKey,
   sessionStartKey,
 } from '../tape/provenance.js'
+import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import type {
   AnswerResult,
@@ -71,6 +72,7 @@ import type { PolicyState } from '../host/policy.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { readSessionEntries } from './batch.js'
+import type { Written } from './batch.js'
 import type { CallRef } from './closure.js'
 import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
@@ -167,6 +169,8 @@ export interface LoopDeps {
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** A token limit on every Run (H11): off in the product; evals, sub-agents and tests set one. */
   readonly tokenLimit: number | null
+  /** A call that reaches a request with no result: throw, or repair and log (§兜底). */
+  readonly onUnansweredCall: 'throw' | 'repair'
 }
 
 export interface Loop {
@@ -702,7 +706,8 @@ export function createLoop(deps: LoopDeps): Loop {
       lease,
       openTable: () => openTable(incarnationId, pre.assembly),
       write: (entries) =>
-        post(box, 'run', null, () => tape.appendEntries({ sessionId, incarnationId, entries })),
+        post(box, 'run', null, () => appendFirstWins(sessionId, incarnationId, entries)),
+      onUnansweredCall: deps.onUnansweredCall,
       emit: {
         delta: (id, type, delta) =>
           emit(ports, { type, rootSessionId: root, sessionId, runId: id, delta }),
@@ -783,6 +788,75 @@ export function createLoop(deps: LoopDeps): Loop {
         })
       })
     })()
+  }
+
+  /**
+   * A Run's facts, committed in its mailbox task (§写入：谁写、写几次「先写者算数」): a `tool/result`
+   * for a call that already has one is dropped with its `tool_outcome`, and the log hears of it. The
+   * look-up and the append share one task, so no other writer of this root lands in between.
+   */
+  async function appendFirstWins(
+    sessionId: string,
+    incarnationId: string,
+    entries: readonly NewEntry[],
+  ): Promise<Written> {
+    const results = entries.filter((entry) => entry.name === 'tool/result')
+    let kept = entries
+    let deferredTo: number | undefined
+    if (results.length > 0) {
+      const runIds = new Set(results.map((entry) => entry.sourceId ?? ''))
+      const existing = await existingResults(sessionId, runIds)
+      const beaten = results.filter((entry) => existing.has(entry.provenanceKey))
+      const dropped = new Set(beaten.map(callOfFact))
+      for (const entry of beaten) {
+        deferredTo = Math.max(deferredTo ?? 0, existing.get(entry.provenanceKey) ?? 0)
+      }
+      if (dropped.size > 0) {
+        kept = entries.filter(
+          (entry) =>
+            !(
+              (entry.name === 'tool/result' || entry.name === 'execution/tool_outcome') &&
+              dropped.has(callOfFact(entry))
+            ),
+        )
+        for (const call of dropped) {
+          log(`[loop] a second result for call ${call} was dropped: the first one written counts`)
+        }
+      }
+    }
+    const deferred = deferredTo === undefined ? {} : { deferredTo }
+    if (kept.length === 0) return { entries: [], receipts: [], ...deferred }
+    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries: kept })
+    return { entries: kept, receipts, ...deferred }
+  }
+
+  /** Every `tool/result` these Runs already have: its provenance key, and its entry id. */
+  async function existingResults(
+    sessionId: string,
+    runIds: ReadonlySet<string>,
+  ): Promise<Map<string, number>> {
+    const keys = new Map<string, number>()
+    for (const runId of runIds) {
+      let fromEntryId: number | undefined
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- the next page starts after this one
+        const page = await tape.readBySource({
+          sessionId,
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          limit: MAX_READ_LIMIT,
+          ...(fromEntryId === undefined ? {} : { fromEntryId }),
+        })
+        for (const entry of page) {
+          if (entry.name === 'tool/result' && entry.provenanceKey !== null) {
+            keys.set(entry.provenanceKey, entry.entryId)
+          }
+        }
+        if (page.length < MAX_READ_LIMIT) break
+        fromEntryId = (page.at(-1)?.entryId ?? 0) + 1
+      }
+    }
+    return keys
   }
 
   /**
@@ -1020,6 +1094,11 @@ export function createLoop(deps: LoopDeps): Loop {
       })
     },
   }
+}
+
+/** A tool fact's call, `<runId>:<requestSeq>:<i>` (§键与挂靠). */
+function callOfFact(entry: NewEntry): string {
+  return `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
 }
 
 /** Nothing queued, nothing running, no live lease: an entry may begin a lease. */

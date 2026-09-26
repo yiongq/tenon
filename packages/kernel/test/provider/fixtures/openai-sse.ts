@@ -584,3 +584,40 @@ export const MCP_ONLY_FRAMES: readonly string[] = [
 
 /** The model every chunk names; spec 02 reports it once as the `response-model` event. */
 export const RESPONSE_MODEL_ID = MODEL_ID
+
+/** A client call as a fixture turn carries it: its id, its name and its arguments' JSON text. */
+export interface FixtureCall {
+  readonly id: string
+  readonly name: string
+  readonly args: string
+}
+
+/**
+ * A turn of text chunks, then client calls, ended by `finishReason` (spec 02 plan step 14's stop
+ * sweep): each text chunk one delta, each call whole in one chunk.
+ */
+export function turnFrames(
+  texts: readonly string[],
+  calls: readonly FixtureCall[],
+  finishReason: string,
+): readonly string[] {
+  return [
+    ROLE_CHUNK,
+    ...texts.map((text) => chunk({ content: text })),
+    ...calls.map((call, index) =>
+      chunk({
+        tool_calls: [
+          {
+            index,
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.args },
+          },
+        ],
+      }),
+    ),
+    chunk({}, finishReason),
+    usageChunk(),
+    DONE,
+  ]
+}

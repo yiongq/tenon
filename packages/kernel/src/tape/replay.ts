@@ -255,10 +255,37 @@ export async function rebuildProviderContext(
   store: TapeReader,
   q: RebuildProviderContextQuery,
 ): Promise<InternalMessage[]> {
+  return (await replayContext(store, q)).messages
+}
+
+/**
+ * A client call in the context with no `tool/result`: what the pairing check before `encode()` finds
+ * (§崩溃、服务端调用块与兜底「兜底」). `dispatched` says whether its `dispatch_committed` is on the
+ * Tape, which is what a repair closure's execution state follows.
+ */
+export interface UnansweredCall {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly ordinal: number
+  readonly providerToolCallId: string
+  readonly name: string
+  readonly dispatched: boolean
+}
+
+/**
+ * `rebuildProviderContext` and the pairing check in one read of the prefix: the messages, and every
+ * call of a visible assistant turn that has no result. A retracted turn's calls are not in the
+ * context, so they are never unanswered; nor are the calls a compaction summarised away.
+ */
+export async function replayContext(
+  store: TapeReader,
+  q: RebuildProviderContextQuery,
+): Promise<{ messages: InternalMessage[]; unanswered: UnansweredCall[] }> {
   const entries = await readReplayEntries(store, q)
   const cut = latestCompaction(entries)
   const tools = toolFactsOf(entries)
   const messages: InternalMessage[] = []
+  const unanswered: UnansweredCall[] = []
   for (const message of effectiveMessages(entries)) {
     if (cut !== null && message.orderSeq < cut.keepFromEntryId) continue
     if (message.role !== 'assistant') {
@@ -273,7 +300,17 @@ export async function rebuildProviderContext(
     const responses: ContentBlock[] = []
     for (const call of calls) {
       const result = tools.results.get(call.key)
-      if (result === undefined) continue
+      if (result === undefined) {
+        unanswered.push({
+          runId: call.runId,
+          requestSeq: call.requestSeq,
+          ordinal: call.ordinal,
+          providerToolCallId: call.providerToolCallId,
+          name: call.name,
+          dispatched: tools.dispatched.has(call.key),
+        })
+        continue
+      }
       responses.push({
         type: 'tool-response',
         id: call.providerToolCallId,
@@ -283,14 +320,19 @@ export async function rebuildProviderContext(
     }
     if (responses.length > 0) messages.push({ role: 'user', content: responses })
   }
-  if (cut === null) return messages
+  if (cut === null) return { messages, unanswered }
   // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
-  return [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages]
+  return {
+    messages: [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages],
+    unanswered,
+  }
 }
 
 /** A `tool/call` as replay places it. */
 interface ReplayCall {
   readonly key: string
+  readonly runId: string
+  readonly requestSeq: number
   readonly ordinal: number
   readonly providerToolCallId: string
   readonly name: string
@@ -308,15 +350,21 @@ function callIdentity(entry: TapeEntry): string {
   return `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
 }
 
-/** The calls by the assistant message they belong to, in <i> order, and the results by call. */
+/**
+ * The calls by the assistant message they belong to, in <i> order, the results by call, and which
+ * calls were dispatched.
+ */
 function toolFactsOf(entries: readonly TapeEntry[]): {
   calls: Map<string, ReplayCall[]>
   results: Map<string, ReplayResult>
+  dispatched: Set<string>
 } {
   const calls = new Map<string, ReplayCall[]>()
   const results = new Map<string, ReplayResult>()
+  const dispatched = new Set<string>()
   for (const entry of entries) {
-    if (entry.name === 'tool/call') {
+    if (entry.name === 'execution/dispatch_committed') dispatched.add(callIdentity(entry))
+    else if (entry.name === 'tool/call') {
       const messageId = entry.payload['messageId']
       if (typeof messageId !== 'string') {
         throw new TapeProjectionError(`${entry.name}: payload.messageId must be a string`)
@@ -324,6 +372,8 @@ function toolFactsOf(entries: readonly TapeEntry[]): {
       const list = calls.get(messageId) ?? []
       list.push({
         key: callIdentity(entry),
+        runId: String(entry.sourceId),
+        requestSeq: Number(entry.sourceSeq),
         ordinal: Number(entry.payload['ordinal']),
         providerToolCallId: String(entry.payload['providerToolCallId']),
         name: String(entry.payload['name']),
@@ -342,7 +392,7 @@ function toolFactsOf(entries: readonly TapeEntry[]): {
     }
   }
   for (const list of calls.values()) list.sort((a, b) => a.ordinal - b.ordinal)
-  return { calls, results }
+  return { calls, results, dispatched }
 }
 
 /**

@@ -242,6 +242,7 @@ export function constructSessionService(
     testTools: extras.tools ?? null,
     userSetting: extras.userSetting ?? ((): null => null),
     tokenLimit: extras.tokenLimit ?? null,
+    onUnansweredCall: options.onUnansweredCall ?? 'throw',
   })
 
   function startFact(

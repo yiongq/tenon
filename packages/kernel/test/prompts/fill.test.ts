@@ -22,38 +22,21 @@ describe('fill', () => {
 })
 
 describe('the notes written so far', () => {
-  it('say why a call was not run, in non-empty English with no slot a cell cannot fill', () => {
-    const cells = Object.entries(MODEL_NOTES.closure).flatMap(([source, byState]) =>
-      Object.entries(byState ?? {}).map(([state, text]) => ({ source, state, text })),
-    )
-    // Plan step 14 writes the whole table (closure.test.ts); these are the cells steps 10–13 need.
-    expect(cells.map(({ source, state }) => `${source}/${state}`).toSorted()).toEqual([
-      'blocked-repeatedly/not-run',
-      'content-filter/not-run',
-      'inspector/not-run',
-      'invalid-input/not-run',
-      'no-progress/not-run',
-      'output-truncated/not-run',
-      'policy/not-run',
-      'protected/not-run',
-      'provider-error/not-run',
-      'step-limit/not-run',
-      'stopped/not-run',
-      'tool-unavailable/not-run',
-      'usage-limit/not-run',
-      'user-disabled/not-run',
-    ])
-    for (const { text } of [...cells, { text: MODEL_NOTES.schemaUnusable }]) {
-      expect(text?.trim().length).toBeGreaterThan(0)
-      // `{target}` (the protected cell's) is the only slot a cell may name so far.
-      expect(() => fill(text ?? '', { target: '~/.ssh' })).not.toThrow()
+  it('say what a model gets back, in non-empty English', () => {
+    // The closure table has its own test (test/loop/closure.test.ts, plan step 14).
+    for (const text of [
+      MODEL_NOTES.schemaUnusable,
+      ...Object.values(MODEL_NOTES.inspectorFailed),
+    ]) {
+      expect(text.trim().length).toBeGreaterThan(0)
+      expect(() => fill(text, {})).not.toThrow()
     }
     // The blocked-after-freeze sentence is the spec's own (§不带 tools 的请求与冻结后的变化).
-    expect(MODEL_NOTES.closure['user-disabled']?.['not-run']).toBe(
+    expect(MODEL_NOTES.closure['user-disabled']['not-run']).toBe(
       'This tool is not available in this session. Do not call it again.',
     )
-    expect(MODEL_NOTES.closure.policy?.['not-run']).toBe(
-      MODEL_NOTES.closure['user-disabled']?.['not-run'],
+    expect(MODEL_NOTES.closure.policy['not-run']).toBe(
+      MODEL_NOTES.closure['user-disabled']['not-run'],
     )
   })
 })

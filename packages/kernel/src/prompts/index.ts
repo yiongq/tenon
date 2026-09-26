@@ -4,8 +4,8 @@
  * tool's module (descriptions, result templates, error texts); a new place means a new key.
  *
  * Plan step 10 lays down `fill()` and `MODEL_NOTES` in the spec's shape. A member no step has written
- * yet is optional, and `closure` holds only the cells written so far; each step adds what it writes to
- * a model (plan steps 10–15), and plan step 14 fills the rest of `closure` and removes the optionals.
+ * yet is optional; plan step 14 writes every cell of `closure` the §原因码表 needs, so every source has
+ * its row, and each later step adds the member it writes to a model.
  * The system prompts, the language hint and `PROMPT_LAYER_VERSION` / `PROMPT_LAYER_HASH` arrive with
  * plan step 18.
  *
@@ -34,10 +34,11 @@ export type ClosureNoteSource = Exclude<ClosureSource, 'no-preference' | 'typed-
 export interface ModelNotes {
   /**
    * By (source, execution state). A blocking code may use the slots `BLOCKED_FACT_KEYS[source]`
-   * (plan step 11); every other cell has none. Partial until plan step 14 fills every cell.
+   * (plan step 11); every other cell has none. Each source has the states §提示层「closure 要填满的格」
+   * lists, and only those.
    */
   readonly closure: Readonly<
-    Partial<Record<ClosureNoteSource, Readonly<Partial<Record<ExecutionState, string>>>>>
+    Record<ClosureNoteSource, Readonly<Partial<Record<ExecutionState, string>>>>
   >
   /** A denying inspector that timed out or failed (§Inspector 接口与合议); the source is `inspector`. */
   readonly inspectorFailed: Readonly<Record<'timeout' | 'error', string>>
@@ -70,17 +71,16 @@ const NOT_AVAILABLE = 'This tool is not available in this session. Do not call i
 
 export const MODEL_NOTES: ModelNotes = {
   closure: {
+    // What the user answered, or did instead of answering (F2, F11).
+    'user-rejected': {
+      'not-run': 'The user declined this call, so it was not run.',
+    },
+    superseded: {
+      'not-run': 'The user sent a new message instead of answering, so this call was not run.',
+    },
+    // The four blocks (D5): not answered by the user, counted towards MACHINE_DENIAL_CAP.
     policy: { 'not-run': NOT_AVAILABLE },
     'user-disabled': { 'not-run': NOT_AVAILABLE },
-    // The second text block carries the validator's message or the tool's own check (§参数校验与失败).
-    'invalid-input': {
-      'not-run':
-        'The arguments of this call are invalid, so it was not run. The reason follows. Correct the arguments before calling it again.',
-    },
-    'tool-unavailable': {
-      'not-run': 'This tool cannot be used right now, so the call was not run.',
-    },
-    // Plan step 13: the blocks a decision makes, and the calls a Run leaves when it ends.
     protected: {
       'not-run':
         'This call was blocked because it reaches a location Tenon protects ({target}), so it was not run. Do not try to reach it another way.',
@@ -88,9 +88,54 @@ export const MODEL_NOTES: ModelNotes = {
     inspector: {
       'not-run': 'A permission check blocked this call, so it was not run.',
     },
+    'tool-unavailable': {
+      'not-run': 'This tool cannot be used right now, so the call was not run.',
+    },
+    // The second text block carries the validator's message or the tool's own check (§参数校验与失败).
+    'invalid-input': {
+      'not-run':
+        'The arguments of this call are invalid, so it was not run. The reason follows. Correct the arguments before calling it again.',
+    },
+    // A stop, a quit or a closed window (B1, B4). What a command printed before it goes after this.
     stopped: {
       'not-run': 'The user stopped the task before this call ran, so it was not run.',
+      aborted:
+        'The user stopped the task while this call was running, so it was interrupted. Changes it made before the stop are still in place.',
+      uncertain:
+        'The user stopped the task while this call was running, and it is not known whether the call finished. Its effects may have happened.',
     },
+    'app-exit': {
+      'not-run': 'Tenon was closing before this call ran, so it was not run.',
+      aborted:
+        'Tenon was closing while this call was running, so it was interrupted. Changes it made before that are still in place.',
+      uncertain:
+        'Tenon was closing while this call was running, and it is not known whether the call finished. Its effects may have happened.',
+    },
+    'timed-out': {
+      aborted:
+        'The command ran past its timeout and was stopped. Its output until then follows. Changes it made are still in place. Retry with a larger timeout if you still need it.',
+      uncertain:
+        'The command ran past its timeout and was stopped, and it is not known whether it exited. Its effects may have happened.',
+    },
+    // Written by the startup recovery, never re-run (B1, B15).
+    crashed: {
+      'not-run': 'Tenon closed unexpectedly before this call ran, so it was not run.',
+      uncertain:
+        'Tenon closed unexpectedly while this call was running, and it is not known whether the call finished. Its effects may have happened. It was not run again.',
+    },
+    // The fallback when a call reached a request without its result (B1): an internal error.
+    repair: {
+      'not-run':
+        'This call has no recorded result because of an internal error, so it was not run.',
+      uncertain:
+        'This call has no recorded result because of an internal error. It may have run, and its effects may have happened.',
+    },
+    // AskUserQuestion stopped before it was answered (H6): the only one of its three fills that is a
+    // closure.
+    unanswered: {
+      aborted: 'The task was stopped before the user answered this question.',
+    },
+    // The calls a Run leaves when it ends by one of these (A2, H11, H12, F2).
     'output-truncated': {
       'not-run':
         'The reply was cut off at the output limit before this call could run, so it was not run.',

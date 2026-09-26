@@ -8,8 +8,8 @@
  * after the fact it reports is committed, and a `run-ended` after the lease is finished: whoever
  * reacts to `done` by sending again finds the session free.
  *
- * Plan step 9 mapped what a one-request Run produces and step 13 adds each Run's `endReason`.
- * `tool-outcome` (step 14), `user-message` (step 17) and `queue-held` (step 17, to queue.ts) are not
+ * Plan step 9 mapped what a one-request Run produces, step 13 added each Run's `endReason` and step
+ * 14 `tool-outcome`. `user-message` (step 17) and `queue-held` (step 17, to queue.ts) are not
  * forwarded yet.
  */
 import { chatEvent } from '@tenon-app/contracts'
@@ -108,11 +108,20 @@ export function createRunEvents(options: RunEventsOptions): (event: SessionEvent
           input: event.input,
         })
         return
+      case 'tool-outcome':
+        emitChatEvent(send, log, {
+          type: 'tool-outcome',
+          sessionId,
+          callKey: event.callKey,
+          providerToolCallId: event.providerToolCallId,
+          ...event.outcome,
+        })
+        return
       case 'run-ended':
         emitChatEvent(send, log, terminalEvent(sessionId, event))
         return
       default:
-        // tool-outcome, user-message, queue-held: see the file comment.
+        // user-message, queue-held: see the file comment.
         return
     }
   }

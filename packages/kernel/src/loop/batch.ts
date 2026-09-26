@@ -37,6 +37,7 @@ import type { InspectedCall } from '../permission/session-view.js'
 import { locatePath, resolvePath } from '../permission/workspace.js'
 import type { PathScope, PathVerdict } from '../permission/workspace.js'
 import type {
+  AppendResult,
   DispatchCommittedPayload,
   FactWriter,
   NewEntry,
@@ -54,7 +55,7 @@ import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ArgumentValidator } from '../tools/validate.js'
 import type { CallRef } from './closure.js'
-import { notRunFacts, resultFacts } from './closure.js'
+import { notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { MACHINE_DENIAL_CAP } from './limits.js'
 import type { McpToolSource } from './ports.js'
 import type { ToolOutcomeView } from './events.js'
@@ -88,10 +89,30 @@ export interface BatchContext {
   /** Machine denials in a row before this batch, counted from the Tape (F2, F3). */
   readonly denials: number
   readonly signal: AbortSignal
-  /** Commits facts through the mailbox; resolves once they are on the Tape. */
-  readonly write: (entries: readonly NewEntry[]) => Promise<void>
+  /** Commits facts through the mailbox; resolves with what was written once it is on the Tape. */
+  readonly write: (entries: readonly NewEntry[]) => Promise<Written>
+  /**
+   * Tests and development builds: a dispatch the Tape already holds throws (§执行日志与恢复表 T1);
+   * the packaged build closes that call `repair` and logs it instead.
+   */
+  readonly strict: boolean
+  readonly log: (line: string) => void
   /** A call's closed outcome, for the interface (sent after its two facts are committed). */
   readonly outcome: (call: CompleteCall, view: ToolOutcomeView) => void
+}
+
+/**
+ * What a write committed: the entries, in the order given, with their receipts. A result for a call
+ * that already has one is left out (先写者算数, §写入：谁写、写几次), and so is its outcome.
+ */
+export interface Written {
+  readonly entries: readonly NewEntry[]
+  readonly receipts: readonly AppendResult[]
+  /**
+   * The top entry id of the results another writer committed first, when this write deferred to
+   * them: the Run's context pin moves past them, or its next request would not see them.
+   */
+  readonly deferredTo?: number
 }
 
 export type BatchResult =
@@ -310,18 +331,17 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       decisionKey,
       writer,
     }
+    const dispatchEntry = ctx.tape.writer('execution').entry('execution/dispatch_committed', {
+      sourceType: 'runtime_event',
+      sourceId: ctx.runId,
+      sourceSeq: ctx.requestSeq,
+      provenanceKey: dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
+      payload: dispatch,
+      createdAt: ctx.now(),
+    })
     // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-    await ctx.write([
-      decided,
-      ctx.tape.writer('execution').entry('execution/dispatch_committed', {
-        sourceType: 'runtime_event',
-        sourceId: ctx.runId,
-        sourceSeq: ctx.requestSeq,
-        provenanceKey: dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
-        payload: dispatch,
-        createdAt: ctx.now(),
-      }),
-    ])
+    const committed = await dispatchOnce(ctx, ref, item, [decided, dispatchEntry], dispatchEntry)
+    if (!committed) continue
     // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
     const execution = await executor({ item, input: call.input, signal: ctx.signal })
     const facts = resultFacts({
@@ -343,6 +363,40 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
   return { kind: 'done', denials }
 }
 
+/**
+ * The decision and its `dispatch_committed`, and whether the side effect may follow (T1). An append
+ * that finds the same dispatch already committed (`created: false`) never dispatches it twice: tests
+ * and development builds throw, the packaged build closes the call uncertain / `repair` and logs it.
+ * A `TapeProvenanceConflictError` — another writer's dispatch under this key — goes up as it is: it
+ * is the bug the queue exists to rule out (01 spec:492), and plan step 16's recovery reads it as 损坏.
+ */
+async function dispatchOnce(
+  ctx: BatchContext,
+  ref: CallRef,
+  item: ToolTableItem,
+  entries: readonly NewEntry[],
+  dispatchEntry: NewEntry,
+): Promise<boolean> {
+  const written = await ctx.write(entries)
+  const at = written.entries.indexOf(dispatchEntry)
+  if (written.receipts[at]?.created !== false) return true
+  const key = dispatchEntry.provenanceKey ?? ''
+  if (ctx.strict)
+    throw new Error(`[loop] dispatch ${key} was already committed; it is never dispatched twice`)
+  ctx.log(`[loop] dispatch ${key} was already committed; not dispatched again, closed as repair`)
+  await ctx.write(
+    repairFacts({
+      tape: ctx.tape,
+      now: ctx.now,
+      call: ref,
+      dispatched: true,
+      effect: effectOf(item),
+      writer: { by: 'run', runId: ctx.runId },
+    }),
+  )
+  return false
+}
+
 /** Writes a call's closing facts, then tells the interface — after the commit, never before. */
 async function close(
   ctx: BatchContext,
@@ -350,11 +404,11 @@ async function close(
   entries: readonly NewEntry[],
   decision?: Decision,
 ): Promise<void> {
-  await ctx.write(entries)
-  const outcome = entries.find((entry) => entry.name === 'execution/tool_outcome')?.payload as
-    | Record<string, unknown>
-    | undefined
-  const result = entries.find((entry) => entry.name === 'tool/result')?.payload as
+  const written = await ctx.write(entries)
+  // A result another writer beat is dropped, and so is its announcement (先写者算数).
+  const outcome = written.entries.find((entry) => entry.name === 'execution/tool_outcome')
+    ?.payload as Record<string, unknown> | undefined
+  const result = written.entries.find((entry) => entry.name === 'tool/result')?.payload as
     | Record<string, unknown>
     | undefined
   if (outcome === undefined || result === undefined) return
@@ -526,7 +580,7 @@ function cardOf(
 }
 
 /** What an executed call records: its tool's class; connector tools are external (§原因码表). */
-function effectOf(item: ToolTableItem): 'read' | 'write' | 'external' {
+export function effectOf(item: ToolTableItem): 'read' | 'write' | 'external' {
   if (item.source === 'builtin' && isBuiltinToolName(item.originalName))
     return BUILTIN_TOOLS[item.originalName].effect
   return 'external'

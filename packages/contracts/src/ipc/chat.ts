@@ -1,6 +1,13 @@
-import type { ProviderErrorCode, RunEndReason } from '@tenon-app/kernel'
+import type {
+  ClosureSource,
+  ExecutionState,
+  ProviderErrorCode,
+  RunEndReason,
+} from '@tenon-app/kernel'
 import { z } from 'zod'
 import { defineEvent, defineRoute } from '../route.js'
+import { decisionSummarySchema } from './approval.js'
+import { confirmTargetSchema } from './confirm.js'
 
 export const sessionIdSchema = z.string().min(1)
 
@@ -58,6 +65,88 @@ export const runEndReasonSchema = z.discriminatedUnion('code', [
 ]) satisfies z.ZodType<RunEndReason>
 export type RunEndReasonContract = z.infer<typeof runEndReasonSchema>
 
+/** How far a call got (spec 02 §原因码表). */
+export const executionStateSchema = z.enum([
+  'not-run',
+  'aborted',
+  'completed',
+  'uncertain',
+]) satisfies z.ZodType<ExecutionState>
+
+/** Why a call was closed rather than run to its end; only ever added to (spec 02 §原因码表). */
+export const closureSourceSchema = z.enum([
+  'policy',
+  'user-disabled',
+  'protected',
+  'inspector',
+  'user-rejected',
+  'stopped',
+  'timed-out',
+  'superseded',
+  'tool-unavailable',
+  'invalid-input',
+  'crashed',
+  'app-exit',
+  'output-truncated',
+  'step-limit',
+  'no-progress',
+  'usage-limit',
+  'blocked-repeatedly',
+  'content-filter',
+  'provider-error',
+  'repair',
+  'no-preference',
+  'unanswered',
+  'typed-answer',
+]) satisfies z.ZodType<ClosureSource>
+
+/**
+ * A closed call as the interface shows it (01 修补 6): the kernel's `ToolOutcomeView`. What the
+ * model read is `output`; the decision crosses as its summary only (F8). The optional members are
+ * exact, like the kernel type's: absent, never `undefined`.
+ */
+export const toolOutcomeViewShape = {
+  effect: z.enum(['read', 'write', 'external', 'blocked']),
+  state: executionStateSchema,
+  source: closureSourceSchema.nullable(), // null = 正常执行完
+  facts: z.record(z.string(), z.string()).exactOptional(), // 只在 source 是拦截码时有，键按 BLOCKED_FACT_KEYS
+  output: z.string(),
+  permission: decisionSummarySchema.exactOptional(), // 没有判决事实的调用没有这一项（F8）
+  approval: z
+    .object({
+      outcome: z.enum([
+        'allowed',
+        'denied',
+        'cancelled-by-stop',
+        'superseded',
+        'tool-unavailable',
+        'denied-on-rejudge',
+      ]),
+      scope: z.enum(['once', 'session']).nullable(),
+      target: confirmTargetSchema,
+    })
+    .exactOptional(), // 只在出过卡的调用上有
+  question: z
+    .object({
+      answers: z.record(z.string(), z.array(z.string()).readonly().nullable()),
+      response: z.string().exactOptional(),
+    })
+    .exactOptional(), // 只在答过的 AskUserQuestion 上有（开放问题 18）
+  handoff: z
+    .object({
+      outcome: z.enum(['completed', 'partial', 'aborted', 'superseded', 'uncertain']),
+      childEndReason: z.string().nullable(),
+      childSessionId: z.string(),
+    })
+    .exactOptional(), // 只在 Agent 调用上有（开放问题 18）
+}
+/**
+ * Not `satisfies z.ZodType<ToolOutcomeView>`: the kernel brands `ConfirmTarget`'s paths, which a
+ * schema of the wire cannot produce. The contract test asserts the kernel view is one of these.
+ */
+export const toolOutcomeViewSchema = z.object(toolOutcomeViewShape)
+export type ToolOutcomeViewContract = z.infer<typeof toolOutcomeViewSchema>
+
 /** Send one user message; the reply arrives as `chatEvent`s. */
 export const chatSend = defineRoute('chat.send', {
   request: z.object({ sessionId: sessionIdSchema, text: z.string().min(1) }),
@@ -101,8 +190,7 @@ export const chatEventSchema = z.discriminatedUnion('type', [
     /** Spec 02 (开放问题 16): on every Run's end; absent on an error that is not a Run's. */
     endReason: runEndReasonSchema.optional(),
   }),
-  // Spec 02, 01 修补 6 (decisions H12, H3, A11, B1): only-added variants. `tool-outcome` comes with
-  // step 14, when the types it carries exist.
+  // Spec 02, 01 修补 6 (decisions H12, H3, A11, B1): only-added variants.
   z.object({ type: z.literal('thinking-delta'), sessionId: sessionIdSchema, delta: z.string() }),
   z.object({
     type: z.literal('tool-call'),
@@ -112,6 +200,14 @@ export const chatEventSchema = z.discriminatedUnion('type', [
     providerToolCallId: z.string(),
     name: z.string(),
     input: z.record(z.string(), z.unknown()),
+  }),
+  /** Sent once the call's `tool/result` and `execution/tool_outcome` are committed. */
+  z.object({
+    type: z.literal('tool-outcome'),
+    sessionId: sessionIdSchema,
+    callKey: z.string().min(1),
+    providerToolCallId: z.string(),
+    ...toolOutcomeViewShape,
   }),
   /** This attempt writes no assistant message (discarded or failed): drop what it streamed. */
   z.object({ type: z.literal('attempt-discarded'), sessionId: sessionIdSchema }),

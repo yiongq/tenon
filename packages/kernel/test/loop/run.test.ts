@@ -9,18 +9,11 @@
  * compaction retry of an overflow is step 30's.
  */
 import { describe, expect, it } from 'vitest'
-import {
-  ZHIPU_DEFAULT_BASE_URL,
-  createMemoryHost,
-  createMemoryTapeStore,
-  zhipuDefinition,
-} from '../../src/index.js'
+import { ZHIPU_DEFAULT_BASE_URL, createMemoryTapeStore, zhipuDefinition } from '../../src/index.js'
 import type {
   ContentBlock,
-  HostAdapter,
   InspectorRegistration,
   LoopPorts,
-  McpConnection,
   ModelInfo,
   Provider,
   SendContext,
@@ -47,6 +40,7 @@ import {
 import type { RecordedRequest, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
+import { LOOK, instantHost, lookSource } from './support.js'
 
 const IDENTITY = { userId: 'run-user', tenantId: 'run-tenant', profileDir: '/tenon/run' }
 const SESSION = '5a2c9a2e-6b3d-4a71-9f52-0c8de7a11b35'
@@ -74,9 +68,6 @@ const USAGE: Usage = {
   final: true,
 }
 
-/** The connector tool every batch calls: `look` on server `fs`, under its provider name. */
-const LOOK = 'fs__look'
-
 type RunEnded = Extract<SessionEvent, { type: 'run-ended' }>
 
 interface Harness {
@@ -100,28 +91,6 @@ interface HarnessOptions {
   readonly onEvent?: (event: SessionEvent) => void
   /** The ports the service is bound to, when a case needs to hold one of them. */
   readonly ports?: (loop: TestLoopPorts) => LoopPorts
-}
-
-/** A host whose timers fire at once, each delay recorded: a backoff is asserted, not waited for. */
-function instantHost(delays: number[]): HostAdapter {
-  const host = createMemoryHost()
-  let clock = 1_000
-  return {
-    ...host,
-    clock: {
-      now: (): number => (clock += 1),
-      setTimeout: (fn, ms): (() => void) => {
-        delays.push(ms)
-        let live = true
-        void Promise.resolve().then(() => {
-          if (live) fn()
-        })
-        return () => {
-          live = false
-        }
-      },
-    },
-  }
 }
 
 /** The scripted provider, with each `stream()` call's context recorded. */
@@ -148,21 +117,11 @@ function harness(options: HarnessOptions = {}): Harness {
   const provider = createScriptedProvider({ models: [MODEL] })
   const sends: SendContext[] = []
   const executed: Record<string, unknown>[] = []
-  const connection = {
-    listTools: () => Promise.resolve([{ name: 'look', inputSchema: { type: 'object' } }]),
-    callTool: (_name: string, args: Record<string, unknown>) => {
-      executed.push(args)
-      return Promise.resolve({
-        content: [{ type: 'text', text: `looked at ${String(args['at'])}` }],
-        isError: false,
-      })
-    },
-  } as unknown as McpConnection
   const loop = createTestLoopPorts({
     connector: {
       provider: recording(provider, sends),
       model: MODEL,
-      mcpSources: [{ serverId: 'fs', connection }],
+      mcpSources: [lookSource(executed)],
     },
     ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
   })

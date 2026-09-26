@@ -30,6 +30,7 @@ import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
   EncodedRequest,
+  InternalMessage,
   ModelInfo,
   Provider,
   ProviderErrorCode,
@@ -49,7 +50,6 @@ import {
   systemHash,
 } from '../provider/wire/shared.js'
 import type {
-  AppendResult,
   MessageStatus,
   NewEntry,
   RunUsageLine,
@@ -75,7 +75,7 @@ import {
   toolsWithheldKey,
   viewContentKey,
 } from '../tape/provenance.js'
-import { rebuildProviderContext } from '../tape/replay.js'
+import { replayContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
@@ -84,10 +84,10 @@ import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { CompleteCall } from './batch.js'
-import { readSessionEntries, runBatch } from './batch.js'
+import type { CompleteCall, Written } from './batch.js'
+import { effectOf, readSessionEntries, runBatch } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
-import { isBlockReason, notRunFacts } from './closure.js'
+import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
 import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
 import type { McpToolSource, RunAbortCause, RunLease } from './ports.js'
@@ -124,7 +124,13 @@ export interface RunDriverContext {
   readonly tokenLimit: number | null
   readonly lease: RunLease
   readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
-  readonly write: (entries: readonly NewEntry[]) => Promise<readonly AppendResult[]>
+  /**
+   * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
+   * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
+   */
+  readonly write: (entries: readonly NewEntry[]) => Promise<Written>
+  /** A call in the context with no result: throw (tests, development) or repair and log (§兜底). */
+  readonly onUnansweredCall: 'throw' | 'repair'
   readonly emit: {
     delta(runId: string, type: 'text-delta' | 'thinking-delta', delta: string): void
     discarded(runId: string): void
@@ -175,10 +181,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     withTerminal: extra.withTerminal ?? [],
     waiting: extra.waiting ?? [],
   })
-  const write = async (entries: readonly NewEntry[]): Promise<void> => {
-    if (entries.length === 0) return
-    const receipts = await ctx.write(entries)
-    for (const receipt of receipts) pin = Math.max(pin, receipt.entryId)
+  const write = async (entries: readonly NewEntry[]): Promise<Written> => {
+    if (entries.length === 0) return { entries: [], receipts: [] }
+    const written = await ctx.write(entries)
+    for (const receipt of written.receipts) pin = Math.max(pin, receipt.entryId)
+    if (written.deferredTo !== undefined) pin = Math.max(pin, written.deferredTo)
+    return written
   }
 
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
@@ -213,11 +221,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       openTable: ctx.openTable,
     })
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
-    const messages = await rebuildProviderContext(tape, {
-      sessionId: ctx.sessionId,
-      atEntryId: pin,
-      target: ctx.model,
-    })
+    const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
     const request: ProviderRequest = {
       model: ctx.model,
       messages,
@@ -359,6 +363,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         testTools: ctx.testTools,
         search: ctx.search,
         denials,
+        strict: ctx.onUnansweredCall === 'throw',
+        log: ctx.log,
         signal,
         write,
         outcome: (call, view) =>
@@ -689,6 +695,43 @@ function attemptFact(
   })
 }
 
+/**
+ * The context at `pin`, with every call paired (§崩溃、服务端调用块与兜底「兜底」): checked once more
+ * after the assembly, before `encode()`. A call without its result throws — the bug is not covered
+ * over — unless the host asked for repair: then each gets a `repair` closure, the log hears of it
+ * once, and the context is read again at the new pin.
+ */
+async function pairedContext(
+  ctx: RunDriverContext,
+  table: FrozenToolTable,
+  pin: number,
+  write: (entries: readonly NewEntry[]) => Promise<Written>,
+  pinAfter: () => number,
+): Promise<InternalMessage[]> {
+  const query = { sessionId: ctx.sessionId, atEntryId: pin, target: ctx.model }
+  const { messages, unanswered } = await replayContext(ctx.tape, query)
+  if (unanswered.length === 0) return messages
+  const keys = unanswered.map((call) => callKeyOf(call.runId, call.requestSeq, call.ordinal))
+  const line = `run ${ctx.runId}: ${String(unanswered.length)} call(s) reached a request with no result: ${keys.join(', ')}`
+  if (ctx.onUnansweredCall === 'throw') throw new Error(`[loop] ${line}`)
+  ctx.log(`[loop] ${line}; repaired`)
+  for (const call of unanswered) {
+    const item = table.items.find((candidate) => candidate.name === call.name)
+    // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
+    await write(
+      repairFacts({
+        tape: ctx.tape,
+        now: ctx.now,
+        call,
+        dispatched: call.dispatched,
+        effect: item === undefined ? 'external' : effectOf(item),
+        writer: { by: 'run', runId: ctx.runId },
+      }),
+    )
+  }
+  return (await replayContext(ctx.tape, { ...query, atEntryId: pinAfter() })).messages
+}
+
 /** Closes every call of a batch that will not run, in `<i>` order, with one source. */
 async function closeAll(
   ctx: RunDriverContext,
@@ -702,7 +745,7 @@ async function closeAll(
     | 'step-limit'
     | 'no-progress'
     | 'usage-limit',
-  write: (entries: readonly NewEntry[]) => Promise<void>,
+  write: (entries: readonly NewEntry[]) => Promise<Written>,
 ): Promise<void> {
   for (const call of calls) {
     const entries = notRunFacts({
@@ -713,8 +756,11 @@ async function closeAll(
       writer: { by: 'run', runId: ctx.runId },
     })
     // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
-    await write(entries)
-    ctx.emit.outcome(call, notRunView(source, entries))
+    const written = await write(entries)
+    // A closure another writer beat is not this one's to announce.
+    if (written.entries.some((entry) => entry.name === 'tool/result')) {
+      ctx.emit.outcome(call, notRunView(source, entries))
+    }
   }
 }
 

@@ -3,7 +3,7 @@
  * step 9): the RunRegistry that is `LoopPorts.leases`, the in-memory queue behind `LoopPorts.queue`,
  * and run-events.ts's mapping from loop events to `chat.event`.
  */
-import { chatEvent } from '@tenon-app/contracts'
+import { chatEvent, chatEventSchema } from '@tenon-app/contracts'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import { createMemoryHost } from '@tenon-app/kernel'
 import type { RunLease, SessionEvent, SessionService } from '@tenon-app/kernel'
@@ -218,6 +218,39 @@ describe('run-events', () => {
         event.type === 'done' ? event.stopReason : event.type === 'error' ? event.code : event.type,
       ),
     ).toEqual(['end-turn', 'error', 'aborted', 'aborted', 'auth', 'unknown'])
+    // Each carries the Run's end reason, done and error alike (plan step 13).
+    expect(chat.map((event) => ('endReason' in event ? event.endReason?.code : null))).toEqual([
+      'completed',
+      'output-truncated',
+      'user-stopped',
+      'shutdown-aborted',
+      'provider-error',
+      'completed',
+    ])
+  })
+
+  it('forwards a closed call as tool-outcome, by callKey, and it parses (plan step 14)', () => {
+    const outcome = {
+      effect: 'blocked' as const,
+      state: 'not-run' as const,
+      source: 'protected' as const,
+      facts: { toolName: 'Read', target: '/etc/passwd' },
+      output: 'blocked',
+    }
+    const { chat } = mapped([
+      { ...root, type: 'tool-outcome', callKey: 'r1:1:0', providerToolCallId: 'toolu_1', outcome },
+      { ...child, type: 'tool-outcome', callKey: 'c1:1:0', providerToolCallId: 'toolu_2', outcome },
+    ])
+    expect(chat).toEqual([
+      {
+        type: 'tool-outcome',
+        sessionId: ROOT,
+        callKey: 'r1:1:0',
+        providerToolCallId: 'toolu_1',
+        ...outcome,
+      },
+    ])
+    expect(chatEventSchema.parse(chat[0])).toEqual(chat[0])
   })
 })
 
