@@ -46,7 +46,7 @@ import type {
   TapeEntry,
 } from '../tape/entry.js'
 import { dispatchCommittedKey, permissionDecidedKey } from '../tape/provenance.js'
-import { MAX_READ_LIMIT } from '../tape/store.js'
+import { MAX_READ_LIMIT, TapeProvenanceConflictError } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import { BUILTIN_TOOLS, isBuiltinToolName } from '../tools/builtin/index.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
@@ -328,10 +328,10 @@ export function blockFacts(
 
 /**
  * The decision and its `dispatch_committed`, and whether the side effect may follow (T1). An append
- * that finds the same dispatch already committed (`created: false`) never dispatches it twice: tests
- * and development builds throw, the packaged build closes the call uncertain / `repair` and logs it.
- * A `TapeProvenanceConflictError` — another writer's dispatch under this key — goes up as it is: it
- * is the bug the queue exists to rule out (01 spec:492), and plan step 16's recovery reads it as 损坏.
+ * that finds the same dispatch already committed (`created: false`) never dispatches it twice; a
+ * `TapeProvenanceConflictError` — another writer's dispatch under this key — dispatches nothing
+ * either, and the call closes as the recovery table's 损坏 (§执行日志与恢复表 T1). Tests and
+ * development builds throw on both; the packaged build closes the call uncertain / `repair` and logs.
  */
 async function dispatchOnce(
   ctx: BatchContext,
@@ -340,10 +340,29 @@ async function dispatchOnce(
   entries: readonly NewEntry[],
   dispatchEntry: NewEntry,
 ): Promise<boolean> {
-  const written = await ctx.write(entries)
+  const key = dispatchEntry.provenanceKey
+  let written: Written
+  try {
+    written = await ctx.write(entries)
+  } catch (error) {
+    if (!(error instanceof TapeProvenanceConflictError) || ctx.strict) throw error
+    ctx.log(
+      `[loop] dispatch ${key} conflicts with another writer's; not dispatched, closed as repair`,
+    )
+    await ctx.write(
+      repairFacts({
+        tape: ctx.tape,
+        now: ctx.now,
+        call: ref,
+        dispatched: true,
+        effect: effectOf(item),
+        writer: ctx.writer,
+      }),
+    )
+    return false
+  }
   const at = written.entries.indexOf(dispatchEntry)
   if (written.receipts[at]?.created !== false) return true
-  const key = dispatchEntry.provenanceKey
   if (ctx.strict)
     throw new Error(`[loop] dispatch ${key} was already committed; it is never dispatched twice`)
   ctx.log(`[loop] dispatch ${key} was already committed; not dispatched again, closed as repair`)

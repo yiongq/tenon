@@ -1,21 +1,30 @@
-import { approvalCurrent, approvalRespond, registerRoute } from '@tenon-app/contracts'
+import {
+  approvalCurrent,
+  approvalList,
+  approvalRespond,
+  approvalResume,
+  registerRoute,
+} from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import type { RunOrigin, SessionService } from '@tenon-app/kernel'
 
 /**
- * The approval routes (spec 02 §答复与投递): `approval.respond` → the kernel's `answer`, and
- * `approval.current` → `currentPending`. Both only forward — which card is current, whether an
- * answer applies, and what it writes are the kernel's. `approval.list` and `approval.resume` come
- * with plan step 16.
+ * The approval routes (spec 02 §答复与投递, §离开会话, §启动恢复与发送防护): `approval.respond` →
+ * `answer`, `approval.current` → `currentPending`, `approval.list` → `listPendingRoots` and
+ * `approval.resume` → `resume`. All four only forward — which card is current, whether an answer
+ * applies, what it writes and what can be resumed are the kernel's — and all four wait for startup
+ * recovery first.
  */
 export interface ApprovalRoutesDeps {
   readonly ipcMain: IpcMainLike
   /** `null` when `sessions.db` could not be opened: nothing waits, and nothing can be answered. */
   readonly sessions: SessionService | null
+  readonly gate?: Promise<void>
 }
 
-export function registerApprovalRoutes({ ipcMain, sessions }: ApprovalRoutesDeps): void {
+export function registerApprovalRoutes({ ipcMain, sessions, gate }: ApprovalRoutesDeps): void {
   registerRoute(ipcMain, approvalRespond, async (request, event) => {
+    await gate
     if (sessions === null) return { status: 'not-found' as const }
     const result = await sessions.answer({ ...request, origin: originOf(event) })
     // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
@@ -26,8 +35,25 @@ export function registerApprovalRoutes({ ipcMain, sessions }: ApprovalRoutesDeps
   })
 
   registerRoute(ipcMain, approvalCurrent, async ({ sessionId }) => {
+    await gate
     if (sessions === null) return null
     return sessions.currentPending({ sessionId })
+  })
+
+  registerRoute(ipcMain, approvalList, async ({ limit }) => {
+    await gate
+    if (sessions === null) return []
+    return [...(await sessions.listPendingRoots({ limit }))]
+  })
+
+  registerRoute(ipcMain, approvalResume, async ({ sessionId }, event) => {
+    await gate
+    if (sessions === null) return { status: 'none' as const }
+    const result = await sessions.resume({ rootSessionId: sessionId, origin: originOf(event) })
+    if (result.status === 'refused') {
+      throw new Error('resume refused: the loop is not bound, or the app is shutting down')
+    }
+    return { status: result.status }
   })
 }
 

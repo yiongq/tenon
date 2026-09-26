@@ -237,14 +237,17 @@ export interface ChatDeps {
   /** The loop's host half, bound to `sessions`; null exactly when `sessions` is. */
   readonly loop: DesktopLoop | null
   readonly log?: (line: string) => void
+  /** Startup recovery: every chat route waits for it first (spec 02 §启动恢复与发送防护). */
+  readonly gate?: Promise<void>
 }
 
 export function registerChatRoutes(deps: ChatDeps): void {
-  const { send, ipcMain, sessions, loop } = deps
+  const { send, ipcMain, sessions, loop, gate } = deps
   const log = deps.log ?? ((line: string): void => console.warn(line))
   const accepted = { accepted: true as const }
 
   registerRoute(ipcMain, chatSend, async ({ sessionId, text }, event) => {
+    await gate
     const fail = (detail: string): typeof accepted => {
       emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail })
       return accepted
@@ -277,13 +280,15 @@ export function registerChatRoutes(deps: ChatDeps): void {
     }
   })
 
-  registerRoute(ipcMain, chatStop, ({ sessionId }) => {
+  registerRoute(ipcMain, chatStop, async ({ sessionId }) => {
+    await gate
     if (sessions === null) return { stopped: false }
     return sessions.stop({ rootSessionId: sessionId })
   })
 
   // 「继续」 (spec 02 §重试与「继续」): the kernel judges whether there is anything to continue.
   registerRoute(ipcMain, chatContinue, async ({ sessionId }, event) => {
+    await gate
     if (sessions === null || loop === null) throw new Error(NO_STORE)
     if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
     const result = await sessions.continueRun({ sessionId, origin: ownerOf(senderOf(event)) })

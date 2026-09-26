@@ -1,4 +1,4 @@
-import { approvalCurrent, approvalRespond } from './ipc/approval.js'
+import { approvalCurrent, approvalList, approvalRespond, approvalResume } from './ipc/approval.js'
 import { chatContinue, chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
@@ -11,7 +11,9 @@ import { sessionLatest, sessionMessages } from './ipc/session.js'
  */
 export const ipcRoutes = {
   approvalCurrent,
+  approvalList,
   approvalRespond,
+  approvalResume,
   chatContinue,
   chatSend,
   chatStop,

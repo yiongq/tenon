@@ -59,6 +59,14 @@ function stubSessions(answerStatus: string): {
       return Promise.resolve({ status: answerStatus })
     },
     currentPending: () => Promise.resolve(CARD),
+    listPendingRoots: (q: { limit: number }) =>
+      Promise.resolve(
+        [
+          { sessionId: SESSION, waitKind: 'resume' },
+          { sessionId: '8d5f9a2e-6b3d-4a71-9f52-0c8de7a11b38', waitKind: 'approval' },
+        ].slice(0, q.limit),
+      ),
+    resume: () => Promise.resolve({ status: answerStatus === 'refused' ? 'refused' : 'started' }),
   } as unknown as SessionService
   return { sessions, answers }
 }
@@ -108,5 +116,53 @@ describe('approval routes', () => {
         decision: 'allow',
       }),
     ).toEqual({ ok: true, data: { status: 'not-found' } })
+  })
+})
+
+describe('approval.list, approval.resume and the recovery gate (plan step 16)', () => {
+  it('lists the rows the kernel gives, bounded by the limit', async () => {
+    const ipc = fakeIpc()
+    registerApprovalRoutes({ ipcMain: ipc.ipcMain, sessions: stubSessions('applied').sessions })
+    expect(await ipc.call('approval.list', { limit: 1 })).toEqual({
+      ok: true,
+      data: [{ sessionId: SESSION, waitKind: 'resume' }],
+    })
+  })
+
+  it('forwards a resume, and maps its refusal to ok: false', async () => {
+    const ipc = fakeIpc()
+    registerApprovalRoutes({ ipcMain: ipc.ipcMain, sessions: stubSessions('applied').sessions })
+    expect(await ipc.call('approval.resume', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: { status: 'started' },
+    })
+    const refusing = fakeIpc()
+    registerApprovalRoutes({
+      ipcMain: refusing.ipcMain,
+      sessions: stubSessions('refused').sessions,
+    })
+    expect(await refusing.call('approval.resume', { sessionId: SESSION })).toMatchObject({
+      ok: false,
+    })
+  })
+
+  it('answers nothing until startup recovery is done', async () => {
+    const ipc = fakeIpc()
+    const gate = Promise.withResolvers<void>()
+    registerApprovalRoutes({
+      ipcMain: ipc.ipcMain,
+      sessions: stubSessions('applied').sessions,
+      gate: gate.promise,
+    })
+    let answered = false
+    const listing = ipc.call('approval.list', { limit: 20 }).then((result) => {
+      answered = true
+      return result
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(answered).toBe(false)
+    gate.resolve()
+    expect(await listing).toMatchObject({ ok: true })
   })
 })

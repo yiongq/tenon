@@ -5,7 +5,9 @@ describe('ipc registry', () => {
   it('lists every declared route and event exactly once', () => {
     expect([...ROUTE_CHANNELS].toSorted()).toEqual([
       'approval.current',
+      'approval.list',
       'approval.respond',
+      'approval.resume',
       'chat.continue',
       'chat.send',
       'chat.stop',

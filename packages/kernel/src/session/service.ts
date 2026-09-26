@@ -37,7 +37,7 @@ import { isCanonicalUuid } from '../ids.js'
 import type { IdSource } from '../ids.js'
 import { createLoop } from '../loop/mailbox.js'
 import type { LoopPorts, RunConnector, RunOrigin } from '../loop/ports.js'
-import type { PendingCard } from '../loop/answer.js'
+import type { PendingCard, PendingRoot } from '../loop/answer.js'
 import type { AnswerCommand } from '../loop/waiting.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
@@ -192,6 +192,8 @@ export interface SessionService {
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
   /** The card a root waits on, for `approval.current` (§答复与投递); null when nothing waits. */
   currentPending(q: { sessionId: string }): Promise<PendingCard | null>
+  /** Each root that waits on an answer or can be resumed, for `approval.list` (§离开会话). */
+  listPendingRoots(q: { limit: number }): Promise<readonly PendingRoot[]>
   stop(q: { rootSessionId: string }): Promise<{ stopped: boolean }>
 }
 
@@ -247,6 +249,24 @@ export function constructSessionService(
     tokenLimit: extras.tokenLimit ?? null,
     onUnansweredCall: options.onUnansweredCall ?? 'throw',
   })
+
+  /**
+   * The root of a session: a sub-agent's is its parent (only two levels, H5), read off the first
+   * page of the session's own facts, where `session/profile_set` shares `session/start`'s batch; a
+   * session with no `profile_set` (phase 1's) is a root (§启动恢复与发送防护).
+   */
+  async function rootSessionOf(sessionId: string): Promise<string> {
+    const first = await tape.readBySource({
+      sessionId,
+      sourceType: 'session',
+      sourceId: sessionId,
+      limit: 8,
+    })
+    const profile = first.find((entry) => entry.name === 'session/profile_set')
+    const parent = (profile?.payload['subagentOf'] as { sessionId?: unknown } | undefined)
+      ?.sessionId
+    return typeof parent === 'string' ? parent : sessionId
+  }
 
   function startFact(
     sessionId: string,
@@ -322,8 +342,10 @@ export function constructSessionService(
       const newest = await tape.listSessions({ limit: LATEST_SESSION_SCAN })
       const restorable = newest.find((row) => row.lastMessageAt !== null) ?? newest[0]
       if (restorable === undefined) return null
-      const messages = await tape.listMessages({ sessionId: restorable.sessionId, limit: q.limit })
-      return { sessionId: restorable.sessionId, messages }
+      // A sub-agent's session opens as its root (B3, 01 修补 6「启动恢复」).
+      const sessionId = await rootSessionOf(restorable.sessionId)
+      const messages = await tape.listMessages({ sessionId, limit: q.limit })
+      return { sessionId, messages }
     },
 
     listMessages(q): Promise<MessageRow[]> {
@@ -339,6 +361,7 @@ export function constructSessionService(
     continueRun: (q) => loop.continueRun(q),
     answer: (q) => loop.answer(q),
     currentPending: (q) => loop.currentPending(q),
+    listPendingRoots: (q) => loop.listPendingRoots(q),
     stop: (q) => loop.stop(q),
   }
 }

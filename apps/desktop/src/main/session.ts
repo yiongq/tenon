@@ -15,10 +15,13 @@ export interface SessionRoutesDeps {
   ipcMain: IpcMainLike
   /** `null` when `sessions.db` could not be opened: there is nothing to restore, honestly. */
   sessions: SessionService | null
+  /** Startup recovery: what the restore reads waits for it (spec 02 §启动恢复与发送防护). */
+  gate?: Promise<void>
 }
 
-export function registerSessionRoutes({ ipcMain, sessions }: SessionRoutesDeps): void {
+export function registerSessionRoutes({ ipcMain, sessions, gate }: SessionRoutesDeps): void {
   registerRoute(ipcMain, sessionLatest, async ({ limit }) => {
+    await gate
     if (sessions === null) return null
     const latest = await sessions.latestSession({ limit })
     // Copied out of the readonly view the kernel hands back: the response schema owns what

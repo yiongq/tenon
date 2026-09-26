@@ -27,13 +27,22 @@ import {
   approvalResolvedKey,
   assembledKey,
   modelSelectedKey,
+  permissionDecidedKey,
   runStartedKey,
   runTerminalKey,
+  toolTableKey,
   viewContentKey,
 } from '../tape/provenance.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
-import type { CompleteCall } from './batch.js'
+import { canonicalJson } from '../tape/canonical-json.js'
+import type { BuiltinToolName } from '../tools/builtin/tool.js'
+import { executorFor } from '../tools/executor.js'
+import type { ToolTableItem } from '../tools/registry.js'
+import { rebuildToolTable } from '../tools/table.js'
+import { blockFacts, decisionEntry, judgeCall, readSessionEntries } from './batch.js'
+import type { CompleteCall, JudgeContext, Judgement } from './batch.js'
+import { readViewState } from './run.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
 import type { RunEndReason } from './terminal.js'
@@ -56,8 +65,8 @@ export interface WaitingCall {
   readonly pausedRunId: string
 }
 
-/** Every fact a Run keyed under its id, paged. */
-async function runFacts(tape: Tape, sessionId: string, runId: string): Promise<TapeEntry[]> {
+/** Every fact a Run keyed under its id, paged from `fromEntryId` (B5). */
+export async function runFacts(tape: Tape, sessionId: string, runId: string): Promise<TapeEntry[]> {
   const entries: TapeEntry[] = []
   let fromEntryId: number | undefined
   for (;;) {
@@ -266,21 +275,34 @@ export function supersedeFacts(tape: Tape, now: () => number, waiting: WaitingCa
   ]
 }
 
-/** The head of a Run an answer opens: `run_started{ resume }`, and its `model_selected` when it requests. */
+/** The paused Run a resuming one names, and the request of the batch it finishes (§续跑). */
+export interface PausedBatch {
+  readonly pausedRunId: string
+  readonly batch: { readonly runId: string; readonly requestSeq: number }
+}
+
+/** The paused batch a waiting call belongs to. */
+export function pausedBatchOf(waiting: WaitingCall): PausedBatch {
+  return {
+    pausedRunId: waiting.pausedRunId,
+    batch: { runId: waiting.ref.runId, requestSeq: waiting.ref.requestSeq },
+  }
+}
+
+/**
+ * The head of a Run that resumes a paused batch: `run_started{ resume }`, and its `model_selected`
+ * when it will request (an answer, `resume`); a Run that only closes calls writes none.
+ */
 export function resumeHead(q: {
   readonly tape: Tape
   readonly now: () => number
   readonly sessionId: string
   readonly runId: string
-  readonly waiting: WaitingCall
+  readonly paused: PausedBatch
   readonly selected: ModelSelectedPayload | null
 }): NewEntry[] {
   const started: RunStartedPayload = {
-    cause: {
-      kind: 'resume',
-      pausedRunId: q.waiting.pausedRunId,
-      batch: { runId: q.waiting.ref.runId, requestSeq: q.waiting.ref.requestSeq },
-    },
+    cause: { kind: 'resume', pausedRunId: q.paused.pausedRunId, batch: q.paused.batch },
   }
   const entries = [
     q.tape.writer('execution').entry('execution/run_started', {
@@ -331,7 +353,7 @@ export function rejectFacts(q: {
         source: 'user-rejected',
         writer: run,
       }),
-      ...resumeHead({ ...q, selected: null }),
+      ...resumeHead({ ...q, paused: pausedBatchOf(q.waiting), selected: null }),
       q.tape.writer('execution').entry('execution/run_terminal', {
         sourceType: 'runtime_event',
         sourceId: q.runId,
@@ -406,6 +428,12 @@ export interface PendingCard {
   readonly allowScope: 'once' | 'session'
 }
 
+/** One row of `approval.list`: a root that waits on an answer, or that can be resumed (§离开会话). */
+export interface PendingRoot {
+  readonly sessionId: string
+  readonly waitKind: 'approval' | 'question' | 'resume'
+}
+
 /** The card an asking decision describes, as `HostConfirm.request` delivers it (§答复与投递「投递」). */
 export function confirmRequestOf(
   sessionId: string,
@@ -423,4 +451,151 @@ export function confirmRequestOf(
     reversibility: decision.reversibility,
     target: confirm.target,
   }
+}
+
+// ----- the re-judgement (§等待模型「重新判定」) --------------------------------------------------------
+
+/** How a waiting call judges now: only ever tighter than the card it waits on (F3). */
+export type Rejudged =
+  | { readonly kind: 'stopped' }
+  | { readonly kind: 'unavailable' }
+  | { readonly kind: 'denied'; readonly judged: Extract<Judgement, { kind: 'judged' }> }
+  | { readonly kind: 'changed'; readonly judged: Extract<Judgement, { kind: 'judged' }> }
+  | { readonly kind: 'unchanged'; readonly judged: Extract<Judgement, { kind: 'judged' }> }
+
+/**
+ * The paused batch's frozen facts: its model setup, and the table item of the waiting call, from
+ * the table frozen for that provider and generation.
+ */
+export async function frozenBatchOf(
+  tape: Tape,
+  waiting: WaitingCall,
+): Promise<{ setup: ResumeSetup; item: ToolTableItem | undefined }> {
+  const entries = await readSessionEntries(tape, waiting.sessionId)
+  const setup = resumeSetupOf(entries, waiting.ref)
+  const head = await tape.head(waiting.sessionId)
+  const state = await readViewState(tape, waiting.sessionId)
+  const tableKey = toolTableKey(
+    head?.incarnationId ?? '',
+    state.generation,
+    setup.selected.providerId,
+  )
+  const stored = state.tables.get(tableKey)
+  const table = stored === undefined ? null : rebuildToolTable(tableKey, stored, state.specs)
+  return { setup, item: table?.items.find((candidate) => candidate.name === waiting.call.name) }
+}
+
+/**
+ * The call judged again, before an allow is applied or at startup: gone (out of the frozen table,
+ * or a builtin with no executor in this build — a connector's server is only reachable through an
+ * assembly, and is checked at dispatch), denied, still asking about something else, or as it was.
+ * A verdict that loosened since is read as `unchanged`: an allow never comes from a re-judgement.
+ */
+export async function rejudgeWaiting(q: {
+  readonly judge: Omit<JudgeContext, 'sessionId' | 'searchHost'>
+  readonly waiting: WaitingCall
+  readonly item: ToolTableItem | undefined
+  readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
+}): Promise<Rejudged> {
+  const { item, waiting } = q
+  if (
+    item === undefined ||
+    (item.source === 'builtin' &&
+      executorFor({ item, mcpSources: [], testTools: q.testTools }) === null)
+  ) {
+    return { kind: 'unavailable' }
+  }
+  const target = waiting.decision.confirm?.target
+  const judged = await judgeCall(
+    {
+      ...q.judge,
+      sessionId: waiting.sessionId,
+      searchHost: target?.type === 'search' ? target.host : null,
+    },
+    item,
+    waiting.call,
+  )
+  if (judged.kind === 'stopped') return judged
+  const verdict = judged.decision.record.verdict
+  if (verdict === 'deny') return { kind: 'denied', judged }
+  if (verdict === 'ask' && cardChanged(waiting.decision, judged)) return { kind: 'changed', judged }
+  return { kind: 'unchanged', judged }
+}
+
+/** Whether a re-judgement's card differs from the one waiting: verdict, summary or card (F3). */
+function cardChanged(
+  before: PermissionDecidedPayload,
+  judged: Extract<Judgement, { kind: 'judged' }>,
+): boolean {
+  const { decision } = judged
+  const after = {
+    verdict: decision.record.verdict,
+    summary: decision.summary,
+    confirm:
+      decision.confirm === undefined || judged.card === undefined
+        ? null
+        : { ...decision.confirm, ...judged.card },
+  }
+  const was = {
+    verdict: before.record.verdict,
+    summary: before.summary,
+    confirm: before.confirm ?? null,
+  }
+  return canonicalJson(after) !== canonicalJson(was)
+}
+
+/** The re-judgement's own decision fact, `…:rejudge:<r>`: a denial, or a card that changed. */
+export function rejudgeDecisionOf(q: {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly waiting: WaitingCall
+  readonly judged: Extract<Judgement, { kind: 'judged' }>
+  readonly writer: FactWriter
+}): NewEntry {
+  const rejudge = q.waiting.rejudge + 1
+  const { ref } = q.waiting
+  return decisionEntry({
+    tape: q.tape,
+    now: q.now,
+    ref,
+    argsHash: q.waiting.call.argsHash,
+    judged: q.judged,
+    key: permissionDecidedKey(ref.runId, ref.requestSeq, ref.ordinal, rejudge),
+    rejudge,
+    writer: q.writer,
+  })
+}
+
+/**
+ * A tightened re-judgement's facts (§每种答复同批写什么): the denial's own decision when it denies,
+ * the resolution (`denied-on-rejudge` or `tool-unavailable`, via `rejudge`) and the call's closure.
+ * Whoever re-judged writes them: the resolver before an allow, the recovery at startup.
+ */
+export function tightenedFacts(q: {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly waiting: WaitingCall
+  readonly rejudged: Extract<Rejudged, { kind: 'unavailable' | 'denied' }>
+  readonly writer: FactWriter
+}): NewEntry[] {
+  const { tape, now, waiting, writer } = q
+  if (q.rejudged.kind === 'unavailable') {
+    return [
+      resolvedEntry({ tape, now, waiting, outcome: 'tool-unavailable', via: 'rejudge', writer }),
+      ...batchClosures({
+        tape,
+        now,
+        waiting,
+        calls: [waiting.call],
+        source: 'tool-unavailable',
+        writer,
+      }),
+    ]
+  }
+  const { judged } = q.rejudged
+  return [
+    rejudgeDecisionOf({ tape, now, waiting, judged, writer }),
+    resolvedEntry({ tape, now, waiting, outcome: 'denied-on-rejudge', via: 'rejudge', writer }),
+    ...blockFacts({ tape, now, writer }, waiting.ref, judged),
+  ]
 }

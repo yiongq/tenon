@@ -23,6 +23,7 @@ import { registerProviderRoutes } from './provider-routes.js'
 import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
 import { registerApprovalRoutes } from './approval-routes.js'
+import { recoveryDelayMs, startRecovery } from './startup-recovery.js'
 import { openSessionStore } from './tape/open.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
@@ -153,6 +154,12 @@ async function main(): Promise<void> {
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  // Right after bindLoop: the routes below wait for it (spec 02 §启动恢复与发送防护).
+  const recovery = startRecovery({
+    sessions,
+    delayMs: recoveryDelayMs(app.isPackaged, process.env),
+    log: (line) => console.error(line),
+  })
   if (tape !== null) {
     // WAL: the last connection to close is what checkpoints the file.
     app.on('will-quit', () => void tape.close())
@@ -178,9 +185,9 @@ async function main(): Promise<void> {
   installMenu()
 
   registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
-  registerChatRoutes({ send: broadcast, ipcMain, sessions, loop })
-  registerSessionRoutes({ ipcMain, sessions })
-  registerApprovalRoutes({ ipcMain, sessions })
+  registerChatRoutes({ send: broadcast, ipcMain, sessions, loop, gate: recovery.ready })
+  registerSessionRoutes({ ipcMain, sessions, gate: recovery.ready })
+  registerApprovalRoutes({ ipcMain, sessions, gate: recovery.ready })
   registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
 
   const win = openWindow()

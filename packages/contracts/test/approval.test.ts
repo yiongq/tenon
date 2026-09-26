@@ -8,18 +8,21 @@ import type {
   DecisionSummary,
   DecisionSummaryCode,
   PendingCard,
+  PendingRoot,
 } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   approvalCurrent,
+  approvalList,
   approvalRespond,
+  approvalResume,
   decisionSummaryCodeSchema,
   decisionSummarySchema,
   ipcEvents,
   ipcRoutes,
 } from '../src/index.js'
-import type { DecisionSummaryContract } from '../src/index.js'
+import type { DecisionSummaryContract, pendingRootSchema } from '../src/index.js'
 
 type Assert<T extends true> = T
 type Extends<A, B> = [A] extends [B] ? true : false
@@ -104,6 +107,9 @@ type CurrentResponse = NonNullable<z.infer<typeof approvalCurrent.response>>
 // The kernel's command and the route's request are one shape; the kernel's card is one of the route's
 // answers (one way: the kernel brands the target's paths).
 export type RequestIsCommand = Assert<Extends<RespondRequest, AnswerCommand>>
+// The pending row, both ways (acceptance 13).
+export type RowIsKernelRow = Assert<Extends<z.infer<typeof pendingRootSchema>, PendingRoot>>
+export type KernelRowIsRow = Assert<Extends<PendingRoot, z.infer<typeof pendingRootSchema>>>
 export type CommandIsRequest = Assert<Extends<AnswerCommand, RespondRequest>>
 
 describe('approval.respond and approval.current (plan step 15)', () => {
@@ -142,5 +148,27 @@ describe('approval.respond and approval.current (plan step 15)', () => {
     const crossed: CurrentResponse = approvalCurrent.response.parse(card) as CurrentResponse
     expect(crossed).toEqual(card)
     expect(approvalCurrent.response.parse(null)).toBeNull()
+  })
+})
+
+describe('approval.list and approval.resume (plan step 16)', () => {
+  const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
+
+  it('are registered, bound the list, and carry the resume row', () => {
+    expect(Object.values(ipcRoutes)).toContain(approvalList)
+    expect(Object.values(ipcRoutes)).toContain(approvalResume)
+    expect(approvalList.request.safeParse({ limit: 20 }).success).toBe(true)
+    expect(approvalList.request.safeParse({ limit: 0 }).success).toBe(false)
+    expect(approvalList.request.safeParse({ limit: 5000 }).success).toBe(false)
+    const rows = [
+      { sessionId: SESSION, waitKind: 'approval' },
+      { sessionId: SESSION, waitKind: 'resume' },
+    ]
+    expect(approvalList.response.parse(rows)).toEqual(rows)
+    expect(
+      approvalList.response.safeParse([{ sessionId: SESSION, waitKind: 'later' }]).success,
+    ).toBe(false)
+    expect(approvalResume.response.safeParse({ status: 'started' }).success).toBe(true)
+    expect(approvalResume.response.safeParse({ status: 'refused' }).success).toBe(false)
   })
 })

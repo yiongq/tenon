@@ -48,9 +48,7 @@ import { parseMessagePayload } from '../tape/projection.js'
 import {
   messageRevisionKey,
   modelSelectedKey,
-  permissionDecidedKey,
   runStartedKey,
-  toolTableKey,
   runTerminalKey,
   sessionStartKey,
 } from '../tape/provenance.js'
@@ -77,35 +75,31 @@ import type { PolicyState } from '../host/policy.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { answerScope, grantKey } from '../permission/grants.js'
-import { executorFor } from '../tools/executor.js'
-import type { ToolTableItem } from '../tools/registry.js'
 import {
   answerTarget,
-  batchClosures,
   confirmRequestOf,
+  frozenBatchOf,
+  pausedBatchOf,
   rejectFacts,
+  rejudgeDecisionOf,
+  rejudgeWaiting,
   resolvedEntry,
   resumeHead,
-  resumeSetupOf,
   stopFacts,
   supersedeFacts,
+  tightenedFacts,
   waitingOf,
 } from './answer.js'
-import type { PendingCard, ResumeSetup, WaitingCall } from './answer.js'
-import {
-  RunWriteRefusedError,
-  blockFacts,
-  decisionEntry,
-  judgeCall,
-  placeOf,
-  readSessionEntries,
-} from './batch.js'
-import type { Judgement, Written } from './batch.js'
+import type { PausedBatch, PendingCard, PendingRoot, ResumeSetup, WaitingCall } from './answer.js'
+import { recoverTape, resumableOf } from './recovery.js'
+import type { Resumable } from './recovery.js'
+import { RunWriteRefusedError, placeOf, readSessionEntries } from './batch.js'
+import type { Written } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
-import { openToolTable, rebuildToolTable } from '../tools/table.js'
+import { openToolTable } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ResumeBatch, RunDriverContext, RunFinish } from './run.js'
 import {
@@ -115,7 +109,6 @@ import {
   callKeyOf,
   driveRun,
   notRunView,
-  readViewState,
   userTextContent,
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
@@ -224,6 +217,8 @@ export interface Loop {
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
   /** What `approval.current` shows for a root (it and its sub-agents): the one card, or null. */
   currentPending(q: { sessionId: string }): Promise<PendingCard | null>
+  /** The roots that wait on an answer or can be resumed, one row each (`approval.list`). */
+  listPendingRoots(q: { limit: number }): Promise<readonly PendingRoot[]>
   stop(q: { rootSessionId: string }): Promise<{ stopped: boolean }>
 }
 
@@ -236,6 +231,8 @@ export function createLoop(deps: LoopDeps): Loop {
   /** Sub-agent session → root (§主进程与 kernel 的循环接口「mailbox」): filled from plan step 31. */
   const roots = new Map<string, string>()
   const rootOf = (sessionId: string): string => roots.get(sessionId) ?? sessionId
+  /** The resumable set (§主进程与 kernel 的循环接口「recover」): filled by `recover()`, per root. */
+  const resumables = new Map<string, Resumable>()
   let bound: LoopPorts | null = null
 
   // ----- the executor --------------------------------------------------------------------------
@@ -386,9 +383,16 @@ export function createLoop(deps: LoopDeps): Loop {
   ): Promise<NotSent> {
     const cause = abortCauseOf(lease)
     try {
-      if (cause === 'user-stop') await closePausedByStop(ports, box)
+      if (cause === 'user-stop') {
+        // A resumable root is stopped by a Run that sends nothing, on this command's lease; that
+        // Run's own `run-ended` is the only one (「登记之后、append 之前被中止」).
+        if ((await stopResumable(ports, box, lease)) === true) {
+          return { status: 'not-sent', code: 'stopped' }
+        }
+        await closePausedByStop(ports, box)
+      }
     } finally {
-      finish(box, lease)
+      if (box.lease === lease) finish(box, lease)
     }
     runEnded(ports, box, box.rootSessionId, {
       runId: null,
@@ -447,14 +451,28 @@ export function createLoop(deps: LoopDeps): Loop {
       const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, { urgent })
       return { kind: 'done', result: { status: 'queued', queuedId } }
     }
-    // A card waiting is superseded by the new round (§多卡、拒绝与取代); plan step 26 answers a
-    // question with the text instead, plan step 16 resumes a resumable session first.
-    if (lease === null || pre === null) {
+    // A resumable root resumes first and this message waits in the queue (§插话与输入框状态表); a
+    // card waiting is superseded by the new round (§多卡、拒绝与取代); plan step 26 answers a
+    // question with the text instead.
+    const resumed = await resumeFirst(ports, box, q.origin, lease)
+    if (resumed === 'aborted' && lease !== null) {
+      return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
+    }
+    if (resumed !== null) {
+      if (resumed === 'aborted') throw new Error('send: aborted without a lease')
+      if (resumed !== 'started') return { kind: 'done', result: resumed }
+      const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, { urgent: false })
+      return { kind: 'done', result: { status: 'queued', queuedId } }
+    }
+    if (pre === null) {
+      // Entered without a prebuild (the root looked resumable, and is not): prebuild now.
+      if (lease !== null) return { kind: 'again', lease }
       const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
       if ('refused' in begun)
         return { kind: 'done', result: { status: 'refused', code: begun.refused } }
       return { kind: 'again', lease: hold(box, begun) }
     }
+    if (lease === null) throw new Error('send: a prebuild without its lease')
     return { kind: 'done', result: await newRound(ports, box, q, lease, pre) }
   }
 
@@ -735,6 +753,133 @@ export function createLoop(deps: LoopDeps): Loop {
     return appendOpening(ports, box, sessionId, runId, head.incarnationId, entries)
   }
 
+  // ----- resumable roots (§启动恢复与发送防护「列出可续跑项，不跑」) -----------------------------------
+
+  /**
+   * A resumable root's resuming Run, opened in the mailbox (`resume`, and a send that comes first):
+   * begun here when the command holds no lease, then `run_started{ resume }` and `model_selected`,
+   * and the Run finishes the batch. Null when the root is not resumable, by the Tape.
+   */
+  async function resumeFirst(
+    ports: LoopPorts,
+    box: RootBox,
+    origin: RunOrigin | null,
+    held: RunLease | null,
+  ): Promise<'started' | 'aborted' | { status: 'refused'; code: 'shutting-down' } | null> {
+    const root = box.rootSessionId
+    const item = resumables.get(root)
+    if (item === undefined) return null
+    const found = await resumableOf(tape, item.sessionId)
+    if (found === null) {
+      resumables.delete(root)
+      return null
+    }
+    // A stop that reached the command's lease while the Tape was read: the command writes the stop
+    // instead (「登记之后、append 之前被中止」).
+    if (held?.signal.aborted === true) return 'aborted'
+    let lease = held
+    if (lease === null) {
+      const begun = ports.leases.begin({ rootSessionId: root, origin })
+      if ('refused' in begun) return { status: 'refused', code: begun.refused }
+      lease = hold(box, begun)
+    }
+    resumables.delete(root)
+    try {
+      await openResumed(
+        ports,
+        box,
+        item.sessionId,
+        lease,
+        { pausedRunId: found.pausedRunId, batch: found.batch },
+        found.setup,
+        { ...found.batch, calls: found.rest, approved: null },
+        [],
+      )
+    } catch (error) {
+      finish(box, lease)
+      throw error
+    }
+    return 'started'
+  }
+
+  /**
+   * 可续跑的会话里停止 (§每种答复同批写什么): a Run that sends nothing — its `run_started{ resume }`,
+   * the rest of the batch not-run / `stopped`, and `run_terminal{ user-stopped }` in one append — and
+   * the root is no longer resumable. `held` is the command's own, already aborted, lease; without one
+   * the stop begins its own (origin null). True when it stopped, false when the host refused a lease,
+   * null when the root is not resumable.
+   */
+  async function stopResumable(
+    ports: LoopPorts,
+    box: RootBox,
+    held: RunLease | null,
+  ): Promise<boolean | null> {
+    const root = box.rootSessionId
+    const item = resumables.get(root)
+    if (item === undefined) return null
+    const found = await resumableOf(tape, item.sessionId)
+    if (found === null) {
+      resumables.delete(root)
+      return null
+    }
+    let lease = held
+    if (lease === null) {
+      const begun = ports.leases.begin({ rootSessionId: root, origin: null })
+      if ('refused' in begun) return false
+      lease = hold(box, begun)
+    }
+    const runId = ids.uuid()
+    const writer: FactWriter = { by: 'run', runId }
+    const reason: RunEndReason = { code: 'user-stopped' }
+    const terminal: RunTerminalPayload = { reason, steps: 0, usage: [], writer }
+    const closures = found.rest.flatMap((call) =>
+      notRunFacts({
+        tape,
+        now,
+        call: {
+          ...found.batch,
+          ordinal: call.ordinal,
+          providerToolCallId: call.providerToolCallId,
+        },
+        source: 'stopped',
+        writer,
+      }),
+    )
+    try {
+      await appendTo(item.sessionId, [
+        ...resumeHead({
+          tape,
+          now,
+          sessionId: item.sessionId,
+          runId,
+          paused: { pausedRunId: found.pausedRunId, batch: found.batch },
+          selected: null,
+        }),
+        ...closures,
+        executionSlice.entry('execution/run_terminal', {
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          provenanceKey: runTerminalKey(runId),
+          payload: terminal,
+          createdAt: now(),
+        }),
+      ])
+    } finally {
+      finish(box, lease)
+    }
+    resumables.delete(root)
+    emit(ports, { type: 'run-started', rootSessionId: root, sessionId: item.sessionId, runId })
+    emitClosures(ports, box, item.sessionId, closures)
+    runEnded(ports, box, item.sessionId, {
+      runId,
+      reason,
+      recorded: true,
+      lastStop: null,
+      errorCode: null,
+    })
+    return true
+  }
+
   // ----- answers (§等待模型：审批、提问与拒绝; §续跑) --------------------------------------------------
 
   async function answerTurn(
@@ -799,7 +944,7 @@ export function createLoop(deps: LoopDeps): Loop {
     waiting: WaitingCall,
     lease: RunLease,
   ): Promise<AnswerResult> {
-    const frozen = await frozenBatch(waiting)
+    const frozen = await frozenBatchOf(tape, waiting)
     if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
     const runId = ids.uuid()
     const { entries, reason } = rejectFacts({
@@ -842,190 +987,127 @@ export function createLoop(deps: LoopDeps): Loop {
     waiting: WaitingCall,
     lease: RunLease,
   ): Promise<AnswerResult> {
-    const frozen = await frozenBatch(waiting)
+    const frozen = await frozenBatchOf(tape, waiting)
     const resolver: FactWriter = { by: 'resolver' }
     const { item } = frozen
-    // Gone, as far as the mailbox can tell without an assembly: out of the frozen table, or a
-    // builtin with no executor in this build. A connector's server is checked at dispatch.
-    const unavailable =
-      item === undefined ||
-      (item.source === 'builtin' &&
-        executorFor({ item, mcpSources: [], testTools: deps.testTools }) === null)
+    const rejudged = await rejudgeWaiting({
+      judge: {
+        tape,
+        host: deps.host,
+        profile: 'chat',
+        inspectors: deps.inspectors,
+        protectedFiles: deps.protectedFiles,
+        userSetting: deps.userSetting,
+        signal: lease.signal,
+      },
+      waiting,
+      item,
+      testTools: deps.testTools,
+    })
+    if (rejudged.kind === 'stopped' || lease.signal.aborted) return abortedAnswer(ports, box, lease)
     let facts: NewEntry[]
     let resume: ResumeBatch
-    if (unavailable) {
+    const rest: ResumeBatch = {
+      runId: waiting.ref.runId,
+      requestSeq: waiting.ref.requestSeq,
+      calls: waiting.rest,
+      approved: null,
+    }
+    if (rejudged.kind === 'unavailable' || rejudged.kind === 'denied') {
+      // Tightened: the call closes, and the new Run handles the rest of the batch.
+      facts = tightenedFacts({ tape, now, waiting, rejudged, writer: resolver })
+      resume = rest
+    } else if (rejudged.kind === 'changed') {
+      // Still asks, but about something else: a new card, and the old one's click is stale.
+      const decided = rejudgeDecisionOf({
+        tape,
+        now,
+        waiting,
+        judged: rejudged.judged,
+        writer: resolver,
+      })
+      await appendTo(waiting.sessionId, [decided])
+      finish(box, lease)
+      const card = cardOfEntries(waiting.sessionId, [decided])
+      if (card !== null) deliver(card)
+      return { status: 'stale' }
+    } else {
+      // Allowed as answered: a verdict that loosened since is not taken (F3).
+      const { judged } = rejudged
+      if (item === undefined) throw new Error('allow: an unchanged judgement has its table item')
+      const scope = answerScope({
+        decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+        reversibility: waiting.decision.reversibility,
+        ...(judged.place === undefined ? {} : { place: judged.place }),
+        source: item.source === 'mcp' ? 'mcp' : 'builtin',
+        toolName: item.originalName,
+      })
+      const object = judged.grantObject ?? {
+        kind: 'call' as const,
+        argsHash: waiting.call.argsHash,
+      }
       facts = [
         resolvedEntry({
           tape,
           now,
           waiting,
-          outcome: 'tool-unavailable',
-          via: 'rejudge',
-          writer: resolver,
-        }),
-        ...batchClosures({
-          tape,
-          now,
-          waiting,
-          calls: [waiting.call],
-          source: 'tool-unavailable',
+          outcome: 'allowed',
+          via: 'card',
+          grant: { scope, key: grantKey(item.serverId, item.originalName, object) },
           writer: resolver,
         }),
       ]
       resume = {
-        runId: waiting.ref.runId,
-        requestSeq: waiting.ref.requestSeq,
-        calls: waiting.rest,
-        approved: null,
-      }
-    } else {
-      const judged = await judgeCall(
-        {
-          tape,
-          host: deps.host,
-          sessionId: waiting.sessionId,
-          profile: 'chat',
-          inspectors: deps.inspectors,
-          protectedFiles: deps.protectedFiles,
-          userSetting: deps.userSetting,
-          searchHost:
-            waiting.decision.confirm?.target.type === 'search'
-              ? waiting.decision.confirm.target.host
-              : null,
-          signal: lease.signal,
-        },
-        item,
-        waiting.call,
-      )
-      if (judged.kind === 'stopped' || lease.signal.aborted) return abortedAnswer(ports, box, lease)
-      const rejudge = waiting.rejudge + 1
-      const key = permissionDecidedKey(
-        waiting.ref.runId,
-        waiting.ref.requestSeq,
-        waiting.ref.ordinal,
-        rejudge,
-      )
-      const verdict = judged.decision.record.verdict
-      if (verdict === 'deny') {
-        facts = [
-          decisionEntry({
-            tape,
-            now,
-            ref: waiting.ref,
-            argsHash: waiting.call.argsHash,
-            judged,
-            key,
-            rejudge,
-            writer: resolver,
-          }),
-          resolvedEntry({
-            tape,
-            now,
-            waiting,
-            outcome: 'denied-on-rejudge',
-            via: 'rejudge',
-            writer: resolver,
-          }),
-          ...blockFacts({ tape, now, writer: resolver }, waiting.ref, judged),
-        ]
-        resume = {
-          runId: waiting.ref.runId,
-          requestSeq: waiting.ref.requestSeq,
-          calls: waiting.rest,
-          approved: null,
-        }
-      } else if (verdict === 'ask' && cardChanged(waiting.decision, judged)) {
-        // Still asks, but about something else: a new card, and the old one's click is stale.
-        const decided = decisionEntry({
-          tape,
-          now,
-          ref: waiting.ref,
-          argsHash: waiting.call.argsHash,
-          judged,
-          key,
-          rejudge,
-          writer: resolver,
-        })
-        await appendTo(waiting.sessionId, [decided])
-        finish(box, lease)
-        const card = cardOfEntries(waiting.sessionId, [decided])
-        if (card !== null) deliver(card)
-        return { status: 'stale' }
-      } else {
-        // Allowed as answered: a verdict that loosened since is not taken (F3).
-        const scope = answerScope({
-          decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+        ...rest,
+        calls: [waiting.call, ...waiting.rest],
+        approved: {
+          ordinal: waiting.ref.ordinal,
+          decisionKey: waiting.decisionKey,
+          summary: waiting.decision.summary,
           reversibility: waiting.decision.reversibility,
-          ...(judged.place === undefined ? {} : { place: judged.place }),
-          source: item.source === 'mcp' ? 'mcp' : 'builtin',
-          toolName: item.originalName,
-        })
-        const object = judged.grantObject ?? {
-          kind: 'call' as const,
-          argsHash: waiting.call.argsHash,
-        }
-        facts = [
-          resolvedEntry({
-            tape,
-            now,
-            waiting,
-            outcome: 'allowed',
-            via: 'card',
-            grant: { scope, key: grantKey(item.serverId, item.originalName, object) },
-            writer: resolver,
-          }),
-        ]
-        resume = {
-          runId: waiting.ref.runId,
-          requestSeq: waiting.ref.requestSeq,
-          calls: [waiting.call, ...waiting.rest],
-          approved: {
-            ordinal: waiting.ref.ordinal,
-            decisionKey: waiting.decisionKey,
-            summary: waiting.decision.summary,
-            reversibility: waiting.decision.reversibility,
-          },
-        }
+        },
       }
     }
     if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
-    const runId = ids.uuid()
-    const head = await tape.head(waiting.sessionId)
-    if (head === null) throw new Error(`answer: session ${waiting.sessionId} has no head`)
-    const opened = await appendOpening(ports, box, waiting.sessionId, runId, head.incarnationId, [
-      ...facts,
-      ...resumeHead({
-        tape,
-        now,
-        sessionId: waiting.sessionId,
-        runId,
-        waiting,
-        selected: frozen.setup.selected,
-      }),
-    ])
-    emitClosures(ports, box, waiting.sessionId, facts)
-    startRun(ports, box, waiting.sessionId, opened, lease, frozen.setup.selected.providerId, () =>
-      resumeSetup(box, waiting.sessionId, lease, frozen.setup, resume),
+    await openResumed(
+      ports,
+      box,
+      waiting.sessionId,
+      lease,
+      pausedBatchOf(waiting),
+      frozen.setup,
+      resume,
+      facts,
     )
     return { status: 'applied' }
   }
 
-  /** The paused batch's frozen facts: its model setup, and the table item of the waiting call. */
-  async function frozenBatch(
-    waiting: WaitingCall,
-  ): Promise<{ setup: ResumeSetup; item: ToolTableItem | undefined }> {
-    const entries = await readSessionEntries(tape, waiting.sessionId)
-    const setup = resumeSetupOf(entries, waiting.ref)
-    const head = await tape.head(waiting.sessionId)
-    const state = await readViewState(tape, waiting.sessionId)
-    const tableKey = toolTableKey(
-      head?.incarnationId ?? '',
-      state.generation,
-      setup.selected.providerId,
+  /**
+   * Opens a Run that resumes a paused batch (an answer, `resume`, a send in a resumable session):
+   * the facts that cause it and its head in one append, then the Run, assembled outside the mailbox.
+   */
+  async function openResumed(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    lease: RunLease,
+    paused: PausedBatch,
+    setup: ResumeSetup,
+    resume: ResumeBatch,
+    facts: readonly NewEntry[],
+  ): Promise<string> {
+    const runId = ids.uuid()
+    const head = await tape.head(sessionId)
+    if (head === null) throw new Error(`resume: session ${sessionId} has no head`)
+    const opened = await appendOpening(ports, box, sessionId, runId, head.incarnationId, [
+      ...facts,
+      ...resumeHead({ tape, now, sessionId, runId, paused, selected: setup.selected }),
+    ])
+    emitClosures(ports, box, sessionId, facts)
+    startRun(ports, box, sessionId, opened, lease, setup.selected.providerId, () =>
+      resumeSetup(box, sessionId, lease, setup, resume),
     )
-    const stored = state.tables.get(tableKey)
-    const table = stored === undefined ? null : rebuildToolTable(tableKey, stored, state.specs)
-    return { setup, item: table?.items.find((candidate) => candidate.name === waiting.call.name) }
+    return runId
   }
 
   /**
@@ -1459,6 +1541,7 @@ export function createLoop(deps: LoopDeps): Loop {
     q: { sessionId: string; origin: RunOrigin | null },
     turn: (lease: RunLease | null, pre: Prebuild | null) => Promise<Turn<T>>,
     refused: (code: 'shutting-down') => T,
+    prebuilds = true,
   ): Promise<T> {
     if (!canBeginAtEntry(box)) return commandFrom(box, q.sessionId, null, null, turn)
     const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
@@ -1467,7 +1550,8 @@ export function createLoop(deps: LoopDeps): Loop {
       return Promise.resolve(refused(begun.refused))
     }
     const lease = hold(box, begun)
-    return commandFrom(box, q.sessionId, lease, prebuild(q.sessionId, box, lease), turn)
+    const prebuilt = prebuilds ? prebuild(q.sessionId, box, lease) : null
+    return commandFrom(box, q.sessionId, lease, prebuilt, turn)
   }
 
   async function commandFrom<T>(
@@ -1498,15 +1582,53 @@ export function createLoop(deps: LoopDeps): Loop {
       bound = ports
     },
 
-    recover(): Promise<RecoverResult> {
-      if (bound === null) return Promise.reject(new Error('recover() before bindLoop()'))
-      // Plan step 16: closes what a crash left open and lists the resumable items.
-      return Promise.resolve({ resumable: [], errors: [] })
+    async recover(): Promise<RecoverResult> {
+      if (bound === null) throw new Error('recover() before bindLoop()')
+      const recovered = await recoverTape({
+        tape,
+        now,
+        log,
+        host: deps.host,
+        inspectors: deps.inspectors,
+        protectedFiles: deps.protectedFiles,
+        userSetting: deps.userSetting,
+        testTools: deps.testTools,
+        strict: deps.onUnansweredCall === 'throw',
+      })
+      const resumable = recovered.resumable.map((item) => ({
+        ...item,
+        rootSessionId: rootOf(item.sessionId),
+      }))
+      for (const item of resumable) resumables.set(item.rootSessionId, item)
+      // Delivered at least once; the renderer pulls `approval.current` on opening a session anyway.
+      for (const card of recovered.cards) deliver(card)
+      return { resumable, errors: recovered.errors }
     },
 
-    resume(): Promise<ResumeResult> {
-      // Plan step 16: the kernel's resumable set is filled by recover(), which lists nothing yet.
-      return Promise.resolve({ status: bound === null ? 'refused' : 'none' })
+    resume(q): Promise<ResumeResult> {
+      const ports = bound
+      if (ports === null) return Promise.resolve({ status: 'refused' })
+      // Its entry never begins a lease: it begins one at its turn, if it opens a Run (「租约」).
+      const box = mailboxOf(q.rootSessionId)
+      return post(box, 'command', null, async (): Promise<ResumeResult> => {
+        const resumed = await resumeFirst(ports, box, q.origin, null)
+        if (resumed === null || resumed === 'aborted') return { status: 'none' }
+        return resumed === 'started' ? { status: 'started' } : { status: 'refused' }
+      })
+    },
+
+    async listPendingRoots(q): Promise<readonly PendingRoot[]> {
+      // One row per root that waits on an answer or can be resumed (§离开会话「approval.list」).
+      const rows = await tape.listPendingApprovals({ limit: MAX_READ_LIMIT })
+      const byRoot = new Map<string, PendingRoot>()
+      for (const row of rows) {
+        const root = rootOf(row.sessionId)
+        if (!byRoot.has(root)) byRoot.set(root, { sessionId: root, waitKind: row.waitKind })
+      }
+      for (const root of resumables.keys()) {
+        if (!byRoot.has(root)) byRoot.set(root, { sessionId: root, waitKind: 'resume' })
+      }
+      return [...byRoot.values()].slice(0, q.limit)
     },
 
     send(q): Promise<SendResult> {
@@ -1527,6 +1649,8 @@ export function createLoop(deps: LoopDeps): Loop {
         q,
         (lease, pre) => sendTurn(ports, box, q, lease, pre),
         (code) => ({ status: 'refused', code }),
+        // A root known at the entry to be resumable resumes first: nothing to prebuild (「新一轮先预建」).
+        !resumables.has(box.rootSessionId),
       )
     },
 
@@ -1574,7 +1698,7 @@ export function createLoop(deps: LoopDeps): Loop {
       if (waiting === null || waiting.waitKind !== 'approval') return null
       const card = confirmRequestOf(waiting.sessionId, waiting.decisionKey, waiting.decision)
       if (card === null) return null
-      const { item } = await frozenBatch(waiting)
+      const { item } = await frozenBatchOf(tape, waiting)
       const place =
         item === undefined
           ? undefined
@@ -1623,6 +1747,8 @@ export function createLoop(deps: LoopDeps): Loop {
           lease.abort('user-stop')
           return { stopped: true }
         }
+        const stoppedResumable = await stopResumable(ports, box, null)
+        if (stoppedResumable !== null) return { stopped: stoppedResumable }
         return { stopped: await closePausedByStop(ports, box) }
       })
     },
@@ -1656,28 +1782,6 @@ function cardOfEntries(sessionId: string, entries: readonly NewEntry[]): Confirm
 /** The two facts a Run's write task refuses once its lease is aborted (「mailbox」). */
 function isDecisionOrDispatch(entry: NewEntry): boolean {
   return entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed'
-}
-
-/** Whether a re-judgement's card differs from the one waiting: verdict, summary or card (F3). */
-function cardChanged(
-  before: PermissionDecidedPayload,
-  judged: Extract<Judgement, { kind: 'judged' }>,
-): boolean {
-  const { decision } = judged
-  const after = {
-    verdict: decision.record.verdict,
-    summary: decision.summary,
-    confirm:
-      decision.confirm === undefined || judged.card === undefined
-        ? null
-        : { ...decision.confirm, ...judged.card },
-  }
-  const was = {
-    verdict: before.record.verdict,
-    summary: before.summary,
-    confirm: before.confirm ?? null,
-  }
-  return canonicalJson(after) !== canonicalJson(was)
 }
 
 /** What a resumed Run gets when a stop beats its `assemble`: nothing to call, nothing to send to. */

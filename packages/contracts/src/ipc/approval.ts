@@ -4,11 +4,11 @@
  * the layer that decided stay on the Tape (F8). The four `approval.*` routes arrive with plan steps
  * 15 and 16.
  */
-import type { DecisionSummary, DecisionSummaryCode } from '@tenon-app/kernel'
+import type { DecisionSummary, DecisionSummaryCode, PendingRoot } from '@tenon-app/kernel'
 import { z } from 'zod'
 import { defineRoute } from '../route.js'
 import { confirmRequestEventPayloadSchema } from './confirm.js'
-import { canonicalSessionIdSchema } from './session.js'
+import { SESSION_READ_LIMIT_MAX, canonicalSessionIdSchema } from './session.js'
 
 /** The summary codes, only ever added to (§判决记录与摘要). */
 export const decisionSummaryCodeSchema = z.enum([
@@ -99,4 +99,28 @@ export const approvalCurrent = defineRoute('approval.current', {
       }),
     ])
     .nullable(),
+})
+
+/**
+ * One row per root session that waits on an answer or can be resumed (§离开会话): a sub-agent's
+ * wait is listed under its root; `resume` is a root in the kernel's resumable set. The banner passes a
+ * fixed `limit`; startup recovery reads through the service, not this route.
+ */
+export const pendingRootSchema = z.object({
+  sessionId: canonicalSessionIdSchema,
+  waitKind: z.enum(['approval', 'question', 'resume']),
+}) satisfies z.ZodType<PendingRoot>
+
+export const approvalList = defineRoute('approval.list', {
+  request: z.object({ limit: z.number().int().min(1).max(SESSION_READ_LIMIT_MAX) }),
+  response: z.array(pendingRootSchema),
+})
+
+/**
+ * Opening a root session resumes what startup recovery listed for it (§启动恢复与发送防护):
+ * `resume({ rootSessionId })`, one to one; a refusal is `ok: false`.
+ */
+export const approvalResume = defineRoute('approval.resume', {
+  request: z.object({ sessionId: canonicalSessionIdSchema }),
+  response: z.object({ status: z.enum(['started', 'none']) }),
 })
