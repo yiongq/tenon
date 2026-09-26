@@ -42,6 +42,7 @@ import type {
   RunStartedPayload,
   RunTerminalPayload,
   SessionStartPayload,
+  WorkspaceSetPayload,
 } from '../tape/entry.js'
 import type { TapeUserMessagePayload } from '../tape/projection.js'
 import { parseMessagePayload } from '../tape/projection.js'
@@ -114,6 +115,11 @@ import {
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
 import type { AnswerCommand } from './waiting.js'
+import { createDraftStore } from '../session/draft.js'
+import type { SessionDraft } from '../session/draft.js'
+import { creationEntries, readSessionFacts, workspaceEntry } from '../session/facts.js'
+import type { Profile } from '../session/facts.js'
+import { resolvePath } from '../permission/workspace.js'
 
 /**
  * `command`: a command's judgement (send, continue, answer, resume, the choices). `stop`: a stop that
@@ -154,6 +160,13 @@ type Prebuild =
       readonly choice: ModelChoice
       readonly assembly: RunAssembly
       readonly provider: Provider
+      /** The session's profile: its `session/profile_set`, or the draft's for a new session. */
+      readonly profile: Profile
+      /**
+       * A new session's draft as it stood when the prebuild began — what its creating batch writes
+       * (model1: the batch equals the draft the prebuild read). Null for an established session.
+       */
+      readonly draft: SessionDraft | null
     }
   | {
       readonly kind: 'config'
@@ -173,6 +186,8 @@ type NotSent = { readonly status: 'not-sent'; readonly code: 'stopped' | 'app-ex
  */
 interface RunSetup {
   readonly provider: () => Provider
+  /** Which candidate set a table opened by this Run takes (H1). */
+  readonly profile: Profile
   readonly model: ModelInfo
   readonly maxTokens: number
   readonly effort: string | null
@@ -232,8 +247,48 @@ export interface LoopDeps {
   readonly onUnansweredCall: 'throw' | 'repair'
 }
 
+/** What `sessionFacts` answers: the route's shape, and whether a draft exists (`unknown-session`). */
+export interface SessionFactsView {
+  readonly established: boolean
+  readonly drafted: boolean
+  readonly profile: Profile
+  readonly workspace: WorkspaceSetPayload | null
+}
+
+export type SelectProfileQuery =
+  | { readonly sessionId: string; readonly profile: 'chat' }
+  /** `dedicated`: the session's own folder, computed by the host (the kernel reads no home). */
+  | { readonly sessionId: string; readonly profile: 'cowork'; readonly dedicated: AbsolutePath }
+
+export type SelectProfileResult =
+  | ({ readonly ok: true } & SessionFactsView)
+  | { readonly ok: false; readonly code: 'established' }
+
+/** A change to the workspace list: folders the host's own dialog or prefill gave, or one removed. */
+export type WorkspaceChange =
+  | { readonly kind: 'add'; readonly folders: readonly AbsolutePath[] }
+  | { readonly kind: 'remove'; readonly folder: string }
+
+export type WorkspaceResult =
+  | {
+      readonly ok: true
+      readonly folders: readonly AbsolutePath[]
+      readonly origin: 'picked' | 'dedicated'
+    }
+  | { readonly ok: false; readonly code: 'not-cowork' | 'unknown-session' | 'not-in-list' }
+
 export interface Loop {
   bind(ports: LoopPorts): void
+  /** A session's profile and workspace: the draft's before it is established (open question 16). */
+  sessionFacts(q: { sessionId: string }): Promise<SessionFactsView>
+  /** The home page's profile, into the draft; `established` once the session exists (H1). */
+  selectProfile(q: SelectProfileQuery): Promise<SelectProfileResult>
+  /** The cowork workspace, in the draft or as a `session/workspace_set` (§工作区; D11). */
+  setWorkspace(q: {
+    sessionId: string
+    change: WorkspaceChange
+    dedicated: AbsolutePath
+  }): Promise<WorkspaceResult>
   recover(): Promise<RecoverResult>
   resume(q: { rootSessionId: string; origin: RunOrigin | null }): Promise<ResumeResult>
   send(q: SendQuery): Promise<SendResult>
@@ -257,6 +312,8 @@ export function createLoop(deps: LoopDeps): Loop {
   const rootOf = (sessionId: string): string => roots.get(sessionId) ?? sessionId
   /** The resumable set (§主进程与 kernel 的循环接口「recover」): filled by `recover()`, per root. */
   const resumables = new Map<string, Resumable>()
+  /** The drafts of sessions not yet established (§会话形态「建立前暂存」): only mailboxes write them. */
+  const drafts = createDraftStore()
   let bound: LoopPorts | null = null
 
   // ----- the executor --------------------------------------------------------------------------
@@ -383,12 +440,17 @@ export function createLoop(deps: LoopDeps): Loop {
   function prebuild(sessionId: string, box: RootBox, lease: RunLease): Promise<Prebuild> {
     const signal = lease.signal
     let providerId: ProviderId | null = null
+    // Taken before the first await, while this lease's holder lets nothing else run: a choice that
+    // arrives later waits for the Run to open and lands after the session exists (model1).
+    const draft = drafts.get(sessionId)
     const work = (async (): Promise<Prebuild> => {
+      const facts = await readSessionFacts(tape, sessionId)
+      const profile = facts.established ? facts.profile : (draft?.profile ?? 'chat')
       // ① (the session's own choice, `session/model_choice_set`) is read from the tape in plan step
-      // 19, the previous origin with the data-flow check; the draft's profile in step 18.
+      // 19, the previous origin with the data-flow check.
       const resolved = await connector.resolveChoice({
         sessionId,
-        profile: 'chat',
+        profile,
         sessionChoice: null,
         previousOrigin: null,
       })
@@ -402,7 +464,14 @@ export function createLoop(deps: LoopDeps): Loop {
         signal,
       })
       if (signal.aborted) return { kind: 'aborted' }
-      return { kind: 'ready', choice: resolved, assembly, provider: assembly.provider() }
+      return {
+        kind: 'ready',
+        choice: resolved,
+        assembly,
+        provider: assembly.provider(),
+        profile,
+        draft: facts.established ? null : draft,
+      }
     })().catch((error: unknown): Prebuild => {
       const problem = configProblem(error, providerId)
       if (problem === null) throw error
@@ -651,10 +720,11 @@ export function createLoop(deps: LoopDeps): Loop {
   }
 
   /**
-   * The pre-run batch, in ONE transaction: `session/start` when the session does not exist yet, the
-   * user's turns — the queued ones first, in their order, each with a new `messageId` (01 修补 9
-   * (q)(r)), then the direct one — `run_started` naming the last, and `session/model_selected`. Plan
-   * step 18 adds the draft's profile, workspace and model-choice facts to the creating batch.
+   * The pre-run batch, in ONE transaction: when the session does not exist yet, `session/start` with
+   * the draft's profile, workspace and model choice (§会话事实「建会话」); the user's turns — the
+   * queued ones first, in their order, each with a new `messageId` (01 修补 9 (q)(r)), then the direct
+   * one — `run_started` naming the last, and `session/model_selected`. The draft goes once that batch
+   * commits; a batch that fails leaves it.
    */
   async function openRound(
     ports: LoopPorts,
@@ -670,7 +740,12 @@ export function createLoop(deps: LoopDeps): Loop {
     const head = await tape.head(sessionId)
     const incarnationId = head?.incarnationId ?? ids.uuid()
     const entries: NewEntry[] = []
-    if (head === null) entries.push(startEntry(sessionId, incarnationId))
+    if (head === null) {
+      entries.push(
+        startEntry(sessionId, incarnationId),
+        ...creationEntries({ tape, sessionId, incarnationId, now }, pre.draft),
+      )
+    }
     const written: Array<{ messageId: string; queuedId: string | null }> = []
     for (const message of messages) {
       const content = userTextContent(message.text)
@@ -709,6 +784,7 @@ export function createLoop(deps: LoopDeps): Loop {
       ...runHead(sessionId, runId, { kind: 'user-message', messageId: last.messageId }, pre),
     )
     const opened = await appendOpening(ports, box, sessionId, runId, incarnationId, entries)
+    if (head === null) drafts.delete(sessionId)
     for (const message of written) {
       emit(ports, {
         type: 'user-message',
@@ -1136,7 +1212,6 @@ export function createLoop(deps: LoopDeps): Loop {
       judge: {
         tape,
         host: deps.host,
-        profile: 'chat',
         inspectors: deps.inspectors,
         protectedFiles: deps.protectedFiles,
         userSetting: deps.userSetting,
@@ -1283,8 +1358,10 @@ export function createLoop(deps: LoopDeps): Loop {
       whenAborted(lease.signal).then((): RunAssembly => stoppedAssembly(setup)),
     ])
     let built: Provider | undefined
+    const { profile } = await readSessionFacts(tape, sessionId)
     return {
       provider: () => (built ??= assembly.provider()),
+      profile,
       model: setup.model,
       maxTokens: setup.maxTokens,
       effort: setup.effort,
@@ -1361,15 +1438,13 @@ export function createLoop(deps: LoopDeps): Loop {
           toolsWithheld: built.assembly.toolsWithheld,
           search: built.assembly.search,
           mcpSources: built.assembly.mcpSources,
-          // The draft's profile is written from plan step 18; until then every session is a chat.
-          profile: 'chat',
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
           userSetting: deps.userSetting,
           testTools: deps.testTools,
           tokenLimit: deps.tokenLimit,
           lease,
-          openTable: () => openTable(incarnationId, built.assembly),
+          openTable: () => openTable(incarnationId, built.assembly, built.profile),
           // A write task that finds its lease aborted writes no decision and no dispatch
           // (§主进程与 kernel 的循环接口「mailbox」): the batch closes the call as stopped instead.
           write: (entries) =>
@@ -1381,6 +1456,8 @@ export function createLoop(deps: LoopDeps): Loop {
             }),
           onUnansweredCall: deps.onUnansweredCall,
           ...(built.resume === undefined ? {} : { resume: built.resume }),
+          locale: () => ports.locale({ sessionId }),
+          localDate: () => ports.localDate({ sessionId }),
           insertQueued: () =>
             post(box, 'run', null, () =>
               insertAtBoundary(ports, box, sessionId, incarnationId, lease, runId),
@@ -1722,18 +1799,18 @@ export function createLoop(deps: LoopDeps): Loop {
 
   /**
    * Opens this provider's table for the generation (§开表与排除): the profile's builtin candidates
-   * and every connector tool of the Run's MCP sources, with one reading of the policy (D4). The
-   * profile is always chat until plan step 18 writes `session/profile_set`; compaction (step 30) is
-   * what makes a generation other than 0.
+   * and every connector tool of the Run's MCP sources, with one reading of the policy (D4).
+   * Compaction (step 30) is what makes a generation other than 0.
    */
   async function openTable(
     incarnationId: string,
     assembly: RunAssembly,
+    profile: Profile,
   ): Promise<{ table: FrozenToolTable; policy: PolicyState }> {
     const policy = deps.host.policy.current()
     const candidates = [
       ...builtinCandidates({
-        profile: 'chat',
+        profile,
         available: deps.builtinAvailable,
         search: assembly.search,
       }),
@@ -1840,10 +1917,149 @@ export function createLoop(deps: LoopDeps): Loop {
     return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
   }
 
+  // ----- the home page's choices (§会话形态「建立前暂存」, §工作区) ---------------------------------
+
+  /** A session's profile and workspace as a route shows them: the Tape's, or the draft's. */
+  async function factsView(sessionId: string): Promise<SessionFactsView> {
+    const facts = await readSessionFacts(tape, sessionId)
+    if (facts.established) {
+      return {
+        established: true,
+        drafted: false,
+        profile: facts.profile,
+        workspace: facts.workspace,
+      }
+    }
+    const draft = drafts.get(sessionId)
+    return {
+      established: false,
+      drafted: draft !== null,
+      profile: draft?.profile ?? 'chat',
+      workspace: draft?.profile === 'cowork' ? draft.workspace : null,
+    }
+  }
+
+  /** The dedicated folder as the workspace: resolved like any root, though it may not exist yet (D8). */
+  async function dedicatedWorkspace(dedicated: AbsolutePath): Promise<WorkspaceSetPayload> {
+    return { folders: [(await resolvePath(deps.host.fs, dedicated)).path], origin: 'dedicated' }
+  }
+
+  async function selectProfileTurn(q: SelectProfileQuery): Promise<SelectProfileResult> {
+    if ((await readSessionFacts(tape, q.sessionId)).established) {
+      return { ok: false, code: 'established' }
+    }
+    const draft = drafts.get(q.sessionId)
+    const modelChoice = draft?.modelChoice ?? null
+    let next: SessionDraft
+    if (q.profile === 'chat') next = { profile: 'chat', modelChoice }
+    else if (draft?.profile === 'cowork') next = draft
+    else {
+      // Back to cowork starts from the dedicated folder; what was chosen before stays in the prefill.
+      next = { profile: 'cowork', workspace: await dedicatedWorkspace(q.dedicated), modelChoice }
+    }
+    drafts.set(q.sessionId, next)
+    return { ok: true, ...(await factsView(q.sessionId)) }
+  }
+
+  /**
+   * The next list (§工作区「来源」「中途增删」): new folders after the ones picked before — the dedicated
+   * folder gives way to them — or the list without the one removed, back to the dedicated folder once
+   * it is empty. Null when nothing changes.
+   */
+  async function nextWorkspace(
+    current: WorkspaceSetPayload,
+    change: WorkspaceChange,
+    dedicated: AbsolutePath,
+  ): Promise<WorkspaceSetPayload | 'not-in-list' | null> {
+    const picked = current.origin === 'picked' ? current.folders : []
+    if (change.kind === 'remove') {
+      if (!picked.includes(change.folder as AbsolutePath)) return 'not-in-list'
+      const rest = picked.filter((folder) => folder !== change.folder)
+      return rest.length === 0 ? dedicatedWorkspace(dedicated) : { folders: rest, origin: 'picked' }
+    }
+    const added: AbsolutePath[] = []
+    for (const folder of change.folders) {
+      // oxlint-disable-next-line no-await-in-loop -- a handful of folders, each resolved once
+      const real = (await resolvePath(deps.host.fs, folder)).path
+      if (!picked.includes(real) && !added.includes(real)) added.push(real)
+    }
+    if (added.length === 0) return null
+    return { folders: [...picked, ...added], origin: 'picked' }
+  }
+
+  async function setWorkspaceTurn(q: {
+    sessionId: string
+    change: WorkspaceChange
+    dedicated: AbsolutePath
+  }): Promise<WorkspaceResult> {
+    const facts = await readSessionFacts(tape, q.sessionId)
+    const draft = facts.established ? null : drafts.get(q.sessionId)
+    if (!facts.established && draft === null) return { ok: false, code: 'unknown-session' }
+    // A sub-agent has no chip: it reads its parent's workspace and cannot change it (§子 agent 契约).
+    const cowork = facts.established
+      ? facts.profile === 'cowork' && facts.subagentOf === null
+      : draft?.profile === 'cowork'
+    const current = facts.established
+      ? facts.workspace
+      : draft?.profile === 'cowork'
+        ? draft.workspace
+        : null
+    if (!cowork || current === null) return { ok: false, code: 'not-cowork' }
+    const next = await nextWorkspace(current, q.change, q.dedicated)
+    if (next === 'not-in-list') return { ok: false, code: 'not-in-list' }
+    if (next === null) return { ok: true, folders: current.folders, origin: current.origin }
+    if (draft?.profile === 'cowork') drafts.set(q.sessionId, { ...draft, workspace: next })
+    else {
+      const head = await tape.head(q.sessionId)
+      if (head === null) return { ok: false, code: 'unknown-session' }
+      await tape.appendEntries({
+        sessionId: q.sessionId,
+        incarnationId: head.incarnationId,
+        entries: [
+          workspaceEntry(
+            { tape, sessionId: q.sessionId, incarnationId: head.incarnationId, now },
+            facts.workspaceFacts,
+            next,
+          ),
+        ],
+      })
+    }
+    return { ok: true, folders: next.folders, origin: next.origin }
+  }
+
   return {
     bind(ports): void {
       if (bound !== null) throw new Error('bindLoop: the loop is already bound')
       bound = ports
+    },
+
+    sessionFacts(q): Promise<SessionFactsView> {
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(
+          new TypeError(`sessionFacts: "${q.sessionId}" is not a canonical UUID`),
+        )
+      }
+      return factsView(q.sessionId)
+    },
+
+    selectProfile(q): Promise<SelectProfileResult> {
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(
+          new TypeError(`selectProfile: "${q.sessionId}" is not a canonical UUID`),
+        )
+      }
+      // In the root's mailbox, in arrival order: behind a send that is still prebuilding, it waits for
+      // that Run to open and answers `established` (model1).
+      return post(mailboxOf(rootOf(q.sessionId)), 'command', null, () => selectProfileTurn(q))
+    },
+
+    setWorkspace(q): Promise<WorkspaceResult> {
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(
+          new TypeError(`setWorkspace: "${q.sessionId}" is not a canonical UUID`),
+        )
+      }
+      return post(mailboxOf(rootOf(q.sessionId)), 'command', null, () => setWorkspaceTurn(q))
     },
 
     async recover(): Promise<RecoverResult> {
@@ -1966,10 +2182,10 @@ export function createLoop(deps: LoopDeps): Loop {
           ? undefined
           : await placeOf(
               {
+                tape,
                 host: deps.host,
                 sessionId: waiting.sessionId,
                 protectedFiles: deps.protectedFiles,
-                profile: 'chat',
               },
               item,
               waiting.call.input,
@@ -2024,6 +2240,7 @@ export function createLoop(deps: LoopDeps): Loop {
 function roundSetup(pre: Extract<Prebuild, { kind: 'ready' }>): RunSetup {
   return {
     provider: () => pre.provider,
+    profile: pre.profile,
     model: pre.assembly.model,
     maxTokens: pre.assembly.maxTokens,
     effort: pre.choice.effort,

@@ -58,4 +58,5 @@ export const BASH_TOOL: BuiltinTool = {
   effect: 'external',
   profiles: COWORK_ONLY,
   check: noChecks,
+  texts: {},
 }

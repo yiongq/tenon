@@ -300,8 +300,9 @@ describe('chat routes', () => {
     await ipc.call('chat.stop', { sessionId })
     await out.waitFor('done')
     const second = fake.requests[1]?.body as { messages: Array<{ role: string; content: unknown }> }
-    expect(second.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
-    expect(JSON.stringify(second.messages[1]?.content)).toContain('w0')
+    // The first turn, the day's environment note (spec 02 §提示层「环境说明」), the partial reply.
+    expect(second.messages.map((m) => m.role)).toEqual(['user', 'user', 'assistant', 'user'])
+    expect(JSON.stringify(second.messages[2]?.content)).toContain('w0')
   })
 
   it('treats the same text after a failure as a retry and keeps a failed turn as context', async () => {
@@ -324,7 +325,8 @@ describe('chat routes', () => {
     await ipc.call('chat.send', { sessionId, text: 'question' })
     await out.waitFor('done')
     const retry = fake.requests.at(-1)?.body as { messages: Array<{ role: string }> }
-    expect(retry.messages.map((m) => m.role)).toEqual(['user'])
+    // The question and the environment note the failed Run wrote; unchanged, it is not written again.
+    expect(retry.messages.map((m) => m.role)).toEqual(['user', 'user'])
     // One user message, not two: the retry reused it.
     const afterRetry = await sessions.listMessages({ sessionId, limit: 10 })
     expect(afterRetry.map((m) => m.role)).toEqual(['user', 'assistant'])
@@ -512,7 +514,12 @@ describe('chat routes', () => {
     expect(doneEvents()[1]).toMatchObject({ endReason: { code: 'completed' } })
     // The second request ends with the continuation note: a user turn for the model…
     const body = fake.requests[1]?.body as { messages: Array<{ role: string }> }
-    expect(body.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    expect(body.messages.map((message) => message.role)).toEqual([
+      'user',
+      'user',
+      'assistant',
+      'user',
+    ])
     expect(JSON.stringify(body.messages.at(-1))).toContain('cut off at the output limit')
     // …that the transcript never shows.
     const rows = await sessions.listMessages({ sessionId, limit: 10 })

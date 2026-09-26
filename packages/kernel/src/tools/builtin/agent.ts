@@ -36,4 +36,5 @@ export const AGENT_TOOL: BuiltinTool = {
   effect: 'external',
   profiles: COWORK_ONLY,
   check: noChecks,
+  texts: {},
 }

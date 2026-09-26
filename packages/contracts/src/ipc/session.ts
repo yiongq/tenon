@@ -109,3 +109,72 @@ export const sessionMessages = defineRoute('session.messages', {
   }),
   response: z.array(messageRowSchema),
 })
+
+// ----- spec 02: the profile, the workspace and the draft before a session exists ------------------
+
+/**
+ * A workspace answer (spec 02 §工作区「路由」; D11, A9): the whole list after the change, with where it
+ * came from — or why nothing changed. Written like `providerWriteResultSchema`; the folders restate
+ * the kernel's `WorkspaceSetPayload` (real absolute paths, `folders[0]` is where commands run).
+ */
+export const workspaceResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    folders: z.array(z.string().min(1)),
+    origin: z.enum(['picked', 'dedicated']),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum(['not-cowork', 'unknown-session', 'not-in-list']),
+  }),
+])
+export type WorkspaceResult = z.infer<typeof workspaceResultSchema>
+
+/** Only the session: a folder never comes from the renderer, only from main's dialog or prefill. */
+const workspaceTarget = z.object({ sessionId: canonicalSessionIdSchema }).strict()
+
+/** Opens main's directory dialog (multiple folders); a cancel answers the list as it was. */
+export const workspacePick = defineRoute('workspace.pick', {
+  request: workspaceTarget,
+  response: workspaceResultSchema,
+})
+/** Takes the prefill `config.json` holds (`lastWorkspaceFolders`) into the session's list. */
+export const workspaceUsePrefill = defineRoute('workspace.usePrefill', {
+  request: workspaceTarget,
+  response: workspaceResultSchema,
+})
+/** Removes one folder already in the list; the list falls back to the dedicated folder when empty. */
+export const workspaceRemove = defineRoute('workspace.remove', {
+  request: z.object({ sessionId: canonicalSessionIdSchema, folder: z.string().min(1) }).strict(),
+  response: workspaceResultSchema,
+})
+
+/**
+ * A session's profile and workspace (spec 02 §工作区「路由」): the Tape's once it is established, the
+ * draft's before. A session neither established nor drafted is a chat with no workspace; phase 1's
+ * sessions are established chats with none.
+ */
+export const sessionFactsResponse = z.object({
+  established: z.boolean(),
+  profile: z.enum(['chat', 'cowork']),
+  workspace: z
+    .object({ folders: z.array(z.string().min(1)), origin: z.enum(['picked', 'dedicated']) })
+    .nullable(),
+})
+export type SessionFactsResponse = z.infer<typeof sessionFactsResponse>
+
+/** The home page's profile, into the draft; `established` once the session exists (H1). */
+export const sessionSelectProfile = defineRoute('session.selectProfile', {
+  request: z
+    .object({ sessionId: canonicalSessionIdSchema, profile: z.enum(['chat', 'cowork']) })
+    .strict(),
+  response: z.discriminatedUnion('ok', [
+    sessionFactsResponse.extend({ ok: z.literal(true) }),
+    z.object({ ok: z.literal(false), code: z.literal('established') }),
+  ]),
+})
+
+export const sessionFacts = defineRoute('session.facts', {
+  request: z.object({ sessionId: canonicalSessionIdSchema }).strict(),
+  response: sessionFactsResponse,
+})

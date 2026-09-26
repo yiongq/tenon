@@ -60,9 +60,11 @@ test('a conversation survives a restart, on screen and on the wire', async () =>
     const body = server.requests.at(-1)?.body as {
       messages: Array<{ role: string; content: unknown }>
     }
-    expect(body.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
+    // The day's environment note follows the first turn (spec 02 §提示层「环境说明」).
+    expect(body.messages.map((m) => m.role)).toEqual(['user', 'user', 'assistant', 'user'])
     expect(JSON.stringify(body.messages[0]?.content)).toContain('tenon-42')
-    expect(JSON.stringify(body.messages[1]?.content)).toContain('Noted.')
+    expect(JSON.stringify(body.messages[1]?.content)).toContain('<environment>')
+    expect(JSON.stringify(body.messages[2]?.content)).toContain('Noted.')
 
     // ...and "New Chat" still means a new chat. macOS keeps the menu bar alive after the last
     // window closes, so the item opens a window — which must NOT restore what was just left.

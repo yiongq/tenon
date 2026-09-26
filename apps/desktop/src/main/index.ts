@@ -8,7 +8,7 @@ import {
   createSessionService,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
+import { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
@@ -25,6 +25,7 @@ import { registerSessionRoutes } from './session.js'
 import { registerApprovalRoutes } from './approval-routes.js'
 import { recoveryDelayMs, startRecovery } from './startup-recovery.js'
 import { openSessionStore } from './tape/open.js'
+import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -122,8 +123,9 @@ async function main(): Promise<void> {
   )
   // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
   // construction, the host's run-time half — the RunRegistry, the queue, the events — through
-  // bindLoop, before anything can send. The protected shell files arrive with the tools that touch
-  // files (plan step 18).
+  // bindLoop, before anything can send. The protected shell files are computed in the user's home:
+  // the kernel reads no home of its own (§「在不在工作区里」).
+  const home = absolutePath(app.getPath('home'))
   const sessions =
     tape === null
       ? null
@@ -138,7 +140,7 @@ async function main(): Promise<void> {
             isPackaged: app.isPackaged,
             log: (line) => console.warn(line),
           }),
-          protectedFiles: [],
+          protectedFiles: protectedShellFiles(home),
           // A call reaching a request with no result: a thrown bug in development, a repair closure
           // and a log line in the packaged build (spec 02 §崩溃、服务端调用块与兜底).
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
@@ -188,6 +190,26 @@ async function main(): Promise<void> {
   registerChatRoutes({ send: broadcast, ipcMain, sessions, loop, gate: recovery.ready })
   registerSessionRoutes({ ipcMain, sessions, gate: recovery.ready })
   registerApprovalRoutes({ ipcMain, sessions, gate: recovery.ready })
+  registerWorkspaceRoutes({
+    ipcMain,
+    sessions,
+    host,
+    home,
+    gate: recovery.ready,
+    // Main's own dialog, over the window that asked: the only way a folder is added (A9).
+    pickFolders: async (event) => {
+      const sender = (event as { sender?: Electron.WebContents } | undefined)?.sender
+      const owner = sender === undefined ? null : BrowserWindow.fromWebContents(sender)
+      const options: Electron.OpenDialogOptions = {
+        properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+      }
+      const picked =
+        owner === null
+          ? await dialog.showOpenDialog(options)
+          : await dialog.showOpenDialog(owner, options)
+      return picked.canceled ? null : picked.filePaths
+    },
+  })
   registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
 
   const win = openWindow()

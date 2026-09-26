@@ -523,12 +523,39 @@ const TURN_SHAPE: readonly unknown[] = [
     payloadKeys: ['modelId', 'providerId'],
     meta: {},
   },
+  // Spec 02 §提示层「环境说明」: the date, before the first request of a session.
+  {
+    name: 'message/environment',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'date', 'messageId', 'revision', 'role', 'status', 'workspace'],
+    meta: {},
+  },
   {
     name: 'view/content',
     kind: 'event',
     sourceType: 'session',
     sourceSeq: null,
     payloadKeys: ['hash', 'model', 'type'],
+    meta: {},
+  },
+  // Spec 02 §提示层「组装」: the incarnation's system text, once, at its first request.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'text', 'type'],
+    meta: {},
+  },
+  // The product table's one chat tool from plan step 18 on: Read.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
     meta: {},
   },
   {
@@ -695,7 +722,7 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, , , , assistant, , attempt] = entries
+      const [, , , modelSelected, note, , , , , , assistant, , attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
@@ -708,9 +735,15 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(attempt?.payload['stop']).toEqual(testCase.stop)
       expect(attempt?.payload['usage']).toEqual(testCase.usage)
       expect(attempt?.payload['error']).toBeNull()
+      // Spec 02 §思考的默认与显示: no effort by default; summarized thinking on a model that offers it
+      // and thinks by default (the Anthropic rows), written only while thinking is on.
       expect(attempt?.payload['request']).toEqual({
         systemHash: expect.any(String),
         maxTokens: model.maxOutputTokens,
+        ...(model.thinkingSpec?.displays?.includes('summarized') === true &&
+        model.thinkingSpec.defaultOn
+          ? { display: 'summarized' }
+          : {}),
       })
       // Spec 02 (01 修补 7): the encoder of the definition's own wire, the hash of the ModelInfo
       // fields encode() reads, and the model the fixture's stream named.
@@ -727,8 +760,10 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(attempt?.payload['responseModelId']).toBe(
         testCase.definition.wire === 'anthropic-messages' ? 'claude-test-4' : 'glm-test',
       )
-      // The prefix this request was assembled from is the head after the two pre-run facts.
-      expect(attempt?.payload['contextAtEntryId']).toBe(modelSelected?.entryId)
+      // The prefix this request was assembled from is the head after the pre-run facts and the
+      // environment note the Run wrote on top of them.
+      expect(note?.name).toBe('message/environment')
+      expect(attempt?.payload['contextAtEntryId']).toBe(note?.entryId)
       expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${runId}:1:1`)
     })
   }

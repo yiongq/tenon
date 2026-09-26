@@ -3,17 +3,21 @@
  * frozen table's item and the model's input, and returns the result's content, whether it is an
  * error, and the execution state.
  *
- * Plan step 13 has two: connector tools, dispatched as `connection.callTool(originalName, args)` on
- * the Run's MCP source for that server; and the tests' fake builtin executor. The real builtin
- * executors land with their tools (plan steps 18 onward) in `BUILTIN_EXECUTORS`. A frozen tool with
- * no executor in this build — a server gone, an implementation removed — closes as
+ * Connector tools are dispatched as `connection.callTool(originalName, args)` on the Run's MCP source
+ * for that server (plan step 13); the tests have a fake builtin executor; the real builtin executors
+ * land with their tools in `BUILTIN_EXECUTORS` — Read, Glob and Grep with plan step 18. A frozen tool
+ * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
+import type { AbsolutePath, HostFs } from '../host/adapter.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { BuiltinToolName } from './builtin/tool.js'
 import { isBuiltinToolName } from './builtin/index.js'
+import { globExecutor } from './builtin/glob.js'
+import { grepExecutor } from './builtin/grep.js'
+import { readExecutor } from './builtin/read.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
@@ -26,12 +30,24 @@ export interface ExecuteQuery {
   readonly item: ToolTableItem
   readonly input: Record<string, unknown>
   readonly signal: AbortSignal
+  /**
+   * Where a file tool acts: the real path its decision placed — the folder Glob and Grep search when
+   * `path` is omitted (§「在不在工作区里」第 5 步). Null for every other tool.
+   */
+  readonly target: AbsolutePath | null
+  /** The workspace roots, real: a walk follows no link that leads outside them. */
+  readonly roots: readonly AbsolutePath[]
+  readonly fs: HostFs
 }
 
 export type ToolExecutor = (q: ExecuteQuery) => Promise<ToolExecution>
 
-/** The builtin executors this build has. Empty until the tools land (plan steps 18, 22, 26–31). */
-export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExecutor>>> = {}
+/** The builtin executors this build has: each lands with its tool (plan steps 18, 22, 26–31). */
+export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExecutor>>> = {
+  Read: readExecutor,
+  Glob: globExecutor,
+  Grep: grepExecutor,
+}
 
 /**
  * The tests' stand-in for a builtin tool (`TestToolRegistry` value `'fake'`): it does nothing and

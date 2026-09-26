@@ -92,6 +92,15 @@ import type { ToolOutcomeView } from './events.js'
 import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
 import type { McpToolSource, RunAbortCause, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
+import {
+  environmentEntry,
+  environmentNow,
+  latestEnvironment,
+  sameEnvironment,
+} from './environment.js'
+import { systemPrompt } from '../prompts/index.js'
+import { readSessionFacts } from '../session/facts.js'
+import type { Profile } from '../session/facts.js'
 
 /** A new message starts at revision 0; only an edit-and-resend (phase 6) increments it. */
 export const FIRST_REVISION = 0
@@ -115,7 +124,6 @@ export interface RunDriverContext {
   readonly toolsWithheld: 'provider-text-only' | null
   readonly search: SearchBackend | null
   readonly mcpSources: readonly McpToolSource[]
-  readonly profile: 'chat' | 'cowork'
   readonly inspectors: readonly InspectorRegistration[]
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -133,6 +141,13 @@ export interface RunDriverContext {
   readonly onUnansweredCall: 'throw' | 'repair'
   /** A Run an answer opened: it finishes the paused batch before its first request (§续跑). */
   readonly resume?: ResumeBatch
+  /**
+   * The interface language (`LoopPorts.locale`), read only when this incarnation's system text is
+   * assembled — at its first request (§提示层「组装」).
+   */
+  readonly locale: () => 'zh-CN' | 'en'
+  /** The host's local date (`LoopPorts.localDate`), read only for the environment note. */
+  readonly localDate: () => string
   /**
    * The queued messages, inserted at a batch boundary — after the batch's results, before the next
    * request, as `message/user` facts of this turn (§插话与输入框状态表「写入时点」). Null when there
@@ -175,6 +190,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const { tape, runId } = ctx
   const signal = ctx.lease.signal
   const state = await readViewState(tape, ctx.sessionId)
+  const { profile } = await readSessionFacts(tape, ctx.sessionId)
   const chain = await chainCounters(tape, ctx.sessionId, runId)
   const validator = createArgumentValidator()
   const usage = new Map<string, RunUsageLine>()
@@ -219,7 +235,6 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       ...q,
       writer: { by: 'run', runId },
-      profile: ctx.profile,
       inspectors: ctx.inspectors,
       validator,
       protectedFiles: ctx.protectedFiles,
@@ -244,11 +259,23 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
    * past them.
    */
   let atBoundary = false
-  const boundary = async (): Promise<void> => {
-    if (!atBoundary) return
+  const boundary = async (): Promise<boolean> => {
+    if (!atBoundary) return false
     atBoundary = false
     const inserted = await ctx.insertQueued()
     for (const receipt of inserted?.receipts ?? []) pin = Math.max(pin, receipt.entryId)
+    return inserted !== null && inserted.entries.length > 0
+  }
+  /**
+   * 「环境说明」: before a boundary request — the first of a Run a message or 「继续」 opened — and
+   * before the request after queued messages went in; after the user's turns, before the context.
+   */
+  const environment = async (): Promise<void> => {
+    const now = await environmentNow(tape, ctx.sessionId, ctx.localDate())
+    const latest = await latestEnvironment(tape, ctx.sessionId, pin)
+    if (latest !== null && sameEnvironment(latest, now)) return
+    const entry = environmentEntry({ tape, now: ctx.now, messageId: ctx.ids.uuid(), state: now })
+    await write([entry])
   }
   const batchEnd = (result: BatchResult): RunFinish | null => {
     if (result.kind === 'paused') {
@@ -304,7 +331,11 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       })
     }
     // oxlint-disable-next-line no-await-in-loop -- the queued messages join before this request
-    await boundary()
+    const inserted = await boundary()
+    if (inserted || (requestSeq === 1 && ctx.resume === undefined)) {
+      // oxlint-disable-next-line no-await-in-loop -- the note joins before this request's context
+      await environment()
+    }
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const assembled = await assembleRequest({
       tape,
@@ -317,15 +348,24 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       toolsWithheld: ctx.toolsWithheld,
       state,
       openTable: ctx.openTable,
+      profile,
+      locale: ctx.locale,
     })
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
     const request: ProviderRequest = {
       model: ctx.model,
+      ...(assembled.system === null ? {} : { system: assembled.system }),
       messages,
       ...(assembled.tools === undefined ? {} : { tools: [...assembled.tools] }),
       maxTokens: ctx.maxTokens,
+      // No effort unless one was chosen: the model's own default (A11).
       ...(ctx.effort === null ? {} : { effort: ctx.effort }),
+      // §思考的默认与显示: summarized thinking on every request of a model that offers it; the
+      // encoder writes it only while thinking is on (with `disabled` it is a 400).
+      ...(ctx.model.thinkingSpec?.displays?.includes('summarized') === true
+        ? { display: 'summarized' as const }
+        : {}),
     }
     // ONCE per payload — and the encoded request is what every attempt of it streams.
     const encoded = provider.encode(request)
@@ -986,6 +1026,8 @@ export function userTextContent(text: string): readonly ContentBlock[] {
 
 /** After a request's assembly commits, the Run's view state knows its table and what it sent. */
 function recordAssembly(state: ViewState, assembled: AssembledRequest): void {
+  state.system = assembled.system
+  state.requested = true
   if (assembled.opened) {
     const table = assembled.table
     const payload: ToolTablePayload = {
@@ -1022,6 +1064,12 @@ export interface ViewState {
   readonly tables: Map<string, ToolTablePayload>
   readonly specs: Map<string, ToolSpec>
   readonly lastSent: Map<string, boolean>
+  /**
+   * The incarnation's system text (`view/content(system)`), once assembled; and whether any request
+   * was made — one before the system existed (phase 1's) keeps the incarnation without one.
+   */
+  system: string | null
+  requested: boolean
 }
 
 export async function readViewState(
@@ -1033,6 +1081,8 @@ export async function readViewState(
     tables: new Map(),
     specs: new Map(),
     lastSent: new Map(),
+    system: null,
+    requested: false,
   }
   let generation = 0
   let fromEntryId: number | undefined
@@ -1054,11 +1104,13 @@ export async function readViewState(
       } else if (entry.name === 'view/content') {
         const content = entry.payload as unknown as ViewContentPayload
         if (content.type === 'tool_spec') state.specs.set(content.hash, content.spec)
+        else if (content.type === 'system') state.system ??= content.text
       } else if (entry.name === 'view/assembled') {
         const assembled = entry.payload as unknown as ViewAssembledPayload
+        state.requested = true
         if (assembled.tools !== null)
           state.lastSent.set(assembled.tools.tableKey, assembled.tools.sent)
-      }
+      } else if (entry.name === 'provider/attempt_completed') state.requested = true
     }
     if (page.nextFromEntryId === null) break
     fromEntryId = page.nextFromEntryId
@@ -1068,6 +1120,8 @@ export async function readViewState(
 
 /** A request's assembly: the tools it sends and the facts that record what it was built from. */
 export interface AssembledRequest {
+  /** The incarnation's system text; null for an incarnation whose requests began without one. */
+  readonly system: string | null
   /** The frozen table's definitions when this request carries them; undefined when it does not. */
   readonly tools: readonly ToolSpec[] | undefined
   readonly table: FrozenToolTable
@@ -1092,6 +1146,10 @@ export interface AssembleQuery {
   readonly state: ViewState
   /** Opens the table of this provider and generation; called only when the Tape has none. */
   readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  /** The session's profile (`session/profile_set`): which of the two system prompts (H1). */
+  readonly profile: Profile
+  /** The interface language, read only when the system text is assembled. */
+  readonly locale: () => 'zh-CN' | 'en'
 }
 
 /**
@@ -1100,7 +1158,8 @@ export interface AssembleQuery {
  * used, whether or not the model takes tools (E2). A request carries the table verbatim unless its
  * model takes no tools (A15) or its provider is sent none (A14); the first request that stops
  * carrying them records a `view/tools_withheld`, and switching back sends the frozen text again.
- * Plan step 18 adds the system prompt; until then `systemHash` is the no-system value.
+ * The system text is assembled once, at the incarnation's first request — its profile's prompt and
+ * the interface language then — and sent from the Tape after that, unchanged (A13).
  */
 export async function assembleRequest(q: AssembleQuery): Promise<AssembledRequest> {
   const view = q.tape.writer('view')
@@ -1118,6 +1177,21 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
       createdAt: q.now(),
     }),
   )
+  let system = q.state.system
+  if (system === null && !q.state.requested) {
+    system = systemPrompt(q.profile, q.locale())
+    const hash = systemHash(system)
+    const content: ViewContentPayload = { type: 'system', hash, text: system }
+    facts.push(
+      view.entry('view/content', {
+        sourceType: 'session',
+        sourceId: q.sessionId,
+        provenanceKey: viewContentKey('system', hash),
+        payload: content,
+        createdAt: q.now(),
+      }),
+    )
+  }
   const stored = q.state.tables.get(tableKey)
   let table: FrozenToolTable
   let opened = false
@@ -1153,7 +1227,7 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
   const assemblyRef = assembledKey(q.runId, q.requestSeq)
   const assembled: ViewAssembledPayload = {
     modelInfoHash: modelHash,
-    systemHash: systemHash(undefined),
+    systemHash: systemHash(system ?? undefined),
     tools: { tableKey, sent },
   }
   facts.push(
@@ -1167,6 +1241,7 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
     }),
   )
   return {
+    system,
     tools: sent ? table.items.map((item) => item.spec) : undefined,
     table,
     opened,

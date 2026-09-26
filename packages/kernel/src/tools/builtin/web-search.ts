@@ -48,4 +48,5 @@ export const WEB_SEARCH_TOOL: BuiltinTool = {
     args['allowed_domains'] !== undefined && args['blocked_domains'] !== undefined
       ? WEB_SEARCH_BOTH_DOMAIN_LISTS
       : null,
+  texts: { bothDomainLists: WEB_SEARCH_BOTH_DOMAIN_LISTS },
 }

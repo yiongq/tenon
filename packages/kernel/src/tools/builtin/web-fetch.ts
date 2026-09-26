@@ -31,4 +31,5 @@ export const WEB_FETCH_TOOL: BuiltinTool = {
   effect: 'external',
   profiles: BOTH_PROFILES,
   check: noChecks,
+  texts: {},
 }

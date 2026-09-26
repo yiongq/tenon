@@ -31,6 +31,7 @@
 import type { HostAdapter, HostIdentity } from '../host/adapter.js'
 import { createMemoryHost } from '../host/memory.js'
 import { absolutePath } from '../host/path.js'
+import { environmentText } from '../loop/environment.js'
 import type { SessionEvent } from '../loop/events.js'
 import type { RunEndReason } from '../loop/terminal.js'
 import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
@@ -937,13 +938,21 @@ async function assertAttemptReEncodes(
     'user',
     `attempt ${entry.entryId} was assembled from a prefix ending on the user's turn`,
   )
+  // The system text is the incarnation's `view/content(system)` the snapshot's hash names (spec 02
+  // §提示层「组装」): sent from the Tape, never re-assembled.
+  const system = await systemTextOf(store, sessionId, fact.request.systemHash)
+  const tools = await toolsOf(store, sessionId, fact.assemblyRef)
   const encoded = encodeAnthropicMessages(
     {
       model: SCRIPT_MODEL,
+      ...(system === undefined ? {} : { system }),
       messages,
+      ...(tools === undefined ? {} : { tools }),
       maxTokens: fact.request.maxTokens,
       ...(fact.request.temperature === undefined ? {} : { temperature: fact.request.temperature }),
       ...(fact.request.thinking === undefined ? {} : { thinking: fact.request.thinking }),
+      ...(fact.request.effort === undefined ? {} : { effort: fact.request.effort }),
+      ...(fact.request.display === undefined ? {} : { display: fact.request.display }),
     },
     SCRIPT_PROVIDER_ID,
   )
@@ -957,12 +966,60 @@ async function assertAttemptReEncodes(
     fact.toolDefinitionsHash,
     `the toolDefinitionsHash recorded by attempt ${entry.entryId}`,
   )
-  assertEqual(
-    fact.request.systemHash,
-    systemHash(undefined),
-    'the snapshot names the system prompt the Run sent: none, before plan step 18',
+  assertTrue(
+    system !== undefined && fact.request.systemHash === systemHash(system),
+    'the snapshot names the system prompt the Run sent, stored once as view/content(system)',
   )
   assertEqual(fact.modelId, SCRIPT_MODEL.id, 'the fact names the model that went on the wire')
+}
+
+/**
+ * The tools the request carried, from the Tape (spec 02 §组装清单与内容寄存): its `view/assembled`
+ * names the table and whether it was sent; the table names each spec by hash; `view/content` holds
+ * them. Undefined when the request sent none.
+ */
+async function toolsOf(
+  store: TapeStore,
+  sessionId: string,
+  assemblyRef: string | undefined,
+): Promise<ToolSpec[] | undefined> {
+  if (assemblyRef === undefined) return undefined
+  const entries = await readAll(store, sessionId)
+  const assembled = entries.find((entry) => entry.provenanceKey === assemblyRef)?.payload as
+    | { tools?: { tableKey: string; sent: boolean } | null }
+    | undefined
+  if (assembled?.tools == null || !assembled.tools.sent) return undefined
+  const tableKey = assembled.tools.tableKey
+  const table = entries.find((entry) => entry.provenanceKey === tableKey)?.payload as
+    | { tools: Array<{ specHash: string }> }
+    | undefined
+  if (table === undefined) fail(`no view/tool_table ${tableKey} on the Tape`)
+  const specs = new Map<string, ToolSpec>()
+  for (const entry of entries) {
+    const content = entry.payload as { type?: unknown; hash?: unknown; spec?: unknown }
+    if (entry.name === 'view/content' && content.type === 'tool_spec') {
+      specs.set(String(content.hash), content.spec as ToolSpec)
+    }
+  }
+  const tools = table.tools.map((tool) => specs.get(tool.specHash))
+  if (tools.some((spec) => spec === undefined)) fail(`a spec of ${tableKey} is not on the Tape`)
+  return tools.length === 0 ? undefined : (tools as ToolSpec[])
+}
+
+/** The text of the `view/content(system)` with this hash in the session, or undefined. */
+async function systemTextOf(
+  store: TapeStore,
+  sessionId: string,
+  hash: string,
+): Promise<string | undefined> {
+  for (const entry of await readAll(store, sessionId)) {
+    if (entry.name !== 'view/content') continue
+    const content = entry.payload as { type?: unknown; hash?: unknown; text?: unknown }
+    if (content.type === 'system' && content.hash === hash && typeof content.text === 'string') {
+      return content.text
+    }
+  }
+  return undefined
 }
 
 /**
@@ -973,7 +1030,9 @@ async function assertAttemptReEncodes(
  * and every fixture stays green while the recorded pin describes a prefix the request was not
  * assembled from. What does catch it is the identity the service commits to: the pin is the top of
  * THIS run's pre-run batch, and `session/model_selected` is keyed by `runId` and therefore always
- * newly appended — so it is that batch's largest id, and the relation is an equality.
+ * newly appended — so it is that batch's largest id, and the relation is an equality. Spec 02 adds
+ * one fact the Run itself writes on top before its first request, the environment note (§提示层
+ * 「环境说明」); when there is one, the pin is that.
  */
 async function assertPinIsThisRunsOwnBatch(
   store: TapeStore,
@@ -988,10 +1047,16 @@ async function assertPinIsThisRunsOwnBatch(
   if (receipt === undefined) {
     fail(`attempt ${entry.entryId}: no session/model_selected for run ${runId}`)
   }
+  const note = entries.find(
+    (candidate) =>
+      candidate.name === 'message/environment' &&
+      candidate.entryId > receipt.entryId &&
+      candidate.entryId < entry.entryId,
+  )
   assertEqual(
     fact.contextAtEntryId,
-    receipt.entryId,
-    `attempt ${entry.entryId} pinned the top of its own pre-run batch`,
+    note?.entryId ?? receipt.entryId,
+    `attempt ${entry.entryId} pinned the top of its own pre-run batch (or its environment note)`,
   )
   // The other fact of that batch: the question this request answered is INSIDE the prefix, which is
   // what makes the pin describe a request that could be sent at all.
@@ -2282,9 +2347,15 @@ export function tapeConformanceCases(
         atEntryId: first.contextAtEntryId,
         target: SCRIPT_MODEL,
       })
+      // The first request of a session carries the environment note after the question (spec 02
+      // §提示层「环境说明」); the second, on the same day, finds it unchanged and writes none.
+      const note = {
+        role: 'user',
+        content: [{ type: 'text', text: environmentText({ date: '2026-09-26', workspace: null }) }],
+      }
       assertEqual(
         firstContext,
-        [{ role: 'user', content: [{ type: 'text', text: 'first question' }] }],
+        [{ role: 'user', content: [{ type: 'text', text: 'first question' }] }, note],
         'the first request replays the question as it was sent, not as it was later edited',
       )
       const secondContext = await rebuildProviderContext(store, {
@@ -2296,6 +2367,7 @@ export function tapeConformanceCases(
         secondContext,
         [
           { role: 'user', content: [{ type: 'text', text: 'first question, edited' }] },
+          note,
           { role: 'user', content: [{ type: 'text', text: 'second question' }] },
         ],
         'the second request sees the revision and not the retracted answer',
@@ -2619,10 +2691,11 @@ export function tapeConformanceCases(
       // The pin is this Run's OWN pre-run batch, not a head read: the other session's writes landing
       // in between must stay out of this one's audit.
       const selected = entries.find((entry) => entry.provenanceKey === modelSelectedKey(turn.runId))
+      const note = entries.find((entry) => entry.name === 'message/environment')
       assertEqual(
         turn.contextAtEntryId,
-        selected?.entryId,
-        "the pin is the run's own pre-run batch",
+        note?.entryId ?? selected?.entryId,
+        "the pin is the run's own pre-run batch, topped by its environment note",
       )
       // oxlint-disable-next-line no-await-in-loop -- one attempt fact at a time
       for (const entry of await attemptFacts(store, sessionId)) {

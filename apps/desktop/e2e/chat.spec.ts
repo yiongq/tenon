@@ -47,7 +47,11 @@ test('a reply streams into the thread as rendered markdown', async () => {
     await expect(page.getByTestId('composer-send')).toBeVisible()
 
     expect(fake.requests).toHaveLength(1)
-    expect(fake.requests[0]?.body).toMatchObject({ stream: true, messages: [{ role: 'user' }] })
+    // The message, then the environment note the Run writes before its first request (spec 02).
+    expect(fake.requests[0]?.body).toMatchObject({
+      stream: true,
+      messages: [{ role: 'user' }, { role: 'user' }],
+    })
     const violations = await page.evaluate(
       () => (globalThis as unknown as { cspViolations: string[] }).cspViolations,
     )
@@ -127,7 +131,8 @@ test('Retry re-sends the failed turn once and the reply then streams', async () 
       'All good',
     )
     const last = fake.requests.at(-1)?.body as { messages: Array<{ role: string }> }
-    expect(last.messages.map((m) => m.role)).toEqual(['user'])
+    // The same turn and its environment note, not a second turn.
+    expect(last.messages.map((m) => m.role)).toEqual(['user', 'user'])
   } finally {
     await app.close()
   }

@@ -88,4 +88,5 @@ export const ASK_USER_QUESTION_TOOL: BuiltinTool = {
   effect: 'read',
   profiles: BOTH_PROFILES,
   check: noChecks,
+  texts: {},
 }

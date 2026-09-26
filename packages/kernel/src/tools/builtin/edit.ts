@@ -1,6 +1,6 @@
 /** Edit (spec 02 §内置工具与参数「Edit」). The executor arrives in plan step 22. */
 import type { BuiltinTool } from './tool.js'
-import { COWORK_ONLY, absolutePathCheck } from './tool.js'
+import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
 const DESCRIPTION = [
   'Replaces text in an existing file.',
@@ -39,4 +39,5 @@ export const EDIT_TOOL: BuiltinTool = {
   check: (args) =>
     absolutePathCheck(args, 'file_path') ??
     (args['old_string'] === args['new_string'] ? EDIT_SAME_STRINGS : null),
+  texts: { notAbsolute: NOT_ABSOLUTE, sameStrings: EDIT_SAME_STRINGS },
 }

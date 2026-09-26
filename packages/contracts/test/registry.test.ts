@@ -18,8 +18,13 @@ describe('ipc registry', () => {
       'provider.configure',
       'provider.list',
       'provider.select',
+      'session.facts',
       'session.latest',
       'session.messages',
+      'session.selectProfile',
+      'workspace.pick',
+      'workspace.remove',
+      'workspace.usePrefill',
     ])
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
       'chat.event',

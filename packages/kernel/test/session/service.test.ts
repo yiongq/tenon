@@ -40,6 +40,8 @@ import type {
   TapeStore,
   Usage,
 } from '../../src/index.js'
+import { systemHash } from '../../src/provider/wire/shared.js'
+import { systemPrompt } from '../../src/prompts/index.js'
 import {
   createCounterIds,
   createScriptedProvider,
@@ -385,11 +387,17 @@ describe('session lifecycle', () => {
     // (§会话形态「建立前暂存」), replacing the desktop's ensureSession.
     const ran = await run(h, sessionId, 'a question')
     const entries = await allEntries(h.store, sessionId)
+    // With no draft the session is a chat (spec 02 §会话形态): its profile shares the anchor's batch;
+    // the Run writes the environment note, then the request's content (model, system, Read's spec).
     expect(entries.map((entry) => entry.name)).toEqual([
       'session/start',
+      'session/profile_set',
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'message/environment',
+      'view/content',
+      'view/content',
       'view/content',
       'view/tool_table',
       'view/assembled',
@@ -397,6 +405,7 @@ describe('session lifecycle', () => {
       'provider/attempt_completed',
       'execution/run_terminal',
     ])
+    expect(entries[1]?.payload).toEqual({ profile: 'chat' })
     expect(ran.ended.recorded).toBe(true)
     // The second message finds the session and writes no second anchor.
     h.provider.script(scriptedTurn({ deltas: ['another'], usage: USAGE }))
@@ -490,6 +499,9 @@ describe('one request', () => {
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'message/environment',
+      'view/content',
+      'view/content',
       'view/content',
       'view/tool_table',
       'view/assembled',
@@ -498,8 +510,9 @@ describe('one request', () => {
       'execution/run_terminal',
     ])
     // The user's turn, the Run's start and the model choice land BEFORE the request, in one
-    // transaction; the assistant message and the attempt fact land together after it.
-    const [, user, started, model, , , assembled, assistant, attempt, terminal] = entries
+    // transaction; the Run's environment note tops the context; the assistant message and the
+    // attempt fact land together after the request.
+    const [, user, started, model, note, , , , , assembled, assistant, attempt, terminal] = entries
     expect(started?.sourceId).toBe(ran.runId)
     expect(started?.payload).toEqual({
       cause: { kind: 'user-message', messageId: user?.payload['messageId'] },
@@ -510,7 +523,7 @@ describe('one request', () => {
     expect(assistant?.payload['runId']).toBe(ran.runId)
     expect(attempt?.sourceId).toBe(ran.runId)
     expect(attempt?.sourceSeq).toBe(1)
-    expect(attempt?.payload['contextAtEntryId']).toBe(model?.entryId)
+    expect(attempt?.payload['contextAtEntryId']).toBe(note?.entryId)
     expect(attempt?.payload['usage']).toEqual(USAGE)
     expect(attempt?.payload['error']).toBeNull()
     // Exactly one terminal, written by the Run, with the steps it took and what it cost (旧 131).
@@ -535,15 +548,20 @@ describe('one request', () => {
     })
     // What the request was assembled from, written after encode() and before the stream (A3).
     expect(attempt?.payload['assemblyRef']).toBe(assembled?.provenanceKey)
-    // The request snapshot: no system prompt before plan step 18, the connector's max tokens.
+    // The request snapshot: the chat system prompt in the interface language (spec 02 §提示层
+    // 「组装」), the connector's max tokens.
+    const system = systemPrompt('chat', 'en')
     expect(attempt?.payload['request']).toEqual({
-      systemHash: expect.any(String),
+      systemHash: systemHash(system),
       maxTokens: MODEL.maxOutputTokens,
     })
-    // And no tools before plan step 10.
-    const body = h.provider.requests.at(-1)?.body as { system?: unknown; tools?: unknown }
-    expect(body.system).toBeUndefined()
-    expect(body.tools).toBeUndefined()
+    // The product's chat table from plan step 18 on: Read alone.
+    const body = h.provider.requests.at(-1)?.body as {
+      system?: unknown
+      tools?: Array<{ name: string }>
+    }
+    expect(body.system).toBe(system)
+    expect(body.tools?.map((tool) => tool.name)).toEqual(['Read'])
   })
 
   it('persists a truncated turn as complete and ends the Run as output-truncated', async () => {
@@ -622,6 +640,9 @@ describe('one request', () => {
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'message/environment',
+      'view/content',
+      'view/content',
       'view/content',
       'view/tool_table',
       'view/assembled',
@@ -713,11 +734,13 @@ describe('one request', () => {
     // The turn is not lost, nothing claims the request happened, and resending the same text is
     // still a retry of this message rather than a second turn.
     const entries = await allEntries(h.store, sessionId)
+    // The environment note was written before the request, and nothing after it.
     expect(entries.map((entry) => entry.name)).toEqual([
       'session/start',
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'message/environment',
     ])
     h.loop.connector.use({ provider: h.provider, model: MODEL })
     h.provider.script(scriptedTurn({ deltas: ['an answer'], usage: USAGE }))
@@ -737,14 +760,21 @@ describe('one request', () => {
     const second = await run(h, sessionId, 'second question')
     const sent = h.provider.requests.at(-1)
     const body = sent?.body as { messages?: { role: string; content: unknown }[] }
-    expect(body.messages?.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    // The first question, the day's environment note, the answer, the second question: the note is
+    // not written again on the same day.
+    expect(body.messages?.map((message) => message.role)).toEqual([
+      'user',
+      'user',
+      'assistant',
+      'user',
+    ])
     // And the same context comes back out of the tape at the pin the fact recorded.
     const replayed = await rebuildProviderContext(h.store, {
       sessionId,
       atEntryId: second.attempt?.payload['contextAtEntryId'] as number,
       target: MODEL,
     })
-    expect(replayed.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    expect(replayed.map((message) => message.role)).toEqual(['user', 'user', 'assistant', 'user'])
   })
 })
 

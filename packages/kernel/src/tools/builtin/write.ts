@@ -1,6 +1,6 @@
 /** Write (spec 02 §内置工具与参数「Write」). The executor arrives in plan step 22. */
 import type { BuiltinTool } from './tool.js'
-import { COWORK_ONLY, absolutePathCheck } from './tool.js'
+import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
 const DESCRIPTION = [
   'Writes a file to the local filesystem, replacing its whole content if it already exists.',
@@ -27,4 +27,5 @@ export const WRITE_TOOL: BuiltinTool = {
   effect: 'write',
   profiles: COWORK_ONLY,
   check: (args) => absolutePathCheck(args, 'file_path'),
+  texts: { notAbsolute: NOT_ABSOLUTE },
 }

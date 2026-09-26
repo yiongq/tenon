@@ -98,7 +98,14 @@ test('acceptance 6: the settings card switches the provider the next message goe
     expect(request?.headers['authorization']).toBe(`Bearer ${ZHIPU_KEY}`)
     expect(request?.body).toMatchObject({ model: ZHIPU_MODEL, stream: true })
     const body = request?.body as { messages: Array<{ role: string }> }
-    expect(body.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    // The system text leads on this wire; the first turn's environment note follows it (spec 02).
+    expect(body.messages.map((message) => message.role)).toEqual([
+      'system',
+      'user',
+      'user',
+      'assistant',
+      'user',
+    ])
     // ...and the endpoint it used to go to saw nothing more.
     expect(first.requests).toHaveLength(1)
 

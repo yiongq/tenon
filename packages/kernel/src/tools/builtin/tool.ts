@@ -8,6 +8,7 @@
  * live in their tool's module and are versioned with it.
  */
 import { isAbsolutePath } from '../../host/path.js'
+import { fill } from '../../prompts/index.js'
 import type { ToolSpec } from '../../provider/types.js'
 import type { SideEffectClass } from '../../tape/entry.js'
 
@@ -43,6 +44,11 @@ export interface BuiltinTool {
    * schema already accepted.
    */
   check(args: Readonly<Record<string, unknown>>): string | null
+  /**
+   * Every fixed English text the tool writes into what the model reads beyond its spec — the checks'
+   * reasons, result templates, error texts — by name. `PROMPT_LAYER_HASH` covers them (§版本闸).
+   */
+  readonly texts: Readonly<Record<string, string>>
 }
 
 /** Both profiles: the chat profile's four tools. */
@@ -55,6 +61,9 @@ export function noChecks(): string | null {
   return null
 }
 
+/** The reason a path argument is refused when it is not absolute; `{key}` is the argument's name. */
+export const NOT_ABSOLUTE = '{key} must be an absolute path.'
+
 /** The fixed reason for a path argument that is not absolute; null when it is or is absent. */
 export function absolutePathCheck(
   args: Readonly<Record<string, unknown>>,
@@ -62,7 +71,5 @@ export function absolutePathCheck(
 ): string | null {
   const value = args[key]
   if (value === undefined) return null
-  return typeof value === 'string' && isAbsolutePath(value)
-    ? null
-    : `${key} must be an absolute path.`
+  return typeof value === 'string' && isAbsolutePath(value) ? null : fill(NOT_ABSOLUTE, { key })
 }

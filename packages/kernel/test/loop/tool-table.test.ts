@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ZHIPU_DEFAULT_BASE_URL,
+  absolutePath,
   createMemoryHost,
   createMemoryTapeStore,
   createSessionService,
@@ -236,10 +237,9 @@ describe('which tools a request carries', () => {
     expect(toolNames(h.a)).toEqual(['AskUserQuestion', 'Read', 'WebFetch', 'WebSearch'])
   })
 
-  it('carries no builtin tool in the product before the tools land', async () => {
+  it('carries the builtin tools that landed in the product: Read, then Glob and Grep in a task', async () => {
     const store = createMemoryTapeStore({ identity: IDENTITY })
     const provider = createScriptedProvider({ models: [MODEL_A] })
-    provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
     const loop = createTestLoopPorts({ connector: { provider, model: MODEL_A } })
     const service = createSessionService({
       host: createMemoryHost(),
@@ -250,12 +250,21 @@ describe('which tools a request carries', () => {
       protectedFiles: [],
     })
     service.bindLoop(loop)
+    provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
     const sent = await service.send({ sessionId: SESSION, origin: null, text: 'hi' })
     if (sent.status === 'started') await loop.runEnded({ runId: sent.runId })
-    expect(toolNames(provider)).toBeUndefined()
-    const table = named(await entries(store), 'view/tool_table')[0]
-    if (table === undefined) throw new Error('no tool table')
-    expect((table.payload as unknown as ToolTablePayload).tools).toEqual([])
+    // Plan step 18: Read is the chat table's only landed tool; the rest join with their steps.
+    expect(toolNames(provider)).toEqual(['Read'])
+    const task = '5e2d8b3f-7c4e-4b82-8a63-1d9ef8b22c45'
+    await service.selectProfile({
+      sessionId: task,
+      profile: 'cowork',
+      dedicated: absolutePath('/home/u/Tenon/workspaces/u/t/task'),
+    })
+    provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
+    const second = await service.send({ sessionId: task, origin: null, text: 'hi' })
+    if (second.status === 'started') await loop.runEnded({ runId: second.runId })
+    expect(toolNames(provider)).toEqual(['Glob', 'Grep', 'Read'])
   })
 })
 

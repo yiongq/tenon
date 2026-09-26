@@ -12,7 +12,15 @@ import {
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
-import { sessionLatest, sessionMessages } from './ipc/session.js'
+import {
+  sessionFacts,
+  sessionLatest,
+  sessionMessages,
+  sessionSelectProfile,
+  workspacePick,
+  workspaceRemove,
+  workspaceUsePrefill,
+} from './ipc/session.js'
 
 /**
  * Every channel that may cross the renderer ↔ main boundary. The preload only forwards
@@ -33,8 +41,13 @@ export const ipcRoutes = {
   providerConfigure,
   providerList,
   providerSelect,
+  sessionFacts,
   sessionLatest,
   sessionMessages,
+  sessionSelectProfile,
+  workspacePick,
+  workspaceRemove,
+  workspaceUsePrefill,
 } as const
 export const ipcEvents = {
   chatEvent,

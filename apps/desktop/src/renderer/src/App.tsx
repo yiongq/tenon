@@ -29,6 +29,7 @@ export function App(): JSX.Element {
     sidebarCollapsed: false,
     provider: null,
     providerConfig: {},
+    lastWorkspaceFolders: [],
   })
 
   /**

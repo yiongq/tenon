@@ -427,6 +427,14 @@ export type {
 export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
 export type { AnswerCommand } from './loop/waiting.js'
 export type { PendingCard, PendingRoot } from './loop/answer.js'
+// Plan step 18: the home page's choices and the workspace, as the session service answers them.
+export type {
+  SelectProfileQuery,
+  SelectProfileResult,
+  SessionFactsView,
+  WorkspaceChange,
+  WorkspaceResult,
+} from './loop/mailbox.js'
 export { INSPECTOR_TIMEOUT_MS } from './permission/inspector.js'
 export type { AskOpinion, DenyOpinion, InspectorRegistration } from './permission/inspector.js'
 export type {

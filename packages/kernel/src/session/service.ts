@@ -36,6 +36,13 @@ import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
 import { isCanonicalUuid } from '../ids.js'
 import type { IdSource } from '../ids.js'
 import { createLoop } from '../loop/mailbox.js'
+import type {
+  SelectProfileQuery,
+  SelectProfileResult,
+  SessionFactsView,
+  WorkspaceChange,
+  WorkspaceResult,
+} from '../loop/mailbox.js'
 import type { LoopPorts, RunConnector, RunOrigin } from '../loop/ports.js'
 import type { PendingCard, PendingRoot } from '../loop/answer.js'
 import type { AnswerCommand } from '../loop/waiting.js'
@@ -49,6 +56,7 @@ import { sessionStartKey } from '../tape/provenance.js'
 import type { MessageRow, TapeStore } from '../tape/store.js'
 import { createTape } from '../tape/tape.js'
 import type { TapeFact } from '../tape/tape.js'
+import { carryEntries, readSessionFacts } from './facts.js'
 
 /**
  * How far down the newest-first session list `latestSession` looks for one with messages. A page, not
@@ -159,9 +167,27 @@ export interface SessionService {
   createSession(q?: CreateSessionQuery): Promise<SessionIncarnation>
   /**
    * Clears a session: a new incarnation, and the kernel-built `session/start` handed to the store
-   * (§删除语义). The facts of the previous incarnation are physically gone.
+   * (§删除语义), with the profile and the workspace carried in the same transaction (spec 02
+   * §会话事实「清空会话」). The facts of the previous incarnation are physically gone.
    */
   resetSession(sessionId: string): Promise<SessionIncarnation>
+  /**
+   * A session's profile and workspace (`session.facts`): the Tape's once it is established, the
+   * draft's before (§会话形态「建立前暂存」). An unknown session is a chat with no workspace.
+   */
+  sessionFacts(q: { sessionId: string }): Promise<SessionFactsView>
+  /** `session.selectProfile`: into the draft; `established` once the session exists. */
+  selectProfile(q: SelectProfileQuery): Promise<SelectProfileResult>
+  /**
+   * `workspace.*` (§工作区): folders the host's own dialog or prefill gave, or one removed. `dedicated`
+   * is the session's own folder, computed by the host; the kernel resolves every folder before it
+   * writes it.
+   */
+  setWorkspace(q: {
+    sessionId: string
+    change: WorkspaceChange
+    dedicated: AbsolutePath
+  }): Promise<WorkspaceResult>
   /** Physical delete: facts, head, projections, cursors. */
   deleteSession(sessionId: string): Promise<void>
   /**
@@ -321,10 +347,12 @@ export function constructSessionService(
       // hash-indistinguishable. The store refuses that, and refuses a session it has no head row for.
       const incarnationId = ids.uuid()
       const fact = startFact(sessionId, incarnationId, undefined)
+      const facts = await readSessionFacts(tape, sessionId)
       const result = await tape.resetSession({
         sessionId,
         incarnationId,
         start: sessionSlice.entry(fact.name, fact.fields),
+        carry: carryEntries({ tape, sessionId, incarnationId, now }, facts),
       })
       return { sessionId, incarnationId, startEntryId: result.entryId }
     },
@@ -351,6 +379,10 @@ export function constructSessionService(
     listMessages(q): Promise<MessageRow[]> {
       return tape.listMessages(q)
     },
+
+    sessionFacts: (q) => loop.sessionFacts(q),
+    selectProfile: (q) => loop.selectProfile(q),
+    setWorkspace: (q) => loop.setWorkspace(q),
 
     bindLoop(ports): void {
       loop.bind(ports)

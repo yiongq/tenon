@@ -109,6 +109,8 @@ export interface TestLoopPorts extends LoopPorts {
   /** The next `run-ended` not yet taken by an earlier call, optionally of one Run. */
   runEnded(q?: { readonly runId?: string | null }): Promise<RunEnded>
   setLocalDate(date: string): void
+  /** The interface language the next system text is assembled in (a mid-session change, 旧 151). */
+  setLocale(locale: 'zh-CN' | 'en'): void
 }
 
 const DEFAULT_ORIGIN = 'https://connector.test'
@@ -127,6 +129,7 @@ export function createTestLoopPorts(options: TestLoopPortsOptions = {}): TestLoo
   let nextSeq = 1
   let nextQueuedId = 1
   let localDate = options.localDate ?? '2026-09-26'
+  let locale = options.locale ?? 'en'
 
   // run-ended bookkeeping: each event is handed to at most one `runEnded()` call.
   const ended: RunEnded[] = []
@@ -242,7 +245,7 @@ export function createTestLoopPorts(options: TestLoopPortsOptions = {}): TestLoo
     },
     leases: { begin },
     events: record,
-    locale: () => options.locale ?? 'en',
+    locale: () => locale,
     localDate: () => localDate,
     commandShell: shell,
     liveLease: (root) => live.get(root) ?? null,
@@ -264,6 +267,9 @@ export function createTestLoopPorts(options: TestLoopPortsOptions = {}): TestLoo
         return Promise.resolve(event)
       }
       return new Promise((resolve) => waiters.push({ runId: q.runId, resolve }))
+    },
+    setLocale(next): void {
+      locale = next
     },
     setLocalDate(date): void {
       localDate = date

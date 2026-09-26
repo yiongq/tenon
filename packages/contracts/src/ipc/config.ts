@@ -33,6 +33,12 @@ export const configSchema = z.object({
   sidebarCollapsed: z.boolean().default(false),
   provider: providerSelectionSchema.nullable().default(null),
   providerConfig: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+  /**
+   * The task profile's prefill (spec 02 §工作区「来源」; D11): the folder list as it last changed,
+   * written by the main process after the kernel accepted a change — never through `config.set`,
+   * since the renderer cannot hand a path in (A9). Falling back to the dedicated folder leaves it.
+   */
+  lastWorkspaceFolders: z.array(z.string().min(1)).default([]),
 })
 export type Config = z.infer<typeof configSchema>
 

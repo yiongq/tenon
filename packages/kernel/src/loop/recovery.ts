@@ -385,7 +385,6 @@ async function rejudgeAtStartup(
     judge: {
       tape: deps.tape,
       host: deps.host,
-      profile: 'chat',
       inspectors: deps.inspectors,
       protectedFiles: deps.protectedFiles,
       userSetting: deps.userSetting,

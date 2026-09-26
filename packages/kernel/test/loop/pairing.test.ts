@@ -392,15 +392,17 @@ describe('replay after a retraction and a late result', () => {
       messages: { role: string; content: { type: string; text?: string }[] }[]
     }
     // Right after its assistant turn, before the later user text — the API reads the two adjacent
-    // user turns as one, results first.
+    // user turns as one, results first. The first question is followed by the day's environment
+    // note (spec 02 §提示层「环境说明」).
     expect(body.messages.map((message) => message.role)).toEqual([
+      'user',
       'user',
       'assistant',
       'user',
       'user',
     ])
-    expect(body.messages[2]?.content.map((block) => block.type)).toEqual(['tool_result'])
-    expect(body.messages[3]?.content.at(-1)).toMatchObject({
+    expect(body.messages[3]?.content.map((block) => block.type)).toEqual(['tool_result'])
+    expect(body.messages[4]?.content.at(-1)).toMatchObject({
       type: 'text',
       text: 'second question',
     })

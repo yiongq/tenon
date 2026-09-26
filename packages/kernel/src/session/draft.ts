@@ -7,9 +7,9 @@
  * here per session id, read and written by that session's mailbox in arrival order. A kernel-internal
  * type: nothing outside the kernel sees it, and the package does not export it.
  *
- * Plan step 9 declares the shape only. The store, `session.selectProfile` / `session.selectModel`
- * writing it and `send` reading it arrive in plan steps 18 and 19; until then a new session is
- * created in the chat profile with no model choice, which is what a missing draft means anyway.
+ * Plan step 9 declared the shape; plan step 18 the store, `selectProfile` and the workspace writing
+ * it and `send` reading it; `selectModel` writes its choice from plan step 19. A new session with no
+ * draft is created in the chat profile with no model choice.
  */
 import type { ModelChoiceSetPayload, WorkspaceSetPayload } from '../tape/entry.js'
 
@@ -24,3 +24,33 @@ export type SessionDraft =
 
 /** At most this many drafts are kept; past it the oldest is dropped. */
 export const SESSION_DRAFT_CAP = 16
+
+/**
+ * The drafts, by session id, oldest first. Only the root's mailbox writes them, so two commands of one
+ * session never interleave; a read outside the mailbox sees the store as the last task left it.
+ */
+export interface DraftStore {
+  get(sessionId: string): SessionDraft | null
+  /** Sets a session's draft; a new one past the cap drops the oldest. */
+  set(sessionId: string, draft: SessionDraft): void
+  delete(sessionId: string): void
+}
+
+export function createDraftStore(cap: number = SESSION_DRAFT_CAP): DraftStore {
+  const drafts = new Map<string, SessionDraft>()
+  return {
+    get: (sessionId) => drafts.get(sessionId) ?? null,
+    set(sessionId, draft): void {
+      // An update keeps the draft's place: "oldest" is the one created first.
+      drafts.set(sessionId, draft)
+      while (drafts.size > cap) {
+        const oldest = drafts.keys().next()
+        if (oldest.done === true) break
+        drafts.delete(oldest.value)
+      }
+    },
+    delete(sessionId): void {
+      drafts.delete(sessionId)
+    },
+  }
+}

@@ -115,6 +115,17 @@ export {
   sessionMessages,
 } from './ipc/session.js'
 export type { ContentBlockContract, MessageRowContract } from './ipc/session.js'
+// Spec 02 plan step 18: the profile, the workspace and the draft before a session exists.
+export {
+  sessionFacts,
+  sessionFactsResponse,
+  sessionSelectProfile,
+  workspacePick,
+  workspaceRemove,
+  workspaceResultSchema,
+  workspaceUsePrefill,
+} from './ipc/session.js'
+export type { SessionFactsResponse, WorkspaceResult } from './ipc/session.js'
 
 // Provider settings (spec 01 step 14): what the settings card reads and writes. A secret value
 // has no field to travel in — see ipc/provider.ts.

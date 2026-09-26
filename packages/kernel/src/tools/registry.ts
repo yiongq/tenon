@@ -34,7 +34,11 @@ export interface ToolTableItem extends ToolOrigin {
  * AskUserQuestion step 26, WebFetch step 27 (as `'real'` in the test registry) then 29, WebSearch step
  * 28, Agent step 31. Until then kernel tests reach them through `createTestSessionService`.
  */
-export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToolName>()
+export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToolName>([
+  'Read',
+  'Glob',
+  'Grep',
+])
 
 /**
  * How many tools one request may carry, by provider (H4; 暂定). Zhipu takes 128. Anthropic is not

@@ -44,6 +44,7 @@ import type {
   NewEntry,
   PermissionDecidedPayload,
   TapeEntry,
+  WorkspaceSetPayload,
 } from '../tape/entry.js'
 import { dispatchCommittedKey, permissionDecidedKey } from '../tape/provenance.js'
 import { MAX_READ_LIMIT, TapeProvenanceConflictError } from '../tape/store.js'
@@ -56,7 +57,8 @@ import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ArgumentValidator } from '../tools/validate.js'
 import type { CallRef } from './closure.js'
-import { notRunFacts, repairFacts, resultFacts } from './closure.js'
+import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
+import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP } from './limits.js'
 import type { McpToolSource } from './ports.js'
 import type { ToolOutcomeView } from './events.js'
@@ -80,7 +82,6 @@ export interface BatchContext {
   readonly requestSeq: number
   /** Who writes: the Run handling the batch — the one that asked, or the one resuming it (§续跑). */
   readonly writer: FactWriter
-  readonly profile: 'chat' | 'cowork'
   readonly table: FrozenToolTable
   /** The calls still to handle, in `<i>` order. */
   readonly calls: readonly CompleteCall[]
@@ -155,7 +156,6 @@ export type BatchResult =
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
   const { writer } = ctx
-  const scope = await pathScopeOf(ctx)
   const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
   let denials = ctx.denials
   for (let k = 0; k < ctx.calls.length; k += 1) {
@@ -190,6 +190,10 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       continue
     }
     try {
+      // Each call reads the session as the calls before it left it, the workspace included: a folder
+      // removed meanwhile is judged by the new list at once (D11).
+      // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
+      const facts = await callFactsOf(ctx)
       if (ctx.approved?.ordinal === call.ordinal) {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
         denials = 0
@@ -197,11 +201,18 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
         if (!(await dispatchOnce(ctx, ref, item, [dispatch], dispatch))) continue
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-        await execute(ctx, call, item, executor, ctx.approved.reversibility, ctx.approved.summary)
+        const target = await locate(ctx.host, item, call.input, facts.scope)
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        await execute(ctx, call, item, executor, {
+          reversibility: ctx.approved.reversibility,
+          summary: ctx.approved.summary,
+          target: target?.real ?? null,
+          roots: facts.scope.roots,
+        })
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
-      const judged = await judgeCall(judge, item, call, scope)
+      const judged = await judgeCall(judge, item, call, facts)
       if (judged.kind === 'stopped') {
         // Stopped while judging: no decision fact, the call and the rest not-run (B1).
         // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
@@ -239,7 +250,12 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
       if (!(await dispatchOnce(ctx, ref, item, [decided, dispatch], dispatch))) continue
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await execute(ctx, call, item, executor, judged.reversibility, decision.summary)
+      await execute(ctx, call, item, executor, {
+        reversibility: judged.reversibility,
+        summary: decision.summary,
+        target: judged.target,
+        roots: facts.scope.roots,
+      })
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
@@ -280,30 +296,53 @@ function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: st
   })
 }
 
-/** The side effect, then its result and outcome. */
+/**
+ * The side effect, then its result and outcome. A file tool acts on the real path its decision placed
+ * (§「在不在工作区里」第 5 步). A call stopped while it ran gets the stopped note, with whatever it had
+ * produced as the second block (§点停止时各状态怎么收).
+ */
 async function execute(
   ctx: BatchContext,
   call: CompleteCall,
   item: ToolTableItem,
   executor: NonNullable<ReturnType<typeof executorFor>>,
-  reversibility: Reversibility,
-  summary: DecisionSummary,
+  q: {
+    readonly reversibility: Reversibility
+    readonly summary: DecisionSummary
+    readonly target: AbsolutePath | null
+    readonly roots: readonly AbsolutePath[]
+  },
 ): Promise<void> {
-  const execution = await executor({ item, input: call.input, signal: ctx.signal })
+  const execution = await executor({
+    item,
+    input: call.input,
+    signal: ctx.signal,
+    target: q.target,
+    roots: q.roots,
+    fs: ctx.host.fs,
+  })
+  const stopped = execution.state !== 'completed'
+  const output = textOf(execution.content)
   const facts = resultFacts({
     tape: ctx.tape,
     now: ctx.now,
     call: refOf(ctx, call),
-    content: execution.content,
-    isError: execution.isError,
-    kernelAuthored: false,
+    content: stopped
+      ? closureContent({
+          source: 'stopped',
+          state: execution.state,
+          ...(output === '' ? {} : { detail: output }),
+        })
+      : execution.content,
+    isError: stopped || execution.isError,
+    kernelAuthored: stopped,
     effect: effectOf(item),
     state: execution.state,
-    source: execution.state === 'completed' ? null : 'stopped',
-    reversibility,
+    source: stopped ? 'stopped' : null,
+    reversibility: q.reversibility,
     writer: ctx.writer,
   })
-  await close(ctx, call, facts, summary)
+  await close(ctx, call, facts, q.summary)
 }
 
 /** A denial's closure: its block code and slots, or a failed inspector's own note (F1). */
@@ -436,7 +475,6 @@ export interface JudgeContext {
   readonly tape: Pick<Tape, 'readRange'>
   readonly host: HostAdapter
   readonly sessionId: string
-  readonly profile: 'chat' | 'cowork'
   readonly inspectors: readonly InspectorRegistration[]
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -452,6 +490,8 @@ export type Judgement =
       readonly decision: Decision
       readonly reversibility: Reversibility
       readonly place?: PathPlace
+      /** Where a file tool acts, when it runs: the real path the decision placed; null otherwise. */
+      readonly target: AbsolutePath | null
       readonly policyVersion: string
       /** The card's kind and object, when it asks. */
       readonly card?: Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'>
@@ -469,13 +509,12 @@ export async function judgeCall(
   ctx: JudgeContext,
   item: ToolTableItem,
   call: Pick<CompleteCall, 'input'>,
-  scope?: PathScope,
+  given?: CallFacts,
 ): Promise<Judgement> {
-  const paths = scope ?? (await pathScopeOf(ctx))
-  const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+  const { entries, profile, scope: paths } = given ?? (await callFactsOf(ctx))
   const reversibility = reversibilityOf(item, call.input)
   const located = await locate(ctx.host, item, call.input, paths)
-  const place = located === undefined ? undefined : placeFor(ctx.profile, located)
+  const place = located === undefined ? undefined : placeFor(profile, located)
   const inspected: InspectedCall = {
     tool: {
       name: item.name,
@@ -488,7 +527,7 @@ export async function judgeCall(
   }
   const view = buildSessionView(entries, {
     call: inspected,
-    profile: ctx.profile,
+    profile,
     ownSpillDir: paths.ownSpillDir,
   })
   const inspection = await runInspectors({
@@ -545,6 +584,7 @@ export async function judgeCall(
     decision,
     reversibility,
     ...(place === undefined ? {} : { place }),
+    target: located?.real ?? null,
     policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
     ...(decision.record.verdict === 'ask'
       ? { card: cardOf(item, call.input, located, workspace, ctx.searchHost) }
@@ -591,9 +631,33 @@ export function decisionEntry(q: {
   })
 }
 
-/** Where file paths are judged from: the workspace roots, the profile, this session's spill, the protected files — all resolved. */
+/**
+ * What judging one call reads off the session, read once per call: its facts in Tape order, its
+ * profile (`session/profile_set`; phase 1's sessions are chats) and where its paths are judged from.
+ */
+export interface CallFacts {
+  readonly entries: readonly TapeEntry[]
+  readonly profile: 'chat' | 'cowork'
+  readonly scope: PathScope
+}
+
+export async function callFactsOf(
+  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles'>,
+): Promise<CallFacts> {
+  const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+  const facts = sessionFactsOf(entries)
+  const workspace = await workspaceOf(ctx.tape, facts)
+  return { entries, profile: facts.profile, scope: await pathScopeOf(ctx, workspace) }
+}
+
+/**
+ * Where file paths are judged from: the workspace roots (real already: resolved when they were
+ * chosen), the profile, this session's spill, the protected files — all resolved. The chat profile
+ * has no workspace, so its roots are empty.
+ */
 export async function pathScopeOf(
   ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles'>,
+  workspace: WorkspaceSetPayload | null,
 ): Promise<PathScope> {
   const fs = ctx.host.fs
   const profileDir = (await resolvePath(fs, ctx.host.identity.profileDir as AbsolutePath)).path
@@ -601,18 +665,18 @@ export async function pathScopeOf(
   const protectedFiles = await Promise.all(
     ctx.protectedFiles.map(async (file) => (await resolvePath(fs, file)).path),
   )
-  // The workspace is the cowork profile's (plan step 18); the chat profile has none.
-  return { roots: [], profileDir, ownSpillDir, protectedFiles }
+  return { roots: workspace?.folders ?? [], profileDir, ownSpillDir, protectedFiles }
 }
 
 /** Where a file tool's path falls, as a decision places it; undefined for any other tool. */
 export async function placeOf(
-  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles' | 'profile'>,
+  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles'>,
   item: ToolTableItem,
   input: Record<string, unknown>,
 ): Promise<PathPlace | undefined> {
-  const located = await locate(ctx.host, item, input, await pathScopeOf(ctx))
-  return located === undefined ? undefined : placeFor(ctx.profile, located)
+  const { profile, scope } = await callFactsOf(ctx)
+  const located = await locate(ctx.host, item, input, scope)
+  return located === undefined ? undefined : placeFor(profile, located)
 }
 
 /** A file tool's path, placed; Glob and Grep without a path search the first folder. */
