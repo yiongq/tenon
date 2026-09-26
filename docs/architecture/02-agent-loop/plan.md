@@ -137,7 +137,7 @@
     - 旧 106（本步部分）：阶段 1 的 `stopReason` 映射不变（`tool-use` 仍归 `end-turn`）；`thinking-delta`、`tool-call`、`attempt-discarded` 都通过 `chatEventSchema`；ERROR_CODE 对两个新码给出 `unknown`。
     - 旧 231、实测 A5：用智谱 key 在 `/api/anthropic` 与 OpenAI 线各跑一次长思考、长输出（max 档，调大 max_tokens），记首字节时间和块间最长间隔；在 OpenAI 线调一个参数约 2 万 token 的工具，`tool_stream` 关、开各一次。间隔接近 300 秒就放宽该线阈值或关掉看门狗，写进 spec §实测记录。
   - 暂定与待定：非官方端点 300 秒是 Tenon 自取的值（按 A5 实测校准）；官方端点的 ping 间隔在第 33 步；智谱 1308、1310 的 `resetAt` 在报文格式核实前留 null（Open）；Fable 5.1 没开保留时的 400 原文拿到前仍归 `invalid-request`（第 33 步）；`x-stainless-*` 整组放行（阶段 6）。
-- [ ] 8. **Tape 修补与新名字**（裁决 B1、B2、B4、B5、B6、B8、F3、H1、D11、A2、H10）
+- [x] 8. **Tape 修补与新名字**（裁决 B1、B2、B4、B5、B6、B8、F3、H1、D11、A2、H10）
   - 读：01 修补 7；§02 的 Tape 事实。
   - 交付物：先只声明、按 spec 原文（各放进 spec 写的文件，后面的步骤实现、不改形状）§载荷 引用的类型：`RunEndReason`（loop/terminal）、`ExecutionState` / `ClosureSource` / `BlockReason`（loop/closure）、`DecisionSource` / `DecisionStep` / `DecisionRecord` / `Decision` / `DecisionSummary` 与摘要码（permission/decide、record）、`InspectorFinding`（permission/inspector；`InspectorCategory`、`FlaggedCategory` 第 5 步已声明）、`SubagentHandoff` / `HandoffCall`（loop/subagent）、`SpillRecord`（loop/spill）；`TapeSlice` 只增 `tool`、`view`、`compaction`，02 的全部名字按总表登记（含 ③ 才写的）；载荷类型（含 `ToolOutcomePayload`、`ToolResultPayload.searchHitUrls`）与 `TapePayloadByName`；names.test.ts:269 的标签改为「已声明的保留名」并补一个未声明的兄弟名；`REPLAY_KINDS` 只增两个，重放读工具事实与 `message/continuation`、从最近 anchor 往后读；撤回即终局与 `TapeMessageRetractedError`；`TapeClosedError`；`readBySource` 的 `fromEntryId`；`resetSession` 的 `carry`；`hash_ver` 规则（只写文档）；待批投影表（含 `wait_kind`）、两个 store、`listPendingApprovals`、`PROJECTION_VERSION` 为 2、第 2 号迁移两个文件与 `MIGRATIONS`；check-tape-schema 按迁移号锚定。
   - 验收：11、12（挂靠、同批原子性、rejudge 在第 15 步补齐，选模型的 n 在第 19 步）；不变量 32。
@@ -684,6 +684,11 @@
   - 测试要点：旧 98 → thinking-shapes.test.ts「rows with no thinkingSpec encode exactly as 01 did」；旧 45、旧 99 → 同文件「the Anthropic wire’s four thinking branches」；旧 100、旧 46 → 「the OpenAI-compatible wire’s effort-only rule」；旧 88 → definitions.test.ts 的三条行数据用例；旧 43、旧 101 → vendor-blocks.test.ts 前两组，另有 desktop session-projection.test.ts（剥掉原样块后通过 `messageRowSchema`，只剩原样块的行留空 content；把剥离改掉两条都变红）；旧 112、旧 42 → vendor-blocks.test.ts「the attempt says which encoder and which model fields」（含 Proxy 断言 encode() 只读 `WIRE_MODEL_FIELDS`）；openai-chat `tool_calls[type=mcp]` → openai-stream.test.ts「OpenAIChatProvider vendor blocks」；02 不变量 1、2 → thinking-shapes.test.ts 同名两组；01 编码测试里以 assistant 轮结尾、断言成功的用例已补尾部 user 轮。
   - 等后面步骤的：验收 7 的复算 promptHash 与 02 不变量 33 要第 10 步的组装清单（`view/assembled`、`assemblyRef`），整条在第 10 步勾；验收 6 的首行调序在第 33 步。
 
+- **2026-09-26 · 第 8 步（Tape 修补与新名字）**，分支 `wt/02-step8` → `feat/02-seg1`，完成（format、lint 含 `tape:check`、typecheck、全部单测 62 个文件 1051 个用例过；一个提交 `7aa3b5d`）。**独立评审待补**（同第 6 步：实现 agent 撞上用量上限时留下一份能编过、能跑过的草稿，本会话接手；评审三视角没跑，① 的 PR 合并前补跑）。
+  - 接手时做的：草稿是在第 5 步合进来之前写的，rebase 到 `feat/02-seg1` 时 `host/adapter.ts` 的 `Reversibility` / `ConfirmTarget` 与 `permission/inspector.ts` 冲突，都取第 5 步的写法（五种形态），`inspector.ts` 保留第 5 步的两个类别并加上本步的 `InspectorFinding`，kernel 入口去掉重复导出。按开放问题第一到六轮的答复补声明：`ClosureSource` 只增 `invalid-input`、`timed-out`；`RunEndReason` 只增 `time-limit`；名字总表加 `message/environment`（slice / kind message，身份 message、messageId、0）与 `EnvironmentPayload`，重放把它和 `message/continuation` 一起读成 user 轮，投影不产行；`ToolResultPayload` 只增 `question?: AskAnswerRecord`；`HASH_VER` 注释写上 B6 的规则（升 `hash_ver` 必同时升 schema 版本）。补了两条测试（重放按顺序读出两种 user 轮，把 `message/environment` 从折叠里去掉就变红；投影对它不产行），修了草稿里五处 lint。
+  - 草稿已做的（逐项对过 plan 第 8 步交付物）：§载荷 引用的类型按 spec 原文只声明（`loop/closure.ts`、`loop/terminal.ts`、`loop/subagent.ts`、`loop/spill.ts`、`permission/decide.ts`、`permission/record.ts`、`permission/inspector.ts`）；`TapeSlice` 只增 `tool`、`view`、`compaction`，02 的名字按总表登记；载荷类型与 `TapePayloadByName`；`REPLAY_KINDS` 只增 `tool_call`、`tool_result`；撤回即终局与 `TapeMessageRetractedError`；`TapeClosedError`；`readBySource` 的 `fromEntryId`；`resetSession` 的 `carry`；待批投影表（含 `wait_kind`）、两个 store、`listPendingApprovals`、`PROJECTION_VERSION` 为 2、第 2 号迁移两份 DDL 与 `MIGRATIONS`；`check-tape-schema` 按迁移号锚定。
+  - 测试要点：旧 58、59 / 113、60、110、111、115、116、117、118、123 与 02 不变量 32 → `testing/tape-conformance.ts` 的 spec 02 各组（内存与 SQLite 两个 store 各跑一遍）；旧 61 → scripts/check-tape-schema.test.mjs「the ladder is anchored by migration number」；旧 114 → names.test.ts 三组（按总表的 slice、kind、身份列写入，错一项拒，未声明的兄弟名拒，源码里没有写 `tool/result_marked` 的调用）；desktop 的 sqlite-store.test.ts 另有迁移梯子与 v1 → v2 升级、租户在迁移前比对、关闭后每个方法都抛 `TapeClosedError`。
+  - 等后面步骤的：验收 12 的挂靠、同批原子性与 rejudge 在第 15 步补齐，选模型的 n 在第 19 步；重放里工具块的排列与隐藏撤回消息名下的 tool/、execution/ 事实在第 14 步。
 ## 验收记录
 
 （第 35 步填写）
@@ -701,12 +706,12 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 进行中（分支 `feat/02-seg1`，每段一个 PR）。**2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**，此刻的状态：
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5、6、7、8 步已并进这个分支，下一步是第 9 步「所有权骨架」（在 `feat/02-seg1` 上新开 worktree 做）。
 
-- 第 5 步：已完成并并进 `feat/02-seg1`（评审两个视角的五条发现已改，第五种 `ConfirmTarget` 已加，见实施记录；突变视角没跑）。
-- 第 6、8 步：实现 agent 中途失败，`.claude/worktrees/t67`（`wt/02-step6-7`）与 `.claude/worktrees/t8`（`wt/02-step8`）里留有未提交的半成品，**不可信**，接手时先看 `git diff` 再决定用不用；第 7 步没开始。
-- owner 2026-09-26 定了开放问题的第一轮（都按推荐）：15 加第五种形态 `{ type: 'tool'; serverId; toolName }`；连接器卡参数默认展开；16 的「工作区变化与日期」新增 `message/environment`（每次用户消息、含插话之前检查，变了才追加全量，含本地日期）；16 的参数校验用 `@modelcontextprotocol/client` 自带的 cf-worker 校验器，失败记新来源码 `invalid-input`。这四条已写回 spec 并记 Revisions（2026-09-26）。第二到六轮 owner 同日也都按推荐定了，已全部写回 spec 并记 Revisions（2026-09-26，(4)–(9)），plan 相关各步的「暂定与待定」与测试要点同步改了；开放问题 12–18、21–25 都已定，余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7 步由本会话直接写；这三步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
+- 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
+- 本机遗留：`.claude/worktrees/t67`（`wt/02-step6-7`，第 6 步的旧提交，内容已在 `feat/02-seg1`）、`t7`、`t8` 三个 worktree 可删。
 
 ## Open
 
