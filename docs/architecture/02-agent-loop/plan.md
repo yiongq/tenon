@@ -242,7 +242,7 @@
     - 旧 106（结束码部分）：`done.endReason` 可选；18 个结束码在两份 locale 里都有非空文案、槽位齐全；`run_terminal` 没有单独的 slots 字段。
     - 旧 131：每个 Run 恰好一条 `execution/run_terminal`，崩溃恢复写的是 `recovered`（在第 16 步补跑）；`run_terminal.usage` 等于本 Run 全部 attempt（含重发与摘要请求）的最终 usage，加上本 Run 写下交接的子会话用量（子会话部分在第 31 步）；token 上限默认关。
   - 暂定与待定：没有 `retryAfterMs` 时从 `baseDelayMs` 起步、每次翻倍（旧开放问题 94，开工前复核）；`RETRY_CAP` 暂取 2（第 34 步校准）；中途插进来的 `message/user` 不清零三种计数（旧开放问题 48）；零可执行调用的 tool-use 回合归 `provider-error`（旧开放问题 124）；token 上限暂按未命中缓存的输入加输出、含子 agent 计（旧开放问题 95，第 34 步前复核）；「继续」重新解析模型、算压缩边界（开放问题 11）。
-- [ ] 14. **收口与重放**（裁决 B1、B2、E2、M3、H8、A2）
+- [x] 14. **收口与重放**（裁决 B1、B2、E2、M3、H8、A2）
   - 读：§工具调用的收口；§执行日志与恢复表；§折叠与读法。
   - 交付物：（`ExecutionState` / `ClosureSource` / `BlockReason` 与 `ToolOutcomePayload` 第 8 步已声明，`BLOCKED_FACT_KEYS` 在第 11 步）`chat.event` 的 `tool-outcome`（按 `callKey`）与 `executionStateSchema` / `closureSourceSchema`（从第 7 步移来）；按会话串行的写入队列（先写者算数）；重放排列（结果紧跟 assistant）；`encode()` 前的配对检查与 `onUnansweredCall`（desktop 只在 `app.isPackaged` 时传 `'repair'`，`log` 传 `console.error`）；撤回折叠；执行日志的 T1。
   - 验收：14（等审批那一种状态在第 15 步补跑）；不变量 23、31。
@@ -743,6 +743,12 @@
   - 暂定与待定（本步的读法，第 15 步复核）：暂停的那一批也算进 `steps`（续跑 Run 收尾同一批时是否再算，第 15 步定，避免重复计数）；`driveRun` 抛错（程序错误、会话被删、store 关闭）不写 `run_terminal`，发 `run-ended{ recorded: false }`，留给第 16 步的启动恢复；「继续」判「能不能点」时读整个会话的事实（读法同 `readSessionEntries`，性能问题留到有长会话时）。
   - 等后面步骤的：Run 的每个写入任务先查 signal、`paused` 提交途中被停止照暂停中停止收口（第 15 步）；跨重启与批准的步数延续、`recovered` 终态（第 15、16 步）；终态任务里取队列（第 17 步）；溢出后压缩重发（第 30 步）；子会话用量并入与子 agent 的更小上限（第 31 步）；「继续」按钮与失败卡（第 20 步）；`done.stopReason` 三值与阶段 1 映射不变已由 run-events 的原表保证，界面侧在第 20 步。
 
+- **2026-09-26 · 第 14 步（收口与重放）**，分支 `wt/02-step14` → `feat/02-seg1`，完成（format、lint、typecheck、全部单测 84 个文件 1235 个用例过，e2e 17 个过；代码一个提交 `d0eb16c`）。验收 14 的停止部分与不变量 23、31 满足；等审批状态、崩溃与拒绝位置见下面「等后面步骤的」。**独立评审待补**（同第 9 步）。
+  - 改了什么：`MODEL_NOTES.closure` 按 §提示层「closure 要填满的格」写齐 21 个来源（含 `user-rejected`、`superseded`、`crashed`、`app-exit`、`unanswered`、`timed-out`、`repair` 的各格），类型改为每个来源必有一行；`closure.ts` 只增 `repairFacts`（没派发 not-run / blocked，派发过 uncertain 并按工具类别记 effect）；`tape/replay.ts` 只增 `replayContext`，一次读出上下文与其中没有结果的调用（撤回的 assistant 名下的、被压缩掉的都不算），`rebuildProviderContext` 改为它的包装；`driveRun` 在组装之后、`encode()` 之前查配对：`'throw'`（默认）直接抛，Run 以 `recorded: false` 结束、请求不出网，`'repair'` 逐个补写 `repair` 收口、`log` 一次、在新的 pin 上重读再发；Run 的写入改走 mailbox 任务里的「先写者算数」：同一任务里先按 runId 读出已有的 `tool/result`，同一调用已有结果的，本批里它的 result 与 outcome 丢掉并记 `log`，不发 `tool-outcome`，pin 移到那条已有结果之后（不然下一次请求看不到它）；T1：放行判决与 `dispatch_committed` 的 append 返回 `created: false` 时不派发，测试与开发构建抛出，打包构建记 uncertain / `repair` 并 `log`（`TapeProvenanceConflictError` 照原样抛，恢复表的「损坏」类在第 16 步）；`SessionServiceOptions.onUnansweredCall` 经 `LoopDeps` 进 Run。contracts：`executionStateSchema`、`closureSourceSchema`（都以 `satisfies z.ZodType<…>` 绑定 kernel 类型）、`toolOutcomeViewShape` / `toolOutcomeViewSchema` 与 chat.event 的 `tool-outcome` 变体（可选成员用 `exactOptional`，与 kernel 类型一样「没有就不出现」；视图本身只做 kernel → contract 的单向类型断言，因为 kernel 的 `ConfirmTarget` 路径带品牌）。desktop：run-events 转发根会话的 `tool-outcome`；index.ts 传 `onUnansweredCall: app.isPackaged ? 'repair' : 'throw'` 与 `log: console.error`。
+  - 自查时发现并修掉的：「先写者算数」丢掉本方的结果后，Run 的 pin 只跟自己的回执走，下一次请求的上下文前缀里没有另一方写的那条结果，配对检查报「没有结果」；`Written` 只增 `deferredTo`，pin 取它。
+  - 测试要点：新文件 test/loop/pairing.test.ts（两条线都走真适配器，每次 fetch 都跑 `assertToolPairing` 与 `assertLastTurnIsUser`）：旧 1 的停止部分——两条线各 200 个随机时点（种子固定：随机的文字块数与调用数，停在任意一个事件之后或第 k 个调用执行中），之后再发一条，每个调用恰好一条结果、`checkFailures` 为空（不变量 23）；兜底两例（第一条结果没落盘：默认抛、请求数不多一次、log 一行；`'repair'` 时补一条 uncertain / `repair`、log 一行、请求照常发出并通过配对）；旧 122（撤回带调用的 assistant 后下一次请求里既没有那次调用也没有它的结果）；旧 178（暂停时来了新消息，`repair` 收口排在新 `message/user` 之后，请求里结果仍紧跟 assistant、排在新的用户文字之前；第 15 步改成 `superseded` 收口后位置不变）；先写者算数（执行中另一方先写了结果：Tape 上只有一条、是先写的那条，log 一行，不发 `tool-outcome`，下一次请求带的是先写的内容）；T1（`created: false` 的派发：开发构建抛且不执行，打包构建记 uncertain / `repair` 且不执行）；不变量 31（一批三个调用，`tool/call`、判决、`dispatch_committed`、结果、outcome 各自按 `<i>` 递增，不断言彼此怎么交错）。test/loop/closure.test.ts（每个来源恰好有 §提示层 列出的那几格、非空英文、槽位不超出该来源可用的槽位）；contracts chat-event.test.ts（`tool-outcome` 三种形态能过，词表外的状态与来源、空 `callKey`、显式 `undefined` 不过，两个枚举 schema 与 kernel 类型双向断言）；desktop run-loop.test.ts（`tool-outcome` 只转根会话、能过 `chatEventSchema`；done 与 error 都带 `endReason`）。fill.test.ts 的格数一段移进 closure.test.ts。
+  - 等后面步骤的：旧 1 的等审批状态与「拒绝第 k 个」（要答复，第 15 步）；崩溃与启动恢复（第 16 步，恢复表的「损坏」类也在那一步）；`superseded` 收口（第 15 步，旧 178 的写法随之改为不经 `repair`）；界面不再显示撤回的工具行（第 20 步）。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -760,9 +766,9 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–13 步已并进这个分支（都已勾），下一步是第 14 步「收口与重放」（在 `feat/02-seg1` 上新开 worktree 做）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–14 步已并进这个分支（都已勾），下一步是第 15 步「等待与答复」（在 `feat/02-seg1` 上新开 worktree 做）。
 
-- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–13 步由本会话直接写；这八步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–14 步由本会话直接写；这九步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
