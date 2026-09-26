@@ -3,6 +3,7 @@ export type {
   ChildHandle,
   ConfirmReason,
   ConfirmRequest,
+  ConfirmTarget,
   FetchLike,
   HostAdapter,
   HostClock,
@@ -10,14 +11,19 @@ export type {
   HostFs,
   HostIdentity,
   HostNetwork,
+  HostPolicy,
   HostProcess,
   HostSandbox,
   HostSecrets,
+  Reversibility,
   SandboxRequest,
   SandboxViolation,
   SpawnSpec,
 } from './host/adapter.js'
 export { CONFIRM_FACT_KEYS, HostNetworkDeniedError } from './host/adapter.js'
+export { EMPTY_POLICY } from './host/policy.js'
+export type { PolicyState, TenantPolicy, ToolPolicyRule } from './host/policy.js'
+export type { FlaggedCategory, InspectorCategory } from './permission/inspector.js'
 export { absolutePath, isAbsolutePath, joinPath } from './host/path.js'
 export { KEY_SEPARATOR, keyFor } from './host/key.js'
 export {

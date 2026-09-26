@@ -43,9 +43,17 @@ export {
   confirmRequestEvent,
   confirmRequestEventPayloadSchema,
   confirmRequestSchema,
+  confirmTargetSchema,
+  flaggedCategorySchema,
   requiredFactKeys,
+  reversibilitySchema,
 } from './ipc/confirm.js'
 export type { ConfirmRequestInput } from './ipc/confirm.js'
+
+// Tenant policy (spec 02 §`HostAdapter.policy`): what 6b's bridge frames and a managed policy file
+// are checked with.
+export { policyStateSchema } from './policy.js'
+export type { PolicyStateContract } from './policy.js'
 export {
   PROTOCOL_FRAME_TYPES,
   checkTenantAssertion,

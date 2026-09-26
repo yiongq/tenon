@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { parse, sep } from 'node:path'
 import type { AbsolutePath, HostFs } from '@tenon-app/kernel'
 import { absolutePath } from '@tenon-app/kernel'
 
@@ -37,6 +38,42 @@ export class DesktopFs implements HostFs {
   async mkdirp(path: AbsolutePath): Promise<void> {
     absolutePath(path)
     await mkdir(path, { recursive: true })
+  }
+
+  /**
+   * `fs.promises.realpath` is the native realpath(3), which also gives the on-disk letter case
+   * (the JS `fs.realpathSync` does not; spec 02 §「在不在工作区里」). A dangling link's realpath
+   * reports ENOENT like a missing path does, so ENOENT / ENOTDIR are checked once more with lstat:
+   * only an entry lstat cannot see either is "not there" (null). Otherwise the original error is
+   * thrown — writing through that dangling link would create a file wherever it points. lstat looks
+   * at the entry itself, so a trailing separator or `/.` is dropped first: with one, lstat follows
+   * the link too, and `ws/evil/` would read as missing while mkdirp through it escapes.
+   */
+  async realpath(path: AbsolutePath): Promise<AbsolutePath | null> {
+    absolutePath(path)
+    try {
+      return absolutePath(await realpath(path))
+    } catch (err) {
+      if (!isErrno(err, 'ENOENT') && !isErrno(err, 'ENOTDIR')) throw err
+      try {
+        await lstat(entryOf(path))
+      } catch (lstatErr) {
+        if (isErrno(lstatErr, 'ENOENT') || isErrno(lstatErr, 'ENOTDIR')) return null
+      }
+      throw err
+    }
+  }
+}
+
+/** The directory entry a path names: trailing separators and `/.` segments removed, root kept. */
+function entryOf(path: string): string {
+  const { root } = parse(path)
+  const tail = sep === '\\' ? /(?:[\\/]+|[\\/]\.)$/ : /(?:\/+|\/\.)$/
+  let entry = path
+  for (;;) {
+    const trimmed = entry.replace(tail, '')
+    if (trimmed === entry || trimmed.length < root.length) return entry
+    entry = trimmed
   }
 }
 

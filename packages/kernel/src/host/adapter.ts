@@ -8,7 +8,13 @@
  * `network` is the eighth member, added by the amendment in
  * docs/architecture/01-provider-and-tape/spec.md ("the HostAdapter.network patch
  * to 00-foundation"). The phase 0 seven members are unchanged.
+ *
+ * `policy` is the ninth member, added by the amendment in
+ * docs/architecture/02-agent-loop/spec.md (§对 00-foundation 的修补), which also adds
+ * `HostFs.realpath`, four `ConfirmReason` values and `ConfirmRequest.reversibility` / `target`.
  */
+
+import type { PolicyState } from './policy.js'
 
 /** A string that has been checked to be an absolute filesystem path. */
 export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
@@ -22,6 +28,15 @@ export interface HostAdapter {
   readonly confirm: HostConfirm
   readonly clock: HostClock
   readonly network: HostNetwork
+  readonly policy: HostPolicy
+}
+
+/** The read-only entry to the tenant policy. The host fetches and caches it; the kernel only reads. */
+export interface HostPolicy {
+  /** Synchronous and never throws; when the latest policy is out of reach, the cached snapshot. */
+  current(): PolicyState
+  /** Called when the policy changes; returns the unsubscribe function (as HostClock.setTimeout). */
+  subscribe(listener: (state: PolicyState) => void): () => void
 }
 
 export interface HostIdentity {
@@ -38,6 +53,13 @@ export interface HostFs {
   stat(path: AbsolutePath): Promise<{ size: number; mtimeMs: number; isDir: boolean } | null>
   readdir(path: AbsolutePath): Promise<string[]>
   mkdirp(path: AbsolutePath): Promise<void>
+  /**
+   * The real absolute path, symbolic links resolved.
+   * Null only when the directory entry itself does not exist (lstat reports ENOENT / ENOTDIR too).
+   * An entry that exists but does not resolve (a dangling link, ELOOP, ...) and every other error
+   * throw — a dangling link's realpath also reports ENOENT and must not read as "not there yet".
+   */
+  realpath(path: AbsolutePath): Promise<AbsolutePath | null>
   // Removal is a separately grantable capability and is not part of the base
   // interface; phase 4 adds HostFs.remove together with runtime authorisation.
 }
@@ -115,7 +137,30 @@ export interface ConfirmRequest {
   facts: Record<string, string>
   /** Raw payload the UI must not render; logs only. Phase 2 decides its use. */
   redacted?: unknown
+  /** Added by spec 02, required (E1). */
+  reversibility: Reversibility
+  /** Added by spec 02, required (E4). */
+  target: ConfirmTarget
 }
+
+/**
+ * Whether Tenon can undo the change this call makes. Only the change: data sent away is told by
+ * the `network` reason and by `target`. Phase 2 produces `read-only`, `unknown` and `irreversible`.
+ * Constraint: reason `irreversible` implies reversibility `irreversible`, not the other way round.
+ */
+export type Reversibility = 'read-only' | 'revertible' | 'snapshotted' | 'irreversible' | 'unknown'
+
+/**
+ * The only member the card's "object" line reads (H3). Discriminated by `type`, not `kind`, so it
+ * does not blur with ConfirmRequest.kind. An MCP call names the tool, not its arguments: the card
+ * shows the call's `input` separately, expanded (spec 02 open question 15).
+ */
+export type ConfirmTarget =
+  | { type: 'command'; command: string; cwd: AbsolutePath } // the command verbatim + its cwd
+  | { type: 'path'; path: AbsolutePath } // the real path after resolution (D8)
+  | { type: 'url'; url: string } // the full URL (WebFetch)
+  | { type: 'search'; query: string; host: string } // the query actually sent + the backend's host
+  | { type: 'tool'; serverId: string; toolName: string } // MCP: serverId as in the permission key, the server's own tool name
 
 /**
  * Phase 0 lists only the reasons an approval card must tell apart. Phase 2's
@@ -127,10 +172,16 @@ export type ConfirmReason =
   | 'network'
   | 'elevated'
   | 'default'
+  // added by spec 02 (§`ConfirmReason` 只增四个值)
+  | 'policy'
+  | 'flagged'
+  | 'command'
+  | 'interaction-required'
 
 /**
  * Required `facts` keys per reason. `irreversible` additionally requires
  * `path` when kind = 'file' and `command` when kind = 'command'.
+ * `flagged`'s `category` holds a FlaggedCategory (permission/inspector.ts); contracts refuse others.
  */
 export const CONFIRM_FACT_KEYS: Readonly<Record<ConfirmReason, readonly string[]>> = {
   irreversible: ['toolName'],
@@ -138,6 +189,11 @@ export const CONFIRM_FACT_KEYS: Readonly<Record<ConfirmReason, readonly string[]
   network: ['host', 'toolName'],
   elevated: ['command'],
   default: ['toolName'],
+  // added by spec 02
+  policy: ['toolName'],
+  flagged: ['toolName', 'category'],
+  command: ['command', 'cwd'],
+  'interaction-required': ['toolName'],
 }
 
 export interface HostClock {
