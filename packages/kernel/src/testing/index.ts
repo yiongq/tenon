@@ -70,3 +70,7 @@ export type {
 // The same service with the test tool registry and injected layer-3 readings (plan step 10).
 export { createTestSessionService } from './test-service.js'
 export type { TestServiceExtras, TestToolRegistry } from './test-service.js'
+
+// A scriptable inspector (plan step 12).
+export { createFakeInspector } from './fake-inspector.js'
+export type { FakeInspector, FakeInspectorAnswer } from './fake-inspector.js'

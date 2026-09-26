@@ -84,7 +84,10 @@ async function session(streams: readonly (readonly string[])[]): Promise<Session
   const host = createMemoryHost()
   const loop = createTestLoopPorts({ connector: { provider, model: MODEL } })
   const service = createSessionService({
-    host: { ...host, clock: { now: () => (clock += 1), setTimeout: host.clock.setTimeout } },
+    host: {
+      ...host,
+      clock: { now: () => (clock += 1), setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms) },
+    },
     tape: store,
     ids: createCounterIds(),
     inspectors: [],

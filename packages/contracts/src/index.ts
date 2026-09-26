@@ -126,3 +126,7 @@ export type {
 } from './ipc/provider.js'
 export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js'
 export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'
+
+// Spec 02 plan step 12: the decision summary, the only half of a decision that crosses IPC.
+export { decisionSummaryCodeSchema, decisionSummarySchema } from './ipc/approval.js'
+export type { DecisionSummaryContract } from './ipc/approval.js'

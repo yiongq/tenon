@@ -4,10 +4,13 @@
  *
  * Plan step 5 declared `InspectorCategory` and `FlaggedCategory`, which the `flagged` approval reason
  * needs; plan step 8 added `InspectorFinding`, which the decision record (`permission/record.ts`)
- * references; plan step 9 adds the opinions and the registration shape, because
- * `SessionServiceOptions.inspectors` takes them. All are declared exactly as the spec writes them;
- * the steps that run inspectors (11, 12, 29) implement them without changing the shape.
+ * references; plan step 9 the opinions and the registration shape, because
+ * `SessionServiceOptions.inspectors` takes them. Plan step 12 adds the first half of a decision
+ * (§判决记录与摘要): running every inspector, with a time limit the kernel sets by `kind`, and folding a
+ * timeout, an error or an answer beyond the declared ceiling into an outcome `decide()` reads.
  */
+import type { HostClock } from '../host/adapter.js'
+import type { InspectorOutcome } from './decide.js'
 import type { AfterResultInput, BeforeCallInput, ResultMarker } from './session-view.js'
 
 export type InspectorCategory = 'exfiltration' // what an inspector may report; only ever added to
@@ -62,3 +65,101 @@ export type InspectorRegistration =
 
 /** Per `kind`, given by the kernel; an inspector cannot state its own. To be calibrated (F1). */
 export const INSPECTOR_TIMEOUT_MS = { 'local-rule': 2_000, model: 30_000 } as const
+
+/** What the first half returns: every outcome in registration order, or that the Run was stopped. */
+export type InspectionResult =
+  | { readonly stopped: false; readonly outcomes: readonly InspectorOutcome[] }
+  | { readonly stopped: true }
+
+/**
+ * Runs every inspector on one call, all at once, each against its time limit (F1). An inspector that
+ * throws, rejects, answers beyond its declared ceiling or with a malformed opinion is an `error`; one
+ * that does not answer in time is a `timeout`; `decide()` folds both into the strictest opinion the
+ * ceiling allows. A stop while they run aborts their signals and is not a failure: the result says
+ * `stopped`, and the call gets no decision fact — it closes as not-run / stopped (B1).
+ */
+export async function runInspectors(q: {
+  readonly inspectors: readonly InspectorRegistration[]
+  readonly input: BeforeCallInput
+  readonly setTimeout: HostClock['setTimeout']
+  readonly signal: AbortSignal
+}): Promise<InspectionResult> {
+  if (q.signal.aborted) return { stopped: true }
+  const controllers = q.inspectors.map(() => new AbortController())
+  const onStop = (): void => {
+    for (const controller of controllers) controller.abort(q.signal.reason)
+  }
+  q.signal.addEventListener('abort', onStop, { once: true })
+  const stopped = new Promise<'stopped'>((resolve) => {
+    q.signal.addEventListener('abort', () => resolve('stopped'), { once: true })
+  })
+  try {
+    const running = Promise.all(
+      q.inspectors.map((inspector, i) => {
+        const controller = controllers[i] ?? new AbortController()
+        return inspectOne(inspector, q.input, q.setTimeout, controller)
+      }),
+    )
+    const settled = await Promise.race([running, stopped])
+    if (settled === 'stopped') return { stopped: true }
+    return { stopped: false, outcomes: settled }
+  } finally {
+    q.signal.removeEventListener('abort', onStop)
+  }
+}
+
+async function inspectOne(
+  inspector: InspectorRegistration,
+  input: BeforeCallInput,
+  setTimeout: HostClock['setTimeout'],
+  controller: AbortController,
+): Promise<InspectorOutcome> {
+  const base = { inspectorId: inspector.id, ceiling: inspector.ceiling }
+  let cancel: () => void = noop
+  const timedOut = new Promise<'timeout'>((resolve) => {
+    cancel = setTimeout(() => {
+      controller.abort('timeout')
+      resolve('timeout')
+    }, INSPECTOR_TIMEOUT_MS[inspector.kind])
+  })
+  try {
+    const answer = await Promise.race([
+      Promise.resolve().then(() => inspector.beforeCall(input, controller.signal)),
+      timedOut,
+    ])
+    if (answer === 'timeout') return { ...base, status: 'timeout' }
+    const opinion = validOpinion(answer, inspector.ceiling)
+    return opinion === null ? { ...base, status: 'error' } : { ...base, status: 'ok', opinion }
+  } catch {
+    return { ...base, status: 'error' }
+  } finally {
+    cancel()
+  }
+}
+
+function noop(): void {}
+
+const CATEGORIES: ReadonlySet<string> = new Set<InspectorCategory>(['exfiltration'])
+
+/** The opinion if it has the declared shape and stays within the ceiling; null otherwise. */
+function validOpinion(value: unknown, ceiling: 'ask' | 'deny'): DenyOpinion | null {
+  if (typeof value !== 'object' || value === null) return null
+  const opinion = value as Record<string, unknown>
+  const findings = opinion['findings']
+  const findingsOk =
+    findings === undefined ||
+    (Array.isArray(findings) &&
+      findings.every(
+        (f) =>
+          typeof f === 'object' &&
+          f !== null &&
+          typeof (f as Record<string, unknown>)['code'] === 'string',
+      ))
+  if (!findingsOk) return null
+  if (opinion['kind'] === 'none') return value as DenyOpinion
+  if (opinion['kind'] !== 'ask' && opinion['kind'] !== 'deny') return null
+  if (opinion['kind'] === 'deny' && ceiling === 'ask') return null
+  if (typeof opinion['category'] !== 'string' || !CATEGORIES.has(opinion['category'])) return null
+  if (!Array.isArray(findings)) return null
+  return value as DenyOpinion
+}

@@ -14,6 +14,7 @@ import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
 import { readConfig } from './host/profile.js'
+import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
 import { hardenWebContents } from './navigation.js'
@@ -119,8 +120,8 @@ async function main(): Promise<void> {
   )
   // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
   // construction, the host's run-time half — the RunRegistry, the queue, the events — through
-  // bindLoop, before anything can send. No inspector yet (plan step 29 registers the exfiltration
-  // rule) and no protected shell files yet (plan step 11).
+  // bindLoop, before anything can send. The protected shell files arrive with the tools that touch
+  // files (plan step 18).
   const sessions =
     tape === null
       ? null
@@ -128,7 +129,7 @@ async function main(): Promise<void> {
           host,
           tape,
           ids: { uuid: (): string => randomUUID() },
-          inspectors: [],
+          inspectors: desktopInspectors(),
           connector: createRunConnector({
             host,
             providers,

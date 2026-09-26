@@ -78,7 +78,7 @@ function harness(onEvent?: (event: SessionEvent, h: Harness) => void): Harness {
   let clock = 1_700_000_000_000
   const host: HostAdapter = {
     ...memory,
-    clock: { now: () => (clock += 1000), setTimeout: memory.clock.setTimeout },
+    clock: { now: () => (clock += 1000), setTimeout: (fn, ms) => memory.clock.setTimeout(fn, ms) },
   }
   const service = createSessionService({
     host,

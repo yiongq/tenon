@@ -39,7 +39,8 @@ export interface ModelNotes {
   readonly closure: Readonly<
     Partial<Record<ClosureNoteSource, Readonly<Partial<Record<ExecutionState, string>>>>>
   >
-  readonly inspectorFailed?: Readonly<Record<'timeout' | 'error', string>> // plan step 12
+  /** A denying inspector that timed out or failed (§Inspector 接口与合议); the source is `inspector`. */
+  readonly inspectorFailed: Readonly<Record<'timeout' | 'error', string>>
   readonly ask?: { readonly result: string; readonly noPreference: string; readonly typed: string } // plan step 26
   readonly handoff?: {
     readonly status: Readonly<Record<'partial' | 'aborted' | 'superseded' | 'uncertain', string>>
@@ -78,6 +79,13 @@ export const MODEL_NOTES: ModelNotes = {
     'tool-unavailable': {
       'not-run': 'This tool cannot be used right now, so the call was not run.',
     },
+  },
+  // The spec's own sentences (§Inspector 接口与合议).
+  inspectorFailed: {
+    timeout:
+      'The permission check for this call timed out, so the call was not run. This is a check failure, not a judgment that the call is unsafe. Ask the user how to proceed if you still need this call.',
+    error:
+      'The permission check for this call failed with an error, so the call was not run. This is a check failure, not a judgment that the call is unsafe. Ask the user how to proceed if you still need this call.',
   },
   schemaUnusable:
     'The input schema its server gave for this tool cannot be used to check arguments, so no call to it can run. Do not call it again in this session.',
