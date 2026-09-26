@@ -65,7 +65,7 @@
 | 表格类产物查看器 | `ArtifactViewerPanel` | 自建头 + Select + ToggleGroup + 自建 iframe + Skeleton | 5 | 产物段内的第一种渲染器：头部为产物名 + 类型后缀 + 版本选择器 +「预览 / 代码」分段 + 复制 / 下载 / 在系统默认应用中打开 / Expand（撑到全宽，`aria-expanded` 翻转）/ Close（回产物列表，不是折叠整段）；内容是无网络沙箱 iframe，底部常驻一行元信息；左边缘可拖拽调宽并记住 | interactions.md §3.6；parity-audit 块词汇 |
 | 文档阅读面板 | `DocReaderPanel` | 自建头 + Button（分裂钮）+ ScrollArea | 5 | 第二种渲染器：头部为文档标题 + 复制分裂钮（主键复制全文，副键给 Markdown / 纯文本）+ 导出 + Expand + Close；正文用衬线正文体，独立滚动，左侧可选 h2 章节导航；与主栏文档卡的按下态双向同步；没有对应能力的动作直接省掉，不放空按钮 | interactions.md §3.6；parity-audit 块词汇 |
 | 内容列 | `ContentColumn` | 自建 | **0** | 定宽居中、滚动容器在这一层；消息列永不横滚，横向溢出由块内部自己处理 | interactions.md §1.1、§3.2 |
-| 设置模态 | `SettingsModal` | Dialog + Tabs（垂直）+ ScrollArea | 3 | 哈希路由，从任何页打开不丢上下文；`Esc` 关；阶段 3 只三样：审批模式三档（默认手动）/ 文件夹访问 / 网络白名单，沙箱档位收在「高级」折叠区。「以后都允许」过的规则在这里可逐条撤销 | interactions.md §1.4；parity-audit 2026-09-13 |
+| 设置模态 | `SettingsModal` | Dialog + Tabs（垂直）+ ScrollArea | 3 | 哈希路由，从任何页打开不丢上下文；`Esc` 关；阶段 3 只两样：文件夹访问 / 网络白名单，沙箱档位收在「高级」折叠区；审批模式三档（默认手动）挪到阶段 4。「以后都允许」过的规则在这里可逐条撤销 | interactions.md §1.4；parity-audit 2026-09-13；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 设置后续分页 | `SettingsTabs` | Tabs + Switch + Select + Table | 随能力 | 审计 §7 的 A 类五项，各随自己的后端能力上线：通用与全局指令（全局指令与项目指令分层，项目指令注明叠加关系）/ 通知（回答完成、需要批准、定时任务失败）/ 隐私与数据（导出 + 逐类清理，本地版不放训练开关）/ 用量（单栏无左导航）/ 能力（工具加载方式、产物与内联可视化开关）。左栏分两组，第二组是定制页的整页跳转 | parity-audit §7、§6 |
 | 记忆页 | `MemoryPage` | 自建整页 + Switch + Table + `Composer`（精简） | 随能力 | 三个独立开关（检索并引用历史 / 从对话生成记忆 / 敏感话题）+ 四段分组（你 / 话题 / 领域 / 项目）+ 条目表格（名 / 摘要 / 更新时间 / 编辑 · 删除）+ 贴底的「告诉它要改什么」输入行；入口在设置左栏 | parity-audit §7 |
 | 命令面板 | `CommandPalette` | Dialog + Combobox | 随能力 | 全局唤起，搜会话与项目；无结果时保留「用这个词新建」的动作项 | interactions.md §1.1；parity-audit §2 |
@@ -78,30 +78,31 @@
 |---|---|---|---|---|---|
 | 输入框 | `Composer` | ComposerPrimitive.Root + Textarea（自增高） | **0** | 空态与会话内两种宽度；`Enter` 发送、`⇧Enter` 换行；输入法组合中的 `Enter` 不发送 | interactions.md §2.1、§2.2；spec.md「国际化」 |
 | 占位文案 | `ComposerPlaceholder` | 自建 | **0** | 随上下文切换（空态问候 / 会话内 / 有技能时 / 输入 `/` 后 / 提问 widget 在场时），全部走目录 | interactions.md §2.1 |
-| 发送钮 | `SendButton` | ComposerPrimitive.Send + Button（icon） | **0** | 有正文或有附件即激活；禁用态也要能聚焦并说明原因 | interactions.md §2.2 |
-| 停止钮 | `StopButton` | ComposerPrimitive.Cancel + Button（icon） | **0** | 生成中原地替换发送钮；`Esc` 等效；阶段 3 起「停止」= 杀沙箱进程，并在结算行写明后续写入未发生 | interactions.md §2.2；parity-audit 2026-09-16 |
+| 发送钮 | `SendButton` | ComposerPrimitive.Send + Button（icon） | **0** | 有正文或有附件即激活；禁用态也要能聚焦并说明原因；阶段 2 起生成中与停止钮并存，发送 = 入队，`Cmd/Ctrl+Enter` = 立即发送 | interactions.md §2.2；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 停止钮 | `StopButton` | ComposerPrimitive.Cancel + Button（icon） | **0** | 阶段 2 起与发送钮并存（阶段 0 生成中原地替换发送钮）；`Esc` 等效；阶段 2 起「停止」即杀，杀整棵进程树，结果写在失败卡的副作用行 | interactions.md §2.2；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 免责行 | `ComposerDisclaimer` | 自建（静态文案） | **0** | 输入框下方常驻一行 `t()` 文案，不是控件；窄屏缩短为短句（§7 的响应式在阶段 6 统一过） | interactions.md §2.1、§7 |
-| 输入框上方槽位 | `ComposerSlots` | 自建（槽位容器） | 3 | 输入框上方只有这一个宿主，优先级写死：审批席 > 提问 widget > 到量条；**最多同时显示一条**，其余折叠成一行「还有 N 条 ›」。槽位本身不渲染内容，只排序与折叠 | parity-audit 块词汇「到量提示条」 |
+| 输入框上方槽位 | `ComposerSlots` | 自建（槽位容器） | 2 | 输入框上方只有这一个宿主，优先级写死：审批席 > 提问 widget > 到量条；**最多同时显示一条**，其余折叠成一行「还有 N 条 ›」。槽位本身不渲染内容，只排序与折叠。阶段 2 只放提问 widget，审批卡内联在消息流里、不进槽位 | parity-audit 块词汇「到量提示条」；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 工具行 | `ComposerToolbar` | 自建（Base UI Toolbar）+ Button | 2 | 阶段 0 没有工具行（spec 的 Composer 最小态只有文本 / 发送 / 停止）；它随第一个占位者（模型菜单）出现。左键组右键组，左右箭头在组内移动；有内容时只有语音那一组会被发送钮替换，模型标记常驻 | interactions.md §2.1；parity-audit §1 |
-| 模式切换 | `ModeSwitch` | Tabs（或 ToggleGroup） | 3 | 对话 / 任务两档，位置在首页输入框内而不是侧栏品牌行 | parity-audit 2026-09-16 |
+| 模式切换 | `ModeSwitch` | Tabs（或 ToggleGroup） | 2 | 对话 / 任务两档，位置在首页输入框内而不是侧栏品牌行；新会话发出第一条消息之前可切，建立后只显示形态、不能改 | parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 文件夹 chip | `FolderChip` | Button（chip 变体）+ 系统目录对话框 | 2 | 只在任务形态出现，位于输入框下方：列出本会话的文件夹，第一个标为 cwd，没选时显示「专用文件夹」；点开由主进程弹系统目录选择框，可多选，点确认才生效，每一项都能移除；行为照 02 §工作区（只在任务形态）。授权弹窗、「以后都允许」、撤销在阶段 3 | [02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 无痕入口 | `IncognitoToggle` | Button（`aria-pressed`）+ Tooltip | 随能力 | 首页头部的常驻入口：本次对话不入记忆、不入过程记录；开启态在输入框上有可见标记，不是只改一个开关 | parity-audit §1、§2 |
 | 附加菜单 | `AttachMenu` | DropdownMenu（含子菜单与勾选项） | 3 | `+` 打开；对话与任务两套菜单项，不共用一套（任务模式去掉加入项目 / 从 GitHub 添加 / 网络搜索，能力组末尾多一项运行位置）；默认向上开，贴顶时向下开 | interactions.md §2.3；parity-audit §1 |
-| 菜单开关组 | `AttachToggles` | DropdownMenu（勾选项） | 随能力 | `+` 菜单末段的开关组：网络搜索 / 记忆（各自随后端能力出现），打勾即开；开启后在工具行留一枚对应 chip | interactions.md §2.3 |
+| 菜单开关组 | `AttachToggles` | DropdownMenu（勾选项） | 随能力 | `+` 菜单末段的开关组：网络搜索 / 记忆（各自随后端能力出现），打勾即开；开启后在工具行留一枚对应 chip。网络搜索开关随阶段 3 的 `AttachMenu` 做，关掉即「本会话不提供搜索」，按工具表冻结规则从新会话起生效 | interactions.md §2.3；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 技能子菜单 | `SkillsSubmenu` | DropdownMenu 子菜单 + ScrollArea | 随能力 | 已装技能列表 + 管理 / 浏览两个动作项 | interactions.md §2.3 |
 | 连接器子菜单 | `ConnectorsSubmenu` | DropdownMenu 子菜单 + Switch | 随能力 | 每个连接器一行开关；末尾「工具加载方式 ›」二级单选 | interactions.md §2.3 |
 | 插件子菜单 | `PluginsSubmenu` | DropdownMenu 子菜单 | 随能力 | Tenon 特有且保留：「插件 ›」下是按角色的工具包 + 管理 / 浏览插件；入口位置与对照对象的单行动作项相同，不下沉 | interactions.md §2.3；parity-audit §1 |
 | 运行位置子菜单 | `RunLocationSubmenu` | DropdownMenu 子菜单（单选项） | 随能力 | 取代规格里的设备列表，值只有「本机」，默认项打勾；会话顶栏的同名指示与它一致 | interactions.md §2.3；parity-audit 处理规则 C、§8 |
-| 模型菜单 | `ModelMenu` | DropdownMenu（含单选项与子菜单） | 2 | 每行双行：供应商 + 一句用途；当前项打勾；末尾「更多模型 ›」 | interactions.md §2.4；parity-audit §1 |
-| 思考强度子菜单 | `EffortSubmenu` | DropdownMenu 子菜单（单选项） | 2 | 逐档说明，最高档标注用量代价；模型不支持分档时退化为一行开关 | interactions.md §2.4 |
+| 模型菜单 | `ModelMenu` | DropdownMenu（含单选项与子菜单） | 2 | 按厂商分组，只列已配置厂商的模型行，未配置的厂商只留一行置灰组头「去设置填 key」；每行双行：模型名 + 用途句或行标记（`<主机> · 仅文字对话`，回环时为「本机」/ 未验证 · 仅文字对话）与目标主机，当前项打勾；「思考强度 ›」子菜单；「更多模型 ›」收 Legacy 行与各厂商的手填模型 ID 输入框；末尾「管理模型…」打开设置。生成中或有待批时标「下一条消息起生效」；有历史的会话从本机或私网切到公网时，菜单原地确认并给「用新模型开新会话」 | interactions.md §2.4；parity-audit §1；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 思考强度子菜单 | `EffortSubmenu` | DropdownMenu 子菜单（单选项） | 2 | 逐档说明，默认档标「默认」，最高档标注用量代价；没有思考描述的模型不显示（不做退化开关）；档位随会话记，换模型回到新模型的默认档 | interactions.md §2.4；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 斜杠菜单 | `SlashMenu` | Popover + Combobox | 随能力 | 输入 `/` 在框上方弹紧凑列表，首项高亮，上下键选择，`Esc` 关并保留已输入文本 | interactions.md §2.4 |
 | 类别入口标记 | `PromptCategoryChips` | Button（chip 变体） | 6 | 空态才出现，点开是原地展开的建议面板而不是直接填词；有内容后收起 | interactions.md §2.5；parity-audit §1 |
 | 建议面板 | `SuggestionPanel` | Collapsible + ThreadPrimitive.Suggestion | 6 | 在标记下方原地展开，`role="option"` 列表 + 关闭钮；点某条 = 直接发送展开后的长指令，不预填 | interactions.md §2.5 |
 | 深度检索前置确认 | `ResearchConfirmDialog` | AlertDialog | 6 | 开启深度检索后**首次发送**弹一次前置确认（讲清耗时与用量），确认过不再弹 | interactions.md §2.3；parity-audit 2026-09-17 |
 | 附件缩略卡 | `AttachmentChip` | ComposerPrimitive.Attachments + AttachmentPrimitive + Button | 3 | 插在编辑区上方，正文为空也激活发送；hover 出圆形移除钮，移除钮有完整无障碍名 | interactions.md §2.6 |
 | 附件灯箱 | `AttachmentLightbox` | Dialog（全屏无边框） | 3 | 点缩略图打开，遮罩 + 原图 + 文件名，`Esc` 关并把焦点还给缩略图 | interactions.md §2.6 |
-| 审批模式菜单 | `ApprovalModeMenu` | DropdownMenu（含单选项） | 3 | 三档各带一句后果说明，默认手动；会话内从左下角向上弹 | interactions.md §2.7；parity-audit §1 |
+| 审批模式菜单 | `ApprovalModeMenu` | DropdownMenu（含单选项） | 4 | 三档各带一句后果说明，默认手动；手动档说明：在连接器页设为总是允许的连接器工具不再问；server 声明必须亲自确认的、组织要求每次都问的除外。会话内从左下角向上弹。阶段 2、3 只有手动档，不显示本菜单 | interactions.md §2.7；parity-audit §1；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 项目选择器 | `ProjectPicker` | Popover + Combobox | 随能力 | 搜索 + 置顶分组 + 全部 + 「新建项目」；每行可设为默认。定时任务表单里的项目选择器用同一份 | interactions.md §2.7；parity-audit §3 |
-| 输入框上方浮条 | `ComposerBanner` | Alert + Button | 3 / 6 | `ComposerSlots` 的占位者之一，框外与输入框同宽：自动确认横幅常驻可见且点它能降回手动（3）；长任务提醒（6）。到量提示归 `QuotaBanner`，不在这一行重复 | interactions.md §2.2；parity-audit 2026-09-16 |
+| 输入框上方浮条 | `ComposerBanner` | Alert + Button | 4 / 6 | `ComposerSlots` 的占位者之一，框外与输入框同宽：自动确认横幅常驻可见且点它能降回手动（4）；长任务提醒（6）。到量提示归 `QuotaBanner`，不在这一行重复 | interactions.md §2.2；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 
 ## §3 消息流
 
@@ -121,10 +122,10 @@
 | 来源脚注行 | `SourceFootnote` | 自建 + `Chip` | 随能力 | 独占动作条**上面**一行、与正文左边界对齐：技能 · 项目知识 N 份 · 连接器 · 引用 N 处，各自可点跳到对应落点。与工具子行并存不冲突——子行说在第几步用的，这一行说这一轮一共用了什么 | parity-audit 块词汇 |
 | 对象锚点标记 | `ObjectChip` | Button（chip 变体）+ Tooltip | 3 | 回执行与正文里指向来源的 chip：支持两段式面包屑（`记忆 › 沟通偏好`），hover 出细下划线与绝对路径 tooltip，点击按来源类型路由（本地文件 / 项目知识 / 记忆 / 连接器 / 外呼对象）。来源不可用时置灰并在 tooltip 里说明原因，不静默失效 | parity-audit 块词汇 |
 | 版本分页器 | `BranchPicker` | BranchPickerPrimitive + Button | 2 | 多版本时才出现，位置在重试之后、时间之前；左右箭头切换，首末版禁用态保留占位 | interactions.md §3.7 |
-| 思考块 | `ThinkingBlock` | Collapsible | 2 | 收起显用时 + 一句摘要，点开展开全文（摘要句同时从状态行收起）；展开状态按消息记住 | interactions.md §3.4 |
+| 思考块 | `ThinkingBlock` | Collapsible | 2 | 收起显用时 + 首句，点开展开厂商返回的思考文本（Anthropic 为摘要，智谱为 reasoning_content；拿不到原始思维链）；首句同时从状态行收起；展开状态按消息记住；重放的历史消息不显示用时 | interactions.md §3.4；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 会话状态行 | `StatusLine` | 自建（`role="status"`） | 2 | 词汇固定：思考中 / 正在干活 / 正在你的电脑上操作 / 撰写中 / 正在问你 / 等你定夺 · 已等 N；本轮结束整行移除，不是改文案 | interactions.md §3.8；parity-audit 2026-09-16 |
 | 流式光标 | `StreamCursor` | 自建 | 2 | 光标闪烁与逐段进入，减动效下只留最终态 | interactions.md §3.8、§5 |
-| 单工具回执行 | `ToolRow` | Collapsible + 自建行 | 3 | 一行一句人话，可展开看输入 / 输出 / 副作用；写操作行带可逆性标记；默认视图里不出现 JSON | interactions.md §3.5 |
+| 单工具回执行 | `ToolRow` | Collapsible + 自建行 | 2 | 一行一句人话，可展开看输入 / 输出 / 副作用；默认视图里不出现 JSON。阶段 2 展开只有输入和输出（纯文本），副作用段与写操作行的可逆性标记在阶段 3 加 | interactions.md §3.5；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 轮级折叠头 | `ToolGroupHeader` | Collapsible | 3 | 一轮多工具时折叠成一句「用了 N 个工具」，展开是子行列表；**写入 / 外呼 / 被拦 / 失败的回执行不进折叠头**，固定展示在头下方 | interactions.md §3.5；parity-audit 2026-09-16 |
 | 命令子行 | `CommandSubRow` | Collapsible + `CodeBlock` | 3 | 展开 = 命令原文代码块 +「输出」段，两段同构；超长命令折叠给「展开全部（N 行）」——多行脚本必须能在展开体里看到全文 | interactions.md §3.5；parity-audit 块词汇 |
 | 技能读取子行 | `SkillReadSubRow` | Collapsible + `ObjectChip` | 3 | 与写入行语义不同，不要合并：动宾「读取技能」，对象 chip 两段（技能名 + 技能文件名，tooltip 给绝对路径），右侧放来源（内置 / 项目 / 个人）而不是耗时，可逆性固定「只读」；展开是被注入的片段摘要 +「打开技能文件」 | parity-audit 块词汇 |
@@ -132,13 +133,14 @@
 | 连续只读折叠行 | `ReadOnlyFoldRow` | Collapsible | 3 | Tenon 特有：同一轮内连续 ≥2 次同类只读调用折成一行（「读取 N 个文件」+ 合计耗时），中间一出现写入 / 外呼 / 被拦 / 失败就断开分组。折叠行的雪佛龙必须真的可点，否则去掉 | parity-audit 块词汇 |
 | 子任务行 | `SubtaskRow` | Collapsible + 自建步流 | 3 | Tenon 特有：形态同回执行，右侧状态位显「第 M 步 / 共 N 步 · 剩余 mm:ss」；展开是内嵌步流（每步一行 + 状态圆点）。步内触发审批时该步变「等你定夺」；与右面板「进度」互不复制——右栏只收任务级里程碑 | parity-audit 块词汇 |
 | 任务活动时间线 | `ActivityTimeline` | 自建 + Separator | 3 | 任务主栏的竖向活动行；与对话的卡片式回执是两套渲染，不要合并 | interactions.md §3.5；parity-audit 2026-09-16 |
-| 内联审批卡 | `ApprovalCard` | Card + Button + Badge | 3 | 接在发起请求那一行下面，不钉在输入框上方；问题式标题 / 路径 / 范围与期限 / 撤不回时单独一句 / 理由 / 能否还原；拒绝 `Esc`、允许 `⏎` | interactions.md §3.8；parity-audit 2026-09-16 |
-| 授权弹窗 | `GrantDialog` | AlertDialog | 3 | 只有文件夹与连接器授权才有「以后都允许」，三钮：取消 / 以后都允许 / 允许；允许过的规则在设置里可撤销 | parity-audit 2026-09-16、2026-09-13 |
-| 提问块 | `AskWidget` | Card + RadioGroup + Button | 3 | 与输入框共用外框、走 `ComposerSlots`；选项 + 跳过 + 「直接回复」；可最小化（塌成一行进度，不等于跳过），切走再回来恢复；中断时显示「未作答」 | interactions.md §3.8；parity-audit 块词汇 |
-| 提问汇总卡 | `AskSummaryCard` | Card | 3 | 答完后在消息流留一张问题 / 所选答案的汇总，跳过项标为无偏好 | parity-audit 2026-09-16 |
-| 轮次结算行 | `TurnSummaryLine` | 自建 | 3 | 一轮结束一行人话：读了 N 个、改了 M 个、有没有对外发送、能不能还原 | parity-audit 2026-09-13 |
-| 失败卡 | `FailureCard` | Card + Button | 3 | Tenon 特有，固定三行且**每行都不能空**：①发生了什么（带步骤号与对象名）②已造成的副作用（哪些已完成并留了快照号、哪些确定没发生）③一行可点动作（去重新授权 / 按原样重跑第 N 步 / 改权限后重跑），没有恢复路径时也要给「复制诊断信息」。四类失败视觉可区分：你停下的＝中性、模型失败＝红、工具失败＝红且指名步骤与对象、被拦截＝琥珀 | parity-audit 块词汇 |
-| 拦截回执 | `BlockedNotice` | Alert | 3 | Tenon 特有：被策略拦下的动作也要有可见回执，写清拦了什么、拒绝原因已回传模型、怎么放行（永不放行的只给「查看保护名单」） | parity-audit 块词汇 |
+| 内联审批卡（最小态 · 阶段 2） | `ApprovalCard` | Card + Button + Badge | 2 | 照 02 §最小审批卡：接在发起请求那一行下面，不钉在输入框上方；问题式标题 / 对象一行（完整显示，控制字符显示为可见转义）/ 为什么停 / 撤不回时单独一句 / 改动默认收起、按纯文本展开 / 拒绝与允许，期限写在允许旁。一般的卡与连接器卡拒绝 `Esc`、允许 `⏎`；不可逆卡默认焦点在「拒绝」、`⏎` = 拒绝，放行只能点「允许」或焦点在「允许」上按 Space。同批后面的调用以「排队中」叠在卡下 | interactions.md §3.8；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 内联审批卡（完整 · 阶段 3） | `ApprovalCard` | Card + Button + Badge | 3 | 在最小态之上加可逆性刻度与带样式的改动预览；「能否还原」一句随阶段 4 的快照 | interactions.md §3.8；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 授权弹窗 | `GrantDialog` | AlertDialog | 3 | 只有文件夹与连接器授权才有「以后都允许」，三钮：取消 / 以后都允许 / 允许。文件夹弹窗写「允许访问这个文件夹」，只给访问权、不放行写入；连接器弹窗授权「使用这个连接器」，不给任何工具设总是允许；允许过的规则在设置里可撤销 | parity-audit 2026-09-16、2026-09-13；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 提问块 | `AskWidget` | Card + RadioGroup + Button | 2 | 与输入框共用外框、走 `ComposerSlots`；选项 + 跳过 + 「直接回复」；可最小化（塌成一行进度，不等于跳过），切走再回来恢复；中断时显示「未作答」。阶段 2 不做最小化 | interactions.md §3.8；parity-audit 块词汇；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 提问汇总卡 | `AskSummaryCard` | Card | 2 | 答完后在消息流留一张问题 / 所选答案的汇总，跳过项标为无偏好 | parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 轮次结算行 | `TurnSummaryLine` | 自建 | 2 | 一轮结束一行人话：读了 N 个、改了 M 个、有没有对外发送、能不能还原。阶段 2 不写「能不能还原」 | parity-audit 2026-09-13；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 失败卡 | `FailureCard` | Card + Button | 2 | Tenon 特有，固定三行且**每行都不能空**：①发生了什么（带步骤号与对象名）②已造成的副作用（哪些已完成并留了快照号、哪些确定没发生）③一行可点动作（去重新授权 / 按原样重跑第 N 步 / 改权限后重跑），没有恢复路径时也要给「复制诊断信息」。四类失败视觉可区分：你停下的＝中性、模型失败＝红、工具失败＝红且指名步骤与对象、被拦截＝琥珀。阶段 2 只做基础三行，各结束码的动作与视觉类见 02 §失败卡与结束原因 | parity-audit 块词汇；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 拦截回执 | `BlockedNotice` | Alert | 2 | Tenon 特有：被策略拦下的动作也要有可见回执，写清拦了什么、拒绝原因已回传模型、怎么放行（永不放行的只给「查看保护名单」）。阶段 2 没有「从回执放行」 | parity-audit 块词汇；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 产物卡 | `ArtifactCard` | Card + Button + DropdownMenu（分裂钮） | 5 | 整卡是 toggle（`aria-pressed` = 右栏已打开该产物，同时只允许一张按下）；主区点开右分栏，`⌄` 打开下载子菜单（本机应用打开 / 在访达中显示 / 复制落盘路径 / 历史版本 ›）。文档卡是同结构但没有分裂钮组 | interactions.md §3.6；parity-audit 2026-09-16、块词汇 |
 | 内联图像 | `InlineImage` | 自建 + Dialog（灯箱） | 5 | 图像与矢量图直接内联渲染，不做卡片也不开右分栏；右上角悬浮全屏查看与「查看请求 / 响应」 | interactions.md §3.6 |
 | 内联产物 | `InlineArtifact` | 自建 iframe | 5 | 内联沙箱 iframe，不开右分栏；壳层不访问其内部 | interactions.md §3.6 |
@@ -164,7 +166,7 @@
 | 产物查看器 | `ArtifactViewer` | 自建全屏 + 自建 iframe + Button | 5 | 无侧栏；点标题 = 原地重命名（不是菜单）；内容是跨域 iframe | interactions.md §4.3 |
 | 首次引导气泡 | `Coachmark` | Popover（受控） | 5 | 与它要引导的界面同批上线（首个宿主是 `ArtifactViewer`）；只在首次出现，层级低于模态；关掉后不再来 | interactions.md §4.3 |
 | 技能 / 连接器 / 插件页 | `CustomizePage` | Tabs + ToggleGroup + DropdownMenu + Table + Card | 随能力 | 一层分段（我的 / 发现）+ 筛选 / 排序 / 添加，工具条随分段变化；我的是单列行列表（名 + 来源 · 描述 + 行菜单），发现页是卡片网格；未连接行给「连接」主按钮 | interactions.md §4.4；parity-audit §6 |
-| 详情多页签 | `DetailTabs` | Tabs + ScrollArea | 随能力 | 先进整页详情（面包屑 + 标题 + 元数据行 + 页签），编辑表单收在页签或「编辑」之后；内容页签是文件树 + 说明渲染 | interactions.md §4.4；parity-audit §6 |
+| 详情多页签 | `DetailTabs` | Tabs + ScrollArea | 随能力 | 先进整页详情（面包屑 + 标题 + 元数据行 + 页签），编辑表单收在页签或「编辑」之后；内容页签是文件树 + 说明渲染。连接器页签按工具给「总是允许 / 每次问 / 永不」三态菜单，「永不」旁写「本会话里再调用会被拦下，新会话起不再提供」；声明 requiresUserInteraction 的工具不给「总是允许」，组织要求每次问时总是允许不生效 | interactions.md §4.4；parity-audit §6；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 
 ## §5–7 状态、动效、响应式
 

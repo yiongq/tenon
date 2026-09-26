@@ -1,6 +1,7 @@
 # 01 · Provider 抽象 + 会话存储（Tape）
 
 Status: implemented
+Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo 的思考描述、pricing 两键与 purposeKey，ProviderRequest 的 effort / display / dropThinkingBefore，厂商原样块，create() 的 clock，encode() 末轮须为 user，出网请求头白名单与流式超时，StreamEvent error 的 timeout 与 resetAt，HostNetwork.fetchUntrusted，fakeNetwork 的请求校验与抓取回放选项，Anthropic 顶层 cache_control，只增的错误与 finish_reason 映射，attempt 与 session/model_selected 载荷新键（含摘要请求的 compaction），重放读取工具事实，readBySource 起点，resetSession 的 carry，TapeClosedError，撤回即终局，hash_ver 规则，待批投影表与第 2 号迁移，schema 检查器按迁移锚定，createSessionService 的 inspectors / connector / protectedFiles / onUnansweredCall / log，chat.event 的 done.endReason 与四个新变体，session.messages 助手行的 calls，生成中发送改为入队与 chat.queue 事件、chat.queue.act / chat.sendNow / chat.continue 路由，会话级选模型的路由与 config.json 两个新键，provider.list 的模型标记 / 档位 / purposeKey / endpoint，表外模型手填，「已配置」的算法，key 绑定主机，启动恢复映射子会话。只增不改，全文与理由在该 spec，不属纯粹只增的几处在该节末尾点名；选型理由的更正见 [ADR-003](../../adr/adr-003-provider-layer.md)）
 Phase: 1 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，按 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」的 amend 规则（2026-09-17 owner 确认），全文见「对 00-foundation 的修补」

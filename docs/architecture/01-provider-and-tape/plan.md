@@ -136,7 +136,7 @@
 - **spec 缺口 · 没有「末尾是 assistant 轮（prefill）」的按模型能力位**：新模型上是 400，老模型上是静默的语义变化。阶段 1 因为重试规则总留一条尾部 user 消息而安全；第 13 步的 `messageId` 复用与阶段 2 的重试循环可能打破它。与上面 thinking 模式是同一类「按模型的线上能力」字段。
 - `ANTHROPIC_CUSTOM_HEADERS` 的非凭据部分（`anthropic-beta`、任意 `x-*`）仍能到线上。要不要做 header 白名单，与 spec 开放问题 1（`x-stainless-*`）是同一个决定。
 - spec 没给线协议适配器定请求超时：现在生效的是 SDK 默认的 10 分钟（只覆盖到响应头）。kernel 要不要自己定一个数，待 owner。
-- **智谱的 `usageNeedsOptIn` 填的是 `false`**，而 spec 的内置 provider 表把 `include_usage` 列为选它的理由之一：厂商的对话补全文档（2026-09-21 重读）根本没列 `stream_options`，只说 usage 是流式块的一个字段。按「照厂商当时文档填」保持 `false`，由验收 21 的 `pnpm test:live` 定夺。
+- **已结（2026-09-25）：不开 opt-in 也给用量**（2026-09-25 改，见 [02 §背景与问题](../02-agent-loop/spec.md)）。原记：**智谱的 `usageNeedsOptIn` 填的是 `false`**，而 spec 的内置 provider 表把 `include_usage` 列为选它的理由之一：厂商的对话补全文档（2026-09-21 重读）根本没列 `stream_options`，只说 usage 是流式块的一个字段。按「照厂商当时文档填」保持 `false`，由验收 21 的 `pnpm test:live` 定夺。
 - **Ollama 的三个保守值与两项探测仍开着**（本机没有运行中的实例）：`contextLimit: 4096` 是**服务端默认**（docs.ollama.com/faq）而不是模型能力；`maxOutputTokens: 2048` 是我们自己取的，没有文档给出上限；`supportsStreamingToolCalls: false` 待实测。两项探测：流式工具调用；`num_ctx` 默认 4096 是否静默截断大 system prompt。
 - 其余未能从一手来源确认的 `ModelInfo` 字段，在 `definitions/*.ts` 的注释里逐项标了日期与查过的 URL。
 - **spec 自相矛盾 · 撤回之后再修订同一个 `messageId`**：「`order_seq`…修订与撤回都不改它」（§投影与重放）与「删单条消息 → 物理删该行」（§删除语义）不能同时成立——行删掉之后，逐条处理的 reducer 无从恢复原来的 `order_seq`。现状：投影按修订那条的 `entry_id` 重新插入，折叠则让消息留在原位，于是 `listMessages` 与 `rebuildProviderContext` 对这一个 `messageId` 的排序不同。阶段 1 没有写入方（编辑 / 删除界面在阶段 6），不影响当前功能；两种修法（投影加 status 列软删，或规定撤回即终局）都要改 spec，待 owner 定。
@@ -152,7 +152,7 @@
 - **待 owner 确认 · 检查器多读了一个输入**：`check-tape-schema.mjs` 除两份方言文件外，还把 SQLite 文件与 spec 里的 ```sql 代码块逐条比对（复核时发现两份文件可以一起偏离 spec 而检查器仍绿）。spec 原文只说「解析两份文件」。代价：以后哪份 spec 用新 DDL supersede 本 spec 时，要同时改脚本里的 `SPEC_FILE`。
 - 验收 8 的措辞只列了裸形式；闸现在也拦 `globalThis.x` 形式。spec 要不要补一句，由 owner 定。
 - 给 6b 的桥帧遗留：帧 `type` 的字符集暂定 `[a-z][a-z0-9_]*`、允许两段及以上（为了与 Tape 的 `ext/<owner>/…` 一致——spec 只写了 `<namespace>/<name>`）；信封 `id` 没有长度上限（属于传输层的帧大小决定）；zod 默认 strip 掉未知键，`hello` / `welcome` / `error` 上的增量字段不会被转发。规则 4 的段语法一致性已由第 3 步的跨包测试钉住；「业务帧的第一方前缀保留」要等 6b 有了第一个业务帧才有东西可拦。
-- spec「选型」一节可补一条事实：当前依赖集下 `--platform=neutral` 先败在 `@modelcontextprotocol/client → pkce-challenge` 的解析上，还轮不到 Anthropic SDK 的 `node:` 模块；`--platform=browser` 干净。
+- spec「选型」一节可补一条事实：当前依赖集下 `--platform=neutral` 同时败在 MCP 客户端的 `pkce-challenge` 和 SDK 的 `standardwebhooks` 与多个 `node:` 内置模块上；`--platform=browser` 干净（2026-09-25 改，见 [02 §UX 文档与其余文件](../02-agent-loop/spec.md)）。
 - 开放问题见 spec 末尾（`x-stainless-*` 头、GLM 的 `reasoning_content` 回传、三平台 fsync 基准、主线程同步 SQLite 的搬迁阈值）。
 - Ollama 的流式工具调用只从源码与已合并的 PR 核实过，没有对运行中的实例实测；`num_ctx` 默认 4096 会静默截断大 system prompt 的说法同样未实测。第 11 步接入时各探一次。
 - 智谱的模型 id 以接入当天 `docs.bigmodel.cn` 为准，不以研究报告为准。
