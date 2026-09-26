@@ -30,19 +30,44 @@ import type {
   ProviderRequest,
   RequestIdentity,
   StreamEvent,
+  ToolSpec,
   Usage,
 } from '../provider/types.js'
-import { encoderOf, modelWireHash, requestSnapshot } from '../provider/wire/shared.js'
-import type { MessageStatus, NewEntry } from '../tape/entry.js'
+import {
+  canonicalHash,
+  encoderOf,
+  modelWireHash,
+  requestSnapshot,
+  systemHash,
+} from '../provider/wire/shared.js'
+import type {
+  MessageStatus,
+  NewEntry,
+  ToolTablePayload,
+  ToolsWithheldPayload,
+  ViewAssembledPayload,
+  ViewContentPayload,
+} from '../tape/entry.js'
 import type {
   TapeAssistantMessagePayload,
   TapeAttemptCompletedPayload,
   TapeAttemptError,
   TapeAttemptStop,
 } from '../tape/projection.js'
-import { attemptCompletedKey, messageRevisionKey } from '../tape/provenance.js'
+import {
+  assembledKey,
+  attemptCompletedKey,
+  messageRevisionKey,
+  toolTableKey,
+  toolsWithheldKey,
+  viewContentKey,
+} from '../tape/provenance.js'
 import { rebuildProviderContext } from '../tape/replay.js'
+import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
+import { rebuildToolTable, toolTableFacts } from '../tools/table.js'
+import type { FrozenToolTable } from '../tools/table.js'
+import type { PolicyState } from '../host/policy.js'
 import type { RunAbortCause, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
 
@@ -70,6 +95,13 @@ export interface RequestQuery {
   readonly maxTokens: number
   /** The session's thinking effort; null = the model's default, and nothing is sent. */
   readonly effort: string | null
+  /** What `assembleRequest` settled for this request: the tools sent, and the facts that record it. */
+  readonly assembled: AssembledRequest
+  /**
+   * Commits the assembly facts. A Run writes through the mailbox, so this posts a task and resolves
+   * once the batch is on the Tape — after `encode()`, before a byte leaves (§组装清单与内容寄存).
+   */
+  readonly write: (entries: readonly NewEntry[]) => Promise<void>
   readonly signal: AbortSignal
   /** Every content delta as it arrives. It must not throw. */
   readonly onDelta: (event: Extract<StreamEvent, { type: 'text-delta' | 'thinking-delta' }>) => void
@@ -104,11 +136,14 @@ export async function streamRequest(q: RequestQuery): Promise<RequestOutcome> {
   const request: ProviderRequest = {
     model: q.model,
     messages,
+    ...(q.assembled.tools === undefined ? {} : { tools: [...q.assembled.tools] }),
     maxTokens: q.maxTokens,
     ...(q.effort === null ? {} : { effort: q.effort }),
   }
   // ONCE — and the encoded request is what is streamed.
   const encoded = q.provider.encode(request)
+  // The content first, then the manifest, then the bytes leave, then the attempt (A3).
+  await q.write(q.assembled.facts)
 
   // A thinking block is stamped with the guard's model identity rather than the wire id, so a block
   // folded here replays as `same-model` instead of looking like a model change.
@@ -205,6 +240,7 @@ export async function streamRequest(q: RequestQuery): Promise<RequestOutcome> {
     ...encoderField(encoded),
     modelWireHash: modelWireHash(q.model),
     ...(responseModelId === null ? {} : { responseModelId }),
+    assemblyRef: q.assembled.assemblyRef,
   }
   terminal.push(
     q.tape.writer('provider').entry('provider/attempt_completed', {
@@ -334,4 +370,170 @@ function streamEndedEarly(): TapeAttemptError {
 /** The text a user turn is written as. */
 export function userTextContent(text: string): readonly ContentBlock[] {
   return [{ type: 'text', text }]
+}
+
+// ----- the assembly (spec 02 §组装清单与内容寄存, §工具目录与冻结) ---------------------------------
+
+/**
+ * What the Tape already says about a session's tables and requests, read once when a Run starts: the
+ * generation (one per compaction), each table and its specs, and whether each table's last request
+ * carried its tools. Plan step 9's Run sends one request, so one read per Run is one per request.
+ */
+export interface ViewState {
+  readonly generation: number
+  readonly tables: Map<string, ToolTablePayload>
+  readonly specs: Map<string, ToolSpec>
+  readonly lastSent: Map<string, boolean>
+}
+
+export async function readViewState(
+  tape: Pick<Tape, 'readRange'>,
+  sessionId: string,
+): Promise<ViewState> {
+  const state: ViewState = {
+    generation: 0,
+    tables: new Map(),
+    specs: new Map(),
+    lastSent: new Map(),
+  }
+  let generation = 0
+  let fromEntryId: number | undefined
+  let incarnationId: string | undefined
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's answer
+    const page = await tape.readRange({
+      sessionId,
+      kinds: ['event', 'anchor'],
+      limit: MAX_READ_LIMIT,
+      ...(fromEntryId === undefined ? {} : { fromEntryId }),
+      ...(incarnationId === undefined ? {} : { incarnationId }),
+    })
+    incarnationId = page.incarnationId
+    for (const entry of page.entries) {
+      if (entry.name === 'compaction/anchor') generation += 1
+      else if (entry.name === 'view/tool_table' && entry.provenanceKey !== null) {
+        state.tables.set(entry.provenanceKey, entry.payload as unknown as ToolTablePayload)
+      } else if (entry.name === 'view/content') {
+        const content = entry.payload as unknown as ViewContentPayload
+        if (content.type === 'tool_spec') state.specs.set(content.hash, content.spec)
+      } else if (entry.name === 'view/assembled') {
+        const assembled = entry.payload as unknown as ViewAssembledPayload
+        if (assembled.tools !== null)
+          state.lastSent.set(assembled.tools.tableKey, assembled.tools.sent)
+      }
+    }
+    if (page.nextFromEntryId === null) break
+    fromEntryId = page.nextFromEntryId
+  }
+  return { ...state, generation }
+}
+
+/** A request's assembly: the tools it sends and the facts that record what it was built from. */
+export interface AssembledRequest {
+  /** The frozen table's definitions when this request carries them; undefined when it does not. */
+  readonly tools: readonly ToolSpec[] | undefined
+  readonly table: FrozenToolTable
+  /** Whether the table is new: the caller records it in its view state once the batch commits. */
+  readonly opened: boolean
+  readonly sent: boolean
+  /** `view/content` (model, specs of a new table), `view/tool_table`, `view/tools_withheld`, `view/assembled`. */
+  readonly facts: readonly NewEntry[]
+  readonly assemblyRef: string
+}
+
+export interface AssembleQuery {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly sessionId: string
+  readonly incarnationId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly model: ModelInfo
+  /** `RunAssembly.toolsWithheld` (A14): the kernel only reads the mark, never the provider id. */
+  readonly toolsWithheld: 'provider-text-only' | null
+  readonly state: ViewState
+  /** Opens the table of this provider and generation; called only when the Tape has none. */
+  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+}
+
+/**
+ * Settles what one request is built from (§组装清单与内容寄存; §工具目录与冻结). The table of this
+ * provider and generation is the one on the Tape, or it opens now — the first time the provider is
+ * used, whether or not the model takes tools (E2). A request carries the table verbatim unless its
+ * model takes no tools (A15) or its provider is sent none (A14); the first request that stops
+ * carrying them records a `view/tools_withheld`, and switching back sends the frozen text again.
+ * Plan step 18 adds the system prompt; until then `systemHash` is the no-system value.
+ */
+export async function assembleRequest(q: AssembleQuery): Promise<AssembledRequest> {
+  const view = q.tape.writer('view')
+  const providerId = q.model.providerId
+  const tableKey = toolTableKey(q.incarnationId, q.state.generation, providerId)
+  const facts: NewEntry[] = []
+  const modelHash = canonicalHash(q.model, `the model ${q.model.id}`)
+  const modelContent: ViewContentPayload = { type: 'model_info', hash: modelHash, model: q.model }
+  facts.push(
+    view.entry('view/content', {
+      sourceType: 'session',
+      sourceId: q.sessionId,
+      provenanceKey: viewContentKey('model_info', modelHash),
+      payload: modelContent,
+      createdAt: q.now(),
+    }),
+  )
+  const stored = q.state.tables.get(tableKey)
+  let table: FrozenToolTable
+  let opened = false
+  if (stored === undefined) {
+    const fresh = await q.openTable()
+    table = fresh.table
+    opened = true
+    facts.push(
+      ...toolTableFacts({ view, sessionId: q.sessionId, table, policy: fresh.policy, now: q.now }),
+    )
+  } else {
+    table = rebuildToolTable(tableKey, stored, q.state.specs)
+  }
+  const sent = q.model.supportsToolCalling && q.toolsWithheld === null
+  if (!sent && (q.state.lastSent.get(tableKey) ?? true)) {
+    const withheld: ToolsWithheldPayload = {
+      providerId,
+      modelId: q.model.id,
+      tableKey,
+      reason: q.toolsWithheld ?? 'model-without-tools',
+    }
+    facts.push(
+      view.entry('view/tools_withheld', {
+        sourceType: 'runtime_event',
+        sourceId: q.runId,
+        sourceSeq: q.requestSeq,
+        provenanceKey: toolsWithheldKey(q.runId, q.requestSeq),
+        payload: withheld,
+        createdAt: q.now(),
+      }),
+    )
+  }
+  const assemblyRef = assembledKey(q.runId, q.requestSeq)
+  const assembled: ViewAssembledPayload = {
+    modelInfoHash: modelHash,
+    systemHash: systemHash(undefined),
+    tools: { tableKey, sent },
+  }
+  facts.push(
+    view.entry('view/assembled', {
+      sourceType: 'runtime_event',
+      sourceId: q.runId,
+      sourceSeq: q.requestSeq,
+      provenanceKey: assemblyRef,
+      payload: assembled,
+      createdAt: q.now(),
+    }),
+  )
+  return {
+    tools: sent ? table.items.map((item) => item.spec) : undefined,
+    table,
+    opened,
+    sent,
+    facts,
+    assemblyRef,
+  }
 }

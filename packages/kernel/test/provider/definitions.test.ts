@@ -457,7 +457,10 @@ function describeFact(entry: TapeEntry): unknown {
   }
 }
 
-/** The six facts of one turn: phase 1's five, and the Run's start (spec 02 plan step 9). */
+/**
+ * The facts of one turn: phase 1's five, the Run's start (spec 02 plan step 9), and what the request
+ * was assembled from — the model's content, the provider's first tool table, the manifest (step 10).
+ */
 const TURN_SHAPE: readonly unknown[] = [
   {
     name: 'session/start',
@@ -492,6 +495,30 @@ const TURN_SHAPE: readonly unknown[] = [
     meta: {},
   },
   {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'model', 'type'],
+    meta: {},
+  },
+  {
+    name: 'view/tool_table',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: 0,
+    payloadKeys: ['excluded', 'generation', 'policyVersion', 'providerId', 'reason', 'tools'],
+    meta: {},
+  },
+  {
+    name: 'view/assembled',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: ['modelInfoHash', 'systemHash', 'tools'],
+    meta: {},
+  },
+  {
     name: 'message/assistant',
     kind: 'message',
     sourceType: 'message',
@@ -507,6 +534,7 @@ const TURN_SHAPE: readonly unknown[] = [
     // Spec 02 (01 修补 7) adds `encoder`, `modelWireHash` and `responseModelId`, the same three on
     // every provider.
     payloadKeys: [
+      'assemblyRef',
       'contextAtEntryId',
       'encoder',
       'error',
@@ -584,7 +612,7 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, assistant, attempt] = entries
+      const [, , , modelSelected, , , , assistant, attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,

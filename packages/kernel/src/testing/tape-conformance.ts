@@ -2452,10 +2452,10 @@ export function tapeConformanceCases(
         })
         assertEqual(
           facts.map((candidate) => candidate.name),
-          ['execution/run_started', 'provider/attempt_completed'],
-          `run ${k}: its start and exactly one provider/attempt_completed`,
+          ['execution/run_started', 'view/assembled', 'provider/attempt_completed'],
+          `run ${k}: its start, its manifest and exactly one provider/attempt_completed`,
         )
-        const fact = facts[1]
+        const fact = facts[2]
         if (fact === undefined) fail(`run ${k}: readBySource returned no attempt fact`)
         assertEqual(
           fact.provenanceKey,

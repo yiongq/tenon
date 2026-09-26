@@ -38,7 +38,11 @@ import type { IdSource } from '../ids.js'
 import { createLoop } from '../loop/mailbox.js'
 import type { LoopPorts, RunConnector, RunOrigin } from '../loop/ports.js'
 import type { AnswerCommand } from '../loop/waiting.js'
+import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
+import type { BuiltinToolName } from '../tools/builtin/tool.js'
+import { PRODUCT_BUILTINS } from '../tools/registry.js'
+import type { ToolKey } from '../tools/table.js'
 import type { ForkOrigin, SessionStartPayload } from '../tape/entry.js'
 import { sessionStartKey } from '../tape/provenance.js'
 import type { MessageRow, TapeStore } from '../tape/store.js'
@@ -189,13 +193,51 @@ export interface SessionService {
 }
 
 export function createSessionService(options: SessionServiceOptions): SessionService {
+  return constructSessionService(options, {})
+}
+
+/**
+ * What only `@tenon-app/kernel/testing`'s `createTestSessionService` passes: the product entry has
+ * neither, and `SessionServiceOptions` carries neither (§主进程与 kernel 的循环接口「测试与 6b」).
+ */
+export interface TestServiceExtras {
+  /** Every builtin tool is a candidate, whatever the product offers yet; the value is its executor. */
+  readonly tools?: TestToolRegistry
+  /** Layer 3 readings, which phase 2 has no producer for (§不带 tools 的请求与冻结后的变化). */
+  readonly userSetting?: (key: ToolKey) => UserToolSetting | null
+}
+
+/**
+ * The test tool registry: keyed by builtin name. `'fake'` (the default for a missing key) is a fake
+ * executor, `'real'` the landed executor of a tool not yet in the product table, `null` no
+ * implementation at all — the tool is still in the table, and a call closes as `tool-unavailable`.
+ * The executors run from the per-round loop on (plan step 13).
+ */
+export type TestToolRegistry = Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>>
+
+/** The one construction both entries share. */
+export function constructSessionService(
+  options: SessionServiceOptions,
+  extras: TestServiceExtras,
+): SessionService {
   assertInspectors(options.inspectors)
   const tape = createTape(options.tape)
   const ids = options.ids
   const now = (): number => options.host.clock.now()
   const log = options.log ?? ((): void => {})
   const sessionSlice = tape.writer('session')
-  const loop = createLoop({ tape, ids, now, connector: options.connector, log })
+  const loop = createLoop({
+    tape,
+    ids,
+    now,
+    connector: options.connector,
+    log,
+    policy: () => options.host.policy.current(),
+    tenantId: options.host.identity.tenantId,
+    builtinAvailable:
+      extras.tools === undefined ? (name) => PRODUCT_BUILTINS.has(name) : () => true,
+    userSetting: extras.userSetting ?? ((): null => null),
+  })
 
   function startFact(
     sessionId: string,

@@ -362,6 +362,9 @@ describe('session lifecycle', () => {
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'view/content',
+      'view/tool_table',
+      'view/assembled',
       'message/assistant',
       'provider/attempt_completed',
     ])
@@ -458,12 +461,15 @@ describe('one request', () => {
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'view/content',
+      'view/tool_table',
+      'view/assembled',
       'message/assistant',
       'provider/attempt_completed',
     ])
     // The user's turn, the Run's start and the model choice land BEFORE the request, in one
     // transaction; the assistant message and the attempt fact land together after it.
-    const [, user, started, model, assistant, attempt] = entries
+    const [, user, started, model, , , assembled, assistant, attempt] = entries
     expect(started?.sourceId).toBe(ran.runId)
     expect(started?.payload).toEqual({
       cause: { kind: 'user-message', messageId: user?.payload['messageId'] },
@@ -477,6 +483,8 @@ describe('one request', () => {
     expect(attempt?.payload['contextAtEntryId']).toBe(model?.entryId)
     expect(attempt?.payload['usage']).toEqual(USAGE)
     expect(attempt?.payload['error']).toBeNull()
+    // What the request was assembled from, written after encode() and before the stream (A3).
+    expect(attempt?.payload['assemblyRef']).toBe(assembled?.provenanceKey)
     // The request snapshot: no system prompt before plan step 18, the connector's max tokens.
     expect(attempt?.payload['request']).toEqual({
       systemHash: expect.any(String),
@@ -561,6 +569,9 @@ describe('one request', () => {
       'message/user',
       'execution/run_started',
       'session/model_selected',
+      'view/content',
+      'view/tool_table',
+      'view/assembled',
       'provider/attempt_completed',
     ])
   })

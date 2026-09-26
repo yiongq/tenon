@@ -61,12 +61,22 @@ import type {
   RunLease,
   RunOrigin,
 } from './ports.js'
+import type { PolicyState } from '../host/policy.js'
+import type { UserToolSetting } from '../permission/decide.js'
+import type { BuiltinToolName } from '../tools/builtin/tool.js'
+import { mcpCandidates } from '../tools/mcp-source.js'
+import { builtinCandidates } from '../tools/registry.js'
+import { openToolTable } from '../tools/table.js'
+import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { RequestOutcome } from './run.js'
 import {
+  FIRST_REQUEST_SEQ,
   FIRST_REVISION,
   abortCauseOf,
   abortedEndReason,
+  assembleRequest,
   endReasonOf,
+  readViewState,
   streamRequest,
   userTextContent,
 } from './run.js'
@@ -135,6 +145,13 @@ export interface LoopDeps {
   readonly now: () => number
   readonly connector: RunConnector
   readonly log: (line: string) => void
+  /** `HostAdapter.policy.current()`: read once per decision and once per table opening (D4). */
+  readonly policy: () => PolicyState
+  readonly tenantId: string
+  /** Which builtin tools the registry offers: the product's, or every one under a test registry. */
+  readonly builtinAvailable: (name: BuiltinToolName) => boolean
+  /** Layer 3 for a connector tool; the product has no producer, so it always answers null. */
+  readonly userSetting: (key: ToolKey) => UserToolSetting | null
 }
 
 export interface Loop {
@@ -499,6 +516,19 @@ export function createLoop(deps: LoopDeps): Loop {
       let outcome: RequestOutcome | null = null
       let failure: unknown = null
       try {
+        const model = pre.assembly.model
+        const assembled = await assembleRequest({
+          tape,
+          now,
+          sessionId,
+          incarnationId: opened.incarnationId,
+          runId,
+          requestSeq: FIRST_REQUEST_SEQ,
+          model,
+          toolsWithheld: pre.assembly.toolsWithheld,
+          state: await readViewState(tape, sessionId),
+          openTable: () => openTable(opened.incarnationId, pre.assembly),
+        })
         outcome = await streamRequest({
           tape,
           ids,
@@ -507,9 +537,14 @@ export function createLoop(deps: LoopDeps): Loop {
           runId,
           contextAtEntryId: opened.contextAtEntryId,
           provider: pre.provider,
-          model: pre.assembly.model,
+          model,
           maxTokens: pre.assembly.maxTokens,
           effort: pre.choice.effort,
+          assembled,
+          write: (entries) =>
+            post(box, 'run', null, async () => {
+              await tape.appendEntries({ sessionId, incarnationId: opened.incarnationId, entries })
+            }),
           signal: lease.signal,
           onDelta: (event) =>
             emit(ports, {
@@ -561,6 +596,39 @@ export function createLoop(deps: LoopDeps): Loop {
         })
       })
     })()
+  }
+
+  /**
+   * Opens this provider's table for the generation (§开表与排除): the profile's builtin candidates
+   * and every connector tool of the Run's MCP sources, with one reading of the policy (D4). The
+   * profile is always chat until plan step 18 writes `session/profile_set`; compaction (step 30) is
+   * what makes a generation other than 0.
+   */
+  async function openTable(
+    incarnationId: string,
+    assembly: RunAssembly,
+  ): Promise<{ table: FrozenToolTable; policy: PolicyState }> {
+    const policy = deps.policy()
+    const candidates = [
+      ...builtinCandidates({
+        profile: 'chat',
+        available: deps.builtinAvailable,
+        search: assembly.search,
+      }),
+      ...(await mcpCandidates(assembly.mcpSources)),
+    ]
+    const table = openToolTable({
+      providerId: assembly.model.providerId,
+      incarnationId,
+      generation: 0,
+      reason: 'first-use',
+      candidates,
+      policy,
+      tenantId: deps.tenantId,
+      userSetting: deps.userSetting,
+      hasSearchBackend: assembly.search !== null,
+    })
+    return { table, policy }
   }
 
   // ----- facts the round reads and writes ------------------------------------------------------
