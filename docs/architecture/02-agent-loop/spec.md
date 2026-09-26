@@ -5,7 +5,7 @@ Phase: 2 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project（82 条开工前裁决，2026-09-25 owner 拍板）; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter、§本地持久化布局、§国际化（裁决 D4、D5、D8、D12、E1、E4、F3、H9、A13）；[01-provider-and-tape](../01-provider-and-tape/spec.md) §所有权与依赖方向、§Provider 层、§Tape、§desktop 接线（裁决 A1–A9、A11、A12、A14、A15、B1–B6、B8、B14、B18、D11、F1、F3、H1、H3、H8、H10–H13、M3、M5、M6、M8）。只增不改（裁决 A4），全文见 §对 00-foundation 的修补、§对 01-provider-and-tape 的修补；不属纯粹只增的在后者第 9 小节点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（Provider 层选型与厂商分档，与本 spec 同时起草）
-Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。
+Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。2026-09-26：开工前裁决表四行的落点对齐（第 1 步复核旧 75 时发现，规则本身不变）：B17 删去 §工具调用的收口（旧，该节无此规则）；D6 的 §Inspector 接口与合议（旧）改为 §内置工具的默认档位；F9 的 §判决记录与摘要（旧）改为 §载荷；§内置模型表的数据改动 的裁决标注补 A15。
 
 ## 背景与问题
 
@@ -174,7 +174,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 | B14 | 「已配置」改为「本构建实际拿得到 key」：打包版只看钥匙串，开发构建含它本来在读的环境变量；02 只做这个算法，以及菜单里未配置厂商置灰、提示去设置填 key | 01 修补 6（01 修补 9 (i)）；§模型菜单与输入框 | Ollama 的 key 改不改 secret：阶段 6 |
 | B15 | 启动恢复完成前 Composer 不能发送，配一个 e2e 用例 | §启动恢复与发送防护 | — |
 | B16 | 维持：谁第一个拿 `.partial()` 解析外部输入，谁换成不带默认值的独立 schema | 不落本 spec（01 `plan.md:133` 已记） | — |
-| B17 | 02 直接引用 01 的 R1（01 `spec.md:48`，执行日志排在阶段 2）与 R6（:53，Tape 内不分支，编辑重发 = 同一 `messageId` 上追加修订） | §执行日志与恢复表；§工具调用的收口 | — |
+| B17 | 02 直接引用 01 的 R1（01 `spec.md:48`，执行日志排在阶段 2）与 R6（:53，Tape 内不分支，编辑重发 = 同一 `messageId` 上追加修订） | §执行日志与恢复表 | — |
 | （B17） | 编辑重发的思考块约束：被修订的不是最后一条时，(i) 撤回其后所有消息，或 (ii) 保留其后消息、按 A13 丢掉它们的思考块；02 没有编辑中间消息的入口，只把「丢掉它之后的全部思考块」写进不变量 | §不变量 | (i)、(ii) 选哪种：阶段 6 |
 | B18 | 有任务在跑时离开先问；停在审批或提问上的可以直接离开，横幅列出在等你的会话；切换会话不再靠组件卸载隐式中止 | §离开会话；§界面范围；`chat.new` 先确认、离开不再隐式停止，01 修补 9 (n) | 多任务并行：阶段 6 |
 
@@ -187,7 +187,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 | D3 | 取更严的一方：策略是上限，策略的「允许」只解锁 | §第 1 层真值表与 TenantPolicy；§AGENTS.md:24（owner 已确认，2026-09-25） | — |
 | D4 | `HostAdapter` 只增 `policy` 成员 | 00 修补（`HostAdapter.policy`）；contracts 加策略 schema | 下发、缓存、离线降级：6b |
 | D5 | 两套码：`ConfirmReason` 只增 `policy`、`flagged`、`command` 与「连接器要求亲自确认」四个值，必填键与主原因顺序写在 02；拦截原因码在 02 新立（`policy`、`user-disabled`、`protected`、`inspector`） | 00 修补（`ConfirmReason`）；§原因码表 | 阶段 4 加 `sandbox` |
-| D6 | 02 只实现手动、自动两档；跳过档阶段 4 有沙箱再定 | §决策表与各层输入；§Inspector 接口与合议 | 阶段 4 开工前裁决跳过档 |
+| D6 | 02 只实现手动、自动两档；跳过档阶段 4 有沙箱再定 | §决策表与各层输入；§内置工具的默认档位 | 阶段 4 开工前裁决跳过档 |
 | D7 | 阶段 2、3 只开手动档；内核实现并测试自动档，但不提供切档 IPC，contracts 不暴露，界面不显示档位选择器 | §可逆性判定与阶段 2 的默认权限姿态；§文档同步 | 自动档与规则 inspector：阶段 4 |
 | D8 | `HostFs` 只增 `realpath`；新路径按最近的已存在上级目录解析 | 00 修补（`HostFs.realpath`）；§「在不在工作区里」 | 硬链接怎么挡：阶段 4 开工前 |
 | D9 | 授权文件夹只给访问权，写入仍按审批档问 | §决策表与各层输入；§文档同步 | 阶段 4 快照后可重议 B |
@@ -215,7 +215,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 | F6 | 逐个答；同一批后面的调用以「排队中」叠在当前卡下面 | §多卡、拒绝与取代；§最小审批卡 | — |
 | F7 | 一律不超时；子 agent 等审批时 deadline 暂停，父 Run 同时暂停 | §待答项与终态；§子 agent 契约 | 没人可问的定时任务：阶段 6 |
 | F8 | 每次调用写一条判决事实，完整步骤只进 Tape；界面另拿一份不带层号的摘要 | §判决记录与摘要；§名字总表 | — |
-| F9 | 常设授权挡不住 inspector；inspector 的拒绝对所有调用一样生效，你从拦截回执上放行；02 只保留「回执放行」这个来源代码 | §合并：两步；§判决记录与摘要 | 回执放行的界面与记法：阶段 4 |
+| F9 | 常设授权挡不住 inspector；inspector 的拒绝对所有调用一样生效，你从拦截回执上放行；02 只保留「回执放行」这个来源代码 | §合并：两步；§载荷 | 回执放行的界面与记法：阶段 4 |
 | F10 | 调用前看「这次调用 + 只读的会话视图」，结果回来后只留标记；railguard 适配器放在 kernel 外面 | §挂点与会话视图；§依赖方向与能力入口 | 结果回来后给模型加提醒：随判官 |
 | F11 | 审批卡没答就发新消息，等于拒绝所有待批并开新一轮 | §多卡、拒绝与取代；§原因码表；§插话与输入框状态表；§子 agent 契约；排过队的消息不走重发复用，01 修补 9 (r) | — |
 
@@ -1066,7 +1066,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 
 ### 内置模型表的数据改动
 
-数据改动，不是 spec 成员，随 plan 落地，列在这里供审稿逐项核对（裁决 A12、A16、M8、A14）。
+数据改动，不是 spec 成员，随 plan 落地，列在这里供审稿逐项核对（裁决 A12、A16、M8、A14、A15）。
 
 | 文件 | 改动 |
 |---|---|

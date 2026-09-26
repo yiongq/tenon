@@ -543,7 +543,7 @@ type InspectionAction =
   | { RequireApproval: string | null };   // 可带给用户看的警告
 ```
 
-**→ 多个 inspector 并行给意见、带 confidence、再合议**，而不是一条 if/else。安全扫描、恶意扩展检查都是 inspector。
+**→ 多个 inspector 按注册顺序串行执行，取最严，confidence 只写日志**，而不是一条 if/else。安全扫描、恶意扩展检查都是 inspector。依据 aaif-goose/goose@80c1197 `tool_inspection.rs:68-118、170-262`（2026-09-25 改，见 [02 §Inspector 接口与合议](../architecture/02-agent-loop/spec.md)）。
 
 ### 第 2 层 — PermissionInspector 决策 **[码]**
 

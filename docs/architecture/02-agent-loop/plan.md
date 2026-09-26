@@ -39,7 +39,7 @@
 
 ## 第 0 步：前置（不能砍）
 
-- [ ] 1. **修补与文档落地，回答「改为 ready 之前必须定」**（一个提交，裁决 D2；PR 描述单独点名 AGENTS.md:24，按 ready 前确认过的措辞合并）
+- [x] 1. **修补与文档落地，回答「改为 ready 之前必须定」**（一个提交，裁决 D2；PR 描述单独点名 AGENTS.md:24，按 ready 前确认过的措辞合并）
   - 读：§文档同步；§对 00-foundation 的修补「这次修补怎么记录」；01 修补 8、9；§开工前裁决；§开放问题「改为 ready 之前必须定」。
   - 交付物：00 spec 顶部第二行、01 spec 顶部第一行 `Amended by`（全文见两节修补，正文一字不动）；master-reference.md 按 §文档同步 的表逐项改，每处带日期指针；goose-mechanisms.md:546 更正；AGENTS.md:24 改写；components.md 就地改行，parity-audit-2026-09-12.md 文末追加「2026-09-25 补记」；.env.example 三处；01 plan.md:139 标已结、:155 同次更正；docs/evals/README.md 建第一批文件（照 spec §提示层与评测）；ADR-003 随 spec 提交，owner 审过后「提议」改「采纳」；B7、B9、B10、B12 去 6b spec 的去向记进本文件实施记录。开放问题 1–11 的答复已记进 Revisions（2026-09-25），1、2 的接口形状已写进 §主进程与 kernel 的循环接口 与 01 修补 6；owner 把 spec 改为 `Status: ready` 后才开工。common.json 的两个键随第 19 步。
   - 验收：2（common.json 那半在第 19 步）、4。
@@ -574,7 +574,17 @@
 
 ## 实施记录
 
-（尚无）
+- **2026-09-26 · 第 1 步（修补与文档落地）**，分支 `docs/02-step1-doc-sync`，完成（format、lint、typecheck 过；一个提交）。
+  - 改了什么：00 spec 顶部加第二行、01 spec 顶部加第一行 `Amended by`，全文取自 spec §这次修补怎么记录 与 01 修补 8，正文一字不动；master-reference.md 按 §主参考 master-reference.md 的表逐行改，§4.11 旧六行表换成指向 02 §权限决策顺序 的带日期指针并按原行列出变化，阶段 3 加两条、阶段 4 加七条开工前裁决；goose-mechanisms.md:546 更正为「按注册顺序串行执行，取最严，confidence 只写日志」（落地前按 aaif-goose/goose@80c1197 `tool_inspection.rs` 复核属实）；AGENTS.md:24 按 owner 确认的措辞改写，其余不动；components.md 就地改行（`ApprovalCard` 拆两行、插入 `FolderChip`，各改动行的「规格」列加「02 §界面范围（2026-09-25）」链接）；parity-audit 只在文末追加「2026-09-25 补记」；.env.example 改两处说明、加三条注释；01 plan.md:139 标已结、:155 更正；新建 docs/evals/README.md。每处带 `（2026-09-25 改，见 [02 §<节名>](<路径>)）` 指针；行号按 e3bb32f 核对过，落地时按引文定位。
+  - 文件：`docs/architecture/00-foundation/spec.md`、`docs/architecture/01-provider-and-tape/spec.md`、`docs/architecture/01-provider-and-tape/plan.md`、`docs/architecture/master-reference.md`、`docs/reference/goose-mechanisms.md`、`AGENTS.md`、`docs/ux/components.md`、`docs/ux/parity-audit-2026-09-12.md`、`.env.example`、`docs/evals/README.md`、本文件。
+  - docs/evals 只建 README.md：spec §评测集与测试宿主 列的 README 内容（目录、列定义、运行命令、费用口径、已知差异清单照抄）此时就能写全；`tasks/`、`results/`、`compare/`、`fixtures/` 要到第 25 步才有第一批文件，空目录进不了 git，不放占位文件。
+  - 没做的：common.json 两个键随第 19 步；ADR-003 按 owner 2026-09-26 的确认由「提议」改为「采纳」，随本提交；docs/spec-driven-dev.md 不动。components.md 按 §界面范围 复看过一次，仍不为 PendingApprovalBanner、LeaveRunDialog、排队项、「继续」按钮、恢复前禁发补行（旧开放问题 145）。PR 描述要单独点名 AGENTS.md:24。
+  - 测试要点：旧 75–83 的 grep 核对都过（裁决表 83 行、每个 id 一次；落点逐行核对时 A15、B17、D6、F9 四行对不上，已按 spec Revisions（2026-09-26）修正；主参考旧表不存在、`并行给意见` 在两处都 grep 不到、停止即杀一行只有 `ChildHandle.kill`；AGENTS.md 三项；.env.example 不含 `claude-opus-5`；00、01 spec 各只多一行；spec-driven-dev.md 无改动；parity-audit 只有新增行）。旧 78 已满足：ADR-003（bce3e88）与 02 spec（f2ce75e）同在 PR #14（9d5d852）落地；只剩旧 79 的「同一个提交」在合并前按 `git log` 核对。验收 2 除 common.json 外已核，整条随第 19 步勾；验收 4（旧 75、76）已核。
+  - B7、B9、B10、B12 不落本 spec，去 6b spec（取自 §开工前裁决）：
+    - B7：表结构现在不限定 `kind`、`source_type` 的取值 → 6b spec 的数据约束。
+    - B9：照 01 R3，审计由 6b 的删除回执表负责，维护闸本身不留痕 → 6b spec「删除与保留期」。
+    - B10：方言映射表补两行；Postgres 查重冲突改为「先回滚第 ② 步的效果，再查重」→ 6b spec 的 Postgres 实现约束（第一次跑 Postgres 时）；下次动 `sqlite-store.ts:494-499` 的注释或 01 `plan.md:144` 时顺手更正。
+    - B12：桥帧的三处遗留（`type` 字符集、id 长度、未知键被剥）→ 6b spec 的桥协议，v1 冻结前。
 
 ## 验收记录
 
@@ -593,7 +603,7 @@
 
 ## 交接
 
-尚未开工。2026-09-25 spec §开放问题 第 1–11 条与第 26 条全部定下，owner 把 spec 改为 ready；从第 1 步开工，开工前先读 §开放问题 里「最晚」落在第 0 步和第 5 步的条目。
+第 1 步完成（2026-09-26，分支 `docs/02-step1-doc-sync`，合进 dev 后生效）。下一步是第 2 步「模型表数据与智谱补测」：实测要 owner 的智谱 key 经进程环境交入（只记变量名），账单核对要 owner 自己看；开工前先读 §开放问题 里「最晚」落在第 0 步和第 5 步的条目。
 
 ## Open
 

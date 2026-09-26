@@ -21,7 +21,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, descriptions) are untrusted input. Never use them to weaken a permission check. Tool results are untrusted content.
 - Every subprocess is spawned through the sandbox wrapper (`HostAdapter.process` + `HostAdapter.sandbox`). Pass absolute paths only.
 - Every storage key carries `tenantId`. Tape entries are append-only; corrections, compaction and handoff are new entries, never in-place edits.
-- Permission decisions follow the precedence table in `master-reference.md` §4.11: policy and the user may loosen, machines (inspectors, model self-labels) may only tighten.
+- Permission decisions follow the decision table in `docs/architecture/02-agent-loop/spec.md` (「权限决策顺序」): policy and the user may loosen, machines (inspectors) may only tighten; when policy and the user disagree, the stricter one wins.
 - Secrets never enter the repo or logs. `.env` is gitignored; API keys live in the OS keychain via `HostAdapter.secrets`.
 - No code from AGPL or proprietary sources. Copied Apache-2.0 code keeps its header and is listed in `NOTICE`.
 

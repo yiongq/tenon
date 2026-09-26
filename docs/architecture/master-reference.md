@@ -328,7 +328,7 @@ while (true) {
 
 退出条件：max_turns / FinalOutputTool / cancel / 终止性错误（refusal、重试后仍失败、压缩两次仍溢出）。
 
-⚠️ **Goose 有个洞你要补**：cancel 时只 `break`，**没把 in-flight 的 tool call 标记为已取消**，会留下 orphaned `tool_use` 块，下一轮发给 Anthropic 直接 400。
+⚠️ **Goose 有个洞你要补**：cancel 时只 `break`，**没把 in-flight 的 tool call 标记为已取消**，会留下 orphaned `tool_use` 块，下一轮发给 Anthropic 直接 400。补注：Goose 现在会在发请求前删掉孤儿调用；Tenon 的收口以 02 为准（2026-09-25 改，见 [02 §工具调用的收口](02-agent-loop/spec.md)）。
 
 #### 4.8.2 上下文管理：四种手段（Goose 实证）
 
@@ -394,9 +394,9 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 
 #### 4.8.5 Subagent 契约（DeepChat 实证）
 
-独立 Session / workspace 授权 / tool mapping / memory 命名空间 / 权限状态；默认 300 秒 deadline（1–1800 可调）；每个父级最多 3 个并发非终态 run；强制 handoff 格式 `Result / Evidence / Changed Files / Validation / Unresolved`。
+独立 Session / workspace 授权 / tool mapping / memory 命名空间 / 权限状态；默认 300 秒 deadline（1–1800 可调）；每个父级最多 3 个并发非终态 run；强制 handoff 格式 `Result / Evidence / Changed Files / Validation / Unresolved`。02 的差异：权限只往下继承；每个父级 1 个并发；交接由最后一条回复承担、不强制格式；deadline 不可调（2026-09-25 改，见 [02 §子 agent 契约](02-agent-loop/spec.md)）。
 
-**层级只有两层**（Claude Desktop 的 Dispatch 同样如此）：child 不能再生 child，防无限递归。**权限转发超时默认拒绝**（Claude 是 10 分钟）——死锁规避。
+**层级只有两层**（Claude Desktop 的 Dispatch 同样如此）：child 不能再生 child，防无限递归。10 分钟是 Claude Dispatch 的规则，Claude Code 的子 agent 不超时；02 定为**转发审批不超时，等审批时 deadline 暂停**（2026-09-25 改，见 [02 §暂停、转发、排队与期限](02-agent-loop/spec.md)）。
 
 **多 agent 的反直觉证据**：固定 reasoning token 下单 agent 持平或优于多 agent（arXiv:2604.02460）；多 agent 约 15× token。**角色扮演式分工（PM agent / 架构师 agent）是多 agent 最差的用法**。真正占优的是可并行的读密集任务。
 
@@ -474,6 +474,8 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 
 **你一定会想写"安全命令白名单"。Cline 用 67.6k star 告诉你这条路走不通**——shell 的管道、`$()`、别名、环境变量会绕过任何正则。
 
+补注：仅 Cline v3 / legacy 运行时如此：新 SDK 运行时已删掉 `requires_approval`；Tenon 不设模型自标（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)）。
+
 权限类目两层嵌套（直接当设置面板信息架构）：Read project files / **Read all files**；Edit project files / **Edit all files**；Execute safe commands / **Execute all commands**；Use browser；Use MCP servers。"基础开关不开，扩展变体不生效"。
 
 **② Zed：工具键格式 `mcp:<server>:<tool_name>`**
@@ -492,11 +494,13 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 
 ```
 第 0 层 GooseMode：Auto（★默认，全自动批准）/ Approve / SmartApprove / Chat
-第 1 层 Inspector 管线：多个 inspector 并行给意见，带 confidence，再合议
+第 1 层 Inspector 管线：按注册顺序串行执行，取最严，confidence 只写日志
 第 2 层 PermissionInspector：查用户显式权限 → 读 MCP readOnlyHint 注解 → 扩展管理类工具强制人工 → 交 LLM 判定
 第 3 层 LLM 判官：把不可信的工具请求作为 JSON 塞进 user 消息，显式防注入，失败 fail-closed
 第 4 层 确认路由：request_id → oneshot channel 映射，UI 通过 IPC 调 deliver() 唤醒
 ```
+
+上面第 1 层一行只更正对 Goose 的事实描述，依据 aaif-goose/goose@80c1197 `tool_inspection.rs:68-118、170-262`（2026-09-25 改，见 [02 §Inspector 接口与合议](02-agent-loop/spec.md)）。
 
 **⭐ 不对称缓存**：LLM 判定后**只缓存"不是只读"的结论，不缓存"是只读"**。理由：缓存错了"安全"会造成风险，缓存错了"危险"只是多问一次。
 
@@ -516,19 +520,19 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 
 **决策顺序（2026-09-12 定，多个机制冲突时按此裁决，Claude Code 实现时不得自选）**：
 
-| 序 | 层 | 来源 | 能做什么 |
-|---|---|---|---|
-| 1 | 租户策略 | 服务端下发（§4.13） | 可 **deny** 任何工具 / server；可把默认档拉高；不可放宽到低于用户设定 |
-| 2 | 可逆性分级 | 工具元数据由 host 判定（发出去撤不回 → `irreversible`） | `irreversible` 默认 blocked，只有租户策略或用户显式 Allow always 能放开 |
-| 3 | 用户持久设定 | Allow always / Never，键 `(tenantId, serverId, toolName)` | 覆盖 4、5 |
-| 4 | Inspector 合议 | 注入检测、恶意命令检查、（可选）LLM 判官 | 只能收紧（Allow → Ask，Ask → Deny），不能放宽 |
-| 5 | 模型自标 `requires_approval`（Cline） | 模型 | 只能收紧 |
-| 6 | 默认 | `confirm` | — |
-| — | MCP `readOnlyHint` 等注解 | server | **不参与**，仅展示 |
+决策表以 02 §权限决策顺序 为唯一权威，本节原表作废（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)）。原表逐行的变化：
 
-一句话：**策略与用户可以放宽，机器只能收紧。**
+- 行 1 租户策略 → 第 1 层：策略是上限，它的「允许」只解锁，不替用户预先批准（裁决 D3）。
+- 行 2 可逆性 → 第 4 层「必须问」：「默认 blocked」改为「必须问，只认这一次」，只有三种有意的放开能免；可逆性只认 host 和租户策略（裁决 D10、D3、E1）。第 4 层另收 server 显式声明的 `requiresUserInteraction`，谁都免不掉（裁决 D12）。
+- 行 3 用户持久设定 → 拆两层：「永不」到第 3 层「用户禁用」，只能拒；「总是允许」到第 6 层「用户授权」，只有连接器工具可设。「覆盖 4、5」作废，机器检查仍能把总是允许改回问（裁决 D1、F9）。
+- 行 4 Inspector 合议 → 第 5 层「机器收紧」：取最严，没有放行，confidence 只进判决记录；超时或出错按注册时声明的最严意见处理；来源改为「02 交付接口和一条只会问人的外带检查」（裁决 F1、F5）。
+- 行 5 模型自标：删去；以后若有「模型申请提权」，只作为第 5 层的一个输入（裁决 D2、E4）。
+- 行 6 默认 → 第 8 层，不变。新增第 2 层保护名单、第 7 层审批档（手动、自动两档）（裁决 D2、D6）。
+- MCP `readOnlyHint` 等注解：不参与放宽，只展示；server 显式声明 `requiresUserInteraction` 为 true 时触发必须问（裁决 D12）。
 
-**⑥ 与姊妹项目 railguard 的关系**（2026-09-12，[yiongq/railguard](https://github.com/yiongq/railguard)，MIT，TS，零运行时依赖）：railguard 守的是**内容与数据访问**（输入注入检测、输出引用核验 / URL 白名单 / PII 打码、RBAC 工具门、行过滤、字段掩码、人工审批、Ed25519 签名审计链）；Tenon 权限引擎守的是**本机能力**（哪个工具能跑、沙箱放行什么文件和网络、用户是否同意）。威胁模型不同，不是同一个东西，**不合并仓库**。交集两处：(1) railguard 的注入检测 / 不可信内容标记可作为 Inspector 管线里的**一个 inspector** 接入（阶段 2 定 `Inspector` 接口时留位置，adapter 形式，可选）；(2) 签名审计链可在阶段 6b 给 Tape 的 Execution Journal 加防篡改（多租户合规需要）。
+一句话：**放宽只能来自策略或用户，机器只能收紧；策略和用户意见不同时，取更严的一方**（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)）。
+
+**⑥ 与姊妹项目 railguard 的关系**（2026-09-12，[yiongq/railguard](https://github.com/yiongq/railguard)，MIT，TS，零运行时依赖）：railguard 守的是**内容与数据访问**（输入注入检测、输出引用核验 / URL 白名单 / PII 打码、RBAC 工具门、行过滤、字段掩码、人工审批、Ed25519 签名审计链）；Tenon 权限引擎守的是**本机能力**（哪个工具能跑、沙箱放行什么文件和网络、用户是否同意）。威胁模型不同，不是同一个东西，**不合并仓库**。交集两处：(1) railguard 的注入检测 / 不可信内容标记可作为 Inspector 管线里的**一个 inspector** 接入（阶段 2 定 `Inspector` 接口时留位置，adapter 形式，可选），接入点是调用前挂点，加上结果回来后只记录的挂点（2026-09-25 改，见 [02 §挂点与会话视图](02-agent-loop/spec.md)）；(2) 签名审计链可在阶段 6b 给 Tape 的 Execution Journal 加防篡改（多租户合规需要）。
 
 ### 4.12 扩展层：Customize 页与 Skills / Plugins / Connectors / .mcpb（2026-09-12 补）
 
@@ -552,7 +556,7 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 | 角色 | 公司系统 | 作为 MCP server 暴露的工具 | 权限档 | plugin 里的 skill |
 |---|---|---|---|---|
 | 客服 | 工单系统 | `search_tickets`（读）、`reply_ticket`（写，需确认） | 写操作每次确认；租户策略可禁 `close_ticket` | "按 SLA 分级回复"的话术与流程 |
-| 财务 | 报销 / 审批流 | `list_pending_approvals`、`approve`（写，不可逆 → 默认 blocked，需策略显式放开） | 不可逆动作先 blocked（§4.11 ⑤） | "对照发票校验报销单" |
+| 财务 | 报销 / 审批流 | `list_pending_approvals`、`approve`（写，不可逆 → 每次都要你亲自批；只有策略点名放开、连接器页设的总是允许、阶段 6 的按任务授权这三种能免；可逆性由租户策略标定，未标定时为「未知」，卡上的允许只管这一次） | 不可逆动作每次问（2026-09-25 改，见 [02 §决策表与各层输入](02-agent-loop/spec.md)） | "对照发票校验报销单" |
 | 数据分析 | 数仓 | `run_sql`（只读账号）、`list_tables` | 只读账号 + 沙箱网络白名单只放数仓域名 | `data:explore-data` 那类探索框架 |
 | HR | HRIS | `lookup_employee`（读，字段掩码） | PII 掩码在 server 侧做（railguard 那类） | 入职 checklist |
 | 法务 | 合同库 | `search_contracts`、`extract_clauses` | 只读 | 条款审查清单 |
@@ -571,7 +575,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 账号 | `userId` | 全局 |
 | 组织（个人 / Team / Enterprise），可切换 | **`tenantId`**，用户与组织多对多 | 租户 |
 | Projects、记忆、连接器授权、插件、定时任务 | 全部带 `tenantId`；服务端行级隔离，本地按 profile 目录隔离（**一个本地 profile = 一个 `(userId, tenantId)`**） | 租户 |
-| 管理员托管设置（允许的 MCP、权限下限、能否连本地文件夹） | 权限查找顺序：**租户策略 → 用户默认 → 会话 → 单次**；策略层由服务端下发，本地缓存 | 租户 |
+| 管理员托管设置（允许的 MCP、权限下限、能否连本地文件夹） | 权限作用域：**租户策略 → 用户默认 → 会话 → 单次**，这四级只标作用域，不代表查找顺序；决策顺序见 02 §权限决策顺序（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)）；策略层由服务端下发，本地缓存 | 租户 |
 | Cowork 云端会话：内核在 Anthropic 临时沙箱，会话跟随账号 | `apps/server` 为每个会话起一个租户隔离的沙箱，跑同一个 `packages/kernel` | 租户 + 会话 |
 | 桌面 App 是桥：云端会话读本地文件夹要开着桌面 App | **桥协议**：桌面 App 与服务端保持长连接，服务端通过它对本机文件做受限读写（Claude Desktop "云端会话经桌面 App 读本地文件夹"那条桥的自研版） | 用户 + 设备 |
 | 本地模式：Linux VM | `apps/desktop` 直接用 sandbox-runtime | 用户 |
@@ -744,7 +748,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 **用法边界**：fixtures 用来**看**结构和状态（打开 `fixtures/index.html` 逐个对照），不复制 class 串、不引用 `css/`；`tokens.css` 只抄键名。uxkit 整包放仓库外的私人目录。
 
-**UX 与阶段的对应**：阶段 0 = 令牌 + 基础组件 + 壳层 + Composer 最小态 + 消息流基础；阶段 2 = Thinking 块、流式态、中断；阶段 3 = 6 种工具块、审批弹窗；阶段 5 = 产物块、Artifacts 页与右面板；阶段 6 = 空 / 加载 / 错误态、动效目录、响应式全部过一遍（§10 清单）。Scheduled / Projects / Customize 页面跟随各自后端能力出现。
+**UX 与阶段的对应**：阶段 0 = 令牌 + 基础组件 + 壳层 + Composer 最小态 + 消息流基础；阶段 2 = Thinking 块、流式态、中断，以及 02 §界面范围 列出的最小版；阶段 3 = 6 种工具块、审批弹窗（均指完整版）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）；阶段 5 = 产物块、Artifacts 页与右面板；阶段 6 = 空 / 加载 / 错误态、动效目录、响应式全部过一遍（§10 清单）。Scheduled / Projects / Customize 页面跟随各自后端能力出现。
 
 ## 9. 优秀客户端参考与拆解方法
 
@@ -880,16 +884,16 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 - 按 §4.8.1 实现主循环
 - 上下文管理：先只做 D（大响应落盘）和 B（摘要 + 锚点），A/C 后补
-- **权限引擎**：`approvalBroker`（照 DeepChat）+ 等待模型用 **"写进 transcript、Run 暂停、回答后新 Run"**（不用内存 `Map<id, Promise>`——服务端 host 的会话沙箱可能被回收，内存等待失效）+ 决策顺序见 §4.11 末表 + `Inspector` 接口（为 railguard 等留位）
-- **审批原因码**（2026-09-17 补）：权限引擎只输出 `ConfirmReason` + 事实槽位（形状见阶段 0 spec，`irreversible / outside-workspace / network / elevated / default`，只增不删），界面据此渲染审批卡上「为什么停、能不能还原」那句人话；kernel 不产生句子。六层判决留在内核，界面不露层号
-- **停止即杀**（2026-09-17 补）：用户点停止，正在跑的命令经 `HostProcess.kill` 结束整棵进程树，不等它跑完（Claude 实测命令会继续跑完）；任务小结写「已停，后续写入未发生」
-- **提示层**（2026-09-17 补，明确交付物）：(1) 对话 / 任务两个 profile 各一份系统提示，从 Anthropic 公开发布的 claude.ai 系统提示与 Claude Code 文档学，不抄原文；(2) 工具集形状贴 Claude Code——读 / 写 / 编辑 / 命令 / 查找 / 子 agent，名字与参数语义一致（模型对这套形状有先验），其余能力走 MCP；(3) 扩展思考、提示缓存、服务端网络搜索与代码执行直接用 API 功能，不自造；(4) 对照组改为用户机器上的 Claude Desktop 本身：同一题两边跑、录屏对比、差在哪改哪（OpenCode 降为第二对照）；(5) 固定 20–30 个任务的评测集，改系统提示或工具描述必跑，结果记 `docs/evals/`
+- **权限引擎**：`approvalBroker`（照 DeepChat）+ 等待模型用 **"写进 transcript、Run 暂停、回答后新 Run"**（不用内存 `Map<id, Promise>`——服务端 host 的会话沙箱可能被回收，内存等待失效）+ 决策顺序见 02 §权限决策顺序（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)） + `Inspector` 接口（为 railguard 等留位）
+- **审批原因码**（2026-09-17 补）：权限引擎只输出 `ConfirmRequest`：原因码、事实槽位、可逆性、对象（形状见 02 §对 00-foundation 的修补）；界面据此渲染，kernel 不产生句子。决策表各层留在内核，界面不露层号；「撤不回」从此取自可逆性，不取自原因码（2026-09-25 改，见 [02 §对 00-foundation 的修补](02-agent-loop/spec.md)）
+- **停止即杀**（2026-09-17 补）：用户点停止，正在跑的命令经 `ChildHandle.kill`（2026-09-25 改，见 [02 §点停止时各状态怎么收](02-agent-loop/spec.md)）结束整棵进程树，不等它跑完（Claude 实测命令会继续跑完）；任务小结写「已停，后续写入未发生」
+- **提示层**（2026-09-17 补，明确交付物）：(1) 对话 / 任务两个 profile 各一份系统提示，从 Anthropic 公开发布的 claude.ai 系统提示与 Claude Code 文档学，不抄原文；(2) 工具集形状贴 Claude Code——读 / 写 / 编辑 / 命令 / 查找 / 子 agent，名字与参数语义一致（模型对这套形状有先验），其余能力走 MCP；WebFetch 例外：只收 url，返回整页 Markdown，不带 prompt，差异写进工具描述（2026-09-25 改，见 [02 §内置工具与工具来源](02-agent-loop/spec.md)）；(3) 扩展思考、提示缓存直接用 API 功能，不自造；网络搜索、网页抓取做成 Tenon 的客户端工具，后端调各家官方接口；服务端代码执行推后（2026-09-25 改，见 [02 §搜索与抓取](02-agent-loop/spec.md)）；(4) 对照组改为用户机器上的 Claude Desktop 本身：同一题两边跑、录屏对比、差在哪改哪（OpenCode 降为第二对照）；同模型列用 Claude Code + GLM；OpenCode 仍是第二对照，作为同模型列的备选（2026-09-25 改，见 [02 §同题对比](02-agent-loop/spec.md)）；(5) 固定 20–30 个任务的评测集，改系统提示或工具描述必跑，结果记 `docs/evals/`；提示层包括 kernel 写给模型的固定英文（收口说明、续写提示、落盘说明等）；评测基线建立之前版本号照常递增、不要求跑评测（2026-09-25 改，见 [02 §提示层与评测](02-agent-loop/spec.md)）
 - **读**：DeepChat `src/main/tool/`（`ToolPermissionBroker`）、`docs/architecture/tool-system.md`、Cline `auto-approve.mdx` + `sdk/`、OpenCode agent loop
-- **对照组**：用 OpenCode 跑同一个任务，看循环差在哪
+- **对照组**：主对照是 Claude Desktop；同模型列是 Claude Code + glm-5.3 对 Tenon + glm-5.3；OpenCode 作同模型列的备选（2026-09-25 改，见 [02 §同题对比](02-agent-loop/spec.md)）
 - **开工前裁决**（2026-09-17 审阅结论；DeepChat broker 与 Goose 四层已有逐路径笔记，不需要新笔记，需要的是拍板）：
   - 严格度定位：工具级「以后都允许」第一版有没有、存哪、怎么撤销。§4.11 第 3 行说有（键 `tenantId / serverId / toolName`），UX 画布 v18 与 parity 审计 09-16 补记说审批只「本次会话内有效」、「以后都允许」只出现在文件夹与连接器授权弹窗——两者必须合成一份
   - 可逆性判定规则：输入是什么（内置工具白名单 / host 判定 / MCP 注解按硬规则不可信），未知 MCP 工具默认哪档；UX 四档刻度（可撤销 / 有快照 / 不可逆 / 未知）到 `ConfirmReason` 的映射，阶段 2 尚无快照时「有快照」档怎么显示
-  - blocked 是「从发给模型的工具列表过滤掉」还是「调用前拦截」，及其对提示缓存与 Tape 记录的影响
+  - blocked 是「从发给模型的工具列表过滤掉」还是「调用前拦截」，及其对提示缓存与 Tape 记录的影响。已由 E2 裁决：按会话与 provider 冻结，冻结后调用时拦（2026-09-25 改，见 [02 §工具目录与冻结](02-agent-loop/spec.md)）
   - §4.13 的四级查找顺序（租户策略 → 用户默认 → 会话 → 单次）与 §4.11 六层表对账成一份，避免实现出两套作用域
   - 租户策略在接口上的落座点：`HostAdapter` 的新成员、kernel 侧 store 由桥喂、还是 contracts 里的 schema。`HostAdapter` 已在阶段 0 冻结：只增成员按 spec-driven-dev 的 amend 规则修补（阶段 1 的 `network` 是先例），改动既有成员须 supersede
   - 第 1 层真值表：策略 allow 撞用户 Never、策略 deny 撞用户 Allow always、个人租户第 1 层是否求值。表行 1「不可放宽到低于用户设定」、表行 2「只有租户策略或用户显式 Allow always 能放开」与总结句「策略与用户可放宽」目前三者打架
@@ -897,15 +901,20 @@ Claude Desktop 的概念 → Tenon 的实现：
   - Inspector 接口形状与合议规则（多个 inspector 冲突取最严还是按 confidence）、超时与抛错是否 fail-closed；LLM 判官是否在本阶段交付
   - 拒绝路径：回给模型的 tool result 形状、能否换参重试、连续拒绝是否计入 no-progress guard；判决 trace 的内部形状（验收要求每行一个测试，但界面不露层号）
   - 补读各半页并入上面的「读」：Cline `requires_approval` 实际怎么传；OpenCode 的审批路径（§15.1 #1 至今无核实路径）
+  - **裁决结果**（2026-09-25）：逐条见 02 §开工前裁决（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）
 - **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试；每个 `ConfirmReason` 在 zh-CN 与 en 下各有一条文案且槽位齐全；点停止后 1 秒内无子进程存活；评测集每题有基线记录；与 Claude Desktop 同题对比至少 10 题有记录（差异与原因）
+- **范围调整**：最小工具行、审批卡、任务形态、文件夹 chip 已挪进 02，阶段 3 / 4 的对应项改做完整版，工期不动（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）；阶段 2、3 只开手动档，见 [02 §可逆性判定与阶段 2 的默认权限姿态](02-agent-loop/spec.md)；工作区来源见 [02 §会话形态、工作区与模型选择](02-agent-loop/spec.md)
 
 ### 阶段 3：MCP host 完整版（2–3 周）
 
-- MCP 设置界面、OAuth（CIMD 优先、DCR 兜底、凭证按 issuer 分键进 keychain）、工具调用卡片、权限确认弹窗
+- MCP 设置界面、OAuth（CIMD 优先、DCR 兜底、凭证按 issuer 分键进 keychain）、工具调用卡片、权限确认弹窗（完整版；最小版在阶段 2）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）
 - 扩展配置 schema：显式 `type`、`envs`/`env_keys` 分离、`available_tools` 白名单
 - stdio 子进程管理：spawn → 握手超时 → 崩溃重连 → stderr 落日志 → 进程树清理 → **超时向 server 发 cancelled**
 - **读**：[deepchat-mechanisms](../reference/deepchat-mechanisms.md) §四、LibreChat `packages/api/src/mcp/`（OAuth 落地）
-- **验收**：Everything server 的每类能力（tools / prompts / resources / sampling / elicitation / listChanged）各一个 e2e；超时后 server 侧能观测到 `notifications/cancelled`；子进程崩溃后状态正确且 stderr 进错误对象；OAuth `iss` 不匹配时拒绝兑换 code；工具名冲突按 `{server}__{tool}` 稳定
+- **开工前裁决**：02 留下两条（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）：
+  - 中途连上的 MCP 工具是否即时生效：支持的 Anthropic 模型用 E2-D，其余用 E2-F，或仍到下个会话（裁决 E2）
+  - 连接器卡要不要加「以后都允许」（D1-A2）或「本会话允许」，按同题对比的确认次数定（裁决 D1、D10）
+- **验收**：Everything server 的每类能力（tools / prompts / resources / sampling / elicitation / listChanged）各一个 e2e；超时后 server 侧能观测到 `notifications/cancelled`；子进程崩溃后状态正确且 stderr 进错误对象；OAuth `iss` 不匹配时拒绝兑换 code；工具名按 02 的命名规则稳定（以 `{server}__{tool}` 为基础，非法字符替换，超长截断并加哈希后缀；替换过的名字也加后缀），映射表进 Tape（2026-09-25 改，见 [02 §工具来源、命名与权限键](02-agent-loop/spec.md)）
 
 ### 阶段 4：沙箱 + 文件桥（1–2 周）
 
@@ -925,6 +934,14 @@ Claude Desktop 的概念 → Tenon 的实现：
   - 长驻 MCP stdio server 的档位与换工作区时的生命周期（FS 规则不热更新）；「仅包管理器」预设的域名表
   - 快照与一键还原单独立题：staging 目录 / 整目录预快照 / git 三选一——它反过来决定 workspace-write 的 allowWrite 指向工作区还是 staging
   - 补查 sandbox-runtime 三点，以 Revisions 追加进现有笔记：`customConfig` 在 macOS / Linux 能否放宽 FS、模块级单例下多工作区并发的实际行为、三个 helper 的 arch 覆盖矩阵
+  - 02 留下的七条（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）：
+    - ① 自动档随快照和规则 inspector 开放，判为不安全时按 D6、F5 处理；规则 inspector 与 railguard 适配随自动档交付，LLM 判官单独立题（裁决 D7、E6、D6、F5）
+    - ② 跳过档做不做：做，就只在本会话沙箱生效时可选、由内核或主进程强制，并入上面「沙箱不可用时的降级阶梯」；不做，就带日期删去 parity-audit:39、:230 和 components.md `ApprovalModeMenu` 行的跳过项（裁决 D6、E6）
+    - ③ 只读命令免问（裁决 E4）
+    - ④ 有快照后，被覆盖的删除（含命令里的 rm）还算不算不可逆、还问不问（裁决 D10、E6）
+    - ⑤ 工作区内写入免问之前先挡硬链接：`HostFs.stat` 只增 nlink、大于 1 按工作区外处理，或 host 改用「临时文件加改名」（裁决 D8）
+    - ⑥ 出网收口到位后，WebFetch 的地址判定并入 host 的统一收口（裁决 H8、D7）
+    - ⑦ 沙箱能判联网与越界后，命令的主原因是否仍固定为 `command`，多个原因按 D5 排（裁决 E1、E4）
 - **验收**：sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过；端到端：选文件夹 → 发一个会写文件的任务 → 审批一次写入 → 完成并看到小结 → 点还原后文件内容与 mtime 回到任务前，`git status` 干净
 
 ### 阶段 5：扩展层 + MCP Apps + Artifacts（4–6 周）
