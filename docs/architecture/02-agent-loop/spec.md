@@ -5,7 +5,7 @@ Phase: 2 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project（82 条开工前裁决，2026-09-25 owner 拍板）; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter、§本地持久化布局、§国际化（裁决 D4、D5、D8、D12、E1、E4、F3、H9、A13）；[01-provider-and-tape](../01-provider-and-tape/spec.md) §所有权与依赖方向、§Provider 层、§Tape、§desktop 接线（裁决 A1–A9、A11、A12、A14、A15、B1–B6、B8、B14、B18、D11、F1、F3、H1、H3、H8、H10–H13、M3、M5、M6、M8）。只增不改（裁决 A4），全文见 §对 00-foundation 的修补、§对 01-provider-and-tape 的修补；不属纯粹只增的在后者第 9 小节点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（Provider 层选型与厂商分档，与本 spec 同时起草）
-Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。2026-09-26：开工前裁决表四行的落点对齐（第 1 步复核旧 75 时发现，规则本身不变）：B17 删去 §工具调用的收口（旧，该节无此规则）；D6 的 §Inspector 接口与合议（旧）改为 §内置工具的默认档位；F9 的 §判决记录与摘要（旧）改为 §载荷；§内置模型表的数据改动 的裁决标注补 A15。2026-09-26：glm-5.3-flash、glm-5.3-flashx 两行的 `supportsVision` 由 false（旧，§内置模型表的数据改动 写的「探测之前为 false」，即 01:706 的保守合成）定为 true，依据 plan 第 2 步的探测 V（2026-09-26：两行对 base64 传入的 64×64 纯红、纯蓝 PNG 都答对颜色，glm-5.3 对照返回 `400 1210`），旧开放问题 34 就此关闭；glm-5.3、glm-4.6 仍为 false。2026-09-26：owner 定开放问题第一轮，都在对应代码开工前，按 spec-driven-dev.md:52 就地修订：(1) 开放问题 15：`ConfirmTarget` 加第五种 `{ type: 'tool'; serverId; toolName }`（旧：四种形态，MCP 出卡暂缓），连接器卡的参数默认展开，五种形态的字符串字段都须非空；§`ConfirmRequest` 只增两个必填成员、§最小审批卡、§内置工具的默认档位 的 kind 一句、§判决记录与摘要 的卡片原料、§界面范围、验收 36、E4 一行与 §文档同步 的 components.md 一行同改；00 的 Amended by 行不改（它没列形态）。(2) 开放问题 16 的参数校验：来源码新增 `invalid-input`（§原因码表，`ClosureSource` 只增），校验器用 `@modelcontextprotocol/client` 的 `validators/cf-worker`，不加依赖；连接器 schema 本身用不了记 `tool-unavailable`，`MODEL_NOTES` 只增 `schemaUnusable`；内置附加检查改为三条（Edit 的 `old_string` 为空改由 schema 挡，加 WebSearch 两个域名参数同给）（旧：「来源码和校验器见 §开放问题」）；WebSearch 超出次数上限记哪个码另定（旧：「按参数不合法的同一路径」）。(3) 开放问题 16 的工作区变化与日期：新增 `message/environment`、`EnvironmentPayload`、必填的 `LoopPorts.localDate`（第 9 步声明）与 `MODEL_NOTES.environment`，§提示层 加「环境说明」，02 发本地日期（旧：§工作区「消息的 Tape 名字、文本和插入时点见 §开放问题……告知这一步不开工」，§提示层「形状定下就进 `MODEL_NOTES`」）；名字总表、§Tape slice、01 修补 7 的读取与投影、§每轮顺序、§重放怎么排、§前缀纪律、§挂点与会话视图、验收 32 同改。2026-09-26：owner 定开放问题第二、三轮（都在对应代码开工前）：(4) 开放问题 17：`LoopPorts` 只增必填的 `commandShell`（第 9 步声明，旧：「候选：经服务构造参数交入」），desktop 的 `shell-env.ts` 按用户终端解析基础环境；`ClosureSource` 只增 `timed-out`（旧：「超时后的执行状态与来源码……见 §开放问题」），§原因码表 加一行；stderr 在 fd 层并入 stdout，非零退出首行 `Exit code: N`、算 is_error（旧：「输出格式……见 §开放问题」）；验收 41 同改。(5) 开放问题 18 的三项：`RunEndReason` 只增 `time-limit`（结束码 17 → 18 个，验收 9、37、52 与 §结束原因词表 的文案条数同改；旧：「到期后怎么收尾还没定……定下之前不做到期检查」）；交接以其余原因结束一律 `partial`、不标 is_error（旧：占位）；HTML 由 kernel 的 WebFetch 用 `@mdream/js` 1.7.2 转，转前有 `FETCH_CONVERT_MAX_BYTES` 并按 charset 解码（旧：「在哪一层转、用哪个库未定」）。(6) WebSearch 超出次数上限记 `tool-unavailable`（旧：按参数不合法的同一路径）。
+Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。2026-09-26：开工前裁决表四行的落点对齐（第 1 步复核旧 75 时发现，规则本身不变）：B17 删去 §工具调用的收口（旧，该节无此规则）；D6 的 §Inspector 接口与合议（旧）改为 §内置工具的默认档位；F9 的 §判决记录与摘要（旧）改为 §载荷；§内置模型表的数据改动 的裁决标注补 A15。2026-09-26：glm-5.3-flash、glm-5.3-flashx 两行的 `supportsVision` 由 false（旧，§内置模型表的数据改动 写的「探测之前为 false」，即 01:706 的保守合成）定为 true，依据 plan 第 2 步的探测 V（2026-09-26：两行对 base64 传入的 64×64 纯红、纯蓝 PNG 都答对颜色，glm-5.3 对照返回 `400 1210`），旧开放问题 34 就此关闭；glm-5.3、glm-4.6 仍为 false。2026-09-26：owner 定开放问题第一轮，都在对应代码开工前，按 spec-driven-dev.md:52 就地修订：(1) 开放问题 15：`ConfirmTarget` 加第五种 `{ type: 'tool'; serverId; toolName }`（旧：四种形态，MCP 出卡暂缓），连接器卡的参数默认展开，五种形态的字符串字段都须非空；§`ConfirmRequest` 只增两个必填成员、§最小审批卡、§内置工具的默认档位 的 kind 一句、§判决记录与摘要 的卡片原料、§界面范围、验收 36、E4 一行与 §文档同步 的 components.md 一行同改；00 的 Amended by 行不改（它没列形态）。(2) 开放问题 16 的参数校验：来源码新增 `invalid-input`（§原因码表，`ClosureSource` 只增），校验器用 `@modelcontextprotocol/client` 的 `validators/cf-worker`，不加依赖；连接器 schema 本身用不了记 `tool-unavailable`，`MODEL_NOTES` 只增 `schemaUnusable`；内置附加检查改为三条（Edit 的 `old_string` 为空改由 schema 挡，加 WebSearch 两个域名参数同给）（旧：「来源码和校验器见 §开放问题」）；WebSearch 超出次数上限记哪个码另定（旧：「按参数不合法的同一路径」）。(3) 开放问题 16 的工作区变化与日期：新增 `message/environment`、`EnvironmentPayload`、必填的 `LoopPorts.localDate`（第 9 步声明）与 `MODEL_NOTES.environment`，§提示层 加「环境说明」，02 发本地日期（旧：§工作区「消息的 Tape 名字、文本和插入时点见 §开放问题……告知这一步不开工」，§提示层「形状定下就进 `MODEL_NOTES`」）；名字总表、§Tape slice、01 修补 7 的读取与投影、§每轮顺序、§重放怎么排、§前缀纪律、§挂点与会话视图、验收 32 同改。2026-09-26：owner 定开放问题第二、三轮（都在对应代码开工前）：(4) 开放问题 17：`LoopPorts` 只增必填的 `commandShell`（第 9 步声明，旧：「候选：经服务构造参数交入」），desktop 的 `shell-env.ts` 按用户终端解析基础环境；`ClosureSource` 只增 `timed-out`（旧：「超时后的执行状态与来源码……见 §开放问题」），§原因码表 加一行；stderr 在 fd 层并入 stdout，非零退出首行 `Exit code: N`、算 is_error（旧：「输出格式……见 §开放问题」）；验收 41 同改。(5) 开放问题 18 的三项：`RunEndReason` 只增 `time-limit`（结束码 17 → 18 个，验收 9、37、52 与 §结束原因词表 的文案条数同改；旧：「到期后怎么收尾还没定……定下之前不做到期检查」）；交接以其余原因结束一律 `partial`、不标 is_error（旧：占位）；HTML 由 kernel 的 WebFetch 用 `@mdream/js` 1.7.2 转，转前有 `FETCH_CONVERT_MAX_BYTES` 并按 charset 解码（旧：「在哪一层转、用哪个库未定」）。(6) WebSearch 超出次数上限记 `tool-unavailable`（旧：按参数不合法的同一路径）。2026-09-26：owner 定开放问题第四到六轮（都在对应代码开工前；各条的旧写法都是「见 §开放问题」或「暂定」）：(7) 12 外带检查写成 kernel 等价规则 `permission/exfiltration.ts`，02 不依赖 railguard，URL 豁免「去掉结尾标点」改为反复去掉、停止字符加反引号（§外带检查、§railguard 映射、§目录、§依赖方向与能力入口、F5 一行、验收 50 同改）；13 对话形态 Read 越界记 `protected`，回执用专用键 `blocked.chatReadScope`（§原因码表 的 `protected` 由两类改为三类，§决策表与各层输入 第 2 层、`LayerInputs.place`、拦截回执规则、`BlockedNotice` 同改）；21 按默认；22 两条线都本机抓取，T10 不再核；23 zhipu、anthropic 的内置行改了 baseURL 仍标 `verified`；24 删会话不删专用文件夹，所有 Read 自己按整行限长、从不落盘（§大响应落盘 的判断对 Read 永不成立，字符按 UTF-16 码元计）；25 空档一律 `uncertain`，`childEndReason` 为 null 时状态行填 `none`；16 的 `listing` 改为 01 修补 2 只增 `ModelInfo.listing?: 'main' | 'more'`（旧：desktop 主进程按 (providerId, modelId) 一张表），01 与本 spec 的 Amended by 摘要同补；18 子会话转上来的卡期限写「本次子任务」。
 
 ## 背景与问题
 
@@ -35,10 +35,10 @@ Provider 层选型与厂商分档见 [ADR-003](../../adr/adr-003-provider-layer.
 | T7 | 一句话问两座城市的天气 | glm-5.3 | 200 | `finish_reason=tool_calls`，一次返回 2 个 `get_weather`（北京、上海）；智谱 FAQ「每次只命中一个」已过时 | 按 usage |
 | T2 | 函数工具与 `web_search`（`search_std`）放在同一请求，问 A 股收盘 | glm-5.3 | 200 | 没有 `tool_calls`，也没有 `web_search` 字段，`finish_reason=stop`：搜索不生效（与 FAQ 一致） | 按 usage |
 | S1 | `POST $ZHIPU_BASE/web_search`，`count:3`，`search_engine` 依次取 `search_std`、`search_pro`、`search_pro_quark`、`search_pro_sogou` | — | 200 ×4 | 带链接的条数：std 0/3，pro 0/3，quark 3/3，sogou 50/50（忽略 `count`）；响应含 `search_intent`、`search_result` | **待核**（标价 0.01 / 0.03 / 0.05 / 0.05 元每次） |
-| T10 | `POST $ZHIPU_BASE/reader`，`return_format:"markdown"`，`retain_images:false` | — | 200 | 响应在 `reader_result{title, content, description, url, external, metadata}` 里，没有 `usage` | **待核**（文档未列价） |
+| T10 | `POST $ZHIPU_BASE/reader`，`return_format:"markdown"`，`retain_images:false` | — | 200 | 响应在 `reader_result{title, content, description, url, external, metadata}` 里，没有 `usage` | 不核（开放问题 22 已定本机抓取；2026-09-26 定价页仍未列 reader 价） |
 | effort | `chat/completions` 分别带 `reasoning_effort` 为 `low` / `high` / `max`，另发一次不传 | glm-5.3、glm-5.3-flash、glm-5.3-flashx | 全部 200 | glm-5.3 的 `reasoning_tokens`：low 23、high 42、max 104、不传 94。flash 分别为 26、36、37、53，flashx 为 19、39、60、37，单次样本噪声大。`medium` 未测 | 按 usage |
 
-**未跑**：T1、T3、T4、T9 只涉及 02 不发的对话补全内置 `web_search` 与 Responses 原生搜索，不补跑（裁决 H8）；glm-5.3、glm-4.6 上的 `tool_stream`，glm-4.6 的 `reasoning_content` 回传，E2 的智谱缓存，T8（`/api/anthropic`，不跑时同模型列留在 `/paas/v4`），以及 S1、T10 的次日账单，归 plan 第 0 步。
+**未跑**：T1、T3、T4、T9 只涉及 02 不发的对话补全内置 `web_search` 与 Responses 原生搜索，不补跑（裁决 H8）；glm-5.3、glm-4.6 上的 `tool_stream`，glm-4.6 的 `reasoning_content` 回传，E2 的智谱缓存，T8（`/api/anthropic`，不跑时同模型列留在 `/paas/v4`），以及 S1 的次日账单，归 plan 第 2 步（T10 不再核，开放问题 22）。
 
 **据此定下**：智谱交错思考加工具时按文档回传 `reasoning_content`（T6：不回传也不报 400，回传的本回合思考计入 `prompt_tokens`），glm-5.3、glm-4.6 由 `drop` 改 `reasoning-content`，新补的 flash、flashx 同样，这是 01 `spec.md:763` 预留的模型表数据改动，`clear_thinking` 用默认值，01 开放问题 2 就此关闭（裁决 A12）；智谱不开 opt-in 也给用量（01 验收 21 的 live 记录，01 `plan.md:89`：不带 `stream_options` 时，用量挂在带 `finish_reason` 的那一块上），01 `spec.md:345` 的 `include_usage` 理由不成立，01 `plan.md:139` 那条 Open 标为已结（裁决 A10）；glm-5.3、glm-5.3-flash、glm-5.3-flashx 声明 `low` / `high` / `max`，glm-4.6 不声明，`medium` 不声明（裁决 A1、A11）；智谱线 WebSearch 只差第 0 步补行，搜索后端的默认档由 H8 落点原文的 `search_std` 更正为 `search_pro_quark`（S1：std、pro 都是 0/3 带链接，quark 3/3 且遵守 `count`；¥0.05 / 次，次日账单待核），owner 2026-09-25 已确认（裁决 H8、M4）；本机抓取与 `HostNetwork.fetchUntrusted` 照做，`/reader` 没核价，不改走（裁决 H8、M2）。
 
@@ -74,7 +74,7 @@ Provider 层选型与厂商分档见 [ADR-003](../../adr/adr-003-provider-layer.
 | 能接、不保证 | 三家内置厂商下手填的表外模型 ID；内置定义改了 `baseURL`、指向其他主机（`zhipu` 或 `anthropic`，包括智谱 `/api/anthropic`、智谱国际站，以及 DeepSeek、Kimi、百炼、OpenAI 的兼容端点） | 手填模型只做纯文本；内置行被指到其他主机时照该行能力数据发，不保证；换主机要按 A9 重填 key | 不进验收 |
 
 - **代码只有一套。** 循环、权限、收口、工具表冻结都不按厂商分支；厂商差别只落在 provider 定义（数据）、线协议适配器、搜索后端（裁决 H8），以及 desktop 的两条规则：不带工具的 provider 名单（02 只有 `ollama`，`qwen3:8b` 的 `supportsToolCalling` 仍为 `true`，裁决 A14）和 key 绑定主机（裁决 A9）（裁决 M2）。
-- **行标记。** Ollama 标「本机 · 仅文字对话」，手填的表外模型标「未验证 · 仅文字对话」（裁决 A14、M6、A15）；内置行改了 `baseURL` 之后暂定仍标 `verified`，菜单行照常显示目标主机；「本机探测」随 M6 的 features spec 才有。ADR-003 的保证、能接上、纯文本三档对应已验证、本机探测、未验证 · 仅文字对话，是那份 spec 落地后的状态。
+- **行标记。** Ollama 标「本机 · 仅文字对话」，手填的表外模型标「未验证 · 仅文字对话」（裁决 A14、M6、A15）；zhipu、anthropic 定义的内置行改了 `baseURL` 之后仍标 `verified`，菜单行照常写用途句和目标主机（开放问题 23 已定）；「本机探测」随 M6 的 features spec 才有。ADR-003 的保证、能接上、纯文本三档对应已验证、本机探测、未验证 · 仅文字对话，是那份 spec 落地后的状态。
 - **不追求 Anthropic 独有的能力**，智谱 `/api/anthropic` 也不算 Anthropic 保证档（裁决 M2）：搜索只拿标题和链接，每次多一个模型子请求（裁决 H8）；`display` 不用 `updates`（裁决 A11）；不用服务端压缩（裁决 H10）；拒答后不自动换模型（裁决 H12）；产品代码发出的请求不带任何 `anthropic-beta`（裁决 A6），只有判定为老账号时 E2 前缀检查的测试请求带头（裁决 M4）。
 
 ### 非目标
@@ -91,7 +91,7 @@ Provider 层选型与厂商分档见 [ADR-003](../../adr/adr-003-provider-layer.
   - ChatGPT 订阅以后要做，有两个前提：`openai-responses` 线已落地（裁决 M7），OpenAI 的 SIWC 对第三方开放（裁决 M8）。
 - **provider 在服务端执行的能力。** 一律不发：Anthropic 服务端工具与 `mcp_toolset`、智谱对话补全的 `web_search` 与 `type=mcp`、智谱 Responses 的 `web_search`；搜索与抓取做成客户端工具（见 §搜索与抓取），代码执行只经任务形态的命令工具、每条都问（裁决 H8、D7）。适配器收到服务端调用块时不派发、不补结果、记一条错误，块存成 `replay: 'never'` 的原样块；`pause_turn` 按服务错误结束（裁决 H8、M3、B1、H12）。这改了主参考 §13:886 第 (3) 条，见 §文档同步。去向：Anthropic 原生服务端工具作为专属选项进后续 spec；智谱 Responses 原生搜索看 T9 再定。
 - **Anthropic 专属的优化。** 服务端压缩（接在同一条 anchor 上，前提是先 amend A2、把 beta 头列进 A6 白名单，裁决 H10）、拒答后自动换模型（裁决 H12）、任务形态的 `display: 'updates'`（有官方 key 后评估，裁决 A11）都留到后续。
-- **LLM 判官、注入扫描、其余规则 inspector 与 railguard 其余适配。** 02 只交付 Inspector 接口与一条确定性的外带检查（见 §权限引擎 · Inspector 与判决记录；裁决 F5、D6）。去向：阶段 4 随自动档；LLM 判官在那之前单独立题。
+- **LLM 判官、注入扫描、其余规则 inspector 与 railguard 适配。** 02 只交付 Inspector 接口与一条确定性的外带检查（见 §权限引擎 · Inspector 与判决记录；裁决 F5、D6）。去向：阶段 4 随自动档；LLM 判官在那之前单独立题。
 - **自动档与跳过档。** 阶段 2、3 只开手动档；kernel 实现并测试手动、自动两档，但没有切档的 IPC，`packages/contracts` 不暴露自动档，界面没有档位选择器（裁决 D6、D7）。去向：阶段 4；跳过档要做的话只在本会话沙箱生效时可选，由 kernel 或主进程强制（裁决 E6）。
 - **子 agent 的并发与后台。** 契约写全，实现只做一次一个、在前台跑（裁决 H5）。去向：阶段 6 做 Research 时。
 - **用户可配置的 MCP。** 02 的 MCP 只以 Everything 夹具接入端到端测试，夹具发起的 elicitation 一律拒绝（裁决 H4、H6）。去向：阶段 3（设置界面、OAuth、重连）。
@@ -211,7 +211,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 | F1 | 取最严；出错或超时按该 inspector 注册时声明的最严意见处理；接口里没有「放行」 | §Inspector 接口与合议（经 `createSessionService` 注册，01 修补 6）；§不变量；§文档同步（更正对 Goose 的描述） | — |
 | F2 | 你拒绝就结束本轮；机器拒绝让模型继续，连续 3 次封顶；子 agent 里的拒绝只拒这一次 | §多卡、拒绝与取代；§原因码表；§结束原因词表 | 自动档下连拦到上限怎么办：阶段 4 |
 | F3 | `tool/` 下加两个名字和一张待批表；重启时先重新判定，再重新投递 | §等待模型；§名字总表；01 修补 7（待批投影表、`listPendingApprovals`、`PROJECTION_VERSION` 加一）；00 修补（`HostConfirm` 可重复投递） | — |
-| F5 | 交付 Inspector 接口，外加一条确定性的外带检查：railguard 的致命三要素，不调模型，只作用于 WebFetch，只转成问人；接法暂定写等价规则，railguard 适配器为备选（见 §开放问题） | §外带检查；§railguard 映射（只在选适配器时）；§非目标 | 规则 inspector 与 railguard 其余适配：阶段 4 |
+| F5 | 交付 Inspector 接口，外加一条确定性的外带检查：railguard 的致命三要素，不调模型，只作用于 WebFetch，只转成问人；接法为 kernel 等价规则（开放问题 12 已定） | §外带检查；§railguard 映射（阶段 4 接 railguard 时用）；§非目标 | 规则 inspector 与 railguard 适配：阶段 4 |
 | F6 | 逐个答；同一批后面的调用以「排队中」叠在当前卡下面 | §多卡、拒绝与取代；§最小审批卡 | — |
 | F7 | 一律不超时；子 agent 等审批时 deadline 暂停，父 Run 同时暂停 | §待答项与终态；§子 agent 契约 | 没人可问的定时任务：阶段 6 |
 | F8 | 每次调用写一条判决事实，完整步骤只进 Tape；界面另拿一份不带层号的摘要 | §判决记录与摘要；§名字总表 | — |
@@ -223,7 +223,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 
 | id | 决定 | 落点 | 推迟到 |
 |---|---|---|---|
-| H1 | 分对话、任务两种形态，工具集分开；任务形态要求模型支持工具调用；对话形态 Read 越界时直接拦下、不出卡，拦截码暂定 `protected` | §会话形态；§会话事实；清空会话经 `resetSession` 只增的 `carry` 重写形态与工作区，01 修补 9 (u)，owner 已确认 | `code` 形态：阶段 6 前重估 |
+| H1 | 分对话、任务两种形态，工具集分开；任务形态要求模型支持工具调用；对话形态 Read 越界时直接拦下、不出卡，拦截码 `protected`（开放问题 13 已定） | §会话形态；§会话事实；清空会话经 `resetSession` 只增的 `carry` 重写形态与工作区，01 修补 9 (u)，owner 已确认 | `code` 形态：阶段 6 前重估 |
 | H3 | 最小正式版提前到阶段 2：单工具回执行、轮次结算行、失败卡基础三行、拦截回执、最小审批卡，加模型菜单、思考强度子菜单、菜单行标记、目标主机与本机切公网确认、手填模型 ID 输入框。owner：「⏎ = 拒绝」只用于可逆性为「不可逆」的卡，连接器卡仍是 ⏎ = 允许 | §界面范围；§文档同步（§8.5 阶段映射、components.md 补记、设置卡下拉改名「新会话默认模型」） | 完整审批卡：阶段 3 / 4 随快照 |
 | H4 | 按三种来源定形，MCP 只以 Everything 夹具接入；provider 在服务端执行的 MCP 阶段 2 不用 | §工具来源、命名与权限键 | 用户可配置的 MCP：阶段 3 |
 | H5 | 契约写全，实现只做前台串行；授权与工作区只往下继承，子会话只能收窄，子会话批的授权不回流父会话 | §子 agent 契约；§载荷（`session/parent_link`） | 并发与后台：阶段 6 |
@@ -259,7 +259,7 @@ packages/kernel/src/
   host/profile.ts        + toolOutputDirFor，与 profileDirFor（:22）并列
   loop/                  ports · events · mailbox · run · batch · limits · terminal · closure · waiting · subagent · compaction · spill   # 02 新定
   permission/            decide · record · inspector · session-view · reversibility · workspace              # 02 新定
-                         exfiltration（F5 取「等价规则」接法时才有）                                          # 02 新定
+                         exfiltration（F5 外带检查，开放问题 12 已定）                                          # 02 新定
   tools/                 registry（来源、命名映射、每请求上限）· table（会话 × provider 冻结）· mcp-source · validate（参数校验）      # 02 新定
     builtin/             read · write · edit · bash · glob · grep · agent · ask-user-question · web-search · web-fetch
     search/              types · select · zhipu · anthropic
@@ -283,7 +283,6 @@ apps/desktop/src/main/
   workspace.ts           专用文件夹路径、目录选择框、workspace.* 路由                                         # 02 新定
   approval.ts            approval.* 四条路由                                                                 # 02 新定
   startup-recovery.ts    启动恢复（§desktop 接线），完成前挡住读路由、发送与答复                              # 02 新定
-  inspectors/railguard.ts   只在 F5 取「适配器」接法时有                                                      # 02 新定
   index.ts · chat.ts · session.ts · provider.ts · provider-routes.ts · config.ts   改动见各节
   tape/sql/tape.sqlite.002.sql   02 的 sql 块，第 2 号迁移                                                    # 02 新定
 apps/server/sql/tape.postgres.002.sql   同上，只为一致性检查                                                  # 02 新定
@@ -312,7 +311,7 @@ export interface SessionServiceOptions {
 
 - `host` 改为完整的 `HostAdapter`（循环要用 `policy`、`fs`、`process`、`confirm`、`network.fetchUntrusted`、`clock.setTimeout`）；构造参数的修补全文与六处调用见 01 修补 6「kernel 服务的构造参数」。
 - inspector 拿不到写入器。阶段 2 不调结果后挂点：注册时带 `afterResult` 的，构造服务就抛错；`tool/result_marked` 只留名字，以后由 `permission/` 写（裁决 F10）。
-- 外带检查两种接法择一交付，都由 desktop 在 `index.ts` 放进 `inspectors`：适配器 `apps/desktop/src/main/inspectors/railguard.ts`（只依赖 kernel 的 inspector 类型、不存状态；kernel 不依赖 railguard），或 kernel 导出的等价规则 `permission/exfiltration.ts`；取哪种见 §开放问题（裁决 F5、F1、F10）。
+- 外带检查由 kernel 导出的等价规则 `permission/exfiltration.ts` 交付：kernel 从包根导出完整的 `InspectorRegistration`（`id: 'exfiltration'`、`kind: 'local-rule'`、`ceiling: 'ask'`），desktop 在 `index.ts` 放进 `inspectors`，apps/server 以后照样注册；02 不依赖 railguard（开放问题 12 已定；裁决 F5、F1、F10）。
 - 搜索后端的注册形状（02 新定，只增），和 provider 一样由 desktop 构造：
 
 ```ts
@@ -647,6 +646,7 @@ export type ConfirmTarget =
 export interface ModelInfo {                         // 已存在（types.ts:28）
   thinkingSpec?: ThinkingSpec                        // 新增；缺省 = 01 的行为逐字不变（含开发期与手填的合成行）
   purposeKey?: string                                // 新增：菜单用途句的 i18n 键，作为数据给出（照 ProviderDefinition.nameKey）
+  listing?: 'main' | 'more'                          // 新增：模型菜单的归类，缺省 = 'main'；只有 desktop 读（照 purposeKey；开放问题 16）
   pricing?: {                                        // 已存在（types.ts:48）
     inputPerMTok: number; outputPerMTok: number; cacheReadPerMTok?: number
     currency?: 'USD' | 'CNY'                         // 新增；缺省读作 USD（01 已有的价格都是美元）
@@ -699,7 +699,7 @@ export interface ProviderDefinition {                // 已存在（types.ts:157
 
 - `thinkingSpec` 各行取值是数据，随 plan 改 `definitions/*.ts`（裁决 A1、A12、A16）；智谱的 `thinking.type` 仍经 `requestParams` 写死（01 spec.md:345）。`forcedToolChoice` 主对话不读（主对话不发 `tool_choice`），只给 §搜索与抓取 的 Anthropic 子请求挑模型。
 - `AttemptRequestSnapshot`（tape/entry.ts:206）只增可选的 `effort`、`display`、`dropThinkingBefore`，仍只由 `requestSnapshot()`（wire/shared.ts:104）产出，记编码器**实际写出**的值（裁决 A1、A3）。
-- `pricing` 供评测算费用（usage × 价格，记币种和汇率），智谱各行补上（裁决 M8）。`purposeKey` 的键里不放原始模型 id（i18next 的分隔符），不进 `WIRE_MODEL_FIELDS`（裁决 H3、M5）。
+- `pricing` 供评测算费用（usage × 价格，记币种和汇率），智谱各行补上（裁决 M8）。`purposeKey` 的键里不放原始模型 id（i18next 的分隔符）；`purposeKey`、`listing` 都不进 `WIRE_MODEL_FIELDS`（裁决 H3、M5）。每个定义的第一行（新用户兜底，M5、A16）不能是 `listing: 'more'`。
 - `error.resetAt`（epoch 毫秒；裁决 H12）：Anthropic 的 `enforced_spend_limit_reached` 由适配器算成下月 1 日 00:00 UTC；智谱 1308、1310 等报文格式核实之前不填。
 - 厂商原样块（裁决 M3）：未知块、已知块上的未知字段、fallback 边界块都原样存进 Tape（anthropic-messages.ts:643-647 的 default 分支不再跳过）。encode() 让它们过 thinking 守卫，每项记进 thinkingDecisions：provider 或模型不同，按规则 1、2 丢；同厂商同模型，原样发回（`vendorFields` 并回原块，去向跟宿主块走）；`replay: 'never'` 一律不发，记 `drop / server-executed`。
 - `replay: 'never'` 只给服务端执行的调用块及其结果块：Anthropic 的 `server_tool_use`、`mcp_tool_use`、`caller` 不是 direct 的 `tool_use`，智谱的 `tool_calls[type=mcp]`。只存档，不回传、不派发（裁决 M3、B1、H8；§工具调用的收口）。
@@ -871,12 +871,12 @@ providerSelectionSchema = z.object({ id, modelId, source: z.literal('user').opti
 **provider.list**（裁决 A14、A15、A1、A9；只增）：
 
 ```ts
-export const modelMarkSchema = z.enum(['verified', 'local-text-only', 'unverified-text-only']) // 新增；'probed' 以后只增
+export const modelMarkSchema = z.enum(['verified', 'local-text-only', 'unverified-text-only']) // 新增；verified 含 baseURL 改指其他主机的 zhipu、anthropic 内置行（开放问题 23）；'probed' 以后只增
 providerModelSchema = z.object({
   id: modelIdSchema,                            // 已存在
   mark: modelMarkSchema,                        // 新增：main 按内置行与范围规则（A14）算
   purposeKey: z.string().optional(),            // 新增：用途句的目录键，取自 ModelInfo.purposeKey（H3）
-  listing: z.enum(['main', 'more']),            // 新增：这份归类数据放在哪，见 §开放问题
+  listing: z.enum(['main', 'more']),            // 新增：取自 ModelInfo.listing，缺省为 'main'（01 修补 2；开放问题 16）
   effortLevels: z.array(effortSchema).optional(), // 新增：照抄 thinkingSpec
   defaultEffort: effortSchema.optional(),       // 新增
 })
@@ -884,7 +884,7 @@ providerModelSchema = z.object({
 //   当前生效 baseURL 的主机。只有 loopback 标「本机」；loopback 与 private 一起算本机一侧，用于本机切公网的确认（§会话形态、工作区与模型选择）
 ```
 
-`listing` 的归类数据暂定由 desktop 主进程按 (providerId, modelId) 列一张表，不改 `ModelInfo`（见 §开放问题）。
+`listing` 取自 `ModelInfo.listing`（01 修补 2），没写的行为 `'main'`；手填与合成的 ModelInfo 不写这一键，按 `'main'` 显示（带各自的行标记），保守合成的规则不变（开放问题 16，owner 2026-09-26）。
 
 **session.messages 与内容块**（裁决 M3、B1）：
 - 响应是数组（session.ts:109），只增的写法是给 `messageRowSchema` 加可选的 `calls: z.array(z.object({ callKey: z.string().min(1), outcome: z.object(toolOutcomeViewShape).nullable() }))`，只在 assistant 行：`calls[i]` 对应这一行第 i 个 `tool-request` 块，还没有 `tool_outcome` 的为 null。暂定由 kernel 的投影组装，desktop 只转交。
@@ -955,7 +955,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 
 - 01 spec 顶部，在 `Status: implemented` 之下加第一行 `Amended by`，01 正文一字不动（裁决 M3、A4）。这一行的内容是：
 
-  `Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo 的思考描述、pricing 两键与 purposeKey，ProviderRequest 的 effort / display / dropThinkingBefore，厂商原样块，create() 的 clock，encode() 末轮须为 user，出网请求头白名单与流式超时，StreamEvent error 的 timeout 与 resetAt，HostNetwork.fetchUntrusted，fakeNetwork 的请求校验与抓取回放选项，Anthropic 顶层 cache_control，只增的错误与 finish_reason 映射，attempt 与 session/model_selected 载荷新键（含摘要请求的 compaction），重放读取工具事实，readBySource 起点，resetSession 的 carry，TapeClosedError，撤回即终局，hash_ver 规则，待批投影表与第 2 号迁移，schema 检查器按迁移锚定，createSessionService 的 inspectors / connector / protectedFiles / onUnansweredCall / log，chat.event 的 done.endReason 与四个新变体，session.messages 助手行的 calls，生成中发送改为入队与 chat.queue 事件、chat.queue.act / chat.sendNow / chat.continue 路由，会话级选模型的路由与 config.json 两个新键，provider.list 的模型标记 / 档位 / purposeKey / endpoint，表外模型手填，「已配置」的算法，key 绑定主机，启动恢复映射子会话。只增不改，全文与理由在该 spec，不属纯粹只增的几处在该节末尾点名；选型理由的更正见 [ADR-003](../../adr/adr-003-provider-layer.md)）`
+  `Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo 的思考描述、pricing 两键、purposeKey 与 listing，ProviderRequest 的 effort / display / dropThinkingBefore，厂商原样块，create() 的 clock，encode() 末轮须为 user，出网请求头白名单与流式超时，StreamEvent error 的 timeout 与 resetAt，HostNetwork.fetchUntrusted，fakeNetwork 的请求校验与抓取回放选项，Anthropic 顶层 cache_control，只增的错误与 finish_reason 映射，attempt 与 session/model_selected 载荷新键（含摘要请求的 compaction），重放读取工具事实，readBySource 起点，resetSession 的 carry，TapeClosedError，撤回即终局，hash_ver 规则，待批投影表与第 2 号迁移，schema 检查器按迁移锚定，createSessionService 的 inspectors / connector / protectedFiles / onUnansweredCall / log，chat.event 的 done.endReason 与四个新变体，session.messages 助手行的 calls，生成中发送改为入队与 chat.queue 事件、chat.queue.act / chat.sendNow / chat.continue 路由，会话级选模型的路由与 config.json 两个新键，provider.list 的模型标记 / 档位 / purposeKey / listing / endpoint，表外模型手填，「已配置」的算法，key 绑定主机，启动恢复映射子会话。只增不改，全文与理由在该 spec，不属纯粹只增的几处在该节末尾点名；选型理由的更正见 [ADR-003](../../adr/adr-003-provider-layer.md)）`
 - 01 plan.md:139 的 Open 条目（智谱的 `usageNeedsOptIn`）标为已结：智谱不开 opt-in 也给用量，01 spec.md:345 的 `include_usage` 理由不成立（裁决 A10）。plan 不受冻结规则约束，直接改。
 - 01 开放问题 2 已由厂商文档回答：智谱带工具时要回传 `reasoning_content`。glm-5.3、glm-4.6 按 01 spec.md:763 预留的「ModelInfo 一行改动」改为 `reasoning-content`，`clear_thinking` 暂用默认值，历史思考照守卫规则 4 回传；数据改动，放在 plan 第 0 步（裁决 A12；其余行见 §内置模型表的数据改动）。
 
@@ -998,7 +998,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 
 | 形态 | 发给模型的候选工具（名字见 §内置工具与工具来源） | 限制 |
 |---|---|---|
-| 对话 | AskUserQuestion、WebSearch、WebFetch、Read | Read 只接受本会话落盘目录（H9）下的路径，其余路径在调用时直接拦下、不出卡：对话形态没有工作区，填不出 `outside-workspace` 的必填槽位。拦截码暂按 `protected`（见 §开放问题）。当前 provider 没有搜索后端时不含 WebSearch。不能执行代码（裁决 H1） |
+| 对话 | AskUserQuestion、WebSearch、WebFetch、Read | Read 只接受本会话落盘目录（H9）下的路径，其余路径在调用时直接拦下、不出卡：对话形态没有工作区，填不出 `outside-workspace` 的必填槽位。拦截码 `protected`，回执用对话形态专用的一句（开放问题 13 已定）。当前 provider 没有搜索后端时不含 WebSearch。不能执行代码（裁决 H1） |
 | 任务 | 对话的四个，再加 Write、Edit、Bash、Glob、Grep、Agent | Read 不受上面的目录限制，按 §权限决策顺序 判定。输入框下方有文件夹 chip（裁决 H1、D11） |
 
 形态只决定候选工具集；开表、排序、冻结和排除按 §工具目录与冻结（裁决 E2）。工具表只放审批和收口都已做完的工具，按砍法砍掉的不在集合里（裁决 M1）。本会话不发工具时，两种形态都是零工具，见 §表外模型与不发工具。
@@ -1009,7 +1009,7 @@ endpointOrigin?: string                                // URL.origin：只留协
   - 用户在文件夹 chip 里选：主进程弹出系统的目录选择对话框，可以多选。所选只对本会话有效，不是持久授权。
   - 预填：`config.json` 的 `lastWorkspaceFolders`。所选列表每次变化，都把变化后的列表写进去；回落到专用文件夹时不写，保留上一次所选。chip 只展示这份记录，用户点确认后才进本会话的列表，确认之前不参与任何判定。
   - 文件夹进列表只有两条路：主进程自己的目录对话框，或主进程自己读出的预填记录。渲染端传不进路径，只能移除列表里已有的项。这条按 A9「渲染端可能被攻破」推出，owner 2026-09-25 已确认。
-  - 没选，或全部移除时，用本会话的专用文件夹 `<home>/Tenon/workspaces/<userId>/<tenantId>/<sessionId>/`。它不在 profile 目录里；带 `tenantId`，因为 AGENTS.md 要求每个存储键都带租户；每个会话一个、不共用（共用就等于别的会话写下的文件在本会话免问可读）。路径由 desktop 的 `workspace.ts` 在会话建立时算出，写进工作区事实；目录要等第一次写入或第一次起进程前才由 host 创建。这个名字只写在 02，不修补 00。删除会话时不删它（暂定，见 §开放问题）。
+  - 没选，或全部移除时，用本会话的专用文件夹 `<home>/Tenon/workspaces/<userId>/<tenantId>/<sessionId>/`。它不在 profile 目录里；带 `tenantId`，因为 AGENTS.md 要求每个存储键都带租户；每个会话一个、不共用（共用就等于别的会话写下的文件在本会话免问可读）。路径由 desktop 的 `workspace.ts` 在会话建立时算出，写进工作区事实；目录要等第一次写入或第一次起进程前才由 host 创建。这个名字只写在 02，不修补 00。删除会话时不删它：里面是会话的产物，也可能有用户自己放进去的文件，删了没法还原。阶段 6 删除会话的确认文案要写明它会保留，「一起删」或「移到废纸篓」由那份 spec 作为用户勾选的另加选项来定（开放问题 24 已定）。
 - **路由**（02 自己的路由，不属于对 01 的修补；contracts 只增）：`workspace.pick`、`workspace.usePrefill` 的请求体只有 `sessionId`，`workspace.remove` 另带一个 `folder`。成功时返回变化后的整张列表；用户在对话框里点取消，原样返回当前列表，不写事实。拒绝码三个：`not-cowork`（形态是对话，包括暂存的形态）、`unknown-session`（既没建立也没暂存）、`not-in-list`（要移除的路径不在列表里）。拒绝时列表和事实都不变。
 
   ```ts
@@ -1078,7 +1078,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 | `definitions/zhipu.ts` | 各行补 `pricing`（`currency`、`cacheWritePerMTok` 见 01 修补 2）；`glm-4.6` 的定价页没列价格，不填（M8） |
 | `definitions/anthropic.ts` | 加 `claude-opus-5-5`：1M / 128K，$4 / $20，读缓存 $0.20，写缓存（5 分钟档）$5。思考字段按 A1：常开、默认 medium、档位 low 到 max、不能强制 tool_choice、采样参数只接受默认值（A16、A1） |
 | `definitions/anthropic.ts` | 行序（A16 ownerNote）：官方 key 到手、并通过 §验收标准 里 Anthropic 组的前缀验收之前，Sonnet 5 排第一、Opus 5.5 排第二；通过之后 Opus 5.5 排第一。起草时是前一种状态。按 M5，第一行只给新用户兜底 |
-| `definitions/anthropic.ts` | Opus 5（Legacy）收进「更多模型 ›」（`listing: 'more'`，01 修补 6）；Fable 5.1 菜单行第二行的本地化文案写「需要组织开启 30 天数据保留」（A16） |
+| `definitions/anthropic.ts` | Opus 5（Legacy）收进「更多模型 ›」（`listing: 'more'`，01 修补 2、6）；Fable 5.1 菜单行第二行的本地化文案写「需要组织开启 30 天数据保留」（A16） |
 
 注释改动（A16、A14）：anthropic.ts 第 13 行、第 71–73 行两处过时注释改掉，Haiku 4.5 的注释写明暂定退役日（不早于 2026-10-15）和「退役前至少提前 60 天通知」，`.env.example:13` 的「Unset = claude-opus-5」改掉；ollama.ts 的 `qwen3:8b` 能力位不动，`contextLimit` 注释的依据改为「显存分档的最低一档」。
 
@@ -1316,7 +1316,7 @@ export type CompactionAnchorPayload = {
 | 1 | 已完成 | `tool/result` 与 `tool_outcome` 都在 | 不动。其中没有 dispatch、effect 却是 `write` 或 `external` 的，只记错误（测试和开发构建抛出） |
 | 2 | 等待 | 待批表里有它的行；或者它是 Agent 调用、有 `parent_link`，而子会话在待批表里有行或是可续跑项；或者它和这样一个 Agent 调用同批、排在后面、还没有判决 | 原样保留（裁决 B1、F3、H5） |
 | 3 | 损坏 | result 和 outcome 只有一条；或者 `dispatch.decisionKey` 指向的，既不是放行判决，也不是有 `allowed` 答复的问人判决；或者各事实的 `providerToolCallId` 与 `tool/call` 不一致 | 按 B1 的兜底，补写缺的那一条（两条都缺就写两条），来源 `repair`；要补 outcome 时，执行状态按 §原因码表 的 `repair` 一行取（没有 dispatch 的记 not-run，有 dispatch 的记 uncertain），并记错误；测试和开发构建直接抛出（裁决 B1） |
-| 4 | 收交接 | Agent 调用，有 dispatch 和 `parent_link`，没有 result 和 outcome（子会话已经不在等） | 按 §交接，从子会话 Tape 机械生成交接（`finalReply`、`calls`、`childEndReason` 照取），写成结果。`outcome` 暂一律记 `uncertain`、来源 `crashed`，与 §停止、新消息、退出与重启 末条一致；要不要改成取子会话的真实结局（只有以 `recovered` 结束或根本没建成的才记 `uncertain`），见 §开放问题 第 25 条（裁决 H5、B1、F11） |
+| 4 | 收交接 | Agent 调用，有 dispatch 和 `parent_link`，没有 result 和 outcome（子会话已经不在等） | 按 §交接，从子会话 Tape 机械生成交接（`finalReply`、`calls`、`childEndReason` 照取），写成结果。`outcome` 一律记 `uncertain`、来源 `crashed`，与 §停止、新消息、退出与重启 末条一致；子会话最后一个 Run 以 `paused` 结束、没有 Run 或根本没建成的，`childEndReason` 记 null，状态行照 §交接 填 `none`（开放问题 25 已定；裁决 H5、B1、F11） |
 | 5 | 不确定 | 有 dispatch，没有 result 和 outcome | `uncertain`、来源 `crashed`，不自动重跑（裁决 B1） |
 | 6 | 未派发 | dispatch、result、outcome 都没有 | `not-run`、来源 `crashed` |
 
@@ -1492,7 +1492,7 @@ export type RunEndReason =
 | `superseded` | 有待批时你发了新消息；同批后面没处理的也记这个码 | not-run；子 agent 的 Agent 调用记 aborted | 否 | F11 |
 | `policy` | 组织策略拒绝，包括工具表冻结之后才被禁、答复前重新判定时被拒 | not-run | 是 | D5、E2、F3 |
 | `user-disabled` | 工具表冻结之后才被你关掉 | not-run | 是 | D5、E2 |
-| `protected` | 两类：D2 第 2 层保护名单；H8 抓取器按字面拦下的 URL，以及 host 解析 DNS 后以 `HostNetworkDeniedError` 拒绝的（判据见 §本机抓取器） | not-run | 是 | D5、D2、H8 |
+| `protected` | 三类：D2 第 2 层保护名单；H8 抓取器按字面拦下的 URL，以及 host 解析 DNS 后以 `HostNetworkDeniedError` 拒绝的（判据见 §本机抓取器）；对话形态里 Read 落在本会话落盘目录以外的路径 | not-run | 是 | D5、D2、H8、H1 |
 | `inspector` | inspector 拒绝，包括会拒绝的 inspector 出错时按拒绝处理 | not-run | 是 | D5、F1 |
 | `tool-unavailable` | 续跑或恢复时新代码执行不了冻结的旧定义；重新判定时工具已经不在；模型调用了冻结表里没有的名字（例如子会话里调 Agent）；连接器工具的 inputSchema 本身用不了（构造或调用校验器时抛错）；WebSearch 超出本会话次数上限（§审批、授权与费用） | not-run | 否 | E2、F3、H8、开放问题 16 |
 | `invalid-input` | 参数不合法：在冻结的表里查到工具之后、判权限之前，没通过 inputSchema 校验或内置工具的附加检查（§内置工具与参数） | not-run | 否，也不计入机器拒绝 | 开放问题 16 |
@@ -1526,7 +1526,7 @@ export const BLOCKED_FACT_KEYS: Readonly<Record<BlockReason, readonly string[]>>
 // ToolOutcomePayload 只增一个成员：facts?: Record<string, string>，只在 source 是 BlockReason 时有，键为 BLOCKED_FACT_KEYS[source]
 ```
 
-拦截回执只读 `tool_outcome` 的 `source` 和 `facts`。判决时拦下的，值取自 `Decision.block.facts`（见 §判决记录与摘要）；host 在派发后拒绝的没有判决事实，由写收口的一方填（裁决 D5、F8）。
+拦截回执只读 `tool_outcome` 的 `source` 和 `facts`，唯一的例外是对话形态的 Read 被 `protected` 拦下时另读会话形态、改用专用的一句（开放问题 13）。判决时拦下的，值取自 `Decision.block.facts`（见 §判决记录与摘要）；host 在派发后拒绝的没有判决事实，由写收口的一方填（裁决 D5、F8）。
 
 ### 写入：谁写、写几次
 
@@ -1629,7 +1629,7 @@ readonly log?: (line: string) => void          // 诊断去处：服务端块、
 
 - `run_started{ resume }` 的 cause 除 `pausedRunId` 外只增 `batch: { runId, requestSeq }`，指向这批调用所在的请求；续跑取模型与档位、恢复读调用事实都靠它（裁决 F3、B1）。
 - 在后一个 Run 里才执行的调用，结果仍挂在原 `(runId, requestSeq)` 下，实际写入者记在 `writer`（裁决 B1、F3）。
-- 牵涉子 agent 的停止与取代跨两个会话，写不进一次 append（`TapeAppendBatch` 按会话分，store.ts:163）：先写子会话，再写父会话。两次之间崩溃，父会话的 Agent 调用按现行判据记 `uncertain`（§停止、新消息、退出与重启）。
+- 牵涉子 agent 的停止与取代跨两个会话，写不进一次 append（`TapeAppendBatch` 按会话分，store.ts:163）：先写子会话，再写父会话。两次之间崩溃，父会话的 Agent 调用记 `uncertain`（§停止、新消息、退出与重启；开放问题 25 已定）。
 
 ### 待批表
 
@@ -1817,7 +1817,7 @@ export const approvalList = defineRoute('approval.list', {
 参数语义（没列到的默认值取 `sdk-tools` 注释里写的）：
 
 - **路径**：`file_path`、`path` 必须是绝对路径（sdk-tools:877；`HostFs` 只收 `AbsolutePath`，`packages/kernel/src/host/adapter.ts:14`）。文件工具只对 `locatePath` 解析出的 `real` 执行（见 §「在不在工作区里」第 5 步）。
-- **Read**：`offset` 是起始行号、从 1 起，`limit` 是行数（sdk-tools:863-868）。只读文本。返回时每行前加「行号 + 制表符」，行号从 1 起；Edit 的描述写明 `old_string` 不含这段前缀。
+- **Read**：`offset` 是起始行号、从 1 起，`limit` 是行数（sdk-tools:863-868）。只读文本。返回时每行前加「行号 + 制表符」，行号从 1 起；Edit 的描述写明 `old_string` 不含这段前缀。单次结果（含行号前缀与末尾说明）不超过 `SPILL_THRESHOLD_CHARS`，与落盘判断用同一个计数函数：从 `offset` 起按整行取，下一整行放不下就停；只在提前停下时（没到文件末尾、也没到 `offset + limit - 1`）末尾加一句英文，写明总行数、本次的行范围和下一段的 `offset`。一行本身就放不下时，只给这一行的前一部分（不切开代理对），说明里写明第 N 行已截断、下一段从 N+1 起；这一行剩下的部分 Read 读不到（任务形态可以用 Grep、Bash；对话形态读不到）。这句说明属于 Read 的结果模板，纳入提示层版本。因此 Read 的结果从不落盘（开放问题 24，owner 2026-09-26）。
 - **Write**：整个文件覆盖。父目录不存在时先调 `HostFs.mkdirp`。
 - **Edit**：`old_string` 在文件里恰好出现一次才替换；`replace_all` 默认 false，为 true 时替换全部（sdk-tools:854）。
 - **Glob、Grep**：省略 `path` 时取工作区事实的 `folders[0]`（裁决 D11）。Grep 默认：`output_mode` 为 `files_with_matches`（sdk-tools:910）；`-n` true、`-o` false，这两个与 `-A`、`-B`、`-C`、`context` 只在 `content` 模式生效；`head_limit` 250，0 表示不限；`offset` 0；`multiline` false；`type`、`glob` 和正则方言跟 ripgrep。Glob 结果按路径码元升序，遍历不跟随指向工作区外的链接（暂定）。
@@ -1831,7 +1831,7 @@ export const approvalList = defineRoute('approval.list', {
 
 各形态可用的工具（裁决 H1、H5、H6、H8、H9）：
 
-- **对话形态**：AskUserQuestion、WebSearch、WebFetch、Read。Read 经 `locatePath`（`roots` 传空）只在结果为 `own-spill`（`tool-output/<sessionId>/` 之内）时执行，其余路径调用时直接拦下、不出卡（`tool-output/<id>/../config.json` 因此读不到）；拦截码见 §开放问题，定之前按 `protected`。
+- **对话形态**：AskUserQuestion、WebSearch、WebFetch、Read。Read 经 `locatePath`（`roots` 传空）只在结果为 `own-spill`（`tool-output/<sessionId>/` 之内）时执行，其余路径调用时直接拦下、不出卡（`tool-output/<id>/../config.json` 因此读不到）；拦截码 `protected`（开放问题 13 已定）：判定时 `own-spill` 以外的结果一律按 `place: 'protected'` 交给 decide，第 1 层没拒时第 2 层拒、`decidedBy: 'protected'`，facts 为 `toolName` 与 `target`（真实路径）；这类调用的 `callReason` 记 `default`。
 - **任务形态**：十个全有。**子 agent**：父表的子集，一定不含 AskUserQuestion 和 Agent（§会话、识别与工具集）。**不发工具的模型**（A14、A15）：一个都不发。
 - **WebSearch** 两种形态都是候选；当前 provider 没有搜索后端时开表以 `no-search-backend` 排除（裁决 H8、E4、E2）。
 - 没有删除工具，删除只能经 Bash（每条都问）；Glob、Grep 是独立的只读工具，不经 Bash（裁决 H7、E4）。
@@ -2014,7 +2014,7 @@ export interface FrozenToolTable {
 | 层 | 来源 | 能做什么 | 作用域 | 存在哪 |
 |---|---|---|---|---|
 | 1 租户策略 | 组织管理员；6b 起由服务端下发；个人租户的策略恒为空，阶段 2 的桌面端就是个人租户 | 拒（整个工具、整个连接器；按参数拒的字段 6b 只增）；要求每次都问；点名放开某个不可逆工具；关掉自动档。6b 起可以给任何工具指定可逆性档位（E1），连接器工具按指定的档位处理（D10） | 租户 | `HostAdapter.policy` 的快照，由 host 在本机缓存（D4） |
-| 2 保护名单 | host 内置：Tenon 的 profile 目录；UX 点名的 shell 配置文件；WebFetch 的非 http(s) 地址、回环 / 私网 / 链路本地地址、不带点的主机名、带凭据的 URL（H8） | 拒，不给放行入口。唯一的窄口：本会话自己的 `tool-output/<sessionId>/`，只读调用由本层放行（`said: 'allow'`），写仍拒（H9）。阶段 4 之前，命令碰到这些路径靠「每条命令都问」兜底；阶段 4 由沙箱的 denyRead / denyWrite 补齐 | 全局 | host 代码，不可配置 |
+| 2 保护名单 | host 内置：Tenon 的 profile 目录；UX 点名的 shell 配置文件；WebFetch 的非 http(s) 地址、回环 / 私网 / 链路本地地址、不带点的主机名、带凭据的 URL（H8） | 拒，不给放行入口。唯一的窄口：本会话自己的 `tool-output/<sessionId>/`，只读调用由本层放行（`said: 'allow'`），写仍拒（H9）。对话形态里 Read 落在这个窄口以外的一律按保护名单拒（H1；开放问题 13）。阶段 4 之前，命令碰到这些路径靠「每条命令都问」兜底；阶段 4 由沙箱的 denyRead / denyWrite 补齐 | 全局 | host 代码，不可配置 |
 | 3 用户禁用 | 关掉的连接器；设成「永不」的连接器工具，键为 (tenantId, serverId, toolName) | 只能拒 | 用户默认 | profile 目录 |
 | 4 必须问 | ① host 判定为撤不回（`reversibility === 'irreversible'`，E1）；② server 显式声明 requiresUserInteraction（D12） | 必须问，答复只管这一次，任何审批档和会话授权都免不掉。① 只有三种有意的放开能免掉（D10）；② 谁都免不掉 | 单次 | 不存；判决写进 Tape |
 | 5 机器收紧 | Inspector 管线。02 交付接口、测试用的假 inspector 和一条只会问人的外带检查（F5） | 只能把放行改成问、把问改成拒；超时或出错时，按这个 inspector 注册时声明的最严意见处理（F1） | 单次 | 不存；以后判官如果缓存结果，只缓存「要问」 |
@@ -2035,7 +2035,7 @@ export interface LayerInputs {
   // 第 1 层：本次判决唯一一次 policy.current() 的结果（D4）。命中哪些规则，由 decide 按 call.tool 的 (serverId, originalName) 自己匹配
   readonly policy: PolicyState
   // 第 2 层
-  readonly place?: PathPlace          // 只在文件工具有，locatePath 的结果（D8）
+  readonly place?: PathPlace          // 只在文件工具有，locatePath 的结果（D8）；对话形态里 own-spill 以外的改记 'protected'（开放问题 13）
   readonly urlBlocked?: true          // 只在 WebFetch 有：URL 字面命中第 2 层的地址规则（H8）
   // 第 3 层：只对 MCP 工具有意义。02 没有产生方，只由测试注入；来源随阶段 3 的连接器入口定
   readonly connectorOff?: true
@@ -2331,12 +2331,12 @@ export interface ResultMarker { readonly code: string } // 例：'looks-like-inj
   - **碰过私有数据**：本会话有任一 Read 或 Grep 已派发且目标不在本会话落盘目录下，或有任一 Bash 已派发（不看结果）。Glob 只返回路径，不算。
   - **读进过不可信内容**：本会话有任一 WebSearch 或 WebFetch 已派发；被拒、被拦、没轮到派发的不算。
 - **豁免**：`fetchUrlVouched` 为真时照常按域名授权，条件是 URL 出现在本会话某条真人 `message/user` 的文本里，或某次 WebSearch 结果的 `searchHitUrls` 里（子会话的来源见 §授权、工作区与外带检查的继承）。模型自己拼的 URL（包括写进 Agent `prompt` 的）和网页里的链接都不豁免（裁决 F5、H5）。算法（owner 已确认）：
-  - 从消息文本取 URL：只认 `http://` 或 `https://` 开头的片段，不分大小写；片段延伸到第一个空白、全角标点（，。、；：！？（）【】「」《》“”‘’）或 `<>"'` 之前，再去掉结尾的 `.,;:!?)]}`。不带 scheme 的（如 `example.com/x`）不算。
+  - 从消息文本取 URL：只认 `http://` 或 `https://` 开头的片段，不分大小写；片段延伸到第一个空白、全角标点（，。、；：！？（）【】「」《》“”‘’）或 `<>"'` 与反引号之前，再反复去掉结尾的 `.,;:!?)]}`，直到结尾不是这些字符（`[文字](URL).` 这样的写法也能命中）。不带 scheme 的（如 `example.com/x`）不算。
   - 比较：两边都按 WHATWG URL 解析，去掉 `#` 片段后比较 `href`，逐字相等才算出现；解析不了的不算。
 - **只管 WebFetch**（WebSearch 调用本身、命令、写入都不触发）。**对话形态**里「碰过私有数据」永远不成立（裁决 F5、H1）。
-- 注册为 `ceiling: 'ask'`、`kind: 'local-rule'`，出错也按问人（裁决 F5、F1）。接法二选一：经适配器接 railguard 的 `lethalTrifecta`，或 kernel 导出一条等价规则 `permission/exfiltration.ts`；都由 desktop 在 `index.ts` 放进 `inspectors`，kernel 侧完全一样。由 owner 定，最晚 ③ 搜索与抓取开工前（§开放问题）。
+- 注册为 `ceiling: 'ask'`、`kind: 'local-rule'`，出错也按问人（裁决 F5、F1）。规则是 kernel 的纯函数 `permission/exfiltration.ts`：调用来源是内置工具（`call.tool.source === 'builtin'`）且是 WebFetch、碰过私有数据、读进过不可信内容、`fetchUrlVouched` 为假，四条都成立就返回 `{ kind: 'ask', category: 'exfiltration', findings: [{ code: 'lethal-trifecta' }] }`，否则放行；由 desktop 在 `index.ts` 放进 `inspectors`（开放问题 12，owner 2026-09-26 按默认定：railguard 0.7.0 的 `lethalTrifecta` 只是三个量的合取，三个量 kernel 本来就要算，接它只多一个依赖）。
 
-### railguard 映射（只在选适配器时）
+### railguard 映射（02 不用，阶段 4 接 railguard 时用）
 
 - 适配器在 kernel 外面（`apps/desktop/src/main/inspectors/railguard.ts`），只依赖 kernel 的 inspector 类型，不存状态。每次调用从 `view` 重建 `GuardContext.taint`：`untrustedSources`、`touchedPrivateData` 取自会话视图，`externalCommsRequested` 从 `false` 开始。
 - `isExternalComm` 只收 `(toolName, args)`（railguard@939027d `src/rules/taint.ts:16`），所以每次调用新建一个闭包带进这次的 `fetchUrlVouched`：只有 WebFetch 且不豁免时返回真（裁决 F10、F5）。
@@ -2350,7 +2350,7 @@ export interface ResultMarker { readonly code: string } // 例：'looks-like-inj
 | 规则出错：`check` 抛错、`status: 'error'`，或者流水线的 `HookRunResult.errors` 非空（`failMode: 'open'` 时 `ok` 仍可能是 `true`） | 适配器抛错，由 kernel 按注册时声明的最严意见处理：声明 `ask` 的问人，声明 `deny` 的拒绝。不沿用概率性规则默认的出错放行 |
 | `mode: 'observe'` 的命中 | 没意见；命中作为发现，只进判决记录 |
 
-`status: 'skipped'` 怎么映射随接法一起定（§开放问题）。spotlight 改的是模型看到的文字，属于提示层，不接在这里（裁决 F10）。
+`status: 'skipped'`（0.7.0 只有声明，没有规则产出）按规则出错处理（开放问题 12 已定）。spotlight 改的是模型看到的文字，属于提示层，不接在这里（裁决 F10）。
 
 ### 判决记录与摘要
 
@@ -2463,7 +2463,7 @@ export function toolOutputDirFor(profileDir: AbsolutePath, sessionId: string): A
 export type SpillRecord = { file: string; bytes: number; sha256: string } // ToolResultPayload.spill? 的类型，由 §载荷 引用
 ```
 
-- **判断点只有一个**：循环写 `tool/result` 之前，按这次结果全部 `text` 段的总字符数判断，与工具种类无关；成功、失败都落盘，WebFetch、WebSearch 用同一阈值（裁决 H9）。`image` 块不计入、不落盘，原样留在 content 里，排在说明文本之后。Read 读落盘文件时单次结果本身超阈值要不要例外，待 owner 定（§开放问题）。
+- **判断点只有一个**：循环写 `tool/result` 之前，按这次结果全部 `text` 段的总字符数判断，与工具种类无关；成功、失败都落盘，WebFetch、WebSearch 用同一阈值（裁决 H9）。`image` 块不计入、不落盘，原样留在 content 里，排在说明文本之后。Read 自己把单次结果限在阈值以内（§内置工具与参数），这个判断对它永远不成立（开放问题 24 已定）。字符数按 UTF-16 码元计（`String.length`），切分不拆开代理对。
 - **写入**：kernel 经 `HostFs.mkdirp` / `writeFile` 写 `toolOutputDirFor(...)/<file>`，各 `text` 段按原顺序以 `\n` 拼接，UTF-8。先写文件，再写 `tool/result`；写盘失败，这次结果回 is_error。`file` 是相对文件名 `<runId>-<requestSeq>-<i>.txt`，由 kernel 按调用身份生成，不取模型或厂商给的任何字符串。目录位置见 §本地持久化布局：只加一行（裁决 H9）。
 - **模型看到什么**：content 里的文本换成英文说明 `MODEL_NOTES.spill`（填 `{preview}` `{path}` `{bytes}`，提示用 Read 的 `offset` / `limit` 分段读）。`{path}` 是绝对路径，只出现在这段文本里。预览取全文开头 `SPILL_PREVIEW_CHARS` 个字符，失败结果也一样。这段文本存进 `tool/result` 的 content，`kernelAuthored: false`，重放原样取，不按新代码重新渲染（裁决 H9、A13）。
 - **Tape 记什么**：content 只有这段说明，另加 `spill`：`bytes` 是文件的 UTF-8 字节数，`sha256` 是文件字节的 SHA-256（hex，在追加事务之外算）。全文和绝对路径都不进任何 Tape 载荷（裁决 H9）。
@@ -2582,7 +2582,7 @@ export declare function subagentElapsedMs(
 export interface SubagentHandoff {
   readonly childSessionId: string
   readonly outcome: 'completed' | 'partial' | 'aborted' | 'superseded' | 'uncertain'
-  readonly childEndReason: RunEndReason['code'] | null // 子会话最后一个 Run 的结束原因；子会话停在等待上时被停止或取代，记 null
+  readonly childEndReason: RunEndReason['code'] | null // 子会话最后一个 Run 的结束原因；子会话停在等待上时被停止或取代、没有 Run 或没建成，记 null
   readonly finalReply: string                           // 子会话最后一条 message/assistant 的文本块原样拼接，没有就是 ''
   readonly calls: readonly HandoffCall[]                // 子会话的每个工具调用各占一行，按 Tape 顺序
   readonly usage: readonly RunUsageLine[]               // 子会话各 Run 的 run_terminal.usage，按 (providerId, modelId) 合并，origin 为 'own'
@@ -2598,7 +2598,7 @@ export interface HandoffCall {
 - 生成时机：子会话最后一个 Run 的终态、子会话里的收口都写完之后，由循环从子会话 Tape 机械生成，不调模型（裁决 F11）。
 - `outcome`：`completed`，子会话最后一个 Run 以 `completed` 结束；`partial`，子会话到了 `SUBAGENT_DEADLINE_MS`，或到了它更小的步数上限 `SUBAGENT_STEP_LIMIT`（与 `SUBAGENT_TOKEN_LIMIT` 同在 `loop/limits.ts`，两个值都由 owner 给，拿到之前子 agent 不开工，见 §开放问题），父级可以再派一个新的子会话，子会话里不出现「继续」（裁决 H5、H11）；`aborted`，停止、退出或关窗，含子会话已以 `completed` 等原因提交终态、父会话收交接之前被停止、关窗或退出的（`childEndReason` 照取，§主进程与 kernel 的循环接口「Run 结束」）（裁决 B1、B4）；`superseded`，被新消息取代（裁决 F11）；`uncertain`，崩溃后由启动恢复补写（裁决 B1）。后三种按 §原因码表 写成 is_error。
 - 子会话最后一个 Run 以其余原因结束（`time-limit`、`usage-limit`、`no-progress`、`blocked-repeatedly`、`provider-error`、`context-overflow`、`refusal`、`content-filter`、`output-truncated`、`quota-exhausted`、`account-config`）时，`outcome` 一律 `partial`，不标 is_error，`childEndReason` 照取；父模型读状态行和子任务的回复，自己决定重派还是上报。Agent 调用的 `tool_outcome` 记 completed、来源 null。子会话不会以 `user-rejected` 结束（开放问题 18，owner 2026-09-26）。
-- 发给模型的英文正文，写事实时一并存进载荷（裁决 B1）：`completed` 时就是 `finalReply` 原文，有被拒的调用就在后面附上这几行（裁决 F2）；其余情况先一行状态说明（写明 `outcome` 和 `childEndReason`），再接非空的 `finalReply`，最后附 `calls` 清单。
+- 发给模型的英文正文，写事实时一并存进载荷（裁决 B1）：`completed` 时就是 `finalReply` 原文，有被拒的调用就在后面附上这几行（裁决 F2）；其余情况先一行状态说明（写明 `outcome` 和 `childEndReason`，`childEndReason` 为 null 时槽位填 `none`），再接非空的 `finalReply`，最后附 `calls` 清单。
 - 用量（裁决 H11）：由某个父 Run 写下的交接，这个父 Run 把 `usage` 各行改记 `origin: 'subagent'`，并进自己 `run_terminal` 的累计用量；由答复处理器（停止、被新消息取代）或启动恢复写下的交接，不进任何 `run_terminal`。评测和费用汇总从每条 attempt 算，已含子会话。
 
 ### 停止、新消息、退出与重启
@@ -2608,7 +2608,7 @@ export interface HandoffCall {
 - 停止和取代都跨两个会话写：先写子会话，再写父会话；交接在子会话写完之后生成。
 - **关窗或退出**：子 agent 在跑，算进行中的 Run，要先问；选停止就按上面处理，来源记 `app-exit`。子 agent 停在审批上时不问，原样留着（裁决 B4、B18）。
 - **重启恢复**：先恢复子会话、再恢复父会话（交接的 `calls` 要读子会话补写之后的 Tape）；父会话里等子会话的 Agent 调用（子会话有待批或是可续跑项）按待批处理，不当孤儿、不补写收口；子会话的待批先带着继承的授权重新判定，再重新投递，打开的是根会话（裁决 B1、B3、F3）。
-- 崩溃时子 agent 正在跑：子会话里在途的调用和父会话的 Agent 调用都记 `uncertain`，交接为 `uncertain`，照样带 `finalReply` 和 `calls`，不自动重跑。先子后父两次写入之间崩溃、子会话已写下非 `paused` 终态而父会话结果还没写时崩溃，这两个空档也按这条记 `uncertain`，由恢复表第 4 类写入；要不要改取子会话的真实结局见 §开放问题 第 25 条（裁决 B1）。
+- 崩溃时子 agent 正在跑：子会话里在途的调用和父会话的 Agent 调用都记 `uncertain`，交接为 `uncertain`，照样带 `finalReply` 和 `calls`，不自动重跑。先子后父两次写入之间崩溃、子会话已写下非 `paused` 终态而父会话结果还没写时崩溃，这两个空档也按这条记 `uncertain`，由恢复表第 4 类写入（开放问题 25 已定；裁决 B1）。
 
 ### 被砍时
 
@@ -2622,7 +2622,7 @@ WebSearch 调各家官方的搜索接口，WebFetch 在本机抓取；两者都�
 
 - WebSearch 收 `query`。`allowed_domains` / `blocked_domains` 只在后端 `domainFilter` 为真时进 schema：Anthropic 后端支持，两个同时给按参数不合法处理（上游返回 400）；智谱后端不暴露，search_pro_quark 不支持 `search_domain_filter`（裁决 H7、H8）。
 - WebFetch 只收 `url`，只发 GET。工具描述写明与 Claude Code 的两处不同：不收 `prompt`；返回整页 Markdown，不是小模型提取的结果。长页落盘，用 Read 分段读（裁决 H7 取 (i)）。
-- 两个工具都不进并行组，已授权过的也串行（裁决 H14）。都不设总时限，只随停止的 AbortSignal 中止，在途的按 §原因码表 记 aborted（要不要加时限随 ai-edge 那条开放问题定）。
+- 两个工具都不进并行组，已授权过的也串行（裁决 H14）。都不设总时限，只随停止的 AbortSignal 中止，在途的按 §原因码表 记 aborted（开放问题 21 已定：两个工具都不设时限）。
 
 ```ts
 // 新增：packages/kernel/src/tools/search/types.ts。SearchBackendDefinition（create({ network, secrets })）见 §依赖方向与能力入口
@@ -2695,8 +2695,8 @@ searchHitUrls?: string[] // 只在 WebSearch 成功时写。取 SearchHit.url �
   - 智谱搜索 search_pro_quark ¥0.05 / 次，每会话 200 次封顶，最多 ¥10（H8 原按 search_std 估的 ¥0.01 随默认档更正）。
   - Anthropic 搜索 $10 / 千次（出错不计费），另加子请求按所选型号计的 token；进主对话的只有标题和链接。
   - 抓取在本机，没有接口费，只花进上下文的页面 token；落盘后只有预览进上下文。
-- 实测结论（§实测记录（2026-09-25，owner 的智谱 key））：quark 带链接、std 与 pro 不带，是改默认档的依据；/reader 能调通但计费未核，暂不改本机抓取；函数工具和内置 web_search 同在一个请求里时搜索不生效，是 H8 选 b 的依据之一。
-- ai-edge 先例（`../ai-edge/packages/mcp-search`，只作参照）：默认 quark（config.ts:88-95）、70 字截断与本节一致；它对 1701 的退避重试不采用（按 H8）；它有、裁决没覆盖的细节（丢弃没链接的命中、`count`、时限与重试、注入净化、配额与缓存）以及抓取要不要改走 /reader，见 §开放问题；搬代码按 Apache-2.0。
+- 实测结论（§实测记录（2026-09-25，owner 的智谱 key））：quark 带链接、std 与 pro 不带，是改默认档的依据；/reader 能调通，不改走（开放问题 22 已定）；函数工具和内置 web_search 同在一个请求里时搜索不生效，是 H8 选 b 的依据之一。
+- ai-edge 先例（`../ai-edge/packages/mcp-search`，只作参照）：默认 quark（config.ts:88-95）、70 字截断与本节一致；它对 1701 的退避重试不采用（按 H8）；它有、裁决没覆盖的细节（丢弃没链接的命中、`count`、时限与重试、注入净化、配额与缓存）已按开放问题 21 定，都不搬；抓取不改走 /reader（开放问题 22 已定）；搬代码按 Apache-2.0。
 
 ## 界面范围
 
@@ -2733,7 +2733,7 @@ callKey: z.string().min(1),
 | `ThinkingBlock` | 取代 `block-registry.tsx:24` 的占位，见 §思考的默认与显示 | `thinking-delta` | A11 |
 | `TurnSummaryLine` | 一轮结束时一行：读了 N 个、改了 M 个、有没有对外发送，按各调用的 `effect`（read / write / external）计数，不写「能不能还原」。「一轮」= 上一条用户消息以来的所有 Run，含批准、答题、子任务之后续跑的。某个 Run 以 `paused` 以外的码结束时才出；没有工具调用的轮不出 | `tool-outcome` 或 `calls`、`done.endReason` | H3、E1 |
 | `FailureCard` | 见 §失败卡与结束原因 | `done.endReason`、`tool-outcome` | H3、H11、H12、B1 |
-| `BlockedNotice` | `tool-outcome.source` 是拦截码（`policy` / `user-disabled` / `protected` / `inspector`）时接在那一行下，写三样：拦了什么（有 `facts.target` 写它，否则写工具名）；为什么（查 `blocked.<source>`，槽位取 `facts`，即 `BLOCKED_FACT_KEYS`，§原因码表）；「已告诉模型」。02 不给放行入口 | `tool-outcome.source`、`tool-outcome.facts` | H3、D5、E2、F9 |
+| `BlockedNotice` | `tool-outcome.source` 是拦截码（`policy` / `user-disabled` / `protected` / `inspector`）时接在那一行下，写三样：拦了什么（有 `facts.target` 写它，否则写工具名）；为什么（查 `blocked.<source>`，槽位取 `facts`，即 `BLOCKED_FACT_KEYS`，§原因码表；会话形态为对话且 `facts.toolName` 为 Read 时改查 `blocked.chatReadScope`，按字面键取，槽位同 `blocked.protected`：`{toolName}`、`{target}`，开放问题 13）；「已告诉模型」。02 不给放行入口 | `tool-outcome.source`、`tool-outcome.facts` | H3、D5、E2、F9 |
 | `ApprovalCard` | 见 §最小审批卡 | `approval.current`；答复用 `approval.respond` | H3、F6、D10 |
 | `ComposerSlots`、`AskWidget`、`AskSummaryCard` | 槽位在阶段 2 只放提问 widget；审批卡内联在消息流里，不进槽位。widget 有 1/N 分页、选项（`multiSelect` 时可多选）和跳过，也可以直接在输入框回复；停止后每题显示「未作答」。答完留一张汇总卡，跳过的题标「无偏好」（数据从哪读见 §开放问题）。不做最小化。等提问时，同批后面的调用以排队行叠在那次 AskUserQuestion 的行下，不进槽位 | `approval.current` 的 question 变体、提问调用的 `input` | H6、F6 |
 | `ModeSwitch` | 新会话发出第一条消息之前可在「对话 / 任务」之间切；建立后只显示形态，不能改 | 建立前的形态怎么送进主进程，见 §开放问题 | H1 |
@@ -2775,7 +2775,7 @@ callKey: z.string().min(1),
   - ④ `reversibility === 'irreversible'` 时单独一句「撤不回」（裁决 E1、D10）。
   - ⑤ 写入和编辑的改动：默认收起，展开后按纯文本显示本次调用的 `input`。连接器调用的参数：默认展开，按纯文本显示本次调用的 `input`，照 ②′ 转义（MCP 规范要求客户端 SHOULD 在调用前把参数给用户看；开放问题 15，owner 2026-09-26）。
   - ⑥ 两个按钮，期限写在「允许」旁。
-- **期限**只由 `allowScope` 和 `target.type` 决定，渲染端不自己推：`once` →「只这一次 / Just this once」；`session` 且 `target.type === 'url'` →「本会话里这个域名 / This domain, this session」；其余 `session` →「本会话 / This session」。`allowScope` 由 kernel 用 §作用域与授权键 的答复作用域函数作用于当前那条 ask 判决算出；写 `approval_resolved.grant.scope` 用同一个函数、同一条判决。所以 `flagged`、策略要求问、撤不回、工作区外、连接器工具都落在 `once`（裁决 D10、D1、D7、D12、H8、F5）。
+- **期限**只由 `allowScope` 和 `target.type` 决定，渲染端不自己推：`once` →「只这一次 / Just this once」；`session` 且 `target.type === 'url'` →「本会话里这个域名 / This domain, this session」；其余 `session` →「本会话 / This session」。转自子会话的卡（`callKey !== anchorCallKey`）：`session` →「本次子任务 / This subtask」，`session` 且 `target.type === 'url'` →「本次子任务里这个域名 / This domain, this subtask」；`once` 不变。这种卡答完塌成的一行在 02 里只在当场显示，重启后不重画（开放问题 18，owner 2026-09-26）。`allowScope` 由 kernel 用 §作用域与授权键 的答复作用域函数作用于当前那条 ask 判决算出；写 `approval_resolved.grant.scope` 用同一个函数、同一条判决。所以 `flagged`、策略要求问、撤不回、工作区外、连接器工具都落在 `once`（裁决 D10、D1、D7、D12、H8、F5）。
 - **按键**（H3 ownerNote）：只在焦点位于卡内时生效，焦点在输入框时按 §插话与输入框状态表；新卡出现时不抢焦点；「默认焦点」指焦点进卡时落在哪个按钮上。
   - 一般的卡：「拒绝 Esc」「允许 ⏎」，默认焦点在「允许」，⏎ = 允许，Esc = 拒绝。连接器卡（可逆性未知、只认这一次）也按这一条。
   - `reversibility === 'irreversible'` 的卡：按钮是「拒绝 ⏎ Esc」「允许」，「允许」不带按键提示，默认焦点在「拒绝」。卡内任何位置按 ⏎ 都是拒绝，焦点在「允许」上也一样（卡拦下按钮原生的 Enter 激活）。放行只有两种：点「允许」；焦点在「允许」上按 Space（Space 一条 owner 2026-09-25 已确认）。
@@ -2789,7 +2789,7 @@ callKey: z.string().min(1),
 - **位置与触发器**：输入框工具行里、发送钮旁边（`ComposerToolbar`，components.md:85）。触发器显示「模型名 + 档名」：本会话 `effort` 为 null 时显示该行 `defaultEffort` 的档名；该行没有 `effortLevels` 时只显示模型名。
 - **分组**：按厂商分组，只列已配置厂商的模型行（「已配置」的算法见 01 修补 6）；未配置的厂商只留一行置灰的组头「去设置填 key」，点击打开设置（同时满足 M5「只列已配置」与 B14「置灰并提示」；owner 2026-09-25 已确认）。
 - **每一行**两行字，当前项打勾：第一行模型名；第二行是用途句（`purposeKey`）或行标记，后接目标主机，`endpoint.reach` 为 `loopback` 写「本机」，`private`、`public` 写主机名或 IP。
-- **行标记**，02 产出三个值：`verified`（保证档厂商的内置行，第二行写用途句；Fable 5.1 写「需要组织开启 30 天数据保留」）；`local-text-only`（Ollama 行，写「<主机> · 仅文字对话」，回环即「本机 · 仅文字对话」）；`unverified-text-only`（手填的表外 id，写「未验证 · 仅文字对话」）。后两类在任务形态置灰并写明原因，对话形态可选（裁决 A15）。「本机探测」（`probed`）归 02 之后的自定义厂商 spec，届时只增。
+- **行标记**，02 产出三个值：`verified`（zhipu、anthropic 定义的内置行，第二行写用途句；baseURL 改指其他主机的也标它，照常发工具、不保证，去向看行上的目标主机，开放问题 23 已定；Fable 5.1 写「需要组织开启 30 天数据保留」）；`local-text-only`（Ollama 行，写「<主机> · 仅文字对话」，回环即「本机 · 仅文字对话」）；`unverified-text-only`（手填的表外 id，写「未验证 · 仅文字对话」）。后两类在任务形态置灰并写明原因，对话形态可选（裁决 A15）。「本机探测」（`probed`）归 02 之后的自定义厂商 spec，届时只增。
 - **「思考强度 ›」**（裁决 A11、A1）：只看这一行的 `effortLevels`，非空才显示；列出各档，`defaultEffort` 标「默认」，最高档注明用量代价。手填与表外模型、glm-4.6、qwen3:8b，以及 Haiku 4.5 这类 budget 模式的行不显示子菜单。components.md:95 的「不支持分档时退化为一行开关」02 不做。
 - **「更多模型 ›」**：收 `listing === 'more'` 的行（Opus 5 Legacy），每个已配置厂商另带一个「手填模型 ID」输入框。菜单末尾是「管理模型…」，打开设置。
 - **生成中或有待批时**：照常可选，菜单顶部写「下一条消息起生效」；改思考档时再加一句「会让缓存失效」（裁决 F3）。
@@ -3240,7 +3240,7 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 47. 本机抓取防绕过：非 http(s)、带凭据、主机名不带点、IP 字面量落在回环 / 私网 / 链路本地（含十进制写法和 ::ffff: 写法）的 URL，以 protected 拦下，0 次请求；fetchUntrusted 对「302 跳到回环」「域名解析到回环」「已批准的域名换了解析结果」都拒绝，每次调用只解析一次 DNS；provider 发往 localhost:11434 的请求照常；同主机跳转在内存里重判后跟随，跨主机的不跟、把目标告诉模型，第 21 跳报错；DNS 层被拒的收口为 not-run/protected，计入连续上限；非文本类型回 is_error；长页落盘（裁决 H8、E4、D5、F2、H9）。
 48. 搜索后端：按 provider 加 baseURL 的主机选后端（open.bigmodel.cn 用智谱后端，/api/anthropic 也算；api.anthropic.com 用 Anthropic 后端；其余主机没有后端、排除 WebSearch）；智谱后端每次恰好一个请求，search_engine 为 search_pro_quark，搜索词截到 70 个码点并告诉模型，1701–1703 回 is_error、不重试，只经注入的 network.fetch 发出，头都在白名单内，用与 provider 相同的 key；Anthropic 后端发非流式请求，只带一个 web_search 工具、tool_choice any，按 forcedToolChoice 挑型号，多块结果按规则合并；根会话连同子会话的 WebSearch 满 200 次之后，不再派发，回 is_error（裁决 H8、A6、A9、M4）。
 49. 搜索与抓取的授权：本会话第一次搜索出 network 卡，target 是截断后的搜索词加后端域名，可逆性 unknown，卡上没有「撤不回」；同一个后端再搜免问，换了后端主机要再问；WebFetch 按规范化后的精确主机名授权；grant.key 等于 grantKey 的输出；成功的 WebSearch 结果带去重、规范化的 searchHitUrls，落不落盘都一样；两种工具的结果写回之后，会话视图的「读进过不可信内容」为真（裁决 H8、E1、D1、F5、F10）。
-50. 外带检查：会话里既碰过私有数据、又读进过不可信内容之后，对已授权域名发出的、不在真人消息和 searchHitUrls 里的 URL，出 flagged/exfiltration 卡，显示完整 URL，允许后不生成域名授权；豁免 URL 照常按域名授权；只满足一个条件、对话形态、WebSearch 调用本身，都不触发；摘要压缩后污点不清零，清空会话后才清零；脚本化 provider 读 .env 再外带时，卡弹出，答复前 fetchUntrusted 0 次；选了适配器接法时，railguard 映射表每行一个测试（裁决 F5、F10、F1、H5）。
+50. 外带检查：会话里既碰过私有数据、又读进过不可信内容之后，对已授权域名发出的、不在真人消息和 searchHitUrls 里的 URL，出 flagged/exfiltration 卡，显示完整 URL，允许后不生成域名授权；豁免 URL 照常按域名授权；只满足一个条件、对话形态、WebSearch 调用本身，都不触发；摘要压缩后污点不清零，清空会话后才清零；脚本化 provider 读 .env 再外带时，卡弹出，答复前 fetchUntrusted 0 次；反引号包着的 URL 与 `[文字](URL).` 的写法同样豁免（裁决 F5、F10、F1、H5）。
 51. 摘要压缩：边界请求越过阈值时，先发摘要请求，再发这条用户消息；anchor 与各 provider 的 after-compaction 工具表同批写；compactionThreshold 对 4096 得 3276，对 200K、1M 都得 150000，估算按线协议换算；智谱会话在回合中途越过阈值时，压缩更早的回合，当前回合逐字节不变；查前缀的模型不在回合中途压缩；保留尾巴里的思考块记 drop/compacted，tool_result 不变；摘要请求不继承思考档位，复算 promptHash 相同；溢出后压缩再重发不超过 2 次（请求数恰好 5）；查前缀的模型在回合中途溢出，以 compactions:0 结束；换到窗口更小的模型时，先压缩再发（裁决 H10、E2、A13、H12、M5）。
 52. 子 agent 的会话与继承：子会话有自己的 Tape 和带 subagentOf 的 profile_set；工具表是父表的子集，没有 Agent 和 AskUserQuestion，子会话里调 Agent 按 tool-unavailable 收口、不建会话；父会话的授权和工作区现算继承，父会话移除文件夹后同样作废，子会话里批的授权不回流父会话；子会话要审批时，父 Run 同时暂停，卡挂在父会话那次 Agent 调用的行下，被拒只拒这一次；等审批时退出重启，打开的是父会话，卡可答，批准后交接挂在原调用下；到步数上限或满 300 秒时交接为 partial、不标 is_error（到期后下一次新请求不发，子 Run 以 time-limit 结束），以 provider-error 等其余原因结束时同样 partial、不标 is_error，用量计入写下交接的那个父 Run；subagentElapsedMs 不计暂停的时段；外带检查的两个条件取父子并集（裁决 H5、F7、F2、F3、B3、D11、H11、F5）。
 53. 子 agent 的停止与崩溃：点停止或发新消息，连带停掉子会话，父会话的 Agent 调用记 aborted 或 superseded，附上从 Tape 生成的调用清单；在跑的命令先确认退出，再写收口；排队消息不进子会话的上下文；子 agent 执行中崩溃，重启时先恢复子会话、再恢复父会话，两边在途的调用都记 uncertain，交接为 uncertain，不自动重跑（裁决 H5、B1、F11、H13）。
@@ -3275,20 +3275,20 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 
 ### 其余（按期限）
 
-12. **F5 外带检查怎么接**：经适配器接 railguard 的 `lethalTrifecta`，或写一条 kernel 等价规则。owner 定，最晚在 ③ 的搜索与抓取开工前；默认写等价规则（它只是三个布尔量的合取，kernel 已从 Tape 算出，接 railguard 只多一个依赖，AGENTS.md:34）。同时定：取适配器时 `status: 'skipped'` 怎么映射；确认豁免里 URL 提取与比较的暂定算法。
-13. **对话形态里 Read 越界时用哪个拦截码**：`protected`（算拦截、出回执、计入 `MACHINE_DENIAL_CAP`）或 `tool-unavailable`（不算、不出、不计）。owner 定，最晚在 ① 的会话形态那一步之前；默认 `protected`，回执另写一句对话形态专用的文案。
+12. **已定（2026-09-26 owner：按默认，豁免算法放宽两处）** **F5 外带检查怎么接**：kernel 等价规则 `permission/exfiltration.ts`，02 不依赖 railguard；`status: 'skipped'` 按规则出错处理（阶段 4 用）；URL 豁免「去掉结尾标点」改为反复去掉，停止字符加反引号。全文见 §外带检查。
+13. **已定（2026-09-26 owner：`protected` 加对话专用回执）** **对话形态里 Read 越界时用哪个拦截码**：`protected`（算拦截、出回执、计入 `MACHINE_DENIAL_CAP`）或 `tool-unavailable`（不算、不出、不计）。owner 定，最晚在 ① 的会话形态那一步之前；默认 `protected`，回执另写一句对话形态专用的文案。
 14. **B1 补录 #2**：审批卡挂着时点停止，Cowork 是作废卡片还是保留。owner 定，最晚在 ① 的等待与答复之前；默认作废。保留的话，「停止时作废待批」改成「停止只停生成」，§等待模型 与 §desktop 接线 跟着改。
 15. **已定（2026-09-26 owner：加第五种形态，连接器卡参数默认展开）** **MCP 工具的审批请求**：`ConfirmTarget` 只增 `{ type: 'tool'; serverId; toolName }`，全文见 §`ConfirmRequest` 只增两个必填成员 与 §最小审批卡。00 的 Amended by 行不改：它只写「增加必填成员 target」，没列形态。AskUserQuestion、Agent 被策略点名要求问时卡上的对象怎么写，留给 6b（02 的产品走不到）。
-16. **① 的契约缺口**，都是「不开工」项，owner 与架构分别在对应的 ① 步骤之前定（2026-09-26 owner 已定两项：参数校验用 cf-worker 校验器、来源码 `invalid-input`，见 §内置工具与参数；工作区变化与日期经 `message/environment` 告诉模型，见 §提示层：范围、位置、版本与组装「环境说明」。WebSearch 超出次数上限记 `tool-unavailable`）：会话建立前形态走哪条路由暂存，已建会话从哪条路由读形态、工作区和预填；主进程怎么把 Run 的进行中状态交给渲染端（只增一个推送事件，或一条查询路由；状态里要带握着根会话租约的 Run 的 runId，子会话的 Run 也算，供「立即发送」绑定；定下之前离开确认与停止钮的状态接线不开工），同一处定渲染端怎么得知排队项已成为用户消息（kernel 发 `SessionEvent` 的 `user-message`；暂定 chat.event 只增同名变体）；会话建立前暂存的形态怎么交给 kernel（经 `send.create` 的 `SessionDraft`，形状随本条定）；key 的主机绑定记录存在哪（约束：键经 `keyFor` 带 `tenantId`，渲染端写不了，随 key 一起删），以及 02 之前已存、没有绑定记录的 key 怎么办（暂定：升级后第一次用到时绑到当时生效的主机，记一行日志）；`listing` 的归类数据放哪（暂定主进程按 (providerId, modelId) 一张表）。另有一条不挡开工、有暂定做法的：以 `error` 事件收尾的 Run（`quota-exhausted`、`account-config`、`provider-error` 等）怎么把 `RunEndReason` 交给失败卡（已显示的半截回复、作废的内容由 01 修补 6 的 `attempt-discarded` 撤回）；定之前按「`chat.event` 的 error 变体也只增可选的 `endReason`（与 done 同形）」做，最晚在 ① 的界面那一步前定，定下后写进 01 修补 6 与 9 (o)。同样不挡开工的还有 `user-message` 怎么交给渲染端：定之前按上面「chat.event 只增同名变体」做（plan 第 17 步），最晚在第 17 步前定，定下后照 01 修补 6 末尾那句改变体个数。
+16. **① 的契约缺口**，都是「不开工」项，owner 与架构分别在对应的 ① 步骤之前定（2026-09-26 owner 已定两项：参数校验用 cf-worker 校验器、来源码 `invalid-input`，见 §内置工具与参数；工作区变化与日期经 `message/environment` 告诉模型，见 §提示层：范围、位置、版本与组装「环境说明」。WebSearch 超出次数上限记 `tool-unavailable`）：会话建立前形态走哪条路由暂存，已建会话从哪条路由读形态、工作区和预填；主进程怎么把 Run 的进行中状态交给渲染端（只增一个推送事件，或一条查询路由；状态里要带握着根会话租约的 Run 的 runId，子会话的 Run 也算，供「立即发送」绑定；定下之前离开确认与停止钮的状态接线不开工），同一处定渲染端怎么得知排队项已成为用户消息（kernel 发 `SessionEvent` 的 `user-message`；暂定 chat.event 只增同名变体）；会话建立前暂存的形态怎么交给 kernel（经 `send.create` 的 `SessionDraft`，形状随本条定）；key 的主机绑定记录存在哪（约束：键经 `keyFor` 带 `tenantId`，渲染端写不了，随 key 一起删），以及 02 之前已存、没有绑定记录的 key 怎么办（暂定：升级后第一次用到时绑到当时生效的主机，记一行日志）。另有一条不挡开工、有暂定做法的：以 `error` 事件收尾的 Run（`quota-exhausted`、`account-config`、`provider-error` 等）怎么把 `RunEndReason` 交给失败卡（已显示的半截回复、作废的内容由 01 修补 6 的 `attempt-discarded` 撤回）；定之前按「`chat.event` 的 error 变体也只增可选的 `endReason`（与 done 同形）」做，最晚在 ① 的界面那一步前定，定下后写进 01 修补 6 与 9 (o)。同样不挡开工的还有 `user-message` 怎么交给渲染端：定之前按上面「chat.event 只增同名变体」做（plan 第 17 步），最晚在第 17 步前定，定下后照 01 修补 6 末尾那句改变体个数。
 17. **已定（2026-09-26 owner：都按推荐）** **② 的 Bash 缺口**：shell 路径与基础环境经 `LoopPorts.commandShell` 交入（第 9 步声明；不改 `SessionServiceOptions` 与 01 的 Amended by），基础环境取用户终端里的环境；超时记 aborted 或 uncertain、来源新增 `timed-out`；stderr 在 fd 层并入 stdout，非零退出首行 `Exit code: N`、算 is_error。全文见 §内置工具与参数「Bash」与 §原因码表。
 18. **③ 的缺口**（2026-09-26 owner 已定三项：HTML 由 kernel 用 `@mdream/js` 转，转前有字节上限并按 charset 解码，见 §本机抓取器；子 agent 到期以新结束码 `time-limit` 收尾、交接 `partial`；以其余原因结束一律 `partial`、不标 is_error，见 §暂停、转发、排队与期限 与 §交接）。余下：提问答完后汇总卡的数据从哪读（界面不能解析给模型的英文）；子会话转上来的卡上「本会话」怎么措辞。owner 定，最晚在 ③ 的对应步骤之前；默认不开工。
 19. **`SUBAGENT_STEP_LIMIT` 和 `SUBAGENT_TOKEN_LIMIT` 的取值**（H11：步数必须小于 100）。由 owner 给数，最晚在 ③ 的子 agent 开工前；拿到数之前不开工，实现者不能自己取值。
 20. **Anthropic 官方 key 能不能开通、怎么付款**（M4）。owner 确认，最晚在 ③ 的 Anthropic 搜索后端开工前；开不了就按 §Anthropic 保证档的退路 走 Revisions。
-21. **搜索的细节**（ai-edge 先例有、裁决没覆盖的）：要不要丢掉没有链接的命中；传不传 `count` 和 `search_recency_filter`；时限与重试（1701 已定为不重试；429、5xx、网络中断要不要重试一次，8 秒时限要不要，WebFetch 要不要总时限）；注入净化放在哪一层（只能在搜索后端里、写 `tool/result` 之前做）；按日配额与缓存；以及两条较严读法（授权按精确主机名匹配、中途换后端要再问）留不留。owner 定，最晚在 ③ 的搜索开工前；默认按 §搜索与抓取 现在的写法。
-22. **智谱线的抓取要不要改走 `/reader`**。owner 核对账单后定，最晚在 ③ 的抓取开工前；默认在本机抓取。无论怎么定，Anthropic 线仍在本机抓取，`fetchUntrusted` 照做。
-23. **内置行改了 baseURL 之后菜单上标什么**。现有三个值都不合适（这些行照常发工具）；候选是 `modelMarkSchema` 只增一个值，或等自定义厂商 spec。owner 定，最晚在 ① 的 ModelMenu 之前；默认标 `verified`，照常显示目标主机。
-24. **删除会话时专用文件夹删不删；Read 读落盘文件时单次结果又超过阈值要不要加例外**。owner 定，前者最晚在 ① 的工作区、后者最晚在 ② 的 Read 之前；默认不删，Read 只返回阈值以内的整行并注明下一段的 `offset`、结果不再落盘（要给 §大响应落盘「与工具种类无关」加一个例外）。
-25. **子会话已结束、父会话结果还没写时崩溃，交接取什么结局**：父会话的 Agent 调用一律记 `uncertain`，还是改取子会话的真实结局（子会话以 `completed`、`user-stopped` 等非 `paused` 终态结束的，按 §交接 的规则取 `outcome`，只有以 `recovered` 结束或没建成的才记 `uncertain`）。owner 定，最晚在 ③ 的子 agent 之前；定之前一律记 `uncertain`（§执行日志与恢复表 第 4 类、§停止、新消息、退出与重启 末条）（裁决 B1、H5）。
+21. **已定（2026-09-26 owner：按默认）** 按 §搜索与抓取 原写法：没链接的命中保留（`url` 记 null）；不传 `count`、`search_recency_filter`（默认 10 条约 2.5K token，第 2 步实测 Q）；两个工具都不设时限；1701–1703、429、5xx、网络中断都不重试；不做注入净化；没有按日配额与缓存；WebFetch 按精确主机名授权；换后端再问（2026-09-25 已确认）。原问题：**搜索的细节**（ai-edge 先例有、裁决没覆盖的）：要不要丢掉没有链接的命中；传不传 `count` 和 `search_recency_filter`；时限与重试（1701 已定为不重试；429、5xx、网络中断要不要重试一次，8 秒时限要不要，WebFetch 要不要总时限）；注入净化放在哪一层（只能在搜索后端里、写 `tool/result` 之前做）；按日配额与缓存；以及两条较严读法（授权按精确主机名匹配、中途换后端要再问）留不留。owner 定，最晚在 ③ 的搜索开工前；默认按 §搜索与抓取 现在的写法。
+22. **已定（2026-09-26 owner：本机抓取）** **智谱线的抓取要不要改走 `/reader`**：两条线都在本机抓取，`fetchUntrusted` 照做；`/reader` 不进 02，列入 §留到后续阶段「以后再评估」。依据：定价页（2026-09-26）没有 reader 价；改走省不掉 Anthropic 线的本机抓取与 HTML 转换，只多一条路径，也与 M2「代码一套、与厂商无关」相违。
+23. **已定（2026-09-26 owner：按默认）** **内置行改了 baseURL 之后菜单上标什么**：仍标 `verified`，照常显示目标主机；只指 zhipu、anthropic 的内置行（Ollama 行仍是 `local-text-only`）。原问题：现有三个值都不合适（这些行照常发工具）；候选是 `modelMarkSchema` 只增一个值，或等自定义厂商 spec。owner 定，最晚在 ① 的 ModelMenu 之前；默认标 `verified`，照常显示目标主机。
+24. **已定（2026-09-26 owner：不删；所有 Read 自己限长）** 删除会话不删专用文件夹，见 §工作区；Read 单次结果按整行限在阈值以内、从不落盘，见 §内置工具与参数。原问题：**删除会话时专用文件夹删不删；Read 读落盘文件时单次结果又超过阈值要不要加例外**。owner 定，前者最晚在 ① 的工作区、后者最晚在 ② 的 Read 之前；默认不删，Read 只返回阈值以内的整行并注明下一段的 `offset`、结果不再落盘（要给 §大响应落盘「与工具种类无关」加一个例外）。
+25. **已定（2026-09-26 owner：按默认，一律 `uncertain`）** 原问题：**子会话已结束、父会话结果还没写时崩溃，交接取什么结局**：父会话的 Agent 调用一律记 `uncertain`，还是改取子会话的真实结局（子会话以 `completed`、`user-stopped` 等非 `paused` 终态结束的，按 §交接 的规则取 `outcome`，只有以 `recovered` 结束或没建成的才记 `uncertain`）。owner 定，最晚在 ③ 的子 agent 之前；定之前一律记 `uncertain`（§执行日志与恢复表 第 4 类、§停止、新消息、退出与重启 末条）（裁决 B1、H5）。
 26. **已定（2026-09-25 owner：全部按默认）** **循环接口里推出、owner 决定没覆盖的读法，一次确认**（§主进程与 kernel 的循环接口 与 §插话与输入框状态表，原标「暂定」、现标「开放问题 26 已定」的各条）。默认都按所在节的写法。最晚在 ① 的第 9 步之前定、要进第 9 步声明的类型的：① 之后 host 实现的端口只能加可选成员；直接发送碰上间接切公网也入队、标 held；「继续」碰上间接切公网什么都不写、返回 `held`，确认后用户再点「继续」。最晚在 ① 的第 15 步之前定的：held 时该根会话任何一次选模型都放出，held 的那条按当时状态重走 `send`，没有 held 的直接发送时按自动发出取队列；空闲时直接发送，带上此前留下的排队项、排在它前面；已停止、正在收尾时发送，入队记 urgent，`user-stopped` 或关窗的 `shutdown-aborted` 之后发出（关窗之后发出的 Run 的 origin 取把那条记为 urgent 的 `send` 的 origin；另一读法：关窗之后不取 urgent）；先被关窗或退出中止、还没收完时轮到的停止照停止收口（另一读法：退出中止的不收口，卡片留到重启，停止返回 `stopped: false`）；可续跑的会话里停止写的那个 Run 与它之后自动发出的 Run，origin 为 null（另一读法：`stop` 另收 `origin`，要在第 9 步声明）；可续跑的会话里直接发送，先续跑、这条插进续跑 Run、发往暂停时的模型，可续跑项在子会话里的插进父会话收交接的 Run（另一读法：照「等审批」取代，同批剩下的记 not-run / `superseded`，按当前选择开新一轮）；可续跑的会话点停止，写一个不发请求、以 `user-stopped` 结束的 Run 收掉同批剩下的，不再续跑，停止钮在可续跑状态下也显示；按下时看到的 Run 已结束、那一项还在队列里的「立即发送」照普通发送发出，带上排在它前面的项；握着租约、还没开 Run 的一方在预建时（含钥匙串弹框一直不答），同根会话其余命令都等它，只有停止插队并让预建不再等（另一读法：只让同类的发送等，答复与选模型照常先判定）；启动时自动恢复的会话不算打开，末尾给一行「继续」。
 
 ### 留到后续阶段
@@ -3297,10 +3297,10 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 
 - **阶段 3**：用户可配置的 MCP；连接器三态的存储与入口；MCP 撞名的根治，以及超出上限时裁掉哪些 MCP 工具；E2-D / E2-F 往时点表加行；D1-A2 或「本会话允许」按钮；「新会话生效」提示挂在哪；AskUserQuestion 的 preview；完整审批卡；启动时 MCP 连接还没起来导致误判 `tool-unavailable`；不可信 MCP schema 的风险（慢正则、大小与嵌套深度上限），以及 outputSchema 改用同一个校验器（开放问题 16）。
 - **阶段 4**：自动档与规则 inspector；跳过档；LLM 判官（单独立题，要答四件事：缓存规则；退回人工的阈值；判官自己怎么防注入，首选参考 Claude Code：输入不带工具结果、另做结果扫描；手动档下跑不跑，只拦截还是只给卡加一句提醒。另含 F10 的选项 D、判官能看的会话视图、前面已判拒时跳过其余 inspector）；按任务授权与从回执放行的产生方；只读命令免问；硬链接与竞态；命令的主原因是否仍固定为 `command`；WebFetch 的地址判定并入出网收口，要不要拦 CGNAT 等地址段。
-- **阶段 6**：会话列表、首页与冷启动（含 `session.latest`「最近」的语义）；编辑重发与分支；审批、交接或「继续」开的 Run 以及已派发过工具的 Run 失败后怎么重试；子 agent 的并发与后台、`subagent_type` 与 `model` 参数、deadline 可调；撤回一条已被摘要覆盖的消息；fork 出来的会话里落盘路径指向父会话目录；`x-stainless-*` 头与 `redacted` 的去留。
+- **阶段 6**：会话列表、首页与冷启动（含 `session.latest`「最近」的语义）；编辑重发与分支；审批、交接或「继续」开的 Run 以及已派发过工具的 Run 失败后怎么重试；子 agent 的并发与后台、`subagent_type` 与 `model` 参数、deadline 可调；撤回一条已被摘要覆盖的消息；fork 出来的会话里落盘路径指向父会话目录；删除会话的确认写明专用文件夹保留，另加「一起删 / 移到废纸篓」的选项（开放问题 24）；`x-stainless-*` 头与 `redacted` 的去留。
 - **6b**：排队消息改存持久队列时，`LoopPorts.queue.take` 取走即删，在取走与写 `message/user` 之间崩溃会丢消息，要换成两段式或写入后再删；策略的下发、本机缓存与变化通知（含已挂的待批和已冻结的表怎么办）；按参数拒、给工具指定可逆性档位，以及它与 host 判定冲突时取哪个；多写入方下「检查」与「写入」的原子性；`hash_ver` 的第三种校验状态。
-- **后续 features spec**：自定义厂商与能力快照（含厂商差异数据面的五项、每个 provider 的工具数上限放在哪）；「Claude Code 引擎」（如果不进 02）；openai-responses 线；Anthropic 服务端工具与服务端压缩（含 B1 的三种情况、A2 的 pause_turn 例外、pause_turn 续发上限与「服务端工具暂停过多」结束原因，裁决 H12）；Ollama 进 agent 验收（含没有终止信号就断流时怎么分类）。
-- **以后再评估**：A11 的任务形态改用 updates、对话降档；H11 的 task_budget 与 1 小时缓存档；M5-A 的改判；refusal 的分类解码与溢出后尾巴怎么再缩小；思考块的起止时间；Read 的 pages；flash 收到 medium 时厂商报不报错；hash_ver 的机检；`encoder.version` 不同的旧记录怎么复核；`checksThinkingPrefix` 改成 `ModelInfo` 字段；压缩后 system 要不要按新版本重组；崩溃后残留的命令进程组（要杀得在派发事实里只增进程组号）；Tape 变大后启动恢复改走索引；接入自动更新时实测 `before-quit-for-update`；macOS 的 CI runner；ApprovalModeMenu 的文案；A4 的读法要不要写进流程文件；Windows 的目录联接与 subst 盘符。
+- **后续 features spec**：自定义厂商与能力快照（含厂商差异数据面的五项、每个 provider 的工具数上限放在哪）；「Claude Code 引擎」（如果不进 02）；openai-responses 线；Anthropic 服务端工具与服务端压缩（含 B1 的三种情况、A2 的 pause_turn 例外、pause_turn 续发上限与「服务端工具暂停过多」结束原因，裁决 H12）；Ollama 进 agent 验收（含没有终止信号就断流时怎么分类）；内置定义改指其他主机的行：自定义厂商 spec 落地、保证档显示「已验证」时（ADR-003），这类行改标 `probed` 或改走自定义厂商入口，那份 spec 点名这处改动（开放问题 23）。
+- **以后再评估**：A11 的任务形态改用 updates、对话降档；H11 的 task_budget 与 1 小时缓存档；M5-A 的改判；refusal 的分类解码与溢出后尾巴怎么再缩小；思考块的起止时间；Read 的 pages；flash 收到 medium 时厂商报不报错；hash_ver 的机检；`encoder.version` 不同的旧记录怎么复核；`checksThinkingPrefix` 改成 `ModelInfo` 字段；压缩后 system 要不要按新版本重组；崩溃后残留的命令进程组（要杀得在派发事实里只增进程组号）；Tape 变大后启动恢复改走索引；接入自动更新时实测 `before-quit-for-update`；macOS 的 CI runner；ApprovalModeMenu 的文案；A4 的读法要不要写进流程文件；Windows 的目录联接与 subst 盘符；智谱线 WebFetch 改走 `/paas/v4/reader`（有公开价后按评测里抓取题的质量再议；要加只增一个可选的抓取后端，先测跳转、`no_cache`、`timeout` 参数与非 HTML 类型，开放问题 22）。
 
 ## 被否决的方案
 
