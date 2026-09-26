@@ -308,3 +308,116 @@ describe('fakeNetwork failures', () => {
     await expect(rejection).rejects.not.toBeInstanceOf(HostNetworkDeniedError)
   })
 })
+
+describe('fakeNetwork options (spec 02, 01 修补 4)', () => {
+  it('keeps the one-argument form exactly as it was', async () => {
+    const net = fakeNetwork([
+      { kind: 'json', body: { n: 1 } },
+      { kind: 'json', body: { n: 2 } },
+    ])
+    await net.fetch(URL_UNDER_TEST, { method: 'POST', body: '{"a":1}' })
+    expect(await (await net.fetch(URL_UNDER_TEST)).json()).toEqual({ n: 2 })
+    await expect(net.fetch(URL_UNDER_TEST)).rejects.toThrow(/no exchange scripted for call 3/)
+    expect(net.callCount).toBe(3)
+    expect(net.requests).toHaveLength(3)
+    expect(net.requests[0]).toMatchObject({ method: 'POST', body: { a: 1 } })
+    expect(net.checkFailures).toEqual([])
+    expect(net.untrustedRequests).toEqual([])
+  })
+
+  it('runs checkRequest on every fetch before playback and records what it throws', async () => {
+    const seen: string[] = []
+    const refusal = new Error('first body is wrong')
+    const net = fakeNetwork(
+      [
+        { kind: 'json', body: { error: { type: 'overloaded_error' } }, status: 529 },
+        { kind: 'json', body: { ok: true } },
+      ],
+      {
+        checkRequest: (request) => {
+          seen.push(request.bodyText ?? '')
+          if (request.body !== null && (request.body as { n?: number }).n === 1) throw refusal
+        },
+      },
+    )
+    // A failing check does not fail the fetch: the scripted response still arrives, and the
+    // retry a provider would send next is checked (and served) just the same.
+    const first = await net.fetch(URL_UNDER_TEST, { method: 'POST', body: '{"n":1}' })
+    expect(first.status).toBe(529)
+    const retry = await net.fetch(URL_UNDER_TEST, { method: 'POST', body: '{"n":2}' })
+    expect(await retry.json()).toEqual({ ok: true })
+    expect(seen).toEqual(['{"n":1}', '{"n":2}'])
+    expect(net.checkFailures).toEqual([refusal])
+    expect(net.callCount).toBe(2)
+  })
+
+  it('checks calls that never reach playback too, one failure per call', async () => {
+    let checks = 0
+    const net = fakeNetwork([], {
+      checkRequest: () => {
+        checks += 1
+        throw new Error(`check ${checks}`)
+      },
+    })
+    const aborted = new AbortController()
+    aborted.abort()
+    await expect(net.fetch(URL_UNDER_TEST, { signal: aborted.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+    await expect(net.fetch(URL_UNDER_TEST)).rejects.toThrow(/no exchange scripted for call 2/)
+    expect(checks).toBe(2)
+    expect(net.checkFailures.map((error) => (error as Error).message)).toEqual([
+      'check 1',
+      'check 2',
+    ])
+  })
+
+  it('replays the untrusted script with its own cursor and request log', async () => {
+    let checks = 0
+    const net = fakeNetwork(
+      { kind: 'json', body: { from: 'fetch' } },
+      {
+        checkRequest: () => {
+          checks += 1
+        },
+        untrusted: [
+          { kind: 'text', body: '<html>page one</html>', status: 200 },
+          { kind: 'denied', message: 'resolves to a private address' },
+        ],
+      },
+    )
+    const page = await net.fetchUntrusted('https://example.test/one')
+    expect(await page.text()).toBe('<html>page one</html>')
+    // The fetch script did not move: its first exchange is still the one served here.
+    expect(await (await net.fetch(URL_UNDER_TEST)).json()).toEqual({ from: 'fetch' })
+    await expect(net.fetchUntrusted('http://10.0.0.1/')).rejects.toBeInstanceOf(
+      HostNetworkDeniedError,
+    )
+    await expect(net.fetchUntrusted('https://example.test/three')).rejects.toThrow(
+      /no exchange scripted for untrusted call 3/,
+    )
+    expect(net.untrustedRequests.map((request) => request.url)).toEqual([
+      'https://example.test/one',
+      'http://10.0.0.1/',
+      'https://example.test/three',
+    ])
+    expect(net.requests.map((request) => request.url)).toEqual([URL_UNDER_TEST])
+    expect(net.callCount).toBe(1)
+    // checkRequest is fetch's alone.
+    expect(checks).toBe(1)
+  })
+
+  it('makes fetchUntrusted reject every call when no untrusted script was given', async () => {
+    const net = fakeNetwork({ kind: 'json', body: {} }, { checkRequest: () => undefined })
+    await expect(net.fetchUntrusted('https://example.test/')).rejects.toThrow(
+      /fetchUntrusted has no script/,
+    )
+    await expect(fakeNetwork([]).fetchUntrusted('https://example.test/')).rejects.toThrow(
+      /fetchUntrusted has no script/,
+    )
+    // Recorded all the same, and fetch's own script is untouched.
+    expect(net.untrustedRequests).toMatchObject([{ url: 'https://example.test/', method: 'GET' }])
+    expect(net.callCount).toBe(0)
+    expect(await (await net.fetch(URL_UNDER_TEST)).json()).toEqual({})
+  })
+})
