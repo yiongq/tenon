@@ -191,7 +191,7 @@
     - requiresUserInteraction 的 MCP 夹具要自写（Everything 基于 v1 SDK，不一定能设 `_meta` 键）。实现第 4 层 ② 之前，先用它端到端验证 connection.ts:76-77 返回的每个工具上 `_meta['anthropic/requiresUserInteraction']` 仍在。
     - 实测：智谱（owner 的 key）与本机 Ollama 在「历史里有工具调用、请求不带 tools」时会不会报错。
   - 暂定与待定：MCP 调用的 `ConfirmRequest.target` 按开放问题 15 的答复取 `{ type: 'tool', serverId, toolName }`，kernel 测试断言 `target.toolName` 与 `facts.toolName` 都是原名、不是映射名（如 `everything__echo`）；`_meta` 读不到就经 Revisions 把第 4 层 ② 推迟到 SDK 支持时；智谱或 Ollama 报错的话只能降级成文本（两线都没有可用的 `tool_choice:none`）；升级后「工具不可用」只看有没有同名实现（暂定，依据内置工具带不带版本号）；开表时断言没超工具数上限。
-- [ ] 11. **工作区判定与决策表**（裁决 D1、D2、D3、D5、D6、D7、D8、D9、D10、D12、E1、E2、E4、F9、H9）
+- [x] 11. **工作区判定与决策表**（裁决 D1、D2、D3、D5、D6、D7、D8、D9、D10、D12、E1、E2、E4、F9、H9）
   - 读：§权限决策顺序；§可逆性判定与阶段 2 的默认权限姿态；§工作区（只在任务形态）。
   - 交付物：`normalizePath`、`locatePath`（保护名单里的 shell 配置文件由 desktop 在用户目录下算出、解析后经 `SessionServiceOptions.protectedFiles` 交入，成员在第 9 步声明）；`reversibility.ts` 除命令模式表以外的部分；主原因的取法（D5 顺序与命令例外）与 H14 用的「能并行」判定；`decide.ts` 两步合并与 `decidedBy`，连同它要的 `record.ts` 的 `summarize` 与摘要码、`BLOCKED_FACT_KEYS`（`TenantPolicy` 与 contracts 的 policy schema 已在第 5 步，旧 156 在这里作回归）；`grants.ts`、`grantKey` 与答复作用域；会话授权从 Tape 现算（含移出工作区永久作废、cwd 规则）；第 2 层保护名单与本会话落盘目录的只读窄口；冻结后在调用时拦下；`policyVersion` 与 `unavailable` 的处理；kernel 实现并测试自动档（contracts 不暴露）。
   - 验收：28、29、30；不变量 20、21、22（命令部分在第 22 步）。
@@ -721,6 +721,13 @@
   - 厂商事实更正（写回 spec，记 Revisions）：Tenon 的 `Client` 按 SDK 默认只协商 2025 代（`versionNegotiation` 缺省 `legacy`），2026-07-28 的 `input_required` 协商不到；服务端硬发时 `callTool` 抛 `SdkError`（`INVALID_RESULT`），不是 spec 原写的 `CapabilityNotSupported`（那是协商到新一代时的路径），行为不变。
   - 等后面步骤的（都要派发或收口，本步只测到判定结论与请求里的定义）：参数不合法、连接器 schema 用不了、冻结后被禁、代码里找不到的冻结工具这几种调用写成什么（not-run / blocked、判决与回执、不计机器拒绝）在第 13、14 步；`interaction-required` 的判定（旧 50、旧 145 的出卡一半）在第 11、15 步；Everything 一次调用走完审批与 Tape 在第 15 步；旧 32 的改界面语言、跨 Run 批准、插话三格在第 15、17、18 步；旧 151 的语言部分在第 18 步；elicitation 在循环里回 is_error / completed 在第 13、14 步。另：每个 Run 开始时扫一遍本会话的 event / anchor 事实来重建 view 状态（暂定，单请求的 Run 只扫一次；多请求的 Run 在第 13 步沿用这次读到的状态）。
 
+- **2026-09-26 · 第 11 步（工作区判定与决策表）**，分支 `wt/02-step11` → `feat/02-seg1`，完成（format、lint、typecheck、全部单测 76 个文件 1171 个用例过；代码一个提交 `79d0103`）。验收 28、29、30 与不变量 20、21、22 的纯函数部分满足，经循环写事实的部分见下面「等后面步骤的」。**独立评审待补**（同第 9 步）。
+  - 改了什么：`host/path.ts` 只增 `normalizePath`、`pathParts` / `fromParts`、`isWithin`（POSIX、盘符、UNC 三种写法，按段比较）；`permission/workspace.ts`（`resolvePath` 按 spec 第 2 步上溯到已存在的上级，悬空链接、链接环、上溯到根仍不存在都判工作区外；`locatePath` 与 `placeOf` 按第 3 步取第一个成立的；根、profile 目录、落盘目录、保护文件用同一算法解析）；`permission/reversibility.ts` 除命令模式表以外的部分（命令暂一律 `unknown`，模式表在第 22 步）与 `callReasonOf`（默认档位表的「原因码」列，另带被拦时的 `target`）；`permission/decide.ts` 的 `LayerInputs`、`InspectorOutcome`、`CallReason`、`DecisionInput`、`decide()`（八层逐层记一步、两步合并、`decidedBy` 按档内顺序、卡的主原因按 D5 顺序与命令例外、`facts` 按 `CONFIRM_FACT_KEYS` / `BLOCKED_FACT_KEYS`、`unavailable` 按拒且压过落盘窄口、自动档与 `disableAutoMode`）、`primaryReason`、H14 用的 `canRunInParallel`；`permission/record.ts` 的 `summarize`（每个可达组合一个码，不抛错）；`loop/closure.ts` 的 `BLOCKED_FACT_KEYS`；`permission/grants.ts`（`GrantObject`、`grantKey`、`sessionGrantKindOf`、答复作用域 `answerScope`、从答复与工作区事实现算会话授权 `sessionGrants`：移出的文件夹下的写授权永久作废、cwd 变了命令授权全作废）；kernel 入口导出 `normalizePath`、`isWithin`、`locatePath`、`placeOf`、`resolvePath`（desktop 以后用同一算法解析保护文件）。
+  - spec 修订（记 Revisions）：`InspectedCall.tool` 只增 `serverId`。§决策表与各层输入 要 `decide` 按 `call.tool` 的 `(serverId, originalName)` 匹配策略规则，原来的 Pick 里没有 `serverId`，连接器工具的规则匹配不了。
+  - 测试要点：旧 5 与「测试写法」→ test/permission/decide.test.ts（每层单独一例，第二步的五档，第 1 层真值表 16 格，点名内置工具的格子用 `serverId: 'builtin'`，三种放开各自撤掉第 4 层 ① 而撤不掉 ②，例 1、例 2，F9 在会话授权与总是允许在场时，`disableAutoMode` 回落手动档，`unavailable` 压过落盘窄口，主原因顺序与命令例外，WebFetch 的 `flagged` 排在 `network` 前，摘要码逐一，能并行的判定）；旧 152、旧 154、旧 155 → 同文件；旧 153 的作用域表与 `grantKey` 五种对象、会话授权的作废规则 → test/permission/grants.test.ts；旧 51、旧 160 与不变量 21 → test/permission/workspace.test.ts（内存 host：新建文件与多层目录、`..`、链接逃逸、指向保护名单的链接、悬空链接与链接环、不存在的盘符、链接之下的工作区根）与 apps/desktop/test/workspace-locate.test.ts（真实临时目录：`/var` → `/private/var` 链接下的根存真实路径、链接逃逸、大小写写错的已存在文件名）；旧 156 由 contracts 的 policy.test.ts 回归（第 5 步已写）。突变核对：去掉总是允许的放开、把 `connector-confirm` 排到 `tenant-policy` 前、放行写落盘目录、手动档永不问、去掉命令例外，五处各有用例变红。
+  - 验收记录：本机（APFS，大小写不敏感）上大小写写错的已存在文件，`realpath` 返回磁盘上的写法，判为工作区内；硬链接本步没测（写入执行器在第 22 步，按 plan「只记回归基线、不断言拦下」在那一步补）。
+  - 等后面步骤的（要循环写判决、派发与收口）：旧 93 的判决记 `policyVersion` 与每次判决只调一次 `policy.current()`、冻结后改 `unavailable` 的那次调用被拦，在第 13 步；旧 153 的重启后从 `tool/approval_resolved` 重建与「允许后同一文件本会话不再问」、旧 157 的会话授权一半，在第 15 步；旧 158、旧 159 的 Glob / Grep 遍历与旧 179 的 HostConfirm 0 次与收口事实，在第 13、14、18 步（对话形态把 `own-spill` 以外判为 `protected` 的映射随 Read 进表）；contracts 里没有切换审批档的路由，现状如此，随第 16 步的路由登记复核。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -738,9 +745,9 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–10 步已并进这个分支（都已勾），下一步是第 11 步「工作区判定与决策表」（在 `feat/02-seg1` 上新开 worktree 做）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–11 步已并进这个分支（都已勾），下一步是第 12 步「Inspector 与判决记录」（在 `feat/02-seg1` 上新开 worktree 做）。
 
-- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9、10 步由本会话直接写；这五步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–11 步由本会话直接写；这六步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
