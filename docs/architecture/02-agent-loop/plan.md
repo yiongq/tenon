@@ -212,7 +212,7 @@
     - 主原因顺序逐例测：多条原因同时命中取最前一条；命令工具固定为 `command`（curl POST 得 `command` 加 `irreversible`）；WebFetch 三要素齐备时 `flagged` 排在 `network` 前；`policy` 与 `interaction-required` 同时成立取 `policy`。
     - 不变量 20 在 02 只断言前半句（内置工具只产生 `once` / `session`），阶段 3 持久存储那半句不测。
   - 暂定与待定：开放问题 11 的权限读法已确认；shell 配置清单为用户目录下 `.zshrc`、`.zshenv`、`.zprofile`、`.bashrc`、`.bash_profile`、`.profile`；还不存在的余下段保留模型给的写法、逐码元比较（暂定）；对话形态越界的拦截码 `protected`（开放问题 13 已定），回执键 `blocked.chatReadScope` 在第 20 步。
-- [ ] 12. **Inspector 与判决记录**（裁决 F1、F8、F9、F10）
+- [x] 12. **Inspector 与判决记录**（裁决 F1、F8、F9、F10）
   - 读：§权限引擎 · Inspector 与判决记录。
   - 交付物：`inspector.ts`、`session-view.ts`、第一段运行器（时限、超时与出错的折算、停止时不写判决事实）、contracts `ipc/approval.ts` 的 `DecisionSummary` schema、假 inspector（类型第 8、9 步已声明，`summarize` 在第 11 步）；注册时带 `afterResult` 就在构造服务时抛错；desktop 单测断言注册的 inspector 全是 `ceiling: 'ask'`。
   - 验收：31；不变量 15–19。
@@ -728,6 +728,12 @@
   - 验收记录：本机（APFS，大小写不敏感）上大小写写错的已存在文件，`realpath` 返回磁盘上的写法，判为工作区内；硬链接本步没测（写入执行器在第 22 步，按 plan「只记回归基线、不断言拦下」在那一步补）。
   - 等后面步骤的（要循环写判决、派发与收口）：旧 93 的判决记 `policyVersion` 与每次判决只调一次 `policy.current()`、冻结后改 `unavailable` 的那次调用被拦，在第 13 步；旧 153 的重启后从 `tool/approval_resolved` 重建与「允许后同一文件本会话不再问」、旧 157 的会话授权一半，在第 15 步；旧 158、旧 159 的 Glob / Grep 遍历与旧 179 的 HostConfirm 0 次与收口事实，在第 13、14、18 步（对话形态把 `own-spill` 以外判为 `protected` 的映射随 Read 进表）；contracts 里没有切换审批档的路由，现状如此，随第 16 步的路由登记复核。
 
+- **2026-09-26 · 第 12 步（Inspector 与判决记录）**，分支 `wt/02-step12` → `feat/02-seg1`，完成（format、lint、typecheck、全部单测 80 个文件 1188 个用例过；代码一个提交 `86661f0`）。验收 31 与不变量 15–19 的判定与 schema 部分满足，写判决事实的部分见下面「等后面步骤的」。**独立评审待补**（同第 9 步）。
+  - 改了什么：`permission/inspector.ts` 的第一段运行器 `runInspectors`（全部 inspector 同时跑，时限按 `kind` 取 `INSPECTOR_TIMEOUT_MS`、计时用 `host.clock.setTimeout`；抛错、reject、越过声明的上限或形状不对都记 `error`，没按时答记 `timeout` 并中止它的 signal；判定中被停止就中止全部 inspector 的 signal、返回 `stopped`，这个调用不写判决事实）；`permission/session-view.ts` 的 `buildSessionView`（按来源从 Tape 现算：真人 `message/user` 的首条与最近 8 条、续写提示与环境说明不算，子会话两项为空；已派发、可逆性不是只读的调用；已派发的 WebSearch / WebFetch 记为不可信来源；任务形态里已派发的 Bash、或目标不在本会话落盘目录下的 Read / Grep 算碰过私有数据，对话形态恒为假；WebFetch 另算 `fetchUrlVouched`：URL 出现在真人消息里或 WebSearch 结果的 `searchHitUrls` 里）与 `urlsInText` / `comparableUrl`（§外带检查的取 URL 与比较算法）；`MODEL_NOTES.inspectorFailed` 两句取 spec 原文；contracts 新建 `ipc/approval.ts`：`decisionSummaryCodeSchema`（18 个码）与严格对象 `decisionSummarySchema`，都以 `satisfies z.ZodType<…>` 绑定 kernel 类型；`@tenon-app/kernel/testing` 导出 `createFakeInspector`；desktop 新建 `inspectors.ts`（`desktopInspectors()`，第 29 步放进外带检查），index.ts 改用它。
+  - 自查时发现并修掉的：测试里把 `host.clock.setTimeout` 不绑定地传出去，内存时钟的方法取不到 `this`，计时器一注册就抛错、被读成 inspector 出错；三处测试替身（vendor-blocks、mailbox、inspector）都改成箭头函数包一层。
+  - 测试要点：旧 162 → test/permission/inspector.test.ts（只会问人的超时出卡、`flagged`、`inspector-failed`，这一步带 inspectorId 与 `status: 'timeout'`；会拒绝的抛错按拒、拦截码 `inspector`，两句英文各含 spec 的关键句；越过上限与形状不对记 `error`；一个超时一个 `exfiltration` 取 `exfiltration`，两个都超时取 `inspector-failed`；停止时 inspector 收到中止、没有可判定的结果；「多加一条 inspector 结果判决不会变宽」对八组输入与五种结果两两穷举）；F9 与 `unavailable` 按拒已在第 11 步的 decide.test.ts；旧 163 → decide.test.ts 的摘要码逐一（第 11 步）加 contracts test/approval.test.ts 的双向类型断言；旧 125、不变量 19 → approval.test.ts（键集合恰为 verdict / code / facts，严格对象多一个键就 parse 失败，遍历全部路由与事件的 schema 没有 `steps`、`decidedBy`、`basis`）；会话视图 → test/permission/session-view.test.ts；desktop 注册的 inspector 全是 `ceiling: 'ask'` → apps/desktop/test/inspectors.test.ts。
+  - 等后面步骤的：旧 124（每个轮到判定的调用一条 `tool/permission_decided`、`record.steps` 覆盖八层、`policyVersion` 只在载荷顶层、冻结后才被禁的 `decidedBy`、开表排除的没有判决事实）与「同一 Run 连续 3 个出错的拒绝以 `blocked-repeatedly` 结束」、判定中停止的收口 not-run / stopped，都要循环派发，在第 13、14 步；`toolOutcomeViewShape.permission` 在第 14 步、`calls[i].outcome` 在第 20 步补跑。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -745,9 +751,9 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–11 步已并进这个分支（都已勾），下一步是第 12 步「Inspector 与判决记录」（在 `feat/02-seg1` 上新开 worktree 做）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–12 步已并进这个分支（都已勾），下一步是第 13 步「循环骨架与 Run 的结束」（在 `feat/02-seg1` 上新开 worktree 做）。
 
-- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–11 步由本会话直接写；这六步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–12 步由本会话直接写；这七步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
