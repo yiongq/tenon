@@ -13,6 +13,8 @@
  * and its summary live here and `Decision`, the output of `decide()`, lives in `decide.ts`.
  */
 import type { FlaggedCategory, InspectorFinding } from './inspector.js'
+import { hostOfUrl } from './reversibility.js'
+import type { InspectedCall } from './session-view.js'
 
 export type DecisionSource = // D2 表的层名，只增
   | 'tenant-policy'
@@ -80,3 +82,72 @@ export interface DecisionSummary {
   readonly code: DecisionSummaryCode
   readonly facts: Readonly<Record<string, string>> // 必填键一律为 toolName；session-allowed-domain 另加 host（按 §搜索与抓取 规范化）
 } // 继承授权放行的 session-allowed* 另带可选槽位 inherited: 'parent'（§子 agent 契约）
+
+/**
+ * The interface's view of a decision (§判决记录与摘要): a code and a few slots for every reachable
+ * combination — never a throw. The auto mode and task grants have no producer in the 02 product, but
+ * tests reach them, so they have codes already. Computed once, when the decision is made, and stored.
+ */
+export function summarize(record: DecisionRecord, call: InspectedCall): DecisionSummary {
+  const toolName = call.tool.originalName
+  const at = (by: DecisionSource): DecisionStep | undefined =>
+    record.steps.find((step) => step.by === by && step.said !== 'none')
+  const summary = (
+    code: DecisionSummaryCode,
+    extra: Record<string, string> = {},
+  ): DecisionSummary => ({
+    verdict: record.verdict,
+    code,
+    facts: { toolName, ...extra },
+  })
+  switch (record.decidedBy) {
+    case 'tenant-policy':
+      return summary('org-policy')
+    case 'protected':
+      return summary(record.verdict === 'allow' ? 'own-output-read' : 'protected')
+    case 'user-disabled':
+      return summary('user-disabled')
+    case 'connector-confirm':
+      return summary('connector-requires-confirm')
+    case 'irreversible':
+      return summary('irreversible-once')
+    case 'inspector': {
+      const said = record.verdict === 'deny' ? 'deny' : 'ask'
+      const deciding = record.steps.filter((step) => step.by === 'inspector' && step.said === said)
+      const category =
+        deciding.find((step) => step.status === 'ok' && step.basis?.category !== undefined)?.basis
+          ?.category ?? 'inspector-failed'
+      if (category === 'inspector-failed') return summary('check-incomplete')
+      return summary(record.verdict === 'deny' ? 'inspector-blocked' : 'exfiltration-recheck')
+    }
+    case 'user-grant': {
+      const basis = at('user-grant')?.basis
+      const inherited = basis?.inherited === true ? { inherited: 'parent' } : {}
+      switch (basis?.grant) {
+        case 'session':
+          return summary('session-allowed', inherited)
+        case 'session-search':
+          return summary('session-allowed-search', inherited)
+        case 'session-domain':
+          return summary('session-allowed-domain', {
+            host: hostOfUrl(typeof call.args['url'] === 'string' ? call.args['url'] : ''),
+            ...inherited,
+          })
+        case 'always-allow':
+          return summary('user-rule')
+        case 'task':
+          return summary('task-grant')
+        default:
+          return summary('workspace-read')
+      }
+    }
+    case 'approval-mode': {
+      if (record.verdict !== 'allow') return summary('default-ask')
+      return summary(
+        at('approval-mode')?.basis?.modeRule === 'auto-range' ? 'auto-mode' : 'no-approval-needed',
+      )
+    }
+    default:
+      return summary('default-ask')
+  }
+}

@@ -24,7 +24,7 @@ export { CONFIRM_FACT_KEYS, HostNetworkDeniedError } from './host/adapter.js'
 export { EMPTY_POLICY } from './host/policy.js'
 export type { PolicyState, TenantPolicy, ToolPolicyRule } from './host/policy.js'
 export type { FlaggedCategory, InspectorCategory } from './permission/inspector.js'
-export { absolutePath, isAbsolutePath, joinPath } from './host/path.js'
+export { absolutePath, isAbsolutePath, isWithin, joinPath, normalizePath } from './host/path.js'
 export { KEY_SEPARATOR, keyFor } from './host/key.js'
 export {
   PROFILE_CONFIG_FILE,
@@ -444,3 +444,8 @@ export type {
   SearchOutcome,
 } from './tools/search/types.js'
 export type { CommandShell } from './tools/builtin/bash.js'
+
+// Spec 02 plan step 11 — 工作区判定与决策表. Where a path falls, resolved the one way both the kernel
+// and the desktop (which resolves the protected shell files) use.
+export { locatePath, placeOf, resolvePath } from './permission/workspace.js'
+export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permission/workspace.js'
