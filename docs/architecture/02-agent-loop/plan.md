@@ -671,7 +671,12 @@
 
 ## 交接
 
-第 0 步第 2–4 步完成（2026-09-26，分支 `feat/02-step0-prep`，合进 dev 后生效）：模型表与智谱补测（第 2 步）；SDK 升到 `@anthropic-ai/sdk` 0.128.0、`openai` 7.23.0，五项检查全过，请求头表与「环境变量能改协议头的值」记在实施记录，第 7 步的白名单名与值都管（第 3 步）；`fakeNetwork` 接缝、四个请求体断言与官方 key 分组（第 4 步；要官方 key 的实测在第 33 步补）。下一步是 ① 的第 5 步「对 00 的修补落代码」，新开分支。T6 已定 A（owner 2026-09-26，见实施记录的 T6+），第 6 步不再等它。owner 2026-09-26 让实现者自行推进到 02 完成：每段（第 0 步、①、②、③、收尾）一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，按纪律排到同段最后，记进 Open 再往下走。开放问题 12、13、15–18、21–25 的提案正在准备，按期限分轮交 owner 定，定下的写回 spec 并记 Revisions。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 进行中（分支 `feat/02-seg1`，每段一个 PR）。**2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**，此刻的状态：
+
+- 第 5 步：在 worktree `.claude/worktrees/t5`（分支 `wt/02-step5`）有一个提交 `0ebb66f`，代码与测试已做、验收 5 自测通过，但评审没做完：spec、安全两个视角各自独立发现同一处 major——`DesktopFs.realpath` 对以 `/`（或 `/.`）结尾、经悬空链接的路径返回 null，而同一路径 writeFile 会写到工作区外；另有四处 minor（PolicyState 与 ConfirmTarget 缺键集合相等断言、`flaggedCategorySchema` 只单向绑定、MemoryFs.readdir 对文件报 ENOENT 而 node 报 ENOTDIR、三个 realpath 测试错标「02 不变量 21」）。突变测试视角没跑。修完这些、并按开放问题 15 的答复（下面）加第五种 `ConfirmTarget`，才能并进 `feat/02-seg1`。
+- 第 6、8 步：实现 agent 中途失败，`.claude/worktrees/t67`（`wt/02-step6-7`）与 `.claude/worktrees/t8`（`wt/02-step8`）里留有未提交的半成品，**不可信**，接手时先看 `git diff` 再决定用不用；第 7 步没开始。
+- owner 2026-09-26 定了开放问题的第一轮（都按推荐）：15 加第五种形态 `{ type: 'tool'; serverId; toolName }`；连接器卡参数默认展开；16 的「工作区变化与日期」新增 `message/environment`（每次用户消息、含插话之前检查，变了才追加全量，含本地日期）；16 的参数校验用 `@modelcontextprotocol/client` 自带的 cf-worker 校验器，失败记新来源码 `invalid-input`。这四条要写回 spec 并记 Revisions（还没写）。其余几轮（Bash、子 agent 与 HTML 转换、建会话前草稿、Run 状态、key 绑定、菜单归类、按默认的五项）的提案与核查结果存在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`，其中第二、三轮要在第 8 步声明类型之前定。
+- T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
 ## Open
 
