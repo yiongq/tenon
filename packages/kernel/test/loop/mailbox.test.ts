@@ -99,9 +99,10 @@ async function names(store: TapeStore, sessionId = SESSION): Promise<string[]> {
 }
 
 describe('leases and the arrival order', () => {
-  it('queues a send that arrives while the first is still prebuilding, with one lease', async () => {
+  it('queues a send that arrives while the first is still prebuilding, then sends it after', async () => {
     const h = harness()
     h.provider.script(scriptedTurn({ deltas: ['an answer'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['the second answer'], usage: USAGE }))
     const held = h.loop.connector.holdAssemble()
     const first = h.service.send({ sessionId: SESSION, origin: null, text: 'first' })
     await held.reached
@@ -116,13 +117,15 @@ describe('leases and the arrival order', () => {
     expect(await second).toEqual({ status: 'queued', queuedId: expect.any(String) })
     if (started.status !== 'started') return
     await h.loop.runEnded({ runId: started.runId })
+    // The first Run completed: the queued one goes out on a lease begun as the first finished
+    // (「Run 结束」) — the recording lease would have thrown had they overlapped.
+    const auto = await h.loop.runEnded()
+    expect(auto.reason).toEqual({ code: 'completed' })
     const tape = await names(h.store)
-    expect(tape.filter((name) => name === 'execution/run_started')).toHaveLength(1)
-    expect(tape.filter((name) => name === 'message/user')).toHaveLength(1)
-    // The recording lease would have thrown on a second begin while the first was live.
-    expect(h.loop.leaseLog).toHaveLength(1)
-    // No auto-send before plan step 17: the queued message stays queued.
-    expect(h.loop.queued(SESSION).map((item) => item.text)).toEqual(['second'])
+    expect(tape.filter((name) => name === 'execution/run_started')).toHaveLength(2)
+    expect(tape.filter((name) => name === 'message/user')).toHaveLength(2)
+    expect(h.loop.leaseLog).toHaveLength(2)
+    expect(h.loop.queued(SESSION)).toEqual([])
   })
 
   it('judges a send by the state at its turn, not at its arrival', async () => {
@@ -174,19 +177,26 @@ describe('leases and the arrival order', () => {
       results.push(self.service.send({ sessionId: SESSION, origin: null, text: 'after the stop' }))
     })
     h.provider.script(scriptedTurn({ deltas: ['a', 'b', 'c'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['sent after the stop'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['and then the rest'], usage: USAGE }))
     const started = await h.service.send({ sessionId: SESSION, origin: null, text: 'hi' })
     if (started.status !== 'started') throw new Error(JSON.stringify(started))
     const ended = await h.loop.runEnded({ runId: started.runId })
     expect(ended.reason).toEqual({ code: 'user-stopped' })
+    // 「何时判定」: a Run aborted and still closing counts as in progress, and what arrives then is
+    // marked urgent — after a `user-stopped` end only the urgent item goes out; the other waits.
+    expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
+      ['while streaming', false],
+    ])
     const [whileStreaming, afterStop] = await Promise.all(results)
     expect(whileStreaming).toMatchObject({ status: 'queued' })
     expect(afterStop).toMatchObject({ status: 'queued' })
-    // 「何时判定」: a Run aborted and still closing counts as in progress, and what arrives then is
-    // marked urgent, so it goes first once that Run's end is written (plan step 17).
-    expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
-      ['while streaming', false],
-      ['after the stop', true],
-    ])
+    // The urgent Run completes, and then the rest of the queue goes out after it.
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(h.loop.queued(SESSION)).toEqual([])
+    const users = h.loop.recorded.filter((event) => event.type === 'user-message')
+    expect(users.map((event) => event.queuedId === null)).toEqual([true, false, false])
   })
 
   it('finishes the lease before run-ended goes out', async () => {

@@ -149,6 +149,7 @@ function mapped(events: readonly SessionEvent[]): { chat: ChatEvent[]; started: 
       chat.push(payload as ChatEvent)
     },
     onRunStarted: (root, runId) => started.push(`${root}:${runId}`),
+    onHeld: () => {},
     log: () => {},
   })
   for (const event of events) handle(event)
@@ -229,6 +230,29 @@ describe('run-events', () => {
     ])
   })
 
+  it('forwards a root’s committed user message, and hands queue-held to the queue (plan step 17)', () => {
+    const held: Array<[string, string | null]> = []
+    const chat: ChatEvent[] = []
+    const handle = createRunEvents({
+      send: (_channel, payload) => chat.push(payload as ChatEvent),
+      onRunStarted: () => {},
+      onHeld: (rootSessionId, host) => held.push([rootSessionId, host]),
+      log: () => {},
+    })
+    handle({ ...root, type: 'user-message', runId: 'r1', messageId: 'm1', queuedId: 'q1' })
+    handle({ ...child, type: 'user-message', runId: 'c1', messageId: 'm2', queuedId: null })
+    handle({ ...root, type: 'queue-held', host: 'api.example.com' })
+    handle({ ...child, type: 'queue-held', host: null })
+    expect(chat).toEqual([
+      { type: 'user-message', sessionId: ROOT, messageId: 'm1', queuedId: 'q1' },
+    ])
+    expect(chatEventSchema.parse(chat[0])).toEqual(chat[0])
+    expect(held).toEqual([
+      [ROOT, 'api.example.com'],
+      [ROOT, null],
+    ])
+  })
+
   it('forwards a closed call as tool-outcome, by callKey, and it parses (plan step 14)', () => {
     const outcome = {
       effect: 'blocked' as const,
@@ -254,8 +278,8 @@ describe('run-events', () => {
   })
 })
 
-describe('chat.send before plan step 17', () => {
-  it('withdraws a message the kernel queued and refuses it as already streaming', async () => {
+describe('chat.send and the queue (plan step 17)', () => {
+  it('leaves a message the kernel queued in the queue, accepted, and pushes the queue', async () => {
     const host = createMemoryHost()
     const sent: unknown[] = []
     const loop = createDesktopLoop({
@@ -278,9 +302,32 @@ describe('chat.send before plan step 17', () => {
     }
     registerChatRoutes({ send: () => {}, ipcMain, sessions, loop, log: () => {} })
     const answer = await handlers.get('chat.send')?.({}, { sessionId: ROOT, text: 'hi' })
-    expect(answer).toMatchObject({ ok: false, error: { code: 'handler-failed' } })
-    expect(await loop.queue.peek(ROOT)).toEqual([])
-    expect(sent).toEqual([])
+    expect(answer).toEqual({ ok: true, data: { accepted: true } })
+    expect((await loop.queue.peek(ROOT)).map((item) => item.text)).toEqual(['hi'])
+    expect(sent).toEqual([
+      { sessionId: ROOT, items: [{ queuedId: expect.any(String), text: 'hi' }] },
+    ])
+  })
+
+  it('withdraws, edits and holds queued messages, pushing the whole queue each time', async () => {
+    const pushed: unknown[] = []
+    const queue = createRunQueue({ onChange: (root, view) => pushed.push({ root, ...view }) })
+    const { queuedId: first } = await queue.enqueue(ROOT, 'first', { urgent: false })
+    const { queuedId: second } = await queue.enqueue(ROOT, 'second', { urgent: false })
+    expect(queue.edit(ROOT, first, 'first, better')).toBe(true)
+    queue.setHeld(ROOT, 'api.example.com')
+    expect(queue.withdraw(ROOT, second)).toBe(true)
+    expect(queue.withdraw(ROOT, second)).toBe(false)
+    expect(pushed.at(-1)).toEqual({
+      root: ROOT,
+      items: [{ queuedId: first, text: 'first, better' }],
+      held: { host: 'api.example.com' },
+    })
+    queue.setHeld(ROOT, null)
+    expect(pushed.at(-1)).toEqual({
+      root: ROOT,
+      items: [{ queuedId: first, text: 'first, better' }],
+    })
   })
 
   it('computes the local date in this machine’s time zone', () => {

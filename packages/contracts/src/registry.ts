@@ -1,5 +1,14 @@
 import { approvalCurrent, approvalList, approvalRespond, approvalResume } from './ipc/approval.js'
-import { chatContinue, chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
+import {
+  chatContinue,
+  chatEvent,
+  chatNew,
+  chatQueueAct,
+  chatQueueEvent,
+  chatSend,
+  chatSendNow,
+  chatStop,
+} from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
@@ -15,7 +24,9 @@ export const ipcRoutes = {
   approvalRespond,
   approvalResume,
   chatContinue,
+  chatQueueAct,
   chatSend,
+  chatSendNow,
   chatStop,
   configGet,
   configSet,
@@ -25,7 +36,13 @@ export const ipcRoutes = {
   sessionLatest,
   sessionMessages,
 } as const
-export const ipcEvents = { chatEvent, chatNew, configLocale, confirmRequestEvent } as const
+export const ipcEvents = {
+  chatEvent,
+  chatNew,
+  chatQueueEvent,
+  configLocale,
+  confirmRequestEvent,
+} as const
 
 export const ROUTE_CHANNELS: readonly string[] = Object.values(ipcRoutes).map((r) => r.channel)
 export const EVENT_CHANNELS: readonly string[] = Object.values(ipcEvents).map((e) => e.channel)

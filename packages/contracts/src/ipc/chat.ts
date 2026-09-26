@@ -211,10 +211,73 @@ export const chatEventSchema = z.discriminatedUnion('type', [
   }),
   /** This attempt writes no assistant message (discarded or failed): drop what it streamed. */
   z.object({ type: z.literal('attempt-discarded'), sessionId: sessionIdSchema }),
+  /**
+   * A `message/user` committed (plan step 17): a direct message, or a queued one inserted at a batch
+   * boundary or sent after a Run — then with its `queuedId`, so its queued bubble becomes it.
+   */
+  z.object({
+    type: z.literal('user-message'),
+    sessionId: sessionIdSchema,
+    messageId: z.string().min(1),
+    queuedId: z.string().min(1).nullable(),
+  }),
 ])
 export type ChatEvent = z.infer<typeof chatEventSchema>
 
 export const chatEvent = defineEvent('chat.event', chatEventSchema)
+
+/**
+ * The queue of a session, whole and in order, pushed on every change (spec 02 01 修补 6「排队、立即发送与
+ * 继续」); `held` while a new round waits on the menu's confirmation of a public host.
+ */
+export const chatQueueEvent = defineEvent(
+  'chat.queue',
+  z.object({
+    sessionId: sessionIdSchema,
+    items: z.array(z.object({ queuedId: z.string().min(1), text: z.string().min(1) })),
+    held: z.object({ host: z.string() }).optional(),
+  }),
+)
+
+/**
+ * What the user does to a queued message: withdraw it, edit it, or send it now — stopping the Run
+ * they saw (`runId`), and only that one. `not-found`: already inserted, sent or withdrawn.
+ */
+export const chatQueueAct = defineRoute('chat.queue.act', {
+  request: z.discriminatedUnion('action', [
+    z.object({
+      action: z.literal('withdraw'),
+      sessionId: sessionIdSchema,
+      queuedId: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal('edit'),
+      sessionId: sessionIdSchema,
+      queuedId: z.string().min(1),
+      text: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal('send-now'),
+      sessionId: sessionIdSchema,
+      queuedId: z.string().min(1),
+      runId: z.string().min(1).nullable(),
+    }),
+  ]),
+  response: z.object({ status: z.enum(['applied', 'not-found']) }),
+})
+
+/**
+ * Cmd/Ctrl+Enter: stop the Run the user saw (`runId`) as a user stop, then send this as the next
+ * message; with no Run, the same as `chat.send`.
+ */
+export const chatSendNow = defineRoute('chat.sendNow', {
+  request: z.object({
+    sessionId: sessionIdSchema,
+    text: z.string().min(1),
+    runId: z.string().min(1).nullable(),
+  }),
+  response: z.object({ accepted: z.literal(true) }),
+})
 
 /** main → renderer: start a fresh session (application menu / shortcut). */
 export const chatNew = defineEvent('chat.new', z.object({}))

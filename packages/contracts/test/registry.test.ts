@@ -9,7 +9,9 @@ describe('ipc registry', () => {
       'approval.respond',
       'approval.resume',
       'chat.continue',
+      'chat.queue.act',
       'chat.send',
+      'chat.sendNow',
       'chat.stop',
       'config.get',
       'config.set',
@@ -22,6 +24,7 @@ describe('ipc registry', () => {
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
       'chat.event',
       'chat.new',
+      'chat.queue',
       'config.locale',
       'confirm.request',
     ])

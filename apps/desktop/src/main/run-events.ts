@@ -8,9 +8,8 @@
  * after the fact it reports is committed, and a `run-ended` after the lease is finished: whoever
  * reacts to `done` by sending again finds the session free.
  *
- * Plan step 9 mapped what a one-request Run produces, step 13 added each Run's `endReason` and step
- * 14 `tool-outcome`. `user-message` (step 17) and `queue-held` (step 17, to queue.ts) are not
- * forwarded yet.
+ * Plan step 9 mapped what a one-request Run produces, step 13 added each Run's `endReason`, step 14
+ * `tool-outcome`, and step 17 `user-message` — `queue-held` goes to queue.ts, not the renderer.
  */
 import { chatEvent } from '@tenon-app/contracts'
 import type { ChatEvent } from '@tenon-app/contracts'
@@ -77,12 +76,19 @@ export interface RunEventsOptions {
   readonly send: EventSender
   /** Every `run-started`, sub-agent sessions included: the RunRegistry's runId (§RunRegistry). */
   readonly onRunStarted: (rootSessionId: string, runId: string) => void
+  /** `queue-held`: not a chat.event — queue.ts sets or clears `chat.queue`'s `held` (01 修补 6). */
+  readonly onHeld: (rootSessionId: string, host: string | null) => void
   readonly log: (line: string) => void
 }
 
 export function createRunEvents(options: RunEventsOptions): (event: SessionEvent) => void {
-  const { send, onRunStarted, log } = options
+  const { send, onRunStarted, onHeld, log } = options
   return (event) => {
+    // `held` belongs to the root's queue, whichever session of the tree asked.
+    if (event.type === 'queue-held') {
+      onHeld(event.rootSessionId, event.host)
+      return
+    }
     if (event.type === 'run-started') {
       onRunStarted(event.rootSessionId, event.runId)
       return
@@ -108,6 +114,15 @@ export function createRunEvents(options: RunEventsOptions): (event: SessionEvent
           input: event.input,
         })
         return
+      case 'user-message':
+        // Committed: the queued bubble with this `queuedId` becomes this message (01 修补 6).
+        emitChatEvent(send, log, {
+          type: 'user-message',
+          sessionId,
+          messageId: event.messageId,
+          queuedId: event.queuedId,
+        })
+        return
       case 'tool-outcome':
         emitChatEvent(send, log, {
           type: 'tool-outcome',
@@ -121,7 +136,6 @@ export function createRunEvents(options: RunEventsOptions): (event: SessionEvent
         emitChatEvent(send, log, terminalEvent(sessionId, event))
         return
       default:
-        // user-message, queue-held: see the file comment.
         return
     }
   }

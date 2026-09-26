@@ -1,4 +1,12 @@
-import { chatContinue, chatSend, chatStop, registerRoute } from '@tenon-app/contracts'
+import {
+  chatContinue,
+  chatQueueAct,
+  chatQueueEvent,
+  chatSend,
+  chatSendNow,
+  chatStop,
+  registerRoute,
+} from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
@@ -14,7 +22,7 @@ import type {
 import type { EventSender } from './host/index.js'
 import { localDateOf } from './locale.js'
 import { createRunQueue } from './queue.js'
-import type { RunQueue } from './queue.js'
+import type { DesktopQueue } from './queue.js'
 import { createRunEvents, emitChatEvent } from './run-events.js'
 
 /**
@@ -31,16 +39,21 @@ import { createRunEvents, emitChatEvent } from './run-events.js'
  *     menu's Reload replaces its document, the lease is aborted with `close-window`, and the kernel
  *     persists what did arrive as `status: 'aborted'` — which is what the user saw.
  *
- * Until plan step 17 queues and auto-sends a message sent while a reply streams, `chat.send` keeps
- * phase 1's refusal: a root with a live lease answers `ALREADY_STREAMING`, and a message the kernel
- * queued anyway (it arrived while the lease was being begun) is withdrawn and refused the same way.
+ * `chat.send` never refuses a message because a reply streams (01 修补 9 (a)): the kernel queues it,
+ * inserts it at the next batch boundary or sends it after the Run, and queue.ts pushes the queue as
+ * `chat.queue`. `chat.sendNow` and `chat.queue.act` are the stop-and-send and the queued item's
+ * three actions.
  */
 
 /** Diagnostics: logged and carried in the never-rendered `detail`, never shown to a user. */
-const ALREADY_STREAMING = 'a reply is already streaming for this session'
 const NO_STORE = 'the session store is unavailable'
 const NOT_A_SESSION_ID = 'the session id is not a canonical uuid'
 const NOT_BOUND = 'the agent loop is not bound yet'
+
+/** `chat.queue.act`'s answer: applied, or the item was no longer queued. */
+function status(applied: boolean): { status: 'applied' | 'not-found' } {
+  return { status: applied ? 'applied' : 'not-found' }
+}
 
 /** Plan step 22 replaces this with shell-env.ts's shell and the user's terminal environment. */
 const PLACEHOLDER_SHELL: CommandShell = {
@@ -188,7 +201,7 @@ export function createRunRegistry(clock: Pick<HostClock, 'setTimeout'>): RunRegi
 /** The host's half of the loop: the registry, the queue and the ports `bindLoop` takes. */
 export interface DesktopLoop {
   readonly registry: RunRegistry
-  readonly queue: RunQueue
+  readonly queue: DesktopQueue
   readonly ports: LoopPorts
 }
 
@@ -203,10 +216,21 @@ export interface DesktopLoopOptions {
 export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
   const log = options.log ?? ((line: string): void => console.warn(line))
   const registry = createRunRegistry(options.clock)
-  const queue = createRunQueue()
+  const queue = createRunQueue({
+    onChange: (root, view) => {
+      try {
+        options.send(chatQueueEvent.channel, { sessionId: root, ...view })
+      } catch (error) {
+        log(
+          `[chat] dropped a chat.queue event: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    },
+  })
   const events = createRunEvents({
     send: options.send,
     onRunStarted: (root, runId) => registry.noteRunStarted(root, runId),
+    onHeld: (root, host) => queue.setHeld(root, host),
     log,
   })
   return {
@@ -256,28 +280,56 @@ export function registerChatRoutes(deps: ChatDeps): void {
     // Every id on the tape is a canonical UUID; a session id that is not one would be taken for a
     // new conversation on every send, so it is refused here rather than at the store.
     if (!isCanonicalUuid(sessionId)) return fail(NOT_A_SESSION_ID)
-    // Plan step 17 turns this refusal into the queue. A root whose lease is still closing counts:
-    // its Run has not written its end yet.
-    if (loop.registry.snapshot().some((entry) => entry.rootSessionId === sessionId)) {
-      throw new Error(ALREADY_STREAMING)
-    }
+    // While a reply streams the kernel queues it: `chat.queue` shows it (01 修补 9 (a)).
     const result = await sessions.send({ sessionId, origin: ownerOf(senderOf(event)), text })
-    switch (result.status) {
-      case 'queued':
-      case 'held':
-        // Arrived while the lease was being begun: nothing sends it on yet, so it is withdrawn.
-        await loop.queue.take(sessionId, {
-          upToSeq: null,
-          urgentOnly: false,
-          queuedId: result.queuedId,
-        })
-        throw new Error(ALREADY_STREAMING)
-      case 'refused':
-        throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
-      default:
-        // started, not-sent (the loop already sent the terminal event), and the rest.
-        return accepted
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
+    // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
+    return accepted
+  })
+
+  // Cmd/Ctrl+Enter: stop the Run the user saw, then this is the next message (H13).
+  registerRoute(ipcMain, chatSendNow, async ({ sessionId, text, runId }, event) => {
+    await gate
+    if (sessions === null || loop === null) {
+      emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail: NO_STORE })
+      return accepted
+    }
+    if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
+    const result = await sessions.send({
+      sessionId,
+      origin: ownerOf(senderOf(event)),
+      text,
+      ...(runId === null ? {} : { urgent: { runId } }),
+    })
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+    }
+    return accepted
+  })
+
+  // The queued bubble's actions: withdraw, edit, send now. The first two are the queue's own; a
+  // send-now is the kernel's, which takes the item at its turn (「立即发送绑定 runId」).
+  registerRoute(ipcMain, chatQueueAct, async (request, event) => {
+    await gate
+    if (sessions === null || loop === null) return { status: 'not-found' as const }
+    if (request.action === 'withdraw') {
+      return status(loop.queue.withdraw(request.sessionId, request.queuedId))
+    }
+    if (request.action === 'edit') {
+      return status(loop.queue.edit(request.sessionId, request.queuedId, request.text))
+    }
+    const result = await sessions.send({
+      sessionId: request.sessionId,
+      origin: ownerOf(senderOf(event)),
+      queuedId: request.queuedId,
+      ...(request.runId === null ? {} : { urgent: { runId: request.runId } }),
+    })
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+    }
+    return status(result.status !== 'not-found')
   })
 
   registerRoute(ipcMain, chatStop, async ({ sessionId }) => {

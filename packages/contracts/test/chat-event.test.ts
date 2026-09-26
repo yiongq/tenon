@@ -10,7 +10,16 @@ import type {
 } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
-import { chatContinue, chatEventSchema, ipcRoutes, runEndReasonSchema } from '../src/index.js'
+import {
+  chatContinue,
+  chatEventSchema,
+  chatQueueAct,
+  chatQueueEvent,
+  chatSendNow,
+  ipcEvents,
+  ipcRoutes,
+  runEndReasonSchema,
+} from '../src/index.js'
 import type {
   RunEndReasonContract,
   ToolOutcomeViewContract,
@@ -180,5 +189,59 @@ describe('tool-outcome (旧 106)', () => {
     expect(chatEventSchema.safeParse({ ...ok, source: 'crash' }).success).toBe(false)
     expect(chatEventSchema.safeParse({ ...ok, callKey: '' }).success).toBe(false)
     expect(chatEventSchema.safeParse({ ...ok, facts: undefined }).success).toBe(false)
+  })
+})
+
+describe('the queue (plan step 17)', () => {
+  it('announces a committed user message, with the queued item it was', () => {
+    for (const queuedId of ['q-1', null]) {
+      const event = { type: 'user-message', sessionId: SESSION, messageId: 'm-1', queuedId }
+      expect(chatEventSchema.parse(event)).toEqual(event)
+    }
+    expect(
+      chatEventSchema.safeParse({
+        type: 'user-message',
+        sessionId: SESSION,
+        messageId: '',
+        queuedId: null,
+      }).success,
+    ).toBe(false)
+  })
+
+  it('pushes the whole queue, with held while a switch waits on the menu', () => {
+    expect(Object.values(ipcEvents)).toContain(chatQueueEvent)
+    const queue = {
+      sessionId: SESSION,
+      items: [{ queuedId: 'q-1', text: 'next' }],
+      held: { host: 'api.example.com' },
+    }
+    expect(chatQueueEvent.payload.parse(queue)).toEqual(queue)
+    expect(
+      chatQueueEvent.payload.safeParse({ sessionId: SESSION, items: [{ queuedId: 'q', text: '' }] })
+        .success,
+    ).toBe(false)
+  })
+
+  it('acts on a queued item, and sends now with the Run the user saw', () => {
+    expect(Object.values(ipcRoutes)).toContain(chatQueueAct)
+    expect(Object.values(ipcRoutes)).toContain(chatSendNow)
+    for (const request of [
+      { action: 'withdraw', sessionId: SESSION, queuedId: 'q-1' },
+      { action: 'edit', sessionId: SESSION, queuedId: 'q-1', text: 'better' },
+      { action: 'send-now', sessionId: SESSION, queuedId: 'q-1', runId: null },
+    ]) {
+      expect(chatQueueAct.request.parse(request)).toEqual(request)
+    }
+    expect(
+      chatQueueAct.request.safeParse({
+        action: 'edit',
+        sessionId: SESSION,
+        queuedId: 'q-1',
+        text: '',
+      }).success,
+    ).toBe(false)
+    expect(
+      chatSendNow.request.parse({ sessionId: SESSION, text: 'now', runId: 'r-1' }),
+    ).toMatchObject({ runId: 'r-1' })
   })
 })

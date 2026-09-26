@@ -133,6 +133,12 @@ export interface RunDriverContext {
   readonly onUnansweredCall: 'throw' | 'repair'
   /** A Run an answer opened: it finishes the paused batch before its first request (§续跑). */
   readonly resume?: ResumeBatch
+  /**
+   * The queued messages, inserted at a batch boundary — after the batch's results, before the next
+   * request, as `message/user` facts of this turn (§插话与输入框状态表「写入时点」). Null when there
+   * was none, or the Run was stopped first.
+   */
+  readonly insertQueued: () => Promise<Written | null>
   readonly emit: {
     delta(runId: string, type: 'text-delta' | 'thinking-delta', delta: string): void
     discarded(runId: string): void
@@ -232,6 +238,18 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
           view,
         ),
     })
+  /**
+   * At a batch boundary the queued messages go in after the results, once the next request's
+   * provider is built — a resumed Run with no key leaves them queued (§续跑) — and the pin moves
+   * past them.
+   */
+  let atBoundary = false
+  const boundary = async (): Promise<void> => {
+    if (!atBoundary) return
+    atBoundary = false
+    const inserted = await ctx.insertQueued()
+    for (const receipt of inserted?.receipts ?? []) pin = Math.max(pin, receipt.entryId)
+  }
   const batchEnd = (result: BatchResult): RunFinish | null => {
     if (result.kind === 'paused') {
       return finish(
@@ -262,6 +280,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const ended = batchEnd(result)
     if (ended !== null) return ended
     if (result.kind === 'done') denials = result.denials
+    atBoundary = true
   }
 
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
@@ -284,6 +303,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         attempts: 0,
       })
     }
+    // oxlint-disable-next-line no-await-in-loop -- the queued messages join before this request
+    await boundary()
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const assembled = await assembleRequest({
       tape,
@@ -427,6 +448,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       const ended = batchEnd(result)
       if (ended !== null) return ended
       if (result.kind === 'done') denials = result.denials
+      atBoundary = true
       break
     }
   }

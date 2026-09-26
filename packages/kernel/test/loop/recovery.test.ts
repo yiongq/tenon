@@ -576,7 +576,9 @@ describe('judging a waiting card again at startup (旧 168)', () => {
       expect(after.loop.connector.calls.resolveChoice).toBe(0)
       // oxlint-disable-next-line no-await-in-loop -- the resuming Run's end
       const ended = await after.loop.runEnded()
-      expect(after.loop.queued(SESSION)).toHaveLength(1)
+      // Inserted before the resumed Run's first request once its provider is built; with no key,
+      // it never gets that far and the message is still queued.
+      expect(after.loop.queued(SESSION)).toHaveLength(trouble === 'no-key' ? 1 : 0)
       // oxlint-disable-next-line no-await-in-loop -- this round's list
       expect(await after.service.listPendingRoots({ limit: 20 })).toEqual([])
       // oxlint-disable-next-line no-await-in-loop -- and nothing left to resume

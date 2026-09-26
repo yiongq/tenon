@@ -95,10 +95,12 @@ function collector(): {
   let terminal: (() => void) | null = null
   return {
     events,
-    send(_channel, payload) {
+    send(channel, payload) {
+      // Only the chat stream: `chat.queue` goes out on the same sender.
+      if (channel !== 'chat.event') return
       const event = payload as ChatEvent
       events.push(event)
-      if (event.type !== 'text-delta') terminal?.()
+      if (event.type === 'done' || event.type === 'error') terminal?.()
       const matched = waiters.filter((w) => w.type === event.type)
       for (const w of matched) waiters.splice(waiters.indexOf(w), 1)
       for (const w of matched) w.resolve(event)
@@ -360,22 +362,33 @@ describe('chat routes', () => {
     expect(await duringTerminal).toEqual({ ok: true, data: { stopped: false } })
   })
 
-  it('refuses a second reply while one is streaming', async () => {
-    fake = await startFakeAnthropic({
-      chunks: Array.from({ length: 200 }, () => 'x '),
-      delayMs: 20,
-    })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+  it('queues a message sent while a reply streams, and sends it once that reply is done', async () => {
+    fake = await startFakeAnthropic({ chunks: ['one ', 'two ', 'three'], delayMs: 20 })
+    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
 
     await ipc.call('chat.send', { sessionId, text: 'hi' })
     await out.waitFor('text-delta')
-    expect(await ipc.call('chat.send', { sessionId, text: 'again' })).toMatchObject({
-      ok: false,
-      error: { code: 'handler-failed' },
+    // Not refused any more (01 修补 9 (a)): the kernel queues it.
+    expect(await ipc.call('chat.send', { sessionId, text: 'again' })).toEqual({
+      ok: true,
+      data: { accepted: true },
     })
-    await ipc.call('chat.stop', { sessionId })
-    await out.waitFor('done')
-    expect(fake.requests).toHaveLength(1)
+    await expect
+      .poll(() => out.events.filter((event) => event.type === 'done').length, { timeout: 5000 })
+      .toBe(2)
+    expect(fake.requests).toHaveLength(2)
+    // It became its own user turn once sent, with its queued id.
+    const users = out.events.filter((event) => event.type === 'user-message')
+    expect(
+      users.map((event) => (event.type === 'user-message' ? event.queuedId !== null : null)),
+    ).toEqual([false, true])
+    const messages = await sessions.listMessages({ sessionId, limit: 10 })
+    expect(messages.map((m) => [m.role, said(m)])).toEqual([
+      ['user', 'hi'],
+      ['assistant', 'one two three'],
+      ['user', 'again'],
+      ['assistant', 'one two three'],
+    ])
   })
 
   it('reports a missing credential as auth before making any request', async () => {

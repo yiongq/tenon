@@ -66,6 +66,7 @@ import type { SessionEvent } from './events.js'
 import type {
   LoopPorts,
   ModelChoice,
+  QueuedMessage,
   RunAssembly,
   RunConnector,
   RunLease,
@@ -136,7 +137,13 @@ interface RootBox {
   lease: RunLease | null
   /** Whether the live lease has opened its Run (its `run_started` is committed). */
   runOpen: boolean
-  /** The indirect switch to a public host waiting on the menu's confirmation (plan step 17). */
+  /** The Run the live lease opened: what a send-now names (「立即发送绑定 runId」). */
+  runId: string | null
+  /** The origin the live lease was begun with: an auto-send after it keeps it. */
+  origin: RunOrigin | null
+  /** The origin of the latest send that queued an urgent item (「Run 结束」, close-window). */
+  urgentOrigin: RunOrigin | null
+  /** The indirect switch to a public host waiting on the menu's confirmation (「间接切公网」). */
   held: { readonly host: string; readonly queuedId: string | null } | null
 }
 
@@ -171,6 +178,23 @@ interface RunSetup {
   readonly effort: string | null
   readonly assembly: RunAssembly
   readonly resume?: ResumeBatch
+}
+
+/**
+ * What a new round opens with: queued items an auto-send already took, or a send-now's item (taken
+ * with the items before it), or a direct message (taken with everything queued before it).
+ */
+interface RoundInput {
+  readonly sessionId: string
+  readonly text: string | null
+  readonly queuedId: string | null
+  readonly taken: readonly QueuedMessage[] | null
+}
+
+/** One user turn of a new round: its text, and the queued item it was, if it was one. */
+interface RoundMessage {
+  readonly text: string
+  readonly queuedId: string | null
 }
 
 /** An opened round: its Run, and the prefix its request is assembled from. */
@@ -246,7 +270,17 @@ export function createLoop(deps: LoopDeps): Loop {
   function mailboxOf(rootSessionId: string): RootBox {
     let box = boxes.get(rootSessionId)
     if (box === undefined) {
-      box = { rootSessionId, tasks: [], running: false, lease: null, runOpen: false, held: null }
+      box = {
+        rootSessionId,
+        tasks: [],
+        running: false,
+        lease: null,
+        runOpen: false,
+        runId: null,
+        origin: null,
+        urgentOrigin: null,
+        held: null,
+      }
       boxes.set(rootSessionId, box)
     }
     return box
@@ -301,6 +335,7 @@ export function createLoop(deps: LoopDeps): Loop {
     if (box.lease === lease) {
       box.lease = null
       box.runOpen = false
+      box.runId = null
     }
     try {
       lease.finish()
@@ -308,6 +343,13 @@ export function createLoop(deps: LoopDeps): Loop {
       log(`[loop] finishing a lease of ${box.rootSessionId} threw: ${describe(error)}`)
     }
     pump(box)
+  }
+
+  /** Clears `held` and says so (「间接切公网」: a stop, a new round, the held item taken). */
+  function clearHeld(ports: LoopPorts, box: RootBox, sessionId: string): void {
+    if (box.held === null) return
+    box.held = null
+    emit(ports, { type: 'queue-held', rootSessionId: box.rootSessionId, sessionId, host: null })
   }
 
   /** Events are synchronous, and a host that throws from one only reaches the log. */
@@ -436,20 +478,36 @@ export function createLoop(deps: LoopDeps): Loop {
   async function sendTurn(
     ports: LoopPorts,
     box: RootBox,
-    q: SendQuery & { text: string },
+    q: SendQuery,
     lease: RunLease | null,
     pre: Prebuild | null,
   ): Promise<Turn<SendResult>> {
     if (lease !== null && lease.signal.aborted) {
       return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     }
+    const root = box.rootSessionId
     // 「何时判定」: in progress means a Run already opened, an aborted one still closing included — and
     // the message is then marked urgent, so it goes first once that Run ends. A lease with no Run open
     // yet can only be this command's own here: such a holder lets nothing but itself run.
     if (box.lease !== null && box.runOpen) {
+      // 「立即发送绑定 runId」: only the Run the user saw is stopped; one that already ended is not,
+      // and this is an ordinary send.
+      if (q.urgent !== undefined && box.runId === q.urgent.runId) box.lease.abort('user-stop')
       const urgent = box.lease.signal.aborted
-      const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, { urgent })
-      return { kind: 'done', result: { status: 'queued', queuedId } }
+      if (urgent) box.urgentOrigin = q.origin
+      if ('text' in q) {
+        const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent })
+        return { kind: 'done', result: { status: 'queued', queuedId } }
+      }
+      // A queued item sent now: it stays where it is, marked urgent when its Run was stopped.
+      const [item] = await ports.queue.take(root, {
+        upToSeq: null,
+        urgentOnly: false,
+        queuedId: q.queuedId,
+      })
+      if (item === undefined) return { kind: 'done', result: { status: 'not-found' } }
+      await ports.queue.restore(root, [{ ...item, urgent: urgent || item.urgent }])
+      return { kind: 'done', result: { status: 'queued', queuedId: item.queuedId } }
     }
     // A resumable root resumes first and this message waits in the queue (§插话与输入框状态表); a
     // card waiting is superseded by the new round (§多卡、拒绝与取代); plan step 26 answers a
@@ -461,52 +519,114 @@ export function createLoop(deps: LoopDeps): Loop {
     if (resumed !== null) {
       if (resumed === 'aborted') throw new Error('send: aborted without a lease')
       if (resumed !== 'started') return { kind: 'done', result: resumed }
-      const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, { urgent: false })
+      if (!('text' in q))
+        return { kind: 'done', result: { status: 'queued', queuedId: q.queuedId } }
+      const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent: false })
       return { kind: 'done', result: { status: 'queued', queuedId } }
     }
     if (pre === null) {
       // Entered without a prebuild (the root looked resumable, and is not): prebuild now.
       if (lease !== null) return { kind: 'again', lease }
-      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+      const begun = beginLease(ports, box, q.origin)
       if ('refused' in begun)
         return { kind: 'done', result: { status: 'refused', code: begun.refused } }
       return { kind: 'again', lease: hold(box, begun) }
     }
     if (lease === null) throw new Error('send: a prebuild without its lease')
-    return { kind: 'done', result: await newRound(ports, box, q, lease, pre) }
+    const input: RoundInput = {
+      sessionId: q.sessionId,
+      text: 'text' in q ? q.text : null,
+      queuedId: 'queuedId' in q ? q.queuedId : null,
+      taken: null,
+    }
+    return { kind: 'done', result: await newRound(ports, box, input, lease, pre) }
+  }
+
+  /** An auto-send's turn: it holds the lease it began when the Run before it ended (「Run 结束」). */
+  async function autoSendTurn(
+    ports: LoopPorts,
+    box: RootBox,
+    input: RoundInput,
+    lease: RunLease | null,
+    pre: Prebuild | null,
+  ): Promise<Turn<SendResult>> {
+    if (lease === null || pre === null)
+      throw new Error('auto-send: it holds its lease and prebuild')
+    if (lease.signal.aborted) {
+      await restoreTaken(ports, box, input.taken)
+      return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
+    }
+    return { kind: 'done', result: await newRound(ports, box, input, lease, pre) }
   }
 
   async function newRound(
     ports: LoopPorts,
     box: RootBox,
-    q: SendQuery & { text: string },
+    input: RoundInput,
     lease: RunLease,
     pre: Prebuild,
   ): Promise<SendResult> {
-    if (pre.kind === 'aborted') return abortedBeforeAppend(ports, box, lease)
-    if (pre.kind === 'config') return configMissing(ports, box, q.sessionId, lease, pre)
-    const waiting = await waitingOf(tape, box.rootSessionId)
+    const root = box.rootSessionId
+    if (pre.kind === 'aborted') {
+      await restoreTaken(ports, box, input.taken)
+      return abortedBeforeAppend(ports, box, lease)
+    }
+    if (pre.kind === 'config') {
+      // 「缺 key」: the queue stays as it was, taken items back in place.
+      await restoreTaken(ports, box, input.taken)
+      return configMissing(ports, box, input.sessionId, lease, pre)
+    }
+    const waiting = await waitingOf(tape, root)
     // A stop that came while the pause was read: it closes the pause, not this message.
-    if (lease.signal.aborted) return abortedBeforeAppend(ports, box, lease)
+    if (lease.signal.aborted) {
+      await restoreTaken(ports, box, input.taken)
+      return abortedBeforeAppend(ports, box, lease)
+    }
     if (pre.kind === 'confirm') {
-      // 「间接切公网」: 0 requests and no fact; this message waits in the queue for the menu's
-      // confirmation. Releasing it (`session.selectModel`) and clearing it are plan steps 17 and 19.
+      // 「间接切公网」: 0 requests and no fact; the message waits in the queue for the menu's
+      // confirmation (released by `session.selectModel`, plan step 19). An auto-send holds nothing
+      // of its own: its items go back and `held` names no item.
       try {
-        const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, {
-          urgent: false,
-        })
+        await restoreTaken(ports, box, input.taken)
+        let queuedId: string | null = input.queuedId
+        if (input.text !== null) {
+          queuedId = (await ports.queue.enqueue(root, input.text, { urgent: false })).queuedId
+        }
         box.held = { host: pre.host, queuedId }
         emit(ports, {
           type: 'queue-held',
-          rootSessionId: box.rootSessionId,
-          sessionId: q.sessionId,
+          rootSessionId: root,
+          sessionId: input.sessionId,
           host: pre.host,
         })
-        return { status: 'held', queuedId }
+        // An auto-send answers no caller; a direct message or a send-now is `held` on its item.
+        return queuedId === null
+          ? { status: 'not-sent', code: 'config-missing' }
+          : { status: 'held', queuedId }
       } finally {
         finish(box, lease)
       }
     }
+    // What goes with this round: an auto-send's items; a send-now's item and those queued before
+    // it; a direct message with everything queued before it (「从队列取什么」).
+    let taken: readonly QueuedMessage[]
+    if (input.taken !== null) taken = input.taken
+    else if (input.queuedId !== null) {
+      const target = (await ports.queue.peek(root)).find((item) => item.queuedId === input.queuedId)
+      if (target === undefined) {
+        finish(box, lease)
+        return { status: 'not-found' }
+      }
+      taken = await ports.queue.take(root, { upToSeq: target.seq, urgentOnly: false })
+    } else taken = await ports.queue.take(root, { upToSeq: null, urgentOnly: false })
+    if (lease.signal.aborted) {
+      await restoreTaken(ports, box, taken)
+      return abortedBeforeAppend(ports, box, lease)
+    }
+    const messages: RoundMessage[] = [
+      ...taken.map((item) => ({ text: item.text, queuedId: item.queuedId })),
+      ...(input.text === null ? [] : [{ text: input.text, queuedId: null }]),
+    ]
     let opened: OpenedRound
     try {
       if (waiting !== null) {
@@ -516,12 +636,15 @@ export function createLoop(deps: LoopDeps): Loop {
         await appendTo(waiting.sessionId, superseded)
         emitClosures(ports, box, waiting.sessionId, superseded)
       }
-      opened = await openRound(ports, box, q, pre)
+      opened = await openRound(ports, box, input.sessionId, messages, pre)
     } catch (error) {
+      await restoreTaken(ports, box, taken)
       finish(box, lease)
       throw error
     }
-    startRun(ports, box, q.sessionId, opened, lease, pre.provider.id, () =>
+    // A new round opened: whatever was held is no longer waiting on its own switch.
+    clearHeld(ports, box, input.sessionId)
+    startRun(ports, box, input.sessionId, opened, lease, pre.provider.id, () =>
       Promise.resolve(roundSetup(pre)),
     )
     return { status: 'started', runId: opened.runId }
@@ -529,58 +652,73 @@ export function createLoop(deps: LoopDeps): Loop {
 
   /**
    * The pre-run batch, in ONE transaction: `session/start` when the session does not exist yet, the
-   * user's turn, `run_started` and `session/model_selected`. Plan step 17 puts the queued messages
-   * taken with this round in front of the user's turn; plan step 18 adds the draft's profile,
-   * workspace and model-choice facts to the creating batch.
+   * user's turns — the queued ones first, in their order, each with a new `messageId` (01 修补 9
+   * (q)(r)), then the direct one — `run_started` naming the last, and `session/model_selected`. Plan
+   * step 18 adds the draft's profile, workspace and model-choice facts to the creating batch.
    */
   async function openRound(
     ports: LoopPorts,
     box: RootBox,
-    q: SendQuery & { text: string },
+    sessionId: string,
+    messages: readonly RoundMessage[],
     pre: Extract<Prebuild, { kind: 'ready' }>,
   ): Promise<OpenedRound> {
     const { assembly, provider } = pre
     // A model that belongs to another provider is a programmer error, caught before anything is
     // written: past this point `session/model_selected` would advertise a pair nobody can encode.
     assertModelBelongs(assembly.model, provider.id)
-    const head = await tape.head(q.sessionId)
+    const head = await tape.head(sessionId)
     const incarnationId = head?.incarnationId ?? ids.uuid()
     const entries: NewEntry[] = []
-    if (head === null) entries.push(startEntry(q.sessionId, incarnationId))
-    const content = userTextContent(q.text)
-    // A resend (01's retry rule, 01 修补 9 (r): only for a message that never queued) reuses the id
-    // and revision of the message it resends, so its append is the idempotent no-op.
-    const resend = head === null ? null : await resendOf(q.sessionId, content)
-    const messageId = resend?.messageId ?? ids.uuid()
-    const revision = resend?.revision ?? FIRST_REVISION
-    const runId = ids.uuid()
-    const userPayload: TapeUserMessagePayload = {
-      messageId,
-      revision,
-      role: 'user',
-      content: [...content],
-      status: 'complete',
+    if (head === null) entries.push(startEntry(sessionId, incarnationId))
+    const written: Array<{ messageId: string; queuedId: string | null }> = []
+    for (const message of messages) {
+      const content = userTextContent(message.text)
+      // A resend (01's retry rule, 01 修补 9 (r): only for a message that never queued, sent alone)
+      // reuses the id and revision of the message it resends, so its append is the idempotent no-op.
+      const resend =
+        head === null || message.queuedId !== null || messages.length > 1
+          ? null
+          : // oxlint-disable-next-line no-await-in-loop -- only ever one message takes this path
+            await resendOf(sessionId, content)
+      const messageId = resend?.messageId ?? ids.uuid()
+      const revision = resend?.revision ?? FIRST_REVISION
+      const userPayload: TapeUserMessagePayload = {
+        messageId,
+        revision,
+        role: 'user',
+        content: [...content],
+        status: 'complete',
+      }
+      entries.push(
+        messageSlice.entry('message/user', {
+          sourceType: 'message',
+          sourceId: messageId,
+          sourceSeq: revision,
+          provenanceKey: messageRevisionKey(messageId, revision),
+          payload: userPayload,
+          createdAt: now(),
+        }),
+      )
+      written.push({ messageId, queuedId: message.queuedId })
     }
+    const last = written.at(-1)
+    if (last === undefined) throw new Error('a new round opens with at least one message')
+    const runId = ids.uuid()
     entries.push(
-      messageSlice.entry('message/user', {
-        sourceType: 'message',
-        sourceId: messageId,
-        sourceSeq: revision,
-        provenanceKey: messageRevisionKey(messageId, revision),
-        payload: userPayload,
-        createdAt: now(),
-      }),
-      ...runHead(q.sessionId, runId, { kind: 'user-message', messageId }, pre),
+      ...runHead(sessionId, runId, { kind: 'user-message', messageId: last.messageId }, pre),
     )
-    const opened = await appendOpening(ports, box, q.sessionId, runId, incarnationId, entries)
-    emit(ports, {
-      type: 'user-message',
-      rootSessionId: box.rootSessionId,
-      sessionId: q.sessionId,
-      runId,
-      messageId,
-      queuedId: null,
-    })
+    const opened = await appendOpening(ports, box, sessionId, runId, incarnationId, entries)
+    for (const message of written) {
+      emit(ports, {
+        type: 'user-message',
+        rootSessionId: box.rootSessionId,
+        sessionId,
+        runId,
+        messageId: message.messageId,
+        queuedId: message.queuedId,
+      })
+    }
     return opened
   }
 
@@ -630,6 +768,7 @@ export function createLoop(deps: LoopDeps): Loop {
   ): Promise<OpenedRound> {
     const receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
     box.runOpen = true
+    box.runId = runId
     emit(ports, { type: 'run-started', rootSessionId: box.rootSessionId, sessionId, runId })
     // The pin: THIS Run's own receipts, not a second head read — the head is shared, and another
     // session's writes are not this request's context.
@@ -685,7 +824,7 @@ export function createLoop(deps: LoopDeps): Loop {
       return { kind: 'done', result: { status: 'not-available' } }
     }
     if (lease === null || pre === null) {
-      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+      const begun = beginLease(ports, box, q.origin)
       if ('refused' in begun) return { kind: 'done', result: { status: 'refused' } }
       return { kind: 'again', lease: hold(box, begun) }
     }
@@ -779,7 +918,7 @@ export function createLoop(deps: LoopDeps): Loop {
     if (held?.signal.aborted === true) return 'aborted'
     let lease = held
     if (lease === null) {
-      const begun = ports.leases.begin({ rootSessionId: root, origin })
+      const begun = beginLease(ports, box, origin)
       if ('refused' in begun) return { status: 'refused', code: begun.refused }
       lease = hold(box, begun)
     }
@@ -824,7 +963,7 @@ export function createLoop(deps: LoopDeps): Loop {
     }
     let lease = held
     if (lease === null) {
-      const begun = ports.leases.begin({ rootSessionId: root, origin: null })
+      const begun = beginLease(ports, box, null)
       if ('refused' in begun) return false
       lease = hold(box, begun)
     }
@@ -902,7 +1041,7 @@ export function createLoop(deps: LoopDeps): Loop {
       }
       if (lease === null) {
         // Its turn opens a Run, and it holds no lease: begun here, in the mailbox (「租约」).
-        const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+        const begun = beginLease(ports, box, q.origin)
         if ('refused' in begun) return { status: 'refused' }
         lease = hold(box, begun)
       }
@@ -956,6 +1095,9 @@ export function createLoop(deps: LoopDeps): Loop {
       toolName: frozen.item?.originalName ?? waiting.call.name,
     })
     await appendTo(waiting.sessionId, entries)
+    // The queued messages go out after a `user-rejected` end (「从队列取什么」).
+    const taken = await takeAfterEnd(ports, box, reason, lease)
+    const origin = autoSendOrigin(box, lease)
     finish(box, lease)
     emit(ports, {
       type: 'run-started',
@@ -964,7 +1106,6 @@ export function createLoop(deps: LoopDeps): Loop {
       runId,
     })
     emitClosures(ports, box, waiting.sessionId, entries)
-    // Plan step 17 sends the queued messages after a `user-rejected` end.
     runEnded(ports, box, waiting.sessionId, {
       runId,
       reason,
@@ -972,6 +1113,7 @@ export function createLoop(deps: LoopDeps): Loop {
       lastStop: null,
       errorCode: null,
     })
+    autoSend(ports, box, waiting.sessionId, taken, origin)
     return { status: 'applied' }
   }
 
@@ -1239,6 +1381,10 @@ export function createLoop(deps: LoopDeps): Loop {
             }),
           onUnansweredCall: deps.onUnansweredCall,
           ...(built.resume === undefined ? {} : { resume: built.resume }),
+          insertQueued: () =>
+            post(box, 'run', null, () =>
+              insertAtBoundary(ports, box, sessionId, incarnationId, lease, runId),
+            ),
           emit: events,
         })
       } catch (error) {
@@ -1267,7 +1413,8 @@ export function createLoop(deps: LoopDeps): Loop {
         } catch (error) {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
         }
-        // Plan step 17 takes the queue here, between the terminal and the finish.
+        // 「从队列取什么」, between the terminal and the finish, in this same task.
+        const taken = recorded ? await takeAfterEnd(ports, box, end.reason, lease) : []
         let card: ConfirmRequest | null = null
         if (recorded && end.reason.code === 'paused') {
           if (lease.stopRequested) {
@@ -1279,6 +1426,7 @@ export function createLoop(deps: LoopDeps): Loop {
           }
           // A quit or a closed window writes nothing more: the card survives the restart (B4).
         }
+        const origin = autoSendOrigin(box, lease)
         finish(box, lease)
         if (recorded) emitClosures(ports, box, sessionId, end.entries)
         runEnded(ports, box, sessionId, {
@@ -1288,10 +1436,126 @@ export function createLoop(deps: LoopDeps): Loop {
           lastStop: finished.lastStop,
           errorCode: finished.errorCode,
         })
+        // In the same synchronous stretch as the finish: nothing else takes the root in between.
+        autoSend(ports, box, sessionId, taken, origin)
         // Delivered once the pause is on the Tape (§答复与投递「投递」); the renderer also pulls it.
         if (card !== null) deliver(card)
       })
     })()
+  }
+
+  /**
+   * The queued messages at a batch boundary (§插话与输入框状态表「写入时点」): taken and written as
+   * this turn's `message/user` facts, each with a new `messageId`, after the batch's results. A Run
+   * stopped first takes nothing; one stopped while the queue answered puts it all back.
+   */
+  async function insertAtBoundary(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    incarnationId: string,
+    lease: RunLease,
+    runId: string,
+  ): Promise<Written | null> {
+    if (lease.signal.aborted) return null
+    const root = box.rootSessionId
+    const items = await ports.queue.take(root, { upToSeq: null, urgentOnly: false })
+    if (items.length === 0) return null
+    if (lease.signal.aborted) {
+      await ports.queue.restore(root, items)
+      return null
+    }
+    const inserted = items.map((item) => ({ item, messageId: ids.uuid() }))
+    const entries = inserted.map(({ item, messageId }) => {
+      const payload: TapeUserMessagePayload = {
+        messageId,
+        revision: FIRST_REVISION,
+        role: 'user',
+        content: [...userTextContent(item.text)],
+        status: 'complete',
+      }
+      return messageSlice.entry('message/user', {
+        sourceType: 'message',
+        sourceId: messageId,
+        sourceSeq: FIRST_REVISION,
+        provenanceKey: messageRevisionKey(messageId, FIRST_REVISION),
+        payload,
+        createdAt: now(),
+      })
+    })
+    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    for (const { item, messageId } of inserted) {
+      emit(ports, {
+        type: 'user-message',
+        rootSessionId: root,
+        sessionId,
+        runId,
+        messageId,
+        queuedId: item.queuedId,
+      })
+    }
+    if (box.held !== null && items.some((item) => item.queuedId === box.held?.queuedId)) {
+      clearHeld(ports, box, sessionId)
+    }
+    return { entries, receipts }
+  }
+
+  /**
+   * 「从队列取什么」 once a terminal committed: everything after `completed` and `user-rejected`, the
+   * urgent items after `user-stopped` and a closed window's `shutdown-aborted`, nothing otherwise. A
+   * stop that reached the lease meanwhile is read again by its cause; what was taken too many goes
+   * back (the committed terminal still names the `run-ended`).
+   */
+  async function takeAfterEnd(
+    ports: LoopPorts,
+    box: RootBox,
+    reason: RunEndReason,
+    lease: RunLease,
+  ): Promise<readonly QueuedMessage[]> {
+    const root = box.rootSessionId
+    const rule = takeRuleOf(reason)
+    if (rule === 'none') return []
+    const items = await ports.queue.take(root, { upToSeq: null, urgentOnly: rule === 'urgent' })
+    if (
+      !lease.signal.aborted ||
+      reason.code === 'user-stopped' ||
+      reason.code === 'shutdown-aborted'
+    ) {
+      return items
+    }
+    const cause = abortCauseOf(lease)
+    const keep = cause === 'quit' ? [] : items.filter((item) => item.urgent)
+    const back = items.filter((item) => !keep.includes(item))
+    if (back.length > 0) await ports.queue.restore(root, back)
+    return keep
+  }
+
+  /**
+   * 自动发出 (「Run 结束」): a new lease begun at once for the items the ended Run took, then the new
+   * round's prebuild and its turn. A refused lease, a failed prebuild or a switch to confirm puts
+   * the items back, no longer urgent (owner 2026-09-25).
+   */
+  function autoSend(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    taken: readonly QueuedMessage[],
+    origin: RunOrigin | null,
+  ): void {
+    if (taken.length === 0) return
+    const begun = beginLease(ports, box, origin)
+    if ('refused' in begun) {
+      void restoreTaken(ports, box, taken)
+      return
+    }
+    const lease = hold(box, begun)
+    const input: RoundInput = { sessionId, text: null, queuedId: null, taken }
+    void commandFrom(box, sessionId, lease, prebuild(sessionId, box, lease), (held, pre) =>
+      autoSendTurn(ports, box, input, held, pre),
+    ).catch((error: unknown) => {
+      void restoreTaken(ports, box, taken)
+      log(`[loop] ${box.rootSessionId}: the queued messages were not sent: ${describe(error)}`)
+    })
   }
 
   /** A card to the host, after its facts committed; a host that fails only reaches the log. */
@@ -1544,7 +1808,7 @@ export function createLoop(deps: LoopDeps): Loop {
     prebuilds = true,
   ): Promise<T> {
     if (!canBeginAtEntry(box)) return commandFrom(box, q.sessionId, null, null, turn)
-    const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+    const begun = beginLease(ports, box, q.origin)
     if ('refused' in begun) {
       dropIfIdle(box)
       return Promise.resolve(refused(begun.refused))
@@ -1637,9 +1901,7 @@ export function createLoop(deps: LoopDeps): Loop {
       if (!isCanonicalUuid(q.sessionId)) {
         return Promise.reject(new TypeError(`send: "${q.sessionId}" is not a canonical UUID`))
       }
-      // Plan step 17: the send-now of a queued item, and the urgent send.
-      if (!('text' in q)) return Promise.resolve({ status: 'not-found' })
-      if (q.text === '') {
+      if ('text' in q && q.text === '') {
         return Promise.reject(new TypeError('send: an empty message is never written'))
       }
       const box = mailboxOf(q.sessionId)
@@ -1683,7 +1945,7 @@ export function createLoop(deps: LoopDeps): Loop {
       if (!canBeginAtEntry(box)) {
         return post(box, 'command', null, () => answerTurn(ports, box, q, null))
       }
-      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+      const begun = beginLease(ports, box, q.origin)
       if ('refused' in begun) {
         dropIfIdle(box)
         return Promise.resolve({ status: 'refused' })
@@ -1731,6 +1993,9 @@ export function createLoop(deps: LoopDeps): Loop {
 
     stop(q): Promise<{ stopped: boolean }> {
       if (bound === null) return Promise.resolve({ stopped: false })
+      // A stop also lets go of a message held for the menu's confirmation (「间接切公网」).
+      const known = boxes.get(q.rootSessionId)
+      if (known !== undefined) clearHeld(bound, known, q.rootSessionId)
       const live = boxes.get(q.rootSessionId)?.lease ?? null
       if (live !== null) {
         live.abort('user-stop')
@@ -1777,6 +2042,44 @@ function cardOfEntries(sessionId: string, entries: readonly NewEntry[]): Confirm
     decided.provenanceKey,
     decided.payload as unknown as PermissionDecidedPayload,
   )
+}
+
+/** `leases.begin`, with the origin kept on the box: an auto-send after this lease reuses it. */
+function beginLease(
+  ports: LoopPorts,
+  box: RootBox,
+  origin: RunOrigin | null,
+): RunLease | { refused: 'shutting-down' } {
+  const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin })
+  if (!('refused' in begun)) box.origin = origin
+  return begun
+}
+
+/** Taken items that did not go out, back at their seq and no longer urgent (「Run 结束」). */
+async function restoreTaken(
+  ports: LoopPorts,
+  box: RootBox,
+  taken: readonly QueuedMessage[] | null,
+): Promise<void> {
+  if (taken === null || taken.length === 0) return
+  await ports.queue.restore(
+    box.rootSessionId,
+    taken.map((item) => ({ ...item, urgent: false })),
+  )
+}
+
+/** The origin an auto-send begins with: the ended lease's, or after a closed window the urgent send's. */
+function autoSendOrigin(box: RootBox, lease: RunLease): RunOrigin | null {
+  const closedWindow = lease.signal.aborted && abortCauseOf(lease) === 'close-window'
+  return closedWindow ? box.urgentOrigin : box.origin
+}
+
+/** 「从队列取什么」 by the end reason: all of it, the urgent items, or nothing. */
+function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
+  if (reason.code === 'completed' || reason.code === 'user-rejected') return 'all'
+  if (reason.code === 'user-stopped') return 'urgent'
+  if (reason.code === 'shutdown-aborted' && reason.trigger === 'close-window') return 'urgent'
+  return 'none'
 }
 
 /** The two facts a Run's write task refuses once its lease is aborted (「mailbox」). */
