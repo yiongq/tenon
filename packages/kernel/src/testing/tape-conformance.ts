@@ -1,5 +1,6 @@
 /**
- * The shared `TapeStore` conformance suite (spec 01 acceptance 3, 10, 11, 13, 15).
+ * The shared `TapeStore` conformance suite (spec 01 acceptance 3, 10, 11, 13, 15; spec 02
+ * acceptance 11 and the tape half of 12, plan step 8).
  *
  * It is FRAMEWORK-FREE by necessity: this file ships from `@tenon-app/kernel/testing`, an entry that
  * `test/host-independence.test.ts` bundles for the browser, so it may not import vitest or any Node
@@ -28,12 +29,33 @@
  *     rejection branches unit-tested in `test/tape/hash.test.ts`, and step 7 owns the byte flip.
  */
 import type { HostIdentity } from '../host/adapter.js'
+import { absolutePath } from '../host/path.js'
+import type { RunEndReason } from '../loop/terminal.js'
 import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
 import { encodeAnthropicMessages } from '../provider/wire/anthropic-messages.js'
-import { systemHash } from '../provider/wire/shared.js'
+import { canonicalHash, systemHash } from '../provider/wire/shared.js'
 import { createSessionService } from '../session/service.js'
 import type { RunResult, SessionService } from '../session/service.js'
-import type { AppendResult, NewEntry, TapeEntry, TapeKind } from '../tape/entry.js'
+import type {
+  ApprovalResolvedPayload,
+  AppendResult,
+  DispatchCommittedPayload,
+  FactWriter,
+  ModelChoiceSetPayload,
+  NewEntry,
+  PermissionDecidedPayload,
+  ProfileSetPayload,
+  RunStartedPayload,
+  RunTerminalPayload,
+  TapeEntry,
+  TapeKind,
+  ToolCallPayload,
+  ToolOutcomePayload,
+  ToolResultPayload,
+  ViewAssembledPayload,
+  ViewContentPayload,
+  WorkspaceSetPayload,
+} from '../tape/entry.js'
 import { bytesToHex, contentHash, hashEntry } from '../tape/hash.js'
 import type { SliceEntryFields, TapeSlice } from '../tape/names.js'
 import { TapeAppendAuthorizationError, createEntryWriter } from '../tape/names.js'
@@ -42,25 +64,41 @@ import type {
   ProjectionReducer,
   TapeAttemptCompletedPayload,
 } from '../tape/projection.js'
-import { project } from '../tape/projection.js'
+import { TapeProjectionError, project } from '../tape/projection.js'
 import { rebuildProviderContext } from '../tape/replay.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import {
   TapeProvenanceSyntaxError,
+  approvalResolvedKey,
+  assembledKey,
   attemptCompletedKey,
+  dispatchCommittedKey,
   messageRetractedKey,
   messageRevisionKey,
+  modelChoiceSetKey,
   modelSelectedKey,
+  permissionDecidedKey,
+  profileSetKey,
+  runStartedKey,
+  runTerminalKey,
   sessionStartKey,
+  toolCallKey,
+  toolOutcomeKey,
+  toolResultKey,
+  viewContentKey,
+  workspaceSetKey,
 } from '../tape/provenance.js'
-import type { MessageRow, TapeStore } from '../tape/store.js'
+import type { MessageRow, PendingApprovalRow, TapeStore } from '../tape/store.js'
 import {
   MAX_READ_LIMIT,
+  TapeClosedError,
+  TapeMessageRetractedError,
   TapeProvenanceConflictError,
   TapeReadLimitError,
   TapeSessionNotFoundError,
   TapeStaleIncarnationError,
 } from '../tape/store.js'
+import { createTape } from '../tape/tape.js'
 import { createCounterIds } from './fake-ids.js'
 import { createScriptedProvider, scriptedTurn, stopEvent } from './scripted-provider.js'
 import type { ScriptedProvider } from './scripted-provider.js'
@@ -77,6 +115,14 @@ export interface TapeStoreFactoryOptions {
    * failed assertion, so a factory may also track handles by label to tear down leftovers.
    */
   readonly label: string
+  /**
+   * Open this store over the SAME backing storage as that one — a store this case opened earlier
+   * through this factory — bound to `identity`'s tenant: one file holding two tenants' rows, the
+   * server shape (spec 01 acceptance 4; spec 02 acceptance 11, 旧 60 and 旧 110). A factory MUST honour
+   * it. The port cannot tell a shared backing from a separate one — that is the property under test —
+   * so a factory that quietly opened a second backing would make the tenant cases pass vacuously.
+   */
+  readonly shareBackingWith?: TapeStore
 }
 
 export type TapeStoreFactory = (options: TapeStoreFactoryOptions) => Promise<TapeStore>
@@ -214,18 +260,27 @@ interface CaseContext {
   readonly stores: TapeStore[]
 }
 
+interface OpenFixtureOptions {
+  readonly project?: ProjectionReducer
+  /** Bind the store to this tenant instead of the suite's. */
+  readonly tenantId?: string
+  /** Open it over the same backing storage as this earlier fixture's store. */
+  readonly shareWith?: Fixture
+}
+
 /** How a case opens a store. The runner closes it afterwards, pass or fail. */
-export type OpenFixture = (options?: { readonly project?: ProjectionReducer }) => Promise<Fixture>
+export type OpenFixture = (options?: OpenFixtureOptions) => Promise<Fixture>
 
 async function openFixture(
   createStore: TapeStoreFactory,
   context: CaseContext,
-  options: { readonly project?: ProjectionReducer } = {},
+  options: OpenFixtureOptions = {},
 ): Promise<Fixture> {
   const store = await createStore({
-    identity: TENANT,
+    identity: options.tenantId === undefined ? TENANT : { ...TENANT, tenantId: options.tenantId },
     label: context.label,
     ...(options.project === undefined ? {} : { project: options.project }),
+    ...(options.shareWith === undefined ? {} : { shareBackingWith: options.shareWith.store }),
   })
   context.stores.push(store)
   // Each case counts from its own base, so two cases never mint the same session id — a factory that
@@ -388,6 +443,268 @@ async function readAll(
     if (page.nextFromEntryId === null) return entries
     fromEntryId = page.nextFromEntryId
   }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Spec 02 fact helpers — the phase-2 names through the kernel's own writers, keys and payload types
+// -------------------------------------------------------------------------------------------------
+
+const RESOLVER: FactWriter = { by: 'resolver' }
+
+/** A client tool call's identity: every tool/ and per-call execution/ fact hangs on it (§键与挂靠). */
+interface CallAt {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly ordinal: number
+}
+
+function callSource(call: CallAt): Pick<SliceEntryFields, 'sourceType' | 'sourceId' | 'sourceSeq'> {
+  return { sourceType: 'runtime_event', sourceId: call.runId, sourceSeq: call.requestSeq }
+}
+
+function callRef(call: CallAt): { ordinal: number; providerToolCallId: string } {
+  return { ordinal: call.ordinal, providerToolCallId: `toolu_${call.requestSeq}_${call.ordinal}` }
+}
+
+const ARGS_HASH = 'd'.repeat(64)
+
+function toolCallFact(fixture: Fixture, call: CallAt, messageId: string): NewEntry {
+  const payload: ToolCallPayload = {
+    ...callRef(call),
+    messageId,
+    name: 'Write',
+    input: { file_path: '/work/a.txt', content: 'x' },
+    argsHash: ARGS_HASH,
+  }
+  return write('tool', 'tool/call', {
+    ...callSource(call),
+    provenanceKey: toolCallKey(call.runId, call.requestSeq, call.ordinal),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+interface DecisionOptions {
+  readonly awaits?: 'approval' | 'question'
+  readonly rejudge?: number
+  readonly verdict?: 'allow' | 'ask' | 'deny'
+  readonly writer?: FactWriter
+}
+
+function decisionFact(fixture: Fixture, call: CallAt, options: DecisionOptions = {}): NewEntry {
+  const verdict = options.verdict ?? (options.awaits === 'approval' ? 'ask' : 'allow')
+  const payload: PermissionDecidedPayload = {
+    ...callRef(call),
+    argsHash: ARGS_HASH,
+    reversibility: 'unknown',
+    record: {
+      verdict,
+      decidedBy: 'default',
+      steps: [{ by: 'default', said: verdict, status: 'ok' }],
+    },
+    summary: { verdict, code: 'default-ask', facts: { toolName: 'Write' } },
+    policyVersion: 'empty',
+    ...(verdict === 'ask'
+      ? {
+          confirm: {
+            reason: 'default',
+            facts: { toolName: 'Write' },
+            kind: 'file',
+            target: { type: 'path', path: absolutePath('/work/a.txt') },
+          },
+        }
+      : {}),
+    ...(verdict === 'deny' ? { block: { reason: 'policy', facts: { toolName: 'Write' } } } : {}),
+    ...(options.awaits === undefined ? {} : { awaits: options.awaits }),
+    ...(options.rejudge === undefined ? {} : { rejudge: options.rejudge }),
+    writer: options.writer ?? { by: 'run', runId: call.runId },
+  }
+  return write('tool', 'tool/permission_decided', {
+    ...callSource(call),
+    provenanceKey: permissionDecidedKey(call.runId, call.requestSeq, call.ordinal, options.rejudge),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function approvalFact(
+  fixture: Fixture,
+  call: CallAt,
+  outcome: ApprovalResolvedPayload['outcome'],
+  options: { readonly decisionKey?: string; readonly writer?: FactWriter } = {},
+): NewEntry {
+  const payload: ApprovalResolvedPayload = {
+    ...callRef(call),
+    decisionKey:
+      options.decisionKey ?? permissionDecidedKey(call.runId, call.requestSeq, call.ordinal),
+    outcome,
+    via: outcome === 'allowed' || outcome === 'denied' ? 'card' : 'stop',
+    grant: outcome === 'allowed' ? { scope: 'once', key: 'write:/work/a.txt' } : null,
+    writer: options.writer ?? RESOLVER,
+  }
+  return write('tool', 'tool/approval_resolved', {
+    ...callSource(call),
+    provenanceKey: approvalResolvedKey(call.runId, call.requestSeq, call.ordinal),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function resultFact(fixture: Fixture, call: CallAt, writer: FactWriter): NewEntry {
+  const payload: ToolResultPayload = {
+    ...callRef(call),
+    isError: false,
+    content: [{ type: 'text', text: 'written' }],
+    kernelAuthored: false,
+    writer,
+  }
+  return write('tool', 'tool/result', {
+    ...callSource(call),
+    provenanceKey: toolResultKey(call.runId, call.requestSeq, call.ordinal),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function dispatchFact(fixture: Fixture, call: CallAt, writer: FactWriter): NewEntry {
+  const payload: DispatchCommittedPayload = {
+    ...callRef(call),
+    name: 'Write',
+    argsHash: ARGS_HASH,
+    decisionKey: permissionDecidedKey(call.runId, call.requestSeq, call.ordinal),
+    writer,
+  }
+  return write('execution', 'execution/dispatch_committed', {
+    ...callSource(call),
+    provenanceKey: dispatchCommittedKey(call.runId, call.requestSeq, call.ordinal),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function outcomeFact(fixture: Fixture, call: CallAt, writer: FactWriter): NewEntry {
+  const payload: ToolOutcomePayload = {
+    ...callRef(call),
+    effect: 'write',
+    state: 'completed',
+    source: null,
+    reversibility: 'unknown',
+    writer,
+  }
+  return write('execution', 'execution/tool_outcome', {
+    ...callSource(call),
+    provenanceKey: toolOutcomeKey(call.runId, call.requestSeq, call.ordinal),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function runStartedFact(
+  fixture: Fixture,
+  runId: string,
+  cause: RunStartedPayload['cause'],
+): NewEntry {
+  const payload: RunStartedPayload = { cause }
+  return write('execution', 'execution/run_started', {
+    sourceType: 'runtime_event',
+    sourceId: runId,
+    provenanceKey: runStartedKey(runId),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function runTerminalFact(fixture: Fixture, runId: string, reason: RunEndReason): NewEntry {
+  const payload: RunTerminalPayload = { reason, steps: 1, usage: [], writer: { by: 'run', runId } }
+  return write('execution', 'execution/run_terminal', {
+    sourceType: 'runtime_event',
+    sourceId: runId,
+    provenanceKey: runTerminalKey(runId),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function profileFact(fixture: Fixture, incarnationId: string): NewEntry {
+  const payload: ProfileSetPayload = { profile: 'cowork' }
+  return write('session', 'session/profile_set', {
+    sourceType: 'session',
+    sourceId: fixture.sessionId,
+    provenanceKey: profileSetKey(incarnationId),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function workspaceFact(fixture: Fixture, incarnationId: string, n: number): NewEntry {
+  const payload: WorkspaceSetPayload = { folders: [absolutePath('/work')], origin: 'picked' }
+  return write('session', 'session/workspace_set', {
+    sourceType: 'session',
+    sourceId: fixture.sessionId,
+    sourceSeq: n,
+    provenanceKey: workspaceSetKey(incarnationId, n),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function modelChoiceFact(
+  fixture: Fixture,
+  incarnationId: string,
+  n: number,
+  modelId: string,
+): NewEntry {
+  const payload: ModelChoiceSetPayload = { providerId: 'zhipu', modelId, effort: null }
+  return write('session', 'session/model_choice_set', {
+    sourceType: 'session',
+    sourceId: fixture.sessionId,
+    sourceSeq: n,
+    provenanceKey: modelChoiceSetKey(incarnationId, n),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function viewContentFact(fixture: Fixture, payload: ViewContentPayload): NewEntry {
+  return write('view', 'view/content', {
+    sourceType: 'session',
+    sourceId: fixture.sessionId,
+    provenanceKey: viewContentKey(payload.type, payload.hash),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+function assembledFact(fixture: Fixture, runId: string, requestSeq: number, systemText: string) {
+  const payload: ViewAssembledPayload = {
+    modelInfoHash: canonicalHash(SCRIPT_MODEL, 'model'),
+    systemHash: systemHash(systemText),
+    tools: null,
+  }
+  return write('view', 'view/assembled', {
+    sourceType: 'runtime_event',
+    sourceId: runId,
+    sourceSeq: requestSeq,
+    provenanceKey: assembledKey(runId, requestSeq),
+    payload,
+    createdAt: fixture.at(),
+  })
+}
+
+/** A reducer that projects like the kernel's but throws on the first fact `fails` picks out. */
+function failingReducer(fails: (entry: TapeEntry) => boolean): ProjectionReducer {
+  return (entry: TapeEntry): readonly ProjectionOp[] => {
+    if (fails(entry)) throw new TapeProjectionError(`injected: ${entry.name} does not project`)
+    return project(entry)
+  }
+}
+
+/** Every pending row of a store, one tenant's, via the port. */
+function pendingOf(fixture: Fixture, sessionId?: string): Promise<PendingApprovalRow[]> {
+  return fixture.store.listPendingApprovals({
+    limit: MAX_READ_LIMIT,
+    ...(sessionId === undefined ? {} : { sessionId }),
+  })
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -2237,6 +2554,768 @@ export function tapeConformanceCases(
       'a rebuild reproduces the interleaved projection',
     )
   })
+
+  // ----- spec 02 · 01 修补 7: the port additions (acceptance 11) --------------------------------
+
+  add(
+    'readBySource pages a run of more than 1000 facts from fromEntryId, as one snapshot',
+    async (open) => {
+      // 旧 58. The run's facts outnumber one page, and another run's facts are interleaved with them, so
+      // the cursor has to be an entry id (not a count) and has to stay on this run's identity columns.
+      const fixture = await open()
+      const runId = fixture.ids.uuid()
+      const otherRun = fixture.ids.uuid()
+      const messageId = fixture.ids.uuid()
+      await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+      const total = MAX_READ_LIMIT + 203
+      for (let batch = 0; batch * 250 < total; batch += 1) {
+        const entries: NewEntry[] = []
+        for (
+          let ordinal = batch * 250;
+          ordinal < Math.min(total, (batch + 1) * 250);
+          ordinal += 1
+        ) {
+          entries.push(toolCallFact(fixture, { runId, requestSeq: 0, ordinal }, messageId))
+          if (ordinal % 100 === 0) {
+            entries.push(
+              toolCallFact(fixture, { runId: otherRun, requestSeq: 0, ordinal }, messageId),
+            )
+          }
+        }
+        // oxlint-disable-next-line no-await-in-loop -- batches go in one after another
+        await appendAll(fixture, entries)
+      }
+      const snapshot = (await readAll(fixture.store, fixture.sessionId)).filter(
+        (entry) => entry.sourceType === 'runtime_event' && entry.sourceId === runId,
+      )
+      assertEqual(snapshot.length, total, 'the snapshot holds every fact of the run')
+      const paged: TapeEntry[] = []
+      let fromEntryId: number | undefined
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's answer
+        const page = await fixture.store.readBySource({
+          sessionId: fixture.sessionId,
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          limit: MAX_READ_LIMIT,
+          ...(fromEntryId === undefined ? {} : { fromEntryId }),
+        })
+        paged.push(...page)
+        const last = page.at(-1)
+        if (last === undefined || page.length < MAX_READ_LIMIT) break
+        fromEntryId = last.entryId + 1
+      }
+      assertEqual(paged, snapshot, 'paging from fromEntryId reads the same facts as the snapshot')
+      const first = snapshot[0]
+      const second = snapshot[1]
+      if (first === undefined || second === undefined) fail('the run has no facts')
+      assertEqual(
+        (
+          await fixture.store.readBySource({
+            sessionId: fixture.sessionId,
+            sourceType: 'runtime_event',
+            sourceId: runId,
+            fromEntryId: second.entryId,
+            limit: 1,
+          })
+        ).map((entry) => entry.entryId),
+        [second.entryId],
+        'fromEntryId is inclusive',
+      )
+      for (const bad of [-1, 1.5, Number.NaN]) {
+        // oxlint-disable-next-line no-await-in-loop -- one rejection asserted per cursor
+        await assertRejects(
+          () =>
+            fixture.store.readBySource({
+              sessionId: fixture.sessionId,
+              sourceType: 'runtime_event',
+              sourceId: runId,
+              fromEntryId: bad,
+              limit: 10,
+            }),
+          TypeError,
+          `fromEntryId ${String(bad)} was accepted`,
+        )
+      }
+    },
+  )
+
+  add(
+    'after close() every method rejects with TapeClosedError, and close() stays idempotent',
+    async (open) => {
+      // 旧 59 / 旧 113, the store half (B4). The check comes before the input is looked at, so a call
+      // that would also be malformed still names the closed store.
+      const fixture = await open()
+      await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+      await fixture.store.close()
+      await fixture.store.close()
+      const sessionId = fixture.sessionId
+      const calls: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+        ['append', () => appendAll(fixture, [extFact(fixture, 1)])],
+        ['readRange', () => fixture.store.readRange({ sessionId, limit: 10 })],
+        ['readRange with a bad limit', () => fixture.store.readRange({ sessionId, limit: 0 })],
+        [
+          'readBySource',
+          () =>
+            fixture.store.readBySource({
+              sessionId,
+              sourceType: 'session',
+              sourceId: sessionId,
+              limit: 1,
+            }),
+        ],
+        ['head', () => fixture.store.head(sessionId)],
+        ['verifyChain', () => fixture.store.verifyChain({ sessionId, limit: 10 })],
+        ['listSessions', () => fixture.store.listSessions({ limit: 10 })],
+        ['listMessages', () => fixture.store.listMessages({ sessionId, limit: 10 })],
+        ['listPendingApprovals', () => fixture.store.listPendingApprovals({ limit: 10 })],
+        ['rebuildProjections', () => fixture.store.rebuildProjections(sessionId)],
+        [
+          'resetSession',
+          () => {
+            const next = fixture.ids.uuid()
+            return fixture.store.resetSession({
+              sessionId,
+              incarnationId: next,
+              start: startEntry(fixture, next),
+            })
+          },
+        ],
+        ['deleteSession', () => fixture.store.deleteSession(sessionId)],
+      ]
+      for (const [method, call] of calls) {
+        // oxlint-disable-next-line no-await-in-loop -- one rejection asserted per method, in order
+        await assertRejects(call, TapeClosedError, `${method} after close()`)
+      }
+    },
+  )
+
+  add(
+    '02 不变量 32: a revision of a retracted message is refused and the tape is unchanged',
+    async (open) => {
+      // Through the kernel's facade — the message writer — because a store never learns who called it.
+      // The store half (what a store does with such a revision when it is handed one anyway) is the
+      // 'a revision after a retraction resurrects the row' case above, which stays.
+      const fixture = await open()
+      const tape = createTape(fixture.store)
+      const messageId = fixture.ids.uuid()
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        userMessage(fixture, messageId, 0, 'first'),
+        retraction(fixture, messageId),
+      ])
+      const before = await readAll(fixture.store, fixture.sessionId)
+      const head = await fixture.store.head(fixture.sessionId)
+      const batch = (entries: readonly NewEntry[]): Promise<AppendResult[]> =>
+        tape.appendEntries({
+          sessionId: fixture.sessionId,
+          incarnationId: fixture.incarnationId,
+          entries,
+        })
+      await assertRejects(
+        () => batch([userMessage(fixture, messageId, 1, 'edited after the delete')]),
+        TapeMessageRetractedError,
+        'a revision after the retraction',
+      )
+      await assertRejects(
+        () =>
+          tape.writer('message').write({
+            sessionId: fixture.sessionId,
+            incarnationId: fixture.incarnationId,
+            fact: {
+              name: 'message/assistant',
+              fields: {
+                sourceType: 'message',
+                sourceId: messageId,
+                sourceSeq: 2,
+                provenanceKey: messageRevisionKey(messageId, 2),
+                payload: {
+                  messageId,
+                  revision: 2,
+                  role: 'assistant',
+                  runId: fixture.ids.uuid(),
+                  content: [{ type: 'text', text: 'x' }],
+                  status: 'complete',
+                },
+                createdAt: fixture.at(),
+              },
+            },
+          }),
+        TapeMessageRetractedError,
+        'a revision through the message slice writer',
+      )
+      // A tombstone EARLIER in the same batch is final too.
+      const fresh = fixture.ids.uuid()
+      await assertRejects(
+        () => batch([retraction(fixture, fresh), userMessage(fixture, fresh, 0, 'after')]),
+        TapeMessageRetractedError,
+        'a revision behind a tombstone in its own batch',
+      )
+      assertEqual(await readAll(fixture.store, fixture.sessionId), before, 'the tape is unchanged')
+      assertEqual(await fixture.store.head(fixture.sessionId), head, 'and so is the head')
+      // Replaying the SAME tombstone is not a revision: 01 invariant 11 still answers it.
+      const [replayed] = await batch([retraction(fixture, messageId)])
+      assertEqual(replayed?.created, false, 'the same message/retracted is an idempotent no-op')
+      // Other messages are unaffected.
+      const [other] = await batch([userMessage(fixture, fixture.ids.uuid(), 0, 'unrelated')])
+      assertEqual(other?.created, true, 'a message that was never retracted still writes')
+    },
+  )
+
+  add(
+    'resetSession writes the carry right after the new session/start, in one transaction',
+    async (open) => {
+      // 旧 110, first half (H1, D11): the profile and workspace facts a cleared session keeps.
+      const fixture = await open()
+      const messageId = fixture.ids.uuid()
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        profileFact(fixture, fixture.incarnationId),
+        workspaceFact(fixture, fixture.incarnationId, 0),
+        userMessage(fixture, messageId, 0, 'before the reset'),
+      ])
+      const next = fixture.ids.uuid()
+      const carry = [profileFact(fixture, next), workspaceFact(fixture, next, 0)]
+      const receipt = await fixture.store.resetSession({
+        sessionId: fixture.sessionId,
+        incarnationId: next,
+        start: startEntry(fixture, next),
+        carry,
+      })
+      fixture.incarnationId = next
+      const after = await readAll(fixture.store, fixture.sessionId)
+      assertEqual(
+        after.map((entry) => entry.name),
+        ['session/start', 'session/profile_set', 'session/workspace_set'],
+        'the new incarnation is session/start and then the carry, in order',
+      )
+      assertEqual(receipt.entryId, after[0]?.entryId, "the receipt is session/start's")
+      assertEqual(receipt.created, true, 'and it is a fresh write')
+      const head = await fixture.store.head(fixture.sessionId)
+      assertEqual(head?.entryCount, 1 + carry.length, 'entryCount is 1 + the carry')
+      assertEqual(head?.incarnationId, next, 'the head is on the new incarnation')
+      assertEqual(
+        (await fixture.store.verifyChain({ sessionId: fixture.sessionId, limit: 10 }))
+          .firstBadEntryId,
+        null,
+        'the carry is chained onto the new anchor',
+      )
+      // A duplicate key inside the carry is a caller bug, and the whole reset is refused.
+      const third = fixture.ids.uuid()
+      await assertRejects(
+        () =>
+          fixture.store.resetSession({
+            sessionId: fixture.sessionId,
+            incarnationId: third,
+            start: startEntry(fixture, third),
+            carry: [profileFact(fixture, third), profileFact(fixture, third)],
+          }),
+        TapeProvenanceConflictError,
+        'a carry repeating a key',
+      )
+      // So is an unauthorised one: the carry passes the same gate as an append.
+      await assertRejects(
+        () =>
+          fixture.store.resetSession({
+            sessionId: fixture.sessionId,
+            incarnationId: third,
+            start: startEntry(fixture, third),
+            carry: [{ ...profileFact(fixture, third), kind: 'anchor' }],
+          }),
+        TapeAppendAuthorizationError,
+        'a carry fact with the wrong kind',
+      )
+      assertEqual(
+        await readAll(fixture.store, fixture.sessionId),
+        after,
+        'neither reset took effect',
+      )
+    },
+  )
+
+  add('a carry fact that fails to project rolls the whole reset back', async (open) => {
+    // 旧 110, second half: the reset is one transaction, projection included.
+    const fixture = await open({
+      project: failingReducer(
+        (entry) => entry.name === 'session/workspace_set' && entry.sourceSeq === 7,
+      ),
+    })
+    const messageId = fixture.ids.uuid()
+    await appendAll(fixture, [
+      startEntry(fixture, fixture.incarnationId),
+      userMessage(fixture, messageId, 0, 'keep me'),
+    ])
+    const before = await readAll(fixture.store, fixture.sessionId)
+    const head = await fixture.store.head(fixture.sessionId)
+    const rows = await fixture.store.listMessages({ sessionId: fixture.sessionId, limit: 10 })
+    const next = fixture.ids.uuid()
+    await assertRejects(
+      () =>
+        fixture.store.resetSession({
+          sessionId: fixture.sessionId,
+          incarnationId: next,
+          start: startEntry(fixture, next),
+          carry: [profileFact(fixture, next), workspaceFact(fixture, next, 7)],
+        }),
+      TapeProjectionError,
+      'a reset whose last carry fact does not project',
+    )
+    assertEqual(
+      await readAll(fixture.store, fixture.sessionId),
+      before,
+      'the old facts are all there',
+    )
+    assertEqual(await fixture.store.head(fixture.sessionId), head, 'the head did not move')
+    assertEqual(
+      await fixture.store.listMessages({ sessionId: fixture.sessionId, limit: 10 }),
+      rows,
+      'and neither did the projection',
+    )
+  })
+
+  add('pending rows and resets never cross tenants sharing one backing', async (open) => {
+    // 旧 60 and 旧 110's tenant half. B is a SECOND tenant in the same file, under the SAME session id,
+    // run id and call key, so a statement that forgot its tenant predicate lists, deletes or resets B's
+    // rows instead of (or as well as) A's. Spec 02 acceptance 11: 「去掉租户谓词测试就变红」.
+    const a = await open()
+    const b = await open({ tenantId: 'conformance-tenant-b', shareWith: a })
+    assertEqual(b.sessionId, a.sessionId, 'the two tenants use the same session id')
+    const runId = a.ids.uuid()
+    assertEqual(b.ids.uuid(), runId, 'and the same run id')
+    const call = { runId, requestSeq: 0, ordinal: 0 }
+    const theirs = { runId, requestSeq: 0, ordinal: 1 }
+    await appendAll(a, [
+      startEntry(a, a.incarnationId),
+      decisionFact(a, call, { awaits: 'approval' }),
+    ])
+    await appendAll(b, [
+      startEntry(b, b.incarnationId),
+      decisionFact(b, call, { awaits: 'approval' }),
+      decisionFact(b, theirs, { awaits: 'question' }),
+    ])
+    const onlyB = b.ids.uuid()
+    const onlyBIncarnation = b.ids.uuid()
+    await b.store.append({
+      sessionId: onlyB,
+      incarnationId: onlyBIncarnation,
+      entries: [
+        write('session', 'session/start', {
+          sourceType: 'session',
+          sourceId: onlyB,
+          sourceSeq: 0,
+          provenanceKey: sessionStartKey(onlyBIncarnation),
+          payload: { incarnationId: onlyBIncarnation },
+          createdAt: b.at(),
+        }),
+      ],
+    })
+    const bState = async (): Promise<unknown> => ({
+      pending: await pendingOf(b),
+      facts: await readAll(b.store, b.sessionId),
+      onlyB: await readAll(b.store, onlyB),
+      head: await b.store.head(onlyB),
+    })
+    const before = await bState()
+    const mine = await pendingOf(a)
+    assertEqual(
+      mine.map((row) => [row.sessionId, row.runId, row.callOrdinal, row.waitKind]),
+      [[a.sessionId, runId, 0, 'approval']],
+      "A lists its own row and none of B's",
+    )
+    assertEqual(await pendingOf(a, a.sessionId), mine, "with A's session id the same")
+    assertEqual(await pendingOf(a, onlyB), [], "B's session id lists nothing for A")
+    // A answers its call: its row goes, B's row under the very same key stays.
+    await appendAll(a, [approvalFact(a, call, 'allowed')])
+    assertEqual(await pendingOf(a), [], "A's row is gone")
+    assertEqual(await bState(), before, "B's rows are untouched by A's delete")
+    // A rebuild of A's projection neither sees nor drops B's.
+    await a.store.rebuildProjections(a.sessionId)
+    assertEqual(await pendingOf(a), [], 'the rebuild adds nothing of B')
+    assertEqual(await bState(), before, 'and removes nothing of B')
+    // A reset naming B's session is a session A cannot see: refused, and B unchanged.
+    const next = a.ids.uuid()
+    await assertRejects(
+      () =>
+        a.store.resetSession({
+          sessionId: onlyB,
+          incarnationId: next,
+          start: write('session', 'session/start', {
+            sourceType: 'session',
+            sourceId: onlyB,
+            sourceSeq: 0,
+            provenanceKey: sessionStartKey(next),
+            payload: { incarnationId: next },
+            createdAt: a.at(),
+          }),
+          carry: [profileFact(a, next)],
+        }),
+      TapeSessionNotFoundError,
+      "a reset of another tenant's session",
+    )
+    assertEqual(await bState(), before, "B's session survived A's reset attempt")
+    // And B still sees exactly its own two rows.
+    assertEqual(
+      (await pendingOf(b)).map((row) => [row.callOrdinal, row.waitKind]),
+      [
+        [0, 'approval'],
+        [1, 'question'],
+      ],
+      "B's view of its own rows",
+    )
+  })
+
+  add(
+    'the pending-approval projection follows decisions, answers and results; a rebuild equals it',
+    async (open) => {
+      // 旧 111 (F3, H6): §待批表's three rules, then the row-by-row rebuild comparison. PROJECTION_VERSION
+      // itself is pinned by the kernel's projection test; a store keeps no second copy of it.
+      const fixture = await open()
+      const runId = fixture.ids.uuid()
+      const laterRun = fixture.ids.uuid()
+      const asked = { runId, requestSeq: 0, ordinal: 0 }
+      const question = { runId, requestSeq: 1, ordinal: 0 }
+      const denied = { runId, requestSeq: 1, ordinal: 1 }
+      const answered = { runId: laterRun, requestSeq: 0, ordinal: 2 }
+      const receipts = await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        decisionFact(fixture, asked, { awaits: 'approval' }),
+        decisionFact(fixture, question, { awaits: 'question' }),
+        decisionFact(fixture, denied, { awaits: 'approval' }),
+        decisionFact(fixture, answered, { awaits: 'approval' }),
+      ])
+      const [, askedAt, questionAt, deniedAt] = receipts
+      // Rule 1 again: a re-judgement that still asks moves entry_id, not created_at.
+      const [rejudged] = await appendAll(fixture, [
+        decisionFact(fixture, asked, { awaits: 'approval', rejudge: 1 }),
+      ])
+      // Rule 3: a re-judgement into a denial carries no awaits and changes nothing by itself; the
+      // approval_resolved written with it removes the row (rule 2). A result removes one as well.
+      await appendAll(fixture, [decisionFact(fixture, denied, { verdict: 'deny', rejudge: 1 })])
+      const stillThere = await pendingOf(fixture)
+      assertEqual(stillThere.length, 4, 'a denial without awaits leaves its row alone')
+      await appendAll(fixture, [
+        approvalFact(fixture, denied, 'denied-on-rejudge', {
+          decisionKey: permissionDecidedKey(denied.runId, denied.requestSeq, denied.ordinal, 1),
+        }),
+        resultFact(fixture, answered, RESOLVER),
+      ])
+      // A delete of a row that is not there is a no-op.
+      await appendAll(fixture, [resultFact(fixture, denied, { by: 'run', runId })])
+      if (askedAt === undefined || questionAt === undefined || deniedAt === undefined) {
+        fail('the decisions were not all written')
+      }
+      const incremental = await pendingOf(fixture)
+      const createdOf = async (entryId: number): Promise<number> => {
+        const entry = (await readAll(fixture.store, fixture.sessionId)).find(
+          (candidate) => candidate.entryId === entryId,
+        )
+        if (entry === undefined) fail(`no entry ${entryId}`)
+        return entry.createdAt
+      }
+      assertEqual(
+        incremental,
+        [
+          {
+            sessionId: fixture.sessionId,
+            runId,
+            requestSeq: 0,
+            callOrdinal: 0,
+            waitKind: 'approval',
+            entryId: rejudged?.entryId,
+            createdAt: await createdOf(askedAt.entryId),
+          },
+          {
+            sessionId: fixture.sessionId,
+            runId,
+            requestSeq: 1,
+            callOrdinal: 0,
+            waitKind: 'question',
+            entryId: questionAt.entryId,
+            createdAt: await createdOf(questionAt.entryId),
+          },
+        ],
+        'two calls still wait, oldest first, each pointing at its decision in force',
+      )
+      await fixture.store.rebuildProjections(fixture.sessionId)
+      assertEqual(await pendingOf(fixture), incremental, 'a rebuild reproduces the rows exactly')
+      assertEqual(
+        await pendingOf(fixture, fixture.sessionId),
+        incremental,
+        'listed by session id, the same rows',
+      )
+      assertEqual(await pendingOf(fixture, fixture.ids.uuid()), [], 'another session has none')
+      // The ceiling holds here as on every read.
+      await assertRejects(
+        () => fixture.store.listPendingApprovals({ limit: MAX_READ_LIMIT + 1 }),
+        TapeReadLimitError,
+        'a limit above the ceiling',
+      )
+      assertEqual((await fixture.store.listPendingApprovals({ limit: 1 })).length, 1, 'limit caps')
+    },
+  )
+
+  // ----- spec 02 · the tape half of acceptance 12 (writers; the loop drives them in later steps) --
+
+  add(
+    'a phase-2 fact rewritten is created:false, and a second answer to one call is a conflict',
+    async (open) => {
+      // 旧 115, the store half. Rejudge keys are separate facts (`…:rejudge:<r>`); whether the loop
+      // writes one only when the verdict, summary or card changed is plan step 15's to prove.
+      const fixture = await open()
+      const call = { runId: fixture.ids.uuid(), requestSeq: 0, ordinal: 0 }
+      const messageId = fixture.ids.uuid()
+      const facts = [
+        toolCallFact(fixture, call, messageId),
+        decisionFact(fixture, call, { awaits: 'approval' }),
+      ]
+      await appendAll(fixture, [startEntry(fixture, fixture.incarnationId), ...facts])
+      const head = await fixture.store.head(fixture.sessionId)
+      const again = await appendAll(fixture, facts)
+      assertEqual(
+        again.map((receipt) => receipt.created),
+        [false, false],
+        'the same call and decision again',
+      )
+      assertEqual(await fixture.store.head(fixture.sessionId), head, 'no row was added')
+      const [rejudge] = await appendAll(fixture, [
+        decisionFact(fixture, call, { awaits: 'approval', rejudge: 1 }),
+      ])
+      assertEqual(rejudge?.created, true, 'a re-judgement is its own fact under its own key')
+      await appendAll(fixture, [approvalFact(fixture, call, 'allowed')])
+      const answered = await readAll(fixture.store, fixture.sessionId)
+      await assertRejects(
+        () => appendAll(fixture, [approvalFact(fixture, call, 'cancelled-by-stop')]),
+        TapeProvenanceConflictError,
+        'a second, different answer to the same call',
+      )
+      const [same] = await appendAll(fixture, [approvalFact(fixture, call, 'allowed')])
+      assertEqual(same?.created, false, 'the same answer replayed')
+      assertEqual(
+        await readAll(fixture.store, fixture.sessionId),
+        answered,
+        'the call still has exactly one answer',
+      )
+    },
+  )
+
+  add(
+    'a call approved in one run and executed in the next keeps its six facts under the first',
+    async (open) => {
+      // 旧 116 (B1, F3): everything about a call hangs on the (runId, requestSeq) of the request that
+      // made it; who actually wrote each fact is in `writer`.
+      const fixture = await open()
+      const pausedRun = fixture.ids.uuid()
+      const resumedRun = fixture.ids.uuid()
+      const call = { runId: pausedRun, requestSeq: 0, ordinal: 0 }
+      const newRun: FactWriter = { by: 'run', runId: resumedRun }
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        runStartedFact(fixture, pausedRun, { kind: 'user-message', messageId: fixture.ids.uuid() }),
+        toolCallFact(fixture, call, fixture.ids.uuid()),
+        decisionFact(fixture, call, { awaits: 'approval' }),
+        runTerminalFact(fixture, pausedRun, { code: 'paused', waitingFor: 'approval' }),
+      ])
+      await appendAll(fixture, [
+        approvalFact(fixture, call, 'allowed'),
+        runStartedFact(fixture, resumedRun, {
+          kind: 'resume',
+          pausedRunId: pausedRun,
+          batch: { runId: pausedRun, requestSeq: 0 },
+        }),
+        modelSelected(fixture, resumedRun),
+      ])
+      await appendAll(fixture, [dispatchFact(fixture, call, newRun)])
+      await appendAll(fixture, [
+        resultFact(fixture, call, newRun),
+        outcomeFact(fixture, call, newRun),
+      ])
+      const facts = await fixture.store.readBySource({
+        sessionId: fixture.sessionId,
+        sourceType: 'runtime_event',
+        sourceId: pausedRun,
+        limit: MAX_READ_LIMIT,
+      })
+      const perCall = facts.filter((entry) => entry.sourceSeq === 0)
+      assertEqual(
+        perCall.map((entry) => entry.name),
+        [
+          'tool/call',
+          'tool/permission_decided',
+          'tool/approval_resolved',
+          'execution/dispatch_committed',
+          'tool/result',
+          'execution/tool_outcome',
+        ],
+        "the six facts of the call, all under the paused run's id",
+      )
+      assertEqual(
+        perCall.map((entry) => entry.payload['writer'] ?? null),
+        [null, { by: 'run', runId: pausedRun }, RESOLVER, newRun, newRun, newRun],
+        'each records who actually wrote it',
+      )
+      assertEqual(
+        facts.map((entry) => entry.name).filter((name) => name.startsWith('execution/run_')),
+        ['execution/run_started', 'execution/run_terminal'],
+        "the paused run's own opening and end are here, the resumed run's are not",
+      )
+    },
+  )
+
+  add(
+    'a paused decision and its run_terminal, an answer and the next run, land together or not at all',
+    async (open) => {
+      // 旧 117 (F3, B1): §执行日志与恢复表's batch rules 1 and 2, with the failure injected into the
+      // LAST fact of each batch so the earlier ones had already been applied inside the transaction.
+      // The reducer reads these two at append time, so a case can arm it for one batch at a time.
+      let poisonedRun = ''
+      let poisonedResume = ''
+      const fixture = await open({
+        project: failingReducer(
+          (entry) =>
+            (entry.name === 'execution/run_terminal' && entry.sourceId === poisonedRun) ||
+            (entry.name === 'session/model_selected' &&
+              entry.provenanceKey === modelSelectedKey(poisonedResume)),
+        ),
+      })
+      const pausedRun = fixture.ids.uuid()
+      const call = { runId: pausedRun, requestSeq: 0, ordinal: 0 }
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        runStartedFact(fixture, pausedRun, { kind: 'user-message', messageId: fixture.ids.uuid() }),
+        toolCallFact(fixture, call, fixture.ids.uuid()),
+      ])
+      const beforePause = await readAll(fixture.store, fixture.sessionId)
+      // Rule 1: the ask decision and run_terminal{paused}. The poisoned terminal takes the decision —
+      // and the pending row it would have made — down with it.
+      poisonedRun = pausedRun
+      await assertRejects(
+        () =>
+          appendAll(fixture, [
+            decisionFact(fixture, call, { awaits: 'approval' }),
+            runTerminalFact(fixture, pausedRun, { code: 'paused', waitingFor: 'approval' }),
+          ]),
+        TapeProjectionError,
+        'a pause whose terminal does not project',
+      )
+      assertEqual(
+        await readAll(fixture.store, fixture.sessionId),
+        beforePause,
+        'no decision without its pause',
+      )
+      assertEqual(await pendingOf(fixture), [], 'and no pending row either')
+      poisonedRun = ''
+      await appendAll(fixture, [
+        decisionFact(fixture, call, { awaits: 'approval' }),
+        runTerminalFact(fixture, pausedRun, { code: 'paused', waitingFor: 'approval' }),
+      ])
+      const waiting = await pendingOf(fixture)
+      assertEqual(waiting.length, 1, 'the pause landed with its decision')
+      const beforeAnswer = await readAll(fixture.store, fixture.sessionId)
+      // Rule 2: approval_resolved(allowed) with the new run's run_started and session/model_selected.
+      const resumed = fixture.ids.uuid()
+      poisonedResume = resumed
+      await assertRejects(
+        () =>
+          appendAll(fixture, [
+            approvalFact(fixture, call, 'allowed'),
+            runStartedFact(fixture, resumed, {
+              kind: 'resume',
+              pausedRunId: pausedRun,
+              batch: { runId: pausedRun, requestSeq: 0 },
+            }),
+            modelSelected(fixture, resumed),
+          ]),
+        TapeProjectionError,
+        'an answer whose new run cannot be recorded',
+      )
+      assertEqual(
+        await readAll(fixture.store, fixture.sessionId),
+        beforeAnswer,
+        'no answer, no run_started, no model_selected',
+      )
+      assertEqual(await pendingOf(fixture), waiting, 'the call is still waiting')
+    },
+  )
+
+  add(
+    'view/content is written once per content, however many requests reference it',
+    async (open) => {
+      // 旧 118 (A3, E2): content-addressed keys, so the second request's copies are no-ops.
+      const fixture = await open()
+      const runId = fixture.ids.uuid()
+      const system = SCRIPT_SYSTEM
+      const contents = (): NewEntry[] => [
+        viewContentFact(fixture, { type: 'system', hash: systemHash(system), text: system }),
+        viewContentFact(fixture, {
+          type: 'tool_spec',
+          hash: canonicalHash(SCRIPT_TOOL, 'tool'),
+          spec: SCRIPT_TOOL,
+        }),
+        viewContentFact(fixture, {
+          type: 'model_info',
+          hash: canonicalHash(SCRIPT_MODEL, 'model'),
+          model: SCRIPT_MODEL,
+        }),
+      ]
+      await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+      for (let requestSeq = 0; requestSeq < 3; requestSeq += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- one request's batch at a time
+        const receipts = await appendAll(fixture, [
+          ...contents(),
+          assembledFact(fixture, runId, requestSeq, system),
+        ])
+        assertEqual(
+          receipts.map((receipt) => receipt.created),
+          requestSeq === 0 ? [true, true, true, true] : [false, false, false, true],
+          `request ${requestSeq}: only the first writes the contents`,
+        )
+      }
+      const stored = (await readAll(fixture.store, fixture.sessionId)).filter(
+        (entry) => entry.name === 'view/content',
+      )
+      assertEqual(
+        stored.map((entry) => entry.payload['type']),
+        ['system', 'tool_spec', 'model_info'],
+        'each content exactly once',
+      )
+    },
+  )
+
+  add(
+    'the first model choice lands with session/start, and two quick choices are n=0 and n=1',
+    async (open) => {
+      // 旧 123, the writer half (M5, A11): a choice made on the home page before the session existed
+      // is the batch's `<n>` = 0; the queue that counts `<n>` from the tape is plan step 19's.
+      const fixture = await open()
+      const receipts = await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        modelChoiceFact(fixture, fixture.incarnationId, 0, 'glm-5.3-flash'),
+      ])
+      assertEqual(
+        receipts.map((receipt) => receipt.created),
+        [true, true],
+        'a creating batch',
+      )
+      const [second] = await appendAll(fixture, [
+        modelChoiceFact(fixture, fixture.incarnationId, 1, 'glm-5.3'),
+      ])
+      assertEqual(second?.created, true, 'n=1 is a second fact, not a conflict with n=0')
+      const [replay] = await appendAll(fixture, [
+        modelChoiceFact(fixture, fixture.incarnationId, 1, 'glm-5.3'),
+      ])
+      assertEqual(replay?.created, false, 'the same n=1 again is idempotent')
+      assertEqual(
+        (await readAll(fixture.store, fixture.sessionId))
+          .filter((entry) => entry.name === 'session/model_choice_set')
+          .map((entry) => [entry.sourceSeq, entry.payload['modelId']]),
+        [
+          [0, 'glm-5.3-flash'],
+          [1, 'glm-5.3'],
+        ],
+        'the two choices in order',
+      )
+    },
+  )
 
   return cases
 }

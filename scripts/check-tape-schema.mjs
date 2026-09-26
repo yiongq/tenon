@@ -1,20 +1,46 @@
 #!/usr/bin/env node
-// pnpm tape:check — spec 01 R4「一套逻辑 schema、两份方言文件」(acceptance 17). Parses both DDL
-// files and asserts they are the same logical schema: table names, column names and order,
-// NOT NULL / DEFAULT / CHECK, primary keys, unique constraints and index definitions must be
-// identical outside the dialect mapping table registered below. Triggers are compared against
-// their REGISTERED SEMANTICS rather than each other's text, so weakening the SQLite side to
-// "remove the divergence" fails too. Also rejects the constructs the spec bans from the schema.
-// The SQLite file is anchored to the spec's own DDL block as well, so the two files cannot drift
-// from the spec together — or shrink to nothing — with the twin comparison still green.
-// Usage: node scripts/check-tape-schema.mjs [sqliteFile] [postgresFile] [specFile]
+// pnpm tape:check — spec 01 R4「一套逻辑 schema、两份方言文件」(acceptance 17), anchored by migration
+// number since spec 02 (01 修补 7, B8, F3; 02 acceptance 11). Every migration is a pair of DDL files
+// — SQLite and Postgres — plus the spec sql block it came from, and each pair is checked on its own:
+// the two files must be the same logical schema (table names, column names and order, NOT NULL /
+// DEFAULT / CHECK, primary keys, unique constraints and index definitions identical outside the
+// dialect mapping table registered below), and the SQLite file must be its spec block, statement for
+// statement, so the two files cannot drift from the spec together — or shrink to nothing — with the
+// twin comparison still green. The spec blocks together are the whole schema: a table or index that
+// two blocks both create is a finding. Triggers are compared against their REGISTERED SEMANTICS
+// across the whole schema of each dialect, so weakening the SQLite side to "remove the divergence"
+// fails too. Also rejects the constructs the spec bans from the schema.
+// Usage: node scripts/check-tape-schema.mjs
 // Exit: 0 ok · 1 divergence or forbidden construct · 2 unreadable file.
 import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
-export const SQLITE_FILE = 'apps/desktop/src/main/tape/sql/tape.sqlite.sql'
-export const POSTGRES_FILE = 'apps/server/sql/tape.postgres.sql'
-export const SPEC_FILE = 'docs/architecture/01-provider-and-tape/spec.md'
+/**
+ * The migration ladder, by number: which two files make each migration and which spec's sql block
+ * it is anchored to — the block that creates `anchorTable`. Migration 1 is spec 01's DDL and its
+ * files are never edited again; migration 2 is spec 02's pending-approval projection.
+ */
+export const MIGRATIONS = Object.freeze([
+  Object.freeze({
+    version: 1,
+    sqliteFile: 'apps/desktop/src/main/tape/sql/tape.sqlite.sql',
+    postgresFile: 'apps/server/sql/tape.postgres.sql',
+    specFile: 'docs/architecture/01-provider-and-tape/spec.md',
+    anchorTable: 'tape_entry',
+  }),
+  Object.freeze({
+    version: 2,
+    sqliteFile: 'apps/desktop/src/main/tape/sql/tape.sqlite.002.sql',
+    postgresFile: 'apps/server/sql/tape.postgres.002.sql',
+    specFile: 'docs/architecture/02-agent-loop/spec.md',
+    anchorTable: 'pending_approval_projection',
+  }),
+])
+
+// Migration 1's files under their original names, for the callers that only know those.
+export const SQLITE_FILE = MIGRATIONS[0].sqliteFile
+export const POSTGRES_FILE = MIGRATIONS[0].postgresFile
+export const SPEC_FILE = MIGRATIONS[0].specFile
 
 // ─── the dialect mapping table ────────────────────────────────────────────────
 // Every difference the two files are allowed to have is registered here. Nothing else.
@@ -598,20 +624,56 @@ export function checkUnregistered(schema) {
   return out
 }
 
-/** The spec's DDL block: the one ```sql fence that defines the tape tables. */
-export function specDdl(md) {
+/** A migration's spec block: the one ```sql fence in its spec that creates `anchorTable`. */
+export function specDdl(md, anchorTable = 'tape_entry') {
   const fences = [...md.matchAll(/```sql\r?\n([\s\S]*?)```/g)].map((m) => m[1])
-  return fences.find((f) => /\bCREATE\s+TABLE\s+tape_entry\b/i.test(f)) ?? null
+  const creates = new RegExp(`\\bCREATE\\s+TABLE\\s+${anchorTable}\\b`, 'i')
+  return fences.find((f) => creates.test(f)) ?? null
 }
 
 const KINDS = { tables: 'table', indexes: 'index', triggers: 'trigger' }
 
+/** A column as the anchor compares it: everything the parser read, in canonical form. */
+const columnShape = (c) =>
+  JSON.stringify([c.type, c.notNull, c.default, canonOrNull(c.check), c.unique, c.residual])
+
+/** The table's column names in declaration order. */
+const columnOrder = (t) => t.columns.map((c) => c.name).join()
+
+/**
+ * What differs between the spec's table and the file's, by name — so a finding points at the column
+ * rather than only at the table. Empty when the difference is somewhere the parser does not split.
+ */
+function tableDetail(want, got) {
+  const out = []
+  const wanted = new Map(want.columns.map((c) => [c.name, c]))
+  const found = new Map(got.columns.map((c) => [c.name, c]))
+  for (const name of new Set([...wanted.keys(), ...found.keys()])) {
+    const w = wanted.get(name)
+    const g = found.get(name)
+    if (!w) out.push(`column ${name} is not in the spec`)
+    else if (!g) out.push(`column ${name} is missing`)
+    else if (columnShape(w) !== columnShape(g)) out.push(`column ${name}`)
+  }
+  if (out.length === 0 && columnOrder(want) !== columnOrder(got)) out.push('column order')
+  if (want.primaryKey.join() !== got.primaryKey.join()) out.push('primary key')
+  if (sets(want.uniques).join(' | ') !== sets(got.uniques).join(' | ')) {
+    out.push('unique constraints')
+  }
+  if (want.checks.map(canon).toSorted().join() !== got.checks.map(canon).toSorted().join()) {
+    out.push('table constraints')
+  }
+  if (want.strict !== got.strict) out.push('STRICT')
+  return out.length === 0 ? '' : ` (${out.join('; ')})`
+}
+
 /**
  * The SQLite file is the spec's DDL block, statement for statement (modulo comments, whitespace
  * and keyword case). Without this anchor the two dialect files could drift from the spec together
- * — or shrink to nothing at all — with the twin comparison still reporting agreement.
+ * — or shrink to nothing at all — with the twin comparison still reporting agreement. Every finding
+ * names the migration file; a table finding also names what in it differs.
  */
-export function checkAgainstSpec(specSql, sqlite) {
+export function checkAgainstSpec(specSql, sqlite, sqliteFile = SQLITE_FILE) {
   const spec = parseSchema(specSql, 'sqlite')
   const out = spec.unparsed.map(
     (st) => `spec DDL block: statement the checker does not understand — "${st}"`,
@@ -621,12 +683,65 @@ export function checkAgainstSpec(specSql, sqlite) {
     for (const name of names(spec[kind], sqlite[kind])) {
       const want = spec[kind].get(name)
       const got = sqlite[kind].get(name)
-      if (!want) out.push(`${what} ${name}: not in the spec's DDL block`)
-      else if (!got) out.push(`${what} ${name}: in the spec's DDL block but not in ${SQLITE_FILE}`)
-      else if (want.sql !== got.sql) out.push(`${what} ${name}: differs from the spec's DDL block`)
+      if (!want) out.push(`${what} ${name}: in ${sqliteFile} but not in the spec's DDL block`)
+      else if (!got) out.push(`${what} ${name}: in the spec's DDL block but not in ${sqliteFile}`)
+      else if (want.sql !== got.sql) {
+        const detail = kind === 'tables' ? tableDetail(want, got) : ''
+        out.push(`${what} ${name}: ${sqliteFile} differs from the spec's DDL block${detail}`)
+      }
     }
   }
   return out
+}
+
+/**
+ * The spec blocks together are the complete schema, one migration each: an object two blocks both
+ * create would make the later migration fail on a real database, and would leave it unclear which
+ * spec owns the object.
+ */
+export function checkBlockUnion(blocks) {
+  const out = []
+  for (const kind of ['tables', 'indexes']) {
+    const owner = new Map()
+    for (const { version, schema } of blocks) {
+      for (const name of schema[kind].keys()) {
+        const first = owner.get(name)
+        if (first === undefined) owner.set(name, version)
+        else {
+          out.push(
+            `${KINDS[kind]} ${name}: created by the DDL blocks of migration ${first} and ` +
+              `migration ${version} — each object belongs to exactly one migration`,
+          )
+        }
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * One dialect's migrations folded into its whole schema, for the checks that span migrations — the
+ * trigger registry above all. Statement order stays global, so "created after" still means after.
+ */
+function mergeSchemas(dialect, schemas) {
+  const merged = {
+    dialect,
+    tables: new Map(),
+    indexes: new Map(),
+    triggers: new Map(),
+    functions: new Map(),
+    unparsed: [],
+  }
+  schemas.forEach((schema, index) => {
+    const offset = index * 1_000_000
+    for (const [name, table] of schema.tables) merged.tables.set(name, table)
+    for (const [name, idx] of schema.indexes) merged.indexes.set(name, idx)
+    for (const [name, t] of schema.triggers)
+      merged.triggers.set(name, { ...t, order: t.order + offset })
+    for (const [name, f] of schema.functions)
+      merged.functions.set(name, { ...f, order: f.order + offset })
+  })
+  return merged
 }
 
 /** Constructs banned from the schema, wherever they appear. */
@@ -644,13 +759,8 @@ export function checkForbidden(sql, dialect) {
   return out
 }
 
-/**
- * All findings for a pair of dialect sources plus the spec markdown that governs them. Empty
- * array = the two files are one logical schema and the SQLite one is still the spec's DDL.
- */
-export function checkTapeSchema({ sqliteSql, postgresSql, specMd }) {
-  const sqlite = parseSchema(sqliteSql, 'sqlite')
-  const postgres = parseSchema(postgresSql, 'postgres')
+/** The twin comparison of ONE migration: its SQLite file against its Postgres file. */
+function checkPair(sqliteSql, postgresSql, sqlite, postgres) {
   const out = []
   for (const schema of [sqlite, postgres]) {
     for (const st of schema.unparsed) {
@@ -673,43 +783,82 @@ export function checkTapeSchema({ sqliteSql, postgresSql, specMd }) {
     else if (!p) out.push(`index ${name}: in sqlite only`)
     else out.push(...compareIndex(name, s, p))
   }
+  return out
+}
+
+/**
+ * All findings for the migration ladder. `migrations` is one entry per migration, in order:
+ * `{ version, sqliteSql, postgresSql, specMd }`, with the file names and anchor table taken from
+ * `MIGRATIONS` by version. Empty array = every pair is one logical schema, every SQLite file is still
+ * its spec's DDL block, and no object is created twice.
+ */
+export function checkTapeSchema({ migrations }) {
+  const out = []
+  const sqliteSchemas = []
+  const postgresSchemas = []
+  const blocks = []
+  const known = new Set(MIGRATIONS.map((m) => m.version))
+  for (const version of known) {
+    if (!migrations.some((m) => m.version === version)) {
+      out.push(`migration ${version}: no sources were handed to the checker`)
+    }
+  }
+  for (const source of migrations) {
+    const meta = MIGRATIONS.find((m) => m.version === source.version)
+    if (meta === undefined) {
+      out.push(`migration ${source.version}: not registered in MIGRATIONS`)
+      continue
+    }
+    const sqlite = parseSchema(source.sqliteSql, 'sqlite')
+    const postgres = parseSchema(source.postgresSql, 'postgres')
+    sqliteSchemas.push(sqlite)
+    postgresSchemas.push(postgres)
+    out.push(...checkPair(source.sqliteSql, source.postgresSql, sqlite, postgres))
+    const specSql = specDdl(source.specMd ?? '', meta.anchorTable)
+    if (specSql === null) {
+      out.push(
+        `${meta.specFile}: no DDL block creating ${meta.anchorTable} — ${meta.sqliteFile} is unanchored`,
+      )
+      continue
+    }
+    blocks.push({ version: meta.version, schema: parseSchema(specSql, 'sqlite') })
+    out.push(...checkAgainstSpec(specSql, sqlite, meta.sqliteFile))
+  }
+  out.push(...checkBlockUnion(blocks))
+  const sqlite = mergeSchemas('sqlite', sqliteSchemas)
+  const postgres = mergeSchemas('postgres', postgresSchemas)
   out.push(...checkTriggers(sqlite), ...checkTriggers(postgres))
-  const specSql = specDdl(specMd ?? '')
-  if (specSql === null) out.push(`${SPEC_FILE}: no DDL block found — the SQLite file is unanchored`)
-  else out.push(...checkAgainstSpec(specSql, sqlite))
   return { findings: out, sqlite, postgres }
 }
 
 // ─── CLI ──────────────────────────────────────────────────────────────────────
 
-function main(argv) {
-  const args = argv.filter((a) => !a.startsWith('--'))
-  const sqliteFile = args[0] ?? SQLITE_FILE
-  const postgresFile = args[1] ?? POSTGRES_FILE
-  const specFile = args[2] ?? SPEC_FILE
-  let sources
+function main() {
+  let migrations
   try {
-    sources = {
-      sqliteSql: readFileSync(sqliteFile, 'utf8'),
-      postgresSql: readFileSync(postgresFile, 'utf8'),
-      specMd: readFileSync(specFile, 'utf8'),
-    }
+    migrations = MIGRATIONS.map((m) => ({
+      version: m.version,
+      sqliteSql: readFileSync(m.sqliteFile, 'utf8'),
+      postgresSql: readFileSync(m.postgresFile, 'utf8'),
+      specMd: readFileSync(m.specFile, 'utf8'),
+    }))
   } catch (e) {
     console.error(`tape:check: ${e.message}`)
     process.exit(2)
   }
-  const { findings, sqlite } = checkTapeSchema(sources)
+  const { findings, sqlite } = checkTapeSchema({ migrations })
   if (findings.length > 0) {
     console.error(`tape:check FAILED — ${findings.length} divergence(s) across the two dialects`)
     for (const f of findings) console.error(`  ${f}`)
     process.exit(1)
   }
   console.log(
-    `tape:check OK — ${sqlite.tables.size} tables, ${sqlite.indexes.size} indexes and ` +
-      `${sqlite.triggers.size} triggers agree in ${sqliteFile} and ${postgresFile}`,
+    `tape:check OK — ${MIGRATIONS.length} migrations: ${sqlite.tables.size} tables, ` +
+      `${sqlite.indexes.size} indexes and ${sqlite.triggers.size} triggers agree in both dialects ` +
+      'and with their spec blocks',
   )
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main(process.argv.slice(2))
+  main()
 }

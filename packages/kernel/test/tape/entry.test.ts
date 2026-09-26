@@ -24,8 +24,10 @@ import {
   TAPE_KINDS,
   TAPE_SOURCE_TYPES,
   TapeAppendAuthorizationError,
+  TapeClosedError,
   TapeHashRecipeError,
   TapeIntegerRangeError,
+  TapeMessageRetractedError,
   TapeNameSyntaxError,
   TapeProvenanceSyntaxError,
   canonicalJson,
@@ -161,6 +163,9 @@ describe('the kernel-defined tape errors are reachable from the package index', 
       TapeIntegerRangeError,
       TapeNameSyntaxError,
       TapeProvenanceSyntaxError,
+      // Spec 02 (01 修补 7): a desktop caller has to tell a closed store and a final retraction apart.
+      TapeClosedError,
+      TapeMessageRetractedError,
     ]
     for (const cls of classes) {
       expect(typeof cls).toBe('function')

@@ -1,20 +1,28 @@
 /**
- * Folding and replay (spec 01 §投影与重放).
+ * Folding and replay (spec 01 §投影与重放; spec 02, 01 修补 7 and §折叠与读法).
  *
  * `effectiveMessages` is the fold: same `messageId` ⇒ the highest `revision` wins, and a
- * `message/retracted` with a LARGER `entry_id` hides the message. Phase 1's inputs are kind
- * `message`, kind `anchor` and the one event `message/retracted`; every other kind and every other
- * event name passes through untouched as evidence and never becomes a message. `tool_call` /
- * `tool_result` fold with their shape in phase 2.
+ * `message/retracted` with a LARGER `entry_id` hides the message. Its inputs are kind `message` —
+ * `message/user`, `message/assistant` and, from spec 02, `message/continuation`, which is a user
+ * message to the provider even though it never gets a projection row — kind `anchor` and the one
+ * event `message/retracted`; every other kind and every other event name passes through untouched as
+ * evidence and never becomes a message.
+ *
+ * `REPLAY_KINDS` reads `tool_call` and `tool_result` too (spec 02 only adds those two). Placing
+ * `tool/call` and `tool/result` around their assistant turn — §重放怎么排 — and hiding a retracted
+ * assistant's tool/ and execution/ facts is plan step 14's; until then no kernel path writes a tool
+ * fact, and the fold passes them through as evidence.
  *
  * `rebuildProviderContext` pages the fold out of a store and hands back provider messages. A
  * request's context is a PREFIX of the tape, not the whole tape, which is why every
  * `provider/attempt_completed` records the `contextAtEntryId` it was assembled at and why replay can
- * be pinned to it.
+ * be pinned to it. From spec 02 it reads from the most recent `compaction/anchor` at or below that
+ * point: the anchor's summary as one user message, then the messages whose `orderSeq` is at or after
+ * its `keepFromEntryId` (§重建、保留尾巴与思考块).
  */
 import type { ContentBlock, InternalMessage, ModelInfo } from '../provider/types.js'
 import type { MessageStatus, TapeEntry } from './entry.js'
-import { parseMessagePayload, parseRetractedMessageId } from './projection.js'
+import { TapeProjectionError, parseMessagePayload, parseRetractedMessageId } from './projection.js'
 import type { TapeReadRangeQuery, TapeReader } from './store.js'
 import { MAX_READ_LIMIT } from './store.js'
 
@@ -31,8 +39,30 @@ export interface EffectiveMessage {
   readonly entryId: number
 }
 
-/** The three kinds the fold reads. Everything else is evidence and is skipped. */
-export const REPLAY_KINDS = Object.freeze(['message', 'anchor', 'event'] as const)
+/**
+ * The kinds replay reads. Spec 02 adds `tool_call` and `tool_result` (01 修补 7); everything else is
+ * evidence and is skipped.
+ */
+export const REPLAY_KINDS = Object.freeze([
+  'message',
+  'anchor',
+  'event',
+  'tool_call',
+  'tool_result',
+] as const)
+
+/**
+ * The message facts the fold reads. `message/continuation` (spec 02, A2) and `message/environment`
+ * (open question 16) are user turns.
+ */
+function isFoldedMessage(entry: TapeEntry): boolean {
+  return (
+    entry.name === 'message/user' ||
+    entry.name === 'message/assistant' ||
+    entry.name === 'message/continuation' ||
+    entry.name === 'message/environment'
+  )
+}
 
 interface FoldState {
   orderSeq: number
@@ -56,7 +86,7 @@ export function effectiveMessages(entries: readonly TapeEntry[]): EffectiveMessa
   }
   for (const entry of entries) {
     if (entry.kind === 'message') {
-      if (entry.name !== 'message/user' && entry.name !== 'message/assistant') continue
+      if (!isFoldedMessage(entry)) continue
       const payload = parseMessagePayload(entry)
       const state = stateFor(payload.messageId)
       state.orderSeq = Math.min(state.orderSeq, entry.entryId)
@@ -122,6 +152,14 @@ export async function readEffectiveMessages(
   store: TapeReader,
   q: ReadEffectiveMessagesQuery,
 ): Promise<EffectiveMessage[]> {
+  return effectiveMessages(await readReplayEntries(store, q))
+}
+
+/** The replay kinds of a pinned prefix, paged, with one incarnation carried across every page. */
+async function readReplayEntries(
+  store: TapeReader,
+  q: ReadEffectiveMessagesQuery,
+): Promise<TapeEntry[]> {
   const entries: TapeEntry[] = []
   let fromEntryId: number | undefined
   let incarnationId: string | undefined
@@ -142,7 +180,41 @@ export async function readEffectiveMessages(
     if (page.nextFromEntryId === null) break
     fromEntryId = page.nextFromEntryId
   }
-  return effectiveMessages(entries)
+  return entries
+}
+
+/** What replay takes from a `compaction/anchor`, read field by field like every other payload. */
+interface CompactionCut {
+  readonly summary: string
+  readonly keepFromEntryId: number
+}
+
+function readCompactionCut(entry: TapeEntry): CompactionCut {
+  const summary = entry.payload['summary']
+  const keepFromEntryId = entry.payload['keepFromEntryId']
+  if (typeof summary !== 'string') {
+    throw new TapeProjectionError(`${entry.name}: payload.summary must be a string`)
+  }
+  if (
+    typeof keepFromEntryId !== 'number' ||
+    !Number.isSafeInteger(keepFromEntryId) ||
+    keepFromEntryId < 0
+  ) {
+    throw new TapeProjectionError(
+      `${entry.name}: payload.keepFromEntryId must be a non-negative safe integer`,
+    )
+  }
+  return { summary, keepFromEntryId }
+}
+
+/** The most recent `compaction/anchor` of a prefix, or null when none was written. */
+function latestCompaction(entries: readonly TapeEntry[]): CompactionCut | null {
+  let latest: TapeEntry | null = null
+  for (const entry of entries) {
+    if (entry.kind !== 'anchor' || entry.name !== 'compaction/anchor') continue
+    if (latest === null || entry.entryId > latest.entryId) latest = entry
+  }
+  return latest === null ? null : readCompactionCut(latest)
 }
 
 export interface RebuildProviderContextQuery extends ReadEffectiveMessagesQuery {
@@ -182,8 +254,13 @@ export async function rebuildProviderContext(
   store: TapeReader,
   q: RebuildProviderContextQuery,
 ): Promise<InternalMessage[]> {
-  const messages = await readEffectiveMessages(store, q)
-  return messages
+  const entries = await readReplayEntries(store, q)
+  const cut = latestCompaction(entries)
+  const messages = effectiveMessages(entries)
+    .filter((message) => cut === null || message.orderSeq >= cut.keepFromEntryId)
     .filter((message) => message.content.length > 0)
-    .map((message) => ({ role: message.role, content: [...message.content] }))
+    .map((message): InternalMessage => ({ role: message.role, content: [...message.content] }))
+  if (cut === null) return messages
+  // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
+  return [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages]
 }

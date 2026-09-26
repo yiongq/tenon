@@ -69,7 +69,17 @@ export const EXT_NAMESPACE = 'ext'
  * `context` kind is reserved for it — phase 3 declares the names, and until then the slice exists
  * so the rule can be stated instead of hard-coded.
  */
-export type TapeSlice = 'session' | 'message' | 'provider' | 'execution' | 'fs' | 'skill'
+export type TapeSlice =
+  | 'session'
+  | 'message'
+  | 'provider'
+  | 'execution'
+  | 'fs'
+  | 'skill'
+  // Spec 02 §Tape slice: only these three are added, and each is still the first segment of its names.
+  | 'tool'
+  | 'view'
+  | 'compaction'
 
 /**
  * How the spec's fact table fixes `source_seq` for a name: a number is that exact value, `'null'` is
@@ -154,12 +164,167 @@ const declarations = [
     sourceId: 'required',
     sourceSeq: 'ordinal',
   },
+  // Spec 02 §名字总表 — every phase-2 name, including the ones only ③ writes, with the triple the
+  // table fixes. `<n>`, `<g>` and `requestSeq` are ordinals the writer carries ('ordinal').
+  {
+    name: 'session/profile_set',
+    kind: 'event',
+    slice: 'session',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'null',
+  },
+  {
+    name: 'session/workspace_set',
+    kind: 'event',
+    slice: 'session',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'session/model_choice_set',
+    kind: 'event',
+    slice: 'session',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  // Reserved by 01; spec 02 gives it its triple and payload.
+  {
+    name: 'session/parent_link',
+    kind: 'event',
+    slice: 'session',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'view/content',
+    kind: 'event',
+    slice: 'view',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'null',
+  },
+  {
+    name: 'view/tool_table',
+    kind: 'event',
+    slice: 'view',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'view/tools_withheld',
+    kind: 'event',
+    slice: 'view',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'view/assembled',
+    kind: 'event',
+    slice: 'view',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'message/continuation',
+    kind: 'message',
+    slice: 'message',
+    sourceType: 'message',
+    sourceId: 'required',
+    sourceSeq: 0,
+  },
+  {
+    // Spec 02 open question 16 (owner 2026-09-26): the date and the workspace, told to the model.
+    name: 'message/environment',
+    kind: 'message',
+    slice: 'message',
+    sourceType: 'message',
+    sourceId: 'required',
+    sourceSeq: 0,
+  },
+  {
+    name: 'tool/call',
+    kind: 'tool_call',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'tool/permission_decided',
+    kind: 'event',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'tool/approval_resolved',
+    kind: 'event',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'tool/result',
+    kind: 'tool_result',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  // Reserved by 01; spec 02 gives the four their triples and payloads.
+  {
+    name: 'execution/run_started',
+    kind: 'event',
+    slice: 'execution',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'null',
+  },
+  {
+    name: 'execution/dispatch_committed',
+    kind: 'event',
+    slice: 'execution',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'execution/tool_outcome',
+    kind: 'event',
+    slice: 'execution',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'execution/run_terminal',
+    kind: 'event',
+    slice: 'execution',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'null',
+  },
+  {
+    name: 'compaction/anchor',
+    kind: 'anchor',
+    slice: 'compaction',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
   // Reserved only — the writers, and their source triples, arrive with the owning phase (R1, R5).
-  { name: 'session/parent_link', kind: 'event', slice: 'session' },
-  { name: 'execution/run_started', kind: 'event', slice: 'execution' },
-  { name: 'execution/dispatch_committed', kind: 'event', slice: 'execution' },
-  { name: 'execution/tool_outcome', kind: 'event', slice: 'execution' },
-  { name: 'execution/run_terminal', kind: 'event', slice: 'execution' },
+  // `tool/result_marked` is phase 2's (F10): the name is held, and the first phase that writes it
+  // declares its identity by the tool/ key rule. Nothing in phase 2 writes it.
+  { name: 'tool/result_marked', kind: 'event', slice: 'tool' },
   { name: 'fs/snapshot_created', kind: 'event', slice: 'fs' },
 ] as const satisfies readonly DeclaredTapeName[]
 

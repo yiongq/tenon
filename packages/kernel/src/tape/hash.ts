@@ -35,7 +35,12 @@ import { TapeIntegerRangeError } from './entry.js'
  */
 export { bytesToHex, hexToBytes }
 
-/** The only recipe this build knows. A row carries its own version; readers switch on it. */
+/**
+ * The only recipe this build knows. A row carries its own version; readers switch on it. Spec 02,
+ * 01 修补 7 (decision B6): bumping it also bumps the schema
+ * version — one migration — so an older build cannot open a file that holds a recipe it does not
+ * know. A third verification state ("recipe not known") is 6b's, by amend.
+ */
 export const HASH_VER = 1
 
 /**

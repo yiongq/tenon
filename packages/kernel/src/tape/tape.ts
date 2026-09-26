@@ -18,6 +18,12 @@
  * nothing malformed ever reaches a transaction. The store repeats the checks it can make on its own
  * — belt and braces on purpose: a test double or a second facade must not become a way around them.
  *
+ * The facade is also the kernel's message writer, which makes it the place spec 02's 「撤回即终局」
+ * (01 修补 7, B2) lives: before a batch carrying a `message/*` revision reaches the store, the facade
+ * looks that messageId up with `readBySource`, and a `message/retracted` there — or earlier in the same
+ * batch — refuses the whole batch with `TapeMessageRetractedError`. A store never learns who called it,
+ * so it cannot make this check; atomicity of the look-up against a second writer is 6b's.
+ *
  * Reads are passed straight through. The facade deliberately does not expose the store it wraps:
  * handing the port out would make the paragraph above a suggestion.
  */
@@ -27,9 +33,11 @@ import { assertAppendAuthorized, createEntryWriter, declaredTapeName } from './n
 import { assertProvenanceKey } from './provenance.js'
 import type {
   MessageRow,
+  PendingApprovalRow,
   SessionHead,
   SessionSummary,
   TapeListMessagesQuery,
+  TapeListPendingApprovalsQuery,
   TapeListSessionsQuery,
   TapeReadBySourceQuery,
   TapeReadRangePage,
@@ -39,6 +47,7 @@ import type {
   TapeVerifyChainPage,
   TapeVerifyChainQuery,
 } from './store.js'
+import { MAX_READ_LIMIT, TapeMessageRetractedError } from './store.js'
 
 /** One fact to write: a name plus everything about it except the kind a declaration already fixes. */
 export interface TapeFact {
@@ -94,8 +103,12 @@ export interface Tape {
   verifyChain(q: TapeVerifyChainQuery): Promise<TapeVerifyChainPage>
   listSessions(q: TapeListSessionsQuery): Promise<SessionSummary[]>
   listMessages(q: TapeListMessagesQuery): Promise<MessageRow[]>
+  listPendingApprovals(q: TapeListPendingApprovalsQuery): Promise<PendingApprovalRow[]>
   rebuildProjections(sessionId: string): Promise<void>
-  /** `start` must be an authorised `session/start`, normally from `writer('session').entry(…)`. */
+  /**
+   * `start` must be an authorised `session/start`, normally from `writer('session').entry(…)`; each
+   * `carry` entry is re-checked against the slice that declared its name, like `appendEntries`.
+   */
   resetSession(q: TapeResetSessionQuery): Promise<AppendResult>
   deleteSession(sessionId: string): Promise<void>
   close(): Promise<void>
@@ -120,6 +133,18 @@ function assertEntryAuthorized(entry: NewEntry): void {
   assertProvenanceKey(entry.provenanceKey)
 }
 
+/** A `message/*` fact that revises a message — everything under `message/` but the tombstone. */
+function isMessageRevision(entry: NewEntry): boolean {
+  return entry.name.startsWith('message/') && entry.name !== 'message/retracted'
+}
+
+function retractedError(messageId: string): TapeMessageRetractedError {
+  return new TapeMessageRetractedError(
+    `message "${messageId}" has been retracted; a retraction is final, so no message/* fact ` +
+      'may be written for it (spec 02, 01 修补 7)',
+  )
+}
+
 function buildEntries(slice: TapeSlice | null, facts: readonly TapeFact[]): NewEntry[] {
   const build = createEntryWriter(slice)
   return facts.map((fact) => {
@@ -132,14 +157,65 @@ function buildEntries(slice: TapeSlice | null, facts: readonly TapeFact[]): NewE
 }
 
 export function createTape(store: TapeStore): Tape {
+  /** Has this messageId a `message/retracted` on the tape? Paged, so no revision count hides it. */
+  async function isRetracted(sessionId: string, messageId: string): Promise<boolean> {
+    let fromEntryId: number | undefined
+    for (;;) {
+      // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's answer
+      const page = await store.readBySource({
+        sessionId,
+        sourceType: 'message',
+        sourceId: messageId,
+        limit: MAX_READ_LIMIT,
+        ...(fromEntryId === undefined ? {} : { fromEntryId }),
+      })
+      if (page.some((entry) => entry.name === 'message/retracted')) return true
+      const last = page.at(-1)
+      if (last === undefined || page.length < MAX_READ_LIMIT) return false
+      fromEntryId = last.entryId + 1
+    }
+  }
+
+  /**
+   * 「撤回即终局」: a revision of a retracted message never reaches the store. A tombstone EARLIER in
+   * the same batch counts too; replaying the tombstone itself is not a revision and goes through, so
+   * the store answers it `created: false` as 01 invariant 11 says.
+   */
+  async function assertNoRevisionAfterRetraction(
+    sessionId: string,
+    entries: readonly NewEntry[],
+  ): Promise<void> {
+    const retractedInBatch = new Set<string>()
+    const checked = new Set<string>()
+    for (const entry of entries) {
+      if (entry.sourceId === undefined || !entry.name.startsWith('message/')) continue
+      const messageId = entry.sourceId
+      if (!isMessageRevision(entry)) {
+        retractedInBatch.add(messageId)
+        continue
+      }
+      if (retractedInBatch.has(messageId)) throw retractedError(messageId)
+      if (checked.has(messageId)) continue
+      checked.add(messageId)
+      // oxlint-disable-next-line no-await-in-loop -- one look-up per messageId, before any write
+      if (await isRetracted(sessionId, messageId)) throw retractedError(messageId)
+    }
+  }
+
+  /** The one door to `store.append`: every write path of the facade goes through it. */
+  async function appendChecked(
+    sessionId: string,
+    incarnationId: string,
+    entries: readonly NewEntry[],
+  ): Promise<AppendResult[]> {
+    await assertNoRevisionAfterRetraction(sessionId, entries)
+    return store.append({ sessionId, incarnationId, entries })
+  }
+
   // `async`, so a rejected name or key REJECTS instead of throwing synchronously: the port promises
   // a promise, and a caller holding only a `.catch()` must not be able to miss the gate.
   async function appendAs(slice: TapeSlice | null, batch: TapeWriteBatch): Promise<AppendResult[]> {
-    return store.append({
-      sessionId: batch.sessionId,
-      incarnationId: batch.incarnationId,
-      entries: buildEntries(slice, batch.facts),
-    })
+    return appendChecked(batch.sessionId, batch.incarnationId, buildEntries(slice, batch.facts))
   }
 
   return {
@@ -174,11 +250,7 @@ export function createTape(store: TapeStore): Tape {
 
     async appendEntries(batch: TapeAppendEntriesBatch): Promise<AppendResult[]> {
       for (const entry of batch.entries) assertEntryAuthorized(entry)
-      return store.append({
-        sessionId: batch.sessionId,
-        incarnationId: batch.incarnationId,
-        entries: batch.entries,
-      })
+      return appendChecked(batch.sessionId, batch.incarnationId, batch.entries)
     },
 
     readRange: (q) => store.readRange(q),
@@ -187,6 +259,7 @@ export function createTape(store: TapeStore): Tape {
     verifyChain: (q) => store.verifyChain(q),
     listSessions: (q) => store.listSessions(q),
     listMessages: (q) => store.listMessages(q),
+    listPendingApprovals: (q) => store.listPendingApprovals(q),
     rebuildProjections: (sessionId) => store.rebuildProjections(sessionId),
     async resetSession(q: TapeResetSessionQuery): Promise<AppendResult> {
       // The same gate the write paths run, on an entry the caller assembled: a reset is an append of
@@ -202,6 +275,9 @@ export function createTape(store: TapeStore): Tape {
         'session',
       )
       assertProvenanceKey(q.start.provenanceKey)
+      // The carry is written into the NEW incarnation, where nothing has been retracted yet; it gets
+      // the same gate an `appendEntries` batch gets, each entry against the slice owning its name.
+      for (const entry of q.carry ?? []) assertEntryAuthorized(entry)
       return store.resetSession(q)
     },
     deleteSession: (sessionId) => store.deleteSession(sessionId),

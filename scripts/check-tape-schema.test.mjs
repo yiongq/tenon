@@ -1,20 +1,38 @@
 // Acceptance 17 as a regression test: the shipped pair of dialect files agrees, and every kind of
 // drift the spec cares about is reported by name. The trigger cases matter most — they are the
 // reason the checker compares registered semantics instead of the two files' text, so weakening
-// one side to "remove the divergence" is not a way out.
+// one side to "remove the divergence" is not a way out. Since spec 02 the checker walks the
+// migration ladder (01 修补 7): each migration's pair is checked on its own and anchored to its own
+// spec's sql block, and the blocks together are the schema (02 acceptance 11, plan step 8 旧 61).
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { POSTGRES_FILE, SPEC_FILE, SQLITE_FILE, checkTapeSchema } from './check-tape-schema.mjs'
+import { MIGRATIONS, SPEC_FILE, SQLITE_FILE, checkTapeSchema } from './check-tape-schema.mjs'
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const sqliteSql = readFileSync(join(repoRoot, SQLITE_FILE), 'utf8')
-const postgresSql = readFileSync(join(repoRoot, POSTGRES_FILE), 'utf8')
-const specMd = readFileSync(join(repoRoot, SPEC_FILE), 'utf8')
+const read = (file) => readFileSync(join(repoRoot, file), 'utf8')
+const shipped = MIGRATIONS.map((m) => ({
+  version: m.version,
+  sqliteSql: read(m.sqliteFile),
+  postgresSql: read(m.postgresFile),
+  specMd: read(m.specFile),
+}))
+const [first, second] = shipped
+const { sqliteSql, postgresSql } = first
+const [, MIGRATION_2] = MIGRATIONS
 
-const findings = (sources) =>
-  checkTapeSchema({ sqliteSql, postgresSql, specMd, ...sources }).findings
+/** Findings with migration 1's sources overridden by `one` and migration 2's by `two`. */
+const findings = (one = {}, two = {}) =>
+  checkTapeSchema({
+    migrations: [
+      { ...first, ...one },
+      { ...second, ...two },
+    ],
+  }).findings
+/** What the anchor reports when migration 1's SQLite file stops being its spec block. */
+const differs = (what, name, detail = '') =>
+  `${what} ${name}: ${SQLITE_FILE} differs from the spec's DDL block${detail}`
 // The replacement goes through a function: `$$` is a plpgsql body's quoting AND String.replace's
 // escape for a literal dollar, and the second meaning would silently mangle the probe.
 const edit = (sql, from, to) => {
@@ -22,6 +40,9 @@ const edit = (sql, from, to) => {
   return sql.replace(from, () => to)
 }
 const upTo = (sql, marker) => sql.slice(0, sql.indexOf(marker))
+
+/** The pending table's created_at column removed, as a drift both dialects share. */
+const dropCreatedAt = (sql) => sql.replace(/\n {2}created_at +\w+ +NOT NULL,/, () => '')
 
 describe('the shipped pair', () => {
   it('is one logical schema in two dialects', () => {
@@ -34,7 +55,7 @@ describe('drift in one file only', () => {
     const drifted = edit(sqliteSql, 'source_seq     INTEGER,', 'source_seq     TEXT,')
     expect(findings({ sqliteSql: drifted })).toEqual([
       'column tape_entry.source_seq: sqlite TEXT maps to TEXT, postgres has BIGINT',
-      "table tape_entry: differs from the spec's DDL block",
+      differs('table', 'tape_entry', ' (column source_seq)'),
     ])
   })
 
@@ -69,7 +90,7 @@ describe('drift in one file only', () => {
     expect(findings({ sqliteSql: drifted })).toEqual([
       'index tape_entry_by_source: sqlite (tenant_id, session_id, source_type, source_id, source_seq)' +
         ' vs postgres (tenant_id, session_id, source_type, source_id, entry_id)',
-      "index tape_entry_by_source: differs from the spec's DDL block",
+      differs('index', 'tape_entry_by_source'),
     ])
   })
 
@@ -81,7 +102,7 @@ describe('drift in one file only', () => {
     )
     expect(findings({ sqliteSql: drifted })).toEqual([
       'primary key tape_entry: sqlite (tenant_id, entry_id) vs postgres (tenant_id, session_id, entry_id)',
-      "table tape_entry: differs from the spec's DDL block",
+      differs('table', 'tape_entry', ' (primary key)'),
     ])
   })
 
@@ -105,7 +126,7 @@ describe('drift in one file only', () => {
     )
     expect(findings({ sqliteSql: noStrict })).toEqual([
       'table projection_cursor: the SQLite dialect requires STRICT on every table',
-      "table projection_cursor: differs from the spec's DDL block",
+      differs('table', 'projection_cursor', ' (STRICT)'),
     ])
     const strict = edit(
       postgresSql,
@@ -126,16 +147,16 @@ describe('triggers are held to the registered semantics', () => {
       'BEFORE UPDATE ON tape_entry\nWHEN NEW.entry_id < 0\nBEGIN',
     )
     expect(findings({ sqliteSql: weakened })).toEqual([
+      differs('trigger', 'tape_entry_no_update'),
       'trigger tape_entry_no_update (sqlite): registered guard unconditional, file has some other condition',
-      "trigger tape_entry_no_update: differs from the spec's DDL block",
     ])
   })
 
   it('rejects a delete gate that stops matching on session_id', () => {
     const weakened = edit(sqliteSql, ' AND m.session_id = OLD.session_id', '')
     expect(findings({ sqliteSql: weakened })).toEqual([
+      differs('trigger', 'tape_entry_no_delete'),
       'trigger tape_entry_no_delete (sqlite): registered guard maintenance-gate, file has some other condition',
-      "trigger tape_entry_no_delete: differs from the spec's DDL block",
     ])
   })
 
@@ -149,8 +170,8 @@ describe('triggers are held to the registered semantics', () => {
       'WHERE m.tenant_id = OLD.tenant_id OR m.session_id = OLD.session_id',
     )
     expect(findings({ sqliteSql: weakened })).toEqual([
+      differs('trigger', 'tape_entry_no_delete'),
       'trigger tape_entry_no_delete (sqlite): registered guard maintenance-gate, file has some other condition',
-      "trigger tape_entry_no_delete: differs from the spec's DDL block",
     ])
   })
 
@@ -161,8 +182,8 @@ describe('triggers are held to the registered semantics', () => {
       'm.session_id = OLD.session_id AND 1 = 0)',
     )
     expect(findings({ sqliteSql: weakened })).toEqual([
+      differs('trigger', 'tape_entry_no_delete'),
       'trigger tape_entry_no_delete (sqlite): registered guard maintenance-gate, file has some other condition',
-      "trigger tape_entry_no_delete: differs from the spec's DDL block",
     ])
   })
 
@@ -227,9 +248,9 @@ describe('triggers are held to the registered semantics', () => {
   it('rejects a trigger that no longer aborts', () => {
     const weakened = edit(sqliteSql, "RAISE(ABORT, 'tape_entry is append-only')", "'noop'")
     expect(findings({ sqliteSql: weakened })).toEqual([
+      differs('trigger', 'tape_entry_no_update'),
       'trigger tape_entry_no_update (sqlite): body must abort the statement with' +
         ' SELECT RAISE(ABORT, …); and nothing else',
-      "trigger tape_entry_no_update: differs from the spec's DDL block",
     ])
   })
 
@@ -254,7 +275,7 @@ describe('clauses no dialect mapping registers', () => {
     )
     expect(findings({ sqliteSql: drifted })).toEqual([
       'index tape_entry_by_kind (sqlite): unregistered clause "WHERE name IS NOT NULL"',
-      "index tape_entry_by_kind: differs from the spec's DDL block",
+      differs('index', 'tape_entry_by_kind'),
     ])
   })
 
@@ -277,7 +298,7 @@ describe('clauses no dialect mapping registers', () => {
     )
     expect(findings({ sqliteSql: drifted })).toEqual([
       'column tape_entry.provenance_key (sqlite): unregistered "COLLATE NOCASE"',
-      "table tape_entry: differs from the spec's DDL block",
+      differs('table', 'tape_entry', ' (column provenance_key)'),
     ])
   })
 
@@ -289,7 +310,7 @@ describe('clauses no dialect mapping registers', () => {
     )
     expect(findings({ sqliteSql: drifted })).toEqual([
       'column tape_entry.session_id (sqlite): unregistered "REFERENCES session_head(session_id)"',
-      "table tape_entry: differs from the spec's DDL block",
+      differs('table', 'tape_entry', ' (column session_id)'),
     ])
   })
 
@@ -338,7 +359,7 @@ describe('the SQLite file is anchored to the spec', () => {
 
   it('fails closed when the spec has no DDL block to anchor against', () => {
     expect(findings({ specMd: '# no sql here\n' })).toEqual([
-      `${SPEC_FILE}: no DDL block found — the SQLite file is unanchored`,
+      `${SPEC_FILE}: no DDL block creating tape_entry — ${SQLITE_FILE} is unanchored`,
     ])
   })
 
@@ -397,5 +418,124 @@ describe('constructs the spec keeps out of the schema', () => {
     expect(findings({ sqliteSql: extra })).toEqual([
       'sqlite: statement the checker does not understand — "CREATE VIEW tape_view AS SELECT 1"',
     ])
+  })
+})
+
+describe('the ladder is anchored by migration number (spec 02 plan step 8, 旧 61)', () => {
+  it('pairs every registered migration with its own two files and spec', () => {
+    expect(MIGRATIONS.map((m) => [m.version, m.anchorTable])).toEqual([
+      [1, 'tape_entry'],
+      [2, 'pending_approval_projection'],
+    ])
+    expect(MIGRATION_2.sqliteFile).toBe('apps/desktop/src/main/tape/sql/tape.sqlite.002.sql')
+    expect(MIGRATION_2.postgresFile).toBe('apps/server/sql/tape.postgres.002.sql')
+    expect(MIGRATION_2.specFile).toBe('docs/architecture/02-agent-loop/spec.md')
+  })
+
+  it('keeps migration 1 byte for byte what spec 01 shipped', async () => {
+    // A shipped migration is never edited (sqlite-store.ts MIGRATIONS): a user's file already ran
+    // it, and an edit would make two builds disagree about what schema v1 is.
+    const { createHash } = await import('node:crypto')
+    const digest = (text) => createHash('sha256').update(text).digest('hex')
+    expect(digest(first.sqliteSql)).toBe(
+      'bfc2de4a9c8e6d24b8ccd5fe62c5470324e2ce54e7d61eba1408fe6499cc37b1',
+    )
+    expect(digest(first.postgresSql)).toBe(
+      '6ee071af1cd6fc4cd93f7f957cbce893e0e16964244af2ace435c19f46309f2a',
+    )
+  })
+
+  it('names the migration file and the column when both dialects drift from the 02 block together', () => {
+    // The two files still agree with each other, so only the anchor can see this.
+    const from = "CHECK (wait_kind IN ('approval','question'))"
+    const to = "CHECK (wait_kind IN ('approval','question','other'))"
+    expect(
+      findings(
+        {},
+        {
+          sqliteSql: edit(second.sqliteSql, from, to),
+          postgresSql: edit(second.postgresSql, from, to),
+        },
+      ),
+    ).toEqual([
+      `table pending_approval_projection: ${MIGRATION_2.sqliteFile} differs from the spec's DDL` +
+        ' block (column wait_kind)',
+    ])
+  })
+
+  it('names a column both 002 files dropped together', () => {
+    expect(
+      findings(
+        {},
+        {
+          sqliteSql: dropCreatedAt(second.sqliteSql),
+          postgresSql: dropCreatedAt(second.postgresSql),
+        },
+      ),
+    ).toEqual([
+      `table pending_approval_projection: ${MIGRATION_2.sqliteFile} differs from the spec's DDL` +
+        ' block (column created_at is missing)',
+    ])
+  })
+
+  it('names a table that the 01 and the 02 block both create', () => {
+    // Copied into the 02 block AND both 002 files, so the pair and the anchor agree: the union is the
+    // only thing left to object, and it names the table.
+    const meta =
+      'CREATE TABLE tape_meta (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), tenant_id TEXT NOT NULL) STRICT;\n'
+    const metaPg =
+      'CREATE TABLE tape_meta (id BIGINT NOT NULL PRIMARY KEY CHECK (id = 1), tenant_id TEXT NOT NULL);\n'
+    const block = 'CREATE TABLE pending_approval_projection ('
+    expect(
+      findings(
+        {},
+        {
+          sqliteSql: `${second.sqliteSql}\n${meta}`,
+          postgresSql: `${second.postgresSql}\n${metaPg}`,
+          specMd: edit(second.specMd, block, `${meta}${block}`),
+        },
+      ),
+    ).toEqual([
+      'table tape_meta: created by the DDL blocks of migration 1 and migration 2 — each object' +
+        ' belongs to exactly one migration',
+    ])
+  })
+
+  it('still reports a one-dialect drift in migration 2 by the twin rules (01 acceptance 17)', () => {
+    const drifted = edit(
+      second.postgresSql,
+      'request_seq  BIGINT NOT NULL,',
+      'request_sequence BIGINT NOT NULL,',
+    )
+    expect(findings({}, { postgresSql: drifted })).toEqual([
+      'column pending_approval_projection.request_seq: in sqlite only',
+      'column pending_approval_projection.request_sequence: in postgres only',
+    ])
+    const loosened = edit(second.sqliteSql, 'wait_kind    TEXT    NOT NULL', 'wait_kind    TEXT')
+    expect(findings({}, { sqliteSql: loosened })).toEqual([
+      'column pending_approval_projection.wait_kind: NOT NULL absent in sqlite, set in postgres',
+      `table pending_approval_projection: ${MIGRATION_2.sqliteFile} differs from the spec's DDL` +
+        ' block (column wait_kind)',
+    ])
+  })
+
+  it('fails closed when migration 2 is emptied, or its spec block is gone', () => {
+    expect(findings({}, { sqliteSql: '', postgresSql: '' })).toEqual([
+      `table pending_approval_projection: in the spec's DDL block but not in ${MIGRATION_2.sqliteFile}`,
+      `index pending_approval_projection_by_created: in the spec's DDL block but not in ${MIGRATION_2.sqliteFile}`,
+    ])
+    expect(findings({}, { specMd: '# no sql here\n' })).toEqual([
+      `${MIGRATION_2.specFile}: no DDL block creating pending_approval_projection — ` +
+        `${MIGRATION_2.sqliteFile} is unanchored`,
+    ])
+  })
+
+  it('refuses a ladder with a migration missing or unregistered', () => {
+    expect(checkTapeSchema({ migrations: [first] }).findings).toEqual([
+      'migration 2: no sources were handed to the checker',
+    ])
+    expect(
+      checkTapeSchema({ migrations: [first, second, { ...second, version: 3 }] }).findings,
+    ).toEqual(['migration 3: not registered in MIGRATIONS'])
   })
 })

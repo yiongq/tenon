@@ -268,8 +268,113 @@ describe('project', () => {
     })
   })
 
-  it('names exactly the two phase-1 projections', () => {
-    expect(PROJECTION_TABLES).toEqual(['message', 'session'])
-    expect(PROJECTION_VERSION).toBe(1)
+  it('names the two phase-1 projections and spec 02’s pending table, at version 2', () => {
+    expect(PROJECTION_TABLES).toEqual(['message', 'session', 'pending_approval'])
+    expect(PROJECTION_VERSION).toBe(2)
+  })
+})
+
+/** A tool/ fact under (RUN, requestSeq 4), call `<i>` = 2 unless the payload says otherwise. */
+function toolFact(
+  name: string,
+  kind: TapeKind,
+  payload: Record<string, unknown>,
+  overrides: Partial<TapeEntry> = {},
+): TapeEntry {
+  return entry({
+    kind,
+    name,
+    sourceType: 'runtime_event',
+    sourceId: RUN,
+    sourceSeq: 4,
+    payload: { ordinal: 2, providerToolCallId: 'toolu_1', ...payload },
+    ...overrides,
+  })
+}
+
+const PENDING_KEY = { sessionId: SESSION, runId: RUN, requestSeq: 4, callOrdinal: 2 }
+
+describe('the pending-approval projection (spec 02 §待批表)', () => {
+  it('upserts a row for a decision that awaits, keyed like every tool/ fact', () => {
+    for (const awaits of ['approval', 'question'] as const) {
+      expect(
+        project(toolFact('tool/permission_decided', 'event', { awaits }, { entryId: 11 })),
+      ).toEqual([
+        {
+          table: 'pending_approval',
+          op: 'upsert',
+          key: PENDING_KEY,
+          values: { waitKind: awaits, entryId: 11 },
+          insertOnly: { createdAt: 1_700_000_000_000 },
+        },
+      ])
+    }
+  })
+
+  it('leaves the table alone for a decision that does not wait — allow, deny, a rejudged denial', () => {
+    expect(project(toolFact('tool/permission_decided', 'event', {}))).toEqual([])
+    expect(project(toolFact('tool/permission_decided', 'event', { rejudge: 1 }))).toEqual([])
+  })
+
+  it('deletes the row on the call’s approval_resolved or its result', () => {
+    const remove = [{ table: 'pending_approval', op: 'delete', key: PENDING_KEY }]
+    expect(project(toolFact('tool/approval_resolved', 'event', { outcome: 'allowed' }))).toEqual(
+      remove,
+    )
+    expect(project(toolFact('tool/result', 'tool_result', { isError: false }))).toEqual(remove)
+  })
+
+  it('projects the other phase-2 facts to nothing — continuation included', () => {
+    const continuation = entry({
+      kind: 'message',
+      name: 'message/continuation',
+      payload: {
+        messageId: MESSAGE,
+        revision: 0,
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue.' }],
+        status: 'complete',
+        cause: 'step-limit',
+        afterRunId: RUN,
+      },
+    })
+    expect(project(continuation)).toEqual([])
+    const environment = entry({
+      kind: 'message',
+      name: 'message/environment',
+      payload: {
+        messageId: MESSAGE,
+        revision: 0,
+        role: 'user',
+        content: [
+          { type: 'text', text: "<environment>\nToday's date: 2026-09-26.\n</environment>" },
+        ],
+        status: 'complete',
+        date: '2026-09-26',
+        workspace: null,
+      },
+    })
+    expect(project(environment)).toEqual([])
+    for (const [name, kind] of [
+      ['tool/call', 'tool_call'],
+      ['execution/dispatch_committed', 'event'],
+      ['execution/tool_outcome', 'event'],
+      ['view/assembled', 'event'],
+      ['compaction/anchor', 'anchor'],
+    ] as const) {
+      expect(project(toolFact(name, kind, { awaits: 'approval' }))).toEqual([])
+    }
+  })
+
+  it('refuses an awaits or an ordinal it cannot read', () => {
+    expect(() =>
+      project(toolFact('tool/permission_decided', 'event', { awaits: 'approve' })),
+    ).toThrow(TapeProjectionError)
+    expect(() => project(toolFact('tool/approval_resolved', 'event', { ordinal: -1 }))).toThrow(
+      TapeProjectionError,
+    )
+    expect(() => project(toolFact('tool/result', 'tool_result', {}, { sourceSeq: null }))).toThrow(
+      TapeProjectionError,
+    )
   })
 })

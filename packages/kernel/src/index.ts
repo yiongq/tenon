@@ -331,3 +331,77 @@ export type { ReadEffectiveMessagesQuery } from './tape/replay.js'
 // the two tracks writing this file can be merged): only a batch that opens with `session/start` may
 // create a session's head row.
 export { assertBatchOpensIncarnation } from './tape/store.js'
+
+// Spec 02 plan step 8 — Tape 修补与新名字. One block at the end, so the tracks writing this file in
+// parallel can be merged: the phase-2 payload types and the types they reference (declared only; the
+// steps that implement them do not change the shapes), the new port errors and queries, the
+// pending-approval projection, the memory store's shared backing and the phase-2 key builders.
+export type { BlockReason, ClosureSource, ExecutionState } from './loop/closure.js'
+export type { SpillRecord } from './loop/spill.js'
+export type { HandoffCall, SubagentHandoff } from './loop/subagent.js'
+export type { RunEndReason } from './loop/terminal.js'
+export type { Decision } from './permission/decide.js'
+export type { InspectorFinding } from './permission/inspector.js'
+export type {
+  DecisionRecord,
+  DecisionSource,
+  DecisionStep,
+  DecisionSummary,
+  DecisionSummaryCode,
+} from './permission/record.js'
+export type {
+  ApprovalResolvedPayload,
+  CompactionAnchorPayload,
+  AskAnswerRecord,
+  ContinuationPayload,
+  EnvironmentPayload,
+  DispatchCommittedPayload,
+  FactWriter,
+  GrantScope,
+  ModelChoiceSetPayload,
+  ParentLinkPayload,
+  PermissionDecidedPayload,
+  ProfileSetPayload,
+  RunStartedPayload,
+  RunTerminalPayload,
+  RunUsageLine,
+  SessionProfile,
+  ToolCallPayload,
+  ToolExclusionCode,
+  ToolOrigin,
+  ToolOutcomePayload,
+  ToolResultPayload,
+  ToolTablePayload,
+  ToolsWithheldPayload,
+  ViewAssembledPayload,
+  ViewContentPayload,
+  WorkspaceSetPayload,
+} from './tape/entry.js'
+export { TapeClosedError, TapeMessageRetractedError, assertEntryIdCursor } from './tape/store.js'
+export type { PendingApprovalRow, TapeListPendingApprovalsQuery } from './tape/store.js'
+export type {
+  PendingApprovalProjectionInsertOnly,
+  PendingApprovalProjectionKey,
+  PendingApprovalProjectionValues,
+} from './tape/projection.js'
+export { createMemoryTapeBacking } from './tape/memory-store.js'
+export type { MemoryTapeBacking } from './tape/memory-store.js'
+export {
+  approvalResolvedKey,
+  assembledKey,
+  compactionAnchorKey,
+  dispatchCommittedKey,
+  modelChoiceSetKey,
+  parentLinkKey,
+  permissionDecidedKey,
+  profileSetKey,
+  runStartedKey,
+  runTerminalKey,
+  toolCallKey,
+  toolOutcomeKey,
+  toolResultKey,
+  toolTableKey,
+  toolsWithheldKey,
+  viewContentKey,
+  workspaceSetKey,
+} from './tape/provenance.js'

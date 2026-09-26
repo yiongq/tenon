@@ -138,6 +138,37 @@ describe('effectiveMessages', () => {
     expect(folded[0]?.orderSeq).toBe(1)
   })
 
+  it('reads message/continuation and message/environment as user turns, in order (spec 02)', () => {
+    const extra = (entryId: number, name: string, messageId: string, more: object): TapeEntry =>
+      fold({
+        kind: 'message',
+        name,
+        entryId,
+        sourceId: messageId,
+        sourceSeq: 0,
+        payload: {
+          messageId,
+          revision: 0,
+          role: 'user',
+          content: [{ type: 'text', text: name }],
+          status: 'complete',
+          ...more,
+        },
+      })
+    const messages = effectiveMessages([
+      messageEntry(1, 'm-user', 0, 'user', [{ type: 'text', text: 'hi' }]),
+      extra(2, 'message/environment', 'm-env', { date: '2026-09-26', workspace: null }),
+      messageEntry(3, 'm-asst', 0, 'assistant', [{ type: 'text', text: 'hello' }]),
+      extra(4, 'message/continuation', 'm-cont', { cause: 'step-limit', afterRunId: 'run' }),
+    ])
+    expect(messages.map((folded) => [folded.messageId, folded.role])).toEqual([
+      ['m-user', 'user'],
+      ['m-env', 'user'],
+      ['m-asst', 'assistant'],
+      ['m-cont', 'user'],
+    ])
+  })
+
   it('passes every other kind and event name through as evidence', () => {
     const folded = effectiveMessages([
       fold({ kind: 'anchor', name: 'session/start', entryId: 1, payload: { incarnationId: 'i' } }),

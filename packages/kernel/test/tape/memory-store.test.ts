@@ -10,7 +10,8 @@
 import { describe, expect, it } from 'vitest'
 import type { HostIdentity } from '../../src/host/adapter.js'
 import type { NewEntry, TapeEntry } from '../../src/tape/entry.js'
-import { createMemoryTapeStore } from '../../src/tape/memory-store.js'
+import type { MemoryTapeBacking } from '../../src/tape/memory-store.js'
+import { createMemoryTapeBacking, createMemoryTapeStore } from '../../src/tape/memory-store.js'
 import { createEntryWriter } from '../../src/tape/names.js'
 import type { ProjectionOp } from '../../src/tape/projection.js'
 import { project } from '../../src/tape/projection.js'
@@ -23,8 +24,24 @@ const IDENTITY: HostIdentity = { userId: 'u', tenantId: 'tenant-a', profileDir: 
 
 describe('tape conformance (memory store)', () => {
   // The memory store needs nothing from `label`: every call is already its own private store. The
-  // SQLite factory at step 7 derives a temp file from it.
-  const cases = tapeConformanceCases((options) => Promise.resolve(createMemoryTapeStore(options)))
+  // SQLite factory at step 7 derives a temp file from it. `shareBackingWith` is honoured by handing
+  // the second store the first one's backing — two tenants in one "file".
+  const backings = new WeakMap<TapeStore, MemoryTapeBacking>()
+  const cases = tapeConformanceCases((options) => {
+    const backing =
+      options.shareBackingWith === undefined
+        ? createMemoryTapeBacking()
+        : backings.get(options.shareBackingWith)
+    if (backing === undefined)
+      throw new Error('shareBackingWith names a store this factory did not open')
+    const store = createMemoryTapeStore({
+      identity: options.identity,
+      backing,
+      ...(options.project === undefined ? {} : { project: options.project }),
+    })
+    backings.set(store, backing)
+    return Promise.resolve(store)
+  })
   for (const conformanceCase of cases) {
     // A conformance case throws on failure rather than calling expect().
     // oxlint-disable-next-line vitest/expect-expect

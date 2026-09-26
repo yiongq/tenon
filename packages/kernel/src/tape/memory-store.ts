@@ -23,6 +23,12 @@
  * exactly as they were and the same store still appends afterwards (acceptance 9's rollback half).
  * Rows are treated as immutable — an update replaces the object — which is what makes cloning the
  * containers enough.
+ *
+ * The rows live in a `MemoryTapeBacking`, keyed by TENANT first — the memory twin of one
+ * `sessions.db` holding two tenants' rows, the shape a server host has. A store is bound to one
+ * tenant of it and never reads another's; by default every store gets a backing of its own. Sharing
+ * one between two stores is what lets the conformance suite prove tenant isolation on this store too
+ * (spec 02 acceptance 11: 「去掉租户谓词测试就变红」).
  */
 import type { HostIdentity } from '../host/adapter.js'
 import { canonicalJson } from './canonical-json.js'
@@ -44,10 +50,12 @@ import {
 } from './projection.js'
 import type {
   MessageRow,
+  PendingApprovalRow,
   SessionHead,
   SessionSummary,
   TapeAppendBatch,
   TapeListMessagesQuery,
+  TapeListPendingApprovalsQuery,
   TapeListSessionsQuery,
   TapeReadBySourceQuery,
   TapeReadRangePage,
@@ -58,12 +66,13 @@ import type {
   TapeVerifyChainQuery,
 } from './store.js'
 import {
+  TapeClosedError,
   TapeSessionNotFoundError,
   TapeStaleIncarnationError,
   assertBatchAllowed,
   assertBatchOpensIncarnation,
   assertCurrentIncarnation,
-  assertEntryAllowed,
+  assertEntryIdCursor,
   assertReadKinds,
   assertReadLimit,
   assertSafeInteger,
@@ -76,6 +85,41 @@ export interface MemoryTapeStoreOptions {
   readonly identity: HostIdentity
   /** Injectable so a test can count applications (acceptance 11). Defaults to the kernel reducer. */
   readonly project?: ProjectionReducer
+  /**
+   * Where the rows live. Omitted: a backing of this store's own. Two stores handed the same backing
+   * are two tenants in one "file" — each still sees only its own tenant's rows.
+   */
+  readonly backing?: MemoryTapeBacking
+}
+
+/**
+ * The storage behind one or more memory stores: sessions keyed by tenant, then by session id. Opaque
+ * on purpose — the only way to reach a row is a store bound to its tenant.
+ */
+export interface MemoryTapeBacking {
+  readonly [backingBrand]: true
+}
+
+declare const backingBrand: unique symbol
+
+const backings = new WeakMap<MemoryTapeBacking, Map<string, Map<string, SessionState>>>()
+
+export function createMemoryTapeBacking(): MemoryTapeBacking {
+  const backing = Object.freeze({}) as MemoryTapeBacking
+  backings.set(backing, new Map())
+  return backing
+}
+
+/** The sessions map of ONE tenant of a backing. This lookup is the memory store's tenant predicate. */
+function tenantSessions(backing: MemoryTapeBacking, tenantId: string): Map<string, SessionState> {
+  const tenants = backings.get(backing)
+  if (tenants === undefined) throw new TypeError('not a backing from createMemoryTapeBacking()')
+  let sessions = tenants.get(tenantId)
+  if (sessions === undefined) {
+    sessions = new Map()
+    tenants.set(tenantId, sessions)
+  }
+  return sessions
 }
 
 /** A `tape_entry` row. `tenant_id` and `session_id` are the store's and the session's. */
@@ -128,6 +172,16 @@ interface SessionProjectionRow {
   readonly updatedAt: number
 }
 
+/** A `pending_approval_projection` row; the key columns are in the map key and repeated here. */
+interface PendingApprovalProjectionRow {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly callOrdinal: number
+  readonly waitKind: 'approval' | 'question'
+  readonly entryId: number
+  readonly createdAt: number
+}
+
 /** `projection_cursor`. Invisible through the port; kept so the twin holds the same state. */
 interface CursorRow {
   readonly incarnationId: string
@@ -143,6 +197,8 @@ interface SessionState {
   byKey: Map<string, StoredEntry>
   messages: Map<string, MessageProjectionRow>
   session: SessionProjectionRow | null
+  /** Keyed by `pendingRowKey`. */
+  pending: Map<string, PendingApprovalProjectionRow>
   cursors: Map<ProjectionTable, CursorRow>
 }
 
@@ -153,8 +209,45 @@ function cloneSession(state: SessionState): SessionState {
     byKey: new Map(state.byKey),
     messages: new Map(state.messages),
     session: state.session,
+    pending: new Map(state.pending),
     cursors: new Map(state.cursors),
   }
+}
+
+/** A fresh, empty session under `head`: what a first append and a reset both start from. */
+function emptySession(head: HeadRow): SessionState {
+  return {
+    head,
+    entries: [],
+    byKey: new Map<string, StoredEntry>(),
+    messages: new Map<string, MessageProjectionRow>(),
+    session: null,
+    pending: new Map<string, PendingApprovalProjectionRow>(),
+    cursors: new Map<ProjectionTable, CursorRow>(),
+  }
+}
+
+/** The primary key minus `(tenant_id, session_id)`, which the containers already are. */
+function pendingRowKey(key: {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly callOrdinal: number
+}): string {
+  return `${key.runId}\u0000${String(key.requestSeq)}\u0000${String(key.callOrdinal)}`
+}
+
+/** The order `listPendingApprovals` promises: `createdAt`, then the key columns, by code unit. */
+function comparePending(
+  left: { readonly sessionId: string } & PendingApprovalProjectionRow,
+  right: { readonly sessionId: string } & PendingApprovalProjectionRow,
+): number {
+  return (
+    left.createdAt - right.createdAt ||
+    compareCodeUnits(left.sessionId, right.sessionId) ||
+    compareCodeUnits(left.runId, right.runId) ||
+    left.requestSeq - right.requestSeq ||
+    left.callOrdinal - right.callOrdinal
+  )
 }
 
 function copyBytes(bytes: Uint8Array): Uint8Array {
@@ -179,6 +272,24 @@ function applyOps(tx: SessionState, sessionId: string, ops: readonly ProjectionO
         `a projection op for session "${op.key.sessionId}" cannot be applied while appending ` +
           `to "${sessionId}"`,
       )
+    }
+    if (op.table === 'pending_approval') {
+      const rowKey = pendingRowKey(op.key)
+      if (op.op === 'delete') {
+        tx.pending.delete(rowKey)
+        continue
+      }
+      // `created_at` is insert-only: a re-judgement that still asks moves `entry_id`, not the wait.
+      const existing = tx.pending.get(rowKey)
+      tx.pending.set(rowKey, {
+        runId: op.key.runId,
+        requestSeq: op.key.requestSeq,
+        callOrdinal: op.key.callOrdinal,
+        waitKind: op.values.waitKind,
+        entryId: op.values.entryId,
+        createdAt: existing?.createdAt ?? op.insertOnly.createdAt,
+      })
+      continue
     }
     if (op.table === 'message') {
       if (op.op === 'delete') {
@@ -267,7 +378,19 @@ function advanceCursors(tx: SessionState, entryId: number, updatedAt: number): v
 export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStore {
   const tenantId = options.identity.tenantId
   const reduce: ProjectionReducer = options.project ?? project
-  const sessions = new Map<string, SessionState>()
+  const sessions = tenantSessions(options.backing ?? createMemoryTapeBacking(), tenantId)
+  let closed = false
+
+  /**
+   * Every method but `close()` runs through this: after `close()` the port rejects with
+   * `TapeClosedError` BEFORE it looks at its input (spec 02, 01 修补 7, B4), as the SQLite store does.
+   */
+  function open<T>(body: () => T): Promise<T> {
+    return run(() => {
+      if (closed) throw new TapeClosedError(`this memory store (tenant "${tenantId}") is closed`)
+      return body()
+    })
+  }
 
   function toTapeEntry(sessionId: string, stored: StoredEntry): TapeEntry {
     return {
@@ -352,6 +475,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
   function rebuildInto(tx: SessionState, sessionId: string): void {
     tx.messages = new Map()
     tx.session = null
+    tx.pending = new Map()
     tx.cursors = new Map()
     for (const stored of tx.entries) {
       applyOps(tx, sessionId, reduce(toTapeEntry(sessionId, stored)))
@@ -389,7 +513,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
 
   return {
     append(batch: TapeAppendBatch): Promise<AppendResult[]> {
-      return run(() => {
+      return open(() => {
         assertTapeId(batch.sessionId, 'sessionId')
         assertTapeId(batch.incarnationId, 'incarnationId')
         assertBatchAllowed(batch.entries)
@@ -407,23 +531,16 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
         if (existing === undefined) assertBatchOpensIncarnation(batch.sessionId, first)
         const tx: SessionState =
           existing === undefined
-            ? {
-                // Create the head row with the incarnation the kernel minted. The store never mints
-                // one and never fabricates the `session/start` that must open it.
-                head: {
-                  incarnationId: batch.incarnationId,
-                  lastEntryId: 0,
-                  lastHash: null,
-                  entryCount: 0,
-                  createdAt: first.createdAt,
-                  updatedAt: first.createdAt,
-                },
-                entries: [],
-                byKey: new Map<string, StoredEntry>(),
-                messages: new Map<string, MessageProjectionRow>(),
-                session: null,
-                cursors: new Map<ProjectionTable, CursorRow>(),
-              }
+            ? // Create the head row with the incarnation the kernel minted. The store never mints
+              // one and never fabricates the `session/start` that must open it.
+              emptySession({
+                incarnationId: batch.incarnationId,
+                lastEntryId: 0,
+                lastHash: null,
+                entryCount: 0,
+                createdAt: first.createdAt,
+                updatedAt: first.createdAt,
+              })
             : cloneSession(existing)
         const results: AppendResult[] = []
         for (const entry of batch.entries) {
@@ -440,7 +557,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     readRange(q: TapeReadRangeQuery): Promise<TapeReadRangePage> {
-      return run(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         assertReadKinds(q.kinds)
         const state = sessions.get(q.sessionId)
@@ -469,12 +586,14 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     readBySource(q: TapeReadBySourceQuery): Promise<TapeEntry[]> {
-      return run(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
+        assertEntryIdCursor(q.fromEntryId, 'readBySource.fromEntryId')
         const state = sessions.get(q.sessionId)
         if (state === undefined) return []
         const entries: TapeEntry[] = []
         for (const stored of state.entries) {
+          if (q.fromEntryId !== undefined && stored.entryId < q.fromEntryId) continue
           if (stored.sourceType !== q.sourceType || stored.sourceId !== q.sourceId) continue
           entries.push(toTapeEntry(q.sessionId, stored))
           if (entries.length === limit) break
@@ -484,7 +603,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     head(sessionId: string): Promise<SessionHead | null> {
-      return run(() => {
+      return open(() => {
         const state = sessions.get(sessionId)
         if (state === undefined) return null
         return {
@@ -501,7 +620,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     verifyChain(q: TapeVerifyChainQuery): Promise<TapeVerifyChainPage> {
-      return run(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const state = sessions.get(q.sessionId)
         if (state === undefined) {
@@ -543,7 +662,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     listSessions(q: TapeListSessionsQuery): Promise<SessionSummary[]> {
-      return run(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const rows: SessionSummary[] = []
         for (const [sessionId, state] of sessions) {
@@ -568,7 +687,7 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     listMessages(q: TapeListMessagesQuery): Promise<MessageRow[]> {
-      return run(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const state = sessions.get(q.sessionId)
         if (state === undefined) return []
@@ -589,8 +708,31 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
       })
     },
 
+    listPendingApprovals(q: TapeListPendingApprovalsQuery): Promise<PendingApprovalRow[]> {
+      return open(() => {
+        const limit = assertReadLimit(q.limit)
+        const rows: Array<{ sessionId: string } & PendingApprovalProjectionRow> = []
+        for (const [sessionId, state] of sessions) {
+          if (q.sessionId !== undefined && sessionId !== q.sessionId) continue
+          for (const row of state.pending.values()) rows.push({ sessionId, ...row })
+        }
+        return rows
+          .toSorted(comparePending)
+          .slice(0, limit)
+          .map((row) => ({
+            sessionId: row.sessionId,
+            runId: row.runId,
+            requestSeq: row.requestSeq,
+            callOrdinal: row.callOrdinal,
+            waitKind: row.waitKind,
+            entryId: row.entryId,
+            createdAt: row.createdAt,
+          }))
+      })
+    },
+
     rebuildProjections(sessionId: string): Promise<void> {
-      return run(() => {
+      return open(() => {
         const state = sessions.get(sessionId)
         if (state === undefined) {
           throw new TapeSessionNotFoundError(
@@ -604,10 +746,12 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
     },
 
     resetSession(q: TapeResetSessionQuery): Promise<AppendResult> {
-      return run(() => {
+      return open(() => {
         assertTapeId(q.sessionId, 'sessionId')
         assertTapeId(q.incarnationId, 'incarnationId')
-        assertEntryAllowed(q.start)
+        // The anchor and the carry are one batch: the same gate as `append`, duplicate keys included.
+        const carry = q.carry ?? []
+        assertBatchAllowed([q.start, ...carry])
         // A `TypeError` like `assertId`'s: handing a reset something other than the anchor is a
         // programmer error at the call site, not a condition of the tape, and it is not the
         // projection that failed.
@@ -629,39 +773,36 @@ export function createMemoryTapeStore(options: MemoryTapeStoreOptions): TapeStor
               'and reusing it would make two generations hash-indistinguishable',
           )
         }
-        const tx: SessionState = {
-          // The high-water mark does NOT decrease: a stale reference must never resolve to a fact
-          // from the next incarnation.
-          head: {
-            incarnationId: q.incarnationId,
-            lastEntryId: state.head.lastEntryId,
-            lastHash: null,
-            entryCount: 0,
-            createdAt: state.head.createdAt,
-            updatedAt: q.start.createdAt,
-          },
-          entries: [],
-          byKey: new Map(),
-          messages: new Map(),
-          session: null,
-          cursors: new Map(),
-        }
+        // The high-water mark does NOT decrease: a stale reference must never resolve to a fact from
+        // the next incarnation.
+        const tx = emptySession({
+          incarnationId: q.incarnationId,
+          lastEntryId: state.head.lastEntryId,
+          lastHash: null,
+          entryCount: 0,
+          createdAt: state.head.createdAt,
+          updatedAt: q.start.createdAt,
+        })
         const result = insertEntry(tx, q.sessionId, q.start)
+        // The carry follows the anchor inside the same copy-on-write transaction: a throw from any of
+        // them (its projection included) leaves the old incarnation exactly as it was.
+        for (const entry of carry) insertEntry(tx, q.sessionId, entry)
         sessions.set(q.sessionId, tx)
         return result
       })
     },
 
     deleteSession(sessionId: string): Promise<void> {
-      return run(() => {
+      return open(() => {
         // Facts, head, projections and cursors go together; an unknown session changes nothing.
         sessions.delete(sessionId)
       })
     },
 
     close(): Promise<void> {
-      // Nothing to release: the memory store owns no handle. It is deliberately NOT a use-after-close
-      // gate either — that would need an eighth error class the port does not define.
+      // Nothing to release — the memory store owns no handle — but from here on every other method
+      // rejects with `TapeClosedError`. Idempotent: the conformance runner closes every store again.
+      closed = true
       return Promise.resolve()
     },
   }

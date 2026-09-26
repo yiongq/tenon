@@ -23,13 +23,16 @@
  *   - `message/retracted` DELETES the row (§删除语义), and a reducer that cannot read the current row
  *     cannot then restore a deleted message's original `order_seq`. A revision appended AFTER a
  *     retraction therefore re-inserts the message at its own entry id, while the fold keeps it where
- *     it started — the two readers disagree on that one sequence. Phase 1 has no writer for it (edit
- *     and delete land in phase 6; regenerate retracts and then runs with NEW messageIds), the shared
- *     conformance suite pins it so both stores answer alike, and closing it needs a spec decision:
- *     either a visibility column instead of a delete, or a fold that treats a retraction as final.
+ *     it started — the two readers disagree on that one sequence. Spec 02 closed it on the WRITE side
+ *     (B2, 「撤回即终局」): the kernel's message writer refuses such a revision with
+ *     `TapeMessageRetractedError`, so no kernel path produces the sequence. The shared conformance
+ *     suite still pins what a store does with one it is handed anyway, so both stores answer alike.
  *
- * Both projection tables can be rebuilt from `tape_entry` at any time, which is why they carry no
- * append-only trigger; a change to `PROJECTION_VERSION` means rebuild.
+ * Every projection table can be rebuilt from `tape_entry` at any time, which is why none carries an
+ * append-only trigger; a change to `PROJECTION_VERSION` means rebuild. Version 2 (spec 02, 01 修补 7)
+ * adds `pending_approval`: the calls waiting on an approval or a question, driven by three facts only
+ * — a `tool/permission_decided` that `awaits` upserts the row, and that call's
+ * `tool/approval_resolved` or `tool/result` deletes it (§待批表).
  */
 import type {
   ContentBlock,
@@ -40,23 +43,42 @@ import type {
 } from '../provider/types.js'
 import { canonicalJson } from './canonical-json.js'
 import type {
+  ApprovalResolvedPayload,
   AssistantMessagePayload,
   AttemptCompletedPayload,
+  CompactionAnchorPayload,
+  ContinuationPayload,
+  EnvironmentPayload,
+  DispatchCommittedPayload,
   MessagePayload,
   MessageRetractedPayload,
   MessageStatus,
+  ModelChoiceSetPayload,
   ModelSelectedPayload,
+  ParentLinkPayload,
+  PermissionDecidedPayload,
+  ProfileSetPayload,
+  RunStartedPayload,
+  RunTerminalPayload,
   SessionStartPayload,
   TapeEntry,
+  ToolCallPayload,
+  ToolOutcomePayload,
+  ToolResultPayload,
+  ToolTablePayload,
+  ToolsWithheldPayload,
   UserMessagePayload,
+  ViewAssembledPayload,
+  ViewContentPayload,
+  WorkspaceSetPayload,
 } from './entry.js'
 import type { DeclaredTapeNameId } from './names.js'
 
-/** Bump it and every projection is rebuilt from the facts. */
-export const PROJECTION_VERSION = 1
+/** Bump it and every projection is rebuilt from the facts. 2 = spec 02's pending-approval table. */
+export const PROJECTION_VERSION = 2
 
 /** The closed table list. A `projection_cursor` row exists per session per entry of this list. */
-export const PROJECTION_TABLES = Object.freeze(['message', 'session'] as const)
+export const PROJECTION_TABLES = Object.freeze(['message', 'session', 'pending_approval'] as const)
 
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number]
 
@@ -110,7 +132,8 @@ export type TapeAttemptCompletedPayload = AttemptCompletedPayload<
 /**
  * Every declared name to the payload it carries. The reserved-only names have no writer before the
  * phase that owns them (R1, R5), so their payload is still open; the entry is here so adding the
- * writer means narrowing a type rather than inventing one.
+ * writer means narrowing a type rather than inventing one. Spec 02 §载荷 fills in every phase-2 name,
+ * including the four `execution/*` and `session/parent_link` that 01 reserved.
  */
 export interface TapePayloadByName {
   'session/start': SessionStartPayload
@@ -119,11 +142,26 @@ export interface TapePayloadByName {
   'message/assistant': TapeAssistantMessagePayload
   'message/retracted': MessageRetractedPayload
   'provider/attempt_completed': TapeAttemptCompletedPayload
-  'session/parent_link': Record<string, unknown>
-  'execution/run_started': Record<string, unknown>
-  'execution/dispatch_committed': Record<string, unknown>
-  'execution/tool_outcome': Record<string, unknown>
-  'execution/run_terminal': Record<string, unknown>
+  'session/profile_set': ProfileSetPayload
+  'session/workspace_set': WorkspaceSetPayload
+  'session/model_choice_set': ModelChoiceSetPayload
+  'session/parent_link': ParentLinkPayload
+  'view/content': ViewContentPayload
+  'view/tool_table': ToolTablePayload
+  'view/tools_withheld': ToolsWithheldPayload
+  'view/assembled': ViewAssembledPayload
+  'message/continuation': ContinuationPayload
+  'message/environment': EnvironmentPayload
+  'tool/call': ToolCallPayload
+  'tool/permission_decided': PermissionDecidedPayload
+  'tool/approval_resolved': ApprovalResolvedPayload
+  'tool/result': ToolResultPayload
+  'execution/run_started': RunStartedPayload
+  'execution/dispatch_committed': DispatchCommittedPayload
+  'execution/tool_outcome': ToolOutcomePayload
+  'execution/run_terminal': RunTerminalPayload
+  'compaction/anchor': CompactionAnchorPayload
+  'tool/result_marked': Record<string, unknown>
   'fs/snapshot_created': Record<string, unknown>
 }
 
@@ -185,6 +223,25 @@ export interface SessionProjectionInsertOnly {
   readonly forkedFromSessionId?: string
 }
 
+/** A waiting call, keyed the way every tool/ fact is: `(runId, requestSeq, <i>)` in its session. */
+export interface PendingApprovalProjectionKey {
+  readonly sessionId: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly callOrdinal: number
+}
+
+/** Overwritten by a re-judgement that still asks: `entryId` moves to the newest decision. */
+export interface PendingApprovalProjectionValues {
+  readonly waitKind: 'approval' | 'question'
+  readonly entryId: number
+}
+
+/** When the call started waiting. Required: the reducer always knows it, and the column is NOT NULL. */
+export interface PendingApprovalProjectionInsertOnly {
+  readonly createdAt: number
+}
+
 export type ProjectionOp =
   | {
       readonly table: 'message'
@@ -202,6 +259,18 @@ export type ProjectionOp =
       readonly insertOnly?: SessionProjectionInsertOnly
     }
   | { readonly table: 'session'; readonly op: 'delete'; readonly key: SessionProjectionKey }
+  | {
+      readonly table: 'pending_approval'
+      readonly op: 'upsert'
+      readonly key: PendingApprovalProjectionKey
+      readonly values: PendingApprovalProjectionValues
+      readonly insertOnly: PendingApprovalProjectionInsertOnly
+    }
+  | {
+      readonly table: 'pending_approval'
+      readonly op: 'delete'
+      readonly key: PendingApprovalProjectionKey
+    }
 
 /** Injectable at store construction so a test can count applications (acceptance 11). */
 export type ProjectionReducer = (entry: TapeEntry) => readonly ProjectionOp[]
@@ -383,9 +452,51 @@ function projectModelSelected(entry: TapeEntry): ProjectionOp[] {
 }
 
 /**
+ * The key a tool/ fact hangs on. Its identity columns carry `(runId, requestSeq)` — the name table
+ * binds them, so a declared tool/ fact always has both — and the payload carries `<i>`.
+ */
+function pendingKey(entry: TapeEntry): PendingApprovalProjectionKey {
+  if (entry.sourceId === null || entry.sourceSeq === null) {
+    throw new TapeProjectionError(`${entry.name}: a tool/ fact carries (runId, requestSeq)`)
+  }
+  return {
+    sessionId: entry.sessionId,
+    runId: entry.sourceId,
+    requestSeq: entry.sourceSeq,
+    callOrdinal: readOrdinal(entry.payload, 'ordinal', entry.name),
+  }
+}
+
+/**
+ * §待批表 rules 1 and 3: a decision that `awaits` upserts the row — a re-judgement that still asks
+ * carries `awaits` too and so moves `entry_id` to itself — and a decision without it (allow, deny, a
+ * re-judgement turned into a denial) leaves the table alone.
+ */
+function projectDecision(entry: TapeEntry): ProjectionOp[] {
+  const awaits = entry.payload['awaits']
+  if (awaits === undefined) return []
+  if (awaits !== 'approval' && awaits !== 'question') {
+    throw new TapeProjectionError(`${entry.name}: payload.awaits must be 'approval' or 'question'`)
+  }
+  return [
+    {
+      table: 'pending_approval',
+      op: 'upsert',
+      key: pendingKey(entry),
+      values: { waitKind: awaits, entryId: entry.entryId },
+      insertOnly: { createdAt: entry.createdAt },
+    },
+  ]
+}
+
+/**
  * The phase-1 facts, matched on the (kind, name) PAIR: every other combination projects to nothing
  * and passes through as evidence. `title` is never written — the interface uses the first user
  * message until phase 6 names sessions — and `provider/attempt_completed` has no projection at all.
+ * `message/continuation` and `message/environment` are user messages to the provider but never a
+ * row: they are not rendered.
+ *
+ * Spec 02 adds the pending-approval rules, and only those: every other phase-2 fact is evidence.
  */
 export function project(entry: TapeEntry): ProjectionOp[] {
   if (entry.kind === 'message') {
@@ -393,6 +504,13 @@ export function project(entry: TapeEntry): ProjectionOp[] {
       return projectMessage(entry)
     }
     return []
+  }
+  if (entry.kind === 'tool_result') {
+    // §待批表 rule 2: the call's result ends its wait — a question's answer IS its result. Deleting a
+    // row that is not there is a no-op.
+    return entry.name === 'tool/result'
+      ? [{ table: 'pending_approval', op: 'delete', key: pendingKey(entry) }]
+      : []
   }
   if (entry.kind === 'anchor') {
     return entry.name === 'session/start' ? projectSessionStart(entry) : []
@@ -408,6 +526,10 @@ export function project(entry: TapeEntry): ProjectionOp[] {
       ]
     }
     if (entry.name === 'session/model_selected') return projectModelSelected(entry)
+    if (entry.name === 'tool/permission_decided') return projectDecision(entry)
+    if (entry.name === 'tool/approval_resolved') {
+      return [{ table: 'pending_approval', op: 'delete', key: pendingKey(entry) }]
+    }
   }
   return []
 }
