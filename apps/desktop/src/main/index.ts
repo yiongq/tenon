@@ -22,6 +22,7 @@ import { preferredSystemLanguages } from './preferred-languages.js'
 import { registerProviderRoutes } from './provider-routes.js'
 import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
+import { registerApprovalRoutes } from './approval-routes.js'
 import { openSessionStore } from './tape/open.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
@@ -179,6 +180,7 @@ async function main(): Promise<void> {
   registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
   registerChatRoutes({ send: broadcast, ipcMain, sessions, loop })
   registerSessionRoutes({ ipcMain, sessions })
+  registerApprovalRoutes({ ipcMain, sessions })
   registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
 
   const win = openWindow()

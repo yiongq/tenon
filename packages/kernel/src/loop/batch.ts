@@ -18,7 +18,7 @@
  *
  * A stop between calls closes the rest as not-run / stopped.
  */
-import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
+import type { AbsolutePath, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
 import { decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
@@ -35,7 +35,8 @@ import {
 import { buildSessionView } from '../permission/session-view.js'
 import type { InspectedCall } from '../permission/session-view.js'
 import { locatePath, resolvePath } from '../permission/workspace.js'
-import type { PathScope, PathVerdict } from '../permission/workspace.js'
+import type { PathPlace, PathScope, PathVerdict } from '../permission/workspace.js'
+import type { DecisionSummary } from '../permission/record.js'
 import type {
   AppendResult,
   DispatchCommittedPayload,
@@ -74,11 +75,17 @@ export interface BatchContext {
   readonly now: () => number
   readonly host: HostAdapter
   readonly sessionId: string
+  /** The request the calls were made in: every fact of theirs is keyed under it (§键与挂靠). */
   readonly runId: string
   readonly requestSeq: number
+  /** Who writes: the Run handling the batch — the one that asked, or the one resuming it (§续跑). */
+  readonly writer: FactWriter
   readonly profile: 'chat' | 'cowork'
   readonly table: FrozenToolTable
+  /** The calls still to handle, in `<i>` order. */
   readonly calls: readonly CompleteCall[]
+  /** A resumed batch's approved call: dispatched on its answered decision, not judged again (§续跑). */
+  readonly approved?: ApprovedCall
   readonly inspectors: readonly InspectorRegistration[]
   readonly validator: ArgumentValidator
   readonly protectedFiles: readonly AbsolutePath[]
@@ -101,6 +108,14 @@ export interface BatchContext {
   readonly outcome: (call: CompleteCall, view: ToolOutcomeView) => void
 }
 
+/** A call the user allowed on its card: the decision it answered, which its dispatch names (T1). */
+export interface ApprovedCall {
+  readonly ordinal: number
+  readonly decisionKey: string
+  readonly summary: DecisionSummary
+  readonly reversibility: Reversibility
+}
+
 /**
  * What a write committed: the entries, in the order given, with their receipts. A result for a call
  * that already has one is left out (先写者算数, §写入：谁写、写几次), and so is its outcome.
@@ -113,6 +128,17 @@ export interface Written {
    * them: the Run's context pin moves past them, or its next request would not see them.
    */
   readonly deferredTo?: number
+}
+
+/**
+ * A Run's write the mailbox refused (§主进程与 kernel 的循环接口「mailbox」): its lease was aborted
+ * before the task's turn, and a decision or a dispatch is not written after a stop.
+ */
+export class RunWriteRefusedError extends Error {
+  constructor() {
+    super('the Run was stopped before this decision or dispatch was written')
+    this.name = 'RunWriteRefusedError'
+  }
 }
 
 export type BatchResult =
@@ -128,24 +154,26 @@ export type BatchResult =
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
-  const writer: FactWriter = { by: 'run', runId: ctx.runId }
+  const { writer } = ctx
   const scope = await pathScopeOf(ctx)
+  const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
   let denials = ctx.denials
   for (let k = 0; k < ctx.calls.length; k += 1) {
     const call = ctx.calls[k] as CompleteCall
-    const ref: CallRef = {
-      runId: ctx.runId,
-      requestSeq: ctx.requestSeq,
-      ordinal: call.ordinal,
-      providerToolCallId: call.providerToolCallId,
-    }
+    const ref = refOf(ctx, call)
     if (ctx.signal.aborted) {
       // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
       await closeRest(ctx, ctx.calls.slice(k), 'stopped')
       return { kind: 'stopped' }
     }
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
-    if (item === undefined) {
+    const verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    const executor =
+      item === undefined || verdict?.ok !== true
+        ? null
+        : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
+    if (item === undefined || verdict === null || !verdict.ok || executor === null) {
+      const invalid = verdict !== null && !verdict.ok ? verdict : null
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
       await close(
         ctx,
@@ -154,213 +182,148 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           tape: ctx.tape,
           now: ctx.now,
           call: ref,
-          source: 'tool-unavailable',
+          source: invalid?.source ?? 'tool-unavailable',
+          ...(invalid === null ? {} : { detail: invalid.reason }),
           writer,
         }),
       )
       continue
     }
-    const verdict = ctx.validator.check(item, call.input)
-    if (!verdict.ok) {
+    try {
+      if (ctx.approved?.ordinal === call.ordinal) {
+        // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
+        denials = 0
+        const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
+        // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
+        if (!(await dispatchOnce(ctx, ref, item, [dispatch], dispatch))) continue
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        await execute(ctx, call, item, executor, ctx.approved.reversibility, ctx.approved.summary)
+        continue
+      }
+      // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
+      const judged = await judgeCall(judge, item, call, scope)
+      if (judged.kind === 'stopped') {
+        // Stopped while judging: no decision fact, the call and the rest not-run (B1).
+        // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
+        await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+        return { kind: 'stopped' }
+      }
+      const { decision } = judged
+      const decisionKey = permissionDecidedKey(ctx.runId, ctx.requestSeq, call.ordinal)
+      const decided = decisionEntry({
+        ...ctx,
+        ref,
+        argsHash: call.argsHash,
+        judged,
+        key: decisionKey,
+      })
+      if (decision.record.verdict === 'deny') {
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        await close(ctx, call, [decided, ...blockFacts(ctx, ref, judged)])
+        denials += 1
+        if (denials >= MACHINE_DENIAL_CAP) {
+          // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
+          await closeRest(ctx, ctx.calls.slice(k + 1), 'blocked-repeatedly')
+          return { kind: 'blocked-repeatedly', count: denials }
+        }
+        continue
+      }
+      if (decision.record.verdict === 'ask') {
+        // The card waits; the rest of the batch waits with it (§等待模型).
+        const waiting = ctx.calls.slice(k).map((rest) => refOf(ctx, rest))
+        return { kind: 'paused', withTerminal: [decided], waiting }
+      }
+      // ----- allowed: decision and dispatch first (T1), then the side effect -----------------------
+      denials = 0
+      const dispatch = dispatchEntryFor(ctx, call, decisionKey)
+      // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
+      if (!(await dispatchOnce(ctx, ref, item, [decided, dispatch], dispatch))) continue
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await close(
-        ctx,
-        call,
-        notRunFacts({
-          tape: ctx.tape,
-          now: ctx.now,
-          call: ref,
-          source: verdict.source,
-          detail: verdict.reason,
-          writer,
-        }),
-      )
-      continue
-    }
-    const executor = executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
-    if (executor === null) {
-      // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await close(
-        ctx,
-        call,
-        notRunFacts({
-          tape: ctx.tape,
-          now: ctx.now,
-          call: ref,
-          source: 'tool-unavailable',
-          writer,
-        }),
-      )
-      continue
-    }
-
-    // ----- the decision --------------------------------------------------------------------------
-    // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
-    const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
-    const reversibility = reversibilityOf(item, call.input)
-    // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-    const located = await locate(ctx, item, call.input, scope)
-    const place = located === undefined ? undefined : placeFor(ctx.profile, located)
-    const inspected: InspectedCall = {
-      tool: {
-        name: item.name,
-        source: item.source,
-        serverId: item.serverId,
-        originalName: item.originalName,
-      },
-      args: call.input,
-      reversibility,
-    }
-    const view = buildSessionView(entries, {
-      call: inspected,
-      profile: ctx.profile,
-      ownSpillDir: scope.ownSpillDir,
-    })
-    // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-    const inspection = await runInspectors({
-      inspectors: ctx.inspectors,
-      input: { call: inspected, view },
-      setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
-      signal: ctx.signal,
-    })
-    if (inspection.stopped) {
-      // Stopped while judging: no decision fact, the call and the rest not-run (B1).
+      await execute(ctx, call, item, executor, judged.reversibility, decision.summary)
+    } catch (error) {
+      if (!(error instanceof RunWriteRefusedError)) throw error
+      // A stop reached the decision's or the dispatch's write first: neither is written, and the
+      // call and the rest close as a stop while judging would (§点停止时各状态怎么收).
       // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
       await closeRest(ctx, ctx.calls.slice(k), 'stopped')
       return { kind: 'stopped' }
     }
-    const policy = ctx.host.policy.current()
-    const workspace = scope.roots[0] ?? null
-    const callReason = callReasonOf({
-      tool: item,
-      args: call.input,
-      ...(place === undefined ? {} : { place }),
-      ...(located === undefined ? {} : { real: located.real }),
-      workspace,
-      searchHost: ctx.search?.host ?? null,
-    })
-    const setting =
-      item.source === 'mcp'
-        ? ctx.userSetting({
-            tenantId: ctx.host.identity.tenantId,
-            serverId: item.serverId,
-            toolName: item.originalName,
-          })
-        : null
-    const object = grantObjectOf(item, call.input, located, workspace, ctx.search)
-    const grantFrom =
-      object === null
-        ? undefined
-        : sessionGrants(grantFactsOf(entries)).get(
-            grantKey(item.serverId, item.originalName, object),
-          )
-    const decision = decide({
-      call: inspected,
-      callReason,
-      layers: {
-        policy,
-        ...(place === undefined ? {} : { place }),
-        ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
-        ...(setting?.userSetting === undefined ? {} : { userSetting: setting.userSetting }),
-        reversibility: { value: reversibility, source: 'host' },
-        requiresUserInteraction: item.requiresUserInteraction,
-        sessionGrant:
-          grantFrom === undefined || object === null
-            ? null
-            : { kind: sessionGrantKindOf(object), grantFrom },
-        approvalMode: 'manual',
-      },
-      inspectors: inspection.outcomes,
-    })
-    const decisionKey = permissionDecidedKey(ctx.runId, ctx.requestSeq, call.ordinal)
-    const decided = decisionFact(ctx, call, decision, {
-      reversibility,
-      policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
-      key: decisionKey,
-      ...(decision.record.verdict === 'ask'
-        ? { card: cardOf(item, call.input, located, workspace, ctx.search) }
-        : {}),
-      writer,
-    })
-
-    if (decision.record.verdict === 'deny') {
-      const block = decision.block
-      if (block === undefined) throw new Error('decide: a denial carries its block')
-      const failed =
-        decision.record.decidedBy === 'inspector' ? failedStatusOf(decision) : undefined
-      // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await close(ctx, call, [
-        decided,
-        ...notRunFacts({
-          tape: ctx.tape,
-          now: ctx.now,
-          call: ref,
-          source: block.reason,
-          facts: block.facts,
-          ...(failed === undefined ? {} : { inspectorStatus: failed }),
-          reversibility,
-          writer,
-        }),
-      ])
-      denials += 1
-      if (denials >= MACHINE_DENIAL_CAP) {
-        // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-        await closeRest(ctx, ctx.calls.slice(k + 1), 'blocked-repeatedly')
-        return { kind: 'blocked-repeatedly', count: denials }
-      }
-      continue
-    }
-    if (decision.record.verdict === 'ask') {
-      // The card waits; the rest of the batch waits with it (§等待模型). Answers are plan step 15's.
-      const waiting = ctx.calls.slice(k).map((rest) => ({
-        runId: ctx.runId,
-        requestSeq: ctx.requestSeq,
-        ordinal: rest.ordinal,
-        providerToolCallId: rest.providerToolCallId,
-      }))
-      return { kind: 'paused', withTerminal: [decided], waiting }
-    }
-
-    // ----- allowed: decision and dispatch first (T1), then the side effect -------------------------
-    denials = 0
-    const dispatch: DispatchCommittedPayload = {
-      ordinal: call.ordinal,
-      providerToolCallId: call.providerToolCallId,
-      name: call.name,
-      argsHash: call.argsHash,
-      decisionKey,
-      writer,
-    }
-    const dispatchEntry = ctx.tape.writer('execution').entry('execution/dispatch_committed', {
-      sourceType: 'runtime_event',
-      sourceId: ctx.runId,
-      sourceSeq: ctx.requestSeq,
-      provenanceKey: dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
-      payload: dispatch,
-      createdAt: ctx.now(),
-    })
-    // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-    const committed = await dispatchOnce(ctx, ref, item, [decided, dispatchEntry], dispatchEntry)
-    if (!committed) continue
-    // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-    const execution = await executor({ item, input: call.input, signal: ctx.signal })
-    const facts = resultFacts({
-      tape: ctx.tape,
-      now: ctx.now,
-      call: ref,
-      content: execution.content,
-      isError: execution.isError,
-      kernelAuthored: false,
-      effect: effectOf(item),
-      state: execution.state,
-      source: execution.state === 'completed' ? null : 'stopped',
-      reversibility,
-      writer,
-    })
-    // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-    await close(ctx, call, facts, decision)
   }
   return { kind: 'done', denials }
+}
+
+function refOf(ctx: Pick<BatchContext, 'runId' | 'requestSeq'>, call: CompleteCall): CallRef {
+  return {
+    runId: ctx.runId,
+    requestSeq: ctx.requestSeq,
+    ordinal: call.ordinal,
+    providerToolCallId: call.providerToolCallId,
+  }
+}
+
+function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: string): NewEntry {
+  const payload: DispatchCommittedPayload = {
+    ordinal: call.ordinal,
+    providerToolCallId: call.providerToolCallId,
+    name: call.name,
+    argsHash: call.argsHash,
+    decisionKey,
+    writer: ctx.writer,
+  }
+  return ctx.tape.writer('execution').entry('execution/dispatch_committed', {
+    sourceType: 'runtime_event',
+    sourceId: ctx.runId,
+    sourceSeq: ctx.requestSeq,
+    provenanceKey: dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
+    payload,
+    createdAt: ctx.now(),
+  })
+}
+
+/** The side effect, then its result and outcome. */
+async function execute(
+  ctx: BatchContext,
+  call: CompleteCall,
+  item: ToolTableItem,
+  executor: NonNullable<ReturnType<typeof executorFor>>,
+  reversibility: Reversibility,
+  summary: DecisionSummary,
+): Promise<void> {
+  const execution = await executor({ item, input: call.input, signal: ctx.signal })
+  const facts = resultFacts({
+    tape: ctx.tape,
+    now: ctx.now,
+    call: refOf(ctx, call),
+    content: execution.content,
+    isError: execution.isError,
+    kernelAuthored: false,
+    effect: effectOf(item),
+    state: execution.state,
+    source: execution.state === 'completed' ? null : 'stopped',
+    reversibility,
+    writer: ctx.writer,
+  })
+  await close(ctx, call, facts, summary)
+}
+
+/** A denial's closure: its block code and slots, or a failed inspector's own note (F1). */
+export function blockFacts(
+  ctx: Pick<BatchContext, 'tape' | 'now' | 'writer'>,
+  ref: CallRef,
+  judged: Extract<Judgement, { kind: 'judged' }>,
+): NewEntry[] {
+  const block = judged.decision.block
+  if (block === undefined) throw new Error('decide: a denial carries its block')
+  return notRunFacts({
+    tape: ctx.tape,
+    now: ctx.now,
+    call: ref,
+    source: block.reason,
+    facts: block.facts,
+    ...(judged.failed === undefined ? {} : { inspectorStatus: judged.failed }),
+    reversibility: judged.reversibility,
+    writer: ctx.writer,
+  })
 }
 
 /**
@@ -380,7 +343,7 @@ async function dispatchOnce(
   const written = await ctx.write(entries)
   const at = written.entries.indexOf(dispatchEntry)
   if (written.receipts[at]?.created !== false) return true
-  const key = dispatchEntry.provenanceKey ?? ''
+  const key = dispatchEntry.provenanceKey
   if (ctx.strict)
     throw new Error(`[loop] dispatch ${key} was already committed; it is never dispatched twice`)
   ctx.log(`[loop] dispatch ${key} was already committed; not dispatched again, closed as repair`)
@@ -391,7 +354,7 @@ async function dispatchOnce(
       call: ref,
       dispatched: true,
       effect: effectOf(item),
-      writer: { by: 'run', runId: ctx.runId },
+      writer: ctx.writer,
     }),
   )
   return false
@@ -402,7 +365,7 @@ async function close(
   ctx: BatchContext,
   call: CompleteCall,
   entries: readonly NewEntry[],
-  decision?: Decision,
+  summary?: DecisionSummary,
 ): Promise<void> {
   const written = await ctx.write(entries)
   // A result another writer beat is dropped, and so is its announcement (先写者算数).
@@ -415,7 +378,7 @@ async function close(
   const denied = entries.find((entry) => entry.name === 'tool/permission_decided')?.payload as
     | PermissionDecidedPayload
     | undefined
-  const summary = decision?.summary ?? denied?.summary
+  const permission = summary ?? denied?.summary
   ctx.outcome(call, {
     effect: outcome['effect'] as ToolOutcomeView['effect'],
     state: outcome['state'] as ToolOutcomeView['state'],
@@ -424,7 +387,7 @@ async function close(
       ? {}
       : { facts: outcome['facts'] as Record<string, string> }),
     output: textOf(result['content']),
-    ...(summary === undefined ? {} : { permission: summary }),
+    ...(permission === undefined ? {} : { permission }),
   })
 }
 
@@ -434,57 +397,185 @@ async function closeRest(
   calls: readonly CompleteCall[],
   source: 'stopped' | 'blocked-repeatedly',
 ): Promise<void> {
-  const writer: FactWriter = { by: 'run', runId: ctx.runId }
   for (const call of calls) {
-    const ref: CallRef = {
-      runId: ctx.runId,
-      requestSeq: ctx.requestSeq,
-      ordinal: call.ordinal,
-      providerToolCallId: call.providerToolCallId,
-    }
+    const facts = notRunFacts({
+      tape: ctx.tape,
+      now: ctx.now,
+      call: refOf(ctx, call),
+      source,
+      writer: ctx.writer,
+    })
     // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
-    await close(ctx, call, notRunFacts({ tape: ctx.tape, now: ctx.now, call: ref, source, writer }))
+    await close(ctx, call, facts)
   }
 }
 
-function decisionFact(
-  ctx: BatchContext,
-  call: CompleteCall,
-  decision: Decision,
-  q: {
-    readonly reversibility: PermissionDecidedPayload['reversibility']
-    readonly policyVersion: string
-    readonly key: string
-    readonly card?: Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'>
-    readonly writer: FactWriter
-  },
-): NewEntry {
+// ----- judging one call (the batch, and the answer's re-judgement) ---------------------------------
+
+/** What judging one call reads: the session's facts, the host's policy and each layer's input. */
+export interface JudgeContext {
+  readonly tape: Pick<Tape, 'readRange'>
+  readonly host: HostAdapter
+  readonly sessionId: string
+  readonly profile: 'chat' | 'cowork'
+  readonly inspectors: readonly InspectorRegistration[]
+  readonly protectedFiles: readonly AbsolutePath[]
+  readonly userSetting: (key: ToolKey) => UserToolSetting | null
+  /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
+  readonly searchHost: string | null
+  readonly signal: AbortSignal
+}
+
+export type Judgement =
+  | { readonly kind: 'stopped' }
+  | {
+      readonly kind: 'judged'
+      readonly decision: Decision
+      readonly reversibility: Reversibility
+      readonly place?: PathPlace
+      readonly policyVersion: string
+      /** The card's kind and object, when it asks. */
+      readonly card?: Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'>
+      /** What an allowed answer grants (§作用域与授权键); null when nothing but this call would. */
+      readonly grantObject: GrantObject | null
+      /** The deciding inspector's failure, when it did not answer (F1). */
+      readonly failed?: 'timeout' | 'error'
+    }
+
+/**
+ * One call's decision (§权限决策顺序): every layer's state computed from the Tape and the host, the
+ * inspectors first — a stop while they run gives no decision at all — then `decide()`.
+ */
+export async function judgeCall(
+  ctx: JudgeContext,
+  item: ToolTableItem,
+  call: Pick<CompleteCall, 'input'>,
+  scope?: PathScope,
+): Promise<Judgement> {
+  const paths = scope ?? (await pathScopeOf(ctx))
+  const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+  const reversibility = reversibilityOf(item, call.input)
+  const located = await locate(ctx.host, item, call.input, paths)
+  const place = located === undefined ? undefined : placeFor(ctx.profile, located)
+  const inspected: InspectedCall = {
+    tool: {
+      name: item.name,
+      source: item.source,
+      serverId: item.serverId,
+      originalName: item.originalName,
+    },
+    args: call.input,
+    reversibility,
+  }
+  const view = buildSessionView(entries, {
+    call: inspected,
+    profile: ctx.profile,
+    ownSpillDir: paths.ownSpillDir,
+  })
+  const inspection = await runInspectors({
+    inspectors: ctx.inspectors,
+    input: { call: inspected, view },
+    setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
+    signal: ctx.signal,
+  })
+  if (inspection.stopped) return { kind: 'stopped' }
+  const policy = ctx.host.policy.current()
+  const workspace = paths.roots[0] ?? null
+  const callReason = callReasonOf({
+    tool: item,
+    args: call.input,
+    ...(place === undefined ? {} : { place }),
+    ...(located === undefined ? {} : { real: located.real }),
+    workspace,
+    searchHost: ctx.searchHost,
+  })
+  const setting =
+    item.source === 'mcp'
+      ? ctx.userSetting({
+          tenantId: ctx.host.identity.tenantId,
+          serverId: item.serverId,
+          toolName: item.originalName,
+        })
+      : null
+  const object = grantObjectOf(item, call.input, located, workspace, ctx.searchHost)
+  const grantFrom =
+    object === null
+      ? undefined
+      : sessionGrants(grantFactsOf(entries)).get(grantKey(item.serverId, item.originalName, object))
+  const decision = decide({
+    call: inspected,
+    callReason,
+    layers: {
+      policy,
+      ...(place === undefined ? {} : { place }),
+      ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
+      ...(setting?.userSetting === undefined ? {} : { userSetting: setting.userSetting }),
+      reversibility: { value: reversibility, source: 'host' },
+      requiresUserInteraction: item.requiresUserInteraction,
+      sessionGrant:
+        grantFrom === undefined || object === null
+          ? null
+          : { kind: sessionGrantKindOf(object), grantFrom },
+      approvalMode: 'manual',
+    },
+    inspectors: inspection.outcomes,
+  })
+  const failed = decision.record.decidedBy === 'inspector' ? failedStatusOf(decision) : undefined
+  return {
+    kind: 'judged',
+    decision,
+    reversibility,
+    ...(place === undefined ? {} : { place }),
+    policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
+    ...(decision.record.verdict === 'ask'
+      ? { card: cardOf(item, call.input, located, workspace, ctx.searchHost) }
+      : {}),
+    grantObject: object,
+    ...(failed === undefined ? {} : { failed }),
+  }
+}
+
+/** A `tool/permission_decided`: the first decision of a call, or a re-judgement (`rejudge`). */
+export function decisionEntry(q: {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly ref: CallRef
+  readonly argsHash: string
+  readonly judged: Extract<Judgement, { kind: 'judged' }>
+  readonly key: string
+  readonly rejudge?: number
+  readonly writer: FactWriter
+}): NewEntry {
+  const { decision } = q.judged
   const payload: PermissionDecidedPayload = {
-    ordinal: call.ordinal,
-    providerToolCallId: call.providerToolCallId,
-    argsHash: call.argsHash,
-    reversibility: q.reversibility,
+    ordinal: q.ref.ordinal,
+    providerToolCallId: q.ref.providerToolCallId,
+    argsHash: q.argsHash,
+    reversibility: q.judged.reversibility,
     record: decision.record,
     summary: decision.summary,
-    policyVersion: q.policyVersion,
-    ...(decision.confirm !== undefined && q.card !== undefined
-      ? { confirm: { ...decision.confirm, ...q.card }, awaits: 'approval' as const }
+    policyVersion: q.judged.policyVersion,
+    ...(decision.confirm !== undefined && q.judged.card !== undefined
+      ? { confirm: { ...decision.confirm, ...q.judged.card }, awaits: 'approval' as const }
       : {}),
     ...(decision.block === undefined ? {} : { block: decision.block }),
+    ...(q.rejudge === undefined ? {} : { rejudge: q.rejudge }),
     writer: q.writer,
   }
-  return ctx.tape.writer('tool').entry('tool/permission_decided', {
+  return q.tape.writer('tool').entry('tool/permission_decided', {
     sourceType: 'runtime_event',
-    sourceId: ctx.runId,
-    sourceSeq: ctx.requestSeq,
+    sourceId: q.ref.runId,
+    sourceSeq: q.ref.requestSeq,
     provenanceKey: q.key,
     payload,
-    createdAt: ctx.now(),
+    createdAt: q.now(),
   })
 }
 
 /** Where file paths are judged from: the workspace roots, the profile, this session's spill, the protected files — all resolved. */
-async function pathScopeOf(ctx: BatchContext): Promise<PathScope> {
+export async function pathScopeOf(
+  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles'>,
+): Promise<PathScope> {
   const fs = ctx.host.fs
   const profileDir = (await resolvePath(fs, ctx.host.identity.profileDir as AbsolutePath)).path
   const ownSpillDir = (await resolvePath(fs, toolOutputDirFor(profileDir, ctx.sessionId))).path
@@ -495,9 +586,19 @@ async function pathScopeOf(ctx: BatchContext): Promise<PathScope> {
   return { roots: [], profileDir, ownSpillDir, protectedFiles }
 }
 
+/** Where a file tool's path falls, as a decision places it; undefined for any other tool. */
+export async function placeOf(
+  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles' | 'profile'>,
+  item: ToolTableItem,
+  input: Record<string, unknown>,
+): Promise<PathPlace | undefined> {
+  const located = await locate(ctx.host, item, input, await pathScopeOf(ctx))
+  return located === undefined ? undefined : placeFor(ctx.profile, located)
+}
+
 /** A file tool's path, placed; Glob and Grep without a path search the first folder. */
 async function locate(
-  ctx: BatchContext,
+  host: HostAdapter,
   item: ToolTableItem,
   input: Record<string, unknown>,
   scope: PathScope,
@@ -507,7 +608,7 @@ async function locate(
     input[item.originalName === 'Glob' || item.originalName === 'Grep' ? 'path' : 'file_path']
   const path = typeof raw === 'string' ? raw : scope.roots[0]
   if (path === undefined) return { real: scope.ownSpillDir, place: 'outside' }
-  return locatePath(ctx.host.fs, path as AbsolutePath, scope)
+  return locatePath(host.fs, path as AbsolutePath, scope)
 }
 
 /** In the chat profile, Read reaches only the session's own spill: anything else is protected (H1). */
@@ -521,7 +622,7 @@ function grantObjectOf(
   input: Record<string, unknown>,
   located: PathVerdict | undefined,
   workspace: AbsolutePath | null,
-  search: SearchBackend | null,
+  searchHost: string | null,
 ): GrantObject | null {
   if (item.source !== 'builtin') return null
   switch (item.originalName) {
@@ -533,7 +634,7 @@ function grantObjectOf(
         ? null
         : { kind: 'command', command: String(input['command'] ?? ''), cwd: workspace }
     case 'WebSearch':
-      return search === null ? null : { kind: 'search', host: search.host }
+      return searchHost === null ? null : { kind: 'search', host: searchHost }
     case 'WebFetch':
       return { kind: 'domain', host: hostOfUrl(String(input['url'] ?? '')) }
     default:
@@ -547,7 +648,7 @@ function cardOf(
   input: Record<string, unknown>,
   located: PathVerdict | undefined,
   workspace: AbsolutePath | null,
-  search: SearchBackend | null,
+  searchHost: string | null,
 ): Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'> {
   if (item.source === 'builtin') {
     if (FILE_TOOL_NAMES.has(item.originalName) && located !== undefined) {
@@ -566,7 +667,7 @@ function cardOf(
     if (item.originalName === 'WebSearch') {
       return {
         kind: 'network',
-        target: { type: 'search', query: String(input['query'] ?? ''), host: search?.host ?? '' },
+        target: { type: 'search', query: String(input['query'] ?? ''), host: searchHost ?? '' },
       }
     }
     if (item.originalName === 'WebFetch') {

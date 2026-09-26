@@ -71,9 +71,11 @@ const NOT_AVAILABLE = 'This tool is not available in this session. Do not call i
 
 export const MODEL_NOTES: ModelNotes = {
   closure: {
-    // What the user answered, or did instead of answering (F2, F11).
+    // What the user answered, or did instead of answering (F2, F11). The rejection is the spec's own
+    // first wording (§多卡、拒绝与取代).
     'user-rejected': {
-      'not-run': 'The user declined this call, so it was not run.',
+      'not-run':
+        'The user rejected this tool call. It was not executed and nothing was changed. This is not an error. Do not retry it unless the user asks.',
     },
     superseded: {
       'not-run': 'The user sent a new message instead of answering, so this call was not run.',

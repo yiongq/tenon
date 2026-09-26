@@ -426,6 +426,7 @@ export type {
 } from './loop/ports.js'
 export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
 export type { AnswerCommand } from './loop/waiting.js'
+export type { PendingCard } from './loop/answer.js'
 export { INSPECTOR_TIMEOUT_MS } from './permission/inspector.js'
 export type { AskOpinion, DenyOpinion, InspectorRegistration } from './permission/inspector.js'
 export type {

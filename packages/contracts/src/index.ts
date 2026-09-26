@@ -105,6 +105,7 @@ export {
 // shapes they carry. Writing stays on `chat.send`.
 export {
   SESSION_READ_LIMIT_MAX,
+  canonicalSessionIdSchema,
   contentBlockSchema,
   messageRowSchema,
   sessionLatest,
@@ -135,5 +136,10 @@ export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js
 export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'
 
 // Spec 02 plan step 12: the decision summary, the only half of a decision that crosses IPC.
-export { decisionSummaryCodeSchema, decisionSummarySchema } from './ipc/approval.js'
+export {
+  approvalCurrent,
+  approvalRespond,
+  decisionSummaryCodeSchema,
+  decisionSummarySchema,
+} from './ipc/approval.js'
 export type { DecisionSummaryContract } from './ipc/approval.js'

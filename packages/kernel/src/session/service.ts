@@ -37,6 +37,7 @@ import { isCanonicalUuid } from '../ids.js'
 import type { IdSource } from '../ids.js'
 import { createLoop } from '../loop/mailbox.js'
 import type { LoopPorts, RunConnector, RunOrigin } from '../loop/ports.js'
+import type { PendingCard } from '../loop/answer.js'
 import type { AnswerCommand } from '../loop/waiting.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
@@ -189,6 +190,8 @@ export interface SessionService {
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   /** An answer to an approval card or a question (plan steps 15 and 26). */
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
+  /** The card a root waits on, for `approval.current` (§答复与投递); null when nothing waits. */
+  currentPending(q: { sessionId: string }): Promise<PendingCard | null>
   stop(q: { rootSessionId: string }): Promise<{ stopped: boolean }>
 }
 
@@ -335,6 +338,7 @@ export function constructSessionService(
     send: (q) => loop.send(q),
     continueRun: (q) => loop.continueRun(q),
     answer: (q) => loop.answer(q),
+    currentPending: (q) => loop.currentPending(q),
     stop: (q) => loop.stop(q),
   }
 }

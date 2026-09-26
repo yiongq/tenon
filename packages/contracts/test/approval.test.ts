@@ -3,10 +3,17 @@
  * 19): the schema and the kernel type are one shape in both directions, strict, with exactly three
  * keys — and no route anywhere carries a decision's steps, its deciding layer or its basis.
  */
-import type { DecisionSummary, DecisionSummaryCode } from '@tenon-app/kernel'
+import type {
+  AnswerCommand,
+  DecisionSummary,
+  DecisionSummaryCode,
+  PendingCard,
+} from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
+  approvalCurrent,
+  approvalRespond,
   decisionSummaryCodeSchema,
   decisionSummarySchema,
   ipcEvents,
@@ -89,5 +96,51 @@ describe('no route or event carries a decision’s record', () => {
     expect(names.size).toBeGreaterThan(10)
     for (const forbidden of ['steps', 'decidedBy', 'basis'])
       expect(names.has(forbidden)).toBe(false)
+  })
+})
+
+type RespondRequest = z.infer<typeof approvalRespond.request>
+type CurrentResponse = NonNullable<z.infer<typeof approvalCurrent.response>>
+// The kernel's command and the route's request are one shape; the kernel's card is one of the route's
+// answers (one way: the kernel brands the target's paths).
+export type RequestIsCommand = Assert<Extends<RespondRequest, AnswerCommand>>
+export type CommandIsRequest = Assert<Extends<AnswerCommand, RespondRequest>>
+
+describe('approval.respond and approval.current (plan step 15)', () => {
+  const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
+  const requestId = 'tool:v1:decision:00000000-0000-4000-8000-000000000001:1:0'
+
+  it('are registered, and refuse a session id that is not canonical', () => {
+    expect(Object.values(ipcRoutes)).toContain(approvalRespond)
+    expect(Object.values(ipcRoutes)).toContain(approvalCurrent)
+    const ok = { kind: 'approval', sessionId: SESSION, requestId, decision: 'allow' }
+    expect(approvalRespond.request.parse(ok)).toEqual(ok)
+    expect(approvalRespond.request.safeParse({ ...ok, sessionId: 'abc' }).success).toBe(false)
+    expect(approvalRespond.request.safeParse({ ...ok, decision: 'maybe' }).success).toBe(false)
+    for (const status of ['applied', 'already-resolved', 'stale', 'not-found', 'invalid']) {
+      expect(approvalRespond.response.safeParse({ status }).success).toBe(true)
+    }
+    expect(approvalRespond.response.safeParse({ status: 'refused' }).success).toBe(false)
+  })
+
+  it('carries the kernel’s pending card, and null when nothing waits', () => {
+    const card: PendingCard = {
+      waitKind: 'approval',
+      card: {
+        requestId,
+        sessionId: SESSION,
+        kind: 'tool',
+        reason: 'flagged',
+        facts: { category: 'exfiltration', toolName: 'look' },
+        reversibility: 'unknown',
+        target: { type: 'tool', serverId: 'fs', toolName: 'look' },
+      },
+      callKey: '00000000-0000-4000-8000-000000000001:1:0',
+      anchorCallKey: '00000000-0000-4000-8000-000000000001:1:0',
+      allowScope: 'once',
+    }
+    const crossed: CurrentResponse = approvalCurrent.response.parse(card) as CurrentResponse
+    expect(crossed).toEqual(card)
+    expect(approvalCurrent.response.parse(null)).toBeNull()
   })
 })

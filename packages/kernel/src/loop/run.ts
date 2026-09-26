@@ -84,7 +84,7 @@ import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { CompleteCall, Written } from './batch.js'
+import type { ApprovedCall, BatchResult, CompleteCall, Written } from './batch.js'
 import { effectOf, readSessionEntries, runBatch } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
@@ -131,6 +131,8 @@ export interface RunDriverContext {
   readonly write: (entries: readonly NewEntry[]) => Promise<Written>
   /** A call in the context with no result: throw (tests, development) or repair and log (§兜底). */
   readonly onUnansweredCall: 'throw' | 'repair'
+  /** A Run an answer opened: it finishes the paused batch before its first request (§续跑). */
+  readonly resume?: ResumeBatch
   readonly emit: {
     delta(runId: string, type: 'text-delta' | 'thinking-delta', delta: string): void
     discarded(runId: string): void
@@ -140,6 +142,14 @@ export interface RunDriverContext {
       view: ToolOutcomeView,
     ): void
   }
+}
+
+/** The paused batch a resuming Run finishes: its request, the calls still to handle, the approved one. */
+export interface ResumeBatch {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly calls: readonly CompleteCall[]
+  readonly approved: ApprovedCall | null
 }
 
 /** What a Run leaves for its terminal task. */
@@ -189,6 +199,71 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     return written
   }
 
+  const batch = (q: {
+    readonly runId: string
+    readonly requestSeq: number
+    readonly table: FrozenToolTable
+    readonly calls: readonly CompleteCall[]
+    readonly approved?: ApprovedCall
+  }): Promise<BatchResult> =>
+    runBatch({
+      tape,
+      now: ctx.now,
+      host: ctx.host,
+      sessionId: ctx.sessionId,
+      ...q,
+      writer: { by: 'run', runId },
+      profile: ctx.profile,
+      inspectors: ctx.inspectors,
+      validator,
+      protectedFiles: ctx.protectedFiles,
+      userSetting: ctx.userSetting,
+      mcpSources: ctx.mcpSources,
+      testTools: ctx.testTools,
+      search: ctx.search,
+      denials,
+      strict: ctx.onUnansweredCall === 'throw',
+      log: ctx.log,
+      signal,
+      write,
+      outcome: (call, view) =>
+        ctx.emit.outcome(
+          { ...call, callKey: callKeyOf(q.runId, q.requestSeq, call.ordinal) },
+          view,
+        ),
+    })
+  const batchEnd = (result: BatchResult): RunFinish | null => {
+    if (result.kind === 'paused') {
+      return finish(
+        { code: 'paused', waitingFor: 'approval' },
+        { withTerminal: result.withTerminal, waiting: result.waiting },
+      )
+    }
+    if (result.kind === 'blocked-repeatedly') {
+      return finish({ code: 'blocked-repeatedly', count: result.count })
+    }
+    if (result.kind === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+    return null
+  }
+
+  if (ctx.resume !== undefined) {
+    // §续跑: the paused batch first — the approved call, then the rest in order — under the frozen
+    // table of the batch's provider. It was counted as a step when it paused, so it is not again.
+    const tableKey = toolTableKey(ctx.incarnationId, state.generation, ctx.model.providerId)
+    const stored = state.tables.get(tableKey)
+    if (stored === undefined) throw new Error(`resume: no frozen table ${tableKey} on the Tape`)
+    const result = await batch({
+      runId: ctx.resume.runId,
+      requestSeq: ctx.resume.requestSeq,
+      table: rebuildToolTable(tableKey, stored, state.specs),
+      calls: ctx.resume.calls,
+      ...(ctx.resume.approved === null ? {} : { approved: ctx.resume.approved }),
+    })
+    const ended = batchEnd(result)
+    if (ended !== null) return ended
+    if (result.kind === 'done') denials = result.denials
+  }
+
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
   // and answers `stop{ aborted }`, so every request of the Run leaves its attempt fact (01 invariant 2).
   for (;;) {
@@ -197,6 +272,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     try {
       provider = ctx.provider()
     } catch (error) {
+      // A resumed Run stopped before it was assembled has no provider to ask (§续跑).
+      if (signal.aborted) return finish(abortedEndReason(abortCauseOf(ctx.lease)))
       if (!(error instanceof ProviderConfigMissingError)) throw error
       errorCode = 'auth'
       return finish({
@@ -330,7 +407,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       const previous = batches.slice(-(NO_PROGRESS_REPEATS - 1))
       if (
         previous.length === NO_PROGRESS_REPEATS - 1 &&
-        previous.every((batch) => batch === signature)
+        previous.every((earlier) => earlier === signature)
       ) {
         // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
         await closeAll(ctx, calls, requestSeq, 'no-progress', write)
@@ -343,45 +420,13 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       }
 
       // ----- step 4: the batch -----------------------------------------------------------------
-      const table = assembled.table
       // oxlint-disable-next-line no-await-in-loop -- the batch runs before the next request is built
-      const result = await runBatch({
-        tape,
-        now: ctx.now,
-        host: ctx.host,
-        sessionId: ctx.sessionId,
-        runId,
-        requestSeq,
-        profile: ctx.profile,
-        table,
-        calls,
-        inspectors: ctx.inspectors,
-        validator,
-        protectedFiles: ctx.protectedFiles,
-        userSetting: ctx.userSetting,
-        mcpSources: ctx.mcpSources,
-        testTools: ctx.testTools,
-        search: ctx.search,
-        denials,
-        strict: ctx.onUnansweredCall === 'throw',
-        log: ctx.log,
-        signal,
-        write,
-        outcome: (call, view) =>
-          ctx.emit.outcome({ ...call, callKey: callKeyOf(runId, requestSeq, call.ordinal) }, view),
-      })
+      const result = await batch({ runId, requestSeq, table: assembled.table, calls })
       steps += 1
       batches.push(signature)
-      if (result.kind === 'paused') {
-        return finish(
-          { code: 'paused', waitingFor: 'approval' },
-          { withTerminal: result.withTerminal, waiting: result.waiting },
-        )
-      }
-      if (result.kind === 'blocked-repeatedly')
-        return finish({ code: 'blocked-repeatedly', count: result.count })
-      if (result.kind === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
-      denials = result.denials
+      const ended = batchEnd(result)
+      if (ended !== null) return ended
+      if (result.kind === 'done') denials = result.denials
       break
     }
   }

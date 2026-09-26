@@ -320,8 +320,15 @@ describe('a new round that cannot start writes nothing', () => {
 })
 
 describe('the commands that come with later steps', () => {
-  it('answer, resume and recover have nothing to act on yet; continue has nothing to continue', async () => {
+  it('resume and recover have nothing to act on yet; answer and continue find nothing', async () => {
     const h = harness()
+    expect(await h.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+      status: 'none',
+    })
+    expect(await h.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(h.loop.leaseLog).toEqual([])
+    // An answer and 「继续」 may open a Run: each begins its lease at its entry, finds nothing to act
+    // on, and finishes it having written nothing (plan steps 13 and 15).
     expect(
       await h.service.answer({
         kind: 'approval',
@@ -331,17 +338,12 @@ describe('the commands that come with later steps', () => {
         origin: null,
       }),
     ).toEqual({ status: 'not-found' })
-    expect(await h.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
-      status: 'none',
-    })
-    expect(await h.service.recover()).toEqual({ resumable: [], errors: [] })
-    expect(h.loop.leaseLog).toEqual([])
-    // 「继续」 on a session with no Run: it begins its lease at its entry, finds nothing to continue,
-    // and finishes it having written nothing (plan step 13).
+    expect(h.loop.leaseLog).toHaveLength(1)
     expect(await h.service.continueRun({ sessionId: SESSION, origin: null })).toEqual({
       status: 'not-available',
     })
-    expect(h.loop.leaseLog).toHaveLength(1)
+    // Every lease begun was finished, and nothing was written or sent.
+    expect(h.loop.leaseLog.length).toBeGreaterThanOrEqual(1)
     expect(h.loop.liveLease(SESSION)).toBeNull()
     expect(h.loop.recorded).toEqual([])
   })

@@ -23,7 +23,7 @@ import type {
   TapeStore,
 } from '../../src/index.js'
 import { resultFacts } from '../../src/loop/closure.js'
-import { messageRetractedKey } from '../../src/tape/provenance.js'
+import { messageRetractedKey, messageRevisionKey } from '../../src/tape/provenance.js'
 import { createTape } from '../../src/tape/tape.js'
 import {
   assertLastTurnIsUser,
@@ -334,9 +334,9 @@ describe('replay after a retraction and a late result', () => {
 
   it('places a result written after a later user message right after its assistant turn (旧 178)', async () => {
     const wire: Wire = 'anthropic-messages'
-    // A card pauses the Run with the call unanswered; the next message comes before any answer, and
-    // the repair closure lands after that message on the Tape. (Plan step 15 closes it as
-    // superseded in the new message's batch instead; where replay puts it is the same.)
+    // A card pauses the Run; a user message lands on the Tape before the answer (written behind the
+    // loop's back, as a message an older build left would be); the answer then runs the call, so
+    // its result comes after that message.
     const ask = createFakeInspector({
       id: 'asker',
       ceiling: 'ask',
@@ -344,13 +344,46 @@ describe('replay after a retraction and a late result', () => {
     })
     const h = harness(wire, [callTurn(wire, [], [{ id: 'call_late', at: 'a' }]), textTurn(wire)], {
       inspectors: [ask.registration],
-      onUnansweredCall: 'repair',
     })
     expect((await send(h, 'first question')).reason).toEqual({
       code: 'paused',
       waitingFor: 'approval',
     })
-    await send(h, 'second question')
+    const head = await h.store.head(SESSION)
+    if (head === null) throw new Error('no head')
+    const tape = createTape(h.store)
+    await tape.appendEntries({
+      sessionId: SESSION,
+      incarnationId: head.incarnationId,
+      entries: [
+        tape.writer('message').entry('message/user', {
+          sourceType: 'message',
+          sourceId: '9e1c9a2e-6b3d-4a71-9f52-0c8de7a11b39',
+          sourceSeq: 0,
+          provenanceKey: messageRevisionKey('9e1c9a2e-6b3d-4a71-9f52-0c8de7a11b39', 0),
+          payload: {
+            messageId: '9e1c9a2e-6b3d-4a71-9f52-0c8de7a11b39',
+            revision: 0,
+            role: 'user',
+            content: [{ type: 'text', text: 'second question' }],
+            status: 'complete',
+          },
+          createdAt: 1,
+        }),
+      ],
+    })
+    const card = await h.service.currentPending({ sessionId: SESSION })
+    if (card === null) throw new Error('no card')
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: card.card.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
     const entries = await all(h.store)
     const user = entries.findLast((entry) => entry.name === 'message/user')
     const result = entries.find((entry) => entry.name === 'tool/result')

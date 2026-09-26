@@ -29,7 +29,8 @@ export const SESSION_READ_LIMIT_MAX = 1000
  * boundaries agreeing is the point. A type-level test keeps this regex and the kernel's together.
  */
 const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const sessionIdSchema = z.string().regex(CANONICAL_UUID, 'not a canonical uuid')
+/** A session id as the Tape writes it: a canonical UUID (spec 02 exports it for approval.*). */
+export const canonicalSessionIdSchema = z.string().regex(CANONICAL_UUID, 'not a canonical uuid')
 
 const limitSchema = z.number().int().min(1).max(SESSION_READ_LIMIT_MAX)
 const orderSeqSchema = z.number().int().min(0)
@@ -76,7 +77,7 @@ export type ContentBlockContract = z.infer<typeof contentBlockSchema>
 
 /** `message_projection` as the port hands it over: ids and ordinals kept, tenant dropped. */
 export const messageRowSchema = z.object({
-  sessionId: sessionIdSchema,
+  sessionId: canonicalSessionIdSchema,
   messageId: z.string().min(1),
   /** `entry_id` of the message's FIRST fact: the stable sort key a revision never moves. */
   orderSeq: orderSeqSchema,
@@ -94,14 +95,14 @@ export type MessageRowContract = z.infer<typeof messageRowSchema>
 export const sessionLatest = defineRoute('session.latest', {
   request: z.object({ limit: limitSchema }),
   response: z
-    .object({ sessionId: sessionIdSchema, messages: z.array(messageRowSchema) })
+    .object({ sessionId: canonicalSessionIdSchema, messages: z.array(messageRowSchema) })
     .nullable(),
 })
 
 /** One page of a session's messages. No cursor = the tail, which is where a reader opens. */
 export const sessionMessages = defineRoute('session.messages', {
   request: z.object({
-    sessionId: sessionIdSchema,
+    sessionId: canonicalSessionIdSchema,
     limit: limitSchema,
     afterOrderSeq: orderSeqSchema.optional(),
     beforeOrderSeq: orderSeqSchema.optional(),

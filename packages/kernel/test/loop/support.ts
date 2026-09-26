@@ -32,14 +32,23 @@ export function instantHost(delays: number[] = []): HostAdapter {
 
 /**
  * The `fs` server with its one tool. `executed` records each call's arguments; `during`, when given,
- * runs while the call is in flight — where a case stops the Run or writes behind its back.
+ * runs while the call is in flight — where a case stops the Run or writes behind its back; a
+ * `description` stands in for a server that changed its tool since the table froze.
  */
 export function lookSource(
   executed: Record<string, unknown>[],
   during?: (args: Record<string, unknown>) => void | Promise<void>,
+  description?: string,
 ): McpToolSource {
   const connection = {
-    listTools: () => Promise.resolve([{ name: 'look', inputSchema: { type: 'object' } }]),
+    listTools: () =>
+      Promise.resolve([
+        {
+          name: 'look',
+          inputSchema: { type: 'object' },
+          ...(description === undefined ? {} : { description }),
+        },
+      ]),
     callTool: async (_name: string, args: Record<string, unknown>) => {
       executed.push(args)
       await during?.(args)

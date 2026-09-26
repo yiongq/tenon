@@ -23,19 +23,22 @@
  * were nothing for them to do (there is not, yet). Plan step 15 adds the waiting states and the rest
  * of the timing rules, step 16 recovery and resume, step 17 the queue's insertion and auto-send.
  */
-import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
+import type { AbsolutePath, ConfirmRequest, HostAdapter } from '../host/adapter.js'
 import type { IdSource } from '../ids.js'
 import { isCanonicalUuid } from '../ids.js'
 import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
-import type { Provider, ProviderErrorCode, ProviderId } from '../provider/types.js'
+import type { ModelInfo, Provider, ProviderErrorCode, ProviderId } from '../provider/types.js'
 import { assertModelBelongs } from '../provider/wire/shared.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { MODEL_NOTES } from '../prompts/index.js'
 import type {
+  AppendResult,
   ContinuationPayload,
+  FactWriter,
   ModelSelectedPayload,
   NewEntry,
+  PermissionDecidedPayload,
   RunStartedPayload,
   RunTerminalPayload,
   SessionStartPayload,
@@ -45,7 +48,9 @@ import { parseMessagePayload } from '../tape/projection.js'
 import {
   messageRevisionKey,
   modelSelectedKey,
+  permissionDecidedKey,
   runStartedKey,
+  toolTableKey,
   runTerminalKey,
   sessionStartKey,
 } from '../tape/provenance.js'
@@ -71,15 +76,38 @@ import type {
 import type { PolicyState } from '../host/policy.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
-import { readSessionEntries } from './batch.js'
-import type { Written } from './batch.js'
-import type { CallRef } from './closure.js'
+import { answerScope, grantKey } from '../permission/grants.js'
+import { executorFor } from '../tools/executor.js'
+import type { ToolTableItem } from '../tools/registry.js'
+import {
+  answerTarget,
+  batchClosures,
+  confirmRequestOf,
+  rejectFacts,
+  resolvedEntry,
+  resumeHead,
+  resumeSetupOf,
+  stopFacts,
+  supersedeFacts,
+  waitingOf,
+} from './answer.js'
+import type { PendingCard, ResumeSetup, WaitingCall } from './answer.js'
+import {
+  RunWriteRefusedError,
+  blockFacts,
+  decisionEntry,
+  judgeCall,
+  placeOf,
+  readSessionEntries,
+} from './batch.js'
+import type { Judgement, Written } from './batch.js'
+import type { CallRef, ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
-import { openToolTable } from '../tools/table.js'
+import { openToolTable, rebuildToolTable } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
-import type { RunDriverContext, RunFinish } from './run.js'
+import type { ResumeBatch, RunDriverContext, RunFinish } from './run.js'
 import {
   FIRST_REVISION,
   abortCauseOf,
@@ -87,6 +115,7 @@ import {
   callKeyOf,
   driveRun,
   notRunView,
+  readViewState,
   userTextContent,
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
@@ -138,6 +167,19 @@ type Prebuild =
 /** A command that opens a Run, stopped before anything was written. */
 type NotSent = { readonly status: 'not-sent'; readonly code: 'stopped' | 'app-exit' }
 
+/**
+ * What a Run is built from (see `startRun`): a new round's prebuild, or a resumed batch's frozen
+ * model and request settings with an assembly made outside the mailbox.
+ */
+interface RunSetup {
+  readonly provider: () => Provider
+  readonly model: ModelInfo
+  readonly maxTokens: number
+  readonly effort: string | null
+  readonly assembly: RunAssembly
+  readonly resume?: ResumeBatch
+}
+
 /** An opened round: its Run, and the prefix its request is assembled from. */
 interface OpenedRound {
   readonly runId: string
@@ -180,6 +222,8 @@ export interface Loop {
   send(q: SendQuery): Promise<SendResult>
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
+  /** What `approval.current` shows for a root (it and its sub-agents): the one card, or null. */
+  currentPending(q: { sessionId: string }): Promise<PendingCard | null>
   stop(q: { rootSessionId: string }): Promise<{ stopped: boolean }>
 }
 
@@ -189,6 +233,9 @@ export function createLoop(deps: LoopDeps): Loop {
   const messageSlice = tape.writer('message')
   const executionSlice = tape.writer('execution')
   const boxes = new Map<string, RootBox>()
+  /** Sub-agent session → root (§主进程与 kernel 的循环接口「mailbox」): filled from plan step 31. */
+  const roots = new Map<string, string>()
+  const rootOf = (sessionId: string): string => roots.get(sessionId) ?? sessionId
   let bound: LoopPorts | null = null
 
   // ----- the executor --------------------------------------------------------------------------
@@ -327,11 +374,22 @@ export function createLoop(deps: LoopDeps): Loop {
     return Promise.race([work, whenAborted(signal)])
   }
 
-  /** 「登记之后、append 之前被中止」: with no waiting state to close yet, nothing is written. */
-  function abortedBeforeAppend(ports: LoopPorts, box: RootBox, lease: RunLease): NotSent {
+  /**
+   * 「登记之后、append 之前被中止」: a user-stop closes, in this command's name, the pause it finds —
+   * `cancelled-by-stop` and the closures, no Run; an idle root, a quit or a closed window writes
+   * nothing, and a card survives the restart (B4).
+   */
+  async function abortedBeforeAppend(
+    ports: LoopPorts,
+    box: RootBox,
+    lease: RunLease,
+  ): Promise<NotSent> {
     const cause = abortCauseOf(lease)
-    finish(box, lease)
-    // Plan step 15: a user-stop here closes the paused state it finds, in this command's name.
+    try {
+      if (cause === 'user-stop') await closePausedByStop(ports, box)
+    } finally {
+      finish(box, lease)
+    }
     runEnded(ports, box, box.rootSessionId, {
       runId: null,
       reason: abortedEndReason(cause),
@@ -379,7 +437,7 @@ export function createLoop(deps: LoopDeps): Loop {
     pre: Prebuild | null,
   ): Promise<Turn<SendResult>> {
     if (lease !== null && lease.signal.aborted) {
-      return { kind: 'done', result: abortedBeforeAppend(ports, box, lease) }
+      return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     }
     // 「何时判定」: in progress means a Run already opened, an aborted one still closing included — and
     // the message is then marked urgent, so it goes first once that Run ends. A lease with no Run open
@@ -389,8 +447,8 @@ export function createLoop(deps: LoopDeps): Loop {
       const { queuedId } = await ports.queue.enqueue(box.rootSessionId, q.text, { urgent })
       return { kind: 'done', result: { status: 'queued', queuedId } }
     }
-    // Plan step 15: a pending approval is superseded here and a pending question answered by the
-    // text; plan step 16: a resumable session resumes first and this message queues.
+    // A card waiting is superseded by the new round (§多卡、拒绝与取代); plan step 26 answers a
+    // question with the text instead, plan step 16 resumes a resumable session first.
     if (lease === null || pre === null) {
       const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
       if ('refused' in begun)
@@ -409,6 +467,9 @@ export function createLoop(deps: LoopDeps): Loop {
   ): Promise<SendResult> {
     if (pre.kind === 'aborted') return abortedBeforeAppend(ports, box, lease)
     if (pre.kind === 'config') return configMissing(ports, box, q.sessionId, lease, pre)
+    const waiting = await waitingOf(tape, box.rootSessionId)
+    // A stop that came while the pause was read: it closes the pause, not this message.
+    if (lease.signal.aborted) return abortedBeforeAppend(ports, box, lease)
     if (pre.kind === 'confirm') {
       // 「间接切公网」: 0 requests and no fact; this message waits in the queue for the menu's
       // confirmation. Releasing it (`session.selectModel`) and clearing it are plan steps 17 and 19.
@@ -430,12 +491,21 @@ export function createLoop(deps: LoopDeps): Loop {
     }
     let opened: OpenedRound
     try {
+      if (waiting !== null) {
+        // 取代: the card and the rest of its batch close as superseded, committed before any fact of
+        // the new round — so the next request shows the model those results first (F11).
+        const superseded = supersedeFacts(tape, now, waiting)
+        await appendTo(waiting.sessionId, superseded)
+        emitClosures(ports, box, waiting.sessionId, superseded)
+      }
       opened = await openRound(ports, box, q, pre)
     } catch (error) {
       finish(box, lease)
       throw error
     }
-    startRun(ports, box, q.sessionId, opened, lease, pre)
+    startRun(ports, box, q.sessionId, opened, lease, pre.provider.id, () =>
+      Promise.resolve(roundSetup(pre)),
+    )
     return { status: 'started', runId: opened.runId }
   }
 
@@ -586,7 +656,7 @@ export function createLoop(deps: LoopDeps): Loop {
     pre: Prebuild | null,
   ): Promise<Turn<ContinueRunResult>> {
     if (lease !== null && lease.signal.aborted) {
-      return { kind: 'done', result: abortedBeforeAppend(ports, box, lease) }
+      return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     }
     // A Run in progress is never this command's own (its lease has opened nothing yet).
     if (box.lease !== null && box.runOpen)
@@ -602,7 +672,7 @@ export function createLoop(deps: LoopDeps): Loop {
       return { kind: 'again', lease: hold(box, begun) }
     }
     if (pre.kind === 'aborted')
-      return { kind: 'done', result: abortedBeforeAppend(ports, box, lease) }
+      return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     if (pre.kind === 'config') {
       return { kind: 'done', result: configMissing(ports, box, q.sessionId, lease, pre) }
     }
@@ -619,7 +689,9 @@ export function createLoop(deps: LoopDeps): Loop {
       finish(box, lease)
       throw error
     }
-    startRun(ports, box, q.sessionId, opened, lease, pre)
+    startRun(ports, box, q.sessionId, opened, lease, pre.provider.id, () =>
+      Promise.resolve(roundSetup(pre)),
+    )
     return { kind: 'done', result: { status: 'started' } }
   }
 
@@ -663,11 +735,349 @@ export function createLoop(deps: LoopDeps): Loop {
     return appendOpening(ports, box, sessionId, runId, head.incarnationId, entries)
   }
 
+  // ----- answers (§等待模型：审批、提问与拒绝; §续跑) --------------------------------------------------
+
+  async function answerTurn(
+    ports: LoopPorts,
+    box: RootBox,
+    q: AnswerCommand & { origin: RunOrigin | null },
+    held: RunLease | null,
+  ): Promise<AnswerResult> {
+    let lease = held
+    try {
+      if (lease !== null && lease.signal.aborted) return await abortedAnswer(ports, box, lease)
+      const target = await answerTarget(tape, q)
+      if (typeof target === 'string') {
+        if (lease !== null) finish(box, lease)
+        return { status: target }
+      }
+      if (q.kind === 'question') {
+        // A question can only be waiting once AskUserQuestion pauses a Run (plan step 26).
+        throw new Error('answering a question is plan step 26')
+      }
+      if (lease === null) {
+        // Its turn opens a Run, and it holds no lease: begun here, in the mailbox (「租约」).
+        const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+        if ('refused' in begun) return { status: 'refused' }
+        lease = hold(box, begun)
+      }
+      return q.decision === 'deny'
+        ? await rejectCard(ports, box, target, lease)
+        : await allowCard(ports, box, target, lease)
+    } catch (error) {
+      if (lease !== null && box.lease === lease) finish(box, lease)
+      throw error
+    }
+  }
+
+  /**
+   * An answer whose lease was aborted before it appended (「登记之后、append 之前被中止」): a user-stop
+   * cancels the card in this answer's name and it reads `already-resolved`; a quit or a closed window
+   * writes nothing, the card survives the restart (B4), and the answer is `refused`.
+   */
+  async function abortedAnswer(
+    ports: LoopPorts,
+    box: RootBox,
+    lease: RunLease,
+  ): Promise<AnswerResult> {
+    const stopped = abortCauseOf(lease) === 'user-stop'
+    try {
+      if (stopped) await closePausedByStop(ports, box)
+    } finally {
+      finish(box, lease)
+    }
+    return { status: stopped ? 'already-resolved' : 'refused' }
+  }
+
+  /**
+   * 主会话里拒绝 (§每种答复同批写什么): no re-judgement; the resolution, this call and the rest of the
+   * batch not-run / `user-rejected`, and a Run that ends at once as `user-rejected` — one append.
+   */
+  async function rejectCard(
+    ports: LoopPorts,
+    box: RootBox,
+    waiting: WaitingCall,
+    lease: RunLease,
+  ): Promise<AnswerResult> {
+    const frozen = await frozenBatch(waiting)
+    if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
+    const runId = ids.uuid()
+    const { entries, reason } = rejectFacts({
+      tape,
+      now,
+      sessionId: waiting.sessionId,
+      runId,
+      waiting,
+      toolName: frozen.item?.originalName ?? waiting.call.name,
+    })
+    await appendTo(waiting.sessionId, entries)
+    finish(box, lease)
+    emit(ports, {
+      type: 'run-started',
+      rootSessionId: box.rootSessionId,
+      sessionId: waiting.sessionId,
+      runId,
+    })
+    emitClosures(ports, box, waiting.sessionId, entries)
+    // Plan step 17 sends the queued messages after a `user-rejected` end.
+    runEnded(ports, box, waiting.sessionId, {
+      runId,
+      reason,
+      recorded: true,
+      lastStop: null,
+      errorCode: null,
+    })
+    return { status: 'applied' }
+  }
+
+  /**
+   * 允许 (§每种答复同批写什么): judged again first, and only ever tighter (F3). Still allowed — or an
+   * ask whose card is unchanged — writes the resolution with the new Run's head and resumes the batch
+   * with this call; tightened to a denial, the call closes with its block and the Run resumes the rest;
+   * an ask whose card changed writes only the re-judgement, answers `stale` and shows the new card.
+   */
+  async function allowCard(
+    ports: LoopPorts,
+    box: RootBox,
+    waiting: WaitingCall,
+    lease: RunLease,
+  ): Promise<AnswerResult> {
+    const frozen = await frozenBatch(waiting)
+    const resolver: FactWriter = { by: 'resolver' }
+    const { item } = frozen
+    // Gone, as far as the mailbox can tell without an assembly: out of the frozen table, or a
+    // builtin with no executor in this build. A connector's server is checked at dispatch.
+    const unavailable =
+      item === undefined ||
+      (item.source === 'builtin' &&
+        executorFor({ item, mcpSources: [], testTools: deps.testTools }) === null)
+    let facts: NewEntry[]
+    let resume: ResumeBatch
+    if (unavailable) {
+      facts = [
+        resolvedEntry({
+          tape,
+          now,
+          waiting,
+          outcome: 'tool-unavailable',
+          via: 'rejudge',
+          writer: resolver,
+        }),
+        ...batchClosures({
+          tape,
+          now,
+          waiting,
+          calls: [waiting.call],
+          source: 'tool-unavailable',
+          writer: resolver,
+        }),
+      ]
+      resume = {
+        runId: waiting.ref.runId,
+        requestSeq: waiting.ref.requestSeq,
+        calls: waiting.rest,
+        approved: null,
+      }
+    } else {
+      const judged = await judgeCall(
+        {
+          tape,
+          host: deps.host,
+          sessionId: waiting.sessionId,
+          profile: 'chat',
+          inspectors: deps.inspectors,
+          protectedFiles: deps.protectedFiles,
+          userSetting: deps.userSetting,
+          searchHost:
+            waiting.decision.confirm?.target.type === 'search'
+              ? waiting.decision.confirm.target.host
+              : null,
+          signal: lease.signal,
+        },
+        item,
+        waiting.call,
+      )
+      if (judged.kind === 'stopped' || lease.signal.aborted) return abortedAnswer(ports, box, lease)
+      const rejudge = waiting.rejudge + 1
+      const key = permissionDecidedKey(
+        waiting.ref.runId,
+        waiting.ref.requestSeq,
+        waiting.ref.ordinal,
+        rejudge,
+      )
+      const verdict = judged.decision.record.verdict
+      if (verdict === 'deny') {
+        facts = [
+          decisionEntry({
+            tape,
+            now,
+            ref: waiting.ref,
+            argsHash: waiting.call.argsHash,
+            judged,
+            key,
+            rejudge,
+            writer: resolver,
+          }),
+          resolvedEntry({
+            tape,
+            now,
+            waiting,
+            outcome: 'denied-on-rejudge',
+            via: 'rejudge',
+            writer: resolver,
+          }),
+          ...blockFacts({ tape, now, writer: resolver }, waiting.ref, judged),
+        ]
+        resume = {
+          runId: waiting.ref.runId,
+          requestSeq: waiting.ref.requestSeq,
+          calls: waiting.rest,
+          approved: null,
+        }
+      } else if (verdict === 'ask' && cardChanged(waiting.decision, judged)) {
+        // Still asks, but about something else: a new card, and the old one's click is stale.
+        const decided = decisionEntry({
+          tape,
+          now,
+          ref: waiting.ref,
+          argsHash: waiting.call.argsHash,
+          judged,
+          key,
+          rejudge,
+          writer: resolver,
+        })
+        await appendTo(waiting.sessionId, [decided])
+        finish(box, lease)
+        const card = cardOfEntries(waiting.sessionId, [decided])
+        if (card !== null) deliver(card)
+        return { status: 'stale' }
+      } else {
+        // Allowed as answered: a verdict that loosened since is not taken (F3).
+        const scope = answerScope({
+          decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+          reversibility: waiting.decision.reversibility,
+          ...(judged.place === undefined ? {} : { place: judged.place }),
+          source: item.source === 'mcp' ? 'mcp' : 'builtin',
+          toolName: item.originalName,
+        })
+        const object = judged.grantObject ?? {
+          kind: 'call' as const,
+          argsHash: waiting.call.argsHash,
+        }
+        facts = [
+          resolvedEntry({
+            tape,
+            now,
+            waiting,
+            outcome: 'allowed',
+            via: 'card',
+            grant: { scope, key: grantKey(item.serverId, item.originalName, object) },
+            writer: resolver,
+          }),
+        ]
+        resume = {
+          runId: waiting.ref.runId,
+          requestSeq: waiting.ref.requestSeq,
+          calls: [waiting.call, ...waiting.rest],
+          approved: {
+            ordinal: waiting.ref.ordinal,
+            decisionKey: waiting.decisionKey,
+            summary: waiting.decision.summary,
+            reversibility: waiting.decision.reversibility,
+          },
+        }
+      }
+    }
+    if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
+    const runId = ids.uuid()
+    const head = await tape.head(waiting.sessionId)
+    if (head === null) throw new Error(`answer: session ${waiting.sessionId} has no head`)
+    const opened = await appendOpening(ports, box, waiting.sessionId, runId, head.incarnationId, [
+      ...facts,
+      ...resumeHead({
+        tape,
+        now,
+        sessionId: waiting.sessionId,
+        runId,
+        waiting,
+        selected: frozen.setup.selected,
+      }),
+    ])
+    emitClosures(ports, box, waiting.sessionId, facts)
+    startRun(ports, box, waiting.sessionId, opened, lease, frozen.setup.selected.providerId, () =>
+      resumeSetup(box, waiting.sessionId, lease, frozen.setup, resume),
+    )
+    return { status: 'applied' }
+  }
+
+  /** The paused batch's frozen facts: its model setup, and the table item of the waiting call. */
+  async function frozenBatch(
+    waiting: WaitingCall,
+  ): Promise<{ setup: ResumeSetup; item: ToolTableItem | undefined }> {
+    const entries = await readSessionEntries(tape, waiting.sessionId)
+    const setup = resumeSetupOf(entries, waiting.ref)
+    const head = await tape.head(waiting.sessionId)
+    const state = await readViewState(tape, waiting.sessionId)
+    const tableKey = toolTableKey(
+      head?.incarnationId ?? '',
+      state.generation,
+      setup.selected.providerId,
+    )
+    const stored = state.tables.get(tableKey)
+    const table = stored === undefined ? null : rebuildToolTable(tableKey, stored, state.specs)
+    return { setup, item: table?.items.find((candidate) => candidate.name === waiting.call.name) }
+  }
+
+  /**
+   * A resuming Run's setup (§续跑), outside the mailbox: the frozen model, max tokens and effort, and
+   * an `assemble` for the search backend and the connector sources. `provider()` is called at the
+   * first request only, so a missing key never loses the results of calls already run. A stop while
+   * `assemble` hangs is not waited for: the Run starts with nothing assembled and closes as stopped.
+   */
+  async function resumeSetup(
+    box: RootBox,
+    sessionId: string,
+    lease: RunLease,
+    setup: ResumeSetup,
+    resume: ResumeBatch,
+  ): Promise<RunSetup> {
+    const choice: ModelChoice = {
+      providerId: setup.selected.providerId,
+      modelId: setup.selected.modelId,
+      effort: setup.effort,
+      capabilitySource: setup.selected.capabilitySource ?? 'builtin',
+    }
+    const assembling = connector.assemble({
+      sessionId,
+      rootSessionId: box.rootSessionId,
+      choice,
+      signal: lease.signal,
+    })
+    assembling.catch(() => undefined)
+    const assembly = await Promise.race([
+      assembling,
+      whenAborted(lease.signal).then((): RunAssembly => stoppedAssembly(setup)),
+    ])
+    let built: Provider | undefined
+    return {
+      provider: () => (built ??= assembly.provider()),
+      model: setup.model,
+      maxTokens: setup.maxTokens,
+      effort: setup.effort,
+      assembly,
+      resume,
+    }
+  }
+
   /**
    * The Run itself, outside the mailbox (`driveRun`); every fact it writes comes back in as a task.
    * Its end is one more task: `run_terminal` — with a paused decision in the same batch (同批规则 1)
    * — then the lease finished, then `run-ended`. Whatever goes wrong, the lease is finished and
    * `run-ended` is sent: a Run that could not record its end says `recorded: false`.
+   *
+   * `setup` is what the Run is built from: a new round's prebuild, ready at once, or — for a Run an
+   * answer opened — the paused batch's frozen facts and an `assemble` called here, outside the mailbox
+   * (§主进程与 kernel 的循环接口「续跑」).
    */
   function startRun(
     ports: LoopPorts,
@@ -675,70 +1085,80 @@ export function createLoop(deps: LoopDeps): Loop {
     sessionId: string,
     opened: OpenedRound,
     lease: RunLease,
-    pre: Extract<Prebuild, { kind: 'ready' }>,
+    providerId: ProviderId,
+    setup: () => Promise<RunSetup>,
   ): void {
     const { runId, incarnationId } = opened
     const root = box.rootSessionId
-    const ctx: RunDriverContext = {
-      tape,
-      ids,
-      now,
-      log,
-      host: deps.host,
-      sessionId,
-      incarnationId,
-      runId,
-      pin: opened.contextAtEntryId,
-      provider: () => pre.provider,
-      model: pre.assembly.model,
-      maxTokens: pre.assembly.maxTokens,
-      effort: pre.choice.effort,
-      toolsWithheld: pre.assembly.toolsWithheld,
-      search: pre.assembly.search,
-      mcpSources: pre.assembly.mcpSources,
-      // The draft's profile is written from plan step 18; until then every session is a chat.
-      profile: 'chat',
-      inspectors: deps.inspectors,
-      protectedFiles: deps.protectedFiles,
-      userSetting: deps.userSetting,
-      testTools: deps.testTools,
-      tokenLimit: deps.tokenLimit,
-      lease,
-      openTable: () => openTable(incarnationId, pre.assembly),
-      write: (entries) =>
-        post(box, 'run', null, () => appendFirstWins(sessionId, incarnationId, entries)),
-      onUnansweredCall: deps.onUnansweredCall,
-      emit: {
-        delta: (id, type, delta) =>
-          emit(ports, { type, rootSessionId: root, sessionId, runId: id, delta }),
-        discarded: (id) =>
-          emit(ports, { type: 'attempt-discarded', rootSessionId: root, sessionId, runId: id }),
-        call: (call) =>
-          emit(ports, {
-            type: 'tool-call',
-            rootSessionId: root,
-            sessionId,
-            callKey: call.callKey,
-            providerToolCallId: call.providerToolCallId,
-            name: call.name,
-            input: call.input,
-          }),
-        outcome: (call, view) =>
-          emit(ports, {
-            type: 'tool-outcome',
-            rootSessionId: root,
-            sessionId,
-            callKey: call.callKey,
-            providerToolCallId: call.providerToolCallId,
-            outcome: view,
-          }),
-      },
+    const events: RunDriverContext['emit'] = {
+      delta: (id, type, delta) =>
+        emit(ports, { type, rootSessionId: root, sessionId, runId: id, delta }),
+      discarded: (id) =>
+        emit(ports, { type: 'attempt-discarded', rootSessionId: root, sessionId, runId: id }),
+      call: (call) =>
+        emit(ports, {
+          type: 'tool-call',
+          rootSessionId: root,
+          sessionId,
+          callKey: call.callKey,
+          providerToolCallId: call.providerToolCallId,
+          name: call.name,
+          input: call.input,
+        }),
+      outcome: (call, view) =>
+        emit(ports, {
+          type: 'tool-outcome',
+          rootSessionId: root,
+          sessionId,
+          callKey: call.callKey,
+          providerToolCallId: call.providerToolCallId,
+          outcome: view,
+        }),
     }
     void (async (): Promise<void> => {
       let finished: RunFinish | null = null
       let failure: unknown = null
       try {
-        finished = await driveRun(ctx)
+        const built = await setup()
+        finished = await driveRun({
+          tape,
+          ids,
+          now,
+          log,
+          host: deps.host,
+          sessionId,
+          incarnationId,
+          runId,
+          pin: opened.contextAtEntryId,
+          provider: built.provider,
+          model: built.model,
+          maxTokens: built.maxTokens,
+          effort: built.effort,
+          toolsWithheld: built.assembly.toolsWithheld,
+          search: built.assembly.search,
+          mcpSources: built.assembly.mcpSources,
+          // The draft's profile is written from plan step 18; until then every session is a chat.
+          profile: 'chat',
+          inspectors: deps.inspectors,
+          protectedFiles: deps.protectedFiles,
+          userSetting: deps.userSetting,
+          testTools: deps.testTools,
+          tokenLimit: deps.tokenLimit,
+          lease,
+          openTable: () => openTable(incarnationId, built.assembly),
+          // A write task that finds its lease aborted writes no decision and no dispatch
+          // (§主进程与 kernel 的循环接口「mailbox」): the batch closes the call as stopped instead.
+          write: (entries) =>
+            post(box, 'run', null, async () => {
+              if (lease.signal.aborted && entries.some(isDecisionOrDispatch)) {
+                throw new RunWriteRefusedError()
+              }
+              return appendFirstWins(sessionId, incarnationId, entries)
+            }),
+          onUnansweredCall: deps.onUnansweredCall,
+          ...(built.resume === undefined ? {} : { resume: built.resume }),
+          emit: events,
+        })
       } catch (error) {
         failure = error
       }
@@ -750,7 +1170,7 @@ export function createLoop(deps: LoopDeps): Loop {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(failure)}`)
           runEnded(ports, box, sessionId, {
             runId,
-            reason: failedEndReason(pre.provider.id),
+            reason: failedEndReason(providerId),
             recorded: false,
             lastStop: null,
             errorCode: 'unknown',
@@ -766,19 +1186,19 @@ export function createLoop(deps: LoopDeps): Loop {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
         }
         // Plan step 17 takes the queue here, between the terminal and the finish.
-        finish(box, lease)
-        if (recorded) {
-          for (const ref of end.stopped) {
-            const closure = end.entries.filter((entry) => entry.payload['ordinal'] === ref.ordinal)
-            ctx.emit.outcome(
-              {
-                callKey: callKeyOf(ref.runId, ref.requestSeq, ref.ordinal),
-                providerToolCallId: ref.providerToolCallId,
-              },
-              notRunView('stopped', closure),
-            )
+        let card: ConfirmRequest | null = null
+        if (recorded && end.reason.code === 'paused') {
+          if (lease.stopRequested) {
+            // A stop that reached the pause while it committed: 暂停中停止, in this same task
+            // (「Run 结束」). The card never shows; `run-ended` still says `paused`.
+            await closePausedByStop(ports, box)
+          } else if (!lease.signal.aborted) {
+            card = cardOfEntries(sessionId, end.entries)
           }
+          // A quit or a closed window writes nothing more: the card survives the restart (B4).
         }
+        finish(box, lease)
+        if (recorded) emitClosures(ports, box, sessionId, end.entries)
         runEnded(ports, box, sessionId, {
           runId,
           reason: end.reason,
@@ -786,8 +1206,66 @@ export function createLoop(deps: LoopDeps): Loop {
           lastStop: finished.lastStop,
           errorCode: finished.errorCode,
         })
+        // Delivered once the pause is on the Tape (§答复与投递「投递」); the renderer also pulls it.
+        if (card !== null) deliver(card)
       })
     })()
+  }
+
+  /** A card to the host, after its facts committed; a host that fails only reaches the log. */
+  function deliver(card: ConfirmRequest): void {
+    void deps.host.confirm.request(card).catch((error: unknown) => {
+      log(`[loop] the card ${card.requestId} was not delivered: ${describe(error)}`)
+    })
+  }
+
+  /** `tool-outcome` for each closure a mailbox task committed — after the commit, never before. */
+  function emitClosures(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    entries: readonly NewEntry[],
+  ): void {
+    for (const result of entries) {
+      if (result.name !== 'tool/result') continue
+      const key = callOfFact(result)
+      const outcome = entries.find(
+        (entry) => entry.name === 'execution/tool_outcome' && callOfFact(entry) === key,
+      )
+      const source = (outcome?.payload['source'] ?? null) as ClosureSource | null
+      if (source === null) continue
+      emit(ports, {
+        type: 'tool-outcome',
+        rootSessionId: box.rootSessionId,
+        sessionId,
+        callKey: key,
+        providerToolCallId: String(result.payload['providerToolCallId']),
+        outcome: notRunView(source, [result]),
+      })
+    }
+  }
+
+  /** Appends one mailbox task's batch to a session, in its current incarnation. */
+  async function appendTo(
+    sessionId: string,
+    entries: readonly NewEntry[],
+  ): Promise<readonly AppendResult[]> {
+    const head = await tape.head(sessionId)
+    if (head === null) throw new Error(`append: session ${sessionId} has no head`)
+    return tape.appendEntries({ sessionId, incarnationId: head.incarnationId, entries })
+  }
+
+  /**
+   * 暂停中停止 (§每种答复同批写什么): the card this root waits on is cancelled, its call and the rest of
+   * its batch close not-run / `stopped`, and no Run opens. True when there was a card.
+   */
+  async function closePausedByStop(ports: LoopPorts, box: RootBox): Promise<boolean> {
+    const waiting = await waitingOf(tape, box.rootSessionId)
+    if (waiting === null) return false
+    const entries = stopFacts(tape, now, waiting)
+    await appendTo(waiting.sessionId, entries)
+    emitClosures(ports, box, waiting.sessionId, entries)
+    return true
   }
 
   /**
@@ -1070,9 +1548,61 @@ export function createLoop(deps: LoopDeps): Loop {
       )
     },
 
-    answer(): Promise<AnswerResult> {
-      // Plan step 15: nothing waits on an answer before the waiting states exist.
-      return Promise.resolve({ status: bound === null ? 'refused' : 'not-found' })
+    answer(q): Promise<AnswerResult> {
+      const ports = bound
+      if (ports === null) return Promise.resolve({ status: 'refused' })
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(new TypeError(`answer: "${q.sessionId}" is not a canonical UUID`))
+      }
+      const box = mailboxOf(rootOf(q.sessionId))
+      // The entry, before the first await: a lease only when nothing is ahead of this answer.
+      if (!canBeginAtEntry(box)) {
+        return post(box, 'command', null, () => answerTurn(ports, box, q, null))
+      }
+      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+      if ('refused' in begun) {
+        dropIfIdle(box)
+        return Promise.resolve({ status: 'refused' })
+      }
+      const lease = hold(box, begun)
+      return post(box, 'command', lease, () => answerTurn(ports, box, q, lease))
+    },
+
+    async currentPending(q): Promise<PendingCard | null> {
+      const waiting = await waitingOf(tape, rootOf(q.sessionId))
+      // A question's card is plan step 26's.
+      if (waiting === null || waiting.waitKind !== 'approval') return null
+      const card = confirmRequestOf(waiting.sessionId, waiting.decisionKey, waiting.decision)
+      if (card === null) return null
+      const { item } = await frozenBatch(waiting)
+      const place =
+        item === undefined
+          ? undefined
+          : await placeOf(
+              {
+                host: deps.host,
+                sessionId: waiting.sessionId,
+                protectedFiles: deps.protectedFiles,
+                profile: 'chat',
+              },
+              item,
+              waiting.call.input,
+            )
+      const callKey = callKeyOf(waiting.ref.runId, waiting.ref.requestSeq, waiting.ref.ordinal)
+      return {
+        waitKind: 'approval',
+        card,
+        callKey,
+        // A sub-agent's card hangs under the parent's Agent call (plan step 31); a root's under its own.
+        anchorCallKey: callKey,
+        allowScope: answerScope({
+          decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+          reversibility: waiting.decision.reversibility,
+          ...(place === undefined ? {} : { place }),
+          source: item?.source === 'builtin' ? 'builtin' : 'mcp',
+          toolName: item?.originalName ?? waiting.call.name,
+        }),
+      }
     },
 
     stop(q): Promise<{ stopped: boolean }> {
@@ -1083,15 +1613,85 @@ export function createLoop(deps: LoopDeps): Loop {
         return Promise.resolve({ stopped: true })
       }
       // No live lease: into the mailbox, and looked at again when its turn comes — a command ahead of
-      // it may have begun one by then. Plan step 15 closes a paused session here, step 16 a
-      // resumable one.
+      // it may have begun one by then. A paused root is closed here (暂停中停止); plan step 16 stops
+      // a resumable one.
+      const ports = bound
       const box = mailboxOf(q.rootSessionId)
       return post(box, 'stop', null, async (): Promise<{ stopped: boolean }> => {
         const lease = box.lease
-        if (lease === null) return { stopped: false }
-        lease.abort('user-stop')
-        return { stopped: true }
+        if (lease !== null) {
+          lease.abort('user-stop')
+          return { stopped: true }
+        }
+        return { stopped: await closePausedByStop(ports, box) }
       })
+    },
+  }
+}
+
+/** A new round's Run, from its prebuild. */
+function roundSetup(pre: Extract<Prebuild, { kind: 'ready' }>): RunSetup {
+  return {
+    provider: () => pre.provider,
+    model: pre.assembly.model,
+    maxTokens: pre.assembly.maxTokens,
+    effort: pre.choice.effort,
+    assembly: pre.assembly,
+  }
+}
+
+/** The card an asking decision in these entries describes, or null. */
+function cardOfEntries(sessionId: string, entries: readonly NewEntry[]): ConfirmRequest | null {
+  const decided = entries.find(
+    (entry) => entry.name === 'tool/permission_decided' && entry.payload['awaits'] === 'approval',
+  )
+  if (decided === undefined) return null
+  return confirmRequestOf(
+    sessionId,
+    decided.provenanceKey,
+    decided.payload as unknown as PermissionDecidedPayload,
+  )
+}
+
+/** The two facts a Run's write task refuses once its lease is aborted (「mailbox」). */
+function isDecisionOrDispatch(entry: NewEntry): boolean {
+  return entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed'
+}
+
+/** Whether a re-judgement's card differs from the one waiting: verdict, summary or card (F3). */
+function cardChanged(
+  before: PermissionDecidedPayload,
+  judged: Extract<Judgement, { kind: 'judged' }>,
+): boolean {
+  const { decision } = judged
+  const after = {
+    verdict: decision.record.verdict,
+    summary: decision.summary,
+    confirm:
+      decision.confirm === undefined || judged.card === undefined
+        ? null
+        : { ...decision.confirm, ...judged.card },
+  }
+  const was = {
+    verdict: before.record.verdict,
+    summary: before.summary,
+    confirm: before.confirm ?? null,
+  }
+  return canonicalJson(after) !== canonicalJson(was)
+}
+
+/** What a resumed Run gets when a stop beats its `assemble`: nothing to call, nothing to send to. */
+function stoppedAssembly(setup: ResumeSetup): RunAssembly {
+  return {
+    model: setup.model,
+    capabilitySource: setup.selected.capabilitySource ?? 'builtin',
+    endpointOrigin: '',
+    maxTokens: setup.maxTokens,
+    toolsWithheld: null,
+    search: null,
+    mcpSources: [],
+    provider: () => {
+      throw new Error('the Run was stopped before it was assembled')
     },
   }
 }
