@@ -294,6 +294,19 @@ describe('provider.select', () => {
     })
   })
 
+  it.each(['glm-5.3-flash', 'glm-5.3-flashx'])('accepts %s, a builtin row since 02', async (id) => {
+    // The daily model and the live suite's: builtin rows, so the card can save them (spec 02 §目标).
+    const h = await harness()
+    expect((await h.entry(ZHIPU_PROVIDER_ID)).models.map((model) => model.id)).toContain(id)
+    expect(await h.call('provider.select', { providerId: ZHIPU_PROVIDER_ID, modelId: id })).toEqual(
+      { ok: true, data: { ok: true } },
+    )
+    expect((await readConfig(h.host.fs, h.host.identity)).provider).toEqual({
+      id: ZHIPU_PROVIDER_ID,
+      modelId: id,
+    })
+  })
+
   it('refuses a model the definition does not declare', async () => {
     const h = await harness()
     expect(
