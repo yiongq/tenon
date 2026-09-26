@@ -4,8 +4,8 @@
  * vendor ran itself is archived, never dispatched and never sent back (旧 101, 01 修补 9 (t)); and
  * the attempt fact says which encoder and which ModelInfo fields produced its bytes (旧 112, 旧 42).
  *
- * The path is the real one end to end: the Anthropic adapter over fakeNetwork, the session service,
- * a memory Tape, and the NEXT request rebuilt from that Tape — so "replayed as stored" is about what
+ * The path is the real one end to end: the Anthropic adapter over fakeNetwork, the session service
+ * and its loop, a memory Tape, and the NEXT request rebuilt from that Tape — so "replayed as stored" is about what
  * the stored fact reproduces, not about an object a test kept in hand. Every request of every run
  * is checked with `assertToolPairing` and `assertLastTurnIsUser` as it leaves.
  *
@@ -18,6 +18,7 @@ import {
   WIRE_MODEL_FIELDS,
   anthropicDefinition,
   canonicalJson,
+  createMemoryHost,
   createMemoryTapeStore,
   createSessionService,
   encodeAnthropicMessages,
@@ -37,6 +38,7 @@ import {
   assertLastTurnIsUser,
   assertToolPairing,
   createCounterIds,
+  createTestLoopPorts,
   fakeNetwork,
 } from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
@@ -79,31 +81,35 @@ async function session(streams: readonly (readonly string[])[]): Promise<Session
   })
   const store = createMemoryTapeStore({ identity: TAPE_IDENTITY })
   let clock = 1_000
+  const host = createMemoryHost()
+  const loop = createTestLoopPorts({ connector: { provider, model: MODEL } })
   const service = createSessionService({
-    host: { clock: { now: () => (clock += 1) } },
+    host: { ...host, clock: { now: () => (clock += 1), setTimeout: host.clock.setTimeout } },
     tape: store,
     ids: createCounterIds(),
+    inspectors: [],
+    connector: loop.connector,
+    protectedFiles: [],
   })
+  service.bindLoop(loop)
   const { sessionId } = await service.createSession()
   return {
     net,
     store,
     sessionId,
     async send(text, model = MODEL) {
-      const result = await service.runRequest({
-        sessionId,
-        user: { text },
-        provider,
-        model,
-        tools: [TOOL],
-      })
-      const page = await store.readRange({
-        sessionId,
-        fromEntryId: result.attemptEntryId,
-        atEntryId: result.attemptEntryId,
-        limit: 1,
-      })
-      const attempt = page.entries[0]
+      loop.connector.use({ provider, model })
+      const sent = await service.send({ sessionId, origin: null, text })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      await loop.runEnded({ runId: sent.runId })
+      const attempt = (
+        await store.readBySource({
+          sessionId,
+          sourceType: 'runtime_event',
+          sourceId: sent.runId,
+          limit: 10,
+        })
+      ).find((entry) => entry.name === 'provider/attempt_completed')
       if (attempt === undefined) throw new Error('no attempt fact')
       return attempt
     },

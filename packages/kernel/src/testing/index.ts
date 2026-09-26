@@ -55,3 +55,14 @@ export type {
   ScriptedProviderOptions,
   ScriptedTurnOptions,
 } from './scripted-provider.js'
+
+// The loop's ports for tests (spec 02 plan step 9): a scripted connector, one in-memory queue,
+// recording leases and an event recorder.
+export { createTestConnector, createTestLoopPorts } from './loop-ports.js'
+export type {
+  TestConnector,
+  TestConnectorScript,
+  TestLease,
+  TestLoopPorts,
+  TestLoopPortsOptions,
+} from './loop-ports.js'

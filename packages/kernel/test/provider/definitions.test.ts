@@ -26,6 +26,7 @@ import {
   ZHIPU_DEFAULT_BASE_URL,
   anthropicDefinition,
   createBlockAccumulator,
+  createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
@@ -41,13 +42,17 @@ import type {
   ModelInfo,
   ProviderDefinition,
   ProviderRegistry,
-  RunResult,
   StopReason,
   StreamEvent,
   TapeEntry,
   Usage,
 } from '../../src/index.js'
-import { createCounterIds, createStreamGate, fakeNetwork } from '../../src/testing/index.js'
+import {
+  createCounterIds,
+  createStreamGate,
+  createTestLoopPorts,
+  fakeNetwork,
+} from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
 import * as anthropicFixture from './fixtures/anthropic-sse.js'
 import * as openAIFixture from './fixtures/openai-sse.js'
@@ -386,13 +391,13 @@ const TAPE_IDENTITY = {
 
 interface TapeDrive {
   readonly entries: TapeEntry[]
-  readonly result: RunResult
+  readonly runId: string
   readonly model: ModelInfo
 }
 
 /**
  * THE call path again, one layer up: the same definition, the same fixture, through the kernel session
- * service into a memory store. Nothing in it names a provider either.
+ * service and its loop into a memory store. Nothing in it names a provider either.
  */
 async function driveThroughTape(
   registry: ProviderRegistry,
@@ -411,30 +416,33 @@ async function driveThroughTape(
   if (model === undefined) throw new Error(`${definition.id} has no builtin model`)
   const store = createMemoryTapeStore({ identity: TAPE_IDENTITY })
   let clock = NOW
+  const host = createMemoryHost()
+  const loop = createTestLoopPorts({ connector: { provider, model } })
   const service = createSessionService({
     host: {
+      ...host,
       clock: {
         now: (): number => {
           clock += 1000
           return clock
         },
+        setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms),
       },
     },
     tape: store,
     ids: createCounterIds(),
+    inspectors: [],
+    connector: loop.connector,
+    protectedFiles: [],
   })
+  service.bindLoop(loop)
   const { sessionId } = await service.createSession()
-  const result = await service.runRequest({
-    sessionId,
-    user: { text: 'read /tmp/a.ts' },
-    provider,
-    model,
-    system: 'be brief',
-    tools: [TOOL],
-  })
+  const sent = await service.send({ sessionId, origin: null, text: 'read /tmp/a.ts' })
+  if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+  await loop.runEnded({ runId: sent.runId })
   const page = await store.readRange({ sessionId, limit: 100 })
   await store.close()
-  return { entries: page.entries, result, model }
+  return { entries: page.entries, runId: sent.runId, model }
 }
 
 /** A fact minus its values: what has to be identical whichever provider produced the turn. */
@@ -449,7 +457,7 @@ function describeFact(entry: TapeEntry): unknown {
   }
 }
 
-/** The five facts of one turn. */
+/** The six facts of one turn: phase 1's five, and the Run's start (spec 02 plan step 9). */
 const TURN_SHAPE: readonly unknown[] = [
   {
     name: 'session/start',
@@ -465,6 +473,14 @@ const TURN_SHAPE: readonly unknown[] = [
     sourceType: 'message',
     sourceSeq: 0,
     payloadKeys: ['content', 'messageId', 'revision', 'role', 'status'],
+    meta: {},
+  },
+  {
+    name: 'execution/run_started',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: null,
+    payloadKeys: ['cause'],
     meta: {},
   },
   {
@@ -562,20 +578,20 @@ describe('acceptance 1 — one call path, four providers', () => {
 
   for (const testCase of CASES) {
     it(`writes the same-shaped Tape facts for ${testCase.name}`, async () => {
-      const { entries, result, model } = await driveThroughTape(registry, testCase)
+      const { entries, runId, model } = await driveThroughTape(registry, testCase)
       // The shape: which facts a turn writes, in which order, with which identity columns and which
       // payload keys. Identical for all four — a provider that needed a sixth fact, a different
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , modelSelected, assistant, attempt] = entries
+      const [, , , modelSelected, assistant, attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
       })
       expect(assistant?.payload['content']).toEqual(testCase.content)
       expect(assistant?.payload['status']).toBe('complete')
-      expect(assistant?.payload['runId']).toBe(result.identity.runId)
+      expect(assistant?.payload['runId']).toBe(runId)
       expect(attempt?.payload['providerId']).toBe(testCase.definition.id)
       expect(attempt?.payload['modelId']).toBe(model.id)
       expect(attempt?.payload['stop']).toEqual(testCase.stop)
@@ -602,7 +618,7 @@ describe('acceptance 1 — one call path, four providers', () => {
       )
       // The prefix this request was assembled from is the head after the two pre-run facts.
       expect(attempt?.payload['contextAtEntryId']).toBe(modelSelected?.entryId)
-      expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${result.identity.runId}:1:1`)
+      expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${runId}:1:1`)
     })
   }
 

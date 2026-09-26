@@ -20,8 +20,9 @@ import {
 import type { AbsolutePath, HostAdapter, MessageRow, SessionService } from '@tenon-app/kernel'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { registerChatRoutes } from '../src/main/chat.js'
+import { createDesktopLoop, registerChatRoutes } from '../src/main/chat.js'
 import { writeConfig } from '../src/main/host/profile.js'
+import { createRunConnector } from '../src/main/run-assembly.js'
 import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
@@ -134,20 +135,27 @@ function harness(options: { host?: HostAdapter; env?: Record<string, string> } =
     options.host ??
     createMemoryHost({ network: { fetch: (input, init) => globalThis.fetch(input, init) } })
   const tape = createMemoryTapeStore({ identity: host.identity })
-  const sessions = createSessionService({ host, tape, ids: { uuid: (): string => randomUUID() } })
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
+  // index.ts's wiring: the connector at construction, the loop's host half through bindLoop.
+  const sessions = createSessionService({
+    host,
+    tape,
+    ids: { uuid: (): string => randomUUID() },
+    inspectors: [],
+    connector: createRunConnector({ host, providers, env: options.env ?? {}, log: noop }),
+    protectedFiles: [],
+  })
   const ipc = fakeIpc()
   const out = collector()
-  registerChatRoutes({
-    host,
+  const loop = createDesktopLoop({
+    clock: host.clock,
     send: out.send,
-    ipcMain: ipc.ipcMain,
-    sessions,
-    providers,
-    env: options.env ?? {},
+    locale: () => 'en',
     log: noop,
   })
+  sessions.bindLoop(loop.ports)
+  registerChatRoutes({ send: out.send, ipcMain: ipc.ipcMain, sessions, loop, log: noop })
   registerSessionRoutes({ ipcMain: ipc.ipcMain, sessions })
   return { ipc, out, sessions, host, sessionId: randomUUID() }
 }
@@ -463,18 +471,13 @@ describe('chat routes', () => {
 
   it('answers every chat route when the session store could not be opened', async () => {
     fake = await startFakeAnthropic({ chunks: ['never'] })
-    const host = createMemoryHost()
-    const providers = createProviderRegistry()
-    registerBuiltinProviders(providers)
     const ipc = fakeIpc()
     const out = collector()
     registerChatRoutes({
-      host,
       send: out.send,
       ipcMain: ipc.ipcMain,
       sessions: null,
-      providers,
-      env: withKey(fake.baseURL),
+      loop: null,
       log: noop,
     })
 

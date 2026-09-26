@@ -307,21 +307,24 @@ export {
 } from './provider/definitions/ollama.js'
 export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'
 
-// The kernel session service (step 12): creates / resets / deletes sessions, writes the phase-1
-// facts and runs ONE provider request. Facts only — no loop, no retry, no tool dispatch (phase 2).
-// It takes the store as an INSTANCE and wraps it in the Tape facade itself, so no caller above it
-// holds `TapeStore.append`.
+// The kernel session service: creates / resets / deletes sessions, reads the projections back, and
+// owns the agent loop (spec 02 §主进程与 kernel 的循环接口). It takes the store as an INSTANCE and
+// wraps it in the Tape facade itself, so no caller above it holds `TapeStore.append`. Spec 02 removed
+// phase 1's `runRequest`, `RunRequestQuery` and `RunResult`: a request is what a Run sends.
 export { createSessionService } from './session/service.js'
 export type {
+  AnswerResult,
+  ContinueRunResult,
   CreateSessionQuery,
   LatestSession,
   ListMessagesQuery,
-  RunRequestQuery,
-  RunResult,
+  RecoverResult,
+  ResumeResult,
+  SendQuery,
+  SendResult,
   SessionIncarnation,
   SessionService,
   SessionServiceOptions,
-  UserTurn,
 } from './session/service.js'
 // The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
 // revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
@@ -405,3 +408,39 @@ export {
   viewContentKey,
   workspaceSetKey,
 } from './tape/provenance.js'
+
+// Spec 02 plan step 9 — 所有权骨架. The loop's ports and events, the commands' types, and the types
+// they reference, declared exactly as §主进程与 kernel 的循环接口 writes them (M1: frozen from here;
+// a host-implemented port only gains optional members after ①).
+export type {
+  CapabilitySource,
+  LoopPorts,
+  McpToolSource,
+  ModelChoice,
+  QueuedMessage,
+  RunAbortCause,
+  RunAssembly,
+  RunConnector,
+  RunLease,
+  RunOrigin,
+} from './loop/ports.js'
+export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
+export type { AnswerCommand } from './loop/waiting.js'
+export { INSPECTOR_TIMEOUT_MS } from './permission/inspector.js'
+export type { AskOpinion, DenyOpinion, InspectorRegistration } from './permission/inspector.js'
+export type {
+  AfterResultInput,
+  BeforeCallInput,
+  InspectedCall,
+  ResultMarker,
+  SessionView,
+} from './permission/session-view.js'
+export { BUILTIN_SERVER_ID } from './tools/registry.js'
+export type { ToolTableItem } from './tools/registry.js'
+export type {
+  SearchBackend,
+  SearchBackendDefinition,
+  SearchHit,
+  SearchOutcome,
+} from './tools/search/types.js'
+export type { CommandShell } from './tools/builtin/bash.js'

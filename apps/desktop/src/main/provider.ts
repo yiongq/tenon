@@ -1,5 +1,6 @@
 /**
- * Turning settings into a constructed `Provider` (spec 01 §desktop 接线).
+ * Where a provider's settings come from (spec 01 §desktop 接线). The Run connector
+ * (`run-assembly.ts`, spec 02) turns them into the constructed `Provider` a Run sends through.
  *
  * The kernel knows how to talk to a provider; it deliberately does not know where the credentials
  * are. That lookup is the host's, and it lives here:
@@ -25,14 +26,7 @@ import {
   ZHIPU_PROVIDER_ID,
   keyFor,
 } from '@tenon-app/kernel'
-import type {
-  HostAdapter,
-  ModelInfo,
-  Provider,
-  ProviderDefinition,
-  ProviderId,
-  ProviderRegistry,
-} from '@tenon-app/kernel'
+import type { HostAdapter, ModelInfo, ProviderDefinition, ProviderId } from '@tenon-app/kernel'
 
 /**
  * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
@@ -77,20 +71,6 @@ const FALLBACK_MAX_OUTPUT_TOKENS = 4096
 
 export type EnvLike = Readonly<Record<string, string | undefined>>
 
-export interface ResolveProviderOptions {
-  readonly host: HostAdapter
-  readonly providers: ProviderRegistry
-  readonly providerId: ProviderId
-  /** `config.json`'s `providerConfig[providerId]`, when the user has saved any. */
-  readonly settings?: Readonly<Record<string, string>> | undefined
-  /** `config.json`'s `provider.modelId`. `TENON_MODEL` only fills what this leaves empty. */
-  readonly modelId?: string | null | undefined
-  readonly env?: EnvLike
-  /** `app.isPackaged`. The environment fallback below is a DEV build's, and only a dev build's. */
-  readonly isPackaged?: boolean
-  readonly log?: (line: string) => void
-}
-
 /**
  * The environment the development fallbacks read — `{}` once packaged, because a shipped Tenon
  * takes no credential, endpoint or provider choice from the ambient shell (「开发期回落」). Every
@@ -129,8 +109,9 @@ export interface ReadInputsOptions {
  * keychain, the rest from `config.json`, then the declared default, with the development
  * environment filling only what neither supplied.
  *
- * Separate from `resolveChatProvider` because `provider.configure` needs the same answer without
- * the environment, to decide whether what the user just typed can build a client at all.
+ * Shared by the Run connector (`run-assembly.ts`, which builds the provider a Run sends through) and
+ * `provider.configure`, which needs the same answer without the environment, to decide whether what
+ * the user just typed can build a client at all.
  */
 export async function readProviderInputs(options: ReadInputsOptions): Promise<ProviderInputs> {
   const { host, definition, env, log } = options
@@ -158,58 +139,6 @@ export async function readProviderInputs(options: ReadInputsOptions): Promise<Pr
     else config[key.name] = value
   }
   return { config, secrets }
-}
-
-export interface ResolvedProvider {
-  readonly provider: Provider
-  readonly model: ModelInfo
-  /** `TENON_MAX_TOKENS` when set, otherwise phase 0's cap within what the model allows. */
-  readonly maxTokens: number
-}
-
-/**
- * Reads the credentials, builds the provider and picks the model.
- *
- * It rejects rather than returns a null provider: a missing credential is a configuration
- * problem with a name (`ProviderConfigMissingError`), and the caller maps it to an error code the
- * interface has copy for. An UNREADABLE keychain (locked, no Secret Service) is not the same
- * thing as an unconfigured one: it is logged and the environment stays in charge, exactly as
- * phase 0 did.
- */
-export async function resolveChatProvider(
-  options: ResolveProviderOptions,
-): Promise<ResolvedProvider> {
-  const { host, providers, providerId } = options
-  const env = devEnv(options)
-  const log = options.log ?? ((line: string): void => console.warn(line))
-  const definition = providers.get(providerId)
-  if (definition === null) {
-    throw new ProviderConfigMissingError(providerId, 'a registered provider definition')
-  }
-
-  const { config, secrets } = await readProviderInputs({
-    host,
-    definition,
-    settings: options.settings,
-    env,
-    log,
-  })
-  const provider = definition.create({
-    network: host.network,
-    // A reading for `retryAfterMs`, and a timer for the byte-level idle watchdog only (spec 02,
-    // 01 修补 2 and 4): retrying still does not belong to a provider.
-    clock: { now: () => host.clock.now(), setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms) },
-    config,
-    secrets,
-  })
-  // The saved choice first; `TENON_MODEL` fills only what it left empty.
-  const model = selectModel(definition, trimmed(options.modelId) ?? fromEnv(env, MODEL_ENV), log)
-  const asked = positiveInteger(env[MAX_TOKENS_ENV])
-  return {
-    provider,
-    model,
-    maxTokens: asked ?? Math.min(DEFAULT_MAX_TOKENS, model.maxOutputTokens),
-  }
 }
 
 /**
@@ -300,11 +229,6 @@ function trimmed(value: string | null | undefined): string | null {
   if (value == null) return null
   const text = value.trim()
   return text === '' ? null : text
-}
-
-function positiveInteger(value: string | undefined): number | null {
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 function smallest(models: readonly ModelInfo[], of: (model: ModelInfo) => number): number | null {

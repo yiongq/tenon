@@ -9,7 +9,7 @@ import {
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
 import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
-import { registerChatRoutes } from './chat.js'
+import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
@@ -19,6 +19,7 @@ import { buildApplicationMenu } from './menu.js'
 import { hardenWebContents } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
 import { registerProviderRoutes } from './provider-routes.js'
+import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
 import { openSessionStore } from './tape/open.js'
 
@@ -110,21 +111,47 @@ async function main(): Promise<void> {
   })
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
-  const sessions =
-    tape === null
-      ? null
-      : createSessionService({ host, tape, ids: { uuid: (): string => randomUUID() } })
-  if (tape !== null) {
-    // WAL: the last connection to close is what checkpoints the file.
-    app.on('will-quit', () => void tape.close())
-  }
-
   const preferred = preferredSystemLanguages()
   const locale = await createLocaleController(
     await readConfig(host.fs, host.identity),
     preferred,
     broadcast,
   )
+  // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
+  // construction, the host's run-time half — the RunRegistry, the queue, the events — through
+  // bindLoop, before anything can send. No inspector yet (plan step 29 registers the exfiltration
+  // rule) and no protected shell files yet (plan step 11).
+  const sessions =
+    tape === null
+      ? null
+      : createSessionService({
+          host,
+          tape,
+          ids: { uuid: (): string => randomUUID() },
+          inspectors: [],
+          connector: createRunConnector({
+            host,
+            providers,
+            isPackaged: app.isPackaged,
+            log: (line) => console.warn(line),
+          }),
+          protectedFiles: [],
+        })
+  const loop =
+    sessions === null
+      ? null
+      : createDesktopLoop({
+          clock: host.clock,
+          send: broadcast,
+          locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
+          log: (line) => console.warn(line),
+        })
+  if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  if (tape !== null) {
+    // WAL: the last connection to close is what checkpoints the file.
+    app.on('will-quit', () => void tape.close())
+  }
+
   const appTitle = (): string => locale.i18n.t('app.name')
   const openWindow = (fresh = false): BrowserWindow =>
     createWindow(locale.current, appTitle(), fresh)
@@ -145,14 +172,7 @@ async function main(): Promise<void> {
   installMenu()
 
   registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
-  registerChatRoutes({
-    host,
-    send: broadcast,
-    ipcMain,
-    sessions,
-    providers,
-    isPackaged: app.isPackaged,
-  })
+  registerChatRoutes({ send: broadcast, ipcMain, sessions, loop })
   registerSessionRoutes({ ipcMain, sessions })
   registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
 
