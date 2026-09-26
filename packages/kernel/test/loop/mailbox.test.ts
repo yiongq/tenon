@@ -320,7 +320,7 @@ describe('a new round that cannot start writes nothing', () => {
 })
 
 describe('the commands that come with later steps', () => {
-  it('answer, resume, continue and recover have nothing to act on yet', async () => {
+  it('answer, resume and recover have nothing to act on yet; continue has nothing to continue', async () => {
     const h = harness()
     expect(
       await h.service.answer({
@@ -334,10 +334,15 @@ describe('the commands that come with later steps', () => {
     expect(await h.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
       status: 'none',
     })
+    expect(await h.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(h.loop.leaseLog).toEqual([])
+    // 「继续」 on a session with no Run: it begins its lease at its entry, finds nothing to continue,
+    // and finishes it having written nothing (plan step 13).
     expect(await h.service.continueRun({ sessionId: SESSION, origin: null })).toEqual({
       status: 'not-available',
     })
-    expect(await h.service.recover()).toEqual({ resumable: [], errors: [] })
-    expect(h.loop.leaseLog).toEqual([])
+    expect(h.loop.leaseLog).toHaveLength(1)
+    expect(h.loop.liveLease(SESSION)).toBeNull()
+    expect(h.loop.recorded).toEqual([])
   })
 })

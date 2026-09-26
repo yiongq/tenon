@@ -86,10 +86,15 @@ interface Harness {
   readonly provider: ScriptedProvider
   readonly ids: ReturnType<typeof createCounterIds>
   readonly loop: TestLoopPorts
+  /** Every delay the loop waited on the host clock, in order. */
+  readonly delays: number[]
 }
 
-/** A memory host whose clock moves a second per reading: `createdAt` is not an ordering key. */
-function tickingHost(): HostAdapter {
+/**
+ * A memory host whose clock moves a second per reading (`createdAt` is not an ordering key) and whose
+ * timers fire at once, each delay recorded: a resend's backoff is asserted, not waited for.
+ */
+function tickingHost(delays: number[]): HostAdapter {
   const host = createMemoryHost()
   let clock = 1_700_000_000_000
   return {
@@ -99,9 +104,31 @@ function tickingHost(): HostAdapter {
         clock += 1000
         return clock
       },
-      setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms),
+      setTimeout: (fn, ms) => {
+        delays.push(ms)
+        let live = true
+        void Promise.resolve().then(() => {
+          if (live) fn()
+        })
+        return () => {
+          live = false
+        }
+      },
     },
   }
+}
+
+/** The same provider with no resend: one attempt per request, whatever its error. */
+function withoutResends(provider: Provider): Provider {
+  return new Proxy(provider, {
+    get(target, key): unknown {
+      if (key === 'retryAdvice') return () => ({ maxAttempts: 1, baseDelayMs: 0 })
+      const value: unknown = Reflect.get(target, key, target)
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value
+    },
+  })
 }
 
 function harness(
@@ -123,8 +150,9 @@ function harness(
     },
     ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
   })
+  const delays: number[] = []
   const service = createSessionService({
-    host: tickingHost(),
+    host: tickingHost(delays),
     tape: store,
     ids,
     inspectors: [],
@@ -132,7 +160,7 @@ function harness(
     protectedFiles: [],
   })
   service.bindLoop(loop)
-  return { store, service, provider, ids, loop }
+  return { store, service, provider, ids, loop, delays }
 }
 
 /** What one Run left behind, read back from the tape and the loop's events. */
@@ -367,6 +395,7 @@ describe('session lifecycle', () => {
       'view/assembled',
       'message/assistant',
       'provider/attempt_completed',
+      'execution/run_terminal',
     ])
     expect(ran.ended.recorded).toBe(true)
     // The second message finds the session and writes no second anchor.
@@ -466,10 +495,11 @@ describe('one request', () => {
       'view/assembled',
       'message/assistant',
       'provider/attempt_completed',
+      'execution/run_terminal',
     ])
     // The user's turn, the Run's start and the model choice land BEFORE the request, in one
     // transaction; the assistant message and the attempt fact land together after it.
-    const [, user, started, model, , , assembled, assistant, attempt] = entries
+    const [, user, started, model, , , assembled, assistant, attempt, terminal] = entries
     expect(started?.sourceId).toBe(ran.runId)
     expect(started?.payload).toEqual({
       cause: { kind: 'user-message', messageId: user?.payload['messageId'] },
@@ -483,6 +513,26 @@ describe('one request', () => {
     expect(attempt?.payload['contextAtEntryId']).toBe(model?.entryId)
     expect(attempt?.payload['usage']).toEqual(USAGE)
     expect(attempt?.payload['error']).toBeNull()
+    // Exactly one terminal, written by the Run, with the steps it took and what it cost (旧 131).
+    expect(terminal?.sourceId).toBe(ran.runId)
+    expect(terminal?.payload).toEqual({
+      reason: { code: 'completed' },
+      steps: 0,
+      usage: [
+        {
+          providerId: h.provider.id,
+          modelId: MODEL.id,
+          origin: 'own',
+          requests: 1,
+          inputTokens: USAGE.inputTokens,
+          outputTokens: USAGE.outputTokens,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          reasoningTokens: 0,
+        },
+      ],
+      writer: { by: 'run', runId: ran.runId },
+    })
     // What the request was assembled from, written after encode() and before the stream (A3).
     expect(attempt?.payload['assemblyRef']).toBe(assembled?.provenanceKey)
     // The request snapshot: no system prompt before plan step 18, the connector's max tokens.
@@ -521,23 +571,23 @@ describe('one request', () => {
     })
   })
 
-  it('reports a wire error on the fact, writes no assistant message and names the code', async () => {
+  it('reports a wire error on the fact, resends it, writes no assistant message and names the code', async () => {
     const h = harness()
     const { sessionId } = await h.service.createSession()
-    h.provider.script(
-      scriptedTurn({
-        deltas: ['half a '],
-        terminal: {
-          type: 'error',
-          code: 'rate-limit',
-          retryable: true,
-          retryAfterMs: 1500,
-          status: 429,
-          providerCode: 'rate_limit_error',
-          detail: 'slow down',
-        },
-      }),
-    )
+    const limited = scriptedTurn({
+      deltas: ['half a '],
+      terminal: {
+        type: 'error',
+        code: 'rate-limit',
+        retryable: true,
+        retryAfterMs: 1500,
+        status: 429,
+        providerCode: 'rate_limit_error',
+        detail: 'slow down',
+      },
+    })
+    // The same payload three times: the first send and min(maxAttempts − 1, RETRY_CAP) = 2 resends.
+    for (let i = 0; i < 3; i += 1) h.provider.script(limited)
     const ran = await run(h, sessionId, 'a question')
     expect(ran.assistant).toBeUndefined()
     // Every field of the event survives, `retryAfterMs` and `status` included — the loop reads
@@ -558,13 +608,16 @@ describe('one request', () => {
         providerId: h.provider.id,
         errorCode: 'rate-limit',
         providerReason: 'rate_limit_error',
-        attempts: 1,
+        attempts: 3,
       },
       recorded: true,
       lastStop: null,
       errorCode: 'rate-limit',
     })
-    expect((await allEntries(h.store, sessionId)).map((entry) => entry.name)).toEqual([
+    // Each resend waits what the vendor asked for, on the host clock.
+    expect(h.delays).toEqual([1500, 1500])
+    const entries = await allEntries(h.store, sessionId)
+    expect(entries.map((entry) => entry.name)).toEqual([
       'session/start',
       'message/user',
       'execution/run_started',
@@ -573,7 +626,17 @@ describe('one request', () => {
       'view/tool_table',
       'view/assembled',
       'provider/attempt_completed',
+      'provider/attempt_completed',
+      'provider/attempt_completed',
+      'execution/run_terminal',
     ])
+    // One payload, three transmissions of it.
+    expect(
+      entries
+        .filter((entry) => entry.name === 'provider/attempt_completed')
+        .map((entry) => entry.provenanceKey?.split(':').slice(-2).join(':')),
+    ).toEqual(['1:1', '1:2', '1:3'])
+    expect(h.loop.recorded.filter((event) => event.type === 'attempt-discarded')).toHaveLength(3)
   })
 
   it('ends a quota error as quota-exhausted with its reset time', async () => {
@@ -609,11 +672,16 @@ describe('one request', () => {
     const { sessionId } = await h.service.createSession()
     // Invariant 1 makes this unreachable for a kernel adapter; the provider comes from the
     // connector, so the Run still may not leave a request without its one attempt fact.
-    h.provider.script([{ type: 'text-delta', index: 0, text: 'half a ' }])
+    for (let i = 0; i < 3; i += 1)
+      h.provider.script([{ type: 'text-delta', index: 0, text: 'half a ' }])
     const ran = await run(h, sessionId, 'a question')
     expect(ran.attempt?.payload['error']).toMatchObject({ code: 'network', retryable: true })
     expect(ran.assistant).toBeUndefined()
-    expect((await allEntries(h.store, sessionId)).at(-1)?.name).toBe('provider/attempt_completed')
+    const names = (await allEntries(h.store, sessionId)).map((entry) => entry.name)
+    expect(names.filter((name) => name === 'provider/attempt_completed')).toHaveLength(3)
+    expect(names.at(-1)).toBe('execution/run_terminal')
+    // No retryAfterMs: from baseDelayMs, doubling (旧开放问题 94).
+    expect(h.delays).toEqual([1000, 2000])
   })
 
   it('refuses a model belonging to another provider before it writes anything', async () => {
@@ -771,7 +839,7 @@ describe('a connection dropped mid-body', () => {
     if (model === undefined) throw new Error('the zhipu definition has no builtin model')
     // The connection dies the moment the first delta lands. Deterministic, and no timers.
     const h = harness({
-      provider,
+      provider: withoutResends(provider),
       model,
       onEvent: (event) => {
         if (event.type === 'text-delta') gate.fail()

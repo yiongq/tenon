@@ -19,14 +19,17 @@ export type {
   RouteResponse,
 } from './route.js'
 export {
+  chatContinue,
   chatEvent,
   chatEventSchema,
   chatNew,
   chatSend,
   chatStop,
+  providerErrorCodeSchema,
+  runEndReasonSchema,
   sessionIdSchema,
 } from './ipc/chat.js'
-export type { ChatEvent } from './ipc/chat.js'
+export type { ChatEvent, RunEndReasonContract } from './ipc/chat.js'
 export {
   configGet,
   configLocale,

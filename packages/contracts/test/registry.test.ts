@@ -4,6 +4,7 @@ import { EVENT_CHANNELS, ROUTE_CHANNELS, isEventChannel, isRouteChannel } from '
 describe('ipc registry', () => {
   it('lists every declared route and event exactly once', () => {
     expect([...ROUTE_CHANNELS].toSorted()).toEqual([
+      'chat.continue',
       'chat.send',
       'chat.stop',
       'config.get',

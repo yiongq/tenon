@@ -192,7 +192,12 @@ describe('chat routes', () => {
     const accepted = await ipc.call('chat.send', { sessionId, text: 'hi' })
     expect(accepted).toEqual({ ok: true, data: { accepted: true } })
     const done = await out.waitFor('done')
-    expect(done).toEqual({ type: 'done', sessionId, stopReason: 'end-turn' })
+    expect(done).toEqual({
+      type: 'done',
+      sessionId,
+      stopReason: 'end-turn',
+      endReason: { code: 'completed' },
+    })
     expect(textOf(out.events)).toBe('Hello, Tenon')
     expect(fake.requests[0]?.headers['x-api-key']).toBe('test-key')
     expect(fake.aborted).toBe(false)
@@ -227,7 +232,12 @@ describe('chat routes', () => {
     const stopped = await ipc.call('chat.stop', { sessionId })
     expect(stopped).toEqual({ ok: true, data: { stopped: true } })
     const done = await out.waitFor('done')
-    expect(done).toEqual({ type: 'done', sessionId, stopReason: 'aborted' })
+    expect(done).toEqual({
+      type: 'done',
+      sessionId,
+      stopReason: 'aborted',
+      endReason: { code: 'user-stopped' },
+    })
     await expect.poll(() => fake.aborted, { timeout: 3000 }).toBe(true)
     expect(fake.chunksSent).toBeLessThan(500)
     expect(await ipc.call('chat.stop', { sessionId })).toEqual({
@@ -469,6 +479,38 @@ describe('chat routes', () => {
     }
   })
 
+  it('continues a truncated reply through chat.continue, with a note only the model sees', async () => {
+    fake = await startFakeAnthropic({ chunks: ['half'], delayMs: 1, stopReasons: ['max_tokens'] })
+    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const doneEvents = (): ChatEvent[] => out.events.filter((event) => event.type === 'done')
+
+    await ipc.call('chat.send', { sessionId, text: 'write it all' })
+    await expect.poll(() => doneEvents().length).toBe(1)
+    expect(doneEvents()[0]).toMatchObject({
+      stopReason: 'error',
+      endReason: { code: 'output-truncated' },
+    })
+
+    expect(await ipc.call('chat.continue', { sessionId })).toEqual({
+      ok: true,
+      data: { status: 'started' },
+    })
+    await expect.poll(() => doneEvents().length).toBe(2)
+    expect(doneEvents()[1]).toMatchObject({ endReason: { code: 'completed' } })
+    // The second request ends with the continuation note: a user turn for the model…
+    const body = fake.requests[1]?.body as { messages: Array<{ role: string }> }
+    expect(body.messages.map((message) => message.role)).toEqual(['user', 'assistant', 'user'])
+    expect(JSON.stringify(body.messages.at(-1))).toContain('cut off at the output limit')
+    // …that the transcript never shows.
+    const rows = await sessions.listMessages({ sessionId, limit: 10 })
+    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'assistant'])
+    // A completed Run leaves nothing to continue.
+    expect(await ipc.call('chat.continue', { sessionId })).toEqual({
+      ok: true,
+      data: { status: 'not-available' },
+    })
+  })
+
   it('answers every chat route when the session store could not be opened', async () => {
     fake = await startFakeAnthropic({ chunks: ['never'] })
     const ipc = fakeIpc()
@@ -493,5 +535,6 @@ describe('chat routes', () => {
       ok: true,
       data: { stopped: false },
     })
+    expect(await ipc.call('chat.continue', { sessionId })).toMatchObject({ ok: false })
   })
 })

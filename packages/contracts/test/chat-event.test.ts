@@ -2,8 +2,45 @@
  * Spec 02, 01 修补 6 (step 7, 旧 106): `chat.event` only adds variants. The three that step 7 adds
  * parse; phase 1's variants are unchanged.
  */
+import type { RunEndReason } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
-import { chatEventSchema } from '../src/index.js'
+import { chatContinue, chatEventSchema, ipcRoutes, runEndReasonSchema } from '../src/index.js'
+import type { RunEndReasonContract } from '../src/index.js'
+
+type Assert<T extends true> = T
+type Extends<A, B> = [A] extends [B] ? true : false
+
+// Exported so `noUnusedLocals` keeps them; nothing imports them.
+export type ContractReasonIsKernelReason = Assert<Extends<RunEndReasonContract, RunEndReason>>
+export type KernelReasonIsContractReason = Assert<Extends<RunEndReason, RunEndReasonContract>>
+
+/** One of each of the 18 end codes, every slot filled (spec 02 §结束原因词表). */
+const END_REASONS: readonly RunEndReason[] = [
+  { code: 'completed' },
+  { code: 'user-stopped' },
+  { code: 'paused', waitingFor: 'approval' },
+  { code: 'user-rejected', toolName: 'Write' },
+  { code: 'blocked-repeatedly', count: 3 },
+  { code: 'step-limit', limit: 100 },
+  { code: 'no-progress', repeats: 4 },
+  { code: 'usage-limit', tokenLimit: 200_000 },
+  { code: 'refusal', providerId: 'anthropic', modelId: 'claude-test' },
+  { code: 'content-filter', providerId: 'zhipu' },
+  { code: 'context-overflow', compactions: 2 },
+  { code: 'quota-exhausted', providerId: 'anthropic', resetAt: null },
+  { code: 'account-config', providerId: 'anthropic' },
+  {
+    code: 'provider-error',
+    providerId: 'zhipu',
+    errorCode: null,
+    providerReason: 'network_error',
+    attempts: 3,
+  },
+  { code: 'output-truncated', maxTokens: 8192 },
+  { code: 'shutdown-aborted', trigger: 'close-window' },
+  { code: 'recovered' },
+  { code: 'time-limit', limitMs: 600_000 },
+]
 
 const SESSION = '11111111-1111-4111-8111-111111111111'
 
@@ -47,5 +84,32 @@ describe('chatEventSchema', () => {
       chatEventSchema.safeParse({ type: 'error', sessionId: SESSION, code: 'quota-exhausted' })
         .success,
     ).toBe(false)
+  })
+
+  it('carries an optional endReason on done and on error, of each of the 18 codes (旧 106)', () => {
+    expect(new Set(END_REASONS.map((reason) => reason.code)).size).toBe(18)
+    for (const endReason of END_REASONS) {
+      const done = { type: 'done', sessionId: SESSION, stopReason: 'end-turn', endReason }
+      expect(chatEventSchema.parse(done)).toEqual(done)
+      const error = { type: 'error', sessionId: SESSION, code: 'provider', endReason }
+      expect(chatEventSchema.parse(error)).toEqual(error)
+    }
+    // A code outside the vocabulary, or a member missing a slot, does not cross.
+    expect(runEndReasonSchema.safeParse({ code: 'crashed' }).success).toBe(false)
+    expect(runEndReasonSchema.safeParse({ code: 'step-limit' }).success).toBe(false)
+  })
+})
+
+describe('chat.continue', () => {
+  it('is registered, and answers one of four statuses', () => {
+    expect(Object.values(ipcRoutes)).toContain(chatContinue)
+    expect(chatContinue.channel).toBe('chat.continue')
+    for (const status of ['started', 'not-available', 'not-sent']) {
+      expect(chatContinue.response.safeParse({ status }).success).toBe(true)
+    }
+    expect(
+      chatContinue.response.safeParse({ status: 'held', host: 'api.example.com' }).success,
+    ).toBe(true)
+    expect(chatContinue.response.safeParse({ status: 'refused' }).success).toBe(false)
   })
 })

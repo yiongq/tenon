@@ -24,3 +24,14 @@ export function profileDirFor(root: AbsolutePath, userId: string, tenantId: stri
   assertProfileId('tenantId', tenantId)
   return joinPath(root, 'profiles', userId, tenantId)
 }
+
+/** The profile directory's folder for large tool outputs (spec 02 §本地持久化布局：只加一行). */
+export const TOOL_OUTPUT_DIR = 'tool-output'
+
+/**
+ * `<profileDir>/tool-output/<sessionId>` — one session's spilled outputs (H9). The session id is a
+ * canonical UUID and is used as the folder name as it is; the folder is made on the first spill.
+ */
+export function toolOutputDirFor(profileDir: AbsolutePath, sessionId: string): AbsolutePath {
+  return joinPath(profileDir, TOOL_OUTPUT_DIR, sessionId)
+}

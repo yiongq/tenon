@@ -1,4 +1,4 @@
-import { chatSend, chatStop, registerRoute } from '@tenon-app/contracts'
+import { chatContinue, chatSend, chatStop, registerRoute } from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
@@ -280,6 +280,22 @@ export function registerChatRoutes(deps: ChatDeps): void {
   registerRoute(ipcMain, chatStop, ({ sessionId }) => {
     if (sessions === null) return { stopped: false }
     return sessions.stop({ rootSessionId: sessionId })
+  })
+
+  // 「继续」 (spec 02 §重试与「继续」): the kernel judges whether there is anything to continue.
+  registerRoute(ipcMain, chatContinue, async ({ sessionId }, event) => {
+    if (sessions === null || loop === null) throw new Error(NO_STORE)
+    if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
+    const result = await sessions.continueRun({ sessionId, origin: ownerOf(senderOf(event)) })
+    switch (result.status) {
+      case 'refused':
+        // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
+        throw new Error('continue refused: the loop is not bound, or the app is shutting down')
+      case 'held':
+        return { status: 'held' as const, host: result.host }
+      default:
+        return { status: result.status }
+    }
   })
 }
 

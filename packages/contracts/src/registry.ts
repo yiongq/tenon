@@ -1,4 +1,4 @@
-import { chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
+import { chatContinue, chatEvent, chatNew, chatSend, chatStop } from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
@@ -9,6 +9,7 @@ import { sessionLatest, sessionMessages } from './ipc/session.js'
  * channels listed here; main only registers handlers for routes listed here.
  */
 export const ipcRoutes = {
+  chatContinue,
   chatSend,
   chatStop,
   configGet,

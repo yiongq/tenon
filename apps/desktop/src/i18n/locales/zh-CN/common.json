@@ -94,5 +94,25 @@
     "provider": "模型服务返回了错误。",
     "unknown": "出了点问题。",
     "retry": "重试"
+  },
+  "runEnd": {
+    "completed": "已完成。",
+    "user-stopped": "你停下了这个任务。",
+    "paused": "{waitingFor, select, approval {等你批准。} question {等你回答。} other {等子任务完成。}}",
+    "user-rejected": "你拒绝了 {toolName}，任务已结束。",
+    "blocked-repeatedly": "调用连续 {count} 次被拦截，任务已结束。",
+    "step-limit": "任务达到了 {limit} 步的上限。",
+    "no-progress": "模型连续 {repeats} 次发出相同的调用、没有进展，任务已结束。",
+    "usage-limit": "任务用量超过了 {tokenLimit} tokens 的上限。",
+    "refusal": "{providerId} 的 {modelId} 拒绝回答。",
+    "content-filter": "{providerId} 的内容安全过滤拦下了这次回复。",
+    "context-overflow": "对话太长，超出了模型的上下文{compactions, plural, =0 {} other {（已压缩 # 次）}}。",
+    "quota-exhausted": "{providerId} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
+    "account-config": "你的 {providerId} 账号或组织设置不满足这次请求。",
+    "provider-error": "模型服务（{providerId}）出错{attempts, plural, =0 {} =1 {} other {，已尝试 # 次}}。",
+    "output-truncated": "回复在 {maxTokens} tokens 的输出上限处被截断。",
+    "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
+    "recovered": "任务运行时 Tenon 意外关闭。",
+    "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。"
   }
 }

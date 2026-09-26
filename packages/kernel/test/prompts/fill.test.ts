@@ -26,16 +26,27 @@ describe('the notes written so far', () => {
     const cells = Object.entries(MODEL_NOTES.closure).flatMap(([source, byState]) =>
       Object.entries(byState ?? {}).map(([state, text]) => ({ source, state, text })),
     )
+    // Plan step 14 writes the whole table (closure.test.ts); these are the cells steps 10–13 need.
     expect(cells.map(({ source, state }) => `${source}/${state}`).toSorted()).toEqual([
+      'blocked-repeatedly/not-run',
+      'content-filter/not-run',
+      'inspector/not-run',
       'invalid-input/not-run',
+      'no-progress/not-run',
+      'output-truncated/not-run',
       'policy/not-run',
+      'protected/not-run',
+      'provider-error/not-run',
+      'step-limit/not-run',
+      'stopped/not-run',
       'tool-unavailable/not-run',
+      'usage-limit/not-run',
       'user-disabled/not-run',
     ])
     for (const { text } of [...cells, { text: MODEL_NOTES.schemaUnusable }]) {
       expect(text?.trim().length).toBeGreaterThan(0)
-      // None of these cells has a slot: filling them with nothing must work.
-      expect(() => fill(text ?? '', {})).not.toThrow()
+      // `{target}` (the protected cell's) is the only slot a cell may name so far.
+      expect(() => fill(text ?? '', { target: '~/.ssh' })).not.toThrow()
     }
     // The blocked-after-freeze sentence is the spec's own (§不带 tools 的请求与冻结后的变化).
     expect(MODEL_NOTES.closure['user-disabled']?.['not-run']).toBe(

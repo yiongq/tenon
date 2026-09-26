@@ -16,6 +16,8 @@ export interface FakeAnthropicOptions {
   failWith?: { status: number; type: string; message: string }
   /** With `failWith`: fail only this many requests, then stream normally. Default: always fail. */
   failTimes?: number
+  /** The `stop_reason` of each streamed request, in order; `end_turn` past the end of the list. */
+  stopReasons?: readonly string[]
 }
 
 export interface FakeAnthropic {
@@ -112,7 +114,10 @@ export async function startFakeAnthropic(options: FakeAnthropicOptions): Promise
         event('content_block_stop', { type: 'content_block_stop', index: 0 })
         event('message_delta', {
           type: 'message_delta',
-          delta: { stop_reason: 'end_turn', stop_sequence: null },
+          delta: {
+            stop_reason: options.stopReasons?.[state.requests.length - 1] ?? 'end_turn',
+            stop_sequence: null,
+          },
           usage: { output_tokens: options.chunks.length },
         })
         event('message_stop', { type: 'message_stop' })

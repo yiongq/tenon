@@ -2452,8 +2452,13 @@ export function tapeConformanceCases(
         })
         assertEqual(
           facts.map((candidate) => candidate.name),
-          ['execution/run_started', 'view/assembled', 'provider/attempt_completed'],
-          `run ${k}: its start, its manifest and exactly one provider/attempt_completed`,
+          [
+            'execution/run_started',
+            'view/assembled',
+            'provider/attempt_completed',
+            'execution/run_terminal',
+          ],
+          `run ${k}: its start, its manifest, exactly one provider/attempt_completed and its end`,
         )
         const fact = facts[2]
         if (fact === undefined) fail(`run ${k}: readBySource returned no attempt fact`)
@@ -2489,11 +2494,13 @@ export function tapeConformanceCases(
     ctx.provider.script(
       scriptedTurn({
         deltas: ['half an '],
+        // Not retryable, so the Run ends on this one attempt (spec 02 resends a transient error itself).
         terminal: {
           type: 'error',
-          code: 'overloaded',
-          retryable: true,
-          providerCode: 'overloaded_error',
+          code: 'invalid-request',
+          retryable: false,
+          status: 400,
+          providerCode: 'invalid_request_error',
           detail: 'upstream said no',
         },
       }),
@@ -2502,7 +2509,7 @@ export function tapeConformanceCases(
     assertEqual(failed.assistantMessageId, null, 'a failed turn writes no assistant message')
     assertEqual(failed.status, null, 'and no status')
     assertEqual(failed.stop, null, 'an error and a stop are exclusive')
-    assertEqual(failed.error?.code, 'overloaded', 'the error is on the run result')
+    assertEqual(failed.error?.code, 'invalid-request', 'the error is on the run result')
     assertEqual(failed.userMessageCreated, true, 'the first send created the user message')
 
     // The same text again: the SAME messageId and revision, so the append is the idempotent no-op.

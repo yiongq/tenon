@@ -1,34 +1,42 @@
 /**
- * A Run (spec 02 §Run 的生命周期与每轮顺序): the request half, outside the mailbox.
+ * A Run (spec 02 §Run 的生命周期与每轮顺序, §一轮回复怎么分流, §上限、守卫与用量, §重试与「继续」):
+ * the requests of one trigger, outside the mailbox. Every fact it writes goes in through the mailbox
+ * (`write`), and its end — `execution/run_terminal`, the lease finished, `run-ended` — is written by
+ * the mailbox task that receives what `driveRun` returns.
  *
- * Plan step 9's Run is the smallest the loop can stand on: ONE request, with no system prompt and no
- * tools (the assembled system arrives in plan step 18, the frozen tool table in step 10), recorded
- * the way phase 1's turn was — a turn that stops on `tool-use` ends there. What the Run WRITES is
- * built here and committed by the mailbox (`loop/mailbox.ts`), because a Run's facts are written as
- * mailbox tasks; plan step 13 replaces this body with the per-round loop (several requests, retries,
- * limits, `run_terminal`) without changing how a Run is opened and closed.
+ * Each round (plan step 13 builds steps 2 to 4; compaction and the environment note are plan steps 30
+ * and 18, inserting queued messages step 17):
  *
- * What survives from the phase 1 service, and why it still holds:
+ *   2. send the request — every new payload a new `requestSeq`, every resend of it a new
+ *      `physicalAttempt` — and route what came back by §一轮回复怎么分流;
+ *   3. a reply with complete client calls first meets the step limit, the no-progress guard and the
+ *      token limit: any of them closes the whole batch not-run and ends the Run;
+ *   4. the batch (`loop/batch.ts`), after which the next request goes out.
  *
- *   - **the request is encoded ONCE** and the encoded request is what is streamed: what is hashed is
- *     what is sent, so `provider/attempt_completed.promptHash` describes the bytes that went out;
- *   - **the context is a PREFIX of the tape**, read back from the tape at the pin the attempt fact
- *     records (`contextAtEntryId`), so the request stays re-checkable (01 acceptance 3);
- *   - **exactly one of `stop` / `error`** reaches the fact, whatever the provider did;
- *   - **an assistant message only when the turn has something to show**: none for an error, one with
- *     status `aborted` for a stopped turn that had partial content, never an empty one.
+ * What survives from the phase 1 service: the request is encoded ONCE per payload and the encoded
+ * request is what is streamed; its context is a PREFIX of the Tape, pinned at the top of this Run's
+ * latest committed batch and recorded on the attempt; exactly one of `stop` / `error` reaches the
+ * attempt fact; an assistant message only when the turn has something to show. What changes (01 修补
+ * 9 (m)): a refusal, a context overflow and Zhipu's `network_error` are discarded — the attempt fact
+ * alone — like every error, and each such attempt sends `attempt-discarded`.
  */
+import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
 import type { IdSource } from '../ids.js'
+import type { UserToolSetting } from '../permission/decide.js'
+import type { InspectorRegistration } from '../permission/inspector.js'
 import { createBlockAccumulator } from '../provider/base.js'
+import { ProviderConfigMissingError } from '../provider/errors.js'
 import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
   EncodedRequest,
   ModelInfo,
   Provider,
+  ProviderErrorCode,
   ProviderId,
   ProviderRequest,
   RequestIdentity,
+  StopReason,
   StreamEvent,
   ToolSpec,
   Usage,
@@ -41,8 +49,12 @@ import {
   systemHash,
 } from '../provider/wire/shared.js'
 import type {
+  AppendResult,
   MessageStatus,
   NewEntry,
+  RunUsageLine,
+  TapeEntry,
+  ToolCallPayload,
   ToolTablePayload,
   ToolsWithheldPayload,
   ViewAssembledPayload,
@@ -58,6 +70,7 @@ import {
   assembledKey,
   attemptCompletedKey,
   messageRevisionKey,
+  toolCallKey,
   toolTableKey,
   toolsWithheldKey,
   viewContentKey,
@@ -65,103 +78,354 @@ import {
 import { rebuildProviderContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
-import { rebuildToolTable, toolTableFacts } from '../tools/table.js'
-import type { FrozenToolTable } from '../tools/table.js'
+import type { BuiltinToolName } from '../tools/builtin/tool.js'
+import type { SearchBackend } from '../tools/search/types.js'
+import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
+import type { FrozenToolTable, ToolKey } from '../tools/table.js'
+import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { RunAbortCause, RunLease } from './ports.js'
+import type { CompleteCall } from './batch.js'
+import { readSessionEntries, runBatch } from './batch.js'
+import type { CallRef, ClosureSource } from './closure.js'
+import { isBlockReason, notRunFacts } from './closure.js'
+import type { ToolOutcomeView } from './events.js'
+import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
+import type { McpToolSource, RunAbortCause, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
-
-/**
- * Plan step 9 sends one payload once, so both ordinals are fixed — and both are RECORDED all the
- * same, so the rows written before the per-round loop existed already say which transmission they
- * were. Plan step 13 numbers them.
- */
-export const FIRST_REQUEST_SEQ = 1
-const FIRST_PHYSICAL_ATTEMPT = 1
 
 /** A new message starts at revision 0; only an edit-and-resend (phase 6) increments it. */
 export const FIRST_REVISION = 0
 
-export interface RequestQuery {
+export interface RunDriverContext {
   readonly tape: Tape
   readonly ids: IdSource
   readonly now: () => number
+  readonly log: (line: string) => void
+  readonly host: HostAdapter
   readonly sessionId: string
+  readonly incarnationId: string
   readonly runId: string
-  /** The top of this Run's own pre-run batch: the prefix the request is assembled from. */
-  readonly contextAtEntryId: number
-  readonly provider: Provider
+  /** The top of this Run's pre-run batch: the first request's context. */
+  readonly pin: number
+  /** The provider, built by the prebuild — or on first use, for a resume (plan step 15). */
+  readonly provider: () => Provider
   readonly model: ModelInfo
   readonly maxTokens: number
-  /** The session's thinking effort; null = the model's default, and nothing is sent. */
   readonly effort: string | null
-  /** What `assembleRequest` settled for this request: the tools sent, and the facts that record it. */
-  readonly assembled: AssembledRequest
-  /**
-   * Commits the assembly facts. A Run writes through the mailbox, so this posts a task and resolves
-   * once the batch is on the Tape — after `encode()`, before a byte leaves (§组装清单与内容寄存).
-   */
-  readonly write: (entries: readonly NewEntry[]) => Promise<void>
-  readonly signal: AbortSignal
-  /** Every content delta as it arrives. It must not throw. */
-  readonly onDelta: (event: Extract<StreamEvent, { type: 'text-delta' | 'thinking-delta' }>) => void
+  readonly toolsWithheld: 'provider-text-only' | null
+  readonly search: SearchBackend | null
+  readonly mcpSources: readonly McpToolSource[]
+  readonly profile: 'chat' | 'cowork'
+  readonly inspectors: readonly InspectorRegistration[]
+  readonly protectedFiles: readonly AbsolutePath[]
+  readonly userSetting: (key: ToolKey) => UserToolSetting | null
+  readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
+  /** A token limit for this Run (off by default; evals and sub-agents set one, H11). */
+  readonly tokenLimit: number | null
+  readonly lease: RunLease
+  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  readonly write: (entries: readonly NewEntry[]) => Promise<readonly AppendResult[]>
+  readonly emit: {
+    delta(runId: string, type: 'text-delta' | 'thinking-delta', delta: string): void
+    discarded(runId: string): void
+    call(call: CompleteCall & { callKey: string }): void
+    outcome(
+      call: { readonly callKey: string; readonly providerToolCallId: string },
+      view: ToolOutcomeView,
+    ): void
+  }
 }
 
-/** What one request left behind: the facts to commit, and how it ended. */
-export interface RequestOutcome {
-  /** `message/assistant` when there is one, then `provider/attempt_completed`, in that order. */
-  readonly terminal: readonly NewEntry[]
+/** What a Run leaves for its terminal task. */
+export interface RunFinish {
+  readonly reason: RunEndReason
+  readonly steps: number
+  readonly usage: readonly RunUsageLine[]
+  readonly lastStop: StopReason | null
+  readonly errorCode: ProviderErrorCode | null
+  /** Facts that go in the terminal's batch: a paused decision (同批规则 1). */
+  readonly withTerminal: readonly NewEntry[]
+  /** The calls a paused decision left waiting: closed not-run / stopped if a stop beats the pause. */
+  readonly waiting: readonly CallRef[]
+}
+
+export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
+  const { tape, runId } = ctx
+  const signal = ctx.lease.signal
+  const state = await readViewState(tape, ctx.sessionId)
+  const chain = await chainCounters(tape, ctx.sessionId, runId)
+  const validator = createArgumentValidator()
+  const usage = new Map<string, RunUsageLine>()
+  let steps = 0
+  let pin = ctx.pin
+  let requestSeq = 0
+  let denials = chain.denials
+  const batches = [...chain.batches]
+  let lastStop: StopReason | null = null
+  let errorCode: ProviderErrorCode | null = null
+  const finish = (
+    reason: RunEndReason,
+    extra: Partial<Pick<RunFinish, 'withTerminal' | 'waiting'>> = {},
+  ): RunFinish => ({
+    reason,
+    steps,
+    usage: [...usage.values()],
+    lastStop,
+    errorCode,
+    withTerminal: extra.withTerminal ?? [],
+    waiting: extra.waiting ?? [],
+  })
+  const write = async (entries: readonly NewEntry[]): Promise<void> => {
+    if (entries.length === 0) return
+    const receipts = await ctx.write(entries)
+    for (const receipt of receipts) pin = Math.max(pin, receipt.entryId)
+  }
+
+  // No abort check before a request: an aborted signal reaches the provider, which starts no stream
+  // and answers `stop{ aborted }`, so every request of the Run leaves its attempt fact (01 invariant 2).
+  for (;;) {
+    requestSeq += 1
+    let provider: Provider
+    try {
+      provider = ctx.provider()
+    } catch (error) {
+      if (!(error instanceof ProviderConfigMissingError)) throw error
+      errorCode = 'auth'
+      return finish({
+        code: 'provider-error',
+        providerId: ctx.model.providerId,
+        errorCode: 'auth',
+        providerReason: null,
+        attempts: 0,
+      })
+    }
+    // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
+    const assembled = await assembleRequest({
+      tape,
+      now: ctx.now,
+      sessionId: ctx.sessionId,
+      incarnationId: ctx.incarnationId,
+      runId,
+      requestSeq,
+      model: ctx.model,
+      toolsWithheld: ctx.toolsWithheld,
+      state,
+      openTable: ctx.openTable,
+    })
+    // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
+    const messages = await rebuildProviderContext(tape, {
+      sessionId: ctx.sessionId,
+      atEntryId: pin,
+      target: ctx.model,
+    })
+    const request: ProviderRequest = {
+      model: ctx.model,
+      messages,
+      ...(assembled.tools === undefined ? {} : { tools: [...assembled.tools] }),
+      maxTokens: ctx.maxTokens,
+      ...(ctx.effort === null ? {} : { effort: ctx.effort }),
+    }
+    // ONCE per payload — and the encoded request is what every attempt of it streams.
+    const encoded = provider.encode(request)
+    const contextAtEntryId = pin
+    // The content first, then the manifest, then the bytes leave, then the attempt (A3).
+    // oxlint-disable-next-line no-await-in-loop -- the content before the manifest before the bytes (A3)
+    await write(assembled.facts)
+    recordAssembly(state, assembled)
+
+    const advice = provider.retryAdvice()
+    const resends = Math.max(0, Math.min(advice.maxAttempts - 1, RETRY_CAP))
+    let physicalAttempt = 0
+    let delay = advice.baseDelayMs
+    let firstByteTimeout: false | undefined
+    for (;;) {
+      physicalAttempt += 1
+      const identity: RequestIdentity = { runId, requestSeq, physicalAttempt }
+      // oxlint-disable-next-line no-await-in-loop -- one physical attempt at a time
+      const attempt = await streamAttempt({
+        ctx,
+        provider,
+        encoded,
+        identity,
+        signal,
+        firstByteTimeout,
+      })
+      addUsage(usage, attempt)
+      lastStop = attempt.stop?.reason ?? null
+      errorCode = attempt.error?.code ?? null
+      const route = routeOf(attempt, ctx.maxTokens)
+      const attemptEntry = attemptFact(ctx, {
+        encoded,
+        request,
+        attempt,
+        contextAtEntryId,
+        identity,
+        assemblyRef: assembled.assemblyRef,
+      })
+
+      if (route.kind === 'discard') {
+        // Only the attempt fact: no assistant, no tool/call (01 修补 9 (m)).
+        // oxlint-disable-next-line no-await-in-loop -- the discarded attempt is on the Tape before the resend
+        await write([attemptEntry])
+        ctx.emit.discarded(runId)
+        if (route.transient && physicalAttempt <= resends) {
+          // Only the resend right after a first-byte timeout goes without that limit (A5).
+          firstByteTimeout = attempt.timeout === 'first-byte' ? false : undefined
+          // oxlint-disable-next-line no-await-in-loop -- a resend waits its backoff
+          const waited = await wait(ctx.host, attempt.error?.retryAfterMs ?? delay, signal)
+          delay *= 2
+          if (!waited) return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+          continue
+        }
+        return finish(
+          route.transient
+            ? providerError(attempt, physicalAttempt)
+            : route.end(attempt, physicalAttempt),
+        )
+      }
+
+      // ----- the reply is kept: assistant, tool/call and attempt in one batch ------------------------
+      const calls = completeCalls(attempt.content, runId, requestSeq)
+      const assistantId = attempt.content.length > 0 ? ctx.ids.uuid() : null
+      // oxlint-disable-next-line no-await-in-loop -- the reply is on the Tape before its calls are handled
+      await write([
+        ...(assistantId === null ? [] : [assistantFact(ctx, assistantId, attempt)]),
+        ...(assistantId === null
+          ? []
+          : calls.map((call) => toolCallFact(ctx, call, requestSeq, assistantId))),
+        attemptEntry,
+      ])
+      for (const call of calls) ctx.emit.call(call)
+      if (attempt.content.some((block) => block.type === 'vendor' && block.replay === 'never')) {
+        ctx.log(
+          `[loop] run ${runId}: the reply holds a call the vendor ran itself; not dispatched, not sent back`,
+        )
+      }
+      if (route.kind === 'close') {
+        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
+        await closeAll(ctx, calls, requestSeq, route.source, write)
+        // A stream the stop cut short ends by the stop's cause, read now: a user-stop wins (B4).
+        if (route.source === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+        return finish(route.end(attempt, physicalAttempt))
+      }
+      if (calls.length === 0) {
+        // A tool-use turn with nothing to execute (only server-side blocks, or a call the decoder
+        // dropped) reads as the pause-turn row: the service went wrong (B1, H12).
+        if (attempt.stop?.reason === 'tool-use')
+          return finish(providerError(attempt, physicalAttempt))
+        return finish({ code: 'completed' })
+      }
+
+      // ----- step 3: the three guards, before any decision -------------------------------------
+      const signature = JSON.stringify(calls.map((call) => [call.name, call.argsHash]))
+      if (chain.steps + steps >= STEP_LIMIT) {
+        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
+        await closeAll(ctx, calls, requestSeq, 'step-limit', write)
+        return finish({ code: 'step-limit', limit: STEP_LIMIT })
+      }
+      const previous = batches.slice(-(NO_PROGRESS_REPEATS - 1))
+      if (
+        previous.length === NO_PROGRESS_REPEATS - 1 &&
+        previous.every((batch) => batch === signature)
+      ) {
+        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
+        await closeAll(ctx, calls, requestSeq, 'no-progress', write)
+        return finish({ code: 'no-progress', repeats: NO_PROGRESS_REPEATS })
+      }
+      if (ctx.tokenLimit !== null && tokensOf(usage) > ctx.tokenLimit) {
+        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
+        await closeAll(ctx, calls, requestSeq, 'usage-limit', write)
+        return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+      }
+
+      // ----- step 4: the batch -----------------------------------------------------------------
+      const table = assembled.table
+      // oxlint-disable-next-line no-await-in-loop -- the batch runs before the next request is built
+      const result = await runBatch({
+        tape,
+        now: ctx.now,
+        host: ctx.host,
+        sessionId: ctx.sessionId,
+        runId,
+        requestSeq,
+        profile: ctx.profile,
+        table,
+        calls,
+        inspectors: ctx.inspectors,
+        validator,
+        protectedFiles: ctx.protectedFiles,
+        userSetting: ctx.userSetting,
+        mcpSources: ctx.mcpSources,
+        testTools: ctx.testTools,
+        search: ctx.search,
+        denials,
+        signal,
+        write,
+        outcome: (call, view) =>
+          ctx.emit.outcome({ ...call, callKey: callKeyOf(runId, requestSeq, call.ordinal) }, view),
+      })
+      steps += 1
+      batches.push(signature)
+      if (result.kind === 'paused') {
+        return finish(
+          { code: 'paused', waitingFor: 'approval' },
+          { withTerminal: result.withTerminal, waiting: result.waiting },
+        )
+      }
+      if (result.kind === 'blocked-repeatedly')
+        return finish({ code: 'blocked-repeatedly', count: result.count })
+      if (result.kind === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+      denials = result.denials
+      break
+    }
+  }
+}
+
+// ----- one attempt ------------------------------------------------------------------------------
+
+/** What one attempt produced. */
+export interface AttemptOutcome {
+  readonly content: ContentBlock[]
   readonly stop: TapeAttemptStop | null
-  readonly error: TapeAttemptError | null
-  /** The error event's `resetAt` (01 修补 2): the end reason reads it, the fact does not carry it. */
+  readonly error: (TapeAttemptError & { readonly retryAfterMs?: number }) | null
   readonly resetAt: number | null
+  readonly timeout: 'first-byte' | 'idle' | null
+  readonly usage: Usage | null
+  readonly responseModelId: string | null
   readonly providerId: ProviderId
   readonly modelId: string
 }
 
-export async function streamRequest(q: RequestQuery): Promise<RequestOutcome> {
-  const identity: RequestIdentity = {
-    runId: q.runId,
-    requestSeq: FIRST_REQUEST_SEQ,
-    physicalAttempt: FIRST_PHYSICAL_ATTEMPT,
-  }
-  // Read BACK from the tape rather than assembled from what the caller has in hand: the recorded
-  // `contextAtEntryId` has to describe bytes a later reader can reproduce, and the tape is the only
-  // thing they can read.
-  const messages = await rebuildProviderContext(q.tape, {
-    sessionId: q.sessionId,
-    atEntryId: q.contextAtEntryId,
-    target: q.model,
-  })
-  const request: ProviderRequest = {
-    model: q.model,
-    messages,
-    ...(q.assembled.tools === undefined ? {} : { tools: [...q.assembled.tools] }),
-    maxTokens: q.maxTokens,
-    ...(q.effort === null ? {} : { effort: q.effort }),
-  }
-  // ONCE — and the encoded request is what is streamed.
-  const encoded = q.provider.encode(request)
-  // The content first, then the manifest, then the bytes leave, then the attempt (A3).
-  await q.write(q.assembled.facts)
-
+async function streamAttempt(q: {
+  readonly ctx: RunDriverContext
+  readonly provider: Provider
+  readonly encoded: EncodedRequest
+  readonly identity: RequestIdentity
+  readonly signal: AbortSignal
+  readonly firstByteTimeout: false | undefined
+}): Promise<AttemptOutcome> {
+  const { ctx, provider, encoded, identity } = q
   // A thinking block is stamped with the guard's model identity rather than the wire id, so a block
   // folded here replays as `same-model` instead of looking like a model change.
   const blocks = createBlockAccumulator({
-    provider: q.provider.id,
-    providerModel: thinkingModelId(q.model),
+    provider: provider.id,
+    providerModel: thinkingModelId(ctx.model),
   })
   let usage: Usage | null = null
   let stop: TapeAttemptStop | null = null
-  let error: TapeAttemptError | null = null
+  let error: AttemptOutcome['error'] = null
   let resetAt: number | null = null
-  /** The model the vendor said answered (spec 02, M5): the first report, if any. */
+  let timeout: AttemptOutcome['timeout'] = null
   let responseModelId: string | null = null
-  for await (const event of q.provider.stream(encoded, { identity, signal: q.signal })) {
+  const send = {
+    identity,
+    signal: q.signal,
+    ...(q.firstByteTimeout === undefined ? {} : { firstByteTimeout: q.firstByteTimeout }),
+  }
+  for await (const event of provider.stream(encoded, send)) {
     switch (event.type) {
       case 'usage':
-        // Only the final reading reaches a fact (01 invariant 1): a `message_start` reading
-        // describes the prompt, not the attempt.
+        // Only the final reading reaches a fact (01 invariant 1).
         if (event.usage.final) usage = { ...event.usage }
         break
       case 'stop':
@@ -170,103 +434,125 @@ export async function streamRequest(q: RequestQuery): Promise<RequestOutcome> {
       case 'error':
         error = attemptError(event)
         resetAt = event.resetAt ?? null
+        timeout = event.timeout ?? null
         break
       case 'response-model':
         responseModelId ??= event.modelId
         break
       case 'text-delta':
       case 'thinking-delta':
-        q.onDelta(event)
+        ctx.emit.delta(identity.runId, event.type, event.text)
         blocks.apply(event)
         break
       default:
         blocks.apply(event)
     }
   }
-  // Exactly one of the two, whatever the provider did. An error wins over a stop that also arrived,
-  // and a stream that ended with neither is reported as the truncated body it is: claiming a turn
-  // nobody finished was complete is the one direction that cannot be corrected later.
+  // Exactly one of the two, whatever the provider did.
   if (error !== null) stop = null
   else if (stop === null) error = streamEndedEarly()
-
-  const arrived = blocks.content()
-  const aborted = stop !== null && stop.reason === 'aborted'
-  // An assistant message only when the turn has something to show: an error writes none (the
-  // evidence is the attempt fact's `error`, and the user's message stays so resending it is a
-  // retry); an abort writes one only when partial content arrived; EMPTY content is never written,
-  // because replay must never produce an empty assistant turn. Every other stop persists what
-  // arrived as `complete` — the three that plan step 13 discards instead (refusal, context-overflow,
-  // network_error) are 01 修补 9 (m), and they change with the loop that resends them.
-  const persist = error === null && arrived.length > 0
-  const status: MessageStatus | null = persist ? (aborted ? 'aborted' : 'complete') : null
-  const terminal: NewEntry[] = []
-  const messageSlice = q.tape.writer('message')
-  if (persist && status !== null) {
-    const assistantMessageId = q.ids.uuid()
-    const payload: TapeAssistantMessagePayload = {
-      messageId: assistantMessageId,
-      revision: FIRST_REVISION,
-      role: 'assistant',
-      content: arrived,
-      status,
-      runId: q.runId,
-    }
-    terminal.push(
-      messageSlice.entry('message/assistant', {
-        sourceType: 'message',
-        sourceId: assistantMessageId,
-        sourceSeq: FIRST_REVISION,
-        provenanceKey: messageRevisionKey(assistantMessageId, FIRST_REVISION),
-        payload,
-        createdAt: q.now(),
-      }),
-    )
-  }
-  const attempt: TapeAttemptCompletedPayload = {
-    providerId: encoded.providerId,
-    modelId: encoded.modelId,
-    contextAtEntryId: q.contextAtEntryId,
-    // The snapshot's single owner is the wire layer: a second recipe here could disagree with the
-    // encoder about `maxTokens`, and then the recorded promptHash would be unverifiable.
-    request: requestSnapshot(request),
-    promptHash: encoded.promptHash,
-    toolDefinitionsHash: encoded.toolDefinitionsHash,
-    thinkingDecisions: [...encoded.thinkingDecisions],
-    usage,
-    stop,
-    error,
-    // 01 修补 7: which encoder built the body, the hash of the ModelInfo fields it read, and the
-    // model the vendor named.
-    ...encoderField(encoded),
-    modelWireHash: modelWireHash(q.model),
-    ...(responseModelId === null ? {} : { responseModelId }),
-    assemblyRef: q.assembled.assemblyRef,
-  }
-  terminal.push(
-    q.tape.writer('provider').entry('provider/attempt_completed', {
-      sourceType: 'runtime_event',
-      sourceId: q.runId,
-      sourceSeq: identity.requestSeq,
-      provenanceKey: attemptCompletedKey(q.runId, identity.requestSeq, identity.physicalAttempt),
-      payload: attempt,
-      createdAt: q.now(),
-    }),
-  )
   return {
-    terminal,
+    content: blocks.content(),
     stop,
     error,
     resetAt: error === null ? null : resetAt,
+    timeout: error === null ? null : timeout,
+    usage,
+    responseModelId,
     providerId: encoded.providerId,
     modelId: encoded.modelId,
   }
 }
 
-/**
- * The cause an abort carries (§进行中、暂停与 RunRegistry). `stopRequested` wins: a user-stop after
- * a quit or a window close still counts as the user's stop. A reason that is not a `RunAbortCause`
- * reads as a stop too — nothing but a stop aborts a lease without saying why.
- */
+// ----- routing (§一轮回复怎么分流) ------------------------------------------------------------------
+
+type Route =
+  | { readonly kind: 'batch' }
+  | {
+      readonly kind: 'close'
+      readonly source: 'output-truncated' | 'content-filter' | 'provider-error' | 'stopped'
+      readonly end: (attempt: AttemptOutcome, attempts: number) => RunEndReason
+    }
+  | {
+      readonly kind: 'discard'
+      /** Resent as the same payload while the count allows (A2, A5, H12). */
+      readonly transient: boolean
+      readonly end: (attempt: AttemptOutcome, attempts: number) => RunEndReason
+    }
+
+function routeOf(attempt: AttemptOutcome, maxTokens: number): Route {
+  const { error, stop } = attempt
+  if (error !== null) {
+    if (error.retryable) return { kind: 'discard', transient: true, end: providerError }
+    if (error.code === 'context-overflow')
+      return { kind: 'discard', transient: false, end: overflow }
+    if (error.code === 'quota-exhausted') {
+      return {
+        kind: 'discard',
+        transient: false,
+        end: (a) => ({ code: 'quota-exhausted', providerId: a.providerId, resetAt: a.resetAt }),
+      }
+    }
+    if (error.code === 'account-config') {
+      return {
+        kind: 'discard',
+        transient: false,
+        end: (a) => ({ code: 'account-config', providerId: a.providerId }),
+      }
+    }
+    return { kind: 'discard', transient: false, end: providerError }
+  }
+  switch (stop?.reason) {
+    case 'max-tokens':
+      return {
+        kind: 'close',
+        source: 'output-truncated',
+        end: () => ({ code: 'output-truncated', maxTokens }),
+      }
+    case 'refusal':
+      return {
+        kind: 'discard',
+        transient: false,
+        end: (a) => ({ code: 'refusal', providerId: a.providerId, modelId: a.modelId }),
+      }
+    case 'context-overflow':
+      return { kind: 'discard', transient: false, end: overflow }
+    case 'content-filter':
+      return {
+        kind: 'close',
+        source: 'content-filter',
+        end: (a) => ({ code: 'content-filter', providerId: a.providerId }),
+      }
+    case 'aborted':
+      return { kind: 'close', source: 'stopped', end: () => ({ code: 'user-stopped' }) } // the cause is read by the caller
+    case 'unknown':
+      // Zhipu's network_error: discarded, and resent like a transient error (H12, A12).
+      if (stop.providerReason === 'network_error')
+        return { kind: 'discard', transient: true, end: providerError }
+      return { kind: 'close', source: 'provider-error', end: providerError }
+    case 'pause-turn':
+      return { kind: 'close', source: 'provider-error', end: providerError }
+    default:
+      return { kind: 'batch' }
+  }
+}
+
+function overflow(): RunEndReason {
+  // Compaction and its retry are plan step 30's; until then an overflow ends the Run.
+  return { code: 'context-overflow', compactions: 0 }
+}
+
+function providerError(attempt: AttemptOutcome, attempts: number): RunEndReason {
+  return {
+    code: 'provider-error',
+    providerId: attempt.providerId,
+    errorCode: attempt.error?.code ?? null,
+    providerReason: attempt.error?.providerCode ?? attempt.stop?.providerReason ?? null,
+    attempts,
+  }
+}
+
+/** The cause an abort carries (§进行中、暂停与 RunRegistry): a user-stop wins, whenever it came. */
 export function abortCauseOf(lease: RunLease): RunAbortCause {
   if (lease.stopRequested) return 'user-stop'
   const reason: unknown = lease.signal.reason
@@ -280,60 +566,276 @@ export function abortedEndReason(cause: RunAbortCause): RunEndReason {
     : { code: 'shutdown-aborted', trigger: cause }
 }
 
-/**
- * Why plan step 9's one-request Run ended, per the rows of §一轮回复怎么分流 that a single request
- * can reach. Plan step 13 moves this to the loop with the whole table (resends, compaction, the
- * zero-call `tool-use` turn) — a Run that stops on `tool-use` here simply ends, as phase 1's did.
- */
-export function endReasonOf(
-  outcome: RequestOutcome,
-  lease: RunLease,
-  maxTokens: number,
-): RunEndReason {
-  const { error, stop, providerId, modelId } = outcome
-  if (error !== null) {
-    if (error.code === 'quota-exhausted') {
-      return { code: 'quota-exhausted', providerId, resetAt: outcome.resetAt }
-    }
-    if (error.code === 'account-config') return { code: 'account-config', providerId }
-    return {
-      code: 'provider-error',
-      providerId,
-      errorCode: error.code,
-      providerReason: error.providerCode,
-      attempts: 1,
-    }
+// ----- the facts a reply writes ------------------------------------------------------------------
+
+/** The reply's complete client calls, numbered in the stream's order (§名字总表 `<i>`). */
+function completeCalls(
+  content: readonly ContentBlock[],
+  runId: string,
+  requestSeq: number,
+): Array<CompleteCall & { callKey: string }> {
+  return content
+    .filter(
+      (block): block is Extract<ContentBlock, { type: 'tool-request' }> =>
+        block.type === 'tool-request',
+    )
+    .map((block, ordinal) => ({
+      ordinal,
+      providerToolCallId: block.id,
+      name: block.name,
+      input: block.input,
+      argsHash: canonicalHash(block.input, `the input of call ${String(ordinal)}`),
+      callKey: callKeyOf(runId, requestSeq, ordinal),
+    }))
+}
+
+/** `<runId>:<requestSeq>:<i>`, the same shape as the tool facts' key; the interface compares it only. */
+export function callKeyOf(runId: string, requestSeq: number, ordinal: number): string {
+  return `${runId}:${String(requestSeq)}:${String(ordinal)}`
+}
+
+function refOf(runId: string, requestSeq: number, call: CompleteCall): CallRef {
+  return { runId, requestSeq, ordinal: call.ordinal, providerToolCallId: call.providerToolCallId }
+}
+
+function assistantFact(
+  ctx: RunDriverContext,
+  messageId: string,
+  attempt: AttemptOutcome,
+): NewEntry {
+  const aborted = attempt.stop?.reason === 'aborted'
+  const status: MessageStatus = aborted ? 'aborted' : 'complete'
+  const payload: TapeAssistantMessagePayload = {
+    messageId,
+    revision: FIRST_REVISION,
+    role: 'assistant',
+    content: attempt.content,
+    status,
+    runId: ctx.runId,
   }
-  switch (stop?.reason) {
-    case 'aborted':
-      return abortedEndReason(abortCauseOf(lease))
-    case 'max-tokens':
-      return { code: 'output-truncated', maxTokens }
-    case 'refusal':
-      return { code: 'refusal', providerId, modelId }
-    case 'content-filter':
-      return { code: 'content-filter', providerId }
-    case 'context-overflow':
-      return { code: 'context-overflow', compactions: 0 }
-    case 'pause-turn':
-    case 'unknown':
-      return {
-        code: 'provider-error',
-        providerId,
-        errorCode: null,
-        providerReason: stop.providerReason,
-        attempts: 1,
-      }
-    default:
-      return { code: 'completed' }
+  return ctx.tape.writer('message').entry('message/assistant', {
+    sourceType: 'message',
+    sourceId: messageId,
+    sourceSeq: FIRST_REVISION,
+    provenanceKey: messageRevisionKey(messageId, FIRST_REVISION),
+    payload,
+    createdAt: ctx.now(),
+  })
+}
+
+function toolCallFact(
+  ctx: RunDriverContext,
+  call: CompleteCall,
+  requestSeq: number,
+  messageId: string,
+): NewEntry {
+  const payload: ToolCallPayload = {
+    ordinal: call.ordinal,
+    providerToolCallId: call.providerToolCallId,
+    messageId,
+    name: call.name,
+    input: call.input,
+    argsHash: call.argsHash,
+  }
+  return ctx.tape.writer('tool').entry('tool/call', {
+    sourceType: 'runtime_event',
+    sourceId: ctx.runId,
+    sourceSeq: requestSeq,
+    provenanceKey: toolCallKey(ctx.runId, requestSeq, call.ordinal),
+    payload,
+    createdAt: ctx.now(),
+  })
+}
+
+function attemptFact(
+  ctx: RunDriverContext,
+  q: {
+    readonly encoded: EncodedRequest
+    readonly request: ProviderRequest
+    readonly attempt: AttemptOutcome
+    readonly contextAtEntryId: number
+    readonly identity: RequestIdentity
+    readonly assemblyRef: string
+  },
+): NewEntry {
+  const { encoded, attempt, identity } = q
+  const payload: TapeAttemptCompletedPayload = {
+    providerId: encoded.providerId,
+    modelId: encoded.modelId,
+    contextAtEntryId: q.contextAtEntryId,
+    request: requestSnapshot(q.request),
+    promptHash: encoded.promptHash,
+    toolDefinitionsHash: encoded.toolDefinitionsHash,
+    thinkingDecisions: [...encoded.thinkingDecisions],
+    usage: attempt.usage,
+    stop: attempt.stop,
+    error: attempt.error,
+    ...encoderField(encoded),
+    modelWireHash: modelWireHash(ctx.model),
+    ...(attempt.responseModelId === null ? {} : { responseModelId: attempt.responseModelId }),
+    assemblyRef: q.assemblyRef,
+  }
+  return ctx.tape.writer('provider').entry('provider/attempt_completed', {
+    sourceType: 'runtime_event',
+    sourceId: identity.runId,
+    sourceSeq: identity.requestSeq,
+    provenanceKey: attemptCompletedKey(
+      identity.runId,
+      identity.requestSeq,
+      identity.physicalAttempt,
+    ),
+    payload,
+    createdAt: ctx.now(),
+  })
+}
+
+/** Closes every call of a batch that will not run, in `<i>` order, with one source. */
+async function closeAll(
+  ctx: RunDriverContext,
+  calls: ReadonlyArray<CompleteCall & { callKey: string }>,
+  requestSeq: number,
+  source:
+    | 'output-truncated'
+    | 'content-filter'
+    | 'provider-error'
+    | 'stopped'
+    | 'step-limit'
+    | 'no-progress'
+    | 'usage-limit',
+  write: (entries: readonly NewEntry[]) => Promise<void>,
+): Promise<void> {
+  for (const call of calls) {
+    const entries = notRunFacts({
+      tape: ctx.tape,
+      now: ctx.now,
+      call: refOf(ctx.runId, requestSeq, call),
+      source,
+      writer: { by: 'run', runId: ctx.runId },
+    })
+    // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
+    await write(entries)
+    ctx.emit.outcome(call, notRunView(source, entries))
   }
 }
 
+/** The interface's view of a call closed not-run by the kernel: its closure's text is the output. */
+export function notRunView(source: ClosureSource, entries: readonly NewEntry[]): ToolOutcomeView {
+  const result = entries.find((entry) => entry.name === 'tool/result')
+  const content = (result?.payload['content'] ?? []) as Array<{ type: string; text?: string }>
+  return {
+    effect: 'blocked',
+    state: 'not-run',
+    source,
+    output: content.map((block) => block.text ?? '').join('\n'),
+  }
+}
+
+// ----- usage, waiting, the chain's counters --------------------------------------------------------
+
+function addUsage(lines: Map<string, RunUsageLine>, attempt: AttemptOutcome): void {
+  const key = `${attempt.providerId}\u0000${attempt.modelId}`
+  const line = lines.get(key) ?? {
+    providerId: attempt.providerId,
+    modelId: attempt.modelId,
+    origin: 'own' as const,
+    requests: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+  }
+  const u = attempt.usage
+  lines.set(key, {
+    ...line,
+    requests: line.requests + 1,
+    inputTokens: line.inputTokens + (u?.inputTokens ?? 0),
+    outputTokens: line.outputTokens + (u?.outputTokens ?? 0),
+    cacheReadTokens: line.cacheReadTokens + (u?.cacheReadTokens ?? 0),
+    cacheWriteTokens: line.cacheWriteTokens + (u?.cacheWriteTokens ?? 0),
+    reasoningTokens: line.reasoningTokens + (u?.reasoningTokens ?? 0),
+  })
+}
+
+/** Uncached input plus output (暂定, H11). */
+function tokensOf(lines: ReadonlyMap<string, RunUsageLine>): number {
+  let total = 0
+  for (const line of lines.values()) total += line.inputTokens + line.outputTokens
+  return total
+}
+
+/** Waits `ms` on the host clock; false when the Run was stopped meanwhile (then it ends as stopped). */
+function wait(host: HostAdapter, ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const onAbort = (): void => {
+      cancel()
+      resolve(false)
+    }
+    const cancel = host.clock.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(true)
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /**
- * The `error` event as the fact records it. Rebuilt key by key because an undefined-valued key is
- * exactly what `canonicalJson` refuses — inside the append transaction, where a throw costs the batch.
+ * The counters the three guards read, from the Tape (§上限、守卫与用量, F3): the chain is this Run and
+ * the Runs it resumes, back to one started by a message or by 「继续」. Steps are the earlier Runs'
+ * `run_terminal.steps`; the batches are their calls' (name, argsHash) lists in request order; the
+ * machine denials are the trailing blocked closures, reset by a call that ran or a card that asked.
  */
-function attemptError(event: Extract<StreamEvent, { type: 'error' }>): TapeAttemptError {
+async function chainCounters(
+  tape: Tape,
+  sessionId: string,
+  runId: string,
+): Promise<{ steps: number; batches: string[]; denials: number }> {
+  const entries = await readSessionEntries(tape, sessionId)
+  const started = new Map<string, TapeEntry>()
+  for (const entry of entries)
+    if (entry.name === 'execution/run_started' && entry.sourceId !== null)
+      started.set(entry.sourceId, entry)
+  const chain: string[] = []
+  let current: string | undefined = runId
+  while (current !== undefined) {
+    const cause = started.get(current)?.payload['cause'] as
+      | { kind?: string; pausedRunId?: string }
+      | undefined
+    if (current !== runId) chain.unshift(current)
+    current = cause?.kind === 'resume' ? cause.pausedRunId : undefined
+  }
+  const inChain = new Set(chain)
+  let steps = 0
+  const calls = new Map<string, Array<[string, string]>>()
+  let denials = 0
+  for (const entry of entries) {
+    if (entry.sourceId === null || !inChain.has(entry.sourceId)) continue
+    if (entry.name === 'execution/run_terminal') steps += Number(entry.payload['steps'] ?? 0)
+    else if (entry.name === 'tool/call') {
+      const key = `${entry.sourceId}:${String(entry.sourceSeq)}`
+      const list = calls.get(key) ?? []
+      list.push([String(entry.payload['name']), String(entry.payload['argsHash'])])
+      calls.set(key, list)
+    } else if (entry.name === 'execution/tool_outcome') {
+      const source = (entry.payload['source'] ?? null) as Parameters<typeof isBlockReason>[0]
+      if (isBlockReason(source)) denials += 1
+      else if (source === null) denials = 0
+    } else if (entry.name === 'tool/permission_decided' && entry.payload['awaits'] !== undefined)
+      denials = 0
+  }
+  return { steps, batches: [...calls.values()].map((list) => JSON.stringify(list)), denials }
+}
+
+// ----- small pieces -------------------------------------------------------------------------------
+
+/**
+ * The `error` event as the loop reads it — with `retryAfterMs` — and as the fact records it. Rebuilt
+ * key by key because an undefined-valued key is exactly what `canonicalJson` refuses.
+ */
+function attemptError(
+  event: Extract<StreamEvent, { type: 'error' }>,
+): TapeAttemptError & { retryAfterMs?: number } {
   return {
     type: 'error',
     code: event.code,
@@ -345,7 +847,7 @@ function attemptError(event: Extract<StreamEvent, { type: 'error' }>): TapeAttem
   }
 }
 
-/** `encoder` for the attempt fact, or nothing: rebuilt key by key for the same reason as above. */
+/** `encoder` for the attempt fact, or nothing. */
 function encoderField(encoded: EncodedRequest): Pick<TapeAttemptCompletedPayload, 'encoder'> {
   const encoder = encoderOf(encoded)
   return encoder === null
@@ -353,10 +855,7 @@ function encoderField(encoded: EncodedRequest): Pick<TapeAttemptCompletedPayload
     : { encoder: { wire: encoder.wire, version: encoder.version, sdk: encoder.sdk } }
 }
 
-/**
- * What is recorded when a stream ends with no terminal event of its own — the same retryable
- * `network` failure `withTerminalEvent` reports for a truncated body, because that is what it is.
- */
+/** A stream that ended with no terminal event: the retryable `network` failure it is. */
 function streamEndedEarly(): TapeAttemptError {
   return {
     type: 'error',
@@ -372,12 +871,38 @@ export function userTextContent(text: string): readonly ContentBlock[] {
   return [{ type: 'text', text }]
 }
 
+/** After a request's assembly commits, the Run's view state knows its table and what it sent. */
+function recordAssembly(state: ViewState, assembled: AssembledRequest): void {
+  if (assembled.opened) {
+    const table = assembled.table
+    const payload: ToolTablePayload = {
+      providerId: table.providerId,
+      generation: table.generation,
+      reason: table.reason,
+      policyVersion: '',
+      tools: table.items.map((item) => ({
+        source: item.source,
+        serverId: item.serverId,
+        originalName: item.originalName,
+        name: item.name,
+        specHash: specHash(item.spec),
+        requiresUserInteraction: item.requiresUserInteraction,
+      })),
+      excluded: [...table.excluded],
+    }
+    state.tables.set(table.tableKey, payload)
+    for (const item of table.items) state.specs.set(specHash(item.spec), item.spec)
+  }
+  state.lastSent.set(assembled.table.tableKey, assembled.sent)
+}
+
 // ----- the assembly (spec 02 §组装清单与内容寄存, §工具目录与冻结) ---------------------------------
 
 /**
  * What the Tape already says about a session's tables and requests, read once when a Run starts: the
  * generation (one per compaction), each table and its specs, and whether each table's last request
- * carried its tools. Plan step 9's Run sends one request, so one read per Run is one per request.
+ * carried its tools. Read once per Run; each request's assembly then updates it in memory once its
+ * facts commit (`recordAssembly`), so the Run never reads it back from the Tape.
  */
 export interface ViewState {
   readonly generation: number

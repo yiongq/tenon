@@ -18,21 +18,26 @@
  *     lease is finished — so commands are judged in arrival order even when the first one is still
  *     prebuilding outside.
  *
- * Plan step 9 builds the executor, the leases and the new-round path of `send`; the other commands
- * are declared and answer as if there were nothing for them to do (there is not, yet). Plan step 15
- * adds the waiting states and the rest of the timing rules, step 16 recovery and resume, step 17 the
- * queue's insertion and auto-send.
+ * Plan step 9 builds the executor, the leases and the new-round path of `send`; step 13 the Run's
+ * rounds and its terminal task, and 「继续」. The other commands are declared and answer as if there
+ * were nothing for them to do (there is not, yet). Plan step 15 adds the waiting states and the rest
+ * of the timing rules, step 16 recovery and resume, step 17 the queue's insertion and auto-send.
  */
+import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
 import type { IdSource } from '../ids.js'
 import { isCanonicalUuid } from '../ids.js'
 import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
 import type { Provider, ProviderErrorCode, ProviderId } from '../provider/types.js'
 import { assertModelBelongs } from '../provider/wire/shared.js'
 import { canonicalJson } from '../tape/canonical-json.js'
+import type { InspectorRegistration } from '../permission/inspector.js'
+import { MODEL_NOTES } from '../prompts/index.js'
 import type {
+  ContinuationPayload,
   ModelSelectedPayload,
   NewEntry,
   RunStartedPayload,
+  RunTerminalPayload,
   SessionStartPayload,
 } from '../tape/entry.js'
 import type { TapeUserMessagePayload } from '../tape/projection.js'
@@ -41,6 +46,7 @@ import {
   messageRevisionKey,
   modelSelectedKey,
   runStartedKey,
+  runTerminalKey,
   sessionStartKey,
 } from '../tape/provenance.js'
 import type { Tape } from '../tape/tape.js'
@@ -64,20 +70,21 @@ import type {
 import type { PolicyState } from '../host/policy.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
+import { readSessionEntries } from './batch.js'
+import type { CallRef } from './closure.js'
+import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
 import { openToolTable } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
-import type { RequestOutcome } from './run.js'
+import type { RunDriverContext, RunFinish } from './run.js'
 import {
-  FIRST_REQUEST_SEQ,
   FIRST_REVISION,
   abortCauseOf,
   abortedEndReason,
-  assembleRequest,
-  endReasonOf,
-  readViewState,
-  streamRequest,
+  callKeyOf,
+  driveRun,
+  notRunView,
   userTextContent,
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
@@ -126,6 +133,9 @@ type Prebuild =
   | { readonly kind: 'confirm'; readonly host: string }
   | { readonly kind: 'aborted' }
 
+/** A command that opens a Run, stopped before anything was written. */
+type NotSent = { readonly status: 'not-sent'; readonly code: 'stopped' | 'app-exit' }
+
 /** An opened round: its Run, and the prefix its request is assembled from. */
 interface OpenedRound {
   readonly runId: string
@@ -143,15 +153,20 @@ export interface LoopDeps {
   readonly tape: Tape
   readonly ids: IdSource
   readonly now: () => number
+  /** The policy is read from it once per decision and once per table opening (D4). */
+  readonly host: HostAdapter
   readonly connector: RunConnector
   readonly log: (line: string) => void
-  /** `HostAdapter.policy.current()`: read once per decision and once per table opening (D4). */
-  readonly policy: () => PolicyState
-  readonly tenantId: string
+  readonly inspectors: readonly InspectorRegistration[]
+  readonly protectedFiles: readonly AbsolutePath[]
   /** Which builtin tools the registry offers: the product's, or every one under a test registry. */
   readonly builtinAvailable: (name: BuiltinToolName) => boolean
+  /** The test registry's executors; null in the product. */
+  readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
   /** Layer 3 for a connector tool; the product has no producer, so it always answers null. */
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
+  /** A token limit on every Run (H11): off in the product; evals, sub-agents and tests set one. */
+  readonly tokenLimit: number | null
 }
 
 export interface Loop {
@@ -309,7 +324,7 @@ export function createLoop(deps: LoopDeps): Loop {
   }
 
   /** 「登记之后、append 之前被中止」: with no waiting state to close yet, nothing is written. */
-  function abortedBeforeAppend(ports: LoopPorts, box: RootBox, lease: RunLease): SendResult {
+  function abortedBeforeAppend(ports: LoopPorts, box: RootBox, lease: RunLease): NotSent {
     const cause = abortCauseOf(lease)
     finish(box, lease)
     // Plan step 15: a user-stop here closes the paused state it finds, in this command's name.
@@ -321,6 +336,35 @@ export function createLoop(deps: LoopDeps): Loop {
       errorCode: null,
     })
     return { status: 'not-sent', code: cause === 'user-stop' ? 'stopped' : 'app-exit' }
+  }
+
+  /**
+   * 「缺 key」: nothing is written, the queue stays as it is, and the failure card is the interface's
+   * (owner 2026-09-25).
+   */
+  function configMissing(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    lease: RunLease,
+    pre: Extract<Prebuild, { kind: 'config' }>,
+  ): { status: 'not-sent'; code: 'config-missing' } {
+    log(`[loop] ${box.rootSessionId}: not sent: ${pre.detail}`)
+    finish(box, lease)
+    runEnded(ports, box, sessionId, {
+      runId: null,
+      reason: {
+        code: 'provider-error',
+        providerId: pre.providerId,
+        errorCode: pre.errorCode,
+        providerReason: null,
+        attempts: 0,
+      },
+      recorded: false,
+      lastStop: null,
+      errorCode: pre.errorCode,
+    })
+    return { status: 'not-sent', code: 'config-missing' }
   }
 
   async function sendTurn(
@@ -360,26 +404,7 @@ export function createLoop(deps: LoopDeps): Loop {
     pre: Prebuild,
   ): Promise<SendResult> {
     if (pre.kind === 'aborted') return abortedBeforeAppend(ports, box, lease)
-    if (pre.kind === 'config') {
-      // 「缺 key」: nothing is written, the queue stays as it is, and the failure card is the
-      // interface's (owner 2026-09-25).
-      log(`[loop] ${box.rootSessionId}: not sent: ${pre.detail}`)
-      finish(box, lease)
-      runEnded(ports, box, q.sessionId, {
-        runId: null,
-        reason: {
-          code: 'provider-error',
-          providerId: pre.providerId,
-          errorCode: pre.errorCode,
-          providerReason: null,
-          attempts: 0,
-        },
-        recorded: false,
-        lastStop: null,
-        errorCode: pre.errorCode,
-      })
-      return { status: 'not-sent', code: 'config-missing' }
-    }
+    if (pre.kind === 'config') return configMissing(ports, box, q.sessionId, lease, pre)
     if (pre.kind === 'confirm') {
       // 「间接切公网」: 0 requests and no fact; this message waits in the queue for the menu's
       // confirmation. Releasing it (`session.selectModel`) and clearing it are plan steps 17 and 19.
@@ -444,10 +469,6 @@ export function createLoop(deps: LoopDeps): Loop {
       content: [...content],
       status: 'complete',
     }
-    const started: RunStartedPayload = { cause: { kind: 'user-message', messageId } }
-    // Which provider and model THIS Run used. `capabilitySource` and `endpointOrigin` are written
-    // from plan step 19, with the choice they describe.
-    const selected: ModelSelectedPayload = { providerId: provider.id, modelId: assembly.model.id }
     entries.push(
       messageSlice.entry('message/user', {
         sourceType: 'message',
@@ -457,30 +478,9 @@ export function createLoop(deps: LoopDeps): Loop {
         payload: userPayload,
         createdAt: now(),
       }),
-      executionSlice.entry('execution/run_started', {
-        sourceType: 'runtime_event',
-        sourceId: runId,
-        provenanceKey: runStartedKey(runId),
-        payload: started,
-        createdAt: now(),
-      }),
-      // Last, so it is the batch's largest id: the pin the request is assembled from.
-      sessionSlice.entry('session/model_selected', {
-        sourceType: 'session',
-        sourceId: q.sessionId,
-        provenanceKey: modelSelectedKey(runId),
-        payload: selected,
-        createdAt: now(),
-      }),
+      ...runHead(q.sessionId, runId, { kind: 'user-message', messageId }, pre),
     )
-    const receipts = await tape.appendEntries({ sessionId: q.sessionId, incarnationId, entries })
-    box.runOpen = true
-    emit(ports, {
-      type: 'run-started',
-      rootSessionId: box.rootSessionId,
-      sessionId: q.sessionId,
-      runId,
-    })
+    const opened = await appendOpening(ports, box, q.sessionId, runId, incarnationId, entries)
     emit(ports, {
       type: 'user-message',
       rootSessionId: box.rootSessionId,
@@ -489,6 +489,56 @@ export function createLoop(deps: LoopDeps): Loop {
       messageId,
       queuedId: null,
     })
+    return opened
+  }
+
+  /**
+   * `run_started` and `session/model_selected`, last in a Run's opening batch so the latter is the
+   * batch's largest id: the pin the first request is assembled from.
+   */
+  function runHead(
+    sessionId: string,
+    runId: string,
+    cause: RunStartedPayload['cause'],
+    pre: Extract<Prebuild, { kind: 'ready' }>,
+  ): NewEntry[] {
+    const started: RunStartedPayload = { cause }
+    // Which provider and model THIS Run used. `capabilitySource` and `endpointOrigin` are written
+    // from plan step 19, with the choice they describe.
+    const selected: ModelSelectedPayload = {
+      providerId: pre.provider.id,
+      modelId: pre.assembly.model.id,
+    }
+    return [
+      executionSlice.entry('execution/run_started', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        provenanceKey: runStartedKey(runId),
+        payload: started,
+        createdAt: now(),
+      }),
+      sessionSlice.entry('session/model_selected', {
+        sourceType: 'session',
+        sourceId: sessionId,
+        provenanceKey: modelSelectedKey(runId),
+        payload: selected,
+        createdAt: now(),
+      }),
+    ]
+  }
+
+  /** Appends a Run's opening batch: from here the lease has opened its Run. */
+  async function appendOpening(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    runId: string,
+    incarnationId: string,
+    entries: readonly NewEntry[],
+  ): Promise<OpenedRound> {
+    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    box.runOpen = true
+    emit(ports, { type: 'run-started', rootSessionId: box.rootSessionId, sessionId, runId })
     // The pin: THIS Run's own receipts, not a second head read — the head is shared, and another
     // session's writes are not this request's context.
     return {
@@ -498,10 +548,122 @@ export function createLoop(deps: LoopDeps): Loop {
     }
   }
 
+  // ----- 「继续」 -------------------------------------------------------------------------------
+
   /**
-   * The Run itself, outside the mailbox; it comes back in to write its facts, finish the lease and
-   * say so. Whatever goes wrong, the lease is finished and `run-ended` is sent: a Run that could not
-   * record its end says `recorded: false`.
+   * What 「继续」 continues (§重试与「继续」): the session's latest Run, when it ended as `step-limit`
+   * or `output-truncated` and no `message/user` came after it. Null when there is nothing to continue.
+   */
+  async function continuable(
+    sessionId: string,
+  ): Promise<{ runId: string; cause: ContinuationPayload['cause'] } | null> {
+    if ((await tape.head(sessionId)) === null) return null
+    const entries = await readSessionEntries(tape, sessionId)
+    let last: string | null = null
+    for (const entry of entries) if (entry.name === 'execution/run_started') last = entry.sourceId
+    if (last === null) return null
+    const terminal = entries.find(
+      (entry) => entry.name === 'execution/run_terminal' && entry.sourceId === last,
+    )
+    if (terminal === undefined) return null
+    const code = (terminal.payload['reason'] as RunEndReason | undefined)?.code
+    if (code !== 'step-limit' && code !== 'output-truncated') return null
+    const later = entries.some(
+      (entry) => entry.name === 'message/user' && entry.entryId > terminal.entryId,
+    )
+    return later ? null : { runId: last, cause: code }
+  }
+
+  async function continueTurn(
+    ports: LoopPorts,
+    box: RootBox,
+    q: { sessionId: string; origin: RunOrigin | null },
+    lease: RunLease | null,
+    pre: Prebuild | null,
+  ): Promise<Turn<ContinueRunResult>> {
+    if (lease !== null && lease.signal.aborted) {
+      return { kind: 'done', result: abortedBeforeAppend(ports, box, lease) }
+    }
+    // A Run in progress is never this command's own (its lease has opened nothing yet).
+    if (box.lease !== null && box.runOpen)
+      return { kind: 'done', result: { status: 'not-available' } }
+    const after = await continuable(q.sessionId)
+    if (after === null) {
+      if (lease !== null) finish(box, lease)
+      return { kind: 'done', result: { status: 'not-available' } }
+    }
+    if (lease === null || pre === null) {
+      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+      if ('refused' in begun) return { kind: 'done', result: { status: 'refused' } }
+      return { kind: 'again', lease: hold(box, begun) }
+    }
+    if (pre.kind === 'aborted')
+      return { kind: 'done', result: abortedBeforeAppend(ports, box, lease) }
+    if (pre.kind === 'config') {
+      return { kind: 'done', result: configMissing(ports, box, q.sessionId, lease, pre) }
+    }
+    if (pre.kind === 'confirm') {
+      // 「继续」 meeting an indirect switch to a public host writes nothing (开放问题 26): the user
+      // confirms in the menu and presses 「继续」 again.
+      finish(box, lease)
+      return { kind: 'done', result: { status: 'held', host: pre.host } }
+    }
+    let opened: OpenedRound
+    try {
+      opened = await openContinue(ports, box, q.sessionId, pre, after)
+    } catch (error) {
+      finish(box, lease)
+      throw error
+    }
+    startRun(ports, box, q.sessionId, opened, lease, pre)
+    return { kind: 'done', result: { status: 'started' } }
+  }
+
+  /**
+   * The continuing Run's opening batch: `message/continuation` — the model-only English note, never
+   * rendered, no `message/user` — then the Run's head, with cause `continue`. Its counters start
+   * from 0: the chain the guards read stops at a Run not started by a resume.
+   */
+  async function openContinue(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    pre: Extract<Prebuild, { kind: 'ready' }>,
+    after: { runId: string; cause: ContinuationPayload['cause'] },
+  ): Promise<OpenedRound> {
+    assertModelBelongs(pre.assembly.model, pre.provider.id)
+    const head = await tape.head(sessionId)
+    if (head === null) throw new Error(`continue: session ${sessionId} has no head`)
+    const messageId = ids.uuid()
+    const runId = ids.uuid()
+    const note: ContinuationPayload = {
+      messageId,
+      revision: FIRST_REVISION,
+      role: 'user',
+      content: [...userTextContent(MODEL_NOTES.continuation[after.cause])],
+      status: 'complete',
+      cause: after.cause,
+      afterRunId: after.runId,
+    }
+    const entries = [
+      messageSlice.entry('message/continuation', {
+        sourceType: 'message',
+        sourceId: messageId,
+        sourceSeq: FIRST_REVISION,
+        provenanceKey: messageRevisionKey(messageId, FIRST_REVISION),
+        payload: note,
+        createdAt: now(),
+      }),
+      ...runHead(sessionId, runId, { kind: 'continue', afterRunId: after.runId, messageId }, pre),
+    ]
+    return appendOpening(ports, box, sessionId, runId, head.incarnationId, entries)
+  }
+
+  /**
+   * The Run itself, outside the mailbox (`driveRun`); every fact it writes comes back in as a task.
+   * Its end is one more task: `run_terminal` — with a paused decision in the same batch (同批规则 1)
+   * — then the lease finished, then `run-ended`. Whatever goes wrong, the lease is finished and
+   * `run-ended` is sent: a Run that could not record its end says `recorded: false`.
    */
   function startRun(
     ports: LoopPorts,
@@ -511,91 +673,153 @@ export function createLoop(deps: LoopDeps): Loop {
     lease: RunLease,
     pre: Extract<Prebuild, { kind: 'ready' }>,
   ): void {
-    const { runId } = opened
+    const { runId, incarnationId } = opened
+    const root = box.rootSessionId
+    const ctx: RunDriverContext = {
+      tape,
+      ids,
+      now,
+      log,
+      host: deps.host,
+      sessionId,
+      incarnationId,
+      runId,
+      pin: opened.contextAtEntryId,
+      provider: () => pre.provider,
+      model: pre.assembly.model,
+      maxTokens: pre.assembly.maxTokens,
+      effort: pre.choice.effort,
+      toolsWithheld: pre.assembly.toolsWithheld,
+      search: pre.assembly.search,
+      mcpSources: pre.assembly.mcpSources,
+      // The draft's profile is written from plan step 18; until then every session is a chat.
+      profile: 'chat',
+      inspectors: deps.inspectors,
+      protectedFiles: deps.protectedFiles,
+      userSetting: deps.userSetting,
+      testTools: deps.testTools,
+      tokenLimit: deps.tokenLimit,
+      lease,
+      openTable: () => openTable(incarnationId, pre.assembly),
+      write: (entries) =>
+        post(box, 'run', null, () => tape.appendEntries({ sessionId, incarnationId, entries })),
+      emit: {
+        delta: (id, type, delta) =>
+          emit(ports, { type, rootSessionId: root, sessionId, runId: id, delta }),
+        discarded: (id) =>
+          emit(ports, { type: 'attempt-discarded', rootSessionId: root, sessionId, runId: id }),
+        call: (call) =>
+          emit(ports, {
+            type: 'tool-call',
+            rootSessionId: root,
+            sessionId,
+            callKey: call.callKey,
+            providerToolCallId: call.providerToolCallId,
+            name: call.name,
+            input: call.input,
+          }),
+        outcome: (call, view) =>
+          emit(ports, {
+            type: 'tool-outcome',
+            rootSessionId: root,
+            sessionId,
+            callKey: call.callKey,
+            providerToolCallId: call.providerToolCallId,
+            outcome: view,
+          }),
+      },
+    }
     void (async (): Promise<void> => {
-      let outcome: RequestOutcome | null = null
+      let finished: RunFinish | null = null
       let failure: unknown = null
       try {
-        const model = pre.assembly.model
-        const assembled = await assembleRequest({
-          tape,
-          now,
-          sessionId,
-          incarnationId: opened.incarnationId,
-          runId,
-          requestSeq: FIRST_REQUEST_SEQ,
-          model,
-          toolsWithheld: pre.assembly.toolsWithheld,
-          state: await readViewState(tape, sessionId),
-          openTable: () => openTable(opened.incarnationId, pre.assembly),
-        })
-        outcome = await streamRequest({
-          tape,
-          ids,
-          now,
-          sessionId,
-          runId,
-          contextAtEntryId: opened.contextAtEntryId,
-          provider: pre.provider,
-          model,
-          maxTokens: pre.assembly.maxTokens,
-          effort: pre.choice.effort,
-          assembled,
-          write: (entries) =>
-            post(box, 'run', null, async () => {
-              await tape.appendEntries({ sessionId, incarnationId: opened.incarnationId, entries })
-            }),
-          signal: lease.signal,
-          onDelta: (event) =>
-            emit(ports, {
-              type: event.type,
-              rootSessionId: box.rootSessionId,
-              sessionId,
-              runId,
-              delta: event.text,
-            }),
-        })
+        finished = await driveRun(ctx)
       } catch (error) {
         failure = error
       }
       await post(box, 'run', null, async () => {
-        let recorded = false
-        if (outcome !== null) {
-          try {
-            await tape.appendEntries({
-              sessionId,
-              incarnationId: opened.incarnationId,
-              entries: outcome.terminal,
-            })
-            recorded = true
-          } catch (error) {
-            failure = error
-          }
-        }
-        finish(box, lease)
-        if (outcome !== null && recorded) {
+        if (finished === null) {
+          // A programmer error, a session deleted underneath the Run, a store closed by an exit: no
+          // terminal is written, and plan step 16's recovery closes what the Run left open.
+          finish(box, lease)
+          log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(failure)}`)
           runEnded(ports, box, sessionId, {
             runId,
-            reason: endReasonOf(outcome, lease, pre.assembly.maxTokens),
-            recorded: true,
-            lastStop: outcome.stop?.reason ?? null,
-            errorCode: outcome.error?.code ?? null,
+            reason: failedEndReason(pre.provider.id),
+            recorded: false,
+            lastStop: null,
+            errorCode: 'unknown',
           })
           return
         }
-        // The Run failed before its facts were written — a programmer error, a session deleted
-        // underneath it, a store closed by an exit. Plan step 13 records `run_terminal` and step 16
-        // recovers a Run left without one; here the host is told it ended, and why is in the log.
-        log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(failure)}`)
+        const end = terminalOf(finished, lease, runId)
+        let recorded = false
+        try {
+          await tape.appendEntries({ sessionId, incarnationId, entries: end.entries })
+          recorded = true
+        } catch (error) {
+          log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
+        }
+        // Plan step 17 takes the queue here, between the terminal and the finish.
+        finish(box, lease)
+        if (recorded) {
+          for (const ref of end.stopped) {
+            const closure = end.entries.filter((entry) => entry.payload['ordinal'] === ref.ordinal)
+            ctx.emit.outcome(
+              {
+                callKey: callKeyOf(ref.runId, ref.requestSeq, ref.ordinal),
+                providerToolCallId: ref.providerToolCallId,
+              },
+              notRunView('stopped', closure),
+            )
+          }
+        }
         runEnded(ports, box, sessionId, {
           runId,
-          reason: failedEndReason(pre.provider.id),
-          recorded: false,
-          lastStop: null,
-          errorCode: 'unknown',
+          reason: end.reason,
+          recorded,
+          lastStop: finished.lastStop,
+          errorCode: finished.errorCode,
         })
       })
     })()
+  }
+
+  /**
+   * What the terminal task writes. A lease aborted before this task's turn (a stop, a closed window
+   * or a quit that came after the Run decided to pause, end or fail) ends the Run by the abort
+   * instead: the paused decision is not written and the calls it left waiting close not-run /
+   * `stopped`, as a stop while judging would have (§主进程与 kernel 的循环接口「mailbox」; §点停止时各状态怎么收).
+   * A pause the stop reaches after its terminal committed is plan step 15's.
+   */
+  function terminalOf(
+    finished: RunFinish,
+    lease: RunLease,
+    runId: string,
+  ): { reason: RunEndReason; entries: NewEntry[]; stopped: readonly CallRef[] } {
+    const writer = { by: 'run', runId } as const
+    const aborted = lease.signal.aborted
+    const reason = aborted ? abortedEndReason(abortCauseOf(lease)) : finished.reason
+    const stopped = aborted ? finished.waiting : []
+    const entries: NewEntry[] = aborted
+      ? stopped.flatMap((ref) => notRunFacts({ tape, now, call: ref, source: 'stopped', writer }))
+      : [...finished.withTerminal]
+    const payload: RunTerminalPayload = {
+      reason,
+      steps: finished.steps,
+      usage: [...finished.usage],
+      writer,
+    }
+    entries.push(
+      executionSlice.entry('execution/run_terminal', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        provenanceKey: runTerminalKey(runId),
+        payload,
+        createdAt: now(),
+      }),
+    )
+    return { reason, entries, stopped }
   }
 
   /**
@@ -608,7 +832,7 @@ export function createLoop(deps: LoopDeps): Loop {
     incarnationId: string,
     assembly: RunAssembly,
   ): Promise<{ table: FrozenToolTable; policy: PolicyState }> {
-    const policy = deps.policy()
+    const policy = deps.host.policy.current()
     const candidates = [
       ...builtinCandidates({
         profile: 'chat',
@@ -624,7 +848,7 @@ export function createLoop(deps: LoopDeps): Loop {
       reason: 'first-use',
       candidates,
       policy,
-      tenantId: deps.tenantId,
+      tenantId: deps.host.identity.tenantId,
       userSetting: deps.userSetting,
       hasSearchBackend: assembly.search !== null,
     })
@@ -673,13 +897,34 @@ export function createLoop(deps: LoopDeps): Loop {
 
   // ----- the commands ---------------------------------------------------------------------------
 
-  async function sendFrom(
+  /**
+   * A command that may open a Run (send, continue): at its entry, before the first await, it begins
+   * a lease only when nothing is ahead of it, and prebuilds; otherwise it queues without one.
+   */
+  function enter<T>(
     ports: LoopPorts,
     box: RootBox,
-    q: SendQuery & { text: string },
+    q: { sessionId: string; origin: RunOrigin | null },
+    turn: (lease: RunLease | null, pre: Prebuild | null) => Promise<Turn<T>>,
+    refused: (code: 'shutting-down') => T,
+  ): Promise<T> {
+    if (!canBeginAtEntry(box)) return commandFrom(box, q.sessionId, null, null, turn)
+    const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
+    if ('refused' in begun) {
+      dropIfIdle(box)
+      return Promise.resolve(refused(begun.refused))
+    }
+    const lease = hold(box, begun)
+    return commandFrom(box, q.sessionId, lease, prebuild(q.sessionId, box, lease), turn)
+  }
+
+  async function commandFrom<T>(
+    box: RootBox,
+    sessionId: string,
     lease: RunLease | null,
     prebuilt: Promise<Prebuild> | null,
-  ): Promise<SendResult> {
+    turn: (lease: RunLease | null, pre: Prebuild | null) => Promise<Turn<T>>,
+  ): Promise<T> {
     let pre: Prebuild | null = null
     try {
       pre = prebuilt === null ? null : await prebuilt
@@ -689,10 +934,10 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null) finish(box, lease)
       throw error
     }
-    const turn = await post(box, 'command', lease, () => sendTurn(ports, box, q, lease, pre))
-    if (turn.kind === 'done') return turn.result
+    const judged = await post(box, 'command', lease, () => turn(lease, pre))
+    if (judged.kind === 'done') return judged.result
     // Began in the mailbox: out to prebuild, and in again. Nothing is written in between.
-    return sendFrom(ports, box, q, turn.lease, prebuild(q.sessionId, box, turn.lease))
+    return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
   }
 
   return {
@@ -724,20 +969,31 @@ export function createLoop(deps: LoopDeps): Loop {
         return Promise.reject(new TypeError('send: an empty message is never written'))
       }
       const box = mailboxOf(q.sessionId)
-      // The entry, before the first await: a lease only when nothing is ahead of this command.
-      if (!canBeginAtEntry(box)) return sendFrom(ports, box, q, null, null)
-      const begun = ports.leases.begin({ rootSessionId: box.rootSessionId, origin: q.origin })
-      if ('refused' in begun) {
-        dropIfIdle(box)
-        return Promise.resolve({ status: 'refused', code: begun.refused })
-      }
-      const lease = hold(box, begun)
-      return sendFrom(ports, box, q, lease, prebuild(q.sessionId, box, lease))
+      return enter(
+        ports,
+        box,
+        q,
+        (lease, pre) => sendTurn(ports, box, q, lease, pre),
+        (code) => ({ status: 'refused', code }),
+      )
     },
 
-    continueRun(): Promise<ContinueRunResult> {
-      // Plan step 13: 「继续」 after a truncated or limited Run.
-      return Promise.resolve({ status: bound === null ? 'refused' : 'not-available' })
+    continueRun(q): Promise<ContinueRunResult> {
+      const ports = bound
+      if (ports === null) return Promise.resolve({ status: 'refused' })
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(
+          new TypeError(`continueRun: "${q.sessionId}" is not a canonical UUID`),
+        )
+      }
+      const box = mailboxOf(q.sessionId)
+      return enter(
+        ports,
+        box,
+        q,
+        (lease, pre) => continueTurn(ports, box, q, lease, pre),
+        () => ({ status: 'refused' }),
+      )
     },
 
     answer(): Promise<AnswerResult> {

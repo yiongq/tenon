@@ -94,5 +94,25 @@
     "provider": "The model service returned an error.",
     "unknown": "Something went wrong.",
     "retry": "Retry"
+  },
+  "runEnd": {
+    "completed": "Done.",
+    "user-stopped": "You stopped this task.",
+    "paused": "{waitingFor, select, approval {Waiting for your approval.} question {Waiting for your answer.} other {Waiting for a subtask to finish.}}",
+    "user-rejected": "You declined {toolName}, so the task ended.",
+    "blocked-repeatedly": "Calls were blocked {count} times in a row, so the task ended.",
+    "step-limit": "The task reached its limit of {limit} steps.",
+    "no-progress": "The model made the same calls {repeats} times in a row without progress, so the task ended.",
+    "usage-limit": "The task went over its limit of {tokenLimit} tokens.",
+    "refusal": "{modelId} on {providerId} declined to answer.",
+    "content-filter": "The content filter of {providerId} stopped the reply.",
+    "context-overflow": "The conversation no longer fits in the model’s context{compactions, plural, =0 {} one {, even after # compaction} other {, even after # compactions}}.",
+    "quota-exhausted": "The quota or spending limit on {providerId} is used up.{resetAt, select, unknown {} other { It resets at {resetAt}.}}",
+    "account-config": "Your {providerId} account or organization is not set up for this request.",
+    "provider-error": "The model service ({providerId}) returned an error{attempts, plural, =0 {} =1 {} other { after # attempts}}.",
+    "output-truncated": "The reply was cut off at the output limit of {maxTokens} tokens.",
+    "shutdown-aborted": "{trigger, select, quit {The task stopped because Tenon quit.} other {The task stopped because the window closed.}}",
+    "recovered": "Tenon closed unexpectedly while this task was running.",
+    "time-limit": "The subtask reached its time limit ({limitMs} ms)."
   }
 }

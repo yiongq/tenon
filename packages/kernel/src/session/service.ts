@@ -205,6 +205,8 @@ export interface TestServiceExtras {
   readonly tools?: TestToolRegistry
   /** Layer 3 readings, which phase 2 has no producer for (§不带 tools 的请求与冻结后的变化). */
   readonly userSetting?: (key: ToolKey) => UserToolSetting | null
+  /** A token limit on every Run (H11): the product has none; evals and sub-agents set their own. */
+  readonly tokenLimit?: number
 }
 
 /**
@@ -230,13 +232,16 @@ export function constructSessionService(
     tape,
     ids,
     now,
+    host: options.host,
     connector: options.connector,
     log,
-    policy: () => options.host.policy.current(),
-    tenantId: options.host.identity.tenantId,
+    inspectors: options.inspectors,
+    protectedFiles: options.protectedFiles,
     builtinAvailable:
       extras.tools === undefined ? (name) => PRODUCT_BUILTINS.has(name) : () => true,
+    testTools: extras.tools ?? null,
     userSetting: extras.userSetting ?? ((): null => null),
+    tokenLimit: extras.tokenLimit ?? null,
   })
 
   function startFact(

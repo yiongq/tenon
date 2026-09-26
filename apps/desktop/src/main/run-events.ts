@@ -8,8 +8,9 @@
  * after the fact it reports is committed, and a `run-ended` after the lease is finished: whoever
  * reacts to `done` by sending again finds the session free.
  *
- * Plan step 9 maps what a one-request Run produces. `tool-outcome` (step 14), `user-message` (step
- * 17) and `queue-held` (step 17, to queue.ts) are not forwarded yet; `done.endReason` is step 13.
+ * Plan step 9 mapped what a one-request Run produces and step 13 adds each Run's `endReason`.
+ * `tool-outcome` (step 14), `user-message` (step 17) and `queue-held` (step 17, to queue.ts) are not
+ * forwarded yet.
  */
 import { chatEvent } from '@tenon-app/contracts'
 import type { ChatEvent } from '@tenon-app/contracts'
@@ -120,7 +121,8 @@ export function createRunEvents(options: RunEventsOptions): (event: SessionEvent
 /**
  * `run-ended` as `done` or `error` (01 修补 6): an error when the Run ended on one, otherwise `done`
  * with the last stop by phase 1's table — or, for a Run that made no attempt, `aborted` when it was
- * stopped and `end-turn` otherwise.
+ * stopped and `end-turn` otherwise. Both carry the Run's `endReason`, which the failure card reads
+ * whichever of the two it is (开放问题 16).
  */
 function terminalEvent(
   sessionId: string,
@@ -128,12 +130,18 @@ function terminalEvent(
 ): ChatEvent {
   if (event.errorCode !== null) {
     const detail = diagnosticOf(event)
-    return { type: 'error', sessionId, code: ERROR_CODE[event.errorCode], detail }
+    return {
+      type: 'error',
+      sessionId,
+      code: ERROR_CODE[event.errorCode],
+      detail,
+      endReason: event.reason,
+    }
   }
   const stopped = event.reason.code === 'user-stopped' || event.reason.code === 'shutdown-aborted'
   const stopReason: ChatStopReason =
     event.lastStop === null ? (stopped ? 'aborted' : 'end-turn') : STOP_REASON[event.lastStop]
-  return { type: 'done', sessionId, stopReason }
+  return { type: 'done', sessionId, stopReason, endReason: event.reason }
 }
 
 /** The never-rendered `detail`: which Run ended, and by which end reason. */

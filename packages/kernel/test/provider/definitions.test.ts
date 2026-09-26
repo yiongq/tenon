@@ -124,6 +124,8 @@ interface DriveCase {
   readonly name: string
   readonly definition: ProviderDefinition
   readonly frames: readonly string[]
+  /** The reply to the request after the call's closure: plain text, which ends the Run. */
+  readonly closing: readonly string[]
   readonly secrets: Record<string, string>
   readonly config: Record<string, string>
   /** What the accumulator must hold once the stream is done. */
@@ -172,6 +174,7 @@ const CASES: readonly DriveCase[] = [
     name: 'anthropic',
     definition: anthropicDefinition,
     frames: anthropicFixture.ONE_TOOL_CALL_FRAMES,
+    closing: anthropicFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -188,6 +191,7 @@ const CASES: readonly DriveCase[] = [
     name: 'zhipu',
     definition: zhipuDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -204,6 +208,7 @@ const CASES: readonly DriveCase[] = [
     name: 'ollama',
     definition: ollamaDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     // No secret at all: this provider's key is a non-secret config item with a default.
     secrets: {},
     config: {},
@@ -222,6 +227,7 @@ const CASES: readonly DriveCase[] = [
     name: 'acme (registered in this test file)',
     definition: acmeDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -405,7 +411,10 @@ async function driveThroughTape(
 ): Promise<TapeDrive> {
   const definition = registry.get(testCase.definition.id)
   if (definition === null) throw new Error(`${testCase.definition.id} is not registered`)
-  const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
+  const net = fakeNetwork([
+    { kind: 'sse', frames: testCase.frames },
+    { kind: 'sse', frames: testCase.closing },
+  ])
   const provider = definition.create({
     network: net,
     clock: { now: () => NOW, setTimeout: () => () => undefined },
@@ -457,9 +466,29 @@ function describeFact(entry: TapeEntry): unknown {
   }
 }
 
+/** The attempt fact's keys. Spec 02 (01 修补 7) adds `encoder`, `modelWireHash` and `responseModelId`. */
+const ATTEMPT_KEYS = [
+  'assemblyRef',
+  'contextAtEntryId',
+  'encoder',
+  'error',
+  'modelId',
+  'modelWireHash',
+  'promptHash',
+  'providerId',
+  'request',
+  'responseModelId',
+  'stop',
+  'thinkingDecisions',
+  'toolDefinitionsHash',
+  'usage',
+]
+
 /**
- * The facts of one turn: phase 1's five, the Run's start (spec 02 plan step 9), and what the request
- * was assembled from — the model's content, the provider's first tool table, the manifest (step 10).
+ * The facts of one Run: phase 1's five, the Run's start (spec 02 plan step 9), what the request was
+ * assembled from — the model's content, the provider's first tool table, the manifest (step 10) —
+ * then the call it asked for, closed as `tool-unavailable` (no product table holds `read_file`), the
+ * second request that carries the closure back, and the Run's terminal (step 13).
  */
 const TURN_SHAPE: readonly unknown[] = [
   {
@@ -527,28 +556,82 @@ const TURN_SHAPE: readonly unknown[] = [
     meta: {},
   },
   {
+    name: 'tool/call',
+    kind: 'tool_call',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: ['argsHash', 'input', 'messageId', 'name', 'ordinal', 'providerToolCallId'],
+    meta: {},
+  },
+  {
     name: 'provider/attempt_completed',
     kind: 'event',
     sourceType: 'runtime_event',
     sourceSeq: 1,
-    // Spec 02 (01 修补 7) adds `encoder`, `modelWireHash` and `responseModelId`, the same three on
-    // every provider.
+    payloadKeys: ATTEMPT_KEYS,
+    meta: {},
+  },
+  {
+    name: 'tool/result',
+    kind: 'tool_result',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
     payloadKeys: [
-      'assemblyRef',
-      'contextAtEntryId',
-      'encoder',
-      'error',
-      'modelId',
-      'modelWireHash',
-      'promptHash',
-      'providerId',
-      'request',
-      'responseModelId',
-      'stop',
-      'thinkingDecisions',
-      'toolDefinitionsHash',
-      'usage',
+      'content',
+      'isError',
+      'kernelAuthored',
+      'ordinal',
+      'providerToolCallId',
+      'writer',
     ],
+    meta: {},
+  },
+  {
+    name: 'execution/tool_outcome',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: [
+      'effect',
+      'ordinal',
+      'providerToolCallId',
+      'reversibility',
+      'source',
+      'state',
+      'writer',
+    ],
+    meta: {},
+  },
+  {
+    name: 'view/assembled',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 2,
+    payloadKeys: ['modelInfoHash', 'systemHash', 'tools'],
+    meta: {},
+  },
+  {
+    name: 'message/assistant',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'messageId', 'revision', 'role', 'runId', 'status'],
+    meta: {},
+  },
+  {
+    name: 'provider/attempt_completed',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 2,
+    payloadKeys: ATTEMPT_KEYS,
+    meta: {},
+  },
+  {
+    name: 'execution/run_terminal',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: null,
+    payloadKeys: ['reason', 'steps', 'usage', 'writer'],
     meta: {},
   },
 ]
@@ -612,7 +695,7 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, , , , assistant, attempt] = entries
+      const [, , , modelSelected, , , , assistant, , attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,

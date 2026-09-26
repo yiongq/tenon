@@ -573,5 +573,14 @@ export const MCP_CALL_FRAMES: readonly string[] = [
   DONE,
 ]
 
+/** A turn that is the vendor's call alone, ended as `tool_calls`: nothing for the client to run. */
+export const MCP_ONLY_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
 /** The model every chunk names; spec 02 reports it once as the `response-model` event. */
 export const RESPONSE_MODEL_ID = MODEL_ID

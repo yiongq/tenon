@@ -8,10 +8,11 @@
  * event `message/retracted`; every other kind and every other event name passes through untouched as
  * evidence and never becomes a message.
  *
- * `REPLAY_KINDS` reads `tool_call` and `tool_result` too (spec 02 only adds those two). Placing
- * `tool/call` and `tool/result` around their assistant turn — §重放怎么排 — and hiding a retracted
- * assistant's tool/ and execution/ facts is plan step 14's; until then no kernel path writes a tool
- * fact, and the fold passes them through as evidence.
+ * `REPLAY_KINDS` reads `tool_call` and `tool_result` too (spec 02 only adds those two), and
+ * `rebuildProviderContext` places them (§重放怎么排): for the provider, the tool facts are authoritative
+ * — an assistant turn's i-th `tool-request` block only marks where its i-th `tool/call` goes, and the
+ * results follow that turn in one user message, in `<i>` order, wherever the Tape holds them. A
+ * retracted assistant turn takes its calls and results with it: they hang off its `messageId`.
  *
  * `rebuildProviderContext` pages the fold out of a store and hands back provider messages. A
  * request's context is a PREFIX of the tape, not the whole tape, which is why every
@@ -256,11 +257,118 @@ export async function rebuildProviderContext(
 ): Promise<InternalMessage[]> {
   const entries = await readReplayEntries(store, q)
   const cut = latestCompaction(entries)
-  const messages = effectiveMessages(entries)
-    .filter((message) => cut === null || message.orderSeq >= cut.keepFromEntryId)
-    .filter((message) => message.content.length > 0)
-    .map((message): InternalMessage => ({ role: message.role, content: [...message.content] }))
+  const tools = toolFactsOf(entries)
+  const messages: InternalMessage[] = []
+  for (const message of effectiveMessages(entries)) {
+    if (cut !== null && message.orderSeq < cut.keepFromEntryId) continue
+    if (message.role !== 'assistant') {
+      if (message.content.length > 0)
+        messages.push({ role: message.role, content: [...message.content] })
+      continue
+    }
+    const calls = tools.calls.get(message.messageId) ?? []
+    const content = placeCalls(message.content, calls)
+    if (content.length > 0) messages.push({ role: 'assistant', content })
+    // The results follow their assistant turn, in <i> order — wherever the Tape holds them.
+    const responses: ContentBlock[] = []
+    for (const call of calls) {
+      const result = tools.results.get(call.key)
+      if (result === undefined) continue
+      responses.push({
+        type: 'tool-response',
+        id: call.providerToolCallId,
+        content: result.content,
+        isError: result.isError,
+      })
+    }
+    if (responses.length > 0) messages.push({ role: 'user', content: responses })
+  }
   if (cut === null) return messages
   // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
   return [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages]
+}
+
+/** A `tool/call` as replay places it. */
+interface ReplayCall {
+  readonly key: string
+  readonly ordinal: number
+  readonly providerToolCallId: string
+  readonly name: string
+  readonly input: Record<string, unknown>
+}
+
+/** What replay takes from a `tool/result`. */
+interface ReplayResult {
+  readonly content: Array<Extract<ContentBlock, { type: 'text' | 'image' }>>
+  readonly isError: boolean
+}
+
+/** A call's identity across its tool/ facts: (runId, requestSeq, <i>). */
+function callIdentity(entry: TapeEntry): string {
+  return `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
+}
+
+/** The calls by the assistant message they belong to, in <i> order, and the results by call. */
+function toolFactsOf(entries: readonly TapeEntry[]): {
+  calls: Map<string, ReplayCall[]>
+  results: Map<string, ReplayResult>
+} {
+  const calls = new Map<string, ReplayCall[]>()
+  const results = new Map<string, ReplayResult>()
+  for (const entry of entries) {
+    if (entry.name === 'tool/call') {
+      const messageId = entry.payload['messageId']
+      if (typeof messageId !== 'string') {
+        throw new TapeProjectionError(`${entry.name}: payload.messageId must be a string`)
+      }
+      const list = calls.get(messageId) ?? []
+      list.push({
+        key: callIdentity(entry),
+        ordinal: Number(entry.payload['ordinal']),
+        providerToolCallId: String(entry.payload['providerToolCallId']),
+        name: String(entry.payload['name']),
+        input: entry.payload['input'] as Record<string, unknown>,
+      })
+      calls.set(messageId, list)
+    } else if (entry.name === 'tool/result') {
+      // The first result of a call counts (先写者算数): a later one is never written, and if a disk
+      // held one anyway, replay would still pair the call once.
+      const key = callIdentity(entry)
+      if (results.has(key)) continue
+      results.set(key, {
+        content: entry.payload['content'] as ReplayResult['content'],
+        isError: entry.payload['isError'] === true,
+      })
+    }
+  }
+  for (const list of calls.values()) list.sort((a, b) => a.ordinal - b.ordinal)
+  return { calls, results }
+}
+
+/**
+ * The assistant content with each `tool-request` block taken from its `tool/call`: the block marks
+ * the position, the fact gives the id, the name and the input. When the counts disagree the content
+ * stays as stored — the recovery pass's 「损坏」 class (plan step 16), not something replay repairs.
+ */
+function placeCalls(
+  content: readonly ContentBlock[],
+  calls: readonly ReplayCall[],
+): ContentBlock[] {
+  const requests = content.filter((block) => block.type === 'tool-request').length
+  if (calls.length === 0 || requests !== calls.length) return [...content]
+  let next = 0
+  return content.map((block): ContentBlock => {
+    if (block.type !== 'tool-request') return block
+    const call = calls[next]
+    next += 1
+    if (call === undefined) return block
+    return {
+      type: 'tool-request',
+      id: call.providerToolCallId,
+      name: call.name,
+      input: call.input,
+      // What the vendor sent verbatim on the block stays with it (01 修补 2).
+      ...(block.vendorFields === undefined ? {} : { vendorFields: block.vendorFields }),
+    }
+  })
 }

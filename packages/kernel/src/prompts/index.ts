@@ -46,7 +46,8 @@ export interface ModelNotes {
     readonly status: Readonly<Record<'partial' | 'aborted' | 'superseded' | 'uncertain', string>>
     readonly call: string
   } // plan step 31
-  readonly continuation?: Readonly<Record<'output-truncated' | 'step-limit', string>> // plan step 13
+  /** The model-only note a 「继续」 Run opens with (`message/continuation`; A2, H11). */
+  readonly continuation: Readonly<Record<'output-truncated' | 'step-limit', string>>
   readonly spill?: string // plan step 24
   readonly searchTruncated?: string // plan step 28
   readonly compactionRequest?: string // plan step 30
@@ -79,6 +80,47 @@ export const MODEL_NOTES: ModelNotes = {
     'tool-unavailable': {
       'not-run': 'This tool cannot be used right now, so the call was not run.',
     },
+    // Plan step 13: the blocks a decision makes, and the calls a Run leaves when it ends.
+    protected: {
+      'not-run':
+        'This call was blocked because it reaches a location Tenon protects ({target}), so it was not run. Do not try to reach it another way.',
+    },
+    inspector: {
+      'not-run': 'A permission check blocked this call, so it was not run.',
+    },
+    stopped: {
+      'not-run': 'The user stopped the task before this call ran, so it was not run.',
+    },
+    'output-truncated': {
+      'not-run':
+        'The reply was cut off at the output limit before this call could run, so it was not run.',
+    },
+    'step-limit': {
+      'not-run': 'The task reached its step limit before this call ran, so it was not run.',
+    },
+    'no-progress': {
+      'not-run':
+        'This call repeats the calls before it without making progress, so it was not run. Try a different approach.',
+    },
+    'usage-limit': {
+      'not-run': 'The task reached its usage limit before this call ran, so it was not run.',
+    },
+    'blocked-repeatedly': {
+      'not-run':
+        'Several calls in a row were blocked, so the task stopped and this call was not run.',
+    },
+    'content-filter': {
+      'not-run': 'The provider’s content filter stopped the reply, so this call was not run.',
+    },
+    'provider-error': {
+      'not-run': 'The model service reported an error, so this call was not run.',
+    },
+  },
+  continuation: {
+    'output-truncated':
+      'Your previous reply was cut off at the output limit. Continue from exactly where it stopped, without repeating what you already wrote.',
+    'step-limit':
+      'The task reached its step limit and the user asked you to continue. Carry on with the task from where you stopped.',
   },
   // The spec's own sentences (§Inspector 接口与合议).
   inspectorFailed: {
