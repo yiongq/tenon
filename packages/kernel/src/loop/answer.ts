@@ -408,8 +408,17 @@ export function resumeSetupOf(
       `resume: the facts of request ${batch.runId}:${String(batch.requestSeq)} are incomplete`,
     )
   }
+  // The paused Run's model and where its capabilities came from (§续跑); where it sends is read
+  // again when the resuming Run is written.
   return {
-    selected: { providerId: selected.providerId, modelId: selected.modelId },
+    selected: {
+      providerId: selected.providerId,
+      modelId: selected.modelId,
+      ...(selected.capabilitySource === undefined
+        ? {}
+        : { capabilitySource: selected.capabilitySource }),
+      ...(selected.endpointOrigin === undefined ? {} : { endpointOrigin: selected.endpointOrigin }),
+    },
     model: content.model,
     maxTokens: request.maxTokens ?? content.model.maxOutputTokens,
     effort: request.effort ?? null,

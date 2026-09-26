@@ -38,6 +38,8 @@ import type { SearchBackend } from '../tools/search/types.js'
 export interface TestConnectorScript {
   readonly provider: Provider
   readonly model: ModelInfo
+  /** Other models `assemble` may be asked for by a session's choice (①); `model` answers the rest. */
+  readonly models?: readonly ModelInfo[]
   readonly effort?: string | null
   readonly capabilitySource?: CapabilitySource
   /** Default `https://connector.test`. */
@@ -66,6 +68,8 @@ export interface TestConnector extends RunConnector {
     readonly assemble: number
     readonly provider: number
   }
+  /** What each `resolveChoice` was asked, in order: ① and the previous origin included. */
+  readonly resolved: ReadonlyArray<Parameters<RunConnector['resolveChoice']>[0]>
 }
 
 /** One recorded lease: what it was begun for, and what happened to it. */
@@ -288,6 +292,7 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
   let providerFailures = 0
   let held: { reached: () => void; gate: Promise<void> } | null = null
   const calls = { resolveChoice: 0, assemble: 0, provider: 0 }
+  const resolved: Array<Parameters<RunConnector['resolveChoice']>[0]> = []
 
   function current(): TestConnectorScript {
     if (script === null) throw new Error('the test connector has no script; pass connector: {…}')
@@ -298,8 +303,11 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
     endpointOrigin(providerId: ProviderId): string | null {
       return script?.provider.id === providerId ? (script.endpointOrigin ?? DEFAULT_ORIGIN) : null
     },
-    resolveChoice(): Promise<ModelChoice | { needsConfirm: { host: string } }> {
+    resolveChoice(q): Promise<ModelChoice | { needsConfirm: { host: string } }> {
       calls.resolveChoice += 1
+      resolved.push(q)
+      // ① wins, and was confirmed in the menu when it was chosen: no data-flow check for it.
+      if (q.sessionChoice !== null) return Promise.resolve(q.sessionChoice)
       if (confirmHost !== null) return Promise.resolve({ needsConfirm: { host: confirmHost } })
       try {
         const s = current()
@@ -313,7 +321,7 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
         return Promise.reject(error)
       }
     },
-    async assemble(): Promise<RunAssembly> {
+    async assemble(q): Promise<RunAssembly> {
       calls.assemble += 1
       const hold = held
       held = null
@@ -322,9 +330,10 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
         await hold.gate
       }
       const s = current()
+      const model = s.models?.find((candidate) => candidate.id === q.choice.modelId) ?? s.model
       return {
-        model: s.model,
-        capabilitySource: s.capabilitySource ?? 'builtin',
+        model,
+        capabilitySource: q.choice.capabilitySource,
         endpointOrigin: s.endpointOrigin ?? DEFAULT_ORIGIN,
         maxTokens: s.maxTokens ?? s.model.maxOutputTokens,
         toolsWithheld: s.toolsWithheld ?? null,
@@ -357,5 +366,6 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
       return { reached: reached.promise, release: gate.resolve }
     },
     calls,
+    resolved,
   }
 }

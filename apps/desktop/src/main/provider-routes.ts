@@ -14,11 +14,22 @@ import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '@tenon
 import type {
   ConfigKey,
   HostAdapter,
+  ModelInfo,
   ProviderDefinition,
   ProviderRegistry,
 } from '@tenon-app/kernel'
-import { readConfig, writeConfig } from './host/profile.js'
-import { providerSecretKey, readProviderInputs, readProviderSecret } from './provider.js'
+import { endpointOf, hostOf } from './endpoint.js'
+import { readConfig, withConfigLock, writeConfig, writeConfigHeld } from './host/profile.js'
+import {
+  BASE_URL_KEY,
+  declaredBaseURL,
+  devEnv,
+  providerSecretKey,
+  readProviderInputs,
+  unboundSecrets,
+} from './provider.js'
+import type { EnvLike } from './provider.js'
+import { TEXT_ONLY_PROVIDERS } from './run-assembly.js'
 
 /**
  * The three provider routes (spec 01 §desktop 接线) — everything the settings card needs and
@@ -42,6 +53,13 @@ export interface ProviderRoutesDeps {
   host: HostAdapter
   providers: ProviderRegistry
   log?: (line: string) => void
+  /**
+   * `app.isPackaged`: 「已配置」 counts a development variable only on a development build — what a
+   * send there would actually find (01 修补 6「已配置」).
+   */
+  isPackaged?: boolean
+  /** The environment the development fallback reads. Tests pass a fixed one; main passes none. */
+  env?: EnvLike
 }
 
 /** Saved. The card re-reads `provider.list` afterwards rather than trusting an echoed value. */
@@ -50,6 +68,7 @@ const SAVED: ProviderWriteResult = { ok: true }
 export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
   const { ipcMain, host, providers } = deps
   const log = deps.log ?? ((line: string): void => console.warn(line))
+  const env = (): EnvLike => devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
 
   registerRoute(ipcMain, providerList, async () => {
     const config = await readConfig(host.fs, host.identity)
@@ -59,13 +78,23 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
           host,
           definition,
           settings: config.providerConfig[definition.id],
+          env: env(),
           log,
         }),
       ),
     )
   })
 
-  registerRoute(ipcMain, providerConfigure, async ({ id, values }) => {
+  registerRoute(ipcMain, providerConfigure, ({ id, values }) =>
+    // In the profile's lock, the config read again inside it: two saves never cross, and a key
+    // is never left paired with another host's base URL (01 修补 6「key 绑定主机」).
+    withConfigLock(host.identity, () => configure(id, values)),
+  )
+
+  async function configure(
+    id: string,
+    values: Readonly<Record<string, string>>,
+  ): Promise<ProviderWriteResult> {
     const definition = providers.get(id)
     if (definition === null) return refused('unknown-provider', null)
     const declared = new Map(definition.configKeys.map((key) => [key.name, key]))
@@ -82,6 +111,15 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
 
     const check = accepts(definition, host, current, next, Object.keys(values))
     if (!check.ok) return refused('invalid-value', check.configKey)
+
+    const settings = mergeSettings(stored, declared, values)
+    const before = hostOf(nonEmpty(stored[BASE_URL_KEY]) ?? declaredBaseURL(definition))
+    const after = hostOf(nonEmpty(settings[BASE_URL_KEY]) ?? declaredBaseURL(definition))
+    // Ollama is for this machine or a private network only: its cloud is not a base URL here.
+    if (TEXT_ONLY_PROVIDERS.has(id) && after !== null && isOllamaCloud(after)) {
+      return refused('key-host-binding', BASE_URL_KEY)
+    }
+    if (before !== after) return moveHost(definition, config.providerConfig, settings, values)
 
     // Secrets first: a `config.json` write that failed afterwards leaves a credential the user
     // can still use, while the reverse would leave a provider pointing somewhere with no key.
@@ -101,25 +139,94 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
             : host.secrets.set(secretName, value)
         }),
     )
-    const settings = mergeSettings(stored, declared, values)
-    await writeConfig(host.fs, host.identity, {
+    await writeConfigHeld(host.fs, host.identity, {
       providerConfig: { ...config.providerConfig, [id]: settings },
     })
     return SAVED
-  })
+  }
+
+  /**
+   * A save that moves the base URL to another host (01 修补 6「key 绑定主机」): every stored key must
+   * be typed again or cleared in it, or nothing is written. Then every declared secret is deleted —
+   * whatever was read — the config written, and the new keys stored: a step that fails leaves no
+   * key rather than a key bound to the wrong host. A keychain that cannot be read or cleared refuses
+   * the whole save before `config.json` is touched.
+   */
+  async function moveHost(
+    definition: ProviderDefinition,
+    all: Readonly<Record<string, Readonly<Record<string, string>>>>,
+    settings: Record<string, string>,
+    values: Readonly<Record<string, string>>,
+  ): Promise<ProviderWriteResult> {
+    const secrets = definition.configKeys.filter((key) => key.secret)
+    const name = (key: ConfigKey): string => providerSecretKey(host, definition.id, key.name)
+    let stored: string[]
+    try {
+      const read = await Promise.all(
+        secrets.map(async (key) =>
+          (await host.secrets.get(name(key))) === null ? null : key.name,
+        ),
+      )
+      stored = read.filter((key): key is string => key !== null)
+    } catch (error) {
+      log(
+        `[provider] ${definition.id}: the keychain could not be read to move the host: ${String(error)}`,
+      )
+      return refused('key-host-binding', BASE_URL_KEY)
+    }
+    if (stored.some((key) => !Object.hasOwn(values, key))) {
+      return refused('key-host-binding', BASE_URL_KEY)
+    }
+    try {
+      await Promise.all(secrets.map((key) => host.secrets.delete(name(key))))
+    } catch (error) {
+      log(
+        `[provider] ${definition.id}: the keychain could not be cleared to move the host: ${String(error)}`,
+      )
+      return refused('key-host-binding', BASE_URL_KEY)
+    }
+    await writeConfigHeld(host.fs, host.identity, {
+      providerConfig: { ...all, [definition.id]: settings },
+    })
+    await Promise.all(
+      secrets
+        .map((key) => ({ key, value: (values[key.name] ?? '').trim() }))
+        .filter(({ value }) => value !== '')
+        .map(({ key, value }) => host.secrets.set(name(key), value)),
+    )
+    return SAVED
+  }
 
   registerRoute(ipcMain, providerSelect, async ({ providerId, modelId }) => {
     const definition = providers.get(providerId)
     if (definition === null) return refused('unknown-provider', null)
-    // One of the definition's own models. A model no table knows is still reachable through
-    // `TENON_MODEL` (which synthesises a conservative `ModelInfo`); letting the card write one
-    // would mean storing a capability set nobody declared.
-    if (!definition.builtinModels.some((model) => model.id === modelId)) {
-      return refused('unknown-model', null)
-    }
-    await writeConfig(host.fs, host.identity, { provider: { id: providerId, modelId } })
+    // A hand-typed id is accepted and marked (M6, A15; 01 修补 9 (c)): its capabilities are the
+    // conservative synthesis, so it only ever holds a text conversation.
+    const selection = selectionOf(definition, modelId)
+    // The card's 「新会话默认模型」: both profiles' defaults and `provider` (§模型选择「设置卡」).
+    await writeConfig(host.fs, host.identity, {
+      provider: selection,
+      defaultModelByProfile: { chat: selection, cowork: selection },
+    })
     return SAVED
   })
+}
+
+/** What `config.json` records for a choice: the id, marked when no builtin table has it. */
+export function selectionOf(
+  definition: ProviderDefinition,
+  modelId: string,
+): { id: string; modelId: string; source?: 'user' } {
+  const builtin = definition.builtinModels.some((model) => model.id === modelId)
+  return builtin ? { id: definition.id, modelId } : { id: definition.id, modelId, source: 'user' }
+}
+
+function isOllamaCloud(host: string): boolean {
+  return host === 'ollama.com' || host.endsWith('.ollama.com')
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === '' ? undefined : value
 }
 
 function refused(
@@ -133,32 +240,57 @@ interface DescribeOptions {
   readonly host: HostAdapter
   readonly definition: ProviderDefinition
   readonly settings: Readonly<Record<string, string>> | undefined
+  /** Already narrowed by `devEnv`: `{}` on a packaged build. */
+  readonly env: EnvLike
   readonly log: (line: string) => void
 }
 
 async function describeProvider(options: DescribeOptions): Promise<ProviderEntryContract> {
-  const { host, definition, settings, log } = options
-  const configKeys = await Promise.all(
-    definition.configKeys.map(async (key) => ({
-      name: key.name,
-      required: key.required,
-      secret: key.secret,
-      primary: key.primary === true,
-      labelKey: key.labelKey,
-      // Never for a secret, whatever a definition declares: `default` is the only field here that
-      // carries a value, and the contract refuses one on a secret key (ipc/provider.ts).
-      ...(key.default === undefined || key.secret ? {} : { default: key.default }),
-      configured: key.secret
-        ? (await readProviderSecret(host, definition.id, key.name, log)) !== null
-        : hasValue(settings?.[key.name]) || hasValue(key.default),
-    })),
-  )
+  const { host, definition, settings, env, log } = options
+  const inputs = await readProviderInputs({ host, definition, settings, env, log })
+  // 「已配置」 is what a send on THIS build would find (01 修补 6): the keychain, the development
+  // variables on a development build, and not a key bound to another host than the one used.
+  const unbound = new Set(unboundSecrets(definition, settings, env, inputs))
+  const configKeys = definition.configKeys.map((key) => ({
+    name: key.name,
+    required: key.required,
+    secret: key.secret,
+    primary: key.primary === true,
+    labelKey: key.labelKey,
+    // Never for a secret, whatever a definition declares: `default` is the only field here that
+    // carries a value, and the contract refuses one on a secret key (ipc/provider.ts).
+    ...(key.default === undefined || key.secret ? {} : { default: key.default }),
+    configured: key.secret
+      ? inputs.sources[key.name] !== undefined && !unbound.has(key.name)
+      : hasValue(settings?.[key.name]) || hasValue(key.default),
+  }))
+  const endpoint = endpointOf(inputs.config[BASE_URL_KEY]) ?? { host: '', reach: 'public' as const }
   return {
     id: definition.id,
     nameKey: definition.nameKey,
     configKeys,
-    models: definition.builtinModels.map((model) => ({ id: model.id })),
+    models: definition.builtinModels.map((model) => menuRow(definition, model)),
     configured: isConfigured(configKeys),
+    endpoint,
+  }
+}
+
+/** A builtin row as the menu lists it (01 修补 6「provider.list」). */
+function menuRow(
+  definition: ProviderDefinition,
+  model: ModelInfo,
+): ProviderEntryContract['models'][number] {
+  const spec = model.thinkingSpec
+  return {
+    id: model.id,
+    // Ollama sends no tools (A14); zhipu's and anthropic's rows stay verified wherever they point.
+    mark: TEXT_ONLY_PROVIDERS.has(definition.id) ? 'local-text-only' : 'verified',
+    ...(model.purposeKey === undefined ? {} : { purposeKey: model.purposeKey }),
+    listing: model.listing ?? 'main',
+    ...(spec?.effortLevels === undefined || spec.effortLevels.length === 0
+      ? {}
+      : { effortLevels: [...spec.effortLevels] }),
+    ...(spec?.defaultEffort === undefined ? {} : { defaultEffort: spec.defaultEffort }),
   }
 }
 
@@ -168,9 +300,9 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
  *
  * The second clause is what makes the answer true for `anthropic`, whose two credentials are both
  * `required: false` because `ConfigKey` cannot say "one of these" — without it a provider with no
- * key at all would report itself ready. It reports what is STORED: a development variable makes
- * the chat path work without making this true, which is the honest reading for a card whose job
- * is to say what a packaged build would find.
+ * key at all would report itself ready. Each key's `configured` is what this build can actually use
+ * (spec 02 01 修补 6「已配置」): a development variable counts on a development build only, and a key
+ * bound to another host than the one the provider sends to does not count at all.
  */
 function isConfigured(keys: readonly ProviderConfigKeyContract[]): boolean {
   if (keys.some((key) => key.required && !key.configured)) return false

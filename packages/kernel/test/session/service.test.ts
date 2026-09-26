@@ -517,7 +517,13 @@ describe('one request', () => {
     expect(started?.payload).toEqual({
       cause: { kind: 'user-message', messageId: user?.payload['messageId'] },
     })
-    expect(model?.payload).toEqual({ providerId: h.provider.id, modelId: MODEL.id })
+    // Where its capabilities came from and where it sent (01 修补 7; plan step 19).
+    expect(model?.payload).toEqual({
+      providerId: h.provider.id,
+      modelId: MODEL.id,
+      capabilitySource: 'builtin',
+      endpointOrigin: 'https://connector.test',
+    })
     expect(user?.sourceType).toBe('message')
     expect(user?.sourceSeq).toBe(0)
     expect(assistant?.payload['runId']).toBe(ran.runId)

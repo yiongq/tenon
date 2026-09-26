@@ -58,7 +58,7 @@ export function registerApprovalRoutes({ ipcMain, sessions, gate }: ApprovalRout
 }
 
 /** The document that answered: the Run the answer opens belongs to it. */
-function originOf(event: unknown): RunOrigin | null {
+export function originOf(event: unknown): RunOrigin | null {
   if (typeof event !== 'object' || event === null) return null
   const sender = (event as { sender?: unknown }).sender
   if (typeof sender !== 'object' || sender === null) return null

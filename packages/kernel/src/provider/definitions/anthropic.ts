@@ -95,6 +95,7 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
     id: 'claude-sonnet-5',
+    purposeKey: 'model.purpose.sonnet5',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -122,6 +123,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     // to max with medium the default, no forced `tool_choice`, sampling parameters at their
     // defaults only (02 §内置模型表的数据改动, decisions A16 and A1).
     id: 'claude-opus-5-5',
+    purposeKey: 'model.purpose.opus55',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -146,8 +148,10 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   },
   {
     // Legacy ("still available") since Opus 5.5; the deprecations page still lists it as Active,
-    // retiring not sooner than 2027-07-24. It moves under 更多模型 › once `listing` exists (02 A16).
+    // retiring not sooner than 2027-07-24. Listed under 更多模型 › (02 A16).
     id: 'claude-opus-5',
+    purposeKey: 'model.purpose.opus5',
+    listing: 'more',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -178,6 +182,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     // 2026-09-26, when no notice for this model was listed). 02 decision A16 drops the row once a
     // deprecation notice appears.
     id: 'claude-haiku-4-5-20251001',
+    purposeKey: 'model.purpose.haiku45',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 200_000,
     maxOutputTokens: 64_000,
@@ -198,6 +203,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   },
   {
     id: 'claude-fable-5-1',
+    purposeKey: 'model.purpose.fable51',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,

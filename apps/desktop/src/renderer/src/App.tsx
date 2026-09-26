@@ -29,6 +29,7 @@ export function App(): JSX.Element {
     sidebarCollapsed: false,
     provider: null,
     providerConfig: {},
+    defaultModelByProfile: {},
     lastWorkspaceFolders: [],
   })
 
@@ -42,6 +43,11 @@ export function App(): JSX.Element {
   const startFresh = useCallback(() => {
     superseded.current = true
     setConversation(freshConversation())
+  }, [])
+  /** A new session whose id the caller minted — its draft may already hold a model choice. */
+  const startSession = useCallback((sessionId: string) => {
+    superseded.current = true
+    setConversation({ sessionId, messages: [] })
   }, [])
 
   useEffect(() => {
@@ -90,6 +96,7 @@ export function App(): JSX.Element {
         key={conversation.sessionId}
         sessionId={conversation.sessionId}
         initialMessages={conversation.messages}
+        onStartSession={startSession}
       >
         <Thread />
       </ChatProvider>

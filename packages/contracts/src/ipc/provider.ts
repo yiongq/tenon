@@ -23,9 +23,20 @@ import { defineRoute } from '../route.js'
 /** A bound on a typed setting: a key or a URL, never a document. */
 export const PROVIDER_VALUE_MAX_LENGTH = 4096
 
-const providerIdSchema = z.string().min(1).max(64)
+export const providerIdSchema = z.string().min(1).max(64)
 const configKeyNameSchema = z.string().min(1).max(64)
-const modelIdSchema = z.string().min(1).max(200)
+export const modelIdSchema = z.string().min(1).max(200)
+
+/** A thinking level by its vendor name; main checks it against the row's `effortLevels` (A11). */
+export const effortSchema = z.string().min(1)
+
+/**
+ * What a row is (spec 02 01 修补 6; A14, A15, 开放问题 23): a builtin row of zhipu or anthropic —
+ * whatever host their base URL points at — is `verified`; an Ollama row sends no tools; a
+ * hand-typed id is unverified and text-only. `probed` joins with a later spec, as an addition.
+ */
+export const modelMarkSchema = z.enum(['verified', 'local-text-only', 'unverified-text-only'])
+export type ModelMark = z.infer<typeof modelMarkSchema>
 
 /**
  * One declared `ConfigKey` as the card renders it. `configured` is what replaces the value: for a
@@ -57,8 +68,29 @@ export const providerConfigKeySchema = z
   })
 export type ProviderConfigKeyContract = z.infer<typeof providerConfigKeySchema>
 
-/** A builtin model, by id: the card offers the list, the run records what it used. */
-export const providerModelSchema = z.object({ id: modelIdSchema })
+/**
+ * A builtin model as the menu lists it (spec 02 01 修补 6): its mark, its purpose sentence's
+ * catalogue key, whether it sits under 「更多模型 ›」, and its thinking levels copied from
+ * `thinkingSpec` — absent for a row with none, which shows no submenu.
+ */
+export const providerModelSchema = z.object({
+  id: modelIdSchema,
+  mark: modelMarkSchema,
+  purposeKey: z.string().min(1).optional(),
+  listing: z.enum(['main', 'more']),
+  effortLevels: z.array(effortSchema).optional(),
+  defaultEffort: effortSchema.optional(),
+})
+
+/**
+ * Where the provider's current base URL points (A9): only `loopback` reads as 「本机」; `loopback`
+ * and `private` together are the local side of the confirmation before a switch to a public host.
+ */
+export const providerEndpointSchema = z.object({
+  host: z.string(),
+  reach: z.enum(['loopback', 'private', 'public']),
+})
+export type ProviderEndpoint = z.infer<typeof providerEndpointSchema>
 
 /** One registered definition. `configured` = this provider could run as it stands. */
 export const providerEntrySchema = z.object({
@@ -67,6 +99,7 @@ export const providerEntrySchema = z.object({
   configKeys: z.array(providerConfigKeySchema),
   models: z.array(providerModelSchema),
   configured: z.boolean(),
+  endpoint: providerEndpointSchema,
 })
 export type ProviderEntryContract = z.infer<typeof providerEntrySchema>
 
@@ -77,14 +110,18 @@ export const providerList = defineRoute('provider.list', {
 
 /**
  * Why a write was refused, as a code the card turns into copy. `invalid-value` is the one a user
- * can cause by typing (a base URL the wire cannot use); the other three are a renderer asking for
- * something no definition declares, which the data-driven card never does.
+ * can cause by typing (a base URL the wire cannot use); `key-host-binding` a save that moves the
+ * base URL to another host without re-entering every stored key, or an Ollama URL on ollama.com
+ * (A9; spec 02 01 修补 6). The rest are a renderer asking for something no definition declares,
+ * which the data-driven card never does; `unknown-model` is kept and no longer returned (a
+ * hand-typed id is accepted, 01 修补 9 (c)).
  */
 export const providerWriteErrorCodeSchema = z.enum([
   'unknown-provider',
   'unknown-key',
   'unknown-model',
   'invalid-value',
+  'key-host-binding',
 ])
 export type ProviderWriteErrorCode = z.infer<typeof providerWriteErrorCodeSchema>
 
@@ -121,9 +158,10 @@ export const providerConfigure = defineRoute('provider.configure', {
 })
 
 /**
- * The provider and model the next run uses. It writes `config.json` and NO Tape fact: what a run
- * actually used is recorded by the run itself (`session/model_selected`), which is the only
- * reading that stays true when this setting changes mid-conversation.
+ * The settings card's 「新会话默认模型」 (spec 02 §模型选择「设置卡」): the default of new sessions in
+ * both profiles and `provider`. A hand-typed id is accepted and stored with `source: 'user'`. It
+ * writes `config.json` and NO Tape fact: what a run actually used is recorded by the run itself
+ * (`session/model_selected`), which is the only reading that stays true when this changes.
  */
 export const providerSelect = defineRoute('provider.select', {
   request: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }),

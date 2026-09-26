@@ -27,6 +27,7 @@ import {
   keyFor,
 } from '@tenon-app/kernel'
 import type { HostAdapter, ModelInfo, ProviderDefinition, ProviderId } from '@tenon-app/kernel'
+import { hostOf } from './endpoint.js'
 
 /**
  * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
@@ -93,6 +94,8 @@ export function selectProviderId(selected: string | null | undefined, env: EnvLi
 export interface ProviderInputs {
   readonly config: Record<string, string>
   readonly secrets: Record<string, string>
+  /** Where each secret was found: the keychain, or (a development build only) the environment. */
+  readonly sources: Readonly<Record<string, 'keychain' | 'env'>>
 }
 
 export interface ReadInputsOptions {
@@ -119,26 +122,76 @@ export async function readProviderInputs(options: ReadInputsOptions): Promise<Pr
   // One pass over the declared keys, secrets read together: a definition declares two or three,
   // and a keychain round trip is the slowest thing on the send path before the request itself.
   const resolved = await Promise.all(
-    definition.configKeys.map(async (key) => ({
-      key,
-      value: key.secret
-        ? ((await readProviderSecret(host, definition.id, key.name, log)) ??
-          fromEnv(env, fallback[key.name]))
-        : // `key.default` last: `create()` is documented to receive the non-secret config with
-          // defaults already applied, so a definition that does not re-apply its own still works.
-          (trimmed(options.settings?.[key.name]) ??
+    definition.configKeys.map(async (key) => {
+      if (!key.secret) {
+        // `key.default` last: `create()` is documented to receive the non-secret config with
+        // defaults already applied, so a definition that does not re-apply its own still works.
+        const value =
+          trimmed(options.settings?.[key.name]) ??
           fromEnv(env, fallback[key.name]) ??
-          trimmed(key.default)),
-    })),
+          trimmed(key.default)
+        return { key, value, source: null }
+      }
+      const stored = await readProviderSecret(host, definition.id, key.name, log)
+      if (stored !== null) return { key, value: stored, source: 'keychain' as const }
+      const fromVars = fromEnv(env, fallback[key.name])
+      return { key, value: fromVars, source: fromVars === null ? null : ('env' as const) }
+    }),
   )
   const secrets: Record<string, string> = {}
   const config: Record<string, string> = {}
-  for (const { key, value } of resolved) {
+  const sources: Record<string, 'keychain' | 'env'> = {}
+  for (const { key, value, source } of resolved) {
     if (value === null) continue
     if (key.secret) secrets[key.name] = value
     else config[key.name] = value
+    if (source !== null) sources[key.name] = source
   }
-  return { config, secrets }
+  return { config, secrets, sources }
+}
+
+/** The config key a definition's endpoint is under. */
+export const BASE_URL_KEY = 'baseURL'
+
+/** The declared default base URL of a definition, when it has one. */
+export function declaredBaseURL(definition: ProviderDefinition): string | undefined {
+  return definition.configKeys.find((key) => key.name === BASE_URL_KEY)?.default
+}
+
+/**
+ * The host a key is bound to (A9; spec 02 01 修补 6「key 绑定主机」), never stored on its own: a
+ * keychain key belongs to the base URL saved with it — the stored one, or the declared default when
+ * none is — and an environment key to the environment's base URL, or the declared default.
+ */
+export function boundHost(
+  definition: ProviderDefinition,
+  settings: Readonly<Record<string, string>> | undefined,
+  env: EnvLike,
+  source: 'keychain' | 'env',
+): string | null {
+  const fallback = DEV_ENV_FALLBACK[definition.id] ?? {}
+  const url =
+    source === 'keychain'
+      ? (trimmed(settings?.[BASE_URL_KEY]) ?? trimmed(declaredBaseURL(definition)))
+      : (fromEnv(env, fallback[BASE_URL_KEY]) ?? trimmed(declaredBaseURL(definition)))
+  return hostOf(url ?? undefined)
+}
+
+/**
+ * The secrets present that a send must not use: bound to another host than the one the provider
+ * sends to now (01 修补 6「发送前再核一次」). A definition with no base URL has nothing to bind to.
+ */
+export function unboundSecrets(
+  definition: ProviderDefinition,
+  settings: Readonly<Record<string, string>> | undefined,
+  env: EnvLike,
+  inputs: ProviderInputs,
+): string[] {
+  const current = hostOf(inputs.config[BASE_URL_KEY])
+  if (current === null) return []
+  return Object.entries(inputs.sources)
+    .filter(([, source]) => boundHost(definition, settings, env, source) !== current)
+    .map(([name]) => name)
 }
 
 /**

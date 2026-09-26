@@ -28,11 +28,11 @@
   "settings": {
     "providers": {
       "title": "Models and keys",
-      "description": "Choose the provider and model for new messages. Keys are kept in the system keychain, never in a settings file.",
+      "description": "Choose the provider and the default model for new chats. Keys are kept in the system keychain, never in a settings file.",
       "close": "Close",
       "loading": "Loading…",
       "provider": "Provider",
-      "model": "Model",
+      "model": "Default model for new chats",
       "stored": "A key is stored. Type a new one to replace it.",
       "notStored": "No key stored yet.",
       "willRemove": "Cleared: saving removes the stored key.",
@@ -45,8 +45,11 @@
         "unknownKey": "That setting is not part of this provider.",
         "unknownModel": "That model is not part of this provider.",
         "noModel": "This provider offers no model, so it cannot be selected.",
-        "unavailable": "Settings could not be saved. Try again."
-      }
+        "unavailable": "Settings could not be saved. Try again.",
+        "keyHostBinding": "A key stays with the host it was saved for. To use another host, type each stored key again or clear it in the same save. Ollama's endpoint must be on this computer or a local network."
+      },
+      "customModel": "Or type a model ID",
+      "customModelHint": "A model that is not in the list is unverified and holds text conversations only."
     }
   },
   "provider": {
@@ -114,5 +117,66 @@
     "shutdown-aborted": "{trigger, select, quit {The task stopped because Tenon quit.} other {The task stopped because the window closed.}}",
     "recovered": "Tenon closed unexpectedly while this task was running.",
     "time-limit": "The subtask reached its time limit ({limitMs} ms)."
+  },
+  "model": {
+    "purpose": {
+      "sonnet5": "Balanced speed and capability",
+      "opus55": "For complex, long tasks",
+      "opus5": "Previous Opus (legacy)",
+      "haiku45": "Fastest, lowest cost",
+      "fable51": "Needs 30-day data retention turned on by your organization",
+      "glm53": "Zhipu GLM-5.3",
+      "glm53flash": "Lightweight GLM-5.3",
+      "glm53flashx": "Lightweight GLM-5.3 (FlashX)",
+      "glm46": "Previous-generation GLM"
+    },
+    "mark": {
+      "localTextOnly": "{host} · text conversation only",
+      "unverified": "Unverified · text conversation only"
+    },
+    "host": {
+      "local": "This computer"
+    },
+    "row": {
+      "line": "{purpose} · {host}",
+      "textOnlyInTask": "A task needs a model that can use tools"
+    },
+    "trigger": {
+      "withEffort": "{model} · {effort}",
+      "label": "Model"
+    },
+    "notConfigured": "{provider} · Add a key in Settings",
+    "more": "More models",
+    "typeModel": "Type a model ID…",
+    "manage": "Manage models…",
+    "effort": {
+      "menu": "Thinking effort",
+      "default": "{level} (default)",
+      "highest": "{level} · uses the most",
+      "level": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Extra high",
+        "max": "Max"
+      }
+    },
+    "nextMessage": "Takes effect from the next message",
+    "cacheNote": "Changing it makes the cache start over",
+    "confirm": {
+      "title": "Earlier messages will be sent to {host}",
+      "switch": "Switch",
+      "newChat": "New chat with this model"
+    },
+    "typeDialog": {
+      "title": "Type a model ID",
+      "description": "For {provider}. A model that is not in the list is unverified and holds text conversations only.",
+      "label": "Model ID",
+      "use": "Use",
+      "cancel": "Cancel",
+      "close": "Close"
+    },
+    "typeModelFor": "{provider} · Type a model ID…",
+    "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over"
   }
 }

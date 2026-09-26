@@ -28,11 +28,11 @@
   "settings": {
     "providers": {
       "title": "模型与密钥",
-      "description": "选择新消息使用的供应商与模型。密钥存在系统钥匙串里，不写进任何配置文件。",
+      "description": "选择新会话默认使用的供应商与模型。密钥存在系统钥匙串里，不写进任何配置文件。",
       "close": "关闭",
       "loading": "加载中…",
       "provider": "供应商",
-      "model": "模型",
+      "model": "新会话默认模型",
       "stored": "已存有密钥。要更换请直接填入新的。",
       "notStored": "还没有存密钥。",
       "willRemove": "已清空：保存后会删除存着的密钥。",
@@ -45,8 +45,11 @@
         "unknownKey": "这个设置项不属于该供应商。",
         "unknownModel": "这个模型不属于该供应商。",
         "noModel": "这个供应商没有可选的模型，选不了。",
-        "unavailable": "没能保存设置，请重试。"
-      }
+        "unavailable": "没能保存设置，请重试。",
+        "keyHostBinding": "密钥只属于保存它时的主机。要换主机，请在同一次保存里重新填写或清空每个已存的密钥。Ollama 的地址只能是本机或局域网。"
+      },
+      "customModel": "或手填模型 ID",
+      "customModelHint": "列表外的模型未经验证，只能纯文字对话。"
     }
   },
   "provider": {
@@ -114,5 +117,66 @@
     "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
     "recovered": "任务运行时 Tenon 意外关闭。",
     "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。"
+  },
+  "model": {
+    "purpose": {
+      "sonnet5": "速度与能力兼顾",
+      "opus55": "适合复杂的长任务",
+      "opus5": "上一代 Opus（旧版）",
+      "haiku45": "最快、成本最低",
+      "fable51": "需要组织开启 30 天数据保留",
+      "glm53": "智谱 GLM-5.3",
+      "glm53flash": "轻量版 GLM-5.3",
+      "glm53flashx": "轻量版 GLM-5.3（FlashX）",
+      "glm46": "上一代 GLM"
+    },
+    "mark": {
+      "localTextOnly": "{host} · 仅文字对话",
+      "unverified": "未验证 · 仅文字对话"
+    },
+    "host": {
+      "local": "本机"
+    },
+    "row": {
+      "line": "{purpose} · {host}",
+      "textOnlyInTask": "任务需要能用工具的模型"
+    },
+    "trigger": {
+      "withEffort": "{model} · {effort}",
+      "label": "模型"
+    },
+    "notConfigured": "{provider} · 去设置填 key",
+    "more": "更多模型",
+    "typeModel": "手填模型 ID…",
+    "manage": "管理模型…",
+    "effort": {
+      "menu": "思考强度",
+      "default": "{level}（默认）",
+      "highest": "{level} · 用量最大",
+      "level": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "很高",
+        "max": "最高"
+      }
+    },
+    "nextMessage": "下一条消息起生效",
+    "cacheNote": "改档会让缓存失效",
+    "confirm": {
+      "title": "此前的内容会发往 {host}",
+      "switch": "切换",
+      "newChat": "用新模型开新会话"
+    },
+    "typeDialog": {
+      "title": "手填模型 ID",
+      "description": "用于{provider}。列表外的模型未经验证，只能纯文字对话。",
+      "label": "模型 ID",
+      "use": "使用",
+      "cancel": "取消",
+      "close": "关闭"
+    },
+    "typeModelFor": "{provider} · 手填模型 ID…",
+    "nextMessageCache": "下一条消息起生效 · 改档会让缓存失效"
   }
 }

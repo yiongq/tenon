@@ -126,6 +126,13 @@ export {
   workspaceUsePrefill,
 } from './ipc/session.js'
 export type { SessionFactsResponse, WorkspaceResult } from './ipc/session.js'
+// Spec 02 plan step 19: the session's own model choice.
+export {
+  sessionModelChoice,
+  sessionModelChoiceResponse,
+  sessionSelectModel,
+} from './ipc/session.js'
+export type { SessionModelChoice } from './ipc/session.js'
 
 // Provider settings (spec 01 step 14): what the settings card reads and writes. A secret value
 // has no field to travel in — see ipc/provider.ts.

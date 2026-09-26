@@ -24,12 +24,14 @@ import {
   OLLAMA_DEFAULT_BASE_URL,
   ProviderAlreadyRegisteredError,
   ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_PROVIDER_ID,
   anthropicDefinition,
   createBlockAccumulator,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  encodeOpenAIChat,
   modelWireHash,
   ollamaDefinition,
   OpenAIChatProvider,
@@ -520,7 +522,7 @@ const TURN_SHAPE: readonly unknown[] = [
     kind: 'event',
     sourceType: 'session',
     sourceSeq: null,
-    payloadKeys: ['modelId', 'providerId'],
+    payloadKeys: ['capabilitySource', 'endpointOrigin', 'modelId', 'providerId'],
     meta: {},
   },
   // Spec 02 §提示层「环境说明」: the date, before the first request of a session.
@@ -726,6 +728,8 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
+        capabilitySource: 'builtin',
+        endpointOrigin: expect.any(String),
       })
       expect(assistant?.payload['content']).toEqual(testCase.content)
       expect(assistant?.payload['status']).toBe('complete')
@@ -1142,28 +1146,34 @@ describe('the model rows spec 02 changes', () => {
     })
   }
 
-  it('declares low / high / max on the three GLM-5.3 rows, no default level, and none on glm-4.6 (旧 88)', () => {
+  it('declares low / high / max on the three GLM-5.3 rows, the vendor default max, and none on glm-4.6 (旧 88)', () => {
+    const spec = {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    }
     expect(
       Object.fromEntries(
         zhipuDefinition.builtinModels.map((model) => [model.id, model.thinkingSpec]),
       ),
     ).toEqual({
-      // Exactly these three, lowest first; no `medium`, and no `defaultEffort`, so an absent effort
-      // sends nothing and the vendor's own default (max) stands (02 §思考档位, decision A1's A′).
-      'glm-5.3': { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
-      'glm-5.3-flash': {
-        mode: 'effort-only',
-        defaultOn: true,
-        effortLevels: ['low', 'high', 'max'],
-      },
-      'glm-5.3-flashx': {
-        mode: 'effort-only',
-        defaultOn: true,
-        effortLevels: ['low', 'high', 'max'],
-      },
+      // Exactly these three, lowest first; no `medium`. `defaultEffort` names the vendor's own
+      // default for the menu (02 §思考档位, decision A1's A′); this wire never sends it, so an
+      // absent effort still sends no `reasoning_effort` (checked below).
+      'glm-5.3': spec,
+      'glm-5.3-flash': spec,
+      'glm-5.3-flashx': spec,
       // `reasoning_effort` is GLM-5.2 and later: glm-4.6 declares no thinking shape and keeps 01's.
       'glm-4.6': undefined,
     })
+    const flash = zhipuDefinition.builtinModels.find((model) => model.id === 'glm-5.3-flash')
+    if (flash === undefined) throw new Error('no glm-5.3-flash row')
+    const body = encodeOpenAIChat(
+      { model: flash, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+      ZHIPU_PROVIDER_ID,
+    ).body as Record<string, unknown>
+    expect(body).not.toHaveProperty('reasoning_effort')
   })
 
   it('declares the Opus 5.5 thinking shape decision A16 asks for (旧 88)', () => {

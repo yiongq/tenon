@@ -21,6 +21,8 @@ describe('ipc registry', () => {
       'session.facts',
       'session.latest',
       'session.messages',
+      'session.modelChoice',
+      'session.selectModel',
       'session.selectProfile',
       'workspace.pick',
       'workspace.remove',

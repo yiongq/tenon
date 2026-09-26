@@ -115,6 +115,7 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
     id: 'glm-5.3',
+    purposeKey: 'model.purpose.glm53',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -128,11 +129,18 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     // The daily model (02 §模型与密钥).
     id: 'glm-5.3-flash',
+    purposeKey: 'model.purpose.glm53flash',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -146,11 +154,18 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 0.8, outputPerMTok: 2.8, cacheReadPerMTok: 0.23, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     // The speed tier the live suite runs on (02 §模型与密钥).
     id: 'glm-5.3-flashx',
+    purposeKey: 'model.purpose.glm53flashx',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -164,10 +179,17 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 2, outputPerMTok: 7, cacheReadPerMTok: 0.57, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     id: 'glm-4.6',
+    purposeKey: 'model.purpose.glm46',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 200_000,
     maxOutputTokens: 128_000,

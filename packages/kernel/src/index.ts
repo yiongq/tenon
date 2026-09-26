@@ -429,6 +429,7 @@ export type { AnswerCommand } from './loop/waiting.js'
 export type { PendingCard, PendingRoot } from './loop/answer.js'
 // Plan step 18: the home page's choices and the workspace, as the session service answers them.
 export type {
+  SelectModelQuery,
   SelectProfileQuery,
   SelectProfileResult,
   SessionFactsView,

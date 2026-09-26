@@ -1,6 +1,7 @@
 import { ComposerPrimitive, ThreadPrimitive } from '@assistant-ui/react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ModelMenu } from '@/components/composer/ModelMenu'
 
 /**
  * spec.md「国际化」: "Composer 收到 Enter 时若 `KeyboardEvent.isComposing === true` 或
@@ -38,6 +39,7 @@ export function Composer(): JSX.Element {
           onKeyDown={guardImeEnter}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 font-sans text-ui text-text-primary outline-none placeholder:text-text-muted"
         />
+        <ModelMenu />
         <ThreadPrimitive.If running={false}>
           <ComposerPrimitive.Send
             data-testid="composer-send"

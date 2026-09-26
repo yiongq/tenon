@@ -36,6 +36,7 @@ import type {
   AppendResult,
   ContinuationPayload,
   FactWriter,
+  ModelChoiceSetPayload,
   ModelSelectedPayload,
   NewEntry,
   PermissionDecidedPayload,
@@ -117,7 +118,12 @@ import type { RunEndReason } from './terminal.js'
 import type { AnswerCommand } from './waiting.js'
 import { createDraftStore } from '../session/draft.js'
 import type { SessionDraft } from '../session/draft.js'
-import { creationEntries, readSessionFacts, workspaceEntry } from '../session/facts.js'
+import {
+  creationEntries,
+  modelChoiceEntry,
+  readSessionFacts,
+  workspaceEntry,
+} from '../session/facts.js'
 import type { Profile } from '../session/facts.js'
 import { resolvePath } from '../permission/workspace.js'
 
@@ -277,8 +283,24 @@ export type WorkspaceResult =
     }
   | { readonly ok: false; readonly code: 'not-cowork' | 'unknown-session' | 'not-in-list' }
 
+/** A choice in the model menu (§模型选择): what `session/model_choice_set` records. */
+export interface SelectModelQuery {
+  readonly sessionId: string
+  readonly choice: ModelChoiceSetPayload
+  /** The document that chose: a held round it releases begins with it (「间接切公网」). */
+  readonly origin: RunOrigin | null
+}
+
 export interface Loop {
   bind(ports: LoopPorts): void
+  /**
+   * `session.selectModel` (§模型选择; 01 修补 6): the session's choice fact, or the draft's before it
+   * exists; releases what a switch to a public host held. Answers the profile it was made in, which
+   * the host writes `defaultModelByProfile` under.
+   */
+  selectModel(q: SelectModelQuery): Promise<{ readonly profile: Profile }>
+  /** `session.modelChoice`: the choice in force for the session's next Run, by the five layers. */
+  effectiveModelChoice(q: { sessionId: string }): Promise<ModelChoice>
   /** A session's profile and workspace: the draft's before it is established (open question 16). */
   sessionFacts(q: { sessionId: string }): Promise<SessionFactsView>
   /** The home page's profile, into the draft; `established` once the session exists (H1). */
@@ -446,13 +468,15 @@ export function createLoop(deps: LoopDeps): Loop {
     const work = (async (): Promise<Prebuild> => {
       const facts = await readSessionFacts(tape, sessionId)
       const profile = facts.established ? facts.profile : (draft?.profile ?? 'chat')
-      // ① (the session's own choice, `session/model_choice_set`) is read from the tape in plan step
-      // 19, the previous origin with the data-flow check.
+      // ① is the session's own choice (the draft's before it exists); ②–⑤ and the data-flow check,
+      // against where the last Run sent, are the connector's (01 修补 6「五层解析」).
       const resolved = await connector.resolveChoice({
         sessionId,
         profile,
-        sessionChoice: null,
-        previousOrigin: null,
+        sessionChoice: choiceOf(
+          facts.established ? facts.modelChoice : (draft?.modelChoice ?? null),
+        ),
+        previousOrigin: facts.lastEndpointOrigin,
       })
       if ('needsConfirm' in resolved) return { kind: 'confirm', host: resolved.needsConfirm.host }
       providerId = resolved.providerId
@@ -809,11 +833,12 @@ export function createLoop(deps: LoopDeps): Loop {
     pre: Extract<Prebuild, { kind: 'ready' }>,
   ): NewEntry[] {
     const started: RunStartedPayload = { cause }
-    // Which provider and model THIS Run used. `capabilitySource` and `endpointOrigin` are written
-    // from plan step 19, with the choice they describe.
+    // Which provider and model THIS Run used, where its capabilities came from and where it sends.
     const selected: ModelSelectedPayload = {
       providerId: pre.provider.id,
       modelId: pre.assembly.model.id,
+      capabilitySource: pre.assembly.capabilitySource,
+      endpointOrigin: pre.assembly.endpointOrigin,
     }
     return [
       executionSlice.entry('execution/run_started', {
@@ -1318,7 +1343,18 @@ export function createLoop(deps: LoopDeps): Loop {
     if (head === null) throw new Error(`resume: session ${sessionId} has no head`)
     const opened = await appendOpening(ports, box, sessionId, runId, head.incarnationId, [
       ...facts,
-      ...resumeHead({ tape, now, sessionId, runId, paused, selected: setup.selected }),
+      // The paused Run's model and capabilities; where it sends now, by the synchronous read.
+      ...resumeHead({
+        tape,
+        now,
+        sessionId,
+        runId,
+        paused,
+        selected: {
+          ...setup.selected,
+          ...originNow(setup.selected.providerId, setup.selected.endpointOrigin),
+        },
+      }),
     ])
     emitClosures(ports, box, sessionId, facts)
     startRun(ports, box, sessionId, opened, lease, setup.selected.providerId, () =>
@@ -1917,7 +1953,81 @@ export function createLoop(deps: LoopDeps): Loop {
     return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
   }
 
+  /** `connector.endpointOrigin` for a resumed Run's `model_selected`, or what the paused Run had. */
+  function originNow(
+    providerId: ProviderId,
+    before: string | undefined,
+  ): { endpointOrigin?: string } {
+    const origin = connector.endpointOrigin(providerId) ?? before
+    return origin === undefined ? {} : { endpointOrigin: origin }
+  }
+
   // ----- the home page's choices (§会话形态「建立前暂存」, §工作区) ---------------------------------
+
+  /**
+   * One menu choice, in the root's mailbox (§会话事实「写入」): `<n>` counted from the Tape here, so
+   * two quick choices never share one; before the session exists, into the draft (a chat draft if
+   * there was none). Then whatever a public host held is released.
+   */
+  async function selectModelTurn(
+    ports: LoopPorts,
+    box: RootBox,
+    q: SelectModelQuery,
+  ): Promise<{ readonly profile: Profile }> {
+    const facts = await readSessionFacts(tape, q.sessionId)
+    let profile: Profile
+    const head = facts.established ? await tape.head(q.sessionId) : null
+    if (head !== null) {
+      await tape.appendEntries({
+        sessionId: q.sessionId,
+        incarnationId: head.incarnationId,
+        entries: [
+          modelChoiceEntry(
+            { tape, sessionId: q.sessionId, incarnationId: head.incarnationId, now },
+            facts.modelChoiceFacts,
+            q.choice,
+          ),
+        ],
+      })
+      profile = facts.profile
+    } else {
+      const draft = drafts.get(q.sessionId)
+      const next: SessionDraft =
+        draft === null
+          ? { profile: 'chat', modelChoice: q.choice }
+          : { ...draft, modelChoice: q.choice }
+      drafts.set(q.sessionId, next)
+      profile = next.profile
+    }
+    await releaseHeld(ports, box, q.origin)
+    return { profile }
+  }
+
+  /**
+   * 「间接切公网」: any choice in the root releases what was held. With no Run left to finish, the held
+   * message and those queued before it (all of them, when an auto-send was held) open a new round,
+   * begun with the chooser's origin; a held message no longer queued only clears the hold.
+   */
+  async function releaseHeld(
+    ports: LoopPorts,
+    box: RootBox,
+    origin: RunOrigin | null,
+  ): Promise<void> {
+    const held = box.held
+    if (held === null) return
+    const root = box.rootSessionId
+    clearHeld(ports, box, root)
+    if (box.lease !== null) return
+    let taken: readonly QueuedMessage[]
+    if (held.queuedId === null) {
+      taken = await ports.queue.take(root, { upToSeq: null, urgentOnly: false })
+    } else {
+      const target = (await ports.queue.peek(root)).find((item) => item.queuedId === held.queuedId)
+      if (target === undefined) return
+      taken = await ports.queue.take(root, { upToSeq: target.seq, urgentOnly: false })
+    }
+    autoSend(ports, box, root, taken, origin)
+  }
 
   /** A session's profile and workspace as a route shows them: the Tape's, or the draft's. */
   async function factsView(sessionId: string): Promise<SessionFactsView> {
@@ -2040,6 +2150,38 @@ export function createLoop(deps: LoopDeps): Loop {
         )
       }
       return factsView(q.sessionId)
+    },
+
+    selectModel(q): Promise<{ readonly profile: Profile }> {
+      const ports = bound
+      if (ports === null) return Promise.reject(new Error('selectModel() before bindLoop()'))
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(
+          new TypeError(`selectModel: "${q.sessionId}" is not a canonical UUID`),
+        )
+      }
+      const box = mailboxOf(rootOf(q.sessionId))
+      // Behind a send that is still prebuilding it waits for that Run to open, and lands as the
+      // session's n = 1 (model1: the choice is never lost).
+      return post(box, 'command', null, () => selectModelTurn(ports, box, q))
+    },
+
+    async effectiveModelChoice(q): Promise<ModelChoice> {
+      const facts = await readSessionFacts(tape, q.sessionId)
+      const draft = facts.established ? null : drafts.get(q.sessionId)
+      const own = choiceOf(facts.established ? facts.modelChoice : (draft?.modelChoice ?? null))
+      if (own !== null) return own
+      // No data-flow check: this only reads what the next Run would choose.
+      const resolved = await connector.resolveChoice({
+        sessionId: q.sessionId,
+        profile: facts.established ? facts.profile : (draft?.profile ?? 'chat'),
+        sessionChoice: null,
+        previousOrigin: null,
+      })
+      if ('needsConfirm' in resolved) {
+        throw new Error('effectiveModelChoice: a read with no previous origin asked to confirm')
+      }
+      return resolved
     },
 
     selectProfile(q): Promise<SelectProfileResult> {
@@ -2237,6 +2379,17 @@ export function createLoop(deps: LoopDeps): Loop {
 }
 
 /** A new round's Run, from its prebuild. */
+/** ① as the connector takes it: a hand-typed id's capabilities are the user's (M6, A15). */
+function choiceOf(payload: ModelChoiceSetPayload | null): ModelChoice | null {
+  if (payload === null) return null
+  return {
+    providerId: payload.providerId,
+    modelId: payload.modelId,
+    effort: payload.effort,
+    capabilitySource: payload.source === 'user' ? 'user' : 'builtin',
+  }
+}
+
 function roundSetup(pre: Extract<Prebuild, { kind: 'ready' }>): RunSetup {
   return {
     provider: () => pre.provider,

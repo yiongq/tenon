@@ -15,6 +15,8 @@ export type LocaleSetting = z.infer<typeof localeSettingSchema>
 export const providerSelectionSchema = z.object({
   id: z.string().min(1),
   modelId: z.string().min(1),
+  /** A hand-typed id no builtin table has (spec 02 01 修补 6; M6, A15). */
+  source: z.literal('user').optional(),
 })
 export type ProviderSelection = z.infer<typeof providerSelectionSchema>
 
@@ -33,6 +35,16 @@ export const configSchema = z.object({
   sidebarCollapsed: z.boolean().default(false),
   provider: providerSelectionSchema.nullable().default(null),
   providerConfig: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+  /**
+   * The default of a new session, by profile (spec 02 01 修补 6; M5): the menu writes the profile
+   * it chose in, the settings card both. Main writes it; `config.set` does not take it.
+   */
+  defaultModelByProfile: z
+    .object({
+      chat: providerSelectionSchema.optional(),
+      cowork: providerSelectionSchema.optional(),
+    })
+    .default({}),
   /**
    * The task profile's prefill (spec 02 §工作区「来源」; D11): the folder list as it last changed,
    * written by the main process after the kernel accepted a change — never through `config.set`,

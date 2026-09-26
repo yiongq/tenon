@@ -1,5 +1,11 @@
 import { z } from 'zod'
 import { defineRoute } from '../route.js'
+import {
+  effortSchema,
+  modelIdSchema,
+  providerIdSchema,
+  providerWriteResultSchema,
+} from './provider.js'
 
 /**
  * Reading the stored conversation (spec 01 §desktop 接线): the renderer restores the latest
@@ -177,4 +183,35 @@ export const sessionSelectProfile = defineRoute('session.selectProfile', {
 export const sessionFacts = defineRoute('session.facts', {
   request: z.object({ sessionId: canonicalSessionIdSchema }).strict(),
   response: sessionFactsResponse,
+})
+
+// ----- spec 02: the session's own model choice (01 修补 6「给会话选模型」; M5, A11, M6) ------------
+
+/**
+ * One choice in the model menu: the session's `session/model_choice_set` (the draft's before the
+ * session exists), and the new-session default of the profile it was made in plus `provider`. A
+ * hand-typed id is accepted; `effort` must be one of the row's levels, or null for the default.
+ */
+export const sessionSelectModel = defineRoute('session.selectModel', {
+  request: z.object({
+    sessionId: canonicalSessionIdSchema,
+    providerId: providerIdSchema,
+    modelId: modelIdSchema,
+    effort: effortSchema.nullable(),
+  }),
+  response: providerWriteResultSchema,
+})
+
+/** The choice in force for this session, by the five layers (01 修补 6「五层解析」). */
+export const sessionModelChoiceResponse = z.object({
+  providerId: providerIdSchema,
+  modelId: modelIdSchema,
+  effort: effortSchema.nullable(),
+  capabilitySource: z.enum(['builtin', 'user', 'synthesized']),
+})
+export type SessionModelChoice = z.infer<typeof sessionModelChoiceResponse>
+
+export const sessionModelChoice = defineRoute('session.modelChoice', {
+  request: z.object({ sessionId: canonicalSessionIdSchema }),
+  response: sessionModelChoiceResponse,
 })

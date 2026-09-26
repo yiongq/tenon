@@ -307,14 +307,14 @@ describe('provider.select', () => {
     })
   })
 
-  it('refuses a model the definition does not declare', async () => {
+  it('accepts a hand-typed id as the user’s, and sets both profiles’ defaults (旧 40, 旧 187)', async () => {
     const h = await harness()
     expect(
-      await h.call('provider.select', {
-        providerId: ZHIPU_PROVIDER_ID,
-        modelId: 'claude-opus-5',
-      }),
-    ).toEqual({ ok: true, data: { ok: false, code: 'unknown-model', configKey: null } })
-    expect((await readConfig(h.host.fs, h.host.identity)).provider).toBeNull()
+      await h.call('provider.select', { providerId: ZHIPU_PROVIDER_ID, modelId: 'glm-own-model' }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    const selection = { id: ZHIPU_PROVIDER_ID, modelId: 'glm-own-model', source: 'user' }
+    expect(config.provider).toEqual(selection)
+    expect(config.defaultModelByProfile).toEqual({ chat: selection, cowork: selection })
   })
 })

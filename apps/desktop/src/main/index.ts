@@ -26,6 +26,7 @@ import { registerApprovalRoutes } from './approval-routes.js'
 import { recoveryDelayMs, startRecovery } from './startup-recovery.js'
 import { openSessionStore } from './tape/open.js'
 import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
+import { registerModelRoutes } from './model-routes.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -210,7 +211,14 @@ async function main(): Promise<void> {
       return picked.canceled ? null : picked.filePaths
     },
   })
-  registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
+  registerProviderRoutes({
+    ipcMain,
+    host,
+    providers,
+    isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
+  })
+  registerModelRoutes({ ipcMain, sessions, providers, host, gate: recovery.ready })
 
   const win = openWindow()
   win.webContents.on('did-finish-load', () => {

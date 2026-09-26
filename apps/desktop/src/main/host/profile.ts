@@ -57,7 +57,39 @@ function fieldwise(raw: unknown): Config {
   return configSchema.parse(kept)
 }
 
-export async function writeConfig(
+/**
+ * One lock per profile (spec 02 01 修补 6「key 绑定主机」): `provider.configure` and every
+ * `writeConfig` run through it one at a time, so a key and the base URL it is bound to are always
+ * saved as a pair, and two saves never interleave a read and a write.
+ */
+const configLocks = new Map<string, Promise<unknown>>()
+
+export function withConfigLock<T>(identity: HostIdentity, work: () => Promise<T>): Promise<T> {
+  const key = identity.profileDir
+  const before = configLocks.get(key) ?? Promise.resolve()
+  const run = before.then(work, work)
+  const settled = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  configLocks.set(key, settled)
+  void settled.then(() => {
+    if (configLocks.get(key) === settled) configLocks.delete(key)
+  })
+  return run
+}
+
+/** Writes a patch under the profile's lock. */
+export function writeConfig(
+  fs: HostFs,
+  identity: HostIdentity,
+  patch: ConfigPatch,
+): Promise<Config> {
+  return withConfigLock(identity, () => writeConfigHeld(fs, identity, patch))
+}
+
+/** Writes a patch; the caller already holds the profile's lock (`withConfigLock`). */
+export async function writeConfigHeld(
   fs: HostFs,
   identity: HostIdentity,
   patch: ConfigPatch,

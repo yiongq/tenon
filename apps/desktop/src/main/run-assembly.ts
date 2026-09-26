@@ -12,9 +12,11 @@
  * The Ollama range rule lives here and nowhere else (A14): a Run on a provider that phase 2 sends no
  * tools to carries `toolsWithheld`, and the kernel's loop never names a provider.
  *
- * Plan step 9 answers the lower three layers of the five (③ `config.json`'s `provider`, ④ the
- * development variables, ⑤ the default); ① the session's own choice arrives from the kernel, ② the
- * per-profile default and the data-flow check are plan step 19; the search backend is step 28.
+ * `resolveChoice` answers ②–⑤ of the five layers (01 修补 6「五层解析」): ② the profile's default
+ * (`defaultModelByProfile`), ③ `config.json`'s `provider`, ④ the development variables, ⑤ the first
+ * builtin. ① — the session's own choice — arrives from the kernel and wins; the data-flow check is
+ * only for a choice ②–⑤ made, which nobody confirmed in the menu (§模型选择「数据去向」). The search
+ * backend is plan step 28.
  */
 import { ProviderConfigMissingError } from '@tenon-app/kernel'
 import type {
@@ -28,20 +30,25 @@ import type {
   RunAssembly,
   RunConnector,
 } from '@tenon-app/kernel'
+import { endpointOf, originOf } from './endpoint.js'
 import { readConfig } from './host/profile.js'
 import {
+  BASE_URL_KEY,
   DEFAULT_MAX_TOKENS,
+  DEV_ENV_FALLBACK,
   MAX_TOKENS_ENV,
   MODEL_ENV,
+  declaredBaseURL,
   devEnv,
   readProviderInputs,
   selectModel,
   selectProviderId,
+  unboundSecrets,
 } from './provider.js'
 import type { EnvLike } from './provider.js'
 
 /** Phase 2 sends no tools to these (A14): a local model's tool calling is not something 02 verifies. */
-const TEXT_ONLY_PROVIDERS: ReadonlySet<ProviderId> = new Set(['ollama'])
+export const TEXT_ONLY_PROVIDERS: ReadonlySet<ProviderId> = new Set(['ollama'])
 
 export interface RunConnectorOptions {
   readonly host: HostAdapter
@@ -67,22 +74,38 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       return origins.get(providerId) ?? defaultOrigin(providers.get(providerId))
     },
 
-    async resolveChoice(q): Promise<ModelChoice> {
+    async resolveChoice(q): Promise<ModelChoice | { needsConfirm: { host: string } }> {
       // ① wins, and was confirmed in the menu when it was chosen.
       if (q.sessionChoice !== null) return q.sessionChoice
       const config = await readConfig(host.fs, host.identity)
       const vars = env()
-      const providerId = selectProviderId(config.provider?.id, vars)
+      // ② the profile's default, then ③ what the settings card saved (「新会话默认」, 01 修补 9 (b)).
+      const saved = config.defaultModelByProfile[q.profile] ?? config.provider
+      const providerId = selectProviderId(saved?.id, vars)
       const definition = definitionOf(providers, providerId)
       // The saved model first; `TENON_MODEL` fills only what it left empty.
-      const requested = trimmed(config.provider?.modelId) ?? trimmed(vars[MODEL_ENV])
+      const requested = trimmed(saved?.modelId) ?? trimmed(vars[MODEL_ENV])
       const model = selectModel(definition, requested, log)
-      return {
+      const choice: ModelChoice = {
         providerId,
         modelId: model.id,
         effort: null,
-        capabilitySource: isBuiltin(definition, model.id) ? 'builtin' : 'synthesized',
+        capabilitySource: isBuiltin(definition, model.id)
+          ? 'builtin'
+          : saved?.source === 'user' && saved.modelId === model.id
+            ? 'user'
+            : 'synthesized',
       }
+      // 「数据去向」: a session with history that sent to this machine or a private network is not
+      // switched to a public host without the menu's confirmation (A9, B18).
+      const before = endpointOf(q.previousOrigin ?? undefined)
+      if (before !== null && before.reach !== 'public') {
+        const next = endpointOf(
+          baseURLOf(definition, config.providerConfig[providerId], vars) ?? undefined,
+        )
+        if (next !== null && next.reach === 'public') return { needsConfirm: { host: next.host } }
+      }
+      return choice
     },
 
     async assemble(q): Promise<RunAssembly> {
@@ -97,15 +120,19 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       if (definition === null || model === null) {
         failure = new ProviderConfigMissingError(q.choice.providerId, 'a registered provider')
       } else {
-        const inputs = await readProviderInputs({
-          host,
-          definition,
-          settings: config.providerConfig[definition.id],
-          env: vars,
-          log,
-        })
-        origin = originOf(inputs.config['baseURL']) ?? origin
+        const settings = config.providerConfig[definition.id]
+        const inputs = await readProviderInputs({ host, definition, settings, env: vars, log })
+        origin = originOf(inputs.config[BASE_URL_KEY]) ?? origin
+        // 「发送前再核一次」: a key bound to another host than the one this sends to is not used —
+        // a configuration error, never a request (A9; 01 修补 6).
+        const unbound = unboundSecrets(definition, settings, vars, inputs)
         try {
+          if (unbound.length > 0) {
+            throw new ProviderConfigMissingError(
+              definition.id,
+              `a key bound to the host it sends to (${unbound.join(', ')})`,
+            )
+          }
           provider = definition.create({
             network: host.network,
             // A reading for `retryAfterMs`, and a timer for the byte-level idle watchdog only
@@ -158,18 +185,21 @@ function isBuiltin(definition: ProviderDefinition, modelId: string): boolean {
 
 /** The origin of a definition's declared default base URL, when it declares one. */
 function defaultOrigin(definition: ProviderDefinition | null): string | null {
-  const key = definition?.configKeys.find((candidate) => candidate.name === 'baseURL')
-  return originOf(key?.default)
+  return definition === null ? null : originOf(declaredBaseURL(definition))
 }
 
-/** `URL.origin` — scheme, host and port — or null for what is not a URL. */
-function originOf(url: string | undefined): string | null {
-  if (url === undefined || url.trim() === '') return null
-  try {
-    return new URL(url).origin
-  } catch {
-    return null
-  }
+/** Where a provider sends, with no secret read: the stored base URL, the dev variable, the default. */
+function baseURLOf(
+  definition: ProviderDefinition,
+  settings: Readonly<Record<string, string>> | undefined,
+  vars: EnvLike,
+): string | null {
+  const envName = DEV_ENV_FALLBACK[definition.id]?.[BASE_URL_KEY]
+  return (
+    trimmed(settings?.[BASE_URL_KEY]) ??
+    trimmed(envName === undefined ? undefined : vars[envName]) ??
+    trimmed(declaredBaseURL(definition))
+  )
 }
 
 /**

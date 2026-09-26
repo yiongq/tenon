@@ -37,13 +37,15 @@ import { isCanonicalUuid } from '../ids.js'
 import type { IdSource } from '../ids.js'
 import { createLoop } from '../loop/mailbox.js'
 import type {
+  SelectModelQuery,
   SelectProfileQuery,
   SelectProfileResult,
   SessionFactsView,
   WorkspaceChange,
   WorkspaceResult,
 } from '../loop/mailbox.js'
-import type { LoopPorts, RunConnector, RunOrigin } from '../loop/ports.js'
+import type { LoopPorts, ModelChoice, RunConnector, RunOrigin } from '../loop/ports.js'
+import type { Profile } from './facts.js'
 import type { PendingCard, PendingRoot } from '../loop/answer.js'
 import type { AnswerCommand } from '../loop/waiting.js'
 import type { UserToolSetting } from '../permission/decide.js'
@@ -178,6 +180,13 @@ export interface SessionService {
   sessionFacts(q: { sessionId: string }): Promise<SessionFactsView>
   /** `session.selectProfile`: into the draft; `established` once the session exists. */
   selectProfile(q: SelectProfileQuery): Promise<SelectProfileResult>
+  /**
+   * `session.selectModel` (spec 02 §模型选择): the session's choice fact — the draft's before it
+   * exists — then what a switch to a public host held goes out. Answers the profile it was made in.
+   */
+  selectModel(q: SelectModelQuery): Promise<{ readonly profile: Profile }>
+  /** `session.modelChoice`: the choice the session's next Run takes, by the five layers. */
+  effectiveModelChoice(q: { sessionId: string }): Promise<ModelChoice>
   /**
    * `workspace.*` (§工作区): folders the host's own dialog or prefill gave, or one removed. `dedicated`
    * is the session's own folder, computed by the host; the kernel resolves every folder before it
@@ -382,6 +391,8 @@ export function constructSessionService(
 
     sessionFacts: (q) => loop.sessionFacts(q),
     selectProfile: (q) => loop.selectProfile(q),
+    selectModel: (q) => loop.selectModel(q),
+    effectiveModelChoice: (q) => loop.effectiveModelChoice(q),
     setWorkspace: (q) => loop.setWorkspace(q),
 
     bindLoop(ports): void {
