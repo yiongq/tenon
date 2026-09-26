@@ -57,6 +57,49 @@ export interface ModelInfo {
   /** Merged into the request body verbatim — the insurance against one vendor breaking
    * the abstraction. */
   requestParams?: Record<string, unknown>
+  /**
+   * Spec 02, 01 修补 2: which thinking shape this model takes, as data. Absent = 01's behaviour byte
+   * for byte, which is what every synthesised row (dev fallback, hand-typed ids) keeps.
+   */
+  thinkingSpec?: ThinkingSpec
+  /**
+   * Spec 02, 01 修补 2: the i18n key of the model menu's one-line purpose, given as data the way
+   * `ProviderDefinition.nameKey` is. Never read by encode(), so it is not in WIRE_MODEL_FIELDS.
+   */
+  purposeKey?: string
+  /**
+   * Spec 02, 01 修补 2 (open question 16, owner 2026-09-26): where the model menu lists the row —
+   * `'more'` puts it under 更多模型 ›. Absent = `'main'`. Only the desktop reads it, so it is not in
+   * WIRE_MODEL_FIELDS; a definition's first row (the new-user fallback) is never `'more'`.
+   */
+  listing?: 'main' | 'more'
+}
+
+/**
+ * Spec 02, 01 修补 2 (decision A1): the thinking shape a model takes.
+ *
+ * - `budget`: only `enabled` + `budget_tokens` (Haiku 4.5);
+ * - `adaptive`: adaptive, can be turned off (Sonnet 5);
+ * - `adaptive-gated`: adaptive, can be turned off only at an effort no higher than
+ *   `disableMaxEffort` (Opus 5);
+ * - `always-on`: always on (Opus 5.5, Fable 5.1);
+ * - `effort-only`: the OpenAI-compatible wire's one mode — the level travels as `reasoning_effort`,
+ *   and thinking can be turned off only when `effortLevels` holds `'none'` (the GLM-5.3 family has
+ *   no such level). An openai-chat row takes only this mode, an anthropic-messages row never does.
+ */
+export interface ThinkingSpec {
+  mode: 'budget' | 'adaptive' | 'adaptive-gated' | 'always-on' | 'effort-only'
+  defaultOn: boolean
+  /** The vendor's own names, lowest first; the interface lists levels in this order. */
+  effortLevels?: readonly string[]
+  defaultEffort?: string
+  disableMaxEffort?: string
+  displays?: readonly ('summarized' | 'omitted')[]
+  defaultDisplay?: 'summarized' | 'omitted'
+  /** true: `temperature` only 1.0, `top_p` only >= 0.99, `top_k` always refused. */
+  samplingDefaultsOnly?: boolean
+  /** false: `tool_choice` of `any` / `tool` is a 400. The main conversation never reads it. */
+  forcedToolChoice?: boolean
 }
 
 export interface RequestIdentity {
@@ -72,7 +115,17 @@ export interface ProviderRequest {
   tools?: ToolSpec[]
   maxTokens?: number
   temperature?: number
+  /** Still three states: absent / on / off. */
   thinking?: { enabled: boolean; budgetTokens?: number }
+  /** Spec 02, 01 修补 2: one of the row's `thinkingSpec.effortLevels`; absent = the model's default. */
+  effort?: string
+  /** Spec 02, 01 修补 2: one of the row's `thinkingSpec.displays`; written only while thinking is on. */
+  display?: 'summarized' | 'omitted'
+  /**
+   * Spec 02, 01 修补 2 (decision H10): the guard drops the thinking blocks of every message whose
+   * index is below this one, each recorded as `drop / compacted`. Absent = 01's behaviour.
+   */
+  dropThinkingBefore?: number
 }
 
 export interface ToolSpec {
@@ -147,6 +200,10 @@ export interface ThinkingDecision {
     | 'no-tools'
     | 'redacted-unsupported'
     | 'missing-signature'
+    /** Spec 02: a `replay: 'never'` vendor block — a call the vendor ran itself, or its result. */
+    | 'server-executed'
+    /** Spec 02 (H10): a thinking block below `ProviderRequest.dropThinkingBefore`. */
+    | 'compacted'
 }
 
 export interface CompleteResult {
@@ -197,16 +254,29 @@ export interface ProviderRegistry {
  * thinking blocks when the model changes" (master-reference §4.8.3) is unimplementable.
  */
 export type ContentBlock =
-  | { type: 'text'; text: string }
+  | { type: 'text'; text: string; vendorFields?: Record<string, unknown> }
   | {
       type: 'thinking'
       text: string
       signature: string
       provider: ProviderId
       providerModel: string
+      vendorFields?: Record<string, unknown>
     }
-  | { type: 'redacted-thinking'; data: string; provider: ProviderId; providerModel: string }
-  | { type: 'tool-request'; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: 'redacted-thinking'
+      data: string
+      provider: ProviderId
+      providerModel: string
+      vendorFields?: Record<string, unknown>
+    }
+  | {
+      type: 'tool-request'
+      id: string
+      name: string
+      input: Record<string, unknown>
+      vendorFields?: Record<string, unknown>
+    }
   | {
       type: 'tool-response'
       id: string
@@ -217,6 +287,18 @@ export type ContentBlock =
       type: 'image'
       mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
       data: string
+    }
+  /**
+   * Spec 02, 01 修补 2 (decision M3): a block the vendor sent that has no counterpart above, kept
+   * verbatim. `replay: 'never'` marks a call the vendor executed itself, and its result: archived,
+   * never dispatched, never sent back.
+   */
+  | {
+      type: 'vendor'
+      provider: ProviderId
+      providerModel: string
+      raw: Record<string, unknown>
+      replay: 'same-model' | 'never'
     }
 
 export interface InternalMessage {
@@ -243,6 +325,17 @@ export type StreamEvent =
       input: Record<string, unknown>
     }
   | { type: 'usage'; usage: Usage }
+  /** Spec 02, 01 修补 2: a whole vendor block, complete as it stands. */
+  | {
+      type: 'vendor-block'
+      index: number
+      raw: Record<string, unknown>
+      replay: 'same-model' | 'never'
+    }
+  /** Spec 02, 01 修补 2: the fields a known block carried that the content model has no place for. */
+  | { type: 'vendor-fields'; index: number; fields: Record<string, unknown> }
+  /** Spec 02 (M5): the model name the vendor reported, at most once per stream. */
+  | { type: 'response-model'; modelId: string }
   | { type: 'stop'; reason: StopReason; providerReason: string | null }
   | {
       type: 'error'

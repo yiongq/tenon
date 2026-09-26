@@ -29,6 +29,7 @@ import {
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  modelWireHash,
   ollamaDefinition,
   OpenAIChatProvider,
   registerBuiltinProviders,
@@ -487,13 +488,18 @@ const TURN_SHAPE: readonly unknown[] = [
     kind: 'event',
     sourceType: 'runtime_event',
     sourceSeq: 1,
+    // Spec 02 (01 修补 7) adds `encoder`, `modelWireHash` and `responseModelId`, the same three on
+    // every provider.
     payloadKeys: [
       'contextAtEntryId',
+      'encoder',
       'error',
       'modelId',
+      'modelWireHash',
       'promptHash',
       'providerId',
       'request',
+      'responseModelId',
       'stop',
       'thinkingDecisions',
       'toolDefinitionsHash',
@@ -579,6 +585,21 @@ describe('acceptance 1 — one call path, four providers', () => {
         systemHash: expect.any(String),
         maxTokens: model.maxOutputTokens,
       })
+      // Spec 02 (01 修补 7): the encoder of the definition's own wire, the hash of the ModelInfo
+      // fields encode() reads, and the model the fixture's stream named.
+      expect(attempt?.payload['encoder']).toEqual({
+        wire: testCase.definition.wire,
+        version: 1,
+        sdk: expect.stringMatching(
+          testCase.definition.wire === 'anthropic-messages'
+            ? /^@anthropic-ai\/sdk@\d/
+            : /^openai@\d/,
+        ),
+      })
+      expect(attempt?.payload['modelWireHash']).toBe(modelWireHash(model))
+      expect(attempt?.payload['responseModelId']).toBe(
+        testCase.definition.wire === 'anthropic-messages' ? 'claude-test-4' : 'glm-test',
+      )
       // The prefix this request was assembled from is the head after the two pre-run facts.
       expect(attempt?.payload['contextAtEntryId']).toBe(modelSelected?.entryId)
       expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${result.identity.runId}:1:1`)
@@ -958,6 +979,76 @@ describe('the model rows spec 02 changes', () => {
       }
     })
   }
+
+  it('declares low / high / max on the three GLM-5.3 rows, no default level, and none on glm-4.6 (旧 88)', () => {
+    expect(
+      Object.fromEntries(
+        zhipuDefinition.builtinModels.map((model) => [model.id, model.thinkingSpec]),
+      ),
+    ).toEqual({
+      // Exactly these three, lowest first; no `medium`, and no `defaultEffort`, so an absent effort
+      // sends nothing and the vendor's own default (max) stands (02 §思考档位, decision A1's A′).
+      'glm-5.3': { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
+      'glm-5.3-flash': {
+        mode: 'effort-only',
+        defaultOn: true,
+        effortLevels: ['low', 'high', 'max'],
+      },
+      'glm-5.3-flashx': {
+        mode: 'effort-only',
+        defaultOn: true,
+        effortLevels: ['low', 'high', 'max'],
+      },
+      // `reasoning_effort` is GLM-5.2 and later: glm-4.6 declares no thinking shape and keeps 01's.
+      'glm-4.6': undefined,
+    })
+  })
+
+  it('declares the Opus 5.5 thinking shape decision A16 asks for (旧 88)', () => {
+    expect(anthropicDefinition.builtinModels[1]?.thinkingSpec).toEqual({
+      mode: 'always-on',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'medium',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+      forcedToolChoice: false,
+    })
+  })
+
+  it('declares each Anthropic row’s thinking mode as the vendor pages give it (2026-09-26)', () => {
+    expect(
+      anthropicDefinition.builtinModels.map((model) => [
+        model.id,
+        model.thinkingSpec?.mode,
+        model.thinkingSpec?.defaultOn,
+        model.thinkingSpec?.defaultEffort,
+        model.thinkingSpec?.disableMaxEffort,
+        model.thinkingSpec?.forcedToolChoice,
+      ]),
+    ).toEqual([
+      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
+      ['claude-opus-5-5', 'always-on', true, 'medium', undefined, false],
+      ['claude-opus-5', 'adaptive-gated', true, 'high', 'high', undefined],
+      ['claude-haiku-4-5-20251001', 'budget', false, undefined, undefined, undefined],
+      ['claude-fable-5-1', 'always-on', true, 'high', undefined, false],
+    ])
+  })
+
+  it('takes effort-only on every openai-chat row and never on an anthropic-messages one (01 修补 2)', () => {
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        const mode = model.thinkingSpec?.mode
+        if (mode === undefined) continue
+        expect([definition.wire, model.id, mode === 'effort-only']).toEqual([
+          definition.wire,
+          model.id,
+          definition.wire === 'openai-chat',
+        ])
+      }
+    }
+  })
 
   it('puts Sonnet 5 first and Opus 5.5 second until the prefix acceptance passes', () => {
     // 02 decision A16's ownerNote: the order changes once an official key passes, not before.

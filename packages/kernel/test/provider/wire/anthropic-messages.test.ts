@@ -157,11 +157,18 @@ describe('encodeAnthropicMessages', () => {
   })
 })
 
+/**
+ * Spec 02 (01 修补 9 (k)): a request ends with the user's turn, so a history that ends with the
+ * assistant's gets one here, and the body carries it last. What the guard decides is unchanged.
+ */
+const TRAILING_USER = user({ type: 'text', text: 'and then?' })
+const TRAILING_WIRE = { role: 'user', content: [{ type: 'text', text: 'and then?' }] }
+
 describe('encodeAnthropicMessages and the thinking guard', () => {
   it('replays a signed block and its redacted sibling as stored', () => {
     const body = bodyOf({
       model: anthropicModel(),
-      messages: [assistant(thinkingBlock(), redactedBlock())],
+      messages: [assistant(thinkingBlock(), redactedBlock()), TRAILING_USER],
     })
     expect(body.messages).toEqual([
       {
@@ -171,6 +178,7 @@ describe('encodeAnthropicMessages and the thinking guard', () => {
           { type: 'redacted_thinking', data: REDACTED_DATA },
         ],
       },
+      TRAILING_WIRE,
     ])
   })
 
@@ -179,18 +187,21 @@ describe('encodeAnthropicMessages and the thinking guard', () => {
     // be exactly the rewrite invariant 7 forbids.
     const body = bodyOf({
       model: anthropicModel(),
-      messages: [assistant(thinkingBlock({ text: '' }))],
+      messages: [assistant(thinkingBlock({ text: '' })), TRAILING_USER],
     })
     expect(body.messages).toEqual([
       { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: SIGNATURE }] },
+      TRAILING_WIRE,
     ])
   })
 
   it('downgrades to a text block and skips a downgrade with no text', () => {
     const model = anthropicModel({ thinkingPreservationFormat: 'text-only' })
     expect(
-      bodyOf({ model, messages: [assistant(thinkingBlock(), { type: 'text', text: 'done' })] })
-        .messages,
+      bodyOf({
+        model,
+        messages: [assistant(thinkingBlock(), { type: 'text', text: 'done' }), TRAILING_USER],
+      }).messages,
     ).toEqual([
       {
         role: 'assistant',
@@ -199,13 +210,17 @@ describe('encodeAnthropicMessages and the thinking guard', () => {
           { type: 'text', text: 'done' },
         ],
       },
+      TRAILING_WIRE,
     ])
     expect(
       bodyOf({
         model,
-        messages: [assistant(thinkingBlock({ text: '' }), { type: 'text', text: 'done' })],
+        messages: [
+          assistant(thinkingBlock({ text: '' }), { type: 'text', text: 'done' }),
+          TRAILING_USER,
+        ],
       }).messages,
-    ).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'done' }] }])
+    ).toEqual([{ role: 'assistant', content: [{ type: 'text', text: 'done' }] }, TRAILING_WIRE])
   })
 
   it('omits a message that is empty after the guard and leaves the turns adjacent', () => {

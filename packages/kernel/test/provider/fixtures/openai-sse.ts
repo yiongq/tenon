@@ -538,3 +538,40 @@ export const INSUFFICIENT_QUOTA: HttpErrorFixture = {
     'insufficient_quota',
   ),
 }
+
+// ---------------------------------------------------------------------------------------------
+// Spec 02 (01 修补 9 (t)): a call the vendor runs itself. zhipu documents `tools: [{ type: 'mcp' }]`
+// on the request (read 2026-09-26) but not how a streamed `tool_calls[].type === 'mcp'` entry looks,
+// so this one is hand-built from the chat-completions shape: an id, `type: 'mcp'`, and the vendor's
+// own `mcp` object where a function call has `function`. Next to it, one ordinary function call.
+// ---------------------------------------------------------------------------------------------
+
+export const MCP_CALL_ID = 'call_mcp_0Fixture'
+export const MCP_FIELDS = {
+  server_label: 'search',
+  name: 'web_search',
+  arguments: '{"q":"tenon"}',
+}
+export const MCP_PREAMBLE = 'Searching.'
+
+export const MCP_CALL_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ content: MCP_PREAMBLE }),
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({
+    tool_calls: [
+      {
+        index: 1,
+        id: TOOL_ID,
+        type: 'function',
+        function: { name: TOOL_NAME, arguments: '{"path":"/tmp/a.ts"}' },
+      },
+    ],
+  }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
+/** The model every chunk names; spec 02 reports it once as the `response-model` event. */
+export const RESPONSE_MODEL_ID = MODEL_ID

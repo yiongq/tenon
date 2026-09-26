@@ -35,6 +35,13 @@ function echoed(overrides: Partial<Extract<ContentBlock, { type: 'thinking' }>> 
   return thinkingBlock({ provider: 'zhipu', providerModel: 'glm-test', ...overrides })
 }
 
+/**
+ * Spec 02 (01 修补 9 (k)): a request ends with the user's turn, so a history that ends with the
+ * assistant's gets one here, and the body carries it last. What the guard decides is unchanged.
+ */
+const TRAILING_USER = user({ type: 'text', text: 'and then?' })
+const TRAILING_WIRE = { role: 'user', content: 'and then?' }
+
 describe('encodeOpenAIChat', () => {
   it('builds the documented body', () => {
     const body = bodyOf({
@@ -130,6 +137,7 @@ describe('encodeOpenAIChat', () => {
           name: 'read_file',
           input: { path: '/tmp/a', encoding: 'utf8' },
         }),
+        TRAILING_USER,
       ],
     })
     expect(body.messages).toEqual([
@@ -143,6 +151,7 @@ describe('encodeOpenAIChat', () => {
           },
         ],
       },
+      TRAILING_WIRE,
     ])
   })
 
@@ -157,10 +166,11 @@ describe('encodeOpenAIChat and the thinking guard', () => {
       const body = bodyOf({
         model: reasoningModel(field),
         tools: [TOOL],
-        messages: [assistant(echoed(), { type: 'text', text: 'done' })],
+        messages: [assistant(echoed(), { type: 'text', text: 'done' }), TRAILING_USER],
       })
       expect(body.messages).toEqual([
         { role: 'assistant', content: 'done', [field]: 'weighing the options' },
+        TRAILING_WIRE,
       ])
     }
   })
@@ -172,10 +182,11 @@ describe('encodeOpenAIChat and the thinking guard', () => {
     const body = bodyOf({
       model: reasoningModel(),
       tools: [TOOL],
-      messages: [assistant(echoed({ text: 'first ' }), echoed({ text: 'second' }))],
+      messages: [assistant(echoed({ text: 'first ' }), echoed({ text: 'second' })), TRAILING_USER],
     })
     expect(body.messages).toEqual([
       { role: 'assistant', content: '', reasoning_content: 'first second' },
+      TRAILING_WIRE,
     ])
   })
 
@@ -187,6 +198,7 @@ describe('encodeOpenAIChat and the thinking guard', () => {
       tools: [TOOL],
       messages: [
         assistant(echoed(), { type: 'tool-request', id: 'call_1', name: 'read_file', input: {} }),
+        TRAILING_USER,
       ],
     })
     expect(withCall.messages).toEqual([
@@ -197,6 +209,7 @@ describe('encodeOpenAIChat and the thinking guard', () => {
         ],
         reasoning_content: 'weighing the options',
       },
+      TRAILING_WIRE,
     ])
   })
 

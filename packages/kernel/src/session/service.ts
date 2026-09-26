@@ -47,7 +47,12 @@ import type {
   ToolSpec,
   Usage,
 } from '../provider/types.js'
-import { assertModelBelongs, requestSnapshot } from '../provider/wire/shared.js'
+import {
+  assertModelBelongs,
+  encoderOf,
+  modelWireHash,
+  requestSnapshot,
+} from '../provider/wire/shared.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type {
   ForkOrigin,
@@ -420,6 +425,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
     let usage: Usage | null = null
     let stop: TapeAttemptStop | null = null
     let error: TapeAttemptError | null = null
+    /** The model the vendor said answered (spec 02, M5): the first report, if any. */
+    let responseModelId: string | null = null
     const stream = q.provider.stream(encoded, {
       identity,
       ...(q.signal === undefined ? {} : { signal: q.signal }),
@@ -437,6 +444,9 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
           break
         case 'error':
           error = attemptError(event)
+          break
+        case 'response-model':
+          responseModelId ??= event.modelId
           break
         default:
           blocks.apply(event)
@@ -483,6 +493,12 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
       usage,
       stop,
       error,
+      // Spec 02, 01 修补 7: which encoder built the body (none when the provider's encode() is not
+      // one of this build's wires), the hash of the ModelInfo fields it read — what tells "the model
+      // table changed" apart from "the record was tampered with" — and the model the vendor named.
+      ...encoderField(encoded),
+      modelWireHash: modelWireHash(q.model),
+      ...(responseModelId === null ? {} : { responseModelId }),
     }
     const terminal: NewEntry[] = []
     if (assistantMessageId !== null && status !== null) {
@@ -623,6 +639,16 @@ function attemptError(event: Extract<StreamEvent, { type: 'error' }>): TapeAttem
     providerCode: event.providerCode,
     detail: event.detail,
   }
+}
+
+/** `encoder` for the attempt fact, or nothing: rebuilt key by key for the same reason as below. */
+function encoderField(
+  encoded: Parameters<typeof encoderOf>[0],
+): Pick<TapeAttemptCompletedPayload, 'encoder'> {
+  const encoder = encoderOf(encoded)
+  return encoder === null
+    ? {}
+    : { encoder: { wire: encoder.wire, version: encoder.version, sdk: encoder.sdk } }
 }
 
 /**

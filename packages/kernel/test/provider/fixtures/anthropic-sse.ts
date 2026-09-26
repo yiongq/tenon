@@ -427,3 +427,80 @@ export const BAD_REQUEST: HttpErrorFixture = {
   status: 400,
   body: errorBody('invalid_request_error', 'max_tokens: must be greater than 0'),
 }
+
+// ---------------------------------------------------------------------------------------------
+// Spec 02 (01 修补 2, decision M3): what the vendor sends that the content model has no place for.
+// Hand-built like everything above; the block type `future_block` and the field `future_field`
+// stand for whatever a later API version adds, which is exactly what the adapter cannot know.
+// ---------------------------------------------------------------------------------------------
+
+/** A field a known block carries beyond the ones the adapter maps. */
+export const THINKING_EXTRA_FIELD = { future_field: { level: 2, tags: ['a', 'b'] } }
+/** A block of a type the adapter does not map, as it arrives whole at `content_block_start`. */
+export const UNKNOWN_BLOCK = { type: 'future_block', payload: { note: 'kept verbatim' }, n: 1 }
+export const VENDOR_ANSWER = 'Done.'
+
+/** A thinking block with an unknown field, an unknown block, then the answer. */
+export const VENDOR_BLOCKS_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, { type: 'thinking', thinking: '', signature: '', ...THINKING_EXTRA_FIELD }),
+  blockDelta(0, { type: 'thinking_delta', thinking: THINKING_TEXT[0] }),
+  blockDelta(0, { type: 'signature_delta', signature: THINKING_SIGNATURE }),
+  blockStop(0),
+  blockStart(1, UNKNOWN_BLOCK),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: VENDOR_ANSWER }),
+  blockStop(2),
+  messageDelta('end_turn', true),
+  MESSAGE_STOP,
+]
+
+export const SERVER_TOOL_ID = 'srvtoolu_01Fixture'
+export const SERVER_QUERY_FRAGMENTS = ['{"query":', ' "tenon"}'] as const
+export const SERVER_TOOL_RESULT = {
+  type: 'web_search_tool_result',
+  tool_use_id: SERVER_TOOL_ID,
+  content: [
+    {
+      type: 'web_search_result',
+      url: 'https://example.test/tenon',
+      title: 'Tenon',
+      encrypted_content: 'RW5jcnlwdGVk',
+    },
+  ],
+}
+export const SERVER_ANSWER = 'Found it.'
+
+/**
+ * A turn in which the vendor ran three calls itself: a web search with its result block, and a code
+ * execution `tool_use` whose `caller` is not `direct`. None of them is ours to dispatch or to send
+ * back (01 修补 9 (t)); the text around them is an ordinary answer.
+ */
+export const SERVER_EXECUTED_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, TEXT_START),
+  blockDelta(0, { type: 'text_delta', text: TOOL_PREAMBLE }),
+  blockStop(0),
+  blockStart(1, { type: 'server_tool_use', id: SERVER_TOOL_ID, name: 'web_search', input: {} }),
+  blockDelta(1, { type: 'input_json_delta', partial_json: SERVER_QUERY_FRAGMENTS[0] }),
+  blockDelta(1, { type: 'input_json_delta', partial_json: SERVER_QUERY_FRAGMENTS[1] }),
+  blockStop(1),
+  blockStart(2, SERVER_TOOL_RESULT),
+  blockStop(2),
+  blockStart(
+    3,
+    toolStart(TOOL_ID, TOOL_NAME, { type: 'code_execution_20250825', tool_id: 'srvtoolu_02' }),
+  ),
+  blockDelta(3, { type: 'input_json_delta', partial_json: TOOL_ARGS_FRAGMENTS[0] }),
+  blockDelta(3, { type: 'input_json_delta', partial_json: TOOL_ARGS_FRAGMENTS[1] }),
+  blockStop(3),
+  blockStart(4, TEXT_START),
+  blockDelta(4, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(4),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
+/** The model `messageStart()` names; spec 02 reports it as the `response-model` event. */
+export const RESPONSE_MODEL_ID = MODEL_ID

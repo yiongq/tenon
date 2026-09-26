@@ -318,6 +318,12 @@ interface DecisionCase {
 /** Keeps the turn alive when every reasoning block of the case is dropped: an empty body is refused. */
 const SURVIVOR: ContentBlock = { type: 'text', text: 'and so' }
 
+/**
+ * Spec 02 (01 修补 9 (k)): a request ends with the user's turn, so a case whose history ends with
+ * the assistant's gets one. The guard's answers and the signatures do not depend on it.
+ */
+const TRAILING_USER = user({ type: 'text', text: 'and then?' })
+
 const FOREIGN = { provider: 'openai', providerModel: 'gpt-test' }
 
 const DECISION_CASES: readonly DecisionCase[] = [
@@ -401,7 +407,7 @@ describe('thinkingDecisions', () => {
   it.each(DECISION_CASES)('$name', ({ wire, model, blocks, hasTools, expected }) => {
     const req: ProviderRequest = {
       model,
-      messages: [assistant(...blocks, SURVIVOR)],
+      messages: [assistant(...blocks, SURVIVOR), TRAILING_USER],
       ...(hasTools ? { tools: [TOOL] } : {}),
     }
     const encoded =
@@ -424,6 +430,7 @@ describe('thinkingDecisions', () => {
         assistant(thinkingBlock(), redactedBlock()),
         user({ type: 'text', text: 'go on' }),
         assistant(redactedBlock(), thinkingBlock({ provider: 'openai' })),
+        TRAILING_USER,
       ],
     }
     expect(encodeAnthropicMessages(req, 'anthropic').thinkingDecisions).toEqual([
@@ -520,7 +527,7 @@ describe('signatures on the way out (invariant 7)', () => {
     const signed = encodeAnthropicMessages(
       {
         model: anthropicModel(),
-        messages: [assistant(thinkingBlock(), redactedBlock(), SURVIVOR)],
+        messages: [assistant(thinkingBlock(), redactedBlock(), SURVIVOR), TRAILING_USER],
       },
       'anthropic',
     )
@@ -534,7 +541,10 @@ describe('signatures on the way out (invariant 7)', () => {
       anthropicModel({ id: 'claude-test-5' }),
     ]) {
       const encoded = encodeAnthropicMessages(
-        { model, messages: [assistant(thinkingBlock(), redactedBlock(), SURVIVOR)] },
+        {
+          model,
+          messages: [assistant(thinkingBlock(), redactedBlock(), SURVIVOR), TRAILING_USER],
+        },
         'anthropic',
       )
       expect(canonicalJson(encoded.body)).not.toContain(SIGNATURE.slice(0, 12))

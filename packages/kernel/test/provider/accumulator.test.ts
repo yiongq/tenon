@@ -268,3 +268,61 @@ describe('block accumulator', () => {
     ).toThrow(ProviderInvalidArgumentError)
   })
 })
+
+describe('block accumulator and the vendor’s verbatim content (spec 02, 01 修补 2)', () => {
+  it('stamps a vendor block like a reasoning block and keeps it in slot order', () => {
+    const raw: Record<string, unknown> = { type: 'future_block', n: 1 }
+    const blocks = fold([
+      { type: 'text-delta', index: 0, text: 'a' },
+      { type: 'vendor-block', index: 1, raw, replay: 'same-model' },
+      { type: 'response-model', modelId: 'claude-x-2026' },
+      { type: 'text-delta', index: 2, text: 'b' },
+    ])
+    expect(blocks.content()).toEqual([
+      { type: 'text', text: 'a' },
+      { type: 'vendor', ...STAMP, raw, replay: 'same-model' },
+      { type: 'text', text: 'b' },
+    ])
+    // A copy, one level deep like a tool call's input: the event the adapter handed over cannot
+    // reach the stored block.
+    raw['n'] = 2
+    expect(blocks.content()[1]).toMatchObject({ raw: { n: 1 } })
+  })
+
+  it('attaches vendor fields to whatever block the slot holds, whenever they arrive', () => {
+    const blocks = fold([
+      { type: 'vendor-fields', index: 0, fields: { citations: [] } },
+      { type: 'text-delta', index: 0, text: 'cited' },
+      { type: 'thinking-delta', index: 1, text: 'hm' },
+      { type: 'thinking-signature', index: 1, signature: 'sig' },
+      { type: 'vendor-fields', index: 1, fields: { future_field: 1 } },
+      { type: 'tool-call-start', index: 2, id: 'toolu_1', name: 'now' },
+      { type: 'vendor-fields', index: 2, fields: { extra: true } },
+      { type: 'tool-call-end', index: 2, id: 'toolu_1', name: 'now', input: {} },
+    ])
+    expect(blocks.content()).toEqual([
+      { type: 'text', text: 'cited', vendorFields: { citations: [] } },
+      {
+        type: 'thinking',
+        text: 'hm',
+        signature: 'sig',
+        ...STAMP,
+        vendorFields: { future_field: 1 },
+      },
+      {
+        type: 'tool-request',
+        id: 'toolu_1',
+        name: 'now',
+        input: {},
+        vendorFields: { extra: true },
+      },
+    ])
+  })
+
+  it('refuses a vendor block on a slot that already holds a block', () => {
+    const blocks = fold([{ type: 'text-delta', index: 0, text: 'a' }])
+    expect(() =>
+      blocks.apply({ type: 'vendor-block', index: 0, raw: { type: 'x' }, replay: 'never' }),
+    ).toThrow(ProviderInvalidArgumentError)
+  })
+})

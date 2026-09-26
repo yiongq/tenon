@@ -196,6 +196,10 @@ export type MessageRetractedPayload = {
 export type ModelSelectedPayload = {
   providerId: string
   modelId: string
+  /** Spec 02, 01 修补 7 (M5): a builtin row, a hand-typed id, or the dev-time synthesis. */
+  capabilitySource?: 'builtin' | 'user' | 'synthesized'
+  /** Spec 02, 01 修补 7: `URL.origin` of where the run sends — scheme, host and port only. */
+  endpointOrigin?: string
 }
 
 /**
@@ -208,6 +212,12 @@ export type AttemptRequestSnapshot = {
   maxTokens: number
   temperature?: number
   thinking?: { enabled: boolean; budgetTokens?: number }
+  /** Spec 02, 01 修补 2: the effort level the encoder wrote. */
+  effort?: string
+  /** Spec 02, 01 修补 2: the display the encoder wrote — absent whenever thinking was off. */
+  display?: 'summarized' | 'omitted'
+  /** Spec 02, 01 修补 2 (H10): the index below which the guard dropped thinking blocks. */
+  dropThinkingBefore?: number
 }
 
 /**
@@ -236,4 +246,14 @@ export type AttemptCompletedPayload<
   usage: TUsage | null
   stop: TStop | null
   error: TError | null
+  /** Spec 02, 01 修补 7 (A3): the provenanceKey of this request's `view/assembled`. */
+  assemblyRef?: string
+  /** Spec 02, 01 修补 7 (M3): the encoder that produced the body, e.g. sdk '@anthropic-ai/sdk@0.128.0'. */
+  encoder?: { wire: 'anthropic-messages' | 'openai-chat'; version: number; sdk: string }
+  /** Spec 02, 01 修补 7: SHA-256(canonicalJson(pick(model, WIRE_MODEL_FIELDS))). */
+  modelWireHash?: string
+  /** Spec 02, 01 修补 7 (M5): the model name the `response-model` event reported. */
+  responseModelId?: string
+  /** Spec 02, 01 修补 7 (H10): present only on the request that writes a summary. */
+  compaction?: { keepFromEntryId: number; requestText: string }
 }

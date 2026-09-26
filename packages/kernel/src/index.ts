@@ -140,6 +140,7 @@ export type {
   StopReason,
   StreamEvent,
   ThinkingDecision,
+  ThinkingSpec,
   ToolSpec,
   Usage,
 } from './provider/types.js'
@@ -157,8 +158,18 @@ export type {
   BlockAccumulatorOptions,
   TerminalStreamOptions,
 } from './provider/base.js'
-export { applyThinkingDecision, decideThinking, thinkingModelId } from './provider/thinking.js'
-export type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from './provider/thinking.js'
+export {
+  applyThinkingDecision,
+  decideThinking,
+  decideVendorBlock,
+  thinkingModelId,
+} from './provider/thinking.js'
+export type {
+  ThinkingApplication,
+  ThinkingBlock,
+  ThinkingTarget,
+  VendorBlock,
+} from './provider/thinking.js'
 export { createProviderRegistry } from './provider/registry.js'
 
 // Tape — the storage port, the in-memory store, the projection reducer, folding, replay, the facade.
@@ -243,6 +254,7 @@ export type { StoredEntryIdentity } from './tape/store.js'
 export { encodeAnthropicMessages } from './provider/wire/anthropic-messages.js'
 export type {
   AnthropicContentBlock,
+  AnthropicRawBlock,
   AnthropicResultBlock,
   AnthropicToolDefinition,
   AnthropicWireMessage,
@@ -258,10 +270,14 @@ export type {
 } from './provider/wire/openai-chat.js'
 export {
   NO_SYSTEM_PROMPT_HASH,
+  WIRE_MODEL_FIELDS,
   effectiveMaxTokens,
+  encoderOf,
+  modelWireHash,
   requestSnapshot,
   systemHash,
 } from './provider/wire/shared.js'
+export type { EncoderInfo } from './provider/wire/shared.js'
 
 // The Anthropic Messages adapter's I/O half (step 10): the SDK client, the raw-event
 // normalisation and the error mapping. The provider definition that constructs it is step 11's.

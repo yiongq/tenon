@@ -118,6 +118,9 @@ function sse(frames: readonly string[]): FakeExchange {
   return { kind: 'sse', frames }
 }
 
+/** Spec 02 (M5): every chunk names the model that answered; the first one is reported, once. */
+const RESPONSE_MODEL: StreamEvent = { type: 'response-model', modelId: 'glm-test' }
+
 function usage(overrides: Partial<Usage> = {}): Usage {
   return {
     inputTokens: fixture.PROMPT_TOKENS,
@@ -236,7 +239,9 @@ describe('OpenAIChatProvider stream() normalisation', () => {
     const { events, net } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
     checkStreamInvariants(events)
     expect(events).toEqual([
-      // The opening `content: ''` beside the role is not content and opens no block.
+      // The opening `content: ''` beside the role is not content and opens no block; the model it
+      // names is reported.
+      RESPONSE_MODEL,
       { type: 'text-delta', index: 0, text: fixture.PLAIN_TEXT[0] },
       { type: 'text-delta', index: 0, text: fixture.PLAIN_TEXT[1] },
       { type: 'usage', usage: usage() },
@@ -258,6 +263,7 @@ describe('OpenAIChatProvider stream() normalisation', () => {
     const { events } = await run(sse(fixture.REASONING_CONTENT_FRAMES))
     checkStreamInvariants(events)
     expect(events).toEqual([
+      RESPONSE_MODEL,
       { type: 'thinking-delta', index: 0, text: fixture.REASONING_TEXT[0] },
       { type: 'thinking-delta', index: 0, text: fixture.REASONING_TEXT[1] },
       { type: 'text-delta', index: 1, text: fixture.REASONING_ANSWER },
@@ -282,6 +288,7 @@ describe('OpenAIChatProvider stream() normalisation', () => {
     const { events } = await run(sse(fixture.OLLAMA_WHOLE_CALL_FRAMES))
     checkStreamInvariants(events)
     expect(events).toEqual([
+      RESPONSE_MODEL,
       { type: 'thinking-delta', index: 0, text: fixture.REASONING_TEXT[0] },
       { type: 'tool-call-start', index: 1, id: fixture.TOOL_ID, name: fixture.TOOL_NAME },
       {
@@ -305,7 +312,8 @@ describe('OpenAIChatProvider stream() normalisation', () => {
     const { events } = await run(sse(fixture.ARGS_BEFORE_ID_FRAMES))
     checkStreamInvariants(events)
     // The fragments were sent first on the wire and come out after the start, in order.
-    expect(events.slice(0, 4)).toEqual([
+    expect(events.slice(0, 5)).toEqual([
+      RESPONSE_MODEL,
       { type: 'tool-call-start', index: 0, id: fixture.TOOL_ID, name: fixture.TOOL_NAME },
       { type: 'tool-call-args-delta', index: 0, json: fixture.TOOL_ARGS_FRAGMENTS[0] },
       { type: 'tool-call-args-delta', index: 0, json: fixture.TOOL_ARGS_FRAGMENTS[1] },
@@ -456,7 +464,10 @@ describe('OpenAIChatProvider stream() normalisation', () => {
   it('turns a mid-stream error object into the terminal error event (invariant 3)', async () => {
     const { events } = await run(sse(fixture.MID_STREAM_ERROR_FRAMES))
     checkStreamInvariants(events)
-    expect(events[0]).toEqual({ type: 'text-delta', index: 0, text: fixture.MID_STREAM_TEXT })
+    expect(events.slice(0, 2)).toEqual([
+      RESPONSE_MODEL,
+      { type: 'text-delta', index: 0, text: fixture.MID_STREAM_TEXT },
+    ])
     const terminal = events.at(-1)
     if (terminal?.type !== 'error') throw new Error('expected a terminal error event')
     expect(terminal.code).toBe('server')
@@ -651,6 +662,7 @@ describe('OpenAIChatProvider stream() error mapping', () => {
     // indistinguishable later from a genuinely free turn — and the stop this error replaces is the
     // only thing the held-back ordering is allowed to cost.
     expect(events).toEqual([
+      RESPONSE_MODEL,
       { type: 'text-delta', index: 0, text: fixture.MID_STREAM_TEXT },
       { type: 'usage', usage: usage() },
       expect.objectContaining({ type: 'error', code: 'server', retryable: true }),
@@ -687,12 +699,16 @@ async function dropMidBody(error: unknown): Promise<StreamEvent[]> {
   const gate = createStreamGate()
   const net = fakeNetwork({ kind: 'sse', frames: fixture.PLAIN_TEXT_FRAMES, gate })
   const iterator = providerOf(net).stream(encodedRequest(), CONTEXT)[Symbol.asyncIterator]()
-  // The role chunk carries `content: ''`, which produces no event of its own.
+  // The role chunk carries `content: ''`, which is not content; it names the model, which is the
+  // one event it produces. Then the first text delta.
   gate.release(2)
   const events: StreamEvent[] = []
-  const first = await iterator.next()
-  if (first.done === true) throw new Error('the fixture ran out of frames')
-  events.push(first.value)
+  for (let pulled = 0; pulled < 2; pulled += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream is consumed one event at a time
+    const step = await iterator.next()
+    if (step.done === true) throw new Error('the fixture ran out of frames')
+    events.push(step.value)
+  }
   gate.fail(error)
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- draining the terminal event
@@ -723,7 +739,8 @@ describe('OpenAIChatProvider abort (invariant 2)', () => {
         { type: 'stop', reason: 'aborted', providerReason: null },
       ])
       expect(events).toHaveLength(stopAfter + 1)
-      expect(textOf(events)).toBe(fixture.LONG_TEXT_DELTAS.slice(0, stopAfter).join(''))
+      // Event 1 is the response model the role chunk names; the rest are text deltas.
+      expect(textOf(events)).toBe(fixture.LONG_TEXT_DELTAS.slice(0, stopAfter - 1).join(''))
       // The held-back stop is replaced, not appended: an aborted turn has no usage and no
       // finish reason, so nothing of the vendor's terminal survives.
       expect(events.filter((event) => event.type === 'usage')).toEqual([])
@@ -734,8 +751,8 @@ describe('OpenAIChatProvider abort (invariant 2)', () => {
 
 /**
  * Consumes exactly `stopAfter` events off a gated long stream, releasing one frame per event, and
- * then aborts. Deterministic by construction: no timers, no randomness, and every frame after the
- * role chunk produces exactly one normalised event.
+ * then aborts. Deterministic by construction: no timers, no randomness, and every frame produces
+ * exactly one normalised event (the role chunk's is the response model).
  */
 async function abortAfter(stopAfter: number): Promise<Run> {
   const gate = createStreamGate()
@@ -747,7 +764,7 @@ async function abortAfter(stopAfter: number): Promise<Run> {
   })
   const iterator = stream[Symbol.asyncIterator]()
   const events: StreamEvent[] = []
-  // The role chunk carries `content: ''`, which produces no event of its own.
+  // The role chunk carries `content: ''`, which is not content; its one event is the response model.
   gate.release(1)
   while (events.length < stopAfter) {
     gate.release(1)
@@ -870,3 +887,51 @@ async function withCredentialEnv(
     }
   }
 }
+
+describe('OpenAIChatProvider vendor blocks (spec 02, 01 修补 9 (t))', () => {
+  /**
+   * 01 dropped this call silently: `start()` marked only `custom` as skipped, the call never got a
+   * function name, and `flush()` passed over it. Shown on the pre-02 code with this very fixture
+   * (02 plan.md, step 6 record) — the turn kept its text and the ordinary call and nothing said a
+   * call had happened. Now it is recognised by its type, beside `custom`.
+   */
+  it('archives a call the vendor ran itself (type mcp) as never-replayed and dispatches it not', async () => {
+    const { events } = await run(sse(fixture.MCP_CALL_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 1,
+        raw: { id: fixture.MCP_CALL_ID, type: 'mcp', mcp: fixture.MCP_FIELDS },
+        replay: 'never',
+      },
+    ])
+    // The ordinary call next to it is still a call of ours, and the only one.
+    expect(
+      events.filter((event) => event.type === 'tool-call-end').map((event) => event.type),
+    ).toHaveLength(1)
+    expect(contentOf(events)).toEqual([
+      { type: 'text', text: fixture.MCP_PREAMBLE },
+      {
+        type: 'vendor',
+        provider: PROVIDER_ID,
+        providerModel: 'glm-test',
+        raw: { id: fixture.MCP_CALL_ID, type: 'mcp', mcp: fixture.MCP_FIELDS },
+        replay: 'never',
+      },
+      {
+        type: 'tool-request',
+        id: fixture.TOOL_ID,
+        name: fixture.TOOL_NAME,
+        input: { path: '/tmp/a.ts' },
+      },
+    ])
+  })
+
+  it('reports the model the chunks name, once', async () => {
+    const { events } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
+    expect(events.filter((event) => event.type === 'response-model')).toEqual([
+      { type: 'response-model', modelId: fixture.RESPONSE_MODEL_ID },
+    ])
+  })
+})

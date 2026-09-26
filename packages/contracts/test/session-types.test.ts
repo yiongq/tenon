@@ -10,6 +10,13 @@
  *
  * Type-level, with one runtime assertion: the read limit is a number, and a number can drift
  * without any type noticing.
+ *
+ * Spec 02 (plan step 6, 原样块取乙): the kernel's content model also holds what a vendor sent
+ * verbatim — the `vendor` block, and `vendorFields` on four known blocks — and the desktop main
+ * process strips both before a row crosses (apps/desktop/src/main/session.ts `projectedRow`), so
+ * contracts is unchanged. The identity checked here is therefore contracts ⇔ the kernel block MINUS
+ * the vendor block; `vendorFields` is optional and needs no subtraction for either direction. That
+ * the vendor block does NOT fit the contract is pinned too: it is what makes the strip necessary.
  */
 import type { ContentBlock, MessageRow } from '@tenon-app/kernel'
 import { MAX_READ_LIMIT, isCanonicalUuid } from '@tenon-app/kernel'
@@ -26,11 +33,20 @@ import type { ContentBlockContract, MessageRowContract } from '../src/index.js'
 type Assert<T extends true> = T
 type Extends<A, B> = [A] extends [B] ? true : false
 
+/** What main lets cross: the kernel block without the vendor's verbatim one. */
+type ProjectedBlock = Exclude<ContentBlock, { type: 'vendor' }>
+type ProjectedRow = Omit<MessageRow, 'content'> & { content: ProjectedBlock[] }
+
 // Exported so `noUnusedLocals` keeps them; nothing imports them.
 export type ContractBlockIsKernelBlock = Assert<Extends<ContentBlockContract, ContentBlock>>
-export type KernelBlockIsContractBlock = Assert<Extends<ContentBlock, ContentBlockContract>>
+export type KernelBlockIsContractBlock = Assert<Extends<ProjectedBlock, ContentBlockContract>>
+export type VendorBlockIsNotContractBlock = Assert<
+  Extends<Extract<ContentBlock, { type: 'vendor' }>, ContentBlockContract> extends false
+    ? true
+    : false
+>
 export type ContractRowIsKernelRow = Assert<Extends<MessageRowContract, MessageRow>>
-export type KernelRowIsContractRow = Assert<Extends<MessageRow, MessageRowContract>>
+export type KernelRowIsContractRow = Assert<Extends<ProjectedRow, MessageRowContract>>
 
 describe('the session IPC shapes and the kernel shapes', () => {
   it('bound the read limit to the same number the store enforces', () => {
