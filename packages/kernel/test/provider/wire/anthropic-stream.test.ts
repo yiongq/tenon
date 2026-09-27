@@ -1033,6 +1033,23 @@ describe('AnthropicMessagesProvider vendor blocks (spec 02, 01 修补 2 and 9 (t
     ])
   })
 
+  it('archives an MCP connector call and its result as never-replayed, and dispatches neither', async () => {
+    // Plan step 6, 旧 101: `mcp_tool_use` is named beside `server_tool_use`, and every
+    // `*_tool_result` is the vendor's — the web search above reaches neither reading.
+    const { events } = await run(sse(fixture.MCP_EXECUTED_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type.startsWith('tool-call'))).toEqual([])
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 0,
+        raw: { ...fixture.MCP_TOOL_START, input: fixture.MCP_TOOL_INPUT },
+        replay: 'never',
+      },
+      { type: 'vendor-block', index: 1, raw: fixture.MCP_TOOL_RESULT, replay: 'never' },
+    ])
+  })
+
   it('reports the model message_start names, once', async () => {
     const { events } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
     expect(events.filter((event) => event.type === 'response-model')).toEqual([

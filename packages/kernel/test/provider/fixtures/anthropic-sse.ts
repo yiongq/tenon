@@ -563,6 +563,41 @@ export const GARBLED_VENDOR_INPUT_FRAMES: readonly string[] = [
   MESSAGE_STOP,
 ]
 
+export const MCP_TOOL_ID = 'mcptoolu_01Fixture'
+/** An MCP connector call as it starts: the vendor calls a tool on a remote MCP server itself. */
+export const MCP_TOOL_START = {
+  type: 'mcp_tool_use',
+  id: MCP_TOOL_ID,
+  name: 'ping',
+  server_name: 'fixture-server',
+  input: {},
+}
+export const MCP_TOOL_INPUT = { host: 'example.test' }
+export const MCP_TOOL_RESULT = {
+  type: 'mcp_tool_result',
+  tool_use_id: MCP_TOOL_ID,
+  is_error: false,
+  content: [{ type: 'text', text: 'pong' }],
+}
+
+/**
+ * A turn in which the vendor ran a call on a remote MCP server (its MCP connector), then answered:
+ * the call and its result are the vendor's, like the web search above (01 修补 9 (t)).
+ */
+export const MCP_EXECUTED_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, MCP_TOOL_START),
+  blockDelta(0, { type: 'input_json_delta', partial_json: JSON.stringify(MCP_TOOL_INPUT) }),
+  blockStop(0),
+  blockStart(1, MCP_TOOL_RESULT),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(2),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
 /** The model `messageStart()` names; spec 02 reports it as the `response-model` event. */
 export const RESPONSE_MODEL_ID = MODEL_ID
 
