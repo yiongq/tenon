@@ -28,7 +28,8 @@ import type { FolderTree } from './helpers/tools.js'
  * acceptance 22's 「立即发送」 over a Bash; acceptance 41, 42). Main's native confirm is replaced
  * through `electronApp.evaluate` (launchTenon presets 「停止任务」, so no teardown waits on it); a quit
  * is `app.quit()` and a close `BrowserWindow#close()`, both through `evaluate`, as Cmd+Q never
- * reaches the application menu.
+ * reaches the application menu. The one native quit is a SIGTERM: Electron handles it as it does
+ * Cmd+Q and the Dock's Quit, with `Browser::Quit` called from native code.
  *
  * The closures written on a quit or a close are `app-exit` (§原因码表): that is the kernel's half of
  * plan step 23 (track K). These cases assert it as the spec writes it.
@@ -177,6 +178,25 @@ test('quitting mid-stream asks first; 「停止任务并退出」 quits, and aft
   }
   // Nothing was in progress on the second launch: its quit asked nothing.
   expect(second.exitConfirms()).toEqual([])
+})
+
+test('macOS: a native quit with nothing in progress exits — a SIGTERM, the path of Cmd+Q and the Dock’s Quit (§停止与退出「退出」)', async () => {
+  test.skip(process.platform !== 'darwin', 'elsewhere the last window closing quits in any case')
+  const userData = makeUserDataDir('exit-native-quit')
+  seedConfig(userData, { locale: 'zh-CN' })
+  const { app, exitConfirms } = await launchTenon({ userData })
+  const pid = app.process().pid
+  let exited = false
+  try {
+    if (pid === undefined) throw new Error('the app has no pid')
+    // Nothing to wait for: the quit's steps are microtasks run inside the native `before-quit`.
+    process.kill(pid, 'SIGTERM')
+    await expect.poll(() => isRunning(pid), { timeout: 5_000 }).toBe(false)
+    exited = true
+  } finally {
+    if (!exited) await app.close()
+  }
+  expect(exitConfirms()).toEqual([])
 })
 
 test('closing the window mid-stream asks too; 「取消」 leaves it open and the task runs to its end (旧 13)', async () => {
