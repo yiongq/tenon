@@ -461,6 +461,25 @@ describe('what keeps a paid run’s record', () => {
     expect(evalRecordSchema.parse(record)).toEqual(record)
   })
 
+  it('cuts a Run still running at the deadline, not only between the Runs of a chain', async () => {
+    const root = fixtures()
+    const held = deferred()
+    const server = await fake(() => [
+      { hold: held.promise, steps: [{ type: 'text', text: 'late' }] },
+    ])
+    cleanups.push(() => held.resolve())
+    const started = Date.now()
+    const { record } = await run(
+      { ...BASE, id: '01-notes', turns: ['Hi'], checks: [{ kind: 'script', id: 'always-pass' }] },
+      server,
+      root,
+      { runWaitMs: 5_000, deadlineMs: 300 },
+    )
+    expect(record).toMatchObject({ verdict: 'fail', endReason: 'user-stopped' })
+    expect(record.note).toMatch(/the task's deadline of 300 ms passed; stopped/)
+    expect(Date.now() - started).toBeLessThan(4_000)
+  })
+
   it('stops a cancelled run the same way: the note says so, and the run’s directory goes', async () => {
     const root = fixtures()
     const held = deferred()

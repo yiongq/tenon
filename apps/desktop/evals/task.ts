@@ -162,9 +162,17 @@ export function fixtureSymlink(fixturesDir: string, path: string): string | null
     if (stat === null) return null
     if (stat.isSymbolicLink()) return shown(at)
   }
-  if (stat?.isDirectory() ?? lstatSync(at).isDirectory()) {
-    for (const entry of readdirSync(at, { withFileTypes: true, recursive: true })) {
-      if (entry.isSymbolicLink()) return shown(join(entry.parentPath, entry.name))
+  return (stat?.isDirectory() ?? lstatSync(at).isDirectory()) ? linkUnder(at, shown) : null
+}
+
+/** The first symlink under `dir`, walked by hand: a `Dirent` never follows a link to a folder. */
+function linkUnder(dir: string, shown: (at: string) => string): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const at = join(dir, entry.name)
+    if (entry.isSymbolicLink()) return shown(at)
+    if (entry.isDirectory()) {
+      const found = linkUnder(at, shown)
+      if (found !== null) return found
     }
   }
   return null

@@ -56,7 +56,7 @@ pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基�
 - 命令、运行器与 zod schema 在 `apps/desktop/evals/`。`pnpm test` 只跑格式检查（tasks 和 results 过 zod，fixture 引用的文件都在），不联网，不要 key。
 - `TENON_EVAL_*` 只从运行器的环境读（命令行前面写上），`.env.local` 里的一律不认；第一次请求之前打印一行解析出的列、次数、题目、期限和 timing，不含 key，`.env.local` 里有被忽略的 `TENON_EVAL_*` 也在这行列出。
 - key 只在运行器进程内读：智谱 key 先取运行器的环境，没有再取仓库根的 `.env.local`（在进程内解析成对象，不写进 `process.env`）；主对比列的官方 key 只从运行器的环境读，`.env.local` 里有就拒跑。命令和记录里只写变量名。发送前照常核对 key 绑定的主机，评测配置不开后门。
-- 期限：每题一个，从发出第一条消息算起，含所有轮次和每条链上的每个 Run（单个 Run 另有 15 分钟上限）。到时运行器停下会话、等 Run 结束，照样出一条记 fail 的记录，note 写明期限已过；vitest 的超时是期限加 5 分钟，所以不会有一次运行在测试超时后没人看着继续花钱。Ctrl-C 取消时同样停下、删掉运行目录，这一条不写进结果文件。
+- 期限：每题一个，从发出第一条消息算起，含所有轮次和每条链上的每个 Run（单个 Run 另有 15 分钟上限）。到时运行器停下会话、等 Run 结束，照样出一条记 fail 的记录，note 写明期限已过；vitest 的超时是期限加 5 分钟，所以不会有一次运行在测试超时后没人看着继续花钱。测试的 signal 被中止（vitest 自己的超时）时同样停下、删掉运行目录，这一条不写进结果文件。Ctrl-C 直接杀掉 vitest 进程：不写记录，临时目录和留在后台的命令可能残留，要手动清。
 - `timing`：`ttftMs` 取整次运行第一次 attempt 从发出到第一个内容事件；第一次 attempt 没有内容（例如 429 后重试）就不记 `timing`。
 - 判分：全部是 script 检查的题，`judgedBy` 记 `script`，全部通过才算 pass；只要有一条 human 检查，就记 `human`，脚本结果写进 note 供人参考。任何一个 Run 以 `usage-limit` 结束，该条记 fail（多轮的题不只看最后一个 Run）。
 - 运行目录删不掉（例如命令留下只读文件夹）时记一行日志，不影响这条记录。

@@ -10,8 +10,9 @@
  *
  * Each case's timeout is the task's deadline plus `DEADLINE_MARGIN_MS`: the runner stops a task at
  * its deadline and still builds its record, so vitest never abandons a run that keeps spending. A
- * cancelled run (Ctrl-C aborts the test's signal) is stopped the same way, its directory removed,
- * and its record not written: it is not a result.
+ * run whose test signal aborts (vitest's own timeout) is stopped the same way, its directory
+ * removed, and its record not written: it is not a result. Ctrl-C kills the vitest worker instead:
+ * no record, and its TMPDIR folder and any command left running may remain.
  *
  * The key is read inside this process only: from its environment, or from the repo-root
  * `.env.local`, parsed here into an object and never into `process.env` — except the official

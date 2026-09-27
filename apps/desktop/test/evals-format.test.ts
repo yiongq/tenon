@@ -6,6 +6,7 @@
  * symlink anywhere in a fixture, pointing in or out (Revision (17) ⑤).
  */
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -222,6 +223,17 @@ describe('pnpm test runs the evals format check (旧 228)', () => {
     expect(problems(through, (f) => symlinkSync(outside, join(f, '07-web', 'up')))).toEqual([
       '07-web.json: fixture 07-web/up/secret.txt has a symlink at 07-web/up',
     ])
+    // A deep link to a folder holding one it may not read: named, never walked into.
+    const locked = join(outside, 'locked')
+    mkdirSync(join(locked, 'shut'), { recursive: true })
+    chmodSync(join(locked, 'shut'), 0o000)
+    try {
+      expect(problems(TASK, (f) => symlinkSync(locked, join(f, '07-web', 'ws', 'deep')))).toEqual([
+        '07-web.json: fixture 07-web/ws has a symlink at 07-web/ws/deep',
+      ])
+    } finally {
+      chmodSync(join(locked, 'shut'), 0o755)
+    }
   })
 
   it('passes results lines that pass zod and names the ones that do not', () => {
