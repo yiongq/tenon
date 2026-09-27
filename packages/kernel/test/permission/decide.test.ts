@@ -1,11 +1,12 @@
 /**
- * The decision table, row by row (spec 02 §权限决策顺序, §判决记录与摘要; plan step 11, 旧 5, 旧 152,
- * 旧 154, 旧 155, the primary-reason order). Each case builds `LayerInputs` directly — no Tape, no
- * loop — and asserts the verdict and `decidedBy`, with the basis where it carries the point.
+ * The decision table, row by row (spec 02 §权限决策顺序, §判决记录与摘要; plan step 11, 旧 5 with its
+ * 旁注 row, 旧 152, 旧 154, 旧 155, the primary-reason order). Each case builds `LayerInputs`
+ * directly — no Tape, no loop — and asserts the verdict and `decidedBy`, with the basis where it
+ * carries the point.
  */
 import { describe, expect, it } from 'vitest'
 import { EMPTY_POLICY } from '../../src/index.js'
-import type { PolicyState, ToolPolicyRule } from '../../src/index.js'
+import type { McpConnection, PolicyState, ToolPolicyRule } from '../../src/index.js'
 import { canRunInParallel, decide, primaryReason } from '../../src/permission/decide.js'
 import type {
   CallReason,
@@ -14,7 +15,9 @@ import type {
   LayerInputs,
 } from '../../src/permission/decide.js'
 import { summarize } from '../../src/permission/record.js'
+import { reversibilityOf } from '../../src/permission/reversibility.js'
 import type { InspectedCall } from '../../src/permission/session-view.js'
+import { mcpCandidates } from '../../src/tools/mcp-source.js'
 
 const CURRENT: PolicyState = { status: 'current', version: 'v1', snapshot: EMPTY_POLICY }
 
@@ -214,13 +217,53 @@ describe('each layer, alone', () => {
       expect(verdictOf(run(builtin('Agent'), { approvalMode }))).toEqual(['allow', 'approval-mode'])
     }
     // A policy ask rule naming them asks after all (旧 154).
+    for (const toolName of ['Agent', 'AskUserQuestion']) {
+      expect(
+        verdictOf(
+          run(builtin(toolName), {
+            reversibility: toolName === 'Agent' ? { value: 'unknown', source: 'host' } : READ_ONLY,
+            policy: policy({ policyId: 'p', serverId: 'builtin', effect: 'ask', toolName }),
+          }),
+        ),
+      ).toEqual(['ask', 'tenant-policy'])
+    }
+    // Only the builtin launches: a connector tool that happens to share the name is asked as one.
+    for (const originalName of ['Agent', 'AskUserQuestion']) {
+      expect(verdictOf(run(connector(originalName)))).toEqual(['ask', 'approval-mode'])
+    }
+  })
+
+  it('旁注: an MCP annotation such as readOnlyHint is shown, never read — it loosens nothing', async () => {
+    const connection = {
+      listTools: () =>
+        Promise.resolve([
+          {
+            name: 'get-sum',
+            inputSchema: { type: 'object' },
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+          },
+        ]),
+    } as unknown as McpConnection
+    const [candidate] = await mcpCandidates([{ serverId: 'everything', connection }])
+    if (candidate === undefined) throw new Error('no candidate')
+    // The table item keeps nothing of the annotations, and the host reads the tool as unknown.
+    expect(JSON.stringify(candidate)).not.toContain('readOnlyHint')
+    const args = { a: 1, b: 2 }
+    const reversibility = reversibilityOf(candidate, args)
+    expect(reversibility).toBe('unknown')
+    const call: InspectedCall = {
+      tool: {
+        name: candidate.name,
+        source: candidate.source,
+        serverId: candidate.serverId,
+        originalName: candidate.originalName,
+      },
+      args,
+      reversibility,
+    }
     expect(
-      verdictOf(
-        run(builtin('Agent'), {
-          policy: policy({ policyId: 'p', serverId: 'builtin', effect: 'ask', toolName: 'Agent' }),
-        }),
-      ),
-    ).toEqual(['ask', 'tenant-policy'])
+      verdictOf(run(call, { reversibility: { value: reversibility, source: 'host' } })),
+    ).toEqual(['ask', 'approval-mode'])
   })
 
   it('layer 8 asks when nothing else holds: a read outside the workspace (旧 157)', () => {
@@ -260,6 +303,23 @@ describe('step 2: the first tier that holds', () => {
       'ask',
       'default',
     ])
+  })
+
+  it('names the first allower in table order: protected > user-grant > approval-mode', () => {
+    // A workspace Read in the auto mode: the folder (layer 6) and the auto range (layer 7) both allow.
+    const read = run(builtin('Read'), {
+      place: 'workspace',
+      reversibility: READ_ONLY,
+      approvalMode: 'auto',
+    })
+    expect(verdictOf(read)).toEqual(['allow', 'user-grant'])
+    expect(read.summary.code).toBe('workspace-read')
+    // The session's own spill with a task grant: the narrow way (layer 2) and the grant both allow.
+    expect(
+      verdictOf(
+        run(builtin('Read'), { place: 'own-spill', reversibility: READ_ONLY, taskGrant: true }),
+      ),
+    ).toEqual(['allow', 'protected'])
   })
 
   it('names the first denier in table order, and the must-ask layers in D5 order', () => {
@@ -486,7 +546,7 @@ describe('the spec’s two worked examples (旧 152)', () => {
 })
 
 describe('F9 and the auto mode', () => {
-  it('asks or denies on an inspector even under a session grant or always-allow', () => {
+  it('02 不变量 18: asks or denies on an inspector even under a session grant or always-allow', () => {
     for (const over of [
       { sessionGrant: SESSION_GRANT },
       { userSetting: 'always-allow' as const },

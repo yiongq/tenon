@@ -160,7 +160,7 @@ export const grepExecutor: ToolExecutor = async (q) => {
     const stat = await q.fs.stat(q.target)
     if (stat === null) return failed(fill(GREP_TEXTS.notFound, { path: q.target }))
     const files: WalkedFile[] = stat.isDir
-      ? (await walkFiles(q.fs, q.target, q.roots, q.signal)).filter((file) => filter.test(file))
+      ? (await walkFiles(q.fs, q.target, q.scope, q.signal)).filter((file) => filter.test(file))
       : [{ path: q.target, relative: basename(q.target) }]
     const entries: string[] = []
     for (const file of files) {

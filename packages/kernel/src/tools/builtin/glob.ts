@@ -66,7 +66,7 @@ export const globExecutor: ToolExecutor = async (q) => {
     const stat = await q.fs.stat(q.target)
     if (stat === null) return failed(fill(GLOB_TEXTS.notFound, { path: q.target }))
     if (!stat.isDir) return failed(fill(GLOB_TEXTS.notDirectory, { path: q.target }))
-    const files = await walkFiles(q.fs, q.target, q.roots, q.signal)
+    const files = await walkFiles(q.fs, q.target, q.scope, q.signal)
     const matched = files.filter((file) => matcher.test(file.relative)).map((file) => file.path)
     if (matched.length === 0) return succeeded(GLOB_TEXTS.none)
     if (matched.length <= GLOB_RESULT_LIMIT) return succeeded(matched.join('\n'))

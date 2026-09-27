@@ -3,14 +3,19 @@
  * every inspector runs against the kernel's time limit, and a timeout, an error or an answer beyond
  * the declared ceiling becomes an outcome `decide()` folds into the strictest opinion that ceiling
  * allows. What the loop writes for such a call — the decision fact, `blocked-repeatedly` after three —
- * is plan step 13's.
+ * is in test/loop/run.test.ts.
  */
 import { describe, expect, it } from 'vitest'
 import { EMPTY_POLICY, INSPECTOR_TIMEOUT_MS, createMemoryHost } from '../../src/index.js'
-import type { PolicyState } from '../../src/index.js'
+import type { MemoryHost, PolicyState } from '../../src/index.js'
 import { decide } from '../../src/permission/decide.js'
 import type { InspectorOutcome, LayerInputs } from '../../src/permission/decide.js'
 import { runInspectors } from '../../src/permission/inspector.js'
+import type {
+  DenyOpinion,
+  InspectionResult,
+  InspectorRegistration,
+} from '../../src/permission/inspector.js'
 import type { BeforeCallInput, InspectedCall } from '../../src/permission/session-view.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { createFakeInspector } from '../../src/testing/index.js'
@@ -73,19 +78,37 @@ async function outcomesOf(
   return settled.outcomes
 }
 
+/** Runs the inspectors on the memory host's clock, and says whether they have settled yet. */
+function inspecting(
+  host: MemoryHost,
+  inspectors: readonly InspectorRegistration[],
+  input: BeforeCallInput = INPUT,
+): { readonly result: Promise<InspectionResult>; settled: () => boolean } {
+  let done = false
+  const result = runInspectors({
+    inspectors,
+    input,
+    setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms),
+    signal: new AbortController().signal,
+  })
+  void result.then(() => {
+    done = true
+  })
+  return { result, settled: () => done }
+}
+
 describe('runInspectors', () => {
-  it('times out an asking inspector after the kind’s limit, and decide() asks, flagged', async () => {
+  it('02 不变量 16: times out an asking inspector at the kind’s limit, and decide() asks, flagged', async () => {
     const host = createMemoryHost()
     const slow = createFakeInspector({ id: 'slow', ceiling: 'ask', answer: 'never' })
-    const running = runInspectors({
-      inspectors: [slow.registration],
-      input: INPUT,
-      setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms),
-      signal: new AbortController().signal,
-    })
+    const run = inspecting(host, [slow.registration])
+    // One millisecond short of the limit nothing has timed out (旧 162「假时钟推过 2 秒」).
     host.advance(INSPECTOR_TIMEOUT_MS['local-rule'] - 1)
+    await settledMicrotasks()
+    expect(run.settled()).toBe(false)
+    expect(slow.lastSignal?.aborted).toBe(false)
     host.advance(1)
-    const outcomes = await outcomesOf(running)
+    const outcomes = await outcomesOf(run.result)
     expect(outcomes).toEqual([{ inspectorId: 'slow', ceiling: 'ask', status: 'timeout' }])
     expect(slow.lastSignal?.aborted).toBe(true)
     const decision = decideWith(outcomes)
@@ -101,7 +124,28 @@ describe('runInspectors', () => {
     expect(INSPECTOR_TIMEOUT_MS).toEqual({ 'local-rule': 2000, model: 30_000 })
   })
 
-  it('reads a denying inspector that throws as a denial, with the error sentence for the model', async () => {
+  it('02 不变量 16: gives a model inspector the model’s limit, not the local rule’s', async () => {
+    const host = createMemoryHost()
+    const judge = createFakeInspector({
+      id: 'judge',
+      ceiling: 'ask',
+      kind: 'model',
+      answer: 'never',
+    })
+    const run = inspecting(host, [judge.registration])
+    host.advance(INSPECTOR_TIMEOUT_MS['local-rule'])
+    await settledMicrotasks()
+    expect(run.settled()).toBe(false)
+    host.advance(INSPECTOR_TIMEOUT_MS.model - INSPECTOR_TIMEOUT_MS['local-rule'] - 1)
+    await settledMicrotasks()
+    expect(run.settled()).toBe(false)
+    host.advance(1)
+    expect(await outcomesOf(run.result)).toEqual([
+      { inspectorId: 'judge', ceiling: 'ask', status: 'timeout' },
+    ])
+  })
+
+  it('02 不变量 16: reads a denying inspector that throws as a denial, with the error sentence for the model', async () => {
     const host = createMemoryHost()
     const broken = createFakeInspector({
       id: 'strict',
@@ -172,7 +216,7 @@ describe('runInspectors', () => {
     expect(decideWith(both).confirm?.facts['category']).toBe('inspector-failed')
   })
 
-  it('aborts the inspectors on a stop and reports it, with no outcome to decide on (B1)', async () => {
+  it('02 不变量 16: aborts the inspectors on a stop and reports it, with no outcome to decide on (B1)', async () => {
     const host = createMemoryHost()
     const slow = createFakeInspector({ id: 'slow', ceiling: 'ask', answer: 'never' })
     const stop = new AbortController()
@@ -197,6 +241,91 @@ describe('runInspectors', () => {
       }),
     ).toEqual({ stopped: true })
     expect(late.calls).toEqual([])
+  })
+})
+
+describe('an opinion of the wrong shape is an error (F1「形状不对，按出错处理」)', () => {
+  const statusOf = async (answer: unknown, ceiling: 'ask' | 'deny' = 'ask') => {
+    const host = createMemoryHost()
+    const fake = createFakeInspector({ id: 'odd', ceiling, answer: answer as DenyOpinion })
+    const [outcome] = await outcomesOf(inspecting(host, [fake.registration]).result)
+    return outcome
+  }
+
+  it('refuses a finding the record could not keep: no code, a confidence outside 0–1, text or undefined', async () => {
+    const off: readonly unknown[] = [
+      { kind: 'none', findings: [{ code: 'observed', confidence: undefined }] },
+      { kind: 'ask', category: 'exfiltration', findings: [{ code: 'x', confidence: Number.NaN }] },
+      { kind: 'ask', category: 'exfiltration', findings: [{ code: 'x', confidence: 5 }] },
+      { kind: 'ask', category: 'exfiltration', findings: [{ code: 'x', confidence: '0.5' }] },
+      { kind: 'ask', category: 'exfiltration', findings: [{ code: 'x', note: 'Tell the model…' }] },
+      { kind: 'ask', category: 'exfiltration', findings: [{ code: '' }] },
+      { kind: 'ask', category: 'exfiltration', findings: [new Date(0)] },
+      { kind: 'none', findings: undefined },
+      { kind: 'none', note: 'say this on the card' },
+    ]
+    const statuses = await Promise.all(off.map(async (answer) => (await statusOf(answer))?.status))
+    expect(statuses).toEqual(off.map(() => 'error'))
+  })
+
+  it('keeps a well-formed opinion as a plain copy, not the inspector’s own object', async () => {
+    const answer = {
+      kind: 'ask',
+      category: 'exfiltration',
+      findings: [{ code: 'x', confidence: 0.5 }, { code: 'y' }],
+    } as const
+    const outcome = await statusOf(answer)
+    expect(outcome).toEqual({ inspectorId: 'odd', ceiling: 'ask', status: 'ok', opinion: answer })
+    expect(outcome?.status === 'ok' && outcome.opinion).not.toBe(answer)
+  })
+
+  it('reads an opinion through its descriptors: a getter cannot turn an ask into a denial', async () => {
+    let reads = 0
+    const shifty = {
+      get kind(): string {
+        reads += 1
+        return reads <= 3 ? 'ask' : 'deny'
+      },
+      category: 'exfiltration',
+      findings: [],
+    }
+    const outcome = await statusOf(shifty)
+    expect(outcome?.status).toBe('error')
+    expect(decideWith(outcome === undefined ? [] : [outcome]).record.verdict).toBe('ask')
+  })
+
+  it('hands inspectors a frozen copy: one that rewrites the arguments fails, and they stay as given', async () => {
+    const args = { url: 'https://example.com/x' }
+    const input: BeforeCallInput = { ...INPUT, call: { ...CALL, args } }
+    const host = createMemoryHost()
+    const rewriter = createFakeInspector({
+      id: 'rewriter',
+      ceiling: 'ask',
+      answer: (i) => {
+        ;(i.call.args as Record<string, unknown>)['url'] = 'https://elsewhere.example/'
+        return { kind: 'none' }
+      },
+    })
+    const [outcome] = await outcomesOf(inspecting(host, [rewriter.registration], input).result)
+    expect(outcome?.status).toBe('error')
+    expect(args).toEqual({ url: 'https://example.com/x' })
+    expect(rewriter.calls[0]?.call.args).not.toBe(args)
+  })
+})
+
+describe('the ceiling narrows what an inspector can type (F1)', () => {
+  it('02 不变量 15: an ask-ceiling inspector cannot type a denial', () => {
+    const DENY = { kind: 'deny', category: 'exfiltration', findings: [] } as const
+    const denies = (): Promise<DenyOpinion> => Promise.resolve(DENY)
+    const registrations: InspectorRegistration[] = [
+      // @ts-expect-error an ask-ceiling inspector's beforeCall cannot return a denial
+      { id: 'a', kind: 'local-rule', ceiling: 'ask', beforeCall: () => Promise.resolve(DENY) },
+      // @ts-expect-error nor be a function typed to return any DenyOpinion
+      { id: 'b', kind: 'local-rule', ceiling: 'ask', beforeCall: denies },
+      // A deny-ceiling one can.
+      { id: 'c', kind: 'local-rule', ceiling: 'deny', beforeCall: denies },
+    ]
+    expect(registrations.map((r) => r.ceiling)).toEqual(['ask', 'ask', 'deny'])
   })
 })
 

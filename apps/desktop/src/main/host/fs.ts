@@ -48,11 +48,17 @@ export class DesktopFs implements HostFs {
    * thrown — writing through that dangling link would create a file wherever it points. lstat looks
    * at the entry itself, so a trailing separator or `/.` is dropped first: with one, lstat follows
    * the link too, and `ws/evil/` would read as missing while mkdirp through it escapes.
+   *
+   * On macOS the data volume is also mounted at /System/Volumes/Data, and realpath(3) leaves that
+   * spelling as it is: `/System/Volumes/Data/Users/u/.zshrc` is `/Users/u/.zshrc` under another name
+   * (a firmlink), and compared as a string it would read as outside the protected list. A result under
+   * that mount is given back in the root spelling when that path is the same file (same device and
+   * inode), so one file has one real path (spec 02 §「在不在工作区里」 steps 2–3; D8).
    */
   async realpath(path: AbsolutePath): Promise<AbsolutePath | null> {
     absolutePath(path)
     try {
-      return absolutePath(await realpath(path))
+      return absolutePath(await rootSpelling(await realpath(path)))
     } catch (err) {
       if (!isErrno(err, 'ENOENT') && !isErrno(err, 'ENOTDIR')) throw err
       try {
@@ -62,6 +68,22 @@ export class DesktopFs implements HostFs {
       }
       throw err
     }
+  }
+}
+
+/** The macOS data volume's own mount point, where every firmlinked folder has a second spelling. */
+const DATA_VOLUME = '/System/Volumes/Data'
+
+/** A real path under the data volume's mount, as the root spells it when that is the same file. */
+async function rootSpelling(real: string): Promise<string> {
+  if (!real.startsWith(`${DATA_VOLUME}/`)) return real
+  try {
+    const root = await realpath(real.slice(DATA_VOLUME.length))
+    if (root === real) return real
+    const [a, b] = await Promise.all([stat(real, { bigint: true }), stat(root, { bigint: true })])
+    return a.dev === b.dev && a.ino === b.ino ? root : real
+  } catch {
+    return real // no such folder at the root: the path is only the data volume's
   }
 }
 

@@ -1,7 +1,8 @@
 /**
  * Read, Glob and Grep (spec 02 §内置工具与参数「Read」「Glob、Grep」; plan step 18): the executors, on
  * the memory host. Read keeps every result under the spill threshold by whole lines (open question
- * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes.
+ * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes;
+ * both walks skip the protected list (§内置工具的默认档位; plan step 11: 旧 159).
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
@@ -15,8 +16,17 @@ import { READ_TEXTS, readExecutor, readResult } from '../../src/tools/builtin/re
 import { BUILTIN_SERVER_ID } from '../../src/tools/registry.js'
 import type { ExecuteQuery, ToolExecution, ToolExecutor } from '../../src/tools/executor.js'
 import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
+import type { PathScope } from '../../src/permission/workspace.js'
 
 const WS = absolutePath('/ws')
+
+/** The scope most cases walk in: one root, a profile directory well away from it. */
+const SCOPE: PathScope = {
+  roots: [WS],
+  profileDir: absolutePath('/tenon/prof'),
+  ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
+  protectedFiles: [],
+}
 
 async function hostWith(files: Record<string, string>): Promise<MemoryHost> {
   const host = createMemoryHost()
@@ -38,6 +48,7 @@ function run(
   input: Record<string, unknown>,
   target: AbsolutePath,
   signal: AbortSignal = new AbortController().signal,
+  scope: PathScope = SCOPE,
 ): Promise<ToolExecution> {
   const q: ExecuteQuery = {
     item: {
@@ -51,7 +62,7 @@ function run(
     input,
     signal,
     target,
-    roots: [WS],
+    scope,
     fs: host.fs,
   }
   return executor(q)
@@ -269,5 +280,86 @@ describe('Grep', () => {
     expect(textOf(await run(grepExecutor, host, 'Grep', { pattern: 'zzz' }, WS))).toBe(
       GREP_TEXTS.none,
     )
+  })
+})
+
+describe('the walks skip the protected list (§内置工具的默认档位「Glob、Grep 的遍历」; 旧 159)', () => {
+  // The workspace is the home folder: it holds the profile directory — this session's spill, another
+  // session's, the config — and a shell file, and a project with a link to that shell file.
+  const HOME = absolutePath('/home/u')
+  const PROFILE = absolutePath('/home/u/prof')
+  const HOME_SCOPE: PathScope = {
+    roots: [HOME],
+    profileDir: PROFILE,
+    ownSpillDir: absolutePath('/home/u/prof/tool-output/s1'),
+    protectedFiles: [absolutePath('/home/u/.zshrc')],
+  }
+  const HOME_FILES = {
+    '/home/u/.zshrc': 'export TOKEN=SECRET-rc\n',
+    '/home/u/prof/config.json': '{"token":"SECRET-config"}\n',
+    '/home/u/prof/logs/main.log': 'SECRET-log\n',
+    '/home/u/prof/tool-output/s2/r-1-0.txt': 'other session SECRET-spill\n',
+    '/home/u/prof/tool-output/s1/r-1-0.txt': 'own SECRET-own\n',
+    '/home/u/proj/a.ts': 'const x = "SECRET-ws"\n',
+  }
+
+  async function homeHost(): Promise<MemoryHost> {
+    const host = await hostWith(HOME_FILES)
+    host.symlink(absolutePath('/home/u/proj/rc'), '/home/u/.zshrc')
+    host.symlink(absolutePath('/home/u/proj/other'), '/home/u/prof/tool-output/s2')
+    return host
+  }
+
+  it('Grep finds no line of the config, the other spill, the logs or the shell file, and does not fail', async () => {
+    const host = await homeHost()
+    const grep = (pattern: string): Promise<ToolExecution> =>
+      run(
+        grepExecutor,
+        host,
+        'Grep',
+        { pattern, output_mode: 'content' },
+        HOME,
+        undefined,
+        HOME_SCOPE,
+      )
+    // A string only config.json holds: 0 hits, no error (旧 159).
+    const config = await grep('SECRET-config')
+    expect(config).toMatchObject({ isError: false, state: 'completed' })
+    expect(textOf(config)).toBe(GREP_TEXTS.none)
+    // Every secret: only the workspace file and this session's own spill answer — the link to the
+    // shell file and the link to the other session's spill are skipped as their targets are.
+    expect(textOf(await grep('SECRET')).split('\n')).toEqual([
+      '/home/u/prof/tool-output/s1/r-1-0.txt:1:own SECRET-own',
+      '/home/u/proj/a.ts:1:const x = "SECRET-ws"',
+    ])
+  })
+
+  it('Glob under the profile directory lists only this session’s spill directory', async () => {
+    const host = await homeHost()
+    const glob = await run(
+      globExecutor,
+      host,
+      'Glob',
+      { pattern: '**' },
+      HOME,
+      undefined,
+      HOME_SCOPE,
+    )
+    expect(glob.isError).toBe(false)
+    expect(textOf(glob).split('\n')).toEqual([
+      '/home/u/prof/tool-output/s1/r-1-0.txt',
+      '/home/u/proj/a.ts',
+    ])
+    // Walked from the spill directory itself, it is all there.
+    const own = await run(
+      globExecutor,
+      host,
+      'Glob',
+      { pattern: '*' },
+      absolutePath('/home/u/prof/tool-output/s1'),
+      undefined,
+      HOME_SCOPE,
+    )
+    expect(textOf(own)).toBe('/home/u/prof/tool-output/s1/r-1-0.txt')
   })
 })

@@ -12,6 +12,7 @@
 import type { AbsolutePath, HostFs } from '../host/adapter.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
+import type { PathScope } from '../permission/workspace.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { BuiltinToolName } from './builtin/tool.js'
 import { isBuiltinToolName } from './builtin/index.js'
@@ -35,8 +36,11 @@ export interface ExecuteQuery {
    * `path` is omitted (§「在不在工作区里」第 5 步). Null for every other tool.
    */
   readonly target: AbsolutePath | null
-  /** The workspace roots, real: a walk follows no link that leads outside them. */
-  readonly roots: readonly AbsolutePath[]
+  /**
+   * Where the call's paths were judged from (§「在不在工作区里」): a walk follows no link that leads
+   * outside the roots, and skips what the scope places `protected` (§内置工具的默认档位).
+   */
+  readonly scope: PathScope
   readonly fs: HostFs
 }
 

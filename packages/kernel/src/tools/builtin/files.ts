@@ -4,11 +4,16 @@
  *
  * The walk sorts by path in code units and follows no link that leads outside the workspace (暂定;
  * the engine and the regex dialect are weighed by the evals in plan step 22, and those two floors stay).
+ * It skips every file and subtree its scope places `protected` — the rest of the profile directory,
+ * other sessions' spill directories, the shell files — without asking or failing; the session's own
+ * spill directory is walked (§内置工具的默认档位「Glob、Grep 的遍历」; D11, E4).
  * Every walk checks the stop signal between two `HostFs` calls: once it is set nothing more is read,
  * and the call records `aborted`.
  */
 import type { AbsolutePath, HostFs } from '../../host/adapter.js'
 import { isWithin, joinPath } from '../../host/path.js'
+import { placeOf } from '../../permission/workspace.js'
+import type { PathScope } from '../../permission/workspace.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecution } from '../executor.js'
 
@@ -114,16 +119,19 @@ export interface WalkedFile {
 
 /**
  * Every file under `root`, depth first, sorted by path in code units. A link is followed only when
- * its real path is inside one of `roots`; a dangling link, a link leading outside and a link back to a
- * folder above it (a loop) are skipped. A folder below the root that cannot be listed is skipped; the
- * root itself throws.
+ * its real path is inside one of the scope's roots; a dangling link, a link leading outside and a link
+ * back to a folder above it (a loop) are skipped. An entry whose real path the scope places
+ * `protected` is skipped, a folder with everything under it — unless the session's own spill
+ * directory lies inside it, when only the way down to that directory survives. A folder below the
+ * root that cannot be listed is skipped; the root itself throws.
  */
 export async function walkFiles(
   fs: HostFs,
   root: AbsolutePath,
-  roots: readonly AbsolutePath[],
+  scope: PathScope,
   signal: AbortSignal,
 ): Promise<WalkedFile[]> {
+  const { roots } = scope
   const files: WalkedFile[] = []
   const walk = async (
     dir: AbsolutePath,
@@ -160,6 +168,13 @@ export async function walkFiles(
       const stat = await fs.stat(path)
       checkSignal(signal)
       if (stat === null) continue
+      // The protected list, skipped quietly (§内置工具的默认档位): the profile directory is walked
+      // only on the way to this session's own spill directory.
+      if (
+        placeOf(resolved, scope) === 'protected' &&
+        !(stat.isDir && isWithin(scope.ownSpillDir, resolved))
+      )
+        continue
       if (stat.isDir) {
         // oxlint-disable-next-line no-await-in-loop -- depth first, in sorted order
         await walk(path, resolved, relative, inside)
