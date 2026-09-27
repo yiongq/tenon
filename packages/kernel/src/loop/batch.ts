@@ -53,6 +53,7 @@ import type { Tape } from '../tape/tape.js'
 import { BUILTIN_TOOLS, isBuiltinToolName } from '../tools/builtin/index.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
+import type { ToolExecution } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
@@ -61,8 +62,8 @@ import type { CommandRun, CommandShell } from '../tools/builtin/bash.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
-import { MACHINE_DENIAL_CAP } from './limits.js'
-import type { McpToolSource } from './ports.js'
+import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
+import type { McpToolSource, RunAbortCause } from './ports.js'
 import type { ToolOutcomeView } from './events.js'
 
 /** One complete client call of a reply, as `tool/call` records it. */
@@ -101,6 +102,11 @@ export interface BatchContext {
   /** Machine denials in a row before this batch, counted from the Tape (F2, F3). */
   readonly denials: number
   readonly signal: AbortSignal
+  /**
+   * Why `signal` was aborted (§进行中、暂停与 RunRegistry「中止原因」), read when a dispatched call
+   * closes after it: a user-stop closes it `stopped`, a quit or a closed window `app-exit` (B4).
+   */
+  readonly cause: () => RunAbortCause
   /** Commits facts through the mailbox; resolves with what was written once it is on the Tape. */
   readonly write: (entries: readonly NewEntry[]) => Promise<Written>
   /**
@@ -340,8 +346,10 @@ function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: st
 
 /**
  * The side effect, then its result and outcome. A file tool acts on the real path its decision placed
- * (§「在不在工作区里」第 5 步). A call stopped while it ran gets the stopped note, with whatever it had
- * produced as the second block (§点停止时各状态怎么收).
+ * (§「在不在工作区里」第 5 步). A call stopped while it ran gets the note of the abort's cause —
+ * `stopped` for a user-stop, `app-exit` for a quit or a closed window (§原因码表, B4) — with whatever
+ * it had produced as the second block (§点停止时各状态怎么收); a Bash timeout stays `timed-out`, a stop
+ * after its kill began included. A call that ended normally before its closure is recorded as it ended.
  */
 async function execute(
   ctx: BatchContext,
@@ -356,7 +364,7 @@ async function execute(
     readonly command: CommandRun | undefined
   },
 ): Promise<void> {
-  const execution = await executor({
+  const running = executor({
     item,
     input: call.input,
     signal: ctx.signal,
@@ -366,9 +374,11 @@ async function execute(
     clock: ctx.host.clock,
     ...(q.command === undefined ? {} : { command: q.command }),
   })
+  const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
   const stopped = execution.state !== 'completed'
-  // A Bash timeout is its own code; every other call that did not complete was stopped.
-  const source = stopped ? (execution.source ?? 'stopped') : null
+  // A Bash timeout is its own code; every other call that did not complete was aborted, by a stop or
+  // by the shutdown.
+  const source = stopped ? (execution.source ?? abortSourceOf(ctx.cause())) : null
   const output = textOf(execution.content)
   const facts = resultFacts({
     tape: ctx.tape,
@@ -392,6 +402,62 @@ async function execute(
   })
   await close(ctx, call, facts, q.summary)
 }
+
+/** A dispatched call's source when the abort ended it: its cause's (§原因码表 `stopped`, `app-exit`). */
+function abortSourceOf(cause: RunAbortCause): 'stopped' | 'app-exit' {
+  return cause === 'user-stop' ? 'stopped' : 'app-exit'
+}
+
+/**
+ * The builtin tools that act in process, through `HostFs` (§点停止时各状态怎么收「进程内写操作」):
+ * the file tools. Bash has its own kill sequence; a connector call is another process's.
+ */
+function inProcess(item: ToolTableItem): boolean {
+  return item.source === 'builtin' && FILE_TOOL_NAMES.has(item.originalName)
+}
+
+/**
+ * An in-process call a stop cannot interrupt (§点停止时各状态怎么收「进程内写操作」): `HostFs` takes no
+ * AbortSignal, so once the stop lands the closure waits for the call at most `STOP_WRITE_WAIT_MS` on
+ * the host clock. Done in time, it is what the call returned — its real end; past the wait, it is
+ * uncertain, and what the call returns later is never written — the closure written first counts
+ * (§写入：谁写、写几次「先写者算数」) — only logged, once, whether it returns or throws.
+ */
+async function withinWriteWait(
+  ctx: BatchContext,
+  call: CompleteCall,
+  running: Promise<ToolExecution>,
+): Promise<ToolExecution> {
+  const { signal } = ctx
+  const late = Promise.withResolvers<'late'>()
+  const wait = { cancel: noTimer }
+  const onStop = (): void => {
+    wait.cancel = ctx.host.clock.setTimeout(() => late.resolve('late'), STOP_WRITE_WAIT_MS)
+  }
+  if (signal.aborted) onStop()
+  else signal.addEventListener('abort', onStop, { once: true })
+  let first: ToolExecution | 'late'
+  try {
+    first = await Promise.race([running, late.promise])
+  } finally {
+    signal.removeEventListener('abort', onStop)
+    wait.cancel()
+  }
+  if (first !== 'late') return first
+  const key = `${ctx.runId}:${String(ctx.requestSeq)}:${String(call.ordinal)}`
+  const dropped = `[loop] ${call.name} call ${key} was closed uncertain after ${String(STOP_WRITE_WAIT_MS)} ms; what it`
+  void running.then(
+    (ended) => ctx.log(`${dropped} returned later (${ended.state}) is not written`),
+    (error: unknown) =>
+      ctx.log(
+        `${dropped} threw later is not written: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+  )
+  return { content: [], isError: true, state: 'uncertain' }
+}
+
+/** No timer set yet: nothing to cancel. */
+function noTimer(): void {}
 
 /**
  * What a Bash call runs with, gathered before its dispatch (§内置工具与参数「Bash」): the base

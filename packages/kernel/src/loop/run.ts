@@ -287,6 +287,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       strict: ctx.onUnansweredCall === 'throw',
       log: ctx.log,
       signal,
+      cause: () => abortCauseOf(ctx.lease),
       write,
       outcome: (call, view) =>
         ctx.emit.outcome(

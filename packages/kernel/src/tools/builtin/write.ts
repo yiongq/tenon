@@ -8,7 +8,8 @@
  * (§参数校验与失败「执行期失败」).
  *
  * The write is not interrupted by a stop: `HostFs` takes no AbortSignal, so one in flight finishes and
- * is recorded as it went (§点停止时各状态怎么收「进程内写操作」).
+ * is recorded as it went — or, still running `STOP_WRITE_WAIT_MS` after the stop, is recorded
+ * uncertain by the batch (loop/batch.ts; §点停止时各状态怎么收「进程内写操作」).
  */
 import { fromParts, pathParts } from '../../host/path.js'
 import type { AbsolutePath } from '../../host/adapter.js'

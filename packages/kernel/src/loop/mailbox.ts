@@ -1676,8 +1676,14 @@ export function createLoop(deps: LoopDeps): Loop {
         if (recorded && end.reason.code === 'paused') {
           if (lease.stopRequested) {
             // A stop that reached the pause while it committed: 暂停中停止, in this same task
-            // (「Run 结束」). The card never shows; `run-ended` still says `paused`.
-            await closePausedByStop(ports, box)
+            // (「Run 结束」). The card never shows; `run-ended` still says `paused`. A store closed by
+            // an exit meanwhile (TapeClosedError) only reaches the log: the lease is still finished,
+            // and the next start's recovery sees the card (§停止与退出 第 5 步).
+            await closePausedByStop(ports, box).catch((error: unknown) => {
+              log(
+                `[loop] run ${runId} of ${sessionId}: its stopped pause was not closed: ${describe(error)}`,
+              )
+            })
           } else if (!lease.signal.aborted) {
             card = cardOfEntries(sessionId, end.entries)
           }
@@ -1699,7 +1705,12 @@ export function createLoop(deps: LoopDeps): Loop {
         // Delivered once the pause is on the Tape (§答复与投递「投递」); the renderer also pulls it.
         if (card !== null) deliver(card)
       })
-    })()
+    })().catch((error: unknown) => {
+      // Nothing of a Run's end escapes as an unhandled rejection (§停止与退出 第 5 步): logged, and
+      // the lease finished if the end did not get that far.
+      log(`[loop] run ${runId} of ${sessionId} failed at its end: ${describe(error)}`)
+      if (box.lease === lease) finish(box, lease)
+    })
   }
 
   /**

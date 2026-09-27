@@ -74,6 +74,11 @@ function sourcesUnder(dir: string): { readonly file: string; readonly text: stri
     .map((file) => ({ file: `${dir}/${file}`, text: readFileSync(`${root}/${file}`, 'utf8') }))
 }
 
+/** A source's code without its comments: comments may name `process.env`, code may not. */
+function codeOf(text: string): string {
+  return text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/^\s*\/\/.*$/gm, '')
+}
+
 describe('kernel host independence', () => {
   it('imports neither contracts nor railguard, and opens no socket or resolver of its own (旧 236)', () => {
     const offenders = sourcesUnder('src').filter(({ text }) =>
@@ -90,6 +95,14 @@ describe('kernel host independence', () => {
     const offenders = ['src/loop', 'src/tools', 'src/permission']
       .flatMap((dir) => sourcesUnder(dir))
       .filter(({ text }) => /['"`]ollama['"`]/.test(text))
+    expect(offenders.map(({ file }) => file)).toEqual([])
+  })
+
+  it('reads no process.env anywhere in src (旧 142; §内置工具与参数「Bash」「起进程」)', () => {
+    // Bash's shell and its environment come in through `LoopPorts.commandShell`.
+    const offenders = sourcesUnder('src').filter(({ text }) =>
+      /\bprocess\s*(?:\?\.|\.)\s*env\b|\bprocess\s*\[\s*['"`]env['"`]\s*\]/.test(codeOf(text)),
+    )
     expect(offenders.map(({ file }) => file)).toEqual([])
   })
 
