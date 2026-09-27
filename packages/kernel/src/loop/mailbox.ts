@@ -100,7 +100,7 @@ import type { Resumable } from './recovery.js'
 import { RunWriteRefusedError, placeOf, readSessionEntries } from './batch.js'
 import { approvalOf } from './calls.js'
 import type { Written } from './batch.js'
-import type { CallRef, ClosureSource } from './closure.js'
+import type { ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
@@ -1515,11 +1515,12 @@ export function createLoop(deps: LoopDeps): Loop {
           tokenLimit: deps.tokenLimit,
           lease,
           openTable: () => openTable(incarnationId, built.assembly, built.profile),
-          // A write task that finds its lease aborted writes no decision and no dispatch
-          // (§主进程与 kernel 的循环接口「mailbox」): the batch closes the call as stopped instead.
+          // A write task that finds its lease aborted writes no decision, no dispatch and no closure
+          // of a call found unusable (§主进程与 kernel 的循环接口「mailbox」): the batch closes the
+          // call as stopped instead.
           write: (entries) =>
             post(box, 'run', null, async () => {
-              if (lease.signal.aborted && entries.some(isDecisionOrDispatch)) {
+              if (lease.signal.aborted && entries.some(isRefusedAfterStop)) {
                 throw new RunWriteRefusedError()
               }
               const written = await appendFirstWins(sessionId, incarnationId, entries)
@@ -1597,7 +1598,7 @@ export function createLoop(deps: LoopDeps): Loop {
           reason: end.reason,
           recorded,
           lastStop: finished.lastStop,
-          errorCode: finished.errorCode,
+          errorCode: end.aborted ? null : finished.errorCode,
           retryOf: stillLast ? retryOf(opened, dispatched) : null,
         })
         // In the same synchronous stretch as the finish: nothing else takes the root in between.
@@ -1889,15 +1890,16 @@ export function createLoop(deps: LoopDeps): Loop {
   /**
    * What the terminal task writes. A lease aborted before this task's turn (a stop, a closed window
    * or a quit that came after the Run decided to pause, end or fail) ends the Run by the abort
-   * instead: the paused decision is not written and the calls it left waiting close not-run /
-   * `stopped`, as a stop while judging would have (§主进程与 kernel 的循环接口「mailbox」; §点停止时各状态怎么收).
-   * A pause the stop reaches after its terminal committed is plan step 15's.
+   * instead: neither the paused decision nor the end's own closures (a limit's, a truncation's) are
+   * written, and the calls they covered close not-run / `stopped`, as a stop while judging would
+   * have (§主进程与 kernel 的循环接口「mailbox」; §点停止时各状态怎么收). `aborted` says the reason was
+   * replaced: no error event ended the Run then (run-ended `errorCode`).
    */
   function terminalOf(
     finished: RunFinish,
     lease: RunLease,
     runId: string,
-  ): { reason: RunEndReason; entries: NewEntry[]; stopped: readonly CallRef[] } {
+  ): { reason: RunEndReason; entries: NewEntry[]; aborted: boolean } {
     const writer = { by: 'run', runId } as const
     const aborted = lease.signal.aborted
     const reason = aborted ? abortedEndReason(abortCauseOf(lease)) : finished.reason
@@ -1920,7 +1922,7 @@ export function createLoop(deps: LoopDeps): Loop {
         createdAt: now(),
       }),
     )
-    return { reason, entries, stopped }
+    return { reason, entries, aborted }
   }
 
   /**
@@ -2561,9 +2563,17 @@ function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
   return 'none'
 }
 
-/** The two facts a Run's write task refuses once its lease is aborted (「mailbox」). */
-function isDecisionOrDispatch(entry: NewEntry): boolean {
-  return entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed'
+/**
+ * What a Run's write task refuses once its lease is aborted (「mailbox」): a decision, a dispatch,
+ * and the not-run closure of a call found unusable — a call not yet dispatched when the stop came
+ * closes as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped).
+ */
+function isRefusedAfterStop(entry: NewEntry): boolean {
+  if (entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed') {
+    return true
+  }
+  const source = entry.name === 'execution/tool_outcome' ? entry.payload['source'] : undefined
+  return source === 'tool-unavailable' || source === 'invalid-input'
 }
 
 /** What a resumed Run gets when a stop beats its `assemble`: nothing to call, nothing to send to. */
