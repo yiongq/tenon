@@ -1,9 +1,14 @@
 /**
  * Grep (spec 02 §内置工具与参数「Glob、Grep」). The executor lands with plan step 18: in process, over
- * `HostFs`, with JavaScript regular expressions standing in for ripgrep's dialect and a table of the
- * common ripgrep types (暂定: the engine and the dialect are weighed in plan step 22). Files are
- * searched in path order; one that is not text, too large or unreadable is skipped, as ripgrep skips it.
+ * `HostFs`, with a table of the common ripgrep types. Files are searched in path order; one that is
+ * not text, too large or unreadable is skipped, as ripgrep skips it.
+ *
+ * The engine is re2js (plan step 22, weighed against a matcher of our own and a killable worker):
+ * RE2's dialect, the family of ripgrep's default engine (「正则方言跟 ripgrep」), matched in time
+ * linear in the text, so no pattern can hold the process every window is served from (s18-safety-2).
+ * Like ripgrep without `--pcre2`, it has no look-around and no backreferences.
  */
+import { RE2JS } from 're2js'
 import type { AbsolutePath } from '../../host/adapter.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
@@ -38,6 +43,8 @@ export const GREP_TEXTS = {
   none: 'No matches found.',
   more: 'Showed entries {from} to {to} of {total}. Call Grep again with offset {next} to see more.',
   invalidPattern: 'The pattern is not a regular expression Grep can use: {message}',
+  lookaround: 'look-around, including look-ahead and look-behind, is not supported',
+  backreference: 'backreferences are not supported',
   invalidGlob: '{glob} is not a glob pattern Grep can read: {message}',
   unknownType: '{type} is not a file type Grep knows. Use glob to name the files instead.',
 } as const
@@ -201,26 +208,45 @@ function optionsOf(input: Readonly<Record<string, unknown>>): GrepOptions {
 }
 
 /**
- * The pattern as a global regex: Unicode-aware when it parses that way, else as written. Without the
- * `u` flag `.` and a class match one UTF-16 code unit, so every part a match shows is widened to
- * whole code points (`wholePart`): ripgrep's `.` matches a whole character.
+ * The pattern compiled as ripgrep compiles it: `-i` folds case, and `multiline` is `rg -U
+ * --multiline-dotall`, where `.` matches a newline and, since ripgrep always sets multi-line, `^` and
+ * `$` match at each line's ends. A pattern re2js turns down comes back as `invalidPattern`, with
+ * ripgrep's own reason for look-around and backreferences and re2js's for the rest.
  */
 function regexOf(
   pattern: string,
   ignoreCase: boolean,
   multiline: boolean,
-): { value: RegExp } | { failure: ReturnType<typeof failed> } {
-  const flags = `g${ignoreCase ? 'i' : ''}${multiline ? 's' : ''}`
+): { value: RE2JS } | { failure: ReturnType<typeof failed> } {
+  const flags =
+    (ignoreCase ? RE2JS.CASE_INSENSITIVE : 0) | (multiline ? RE2JS.DOTALL | RE2JS.MULTILINE : 0)
   try {
-    return { value: new RegExp(pattern, `${flags}u`) }
-  } catch {
-    try {
-      return { value: new RegExp(pattern, flags) }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { failure: failed(fill(GREP_TEXTS.invalidPattern, { message })) }
+    return { value: RE2JS.compile(pattern, flags) }
+  } catch (error) {
+    const message = unsupported(pattern) ?? (error instanceof Error ? error.message : String(error))
+    return { failure: failed(fill(GREP_TEXTS.invalidPattern, { message })) }
+  }
+}
+
+/**
+ * Look-around or a backreference in a pattern re2js turned down, named in ripgrep's words: re2js
+ * reads `(?<=` as a bad group name and `\1` as a bad escape. Escapes are stepped over whole.
+ */
+function unsupported(pattern: string): string | null {
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern[i] === '\\') {
+      const next = pattern[i + 1] ?? ''
+      if ((next >= '1' && next <= '9') || pattern.startsWith('k<', i + 1)) {
+        return GREP_TEXTS.backreference
+      }
+      i += 1
+    } else if (/^\(\?(?:=|!|<=|<!)/.test(pattern.slice(i, i + 4))) {
+      return GREP_TEXTS.lookaround
+    } else if (pattern.startsWith('(?P=', i)) {
+      return GREP_TEXTS.backreference
     }
   }
+  return null
 }
 
 /** `glob` and `type` narrow the files: a glob without `/` matches the file name, one with it the path. */
@@ -288,7 +314,7 @@ export function entriesOf(
   found: GrepPage,
   path: AbsolutePath,
   content: string,
-  regex: RegExp,
+  regex: RE2JS,
   o: GrepOptions,
 ): void {
   const hits = o.multiline ? multilineHits(content, regex) : lineHits(content, regex)
@@ -305,7 +331,7 @@ export function entriesOf(
   }
   if (o.onlyMatching) {
     for (const hit of hits) {
-      for (const [start, end] of wholeSpans(hit.text, hit.matches)) {
+      for (const [start, end] of wholeSpans(hit.text, hit.spans())) {
         put(found, () => {
           const part = hit.text.slice(start, end)
           return o.lineNumbers ? `${path}:${String(hit.line)}:${part}` : `${path}:${part}`
@@ -357,32 +383,43 @@ function showLines(
   for (let k = shown + 1; k <= last; k += 1) show(k, '-')
 }
 
+/** Where a match lies in the text it was found in: code-unit offsets, the end exclusive. */
+type Span = readonly [start: number, end: number]
+
 /**
  * A matched line, or the lines a multiline match spans, and the text its matches index into: the
- * line itself, or the whole file.
+ * line itself, or the whole file. A line's matches are found only when asked for: `-o` alone shows
+ * them.
  */
 interface Hit {
   readonly line: number
   readonly lastLine: number
   readonly text: string
-  readonly matches: readonly RegExpExecArray[]
+  readonly spans: () => Iterable<Span>
 }
 
 /**
  * The hits of a file, one line at a time: its lines as `linesOf` splits them — on `\n`, a final one
- * ending the last line — never all of them at once.
+ * ending the last line — never all of them at once. A line is a hit when the pattern matches in it,
+ * even empty, as ripgrep has it.
  */
-function* lineHits(content: string, regex: RegExp): Generator<Hit, void, undefined> {
+function* lineHits(content: string, regex: RE2JS): Generator<Hit, void, undefined> {
   let n = 0
   for (let start = 0; start < content.length;) {
     const newline = content.indexOf('\n', start)
     const end = newline === -1 ? content.length : newline
     const line = content.slice(start, end)
     n += 1
-    const matches = [...line.matchAll(regex)]
-    if (matches.length > 0) yield { line: n, lastLine: n, text: line, matches }
+    if (regex.test(line))
+      yield { line: n, lastLine: n, text: line, spans: () => spansOf(regex, line) }
     start = end + 1
   }
+}
+
+/** The matches in a text, in order; after an empty one, re2js moves on by a whole code point. */
+function* spansOf(regex: RE2JS, text: string): Generator<Span, void, undefined> {
+  const matcher = regex.matcher(text)
+  while (matcher.find()) yield [matcher.start(), matcher.end()]
 }
 
 /** The line numbers of increasing offsets, counted forward: no table of where each line starts. */
@@ -419,17 +456,18 @@ function lineCount(content: string): number {
 
 /**
  * The spans the matches show, each widened to whole code points: a match that begins on the low half
- * of a surrogate pair takes its high half, and one that ends on a high half takes its low half. A span
- * that then overlaps the one before joins it, so a character is shown once. Half a pair would be
- * stored on the Tape and sent in every later request (§内置工具与参数「不切开代理对」, 「正则方言跟
- * ripgrep」). An empty match shows nothing.
+ * of a surrogate pair takes its high half, and one that ends on a high half takes its low half. re2js
+ * steps by code point, but a pattern that is one lone surrogate is found by its literal, halfway into
+ * a pair. A span that then overlaps the one before joins it, so a character is shown once. Half a pair
+ * would be stored on the Tape and sent in every later request (§内置工具与参数「不切开代理对」,
+ * 「正则方言跟 ripgrep」). An empty match shows nothing.
  */
-function wholeSpans(text: string, matches: readonly RegExpExecArray[]): Array<[number, number]> {
+function wholeSpans(text: string, matches: Iterable<Span>): Array<[number, number]> {
   const spans: Array<[number, number]> = []
-  for (const match of matches) {
-    if (match[0] === '') continue
-    let start = match.index
-    let end = start + match[0].length
+  for (const [matchStart, matchEnd] of matches) {
+    if (matchStart === matchEnd) continue
+    let start = matchStart
+    let end = matchEnd
     if (isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) {
       start -= 1
     }
@@ -449,14 +487,17 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff
 }
 
-/** The hits of a multiline pattern, one match at a time; an empty match is none. */
-function* multilineHits(content: string, regex: RegExp): Generator<Hit, void, undefined> {
+/**
+ * The hits of a multiline pattern, one match at a time; an empty match is none. A file the pattern
+ * cannot match anywhere is passed over by re2js's DFA before any match is looked for.
+ */
+function* multilineHits(content: string, regex: RE2JS): Generator<Hit, void, undefined> {
+  if (!regex.test(content)) return
   const lineAt = lineCounter(content)
-  for (const match of content.matchAll(regex)) {
-    if (match[0] === '') continue
-    const line = lineAt(match.index)
-    const lastLine = lineAt(match.index + match[0].length - 1)
-    yield { line, lastLine, text: content, matches: [match] }
+  for (const span of spansOf(regex, content)) {
+    const [start, end] = span
+    if (start === end) continue
+    yield { line: lineAt(start), lastLine: lineAt(end - 1), text: content, spans: () => [span] }
   }
 }
 
