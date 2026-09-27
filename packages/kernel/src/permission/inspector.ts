@@ -77,6 +77,10 @@ export type InspectionResult =
  * that does not answer in time is a `timeout`; `decide()` folds both into the strictest opinion the
  * ceiling allows. A stop while they run aborts their signals and is not a failure: the result says
  * `stopped`, and the call gets no decision fact — it closes as not-run / stopped (B1).
+ *
+ * The inspectors are handed a frozen copy of the input (§挂点与会话视图「只读的会话视图」): one that
+ * writes to it fails as an `error`, and the call is judged, shown and run on the arguments the model
+ * gave (§railguard 映射「按原参数判定」).
  */
 export async function runInspectors(q: {
   readonly inspectors: readonly InspectorRegistration[]
@@ -93,11 +97,12 @@ export async function runInspectors(q: {
   const stopped = new Promise<'stopped'>((resolve) => {
     q.signal.addEventListener('abort', () => resolve('stopped'), { once: true })
   })
+  const input = frozenCopy(q.input)
   try {
     const running = Promise.all(
       q.inspectors.map((inspector, i) => {
         const controller = controllers[i] ?? new AbortController()
-        return inspectOne(inspector, q.input, q.setTimeout, controller)
+        return inspectOne(inspector, input, q.setTimeout, controller)
       }),
     )
     const settled = await Promise.race([running, stopped])
@@ -141,25 +146,80 @@ function noop(): void {}
 
 const CATEGORIES: ReadonlySet<string> = new Set<InspectorCategory>(['exfiltration'])
 
-/** The opinion if it has the declared shape and stays within the ceiling; null otherwise. */
+/** The keys an opinion of each kind may carry, and a finding. */
+const NONE_KEYS: ReadonlySet<string> = new Set(['kind', 'findings'])
+const JUDGING_KEYS: ReadonlySet<string> = new Set(['kind', 'category', 'findings'])
+const FINDING_KEYS: ReadonlySet<string> = new Set(['code', 'confidence'])
+
+/**
+ * The opinion, rebuilt as a plain object, if it has the declared shape and stays within the ceiling;
+ * null otherwise — an `error` (F1「形状不对，按出错处理」). Every property is read once, through its
+ * descriptor, so what is checked is what `decide()` reads and the record keeps: an accessor, a key the
+ * type does not declare (an explicit `undefined` included), a finding without a code or with a
+ * `confidence` outside 0–1 are all off-shape (§Inspector 接口与合议「意见里只有代码没有文字」).
+ */
 function validOpinion(value: unknown, ceiling: 'ask' | 'deny'): DenyOpinion | null {
-  if (typeof value !== 'object' || value === null) return null
-  const opinion = value as Record<string, unknown>
-  const findings = opinion['findings']
-  const findingsOk =
-    findings === undefined ||
-    (Array.isArray(findings) &&
-      findings.every(
-        (f) =>
-          typeof f === 'object' &&
-          f !== null &&
-          typeof (f as Record<string, unknown>)['code'] === 'string',
-      ))
-  if (!findingsOk) return null
-  if (opinion['kind'] === 'none') return value as DenyOpinion
-  if (opinion['kind'] !== 'ask' && opinion['kind'] !== 'deny') return null
-  if (opinion['kind'] === 'deny' && ceiling === 'ask') return null
-  if (typeof opinion['category'] !== 'string' || !CATEGORIES.has(opinion['category'])) return null
-  if (!Array.isArray(findings)) return null
-  return value as DenyOpinion
+  const opinion = dataFields(value)
+  if (opinion === null) return null
+  const kind = opinion.get('kind')
+  if (kind !== 'none' && kind !== 'ask' && kind !== 'deny') return null
+  if (kind === 'deny' && ceiling === 'ask') return null
+  const keys = kind === 'none' ? NONE_KEYS : JUDGING_KEYS
+  if ([...opinion.keys()].some((key) => !keys.has(key))) return null
+  const findings = opinion.has('findings') ? validFindings(opinion.get('findings')) : undefined
+  if (findings === null) return null
+  if (kind === 'none') return findings === undefined ? { kind } : { kind, findings }
+  const category = opinion.get('category')
+  if (typeof category !== 'string' || !CATEGORIES.has(category)) return null
+  if (findings === undefined) return null
+  return { kind, category: category as InspectorCategory, findings }
+}
+
+function validFindings(value: unknown): InspectorFinding[] | null {
+  if (!Array.isArray(value)) return null
+  const findings: InspectorFinding[] = []
+  for (let i = 0; i < value.length; i += 1) {
+    const slot = Object.getOwnPropertyDescriptor(value, i)
+    if (slot === undefined || !('value' in slot)) return null
+    const finding = dataFields(slot.value)
+    if (finding === null || [...finding.keys()].some((key) => !FINDING_KEYS.has(key))) return null
+    const code = finding.get('code')
+    if (typeof code !== 'string' || code === '') return null
+    if (!finding.has('confidence')) {
+      findings.push({ code })
+      continue
+    }
+    const confidence = finding.get('confidence')
+    if (typeof confidence !== 'number' || !(confidence >= 0 && confidence <= 1)) return null
+    findings.push({ code, confidence })
+  }
+  return findings
+}
+
+/**
+ * A plain object's own properties, each read once through its descriptor; null for anything else —
+ * an array, a class instance, a symbol key, an accessor (whose getter could answer differently on the
+ * next read).
+ */
+function dataFields(value: unknown): Map<string, unknown> | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const prototype: unknown = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return null
+  const fields = new Map<string, unknown>()
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') return null
+    const property = Object.getOwnPropertyDescriptor(value, key)
+    if (property === undefined || !('value' in property)) return null
+    fields.set(key, property.value)
+  }
+  return fields
+}
+
+/** A deep copy of plain data, frozen all the way down. */
+function frozenCopy<T>(value: T): T {
+  if (typeof value !== 'object' || value === null) return value
+  const copy: unknown = Array.isArray(value)
+    ? value.map((item: unknown) => frozenCopy(item))
+    : Object.fromEntries(Object.entries(value).map(([key, item]) => [key, frozenCopy(item)]))
+  return Object.freeze(copy) as T
 }

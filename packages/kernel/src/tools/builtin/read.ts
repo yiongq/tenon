@@ -111,7 +111,9 @@ export function readResult(
     let cut = budget - prefix.length
     if (isHighSurrogate(raw.charCodeAt(cut - 1))) cut -= 1
     const slots = { line: String(n), total: String(total), chars: String(cut), next: String(n + 1) }
-    const note = fill(n < end ? READ_TEXTS.longLine : READ_TEXTS.longLastLine, slots)
+    // The next part is named whenever the file goes on, `limit` reached or not: only the file's last
+    // line has no N+1 (§内置工具与参数「Read」「下一段从 N+1 起」).
+    const note = fill(n < total ? READ_TEXTS.longLine : READ_TEXTS.longLastLine, slots)
     return { text: `${prefix}${raw.slice(0, cut)}\n\n${note}`, isError: false }
   }
   const note = fill(READ_TEXTS.more, {

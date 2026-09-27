@@ -131,6 +131,33 @@ describe('the answer scope, top row first', () => {
     expect(scope(decision('tool', 'mcp'), { source: 'mcp', toolName: 'tool' })).toBe('once')
   })
 
+  it('holds once for an irreversible call a policy released, asked only by the manual mode (owner-confirmed)', () => {
+    // The irreversible row decides here, not the must-ask row above it: the policy lifted layer 4 ①,
+    // so the card is the manual mode's (§作用域与授权键「被策略放开后因手动档弹出的卡也算」).
+    const released = decision('Bash', 'builtin', {
+      place: 'workspace',
+      reversibility: { value: 'irreversible', source: 'host' },
+      policy: {
+        status: 'current',
+        version: 'v',
+        snapshot: {
+          tools: [
+            {
+              policyId: 'lift',
+              serverId: 'builtin',
+              toolName: 'Bash',
+              effect: 'release-irreversible',
+            },
+          ],
+        },
+      },
+    })
+    expect([released.record.verdict, released.record.decidedBy]).toEqual(['ask', 'approval-mode'])
+    expect(
+      scope(released, { reversibility: 'irreversible', place: 'workspace', toolName: 'Bash' }),
+    ).toBe('once')
+  })
+
   it('holds for the session for Write / Edit in the workspace, Bash, WebSearch and WebFetch', () => {
     for (const toolName of ['Write', 'Edit', 'Bash', 'WebSearch', 'WebFetch']) {
       expect(

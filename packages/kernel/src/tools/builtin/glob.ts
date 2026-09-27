@@ -4,7 +4,8 @@
  */
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { FILE_TEXTS, failed, globToRegExp, succeeded, walkFiles, whenThrown } from './files.js'
+import { FILE_TEXTS, failed, globMatcher, succeeded, walkFiles, whenThrown } from './files.js'
+import type { GlobMatcher } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
@@ -55,9 +56,9 @@ export const GLOB_TOOL: BuiltinTool = {
 export const globExecutor: ToolExecutor = async (q) => {
   if (q.target === null) throw new Error('Glob: a call reached its executor with no target path')
   const pattern = String(q.input['pattern'] ?? '')
-  let matcher: RegExp
+  let matcher: GlobMatcher
   try {
-    matcher = globToRegExp(pattern)
+    matcher = globMatcher(pattern)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return failed(fill(GLOB_TEXTS.invalidPattern, { pattern, message }))
@@ -66,7 +67,7 @@ export const globExecutor: ToolExecutor = async (q) => {
     const stat = await q.fs.stat(q.target)
     if (stat === null) return failed(fill(GLOB_TEXTS.notFound, { path: q.target }))
     if (!stat.isDir) return failed(fill(GLOB_TEXTS.notDirectory, { path: q.target }))
-    const files = await walkFiles(q.fs, q.target, q.roots, q.signal)
+    const files = await walkFiles(q.fs, q.target, q.scope, q.signal)
     const matched = files.filter((file) => matcher.test(file.relative)).map((file) => file.path)
     if (matched.length === 0) return succeeded(GLOB_TEXTS.none)
     if (matched.length <= GLOB_RESULT_LIMIT) return succeeded(matched.join('\n'))

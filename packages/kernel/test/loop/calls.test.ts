@@ -8,12 +8,15 @@
  *
  * Every Tape entry here comes from a real Run: the scripted provider asks for the calls, the loop
  * judges, pauses, answers and closes them. The live view each redraw is compared with is the
- * `tool-outcome` event the same Run sent.
+ * `tool-outcome` event the same Run sent. The last block is plan step 10's 旧 141 in the loop: what
+ * a call whose arguments fail validation writes, and what it does not.
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
 import type {
   AbsolutePath,
+  McpConnection,
+  McpToolSource,
   MemoryHost,
   ModelInfo,
   PendingCard,
@@ -37,6 +40,7 @@ import {
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
+import { EDIT_SAME_STRINGS } from '../../src/tools/builtin/edit.js'
 import { LOOK, lookSource } from './support.js'
 
 const IDENTITY = { userId: 'calls-user', tenantId: 'calls-tenant', profileDir: '/tenon/calls' }
@@ -96,6 +100,8 @@ function harness(
     readonly store?: TapeStore
     readonly idsFrom?: number
     readonly during?: (args: Record<string, unknown>) => void | Promise<void>
+    /** More connector servers, next to `fs`. */
+    readonly sources?: readonly McpToolSource[]
   } = {},
 ): Harness {
   const memory = createMemoryHost({ identity: IDENTITY })
@@ -104,7 +110,11 @@ function harness(
   const executed: Record<string, unknown>[] = []
   const inspector = createFakeInspector({ id: 'asker', ceiling: 'ask' })
   const loop = createTestLoopPorts({
-    connector: { provider, model: MODEL, mcpSources: [lookSource(executed, o.during)] },
+    connector: {
+      provider,
+      model: MODEL,
+      mcpSources: [lookSource(executed, o.during), ...(o.sources ?? [])],
+    },
   })
   const service = createTestSessionService(
     {
@@ -635,5 +645,96 @@ describe('calls on a redrawn row (01 修补 6)', () => {
     for (const outcome of outcomes) {
       for (const key of Object.keys(outcome ?? {})) expect(VIEW_KEYS.has(key)).toBe(true)
     }
+  })
+})
+
+describe('arguments that fail validation, in the loop (旧 141; 旧 124: no decision)', () => {
+  it('closes each call blocked / not-run with the reason second: no decision, dispatch or card', async () => {
+    const ran: string[] = []
+    // A connector with a required argument, and one whose schema no validator can use.
+    const connection = {
+      listTools: () =>
+        Promise.resolve([
+          {
+            name: 'echo',
+            inputSchema: {
+              type: 'object',
+              properties: { message: { type: 'string' } },
+              required: ['message'],
+            },
+          },
+          {
+            name: 'broken',
+            inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '(' } } },
+          },
+        ]),
+      callTool: (name: string) => {
+        ran.push(name)
+        return Promise.resolve({ content: [{ type: 'text', text: 'ran' }], isError: false })
+      },
+    } as unknown as McpConnection
+    const h = harness({ sources: [{ serverId: 'fix', connection }] })
+    await cowork(h, absolutePath('/work'))
+    const header13 = '一二三四五六七八九十一二三'
+    h.provider.script(
+      reply(
+        { name: 'Bash', input: { command: 'ls', timeout: 600_001 } },
+        { name: 'Write', input: { file_path: 'relative.txt', content: 'x' } },
+        { name: 'Edit', input: { file_path: '/work/a.txt', old_string: 'a', new_string: 'a' } },
+        {
+          name: 'AskUserQuestion',
+          input: {
+            questions: [
+              {
+                question: 'Which one?',
+                header: header13,
+                options: [
+                  { label: 'A', description: 'a' },
+                  { label: 'B', description: 'b' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+        },
+        { name: 'fix__echo', input: {} },
+        { name: 'fix__broken', input: { id: 'x' } },
+      ),
+    )
+    h.provider.script(done())
+    expect((await send(h, 'go')).code).toBe('completed')
+    const entries = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    const named = (name: string) => entries.filter((entry) => entry.name === name)
+    // Nothing was judged, dispatched, shown or run.
+    expect(named('tool/permission_decided')).toEqual([])
+    expect(named('execution/dispatch_committed')).toEqual([])
+    expect(h.memory.confirmRequests).toEqual([])
+    expect(ran).toEqual([])
+    expect(
+      named('execution/tool_outcome').map((entry) => [
+        entry.payload['effect'],
+        entry.payload['state'],
+        entry.payload['source'],
+      ]),
+    ).toEqual([
+      ...Array.from({ length: 5 }, () => ['blocked', 'not-run', 'invalid-input']),
+      ['blocked', 'not-run', 'tool-unavailable'],
+    ])
+    const results = named('tool/result').map(
+      (entry) => entry.payload as { isError: boolean; content: { type: string; text: string }[] },
+    )
+    expect(results.every((result) => result.isError && result.content.length === 2)).toBe(true)
+    expect(results.map((result) => result.content[0]?.text)).toEqual([
+      ...Array.from({ length: 5 }, () => MODEL_NOTES.closure['invalid-input']['not-run']),
+      MODEL_NOTES.closure['tool-unavailable']['not-run'],
+    ])
+    // The second block is why: the validator's message, the tool's own check, the unusable schema.
+    const reasons = results.map((result) => result.content[1]?.text ?? '')
+    expect(reasons[0]).toMatch(/timeout/)
+    expect(reasons[1]).toMatch(/absolute/i)
+    expect(reasons[2]).toBe(EDIT_SAME_STRINGS)
+    expect(reasons[3]).toMatch(/header/)
+    expect(reasons[4]).toMatch(/message/)
+    expect(reasons[5]).toBe(MODEL_NOTES.schemaUnusable)
   })
 })

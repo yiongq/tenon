@@ -225,7 +225,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           reversibility: ctx.approved.reversibility,
           summary: ctx.approved.summary,
           target: target?.real ?? null,
-          roots: facts.scope.roots,
+          scope: facts.scope,
         })
         continue
       }
@@ -271,7 +271,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         reversibility: judged.reversibility,
         summary: decision.summary,
         target: judged.target,
-        roots: facts.scope.roots,
+        scope: facts.scope,
       })
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
@@ -327,7 +327,7 @@ async function execute(
     readonly reversibility: Reversibility
     readonly summary: DecisionSummary
     readonly target: AbsolutePath | null
-    readonly roots: readonly AbsolutePath[]
+    readonly scope: PathScope
   },
 ): Promise<void> {
   const execution = await executor({
@@ -335,7 +335,7 @@ async function execute(
     input: call.input,
     signal: ctx.signal,
     target: q.target,
-    roots: q.roots,
+    scope: q.scope,
     fs: ctx.host.fs,
   })
   const stopped = execution.state !== 'completed'

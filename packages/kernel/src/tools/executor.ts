@@ -12,6 +12,8 @@
 import type { AbsolutePath, HostFs } from '../host/adapter.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
+import type { PathScope } from '../permission/workspace.js'
+import { MODEL_NOTES, fill } from '../prompts/index.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { BuiltinToolName } from './builtin/tool.js'
 import { isBuiltinToolName } from './builtin/index.js'
@@ -35,8 +37,11 @@ export interface ExecuteQuery {
    * `path` is omitted (§「在不在工作区里」第 5 步). Null for every other tool.
    */
   readonly target: AbsolutePath | null
-  /** The workspace roots, real: a walk follows no link that leads outside them. */
-  readonly roots: readonly AbsolutePath[]
+  /**
+   * Where the call's paths were judged from (§「在不在工作区里」): a walk follows no link that leads
+   * outside the roots, and skips what the scope places `protected` (§内置工具的默认档位).
+   */
+  readonly scope: PathScope
   readonly fs: HostFs
 }
 
@@ -63,7 +68,8 @@ export const fakeExecutor: ToolExecutor = (q) =>
 /**
  * A connector call. A `callTool` that throws — an elicitation the client refuses, a result the SDK
  * cannot read, a server gone — is an is_error result of a call that did run (§工具来源、命名与权限键
- * 「elicitation 一律拒绝」). Content the model can read is kept; anything else becomes its JSON.
+ * 「elicitation 一律拒绝」). Content the model can read is kept; anything else becomes its JSON. Both
+ * fixed texts come from the prompt layer (§提示层「规则与位置」), so its hash covers them.
  */
 export function mcpExecutor(source: McpToolSource): ToolExecutor {
   return async (q) => {
@@ -77,7 +83,7 @@ export function mcpExecutor(source: McpToolSource): ToolExecutor {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {
-        content: [{ type: 'text', text: `The tool call failed: ${message}` }],
+        content: [{ type: 'text', text: fill(MODEL_NOTES.connectorFailed, { message }) }],
         isError: true,
         state: 'completed',
       }
@@ -113,7 +119,7 @@ function mcpContent(blocks: readonly unknown[] | undefined): ResultContent {
       content.push({ type: 'text', text: canonicalJson(block) })
     }
   }
-  return content.length > 0 ? content : [{ type: 'text', text: '(no output)' }]
+  return content.length > 0 ? content : [{ type: 'text', text: MODEL_NOTES.connectorEmpty }]
 }
 
 /**

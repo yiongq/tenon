@@ -12,6 +12,7 @@ import type {
 } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import * as contracts from '../src/index.js'
 import {
   approvalCurrent,
   approvalList,
@@ -62,7 +63,7 @@ function propertyNames(schema: z.ZodType): Set<string> {
 }
 
 describe('decisionSummarySchema', () => {
-  it('has exactly verdict, code and facts, and refuses anything else', () => {
+  it('02 不变量 19: has exactly verdict, code and facts, and refuses anything else', () => {
     expect(Object.keys(decisionSummarySchema.shape).toSorted()).toEqual([
       'code',
       'facts',
@@ -86,7 +87,7 @@ describe('decisionSummarySchema', () => {
 })
 
 describe('no route or event carries a decision’s record', () => {
-  it('has no steps, decidedBy or basis anywhere', () => {
+  it('02 不变量 19: has no steps, decidedBy or basis anywhere, and no decision record export', () => {
     const schemas: z.ZodType[] = [
       ...Object.values(ipcRoutes).flatMap((route) => [
         route.request as z.ZodType,
@@ -99,6 +100,8 @@ describe('no route or event carries a decision’s record', () => {
     expect(names.size).toBeGreaterThan(10)
     for (const forbidden of ['steps', 'decidedBy', 'basis'])
       expect(names.has(forbidden)).toBe(false)
+    // `DecisionRecord` stays on the Tape: contracts exports nothing named for it.
+    expect(Object.keys(contracts).filter((name) => /decisionrecord/i.test(name))).toEqual([])
   })
 })
 

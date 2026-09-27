@@ -15,7 +15,7 @@ import {
   checkSignal,
   decodeText,
   failed,
-  globToRegExp,
+  globMatcher,
   linesOf,
   succeeded,
   walkFiles,
@@ -160,16 +160,24 @@ export const grepExecutor: ToolExecutor = async (q) => {
     const stat = await q.fs.stat(q.target)
     if (stat === null) return failed(fill(GREP_TEXTS.notFound, { path: q.target }))
     const files: WalkedFile[] = stat.isDir
-      ? (await walkFiles(q.fs, q.target, q.roots, q.signal)).filter((file) => filter.test(file))
+      ? (await walkFiles(q.fs, q.target, q.scope, q.signal)).filter((file) => filter.test(file))
       : [{ path: q.target, relative: basename(q.target) }]
-    const entries: string[] = []
+    // Only the page is kept; the entries around it are counted, so memory stays bounded by
+    // `head_limit` however much the walk finds, and the note can still name the total.
+    const kept: string[] = []
+    let total = 0
+    const end = options.headLimit === 0 ? Infinity : options.offset + options.headLimit
     for (const file of files) {
       // oxlint-disable-next-line no-await-in-loop -- one file at a time, the stop checked between
       const text = await searchable(q, file.path)
       checkSignal(q.signal)
-      if (text !== null) entries.push(...entriesOf(file.path, text, regex.value, options))
+      if (text === null) continue
+      for (const entry of entriesOf(file.path, text, regex.value, options)) {
+        if (total >= options.offset && total < end) kept.push(entry)
+        total += 1
+      }
     }
-    return succeeded(page(entries, options))
+    return succeeded(page(kept, total, options))
   } catch (error) {
     return whenThrown(error, q.target)
   }
@@ -192,7 +200,11 @@ function optionsOf(input: Readonly<Record<string, unknown>>): GrepOptions {
   }
 }
 
-/** The pattern as a global regex: Unicode-aware when it parses that way, else as written. */
+/**
+ * The pattern as a global regex: Unicode-aware when it parses that way, else as written. Without the
+ * `u` flag `.` and a class match one UTF-16 code unit, so every part a match shows is widened to
+ * whole code points (`wholePart`): ripgrep's `.` matches a whole character.
+ */
 function regexOf(
   pattern: string,
   ignoreCase: boolean,
@@ -219,7 +231,7 @@ function fileFilterOf(
   const glob = input['glob']
   if (typeof glob === 'string') {
     try {
-      const matcher = globToRegExp(glob)
+      const matcher = globMatcher(glob)
       tests.push((file) => matcher.test(glob.includes('/') ? file.relative : basename(file.path)))
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -230,7 +242,7 @@ function fileFilterOf(
   if (typeof type === 'string') {
     const globs = TYPES[type]
     if (globs === undefined) return { failure: failed(fill(GREP_TEXTS.unknownType, { type })) }
-    const matchers = globs.map((pattern) => globToRegExp(pattern))
+    const matchers = globs.map((pattern) => globMatcher(pattern))
     tests.push((file) => matchers.some((matcher) => matcher.test(basename(file.path))))
   }
   return { test: (file) => tests.every((test) => test(file)) }
@@ -299,10 +311,41 @@ function lineHits(fileLines: readonly string[], regex: RegExp): Hit[] {
   fileLines.forEach((line, i) => {
     const matches = [...line.matchAll(regex)]
     if (matches.length === 0) return
-    const parts = matches.map((match) => match[0]).filter((part) => part !== '')
-    hits.push({ line: i + 1, lastLine: i + 1, parts })
+    hits.push({ line: i + 1, lastLine: i + 1, parts: wholeParts(line, matches) })
   })
   return hits
+}
+
+/**
+ * The parts the matches show, each widened to whole code points: a match that begins on the low half
+ * of a surrogate pair takes its high half, and one that ends on a high half takes its low half. A part
+ * that then overlaps the one before joins it, so a character is shown once. Half a pair would be
+ * stored on the Tape and sent in every later request (§内置工具与参数「不切开代理对」, 「正则方言跟
+ * ripgrep」). An empty match shows nothing.
+ */
+function wholeParts(text: string, matches: readonly RegExpExecArray[]): string[] {
+  const spans: Array<[number, number]> = []
+  for (const match of matches) {
+    if (match[0] === '') continue
+    let start = match.index
+    let end = start + match[0].length
+    if (isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))) {
+      start -= 1
+    }
+    if (isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) end += 1
+    const last = spans.at(-1)
+    if (last !== undefined && start < last[1]) last[1] = Math.max(last[1], end)
+    else spans.push([start, end])
+  }
+  return spans.map(([start, end]) => text.slice(start, end))
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff
 }
 
 function multilineHits(text: string, regex: RegExp): Hit[] {
@@ -323,22 +366,25 @@ function multilineHits(text: string, regex: RegExp): Hit[] {
     if (match[0] === '') continue
     const first = lineAt(match.index)
     const last = lineAt(match.index + match[0].length - 1)
-    hits.push({ line: first, lastLine: last, parts: [match[0]] })
+    hits.push({ line: first, lastLine: last, parts: wholeParts(text, [match]) })
   }
   return hits
 }
 
-/** `offset` entries skipped, then at most `head_limit` (0: all), with a note when some were left. */
-function page(entries: readonly string[], o: GrepOptions): string {
-  if (entries.length === 0) return GREP_TEXTS.none
-  const from = Math.min(o.offset, entries.length)
-  const to = o.headLimit === 0 ? entries.length : Math.min(entries.length, from + o.headLimit)
-  const shown = entries.slice(from, to).join('\n')
-  if (to >= entries.length) return shown.length === 0 ? GREP_TEXTS.none : shown
+/**
+ * `offset` entries skipped, then at most `head_limit` (0: all), with a note when some were left.
+ * `kept` holds just those entries, of `total` found.
+ */
+function page(kept: readonly string[], total: number, o: GrepOptions): string {
+  if (total === 0) return GREP_TEXTS.none
+  const from = Math.min(o.offset, total)
+  const to = o.headLimit === 0 ? total : Math.min(total, from + o.headLimit)
+  const shown = kept.join('\n')
+  if (to >= total) return shown.length === 0 ? GREP_TEXTS.none : shown
   const note = fill(GREP_TEXTS.more, {
     from: String(from + 1),
     to: String(to),
-    total: String(entries.length),
+    total: String(total),
     next: String(to),
   })
   return `${shown}\n\n${note}`

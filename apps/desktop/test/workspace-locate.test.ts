@@ -2,8 +2,10 @@
  * "Is this path in the workspace?" on the real disk (spec 02 §「在不在工作区里」 steps 3–4; plan step 11,
  * 旧 51, 旧 160): macOS hands out temporary folders under the /var → /private/var link, so a root has to
  * be stored resolved; a name typed in the wrong case resolves to the disk's spelling on a
- * case-insensitive volume; a link out of the workspace is outside.
+ * case-insensitive volume; a link out of the workspace is outside; the data volume's second spelling
+ * of a protected path is still protected.
  */
+import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +13,9 @@ import { absolutePath, locatePath, resolvePath } from '@tenon-app/kernel'
 import type { AbsolutePath, PathScope } from '@tenon-app/kernel'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DesktopFs } from '../src/main/host/fs.js'
+
+/** A real path as the macOS data volume's own mount spells it. */
+const aliased = (real: string): AbsolutePath => absolutePath(`/System/Volumes/Data${real}`)
 
 describe('locatePath on the desktop disk', () => {
   const fs = new DesktopFs()
@@ -75,4 +80,28 @@ describe('locatePath on the desktop disk', () => {
       place: 'workspace',
     })
   })
+
+  // macOS mounts the data volume a second time; realpath(3) keeps that spelling (s11-safety-2).
+  it.runIf(existsSync('/System/Volumes/Data/private'))(
+    'places the data volume’s spelling of the profile directory and a shell file as protected',
+    async () => {
+      const home = await realpath(join(raw, 'ws'))
+      await writeFile(join(home, '.zshrc'), 'export X=1')
+      const withShell = { ...scope, protectedFiles: [absolutePath(join(home, '.zshrc'))] }
+      const config = join(scope.profileDir, 'config.json')
+      await writeFile(config, '{}')
+      expect(await locatePath(fs, aliased(config), withShell)).toEqual({
+        real: config,
+        place: 'protected',
+      })
+      expect((await locatePath(fs, aliased(join(home, '.zshrc')), withShell)).place).toBe(
+        'protected',
+      )
+      // A link in the workspace to that spelling resolves the same way.
+      await symlink(aliased(config), join(home, 'conf'))
+      expect((await locatePath(fs, at('ws/conf'), withShell)).place).toBe('protected')
+      // A path only the data volume has keeps its spelling.
+      expect(await fs.realpath(absolutePath('/System/Volumes/Data'))).toBe('/System/Volumes/Data')
+    },
+  )
 })

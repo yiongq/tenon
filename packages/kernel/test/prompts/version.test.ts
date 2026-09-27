@@ -72,6 +72,12 @@ describe('the version gate', () => {
         ...layer,
         MODEL_NOTES: { ...(layer.MODEL_NOTES as object), schemaUnusable: 'changed' },
       },
+      // A connector call's own texts (executor.ts) are in the layer too.
+      {
+        ...layer,
+        MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorFailed: 'changed {message}' },
+      },
+      { ...layer, MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorEmpty: '(none)' } },
       // Both of WebSearch's variants are in the layer, each on its own.
       withTool('WebSearch', (t) => ({
         ...t,

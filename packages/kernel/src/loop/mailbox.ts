@@ -315,6 +315,13 @@ export interface Loop {
     change: WorkspaceChange
     dedicated: AbsolutePath
   }): Promise<WorkspaceResult>
+  /**
+   * Runs a clear of the session (`resetSession`: the facts read, the carry built, the store's reset)
+   * as one command turn of its root's mailbox, where every other `session/*` fact is written
+   * (§会话事实「写入」): a workspace change that arrives meanwhile lands before the read or after the
+   * reset, never in between, where it would be lost with the old incarnation.
+   */
+  resetTurn<T>(sessionId: string, reset: () => Promise<T>): Promise<T>
   recover(): Promise<RecoverResult>
   resume(q: { rootSessionId: string; origin: RunOrigin | null }): Promise<ResumeResult>
   send(q: SendQuery): Promise<SendResult>
@@ -2332,6 +2339,10 @@ export function createLoop(deps: LoopDeps): Loop {
         )
       }
       return post(mailboxOf(rootOf(q.sessionId)), 'command', null, () => setWorkspaceTurn(q))
+    },
+
+    resetTurn<T>(sessionId: string, reset: () => Promise<T>): Promise<T> {
+      return post(mailboxOf(rootOf(sessionId)), 'command', null, reset)
     },
 
     async recover(): Promise<RecoverResult> {

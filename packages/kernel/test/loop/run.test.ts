@@ -6,13 +6,17 @@
  * The calls go to a connector tool the user set to always-allow (layer 6), so a batch runs without a
  * card; a deny inspector stands in for a machine denial and an ask one for a card. What needs the
  * answers (a pause across a restart, the step count carried by a resume) is plan step 15's; the
- * compaction retry of an overflow is step 30's.
+ * compaction retry of an overflow is step 30's. The last block judges calls in the loop (plan step
+ * 12: 旧 162's loop half, 旧 124; step 11: 旧 93's loop half; 02 不变量 16).
  */
 import { describe, expect, it } from 'vitest'
 import {
+  EMPTY_POLICY,
+  INSPECTOR_TIMEOUT_MS,
   ZHIPU_DEFAULT_BASE_URL,
   createMemoryHost,
   createMemoryTapeStore,
+  rebuildProviderContext,
   zhipuDefinition,
 } from '../../src/index.js'
 import type {
@@ -21,14 +25,17 @@ import type {
   InspectorRegistration,
   LoopPorts,
   ModelInfo,
+  PermissionDecidedPayload,
   Provider,
   SendContext,
   SessionEvent,
   SessionService,
   StopReason,
   StreamEvent,
+  TapeAttemptCompletedPayload,
   TapeEntry,
   TapeStore,
+  ToolSpec,
   Usage,
 } from '../../src/index.js'
 import {
@@ -92,6 +99,10 @@ interface Harness {
 
 interface HarnessOptions {
   readonly inspectors?: readonly InspectorRegistration[]
+  /** A host of the case's own, in place of the instant one (a clock that never fires, a policy). */
+  readonly host?: HostAdapter
+  /** The instant host lets a fake inspector answer before its time limit fires. */
+  readonly answersFirst?: boolean
   readonly tokenLimit?: number
   readonly store?: TapeStore
   readonly onEvent?: (event: SessionEvent) => void
@@ -145,7 +156,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const logs: string[] = []
   const service = createTestSessionService(
     {
-      host: options.host ?? instantHost(delays),
+      host: options.host ?? instantHost(delays, { answersFirst: options.answersFirst === true }),
       tape: store,
       ids: createCounterIds({ start: options.idsFrom ?? 1 }),
       inspectors: [...(options.inspectors ?? [])],
@@ -284,6 +295,24 @@ function lastUserText(h: Harness, index = -1): string {
     : last.content.map((block) => block.text ?? '').join('')
 }
 
+/** Each decision's inspector steps, `said` and `status` only, in the Tape's order. */
+function inspectorSteps(entries: readonly TapeEntry[]): { said: string; status: string }[] {
+  return named(entries, 'tool/permission_decided').flatMap((entry) =>
+    (entry.payload as unknown as PermissionDecidedPayload).record.steps
+      .filter((step) => step.by === 'inspector')
+      .map((step) => ({ said: step.said, status: step.status })),
+  )
+}
+
+/** The text of each `tool/result`, in the Tape's order. */
+function resultTexts(entries: readonly TapeEntry[]): string[] {
+  return named(entries, 'tool/result').map((entry) =>
+    (entry.payload['content'] as { type: string; text?: string }[])
+      .map((block) => block.text ?? '')
+      .join('\n'),
+  )
+}
+
 function attemptKeys(entries: readonly TapeEntry[]): string[] {
   return named(entries, 'provider/attempt_completed').map(
     (entry) => entry.provenanceKey?.split(':').slice(-2).join(':') ?? '',
@@ -365,6 +394,124 @@ describe('a batch and the next request', () => {
     expect(named(entries, 'tool/call')).toHaveLength(1)
     expect(outcomes(entries)).toEqual(['not-run/stopped'])
     expect(h.executed).toEqual([])
+  })
+})
+
+/**
+ * What a request was sent, re-encoded from the Tape alone (acceptance 3, 38): the replay pinned at the
+ * fact's `contextAtEntryId`, the incarnation's stored system text, the table's stored specs and the
+ * fact's own request snapshot, through the provider's real encoder.
+ */
+async function reEncodedPromptHash(h: Harness, entry: TapeEntry): Promise<string> {
+  const fact = entry.payload as unknown as TapeAttemptCompletedPayload
+  const entries = await all(h)
+  const byKey = (key: string | undefined): Record<string, unknown> | undefined =>
+    entries.find((candidate) => candidate.provenanceKey === key)?.payload
+  const contents = named(entries, 'view/content').map((candidate) => candidate.payload)
+  const system = contents.find(
+    (content) => content['type'] === 'system' && content['hash'] === fact.request.systemHash,
+  )?.['text'] as string | undefined
+  const sent = byKey(fact.assemblyRef)?.['tools'] as { tableKey: string; sent: boolean } | null
+  const table = sent?.sent === true ? byKey(sent.tableKey) : undefined
+  const tools = (table?.['tools'] as { specHash: string }[] | undefined)?.map(
+    (tool) =>
+      contents.find(
+        (content) => content['type'] === 'tool_spec' && content['hash'] === tool.specHash,
+      )?.['spec'] as ToolSpec,
+  )
+  const messages = await rebuildProviderContext(h.store, {
+    sessionId: SESSION,
+    atEntryId: fact.contextAtEntryId,
+    target: MODEL,
+  })
+  return h.provider.encode({
+    model: MODEL,
+    ...(system === undefined ? {} : { system }),
+    messages,
+    ...(tools === undefined || tools.length === 0 ? {} : { tools }),
+    maxTokens: fact.request.maxTokens,
+    ...(fact.request.temperature === undefined ? {} : { temperature: fact.request.temperature }),
+    ...(fact.request.thinking === undefined ? {} : { thinking: fact.request.thinking }),
+    ...(fact.request.effort === undefined ? {} : { effort: fact.request.effort }),
+    ...(fact.request.display === undefined ? {} : { display: fact.request.display }),
+  }).promptHash
+}
+
+describe('kernel-written text replays as stored, across a layer change (旧 225 后半, acceptance 38)', () => {
+  it('sends an older layer’s closure, continuation and environment notes byte for byte, and its attempts still recompute', async () => {
+    // What an older prompt layer wrote (§提示层「存在哪、重放取什么」): the three notes are swapped
+    // while the first two Runs write them, and the layer is back to this build's for the third.
+    const notes = MODEL_NOTES as unknown as {
+      closure: Record<string, Record<string, string>>
+      continuation: Record<string, string>
+      environment: Record<string, string>
+    }
+    const older = {
+      closure: 'An older layer: the reply ran out before this call, so it did not run.',
+      continuation: 'An older layer: carry on from where the reply stopped.',
+      date: 'An older layer’s date line: {date}',
+    }
+    const truncatedCell = notes.closure['output-truncated'] ?? {}
+    const current = {
+      closure: truncatedCell['not-run'] ?? '',
+      continuation: notes.continuation['output-truncated'] ?? '',
+      date: notes.environment['date'] ?? '',
+    }
+    const h = harness()
+    truncatedCell['not-run'] = older.closure
+    notes.continuation['output-truncated'] = older.continuation
+    notes.environment['date'] = older.date
+    try {
+      h.provider.script(
+        callTurn([{ id: 'toolu_1', input: { at: 'a' } }], {
+          text: 'Starting.',
+          stop: 'max-tokens',
+          providerReason: 'max_tokens',
+        }),
+      )
+      expect((await send(h, 'write it all')).reason.code).toBe('output-truncated')
+      h.provider.script(done('…and the rest.'))
+      await h.service.continueRun({ sessionId: SESSION, origin: null })
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    } finally {
+      truncatedCell['not-run'] = current.closure
+      notes.continuation['output-truncated'] = current.continuation
+      notes.environment['date'] = current.date
+    }
+    h.provider.script(done('Next.'))
+    expect((await send(h, 'and now')).reason).toEqual({ code: 'completed' })
+
+    // The stored texts are the older ones, and the request after the change sends them as stored.
+    const entries = await all(h)
+    expect(resultTexts(entries)).toEqual([older.closure])
+    expect(named(entries, 'tool/result')[0]?.payload['kernelAuthored']).toBe(true)
+    const stored = (name: string): string =>
+      (named(entries, name)[0]?.payload['content'] as { text: string }[] | undefined)?.[0]?.text ??
+      ''
+    expect(stored('message/continuation')).toBe(older.continuation)
+    expect(stored('message/environment')).toContain(older.date.replace(' {date}', ''))
+    const [, continued, next] = h.provider.requests.map(
+      (request) => (request.body as { messages: unknown[] }).messages,
+    )
+    const sentText = JSON.stringify(next)
+    for (const text of [older.closure, older.continuation, stored('message/environment')]) {
+      expect(sentText).toContain(JSON.stringify(text).slice(1, -1))
+    }
+    for (const text of [current.closure, current.continuation]) {
+      expect(sentText).not.toContain(JSON.stringify(text).slice(1, -1))
+    }
+    // Byte for byte: the request after the change opens with the one before it.
+    expect(JSON.stringify(next?.slice(0, continued?.length ?? 0))).toBe(JSON.stringify(continued))
+    // Every attempt, the older layer's included, still re-encodes from the Tape to its promptHash.
+    const attempts = named(entries, 'provider/attempt_completed')
+    expect(attempts).toHaveLength(3)
+    for (const attempt of attempts) {
+      const fact = attempt.payload as unknown as TapeAttemptCompletedPayload
+      // oxlint-disable-next-line no-await-in-loop -- one attempt at a time, each read from the Tape
+      expect(await reEncodedPromptHash(h, attempt), `attempt ${String(attempt.entryId)}`).toBe(
+        fact.promptHash,
+      )
+    }
   })
 })
 
@@ -836,17 +983,25 @@ describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
       ceiling: 'deny',
       answer: { kind: 'deny', category: 'exfiltration', findings: [{ code: 'test' }] },
     })
-    const h = harness({ inspectors: [deny.registration] })
+    // The fake answers before its limit: these are its denials, not three timeouts.
+    const h = harness({ inspectors: [deny.registration], answersFirst: true })
     for (let i = 0; i < 4; i += 1)
       h.provider.script(callTurn([{ id: `toolu_${String(i)}`, input: { at: 'same' } }]))
     expect((await send(h)).reason).toEqual({ code: 'blocked-repeatedly', count: 3 })
     expect(h.provider.starts).toBe(3)
     expect(h.executed).toEqual([])
-    expect(outcomes(await all(h))).toEqual([
+    const entries = await all(h)
+    expect(outcomes(entries)).toEqual([
       'not-run/inspector',
       'not-run/inspector',
       'not-run/inspector',
     ])
+    expect(named(entries, 'execution/tool_outcome').map((entry) => entry.payload['facts'])).toEqual(
+      Array.from({ length: 3 }, () => ({ toolName: 'look', category: 'exfiltration' })),
+    )
+    expect(inspectorSteps(entries)).toEqual(
+      Array.from({ length: 3 }, () => ({ said: 'deny', status: 'ok' })),
+    )
   })
 
   it(
@@ -1260,5 +1415,222 @@ describe('tool-outcome and its facts', () => {
     expect(h.loop.recorded.slice(before).filter((event) => event.type === 'tool-outcome')).toEqual(
       [],
     )
+  })
+})
+
+/** Lets the loop run until `ready` holds, a macrotask at a time. */
+async function until(ready: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !ready(); i += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- polling the loop between two macrotasks
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0)
+    })
+  }
+  if (!ready()) throw new Error('the loop never got there')
+}
+
+/** The decision facts' payloads, in the Tape's order. */
+function decisions(entries: readonly TapeEntry[]): PermissionDecidedPayload[] {
+  return named(entries, 'tool/permission_decided').map(
+    (entry) => entry.payload as unknown as PermissionDecidedPayload,
+  )
+}
+
+/** `n` calls to `look`, each at its own place. */
+const calls = (n: number): Call[] =>
+  Array.from({ length: n }, (_, i) => ({ id: `toolu_${String(i)}`, input: { at: String(i) } }))
+
+describe('judging a call in the loop (旧 162, 旧 124, 旧 93)', () => {
+  it('02 不变量 16: ends three calls a denying inspector failed on as blocked-repeatedly, each with the error sentence', async () => {
+    const broken = createFakeInspector({
+      id: 'strict',
+      ceiling: 'deny',
+      answer: { throws: new Error('boom') },
+    })
+    const h = harness({ inspectors: [broken.registration], answersFirst: true })
+    for (const call of calls(3)) h.provider.script(callTurn([call]))
+    expect((await send(h)).reason).toEqual({ code: 'blocked-repeatedly', count: 3 })
+    expect(h.executed).toEqual([])
+    const entries = await all(h)
+    expect(resultTexts(entries)).toEqual(
+      Array.from({ length: 3 }, () => MODEL_NOTES.inspectorFailed.error),
+    )
+    expect(outcomes(entries)).toEqual(Array.from({ length: 3 }, () => 'not-run/inspector'))
+    expect(named(entries, 'execution/tool_outcome').map((entry) => entry.payload['facts'])).toEqual(
+      Array.from({ length: 3 }, () => ({ toolName: 'look', category: 'inspector-failed' })),
+    )
+    expect(inspectorSteps(entries)).toEqual(
+      Array.from({ length: 3 }, () => ({ said: 'deny', status: 'error' })),
+    )
+  })
+
+  it('02 不变量 16: sends the timed-out sentence when a denying inspector does not answer in time', async () => {
+    const slow = createFakeInspector({ id: 'strict', ceiling: 'deny', answer: 'never' })
+    const h = harness({ inspectors: [slow.registration] })
+    h.provider.script(callTurn(calls(1)))
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    expect(h.delays).toContain(INSPECTOR_TIMEOUT_MS['local-rule'])
+    const entries = await all(h)
+    expect(resultTexts(entries)).toEqual([MODEL_NOTES.inspectorFailed.timeout])
+    expect(inspectorSteps(entries)).toEqual([{ said: 'deny', status: 'timeout' }])
+    expect(slow.lastSignal?.aborted).toBe(true)
+  })
+
+  it('02 不变量 16: writes no decision for a call stopped while its inspectors judge, and closes the batch not-run / stopped', async () => {
+    const slow = createFakeInspector({ id: 'slow', ceiling: 'ask', answer: 'never' })
+    // A clock that never fires: the inspector is still judging when the stop lands.
+    const h = harness({ inspectors: [slow.registration], host: createMemoryHost() })
+    h.provider.script(callTurn(calls(2)))
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'look at both' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    await until(() => slow.calls.length === 1)
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason).toEqual({ code: 'user-stopped' })
+    expect(slow.lastSignal?.aborted).toBe(true)
+    const entries = await all(h)
+    expect(named(entries, 'tool/permission_decided')).toEqual([])
+    expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
+    expect(slow.calls).toHaveLength(1)
+  })
+
+  it('writes one decision per judged call: every layer in order, each inspector, decidedBy and the summary (旧 124)', async () => {
+    const observer = createFakeInspector({
+      id: 'observer',
+      ceiling: 'ask',
+      answer: { kind: 'none', findings: [{ code: 'seen', confidence: 0.25 }] },
+    })
+    const judge = createFakeInspector({
+      id: 'judge',
+      ceiling: 'deny',
+      answer: (input) =>
+        input.call.args['at'] === 'deny'
+          ? { kind: 'deny', category: 'exfiltration', findings: [{ code: 'no' }] }
+          : input.call.args['at'] === 'ask'
+            ? { kind: 'ask', category: 'exfiltration', findings: [{ code: 'maybe' }] }
+            : { kind: 'none' },
+    })
+    const h = harness({
+      inspectors: [observer.registration, judge.registration],
+      answersFirst: true,
+    })
+    h.provider.script(
+      callTurn([
+        { id: 'toolu_a', input: { at: 'a' } },
+        { id: 'toolu_d', input: { at: 'deny' } },
+        { id: 'toolu_q', input: { at: 'ask' } },
+      ]),
+    )
+    expect((await send(h)).reason.code).toBe('paused')
+    const decided = decisions(await all(h))
+    expect(decided.map((d) => [d.ordinal, d.record.verdict, d.record.decidedBy])).toEqual([
+      [0, 'allow', 'user-grant'],
+      [1, 'deny', 'inspector'],
+      [2, 'ask', 'inspector'],
+    ])
+    for (const d of decided) {
+      expect(d.record.steps.map((step) => step.by)).toEqual([
+        'tenant-policy',
+        'protected',
+        'user-disabled',
+        'irreversible',
+        'connector-confirm',
+        'inspector',
+        'inspector',
+        'user-grant',
+        'approval-mode',
+        'default',
+      ])
+      expect(d.record.steps.flatMap((step) => step.inspectorId ?? [])).toEqual([
+        'observer',
+        'judge',
+      ])
+      expect(Object.keys(d.summary).toSorted()).toEqual(['code', 'facts', 'verdict'])
+      // The policy version is the payload's, never the record's (§判决记录与摘要).
+      expect(d.policyVersion).toBe('empty')
+      expect('policyVersion' in d.record).toBe(false)
+    }
+    expect(decided[0]?.record.steps[5]).toEqual({
+      by: 'inspector',
+      inspectorId: 'observer',
+      said: 'none',
+      basis: { findings: [{ code: 'seen', confidence: 0.25 }] },
+      status: 'ok',
+    })
+  })
+
+  it('reads the policy once per decision and once per table, and records its version (旧 93)', async () => {
+    const memory = createMemoryHost()
+    memory.setPolicy({ status: 'current', version: 'v7', snapshot: EMPTY_POLICY })
+    let reads = 0
+    const host: HostAdapter = {
+      ...memory,
+      policy: {
+        current: () => {
+          reads += 1
+          return memory.policy.current()
+        },
+        subscribe: (listener) => memory.policy.subscribe(listener),
+      },
+    }
+    const h = harness({ host })
+    h.provider.script(callTurn(calls(2)))
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    let entries = await all(h)
+    expect(named(entries, 'view/tool_table')[0]?.payload['policyVersion']).toBe('v7')
+    expect(decisions(entries).map((d) => d.policyVersion)).toEqual(['v7', 'v7'])
+    // One opening of the table, one reading for each of the two decisions.
+    expect(reads).toBe(3)
+
+    // After the freeze the policy goes out of reach: the next call is blocked at layer 1.
+    memory.setPolicy({ status: 'unavailable' })
+    h.provider.script(callTurn([{ id: 'toolu_x', input: { at: 'x' } }]))
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    entries = await all(h)
+    const last = decisions(entries).at(-1)
+    expect([last?.record.verdict, last?.record.decidedBy, last?.policyVersion]).toEqual([
+      'deny',
+      'tenant-policy',
+      'unavailable',
+    ])
+    expect(last?.block).toEqual({ reason: 'policy', facts: { toolName: 'look' } })
+    expect(outcomes(entries).at(-1)).toBe('not-run/policy')
+    expect(h.executed).toEqual([{ at: '0' }, { at: '1' }])
+    // The table came back from the Tape, not opened again: one more reading, the decision's.
+    expect(named(entries, 'view/tool_table')).toHaveLength(1)
+    expect(reads).toBe(4)
+  })
+
+  it('runs a call on the arguments the model gave when an inspector tries to rewrite them', async () => {
+    const rewriter = createFakeInspector({
+      id: 'rewriter',
+      ceiling: 'ask',
+      answer: (input) => {
+        ;(input.call.args as Record<string, unknown>)['at'] = 'rewritten-by-inspector'
+        return { kind: 'none' }
+      },
+    })
+    const h = harness({ inspectors: [rewriter.registration], answersFirst: true })
+    h.provider.script(callTurn([{ id: 'toolu_1', input: { at: 'a' } }]))
+    // The write fails on the frozen copy: the inspector erred, so the call asks (its ceiling).
+    expect((await send(h)).reason.code).toBe('paused')
+    const pending = await h.service.currentPending({ sessionId: SESSION })
+    expect(pending?.card.reason).toBe('flagged')
+    h.provider.script(done())
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending?.card.requestId ?? '',
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    const entries = await all(h)
+    expect(named(entries, 'tool/call')[0]?.payload['input']).toEqual({ at: 'a' })
+    expect(h.executed).toEqual([{ at: 'a' }])
   })
 })
