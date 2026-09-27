@@ -221,6 +221,41 @@ describe('the protected list in a task whose workspace is the home folder (旧 1
   })
 })
 
+describe('the shell file in another case, in a task whose workspace is the home folder', () => {
+  // The file is missing in that spelling, which it keeps (§「在不在工作区里」 step 2); on a
+  // case-insensitive volume the write would land on the protected file, so the compare folds case.
+  it('blocks the Write without a card, as it blocks the file itself', async () => {
+    const h = await harness()
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath(HOME)] },
+      dedicated: DEDICATED,
+    })
+    const code = await runOnce(
+      h,
+      { name: 'Write', input: { file_path: `${HOME}/.ZSHRC`, content: 'x' } },
+      { name: 'Read', input: { file_path: `${HOME}/proj/a.ts` } },
+      { name: 'Write', input: { file_path: `${HOME}/.ZshRc`, content: 'x' } },
+    )
+    expect(code).toBe('completed')
+    const blocked = [
+      ['deny', 'protected', 'unknown'],
+      ['not-run', 'protected'],
+    ]
+    expect((await closed(h)).calls.map((call) => [call.decision, call.outcome])).toEqual([
+      blocked,
+      [
+        ['allow', 'user-grant', 'read-only'],
+        ['completed', null],
+      ],
+      blocked,
+    ])
+    expect(h.memory.confirmRequests).toEqual([])
+    expect(await h.memory.fs.stat(absolutePath(`${HOME}/.ZSHRC`))).toBeNull()
+  })
+})
+
 describe('a path the host finds but cannot name, in a task (owner 2026-09-27, s11-safety-2)', () => {
   // §「在不在工作区里」 step 2: realpath cannot name a /.vol path, so nothing can be compared with the
   // protected list. It is blocked like the list — not placed outside, where a card would offer allow.

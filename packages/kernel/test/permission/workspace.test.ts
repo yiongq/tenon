@@ -92,6 +92,28 @@ describe('locatePath', () => {
     ).toBe('protected')
   })
 
+  it('compares the protected list without regard to case: a missing shell file in another case is protected', async () => {
+    const { fs, scope } = await world()
+    // ~/.zprofile does not exist: its name keeps the model's spelling (step 2), and on APFS a write
+    // of `.ZPROFILE` creates `.zprofile`.
+    const listed = { ...scope, roots: [p('/')], protectedFiles: [p('/home/.zprofile')] }
+    for (const spelling of ['.ZPROFILE', '.zProfile', '.zpro\uFB01le']) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time
+      expect(await locatePath(fs, p(`/home/${spelling}`), listed)).toEqual({
+        real: `/home/${spelling}`,
+        place: 'protected',
+      })
+    }
+    // The letters APFS folds onto ASCII ones fold here too: ſ onto s, the Kelvin sign onto k.
+    expect((await locatePath(fs, p('/home/.z\u017Fhrc'), scope)).place).toBe('protected')
+    expect((await locatePath(fs, p('/HOME/.ZSHRC'), { ...scope, roots: [p('/')] })).place).toBe(
+      'protected',
+    )
+    // Only the listed names: another file beside them is not.
+    expect((await locatePath(fs, p('/home/.zprofile.bak'), listed)).place).toBe('workspace')
+    expect((await locatePath(fs, p('/home/.zshrc2'), scope)).place).toBe('outside')
+  })
+
   it('places new files and new nested folders inside the workspace, keeping what the model wrote', async () => {
     const { fs, scope } = await world()
     expect(await locatePath(fs, p('/ws/new/deeper/file.txt'), scope)).toEqual({

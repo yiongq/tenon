@@ -1,9 +1,11 @@
 /**
  * Edit (spec 02 §内置工具与参数「Edit」). The executor lands with plan step 22: `old_string` is
  * replaced only when it occurs exactly once, or every occurrence with `replace_all` (sdk-tools:854),
- * at the real path its decision placed (§「在不在工作区里」第 5 步). A target that is missing or a
- * folder, an `old_string` not found, or one that is not unique without `replace_all`, is an
- * execution-time failure: the call ran, is_error, `completed` (§参数校验与失败「执行期失败」).
+ * at the real path its decision placed (§「在不在工作区里」第 5 步), once that path, resolved again
+ * before the file is read, still names itself (a path a link now leads away from is refused and
+ * nothing is read or written). A target that is missing or a folder, an `old_string` not found, or
+ * one that is not unique without `replace_all`, is an execution-time failure: the call ran, is_error,
+ * `completed` (§参数校验与失败「执行期失败」).
  *
  * The file is read as UTF-8 and written back as UTF-8, so a file that is not valid UTF-8 is refused
  * rather than rewritten with U+FFFD where its bad bytes were; a byte order mark is kept.
@@ -16,6 +18,7 @@ import {
   FILE_TEXTS,
   checkSignal,
   failed,
+  stillNamesItself,
   succeeded,
   whenThrown,
 } from './files.js'
@@ -43,6 +46,7 @@ export const EDIT_TEXTS = {
   notText: FILE_TEXTS.notText,
   tooLarge: FILE_TEXTS.tooLarge,
   hostError: FILE_TEXTS.hostError,
+  resolvesElsewhere: FILE_TEXTS.resolvesElsewhere,
   notUtf8: '{path} is not valid UTF-8 text, so Edit cannot change it without changing other bytes.',
   noMatch: 'old_string was not found in {path}. Read the file again and copy old_string exactly.',
   notUnique:
@@ -90,6 +94,9 @@ export const editExecutor: ToolExecutor = async (q) => {
   const replaceAll = q.input['replace_all'] === true
   let text: string
   try {
+    if (!(await stillNamesItself(q.fs, path))) {
+      return failed(fill(EDIT_TEXTS.resolvesElsewhere, { path }))
+    }
     const stat = await q.fs.stat(path)
     checkSignal(q.signal)
     if (stat === null) return failed(fill(EDIT_TEXTS.notFound, { path }))

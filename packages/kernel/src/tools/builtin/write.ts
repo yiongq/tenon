@@ -1,9 +1,11 @@
 /**
  * Write (spec 02 §内置工具与参数「Write」). The executor lands with plan step 22: the whole file is
- * replaced at the real path its decision placed (§「在不在工作区里」第 5 步), a missing parent folder
- * made first with `HostFs.mkdirp` — which is also how the session's dedicated folder comes to exist
- * (§工作区). A target that is a folder, or a parent that is a file, is an execution-time failure: the
- * call ran, is_error, `completed` (§参数校验与失败「执行期失败」).
+ * replaced at the real path its decision placed (§「在不在工作区里」第 5 步), once that path, resolved
+ * again just before the write, still names itself (a path a link now leads away from is refused and
+ * nothing is written); a missing parent folder is made first with `HostFs.mkdirp` — which is also how
+ * the session's dedicated folder comes to exist (§工作区). A target that is a folder, or a parent
+ * that is a file, is an execution-time failure: the call ran, is_error, `completed`
+ * (§参数校验与失败「执行期失败」).
  *
  * The write is not interrupted by a stop: `HostFs` takes no AbortSignal, so one in flight finishes and
  * is recorded as it went (§点停止时各状态怎么收「进程内写操作」).
@@ -12,7 +14,7 @@ import { fromParts, pathParts } from '../../host/path.js'
 import type { AbsolutePath } from '../../host/adapter.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { FILE_TEXTS, failed, succeeded } from './files.js'
+import { FILE_TEXTS, failed, stillNamesItself, succeeded } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
@@ -28,6 +30,7 @@ export const WRITE_TEXTS = {
   notAbsolute: NOT_ABSOLUTE,
   isDirectory: FILE_TEXTS.isDirectory,
   notDirectory: FILE_TEXTS.notDirectory,
+  resolvesElsewhere: FILE_TEXTS.resolvesElsewhere,
   created: 'Created {path}.',
   replaced: 'Replaced the whole content of {path}.',
   hostError: 'Writing {path} failed: {message}',
@@ -60,6 +63,9 @@ export const writeExecutor: ToolExecutor = async (q) => {
   if (path === null) throw new Error('Write: a call reached its executor with no target path')
   const content = typeof q.input['content'] === 'string' ? q.input['content'] : ''
   try {
+    if (!(await stillNamesItself(q.fs, path))) {
+      return failed(fill(WRITE_TEXTS.resolvesElsewhere, { path }))
+    }
     const existing = await q.fs.stat(path)
     if (existing?.isDir === true) return failed(fill(WRITE_TEXTS.isDirectory, { path }))
     const parent = parentOf(path)

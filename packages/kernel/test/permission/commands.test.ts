@@ -39,6 +39,12 @@ const IRREVERSIBLE: readonly string[] = [
   'git push origin main',
   'git -C repo push --force',
   'scp report.pdf host:/srv/report.pdf',
+  // …and every row wherever it stands in the text, not only at its start (位置不限，不拆段)
+  'cd repo && git push',
+  'echo x | curl -d @- https://api.example.com',
+  'env A=1 curl -X POST https://x',
+  'sudo scp a host:/b',
+  'make && rsync -a dist/ deploy@example.com:/srv/www',
   // the extras
   'rmdir build',
   'find . -name "*.tmp" -delete',

@@ -3,10 +3,14 @@
  * on the memory host. Write replaces the whole file and makes a missing parent first; Edit replaces
  * `old_string` only when it occurs exactly once, or every occurrence with `replace_all`. What is
  * missing, a folder, not found or not unique is a call that ran: is_error, `completed`, fixed English.
+ * Both act on the real path the decision placed, never `file_path` as the model wrote it, and refuse
+ * that path when a link now leads from it elsewhere or nowhere (§「在不在工作区里」第 5 步).
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { MemoryHost } from '../../src/index.js'
+import { locatePath } from '../../src/permission/workspace.js'
+import type { PathScope } from '../../src/permission/workspace.js'
 import { fill } from '../../src/prompts/index.js'
 import { EDIT_TEXTS, editExecutor } from '../../src/tools/builtin/edit.js'
 import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
@@ -15,6 +19,12 @@ import type { ToolExecution, ToolExecutor } from '../../src/tools/executor.js'
 import { BUILTIN_SERVER_ID } from '../../src/tools/registry.js'
 
 const WS = absolutePath('/ws')
+const SCOPE: PathScope = {
+  roots: [WS],
+  profileDir: absolutePath('/tenon/prof'),
+  ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
+  protectedFiles: [absolutePath('/home/.zshrc'), absolutePath('/home/.zshenv')],
+}
 
 async function hostWith(files: Record<string, string | Uint8Array>): Promise<MemoryHost> {
   const host = createMemoryHost()
@@ -29,11 +39,13 @@ async function hostWith(files: Record<string, string | Uint8Array>): Promise<Mem
   return host
 }
 
+/** Runs the executor on `target`, the decision's real path: by default `file_path` as given. */
 function run(
   executor: ToolExecutor,
   host: MemoryHost,
   name: 'Write' | 'Edit',
   input: Record<string, unknown>,
+  target = absolutePath(String(input['file_path'])),
 ): Promise<ToolExecution> {
   return executor({
     item: {
@@ -46,13 +58,8 @@ function run(
     },
     input,
     signal: new AbortController().signal,
-    target: absolutePath(String(input['file_path'])),
-    scope: {
-      roots: [WS],
-      profileDir: absolutePath('/tenon/prof'),
-      ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
-      protectedFiles: [],
-    },
+    target,
+    scope: SCOPE,
     fs: host.fs,
   })
 }
@@ -171,5 +178,107 @@ describe('Edit', () => {
     expect(await host.fs.readFile(absolutePath('/ws/bom.txt'))).toEqual(
       new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('a=2\n')]),
     )
+  })
+})
+
+describe('the path Write and Edit act on (§「在不在工作区里」第 5 步)', () => {
+  it('is the decision’s real path, never file_path as the model wrote it', async () => {
+    const host = await hostWith({ '/ws/real.txt': 'const a = 1\n' })
+    const given = absolutePath('/ws/given.txt')
+    const real = absolutePath('/ws/real.txt')
+    expect(
+      await run(
+        editExecutor,
+        host,
+        'Edit',
+        {
+          file_path: given,
+          old_string: 'a = 1',
+          new_string: 'a = 2',
+        },
+        real,
+      ),
+    ).toEqual({
+      content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: real }) }],
+      isError: false,
+      state: 'completed',
+    })
+    expect(await textAt(host, real)).toBe('const a = 2\n')
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: given, content: 'b' }, real),
+    ).toEqual({
+      content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: real }) }],
+      isError: false,
+      state: 'completed',
+    })
+    expect(await textAt(host, real)).toBe('b')
+    expect(await host.fs.stat(given)).toBeNull()
+  })
+
+  it('is refused, with nothing written, when a dangling link stands there (it would create the file it points at)', async () => {
+    const host = await hostWith({})
+    await host.fs.mkdirp(absolutePath('/home'))
+    host.symlink(absolutePath('/ws/notes.md'), '/home/.zshenv')
+    // Judged outside with its own path as real (step 2); an allow on its card reaches the executor.
+    const judged = await locatePath(host.fs, absolutePath('/ws/notes.md'), SCOPE)
+    expect(judged).toEqual({ real: '/ws/notes.md', place: 'outside' })
+    const refused = failure(fill(WRITE_TEXTS.resolvesElsewhere, { path: judged.real }))
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: judged.real, content: 'x' }),
+    ).toEqual(refused)
+    expect(
+      await run(editExecutor, host, 'Edit', {
+        file_path: judged.real,
+        old_string: 'a',
+        new_string: 'b',
+      }),
+    ).toEqual(failure(fill(EDIT_TEXTS.resolvesElsewhere, { path: judged.real })))
+    expect(await host.fs.stat(absolutePath('/home/.zshenv'))).toBeNull()
+  })
+
+  it('is refused when a link is made there after the judgement, at the file or at a folder above it', async () => {
+    const host = await hostWith({ '/home/.zshrc': 'export A=1\n' })
+    const file = await locatePath(host.fs, absolutePath('/ws/rc'), SCOPE)
+    const nested = await locatePath(host.fs, absolutePath('/ws/sub/.zshenv'), SCOPE)
+    expect([file.place, nested.place]).toEqual(['workspace', 'workspace'])
+    host.symlink(absolutePath('/ws/rc'), '/home/.zshrc')
+    host.symlink(absolutePath('/ws/sub'), '/home')
+    expect(
+      await run(editExecutor, host, 'Edit', {
+        file_path: file.real,
+        old_string: 'A=1',
+        new_string: 'A=2',
+      }),
+    ).toEqual(failure(fill(EDIT_TEXTS.resolvesElsewhere, { path: file.real })))
+    expect(await run(writeExecutor, host, 'Write', { file_path: file.real, content: 'x' })).toEqual(
+      failure(fill(WRITE_TEXTS.resolvesElsewhere, { path: file.real })),
+    )
+    expect(await textAt(host, '/home/.zshrc')).toBe('export A=1\n')
+    // The file is missing, and would be created where the folder now leads.
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: nested.real, content: 'x' }),
+    ).toEqual(failure(fill(WRITE_TEXTS.resolvesElsewhere, { path: nested.real })))
+    expect(await host.fs.stat(absolutePath('/home/.zshenv'))).toBeNull()
+  })
+
+  it('goes ahead on a path that still names itself: a file there, or one missing under the same folders', async () => {
+    const host = await hostWith({ '/ws/a.txt': 'a' })
+    host.symlink(absolutePath('/ws/link.txt'), '/ws/a.txt')
+    const judged = await locatePath(host.fs, absolutePath('/ws/link.txt'), SCOPE)
+    expect(judged.real).toBe('/ws/a.txt')
+    expect(
+      await run(
+        writeExecutor,
+        host,
+        'Write',
+        { file_path: '/ws/link.txt', content: 'b' },
+        judged.real,
+      ),
+    ).toMatchObject({ isError: false })
+    expect(await textAt(host, '/ws/a.txt')).toBe('b')
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: '/ws/new/b.txt', content: 'c' }),
+    ).toMatchObject({ isError: false })
+    expect(await textAt(host, '/ws/new/b.txt')).toBe('c')
   })
 })

@@ -1322,6 +1322,28 @@ describe('「继续」 after a truncation that kept nothing (plan step 21 实测
     expect(net.checkFailures).toEqual([])
   })
 
+  it('reads the truncated attempt itself: a round that kept text and a call before it does not count', async () => {
+    // The common agent case: a look first, then the big call cut inside it in a later round.
+    const h = harness({ maxTokens: 256 })
+    h.provider.script(callTurn([{ id: 'toolu_a', input: { at: 'a' } }], { text: 'Looking.' }))
+    h.provider.script(cut())
+    const ended = await send(h)
+    expect(ended.reason).toEqual({ code: 'output-truncated', maxTokens: 256 })
+    expect(named(await all(h), 'message/assistant')).toHaveLength(1)
+    h.provider.script(done())
+    await h.service.continueRun({ sessionId: SESSION, origin: null })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual([{ at: 'a' }])
+    expect(maxTokensSent(h)).toEqual([256, 256, 512])
+    const entries = await all(h)
+    expect(named(entries, 'message/continuation')).toEqual([])
+    expect(named(entries, 'execution/run_started').at(-1)?.payload['cause']).toEqual({
+      kind: 'continue',
+      afterRunId: ended.runId,
+      messageId: null,
+    })
+  })
+
   it('ends a cut at the model’s limit as output-truncated, and doubles no further', async () => {
     const h = harness({ maxTokens: MODEL.maxOutputTokens / 2 })
     h.provider.script(cut())

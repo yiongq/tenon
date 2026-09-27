@@ -223,7 +223,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         const command = await commandRunOf(ctx, call, item, facts)
         if (command === 'stopped') {
           // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-          await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+          await closeApprovedAndRest(ctx, ctx.approved, k)
           return { kind: 'stopped' }
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
@@ -299,7 +299,9 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
       // call and the rest close as a stop while judging would (§点停止时各状态怎么收).
       // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-      await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+      await (ctx.approved?.ordinal === call.ordinal
+        ? closeApprovedAndRest(ctx, ctx.approved, k)
+        : closeRest(ctx, ctx.calls.slice(k), 'stopped'))
       return { kind: 'stopped' }
     }
   }
@@ -532,6 +534,32 @@ async function close(
     | undefined
   const view = closedView(written.entries, summary ?? denied?.summary)
   if (view !== null) ctx.outcome(call, view)
+}
+
+/**
+ * A stop before the approved call's dispatch: it closes not-run / stopped with the reversibility of
+ * the asking decision it already has (§载荷 ToolOutcomePayload: 取判决事实里的值), then the rest.
+ */
+async function closeApprovedAndRest(
+  ctx: BatchContext,
+  approved: ApprovedCall,
+  k: number,
+): Promise<void> {
+  const call = ctx.calls[k]
+  if (call === undefined) throw new Error('batch: the approved call is not in the batch')
+  await close(
+    ctx,
+    call,
+    notRunFacts({
+      tape: ctx.tape,
+      now: ctx.now,
+      call: refOf(ctx, call),
+      source: 'stopped',
+      reversibility: approved.reversibility,
+      writer: ctx.writer,
+    }),
+  )
+  await closeRest(ctx, ctx.calls.slice(k + 1), 'stopped')
 }
 
 /** Closes calls that will not run, in order, all with one source. */

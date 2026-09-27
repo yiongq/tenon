@@ -211,7 +211,11 @@ export function resolvedEntry(q: {
   })
 }
 
-/** Not-run closures, one source, for these calls of the waiting batch, in `<i>` order. */
+/**
+ * Not-run closures, one source, for these calls of the waiting batch, in `<i>` order. The waiting
+ * call has its asking decision, whose reversibility it keeps; the rest have none, so `unknown`
+ * (§载荷 ToolOutcomePayload).
+ */
 export function batchClosures(q: {
   readonly tape: Tape
   readonly now: () => number
@@ -231,6 +235,9 @@ export function batchClosures(q: {
         providerToolCallId: call.providerToolCallId,
       },
       source: q.source,
+      ...(call.ordinal === q.waiting.ref.ordinal
+        ? { reversibility: q.waiting.decision.reversibility }
+        : {}),
       writer: q.writer,
     }),
   )

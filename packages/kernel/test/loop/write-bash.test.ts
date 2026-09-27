@@ -38,6 +38,7 @@ import type {
 import { STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import { reversibilityOf } from '../../src/permission/reversibility.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
+import { COMMAND_SCRIPT } from '../../src/tools/builtin/bash.js'
 import type { CommandShell } from '../../src/tools/builtin/bash.js'
 import {
   createCounterIds,
@@ -151,6 +152,8 @@ async function harness(o: {
   /** The workspace: a picked folder (default `WORK`), or only the dedicated folder. */
   readonly folder?: AbsolutePath | 'dedicated'
   readonly commandShell?: CommandShell
+  /** Called on each reading of the service's clock, before it answers. */
+  readonly onNow?: () => void
 }): Promise<Harness> {
   const host = createMemoryHost({
     identity: IDENTITY,
@@ -179,8 +182,19 @@ async function harness(o: {
     connector: { provider, model: MODEL, mcpSources: [annotated()] },
     ...(o.commandShell === undefined ? {} : { commandShell: o.commandShell }),
   })
+  const { onNow } = o
+  const clock =
+    onNow === undefined
+      ? host.clock
+      : {
+          now: () => {
+            onNow()
+            return host.clock.now()
+          },
+          setTimeout: (fn: () => void, ms: number) => host.clock.setTimeout(fn, ms),
+        }
   const options = {
-    host: { ...host, sandbox },
+    host: { ...host, sandbox, clock },
     tape: store,
     ids: createCounterIds(),
     inspectors: [inspector.registration],
@@ -435,15 +449,14 @@ describe('the dedicated folder (旧 180)', () => {
     const pending = await pausedOn(h, 'Bash', { command: 'pwd' })
     expect(pending.card.target).toEqual({ type: 'command', command: 'pwd', cwd: DEDICATED })
     await allow(h, pending)
-    expect(spawns.specs).toEqual([
-      { argv: ['/bin/zsh', '-c', 'exec 2>&1\npwd'], cwd: DEDICATED, env, stdio: 'pipe' },
-    ])
+    const argv = ['/bin/zsh', '-c', COMMAND_SCRIPT, '/bin/zsh', 'pwd']
+    expect(spawns.specs).toEqual([{ argv, cwd: DEDICATED, env, stdio: 'pipe' }])
     expect(spawns.cwdExisted).toEqual([true])
     const call = (await named(h, 'tool/call')).at(-1)?.payload['providerToolCallId'] as string
     expect(h.wrapped).toEqual([
       {
         commandId: call,
-        argv: ['/bin/zsh', '-c', 'exec 2>&1\npwd'],
+        argv,
         cwd: DEDICATED,
         env,
         profile: 'workspace-write',
@@ -557,7 +570,7 @@ function settle(): Promise<void> {
 }
 
 describe('a stop while Bash awaits its base environment', () => {
-  it('records the call not-run / stopped: nothing dispatched, nothing spawned', async () => {
+  it('records the call allowed on its card not-run / stopped with its decision’s reversibility: nothing dispatched, nothing spawned', async () => {
     const env = Promise.withResolvers<Readonly<Record<string, string>>>()
     const reached = Promise.withResolvers<void>()
     let spawned = 0
@@ -576,7 +589,7 @@ describe('a stop while Bash awaits its base environment', () => {
         },
       },
     })
-    const pending = await pausedOn(h, 'Bash', { command: 'make' })
+    const pending = await pausedOn(h, 'Bash', { command: 'rm -rf build' })
     expect(
       await h.service.answer({
         kind: 'approval',
@@ -590,12 +603,113 @@ describe('a stop while Bash awaits its base environment', () => {
     expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
     env.resolve({})
+    // The call has its asking decision: the closure takes that fact's value (§载荷 ToolOutcomePayload).
     expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
       state: 'not-run',
       source: 'stopped',
       effect: 'blocked',
+      reversibility: 'irreversible',
     })
     expect(await named(h, 'execution/dispatch_committed')).toEqual([])
     expect(spawned).toBe(0)
+  })
+
+  it('keeps that reversibility when the stop lands after the environment came, before the dispatch’s write', async () => {
+    let armed = false
+    let stop: (() => void) | null = null
+    let spawned = 0
+    const h = await harness({
+      process: {
+        spawn: () => {
+          spawned += 1
+          return Promise.reject(new Error('never spawned'))
+        },
+      },
+      commandShell: {
+        path: absolutePath('/bin/sh'),
+        env: () => {
+          armed = true
+          return Promise.resolve({})
+        },
+      },
+      // The first reading of the clock once the environment was asked for is the dispatch's
+      // createdAt: the stop lands after the batch looked at the signal, before its write's turn.
+      onNow: () => {
+        if (!armed) return
+        armed = false
+        stop?.()
+      },
+    })
+    stop = () => void h.service.stop({ rootSessionId: SESSION })
+    const pending = await pausedOn(h, 'Bash', { command: 'rm -rf build' })
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: pending.card.requestId,
+      decision: 'allow',
+      origin: null,
+    })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'not-run',
+      source: 'stopped',
+      reversibility: 'irreversible',
+    })
+    expect(await named(h, 'execution/dispatch_committed')).toEqual([])
+    expect(spawned).toBe(0)
+  })
+
+  it('races the stop on the path with no card too: a command this session already allows', async () => {
+    let host: MemoryHost | null = null
+    const spawns = fakeProcesses(() => {
+      if (host === null) throw new Error('spawned before the host was made')
+      return host
+    }, 'built\n')
+    const pendingEnv = Promise.withResolvers<Readonly<Record<string, string>>>()
+    const reached = Promise.withResolvers<void>()
+    let asked = 0
+    const h = await harness({
+      process: spawns.process,
+      commandShell: {
+        path: absolutePath('/bin/sh'),
+        // The first call gets its environment at once; the second waits for it.
+        env: () => {
+          asked += 1
+          if (asked === 1) return Promise.resolve({ PATH: '/usr/bin:/bin' })
+          reached.resolve()
+          return pendingEnv.promise
+        },
+      },
+    })
+    host = h.memory
+    await allow(h, await pausedOn(h, 'Bash', { command: 'make' }))
+    expect(spawns.specs).toHaveLength(1)
+    const runId = await send(h, 'Bash', { command: 'make' })
+    await reached.promise
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+    // No card, so no decision fact was written before the stop: the closure records unknown.
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'not-run',
+      source: 'stopped',
+      effect: 'blocked',
+      reversibility: 'unknown',
+    })
+    expect(await named(h, 'execution/dispatch_committed')).toHaveLength(1)
+    expect(spawns.specs).toHaveLength(1)
+    pendingEnv.resolve({})
+  })
+})
+
+describe('a stop while the card waits (§每种答复同批写什么「暂停中停止」)', () => {
+  it('closes the waiting call not-run / stopped with its decision’s reversibility', async () => {
+    const h = await harness({ registry: 'test' })
+    await pausedOn(h, 'Bash', { command: 'rm -rf build' })
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'not-run',
+      source: 'stopped',
+      reversibility: 'irreversible',
+    })
   })
 })

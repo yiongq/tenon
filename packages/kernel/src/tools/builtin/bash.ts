@@ -6,12 +6,14 @@
  * and hands the executor what it resolved to as `CommandRun.env` (loop/batch.ts).
  *
  * One call, one process, the same path as `mcp/connection.ts`: `HostSandbox.wrap`, then
- * `HostProcess.spawn`, then `afterExit` once it exited. The shell runs `exec 2>&1` before the command,
- * so stderr joins stdout at the file-descriptor level and only stdout is read, in the order the shell
- * wrote it. The stop and the timeout share one kill sequence — SIGTERM, `STOP_TERM_GRACE_MS`, then
- * SIGKILL unconditionally (the direct child's exit says nothing of its group, §点停止时各状态怎么收
- * 「执行命令」) — and `exited` within `STOP_EXIT_CONFIRM_MS` of the SIGKILL records `aborted`, anything
- * later `uncertain`. Plan step 23 calibrates the constants.
+ * `HostProcess.spawn`, then `afterExit` once it exited. The shell runs `exec 2>&1` and only then
+ * hands the command to the same shell binary (`COMMAND_SCRIPT`), so stderr joins stdout at the
+ * file-descriptor level before the command is even parsed — zsh parses a whole `-c` string before it
+ * runs any of it, and its parse errors would otherwise go to the stderr nobody reads — and only stdout
+ * is read, in the order the shell wrote it. The stop and the timeout share one kill sequence —
+ * SIGTERM, `STOP_TERM_GRACE_MS`, then SIGKILL unconditionally (the direct child's exit says nothing
+ * of its group, §点停止时各状态怎么收「执行命令」) — and `exited` within `STOP_EXIT_CONFIRM_MS` of the
+ * SIGKILL records `aborted`, anything later `uncertain`. Plan step 23 calibrates the constants.
  */
 import type { AbsolutePath, ChildHandle, HostAdapter, HostClock } from '../../host/adapter.js'
 import { STOP_EXIT_CONFIRM_MS, STOP_TERM_GRACE_MS } from '../../loop/limits.js'
@@ -58,6 +60,14 @@ const DESCRIPTION = [
   'There is no background mode.',
   'Use Read, Glob and Grep rather than cat, find or grep, and Edit or Write rather than editing files from the shell.',
 ].join(' ')
+
+/**
+ * The outer shell's script (§内置工具与参数「Bash」「起进程」): stderr into stdout, then the same
+ * shell (`$0`) replaces it and parses the command (`$1`). `--` ends the inner shell's options, so a
+ * command that begins with `-` is a command, as it would be in a terminal; the inner shell sees no
+ * positional parameters.
+ */
+export const COMMAND_SCRIPT = 'exec 2>&1; exec "$0" -c -- "$1"'
 
 /** Bash's result template and its own errors (§内置工具与参数「Bash」「输出」; in the prompt layer). */
 export const BASH_TEXTS = {
@@ -112,7 +122,7 @@ export const bashExecutor: ToolExecutor = async (q) => {
     if (run.dedicated) await q.fs.mkdirp(cwd)
     const wrapped = await sandbox.wrap({
       commandId: run.commandId,
-      argv: [run.shell, '-c', `exec 2>&1\n${command}`],
+      argv: [run.shell, '-c', COMMAND_SCRIPT, run.shell, command],
       cwd,
       env: { ...run.env },
       profile: 'workspace-write', // phase 2's wrap passes through: the intent only
@@ -202,22 +212,39 @@ interface OutputReader {
   cancel(): Promise<void>
 }
 
+/**
+ * A read that throws is a pipe that broke: the output ends where it broke. An append that throws is
+ * the text past the longest string the engine can hold (V8: 2^29 − 24 code units, a RangeError): the
+ * text stays as it was, and the pipe is still drained to its end, so the command is not held on a full
+ * pipe until the timeout and ends the way it ends (plan step 24 decides how a long output is spilled).
+ */
 function readOutput(stream: ReadableStream<Uint8Array>): OutputReader {
   const reader = stream.getReader()
   const decoder = new TextDecoder('utf-8')
   let text = ''
-  const done = (async (): Promise<void> => {
+  let full = false
+  const append = (piece: () => string): void => {
+    if (full) return
     try {
-      for (;;) {
-        // oxlint-disable-next-line no-await-in-loop -- a pipe is read one chunk after another
-        const chunk = await reader.read()
-        if (chunk.done) break
-        text += decoder.decode(chunk.value, { stream: true })
-      }
+      text += piece()
     } catch {
-      // A pipe that broke ends the output where it broke.
+      full = true
     }
-    text += decoder.decode()
+  }
+  const done = (async (): Promise<void> => {
+    for (;;) {
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- a pipe is read one chunk after another
+        chunk = await reader.read()
+      } catch {
+        break
+      }
+      if (chunk.done) break
+      const { value } = chunk
+      append(() => decoder.decode(value, { stream: true }))
+    }
+    append(() => decoder.decode())
   })()
   return {
     done,
