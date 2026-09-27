@@ -383,7 +383,7 @@
 
 - [ ] 22. **Write / Edit / Bash**（裁决 E1、E4、D10、D7、H7）
   - 读：§内置工具与参数「Bash」；§可逆性；§内置工具的默认档位；§权限决策顺序「合并：两步」。
-  - 交付物：Write（父目录不存在先 `mkdirp`）、Edit 执行器（Write、Edit、Bash 在本步进产品工具表）；Bash 起进程（`HostSandbox.wrap` + `HostProcess.spawn` + `afterExit`，同 connection.ts:48-61 的路径）与 `SandboxRequest`；命令保守模式表（`reversibility.ts`）、`command` 原因码、撤不回每次问并接进第 4 层 ①、卡上改动可展开；effect 取值按参数表。
+  - 交付物：Write（父目录不存在先 `mkdirp`）、Edit 执行器（Write、Edit、Bash 在本步进产品工具表）；Bash 起进程（`HostSandbox.wrap` + `HostProcess.spawn` + `afterExit`，同 connection.ts:48-61 的路径）与 `SandboxRequest`；命令保守模式表（`reversibility.ts`）、`command` 原因码、撤不回每次问并接进第 4 层 ①、卡上改动可展开；effect 取值按参数表。另：第 21 步实测 A2 的定案（owner 2026-09-27 选 A）——截断落在本轮什么都没写下的地方（唯一的工具调用中途、之前没有思考和文字）时，「继续」改为把 max_tokens 加倍（不超过模型的 maxOutputTokens）、整轮重发，本轮不进历史；spec §重试与「继续」 走 Revisions，kernel 的 `continueRun` 与 `run-ended` 相应改，测试：同一个截断场景第二次能完成、到上限仍截断时照常以 output-truncated 结束且不再加倍。
   - 验收：40；补齐 36 的写入卡与不可逆卡、19、20 与 37 里需要写入的部分；不变量 22（命令部分）。
   - 测试要点：
     - 旧 52、不变量 22：判 `irreversible`：rm 已有文件；curl 带 `-X POST`、`-d`、`-F` 或 `--upload-file`；git push；scp。判 `unknown`：curl GET、ls 与解析不了的命令；永远不判 `read-only`；原因码一律 `command`。
@@ -834,5 +834,4 @@
 - 给数：`SUBAGENT_STEP_LIMIT`、`SUBAGENT_TOKEN_LIMIT`（步数须小于 100），第 31 步开工前（开放问题 19）。
 - owner 补录：B1 #2（审批卡挂着时点停止，Cowork 作废还是保留卡片），最晚第 15 步前（开放问题 14）；F11 与 H13 #1（审批卡挂着时发新消息）；D7 三项（手动档下跑 `ls` 会不会先弹卡、新账号的初始审批档、覆盖已连接文件夹里的已有文件是否也不逐次问）；F6 #5（多张审批卡是否来自同一批、能否跳着答、拒绝一张后其余怎样）；F7 #3（子 agent 的审批卡出现在哪、会不会超时）；B3（停在任务页直接 Cmd+Q 再启动，落在首页还是该任务；落在任务页就按 B3-A 的改判重比 A 和 D）；H1 自查（自己的 Claude 消息框里还有没有 Chat / Cowork 选项）；Cowork 覆盖已有文件、跑 shell 命令时弹不弹卡。除 B1 #2 外都在同题对比开跑前补齐（第 34 步），补录后更新 docs/evals/README.md 已知差异清单的第 1 条和第 8 条。
 - owner 的 key 下次撞到智谱额度上限时，抓 1308、1310 报文的原文，供补 `resetAt` 的解析（第 7 步）。
-- 拍板（第 21 步实测 A2）：截断落在唯一的工具调用中途、之前没有思考和文字时，按「半截的不写」什么都不留，「继续」只能从头再发同一个调用、在同一个 max_tokens 处再被截断，永远没有进展。候选：A. 这种截断（本轮什么都没写下）时「继续」改为把 max_tokens 加倍（不超过模型上限）整轮重发，走 Revisions——即 plan 第 21 步暂定项里 400 分支的同一做法；B. 维持现状，失败卡只写「截断」，由用户自己换模型或拆小任务。推荐 A。第 22 步的大段 Write 最容易碰上，最晚第 22 步收尾前定。
 - M8 landing：在 ChatGPT 的 Data Controls 里关掉训练；主账号先不订 GLM Coding Plan；需要时买智谱资源包，并在账单上核对 flash 的实际单价与资源包的扣减方式。
