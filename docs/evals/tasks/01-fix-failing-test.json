@@ -1,0 +1,12 @@
+{
+  "id": "01-fix-failing-test",
+  "profile": "cowork",
+  "turns": [
+    "这个小项目的测试挂了。先运行 `node test.mjs` 看看哪里失败，找到原因并修好源代码（不要改 test.mjs），最后再运行一次 `node test.mjs` 确认全部通过。"
+  ],
+  "workspace": "01-fix-failing-test",
+  "host": { "answers": { "default": "allow", "command": "allow" } },
+  "checks": [{ "kind": "script", "id": "01-fix-failing-test" }],
+  "compare": true,
+  "from": ["H15", "H1"]
+}
