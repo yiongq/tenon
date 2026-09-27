@@ -31,6 +31,11 @@ import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
 import { replayOnLoad } from './window-replay.js'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
+import {
+  createSessionRemoval,
+  exposeSessionRemoval,
+  refuseWhileRemoving,
+} from './session-removal.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -169,6 +174,18 @@ async function main(): Promise<void> {
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
           log: (line) => console.error(line),
         })
+  // Clearing and deleting a session, its tool-output folder with it (spec 02 §大响应落盘): until one
+  // completes, the session takes no send and opens no Run.
+  const removal =
+    sessions === null
+      ? null
+      : createSessionRemoval({
+          sessions,
+          profileDir: absolutePath(host.identity.profileDir),
+          log: (line) => console.warn(line),
+        })
+  const removing = (sessionId: string): boolean => removal?.removing(sessionId) ?? false
+  exposeSessionRemoval(removal, app.isPackaged, process.env)
   const loop =
     sessions === null
       ? null
@@ -177,6 +194,7 @@ async function main(): Promise<void> {
           send: broadcast,
           locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
           commandShell,
+          removing,
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
@@ -233,10 +251,14 @@ async function main(): Promise<void> {
   installMenu()
 
   // `ipcMain` itself, except in a development build an e2e asked to count or fail routes (e2e-routes.ts).
-  // Once the quit's third step ran, a route that opens a Run or writes a fact answers ok: false.
-  const routes = refuseWhileShuttingDown(
-    e2eRouteSeam(ipcMain, app.isPackaged, process.env),
-    () => shutdown.started,
+  // Once the quit's third step ran, a route that opens a Run or writes a fact answers ok: false; so
+  // does a send to a session being cleared or deleted.
+  const routes = refuseWhileRemoving(
+    refuseWhileShuttingDown(
+      e2eRouteSeam(ipcMain, app.isPackaged, process.env),
+      () => shutdown.started,
+    ),
+    removing,
   )
   registerConfigRoutes(routes, host, (next) => void locale.apply(next))
   registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })

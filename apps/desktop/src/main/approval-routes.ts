@@ -29,7 +29,9 @@ export function registerApprovalRoutes({ ipcMain, sessions, gate }: ApprovalRout
     const result = await sessions.answer({ ...request, origin: originOf(event) })
     // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
     if (result.status === 'refused') {
-      throw new Error('answer refused: the loop is not bound, or the app is shutting down')
+      throw new Error(
+        'answer refused: the loop is unbound, the app is quitting, or a removal is under way',
+      )
     }
     return { status: result.status }
   })
@@ -51,7 +53,9 @@ export function registerApprovalRoutes({ ipcMain, sessions, gate }: ApprovalRout
     if (sessions === null) return { status: 'none' as const }
     const result = await sessions.resume({ rootSessionId: sessionId, origin: originOf(event) })
     if (result.status === 'refused') {
-      throw new Error('resume refused: the loop is not bound, or the app is shutting down')
+      throw new Error(
+        'resume refused: the loop is unbound, the app is quitting, or a removal is under way',
+      )
     }
     return { status: result.status }
   })
