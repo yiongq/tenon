@@ -11,8 +11,16 @@ import type { HostIdentity } from '../../src/host/adapter.js'
 import type { AppendResult, NewEntry } from '../../src/tape/entry.js'
 import { createMemoryTapeStore } from '../../src/tape/memory-store.js'
 import { TapeAppendAuthorizationError } from '../../src/tape/names.js'
-import { TapeProvenanceSyntaxError, sessionStartKey } from '../../src/tape/provenance.js'
+import {
+  TapeProvenanceSyntaxError,
+  messageRetractedKey,
+  messageRevisionKey,
+  profileSetKey,
+  sessionStartKey,
+} from '../../src/tape/provenance.js'
 import type { TapeAppendBatch, TapeResetSessionQuery, TapeStore } from '../../src/tape/store.js'
+import { MAX_READ_LIMIT, TapeMessageRetractedError } from '../../src/tape/store.js'
+import type { TapeFact } from '../../src/tape/tape.js'
 import { createTape } from '../../src/tape/tape.js'
 import { createCounterIds } from '../../src/testing/fake-ids.js'
 
@@ -390,6 +398,95 @@ describe('tape facade', () => {
       tape.resetSession({ sessionId: SESSION, incarnationId: INCARNATION, start: smuggled }),
     ).rejects.toThrow(TapeAppendAuthorizationError)
     expect(spy.calls).toEqual([])
+  })
+
+  // Plan step 8, 旧 110 and 旧 114: the carry passes the facade's gate too, not only the store's.
+  it('rejects an unauthorised or malformed carry fact before the store is reached', async () => {
+    const spy = spyStore()
+    const tape = createTape(spy.store)
+    const next = '00000000-0000-4000-8000-000000000207'
+    const start = tape.writer('session').entry('session/start', {
+      sourceType: 'session',
+      sourceId: SESSION,
+      sourceSeq: 0,
+      provenanceKey: sessionStartKey(next),
+      payload: { incarnationId: next },
+      createdAt: 1_700_000_009_000,
+    })
+    const profile = tape.writer('session').entry('session/profile_set', {
+      sourceType: 'session',
+      sourceId: SESSION,
+      provenanceKey: profileSetKey(next),
+      payload: { profile: 'chat' },
+      createdAt: 1_700_000_009_000,
+    })
+    const reset = (carry: NewEntry[]): Promise<AppendResult> =>
+      tape.resetSession({ sessionId: SESSION, incarnationId: next, start, carry })
+    // A 02 name with a kind the name table does not bind it to, then an undeclared sibling.
+    await expect(reset([{ ...profile, kind: 'message' }])).rejects.toThrow(
+      TapeAppendAuthorizationError,
+    )
+    await expect(reset([{ ...profile, name: 'session/anything' }])).rejects.toThrow(
+      TapeAppendAuthorizationError,
+    )
+    await expect(
+      reset([{ ...profile, provenanceKey: 'session:v1:profile:2026-09-21T10:00:00Z' }]),
+    ).rejects.toThrow(TapeProvenanceSyntaxError)
+    expect(spy.calls).toEqual([])
+  })
+
+  // Plan step 8, 旧 59 and 旧 113 (02 不变量 32): the look-up pages, so no number of revisions in front
+  // of the tombstone hides it.
+  it('refuses a revision when the retraction sits past the first page of the message', async () => {
+    const tape = await withSession()
+    const writer = tape.writer('message')
+    let clock = 1_700_000_020_000
+    const revision = (r: number): TapeFact => ({
+      name: 'message/user',
+      fields: {
+        sourceType: 'message',
+        sourceId: MESSAGE,
+        sourceSeq: r,
+        provenanceKey: messageRevisionKey(MESSAGE, r),
+        payload: {
+          messageId: MESSAGE,
+          revision: r,
+          role: 'user',
+          content: [{ type: 'text', text: `revision ${String(r)}` }],
+          status: 'complete',
+        },
+        createdAt: (clock += 1),
+      },
+    })
+    await writer.writeBatch({
+      sessionId: SESSION,
+      incarnationId: INCARNATION,
+      facts: Array.from({ length: MAX_READ_LIMIT }, (_, r) => revision(r)),
+    })
+    await writer.write({
+      sessionId: SESSION,
+      incarnationId: INCARNATION,
+      fact: {
+        name: 'message/retracted',
+        fields: {
+          sourceType: 'message',
+          sourceId: MESSAGE,
+          provenanceKey: messageRetractedKey(MESSAGE),
+          payload: { messageId: MESSAGE, reason: 'user-deleted' },
+          createdAt: (clock += 1),
+        },
+      },
+    })
+    const before = await tape.head(SESSION)
+    expect(before?.entryCount).toBe(MAX_READ_LIMIT + 2)
+    await expect(
+      writer.write({
+        sessionId: SESSION,
+        incarnationId: INCARNATION,
+        fact: revision(MAX_READ_LIMIT),
+      }),
+    ).rejects.toThrow(TapeMessageRetractedError)
+    expect(await tape.head(SESSION)).toEqual(before)
   })
 
   it('resets a session with a start fact built by the session writer', async () => {

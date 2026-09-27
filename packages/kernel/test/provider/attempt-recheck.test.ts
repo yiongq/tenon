@@ -313,6 +313,74 @@ describe('re-encoding an attempt from its assembly alone', () => {
     })
   })
 
+  // 02 不变量 33 (plan step 6, 旧 42): each original is checked against the name it is filed under,
+  // and a record edited to agree with a changed table is tampering, never 「模型表已变」 or verified.
+  it('names the original that no longer matches, and never passes an edited record', async () => {
+    const { store, attempts } = await recordedSession()
+    const [first, second, flash] = attempts
+    if (first === undefined || second === undefined || flash === undefined) {
+      throw new Error('no attempts')
+    }
+    // The second request of the first run pointing at the first request's manifest.
+    const borrowed = String(first.payload['assemblyRef'])
+    expect(
+      await recheck(store, { ...second, payload: { ...second.payload, assemblyRef: borrowed } }),
+    ).toEqual({
+      verdict: 'tampered',
+      problems: [`the attempt names the manifest ${borrowed}, not its own request's`],
+    })
+    // The attempt's modelWireHash rewritten to match an edited table row.
+    const shorter = { ...FLASH, maxOutputTokens: FLASH.maxOutputTokens - 1 }
+    const edited = TABLE.map((model) => (model === FLASH ? shorter : model))
+    expect(
+      await recheck(
+        store,
+        { ...flash, payload: { ...flash.payload, modelWireHash: modelWireHash(shorter) } },
+        edited,
+      ),
+    ).toEqual({
+      verdict: 'tampered',
+      problems: ["the stored ModelInfo's wire fields do not hash to attempt.modelWireHash"],
+    })
+    // The request snapshot naming another system prompt than its manifest.
+    const snapshot = first.payload['request'] as Record<string, unknown>
+    expect(
+      await recheck(store, {
+        ...first,
+        payload: { ...first.payload, request: { ...snapshot, systemHash: 'f'.repeat(64) } },
+      }),
+    ).toEqual({
+      verdict: 'tampered',
+      problems: ['the request snapshot and the manifest name different system prompts'],
+    })
+    // The stored system text edited under its old name.
+    const otherSystem = rewritten(store, (entry) =>
+      entry.name === 'view/content' && entry.payload['type'] === 'system'
+        ? { ...entry, payload: { ...entry.payload, text: 'another system prompt' } }
+        : entry,
+    )
+    expect(await recheck(otherSystem, first)).toEqual({
+      verdict: 'tampered',
+      problems: ['the stored system text does not hash to its name'],
+    })
+    // The frozen tool table losing a row: every spec left still hashes to its name.
+    const fewerTools = rewritten(store, (entry) =>
+      entry.name === 'view/tool_table'
+        ? {
+            ...entry,
+            payload: {
+              ...entry.payload,
+              tools: (entry.payload['tools'] as unknown[]).slice(0, -1),
+            },
+          }
+        : entry,
+    )
+    expect(await recheck(fewerTools, first)).toEqual({
+      verdict: 'tampered',
+      problems: ['the promptHash does not recompute', 'the toolDefinitionsHash does not recompute'],
+    })
+  })
+
   it('leaves out the records invariant 33 does not speak of', async () => {
     const { store, attempts } = await recordedSession()
     const first = attempts[0]
