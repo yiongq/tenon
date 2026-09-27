@@ -270,6 +270,42 @@ describe('vendor blocks through the Tape (旧 43)', () => {
     expect(s.net.checkFailures).toEqual([])
   })
 
+  it('never lets a stored vendor field rewrite the block’s own signature or text', () => {
+    // Plan step 6 (01 修补 2): the block's own keys win over its vendorFields, so what the Tape kept
+    // beside a thinking block can add a field but not replace the signature or what it signed.
+    const signature = fixture.THINKING_SIGNATURE
+    const block: ContentBlock = {
+      type: 'thinking',
+      text: 'weighing it',
+      signature,
+      provider: 'anthropic',
+      providerModel: MODEL.id,
+      vendorFields: {
+        ...fixture.THINKING_EXTRA_FIELD,
+        signature: 'Zm9yZ2Vk',
+        thinking: 'rewritten',
+      },
+    }
+    const encoded = encodeAnthropicMessages(
+      {
+        model: MODEL,
+        messages: [
+          user({ type: 'text', text: 'a' }),
+          assistant(block, { type: 'text', text: 'b' }),
+          user({ type: 'text', text: 'c' }),
+        ],
+      },
+      'anthropic',
+    )
+    const messages = (encoded.body as { messages: { content: unknown[] }[] }).messages
+    expect(messages[1]?.content[0]).toEqual({
+      type: 'thinking',
+      thinking: 'weighing it',
+      signature,
+      ...fixture.THINKING_EXTRA_FIELD,
+    })
+  })
+
   it('drops both on a model change and records why', async () => {
     const s = await session([fixture.VENDOR_BLOCKS_FRAMES, fixture.PLAIN_TEXT_FRAMES])
     await s.send('first')

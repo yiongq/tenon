@@ -486,6 +486,23 @@ describe('thinkingEffortSupport() answers from the row (01 修补 3)', () => {
     expect(zhipu.thinkingEffortSupport(FLASH)).toBe('effort')
     expect(zhipu.thinkingEffortSupport(GLM_4_6)).toBe('none')
   })
+
+  it('answers none for a declared shape that lists no effort level, on both wires', () => {
+    // Plan step 6: only a DECLARED level makes a row 'effort'; a shape without one has no tier.
+    const anthropic = instance(anthropicDefinition).provider
+    const zhipu = instance(zhipuDefinition).provider
+    for (const effortLevels of [undefined, []]) {
+      const levels = effortLevels === undefined ? {} : { effortLevels }
+      const adaptive = anthropicModel({
+        thinkingSpec: { mode: 'adaptive', defaultOn: true, ...levels },
+      })
+      const effortOnly = openAIModel({
+        thinkingSpec: { mode: 'effort-only', defaultOn: true, ...levels },
+      })
+      expect(anthropic.thinkingEffortSupport(adaptive)).toBe('none')
+      expect(zhipu.thinkingEffortSupport(effortOnly)).toBe('none')
+    }
+  })
 })
 
 describe('dropThinkingBefore (01 修补 2 and 3; H10)', () => {
@@ -514,6 +531,45 @@ describe('dropThinkingBefore (01 修补 2 and 3; H10)', () => {
     ).toEqual([
       { action: 'replay', reason: 'same-model' },
       { action: 'replay', reason: 'same-model' },
+    ])
+  })
+
+  it('keeps the thinking of the message at the cut itself, on both wires', () => {
+    // Plan step 6 (H10): "below the cut" is strict — the message the cut names is the first one kept.
+    expect(
+      encodeAnthropicMessages(
+        { model: anthropicModel(), messages, dropThinkingBefore: 3 },
+        'anthropic',
+      ).thinkingDecisions,
+    ).toEqual([
+      { action: 'drop', reason: 'compacted' },
+      { action: 'replay', reason: 'same-model' },
+    ])
+    // The OpenAI wire puts a system message first; the cut still counts `req.messages`.
+    const echoing = openAIModel({
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+    })
+    const zhipuThinking = thinkingBlock({ provider: 'zhipu', providerModel: echoing.id })
+    const zhipuMessages = messages.map((message) =>
+      message.role === 'assistant'
+        ? { ...message, content: [zhipuThinking, ...message.content.slice(1)] }
+        : message,
+    )
+    expect(
+      encodeOpenAIChat(
+        {
+          model: echoing,
+          system: 'be terse',
+          messages: zhipuMessages,
+          tools: [TOOL],
+          dropThinkingBefore: 3,
+        },
+        'zhipu',
+      ).thinkingDecisions,
+    ).toEqual([
+      { action: 'drop', reason: 'compacted' },
+      { action: 'echo', reason: 'same-model' },
     ])
   })
 

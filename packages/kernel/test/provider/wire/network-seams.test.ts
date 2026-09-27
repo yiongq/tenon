@@ -25,6 +25,7 @@ import type {
   SendContext,
   StreamEvent,
 } from '../../../src/index.js'
+import { fetchThroughHost } from '../../../src/provider/wire/transport.js'
 import { createStreamGate, fakeNetwork } from '../../../src/testing/index.js'
 import type { FakeExchange, FakeNetwork } from '../../../src/testing/index.js'
 import * as anthropicFixture from '../fixtures/anthropic-sse.js'
@@ -194,6 +195,38 @@ describe('the byte-level idle watchdog (旧 48, 旧 103)', () => {
     gate.release(rest.length)
     await run
     expect(events.at(-1)).toMatchObject({ type: 'stop', reason: 'end-turn' })
+    expect(time.armed()).toBe(0)
+  })
+})
+
+describe('the watchdog is torn down when the body is read to the end (旧 103, 01 修补 4)', () => {
+  // Below the SDK: through a provider, the SDK stops reading at message_stop and cancels what is
+  // left of the body, so the case above reaches the cancel path, not this one.
+  it('cancels its timer once the last byte is read, and never fires afterwards', async () => {
+    const time = countingClock()
+    const encoder = new TextEncoder()
+    const network: HostNetwork = {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode('a'))
+                controller.enqueue(encoder.encode('b'))
+                controller.close()
+              },
+            }),
+          ),
+        ),
+    }
+    const response = await fetchThroughHost(network, 'https://api.example.test/v1', undefined, {
+      clock: time.clock,
+      idleMs: 300_000,
+    })
+    expect(await response.text()).toBe('ab')
+    expect(time.armed()).toBe(0)
+    time.advance(300_000)
+    await flush()
     expect(time.armed()).toBe(0)
   })
 })
@@ -533,6 +566,17 @@ describe('quota-exhausted (旧 105)', () => {
     expect(await errorOf(anthropicDefinition, SONNET, 429, plain)).toMatchObject({
       code: 'rate-limit',
       retryable: true,
+    })
+  })
+
+  it('reads the spend limit at either nesting depth, as a relay may unwrap the error object', async () => {
+    // Plan step 7, 旧 105: `details` beside the vendor's own `type` and `message`, the body a gateway
+    // relays without the outer `{ type: 'error', error }` — otherwise a retryable rate limit.
+    expect(await errorOf(anthropicDefinition, SONNET, 429, spendLimit.error)).toMatchObject({
+      type: 'error',
+      code: 'quota-exhausted',
+      retryable: false,
+      resetAt: Date.parse('2026-10-01T00:00:00.000Z'),
     })
   })
 
