@@ -696,7 +696,16 @@ export function createLoop(deps: LoopDeps): Loop {
       await restoreTaken(ports, box, input.taken)
       return configMissing(ports, box, input.sessionId, lease, pre)
     }
-    const waiting = await waitingOf(tape, root)
+    let waiting: WaitingCall | null
+    try {
+      waiting = await waitingOf(tape, root)
+    } catch (error) {
+      // An auto-send's items go back before its lease does: what waits behind it finds the queue
+      // as it was, in order (models/README: 排队消息…按规定次序发出).
+      await restoreTaken(ports, box, input.taken)
+      finish(box, lease)
+      throw error
+    }
     // A stop that came while the pause was read: it closes the pause, not this message.
     if (lease.signal.aborted) {
       await restoreTaken(ports, box, input.taken)

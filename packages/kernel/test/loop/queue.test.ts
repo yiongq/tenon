@@ -13,6 +13,7 @@ import {
   createMemoryTapeStore,
 } from '../../src/index.js'
 import type {
+  LoopPorts,
   ModelInfo,
   SendResult,
   SessionEvent,
@@ -78,6 +79,7 @@ interface Harness {
 function harness(
   during?: (h: Harness) => void | Promise<void>,
   wrap?: (inner: TapeStore) => TapeStore,
+  ports?: (loop: TestLoopPorts) => LoopPorts,
 ): Harness {
   const inner = createMemoryTapeStore({ identity: IDENTITY })
   const store = wrap?.(inner) ?? inner
@@ -103,7 +105,7 @@ function harness(
     },
     { tools: {}, userSetting: () => ({ userSetting: 'always-allow' }) },
   )
-  service.bindLoop(loop)
+  service.bindLoop(ports?.(loop) ?? loop)
   self = { store, service, loop, provider, executed, inspector }
   return self
 }
@@ -434,6 +436,54 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
       ['second', false],
     ])
     await h.loop.runEnded({ runId: await startRun(h, 'third') })
+    expect(userTexts(await all(h))).toEqual(['first', 'second', 'third'])
+  })
+
+  it('puts a failed auto-send’s items back before the next command may take the queue', async () => {
+    // The lease that took them is finished only once they are back: the message behind it goes
+    // out with them, in their order (models/README: 排队消息…按规定次序发出), however slow the
+    // host's restore is.
+    let reads = 0
+    const restoring = Promise.withResolvers<void>()
+    const h = harness(
+      undefined,
+      (inner) =>
+        proxyStore(inner, {
+          // The auto-send's read of the pause fails: the second round's.
+          listPendingApprovals: (q) =>
+            (reads += 1) === 2
+              ? Promise.reject(new Error('SQLITE_IOERR: disk I/O error'))
+              : inner.listPendingApprovals(q),
+        }),
+      (loop) => ({
+        ...loop,
+        queue: {
+          ...loop.queue,
+          restore: async (...args: Parameters<LoopPorts['queue']['restore']>) => {
+            await restoring.promise
+            return loop.queue.restore(...args)
+          },
+        },
+      }),
+    )
+    h.provider.script(done())
+    h.provider.script(done())
+    const first = h.service.send({ sessionId: SESSION, origin: null, text: 'first' })
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'second' })
+    const started = await first
+    if (started.status !== 'started') throw new Error('not started')
+    const hold = h.loop.connector.holdAssemble()
+    await h.loop.runEnded({ runId: started.runId })
+    // The auto-send is prebuilding with 'second'; 'third' waits in the mailbox behind it.
+    await hold.reached
+    const third = h.service.send({ sessionId: SESSION, origin: null, text: 'third' })
+    hold.release()
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20)
+    })
+    restoring.resolve()
+    expect(await third).toMatchObject({ status: 'started' })
+    await h.loop.runEnded()
     expect(userTexts(await all(h))).toEqual(['first', 'second', 'third'])
   })
 
