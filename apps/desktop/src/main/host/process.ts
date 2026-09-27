@@ -7,7 +7,10 @@
  * - `exited` resolves on 'exit', never 'close': 'close' waits for every stdio stream
  *   to drain and never fires while an orphaned grandchild holds the pipe.
  * - `kill()` delivers the signal and resolves; escalation (SIGTERM → grace → SIGKILL)
- *   is the kernel's job through HostClock.
+ *   is the kernel's job through HostClock. Past `exited` it still reaches the group while
+ *   the group has members — a stop's SIGKILL is unconditional because the leader's exit
+ *   says nothing of its children (spec 02 §点停止时各状态怎么收「执行命令」) — and sends
+ *   nothing once the group was found empty.
  * - `exited` never rejects. `spawn()` rejects instead: a relative argv[0] never
  *   spawns, and a failed exec (ENOENT) surfaces as the rejection.
  * - `stream.Readable.toWeb()` is NOT used for stdout/stderr: it throws inside an
@@ -78,17 +81,23 @@ export async function spawnChild(spec: SpawnSpec, signal?: AbortSignal): Promise
   if (pid === undefined) throw new Error('child spawned without a pid')
 
   let hasExited = false
+  // Whether the group outlived its leader: members a stop's SIGKILL must still reach (spec 02
+  // §点停止时各状态怎么收「执行命令」). Read at the exit and after each signal sent past it.
+  let groupLeft = false
   const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
     child.once('exit', (code, sig) => {
       hasExited = true
+      groupLeft = groupAlive(pid)
       resolve({ code, signal: sig })
     })
   })
 
   const deliver = async (sig: 'SIGTERM' | 'SIGKILL'): Promise<void> => {
-    // Once reaped, -pid may name a different group.
-    if (hasExited) return
+    // Once reaped, -pid names this group only while the group has members (POSIX reuses no pid that
+    // is a live group's id); a group found empty may be someone else's by the next signal.
+    if (hasExited && !groupLeft) return
     await killTree(pid, sig)
+    if (hasExited) groupLeft = groupAlive(pid)
   }
 
   if (signal) {
@@ -188,6 +197,20 @@ function nullSink(): WritableStream<Uint8Array> {
       /* /dev/null */
     },
   })
+}
+
+/**
+ * Whether process group `pgid` has a member left, zombies included; never on win32, where taskkill
+ * walks the tree from a pid that must still be running.
+ */
+function groupAlive(pgid: number): boolean {
+  if (IS_WINDOWS) return false
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 /** Kill the process tree rooted at `pid`. ESRCH (already gone) is not an error. */
