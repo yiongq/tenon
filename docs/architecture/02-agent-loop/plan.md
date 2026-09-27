@@ -365,7 +365,7 @@
     - 旧 226（ThinkingBlock）：收起显示首句、展开显示摘要或 reasoning_content；流式时收起态显示用时，重启后重放的历史消息不显示用时；zh-CN、en 各一例。
     - 旧 27（界面）：`step-limit` 结束后界面出现「继续」。
   - 暂定与待定：开放问题 16 已定（owner 2026-09-26）：Run 状态用推送事件 `run.state`（contracts `ipc/run.ts` 与 registry 登记；RunRegistry 记 runId 并推送；每个窗口 `did-finish-load` 补推 `run.state` 与不为空的 `chat.queue`；渲染端状态表在 main.tsx 里作为静态 import 放在 `startRendererI18n` 之前），测试要点补：答复开的 Run、自动发出（预建期间 running 为真、runId 为 null）、子会话答复开的 Run 都推送；收交接时 runId 换成父会话的 Run；abort 后 running 为假、runId 仍在；finish 后 runId 为 null；同一同步段里的 finish 与 begin 只推一次；重载后新文档收到补推；`error.endReason` 已定（第 13 步做）；`user-message` 已定（第 17 步）；开放问题 26（「继续」行，已定）；多个文件夹时工作区外卡的 `facts.workspace` 填第一个（暂定）；新卡不抢焦点；`APPROVAL_CLICK_GUARD_MS` 按 Cowork 09-17 修过的叠卡行为自测取值，结果写进 components.md 的带日期补记；横幅 `approval.list` 的 `limit` 暂取 20（第 34 步校准）；开放问题 11 的界面读法；连接器卡参数默认展开（开放问题 15，已定），components.md 已有带日期补记。
-- [ ] 21. **① 的 live**（〔智谱 live〕；裁决 M2、A12、A1、H4、F3、H10、A2）
+- [x] 21. **① 的 live**（〔智谱 live〕；裁决 M2、A12、A1、H4、F3、H10、A2）
   - 读：§验收标准 第 39 条；§实测记录。
   - 交付物：`pnpm test:live` 的智谱 agent 用例（flashx 与 flash 各一遍）；实测结果写进本文件的 live 记录。
   - 验收：39（WebSearch 往返在第 28 步）。
@@ -789,6 +789,19 @@
   - 测试要点：kernel test/loop/calls.test.ts（真实 Run 上 `calls[i]` 的完成、拦截、拒绝、允许一次与本会话、拒绝后 not-run、还没有收口的调用；活收口与重画逐字段相同，含收紧判定）、allow-scope.test.ts（旧 217 kernel 半：答复作用域表每一行 `allowScope` 等于写进 `approval_resolved` 的 `grant.scope`）、retry-of.test.ts（`retryOf` 在各种开法与结束下的取值）、mailbox.test.ts 一例；contracts test/outcome.test.ts（外形、严格性、双向类型断言，路由 schema 里没有 `steps` / `decidedBy` / `basis`）。desktop 单测：copy-coverage.test.ts（旧 6，用 `@formatjs/icu-messageformat-parser` 取参数名，覆盖 ConfirmReason × kind、18 个结束码、4 个拦截码、全部 ClosureSource、行标记、期限、横幅、purposeKey）、session-store.test.ts、run-state*.test.ts、window-replay.test.ts、renderer-*.test.ts（模型、转换、转义、句子、卡片键、结束卡表、首句、队列表）、renderer-live-thread.test.ts（真实 kernel 上活事件折出的线程与重启后的重画逐条相同）。e2e 新增 tools、approval、run-end、thinking、navigation、queue、recovery、text-fit-02 八个文件：旧 214、97、21、222 部分、221、27、226、17 ①②③④、134、135、18 / 138（含 `session.latest` 失败也放开）、打开时续跑、22、220、223 双语不换行不截断，attempt-discarded，「复制诊断信息」的内容，「重试」重发同一条且过期后隐藏，缺 key 的发送，held 确认页不因修改排队项重开，任务形态配纯文字模型禁发，Esc 停止。突变测试两轮，没杀死的都补了测试。
   - 等后面步骤的：旧 4、旧 20、旧 216 的写入卡与撤不回卡，旧 218 的 Write 卡（第 22 步）；排队项退出即丢弃、停止与关窗（第 23 步）；提问 widget 与横幅「在等你回答」文案（旧 134 末句，第 26 步）；子 agent 的卡与「本次子任务」期限的 e2e（第 31 步）；「用新模型开新会话」遇到进行中 Run 走 LeaveRunDialog 的 e2e（旧 185 后半，代码已接，e2e 没写）；`APPROVAL_CLICK_GUARD_MS` 与横幅 limit 的校准（第 34 步）。
 
+- **2026-09-27 · 第 21 步（① 的 live）**，分支 `wt/02-step21` → `feat/02-seg1`，完成（format、lint、typecheck 过；默认 e2e 仍是 94 个、不收 live；`pnpm test:live -g zhipu` 7 个全过，旧 64 的重启用例连跑 3 遍过；代码一个提交，只动 `e2e/live-provider.spec.ts` 与 `tsconfig.e2e.json`，没有产品代码）。验收 39 满足（WebSearch 往返在第 28 步）。评审：一个实现 agent、一个复核 agent（覆盖、读数、key 扫描），复核的 5 条小问题都已改；key 扫描 0 命中。
+  - 实测记录（2026-09-27，open.bigmodel.cn，owner 的 key 只在进程内读）：
+    - 旧 62：任务形态两轮对话、两次工具往返（Grep 在工作区内不出卡；Read 工作区外出卡、点「允许」后续跑），glm-5.3-flashx 与 glm-5.3-flash 各 4 次请求全 200；Tape 里 `run_started` 的 cause 依次为 user-message、user-message、resume，终态 completed、paused、completed；两个模型都把上一轮的思考作为 `reasoning_content` 回传。flash 的隐式缓存命中高于 flashx（1728–1984 对 0–1600 token）。
+    - 旧 63：glm-5.3-flash 上经模型菜单选 low、high、max，三次都 200，请求体 `reasoning_effort` 与所选一致；reasoning_tokens 只作记录：0、4、9（一词回答，两次跑相同）。可选项：`medium` 答 `400 1210`（「该模型始终思考，不支持关闭思考；请使用 low、high 或 max」），与模型表不列 medium 一致。
+    - 旧 64：映射出的长名字（64 字符的哈希名、替换 `.` 后的哈希名、正好 64 的原名）在智谱线被接受，模型按映射名回调、按原名执行；glm-5.3-flash 上出卡后退出重启、再允许，续跑请求里暂停那一轮的 `reasoning_content` 与 Tape 里的思考逐字相同，200 且完成。它在短任务上约三次里有一次调用前不出思考，用例对第一次启动最多重试三次、直到暂停的那一轮带思考。01 验收 21（流式与停止）仍过。
+    - 旧 233：智谱定义（openai-chat 线）上 glm-4.6（表里唯一 200K 窗口的行；5.3 系为 1M）流式发 140 万字符输入，答 `400`、`{"error":{"code":"1261","message":"Prompt 超长"}}`，没有 SSE、没有 `finish_reason: model_context_window_exceeded`；映射为 `context-overflow`、不重发。同输入的直接非流式请求答同一个 400 原文，消息里没有 token 数（供第 30 步）。
+    - 实测 A2：截断落在唯一的工具调用中途、之前没有思考也没有文字时，按 01 的「半截的不写」不写 `message/assistant`，「继续」发出去的只有用户消息，模型从头再发同一个调用，在同一个 max_tokens 处再被截断，两次都 200 但没有进展；截断前有思考时，续写带着思考发出、模型在上限内重发完整调用并完成。没有 400，所以暂定项的 400 分支不触发；没有进展这一条记进 Open 等 owner 定。
+    - 实测：Grep 的 `-A`、`-B`、`-C`、`-i`、`-n`、`-o` 这类以「-」开头的 JSON schema 属性名，两个模型 8 次请求全 200，模型也用了 `"-i": true`，与 H7 不冲突。
+    - A5 的间隔实测：第 7 步已跑完四行，没有遗留。
+  - 本步的读法（第 22 步复核）：① live 用例抓请求体不经本地代理：A9 的 key 绑定主机不把环境变量里的 key 发往声明主机以外的地址，本地代理收不到请求；改为在主进程里包一层 `globalThis.fetch`，只记 URL、方法、JSON 请求体与状态码，不记请求头。② 长名字那一例在进程内驱动 kernel（① 的 desktop 不注册连接器），baseURL 只用智谱的声明主机，与 app 的 key 绑定一致。③ 旧 62 的卡片由工作区外的 Read 触发（① 只有 Read、Glob、Grep），写入类在第 22 步。
+  - 测试要点：`e2e/live-provider.spec.ts` 新增「live agent · zhipu」组（旧 62 两个模型、旧 63、旧 64 两例），修了步骤 20 改名停止钮后 01 验收 21 的两个用例；旧 233、A2 与「-」属性名的探针在 scratchpad 跑、结果记在上面，不入库。
+  - 等后面步骤的：A2 没有进展时「继续」怎么办（Open，等 owner 定）；旧 233 的原文供第 30 步摘要压缩用。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -806,7 +819,7 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–20 步已并进这个分支（都已勾），下一步是第 21 步（① 的 live，在 `feat/02-seg1` 上新开 worktree 做）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–21 步已并进这个分支（都已勾）。① 的 PR 之前还有：第 5–19 步补评审查出的问题的修复（2026-09-27 补评审确认 137 条，见实施记录「① 补评审」），以及第 5–19 步的突变视角。
 
 - **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步与第 5 步的突变视角都没跑独立评审，实施记录里各标了「独立评审待补」，① 的 PR 合并之前补跑（照第 2–4 步的三视角加核查）。 2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审仍待做，在 ① 的 PR 合并之前。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
@@ -821,4 +834,5 @@
 - 给数：`SUBAGENT_STEP_LIMIT`、`SUBAGENT_TOKEN_LIMIT`（步数须小于 100），第 31 步开工前（开放问题 19）。
 - owner 补录：B1 #2（审批卡挂着时点停止，Cowork 作废还是保留卡片），最晚第 15 步前（开放问题 14）；F11 与 H13 #1（审批卡挂着时发新消息）；D7 三项（手动档下跑 `ls` 会不会先弹卡、新账号的初始审批档、覆盖已连接文件夹里的已有文件是否也不逐次问）；F6 #5（多张审批卡是否来自同一批、能否跳着答、拒绝一张后其余怎样）；F7 #3（子 agent 的审批卡出现在哪、会不会超时）；B3（停在任务页直接 Cmd+Q 再启动，落在首页还是该任务；落在任务页就按 B3-A 的改判重比 A 和 D）；H1 自查（自己的 Claude 消息框里还有没有 Chat / Cowork 选项）；Cowork 覆盖已有文件、跑 shell 命令时弹不弹卡。除 B1 #2 外都在同题对比开跑前补齐（第 34 步），补录后更新 docs/evals/README.md 已知差异清单的第 1 条和第 8 条。
 - owner 的 key 下次撞到智谱额度上限时，抓 1308、1310 报文的原文，供补 `resetAt` 的解析（第 7 步）。
+- 拍板（第 21 步实测 A2）：截断落在唯一的工具调用中途、之前没有思考和文字时，按「半截的不写」什么都不留，「继续」只能从头再发同一个调用、在同一个 max_tokens 处再被截断，永远没有进展。候选：A. 这种截断（本轮什么都没写下）时「继续」改为把 max_tokens 加倍（不超过模型上限）整轮重发，走 Revisions——即 plan 第 21 步暂定项里 400 分支的同一做法；B. 维持现状，失败卡只写「截断」，由用户自己换模型或拆小任务。推荐 A。第 22 步的大段 Write 最容易碰上，最晚第 22 步收尾前定。
 - M8 landing：在 ChatGPT 的 Data Controls 里关掉训练；主账号先不订 GLM Coding Plan；需要时买智谱资源包，并在账单上核对 flash 的实际单价与资源包的扣减方式。
