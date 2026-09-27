@@ -110,7 +110,10 @@ describe('pnpm test runs the evals format check (旧 228)', () => {
     const evals = (await import(pathToFileURL(join(EVALS, 'vitest.config.ts')).href)) as {
       default: { test: { name: string; include: string[] } }
     }
-    expect(evals.default.test).toMatchObject({ name: 'evals', include: ['*.test.ts'] })
+    expect(evals.default.test).toMatchObject({
+      name: 'evals',
+      include: ['*.test.ts', 'test/**/*.test.ts'],
+    })
     expect(readFileSync(join(EVALS, 'format.test.ts'), 'utf8')).not.toMatch(
       /\.skip|skipIf|runIf|todo/,
     )
