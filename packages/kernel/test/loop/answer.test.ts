@@ -232,7 +232,7 @@ function attemptSnapshot(entry: TapeEntry | undefined): unknown {
 }
 
 /** `writer` for a fact the Run `runId` wrote (§键与挂靠). */
-function by(runId: string | undefined): unknown {
+function by(runId: string | null | undefined): unknown {
   return { by: 'run', runId }
 }
 

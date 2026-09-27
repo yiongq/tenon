@@ -23,6 +23,8 @@ import type { PromptLayer } from '../../src/prompts/layer.js'
  */
 const LAYER_HISTORY: Readonly<Record<number, string>> = {
   1: '62cfe9ae7da9a26873d295566ace5d21277ed329c33f745309d7cd64175ae039',
+  // The connector notes (connectorFailed, connectorEmpty) joined the layer (plan step 18 catch-up).
+  2: '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc',
 }
 
 describe('the version gate', () => {

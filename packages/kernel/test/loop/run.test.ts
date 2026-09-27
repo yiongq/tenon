@@ -108,8 +108,6 @@ interface HarnessOptions {
   readonly onEvent?: (event: SessionEvent) => void
   /** The ports the service is bound to, when a case needs to hold one of them. */
   readonly ports?: (loop: TestLoopPorts) => LoopPorts
-  /** Default: a host whose timers fire at once. */
-  readonly host?: HostAdapter
   /** A provider's retry advice other than the scripted one's. */
   readonly retryAdvice?: { maxAttempts: number; baseDelayMs: number }
   /** The first id handed out: a restarted app's ids never repeat the ones before. */
