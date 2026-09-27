@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { changeView, defaultButton, keyAnswer, keyHints, objectParts } from '@/lib/approval-card'
 import { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey } from '@/lib/approval-keys'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
@@ -30,39 +31,34 @@ function titleKey(card: Card): string {
 /** The object line: the one thing the card is about, in full, escaped (②, ②′; E4). */
 export function ObjectLine(props: { readonly target: Card['target'] }): JSX.Element {
   const { t } = useTranslation()
-  const { target } = props
-  const mono = 'block whitespace-pre-wrap break-all font-mono text-ui-sm text-text-primary'
-  switch (target.type) {
-    case 'path':
-      return <code className={mono}>{visible(target.path)}</code>
-    case 'command':
-      return (
-        <span className="flex flex-col gap-0.5">
-          <code className={mono}>{visible(target.command)}</code>
-          <span className="font-sans text-micro text-text-muted">
-            {t('confirm.cwd', { cwd: visible(target.cwd) })}
+  const parts = objectParts(t, props.target)
+  const [only] = parts
+  if (parts.length === 1 && only !== undefined)
+    return <code className={PART_CLASS.value}>{only.text}</code>
+  return (
+    <span className="flex flex-col gap-0.5">
+      {parts.map((part, index) =>
+        part.role === 'note' ? (
+          // oxlint-disable-next-line react/no-array-index-key -- the parts are fixed per target type
+          <span key={index} className={PART_CLASS.note}>
+            {part.text}
           </span>
-        </span>
-      )
-    case 'search':
-      return (
-        <span className="flex flex-col gap-0.5">
-          <code className={mono}>{visible(target.query)}</code>
-          <span className="font-mono text-micro text-text-muted">{visible(target.host)}</span>
-        </span>
-      )
-    case 'url':
-      return <code className={mono}>{visible(target.url)}</code>
-    case 'tool':
-      // Two parts, never joined into one string: a tool's own name may hold spaces and ·.
-      return (
-        <span className="flex flex-col gap-0.5">
-          <code className={mono}>{visible(target.serverId)}</code>
-          <code className={mono}>{visible(target.toolName)}</code>
-        </span>
-      )
-  }
+        ) : (
+          // oxlint-disable-next-line react/no-array-index-key -- the parts are fixed per target type
+          <code key={index} className={PART_CLASS[part.role]}>
+            {part.text}
+          </code>
+        ),
+      )}
+    </span>
+  )
 }
+
+const PART_CLASS = {
+  value: 'block whitespace-pre-wrap break-all font-mono text-ui-sm text-text-primary',
+  note: 'font-sans text-micro text-text-muted',
+  host: 'font-mono text-micro text-text-muted',
+} as const
 
 /** A card's facts as its sentence shows them: the same escaping as the object line (②′). */
 function visibleFacts(facts: Readonly<Record<string, string>>): Record<string, string> {
@@ -79,39 +75,36 @@ function visibleFacts(facts: Readonly<Record<string, string>>): Record<string, s
 export function ApprovalCard(props: {
   readonly pending: PendingCard
   readonly since: number
+  /** The call's tool as its row names it: which of a write's arguments are its change (⑤). */
+  readonly toolName: string
   readonly input: Readonly<Record<string, unknown>>
   readonly onRespond: (decision: 'allow' | 'deny') => void
 }): JSX.Element {
   const { t } = useTranslation()
   const { card } = props.pending
-  const irreversible = card.reversibility === 'irreversible'
   const allowRef = useRef<HTMLButtonElement | null>(null)
   const denyRef = useRef<HTMLButtonElement | null>(null)
-  const [showInput, setShowInput] = useState(card.target.type === 'tool')
+  const change = changeView(card, props.toolName, props.input)
+  const [showChange, setShowChange] = useState(change?.expanded === true)
+  const hints = keyHints(card)
   const subtask = props.pending.callKey !== props.pending.anchorCallKey
   const guarded = (): boolean => Date.now() - props.since < APPROVAL_CLICK_GUARD_MS
   const answer = (decision: 'allow' | 'deny'): void => {
     if (!guarded()) props.onRespond(decision)
   }
   const onKeyDown = (event: KeyboardEvent<HTMLFieldSetElement>): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      answer('deny')
-    } else if (event.key === 'Enter') {
-      if (irreversible) {
-        // The card takes Enter from every button, 「允许」 included: here it only ever denies.
-        event.preventDefault()
-        answer('deny')
-      } else {
-        // React types `target` as the card; it is whichever element inside had focus.
-        const from: EventTarget = event.target
-        if (from !== event.currentTarget && from !== allowRef.current) return
-        event.preventDefault()
-        answer('allow')
-      }
-    }
+    // React types `target` as the card; it is whichever element inside had focus.
+    const from: EventTarget = event.target
+    const decision = keyAnswer(
+      card,
+      event.key,
+      from === event.currentTarget ? 'card' : from === allowRef.current ? 'allow' : 'other',
+    )
+    if (decision === null) return
+    // Taken from the button too: on an irreversible card ⏎ on 「允许」 denies.
+    event.preventDefault()
+    answer(decision)
   }
-  const writes = card.kind === 'file' && card.reversibility !== 'read-only'
   return (
     // A card, not a control: ⏎ and Esc from its buttons bubble here, which is how ⏎ on 「允许」
     // still denies an irreversible card (§最小审批卡).
@@ -127,7 +120,7 @@ export function ApprovalCard(props: {
         // coming back with the window (no related target), or put there by a click stays put.
         const from = event.relatedTarget
         if (!(from instanceof Node) || event.currentTarget.contains(from)) return
-        const preferred = (irreversible ? denyRef : allowRef).current
+        const preferred = (defaultButton(card) === 'deny' ? denyRef : allowRef).current
         // React types `target` as the card; it is whichever element inside took focus.
         const into: Element = event.target
         if (preferred === null || into === preferred) return
@@ -144,34 +137,52 @@ export function ApprovalCard(props: {
       <p className="text-ui-sm text-text-secondary" data-testid="approval-reason">
         {tx(t, reasonKey(card), visibleFacts(card.facts))}
       </p>
-      {irreversible ? (
+      {card.reversibility === 'irreversible' ? (
         <p className="text-ui-sm font-medium text-text-danger" data-testid="approval-irreversible">
           {t('confirm.irreversible')}
         </p>
       ) : null}
-      {writes || card.target.type === 'tool' ? (
+      {change === null ? null : (
         <div>
-          {card.target.type === 'tool' ? (
+          {change.kind === 'arguments' ? (
             <p className="text-micro text-text-muted">{t('confirm.arguments')}</p>
           ) : (
             <button
               type="button"
+              data-testid="approval-change-toggle"
+              aria-expanded={showChange}
               className="text-micro text-text-muted underline"
-              onClick={() => setShowInput((open) => !open)}
+              onClick={() => setShowChange((open) => !open)}
             >
               {t('confirm.showChange')}
             </button>
           )}
-          {showInput ? (
-            <pre
-              data-testid="approval-input"
-              className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-0 p-2 font-mono text-micro text-text-primary"
-            >
-              {visible(JSON.stringify(props.input, null, 2))}
-            </pre>
+          {showChange ? (
+            <div data-testid="approval-input" className="mt-1 flex flex-col gap-1">
+              {change.sections.map((section) => (
+                <div key={section.label ?? ''} data-testid="approval-change-section">
+                  {section.label === null ? null : (
+                    <p className="text-micro text-text-muted" data-testid="approval-change-label">
+                      {t(section.label as never)}
+                    </p>
+                  )}
+                  <pre
+                    data-testid="approval-change-text"
+                    className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-0 p-2 font-mono text-micro text-text-primary"
+                  >
+                    {section.text}
+                  </pre>
+                </div>
+              ))}
+              {change.note === null ? null : (
+                <p className="text-micro text-text-muted" data-testid="approval-change-note">
+                  {t(change.note as never)}
+                </p>
+              )}
+            </div>
           ) : null}
         </div>
-      ) : null}
+      )}
       <div className="flex items-center justify-end gap-2">
         <span className="mr-auto text-micro text-text-muted" data-testid="approval-scope">
           {t(scopeKey(props.pending.allowScope, card.target.type, subtask) as never)}
@@ -184,10 +195,8 @@ export function ApprovalCard(props: {
           onClick={() => answer('deny')}
         >
           {t('confirm.deny')}
-          <kbd className="ml-1 text-micro text-text-muted">
-            {irreversible
-              ? `${t('confirm.key.enter')} ${t('confirm.key.esc')}`
-              : t('confirm.key.esc')}
+          <kbd className="ml-1 text-micro text-text-muted" data-testid="approval-deny-keys">
+            {hints.deny.map((key) => t(key as never)).join(' ')}
           </kbd>
         </Button>
         <Button
@@ -197,8 +206,10 @@ export function ApprovalCard(props: {
           onClick={() => answer('allow')}
         >
           {t('confirm.allow')}
-          {irreversible ? null : (
-            <kbd className="ml-1 text-micro text-text-on-accent">{t('confirm.key.enter')}</kbd>
+          {hints.allow.length === 0 ? null : (
+            <kbd className="ml-1 text-micro text-text-on-accent" data-testid="approval-allow-keys">
+              {hints.allow.map((key) => t(key as never)).join(' ')}
+            </kbd>
           )}
         </Button>
       </div>

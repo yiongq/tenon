@@ -120,6 +120,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             key={pending.card.requestId}
             pending={pending}
             since={snapshot.pendingSince}
+            toolName={props.toolName}
             input={input}
             onRespond={(decision) => void store.respond(decision)}
           />

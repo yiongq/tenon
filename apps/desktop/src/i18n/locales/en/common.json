@@ -308,6 +308,11 @@
       "subtaskDomain": "This domain, this subtask"
     },
     "showChange": "Show the change",
+    "change": {
+      "old": "Replace",
+      "new": "With",
+      "replaceAll": "Every occurrence is replaced."
+    },
     "arguments": "Arguments",
     "cwd": "in {cwd}",
     "answered": {
