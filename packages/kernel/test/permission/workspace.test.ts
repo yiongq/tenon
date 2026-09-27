@@ -114,6 +114,18 @@ describe('locatePath', () => {
     expect((await locatePath(fs, p('/home/.zshrc2'), scope)).place).toBe('outside')
   })
 
+  it('folds the protected list too: an entry in mixed case, as macOS’s /Users/<name> is, still protects', async () => {
+    const { fs, host, scope } = await world()
+    await host.fs.mkdirp(p('/Users/U'))
+    await host.fs.writeFile(p('/Users/U/.zshrc'), '')
+    const listed = { ...scope, roots: [p('/')], protectedFiles: [p('/Users/U/.zshrc')] }
+    // The exact spelling, and one in another case (missing on this case-sensitive host).
+    for (const path of ['/Users/U/.zshrc', '/Users/U/.ZSHRC']) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time
+      expect(await locatePath(fs, p(path), listed)).toEqual({ real: path, place: 'protected' })
+    }
+  })
+
   it('places new files and new nested folders inside the workspace, keeping what the model wrote', async () => {
     const { fs, scope } = await world()
     expect(await locatePath(fs, p('/ws/new/deeper/file.txt'), scope)).toEqual({

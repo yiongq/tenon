@@ -37,9 +37,10 @@ import type {
 } from '../../src/index.js'
 import { STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import { reversibilityOf } from '../../src/permission/reversibility.js'
-import { MODEL_NOTES } from '../../src/prompts/index.js'
+import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
 import { COMMAND_SCRIPT } from '../../src/tools/builtin/bash.js'
 import type { CommandShell } from '../../src/tools/builtin/bash.js'
+import { WRITE_TEXTS } from '../../src/tools/builtin/write.js'
 import {
   createCounterIds,
   createFakeInspector,
@@ -219,31 +220,49 @@ async function harness(o: {
 
 let nextCall = 1
 
-/** One reply asking for one call. */
-function callOf(name: string, input: Record<string, unknown>): StreamEvent[] {
-  const id = `toolu_${String(nextCall++)}`
+/** A call of a reply after the first, in the same batch. */
+type LaterCall = readonly [name: string, input: Record<string, unknown>]
+
+/** One reply asking for the call, and for the later ones after it. */
+function callOf(
+  name: string,
+  input: Record<string, unknown>,
+  later: readonly LaterCall[] = [],
+): StreamEvent[] {
+  const calls: readonly LaterCall[] = [[name, input], ...later]
   return [
-    { type: 'tool-call-start', index: 1, id, name },
-    { type: 'tool-call-end', index: 1, id, name, input },
+    ...calls.flatMap(([called, args], k): StreamEvent[] => {
+      const id = `toolu_${String(nextCall++)}`
+      return [
+        { type: 'tool-call-start', index: k + 1, id, name: called },
+        { type: 'tool-call-end', index: k + 1, id, name: called, input: args },
+      ]
+    }),
     { type: 'usage', usage: USAGE },
     stopEvent('tool-use', 'tool_use'),
   ]
 }
 
-async function send(h: Harness, name: string, input: Record<string, unknown>): Promise<string> {
-  h.provider.script(callOf(name, input))
+async function send(
+  h: Harness,
+  name: string,
+  input: Record<string, unknown>,
+  later: readonly LaterCall[] = [],
+): Promise<string> {
+  h.provider.script(callOf(name, input, later))
   const sent = await h.service.send({ sessionId: SESSION, origin: null, text: `call ${name}` })
   if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
   return sent.runId
 }
 
-/** Sends a message whose reply asks for the call; the Run pauses on its card. */
+/** Sends a message whose reply asks for the call (and the later ones); the Run pauses on its card. */
 async function pausedOn(
   h: Harness,
   name: string,
   input: Record<string, unknown>,
+  later: readonly LaterCall[] = [],
 ): Promise<PendingCard> {
-  const runId = await send(h, name, input)
+  const runId = await send(h, name, input, later)
   expect((await h.loop.runEnded({ runId })).reason).toEqual({
     code: 'paused',
     waitingFor: 'approval',
@@ -288,6 +307,24 @@ async function lastOf(h: Harness, name: string): Promise<Record<string, unknown>
   const found = (await named(h, name)).at(-1)
   if (found === undefined) throw new Error(`no ${name}`)
   return found.payload
+}
+
+/** Every closure's `<i>`, state, source and reversibility, in Tape order. */
+async function outcomes(h: Harness): Promise<string[]> {
+  return (await named(h, 'execution/tool_outcome')).map(({ payload }) =>
+    [payload['ordinal'], payload['state'], payload['source'], payload['reversibility']].join(' '),
+  )
+}
+
+/** Answers the card allow without waiting for the answer: the resumed Run may be held meanwhile. */
+function allowing(h: Harness, pending: PendingCard): ReturnType<SessionService['answer']> {
+  return h.service.answer({
+    kind: 'approval',
+    sessionId: SESSION,
+    requestId: pending.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
 }
 
 describe('a command the pattern table calls irreversible (旧 96)', () => {
@@ -418,6 +455,35 @@ describe('Write in the workspace (旧 215, the kernel half)', () => {
     ).toEqual({
       type: 'path',
       path,
+    })
+  })
+
+  it('acts on the card’s path after the allow: a link swapped in there before the dispatch is not followed', async () => {
+    const h = await harness({})
+    const path = absolutePath(`${WORK}/notes.md`)
+    const secret = absolutePath('/outside/secret')
+    await h.memory.fs.mkdirp(absolutePath('/outside'))
+    await h.memory.fs.writeFile(secret, 'orig')
+    const pending = await pausedOn(h, 'Write', { file_path: path, content: 'x' })
+    expect(pending.card.target).toEqual({ type: 'path', path })
+    // The answer judges the card's path again; the link lands while the resumed Run assembles.
+    const held = h.loop.connector.holdAssemble()
+    h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+    const answered = allowing(h, pending)
+    await held.reached
+    h.memory.symlink(path, secret)
+    held.release()
+    expect(await answered).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    // §「在不在工作区里」第 5 步: the card's real path no longer names itself, so nothing is written.
+    expect(await h.memory.fs.readFile(secret, { encoding: 'utf8' })).toBe('orig')
+    expect(await lastOf(h, 'tool/result')).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: fill(WRITE_TEXTS.resolvesElsewhere, { path }) }],
+    })
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'completed',
+      source: null,
     })
   })
 })
@@ -614,6 +680,41 @@ describe('a stop while Bash awaits its base environment', () => {
     expect(spawned).toBe(0)
   })
 
+  it('closes the calls after it not-run / stopped too, with no decision fact: unknown', async () => {
+    const env = Promise.withResolvers<Readonly<Record<string, string>>>()
+    const reached = Promise.withResolvers<void>()
+    let spawned = 0
+    const h = await harness({
+      process: {
+        spawn: () => {
+          spawned += 1
+          return Promise.reject(new Error('never spawned'))
+        },
+      },
+      commandShell: {
+        path: absolutePath('/bin/sh'),
+        env: () => {
+          reached.resolve()
+          return env.promise
+        },
+      },
+    })
+    const pending = await pausedOn(h, 'Bash', { command: 'rm -rf build' }, [
+      ['Bash', { command: 'rm -rf dist' }],
+    ])
+    expect(await allowing(h, pending)).toEqual({ status: 'applied' })
+    await reached.promise
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
+    env.resolve({})
+    expect(await outcomes(h)).toEqual([
+      '0 not-run stopped irreversible',
+      '1 not-run stopped unknown',
+    ])
+    expect(await named(h, 'execution/dispatch_committed')).toEqual([])
+    expect(spawned).toBe(0)
+  })
+
   it('keeps that reversibility when the stop lands after the environment came, before the dispatch’s write', async () => {
     let armed = false
     let stop: (() => void) | null = null
@@ -701,6 +802,31 @@ describe('a stop while Bash awaits its base environment', () => {
   })
 })
 
+describe('a stop while the answered Run assembles, before its batch', () => {
+  it('closes the approved call not-run / stopped with its decision’s reversibility, the rest unknown', async () => {
+    const h = await harness({ registry: 'test' })
+    const pending = await pausedOn(h, 'Bash', { command: 'rm -rf build' }, [
+      ['Bash', { command: 'rm -rf dist' }],
+    ])
+    const held = h.loop.connector.holdAssemble()
+    const answered = allowing(h, pending)
+    await held.reached
+    // The resumed Run's head is on the Tape; the stop does not wait for its assembly (resumeSetup).
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect(await answered).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
+    held.release()
+    expect(await lastOf(h, 'tool/permission_decided')).toMatchObject({
+      reversibility: 'irreversible',
+    })
+    expect(await outcomes(h)).toEqual([
+      '0 not-run stopped irreversible',
+      '1 not-run stopped unknown',
+    ])
+    expect(await named(h, 'execution/dispatch_committed')).toEqual([])
+  })
+})
+
 describe('a stop while the card waits (§每种答复同批写什么「暂停中停止」)', () => {
   it('closes the waiting call not-run / stopped with its decision’s reversibility', async () => {
     const h = await harness({ registry: 'test' })
@@ -711,5 +837,29 @@ describe('a stop while the card waits (§每种答复同批写什么「暂停中
       source: 'stopped',
       reversibility: 'irreversible',
     })
+  })
+
+  // Only the waiting call has a decision fact; the calls waiting with it have none (§载荷).
+  it('closes the calls waiting with it as unknown', async () => {
+    const h = await harness({ registry: 'test' })
+    await pausedOn(h, 'Bash', { command: 'rm -rf build' }, [['Bash', { command: 'rm -rf dist' }]])
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect(await outcomes(h)).toEqual([
+      '0 not-run stopped irreversible',
+      '1 not-run stopped unknown',
+    ])
+  })
+
+  it('closes them the same way when a new message supersedes the card', async () => {
+    const h = await harness({ registry: 'test' })
+    await pausedOn(h, 'Bash', { command: 'rm -rf build' }, [['Bash', { command: 'rm -rf dist' }]])
+    h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'instead' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason).toEqual({ code: 'completed' })
+    expect(await outcomes(h)).toEqual([
+      '0 not-run superseded irreversible',
+      '1 not-run superseded unknown',
+    ])
   })
 })

@@ -1418,6 +1418,9 @@ export function createLoop(deps: LoopDeps): Loop {
           decisionKey: waiting.decisionKey,
           summary: waiting.decision.summary,
           reversibility: waiting.decision.reversibility,
+          // The card's real path, as the re-judgement placed it: the executor acts there, and its
+          // re-check refuses it if a link has moved it since (§「在不在工作区里」第 5 步).
+          target: judged.target,
         },
       }
     }

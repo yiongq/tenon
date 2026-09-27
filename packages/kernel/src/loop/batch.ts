@@ -119,6 +119,12 @@ export interface ApprovedCall {
   readonly decisionKey: string
   readonly summary: DecisionSummary
   readonly reversibility: Reversibility
+  /**
+   * Where a file tool acts: the real path the answer's re-judgement placed, the card's own; null for
+   * any other tool. Not located again after the dispatch — the executor's re-check guards this path
+   * (§「在不在工作区里」第 5 步).
+   */
+  readonly target: AbsolutePath | null
 }
 
 /**
@@ -223,19 +229,17 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         const command = await commandRunOf(ctx, call, item, facts)
         if (command === 'stopped') {
           // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-          await closeApprovedAndRest(ctx, ctx.approved, k)
+          await closeRest(ctx, ctx.calls.slice(k), 'stopped')
           return { kind: 'stopped' }
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
         if (!(await dispatchOnce(ctx, call, item, [dispatch], dispatch))) continue
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-        const target = await locate(ctx.host, item, call.input, facts.scope)
-        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await execute(ctx, call, item, executor, {
           reversibility: ctx.approved.reversibility,
           summary: ctx.approved.summary,
-          target: target?.real ?? null,
+          target: ctx.approved.target,
           scope: facts.scope,
           command,
         })
@@ -299,9 +303,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
       // call and the rest close as a stop while judging would (§点停止时各状态怎么收).
       // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-      await (ctx.approved?.ordinal === call.ordinal
-        ? closeApprovedAndRest(ctx, ctx.approved, k)
-        : closeRest(ctx, ctx.calls.slice(k), 'stopped'))
+      await closeRest(ctx, ctx.calls.slice(k), 'stopped')
       return { kind: 'stopped' }
     }
   }
@@ -537,32 +539,10 @@ async function close(
 }
 
 /**
- * A stop before the approved call's dispatch: it closes not-run / stopped with the reversibility of
- * the asking decision it already has (§载荷 ToolOutcomePayload: 取判决事实里的值), then the rest.
+ * Closes calls that will not run, in order, all with one source. The approved call has the asking
+ * decision it answered, whose reversibility it keeps; the rest have none, so `unknown` (§载荷
+ * ToolOutcomePayload: 取判决事实里的值).
  */
-async function closeApprovedAndRest(
-  ctx: BatchContext,
-  approved: ApprovedCall,
-  k: number,
-): Promise<void> {
-  const call = ctx.calls[k]
-  if (call === undefined) throw new Error('batch: the approved call is not in the batch')
-  await close(
-    ctx,
-    call,
-    notRunFacts({
-      tape: ctx.tape,
-      now: ctx.now,
-      call: refOf(ctx, call),
-      source: 'stopped',
-      reversibility: approved.reversibility,
-      writer: ctx.writer,
-    }),
-  )
-  await closeRest(ctx, ctx.calls.slice(k + 1), 'stopped')
-}
-
-/** Closes calls that will not run, in order, all with one source. */
 async function closeRest(
   ctx: BatchContext,
   calls: readonly CompleteCall[],
@@ -574,6 +554,9 @@ async function closeRest(
       now: ctx.now,
       call: refOf(ctx, call),
       source,
+      ...(ctx.approved?.ordinal === call.ordinal
+        ? { reversibility: ctx.approved.reversibility }
+        : {}),
       writer: ctx.writer,
     })
     // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
