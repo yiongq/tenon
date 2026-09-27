@@ -138,6 +138,17 @@ describe('locatePath', () => {
       real: 'D:\\nothing\\here',
       place: 'outside',
     })
+    // A host that answers null all the way up to the root (the desktop host on a drive that is not
+    // there): unresolved, and outside even under a root the scope names.
+    const absent = { realpath: () => Promise.resolve(null) } as unknown as HostFs
+    expect(await resolvePath(absent, p('/ws/src/a.ts'))).toEqual({
+      path: '/ws/src/a.ts',
+      resolved: false,
+    })
+    expect(await locatePath(absent, p('/ws/src/a.ts'), scope)).toEqual({
+      real: '/ws/src/a.ts',
+      place: 'outside',
+    })
   })
 
   it('resolves roots the same way, so a workspace under a link is not everything-outside (D8)', async () => {
