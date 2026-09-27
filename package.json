@@ -21,7 +21,9 @@
     "dev": "pnpm --filter @tenon-app/desktop dev",
     "copy:check": "node scripts/check-copy.mjs",
     "tape:check": "node scripts/check-tape-schema.mjs",
-    "test:live": "pnpm build && pnpm --filter @tenon-app/desktop test:live"
+    "test:live": "pnpm build && pnpm --filter @tenon-app/desktop test:live",
+    "eval": "pnpm build && TENON_EVAL=1 vitest run --project evals",
+    "evals:gate": "TENON_EVALS_GATE=1 vitest run --project evals"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.2",

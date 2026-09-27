@@ -67,8 +67,9 @@ export type {
   TestLoopPortsOptions,
 } from './loop-ports.js'
 
-// The same service with the test tool registry and injected layer-3 readings (plan step 10).
-export { createTestSessionService } from './test-service.js'
+// The same service with the test tool registry and injected layer-3 readings (plan step 10), and the
+// product service with an eval's token limit (plan step 25).
+export { createEvalSessionService, createTestSessionService } from './test-service.js'
 export type { TestServiceExtras, TestToolRegistry } from './test-service.js'
 
 // A scriptable inspector (plan step 12).

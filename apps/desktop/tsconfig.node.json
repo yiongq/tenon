@@ -13,6 +13,7 @@
   },
   "include": [
     "src/main/**/*.ts",
+    "evals/**/*.ts",
     "src/preload/**/*.ts",
     "src/i18n/**/*.ts",
     "test/**/*.ts",

@@ -336,6 +336,9 @@ export type {
   SessionServiceOptions,
 } from './session/service.js'
 export type { RowCall } from './loop/calls.js'
+// The prompt layer's version and hash, which every eval record cites (spec 02 §提示层「版本闸」;
+// plan step 25): the runner reads them here, the texts stay the kernel's.
+export { PROMPT_LAYER_HASH, PROMPT_LAYER_VERSION } from './prompts/index.js'
 // The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
 // revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
 export { readEffectiveMessages } from './tape/replay.js'

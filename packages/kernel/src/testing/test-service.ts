@@ -7,6 +7,10 @@
  * Each builtin tool reaches kernel tests through this before it joins the product table (Read, Glob
  * and Grep at plan step 18; Write, Edit and Bash at 22; AskUserQuestion 26; WebSearch 28; WebFetch
  * 29; Agent 31).
+ *
+ * `createEvalSessionService` is the eval runner's (§评测集与测试宿主「usageLimitTokens」; plan step
+ * 25): the product construction exactly — the product tool table and executors, no test registry —
+ * with the one thing an eval adds, H11's per-Run token limit, set only when a task names one.
  */
 import { constructSessionService } from '../session/service.js'
 import type {
@@ -23,4 +27,14 @@ export function createTestSessionService(
   test: TestServiceExtras = {},
 ): SessionService {
   return constructSessionService(options, { ...test, tools: test.tools ?? {} })
+}
+
+export function createEvalSessionService(
+  options: SessionServiceOptions,
+  evaluation: { readonly tokenLimit?: number } = {},
+): SessionService {
+  return constructSessionService(
+    options,
+    evaluation.tokenLimit === undefined ? {} : { tokenLimit: evaluation.tokenLimit },
+  )
 }
