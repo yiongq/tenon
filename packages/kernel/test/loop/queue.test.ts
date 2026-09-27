@@ -355,6 +355,32 @@ describe('send-now (「立即发送绑定 runId」)', () => {
     expect((await h.loop.runEnded({ runId: sent.runId })).reason).toEqual({ code: 'completed' })
   })
 
+  it('queues a send-now whose Run already ended behind the newer Run, and leaves that Run alone', async () => {
+    // Plan step 17: chat.sendNow 的 runId 已结束，这条按普通发送处理 — a newer Run in progress is
+    // not the one the user saw, so it is not stopped and the message joins it at the boundary.
+    let first = ''
+    let late: Promise<SendResult> | undefined
+    const h = harness((self) => {
+      late ??= self.service.send({
+        sessionId: SESSION,
+        origin: null,
+        text: 'sent now, too late',
+        urgent: { runId: first },
+      })
+    })
+    h.provider.script(done('first'))
+    first = await startRun(h, 'one')
+    await h.loop.runEnded({ runId: first })
+    h.provider.script(calls('a'))
+    h.provider.script(done())
+    const second = await startRun(h, 'two')
+    expect((await h.loop.runEnded({ runId: second })).reason).toEqual({ code: 'completed' })
+    expect(await late).toMatchObject({ status: 'queued' })
+    expect(h.loop.leaseLog.map((lease) => lease.stopRequested)).toEqual([false, false])
+    expect(userTexts(await all(h))).toEqual(['one', 'two', 'sent now, too late'])
+    expect(lastUserText(h)).toBe('sent now, too late')
+  })
+
   it('answers not-found for a queued item an auto-send already took, and leaves that Run alone', async () => {
     const h = harness()
     h.provider.script(done('first'))
@@ -681,6 +707,63 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
     expect(userTexts(await all(h))).toEqual(['work', 'after the stop'])
+  })
+
+  it('sends a message that came after a window closed once that Run is written, for its own window', async () => {
+    // Plan step 17, 「从队列取什么」: shutdown-aborted{ close-window } 之后只取 urgent 项; 「Run 结束」:
+    // 关窗中止的取把这条记为 urgent 的那次 send 的 origin (开放问题 26 已定).
+    const closing = { window: 'closing' }
+    const other = { window: 'other' }
+    let asked = false
+    const h = harness(async (self) => {
+      if (asked) return
+      asked = true
+      await self.service.send({ sessionId: SESSION, origin: closing, text: 'queued, not urgent' })
+      expect(self.loop.abort(SESSION, 'close-window')).toBe(true)
+      await self.service.send({ sessionId: SESSION, origin: other, text: 'after the close' })
+    })
+    h.provider.script(calls('a'))
+    h.provider.script(done())
+    h.provider.script(done())
+    const sent = await h.service.send({ sessionId: SESSION, origin: closing, text: 'work' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason).toEqual({
+      code: 'shutdown-aborted',
+      trigger: 'close-window',
+    })
+    // Only the urgent item goes out now, begun for the window that sent it.
+    await expect.poll(() => h.loop.leaseLog.length).toBe(2)
+    expect(h.loop.leaseLog[1]?.origin).toBe(other)
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    // After that Run completes the rest follows, on the origin of the lease that just ended.
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(userTexts(await all(h))).toEqual(['work', 'after the close', 'queued, not urgent'])
+    expect(h.loop.leaseLog.map((lease) => lease.origin)).toEqual([closing, other, other])
+  })
+
+  it('puts an urgent item back as not urgent when the auto-send after the stop has no key', async () => {
+    // Plan step 17, 「Run 结束」: 预建失败时 restore 取走的项（去掉 urgent）— a later stop must not
+    // send it on its own.
+    let runId = ''
+    let urgent: Promise<SendResult> | undefined
+    const h = harness((self) => {
+      self.loop.connector.failProvider(new ProviderConfigMissingError('anthropic', 'apiKey'), 1)
+      urgent ??= self.service.send({
+        sessionId: SESSION,
+        origin: null,
+        text: 'stop, do this',
+        urgent: { runId },
+      })
+    })
+    h.provider.script(calls('a'))
+    runId = await startRun(h, 'long task')
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+    expect(await urgent).toMatchObject({ status: 'queued' })
+    expect(await h.loop.runEnded({ runId: null })).toMatchObject({ recorded: false })
+    expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
+      ['stop, do this', false],
+    ])
+    expect(userTexts(await all(h))).toEqual(['long task'])
   })
 })
 

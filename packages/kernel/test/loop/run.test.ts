@@ -975,6 +975,20 @@ describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
     expect(control.executed).toHaveLength(4)
   })
 
+  it('does not read two batches taking turns as a repeat: only the same batch in a row counts', async () => {
+    // Plan step 13 (旧 3), §上限「原地打转」: 连续 NO_PROGRESS_REPEATS 批调用相同 — a batch that came
+    // back after a different one has not repeated.
+    const h = harness()
+    const ats = ['a', 'b', 'a', 'b', 'a']
+    ats.forEach((at, i) => {
+      h.provider.script(callTurn([{ id: `toolu_${String(i)}`, input: { at } }]))
+    })
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual(ats.map((at) => ({ at })))
+    expect(outcomes(await all(h))).not.toContain('not-run/no-progress')
+  })
+
   it('ends repeated machine denials at the third, before no-progress', async () => {
     const deny = createFakeInspector({
       id: 'deny-all',
