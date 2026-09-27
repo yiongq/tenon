@@ -3,22 +3,25 @@
  * the memory host. Read keeps every result under the spill threshold by whole lines (open question
  * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes,
  * and its engine (plan step 22): ripgrep's dialect, in time linear in the text, the program capped
- * (adv-3); both walks skip the protected list (§内置工具的默认档位; plan step 11: 旧 159).
+ * (adv-3), a line's work and a call's time bounded, the event loop given its turns (s18-safety-2);
+ * both walks skip the protected list (§内置工具的默认档位; plan step 11: 旧 159).
  */
 import { RE2JS } from 're2js'
 import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
-import type { AbsolutePath, MemoryHost } from '../../src/index.js'
+import type { AbsolutePath, HostClock, MemoryHost } from '../../src/index.js'
 import { SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
 import { fill } from '../../src/prompts/index.js'
 import { globMatcher } from '../../src/tools/builtin/files.js'
 import { GLOB_RESULT_LIMIT, GLOB_TEXTS, globExecutor } from '../../src/tools/builtin/glob.js'
 import {
   GREP_HEAD_LIMIT,
-  GREP_MAX_PROGRAM,
+  GREP_LINE_WORK_MAX,
   GREP_TEXTS,
+  GREP_TIME_BUDGET_MS,
   entriesOf,
   grepExecutor,
+  grepMeter,
 } from '../../src/tools/builtin/grep.js'
 import type { GrepOptions, GrepPage } from '../../src/tools/builtin/grep.js'
 import { READ_TEXTS, readExecutor, readResult } from '../../src/tools/builtin/read.js'
@@ -58,6 +61,7 @@ function run(
   target: AbsolutePath,
   signal: AbortSignal = new AbortController().signal,
   scope: PathScope = SCOPE,
+  clock: HostClock = host.clock,
 ): Promise<ToolExecution> {
   const q: ExecuteQuery = {
     item: {
@@ -73,6 +77,7 @@ function run(
     target,
     scope,
     fs: host.fs,
+    clock,
   }
   return executor(q)
 }
@@ -274,6 +279,38 @@ function grepOptions(o: Partial<GrepOptions>): GrepOptions {
   }
 }
 
+/**
+ * A clock `step` ms on at every reading, whose timers run on the real event loop, each a turn
+ * counted and `onTurn` called first.
+ */
+function turnsOf(
+  step: number,
+  onTurn: () => void = () => {},
+): {
+  clock: HostClock
+  turns: () => number
+} {
+  let now = 0
+  let turns = 0
+  const clock: HostClock = {
+    now: () => (now += step),
+    setTimeout: (fn, ms) => {
+      const timer = setTimeout(() => {
+        turns += 1
+        onTurn()
+        fn()
+      }, ms)
+      return () => clearTimeout(timer)
+    },
+  }
+  return { clock, turns: () => turns }
+}
+
+/** `run`'s last three arguments for a call on a clock `step` ms on at every reading. */
+function onClock(step: number): [AbortSignal, PathScope, HostClock] {
+  return [new AbortController().signal, SCOPE, turnsOf(step).clock]
+}
+
 describe('Grep', () => {
   const FILES = {
     '/ws/a.ts': 'const alpha = 1\nconst beta = 2\n// Alpha again\n',
@@ -411,7 +448,7 @@ describe('Grep', () => {
     )
   })
 
-  it('fills the page from the first lines of a long file, and only counts the rest', () => {
+  it('fills the page from the first lines of a long file, and only counts the rest', async () => {
     // s18-safety-3: one file's lines, hits and entry strings were all built before the page was
     // applied — a 64 MiB file of short lines is millions of each. Now an entry is built only on the
     // page, and the page is full once the pattern has run over the lines it needed, not the file.
@@ -450,7 +487,10 @@ describe('Grep', () => {
         matcher.find = counted(matcher.find.bind(matcher))
         return matcher
       }
-      entriesOf(found, path, text, regex, o)
+      const meter = grepMeter(createMemoryHost().clock, new AbortController().signal, 3)
+      expect(regex.programSize()).toBe(3)
+      // oxlint-disable-next-line no-await-in-loop -- one set of options at a time
+      await entriesOf(found, path, text, regex, o, meter)
       expect(found.total).toBe(total)
       expect(found.kept).toHaveLength(Math.min(total, GREP_HEAD_LIMIT))
       expect(built).toBeLessThanOrEqual(found.kept.length)
@@ -533,6 +573,39 @@ describe('Grep', () => {
     expect(await grep({ pattern: '[=\\W]{3}', '-o': true })).toBe(
       '/ws/u.txt:1: = \n/ws/u.txt:2: = ',
     )
+    // A negated class stays negated, and the Perl classes' negations are Unicode too: rg 15.2's
+    // answers, line by line.
+    expect(await grep({ pattern: '[^a-z]+', '-o': true })).toBe(
+      ['1:_', '1: = ', '2:用户名称 = 张三', '3:é', '3:-', '3: 日本', '4:价格１２３元 ١٢٣ 12']
+        .concat(['5:\u3000', '5:\u00a0'])
+        .map((part) => `/ws/u.txt:${part}`)
+        .join('\n'),
+    )
+    const other = await hostWith({
+      '/ws/v.txt': ['abc 日本 - x', 'ab ^^ cd', 'a\u3000b c', 'héllo 日本', '١٢٣x'].join('\n'),
+    })
+    const target = absolutePath('/ws/v.txt')
+    const nonWord = ['1: ', '1: - ', '2: ^^ ', '3:\u3000', '3: ', '4: ']
+    for (const [pattern, parts] of [
+      // `\W` alone in a class, and beside a `^` that is no negation.
+      ['[\\W]+', nonWord],
+      ['[\\W^]+', nonWord],
+      ['\\W+', nonWord],
+      [
+        '\\S+',
+        ['1:abc', '1:日本', '1:-', '1:x', '2:ab', '2:^^', '2:cd', '3:a', '3:b', '3:c'].concat([
+          '4:héllo',
+          '4:日本',
+          '5:١٢٣x',
+        ]),
+      ],
+      ['\\D+', ['1:abc 日本 - x', '2:ab ^^ cd', '3:a\u3000b c', '4:héllo 日本', '5:x']],
+    ] as const) {
+      const input = { pattern, output_mode: 'content', '-o': true }
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+      const found = textOf(await run(grepExecutor, other, 'Grep', input, target))
+      expect(found).toBe(parts.map((part) => `/ws/v.txt:${part}`).join('\n'))
+    }
     // re2js's reason for what it cannot parse quotes the pattern as written, not as rewritten.
     expect(await grep({ pattern: '(\\w' })).toBe(
       fill(GREP_TEXTS.invalidPattern, {
@@ -582,25 +655,133 @@ describe('Grep', () => {
       compile.mockClear()
       expect(textOf(await grep('.{1000}'.repeat(142)))).toBe(tooLarge)
       expect(compile).not.toHaveBeenCalled()
+      // The bound takes the larger count of `{n,m}`, and a group's contents with the group.
+      for (const pattern of ['.{0,1000}'.repeat(20), '(?:.{1000})'.repeat(40)]) {
+        // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+        expect(textOf(await grep(pattern))).toBe(tooLarge)
+        expect(compile).not.toHaveBeenCalled()
+      }
     } finally {
       compile.mockRestore()
     }
   })
 
-  it('runs a pattern just within the cap over a 1 MB line well within a second (adv-3)', async () => {
-    const host = await hostWith({ '/ws/x.txt': `${'x'.repeat(1 << 20)}\n` })
-    // Counted repeats up to the cap, the largest programs a model writes: `.{1000}` as often as it
-    // fits, then the rest, then a class the line never matches, so the whole line is read.
-    const rest = GREP_MAX_PROGRAM - 3
-    const pattern = `${'.{1000}'.repeat(Math.floor(rest / 1000))}.{${String(rest % 1000)}}[yz]`
-    expect(RE2JS.compile(pattern).programSize()).toBe(GREP_MAX_PROGRAM)
-    const started = performance.now()
-    const result = await run(grepExecutor, host, 'Grep', { pattern, output_mode: 'content' }, WS)
-    expect(textOf(result)).toBe(GREP_TEXTS.none)
-    expect(performance.now() - started).toBeLessThan(1000)
-    // A counted repeat as a model writes one passes, at two thirds of the cap.
-    const words = await run(grepExecutor, host, 'Grep', { pattern: '\\w{1,1000}[yz]' }, WS)
-    expect(textOf(words)).toBe(GREP_TEXTS.none)
+  it('stops at a line too long for its pattern, and takes the longest it allows within a second (s18-safety-2)', async () => {
+    // Random `a` and `b`, on which re2js's DFA settles least: a line costs up to about 30 ns a
+    // character an instruction, at every program size up to the cap.
+    let seed = 1
+    const ab = (n: number): string =>
+      Array.from({ length: n }, () => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff
+        return seed >> 16 < 0x4000 ? 'a' : 'b'
+      }).join('')
+    for (const [pattern, program] of [
+      ['[ab]*a[ab]{300}c', 306],
+      [`[ab]*a${'[ab]{996}'.repeat(3)}c`, 2994],
+    ] as const) {
+      expect(RE2JS.compile(pattern).programSize()).toBe(program)
+      const longest = Math.floor(GREP_LINE_WORK_MAX / program)
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time, each timed
+      const host = await hostWith({
+        '/ws/x.txt': `short\n${ab(longest - 4)}bbbc\n`,
+        '/ws/y.txt': `short\n${ab(longest - 3)}bbbc\n`,
+      })
+      for (const onlyMatching of [false, true]) {
+        const input = { pattern, output_mode: 'content', '-o': onlyMatching }
+        const started = performance.now()
+        // oxlint-disable-next-line no-await-in-loop -- one mode at a time, each timed
+        const taken = await run(grepExecutor, host, 'Grep', input, absolutePath('/ws/x.txt'))
+        expect(performance.now() - started).toBeLessThan(1000)
+        expect(taken).toMatchObject({ isError: false, state: 'completed' })
+        // One character more, and the call stops before matching the line, which it names.
+        // oxlint-disable-next-line no-await-in-loop -- one mode at a time
+        const over = await run(grepExecutor, host, 'Grep', input, absolutePath('/ws/y.txt'))
+        expect(over).toMatchObject({ isError: true, state: 'completed' })
+        expect(textOf(over)).toBe(fill(GREP_TEXTS.tooLong, { where: '/ws/y.txt:2' }))
+      }
+    }
+    // In multiline mode the whole file is one text, and the file is named: three instructions over
+    // just more than a third of the bound in characters.
+    const host = await hostWith({
+      '/ws/m.txt': 'x\n'.repeat(Math.floor(GREP_LINE_WORK_MAX / 6) + 1),
+    })
+    const multiline = await run(grepExecutor, host, 'Grep', { pattern: 'y', multiline: true }, WS)
+    expect(RE2JS.compile('y', RE2JS.DOTALL | RE2JS.MULTILINE).programSize()).toBe(3)
+    expect(textOf(multiline)).toBe(fill(GREP_TEXTS.tooLong, { where: '/ws/m.txt' }))
+    expect(textOf(await run(grepExecutor, host, 'Grep', { pattern: 'y' }, WS))).toBe(
+      GREP_TEXTS.none,
+    )
+  })
+
+  it('stops a call past its time budget, with what it had found (s18-safety-2)', async () => {
+    const timeUp = fill(GREP_TEXTS.timeUp, { seconds: String(GREP_TIME_BUDGET_MS / 1000) })
+    // The clock a second on at every reading. Between files: forty that each match, in path order.
+    const names = Array.from({ length: 40 }, (_, i) => `/ws/f${String(i).padStart(2, '0')}.txt`)
+    const many = await hostWith(Object.fromEntries(names.map((name) => [name, 'alpha\n'])))
+    const files = await run(grepExecutor, many, 'Grep', { pattern: 'alpha' }, WS, ...onClock(1000))
+    expect(files).toMatchObject({ isError: true, state: 'completed' })
+    const [reason, found = ''] = textOf(files).split('\n\n')
+    expect(reason).toBe(timeUp)
+    const [heading, ...listed] = found.split('\n')
+    expect(heading).toBe(GREP_TEXTS.foundBefore)
+    expect(listed.length).toBeGreaterThan(5)
+    expect(listed).toEqual(names.slice(0, listed.length))
+    expect(listed.length).toBeLessThan(names.length)
+    // Between lines: a thousand characters a line, about a million units of work, the clock read
+    // before each. No line matches, so nothing goes with the reason.
+    const lines = await hostWith({ '/ws/l.txt': `${'x'.repeat(1000)}\n`.repeat(100) })
+    const target = absolutePath('/ws/l.txt')
+    const inFile = await run(
+      grepExecutor,
+      lines,
+      'Grep',
+      { pattern: 'z.{997}' },
+      target,
+      ...onClock(1000),
+    )
+    expect(textOf(inFile)).toBe(timeUp)
+    // Between the finds of `-o`: `a.*z|a` scans the rest of the line for every `a` it finds.
+    const quadratic = await hostWith({ '/ws/q.txt': 'a'.repeat(5000) })
+    const parts = await run(
+      grepExecutor,
+      quadratic,
+      'Grep',
+      { pattern: 'a.*z|a', output_mode: 'content', '-o': true, head_limit: 2 },
+      absolutePath('/ws/q.txt'),
+      ...onClock(1000),
+    )
+    expect(textOf(parts)).toBe(
+      `${timeUp}\n\n${GREP_TEXTS.foundBefore}\n/ws/q.txt:1:a\n/ws/q.txt:1:a`,
+    )
+  })
+
+  it('gives the event loop a turn every 50 ms of matching, and a stop lands there (s18-safety-2)', async () => {
+    const host = await hostWith({ '/ws/l.txt': `${'x'.repeat(1000)}\n`.repeat(100) })
+    const target = absolutePath('/ws/l.txt')
+    const input = { pattern: 'z.{997}', output_mode: 'count' }
+    // The clock 20 ms on at every reading, one before each line: a turn every few lines of the one
+    // file, and the search runs to its end.
+    const calm = turnsOf(20)
+    const done = await run(grepExecutor, host, 'Grep', input, target, undefined, SCOPE, calm.clock)
+    expect(done).toMatchObject({ isError: false, state: 'completed' })
+    expect(textOf(done)).toBe(GREP_TEXTS.none)
+    expect(calm.turns()).toBeGreaterThan(10)
+    // A stop that comes in on the first turn ends the call there, in the middle of the file: aborted,
+    // as between two reads.
+    const stop = new AbortController()
+    const stopping = turnsOf(20, () => stop.abort())
+    const stopped = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      input,
+      target,
+      stop.signal,
+      SCOPE,
+      stopping.clock,
+    )
+    expect(stopped).toEqual({ content: [], isError: true, state: 'aborted' })
+    expect(stopping.turns()).toBe(1)
   })
 
   it('runs a pathological pattern over a 30 000-character line in bounded time (s18-safety-2)', async () => {

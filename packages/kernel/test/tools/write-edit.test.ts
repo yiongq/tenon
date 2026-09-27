@@ -54,6 +54,7 @@ function run(
       protectedFiles: [],
     },
     fs: host.fs,
+    clock: host.clock,
   })
 }
 

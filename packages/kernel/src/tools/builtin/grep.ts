@@ -8,22 +8,30 @@
  * two read it differently (「正则方言跟 ripgrep」; `ripgrepPattern`). Like ripgrep without `--pcre2`,
  * it has no look-around and no backreferences.
  *
- * What is bounded (s18-safety-2, adv-3), measured on re2js 2.8.6: matching takes time linear in the
- * text, by a factor that grows with the compiled program, and the program is capped at
- * `GREP_MAX_PROGRAM` instructions — checked on the text before compiling, and on the program after.
- * The cap also bounds re2js's lazy DFA. It keeps at most 10 010 states, its fixed 8 MB budget read at
- * 838 bytes a state (`RE2JS.compile` takes no budget; only `RE2Set` does, and it finds no positions),
- * while each state holds two 256-entry tables and one entry per instruction it is in: about 50 MB
- * full at any size, about 100 MB at the cap, where 142 000 instructions ran a line toward gigabytes.
- * What is not bounded is how long one call holds the main process: files are searched there one by
- * one, the stop checked only between them, and within the cap a line still costs 10 to 15 ms an
- * instruction a MB when the DFA cannot settle, or under `-o` and multiline, which re2js matches on
- * its NFA — 0.3 s a MB for a hostile pattern of 36 instructions, tens of seconds a MB at the cap.
- * Counted repeats, the usual large patterns, settle: `.{1000}` written three times, 3 003
- * instructions, takes 0.17 s over a 1 MB line.
+ * What is bounded (s18-safety-2, adv-3), measured on re2js 2.8.6:
+ * - The program, at `GREP_MAX_PROGRAM` instructions: checked on the text before compiling, and on the
+ *   program after. The cap also bounds re2js's lazy DFA. It keeps at most 10 010 states, its fixed
+ *   8 MB budget read at 838 bytes a state (`RE2JS.compile` takes no budget; only `RE2Set` does, and
+ *   it finds no positions), while each state holds two 256-entry tables and one entry per
+ *   instruction it is in: about 50 MB full at any size, about 100 MB at the cap, where 142 000
+ *   instructions ran a line toward gigabytes.
+ * - One line's matching, or one file's in multiline mode, at `GREP_LINE_WORK_MAX` characters times
+ *   instructions, reckoned before it starts; past it the call stops. Matching takes time linear in
+ *   the text, by a factor that grows with the program, up to about 30 ns a character an instruction
+ *   where the DFA cannot settle. The text of a pattern does not tell when it settles, so the factor
+ *   is taken at its worst: `.{996}` written three times, 2 990 instructions, settles and takes 0.17 s
+ *   over a 1 MB line, but after `a` it does not, and takes tens of seconds a MB. The longest line
+ *   taken holds the main process about 0.35 s, 0.45 s under `-o`.
+ * - The call's time, at `GREP_TIME_BUDGET_MS`, and the stop. The clock is read before each file, and
+ *   between lines and between the finds of `-o` and multiline — each of which may scan the rest of
+ *   the text: `a.*z|a` under `-o` is quadratic in a line — once a slice of reckoned work has passed.
+ *   Past the budget the call stops with what it found; every `GREP_SLICE_MS` the event loop gets a
+ *   turn, and then the stop is checked, as between two reads (`GrepMeter`).
+ * What is not bounded is a line's test, or a find, once begun: it runs to its end, within the line's
+ * bound, before the event loop gets its turn.
  */
 import { RE2JS } from 're2js'
-import type { AbsolutePath } from '../../host/adapter.js'
+import type { AbsolutePath, HostClock } from '../../host/adapter.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
 import type { WalkedFile } from './files.js'
@@ -44,6 +52,7 @@ import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
 const DESCRIPTION = [
   'Searches file contents with a regular expression, using ripgrep syntax.',
+  'Unlike ripgrep, \\b and \\B are ASCII word boundaries.',
   'It searches under path, or under the first workspace folder when path is omitted; glob and type narrow the files searched.',
   'output_mode is files_with_matches by default (the paths of matching files); content shows the matching lines, and count the number of matches per file.',
   '-n (line numbers, on by default), -o, -A, -B, -C and context apply to content mode only.',
@@ -63,6 +72,10 @@ export const GREP_TEXTS = {
   negatedNonWord: '\\W is not supported inside a negated class [^...]',
   wordBoundary: '\\<, \\> and \\b{...} are not supported; \\b and \\B are',
   tooLarge: 'the pattern is too large; shorten it or lower its repetition counts',
+  tooLong: '{where} is too long to search with this pattern. Narrow the pattern or the path.',
+  timeUp:
+    'The search took longer than {seconds} seconds and was stopped. Narrow the pattern or the path.',
+  foundBefore: 'Found before it stopped:',
   invalidGlob: '{glob} is not a glob pattern Grep can read: {message}',
   unknownType: '{type} is not a file type Grep knows. Use glob to name the files instead.',
 } as const
@@ -85,6 +98,32 @@ export const GREP_MAX_PROGRAM = 3000
  * limit took 1.1 s and 1 GB before the cap could be read.
  */
 const TEXT_BOUND_LIMIT = 10 * GREP_MAX_PROGRAM
+
+/**
+ * The most work one line may take, or one file in multiline mode, reckoned before it is matched as
+ * its characters times the program's instructions (s18-safety-2); past it the call stops. re2js
+ * spends up to about 30 ns a unit where its DFA cannot settle (`[ab]*a[ab]{300}c` over a line of
+ * random `a` and `b`), so the longest line taken holds the main process about 0.35 s, 0.45 s under
+ * `-o` (measured at this bound). A pattern of 10 instructions, such as `function`, takes lines up to
+ * a million characters; one at the cap, 3 333. 待校准（第 34 步）.
+ */
+export const GREP_LINE_WORK_MAX = 10_000_000
+
+/**
+ * How long one call may search, the walk and the reads included (s18-safety-2): read between lines,
+ * files and finds; past it the call stops with what it found. 待校准（第 34 步）.
+ */
+export const GREP_TIME_BUDGET_MS = 30_000
+
+/** How long matching runs before the event loop gets a turn and the stop is checked. */
+const GREP_SLICE_MS = 50
+
+/**
+ * The work, reckoned as for `GREP_LINE_WORK_MAX`, between two readings of the clock: at most about
+ * 30 ms, far less where the DFA settles. Reading it before every short line would double a search
+ * for a literal.
+ */
+const CLOCK_WORK = 1_000_000
 
 /** The ripgrep types Grep knows (a subset of `rg --type-list`), as basename globs. */
 const TYPES: Readonly<Record<string, readonly string[]>> = {
@@ -196,31 +235,124 @@ export const grepExecutor: ToolExecutor = async (q) => {
   if ('failure' in regex) return regex.failure
   const filter = fileFilterOf(input)
   if ('failure' in filter) return filter.failure
+  const meter = grepMeter(q.clock, q.signal, regex.value.programSize())
+  // Only the page is kept; the entries around it are counted, so memory stays bounded by
+  // `head_limit` however much the walk finds or one file holds, and the note can still name the
+  // total.
+  const found: GrepPage = {
+    offset: options.offset,
+    end: options.headLimit === 0 ? Infinity : options.offset + options.headLimit,
+    kept: [],
+    total: 0,
+  }
   try {
     const stat = await q.fs.stat(q.target)
     if (stat === null) return failed(fill(GREP_TEXTS.notFound, { path: q.target }))
     const files: WalkedFile[] = stat.isDir
       ? (await walkFiles(q.fs, q.target, q.scope, q.signal)).filter((file) => filter.test(file))
       : [{ path: q.target, relative: basename(q.target) }]
-    // Only the page is kept; the entries around it are counted, so memory stays bounded by
-    // `head_limit` however much the walk finds or one file holds, and the note can still name the
-    // total.
-    const found: GrepPage = {
-      offset: options.offset,
-      end: options.headLimit === 0 ? Infinity : options.offset + options.headLimit,
-      kept: [],
-      total: 0,
-    }
     for (const file of files) {
+      // oxlint-disable-next-line no-await-in-loop -- the event loop's turn, between two files
+      if (meter.check()) await meter.pause()
       // oxlint-disable-next-line no-await-in-loop -- one file at a time, the stop checked between
       const text = await searchable(q, file.path)
       checkSignal(q.signal)
       if (text === null) continue
-      entriesOf(found, file.path, text, regex.value, options)
+      // oxlint-disable-next-line no-await-in-loop -- one file at a time, the page filled in order
+      await entriesOf(found, file.path, text, regex.value, options, meter)
     }
     return succeeded(page(found, options))
   } catch (error) {
+    if (error instanceof PastBound) return failed(cutShort(error, found))
     return whenThrown(error, q.target)
+  }
+}
+
+/** A call past a bound: its reason, then, past the time budget, the entries it had kept. */
+function cutShort(bound: PastBound, found: GrepPage): string {
+  if (!bound.withFound || found.kept.length === 0) return bound.message
+  return `${bound.message}\n\n${GREP_TEXTS.foundBefore}\n${found.kept.join('\n')}`
+}
+
+/** Thrown once a call passes a bound (s18-safety-2); the executor answers with its message. */
+class PastBound extends Error {
+  /** Whether the entries found so far go with it: past the time budget, not past a line's bound. */
+  readonly withFound: boolean
+
+  constructor(message: string, withFound: boolean) {
+    super(message)
+    this.name = 'PastBound'
+    this.withFound = withFound
+  }
+}
+
+/**
+ * What one call spends matching, and where it stops (s18-safety-2). `take` reckons a line, or a file
+ * in multiline mode, before it is matched, and stops the call past `GREP_LINE_WORK_MAX`; `spend`
+ * reckons a further find in a text as a scan of the rest of it. Every `CLOCK_WORK` of either, and
+ * between files at `check`, the clock is read: past `GREP_TIME_BUDGET_MS` the call stops, and once
+ * `GREP_SLICE_MS` have passed since the event loop's last turn, each answers true, and the search
+ * `pause`s before it goes on: a turn of the event loop, then the stop checked, as between two reads.
+ */
+export interface GrepMeter {
+  take(length: number, path: AbsolutePath, line: number | null): boolean
+  spend(length: number): boolean
+  check(): boolean
+  pause(): Promise<void>
+}
+
+export function grepMeter(clock: HostClock, signal: AbortSignal, program: number): GrepMeter {
+  const started = clock.now()
+  let turn = started
+  let unread = 0
+  const check = (): boolean => {
+    unread = 0
+    const now = clock.now()
+    if (now - started > GREP_TIME_BUDGET_MS) {
+      const seconds = String(GREP_TIME_BUDGET_MS / 1000)
+      throw new PastBound(fill(GREP_TEXTS.timeUp, { seconds }), true)
+    }
+    return now - turn >= GREP_SLICE_MS
+  }
+  const spend = (length: number): boolean => {
+    unread += (length + 1) * program
+    return unread >= CLOCK_WORK && check()
+  }
+  return {
+    take: (length, path, line) => {
+      if (length * program > GREP_LINE_WORK_MAX) {
+        const where = line === null ? path : `${path}:${String(line)}`
+        throw new PastBound(fill(GREP_TEXTS.tooLong, { where }), false)
+      }
+      return spend(length)
+    },
+    spend,
+    check,
+    pause: async () => {
+      await new Promise<void>((resolve) => clock.setTimeout(resolve, 0))
+      turn = clock.now()
+      checkSignal(signal)
+    },
+  }
+}
+
+/** A step of a search where the event loop is due a turn (`GrepMeter.pause`). */
+const PAUSE = Symbol('pause')
+type Pause = typeof PAUSE
+
+/** Goes through `items` in order, pausing where they say, until `visit` answers false. */
+async function each<T>(
+  items: Iterable<T | Pause>,
+  meter: GrepMeter,
+  visit: (item: T) => boolean,
+): Promise<void> {
+  for (const item of items) {
+    if (item === PAUSE) {
+      // oxlint-disable-next-line no-await-in-loop -- the event loop's turn, between two matches
+      await meter.pause()
+    } else if (!visit(item)) {
+      return
+    }
   }
 }
 
@@ -318,8 +450,9 @@ interface ReadPattern {
  * classes and class set operations, which re2js takes as literal characters (`classOf`), and its
  * `\<`, `\>` and `\b{…}`. Escapes are stepped over whole, and `\Q…\E` is left as written.
  *
- * Known gap: `\b` and `\B` stay ASCII. RE2 has no Unicode word boundary and none can be built without
- * look-around, so `\b用户` misses 用户 at the start of a line or after a space, where ripgrep finds it.
+ * Known gap, said in the description: `\b` and `\B` stay ASCII. RE2 has no Unicode word boundary
+ * and none can be built without look-around, so `\b用户` misses 用户 at the start of a line or after
+ * a space, where ripgrep finds it.
  *
  * The walk also bounds the program re2js will compile, from the text: one instruction a character,
  * escape or class (three for the alternative `classOf` may write), two more a group, one more an
@@ -539,38 +672,62 @@ function put(found: GrepPage, entry: () => string): void {
   found.total += 1
 }
 
-/** One file's entries in the chosen mode, onto the page: nothing when it has no match. */
-export function entriesOf(
+/**
+ * One file's entries in the chosen mode, onto the page: nothing when it has no match. `meter` reckons
+ * the matching and stops or pauses it (`GrepMeter`).
+ */
+export async function entriesOf(
   found: GrepPage,
   path: AbsolutePath,
   content: string,
   regex: RE2JS,
   o: GrepOptions,
-): void {
-  const hits = o.multiline ? multilineHits(content, regex) : lineHits(content, regex)
+  meter: GrepMeter,
+): Promise<void> {
+  const hits = o.multiline
+    ? multilineHits(content, regex, path, meter)
+    : lineHits(content, regex, path, meter)
   if (o.mode === 'files_with_matches') {
     // The first hit names the file; the rest of it is not searched.
-    if (hits.next().done !== true) put(found, () => path)
+    await each(hits, meter, () => {
+      put(found, () => path)
+      return false
+    })
     return
   }
   if (o.mode === 'count') {
     let count = 0
-    for (let next = hits.next(); next.done !== true; next = hits.next()) count += 1
+    await each(hits, meter, () => {
+      count += 1
+      return true
+    })
     if (count > 0) put(found, () => `${path}:${String(count)}`)
     return
   }
   if (o.onlyMatching) {
-    for (const hit of hits) {
-      for (const [start, end] of wholeSpans(hit.text, hit.spans())) {
-        put(found, () => {
-          const part = hit.text.slice(start, end)
-          return o.lineNumbers ? `${path}:${String(hit.line)}:${part}` : `${path}:${part}`
-        })
-      }
-    }
+    await each(partsOf(hits), meter, ([hit, [start, end]]) => {
+      put(found, () => {
+        const part = hit.text.slice(start, end)
+        return o.lineNumbers ? `${path}:${String(hit.line)}:${part}` : `${path}:${part}`
+      })
+      return true
+    })
     return
   }
-  showLines(found, path, content, hits, o)
+  await showLines(found, path, content, hits, o, meter)
+}
+
+/** `-o`'s parts: each hit's matches, widened by `wholeSpans`, the pauses of both kept in order. */
+function* partsOf(
+  hits: Iterable<Hit | Pause>,
+): Generator<readonly [Hit, Span] | Pause, void, undefined> {
+  for (const hit of hits) {
+    if (hit === PAUSE) {
+      yield PAUSE
+      continue
+    }
+    for (const span of wholeSpans(hit.text, hit.spans())) yield span === PAUSE ? PAUSE : [hit, span]
+  }
 }
 
 /**
@@ -578,13 +735,14 @@ export function entriesOf(
  * matched lines come in order, so a line is shown once, after the context left over from the match
  * before and the context before it; its text is read only when it lands on the page.
  */
-function showLines(
+async function showLines(
   found: GrepPage,
   path: AbsolutePath,
   content: string,
-  hits: Iterable<Hit>,
+  hits: Iterable<Hit | Pause>,
   o: GrepOptions,
-): void {
+  meter: GrepMeter,
+): Promise<void> {
   const context = o.before > 0 || o.after > 0
   const lineText = lineReader(content)
   let shown = 0
@@ -598,7 +756,7 @@ function showLines(
     })
     shown = n
   }
-  for (const hit of hits) {
+  await each(hits, meter, (hit) => {
     // A multiline hit matches every line it spans; a line a hit before it matched is not again.
     for (let n = Math.max(hit.line, matched + 1); n <= hit.lastLine; n += 1) {
       const after = matched === 0 ? 0 : matched + o.after
@@ -607,7 +765,8 @@ function showLines(
       show(n, ':')
       matched = n
     }
-  }
+    return true
+  })
   if (matched === 0 || o.after === 0) return
   const last = Math.min(matched + o.after, lineCount(content))
   for (let k = shown + 1; k <= last; k += 1) show(k, '-')
@@ -625,31 +784,51 @@ interface Hit {
   readonly line: number
   readonly lastLine: number
   readonly text: string
-  readonly spans: () => Iterable<Span>
+  readonly spans: () => Iterable<Span | Pause>
 }
 
 /**
  * The hits of a file, one line at a time: its lines as `linesOf` splits them — on `\n`, a final one
  * ending the last line — never all of them at once. A line is a hit when the pattern matches in it,
- * even empty, as ripgrep has it.
+ * even empty, as ripgrep has it. Each line is reckoned before it is matched (`GrepMeter.take`).
  */
-function* lineHits(content: string, regex: RE2JS): Generator<Hit, void, undefined> {
+function* lineHits(
+  content: string,
+  regex: RE2JS,
+  path: AbsolutePath,
+  meter: GrepMeter,
+): Generator<Hit | Pause, void, undefined> {
   let n = 0
   for (let start = 0; start < content.length;) {
     const newline = content.indexOf('\n', start)
     const end = newline === -1 ? content.length : newline
-    const line = content.slice(start, end)
     n += 1
-    if (regex.test(line))
-      yield { line: n, lastLine: n, text: line, spans: () => spansOf(regex, line) }
+    if (meter.take(end - start, path, n)) yield PAUSE
+    const line = content.slice(start, end)
+    if (regex.test(line)) {
+      yield { line: n, lastLine: n, text: line, spans: () => spansOf(regex, line, meter) }
+    }
     start = end + 1
   }
 }
 
-/** The matches in a text, in order; after an empty one, re2js moves on by a whole code point. */
-function* spansOf(regex: RE2JS, text: string): Generator<Span, void, undefined> {
+/**
+ * The matches in a text, in order; after an empty one, re2js moves on by a whole code point. Each
+ * find is reckoned as a scan of the rest of the text, which it can be: `a.*z|a` under `-o` reads a
+ * line of `a`s to its end for every match, quadratic in the line.
+ */
+function* spansOf(
+  regex: RE2JS,
+  text: string,
+  meter: GrepMeter,
+): Generator<Span | Pause, void, undefined> {
   const matcher = regex.matcher(text)
-  while (matcher.find()) yield [matcher.start(), matcher.end()]
+  for (let from = 0; ;) {
+    if (meter.spend(text.length - from)) yield PAUSE
+    if (!matcher.find()) return
+    from = matcher.end()
+    yield [matcher.start(), from]
+  }
 }
 
 /** The line numbers of increasing offsets, counted forward: no table of where each line starts. */
@@ -690,11 +869,19 @@ function lineCount(content: string): number {
  * steps by code point, but a pattern that is one lone surrogate is found by its literal, halfway into
  * a pair. A span that then overlaps the one before joins it, so a character is shown once. Half a pair
  * would be stored on the Tape and sent in every later request (§内置工具与参数「不切开代理对」,
- * 「正则方言跟 ripgrep」). An empty match shows nothing.
+ * 「正则方言跟 ripgrep」). An empty match shows nothing; pauses pass through in order.
  */
-function wholeSpans(text: string, matches: Iterable<Span>): Array<[number, number]> {
-  const spans: Array<[number, number]> = []
-  for (const [matchStart, matchEnd] of matches) {
+function* wholeSpans(
+  text: string,
+  matches: Iterable<Span | Pause>,
+): Generator<Span | Pause, void, undefined> {
+  let last: [number, number] | null = null
+  for (const match of matches) {
+    if (match === PAUSE) {
+      yield PAUSE
+      continue
+    }
+    const [matchStart, matchEnd] = match
     if (matchStart === matchEnd) continue
     let start = matchStart
     let end = matchEnd
@@ -702,11 +889,14 @@ function wholeSpans(text: string, matches: Iterable<Span>): Array<[number, numbe
       start -= 1
     }
     if (isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) end += 1
-    const last = spans.at(-1)
-    if (last !== undefined && start < last[1]) last[1] = Math.max(last[1], end)
-    else spans.push([start, end])
+    if (last !== null && start < last[1]) {
+      last[1] = Math.max(last[1], end)
+    } else {
+      if (last !== null) yield last
+      last = [start, end]
+    }
   }
-  return spans
+  if (last !== null) yield last
 }
 
 function isHighSurrogate(code: number): boolean {
@@ -718,13 +908,24 @@ function isLowSurrogate(code: number): boolean {
 }
 
 /**
- * The hits of a multiline pattern, one match at a time; an empty match is none. A file the pattern
- * cannot match anywhere is passed over by re2js's DFA before any match is looked for.
+ * The hits of a multiline pattern, one match at a time; an empty match is none. The whole file is
+ * reckoned first (`GrepMeter.take`). A file the pattern cannot match anywhere is passed over by
+ * re2js's DFA before any match is looked for.
  */
-function* multilineHits(content: string, regex: RE2JS): Generator<Hit, void, undefined> {
+function* multilineHits(
+  content: string,
+  regex: RE2JS,
+  path: AbsolutePath,
+  meter: GrepMeter,
+): Generator<Hit | Pause, void, undefined> {
+  if (meter.take(content.length, path, null)) yield PAUSE
   if (!regex.test(content)) return
   const lineAt = lineCounter(content)
-  for (const span of spansOf(regex, content)) {
+  for (const span of spansOf(regex, content, meter)) {
+    if (span === PAUSE) {
+      yield PAUSE
+      continue
+    }
     const [start, end] = span
     if (start === end) continue
     yield { line: lineAt(start), lastLine: lineAt(end - 1), text: content, spans: () => [span] }

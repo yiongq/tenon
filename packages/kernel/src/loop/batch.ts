@@ -359,6 +359,7 @@ async function execute(
     target: q.target,
     scope: q.scope,
     fs: ctx.host.fs,
+    clock: ctx.host.clock,
     ...(q.command === undefined ? {} : { command: q.command }),
   })
   const stopped = execution.state !== 'completed'
