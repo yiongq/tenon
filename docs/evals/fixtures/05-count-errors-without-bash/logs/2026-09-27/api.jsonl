@@ -1,0 +1,84 @@
+{"ts":"2026-09-27T00:02:01.144Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-947777"}
+{"ts":"2026-09-27T00:02:30.976Z","level":"info","service":"api","msg":"config reloaded","trace":"t-949576"}
+{"ts":"2026-09-27T00:02:54.371Z","level":"info","service":"api","msg":"POST /v1/carts 201","trace":"t-232242"}
+{"ts":"2026-09-27T00:03:34.322Z","level":"warn","service":"api","msg":"slow query 812ms","trace":"t-805715"}
+{"ts":"2026-09-27T00:03:59.274Z","level":"warn","service":"api","msg":"retry 1/3 after timeout","trace":"t-618293"}
+{"ts":"2026-09-27T00:04:46.188Z","level":"info","service":"api","msg":"health check ok","trace":"t-144256"}
+{"ts":"2026-09-27T00:05:41.344Z","level":"error","service":"api","msg":"db connection refused","trace":"t-935649"}
+{"ts":"2026-09-27T00:07:22.717Z","level":"warn","service":"api","msg":"retry 1/3 after timeout","trace":"t-667899"}
+{"ts":"2026-09-27T00:09:05.273Z","level":"info","service":"api","msg":"job finished","trace":"t-465423"}
+{"ts":"2026-09-27T00:09:50.849Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-813436"}
+{"ts":"2026-09-27T00:10:57.679Z","level":"info","service":"api","msg":"health check ok","trace":"t-228446"}
+{"ts":"2026-09-27T00:12:40.374Z","level":"info","service":"api","msg":"job finished","trace":"t-609201"}
+{"ts":"2026-09-27T00:13:55.721Z","level":"info","service":"api","msg":"POST /v1/carts 201","trace":"t-479208"}
+{"ts":"2026-09-27T00:15:38.143Z","level":"info","service":"api","msg":"config reloaded","trace":"t-762197"}
+{"ts":"2026-09-27T00:16:47.745Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-188259"}
+{"ts":"2026-09-27T00:18:19.654Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-582588"}
+{"ts":"2026-09-27T00:18:46.136Z","level":"info","service":"api","msg":"health check ok","trace":"t-379154"}
+{"ts":"2026-09-27T00:20:04.204Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-515365"}
+{"ts":"2026-09-27T00:21:51.732Z","level":"info","service":"api","msg":"config reloaded","trace":"t-371998"}
+{"ts":"2026-09-27T00:22:24.357Z","level":"info","service":"api","msg":"POST /v1/carts 201","trace":"t-164309"}
+{"ts":"2026-09-27T00:23:34.110Z","level":"warn","service":"api","msg":"deprecated header X-Client","trace":"t-399327"}
+{"ts":"2026-09-27T00:24:26.808Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-692144"}
+{"ts":"2026-09-27T00:26:13.969Z","level":"warn","service":"api","msg":"retry 1/3 after timeout","trace":"t-402060"}
+{"ts":"2026-09-27T00:26:58.198Z","level":"warn","service":"api","msg":"deprecated header X-Client","trace":"t-961582"}
+{"ts":"2026-09-27T00:28:36.124Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-644128"}
+{"ts":"2026-09-27T00:29:06.843Z","level":"info","service":"api","msg":"job finished","trace":"t-976292"}
+{"ts":"2026-09-27T00:30:30.100Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-973602"}
+{"ts":"2026-09-27T00:32:10.422Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-725660"}
+{"ts":"2026-09-27T00:33:36.902Z","level":"info","service":"api","msg":"config reloaded","trace":"t-785197"}
+{"ts":"2026-09-27T00:35:12.602Z","level":"info","service":"api","msg":"config reloaded","trace":"t-203987"}
+{"ts":"2026-09-27T00:36:00.926Z","level":"error","service":"api","msg":"unhandled rejection in handler","trace":"t-853825"}
+{"ts":"2026-09-27T00:37:46.449Z","level":"info","service":"api","msg":"job finished","trace":"t-555474"}
+{"ts":"2026-09-27T00:39:08.545Z","level":"error","service":"api","msg":"payment declined: card expired","trace":"t-544444"}
+{"ts":"2026-09-27T00:39:52.017Z","level":"info","service":"api","msg":"job finished","trace":"t-269619"}
+{"ts":"2026-09-27T00:41:40.988Z","level":"warn","service":"api","msg":"slow query 812ms","trace":"t-959145"}
+{"ts":"2026-09-27T00:42:39.629Z","level":"info","service":"api","msg":"health check ok","trace":"t-750339"}
+{"ts":"2026-09-27T00:43:40.604Z","level":"info","service":"api","msg":"health check ok","trace":"t-277753"}
+{"ts":"2026-09-27T00:45:18.761Z","level":"info","service":"api","msg":"health check ok","trace":"t-815711"}
+{"ts":"2026-09-27T00:45:46.202Z","level":"info","service":"api","msg":"config reloaded","trace":"t-157974"}
+{"ts":"2026-09-27T00:47:13.639Z","level":"error","service":"api","msg":"upstream timeout after 30000ms","trace":"t-431829"}
+{"ts":"2026-09-27T00:48:13.369Z","level":"info","service":"api","msg":"config reloaded","trace":"t-210952"}
+{"ts":"2026-09-27T00:48:36.032Z","level":"info","service":"api","msg":"POST /v1/carts 201","trace":"t-525412"}
+{"ts":"2026-09-27T00:49:47.761Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-635941"}
+{"ts":"2026-09-27T00:51:32.815Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-971371"}
+{"ts":"2026-09-27T00:53:05.621Z","level":"warn","service":"api","msg":"queue depth 1200","trace":"t-530433"}
+{"ts":"2026-09-27T00:53:40.911Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-697661"}
+{"ts":"2026-09-27T00:54:46.619Z","level":"error","service":"api","msg":"failed to parse webhook body","trace":"t-377110"}
+{"ts":"2026-09-27T00:56:22.805Z","level":"info","service":"api","msg":"config reloaded","trace":"t-362795"}
+{"ts":"2026-09-27T00:57:03.431Z","level":"info","service":"api","msg":"POST /v1/carts 201","trace":"t-889483"}
+{"ts":"2026-09-27T00:58:40.838Z","level":"info","service":"api","msg":"config reloaded","trace":"t-665290"}
+{"ts":"2026-09-27T00:59:42.919Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-520752"}
+{"ts":"2026-09-27T01:01:10.313Z","level":"info","service":"api","msg":"config reloaded","trace":"t-258832"}
+{"ts":"2026-09-27T01:02:39.851Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-151314"}
+{"ts":"2026-09-27T01:03:16.302Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-191488"}
+{"ts":"2026-09-27T01:04:23.551Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-457288"}
+{"ts":"2026-09-27T01:04:53.255Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-293029"}
+{"ts":"2026-09-27T01:05:57.064Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-555576"}
+{"ts":"2026-09-27T01:06:35.817Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-543892"}
+{"ts":"2026-09-27T01:07:54.412Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-971742"}
+{"ts":"2026-09-27T01:08:32.099Z","level":"info","service":"api","msg":"config reloaded","trace":"t-722221"}
+{"ts":"2026-09-27T01:10:10.251Z","level":"info","service":"api","msg":"job finished","trace":"t-716192"}
+{"ts":"2026-09-27T01:11:15.475Z","level":"info","service":"api","msg":"job finished","trace":"t-376835"}
+{"ts":"2026-09-27T01:12:48.615Z","level":"info","service":"api","msg":"config reloaded","trace":"t-246753"}
+{"ts":"2026-09-27T01:13:35.519Z","level":"warn","service":"api","msg":"retry 1/3 after timeout","trace":"t-930210"}
+{"ts":"2026-09-27T01:14:39.815Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-438090"}
+{"ts":"2026-09-27T01:15:38.481Z","level":"error","service":"api","msg":"failed to parse webhook body","trace":"t-143822"}
+{"ts":"2026-09-27T01:17:13.322Z","level":"info","service":"api","msg":"job finished","trace":"t-680233"}
+{"ts":"2026-09-27T01:18:24.465Z","level":"info","service":"api","msg":"error budget at 72% for this week","trace":"t-924642"}
+{"ts":"2026-09-27T01:19:16.709Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-431766"}
+{"ts":"2026-09-27T01:20:20.939Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-204822"}
+{"ts":"2026-09-27T01:21:33.573Z","level":"info","service":"api","msg":"config reloaded","trace":"t-900353"}
+{"ts":"2026-09-27T01:22:56.121Z","level":"info","service":"api","msg":"job finished","trace":"t-280277"}
+{"ts":"2026-09-27T01:23:30.460Z","level":"info","service":"api","msg":"GET /v1/orders 200","trace":"t-774149"}
+{"ts":"2026-09-27T01:23:57.575Z","level":"info","service":"api","msg":"health check ok","trace":"t-805313"}
+{"ts":"2026-09-27T01:25:22.511Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-934652"}
+{"ts":"2026-09-27T01:26:56.411Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-861477"}
+{"ts":"2026-09-27T01:27:32.362Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-797812"}
+{"ts":"2026-09-27T01:28:58.064Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-844877"}
+{"ts":"2026-09-27T01:30:18.762Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-922186"}
+{"ts":"2026-09-27T01:30:55.866Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-465199"}
+{"ts":"2026-09-27T01:32:44.088Z","level":"error","service":"api","msg":"failed to parse webhook body","trace":"t-744448"}
+{"ts":"2026-09-27T01:34:19.483Z","level":"info","service":"api","msg":"cache hit ratio 0.93","trace":"t-668322"}
+{"ts":"2026-09-27T01:36:07.108Z","level":"info","service":"api","msg":"retrying after upstream error, attempt 2 ok","trace":"t-726221"}
+{"ts":"2026-09-27T01:37:54.227Z","level":"info","service":"api","msg":"health check ok","trace":"t-201617"}

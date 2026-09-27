@@ -1,0 +1,13 @@
+{
+  "id": "04-long-log-en",
+  "profile": "cowork",
+  "turns": [
+    "Run `node run-tests.mjs` in the workspace. It prints the log of last night's full test run. Exactly one test failed for real (tests that passed on a retry don't count). Write that test's ID (the part in square brackets, like `AB-1234`) into answer.txt at the workspace root, and nothing else."
+  ],
+  "workspace": "04-long-log-en",
+  "host": { "answers": { "default": "allow", "command": "allow" }, "usageLimitTokens": 500000 },
+  "checks": [{ "kind": "script", "id": "04-long-log-en" }],
+  "calibrates": ["H9"],
+  "compare": true,
+  "from": ["H9", "H15"]
+}

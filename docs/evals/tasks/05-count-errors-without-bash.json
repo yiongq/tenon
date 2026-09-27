@@ -1,0 +1,15 @@
+{
+  "id": "05-count-errors-without-bash",
+  "profile": "cowork",
+  "turns": [
+    "logs/ 下按日期分目录存着各服务的日志（JSON Lines，每行一条记录）。只看 logs/2026-09-27/：统计其中每个文件里 `level` 为 `error` 的记录条数，写进工作区根目录的 summary.txt——每个文件一行，格式为「文件名 条数」（例如 `api.jsonl 3`），按文件名升序，条数为 0 的文件也要写。"
+  ],
+  "workspace": "05-count-errors-without-bash",
+  "host": {
+    "answers": { "default": "allow", "command": "allow" },
+    "disableTool": { "name": "Bash", "afterRound": 1 }
+  },
+  "checks": [{ "kind": "script", "id": "05-count-errors-without-bash" }],
+  "compare": false,
+  "from": ["F2"]
+}

@@ -11,6 +11,24 @@
 - 录屏和 Claude Code 一侧的原始记录放在仓库外，记录里只留文件名（`raw`）。
 - 任何 provider key 的值都不进本目录；记录和命令里只写变量名（如 `$ZHIPU_API_KEY`）。
 
+## 题目索引
+
+检查脚本在 `apps/desktop/evals/checks/<id>.ts`，只看工作区文件和 Tape 事实，不看模型怎么措辞；note 里写 F2、E2、H9 要记的数。
+
+| 题 | 形态 | 测什么 | 同题对比 | 校准 |
+|---|---|---|---|---|
+| `01-fix-failing-test` | 任务 | 小的编码修复：跑 `node test.mjs`，从 cart.js 追到 money.js 的 `formatCents`，修好后再跑一次；test.mjs 不许改，另有暗测挡住只在 cart.js 里绕过去的改法 | 是 | — |
+| `02-rename-without-edit` | 任务 | 第 1 轮后 `disableTool` 关掉 Edit（F2、E2）：被策略拦下后换 Write 或命令把两个文件里的函数名改对，其余一字不动；note 记拦了几次、拦下后还调不调 Edit、第几次拦截后换了做法 | 否 | — |
+| `03-long-log-zh` | 任务 | 命令输出约 4.5 万字符的中文构建日志（超过落盘阈值），唯一的错误行在约 3.7 万字符处：靠预览加 Read 分段（或对落盘文件 Grep）找出错误码 | 是 | H9 |
+| `04-long-log-en` | 任务 | 同 03，英文测试日志约 4.6 万字符，真失败的一行在约 3.9 万字符处，另有重试后通过的干扰行 | 是 | H9 |
+| `05-count-errors-without-bash` | 任务 | 第 1 轮后关掉 Bash（F2）：换着命令反复撞同一条策略，连续 3 次即以 `blocked-repeatedly` 结束；要在那之前改用 Grep / Read 数出每个文件 `level` 为 `error` 的条数 | 否 | — |
+
+- 关工具的题（02、05）不进对比集：对照客户端没有会话中途改策略的办法。
+- 03、04 设 `usageLimitTokens: 500000` 作费用护栏（长输出反复读时防失控）；其余题不设。
+- 工具轮数（H11）每题都记在 `toolRounds`，`calibrates` 不单列。
+- 前 5 题没有对话形态：对话形态现在只有 Read（只能读本会话的落盘目录），能产生落盘的 WebSearch、WebFetch 在第 27、28 步，对话题随那两步加。
+- 夹具里的日志存成 `.jsonl`：`.gitignore` 忽略 `*.log`。03、04 的日志由脚本按固定种子生成，答案不在源码里。
+
 ## 列定义
 
 一列 = 客户端 × 模型 × 入口（`EvalRecord.column`）。每个模型固定用一个 effort 并记进记录，`null` 表示没传、用模型默认档。

@@ -17,6 +17,7 @@
     "src/preload/**/*.ts",
     "src/i18n/**/*.ts",
     "test/**/*.ts",
+    "evals/**/*.ts",
     "vitest.config.ts",
     "electron.vite.config.ts"
   ],

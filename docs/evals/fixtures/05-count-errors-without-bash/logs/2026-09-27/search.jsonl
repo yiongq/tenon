@@ -1,0 +1,58 @@
+{"ts":"2026-09-27T00:02:01.289Z","level":"info","service":"search","msg":"health check ok","trace":"t-717374"}
+{"ts":"2026-09-27T00:03:42.304Z","level":"info","service":"search","msg":"config reloaded","trace":"t-219927"}
+{"ts":"2026-09-27T00:05:10.961Z","level":"warn","service":"search","msg":"retry 1/3 after timeout","trace":"t-325342"}
+{"ts":"2026-09-27T00:06:05.147Z","level":"info","service":"search","msg":"config reloaded","trace":"t-834942"}
+{"ts":"2026-09-27T00:07:03.503Z","level":"info","service":"search","msg":"error budget at 72% for this week","trace":"t-804658"}
+{"ts":"2026-09-27T00:07:29.245Z","level":"info","service":"search","msg":"job finished","trace":"t-713359"}
+{"ts":"2026-09-27T00:08:51.306Z","level":"warn","service":"search","msg":"error rate above 1% for 2m","trace":"t-993327"}
+{"ts":"2026-09-27T00:10:19.894Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-105301"}
+{"ts":"2026-09-27T00:11:51.452Z","level":"warn","service":"search","msg":"error rate above 1% for 2m","trace":"t-589195"}
+{"ts":"2026-09-27T00:13:32.072Z","level":"info","service":"search","msg":"job finished","trace":"t-877084"}
+{"ts":"2026-09-27T00:14:08.060Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-402444"}
+{"ts":"2026-09-27T00:14:53.844Z","level":"info","service":"search","msg":"job finished","trace":"t-679863"}
+{"ts":"2026-09-27T00:15:15.454Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-506582"}
+{"ts":"2026-09-27T00:16:14.008Z","level":"info","service":"search","msg":"config reloaded","trace":"t-729591"}
+{"ts":"2026-09-27T00:17:06.583Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-850505"}
+{"ts":"2026-09-27T00:17:59.527Z","level":"info","service":"search","msg":"job finished","trace":"t-911330"}
+{"ts":"2026-09-27T00:19:06.457Z","level":"info","service":"search","msg":"health check ok","trace":"t-738885"}
+{"ts":"2026-09-27T00:19:28.534Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-932548"}
+{"ts":"2026-09-27T00:20:53.195Z","level":"info","service":"search","msg":"config reloaded","trace":"t-919221"}
+{"ts":"2026-09-27T00:21:35.905Z","level":"info","service":"search","msg":"health check ok","trace":"t-337903"}
+{"ts":"2026-09-27T00:23:14.990Z","level":"error","service":"search","msg":"failed to parse webhook body","trace":"t-720821"}
+{"ts":"2026-09-27T00:23:40.812Z","level":"warn","service":"search","msg":"slow query 812ms","trace":"t-740971"}
+{"ts":"2026-09-27T00:24:18.524Z","level":"info","service":"search","msg":"health check ok","trace":"t-818534"}
+{"ts":"2026-09-27T00:24:44.054Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-299057"}
+{"ts":"2026-09-27T00:25:42.633Z","level":"info","service":"search","msg":"config reloaded","trace":"t-268465"}
+{"ts":"2026-09-27T00:26:46.628Z","level":"info","service":"search","msg":"config reloaded","trace":"t-319393"}
+{"ts":"2026-09-27T00:28:18.661Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-737306"}
+{"ts":"2026-09-27T00:28:49.017Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-962201"}
+{"ts":"2026-09-27T00:30:24.619Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-658802"}
+{"ts":"2026-09-27T00:31:44.976Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-220899"}
+{"ts":"2026-09-27T00:32:52.192Z","level":"info","service":"search","msg":"cache hit ratio 0.93","trace":"t-176183"}
+{"ts":"2026-09-27T00:34:19.702Z","level":"info","service":"search","msg":"health check ok","trace":"t-246487"}
+{"ts":"2026-09-27T00:35:25.154Z","level":"info","service":"search","msg":"cache hit ratio 0.93","trace":"t-104192"}
+{"ts":"2026-09-27T00:36:17.447Z","level":"info","service":"search","msg":"job finished","trace":"t-801486"}
+{"ts":"2026-09-27T00:37:08.607Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-762451"}
+{"ts":"2026-09-27T00:38:38.839Z","level":"info","service":"search","msg":"error budget at 72% for this week","trace":"t-849564"}
+{"ts":"2026-09-27T00:40:25.362Z","level":"info","service":"search","msg":"job finished","trace":"t-595725"}
+{"ts":"2026-09-27T00:40:49.991Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-922341"}
+{"ts":"2026-09-27T00:41:49.035Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-473593"}
+{"ts":"2026-09-27T00:43:37.681Z","level":"error","service":"search","msg":"payment declined: card expired","trace":"t-885156"}
+{"ts":"2026-09-27T00:45:02.008Z","level":"info","service":"search","msg":"job finished","trace":"t-629538"}
+{"ts":"2026-09-27T00:45:50.321Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-237656"}
+{"ts":"2026-09-27T00:47:34.902Z","level":"info","service":"search","msg":"health check ok","trace":"t-810497"}
+{"ts":"2026-09-27T00:48:14.821Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-194780"}
+{"ts":"2026-09-27T00:49:05.635Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-705261"}
+{"ts":"2026-09-27T00:50:41.433Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-444608"}
+{"ts":"2026-09-27T00:52:31.245Z","level":"info","service":"search","msg":"health check ok","trace":"t-823812"}
+{"ts":"2026-09-27T00:53:49.644Z","level":"info","service":"search","msg":"health check ok","trace":"t-712583"}
+{"ts":"2026-09-27T00:55:01.653Z","level":"info","service":"search","msg":"error budget at 72% for this week","trace":"t-754705"}
+{"ts":"2026-09-27T00:55:41.007Z","level":"info","service":"search","msg":"retrying after upstream error, attempt 2 ok","trace":"t-529037"}
+{"ts":"2026-09-27T00:56:09.337Z","level":"info","service":"search","msg":"job finished","trace":"t-857083"}
+{"ts":"2026-09-27T00:57:27.487Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-128605"}
+{"ts":"2026-09-27T00:58:47.071Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-781800"}
+{"ts":"2026-09-27T00:59:56.280Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-504996"}
+{"ts":"2026-09-27T01:00:19.456Z","level":"info","service":"search","msg":"POST /v1/carts 201","trace":"t-902613"}
+{"ts":"2026-09-27T01:01:08.660Z","level":"info","service":"search","msg":"error budget at 72% for this week","trace":"t-361477"}
+{"ts":"2026-09-27T01:01:34.059Z","level":"info","service":"search","msg":"GET /v1/orders 200","trace":"t-985201"}
+{"ts":"2026-09-27T01:02:23.282Z","level":"info","service":"search","msg":"cache hit ratio 0.93","trace":"t-542359"}
