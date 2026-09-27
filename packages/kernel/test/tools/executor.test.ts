@@ -76,6 +76,14 @@ describe('mcpExecutor’s fixed texts come from the prompt layer', () => {
     })
   })
 
+  it('passes the connector’s own error flag through, only when it is true', async () => {
+    const content = [{ type: 'text', text: 'no such file' }]
+    const failed = mcpExecutor(source(() => Promise.resolve({ content, isError: true })))
+    expect(await failed(query())).toEqual({ content, isError: true, state: 'completed' })
+    const loose = mcpExecutor(source(() => Promise.resolve({ content, isError: 'true' })))
+    expect((await loose(query())).isError).toBe(false)
+  })
+
   it('answers a result with no content with MODEL_NOTES.connectorEmpty', async () => {
     const run = mcpExecutor(source(() => Promise.resolve({ content: [], isError: false })))
     expect(await run(query())).toEqual({
