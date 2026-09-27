@@ -582,6 +582,28 @@ export const MCP_ONLY_FRAMES: readonly string[] = [
   DONE,
 ]
 
+/**
+ * The vendor's call, then a client call under the SAME wire index with its own id — the index reuse
+ * REUSED_INDEX_FRAMES shows for two function calls (ollama#15457), after a call the vendor ran.
+ */
+export const MCP_REUSED_INDEX_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({
+    tool_calls: [
+      {
+        index: 0,
+        id: TOOL_ID,
+        type: 'function',
+        function: { name: TOOL_NAME, arguments: JSON.stringify(TOOL_INPUT) },
+      },
+    ],
+  }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
 /** The model every chunk names; spec 02 reports it once as the `response-model` event. */
 export const RESPONSE_MODEL_ID = MODEL_ID
 

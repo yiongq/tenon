@@ -927,6 +927,31 @@ describe('OpenAIChatProvider vendor blocks (spec 02, 01 修补 9 (t))', () => {
     ])
   })
 
+  it('keeps a client call that reuses the index of the vendor’s call apart from it', async () => {
+    // 01 修补 9 (t): only the mcp call is diverted. With no id on record for it, the client call's
+    // fragment was merged INTO the archived block — one vendor-block holding both, no tool-call-end,
+    // and a `tool-use` turn with nothing to run.
+    const { events } = await run(sse(fixture.MCP_REUSED_INDEX_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 0,
+        raw: { id: fixture.MCP_CALL_ID, type: 'mcp', mcp: fixture.MCP_FIELDS },
+        replay: 'never',
+      },
+    ])
+    expect(events.filter((event) => event.type === 'tool-call-end')).toEqual([
+      {
+        type: 'tool-call-end',
+        index: 1,
+        id: fixture.TOOL_ID,
+        name: fixture.TOOL_NAME,
+        input: fixture.TOOL_INPUT,
+      },
+    ])
+  })
+
   it('reports the model the chunks name, once', async () => {
     const { events } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
     expect(events.filter((event) => event.type === 'response-model')).toEqual([

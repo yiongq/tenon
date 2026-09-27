@@ -15,13 +15,34 @@ import {
 import { currentPromptLayer, promptLayerHash, promptLayerHashOf } from '../../src/prompts/layer.js'
 import type { PromptLayer } from '../../src/prompts/layer.js'
 
+/**
+ * Every released prompt layer, by version: append a row, never edit one. Eval records and the
+ * 「改了必跑」 trigger key on the version, so one version has to mean one layer — a hash updated
+ * without a new row here fails, which is what makes the version move with it (acceptance 38:
+ * 「却没同时改版本号和哈希，pnpm test 失败」).
+ */
+const LAYER_HISTORY: Readonly<Record<number, string>> = {
+  1: '62cfe9ae7da9a26873d295566ace5d21277ed329c33f745309d7cd64175ae039',
+}
+
 describe('the version gate', () => {
   it('holds the hash of the layer this build has', () => {
     expect(
       promptLayerHash(),
-      'The prompt layer changed. Raise PROMPT_LAYER_VERSION by one, set PROMPT_LAYER_HASH to the new hash, and run the eval set (spec 02 §提示层「版本闸」).',
+      'The prompt layer changed. Raise PROMPT_LAYER_VERSION by one, set PROMPT_LAYER_HASH to the new hash, add the pair to LAYER_HISTORY in this file, and run the eval set (spec 02 §提示层「版本闸」).',
     ).toBe(PROMPT_LAYER_HASH)
-    expect(Number.isInteger(PROMPT_LAYER_VERSION) && PROMPT_LAYER_VERSION >= 1).toBe(true)
+  })
+
+  it('moves the version with the hash (acceptance 38, 旧 224)', () => {
+    const versions = Object.keys(LAYER_HISTORY).map(Number)
+    expect(
+      LAYER_HISTORY[PROMPT_LAYER_VERSION],
+      'PROMPT_LAYER_HASH is not the hash LAYER_HISTORY records for PROMPT_LAYER_VERSION: a new layer needs a new version and a new row, never an edited one.',
+    ).toBe(PROMPT_LAYER_HASH)
+    // The current version is the newest, versions only go up by one, and no two share a layer.
+    expect(PROMPT_LAYER_VERSION).toBe(Math.max(...versions))
+    expect(versions.toSorted((a, b) => a - b)).toEqual(versions.map((_, i) => i + 1))
+    expect(new Set(Object.values(LAYER_HISTORY)).size).toBe(versions.length)
   })
 
   it('moves on one character anywhere in the layer', () => {
