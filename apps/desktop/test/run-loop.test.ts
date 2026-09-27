@@ -122,6 +122,48 @@ describe('RunRegistry', () => {
     theirs.finish()
   })
 
+  it('aborts the Runs of a document whose renderer is gone, though the WebContents stays', () => {
+    // §停止与退出「watchOwner」: 文档被销毁. A crashed or killed renderer fires only
+    // `render-process-gone` (Electron 44.4.1): no `destroyed`, no `did-navigate` until a reload.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const other = fakeOwner()
+    const mine = lease(registry.begin({ rootSessionId: ROOT, origin: window.owner }))
+    const theirs = lease(registry.begin({ rootSessionId: CHILD, origin: other.owner }))
+    window.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 11 })
+    expect(mine.signal.reason).toBe('close-window')
+    expect(mine.stopRequested).toBe(false)
+    expect(theirs.signal.aborted).toBe(false)
+    expect(registry.running()).toEqual([CHILD])
+    mine.finish()
+    expect(window.listeners()).toBe(0)
+    theirs.finish()
+  })
+
+  it('aborts at once a lease begun for a document whose renderer is already gone', () => {
+    // A command that waited in the mailbox, begun after the crash: no second `render-process-gone`.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const late = lease(
+      registry.begin({
+        rootSessionId: ROOT,
+        origin: { ...window.owner, isDestroyed: () => false, isCrashed: () => true },
+      }),
+    )
+    expect(late.signal.reason).toBe('close-window')
+    expect(registry.running()).toEqual([])
+    late.finish()
+    // Reloaded since: a live renderer is left alone.
+    const mine = lease(
+      registry.begin({
+        rootSessionId: ROOT,
+        origin: { ...window.owner, isDestroyed: () => false, isCrashed: () => false },
+      }),
+    )
+    expect(mine.signal.aborted).toBe(false)
+    mine.finish()
+  })
+
   it('aborts at once a lease begun for a document that is already gone', () => {
     // plan step 9: 「窗口销毁…时以 close-window 中止」 — a command that waited in the mailbox begins
     // its lease with the origin it came with, after that window closed; no `destroyed` comes then.

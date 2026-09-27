@@ -76,8 +76,19 @@ function fakeClock(): {
 }
 
 /**
- * Electron's `app`, as the six steps see it: `quit()` emits `before-quit` first, and the app only
- * goes on to quit when no listener prevented it. `userQuits()` is Cmd+Q, the menu, or `window-all-closed`.
+ * Electron's `app`, as the six steps see it (`Browser::Quit`): a quit while quitting does nothing;
+ * otherwise `is_quitting_ = HandleBeforeQuit()` — quitting when no `before-quit` listener prevented
+ * it — and then the windows close, after which the app exits only if it is still quitting (macOS
+ * ignores the `window-all-closed` it gets otherwise).
+ *
+ * - `app.quit()` is JS's, `window-all-closed`'s included: the emit is nested in JS, so the answer is
+ *   stored as it returns.
+ * - `userQuits()` is a native quit — Cmd+Q, the Dock's or the menu's Quit, SIGTERM — whose emit comes
+ *   from native code: Electron runs the microtasks it queued before the answer is stored, so a
+ *   `quit()` among them re-enters while not yet quitting, and the stored answer overwrites what it
+ *   set (measured on 44.4.1). A fake cannot drain microtasks in place: its store waits for a timer
+ *   set before the emit, which fires before any timer those microtasks set. Returns whether the
+ *   quit was held.
  */
 function fakeApp(): {
   app: {
@@ -87,27 +98,43 @@ function fakeApp(): {
   userQuits(): boolean
   /** How many times main itself called `app.quit()`. */
   quits(): number
-  /** Whether the app got past `before-quit`. */
+  /** Whether the app exited: it was still quitting once its windows had closed. */
   exited(): boolean
 } {
   const listeners: Array<(e: { preventDefault(): void }) => void> = []
   let quits = 0
+  let quitting = false
   let exited = false
   const emit = (): boolean => {
     let prevented = false
     for (const listener of listeners) listener({ preventDefault: () => (prevented = true) })
-    if (!prevented) exited = true
     return prevented
+  }
+  const closeWindows = (): void => {
+    setTimeout(() => {
+      if (quitting) exited = true
+    }, 0)
   }
   return {
     app: {
       on: (_event, listener) => void listeners.push(listener),
       quit: () => {
         quits += 1
-        emit()
+        if (quitting) return
+        quitting = !emit()
+        if (quitting) closeWindows()
       },
     },
-    userQuits: emit,
+    userQuits: () => {
+      if (quitting) return false
+      let prevented = true
+      setTimeout(() => {
+        quitting = !prevented
+        if (quitting) closeWindows()
+      }, 0)
+      prevented = emit()
+      return prevented
+    },
     quits: () => quits,
     exited: () => exited,
   }
@@ -182,10 +209,14 @@ function lease(result: RunLease | { refused: 'shutting-down' }): RunLease {
   return result
 }
 
+/** A few macrotasks: step 6's quit is one after the store closed, and the fake app's exit another. */
 async function flush(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setTimeout(resolve, 0)
-  })
+  for (let hop = 0; hop < 3; hop += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- one macrotask after another
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+  }
 }
 
 interface Rig {
@@ -296,6 +327,70 @@ describe('before-quit: the six steps (§停止与退出「退出」)', () => {
     expect(r.dialog.asked).toHaveLength(2)
   })
 
+  it('a quit confirm its window’s close dismissed is no cancel: with nothing left in progress, it quits', async () => {
+    // macOS queues the quit's sheet behind the window's close sheet; 「停止任务并关闭」 closes the window,
+    // and that dismisses the quit's with its cancelId, before the window reads as destroyed (44.4.1).
+    const r = rig()
+    const running = lease(r.registry.begin({ rootSessionId: ROOT, origin: r.win.webContents }))
+    r.shutdown.onClose(r.win, { preventDefault: () => {} })
+    await flush()
+    r.app.userQuits()
+    await flush()
+    expect(r.dialog.asked.map((entry) => [entry.over, entry.options.buttons])).toEqual([
+      [r.win, ['<leave.stopAndClose>', '<leave.cancel>']],
+      [r.win, ['<leave.stopAndQuit>', '<leave.cancel>']],
+    ])
+    r.dialog.answer(0, EXIT_CONFIRM_STOP)
+    await flush()
+    expect(running.signal.reason).toBe('close-window')
+    expect(r.win.closes).toBe(1)
+    // That close goes through, and takes the quit's confirm with it.
+    const closed = { prevented: false, preventDefault: () => (closed.prevented = true) }
+    r.shutdown.onClose(r.win, closed)
+    expect(closed.prevented).toBe(false)
+    r.dialog.answer(1, EXIT_CONFIRM_CANCEL)
+    await flush()
+    expect(r.dialog.asked).toHaveLength(2)
+    expect(r.shutdown.started).toBe(true)
+    running.finish()
+    await flush()
+    expect(r.tape.closes()).toBe(1)
+    r.tape.resolve()
+    await flush()
+    expect(r.app.quits()).toBe(1)
+    expect(r.app.exited()).toBe(true)
+  })
+
+  it('…and with a Run still in progress elsewhere, asks again over no closing window; that cancel counts', async () => {
+    const r = rig()
+    lease(r.registry.begin({ rootSessionId: ROOT, origin: r.win.webContents }))
+    const elsewhere = lease(r.registry.begin({ rootSessionId: OTHER, origin: {} }))
+    r.shutdown.onClose(r.win, { preventDefault: () => {} })
+    await flush()
+    r.app.userQuits()
+    await flush()
+    r.dialog.answer(0, EXIT_CONFIRM_STOP)
+    await flush()
+    r.shutdown.onClose(r.win, { preventDefault: () => {} })
+    r.dialog.answer(1, EXIT_CONFIRM_CANCEL)
+    await flush()
+    // The closing window is still what `parent()` finds (it leaves getAllWindows() on `closed`).
+    expect(r.dialog.asked.map((entry) => [entry.over, entry.options.buttons])).toEqual([
+      [r.win, ['<leave.stopAndClose>', '<leave.cancel>']],
+      [r.win, ['<leave.stopAndQuit>', '<leave.cancel>']],
+      [null, ['<leave.stopAndQuit>', '<leave.cancel>']],
+    ])
+    expect(r.shutdown.started).toBe(false)
+    // Over no window, nothing dismisses it: this cancel is the user's, and the quit ends.
+    r.dialog.answer(2, EXIT_CONFIRM_CANCEL)
+    await flush()
+    expect(r.dialog.asked).toHaveLength(3)
+    expect(r.shutdown.started).toBe(false)
+    expect(elsewhere.signal.aborted).toBe(false)
+    expect(r.tape.closes()).toBe(0)
+    expect(r.app.quits()).toBe(0)
+  })
+
   it('stop: beginShutdown, then abort(all, quit), in one synchronous stretch', async () => {
     const inner = createRunRegistry(fakeClock().clock)
     const order: string[] = []
@@ -401,6 +496,52 @@ describe('before-quit: the six steps (§停止与退出「退出」)', () => {
     expect(app.exited()).toBe(true)
   })
 
+  it('a native quit with nothing to wait for exits: step 6 quits after the native emit returned', async () => {
+    // Nothing live and a store that closes at once (better-sqlite3 closes synchronously): steps 1–5
+    // are microtasks only, which Cmd+Q, the Dock's Quit or a SIGTERM run inside its own emit.
+    const app = fakeApp()
+    let closes = 0
+    createShutdown<FakeWindow>({
+      app: app.app,
+      dialog: fakeDialog().dialog,
+      registry: createRunRegistry(fakeClock().clock),
+      tape: {
+        close: () => {
+          closes += 1
+          return Promise.resolve()
+        },
+      },
+      t,
+      parent: () => null,
+      log: () => {},
+    })
+    expect(app.userQuits()).toBe(true)
+    await flush()
+    expect(closes).toBe(1)
+    expect(app.quits()).toBe(1)
+    expect(app.exited()).toBe(true)
+  })
+
+  it('a store whose close rejects still quits', async () => {
+    // Step 5, then step 6: a close that fails is logged, and is no reason to stay.
+    const app = fakeApp()
+    const log: string[] = []
+    createShutdown<FakeWindow>({
+      app: app.app,
+      dialog: fakeDialog().dialog,
+      registry: createRunRegistry(fakeClock().clock),
+      tape: { close: () => Promise.reject(new Error('SQLITE_BUSY')) },
+      t,
+      parent: () => null,
+      log: (line) => log.push(line),
+    })
+    app.userQuits()
+    await flush()
+    expect(app.quits()).toBe(1)
+    expect(app.exited()).toBe(true)
+    expect(log).toEqual(['[shutdown] the session store did not close cleanly: SQLITE_BUSY'])
+  })
+
   it('before-quit-for-update is step 3 with quit; the before-quit that follows goes on from step 4', async () => {
     const r = rig()
     const running = lease(r.registry.begin({ rootSessionId: ROOT, origin: null }))
@@ -475,18 +616,24 @@ describe('a window’s close (§停止与退出「关窗」)', () => {
     expect(r.shutdown.started).toBe(false)
   })
 
-  it('once the shutdown began, no close asks', async () => {
+  it('once the shutdown began, no close asks, nor holds for a close confirm still open', async () => {
+    // Step 3: 各窗口的 close 不再询问. The quit's close of the windows (step 6) is not held by one
+    // whose own confirm is still open: the quit was confirmed over it.
     const r = rig()
-    lease(r.registry.begin({ rootSessionId: ROOT, origin: null }))
+    lease(r.registry.begin({ rootSessionId: ROOT, origin: r.win.webContents }))
+    const asked = { prevented: false, preventDefault: () => (asked.prevented = true) }
+    r.shutdown.onClose(r.win, asked)
+    expect(asked.prevented).toBe(true)
+    await flush()
     r.app.userQuits()
     await flush()
-    r.dialog.answer(0, EXIT_CONFIRM_STOP)
+    r.dialog.answer(1, EXIT_CONFIRM_STOP)
     await flush()
-    // A Run begun before, by this window, is aborted and closing; nothing of it asks now.
+    expect(r.shutdown.started).toBe(true)
     const closing = { prevented: false, preventDefault: () => (closing.prevented = true) }
     r.shutdown.onClose(r.win, closing)
     expect(closing.prevented).toBe(false)
-    expect(r.dialog.asked).toHaveLength(1)
+    expect(r.dialog.asked).toHaveLength(2)
   })
 })
 

@@ -65,6 +65,8 @@ interface RunOwner {
   off(event: string, listener: (...args: unknown[]) => void): unknown
   /** A WebContents has it: a document already gone fires no `destroyed` for a lease begun later. */
   isDestroyed?(): boolean
+  /** Likewise for a document whose renderer is gone: no `render-process-gone` comes again. */
+  isCrashed?(): boolean
 }
 
 /**
@@ -194,9 +196,11 @@ export function createRunRegistry(
       })
       live.set(q.rootSessionId, entry)
       // A command that waited in the mailbox begins its lease with the origin it came with, and that
-      // window may have closed meanwhile: aborted at once, so the kernel writes nothing
-      // (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
-      if (owner?.isDestroyed?.() === true) abortOne(entry, 'close-window')
+      // window may have closed, or its renderer crashed, meanwhile: aborted at once, so the kernel
+      // writes nothing (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
+      if (owner?.isDestroyed?.() === true || owner?.isCrashed?.() === true) {
+        abortOne(entry, 'close-window')
+      }
       changed(q.rootSessionId)
       return entry.lease
     },
@@ -460,9 +464,14 @@ function ownerOf(candidate: unknown): RunOwner | null {
 }
 
 /**
- * Calls `gone` once the owning document is destroyed, or the main frame has a new document (a
- * reload); returns the detach (spec 02 §停止与退出「watchOwner」). The caller aborts that document's
- * Runs with `close-window`: no confirm, and a paused session — which has no lease — is not touched.
+ * Calls `gone` once the owning document is destroyed, its renderer is gone, or the main frame has a
+ * new document (a reload); returns the detach (spec 02 §停止与退出「watchOwner」). The caller aborts
+ * that document's Runs with `close-window`: no confirm, and a paused session — which has no lease — is
+ * not touched.
+ *
+ * A crashed or killed renderer takes its document with it, though the WebContents stays: only
+ * `render-process-gone` fires, and no `destroyed` or `did-navigate` until the window is closed or
+ * reloaded (measured on Electron 44.4.1, `forcefullyCrashRenderer()`).
  *
  * `did-navigate` is a main-frame navigation that committed; an in-page one (fragment, pushState)
  * does not fire it. Not `did-start-navigation`: that fires first even for a navigation
@@ -473,9 +482,11 @@ function watchOwner(owner: RunOwner | null, gone: () => void): () => void {
   if (owner === null) return (): void => {}
   const onGone = (): void => gone()
   owner.on('destroyed', onGone)
+  owner.on('render-process-gone', onGone)
   owner.on('did-navigate', onGone)
   return (): void => {
     owner.off('destroyed', onGone)
+    owner.off('render-process-gone', onGone)
     owner.off('did-navigate', onGone)
   }
 }

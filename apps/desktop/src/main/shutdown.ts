@@ -22,17 +22,21 @@ import type { RunRegistry } from './chat.js'
  * card or a question writes nothing and is there after a restart (§启动恢复与发送防护). Only a Run in
  * progress asks first, on main's native confirm, whose copy is `LeaveRunDialog`'s keys; the answer
  * that stops aborts with `close-window` or `quit`, and the kernel records the Run as
- * `shutdown-aborted` with that trigger and each call it closes as `app-exit`.
+ * `shutdown-aborted` with that trigger: a call the shutdown interrupted closes as `app-exit`, and one
+ * never dispatched stays not-run / `stopped` (§点停止时各状态怎么收).
  *
  * - **A window's `close`**, while no shutdown has begun and the window's document has a Run in
  *   progress: prevented, then 「停止任务并关闭 / 取消」. Cancel changes nothing; stop aborts that
  *   document's Runs with `close-window` and closes the window again, which no longer asks. The store
- *   stays open, so the Run's closing writes land.
+ *   stays open, so the Run's closing writes land. A close that goes through dismisses a confirm still
+ *   open over the window (a quit's, queued behind the close's on macOS) with its `cancelId`.
  * - **`before-quit`**, the six steps, once: a repeated trigger waits on the same run, and a cancelled
  *   confirm ends it, so the next quit asks again.
  *   1. The first `before-quit` is always prevented — an ordinary quit waits for `tape.close()` too;
  *      the one step 6 makes goes through.
- *   2. With a Run in progress, 「停止任务并退出 / 取消」; cancel returns and nothing changes.
+ *   2. With a Run in progress, 「停止任务并退出 / 取消」; cancel returns and nothing changes. A confirm
+ *      its window's close dismissed is no answer: asked again, over no closing window, while a Run is
+ *      still in progress, and not at all once none is.
  *   3. In one synchronous stretch `beginShutdown()`, then `abort('all', 'quit')`: no Run can open in
  *      between, and from here on the routes that open a Run or write a fact answer `ok: false`
  *      (`refuseWhileShuttingDown`) and no window's `close` asks.
@@ -41,7 +45,11 @@ import type { RunRegistry } from './chat.js'
  *      constants are the kernel's (loop/limits.ts): the desktop writes no number of its own.
  *   5. `tape.close()`, skipped without a store. A write later than this meets `TapeClosedError`; the
  *      kernel logs it, and the next start's recovery closes what was left open.
- *   6. Shutdown is done; `app.quit()`.
+ *   6. Shutdown is done; `app.quit()`, one macrotask later. With nothing to wait for, steps 1–5 are
+ *      microtasks, which a native quit (Cmd+Q, the Dock, SIGTERM) runs inside its own `before-quit`
+ *      emit: a quit from there is overwritten when that emit's prevented answer is stored, the windows
+ *      close without quitting, and macOS keeps an app with no window and a closed store (measured on
+ *      Electron 44.4.1).
  * - **`before-quit-for-update`** (`quitAndInstall` closes the windows before any `before-quit`):
  *   step 3 with `quit`, and the `before-quit` that follows goes on from step 4.
  *
@@ -176,6 +184,13 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
   let flight: Promise<void> | null = null
   /** Windows whose confirm is open: a second close waits on the first answer. */
   const asking = new Set<W>()
+  /**
+   * Windows whose `close` went through before the shutdown began (step 2 asks only then). Electron
+   * dismisses a confirm over one after that event, and before the window reads as destroyed or
+   * leaves `getAllWindows()` (measured on 44.4.1).
+   */
+  const closing = new WeakSet<W>()
+  const gone = (win: W): boolean => closing.has(win) || win.isDestroyed()
 
   /** True when the user chose to stop; a confirm that fails is a cancel, and is logged. */
   const confirm = async (kind: 'close' | 'quit', over: W | null): Promise<boolean> => {
@@ -214,8 +229,15 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
 
   const quit = async (): Promise<void> => {
     // Step 2: only a Run in progress asks. One a closed window or an update already aborted does not.
-    if (!started && registry !== null && registry.running().length > 0) {
-      if (!(await confirm('quit', deps.parent()))) {
+    const inProgress = (): boolean => !started && registry !== null && registry.running().length > 0
+    while (inProgress()) {
+      const parent = deps.parent()
+      const over = parent === null || gone(parent) ? null : parent
+      // oxlint-disable-next-line no-await-in-loop -- one confirm at a time, each on the last's outcome
+      if (await confirm('quit', over)) break
+      // Dismissed by its window's close, not answered: that close's own confirm may have stopped
+      // what was in progress.
+      if (over === null || !gone(over)) {
         flight = null
         return
       }
@@ -231,9 +253,9 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
         deps.log(`[shutdown] the session store did not close cleanly: ${messageOf(error)}`)
       }
     }
-    // Step 6.
+    // Step 6, out of the native `before-quit` emit that may still be on the stack.
     done = true
-    app.quit()
+    setTimeout(() => app.quit(), 0)
   }
 
   app.on('before-quit', (event) => {
@@ -257,7 +279,10 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
       }
       const origin = win.webContents
       // Only a Run in progress asks: a card or a question waiting is no reason to (B4).
-      if (registry === null || registry.running(origin).length === 0) return
+      if (registry === null || registry.running(origin).length === 0) {
+        closing.add(win)
+        return
+      }
       event.preventDefault()
       asking.add(win)
       void confirm('close', win).then((stop) => {
