@@ -112,6 +112,8 @@ interface HarnessOptions {
   readonly retryAdvice?: { maxAttempts: number; baseDelayMs: number }
   /** The first id handed out: a restarted app's ids never repeat the ones before. */
   readonly idsFrom?: number
+  /** The assembly's max tokens, in place of the model's `maxOutputTokens`. */
+  readonly maxTokens?: number
 }
 
 /** The scripted provider, with each `stream()` call's context recorded. */
@@ -148,6 +150,7 @@ function harness(options: HarnessOptions = {}): Harness {
       provider: recording(provider, sends, options.retryAdvice),
       model: MODEL,
       mcpSources: [lookSource(executed)],
+      ...(options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens }),
     },
     ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
   })
@@ -1194,6 +1197,226 @@ describe('the step count across a pause and a restart (验收 17, 旧 27, 旧 12
       [40, 'step-limit'],
     ])
     expect(before.executed.length + h.executed.length).toBe(100)
+  })
+})
+
+/** The `max_tokens` each scripted request sent, in order. */
+function maxTokensSent(h: Harness): unknown[] {
+  return h.provider.requests.map((request) => (request.body as { max_tokens?: unknown }).max_tokens)
+}
+
+/** The `request.maxTokens` each attempt fact recorded, in the Tape's order. */
+async function attemptMaxTokens(h: Harness): Promise<number[]> {
+  return named(await all(h), 'provider/attempt_completed').map(
+    (entry) => (entry.payload as unknown as TapeAttemptCompletedPayload).request.maxTokens,
+  )
+}
+
+/** One frame of zhipu's stream (openai-chat), as `fakeNetwork` releases it. */
+function zhipuFrame(data: Record<string, unknown>): string {
+  const base = { id: 'chatcmpl-a2', object: 'chat.completion.chunk', created: 1, model: 'glm-test' }
+  return `data: ${JSON.stringify({ ...base, ...data })}\n\n`
+}
+
+function zhipuChunk(delta: unknown, finish: string | null = null): string {
+  return zhipuFrame({ choices: [{ index: 0, delta, finish_reason: finish }] })
+}
+
+/** A whole zhipu reply: the role chunk, these chunks, the trailing usage chunk and `[DONE]`. */
+function zhipuTurn(...chunks: string[]): { kind: 'sse'; frames: string[] } {
+  return {
+    kind: 'sse',
+    frames: [
+      zhipuChunk({ role: 'assistant', content: '' }),
+      ...chunks,
+      zhipuFrame({
+        choices: [],
+        usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+      }),
+      'data: [DONE]\n\n',
+    ],
+  }
+}
+
+/** A chunk that opens call `id` to the `look` tool, with its whole arguments when given. */
+function callStart(id: string, args?: string): unknown {
+  return {
+    tool_calls: [
+      {
+        index: 0,
+        id,
+        type: 'function',
+        function: { name: LOOK, ...(args === undefined ? {} : { arguments: args }) },
+      },
+    ],
+  }
+}
+
+describe('「继续」 after a truncation that kept nothing (plan step 21 实测 A2; owner 2026-09-27, A)', () => {
+  // The cut falls inside the only tool call, with no thinking or text before it: 01 invariant 5
+  // writes no half call, so the attempt leaves no `message/assistant`, and a continuation note would
+  // ask the model to go on from a reply it never sees (§重试与「继续」).
+  const cut = (): StreamEvent[] =>
+    callTurn([], { half: true, stop: 'max-tokens', providerReason: 'max_tokens' })
+
+  it('resends the round whole at twice max_tokens, and the same cut then completes (zhipu, on the fake network)', async () => {
+    const net = fakeNetwork(
+      [
+        // What step 21 measured: the call begins, its arguments are cut, finish_reason `length`.
+        zhipuTurn(
+          zhipuChunk(callStart('call_cut')),
+          zhipuChunk({ tool_calls: [{ index: 0, function: { arguments: '{"at":' } }] }),
+          zhipuChunk({}, 'length'),
+        ),
+        zhipuTurn(zhipuChunk(callStart('call_whole', '{"at":"a"}')), zhipuChunk({}, 'tool_calls')),
+        { kind: 'sse', frames: openAIFixture.PLAIN_TEXT_FRAMES },
+        { kind: 'sse', frames: openAIFixture.PLAIN_TEXT_FRAMES },
+      ],
+      {
+        checkRequest: (request) => {
+          assertToolPairing(request)
+          assertLastTurnIsUser(request)
+        },
+      },
+    )
+    const provider = zhipuDefinition.create({
+      network: net,
+      clock: { now: () => 0, setTimeout: () => () => undefined },
+      config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
+      secrets: { apiKey: 'test-key-not-a-real-credential' },
+    })
+    const model = zhipuDefinition.builtinModels[0]
+    if (model === undefined) throw new Error('the zhipu definition has no builtin model')
+    const h = harness()
+    h.loop.connector.use({ provider, model, maxTokens: 64, mcpSources: [lookSource(h.executed)] })
+
+    const ended = await send(h, 'write it all')
+    expect(ended.reason).toEqual({ code: 'output-truncated', maxTokens: 64 })
+    let entries = await all(h)
+    expect(named(entries, 'message/assistant')).toEqual([])
+    expect(named(entries, 'tool/call')).toEqual([])
+
+    expect(await h.service.continueRun({ sessionId: SESSION, origin: null })).toEqual({
+      status: 'started',
+    })
+    const continued = await h.loop.runEnded()
+    expect(continued.reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual([{ at: 'a' }])
+    const bodies = net.requests.map((request) => request.body as Record<string, unknown>)
+    // 整轮重发: the truncated request as it was, only at twice the limit, and no note.
+    expect(bodies.map((body) => body['max_tokens'])).toEqual([64, 128, 128])
+    expect({ ...bodies[1], max_tokens: 64 }).toEqual(bodies[0])
+    entries = await all(h)
+    expect(named(entries, 'message/continuation')).toEqual([])
+    expect(named(entries, 'execution/run_started').at(-1)?.payload['cause']).toEqual({
+      kind: 'continue',
+      afterRunId: ended.runId,
+      messageId: null,
+    })
+    // What the attempts record is what went out: the doubled Run's every request.
+    expect(await attemptMaxTokens(h)).toEqual([64, 128, 128])
+
+    // A later message's Run goes back to the assembly's limit.
+    expect((await send(h, 'and now')).reason).toEqual({ code: 'completed' })
+    expect(net.requests.at(-1)?.body).toMatchObject({ max_tokens: 64 })
+    expect(net.checkFailures).toEqual([])
+  })
+
+  it('ends a cut at the model’s limit as output-truncated, and doubles no further', async () => {
+    const h = harness({ maxTokens: MODEL.maxOutputTokens / 2 })
+    h.provider.script(cut())
+    expect((await send(h)).reason).toEqual({ code: 'output-truncated', maxTokens: 512 })
+    h.provider.script(cut())
+    await h.service.continueRun({ sessionId: SESSION, origin: null })
+    expect((await h.loop.runEnded()).reason).toEqual({
+      code: 'output-truncated',
+      maxTokens: MODEL.maxOutputTokens,
+    })
+    // Twice 1024 is past the model's limit: nothing to raise, so 「继续」 goes on as after any other
+    // truncation — the note, at the assembly's limit.
+    h.provider.script(cut())
+    await h.service.continueRun({ sessionId: SESSION, origin: null })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'output-truncated', maxTokens: 512 })
+    expect(maxTokensSent(h)).toEqual([512, 1024, 512])
+    expect(await attemptMaxTokens(h)).toEqual([512, 1024, 512])
+    expect(lastUserText(h)).toBe(MODEL_NOTES.continuation['output-truncated'])
+    expect(named(await all(h), 'message/continuation')).toHaveLength(1)
+  })
+
+  it.each([
+    ['text', { text: 'Starting.' }],
+    [
+      'thinking',
+      {
+        before: [
+          { type: 'thinking-delta', index: 0, text: 'Plan the file first.' },
+          { type: 'thinking-signature', index: 0, signature: 'sig-a2' },
+        ] satisfies StreamEvent[],
+      },
+    ],
+  ])(
+    'continues with the note at the same max_tokens after a cut that kept %s',
+    async (_kept, before) => {
+      const h = harness({ maxTokens: 512 })
+      h.provider.script(
+        callTurn([], { ...before, half: true, stop: 'max-tokens', providerReason: 'max_tokens' }),
+      )
+      const ended = await send(h)
+      expect(ended.reason).toEqual({ code: 'output-truncated', maxTokens: 512 })
+      expect(named(await all(h), 'message/assistant')).toHaveLength(1)
+      h.provider.script(done('…and the rest.'))
+      await h.service.continueRun({ sessionId: SESSION, origin: null })
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+      expect(maxTokensSent(h)).toEqual([512, 512])
+      expect(lastUserText(h)).toBe(MODEL_NOTES.continuation['output-truncated'])
+      const entries = await all(h)
+      const [note] = named(entries, 'message/continuation')
+      expect(named(entries, 'execution/run_started').at(-1)?.payload['cause']).toEqual({
+        kind: 'continue',
+        afterRunId: ended.runId,
+        messageId: note?.payload['messageId'],
+      })
+    },
+  )
+
+  it('never raises the limit to less than an ordinary Run would send', async () => {
+    const h = harness({ maxTokens: 256 })
+    h.provider.script(cut())
+    expect((await send(h)).reason).toMatchObject({ code: 'output-truncated' })
+    // What an ordinary Run sends grew since (another model chosen in the menu): twice 256 is under it.
+    h.loop.connector.use({
+      provider: h.provider,
+      model: MODEL,
+      maxTokens: 900,
+      mcpSources: [lookSource(h.executed)],
+    })
+    h.provider.script(done())
+    await h.service.continueRun({ sessionId: SESSION, origin: null })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(maxTokensSent(h)).toEqual([256, 900])
+    expect(named(await all(h), 'message/continuation')).toEqual([])
+  })
+
+  it('keeps the doubled limit through a pause and its answer; a later message goes back', async () => {
+    // Doubled to 512, under the model's 1024: a resume that fell back to the model's limit shows.
+    const h = harness({
+      maxTokens: 256,
+      inspectors: [askAt('x').registration],
+      host: createMemoryHost(),
+    })
+    h.provider.script(cut())
+    expect((await send(h)).reason).toMatchObject({ code: 'output-truncated' })
+    h.provider.script(callTurn([{ id: 'toolu_x', input: { at: 'x' } }]))
+    await h.service.continueRun({ sessionId: SESSION, origin: null })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    h.provider.script(done())
+    await allow(h)
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual([{ at: 'x' }])
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    expect(maxTokensSent(h)).toEqual([256, 512, 512, 256])
+    expect(await attemptMaxTokens(h)).toEqual([256, 512, 512, 256])
   })
 })
 
