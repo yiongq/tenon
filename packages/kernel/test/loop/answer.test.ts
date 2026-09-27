@@ -195,6 +195,11 @@ function resolutions(entries: readonly TapeEntry[]): string[] {
   )
 }
 
+/** `writer` for a fact the Run `runId` wrote (§键与挂靠). */
+function by(runId: string | undefined): unknown {
+  return { by: 'run', runId }
+}
+
 async function rows(h: Harness): Promise<number> {
   return (await h.store.listPendingApprovals({ sessionId: SESSION, limit: 100 })).length
 }
@@ -222,7 +227,7 @@ describe('a card, and its answer', () => {
     expect(pending?.card.facts).toEqual({ category: 'exfiltration', toolName: 'look' })
   })
 
-  it('allows: resumes the batch with that call, under the same model, and the next card waits alone (旧 174)', async () => {
+  it('allows: resumes the batch with that call, under the same model, and the next card waits alone (旧 174, 旧 116)', async () => {
     const h = harness()
     const first = await paused(h, 'a', 'b')
     h.provider.script(done())
@@ -261,6 +266,85 @@ describe('a card, and its answer', () => {
       [1, 'run'],
     ])
     expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    // 旧 116 (§键与挂靠; 02 验收 12): all six facts of each call are under the paused Run's id, and
+    // `writer` names who actually wrote each one — the Run that judged it, the resolver for the answer,
+    // the resumed Run that ran it for its dispatch, result and outcome.
+    const [pausedRun, firstResume, secondResume] = named(entries, 'execution/run_started')
+      .filter(
+        (entry, i) => i === 0 || (entry.payload['cause'] as { kind: string }).kind === 'resume',
+      )
+      .map((entry) => entry.sourceId ?? '')
+    const owned = await h.store.readBySource({
+      sessionId: SESSION,
+      sourceType: 'runtime_event',
+      sourceId: pausedRun ?? '',
+      limit: 100,
+    })
+    const factsOf = (ordinal: number): unknown[] =>
+      owned
+        .filter((entry) => entry.payload['ordinal'] === ordinal)
+        .map((entry) => [entry.name, entry.payload['writer'] ?? null])
+    const resolver = { by: 'resolver' }
+    expect(factsOf(0)).toEqual([
+      ['tool/call', null],
+      ['tool/permission_decided', by(pausedRun)],
+      ['tool/approval_resolved', resolver],
+      ['execution/dispatch_committed', by(firstResume)],
+      ['tool/result', by(firstResume)],
+      ['execution/tool_outcome', by(firstResume)],
+    ])
+    expect(factsOf(1)).toEqual([
+      ['tool/call', null],
+      ['tool/permission_decided', by(firstResume)],
+      ['tool/approval_resolved', resolver],
+      ['execution/dispatch_committed', by(secondResume)],
+      ['tool/result', by(secondResume)],
+      ['execution/tool_outcome', by(secondResume)],
+    ])
+  })
+
+  it('allows in one append with the new Run’s run_started and model_selected (旧 117, 同批规则 2)', async () => {
+    const appends: string[][] = []
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      append: async (batch) => {
+        appends.push(batch.entries.map((entry) => entry.name))
+        return inner.append(batch)
+      },
+    })
+    const h = harness({ store })
+    const requestId = await paused(h)
+    h.provider.script(done())
+    expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(appends.filter((names) => names.includes('tool/approval_resolved'))).toEqual([
+      ['tool/approval_resolved', 'execution/run_started', 'session/model_selected'],
+    ])
+  })
+
+  it('leaves the answer, the new Run and its model all unwritten when that append fails (旧 117)', async () => {
+    let failing = true
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      append: (batch) =>
+        failing && batch.entries.some((entry) => entry.name === 'tool/approval_resolved')
+          ? Promise.reject(new Error('injected: the allow does not commit'))
+          : inner.append(batch),
+    })
+    const h = harness({ store })
+    const requestId = await paused(h)
+    const before = await all(h)
+    await expect(answer(h, requestId, 'allow')).rejects.toThrow('injected')
+    expect(await all(h)).toEqual(before)
+    expect(h.executed).toEqual([])
+    // The card still waits: its row, and the card itself for the next window to show.
+    expect(await rows(h)).toBe(1)
+    expect((await h.service.currentPending({ sessionId: SESSION }))?.card.requestId).toBe(requestId)
+    failing = false
+    h.provider.script(done())
+    expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual([{ at: 'a' }])
   })
 
   it('rejects in the main session: one append, a Run that sends nothing, and the rest not run (旧 173)', async () => {

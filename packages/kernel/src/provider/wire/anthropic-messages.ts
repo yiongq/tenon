@@ -119,9 +119,10 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
  * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; 2 adds
  * the top-level `cache_control` (01 修补 3). Add one with every change to what it encodes, and a row
- * to test/provider/wire/encoder-version.test.ts.
+ * to test/provider/wire/encoder-version.test.ts. Exported for the attempt re-check (02 不变量 33),
+ * which covers only the records this build's encoder wrote.
  */
-const ENCODER: EncoderInfo = Object.freeze({
+export const ANTHROPIC_MESSAGES_ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
   version: 2,
   sdk: `@anthropic-ai/sdk@${SDK_VERSION}`,
@@ -242,7 +243,14 @@ export function encodeAnthropicMessages(
   // body, so promptHash covers it; a synthesised row (supportsCacheControl false) writes none.
   if (req.model.supportsCacheControl) body.cache_control = { type: 'ephemeral' }
   mergeRequestParams(body, req.model, RESERVED_KEYS)
-  const encoded = sealEncoded(providerId, req.model.id, body, tools, decisions, ENCODER)
+  const encoded = sealEncoded(
+    providerId,
+    req.model.id,
+    body,
+    tools,
+    decisions,
+    ANTHROPIC_MESSAGES_ENCODER,
+  )
   // Last, so every refusal 01 already made still comes first with 01's own error (01 修补 3).
   assertLastTurnIsUser(req.messages, WIRE)
   return encoded

@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type { ProjectionOp, TapeEntry } from '@tenon-app/kernel'
+import type { ProjectionOp, TapeEntry, TapeStore } from '@tenon-app/kernel'
 import {
   TapeBusyError,
   TapeClosedError,
@@ -286,24 +286,57 @@ describe('opening the file (acceptance 18)', () => {
   })
 
   it('upgrades a schema-v1 file to v2 on open, leaving its facts where they were', async () => {
-    // The file a phase-1 build wrote: migration 1 only. Migration 2 adds the pending-approval table
-    // and nothing else, in its own transaction, and the facts read back unchanged.
-    const profileDir = tempProfileDir('tape-v1-upgrade')
+    // The file a phase-1 build wrote: migration 1's DDL and nothing else, already holding a session —
+    // its facts, head, projections and cursors — when migration 2 first runs. The rows are written by
+    // this build's store into a scratch file and copied into a file made from migration 1 alone; the
+    // cursors keep the two projections phase 1 had, at projection_version 1.
     const seq = ids(1)
     const at = clockFrom()
     const sessionId = seq.uuid()
     const incarnationId = seq.uuid()
+    const scratch = openStore({ label: 'v1-rows' })
+    await scratch.store.append({
+      sessionId,
+      incarnationId,
+      entries: [
+        startFact(sessionId, incarnationId, at),
+        userFact(seq.uuid(), 0, 'from v1', at),
+        modelSelectedFact(sessionId, seq.uuid(), at),
+      ],
+    })
+    const read = async (
+      store: TapeStore,
+    ): Promise<{ entries: TapeEntry[]; sessions: unknown; messages: unknown }> => ({
+      entries: (await store.readRange({ sessionId, limit: 10 })).entries,
+      sessions: await store.listSessions({ limit: 10 }),
+      messages: await store.listMessages({ sessionId, limit: 10 }),
+    })
+    const written = await read(scratch.store)
+    expect(written.entries).toHaveLength(3)
+    await scratch.store.close()
+
+    const profileDir = tempProfileDir('tape-v1-upgrade')
     const v1 = rawConnection(dbFile(profileDir))
     v1.exec(migration001)
     v1.prepare('INSERT INTO schema_version (version, applied_at) VALUES (1, 1)').run()
+    v1.prepare('ATTACH DATABASE ? AS scratch').run(scratch.file)
+    v1.exec(
+      [
+        'INSERT INTO tape_meta SELECT * FROM scratch.tape_meta',
+        'INSERT INTO session_head SELECT * FROM scratch.session_head',
+        'INSERT INTO tape_entry SELECT * FROM scratch.tape_entry',
+        'INSERT INTO message_projection SELECT * FROM scratch.message_projection',
+        'INSERT INTO session_projection SELECT * FROM scratch.session_projection',
+        "INSERT INTO projection_cursor SELECT * FROM scratch.projection_cursor WHERE projection <> 'pending_approval'",
+        'UPDATE projection_cursor SET projection_version = 1',
+      ].join(';\n'),
+    )
+    v1.prepare('DETACH DATABASE scratch').run()
+    expect(tableNames(v1)).not.toContain('pending_approval_projection')
+    expect(countFacts(v1, 'tenant-a')).toBe(3)
     v1.close()
-    const before = openStore({ label: 'v1-upgrade', profileDir })
-    await before.store.append({
-      sessionId,
-      incarnationId,
-      entries: [startFact(sessionId, incarnationId, at), userFact(seq.uuid(), 0, 'from v1', at)],
-    })
-    await before.store.close()
+
+    const upgraded = openStore({ label: 'v1-upgrade', profileDir })
     const raw = rawConnection(dbFile(profileDir))
     expect(raw.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual([
       { version: 1 },
@@ -311,10 +344,15 @@ describe('opening the file (acceptance 18)', () => {
     ])
     expect(tableNames(raw)).toContain('pending_approval_projection')
     raw.close()
-    const reopened = openStore({ label: 'v1-upgrade', profileDir })
-    expect((await reopened.store.readRange({ sessionId, limit: 10 })).entries).toHaveLength(2)
-    expect(await reopened.store.listPendingApprovals({ limit: 10 })).toEqual([])
-    await reopened.store.close()
+    // Migration 2 adds a table and touches nothing that was there: the facts, the chain, the list and
+    // the transcript read back as phase 1 left them, and nothing waits.
+    expect(await read(upgraded.store)).toEqual(written)
+    expect((await upgraded.store.verifyChain({ sessionId, limit: 10 })).firstBadEntryId).toBeNull()
+    expect(await upgraded.store.listPendingApprovals({ limit: 10 })).toEqual([])
+    // And the rows are the ones a rebuild derives from those facts.
+    await upgraded.store.rebuildProjections(sessionId)
+    expect(await read(upgraded.store)).toEqual(written)
+    await upgraded.store.close()
   })
 
   it('compares the tenant before migration 2 runs on someone else’s v1 file', async () => {
