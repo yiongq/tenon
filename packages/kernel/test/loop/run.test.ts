@@ -1332,15 +1332,17 @@ describe('「继续」 after a truncation that kept nothing (plan step 21 实测
       code: 'output-truncated',
       maxTokens: MODEL.maxOutputTokens,
     })
-    // Twice 1024 is past the model's limit: nothing to raise, so 「继续」 goes on as after any other
-    // truncation — the note, at the assembly's limit.
+    // Twice 1024 is past the model's limit: the round is resent at the limit, still with no note,
+    // and never at less than the Run before it sent.
     h.provider.script(cut())
     await h.service.continueRun({ sessionId: SESSION, origin: null })
-    expect((await h.loop.runEnded()).reason).toEqual({ code: 'output-truncated', maxTokens: 512 })
-    expect(maxTokensSent(h)).toEqual([512, 1024, 512])
-    expect(await attemptMaxTokens(h)).toEqual([512, 1024, 512])
-    expect(lastUserText(h)).toBe(MODEL_NOTES.continuation['output-truncated'])
-    expect(named(await all(h), 'message/continuation')).toHaveLength(1)
+    expect((await h.loop.runEnded()).reason).toEqual({
+      code: 'output-truncated',
+      maxTokens: MODEL.maxOutputTokens,
+    })
+    expect(maxTokensSent(h)).toEqual([512, 1024, 1024])
+    expect(await attemptMaxTokens(h)).toEqual([512, 1024, 1024])
+    expect(named(await all(h), 'message/continuation')).toEqual([])
   })
 
   it.each([

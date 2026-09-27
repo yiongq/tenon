@@ -2655,13 +2655,13 @@ function emptyTruncationOf(entries: readonly TapeEntry[], runId: string): number
 /**
  * 「继续」's max tokens after a truncation that kept nothing (§重试与「继续」; owner 2026-09-27, A):
  * twice the truncated attempt's, never past the model's `maxOutputTokens`, and never under what a
- * Run of this assembly sends anyway. Null when doubling raises nothing — the attempt was already at
- * the model's limit — and 「继续」 continues with its note, as after any other truncation.
+ * Run of this assembly sends anyway. At the model's limit it stays there: the round is resent at the
+ * limit, since a note would ask the model to go on from a reply it never sees. Null only after a
+ * truncation that kept something, which 「继续」 continues with its note.
  */
 function raisedMaxTokens(emptyAt: number | null, assembly: RunAssembly): number | null {
   if (emptyAt === null) return null
-  const doubled = Math.min(2 * emptyAt, assembly.model.maxOutputTokens)
-  return doubled > emptyAt ? Math.max(doubled, assembly.maxTokens) : null
+  return Math.max(Math.min(2 * emptyAt, assembly.model.maxOutputTokens), assembly.maxTokens)
 }
 
 /** The card an asking decision in these entries describes, or null. */
