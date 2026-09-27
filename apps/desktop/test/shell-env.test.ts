@@ -12,7 +12,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createHostProcess } from '../src/main/host/process.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import {
-  SHELL_ENV_TIMEOUT_MS,
   pickShell,
   snapshotEnv,
   startCommandShell,
@@ -155,6 +154,10 @@ describe('the shell env (-i -l -c, env -0 between two markers)', () => {
     expect(argv.slice(0, 3)).toEqual(['-i', '-l', '-c'])
     expect(argv[3]).toContain('/usr/bin/env -0')
     expect(env['FROM_RC']).toBe('from rc\nsecond line')
+    // All of the startup env the shell passed on, the first variable env -0 prints included: none
+    // is filed under a name with the start marker (32 lowercase hex digits) left in front of it.
+    expect(env).toMatchObject(withoutTenonVars(startupEnv, false))
+    expect(Object.keys(env).filter((name) => !/^[A-Z_][A-Z0-9_]*$/.test(name))).toEqual([])
     expect(env['STARTUP_ONLY']).toBe('kept')
     expect(env['GH_TOKEN']).toBe('user-token')
     expect(env).not.toHaveProperty('EARLY_JUNK')
@@ -170,7 +173,7 @@ describe('the shell env (-i -l -c, env -0 between two markers)', () => {
     await eventually(() => sandbox.exited.length === 1)
   })
 
-  it(`falls back to the startup env with one log line when the shell does not answer in ${String(SHELL_ENV_TIMEOUT_MS)} ms, and kills its tree`, async () => {
+  it('falls back to the startup env with one log line when the shell does not answer in 10 s, and kills its tree', async () => {
     const pidFile = join(dir, 'pids')
     const shell = await fakeShell(
       'bash',
@@ -195,7 +198,8 @@ describe('the shell env (-i -l -c, env -0 between two markers)', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(answered).toBe(false)
 
-    expect(timers.map((timer) => timer.ms)).toEqual([SHELL_ENV_TIMEOUT_MS])
+    // The spec's 「10 秒没完就经 kill 清整棵进程树」, as a literal: not the constant it is checking.
+    expect(timers.map((timer) => timer.ms)).toEqual([10_000])
     timers[0]?.fn()
     const env = await pending
 

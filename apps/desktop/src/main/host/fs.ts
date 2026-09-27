@@ -1,20 +1,59 @@
-import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import type { Stats } from 'node:fs'
+import { lstat, mkdir, open, readdir, realpath, stat } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { parse, sep } from 'node:path'
 import type { AbsolutePath, HostFs } from '@tenon-app/kernel'
 import { UnresolvableAliasError, absolutePath } from '@tenon-app/kernel'
 
 /** Real filesystem access for the desktop host. Every path is re-checked to be absolute. */
 export class DesktopFs implements HostFs {
+  /**
+   * Reads a regular file and nothing else (s22 plat-3). A named pipe (FIFO) blocks open(2) until a
+   * writer comes, and it would block inside libuv's threadpool where no stop reaches it: the call
+   * would never return, and spec 02 §参数校验与失败「执行期失败」 has no such outcome. So the file is
+   * opened non-blocking — which changes nothing for a regular file — and the handle's fstat must say
+   * regular file before a byte is read. A FIFO, a device or a socket throws, which Read and Edit
+   * answer as is_error / `completed` and Grep's walk skips.
+   */
   async readFile(path: AbsolutePath, opts?: { encoding?: 'utf8' }): Promise<Uint8Array | string> {
     absolutePath(path)
-    if (opts?.encoding === 'utf8') return readFile(path, 'utf8')
-    const buf = await readFile(path)
-    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+    const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
+    try {
+      await regularFileOnly(handle, path)
+      if (opts?.encoding === 'utf8') return await handle.readFile('utf8')
+      const buf = await handle.readFile()
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
+    } finally {
+      await handle.close()
+    }
   }
 
+  /**
+   * Replaces a regular file's whole content, or makes a new one, and writes nothing else (s22
+   * plat-3). Opened non-blocking, a FIFO no one reads fails at once (ENXIO) instead of blocking the
+   * way `readFile` explains; opened without O_TRUNC, a target fstat shows is not a regular file is
+   * refused before anything in it is cut. Only then is it truncated and written through the handle.
+   */
   async writeFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
     absolutePath(path)
-    await writeFile(path, data)
+    let handle: FileHandle
+    try {
+      handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK)
+    } catch (err) {
+      // open(2) answers ENXIO only for a FIFO without a reader, a device with nothing behind it and,
+      // on Linux, a socket: never for a regular file.
+      if (isErrno(err, 'ENXIO'))
+        throw notRegularFile(path, 'a named pipe or another special file', err)
+      throw err
+    }
+    try {
+      await regularFileOnly(handle, path)
+      await handle.truncate(0)
+      await handle.writeFile(data)
+    } finally {
+      await handle.close()
+    }
   }
 
   async stat(
@@ -147,6 +186,31 @@ function entryOf(path: string): string {
     if (trimmed === entry || trimmed.length < root.length) return entry
     entry = trimmed
   }
+}
+
+/**
+ * Throws unless the open handle is a regular file (s22 plat-3). A folder throws the EISDIR a plain
+ * read of it gives, as the memory host's does; anything else says what it is.
+ */
+async function regularFileOnly(handle: FileHandle, path: string): Promise<void> {
+  const stats = await handle.stat()
+  if (stats.isFile()) return
+  if (stats.isDirectory()) {
+    const message = 'EISDIR: illegal operation on a directory, read'
+    throw Object.assign(new Error(message), { code: 'EISDIR', syscall: 'read', path })
+  }
+  throw notRegularFile(path, kindOf(stats))
+}
+
+function notRegularFile(path: string, kind: string, cause?: unknown): Error {
+  return new Error(`'${path}' is ${kind}, not a regular file`, { cause })
+}
+
+function kindOf(stats: Stats): string {
+  if (stats.isFIFO()) return 'a named pipe'
+  if (stats.isSocket()) return 'a socket'
+  if (stats.isCharacterDevice() || stats.isBlockDevice()) return 'a device'
+  return 'a special file'
 }
 
 function isErrno(err: unknown, code: string): boolean {
