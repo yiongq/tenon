@@ -503,6 +503,21 @@ describe('Grep', () => {
     }
   })
 
+  it('paces the clock by the program, not the cheaper factor a literal is bounded by', () => {
+    let reads = 0
+    const clock = { now: () => (reads += 1), setTimeout: () => () => undefined }
+    const lines = 100_000
+    const cheap = grepMeter(clock, new AbortController().signal, 1, 10)
+    for (let n = 0; n < lines; n += 1) cheap.take(9, absolutePath('/ws/a.txt'), n + 1)
+    const literal = reads
+    reads = 0
+    const dear = grepMeter(clock, new AbortController().signal, 10)
+    for (let n = 0; n < lines; n += 1) dear.take(9, absolutePath('/ws/a.txt'), n + 1)
+    // Short lines of a literal read the clock as often as the program's own cost says (FBRC-1).
+    expect(literal).toBe(reads)
+    expect(literal).toBeGreaterThan(5)
+  })
+
   it("reads ripgrep's dialect: inline flags, Unicode classes, and multiline ^ and $ at each line", async () => {
     const host = await hostWith({ ...FILES, '/ws/u.txt': 'héllo 日本 12\nαβγ abc\n' })
     const grep = async (input: Record<string, unknown>): Promise<string> =>

@@ -239,7 +239,12 @@ export const grepExecutor: ToolExecutor = async (q) => {
   if ('failure' in regex) return regex.failure
   const filter = fileFilterOf(input)
   if ('failure' in filter) return filter.failure
-  const meter = grepMeter(q.clock, q.signal, workFactor(pattern, ignoreCase, regex.value))
+  const meter = grepMeter(
+    q.clock,
+    q.signal,
+    workFactor(pattern, ignoreCase, regex.value),
+    regex.value.programSize(),
+  )
   // Only the page is kept; the entries around it are counted, so memory stays bounded by
   // `head_limit` however much the walk finds or one file holds, and the note can still name the
   // total.
@@ -332,7 +337,17 @@ export interface GrepMeter {
   pause(): Promise<void>
 }
 
-export function grepMeter(clock: HostClock, signal: AbortSignal, factor: number): GrepMeter {
+/**
+ * `factor` prices a line against `GREP_LINE_WORK_MAX`; `pace`, the program size, paces the clock
+ * readings. A literal's cheap factor must not stretch the time between two turns of the event loop
+ * on files of short lines, where the cost per line is not the scan (FBRC-1).
+ */
+export function grepMeter(
+  clock: HostClock,
+  signal: AbortSignal,
+  factor: number,
+  pace: number = factor,
+): GrepMeter {
   const started = clock.now()
   let turn = started
   let unread = 0
@@ -345,7 +360,7 @@ export function grepMeter(clock: HostClock, signal: AbortSignal, factor: number)
     return now - turn >= GREP_SLICE_MS
   }
   const spend = (length: number): boolean => {
-    unread += (length + 1) * factor
+    unread += (length + 1) * pace
     return unread >= CLOCK_WORK && check()
   }
   return {
