@@ -4,7 +4,8 @@
  */
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { FILE_TEXTS, failed, globToRegExp, succeeded, walkFiles, whenThrown } from './files.js'
+import { FILE_TEXTS, failed, globMatcher, succeeded, walkFiles, whenThrown } from './files.js'
+import type { GlobMatcher } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
@@ -55,9 +56,9 @@ export const GLOB_TOOL: BuiltinTool = {
 export const globExecutor: ToolExecutor = async (q) => {
   if (q.target === null) throw new Error('Glob: a call reached its executor with no target path')
   const pattern = String(q.input['pattern'] ?? '')
-  let matcher: RegExp
+  let matcher: GlobMatcher
   try {
-    matcher = globToRegExp(pattern)
+    matcher = globMatcher(pattern)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return failed(fill(GLOB_TEXTS.invalidPattern, { pattern, message }))

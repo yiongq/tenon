@@ -9,9 +9,9 @@ import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { AbsolutePath, MemoryHost } from '../../src/index.js'
 import { SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
 import { fill } from '../../src/prompts/index.js'
-import { globToRegExp } from '../../src/tools/builtin/files.js'
+import { globMatcher } from '../../src/tools/builtin/files.js'
 import { GLOB_RESULT_LIMIT, GLOB_TEXTS, globExecutor } from '../../src/tools/builtin/glob.js'
-import { GREP_TEXTS, grepExecutor } from '../../src/tools/builtin/grep.js'
+import { GREP_HEAD_LIMIT, GREP_TEXTS, grepExecutor } from '../../src/tools/builtin/grep.js'
 import { READ_TEXTS, readExecutor, readResult } from '../../src/tools/builtin/read.js'
 import { BUILTIN_SERVER_ID } from '../../src/tools/registry.js'
 import type { ExecuteQuery, ToolExecution, ToolExecutor } from '../../src/tools/executor.js'
@@ -112,6 +112,19 @@ describe('Read keeps each result under the threshold, by whole lines (open quest
     expect(readResult(`${long}\nsecond\n`, 2, null).text).toBe('2\tsecond')
   })
 
+  it('names the next part after a cut line even when the limit ends on it, and none after the last line', () => {
+    // §内置工具与参数「Read」「下一段从 N+1 起」: the exemption at `offset + limit - 1` is the ordinary
+    // closing sentence's, not the cut line's.
+    const long = 'a'.repeat(50_000)
+    const limited = readResult(`${long}\nsecond\nthird\n`, 1, 1)
+    expect(limited.text.length).toBeLessThanOrEqual(SPILL_THRESHOLD_CHARS)
+    expect(limited.text).toContain('Line 1 of 3 is too long')
+    expect(limited.text).toContain('The next part starts at offset 2.')
+    const last = readResult(`first\n${long}\n`, 2, 1)
+    expect(last.text).toContain('Line 2 of 2 is too long')
+    expect(last.text).not.toContain('offset')
+  })
+
   it('adds no closing sentence when it stops at the limit, before the end of the file', () => {
     const result = readResult('a\nb\nc\nd\n', 2, 2)
     expect(result).toEqual({ text: '2\tb\n3\tc', isError: false })
@@ -191,12 +204,26 @@ describe('Glob', () => {
   })
 
   it('reads the dialect it documents', () => {
-    expect(globToRegExp('src/**/test_*.py').test('src/a/b/test_x.py')).toBe(true)
-    expect(globToRegExp('src/**/test_*.py').test('src/test_x.py')).toBe(true)
-    expect(globToRegExp('*.{ts,tsx}').test('a.tsx')).toBe(true)
-    expect(globToRegExp('[!a]?.md').test('bc.md')).toBe(true)
-    expect(globToRegExp('[!a]?.md').test('ac.md')).toBe(false)
-    expect(globToRegExp('a.b').test('axb')).toBe(false)
+    expect(globMatcher('src/**/test_*.py').test('src/a/b/test_x.py')).toBe(true)
+    expect(globMatcher('src/**/test_*.py').test('src/test_x.py')).toBe(true)
+    expect(globMatcher('*.{ts,tsx}').test('a.tsx')).toBe(true)
+    expect(globMatcher('[!a]?.md').test('bc.md')).toBe(true)
+    expect(globMatcher('[!a]?.md').test('ac.md')).toBe(false)
+    expect(globMatcher('a.b').test('axb')).toBe(false)
+    // `?` is one character, a surrogate pair included; a bad class fails as the pattern.
+    expect(globMatcher('?.md').test('😀.md')).toBe(true)
+    expect(() => globMatcher('[z-a]')).toThrow(SyntaxError)
+  })
+
+  it('matches in time linear in the path, so a pattern cannot hold the process (§内置工具与参数)', async () => {
+    // As a backtracking regular expression this took seconds on one name, and no stop can land
+    // inside a match: the main process serves every window meanwhile.
+    const host = await hostWith({ [`/ws/${'a'.repeat(60)}`]: '' })
+    const started = performance.now()
+    const glob = await run(globExecutor, host, 'Glob', { pattern: '*a*a*a*a*a*a*a*a*a*b' }, WS)
+    expect(textOf(glob)).toBe(GLOB_TEXTS.none)
+    expect(globMatcher('*a*a*a*a*a*a*a*a*a*b').test(`${'a'.repeat(5000)}b`)).toBe(true)
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 })
 
@@ -267,6 +294,71 @@ describe('Grep', () => {
     )
     expect(textOf(paged)).toBe(
       `/ws/n.txt:2:x\n/ws/n.txt:3:x\n\n${fill(GREP_TEXTS.more, { from: '2', to: '3', total: '5', next: '3' })}`,
+    )
+  })
+
+  it('never shows half a surrogate pair, the pattern parsed without the u flag included', async () => {
+    // `\\"` is no escape under `u`, so this pattern falls back to code units, where `.` is half a
+    // character (§内置工具与参数「正则方言跟 ripgrep」; a lone surrogate would replay in every request).
+    const host = await hostWith({ '/ws/a.json': '{"t": "a😀b"}\n', '/ws/e.txt': '😀😀\n' })
+    const cut = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      { pattern: '\\"t\\": \\".{0,2}', output_mode: 'content', '-o': true },
+      absolutePath('/ws/a.json'),
+    )
+    expect(textOf(cut)).toBe('/ws/a.json:1:"t": "a😀')
+    expect(textOf(cut).isWellFormed()).toBe(true)
+    // A match that ends on a low half gets the high half back, and a character is shown once.
+    const halves = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      { pattern: '\\ude00|\\"', output_mode: 'content', '-o': true, multiline: true },
+      absolutePath('/ws/e.txt'),
+    )
+    expect(textOf(halves)).toBe('/ws/e.txt:1:😀\n/ws/e.txt:1:😀')
+    const each = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      { pattern: '\\"|.', output_mode: 'content', '-o': true },
+      absolutePath('/ws/e.txt'),
+    )
+    expect(textOf(each)).toBe('/ws/e.txt:1:😀\n/ws/e.txt:1:😀')
+  })
+
+  it('keeps only the page in memory, and still counts the rest for the note', async () => {
+    // One file of 300 000 matching lines: the entries were once spread into a push, which overflows
+    // the call stack and came back as a failure of the root (plan step 18, head_limit 250).
+    const big = 'x\n'.repeat(300_000)
+    const host = await hostWith({ '/ws/big.txt': big, '/ws/small.txt': 'x\n' })
+    const paged = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      { pattern: '.', output_mode: 'content', offset: 299_999 },
+      WS,
+    )
+    expect(paged).toMatchObject({ isError: false, state: 'completed' })
+    expect(textOf(paged)).toBe(`/ws/big.txt:300000:x\n/ws/small.txt:1:x`)
+    const first = await run(
+      grepExecutor,
+      host,
+      'Grep',
+      { pattern: '.', output_mode: 'content' },
+      WS,
+    )
+    const [shown, note] = textOf(first).split('\n\n')
+    expect(shown?.split('\n')).toHaveLength(GREP_HEAD_LIMIT)
+    expect(note).toBe(
+      fill(GREP_TEXTS.more, {
+        from: '1',
+        to: String(GREP_HEAD_LIMIT),
+        total: '300001',
+        next: String(GREP_HEAD_LIMIT),
+      }),
     )
   })
 

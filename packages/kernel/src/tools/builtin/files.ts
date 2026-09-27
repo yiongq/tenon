@@ -187,63 +187,173 @@ export async function walkFiles(
   return files.toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }
 
-/**
- * A glob as a regular expression over a `/`-separated relative path (暂定 dialect): `**` any number of
- * folders, `*` and `?` within one segment, `[...]` (`!` or `^` negates), `{a,b}`, `\` escapes. A
- * pattern with no `/` matches the whole path from the root, so `*.ts` matches only top-level files.
- */
-export function globToRegExp(pattern: string): RegExp {
-  return new RegExp(`^${globSource(pattern)}$`, 'u')
+/** A compiled glob: whether a `/`-separated relative path (or a file name) matches it. */
+export interface GlobMatcher {
+  test(path: string): boolean
 }
 
-function globSource(pattern: string): string {
-  let out = ''
+/**
+ * A glob over a `/`-separated relative path (暂定 dialect): `**` any number of folders, `*` and `?`
+ * within one segment, `[...]` (`!` or `^` negates), `{a,b}`, `\` escapes. A pattern with no `/`
+ * matches the whole path from the root, so `*.ts` matches only top-level files. Throws on a class a
+ * regular expression cannot hold.
+ *
+ * It runs as a set of states stepped one character at a time (a Thompson NFA), never as a
+ * backtracking regular expression: `*a*a*a*a*a*a*a*a*b` over a long name took seconds that way, in
+ * the process every window is served from, where no stop can land (§内置工具与参数「Read、Glob、Grep
+ * 在两次 HostFs 调用之间查中止信号」). The time is the path's length times the pattern's.
+ */
+export function globMatcher(pattern: string): GlobMatcher {
+  const nfa: GlobNfa = { states: [] }
+  const start = addState(nfa, null)
+  const accept = compileGlob(nfa, pattern, start)
+  const closures = nfa.states.map((_, i) => epsilonClosure(nfa, i))
+  const initial = closures[start] ?? []
+  return {
+    test(path: string): boolean {
+      let current: readonly number[] = initial
+      for (const char of path) {
+        const seen = new Set<number>()
+        for (const state of current) {
+          const { test, next } = nfa.states[state] as GlobState
+          if (test === null || !test(char)) continue
+          for (const reached of closures[next[0] as number] ?? []) seen.add(reached)
+        }
+        if (seen.size === 0) return false
+        current = [...seen]
+      }
+      return current.includes(accept)
+    },
+  }
+}
+
+/** A state consumes one character that passes `test`, or (`test` null) moves on without one. */
+interface GlobState {
+  readonly test: ((char: string) => boolean) | null
+  readonly next: number[]
+}
+
+interface GlobNfa {
+  readonly states: GlobState[]
+}
+
+function addState(nfa: GlobNfa, test: GlobState['test']): number {
+  return nfa.states.push({ test, next: [] }) - 1
+}
+
+function link(nfa: GlobNfa, from: number, to: number): void {
+  nfa.states[from]?.next.push(to)
+}
+
+/** The consuming states and the accepting one reached from `state` without a character. */
+function epsilonClosure(nfa: GlobNfa, state: number): number[] {
+  const seen = new Set<number>()
+  const stack = [state]
+  while (stack.length > 0) {
+    const at = stack.pop() as number
+    if (seen.has(at)) continue
+    seen.add(at)
+    const s = nfa.states[at] as GlobState
+    if (s.test === null) stack.push(...s.next)
+  }
+  return [...seen]
+}
+
+const notSlash = (char: string): boolean => char !== '/'
+const isSlash = (char: string): boolean => char === '/'
+/** What `.` matched in the regular expression this replaces: anything but a line terminator. */
+const notLineEnd = (char: string): boolean =>
+  char !== '\n' && char !== '\r' && char !== '\u2028' && char !== '\u2029'
+
+/** Adds `pattern` after state `from`; answers the state it ends on. */
+function compileGlob(nfa: GlobNfa, pattern: string, from: number): number {
+  let at = from
+  const one = (test: (char: string) => boolean): void => {
+    const consume = addState(nfa, test)
+    const after = addState(nfa, null)
+    link(nfa, at, consume)
+    link(nfa, consume, after)
+    at = after
+  }
+  /** Any number of characters passing `test`. */
+  const many = (test: (char: string) => boolean): void => {
+    const loop = addState(nfa, null)
+    const consume = addState(nfa, test)
+    link(nfa, at, loop)
+    link(nfa, loop, consume)
+    link(nfa, consume, loop)
+    at = loop
+  }
   let i = 0
   while (i < pattern.length) {
-    const c = pattern[i] as string
+    const c = String.fromCodePoint(pattern.codePointAt(i) as number)
     if (c === '*') {
       if (pattern[i + 1] === '*') {
         const slash = pattern[i + 2] === '/'
-        out += slash ? '(?:[^/]*/)*' : '.*'
+        if (slash) {
+          // `**/`: nothing, or folders — any run of segments each ending in `/`.
+          const loop = addState(nfa, null)
+          const done = addState(nfa, null)
+          const segment = addState(nfa, null)
+          const name = addState(nfa, notSlash)
+          const end = addState(nfa, isSlash)
+          link(nfa, at, loop)
+          link(nfa, loop, done)
+          link(nfa, loop, segment)
+          link(nfa, segment, name)
+          link(nfa, name, segment)
+          link(nfa, segment, end)
+          link(nfa, end, loop)
+          at = done
+        } else many(notLineEnd)
         i += slash ? 3 : 2
       } else {
-        out += '[^/]*'
+        many(notSlash)
         i += 1
       }
     } else if (c === '?') {
-      out += '[^/]'
+      one(notSlash)
       i += 1
     } else if (c === '[') {
       const end = pattern.indexOf(']', i + 2)
       if (end < 0) {
-        out += '\\['
+        one((char) => char === '[')
         i += 1
       } else {
         let body = pattern.slice(i + 1, end)
         const negated = body.startsWith('!') || body.startsWith('^')
         if (negated) body = body.slice(1)
-        out += `[${negated ? '^' : ''}${body.replaceAll('\\', '\\\\').replaceAll(']', '\\]')}]`
+        // One class, matched against one character: linear, and it throws as the class would.
+        const escaped = body.replaceAll('\\', '\\\\').replaceAll(']', '\\]')
+        const cls = new RegExp(`^[${negated ? '^' : ''}${escaped}]$`, 'u')
+        one((char) => cls.test(char))
         i = end + 1
       }
     } else if (c === '{') {
       const end = closingBrace(pattern, i)
       if (end < 0) {
-        out += '\\{'
+        one((char) => char === '{')
         i += 1
       } else {
-        const options = splitTopLevel(pattern.slice(i + 1, end))
-        out += `(?:${options.map(globSource).join('|')})`
+        const done = addState(nfa, null)
+        for (const option of splitTopLevel(pattern.slice(i + 1, end))) {
+          const begin = addState(nfa, null)
+          link(nfa, at, begin)
+          link(nfa, compileGlob(nfa, option, begin), done)
+        }
+        at = done
         i = end + 1
       }
     } else if (c === '\\' && i + 1 < pattern.length) {
-      out += escapeRegExp(pattern[i + 1] as string)
-      i += 2
+      const escaped = String.fromCodePoint(pattern.codePointAt(i + 1) as number)
+      one((char) => char === escaped)
+      i += 1 + escaped.length
     } else {
-      out += escapeRegExp(c)
-      i += 1
+      one((char) => char === c)
+      i += c.length
     }
   }
-  return out
+  return at
 }
 
 function closingBrace(pattern: string, open: number): number {
@@ -274,8 +384,4 @@ function splitTopLevel(body: string): string[] {
   }
   parts.push(body.slice(start))
   return parts
-}
-
-function escapeRegExp(c: string): string {
-  return /[\\^$.*+?()[\]{}|/]/.test(c) ? `\\${c}` : c
 }

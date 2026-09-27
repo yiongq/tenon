@@ -217,6 +217,53 @@ describe('the protected list in a task whose workspace is the home folder (旧 1
   })
 })
 
+describe('a walk rooted outside the workspace, allowed on its card (旧 159; §内置工具的默认档位)', () => {
+  // The protected list has no way to be allowed: an `outside-workspace` card lets the walk run, and
+  // the walk still skips what the list holds (「保护名单…直接拦下，不给放行入口」).
+  it.each([
+    [
+      'Grep',
+      { pattern: 'SECRET', output_mode: 'content', path: HOME },
+      `${OWN_SPILL}/r-1-0.txt:1:own SECRET-own`,
+    ],
+    ['Glob', { pattern: '**', path: HOME }, `${OWN_SPILL}/r-1-0.txt\n${HOME}/proj/a.ts`],
+  ])('%s over the home folder finds nothing the list holds', async (name, input, text) => {
+    const h = await harness()
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath(`${HOME}/proj`)] },
+      dedicated: DEDICATED,
+    })
+    h.provider.script(reply({ name, input }))
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
+    const pending = await h.service.currentPending({ sessionId: SESSION })
+    expect(pending?.card.reason).toBe('outside-workspace')
+    h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending?.card.requestId ?? '',
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    const { calls } = await closed(h)
+    expect(calls).toEqual([
+      {
+        decision: ['ask', 'default', 'read-only'],
+        outcome: ['completed', null],
+        isError: false,
+        text,
+      },
+    ])
+  })
+})
+
 describe('the chat profile reads only its own spill (旧 179)', () => {
   it('reads there without a card, and blocks everything else at the call, the way back up included', async () => {
     const h = await harness()
