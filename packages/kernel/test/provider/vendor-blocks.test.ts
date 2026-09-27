@@ -9,9 +9,9 @@
  * the stored fact reproduces, not about an object a test kept in hand. Every request of every run
  * is checked with `assertToolPairing` and `assertLastTurnIsUser` as it leaves.
  *
- * What waits: the other half of 旧 112 and 旧 42 — `canonicalHash(model)` against
- * `view/assembled.modelInfoHash`, re-encoding from the assembly's ModelInfo, and the verifier that
- * says 「模型表已变」 rather than 「被篡改」 — needs the assembly record of plan step 10.
+ * The other half of 旧 112 and 旧 42 — `canonicalHash(model)` against `view/assembled.modelInfoHash`,
+ * re-encoding from the assembly's ModelInfo, and the re-check that says 「模型表已变」 rather than
+ * 「被篡改」 (02 不变量 33) — is attempt-recheck.test.ts, over step 10's assembly record.
  */
 import { describe, expect, it } from 'vitest'
 import {

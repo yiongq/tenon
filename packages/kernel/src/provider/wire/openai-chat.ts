@@ -101,9 +101,10 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
  * 1 is spec 02's encoder — `reasoning_effort`, the vendor blocks and the trailing-user rule; add one
- * with every change to what it encodes.
+ * with every change to what it encodes. Exported for the attempt re-check (02 不变量 33), which covers
+ * only the records this build's encoder wrote.
  */
-const ENCODER: EncoderInfo = Object.freeze({
+export const OPENAI_CHAT_ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
   version: 1,
   sdk: `openai@${SDK_VERSION}`,
@@ -209,7 +210,7 @@ export function encodeOpenAIChat(req: ProviderRequest, providerId: ProviderId): 
     if (req.effort !== undefined) body.reasoning_effort = req.effort
   }
   mergeRequestParams(body, req.model, RESERVED_KEYS)
-  const encoded = sealEncoded(providerId, req.model.id, body, tools, decisions, ENCODER)
+  const encoded = sealEncoded(providerId, req.model.id, body, tools, decisions, OPENAI_CHAT_ENCODER)
   // Last, so every refusal 01 already made still comes first with 01's own error (01 修补 3).
   assertLastTurnIsUser(req.messages, WIRE)
   return encoded

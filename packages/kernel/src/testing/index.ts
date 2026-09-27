@@ -74,3 +74,7 @@ export type { TestServiceExtras, TestToolRegistry } from './test-service.js'
 // A scriptable inspector (plan step 12).
 export { createFakeInspector } from './fake-inspector.js'
 export type { FakeInspector, FakeInspectorAnswer } from './fake-inspector.js'
+
+// The re-check of an attempt fact from the Tape alone: 02 不变量 33 and acceptance 7's 「模型表已变」.
+export { recheckAttempt } from './attempt-recheck.js'
+export type { AttemptRecheck, AttemptRecheckQuery } from './attempt-recheck.js'

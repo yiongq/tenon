@@ -35,7 +35,6 @@ import { environmentText } from '../loop/environment.js'
 import type { SessionEvent } from '../loop/events.js'
 import type { RunEndReason } from '../loop/terminal.js'
 import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
-import { encodeAnthropicMessages } from '../provider/wire/anthropic-messages.js'
 import { canonicalHash, systemHash } from '../provider/wire/shared.js'
 import { createSessionService } from '../session/service.js'
 import type { SessionService } from '../session/service.js'
@@ -72,6 +71,7 @@ import type {
 import { TapeProjectionError, project } from '../tape/projection.js'
 import { rebuildProviderContext } from '../tape/replay.js'
 import { canonicalJson } from '../tape/canonical-json.js'
+import { recheckAttempt } from './attempt-recheck.js'
 import { createTestLoopPorts } from './loop-ports.js'
 import type { TestLoopPorts } from './loop-ports.js'
 import {
@@ -534,6 +534,11 @@ function decisionFact(fixture: Fixture, call: CallAt, options: DecisionOptions =
   })
 }
 
+/** A decision that waits, on a call of a run of its own: one pending row. */
+function waitingOnFreshRun(fixture: Fixture, awaits: 'approval' | 'question'): NewEntry {
+  return decisionFact(fixture, { runId: fixture.ids.uuid(), requestSeq: 0, ordinal: 0 }, { awaits })
+}
+
 function approvalFact(
   fixture: Fixture,
   call: CallAt,
@@ -904,13 +909,15 @@ async function attemptFacts(store: TapeStore, sessionId: string): Promise<TapeEn
 }
 
 /**
- * Acceptance 3 for ONE attempt fact: replay pinned at the `contextAtEntryId` that fact recorded, plus
- * that fact's own request snapshot, re-encoded through the real wire encoder, hashes to the
- * `promptHash` the fact recorded. (A Run sends no system prompt and no tools before plan steps 18 and
- * 10; from then on the re-encode reads them from the Run's assembly facts.)
+ * Acceptance 3 for ONE attempt fact, and 02 不变量 33: the request rebuilt from the Tape alone — replay
+ * pinned at the `contextAtEntryId` that fact recorded, its own request snapshot, and the ModelInfo,
+ * system text and tools its `view/assembled` names — re-encodes through the real wire encoder to the
+ * `promptHash` the fact recorded. `recheckAttempt` does the rebuilding; the model table it is compared
+ * with here is the scripted provider's one row.
  *
- * Nothing outside the fact and the tape goes into it, which is the point: if the pin, the snapshot or
- * the encoder disagreed with what was sent, the recorded hash could never be recomputed again.
+ * Nothing outside the fact and the tape goes into it, which is the point: if the pin, the snapshot, the
+ * stored originals or the encoder disagreed with what was sent, the recorded hash could never be
+ * recomputed again.
  */
 async function assertAttemptReEncodes(
   store: TapeStore,
@@ -919,11 +926,16 @@ async function assertAttemptReEncodes(
 ): Promise<void> {
   const fact = attemptPayloadOf(entry)
   await assertPinIsThisRunsOwnBatch(store, sessionId, entry, fact)
-  const messages = await rebuildProviderContext(store, {
+  const recheck = await recheckAttempt(store, {
     sessionId,
-    atEntryId: fact.contextAtEntryId,
-    target: SCRIPT_MODEL,
+    attempt: entry,
+    currentModel: (providerId, modelId) =>
+      providerId === SCRIPT_PROVIDER_ID && modelId === SCRIPT_MODEL.id ? SCRIPT_MODEL : null,
   })
+  if (recheck.verdict !== 'verified') {
+    fail(`attempt ${entry.entryId} does not recompute from the tape: ${describeValue(recheck)}`)
+  }
+  const { messages, system } = recheck.request
   assertTrue(messages.length > 0, `the context of attempt ${entry.entryId} is not empty`)
   assertEqual(
     messages.filter((message) => message.content.length === 0),
@@ -940,86 +952,11 @@ async function assertAttemptReEncodes(
   )
   // The system text is the incarnation's `view/content(system)` the snapshot's hash names (spec 02
   // §提示层「组装」): sent from the Tape, never re-assembled.
-  const system = await systemTextOf(store, sessionId, fact.request.systemHash)
-  const tools = await toolsOf(store, sessionId, fact.assemblyRef)
-  const encoded = encodeAnthropicMessages(
-    {
-      model: SCRIPT_MODEL,
-      ...(system === undefined ? {} : { system }),
-      messages,
-      ...(tools === undefined ? {} : { tools }),
-      maxTokens: fact.request.maxTokens,
-      ...(fact.request.temperature === undefined ? {} : { temperature: fact.request.temperature }),
-      ...(fact.request.thinking === undefined ? {} : { thinking: fact.request.thinking }),
-      ...(fact.request.effort === undefined ? {} : { effort: fact.request.effort }),
-      ...(fact.request.display === undefined ? {} : { display: fact.request.display }),
-    },
-    SCRIPT_PROVIDER_ID,
-  )
-  assertEqual(
-    encoded.promptHash,
-    fact.promptHash,
-    `the promptHash recorded by attempt ${entry.entryId} recomputes from the tape`,
-  )
-  assertEqual(
-    encoded.toolDefinitionsHash,
-    fact.toolDefinitionsHash,
-    `the toolDefinitionsHash recorded by attempt ${entry.entryId}`,
-  )
   assertTrue(
     system !== undefined && fact.request.systemHash === systemHash(system),
     'the snapshot names the system prompt the Run sent, stored once as view/content(system)',
   )
   assertEqual(fact.modelId, SCRIPT_MODEL.id, 'the fact names the model that went on the wire')
-}
-
-/**
- * The tools the request carried, from the Tape (spec 02 §组装清单与内容寄存): its `view/assembled`
- * names the table and whether it was sent; the table names each spec by hash; `view/content` holds
- * them. Undefined when the request sent none.
- */
-async function toolsOf(
-  store: TapeStore,
-  sessionId: string,
-  assemblyRef: string | undefined,
-): Promise<ToolSpec[] | undefined> {
-  if (assemblyRef === undefined) return undefined
-  const entries = await readAll(store, sessionId)
-  const assembled = entries.find((entry) => entry.provenanceKey === assemblyRef)?.payload as
-    | { tools?: { tableKey: string; sent: boolean } | null }
-    | undefined
-  if (assembled?.tools == null || !assembled.tools.sent) return undefined
-  const tableKey = assembled.tools.tableKey
-  const table = entries.find((entry) => entry.provenanceKey === tableKey)?.payload as
-    | { tools: Array<{ specHash: string }> }
-    | undefined
-  if (table === undefined) fail(`no view/tool_table ${tableKey} on the Tape`)
-  const specs = new Map<string, ToolSpec>()
-  for (const entry of entries) {
-    const content = entry.payload as { type?: unknown; hash?: unknown; spec?: unknown }
-    if (entry.name === 'view/content' && content.type === 'tool_spec') {
-      specs.set(String(content.hash), content.spec as ToolSpec)
-    }
-  }
-  const tools = table.tools.map((tool) => specs.get(tool.specHash))
-  if (tools.some((spec) => spec === undefined)) fail(`a spec of ${tableKey} is not on the Tape`)
-  return tools.length === 0 ? undefined : (tools as ToolSpec[])
-}
-
-/** The text of the `view/content(system)` with this hash in the session, or undefined. */
-async function systemTextOf(
-  store: TapeStore,
-  sessionId: string,
-  hash: string,
-): Promise<string | undefined> {
-  for (const entry of await readAll(store, sessionId)) {
-    if (entry.name !== 'view/content') continue
-    const content = entry.payload as { type?: unknown; hash?: unknown; text?: unknown }
-    if (content.type === 'system' && content.hash === hash && typeof content.text === 'string') {
-      return content.text
-    }
-  }
-  return undefined
 }
 
 /**
@@ -3216,6 +3153,52 @@ export function tapeConformanceCases(
         'a limit above the ceiling',
       )
       assertEqual((await fixture.store.listPendingApprovals({ limit: 1 })).length, 1, 'limit caps')
+    },
+  )
+
+  add(
+    'a reset or a delete takes the session’s pending rows with it, and only its own',
+    async (open) => {
+      // 01 §删除语义 (resetSession / deleteSession 「清该 session 的投影与游标」) applied to 01 修补 7's
+      // pending table: a row outliving its session would read, at startup and on the banner, as a
+      // call still waiting under a Run that is gone. A second session's row must stay.
+      const fixture = await open()
+      const other: Fixture = { ...fixture, sessionId: fixture.ids.uuid() }
+      other.incarnationId = fixture.ids.uuid()
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        waitingOnFreshRun(fixture, 'approval'),
+      ])
+      await appendAll(other, [
+        startEntry(other, other.incarnationId),
+        waitingOnFreshRun(other, 'approval'),
+      ])
+      const theirs = await pendingOf(other, other.sessionId)
+      assertEqual(theirs.length, 1, 'the other session has its one row')
+      const assertOnlyTheirs = async (after: string): Promise<void> => {
+        assertEqual(await pendingOf(fixture, fixture.sessionId), [], `${after}: no row of its own`)
+        assertEqual(await pendingOf(fixture), theirs, `${after}: only the other session's row`)
+      }
+      const reset = async (withCarry: boolean): Promise<void> => {
+        const next = fixture.ids.uuid()
+        await fixture.store.resetSession({
+          sessionId: fixture.sessionId,
+          incarnationId: next,
+          start: startEntry(fixture, next),
+          ...(withCarry ? { carry: [profileFact(fixture, next)] } : {}),
+        })
+        fixture.incarnationId = next
+      }
+      await reset(false)
+      await assertOnlyTheirs('a reset')
+      await appendAll(fixture, [waitingOnFreshRun(fixture, 'question')])
+      assertEqual((await pendingOf(fixture, fixture.sessionId)).length, 1, 'a question waits')
+      await reset(true)
+      await assertOnlyTheirs('a reset with a carry')
+      await appendAll(fixture, [waitingOnFreshRun(fixture, 'approval')])
+      assertEqual((await pendingOf(fixture, fixture.sessionId)).length, 1, 'an approval waits')
+      await fixture.store.deleteSession(fixture.sessionId)
+      await assertOnlyTheirs('a delete')
     },
   )
 
