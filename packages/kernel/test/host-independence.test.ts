@@ -8,7 +8,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { build } from 'esbuild'
+import { build, transformSync } from 'esbuild'
 import { describe, expect, it } from 'vitest'
 
 const kernelDir = fileURLToPath(new URL('../', import.meta.url))
@@ -74,9 +74,16 @@ function sourcesUnder(dir: string): { readonly file: string; readonly text: stri
     .map((file) => ({ file: `${dir}/${file}`, text: readFileSync(`${root}/${file}`, 'utf8') }))
 }
 
-/** A source's code without its comments: comments may name `process.env`, code may not. */
-function codeOf(text: string): string {
-  return text.replaceAll(/\/\*[\s\S]*?\*\//g, '').replaceAll(/^\s*\/\/.*$/gm, '')
+/**
+ * Each `process.env` read in a source's code, the read as written. The code is esbuild's parse of it
+ * with every comment dropped: a comment may name `process.env`, and no `/*` in a comment or string
+ * can hide the code after it. A string that names it still counts, which errs on the safe side.
+ */
+function processEnvReads(text: string): string[] {
+  const code = transformSync(text, { loader: 'ts', legalComments: 'none' }).code
+  const read =
+    /\bprocess\s*(?:\??\.\s*env\b|(?:\?\.)?\[\s*(['"`])env\1\s*\])|\{[^{}]*\benv\b[^{}]*\}\s*=\s*(?:globalThis\.)?process\b/g
+  return [...code.matchAll(read)].map(([match]) => match)
 }
 
 describe('kernel host independence', () => {
@@ -100,10 +107,29 @@ describe('kernel host independence', () => {
 
   it('reads no process.env anywhere in src (旧 142; §内置工具与参数「Bash」「起进程」)', () => {
     // Bash's shell and its environment come in through `LoopPorts.commandShell`.
-    const offenders = sourcesUnder('src').filter(({ text }) =>
-      /\bprocess\s*(?:\?\.|\.)\s*env\b|\bprocess\s*\[\s*['"`]env['"`]\s*\]/.test(codeOf(text)),
+    const offenders = sourcesUnder('src').flatMap(({ file, text }) =>
+      processEnvReads(text).map((read) => `${file}: ${read}`),
     )
-    expect(offenders.map(({ file }) => file)).toEqual([])
+    expect(offenders).toEqual([])
+  })
+
+  it('finds a process.env read after a comment or string holding `/*`, and none in a comment', () => {
+    const sample = [
+      '// the carry rewrites `session/*` facts',
+      'const home = process.env.HOME',
+      'const note = `no message/* fact ${home}`',
+      "const shell = process?.['env']",
+      'const path = process?.env.PATH',
+      '/** Reads no `process.env` of its own. */',
+      'const { env: vars } = globalThis.process',
+      'export const read = { note, shell, path, vars }',
+    ].join('\n')
+    expect(processEnvReads(sample)).toEqual([
+      'process.env',
+      'process?.["env"]',
+      'process?.env',
+      '{ env: vars } = globalThis.process',
+    ])
   })
 
   it('bundles the public entry with no node: built-in reachable', async () => {

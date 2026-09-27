@@ -293,6 +293,28 @@ function gatedWrite(): {
   }
 }
 
+/** A store whose `append` runs `then` once each batch commits, before the appender hears back. */
+function afterAppend(
+  inner: TapeStore,
+  then: (batch: Parameters<TapeStore['append']>[0]) => Promise<void> | void,
+): TapeStore {
+  return new Proxy(inner, {
+    get(target, key): unknown {
+      if (key === 'append') {
+        return async (batch: Parameters<TapeStore['append']>[0]) => {
+          const receipts = await target.append(batch)
+          await then(batch)
+          return receipts
+        }
+      }
+      const value: unknown = Reflect.get(target, key, target)
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value
+    },
+  })
+}
+
 let nextCall = 1
 
 type Call = readonly [name: string, input: Record<string, unknown>]
@@ -533,6 +555,56 @@ describe('a stop in each state (旧 177; §点停止时各状态怎么收)', () 
     expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('after\n')
   })
 
+  it('records an Edit past STOP_WRITE_WAIT_MS uncertain too: its writeFile is an in-process write', async () => {
+    const write = gatedWrite()
+    const h = await harness({ fs: write.fs })
+    const runId = await allowed(h, [
+      ['Edit', { file_path: FILE, old_string: 'before', new_string: 'after' }],
+    ])
+    await write.reached
+    void h.service.stop({ rootSessionId: SESSION })
+    await settle()
+    h.memory.advance(STOP_WRITE_WAIT_MS)
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+    expect(await outcomes(h)).toEqual(['0 uncertain stopped write'])
+    expect(await resultTexts(h)).toEqual([[MODEL_NOTES.closure.stopped.uncertain]])
+    const count = (await entries(h)).length
+    const logged = h.logs.length
+    write.release()
+    await until(() => h.logs.length > logged, 'the late return logged')
+    await settle()
+    expect((await entries(h)).length).toBe(count)
+    expect(h.logs.slice(logged)).toEqual([
+      expect.stringMatching(/Edit call .* closed uncertain .* returned later \(completed\)/),
+    ])
+  })
+
+  it('waits STOP_WRITE_WAIT_MS for a write whose stop landed while its dispatch was committing', async () => {
+    const write = gatedWrite()
+    const h = await harness({
+      fs: write.fs,
+      // The stop lands after the dispatch commits, before the batch hears back: the write begins
+      // with its signal already aborted, and nothing will fire `abort` again.
+      store: (inner, harnessOf) =>
+        afterAppend(inner, (batch) => {
+          if (batch.entries.some((entry) => entry.name === 'execution/dispatch_committed')) {
+            void harnessOf().service.stop({ rootSessionId: SESSION })
+          }
+        }),
+    })
+    const runId = await allowed(h, [['Write', { file_path: FILE, content: 'after\n' }]])
+    await write.reached
+    await settle()
+    h.memory.advance(STOP_WRITE_WAIT_MS - 1)
+    await settle()
+    expect(await named(h, 'tool/result')).toEqual([])
+    h.memory.advance(1)
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+    expect(await outcomes(h)).toEqual(['0 uncertain stopped write'])
+    write.release()
+    await settle()
+  })
+
   it('leaves exactly one result when the stop and the normal end arrive together', async () => {
     const write = gatedWrite()
     const h = await harness({ fs: write.fs })
@@ -619,6 +691,26 @@ describe('an in-process call on a stop (旧 143; §点停止时各状态怎么�
     await settle()
     expect(h.logs).toEqual([])
     expect(write.calls()).toBe(1)
+  })
+
+  it('Edit waits for its writeFile in flight too, and records how it really ended', async () => {
+    const write = gatedWrite()
+    const h = await harness({ fs: write.fs })
+    const runId = await allowed(h, [
+      ['Edit', { file_path: FILE, old_string: 'before', new_string: 'after' }],
+    ])
+    await write.reached
+    void h.service.stop({ rootSessionId: SESSION })
+    h.memory.advance(STOP_WRITE_WAIT_MS - 1)
+    await settle()
+    expect(await named(h, 'tool/result')).toEqual([])
+    write.release()
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+    expect(await outcomes(h)).toEqual(['0 completed  write'])
+    expect(await resultTexts(h)).toEqual([
+      [`Edited ${FILE}: replaced the one occurrence of old_string.`],
+    ])
+    expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('after\n')
   })
 })
 
@@ -844,29 +936,17 @@ describe('a write that lands after tape.close() (§停止与退出 第 5 步)', 
   it('is caught when a stop reached the pause while it committed and the store closed after it', async () => {
     const h = await harness({
       store: (inner, harnessOf) =>
-        new Proxy(inner, {
-          get(target, key): unknown {
-            if (key === 'append') {
-              return async (batch: Parameters<TapeStore['append']>[0]) => {
-                const receipts = await target.append(batch)
-                const pauses = batch.entries.some(
-                  (entry) =>
-                    entry.name === 'execution/run_terminal' &&
-                    (entry.payload['reason'] as { code: string }).code === 'paused',
-                )
-                if (pauses) {
-                  // The stop lands after the paused terminal committed; the exit closes the store.
-                  await harnessOf().service.stop({ rootSessionId: SESSION })
-                  await target.close()
-                }
-                return receipts
-              }
-            }
-            const value: unknown = Reflect.get(target, key, target)
-            return typeof value === 'function'
-              ? (value as (...args: unknown[]) => unknown).bind(target)
-              : value
-          },
+        afterAppend(inner, async (batch) => {
+          const pauses = batch.entries.some(
+            (entry) =>
+              entry.name === 'execution/run_terminal' &&
+              (entry.payload['reason'] as { code: string }).code === 'paused',
+          )
+          if (pauses) {
+            // The stop lands after the paused terminal committed; the exit closes the store.
+            await harnessOf().service.stop({ rootSessionId: SESSION })
+            await inner.close()
+          }
         }),
     })
     const runId = await send(h, [['Bash', { command: 'make' }]])
