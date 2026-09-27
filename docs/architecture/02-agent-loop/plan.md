@@ -381,7 +381,7 @@
 
 ## ② 能改能跑（不能砍；做完时任务形态完整可用，但还没验收）
 
-- [ ] 22. **Write / Edit / Bash**（裁决 E1、E4、D10、D7、H7）
+- [x] 22. **Write / Edit / Bash**（裁决 E1、E4、D10、D7、H7）
   - 读：§内置工具与参数「Bash」；§可逆性；§内置工具的默认档位；§权限决策顺序「合并：两步」。
   - 交付物：Write（父目录不存在先 `mkdirp`）、Edit 执行器（Write、Edit、Bash 在本步进产品工具表）；Bash 起进程（`HostSandbox.wrap` + `HostProcess.spawn` + `afterExit`，同 connection.ts:48-61 的路径）与 `SandboxRequest`；命令保守模式表（`reversibility.ts`）、`command` 原因码、撤不回每次问并接进第 4 层 ①、卡上改动可展开；effect 取值按参数表。另：第 21 步实测 A2 的定案（owner 2026-09-27 选 A）——截断落在本轮什么都没写下的地方（唯一的工具调用中途、之前没有思考和文字）时，「继续」改为把 max_tokens 加倍（不超过模型的 maxOutputTokens）、整轮重发，本轮不进历史；spec §重试与「继续」 走 Revisions，kernel 的 `continueRun` 与 `run-ended` 相应改，测试：同一个截断场景第二次能完成、到上限仍截断时照常以 output-truncated 结束且不再加倍。
   - 验收：40；补齐 36 的写入卡与不可逆卡、19、20 与 37 里需要写入的部分；不变量 22（命令部分）。
@@ -819,6 +819,43 @@
   - 复评与突变（2026-09-27，限流跑：一次一个区，vitest 限 2 个 worker，e2e 一次一个进程——先前满负荷并行把 owner 的机器跑得发烫，中途停过一次）：每区一个复评视角加核查，对照合并后的 `b4b08fa`，逐条看修复是否成立、合并有没有带回问题；成立 10 条，都是 minor 或「测试护不住修复」，驳回的里有 3 条是「spec 还没写」而 `6a29a84` 已写。突变视角每区一个、各在自己的 worktree（`wt/02-mutation-A`…`E`，`da42d4a`、`d693e4a`、`08162c1`、`8babead`、`483e9ef`、`52c81b1`）：杀掉 204 个变异体，补 52 个测试，没有查出产品缺陷；E 区 2 个存活变异体不补测试（ollama.com 的拒收在别的 provider 与近似域名上的行为 spec 没有规定，补了等于替 spec 定读法）。成立的 10 条里 9 条已修（kernel `9fe1346`：编码器第二份黄金请求带同模型 `vendorSource`、续跑在 begin 后与 append 前查中止、用户停下后自动发出取发紧急消息的那个窗口的 origin、`commandFrom` 兜底换成能护住它的失败点、Grep 逐行惰性、单文件内存有界；desktop `bee6150`：macOS 的 `/.nofollow`、`/.resolve`、`/dev/fd` 与任何 errno 都走别名检查、已确认过的同一公网主机不再重复确认（`session.facts` 只增 `chosen`）、读配置只数改了该 provider 设置的写入、held 确认页的主机有 e2e 护着），第 10 条是 s7-spec-1 的「值」一半，照读法 ① 留到阶段 6。spec 相应只增或澄清，记 Revisions (11)。
   - 等后面步骤的：Grep 的正则引擎与反向引用、环视的 `invalidPattern`（第 22 步）；`head_limit: 0` 的上限（第 34 步）；anchor `summary` 跨提示层版本重放（第 30 步）；`x-stainless-*` 的值（阶段 6）；`listSessions` 的并列游标（有批量导入时 amend 01）；undici 诊断通道记录器第一次真跑在下一次 `pnpm test:live`；model-menu.spec.ts 的悬停子菜单在满载下偶发超时，单跑都过，另修。navigation.spec.ts:138 的偶发失败是真缺陷，已修（`0c7cc13`）：新弹出的对话框还没接过焦点时按 Esc，`StopOnEscape` 当成停止发出了 `chat.stop`；现在页面上有打开的对话框或菜单时一律让给它，用例先把焦点移出对话框再按 Esc，竞态每次都跑到。
 
+- **2026-09-27 · 第 22 步（Write / Edit / Bash）**，分支 `wt/02-step22` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 133 个文件 2499 个用例过，build 过，e2e 110 个过）。验收 40 满足；36 的写入卡与不可逆卡、19、20、37 里要写入的部分补跑；不变量 22（命令部分）有测试。做法：四条实现线各用一个 worktree——K（Write、Edit、Bash 执行器与命令模式表，`3b3f56e`）、A（「继续」加倍，`005d969`，lead 改到上限仍整轮重发 `cab1897`）、G（Grep 换引擎，`5c09f6f`）、D（desktop 的 `shell-env.ts`，`a0ac9e4`）——并进之后一条 e2e 线（`4ff7ed6`）；四视角评审（spec、真进程、对抗、突变）各配核查，确认 14 条 → 三条修复线（`9cf9cc0`、`a75ce30`、`a7f0df6`）→ 复评加突变，确认 12 条 → 修（`4b24c3b`、`6dcc9e6`、`a886e59`）→ 复查，确认 4 条 → 修（`5730584`、`69d9b4f`、`e0facd8`）。限流跑：一次最多四个实现 agent，vitest 限 2 个 worker，同一时刻最多一个 Electron。
+  - 改了什么：
+    - kernel：Write（缺父目录先 `mkdirp`，专用文件夹因此在第一次写入时才建）、Edit（恰好一次，或 `replace_all`；`new_string` 按字面插入；不是严格 UTF-8 的文件拒改、保留 BOM）、Bash 执行器，三个进产品工具表。
+    - Bash：先等 `commandShell.env()`，与停止赛跑，停在这里记 not-run / stopped。经 `HostSandbox.wrap` + `HostProcess.spawn` 起进程，`SandboxRequest` 按 spec；stdin 立即关。stdout 按 UTF-8 流式解码，退出后最多再读 `STOP_EXIT_CONFIRM_MS`；首行 `Exit code: N` / `Killed by signal: SIGxxx`，没有输出时写 `(no output)`；最后调 `afterExit`。超时与停止同一序列（SIGTERM、`STOP_TERM_GRACE_MS` 后 SIGKILL），校准与旧 7 / 142 / 177 在第 23 步。
+    - 命令模式表（`reversibility.ts`）：按词边界匹配，与长度成线性。判 irreversible 的：rm、rmdir、`find … -delete`，带 `-X POST` / `-d` / `--data*` / `-F` / `--form` / `-T` / `--upload-file` / `--json` 的 curl，`wget --post-data` / `--post-file`，git push，`git clean -f`，scp，推到远端 `host:` 或 `rsync://` 的 rsync。命令词不分大小写，选项分。
+    - desktop：
+      - `shell-env.ts`：`main()` 第一行拍下启动环境；ready 后用登录 shell `-i -l -c` 在两个随机标记之间跑 `/usr/bin/env -0`，只算一次，10 秒没完就整树 SIGKILL，失败退回启动环境并记一行日志；去掉 `TENON_*`、`ELECTRON_*`，开发构建再去掉 `DEV_ENV_FALLBACK` 的名字；取代 `PLACEHOLDER_SHELL`。
+      - `DesktopFs.readFile` / `writeFile` 只收普通文件：先按路径 stat、再以 `O_NONBLOCK` 打开、再 fstat 句柄；FIFO、设备、socket 直接报错，不会卡住，也不会放走一个等在管道上的写入方。
+    - 审批卡 ⑤：Write 展开为写入内容的纯文本，Edit 为「把这段 / 改成」两段加 `replace_all` 提示，都经 `visible()`；连接器参数照旧 JSON、默认展开；卡片逻辑挪进 `lib/approval-card.ts`，供 node 测试。
+    - e2e `write-card.spec.ts` 8 个（旧 4、旧 20 两种、旧 215、旧 216、旧 218、旧 222 写入那半、硬链接基线）；`text-fit-02.spec.ts` 各语言加一例；Everything 夹具卡「⏎ = 允许」的组件测试补上。
+  - 本步的读法（lead 定，没有交 owner；改了 spec 的都记进 Revisions）：
+    - ① 「继续」加倍（Revisions (12)）：不追加续写提示（它要模型接着一段看不到的回复写），`run_started.cause.messageId` 为 null；`max_tokens` 取 min(2 × 截断那次, 模型的 `maxOutputTokens`)，不低于组装平常给的值；截断那次已在上限时仍按上限整轮重发（A 线原写退回续写、用组装的 64000，比上一轮还小，lead 改）；记进 attempt 的 `request.maxTokens`，本 Run 的续跑沿用；`run-ended` 与 chat.event 不增字段。
+    - ② Bash 的 argv 改为 `[shell, '-c', 'exec 2>&1; exec "$0" -c -- "$1"', shell, command]`（Revisions (13)）：zsh 先解析整段 `-c` 再执行，语法错误写到没人读的 stderr，模型只拿到 `Exit code: 1`；`--` 防止以「-」开头的命令被当成 shell 选项。代价：`.zshenv` 与 `$BASH_ENV` 每条命令读两次，本机约多 1.4 ms。
+    - ③ Write / Edit 执行前按 §「在不在工作区里」第 2 步再解析一次 `real`，不再指向它自己就不写、回 is_error / completed（Revisions (13)）：挡住悬空链接（经它能建出不存在的 `~/.zshenv`）、判定后建或换的链接，含上级目录；批准路径直接用卡上那条真实路径，不再重新定位——重新判定因链接到本会话已授权的文件而放宽时也一样。剩下的竞态只有复核到写入之间。
+    - ④ 与 `protectedFiles` 比较时折叠大小写（NFD、小写、大写、再小写）（Revisions (13)）：APFS 把 `.ZPROFILE` 写成 `.zprofile`，也把 `ſ`、开尔文符号、`ﬁ`、`ẞ` 折成普通字母，扫 U+0080–U+2FFFF 找到的九个都覆盖；只会有更多路径变成 `protected`。
+    - ⑤ Grep 的引擎（第 18 步读法 ⑦）：评测后选 re2js 2.8.6（MIT、ESM、无依赖，钉死版本）。对比：JS RegExp 在 `(a+)+$` 这类病态模式上超过 3 秒被杀；re2js 在 3 万字符的一行上 2–13 ms；`@bufbuild/re2` 没有匹配位置，`@re2tools/re2-wasm` 要 `node:fs` 加载，V8 的线性引擎要进程级开关，自写匹配器代价太大，可杀的 worker 要 02 没声明的 HostAdapter 成员。方言：`\d` `\w` `\s` 及其否定改写成 ripgrep 的 Unicode 定义（逐码位对 rg 15.2.0，只差 Unicode 17 新增的码位）；类运算 `&&` `--` `~~`、嵌套类、`\<` `\>` `\b{start}`、反向引用、环视一律 `invalidPattern`；`\b` `\B` 只认 ASCII（RE2 做不到 Unicode），写进工具描述与 spec（Revisions (14)）。典型语料（仓库 5.8 MB）改写前后 301 → 323 ms。
+    - ⑥ Grep 的四道界（Revisions (14)），关掉 s18-safety-2 的 Grep 一半：
+      - 程序大小超过 `GREP_MAX_PROGRAM`（3000）拒绝，远超的在编译前就按文本估计拒掉。
+      - 匹配一行（`multiline` 时整个文件）之前按字符数 × 指令数估工作量，超过 `GREP_LINE_WORK_MAX`（1000 万）就跳过那个文件、撤回它已找到的条目、在结果末尾写明跳过的「文件:行」，不算 is_error。不带 `-i` 的纯字面串每字符算 1：re2js 直接 `indexOf`，1000 万字符最多约 25 ms。复查实测过「一行太长就整次失败」会让 sourcemap、`.tsbuildinfo` 把整棵树的普通搜索一起弄丢，所以改为跳过。
+      - 整次调用超过 `GREP_TIME_BUDGET_MS`（30 秒）停下，回 is_error，附已找到的。
+      - 每约 50 ms 让出一次事件循环再查停止，停止记 aborted；时钟读取按程序大小计，字面串的便宜系数只用于单行的界。
+      - `ExecuteQuery` 因此只增必填的 `clock`。
+      - 三个数都待第 34 步校准；只有前缀是字面串的模式另算代价也留到那时。
+    - ⑦ 其余：
+      - 非零退出且没有输出时写 `Exit code: 3\n(no output)`，`(no output)` 只在正常退出时独占整段。
+      - 可能覆盖文件的 `mv` 要 stat 才能判，仍是 `unknown`；curl `-X PUT` / `DELETE`、`rsync --delete`、`unlink`、`shred` 两张清单都没列，也仍是 `unknown`，等评测样本。
+      - `git commit -m "push"` 这类会误判 irreversible，spec 允许往严里误判。
+      - shell-env 的探测进程用 `read-only` 档、cwd 为家目录；e2e 与开发时会跑开发者真实的登录 shell（spec 没有这个接缝）。
+      - 审批后停止时，批准的那个调用的收口取判决事实里的可逆性，同批其余记 `unknown`。
+  - 实测：本机 APFS 上工作区里指向外面的硬链接，经 Write 写入会改到外面的文件，判为工作区内、普通写入卡、本会话；只记回归基线、不断言拦下（第 11 步记录所说，D8 已知局限，阶段 4 裁决）。
+  - 等后面步骤的：
+    - 第 23 步：STOP 常量校准，旧 7 / 142 / 177，退出与关窗时来源记 `app-exit`（现在一律 `stopped`）。
+    - 第 24 步：Bash 大输出落盘（现在整段留在内存）。
+    - 第 25 步评测再定：要不要「先 Read 才能 Write / Edit」的守卫、Read 的行号前缀对 Edit 命中率的影响、命令表的样本、Grep 方言的剩余差异。
+    - 第 34 步：Grep 的三个常量、跳过清单要不要限长。
+    - 下一次 `pnpm test:live`（要 owner 的 key）：A2 加倍在智谱上重跑一遍；live 旧 62 加写入卡。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -836,9 +873,9 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–21 步已并进这个分支（都已勾）。① 的 PR 之前还有：第 5–19 步的突变视角与一轮复评审（正在跑）。2026-09-27 补评审确认的 137 条已由五个修复区与三项 owner 裁决处理，都在 `wt/02-catchup-merge` 上，见实施记录「① 补评审」。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22 步已完成并进这个分支（见实施记录）；下一步是第 23 步（停止即杀与关窗退出）。
 
-- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），① 的 PR 等突变视角跑完再开。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），突变视角与复评跑完后 ① 已合进 dev。多 agent 工作流一次最多四个实现 agent，vitest 限 `--maxWorkers=2`，同一时刻最多一个 Electron（2026-09-27 本机过热之后）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 
