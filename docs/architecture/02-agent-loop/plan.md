@@ -392,7 +392,7 @@
     - 旧 215：工作区内的 Write：卡上显示路径，改动默认收起，展开为写入内容的纯文本，「允许」旁写「本会话」；同一文件本会话第二次写不出卡。
     - 旧 216：撤不回的卡（删除已有文件的 Bash）：单独一句「撤不回」；按钮为「拒绝 ⏎ Esc」「允许」（后者不带按键提示）；焦点进卡落在「拒绝」；在卡内按 ⏎，包括焦点在「允许」上时，都按拒绝收口，文件仍在；点「允许」，或焦点在「允许」上按 Space，才执行，期限写「只这一次」。Everything 夹具工具的卡仍是 ⏎ = 允许、期限「只这一次」，对象行是连接器 ID 加工具原名、分两段，参数默认展开（这一句是渲染端组件测试，desktop 不注册 MCP 来源）。
   - 暂定与待定：开放问题 17 已定（owner 2026-09-26，spec §内置工具与参数「Bash」）：`LoopPorts.commandShell`（第 9 步声明，desktop 先传占位，本步换成 `apps/desktop/src/main/host/shell-env.ts`）；argv 用 `exec 2>&1` 在 fd 层并 stderr；非零退出首行 `Exit code: N`、is_error；超时来源 `timed-out`（第 23 步验）。测试要点补：假 shell 脚本打印标记之间的 `env -0` 时取到它；超时或失败时退回启动环境、log 被调一次；`TENON_*`、`ELECTRON_*` 与开发构建的 key 名都不在结果里；`printf 'a\n'; printf 'b\n' >&2; printf 'c\n'` 得到 a、b、c 三行；`exit 3` 首行 `Exit code: 3`、is_error、completed / null；`true` 得到 `(no output)`；`sleep 30 &` 握着管道时，调用在退出后 `STOP_EXIT_CONFIRM_MS` 内返回；等 `env()` 时点停止记 not-run / `stopped`。命令模式表在 E1 / E4 用例之外收哪些（`rmdir`、`find -delete`、`git clean -f`、覆盖文件的 `mv`、`wget --post-data`、rsync 到远端等）按评测里的命令样本定，只许加往 `irreversible` 判的；Glob / Grep 的引擎与正则方言、要不要「先 Read 才能 Write / Edit」的守卫（定之前不做）、Read 的行号前缀会不会降低 Edit 命中率，都按评测题定；每次调用起新进程、`cd` 不跨调用保留（暂定）；Bash、WebSearch、WebFetch 的 effect 暂定 `external`（开放问题 11）。
-- [ ] 23. **停止即杀与关窗退出**（裁决 B1、B4、B18、H7）
+- [x] 23. **停止即杀与关窗退出**（裁决 B1、B4、B18、H7）
   - 读：§工具调用的收口「点停止时各状态怎么收」；§desktop 接线「停止与退出」「e2e 接缝」；§上限、守卫与用量 的常量。
   - 交付物：`STOP_TERM_GRACE_MS` / `STOP_EXIT_CONFIRM_MS` / `STOP_WRITE_WAIT_MS` 的校准；停止时六种状态的收口；无条件 SIGKILL 与确认窗口；进程内写操作等待；Bash 超时（`HostClock.setTimeout`，同一序列）；窗口 `close` 与 `before-quit` 的确认、六步关机顺序、`watchOwner` 新语义与 `RunAbortCause`、删掉 will-quit 里的 `void tape.close()`、迟到写入捕获 `TapeClosedError`、`dialog.showMessageBox` 的调用写法与 e2e 接缝。
   - 验收：41、42；补齐 22 的「立即发送」打断 Bash。
@@ -856,6 +856,24 @@
     - 第 34 步：Grep 的三个常量、跳过清单要不要限长。
     - 下一次 `pnpm test:live`（要 owner 的 key）：A2 加倍在智谱上重跑一遍；live 旧 62 加写入卡。
 
+- **2026-09-27 · 第 23 步（停止即杀与关窗退出）**，分支 `wt/02-step23` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 136 个文件 2556 个用例过，build 过，e2e 123 个过）。验收 41、42 满足（Linux 一半以 CI 上的 `stop-tree.test.ts` 为准）；22 的「立即发送」打断 Bash 补上。做法：三条实现线——K（kernel 的停止收口、写入等待与 `app-exit`，`e73bcbc`）、D（desktop 的关窗与退出、全部 e2e，`9e97e6d`；只有这条线跑 Electron）、P（真进程树与三个 STOP 常量，`8582232`）；四视角评审（spec、Electron 与进程实测、竞态、突变）各配核查，确认 9 条（1 条 blocker）→ 两条修复线（`9fcf63c`、`035f27e`）→ 复查 0 条。
+  - 改了什么：
+    - kernel：`BatchContext` 只增 `cause`，已派发、被退出或关窗中止的调用收口来源记 `app-exit`（用户停止仍是 `stopped`，Bash 超时仍是 `timed-out`）；进程内文件工具（Read、Write、Edit、Glob、Grep）停止后最多等 `STOP_WRITE_WAIT_MS`，超时记 uncertain，之后迟到的结果只记一行日志、不写 Tape；Run 收尾里暂停写入与停止相撞后存储关闭的 `TapeClosedError` 接住并记日志，租约照常收回。
+    - desktop 进程：`ChildHandle.kill` 在直接子进程退出后仍对 `-pid` 发信号，直到探到进程组已空（`kill(-pid, 0)`）；原来的 `if (hasExited) return` 让停止的 SIGKILL 到不了忽略 SIGTERM 的孙进程，树活过了停止、调用却记 aborted。
+    - desktop 退出：新增 `shutdown.ts`——关窗确认「停止任务并关闭 / 取消」；`before-quit` 六步只跑一次，第一次一律 `preventDefault`，有进行中的 Run 才确认，同一同步段 `beginShutdown()` 再 `abort('all', 'quit')`，`settled(STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS)`（从 kernel 导入，apps/desktop 里没有 2500），`tape.close()`，第 6 步隔一个宏任务再 `app.quit()`；`before-quit-for-update` 做第 3 步；关机开始后 12 条会开 Run 或写事实的路由回 `ok: false`；删掉 will-quit 里的 `void tape.close()`；确认框以 `dialog.showMessageBox(...)` 调用，文案与 `LeaveRunDialog` 共用 `leave` 组。
+    - `watchOwner`：改为文档销毁、主框架提交了新文档（`did-navigate`）或渲染进程没了（`render-process-gone`）时以 `close-window` 中止这个文档的 Run；`begin` 时文档已销毁或已崩溃也立即中止。
+    - 失败卡：被停下、`exited` 已确认的 Bash 写「后续写入未发生」，WebFetch、WebSearch 与连接器仍写「可能已到对方」。
+    - 测试：`stop.test.ts`（旧 177、142、143、230，`app-exit`，迟到写入）、`host-independence.test.ts` 的 `process.env` 扫描改用 esbuild 解析（原来的正则会被注释里的 `/*` 骗过、漏扫约 70 行）、`stop-tree.test.ts` 与两个 fork 夹具、`shutdown.test.ts`（旧 137，假 app 按 Electron 的重入规则写）、`run-loop.test.ts`、`e2e/stop-exit.spec.ts`（旧 13、136、14、旧 7 的界面一半、立即发送打断 Bash、排队项在退出时丢弃、macOS 上空闲时收 SIGTERM 能退出）。
+  - 实测（2026-09-27，macOS 26.3，Apple M5 10 核，每例空闲 10 次、再 2 核满载 5 次，结果一样）：夹具 (a) 直接子进程收 SIGTERM 就退、孙进程忽略：停止后 SIGKILL 在 500.2–502.6 ms，进程组清空（含僵尸）500.9–504.6 ms，调用返回 500.4–504.0 ms；修复之前这一例的组 5 秒内都没空。夹具 (b) 父子都忽略：SIGKILL 499.9–501.7 ms，`exited` 在 SIGKILL 后 0.3–0.5 ms，组清空 501.5–503.4 ms；`timeout: 1000` 时 SIGTERM 之后同样约 502 ms 清空。1 秒的预算还剩约一半，三个常量不改（500、500、2000），仍标待校准，第 34 步定稿。Electron 44.4.1 上实测：原生退出路径（Cmd+Q、Dock 的退出、SIGTERM）里，第 6 步的 `app.quit()` 若落在第一次 `before-quit` 的微任务里会重入 `Browser::Quit` 被复位，窗口关完只触发 `window-all-closed`，macOS 上应用不退、存储已关——隔一个宏任务就正常退出（评审 R2-1，blocker，已修）。
+  - 本步的读法（lead 定，没有交 owner）：
+    - ① `app-exit` 只给已派发、被关机中止的调用；没派发的照 §点停止时各状态怎么收 开头「同批后面还没派发的调用一律记 not-run / `stopped`」记 `stopped`，流里被退出截断的完整调用也一样；已派发、在收口前就做完的按实际结果记。两个评审都提出 §提示层 给 `app-exit` 列了 not-run 一格、现在走不到，两个核查按上面那句驳回；这处措辞张力留着，要改就一起改正文、代码与测试。
+    - ② 写入等待覆盖五个进程内文件工具（那一行把 Read 也写在里面），从停止那一刻计时，不停止的慢写不截断。中止原因在写收口时读，用户停止优先；Bash 超时的杀进程序列已开始后再来的停止或退出仍记 `timed-out`。
+    - ③ 关机后拒绝的路由含 `chat.stop`（暂停的会话里它会写 `cancelled-by-stop`，B4 不许退出作废卡片）；读路由、`config.set` 与 `provider.*` 不写 Tape 事实，照常答。
+    - ④ 确认框按钮 0 = 停止、1 = 取消，默认与 Esc 都是取消；`showMessageBox` 抛错按取消；取消之后下一次退出重新问；关窗确认还开着时来了退出，退出确认被 Electron 以窗口关闭撤下的不算取消，仍有进行中的 Run 就再问一次。
+    - ⑤ 渲染进程崩溃算「文档被销毁」。已知缺口：文档重载之前排进队列、重载之后才开始的命令挂在新文档上（`did-navigate` 早于租约）。
+    - ⑥ e2e 的原生确认框在每次启动时预设为「停止」并记进一个 JSONL；重启后渲染端对存下的 Run 不出失败卡（第 23 步之前就如此），所以「重启后终态为 shutdown-aborted」断言在 Tape 上。
+  - 等后面步骤的：提问的 `unanswered` 回填（第 26 步）；WebSearch、WebFetch 在途时中止网络请求（第 27、28 步）；在途的连接器调用停止时不传 signal、等服务器答复，spec 没写这一行；`packages/kernel/test/support/node-process.ts` 仍有同样的 `hasExited` 守卫（现有测试都不需要孙进程被杀，组的行为由 desktop 的 `stop-tree.test.ts` 覆盖）；STOP 常量与 Linux 的实测以 CI 为准，第 34 步定稿；spec 里指向 process.ts:194、chat.ts:307-323、index.ts:117-120 的行号已过时。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -873,7 +891,7 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22 步已完成并进这个分支（见实施记录）；下一步是第 23 步（停止即杀与关窗退出）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22、23 步已完成并进这个分支（见实施记录）；下一步是第 24 步（长输出落盘与只读并行）。
 
 - **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），突变视角与复评跑完后 ① 已合进 dev。多 agent 工作流一次最多四个实现 agent，vitest 限 `--maxWorkers=2`，同一时刻最多一个 Electron（2026-09-27 本机过热之后）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
