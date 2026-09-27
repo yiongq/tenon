@@ -1,9 +1,17 @@
 /**
- * One batch of tool calls (spec 02 §一批工具怎么执行, §权限决策顺序, §原因码表; plan step 13).
+ * One batch of tool calls (spec 02 §一批工具怎么执行, §权限决策顺序, §原因码表; plan steps 13, 24).
  *
- * The calls of one reply are handled one at a time, in the model's order — plan step 13 is serial;
- * the parallel group of workspace reads (H14) may come later without changing the Tape's shape (M1).
- * For each call:
+ * The parallel group first (H14, plan step 24): from the reply's first call, the adjacent calls each a
+ * Read, Glob or Grep in the workspace, judged allow as such (`canRunInParallel`), are dispatched
+ * together — each judged and dispatched without waiting for the ones before it to end (T1), so a later
+ * member's decision and dispatch may precede an earlier one's result. Their results are buffered and
+ * written in `<i>` order, whatever order they finish in. The group is cut before the first call that
+ * is anything else — one that asks, is denied, changes something, is another tool, reads outside the
+ * workspace or the spill, or runs in the chat profile — and that call's judgement, made to find the
+ * cut, is the one the serial pass uses. A resumed batch is past its cut already: it never forms a
+ * group, and neither does the rest of this one (F6).
+ *
+ * Then the calls one at a time, in the model's order. For each call:
  *
  *   1. find it in the frozen table — a name it does not hold is `tool-unavailable`;
  *   2. validate its arguments — `invalid-input`, or `tool-unavailable` for a schema that cannot be
@@ -17,11 +25,13 @@
  *      on the Tape (T1) — the executor, then its result and outcome. Bash first awaits its base
  *      environment, raced against the stop (§内置工具与参数「Bash」): a stop that wins writes neither.
  *
- * A stop between calls closes the rest as not-run / stopped.
+ * A stop between calls closes the rest as not-run / stopped. A stop while the group runs closes each
+ * member as §点停止时各状态怎么收 says — each with its own write wait, counted from the stop — and then
+ * the calls not dispatched, not-run / stopped, after the members' results.
  */
 import type { AbsolutePath, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
-import { decide } from '../permission/decide.js'
+import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
 import { grantKey, sessionGrantKindOf, sessionGrants } from '../permission/grants.js'
 import type { GrantFact, GrantObject } from '../permission/grants.js'
@@ -53,7 +63,7 @@ import type { Tape } from '../tape/tape.js'
 import { BUILTIN_TOOLS, isBuiltinToolName } from '../tools/builtin/index.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
-import type { ToolExecution } from '../tools/executor.js'
+import type { ToolExecution, ToolExecutor } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
@@ -183,7 +193,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
   const { writer } = ctx
   const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
   let denials = ctx.denials
-  for (let k = 0; k < ctx.calls.length; k += 1) {
+  const group = await runGroup(ctx, judge)
+  if (group.stopped) {
+    // Stopped while judging a call: no decision fact for it, it and the rest not-run (B1).
+    await closeRest(ctx, ctx.calls.slice(group.closed), 'stopped')
+    return { kind: 'stopped' }
+  }
+  if (group.closed > 0) denials = 0
+  for (let k = group.closed; k < ctx.calls.length; k += 1) {
     const call = ctx.calls[k] as CompleteCall
     const ref = refOf(ctx, call)
     if (ctx.signal.aborted) {
@@ -223,11 +240,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       continue
     }
+    // The group's cut, judged already: that judgement stands, with the session it read (no inspector
+    // runs twice for one call).
+    const held = group.cut?.call === call ? group.cut : undefined
     try {
       // Each call reads the session as the calls before it left it, the workspace included: a folder
       // removed meanwhile is judged by the new list at once (D11).
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
-      const facts = await callFactsOf(ctx)
+      const facts = held?.facts ?? (await callFactsOf(ctx))
       if (ctx.approved?.ordinal === call.ordinal) {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
         denials = 0
@@ -240,7 +260,12 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-        if (!(await dispatchOnce(ctx, call, item, [dispatch], dispatch))) continue
+        const repair = await dispatchOnce(ctx, call, item, [dispatch], dispatch)
+        if (repair !== null) {
+          // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+          await close(ctx, call, repair)
+          continue
+        }
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await execute(ctx, call, item, executor, {
           reversibility: ctx.approved.reversibility,
@@ -252,7 +277,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
-      const judged = await judgeCall(judge, item, call, facts)
+      const judged = held?.judged ?? (await judgeCall(judge, item, call, facts))
       if (judged.kind === 'stopped') {
         // Stopped while judging: no decision fact, the call and the rest not-run (B1).
         // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
@@ -295,7 +320,12 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-      if (!(await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch))) continue
+      const repair = await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
+      if (repair !== null) {
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        await close(ctx, call, repair)
+        continue
+      }
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
       await execute(ctx, call, item, executor, {
         reversibility: judged.reversibility,
@@ -315,6 +345,110 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
   }
   return { kind: 'done', denials }
 }
+
+type Judged = Extract<Judgement, { kind: 'judged' }>
+
+/** What the parallel group leaves the serial pass. */
+interface GroupEnd {
+  /** How many calls, from the first, it dispatched and closed. */
+  readonly closed: number
+  /** A stop came while it judged the next call: no decision for it (B1). */
+  readonly stopped: boolean
+  /** The call it was cut before, when judging it was what told: that judgement stands. */
+  readonly cut?: { readonly call: CompleteCall; readonly judged: Judged; readonly facts: CallFacts }
+}
+
+/**
+ * The parallel group (§一批工具怎么执行 第 2、5 步; H14): from the reply's first call, each adjacent call
+ * that is a builtin Read, Glob or Grep with valid arguments and an executor, judged allow as a
+ * workspace read (`canRunInParallel`). Each is judged on the session as the members before it left
+ * it — their dispatches on the Tape, which the inspectors' view counts (§挂点与会话视图) — then its
+ * decision and dispatch are written and at once its side effect begins (T1); the next is judged
+ * without waiting for it to end. Their closures are made as they end — on a stop, each with its own
+ * write wait counted from the stop (§点停止时各状态怎么收「进程内写操作」) — and written in `<i>` order.
+ *
+ * The first call that does not qualify is the cut; when judging it was what told, its judgement is
+ * kept for the serial pass, so no inspector runs twice for one call. No group for a resumed batch — its
+ * first call is the card's, or one after it: past the cut — nor in the chat profile, which has no
+ * workspace (F6, E4). A stop before a member's dispatch, or one that reached its write first,
+ * dispatches no more: the serial pass closes the rest, not-run / stopped, after these closures.
+ */
+async function runGroup(ctx: BatchContext, judge: JudgeContext): Promise<GroupEnd> {
+  const closures: Array<{
+    readonly call: CompleteCall
+    readonly facts: Promise<readonly NewEntry[]>
+    readonly summary?: DecisionSummary
+  }> = []
+  let end: Omit<GroupEnd, 'closed'> = { stopped: false }
+  const leading = ctx.approved === undefined && ctx.calls[0]?.ordinal === 0
+  for (const call of leading ? ctx.calls : []) {
+    if (ctx.signal.aborted) break
+    const item = ctx.table.items.find((candidate) => candidate.name === call.name)
+    if (
+      item === undefined ||
+      item.source !== 'builtin' ||
+      !PARALLEL_TOOL_NAMES.has(item.originalName) ||
+      !ctx.validator.check(item, call.input).ok
+    ) {
+      break
+    }
+    const executor = executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
+    if (executor === null) break
+    // oxlint-disable-next-line no-await-in-loop -- the view reads the dispatches before this call's
+    const facts = await callFactsOf(ctx)
+    if (facts.profile !== 'cowork') break
+    // oxlint-disable-next-line no-await-in-loop -- judged in the model's order, as the serial pass would
+    const judged = await judgeCall(judge, item, call, facts)
+    if (judged.kind === 'stopped') {
+      end = { stopped: true }
+      break
+    }
+    if (!canRunInParallel(inspectedOf(item, call.input, judged.reversibility), judged.decision)) {
+      end = { stopped: false, cut: { call, judged, facts } }
+      break
+    }
+    const decisionKey = permissionDecidedKey(ctx.runId, ctx.requestSeq, call.ordinal)
+    const decided = decisionEntry({
+      ...ctx,
+      ref: refOf(ctx, call),
+      argsHash: call.argsHash,
+      judged,
+      key: decisionKey,
+    })
+    const dispatch = dispatchEntryFor(ctx, call, decisionKey)
+    let repair: readonly NewEntry[] | null
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- T1: each side effect waits for its own dispatch
+      repair = await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
+    } catch (error) {
+      if (!(error instanceof RunWriteRefusedError)) throw error
+      break
+    }
+    if (repair !== null) {
+      closures.push({ call, facts: Promise.resolve(repair) })
+      continue
+    }
+    const closure = perform(ctx, call, item, executor, {
+      reversibility: judged.reversibility,
+      summary: judged.decision.summary,
+      target: judged.target,
+      scope: facts.scope,
+      command: undefined,
+    })
+    // Awaited below, in <i> order; handled now, so one that rejects while an earlier one is awaited is
+    // not reported unhandled — the first rejection awaited ends the batch.
+    closure.catch(noRejection)
+    closures.push({ call, facts: closure, summary: judged.decision.summary })
+  }
+  for (const closure of closures) {
+    // oxlint-disable-next-line no-await-in-loop -- tool/result and tool_outcome are written in <i> order
+    await close(ctx, closure.call, await closure.facts, closure.summary)
+  }
+  return { closed: closures.length, ...end }
+}
+
+/** A rejection seen where the promise is awaited, not here. */
+function noRejection(): void {}
 
 function refOf(ctx: Pick<BatchContext, 'runId' | 'requestSeq'>, call: CompleteCall): CallRef {
   return {
@@ -344,26 +478,41 @@ function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: st
   })
 }
 
-/**
- * The side effect, then its result and outcome. A file tool acts on the real path its decision placed
- * (§「在不在工作区里」第 5 步). A call stopped while it ran gets the note of the abort's cause —
- * `stopped` for a user-stop, `app-exit` for a quit or a closed window (§原因码表, B4) — with whatever
- * it had produced as the second block (§点停止时各状态怎么收); a Bash timeout stays `timed-out`, a stop
- * after its kill began included. A call that ended normally before its closure is recorded as it ended.
- */
+/** What running an allowed call needs beside the call: its decision's reading of it. */
+interface Performed {
+  readonly reversibility: Reversibility
+  readonly summary: DecisionSummary
+  readonly target: AbsolutePath | null
+  readonly scope: PathScope
+  readonly command: CommandRun | undefined
+}
+
+/** The side effect, then its result and outcome (`perform`), written. */
 async function execute(
   ctx: BatchContext,
   call: CompleteCall,
   item: ToolTableItem,
-  executor: NonNullable<ReturnType<typeof executorFor>>,
-  q: {
-    readonly reversibility: Reversibility
-    readonly summary: DecisionSummary
-    readonly target: AbsolutePath | null
-    readonly scope: PathScope
-    readonly command: CommandRun | undefined
-  },
+  executor: ToolExecutor,
+  q: Performed,
 ): Promise<void> {
+  await close(ctx, call, await perform(ctx, call, item, executor, q), q.summary)
+}
+
+/**
+ * The side effect, and the result and outcome it leaves, not yet written. A file tool acts on the real
+ * path its decision placed (§「在不在工作区里」第 5 步). A call stopped while it ran gets the note of the
+ * abort's cause — `stopped` for a user-stop, `app-exit` for a quit or a closed window (§原因码表, B4) —
+ * with whatever it had produced as the second block (§点停止时各状态怎么收); a Bash timeout stays
+ * `timed-out`, a stop after its kill began included. A call that ended normally before its closure is
+ * recorded as it ended. The write wait begins listening for the stop the moment this is called.
+ */
+async function perform(
+  ctx: BatchContext,
+  call: CompleteCall,
+  item: ToolTableItem,
+  executor: ToolExecutor,
+  q: Performed,
+): Promise<NewEntry[]> {
   const running = executor({
     item,
     input: call.input,
@@ -380,7 +529,7 @@ async function execute(
   // by the shutdown.
   const source = stopped ? (execution.source ?? abortSourceOf(ctx.cause())) : null
   const output = textOf(execution.content)
-  const facts = resultFacts({
+  return resultFacts({
     tape: ctx.tape,
     now: ctx.now,
     call: refOf(ctx, call),
@@ -400,7 +549,6 @@ async function execute(
     reversibility: q.reversibility,
     writer: ctx.writer,
   })
-  await close(ctx, call, facts, q.summary)
 }
 
 /** A dispatched call's source when the abort ended it: its cause's (§原因码表 `stopped`, `app-exit`). */
@@ -515,12 +663,12 @@ export function blockFacts(
 }
 
 /**
- * The decision and its `dispatch_committed`, and whether the side effect may follow (T1). An append
+ * The decision and its `dispatch_committed`; null when the side effect may follow (T1). An append
  * that finds the same dispatch already committed (`created: false`) never dispatches it twice; a
  * `TapeProvenanceConflictError` — another writer's dispatch under this key — dispatches nothing
  * either, and the call closes as the recovery table's 损坏 (§执行日志与恢复表 T1). Tests and
- * development builds throw on both; the packaged build closes the call uncertain / `repair`, announced
- * like any closure, and logs.
+ * development builds throw on both; the packaged build logs and answers the call's uncertain /
+ * `repair` closure, for the caller to write in its place — announced like any closure.
  */
 async function dispatchOnce(
   ctx: BatchContext,
@@ -528,21 +676,17 @@ async function dispatchOnce(
   item: ToolTableItem,
   entries: readonly NewEntry[],
   dispatchEntry: NewEntry,
-): Promise<boolean> {
+): Promise<NewEntry[] | null> {
   const key = dispatchEntry.provenanceKey
-  const repair = (): Promise<void> =>
-    close(
-      ctx,
-      call,
-      repairFacts({
-        tape: ctx.tape,
-        now: ctx.now,
-        call: refOf(ctx, call),
-        dispatched: true,
-        effect: effectOf(item),
-        writer: ctx.writer,
-      }),
-    )
+  const repair = (): NewEntry[] =>
+    repairFacts({
+      tape: ctx.tape,
+      now: ctx.now,
+      call: refOf(ctx, call),
+      dispatched: true,
+      effect: effectOf(item),
+      writer: ctx.writer,
+    })
   let written: Written
   try {
     written = await ctx.write(entries)
@@ -551,16 +695,14 @@ async function dispatchOnce(
     ctx.log(
       `[loop] dispatch ${key} conflicts with another writer's; not dispatched, closed as repair`,
     )
-    await repair()
-    return false
+    return repair()
   }
   const at = written.entries.indexOf(dispatchEntry)
-  if (written.receipts[at]?.created !== false) return true
+  if (written.receipts[at]?.created !== false) return null
   if (ctx.strict)
     throw new Error(`[loop] dispatch ${key} was already committed; it is never dispatched twice`)
   ctx.log(`[loop] dispatch ${key} was already committed; not dispatched again, closed as repair`)
-  await repair()
-  return false
+  return repair()
 }
 
 /**
@@ -678,16 +820,7 @@ export async function judgeCall(
   const reversibility = reversibilityOf(item, call.input)
   const located = await locate(ctx.host, item, call.input, paths)
   const place = located === undefined ? undefined : placeFor(profile, located)
-  const inspected: InspectedCall = {
-    tool: {
-      name: item.name,
-      source: item.source,
-      serverId: item.serverId,
-      originalName: item.originalName,
-    },
-    args: call.input,
-    reversibility,
-  }
+  const inspected = inspectedOf(item, call.input, reversibility)
   const view = buildSessionView(entries, {
     call: inspected,
     profile,
@@ -754,6 +887,24 @@ export async function judgeCall(
       : {}),
     grantObject: object,
     ...(failed === undefined ? {} : { failed }),
+  }
+}
+
+/** A call as the inspectors and the parallel group's test see it. */
+function inspectedOf(
+  item: ToolTableItem,
+  args: Record<string, unknown>,
+  reversibility: Reversibility,
+): InspectedCall {
+  return {
+    tool: {
+      name: item.name,
+      source: item.source,
+      serverId: item.serverId,
+      originalName: item.originalName,
+    },
+    args,
+    reversibility,
   }
 }
 

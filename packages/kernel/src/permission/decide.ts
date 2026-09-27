@@ -342,16 +342,16 @@ export function primaryReason(q: {
   return REASON_ORDER.find((reason) => holding.has(reason)) ?? 'default'
 }
 
+/** The only tools the parallel group takes (H14; §一批工具怎么执行): the builtin workspace reads. */
+export const PARALLEL_TOOL_NAMES: ReadonlySet<string> = new Set(['Read', 'Glob', 'Grep'])
+
 /**
  * Whether a call may run in the parallel group (H14; §一批工具怎么执行): only a Read, Glob or Grep
  * inside the workspace, allowed as such. A read of the spill directory, a read outside the workspace,
  * WebSearch and WebFetch never do — not even once the user allowed them.
  */
 export function canRunInParallel(call: InspectedCall, decision: Decision): boolean {
-  if (
-    call.tool.source !== 'builtin' ||
-    !['Read', 'Glob', 'Grep'].includes(call.tool.originalName)
-  ) {
+  if (call.tool.source !== 'builtin' || !PARALLEL_TOOL_NAMES.has(call.tool.originalName)) {
     return false
   }
   if (decision.record.verdict !== 'allow' || decision.record.decidedBy !== 'user-grant')
