@@ -20,7 +20,11 @@ export type {
   SandboxViolation,
   SpawnSpec,
 } from './host/adapter.js'
-export { CONFIRM_FACT_KEYS, HostNetworkDeniedError } from './host/adapter.js'
+export {
+  CONFIRM_FACT_KEYS,
+  HostNetworkDeniedError,
+  UnresolvableAliasError,
+} from './host/adapter.js'
 export { EMPTY_POLICY } from './host/policy.js'
 export type { PolicyState, TenantPolicy, ToolPolicyRule } from './host/policy.js'
 export type { FlaggedCategory, InspectorCategory } from './permission/inspector.js'

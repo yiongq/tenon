@@ -58,10 +58,29 @@ export interface HostFs {
    * Null only when the directory entry itself does not exist (lstat reports ENOENT / ENOTDIR too).
    * An entry that exists but does not resolve (a dangling link, ELOOP, ...) and every other error
    * throw — a dangling link's realpath also reports ENOENT and must not read as "not there yet".
+   * An entry that is there and can be followed, yet has no real path to give (macOS's
+   * `/.vol/<dev>/<ino>`), throws `UnresolvableAliasError`.
    */
   realpath(path: AbsolutePath): Promise<AbsolutePath | null>
   // Removal is a separately grantable capability and is not part of the base
   // interface; phase 4 adds HostFs.remove together with runtime authorisation.
+}
+
+/**
+ * `HostFs.realpath`'s one typed failure: lstat sees the entry and stat follows it to a file that is
+ * there, yet realpath(3) cannot name it — macOS volfs's `/.vol/<dev>/<ino>`, which reaches any file
+ * by its inode. What cannot be named cannot be compared with the protected list, so the kernel blocks
+ * the path like the list, with no card (spec 02 §「在不在工作区里」 step 2; owner 2026-09-27). A
+ * dangling link is not this: stat cannot follow it, and realpath throws the original error.
+ */
+export class UnresolvableAliasError extends Error {
+  readonly path: AbsolutePath
+
+  constructor(path: AbsolutePath, options?: ErrorOptions) {
+    super(`realpath cannot name ${path}, though the entry is there`, options)
+    this.name = 'UnresolvableAliasError'
+    this.path = path
+  }
 }
 
 export interface HostSecrets {
