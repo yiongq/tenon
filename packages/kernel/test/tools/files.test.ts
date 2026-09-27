@@ -100,13 +100,16 @@ describe('Read keeps each result under the threshold, by whole lines (open quest
   })
 
   it('gives the first part of a line too long for one result, and the next offset after it', () => {
-    // A surrogate pair straddles the cut: it is never split.
-    const long = `${'a'.repeat(SPILL_THRESHOLD_CHARS - 400)}😀${'b'.repeat(50_000)}`
+    // Where a plain line is cut, for a file of the same number of lines.
+    const plain = readResult(`${'a'.repeat(SPILL_THRESHOLD_CHARS)}\nsecond\n`, 1, null)
+    const cut = (linesBack(plain.text)[0] ?? '').length
+    // A surrogate pair straddles that cut, its high half the last character that fits: never split.
+    const long = `${'a'.repeat(cut - 1)}😀${'b'.repeat(50_000)}`
     const result = readResult(`${long}\nsecond\n`, 1, null)
     expect(result.text.length).toBeLessThanOrEqual(SPILL_THRESHOLD_CHARS)
     const shown = linesBack(result.text)[0] ?? ''
-    expect(long.startsWith(shown)).toBe(true)
-    expect(/[\uD800-\uDBFF]$/.test(shown)).toBe(false)
+    expect(shown).toBe('a'.repeat(cut - 1))
+    expect(result.text).toContain(`only its first ${String(cut - 1)} characters are shown`)
     expect(result.text).toContain('Line 1 of 2 is too long')
     expect(result.text).toContain('The next part starts at offset 2.')
     expect(readResult(`${long}\nsecond\n`, 2, null).text).toBe('2\tsecond')
@@ -180,6 +183,13 @@ describe('Glob', () => {
     )
   })
 
+  it('sorts the whole walk by path, not folder by folder', async () => {
+    // Folder by folder, a/b.ts comes before a-c.ts; by code unit '-' (0x2d) is before '/' (0x2f).
+    const host = await hostWith({ '/ws/a/b.ts': '', '/ws/a-c.ts': '' })
+    const all = await run(globExecutor, host, 'Glob', { pattern: '**/*.ts' }, WS)
+    expect(textOf(all).split('\n')).toEqual(['/ws/a-c.ts', '/ws/a/b.ts'])
+  })
+
   it('follows a link inside the workspace, and not one that leads outside it', async () => {
     const host = await hostWith({ '/ws/src/a.ts': '', '/outside/secret.ts': '' })
     host.symlink(absolutePath('/ws/out'), '/outside')
@@ -198,6 +208,14 @@ describe('Glob', () => {
     const capped = textOf(await run(globExecutor, host, 'Glob', { pattern: 'f*' }, WS))
     expect(capped.split('\n\n')[0]?.split('\n')).toHaveLength(GLOB_RESULT_LIMIT)
     expect(capped).toContain(fill(GLOB_TEXTS.over, { limit: String(GLOB_RESULT_LIMIT) }))
+    // Exactly the limit is not "more than" it: every path, and no note.
+    const exact = textOf(await run(globExecutor, host, 'Glob', { pattern: 'f00*' }, WS))
+    expect(exact).toBe(
+      Array.from(
+        { length: GLOB_RESULT_LIMIT },
+        (_, i) => `/ws/f${String(i).padStart(5, '0')}`,
+      ).join('\n'),
+    )
     const file = await run(globExecutor, host, 'Glob', { pattern: '*' }, absolutePath('/ws/f00000'))
     expect(file.isError).toBe(true)
     expect(textOf(file)).toBe(fill(GLOB_TEXTS.notDirectory, { path: '/ws/f00000' }))

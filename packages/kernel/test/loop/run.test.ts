@@ -1489,6 +1489,34 @@ describe('judging a call in the loop (旧 162, 旧 124, 旧 93)', () => {
     expect(slow.lastSignal?.aborted).toBe(true)
   })
 
+  it('sends the block sentence, not the check-failure one, when a denying inspector did deny beside one that failed (F1)', async () => {
+    // Registered first, so a search for the failed step finds it before the one that answered.
+    const broken = createFakeInspector({
+      id: 'broken',
+      ceiling: 'deny',
+      answer: { throws: new Error('boom') },
+    })
+    const judge = createFakeInspector({
+      id: 'judge',
+      ceiling: 'deny',
+      answer: { kind: 'deny', category: 'exfiltration', findings: [{ code: 'no' }] },
+    })
+    const h = harness({ inspectors: [broken.registration, judge.registration], answersFirst: true })
+    h.provider.script(callTurn(calls(1)))
+    h.provider.script(done())
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    const entries = await all(h)
+    // One of them judged the call unsafe: "not a judgment that the call is unsafe" would be false.
+    expect(resultTexts(entries)).toEqual([MODEL_NOTES.closure.inspector['not-run']])
+    expect(inspectorSteps(entries)).toEqual([
+      { said: 'deny', status: 'error' },
+      { said: 'deny', status: 'ok' },
+    ])
+    expect(named(entries, 'execution/tool_outcome').map((entry) => entry.payload['facts'])).toEqual(
+      [{ toolName: 'look', category: 'exfiltration' }],
+    )
+  })
+
   it('02 不变量 16: writes no decision for a call stopped while its inspectors judge, and closes the batch not-run / stopped', async () => {
     const slow = createFakeInspector({ id: 'slow', ceiling: 'ask', answer: 'never' })
     // A clock that never fires: the inspector is still judging when the stop lands.

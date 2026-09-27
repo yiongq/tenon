@@ -165,6 +165,22 @@ describe('workspace routes (旧 182)', () => {
     expect((await readConfig(h.host.fs, h.host.identity)).lastWorkspaceFolders).toEqual(['/work/b'])
   })
 
+  it('drops a dialog answer that is not an absolute path, and reads one with none left as a cancel', async () => {
+    const h = await harness()
+    await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+    h.picks.push(['relative/dir'])
+    expect(await h.call('workspace.pick', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: { ok: true, folders: [DEDICATED], origin: 'dedicated' },
+    })
+    expect((await readConfig(h.host.fs, h.host.identity)).lastWorkspaceFolders).toEqual([])
+    h.picks.push(['relative/dir', '/work/a'])
+    expect(await h.call('workspace.pick', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: { ok: true, folders: ['/work/a'], origin: 'picked' },
+    })
+  })
+
   it('takes the prefill only when asked: until then the workspace is the dedicated folder', async () => {
     const h = await harness()
     await writeConfig(h.host.fs, h.host.identity, { lastWorkspaceFolders: ['/work/a'] })

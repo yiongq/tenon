@@ -23,6 +23,9 @@ import type {
 import { environmentText } from '../../src/loop/environment.js'
 import { LOCALE_HINT, SYSTEM_PROMPTS, fill } from '../../src/prompts/index.js'
 import { SESSION_DRAFT_CAP } from '../../src/session/draft.js'
+import { readSessionFacts, workspaceOf } from '../../src/session/facts.js'
+import { profileSetKey } from '../../src/tape/provenance.js'
+import { createTape } from '../../src/tape/tape.js'
 import {
   createCounterIds,
   createScriptedProvider,
@@ -273,6 +276,23 @@ describe('the draft before a session exists (open question 16)', () => {
     expect((await h.service.sessionFacts({ sessionId: ids[0] as string })).drafted).toBe(false)
     expect((await h.service.sessionFacts({ sessionId: ids[1] as string })).drafted).toBe(true)
   })
+
+  it('keeps an updated draft in its place: the one created first is still the first dropped', async () => {
+    const h = await harness()
+    const ids = Array.from(
+      { length: SESSION_DRAFT_CAP + 1 },
+      (_, i) => `8d2e9a2e-6b3d-4a71-9f52-${String(i).padStart(12, '0')}`,
+    )
+    for (const id of ids.slice(0, SESSION_DRAFT_CAP)) {
+      // oxlint-disable-next-line no-await-in-loop -- in order: the first one is the oldest
+      await h.service.selectProfile({ sessionId: id, profile: 'chat' })
+    }
+    // The oldest draft changes its profile: an update, not a new draft.
+    await cowork(h, ids[0] as string)
+    await h.service.selectProfile({ sessionId: ids[SESSION_DRAFT_CAP] as string, profile: 'chat' })
+    expect((await h.service.sessionFacts({ sessionId: ids[0] as string })).drafted).toBe(false)
+    expect((await h.service.sessionFacts({ sessionId: ids[1] as string })).drafted).toBe(true)
+  })
 })
 
 describe('the workspace (§工作区; D11)', () => {
@@ -484,6 +504,47 @@ describe('the workspace (§工作区; D11)', () => {
     const after = await h.service.currentPending({ sessionId: SESSION })
     expect(after?.card.reason).toBe('outside-workspace')
     expect(after?.allowScope).toBe('once')
+  })
+
+  it('judges a sub-agent in its parent’s workspace, read now, and gives it no chip (D11, H5 ①)', async () => {
+    const h = await harness()
+    await cowork(h)
+    await send(h, 'start')
+    const child = '7c1d9a2e-6b3d-4a71-9f52-0c8de7a11b43'
+    await h.service.createSession({ sessionId: child })
+    const tape = createTape(h.store)
+    const incarnationId = (await h.store.head(child))?.incarnationId ?? ''
+    // A sub-agent writes only its profile, naming the parent; never a workspace fact of its own.
+    await tape.appendEntries({
+      sessionId: child,
+      incarnationId,
+      entries: [
+        tape.writer('session').entry('session/profile_set', {
+          sourceType: 'session',
+          sourceId: child,
+          provenanceKey: profileSetKey(incarnationId),
+          payload: { profile: 'cowork', subagentOf: { sessionId: SESSION, linkKey: 'x' } },
+          createdAt: 5,
+        }),
+      ],
+    })
+    const facts = await readSessionFacts(tape, child)
+    expect(facts.workspace).toBeNull()
+    expect(await workspaceOf(tape, facts)).toEqual({ folders: [DEDICATED], origin: 'dedicated' })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [X] },
+      dedicated: DEDICATED,
+    })
+    // Read from the parent at each judgement, not a snapshot taken when the link was made.
+    expect(await workspaceOf(tape, facts)).toEqual({ folders: [X], origin: 'picked' })
+    expect(
+      await h.service.setWorkspace({
+        sessionId: child,
+        change: { kind: 'add', folders: [Y] },
+        dedicated: DEDICATED,
+      }),
+    ).toEqual({ ok: false, code: 'not-cowork' })
   })
 
   it('keeps the profile across a restart: a new service reads it from the Tape', async () => {

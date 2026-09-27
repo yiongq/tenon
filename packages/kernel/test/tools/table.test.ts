@@ -77,6 +77,15 @@ describe('connector tool names (H4)', () => {
     )
   })
 
+  it('cut a name of legal characters too once it is longer than 64, and keep one of exactly 64 (旧 144)', () => {
+    expect(mcpToolName('a', 'x'.repeat(61))).toBe(`a__${'x'.repeat(61)}`)
+    const long = mcpToolName('a', 'x'.repeat(62))
+    expect(long).toMatch(TOOL_NAME_PATTERN)
+    expect(long).toBe(
+      `a__${'x'.repeat(52)}_${sha256Hex(canonicalJson(['a', 'x'.repeat(62)])).slice(0, 8)}`,
+    )
+  })
+
   it('make a table fail when two map onto one name, or a connector takes a builtin name', () => {
     // The mapping is not injective: server a's b__c and server a__b's c both spell a__b__c.
     const clash = [connectorTool('a', 'b__c'), connectorTool('a__b', 'c')]

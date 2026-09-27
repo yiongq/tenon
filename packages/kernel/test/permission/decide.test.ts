@@ -323,6 +323,14 @@ describe('step 2: the first tier that holds', () => {
   })
 
   it('names the first denier in table order, and the must-ask layers in D5 order', () => {
+    // Layer 1 before layer 2: a protected path the policy also denies is the policy's block.
+    const layered = run(builtin('Read'), {
+      place: 'protected',
+      reversibility: READ_ONLY,
+      policy: policy({ policyId: 'p', serverId: 'builtin', effect: 'deny', toolName: 'Read' }),
+    })
+    expect(verdictOf(layered)).toEqual(['deny', 'tenant-policy'])
+    expect(layered.block?.reason).toBe('policy')
     expect(
       verdictOf(
         run(connector(), { place: 'protected', userSetting: 'never' }, undefined, [deny('d')]),
