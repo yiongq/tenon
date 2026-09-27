@@ -1,3 +1,4 @@
+import { isCanonicalUuid } from '../ids.js'
 import type { AbsolutePath } from './adapter.js'
 import { joinPath } from './path.js'
 
@@ -30,8 +31,13 @@ export const TOOL_OUTPUT_DIR = 'tool-output'
 
 /**
  * `<profileDir>/tool-output/<sessionId>` — one session's spilled outputs (H9). The session id is a
- * canonical UUID and is used as the folder name as it is; the folder is made on the first spill.
+ * canonical UUID and is used as the folder name as it is; the folder is made on the first spill. An id
+ * that is not one — `../x`, an upper-case UUID — throws `TypeError`: ids that become directory names
+ * are checked first, as `assertProfileId` does (spec 02 §大响应落盘).
  */
 export function toolOutputDirFor(profileDir: AbsolutePath, sessionId: string): AbsolutePath {
+  if (!isCanonicalUuid(sessionId)) {
+    throw new TypeError(`sessionId "${sessionId}" is not a canonical UUID`)
+  }
   return joinPath(profileDir, TOOL_OUTPUT_DIR, sessionId)
 }

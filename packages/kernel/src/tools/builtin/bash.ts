@@ -216,7 +216,7 @@ interface OutputReader {
  * A read that throws is a pipe that broke: the output ends where it broke. An append that throws is
  * the text past the longest string the engine can hold (V8: 2^29 − 24 code units, a RangeError): the
  * text stays as it was, and the pipe is still drained to its end, so the command is not held on a full
- * pipe until the timeout and ends the way it ends (plan step 24 decides how a long output is spilled).
+ * pipe until the timeout and ends the way it ends. A long output is spilled by the batch (§大响应落盘).
  */
 function readOutput(stream: ReadableStream<Uint8Array>): OutputReader {
   const reader = stream.getReader()

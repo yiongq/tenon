@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { absolutePath } from '../../src/host/path.js'
-import { PROFILE_SUBDIRS, assertProfileId, profileDirFor } from '../../src/host/profile.js'
+import {
+  PROFILE_SUBDIRS,
+  assertProfileId,
+  profileDirFor,
+  toolOutputDirFor,
+} from '../../src/host/profile.js'
 
 const root = absolutePath('/Users/me/Library/Application Support/tenon')
 
@@ -28,5 +33,20 @@ describe('profileDirFor', () => {
 
   it('declares the phase-0 sub-directories', () => {
     expect([...PROFILE_SUBDIRS]).toEqual(['logs', 'mcp', 'skills', 'plugins'])
+  })
+})
+
+describe('toolOutputDirFor (spec 02 §大响应落盘; 旧 57, 旧 188)', () => {
+  const profile = absolutePath('/Users/me/tenon/profiles/u1/personal')
+  const session = '0f8e2d4c-6b1a-4c3e-9d7f-2a5b8c1e4f60'
+
+  it('lays out <profileDir>/tool-output/<sessionId>', () => {
+    expect(toolOutputDirFor(profile, session)).toBe(`${profile}/tool-output/${session}`)
+  })
+
+  it('throws TypeError for an id that is not a canonical UUID, before any path is made', () => {
+    for (const bad of ['../x', session.toUpperCase(), `{${session}}`, `${session}/..`, '', 's1']) {
+      expect(() => toolOutputDirFor(profile, bad)).toThrow(TypeError)
+    }
   })
 })

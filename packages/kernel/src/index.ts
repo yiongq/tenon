@@ -33,8 +33,10 @@ export { KEY_SEPARATOR, keyFor } from './host/key.js'
 export {
   PROFILE_CONFIG_FILE,
   PROFILE_SUBDIRS,
+  TOOL_OUTPUT_DIR,
   assertProfileId,
   profileDirFor,
+  toolOutputDirFor,
 } from './host/profile.js'
 export { createMemoryHost } from './host/memory.js'
 export type { MemoryHost, MemoryHostOptions } from './host/memory.js'

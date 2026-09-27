@@ -14,7 +14,8 @@
  *   5. deny: the decision and a kernel-authored closure; the third machine denial in a row ends the
  *      Run as `blocked-repeatedly`. Ask: the decision is written with the Run's `paused` terminal, in
  *      one batch (同批规则 1). Allow: the decision and `dispatch_committed`, then — only once they are
- *      on the Tape (T1) — the executor, then its result and outcome. Bash first awaits its base
+ *      on the Tape (T1) — the executor, then its result and outcome, a result past the spill
+ *      threshold written to disk first (§大响应落盘; plan step 24). Bash first awaits its base
  *      environment, raced against the stop (§内置工具与参数「Bash」): a stop that wins writes neither.
  *
  * A stop between calls closes the rest as not-run / stopped.
@@ -63,6 +64,7 @@ import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
+import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause } from './ports.js'
 import type { ToolOutcomeView } from './events.js'
 
@@ -350,6 +352,8 @@ function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: st
  * `stopped` for a user-stop, `app-exit` for a quit or a closed window (§原因码表, B4) — with whatever
  * it had produced as the second block (§点停止时各状态怎么收); a Bash timeout stays `timed-out`, a stop
  * after its kill began included. A call that ended normally before its closure is recorded as it ended.
+ * Every executed call's result passes the spill check before it is written (§大响应落盘); the batch's
+ * other closures are the kernel's fixed notes, which never reach the threshold.
  */
 async function execute(
   ctx: BatchContext,
@@ -380,20 +384,36 @@ async function execute(
   // by the shutdown.
   const source = stopped ? (execution.source ?? abortSourceOf(ctx.cause())) : null
   const output = textOf(execution.content)
+  const ref = refOf(ctx, call)
+  // The one spill check, on what is about to be written (§大响应落盘): a command's output after its
+  // stop note is spilled like any other text.
+  const checked = await spillChecked({
+    fs: ctx.host.fs,
+    profileDir: ctx.host.identity.profileDir as AbsolutePath,
+    sessionId: ctx.sessionId,
+    call: ref,
+    result: {
+      content:
+        source === null
+          ? execution.content
+          : closureContent({
+              source,
+              state: execution.state,
+              ...(output === '' ? {} : { detail: output }),
+            }),
+      isError: stopped || execution.isError,
+      kernelAuthored: stopped,
+    },
+    log: ctx.log,
+  })
   const facts = resultFacts({
     tape: ctx.tape,
     now: ctx.now,
-    call: refOf(ctx, call),
-    content:
-      source === null
-        ? execution.content
-        : closureContent({
-            source,
-            state: execution.state,
-            ...(output === '' ? {} : { detail: output }),
-          }),
-    isError: stopped || execution.isError,
-    kernelAuthored: stopped,
+    call: ref,
+    content: checked.content,
+    isError: checked.isError,
+    kernelAuthored: checked.kernelAuthored,
+    ...(checked.spill === undefined ? {} : { spill: checked.spill }),
     effect: effectOf(item),
     state: execution.state,
     source,

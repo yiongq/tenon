@@ -29,8 +29,9 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // and backreferences as ripgrep does now that re2js turns them down, turns down what re2js would
   // misread and too large a pattern, says \b and \B are ASCII, names the files skipped for a line
   // too long for the pattern, and a search past its time budget; Write and Edit refuse a path that
-  // now resolves elsewhere (plan step 22, with its review's fixes, in place before release).
-  3: 'fcac5ec9d27d79cc57f960a0d1be928a6acef815db6da168d527b7c6cb59f27c',
+  // now resolves elsewhere (plan step 22, with its review's fixes, in place before release); the
+  // spill notes spill and spillFailed (plan step 24, in place before release).
+  3: 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e',
 }
 
 describe('the version gate', () => {
@@ -87,6 +88,18 @@ describe('the version gate', () => {
         MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorFailed: 'changed {message}' },
       },
       { ...layer, MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorEmpty: '(none)' } },
+      // The spill notes (plan step 24).
+      {
+        ...layer,
+        MODEL_NOTES: {
+          ...(layer.MODEL_NOTES as object),
+          spill: 'changed {bytes} {path} {preview}',
+        },
+      },
+      {
+        ...layer,
+        MODEL_NOTES: { ...(layer.MODEL_NOTES as object), spillFailed: 'changed {preview}' },
+      },
       // Both of WebSearch's variants are in the layer, each on its own.
       withTool('WebSearch', (t) => ({
         ...t,
