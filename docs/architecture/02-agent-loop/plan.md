@@ -419,7 +419,7 @@
     - 旧 126：d 没有被派发；`tool/result` 与 `tool_outcome` 按 a、b、c、d 的顺序出现；本会话即使已允许过搜索与域名，同批里 WebSearch、WebFetch、Bash、Write、MCP 工具也从不同时在途；对话形态里连续的 Read 逐个派发。
     - 不变量 13：假工具记录执行区间，只有最前面那组 Read / Glob / Grep 的区间允许重叠。
   - 暂定与待定：开放问题 24 已定（所有 Read 自己限长，第 18 步已做，阈值常量与计数函数已在）；对话形态 Read 一个落盘文件、超过阈值时不再落盘；删目录失败不在启动时清扫；阈值与预览在第 34 步校准。
-- [ ] 25. **评测运行器与小横评**（裁决 H15、M8、D7）
+- [x] 25. **评测运行器与小横评**（裁决 H15、M8、D7）
   - 读：§评测集与测试宿主；§记录格式与费用口径；§同题对比。
   - 交付物：`apps/desktop/evals/`（测试宿主、task 与 record 的 zod、checks、费用函数、models.ts 的评测专用行），根 vitest 的 `evals` project 与 `pnpm eval` / `pnpm evals:gate` 脚本，评测集前 5 题（01–05）；循环跑通后马上做 GLM 小横评。
   - 验收：45。
@@ -903,6 +903,31 @@
       - 清空之后这个根会话的排队项、`held`、可续跑标记与待批卡片在 kernel 里仍在（清空之前就如此，也不止有 Run 的情形），要不要随清空一起清另议。
       - `model-menu.spec.ts` 的悬停子菜单在满载下偶发超时，单跑都过。
 
+- **2026-09-28 · 第 25 步（评测运行器与小横评）**，分支 `wt/02-step25` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 147 个文件 2704 个用例过；`pnpm eval` 真跑三列，见下）。验收 45 满足。做法：两条实现线——R（运行器与测试宿主，`2c49bf1`）、T（前 5 题、夹具与判分，`cfb43d8`）；合并后对齐判分类型与测试范围（`69a4f9e`、`c958dc0`）；**真跑之前**先跑四视角评审（spec、真跑记录是否正确、测试宿主的安全边界、突变）各配核查，确认 20 条（13 个不同问题）→ 一条修复线（`4964fc8`）→ 复查 3 条，lead 补上（`8f8968d`）；冒烟之后发现计划行与日志被 vitest 吞掉，改写 stderr（`ed7ee7f`）。
+  - 改了什么：`apps/desktop/evals/`——`task.ts`（`EvalTask` / `EvalCheck` 与 zod：工作区外的卡、带 web 的题里的命令卡写 allow 一律拒收，夹具路径不得越出 `docs/evals/fixtures`、路径上与夹具里都不许有符号链接）、`record.ts`（`EvalRecord` 与 zod）、`host.ts`（每次运行一个 mkdtemp 目录放 profile、工作区（不跟随链接地复制，`dotenv.txt` 改名为 `.env`）、HOME 与 TMPDIR；Bash 的环境只有 PATH、HOME、TMPDIR、LANG；desktop 真实的 fs、process、network 与沙箱，secrets 用内存；审批卡按原因自动答复，没列的拒、`outside-workspace` 一律拒、带 web 的题 `command` 一律拒，作用域由 kernel 按卡上的 `allowScope` 给；可换的策略快照；假 SearchBackend 与假 `fetchUntrusted`）、`runner.ts`（经产品的 kernel 服务与 desktop 的 run-assembly 跑每一轮；每题一个总期限，默认 45 分钟，到点停下会话、照样出一条 fail 记录，vitest 的超时是期限加 5 分钟；任何一个 Run 以 `usage-limit` 结束就记 fail；记录的 clientVersion、提示层哈希、结束原因、工具轮数、按原因计的卡数、用量、费用、用时与测速）、`cost.ts`（按 Tape 算：每条 attempt 的最终 usage 乘冻结的 `pricing`，两条线的未命中缓存输入分别换算）、`models.ts`（评测专用的 glm-5.3 行，经 `/api/anthropic`、按 A9 绑定 `open.bigmodel.cn`；`BASELINE_COLUMN`）、`format.ts`（格式检查与门禁）、`checks/`（五题的判分与共用的 F2 / E2 计数）。根 vitest 注册 `evals` project，`pnpm eval` / `pnpm evals:gate` 两个脚本；`pnpm test` 只跑格式检查、不联网、不要 key。`docs/evals/`：前 5 题、夹具、三列结果、README 的题目索引与运行说明。kernel 入口只增 `PROMPT_LAYER_VERSION` / `PROMPT_LAYER_HASH` 的导出，`@tenon-app/kernel/testing` 只增 `createEvalSessionService`。spec Revisions (17)。
+  - 前 5 题（都是任务形态；对话形态现在只能读本会话的落盘目录，要等第 27、28 步的网页工具）：01 修一个失败的测试（compare）；02 第 1 轮后禁用 Edit、完成两个文件的改名（F2、E2）；03、04 中文、英文长日志里找关键行（H9，compare）；05 第 1 轮后禁用 Bash、统计错误条数（F2）。
+  - 实测（2026-09-28，open.bigmodel.cn `/paas/v4`，owner 的 key 只在评测进程内读；不传 effort；每题 3 次，flashx 只跑 1 次测速）：
+
+    | 模型 | 通过 | 花费 | 平均 / 最多工具轮数 | 平均 / 最长用时 |
+    |---|---|---|---|---|
+    | glm-5.3-flash | 13/15 | ¥0.22 | 5.7 / 10 | 45 / 88 秒 |
+    | glm-5.3 | 15/15 | ¥2.68 | 6.3 / 9 | 29 / 61 秒 |
+    | glm-5.3-flashx（1 次） | 4/5 | ¥0.14 | 5.6 / 8 | 24 / 36 秒；首字 3.1–3.4 秒，输出 175–195 token/秒 |
+
+    - 真跑合计约 ¥3.05（含一次冒烟 ¥0.01），plan 原估约 ¥35。
+    - flash 与 flashx 的失败都在「工具被禁」的题上：02、05 里换着参数连续三次撞上被禁的工具，以 `blocked-repeatedly` 结束。glm-5.3 在这两题上收到 is_error 之后再没调过被禁的工具（02 各 2 次拦截、05 各 1 次拦截之后改用别的做法）。
+    - 长日志两题 9 次落盘全部找到关键行，模型多用 Grep 搜落盘文件，Read 分段读只出现过几次（`offset/limit` 如 615/30、725/15）；flash 有一次在命令里直接 grep、输出没到阈值没落盘。
+    - 单题用量最多约 8 万 token（glm-5.3 的 05 题，¥0.36）。
+  - 本步的读法（lead 定，没有交 owner）：
+    - ① 基线模型定 glm-5.3（`BASELINE_COLUMN`）：通过率 15/15 对 13/15，flash 掉的正是多步任务里的恢复；一轮完整基线（25 题 × 3 次）按本次单价约 ¥13。owner 想改回 flash 只改这一行。
+    - ② 评测运行器不设全局 token 上限：单题最多约 8 万 token，费用护栏只用题目里的 `usageLimitTokens`（03、04 设了 50 万）。
+    - ③ 其余见 Revisions (17)：`TENON_EVAL_*` 只读运行器的环境、`.env.local` 只提供 key；`TENON_EVAL_TIMING`、`TENON_EVAL_DEADLINE_MIN` 两个变量；首字延迟取整次运行第一次 attempt，第一次 attempt 没有内容就不记；Ctrl-C 直接杀掉 vitest，不写记录，临时目录可能残留。
+  - 等后面步骤的：
+    - 第 26–31 步：提问、网页、子 agent 落地后，测试宿主已留的接缝接上（跳过提问、假搜索与假抓取），对话形态与 F5 的题随网页工具补。
+    - 第 34 步：补齐 20–30 题、同题对比集、门禁进 CI；门禁对必含题的识别按各题的 `from` 核一遍。
+    - live 用例里真跑的接线（期限、signal、计划行）没有单测，靠这次真跑验证过。
+    - 已知：每次运行留下一个 undici Agent 与一个配置监听，几十次运行无妨。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -920,7 +945,7 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–24 步已完成并进这个分支（见实施记录）；下一步是第 25 步（评测运行器与小横评，要 owner 的智谱 key 跑实测、约 ¥35）。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，PR 进 dev。下一步是 ③ 的第 26 步（AskUserQuestion）。
 
 - **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），突变视角与复评跑完后 ① 已合进 dev。多 agent 工作流一次最多四个实现 agent，vitest 限 `--maxWorkers=2`，同一时刻最多一个 Electron（2026-09-27 本机过热之后）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
