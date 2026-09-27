@@ -1071,6 +1071,28 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
     expect(ended).toMatchObject({ recorded: false, reason: { code: 'user-stopped' } })
   })
 
+  for (const cause of ['quit', 'close-window'] as const) {
+    it(`writes nothing and keeps the card when a ${cause} lands in the new message’s prebuild (B4)`, async () => {
+      // Plan step 15, 「登记之后、append 之前被中止」: 其余 quit、close-window：什么都不写，卡片跨重启保留.
+      const h = harness()
+      const requestId = await paused(h)
+      const before = await all(h)
+      const hold = h.loop.connector.holdAssemble()
+      const sending = h.service.send({ sessionId: SESSION, origin: null, text: 'x' })
+      await hold.reached
+      expect(h.loop.abort(SESSION, cause)).toBe(true)
+      expect(await sending).toEqual({ status: 'not-sent', code: 'app-exit' })
+      hold.release()
+      expect(await all(h)).toEqual(before)
+      expect(await requestIdOf(h)).toBe(requestId)
+      const ended = await h.loop.runEnded({ runId: null })
+      expect(ended).toMatchObject({
+        recorded: false,
+        reason: { code: 'shutdown-aborted', trigger: cause },
+      })
+    })
+  }
+
   /** A pause whose append a stop or a quit reaches mid-flight; what the Run and the Tape say after. */
   async function stoppedWhilePausing(
     cause: 'user-stop' | 'quit' | 'close-window-then-stop',
