@@ -853,7 +853,7 @@
     - 第 23 步：STOP 常量校准，旧 7 / 142 / 177，退出与关窗时来源记 `app-exit`（现在一律 `stopped`）。
     - 第 24 步：Bash 大输出落盘（现在整段留在内存）。
     - 第 25 步评测再定：要不要「先 Read 才能 Write / Edit」的守卫、Read 的行号前缀对 Edit 命中率的影响、命令表的样本、Grep 方言的剩余差异。
-    - 第 34 步：Grep 的三个常量、跳过清单要不要限长。
+    - 第 34 步：Grep 的三个常量、跳过清单要不要限长（上限处那一行在本机约 0.4 秒，在 CI 的 ubuntu 机器上约 1.5 秒，PR #19 的 CI 实测；计时测试的上限因此放宽到 5 秒）。
     - 下一次 `pnpm test:live`（要 owner 的 key）：A2 加倍在智谱上重跑一遍；live 旧 62 加写入卡。
 
 - **2026-09-27 · 第 23 步（停止即杀与关窗退出）**，分支 `wt/02-step23` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 136 个文件 2556 个用例过，build 过，e2e 123 个过）。验收 41、42 满足（Linux 一半以 CI 上的 `stop-tree.test.ts` 为准）；22 的「立即发送」打断 Bash 补上。做法：三条实现线——K（kernel 的停止收口、写入等待与 `app-exit`，`e73bcbc`）、D（desktop 的关窗与退出、全部 e2e，`9e97e6d`；只有这条线跑 Electron）、P（真进程树与三个 STOP 常量，`8582232`）；四视角评审（spec、Electron 与进程实测、竞态、突变）各配核查，确认 9 条（1 条 blocker）→ 两条修复线（`9fcf63c`、`035f27e`）→ 复查 0 条。

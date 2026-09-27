@@ -686,7 +686,7 @@ describe('Grep', () => {
     }
   })
 
-  it('skips a file at a line too long for its pattern, never matching that line, and takes the longest it allows within a second (s18-safety-2)', async () => {
+  it('skips a file at a line too long for its pattern, never matching that line, and takes the longest it allows in seconds, not minutes (s18-safety-2)', async () => {
     // Random `a` and `b`, on which re2js's DFA settles least: a line costs up to about 30 ns a
     // character an instruction, at every program size up to the cap.
     let seed = 1
@@ -711,7 +711,10 @@ describe('Grep', () => {
         const started = performance.now()
         // oxlint-disable-next-line no-await-in-loop -- one mode at a time, each timed
         const taken = await run(grepExecutor, host, 'Grep', input, absolutePath('/ws/x.txt'))
-        expect(performance.now() - started).toBeLessThan(1000)
+        // About 0.4 s on the M5 Mac this was measured on and about 1.5 s on CI's ubuntu runner; the
+        // bound only shows the line costs seconds, not the minutes it would without GREP_LINE_WORK_MAX
+        // (its calibration is plan step 34's).
+        expect(performance.now() - started).toBeLessThan(5000)
         expect(taken).toMatchObject({ isError: false, state: 'completed' })
         // One character more, and the file is skipped before the line is matched, and named after
         // the entries; that is no error.
