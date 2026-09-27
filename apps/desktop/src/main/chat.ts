@@ -186,11 +186,11 @@ export function createRunRegistry(
         },
       }
       // Watched from the moment the lease exists: a window that disappears while the Run is still
-      // being prepared must not leave one behind either.
+      // being prepared must not leave one behind either. What goes is the document, so what is
+      // aborted is every Run it began (§停止与退出「watchOwner」).
       const owner = ownerOf(q.origin)
       entry.detach = watchOwner(owner, () => {
-        abortOne(entry, 'close-window')
-        changed(q.rootSessionId)
+        if (q.origin !== null) registry.abort({ origin: q.origin }, 'close-window')
       })
       live.set(q.rootSessionId, entry)
       // A command that waited in the mailbox begins its lease with the origin it came with, and that
@@ -459,22 +459,24 @@ function ownerOf(candidate: unknown): RunOwner | null {
   return hasListeners ? (candidate as unknown as RunOwner) : null
 }
 
-/** Calls `gone` once the owning document is replaced or destroyed; returns the detach. */
+/**
+ * Calls `gone` once the owning document is destroyed, or the main frame has a new document (a
+ * reload); returns the detach (spec 02 §停止与退出「watchOwner」). The caller aborts that document's
+ * Runs with `close-window`: no confirm, and a paused session — which has no lease — is not touched.
+ *
+ * `did-navigate` is a main-frame navigation that committed; an in-page one (fragment, pushState)
+ * does not fire it. Not `did-start-navigation`: that fires first even for a navigation
+ * `hardenWebContents` then cancels in `will-frame-navigate` (measured on Electron 44.4.1, a
+ * `location.href` to another origin), which replaces no document.
+ */
 function watchOwner(owner: RunOwner | null, gone: () => void): () => void {
   if (owner === null) return (): void => {}
-  const onDestroyed = (): void => gone()
-  const onNavigation = (...args: unknown[]): void => {
-    // Electron's own `did-start-navigation` params. A main-frame navigation that is not a
-    // fragment / pushState one replaces the document; anything else leaves the Run alone.
-    const details = args[0]
-    if (!isRecord(details)) return
-    if (details['isMainFrame'] === true && details['isSameDocument'] === false) gone()
-  }
-  owner.on('destroyed', onDestroyed)
-  owner.on('did-start-navigation', onNavigation)
+  const onGone = (): void => gone()
+  owner.on('destroyed', onGone)
+  owner.on('did-navigate', onGone)
   return (): void => {
-    owner.off('destroyed', onDestroyed)
-    owner.off('did-start-navigation', onNavigation)
+    owner.off('destroyed', onGone)
+    owner.off('did-navigate', onGone)
   }
 }
 

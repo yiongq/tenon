@@ -72,13 +72,16 @@ function fakeIpc(): {
 }
 
 /**
- * The half of a WebContents this path uses: the two events that say the document is gone. The
- * shape of `did-start-navigation`'s details is Electron's own (pinned at 44.4.1).
+ * The half of a WebContents this path uses: the events that say the document is gone, in Electron's
+ * order (measured on 44.4.1): a reload starts a main-frame navigation and commits it; a navigation
+ * `hardenWebContents` cancels starts one and commits nothing.
  */
 function fakeWindow(): {
   event: { sender: unknown }
   close(): void
   reload(): void
+  /** `location.href` to another origin, which main cancels in `will-frame-navigate`. */
+  blockedNavigation(): void
   listenerCount(): number
 } {
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
@@ -98,8 +101,12 @@ function fakeWindow(): {
   return {
     event: { sender },
     close: () => emit('destroyed'),
-    reload: () =>
-      emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'app://x' }),
+    reload: () => {
+      emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'app://x' })
+      emit('did-navigate', {}, 'app://x', 200, 'OK')
+    },
+    blockedNavigation: () =>
+      emit('did-start-navigation', { isMainFrame: true, isSameDocument: false, url: 'https://x' }),
     listenerCount: () => [...listeners.values()].reduce((n, set) => n + set.size, 0),
   }
 }
@@ -495,6 +502,26 @@ describe('chat routes', () => {
     win.reload()
     expect(await out.waitFor('done')).toMatchObject({ stopReason: 'aborted' })
     await expect.poll(() => fake.aborted, { timeout: 3000 }).toBe(true)
+  })
+
+  it('leaves the run alone on a navigation main cancels: the document was never replaced', async () => {
+    // spec 02 §停止与退出「watchOwner」: 主框架换了文档（重载）. `did-start-navigation` comes before
+    // `will-frame-navigate` cancels it, so it cannot be what ends a Run.
+    fake = await startFakeAnthropic({
+      chunks: Array.from({ length: 20 }, (_, i) => `w${i} `),
+      delayMs: 10,
+    })
+    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const win = fakeWindow()
+
+    await ipc.call('chat.send', { sessionId, text: 'hi' }, win.event)
+    await out.waitFor('text-delta')
+    win.blockedNavigation()
+    expect(await out.waitFor('done')).toMatchObject({
+      stopReason: 'end-turn',
+      endReason: { code: 'completed' },
+    })
+    expect(fake.aborted).toBe(false)
   })
 
   it('sends to the provider config.json selected, not to the default one', async () => {

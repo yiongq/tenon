@@ -467,3 +467,7 @@ export type { CommandShell } from './tools/builtin/bash.js'
 // and the desktop (which resolves the protected shell files) use.
 export { locatePath, placeOf, resolvePath } from './permission/workspace.js'
 export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permission/workspace.js'
+
+// Spec 02 plan step 23 — 停止与退出. The quit waits the stop sequence's grace plus the in-process
+// write wait, and reads both here, so the desktop writes no number of its own (§停止与退出 第 4 步).
+export { STOP_TERM_GRACE_MS, STOP_WRITE_WAIT_MS } from './loop/limits.js'

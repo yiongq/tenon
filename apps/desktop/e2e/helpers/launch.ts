@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { _electron as electron } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { appEnvironment } from './app-env.js'
+import { exitConfirmsIn, stubExitConfirm } from './exit.js'
+import type { ExitConfirm } from './exit.js'
 
 export type Locale = 'zh-CN' | 'en'
 export type LocaleSetting = 'auto' | Locale
@@ -94,6 +97,8 @@ export interface LaunchOptions {
 export interface LaunchedApp {
   readonly app: ElectronApplication
   readonly page: Page
+  /** Every close or quit confirm main showed in this launch, readable after the app is gone. */
+  readonly exitConfirms: () => ExitConfirm[]
 }
 
 /**
@@ -132,7 +137,11 @@ export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> 
     (target) => globalThis.innerWidth === target.width && globalThis.innerHeight === target.height,
     size,
   )
-  return { app, page }
+  // Main's close and quit confirm (spec 02 §e2e 接缝), preset to 「停止任务」 so that no teardown waits
+  // on it; a case that answers otherwise presets `stop` again before its teardown (exit.ts).
+  const record = join(options.userData, `e2e-exit-confirms-${randomUUID()}.jsonl`)
+  await stubExitConfirm(app, 'stop', record)
+  return { app, page, exitConfirms: () => exitConfirmsIn(record) }
 }
 
 /**

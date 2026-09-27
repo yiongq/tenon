@@ -145,6 +145,7 @@ function fakeWindow(): {
     close: () => emit('destroyed'),
     reload: () => {
       emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+      emit('did-navigate')
       emit('did-finish-load')
     },
   }

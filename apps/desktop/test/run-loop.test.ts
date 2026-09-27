@@ -24,24 +24,31 @@ function lease(result: RunLease | { refused: 'shutting-down' }): RunLease {
   return result
 }
 
-/** A stand-in for a WebContents: the two events that say the document is gone. */
-function fakeOwner(): { owner: object; close(): void; listeners(): number } {
-  const listeners = new Map<string, Set<() => void>>()
+/** A stand-in for a WebContents: the events that say the document is gone. */
+function fakeOwner(): {
+  owner: object
+  close(): void
+  emit(name: string, ...args: unknown[]): void
+  listeners(): number
+} {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   const owner = {
-    on(name: string, listener: () => void): void {
+    on(name: string, listener: (...args: unknown[]) => void): void {
       const set = listeners.get(name) ?? new Set()
       set.add(listener)
       listeners.set(name, set)
     },
-    off(name: string, listener: () => void): void {
+    off(name: string, listener: (...args: unknown[]) => void): void {
       listeners.get(name)?.delete(listener)
     },
   }
+  const emit = (name: string, ...args: unknown[]): void => {
+    for (const listener of listeners.get(name) ?? []) listener(...args)
+  }
   return {
     owner,
-    close: () => {
-      for (const listener of listeners.get('destroyed') ?? []) listener()
-    },
+    close: () => emit('destroyed'),
+    emit,
     listeners: () => [...listeners.values()].reduce((n, set) => n + set.size, 0),
   }
 }
@@ -89,6 +96,28 @@ describe('RunRegistry', () => {
     expect(theirs.signal.aborted).toBe(false)
     mine.finish()
     // Nothing is left listening on a webContents that outlives the lease.
+    expect(window.listeners()).toBe(0)
+    theirs.finish()
+  })
+
+  it('aborts the Runs of a document the main frame replaced, and none for a navigation main cancelled', () => {
+    // §停止与退出「watchOwner」: 主框架换了文档（重载）时调 abort({ origin }, 'close-window'), 只中止这个
+    // 文档登记的进行中 Run. Electron's order (44.4.1): a reload fires `did-start-navigation`, then
+    // `did-navigate`; a navigation `hardenWebContents` cancels fires only the first.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const other = fakeOwner()
+    const mine = lease(registry.begin({ rootSessionId: ROOT, origin: window.owner }))
+    const theirs = lease(registry.begin({ rootSessionId: CHILD, origin: other.owner }))
+    window.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(mine.signal.aborted).toBe(false)
+    window.emit('did-navigate', {}, 'file:///app/index.html', 200, 'OK')
+    expect(mine.signal.reason).toBe('close-window')
+    // No stop was asked for: nothing a paused session holds is closed on its account.
+    expect(mine.stopRequested).toBe(false)
+    expect(theirs.signal.aborted).toBe(false)
+    expect(registry.running()).toEqual([CHILD])
+    mine.finish()
     expect(window.listeners()).toBe(0)
     theirs.finish()
   })
