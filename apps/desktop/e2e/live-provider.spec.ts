@@ -261,9 +261,11 @@ test.describe('live provider · zhipu', () => {
  * glm-5.3-flashx (TENON_LIVE_ZHIPU_MODEL) and glm-5.3-flash, the rest on flash, as the plan says;
  * the WebSearch round trip waits for plan step 28.
  *
- * What went on the wire is read where it leaves: main's egress calls `globalThis.fetch` at send time
- * (src/main/host/network.ts), so each case wraps it in the app it launched and keeps the URL, method,
- * JSON body and status of every request — never a header, so never the credential. A local proxy as
+ * What went on the wire is read where it leaves: main's egress is undici's own fetch
+ * (src/main/host/network.ts; 01 修补 9 (w), owner 2026-09-27), which announces every request on
+ * undici's diagnostics channels, so each case subscribes to them in the app it launched and keeps the
+ * URL, method, JSON body and status of every request — never a header, so never the credential.
+ * Wrapping `globalThis.fetch` would see nothing: the egress no longer goes through it. A local proxy as
  * the zhipu `baseURL` cannot stand in for that seam: a development-fallback key is bound to the
  * declared host (A9, `boundHost` in src/main/provider.ts) and is never sent to another one. With
  * TENON_LIVE_RECORD_DIR set, each case writes those requests and its Tape's attempts (usage with the
@@ -316,7 +318,11 @@ interface WireRequest {
   status: number | null
 }
 
-/** Wraps main's `globalThis.fetch`, once per launch; self-contained, as `evaluate` runs it in main. */
+/**
+ * Subscribes to undici's request channels in main, once per launch; self-contained, as `evaluate`
+ * runs it in main. The channels are named process-wide, so they carry the requests of the undici the
+ * egress imports as well as the platform's own; a redirect is one request per hop.
+ */
 async function recordRequests(app: ElectronApplication): Promise<void> {
   await app.evaluate(() => {
     const store = globalThis as unknown as { liveRequests?: unknown[] }
@@ -324,23 +330,44 @@ async function recordRequests(app: ElectronApplication): Promise<void> {
     const requests: Array<{ url: string; method: string; body: unknown; status: number | null }> =
       []
     store.liveRequests = requests
-    const original = globalThis.fetch
-    globalThis.fetch = async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      let body: unknown = null
-      if (typeof init?.body === 'string') {
-        try {
-          body = JSON.parse(init.body) as unknown
-        } catch {
-          body = null
-        }
-      }
-      const record = { url, method: init?.method ?? 'GET', body, status: null as number | null }
-      requests.push(record)
-      const response = await original(input, init)
-      record.status = response.status
-      return response
+    /** undici's own request object, as its channels publish it: only the fields read here. */
+    interface Sent {
+      readonly origin: string | URL
+      readonly path: string
+      readonly method: string
     }
+    const open = new WeakMap<object, { record: (typeof requests)[number]; chunks: Buffer[] }>()
+    const channels = process.getBuiltinModule('node:diagnostics_channel')
+    channels.subscribe('undici:request:create', (message) => {
+      const { request } = message as { request: Sent }
+      const url = `${new URL(String(request.origin)).origin}${request.path}`
+      const record: (typeof requests)[number] = {
+        url,
+        method: request.method,
+        body: null,
+        status: null,
+      }
+      requests.push(record)
+      open.set(request, { record, chunks: [] })
+    })
+    channels.subscribe('undici:request:bodyChunkSent', (message) => {
+      const { request, chunk } = message as { request: object; chunk: Uint8Array | string }
+      open.get(request)?.chunks.push(Buffer.from(chunk))
+    })
+    channels.subscribe('undici:request:bodySent', (message) => {
+      const entry = open.get((message as { request: object }).request)
+      if (entry === undefined || entry.chunks.length === 0) return
+      try {
+        entry.record.body = JSON.parse(Buffer.concat(entry.chunks).toString('utf8')) as unknown
+      } catch {
+        entry.record.body = null
+      }
+    })
+    channels.subscribe('undici:request:headers', (message) => {
+      const { request, response } = message as { request: object; response: { statusCode: number } }
+      const entry = open.get(request)
+      if (entry !== undefined) entry.record.status = response.statusCode
+    })
   })
 }
 

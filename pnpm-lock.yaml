@@ -119,6 +119,9 @@ importers:
       streamdown:
         specifier: 2.6.0
         version: 2.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      undici:
+        specifier: 7.29.1
+        version: 7.29.1
       zod:
         specifier: 'catalog:'
         version: 4.6.5
