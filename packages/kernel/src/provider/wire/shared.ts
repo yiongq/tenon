@@ -13,7 +13,12 @@ import { CanonicalJsonError, canonicalJson } from '../../tape/canonical-json.js'
 import type { AttemptRequestSnapshot } from '../../tape/entry.js'
 import { sha256Hex } from '../../tape/hash.js'
 import { ProviderInvalidArgumentError } from '../errors.js'
-import { applyThinkingDecision, decideThinking, decideVendorBlock } from '../thinking.js'
+import {
+  applyThinkingDecision,
+  decideThinking,
+  decideVendorBlock,
+  decideVendorFields,
+} from '../thinking.js'
 import type {
   ThinkingApplication,
   ThinkingBlock,
@@ -262,8 +267,9 @@ export function thinkingTargetFor(req: ProviderRequest): ThinkingTarget {
 
 /**
  * Every reasoning block of every message goes through this, and only through this: the
- * decision is recorded before it is applied, so `thinkingDecisions` is one entry per reasoning
- * block in message/block order whatever the wire then does with it. `messageIndex` is the block's
+ * decision is recorded before it is applied, so `thinkingDecisions` holds one entry per reasoning
+ * block — among those for vendor blocks and vendor field sets (guardVendorBlock, guardVendorFields)
+ * — in message/block order whatever the wire then does with it. `messageIndex` is the block's
  * message within `req.messages`, which the compaction rule (spec 02, H10) reads.
  */
 export function guardReasoning(
@@ -289,6 +295,24 @@ export function guardVendorBlock(
   const decision = decideVendorBlock(block, target)
   decisions.push(decision)
   return decision.action === 'replay'
+}
+
+/**
+ * As guardVendorBlock(), for the `vendorFields` of a text or tool-request block (spec 02, 01 修补 2;
+ * s6-spec-2, owner 2026-09-27): one decision per field set, in block order, and the fields to merge
+ * back when they pass — undefined when they are dropped. A block without fields records nothing: it
+ * has nothing the vendor alone put there. Called only for a block that goes on the wire, so a
+ * decision never describes fields whose host was skipped.
+ */
+export function guardVendorFields(
+  block: Extract<ContentBlock, { type: 'text' | 'tool-request' }>,
+  target: ThinkingTarget,
+  decisions: ThinkingDecision[],
+): Record<string, unknown> | undefined {
+  if (block.vendorFields === undefined) return undefined
+  const decision = decideVendorFields(block.vendorSource, target)
+  decisions.push(decision)
+  return decision.action === 'replay' ? block.vendorFields : undefined
 }
 
 /**

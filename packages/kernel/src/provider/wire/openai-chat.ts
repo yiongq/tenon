@@ -36,7 +36,7 @@ import {
   statusErrorCode,
   stringField,
 } from '../errors.js'
-import type { ThinkingApplication } from '../thinking.js'
+import type { ThinkingApplication, ThinkingTarget } from '../thinking.js'
 import type {
   ContentBlock,
   EncodedRequest,
@@ -66,6 +66,7 @@ import {
   effortTierOf,
   guardReasoning,
   guardVendorBlock,
+  guardVendorFields,
   hasSystemPrompt,
   mergeRequestParams,
   sealEncoded,
@@ -113,6 +114,8 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
  * 1 is spec 02's encoder — `reasoning_effort`, the vendor blocks and the trailing-user rule; add one
  * with every change to what it encodes, and a row to test/provider/wire/encoder-version.test.ts.
+ * Recording a decision for the vendor fields of text and tool-request blocks (s6-spec-2, owner
+ * 2026-09-27) changed no byte — this wire never sent them — so the version stayed at 1.
  * Exported for the attempt re-check (02 不变量 33), which covers only the records this build's
  * encoder wrote.
  */
@@ -289,7 +292,10 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
       switch (block.type) {
         case 'text':
           // An empty text part carries nothing and is rejected by parts of this wire.
-          if (block.text !== '') parts.push({ type: 'text', text: block.text })
+          if (block.text !== '') {
+            refuseVendorFields(block, target, decisions, req.model)
+            parts.push({ type: 'text', text: block.text })
+          }
           break
         case 'thinking':
         case 'redacted-thinking': {
@@ -318,6 +324,7 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
           // something the endpoint never saw.
           assertBlockRole('a tool call', message.role, 'assistant', WIRE)
           requested.add(block.id)
+          refuseVendorFields(block, target, decisions, req.model)
           toolCalls.push({
             id: block.id,
             type: 'function',
@@ -372,6 +379,26 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
     if (turn !== null) out.push(turn)
   }
   return out
+}
+
+/**
+ * The vendor fields of a text or tool-request block, through the guard (spec 02, 01 修补 2; s6-spec-2,
+ * owner 2026-09-27): the decision is recorded, and the fields are never sent — this wire's decoder
+ * produces none, so every field set here is another provider's or has no source, and a single text
+ * part becomes a bare string with no room for them. A field set the guard would send back is refused
+ * like a replayable vendor block, rather than dropped out of the audit.
+ */
+function refuseVendorFields(
+  block: Extract<ContentBlock, { type: 'text' | 'tool-request' }>,
+  target: ThinkingTarget,
+  decisions: ThinkingDecision[],
+  model: ModelInfo,
+): void {
+  if (guardVendorFields(block, target, decisions) !== undefined) {
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: ${WIRE} carries no vendor fields, so those on a ${block.type} block cannot be replayed`,
+    )
+  }
 }
 
 /**

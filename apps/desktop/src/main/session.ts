@@ -48,8 +48,9 @@ export function registerSessionRoutes({ ipcMain, sessions, gate }: SessionRoutes
 /**
  * A stored message as it may leave the main process (spec 02 plan, step 6: 原样块取乙). The kernel
  * keeps what the vendor sent verbatim — `vendor` blocks and the `vendorFields` of known blocks
- * (01 修补 2) — for the Tape and for replay; none of it is for the renderer, and the contracts'
- * block union does not have it. It is taken out HERE, before the response schema sees the row, so
+ * (01 修补 2), with the `vendorSource` the guard judges text and tool-request fields by (s6-spec-2)
+ * — for the Tape and for replay; none of it is for the renderer, and the contracts' block union
+ * does not have it. It is taken out HERE, before the response schema sees the row, so
  * that schema stays exactly what it was; showing vendor blocks one day is an addition to contracts
  * (甲), not a change.
  *

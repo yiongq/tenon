@@ -300,8 +300,11 @@ describe('block accumulator and the vendor’s verbatim content (spec 02, 01 修
       { type: 'vendor-fields', index: 2, fields: { extra: true } },
       { type: 'tool-call-end', index: 2, id: 'toolu_1', name: 'now', input: {} },
     ])
+    // The text and the tool call carry no provider of their own, so the fields get one: the guard
+    // judges them against the model that sent them (01 修补 2; s6-spec-2, owner 2026-09-27). The
+    // thinking block already carries it, and its fields go wherever the block goes.
     expect(blocks.content()).toEqual([
-      { type: 'text', text: 'cited', vendorFields: { citations: [] } },
+      { type: 'text', text: 'cited', vendorFields: { citations: [] }, vendorSource: STAMP },
       {
         type: 'thinking',
         text: 'hm',
@@ -315,7 +318,20 @@ describe('block accumulator and the vendor’s verbatim content (spec 02, 01 修
         name: 'now',
         input: {},
         vendorFields: { extra: true },
+        vendorSource: STAMP,
       },
+    ])
+  })
+
+  it('stamps no source on a block without vendor fields', () => {
+    const blocks = fold([
+      { type: 'text-delta', index: 0, text: 'plain' },
+      { type: 'tool-call-start', index: 1, id: 'toolu_1', name: 'now' },
+      { type: 'tool-call-end', index: 1, id: 'toolu_1', name: 'now', input: {} },
+    ])
+    expect(blocks.content()).toEqual([
+      { type: 'text', text: 'plain' },
+      { type: 'tool-request', id: 'toolu_1', name: 'now', input: {} },
     ])
   })
 

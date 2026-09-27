@@ -753,8 +753,9 @@ describe('acceptance 1 — one call path, four providers', () => {
       // fields encode() reads, and the model the fixture's stream named.
       expect(attempt?.payload['encoder']).toEqual({
         wire: testCase.definition.wire,
-        // anthropic-messages 2 added the top-level cache_control (encoder-version.test.ts).
-        version: testCase.definition.wire === 'anthropic-messages' ? 2 : 1,
+        // anthropic-messages 2 added the top-level cache_control, 3 the vendor-fields guard
+        // (s6-spec-2; encoder-version.test.ts).
+        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 1,
         sdk: expect.stringMatching(
           testCase.definition.wire === 'anthropic-messages'
             ? /^@anthropic-ai\/sdk@\d/

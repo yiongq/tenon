@@ -5,8 +5,8 @@ import { projectedRow } from '../src/main/session.js'
 
 /**
  * Spec 02 plan step 6, 旧 101 (原样块取乙): what the vendor sent verbatim stays in the kernel. A row
- * leaves the main process without `vendor` blocks and without `vendorFields`, and still passes the
- * contracts' response schema, which is unchanged.
+ * leaves the main process without `vendor` blocks, `vendorFields` or `vendorSource` (s6-spec-2), and
+ * still passes the contracts' response schema, which is unchanged.
  */
 const SESSION = '11111111-1111-4111-8111-111111111111'
 
@@ -27,7 +27,13 @@ function row(content: MessageRow['content']): MessageRow {
 describe('projectedRow', () => {
   it('strips vendor blocks and vendor fields, and the result passes messageRowSchema', () => {
     const stored = row([
-      { type: 'text', text: 'hi', vendorFields: { citations: [{ url: 'https://example.com' }] } },
+      {
+        type: 'text',
+        text: 'hi',
+        vendorFields: { citations: [{ url: 'https://example.com' }] },
+        // Where the fields came from (s6-spec-2, owner 2026-09-27): the guard's, not the renderer's.
+        vendorSource: { provider: 'anthropic', providerModel: 'claude-opus-5-5' },
+      },
       {
         type: 'thinking',
         text: 'why',
@@ -49,6 +55,7 @@ describe('projectedRow', () => {
         name: 'Read',
         input: { path: '/a' },
         vendorFields: { x: 2 },
+        vendorSource: { provider: 'anthropic', providerModel: 'claude-opus-5-5' },
       },
     ])
     const out = projectedRow(stored)

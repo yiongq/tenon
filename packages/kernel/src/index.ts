@@ -143,6 +143,7 @@ export type {
   ThinkingSpec,
   ToolSpec,
   Usage,
+  VendorSource,
 } from './provider/types.js'
 export {
   ProviderAlreadyRegisteredError,
@@ -162,6 +163,7 @@ export {
   applyThinkingDecision,
   decideThinking,
   decideVendorBlock,
+  decideVendorFields,
   thinkingModelId,
 } from './provider/thinking.js'
 export type {
