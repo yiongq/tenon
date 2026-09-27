@@ -16,12 +16,13 @@
  *   instruction it is in: about 50 MB full at any size, about 100 MB at the cap, where 142 000
  *   instructions ran a line toward gigabytes.
  * - One line's matching, or one file's in multiline mode, at `GREP_LINE_WORK_MAX` characters times
- *   instructions, reckoned before it starts; past it the call stops. Matching takes time linear in
- *   the text, by a factor that grows with the program, up to about 30 ns a character an instruction
- *   where the DFA cannot settle. The text of a pattern does not tell when it settles, so the factor
- *   is taken at its worst: `.{996}` written three times, 2 990 instructions, settles and takes 0.17 s
- *   over a 1 MB line, but after `a` it does not, and takes tens of seconds a MB. The longest line
- *   taken holds the main process about 0.35 s, 0.45 s under `-o`.
+ *   instructions, reckoned before it starts; past it that file is skipped, nothing from it kept, and
+ *   named after the entries. Matching takes time linear in the text, by a factor that grows with the
+ *   program, up to about 30 ns a character an instruction where the DFA cannot settle. The text of a
+ *   pattern does not tell when it settles, so the factor is taken at its worst: `.{996}` written
+ *   three times, 2 990 instructions, settles and takes 0.17 s over a 1 MB line, but after `a` it
+ *   does not, and takes tens of seconds a MB. The longest line taken holds the main process about
+ *   0.35 s, 0.45 s under `-o`. A pattern that is one literal counts one a character (`workFactor`).
  * - The call's time, at `GREP_TIME_BUDGET_MS`, and the stop. The clock is read before each file, and
  *   between lines and between the finds of `-o` and multiline — each of which may scan the rest of
  *   the text: `a.*z|a` under `-o` is quadratic in a line — once a slice of reckoned work has passed.
@@ -72,7 +73,8 @@ export const GREP_TEXTS = {
   negatedNonWord: '\\W is not supported inside a negated class [^...]',
   wordBoundary: '\\<, \\> and \\b{...} are not supported; \\b and \\B are',
   tooLarge: 'the pattern is too large; shorten it or lower its repetition counts',
-  tooLong: '{where} is too long to search with this pattern. Narrow the pattern or the path.',
+  skipped:
+    'Not searched, so nothing from them is shown: in each of these files the line named is too long to search with this pattern (in multiline mode, the whole file is). Narrow the pattern or the path to search them.',
   timeUp:
     'The search took longer than {seconds} seconds and was stopped. Narrow the pattern or the path.',
   foundBefore: 'Found before it stopped:',
@@ -101,11 +103,11 @@ const TEXT_BOUND_LIMIT = 10 * GREP_MAX_PROGRAM
 
 /**
  * The most work one line may take, or one file in multiline mode, reckoned before it is matched as
- * its characters times the program's instructions (s18-safety-2); past it the call stops. re2js
- * spends up to about 30 ns a unit where its DFA cannot settle (`[ab]*a[ab]{300}c` over a line of
- * random `a` and `b`), so the longest line taken holds the main process about 0.35 s, 0.45 s under
- * `-o` (measured at this bound). A pattern of 10 instructions, such as `function`, takes lines up to
- * a million characters; one at the cap, 3 333. 待校准（第 34 步）.
+ * its characters times `workFactor` (s18-safety-2); past it the file is skipped. re2js spends up to
+ * about 30 ns a unit where its DFA cannot settle (`[ab]*a[ab]{300}c` over a line of random `a` and
+ * `b`), so the longest line taken holds the main process about 0.35 s, 0.45 s under `-o` (measured
+ * at this bound). A pattern of 11 instructions, such as `function\(`, takes lines up to 909 090
+ * characters; one at the cap, 3 333; one literal, ten million. 待校准（第 34 步）.
  */
 export const GREP_LINE_WORK_MAX = 10_000_000
 
@@ -231,11 +233,13 @@ export const grepExecutor: ToolExecutor = async (q) => {
   if (q.target === null) throw new Error('Grep: a call reached its executor with no target path')
   const input = q.input
   const options = optionsOf(input)
-  const regex = regexOf(String(input['pattern'] ?? ''), input['-i'] === true, options.multiline)
+  const pattern = String(input['pattern'] ?? '')
+  const ignoreCase = input['-i'] === true
+  const regex = regexOf(pattern, ignoreCase, options.multiline)
   if ('failure' in regex) return regex.failure
   const filter = fileFilterOf(input)
   if ('failure' in filter) return filter.failure
-  const meter = grepMeter(q.clock, q.signal, regex.value.programSize())
+  const meter = grepMeter(q.clock, q.signal, workFactor(pattern, ignoreCase, regex.value))
   // Only the page is kept; the entries around it are counted, so memory stays bounded by
   // `head_limit` however much the walk finds or one file holds, and the note can still name the
   // total.
@@ -244,6 +248,7 @@ export const grepExecutor: ToolExecutor = async (q) => {
     end: options.headLimit === 0 ? Infinity : options.offset + options.headLimit,
     kept: [],
     total: 0,
+    skipped: [],
   }
   try {
     const stat = await q.fs.stat(q.target)
@@ -261,38 +266,64 @@ export const grepExecutor: ToolExecutor = async (q) => {
       // oxlint-disable-next-line no-await-in-loop -- one file at a time, the page filled in order
       await entriesOf(found, file.path, text, regex.value, options, meter)
     }
-    return succeeded(page(found, options))
+    return succeeded(withSkipped(page(found, options), found))
   } catch (error) {
-    if (error instanceof PastBound) return failed(cutShort(error, found))
+    if (error instanceof TimeUp) return failed(withSkipped(cutShort(error.message, found), found))
     return whenThrown(error, q.target)
   }
 }
 
-/** A call past a bound: its reason, then, past the time budget, the entries it had kept. */
-function cutShort(bound: PastBound, found: GrepPage): string {
-  if (!bound.withFound || found.kept.length === 0) return bound.message
-  return `${bound.message}\n\n${GREP_TEXTS.foundBefore}\n${found.kept.join('\n')}`
+/** A call past its time budget: the reason, then the entries it had kept. */
+function cutShort(reason: string, found: GrepPage): string {
+  if (found.kept.length === 0) return reason
+  return `${reason}\n\n${GREP_TEXTS.foundBefore}\n${found.kept.join('\n')}`
 }
 
-/** Thrown once a call passes a bound (s18-safety-2); the executor answers with its message. */
-class PastBound extends Error {
-  /** Whether the entries found so far go with it: past the time budget, not past a line's bound. */
-  readonly withFound: boolean
+/** A result, then the files skipped for a line too long (`TooLong`), when there are any. */
+function withSkipped(result: string, found: GrepPage): string {
+  if (found.skipped.length === 0) return result
+  return `${result}\n\n${GREP_TEXTS.skipped}\n${found.skipped.join('\n')}`
+}
 
-  constructor(message: string, withFound: boolean) {
+/**
+ * What `GREP_LINE_WORK_MAX` reckons a character of text at: the program's instructions, or one for
+ * a pattern that is one literal and case-sensitive. re2js finds such a pattern with `indexOf`,
+ * whatever its length (its program's prefix is complete): at most about 2.4 ns a character over
+ * ten million, measured at 17 and 2 000 characters. A literal only at the start is not enough: past
+ * it the whole program runs, and a text can hold the literal everywhere.
+ */
+function workFactor(pattern: string, ignoreCase: boolean, regex: RE2JS): number {
+  return !ignoreCase && !/[\\.+*?()|[\]{}^$]/.test(pattern) ? 1 : regex.programSize()
+}
+
+/** Thrown once a call passes its time budget (s18-safety-2); the executor answers with it. */
+class TimeUp extends Error {
+  constructor(message: string) {
     super(message)
-    this.name = 'PastBound'
-    this.withFound = withFound
+    this.name = 'TimeUp'
+  }
+}
+
+/** Thrown at a line, or a multiline file, too long for the pattern; `entriesOf` skips the file. */
+class TooLong extends Error {
+  /** The file and line, or in multiline mode the file, as the note names it. */
+  readonly where: string
+
+  constructor(where: string) {
+    super(where)
+    this.name = 'TooLong'
+    this.where = where
   }
 }
 
 /**
  * What one call spends matching, and where it stops (s18-safety-2). `take` reckons a line, or a file
- * in multiline mode, before it is matched, and stops the call past `GREP_LINE_WORK_MAX`; `spend`
- * reckons a further find in a text as a scan of the rest of it. Every `CLOCK_WORK` of either, and
- * between files at `check`, the clock is read: past `GREP_TIME_BUDGET_MS` the call stops, and once
- * `GREP_SLICE_MS` have passed since the event loop's last turn, each answers true, and the search
- * `pause`s before it goes on: a turn of the event loop, then the stop checked, as between two reads.
+ * in multiline mode, before it is matched, and past `GREP_LINE_WORK_MAX` throws `TooLong`, so the
+ * file is skipped; `spend` reckons a further find in a text as a scan of the rest of it. Every
+ * `CLOCK_WORK` of either, and between files at `check`, the clock is read: past
+ * `GREP_TIME_BUDGET_MS` the call stops, and once `GREP_SLICE_MS` have passed since the event loop's
+ * last turn, each answers true, and the search `pause`s before it goes on: a turn of the event
+ * loop, then the stop checked, as between two reads.
  */
 export interface GrepMeter {
   take(length: number, path: AbsolutePath, line: number | null): boolean
@@ -301,7 +332,7 @@ export interface GrepMeter {
   pause(): Promise<void>
 }
 
-export function grepMeter(clock: HostClock, signal: AbortSignal, program: number): GrepMeter {
+export function grepMeter(clock: HostClock, signal: AbortSignal, factor: number): GrepMeter {
   const started = clock.now()
   let turn = started
   let unread = 0
@@ -309,20 +340,18 @@ export function grepMeter(clock: HostClock, signal: AbortSignal, program: number
     unread = 0
     const now = clock.now()
     if (now - started > GREP_TIME_BUDGET_MS) {
-      const seconds = String(GREP_TIME_BUDGET_MS / 1000)
-      throw new PastBound(fill(GREP_TEXTS.timeUp, { seconds }), true)
+      throw new TimeUp(fill(GREP_TEXTS.timeUp, { seconds: String(GREP_TIME_BUDGET_MS / 1000) }))
     }
     return now - turn >= GREP_SLICE_MS
   }
   const spend = (length: number): boolean => {
-    unread += (length + 1) * program
+    unread += (length + 1) * factor
     return unread >= CLOCK_WORK && check()
   }
   return {
     take: (length, path, line) => {
-      if (length * program > GREP_LINE_WORK_MAX) {
-        const where = line === null ? path : `${path}:${String(line)}`
-        throw new PastBound(fill(GREP_TEXTS.tooLong, { where }), false)
+      if (length * factor > GREP_LINE_WORK_MAX) {
+        throw new TooLong(line === null ? path : `${path}:${String(line)}`)
       }
       return spend(length)
     },
@@ -658,12 +687,14 @@ async function searchable(
  * ones from `offset` up to `end` are built and kept. One file's entries come a line at a time and
  * are built only on the page (s18-safety-3), so past the file's own text a call holds the page and
  * one line, however many lines the file has — `head_limit` 0, no limit, keeps them all (the owner's).
+ * `skipped` names the files passed over for a line too long, in the order searched.
  */
 export interface GrepPage {
   readonly offset: number
   readonly end: number
   readonly kept: string[]
   total: number
+  readonly skipped: string[]
 }
 
 /** Counts one entry, and builds and keeps it only when it lands on the page. */
@@ -674,9 +705,33 @@ function put(found: GrepPage, entry: () => string): void {
 
 /**
  * One file's entries in the chosen mode, onto the page: nothing when it has no match. `meter` reckons
- * the matching and stops or pauses it (`GrepMeter`).
+ * the matching and stops or pauses it (`GrepMeter`). Once the search reaches a line too long for the
+ * pattern, or in multiline mode at once for a file too long, the file is skipped: the entries it had
+ * put are taken back, uncounted, and it goes into `skipped` — in files_with_matches mode only when no
+ * line before that one matched, since the first match ends the file's search.
  */
 export async function entriesOf(
+  found: GrepPage,
+  path: AbsolutePath,
+  content: string,
+  regex: RE2JS,
+  o: GrepOptions,
+  meter: GrepMeter,
+): Promise<void> {
+  const kept = found.kept.length
+  const total = found.total
+  try {
+    await fileEntries(found, path, content, regex, o, meter)
+  } catch (error) {
+    if (!(error instanceof TooLong)) throw error
+    found.kept.length = kept
+    found.total = total
+    found.skipped.push(error.where)
+  }
+}
+
+/** `entriesOf`'s search of one file, which a line too long for the pattern ends with `TooLong`. */
+async function fileEntries(
   found: GrepPage,
   path: AbsolutePath,
   content: string,
@@ -790,7 +845,8 @@ interface Hit {
 /**
  * The hits of a file, one line at a time: its lines as `linesOf` splits them — on `\n`, a final one
  * ending the last line — never all of them at once. A line is a hit when the pattern matches in it,
- * even empty, as ripgrep has it. Each line is reckoned before it is matched (`GrepMeter.take`).
+ * even empty, as ripgrep has it. Each line is reckoned before it is matched (`GrepMeter.take`), and
+ * one too long for the pattern ends the file's search unmatched.
  */
 function* lineHits(
   content: string,
@@ -909,8 +965,8 @@ function isLowSurrogate(code: number): boolean {
 
 /**
  * The hits of a multiline pattern, one match at a time; an empty match is none. The whole file is
- * reckoned first (`GrepMeter.take`). A file the pattern cannot match anywhere is passed over by
- * re2js's DFA before any match is looked for.
+ * reckoned first (`GrepMeter.take`), and one too long for the pattern is not matched. A file the
+ * pattern cannot match anywhere is passed over by re2js's DFA before any match is looked for.
  */
 function* multilineHits(
   content: string,

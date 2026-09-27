@@ -27,9 +27,9 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   2: '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc',
   // Write, Edit and Bash's result templates and errors joined the layer, and Grep names look-around
   // and backreferences as ripgrep does now that re2js turns them down, turns down what re2js would
-  // misread and too large a pattern, says \b and \B are ASCII, and names a line too long for the
-  // pattern and a search past its time budget (plan step 22).
-  3: '21e3ec1ed486e1a68c260ce4801898c5f585dc4d7245780a7b917e83aabfc0f0',
+  // misread and too large a pattern, says \b and \B are ASCII, names the files skipped for a line
+  // too long for the pattern, and a search past its time budget (plan step 22).
+  3: 'b5220fb8d36c7e10bf57032423a0520511bb9655085afa9c23278cfe08e690b9',
 }
 
 describe('the version gate', () => {
