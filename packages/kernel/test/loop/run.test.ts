@@ -9,9 +9,15 @@
  * compaction retry of an overflow is step 30's.
  */
 import { describe, expect, it } from 'vitest'
-import { ZHIPU_DEFAULT_BASE_URL, createMemoryTapeStore, zhipuDefinition } from '../../src/index.js'
+import {
+  ZHIPU_DEFAULT_BASE_URL,
+  createMemoryHost,
+  createMemoryTapeStore,
+  zhipuDefinition,
+} from '../../src/index.js'
 import type {
   ContentBlock,
+  HostAdapter,
   InspectorRegistration,
   LoopPorts,
   ModelInfo,
@@ -91,12 +97,23 @@ interface HarnessOptions {
   readonly onEvent?: (event: SessionEvent) => void
   /** The ports the service is bound to, when a case needs to hold one of them. */
   readonly ports?: (loop: TestLoopPorts) => LoopPorts
+  /** Default: a host whose timers fire at once. */
+  readonly host?: HostAdapter
+  /** A provider's retry advice other than the scripted one's. */
+  readonly retryAdvice?: { maxAttempts: number; baseDelayMs: number }
+  /** The first id handed out: a restarted app's ids never repeat the ones before. */
+  readonly idsFrom?: number
 }
 
 /** The scripted provider, with each `stream()` call's context recorded. */
-function recording(provider: ScriptedProvider, sends: SendContext[]): Provider {
+function recording(
+  provider: ScriptedProvider,
+  sends: SendContext[],
+  advice?: { maxAttempts: number; baseDelayMs: number },
+): Provider {
   return new Proxy(provider, {
     get(target, key): unknown {
+      if (key === 'retryAdvice' && advice !== undefined) return () => advice
       if (key === 'stream') {
         return (encoded: Parameters<Provider['stream']>[0], ctx: SendContext) => {
           sends.push(ctx)
@@ -119,7 +136,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const executed: Record<string, unknown>[] = []
   const loop = createTestLoopPorts({
     connector: {
-      provider: recording(provider, sends),
+      provider: recording(provider, sends, options.retryAdvice),
       model: MODEL,
       mcpSources: [lookSource(executed)],
     },
@@ -128,9 +145,9 @@ function harness(options: HarnessOptions = {}): Harness {
   const logs: string[] = []
   const service = createTestSessionService(
     {
-      host: instantHost(delays),
+      host: options.host ?? instantHost(delays),
       tape: store,
-      ids: createCounterIds(),
+      ids: createCounterIds({ start: options.idsFrom ?? 1 }),
       inspectors: [...(options.inspectors ?? [])],
       connector: loop.connector,
       protectedFiles: [],
@@ -692,6 +709,105 @@ describe('resends (旧 29, 旧 130)', () => {
       .map((event) => (event.type === 'text-delta' ? event.delta : event.type))
     expect(events).toEqual(['half', 'attempt-discarded', 'whole'])
   })
+
+  it('resends no more than maxAttempts − 1 when that is under RETRY_CAP (验收 16, 旧 29)', async () => {
+    // min(maxAttempts − 1, RETRY_CAP) with the two apart: a provider that allows 2 attempts.
+    const h = harness({ retryAdvice: { maxAttempts: 2, baseDelayMs: 500 } })
+    for (let i = 0; i < 3; i += 1) h.provider.script(errorTurn('overloaded'))
+    expect((await send(h)).reason).toMatchObject({
+      code: 'provider-error',
+      errorCode: 'overloaded',
+      attempts: 2,
+    })
+    expect(h.provider.starts).toBe(2)
+    expect(h.delays).toEqual([500])
+  })
+
+  it('shares one budget between timeouts and network_error, and ends once it is spent (验收 16)', async () => {
+    // 「超时和 network_error 共用这个计数，用尽后以 provider-error 结束」: a first-byte timeout, a
+    // network_error stop and an idle timeout are three attempts of one budget, not one each.
+    const h = harness()
+    h.provider.script(errorTurn('network', { timeout: 'first-byte' }))
+    h.provider.script(
+      callTurn([], { text: 'half', stop: 'unknown', providerReason: 'network_error' }),
+    )
+    h.provider.script(errorTurn('network', { timeout: 'idle' }))
+    h.provider.script(done())
+    expect((await send(h)).reason).toMatchObject({
+      code: 'provider-error',
+      errorCode: 'network',
+      attempts: 3,
+    })
+    expect(h.provider.starts).toBe(3)
+  })
+
+  it('ends a Run stopped during the backoff as user-stopped, with no error code', async () => {
+    // §重试与「继续」: 等待中点停止，Run 以 user-stopped 结束; run-ended's errorCode is that of the error
+    // that ended the Run, and a stop ended this one (null) — so the interface shows done{aborted}.
+    let service: SessionService | undefined
+    const memory = createMemoryHost()
+    const host: HostAdapter = {
+      ...memory,
+      clock: {
+        now: () => 0,
+        setTimeout: () => {
+          // The wait never ends by itself: the stop lands inside it, once it is waiting.
+          queueMicrotask(() => void service?.stop({ rootSessionId: SESSION }))
+          return () => undefined
+        },
+      },
+    }
+    const h = harness({ host })
+    service = h.service
+    h.provider.script(errorTurn('overloaded', { deltas: ['half'] }))
+    const ended = await send(h)
+    expect(ended).toMatchObject({
+      reason: { code: 'user-stopped' },
+      recorded: true,
+      errorCode: null,
+      lastStop: null,
+    })
+    expect(h.provider.starts).toBe(1)
+    const tail = h.loop.recorded.map((event) => event.type).slice(-2)
+    expect(tail).toEqual(['attempt-discarded', 'run-ended'])
+  })
+
+  it('ends a failed Run whose terminal a stop beat as user-stopped, with no error code', async () => {
+    // 「mailbox」: the failure is not written once the lease is aborted — the Run ends by the stop,
+    // and no error event ended it.
+    const gate = Promise.withResolvers<void>()
+    let queued: Promise<unknown> | undefined
+    let h: Harness | undefined
+    h = harness({
+      // A message sent while the reply streams holds the mailbox until the case lets it go.
+      ports: (loop) => ({
+        ...loop,
+        queue: {
+          ...loop.queue,
+          enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
+            await gate.promise
+            return loop.queue.enqueue(...args)
+          },
+        },
+      }),
+      onEvent: (event) => {
+        if (event.type === 'text-delta') {
+          queued ??= h?.service.send({ sessionId: SESSION, origin: null, text: 'meanwhile' })
+        }
+      },
+    })
+    h.provider.script(errorTurn('auth', { retryable: false, deltas: ['half'] }))
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    await expect.poll(() => queued !== undefined).toBe(true)
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    gate.resolve()
+    const ended = await h.loop.runEnded({ runId: sent.runId })
+    expect(ended).toMatchObject({ reason: { code: 'user-stopped' }, errorCode: null })
+    expect(named(await all(h), 'execution/run_terminal')[0]?.payload['reason']).toEqual({
+      code: 'user-stopped',
+    })
+  })
 })
 
 describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
@@ -772,6 +888,55 @@ describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
     expect(outcomes(await all(h))).toEqual(['completed/null', 'not-run/usage-limit'])
     expect(h.provider.starts).toBe(2)
   })
+
+  it('sends no resend once a discarded attempt went over the token limit (旧 28)', async () => {
+    // 「每次 attempt 结束后检查，越限就不再发请求」: 13 tokens an attempt, the second goes over 20.
+    const h = harness({ tokenLimit: 20 })
+    for (let i = 0; i < 3; i += 1) {
+      h.provider.script(
+        callTurn([], { text: 'half', stop: 'unknown', providerReason: 'network_error' }),
+      )
+    }
+    const ended = await send(h)
+    expect(ended).toMatchObject({
+      reason: { code: 'usage-limit', tokenLimit: 20 },
+      errorCode: null,
+    })
+    expect(h.provider.starts).toBe(2)
+  })
+
+  it('counts only the uncached input on the openai-chat wire (旧 28, 暂定: 未命中缓存的输入加输出)', async () => {
+    // The fixture's usage: prompt 31 with 12 cached and 5 written to the cache, completion 57 —
+    // 71 toward the limit, not the 88 openai-chat reports as input plus output (spec §评测运行器
+    // 「费用与用量」: that wire's input includes the cache).
+    const net = fakeNetwork(
+      [
+        {
+          kind: 'sse',
+          frames: openAIFixture.turnFrames(
+            [],
+            [{ id: 'call_1', name: LOOK, args: JSON.stringify({ at: 'a' }) }],
+            'tool_calls',
+          ),
+        },
+        { kind: 'sse', frames: openAIFixture.turnFrames(['Done.'], [], 'stop') },
+      ],
+      { checkRequest: assertToolPairing },
+    )
+    const provider = zhipuDefinition.create({
+      network: net,
+      clock: { now: () => 0, setTimeout: () => () => undefined },
+      config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
+      secrets: { apiKey: 'test-key-not-a-real-credential' },
+    })
+    const model = zhipuDefinition.builtinModels[0]
+    if (model === undefined) throw new Error('the zhipu definition has no builtin model')
+    const h = harness({ tokenLimit: 80 })
+    h.loop.connector.use({ provider, model, mcpSources: [lookSource(h.executed)] })
+    expect((await send(h)).reason).toEqual({ code: 'completed' })
+    expect(h.executed).toEqual([{ at: 'a' }])
+    expect(net.callCount).toBe(2)
+  })
 })
 
 /** An inspector that asks about every call: the card that pauses a Run. */
@@ -781,6 +946,187 @@ const ask = (): ReturnType<typeof createFakeInspector> =>
     ceiling: 'ask',
     answer: { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] },
   })
+
+/** Asks about the call on `at`, and about nothing else: the card that pauses a Run there. */
+const askAt = (at: string): ReturnType<typeof createFakeInspector> =>
+  createFakeInspector({
+    id: 'asker',
+    ceiling: 'ask',
+    answer: (input) =>
+      input.call.args['at'] === at
+        ? { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
+        : { kind: 'none' },
+  })
+
+/** Answers the root's one card. */
+async function allow(h: Harness): Promise<void> {
+  const card = await h.service.currentPending({ sessionId: SESSION })
+  if (card === null) throw new Error('no card')
+  const answered = await h.service.answer({
+    kind: 'approval',
+    sessionId: SESSION,
+    requestId: card.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  expect(answered).toEqual({ status: 'applied' })
+}
+
+describe('the step count across a pause and a restart (验收 17, 旧 27, 旧 127)', () => {
+  // 「步数跨重启延续：第 60 批时暂停、重启、批准后，新 Run 最多再跑 40 批就以 step-limit 结束」. The host's
+  // timers never fire, so the inspector answers rather than timing out.
+  const script = (h: Harness, from: number, to: number): void => {
+    for (let i = from; i <= to; i += 1)
+      h.provider.script(callTurn([{ id: `toolu_${String(i)}`, input: { at: String(i) } }]))
+  }
+  const terminals = async (h: Harness): Promise<unknown[]> =>
+    named(await all(h), 'execution/run_terminal').map((entry) => [
+      entry.payload['steps'],
+      (entry.payload['reason'] as { code: string }).code,
+    ])
+
+  it(
+    'pauses at the 60th batch, and the resumed Run stops after 40 more',
+    { timeout: 30_000 },
+    async () => {
+      const h = harness({ inspectors: [askAt('59').registration], host: createMemoryHost() })
+      script(h, 0, 59)
+      expect((await send(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+      script(h, 60, 100)
+      await allow(h)
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'step-limit', limit: 100 })
+      expect(await terminals(h)).toEqual([
+        [60, 'paused'],
+        [40, 'step-limit'],
+      ])
+      expect(h.executed).toHaveLength(100)
+      expect(outcomes(await all(h)).at(-1)).toBe('not-run/step-limit')
+    },
+  )
+
+  it('carries the count through a restart before the answer', { timeout: 30_000 }, async () => {
+    const before = harness({ inspectors: [askAt('59').registration], host: createMemoryHost() })
+    script(before, 0, 59)
+    expect((await send(before)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    // The app restarts: a new service on the same store, recovery, then the answer.
+    const h = harness({
+      inspectors: [askAt('59').registration],
+      host: createMemoryHost(),
+      store: before.store,
+      idsFrom: 100_000,
+    })
+    expect(await h.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(await h.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+      status: 'none',
+    })
+    script(h, 60, 100)
+    await allow(h)
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'step-limit', limit: 100 })
+    expect(await terminals(h)).toEqual([
+      [60, 'paused'],
+      [40, 'step-limit'],
+    ])
+    expect(before.executed.length + h.executed.length).toBe(100)
+  })
+})
+
+describe('a stop that beats a limit’s or a truncation’s end (「mailbox」)', () => {
+  // 「已中止的…各种上限与截断）连同它们的同批收口都不写…收口照「生成中」一行」: the end's closures go with
+  // its terminal, so a stop that lands before the terminal task writes neither.
+  it('closes a truncated reply’s calls as stopped when the stop lands after the reply committed', async () => {
+    let h: Harness | undefined
+    h = harness({
+      onEvent: (event) => {
+        if (event.type === 'tool-call') void h?.service.stop({ rootSessionId: SESSION })
+      },
+    })
+    h.provider.script(
+      callTurn(
+        [
+          { id: 'toolu_1', input: { at: 'a' } },
+          { id: 'toolu_2', input: { at: 'b' } },
+        ],
+        { stop: 'max-tokens', providerReason: 'max_tokens' },
+      ),
+    )
+    const ended = await send(h)
+    expect(ended).toMatchObject({ reason: { code: 'user-stopped' }, errorCode: null })
+    const entries = await all(h)
+    expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
+    expect(named(entries, 'execution/run_terminal')[0]?.payload['reason']).toEqual({
+      code: 'user-stopped',
+    })
+    const views = h.loop.recorded.flatMap((event) =>
+      event.type === 'tool-outcome' ? [event.outcome.source] : [],
+    )
+    expect(views).toEqual(['stopped', 'stopped'])
+  })
+
+  it('closes a call found unusable as stopped when the stop beats its closure', async () => {
+    // §点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped — also one the batch had
+    // already found unusable, whose closure's write the stop reached first.
+    const gate = Promise.withResolvers<void>()
+    let queued: Promise<unknown> | undefined
+    let h: Harness | undefined
+    h = harness({
+      // A message sent at the first call's outcome holds the mailbox, so the next write waits.
+      ports: (loop) => ({
+        ...loop,
+        queue: {
+          ...loop.queue,
+          enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
+            await gate.promise
+            return loop.queue.enqueue(...args)
+          },
+        },
+      }),
+      onEvent: (event) => {
+        if (event.type !== 'tool-outcome' || queued !== undefined) return
+        queued = h?.service.send({ sessionId: SESSION, origin: null, text: 'meanwhile' })
+        setTimeout(() => {
+          void h?.service.stop({ rootSessionId: SESSION })
+          gate.resolve()
+        }, 0)
+      },
+    })
+    h.provider.script(
+      callTurn([
+        { id: 'toolu_1', input: { at: 'a' } },
+        { id: 'toolu_2', input: { at: 'b' }, name: 'fs__nope' },
+      ]),
+    )
+    expect((await send(h)).reason).toEqual({ code: 'user-stopped' })
+    expect(outcomes(await all(h))).toEqual(['completed/null', 'not-run/stopped'])
+  })
+
+  it('closes the rest of a batch as stopped when the stop lands at the third machine denial', async () => {
+    const deny = createFakeInspector({
+      id: 'deny-all',
+      ceiling: 'deny',
+      answer: { kind: 'deny', category: 'exfiltration', findings: [{ code: 'test' }] },
+    })
+    let seen = 0
+    let h: Harness | undefined
+    h = harness({
+      inspectors: [deny.registration],
+      onEvent: (event) => {
+        if (event.type === 'tool-outcome' && (seen += 1) === 3) {
+          void h?.service.stop({ rootSessionId: SESSION })
+        }
+      },
+    })
+    h.provider.script(
+      callTurn(['a', 'b', 'c', 'd'].map((at, i) => ({ id: `toolu_${String(i)}`, input: { at } }))),
+    )
+    expect((await send(h)).reason).toEqual({ code: 'user-stopped' })
+    expect(outcomes(await all(h))).toEqual([
+      'not-run/inspector',
+      'not-run/inspector',
+      'not-run/inspector',
+      'not-run/stopped',
+    ])
+  })
+})
 
 describe('a pause, and a stop that beats it', () => {
   it('writes the asking decision with the paused terminal, in one batch', async () => {
@@ -815,54 +1161,60 @@ describe('a pause, and a stop that beats it', () => {
     expect(outcomes(await all(h))).toEqual([])
   })
 
-  it('ends as stopped when the stop lands after the Run decided to pause, and writes no decision', async () => {
-    const gate = Promise.withResolvers<void>()
-    const inspector = ask()
-    const h = harness({
-      inspectors: [inspector.registration],
-      // A message sent while the Run judges holds the mailbox until the case lets it go, so the
-      // Run's terminal task waits behind it.
-      ports: (loop) => ({
-        ...loop,
-        queue: {
-          ...loop.queue,
-          enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
-            await gate.promise
-            return loop.queue.enqueue(...args)
+  // 答复已登记、还没 append 时先以 close-window 中止、再 chat.stop（上一条两个时点同样再各跑一次）: the
+  // stop that follows a closed window is read as the stop (lease.stopRequested), here before the
+  // commit; answer.test.ts has the other time point, mid-commit.
+  for (const cause of ['user-stop', 'close-window-then-stop'] as const) {
+    it(`ends as stopped when the stop lands after the Run decided to pause, and writes no decision (${cause})`, async () => {
+      const gate = Promise.withResolvers<void>()
+      const inspector = ask()
+      const h = harness({
+        inspectors: [inspector.registration],
+        // A message sent while the Run judges holds the mailbox until the case lets it go, so the
+        // Run's terminal task waits behind it.
+        ports: (loop) => ({
+          ...loop,
+          queue: {
+            ...loop.queue,
+            enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
+              await gate.promise
+              return loop.queue.enqueue(...args)
+            },
           },
-        },
-      }),
+        }),
+      })
+      let queued: Promise<unknown> | undefined
+      inspector.answer(() => {
+        queued ??= h.service.send({ sessionId: SESSION, origin: null, text: 'one more thing' })
+        return { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
+      })
+      h.provider.script(
+        callTurn([
+          { id: 'toolu_1', input: { at: 'a' } },
+          { id: 'toolu_2', input: { at: 'b' } },
+        ]),
+      )
+      const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'look at both' })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      // Past the decision: the Run has returned its pause and its terminal task is queued.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20)
+      })
+      if (cause === 'close-window-then-stop') h.loop.abort(SESSION, 'close-window')
+      expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+      gate.resolve()
+      expect(await queued).toMatchObject({ status: 'queued' })
+      const ended = await h.loop.runEnded({ runId: sent.runId })
+      expect(ended.reason).toEqual({ code: 'user-stopped' })
+      const entries = await all(h)
+      expect(named(entries, 'tool/permission_decided')).toEqual([])
+      expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
+      expect(named(entries, 'execution/run_terminal')[0]?.payload['reason']).toEqual({
+        code: 'user-stopped',
+      })
+      expect(h.loop.recorded.filter((event) => event.type === 'tool-outcome')).toHaveLength(2)
     })
-    let queued: Promise<unknown> | undefined
-    inspector.answer(() => {
-      queued ??= h.service.send({ sessionId: SESSION, origin: null, text: 'one more thing' })
-      return { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
-    })
-    h.provider.script(
-      callTurn([
-        { id: 'toolu_1', input: { at: 'a' } },
-        { id: 'toolu_2', input: { at: 'b' } },
-      ]),
-    )
-    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'look at both' })
-    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
-    // Past the decision: the Run has returned its pause and its terminal task is queued.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20)
-    })
-    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
-    gate.resolve()
-    expect(await queued).toMatchObject({ status: 'queued' })
-    const ended = await h.loop.runEnded({ runId: sent.runId })
-    expect(ended.reason).toEqual({ code: 'user-stopped' })
-    const entries = await all(h)
-    expect(named(entries, 'tool/permission_decided')).toEqual([])
-    expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
-    expect(named(entries, 'execution/run_terminal')[0]?.payload['reason']).toEqual({
-      code: 'user-stopped',
-    })
-    expect(h.loop.recorded.filter((event) => event.type === 'tool-outcome')).toHaveLength(2)
-  })
+  }
 })
 
 describe('tool-outcome and its facts', () => {

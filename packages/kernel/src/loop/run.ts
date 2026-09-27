@@ -25,7 +25,7 @@ import type { IdSource } from '../ids.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { createBlockAccumulator } from '../provider/base.js'
-import { ProviderConfigMissingError } from '../provider/errors.js'
+import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
 import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
@@ -85,7 +85,7 @@ import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
 import type { ApprovedCall, BatchResult, CompleteCall, Written } from './batch.js'
-import { effectOf, readSessionEntries, runBatch } from './batch.js'
+import { closedView, effectOf, readSessionEntries, runBatch } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
@@ -180,9 +180,16 @@ export interface RunFinish {
   readonly usage: readonly RunUsageLine[]
   readonly lastStop: StopReason | null
   readonly errorCode: ProviderErrorCode | null
-  /** Facts that go in the terminal's batch: a paused decision (同批规则 1). */
+  /**
+   * Facts that go in the terminal's batch: a paused decision (同批规则 1), or the not-run closures
+   * of a Run that ends on a limit, a truncation, a filter or an error (「mailbox」: those closures go
+   * with their terminal, so a stop that beats the terminal task writes neither).
+   */
   readonly withTerminal: readonly NewEntry[]
-  /** The calls a paused decision left waiting: closed not-run / stopped if a stop beats the pause. */
+  /**
+   * The calls `withTerminal` closes or leaves waiting: closed not-run / stopped instead if a stop
+   * beats the terminal task (§点停止时各状态怎么收「生成中」).
+   */
   readonly waiting: readonly CallRef[]
 }
 
@@ -201,6 +208,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const batches = [...chain.batches]
   let lastStop: StopReason | null = null
   let errorCode: ProviderErrorCode | null = null
+  /** What the token limit counts so far: every attempt's uncached input plus output (H11). */
+  let counted = 0
   const finish = (
     reason: RunEndReason,
     extra: Partial<Pick<RunFinish, 'withTerminal' | 'waiting'>> = {},
@@ -213,6 +222,34 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     withTerminal: extra.withTerminal ?? [],
     waiting: extra.waiting ?? [],
   })
+  /**
+   * Ended by the abort (§重试与「继续」: a stop during the wait included). The terminal task reads the
+   * lease again, and its `run-ended` carries no error code then: no error event ended this Run.
+   */
+  const aborted = (): RunFinish => finish(abortedEndReason(abortCauseOf(ctx.lease)))
+  /**
+   * A Run that ends on a limit, a truncation, a filter or an error with calls it will not run: their
+   * not-run closures go in the terminal's batch (see `RunFinish.withTerminal`).
+   */
+  const endClosing = (
+    reason: RunEndReason,
+    refs: readonly CallRef[],
+    source:
+      | 'stopped'
+      | 'output-truncated'
+      | 'content-filter'
+      | 'provider-error'
+      | 'step-limit'
+      | 'no-progress'
+      | 'usage-limit'
+      | 'blocked-repeatedly',
+  ): RunFinish =>
+    finish(reason, {
+      withTerminal: refs.flatMap((ref) =>
+        notRunFacts({ tape, now: ctx.now, call: ref, source, writer: { by: 'run', runId } }),
+      ),
+      waiting: refs,
+    })
   const write = async (entries: readonly NewEntry[]): Promise<Written> => {
     if (entries.length === 0) return { entries: [], receipts: [] }
     const written = await ctx.write(entries)
@@ -285,9 +322,13 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       )
     }
     if (result.kind === 'blocked-repeatedly') {
-      return finish({ code: 'blocked-repeatedly', count: result.count })
+      return endClosing(
+        { code: 'blocked-repeatedly', count: result.count },
+        result.rest,
+        'blocked-repeatedly',
+      )
     }
-    if (result.kind === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+    if (result.kind === 'stopped') return aborted()
     return null
   }
 
@@ -319,13 +360,23 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       provider = ctx.provider()
     } catch (error) {
       // A resumed Run stopped before it was assembled has no provider to ask (§续跑).
-      if (signal.aborted) return finish(abortedEndReason(abortCauseOf(ctx.lease)))
-      if (!(error instanceof ProviderConfigMissingError)) throw error
-      errorCode = 'auth'
+      if (signal.aborted) return aborted()
+      // A configuration problem ends the Run as the failure card names it, with what already ran
+      // kept (§续跑「构造失败也不能丢已执行调用的结果」): a missing key is `auth`; a value present but
+      // unusable (a base URL with a query string) is `invalid-request`, as a new round's prebuild
+      // reads it (mailbox.ts `configProblem`).
+      const code =
+        error instanceof ProviderConfigMissingError
+          ? 'auth'
+          : error instanceof ProviderInvalidArgumentError
+            ? 'invalid-request'
+            : null
+      if (code === null) throw error
+      errorCode = code
       return finish({
         code: 'provider-error',
         providerId: ctx.model.providerId,
-        errorCode: 'auth',
+        errorCode: code,
         providerReason: null,
         attempts: 0,
       })
@@ -393,6 +444,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         firstByteTimeout,
       })
       addUsage(usage, attempt)
+      counted += limitTokensOf(attempt.usage, encoderOf(encoded)?.wire ?? null)
       lastStop = attempt.stop?.reason ?? null
       errorCode = attempt.error?.code ?? null
       const route = routeOf(attempt, ctx.maxTokens)
@@ -411,12 +463,17 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         await write([attemptEntry])
         ctx.emit.discarded(runId)
         if (route.transient && physicalAttempt <= resends) {
+          // §上限「token 上限」: checked after every attempt — over the limit, no resend goes out.
+          if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+            errorCode = null
+            return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+          }
           // Only the resend right after a first-byte timeout goes without that limit (A5).
           firstByteTimeout = attempt.timeout === 'first-byte' ? false : undefined
           // oxlint-disable-next-line no-await-in-loop -- a resend waits its backoff
           const waited = await wait(ctx.host, attempt.error?.retryAfterMs ?? delay, signal)
           delay *= 2
-          if (!waited) return finish(abortedEndReason(abortCauseOf(ctx.lease)))
+          if (!waited) return aborted()
           continue
         }
         return finish(
@@ -443,12 +500,14 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
           `[loop] run ${runId}: the reply holds a call the vendor ran itself; not dispatched, not sent back`,
         )
       }
+      const refs = calls.map((call) => refOf(runId, requestSeq, call))
       if (route.kind === 'close') {
-        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
-        await closeAll(ctx, calls, requestSeq, route.source, write)
-        // A stream the stop cut short ends by the stop's cause, read now: a user-stop wins (B4).
-        if (route.source === 'stopped') return finish(abortedEndReason(abortCauseOf(ctx.lease)))
-        return finish(route.end(attempt, physicalAttempt))
+        // A stream the stop cut short ends by the stop's cause, read at the terminal task: a
+        // user-stop wins (B4).
+        if (route.source === 'stopped') {
+          return endClosing(abortedEndReason(abortCauseOf(ctx.lease)), refs, 'stopped')
+        }
+        return endClosing(route.end(attempt, physicalAttempt), refs, route.source)
       }
       if (calls.length === 0) {
         // A tool-use turn with nothing to execute (only server-side blocks, or a call the decoder
@@ -461,23 +520,21 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       // ----- step 3: the three guards, before any decision -------------------------------------
       const signature = JSON.stringify(calls.map((call) => [call.name, call.argsHash]))
       if (chain.steps + steps >= STEP_LIMIT) {
-        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
-        await closeAll(ctx, calls, requestSeq, 'step-limit', write)
-        return finish({ code: 'step-limit', limit: STEP_LIMIT })
+        return endClosing({ code: 'step-limit', limit: STEP_LIMIT }, refs, 'step-limit')
       }
       const previous = batches.slice(-(NO_PROGRESS_REPEATS - 1))
       if (
         previous.length === NO_PROGRESS_REPEATS - 1 &&
         previous.every((earlier) => earlier === signature)
       ) {
-        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
-        await closeAll(ctx, calls, requestSeq, 'no-progress', write)
-        return finish({ code: 'no-progress', repeats: NO_PROGRESS_REPEATS })
+        return endClosing(
+          { code: 'no-progress', repeats: NO_PROGRESS_REPEATS },
+          refs,
+          'no-progress',
+        )
       }
-      if (ctx.tokenLimit !== null && tokensOf(usage) > ctx.tokenLimit) {
-        // oxlint-disable-next-line no-await-in-loop -- the closures are on the Tape before the Run ends
-        await closeAll(ctx, calls, requestSeq, 'usage-limit', write)
-        return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+      if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+        return endClosing({ code: 'usage-limit', tokenLimit: ctx.tokenLimit }, refs, 'usage-limit')
       }
 
       // ----- step 4: the batch -----------------------------------------------------------------
@@ -804,9 +861,11 @@ function attemptFact(
 
 /**
  * The context at `pin`, with every call paired (§崩溃、服务端调用块与兜底「兜底」): checked once more
- * after the assembly, before `encode()`. A call without its result throws — the bug is not covered
- * over — unless the host asked for repair: then each gets a `repair` closure, the log hears of it
- * once, and the context is read again at the new pin.
+ * after the assembly, before `encode()`. A call without its result, or a turn whose blocks and calls
+ * disagree (§重放怎么排 1), throws — the bug is not covered over — unless the host asked for repair:
+ * then each unanswered call gets a `repair` closure (only the result, when its outcome is already on
+ * the Tape: 补写缺的那一条), announced like any closure; a disagreeing turn is sent as its facts place
+ * it; the log hears of it once, and the context is read again at the new pin.
  */
 async function pairedContext(
   ctx: RunDriverContext,
@@ -816,59 +875,52 @@ async function pairedContext(
   pinAfter: () => number,
 ): Promise<InternalMessage[]> {
   const query = { sessionId: ctx.sessionId, atEntryId: pin, target: ctx.model }
-  const { messages, unanswered } = await replayContext(ctx.tape, query)
-  if (unanswered.length === 0) return messages
+  const { messages, unanswered, mismatched } = await replayContext(ctx.tape, query)
+  if (unanswered.length === 0 && mismatched.length === 0) return messages
   const keys = unanswered.map((call) => callKeyOf(call.runId, call.requestSeq, call.ordinal))
-  const line = `run ${ctx.runId}: ${String(unanswered.length)} call(s) reached a request with no result: ${keys.join(', ')}`
+  const problems = [
+    ...(unanswered.length === 0
+      ? []
+      : [
+          `${String(unanswered.length)} call(s) reached a request with no result: ${keys.join(', ')}`,
+        ]),
+    ...mismatched.map(
+      (turn) =>
+        `assistant ${turn.messageId} holds ${String(turn.blocks)} tool-request block(s) for ${String(turn.calls)} call(s)`,
+    ),
+  ]
+  const line = `run ${ctx.runId}: ${problems.join('; ')}`
   if (ctx.onUnansweredCall === 'throw') throw new Error(`[loop] ${line}`)
   ctx.log(`[loop] ${line}; repaired`)
+  if (unanswered.length === 0) return messages
   for (const call of unanswered) {
     const item = table.items.find((candidate) => candidate.name === call.name)
-    // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
-    await write(
-      repairFacts({
-        tape: ctx.tape,
-        now: ctx.now,
-        call,
-        dispatched: call.dispatched,
-        effect: item === undefined ? 'external' : effectOf(item),
-        writer: { by: 'run', runId: ctx.runId },
-      }),
-    )
-  }
-  return (await replayContext(ctx.tape, { ...query, atEntryId: pinAfter() })).messages
-}
-
-/** Closes every call of a batch that will not run, in `<i>` order, with one source. */
-async function closeAll(
-  ctx: RunDriverContext,
-  calls: ReadonlyArray<CompleteCall & { callKey: string }>,
-  requestSeq: number,
-  source:
-    | 'output-truncated'
-    | 'content-filter'
-    | 'provider-error'
-    | 'stopped'
-    | 'step-limit'
-    | 'no-progress'
-    | 'usage-limit',
-  write: (entries: readonly NewEntry[]) => Promise<Written>,
-): Promise<void> {
-  for (const call of calls) {
-    const entries = notRunFacts({
+    const facts = repairFacts({
       tape: ctx.tape,
       now: ctx.now,
-      call: refOf(ctx.runId, requestSeq, call),
-      source,
+      call,
+      dispatched: call.dispatched,
+      effect: item === undefined ? 'external' : effectOf(item),
       writer: { by: 'run', runId: ctx.runId },
     })
     // oxlint-disable-next-line no-await-in-loop -- closures are written in <i> order
-    const written = await write(entries)
-    // A closure another writer beat is not this one's to announce.
-    if (written.entries.some((entry) => entry.name === 'tool/result')) {
-      ctx.emit.outcome(call, notRunView(source, entries))
+    const written = await write(
+      call.closed ? facts.filter((entry) => entry.name !== 'execution/tool_outcome') : facts,
+    )
+    // After the commit, as every closure is (SessionEvent `tool-outcome`): the live row reads an
+    // internal error (§原因码表 repair). A call whose outcome was already there was announced then.
+    const view = closedView(written.entries)
+    if (view !== null) {
+      ctx.emit.outcome(
+        {
+          callKey: callKeyOf(call.runId, call.requestSeq, call.ordinal),
+          providerToolCallId: call.providerToolCallId,
+        },
+        view,
+      )
     }
   }
+  return (await replayContext(ctx.tape, { ...query, atEntryId: pinAfter() })).messages
 }
 
 /** The interface's view of a call closed not-run by the kernel: its closure's text is the output. */
@@ -910,11 +962,18 @@ function addUsage(lines: Map<string, RunUsageLine>, attempt: AttemptOutcome): vo
   })
 }
 
-/** Uncached input plus output (暂定, H11). */
-function tokensOf(lines: ReadonlyMap<string, RunUsageLine>): number {
-  let total = 0
-  for (const line of lines.values()) total += line.inputTokens + line.outputTokens
-  return total
+/**
+ * What one attempt counts toward the token limit: uncached input plus output (暂定, H11), by wire as
+ * §评测运行器「费用与用量」 counts `usage.input` — anthropic-messages' `inputTokens` leave the cache
+ * out already; openai-chat's include it, so the cache reads and writes come off first.
+ */
+function limitTokensOf(u: Usage | null, wire: 'anthropic-messages' | 'openai-chat' | null): number {
+  if (u === null) return 0
+  const input =
+    wire === 'openai-chat'
+      ? Math.max(0, u.inputTokens - u.cacheReadTokens - u.cacheWriteTokens)
+      : u.inputTokens
+  return input + u.outputTokens
 }
 
 /** Waits `ms` on the host clock; false when the Run was stopped meanwhile (then it ends as stopped). */

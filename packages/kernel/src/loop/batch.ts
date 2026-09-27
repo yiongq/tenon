@@ -133,7 +133,8 @@ export interface Written {
 
 /**
  * A Run's write the mailbox refused (§主进程与 kernel 的循环接口「mailbox」): its lease was aborted
- * before the task's turn, and a decision or a dispatch is not written after a stop.
+ * before the task's turn, and a decision, a dispatch or the closure of a call found unusable is not
+ * written after a stop — the call closes as stopped instead.
  */
 export class RunWriteRefusedError extends Error {
   constructor() {
@@ -151,7 +152,15 @@ export type BatchResult =
       /** The asked call and the rest of the batch after it, which wait with it (§等待模型). */
       readonly waiting: readonly CallRef[]
     }
-  | { readonly kind: 'blocked-repeatedly'; readonly count: number }
+  /**
+   * The third machine denial in a row: the calls after it are the Run's to close, in its terminal's
+   * batch (「mailbox」: a stop that beats the terminal task writes neither).
+   */
+  | {
+      readonly kind: 'blocked-repeatedly'
+      readonly count: number
+      readonly rest: readonly CallRef[]
+    }
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
@@ -174,19 +183,28 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
     if (item === undefined || verdict === null || !verdict.ok || executor === null) {
       const invalid = verdict !== null && !verdict.ok ? verdict : null
-      // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await close(
-        ctx,
-        call,
-        notRunFacts({
-          tape: ctx.tape,
-          now: ctx.now,
-          call: ref,
-          source: invalid?.source ?? 'tool-unavailable',
-          ...(invalid === null ? {} : { detail: invalid.reason }),
-          writer,
-        }),
-      )
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        await close(
+          ctx,
+          call,
+          notRunFacts({
+            tape: ctx.tape,
+            now: ctx.now,
+            call: ref,
+            source: invalid?.source ?? 'tool-unavailable',
+            ...(invalid === null ? {} : { detail: invalid.reason }),
+            writer,
+          }),
+        )
+      } catch (error) {
+        if (!(error instanceof RunWriteRefusedError)) throw error
+        // A stop reached this closure's write first: the call was never dispatched, so it and the
+        // rest close as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped).
+        // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
+        await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+        return { kind: 'stopped' }
+      }
       continue
     }
     try {
@@ -199,7 +217,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         denials = 0
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-        if (!(await dispatchOnce(ctx, ref, item, [dispatch], dispatch))) continue
+        if (!(await dispatchOnce(ctx, call, item, [dispatch], dispatch))) continue
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         const target = await locate(ctx.host, item, call.input, facts.scope)
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
@@ -233,9 +251,8 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         await close(ctx, call, [decided, ...blockFacts(ctx, ref, judged)])
         denials += 1
         if (denials >= MACHINE_DENIAL_CAP) {
-          // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
-          await closeRest(ctx, ctx.calls.slice(k + 1), 'blocked-repeatedly')
-          return { kind: 'blocked-repeatedly', count: denials }
+          const rest = ctx.calls.slice(k + 1).map((later) => refOf(ctx, later))
+          return { kind: 'blocked-repeatedly', count: denials, rest }
         }
         continue
       }
@@ -248,7 +265,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       denials = 0
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-      if (!(await dispatchOnce(ctx, ref, item, [decided, dispatch], dispatch))) continue
+      if (!(await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch))) continue
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
       await execute(ctx, call, item, executor, {
         reversibility: judged.reversibility,
@@ -370,16 +387,30 @@ export function blockFacts(
  * that finds the same dispatch already committed (`created: false`) never dispatches it twice; a
  * `TapeProvenanceConflictError` — another writer's dispatch under this key — dispatches nothing
  * either, and the call closes as the recovery table's 损坏 (§执行日志与恢复表 T1). Tests and
- * development builds throw on both; the packaged build closes the call uncertain / `repair` and logs.
+ * development builds throw on both; the packaged build closes the call uncertain / `repair`, announced
+ * like any closure, and logs.
  */
 async function dispatchOnce(
   ctx: BatchContext,
-  ref: CallRef,
+  call: CompleteCall,
   item: ToolTableItem,
   entries: readonly NewEntry[],
   dispatchEntry: NewEntry,
 ): Promise<boolean> {
   const key = dispatchEntry.provenanceKey
+  const repair = (): Promise<void> =>
+    close(
+      ctx,
+      call,
+      repairFacts({
+        tape: ctx.tape,
+        now: ctx.now,
+        call: refOf(ctx, call),
+        dispatched: true,
+        effect: effectOf(item),
+        writer: ctx.writer,
+      }),
+    )
   let written: Written
   try {
     written = await ctx.write(entries)
@@ -388,16 +419,7 @@ async function dispatchOnce(
     ctx.log(
       `[loop] dispatch ${key} conflicts with another writer's; not dispatched, closed as repair`,
     )
-    await ctx.write(
-      repairFacts({
-        tape: ctx.tape,
-        now: ctx.now,
-        call: ref,
-        dispatched: true,
-        effect: effectOf(item),
-        writer: ctx.writer,
-      }),
-    )
+    await repair()
     return false
   }
   const at = written.entries.indexOf(dispatchEntry)
@@ -405,17 +427,35 @@ async function dispatchOnce(
   if (ctx.strict)
     throw new Error(`[loop] dispatch ${key} was already committed; it is never dispatched twice`)
   ctx.log(`[loop] dispatch ${key} was already committed; not dispatched again, closed as repair`)
-  await ctx.write(
-    repairFacts({
-      tape: ctx.tape,
-      now: ctx.now,
-      call: ref,
-      dispatched: true,
-      effect: effectOf(item),
-      writer: ctx.writer,
-    }),
-  )
+  await repair()
   return false
+}
+
+/**
+ * The interface's view of a closure a write committed: its outcome and its result, or null when
+ * either did not land (a result another writer beat is dropped with its outcome, 先写者算数).
+ */
+export function closedView(
+  written: readonly NewEntry[],
+  permission?: DecisionSummary,
+): ToolOutcomeView | null {
+  const outcome = written.find((entry) => entry.name === 'execution/tool_outcome')?.payload as
+    | Record<string, unknown>
+    | undefined
+  const result = written.find((entry) => entry.name === 'tool/result')?.payload as
+    | Record<string, unknown>
+    | undefined
+  if (outcome === undefined || result === undefined) return null
+  return {
+    effect: outcome['effect'] as ToolOutcomeView['effect'],
+    state: outcome['state'] as ToolOutcomeView['state'],
+    source: (outcome['source'] ?? null) as ToolOutcomeView['source'],
+    ...(outcome['facts'] === undefined
+      ? {}
+      : { facts: outcome['facts'] as Record<string, string> }),
+    output: textOf(result['content']),
+    ...(permission === undefined ? {} : { permission }),
+  }
 }
 
 /** Writes a call's closing facts, then tells the interface — after the commit, never before. */
@@ -426,34 +466,18 @@ async function close(
   summary?: DecisionSummary,
 ): Promise<void> {
   const written = await ctx.write(entries)
-  // A result another writer beat is dropped, and so is its announcement (先写者算数).
-  const outcome = written.entries.find((entry) => entry.name === 'execution/tool_outcome')
-    ?.payload as Record<string, unknown> | undefined
-  const result = written.entries.find((entry) => entry.name === 'tool/result')?.payload as
-    | Record<string, unknown>
-    | undefined
-  if (outcome === undefined || result === undefined) return
   const denied = entries.find((entry) => entry.name === 'tool/permission_decided')?.payload as
     | PermissionDecidedPayload
     | undefined
-  const permission = summary ?? denied?.summary
-  ctx.outcome(call, {
-    effect: outcome['effect'] as ToolOutcomeView['effect'],
-    state: outcome['state'] as ToolOutcomeView['state'],
-    source: (outcome['source'] ?? null) as ToolOutcomeView['source'],
-    ...(outcome['facts'] === undefined
-      ? {}
-      : { facts: outcome['facts'] as Record<string, string> }),
-    output: textOf(result['content']),
-    ...(permission === undefined ? {} : { permission }),
-  })
+  const view = closedView(written.entries, summary ?? denied?.summary)
+  if (view !== null) ctx.outcome(call, view)
 }
 
 /** Closes calls that will not run, in order, all with one source. */
 async function closeRest(
   ctx: BatchContext,
   calls: readonly CompleteCall[],
-  source: 'stopped' | 'blocked-repeatedly',
+  source: 'stopped',
 ): Promise<void> {
   for (const call of calls) {
     const facts = notRunFacts({

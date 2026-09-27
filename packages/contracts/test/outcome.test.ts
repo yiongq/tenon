@@ -156,6 +156,22 @@ describe('ipc/outcome.ts', () => {
     expect(messageRowSchema.safeParse(row([{ callKey: KEY, outcome: leaked }])).success).toBe(false)
   })
 
+  it('refuses a handoff that names no child session (01 修补 6: childSessionId min(1))', () => {
+    const handoff = (childSessionId: string) => ({
+      ...ASKED,
+      handoff: { outcome: 'aborted', childEndReason: null, childSessionId },
+    })
+    expect(toolOutcomeViewSchema.safeParse(handoff(SESSION)).success).toBe(true)
+    expect(toolOutcomeViewSchema.safeParse(handoff('')).success).toBe(false)
+    const event = {
+      type: 'tool-outcome',
+      sessionId: SESSION,
+      callKey: KEY,
+      providerToolCallId: 't',
+    }
+    expect(chatEventSchema.safeParse({ ...event, ...handoff('') }).success).toBe(false)
+  })
+
   it('keeps optional members exact, and the answer’s scope to the two a card gives', () => {
     for (const key of ['facts', 'permission', 'approval', 'question', 'handoff']) {
       expect(toolOutcomeViewSchema.safeParse({ ...ASKED, [key]: undefined }).success).toBe(false)

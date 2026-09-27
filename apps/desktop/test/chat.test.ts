@@ -597,6 +597,60 @@ describe('chat routes', () => {
   })
 })
 
+describe('the recovery gate (plan step 16: chat.send、chat.stop、「继续」…都先 await)', () => {
+  it('asks the kernel nothing on any chat route until startup recovery is done', async () => {
+    // §启动恢复与发送防护: 补写一定在下一次请求之前完成 — a send, a send-now, a queued item's
+    // send-now, a stop and 「继续」 all wait for the gate before they reach the kernel.
+    const reached: string[] = []
+    const sessions = {
+      send: (q: { sessionId: string }) => {
+        reached.push('send')
+        return Promise.resolve({ status: 'queued', queuedId: `queued-${q.sessionId}` })
+      },
+      stop: () => {
+        reached.push('stop')
+        return Promise.resolve({ stopped: false })
+      },
+      continueRun: () => {
+        reached.push('continueRun')
+        return Promise.resolve({ status: 'not-available' })
+      },
+    } as unknown as SessionService
+    const host = createMemoryHost()
+    const loop = createDesktopLoop({ clock: host.clock, send: noop, locale: () => 'en', log: noop })
+    const ipc = fakeIpc()
+    const gate = Promise.withResolvers<void>()
+    registerChatRoutes({
+      send: noop,
+      ipcMain: ipc.ipcMain,
+      sessions,
+      loop,
+      log: noop,
+      gate: gate.promise,
+    })
+    const sessionId = randomUUID()
+    const calls = [
+      ipc.call('chat.send', { sessionId, text: 'hi' }),
+      ipc.call('chat.sendNow', { sessionId, text: 'now', runId: null }),
+      ipc.call('chat.queue.act', {
+        sessionId,
+        queuedId: 'queued-1',
+        action: 'send-now',
+        runId: null,
+      }),
+      ipc.call('chat.stop', { sessionId }),
+      ipc.call('chat.continue', { sessionId }),
+    ]
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    expect(reached).toEqual([])
+    gate.resolve()
+    for (const result of await Promise.all(calls)) expect(result).toMatchObject({ ok: true })
+    expect(reached.toSorted()).toEqual(['continueRun', 'send', 'send', 'send', 'stop'])
+  })
+})
+
 const SCRIPTED_MODEL: ModelInfo = {
   id: 'claude-status-1',
   providerId: 'anthropic',

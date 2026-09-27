@@ -261,7 +261,9 @@ export async function rebuildProviderContext(
 /**
  * A client call in the context with no `tool/result`: what the pairing check before `encode()` finds
  * (§崩溃、服务端调用块与兜底「兜底」). `dispatched` says whether its `dispatch_committed` is on the
- * Tape, which is what a repair closure's execution state follows.
+ * Tape, which is what a repair closure's execution state follows; `closed`, whether its
+ * `tool_outcome` is — then only the result is missing, and only it is written (§执行日志与恢复表「损坏」:
+ * 补写缺的那一条).
  */
 export interface UnansweredCall {
   readonly runId: string
@@ -270,6 +272,18 @@ export interface UnansweredCall {
   readonly providerToolCallId: string
   readonly name: string
   readonly dispatched: boolean
+  readonly closed: boolean
+}
+
+/**
+ * A visible assistant turn whose `tool-request` blocks and `tool/call` facts disagree in number or in
+ * `providerToolCallId` (§重放怎么排 1: 按恢复表的「损坏」类处理). Its calls are placed from the facts
+ * (B1: 以工具事实为准组装上下文): a block with no fact is left out, a fact with no block gets one.
+ */
+export interface MismatchedTurn {
+  readonly messageId: string
+  readonly blocks: number
+  readonly calls: number
 }
 
 /**
@@ -280,12 +294,17 @@ export interface UnansweredCall {
 export async function replayContext(
   store: TapeReader,
   q: RebuildProviderContextQuery,
-): Promise<{ messages: InternalMessage[]; unanswered: UnansweredCall[] }> {
+): Promise<{
+  messages: InternalMessage[]
+  unanswered: UnansweredCall[]
+  mismatched: MismatchedTurn[]
+}> {
   const entries = await readReplayEntries(store, q)
   const cut = latestCompaction(entries)
   const tools = toolFactsOf(entries)
   const messages: InternalMessage[] = []
   const unanswered: UnansweredCall[] = []
+  const mismatched: MismatchedTurn[] = []
   for (const message of effectiveMessages(entries)) {
     if (cut !== null && message.orderSeq < cut.keepFromEntryId) continue
     if (message.role !== 'assistant') {
@@ -294,7 +313,21 @@ export async function replayContext(
       continue
     }
     const calls = tools.calls.get(message.messageId) ?? []
-    const content = placeCalls(message.content, calls)
+    const requests = message.content.filter(
+      (block): block is Extract<ContentBlock, { type: 'tool-request' }> =>
+        block.type === 'tool-request',
+    )
+    const agrees =
+      requests.length === calls.length &&
+      requests.every((block, i) => block.id === calls[i]?.providerToolCallId)
+    if (!agrees) {
+      mismatched.push({
+        messageId: message.messageId,
+        blocks: requests.length,
+        calls: calls.length,
+      })
+    }
+    const content = agrees ? placeCalls(message.content, calls) : byFacts(message.content, calls)
     if (content.length > 0) messages.push({ role: 'assistant', content })
     // The results follow their assistant turn, in <i> order — wherever the Tape holds them.
     const responses: ContentBlock[] = []
@@ -308,6 +341,7 @@ export async function replayContext(
           providerToolCallId: call.providerToolCallId,
           name: call.name,
           dispatched: tools.dispatched.has(call.key),
+          closed: tools.closed.has(call.key),
         })
         continue
       }
@@ -320,11 +354,12 @@ export async function replayContext(
     }
     if (responses.length > 0) messages.push({ role: 'user', content: responses })
   }
-  if (cut === null) return { messages, unanswered }
+  if (cut === null) return { messages, unanswered, mismatched }
   // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
   return {
     messages: [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages],
     unanswered,
+    mismatched,
   }
 }
 
@@ -352,18 +387,21 @@ function callIdentity(entry: TapeEntry): string {
 
 /**
  * The calls by the assistant message they belong to, in <i> order, the results by call, and which
- * calls were dispatched.
+ * calls were dispatched and which have their outcome.
  */
 function toolFactsOf(entries: readonly TapeEntry[]): {
   calls: Map<string, ReplayCall[]>
   results: Map<string, ReplayResult>
   dispatched: Set<string>
+  closed: Set<string>
 } {
   const calls = new Map<string, ReplayCall[]>()
   const results = new Map<string, ReplayResult>()
   const dispatched = new Set<string>()
+  const closed = new Set<string>()
   for (const entry of entries) {
     if (entry.name === 'execution/dispatch_committed') dispatched.add(callIdentity(entry))
+    else if (entry.name === 'execution/tool_outcome') closed.add(callIdentity(entry))
     else if (entry.name === 'tool/call') {
       const messageId = entry.payload['messageId']
       if (typeof messageId !== 'string') {
@@ -392,20 +430,19 @@ function toolFactsOf(entries: readonly TapeEntry[]): {
     }
   }
   for (const list of calls.values()) list.sort((a, b) => a.ordinal - b.ordinal)
-  return { calls, results, dispatched }
+  return { calls, results, dispatched, closed }
 }
 
 /**
  * The assistant content with each `tool-request` block taken from its `tool/call`: the block marks
- * the position, the fact gives the id, the name and the input. When the counts disagree the content
- * stays as stored — the recovery pass's 「损坏」 class (plan step 16), not something replay repairs.
+ * the position, the fact gives the id, the name and the input. The caller has checked that the
+ * blocks and the facts agree.
  */
 function placeCalls(
   content: readonly ContentBlock[],
   calls: readonly ReplayCall[],
 ): ContentBlock[] {
-  const requests = content.filter((block) => block.type === 'tool-request').length
-  if (calls.length === 0 || requests !== calls.length) return [...content]
+  if (calls.length === 0) return [...content]
   let next = 0
   return content.map((block): ContentBlock => {
     if (block.type !== 'tool-request') return block
@@ -421,4 +458,23 @@ function placeCalls(
       ...(block.vendorFields === undefined ? {} : { vendorFields: block.vendorFields }),
     }
   })
+}
+
+/**
+ * A turn whose blocks and facts disagree (「损坏」), placed from the facts alone: the stored
+ * `tool-request` blocks go, and each `tool/call` comes after the rest of the content in `<i>` order,
+ * so every call sent has its block and no block is sent without its call. The pairing check before
+ * `encode()` throws on such a turn in development and test builds; this is what a packaged build
+ * sends after it logs the repair.
+ */
+function byFacts(content: readonly ContentBlock[], calls: readonly ReplayCall[]): ContentBlock[] {
+  return [
+    ...content.filter((block) => block.type !== 'tool-request'),
+    ...calls.map((call): ContentBlock => ({
+      type: 'tool-request',
+      id: call.providerToolCallId,
+      name: call.name,
+      input: call.input,
+    })),
+  ]
 }

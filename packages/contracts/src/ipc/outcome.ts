@@ -120,7 +120,7 @@ export const toolOutcomeViewShape = {
     .object({
       outcome: z.enum(['completed', 'partial', 'aborted', 'superseded', 'uncertain']),
       childEndReason: z.string().nullable(),
-      childSessionId: z.string(),
+      childSessionId: z.string().min(1),
     })
     .exactOptional(), // 只在 Agent 调用上有（开放问题 18）
 }

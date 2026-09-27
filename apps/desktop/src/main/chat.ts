@@ -70,6 +70,8 @@ const PLACEHOLDER_SHELL: CommandShell = {
 interface RunOwner {
   on(event: string, listener: (...args: unknown[]) => void): unknown
   off(event: string, listener: (...args: unknown[]) => void): unknown
+  /** A WebContents has it: a document already gone fires no `destroyed` for a lease begun later. */
+  isDestroyed?(): boolean
 }
 
 /**
@@ -192,11 +194,16 @@ export function createRunRegistry(
       }
       // Watched from the moment the lease exists: a window that disappears while the Run is still
       // being prepared must not leave one behind either.
-      entry.detach = watchOwner(ownerOf(q.origin), () => {
+      const owner = ownerOf(q.origin)
+      entry.detach = watchOwner(owner, () => {
         abortOne(entry, 'close-window')
         changed(q.rootSessionId)
       })
       live.set(q.rootSessionId, entry)
+      // A command that waited in the mailbox begins its lease with the origin it came with, and that
+      // window may have closed meanwhile: aborted at once, so the kernel writes nothing
+      // (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
+      if (owner?.isDestroyed?.() === true) abortOne(entry, 'close-window')
       changed(q.rootSessionId)
       return entry.lease
     },
@@ -356,6 +363,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     if (result.status === 'refused') {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
+    noteHeld(loop.queue, sessionId, result)
     // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
     return answerOf(result)
   })
@@ -377,6 +385,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     if (result.status === 'refused') {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
+    noteHeld(loop.queue, sessionId, result)
     return answerOf(result)
   })
 
@@ -400,6 +409,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     if (result.status === 'refused') {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
+    noteHeld(loop.queue, request.sessionId, result)
     // Held again for a public host: the renderer reopens the model menu's confirmation on it.
     return { ...status(result.status !== 'not-found'), sendStatus: result.status }
   })
@@ -426,6 +436,19 @@ export function registerChatRoutes(deps: ChatDeps): void {
         return { status: result.status }
     }
   })
+}
+
+/**
+ * A send the kernel held for a public host names its item in the answer; the `queue-held` event
+ * that came first names only the host. queue.ts needs the item to clear `held` when it is
+ * withdrawn (「间接切公网」).
+ */
+function noteHeld(
+  queue: DesktopQueue,
+  root: string,
+  result: Awaited<ReturnType<SessionService['send']>>,
+): void {
+  if (result.status === 'held') queue.heldItem(root, result.queuedId)
 }
 
 /** The sender behind an IPC event, when there is one (a unit test's event carries none). */

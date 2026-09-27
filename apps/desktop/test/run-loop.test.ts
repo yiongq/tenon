@@ -90,6 +90,28 @@ describe('RunRegistry', () => {
     theirs.finish()
   })
 
+  it('aborts at once a lease begun for a document that is already gone', () => {
+    // plan step 9: 「窗口销毁…时以 close-window 中止」 — a command that waited in the mailbox begins
+    // its lease with the origin it came with, after that window closed; no `destroyed` comes then.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    window.close()
+    const late = lease(
+      registry.begin({ rootSessionId: ROOT, origin: { ...window.owner, isDestroyed: () => true } }),
+    )
+    expect(late.signal.reason).toBe('close-window')
+    expect(late.stopRequested).toBe(false)
+    expect(registry.running()).toEqual([])
+    late.finish()
+    // A live document is left alone.
+    const open = fakeOwner()
+    const mine = lease(
+      registry.begin({ rootSessionId: ROOT, origin: { ...open.owner, isDestroyed: () => false } }),
+    )
+    expect(mine.signal.aborted).toBe(false)
+    mine.finish()
+  })
+
   it('records the first Run a lease opened, sub-agent sessions included', () => {
     const registry = createRunRegistry(createMemoryHost().clock)
     const live = lease(registry.begin({ rootSessionId: ROOT, origin: null }))
@@ -361,6 +383,73 @@ describe('chat.send and the queue (plan step 17)', () => {
     expect(sent).toEqual([
       { sessionId: ROOT, items: [{ queuedId: expect.any(String), text: 'hi' }] },
     ])
+  })
+
+  it('clears held when the held message is withdrawn, and keeps it for any other', async () => {
+    // 「间接切公网」: queue.ts 撤回 held 那条时自己清 chat.queue 的 held — the send's answer names the
+    // item, the queue-held event before it only the host.
+    const host = createMemoryHost()
+    const pushed: Array<{ items: unknown[]; held?: unknown }> = []
+    const loop = createDesktopLoop({
+      clock: host.clock,
+      send: (channel, payload) => {
+        if (channel === 'chat.queue') pushed.push(payload as { items: unknown[]; held?: unknown })
+      },
+      locale: () => 'en',
+    })
+    // A message left from before, then a direct send the kernel holds for a public host.
+    const { queuedId: before } = await loop.queue.enqueue(ROOT, 'left from before', {
+      urgent: false,
+    })
+    const sessions = {
+      send: async (q: { text: string }) => {
+        const { queuedId } = await loop.queue.enqueue(ROOT, q.text, { urgent: false })
+        loop.ports.events({
+          type: 'queue-held',
+          rootSessionId: ROOT,
+          sessionId: ROOT,
+          host: 'api.example.com',
+        })
+        return { status: 'held', queuedId }
+      },
+    } as unknown as SessionService
+    const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
+    const ipcMain: IpcMainLike = {
+      handle(channel, listener) {
+        handlers.set(channel, listener)
+      },
+    }
+    registerChatRoutes({ send: () => {}, ipcMain, sessions, loop, log: () => {} })
+    await handlers.get('chat.send')?.({}, { sessionId: ROOT, text: 'to the public host' })
+    expect(pushed.at(-1)?.held).toEqual({ host: 'api.example.com' })
+    const heldId = (await loop.queue.peek(ROOT)).at(-1)?.queuedId ?? ''
+    const act = handlers.get('chat.queue.act')
+    // Another item goes: the held one still waits on the menu.
+    await act?.({}, { sessionId: ROOT, action: 'withdraw', queuedId: before })
+    expect(pushed.at(-1)).toEqual({
+      sessionId: ROOT,
+      items: [{ queuedId: heldId, text: 'to the public host' }],
+      held: { host: 'api.example.com' },
+    })
+    // Withdrawing the held one leaves nothing to confirm.
+    const { queuedId: after } = await loop.queue.enqueue(ROOT, 'written later', { urgent: false })
+    await act?.({}, { sessionId: ROOT, action: 'withdraw', queuedId: heldId })
+    expect(pushed.at(-1)).toEqual({
+      sessionId: ROOT,
+      items: [{ queuedId: after, text: 'written later' }],
+    })
+  })
+
+  it('keeps an auto-send’s hold, which names no item, until the queue is empty', async () => {
+    const pushed: Array<{ held?: unknown }> = []
+    const queue = createRunQueue({ onChange: (_root, view) => pushed.push(view) })
+    const { queuedId: a } = await queue.enqueue(ROOT, 'a', { urgent: false })
+    const { queuedId: b } = await queue.enqueue(ROOT, 'b', { urgent: false })
+    queue.setHeld(ROOT, 'api.example.com')
+    queue.withdraw(ROOT, b)
+    expect(pushed.at(-1)?.held).toEqual({ host: 'api.example.com' })
+    queue.withdraw(ROOT, a)
+    expect(pushed.at(-1)?.held).toBeUndefined()
   })
 
   it('withdraws, edits and holds queued messages, pushing the whole queue each time', async () => {

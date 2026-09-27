@@ -23,6 +23,12 @@ export interface DesktopQueue extends RunQueue {
   edit(root: string, queuedId: string, text: string): boolean
   /** `queue-held` from the kernel: the host a held round waits on, or null once it is cleared. */
   setHeld(root: string, host: string | null): void
+  /**
+   * The item a send was answered `held` on (`send`'s `{ status: 'held', queuedId }`): withdrawing
+   * it clears `held` (「间接切公网」). An auto-send's hold names no item and clears once the queue is
+   * empty.
+   */
+  heldItem(root: string, queuedId: string): void
   /** Every root whose queue is not empty, as `chat.queue` shows it: what a new window is re-sent. */
   views(): ReadonlyArray<readonly [string, QueueView]>
 }
@@ -31,12 +37,13 @@ export function createRunQueue(
   options: { readonly onChange?: (root: string, view: QueueView) => void } = {},
 ): DesktopQueue {
   const queues = new Map<string, QueuedMessage[]>()
-  const held = new Map<string, string>()
+  /** The host a held round waits on, and the item it holds (null for an auto-send's hold). */
+  const held = new Map<string, { readonly host: string; readonly queuedId: string | null }>()
   let nextSeq = 1
 
   const queueOf = (root: string): QueuedMessage[] => queues.get(root) ?? []
   const viewOf = (root: string): QueueView => {
-    const host = held.get(root)
+    const host = held.get(root)?.host
     return {
       items: queueOf(root).map((item) => ({ queuedId: item.queuedId, text: item.text })),
       ...(host === undefined ? {} : { held: { host } }),
@@ -87,6 +94,8 @@ export function createRunQueue(
     withdraw(root, queuedId): boolean {
       const items = queueOf(root)
       if (!items.some((item) => item.queuedId === queuedId)) return false
+      // 「间接切公网」: queue.ts 撤回 held 那条时自己清 chat.queue 的 held.
+      if (held.get(root)?.queuedId === queuedId) held.delete(root)
       store(
         root,
         items.filter((item) => item.queuedId !== queuedId),
@@ -107,9 +116,14 @@ export function createRunQueue(
       return true
     },
     setHeld(root, host): void {
+      // A new hold replaces the one before it; which item it holds comes with the send's answer.
       if (host === null) held.delete(root)
-      else held.set(root, host)
+      else held.set(root, { host, queuedId: null })
       notify(root)
+    },
+    heldItem(root, queuedId): void {
+      const current = held.get(root)
+      if (current !== undefined) held.set(root, { host: current.host, queuedId })
     },
     views() {
       return [...new Set([...queues.keys(), ...held.keys()])].map(

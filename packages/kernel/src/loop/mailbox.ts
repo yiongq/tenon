@@ -100,7 +100,7 @@ import type { Resumable } from './recovery.js'
 import { RunWriteRefusedError, placeOf, readSessionEntries } from './batch.js'
 import { approvalOf } from './calls.js'
 import type { Written } from './batch.js'
-import type { CallRef, ClosureSource } from './closure.js'
+import type { ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
@@ -585,26 +585,47 @@ export function createLoop(deps: LoopDeps): Loop {
       return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     }
     const root = box.rootSessionId
+    // 「立即发送绑定 runId」: an item no longer queued (an auto-send took it, it was inserted or
+    // withdrawn) answers not-found and does nothing — no Run stopped, no prebuild's answer acted on
+    // (models/model1 sendTurn: `qsend: item gone -> not-found` comes first).
+    if (!('text' in q)) {
+      const queued = (await ports.queue.peek(root)).some((item) => item.queuedId === q.queuedId)
+      if (lease !== null && lease.signal.aborted) {
+        return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
+      }
+      if (!queued) {
+        if (lease !== null) finish(box, lease)
+        return { kind: 'done', result: { status: 'not-found' } }
+      }
+    }
     // 「何时判定」: in progress means a Run already opened, an aborted one still closing included — and
     // the message is then marked urgent, so it goes first once that Run ends. A lease with no Run open
     // yet can only be this command's own here: such a holder lets nothing but itself run.
     if (box.lease !== null && box.runOpen) {
+      const live = box.lease
       // 「立即发送绑定 runId」: only the Run the user saw is stopped; one that already ended is not,
       // and this is an ordinary send.
-      if (q.urgent !== undefined && box.runId === q.urgent.runId) box.lease.abort('user-stop')
-      const urgent = box.lease.signal.aborted
-      if (urgent) box.urgentOrigin = q.origin
+      const stopsRun = q.urgent !== undefined && box.runId === q.urgent.runId
       if ('text' in q) {
+        if (stopsRun) live.abort('user-stop')
+        const urgent = live.signal.aborted
+        if (urgent) box.urgentOrigin = q.origin
         const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent })
         return { kind: 'done', result: { status: 'queued', queuedId } }
       }
-      // A queued item sent now: it stays where it is, marked urgent when its Run was stopped.
+      // A queued item sent now: taken before anything is stopped — one withdrawn meanwhile stops
+      // nothing — then back where it was, marked urgent when its Run was stopped.
       const [item] = await ports.queue.take(root, {
         upToSeq: null,
         urgentOnly: false,
         queuedId: q.queuedId,
       })
       if (item === undefined) return { kind: 'done', result: { status: 'not-found' } }
+      if (stopsRun) live.abort('user-stop')
+      const urgent = live.signal.aborted
+      if (urgent) box.urgentOrigin = q.origin
+      // The held item goes out next: it no longer waits on its own switch (「间接切公网」).
+      if (urgent && box.held?.queuedId === item.queuedId) clearHeld(ports, box, q.sessionId)
       await ports.queue.restore(root, [{ ...item, urgent: urgent || item.urgent }])
       return { kind: 'done', result: { status: 'queued', queuedId: item.queuedId } }
     }
@@ -675,7 +696,16 @@ export function createLoop(deps: LoopDeps): Loop {
       await restoreTaken(ports, box, input.taken)
       return configMissing(ports, box, input.sessionId, lease, pre)
     }
-    const waiting = await waitingOf(tape, root)
+    let waiting: WaitingCall | null
+    try {
+      waiting = await waitingOf(tape, root)
+    } catch (error) {
+      // An auto-send's items go back before its lease does: what waits behind it finds the queue
+      // as it was, in order (models/README: 排队消息…按规定次序发出).
+      await restoreTaken(ports, box, input.taken)
+      finish(box, lease)
+      throw error
+    }
     // A stop that came while the pause was read: it closes the pause, not this message.
     if (lease.signal.aborted) {
       await restoreTaken(ports, box, input.taken)
@@ -1029,7 +1059,6 @@ export function createLoop(deps: LoopDeps): Loop {
       if ('refused' in begun) return { status: 'refused', code: begun.refused }
       lease = hold(box, begun)
     }
-    resumables.delete(root)
     try {
       await openResumed(
         ports,
@@ -1042,9 +1071,14 @@ export function createLoop(deps: LoopDeps): Loop {
         [],
       )
     } catch (error) {
+      // Nothing was written: the Tape still says resumable, and so does the set — a later resume or
+      // send resumes it (models/model2: resumable-missing-from-set).
       finish(box, lease)
       throw error
     }
+    // Out of the set in the task that wrote the `run_started{ resume }` naming it, once it did
+    // (§主进程与 kernel 的循环接口「recover」).
+    resumables.delete(root)
     return 'started'
   }
 
@@ -1140,6 +1174,10 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null && lease.signal.aborted) return await abortedAnswer(ports, box, lease)
       const target = await answerTarget(tape, q)
       if (typeof target === 'string') {
+        // A stop that aborted this answer's lease while the Tape was read was promised a close by
+        // the holder (「停止」: 有活租约就 abort; 「登记之后、append 之前被中止」): the card still
+        // waiting — a newer one than this answer named — is cancelled in its name.
+        if (lease !== null && lease.signal.aborted) return await abortedAnswer(ports, box, lease)
         if (lease !== null) finish(box, lease)
         return { status: target }
       }
@@ -1277,6 +1315,9 @@ export function createLoop(deps: LoopDeps): Loop {
         writer: resolver,
       })
       await appendTo(waiting.sessionId, [decided])
+      // A stop that landed while the re-judgement committed: 暂停中停止 closes the new card, which
+      // never shows; a quit or a closed window leaves it for the restart (B4), as a pause does.
+      if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
       finish(box, lease)
       const card = cardOfEntries(waiting.sessionId, [decided])
       if (card !== null) deliver(card)
@@ -1494,11 +1535,12 @@ export function createLoop(deps: LoopDeps): Loop {
           tokenLimit: deps.tokenLimit,
           lease,
           openTable: () => openTable(incarnationId, built.assembly, built.profile),
-          // A write task that finds its lease aborted writes no decision and no dispatch
-          // (§主进程与 kernel 的循环接口「mailbox」): the batch closes the call as stopped instead.
+          // A write task that finds its lease aborted writes no decision, no dispatch and no closure
+          // of a call found unusable (§主进程与 kernel 的循环接口「mailbox」): the batch closes the
+          // call as stopped instead.
           write: (entries) =>
             post(box, 'run', null, async () => {
-              if (lease.signal.aborted && entries.some(isDecisionOrDispatch)) {
+              if (lease.signal.aborted && entries.some(isRefusedAfterStop)) {
                 throw new RunWriteRefusedError()
               }
               const written = await appendFirstWins(sessionId, incarnationId, entries)
@@ -1576,7 +1618,7 @@ export function createLoop(deps: LoopDeps): Loop {
           reason: end.reason,
           recorded,
           lastStop: finished.lastStop,
-          errorCode: finished.errorCode,
+          errorCode: end.aborted ? null : finished.errorCode,
           retryOf: stillLast ? retryOf(opened, dispatched) : null,
         })
         // In the same synchronous stretch as the finish: nothing else takes the root in between.
@@ -1626,7 +1668,15 @@ export function createLoop(deps: LoopDeps): Loop {
         createdAt: now(),
       })
     })
-    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    let receipts: readonly AppendResult[]
+    try {
+      receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    } catch (error) {
+      // Not written, so not inserted: back in the queue, in their order, before the Run fails
+      // (models/README: 排队消息不丢).
+      await ports.queue.restore(root, items)
+      throw error
+    }
     for (const { item, messageId } of inserted) {
       emit(ports, {
         type: 'user-message',
@@ -1868,15 +1918,16 @@ export function createLoop(deps: LoopDeps): Loop {
   /**
    * What the terminal task writes. A lease aborted before this task's turn (a stop, a closed window
    * or a quit that came after the Run decided to pause, end or fail) ends the Run by the abort
-   * instead: the paused decision is not written and the calls it left waiting close not-run /
-   * `stopped`, as a stop while judging would have (§主进程与 kernel 的循环接口「mailbox」; §点停止时各状态怎么收).
-   * A pause the stop reaches after its terminal committed is plan step 15's.
+   * instead: neither the paused decision nor the end's own closures (a limit's, a truncation's) are
+   * written, and the calls they covered close not-run / `stopped`, as a stop while judging would
+   * have (§主进程与 kernel 的循环接口「mailbox」; §点停止时各状态怎么收). `aborted` says the reason was
+   * replaced: no error event ended the Run then (run-ended `errorCode`).
    */
   function terminalOf(
     finished: RunFinish,
     lease: RunLease,
     runId: string,
-  ): { reason: RunEndReason; entries: NewEntry[]; stopped: readonly CallRef[] } {
+  ): { reason: RunEndReason; entries: NewEntry[]; aborted: boolean } {
     const writer = { by: 'run', runId } as const
     const aborted = lease.signal.aborted
     const reason = aborted ? abortedEndReason(abortCauseOf(lease)) : finished.reason
@@ -1899,7 +1950,7 @@ export function createLoop(deps: LoopDeps): Loop {
         createdAt: now(),
       }),
     )
-    return { reason, entries, stopped }
+    return { reason, entries, aborted }
   }
 
   /**
@@ -2016,7 +2067,17 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null) finish(box, lease)
       throw error
     }
-    const judged = await post(box, 'command', lease, () => turn(lease, pre))
+    let judged: Turn<T>
+    try {
+      judged = await post(box, 'command', lease, () => turn(lease, pre))
+    } catch (error) {
+      // A turn that failed before its Run opened (a read of the Tape or the queue that threw): the
+      // lease it holds — the one it came in with, or one it began in the mailbox — is finished here,
+      // or the root would wait on it for good (「租约」: 最后没开 Run 的就 finish; models: 没有死锁).
+      // While this turn ran nobody else could begin one, so an unopened live lease is this one's.
+      if (box.lease !== null && !box.runOpen) finish(box, box.lease)
+      throw error
+    }
     if (judged.kind === 'done') return judged.result
     // Began in the mailbox: out to prebuild, and in again. Nothing is written in between.
     return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
@@ -2494,13 +2555,22 @@ function beginLease(
   return begun
 }
 
-/** Taken items that did not go out, back at their seq and no longer urgent (「Run 结束」). */
+/**
+ * The lists of taken items already put back. A failed round is seen twice — by the turn that puts
+ * its items back and by the auto-send's catch — and a second `restore` would queue each item twice
+ * (models/README: 排队消息不丢、不重复). A list is never taken again once restored: a later `take`
+ * returns a new one.
+ */
+const restoredLists = new WeakSet<readonly QueuedMessage[]>()
+
+/** Taken items that did not go out, back at their seq and no longer urgent (「Run 结束」) — once. */
 async function restoreTaken(
   ports: LoopPorts,
   box: RootBox,
   taken: readonly QueuedMessage[] | null,
 ): Promise<void> {
-  if (taken === null || taken.length === 0) return
+  if (taken === null || taken.length === 0 || restoredLists.has(taken)) return
+  restoredLists.add(taken)
   await ports.queue.restore(
     box.rootSessionId,
     taken.map((item) => ({ ...item, urgent: false })),
@@ -2521,9 +2591,17 @@ function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
   return 'none'
 }
 
-/** The two facts a Run's write task refuses once its lease is aborted (「mailbox」). */
-function isDecisionOrDispatch(entry: NewEntry): boolean {
-  return entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed'
+/**
+ * What a Run's write task refuses once its lease is aborted (「mailbox」): a decision, a dispatch,
+ * and the not-run closure of a call found unusable — a call not yet dispatched when the stop came
+ * closes as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped).
+ */
+function isRefusedAfterStop(entry: NewEntry): boolean {
+  if (entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed') {
+    return true
+  }
+  const source = entry.name === 'execution/tool_outcome' ? entry.payload['source'] : undefined
+  return source === 'tool-unavailable' || source === 'invalid-input'
 }
 
 /** What a resumed Run gets when a stop beats its `assemble`: nothing to call, nothing to send to. */

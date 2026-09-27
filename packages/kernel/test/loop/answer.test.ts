@@ -7,13 +7,16 @@
  * always-allow, so without the inspector it runs), and from WebFetch, which asks in the manual mode.
  * A question's card is plan step 26's; the startup rejudge and its card-less restart are step 16's.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ProviderConfigMissingError,
+  ProviderInvalidArgumentError,
+  anthropicDefinition,
   createMemoryHost,
   createMemoryTapeStore,
 } from '../../src/index.js'
 import type {
+  CapabilitySource,
   HostAdapter,
   MemoryHost,
   ModelInfo,
@@ -41,6 +44,7 @@ import type {
 } from '../../src/testing/index.js'
 import { modelWireHash } from '../../src/provider/wire/shared.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
+import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
 import { LOOK, lookSource, proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'answer-user', tenantId: 'answer-tenant', profileDir: '/tenon/answer' }
@@ -71,6 +75,13 @@ const USAGE: Usage = {
 
 const ASK = { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] } as const
 
+/** A policy that asks about `fs__look`: with the inspector silent, still a card — a different one. */
+const ASK_LOOK = {
+  status: 'current',
+  version: 'v2',
+  snapshot: { tools: [{ policyId: 'p1', serverId: 'fs', toolName: 'look', effect: 'ask' }] },
+} as const
+
 type RunEnded = Extract<SessionEvent, { type: 'run-ended' }>
 
 interface Harness {
@@ -89,6 +100,13 @@ interface HarnessOptions {
   readonly tools?: TestToolRegistry
   /** Where the id counter starts: a restarted service must not mint the ids of the one before. */
   readonly idsFrom?: number
+  /** What the menu answers: the model, its effort and where its capabilities came from. */
+  readonly model?: ModelInfo
+  readonly effort?: string | null
+  readonly capabilitySource?: CapabilitySource
+  readonly locale?: 'zh-CN' | 'en'
+  /** The `fs__look` tool's description, as its server gives it now. */
+  readonly description?: string
 }
 
 /**
@@ -103,12 +121,20 @@ function hosts(): { memory: MemoryHost; host: HostAdapter } {
 function harness(o: HarnessOptions = {}): Harness {
   const { memory, host } = hosts()
   const store = o.store ?? createMemoryTapeStore({ identity: IDENTITY })
-  const provider = createScriptedProvider({ models: [MODEL] })
+  const model = o.model ?? MODEL
+  const provider = createScriptedProvider({ models: [model] })
   const executed: Record<string, unknown>[] = []
   const inspector = createFakeInspector({ id: 'asker', ceiling: 'ask', answer: ASK })
   const logs: string[] = []
   const loop = createTestLoopPorts({
-    connector: { provider, model: MODEL, mcpSources: [lookSource(executed)] },
+    connector: {
+      provider,
+      model,
+      mcpSources: [lookSource(executed, undefined, o.description)],
+      ...(o.effort === undefined ? {} : { effort: o.effort }),
+      ...(o.capabilitySource === undefined ? {} : { capabilitySource: o.capabilitySource }),
+    },
+    ...(o.locale === undefined ? {} : { locale: o.locale }),
   })
   const service = createTestSessionService(
     {
@@ -195,6 +221,16 @@ function resolutions(entries: readonly TapeEntry[]): string[] {
   )
 }
 
+/** What an attempt sent: its model, the hashes of its model row and tools, and its request snapshot. */
+function attemptSnapshot(entry: TapeEntry | undefined): unknown {
+  return {
+    modelId: entry?.payload['modelId'],
+    modelWireHash: entry?.payload['modelWireHash'],
+    toolDefinitionsHash: entry?.payload['toolDefinitionsHash'],
+    request: entry?.payload['request'],
+  }
+}
+
 /** `writer` for a fact the Run `runId` wrote (§键与挂靠). */
 function by(runId: string | undefined): unknown {
   return { by: 'run', runId }
@@ -228,17 +264,42 @@ describe('a card, and its answer', () => {
   })
 
   it('allows: resumes the batch with that call, under the same model, and the next card waits alone (旧 174, 旧 116)', async () => {
-    const h = harness()
+    const appends: string[][] = []
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      append: async (batch) => {
+        appends.push(batch.entries.map((entry) => entry.name))
+        return inner.append(batch)
+      },
+    })
+    const h = harness({ store })
     const first = await paused(h, 'a', 'b')
+    // 旧 174: 在 SessionService 与 approval.list 上断言…最多一行.
+    const oneRow = [{ sessionId: SESSION, waitKind: 'approval' }]
+    expect(await h.service.listPendingRoots({ limit: 20 })).toEqual(oneRow)
     h.provider.script(done())
     expect(await answer(h, first, 'allow')).toEqual({ status: 'applied' })
+    // 验收 12: the allowed answer and the new Run's head, written together or not at all.
+    const allowedWith = [
+      'tool/approval_resolved',
+      'execution/run_started',
+      'session/model_selected',
+    ]
+    expect(appends.filter((names) => names.includes('tool/approval_resolved'))).toEqual([
+      allowedWith,
+    ])
     // b is judged next, asks, and the resumed Run pauses on it: one row at a time.
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
     expect(h.executed).toEqual([{ at: 'a' }])
     expect(await rows(h)).toBe(1)
+    expect(await h.service.listPendingRoots({ limit: 20 })).toEqual(oneRow)
     const second = await requestIdOf(h)
     expect(second).toMatch(/:1:1$/)
     expect(await answer(h, second, 'allow')).toEqual({ status: 'applied' })
+    expect(appends.filter((names) => names.includes('tool/approval_resolved'))).toEqual([
+      allowedWith,
+      allowedWith,
+    ])
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
     expect(h.executed).toEqual([{ at: 'a' }, { at: 'b' }])
     const entries = await all(h)
@@ -257,23 +318,38 @@ describe('a card, and its answer', () => {
         named(entries, 'session/model_selected').map((entry) => JSON.stringify(entry.payload)),
       ).size,
     ).toBe(1)
-    // The results hang off the request that made the calls, written by the Run that ran them.
+    // The results hang off the request that made the calls, written by the Run that ran them
+    // (验收 12: 六条事实都挂在原 runId 下，writer 记实际写入者).
+    const [pausedRun, firstResumed, secondResumed] = named(entries, 'execution/run_started').map(
+      (entry) => entry.sourceId,
+    )
     const results = named(entries, 'tool/result')
     expect(
-      results.map((entry) => [entry.sourceSeq, (entry.payload['writer'] as { by: string }).by]),
+      results.map((entry) => [entry.sourceId, entry.sourceSeq, entry.payload['writer']]),
     ).toEqual([
-      [1, 'run'],
-      [1, 'run'],
+      [pausedRun, 1, { by: 'run', runId: firstResumed }],
+      [pausedRun, 1, { by: 'run', runId: secondResumed }],
     ])
+    expect(
+      named(entries, 'execution/dispatch_committed').map((entry) => [
+        entry.sourceId,
+        entry.payload['writer'],
+      ]),
+    ).toEqual([
+      [pausedRun, { by: 'run', runId: firstResumed }],
+      [pausedRun, { by: 'run', runId: secondResumed }],
+    ])
+    // 验收 12: rejudge 只在结论、摘要或卡面变了时才写 — both allows found the cards unchanged.
+    expect(
+      named(entries, 'tool/permission_decided').filter((entry) =>
+        entry.provenanceKey?.includes(':rejudge:'),
+      ),
+    ).toEqual([])
     expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(await h.service.listPendingRoots({ limit: 20 })).toEqual([])
     // 旧 116 (§键与挂靠; 02 验收 12): all six facts of each call are under the paused Run's id, and
     // `writer` names who actually wrote each one — the Run that judged it, the resolver for the answer,
     // the resumed Run that ran it for its dispatch, result and outcome.
-    const [pausedRun, firstResume, secondResume] = named(entries, 'execution/run_started')
-      .filter(
-        (entry, i) => i === 0 || (entry.payload['cause'] as { kind: string }).kind === 'resume',
-      )
-      .map((entry) => entry.sourceId ?? '')
     const owned = await h.store.readBySource({
       sessionId: SESSION,
       sourceType: 'runtime_event',
@@ -289,36 +365,17 @@ describe('a card, and its answer', () => {
       ['tool/call', null],
       ['tool/permission_decided', by(pausedRun)],
       ['tool/approval_resolved', resolver],
-      ['execution/dispatch_committed', by(firstResume)],
-      ['tool/result', by(firstResume)],
-      ['execution/tool_outcome', by(firstResume)],
+      ['execution/dispatch_committed', by(firstResumed)],
+      ['tool/result', by(firstResumed)],
+      ['execution/tool_outcome', by(firstResumed)],
     ])
     expect(factsOf(1)).toEqual([
       ['tool/call', null],
-      ['tool/permission_decided', by(firstResume)],
+      ['tool/permission_decided', by(firstResumed)],
       ['tool/approval_resolved', resolver],
-      ['execution/dispatch_committed', by(secondResume)],
-      ['tool/result', by(secondResume)],
-      ['execution/tool_outcome', by(secondResume)],
-    ])
-  })
-
-  it('allows in one append with the new Run’s run_started and model_selected (旧 117, 同批规则 2)', async () => {
-    const appends: string[][] = []
-    const inner = createMemoryTapeStore({ identity: IDENTITY })
-    const store = proxyStore(inner, {
-      append: async (batch) => {
-        appends.push(batch.entries.map((entry) => entry.name))
-        return inner.append(batch)
-      },
-    })
-    const h = harness({ store })
-    const requestId = await paused(h)
-    h.provider.script(done())
-    expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
-    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
-    expect(appends.filter((names) => names.includes('tool/approval_resolved'))).toEqual([
-      ['tool/approval_resolved', 'execution/run_started', 'session/model_selected'],
+      ['execution/dispatch_committed', by(secondResumed)],
+      ['tool/result', by(secondResumed)],
+      ['execution/tool_outcome', by(secondResumed)],
     ])
   })
 
@@ -392,6 +449,12 @@ describe('a stop, a new message and the answers that lose to them', () => {
     expect(outcomes(entries)).toEqual(['0:not-run/stopped', '1:not-run/stopped'])
     expect(named(entries, 'execution/run_started')).toHaveLength(started)
     expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    // 旧 10: 重启后也不再弹出 — a restarted service delivers no card and lists nothing to resume.
+    const restarted = harness({ store: h.store, idsFrom: 1000 })
+    expect(await restarted.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(restarted.memory.confirmRequests).toEqual([])
+    expect(await restarted.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(await restarted.service.listPendingRoots({ limit: 20 })).toEqual([])
     expect(await answer(h, requestId, 'allow')).toEqual({ status: 'already-resolved' })
     expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: false })
     // The next request carries both closures.
@@ -471,11 +534,93 @@ describe('a stop, a new message and the answers that lose to them', () => {
     ])
     expect(await answer(h, requestId, 'allow')).toEqual({ status: 'already-resolved' })
   })
+
+  it('supersedes with the messages queued meanwhile first, in their order (旧 21, 验收 20)', async () => {
+    const h = harness()
+    await paused(h, 'a', 'b')
+    // Queued while the Run was busy: a pause takes nothing from the queue (§插话与输入框状态表).
+    await h.loop.queue.enqueue(SESSION, 'meanwhile', { urgent: false })
+    await h.loop.queue.enqueue(SESSION, 'and this', { urgent: false })
+    h.provider.script(done())
+    await send(h, 'instead')
+    const entries = await all(h)
+    expect(resolutions(entries)).toEqual(['superseded/new-message'])
+    // 取代: 已排队的消息按先后排在新消息前面一起发出 — after the closures, in one round.
+    const tail = entries
+      .filter((entry) => entry.name === 'tool/result' || entry.name === 'message/user')
+      .slice(-5)
+      .map((entry) =>
+        entry.name === 'tool/result'
+          ? 'result'
+          : ((entry.payload['content'] as { text: string }[])[0]?.text ?? ''),
+      )
+    expect(tail).toEqual(['result', 'result', 'meanwhile', 'and this', 'instead'])
+    expect(named(entries, 'execution/run_started')).toHaveLength(2)
+    // The request shows the model both results, then the three messages in that order.
+    const body = h.provider.requests.at(-1)?.body as {
+      messages: { role: string; content: { type: string; text?: string }[] }[]
+    }
+    const blocks = body.messages
+      .flatMap((message) => message.content)
+      .map((block) => (block.type === 'text' ? String(block.text) : block.type))
+    const afterCalls = blocks.slice(blocks.lastIndexOf('tool_use') + 1)
+    expect(
+      afterCalls.filter((block) =>
+        ['tool_result', 'meanwhile', 'and this', 'instead'].includes(block),
+      ),
+    ).toEqual(['tool_result', 'tool_result', 'meanwhile', 'and this', 'instead'])
+    expect(h.loop.queued(SESSION)).toEqual([])
+  })
+
+  it('cancels the card when a stop lands while a stale answer reads the Tape (「登记之后、append 之前被中止」)', async () => {
+    // The stop found the answer's live lease and aborted it: the holder closes for it (「停止」),
+    // whatever its target turned out to be.
+    let holding = false
+    const reached = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      listPendingApprovals: async (q) => {
+        if (holding) {
+          holding = false
+          reached.resolve()
+          await gate.promise
+        }
+        return inner.listPendingApprovals(q)
+      },
+    })
+    const h = harness({ store })
+    const old = await paused(h)
+    h.inspector.answer({ kind: 'none' })
+    h.memory.setPolicy(ASK_LOOK)
+    expect(await answer(h, old, 'allow')).toEqual({ status: 'stale' })
+    const fresh = await requestIdOf(h)
+    holding = true
+    const answering = answer(h, old, 'allow')
+    await reached.promise
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    gate.resolve()
+    expect(await answering).toEqual({ status: 'already-resolved' })
+    const entries = await all(h)
+    expect(resolutions(entries)).toEqual(['cancelled-by-stop/stop'])
+    expect(outcomes(entries)).toEqual(['0:not-run/stopped'])
+    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(await rows(h)).toBe(0)
+    expect(await answer(h, fresh, 'allow')).toEqual({ status: 'already-resolved' })
+  })
 })
 
 describe('the re-judgement before an allow (F3)', () => {
   it('tightens to a denial the policy now makes: denied-on-rejudge, not run, and the batch goes on (旧 4)', async () => {
-    const h = harness()
+    const appends: string[][] = []
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      append: async (batch) => {
+        appends.push(batch.entries.map((entry) => entry.name))
+        return inner.append(batch)
+      },
+    })
+    const h = harness({ store })
     const requestId = await paused(h)
     h.memory.setPolicy({
       status: 'current',
@@ -493,6 +638,17 @@ describe('the re-judgement before an allow (F3)', () => {
     ])
     expect(outcomes(entries)).toEqual(['0:not-run/policy'])
     expect(h.executed).toEqual([])
+    // 验收 12: the re-judgement, the resolution, the closure and the new Run's head in one append.
+    expect(appends.filter((names) => names.includes('tool/approval_resolved'))).toEqual([
+      [
+        'tool/permission_decided',
+        'tool/approval_resolved',
+        'tool/result',
+        'execution/tool_outcome',
+        'execution/run_started',
+        'session/model_selected',
+      ],
+    ])
   })
 
   it('answers stale when the card changed, and applies on the new card (旧 169)', async () => {
@@ -519,6 +675,75 @@ describe('the re-judgement before an allow (F3)', () => {
     entries = await all(h)
     expect(resolutions(entries)).toEqual(['allowed/card'])
     expect(h.executed).toEqual([{ at: 'a' }])
+  })
+
+  /** An allow whose card changed, and a stop or a quit that lands while the re-judgement commits. */
+  async function abortedWhileRejudging(cause: 'user-stop' | 'quit'): Promise<{
+    stopped: unknown
+    answered: unknown
+    resolutions: string[]
+    delivered: string[]
+    cardLeft: string | null
+  }> {
+    let holding = false
+    const reached = Promise.withResolvers<void>()
+    const gate = Promise.withResolvers<void>()
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    const store = proxyStore(inner, {
+      append: async (batch) => {
+        if (holding && batch.entries.some((entry) => entry.provenanceKey?.includes(':rejudge:'))) {
+          holding = false
+          reached.resolve()
+          await gate.promise
+        }
+        return inner.append(batch)
+      },
+    })
+    const h = harness({ store })
+    const old = await paused(h)
+    h.inspector.answer({ kind: 'none' })
+    h.memory.setPolicy(ASK_LOOK)
+    holding = true
+    const answering = answer(h, old, 'allow')
+    await reached.promise
+    const stopped =
+      cause === 'user-stop'
+        ? await h.service.stop({ rootSessionId: SESSION })
+        : h.loop.abort(SESSION, 'quit')
+    gate.resolve()
+    const answered = await answering
+    return {
+      stopped,
+      answered,
+      resolutions: resolutions(await all(h)),
+      delivered: h.memory.confirmRequests.map((request) => request.requestId.replace(old, 'old')),
+      cardLeft:
+        (await h.service.currentPending({ sessionId: SESSION }))?.card.requestId.replace(
+          old,
+          'old',
+        ) ?? null,
+    }
+  }
+
+  it('cancels the new card, never shown, when a stop lands while the changed re-judgement commits', async () => {
+    // 「停止」: 有活租约就 abort('user-stop') — the answer holding it closes as 暂停中停止.
+    expect(await abortedWhileRejudging('user-stop')).toEqual({
+      stopped: { stopped: true },
+      answered: { status: 'already-resolved' },
+      resolutions: ['cancelled-by-stop/stop'],
+      delivered: ['old'],
+      cardLeft: null,
+    })
+  })
+
+  it('leaves the new card for the restart when a quit lands there instead (B4)', async () => {
+    expect(await abortedWhileRejudging('quit')).toEqual({
+      stopped: true,
+      answered: { status: 'refused' },
+      resolutions: [],
+      delivered: ['old'],
+      cardLeft: 'old:rejudge:1',
+    })
   })
 
   it('closes a tool the build no longer has as tool-unavailable after a restart (旧 4)', async () => {
@@ -580,6 +805,123 @@ describe('the resumed Run (§续跑)', () => {
     )
   })
 
+  it('sends the one request to the paused model after it was withdrawn, and ends provider-error (旧 172, 验收 21)', async () => {
+    const h = harness()
+    const requestId = await paused(h)
+    const starts = h.provider.starts
+    const pausedSelected = named(await all(h), 'session/model_selected').at(-1)?.payload
+    // The row is gone: the menu offers another model now, and the server refuses the old one.
+    h.loop.connector.use({
+      provider: h.provider,
+      model: { ...MODEL, id: 'claude-answer-2' },
+      mcpSources: [lookSource(h.executed)],
+    })
+    h.provider.script(
+      scriptedTurn({
+        deltas: [],
+        terminal: {
+          type: 'error',
+          code: 'invalid-request',
+          retryable: false,
+          providerCode: 'not_found_error',
+          detail: `model: ${MODEL.id}`,
+        },
+      }),
+    )
+    expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toMatchObject({
+      code: 'provider-error',
+      errorCode: 'invalid-request',
+    })
+    expect(h.executed).toEqual([{ at: 'a' }])
+    // 模型已下线：发一次请求，以 provider-error 结束，不换别的模型.
+    expect(h.provider.starts).toBe(starts + 1)
+    const body = h.provider.requests.at(-1)?.body as { model: string } | undefined
+    expect(body?.model).toBe(MODEL.id)
+    expect(named(await all(h), 'session/model_selected').at(-1)?.payload).toEqual(pausedSelected)
+  })
+
+  it('keeps what ran and records a provider-error end when the base URL is unusable (§续跑)', async () => {
+    // 「第一次发请求时才构造 provider；构造失败也不能丢已执行调用的结果」: a value present but unusable
+    // is a configuration end, as a new round's prebuild reads it (`invalid-request`), not a Run left
+    // without its terminal.
+    const h = harness()
+    const requestId = await paused(h)
+    const starts = h.provider.starts
+    h.loop.connector.failProvider(
+      new ProviderInvalidArgumentError('baseURL must not carry a query string'),
+    )
+    expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
+    expect(await h.loop.runEnded()).toMatchObject({
+      recorded: true,
+      reason: {
+        code: 'provider-error',
+        providerId: 'anthropic',
+        errorCode: 'invalid-request',
+        attempts: 0,
+      },
+      errorCode: 'invalid-request',
+    })
+    expect(h.executed).toEqual([{ at: 'a' }])
+    const entries = await all(h)
+    expect(outcomes(entries)).toEqual(['0:completed/null'])
+    expect(named(entries, 'execution/run_terminal')).toHaveLength(2)
+    expect(h.provider.starts).toBe(starts)
+  })
+
+  it('keeps the paused Run’s provider, model, source, effort, system and tools across an upgrade (旧 15, 旧 16, 不变量 25)', async () => {
+    const row = anthropicDefinition.builtinModels.find((model) => model.id === 'claude-sonnet-5')
+    if (row === undefined) throw new Error('no claude-sonnet-5 row')
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const before = harness({
+      store,
+      model: row,
+      effort: 'low',
+      capabilitySource: 'user',
+      locale: 'en',
+    })
+    const requestId = await paused(before)
+    // The simulated upgrade: a new process whose menu picked another model and effort, whose
+    // interface speaks another language, whose server describes its tool differently, and whose
+    // builtin tools read differently.
+    const spec = vi.spyOn(BUILTIN_TOOLS.WebFetch, 'spec').mockImplementation(() => ({
+      name: 'WebFetch',
+      description: 'Fetches a page, as the upgraded build describes it.',
+      inputSchema: { type: 'object' },
+    }))
+    try {
+      const after = harness({
+        store,
+        idsFrom: 1000,
+        model: { ...row, id: 'claude-answer-2' },
+        effort: 'max',
+        capabilitySource: 'builtin',
+        locale: 'zh-CN',
+        description: 'A tool that looks, rewritten.',
+      })
+      after.provider.script(done())
+      expect(await answer(after, requestId, 'allow')).toEqual({ status: 'applied' })
+      expect((await after.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    } finally {
+      spec.mockRestore()
+    }
+    const entries = await all(before)
+    const [pausedAttempt, resumedAttempt] = named(entries, 'provider/attempt_completed')
+    const [pausedSelected, resumedSelected] = named(entries, 'session/model_selected')
+    expect(resumedSelected?.payload).toEqual(pausedSelected?.payload)
+    expect(resumedSelected?.payload).toMatchObject({
+      providerId: 'anthropic',
+      modelId: row.id,
+      capabilitySource: 'user',
+    })
+    expect(attemptSnapshot(resumedAttempt)).toEqual(attemptSnapshot(pausedAttempt))
+    expect(pausedAttempt?.payload['request']).toMatchObject({ effort: 'low' })
+    // One system text for the incarnation, the one assembled before the pause.
+    expect(
+      named(entries, 'view/content').filter((entry) => entry.payload['type'] === 'system'),
+    ).toHaveLength(1)
+  })
+
   it('runs the approved call even when the key is gone, then ends as auth with no request (旧 172)', async () => {
     const h = harness()
     const requestId = await paused(h)
@@ -611,17 +953,27 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
     expect(named(entries, 'execution/run_started')).toHaveLength(1)
   })
 
-  it('writes nothing on a quit there, and the card is still there', async () => {
+  it('writes nothing on a quit there, and the card is still there after the restart (B4)', async () => {
     const h = harness()
     const requestId = await paused(h)
-    const before = (await all(h)).length
+    const before = await all(h)
     h.inspector.answer('never')
     const answering = answer(h, requestId, 'allow')
     await Promise.resolve()
     expect(h.loop.abort(SESSION, 'quit')).toBe(true)
     expect(await answering).toEqual({ status: 'refused' })
-    expect(await all(h)).toHaveLength(before)
+    // 以 quit 中止，Tape 逐字节不变、重启后卡还在.
+    expect(await all(h)).toEqual(before)
     expect(await h.service.currentPending({ sessionId: SESSION })).not.toBeNull()
+    const restarted = harness({ store: h.store, idsFrom: 1000 })
+    expect(await restarted.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(restarted.memory.confirmRequests.map((request) => request.requestId)).toEqual([
+      requestId,
+    ])
+    restarted.provider.script(done())
+    expect(await answer(restarted, requestId, 'allow')).toEqual({ status: 'applied' })
+    expect((await restarted.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(restarted.executed).toEqual([{ at: 'a' }])
   })
 
   it('reads a close-window then a stop as the stop', async () => {
@@ -720,7 +1072,9 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
   })
 
   /** A pause whose append a stop or a quit reaches mid-flight; what the Run and the Tape say after. */
-  async function stoppedWhilePausing(cause: 'user-stop' | 'quit'): Promise<{
+  async function stoppedWhilePausing(
+    cause: 'user-stop' | 'quit' | 'close-window-then-stop',
+  ): Promise<{
     stopped: unknown
     reason: unknown
     delivered: number
@@ -744,10 +1098,11 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: `go ${cause}` })
     if (sent.status !== 'started') throw new Error('not started')
     await reached.promise
+    if (cause === 'close-window-then-stop') h.loop.abort(SESSION, 'close-window')
     const stopped =
-      cause === 'user-stop'
-        ? await h.service.stop({ rootSessionId: SESSION })
-        : h.loop.abort(SESSION, 'quit')
+      cause === 'quit'
+        ? h.loop.abort(SESSION, 'quit')
+        : await h.service.stop({ rootSessionId: SESSION })
     gate.resolve()
     const ended = await h.loop.runEnded({ runId: sent.runId })
     return {
@@ -761,6 +1116,17 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
 
   it('cancels a pause a stop reached while it committed, in the same task (「Run 结束」)', async () => {
     expect(await stoppedWhilePausing('user-stop')).toEqual({
+      stopped: { stopped: true },
+      reason: { code: 'paused', waitingFor: 'approval' },
+      delivered: 0,
+      resolutions: ['cancelled-by-stop/stop'],
+      cardLeft: false,
+    })
+  })
+
+  it('reads a close-window then a stop there as the stop (「Run 结束」: lease.stopRequested)', async () => {
+    // 答复已登记、还没 append 时先以 close-window 中止、再 chat.stop（上一条两个时点同样再各跑一次）.
+    expect(await stoppedWhilePausing('close-window-then-stop')).toEqual({
       stopped: { stopped: true },
       reason: { code: 'paused', waitingFor: 'approval' },
       delivered: 0,

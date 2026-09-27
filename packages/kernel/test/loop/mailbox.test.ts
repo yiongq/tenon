@@ -30,6 +30,7 @@ import {
   scriptedTurn,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
+import { proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'loop-user', tenantId: 'loop-tenant', profileDir: '/tenon/loop' }
 const SESSION = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
@@ -64,8 +65,12 @@ interface Harness {
   readonly loop: TestLoopPorts
 }
 
-function harness(onEvent?: (event: SessionEvent, h: Harness) => void): Harness {
-  const store = createMemoryTapeStore({ identity: IDENTITY })
+function harness(
+  onEvent?: (event: SessionEvent, h: Harness) => void,
+  wrap?: (inner: TapeStore) => TapeStore,
+): Harness {
+  const inner = createMemoryTapeStore({ identity: IDENTITY })
+  const store = wrap?.(inner) ?? inner
   const provider = createScriptedProvider({ models: [MODEL] })
   let self: Harness | null = null
   const loop = createTestLoopPorts({
@@ -166,6 +171,33 @@ describe('leases and the arrival order', () => {
     expect(started.status).toBe('started')
     if (started.status === 'started') await h.loop.runEnded({ runId: started.runId })
     expect(h.loop.leaseLog.map((lease) => lease.finished)).toEqual([true, true])
+  })
+
+  it('finishes the lease of a turn whose read throws, and the command behind it still runs', async () => {
+    // 「租约」: 最后没开 Run 的就 finish — a read that fails inside the turn too (an SQLite I/O error
+    // stands in); otherwise the root waits on a dead lease for good (models/README: 没有死锁).
+    let failures = 1
+    const h = harness(undefined, (inner) =>
+      proxyStore(inner, {
+        listPendingApprovals: (q) =>
+          failures-- > 0
+            ? Promise.reject(new Error('SQLITE_IOERR: disk I/O error'))
+            : inner.listPendingApprovals(q),
+      }),
+    )
+    h.provider.script(scriptedTurn({ deltas: ['an answer'], usage: USAGE }))
+    const held = h.loop.connector.holdAssemble()
+    const first = h.service.send({ sessionId: SESSION, origin: null, text: 'first' })
+    await held.reached
+    const second = h.service.send({ sessionId: SESSION, origin: null, text: 'second' })
+    held.release()
+    await expect(first).rejects.toThrow(/SQLITE_IOERR/)
+    // Judged once the failed turn let go: an idle root, so a round of its own.
+    const started = await second
+    expect(started.status).toBe('started')
+    if (started.status === 'started') await h.loop.runEnded({ runId: started.runId })
+    expect(h.loop.leaseLog.map((lease) => lease.finished)).toEqual([true, true])
+    expect(h.loop.liveLease(SESSION)).toBeNull()
   })
 
   it('queues a send that arrives while a Run streams, marked urgent once that Run is stopped', async () => {

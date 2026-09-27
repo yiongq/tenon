@@ -92,7 +92,7 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
   const resumable: Resumable[] = []
   const errors: string[] = []
   const cards: ConfirmRequest[] = []
-  for (const sessionId of await allSessions(deps.tape)) {
+  for (const sessionId of await allSessions(deps, errors)) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- one session after another: each is one append per Run
       await closeUnfinishedRuns(deps, sessionId, errors)
@@ -113,19 +113,42 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
   return { resumable, errors, cards }
 }
 
-/** Every session of this store's tenant, newest first, paged. */
-async function allSessions(tape: Tape): Promise<string[]> {
+/**
+ * Every session of this store's tenant, newest first, paged. The cursor is strictly below (01's
+ * `listSessions`), so the next page starts AT the last row's `updatedAt` — its cursor one above it
+ * — and the rows seen already are dropped: a session sharing that `updatedAt` with the page boundary
+ * is still recovered before its next request (裁决 B1). Only a full page of one `updatedAt` cannot
+ * be paged past that way; it moves below it, and the sessions it could not reach are an error line.
+ */
+async function allSessions(deps: RecoveryDeps, errors: string[]): Promise<string[]> {
   const ids: string[] = []
+  const seen = new Set<string>()
   let updatedBefore: number | undefined
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- the next page's cursor is this page's last row
-    const page = await tape.listSessions({
+    const page = await deps.tape.listSessions({
       limit: MAX_READ_LIMIT,
       ...(updatedBefore === undefined ? {} : { updatedBefore }),
     })
-    ids.push(...page.map((row) => row.sessionId))
-    if (page.length < MAX_READ_LIMIT) return ids
-    updatedBefore = page.at(-1)?.updatedAt
+    const before = ids.length
+    for (const row of page) {
+      if (seen.has(row.sessionId)) continue
+      seen.add(row.sessionId)
+      ids.push(row.sessionId)
+    }
+    const first = page[0]
+    const last = page.at(-1)
+    if (page.length < MAX_READ_LIMIT || first === undefined || last === undefined) return ids
+    if (first.updatedAt === last.updatedAt) {
+      const line = `[recovery] ${String(MAX_READ_LIMIT)} sessions share updatedAt ${String(last.updatedAt)}: any more of them were not scanned`
+      deps.log(line)
+      errors.push(line)
+    }
+    // Every page adds a session or moves strictly below its last row: the scan ends.
+    updatedBefore =
+      first.updatedAt === last.updatedAt || ids.length === before
+        ? last.updatedAt
+        : last.updatedAt + 1
   }
 }
 
