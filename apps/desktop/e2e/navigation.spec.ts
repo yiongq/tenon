@@ -182,7 +182,12 @@ test('paused on a card, New leaves at once; the banner’s 「回去」 makes th
     await newChatFromSidebar(page)
     const dialog = page.getByTestId('leave-run')
     await expect(dialog).toBeVisible()
-    // Esc in the dialog is 「留在这里」, never the thread's stop (Thread.tsx StopOnEscape).
+    // Esc in the dialog is 「留在这里」, never the thread's stop (Thread.tsx StopOnEscape) — also in
+    // the moment before Base UI has moved focus into it, which a busy machine makes wide: focus is
+    // taken off the dialog here so the Esc lands outside it, as it did in the flaky full runs.
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    })
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
     await page.waitForTimeout(300)

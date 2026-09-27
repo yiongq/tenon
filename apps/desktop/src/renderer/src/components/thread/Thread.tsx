@@ -27,6 +27,13 @@ const OWN_ESCAPE =
   '[data-testid="approval-card"], [role="dialog"], [role="alertdialog"], [role="menu"]'
 
 /**
+ * An open dialog or menu owns Esc wherever focus is: Base UI moves focus into a popup a moment
+ * after it opens, and an Esc in that moment closes the popup, never stops the Run. Closed popups
+ * are unmounted (nothing here keeps them mounted), so presence means open.
+ */
+const OPEN_POPUP = '[role="dialog"], [role="alertdialog"], [role="menu"]'
+
+/**
  * Esc stops (spec 02 §模型菜单与输入框「按键」: 焦点在卡内 = 拒绝，其余 = 停止; components.md
  * StopButton「Esc 等效」) whenever the stop button shows — never while an input method is composing.
  */
@@ -39,6 +46,7 @@ function StopOnEscape(): null {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
       if (event.target instanceof Element && event.target.closest(OWN_ESCAPE) !== null) return
+      if (document.querySelector(OPEN_POPUP) !== null) return
       event.preventDefault()
       void store.stop()
     }
