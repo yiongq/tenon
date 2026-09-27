@@ -456,6 +456,42 @@ export const VENDOR_BLOCKS_FRAMES: readonly string[] = [
   MESSAGE_STOP,
 ]
 
+/** Fields the three other known block types carry beyond the ones the adapter maps. */
+export const REDACTED_EXTRA_FIELD = { future_redacted: 'r1' }
+export const TEXT_EXTRA_FIELD = { future_text: { k: 1 } }
+export const TOOL_USE_EXTRA_FIELD = { future_tool: [1, 2] }
+/** A citation as the documented `citations_delta` carries it; folded into the text's `citations`. */
+export const CITATION = {
+  type: 'char_location',
+  cited_text: 'tenon',
+  document_index: 0,
+  document_title: 'Notes',
+  start_char_index: 0,
+  end_char_index: 5,
+}
+export const VENDOR_FIELDS_TEXT = 'Looking.'
+
+/**
+ * A redacted block, a cited text block and a direct call, each with a field the adapter does not map,
+ * ended as `tool_use`: the call is `toolName`'s, with `args` as its one argument fragment.
+ */
+export function vendorFieldsFrames(toolName: string, args: string): readonly string[] {
+  return [
+    messageStart(),
+    blockStart(0, { type: 'redacted_thinking', data: REDACTED_DATA, ...REDACTED_EXTRA_FIELD }),
+    blockStop(0),
+    blockStart(1, { ...TEXT_START, ...TEXT_EXTRA_FIELD }),
+    blockDelta(1, { type: 'text_delta', text: VENDOR_FIELDS_TEXT }),
+    blockDelta(1, { type: 'citations_delta', citation: CITATION }),
+    blockStop(1),
+    blockStart(2, { ...(toolStart(TOOL_ID, toolName) as object), ...TOOL_USE_EXTRA_FIELD }),
+    blockDelta(2, { type: 'input_json_delta', partial_json: args }),
+    blockStop(2),
+    messageDelta('tool_use', true),
+    MESSAGE_STOP,
+  ]
+}
+
 export const SERVER_TOOL_ID = 'srvtoolu_01Fixture'
 export const SERVER_QUERY_FRAGMENTS = ['{"query":', ' "tenon"}'] as const
 export const SERVER_TOOL_RESULT = {
@@ -498,6 +534,31 @@ export const SERVER_EXECUTED_FRAMES: readonly string[] = [
   blockStart(4, TEXT_START),
   blockDelta(4, { type: 'text_delta', text: SERVER_ANSWER }),
   blockStop(4),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
+/** Streamed vendor input that never forms a JSON object: an unterminated object each time. */
+export const GARBLED_SERVER_QUERY = '{"query": "x"'
+export const GARBLED_FUTURE_INPUT = '{"a":'
+/** A block of a type the adapter does not map that takes streamed input, as it starts. */
+export const FUTURE_CALL_START = { type: 'future_call', id: 'fut_01Fixture', input: {} }
+
+/**
+ * Two vendor blocks whose streamed input does not parse — a server call (`never` already) and an
+ * unknown block that would otherwise go back to the same model — then an ordinary answer.
+ */
+export const GARBLED_VENDOR_INPUT_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, { type: 'server_tool_use', id: SERVER_TOOL_ID, name: 'web_search', input: {} }),
+  blockDelta(0, { type: 'input_json_delta', partial_json: GARBLED_SERVER_QUERY }),
+  blockStop(0),
+  blockStart(1, FUTURE_CALL_START),
+  blockDelta(1, { type: 'input_json_delta', partial_json: GARBLED_FUTURE_INPUT }),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(2),
   messageDelta('end_turn'),
   MESSAGE_STOP,
 ]

@@ -241,15 +241,19 @@ function watchedBody(
 }
 
 /**
- * What the request-header allowlist lets out (spec 02, 01 修补 4; decision A6): exact names, name
- * prefixes (the `x-stainless-*` group, let through until phase 6), and the protocol headers whose
- * value is fixed — re-set to that value whatever the SDK merged in, because `*_CUSTOM_HEADERS` env
- * lines can replace the value of an allowed header, not only add a name (02 plan step 3, checks 3
- * and 5). The kernel decides `anthropic-beta` itself; 02's list is empty, so it is not allowed.
+ * What the request-header allowlist lets out (spec 02, 01 修补 4; decision A6): exact names, and the
+ * protocol headers whose value is fixed — re-set to that value whatever the SDK merged in, because
+ * `*_CUSTOM_HEADERS` env lines can replace the value of an allowed header, not only add a name (02
+ * plan step 3, checks 3 and 5). The kernel decides `anthropic-beta` itself; 02's list is empty, so it
+ * is not allowed.
+ *
+ * Names only, never a prefix: the `x-stainless-*` group let through until phase 6 (01 open question
+ * 1) is the SDK's OWN group, each name as the pinned SDK sends it. A prefix would also let out any
+ * `x-stainless-anything:` line an env variable adds, and invariant 3 is that the header set with the
+ * variable set is the one without it.
  */
 export interface HeaderAllowList {
   readonly names: readonly string[]
-  readonly prefixes: readonly string[]
   readonly pinned: Readonly<Record<string, string>>
 }
 
@@ -267,9 +271,7 @@ export function allowedRequestInit(
   incoming.forEach((value, name) => {
     const lower = name.toLowerCase()
     if (Object.hasOwn(allow.pinned, lower)) return
-    if (allow.names.includes(lower) || allow.prefixes.some((prefix) => lower.startsWith(prefix))) {
-      out.set(lower, value)
-    }
+    if (allow.names.includes(lower)) out.set(lower, value)
   })
   for (const [name, value] of Object.entries(allow.pinned)) out.set(name, value)
   return { ...init, headers: out }

@@ -198,6 +198,61 @@ describe('the byte-level idle watchdog (旧 48, 旧 103)', () => {
   })
 })
 
+describe('the watchdog is torn down when the body is cancelled (旧 103, 01 修补 4)', () => {
+  // 「响应体读完、被取消或出错时拆除」: read to the end is the case above; these are the other two
+  // ways a body stops being read — a Stop, and a consumer that leaves early. Either would otherwise
+  // leave a 180 s / 300 s host timer armed after every stopped turn.
+  const wires = [
+    ['anthropic-messages', anthropicDefinition, SONNET, anthropicFixture.PLAIN_TEXT_FRAMES],
+    ['openai-chat', zhipuDefinition, GLM, openAIFixture.PLAIN_TEXT_FRAMES],
+  ] as const
+
+  async function opened(
+    definition: ProviderDefinition,
+    model: ModelInfo,
+    frames: readonly string[],
+  ) {
+    const time = countingClock()
+    const gate = createStreamGate()
+    const provider = build(definition, fakeNetwork({ kind: 'sse', frames, gate }), time.clock)
+    const controller = new AbortController()
+    const stream = provider.stream(provider.encode(requestOf(model)), {
+      identity: IDENTITY,
+      signal: controller.signal,
+    })
+    const iterator = stream[Symbol.asyncIterator]()
+    await flush()
+    gate.release(1)
+    const first = await iterator.next()
+    expect(first.done).toBe(false)
+    // Armed while the body is open: what the two cases below have to take down.
+    expect(time.armed()).toBe(1)
+    return { time, controller, iterator }
+  }
+
+  for (const [wire, definition, model, frames] of wires) {
+    it(`${wire}: a Stop mid-stream`, async () => {
+      const { time, controller, iterator } = await opened(definition, model, frames)
+      controller.abort()
+      const rest: StreamEvent[] = []
+      // oxlint-disable-next-line no-await-in-loop -- the rest of one stream, in order
+      for (let step = await iterator.next(); step.done !== true; step = await iterator.next()) {
+        rest.push(step.value)
+      }
+      await flush()
+      expect(rest.at(-1)).toMatchObject({ type: 'stop', reason: 'aborted' })
+      expect(time.armed()).toBe(0)
+    })
+
+    it(`${wire}: the consumer returning early`, async () => {
+      const { time, iterator } = await opened(definition, model, frames)
+      await iterator.return?.()
+      await flush()
+      expect(time.armed()).toBe(0)
+    })
+  }
+})
+
 function timeoutHeader(net: FakeNetwork): string | undefined {
   return net.requests[0]?.headers['x-stainless-timeout']
 }
@@ -284,6 +339,13 @@ describe('top-level cache_control (旧 102)', () => {
   })
 })
 
+/** The SDK's own `x-stainless-*` names a request carries — the group 01 open question 1 keeps. */
+function stainless(headers: Readonly<Record<string, string>>): string[] {
+  return Object.keys(headers)
+    .filter((name) => name.startsWith('x-stainless-'))
+    .toSorted()
+}
+
 describe('02 不变量 3: the request-header allowlist (旧 104)', () => {
   const ENV = ['ANTHROPIC_CUSTOM_HEADERS', 'OPENAI_CUSTOM_HEADERS'] as const
 
@@ -311,6 +373,16 @@ describe('02 不变量 3: the request-header allowlist (旧 104)', () => {
     }
   }
 
+  const STAINLESS_BOTH = [
+    'x-stainless-arch',
+    'x-stainless-lang',
+    'x-stainless-os',
+    'x-stainless-package-version',
+    'x-stainless-retry-count',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+  ]
+
   it('keeps an ANTHROPIC_CUSTOM_HEADERS line from adding a header or changing a value', async () => {
     const exchange: FakeExchange = { kind: 'sse', frames: anthropicFixture.PLAIN_TEXT_FRAMES }
     const clean = await headersWith({}, anthropicDefinition, SONNET, exchange)
@@ -319,6 +391,8 @@ describe('02 不变量 3: the request-header allowlist (旧 104)', () => {
         ANTHROPIC_CUSTOM_HEADERS: [
           'anthropic-beta: sneaky-2026-01-01',
           'x-foo: bar',
+          // A name inside the group's prefix the SDK never sends is a header added all the same.
+          'x-stainless-foo: bar',
           'anthropic-version: 1999-01-01',
           'user-agent: evil',
           'accept: text/html',
@@ -331,23 +405,37 @@ describe('02 不变量 3: the request-header allowlist (旧 104)', () => {
     expect(decoyed).toEqual(clean)
     expect(decoyed['anthropic-beta']).toBeUndefined()
     expect(decoyed['x-foo']).toBeUndefined()
+    expect(decoyed['x-stainless-foo']).toBeUndefined()
     expect(decoyed['anthropic-version']).toBe('2023-06-01')
     expect(decoyed['x-api-key']).toBe(KEY)
-    expect(Object.keys(decoyed).some((name) => name.startsWith('x-stainless-'))).toBe(true)
+    // The SDK's own eight still go (plan step 3, check 5).
+    expect(stainless(decoyed)).toEqual([...STAINLESS_BOTH, 'x-stainless-timeout'].toSorted())
   })
 
   it('does the same for OPENAI_CUSTOM_HEADERS', async () => {
     const exchange: FakeExchange = { kind: 'sse', frames: openAIFixture.PLAIN_TEXT_FRAMES }
     const clean = await headersWith({}, zhipuDefinition, GLM, exchange)
     const decoyed = await headersWith(
-      { OPENAI_CUSTOM_HEADERS: ['x-foo: bar', 'user-agent: evil', 'accept: text/html'].join('\n') },
+      {
+        OPENAI_CUSTOM_HEADERS: [
+          'anthropic-beta: sneaky',
+          'x-foo: bar',
+          'x-stainless-foo: bar',
+          'user-agent: evil',
+          'accept: text/html',
+        ].join('\n'),
+      },
       zhipuDefinition,
       GLM,
       exchange,
     )
     expect(decoyed).toEqual(clean)
+    expect(decoyed['anthropic-beta']).toBeUndefined()
     expect(decoyed['x-foo']).toBeUndefined()
+    expect(decoyed['x-stainless-foo']).toBeUndefined()
     expect(decoyed.authorization).toBe(`Bearer ${KEY}`)
+    // The SDK's own seven still go: this wire passes the SDK no per-request timeout.
+    expect(stainless(decoyed)).toEqual(STAINLESS_BOTH)
   })
 })
 

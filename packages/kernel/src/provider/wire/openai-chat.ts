@@ -88,20 +88,31 @@ const WIRE = 'openai-chat'
 
 /**
  * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
- * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, the credential, the
- * `x-stainless-*` group. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot
- * rewrite them.
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, the credential, and
+ * the SDK's seven `x-stainless-*` headers by name — no `x-stainless-timeout`, since this wire passes
+ * the SDK no per-request timeout, and no `x-stainless-helper-method`, which only the SDK's helpers
+ * set. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot rewrite them. Re-read
+ * this list with every SDK pin.
  */
 const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
-  names: Object.freeze(['content-type', 'authorization']),
-  prefixes: Object.freeze(['x-stainless-']),
+  names: Object.freeze([
+    'content-type',
+    'authorization',
+    'x-stainless-arch',
+    'x-stainless-lang',
+    'x-stainless-os',
+    'x-stainless-package-version',
+    'x-stainless-retry-count',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+  ]),
   pinned: Object.freeze({ accept: 'application/json', 'user-agent': `OpenAI/JS ${SDK_VERSION}` }),
 })
 
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
  * 1 is spec 02's encoder — `reasoning_effort`, the vendor blocks and the trailing-user rule; add one
- * with every change to what it encodes.
+ * with every change to what it encodes, and a row to test/provider/wire/encoder-version.test.ts.
  */
 const ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
@@ -912,7 +923,12 @@ function createChunkSlots() {
       // First statement wins for both: a wire that restates them is not renaming the call.
       const id = nonEmpty(raw.id)
       const call = slotFor(raw, id)
-      if (call === null || call.skipped) return []
+      if (call === null) return []
+      // Recorded before either early return: slotFor() tells a new call from a continuation by its
+      // id, and a vendor or skipped call with no id on record would swallow a client call that
+      // reuses its index — that call then goes unarchived AND undispatched (01 修补 9 (t)).
+      if (id !== null && call.id === null) call.id = id
+      if (call.skipped) return []
       if (call.vendor !== null) {
         // Read as a record: a call the vendor runs states fields no OpenAI type declares.
         const fields = raw as unknown as Record<string, unknown>
@@ -924,7 +940,6 @@ function createChunkSlots() {
         return []
       }
       const out: StreamEvent[] = []
-      if (id !== null && call.id === null) call.id = id
       const name = nonEmpty(raw.function?.name)
       if (name !== null && call.name === null) call.name = name
       if (!call.started && call.id !== null && call.name !== null) {

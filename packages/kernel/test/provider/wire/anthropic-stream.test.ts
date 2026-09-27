@@ -1000,6 +1000,39 @@ describe('AnthropicMessagesProvider vendor blocks (spec 02, 01 修补 2 and 9 (t
     ])
   })
 
+  it('archives a vendor block whose streamed input does not parse, never to be sent back', async () => {
+    // 01 修补 2 「未知块……原样存进 Tape」, §崩溃、服务端调用块与兜底「块存进 Tape」: the block used to
+    // vanish at its stop, so the Tape had no record that the vendor ran a call and the loop never
+    // logged it. Now the start as it arrived, the fragments as their unparsed text.
+    const { events } = await run(sse(fixture.GARBLED_VENDOR_INPUT_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 0,
+        raw: {
+          type: 'server_tool_use',
+          id: fixture.SERVER_TOOL_ID,
+          name: 'web_search',
+          input: {},
+          partial_json: fixture.GARBLED_SERVER_QUERY,
+        },
+        replay: 'never',
+      },
+      {
+        type: 'vendor-block',
+        index: 1,
+        raw: { ...fixture.FUTURE_CALL_START, partial_json: fixture.GARBLED_FUTURE_INPUT },
+        // Not `same-model`: a block whose content we cannot state cannot go back as it was.
+        replay: 'never',
+      },
+    ])
+    expect(events.filter((event) => event.type.startsWith('tool-call'))).toEqual([])
+    expect(terminalsOf(events)).toEqual([
+      { type: 'stop', reason: 'end-turn', providerReason: 'end_turn' },
+    ])
+  })
+
   it('reports the model message_start names, once', async () => {
     const { events } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
     expect(events.filter((event) => event.type === 'response-model')).toEqual([

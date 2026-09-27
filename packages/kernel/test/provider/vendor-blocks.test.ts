@@ -39,9 +39,11 @@ import {
   assertToolPairing,
   createCounterIds,
   createTestLoopPorts,
+  createTestSessionService,
   fakeNetwork,
 } from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
+import { LOOK, instantHost, lookSource } from '../loop/support.js'
 import * as fixture from './fixtures/anthropic-sse.js'
 import { TOOL, anthropicModel, assistant, openAIModel, requestOf, user } from './wire/fixtures.js'
 
@@ -157,6 +159,71 @@ describe('vendor blocks through the Tape (旧 43)', () => {
     expect(s.net.checkFailures).toEqual([])
   })
 
+  it('replays the unknown fields of a redacted, a text and a tool_use block byte for byte', async () => {
+    // Acceptance 7 「未知字段同模型回放逐字节相同」 for the three other known block types: the text
+    // block's `citations` come from citations_delta, the rest ride on the block's start. The call is
+    // run, so the SAME run's next request carries the turn back, rebuilt from the Tape.
+    const net = fakeNetwork(
+      [
+        fixture.vendorFieldsFrames(LOOK, JSON.stringify({ at: 'a' })),
+        fixture.PLAIN_TEXT_FRAMES,
+      ].map((frames) => ({ kind: 'sse' as const, frames })),
+      {
+        checkRequest: (request) => {
+          assertToolPairing(request)
+          assertLastTurnIsUser(request)
+        },
+      },
+    )
+    const provider = anthropicDefinition.create({
+      network: net,
+      clock: { now: () => 0, setTimeout: () => () => undefined },
+      config: { baseURL: 'https://api.anthropic.test' },
+      secrets: { apiKey: 'test-key-not-a-real-credential' },
+    })
+    const loop = createTestLoopPorts({
+      connector: { provider, model: MODEL, mcpSources: [lookSource([])] },
+    })
+    const service = createTestSessionService(
+      {
+        host: instantHost(),
+        tape: createMemoryTapeStore({ identity: TAPE_IDENTITY }),
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: loop.connector,
+        protectedFiles: [],
+      },
+      { tools: {}, userSetting: () => ({ userSetting: 'always-allow' }) },
+    )
+    service.bindLoop(loop)
+    const { sessionId } = await service.createSession()
+    const sent = await service.send({ sessionId, origin: null, text: 'look at a' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await loop.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
+    const [turn] = assistantTurns(net, 1)
+    expect(turn?.map((block) => canonicalJson(block))).toEqual([
+      canonicalJson({
+        type: 'redacted_thinking',
+        data: fixture.REDACTED_DATA,
+        ...fixture.REDACTED_EXTRA_FIELD,
+      }),
+      canonicalJson({
+        type: 'text',
+        text: fixture.VENDOR_FIELDS_TEXT,
+        ...fixture.TEXT_EXTRA_FIELD,
+        citations: [fixture.CITATION],
+      }),
+      canonicalJson({
+        type: 'tool_use',
+        id: fixture.TOOL_ID,
+        name: LOOK,
+        input: { at: 'a' },
+        ...fixture.TOOL_USE_EXTRA_FIELD,
+      }),
+    ])
+    expect(net.checkFailures).toEqual([])
+  })
+
   it('drops both on a model change and records why', async () => {
     const s = await session([fixture.VENDOR_BLOCKS_FRAMES, fixture.PLAIN_TEXT_FRAMES])
     await s.send('first')
@@ -245,7 +312,7 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     const attempt = await s.send('hi')
     expect(attempt.payload['encoder']).toEqual({
       wire: 'anthropic-messages',
-      version: 1,
+      version: 2,
       sdk: expect.stringMatching(/^@anthropic-ai\/sdk@\d+\.\d+\.\d+$/),
     })
     // canonicalHash(pick(model, WIRE_MODEL_FIELDS)), computed here from the definition.
@@ -293,6 +360,8 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
       ]),
       ...zhipuDefinition.builtinModels.map((m): readonly [ModelInfo, Wire] => [m, 'openai-chat']),
       [anthropicModel({ canonicalId: 'claude-canonical' }), 'anthropic-messages'],
+      [anthropicModel({ thinkingPreservationFormat: 'text-only' }), 'anthropic-messages'],
+      [openAIModel(), 'openai-chat'],
       [
         openAIModel({
           thinkingPreservationFormat: 'reasoning-content',
@@ -304,6 +373,10 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     for (const [model, wire] of rows) {
       const req: ProviderRequest = {
         ...requestOf(watched(model), { system: 's', tools: [TOOL] }),
+        // Every path encode() reads a ModelInfo on (plan 旧 112): the thinking guard and its
+        // application, the vendor-block guard, a tool pair and an image, not only the body keys.
+        messages: guardedHistory(model, wire),
+        dropThinkingBefore: 0,
         ...(model.thinkingSpec?.effortLevels?.[0] === undefined
           ? {}
           : { effort: model.thinkingSpec.effortLevels[0] }),
@@ -314,7 +387,54 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     expect(
       [...read].filter((key) => !(WIRE_MODEL_FIELDS as readonly string[]).includes(key)),
     ).toEqual([])
-    // And the watch saw something: an encoder that read nothing would pass the line above.
-    expect(read.has('thinkingSpec')).toBe(true)
+    // And the watch reached the guard: an encoder that read nothing, or a request that never got
+    // past the body keys, would pass the line above.
+    expect(
+      ['thinkingSpec', 'thinkingPreservationFormat', 'canonicalId', 'reasoningEchoField'].filter(
+        (key) => !read.has(key),
+      ),
+    ).toEqual([])
   })
 })
+
+/**
+ * A same-model history for `model` that reaches every guard rule a row can reach: a signed and a
+ * redacted reasoning block, a vendor block of each replay kind the wire decodes, a tool pair, an
+ * image, ending on a user turn. Stamped with the guard's own identity for the row (canonicalId when
+ * it has one), so rules 1 and 2 pass and rules 3-7 run.
+ */
+function guardedHistory(model: ModelInfo, wire: 'anthropic-messages' | 'openai-chat') {
+  const provider = model.providerId
+  const providerModel = model.canonicalId ?? model.id
+  const vendor = (replay: 'same-model' | 'never'): ContentBlock => ({
+    type: 'vendor',
+    provider,
+    providerModel,
+    raw: { type: replay === 'never' ? 'server_tool_use' : 'future_block', id: `v-${replay}` },
+    replay,
+  })
+  return [
+    user({ type: 'text', text: 'a' }),
+    assistant(
+      {
+        type: 'thinking',
+        text: 'weighing',
+        signature: 'c2lnbmVk',
+        provider,
+        providerModel,
+      },
+      { type: 'redacted-thinking', data: 'cmVkYWN0ZWQ=', provider, providerModel },
+      // The OpenAI-compatible wire decodes only calls the vendor ran itself.
+      ...(wire === 'anthropic-messages' ? [vendor('same-model')] : []),
+      vendor('never'),
+      { type: 'text', text: 'looking' },
+      { type: 'tool-request', id: 't1', name: TOOL.name, input: { path: 'a' } },
+    ),
+    user(
+      { type: 'tool-response', id: 't1', isError: false, content: [{ type: 'text', text: 'x' }] },
+      { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' },
+    ),
+    assistant({ type: 'text', text: 'b' }),
+    user({ type: 'text', text: 'c' }),
+  ]
+}

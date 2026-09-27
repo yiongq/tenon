@@ -88,13 +88,26 @@ const WIRE = 'anthropic-messages'
 
 /**
  * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
- * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, one credential, the
- * `x-stainless-*` group. The fixed protocol values are pinned, so an `ANTHROPIC_CUSTOM_HEADERS` line
- * cannot rewrite them; `anthropic-beta` is the kernel's to decide and 02 decides none.
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, one credential, and
+ * the SDK's eight `x-stainless-*` headers by name. The fixed protocol values are pinned, so an
+ * `ANTHROPIC_CUSTOM_HEADERS` line cannot rewrite them; `anthropic-beta` is the kernel's to decide and
+ * 02 decides none. `x-stainless-helper` / `-helper-method` are left out: the SDK sends them only for
+ * objects its own helpers built, and encode() builds plain ones. Re-read this list with every SDK pin.
  */
 const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
-  names: Object.freeze(['content-type', 'x-api-key', 'authorization']),
-  prefixes: Object.freeze(['x-stainless-']),
+  names: Object.freeze([
+    'content-type',
+    'x-api-key',
+    'authorization',
+    'x-stainless-arch',
+    'x-stainless-lang',
+    'x-stainless-os',
+    'x-stainless-package-version',
+    'x-stainless-retry-count',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+    'x-stainless-timeout',
+  ]),
   pinned: Object.freeze({
     accept: 'application/json',
     'anthropic-version': '2023-06-01',
@@ -104,12 +117,13 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
 
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
- * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; add one
- * with every change to what it encodes.
+ * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; 2 adds
+ * the top-level `cache_control` (01 修补 3). Add one with every change to what it encodes, and a row
+ * to test/provider/wire/encoder-version.test.ts.
  */
 const ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
-  version: 1,
+  version: 2,
   sdk: `@anthropic-ai/sdk@${SDK_VERSION}`,
 })
 
@@ -903,10 +917,8 @@ async function* normaliseAnthropicEvents(
         const closed = blocks.close(event.index)
         if (closed === null) break
         if (closed.kind === 'vendor') {
-          const raw = vendorRaw(closed)
-          if (raw !== null) {
-            yield { type: 'vendor-block', index: closed.slot, raw, replay: closed.replay }
-          }
+          const archived = vendorArchive(closed)
+          if (archived !== null) yield { type: 'vendor-block', index: closed.slot, ...archived }
           break
         }
         if (closed.fields !== null) {
@@ -1004,16 +1016,25 @@ function vendorReplay(raw: Record<string, unknown>): 'same-model' | 'never' {
 }
 
 /**
- * A vendor block as it stands at its stop, or null when its streamed input does not parse — a block
- * whose content we cannot state is not archived as if we could, the way an unparsable tool call is
- * not turned into one.
+ * A vendor block as it stands at its stop, the way the SDK's accumulator builds it: the start, with
+ * the streamed `input` folded in.
+ *
+ * Streamed input that does not parse is still archived (01 修补 2: every vendor block goes into the
+ * Tape; §崩溃、服务端调用块与兜底: 块存进 Tape, and the loop logs it): the start exactly as it arrived,
+ * and the fragments as the unparsed text under `partial_json`, the wire's own name for them. What we
+ * cannot state is recorded as what arrived rather than guessed at, and it is never sent back — a
+ * block whose content we cannot state cannot be replayed "as it was".
  */
-function vendorRaw(block: OpenBlock): Record<string, unknown> | null {
+function vendorArchive(
+  block: OpenBlock,
+): { raw: Record<string, unknown>; replay: 'same-model' | 'never' } | null {
   const raw = block.raw
   if (raw === null) return null
-  if (block.json === '') return raw
+  if (block.json === '') return { raw, replay: block.replay }
   const input = parseToolArguments(block.json)
-  return input === null ? null : { ...raw, input }
+  return input === null
+    ? { raw: { ...raw, partial_json: block.json }, replay: 'never' }
+    : { raw: { ...raw, input }, replay: block.replay }
 }
 
 /** One open content block: the slot this adapter gave it, and what it holds. */
