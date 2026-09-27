@@ -9,6 +9,9 @@
  * `source_id` is what recovery groups a run by — so a fact written with the wrong identity is
  * unfindable AND makes its own correct rewrite a provenance conflict.
  */
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { TapeKind, TapeSourceType } from '../../src/tape/entry.js'
 import type {
@@ -31,7 +34,45 @@ import {
   isReservedNamespace,
 } from '../../src/tape/names.js'
 
-const SLICES: readonly TapeSlice[] = ['session', 'message', 'provider', 'execution', 'fs', 'skill']
+const SLICES: readonly TapeSlice[] = [
+  'session',
+  'message',
+  'provider',
+  'execution',
+  'fs',
+  'skill',
+  'tool',
+  'view',
+  'compaction',
+]
+
+/**
+ * Spec 02 §名字总表, row by row: name → `slice/kind` and the identity triple as
+ * `sourceType/sourceId/sourceSeq` ('ordinal' for `<n>`, `<g>`, `requestSeq`). `tool/result_marked`
+ * is the one row whose identity is 「未声明」.
+ */
+const PHASE_2_NAMES: ReadonlyArray<readonly [string, string, string]> = [
+  ['session/profile_set', 'session/event', 'session/required/null'],
+  ['session/workspace_set', 'session/event', 'session/required/ordinal'],
+  ['session/model_choice_set', 'session/event', 'session/required/ordinal'],
+  ['session/parent_link', 'session/event', 'runtime_event/required/ordinal'],
+  ['view/content', 'view/event', 'session/required/null'],
+  ['view/tool_table', 'view/event', 'session/required/ordinal'],
+  ['view/tools_withheld', 'view/event', 'runtime_event/required/ordinal'],
+  ['view/assembled', 'view/event', 'runtime_event/required/ordinal'],
+  ['message/continuation', 'message/message', 'message/required/0'],
+  ['message/environment', 'message/message', 'message/required/0'],
+  ['tool/call', 'tool/tool_call', 'runtime_event/required/ordinal'],
+  ['tool/permission_decided', 'tool/event', 'runtime_event/required/ordinal'],
+  ['tool/approval_resolved', 'tool/event', 'runtime_event/required/ordinal'],
+  ['tool/result', 'tool/tool_result', 'runtime_event/required/ordinal'],
+  ['tool/result_marked', 'tool/event', 'undefined/undefined/undefined'],
+  ['execution/run_started', 'execution/event', 'runtime_event/required/null'],
+  ['execution/dispatch_committed', 'execution/event', 'runtime_event/required/ordinal'],
+  ['execution/tool_outcome', 'execution/event', 'runtime_event/required/ordinal'],
+  ['execution/run_terminal', 'execution/event', 'runtime_event/required/null'],
+  ['compaction/anchor', 'compaction/anchor', 'runtime_event/required/ordinal'],
+]
 
 const SUBJECT = '11111111-1111-4111-8111-111111111111'
 
@@ -131,7 +172,35 @@ describe('the reserved namespace table', () => {
     expect(triple.get('message/retracted')).toBe('message/required/null')
     expect(triple.get('provider/attempt_completed')).toBe('runtime_event/required/ordinal')
     // Reserved-only names fix nothing: the phase that writes them declares their triple with them.
-    expect(triple.get('execution/run_started')).toBe('undefined/undefined/undefined')
+    expect(triple.get('fs/snapshot_created')).toBe('undefined/undefined/undefined')
+  })
+
+  it('declares every name of spec 02’s name table with its slice, kind and identity triple', () => {
+    const table = new Map(
+      DECLARED_TAPE_NAMES.map((d) => [
+        d.name,
+        [
+          `${d.slice}/${d.kind}`,
+          [d.sourceType, d.sourceId, d.sourceSeq].map((part) => String(part)).join('/'),
+        ],
+      ]),
+    )
+    for (const [name, sliceKind, triple] of PHASE_2_NAMES) {
+      expect([name, table.get(name)]).toEqual([name, [sliceKind, triple]])
+    }
+    // Nothing else: 6 phase-1 names, the 19 of spec 02 and the one still reserved for phase 4.
+    expect(DECLARED_TAPE_NAMES.map((d) => d.name).toSorted()).toEqual(
+      [
+        'session/start',
+        'session/model_selected',
+        'message/user',
+        'message/assistant',
+        'message/retracted',
+        'provider/attempt_completed',
+        ...PHASE_2_NAMES.map(([name]) => name),
+        'fs/snapshot_created',
+      ].toSorted(),
+    )
   })
 
   it('declares no context-kind name yet, so no writer can produce one', () => {
@@ -266,7 +335,10 @@ describe('generic append (slice = null)', () => {
     ['event', 'execution/anything', 'an undeclared sibling'],
     ['event', 'tool/anything', 'an undeclared sibling'],
     ['event', 'fs/anything', 'an undeclared sibling'],
-    ['event', 'view/assembled', 'an undeclared sibling'],
+    // Declared since spec 02 — 01 acceptance 13 used it as its undeclared example, and the verdict is
+    // the same either way: generic append refuses the whole reserved prefix.
+    ['event', 'view/assembled', 'a declared reserved name'],
+    ['event', 'view/anything', 'an undeclared sibling'],
     ['event', 'view/tool_result', 'an undeclared sibling'],
     ['event', 'contract/anything', 'an undeclared sibling'],
     ['event', 'compaction/anything', 'an undeclared sibling'],
@@ -313,6 +385,13 @@ describe('generic append (slice = null)', () => {
       expect(() => createEntryWriter(null)(name, { ...fields, kind })).toThrow(guard)
     })
   }
+
+  it('refuses every name of spec 02’s table, under the kind it is bound to', () => {
+    for (const [name, sliceKind] of PHASE_2_NAMES) {
+      const kind = sliceKind.split('/')[1] as TapeKind
+      expect(() => assertAppendAuthorized(ask(kind, name), null)).toThrow(/reserved prefix/)
+    }
+  })
 
   it('allows ext/<owner>/… with an explicit kind', () => {
     expect(() => assertAppendAuthorized(ask('event', 'ext/acme/note'), null)).not.toThrow()
@@ -363,6 +442,16 @@ describe('slice writers', () => {
     expect(() => createEntryWriter('fs')('fs/anything', fields)).toThrow(
       TapeAppendAuthorizationError,
     )
+    // The three slices spec 02 adds hold only their declared names too.
+    for (const [slice, name] of [
+      ['tool', 'tool/anything'],
+      ['view', 'view/anything'],
+      ['compaction', 'compaction/anything'],
+    ] as const) {
+      expect(() => createEntryWriter(slice)(name, { ...fields, kind: 'event' })).toThrow(
+        /not a declared tape name/,
+      )
+    }
   })
 
   it('rejects a declared name written with the wrong kind', () => {
@@ -485,17 +574,74 @@ describe('the identity columns a declaration fixes', () => {
   })
 
   it('leaves a reserved-only name’s identity to the phase that writes it', () => {
-    // No declared triple, so any identity passes — but only from the owning slice, and phase 2 is
-    // expected to declare its triple when it declares its writer.
-    const entry = createEntryWriter('execution')('execution/run_started', {
+    // No declared triple, so any identity passes — but only from the owning slice, and the phase that
+    // writes `tool/result_marked` declares its triple when it declares its writer (F10).
+    const entry = createEntryWriter('tool')('tool/result_marked', {
       sourceType: 'runtime_event',
       sourceId: SUBJECT,
       sourceSeq: 0,
-      provenanceKey: 'execution:v1:run:started',
+      provenanceKey: 'tool:v1:marked',
       payload: {},
       createdAt: 1,
     })
-    expect(entry.name).toBe('execution/run_started')
+    expect(entry.name).toBe('tool/result_marked')
+  })
+
+  it('pins each spec-02 name to its own triple: every other identity is refused', () => {
+    // 旧 114: a phase-2 name is written only with the slice, the kind AND the identity columns its row
+    // gives; one wrong column is an authorisation error, not a quietly different fact.
+    for (const [name] of PHASE_2_NAMES) {
+      const declared = declarationOf(name)
+      if (declared.sourceType === undefined) continue
+      const good = fieldsFor(declared)
+      const write = (f: SliceEntryFields): unknown => createEntryWriter(declared.slice)(name, f)
+      expect(() => write(good)).not.toThrow()
+      const otherType = declared.sourceType === 'session' ? 'runtime_event' : 'session'
+      expect(() => write({ ...good, sourceType: otherType })).toThrow(/bound to sourceType/)
+      const { sourceId: _dropped, ...noSubject } = good
+      expect(() => write(noSubject)).toThrow(/needs a sourceId/)
+      const { sourceSeq: _noSeq, ...noSeq } = good
+      const seqCase =
+        declared.sourceSeq === 'null'
+          ? { fields: { ...good, sourceSeq: 0 }, error: /has no sourceSeq/ }
+          : { fields: noSeq, error: /needs a sourceSeq/ }
+      expect(() => write(seqCase.fields)).toThrow(seqCase.error)
+      const fixedSeq = declared.sourceSeq
+      const offSeq = typeof fixedSeq === 'number' ? fixedSeq + 1 : null
+      // A name bound to a fixed ordinal refuses any other; the rest have nothing to check here.
+      if (offSeq !== null) {
+        // oxlint-disable-next-line vitest/no-conditional-expect -- only names with a fixed ordinal
+        expect(() => write({ ...good, sourceSeq: offSeq })).toThrow(/bound to sourceSeq/)
+      }
+      const wrongKind = declared.kind === 'event' ? 'message' : 'event'
+      expect(() => write({ ...good, kind: wrongKind })).toThrow(/bound to kind/)
+    }
+  })
+
+  it('has no writer of tool/result_marked anywhere in the shipped source', () => {
+    // Spec 02 keeps the name and writes nothing under it (F10). Outside its declaration and its entry
+    // in the payload map, the literal must not appear in any package or app source file.
+    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url))
+    const roots = ['packages/kernel/src', 'packages/contracts/src', 'apps/desktop/src']
+    const allowed = new Set([
+      'packages/kernel/src/tape/names.ts',
+      'packages/kernel/src/tape/projection.ts',
+    ])
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const item of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, item.name)
+        if (item.isDirectory()) walk(path)
+        else if (/\.(ts|tsx|mts)$/.test(item.name)) {
+          const file = relative(repoRoot, path)
+          if (!allowed.has(file) && readFileSync(path, 'utf8').includes('tool/result_marked')) {
+            offenders.push(file)
+          }
+        }
+      }
+    }
+    for (const root of roots) walk(join(repoRoot, root))
+    expect(offenders).toEqual([])
   })
 })
 

@@ -9,6 +9,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import {
+  ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
   createMemoryHost,
   createMemoryTapeStore,
@@ -17,11 +18,27 @@ import {
   keyFor,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { AbsolutePath, HostAdapter, MessageRow, SessionService } from '@tenon-app/kernel'
+import type {
+  AbsolutePath,
+  HostAdapter,
+  MessageRow,
+  ModelInfo,
+  SessionService,
+} from '@tenon-app/kernel'
+import {
+  createCounterIds,
+  createScriptedProvider,
+  createTestConnector,
+  createTestSessionService,
+  scriptedTurn,
+} from '@tenon-app/kernel/testing'
+import type { ScriptedProvider, TestConnector } from '@tenon-app/kernel/testing'
+import { chatEventSchema, chatQueueEvent, chatSend, chatSendNow } from '@tenon-app/contracts'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { registerChatRoutes } from '../src/main/chat.js'
+import { createDesktopLoop, registerChatRoutes } from '../src/main/chat.js'
 import { writeConfig } from '../src/main/host/profile.js'
+import { createRunConnector } from '../src/main/run-assembly.js'
 import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
@@ -94,10 +111,12 @@ function collector(): {
   let terminal: (() => void) | null = null
   return {
     events,
-    send(_channel, payload) {
+    send(channel, payload) {
+      // Only the chat stream: `chat.queue` goes out on the same sender.
+      if (channel !== 'chat.event') return
       const event = payload as ChatEvent
       events.push(event)
-      if (event.type !== 'text-delta') terminal?.()
+      if (event.type === 'done' || event.type === 'error') terminal?.()
       const matched = waiters.filter((w) => w.type === event.type)
       for (const w of matched) waiters.splice(waiters.indexOf(w), 1)
       for (const w of matched) w.resolve(event)
@@ -134,20 +153,27 @@ function harness(options: { host?: HostAdapter; env?: Record<string, string> } =
     options.host ??
     createMemoryHost({ network: { fetch: (input, init) => globalThis.fetch(input, init) } })
   const tape = createMemoryTapeStore({ identity: host.identity })
-  const sessions = createSessionService({ host, tape, ids: { uuid: (): string => randomUUID() } })
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
+  // index.ts's wiring: the connector at construction, the loop's host half through bindLoop.
+  const sessions = createSessionService({
+    host,
+    tape,
+    ids: { uuid: (): string => randomUUID() },
+    inspectors: [],
+    connector: createRunConnector({ host, providers, env: options.env ?? {}, log: noop }),
+    protectedFiles: [],
+  })
   const ipc = fakeIpc()
   const out = collector()
-  registerChatRoutes({
-    host,
+  const loop = createDesktopLoop({
+    clock: host.clock,
     send: out.send,
-    ipcMain: ipc.ipcMain,
-    sessions,
-    providers,
-    env: options.env ?? {},
+    locale: () => 'en',
     log: noop,
   })
+  sessions.bindLoop(loop.ports)
+  registerChatRoutes({ send: out.send, ipcMain: ipc.ipcMain, sessions, loop, log: noop })
   registerSessionRoutes({ ipcMain: ipc.ipcMain, sessions })
   return { ipc, out, sessions, host, sessionId: randomUUID() }
 }
@@ -182,9 +208,19 @@ describe('chat routes', () => {
     const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
 
     const accepted = await ipc.call('chat.send', { sessionId, text: 'hi' })
-    expect(accepted).toEqual({ ok: true, data: { accepted: true } })
+    expect(accepted).toEqual({ ok: true, data: { accepted: true, status: 'started' } })
     const done = await out.waitFor('done')
-    expect(done).toEqual({ type: 'done', sessionId, stopReason: 'end-turn' })
+    await out.waitFor('user-message')
+    expect(done).toEqual({
+      type: 'done',
+      sessionId,
+      stopReason: 'end-turn',
+      endReason: { code: 'completed' },
+      // Which Run ended, for the failure card's copied diagnostics (plan step 20).
+      runId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f-]{27}$/u),
+      // Its reply follows the message that opened it: a resend would be a second copy (run-ended.retryOf).
+      retryOf: null,
+    })
     expect(textOf(out.events)).toBe('Hello, Tenon')
     expect(fake.requests[0]?.headers['x-api-key']).toBe('test-key')
     expect(fake.aborted).toBe(false)
@@ -219,7 +255,17 @@ describe('chat routes', () => {
     const stopped = await ipc.call('chat.stop', { sessionId })
     expect(stopped).toEqual({ ok: true, data: { stopped: true } })
     const done = await out.waitFor('done')
-    expect(done).toEqual({ type: 'done', sessionId, stopReason: 'aborted' })
+    await out.waitFor('user-message')
+    expect(done).toEqual({
+      type: 'done',
+      sessionId,
+      stopReason: 'aborted',
+      endReason: { code: 'user-stopped' },
+      // Which Run ended, for the failure card's copied diagnostics (plan step 20).
+      runId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f-]{27}$/u),
+      // The message opened it and no call went out: the kernel names it (run-ended.retryOf).
+      retryOf: null, // the stopped reply is kept after the message (run-ended.retryOf)
+    })
     await expect.poll(() => fake.aborted, { timeout: 3000 }).toBe(true)
     expect(fake.chunksSent).toBeLessThan(500)
     expect(await ipc.call('chat.stop', { sessionId })).toEqual({
@@ -250,8 +296,9 @@ describe('chat routes', () => {
       data: { stopped: true },
     })
     keychain.resolve(null)
-    await sending
-    expect(await out.waitFor('done')).toMatchObject({ stopReason: 'aborted' })
+    // Nothing was written, and no event will name the message: the renderer settles it (plan step 20).
+    expect(await sending).toEqual({ ok: true, data: { accepted: true, status: 'not-sent' } })
+    expect(await out.waitFor('done')).toMatchObject({ stopReason: 'aborted', retryOf: null })
     expect(fake.requests).toHaveLength(0)
     // Nothing was written: the turn never started.
     expect(await sessions.listMessages({ sessionId, limit: 10 })).toEqual([])
@@ -280,8 +327,9 @@ describe('chat routes', () => {
     await ipc.call('chat.stop', { sessionId })
     await out.waitFor('done')
     const second = fake.requests[1]?.body as { messages: Array<{ role: string; content: unknown }> }
-    expect(second.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user'])
-    expect(JSON.stringify(second.messages[1]?.content)).toContain('w0')
+    // The first turn, the day's environment note (spec 02 §提示层「环境说明」), the partial reply.
+    expect(second.messages.map((m) => m.role)).toEqual(['user', 'user', 'assistant', 'user'])
+    expect(JSON.stringify(second.messages[2]?.content)).toContain('w0')
   })
 
   it('treats the same text after a failure as a retry and keeps a failed turn as context', async () => {
@@ -295,20 +343,40 @@ describe('chat routes', () => {
     const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
 
     await ipc.call('chat.send', { sessionId, text: 'question' })
-    expect(await out.waitFor('error')).toMatchObject({ code: 'provider' })
+    const failed = await out.waitFor('error')
+    expect(failed).toMatchObject({ code: 'provider' })
     // The user's turn stayed; no assistant message was invented for a turn that failed.
     const afterFailure = await sessions.listMessages({ sessionId, limit: 10 })
     expect(afterFailure.map((m) => m.role)).toEqual(['user'])
+    // 「重试」 is offered for it, and resends that very message (§失败卡与结束原因).
+    expect(failed).toMatchObject({ retryOf: afterFailure[0]?.messageId })
     out.events.length = 0
 
     await ipc.call('chat.send', { sessionId, text: 'question' })
     await out.waitFor('done')
     const retry = fake.requests.at(-1)?.body as { messages: Array<{ role: string }> }
-    expect(retry.messages.map((m) => m.role)).toEqual(['user'])
+    // The question and the environment note the failed Run wrote; unchanged, it is not written again.
+    expect(retry.messages.map((m) => m.role)).toEqual(['user', 'user'])
     // One user message, not two: the retry reused it.
     const afterRetry = await sessions.listMessages({ sessionId, limit: 10 })
     expect(afterRetry.map((m) => m.role)).toEqual(['user', 'assistant'])
     expect(afterRetry[0]?.messageId).toBe(afterFailure[0]?.messageId)
+  }, 20_000)
+
+  it('shows an exhausted spend limit as the unknown error code (spec 02, 01 修补 5)', async () => {
+    fake = await startFakeAnthropic({
+      chunks: ['ok'],
+      delayMs: 5,
+      failWith: {
+        status: 400,
+        type: 'invalid_request_error',
+        message: 'You have reached your specified API usage limits.',
+      },
+    })
+    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    await ipc.call('chat.send', { sessionId, text: 'question' })
+    // quota-exhausted maps to 01's fallback; the finer reason travels as the Run's endReason.
+    expect(await out.waitFor('error')).toMatchObject({ code: 'unknown' })
   }, 20_000)
 
   it('releases the session before the terminal event goes out', async () => {
@@ -326,22 +394,33 @@ describe('chat routes', () => {
     expect(await duringTerminal).toEqual({ ok: true, data: { stopped: false } })
   })
 
-  it('refuses a second reply while one is streaming', async () => {
-    fake = await startFakeAnthropic({
-      chunks: Array.from({ length: 200 }, () => 'x '),
-      delayMs: 20,
-    })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+  it('queues a message sent while a reply streams, and sends it once that reply is done', async () => {
+    fake = await startFakeAnthropic({ chunks: ['one ', 'two ', 'three'], delayMs: 20 })
+    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
 
     await ipc.call('chat.send', { sessionId, text: 'hi' })
     await out.waitFor('text-delta')
-    expect(await ipc.call('chat.send', { sessionId, text: 'again' })).toMatchObject({
-      ok: false,
-      error: { code: 'handler-failed' },
+    // Not refused any more (01 修补 9 (a)): the kernel queues it.
+    expect(await ipc.call('chat.send', { sessionId, text: 'again' })).toEqual({
+      ok: true,
+      data: { accepted: true, status: 'queued' },
     })
-    await ipc.call('chat.stop', { sessionId })
-    await out.waitFor('done')
-    expect(fake.requests).toHaveLength(1)
+    await expect
+      .poll(() => out.events.filter((event) => event.type === 'done').length, { timeout: 5000 })
+      .toBe(2)
+    expect(fake.requests).toHaveLength(2)
+    // It became its own user turn once sent, with its queued id.
+    const users = out.events.filter((event) => event.type === 'user-message')
+    expect(
+      users.map((event) => (event.type === 'user-message' ? event.queuedId !== null : null)),
+    ).toEqual([false, true])
+    const messages = await sessions.listMessages({ sessionId, limit: 10 })
+    expect(messages.map((m) => [m.role, said(m)])).toEqual([
+      ['user', 'hi'],
+      ['assistant', 'one two three'],
+      ['user', 'again'],
+      ['assistant', 'one two three'],
+    ])
   })
 
   it('reports a missing credential as auth before making any request', async () => {
@@ -350,8 +429,11 @@ describe('chat routes', () => {
       env: { ANTHROPIC_BASE_URL: fake.baseURL },
     })
 
-    await ipc.call('chat.send', { sessionId, text: 'hi' })
-    expect(await out.waitFor('error')).toMatchObject({ code: 'auth' })
+    expect(await ipc.call('chat.send', { sessionId, text: 'hi' })).toEqual({
+      ok: true,
+      data: { accepted: true, status: 'not-sent' },
+    })
+    expect(await out.waitFor('error')).toMatchObject({ code: 'auth', runId: null, retryOf: null })
     expect(fake.requests).toHaveLength(0)
     // A configuration problem writes nothing: there is no turn to show.
     expect(await sessions.listMessages({ sessionId, limit: 10 })).toEqual([])
@@ -445,27 +527,64 @@ describe('chat routes', () => {
     }
   })
 
+  it('continues a truncated reply through chat.continue, with a note only the model sees', async () => {
+    fake = await startFakeAnthropic({ chunks: ['half'], delayMs: 1, stopReasons: ['max_tokens'] })
+    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const doneEvents = (): ChatEvent[] => out.events.filter((event) => event.type === 'done')
+
+    await ipc.call('chat.send', { sessionId, text: 'write it all' })
+    await expect.poll(() => doneEvents().length).toBe(1)
+    expect(doneEvents()[0]).toMatchObject({
+      stopReason: 'error',
+      endReason: { code: 'output-truncated' },
+    })
+
+    expect(await ipc.call('chat.continue', { sessionId })).toEqual({
+      ok: true,
+      data: { status: 'started' },
+    })
+    await expect.poll(() => doneEvents().length).toBe(2)
+    expect(doneEvents()[1]).toMatchObject({ endReason: { code: 'completed' } })
+    // The second request ends with the continuation note: a user turn for the model…
+    const body = fake.requests[1]?.body as { messages: Array<{ role: string }> }
+    expect(body.messages.map((message) => message.role)).toEqual([
+      'user',
+      'user',
+      'assistant',
+      'user',
+    ])
+    expect(JSON.stringify(body.messages.at(-1))).toContain('cut off at the output limit')
+    // …that the transcript never shows.
+    const rows = await sessions.listMessages({ sessionId, limit: 10 })
+    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'assistant'])
+    // A completed Run leaves nothing to continue.
+    expect(await ipc.call('chat.continue', { sessionId })).toEqual({
+      ok: true,
+      data: { status: 'not-available' },
+    })
+  })
+
   it('answers every chat route when the session store could not be opened', async () => {
     fake = await startFakeAnthropic({ chunks: ['never'] })
-    const host = createMemoryHost()
-    const providers = createProviderRegistry()
-    registerBuiltinProviders(providers)
     const ipc = fakeIpc()
     const out = collector()
     registerChatRoutes({
-      host,
       send: out.send,
       ipcMain: ipc.ipcMain,
       sessions: null,
-      providers,
-      env: withKey(fake.baseURL),
+      loop: null,
       log: noop,
     })
 
     const sessionId = randomUUID()
+    // Nothing is written anywhere: the renderer settles what it showed (plan step 20).
     expect(await ipc.call('chat.send', { sessionId, text: 'hi' })).toEqual({
       ok: true,
-      data: { accepted: true },
+      data: { accepted: true, status: 'not-sent' },
+    })
+    expect(await ipc.call('chat.sendNow', { sessionId, text: 'now', runId: null })).toEqual({
+      ok: true,
+      data: { accepted: true, status: 'not-sent' },
     })
     expect(await out.waitFor('error')).toMatchObject({ code: 'unknown' })
     expect(fake.requests).toHaveLength(0)
@@ -474,5 +593,208 @@ describe('chat routes', () => {
       ok: true,
       data: { stopped: false },
     })
+    expect(await ipc.call('chat.continue', { sessionId })).toMatchObject({ ok: false })
+  })
+})
+
+describe('the recovery gate (plan step 16: chat.send、chat.stop、「继续」…都先 await)', () => {
+  it('asks the kernel nothing on any chat route until startup recovery is done', async () => {
+    // §启动恢复与发送防护: 补写一定在下一次请求之前完成 — a send, a send-now, a queued item's
+    // send-now, a stop and 「继续」 all wait for the gate before they reach the kernel.
+    const reached: string[] = []
+    const sessions = {
+      send: (q: { sessionId: string }) => {
+        reached.push('send')
+        return Promise.resolve({ status: 'queued', queuedId: `queued-${q.sessionId}` })
+      },
+      stop: () => {
+        reached.push('stop')
+        return Promise.resolve({ stopped: false })
+      },
+      continueRun: () => {
+        reached.push('continueRun')
+        return Promise.resolve({ status: 'not-available' })
+      },
+    } as unknown as SessionService
+    const host = createMemoryHost()
+    const loop = createDesktopLoop({ clock: host.clock, send: noop, locale: () => 'en', log: noop })
+    const ipc = fakeIpc()
+    const gate = Promise.withResolvers<void>()
+    registerChatRoutes({
+      send: noop,
+      ipcMain: ipc.ipcMain,
+      sessions,
+      loop,
+      log: noop,
+      gate: gate.promise,
+    })
+    const sessionId = randomUUID()
+    const calls = [
+      ipc.call('chat.send', { sessionId, text: 'hi' }),
+      ipc.call('chat.sendNow', { sessionId, text: 'now', runId: null }),
+      ipc.call('chat.queue.act', {
+        sessionId,
+        queuedId: 'queued-1',
+        action: 'send-now',
+        runId: null,
+      }),
+      ipc.call('chat.stop', { sessionId }),
+      ipc.call('chat.continue', { sessionId }),
+    ]
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    expect(reached).toEqual([])
+    gate.resolve()
+    for (const result of await Promise.all(calls)) expect(result).toMatchObject({ ok: true })
+    expect(reached.toSorted()).toEqual(['continueRun', 'send', 'send', 'send', 'stop'])
+  })
+})
+
+const SCRIPTED_MODEL: ModelInfo = {
+  id: 'claude-status-1',
+  providerId: 'anthropic',
+  contextLimit: 200_000,
+  maxOutputTokens: 1024,
+  reasoning: false,
+  supportsToolCalling: true,
+  supportsStreamingToolCalls: true,
+  supportsVision: false,
+  supportsCacheControl: false,
+  thinkingPreservationFormat: 'drop',
+  usageNeedsOptIn: false,
+}
+
+/**
+ * The same routes over the real kernel with the scripted connector behind it: where a case holds a
+ * prebuild open, asks for a public host's confirmation, or takes the key away.
+ */
+function scriptedHarness(): {
+  readonly ipc: ReturnType<typeof fakeIpc>
+  readonly out: ReturnType<typeof collector>
+  readonly connector: TestConnector
+  readonly provider: ScriptedProvider
+  /** Every `chat.queue` push, parsed. */
+  readonly queue: Array<ReturnType<typeof chatQueueEvent.payload.parse>>
+  readonly sessionId: string
+} {
+  const host = createMemoryHost()
+  const provider = createScriptedProvider({ models: [SCRIPTED_MODEL] })
+  const connector = createTestConnector({ provider, model: SCRIPTED_MODEL })
+  const sessions = createTestSessionService(
+    {
+      host,
+      tape: createMemoryTapeStore({ identity: host.identity }),
+      ids: createCounterIds(),
+      inspectors: [],
+      connector,
+      protectedFiles: [],
+    },
+    { tools: {} },
+  )
+  const out = collector()
+  const queue: Array<ReturnType<typeof chatQueueEvent.payload.parse>> = []
+  const send = (channel: string, payload: unknown): void => {
+    if (channel === chatQueueEvent.channel) queue.push(chatQueueEvent.payload.parse(payload))
+    if (channel === 'chat.event') chatEventSchema.parse(payload)
+    out.send(channel, payload)
+  }
+  const loop = createDesktopLoop({ clock: host.clock, send, locale: () => 'en', log: noop })
+  sessions.bindLoop(loop.ports)
+  const ipc = fakeIpc()
+  registerChatRoutes({ send, ipcMain: ipc.ipcMain, sessions, loop, log: noop })
+  return { ipc, out, connector, provider, queue, sessionId: randomUUID() }
+}
+
+/** A route's answer, checked against the route's own response schema. */
+async function answered(
+  route: typeof chatSend | typeof chatSendNow,
+  sent: Promise<unknown>,
+): Promise<unknown> {
+  const answer = (await sent) as { ok: boolean; data?: unknown }
+  expect(answer.ok).toBe(true)
+  return route.response.parse(answer.data)
+}
+
+describe('what chat.send and chat.sendNow answer: the kernel’s status (plan step 20)', () => {
+  it('started, and queued for one judged while the first holds the root', async () => {
+    // §chat.event: `started`, `queued` and `held` are followed by events that show the message.
+    const h = scriptedHarness()
+    h.provider.script(scriptedTurn({ deltas: ['one'] }))
+    h.provider.script(scriptedTurn({ deltas: ['two'] }))
+    const held = h.connector.holdAssemble()
+    const first = h.ipc.call('chat.send', { sessionId: h.sessionId, text: 'first' })
+    await held.reached
+    const second = h.ipc.call('chat.send', { sessionId: h.sessionId, text: 'second' })
+    held.release()
+    expect(await answered(chatSend, first)).toEqual({ accepted: true, status: 'started' })
+    expect(await answered(chatSend, second)).toEqual({ accepted: true, status: 'queued' })
+    // The queued one was shown by the queue push, then went out on its own.
+    expect(h.queue.some((push) => push.items.some((item) => item.text === 'second'))).toBe(true)
+    await expect.poll(() => h.out.events.filter((event) => event.type === 'done').length).toBe(2)
+  })
+
+  it('send-now answers the same way: started when idle, queued behind a Run it did not name', async () => {
+    const h = scriptedHarness()
+    h.provider.script(scriptedTurn({ deltas: ['one'] }))
+    h.provider.script(scriptedTurn({ deltas: ['two'] }))
+    const held = h.connector.holdAssemble()
+    const first = h.ipc.call('chat.sendNow', { sessionId: h.sessionId, text: 'first', runId: null })
+    await held.reached
+    const second = h.ipc.call('chat.sendNow', {
+      sessionId: h.sessionId,
+      text: 'second',
+      runId: null,
+    })
+    held.release()
+    expect(await answered(chatSendNow, first)).toEqual({ accepted: true, status: 'started' })
+    expect(await answered(chatSendNow, second)).toEqual({ accepted: true, status: 'queued' })
+  })
+
+  it('held: a public host it would switch to indirectly waits for the menu, and the queue says so', async () => {
+    const h = scriptedHarness()
+    h.connector.needsConfirm('api.example.com')
+    const sent = h.ipc.call('chat.send', { sessionId: h.sessionId, text: 'to the cloud' })
+    expect(await answered(chatSend, sent)).toEqual({ accepted: true, status: 'held' })
+    expect(h.queue.at(-1)).toEqual({
+      sessionId: h.sessionId,
+      items: [{ queuedId: expect.any(String), text: 'to the cloud' }],
+      held: { host: 'api.example.com' },
+    })
+    expect(h.provider.starts).toBe(0)
+  })
+
+  it('not-sent from the kernel: a missing key, and a stop in the prebuild — nothing was written', async () => {
+    const noKey = scriptedHarness()
+    noKey.connector.failProvider(new ProviderConfigMissingError('anthropic', 'apiKey'))
+    expect(
+      await answered(
+        chatSend,
+        noKey.ipc.call('chat.send', { sessionId: noKey.sessionId, text: 'hi' }),
+      ),
+    ).toEqual({ accepted: true, status: 'not-sent' })
+    expect(await noKey.out.waitFor('error')).toMatchObject({ runId: null, retryOf: null })
+
+    const stopped = scriptedHarness()
+    const held = stopped.connector.holdAssemble()
+    const sending = stopped.ipc.call('chat.send', { sessionId: stopped.sessionId, text: 'hi' })
+    await held.reached
+    expect(await stopped.ipc.call('chat.stop', { sessionId: stopped.sessionId })).toEqual({
+      ok: true,
+      data: { stopped: true },
+    })
+    held.release()
+    expect(await answered(chatSend, sending)).toEqual({ accepted: true, status: 'not-sent' })
+    for (const h of [noKey, stopped]) {
+      expect(h.out.events.filter((event) => event.type === 'user-message')).toEqual([])
+    }
+  })
+
+  it('not-sent from main itself: a session id that is not one, with the error it sent', async () => {
+    const h = scriptedHarness()
+    expect(
+      await answered(chatSend, h.ipc.call('chat.send', { sessionId: 'not-a-uuid', text: 'hi' })),
+    ).toEqual({ accepted: true, status: 'not-sent' })
+    expect(await h.out.waitFor('error')).toMatchObject({ sessionId: 'not-a-uuid', code: 'unknown' })
   })
 })

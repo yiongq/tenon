@@ -13,15 +13,27 @@ import { CanonicalJsonError, canonicalJson } from '../../tape/canonical-json.js'
 import type { AttemptRequestSnapshot } from '../../tape/entry.js'
 import { sha256Hex } from '../../tape/hash.js'
 import { ProviderInvalidArgumentError } from '../errors.js'
-import { applyThinkingDecision, decideThinking } from '../thinking.js'
-import type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from '../thinking.js'
+import {
+  applyThinkingDecision,
+  decideThinking,
+  decideVendorBlock,
+  decideVendorFields,
+} from '../thinking.js'
+import type {
+  ThinkingApplication,
+  ThinkingBlock,
+  ThinkingTarget,
+  VendorBlock,
+} from '../thinking.js'
 import type {
   ContentBlock,
   EncodedRequest,
+  InternalMessage,
   ModelInfo,
   ProviderId,
   ProviderRequest,
   ThinkingDecision,
+  ThinkingSpec,
 } from '../types.js'
 
 /** The image block both wires have to place; its media type is checked per wire. */
@@ -114,7 +126,130 @@ export function requestSnapshot(req: ProviderRequest): AttemptRequestSnapshot {
         ? { enabled: thinking.enabled }
         : { enabled: thinking.enabled, budgetTokens: thinking.budgetTokens }
   }
+  // Spec 02, 01 修补 2: what the encoder WROTE. Both wires write `effort` whenever one is given (a
+  // level the row does not declare never gets this far), and `display` only while thinking is on —
+  // the same reading the Anthropic encoder takes (thinkingIsOn below), which is the only wire whose
+  // rows may declare a display at all.
+  if (req.effort !== undefined) snapshot.effort = req.effort
+  if (req.display !== undefined && thinkingIsOn(req)) snapshot.display = req.display
+  if (req.dropThinkingBefore !== undefined) snapshot.dropThinkingBefore = req.dropThinkingBefore
   return snapshot
+}
+
+/**
+ * Whether thinking is on for this request (spec 02, 01 修补 3): turned on explicitly, or on by the
+ * model's default and not turned off this time. A row with no `thinkingSpec` has no default to fall
+ * back on, so it reads as off unless the caller turned it on.
+ */
+export function thinkingIsOn(req: ProviderRequest): boolean {
+  return req.thinking?.enabled ?? req.model.thinkingSpec?.defaultOn ?? false
+}
+
+/**
+ * The ModelInfo fields encode() reads (spec 02, 01 修补 7) — and therefore the only ones
+ * `modelWireHash` covers. An encoder that starts reading another field adds it here in the same
+ * change; a test watches encode() through a Proxy to hold both wires to it.
+ */
+export const WIRE_MODEL_FIELDS = Object.freeze([
+  'id',
+  'providerId',
+  'canonicalId',
+  'maxOutputTokens',
+  'thinkingPreservationFormat',
+  'reasoningEchoField',
+  'usageNeedsOptIn',
+  'requestParams',
+  'supportsCacheControl',
+  'thinkingSpec',
+] as const satisfies readonly (keyof ModelInfo)[])
+
+/**
+ * `provider/attempt_completed.modelWireHash`: canonicalHash(pick(model, WIRE_MODEL_FIELDS)). An
+ * absent field is left out of the pick rather than written as undefined, which canonicalJson refuses
+ * — and "absent" is exactly what the row said. Editing `pricing` or `purposeKey` leaves it unchanged.
+ */
+export function modelWireHash(model: ModelInfo): string {
+  const picked: Record<string, unknown> = {}
+  for (const field of WIRE_MODEL_FIELDS) {
+    const value = model[field]
+    if (value !== undefined) picked[field] = value
+  }
+  return canonicalHash(picked, `the wire fields of model ${model.id}`)
+}
+
+/**
+ * `thinkingEffortSupport()` for a row that declares a thinking shape (spec 02, 01 修补 3): `budget`
+ * mode answers 'budget', any declared effort level answers 'effort', anything else 'none'.
+ */
+export function effortTierOf(spec: ThinkingSpec): 'none' | 'budget' | 'effort' {
+  if (spec.mode === 'budget') return 'budget'
+  return (spec.effortLevels?.length ?? 0) > 0 ? 'effort' : 'none'
+}
+
+/**
+ * The refusals both wires share (spec 02, 01 修补 3; decision A1): an effort the row does not list
+ * in `effortLevels`, or a display it does not list in `displays` — a row with no `thinkingSpec`
+ * lists neither. A malformed `dropThinkingBefore` is refused here too: it names a message index.
+ */
+export function assertThinkingRequest(req: ProviderRequest, wire: string): void {
+  const spec = req.model.thinkingSpec
+  const effort = req.effort
+  if (effort !== undefined && !(spec?.effortLevels ?? []).includes(effort)) {
+    throw new ProviderInvalidArgumentError(
+      `${wire}: model ${req.model.id} declares no effort level "${effort}"`,
+    )
+  }
+  const display = req.display
+  if (display !== undefined && !(spec?.displays ?? []).includes(display)) {
+    throw new ProviderInvalidArgumentError(
+      `${wire}: model ${req.model.id} declares no thinking display "${display}"`,
+    )
+  }
+  const cut = req.dropThinkingBefore
+  if (cut !== undefined && (!Number.isSafeInteger(cut) || cut < 0)) {
+    throw new ProviderInvalidArgumentError(
+      `${wire}: dropThinkingBefore must be a non-negative integer, not ${String(cut)}`,
+    )
+  }
+}
+
+/**
+ * `samplingDefaultsOnly` (spec 02, 01 修补 3; decisions M3, A1): a non-default sampling value is
+ * refused rather than quietly dropped — `temperature` only 1.0, `top_p` only >= 0.99, `top_k` never.
+ * `temperature` is reserved on both wires, so it can only come from the request; the other two have
+ * no request field and can only come from `requestParams`.
+ */
+export function assertSamplingDefaults(req: ProviderRequest, wire: string): void {
+  if (req.model.thinkingSpec?.samplingDefaultsOnly !== true) return
+  const refuse = (what: string): never => {
+    throw new ProviderInvalidArgumentError(
+      `${wire}: model ${req.model.id} accepts sampling parameters at their defaults only; ${what}`,
+    )
+  }
+  if (req.temperature !== undefined && req.temperature !== 1) {
+    refuse(`temperature ${String(req.temperature)} is not 1.0`)
+  }
+  const params = req.model.requestParams ?? {}
+  if (Object.hasOwn(params, 'top_p')) {
+    const topP = params['top_p']
+    if (typeof topP !== 'number' || !(topP >= 0.99)) refuse(`top_p ${String(topP)} is below 0.99`)
+  }
+  if (Object.hasOwn(params, 'top_k')) refuse('top_k is not accepted at all')
+}
+
+/**
+ * Spec 02, 01 修补 3 (decision A2; 01 修补 9 (k)): the last message of the request is the user's.
+ * Checked on `req.messages` as the caller built them, after every check 01 already made — so a
+ * request 01 refused is still refused with 01's error. 02 makes no exception: a continuation prompt
+ * is itself a user message.
+ */
+export function assertLastTurnIsUser(messages: readonly InternalMessage[], wire: string): void {
+  const last = messages.at(-1)
+  if (last !== undefined && last.role !== 'user') {
+    throw new ProviderInvalidArgumentError(
+      `${wire}: a request must end with a user turn, and this one ends with an ${last.role} turn`,
+    )
+  }
 }
 
 /** Whether a system prompt goes on the wire at all: see systemHash(). */
@@ -124,22 +259,79 @@ export function hasSystemPrompt(system: string | undefined): system is string {
 
 /** What the thinking guard compares against for THIS request; `hasTools` turns rule 4. */
 export function thinkingTargetFor(req: ProviderRequest): ThinkingTarget {
-  return { model: req.model, hasTools: (req.tools?.length ?? 0) > 0 }
+  const target = { model: req.model, hasTools: (req.tools?.length ?? 0) > 0 }
+  return req.dropThinkingBefore === undefined
+    ? target
+    : { ...target, dropThinkingBefore: req.dropThinkingBefore }
 }
 
 /**
  * Every reasoning block of every message goes through this, and only through this: the
- * decision is recorded before it is applied, so `thinkingDecisions` is one entry per reasoning
- * block in message/block order whatever the wire then does with it.
+ * decision is recorded before it is applied, so `thinkingDecisions` holds one entry per reasoning
+ * block — among those for vendor blocks and vendor field sets (guardVendorBlock, guardVendorFields)
+ * — in message/block order whatever the wire then does with it. `messageIndex` is the block's
+ * message within `req.messages`, which the compaction rule (spec 02, H10) reads.
  */
 export function guardReasoning(
   block: ThinkingBlock,
   target: ThinkingTarget,
   decisions: ThinkingDecision[],
+  messageIndex: number,
 ): ThinkingApplication {
-  const decision = decideThinking(block, target)
+  const decision = decideThinking(block, target, messageIndex)
   decisions.push(decision)
   return applyThinkingDecision(block, decision, target.model)
+}
+
+/**
+ * As guardReasoning(), for a vendor block (spec 02, 01 修补 2): the decision is recorded in the same
+ * list, in block order, and the block either goes back exactly as stored or not at all.
+ */
+export function guardVendorBlock(
+  block: VendorBlock,
+  target: ThinkingTarget,
+  decisions: ThinkingDecision[],
+): boolean {
+  const decision = decideVendorBlock(block, target)
+  decisions.push(decision)
+  return decision.action === 'replay'
+}
+
+/**
+ * As guardVendorBlock(), for the `vendorFields` of a text or tool-request block (spec 02, 01 修补 2;
+ * s6-spec-2, owner 2026-09-27): one decision per field set, in block order, and the fields to merge
+ * back when they pass — undefined when they are dropped. A block without fields records nothing: it
+ * has nothing the vendor alone put there. Called only for a block that goes on the wire, so a
+ * decision never describes fields whose host was skipped.
+ */
+export function guardVendorFields(
+  block: Extract<ContentBlock, { type: 'text' | 'tool-request' }>,
+  target: ThinkingTarget,
+  decisions: ThinkingDecision[],
+): Record<string, unknown> | undefined {
+  if (block.vendorFields === undefined) return undefined
+  const decision = decideVendorFields(block.vendorSource, target)
+  decisions.push(decision)
+  return decision.action === 'replay' ? block.vendorFields : undefined
+}
+
+/**
+ * `vendorFields` merged back into the wire block they were decoded from (spec 02, 01 修补 2): the
+ * fields the content model has no place for, then the block's own. The block's own keys win, so a
+ * stored field can never rewrite a signature, an id or the text itself.
+ */
+export function withVendorFields<T extends Record<string, unknown>>(
+  wireBlock: T,
+  fields: Record<string, unknown> | undefined,
+): T {
+  if (fields === undefined) return wireBlock
+  const merged: Record<string, unknown> = { ...wireBlock }
+  for (const key of Object.keys(fields)) {
+    // `__proto__` would set the prototype instead of an own key — see mergeRequestParams.
+    if (Object.hasOwn(wireBlock, key) || key === '__proto__') continue
+    merged[key] = fields[key]
+  }
+  return merged as T
 }
 
 /**
@@ -288,6 +480,32 @@ export function mergeRequestParams(
   }
 }
 
+/** `provider/attempt_completed.encoder` (spec 02, 01 修补 7): which encoder built a body. */
+export interface EncoderInfo {
+  readonly wire: 'anthropic-messages' | 'openai-chat'
+  /** The encoder's own version: every commit that changes what it encodes adds one. */
+  readonly version: number
+  /** The SDK the body is handed to, as `<package>@<version>`. */
+  readonly sdk: string
+}
+
+/**
+ * Which encoder produced each EncodedRequest, kept beside the object rather than on it: the spec
+ * adds `encoder` to the attempt fact but no member to EncodedRequest, and the writer of that fact
+ * holds only the Provider and what its encode() returned. Weak, so it holds nothing alive; filled
+ * only by sealEncoded(), so a request no wire of this build encoded has no entry.
+ */
+const ENCODERS = new WeakMap<EncodedRequest, EncoderInfo>()
+
+/**
+ * The encoder a request came from, or null when it came from none of this build's wires (a copy of
+ * the object, or a test double with an encoder of its own) — an attempt then records no `encoder`,
+ * and invariant 33 does not cover it.
+ */
+export function encoderOf(encoded: EncodedRequest): EncoderInfo | null {
+  return ENCODERS.get(encoded) ?? null
+}
+
 /** Assembles the EncodedRequest once a wire has built its body and tool definitions. */
 export function sealEncoded(
   providerId: ProviderId,
@@ -295,8 +513,9 @@ export function sealEncoded(
   body: Record<string, unknown>,
   toolDefinitions: readonly unknown[],
   thinkingDecisions: readonly ThinkingDecision[],
+  encoder: EncoderInfo,
 ): EncodedRequest {
-  return {
+  const encoded: EncodedRequest = {
     providerId,
     modelId,
     body,
@@ -306,4 +525,6 @@ export function sealEncoded(
     toolDefinitionsHash: canonicalHash(toolDefinitions, 'the tool definitions'),
     thinkingDecisions,
   }
+  ENCODERS.set(encoded, encoder)
+  return encoded
 }

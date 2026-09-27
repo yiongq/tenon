@@ -427,3 +427,212 @@ export const BAD_REQUEST: HttpErrorFixture = {
   status: 400,
   body: errorBody('invalid_request_error', 'max_tokens: must be greater than 0'),
 }
+
+// ---------------------------------------------------------------------------------------------
+// Spec 02 (01 修补 2, decision M3): what the vendor sends that the content model has no place for.
+// Hand-built like everything above; the block type `future_block` and the field `future_field`
+// stand for whatever a later API version adds, which is exactly what the adapter cannot know.
+// ---------------------------------------------------------------------------------------------
+
+/** A field a known block carries beyond the ones the adapter maps. */
+export const THINKING_EXTRA_FIELD = { future_field: { level: 2, tags: ['a', 'b'] } }
+/** A block of a type the adapter does not map, as it arrives whole at `content_block_start`. */
+export const UNKNOWN_BLOCK = { type: 'future_block', payload: { note: 'kept verbatim' }, n: 1 }
+export const VENDOR_ANSWER = 'Done.'
+
+/** A thinking block with an unknown field, an unknown block, then the answer. */
+export const VENDOR_BLOCKS_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, { type: 'thinking', thinking: '', signature: '', ...THINKING_EXTRA_FIELD }),
+  blockDelta(0, { type: 'thinking_delta', thinking: THINKING_TEXT[0] }),
+  blockDelta(0, { type: 'signature_delta', signature: THINKING_SIGNATURE }),
+  blockStop(0),
+  blockStart(1, UNKNOWN_BLOCK),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: VENDOR_ANSWER }),
+  blockStop(2),
+  messageDelta('end_turn', true),
+  MESSAGE_STOP,
+]
+
+/** Fields the three other known block types carry beyond the ones the adapter maps. */
+export const REDACTED_EXTRA_FIELD = { future_redacted: 'r1' }
+export const TEXT_EXTRA_FIELD = { future_text: { k: 1 } }
+export const TOOL_USE_EXTRA_FIELD = { future_tool: [1, 2] }
+/** A citation as the documented `citations_delta` carries it; folded into the text's `citations`. */
+export const CITATION = {
+  type: 'char_location',
+  cited_text: 'tenon',
+  document_index: 0,
+  document_title: 'Notes',
+  start_char_index: 0,
+  end_char_index: 5,
+}
+export const VENDOR_FIELDS_TEXT = 'Looking.'
+
+/**
+ * A redacted block, a cited text block and a direct call, each with a field the adapter does not map,
+ * ended as `tool_use`: the call is `toolName`'s, with `args` as its one argument fragment.
+ */
+export function vendorFieldsFrames(toolName: string, args: string): readonly string[] {
+  return [
+    messageStart(),
+    blockStart(0, { type: 'redacted_thinking', data: REDACTED_DATA, ...REDACTED_EXTRA_FIELD }),
+    blockStop(0),
+    blockStart(1, { ...TEXT_START, ...TEXT_EXTRA_FIELD }),
+    blockDelta(1, { type: 'text_delta', text: VENDOR_FIELDS_TEXT }),
+    blockDelta(1, { type: 'citations_delta', citation: CITATION }),
+    blockStop(1),
+    blockStart(2, { ...(toolStart(TOOL_ID, toolName) as object), ...TOOL_USE_EXTRA_FIELD }),
+    blockDelta(2, { type: 'input_json_delta', partial_json: args }),
+    blockStop(2),
+    messageDelta('tool_use', true),
+    MESSAGE_STOP,
+  ]
+}
+
+export const SERVER_TOOL_ID = 'srvtoolu_01Fixture'
+export const SERVER_QUERY_FRAGMENTS = ['{"query":', ' "tenon"}'] as const
+export const SERVER_TOOL_RESULT = {
+  type: 'web_search_tool_result',
+  tool_use_id: SERVER_TOOL_ID,
+  content: [
+    {
+      type: 'web_search_result',
+      url: 'https://example.test/tenon',
+      title: 'Tenon',
+      encrypted_content: 'RW5jcnlwdGVk',
+    },
+  ],
+}
+export const SERVER_ANSWER = 'Found it.'
+
+/**
+ * A turn in which the vendor ran three calls itself: a web search with its result block, and a code
+ * execution `tool_use` whose `caller` is not `direct`. None of them is ours to dispatch or to send
+ * back (01 修补 9 (t)); the text around them is an ordinary answer.
+ */
+export const SERVER_EXECUTED_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, TEXT_START),
+  blockDelta(0, { type: 'text_delta', text: TOOL_PREAMBLE }),
+  blockStop(0),
+  blockStart(1, { type: 'server_tool_use', id: SERVER_TOOL_ID, name: 'web_search', input: {} }),
+  blockDelta(1, { type: 'input_json_delta', partial_json: SERVER_QUERY_FRAGMENTS[0] }),
+  blockDelta(1, { type: 'input_json_delta', partial_json: SERVER_QUERY_FRAGMENTS[1] }),
+  blockStop(1),
+  blockStart(2, SERVER_TOOL_RESULT),
+  blockStop(2),
+  blockStart(
+    3,
+    toolStart(TOOL_ID, TOOL_NAME, { type: 'code_execution_20250825', tool_id: 'srvtoolu_02' }),
+  ),
+  blockDelta(3, { type: 'input_json_delta', partial_json: TOOL_ARGS_FRAGMENTS[0] }),
+  blockDelta(3, { type: 'input_json_delta', partial_json: TOOL_ARGS_FRAGMENTS[1] }),
+  blockStop(3),
+  blockStart(4, TEXT_START),
+  blockDelta(4, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(4),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
+/** Streamed vendor input that never forms a JSON object: an unterminated object each time. */
+export const GARBLED_SERVER_QUERY = '{"query": "x"'
+export const GARBLED_FUTURE_INPUT = '{"a":'
+/** A block of a type the adapter does not map that takes streamed input, as it starts. */
+export const FUTURE_CALL_START = { type: 'future_call', id: 'fut_01Fixture', input: {} }
+
+/**
+ * Two vendor blocks whose streamed input does not parse — a server call (`never` already) and an
+ * unknown block that would otherwise go back to the same model — then an ordinary answer.
+ */
+export const GARBLED_VENDOR_INPUT_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, { type: 'server_tool_use', id: SERVER_TOOL_ID, name: 'web_search', input: {} }),
+  blockDelta(0, { type: 'input_json_delta', partial_json: GARBLED_SERVER_QUERY }),
+  blockStop(0),
+  blockStart(1, FUTURE_CALL_START),
+  blockDelta(1, { type: 'input_json_delta', partial_json: GARBLED_FUTURE_INPUT }),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(2),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
+export const MCP_TOOL_ID = 'mcptoolu_01Fixture'
+/** An MCP connector call as it starts: the vendor calls a tool on a remote MCP server itself. */
+export const MCP_TOOL_START = {
+  type: 'mcp_tool_use',
+  id: MCP_TOOL_ID,
+  name: 'ping',
+  server_name: 'fixture-server',
+  input: {},
+}
+export const MCP_TOOL_INPUT = { host: 'example.test' }
+export const MCP_TOOL_RESULT = {
+  type: 'mcp_tool_result',
+  tool_use_id: MCP_TOOL_ID,
+  is_error: false,
+  content: [{ type: 'text', text: 'pong' }],
+}
+
+/**
+ * A turn in which the vendor ran a call on a remote MCP server (its MCP connector), then answered:
+ * the call and its result are the vendor's, like the web search above (01 修补 9 (t)).
+ */
+export const MCP_EXECUTED_FRAMES: readonly string[] = [
+  messageStart(),
+  blockStart(0, MCP_TOOL_START),
+  blockDelta(0, { type: 'input_json_delta', partial_json: JSON.stringify(MCP_TOOL_INPUT) }),
+  blockStop(0),
+  blockStart(1, MCP_TOOL_RESULT),
+  blockStop(1),
+  blockStart(2, TEXT_START),
+  blockDelta(2, { type: 'text_delta', text: SERVER_ANSWER }),
+  blockStop(2),
+  messageDelta('end_turn'),
+  MESSAGE_STOP,
+]
+
+/** The model `messageStart()` names; spec 02 reports it as the `response-model` event. */
+export const RESPONSE_MODEL_ID = MODEL_ID
+
+/** A client call as a fixture turn carries it: its id, its name and its arguments' JSON text. */
+export interface FixtureCall {
+  readonly id: string
+  readonly name: string
+  readonly args: string
+}
+
+/**
+ * A turn of text chunks, then client calls, ended by `stopReason` (spec 02 plan step 14's stop sweep):
+ * each text chunk one delta, each call's arguments one fragment.
+ */
+export function turnFrames(
+  texts: readonly string[],
+  calls: readonly FixtureCall[],
+  stopReason: string,
+): readonly string[] {
+  const frames = [messageStart()]
+  let index = 0
+  if (texts.length > 0) {
+    frames.push(blockStart(index, TEXT_START))
+    for (const text of texts) frames.push(blockDelta(index, { type: 'text_delta', text }))
+    frames.push(blockStop(index))
+    index += 1
+  }
+  for (const call of calls) {
+    frames.push(
+      blockStart(index, toolStart(call.id, call.name)),
+      blockDelta(index, { type: 'input_json_delta', partial_json: call.args }),
+      blockStop(index),
+    )
+    index += 1
+  }
+  frames.push(messageDelta(stopReason), MESSAGE_STOP)
+  return frames
+}

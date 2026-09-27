@@ -2,14 +2,31 @@ import { describe, expect, it } from 'vitest'
 import {
   PROVENANCE_KEY_MAX_LENGTH,
   TapeProvenanceSyntaxError,
+  approvalResolvedKey,
+  assembledKey,
   assertProvenanceKey,
   attemptCompletedKey,
+  compactionAnchorKey,
+  dispatchCommittedKey,
   isValidProvenanceKey,
   messageRetractedKey,
   messageRevisionKey,
+  modelChoiceSetKey,
   modelSelectedKey,
+  parentLinkKey,
   parseProvenanceKey,
+  permissionDecidedKey,
+  profileSetKey,
+  runStartedKey,
+  runTerminalKey,
   sessionStartKey,
+  toolCallKey,
+  toolOutcomeKey,
+  toolResultKey,
+  toolTableKey,
+  toolsWithheldKey,
+  viewContentKey,
+  workspaceSetKey,
 } from '../../src/tape/provenance.js'
 
 const INCARNATION = '11111111-1111-4111-8111-111111111111'
@@ -172,5 +189,74 @@ describe('provenance key builders', () => {
     expect(() => messageRevisionKey(MESSAGE, 2 ** 53)).toThrow(/revision/)
     expect(() => attemptCompletedKey(RUN, -1, 0)).toThrow(/requestSeq/)
     expect(() => attemptCompletedKey(RUN, 0, -1)).toThrow(/physicalAttempt/)
+  })
+})
+
+describe('spec 02 key builders (§名字总表)', () => {
+  const HASH = 'ab'.repeat(32)
+  /** Every row of the table's key column, built for one call identity. */
+  const keys = (id: string): Array<readonly [string, string]> => [
+    [profileSetKey(id), `session:v1:profile:${id}`],
+    [workspaceSetKey(id, 2), `session:v1:workspace:${id}:2`],
+    [modelChoiceSetKey(id, 1), `session:v1:model_choice:${id}:1`],
+    [parentLinkKey(id, 3, 1), `session:v1:parent_link:${id}:3:1`],
+    [viewContentKey('system', HASH), `view:v1:content:system:${HASH}`],
+    [viewContentKey('tool_spec', HASH), `view:v1:content:tool_spec:${HASH}`],
+    [viewContentKey('model_info', HASH), `view:v1:content:model_info:${HASH}`],
+    [toolTableKey(id, 0, 'zhipu'), `view:v1:tool_table:${id}:0:zhipu`],
+    [toolsWithheldKey(id, 4), `view:v1:tools_withheld:${id}:4`],
+    [assembledKey(id, 4), `view:v1:assembled:${id}:4`],
+    [messageRevisionKey(id, 0), `message:v1:${id}:0`], // message/continuation
+    [toolCallKey(id, 3, 1), `tool:v1:call:${id}:3:1`],
+    [permissionDecidedKey(id, 3, 1), `tool:v1:decision:${id}:3:1`],
+    [permissionDecidedKey(id, 3, 1, 2), `tool:v1:decision:${id}:3:1:rejudge:2`],
+    [approvalResolvedKey(id, 3, 1), `tool:v1:approval:${id}:3:1`],
+    [toolResultKey(id, 3, 1), `tool:v1:result:${id}:3:1`],
+    [runStartedKey(id), `execution:v1:run_started:${id}`],
+    [dispatchCommittedKey(id, 3, 1), `execution:v1:dispatch:${id}:3:1`],
+    [toolOutcomeKey(id, 3, 1), `execution:v1:outcome:${id}:3:1`],
+    [runTerminalKey(id), `execution:v1:run_terminal:${id}`],
+    [compactionAnchorKey(id, 5), `compaction:v1:anchor:${id}:5`],
+  ]
+
+  it('builds exactly the keys the name table writes down, each valid and within bounds', () => {
+    for (const [built, expected] of keys(RUN)) {
+      expect(built).toBe(expected)
+      expect(isValidProvenanceKey(built)).toBe(true)
+      expect(built.length).toBeLessThanOrEqual(PROVENANCE_KEY_MAX_LENGTH)
+    }
+  })
+
+  it('never mints two keys for one fact, nor one key for two', () => {
+    const built = keys(RUN).map(([key]) => key)
+    expect(new Set(built).size).toBe(built.length)
+    // Case variants of a minted key do not validate either (the byte-wise uniqueness argument).
+    expect(keys(LETTERED).filter(([key]) => isValidProvenanceKey(key.toUpperCase()))).toEqual([])
+  })
+
+  it('counts a re-judgement from 1: the first decision has no rejudge segment', () => {
+    for (const r of [0, -1, 1.5, Number.NaN]) {
+      expect(() => permissionDecidedKey(RUN, 0, 0, r)).toThrow(TapeProvenanceSyntaxError)
+    }
+    expect(permissionDecidedKey(RUN, 0, 0, 1)).not.toBe(permissionDecidedKey(RUN, 0, 0))
+  })
+
+  it('refuses a non-digest content hash, an unknown content type and an unsafe provider id', () => {
+    for (const hash of ['', 'AB'.repeat(32), 'ab'.repeat(31), `${'ab'.repeat(32)}0`]) {
+      expect(() => viewContentKey('system', hash)).toThrow(/64 lowercase hex/)
+    }
+    expect(() => viewContentKey('prompt' as 'system', HASH)).toThrow(TapeProvenanceSyntaxError)
+    for (const providerId of ['', 'Zhipu', 'a:b', 'z hipu']) {
+      expect(() => toolTableKey(RUN, 0, providerId)).toThrow(/providerId/)
+    }
+  })
+
+  it('refuses a non-canonical id and a bad ordinal in every builder', () => {
+    expect(() => toolCallKey('not-a-uuid', 0, 0)).toThrow(/runId/)
+    expect(() => profileSetKey('not-a-uuid')).toThrow(/incarnationId/)
+    expect(() => toolResultKey(RUN, -1, 0)).toThrow(/requestSeq/)
+    expect(() => approvalResolvedKey(RUN, 0, 1.5)).toThrow(/ordinal/)
+    expect(() => workspaceSetKey(INCARNATION, -1)).toThrow(/n must/)
+    expect(() => toolTableKey(INCARNATION, -1, 'zhipu')).toThrow(/generation/)
   })
 })

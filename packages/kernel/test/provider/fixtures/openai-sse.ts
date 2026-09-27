@@ -538,3 +538,108 @@ export const INSUFFICIENT_QUOTA: HttpErrorFixture = {
     'insufficient_quota',
   ),
 }
+
+// ---------------------------------------------------------------------------------------------
+// Spec 02 (01 修补 9 (t)): a call the vendor runs itself. zhipu documents `tools: [{ type: 'mcp' }]`
+// on the request (read 2026-09-26) but not how a streamed `tool_calls[].type === 'mcp'` entry looks,
+// so this one is hand-built from the chat-completions shape: an id, `type: 'mcp'`, and the vendor's
+// own `mcp` object where a function call has `function`. Next to it, one ordinary function call.
+// ---------------------------------------------------------------------------------------------
+
+export const MCP_CALL_ID = 'call_mcp_0Fixture'
+export const MCP_FIELDS = {
+  server_label: 'search',
+  name: 'web_search',
+  arguments: '{"q":"tenon"}',
+}
+export const MCP_PREAMBLE = 'Searching.'
+
+export const MCP_CALL_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ content: MCP_PREAMBLE }),
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({
+    tool_calls: [
+      {
+        index: 1,
+        id: TOOL_ID,
+        type: 'function',
+        function: { name: TOOL_NAME, arguments: '{"path":"/tmp/a.ts"}' },
+      },
+    ],
+  }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
+/** A turn that is the vendor's call alone, ended as `tool_calls`: nothing for the client to run. */
+export const MCP_ONLY_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
+/**
+ * The vendor's call, then a client call under the SAME wire index with its own id — the index reuse
+ * REUSED_INDEX_FRAMES shows for two function calls (ollama#15457), after a call the vendor ran.
+ */
+export const MCP_REUSED_INDEX_FRAMES: readonly string[] = [
+  ROLE_CHUNK,
+  chunk({ tool_calls: [{ index: 0, id: MCP_CALL_ID, type: 'mcp', mcp: MCP_FIELDS }] }),
+  chunk({
+    tool_calls: [
+      {
+        index: 0,
+        id: TOOL_ID,
+        type: 'function',
+        function: { name: TOOL_NAME, arguments: JSON.stringify(TOOL_INPUT) },
+      },
+    ],
+  }),
+  chunk({}, 'tool_calls'),
+  usageChunk(),
+  DONE,
+]
+
+/** The model every chunk names; spec 02 reports it once as the `response-model` event. */
+export const RESPONSE_MODEL_ID = MODEL_ID
+
+/** A client call as a fixture turn carries it: its id, its name and its arguments' JSON text. */
+export interface FixtureCall {
+  readonly id: string
+  readonly name: string
+  readonly args: string
+}
+
+/**
+ * A turn of text chunks, then client calls, ended by `finishReason` (spec 02 plan step 14's stop
+ * sweep): each text chunk one delta, each call whole in one chunk.
+ */
+export function turnFrames(
+  texts: readonly string[],
+  calls: readonly FixtureCall[],
+  finishReason: string,
+): readonly string[] {
+  return [
+    ROLE_CHUNK,
+    ...texts.map((text) => chunk({ content: text })),
+    ...calls.map((call, index) =>
+      chunk({
+        tool_calls: [
+          {
+            index,
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.args },
+          },
+        ],
+      }),
+    ),
+    chunk({}, finishReason),
+    usageChunk(),
+    DONE,
+  ]
+}

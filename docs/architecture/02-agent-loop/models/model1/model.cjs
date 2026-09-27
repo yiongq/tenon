@@ -43,6 +43,13 @@ function initial(sc) {
     runs: {}, // id -> {sess, lease, st, cause, pausedRun, reason, batchDone, parent}
     queue: [], // [{q, seq, urgent, m, owed}]
     held: null, // {q|null}
+    // Q16-draft (2026-09-26): a session not yet established keeps a draft in kernel memory, read/written by its mailbox
+    est: true,
+    draftScenario: false,
+    draft: null, // {profile, choice}
+    created: null, // the draft written with session/start
+    choiceFacts: [], // model_choice_set written after the session exists (n >= 1)
+    sel: { pending: 0, last: null },
     rset: [], // kernel resumable set: [{sess, pausedRun}]
     tape: {
       last: 'completed',
@@ -184,7 +191,30 @@ function writeMsgs(s, ms) {
 }
 
 // ---------------------------------------------------------------- run primitives
+// Q16-draft: resolveChoice reads the draft synchronously when the prebuild starts; the lease remembers what it read
+function markPrebuild(s, c) {
+  c.stage = 'prebuild'
+  if (!s.est && c.lease && s.leases[c.lease]) s.leases[c.lease].snap = JSON.stringify(s.draft)
+}
+// Q16-draft: the first round of a session that does not exist yet writes session/start with the draft in one batch
+function createSession(s, L) {
+  const snap = L && s.leases[L] ? s.leases[L].snap : undefined
+  if (snap !== undefined && snap !== JSON.stringify(s.draft))
+    s.undef.push(
+      'VIOLATION session/start batch differs from the draft the prebuild read (' +
+        snap +
+        ' vs ' +
+        JSON.stringify(s.draft) +
+        ')',
+    )
+  if (s.created) s.undef.push('VIOLATION session created twice')
+  s.created = clone(s.draft || { profile: 'chat', choice: null })
+  s.est = true
+  s.draft = null
+}
 function openRun(s, L, sess, cause, pausedRun) {
+  if (!s.est && sess === 'R' && (cause === 'user-message' || cause === 'continue'))
+    createSession(s, L)
   if (
     (cause === 'user-message' || cause === 'continue') &&
     s.confirmNeeded &&
@@ -286,13 +316,34 @@ function userActions(s) {
   if (s.tape.last === 'output-truncated')
     acts.push(['continue', () => cmdEntry(s, { kind: 'continue' })])
   acts.push(['approval.resume(open session)', () => cmdEntry(s, { kind: 'resume' })])
-  if (s.held)
+  if (s.held && !s.draftScenario)
     acts.push([
       'selectModel',
       () => {
         s.mb.push({ t: 'select' })
       },
     ])
+  if (s.draftScenario) {
+    // Q16-draft: the model menu and the mode switch can be used at any time; both go through the mailbox, never begin
+    acts.push([
+      'selectModel(any time)',
+      () => {
+        s.sel.pending++
+        s.mb.push({ t: 'select', v: nid(s, 'v') })
+      },
+    ])
+    if (!s.est)
+      acts.push([
+        'selectProfile',
+        () => {
+          s.sel.pending++
+          s.mb.push({
+            t: 'profile',
+            p: s.draft && s.draft.profile === 'cowork' ? 'chat' : 'cowork',
+          })
+        },
+      ])
+  }
   acts.push(['quit', () => quit(s)])
   if (!s.closes && Object.values(s.leases).some((l) => !l.aborted))
     acts.push(['closeWindow(confirm stop)', () => closeWindow(s)])
@@ -318,7 +369,9 @@ function cmdEntry(s, c) {
   }
   s.cmds[c.id] = c
   // R3 :417 look before the first await: begin only if no live lease and no command queued or waiting; resume never at entry
-  const pendingCmd = s.mb.some((t) => t.t === 'cmd' || t.t === 'stop' || t.t === 'select')
+  const pendingCmd = s.mb.some(
+    (t) => t.t === 'cmd' || t.t === 'stop' || t.t === 'select' || t.t === 'profile',
+  )
   if (!liveLease(s) && !pendingCmd && c.kind !== 'resume') {
     const L = begin(s, 'cmd:' + c.id)
     if (!L) {
@@ -332,12 +385,12 @@ function cmdEntry(s, c) {
     const q = s.tape.pending && s.tape.pending.kind === 'question' && s.tape.pending.sess === 'R'
     const res = s.rset.length > 0
     if ((c.kind === 'send' || c.kind === 'qsend') && !q && !res) {
-      c.stage = 'prebuild'
+      markPrebuild(s, c)
       c.peek = s.seq
       return
     }
     if (c.kind === 'continue') {
-      c.stage = 'prebuild'
+      markPrebuild(s, c)
       c.peek = s.seq
       return
     }
@@ -405,6 +458,11 @@ function crash(s) {
   s.held = null
   s.rset = []
   s.stopRecs = []
+  s.sel.pending = 0 // mailbox gone
+  if (!s.est) {
+    s.draft = null // the draft is kernel memory
+    s.sel.last = null
+  }
   // recovery (a): open Runs get terminal 'recovered' (or paused when only waiting on subagent)
   const hadChildRun = childEndPending || activeRuns(s).some(([, r]) => r.sess === 'C')
   for (const [, r] of activeRuns(s)) {
@@ -528,7 +586,8 @@ function mailboxStep(s, i) {
   if (t.t === 'runEnd') return runEndTurn(s, t.r)
   if (t.t === 'take') return runTakeTurn(s, t.r)
   if (t.t === 'batch') return batchTurn(s, t.r)
-  if (t.t === 'select') return selectTurn(s)
+  if (t.t === 'select') return selectTurn(s, t)
+  if (t.t === 'profile') return profileTurn(s, t)
 }
 
 function doneCmd(s, c, status) {
@@ -656,7 +715,7 @@ function newRoundTurn(s, c, _kind) {
   if (!c.pre) {
     const L = acquire(s, c)
     if (!L) return doneCmd(s, c, 'refused')
-    c.stage = 'prebuild'
+    markPrebuild(s, c)
     s.trace.push('  ' + c.id + ' has no prebuild: leaves mailbox to prebuild, re-queues')
     return
   }
@@ -749,7 +808,7 @@ function continueTurn(s, c) {
   if (!c.pre) {
     const L = acquire(s, c)
     if (!L) return doneCmd(s, c, 'refused')
-    c.stage = 'prebuild'
+    markPrebuild(s, c)
     return
   }
   if (c.pre === 'missing') return doneCmd(s, c, 'not-sent:config-missing')
@@ -785,7 +844,21 @@ function stopTurn(s) {
   s.trace.push('  stop(mailbox) stopped:' + closed)
 }
 
-function selectTurn(s) {
+function profileTurn(s, t) {
+  s.sel.pending--
+  if (s.est) return // established: returns 'established', no fact
+  s.draft = s.draft || { profile: 'chat', choice: null }
+  s.draft.profile = t.p
+}
+function selectTurn(s, t) {
+  if (t && t.v) {
+    s.sel.pending--
+    s.sel.last = t.v
+    if (!s.est) {
+      s.draft = s.draft || { profile: 'chat', choice: null }
+      s.draft.choice = t.v
+    } else s.choiceFacts.push(t.v)
+  }
   s.tape.sessionChoice = true
   if (!s.held) return
   const h = s.held
@@ -804,7 +877,7 @@ function selectTurn(s) {
     delete s.cmds[c.id]
     return
   }
-  c.stage = 'prebuild'
+  markPrebuild(s, c)
 }
 
 function batchTurn(s, rid) {
@@ -981,6 +1054,17 @@ function check(s) {
     if (['streaming', 'assembling'].includes(r.st) && !s.leases[r.lease])
       v.push('VIOLATION ' + id + ' streams without a live lease')
   for (const u of s.undef) v.push(u)
+  // Q16-draft: every applied selection is what the session now uses; a draft never outlives the session/start batch
+  if (s.sel.last !== null) {
+    const eff = s.est
+      ? s.choiceFacts.length
+        ? s.choiceFacts[s.choiceFacts.length - 1]
+        : s.created && s.created.choice
+      : s.draft && s.draft.choice
+    if (eff !== s.sel.last)
+      v.push('VIOLATION model selection lost: last applied ' + s.sel.last + ', session uses ' + eff)
+  }
+  if (s.est && s.draft) v.push('VIOLATION draft still there after the session was created')
   // INV card vs Run: a waiting card (or resumable item) and a live Run on the same tree at once
   const tr = tapeResumable(s)
   if (
@@ -1010,6 +1094,8 @@ function quiescent(s) {
 }
 function checkQuiescent(s) {
   const v = []
+  if (s.sel.pending)
+    v.push('VIOLATION ' + s.sel.pending + ' model/profile selection(s) never applied')
   if (s.app !== 'quitting')
     for (const x of s.queue)
       if (x.owed)

@@ -10,12 +10,22 @@
  *
  * Signatures are never rewritten and never synthesised: a signature Anthropic did not
  * produce comes back as a 400.
+ *
+ * Spec 02 (01 修补 3) adds two things and changes none of the seven rules. A rule ahead of them all:
+ * a block in a message below `ProviderRequest.dropThinkingBefore` is dropped as `compacted` (H10).
+ * And the vendor blocks (M3) go through the same guard in their own function, decideVendorBlock():
+ * rules 1 and 2 apply to them unchanged, `replay: 'never'` is never sent, and a block that passes
+ * both goes back as it was stored. The vendor fields of a text or tool-request block go through
+ * rules 1 and 2 as well, in decideVendorFields() (01 修补 2; s6-spec-2, owner 2026-09-27).
  */
 import { ProviderInvalidArgumentError } from './errors.js'
-import type { ContentBlock, ModelInfo, ThinkingDecision } from './types.js'
+import type { ContentBlock, ModelInfo, ThinkingDecision, VendorSource } from './types.js'
 
 /** The two reasoning block kinds the guard judges. */
 export type ThinkingBlock = Extract<ContentBlock, { type: 'thinking' | 'redacted-thinking' }>
+
+/** Spec 02 (M3): a block kept verbatim from the vendor, judged by decideVendorBlock(). */
+export type VendorBlock = Extract<ContentBlock, { type: 'vendor' }>
 
 /**
  * What the guard compares against. `hasTools` is not on ModelInfo because it is a property
@@ -25,6 +35,8 @@ export interface ThinkingTarget {
   readonly model: ModelInfo
   /** Whether this request carries tools at all (`ProviderRequest.tools` is non-empty). */
   readonly hasTools: boolean
+  /** `ProviderRequest.dropThinkingBefore`, when the request carries one (spec 02, H10). */
+  readonly dropThinkingBefore?: number
 }
 
 /**
@@ -44,8 +56,22 @@ export function thinkingModelId(model: ModelInfo): string {
   return canonical
 }
 
-export function decideThinking(block: ThinkingBlock, target: ThinkingTarget): ThinkingDecision {
+/**
+ * `messageIndex` is the index of the message the block sits in, within `ProviderRequest.messages`.
+ * Only the compaction rule reads it, so a caller judging a block outside any request leaves it out.
+ */
+export function decideThinking(
+  block: ThinkingBlock,
+  target: ThinkingTarget,
+  messageIndex?: number,
+): ThinkingDecision {
   const { model } = target
+  // 0. (spec 02, H10) Everything before the compaction cut goes, whatever the rules below would
+  //    say: the prefix it was produced under is no longer the one being sent.
+  const cut = target.dropThinkingBefore
+  if (cut !== undefined && messageIndex !== undefined && messageIndex < cut) {
+    return { action: 'drop', reason: 'compacted' }
+  }
   // 1. Another provider's history is never replayed, whatever the target would do with it.
   if (block.provider !== model.providerId) return { action: 'drop', reason: 'foreign-provider' }
   // 2. Same provider, different model: the signature is bound to the model that signed it.
@@ -81,6 +107,49 @@ export function decideThinking(block: ThinkingBlock, target: ThinkingTarget): Th
       // 7. Otherwise it goes back exactly as it was stored.
       return { action: 'replay', reason: 'same-model' }
   }
+}
+
+/**
+ * The guard for a vendor block (spec 02, 01 修补 2 and 3; decisions M3, B1). Its own order:
+ *
+ * - `replay: 'never'` first — a call the vendor ran itself, or its result, is archived and never sent
+ *   back, whoever the target is (01 修补 9 (t));
+ * - then rules 1 and 2 exactly as for a thinking block: another provider's or another model's block
+ *   is dropped;
+ * - otherwise it goes back as it was stored. Rules 3-7 do not apply: they are the target's policy for
+ *   REASONING, and a vendor block is not reasoning the target could keep in another form.
+ */
+export function decideVendorBlock(block: VendorBlock, target: ThinkingTarget): ThinkingDecision {
+  if (block.replay === 'never') return { action: 'drop', reason: 'server-executed' }
+  return sourceGate(block, target.model)
+}
+
+/**
+ * The guard for the `vendorFields` of a text or tool-request block (spec 02, 01 修补 2: 「已知块上的
+ * 未知字段……每项记进 thinkingDecisions：provider 或模型不同，按规则 1、2 丢」; s6-spec-2, owner
+ * 2026-09-27). The block itself always goes — it is the answer, not the vendor's — so only the fields
+ * are judged, against the `vendorSource` the fold stamped next to them:
+ *
+ * - no source: fields stored before the fold stamped one. Nothing says which model produced them, so
+ *   they are not sent to any (`missing-source`); keeping them on a same-model replay would need the
+ *   run's model read back from the Tape and mapped through a model row the encoder does not have;
+ * - otherwise rules 1 and 2 exactly as for a vendor block; fields that pass both go back as stored.
+ */
+export function decideVendorFields(
+  source: VendorSource | undefined,
+  target: ThinkingTarget,
+): ThinkingDecision {
+  if (source === undefined) return { action: 'drop', reason: 'missing-source' }
+  return sourceGate(source, target.model)
+}
+
+/** Rules 1 and 2, for what carries no reasoning: another provider's or another model's is dropped. */
+function sourceGate(source: VendorSource, model: ModelInfo): ThinkingDecision {
+  if (source.provider !== model.providerId) return { action: 'drop', reason: 'foreign-provider' }
+  if (source.providerModel !== thinkingModelId(model)) {
+    return { action: 'drop', reason: 'model-changed' }
+  }
+  return { action: 'replay', reason: 'same-model' }
 }
 
 /**

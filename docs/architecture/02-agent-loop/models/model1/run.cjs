@@ -20,6 +20,33 @@ const SC = {
       s.confirmNeeded = true
     },
   },
+  // Q16-draft (2026-09-26): a new session that does not exist yet; model/profile selection at any time
+  draftNew: {
+    budget: 3,
+    init: (s) => {
+      s.est = false
+      s.draftScenario = true
+      s.tape.last = null
+    },
+  },
+  draftNewConfirm: {
+    budget: 3,
+    init: (s) => {
+      s.est = false
+      s.draftScenario = true
+      s.tape.last = null
+      s.confirmNeeded = true
+    },
+  },
+  draftNewMissingKey: {
+    budget: 3,
+    init: (s) => {
+      s.est = false
+      s.draftScenario = true
+      s.tape.last = null
+      s.keyMissing = true
+    },
+  },
   idleMissingKey: {
     budget: 3,
     init: (s) => {

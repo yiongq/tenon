@@ -9,6 +9,13 @@ import { App } from './App'
 import { ThemeProvider } from './components/shell/ThemeProvider'
 import { TooltipProvider } from './components/ui/tooltip'
 import { startRendererI18n } from './i18n'
+import { listenForQueue } from './runtime/queue-state'
+import { listenForRunState } from './runtime/run-state'
+
+// Subscribed before anything awaits: a `run.state` or `chat.queue` push that main sends as this
+// document loads is never missed (spec 02 §进行中、暂停与 RunRegistry「何时推」).
+listenForRunState(window.tenon)
+listenForQueue(window.tenon)
 
 const container = document.getElementById('root')
 if (!container) throw new Error('root container missing')

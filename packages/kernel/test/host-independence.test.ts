@@ -6,7 +6,7 @@
  * 'browser', not 'neutral': the Anthropic SDK's legacy top-level `browser` field swaps
  * internal/node.mjs for a stub, and only the browser platform applies it.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { describe, expect, it } from 'vitest'
@@ -66,7 +66,33 @@ async function bundleImportErrors(module: string): Promise<string[]> {
   }
 }
 
+/** Every TypeScript source under a kernel directory, recursively, with its text. */
+function sourcesUnder(dir: string): { readonly file: string; readonly text: string }[] {
+  const root = `${kernelDir}${dir}`
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((file) => file.endsWith('.ts'))
+    .map((file) => ({ file: `${dir}/${file}`, text: readFileSync(`${root}/${file}`, 'utf8') }))
+}
+
 describe('kernel host independence', () => {
+  it('imports neither contracts nor railguard, and opens no socket or resolver of its own (旧 236)', () => {
+    const offenders = sourcesUnder('src').filter(({ text }) =>
+      /from\s+['"](?:@tenon-app\/contracts|railguard|node:dns|node:net|dns|net)(?:\/[^'"]*)?['"]/.test(
+        text,
+      ),
+    )
+    expect(offenders.map(({ file }) => file)).toEqual([])
+  })
+
+  it('names no provider in loop/, tools/ or permission/ (旧 236; A14)', () => {
+    // The Ollama rule lives in the desktop's run-assembly.ts and reaches the loop as
+    // `RunAssembly.toolsWithheld`; the loop never branches on a provider id.
+    const offenders = ['src/loop', 'src/tools', 'src/permission']
+      .flatMap((dir) => sourcesUnder(dir))
+      .filter(({ text }) => /['"`]ollama['"`]/.test(text))
+    expect(offenders.map(({ file }) => file)).toEqual([])
+  })
+
   it('bundles the public entry with no node: built-in reachable', async () => {
     expect(await bundleErrors('src/index.ts')).toEqual([])
   }, 60_000)

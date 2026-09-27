@@ -11,9 +11,12 @@ import { createMemoryTapeStore } from '../../src/tape/memory-store.js'
 import type { NewEntry, TapeEntry, TapeKind } from '../../src/tape/entry.js'
 import { createEntryWriter } from '../../src/tape/names.js'
 import {
+  compactionAnchorKey,
   messageRetractedKey,
   messageRevisionKey,
   sessionStartKey,
+  toolCallKey,
+  toolResultKey,
 } from '../../src/tape/provenance.js'
 import { effectiveMessages, rebuildProviderContext } from '../../src/tape/replay.js'
 import type { TapeStore } from '../../src/tape/store.js'
@@ -138,6 +141,37 @@ describe('effectiveMessages', () => {
     expect(folded[0]?.orderSeq).toBe(1)
   })
 
+  it('reads message/continuation and message/environment as user turns, in order (spec 02)', () => {
+    const extra = (entryId: number, name: string, messageId: string, more: object): TapeEntry =>
+      fold({
+        kind: 'message',
+        name,
+        entryId,
+        sourceId: messageId,
+        sourceSeq: 0,
+        payload: {
+          messageId,
+          revision: 0,
+          role: 'user',
+          content: [{ type: 'text', text: name }],
+          status: 'complete',
+          ...more,
+        },
+      })
+    const messages = effectiveMessages([
+      messageEntry(1, 'm-user', 0, 'user', [{ type: 'text', text: 'hi' }]),
+      extra(2, 'message/environment', 'm-env', { date: '2026-09-26', workspace: null }),
+      messageEntry(3, 'm-asst', 0, 'assistant', [{ type: 'text', text: 'hello' }]),
+      extra(4, 'message/continuation', 'm-cont', { cause: 'step-limit', afterRunId: 'run' }),
+    ])
+    expect(messages.map((folded) => [folded.messageId, folded.role])).toEqual([
+      ['m-user', 'user'],
+      ['m-env', 'user'],
+      ['m-asst', 'assistant'],
+      ['m-cont', 'user'],
+    ])
+  })
+
   it('passes every other kind and event name through as evidence', () => {
     const folded = effectiveMessages([
       fold({ kind: 'anchor', name: 'session/start', entryId: 1, payload: { incarnationId: 'i' } }),
@@ -218,6 +252,29 @@ function message(
       content,
       status: 'complete',
       ...(role === 'assistant' ? { runId: '00000000-0000-4000-8000-0000000000ff' } : {}),
+    },
+    createdAt: at(),
+  })
+}
+
+function compaction(
+  runId: string,
+  requestSeq: number,
+  summary: string,
+  keepFromEntryId: number,
+): NewEntry {
+  return createEntryWriter('compaction')('compaction/anchor', {
+    sourceType: 'runtime_event',
+    sourceId: runId,
+    sourceSeq: requestSeq,
+    provenanceKey: compactionAnchorKey(runId, requestSeq),
+    payload: {
+      coversThroughEntryId: keepFromEntryId - 1,
+      keepFromEntryId,
+      summary,
+      summarizer: { providerId: 'anthropic', modelId: TARGET.id },
+      trigger: { code: 'threshold', estimatedInputTokens: 150_000, thresholdTokens: 140_000 },
+      generation: 0,
     },
     createdAt: at(),
   })
@@ -412,6 +469,113 @@ describe('rebuildProviderContext', () => {
     expect(context).toHaveLength(messageIds.length)
     expect(context[0]?.content).toEqual(text('message 0'))
     expect(context.at(-1)?.content).toEqual(text('message 1199'))
+  })
+
+  // Plan step 8 「重放……从最近 anchor 往后读」: the newest compaction/anchor wins, and replay keeps the
+  // original from its keepFromEntryId on, that entry included (CompactionAnchorPayload).
+  it('replays from the latest compaction/anchor: its summary, then keepFromEntryId onwards', async () => {
+    const session = await openSession()
+    const runId = session.ids.uuid()
+    const first = session.ids.uuid()
+    const answer = session.ids.uuid()
+    const second = session.ids.uuid()
+    const again = session.ids.uuid()
+    const third = session.ids.uuid()
+    const append = (entries: NewEntry[]): ReturnType<TapeStore['append']> =>
+      session.store.append({
+        sessionId: session.sessionId,
+        incarnationId: session.incarnationId,
+        entries,
+      })
+    const replay = (): ReturnType<typeof rebuildProviderContext> =>
+      rebuildProviderContext(session.store, { sessionId: session.sessionId, target: TARGET })
+    const [, , kept] = await append([
+      message(first, 0, 'user', text('one')),
+      message(answer, 0, 'assistant', text('answer one')),
+      message(second, 0, 'user', text('two')),
+    ])
+    if (kept === undefined) throw new Error('no receipt')
+    await append([compaction(runId, 0, 'first summary', kept.entryId)])
+    expect(await replay()).toEqual([
+      { role: 'user', content: text('first summary') },
+      { role: 'user', content: text('two') },
+    ])
+    const [, keptLater] = await append([
+      message(again, 0, 'assistant', text('answer two')),
+      message(third, 0, 'user', text('three')),
+    ])
+    if (keptLater === undefined) throw new Error('no receipt')
+    await append([compaction(runId, 1, 'second summary', keptLater.entryId)])
+    expect(await replay()).toEqual([
+      { role: 'user', content: text('second summary') },
+      { role: 'user', content: text('three') },
+    ])
+  })
+
+  // Plan step 14 「先写者算数」, read through step 8's replay of tool facts: only one tool/result is ever
+  // written per call, and if a disk held a second one anyway, the first still answers the call.
+  it('pairs a call with its first tool/result when the tape holds two', async () => {
+    const session = await openSession()
+    const runId = session.ids.uuid()
+    const question = session.ids.uuid()
+    const answer = session.ids.uuid()
+    const request: ContentBlock = {
+      type: 'tool-request',
+      id: 'toolu_1',
+      name: 'Read',
+      input: { path: 'a.txt' },
+    }
+    const tool = createEntryWriter('tool')
+    const result = (provenanceKey: string, body: string): NewEntry =>
+      tool('tool/result', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        sourceSeq: 0,
+        provenanceKey,
+        payload: {
+          ordinal: 0,
+          providerToolCallId: 'toolu_1',
+          isError: false,
+          content: text(body),
+          kernelAuthored: false,
+        },
+        createdAt: at(),
+      })
+    await session.store.append({
+      sessionId: session.sessionId,
+      incarnationId: session.incarnationId,
+      entries: [
+        message(question, 0, 'user', text('read a.txt')),
+        message(answer, 0, 'assistant', [request]),
+        tool('tool/call', {
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          sourceSeq: 0,
+          provenanceKey: toolCallKey(runId, 0, 0),
+          payload: {
+            ordinal: 0,
+            providerToolCallId: 'toolu_1',
+            messageId: answer,
+            name: 'Read',
+            input: { path: 'a.txt' },
+            argsHash: 'unused-by-replay',
+          },
+          createdAt: at(),
+        }),
+        result(toolResultKey(runId, 0, 0), 'first'),
+        result(`${toolResultKey(runId, 0, 0)}:again`, 'second'),
+      ],
+    })
+    expect(
+      await rebuildProviderContext(session.store, { sessionId: session.sessionId, target: TARGET }),
+    ).toEqual([
+      { role: 'user', content: text('read a.txt') },
+      { role: 'assistant', content: [request] },
+      {
+        role: 'user',
+        content: [{ type: 'tool-response', id: 'toolu_1', content: text('first'), isError: false }],
+      },
+    ])
   })
 
   it('is empty for a session that does not exist', async () => {

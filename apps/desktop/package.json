@@ -32,9 +32,11 @@
     "react-dom": "catalog:",
     "react-i18next": "17.0.14",
     "streamdown": "2.6.0",
+    "undici": "7.29.1",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@formatjs/icu-messageformat-parser": "3.5.18",
     "@playwright/test": "catalog:",
     "@tailwindcss/vite": "4.3.3",
     "@types/better-sqlite3": "9.6.0",

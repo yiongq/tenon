@@ -1,20 +1,29 @@
 /**
- * Folding and replay (spec 01 §投影与重放).
+ * Folding and replay (spec 01 §投影与重放; spec 02, 01 修补 7 and §折叠与读法).
  *
  * `effectiveMessages` is the fold: same `messageId` ⇒ the highest `revision` wins, and a
- * `message/retracted` with a LARGER `entry_id` hides the message. Phase 1's inputs are kind
- * `message`, kind `anchor` and the one event `message/retracted`; every other kind and every other
- * event name passes through untouched as evidence and never becomes a message. `tool_call` /
- * `tool_result` fold with their shape in phase 2.
+ * `message/retracted` with a LARGER `entry_id` hides the message. Its inputs are kind `message` —
+ * `message/user`, `message/assistant` and, from spec 02, `message/continuation`, which is a user
+ * message to the provider even though it never gets a projection row — kind `anchor` and the one
+ * event `message/retracted`; every other kind and every other event name passes through untouched as
+ * evidence and never becomes a message.
+ *
+ * `REPLAY_KINDS` reads `tool_call` and `tool_result` too (spec 02 only adds those two), and
+ * `rebuildProviderContext` places them (§重放怎么排): for the provider, the tool facts are authoritative
+ * — an assistant turn's i-th `tool-request` block only marks where its i-th `tool/call` goes, and the
+ * results follow that turn in one user message, in `<i>` order, wherever the Tape holds them. A
+ * retracted assistant turn takes its calls and results with it: they hang off its `messageId`.
  *
  * `rebuildProviderContext` pages the fold out of a store and hands back provider messages. A
  * request's context is a PREFIX of the tape, not the whole tape, which is why every
  * `provider/attempt_completed` records the `contextAtEntryId` it was assembled at and why replay can
- * be pinned to it.
+ * be pinned to it. From spec 02 it reads from the most recent `compaction/anchor` at or below that
+ * point: the anchor's summary as one user message, then the messages whose `orderSeq` is at or after
+ * its `keepFromEntryId` (§重建、保留尾巴与思考块).
  */
 import type { ContentBlock, InternalMessage, ModelInfo } from '../provider/types.js'
 import type { MessageStatus, TapeEntry } from './entry.js'
-import { parseMessagePayload, parseRetractedMessageId } from './projection.js'
+import { TapeProjectionError, parseMessagePayload, parseRetractedMessageId } from './projection.js'
 import type { TapeReadRangeQuery, TapeReader } from './store.js'
 import { MAX_READ_LIMIT } from './store.js'
 
@@ -31,8 +40,30 @@ export interface EffectiveMessage {
   readonly entryId: number
 }
 
-/** The three kinds the fold reads. Everything else is evidence and is skipped. */
-export const REPLAY_KINDS = Object.freeze(['message', 'anchor', 'event'] as const)
+/**
+ * The kinds replay reads. Spec 02 adds `tool_call` and `tool_result` (01 修补 7); everything else is
+ * evidence and is skipped.
+ */
+export const REPLAY_KINDS = Object.freeze([
+  'message',
+  'anchor',
+  'event',
+  'tool_call',
+  'tool_result',
+] as const)
+
+/**
+ * The message facts the fold reads. `message/continuation` (spec 02, A2) and `message/environment`
+ * (open question 16) are user turns.
+ */
+function isFoldedMessage(entry: TapeEntry): boolean {
+  return (
+    entry.name === 'message/user' ||
+    entry.name === 'message/assistant' ||
+    entry.name === 'message/continuation' ||
+    entry.name === 'message/environment'
+  )
+}
 
 interface FoldState {
   orderSeq: number
@@ -56,7 +87,7 @@ export function effectiveMessages(entries: readonly TapeEntry[]): EffectiveMessa
   }
   for (const entry of entries) {
     if (entry.kind === 'message') {
-      if (entry.name !== 'message/user' && entry.name !== 'message/assistant') continue
+      if (!isFoldedMessage(entry)) continue
       const payload = parseMessagePayload(entry)
       const state = stateFor(payload.messageId)
       state.orderSeq = Math.min(state.orderSeq, entry.entryId)
@@ -122,6 +153,14 @@ export async function readEffectiveMessages(
   store: TapeReader,
   q: ReadEffectiveMessagesQuery,
 ): Promise<EffectiveMessage[]> {
+  return effectiveMessages(await readReplayEntries(store, q))
+}
+
+/** The replay kinds of a pinned prefix, paged, with one incarnation carried across every page. */
+async function readReplayEntries(
+  store: TapeReader,
+  q: ReadEffectiveMessagesQuery,
+): Promise<TapeEntry[]> {
   const entries: TapeEntry[] = []
   let fromEntryId: number | undefined
   let incarnationId: string | undefined
@@ -142,7 +181,41 @@ export async function readEffectiveMessages(
     if (page.nextFromEntryId === null) break
     fromEntryId = page.nextFromEntryId
   }
-  return effectiveMessages(entries)
+  return entries
+}
+
+/** What replay takes from a `compaction/anchor`, read field by field like every other payload. */
+interface CompactionCut {
+  readonly summary: string
+  readonly keepFromEntryId: number
+}
+
+function readCompactionCut(entry: TapeEntry): CompactionCut {
+  const summary = entry.payload['summary']
+  const keepFromEntryId = entry.payload['keepFromEntryId']
+  if (typeof summary !== 'string') {
+    throw new TapeProjectionError(`${entry.name}: payload.summary must be a string`)
+  }
+  if (
+    typeof keepFromEntryId !== 'number' ||
+    !Number.isSafeInteger(keepFromEntryId) ||
+    keepFromEntryId < 0
+  ) {
+    throw new TapeProjectionError(
+      `${entry.name}: payload.keepFromEntryId must be a non-negative safe integer`,
+    )
+  }
+  return { summary, keepFromEntryId }
+}
+
+/** The most recent `compaction/anchor` of a prefix, or null when none was written. */
+function latestCompaction(entries: readonly TapeEntry[]): CompactionCut | null {
+  let latest: TapeEntry | null = null
+  for (const entry of entries) {
+    if (entry.kind !== 'anchor' || entry.name !== 'compaction/anchor') continue
+    if (latest === null || entry.entryId > latest.entryId) latest = entry
+  }
+  return latest === null ? null : readCompactionCut(latest)
 }
 
 export interface RebuildProviderContextQuery extends ReadEffectiveMessagesQuery {
@@ -182,8 +255,228 @@ export async function rebuildProviderContext(
   store: TapeReader,
   q: RebuildProviderContextQuery,
 ): Promise<InternalMessage[]> {
-  const messages = await readEffectiveMessages(store, q)
-  return messages
-    .filter((message) => message.content.length > 0)
-    .map((message) => ({ role: message.role, content: [...message.content] }))
+  return (await replayContext(store, q)).messages
+}
+
+/**
+ * A client call in the context with no `tool/result`: what the pairing check before `encode()` finds
+ * (§崩溃、服务端调用块与兜底「兜底」). `dispatched` says whether its `dispatch_committed` is on the
+ * Tape, which is what a repair closure's execution state follows; `closed`, whether its
+ * `tool_outcome` is — then only the result is missing, and only it is written (§执行日志与恢复表「损坏」:
+ * 补写缺的那一条).
+ */
+export interface UnansweredCall {
+  readonly runId: string
+  readonly requestSeq: number
+  readonly ordinal: number
+  readonly providerToolCallId: string
+  readonly name: string
+  readonly dispatched: boolean
+  readonly closed: boolean
+}
+
+/**
+ * A visible assistant turn whose `tool-request` blocks and `tool/call` facts disagree in number or in
+ * `providerToolCallId` (§重放怎么排 1: 按恢复表的「损坏」类处理). Its calls are placed from the facts
+ * (B1: 以工具事实为准组装上下文): a block with no fact is left out, a fact with no block gets one.
+ */
+export interface MismatchedTurn {
+  readonly messageId: string
+  readonly blocks: number
+  readonly calls: number
+}
+
+/**
+ * `rebuildProviderContext` and the pairing check in one read of the prefix: the messages, and every
+ * call of a visible assistant turn that has no result. A retracted turn's calls are not in the
+ * context, so they are never unanswered; nor are the calls a compaction summarised away.
+ */
+export async function replayContext(
+  store: TapeReader,
+  q: RebuildProviderContextQuery,
+): Promise<{
+  messages: InternalMessage[]
+  unanswered: UnansweredCall[]
+  mismatched: MismatchedTurn[]
+}> {
+  const entries = await readReplayEntries(store, q)
+  const cut = latestCompaction(entries)
+  const tools = toolFactsOf(entries)
+  const messages: InternalMessage[] = []
+  const unanswered: UnansweredCall[] = []
+  const mismatched: MismatchedTurn[] = []
+  for (const message of effectiveMessages(entries)) {
+    if (cut !== null && message.orderSeq < cut.keepFromEntryId) continue
+    if (message.role !== 'assistant') {
+      if (message.content.length > 0)
+        messages.push({ role: message.role, content: [...message.content] })
+      continue
+    }
+    const calls = tools.calls.get(message.messageId) ?? []
+    const requests = message.content.filter(
+      (block): block is Extract<ContentBlock, { type: 'tool-request' }> =>
+        block.type === 'tool-request',
+    )
+    const agrees =
+      requests.length === calls.length &&
+      requests.every((block, i) => block.id === calls[i]?.providerToolCallId)
+    if (!agrees) {
+      mismatched.push({
+        messageId: message.messageId,
+        blocks: requests.length,
+        calls: calls.length,
+      })
+    }
+    const content = agrees ? placeCalls(message.content, calls) : byFacts(message.content, calls)
+    if (content.length > 0) messages.push({ role: 'assistant', content })
+    // The results follow their assistant turn, in <i> order — wherever the Tape holds them.
+    const responses: ContentBlock[] = []
+    for (const call of calls) {
+      const result = tools.results.get(call.key)
+      if (result === undefined) {
+        unanswered.push({
+          runId: call.runId,
+          requestSeq: call.requestSeq,
+          ordinal: call.ordinal,
+          providerToolCallId: call.providerToolCallId,
+          name: call.name,
+          dispatched: tools.dispatched.has(call.key),
+          closed: tools.closed.has(call.key),
+        })
+        continue
+      }
+      responses.push({
+        type: 'tool-response',
+        id: call.providerToolCallId,
+        content: result.content,
+        isError: result.isError,
+      })
+    }
+    if (responses.length > 0) messages.push({ role: 'user', content: responses })
+  }
+  if (cut === null) return { messages, unanswered, mismatched }
+  // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
+  return {
+    messages: [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages],
+    unanswered,
+    mismatched,
+  }
+}
+
+/** A `tool/call` as replay places it. */
+interface ReplayCall {
+  readonly key: string
+  readonly runId: string
+  readonly requestSeq: number
+  readonly ordinal: number
+  readonly providerToolCallId: string
+  readonly name: string
+  readonly input: Record<string, unknown>
+}
+
+/** What replay takes from a `tool/result`. */
+interface ReplayResult {
+  readonly content: Array<Extract<ContentBlock, { type: 'text' | 'image' }>>
+  readonly isError: boolean
+}
+
+/** A call's identity across its tool/ facts: (runId, requestSeq, <i>). */
+function callIdentity(entry: TapeEntry): string {
+  return `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
+}
+
+/**
+ * The calls by the assistant message they belong to, in <i> order, the results by call, and which
+ * calls were dispatched and which have their outcome.
+ */
+function toolFactsOf(entries: readonly TapeEntry[]): {
+  calls: Map<string, ReplayCall[]>
+  results: Map<string, ReplayResult>
+  dispatched: Set<string>
+  closed: Set<string>
+} {
+  const calls = new Map<string, ReplayCall[]>()
+  const results = new Map<string, ReplayResult>()
+  const dispatched = new Set<string>()
+  const closed = new Set<string>()
+  for (const entry of entries) {
+    if (entry.name === 'execution/dispatch_committed') dispatched.add(callIdentity(entry))
+    else if (entry.name === 'execution/tool_outcome') closed.add(callIdentity(entry))
+    else if (entry.name === 'tool/call') {
+      const messageId = entry.payload['messageId']
+      if (typeof messageId !== 'string') {
+        throw new TapeProjectionError(`${entry.name}: payload.messageId must be a string`)
+      }
+      const list = calls.get(messageId) ?? []
+      list.push({
+        key: callIdentity(entry),
+        runId: String(entry.sourceId),
+        requestSeq: Number(entry.sourceSeq),
+        ordinal: Number(entry.payload['ordinal']),
+        providerToolCallId: String(entry.payload['providerToolCallId']),
+        name: String(entry.payload['name']),
+        input: entry.payload['input'] as Record<string, unknown>,
+      })
+      calls.set(messageId, list)
+    } else if (entry.name === 'tool/result') {
+      // The first result of a call counts (先写者算数): a later one is never written, and if a disk
+      // held one anyway, replay would still pair the call once.
+      const key = callIdentity(entry)
+      if (results.has(key)) continue
+      results.set(key, {
+        content: entry.payload['content'] as ReplayResult['content'],
+        isError: entry.payload['isError'] === true,
+      })
+    }
+  }
+  for (const list of calls.values()) list.sort((a, b) => a.ordinal - b.ordinal)
+  return { calls, results, dispatched, closed }
+}
+
+/**
+ * The assistant content with each `tool-request` block taken from its `tool/call`: the block marks
+ * the position, the fact gives the id, the name and the input. The caller has checked that the
+ * blocks and the facts agree.
+ */
+function placeCalls(
+  content: readonly ContentBlock[],
+  calls: readonly ReplayCall[],
+): ContentBlock[] {
+  if (calls.length === 0) return [...content]
+  let next = 0
+  return content.map((block): ContentBlock => {
+    if (block.type !== 'tool-request') return block
+    const call = calls[next]
+    next += 1
+    if (call === undefined) return block
+    return {
+      type: 'tool-request',
+      id: call.providerToolCallId,
+      name: call.name,
+      input: call.input,
+      // What the vendor sent verbatim on the block stays with it (01 修补 2), and so does where it
+      // came from, which the guard judges it by (s6-spec-2, owner 2026-09-27).
+      ...(block.vendorFields === undefined ? {} : { vendorFields: block.vendorFields }),
+      ...(block.vendorSource === undefined ? {} : { vendorSource: block.vendorSource }),
+    }
+  })
+}
+
+/**
+ * A turn whose blocks and facts disagree (「损坏」), placed from the facts alone: the stored
+ * `tool-request` blocks go, and each `tool/call` comes after the rest of the content in `<i>` order,
+ * so every call sent has its block and no block is sent without its call. The pairing check before
+ * `encode()` throws on such a turn in development and test builds; this is what a packaged build
+ * sends after it logs the repair.
+ */
+function byFacts(content: readonly ContentBlock[], calls: readonly ReplayCall[]): ContentBlock[] {
+  return [
+    ...content.filter((block) => block.type !== 'tool-request'),
+    ...calls.map((call): ContentBlock => ({
+      type: 'tool-request',
+      id: call.providerToolCallId,
+      name: call.name,
+      input: call.input,
+    })),
+  ]
 }

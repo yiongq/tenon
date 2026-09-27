@@ -150,11 +150,18 @@ type BlockSlot =
       start: { id: string; name: string } | null
       end: { id: string; name: string; input: Record<string, unknown> } | null
     }
+  /** Spec 02 (01 修补 2): a block the vendor sent whole, kept verbatim. */
+  | { kind: 'vendor'; raw: Record<string, unknown>; replay: 'same-model' | 'never' }
 
 class BlockFold implements BlockAccumulator {
   readonly #provider: ProviderId
   readonly #providerModel: string
   readonly #slots = new Map<number, BlockSlot>()
+  /**
+   * `vendor-fields` by slot (spec 02), kept apart from the slots so their order against the block's
+   * own events does not matter; content() attaches them to whatever block the slot ends up holding.
+   */
+  readonly #fields = new Map<number, Record<string, unknown>>()
 
   constructor(options: BlockAccumulatorOptions) {
     this.#provider = options.provider
@@ -254,8 +261,25 @@ class BlockFold implements BlockAccumulator {
         slot.end = end
         return
       }
-      // A caller may fold a whole stream; the terminal and usage events are not content.
+      case 'vendor-block': {
+        const slot = this.#slots.get(event.index)
+        // Whole on arrival, like a redacted block: a second one on the same slot is a bug.
+        if (slot !== undefined) throw conflict(event.index, 'a free vendor slot', slot)
+        this.#slots.set(event.index, {
+          kind: 'vendor',
+          raw: { ...event.raw },
+          replay: event.replay,
+        })
+        return
+      }
+      case 'vendor-fields': {
+        const fields = this.#fields.get(event.index)
+        this.#fields.set(event.index, { ...fields, ...event.fields })
+        return
+      }
+      // A caller may fold a whole stream; the terminal, usage and model events are not content.
       case 'usage':
+      case 'response-model':
       case 'stop':
       case 'error':
         return
@@ -269,11 +293,25 @@ class BlockFold implements BlockAccumulator {
     for (const index of [...this.#slots.keys()].toSorted((a, b) => a - b)) {
       const slot = this.#slots.get(index)
       if (slot === undefined) continue
+      // Copied on the way out, like a tool call's input: the caller must not be able to reach the
+      // map a later content() call reads.
+      const stored = this.#fields.get(index)
+      const fields = stored === undefined ? {} : { vendorFields: { ...stored } }
+      // A text or tool-request block has no provider of its own, so its fields get the one a
+      // thinking block carries: the guard judges them against it (01 修补 2; s6-spec-2, owner
+      // 2026-09-27). Stamped only next to fields, and never on a block that already has the pair.
+      const sourced =
+        stored === undefined
+          ? {}
+          : {
+              ...fields,
+              vendorSource: { provider: this.#provider, providerModel: this.#providerModel },
+            }
       switch (slot.kind) {
         case 'text':
           // An empty text block is not content: it would turn an aborted run into an
           // assistant turn, and both wire protocols reject one on the way back in.
-          if (slot.text !== '') blocks.push({ type: 'text', text: slot.text })
+          if (slot.text !== '') blocks.push({ type: 'text', text: slot.text, ...sourced })
           break
         case 'thinking':
           // Nothing to render and nothing to replay is not content either: an empty,
@@ -288,6 +326,7 @@ class BlockFold implements BlockAccumulator {
               signature: slot.signature ?? '',
               provider: this.#provider,
               providerModel: this.#providerModel,
+              ...fields,
             })
           }
           break
@@ -297,6 +336,17 @@ class BlockFold implements BlockAccumulator {
             data: slot.data,
             provider: this.#provider,
             providerModel: this.#providerModel,
+            ...fields,
+          })
+          break
+        case 'vendor':
+          // Stamped like a reasoning block: the guard judges it against the model that sent it.
+          blocks.push({
+            type: 'vendor',
+            provider: this.#provider,
+            providerModel: this.#providerModel,
+            raw: { ...slot.raw },
+            replay: slot.replay,
           })
           break
         case 'tool':
@@ -310,6 +360,7 @@ class BlockFold implements BlockAccumulator {
               // Copied again on the way out: a caller that mutates a block it was handed
               // must not be able to reach the slot a later content() call reads.
               input: { ...slot.end.input },
+              ...sourced,
             })
           }
           break

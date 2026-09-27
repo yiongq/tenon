@@ -84,6 +84,14 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
  *   which is what makes a per-model parameter safe on tool-less requests. The reference's text
  *   schema lists GLM-5.3 and GLM-4.6 for it; its vision schema, where the flash pair sits, has no
  *   such property, but the flash page recommends it and the probe is what these rows follow.
+ * - `thinkingSpec` (spec 02, 01 修补 2; decision A1's A′) on the three GLM-5.3 rows: `effort-only`,
+ *   on by default, levels `low` / `high` / `max` and nothing else — no `medium` and no default
+ *   declared, so an absent effort sends no `reasoning_effort` and the vendor's own default (`max`)
+ *   stands. Read 2026-09-26 on the thinking page and the glm-5.3 page: "针对 GLM-5.3 GLM-5.3-FLASH
+ *   GLM-5.3-FLASHX，仅支持 max、high、low，其余输入将报错" for API requests (the mapping of other
+ *   values the page gives is for Coding Plan requests only), and thinking cannot be disabled on
+ *   them. Whether flash really 400s on `medium` is an optional live check (02 plan, step 21). glm-4.6 has none:
+ *   `reasoning_effort` is documented for GLM-5.2 and later only, so it keeps 01's encoding exactly.
  * - `supportsCacheControl: false` everywhere on this wire: the vendor's context caching is
  *   automatic and there is no `cache_control` parameter to place, so there is nothing for a caller
  *   to control.
@@ -107,6 +115,7 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
     id: 'glm-5.3',
+    purposeKey: 'model.purpose.glm53',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -120,10 +129,18 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     // The daily model (02 §模型与密钥).
     id: 'glm-5.3-flash',
+    purposeKey: 'model.purpose.glm53flash',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -137,10 +154,18 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 0.8, outputPerMTok: 2.8, cacheReadPerMTok: 0.23, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     // The speed tier the live suite runs on (02 §模型与密钥).
     id: 'glm-5.3-flashx',
+    purposeKey: 'model.purpose.glm53flashx',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -154,9 +179,17 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     usageNeedsOptIn: false,
     pricing: { inputPerMTok: 2, outputPerMTok: 7, cacheReadPerMTok: 0.57, currency: 'CNY' },
     requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+    thinkingSpec: {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+      defaultEffort: 'max',
+    },
   },
   {
     id: 'glm-4.6',
+    purposeKey: 'model.purpose.glm46',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 200_000,
     maxOutputTokens: 128_000,
@@ -172,15 +205,23 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   },
 ])
 
+const FINISH_REASONS = Object.freeze({
+  sensitive: 'content-filter',
+  model_context_window_exceeded: 'context-overflow',
+} as const)
+
 export const zhipuDefinition: ProviderDefinition = {
   id: ZHIPU_PROVIDER_ID,
   nameKey: 'provider.zhipu.name',
   wire: 'openai-chat',
   configKeys: [...CONFIG_KEYS],
   builtinModels: [...MODELS],
+  // Spec 02, 01 修补 5 (A12, H10): the two finish_reason values this vendor adds. `network_error` is
+  // not declared: it stays `unknown` with its raw value in providerReason, and the loop resends.
+  finishReasons: FINISH_REASONS,
   create(args: {
     network: HostNetwork
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string>
     secrets: Record<string, string>
   }): Provider {
@@ -195,6 +236,7 @@ export const zhipuDefinition: ProviderDefinition = {
       // '', and a key with a default is never missing.
       baseURL: configuredValue(args.config['baseURL']) ?? ZHIPU_DEFAULT_BASE_URL,
       models: MODELS,
+      finishReasons: FINISH_REASONS,
     })
   },
 }

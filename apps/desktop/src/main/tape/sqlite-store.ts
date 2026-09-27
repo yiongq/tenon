@@ -48,6 +48,7 @@ import type {
   MessageRow,
   MessageStatus,
   NewEntry,
+  PendingApprovalRow,
   ProjectionOp,
   ProjectionReducer,
   SessionHead,
@@ -56,6 +57,7 @@ import type {
   TapeEntry,
   TapeKind,
   TapeListMessagesQuery,
+  TapeListPendingApprovalsQuery,
   TapeListSessionsQuery,
   TapeReadBySourceQuery,
   TapeReadRangePage,
@@ -71,6 +73,7 @@ import {
   PROJECTION_TABLES,
   PROJECTION_VERSION,
   TapeBusyError,
+  TapeClosedError,
   TapeIntegerRangeError,
   TapeProjectionError,
   TapeProvenanceConflictError,
@@ -80,7 +83,7 @@ import {
   assertBatchAllowed,
   assertBatchOpensIncarnation,
   assertCurrentIncarnation,
-  assertEntryAllowed,
+  assertEntryIdCursor,
   assertReadKinds,
   assertReadLimit,
   assertTapeId,
@@ -95,6 +98,7 @@ import {
 import Database from 'better-sqlite3'
 import type { Database as SqliteConnection, Statement } from 'better-sqlite3'
 import migration001 from './sql/tape.sqlite.sql?raw'
+import migration002 from './sql/tape.sqlite.002.sql?raw'
 
 /** One file per profile (spec 01 §SQLite 实现约束; phase 0's layout reserved the name). */
 export const SESSIONS_DB_FILE = 'sessions.db'
@@ -104,11 +108,14 @@ export const DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 /**
  * Forward-only, numbered, one transaction each, recorded in the `schema_version` TABLE rather than
- * `PRAGMA user_version` so both dialects take one code path. Migration 1 is the DDL file the spec owns
- * and `scripts/check-tape-schema.mjs` guards; a migration is never edited once shipped.
+ * `PRAGMA user_version` so both dialects take one code path. Each migration is the DDL block of the
+ * spec that owns it, and `scripts/check-tape-schema.mjs` pairs them by number — 1 with spec 01's
+ * block, 2 with spec 02's (the pending-approval projection, 01 修补 7). A migration is never edited
+ * once shipped: migration 1's file stays byte for byte what spec 01 shipped.
  */
 const MIGRATIONS: readonly { readonly version: number; readonly sql: string }[] = Object.freeze([
   { version: 1, sql: migration001 },
+  { version: 2, sql: migration002 },
 ])
 
 /** The newest schema this build can run. A file above it is refused, not migrated backwards. */
@@ -126,11 +133,19 @@ const ENTRY_COLUMNS =
  * Exported so acceptance 14 can `EXPLAIN QUERY PLAN` the statement the store REALLY runs: the plan
  * must name `tape_entry_by_source` and must not contain `TEMP B-TREE`. Renaming the index, reordering
  * its columns or turning this into a scan then reds that test instead of quietly costing a sort.
+ *
+ * The `entry_id >= ?` bound is spec 02's `fromEntryId` (01 修补 7, B5), bound to 0 when absent. It is
+ * a range on the index's last column, so the one statement still rides `tape_entry_by_source`.
  */
 export const READ_BY_SOURCE_SQL =
   `SELECT ${ENTRY_COLUMNS} FROM tape_entry ` +
   'WHERE tenant_id = ? AND session_id = ? AND source_type = ? AND source_id = ? ' +
-  'ORDER BY entry_id LIMIT ?'
+  'AND entry_id >= ? ORDER BY entry_id LIMIT ?'
+
+/** The statement behind `listPendingApprovals`; the ORDER BY is the total order the port promises. */
+const PENDING_COLUMNS =
+  'session_id, run_id, request_seq, call_ordinal, wait_kind, entry_id, created_at'
+const PENDING_ORDER = 'ORDER BY created_at, session_id, run_id, request_seq, call_ordinal'
 
 /** Internal page size for the full scans that live behind the port (`rebuildProjections`). */
 const SCAN_PAGE = 1000
@@ -571,7 +586,8 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
         )
       }
       if (op.table === 'message') applyMessageOp(sessionId, op)
-      else applySessionOp(sessionId, op)
+      else if (op.table === 'session') applySessionOp(sessionId, op)
+      else applyPendingOp(sessionId, op)
     }
   }
 
@@ -682,6 +698,38 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
   }
 
   /**
+   * `pending_approval_projection` (spec 02, 01 修补 7). `created_at` is in VALUES but not in DO UPDATE:
+   * a re-judgement that still asks moves `entry_id`, not the moment the call started waiting.
+   */
+  function applyPendingOp(
+    sessionId: string,
+    op: Extract<ProjectionOp, { table: 'pending_approval' }>,
+  ): void {
+    if (op.op === 'delete') {
+      prepare(
+        'DELETE FROM pending_approval_projection WHERE tenant_id = ? AND session_id = ? AND ' +
+          'run_id = ? AND request_seq = ? AND call_ordinal = ?',
+      ).run([tenantId, sessionId, op.key.runId, op.key.requestSeq, op.key.callOrdinal])
+      return
+    }
+    prepare(
+      'INSERT INTO pending_approval_projection (tenant_id, session_id, run_id, request_seq, ' +
+        'call_ordinal, wait_kind, entry_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT (tenant_id, session_id, run_id, request_seq, call_ordinal) DO UPDATE SET ' +
+        'wait_kind = excluded.wait_kind, entry_id = excluded.entry_id',
+    ).run([
+      tenantId,
+      sessionId,
+      op.key.runId,
+      op.key.requestSeq,
+      op.key.callOrdinal,
+      op.values.waitKind,
+      op.values.entryId,
+      op.insertOnly.createdAt,
+    ])
+  }
+
+  /**
    * The cursor records what a projection has CONSUMED, not what it wrote, so it advances for every
    * inserted fact — including the ones that project to nothing.
    */
@@ -705,7 +753,12 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
   function clearProjections(sessionId: string): void {
     // No gate and no trigger here: both projection tables are derivable from `tape_entry` at any time
     // (§投影与重放), which is exactly why they carry no append-only trigger.
-    for (const table of ['message_projection', 'session_projection', 'projection_cursor']) {
+    for (const table of [
+      'message_projection',
+      'session_projection',
+      'pending_approval_projection',
+      'projection_cursor',
+    ]) {
       prepare(`DELETE FROM ${table} WHERE tenant_id = ? AND session_id = ?`).run([
         tenantId,
         sessionId,
@@ -756,9 +809,22 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
   // The port
   // ---------------------------------------------------------------------------------------------
 
+  /**
+   * Every method but `close()` runs through this: after `close()` the port rejects with
+   * `TapeClosedError` BEFORE it looks at its input (spec 02, 01 修补 7, B4), exactly as the memory
+   * store does — not with the binding's own `TypeError`, which would name better-sqlite3 through the
+   * port.
+   */
+  function open<T>(body: () => T): Promise<T> {
+    return promised(() => {
+      if (!db.open) throw new TapeClosedError(`${file}: this store is closed`)
+      return body()
+    })
+  }
+
   return {
     append(batch: TapeAppendBatch): Promise<AppendResult[]> {
-      return promised(() => {
+      return open(() => {
         assertTapeId(batch.sessionId, 'sessionId')
         assertTapeId(batch.incarnationId, 'incarnationId')
         assertBatchAllowed(batch.entries)
@@ -822,7 +888,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     readRange(q: TapeReadRangeQuery): Promise<TapeReadRangePage> {
-      return promised(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         assertReadKinds(q.kinds)
         const head = selectHead(q.sessionId)
@@ -866,13 +932,15 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     readBySource(q: TapeReadBySourceQuery): Promise<TapeEntry[]> {
-      return promised(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
+        assertEntryIdCursor(q.fromEntryId, 'readBySource.fromEntryId')
         const rows = prepare(READ_BY_SOURCE_SQL).all([
           tenantId,
           q.sessionId,
           q.sourceType,
           q.sourceId,
+          q.fromEntryId ?? 0,
           limit,
         ])
         return rows.map((row) => toTapeEntry(q.sessionId, toStoredRow(row)))
@@ -880,7 +948,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     head(sessionId: string): Promise<SessionHead | null> {
-      return promised(() => {
+      return open(() => {
         const head = selectHead(sessionId)
         if (head === undefined) return null
         return { tenantId, sessionId, ...head }
@@ -888,7 +956,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     verifyChain(q: TapeVerifyChainQuery): Promise<TapeVerifyChainPage> {
-      return promised(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const head = selectHead(q.sessionId)
         if (head === undefined) {
@@ -940,7 +1008,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     listSessions(q: TapeListSessionsQuery): Promise<SessionSummary[]> {
-      return promised(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const params: SqlValue[] = [tenantId]
         let where = 'tenant_id = ?'
@@ -969,7 +1037,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     listMessages(q: TapeListMessagesQuery): Promise<MessageRow[]> {
-      return promised(() => {
+      return open(() => {
         const limit = assertReadLimit(q.limit)
         const params: SqlValue[] = [tenantId, q.sessionId]
         let where = 'tenant_id = ? AND session_id = ?'
@@ -1009,8 +1077,39 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
       })
     },
 
+    listPendingApprovals(q: TapeListPendingApprovalsQuery): Promise<PendingApprovalRow[]> {
+      return open(() => {
+        const limit = assertReadLimit(q.limit)
+        const rows =
+          q.sessionId === undefined
+            ? prepare(
+                `SELECT ${PENDING_COLUMNS} FROM pending_approval_projection WHERE tenant_id = ? ` +
+                  `${PENDING_ORDER} LIMIT ?`,
+              ).all([tenantId, limit])
+            : prepare(
+                `SELECT ${PENDING_COLUMNS} FROM pending_approval_projection ` +
+                  `WHERE tenant_id = ? AND session_id = ? ${PENDING_ORDER} LIMIT ?`,
+              ).all([tenantId, q.sessionId, limit])
+        return rows.map((row) => {
+          const waitKind = readText(row, 'wait_kind')
+          if (waitKind !== 'approval' && waitKind !== 'question') {
+            throw columnError('wait_kind', waitKind, "'approval' or 'question'")
+          }
+          return {
+            sessionId: readText(row, 'session_id'),
+            runId: readText(row, 'run_id'),
+            requestSeq: readInt(row, 'request_seq'),
+            callOrdinal: readInt(row, 'call_ordinal'),
+            waitKind,
+            entryId: readInt(row, 'entry_id'),
+            createdAt: readInt(row, 'created_at'),
+          }
+        })
+      })
+    },
+
     rebuildProjections(sessionId: string): Promise<void> {
-      return promised(() => {
+      return open(() => {
         transact(() => {
           const head = selectHead(sessionId)
           if (head === undefined) {
@@ -1025,10 +1124,12 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     },
 
     resetSession(q: TapeResetSessionQuery): Promise<AppendResult> {
-      return promised(() => {
+      return open(() => {
         assertTapeId(q.sessionId, 'sessionId')
         assertTapeId(q.incarnationId, 'incarnationId')
-        assertEntryAllowed(q.start)
+        // The anchor and the carry are one batch: the same gate as `append`, duplicate keys included.
+        const carry = q.carry ?? []
+        assertBatchAllowed([q.start, ...carry])
         // A `TypeError` like `assertId`'s: handing a reset something other than the anchor is a
         // programmer error at the call site, not a condition of the tape.
         if (q.start.name !== 'session/start') {
@@ -1063,13 +1164,17 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
             'UPDATE session_head SET incarnation_id = ?, last_hash = NULL, entry_count = 0, ' +
               'updated_at = ? WHERE tenant_id = ? AND session_id = ?',
           ).run([q.incarnationId, q.start.createdAt, tenantId, q.sessionId])
-          return insertEntry(q.sessionId, q.start)
+          const result = insertEntry(q.sessionId, q.start)
+          // The carry follows the anchor inside the same transaction, checked and projected as an
+          // append would be: any failure rolls the whole reset back, old facts included.
+          for (const entry of carry) insertEntry(q.sessionId, entry)
+          return result
         })
       })
     },
 
     deleteSession(sessionId: string): Promise<void> {
-      return promised(() => {
+      return open(() => {
         transact(() => {
           // An unknown session changes nothing and does not throw — and under acceptance 4 another
           // tenant's session IS an unknown session, so this must not so much as open a gate.
@@ -1092,8 +1197,7 @@ export function createSqliteTapeStore(options: SqliteTapeStoreOptions): TapeStor
     close(): Promise<void> {
       return promised(() => {
         // Idempotent: the conformance runner closes every store it opened, including after a failure.
-        // Every method after this rejects with the `TypeError` the prepare helper raises; the port
-        // says nothing about use after close, so this is a programmer error, not an eighth error class.
+        // Every other method afterwards rejects with `TapeClosedError` (`open` above).
         if (db.open) db.close()
       })
     },
@@ -1119,16 +1223,15 @@ interface Statements {
  * parameterised by the connection so the read-only version probe runs through it too rather than
  * growing a second, unchecked way to read a row.
  *
- * It is also the single place a closed connection is caught. Reaching a store after `close()` is a
- * caller bug, so it is the same `TypeError` an empty id gets — never the binding's own
- * `TypeError: The database connection is not open`, which would leak better-sqlite3's wording through
- * the port. (The memory store keeps serving after `close()`; the port defines neither, and the
- * divergence is reported rather than papered over with an eighth error class.)
+ * It is also the backstop for a closed connection: the port's methods refuse with `TapeClosedError`
+ * before they get here (spec 02, 01 修补 7), and a statement that still reaches a closed connection —
+ * a new path that forgot the gate — gets the same error rather than the binding's own
+ * `TypeError: The database connection is not open`, which would leak better-sqlite3's wording.
  */
 function statementsFor(db: SqliteConnection, file: string): Statements {
   const statements = new Map<string, Statement<SqlValue[], unknown>>()
   function assertOpen(): void {
-    if (!db.open) throw new TypeError(`${file}: this store is closed`)
+    if (!db.open) throw new TapeClosedError(`${file}: this store is closed`)
   }
   return {
     prepare(sql: string) {

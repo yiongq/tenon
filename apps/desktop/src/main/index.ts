@@ -8,19 +8,27 @@ import {
   createSessionService,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import { app, BrowserWindow, Menu, ipcMain, session, shell } from 'electron'
-import { registerChatRoutes } from './chat.js'
+import { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
+import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
 import { readConfig } from './host/profile.js'
+import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
-import { hardenWebContents } from './navigation.js'
+import { hardenWebContents, isSameDocument } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
 import { registerProviderRoutes } from './provider-routes.js'
+import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
+import { registerApprovalRoutes } from './approval-routes.js'
+import { recoveryDelayMs, startRecovery } from './startup-recovery.js'
+import { e2eRouteSeam } from './e2e-routes.js'
 import { openSessionStore } from './tape/open.js'
+import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
+import { replayOnLoad } from './window-replay.js'
+import { registerModelRoutes } from './model-routes.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -85,11 +93,17 @@ async function main(): Promise<void> {
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
   await app.whenReady()
-  // Phase 0 needs no web permissions (camera, geolocation, notifications…): deny them all.
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
+  // No web permissions (camera, geolocation, notifications…) but one: the app's own document may
+  // write the clipboard, for the failure card's 「复制诊断信息」 (spec 02 §失败卡与结束原因). Reading it
+  // stays denied.
+  const mayWriteClipboard = (url: string, permission: string): boolean =>
+    permission === 'clipboard-sanitized-write' && isSameDocument(url, appUrl())
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) =>
+    callback(mayWriteClipboard(contents.getURL(), permission)),
   )
-  session.defaultSession.setPermissionCheckHandler(() => false)
+  session.defaultSession.setPermissionCheckHandler((contents, permission) =>
+    mayWriteClipboard(contents?.getURL() ?? '', permission),
+  )
   const host = await createDesktopHost({
     userDataDir: absolutePath(app.getPath('userData')),
     userId: LOCAL_USER_ID,
@@ -110,24 +124,64 @@ async function main(): Promise<void> {
   })
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
+  const preferred = preferredSystemLanguages()
+  const startupConfig = await readConfig(host.fs, host.identity)
+  const locale = await createLocaleController(startupConfig, preferred, broadcast)
+  // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
+  // construction, the host's run-time half — the RunRegistry, the queue, the events — through
+  // bindLoop, before anything can send. The protected shell files are computed in the user's home:
+  // the kernel reads no home of its own (§「在不在工作区里」).
+  const home = absolutePath(app.getPath('home'))
   const sessions =
     tape === null
       ? null
-      : createSessionService({ host, tape, ids: { uuid: (): string => randomUUID() } })
+      : createSessionService({
+          host,
+          tape,
+          ids: { uuid: (): string => randomUUID() },
+          inspectors: desktopInspectors(),
+          connector: createRunConnector({
+            host,
+            providers,
+            isPackaged: app.isPackaged,
+            log: (line) => console.warn(line),
+            // Before bindLoop and recover(): a resume's endpointOrigin is the configured host.
+            config: startupConfig,
+          }),
+          protectedFiles: protectedShellFiles(home),
+          // A call reaching a request with no result: a thrown bug in development, a repair closure
+          // and a log line in the packaged build (spec 02 §崩溃、服务端调用块与兜底).
+          onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
+          log: (line) => console.error(line),
+        })
+  const loop =
+    sessions === null
+      ? null
+      : createDesktopLoop({
+          clock: host.clock,
+          send: broadcast,
+          locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
+          log: (line) => console.warn(line),
+        })
+  if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  // Right after bindLoop: the routes below wait for it (spec 02 §启动恢复与发送防护).
+  const recovery = startRecovery({
+    sessions,
+    delayMs: recoveryDelayMs(app.isPackaged, process.env),
+    log: (line) => console.error(line),
+  })
   if (tape !== null) {
     // WAL: the last connection to close is what checkpoints the file.
     app.on('will-quit', () => void tape.close())
   }
 
-  const preferred = preferredSystemLanguages()
-  const locale = await createLocaleController(
-    await readConfig(host.fs, host.identity),
-    preferred,
-    broadcast,
-  )
   const appTitle = (): string => locale.i18n.t('app.name')
-  const openWindow = (fresh = false): BrowserWindow =>
-    createWindow(locale.current, appTitle(), fresh)
+  const openWindow = (fresh = false): BrowserWindow => {
+    const opened = createWindow(locale.current, appTitle(), fresh)
+    // A document that loads — the first one, a new window, a reload — gets the state it missed.
+    replayOnLoad(opened.webContents, loop)
+    return opened
+  }
   const newChat = (): void => {
     const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (target) target.webContents.send(chatNew.channel, {})
@@ -144,17 +198,40 @@ async function main(): Promise<void> {
   })
   installMenu()
 
-  registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
-  registerChatRoutes({
-    host,
-    send: broadcast,
-    ipcMain,
+  // `ipcMain` itself, except in a development build an e2e asked to count or fail routes (e2e-routes.ts).
+  const routes = e2eRouteSeam(ipcMain, app.isPackaged, process.env)
+  registerConfigRoutes(routes, host, (next) => void locale.apply(next))
+  registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
+  registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
+  registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
+  registerWorkspaceRoutes({
+    ipcMain: routes,
     sessions,
+    host,
+    home,
+    gate: recovery.ready,
+    // Main's own dialog, over the window that asked: the only way a folder is added (A9).
+    pickFolders: async (event) => {
+      const sender = (event as { sender?: Electron.WebContents } | undefined)?.sender
+      const owner = sender === undefined ? null : BrowserWindow.fromWebContents(sender)
+      const options: Electron.OpenDialogOptions = {
+        properties: ['openDirectory', 'multiSelections', 'createDirectory'],
+      }
+      const picked =
+        owner === null
+          ? await dialog.showOpenDialog(options)
+          : await dialog.showOpenDialog(owner, options)
+      return picked.canceled ? null : picked.filePaths
+    },
+  })
+  registerProviderRoutes({
+    ipcMain: routes,
+    host,
     providers,
     isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
   })
-  registerSessionRoutes({ ipcMain, sessions })
-  registerProviderRoutes({ ipcMain, host, providers, log: (line) => console.warn(line) })
+  registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
   const win = openWindow()
   win.webContents.on('did-finish-load', () => {

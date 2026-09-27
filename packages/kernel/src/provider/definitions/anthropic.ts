@@ -68,26 +68,34 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
  * `thinkingPreservationFormat: 'signed-blocks'` on every row: this wire carries thinking back as
  * the signed block it issued, and a signature is never rewritten (invariant 7).
  *
- * `reasoning: true` states that the model reasons — it does not state which thinking PARAMETER it
- * takes, and on this vendor those have diverged. Read on 2026-09-21 at
- * https://platform.claude.com/docs/en/build-with-claude/extended-thinking: the manual
- * `thinking: { type: 'enabled', budget_tokens }` shape `encode()` writes "returns a 400 error" on
- * Claude Opus 4.7 and later, which covers four of the five rows below (Opus 5.5, Opus 5, Sonnet 5,
- * Fable 5.1); those models take `thinking: { type: 'adaptive' }` with `output_config: { effort }`
- * instead, and Opus 5.5 and Fable 5.1 also refuse `disabled`. Only `claude-haiku-4-5-20251001`
- * still takes the budget form — and takes nothing else.
+ * `reasoning: true` states that the model reasons; WHICH thinking parameter it takes is its
+ * `thinkingSpec` (spec 02, 01 修补 2; decision A1), filled on 2026-09-26 (02 plan.md, step 6) from
+ * https://platform.claude.com/docs/en/build-with-claude/thinking, .../build-with-claude/effort,
+ * .../build-with-claude/extended-thinking and each model's overview page, all read that day:
  *
- * 01's `ModelInfo` had no field for that difference. Spec 02 adds one — `ThinkingSpec`, through 01
- * 修补 2 — and 02 plan.md fills it in on these rows at step 6. Until then no row makes the kernel
- * send a thinking parameter: `ProviderRequest.thinking` is a caller's choice, and a caller that
- * makes it on one of the four gets the vendor's 400 rather than a quiet downgrade.
- * `thinkingEffortSupport()` answering `'budget'` for all five is the same gap seen from the other
- * side. Note that the vendor already has thinking on by default on those four, with no thinking
- * parameter sent (https://platform.claude.com/docs/en/build-with-claude/thinking, 2026-09-26).
+ * - modes: Sonnet 5 thinks by default and accepts `disabled` (`adaptive`); Opus 5 thinks by default
+ *   and accepts `disabled` only at effort `high` or below (`adaptive-gated`, `disableMaxEffort:
+ *   'high'`); Opus 5.5 and Fable 5.1 reject `disabled` (`always-on`); Haiku 4.5 takes only the
+ *   manual `enabled` + `budget_tokens` form and is off by default (`budget`). The manual form is a
+ *   400 on the four others;
+ * - effort: all five levels `low` … `max` on the four adaptive rows; the default is `medium` on
+ *   Opus 5.5 and `high` on the other three; Haiku 4.5 does not support the parameter;
+ * - display: `summarized` or `omitted` in either mode, `omitted` the default on the four newer rows
+ *   and `summarized` on "earlier models", Haiku 4.5 among them. `updates` is a beta and not listed;
+ * - sampling: a non-default `temperature`, `top_p` or `top_k` is a 400 on every request on the four
+ *   newer rows (`samplingDefaultsOnly`); on Haiku 4.5 only while thinking is on, which the flag
+ *   cannot say, so that row does not set it. The thresholds the kernel enforces are spec 02's
+ *   (01 修补 2: temperature 1.0 only, top_p >= 0.99, no top_k); the pages say only "the defaults";
+ * - forced `tool_choice` (`any` / `tool`) is a 400 on Opus 5.5 and Fable 5.1 (`forcedToolChoice:
+ *   false`); the other rows leave the field out, which the search sub-request reads as usable.
+ *
+ * The vendor has thinking on by default on the four adaptive rows with no thinking parameter sent,
+ * so an absent `ProviderRequest.thinking` writes none and the model's default stands.
  */
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
     id: 'claude-sonnet-5',
+    purposeKey: 'model.purpose.sonnet5',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -98,14 +106,24 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsCacheControl: true,
     thinkingPreservationFormat: 'signed-blocks',
     usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'adaptive',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+    },
     pricing: { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2 },
   },
   {
     // A fixed id with no date suffix; the alias is the same string. The 5-minute cache-write price
-    // is the one recorded (the 1-hour tier is $8). Its thinking fields — always on, five effort
-    // levels from low to max with medium the default, no forced `tool_choice`, sampling parameters
-    // at their defaults only — arrive with `ThinkingSpec` (02 plan.md, step 6).
+    // is the one recorded (the 1-hour tier is $8). Thinking always on, five effort levels from low
+    // to max with medium the default, no forced `tool_choice`, sampling parameters at their
+    // defaults only (02 §内置模型表的数据改动, decisions A16 and A1).
     id: 'claude-opus-5-5',
+    purposeKey: 'model.purpose.opus55',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -116,12 +134,24 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsCacheControl: true,
     thinkingPreservationFormat: 'signed-blocks',
     usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'always-on',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'medium',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+      forcedToolChoice: false,
+    },
     pricing: { inputPerMTok: 4, outputPerMTok: 20, cacheReadPerMTok: 0.2, cacheWritePerMTok: 5 },
   },
   {
     // Legacy ("still available") since Opus 5.5; the deprecations page still lists it as Active,
-    // retiring not sooner than 2027-07-24. It moves under 更多模型 › once `listing` exists (02 A16).
+    // retiring not sooner than 2027-07-24. Listed under 更多模型 › (02 A16).
     id: 'claude-opus-5',
+    purposeKey: 'model.purpose.opus5',
+    listing: 'more',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -132,6 +162,16 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsCacheControl: true,
     thinkingPreservationFormat: 'signed-blocks',
     usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'adaptive-gated',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+      disableMaxEffort: 'high',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+    },
     pricing: { inputPerMTok: 5, outputPerMTok: 25, cacheReadPerMTok: 0.5 },
   },
   {
@@ -142,6 +182,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     // 2026-09-26, when no notice for this model was listed). 02 decision A16 drops the row once a
     // deprecation notice appears.
     id: 'claude-haiku-4-5-20251001',
+    purposeKey: 'model.purpose.haiku45',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 200_000,
     maxOutputTokens: 64_000,
@@ -152,10 +193,17 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsCacheControl: true,
     thinkingPreservationFormat: 'signed-blocks',
     usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'budget',
+      defaultOn: false,
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'summarized',
+    },
     pricing: { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 0.1 },
   },
   {
     id: 'claude-fable-5-1',
+    purposeKey: 'model.purpose.fable51',
     providerId: ANTHROPIC_PROVIDER_ID,
     contextLimit: 1_000_000,
     maxOutputTokens: 128_000,
@@ -166,6 +214,16 @@ const MODELS: readonly ModelInfo[] = frozenModels([
     supportsCacheControl: true,
     thinkingPreservationFormat: 'signed-blocks',
     usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'always-on',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+      forcedToolChoice: false,
+    },
     pricing: { inputPerMTok: 10, outputPerMTok: 50, cacheReadPerMTok: 0.25 },
   },
 ])
@@ -179,7 +237,7 @@ export const anthropicDefinition: ProviderDefinition = {
   builtinModels: [...MODELS],
   create(args: {
     network: HostNetwork
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string>
     secrets: Record<string, string>
   }): Provider {

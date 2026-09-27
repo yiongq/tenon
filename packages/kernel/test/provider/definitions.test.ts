@@ -24,11 +24,15 @@ import {
   OLLAMA_DEFAULT_BASE_URL,
   ProviderAlreadyRegisteredError,
   ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_PROVIDER_ID,
   anthropicDefinition,
   createBlockAccumulator,
+  createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  encodeOpenAIChat,
+  modelWireHash,
   ollamaDefinition,
   OpenAIChatProvider,
   registerBuiltinProviders,
@@ -40,13 +44,17 @@ import type {
   ModelInfo,
   ProviderDefinition,
   ProviderRegistry,
-  RunResult,
   StopReason,
   StreamEvent,
   TapeEntry,
   Usage,
 } from '../../src/index.js'
-import { createCounterIds, createStreamGate, fakeNetwork } from '../../src/testing/index.js'
+import {
+  createCounterIds,
+  createStreamGate,
+  createTestLoopPorts,
+  fakeNetwork,
+} from '../../src/testing/index.js'
 import type { FakeNetwork } from '../../src/testing/index.js'
 import * as anthropicFixture from './fixtures/anthropic-sse.js'
 import * as openAIFixture from './fixtures/openai-sse.js'
@@ -118,6 +126,8 @@ interface DriveCase {
   readonly name: string
   readonly definition: ProviderDefinition
   readonly frames: readonly string[]
+  /** The reply to the request after the call's closure: plain text, which ends the Run. */
+  readonly closing: readonly string[]
   readonly secrets: Record<string, string>
   readonly config: Record<string, string>
   /** What the accumulator must hold once the stream is done. */
@@ -166,6 +176,7 @@ const CASES: readonly DriveCase[] = [
     name: 'anthropic',
     definition: anthropicDefinition,
     frames: anthropicFixture.ONE_TOOL_CALL_FRAMES,
+    closing: anthropicFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -182,6 +193,7 @@ const CASES: readonly DriveCase[] = [
     name: 'zhipu',
     definition: zhipuDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -198,6 +210,7 @@ const CASES: readonly DriveCase[] = [
     name: 'ollama',
     definition: ollamaDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     // No secret at all: this provider's key is a non-secret config item with a default.
     secrets: {},
     config: {},
@@ -216,6 +229,7 @@ const CASES: readonly DriveCase[] = [
     name: 'acme (registered in this test file)',
     definition: acmeDefinition,
     frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
     secrets: { apiKey: API_KEY },
     config: {},
     content: textThenCall(
@@ -248,7 +262,7 @@ async function drive(registry: ProviderRegistry, testCase: DriveCase): Promise<D
   const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -293,7 +307,7 @@ async function driveWithAbort(
   const net = fakeNetwork({ kind: 'sse', frames: testCase.frames, gate })
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -385,13 +399,13 @@ const TAPE_IDENTITY = {
 
 interface TapeDrive {
   readonly entries: TapeEntry[]
-  readonly result: RunResult
+  readonly runId: string
   readonly model: ModelInfo
 }
 
 /**
  * THE call path again, one layer up: the same definition, the same fixture, through the kernel session
- * service into a memory store. Nothing in it names a provider either.
+ * service and its loop into a memory store. Nothing in it names a provider either.
  */
 async function driveThroughTape(
   registry: ProviderRegistry,
@@ -399,10 +413,13 @@ async function driveThroughTape(
 ): Promise<TapeDrive> {
   const definition = registry.get(testCase.definition.id)
   if (definition === null) throw new Error(`${testCase.definition.id} is not registered`)
-  const net = fakeNetwork({ kind: 'sse', frames: testCase.frames })
+  const net = fakeNetwork([
+    { kind: 'sse', frames: testCase.frames },
+    { kind: 'sse', frames: testCase.closing },
+  ])
   const provider = definition.create({
     network: net,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     config: applyDefaults(definition, testCase.config),
     secrets: testCase.secrets,
   })
@@ -410,30 +427,33 @@ async function driveThroughTape(
   if (model === undefined) throw new Error(`${definition.id} has no builtin model`)
   const store = createMemoryTapeStore({ identity: TAPE_IDENTITY })
   let clock = NOW
+  const host = createMemoryHost()
+  const loop = createTestLoopPorts({ connector: { provider, model } })
   const service = createSessionService({
     host: {
+      ...host,
       clock: {
         now: (): number => {
           clock += 1000
           return clock
         },
+        setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms),
       },
     },
     tape: store,
     ids: createCounterIds(),
+    inspectors: [],
+    connector: loop.connector,
+    protectedFiles: [],
   })
+  service.bindLoop(loop)
   const { sessionId } = await service.createSession()
-  const result = await service.runRequest({
-    sessionId,
-    user: { text: 'read /tmp/a.ts' },
-    provider,
-    model,
-    system: 'be brief',
-    tools: [TOOL],
-  })
+  const sent = await service.send({ sessionId, origin: null, text: 'read /tmp/a.ts' })
+  if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+  await loop.runEnded({ runId: sent.runId })
   const page = await store.readRange({ sessionId, limit: 100 })
   await store.close()
-  return { entries: page.entries, result, model }
+  return { entries: page.entries, runId: sent.runId, model }
 }
 
 /** A fact minus its values: what has to be identical whichever provider produced the turn. */
@@ -448,7 +468,30 @@ function describeFact(entry: TapeEntry): unknown {
   }
 }
 
-/** The five facts of one turn. */
+/** The attempt fact's keys. Spec 02 (01 修补 7) adds `encoder`, `modelWireHash` and `responseModelId`. */
+const ATTEMPT_KEYS = [
+  'assemblyRef',
+  'contextAtEntryId',
+  'encoder',
+  'error',
+  'modelId',
+  'modelWireHash',
+  'promptHash',
+  'providerId',
+  'request',
+  'responseModelId',
+  'stop',
+  'thinkingDecisions',
+  'toolDefinitionsHash',
+  'usage',
+]
+
+/**
+ * The facts of one Run: phase 1's five, the Run's start (spec 02 plan step 9), what the request was
+ * assembled from — the model's content, the provider's first tool table, the manifest (step 10) —
+ * then the call it asked for, closed as `tool-unavailable` (no product table holds `read_file`), the
+ * second request that carries the closure back, and the Run's terminal (step 13).
+ */
 const TURN_SHAPE: readonly unknown[] = [
   {
     name: 'session/start',
@@ -467,11 +510,133 @@ const TURN_SHAPE: readonly unknown[] = [
     meta: {},
   },
   {
+    name: 'execution/run_started',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: null,
+    payloadKeys: ['cause'],
+    meta: {},
+  },
+  {
     name: 'session/model_selected',
     kind: 'event',
     sourceType: 'session',
     sourceSeq: null,
-    payloadKeys: ['modelId', 'providerId'],
+    payloadKeys: ['capabilitySource', 'endpointOrigin', 'modelId', 'providerId'],
+    meta: {},
+  },
+  // Spec 02 §提示层「环境说明」: the date, before the first request of a session.
+  {
+    name: 'message/environment',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'date', 'messageId', 'revision', 'role', 'status', 'workspace'],
+    meta: {},
+  },
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'model', 'type'],
+    meta: {},
+  },
+  // Spec 02 §提示层「组装」: the incarnation's system text, once, at its first request.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'text', 'type'],
+    meta: {},
+  },
+  // The product table's one chat tool from plan step 18 on: Read.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
+    meta: {},
+  },
+  {
+    name: 'view/tool_table',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: 0,
+    payloadKeys: ['excluded', 'generation', 'policyVersion', 'providerId', 'reason', 'tools'],
+    meta: {},
+  },
+  {
+    name: 'view/assembled',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: ['modelInfoHash', 'systemHash', 'tools'],
+    meta: {},
+  },
+  {
+    name: 'message/assistant',
+    kind: 'message',
+    sourceType: 'message',
+    sourceSeq: 0,
+    payloadKeys: ['content', 'messageId', 'revision', 'role', 'runId', 'status'],
+    meta: {},
+  },
+  {
+    name: 'tool/call',
+    kind: 'tool_call',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: ['argsHash', 'input', 'messageId', 'name', 'ordinal', 'providerToolCallId'],
+    meta: {},
+  },
+  {
+    name: 'provider/attempt_completed',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: ATTEMPT_KEYS,
+    meta: {},
+  },
+  {
+    name: 'tool/result',
+    kind: 'tool_result',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: [
+      'content',
+      'isError',
+      'kernelAuthored',
+      'ordinal',
+      'providerToolCallId',
+      'writer',
+    ],
+    meta: {},
+  },
+  {
+    name: 'execution/tool_outcome',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 1,
+    payloadKeys: [
+      'effect',
+      'ordinal',
+      'providerToolCallId',
+      'reversibility',
+      'source',
+      'state',
+      'writer',
+    ],
+    meta: {},
+  },
+  {
+    name: 'view/assembled',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: 2,
+    payloadKeys: ['modelInfoHash', 'systemHash', 'tools'],
     meta: {},
   },
   {
@@ -486,19 +651,16 @@ const TURN_SHAPE: readonly unknown[] = [
     name: 'provider/attempt_completed',
     kind: 'event',
     sourceType: 'runtime_event',
-    sourceSeq: 1,
-    payloadKeys: [
-      'contextAtEntryId',
-      'error',
-      'modelId',
-      'promptHash',
-      'providerId',
-      'request',
-      'stop',
-      'thinkingDecisions',
-      'toolDefinitionsHash',
-      'usage',
-    ],
+    sourceSeq: 2,
+    payloadKeys: ATTEMPT_KEYS,
+    meta: {},
+  },
+  {
+    name: 'execution/run_terminal',
+    kind: 'event',
+    sourceType: 'runtime_event',
+    sourceSeq: null,
+    payloadKeys: ['reason', 'steps', 'usage', 'writer'],
     meta: {},
   },
 ]
@@ -556,32 +718,59 @@ describe('acceptance 1 — one call path, four providers', () => {
 
   for (const testCase of CASES) {
     it(`writes the same-shaped Tape facts for ${testCase.name}`, async () => {
-      const { entries, result, model } = await driveThroughTape(registry, testCase)
+      const { entries, runId, model } = await driveThroughTape(registry, testCase)
       // The shape: which facts a turn writes, in which order, with which identity columns and which
       // payload keys. Identical for all four — a provider that needed a sixth fact, a different
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , modelSelected, assistant, attempt] = entries
+      const [, , , modelSelected, note, , , , , , assistant, , attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
+        capabilitySource: 'builtin',
+        endpointOrigin: expect.any(String),
       })
       expect(assistant?.payload['content']).toEqual(testCase.content)
       expect(assistant?.payload['status']).toBe('complete')
-      expect(assistant?.payload['runId']).toBe(result.identity.runId)
+      expect(assistant?.payload['runId']).toBe(runId)
       expect(attempt?.payload['providerId']).toBe(testCase.definition.id)
       expect(attempt?.payload['modelId']).toBe(model.id)
       expect(attempt?.payload['stop']).toEqual(testCase.stop)
       expect(attempt?.payload['usage']).toEqual(testCase.usage)
       expect(attempt?.payload['error']).toBeNull()
+      // Spec 02 §思考的默认与显示: no effort by default; summarized thinking on a model that offers it
+      // and thinks by default (the Anthropic rows), written only while thinking is on.
       expect(attempt?.payload['request']).toEqual({
         systemHash: expect.any(String),
         maxTokens: model.maxOutputTokens,
+        ...(model.thinkingSpec?.displays?.includes('summarized') === true &&
+        model.thinkingSpec.defaultOn
+          ? { display: 'summarized' }
+          : {}),
       })
-      // The prefix this request was assembled from is the head after the two pre-run facts.
-      expect(attempt?.payload['contextAtEntryId']).toBe(modelSelected?.entryId)
-      expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${result.identity.runId}:1:1`)
+      // Spec 02 (01 修补 7): the encoder of the definition's own wire, the hash of the ModelInfo
+      // fields encode() reads, and the model the fixture's stream named.
+      expect(attempt?.payload['encoder']).toEqual({
+        wire: testCase.definition.wire,
+        // anthropic-messages 2 added the top-level cache_control, 3 the vendor-fields guard
+        // (s6-spec-2; encoder-version.test.ts).
+        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 1,
+        sdk: expect.stringMatching(
+          testCase.definition.wire === 'anthropic-messages'
+            ? /^@anthropic-ai\/sdk@\d/
+            : /^openai@\d/,
+        ),
+      })
+      expect(attempt?.payload['modelWireHash']).toBe(modelWireHash(model))
+      expect(attempt?.payload['responseModelId']).toBe(
+        testCase.definition.wire === 'anthropic-messages' ? 'claude-test-4' : 'glm-test',
+      )
+      // The prefix this request was assembled from is the head after the pre-run facts and the
+      // environment note the Run wrote on top of them.
+      expect(note?.name).toBe('message/environment')
+      expect(attempt?.payload['contextAtEntryId']).toBe(note?.entryId)
+      expect(attempt?.provenanceKey).toBe(`provider:v1:attempt:${runId}:1:1`)
     })
   }
 
@@ -674,7 +863,7 @@ describe('builtin provider definitions', () => {
     const net = fakeNetwork({ kind: 'sse', frames: openAIFixture.PLAIN_TEXT_FRAMES })
     const provider = ollamaDefinition.create({
       network: net,
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: { apiKey: '', baseURL: OLLAMA_DEFAULT_BASE_URL },
       secrets: {},
     })
@@ -697,7 +886,7 @@ describe('builtin provider definitions', () => {
     const net = fakeNetwork({ kind: 'sse', frames: openAIFixture.NO_USAGE_FRAMES })
     const provider = zhipuDefinition.create({
       network: net,
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: {},
       secrets: { apiKey: API_KEY },
     })
@@ -767,7 +956,7 @@ describe('builtin provider definitions', () => {
   it('hands out models a caller cannot edit through the provider', async () => {
     const provider = zhipuDefinition.create({
       network: fakeNetwork([]),
-      clock: { now: () => NOW },
+      clock: { now: () => NOW, setTimeout: () => () => undefined },
       config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
       secrets: { apiKey: API_KEY },
     })
@@ -922,7 +1111,7 @@ describe('the model rows spec 02 changes', () => {
     it(`echoes ${id}'s own reasoning_content when the request carries tools, and only then`, async () => {
       const provider = zhipuDefinition.create({
         network: fakeNetwork([]),
-        clock: { now: () => NOW },
+        clock: { now: () => NOW, setTimeout: () => () => undefined },
         config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
         secrets: { apiKey: API_KEY },
       })
@@ -958,6 +1147,82 @@ describe('the model rows spec 02 changes', () => {
       }
     })
   }
+
+  it('declares low / high / max on the three GLM-5.3 rows, the vendor default max, and none on glm-4.6 (旧 88)', () => {
+    const spec = {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    }
+    expect(
+      Object.fromEntries(
+        zhipuDefinition.builtinModels.map((model) => [model.id, model.thinkingSpec]),
+      ),
+    ).toEqual({
+      // Exactly these three, lowest first; no `medium`. `defaultEffort` names the vendor's own
+      // default for the menu (02 §思考档位, decision A1's A′); this wire never sends it, so an
+      // absent effort still sends no `reasoning_effort` (checked below).
+      'glm-5.3': spec,
+      'glm-5.3-flash': spec,
+      'glm-5.3-flashx': spec,
+      // `reasoning_effort` is GLM-5.2 and later: glm-4.6 declares no thinking shape and keeps 01's.
+      'glm-4.6': undefined,
+    })
+    const flash = zhipuDefinition.builtinModels.find((model) => model.id === 'glm-5.3-flash')
+    if (flash === undefined) throw new Error('no glm-5.3-flash row')
+    const body = encodeOpenAIChat(
+      { model: flash, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+      ZHIPU_PROVIDER_ID,
+    ).body as Record<string, unknown>
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('declares the Opus 5.5 thinking shape decision A16 asks for (旧 88)', () => {
+    expect(anthropicDefinition.builtinModels[1]?.thinkingSpec).toEqual({
+      mode: 'always-on',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'medium',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+      forcedToolChoice: false,
+    })
+  })
+
+  it('declares each Anthropic row’s thinking mode as the vendor pages give it (2026-09-26)', () => {
+    expect(
+      anthropicDefinition.builtinModels.map((model) => [
+        model.id,
+        model.thinkingSpec?.mode,
+        model.thinkingSpec?.defaultOn,
+        model.thinkingSpec?.defaultEffort,
+        model.thinkingSpec?.disableMaxEffort,
+        model.thinkingSpec?.forcedToolChoice,
+      ]),
+    ).toEqual([
+      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
+      ['claude-opus-5-5', 'always-on', true, 'medium', undefined, false],
+      ['claude-opus-5', 'adaptive-gated', true, 'high', 'high', undefined],
+      ['claude-haiku-4-5-20251001', 'budget', false, undefined, undefined, undefined],
+      ['claude-fable-5-1', 'always-on', true, 'high', undefined, false],
+    ])
+  })
+
+  it('takes effort-only on every openai-chat row and never on an anthropic-messages one (01 修补 2)', () => {
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        const mode = model.thinkingSpec?.mode
+        if (mode === undefined) continue
+        expect([definition.wire, model.id, mode === 'effort-only']).toEqual([
+          definition.wire,
+          model.id,
+          definition.wire === 'openai-chat',
+        ])
+      }
+    }
+  })
 
   it('puts Sonnet 5 first and Opus 5.5 second until the prefix acceptance passes', () => {
     // 02 decision A16's ownerNote: the order changes once an official key passes, not before.

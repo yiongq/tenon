@@ -4,21 +4,37 @@ import { EVENT_CHANNELS, ROUTE_CHANNELS, isEventChannel, isRouteChannel } from '
 describe('ipc registry', () => {
   it('lists every declared route and event exactly once', () => {
     expect([...ROUTE_CHANNELS].toSorted()).toEqual([
+      'approval.current',
+      'approval.list',
+      'approval.respond',
+      'approval.resume',
+      'chat.continue',
+      'chat.queue.act',
       'chat.send',
+      'chat.sendNow',
       'chat.stop',
       'config.get',
       'config.set',
       'provider.configure',
       'provider.list',
       'provider.select',
+      'session.facts',
       'session.latest',
       'session.messages',
+      'session.modelChoice',
+      'session.selectModel',
+      'session.selectProfile',
+      'workspace.pick',
+      'workspace.remove',
+      'workspace.usePrefill',
     ])
     expect([...EVENT_CHANNELS].toSorted()).toEqual([
       'chat.event',
       'chat.new',
+      'chat.queue',
       'config.locale',
       'confirm.request',
+      'run.state',
     ])
     expect(new Set([...ROUTE_CHANNELS, ...EVENT_CHANNELS]).size).toBe(
       ROUTE_CHANNELS.length + EVENT_CHANNELS.length,

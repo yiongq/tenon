@@ -44,3 +44,16 @@ export async function createLocaleController(
     },
   }
 }
+
+/**
+ * `YYYY-MM-DD` of `now` in this machine's time zone: the loop's `localDate` port, read when the
+ * kernel writes `message/environment` (spec 02, open question 16, owner 2026-09-26).
+ */
+export function localDateOf(now: number): string {
+  const date = new Date(now)
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0')
+}

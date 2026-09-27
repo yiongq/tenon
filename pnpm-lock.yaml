@@ -119,10 +119,16 @@ importers:
       streamdown:
         specifier: 2.6.0
         version: 2.6.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      undici:
+        specifier: 7.29.1
+        version: 7.29.1
       zod:
         specifier: 'catalog:'
         version: 4.6.5
     devDependencies:
+      '@formatjs/icu-messageformat-parser':
+        specifier: 3.5.18
+        version: 3.5.18
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.63.0

@@ -3,6 +3,7 @@ export type {
   ChildHandle,
   ConfirmReason,
   ConfirmRequest,
+  ConfirmTarget,
   FetchLike,
   HostAdapter,
   HostClock,
@@ -10,15 +11,24 @@ export type {
   HostFs,
   HostIdentity,
   HostNetwork,
+  HostPolicy,
   HostProcess,
   HostSandbox,
   HostSecrets,
+  Reversibility,
   SandboxRequest,
   SandboxViolation,
   SpawnSpec,
 } from './host/adapter.js'
-export { CONFIRM_FACT_KEYS, HostNetworkDeniedError } from './host/adapter.js'
-export { absolutePath, isAbsolutePath, joinPath } from './host/path.js'
+export {
+  CONFIRM_FACT_KEYS,
+  HostNetworkDeniedError,
+  UnresolvableAliasError,
+} from './host/adapter.js'
+export { EMPTY_POLICY } from './host/policy.js'
+export type { PolicyState, TenantPolicy, ToolPolicyRule } from './host/policy.js'
+export type { FlaggedCategory, InspectorCategory } from './permission/inspector.js'
+export { absolutePath, isAbsolutePath, isWithin, joinPath, normalizePath } from './host/path.js'
 export { KEY_SEPARATOR, keyFor } from './host/key.js'
 export {
   PROFILE_CONFIG_FILE,
@@ -134,8 +144,10 @@ export type {
   StopReason,
   StreamEvent,
   ThinkingDecision,
+  ThinkingSpec,
   ToolSpec,
   Usage,
+  VendorSource,
 } from './provider/types.js'
 export {
   ProviderAlreadyRegisteredError,
@@ -151,8 +163,19 @@ export type {
   BlockAccumulatorOptions,
   TerminalStreamOptions,
 } from './provider/base.js'
-export { applyThinkingDecision, decideThinking, thinkingModelId } from './provider/thinking.js'
-export type { ThinkingApplication, ThinkingBlock, ThinkingTarget } from './provider/thinking.js'
+export {
+  applyThinkingDecision,
+  decideThinking,
+  decideVendorBlock,
+  decideVendorFields,
+  thinkingModelId,
+} from './provider/thinking.js'
+export type {
+  ThinkingApplication,
+  ThinkingBlock,
+  ThinkingTarget,
+  VendorBlock,
+} from './provider/thinking.js'
 export { createProviderRegistry } from './provider/registry.js'
 
 // Tape — the storage port, the in-memory store, the projection reducer, folding, replay, the facade.
@@ -237,6 +260,7 @@ export type { StoredEntryIdentity } from './tape/store.js'
 export { encodeAnthropicMessages } from './provider/wire/anthropic-messages.js'
 export type {
   AnthropicContentBlock,
+  AnthropicRawBlock,
   AnthropicResultBlock,
   AnthropicToolDefinition,
   AnthropicWireMessage,
@@ -252,10 +276,14 @@ export type {
 } from './provider/wire/openai-chat.js'
 export {
   NO_SYSTEM_PROMPT_HASH,
+  WIRE_MODEL_FIELDS,
   effectiveMaxTokens,
+  encoderOf,
+  modelWireHash,
   requestSnapshot,
   systemHash,
 } from './provider/wire/shared.js'
+export type { EncoderInfo } from './provider/wire/shared.js'
 
 // The Anthropic Messages adapter's I/O half (step 10): the SDK client, the raw-event
 // normalisation and the error mapping. The provider definition that constructs it is step 11's.
@@ -285,22 +313,27 @@ export {
 } from './provider/definitions/ollama.js'
 export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'
 
-// The kernel session service (step 12): creates / resets / deletes sessions, writes the phase-1
-// facts and runs ONE provider request. Facts only — no loop, no retry, no tool dispatch (phase 2).
-// It takes the store as an INSTANCE and wraps it in the Tape facade itself, so no caller above it
-// holds `TapeStore.append`.
+// The kernel session service: creates / resets / deletes sessions, reads the projections back, and
+// owns the agent loop (spec 02 §主进程与 kernel 的循环接口). It takes the store as an INSTANCE and
+// wraps it in the Tape facade itself, so no caller above it holds `TapeStore.append`. Spec 02 removed
+// phase 1's `runRequest`, `RunRequestQuery` and `RunResult`: a request is what a Run sends.
 export { createSessionService } from './session/service.js'
 export type {
+  AnswerResult,
+  ContinueRunResult,
   CreateSessionQuery,
   LatestSession,
   ListMessagesQuery,
-  RunRequestQuery,
-  RunResult,
+  RecoverResult,
+  ResumeResult,
+  SendQuery,
+  SendResult,
   SessionIncarnation,
+  SessionMessageRow,
   SessionService,
   SessionServiceOptions,
-  UserTurn,
 } from './session/service.js'
+export type { RowCall } from './loop/calls.js'
 // The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
 // revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
 export { readEffectiveMessages } from './tape/replay.js'
@@ -309,3 +342,128 @@ export type { ReadEffectiveMessagesQuery } from './tape/replay.js'
 // the two tracks writing this file can be merged): only a batch that opens with `session/start` may
 // create a session's head row.
 export { assertBatchOpensIncarnation } from './tape/store.js'
+
+// Spec 02 plan step 8 — Tape 修补与新名字. One block at the end, so the tracks writing this file in
+// parallel can be merged: the phase-2 payload types and the types they reference (declared only; the
+// steps that implement them do not change the shapes), the new port errors and queries, the
+// pending-approval projection, the memory store's shared backing and the phase-2 key builders.
+export type { BlockReason, ClosureSource, ExecutionState } from './loop/closure.js'
+export type { SpillRecord } from './loop/spill.js'
+export type { HandoffCall, SubagentHandoff } from './loop/subagent.js'
+export type { RunEndReason } from './loop/terminal.js'
+export type { Decision } from './permission/decide.js'
+export type { InspectorFinding } from './permission/inspector.js'
+export type {
+  DecisionRecord,
+  DecisionSource,
+  DecisionStep,
+  DecisionSummary,
+  DecisionSummaryCode,
+} from './permission/record.js'
+export type {
+  ApprovalResolvedPayload,
+  CompactionAnchorPayload,
+  AskAnswerRecord,
+  ContinuationPayload,
+  EnvironmentPayload,
+  DispatchCommittedPayload,
+  FactWriter,
+  GrantScope,
+  ModelChoiceSetPayload,
+  ParentLinkPayload,
+  PermissionDecidedPayload,
+  ProfileSetPayload,
+  RunStartedPayload,
+  RunTerminalPayload,
+  RunUsageLine,
+  SessionProfile,
+  ToolCallPayload,
+  ToolExclusionCode,
+  ToolOrigin,
+  ToolOutcomePayload,
+  ToolResultPayload,
+  ToolTablePayload,
+  ToolsWithheldPayload,
+  ViewAssembledPayload,
+  ViewContentPayload,
+  WorkspaceSetPayload,
+} from './tape/entry.js'
+export { TapeClosedError, TapeMessageRetractedError, assertEntryIdCursor } from './tape/store.js'
+export type { PendingApprovalRow, TapeListPendingApprovalsQuery } from './tape/store.js'
+export type {
+  PendingApprovalProjectionInsertOnly,
+  PendingApprovalProjectionKey,
+  PendingApprovalProjectionValues,
+} from './tape/projection.js'
+export { createMemoryTapeBacking } from './tape/memory-store.js'
+export type { MemoryTapeBacking } from './tape/memory-store.js'
+export {
+  approvalResolvedKey,
+  assembledKey,
+  compactionAnchorKey,
+  dispatchCommittedKey,
+  modelChoiceSetKey,
+  parentLinkKey,
+  permissionDecidedKey,
+  profileSetKey,
+  runStartedKey,
+  runTerminalKey,
+  toolCallKey,
+  toolOutcomeKey,
+  toolResultKey,
+  toolTableKey,
+  toolsWithheldKey,
+  viewContentKey,
+  workspaceSetKey,
+} from './tape/provenance.js'
+
+// Spec 02 plan step 9 — 所有权骨架. The loop's ports and events, the commands' types, and the types
+// they reference, declared exactly as §主进程与 kernel 的循环接口 writes them (M1: frozen from here;
+// a host-implemented port only gains optional members after ①).
+export type {
+  CapabilitySource,
+  LoopPorts,
+  McpToolSource,
+  ModelChoice,
+  QueuedMessage,
+  RunAbortCause,
+  RunAssembly,
+  RunConnector,
+  RunLease,
+  RunOrigin,
+} from './loop/ports.js'
+export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
+export type { AnswerCommand } from './loop/waiting.js'
+export type { PendingCard, PendingRoot } from './loop/answer.js'
+// Plan step 18: the home page's choices and the workspace, as the session service answers them.
+export type {
+  SelectModelQuery,
+  SelectProfileQuery,
+  SelectProfileResult,
+  SessionFactsView,
+  WorkspaceChange,
+  WorkspaceResult,
+} from './loop/mailbox.js'
+export { INSPECTOR_TIMEOUT_MS } from './permission/inspector.js'
+export type { AskOpinion, DenyOpinion, InspectorRegistration } from './permission/inspector.js'
+export type {
+  AfterResultInput,
+  BeforeCallInput,
+  InspectedCall,
+  ResultMarker,
+  SessionView,
+} from './permission/session-view.js'
+export { BUILTIN_SERVER_ID } from './tools/registry.js'
+export type { ToolTableItem } from './tools/registry.js'
+export type {
+  SearchBackend,
+  SearchBackendDefinition,
+  SearchHit,
+  SearchOutcome,
+} from './tools/search/types.js'
+export type { CommandShell } from './tools/builtin/bash.js'
+
+// Spec 02 plan step 11 — 工作区判定与决策表. Where a path falls, resolved the one way both the kernel
+// and the desktop (which resolves the protected shell files) use.
+export { locatePath, placeOf, resolvePath } from './permission/workspace.js'
+export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permission/workspace.js'

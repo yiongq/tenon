@@ -19,14 +19,24 @@ export type {
   RouteResponse,
 } from './route.js'
 export {
+  chatContinue,
   chatEvent,
   chatEventSchema,
   chatNew,
+  chatQueueAct,
+  chatQueueEvent,
   chatSend,
+  chatSendNow,
   chatStop,
+  closureSourceSchema,
+  executionStateSchema,
+  providerErrorCodeSchema,
+  runEndReasonSchema,
   sessionIdSchema,
+  toolOutcomeViewSchema,
+  toolOutcomeViewShape,
 } from './ipc/chat.js'
-export type { ChatEvent } from './ipc/chat.js'
+export type { ChatEvent, RunEndReasonContract, ToolOutcomeViewContract } from './ipc/chat.js'
 export {
   configGet,
   configLocale,
@@ -43,9 +53,17 @@ export {
   confirmRequestEvent,
   confirmRequestEventPayloadSchema,
   confirmRequestSchema,
+  confirmTargetSchema,
+  flaggedCategorySchema,
   requiredFactKeys,
+  reversibilitySchema,
 } from './ipc/confirm.js'
 export type { ConfirmRequestInput } from './ipc/confirm.js'
+
+// Tenant policy (spec 02 §`HostAdapter.policy`): what 6b's bridge frames and a managed policy file
+// are checked with.
+export { policyStateSchema } from './policy.js'
+export type { PolicyStateContract } from './policy.js'
 export {
   PROTOCOL_FRAME_TYPES,
   checkTenantAssertion,
@@ -90,12 +108,31 @@ export {
 // shapes they carry. Writing stays on `chat.send`.
 export {
   SESSION_READ_LIMIT_MAX,
+  canonicalSessionIdSchema,
   contentBlockSchema,
   messageRowSchema,
   sessionLatest,
   sessionMessages,
 } from './ipc/session.js'
 export type { ContentBlockContract, MessageRowContract } from './ipc/session.js'
+// Spec 02 plan step 18: the profile, the workspace and the draft before a session exists.
+export {
+  sessionFacts,
+  sessionFactsResponse,
+  sessionSelectProfile,
+  workspacePick,
+  workspaceRemove,
+  workspaceResultSchema,
+  workspaceUsePrefill,
+} from './ipc/session.js'
+export type { SessionFactsResponse, WorkspaceResult } from './ipc/session.js'
+// Spec 02 plan step 19: the session's own model choice.
+export {
+  sessionModelChoice,
+  sessionModelChoiceResponse,
+  sessionSelectModel,
+} from './ipc/session.js'
+export type { SessionModelChoice } from './ipc/session.js'
 
 // Provider settings (spec 01 step 14): what the settings card reads and writes. A secret value
 // has no field to travel in — see ipc/provider.ts.
@@ -112,9 +149,26 @@ export {
 } from './ipc/provider.js'
 export type {
   ProviderConfigKeyContract,
+  ProviderEndpoint,
   ProviderEntryContract,
   ProviderWriteErrorCode,
   ProviderWriteResult,
 } from './ipc/provider.js'
 export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js'
 export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'
+
+// Spec 02 plan step 12: the decision summary, the only half of a decision that crosses IPC.
+export {
+  approvalCurrent,
+  approvalList,
+  approvalRespond,
+  approvalResume,
+  pendingRootSchema,
+  decisionSummaryCodeSchema,
+  decisionSummarySchema,
+} from './ipc/approval.js'
+export type { DecisionSummaryContract } from './ipc/approval.js'
+
+// Spec 02 plan step 20: whether a root session has a Run in progress, as main sees it.
+export { runStateEvent } from './ipc/run.js'
+export type { RunState } from './ipc/run.js'

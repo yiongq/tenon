@@ -145,3 +145,152 @@ export function attemptCompletedKey(
     `:${ordinalPart('requestSeq', requestSeq)}:${ordinalPart('physicalAttempt', physicalAttempt)}`
   )
 }
+
+// -------------------------------------------------------------------------------------------------
+// Spec 02 §名字总表 — the keys of the phase-2 names, one builder per row. `<i>` is the call's
+// ordinal in its reply, `<n>` the fact's ordinal in its incarnation, `<g>` the tool-table generation
+// and `<r>` the call's re-judgement count (from 1); all of them come from the tape, never a counter.
+// `message/continuation` has no builder of its own: its key is `messageRevisionKey(messageId, 0)`.
+// -------------------------------------------------------------------------------------------------
+
+/** A digest in a key: lowercase SHA-256 hex, the only spelling `canonicalHash` / `systemHash` emit. */
+function digestPart(label: string, value: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new TapeProvenanceSyntaxError(`${label} must be 64 lowercase hex digits, got "${value}"`)
+  }
+  return value
+}
+
+/** A provider id inside a key: it has to be a valid identity segment as it stands. */
+function providerPart(value: string): string {
+  if (typeof value !== 'string' || !IDENTITY_SEGMENT.test(value)) {
+    throw new TapeProvenanceSyntaxError(
+      `providerId must be a lowercase identity segment ([a-z0-9._-]+), got "${value}"`,
+    )
+  }
+  return value
+}
+
+/** `…:<runId>:<requestSeq>:<i>` — the key every tool/ fact and per-call execution/ fact hangs on. */
+function callPart(runId: string, requestSeq: number, ordinal: number): string {
+  return (
+    `${uuidPart('runId', runId)}:${ordinalPart('requestSeq', requestSeq)}` +
+    `:${ordinalPart('ordinal', ordinal)}`
+  )
+}
+
+/** `session:v1:profile:<incarnationId>` — rewritten with the carry when a session is cleared. */
+export function profileSetKey(incarnationId: string): string {
+  return `session:v1:profile:${uuidPart('incarnationId', incarnationId)}`
+}
+
+/** `session:v1:workspace:<incarnationId>:<n>`. */
+export function workspaceSetKey(incarnationId: string, n: number): string {
+  return `session:v1:workspace:${uuidPart('incarnationId', incarnationId)}:${ordinalPart('n', n)}`
+}
+
+/** `session:v1:model_choice:<incarnationId>:<n>` — `<n>` is counted from the tape in the queue. */
+export function modelChoiceSetKey(incarnationId: string, n: number): string {
+  return (
+    `session:v1:model_choice:${uuidPart('incarnationId', incarnationId)}` +
+    `:${ordinalPart('n', n)}`
+  )
+}
+
+/** `session:v1:parent_link:<runId>:<requestSeq>:<i>`. */
+export function parentLinkKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `session:v1:parent_link:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/** `view:v1:content:<type>:<hash>` — content-addressed, so the same content is written once. */
+export function viewContentKey(type: 'system' | 'tool_spec' | 'model_info', hash: string): string {
+  if (type !== 'system' && type !== 'tool_spec' && type !== 'model_info') {
+    throw new TapeProvenanceSyntaxError(
+      `view/content type must be system, tool_spec or model_info, got "${String(type)}"`,
+    )
+  }
+  return `view:v1:content:${type}:${digestPart('hash', hash)}`
+}
+
+/** `view:v1:tool_table:<incarnationId>:<g>:<providerId>`. */
+export function toolTableKey(
+  incarnationId: string,
+  generation: number,
+  providerId: string,
+): string {
+  return (
+    `view:v1:tool_table:${uuidPart('incarnationId', incarnationId)}` +
+    `:${ordinalPart('generation', generation)}:${providerPart(providerId)}`
+  )
+}
+
+/** `view:v1:tools_withheld:<runId>:<requestSeq>`. */
+export function toolsWithheldKey(runId: string, requestSeq: number): string {
+  return `view:v1:tools_withheld:${uuidPart('runId', runId)}:${ordinalPart('requestSeq', requestSeq)}`
+}
+
+/** `view:v1:assembled:<runId>:<requestSeq>` — a transient resend of the same requestSeq reuses it. */
+export function assembledKey(runId: string, requestSeq: number): string {
+  return `view:v1:assembled:${uuidPart('runId', runId)}:${ordinalPart('requestSeq', requestSeq)}`
+}
+
+/** `tool:v1:call:<runId>:<requestSeq>:<i>`. */
+export function toolCallKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `tool:v1:call:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/**
+ * `tool:v1:decision:<runId>:<requestSeq>:<i>`, and `…:<i>:rejudge:<r>` for a re-judgement. `<r>`
+ * counts from 1 per call and equals the payload's `rejudge`; 0 is the first decision, which has no
+ * `rejudge` segment at all, so it is refused here rather than minting a second key for it.
+ */
+export function permissionDecidedKey(
+  runId: string,
+  requestSeq: number,
+  ordinal: number,
+  rejudge?: number,
+): string {
+  const base = `tool:v1:decision:${callPart(runId, requestSeq, ordinal)}`
+  if (rejudge === undefined) return base
+  if (!Number.isSafeInteger(rejudge) || rejudge < 1) {
+    throw new TapeProvenanceSyntaxError(
+      `rejudge counts from 1 (the first decision has none), got ${String(rejudge)}`,
+    )
+  }
+  return `${base}:rejudge:${String(rejudge)}`
+}
+
+/** `tool:v1:approval:<runId>:<requestSeq>:<i>` — one key for every outcome, so a call gets one. */
+export function approvalResolvedKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `tool:v1:approval:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/** `tool:v1:result:<runId>:<requestSeq>:<i>`. */
+export function toolResultKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `tool:v1:result:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/** `execution:v1:run_started:<runId>`. */
+export function runStartedKey(runId: string): string {
+  return `execution:v1:run_started:${uuidPart('runId', runId)}`
+}
+
+/** `execution:v1:dispatch:<runId>:<requestSeq>:<i>`. */
+export function dispatchCommittedKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `execution:v1:dispatch:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/** `execution:v1:outcome:<runId>:<requestSeq>:<i>`. */
+export function toolOutcomeKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `execution:v1:outcome:${callPart(runId, requestSeq, ordinal)}`
+}
+
+/** `execution:v1:run_terminal:<runId>`. */
+export function runTerminalKey(runId: string): string {
+  return `execution:v1:run_terminal:${uuidPart('runId', runId)}`
+}
+
+/** `compaction:v1:anchor:<runId>:<requestSeq>` — the requestSeq of the summary request. */
+export function compactionAnchorKey(runId: string, requestSeq: number): string {
+  return `compaction:v1:anchor:${uuidPart('runId', runId)}:${ordinalPart('requestSeq', requestSeq)}`
+}

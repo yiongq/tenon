@@ -109,6 +109,31 @@ export class TapeReadLimitError extends Error {
   }
 }
 
+/**
+ * The store was closed (spec 02, 01 修补 7, B4). After `close()` every other method of the port
+ * rejects with this, in both stores; `close()` itself stays idempotent, because the conformance runner
+ * closes every store it opened once more when a case ends.
+ */
+export class TapeClosedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TapeClosedError'
+  }
+}
+
+/**
+ * A `message/*` revision for a messageId that already has a `message/retracted` (spec 02, 01 修补 7,
+ * B2): a retraction is final. Thrown by the kernel's message writer — the facade looks the message
+ * up with `readBySource` before it appends — not by a store, and the tape is left unchanged. Replaying
+ * the SAME `message/retracted` is not a revision and still answers `created: false`.
+ */
+export class TapeMessageRetractedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TapeMessageRetractedError'
+  }
+}
+
 /** `session_head` minus nothing: the row as the kernel sees it. */
 export interface SessionHead {
   tenantId: string
@@ -197,6 +222,11 @@ export interface TapeReadBySourceQuery {
   sessionId: string
   sourceType: TapeSourceType
   sourceId: string
+  /**
+   * Inclusive lower bound (spec 02, 01 修补 7, B5): a caller pages with the previous page's last
+   * `entryId` + 1. The result shape is unchanged, and the read still rides `tape_entry_by_source`.
+   */
+  fromEntryId?: number
   limit: number
 }
 
@@ -235,6 +265,36 @@ export interface TapeResetSessionQuery {
   incarnationId: string
   /** The `session/start` the kernel assembled. A store never builds a reserved fact itself. */
   start: NewEntry
+  /**
+   * Facts written right after the new `session/start`, in order, in the SAME transaction (spec 02,
+   * 01 修补 7, H1, D11; owner-confirmed as an amend, 01 修补 9 (u)): the profile and workspace facts a
+   * cleared session keeps. Each is checked and projected exactly as `append` would; if any fails, the
+   * whole reset rolls back and the old facts are still there. The receipt is still `session/start`'s.
+   */
+  carry?: readonly NewEntry[]
+}
+
+/**
+ * `pending_approval_projection` minus `tenant_id`, camelCase (spec 02, 01 修补 7, F3, H6): one row per
+ * call that is waiting on the user — an approval or a question. `entryId` is the
+ * `tool/permission_decided` currently in force; its provenance key is the `requestId` a card carries.
+ */
+export interface PendingApprovalRow {
+  sessionId: string
+  runId: string
+  requestSeq: number
+  /** Which client tool call of that reply (the `<i>` of the keys). */
+  callOrdinal: number
+  waitKind: 'approval' | 'question'
+  entryId: number
+  createdAt: number
+}
+
+export interface TapeListPendingApprovalsQuery {
+  /** Required, ≤ `MAX_READ_LIMIT`, like every read. */
+  limit: number
+  /** One session's rows; absent = every session of this store's tenant. */
+  sessionId?: string
 }
 
 export interface TapeStore {
@@ -262,6 +322,12 @@ export interface TapeStore {
   listSessions(q: TapeListSessionsQuery): Promise<SessionSummary[]>
   /** With no cursor, the LATEST `limit` rows: the interface opens at the tail of a conversation. */
   listMessages(q: TapeListMessagesQuery): Promise<MessageRow[]>
+  /**
+   * The waiting calls (spec 02, 01 修补 7): oldest first — `createdAt`, then the key columns, so the
+   * order is total and both stores agree. Another tenant's rows are never returned, with or without
+   * `sessionId` (01 acceptance 4's standard, held by 02 acceptance 11).
+   */
+  listPendingApprovals(q: TapeListPendingApprovalsQuery): Promise<PendingApprovalRow[]>
   rebuildProjections(sessionId: string): Promise<void>
 
   /**
@@ -275,6 +341,7 @@ export interface TapeStore {
   /** Physical delete: facts, head, projections, cursors. */
   deleteSession(sessionId: string): Promise<void>
 
+  /** Idempotent. Every other method afterwards rejects with `TapeClosedError`. */
   close(): Promise<void>
 }
 
@@ -310,6 +377,18 @@ export function assertReadLimit(limit: number, label = 'limit'): number {
 export function assertReadKinds(kinds: readonly TapeKind[] | undefined): void {
   if (kinds !== undefined && kinds.length === 0) {
     throw new TypeError('readRange: kinds must not be empty; omit it to read every kind')
+  }
+}
+
+/**
+ * The cursor `readBySource` takes. Checked on the port rather than left to each store: an entry id is
+ * a non-negative safe integer, and a `NaN` or a fraction would otherwise be answered one way by a
+ * comparison in memory and another by a bound SQL parameter. A `TypeError`, like `assertTapeId`'s.
+ */
+export function assertEntryIdCursor(value: number | undefined, label: string): void {
+  if (value === undefined) return
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new TypeError(`${label} must be a non-negative safe integer, got ${String(value)}`)
   }
 }
 

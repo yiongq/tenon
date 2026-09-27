@@ -155,3 +155,48 @@ test('a thread taller than the window scrolls itself, never the shell', async ()
     await app.close()
   }
 })
+
+test('a message sent while the thread is scrolled up brings the thread to its end (Thread.tsx FollowOnSend)', async () => {
+  // One reply taller than the window, then a second one that the new message asks for.
+  const lines = Array.from(
+    { length: 40 },
+    (_, i) => `- line ${String(i)}, one of a reply taller than the window\n`,
+  )
+  fake = await startFakeAnthropic({
+    replies: [
+      { steps: [{ type: 'text', text: [...lines, '\nDone.'] }], delayMs: 2 },
+      { steps: [{ type: 'text', text: ['Short.'] }], delayMs: 5 },
+    ],
+  })
+  const userData = makeUserDataDir('layout-follow')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: { ANTHROPIC_BASE_URL: fake.baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' },
+    contentSize: { width: 1280, height: 780 },
+  })
+  const distanceToBottom = async (): Promise<number> => {
+    const metrics = await readMetrics(page)
+    return metrics.viewportScrollHeight - metrics.viewportClientHeight - metrics.viewportScrollTop
+  }
+  try {
+    await page.getByTestId('composer-input').fill('a long answer, please')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text').last()).toContainText('Done.')
+    await expect.poll(distanceToBottom).toBeLessThanOrEqual(2)
+    // Scrolled back to the top to read the start of it.
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="thread-viewport"]')?.scrollTo({ top: 0 })
+    })
+    await expect(page.getByTestId('scroll-to-bottom')).toBeEnabled()
+    // Sending never reports a running thread to assistant-ui (it queues during a Run), so its own
+    // follow does not fire: the message just sent must still come into view, and its reply below.
+    await page.getByTestId('composer-input').fill('and now?')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Short.')
+    await expect.poll(distanceToBottom).toBeLessThanOrEqual(2)
+    await expect(page.getByTestId('scroll-to-bottom')).toBeDisabled()
+  } finally {
+    await app.close()
+  }
+})

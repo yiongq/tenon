@@ -28,11 +28,11 @@
   "settings": {
     "providers": {
       "title": "模型与密钥",
-      "description": "选择新消息使用的供应商与模型。密钥存在系统钥匙串里，不写进任何配置文件。",
+      "description": "选择新会话默认使用的供应商与模型。密钥存在系统钥匙串里，不写进任何配置文件。",
       "close": "关闭",
       "loading": "加载中…",
       "provider": "供应商",
-      "model": "模型",
+      "model": "新会话默认模型",
       "stored": "已存有密钥。要更换请直接填入新的。",
       "notStored": "还没有存密钥。",
       "willRemove": "已清空：保存后会删除存着的密钥。",
@@ -45,8 +45,11 @@
         "unknownKey": "这个设置项不属于该供应商。",
         "unknownModel": "这个模型不属于该供应商。",
         "noModel": "这个供应商没有可选的模型，选不了。",
-        "unavailable": "没能保存设置，请重试。"
-      }
+        "unavailable": "没能保存设置，请重试。",
+        "keyHostBinding": "密钥只属于保存它时的主机。要换主机，请在同一次保存里重新填写或清空每个已存的密钥。Ollama 的地址只能是本机或局域网。"
+      },
+      "customModel": "或手填模型 ID",
+      "customModelHint": "列表外的模型未经验证，只能纯文字对话。"
     }
   },
   "provider": {
@@ -77,7 +80,10 @@
     "placeholder": "想让 Tenon 做什么",
     "send": "发送",
     "stop": "停止",
-    "disclaimer": "Tenon 可能会出错，重要信息请核实。"
+    "disclaimer": "Tenon 可能会出错，重要信息请核实。",
+    "pendingHint": "发送会取消上面待批的操作。",
+    "restoring": "正在恢复上次的对话…",
+    "textOnlyTask": "这个模型不能用工具，不能执行任务。请换一个模型。"
   },
   "thread": {
     "empty": "开始对话",
@@ -94,5 +100,255 @@
     "provider": "模型服务返回了错误。",
     "unknown": "出了点问题。",
     "retry": "重试"
+  },
+  "runEnd": {
+    "completed": "已完成。",
+    "user-stopped": "你停下了这个任务。",
+    "paused": "{waitingFor, select, approval {等你批准。} question {等你回答。} other {等子任务完成。}}",
+    "user-rejected": "你拒绝了 {toolName}，任务已结束。",
+    "blocked-repeatedly": "调用连续 {count} 次被拦截，任务已结束。",
+    "step-limit": "任务达到了 {limit} 步的上限。",
+    "no-progress": "模型连续 {repeats} 次发出相同的调用、没有进展，任务已结束。",
+    "usage-limit": "任务用量超过了 {tokenLimit} tokens 的上限。",
+    "refusal": "{providerId} 的 {modelId} 拒绝回答。",
+    "content-filter": "{providerId} 的内容安全过滤拦下了这次回复。",
+    "context-overflow": "对话太长，超出了模型的上下文{compactions, plural, =0 {} other {（已压缩 # 次）}}。",
+    "quota-exhausted": "{providerId} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
+    "account-config": "你的 {providerId} 账号或组织设置不满足这次请求。",
+    "provider-error": "模型服务（{providerId}）出错{attempts, plural, =0 {} =1 {} other {，已尝试 # 次}}。",
+    "output-truncated": "回复在 {maxTokens} tokens 的输出上限处被截断。",
+    "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
+    "recovered": "任务运行时 Tenon 意外关闭。",
+    "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。"
+  },
+  "model": {
+    "purpose": {
+      "sonnet5": "速度与能力兼顾",
+      "opus55": "适合复杂的长任务",
+      "opus5": "上一代 Opus（旧版）",
+      "haiku45": "最快、成本最低",
+      "fable51": "需要组织或工作区开启 30 天数据保留",
+      "glm53": "智谱 GLM-5.3",
+      "glm53flash": "轻量版 GLM-5.3",
+      "glm53flashx": "轻量版 GLM-5.3（FlashX）",
+      "glm46": "上一代 GLM"
+    },
+    "mark": {
+      "localTextOnly": "{host} · 仅文字对话",
+      "unverified": "未验证 · 仅文字对话 · {host}"
+    },
+    "host": {
+      "local": "本机"
+    },
+    "row": {
+      "line": "{purpose} · {host}",
+      "textOnlyInTask": "任务需要能用工具的模型"
+    },
+    "trigger": {
+      "withEffort": "{model} · {effort}",
+      "label": "模型"
+    },
+    "notConfigured": "{provider} · 去设置填 key",
+    "more": "更多模型",
+    "typeModel": "手填模型 ID…",
+    "manage": "管理模型…",
+    "effort": {
+      "menu": "思考强度",
+      "default": "{level}（默认）",
+      "highest": "{level} · 用量最大",
+      "defaultHighest": "{level}（默认）· 用量最大",
+      "level": {
+        "low": "低",
+        "medium": "中",
+        "high": "高",
+        "xhigh": "很高",
+        "max": "最高"
+      }
+    },
+    "nextMessage": "下一条消息起生效",
+    "cacheNote": "改档会让缓存失效",
+    "confirm": {
+      "title": "此前的内容会发往 {host}",
+      "switch": "切换",
+      "newChat": "用新模型开新会话"
+    },
+    "typeDialog": {
+      "title": "手填模型 ID",
+      "description": "用于{provider}。列表外的模型未经验证，只能纯文字对话。",
+      "label": "模型 ID",
+      "use": "使用",
+      "cancel": "取消",
+      "close": "关闭"
+    },
+    "typeModelFor": "{provider} · 手填模型 ID…",
+    "nextMessageCache": "下一条消息起生效 · 改档会让缓存失效"
+  },
+  "leave": {
+    "title": "停止这个任务？",
+    "description": "任务还在进行。可以停止后离开，或者留在这里等它做完。",
+    "stop": "停止任务",
+    "stay": "留在这里"
+  },
+  "queue": {
+    "queued": "排队中",
+    "withdraw": "撤回",
+    "edit": "修改",
+    "save": "保存",
+    "cancel": "取消",
+    "sendNow": "立即发送"
+  },
+  "banner": {
+    "approval": "另一个会话在等你批准",
+    "question": "另一个会话在等你回答",
+    "resume": "另一个会话有没做完的操作",
+    "goBack": "回去"
+  },
+  "resume": {
+    "row": "上次没做完",
+    "continue": "继续"
+  },
+  "tool": {
+    "Read": "读取 {path}",
+    "Write": "写入 {path}",
+    "Edit": "编辑 {path}",
+    "Bash": "运行 {command}",
+    "Glob": "查找匹配 {pattern} 的文件",
+    "Grep": "在文件里搜索 {pattern}",
+    "WebSearch": "联网搜索 {query}",
+    "WebFetch": "抓取 {url}",
+    "AskUserQuestion": "向你提问",
+    "Agent": "把子任务交给 agent：{description}",
+    "generic": "使用 {toolName}",
+    "running": "进行中…",
+    "details": "详情",
+    "input": "输入",
+    "output": "输出",
+    "error": "工具报告了错误。"
+  },
+  "closure": {
+    "user-rejected": "你拒绝了这个操作。",
+    "superseded": "没有执行：你发了新消息。",
+    "policy": "被组织策略拦下。",
+    "user-disabled": "被拦下：这个工具已关闭。",
+    "protected": "被拦下：Tenon 保护这个位置。",
+    "inspector": "被权限检查拦下。",
+    "tool-unavailable": "没有执行：这个工具不可用。",
+    "invalid-input": "没有执行：参数不合法。",
+    "stopped": "已停止。",
+    "app-exit": "Tenon 关闭时停下了。",
+    "timed-out": "超时后停下了。",
+    "crashed": "Tenon 意外关闭，没有再次执行。",
+    "repair": "没有记录到结果。",
+    "unanswered": "没有作答。",
+    "output-truncated": "没有执行：回复被截断了。",
+    "step-limit": "没有执行：任务到了步数上限。",
+    "no-progress": "没有执行：调用没有进展。",
+    "usage-limit": "没有执行：任务到了用量上限。",
+    "blocked-repeatedly": "没有执行：连续多个调用被拦下。",
+    "content-filter": "没有执行：内容过滤拦下了回复。",
+    "provider-error": "没有执行：模型服务出错。",
+    "no-preference": "无偏好。",
+    "typed-answer": "你直接回复了。"
+  },
+  "blocked": {
+    "policy": "{toolName} 被组织策略拦下。",
+    "user-disabled": "{toolName} 已关闭。",
+    "protected": "{toolName} 不能访问 {target}：这是 Tenon 保护的位置。",
+    "inspector": {
+      "exfiltration": "{toolName} 被权限检查拦下：它可能把你的数据发往别处。",
+      "inspector-failed": "{toolName} 被拦下：对它的权限检查没有完成。"
+    },
+    "chatReadScope": "对话里 {toolName} 只能打开 Tenon 为这个对话保存的文件；{target} 不在其中。",
+    "told": "已告诉模型。"
+  },
+  "confirm": {
+    "title": {
+      "file": {
+        "read": "读取这个文件？",
+        "write": "修改这个文件？"
+      },
+      "command": "运行这条命令？",
+      "network": {
+        "search": "联网搜索？",
+        "url": "抓取这个网页？"
+      },
+      "tool": "使用这个连接器工具？"
+    },
+    "reason": {
+      "irreversible": {
+        "file": "{toolName} 对 {path} 的改动撤不回。",
+        "command": "{toolName} 运行的 {command} 撤不回。",
+        "tool": "{toolName} 的改动撤不回。",
+        "network": "{toolName} 的改动撤不回。"
+      },
+      "outside-workspace": "{path} 在工作区（{workspace}）之外。",
+      "network": "{toolName} 会把数据发往 {host}。",
+      "elevated": "这条命令要提升权限：{command}",
+      "default": "{toolName} 需要你批准。",
+      "policy": "组织要求 {toolName} 先经批准。",
+      "flagged": {
+        "exfiltration": "{toolName} 可能把你的数据发往别处。",
+        "inspector-failed": "{toolName} 的权限检查没有完成，所以来问你。"
+      },
+      "command": "每条命令都先问：在 {cwd} 运行 {command}。",
+      "interaction-required": "{toolName} 需要你参与。"
+    },
+    "irreversible": "撤不回。",
+    "allow": "允许",
+    "deny": "拒绝",
+    "key": {
+      "enter": "⏎",
+      "esc": "Esc"
+    },
+    "scope": {
+      "once": "只这一次",
+      "session": "本会话",
+      "sessionDomain": "本会话里这个域名",
+      "subtask": "本次子任务",
+      "subtaskDomain": "本次子任务里这个域名"
+    },
+    "showChange": "展开改动",
+    "arguments": "参数",
+    "cwd": "位于 {cwd}",
+    "answered": {
+      "allowed": "已允许 · {scope}",
+      "denied": "已拒绝"
+    },
+    "notRun": "未执行"
+  },
+  "failure": {
+    "effects": {
+      "none": "没有执行任何操作。",
+      "notRun": "{count} 个调用确定没发生。",
+      "uncertain": "{count} 个调用可能已执行。",
+      "doneHeading": "{count} 个调用已完成：",
+      "stopped": "{count} 个调用中途停下，后续写入未发生。",
+      "stoppedSent": "{count} 个请求在途中被停下，可能已到对方。"
+    },
+    "continue": "继续",
+    "retry": "重试",
+    "settings": "去设置",
+    "copy": "复制诊断信息",
+    "copied": "已复制"
+  },
+  "summary": {
+    "line": "读了 {read} 个 · 改了 {write} 个{external, plural, =0 {} other { · 有对外发送}}"
+  },
+  "thinking": {
+    "label": "思考",
+    "took": "思考了 {seconds} 秒"
+  },
+  "mode": {
+    "label": "形态",
+    "chat": "对话",
+    "cowork": "任务"
+  },
+  "folder": {
+    "label": "文件夹",
+    "dedicated": "专用文件夹",
+    "cwd": "命令在这里运行",
+    "add": "添加文件夹…",
+    "prefill": "用上次的 {count} 个文件夹",
+    "remove": "移除 {name}"
   }
 }

@@ -110,6 +110,9 @@ const RETRYABLE_BY_DEFAULT: Readonly<Record<ProviderErrorCode, boolean>> = {
   network: true,
   server: true,
   unknown: false,
+  // Spec 02, 01 修补 5: resending fails the same way until a human changes the account.
+  'quota-exhausted': false,
+  'account-config': false,
 }
 
 /** Digits with an optional fraction only: `Number('')` is 0 and `Number('Wed')` is NaN. */

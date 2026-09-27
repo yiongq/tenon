@@ -11,11 +11,14 @@ import type { TapeStore } from '../../src/tape/store.js'
 import {
   MAX_READ_LIMIT,
   TapeBusyError,
+  TapeClosedError,
+  TapeMessageRetractedError,
   TapeProvenanceConflictError,
   TapeReadLimitError,
   TapeSessionNotFoundError,
   TapeStaleIncarnationError,
   TapeTenantMismatchError,
+  assertEntryIdCursor,
   assertReadLimit,
 } from '../../src/tape/store.js'
 import { TapeIntegerRangeError } from '../../src/tape/entry.js'
@@ -36,6 +39,18 @@ export async function typeLevelFixture(): Promise<void> {
   await store.listSessions({})
   // @ts-expect-error the tenant is never a parameter: a store is bound to one at construction
   await store.readRange({ sessionId: 's', limit: 10, tenantId: 'other' })
+  // @ts-expect-error spec 02's pending read is bounded like every other
+  await store.listPendingApprovals({ sessionId: 's' })
+  // @ts-expect-error and takes no tenant either (01 acceptance 4's standard, 02 acceptance 11)
+  await store.listPendingApprovals({ limit: 10, tenantId: 'other' })
+  await store.listPendingApprovals({ limit: MAX_READ_LIMIT })
+  await store.readBySource({
+    sessionId: 's',
+    sourceType: 'runtime_event',
+    sourceId: 'r',
+    fromEntryId: 1001,
+    limit: MAX_READ_LIMIT,
+  })
   // The bounded forms compile.
   await store.readRange({ sessionId: 's', limit: MAX_READ_LIMIT, atEntryId: 4, kinds: ['message'] })
 }
@@ -53,7 +68,7 @@ describe('tape store port', () => {
     }
   })
 
-  it('names all seven tape errors, each carrying its own name', () => {
+  it('names all seven tape errors and spec 02’s two, each carrying its own name', () => {
     const errors = [
       new TapeProvenanceConflictError('x'),
       new TapeTenantMismatchError('x'),
@@ -62,6 +77,8 @@ describe('tape store port', () => {
       new TapeSessionNotFoundError('x'),
       new TapeBusyError('x'),
       new TapeReadLimitError('x'),
+      new TapeClosedError('x'),
+      new TapeMessageRetractedError('x'),
     ]
     expect(errors.map((error) => error.name)).toEqual([
       'TapeProvenanceConflictError',
@@ -71,11 +88,24 @@ describe('tape store port', () => {
       'TapeSessionNotFoundError',
       'TapeBusyError',
       'TapeReadLimitError',
+      'TapeClosedError',
+      'TapeMessageRetractedError',
     ])
     // Each is its own class: catching one must not catch another.
     for (const error of errors) {
       expect(error).toBeInstanceOf(Error)
       expect(errors.filter((other) => other.constructor === error.constructor)).toHaveLength(1)
+    }
+  })
+})
+
+describe('the readBySource cursor gate', () => {
+  it('takes a non-negative safe integer or nothing', () => {
+    for (const cursor of [undefined, 0, 1, 1001, Number.MAX_SAFE_INTEGER]) {
+      expect(() => assertEntryIdCursor(cursor, 'fromEntryId')).not.toThrow()
+    }
+    for (const cursor of [-1, 1.5, Number.NaN, 2 ** 53, Number.POSITIVE_INFINITY]) {
+      expect(() => assertEntryIdCursor(cursor, 'fromEntryId')).toThrow(TypeError)
     }
   })
 })

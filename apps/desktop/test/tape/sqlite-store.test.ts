@@ -5,9 +5,10 @@
  */
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
-import type { ProjectionOp, TapeEntry } from '@tenon-app/kernel'
+import type { ProjectionOp, TapeEntry, TapeStore } from '@tenon-app/kernel'
 import {
   TapeBusyError,
+  TapeClosedError,
   TapeIntegerRangeError,
   TapeProvenanceConflictError,
   TapeSessionNotFoundError,
@@ -17,10 +18,12 @@ import {
 import type { Database as SqliteDatabase } from 'better-sqlite3'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
+  PROGRAM_SCHEMA_VERSION,
   READ_BY_SOURCE_SQL,
   TapeSchemaVersionError,
   createSqliteTapeStore,
 } from '../../src/main/tape/sqlite-store.js'
+import migration001 from '../../src/main/tape/sql/tape.sqlite.sql?raw'
 import {
   clockFrom,
   dbFile,
@@ -233,18 +236,21 @@ function foreignState(raw: SqliteDatabase, tenantId: string): unknown {
 // -------------------------------------------------------------------------------------------------
 
 describe('opening the file (acceptance 18)', () => {
-  it('builds schema v1 with one schema_version row, and reopening writes nothing', async () => {
+  it('builds the whole ladder with one schema_version row each, and reopening writes nothing', async () => {
     const profileDir = tempProfileDir('tape-migrate')
     const first = openStore({ label: 'migrate', profileDir })
     await first.store.close()
 
     const raw = rawConnection(first.file)
+    expect(PROGRAM_SCHEMA_VERSION).toBe(2)
     expect(raw.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual([
       { version: 1 },
+      { version: 2 },
     ])
-    // The DDL file's objects, all of them, in one file.
+    // Both DDL files' objects, all of them, in one file.
     expect(tableNames(raw)).toEqual([
       'message_projection',
+      'pending_approval_projection',
       'projection_cursor',
       'schema_version',
       'session_head',
@@ -271,9 +277,101 @@ describe('opening the file (acceptance 18)', () => {
     writeFileSync(dbFile(profileDir), '')
     const opened = openStore({ label: 'empty', profileDir })
     const raw = rawConnection(opened.file)
-    expect(raw.prepare('SELECT version FROM schema_version').all()).toEqual([{ version: 1 }])
+    expect(raw.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+    ])
     raw.close()
     await opened.store.close()
+  })
+
+  it('upgrades a schema-v1 file to v2 on open, leaving its facts where they were', async () => {
+    // The file a phase-1 build wrote: migration 1's DDL and nothing else, already holding a session —
+    // its facts, head, projections and cursors — when migration 2 first runs. The rows are written by
+    // this build's store into a scratch file and copied into a file made from migration 1 alone; the
+    // cursors keep the two projections phase 1 had, at projection_version 1.
+    const seq = ids(1)
+    const at = clockFrom()
+    const sessionId = seq.uuid()
+    const incarnationId = seq.uuid()
+    const scratch = openStore({ label: 'v1-rows' })
+    await scratch.store.append({
+      sessionId,
+      incarnationId,
+      entries: [
+        startFact(sessionId, incarnationId, at),
+        userFact(seq.uuid(), 0, 'from v1', at),
+        modelSelectedFact(sessionId, seq.uuid(), at),
+      ],
+    })
+    const read = async (
+      store: TapeStore,
+    ): Promise<{ entries: TapeEntry[]; sessions: unknown; messages: unknown }> => ({
+      entries: (await store.readRange({ sessionId, limit: 10 })).entries,
+      sessions: await store.listSessions({ limit: 10 }),
+      messages: await store.listMessages({ sessionId, limit: 10 }),
+    })
+    const written = await read(scratch.store)
+    expect(written.entries).toHaveLength(3)
+    await scratch.store.close()
+
+    const profileDir = tempProfileDir('tape-v1-upgrade')
+    const v1 = rawConnection(dbFile(profileDir))
+    v1.exec(migration001)
+    v1.prepare('INSERT INTO schema_version (version, applied_at) VALUES (1, 1)').run()
+    v1.prepare('ATTACH DATABASE ? AS scratch').run(scratch.file)
+    v1.exec(
+      [
+        'INSERT INTO tape_meta SELECT * FROM scratch.tape_meta',
+        'INSERT INTO session_head SELECT * FROM scratch.session_head',
+        'INSERT INTO tape_entry SELECT * FROM scratch.tape_entry',
+        'INSERT INTO message_projection SELECT * FROM scratch.message_projection',
+        'INSERT INTO session_projection SELECT * FROM scratch.session_projection',
+        "INSERT INTO projection_cursor SELECT * FROM scratch.projection_cursor WHERE projection <> 'pending_approval'",
+        'UPDATE projection_cursor SET projection_version = 1',
+      ].join(';\n'),
+    )
+    v1.prepare('DETACH DATABASE scratch').run()
+    expect(tableNames(v1)).not.toContain('pending_approval_projection')
+    expect(countFacts(v1, 'tenant-a')).toBe(3)
+    v1.close()
+
+    const upgraded = openStore({ label: 'v1-upgrade', profileDir })
+    const raw = rawConnection(dbFile(profileDir))
+    expect(raw.prepare('SELECT version FROM schema_version ORDER BY version').all()).toEqual([
+      { version: 1 },
+      { version: 2 },
+    ])
+    expect(tableNames(raw)).toContain('pending_approval_projection')
+    raw.close()
+    // Migration 2 adds a table and touches nothing that was there: the facts, the chain, the list and
+    // the transcript read back as phase 1 left them, and nothing waits.
+    expect(await read(upgraded.store)).toEqual(written)
+    expect((await upgraded.store.verifyChain({ sessionId, limit: 10 })).firstBadEntryId).toBeNull()
+    expect(await upgraded.store.listPendingApprovals({ limit: 10 })).toEqual([])
+    // And the rows are the ones a rebuild derives from those facts.
+    await upgraded.store.rebuildProjections(sessionId)
+    expect(await read(upgraded.store)).toEqual(written)
+    await upgraded.store.close()
+  })
+
+  it('compares the tenant before migration 2 runs on someone else’s v1 file', async () => {
+    // With two rungs on the ladder the order finally matters: an A-bound store opening B's v1 file
+    // must refuse BEFORE upgrading it, or B's own older build would refuse its history afterwards.
+    const profileDir = tempProfileDir('tape-v1-foreign')
+    const v1 = rawConnection(dbFile(profileDir))
+    v1.exec(migration001)
+    v1.prepare('INSERT INTO schema_version (version, applied_at) VALUES (1, 1)').run()
+    v1.prepare("INSERT INTO tape_meta (id, tenant_id) VALUES (1, 'tenant-b')").run()
+    v1.close()
+    const digest = fileDigest(dbFile(profileDir))
+    expect(() =>
+      createSqliteTapeStore({ identity: identityFor(profileDir, 'tenant-a'), now: () => 1 }),
+    ).toThrow(TapeTenantMismatchError)
+    expect(fileDigest(dbFile(profileDir))).toBe(digest)
+    const raw = rawConnection(dbFile(profileDir))
+    expect(raw.prepare('SELECT version FROM schema_version').all()).toEqual([{ version: 1 }])
+    raw.close()
   })
 
   it('refuses a file from a newer build and leaves it byte for byte unchanged', async () => {
@@ -283,7 +381,7 @@ describe('opening the file (acceptance 18)', () => {
     const raw = rawConnection(first.file)
     raw
       .prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)')
-      .run(2, 1_700_000_000_000)
+      .run(PROGRAM_SCHEMA_VERSION + 1, 1_700_000_000_000)
     raw.close()
 
     const before = fileDigest(first.file)
@@ -308,7 +406,9 @@ describe('opening the file (acceptance 18)', () => {
     const snapshot = `${first.file}.snapshot`
     const walSnapshot = `${walFile}.snapshot`
     const writer = rawConnection(first.file)
-    writer.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(2, 1)
+    writer
+      .prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)')
+      .run(PROGRAM_SCHEMA_VERSION + 1, 1)
     expect(existsSync(walFile)).toBe(true)
     copyFileSync(first.file, snapshot)
     copyFileSync(walFile, walSnapshot)
@@ -334,7 +434,9 @@ describe('opening the file (acceptance 18)', () => {
     const first = openStore({ label: 'newer-delete', profileDir })
     await first.store.close()
     const raw = rawConnection(first.file)
-    raw.prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)').run(2, 1)
+    raw
+      .prepare('INSERT INTO schema_version (version, applied_at) VALUES (?, ?)')
+      .run(PROGRAM_SCHEMA_VERSION + 1, 1)
     expect(raw.pragma('journal_mode = DELETE', { simple: true })).toBe('delete')
     raw.close()
 
@@ -1011,13 +1113,17 @@ describe('readBySource (acceptance 14)', () => {
     // The plan of the statement the store REALLY runs: a rename, a column reorder or a rewrite into a
     // scan has to red this test rather than quietly cost a sort.
     const raw = rawConnection(opened.file)
-    const plan = raw
-      .prepare(`EXPLAIN QUERY PLAN ${READ_BY_SOURCE_SQL}`)
-      .all('tenant-a', sessionId, 'runtime_event', runId, 10)
-      .map((row) => (row as { detail: string }).detail)
-      .join('\n')
-    expect(plan).toContain('tape_entry_by_source')
-    expect(plan).not.toContain('TEMP B-TREE')
+    // Spec 02's `fromEntryId` (旧 58) is a bound in the same statement: with it absent (0) and with
+    // it set, the plan stays on the index and never sorts.
+    for (const fromEntryId of [0, 2]) {
+      const plan = raw
+        .prepare(`EXPLAIN QUERY PLAN ${READ_BY_SOURCE_SQL}`)
+        .all('tenant-a', sessionId, 'runtime_event', runId, fromEntryId, 10)
+        .map((row) => (row as { detail: string }).detail)
+        .join('\n')
+      expect(plan).toContain('tape_entry_by_source')
+      expect(plan).not.toContain('TEMP B-TREE')
+    }
     raw.close()
     await opened.store.close()
   })
@@ -1052,20 +1158,14 @@ describe('projection_cursor', () => {
           'projection_cursor WHERE tenant_id = ? AND session_id = ? ORDER BY projection',
       )
       .all('tenant-a', sessionId)
-    expect(cursors).toEqual([
-      {
-        projection: 'message',
+    expect(cursors).toEqual(
+      ['message', 'pending_approval', 'session'].map((projection) => ({
+        projection,
         incarnation_id: incarnationId,
         last_entry_id: 3,
-        projection_version: 1,
-      },
-      {
-        projection: 'session',
-        incarnation_id: incarnationId,
-        last_entry_id: 3,
-        projection_version: 1,
-      },
-    ])
+        projection_version: 2,
+      })),
+    )
 
     // A rebuild replays the same facts through the same ops, so it lands on the same cursor.
     await opened.store.rebuildProjections(sessionId)
@@ -1078,6 +1178,7 @@ describe('projection_cursor', () => {
         .all('tenant-a', sessionId),
     ).toEqual([
       { projection: 'message', last_entry_id: 3 },
+      { projection: 'pending_approval', last_entry_id: 3 },
       { projection: 'session', last_entry_id: 3 },
     ])
 
@@ -1095,10 +1196,13 @@ describe('projection_cursor', () => {
             'WHERE tenant_id = ? AND session_id = ? ORDER BY projection',
         )
         .all('tenant-a', sessionId),
-    ).toEqual([
-      { projection: 'message', incarnation_id: nextIncarnation, last_entry_id: reset.entryId },
-      { projection: 'session', incarnation_id: nextIncarnation, last_entry_id: reset.entryId },
-    ])
+    ).toEqual(
+      ['message', 'pending_approval', 'session'].map((projection) => ({
+        projection,
+        incarnation_id: nextIncarnation,
+        last_entry_id: reset.entryId,
+      })),
+    )
 
     // And deleting the session takes the cursor with it.
     await opened.store.deleteSession(sessionId)
@@ -1113,11 +1217,12 @@ describe('projection_cursor', () => {
 })
 
 // -------------------------------------------------------------------------------------------------
-// After close() · the port says nothing, so the store must at least not leak the binding's wording
+// After close() · spec 02 (01 修补 7) makes it TapeClosedError on both stores; the conformance suite
+// holds every method to it, and this file only adds that the binding's wording never leaks
 // -------------------------------------------------------------------------------------------------
 
 describe('a closed store', () => {
-  it("rejects every method with its own error instead of better-sqlite3's", async () => {
+  it("rejects every method with TapeClosedError instead of better-sqlite3's", async () => {
     const opened = openStore({ label: 'closed' })
     const seq = ids(1)
     const at = clockFrom()
@@ -1129,8 +1234,7 @@ describe('a closed store', () => {
       entries: [startFact(sessionId, incarnationId, at)],
     })
     await opened.store.close()
-    // Idempotent, and then every path refuses through the one prepare helper. Use after close is a
-    // caller bug, not a condition of the tape, so it is the TypeError an empty id gets — never
+    // Idempotent, and then every path refuses with the port's own error — never
     // `TypeError: The database connection is not open`, which would name the binding through the port.
     await opened.store.close()
     for (const call of [
@@ -1140,7 +1244,9 @@ describe('a closed store', () => {
       () => opened.store.append({ sessionId, incarnationId, entries: [extFact(sessionId, 1, at)] }),
     ]) {
       // oxlint-disable-next-line no-await-in-loop -- one rejection asserted per method, in order
-      await expect(call()).rejects.toThrow(/this store is closed/)
+      await expect(call()).rejects.toThrow(TapeClosedError)
+      // oxlint-disable-next-line no-await-in-loop -- one rejection asserted per method, in order
+      await expect(call()).rejects.not.toThrow(/connection is not open/)
     }
   })
 })

@@ -60,6 +60,13 @@ interface CardError {
 interface Draft {
   readonly providerId: string
   readonly modelId: string
+  /** A hand-typed model id; used instead of `modelId` when not blank (M6). */
+  readonly customModel: string
+  /**
+   * Whether the user touched the model: only then does a save write the default model (spec 02
+   * §模型选择「设置卡」) — a save that only changed a key must not move the default of new chats.
+   */
+  readonly modelEdited: boolean
   /** Current field contents, keyed by `ConfigKey.name`. Secrets start empty. */
   readonly values: Readonly<Record<string, string>>
   /** The fields the user typed in: the only ones a save sends. */
@@ -181,9 +188,10 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (draft === null) return
-    // A definition that ships no model cannot be selected at all (`provider.select` requires one),
-    // so a save that would write nothing says why instead of closing as though it had taken.
-    if (draft.modelId === '') {
+    const modelId = draft.customModel.trim() === '' ? draft.modelId : draft.customModel.trim()
+    // A definition that ships no model cannot be selected without a typed id (`provider.select`
+    // requires one), so a save that would write nothing says why instead of closing as if it took.
+    if (draft.modelEdited && modelId === '') {
       setError({ code: 'no-model', configKey: null })
       return
     }
@@ -215,12 +223,14 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
         if (!written.ok) return await fail({ code: 'unavailable', configKey: null }, false)
         if (!written.data.ok) return await fail(written.data, false)
       }
-      const chosen = await invokeRoute(window.tenon, providerSelect, {
-        providerId: draft.providerId,
-        modelId: draft.modelId,
-      })
-      if (!chosen.ok) return await fail({ code: 'unavailable', configKey: null }, wrote)
-      if (!chosen.data.ok) return await fail(chosen.data, wrote)
+      if (draft.modelEdited) {
+        const chosen = await invokeRoute(window.tenon, providerSelect, {
+          providerId: draft.providerId,
+          modelId,
+        })
+        if (!chosen.ok) return await fail({ code: 'unavailable', configKey: null }, wrote)
+        if (!chosen.data.ok) return await fail(chosen.data, wrote)
+      }
       close()
     } finally {
       setSaving(false)
@@ -325,12 +335,40 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
                       options={entry.models.map((model) => ({ value: model.id, label: model.id }))}
                       onChange={(modelId) =>
                         setDraft((current) =>
-                          current === null ? current : { ...current, modelId },
+                          current === null
+                            ? current
+                            : { ...current, modelId, customModel: '', modelEdited: true },
                         )
                       }
                     />
                   </Field>
                 )}
+                <Field
+                  label={t('settings.providers.customModel')}
+                  htmlFor={`${fieldId}-custom-model`}
+                >
+                  <Input
+                    id={`${fieldId}-custom-model`}
+                    data-testid="model-custom"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-describedby={`${fieldId}-custom-model-hint`}
+                    value={draft.customModel}
+                    onChange={(event) => {
+                      const customModel = event.target.value
+                      setError(null)
+                      setDraft((current) =>
+                        current === null ? current : { ...current, customModel, modelEdited: true },
+                      )
+                    }}
+                  />
+                  <span
+                    id={`${fieldId}-custom-model-hint`}
+                    className="font-sans text-micro text-text-muted"
+                  >
+                    {t('settings.providers.customModelHint')}
+                  </span>
+                </Field>
               </>
             )}
           </div>
@@ -368,6 +406,7 @@ const ERROR_KEY = {
   'unknown-key': 'settings.providers.error.unknownKey',
   'unknown-model': 'settings.providers.error.unknownModel',
   'invalid-value': 'settings.providers.error.invalidValue',
+  'key-host-binding': 'settings.providers.error.keyHostBinding',
   'no-model': 'settings.providers.error.noModel',
   unavailable: 'settings.providers.error.unavailable',
 } as const satisfies Record<CardErrorCode, string>
@@ -416,13 +455,14 @@ function newDraft(
     values[key.name] = key.secret ? '' : (stored[key.name] ?? key.default ?? '')
   }
   const named = saved?.id === entry.id ? saved.modelId : null
-  const modelId =
-    named !== null && entry.models.some((model) => model.id === named)
-      ? named
-      : (entry.models[0]?.id ?? '')
+  const builtin = named !== null && entry.models.some((model) => model.id === named)
+  const modelId = builtin ? named : (entry.models[0]?.id ?? '')
   return {
     providerId: entry.id,
     modelId,
+    // A saved hand-typed id shows where it was typed.
+    customModel: saved?.id === entry.id && saved.source === 'user' ? saved.modelId : '',
+    modelEdited: false,
     values,
     edited: [],
     secretKeys: entry.configKeys.filter((key) => key.secret).map((key) => key.name),

@@ -1,306 +1,467 @@
-import { chatEvent, chatSend, chatStop, registerRoute } from '@tenon-app/contracts'
-import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
 import {
-  ProviderConfigMissingError,
-  ProviderInvalidArgumentError,
-  TapeStaleIncarnationError,
-  isCanonicalUuid,
-} from '@tenon-app/kernel'
+  chatContinue,
+  chatQueueAct,
+  chatQueueEvent,
+  runStateEvent,
+  chatSend,
+  chatSendNow,
+  chatStop,
+  registerRoute,
+} from '@tenon-app/contracts'
+import type { IpcMainLike, RouteResponse } from '@tenon-app/contracts'
+import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
-  HostAdapter,
-  ProviderErrorCode,
-  ProviderRegistry,
+  AbsolutePath,
+  CommandShell,
+  HostClock,
+  LoopPorts,
+  RunAbortCause,
+  RunLease,
+  RunOrigin,
   SessionService,
-  StopReason,
 } from '@tenon-app/kernel'
 import type { EventSender } from './host/index.js'
-import { readConfig } from './host/profile.js'
-import { devEnv, resolveChatProvider, selectProviderId } from './provider.js'
-import type { EnvLike, ResolvedProvider } from './provider.js'
+import { localDateOf } from './locale.js'
+import { createRunQueue } from './queue.js'
+import type { DesktopQueue } from './queue.js'
+import { createRunEvents, emitChatEvent } from './run-events.js'
 
 /**
- * The chat path (spec 01 §desktop 接线). Phase 0's in-memory `history` Map and its directly
- * constructed SDK client are gone: the transcript is the Tape, and one kernel call — the session
- * service's `runRequest` — writes the user's turn, streams the answer and records what happened.
+ * The chat path (spec 01 §desktop 接线; spec 02 §主进程与 kernel 的循环接口, §进行中、暂停与
+ * RunRegistry). The loop is the kernel's now: `chat.send` forwards to `SessionService.send` and
+ * `chat.stop` to `stop`, and what a Run does comes back as loop events (run-events.ts). What stays in
+ * this file is the part only a host can do — which Runs are in progress, and which document asked for
+ * each one:
  *
- * What survives unchanged from phase 0, because it is what makes the transcript trustworthy, and
- * where it now lives:
+ *   - **the RunRegistry** is the one place in-progress Runs are recorded, by root session. It is the
+ *     kernel's `LoopPorts.leases`: every Run the kernel opens is begun here first, so a stop, a
+ *     closing window or a quit can reach it. It replaces phase 1's `inFlight` map.
+ *   - **a Run never outlives the document that asked for it.** When the window closes, or the View
+ *     menu's Reload replaces its document, the lease is aborted with `close-window`, and the kernel
+ *     persists what did arrive as `status: 'aborted'` — which is what the user saw.
  *
- *   - the run is registered BEFORE the first await, so a `chat.stop` arriving while the keychain
- *     or the store is still being read is not lost;
- *   - a stopped reply keeps the text that did arrive (the service persists it as
- *     `status: 'aborted'`), so what the user sees and what the model will see stay the same thing;
- *   - a failed turn stays in the transcript: the user's message is on the tape and the evidence is
- *     the attempt fact's `error`, with no assistant message written;
- *   - re-sending the same text after a failure is therefore a RETRY of that same user message, not
- *     a second turn — the service recognises it and its append is an idempotent no-op;
- *   - in-flight is released BEFORE the terminal event goes out, and only after the service's final
- *     batch has committed: whoever reacts to `done` / `error` by sending again must neither be
- *     told a reply is still streaming nor race the transcript they are about to extend;
- *   - a run never outlives the document that asked for it (see `RunOwner`).
- *
- * One run per session at a time, as before. The session id is the RENDERER's: it mints a canonical
- * UUID per conversation and filters every `chat.event` on it, so main creates the session under
- * that id on first use rather than keeping a renderer-id → tape-id map — the in-process state this
- * step exists to delete.
+ * `chat.send` never refuses a message because a reply streams (01 修补 9 (a)): the kernel queues it,
+ * inserts it at the next batch boundary or sends it after the Run, and queue.ts pushes the queue as
+ * `chat.queue`. `chat.sendNow` and `chat.queue.act` are the stop-and-send and the queued item's
+ * three actions.
  */
-
-/** How the interface names a failure. Never a sentence: the renderer owns the copy. */
-type ChatErrorCode = Extract<ChatEvent, { type: 'error' }>['code']
-type ChatStopReason = Extract<ChatEvent, { type: 'done' }>['stopReason']
-
-/** Spec 01 §desktop 接线, verbatim. `satisfies` makes a new provider code a compile error here. */
-const ERROR_CODE = {
-  network: 'network',
-  auth: 'auth',
-  'rate-limit': 'rate-limit',
-  overloaded: 'rate-limit',
-  'invalid-request': 'provider',
-  'context-overflow': 'provider',
-  server: 'provider',
-  'egress-denied': 'unknown',
-  unknown: 'unknown',
-} as const satisfies Record<ProviderErrorCode, ChatErrorCode>
-
-/**
- * Also verbatim. The three "finished normally" reasons collapse into `end-turn` because the
- * interface has one piece of copy for them; the raw `StopReason` is on the attempt fact, which is
- * where a reader that cares looks. Giving `max-tokens`, `refusal` and the rest their own copy
- * means extending the `chat.event` enum, which is phase 6's.
- */
-const STOP_REASON = {
-  'end-turn': 'end-turn',
-  'stop-sequence': 'end-turn',
-  'tool-use': 'end-turn',
-  aborted: 'aborted',
-  'max-tokens': 'error',
-  refusal: 'error',
-  'content-filter': 'error',
-  'pause-turn': 'error',
-  'context-overflow': 'error',
-  unknown: 'error',
-} as const satisfies Record<StopReason, ChatStopReason>
 
 /** Diagnostics: logged and carried in the never-rendered `detail`, never shown to a user. */
-const ALREADY_STREAMING = 'a reply is already streaming for this session'
 const NO_STORE = 'the session store is unavailable'
 const NOT_A_SESSION_ID = 'the session id is not a canonical uuid'
+const NOT_BOUND = 'the agent loop is not bound yet'
 
-interface Run {
-  readonly controller: AbortController
+/** `chat.queue.act`'s answer: applied, or the item was no longer queued. */
+function status(applied: boolean): { status: 'applied' | 'not-found' } {
+  return { status: applied ? 'applied' : 'not-found' }
+}
+
+/** Plan step 22 replaces this with shell-env.ts's shell and the user's terminal environment. */
+const PLACEHOLDER_SHELL: CommandShell = {
+  path: '/bin/sh' as AbsolutePath,
+  env: () => Promise.resolve({}),
 }
 
 /**
- * The document a run belongs to, as this file needs it — structural, so chat.ts stays free of
- * electron: what IPC hands the handler is an `IpcMainInvokeEvent` whose `sender` is a WebContents.
- *
- * A run is started by one window and its events are rendered by that window's live subscription
- * alone. When the document goes away — the window closes, or the View menu's Reload replaces it —
- * the run must go with it. Otherwise the reply streams to nobody while the session stays
- * in-flight, the reloaded window's next send is refused as "already streaming", and the answer
- * that finally commits is invisible until a restart while the model has been seeing it all along:
- * exactly the drift this step exists to delete. Aborting is the honest end, and the kernel
- * persists what did arrive as `status: 'aborted'` — which is what the user saw.
+ * The document a Run belongs to, as this file needs it — structural, so chat.ts stays free of
+ * electron: what IPC hands the handler is an `IpcMainInvokeEvent` whose `sender` is a WebContents,
+ * and that WebContents is the `RunOrigin` the kernel hands back.
  */
 interface RunOwner {
   on(event: string, listener: (...args: unknown[]) => void): unknown
   off(event: string, listener: (...args: unknown[]) => void): unknown
+  /** A WebContents has it: a document already gone fires no `destroyed` for a lease begun later. */
+  isDestroyed?(): boolean
+}
+
+/**
+ * Spec 02 §进行中、暂停与 RunRegistry — desktop-internal, not in contracts. `begin` is
+ * `LoopPorts.leases.begin`.
+ */
+export interface RunRegistry {
+  /** Registers a Run; after `beginShutdown` answers refused, and the kernel writes nothing. */
+  begin(q: {
+    rootSessionId: string
+    origin: RunOrigin | null
+  }): RunLease | { refused: 'shutting-down' }
+  /** Roots with an un-aborted lease (one that has not opened a Run yet included); by origin if given. */
+  running(origin?: RunOrigin): readonly string[]
+  /** Aborts; the first cause stands, and a `user-stop` sets `stopRequested` whenever it comes. */
+  abort(
+    target: { rootSessionId: string } | { origin: RunOrigin } | 'all',
+    cause: RunAbortCause,
+  ): boolean
+  /** Resolves when every registered lease has finished, or after `timeoutMs`, whichever is first. */
+  settled(timeoutMs: number): Promise<void>
+  /** From now on `begin` refuses. */
+  beginShutdown(): void
+  /** Desktop-internal: the lease's first Run, whichever session of the tree it ran in. */
+  noteRunStarted(rootSessionId: string, runId: string): void
+  /** Desktop-internal: every live lease, aborted ones included, with its Run. */
+  snapshot(): readonly { rootSessionId: string; runId: string | null; aborted: boolean }[]
+}
+
+interface Registered {
+  readonly lease: RunLease
+  readonly controller: AbortController
+  readonly origin: RunOrigin | null
+  runId: string | null
+  stopRequested: boolean
+  detach: () => void
+}
+
+/** Aborts with the first cause only; a `user-stop` marks `stopRequested` whenever it comes. */
+function abortOne(entry: Registered, cause: RunAbortCause): void {
+  if (cause === 'user-stop') entry.stopRequested = true
+  if (!entry.controller.signal.aborted) entry.controller.abort(cause)
+}
+
+/** What `run.state` says about a root: its un-aborted lease, and the Run that lease opened. */
+export interface RootRunState {
+  readonly running: boolean
+  readonly runId: string | null
+}
+
+export function createRunRegistry(
+  clock: Pick<HostClock, 'setTimeout'>,
+  onChange?: (rootSessionId: string, state: RootRunState) => void,
+): RunRegistry {
+  const live = new Map<string, Registered>()
+  const waiters = new Set<() => void>()
+  let shuttingDown = false
+  /**
+   * `run.state` (§进行中、暂停与 RunRegistry「何时推」): a root whose two values changed is pushed once
+   * per synchronous stretch, with its last values — a `finish` and the next `begin` in one stretch
+   * (an auto-send) are one push.
+   */
+  const dirty = new Set<string>()
+  const stateOf = (root: string): RootRunState => {
+    const entry = live.get(root)
+    return entry === undefined
+      ? { running: false, runId: null }
+      : { running: !entry.controller.signal.aborted, runId: entry.runId }
+  }
+  const pushed = new Map<string, string>()
+  const changed = (root: string): void => {
+    if (onChange === undefined) return
+    if (dirty.size === 0) {
+      queueMicrotask(() => {
+        const batch = Array.from(dirty)
+        dirty.clear()
+        for (const each of batch) {
+          const state = stateOf(each)
+          const key = `${String(state.running)}:${String(state.runId)}`
+          if (pushed.get(each) === key) continue
+          pushed.set(each, key)
+          if (!state.running && state.runId === null) pushed.delete(each)
+          onChange(each, state)
+        }
+      })
+    }
+    dirty.add(root)
+  }
+
+  const registry: RunRegistry = {
+    begin(q) {
+      if (shuttingDown) return { refused: 'shutting-down' }
+      if (live.has(q.rootSessionId)) {
+        // The kernel promises one live lease per root; a second begin is its bug, not a race.
+        throw new Error(`RunRegistry: ${q.rootSessionId} already has a live lease`)
+      }
+      const controller = new AbortController()
+      const entry: Registered = {
+        controller,
+        origin: q.origin,
+        runId: null,
+        stopRequested: false,
+        detach: () => {},
+        lease: {
+          signal: controller.signal,
+          get stopRequested(): boolean {
+            return entry.stopRequested
+          },
+          abort: (cause) => {
+            abortOne(entry, cause)
+            changed(q.rootSessionId)
+          },
+          finish: () => {
+            entry.detach()
+            if (live.get(q.rootSessionId) === entry) live.delete(q.rootSessionId)
+            changed(q.rootSessionId)
+            if (live.size === 0) for (const resolve of waiters) resolve()
+          },
+        },
+      }
+      // Watched from the moment the lease exists: a window that disappears while the Run is still
+      // being prepared must not leave one behind either.
+      const owner = ownerOf(q.origin)
+      entry.detach = watchOwner(owner, () => {
+        abortOne(entry, 'close-window')
+        changed(q.rootSessionId)
+      })
+      live.set(q.rootSessionId, entry)
+      // A command that waited in the mailbox begins its lease with the origin it came with, and that
+      // window may have closed meanwhile: aborted at once, so the kernel writes nothing
+      // (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
+      if (owner?.isDestroyed?.() === true) abortOne(entry, 'close-window')
+      changed(q.rootSessionId)
+      return entry.lease
+    },
+    running(origin) {
+      return [...live.entries()]
+        .filter(([, entry]) => !entry.controller.signal.aborted)
+        .filter(([, entry]) => origin === undefined || entry.origin === origin)
+        .map(([root]) => root)
+    },
+    abort(target, cause) {
+      const targets = [...live.entries()].filter(
+        ([root, entry]) =>
+          target === 'all' ||
+          ('rootSessionId' in target
+            ? root === target.rootSessionId
+            : entry.origin === target.origin),
+      )
+      for (const [root, entry] of targets) {
+        abortOne(entry, cause)
+        changed(root)
+      }
+      return targets.length > 0
+    },
+    settled(timeoutMs) {
+      if (live.size === 0) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        const done = (): void => {
+          waiters.delete(done)
+          cancel()
+          resolve()
+        }
+        const cancel = clock.setTimeout(done, timeoutMs)
+        waiters.add(done)
+      })
+    },
+    beginShutdown() {
+      shuttingDown = true
+    },
+    noteRunStarted(rootSessionId, runId) {
+      const entry = live.get(rootSessionId)
+      if (entry === undefined || entry.runId !== null) return
+      entry.runId = runId
+      changed(rootSessionId)
+    },
+    snapshot() {
+      return [...live.entries()].map(([rootSessionId, entry]) => ({
+        rootSessionId,
+        runId: entry.runId,
+        aborted: entry.controller.signal.aborted,
+      }))
+    },
+  }
+  return registry
+}
+
+/** The host's half of the loop: the registry, the queue and the ports `bindLoop` takes. */
+export interface DesktopLoop {
+  readonly registry: RunRegistry
+  readonly queue: DesktopQueue
+  readonly ports: LoopPorts
+}
+
+export interface DesktopLoopOptions {
+  readonly clock: HostClock
+  readonly send: EventSender
+  /** The interface language now; the kernel reads it when it assembles a system prompt. */
+  readonly locale: () => 'zh-CN' | 'en'
+  readonly log?: (line: string) => void
+}
+
+export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
+  const log = options.log ?? ((line: string): void => console.warn(line))
+  const registry = createRunRegistry(options.clock, (root, state) => {
+    try {
+      options.send(runStateEvent.channel, { sessionId: root, ...state })
+    } catch (error) {
+      log(
+        `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  })
+  const queue = createRunQueue({
+    onChange: (root, view) => {
+      try {
+        options.send(chatQueueEvent.channel, { sessionId: root, ...view })
+      } catch (error) {
+        log(
+          `[chat] dropped a chat.queue event: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    },
+  })
+  const events = createRunEvents({
+    send: options.send,
+    onRunStarted: (root, runId) => registry.noteRunStarted(root, runId),
+    onHeld: (root, host) => queue.setHeld(root, host),
+    log,
+  })
+  return {
+    registry,
+    queue,
+    ports: {
+      queue,
+      leases: registry,
+      events,
+      locale: () => options.locale(),
+      // Open question 16 (owner 2026-09-26): the user's local date, in this machine's time zone.
+      localDate: () => localDateOf(options.clock.now()),
+      commandShell: PLACEHOLDER_SHELL,
+    },
+  }
 }
 
 export interface ChatDeps {
-  host: HostAdapter
-  send: EventSender
-  ipcMain: IpcMainLike
+  readonly send: EventSender
+  readonly ipcMain: IpcMainLike
   /**
    * `null` when `sessions.db` could not be opened (another tenant's file, or one written by a
    * newer build). The window still runs and every chat route answers with a terminal `error`
    * instead of crashing, because the alternative — refusing to start — would also refuse the
    * settings the user needs in order to fix it. Nothing on disk is touched.
    */
-  sessions: SessionService | null
-  providers: ProviderRegistry
-  /** `app.isPackaged`: a packaged build takes no credential from the environment. */
-  isPackaged?: boolean
-  /** The environment the development fallback reads. Tests pass a fixed one; main passes none. */
-  env?: EnvLike
-  log?: (line: string) => void
+  readonly sessions: SessionService | null
+  /** The loop's host half, bound to `sessions`; null exactly when `sessions` is. */
+  readonly loop: DesktopLoop | null
+  readonly log?: (line: string) => void
+  /** Startup recovery: every chat route waits for it first (spec 02 §启动恢复与发送防护). */
+  readonly gate?: Promise<void>
+}
+
+type SendAnswer = RouteResponse<typeof chatSend>
+
+/** What the renderer is told of a send the kernel took (refused ones are route errors). */
+function answerOf(
+  result: Exclude<Awaited<ReturnType<SessionService['send']>>, { status: 'refused' }>,
+): SendAnswer {
+  return { accepted: true, status: result.status }
 }
 
 export function registerChatRoutes(deps: ChatDeps): void {
-  const { host, send, ipcMain, sessions, providers } = deps
+  const { send, ipcMain, sessions, loop, gate } = deps
   const log = deps.log ?? ((line: string): void => console.warn(line))
-  const inFlight = new Map<string, Run>()
-
-  /**
-   * A send that throws would reject the whole run inside the service's stream loop and leave the
-   * turn without its attempt fact, which is the shape of a crash rather than of a closed window.
-   */
-  const emit = (event: ChatEvent): void => {
-    try {
-      send(chatEvent.channel, event)
-    } catch (error) {
-      log(`[chat] dropped a ${event.type} event: ${describe(error)}`)
-    }
-  }
 
   registerRoute(ipcMain, chatSend, async ({ sessionId, text }, event) => {
-    if (inFlight.has(sessionId)) throw new Error(ALREADY_STREAMING)
-
-    const run: Run = { controller: new AbortController() }
-    inFlight.set(sessionId, run)
-    // Watched before the first await, with the run: a window that disappears during setup must
-    // not leave one behind either.
-    const detach = watchOwner(ownerOf(event), () => run.controller.abort())
-    const release = (): void => {
-      detach()
-      if (inFlight.get(sessionId) === run) inFlight.delete(sessionId)
+    await gate
+    // Nothing of it was written: the renderer settles the message it showed (plan step 20).
+    const fail = (detail: string): SendAnswer => {
+      emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail })
+      return { accepted: true, status: 'not-sent' }
     }
-    const accepted = { accepted: true as const }
-    const fail = (code: ChatErrorCode, detail: string): typeof accepted => {
-      release()
-      emit({ type: 'error', sessionId, code, detail })
-      return accepted
+    if (sessions === null || loop === null) return fail(NO_STORE)
+    // Every id on the tape is a canonical UUID; a session id that is not one would be taken for a
+    // new conversation on every send, so it is refused here rather than at the store.
+    if (!isCanonicalUuid(sessionId)) return fail(NOT_A_SESSION_ID)
+    // While a reply streams the kernel queues it: `chat.queue` shows it (01 修补 9 (a)).
+    const result = await sessions.send({ sessionId, origin: ownerOf(senderOf(event)), text })
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
-    const stopHere = (): typeof accepted => {
-      release()
-      emit({ type: 'done', sessionId, stopReason: 'aborted' })
-      return accepted
-    }
-
-    try {
-      if (sessions === null) return fail('unknown', NO_STORE)
-      // Every id on the tape is a canonical UUID; a session id that is not one would be taken for
-      // a new conversation on every send, so it is refused here rather than at the store.
-      if (!isCanonicalUuid(sessionId)) return fail('unknown', NOT_A_SESSION_ID)
-
-      const config = await readConfig(host.fs, host.identity)
-      // The SELECTED provider: what the settings card saved, else the development fallback, else
-      // the default. Read per send, so a provider chosen while the window is open takes effect on
-      // the next message rather than at the next launch.
-      const env = devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
-      const providerId = selectProviderId(config.provider?.id, env)
-      let resolved: ResolvedProvider
-      try {
-        resolved = await resolveChatProvider({
-          host,
-          providers,
-          providerId,
-          settings: config.providerConfig[providerId],
-          modelId: config.provider?.modelId,
-          env,
-          isPackaged: deps.isPackaged === true,
-          log,
-        })
-      } catch (error) {
-        // A provider that cannot be constructed is a CONFIGURATION problem, not a crash: the user
-        // has no key yet, or a base URL they can fix. Phase 0 answered `auth` for the first one
-        // and the interface has copy for it.
-        return fail(configErrorCode(error), describe(error))
-      }
-      if (run.controller.signal.aborted) return stopHere()
-
-      await ensureSession(sessions, sessionId)
-      // Checked again: creating the session is the second await a stop can land inside.
-      if (run.controller.signal.aborted) return stopHere()
-
-      void runTurn({ sessions, run, sessionId, text, resolved, emit, release, log })
-      return accepted
-    } catch (error) {
-      release()
-      throw error
-    }
+    noteHeld(loop.queue, sessionId, result)
+    // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
+    return answerOf(result)
   })
 
-  registerRoute(ipcMain, chatStop, ({ sessionId }) => {
-    const run = inFlight.get(sessionId)
-    if (!run) return { stopped: false }
-    // The signal is the only stop mechanism: it reaches the SDK, which reaches the socket, and the
-    // provider turns it into `stop{ aborted }` rather than an error (invariant 2).
-    run.controller.abort()
-    return { stopped: true }
-  })
-}
-
-interface TurnOptions {
-  readonly sessions: SessionService
-  readonly run: Run
-  readonly sessionId: string
-  readonly text: string
-  readonly resolved: ResolvedProvider
-  readonly emit: (event: ChatEvent) => void
-  readonly release: () => void
-  readonly log: (line: string) => void
-}
-
-/**
- * One request, start to terminal event. The terminal event is derived from the RESOLVED result
- * and never from the `stop` / `error` seen inside the stream: the facts are committed only when
- * `runRequest` resolves, so a renderer told "done" from inside the stream could send again while
- * `message/assistant` was still unwritten.
- */
-async function runTurn(options: TurnOptions): Promise<void> {
-  const { sessions, run, sessionId, text, resolved, emit, release, log } = options
-  try {
-    const result = await sessions.runRequest({
+  // Cmd/Ctrl+Enter: stop the Run the user saw, then this is the next message (H13).
+  registerRoute(ipcMain, chatSendNow, async ({ sessionId, text, runId }, event) => {
+    await gate
+    if (sessions === null || loop === null) {
+      emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail: NO_STORE })
+      return { accepted: true, status: 'not-sent' } satisfies SendAnswer
+    }
+    if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
+    const result = await sessions.send({
       sessionId,
-      user: { text },
-      provider: resolved.provider,
-      model: resolved.model,
-      maxTokens: resolved.maxTokens,
-      signal: run.controller.signal,
-      onEvent: (event) => {
-        // Phase 1 renders text. Thinking, tool calls and usage are on the tape; giving them their
-        // own `chat.event` members is phase 2's, when there is something to show for them.
-        if (event.type === 'text-delta') emit({ type: 'text-delta', sessionId, delta: event.text })
-      },
+      origin: ownerOf(senderOf(event)),
+      text,
+      ...(runId === null ? {} : { urgent: { runId } }),
     })
-    release()
-    if (result.error !== null) {
-      emit({
-        type: 'error',
-        sessionId,
-        code: ERROR_CODE[result.error.code],
-        detail: result.error.detail,
-      })
-      return
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
-    const reason = result.stop === null ? 'error' : STOP_REASON[result.stop.reason]
-    emit({ type: 'done', sessionId, stopReason: reason })
-  } catch (error) {
-    // Not a provider failure: the request never reached a terminal fact. The one reachable cause
-    // in phase 1 is a session deleted underneath a running request (`TapeSessionNotFoundError`),
-    // whose facts are deliberately lost with the session — never something to retry.
-    release()
-    const detail = describe(error)
-    log(`[chat] the run for session ${sessionId} did not complete: ${detail}`)
-    emit({ type: 'error', sessionId, code: 'unknown', detail })
-  }
+    noteHeld(loop.queue, sessionId, result)
+    return answerOf(result)
+  })
+
+  // The queued bubble's actions: withdraw, edit, send now. The first two are the queue's own; a
+  // send-now is the kernel's, which takes the item at its turn (「立即发送绑定 runId」).
+  registerRoute(ipcMain, chatQueueAct, async (request, event) => {
+    await gate
+    if (sessions === null || loop === null) return { status: 'not-found' as const }
+    if (request.action === 'withdraw') {
+      return status(loop.queue.withdraw(request.sessionId, request.queuedId))
+    }
+    if (request.action === 'edit') {
+      return status(loop.queue.edit(request.sessionId, request.queuedId, request.text))
+    }
+    const result = await sessions.send({
+      sessionId: request.sessionId,
+      origin: ownerOf(senderOf(event)),
+      queuedId: request.queuedId,
+      ...(request.runId === null ? {} : { urgent: { runId: request.runId } }),
+    })
+    if (result.status === 'refused') {
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+    }
+    noteHeld(loop.queue, request.sessionId, result)
+    // Held again for a public host: the renderer reopens the model menu's confirmation on it.
+    return { ...status(result.status !== 'not-found'), sendStatus: result.status }
+  })
+
+  registerRoute(ipcMain, chatStop, async ({ sessionId }) => {
+    await gate
+    if (sessions === null) return { stopped: false }
+    return sessions.stop({ rootSessionId: sessionId })
+  })
+
+  // 「继续」 (spec 02 §重试与「继续」): the kernel judges whether there is anything to continue.
+  registerRoute(ipcMain, chatContinue, async ({ sessionId }, event) => {
+    await gate
+    if (sessions === null || loop === null) throw new Error(NO_STORE)
+    if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
+    const result = await sessions.continueRun({ sessionId, origin: ownerOf(senderOf(event)) })
+    switch (result.status) {
+      case 'refused':
+        // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
+        throw new Error('continue refused: the loop is not bound, or the app is shutting down')
+      case 'held':
+        return { status: 'held' as const, host: result.host }
+      default:
+        return { status: result.status }
+    }
+  })
 }
 
 /**
- * Creates the session the renderer named, if this is its first message.
- *
- * Two bounded reads instead of a "does it exist" method the port does not have: a session with
- * messages plainly exists, and for an empty one the store answers a `session/start` carrying a
- * fresh incarnation with `TapeStaleIncarnationError` — its head row already has one. Anything else
- * propagates.
+ * A send the kernel held for a public host names its item in the answer; the `queue-held` event
+ * that came first names only the host. queue.ts needs the item to clear `held` when it is
+ * withdrawn (「间接切公网」).
  */
-async function ensureSession(sessions: SessionService, sessionId: string): Promise<void> {
-  const existing = await sessions.listMessages({ sessionId, limit: 1 })
-  if (existing.length > 0) return
-  try {
-    await sessions.createSession({ sessionId })
-  } catch (error) {
-    if (!(error instanceof TapeStaleIncarnationError)) throw error
-  }
+function noteHeld(
+  queue: DesktopQueue,
+  root: string,
+  result: Awaited<ReturnType<SessionService['send']>>,
+): void {
+  if (result.status === 'held') queue.heldItem(root, result.queuedId)
 }
 
-/** The webContents behind an IPC event, when there is one (a unit test's event carries none). */
-function ownerOf(event: unknown): RunOwner | null {
-  const sender: unknown = isRecord(event) ? event['sender'] : undefined
-  if (!isRecord(sender)) return null
-  const hasListeners = typeof sender['on'] === 'function' && typeof sender['off'] === 'function'
-  return hasListeners ? (sender as unknown as RunOwner) : null
+/** The sender behind an IPC event, when there is one (a unit test's event carries none). */
+function senderOf(event: unknown): unknown {
+  return isRecord(event) ? event['sender'] : undefined
+}
+
+/** The document a Run belongs to, if what IPC handed over is one. */
+function ownerOf(candidate: unknown): RunOwner | null {
+  if (!isRecord(candidate)) return null
+  const hasListeners =
+    typeof candidate['on'] === 'function' && typeof candidate['off'] === 'function'
+  return hasListeners ? (candidate as unknown as RunOwner) : null
 }
 
 /** Calls `gone` once the owning document is replaced or destroyed; returns the detach. */
@@ -309,7 +470,7 @@ function watchOwner(owner: RunOwner | null, gone: () => void): () => void {
   const onDestroyed = (): void => gone()
   const onNavigation = (...args: unknown[]): void => {
     // Electron's own `did-start-navigation` params. A main-frame navigation that is not a
-    // fragment / pushState one replaces the document; anything else leaves the run alone.
+    // fragment / pushState one replaces the document; anything else leaves the Run alone.
     const details = args[0]
     if (!isRecord(details)) return
     if (details['isMainFrame'] === true && details['isSameDocument'] === false) gone()
@@ -324,21 +485,4 @@ function watchOwner(owner: RunOwner | null, gone: () => void): () => void {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
-}
-
-/**
- * A provider that refuses to be constructed. A missing credential reads as `auth`, as it did in
- * phase 0; a value that is present but unusable (a base URL with a query string, an Anthropic one
- * ending in `/v1`) is the `provider` bucket, which is where the wire's own `invalid-request` goes.
- * Anything else is not a configuration problem and says so.
- */
-function configErrorCode(error: unknown): ChatErrorCode {
-  if (error instanceof ProviderConfigMissingError) return 'auth'
-  if (error instanceof ProviderInvalidArgumentError) return 'provider'
-  return 'unknown'
-}
-
-/** Diagnostic text for logs and the never-rendered `detail`. Adapters redact credentials. */
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }

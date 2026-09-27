@@ -40,7 +40,14 @@ describe('provider catalogue keys', () => {
 
     const missing: string[] = []
     for (const definition of definitions) {
-      const keys = [definition.nameKey, ...definition.configKeys.map((key) => key.labelKey)]
+      // Spec 02: the menu's purpose sentence of each row is a catalogue key too.
+      const keys = [
+        definition.nameKey,
+        ...definition.configKeys.map((key) => key.labelKey),
+        ...definition.builtinModels.flatMap((model) =>
+          model.purposeKey === undefined ? [] : [model.purposeKey],
+        ),
+      ]
       expect(keys.length).toBeGreaterThan(1)
       for (const locale of SUPPORTED_LOCALES) {
         for (const key of keys) {

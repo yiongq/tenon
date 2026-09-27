@@ -9,7 +9,12 @@
  * Every key is written only when it has a value — canonicalJson (and therefore `promptHash`)
  * refuses an undefined-valued key, and the wire's notion of "absent" is a missing key.
  */
-import Anthropic, { APIConnectionError, APIError } from '@anthropic-ai/sdk'
+import Anthropic, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+} from '@anthropic-ai/sdk'
+import { VERSION as SDK_VERSION } from '@anthropic-ai/sdk/version'
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import { BaseProvider, withTerminalEvent } from '../base.js'
 import {
@@ -41,6 +46,7 @@ import type {
   StopReason,
   StreamEvent,
   ThinkingDecision,
+  ThinkingSpec,
   ToolSpec,
   Usage,
 } from '../types.js'
@@ -48,26 +54,82 @@ import {
   assertBlockRole,
   assertHasMessages,
   assertImageMediaType,
+  assertLastTurnIsUser,
   assertModelBelongs,
+  assertSamplingDefaults,
+  assertThinkingRequest,
   assertToolInput,
   assertToolRequested,
   effectiveMaxTokens,
+  effortTierOf,
   guardReasoning,
+  guardVendorBlock,
+  guardVendorFields,
   hasSystemPrompt,
   mergeRequestParams,
   sealEncoded,
   thinkingTargetFor,
+  withVendorFields,
 } from './shared.js'
-import type { ImageContentBlock } from './shared.js'
+import type { EncoderInfo, ImageContentBlock } from './shared.js'
 import {
+  StreamIdleTimeoutError,
+  allowedRequestInit,
   assertBaseUrl,
   configuredValue,
   fetchThroughHost,
+  firstByteTimeoutMs,
+  idleMsFor,
   parseToolArguments,
   tokenCount,
 } from './transport.js'
+import type { HeaderAllowList } from './transport.js'
 
 const WIRE = 'anthropic-messages'
+
+/**
+ * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, one credential, and
+ * the SDK's eight `x-stainless-*` headers by name. The fixed protocol values are pinned, so an
+ * `ANTHROPIC_CUSTOM_HEADERS` line cannot rewrite them; `anthropic-beta` is the kernel's to decide and
+ * 02 decides none. `x-stainless-helper` / `-helper-method` are left out: the SDK sends them only for
+ * objects its own helpers built, and encode() builds plain ones. Re-read this list with every SDK pin.
+ */
+const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+  names: Object.freeze([
+    'content-type',
+    'x-api-key',
+    'authorization',
+    'x-stainless-arch',
+    'x-stainless-lang',
+    'x-stainless-os',
+    'x-stainless-package-version',
+    'x-stainless-retry-count',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+    'x-stainless-timeout',
+  ]),
+  pinned: Object.freeze({
+    accept: 'application/json',
+    'anthropic-version': '2023-06-01',
+    'user-agent': `Anthropic/JS ${SDK_VERSION}`,
+  }),
+})
+
+/**
+ * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
+ * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; 2 adds
+ * the top-level `cache_control` (01 修补 3); 3 puts the vendor fields of text and tool_use blocks
+ * through rules 1 and 2 (01 修补 2; s6-spec-2, owner 2026-09-27), so fields another model produced,
+ * or stored with no source, no longer go out. Add one with every change to what it encodes, and a
+ * row to test/provider/wire/encoder-version.test.ts. Exported for the attempt re-check (02 不变量
+ * 33), which covers only the records this build's encoder wrote.
+ */
+export const ANTHROPIC_MESSAGES_ENCODER: EncoderInfo = Object.freeze({
+  wire: WIRE,
+  version: 3,
+  sdk: `@anthropic-ai/sdk@${SDK_VERSION}`,
+})
 
 /** The four base64 source types the Messages API documents. */
 const MEDIA_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -80,10 +142,11 @@ const MIN_THINKING_BUDGET = 1024
  * criterion — what promptHash covers has to be the request the audit describes:
  *
  * - every key this encoder writes: `model`, `messages`, `max_tokens`, `system`, `tools`,
- *   `temperature`, `thinking`, `stream`. All but `model`, `messages` and `stream` are also what
- *   the `provider/attempt_completed` record describes (`systemHash`, `maxTokens`, `temperature`,
- *   `thinking` in the request snapshot, `toolDefinitionsHash` beside it), so a passthrough that
- *   replaced one would leave the fact describing a request nobody sent;
+ *   `temperature`, `thinking`, `stream`, and since spec 02 `output_config` (the effort) and
+ *   `cache_control` (01 修补 3). All but `model`, `messages` and `stream` are also what the
+ *   `provider/attempt_completed` record describes (`systemHash`, `maxTokens`, `temperature`,
+ *   `thinking`, `effort`, `display` in the request snapshot, `toolDefinitionsHash` beside it), so a
+ *   passthrough that replaced one would leave the fact describing a request nobody sent;
  * - `user_profile_id` / `workspace_id`, which the pinned SDK destructures out of the body into
  *   `anthropic-user-profile-id` / `anthropic-workspace-id` headers: promptHash would cover a key
  *   that never travels in the body. Nothing in phase 1 wants them; refusing is enough. Re-audit
@@ -98,6 +161,8 @@ const RESERVED_KEYS: readonly string[] = [
   'temperature',
   'thinking',
   'stream',
+  'output_config',
+  'cache_control',
   'user_profile_id',
   'workspace_id',
 ]
@@ -119,9 +184,12 @@ export type AnthropicContentBlock =
       content?: AnthropicResultBlock[]
     }
 
+/** A vendor block (spec 02, 01 修补 2) goes back exactly as it arrived, whatever its type. */
+export type AnthropicRawBlock = Readonly<Record<string, unknown>>
+
 export interface AnthropicWireMessage {
   role: 'user' | 'assistant'
-  content: AnthropicContentBlock[]
+  content: (AnthropicContentBlock | AnthropicRawBlock)[]
 }
 
 export interface AnthropicToolDefinition {
@@ -147,6 +215,7 @@ export function encodeAnthropicMessages(
   assertHasMessages(messages.length, WIRE)
   const tools = encodeTools(req.tools)
   const maxTokens = effectiveMaxTokens(req)
+  assertThinkingRequest(req, WIRE)
   const body: Record<string, unknown> = {
     // The WIRE id, never `canonicalId`: the endpoint only knows its own name.
     model: req.model.id,
@@ -162,10 +231,112 @@ export function encodeAnthropicMessages(
   if (hasSystemPrompt(req.system)) body.system = req.system
   if (tools.length > 0) body.tools = tools
   if (req.temperature !== undefined) body.temperature = req.temperature
-  const thinking = req.thinking
-  if (thinking?.enabled === true) body.thinking = thinkingParam(req.model, thinking, maxTokens)
+  const spec = req.model.thinkingSpec
+  if (spec === undefined) {
+    // 01's one shape, byte for byte: only an explicit `enabled` writes anything.
+    const thinking = req.thinking
+    if (thinking?.enabled === true) body.thinking = thinkingParam(req.model, thinking, maxTokens)
+  } else {
+    assertSamplingDefaults(req, WIRE)
+    const thinking = thinkingShape(req, spec, maxTokens)
+    if (thinking !== null) body.thinking = thinking
+    if (req.effort !== undefined) body.output_config = { effort: req.effort }
+  }
+  // Spec 02, 01 修补 3 (decisions H8, M8): the automatic-caching form, 5-minute tier, no ttl. In the
+  // body, so promptHash covers it; a synthesised row (supportsCacheControl false) writes none.
+  if (req.model.supportsCacheControl) body.cache_control = { type: 'ephemeral' }
   mergeRequestParams(body, req.model, RESERVED_KEYS)
-  return sealEncoded(providerId, req.model.id, body, tools, decisions)
+  const encoded = sealEncoded(
+    providerId,
+    req.model.id,
+    body,
+    tools,
+    decisions,
+    ANTHROPIC_MESSAGES_ENCODER,
+  )
+  // Last, so every refusal 01 already made still comes first with 01's own error (01 修补 3).
+  assertLastTurnIsUser(req.messages, WIRE)
+  return encoded
+}
+
+/**
+ * The `thinking` object for a row that declares its shape (spec 02, 01 修补 3; decisions A1, M3), or
+ * null when none is written. `req.thinking` is still three states:
+ *
+ * - absent: nothing is written, the model's default stands. The one exception is a model that thinks
+ *   by default and a `display` to carry, which needs a thinking object to sit in — the equivalent
+ *   `{ type: 'adaptive', display }`;
+ * - on: the budget mode as 01 (a budget is mandatory); the three adaptive modes as
+ *   `{ type: 'adaptive' }`, where a budget is refused;
+ * - off: `disabled` for budget and adaptive; adaptive-gated only while this request's level (its
+ *   `effort`, else the row's `defaultEffort`) is no higher than `disableMaxEffort`; never on
+ *   always-on.
+ *
+ * `display` goes inside the object only while thinking is on: with `disabled` it is a 400, so it is
+ * left out, and the snapshot does not record it (thinkingIsOn in shared.ts reads the same way).
+ */
+function thinkingShape(
+  req: ProviderRequest,
+  spec: ThinkingSpec,
+  maxTokens: number,
+): Record<string, unknown> | null {
+  const model = req.model
+  if (spec.mode === 'effort-only') {
+    // A table error: that mode belongs to the OpenAI-compatible wire, and this one has no
+    // `reasoning_effort` to put the level in.
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: thinking mode "effort-only" belongs to the openai-chat wire, not ${WIRE}`,
+    )
+  }
+  const display = req.display === undefined ? {} : { display: req.display }
+  const thinking = req.thinking
+  if (thinking === undefined) {
+    return spec.defaultOn && req.display !== undefined ? { type: 'adaptive', ...display } : null
+  }
+  if (thinking.enabled) {
+    if (spec.mode === 'budget') return { ...thinkingParam(model, thinking, maxTokens), ...display }
+    if (thinking.budgetTokens !== undefined) {
+      throw new ProviderInvalidArgumentError(
+        `model ${model.id}: thinking is adaptive on this model, so budgetTokens has no place in it`,
+      )
+    }
+    return { type: 'adaptive', ...display }
+  }
+  switch (spec.mode) {
+    case 'budget':
+    case 'adaptive':
+      return { type: 'disabled' }
+    case 'adaptive-gated':
+      assertMayDisable(req, spec)
+      return { type: 'disabled' }
+    case 'always-on':
+      throw new ProviderInvalidArgumentError(
+        `model ${model.id}: thinking is always on for this model and cannot be turned off`,
+      )
+  }
+}
+
+/**
+ * adaptive-gated: thinking may be turned off only at a level no higher than `disableMaxEffort`,
+ * compared by position in `effortLevels`. A row missing either end of the comparison is a table
+ * error, and it is refused rather than guessed at — a guess either way is a 400 or a silent downgrade.
+ */
+function assertMayDisable(req: ProviderRequest, spec: ThinkingSpec): void {
+  const levels = spec.effortLevels ?? []
+  const level = req.effort ?? spec.defaultEffort
+  const ceiling = spec.disableMaxEffort
+  const at = level === undefined ? -1 : levels.indexOf(level)
+  const max = ceiling === undefined ? -1 : levels.indexOf(ceiling)
+  if (at < 0 || max < 0) {
+    throw new ProviderInvalidArgumentError(
+      `model ${req.model.id}: an adaptive-gated row needs a default effort and a disableMaxEffort among its effortLevels`,
+    )
+  }
+  if (at > max) {
+    throw new ProviderInvalidArgumentError(
+      `model ${req.model.id}: thinking cannot be turned off at effort "${String(level)}"; the highest level that allows it is "${String(ceiling)}"`,
+    )
+  }
 }
 
 /**
@@ -179,11 +350,8 @@ export function encodeAnthropicMessages(
  * dev fallback lets `TENON_MAX_TOKENS` move `max_tokens` independently of the budget, so the pair
  * really can arrive inconsistent.
  *
- * Which thinking SHAPE a given model takes is a `ModelInfo` question neither this step nor step 11
- * can answer: the vendor now has two modes (this one, and adaptive thinking steered by
- * `output_config.effort`), and `ModelInfo` has no field that distinguishes them. Reported for
- * plan.md's Open rather than settled here — inventing the field would be architecture the spec does
- * not describe.
+ * Which thinking SHAPE a given model takes is `ModelInfo.thinkingSpec` since spec 02 (01 修补 2): a
+ * row without one keeps exactly this form, and a `budget`-mode row reaches it through thinkingShape().
  */
 function thinkingParam(
   model: ModelInfo,
@@ -234,20 +402,26 @@ function encodeMessages(
   const target = thinkingTargetFor(req)
   const requested = new Set<string>()
   const out: AnthropicWireMessage[] = []
-  for (const message of req.messages) {
-    const content: AnthropicContentBlock[] = []
+  for (const [messageIndex, message] of req.messages.entries()) {
+    const content: (AnthropicContentBlock | AnthropicRawBlock)[] = []
     for (const block of message.content) {
       switch (block.type) {
         case 'text':
-          // The API rejects an empty text block, whatever produced it.
-          if (block.text !== '') content.push({ type: 'text', text: block.text })
+          // The API rejects an empty text block, whatever produced it. Fields the vendor put on it
+          // that the content model has no place for go back with it when the guard keeps them:
+          // the same provider and model that sent them (spec 02, 01 修补 2; s6-spec-2).
+          if (block.text !== '') {
+            const fields = guardVendorFields(block, target, decisions)
+            content.push(withVendorFields({ type: 'text', text: block.text }, fields))
+          }
           break
         case 'thinking':
         case 'redacted-thinking': {
           // Reasoning is the assistant's own output, and the guard judges it against the model
           // that produced it; on a user turn it is neither legal here nor true.
           assertBlockRole('a reasoning block', message.role, 'assistant', WIRE)
-          const encoded = reasoningBlock(guardReasoning(block, target, decisions), req.model)
+          const applied = guardReasoning(block, target, decisions, messageIndex)
+          const encoded = reasoningBlock(applied, req.model)
           if (encoded !== null) content.push(encoded)
           break
         }
@@ -256,13 +430,27 @@ function encodeMessages(
           // legitimise the `tool_result` that follows it.
           assertBlockRole('a tool call', message.role, 'assistant', WIRE)
           requested.add(block.id)
-          // Invariant 6 on the way out: `{}` for empty input, never null, never a JSON string.
-          content.push({
-            type: 'tool_use',
-            id: block.id,
-            name: block.name,
-            input: assertToolInput(block.input, block.name, WIRE),
-          })
+          // Invariant 6 on the way out: `{}` for empty input, never null, never a JSON string. The
+          // call always goes; its vendor fields only as the guard says, like the text's above.
+          content.push(
+            withVendorFields(
+              {
+                type: 'tool_use',
+                id: block.id,
+                name: block.name,
+                input: assertToolInput(block.input, block.name, WIRE),
+              },
+              guardVendorFields(block, target, decisions),
+            ),
+          )
+          break
+        case 'vendor':
+          // The vendor's own block, judged by the guard (spec 02, 01 修补 2 and 3): a call it ran
+          // itself never goes back, another provider's or model's block is dropped, and the rest
+          // goes back exactly as it was stored. Dropped BEFORE the emptiness check below, so a turn
+          // that held nothing else is omitted like any other empty turn.
+          assertBlockRole('a vendor block', message.role, 'assistant', WIRE)
+          if (guardVendorBlock(block, target, decisions)) content.push(block.raw)
           break
         case 'tool-response':
           assertBlockRole('a tool result', message.role, 'user', WIRE)
@@ -295,13 +483,21 @@ function reasoningBlock(
     case 'drop':
       return null
     case 'keep':
+      // The fields the vendor put on the block go back with it (spec 02, 01 修补 2): replaying it
+      // "as it was stored" means all of it.
       return applied.block.type === 'thinking'
-        ? {
-            type: 'thinking',
-            thinking: applied.block.text,
-            signature: applied.block.signature,
-          }
-        : { type: 'redacted_thinking', data: applied.block.data }
+        ? withVendorFields(
+            {
+              type: 'thinking' as const,
+              thinking: applied.block.text,
+              signature: applied.block.signature,
+            },
+            applied.block.vendorFields,
+          )
+        : withVendorFields(
+            { type: 'redacted_thinking' as const, data: applied.block.data },
+            applied.block.vendorFields,
+          )
     case 'text':
       // A downgrade with nothing left to say is skipped: an empty text block is a 400.
       return applied.block.text === '' ? null : { type: 'text', text: applied.block.text }
@@ -347,7 +543,7 @@ export interface AnthropicMessagesProviderOptions {
   readonly id: ProviderId
   readonly network: HostNetwork
   /** Only `now()`: see ProviderDefinition.create(). Read when an error is mapped. */
-  readonly clock: Pick<HostClock, 'now'>
+  readonly clock: Pick<HostClock, 'now' | 'setTimeout'>
   /** `null` = not configured. `apiKey` and `authToken` are never both absent — see below. */
   readonly apiKey: string | null
   readonly authToken: string | null
@@ -393,7 +589,9 @@ export interface AnthropicMessagesProviderOptions {
 export class AnthropicMessagesProvider extends BaseProvider {
   readonly id: ProviderId
   readonly #client: Anthropic
-  readonly #clock: Pick<HostClock, 'now'>
+  readonly #clock: Pick<HostClock, 'now' | 'setTimeout'>
+  /** Where requests go: it decides the first-byte and idle limits (01 修补 4). */
+  readonly #baseURL: string
   readonly #models: readonly ModelInfo[]
   /** The credential values, for redacting them out of an error `detail` that reaches logs. */
   readonly #credentials: readonly string[]
@@ -420,6 +618,7 @@ export class AnthropicMessagesProvider extends BaseProvider {
     assertBaseUrl(options.id, baseURL, { wire: WIRE, refuseV1Suffix: true })
     this.id = options.id
     this.#clock = options.clock
+    this.#baseURL = baseURL
     this.#models = [...options.models]
     this.#credentials = [apiKey, authToken].filter((value): value is string => value !== null)
     // Called through a closure rather than handed over as a bare property: the SDK invokes it
@@ -440,7 +639,13 @@ export class AnthropicMessagesProvider extends BaseProvider {
         'x-api-key': apiKey,
         authorization: authToken === null ? null : `Bearer ${authToken}`,
       },
-      fetch: (input, init) => fetchThroughHost(network, input, init),
+      // Spec 02, 01 修补 4: every request through the header allowlist, every body under the idle
+      // watchdog (180 s on the official endpoint, 300 s elsewhere).
+      fetch: (input, init) =>
+        fetchThroughHost(network, input, allowedRequestInit(init, ALLOWED_HEADERS), {
+          clock: options.clock,
+          idleMs: idleMsFor(baseURL),
+        }),
     })
   }
 
@@ -474,7 +679,10 @@ export class AnthropicMessagesProvider extends BaseProvider {
     // the endpoint had failed — and `EncodedRequest.body` is typed `unknown`, which phase 2 will
     // rebuild from a Tape.
     const params = streamParams(encoded)
-    return withTerminalEvent(() => this.#events(params, ctx), {
+    // Spec 02, 01 修补 4 (A5): the first-byte limit, for the official endpoint only; null leaves the
+    // SDK's own default. Runs on the SDK's timer, not the host clock.
+    const timeout = firstByteTimeoutMs(this.#baseURL, encoded.body, ctx.firstByteTimeout)
+    return withTerminalEvent(() => this.#events(params, ctx, timeout), {
       // Read when the error happens, not when the stream is built: a `retry-after` HTTP-date is
       // relative to now.
       mapError: (error) =>
@@ -487,23 +695,27 @@ export class AnthropicMessagesProvider extends BaseProvider {
   }
 
   /**
-   * The Messages API takes `budget_tokens`, which is the `'budget'` tier — but only for a model
-   * that reasons at all: answering `'budget'` for one whose `ModelInfo` says `reasoning: false`
-   * would tell the caller a thinking budget is available on a model that 400s on the parameter.
+   * A row that declares its thinking shape answers from it (spec 02, 01 修补 3): `budget` mode is
+   * 'budget', declared effort levels are 'effort'. A row without one keeps 01's answer: this wire
+   * takes `budget_tokens`, which is the `'budget'` tier — but only for a model that reasons at all.
    */
   override thinkingEffortSupport(model: ModelInfo): 'none' | 'budget' | 'effort' {
+    const spec = model.thinkingSpec
+    if (spec !== undefined) return effortTierOf(spec)
     return model.reasoning ? 'budget' : 'none'
   }
 
   async *#events(
     params: Anthropic.MessageCreateParamsStreaming,
     ctx: SendContext,
+    timeout: number | null,
   ): AsyncIterable<StreamEvent> {
     const stream = await this.#client.messages.create(params, {
       // The SDK's own AbortController is chained to this one, so an abort reaches the fetch the
       // host performed. `withTerminalEvent` still races the signal itself: a socket that has
       // gone quiet must not be able to outlive a Stop.
       signal: ctx.signal,
+      ...(timeout === null ? {} : { timeout }),
     })
     yield* normaliseAnthropicEvents(readBody(stream))
   }
@@ -580,6 +792,22 @@ function streamParams(encoded: EncodedRequest): Anthropic.MessageCreateParamsStr
  * index block for block; a wire that reuses one of its indices gets a fresh slot instead, because
  * a collision makes the caller's fold throw — and an endpoint renumbering its blocks is not a
  * programmer error, so it must not cost the turn its terminal event.
+ *
+ * Spec 02 (01 修补 2, decision M3) stops skipping what the content model has no place for:
+ *
+ * - a block type this adapter does not map is kept whole as a `vendor-block` (`same-model`);
+ * - a call the vendor runs itself — `server_tool_use`, `mcp_tool_use`, a `tool_use` whose `caller`
+ *   is not `direct` — and every `*_tool_result` block is kept the same way as `never`: archived, not
+ *   dispatched, not sent back (01 修补 9 (t));
+ * - a field a known block carries beyond the ones mapped (TEXT_KEYS and friends below) is kept as
+ *   that block's `vendor-fields`.
+ *
+ * Both are emitted at the block's `content_block_stop`, complete; a block that never stops is not
+ * emitted, the same way a truncated tool call is not. Deltas are folded into a vendor block exactly
+ * as the pinned SDK's own accumulator folds them (lib/MessageStream.mjs): `input_json_delta` builds
+ * the `input` of a block that has one, `citations_delta` extends a text block's `citations`, and
+ * nothing else applies to a block of an unknown type. The model the vendor says answered is
+ * reported once, from `message_start` (M5).
  */
 async function* normaliseAnthropicEvents(
   events: AsyncIterable<Anthropic.RawMessageStreamEvent>,
@@ -596,20 +824,27 @@ async function* normaliseAnthropicEvents(
         const usage = usageEvent(event.message.usage, false, null)
         opening = usage
         yield { type: 'usage', usage }
+        const model: unknown = event.message.model
+        if (typeof model === 'string' && model !== '') {
+          yield { type: 'response-model', modelId: model }
+        }
         break
       }
       case 'content_block_start': {
+        // Read as a plain record as well as the SDK's union: a vendor block is whatever the wire
+        // sent, and the pinned SDK's types cannot name a block type newer than they are.
+        const raw = event.content_block as unknown as Record<string, unknown>
         const block = event.content_block
         switch (block.type) {
           case 'text': {
-            const index = blocks.open(event.index, 'text')
+            const index = blocks.open(event.index, 'text', extraFields(raw, TEXT_KEYS))
             // The wire opens a text block with `text: ''`; anything else is content that
             // arrived and would otherwise be dropped.
             if (block.text !== '') yield { type: 'text-delta', index, text: block.text }
             break
           }
           case 'thinking': {
-            const index = blocks.open(event.index, 'thinking')
+            const index = blocks.open(event.index, 'thinking', extraFields(raw, THINKING_KEYS))
             if (block.thinking !== '') {
               yield { type: 'thinking-delta', index, text: block.thinking }
             }
@@ -623,7 +858,7 @@ async function* normaliseAnthropicEvents(
           case 'redacted_thinking':
             yield {
               type: 'redacted-thinking',
-              index: blocks.open(event.index, 'redacted'),
+              index: blocks.open(event.index, 'redacted', extraFields(raw, REDACTED_KEYS)),
               data: block.data,
             }
             break
@@ -631,20 +866,24 @@ async function* normaliseAnthropicEvents(
             // A call the vendor's own container runs (code execution) is not ours to execute:
             // forwarding it would hand the kernel's tool executor a call the model never asked
             // us for. An absent `caller` is the direct shape — the field is newer than the wire
-            // and compatible gateways omit it.
+            // and compatible gateways omit it. Kept, never replayed (spec 02, 01 修补 9 (t)).
             if (!isDirectCall(block.caller)) {
-              blocks.open(event.index, 'skipped')
+              blocks.openVendor(event.index, raw, 'never')
               break
             }
-            const index = blocks.openCall(event.index, block.id, block.name)
+            const index = blocks.openCall(
+              event.index,
+              block.id,
+              block.name,
+              extraFields(raw, TOOL_USE_KEYS),
+            )
             yield { type: 'tool-call-start', index, id: block.id, name: block.name }
             break
           }
           default:
-            // Server-side tool blocks (web search, code execution, container upload…). Phase 1
-            // requests none of them, and there is no normalised event that carries one, so the
-            // block and its deltas are skipped rather than mapped onto something they are not.
-            blocks.open(event.index, 'skipped')
+            // Server-side tool calls and their results, and any block type this adapter does not
+            // map: kept whole rather than skipped or mapped onto something they are not.
+            blocks.openVendor(event.index, raw, vendorReplay(raw))
             break
         }
         break
@@ -670,24 +909,38 @@ async function* normaliseAnthropicEvents(
             break
           }
           case 'input_json_delta': {
-            const open = blocks.call(event.index)
-            // No open tool block: the fragments belong to a server-side tool we skipped.
+            const open = blocks.inputOf(event.index)
+            // No open block that takes input: nothing to fold the fragment into.
             if (open === null) break
             open.json += delta.partial_json
-            yield { type: 'tool-call-args-delta', index: open.slot, json: delta.partial_json }
+            // Only a call of ours streams its arguments; a vendor block's input is folded silently.
+            if (open.call !== null) {
+              yield { type: 'tool-call-args-delta', index: open.slot, json: delta.partial_json }
+            }
             break
           }
           case 'citations_delta':
-            // Citations ride on a text block we already forwarded; phase 1 asks for none.
+            // Citations ride on a text block we already forwarded: kept with its other vendor
+            // fields, the way the SDK's accumulator appends them. 02 asks for none.
+            blocks.cite(event.index, delta.citation)
             break
         }
         break
       }
       case 'content_block_stop': {
         const closed = blocks.close(event.index)
+        if (closed === null) break
+        if (closed.kind === 'vendor') {
+          const archived = vendorArchive(closed)
+          if (archived !== null) yield { type: 'vendor-block', index: closed.slot, ...archived }
+          break
+        }
+        if (closed.fields !== null) {
+          yield { type: 'vendor-fields', index: closed.slot, fields: closed.fields }
+        }
         // Text, thinking and redacted blocks need no closing event: they were complete as they
         // arrived.
-        if (closed === null || closed.call === null) break
+        if (closed.call === null) break
         const input = parseToolArguments(closed.json)
         if (input === null) {
           // Arguments we cannot parse are not a tool call. Reported as the terminal error rather
@@ -742,6 +995,62 @@ function isDirectCall(caller: { readonly type: string } | null | undefined): boo
   return caller == null || caller.type === 'direct'
 }
 
+/**
+ * The keys each known block type maps onto the content model; any other key it carries is a vendor
+ * field. `caller` is read (it decides who runs a call) and a direct call is the only kind kept as a
+ * `tool-request`, so it carries nothing worth replaying.
+ */
+const TEXT_KEYS: readonly string[] = ['type', 'text']
+const THINKING_KEYS: readonly string[] = ['type', 'thinking', 'signature']
+const REDACTED_KEYS: readonly string[] = ['type', 'data']
+const TOOL_USE_KEYS: readonly string[] = ['type', 'id', 'name', 'input', 'caller']
+
+/** The keys of `raw` outside `known`, or null when there are none. */
+function extraFields(
+  raw: Record<string, unknown>,
+  known: readonly string[],
+): Record<string, unknown> | null {
+  let extra: Record<string, unknown> | null = null
+  for (const key of Object.keys(raw)) {
+    if (known.includes(key)) continue
+    extra ??= {}
+    extra[key] = raw[key]
+  }
+  return extra
+}
+
+/**
+ * Whether a block the vendor ran itself: its server-side calls and every tool-result block they
+ * produce are `never` (01 修补 9 (t)); every other unmapped block goes back to the same model (M3).
+ */
+function vendorReplay(raw: Record<string, unknown>): 'same-model' | 'never' {
+  const type = raw['type']
+  if (type === 'server_tool_use' || type === 'mcp_tool_use') return 'never'
+  return typeof type === 'string' && type.endsWith('_tool_result') ? 'never' : 'same-model'
+}
+
+/**
+ * A vendor block as it stands at its stop, the way the SDK's accumulator builds it: the start, with
+ * the streamed `input` folded in.
+ *
+ * Streamed input that does not parse is still archived (01 修补 2: every vendor block goes into the
+ * Tape; §崩溃、服务端调用块与兜底: 块存进 Tape, and the loop logs it): the start exactly as it arrived,
+ * and the fragments as the unparsed text under `partial_json`, the wire's own name for them. What we
+ * cannot state is recorded as what arrived rather than guessed at, and it is never sent back — a
+ * block whose content we cannot state cannot be replayed "as it was".
+ */
+function vendorArchive(
+  block: OpenBlock,
+): { raw: Record<string, unknown>; replay: 'same-model' | 'never' } | null {
+  const raw = block.raw
+  if (raw === null) return null
+  if (block.json === '') return { raw, replay: block.replay }
+  const input = parseToolArguments(block.json)
+  return input === null
+    ? { raw: { ...raw, partial_json: block.json }, replay: 'never' }
+    : { raw: { ...raw, input }, replay: block.replay }
+}
+
 /** One open content block: the slot this adapter gave it, and what it holds. */
 interface OpenBlock {
   /** The normalised `index`. Handed out once and never reused within a response. */
@@ -749,13 +1058,18 @@ interface OpenBlock {
   readonly kind: BlockKind
   /** `tool` only: the call's identity, which its `tool-call-end` has to repeat. */
   readonly call: { readonly id: string; readonly name: string } | null
-  /** `tool` only: the argument fragments so far. */
+  /** `tool`, and a `vendor` block that has an `input`: the argument fragments so far. */
   json: string
   /** `thinking` only: a signature has arrived, and a signature is never rewritten. */
   signed: boolean
+  /** A known block's vendor fields so far (spec 02), or null when it has none. */
+  fields: Record<string, unknown> | null
+  /** `vendor` only: the block as it started. */
+  readonly raw: Record<string, unknown> | null
+  readonly replay: 'same-model' | 'never'
 }
 
-type BlockKind = 'text' | 'thinking' | 'redacted' | 'tool' | 'skipped'
+type BlockKind = 'text' | 'thinking' | 'redacted' | 'tool' | 'vendor'
 
 /**
  * The adapter's block slots, keyed by the vendor's content-block index.
@@ -768,35 +1082,68 @@ type BlockKind = 'text' | 'thinking' | 'redacted' | 'tool' | 'skipped'
 function createSlots() {
   const open = new Map<number, OpenBlock>()
   let next = 0
-  const allocate = (index: number, kind: BlockKind, call: OpenBlock['call'] = null): OpenBlock => {
-    const block: OpenBlock = { slot: next, kind, call, json: '', signed: false }
+  const allocate = (
+    index: number,
+    kind: BlockKind,
+    extra: {
+      call?: OpenBlock['call']
+      fields?: Record<string, unknown> | null
+      raw?: Record<string, unknown>
+      replay?: 'same-model' | 'never'
+    } = {},
+  ): OpenBlock => {
+    const block: OpenBlock = {
+      slot: next,
+      kind,
+      call: extra.call ?? null,
+      json: '',
+      signed: false,
+      fields: extra.fields ?? null,
+      // A copy: the SDK hands over the parsed frame, and the block kept here must not change with it.
+      raw: extra.raw === undefined ? null : { ...extra.raw },
+      replay: extra.replay ?? 'same-model',
+    }
     next += 1
     open.set(index, block)
     return block
   }
   return {
-    /** Opens a block with no identity of its own (text, thinking, redacted, skipped). */
-    open(index: number, kind: BlockKind): number {
-      return allocate(index, kind).slot
+    /** Opens a block with no identity of its own (text, thinking, redacted). */
+    open(index: number, kind: BlockKind, fields: Record<string, unknown> | null = null): number {
+      return allocate(index, kind, { fields }).slot
     },
-    openCall(index: number, id: string, name: string): number {
-      return allocate(index, 'tool', { id, name }).slot
+    openCall(
+      index: number,
+      id: string,
+      name: string,
+      fields: Record<string, unknown> | null,
+    ): number {
+      return allocate(index, 'tool', { call: { id, name }, fields }).slot
+    },
+    /** Opens a block kept whole (spec 02): see normaliseAnthropicEvents(). */
+    openVendor(
+      index: number,
+      raw: Record<string, unknown>,
+      replay: 'same-model' | 'never',
+    ): number {
+      return allocate(index, 'vendor', { raw, replay }).slot
     },
     /**
      * The slot a text / thinking delta belongs to: the open block when its kind matches, a
      * fresh slot when the index holds nothing or holds another kind, and null when the block
-     * open there is one we skipped (its deltas are not content of ours).
+     * open there is a vendor block (a text or thinking delta does not apply to one — the SDK's
+     * accumulator ignores it too — and its content is not ours).
      */
     deltaSlot(index: number, kind: 'text' | 'thinking'): number | null {
       const block = open.get(index)
       if (block === undefined) return allocate(index, kind).slot
-      if (block.kind === 'skipped') return null
+      if (block.kind === 'vendor') return null
       return block.kind === kind ? block.slot : allocate(index, kind).slot
     },
     /** As deltaSlot, for a signature: a second one for the same block opens a fresh slot. */
     signatureSlot(index: number): number | null {
       const block = open.get(index)
-      if (block?.kind === 'skipped') return null
+      if (block?.kind === 'vendor') return null
       if (block === undefined || block.kind !== 'thinking' || block.signed) {
         const fresh = allocate(index, 'thinking')
         fresh.signed = true
@@ -810,10 +1157,24 @@ function createSlots() {
       const block = open.get(index)
       if (block !== undefined) block.signed = true
     },
-    /** The open tool call at `index`, for appending an argument fragment. */
-    call(index: number): OpenBlock | null {
+    /**
+     * The open block at `index` that takes an argument fragment: a call of ours, or a vendor block
+     * whose start carried an `input` (the blocks the SDK's accumulator builds an input for).
+     */
+    inputOf(index: number): OpenBlock | null {
       const block = open.get(index)
-      return block !== undefined && block.call !== null ? block : null
+      if (block === undefined) return null
+      if (block.call !== null) return block
+      return block.raw !== null && Object.hasOwn(block.raw, 'input') ? block : null
+    },
+    /** A citation for the text block open at `index`, appended to its `citations` field. */
+    cite(index: number, citation: unknown): void {
+      const block = open.get(index)
+      if (block?.kind !== 'text') return
+      const fields = block.fields ?? {}
+      const cited = fields['citations']
+      fields['citations'] = Array.isArray(cited) ? [...cited, citation] : [citation]
+      block.fields = fields
     },
     close(index: number): OpenBlock | null {
       const block = open.get(index)
@@ -911,7 +1272,44 @@ function mapAnthropicError(
   if (status !== undefined) event.status = status
   const delay = retryAfterMs(errorHeaders(error), ctx.now)
   if (delay !== null) event.retryAfterMs = delay
+  // Spec 02, 01 修补 4 (A5): which limit ended the stream. Both are connection failures the
+  // classifier already reads as a retryable `network`.
+  const timeout = timeoutKindOf(chain)
+  if (timeout !== null) event.timeout = timeout
+  // Spec 02, 01 修补 2 (H12): the monthly spend limit resets at 00:00 UTC on the 1st.
+  if (code === 'quota-exhausted' && isSpendLimit(error))
+    event.resetAt = startOfNextMonthUtc(ctx.now)
   return event
+}
+
+/** The first-byte limit is the SDK's own timeout; the idle one is the watchdog's (01 修补 4). */
+export function timeoutKindOf(chain: readonly unknown[]): 'first-byte' | 'idle' | null {
+  if (chain.some((link) => link instanceof StreamIdleTimeoutError)) return 'idle'
+  if (chain.some((link) => link instanceof APIConnectionTimeoutError)) return 'first-byte'
+  return null
+}
+
+/** 429 with `error.details.error_code = enforced_spend_limit_reached` (01 修补 5). */
+function isSpendLimit(error: unknown): boolean {
+  const body = objectField(error, 'error')
+  const inner = objectField(body, 'error')
+  const details = objectField(inner, 'details') ?? objectField(body, 'details')
+  return stringField(details, 'error_code') === 'enforced_spend_limit_reached'
+}
+
+/** The vendor's own `error.message`, not the SDK's `<status> <body>` summary. */
+function vendorMessage(error: unknown): string {
+  const body = objectField(error, 'error')
+  return (
+    stringField(objectField(body, 'error'), 'message') ??
+    stringField(body, 'message') ??
+    ''
+  ).trim()
+}
+
+function startOfNextMonthUtc(now: number): number {
+  const date = new Date(now)
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1)
 }
 
 function classifyAnthropicError(
@@ -924,6 +1322,12 @@ function classifyAnthropicError(
   // rejected fetch as `new APIConnectionError({ cause })`, so the denial arrives one or two
   // links down.
   if (hasEgressDenial(chain)) return 'egress-denied'
+  // Spec 02, 01 修补 5 (H12): the two spend limits, before the status table reads them as a
+  // retryable rate limit or a plain invalid request.
+  if (status === 429 && isSpendLimit(error)) return 'quota-exhausted'
+  if (status === 400 && vendorMessage(error).startsWith('You have reached your specified')) {
+    return 'quota-exhausted'
+  }
   if (status !== undefined) return statusErrorCode(status, errorMessage(error))
   if (providerCode !== null && Object.hasOwn(ERROR_TYPES, providerCode)) {
     const code = ERROR_TYPES[providerCode as AnthropicErrorType]

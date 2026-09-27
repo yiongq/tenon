@@ -15,7 +15,8 @@
  * Every key is written only when it has a value: canonicalJson (and therefore `promptHash`)
  * refuses an undefined-valued key.
  */
-import OpenAI, { APIConnectionError, APIError } from 'openai'
+import OpenAI, { APIConnectionError, APIConnectionTimeoutError, APIError } from 'openai'
+import { VERSION as SDK_VERSION } from 'openai/version'
 import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import { BaseProvider, withTerminalEvent } from '../base.js'
 import {
@@ -35,7 +36,7 @@ import {
   statusErrorCode,
   stringField,
 } from '../errors.js'
-import type { ThinkingApplication } from '../thinking.js'
+import type { ThinkingApplication, ThinkingTarget } from '../thinking.js'
 import type {
   ContentBlock,
   EncodedRequest,
@@ -54,27 +55,75 @@ import {
   assertBlockRole,
   assertHasMessages,
   assertImageMediaType,
+  assertLastTurnIsUser,
   assertModelBelongs,
+  assertSamplingDefaults,
+  assertThinkingRequest,
   assertToolInput,
   assertToolRequested,
   canonicalText,
   effectiveMaxTokens,
+  effortTierOf,
   guardReasoning,
+  guardVendorBlock,
+  guardVendorFields,
   hasSystemPrompt,
   mergeRequestParams,
   sealEncoded,
   thinkingTargetFor,
 } from './shared.js'
-import type { ImageContentBlock } from './shared.js'
+import type { EncoderInfo, ImageContentBlock } from './shared.js'
 import {
+  StreamIdleTimeoutError,
+  allowedRequestInit,
   assertBaseUrl,
   configuredValue,
   fetchThroughHost,
+  idleMsFor,
   parseToolArguments,
   tokenCount,
 } from './transport.js'
+import type { HeaderAllowList } from './transport.js'
 
 const WIRE = 'openai-chat'
+
+/**
+ * The request headers this wire lets out (spec 02, 01 修补 4; decision A6), from the headers the
+ * pinned SDK was seen to send (02 plan step 3, check 5): the protocol headers, the credential, and
+ * the SDK's seven `x-stainless-*` headers by name — no `x-stainless-timeout`, since this wire passes
+ * the SDK no per-request timeout, and no `x-stainless-helper-method`, which only the SDK's helpers
+ * set. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot rewrite them. Re-read
+ * this list with every SDK pin.
+ */
+const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+  names: Object.freeze([
+    'content-type',
+    'authorization',
+    'x-stainless-arch',
+    'x-stainless-lang',
+    'x-stainless-os',
+    'x-stainless-package-version',
+    'x-stainless-retry-count',
+    'x-stainless-runtime',
+    'x-stainless-runtime-version',
+  ]),
+  pinned: Object.freeze({ accept: 'application/json', 'user-agent': `OpenAI/JS ${SDK_VERSION}` }),
+})
+
+/**
+ * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
+ * 1 is spec 02's encoder — `reasoning_effort`, the vendor blocks and the trailing-user rule; add one
+ * with every change to what it encodes, and a row to test/provider/wire/encoder-version.test.ts.
+ * Recording a decision for the vendor fields of text and tool-request blocks (s6-spec-2, owner
+ * 2026-09-27) changed no byte — this wire never sent them — so the version stayed at 1.
+ * Exported for the attempt re-check (02 不变量 33), which covers only the records this build's
+ * encoder wrote.
+ */
+export const OPENAI_CHAT_ENCODER: EncoderInfo = Object.freeze({
+  wire: WIRE,
+  version: 1,
+  sdk: `openai@${SDK_VERSION}`,
+})
 
 /** The formats the vision part of this wire documents, carried as base64 data URLs. */
 const MEDIA_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -100,6 +149,7 @@ const RESERVED_KEYS: readonly string[] = [
   'stream_options',
   'temperature',
   'tools',
+  'reasoning_effort',
 ]
 
 export type OpenAIContentPart =
@@ -142,6 +192,12 @@ export interface OpenAIToolDefinition {
  * `req.thinking` has no counterpart on this wire and is not encoded: a vendor that takes a
  * thinking parameter (zhipu) declares it in `ModelInfo.requestParams`, which is the seam the
  * spec chose for exactly this. The request snapshot still records what was asked for.
+ *
+ * A row that declares its thinking shape takes only `effort-only` here (spec 02, 01 修补 3;
+ * decisions A1, A11): the level travels as `reasoning_effort`, written only when given; thinking can
+ * be turned off only through an `effort` of `'none'` the row lists, so `thinking: { enabled: false }`
+ * and a thinking budget are refused, and `{ enabled: true }` writes nothing. A row without one is
+ * 01's, byte for byte.
  */
 export function encodeOpenAIChat(req: ProviderRequest, providerId: ProviderId): EncodedRequest {
   assertModelBelongs(req.model, providerId)
@@ -150,6 +206,7 @@ export function encodeOpenAIChat(req: ProviderRequest, providerId: ProviderId): 
   // The leading system message is not a turn: a body carrying it alone has no conversation in it.
   assertHasMessages(messages.filter((message) => message.role !== 'system').length, WIRE)
   const tools = encodeTools(req.tools)
+  assertThinkingRequest(req, WIRE)
   const body: Record<string, unknown> = {
     // The WIRE id, never `canonicalId`: the endpoint only knows its own name.
     model: req.model.id,
@@ -162,8 +219,40 @@ export function encodeOpenAIChat(req: ProviderRequest, providerId: ProviderId): 
   if (req.model.usageNeedsOptIn) body.stream_options = { include_usage: true }
   if (tools.length > 0) body.tools = tools
   if (req.temperature !== undefined) body.temperature = req.temperature
+  if (req.model.thinkingSpec !== undefined) {
+    assertEffortOnly(req)
+    assertSamplingDefaults(req, WIRE)
+    if (req.effort !== undefined) body.reasoning_effort = req.effort
+  }
   mergeRequestParams(body, req.model, RESERVED_KEYS)
-  return sealEncoded(providerId, req.model.id, body, tools, decisions)
+  const encoded = sealEncoded(providerId, req.model.id, body, tools, decisions, OPENAI_CHAT_ENCODER)
+  // Last, so every refusal 01 already made still comes first with 01's own error (01 修补 3).
+  assertLastTurnIsUser(req.messages, WIRE)
+  return encoded
+}
+
+/** The effort-only rules for `req.thinking` on a row that declares a thinking shape. */
+function assertEffortOnly(req: ProviderRequest): void {
+  const model = req.model
+  if (model.thinkingSpec?.mode !== 'effort-only') {
+    // A table error: the other four modes are the Anthropic wire's, and this wire has no thinking
+    // object to express any of them.
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: ${WIRE} rows take thinking mode "effort-only" only`,
+    )
+  }
+  const thinking = req.thinking
+  if (thinking === undefined) return
+  if (!thinking.enabled) {
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: thinking is turned off on ${WIRE} only through an effort of "none", which the row must list`,
+    )
+  }
+  if (thinking.budgetTokens !== undefined) {
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: ${WIRE} has no thinking budget; the level is its effort`,
+    )
+  }
 }
 
 function encodeTools(tools: readonly ToolSpec[] | undefined): OpenAIToolDefinition[] {
@@ -194,7 +283,7 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
   const requested = new Set<string>()
   const out: OpenAIWireMessage[] = []
   if (hasSystemPrompt(req.system)) out.push({ role: 'system', content: req.system })
-  for (const message of req.messages) {
+  for (const [messageIndex, message] of req.messages.entries()) {
     const parts: OpenAIContentPart[] = []
     const toolCalls: OpenAIToolCall[] = []
     const toolMessages: OpenAIWireMessage[] = []
@@ -203,7 +292,10 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
       switch (block.type) {
         case 'text':
           // An empty text part carries nothing and is rejected by parts of this wire.
-          if (block.text !== '') parts.push({ type: 'text', text: block.text })
+          if (block.text !== '') {
+            refuseVendorFields(block, target, decisions, req.model)
+            parts.push({ type: 'text', text: block.text })
+          }
           break
         case 'thinking':
         case 'redacted-thinking': {
@@ -211,7 +303,7 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
           // message, and a downgraded block surfacing as user text would put the model's
           // reasoning in the user's mouth.
           assertBlockRole('a reasoning block', message.role, 'assistant', WIRE)
-          const applied = guardReasoning(block, target, decisions)
+          const applied = guardReasoning(block, target, decisions, messageIndex)
           const surfaced = reasoning(applied, req.model)
           if (surfaced === null) break
           if (surfaced.kind === 'text') parts.push(surfaced.part)
@@ -232,6 +324,7 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
           // something the endpoint never saw.
           assertBlockRole('a tool call', message.role, 'assistant', WIRE)
           requested.add(block.id)
+          refuseVendorFields(block, target, decisions, req.model)
           toolCalls.push({
             id: block.id,
             type: 'function',
@@ -266,6 +359,19 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
           assertBlockRole('an image', message.role, 'user', WIRE)
           parts.push(imagePart(block))
           break
+        case 'vendor':
+          // Judged by the guard (spec 02, 01 修补 2 and 3) and dropped before the emptiness check in
+          // wireMessage(), so a turn that held nothing else is omitted. The only vendor block this
+          // wire decodes is a call the vendor ran itself (`never`); one the guard would replay has
+          // no place on this wire — it came from another adapter's table — and is refused rather
+          // than dropped out of the audit.
+          assertBlockRole('a vendor block', message.role, 'assistant', WIRE)
+          if (guardVendorBlock(block, target, decisions)) {
+            throw new ProviderInvalidArgumentError(
+              `model ${req.model.id}: ${WIRE} carries no vendor blocks, so one cannot be replayed`,
+            )
+          }
+          break
       }
     }
     out.push(...toolMessages)
@@ -273,6 +379,26 @@ function encodeMessages(req: ProviderRequest, decisions: ThinkingDecision[]): Op
     if (turn !== null) out.push(turn)
   }
   return out
+}
+
+/**
+ * The vendor fields of a text or tool-request block, through the guard (spec 02, 01 修补 2; s6-spec-2,
+ * owner 2026-09-27): the decision is recorded, and the fields are never sent — this wire's decoder
+ * produces none, so every field set here is another provider's or has no source, and a single text
+ * part becomes a bare string with no room for them. A field set the guard would send back is refused
+ * like a replayable vendor block, rather than dropped out of the audit.
+ */
+function refuseVendorFields(
+  block: Extract<ContentBlock, { type: 'text' | 'tool-request' }>,
+  target: ThinkingTarget,
+  decisions: ThinkingDecision[],
+  model: ModelInfo,
+): void {
+  if (guardVendorFields(block, target, decisions) !== undefined) {
+    throw new ProviderInvalidArgumentError(
+      `model ${model.id}: ${WIRE} carries no vendor fields, so those on a ${block.type} block cannot be replayed`,
+    )
+  }
 }
 
 /**
@@ -369,7 +495,7 @@ export interface OpenAIChatProviderOptions {
   readonly id: ProviderId
   readonly network: HostNetwork
   /** Only `now()`: see ProviderDefinition.create(). Read when an error is mapped. */
-  readonly clock: Pick<HostClock, 'now'>
+  readonly clock: Pick<HostClock, 'now' | 'setTimeout'>
   /**
    * The credential, which on this wire is never absent: `null` and `''` make the SDK throw
    * `Missing credentials`, and `undefined` makes it read OPENAI_API_KEY. A provider that needs no
@@ -379,6 +505,11 @@ export interface OpenAIChatProviderOptions {
   /** Always explicit: a blank baseURL makes the SDK fall back to api.openai.com — see below. */
   readonly baseURL: string
   readonly models: readonly ModelInfo[]
+  /**
+   * Spec 02, 01 修补 2: the definition's `finishReasons`, added to this wire's own table. A value
+   * the table already maps is refused here: a definition may only add.
+   */
+  readonly finishReasons?: Readonly<Record<string, StopReason>>
 }
 
 /**
@@ -411,16 +542,19 @@ export interface OpenAIChatProviderOptions {
  * - the request timeout is left at the SDK's own default (10 minutes). A stall budget is a policy
  *   this spec does not state, and a number invented here would ship as one.
  *
- * `thinkingEffortSupport()` is deliberately NOT overridden: this wire has no thinking parameter of
- * its own, and a vendor's own (zhipu's `thinking` / `reasoning_effort`) travels through
- * `ModelInfo.requestParams`, which the kernel does not interpret. 'none' is the honest answer for
- * the seam the caller can actually drive.
+ * `thinkingEffortSupport()` answers from the row's `thinkingSpec` (spec 02, 01 修补 3):
+ * `reasoning_effort` is OpenAI's standard parameter, written by the encoder from its own field, so a
+ * row that declares effort levels answers 'effort'. A row without one keeps 01's 'none': a vendor's
+ * other thinking parameter (zhipu's `thinking`) still travels through `ModelInfo.requestParams`,
+ * which the kernel does not interpret.
  */
 export class OpenAIChatProvider extends BaseProvider {
   readonly id: ProviderId
   readonly #client: OpenAI
-  readonly #clock: Pick<HostClock, 'now'>
+  readonly #clock: Pick<HostClock, 'now' | 'setTimeout'>
   readonly #models: readonly ModelInfo[]
+  /** This wire's finish_reason table plus the definition's additions (01 修补 5). */
+  readonly #stopReasons: Readonly<Record<string, StopReason>>
   /** The credential value, for redacting it out of an error `detail` that reaches logs. */
   readonly #credentials: readonly string[]
 
@@ -437,6 +571,7 @@ export class OpenAIChatProvider extends BaseProvider {
     this.#clock = options.clock
     this.#models = [...options.models]
     this.#credentials = [apiKey]
+    this.#stopReasons = stopReasonTable(options.id, options.finishReasons)
     // Called through a closure rather than handed over as a bare property: the SDK invokes it
     // with `undefined` as the receiver, so a host whose `fetch` is a method would lose its
     // `this`. The reference is captured on this instance and nowhere else.
@@ -451,7 +586,13 @@ export class OpenAIChatProvider extends BaseProvider {
       webhookSecret: null,
       logLevel: 'off',
       defaultHeaders: { authorization: `Bearer ${apiKey}` },
-      fetch: (input, init) => fetchThroughHost(network, input, init),
+      // Spec 02, 01 修补 4: every request through the header allowlist, every body under the idle
+      // watchdog (300 s: this wire never reaches the official Anthropic endpoint).
+      fetch: (input, init) =>
+        fetchThroughHost(network, input, allowedRequestInit(init, ALLOWED_HEADERS), {
+          clock: options.clock,
+          idleMs: idleMsFor(baseURL),
+        }),
     })
   }
 
@@ -462,6 +603,11 @@ export class OpenAIChatProvider extends BaseProvider {
 
   encode(req: ProviderRequest): EncodedRequest {
     return encodeOpenAIChat(req, this.id)
+  }
+
+  override thinkingEffortSupport(model: ModelInfo): 'none' | 'budget' | 'effort' {
+    const spec = model.thinkingSpec
+    return spec === undefined ? 'none' : effortTierOf(spec)
   }
 
   /**
@@ -506,7 +652,7 @@ export class OpenAIChatProvider extends BaseProvider {
       // gone quiet must not be able to outlive a Stop.
       signal: ctx.signal,
     })
-    yield* normaliseOpenAIChunks(readBody(stream))
+    yield* normaliseOpenAIChunks(readBody(stream), this.#stopReasons)
   }
 }
 
@@ -586,6 +732,8 @@ function streamParams(encoded: EncodedRequest): OpenAI.ChatCompletionCreateParam
 interface ChunkView {
   readonly choices?: readonly ChoiceView[] | null
   readonly usage?: OpenAIWireUsage | null
+  /** The model that answered (spec 02, M5); every chunk restates it. */
+  readonly model?: unknown
 }
 
 interface ChoiceView {
@@ -638,18 +786,29 @@ interface OpenAIWireUsage {
  *
  * Only the first choice of each chunk is read. `encode()` never asks for more than one completion,
  * and there is no normalised event that could carry a second one.
+ *
+ * Spec 02: the model the vendor says answered is reported once, from the first chunk that names it
+ * (M5), and a call the vendor runs itself (`tool_calls[].type === 'mcp'`) is archived as a
+ * `vendor-block` that is never replayed (01 修补 9 (t)) — see createChunkSlots().
  */
 async function* normaliseOpenAIChunks(
   chunks: AsyncIterable<ChunkView>,
+  stopReasons: Readonly<Record<string, StopReason>>,
 ): AsyncIterable<StreamEvent> {
   const slots = createChunkSlots()
   /** The latest usage reading. Both this wire's readings are cumulative, so a later one wins. */
   let usage: Usage | null = null
   let stop: Extract<StreamEvent, { type: 'stop' }> | null = null
+  let modelReported = false
   try {
     for await (const chunk of chunks) {
       const reading = chunkUsage(chunk.usage)
       if (reading !== null) usage = reading
+      const model = chunk.model
+      if (!modelReported && typeof model === 'string' && model !== '') {
+        modelReported = true
+        yield { type: 'response-model', modelId: model }
+      }
       const choice = chunk.choices?.[0]
       if (choice == null) continue
       const delta = choice.delta
@@ -673,7 +832,7 @@ async function* normaliseOpenAIChunks(
       // The first finish reason wins: a wire that restates it is not ending the turn twice.
       if (typeof finish === 'string' && finish !== '' && stop === null) {
         yield* slots.flush(finish)
-        stop = { type: 'stop', reason: stopReasonOf(finish), providerReason: finish }
+        stop = { type: 'stop', reason: stopReasonOf(finish, stopReasons), providerReason: finish }
       }
     }
   } finally {
@@ -710,6 +869,12 @@ interface OpenAICall {
   malformed: boolean
   /** A call no normalised event can carry: its fragments are dropped rather than mismapped. */
   readonly skipped: boolean
+  /**
+   * A call the vendor runs itself (`type: 'mcp'`, spec 02): its fragments are kept, merged the way
+   * the pinned SDK's own accumulator merges a tool call's other fields (each one assigned as it
+   * arrives), and the whole is archived as a `vendor-block` that is never replayed. Null otherwise.
+   */
+  readonly vendor: Record<string, unknown> | null
 }
 
 /**
@@ -740,6 +905,9 @@ function createChunkSlots() {
       args: '',
       malformed: false,
       skipped: raw.type === 'custom' || raw.custom != null,
+      // Recognised by its type field, next to `custom` (01 修补 9 (t)): reaching it through "no
+      // function name" instead would drop it silently, which is what 01 did.
+      vendor: raw.type === 'mcp' ? {} : null,
     }
     open.set(key, call)
     calls.push(call)
@@ -784,9 +952,23 @@ function createChunkSlots() {
       // First statement wins for both: a wire that restates them is not renaming the call.
       const id = nonEmpty(raw.id)
       const call = slotFor(raw, id)
-      if (call === null || call.skipped) return []
-      const out: StreamEvent[] = []
+      if (call === null) return []
+      // Recorded before either early return: slotFor() tells a new call from a continuation by its
+      // id, and a vendor or skipped call with no id on record would swallow a client call that
+      // reuses its index — that call then goes unarchived AND undispatched (01 修补 9 (t)).
       if (id !== null && call.id === null) call.id = id
+      if (call.skipped) return []
+      if (call.vendor !== null) {
+        // Read as a record: a call the vendor runs states fields no OpenAI type declares.
+        const fields = raw as unknown as Record<string, unknown>
+        for (const key of Object.keys(fields)) {
+          // `index` is where the fragment arrived, not a field of the call; `__proto__` would set
+          // the prototype rather than a key.
+          if (key !== 'index' && key !== '__proto__') call.vendor[key] = fields[key]
+        }
+        return []
+      }
+      const out: StreamEvent[] = []
       const name = nonEmpty(raw.function?.name)
       if (name !== null && call.name === null) call.name = name
       if (!call.started && call.id !== null && call.name !== null) {
@@ -825,9 +1007,22 @@ function createChunkSlots() {
      */
     flush(finish: string): StreamEvent[] {
       const out: StreamEvent[] = []
-      if (finish === 'length') return out
-      // Allocation order is slot order.
+      // Allocation order is slot order. A call the vendor ran is archived whatever the finish
+      // reason: it already happened, and it is never dispatched, so a truncation changes nothing
+      // about what is safe to do with it.
       for (const call of calls) {
+        if (call.vendor !== null) {
+          out.push({
+            type: 'vendor-block',
+            index: call.slot,
+            raw: { ...call.vendor },
+            replay: 'never',
+          })
+        }
+      }
+      if (finish === 'length') return out
+      for (const call of calls) {
+        if (call.vendor !== null) continue
         if (call.skipped || call.malformed || call.id === null || call.name === null) continue
         const input = parseToolArguments(call.args)
         if (input === null) continue
@@ -906,10 +1101,29 @@ const STOP_REASONS: Readonly<
   content_filter: 'content-filter',
 }
 
-function stopReasonOf(raw: string): StopReason {
-  return Object.hasOwn(STOP_REASONS, raw)
-    ? STOP_REASONS[raw as NonNullable<OpenAI.ChatCompletionChunk.Choice['finish_reason']>]
-    : 'unknown'
+function stopReasonOf(raw: string, table: Readonly<Record<string, StopReason>>): StopReason {
+  return Object.hasOwn(table, raw) ? (table[raw] ?? 'unknown') : 'unknown'
+}
+
+/**
+ * This wire's table plus a definition's additions (spec 02, 01 修补 5; decisions A12, M2, M6):
+ * zhipu's `sensitive` and `model_context_window_exceeded`. Overriding a value the wire already maps
+ * is a table error.
+ */
+function stopReasonTable(
+  providerId: ProviderId,
+  extra: Readonly<Record<string, StopReason>> | undefined,
+): Readonly<Record<string, StopReason>> {
+  const table: Record<string, StopReason> = { ...STOP_REASONS }
+  for (const [raw, reason] of Object.entries(extra ?? {})) {
+    if (Object.hasOwn(STOP_REASONS, raw)) {
+      throw new ProviderInvalidArgumentError(
+        `provider ${providerId}: finishReasons may only add values; "${raw}" is already mapped`,
+      )
+    }
+    table[raw] = reason
+  }
+  return Object.freeze(table)
 }
 
 interface OpenAIErrorContext {
@@ -947,6 +1161,11 @@ function mapOpenAIError(
   if (status !== undefined) event.status = status
   const delay = retryAfterMs(errorHeaders(error), ctx.now)
   if (delay !== null) event.retryAfterMs = delay
+  // Spec 02, 01 修补 4 (A5): which limit ended the stream — the SDK's own connection timeout, or the
+  // byte-level watchdog. Both already classify as a retryable `network`.
+  if (chain.some((link) => link instanceof StreamIdleTimeoutError)) event.timeout = 'idle'
+  else if (chain.some((link) => link instanceof APIConnectionTimeoutError))
+    event.timeout = 'first-byte'
   return event
 }
 
@@ -1004,7 +1223,22 @@ const ERROR_VOCABULARY: Readonly<Record<string, ProviderErrorCode>> = {
   context_length_exceeded: 'context-overflow',
   model_context_window_exceeded: 'context-overflow',
   '1261': 'context-overflow',
-  '1113': 'invalid-request',
+  // Spec 02, 01 修补 5 (H12): zhipu's exhausted balance, quota and plan codes. 1302 and 1305 stay
+  // retryable (1305 reaches the status table as a 429).
+  '1113': 'quota-exhausted',
+  '1308': 'quota-exhausted',
+  '1309': 'quota-exhausted',
+  '1310': 'quota-exhausted',
+  '1311': 'quota-exhausted',
+  '1313': 'quota-exhausted',
+  '1314': 'quota-exhausted',
+  '1315': 'quota-exhausted',
+  '1316': 'quota-exhausted',
+  '1317': 'quota-exhausted',
+  '1318': 'quota-exhausted',
+  '1319': 'quota-exhausted',
+  '1320': 'quota-exhausted',
+  '1321': 'quota-exhausted',
   '1302': 'rate-limit',
   invalid_api_key: 'auth',
   invalid_authentication: 'auth',

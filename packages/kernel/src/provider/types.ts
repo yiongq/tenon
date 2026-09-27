@@ -57,6 +57,49 @@ export interface ModelInfo {
   /** Merged into the request body verbatim — the insurance against one vendor breaking
    * the abstraction. */
   requestParams?: Record<string, unknown>
+  /**
+   * Spec 02, 01 修补 2: which thinking shape this model takes, as data. Absent = 01's behaviour byte
+   * for byte, which is what every synthesised row (dev fallback, hand-typed ids) keeps.
+   */
+  thinkingSpec?: ThinkingSpec
+  /**
+   * Spec 02, 01 修补 2: the i18n key of the model menu's one-line purpose, given as data the way
+   * `ProviderDefinition.nameKey` is. Never read by encode(), so it is not in WIRE_MODEL_FIELDS.
+   */
+  purposeKey?: string
+  /**
+   * Spec 02, 01 修补 2 (open question 16, owner 2026-09-26): where the model menu lists the row —
+   * `'more'` puts it under 更多模型 ›. Absent = `'main'`. Only the desktop reads it, so it is not in
+   * WIRE_MODEL_FIELDS; a definition's first row (the new-user fallback) is never `'more'`.
+   */
+  listing?: 'main' | 'more'
+}
+
+/**
+ * Spec 02, 01 修补 2 (decision A1): the thinking shape a model takes.
+ *
+ * - `budget`: only `enabled` + `budget_tokens` (Haiku 4.5);
+ * - `adaptive`: adaptive, can be turned off (Sonnet 5);
+ * - `adaptive-gated`: adaptive, can be turned off only at an effort no higher than
+ *   `disableMaxEffort` (Opus 5);
+ * - `always-on`: always on (Opus 5.5, Fable 5.1);
+ * - `effort-only`: the OpenAI-compatible wire's one mode — the level travels as `reasoning_effort`,
+ *   and thinking can be turned off only when `effortLevels` holds `'none'` (the GLM-5.3 family has
+ *   no such level). An openai-chat row takes only this mode, an anthropic-messages row never does.
+ */
+export interface ThinkingSpec {
+  mode: 'budget' | 'adaptive' | 'adaptive-gated' | 'always-on' | 'effort-only'
+  defaultOn: boolean
+  /** The vendor's own names, lowest first; the interface lists levels in this order. */
+  effortLevels?: readonly string[]
+  defaultEffort?: string
+  disableMaxEffort?: string
+  displays?: readonly ('summarized' | 'omitted')[]
+  defaultDisplay?: 'summarized' | 'omitted'
+  /** true: `temperature` only 1.0, `top_p` only >= 0.99, `top_k` always refused. */
+  samplingDefaultsOnly?: boolean
+  /** false: `tool_choice` of `any` / `tool` is a 400. The main conversation never reads it. */
+  forcedToolChoice?: boolean
 }
 
 export interface RequestIdentity {
@@ -72,7 +115,17 @@ export interface ProviderRequest {
   tools?: ToolSpec[]
   maxTokens?: number
   temperature?: number
+  /** Still three states: absent / on / off. */
   thinking?: { enabled: boolean; budgetTokens?: number }
+  /** Spec 02, 01 修补 2: one of the row's `thinkingSpec.effortLevels`; absent = the model's default. */
+  effort?: string
+  /** Spec 02, 01 修补 2: one of the row's `thinkingSpec.displays`; written only while thinking is on. */
+  display?: 'summarized' | 'omitted'
+  /**
+   * Spec 02, 01 修补 2 (decision H10): the guard drops the thinking blocks of every message whose
+   * index is below this one, each recorded as `drop / compacted`. Absent = 01's behaviour.
+   */
+  dropThinkingBefore?: number
 }
 
 export interface ToolSpec {
@@ -96,6 +149,11 @@ export interface Usage {
 export interface SendContext {
   signal?: AbortSignal
   identity: RequestIdentity // read-only for the provider, never modified
+  /**
+   * Spec 02, 01 修补 4 (decision A5): false = no first-byte limit on this send. The loop passes it
+   * only on the resend right after a first-byte timeout; absent = the adapter's own rule.
+   */
+  firstByteTimeout?: boolean
 }
 
 export interface Provider {
@@ -133,7 +191,10 @@ export interface EncodedRequest {
   readonly body: unknown // the wire payload handed to the SDK
   readonly promptHash: string // SHA-256 (hex) of canonicalJson(body)
   readonly toolDefinitionsHash: string
-  /** Audit: where each reasoning block went, and why. */
+  /**
+   * Audit: where each reasoning block went, and why — and, from spec 02 (01 修补 2), each vendor
+   * block and each field set on a text or tool-request block, all in message/block order.
+   */
   readonly thinkingDecisions: readonly ThinkingDecision[]
 }
 
@@ -147,6 +208,16 @@ export interface ThinkingDecision {
     | 'no-tools'
     | 'redacted-unsupported'
     | 'missing-signature'
+    /** Spec 02: a `replay: 'never'` vendor block — a call the vendor ran itself, or its result. */
+    | 'server-executed'
+    /** Spec 02 (H10): a thinking block below `ProviderRequest.dropThinkingBefore`. */
+    | 'compacted'
+    /**
+     * Spec 02 (01 修补 2; s6-spec-2, owner 2026-09-27): the `vendorFields` of a text or tool-request
+     * block stored with no `vendorSource` — before the fold stamped one — so rules 1 and 2 have
+     * nothing to compare and the fields are not sent.
+     */
+    | 'missing-source'
 }
 
 export interface CompleteResult {
@@ -168,16 +239,22 @@ export interface ProviderDefinition {
   wire: 'anthropic-messages' | 'openai-chat'
   configKeys: ConfigKey[]
   builtinModels: ModelInfo[]
+  /**
+   * Spec 02, 01 修补 2 (decisions A12, M2, M6): finish_reason values the openai-chat wire's own table
+   * does not know, as data. A definition may only ADD values: one the table already maps is refused
+   * when the provider is built. The anthropic-messages wire does not read it.
+   */
+  finishReasons?: Readonly<Record<string, StopReason>>
   /** Host capabilities enter only through here. */
   create(args: {
     network: HostNetwork
     /**
-     * A clock reading is the one host capability `retryAfterMs()` needs: the HTTP-date branch
-     * of `retry-after` is an absolute time, and the kernel has no `Date.now()` (lint gate).
-     * `Pick<…, 'now'>` rather than the whole HostClock on purpose — an adapter must not get a
-     * timer through this door, because retrying is the phase 2 loop's job, not the provider's.
+     * `now` is what `retryAfterMs()` needs: the HTTP-date branch of `retry-after` is an absolute
+     * time, and the kernel has no `Date.now()` (lint gate). `setTimeout` (spec 02, 01 修补 2 and 4)
+     * is for the byte-level idle watchdog only: retrying is still the loop's job, and the
+     * first-byte limit runs on the SDK's own timer.
      */
-    clock: Pick<HostClock, 'now'>
+    clock: Pick<HostClock, 'now' | 'setTimeout'>
     config: Record<string, string> // non-secret items, defaults already applied
     secrets: Record<string, string> // read from HostAdapter.secrets by the caller
   }): Provider
@@ -190,23 +267,54 @@ export interface ProviderRegistry {
 }
 
 /**
+ * Where the `vendorFields` of a text or tool-request block came from (spec 02, 01 修补 2; s6-spec-2,
+ * owner 2026-09-27): the same pair a thinking block carries, stamped by the stream fold whenever it
+ * attaches fields, so the guard can judge them with rules 1 and 2 — decideVendorFields().
+ */
+export interface VendorSource {
+  provider: ProviderId
+  providerModel: string
+}
+
+/**
  * The content model, shared with the Tape message payloads.
  *
  * `provider` and `providerModel` are recorded on the thinking block ITSELF: without them
  * the thinking guard has nothing to compare, and "drop or downgrade the previous model's
  * thinking blocks when the model changes" (master-reference §4.8.3) is unimplementable.
+ * A text or tool-request block carries the same pair as `vendorSource`, and only for its
+ * `vendorFields`: the block itself is everyone's, the fields are the vendor's.
  */
 export type ContentBlock =
-  | { type: 'text'; text: string }
+  | {
+      type: 'text'
+      text: string
+      vendorFields?: Record<string, unknown>
+      vendorSource?: VendorSource
+    }
   | {
       type: 'thinking'
       text: string
       signature: string
       provider: ProviderId
       providerModel: string
+      vendorFields?: Record<string, unknown>
     }
-  | { type: 'redacted-thinking'; data: string; provider: ProviderId; providerModel: string }
-  | { type: 'tool-request'; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: 'redacted-thinking'
+      data: string
+      provider: ProviderId
+      providerModel: string
+      vendorFields?: Record<string, unknown>
+    }
+  | {
+      type: 'tool-request'
+      id: string
+      name: string
+      input: Record<string, unknown>
+      vendorFields?: Record<string, unknown>
+      vendorSource?: VendorSource
+    }
   | {
       type: 'tool-response'
       id: string
@@ -217,6 +325,18 @@ export type ContentBlock =
       type: 'image'
       mediaType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'
       data: string
+    }
+  /**
+   * Spec 02, 01 修补 2 (decision M3): a block the vendor sent that has no counterpart above, kept
+   * verbatim. `replay: 'never'` marks a call the vendor executed itself, and its result: archived,
+   * never dispatched, never sent back.
+   */
+  | {
+      type: 'vendor'
+      provider: ProviderId
+      providerModel: string
+      raw: Record<string, unknown>
+      replay: 'same-model' | 'never'
     }
 
 export interface InternalMessage {
@@ -243,6 +363,17 @@ export type StreamEvent =
       input: Record<string, unknown>
     }
   | { type: 'usage'; usage: Usage }
+  /** Spec 02, 01 修补 2: a whole vendor block, complete as it stands. */
+  | {
+      type: 'vendor-block'
+      index: number
+      raw: Record<string, unknown>
+      replay: 'same-model' | 'never'
+    }
+  /** Spec 02, 01 修补 2: the fields a known block carried that the content model has no place for. */
+  | { type: 'vendor-fields'; index: number; fields: Record<string, unknown> }
+  /** Spec 02 (M5): the model name the vendor reported, at most once per stream. */
+  | { type: 'response-model'; modelId: string }
   | { type: 'stop'; reason: StopReason; providerReason: string | null }
   | {
       type: 'error'
@@ -252,6 +383,10 @@ export type StreamEvent =
       status?: number
       providerCode: string | null
       detail: string /* logs only, never rendered */
+      /** Spec 02, 01 修补 4 (A5): which limit ended the stream — no first byte, or no byte for too long. */
+      timeout?: 'first-byte' | 'idle'
+      /** Spec 02, 01 修补 2 (H12): epoch ms when an exhausted quota resets, when the vendor says. */
+      resetAt?: number
     }
 
 export type StopReason =
@@ -276,3 +411,7 @@ export type ProviderErrorCode =
   | 'egress-denied'
   | 'server'
   | 'unknown'
+  /** Spec 02, 01 修补 5 (H12): an exhausted quota or spend limit; not retryable. */
+  | 'quota-exhausted'
+  /** Spec 02, 01 修补 5 (H12): the account or organisation is not set up for this; not retryable. */
+  | 'account-config'

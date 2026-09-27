@@ -84,7 +84,7 @@ function providerOf(
   return new AnthropicMessagesProvider({
     id: PROVIDER_ID,
     network,
-    clock: { now: () => NOW },
+    clock: { now: () => NOW, setTimeout: () => () => undefined },
     apiKey: API_KEY,
     authToken: null,
     baseURL: BASE_URL,
@@ -135,6 +135,9 @@ function usage(overrides: Partial<Usage> = {}): Usage {
 }
 
 const START_USAGE: Usage = usage({ outputTokens: fixture.START_OUTPUT_TOKENS, final: false })
+
+/** Spec 02 (M5): `message_start` names the model that answered, reported once, after its usage. */
+const RESPONSE_MODEL: StreamEvent = { type: 'response-model', modelId: 'claude-test-4' }
 
 function terminalsOf(events: readonly StreamEvent[]): StreamEvent[] {
   return events.filter((event) => event.type === 'stop' || event.type === 'error')
@@ -253,6 +256,7 @@ describe('AnthropicMessagesProvider stream() normalisation', () => {
     checkStreamInvariants(events)
     expect(events).toEqual([
       { type: 'usage', usage: START_USAGE },
+      RESPONSE_MODEL,
       { type: 'text-delta', index: 0, text: fixture.PLAIN_TEXT[0] },
       { type: 'text-delta', index: 0, text: fixture.PLAIN_TEXT[1] },
       { type: 'usage', usage: usage() },
@@ -266,6 +270,7 @@ describe('AnthropicMessagesProvider stream() normalisation', () => {
     checkStreamInvariants(events)
     expect(events).toEqual([
       { type: 'usage', usage: START_USAGE },
+      RESPONSE_MODEL,
       { type: 'thinking-delta', index: 0, text: fixture.THINKING_TEXT[0] },
       { type: 'thinking-delta', index: 0, text: fixture.THINKING_TEXT[1] },
       { type: 'thinking-signature', index: 0, signature: fixture.THINKING_SIGNATURE },
@@ -290,6 +295,7 @@ describe('AnthropicMessagesProvider stream() normalisation', () => {
     checkStreamInvariants(events)
     expect(events).toEqual([
       { type: 'usage', usage: START_USAGE },
+      RESPONSE_MODEL,
       { type: 'redacted-thinking', index: 0, data: fixture.REDACTED_DATA },
       { type: 'text-delta', index: 1, text: fixture.REDACTED_ANSWER },
       { type: 'usage', usage: usage() },
@@ -302,6 +308,7 @@ describe('AnthropicMessagesProvider stream() normalisation', () => {
     checkStreamInvariants(events)
     expect(events).toEqual([
       { type: 'usage', usage: START_USAGE },
+      RESPONSE_MODEL,
       { type: 'text-delta', index: 0, text: fixture.TOOL_PREAMBLE },
       { type: 'tool-call-start', index: 1, id: fixture.TOOL_ID, name: fixture.TOOL_NAME },
       { type: 'tool-call-args-delta', index: 1, json: fixture.TOOL_ARGS_FRAGMENTS[0] },
@@ -494,8 +501,9 @@ describe('AnthropicMessagesProvider stream() normalisation', () => {
   it('turns a mid-stream error frame into the terminal error event (invariant 3)', async () => {
     const { events } = await run(sse(fixture.MID_STREAM_ERROR_FRAMES))
     checkStreamInvariants(events)
-    expect(events.slice(0, 2)).toEqual([
+    expect(events.slice(0, 3)).toEqual([
       { type: 'usage', usage: START_USAGE },
+      RESPONSE_MODEL,
       { type: 'text-delta', index: 0, text: fixture.MID_STREAM_TEXT },
     ])
     const terminal = events.at(-1)
@@ -607,7 +615,9 @@ describe('AnthropicMessagesProvider stream() error mapping', () => {
         ...(testCase.fixture.headers === undefined ? {} : { headers: testCase.fixture.headers }),
       }
       const overrides =
-        testCase.now === undefined ? {} : { clock: { now: () => testCase.now as number } }
+        testCase.now === undefined
+          ? {}
+          : { clock: { now: () => testCase.now as number, setTimeout: () => () => undefined } }
       const { events, net } = await run(exchange, overrides)
       checkStreamInvariants(events)
       // Exactly one physical request: maxRetries is 0, so a 500 is one call, not three.
@@ -668,10 +678,11 @@ describe('AnthropicMessagesProvider stream() error mapping', () => {
       const gate = createStreamGate()
       const net = fakeNetwork({ kind: 'sse', frames: fixture.PLAIN_TEXT_FRAMES, gate })
       const iterator = providerOf(net).stream(encodedRequest(), CONTEXT)[Symbol.asyncIterator]()
-      // message_start (one usage event), content_block_start, ping, one text delta.
+      // message_start (a usage event and the response model), content_block_start, ping, one text
+      // delta.
       gate.release(4)
       const events: StreamEvent[] = []
-      for (let pulled = 0; pulled < 2; pulled += 1) {
+      for (let pulled = 0; pulled < 3; pulled += 1) {
         // oxlint-disable-next-line no-await-in-loop -- a stream is consumed one event at a time
         const step = await iterator.next()
         if (step.done === true) throw new Error('the fixture ran out of frames')
@@ -770,8 +781,11 @@ describe('AnthropicMessagesProvider abort (acceptance 7, provider half)', () => 
       ])
       expect(events.at(-1)?.type).toBe('stop')
       expect(events).toHaveLength(stopAfter + 1)
-      // Event 1 is the message_start usage reading; the rest are text deltas, one per frame.
-      expect(textOf(events)).toBe(fixture.LONG_TEXT_DELTAS.slice(0, stopAfter - 1).join(''))
+      // Events 1 and 2 are the message_start usage reading and the response model; the rest are
+      // text deltas, one per frame.
+      expect(textOf(events)).toBe(
+        fixture.LONG_TEXT_DELTAS.slice(0, Math.max(0, stopAfter - 2)).join(''),
+      )
       expect(net.callCount).toBe(1)
     }
   }, 60_000)
@@ -792,7 +806,8 @@ async function abortAfter(stopAfter: number): Promise<Run> {
   })
   const iterator = stream[Symbol.asyncIterator]()
   const events: StreamEvent[] = []
-  // message_start (one usage event) and content_block_start (no event of its own).
+  // message_start (a usage event and the response model) and content_block_start (no event of its
+  // own).
   gate.release(2)
   while (events.length < stopAfter) {
     // oxlint-disable-next-line no-await-in-loop -- a stream is consumed one event at a time
@@ -914,3 +929,131 @@ async function withCredentialEnv(
     }
   }
 }
+
+describe('AnthropicMessagesProvider vendor blocks (spec 02, 01 修补 2 and 9 (t))', () => {
+  it('keeps an unknown block whole and a known block’s unknown field as its vendor fields', async () => {
+    const { events } = await run(sse(fixture.VENDOR_BLOCKS_FRAMES))
+    checkStreamInvariants(events)
+    // Both at their block's stop, complete: nothing is skipped any more (M3).
+    expect(events.filter((event) => event.type.startsWith('vendor-'))).toEqual([
+      { type: 'vendor-fields', index: 0, fields: fixture.THINKING_EXTRA_FIELD },
+      { type: 'vendor-block', index: 1, raw: fixture.UNKNOWN_BLOCK, replay: 'same-model' },
+    ])
+    expect(contentOf(events)).toEqual([
+      {
+        type: 'thinking',
+        text: fixture.THINKING_TEXT[0],
+        signature: fixture.THINKING_SIGNATURE,
+        provider: PROVIDER_ID,
+        providerModel: 'claude-test-4',
+        vendorFields: fixture.THINKING_EXTRA_FIELD,
+      },
+      {
+        type: 'vendor',
+        provider: PROVIDER_ID,
+        providerModel: 'claude-test-4',
+        raw: fixture.UNKNOWN_BLOCK,
+        replay: 'same-model',
+      },
+      { type: 'text', text: fixture.VENDOR_ANSWER },
+    ])
+  })
+
+  it('archives every call the vendor ran itself as never-replayed and dispatches none', async () => {
+    const { events } = await run(sse(fixture.SERVER_EXECUTED_FRAMES))
+    checkStreamInvariants(events)
+    // Not one of the three reaches the kernel's tool executor: no tool-call event at all.
+    expect(events.filter((event) => event.type.startsWith('tool-call'))).toEqual([])
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 1,
+        // The streamed input is folded in the way the SDK's own accumulator folds it.
+        raw: {
+          type: 'server_tool_use',
+          id: fixture.SERVER_TOOL_ID,
+          name: 'web_search',
+          input: { query: 'tenon' },
+        },
+        replay: 'never',
+      },
+      { type: 'vendor-block', index: 2, raw: fixture.SERVER_TOOL_RESULT, replay: 'never' },
+      {
+        type: 'vendor-block',
+        index: 3,
+        raw: {
+          type: 'tool_use',
+          id: fixture.TOOL_ID,
+          name: fixture.TOOL_NAME,
+          input: fixture.TOOL_INPUT,
+          caller: { type: 'code_execution_20250825', tool_id: 'srvtoolu_02' },
+        },
+        replay: 'never',
+      },
+    ])
+    expect(contentOf(events).map((block) => block.type)).toEqual([
+      'text',
+      'vendor',
+      'vendor',
+      'vendor',
+      'text',
+    ])
+  })
+
+  it('archives a vendor block whose streamed input does not parse, never to be sent back', async () => {
+    // 01 修补 2 「未知块……原样存进 Tape」, §崩溃、服务端调用块与兜底「块存进 Tape」: the block used to
+    // vanish at its stop, so the Tape had no record that the vendor ran a call and the loop never
+    // logged it. Now the start as it arrived, the fragments as their unparsed text.
+    const { events } = await run(sse(fixture.GARBLED_VENDOR_INPUT_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 0,
+        raw: {
+          type: 'server_tool_use',
+          id: fixture.SERVER_TOOL_ID,
+          name: 'web_search',
+          input: {},
+          partial_json: fixture.GARBLED_SERVER_QUERY,
+        },
+        replay: 'never',
+      },
+      {
+        type: 'vendor-block',
+        index: 1,
+        raw: { ...fixture.FUTURE_CALL_START, partial_json: fixture.GARBLED_FUTURE_INPUT },
+        // Not `same-model`: a block whose content we cannot state cannot go back as it was.
+        replay: 'never',
+      },
+    ])
+    expect(events.filter((event) => event.type.startsWith('tool-call'))).toEqual([])
+    expect(terminalsOf(events)).toEqual([
+      { type: 'stop', reason: 'end-turn', providerReason: 'end_turn' },
+    ])
+  })
+
+  it('archives an MCP connector call and its result as never-replayed, and dispatches neither', async () => {
+    // Plan step 6, 旧 101: `mcp_tool_use` is named beside `server_tool_use`, and every
+    // `*_tool_result` is the vendor's — the web search above reaches neither reading.
+    const { events } = await run(sse(fixture.MCP_EXECUTED_FRAMES))
+    checkStreamInvariants(events)
+    expect(events.filter((event) => event.type.startsWith('tool-call'))).toEqual([])
+    expect(events.filter((event) => event.type === 'vendor-block')).toEqual([
+      {
+        type: 'vendor-block',
+        index: 0,
+        raw: { ...fixture.MCP_TOOL_START, input: fixture.MCP_TOOL_INPUT },
+        replay: 'never',
+      },
+      { type: 'vendor-block', index: 1, raw: fixture.MCP_TOOL_RESULT, replay: 'never' },
+    ])
+  })
+
+  it('reports the model message_start names, once', async () => {
+    const { events } = await run(sse(fixture.PLAIN_TEXT_FRAMES))
+    expect(events.filter((event) => event.type === 'response-model')).toEqual([
+      { type: 'response-model', modelId: fixture.RESPONSE_MODEL_ID },
+    ])
+  })
+})

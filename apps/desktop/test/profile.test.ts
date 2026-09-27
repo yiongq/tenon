@@ -61,6 +61,8 @@ describe('desktop profiles', () => {
       sidebarCollapsed: true,
       provider: null,
       providerConfig: {},
+      defaultModelByProfile: {},
+      lastWorkspaceFolders: [],
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })
