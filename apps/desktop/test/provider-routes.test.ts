@@ -140,6 +140,32 @@ describe('provider.list', () => {
     expect(JSON.stringify(await h.list())).not.toContain(KEY)
   })
 
+  it('lists no thinking levels for a row whose spec names none (旧 186)', async () => {
+    // An empty list is no submenu: the menu opens 「思考强度 ›」 for any row that carries the field.
+    const base = createProviderRegistry()
+    registerBuiltinProviders(base)
+    const anthropic = base.get(ANTHROPIC_PROVIDER_ID) as ProviderDefinition
+    const row = anthropic.builtinModels[0]
+    expect(row).toBeDefined()
+    const h = await harness([
+      {
+        ...anthropic,
+        id: 'probe',
+        builtinModels: [
+          {
+            ...(row as NonNullable<typeof row>),
+            id: 'probe-model',
+            providerId: 'probe',
+            thinkingSpec: { mode: 'adaptive', defaultOn: true, effortLevels: [] },
+          },
+        ],
+      },
+    ])
+    const [listed] = (await h.entry('probe')).models
+    expect(listed?.id).toBe('probe-model')
+    expect(listed).not.toHaveProperty('effortLevels')
+  })
+
   it('marks a key as configured from its declared default', async () => {
     const h = await harness()
     const baseURL = (await h.entry(ZHIPU_PROVIDER_ID)).configKeys.find(

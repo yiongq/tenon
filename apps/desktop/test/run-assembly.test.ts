@@ -29,7 +29,7 @@ import type {
   StreamEvent,
 } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it } from 'vitest'
-import { readConfig, writeConfig } from '../src/main/host/profile.js'
+import { configPath, readConfig, writeConfig } from '../src/main/host/profile.js'
 import {
   DEFAULT_MAX_TOKENS,
   MAX_TOKENS_ENV,
@@ -423,6 +423,91 @@ describe('what the connector adds for the loop', () => {
       log: () => {},
     })
     expect(dev.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('http://localhost:8080')
+  })
+
+  it('keeps endpointOrigin on a save that landed during a read, not on the older file the read saw (s9-spec-2)', async () => {
+    // A resolveChoice whose config read was slow must not put the snapshot back to what the file
+    // held before a save that finished meanwhile: the next model_selected would name the old host.
+    const memory = createMemoryHost()
+    await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
+    let hold: { reached: () => void; release: Promise<void> } | null = null
+    const host: HostAdapter = {
+      ...memory,
+      fs: {
+        ...memory.fs,
+        readFile: async (path, opts) => {
+          const data = await memory.fs.readFile(path, opts)
+          const held = hold
+          if (held !== null && path.endsWith('config.json')) {
+            hold = null
+            held.reached()
+            await held.release
+          }
+          return data
+        },
+        stat: (path) => memory.fs.stat(path),
+        readdir: (path) => memory.fs.readdir(path),
+        mkdirp: (path) => memory.fs.mkdirp(path),
+        realpath: (path) => memory.fs.realpath(path),
+        writeFile: (path, data) => memory.fs.writeFile(path, data),
+      },
+    }
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'http://127.0.0.1:4000' } },
+    })
+    const connector = createRunConnector({
+      host,
+      providers: registry(),
+      env: {},
+      log: () => {},
+      config: await readConfig(host.fs, host.identity),
+    })
+    const reached = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    hold = { reached: reached.resolve, release: release.promise }
+    const resolving = connector.resolveChoice(choose)
+    await reached.promise
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://relay.example/' } },
+    })
+    release.resolve()
+    await resolving
+    expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://relay.example')
+  })
+
+  it('moves endpointOrigin to where a send read a config.json edited by hand (旧 49)', async () => {
+    // No write of this process announces a hand edit; the send's own read is what the snapshot
+    // learns it from (§续跑「endpointOrigin 按实际发往的地址记」).
+    const host = createMemoryHost()
+    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'http://127.0.0.1:4000' } },
+    })
+    const connector = createRunConnector({
+      host,
+      providers: registry(),
+      env: {},
+      log: () => {},
+      config: await readConfig(host.fs, host.identity),
+    })
+    const edited = {
+      ...(await readConfig(host.fs, host.identity)),
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://relay.example/' } },
+    }
+    await host.fs.writeFile(configPath(host.identity), JSON.stringify(edited))
+    const assembly = await connector.assemble({
+      sessionId: 's',
+      rootSessionId: 's',
+      choice: {
+        providerId: ANTHROPIC_PROVIDER_ID,
+        modelId: 'claude-sonnet-5',
+        effort: null,
+        capabilitySource: 'builtin',
+      },
+      signal: new AbortController().signal,
+    })
+    expect(assembly.endpointOrigin).toBe('https://relay.example')
+    expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://relay.example')
   })
 
   it('says where the model came from, and lets the session choice through untouched', async () => {

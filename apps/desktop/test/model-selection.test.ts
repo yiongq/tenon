@@ -66,6 +66,7 @@ async function routes(
     env?: Record<string, string>
     isPackaged?: boolean
     sessions?: SessionService | null
+    gate?: Promise<void>
   } = {},
 ): Promise<Routes> {
   const host = o.host ?? (await freshHost())
@@ -84,7 +85,13 @@ async function routes(
     isPackaged: o.isPackaged ?? false,
     log: () => {},
   })
-  registerModelRoutes({ ipcMain, sessions: o.sessions ?? null, providers, host })
+  registerModelRoutes({
+    ipcMain,
+    sessions: o.sessions ?? null,
+    providers,
+    host,
+    ...(o.gate === undefined ? {} : { gate: o.gate }),
+  })
   const call = async (channel: string, payload: unknown): Promise<unknown> => {
     const handler = handlers.get(channel)
     if (handler === undefined) throw new Error(`no handler for ${channel}`)
@@ -413,6 +420,50 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     expect((await readConfig(host.fs, host.identity)).providerConfig).toEqual({})
   })
 
+  it('refuses a move while the keychain cannot be cleared, before config.json is touched', async () => {
+    // 「钥匙串读或删出错就整次拒绝、不写 config.json」: the key stays with the host it was saved for.
+    const store = new Map<string, string>()
+    const secrets: HostSecrets = {
+      get: (key) => Promise.resolve(store.get(key) ?? null),
+      set: (key, value) => {
+        store.set(key, value)
+        return Promise.resolve()
+      },
+      delete: () => Promise.reject(new Error('the keychain is locked')),
+    }
+    const host = await freshHost(secrets)
+    const r = await routes({ host })
+    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    expect(
+      await r.call('provider.configure', {
+        id: ZHIPU_PROVIDER_ID,
+        values: { baseURL: 'https://gateway.example/api/paas/v4/', apiKey: 'sk-new' },
+      }),
+    ).toEqual({ ok: true, data: { ok: false, code: 'key-host-binding', configKey: 'baseURL' } })
+    expect((await readConfig(host.fs, host.identity)).providerConfig).toEqual({})
+    expect(store.get(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+  })
+
+  it('asks for no key again when a save keeps the stored host (01 修补 6「key 绑定主机」)', async () => {
+    // The host a key is bound to is the STORED base URL's, not the declared default's: a new path
+    // on the same relay is no move.
+    const r = await routes()
+    await writeConfig(r.host.fs, r.host.identity, {
+      providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://gateway.example/api/paas/v4/' } },
+    })
+    await r.host.secrets.set(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    expect(
+      await r.call('provider.configure', {
+        id: ZHIPU_PROVIDER_ID,
+        values: { baseURL: 'https://gateway.example/v4/' },
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    expect(await r.host.secrets.get(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+    expect(
+      (await readConfig(r.host.fs, r.host.identity)).providerConfig[ZHIPU_PROVIDER_ID]?.['baseURL'],
+    ).toBe('https://gateway.example/v4/')
+  })
+
   it('refuses a send with a key bound elsewhere, before any request (发送前再核一次)', async () => {
     const host = await freshHost()
     await host.secrets.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
@@ -533,6 +584,59 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
       expect(request.url.startsWith('https://b.example/')).toBe(true)
       expect(request.auth).toBe('Bearer sk-for-B')
     }
+  })
+
+  it('refuses the send, before any request, while saves keep landing during every read', async () => {
+    // readSettledInputs gives up after its attempts with `settled: false`: a key that no single
+    // save left beside this base URL is a configuration error, never a request.
+    const store = new Map<string, string>()
+    let host: HostAdapter | null = null
+    const settings = { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://a.example/api/paas/v4/' } }
+    const secrets: HostSecrets = {
+      get: async (key) => {
+        // Another save lands while the keychain is read — the same host each time.
+        if (host !== null) await writeConfig(host.fs, host.identity, { providerConfig: settings })
+        return store.get(key) ?? null
+      },
+      set: (key, value) => {
+        store.set(key, value)
+        return Promise.resolve()
+      },
+      delete: (key) => {
+        store.delete(key)
+        return Promise.resolve()
+      },
+    }
+    host = await freshHost(secrets)
+    await writeConfig(host.fs, host.identity, { providerConfig: settings })
+    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), 'sk-for-A')
+    let requests = 0
+    const connector = createRunConnector({
+      host: {
+        ...host,
+        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+      } as HostAdapter,
+      providers: registry(),
+      env: {},
+    })
+    const assembly = await connector.assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice: {
+        providerId: ZHIPU_PROVIDER_ID,
+        modelId: 'glm-5.3-flash',
+        effort: null,
+        capabilitySource: 'builtin',
+      },
+      signal: new AbortController().signal,
+    })
+    expect(() => assembly.provider()).toThrow(
+      expect.objectContaining({
+        name: 'ProviderConfigMissingError',
+        key: 'a key read while no save was moving its host',
+      }),
+    )
+    expect(requests).toBe(0)
   })
 })
 
@@ -662,6 +766,57 @@ describe('the five layers and the data-flow check (旧 107, 旧 184)', () => {
       }),
     ).toMatchObject({ providerId: ANTHROPIC_PROVIDER_ID })
   })
+
+  it('reads a private host as the local side: this machine to a private network is not asked about (开放问题 11)', async () => {
+    const ollamaDefault = { id: OLLAMA_PROVIDER_ID, modelId: 'qwen3:8b' }
+    expect(
+      await resolve({
+        previousOrigin: 'http://localhost:11434',
+        config: {
+          provider: ollamaDefault,
+          providerConfig: { [OLLAMA_PROVIDER_ID]: { baseURL: 'http://192.168.1.20:11434/v1/' } },
+        },
+      }),
+    ).toMatchObject({ providerId: OLLAMA_PROVIDER_ID, modelId: 'qwen3:8b' })
+  })
+
+  it('compares with where the default sends now: the stored base URL, not the declared one (A9)', async () => {
+    // Ollama's declared default is this machine; a stored public host is where the history would go.
+    expect(
+      await resolve({
+        previousOrigin: 'http://localhost:11434',
+        config: {
+          provider: { id: OLLAMA_PROVIDER_ID, modelId: 'qwen3:8b' },
+          providerConfig: { [OLLAMA_PROVIDER_ID]: { baseURL: 'https://gpu.example.com/v1/' } },
+        },
+      }),
+    ).toEqual({ needsConfirm: { host: 'gpu.example.com' } })
+    // And Anthropic's declared default is public, but a relay on this machine is not.
+    expect(
+      await resolve({
+        previousOrigin: 'http://localhost:11434',
+        config: {
+          provider: { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-sonnet-5' },
+          providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'http://127.0.0.1:4000' } },
+        },
+      }),
+    ).toMatchObject({ providerId: ANTHROPIC_PROVIDER_ID })
+  })
+
+  it('marks as the user’s only the hand-typed id it runs, not what TENON_MODEL filled in (旧 40, 旧 108)', async () => {
+    // A blank hand-typed default (a hand-edited config.json) leaves the model to TENON_MODEL: a
+    // synthesis the development variable named, not an id the user typed.
+    expect(
+      await resolve({
+        config: { provider: { id: ZHIPU_PROVIDER_ID, modelId: ' ', source: 'user' } },
+        env: { TENON_MODEL: 'glm-dev-only' },
+      }),
+    ).toMatchObject({
+      providerId: ZHIPU_PROVIDER_ID,
+      modelId: 'glm-dev-only',
+      capabilitySource: 'synthesized',
+    })
+  })
 })
 
 describe('a hand-typed model (旧 40, 旧 108)', () => {
@@ -692,8 +847,15 @@ describe('a hand-typed model (旧 40, 旧 108)', () => {
 })
 
 describe('session.selectModel and session.modelChoice', () => {
-  async function withSessions(): Promise<{ r: Routes; sessions: SessionService }> {
-    const host = await freshHost()
+  async function withSessions(
+    o: {
+      host?: HostAdapter
+      gate?: Promise<void>
+      /** Records each call the routes make into the session service. */
+      asked?: string[]
+    } = {},
+  ): Promise<{ r: Routes; sessions: SessionService }> {
+    const host = o.host ?? (await freshHost())
     const loop = createTestLoopPorts({})
     const sessions = createSessionService({
       host,
@@ -704,7 +866,26 @@ describe('session.selectModel and session.modelChoice', () => {
       protectedFiles: [],
     })
     sessions.bindLoop(loop)
-    return { r: await routes({ host, sessions }), sessions }
+    const asked = o.asked
+    const seen: SessionService =
+      asked === undefined
+        ? sessions
+        : {
+            ...sessions,
+            selectModel: (q) => (asked.push('selectModel'), sessions.selectModel(q)),
+            effectiveModelChoice: (q) => (
+              asked.push('effectiveModelChoice'),
+              sessions.effectiveModelChoice(q)
+            ),
+          }
+    return {
+      r: await routes({
+        host,
+        sessions: seen,
+        ...(o.gate === undefined ? {} : { gate: o.gate }),
+      }),
+      sessions,
+    }
   }
 
   it('records the choice and the profile’s default and provider — never the level as a default', async () => {
@@ -764,6 +945,95 @@ describe('session.selectModel and session.modelChoice', () => {
     })
     expect(await r.call('session.modelChoice', { sessionId: SESSION })).toMatchObject({
       data: { modelId: 'glm-own', capabilitySource: 'user' },
+    })
+  })
+
+  it('answers neither route until startup recovery is done (plan step 19: 接启动恢复的闸)', async () => {
+    const gate = Promise.withResolvers<void>()
+    const asked: string[] = []
+    const { r } = await withSessions({ gate: gate.promise, asked })
+    let answered = 0
+    const choosing = r
+      .call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: ZHIPU_PROVIDER_ID,
+        modelId: 'glm-5.3-flash',
+        effort: null,
+      })
+      .finally(() => (answered += 1))
+    const reading = r
+      .call('session.modelChoice', { sessionId: SESSION })
+      .finally(() => (answered += 1))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(asked).toEqual([])
+    expect(answered).toBe(0)
+    expect((await readConfig(r.host.fs, r.host.identity)).provider).toBeNull()
+    gate.resolve()
+    expect(await choosing).toEqual({ ok: true, data: { ok: true } })
+    expect(await reading).toMatchObject({ ok: true })
+    expect(asked.toSorted()).toEqual(['effectiveModelChoice', 'selectModel'])
+  })
+
+  it('writes each profile’s default in the profile’s lock: two choices at once keep both (每个 profile 一把主进程锁)', async () => {
+    // The first choice's config read is held (a slow disk) while a second choice, in the other
+    // profile, arrives: outside the lock the second would be overwritten by a patch built on the
+    // first's stale read.
+    const memory = createMemoryHost()
+    await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
+    let hold: { reached: () => void; release: Promise<void> } | null = null
+    const host: HostAdapter = {
+      ...memory,
+      fs: {
+        ...memory.fs,
+        readFile: async (path, opts) => {
+          const data = await memory.fs.readFile(path, opts)
+          const held = hold
+          if (held !== null && path.endsWith('config.json')) {
+            hold = null
+            held.reached()
+            await held.release
+          }
+          return data
+        },
+        stat: (path) => memory.fs.stat(path),
+        readdir: (path) => memory.fs.readdir(path),
+        mkdirp: (path) => memory.fs.mkdirp(path),
+        realpath: (path) => memory.fs.realpath(path),
+        writeFile: (path, data) => memory.fs.writeFile(path, data),
+      },
+    }
+    const { r, sessions } = await withSessions({ host })
+    const TASK = '7e2f0b1c-3d4a-4b5c-8d6e-9f0a1b2c3d4e'
+    await sessions.selectProfile({
+      sessionId: TASK,
+      profile: 'cowork',
+      dedicated: '/home/u/Tenon/workspaces/x' as AbsolutePath,
+    })
+    // Something read config.json before: the file exists, so each read goes through readFile.
+    await writeConfig(host.fs, host.identity, { locale: 'en' })
+    const reached = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    hold = { reached: reached.resolve, release: release.promise }
+    const first = r.call('session.selectModel', {
+      sessionId: TASK,
+      providerId: ANTHROPIC_PROVIDER_ID,
+      modelId: 'claude-opus-5-5',
+      effort: null,
+    })
+    await reached.promise
+    const second = r.call('session.selectModel', {
+      sessionId: SESSION,
+      providerId: ZHIPU_PROVIDER_ID,
+      modelId: 'glm-5.3-flash',
+      effort: null,
+    })
+    await Promise.race([second, new Promise((resolve) => setTimeout(resolve, 20))])
+    release.resolve()
+    expect(await first).toEqual({ ok: true, data: { ok: true } })
+    expect(await second).toEqual({ ok: true, data: { ok: true } })
+    expect((await readConfig(host.fs, host.identity)).defaultModelByProfile).toEqual({
+      cowork: { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-opus-5-5' },
+      chat: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash' },
     })
   })
 
