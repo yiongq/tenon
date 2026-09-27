@@ -33,7 +33,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, lookSource, proxyStore } from './support.js'
+import { LOOK, closedWindows, lookSource, proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'queue-user', tenantId: 'queue-tenant', profileDir: '/tenon/queue' }
 const SESSION = '9a6b9a2e-6b3d-4a71-9f52-0c8de7a11b3d'
@@ -739,6 +739,66 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
     expect(userTexts(await all(h))).toEqual(['work', 'after the close', 'queued, not urgent'])
     expect(h.loop.leaseLog.map((lease) => lease.origin)).toEqual([closing, other, other])
+  })
+
+  it('sends the urgent message for its own window when the stopped Run’s window closed too', async () => {
+    // 「Run 结束」: a window that closes after a stop leaves the cause `user-stop` (stopRequested), so
+    // the ended lease cannot say its window is gone; begun for that window, the auto-send would be
+    // aborted at once and the urgent message would never go out (rrC-2). Both orders.
+    for (const order of ['stop, then close', 'close, then send now'] as const) {
+      const closing = { window: 'closing' }
+      const other = { window: 'other' }
+      const closed: object[] = []
+      let runId = ''
+      let urgent: Promise<SendResult> | undefined
+      const h = harness(
+        async (self) => {
+          if (urgent !== undefined) return
+          if (order === 'stop, then close') {
+            urgent = self.service.send({
+              sessionId: SESSION,
+              origin: other,
+              text: 'stop, do this',
+              urgent: { runId },
+            })
+            closed.push(closing)
+            self.loop.abort(SESSION, 'close-window')
+            return
+          }
+          closed.push(closing)
+          self.loop.abort(SESSION, 'close-window')
+          const queued = await self.service.send({
+            sessionId: SESSION,
+            origin: other,
+            text: 'stop, do this',
+          })
+          if (queued.status !== 'queued') throw new Error(JSON.stringify(queued))
+          urgent = self.service.send({
+            sessionId: SESSION,
+            origin: other,
+            queuedId: queued.queuedId,
+            urgent: { runId },
+          })
+        },
+        undefined,
+        (loop) => closedWindows(loop, closed),
+      )
+      h.provider.script(calls('a'))
+      h.provider.script(done())
+      // oxlint-disable-next-line no-await-in-loop -- one Run per order
+      const sent = await h.service.send({ sessionId: SESSION, origin: closing, text: 'long task' })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      runId = sent.runId
+      // oxlint-disable-next-line no-await-in-loop -- that Run's end
+      expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
+      // oxlint-disable-next-line no-await-in-loop -- the urgent send
+      expect(await urgent).toMatchObject({ status: 'queued' })
+      // oxlint-disable-next-line no-await-in-loop -- the auto-send's end
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+      expect(h.loop.leaseLog.map((lease) => lease.origin)).toEqual([closing, other])
+      // oxlint-disable-next-line no-await-in-loop -- what was written
+      expect(userTexts(await all(h))).toEqual(['long task', 'stop, do this'])
+    }
   })
 
   it('puts an urgent item back as not urgent when the auto-send after the stop has no key', async () => {

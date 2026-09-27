@@ -15,6 +15,7 @@ import {
 } from '../../src/index.js'
 import type {
   InspectorRegistration,
+  LoopPorts,
   MemoryHost,
   ModelInfo,
   NewEntry,
@@ -49,7 +50,7 @@ import type {
   TestLoopPorts,
   TestToolRegistry,
 } from '../../src/testing/index.js'
-import { LOOK, lookSource, proxyStore } from './support.js'
+import { LOOK, closedWindows, lookSource, proxyStore } from './support.js'
 
 const IDENTITY = {
   userId: 'recover-user',
@@ -104,6 +105,8 @@ interface ServiceOptions {
   readonly extraInspectors?: readonly InspectorRegistration[]
   /** Runs while a call executes. */
   readonly during?: () => void
+  /** The ports the service is bound to, from the test's own. */
+  readonly ports?: (loop: TestLoopPorts) => LoopPorts
 }
 
 /** One process's service on the store: a new one is a restart. */
@@ -129,7 +132,7 @@ function service(store: TapeStore, o: ServiceOptions = {}): Service {
     },
     { tools: o.tools ?? {}, userSetting: () => ({ userSetting: 'always-allow' }) },
   )
-  built.bindLoop(loop)
+  built.bindLoop(o.ports?.(loop) ?? loop)
   return { memory, service: built, loop, provider, executed, inspector, logs }
 }
 
@@ -610,6 +613,61 @@ describe('judging a waiting card again at startup (旧 168)', () => {
     expect(after.executed).toEqual([{ at: 'b' }])
   })
 
+  it('writes nothing for a resume or a send from a window closed while they waited, and stays resumable', async () => {
+    // 「登记之后、append 之前被中止」, B4: a command that waited in the mailbox begins its lease with
+    // the origin it came with, and the desktop aborts it at once when that window has closed. A
+    // resume opened on it anyway would close b as stopped with no stop pressed, and the root would
+    // no longer be resumable (rrC-1).
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const before = service(store)
+    before.provider.script(calls('a', 'b'))
+    expect((await send(before)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const closed = { window: 'closed' }
+    const after = service(store, {
+      idsFrom: 1000,
+      inspector: createFakeInspector({ id: 'asker', ceiling: 'ask', answer: { kind: 'none' } }),
+      ports: (loop) => closedWindows(loop, [closed]),
+    })
+    after.memory.setPolicy({
+      status: 'current',
+      version: 'v2',
+      snapshot: { tools: [{ policyId: 'p1', serverId: 'fs', toolName: 'look', effect: 'deny' }] },
+    })
+    expect((await after.service.recover()).resumable.map((item) => item.rootSessionId)).toEqual([
+      SESSION,
+    ])
+    after.memory.setPolicy({ status: 'current', version: 'v3', snapshot: { tools: [] } })
+    const written = (await all(store)).length
+    // The send enters behind the resume, with no lease: it begins one at its turn, as the resume.
+    const resumed = after.service.resume({ rootSessionId: SESSION, origin: closed })
+    const sent = after.service.send({ sessionId: SESSION, origin: closed, text: 'and also' })
+    expect(await resumed).toEqual({ status: 'none' })
+    expect(await sent).toEqual({ status: 'not-sent', code: 'app-exit' })
+    expect(await all(store)).toHaveLength(written)
+    expect(after.loop.leaseLog.map((lease) => [lease.cause, lease.finished])).toEqual([
+      ['close-window', true],
+      ['close-window', true],
+    ])
+    // Only the send says it ended; the resume opened nothing to end.
+    expect(await after.loop.runEnded()).toMatchObject({
+      runId: null,
+      reason: { code: 'shutdown-aborted', trigger: 'close-window' },
+      recorded: false,
+    })
+    expect(after.loop.recorded.filter((event) => event.type === 'run-ended')).toHaveLength(1)
+    expect(after.loop.connector.calls.assemble).toBe(0)
+    expect(await after.service.listPendingRoots({ limit: 20 })).toEqual([
+      { sessionId: SESSION, waitKind: 'resume' },
+    ])
+    after.provider.script(done())
+    expect(await after.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+      status: 'started',
+    })
+    expect((await after.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(outcomes(await all(store))).toEqual(['0:not-run/policy', '1:completed/null'])
+    expect(after.executed).toEqual([{ at: 'b' }])
+  })
+
   it('resumes first when a message comes to a resumable session, and queues the message', async () => {
     for (const trouble of ['confirm', 'no-key'] as const) {
       // oxlint-disable-next-line no-await-in-loop -- one restart per trouble
@@ -700,6 +758,47 @@ describe('stopping a resumable session (§每种答复同批写什么「可续�
       // oxlint-disable-next-line no-await-in-loop -- the next start
       expect((await service(store, { idsFrom: 2000 }).service.recover()).resumable).toEqual([])
     }
+  })
+
+  it('writes the stop on a resume’s own lease when the stop reaches it before its append', async () => {
+    // 「登记之后、append 之前被中止」: a stop that aborts the lease a resume began in the mailbox, while
+    // it reads the head, is written by the resume — the Run that sends nothing, on that lease, and
+    // no resuming Run nor its `assemble` (rrC-1).
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    let stopping: Service | null = null
+    let stopped: Promise<{ stopped: boolean }> | null = null
+    const store = proxyStore(inner, {
+      head: (sessionId) => {
+        if (stopping !== null && stopped === null && stopping.loop.liveLease(SESSION) !== null) {
+          stopped = stopping.service.stop({ rootSessionId: SESSION })
+        }
+        return inner.head(sessionId)
+      },
+    })
+    const before = service(store)
+    before.provider.script(calls('a', 'b'))
+    await send(before)
+    const after = service(store, { idsFrom: 1000 })
+    after.memory.setPolicy({
+      status: 'current',
+      version: 'v2',
+      snapshot: { tools: [{ policyId: 'p1', serverId: 'fs', toolName: 'look', effect: 'deny' }] },
+    })
+    await after.service.recover()
+    stopping = after
+    expect(await after.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+      status: 'none',
+    })
+    expect(await stopped).toEqual({ stopped: true })
+    expect(after.loop.leaseLog).toHaveLength(1)
+    const ends = after.loop.recorded.filter((event) => event.type === 'run-ended')
+    expect(ends).toHaveLength(1)
+    expect(ends[0]).toMatchObject({ recorded: true, reason: { code: 'user-stopped' } })
+    const entries = await all(store)
+    expect(named(entries, 'session/model_selected')).toHaveLength(1)
+    expect(outcomes(entries)).toEqual(['0:not-run/policy', '1:not-run/stopped'])
+    expect(after.loop.connector.calls.assemble).toBe(0)
+    expect(await after.service.listPendingRoots({ limit: 20 })).toEqual([])
   })
 
   it('stops with the lease a send began at its entry: one lease, only that Run’s end', async () => {

@@ -16,6 +16,7 @@ import {
 } from '../../src/index.js'
 import type {
   HostAdapter,
+  LoopPorts,
   ModelInfo,
   SessionEvent,
   SessionService,
@@ -68,6 +69,7 @@ interface Harness {
 function harness(
   onEvent?: (event: SessionEvent, h: Harness) => void,
   wrap?: (inner: TapeStore) => TapeStore,
+  ports?: (loop: TestLoopPorts) => LoopPorts,
 ): Harness {
   const inner = createMemoryTapeStore({ identity: IDENTITY })
   const store = wrap?.(inner) ?? inner
@@ -93,7 +95,7 @@ function harness(
     connector: loop.connector,
     protectedFiles: [],
   })
-  service.bindLoop(loop)
+  service.bindLoop(ports?.(loop) ?? loop)
   self = { store, service, provider, loop }
   return self
 }
@@ -198,6 +200,30 @@ describe('leases and the arrival order', () => {
     if (started.status === 'started') await h.loop.runEnded({ runId: started.runId })
     expect(h.loop.leaseLog.map((lease) => lease.finished)).toEqual([true, true])
     expect(h.loop.liveLease(SESSION)).toBeNull()
+  })
+
+  it('finishes the lease of a turn whose read throws before any round, and the next send runs', async () => {
+    // The same rule for a read no round catches — a send-now's look at the queue here; `resume`'s
+    // and 「继续」's reads of the Tape are others: the command's own catch finishes the lease the
+    // turn holds (s9-spec-1).
+    let failures = 1
+    const h = harness(undefined, undefined, (loop) => ({
+      ...loop,
+      queue: {
+        ...loop.queue,
+        peek: (root) =>
+          failures-- > 0 ? Promise.reject(new Error('the queue is gone')) : loop.queue.peek(root),
+      },
+    }))
+    h.provider.script(scriptedTurn({ deltas: ['an answer'], usage: USAGE }))
+    await expect(
+      h.service.send({ sessionId: SESSION, origin: null, queuedId: 'queued-1' }),
+    ).rejects.toThrow(/the queue is gone/)
+    expect(h.loop.liveLease(SESSION)).toBeNull()
+    const started = await h.service.send({ sessionId: SESSION, origin: null, text: 'second' })
+    expect(started.status).toBe('started')
+    if (started.status === 'started') await h.loop.runEnded({ runId: started.runId })
+    expect(h.loop.leaseLog.map((lease) => lease.finished)).toEqual([true, true])
   })
 
   it('queues a send that arrives while a Run streams, marked urgent once that Run is stopped', async () => {

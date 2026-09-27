@@ -1,9 +1,16 @@
 /**
  * What the loop tests share: a host whose timers fire at once, the connector tool every batch calls,
- * and a store a case can reach into.
+ * a store a case can reach into, and leases begun the way the desktop begins them.
  */
 import { createMemoryHost } from '../../src/index.js'
-import type { HostAdapter, McpConnection, McpToolSource, TapeStore } from '../../src/index.js'
+import type {
+  HostAdapter,
+  LoopPorts,
+  McpConnection,
+  McpToolSource,
+  RunOrigin,
+  TapeStore,
+} from '../../src/index.js'
 
 /** The connector tool the loop tests call: `look` on server `fs`, under its provider name. */
 export const LOOK = 'fs__look'
@@ -84,4 +91,24 @@ export function proxyStore(store: TapeStore, overrides: Partial<TapeStore>): Tap
         : value
     },
   })
+}
+
+/**
+ * `loop` with its leases begun as the desktop's RunRegistry begins them: a lease begun for a window
+ * already closed is aborted at once with `close-window` (chat.ts), so a command that waited in the
+ * mailbox while its window closed writes nothing (「登记之后、append 之前被中止」).
+ */
+export function closedWindows(loop: LoopPorts, closed: readonly RunOrigin[]): LoopPorts {
+  return {
+    ...loop,
+    leases: {
+      begin: (q) => {
+        const begun = loop.leases.begin(q)
+        if (!('refused' in begun) && q.origin !== null && closed.includes(q.origin)) {
+          begun.abort('close-window')
+        }
+        return begun
+      },
+    },
+  }
 }

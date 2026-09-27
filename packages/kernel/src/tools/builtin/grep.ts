@@ -16,7 +16,6 @@ import {
   decodeText,
   failed,
   globMatcher,
-  linesOf,
   succeeded,
   walkFiles,
   whenThrown,
@@ -136,7 +135,7 @@ export const GREP_TOOL: BuiltinTool = {
 
 type Mode = 'content' | 'files_with_matches' | 'count'
 
-interface GrepOptions {
+export interface GrepOptions {
   readonly mode: Mode
   readonly lineNumbers: boolean
   readonly onlyMatching: boolean
@@ -163,21 +162,22 @@ export const grepExecutor: ToolExecutor = async (q) => {
       ? (await walkFiles(q.fs, q.target, q.scope, q.signal)).filter((file) => filter.test(file))
       : [{ path: q.target, relative: basename(q.target) }]
     // Only the page is kept; the entries around it are counted, so memory stays bounded by
-    // `head_limit` however much the walk finds, and the note can still name the total.
-    const kept: string[] = []
-    let total = 0
-    const end = options.headLimit === 0 ? Infinity : options.offset + options.headLimit
+    // `head_limit` however much the walk finds or one file holds, and the note can still name the
+    // total.
+    const found: GrepPage = {
+      offset: options.offset,
+      end: options.headLimit === 0 ? Infinity : options.offset + options.headLimit,
+      kept: [],
+      total: 0,
+    }
     for (const file of files) {
       // oxlint-disable-next-line no-await-in-loop -- one file at a time, the stop checked between
       const text = await searchable(q, file.path)
       checkSignal(q.signal)
       if (text === null) continue
-      for (const entry of entriesOf(file.path, text, regex.value, options)) {
-        if (total >= options.offset && total < end) kept.push(entry)
-        total += 1
-      }
+      entriesOf(found, file.path, text, regex.value, options)
     }
-    return succeeded(page(kept, total, options))
+    return succeeded(page(found, options))
   } catch (error) {
     return whenThrown(error, q.target)
   }
@@ -264,66 +264,167 @@ async function searchable(
   }
 }
 
-/** One file's entries in the chosen mode: nothing when it has no match. */
-function entriesOf(path: AbsolutePath, content: string, regex: RegExp, o: GrepOptions): string[] {
-  const fileLines = linesOf(content)
-  const hits = o.multiline ? multilineHits(content, regex) : lineHits(fileLines, regex)
-  if (hits.length === 0) return []
-  if (o.mode === 'files_with_matches') return [path]
-  if (o.mode === 'count') return [`${path}:${String(hits.length)}`]
+/**
+ * The page one call fills, file after file: every entry found is counted into `total`, and only the
+ * ones from `offset` up to `end` are built and kept. One file's entries come a line at a time and
+ * are built only on the page (s18-safety-3), so past the file's own text a call holds the page and
+ * one line, however many lines the file has — `head_limit` 0, no limit, keeps them all (the owner's).
+ */
+export interface GrepPage {
+  readonly offset: number
+  readonly end: number
+  readonly kept: string[]
+  total: number
+}
+
+/** Counts one entry, and builds and keeps it only when it lands on the page. */
+function put(found: GrepPage, entry: () => string): void {
+  if (found.total >= found.offset && found.total < found.end) found.kept.push(entry())
+  found.total += 1
+}
+
+/** One file's entries in the chosen mode, onto the page: nothing when it has no match. */
+export function entriesOf(
+  found: GrepPage,
+  path: AbsolutePath,
+  content: string,
+  regex: RegExp,
+  o: GrepOptions,
+): void {
+  const hits = o.multiline ? multilineHits(content, regex) : lineHits(content, regex)
+  if (o.mode === 'files_with_matches') {
+    // The first hit names the file; the rest of it is not searched.
+    if (hits.next().done !== true) put(found, () => path)
+    return
+  }
+  if (o.mode === 'count') {
+    let count = 0
+    for (let next = hits.next(); next.done !== true; next = hits.next()) count += 1
+    if (count > 0) put(found, () => `${path}:${String(count)}`)
+    return
+  }
   if (o.onlyMatching) {
-    return hits.flatMap((hit) =>
-      hit.parts.map((part) =>
-        o.lineNumbers ? `${path}:${String(hit.line)}:${part}` : `${path}:${part}`,
-      ),
-    )
-  }
-  const matched = new Set<number>()
-  for (const hit of hits) for (let n = hit.line; n <= hit.lastLine; n += 1) matched.add(n)
-  const shown = new Set<number>()
-  for (const n of matched) {
-    for (let k = Math.max(1, n - o.before); k <= Math.min(fileLines.length, n + o.after); k += 1) {
-      shown.add(k)
+    for (const hit of hits) {
+      for (const [start, end] of wholeSpans(hit.text, hit.matches)) {
+        put(found, () => {
+          const part = hit.text.slice(start, end)
+          return o.lineNumbers ? `${path}:${String(hit.line)}:${part}` : `${path}:${part}`
+        })
+      }
     }
+    return
   }
-  const out: string[] = []
-  let previous = 0
-  for (const n of [...shown].toSorted((a, b) => a - b)) {
-    // Groups of context are set apart as ripgrep does; without context there are no groups.
-    const context = o.before > 0 || o.after > 0
-    if (context && previous !== 0 && n > previous + 1) out.push('--')
-    const mark = matched.has(n) ? ':' : '-'
-    const line = fileLines[n - 1] ?? ''
-    out.push(o.lineNumbers ? `${path}${mark}${String(n)}${mark}${line}` : `${path}${mark}${line}`)
-    previous = n
-  }
-  return out
-}
-
-interface Hit {
-  readonly line: number
-  readonly lastLine: number
-  readonly parts: readonly string[]
-}
-
-function lineHits(fileLines: readonly string[], regex: RegExp): Hit[] {
-  const hits: Hit[] = []
-  fileLines.forEach((line, i) => {
-    const matches = [...line.matchAll(regex)]
-    if (matches.length === 0) return
-    hits.push({ line: i + 1, lastLine: i + 1, parts: wholeParts(line, matches) })
-  })
-  return hits
+  showLines(found, path, content, hits, o)
 }
 
 /**
- * The parts the matches show, each widened to whole code points: a match that begins on the low half
- * of a surrogate pair takes its high half, and one that ends on a high half takes its low half. A part
+ * Content mode: each matched line with its context, in line order, as ripgrep prints them. The
+ * matched lines come in order, so a line is shown once, after the context left over from the match
+ * before and the context before it; its text is read only when it lands on the page.
+ */
+function showLines(
+  found: GrepPage,
+  path: AbsolutePath,
+  content: string,
+  hits: Iterable<Hit>,
+  o: GrepOptions,
+): void {
+  const context = o.before > 0 || o.after > 0
+  const lineText = lineReader(content)
+  let shown = 0
+  let matched = 0
+  const show = (n: number, mark: ':' | '-'): void => {
+    // Groups of context are set apart as ripgrep does; without context there are no groups.
+    if (context && shown !== 0 && n > shown + 1) put(found, () => '--')
+    put(found, () => {
+      const line = lineText(n)
+      return o.lineNumbers ? `${path}${mark}${String(n)}${mark}${line}` : `${path}${mark}${line}`
+    })
+    shown = n
+  }
+  for (const hit of hits) {
+    // A multiline hit matches every line it spans; a line a hit before it matched is not again.
+    for (let n = Math.max(hit.line, matched + 1); n <= hit.lastLine; n += 1) {
+      const after = matched === 0 ? 0 : matched + o.after
+      for (let k = shown + 1; k < n && k <= after; k += 1) show(k, '-')
+      for (let k = Math.max(shown + 1, n - o.before); k < n; k += 1) show(k, '-')
+      show(n, ':')
+      matched = n
+    }
+  }
+  if (matched === 0 || o.after === 0) return
+  const last = Math.min(matched + o.after, lineCount(content))
+  for (let k = shown + 1; k <= last; k += 1) show(k, '-')
+}
+
+/**
+ * A matched line, or the lines a multiline match spans, and the text its matches index into: the
+ * line itself, or the whole file.
+ */
+interface Hit {
+  readonly line: number
+  readonly lastLine: number
+  readonly text: string
+  readonly matches: readonly RegExpExecArray[]
+}
+
+/**
+ * The hits of a file, one line at a time: its lines as `linesOf` splits them — on `\n`, a final one
+ * ending the last line — never all of them at once.
+ */
+function* lineHits(content: string, regex: RegExp): Generator<Hit, void, undefined> {
+  let n = 0
+  for (let start = 0; start < content.length;) {
+    const newline = content.indexOf('\n', start)
+    const end = newline === -1 ? content.length : newline
+    const line = content.slice(start, end)
+    n += 1
+    const matches = [...line.matchAll(regex)]
+    if (matches.length > 0) yield { line: n, lastLine: n, text: line, matches }
+    start = end + 1
+  }
+}
+
+/** The line numbers of increasing offsets, counted forward: no table of where each line starts. */
+function lineCounter(content: string): (index: number) => number {
+  let line = 1
+  let newline = content.indexOf('\n')
+  return (index) => {
+    while (newline !== -1 && newline < index) {
+      line += 1
+      newline = content.indexOf('\n', newline + 1)
+    }
+    return line
+  }
+}
+
+/** Line `n`'s text, for numbers asked in increasing order: read forward, the file never split. */
+function lineReader(content: string): (n: number) => string {
+  let line = 1
+  let start = 0
+  return (n) => {
+    for (; line < n; line += 1) start = content.indexOf('\n', start) + 1
+    const newline = content.indexOf('\n', start)
+    return content.slice(start, newline === -1 ? content.length : newline)
+  }
+}
+
+/** How many lines `linesOf` finds in a text, without splitting it. */
+function lineCount(content: string): number {
+  if (content.length === 0) return 0
+  let count = 0
+  for (let i = content.indexOf('\n'); i !== -1; i = content.indexOf('\n', i + 1)) count += 1
+  return content.endsWith('\n') ? count : count + 1
+}
+
+/**
+ * The spans the matches show, each widened to whole code points: a match that begins on the low half
+ * of a surrogate pair takes its high half, and one that ends on a high half takes its low half. A span
  * that then overlaps the one before joins it, so a character is shown once. Half a pair would be
  * stored on the Tape and sent in every later request (§内置工具与参数「不切开代理对」, 「正则方言跟
  * ripgrep」). An empty match shows nothing.
  */
-function wholeParts(text: string, matches: readonly RegExpExecArray[]): string[] {
+function wholeSpans(text: string, matches: readonly RegExpExecArray[]): Array<[number, number]> {
   const spans: Array<[number, number]> = []
   for (const match of matches) {
     if (match[0] === '') continue
@@ -337,7 +438,7 @@ function wholeParts(text: string, matches: readonly RegExpExecArray[]): string[]
     if (last !== undefined && start < last[1]) last[1] = Math.max(last[1], end)
     else spans.push([start, end])
   }
-  return spans.map(([start, end]) => text.slice(start, end))
+  return spans
 }
 
 function isHighSurrogate(code: number): boolean {
@@ -348,34 +449,22 @@ function isLowSurrogate(code: number): boolean {
   return code >= 0xdc00 && code <= 0xdfff
 }
 
-function multilineHits(text: string, regex: RegExp): Hit[] {
-  const starts = [0]
-  for (let i = 0; i < text.length; i += 1) if (text[i] === '\n') starts.push(i + 1)
-  const lineAt = (index: number): number => {
-    let low = 0
-    let high = starts.length - 1
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2)
-      if ((starts[mid] ?? 0) <= index) low = mid
-      else high = mid - 1
-    }
-    return low + 1
-  }
-  const hits: Hit[] = []
-  for (const match of text.matchAll(regex)) {
+/** The hits of a multiline pattern, one match at a time; an empty match is none. */
+function* multilineHits(content: string, regex: RegExp): Generator<Hit, void, undefined> {
+  const lineAt = lineCounter(content)
+  for (const match of content.matchAll(regex)) {
     if (match[0] === '') continue
-    const first = lineAt(match.index)
-    const last = lineAt(match.index + match[0].length - 1)
-    hits.push({ line: first, lastLine: last, parts: wholeParts(text, [match]) })
+    const line = lineAt(match.index)
+    const lastLine = lineAt(match.index + match[0].length - 1)
+    yield { line, lastLine, text: content, matches: [match] }
   }
-  return hits
 }
 
 /**
  * `offset` entries skipped, then at most `head_limit` (0: all), with a note when some were left.
  * `kept` holds just those entries, of `total` found.
  */
-function page(kept: readonly string[], total: number, o: GrepOptions): string {
+function page({ kept, total }: GrepPage, o: GrepOptions): string {
   if (total === 0) return GREP_TEXTS.none
   const from = Math.min(o.offset, total)
   const to = o.headLimit === 0 ? total : Math.min(total, from + o.headLimit)

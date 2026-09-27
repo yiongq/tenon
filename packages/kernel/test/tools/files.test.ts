@@ -11,7 +11,13 @@ import { SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
 import { fill } from '../../src/prompts/index.js'
 import { globMatcher } from '../../src/tools/builtin/files.js'
 import { GLOB_RESULT_LIMIT, GLOB_TEXTS, globExecutor } from '../../src/tools/builtin/glob.js'
-import { GREP_HEAD_LIMIT, GREP_TEXTS, grepExecutor } from '../../src/tools/builtin/grep.js'
+import {
+  GREP_HEAD_LIMIT,
+  GREP_TEXTS,
+  entriesOf,
+  grepExecutor,
+} from '../../src/tools/builtin/grep.js'
+import type { GrepOptions, GrepPage } from '../../src/tools/builtin/grep.js'
 import { READ_TEXTS, readExecutor, readResult } from '../../src/tools/builtin/read.js'
 import { BUILTIN_SERVER_ID } from '../../src/tools/registry.js'
 import type { ExecuteQuery, ToolExecution, ToolExecutor } from '../../src/tools/executor.js'
@@ -245,6 +251,21 @@ describe('Glob', () => {
   })
 })
 
+/** Grep's options as its executor reads them from a call: content mode, the defaults otherwise. */
+function grepOptions(o: Partial<GrepOptions>): GrepOptions {
+  return {
+    mode: 'content',
+    lineNumbers: true,
+    onlyMatching: false,
+    before: 0,
+    after: 0,
+    multiline: false,
+    headLimit: GREP_HEAD_LIMIT,
+    offset: 0,
+    ...o,
+  }
+}
+
 describe('Grep', () => {
   const FILES = {
     '/ws/a.ts': 'const alpha = 1\nconst beta = 2\n// Alpha again\n',
@@ -347,20 +368,18 @@ describe('Grep', () => {
     expect(textOf(each)).toBe('/ws/e.txt:1:😀\n/ws/e.txt:1:😀')
   })
 
-  it('keeps only the page in memory, and still counts the rest for the note', async () => {
-    // One file of 300 000 matching lines: the entries were once spread into a push, which overflows
-    // the call stack and came back as a failure of the root (plan step 18, head_limit 250).
-    const big = 'x\n'.repeat(300_000)
+  it('pages one long file, and still counts the rest for the note', async () => {
+    const big = 'x\n'.repeat(100_000)
     const host = await hostWith({ '/ws/big.txt': big, '/ws/small.txt': 'x\n' })
     const paged = await run(
       grepExecutor,
       host,
       'Grep',
-      { pattern: '.', output_mode: 'content', offset: 299_999 },
+      { pattern: '.', output_mode: 'content', offset: 99_999 },
       WS,
     )
     expect(paged).toMatchObject({ isError: false, state: 'completed' })
-    expect(textOf(paged)).toBe(`/ws/big.txt:300000:x\n/ws/small.txt:1:x`)
+    expect(textOf(paged)).toBe(`/ws/big.txt:100000:x\n/ws/small.txt:1:x`)
     const first = await run(
       grepExecutor,
       host,
@@ -374,10 +393,48 @@ describe('Grep', () => {
       fill(GREP_TEXTS.more, {
         from: '1',
         to: String(GREP_HEAD_LIMIT),
-        total: '300001',
+        total: '100001',
         next: String(GREP_HEAD_LIMIT),
       }),
     )
+  })
+
+  it('fills the page from the first lines of a long file, and only counts the rest', () => {
+    // s18-safety-3: one file's lines, hits and entry strings were all built before the page was
+    // applied — a 64 MiB file of short lines is millions of each. Now an entry is built only on the
+    // page, and the page is full once the pattern has run over the lines it needed, not the file.
+    const text = Array.from({ length: 100_000 }, (_, i) => (i % 10 === 0 ? 'x' : 'y')).join('\n')
+    // Every entry but a `--` is built around its path: the entry strings built, counted.
+    let built = 0
+    const path = {
+      toString: () => {
+        built += 1
+        return '/ws/long.txt'
+      },
+    } as unknown as AbsolutePath
+    // The pattern runs once or twice a line, once a multiline match: a few hundred fill the page,
+    // and only a count reads the whole file first — 110 000 runs — to build its one entry.
+    for (const [o, total, runsToFill] of [
+      // Every tenth line matches: groups of five lines, the first of three, set apart by `--`.
+      [grepOptions({ before: 2, after: 2 }), 3 + 9999 * 6, 1000],
+      [grepOptions({ onlyMatching: true, multiline: true }), 10_000, 1000],
+      [grepOptions({ mode: 'count' }), 1, 110_000],
+    ] as const) {
+      const found: GrepPage = { offset: 0, end: GREP_HEAD_LIMIT, kept: [], total: 0 }
+      built = 0
+      let runs = 0
+      class Watched extends RegExp {
+        override exec(line: string): RegExpExecArray | null {
+          if (found.kept.length < GREP_HEAD_LIMIT) runs += 1
+          return super.exec(line)
+        }
+      }
+      entriesOf(found, path, text, new Watched('x', o.multiline ? 'gsu' : 'gu'), o)
+      expect(found.total).toBe(total)
+      expect(found.kept).toHaveLength(Math.min(total, GREP_HEAD_LIMIT))
+      expect(built).toBeLessThanOrEqual(found.kept.length)
+      expect(runs).toBeLessThanOrEqual(runsToFill)
+    }
   })
 
   it('answers a bad pattern, an unknown type and no match without a search', async () => {
