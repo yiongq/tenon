@@ -146,23 +146,49 @@ describe('approval.list, approval.resume and the recovery gate (plan step 16)', 
     })
   })
 
-  it('answers nothing until startup recovery is done', async () => {
+  it('answers nothing, and asks the kernel nothing, until startup recovery is done', async () => {
+    // Plan step 16: `approval.*` 都先 await — recovery's rewrites land before any answer reads the
+    // Tape (§启动恢复与发送防护).
     const ipc = fakeIpc()
     const gate = Promise.withResolvers<void>()
-    registerApprovalRoutes({
-      ipcMain: ipc.ipcMain,
-      sessions: stubSessions('applied').sessions,
-      gate: gate.promise,
+    const { sessions } = stubSessions('applied')
+    const reached: string[] = []
+    const recording = new Proxy(sessions, {
+      get(target, key, receiver): unknown {
+        const value: unknown = Reflect.get(target, key, receiver)
+        if (typeof value !== 'function') return value
+        return (...args: unknown[]) => {
+          reached.push(String(key))
+          return (value as (...a: unknown[]) => unknown).apply(target, args)
+        }
+      },
     })
-    let answered = false
-    const listing = ipc.call('approval.list', { limit: 20 }).then((result) => {
-      answered = true
-      return result
+    registerApprovalRoutes({ ipcMain: ipc.ipcMain, sessions: recording, gate: gate.promise })
+    let answered = 0
+    const settled = (call: Promise<unknown>): Promise<unknown> =>
+      call.then((result) => {
+        answered += 1
+        return result
+      })
+    const calls = [
+      settled(ipc.call('approval.list', { limit: 20 })),
+      settled(
+        ipc.call('approval.respond', {
+          kind: 'approval',
+          sessionId: SESSION,
+          requestId: REQUEST,
+          decision: 'allow',
+        }),
+      ),
+      settled(ipc.call('approval.current', { sessionId: SESSION })),
+      settled(ipc.call('approval.resume', { sessionId: SESSION })),
+    ]
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
     })
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(answered).toBe(false)
+    expect({ answered, reached }).toEqual({ answered: 0, reached: [] })
     gate.resolve()
-    expect(await listing).toMatchObject({ ok: true })
+    for (const result of await Promise.all(calls)) expect(result).toMatchObject({ ok: true })
+    expect(reached.toSorted()).toEqual(['answer', 'currentPending', 'listPendingRoots', 'resume'])
   })
 })

@@ -25,7 +25,7 @@ import type { IdSource } from '../ids.js'
 import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { createBlockAccumulator } from '../provider/base.js'
-import { ProviderConfigMissingError } from '../provider/errors.js'
+import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
 import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
@@ -361,12 +361,22 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     } catch (error) {
       // A resumed Run stopped before it was assembled has no provider to ask (§续跑).
       if (signal.aborted) return aborted()
-      if (!(error instanceof ProviderConfigMissingError)) throw error
-      errorCode = 'auth'
+      // A configuration problem ends the Run as the failure card names it, with what already ran
+      // kept (§续跑「构造失败也不能丢已执行调用的结果」): a missing key is `auth`; a value present but
+      // unusable (a base URL with a query string) is `invalid-request`, as a new round's prebuild
+      // reads it (mailbox.ts `configProblem`).
+      const code =
+        error instanceof ProviderConfigMissingError
+          ? 'auth'
+          : error instanceof ProviderInvalidArgumentError
+            ? 'invalid-request'
+            : null
+      if (code === null) throw error
+      errorCode = code
       return finish({
         code: 'provider-error',
         providerId: ctx.model.providerId,
-        errorCode: 'auth',
+        errorCode: code,
         providerReason: null,
         attempts: 0,
       })

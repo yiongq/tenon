@@ -1161,54 +1161,60 @@ describe('a pause, and a stop that beats it', () => {
     expect(outcomes(await all(h))).toEqual([])
   })
 
-  it('ends as stopped when the stop lands after the Run decided to pause, and writes no decision', async () => {
-    const gate = Promise.withResolvers<void>()
-    const inspector = ask()
-    const h = harness({
-      inspectors: [inspector.registration],
-      // A message sent while the Run judges holds the mailbox until the case lets it go, so the
-      // Run's terminal task waits behind it.
-      ports: (loop) => ({
-        ...loop,
-        queue: {
-          ...loop.queue,
-          enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
-            await gate.promise
-            return loop.queue.enqueue(...args)
+  // 答复已登记、还没 append 时先以 close-window 中止、再 chat.stop（上一条两个时点同样再各跑一次）: the
+  // stop that follows a closed window is read as the stop (lease.stopRequested), here before the
+  // commit; answer.test.ts has the other time point, mid-commit.
+  for (const cause of ['user-stop', 'close-window-then-stop'] as const) {
+    it(`ends as stopped when the stop lands after the Run decided to pause, and writes no decision (${cause})`, async () => {
+      const gate = Promise.withResolvers<void>()
+      const inspector = ask()
+      const h = harness({
+        inspectors: [inspector.registration],
+        // A message sent while the Run judges holds the mailbox until the case lets it go, so the
+        // Run's terminal task waits behind it.
+        ports: (loop) => ({
+          ...loop,
+          queue: {
+            ...loop.queue,
+            enqueue: async (...args: Parameters<LoopPorts['queue']['enqueue']>) => {
+              await gate.promise
+              return loop.queue.enqueue(...args)
+            },
           },
-        },
-      }),
+        }),
+      })
+      let queued: Promise<unknown> | undefined
+      inspector.answer(() => {
+        queued ??= h.service.send({ sessionId: SESSION, origin: null, text: 'one more thing' })
+        return { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
+      })
+      h.provider.script(
+        callTurn([
+          { id: 'toolu_1', input: { at: 'a' } },
+          { id: 'toolu_2', input: { at: 'b' } },
+        ]),
+      )
+      const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'look at both' })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      // Past the decision: the Run has returned its pause and its terminal task is queued.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 20)
+      })
+      if (cause === 'close-window-then-stop') h.loop.abort(SESSION, 'close-window')
+      expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+      gate.resolve()
+      expect(await queued).toMatchObject({ status: 'queued' })
+      const ended = await h.loop.runEnded({ runId: sent.runId })
+      expect(ended.reason).toEqual({ code: 'user-stopped' })
+      const entries = await all(h)
+      expect(named(entries, 'tool/permission_decided')).toEqual([])
+      expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
+      expect(named(entries, 'execution/run_terminal')[0]?.payload['reason']).toEqual({
+        code: 'user-stopped',
+      })
+      expect(h.loop.recorded.filter((event) => event.type === 'tool-outcome')).toHaveLength(2)
     })
-    let queued: Promise<unknown> | undefined
-    inspector.answer(() => {
-      queued ??= h.service.send({ sessionId: SESSION, origin: null, text: 'one more thing' })
-      return { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
-    })
-    h.provider.script(
-      callTurn([
-        { id: 'toolu_1', input: { at: 'a' } },
-        { id: 'toolu_2', input: { at: 'b' } },
-      ]),
-    )
-    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'look at both' })
-    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
-    // Past the decision: the Run has returned its pause and its terminal task is queued.
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20)
-    })
-    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
-    gate.resolve()
-    expect(await queued).toMatchObject({ status: 'queued' })
-    const ended = await h.loop.runEnded({ runId: sent.runId })
-    expect(ended.reason).toEqual({ code: 'user-stopped' })
-    const entries = await all(h)
-    expect(named(entries, 'tool/permission_decided')).toEqual([])
-    expect(outcomes(entries)).toEqual(['not-run/stopped', 'not-run/stopped'])
-    expect(named(entries, 'execution/run_terminal')[0]?.payload['reason']).toEqual({
-      code: 'user-stopped',
-    })
-    expect(h.loop.recorded.filter((event) => event.type === 'tool-outcome')).toHaveLength(2)
-  })
+  }
 })
 
 describe('tool-outcome and its facts', () => {

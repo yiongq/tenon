@@ -260,7 +260,7 @@ describe('closing what a crash left open (§执行日志与恢复表)', () => {
   it('closes an approved call that never got its dispatch not-run / crashed, and the Run recovered (旧 120, 旧 171)', async () => {
     const crash = dying(has('execution/dispatch_committed'))
     const before = service(crash.store)
-    before.provider.script(calls('a'))
+    before.provider.script(calls('a', 'b'))
     expect((await send(before)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
     expect(await allow(before, await requestIdOf(before))).toEqual({ status: 'applied' })
     expect((await before.loop.runEnded()).recorded).toBe(false)
@@ -269,7 +269,9 @@ describe('closing what a crash left open (§执行日志与恢复表)', () => {
     const after = service(crash.inner, { idsFrom: 1000 })
     expect(await after.service.recover()).toEqual({ resumable: [], errors: [] })
     const entries = await all(crash.inner)
-    expect(outcomes(entries)).toEqual(['0:not-run/crashed'])
+    // 旧 171: 被批准的调用与同批其余记 not-run / crashed（经 run_started.cause.batch 读到）— b was never
+    // judged, and only the resumed Run's cause names it.
+    expect(outcomes(entries)).toEqual(['0:not-run/crashed', '1:not-run/crashed'])
     expect(terminals(entries)).toEqual(['paused/run', 'recovered/recovery'])
     expect(before.executed).toEqual([])
     // The next request passes B1's check before it goes out.
@@ -558,6 +560,56 @@ describe('judging a waiting card again at startup (旧 168)', () => {
     expect(again.executed).toEqual([{ at: 'b' }])
   })
 
+  it('keeps a root resumable when its resume could not be written, and resumes it the next time', async () => {
+    // 「凡写出指向可续跑项的 run_started{ resume } 的…同一任务里移除它」: nothing written, nothing removed
+    // (models/model2: resumable-missing-from-set) — or b would never be judged.
+    const inner = createMemoryTapeStore({ identity: IDENTITY })
+    let failed = false
+    const store = proxyStore(inner, {
+      append: (batch) => {
+        const resumes = batch.entries.some(
+          (entry) =>
+            entry.name === 'execution/run_started' &&
+            (entry.payload['cause'] as { kind: string }).kind === 'resume',
+        )
+        if (resumes && !failed) {
+          failed = true
+          return Promise.reject(new Error('SQLITE_BUSY: database is locked'))
+        }
+        return inner.append(batch)
+      },
+    })
+    const before = service(store)
+    before.provider.script(calls('a', 'b'))
+    expect((await send(before)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const after = service(store, {
+      idsFrom: 1000,
+      inspector: createFakeInspector({ id: 'asker', ceiling: 'ask', answer: { kind: 'none' } }),
+    })
+    after.memory.setPolicy({
+      status: 'current',
+      version: 'v2',
+      snapshot: { tools: [{ policyId: 'p1', serverId: 'fs', toolName: 'look', effect: 'deny' }] },
+    })
+    expect((await after.service.recover()).resumable.map((item) => item.rootSessionId)).toEqual([
+      SESSION,
+    ])
+    after.memory.setPolicy({ status: 'current', version: 'v3', snapshot: { tools: [] } })
+    await expect(after.service.resume({ rootSessionId: SESSION, origin: null })).rejects.toThrow(
+      'SQLITE_BUSY',
+    )
+    expect(await after.service.listPendingRoots({ limit: 20 })).toEqual([
+      { sessionId: SESSION, waitKind: 'resume' },
+    ])
+    after.provider.script(done())
+    expect(await after.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+      status: 'started',
+    })
+    expect((await after.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(outcomes(await all(store))).toEqual(['0:not-run/policy', '1:completed/null'])
+    expect(after.executed).toEqual([{ at: 'b' }])
+  })
+
   it('resumes first when a message comes to a resumable session, and queues the message', async () => {
     for (const trouble of ['confirm', 'no-key'] as const) {
       // oxlint-disable-next-line no-await-in-loop -- one restart per trouble
@@ -599,11 +651,18 @@ describe('judging a waiting card again at startup (旧 168)', () => {
 describe('stopping a resumable session (§每种答复同批写什么「可续跑的会话里停止」)', () => {
   it('writes a Run that sends nothing, closes the rest stopped, and lists it no more', async () => {
     for (const ats of [['a'], ['a', 'b']]) {
-      const store = createMemoryTapeStore({ identity: IDENTITY })
+      const inner = createMemoryTapeStore({ identity: IDENTITY })
+      const appends: NewEntry[][] = []
+      const store = proxyStore(inner, {
+        append: async (batch) => {
+          appends.push([...batch.entries])
+          return inner.append(batch)
+        },
+      })
       const before = service(store)
       before.provider.script(calls(...ats))
       // oxlint-disable-next-line no-await-in-loop -- one session per batch size
-      await send(before)
+      const paused = await send(before)
       const after = service(store, { idsFrom: 1000 })
       after.memory.setPolicy({
         status: 'current',
@@ -612,8 +671,25 @@ describe('stopping a resumable session (§每种答复同批写什么「可续�
       })
       // oxlint-disable-next-line no-await-in-loop -- startup first
       await after.service.recover()
+      const recovered = appends.length
       // oxlint-disable-next-line no-await-in-loop -- the stop
       expect(await after.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+      // 一次 append 里有新 Run 的 run_started{ resume }、同批其余的 not-run / stopped（单调用批没有）
+      // 与 run_terminal{ user-stopped }.
+      const stopBatches = appends.slice(recovered)
+      expect(stopBatches.map((batch) => batch.map((entry) => entry.name))).toEqual([
+        [
+          'execution/run_started',
+          ...(ats.length === 1 ? [] : ['tool/result', 'execution/tool_outcome']),
+          'execution/run_terminal',
+        ],
+      ])
+      const [started] = stopBatches[0] ?? []
+      expect(started?.payload['cause']).toMatchObject({
+        kind: 'resume',
+        pausedRunId: paused.runId,
+        batch: { runId: paused.runId, requestSeq: 1 },
+      })
       // oxlint-disable-next-line no-await-in-loop -- this session's facts
       const entries = await all(store)
       expect(terminals(entries).at(-1)).toBe('user-stopped/run')
@@ -647,6 +723,30 @@ describe('stopping a resumable session (§每种答复同批写什么「可续�
     expect(ends[0]).toMatchObject({ recorded: true, reason: { code: 'user-stopped' } })
     expect(outcomes(await all(store))).toEqual(['0:not-run/policy', '1:not-run/stopped'])
   })
+})
+
+describe('the scan over every session (§启动恢复与发送防护 第 1 步, 裁决 B1)', () => {
+  it('recovers a session that shares its updatedAt with the last row of a page', async () => {
+    // listSessions' cursor is strictly below: paged from the boundary row's updatedAt as it is, the
+    // session tied with that row would never be closed before its next request.
+    const crash = dying(has('execution/run_terminal'))
+    const crashed = service(crash.store)
+    crashed.provider.script(done())
+    expect((await send(crashed)).recorded).toBe(false)
+    // Its tie at updatedAt 0, first by id: the 1000th row of the first page.
+    const tied = service(crash.inner, { idsFrom: 1000 })
+    await tied.service.createSession({ sessionId: '1e5f9a2e-6b3d-4a71-9f52-0c8de7a11b3a' })
+    // 999 sessions updated later: the first 999 rows.
+    const later = service(crash.inner, { idsFrom: 2000 })
+    later.memory.advance(1000)
+    for (let i = 0; i < 999; i += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one session after another, as a user makes them
+      await later.service.createSession()
+    }
+    const after = service(crash.inner, { idsFrom: 10_000 })
+    expect(await after.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(terminals(await all(crash.inner))).toEqual(['recovered/recovery'])
+  }, 30_000)
 })
 
 describe('T1 at the write (旧 119)', () => {

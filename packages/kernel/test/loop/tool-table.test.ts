@@ -394,6 +394,7 @@ function assertPrefixes(bodies: readonly { messages: unknown[]; tools?: unknown 
   }
 }
 
+// 旧 32's approval cell (跨 Run 批准) is in pairing.test.ts, whose harness has both wires' calls.
 describe('the prefix discipline (A13; 旧 32, the part without approvals)', () => {
   it('holds on the Anthropic wire', async () => {
     expect.hasAssertions()

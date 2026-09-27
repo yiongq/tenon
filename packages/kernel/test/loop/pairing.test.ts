@@ -508,6 +508,49 @@ describe('rejecting each call of a batch in turn leaves every call paired (旧 1
   }
 })
 
+describe('the prefix discipline across an approval (A13; 旧 32「跨 Run 批准」, 验收 26)', () => {
+  // The cell tool-table.test.ts leaves out: a card pauses the Run, the allow opens another, and its
+  // request extends the paused one — messages a prefix, system and tools the same bytes.
+  for (const wire of WIRES) {
+    it(`holds on ${wire}`, async () => {
+      const h = harness(
+        wire,
+        [callTurn(wire, ['Looking.'], [{ id: 'call_x', at: 'a' }]), textTurn(wire), textTurn(wire)],
+        { inspectors: [askAll()], host: createMemoryHost() },
+      )
+      expect((await send(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+      // The interface language changes while the card waits: the system stays the paused one's.
+      h.loop.setLocale('zh-CN')
+      const card = await h.service.currentPending({ sessionId: SESSION })
+      expect(
+        await h.service.answer({
+          kind: 'approval',
+          sessionId: SESSION,
+          requestId: card?.card.requestId ?? '',
+          decision: 'allow',
+          origin: null,
+        }),
+      ).toEqual({ status: 'applied' })
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+      expect((await send(h)).reason).toEqual({ code: 'completed' })
+      const bodies = h.net.requests.map(
+        (request) => request.body as { messages: unknown[]; system?: unknown; tools?: unknown },
+      )
+      expect(bodies).toHaveLength(3)
+      for (let i = 1; i < bodies.length; i += 1) {
+        const previous = bodies[i - 1]
+        const current = bodies[i]
+        if (previous === undefined || current === undefined) throw new Error('missing request')
+        expect(current.messages.slice(0, previous.messages.length)).toEqual(previous.messages)
+        expect(JSON.stringify(current.system)).toBe(JSON.stringify(bodies[0]?.system))
+        expect(JSON.stringify(current.tools)).toBe(JSON.stringify(bodies[0]?.tools))
+      }
+      expect(h.executed).toEqual([{ at: 'a' }])
+      expect(h.net.checkFailures).toEqual([])
+    })
+  }
+})
+
 /** The first result the Run writes never lands: the bug the check is there to catch. */
 const losingFirstResult = (inner: TapeStore): TapeStore => {
   let lost = false

@@ -146,6 +146,13 @@ function lastUserText(h: Harness): string {
   return body.messages.at(-1)?.content.at(-1)?.text ?? ''
 }
 
+/** The hosts `queue-held` said, in order: null once a hold was cleared. */
+function heldHosts(h: Harness): unknown[] {
+  return h.loop.recorded
+    .filter((event) => event.type === 'queue-held')
+    .map((event) => (event.type === 'queue-held' ? event.host : undefined))
+}
+
 function ended(h: Harness): RunEnded[] {
   return h.loop.recorded.filter((event): event is RunEnded => event.type === 'run-ended')
 }
@@ -236,6 +243,77 @@ describe('a message sent while a Run is busy (旧 22, 旧 132)', () => {
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
     expect(lastUserText(h)).toBe('meanwhile')
     expect(h.loop.queued(SESSION)).toEqual([])
+  })
+
+  it('goes out after the card is denied, on the next Run (「Run 结束时」: user-rejected, F2)', async () => {
+    // 根会话的 Run 以 completed 或 user-rejected（F2）结束之后，排队消息自动作为下一条发出.
+    let queued: Promise<SendResult> | undefined
+    const h = harness((self) => {
+      queued ??= self.service.send({ sessionId: SESSION, origin: null, text: 'then c' })
+    })
+    h.inspector.answer(({ call }) =>
+      call.args['at'] === 'b'
+        ? { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] }
+        : { kind: 'none' },
+    )
+    h.provider.script(calls('a', 'b'))
+    const runId = await startRun(h, 'look at a and b')
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({
+      code: 'paused',
+      waitingFor: 'approval',
+    })
+    expect(await queued).toMatchObject({ status: 'queued' })
+    const card = await h.service.currentPending({ sessionId: SESSION })
+    h.provider.script(done())
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: card?.card.requestId ?? '',
+        decision: 'deny',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-rejected', toolName: 'look' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    const entries = await all(h)
+    expect(userTexts(entries)).toEqual(['look at a and b', 'then c'])
+    const [opener, sent] = entries.filter((entry) => entry.name === 'message/user')
+    expect(sent?.payload['messageId']).not.toBe(opener?.payload['messageId'])
+    expect(lastUserText(h)).toBe('then c')
+    expect(h.loop.queued(SESSION)).toEqual([])
+  })
+
+  it('stays queued when its insertion at the batch boundary could not be written', async () => {
+    // 「插进去的那一刻才写 message/user」: not written, not inserted — back in the queue, not lost
+    // (models/README: 排队消息不丢).
+    let sent: Promise<unknown> | undefined
+    let failed = false
+    const h = harness(
+      (self) => {
+        sent ??= self.service.send({ sessionId: SESSION, origin: null, text: 'also check b' })
+      },
+      (inner) =>
+        proxyStore(inner, {
+          append: (batch) => {
+            if (!failed && batch.entries.every((entry) => entry.name === 'message/user')) {
+              failed = true
+              return Promise.reject(new Error('SQLITE_FULL: database or disk is full'))
+            }
+            return inner.append(batch)
+          },
+        }),
+    )
+    h.provider.script(calls('a'))
+    const runId = await startRun(h, 'check a')
+    expect(await h.loop.runEnded({ runId })).toMatchObject({ recorded: false })
+    expect(await sent).toMatchObject({ status: 'queued' })
+    expect(failed).toBe(true)
+    expect(h.loop.queued(SESSION).map((item) => item.text)).toEqual(['also check b'])
+    expect(userTexts(await all(h))).toEqual(['check a'])
+    expect(
+      h.loop.recorded.filter((event) => event.type === 'user-message' && event.queuedId !== null),
+    ).toEqual([])
   })
 })
 
@@ -369,6 +447,54 @@ describe('send-now (「立即发送绑定 runId」)', () => {
     h.provider.script(done())
     await h.loop.runEnded()
     expect(userTexts(await all(h))).toEqual(['before', 'this one', 'after'])
+  })
+
+  it('clears held once the held item is sent now into a Run it stops (「间接切公网」)', async () => {
+    // held 另在这些时候清掉、发 queue-held{ host: null }：…held 那条被取走（…立即发送）— at once, not
+    // only when the round after it opens (models/model1: held item taken by 立即发送 clears held).
+    let heldId = ''
+    let afterSendNow: unknown[] | undefined
+    const h = harness(async (self) => {
+      if (afterSendNow !== undefined || heldId === '') return
+      const running = self.loop.recorded.findLast((event) => event.type === 'run-started')
+      const answered = await self.service.send({
+        sessionId: SESSION,
+        origin: null,
+        queuedId: heldId,
+        urgent: { runId: running?.type === 'run-started' ? running.runId : '' },
+      })
+      expect(answered).toEqual({ status: 'queued', queuedId: heldId })
+      afterSendNow = heldHosts(self)
+    })
+    h.inspector.answer({ kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] })
+    h.provider.script(calls('a'))
+    expect((await h.loop.runEnded({ runId: await startRun(h, 'check a') })).reason).toEqual({
+      code: 'paused',
+      waitingFor: 'approval',
+    })
+    // A direct send while the card waits meets a public host: it waits in the queue, held.
+    h.loop.connector.needsConfirm('api.example.com')
+    const held = await h.service.send({ sessionId: SESSION, origin: null, text: 'to the cloud' })
+    if (held.status !== 'held') throw new Error(`held answered ${JSON.stringify(held)}`)
+    expect(heldHosts(h)).toEqual(['api.example.com'])
+    h.loop.connector.needsConfirm(null)
+    h.inspector.answer({ kind: 'none' })
+    h.provider.script(done())
+    const card = await h.service.currentPending({ sessionId: SESSION })
+    heldId = held.queuedId
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: card?.card.requestId ?? '',
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
+    expect(afterSendNow).toEqual(['api.example.com', null])
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(lastUserText(h)).toBe('to the cloud')
   })
 
   it('leaves the queued item in place when its send-now has no key', async () => {
@@ -598,6 +724,81 @@ describe('a direct send and the queue (§插话与输入框状态表「空闲」
     })
     expect(await all(h)).toEqual([])
     expect(h.loop.queued(SESSION).map((item) => item.text)).toEqual(['waiting'])
+  })
+
+  it('ends as stopped a Run that decided completed when the stop comes before its commit', async () => {
+    // Plan step 17: Run 已决定 completed、提交之前 chat.stop：终态为 user-stopped，不自动发出非 urgent
+    // 项 — the reply is on the Tape, the terminal task has not run (「mailbox」).
+    let stopping: Promise<unknown> | undefined
+    let self: Harness | undefined
+    const h = harness(undefined, (inner) =>
+      proxyStore(inner, {
+        append: async (batch) => {
+          const receipts = await inner.append(batch)
+          if (batch.entries.some((entry) => entry.name === 'message/assistant')) {
+            stopping ??= self?.service.stop({ rootSessionId: SESSION })
+            await stopping
+          }
+          return receipts
+        },
+      }),
+    )
+    self = h
+    h.provider.script(done())
+    const hold = h.loop.connector.holdAssemble()
+    const first = h.service.send({ sessionId: SESSION, origin: null, text: 'one' })
+    await hold.reached
+    const second = h.service.send({ sessionId: SESSION, origin: null, text: 'two' })
+    hold.release()
+    expect(await second).toMatchObject({ status: 'queued' })
+    const started = await first
+    if (started.status !== 'started') throw new Error('not started')
+    const end = await h.loop.runEnded({ runId: started.runId })
+    expect(await stopping).toEqual({ stopped: true })
+    expect(end.reason).toEqual({ code: 'user-stopped' })
+    const entries = await all(h)
+    expect(entries.filter((entry) => entry.name === 'message/assistant')).toHaveLength(1)
+    expect(
+      entries.findLast((entry) => entry.name === 'execution/run_terminal')?.payload,
+    ).toMatchObject({ reason: { code: 'user-stopped' } })
+    expect(h.loop.queued(SESSION).map((item) => item.text)).toEqual(['two'])
+    expect(ended(h)).toHaveLength(1)
+    expect(h.loop.leaseLog).toHaveLength(1)
+  })
+
+  it('keeps the non-urgent items when a stop lands while the completed terminal commits', async () => {
+    // 「从队列取什么」: a stop that reached the lease meanwhile is read again by its cause — what was
+    // taken too many goes back; the committed terminal still names the run-ended.
+    let stopping: Promise<unknown> | undefined
+    let self: Harness | undefined
+    const h = harness(undefined, (inner) =>
+      proxyStore(inner, {
+        append: async (batch) => {
+          if (batch.entries.some((entry) => entry.name === 'execution/run_terminal')) {
+            stopping ??= self?.service.stop({ rootSessionId: SESSION })
+            await stopping
+          }
+          return inner.append(batch)
+        },
+      }),
+    )
+    self = h
+    h.provider.script(done())
+    const hold = h.loop.connector.holdAssemble()
+    const first = h.service.send({ sessionId: SESSION, origin: null, text: 'one' })
+    await hold.reached
+    const second = h.service.send({ sessionId: SESSION, origin: null, text: 'two' })
+    hold.release()
+    expect(await second).toMatchObject({ status: 'queued' })
+    const started = await first
+    if (started.status !== 'started') throw new Error('not started')
+    expect((await h.loop.runEnded({ runId: started.runId })).reason).toEqual({
+      code: 'completed',
+    })
+    expect(await stopping).toEqual({ stopped: true })
+    expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([['two', false]])
+    expect(ended(h)).toHaveLength(1)
+    expect(h.loop.leaseLog).toHaveLength(1)
   })
 
   it('ends as stopped a Run whose completion a stop beat, and sends no queued item', async () => {

@@ -1059,7 +1059,6 @@ export function createLoop(deps: LoopDeps): Loop {
       if ('refused' in begun) return { status: 'refused', code: begun.refused }
       lease = hold(box, begun)
     }
-    resumables.delete(root)
     try {
       await openResumed(
         ports,
@@ -1072,9 +1071,14 @@ export function createLoop(deps: LoopDeps): Loop {
         [],
       )
     } catch (error) {
+      // Nothing was written: the Tape still says resumable, and so does the set — a later resume or
+      // send resumes it (models/model2: resumable-missing-from-set).
       finish(box, lease)
       throw error
     }
+    // Out of the set in the task that wrote the `run_started{ resume }` naming it, once it did
+    // (§主进程与 kernel 的循环接口「recover」).
+    resumables.delete(root)
     return 'started'
   }
 
@@ -1170,6 +1174,10 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null && lease.signal.aborted) return await abortedAnswer(ports, box, lease)
       const target = await answerTarget(tape, q)
       if (typeof target === 'string') {
+        // A stop that aborted this answer's lease while the Tape was read was promised a close by
+        // the holder (「停止」: 有活租约就 abort; 「登记之后、append 之前被中止」): the card still
+        // waiting — a newer one than this answer named — is cancelled in its name.
+        if (lease !== null && lease.signal.aborted) return await abortedAnswer(ports, box, lease)
         if (lease !== null) finish(box, lease)
         return { status: target }
       }
@@ -1307,6 +1315,9 @@ export function createLoop(deps: LoopDeps): Loop {
         writer: resolver,
       })
       await appendTo(waiting.sessionId, [decided])
+      // A stop that landed while the re-judgement committed: 暂停中停止 closes the new card, which
+      // never shows; a quit or a closed window leaves it for the restart (B4), as a pause does.
+      if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
       finish(box, lease)
       const card = cardOfEntries(waiting.sessionId, [decided])
       if (card !== null) deliver(card)
@@ -1657,7 +1668,15 @@ export function createLoop(deps: LoopDeps): Loop {
         createdAt: now(),
       })
     })
-    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    let receipts: readonly AppendResult[]
+    try {
+      receipts = await tape.appendEntries({ sessionId, incarnationId, entries })
+    } catch (error) {
+      // Not written, so not inserted: back in the queue, in their order, before the Run fails
+      // (models/README: 排队消息不丢).
+      await ports.queue.restore(root, items)
+      throw error
+    }
     for (const { item, messageId } of inserted) {
       emit(ports, {
         type: 'user-message',
