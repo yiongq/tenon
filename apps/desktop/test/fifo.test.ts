@@ -36,6 +36,7 @@ import { readExecutor } from '../../../packages/kernel/src/tools/builtin/read.js
 import { writeExecutor } from '../../../packages/kernel/src/tools/builtin/write.js'
 import type { ToolExecution, ToolExecutor } from '../../../packages/kernel/src/tools/executor.js'
 import { BUILTIN_SERVER_ID } from '../../../packages/kernel/src/tools/registry.js'
+import { SystemClock } from '../src/main/host/clock.js'
 import { DesktopFs } from '../src/main/host/fs.js'
 
 /** What runs right after the next stat of `path` returns: the file swapped between stat and open. */
@@ -158,6 +159,7 @@ describe.runIf(process.platform !== 'win32')(
           protectedFiles: [],
         },
         fs,
+        clock: new SystemClock(),
       })
     }
 
