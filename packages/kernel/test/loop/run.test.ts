@@ -16,6 +16,7 @@ import {
   ZHIPU_DEFAULT_BASE_URL,
   createMemoryHost,
   createMemoryTapeStore,
+  rebuildProviderContext,
   zhipuDefinition,
 } from '../../src/index.js'
 import type {
@@ -31,8 +32,10 @@ import type {
   SessionService,
   StopReason,
   StreamEvent,
+  TapeAttemptCompletedPayload,
   TapeEntry,
   TapeStore,
+  ToolSpec,
   Usage,
 } from '../../src/index.js'
 import {
@@ -380,6 +383,124 @@ describe('a batch and the next request', () => {
     expect(named(entries, 'tool/call')).toHaveLength(1)
     expect(outcomes(entries)).toEqual(['not-run/stopped'])
     expect(h.executed).toEqual([])
+  })
+})
+
+/**
+ * What a request was sent, re-encoded from the Tape alone (acceptance 3, 38): the replay pinned at the
+ * fact's `contextAtEntryId`, the incarnation's stored system text, the table's stored specs and the
+ * fact's own request snapshot, through the provider's real encoder.
+ */
+async function reEncodedPromptHash(h: Harness, entry: TapeEntry): Promise<string> {
+  const fact = entry.payload as unknown as TapeAttemptCompletedPayload
+  const entries = await all(h)
+  const byKey = (key: string | undefined): Record<string, unknown> | undefined =>
+    entries.find((candidate) => candidate.provenanceKey === key)?.payload
+  const contents = named(entries, 'view/content').map((candidate) => candidate.payload)
+  const system = contents.find(
+    (content) => content['type'] === 'system' && content['hash'] === fact.request.systemHash,
+  )?.['text'] as string | undefined
+  const sent = byKey(fact.assemblyRef)?.['tools'] as { tableKey: string; sent: boolean } | null
+  const table = sent?.sent === true ? byKey(sent.tableKey) : undefined
+  const tools = (table?.['tools'] as { specHash: string }[] | undefined)?.map(
+    (tool) =>
+      contents.find(
+        (content) => content['type'] === 'tool_spec' && content['hash'] === tool.specHash,
+      )?.['spec'] as ToolSpec,
+  )
+  const messages = await rebuildProviderContext(h.store, {
+    sessionId: SESSION,
+    atEntryId: fact.contextAtEntryId,
+    target: MODEL,
+  })
+  return h.provider.encode({
+    model: MODEL,
+    ...(system === undefined ? {} : { system }),
+    messages,
+    ...(tools === undefined || tools.length === 0 ? {} : { tools }),
+    maxTokens: fact.request.maxTokens,
+    ...(fact.request.temperature === undefined ? {} : { temperature: fact.request.temperature }),
+    ...(fact.request.thinking === undefined ? {} : { thinking: fact.request.thinking }),
+    ...(fact.request.effort === undefined ? {} : { effort: fact.request.effort }),
+    ...(fact.request.display === undefined ? {} : { display: fact.request.display }),
+  }).promptHash
+}
+
+describe('kernel-written text replays as stored, across a layer change (旧 225 后半, acceptance 38)', () => {
+  it('sends an older layer’s closure, continuation and environment notes byte for byte, and its attempts still recompute', async () => {
+    // What an older prompt layer wrote (§提示层「存在哪、重放取什么」): the three notes are swapped
+    // while the first two Runs write them, and the layer is back to this build's for the third.
+    const notes = MODEL_NOTES as unknown as {
+      closure: Record<string, Record<string, string>>
+      continuation: Record<string, string>
+      environment: Record<string, string>
+    }
+    const older = {
+      closure: 'An older layer: the reply ran out before this call, so it did not run.',
+      continuation: 'An older layer: carry on from where the reply stopped.',
+      date: 'An older layer’s date line: {date}',
+    }
+    const truncatedCell = notes.closure['output-truncated'] ?? {}
+    const current = {
+      closure: truncatedCell['not-run'] ?? '',
+      continuation: notes.continuation['output-truncated'] ?? '',
+      date: notes.environment['date'] ?? '',
+    }
+    const h = harness()
+    truncatedCell['not-run'] = older.closure
+    notes.continuation['output-truncated'] = older.continuation
+    notes.environment['date'] = older.date
+    try {
+      h.provider.script(
+        callTurn([{ id: 'toolu_1', input: { at: 'a' } }], {
+          text: 'Starting.',
+          stop: 'max-tokens',
+          providerReason: 'max_tokens',
+        }),
+      )
+      expect((await send(h, 'write it all')).reason.code).toBe('output-truncated')
+      h.provider.script(done('…and the rest.'))
+      await h.service.continueRun({ sessionId: SESSION, origin: null })
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    } finally {
+      truncatedCell['not-run'] = current.closure
+      notes.continuation['output-truncated'] = current.continuation
+      notes.environment['date'] = current.date
+    }
+    h.provider.script(done('Next.'))
+    expect((await send(h, 'and now')).reason).toEqual({ code: 'completed' })
+
+    // The stored texts are the older ones, and the request after the change sends them as stored.
+    const entries = await all(h)
+    expect(resultTexts(entries)).toEqual([older.closure])
+    expect(named(entries, 'tool/result')[0]?.payload['kernelAuthored']).toBe(true)
+    const stored = (name: string): string =>
+      (named(entries, name)[0]?.payload['content'] as { text: string }[] | undefined)?.[0]?.text ??
+      ''
+    expect(stored('message/continuation')).toBe(older.continuation)
+    expect(stored('message/environment')).toContain(older.date.replace(' {date}', ''))
+    const [, continued, next] = h.provider.requests.map(
+      (request) => (request.body as { messages: unknown[] }).messages,
+    )
+    const sentText = JSON.stringify(next)
+    for (const text of [older.closure, older.continuation, stored('message/environment')]) {
+      expect(sentText).toContain(JSON.stringify(text).slice(1, -1))
+    }
+    for (const text of [current.closure, current.continuation]) {
+      expect(sentText).not.toContain(JSON.stringify(text).slice(1, -1))
+    }
+    // Byte for byte: the request after the change opens with the one before it.
+    expect(JSON.stringify(next?.slice(0, continued?.length ?? 0))).toBe(JSON.stringify(continued))
+    // Every attempt, the older layer's included, still re-encodes from the Tape to its promptHash.
+    const attempts = named(entries, 'provider/attempt_completed')
+    expect(attempts).toHaveLength(3)
+    for (const attempt of attempts) {
+      const fact = attempt.payload as unknown as TapeAttemptCompletedPayload
+      // oxlint-disable-next-line no-await-in-loop -- one attempt at a time, each read from the Tape
+      expect(await reEncodedPromptHash(h, attempt), `attempt ${String(attempt.entryId)}`).toBe(
+        fact.promptHash,
+      )
+    }
   })
 })
 
