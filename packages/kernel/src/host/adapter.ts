@@ -59,7 +59,8 @@ export interface HostFs {
    * An entry that exists but does not resolve (a dangling link, ELOOP, ...) and every other error
    * throw — a dangling link's realpath also reports ENOENT and must not read as "not there yet".
    * An entry that is there and can be followed, yet has no real path to give (macOS's
-   * `/.vol/<dev>/<ino>`), throws `UnresolvableAliasError`.
+   * `/.vol/<dev>/<ino>`, and the host's other alias spellings: `/.nofollow`, `/.resolve`, `/dev/fd`),
+   * throws `UnresolvableAliasError`.
    */
   realpath(path: AbsolutePath): Promise<AbsolutePath | null>
   // Removal is a separately grantable capability and is not part of the base

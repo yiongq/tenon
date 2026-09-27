@@ -159,6 +159,13 @@ test('asks by where the history went, not by the model in effect, and a typed mo
     await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
     await page.getByTestId('model-confirm-switch').click()
     await expect(current).toHaveText('glm-5.3-flash · Max')
+    // A level of the session's own choice goes where the switch was just confirmed: asked nothing
+    // more, though no Run has gone there yet (rrE-1).
+    await trigger.click()
+    await page.getByTestId('model-effort').hover()
+    await page.getByTestId('model-effort-high').click()
+    await expect(current).toHaveText('glm-5.3-flash · High')
+    await expect(page.getByTestId('model-confirm')).toHaveCount(0)
     // Nothing has gone to zhipu yet, so another public host is asked about too, by its own name:
     // the menu compares with where the history went, not with the model in effect (a public host
     // to another after the history did go out asks nothing: renderer-data-flow.test.ts).
@@ -331,6 +338,58 @@ test('withdrawing the held message clears the hold, and the next message held an
 // Where no provider is ever reached: `.invalid` never resolves (RFC 6761), so a regression that sent
 // the history anyway would fail on the name, not reach a vendor. The e2e keychain is in memory.
 const UNREACHABLE_ZHIPU = 'https://zhipu.invalid/api/paas/v4/'
+const UNREACHABLE_ANTHROPIC = 'https://anthropic.invalid/'
+
+test('a round held for one public host, confirmed after the default moved to another, names the host 「切换」 sends to (s19-safety-3)', async () => {
+  // Held for zhipu, closed with Esc; then the default moves again, to a second public host, while
+  // the round stays held. Back in the session the confirmation opens again and must name where the
+  // choice 「切换」 commits sends now, not the host the kernel held for.
+  const { app, page, server } = await launchHeld('model-held-moved')
+  try {
+    await heldRound(page, server)
+    const saved = await page.evaluate(async (baseURL) => {
+      const configured = await window.tenon.invoke('provider.configure', {
+        id: 'anthropic',
+        values: { baseURL, apiKey: 'e2e-anthropic-key' },
+      })
+      const selected = await window.tenon.invoke('provider.select', {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-5',
+      })
+      return [configured, selected]
+    }, UNREACHABLE_ANTHROPIC)
+    expect(saved).toEqual([
+      { ok: true, data: { ok: true } },
+      { ok: true, data: { ok: true } },
+    ])
+    // Back to the session: the reloaded window restores it, main replays its held queue, and the
+    // menu opens by itself (phase 2 has no session list to leave and come back through).
+    await page.reload()
+    const confirm = page.getByTestId('model-confirm')
+    await expect(confirm).toContainText('Earlier messages will be sent to anthropic.invalid')
+    await expect(confirm).not.toContainText(ZHIPU_HOST)
+    await expect(page.getByTestId('queued-bubble')).toContainText('and this?')
+    await page.getByTestId('model-confirm-switch').click()
+    // The held message went out on what the page named: the Run's record says anthropic.invalid,
+    // and zhipu got nothing.
+    const lastHost = (): Promise<string | undefined> =>
+      page.evaluate(async () => {
+        const latest = (await window.tenon.invoke('session.latest', { limit: 1 })) as {
+          data: { sessionId: string } | null
+        }
+        if (latest.data === null) return undefined
+        const facts = (await window.tenon.invoke('session.facts', {
+          sessionId: latest.data.sessionId,
+        })) as { data: { lastEndpoint?: { host: string } } }
+        return facts.data.lastEndpoint?.host
+      })
+    await expect.poll(lastHost).toBe('anthropic.invalid')
+    await expect(page.getByTestId('queued-bubble')).toHaveCount(0)
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
 
 test('a session on this computer whose default moved to a public host asks on any row or level of it (s19-spec-1, 验收 34)', async () => {
   // The session never chose: it runs on the profile's default, which the settings card then moves

@@ -14,14 +14,20 @@ import type { ProviderEndpoint } from '@tenon-app/contracts'
  * The host to confirm before this choice sends the history there, or null when there is nothing to
  * ask. `last` is where the history went (null: no Run has sent anything; undefined: it could not be
  * read, and then only a session with history on screen asks, as if it had stayed on this side).
- * `target` is where the chosen row's provider sends now.
+ * `target` is where the chosen row's provider sends now. `confirmed` is where the session's own
+ * choice (①, `session.facts`' `chosen`) sends now: the user said yes to that host when choosing it,
+ * and the kernel sends ① with no check of its own, so a level of it, its row again or a model typed
+ * for the same host asks nothing more until a Run has gone there (rrE-1). Null while a default
+ * (②–⑤) is in effect: nobody confirmed that one.
  */
 export function confirmHostFor(
   last: ProviderEndpoint | null | undefined,
   target: ProviderEndpoint | undefined,
   hasHistory: boolean,
+  confirmed: string | null,
 ): string | null {
   if (target === undefined || target.reach !== 'public') return null
+  if (confirmed !== null && confirmed === target.host) return null
   if (last === undefined) return hasHistory ? target.host : null
   return last !== null && last.reach !== 'public' ? target.host : null
 }

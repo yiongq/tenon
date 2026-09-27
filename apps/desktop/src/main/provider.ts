@@ -29,7 +29,7 @@ import {
 import type { HostAdapter, ModelInfo, ProviderDefinition, ProviderId } from '@tenon-app/kernel'
 import type { Config } from '@tenon-app/contracts'
 import { hostOf } from './endpoint.js'
-import { configGeneration, readConfig } from './host/profile.js'
+import { configGeneration, providerSettingsGeneration, readConfig } from './host/profile.js'
 
 /**
  * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
@@ -156,9 +156,15 @@ export async function readProviderInputs(options: ReadInputsOptions): Promise<Pr
 export interface SettledInputs {
   readonly config: Config
   readonly inputs: ProviderInputs
-  /** No `config.json` write landed while it was read: the keys belong to this config's hosts. */
+  /**
+   * No write changed this provider's settings while it was read (`providerSettingsGeneration`): the
+   * keys belong to the host this config names. Writes of anything else do not count (rrE-2).
+   */
   readonly settled: boolean
-  /** `configGeneration` when the read finished: a snapshot kept from it is current while unchanged. */
+  /**
+   * `configGeneration` just before this `config.json` was read: a snapshot kept from `config` is
+   * current while it is unchanged — any write after the read, of any key, is newer than `config`.
+   */
   readonly generation: number
 }
 
@@ -169,8 +175,11 @@ const SETTLE_ATTEMPTS = 3
  * `config.json` and then a definition's inputs, as ONE save left them (01 修补 6「key 绑定主机」). A
  * save that moves the host between the two reads would pair the new host's key with the old base URL
  * — and send it there — because nothing on the send path holds the profile's lock (a keychain prompt
- * must not hold every save). Read again while a write landed in between; `settled: false` after
- * `SETTLE_ATTEMPTS`, which a send refuses as a configuration error.
+ * must not hold every save). Read again while a write changed THIS provider's settings in between;
+ * `settled: false` after `SETTLE_ATTEMPTS`, which a send refuses as a configuration error. A write
+ * of anything else (a default model on a held round's release, the locale, the sidebar, the folder
+ * list, another provider) cannot unpair these keys, so it neither reads the keychain again — a
+ * second prompt on an unsigned build — nor refuses the send (rrE-2).
  */
 export async function readSettledInputs(
   options: Omit<ReadInputsOptions, 'settings'>,
@@ -178,15 +187,16 @@ export async function readSettledInputs(
   const { host, definition } = options
   let last: SettledInputs | null = null
   for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
-    const before = configGeneration(host.identity)
+    const generation = configGeneration(host.identity)
+    const before = providerSettingsGeneration(host.identity, definition.id)
     // oxlint-disable-next-line no-await-in-loop -- a read again only when a save landed mid-read
     const config = await readConfig(host.fs, host.identity)
     const settings = config.providerConfig[definition.id]
     // oxlint-disable-next-line no-await-in-loop -- the same read, its second half
     const inputs = await readProviderInputs({ ...options, settings })
-    const generation = configGeneration(host.identity)
-    last = { config, inputs, settled: generation === before, generation }
-    if (last.settled) return last
+    const settled = providerSettingsGeneration(host.identity, definition.id) === before
+    last = { config, inputs, settled, generation }
+    if (settled) return last
   }
   if (last === null) throw new Error('readSettledInputs: no attempt ran')
   return last

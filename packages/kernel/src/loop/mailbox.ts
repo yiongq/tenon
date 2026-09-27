@@ -269,6 +269,13 @@ export interface SessionFactsView {
    * first Run, and for a draft.
    */
   readonly lastEndpointOrigin: string | null
+  /**
+   * The session's own choice (①, the draft's before the session exists), which the menu confirmed
+   * when it was made and a prebuild sends with no data-flow check; null while the choice in effect
+   * is a default (②–⑤) nobody confirmed. Only its provider: the menu compares hosts (§模型选择
+   * 「数据去向」; rrE-1).
+   */
+  readonly chosen: { readonly providerId: ProviderId } | null
 }
 
 export type SelectProfileQuery =
@@ -2194,6 +2201,7 @@ export function createLoop(deps: LoopDeps): Loop {
         profile: facts.profile,
         workspace: facts.workspace,
         lastEndpointOrigin: previousOriginOf(facts),
+        chosen: chosenOf(facts.modelChoice),
       }
     }
     const draft = drafts.get(sessionId)
@@ -2203,6 +2211,7 @@ export function createLoop(deps: LoopDeps): Loop {
       profile: draft?.profile ?? 'chat',
       workspace: draft?.profile === 'cowork' ? draft.workspace : null,
       lastEndpointOrigin: null,
+      chosen: chosenOf(draft?.modelChoice ?? null),
     }
   }
 
@@ -2541,6 +2550,13 @@ export function createLoop(deps: LoopDeps): Loop {
 
 /** A new round's Run, from its prebuild. */
 /** ① as the connector takes it: a hand-typed id's capabilities are the user's (M6, A15). */
+/** ① as `sessionFacts` names it: the provider of the choice a prebuild takes as `sessionChoice`. */
+function chosenOf(
+  payload: ModelChoiceSetPayload | null,
+): { readonly providerId: ProviderId } | null {
+  return payload === null ? null : { providerId: payload.providerId }
+}
+
 function choiceOf(payload: ModelChoiceSetPayload | null): ModelChoice | null {
   if (payload === null) return null
   return {

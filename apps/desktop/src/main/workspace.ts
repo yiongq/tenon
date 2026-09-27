@@ -150,7 +150,8 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
 
 /**
  * The route's shape: `drafted` stays in main, the arrays are copied out of the kernel's answer, and
- * the last origin is classified here, where 「本机」 and the private side are read (endpoint.ts).
+ * the last origin is classified here, where 「本机」 and the private side are read (endpoint.ts). `chosen`
+ * only when the session has its own choice (①; rrE-1).
  */
 function factsOf(view: SessionFactsView): SessionFactsResponse {
   const lastEndpoint = endpointOf(view.lastEndpointOrigin ?? undefined)
@@ -162,5 +163,6 @@ function factsOf(view: SessionFactsView): SessionFactsResponse {
         ? null
         : { folders: [...view.workspace.folders], origin: view.workspace.origin },
     ...(lastEndpoint === null ? {} : { lastEndpoint }),
+    ...(view.chosen === null ? {} : { chosen: { providerId: view.chosen.providerId } }),
   }
 }

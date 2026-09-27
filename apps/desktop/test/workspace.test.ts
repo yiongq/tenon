@@ -181,6 +181,20 @@ describe('workspace routes (旧 182)', () => {
     })
   })
 
+  it('names the session’s own choice as `chosen`, and only when it has one (rrE-1)', async () => {
+    // The model menu does not ask again for the host that choice confirmed (§模型选择「数据去向」).
+    const h = await harness()
+    const facts = async (): Promise<unknown> =>
+      ((await h.call('session.facts', { sessionId: SESSION })) as { data: unknown }).data
+    expect(await facts()).not.toHaveProperty('chosen')
+    await h.sessions.selectModel({
+      sessionId: SESSION,
+      choice: { providerId: 'zhipu', modelId: 'glm-5.3-flash', effort: null },
+      origin: null,
+    })
+    expect(await facts()).toMatchObject({ chosen: { providerId: 'zhipu' } })
+  })
+
   it('takes the prefill only when asked: until then the workspace is the dedicated folder', async () => {
     const h = await harness()
     await writeConfig(h.host.fs, h.host.identity, { lastWorkspaceFolders: ['/work/a'] })
