@@ -54,7 +54,8 @@ const date = today()
 
 describe.skipIf(!process.env['TENON_EVAL'])('live eval', () => {
   beforeAll(() => {
-    if (plan !== null) console.warn(planLine(plan))
+    // Straight to stderr: vitest does not show the console output of a test that passes.
+    if (plan !== null) process.stderr.write(`${planLine(plan)}\n`)
   })
 
   it('has tasks to run', () => {
@@ -66,7 +67,9 @@ describe.skipIf(!process.env['TENON_EVAL'])('live eval', () => {
       `${task.id} · run ${String(run)}`,
       async ({ signal }) => {
         // A log line never carries the key; this keeps it that way if one ever did.
-        const log = (line: string): void => console.warn(line.replaceAll(live.key, '[key]'))
+        const log = (line: string): void => {
+          process.stderr.write(`${line.replaceAll(live.key, '[key]')}\n`)
+        }
         const record = await runTask({
           task,
           run,
