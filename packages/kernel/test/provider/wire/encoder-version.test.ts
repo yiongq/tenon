@@ -2,7 +2,8 @@
  * `encoder.version` moves with the bytes (spec 02, 01 修补 7: 「encoder.version 是编码器自己的版本号，
  * 凡改变编码结果的提交都加一」; invariant 33 trusts it). One fixed request per wire, reaching the
  * paths an encoder change would touch — thinking, vendor fields and blocks, tool pairs, images, the
- * spec 02 keys — and a table of the `promptHash` every version of that encoder gives it.
+ * spec 02 keys — and a table of the `promptHash` every version of that encoder gives it. A second
+ * request covers the vendor fields of text and tool_use blocks that go back to the same model.
  *
  * When this fails, the encoding changed: raise the wire's `ENCODER.version` by one and APPEND a row.
  * Never edit a row — an attempt recorded under that version was hashed from those bytes, and a
@@ -31,6 +32,16 @@ const GOLDEN: Readonly<
   'openai-chat': {
     1: 'bf2278ab5d0fcfa5d95d523b4756ac6dfa0dcb9e220e6f525a596799c3e9e21a',
   },
+}
+
+/**
+ * promptHash of the same-model fields request, by anthropic-messages version. It starts at 3, the
+ * version that began judging these fields by their `vendorSource` (s6-spec-2): the rows before it
+ * cannot be rehashed. openai-chat has none — a field set its guard would send back has no place on
+ * that wire and is refused, so no bytes of it exist to pin.
+ */
+const GOLDEN_FIELDS: Readonly<Record<number, string>> = {
+  3: '27ed911f5a28ddc03ecc8661edc48fbc0e6efc548da70ef8d059d9feb8a78ad2',
 }
 
 /** Fixed here rather than read from a definition: a model-table edit is not an encoder change. */
@@ -128,6 +139,43 @@ function goldenRequest(model: ModelInfo): ProviderRequest {
   }
 }
 
+/**
+ * Text and tool_use blocks whose vendor fields came from this very model, so the guard merges them
+ * back (spec 02, 01 修补 2; s6-spec-2) — including a stored key the block's own must win over.
+ */
+function fieldsGoldenRequest(model: ModelInfo): ProviderRequest {
+  const source = { provider: model.providerId, providerModel: model.id }
+  return {
+    model,
+    tools: [TOOL],
+    messages: [
+      user({ type: 'text', text: 'Read a.ts' }),
+      assistant(
+        {
+          type: 'text',
+          text: 'Reading.',
+          vendorFields: { citations: [{ type: 'char_location', cited_text: 'a.ts' }] },
+          vendorSource: source,
+        },
+        {
+          type: 'tool-request',
+          id: 'call_golden_2',
+          name: 'read_file',
+          input: { path: 'a.ts' },
+          vendorFields: { future_tool: [1, 2], id: 'call_stored' },
+          vendorSource: source,
+        },
+      ),
+      user({
+        type: 'tool-response',
+        id: 'call_golden_2',
+        isError: false,
+        content: [{ type: 'text', text: 'export {}' }],
+      }),
+    ],
+  }
+}
+
 function versionOf(encoded: EncodedRequest): number {
   const encoder = encoderOf(encoded)
   if (encoder === null) throw new Error('no encoder recorded')
@@ -152,4 +200,23 @@ describe('encoder.version moves with the bytes (01 修补 7, invariant 33)', () 
       expect(new Set(Object.values(rows)).size).toBe(versions.length)
     })
   }
+
+  it('anthropic-messages: same-model text and tool_use fields have their own table', () => {
+    const encoded = encodeAnthropicMessages(fieldsGoldenRequest(ANTHROPIC_ROW), 'anthropic')
+    // Both field sets pass the guard, so these bytes are the merge-back path and not a drop.
+    expect(encoded.thinkingDecisions).toEqual([
+      { action: 'replay', reason: 'same-model' },
+      { action: 'replay', reason: 'same-model' },
+    ])
+    const versions = Object.keys(GOLDEN_FIELDS).map(Number)
+    expect(versionOf(encoded)).toBe(Math.max(...versions))
+    expect(versionOf(encoded)).toBe(
+      Math.max(...Object.keys(GOLDEN['anthropic-messages']).map(Number)),
+    )
+    expect(
+      encoded.promptHash,
+      'The anthropic-messages encoding changed. Raise its ENCODER.version by one and append a row to both tables; never edit one.',
+    ).toBe(GOLDEN_FIELDS[versionOf(encoded)])
+    expect(new Set(Object.values(GOLDEN_FIELDS)).size).toBe(versions.length)
+  })
 })
