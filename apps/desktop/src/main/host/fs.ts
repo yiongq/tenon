@@ -11,13 +11,18 @@ export class DesktopFs implements HostFs {
   /**
    * Reads a regular file and nothing else (s22 plat-3). A named pipe (FIFO) blocks open(2) until a
    * writer comes, and it would block inside libuv's threadpool where no stop reaches it: the call
-   * would never return, and spec 02 §参数校验与失败「执行期失败」 has no such outcome. So the file is
-   * opened non-blocking — which changes nothing for a regular file — and the handle's fstat must say
-   * regular file before a byte is read. A FIFO, a device or a socket throws, which Read and Edit
-   * answer as is_error / `completed` and Grep's walk skips.
+   * would never return, and spec 02 §参数校验与失败「执行期失败」 has no such outcome. So the path is
+   * stat'ed first, which opens nothing: a FIFO, a device or a socket throws there, which Read and
+   * Edit answer as is_error / `completed` and Grep's walk skips, and a writer waiting on the pipe
+   * keeps waiting for its real reader. Opening it, even non-blocking, would let that writer go and
+   * drop what it wrote with the handle. The open is still non-blocking — which changes nothing for
+   * a regular file — and the handle's fstat must still say regular file before a byte is read: a
+   * special file swapped in between the stat and the open is refused too, though a peer waiting on
+   * it in that gap is let go (the race this leaves).
    */
   async readFile(path: AbsolutePath, opts?: { encoding?: 'utf8' }): Promise<Uint8Array | string> {
     absolutePath(path)
+    await regularPathOnly(path)
     const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
     try {
       await regularFileOnly(handle, path)
@@ -31,12 +36,15 @@ export class DesktopFs implements HostFs {
 
   /**
    * Replaces a regular file's whole content, or makes a new one, and writes nothing else (s22
-   * plat-3). Opened non-blocking, a FIFO no one reads fails at once (ENXIO) instead of blocking the
-   * way `readFile` explains; opened without O_TRUNC, a target fstat shows is not a regular file is
-   * refused before anything in it is cut. Only then is it truncated and written through the handle.
+   * plat-3). A path that is there is stat'ed first, as `readFile` explains, so a reader waiting on a
+   * FIFO is not let go with nothing. For what is swapped in after that stat: opened non-blocking, a
+   * FIFO no one reads fails at once (ENXIO) instead of blocking; opened without O_TRUNC, a target
+   * fstat shows is not a regular file is refused before anything in it is cut. Only then is it
+   * truncated and written through the handle.
    */
   async writeFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
     absolutePath(path)
+    await regularPathOnly(path)
     let handle: FileHandle
     try {
       handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK)
@@ -189,17 +197,30 @@ function entryOf(path: string): string {
 }
 
 /**
+ * Throws when the path names a special file (s22 plat-3), before anything opens it. What stat cannot
+ * see (missing, no access) and a folder are left to the open, which answers them in its own words.
+ */
+async function regularPathOnly(path: string): Promise<void> {
+  const stats = await stat(path).catch(() => null)
+  if (stats !== null && !stats.isDirectory()) refuseSpecial(stats, path)
+}
+
+/**
  * Throws unless the open handle is a regular file (s22 plat-3). A folder throws the EISDIR a plain
  * read of it gives, as the memory host's does; anything else says what it is.
  */
 async function regularFileOnly(handle: FileHandle, path: string): Promise<void> {
   const stats = await handle.stat()
-  if (stats.isFile()) return
   if (stats.isDirectory()) {
     const message = 'EISDIR: illegal operation on a directory, read'
     throw Object.assign(new Error(message), { code: 'EISDIR', syscall: 'read', path })
   }
-  throw notRegularFile(path, kindOf(stats))
+  refuseSpecial(stats, path)
+}
+
+/** Throws unless the stats are a regular file's, saying what the file is instead. */
+function refuseSpecial(stats: Stats, path: string): void {
+  if (!stats.isFile()) throw notRegularFile(path, kindOf(stats))
 }
 
 function notRegularFile(path: string, kind: string, cause?: unknown): Error {

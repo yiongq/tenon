@@ -158,6 +158,13 @@ describe('the shell env (-i -l -c, env -0 between two markers)', () => {
     // is filed under a name with the start marker (32 lowercase hex digits) left in front of it.
     expect(env).toMatchObject(withoutTenonVars(startupEnv, false))
     expect(Object.keys(env).filter((name) => !/^[A-Z_][A-Z0-9_]*$/.test(name))).toEqual([])
+    // And under its own name: a key cut short (a dev key filed as `HIPU_API_KEY`) is no startup
+    // name, so the exact set is pinned, less what the shells set themselves.
+    const shellSet = new Set(['PWD', 'OLDPWD', 'SHLVL', '_'])
+    const names = Object.keys(env).filter((name) => !shellSet.has(name))
+    expect(names.toSorted()).toEqual(
+      [...Object.keys(withoutTenonVars(startupEnv, false)), 'FROM_RC'].toSorted(),
+    )
     expect(env['STARTUP_ONLY']).toBe('kept')
     expect(env['GH_TOKEN']).toBe('user-token')
     expect(env).not.toHaveProperty('EARLY_JUNK')
