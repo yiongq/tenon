@@ -1569,6 +1569,7 @@ export function createLoop(deps: LoopDeps): Loop {
           toolsWithheld: built.assembly.toolsWithheld,
           search: built.assembly.search,
           mcpSources: built.assembly.mcpSources,
+          commandShell: ports.commandShell,
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
           userSetting: deps.userSetting,

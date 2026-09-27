@@ -1,0 +1,175 @@
+/**
+ * Write and Edit (spec 02 §内置工具与参数「Write」「Edit」「执行期失败」; plan step 22): the executors,
+ * on the memory host. Write replaces the whole file and makes a missing parent first; Edit replaces
+ * `old_string` only when it occurs exactly once, or every occurrence with `replace_all`. What is
+ * missing, a folder, not found or not unique is a call that ran: is_error, `completed`, fixed English.
+ */
+import { describe, expect, it } from 'vitest'
+import { absolutePath, createMemoryHost } from '../../src/index.js'
+import type { MemoryHost } from '../../src/index.js'
+import { fill } from '../../src/prompts/index.js'
+import { EDIT_TEXTS, editExecutor } from '../../src/tools/builtin/edit.js'
+import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
+import { WRITE_TEXTS, writeExecutor } from '../../src/tools/builtin/write.js'
+import type { ToolExecution, ToolExecutor } from '../../src/tools/executor.js'
+import { BUILTIN_SERVER_ID } from '../../src/tools/registry.js'
+
+const WS = absolutePath('/ws')
+
+async function hostWith(files: Record<string, string | Uint8Array>): Promise<MemoryHost> {
+  const host = createMemoryHost()
+  await host.fs.mkdirp(WS)
+  for (const [path, data] of Object.entries(files)) {
+    const at = absolutePath(path)
+    // oxlint-disable-next-line no-await-in-loop -- the folder before the file in it
+    await host.fs.mkdirp(absolutePath(at.slice(0, at.lastIndexOf('/')) || '/'))
+    // oxlint-disable-next-line no-await-in-loop -- one file at a time
+    await host.fs.writeFile(at, data)
+  }
+  return host
+}
+
+function run(
+  executor: ToolExecutor,
+  host: MemoryHost,
+  name: 'Write' | 'Edit',
+  input: Record<string, unknown>,
+): Promise<ToolExecution> {
+  return executor({
+    item: {
+      source: 'builtin',
+      serverId: BUILTIN_SERVER_ID,
+      originalName: name,
+      name,
+      spec: BUILTIN_TOOLS[name].spec({ domainFilter: false }),
+      requiresUserInteraction: false,
+    },
+    input,
+    signal: new AbortController().signal,
+    target: absolutePath(String(input['file_path'])),
+    scope: {
+      roots: [WS],
+      profileDir: absolutePath('/tenon/prof'),
+      ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
+      protectedFiles: [],
+    },
+    fs: host.fs,
+  })
+}
+
+async function textAt(host: MemoryHost, path: string): Promise<string> {
+  return new TextDecoder().decode((await host.fs.readFile(absolutePath(path))) as Uint8Array)
+}
+
+function failure(text: string): ToolExecution {
+  return { content: [{ type: 'text', text }], isError: true, state: 'completed' }
+}
+
+describe('Write', () => {
+  it('creates a file, making its missing parent folders first', async () => {
+    const host = await hostWith({})
+    const path = '/ws/deep/er/notes.md'
+    expect(await host.fs.stat(absolutePath('/ws/deep'))).toBeNull()
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: path, content: '# Notes\n' }),
+    ).toEqual({
+      content: [{ type: 'text', text: fill(WRITE_TEXTS.created, { path }) }],
+      isError: false,
+      state: 'completed',
+    })
+    expect(await host.fs.stat(absolutePath('/ws/deep/er'))).toMatchObject({ isDir: true })
+    expect(await textAt(host, path)).toBe('# Notes\n')
+  })
+
+  it('replaces the whole content of a file that is there', async () => {
+    const host = await hostWith({ '/ws/a.txt': 'a much longer first version\n' })
+    const done = await run(writeExecutor, host, 'Write', { file_path: '/ws/a.txt', content: 'b' })
+    expect(done).toEqual({
+      content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: '/ws/a.txt' }) }],
+      isError: false,
+      state: 'completed',
+    })
+    expect(await textAt(host, '/ws/a.txt')).toBe('b')
+  })
+
+  it('fails, having run, on a folder or under a file — and writes nothing', async () => {
+    const host = await hostWith({ '/ws/sub/keep.txt': 'x', '/ws/plain': 'file' })
+    expect(await run(writeExecutor, host, 'Write', { file_path: '/ws/sub', content: 'y' })).toEqual(
+      failure(fill(WRITE_TEXTS.isDirectory, { path: '/ws/sub' })),
+    )
+    expect(await host.fs.stat(absolutePath('/ws/sub'))).toMatchObject({ isDir: true })
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: '/ws/plain/a.txt', content: 'y' }),
+    ).toEqual(failure(fill(WRITE_TEXTS.notDirectory, { path: '/ws/plain' })))
+    expect(await textAt(host, '/ws/plain')).toBe('file')
+  })
+})
+
+describe('Edit', () => {
+  const FILE = '/ws/app.ts'
+  const SOURCE = 'const a = 1\nconst b = 1\nexport { a, b }\n'
+
+  it('replaces old_string where it occurs exactly once', async () => {
+    const host = await hostWith({ [FILE]: SOURCE })
+    const done = await run(editExecutor, host, 'Edit', {
+      file_path: FILE,
+      old_string: 'const b = 1',
+      new_string: 'const b = $&2',
+    })
+    expect(done).toEqual({
+      content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: FILE }) }],
+      isError: false,
+      state: 'completed',
+    })
+    // new_string goes in as written: `$&` is not a replacement pattern.
+    expect(await textAt(host, FILE)).toBe('const a = 1\nconst b = $&2\nexport { a, b }\n')
+  })
+
+  it('refuses an old_string that is not unique, unless replace_all, which replaces every one', async () => {
+    const host = await hostWith({ [FILE]: SOURCE })
+    const input = { file_path: FILE, old_string: '= 1', new_string: '= 2' }
+    expect(await run(editExecutor, host, 'Edit', input)).toEqual(
+      failure(fill(EDIT_TEXTS.notUnique, { path: FILE, count: '2' })),
+    )
+    expect(await textAt(host, FILE)).toBe(SOURCE)
+    expect(await run(editExecutor, host, 'Edit', { ...input, replace_all: false })).toMatchObject({
+      isError: true,
+    })
+    expect(await run(editExecutor, host, 'Edit', { ...input, replace_all: true })).toEqual({
+      content: [{ type: 'text', text: fill(EDIT_TEXTS.editedAll, { path: FILE, count: '2' }) }],
+      isError: false,
+      state: 'completed',
+    })
+    expect(await textAt(host, FILE)).toBe('const a = 2\nconst b = 2\nexport { a, b }\n')
+  })
+
+  it('fails, having run, when old_string is not there, the file is missing or is a folder', async () => {
+    const host = await hostWith({ [FILE]: SOURCE })
+    const edit = (file_path: string): Promise<ToolExecution> =>
+      run(editExecutor, host, 'Edit', { file_path, old_string: 'const c', new_string: 'const d' })
+    expect(await edit(FILE)).toEqual(failure(fill(EDIT_TEXTS.noMatch, { path: FILE })))
+    expect(await textAt(host, FILE)).toBe(SOURCE)
+    expect(await edit('/ws/missing.ts')).toEqual(
+      failure(fill(EDIT_TEXTS.notFound, { path: '/ws/missing.ts' })),
+    )
+    expect(await host.fs.stat(absolutePath('/ws/missing.ts'))).toBeNull()
+    expect(await edit('/ws')).toEqual(failure(fill(EDIT_TEXTS.isDirectory, { path: '/ws' })))
+  })
+
+  it('refuses a file that is not valid UTF-8 rather than rewrite its other bytes, and keeps a BOM', async () => {
+    const bad = new Uint8Array([0x61, 0x3d, 0x31, 0x0a, 0xff, 0xfe, 0x0a])
+    const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('a=1\n')])
+    const host = await hostWith({ '/ws/bad.txt': bad, '/ws/bom.txt': bom })
+    const input = { old_string: 'a=1', new_string: 'a=2' }
+    expect(await run(editExecutor, host, 'Edit', { ...input, file_path: '/ws/bad.txt' })).toEqual(
+      failure(fill(EDIT_TEXTS.notUtf8, { path: '/ws/bad.txt' })),
+    )
+    expect(await host.fs.readFile(absolutePath('/ws/bad.txt'))).toEqual(bad)
+    expect(
+      await run(editExecutor, host, 'Edit', { ...input, file_path: '/ws/bom.txt' }),
+    ).toMatchObject({ isError: false })
+    expect(await host.fs.readFile(absolutePath('/ws/bom.txt'))).toEqual(
+      new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('a=2\n')]),
+    )
+  })
+})

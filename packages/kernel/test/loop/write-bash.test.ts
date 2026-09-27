@@ -1,0 +1,601 @@
+/**
+ * Write, Edit and Bash through a real Run (spec 02 §内置工具的默认档位, §作用域与授权键, §可逆性,
+ * §内置工具与参数「Bash」, §工作区; plan step 22): the cards they raise, what an allow grants, the
+ * command pattern table on the card and in the facts, the dedicated folder coming into being, and the
+ * stop that lands while Bash awaits its base environment.
+ *
+ * The product registry runs the real executors (Write, Edit and Bash joined it here), on the memory
+ * host; Bash spawns a fake child unless a case needs `/bin/sh`. 旧 96 and 旧 161 care only about the
+ * decision, so they run on the test registry's fake executors.
+ */
+import { realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { describe, expect, it } from 'vitest'
+import {
+  absolutePath,
+  createMemoryHost,
+  createMemoryTapeStore,
+  createSessionService,
+} from '../../src/index.js'
+import type {
+  AbsolutePath,
+  ChildHandle,
+  HostProcess,
+  HostSandbox,
+  McpConnection,
+  McpToolSource,
+  MemoryHost,
+  ModelInfo,
+  PendingCard,
+  SandboxRequest,
+  SessionService,
+  SpawnSpec,
+  StreamEvent,
+  TapeEntry,
+  TapeStore,
+  Usage,
+} from '../../src/index.js'
+import { STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
+import { reversibilityOf } from '../../src/permission/reversibility.js'
+import { MODEL_NOTES } from '../../src/prompts/index.js'
+import type { CommandShell } from '../../src/tools/builtin/bash.js'
+import {
+  createCounterIds,
+  createFakeInspector,
+  createScriptedProvider,
+  createTestLoopPorts,
+  createTestSessionService,
+  scriptedTurn,
+  stopEvent,
+} from '../../src/testing/index.js'
+import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
+import { createNodeProcess } from '../support/node-process.js'
+
+const IDENTITY = { userId: 'cmd-user', tenantId: 'cmd-tenant', profileDir: '/tenon/cmd' }
+const SESSION = '3a7c1e9b-2d4f-4b6a-8c1e-5f9a2b3c4d51'
+const DEDICATED = absolutePath(`/home/u/Tenon/workspaces/cmd-user/cmd-tenant/${SESSION}`)
+const WORK = absolutePath('/work/project')
+
+const MODEL: ModelInfo = {
+  id: 'claude-cmd-1',
+  providerId: 'anthropic',
+  contextLimit: 200_000,
+  maxOutputTokens: 1024,
+  reasoning: false,
+  supportsToolCalling: true,
+  supportsStreamingToolCalls: true,
+  supportsVision: false,
+  supportsCacheControl: false,
+  thinkingPreservationFormat: 'drop',
+  usageNeedsOptIn: false,
+}
+
+const USAGE: Usage = {
+  inputTokens: 5,
+  outputTokens: 2,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  reasoningTokens: 0,
+  final: true,
+}
+
+const ASK = { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }] } as const
+
+/** A connector with two tools that call themselves harmless and dangerous (never read, E1, E4). */
+function annotated(): McpToolSource {
+  const connection = {
+    listTools: () =>
+      Promise.resolve([
+        { name: 'peek', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+        { name: 'wipe', inputSchema: { type: 'object' }, annotations: { destructiveHint: true } },
+      ]),
+    callTool: () => Promise.resolve({ content: [{ type: 'text', text: 'ok' }], isError: false }),
+  } as unknown as McpConnection
+  return { serverId: 'hints', connection }
+}
+
+/** Every spawn a Run asked for; each child prints `output` and exits 0. */
+interface Spawns {
+  readonly process: HostProcess
+  readonly specs: SpawnSpec[]
+  /** Whether the cwd was a folder on the host's disk at the moment of each spawn. */
+  readonly cwdExisted: boolean[]
+}
+
+function fakeProcesses(memory: () => MemoryHost, output: string): Spawns {
+  const specs: SpawnSpec[] = []
+  const cwdExisted: boolean[] = []
+  return {
+    specs,
+    cwdExisted,
+    process: {
+      spawn: async (spec) => {
+        specs.push(spec)
+        cwdExisted.push((await memory().fs.stat(spec.cwd))?.isDir === true)
+        const exited = Promise.withResolvers<{ code: number | null; signal: string | null }>()
+        const child: ChildHandle = {
+          pid: 7,
+          stdin: new WritableStream(),
+          stdout: new ReadableStream({
+            start: (controller) => {
+              controller.enqueue(new TextEncoder().encode(output))
+              controller.close()
+              exited.resolve({ code: 0, signal: null })
+            },
+          }),
+          stderr: new ReadableStream({ start: (controller) => controller.close() }),
+          exited: exited.promise,
+          kill: () => Promise.resolve(),
+        }
+        return child
+      },
+    },
+  }
+}
+
+interface Harness {
+  readonly memory: MemoryHost
+  readonly store: TapeStore
+  readonly service: SessionService
+  readonly loop: TestLoopPorts
+  readonly provider: ScriptedProvider
+  readonly inspector: FakeInspector
+  readonly wrapped: SandboxRequest[]
+  readonly afterExit: string[]
+}
+
+async function harness(o: {
+  /** `'test'`: the test registry with fake executors; default the product's. */
+  readonly registry?: 'product' | 'test'
+  readonly process?: HostProcess
+  /** The workspace: a picked folder (default `WORK`), or only the dedicated folder. */
+  readonly folder?: AbsolutePath | 'dedicated'
+  readonly commandShell?: CommandShell
+}): Promise<Harness> {
+  const host = createMemoryHost({
+    identity: IDENTITY,
+    ...(o.process === undefined ? {} : { process: o.process }),
+  })
+  // The sandbox passes through; what it was asked is recorded (§内置工具与参数「Bash」「起进程」).
+  const wrapped: SandboxRequest[] = []
+  const afterExit: string[] = []
+  const sandbox: HostSandbox = {
+    wrap: (request) => {
+      wrapped.push(request)
+      return host.sandbox.wrap(request)
+    },
+    afterExit: (commandId) => {
+      afterExit.push(commandId)
+      return Promise.resolve()
+    },
+    violations: (commandId) => host.sandbox.violations(commandId),
+  }
+  const folder = o.folder ?? WORK
+  if (folder !== 'dedicated') await host.fs.mkdirp(folder)
+  const store = createMemoryTapeStore({ identity: IDENTITY })
+  const provider = createScriptedProvider({ models: [MODEL] })
+  const inspector = createFakeInspector({ id: 'asker', ceiling: 'ask' })
+  const loop = createTestLoopPorts({
+    connector: { provider, model: MODEL, mcpSources: [annotated()] },
+    ...(o.commandShell === undefined ? {} : { commandShell: o.commandShell }),
+  })
+  const options = {
+    host: { ...host, sandbox },
+    tape: store,
+    ids: createCounterIds(),
+    inspectors: [inspector.registration],
+    connector: loop.connector,
+    protectedFiles: [],
+  }
+  const service =
+    o.registry === 'test'
+      ? createTestSessionService(options, { tools: {} })
+      : createSessionService(options)
+  service.bindLoop(loop)
+  await service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+  if (folder !== 'dedicated') {
+    await service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [folder] },
+      dedicated: DEDICATED,
+    })
+  }
+  return { memory: host, store, service, loop, provider, inspector, wrapped, afterExit }
+}
+
+let nextCall = 1
+
+/** One reply asking for one call. */
+function callOf(name: string, input: Record<string, unknown>): StreamEvent[] {
+  const id = `toolu_${String(nextCall++)}`
+  return [
+    { type: 'tool-call-start', index: 1, id, name },
+    { type: 'tool-call-end', index: 1, id, name, input },
+    { type: 'usage', usage: USAGE },
+    stopEvent('tool-use', 'tool_use'),
+  ]
+}
+
+async function send(h: Harness, name: string, input: Record<string, unknown>): Promise<string> {
+  h.provider.script(callOf(name, input))
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: `call ${name}` })
+  if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+  return sent.runId
+}
+
+/** Sends a message whose reply asks for the call; the Run pauses on its card. */
+async function pausedOn(
+  h: Harness,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<PendingCard> {
+  const runId = await send(h, name, input)
+  expect((await h.loop.runEnded({ runId })).reason).toEqual({
+    code: 'paused',
+    waitingFor: 'approval',
+  })
+  const pending = await h.service.currentPending({ sessionId: SESSION })
+  if (pending === null) throw new Error('no card')
+  return pending
+}
+
+/** Sends a call the session already allows: it runs with no card, and the Run completes. */
+async function ranFree(h: Harness, name: string, input: Record<string, unknown>): Promise<void> {
+  const runId = await send(h, name, input)
+  h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+  expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'completed' })
+  expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+}
+
+/** Allows the card and lets the resumed Run finish on a text reply. */
+async function allow(h: Harness, pending: PendingCard): Promise<void> {
+  h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+  expect(
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: pending.card.requestId,
+      decision: 'allow',
+      origin: null,
+    }),
+  ).toEqual({ status: 'applied' })
+  await h.loop.runEnded()
+}
+
+async function entries(h: Harness): Promise<TapeEntry[]> {
+  return (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+}
+
+async function named(h: Harness, name: string): Promise<TapeEntry[]> {
+  return (await entries(h)).filter((entry) => entry.name === name)
+}
+
+async function lastOf(h: Harness, name: string): Promise<Record<string, unknown>> {
+  const found = (await named(h, name)).at(-1)
+  if (found === undefined) throw new Error(`no ${name}`)
+  return found.payload
+}
+
+describe('a command the pattern table calls irreversible (旧 96)', () => {
+  it('asks with reason command, its text and cwd, and holds each allow for that one call', async () => {
+    const h = await harness({ registry: 'test' })
+    const command = 'curl -X POST https://api.example.com/items -d @body.json'
+    for (let round = 0; round < 2; round += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one card, answered, then the same call again
+      const pending = await pausedOn(h, 'Bash', { command })
+      expect(pending.card).toMatchObject({
+        kind: 'command',
+        reason: 'command',
+        facts: { command, cwd: WORK },
+        target: { type: 'command', command, cwd: WORK },
+        reversibility: 'irreversible',
+      })
+      expect(pending.allowScope).toBe('once')
+      // oxlint-disable-next-line no-await-in-loop -- the decision the card came from
+      expect((await lastOf(h, 'tool/permission_decided'))['reversibility']).toBe('irreversible')
+      // oxlint-disable-next-line no-await-in-loop -- allowed, it runs this once
+      await allow(h, pending)
+      // oxlint-disable-next-line no-await-in-loop -- the grant the answer wrote
+      expect((await lastOf(h, 'tool/approval_resolved'))['grant']).toMatchObject({ scope: 'once' })
+      // oxlint-disable-next-line no-await-in-loop -- the call ran on its allow
+      expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+        state: 'completed',
+        reversibility: 'irreversible',
+      })
+    }
+    expect(await named(h, 'execution/dispatch_committed')).toHaveLength(2)
+  })
+
+  it('frees an allowed unknown command for the exact same text only', async () => {
+    const h = await harness({ registry: 'test' })
+    const pending = await pausedOn(h, 'Bash', { command: 'ls -la' })
+    expect(pending.card.reversibility).toBe('unknown')
+    expect(pending.allowScope).toBe('session')
+    await allow(h, pending)
+    await ranFree(h, 'Bash', { command: 'ls -la' })
+    expect(await named(h, 'execution/dispatch_committed')).toHaveLength(2)
+    // One character more is another command.
+    const other = await pausedOn(h, 'Bash', { command: 'ls -la ' })
+    expect(other.card.target).toEqual({ type: 'command', command: 'ls -la ', cwd: WORK })
+  })
+})
+
+describe('an inspector changes only whether to ask, never the reversibility (旧 161)', () => {
+  const CASES: ReadonlyArray<{
+    readonly name: string
+    readonly input: Record<string, unknown>
+    readonly reversibility: string
+    /** Whether the call asks with the inspector silent. */
+    readonly asksAnyway: boolean
+  }> = [
+    {
+      name: 'Bash',
+      input: { command: 'rm -rf build' },
+      reversibility: 'irreversible',
+      asksAnyway: true,
+    },
+    { name: 'Bash', input: { command: 'make' }, reversibility: 'unknown', asksAnyway: true },
+    {
+      name: 'Write',
+      input: { file_path: `${WORK}/a.txt`, content: 'x' },
+      reversibility: 'unknown',
+      asksAnyway: true,
+    },
+    {
+      name: 'Read',
+      input: { file_path: `${WORK}/a.txt` },
+      reversibility: 'read-only',
+      asksAnyway: false,
+    },
+    // A connector tool is unknown whatever its annotations claim.
+    { name: 'hints__peek', input: {}, reversibility: 'unknown', asksAnyway: true },
+    { name: 'hints__wipe', input: {}, reversibility: 'unknown', asksAnyway: true },
+  ]
+
+  for (const c of CASES) {
+    it(`${c.name} ${JSON.stringify(c.input)}: ${c.reversibility} on the card, the decision and the closure`, async () => {
+      const h = await harness({ registry: 'test' })
+      h.inspector.answer(ASK)
+      const pending = await pausedOn(h, c.name, c.input)
+      expect(pending.card.reversibility).toBe(c.reversibility)
+      const decided = await lastOf(h, 'tool/permission_decided')
+      expect(decided['reversibility']).toBe(c.reversibility)
+      expect(h.inspector.calls.at(-1)?.call.reversibility).toBe(c.reversibility)
+      await allow(h, pending)
+      expect((await lastOf(h, 'execution/tool_outcome'))['reversibility']).toBe(c.reversibility)
+      // The host's own reading, for the same call.
+      const tool = c.name.includes('__')
+        ? { source: 'mcp' as const, originalName: c.name.split('__')[1] ?? '' }
+        : { source: 'builtin' as const, originalName: c.name }
+      expect(reversibilityOf(tool, c.input)).toBe(c.reversibility)
+      // Silent, the inspector leaves the question of asking to the rest of the table.
+      h.inspector.answer({ kind: 'none' })
+      const runId = await send(h, c.name, c.input)
+      if (!c.asksAnyway) h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+      expect((await h.loop.runEnded({ runId })).reason.code).toBe(
+        c.asksAnyway ? 'paused' : 'completed',
+      )
+      expect((await lastOf(h, 'tool/permission_decided'))['reversibility']).toBe(c.reversibility)
+    })
+  }
+})
+
+describe('Write in the workspace (旧 215, the kernel half)', () => {
+  it('asks with reason default and the real path, allows for the session, and the same file runs free', async () => {
+    const h = await harness({})
+    const path = `${WORK}/notes.md`
+    const pending = await pausedOn(h, 'Write', { file_path: path, content: 'first\n' })
+    expect(pending.card).toMatchObject({
+      kind: 'file',
+      reason: 'default',
+      facts: { toolName: 'Write' },
+      target: { type: 'path', path },
+      reversibility: 'unknown',
+    })
+    expect(pending.allowScope).toBe('session')
+    await allow(h, pending)
+    expect(await h.memory.fs.readFile(absolutePath(path), { encoding: 'utf8' })).toBe('first\n')
+    await ranFree(h, 'Write', { file_path: path, content: 'second\n' })
+    expect(await h.memory.fs.readFile(absolutePath(path), { encoding: 'utf8' })).toBe('second\n')
+    // The grant is Write's, for this file: another file, or Edit on this one, asks again.
+    expect(
+      (await pausedOn(h, 'Edit', { file_path: path, old_string: 'second', new_string: '2' })).card
+        .target,
+    ).toEqual({
+      type: 'path',
+      path,
+    })
+  })
+})
+
+describe('the dedicated folder (旧 180)', () => {
+  it('does not exist before the first Write, which makes it', async () => {
+    const h = await harness({ folder: 'dedicated' })
+    expect(await h.memory.fs.stat(DEDICATED)).toBeNull()
+    const path = `${DEDICATED}/out/report.md`
+    await allow(h, await pausedOn(h, 'Write', { file_path: path, content: 'r' }))
+    expect(await h.memory.fs.stat(DEDICATED)).toMatchObject({ isDir: true })
+    expect(await h.memory.fs.readFile(absolutePath(path), { encoding: 'utf8' })).toBe('r')
+  })
+
+  it('is made before the first Bash, which runs in it: cwd folders[0], its env as given', async () => {
+    let host: MemoryHost | null = null
+    const spawns = fakeProcesses(() => {
+      if (host === null) throw new Error('spawned before the host was made')
+      return host
+    }, '/somewhere\n')
+    const env = { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' }
+    const h = await harness({
+      folder: 'dedicated',
+      process: spawns.process,
+      commandShell: { path: absolutePath('/bin/zsh'), env: () => Promise.resolve(env) },
+    })
+    host = h.memory
+    expect(await h.memory.fs.stat(DEDICATED)).toBeNull()
+    const pending = await pausedOn(h, 'Bash', { command: 'pwd' })
+    expect(pending.card.target).toEqual({ type: 'command', command: 'pwd', cwd: DEDICATED })
+    await allow(h, pending)
+    expect(spawns.specs).toEqual([
+      { argv: ['/bin/zsh', '-c', 'exec 2>&1\npwd'], cwd: DEDICATED, env, stdio: 'pipe' },
+    ])
+    expect(spawns.cwdExisted).toEqual([true])
+    const call = (await named(h, 'tool/call')).at(-1)?.payload['providerToolCallId'] as string
+    expect(h.wrapped).toEqual([
+      {
+        commandId: call,
+        argv: ['/bin/zsh', '-c', 'exec 2>&1\npwd'],
+        cwd: DEDICATED,
+        env,
+        profile: 'workspace-write',
+        workspace: [DEDICATED],
+      },
+    ])
+    expect(h.afterExit).toEqual([call])
+    expect(await lastOf(h, 'tool/result')).toMatchObject({
+      isError: false,
+      kernelAuthored: false,
+      content: [{ type: 'text', text: '/somewhere\n' }],
+    })
+  })
+})
+
+describe('Bash on a real /bin/sh, through the Run', () => {
+  it('records `exit 3` as a completed call whose result is an error headed `Exit code: 3`', async () => {
+    const here = absolutePath(realpathSync(tmpdir()))
+    const h = await harness({
+      folder: here,
+      process: createNodeProcess(),
+      commandShell: {
+        path: absolutePath('/bin/sh'),
+        env: () => Promise.resolve({ PATH: '/usr/bin:/bin' }),
+      },
+    })
+    await allow(h, await pausedOn(h, 'Bash', { command: 'exit 3' }))
+    const result = await lastOf(h, 'tool/result')
+    expect(result).toMatchObject({ isError: true, kernelAuthored: false })
+    const [first] = (result['content'] as Array<{ text: string }>)[0]?.text.split('\n') ?? []
+    expect(first).toBe('Exit code: 3')
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'completed',
+      source: null,
+      effect: 'external',
+    })
+  })
+})
+
+describe('a Bash call past its timeout', () => {
+  it('is killed, recorded aborted / timed-out with its output, and the Run goes on', async () => {
+    const spawned = Promise.withResolvers<void>()
+    const kills: string[] = []
+    const h = await harness({
+      process: {
+        spawn: () => {
+          const exited = Promise.withResolvers<{ code: number | null; signal: string | null }>()
+          let out: ReadableStreamDefaultController<Uint8Array> | undefined
+          const child: ChildHandle = {
+            pid: 9,
+            stdin: new WritableStream(),
+            stdout: new ReadableStream({
+              start: (controller) => {
+                out = controller
+                controller.enqueue(new TextEncoder().encode('step 1 of 3\n'))
+              },
+            }),
+            stderr: new ReadableStream({ start: (controller) => controller.close() }),
+            exited: exited.promise,
+            kill: (signal = 'SIGTERM') => {
+              kills.push(signal)
+              if (signal === 'SIGKILL') {
+                out?.close()
+                exited.resolve({ code: null, signal: 'SIGKILL' })
+              }
+              return Promise.resolve()
+            },
+          }
+          spawned.resolve()
+          return Promise.resolve(child)
+        },
+      },
+    })
+    const pending = await pausedOn(h, 'Bash', { command: 'make all', timeout: 1000 })
+    h.provider.script(scriptedTurn({ deltas: ['It timed out.'], usage: USAGE }))
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: pending.card.requestId,
+      decision: 'allow',
+      origin: null,
+    })
+    await spawned.promise
+    await settle()
+    h.memory.advance(1000)
+    await settle()
+    expect(kills).toEqual(['SIGTERM'])
+    h.memory.advance(STOP_TERM_GRACE_MS)
+    // Not a block, not a stop: the next request goes out and the Run completes.
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    expect(kills).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'aborted',
+      source: 'timed-out',
+      effect: 'external',
+    })
+    expect(await lastOf(h, 'tool/result')).toMatchObject({
+      isError: true,
+      kernelAuthored: true,
+      content: [
+        { type: 'text', text: MODEL_NOTES.closure['timed-out'].aborted },
+        { type: 'text', text: 'step 1 of 3\n' },
+      ],
+    })
+  })
+})
+
+/** Lets every promise the Run has in flight settle. */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+describe('a stop while Bash awaits its base environment', () => {
+  it('records the call not-run / stopped: nothing dispatched, nothing spawned', async () => {
+    const env = Promise.withResolvers<Readonly<Record<string, string>>>()
+    const reached = Promise.withResolvers<void>()
+    let spawned = 0
+    const h = await harness({
+      process: {
+        spawn: () => {
+          spawned += 1
+          return Promise.reject(new Error('never spawned'))
+        },
+      },
+      commandShell: {
+        path: absolutePath('/bin/sh'),
+        env: () => {
+          reached.resolve()
+          return env.promise
+        },
+      },
+    })
+    const pending = await pausedOn(h, 'Bash', { command: 'make' })
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending.card.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    await reached.promise
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'user-stopped' })
+    env.resolve({})
+    expect(await lastOf(h, 'execution/tool_outcome')).toMatchObject({
+      state: 'not-run',
+      source: 'stopped',
+      effect: 'blocked',
+    })
+    expect(await named(h, 'execution/dispatch_committed')).toEqual([])
+    expect(spawned).toBe(0)
+  })
+})

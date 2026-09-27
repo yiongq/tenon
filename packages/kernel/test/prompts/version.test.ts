@@ -25,6 +25,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   1: '62cfe9ae7da9a26873d295566ace5d21277ed329c33f745309d7cd64175ae039',
   // The connector notes (connectorFailed, connectorEmpty) joined the layer (plan step 18 catch-up).
   2: '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc',
+  // Write, Edit and Bash's result templates and errors joined the layer (plan step 22).
+  3: '9677ce5c63960d57cc7f91e43439272d3bf320567552b3f44223733e70143ea7',
 }
 
 describe('the version gate', () => {
@@ -67,6 +69,7 @@ describe('the version gate', () => {
     const search = tool('WebSearch')
     const read = tool('Read')
     const edit = tool('Edit')
+    const bash = tool('Bash')
     const variants: PromptLayer[] = [
       { ...layer, SYSTEM_PROMPTS: { ...SYSTEM_PROMPTS, chat: `${SYSTEM_PROMPTS.chat}.` } },
       { ...layer, LOCALE_HINT: `${LOCALE_HINT} ` },
@@ -103,6 +106,11 @@ describe('the version gate', () => {
       withTool('Edit', (t) => ({
         ...t,
         texts: { ...t.texts, sameStrings: `${edit.texts['sameStrings'] ?? ''}!` },
+      })),
+      // A command's result heading (plan step 22).
+      withTool('Bash', (t) => ({
+        ...t,
+        texts: { ...t.texts, exitCode: `${bash.texts['exitCode'] ?? ''}.` },
       })),
     ]
     expect(search.variants.map((v) => v.variant)).toEqual(['domainFilter', 'plain'])

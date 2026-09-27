@@ -21,7 +21,7 @@ import type { ToolExecution } from '../executor.js'
 export const FILE_READ_MAX_BYTES = 64 * 1024 * 1024
 
 /** A file whose first this-many bytes hold a NUL is not text. */
-const BINARY_SNIFF_BYTES = 8192
+export const BINARY_SNIFF_BYTES = 8192
 
 /** The execution-time failures the file tools share (§参数校验与失败「执行期失败」). */
 export const FILE_TEXTS = {

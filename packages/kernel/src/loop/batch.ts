@@ -14,7 +14,8 @@
  *   5. deny: the decision and a kernel-authored closure; the third machine denial in a row ends the
  *      Run as `blocked-repeatedly`. Ask: the decision is written with the Run's `paused` terminal, in
  *      one batch (同批规则 1). Allow: the decision and `dispatch_committed`, then — only once they are
- *      on the Tape (T1) — the executor, then its result and outcome.
+ *      on the Tape (T1) — the executor, then its result and outcome. Bash first awaits its base
+ *      environment, raced against the stop (§内置工具与参数「Bash」): a stop that wins writes neither.
  *
  * A stop between calls closes the rest as not-run / stopped.
  */
@@ -56,6 +57,7 @@ import type { ToolTableItem } from '../tools/registry.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ArgumentValidator } from '../tools/validate.js'
+import type { CommandRun, CommandShell } from '../tools/builtin/bash.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
@@ -94,6 +96,8 @@ export interface BatchContext {
   readonly mcpSources: readonly McpToolSource[]
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
   readonly search: SearchBackend | null
+  /** Bash's shell and base environment (`LoopPorts.commandShell`). */
+  readonly commandShell: CommandShell
   /** Machine denials in a row before this batch, counted from the Tape (F2, F3). */
   readonly denials: number
   readonly signal: AbortSignal
@@ -215,6 +219,13 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       if (ctx.approved?.ordinal === call.ordinal) {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
         denials = 0
+        // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        const command = await commandRunOf(ctx, call, item, facts)
+        if (command === 'stopped') {
+          // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
+          await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+          return { kind: 'stopped' }
+        }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
         if (!(await dispatchOnce(ctx, call, item, [dispatch], dispatch))) continue
@@ -226,6 +237,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           summary: ctx.approved.summary,
           target: target?.real ?? null,
           scope: facts.scope,
+          command,
         })
         continue
       }
@@ -263,6 +275,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       // ----- allowed: decision and dispatch first (T1), then the side effect -----------------------
       denials = 0
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+      const command = await commandRunOf(ctx, call, item, facts)
+      if (command === 'stopped') {
+        // Stopped before the dispatch: no decision fact, the call and the rest not-run (B1).
+        // oxlint-disable-next-line no-await-in-loop -- the rest of the batch closes once, in order
+        await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+        return { kind: 'stopped' }
+      }
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
       if (!(await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch))) continue
@@ -272,6 +292,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         summary: decision.summary,
         target: judged.target,
         scope: facts.scope,
+        command,
       })
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
@@ -328,6 +349,7 @@ async function execute(
     readonly summary: DecisionSummary
     readonly target: AbsolutePath | null
     readonly scope: PathScope
+    readonly command: CommandRun | undefined
   },
 ): Promise<void> {
   const execution = await executor({
@@ -337,29 +359,68 @@ async function execute(
     target: q.target,
     scope: q.scope,
     fs: ctx.host.fs,
+    ...(q.command === undefined ? {} : { command: q.command }),
   })
   const stopped = execution.state !== 'completed'
+  // A Bash timeout is its own code; every other call that did not complete was stopped.
+  const source = stopped ? (execution.source ?? 'stopped') : null
   const output = textOf(execution.content)
   const facts = resultFacts({
     tape: ctx.tape,
     now: ctx.now,
     call: refOf(ctx, call),
-    content: stopped
-      ? closureContent({
-          source: 'stopped',
-          state: execution.state,
-          ...(output === '' ? {} : { detail: output }),
-        })
-      : execution.content,
+    content:
+      source === null
+        ? execution.content
+        : closureContent({
+            source,
+            state: execution.state,
+            ...(output === '' ? {} : { detail: output }),
+          }),
     isError: stopped || execution.isError,
     kernelAuthored: stopped,
     effect: effectOf(item),
     state: execution.state,
-    source: stopped ? 'stopped' : null,
+    source,
     reversibility: q.reversibility,
     writer: ctx.writer,
   })
   await close(ctx, call, facts, q.summary)
+}
+
+/**
+ * What a Bash call runs with, gathered before its dispatch (§内置工具与参数「Bash」): the base
+ * environment `commandShell.env()` resolves to, awaited in a race with the stop, and the workspace it
+ * runs in; `'stopped'` when the stop came first — the call is not run. Undefined for every other tool.
+ * The host's `env()` does not reject (it falls back to the launch environment and logs).
+ */
+async function commandRunOf(
+  ctx: BatchContext,
+  call: CompleteCall,
+  item: ToolTableItem,
+  facts: CallFacts,
+): Promise<CommandRun | 'stopped' | undefined> {
+  if (item.source !== 'builtin' || item.originalName !== 'Bash') return undefined
+  const { signal } = ctx
+  if (signal.aborted) return 'stopped'
+  const stop = Promise.withResolvers<'stopped'>()
+  const onStop = (): void => stop.resolve('stopped')
+  signal.addEventListener('abort', onStop, { once: true })
+  let env: Readonly<Record<string, string>> | 'stopped'
+  try {
+    env = await Promise.race([ctx.commandShell.env(), stop.promise])
+  } finally {
+    signal.removeEventListener('abort', onStop)
+  }
+  if (env === 'stopped' || signal.aborted) return 'stopped'
+  return {
+    commandId: call.providerToolCallId,
+    shell: ctx.commandShell.path,
+    env,
+    folders: facts.scope.roots,
+    dedicated: facts.workspace?.origin === 'dedicated',
+    host: ctx.host,
+  }
 }
 
 /** A denial's closure: its block code and slots, or a failed inspector's own note (F1). */
@@ -663,6 +724,8 @@ export interface CallFacts {
   readonly entries: readonly TapeEntry[]
   readonly profile: 'chat' | 'cowork'
   readonly scope: PathScope
+  /** The workspace facts the scope's roots come from; null in the chat profile. */
+  readonly workspace: WorkspaceSetPayload | null
 }
 
 export async function callFactsOf(
@@ -671,7 +734,7 @@ export async function callFactsOf(
   const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
   const facts = sessionFactsOf(entries)
   const workspace = await workspaceOf(ctx.tape, facts)
-  return { entries, profile: facts.profile, scope: await pathScopeOf(ctx, workspace) }
+  return { entries, profile: facts.profile, scope: await pathScopeOf(ctx, workspace), workspace }
 }
 
 /**

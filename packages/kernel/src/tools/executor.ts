@@ -5,7 +5,8 @@
  *
  * Connector tools are dispatched as `connection.callTool(originalName, args)` on the Run's MCP source
  * for that server (plan step 13); the tests have a fake builtin executor; the real builtin executors
- * land with their tools in `BUILTIN_EXECUTORS` — Read, Glob and Grep with plan step 18. A frozen tool
+ * land with their tools in `BUILTIN_EXECUTORS` — Read, Glob and Grep with plan step 18, Write, Edit
+ * and Bash with step 22. A frozen tool
  * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
@@ -17,15 +18,24 @@ import { MODEL_NOTES, fill } from '../prompts/index.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { BuiltinToolName } from './builtin/tool.js'
 import { isBuiltinToolName } from './builtin/index.js'
+import { bashExecutor } from './builtin/bash.js'
+import type { CommandRun } from './builtin/bash.js'
+import { editExecutor } from './builtin/edit.js'
 import { globExecutor } from './builtin/glob.js'
 import { grepExecutor } from './builtin/grep.js'
 import { readExecutor } from './builtin/read.js'
+import { writeExecutor } from './builtin/write.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
   readonly content: ResultContent
   readonly isError: boolean
   readonly state: Exclude<ExecutionState, 'not-run'>
+  /**
+   * Why a call that did not complete ended, when the stop is not why: only Bash's timeout (§原因码表
+   * `timed-out`). The batch writes that code's note, `content` as its second block.
+   */
+  readonly source?: 'timed-out'
 }
 
 export interface ExecuteQuery {
@@ -43,6 +53,11 @@ export interface ExecuteQuery {
    */
   readonly scope: PathScope
   readonly fs: HostFs
+  /**
+   * What Bash runs with (§内置工具与参数「Bash」), its base environment awaited before the dispatch;
+   * absent for every other tool.
+   */
+  readonly command?: CommandRun
 }
 
 export type ToolExecutor = (q: ExecuteQuery) => Promise<ToolExecution>
@@ -50,6 +65,9 @@ export type ToolExecutor = (q: ExecuteQuery) => Promise<ToolExecution>
 /** The builtin executors this build has: each lands with its tool (plan steps 18, 22, 26–31). */
 export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExecutor>>> = {
   Read: readExecutor,
+  Write: writeExecutor,
+  Edit: editExecutor,
+  Bash: bashExecutor,
   Glob: globExecutor,
   Grep: grepExecutor,
 }
