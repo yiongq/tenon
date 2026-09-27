@@ -15,10 +15,11 @@
  * a block in a message below `ProviderRequest.dropThinkingBefore` is dropped as `compacted` (H10).
  * And the vendor blocks (M3) go through the same guard in their own function, decideVendorBlock():
  * rules 1 and 2 apply to them unchanged, `replay: 'never'` is never sent, and a block that passes
- * both goes back as it was stored.
+ * both goes back as it was stored. The vendor fields of a text or tool-request block go through
+ * rules 1 and 2 as well, in decideVendorFields() (01 修补 2; s6-spec-2, owner 2026-09-27).
  */
 import { ProviderInvalidArgumentError } from './errors.js'
-import type { ContentBlock, ModelInfo, ThinkingDecision } from './types.js'
+import type { ContentBlock, ModelInfo, ThinkingDecision, VendorSource } from './types.js'
 
 /** The two reasoning block kinds the guard judges. */
 export type ThinkingBlock = Extract<ContentBlock, { type: 'thinking' | 'redacted-thinking' }>
@@ -120,10 +121,32 @@ export function decideThinking(
  */
 export function decideVendorBlock(block: VendorBlock, target: ThinkingTarget): ThinkingDecision {
   if (block.replay === 'never') return { action: 'drop', reason: 'server-executed' }
-  if (block.provider !== target.model.providerId) {
-    return { action: 'drop', reason: 'foreign-provider' }
-  }
-  if (block.providerModel !== thinkingModelId(target.model)) {
+  return sourceGate(block, target.model)
+}
+
+/**
+ * The guard for the `vendorFields` of a text or tool-request block (spec 02, 01 修补 2: 「已知块上的
+ * 未知字段……每项记进 thinkingDecisions：provider 或模型不同，按规则 1、2 丢」; s6-spec-2, owner
+ * 2026-09-27). The block itself always goes — it is the answer, not the vendor's — so only the fields
+ * are judged, against the `vendorSource` the fold stamped next to them:
+ *
+ * - no source: fields stored before the fold stamped one. Nothing says which model produced them, so
+ *   they are not sent to any (`missing-source`); keeping them on a same-model replay would need the
+ *   run's model read back from the Tape and mapped through a model row the encoder does not have;
+ * - otherwise rules 1 and 2 exactly as for a vendor block; fields that pass both go back as stored.
+ */
+export function decideVendorFields(
+  source: VendorSource | undefined,
+  target: ThinkingTarget,
+): ThinkingDecision {
+  if (source === undefined) return { action: 'drop', reason: 'missing-source' }
+  return sourceGate(source, target.model)
+}
+
+/** Rules 1 and 2, for what carries no reasoning: another provider's or another model's is dropped. */
+function sourceGate(source: VendorSource, model: ModelInfo): ThinkingDecision {
+  if (source.provider !== model.providerId) return { action: 'drop', reason: 'foreign-provider' }
+  if (source.providerModel !== thinkingModelId(model)) {
     return { action: 'drop', reason: 'model-changed' }
   }
   return { action: 'replay', reason: 'same-model' }

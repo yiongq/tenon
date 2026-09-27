@@ -191,7 +191,10 @@ export interface EncodedRequest {
   readonly body: unknown // the wire payload handed to the SDK
   readonly promptHash: string // SHA-256 (hex) of canonicalJson(body)
   readonly toolDefinitionsHash: string
-  /** Audit: where each reasoning block went, and why. */
+  /**
+   * Audit: where each reasoning block went, and why — and, from spec 02 (01 修补 2), each vendor
+   * block and each field set on a text or tool-request block, all in message/block order.
+   */
   readonly thinkingDecisions: readonly ThinkingDecision[]
 }
 
@@ -209,6 +212,12 @@ export interface ThinkingDecision {
     | 'server-executed'
     /** Spec 02 (H10): a thinking block below `ProviderRequest.dropThinkingBefore`. */
     | 'compacted'
+    /**
+     * Spec 02 (01 修补 2; s6-spec-2, owner 2026-09-27): the `vendorFields` of a text or tool-request
+     * block stored with no `vendorSource` — before the fold stamped one — so rules 1 and 2 have
+     * nothing to compare and the fields are not sent.
+     */
+    | 'missing-source'
 }
 
 export interface CompleteResult {
@@ -258,14 +267,31 @@ export interface ProviderRegistry {
 }
 
 /**
+ * Where the `vendorFields` of a text or tool-request block came from (spec 02, 01 修补 2; s6-spec-2,
+ * owner 2026-09-27): the same pair a thinking block carries, stamped by the stream fold whenever it
+ * attaches fields, so the guard can judge them with rules 1 and 2 — decideVendorFields().
+ */
+export interface VendorSource {
+  provider: ProviderId
+  providerModel: string
+}
+
+/**
  * The content model, shared with the Tape message payloads.
  *
  * `provider` and `providerModel` are recorded on the thinking block ITSELF: without them
  * the thinking guard has nothing to compare, and "drop or downgrade the previous model's
  * thinking blocks when the model changes" (master-reference §4.8.3) is unimplementable.
+ * A text or tool-request block carries the same pair as `vendorSource`, and only for its
+ * `vendorFields`: the block itself is everyone's, the fields are the vendor's.
  */
 export type ContentBlock =
-  | { type: 'text'; text: string; vendorFields?: Record<string, unknown> }
+  | {
+      type: 'text'
+      text: string
+      vendorFields?: Record<string, unknown>
+      vendorSource?: VendorSource
+    }
   | {
       type: 'thinking'
       text: string
@@ -287,6 +313,7 @@ export type ContentBlock =
       name: string
       input: Record<string, unknown>
       vendorFields?: Record<string, unknown>
+      vendorSource?: VendorSource
     }
   | {
       type: 'tool-response'

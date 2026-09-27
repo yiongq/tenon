@@ -454,8 +454,10 @@ function placeCalls(
       id: call.providerToolCallId,
       name: call.name,
       input: call.input,
-      // What the vendor sent verbatim on the block stays with it (01 修补 2).
+      // What the vendor sent verbatim on the block stays with it (01 修补 2), and so does where it
+      // came from, which the guard judges it by (s6-spec-2, owner 2026-09-27).
       ...(block.vendorFields === undefined ? {} : { vendorFields: block.vendorFields }),
+      ...(block.vendorSource === undefined ? {} : { vendorSource: block.vendorSource }),
     }
   })
 }

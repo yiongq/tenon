@@ -64,6 +64,7 @@ import {
   effortTierOf,
   guardReasoning,
   guardVendorBlock,
+  guardVendorFields,
   hasSystemPrompt,
   mergeRequestParams,
   sealEncoded,
@@ -118,13 +119,15 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
 /**
  * `provider/attempt_completed.encoder` for every body this file builds (spec 02, 01 修补 7). Version
  * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; 2 adds
- * the top-level `cache_control` (01 修补 3). Add one with every change to what it encodes, and a row
- * to test/provider/wire/encoder-version.test.ts. Exported for the attempt re-check (02 不变量 33),
- * which covers only the records this build's encoder wrote.
+ * the top-level `cache_control` (01 修补 3); 3 puts the vendor fields of text and tool_use blocks
+ * through rules 1 and 2 (01 修补 2; s6-spec-2, owner 2026-09-27), so fields another model produced,
+ * or stored with no source, no longer go out. Add one with every change to what it encodes, and a
+ * row to test/provider/wire/encoder-version.test.ts. Exported for the attempt re-check (02 不变量
+ * 33), which covers only the records this build's encoder wrote.
  */
 export const ANTHROPIC_MESSAGES_ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
-  version: 2,
+  version: 3,
   sdk: `@anthropic-ai/sdk@${SDK_VERSION}`,
 })
 
@@ -405,9 +408,11 @@ function encodeMessages(
       switch (block.type) {
         case 'text':
           // The API rejects an empty text block, whatever produced it. Fields the vendor put on it
-          // that the content model has no place for go back with it (spec 02, 01 修补 2).
+          // that the content model has no place for go back with it when the guard keeps them:
+          // the same provider and model that sent them (spec 02, 01 修补 2; s6-spec-2).
           if (block.text !== '') {
-            content.push(withVendorFields({ type: 'text', text: block.text }, block.vendorFields))
+            const fields = guardVendorFields(block, target, decisions)
+            content.push(withVendorFields({ type: 'text', text: block.text }, fields))
           }
           break
         case 'thinking':
@@ -425,7 +430,8 @@ function encodeMessages(
           // legitimise the `tool_result` that follows it.
           assertBlockRole('a tool call', message.role, 'assistant', WIRE)
           requested.add(block.id)
-          // Invariant 6 on the way out: `{}` for empty input, never null, never a JSON string.
+          // Invariant 6 on the way out: `{}` for empty input, never null, never a JSON string. The
+          // call always goes; its vendor fields only as the guard says, like the text's above.
           content.push(
             withVendorFields(
               {
@@ -434,7 +440,7 @@ function encodeMessages(
                 name: block.name,
                 input: assertToolInput(block.input, block.name, WIRE),
               },
-              block.vendorFields,
+              guardVendorFields(block, target, decisions),
             ),
           )
           break

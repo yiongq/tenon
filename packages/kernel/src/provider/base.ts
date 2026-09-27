@@ -297,11 +297,21 @@ class BlockFold implements BlockAccumulator {
       // map a later content() call reads.
       const stored = this.#fields.get(index)
       const fields = stored === undefined ? {} : { vendorFields: { ...stored } }
+      // A text or tool-request block has no provider of its own, so its fields get the one a
+      // thinking block carries: the guard judges them against it (01 修补 2; s6-spec-2, owner
+      // 2026-09-27). Stamped only next to fields, and never on a block that already has the pair.
+      const sourced =
+        stored === undefined
+          ? {}
+          : {
+              ...fields,
+              vendorSource: { provider: this.#provider, providerModel: this.#providerModel },
+            }
       switch (slot.kind) {
         case 'text':
           // An empty text block is not content: it would turn an aborted run into an
           // assistant turn, and both wire protocols reject one on the way back in.
-          if (slot.text !== '') blocks.push({ type: 'text', text: slot.text, ...fields })
+          if (slot.text !== '') blocks.push({ type: 'text', text: slot.text, ...sourced })
           break
         case 'thinking':
           // Nothing to render and nothing to replay is not content either: an empty,
@@ -350,7 +360,7 @@ class BlockFold implements BlockAccumulator {
               // Copied again on the way out: a caller that mutates a block it was handed
               // must not be able to reach the slot a later content() call reads.
               input: { ...slot.end.input },
-              ...fields,
+              ...sourced,
             })
           }
           break

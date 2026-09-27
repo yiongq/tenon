@@ -15,12 +15,14 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  ProviderInvalidArgumentError,
   WIRE_MODEL_FIELDS,
   anthropicDefinition,
   canonicalJson,
   createMemoryHost,
   createMemoryTapeStore,
   createSessionService,
+  decideVendorFields,
   encodeAnthropicMessages,
   encodeOpenAIChat,
   modelWireHash,
@@ -29,6 +31,7 @@ import {
 } from '../../src/index.js'
 import type {
   ContentBlock,
+  InternalMessage,
   ModelInfo,
   ProviderRequest,
   TapeEntry,
@@ -121,6 +124,74 @@ async function session(streams: readonly (readonly string[])[]): Promise<Session
   }
 }
 
+interface ToolSession {
+  readonly net: FakeNetwork
+  readonly store: TapeStore
+  readonly sessionId: string
+  /** One run on `model`, which may call `LOOK`; answers the run's attempt facts in request order. */
+  send(text: string, model?: ModelInfo): Promise<TapeEntry[]>
+}
+
+/**
+ * A session over the real Anthropic adapter whose first answer carries the vendor fields of a
+ * redacted, a text and a tool_use block and calls `LOOK`, answered next by plain text; `more` are the
+ * streams after those two.
+ */
+async function toolSession(...more: (readonly string[])[]): Promise<ToolSession> {
+  const net = fakeNetwork(
+    [fixture.vendorFieldsFrames(LOOK, JSON.stringify({ at: 'a' })), fixture.PLAIN_TEXT_FRAMES]
+      .concat(more)
+      .map((frames) => ({ kind: 'sse' as const, frames })),
+    {
+      checkRequest: (request) => {
+        assertToolPairing(request)
+        assertLastTurnIsUser(request)
+      },
+    },
+  )
+  const provider = anthropicDefinition.create({
+    network: net,
+    clock: { now: () => 0, setTimeout: () => () => undefined },
+    config: { baseURL: 'https://api.anthropic.test' },
+    secrets: { apiKey: 'test-key-not-a-real-credential' },
+  })
+  const store = createMemoryTapeStore({ identity: TAPE_IDENTITY })
+  const loop = createTestLoopPorts({
+    connector: { provider, model: MODEL, mcpSources: [lookSource([])] },
+  })
+  const service = createTestSessionService(
+    {
+      host: instantHost(),
+      tape: store,
+      ids: createCounterIds(),
+      inspectors: [],
+      connector: loop.connector,
+      protectedFiles: [],
+    },
+    { tools: {}, userSetting: () => ({ userSetting: 'always-allow' }) },
+  )
+  service.bindLoop(loop)
+  const { sessionId } = await service.createSession()
+  return {
+    net,
+    store,
+    sessionId,
+    async send(text, model = MODEL) {
+      loop.connector.use({ provider, model, mcpSources: [lookSource([])] })
+      const sent = await service.send({ sessionId, origin: null, text })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      expect((await loop.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
+      const facts = await store.readBySource({
+        sessionId,
+        sourceType: 'runtime_event',
+        sourceId: sent.runId,
+        limit: 100,
+      })
+      return facts.filter((entry) => entry.name === 'provider/attempt_completed')
+    },
+  }
+}
+
 /** The assistant turns of a recorded request body, as the SDK sent them. */
 function assistantTurns(net: FakeNetwork, index: number): unknown[][] {
   const body = net.requests[index]?.body as { messages: { role: string; content: unknown[] }[] }
@@ -128,7 +199,9 @@ function assistantTurns(net: FakeNetwork, index: number): unknown[][] {
 }
 
 /** The assistant content the Tape holds, in order. */
-async function storedAssistantContent(s: Session): Promise<ContentBlock[][]> {
+async function storedAssistantContent(
+  s: Pick<Session, 'store' | 'sessionId'>,
+): Promise<ContentBlock[][]> {
   const page = await s.store.readRange({ sessionId: s.sessionId, limit: 100 })
   return page.entries
     .filter((entry) => entry.name === 'message/assistant')
@@ -163,44 +236,9 @@ describe('vendor blocks through the Tape (旧 43)', () => {
     // Acceptance 7 「未知字段同模型回放逐字节相同」 for the three other known block types: the text
     // block's `citations` come from citations_delta, the rest ride on the block's start. The call is
     // run, so the SAME run's next request carries the turn back, rebuilt from the Tape.
-    const net = fakeNetwork(
-      [
-        fixture.vendorFieldsFrames(LOOK, JSON.stringify({ at: 'a' })),
-        fixture.PLAIN_TEXT_FRAMES,
-      ].map((frames) => ({ kind: 'sse' as const, frames })),
-      {
-        checkRequest: (request) => {
-          assertToolPairing(request)
-          assertLastTurnIsUser(request)
-        },
-      },
-    )
-    const provider = anthropicDefinition.create({
-      network: net,
-      clock: { now: () => 0, setTimeout: () => () => undefined },
-      config: { baseURL: 'https://api.anthropic.test' },
-      secrets: { apiKey: 'test-key-not-a-real-credential' },
-    })
-    const loop = createTestLoopPorts({
-      connector: { provider, model: MODEL, mcpSources: [lookSource([])] },
-    })
-    const service = createTestSessionService(
-      {
-        host: instantHost(),
-        tape: createMemoryTapeStore({ identity: TAPE_IDENTITY }),
-        ids: createCounterIds(),
-        inspectors: [],
-        connector: loop.connector,
-        protectedFiles: [],
-      },
-      { tools: {}, userSetting: () => ({ userSetting: 'always-allow' }) },
-    )
-    service.bindLoop(loop)
-    const { sessionId } = await service.createSession()
-    const sent = await service.send({ sessionId, origin: null, text: 'look at a' })
-    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
-    expect((await loop.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
-    const [turn] = assistantTurns(net, 1)
+    const s = await toolSession()
+    const [, next] = await s.send('look at a')
+    const [turn] = assistantTurns(s.net, 1)
     expect(turn?.map((block) => canonicalJson(block))).toEqual([
       canonicalJson({
         type: 'redacted_thinking',
@@ -221,7 +259,15 @@ describe('vendor blocks through the Tape (旧 43)', () => {
         ...fixture.TOOL_USE_EXTRA_FIELD,
       }),
     ])
-    expect(net.checkFailures).toEqual([])
+    // The redacted block, then one decision per field set of the text and the call (01 修补 2
+    // 「每项记进 thinkingDecisions」; s6-spec-2, owner 2026-09-27). The redacted block's own fields
+    // go with it under its decision.
+    expect(next?.payload['thinkingDecisions']).toEqual([
+      { action: 'replay', reason: 'same-model' },
+      { action: 'replay', reason: 'same-model' },
+      { action: 'replay', reason: 'same-model' },
+    ])
+    expect(s.net.checkFailures).toEqual([])
   })
 
   it('drops both on a model change and records why', async () => {
@@ -239,7 +285,148 @@ describe('vendor blocks through the Tape (旧 43)', () => {
     expect(stored?.map((block) => block.type)).toEqual(['thinking', 'vendor', 'text'])
     expect(s.net.checkFailures).toEqual([])
   })
+
+  it('drops the fields of a text and a tool_use block on a model change and records why', async () => {
+    // 01 修补 2 「已知块上的未知字段……provider 或模型不同，按规则 1、2 丢」 (s6-spec-2, owner
+    // 2026-09-27): the text and the call still go, without the fields another model produced.
+    const s = await toolSession(fixture.PLAIN_TEXT_FRAMES)
+    await s.send('look at a')
+    const [switched] = await s.send('and now?', OTHER_MODEL)
+    const [turn] = assistantTurns(s.net, 2)
+    expect(turn).toEqual([
+      { type: 'text', text: fixture.VENDOR_FIELDS_TEXT },
+      { type: 'tool_use', id: fixture.TOOL_ID, name: LOOK, input: { at: 'a' } },
+    ])
+    expect(switched?.payload['thinkingDecisions']).toEqual([
+      { action: 'drop', reason: 'model-changed' },
+      { action: 'drop', reason: 'model-changed' },
+      { action: 'drop', reason: 'model-changed' },
+    ])
+    // Dropped from the request, not from the Tape: the fields and their source are still there.
+    const [stored] = await storedAssistantContent(s)
+    const source = { provider: 'anthropic', providerModel: MODEL.id }
+    expect(stored?.[1]).toMatchObject({ type: 'text', vendorSource: source })
+    expect(stored?.[2]).toMatchObject({
+      type: 'tool-request',
+      vendorFields: fixture.TOOL_USE_EXTRA_FIELD,
+      vendorSource: source,
+    })
+    expect(s.net.checkFailures).toEqual([])
+  })
 })
+
+describe('vendor fields on text and tool_use blocks go through the guard (s6-spec-2)', () => {
+  it('merges a same-model field set back, drops the rest, one decision each (anthropic)', () => {
+    const encoded = encodeAnthropicMessages(
+      { model: MODEL, messages: fieldsHistory() },
+      'anthropic',
+    )
+    const [, turn] = (encoded.body as { messages: { content: unknown[] }[] }).messages
+    expect(turn?.content).toEqual([
+      { type: 'text', text: 'kept', citations: [1] },
+      { type: 'tool_use', id: 't1', name: TOOL.name, input: { path: 'a' } },
+      { type: 'text', text: 'foreign' },
+      { type: 'text', text: 'unsourced' },
+    ])
+    expect(encoded.thinkingDecisions).toEqual([
+      { action: 'replay', reason: 'same-model' },
+      { action: 'drop', reason: 'model-changed' },
+      { action: 'drop', reason: 'foreign-provider' },
+      { action: 'drop', reason: 'missing-source' },
+    ])
+  })
+
+  it('records the drops on the wire that has no place for the fields (openai-chat)', () => {
+    const model = openAIModel()
+    const encoded = encodeOpenAIChat({ model, messages: fieldsHistory() }, 'zhipu')
+    const bare = encodeOpenAIChat({ model, messages: fieldsHistory().map(withoutFields) }, 'zhipu')
+    // The same bytes as before the guard judged them: this wire never sent them.
+    expect(encoded.promptHash).toBe(bare.promptHash)
+    expect(encoded.thinkingDecisions).toEqual([
+      { action: 'drop', reason: 'foreign-provider' },
+      { action: 'drop', reason: 'foreign-provider' },
+      { action: 'drop', reason: 'foreign-provider' },
+      { action: 'drop', reason: 'missing-source' },
+    ])
+    expect(bare.thinkingDecisions).toEqual([])
+    // A field set the guard would send back has nowhere to go here, and is refused rather than
+    // dropped out of the audit, as a replayable vendor block is.
+    const own = { provider: 'zhipu', providerModel: model.id } as const
+    expect(() =>
+      encodeOpenAIChat(
+        {
+          model,
+          messages: [
+            user({ type: 'text', text: 'a' }),
+            assistant({ type: 'text', text: 'b', vendorFields: { x: 1 }, vendorSource: own }),
+            user({ type: 'text', text: 'c' }),
+          ],
+        },
+        'zhipu',
+      ),
+    ).toThrow(ProviderInvalidArgumentError)
+  })
+
+  it('judges with rules 1 and 2 of the vendor-block guard, on the canonical model id', () => {
+    const target = { model: anthropicModel({ canonicalId: 'claude-canonical' }), hasTools: false }
+    const source = { provider: 'anthropic', providerModel: 'claude-canonical' } as const
+    expect(decideVendorFields(source, target)).toEqual({ action: 'replay', reason: 'same-model' })
+    expect(decideVendorFields({ ...source, providerModel: target.model.id }, target)).toEqual({
+      action: 'drop',
+      reason: 'model-changed',
+    })
+    expect(decideVendorFields({ ...source, provider: 'zhipu' }, target)).toEqual({
+      action: 'drop',
+      reason: 'foreign-provider',
+    })
+    expect(decideVendorFields(undefined, target)).toEqual({
+      action: 'drop',
+      reason: 'missing-source',
+    })
+  })
+})
+
+/**
+ * Field sets on text and tool-request blocks, one of each source: MODEL's own, another Anthropic
+ * model's, another provider's, and one stored with no source.
+ */
+function fieldsHistory(): InternalMessage[] {
+  const source = { provider: 'anthropic', providerModel: MODEL.id } as const
+  return [
+    user({ type: 'text', text: 'a' }),
+    assistant(
+      { type: 'text', text: 'kept', vendorFields: { citations: [1] }, vendorSource: source },
+      {
+        type: 'tool-request',
+        id: 't1',
+        name: TOOL.name,
+        input: { path: 'a' },
+        vendorFields: { future_tool: 1 },
+        vendorSource: { ...source, providerModel: 'claude-test-3' },
+      },
+      {
+        type: 'text',
+        text: 'foreign',
+        vendorFields: { future_text: 2 },
+        vendorSource: { provider: 'openai', providerModel: 'gpt-test' },
+      },
+      { type: 'text', text: 'unsourced', vendorFields: { future_text: 3 } },
+    ),
+    user({ type: 'tool-response', id: 't1', isError: false, content: [] }),
+  ]
+}
+
+/** The same history with no vendor fields and no source anywhere. */
+function withoutFields(message: InternalMessage): InternalMessage {
+  return {
+    ...message,
+    content: message.content.map((block) => {
+      if (block.type !== 'text' && block.type !== 'tool-request') return block
+      const { vendorFields: _fields, vendorSource: _source, ...rest } = block
+      return rest
+    }),
+  }
+}
 
 describe('calls the vendor ran itself (旧 101, 01 修补 9 (t))', () => {
   it('stores them as never-replayed, dispatches none and never sends them back', async () => {
@@ -312,7 +499,7 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     const attempt = await s.send('hi')
     expect(attempt.payload['encoder']).toEqual({
       wire: 'anthropic-messages',
-      version: 2,
+      version: 3,
       sdk: expect.stringMatching(/^@anthropic-ai\/sdk@\d+\.\d+\.\d+$/),
     })
     // canonicalHash(pick(model, WIRE_MODEL_FIELDS)), computed here from the definition.
@@ -427,7 +614,14 @@ function guardedHistory(model: ModelInfo, wire: 'anthropic-messages' | 'openai-c
       // The OpenAI-compatible wire decodes only calls the vendor ran itself.
       ...(wire === 'anthropic-messages' ? [vendor('same-model')] : []),
       vendor('never'),
-      { type: 'text', text: 'looking' },
+      {
+        type: 'text',
+        text: 'looking',
+        // The vendor-fields guard (s6-spec-2): a field set this wire can send back.
+        ...(wire === 'anthropic-messages'
+          ? { vendorFields: { citations: [] }, vendorSource: { provider, providerModel } }
+          : {}),
+      },
       { type: 'tool-request', id: 't1', name: TOOL.name, input: { path: 'a' } },
     ),
     user(

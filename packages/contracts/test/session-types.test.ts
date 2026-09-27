@@ -12,11 +12,13 @@
  * without any type noticing.
  *
  * Spec 02 (plan step 6, 原样块取乙): the kernel's content model also holds what a vendor sent
- * verbatim — the `vendor` block, and `vendorFields` on four known blocks — and the desktop main
- * process strips both before a row crosses (apps/desktop/src/main/session.ts `projectedRow`), so
+ * verbatim — the `vendor` block, and `vendorFields` on four known blocks, with a `vendorSource` next
+ * to those on text and tool-request (s6-spec-2, owner 2026-09-27) — and the desktop main process
+ * strips all of it before a row crosses (apps/desktop/src/main/session.ts `projectedRow`), so
  * contracts is unchanged. The identity checked here is therefore contracts ⇔ the kernel block MINUS
- * the vendor block; `vendorFields` is optional and needs no subtraction for either direction. That
- * the vendor block does NOT fit the contract is pinned too: it is what makes the strip necessary.
+ * the vendor block; `vendorFields` and `vendorSource` are optional and need no subtraction for either
+ * direction. That the vendor block does NOT fit the contract is pinned too: it is what makes the
+ * strip necessary.
  */
 import type { ContentBlock, MessageRow } from '@tenon-app/kernel'
 import { MAX_READ_LIMIT, isCanonicalUuid } from '@tenon-app/kernel'

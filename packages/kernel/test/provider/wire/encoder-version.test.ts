@@ -15,7 +15,10 @@ import { PNG_DATA, SIGNATURE, TOOL, assistant, user } from './fixtures.js'
 
 /**
  * promptHash of the golden request, by encoder version. anthropic-messages 1 is ee2781a (step 6); 2 is
- * 3cb1249 (step 7), which added the top-level `cache_control` and left the version at 1.
+ * 3cb1249 (step 7), which added the top-level `cache_control` and left the version at 1; 3 judges the
+ * vendor fields of text and tool_use blocks by their `vendorSource` (s6-spec-2, owner 2026-09-27) —
+ * the golden text block has none, so its `citations` no longer go out. openai-chat never sent those
+ * fields, so its bytes, and its version, stayed.
  */
 const GOLDEN: Readonly<
   Record<'anthropic-messages' | 'openai-chat', Readonly<Record<number, string>>>
@@ -23,6 +26,7 @@ const GOLDEN: Readonly<
   'anthropic-messages': {
     1: '19d4b9c002611705b354dff54d23898ea14195213b0e7da11f0c5174048f977f',
     2: '59a5fbf449219c9c34a2f8f127bde26bda8a920cbcacc2ec6d275034b8008866',
+    3: 'e246329eaa8a7dd5129311efc0fb49b765740cd34a35c6fe3c70f9fdfb8c2f33',
   },
   'openai-chat': {
     1: 'bf2278ab5d0fcfa5d95d523b4756ac6dfa0dcb9e220e6f525a596799c3e9e21a',
