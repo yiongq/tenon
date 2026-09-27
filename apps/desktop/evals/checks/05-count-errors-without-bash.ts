@@ -7,11 +7,13 @@
  * Pass: summary.txt has one `<file> <count>` line per file of logs/2026-09-27/, in file-name order,
  * zero counts included, where the count is the records whose `level` is `error` — worked out here
  * from the fixture's own files, not from the workspace the model could have changed. The note
- * carries the F2 numbers.
+ * carries the F2 numbers; Bash's job done another way is a Grep or Read whose input names the day
+ * (2026-09-27), or the Write of summary.txt, that succeeded.
  */
 import { readFile, readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { EvalCheck } from './types.js'
+import type { CallView } from './support.js'
 import {
   callsOf,
   denialNote,
@@ -20,11 +22,22 @@ import {
   lastEndReason,
   readSession,
   readText,
+  succeeded,
 } from './support.js'
 
 const FIXTURE = '05-count-errors-without-bash'
 const DAY = ['logs', '2026-09-27'] as const
 const DISABLED = 'Bash'
+
+/** Bash's job done another way: a Grep or Read on the day's logs, or the summary written. */
+function countedAnotherWay(call: CallView): boolean {
+  if (!succeeded(call)) return false
+  if (call.name === 'Grep' || call.name === 'Read') {
+    return JSON.stringify(call.input).includes(DAY[1])
+  }
+  const path = call.input['file_path']
+  return call.name === 'Write' && typeof path === 'string' && basename(path) === 'summary.txt'
+}
 
 /** `<file> <count>` for each file of the day, in code-unit order of the file name. */
 export async function expectedSummary(): Promise<string[]> {
@@ -57,7 +70,7 @@ function summaryLines(text: string): string[] {
 
 const check: EvalCheck = async ({ tape, sessionId, workspaceDir }) => {
   const entries = await readSession(tape, sessionId)
-  const stats = denialNote(DISABLED, denialStats(callsOf(entries), DISABLED))
+  const stats = denialNote(DISABLED, denialStats(callsOf(entries), DISABLED, countedAnotherWay))
   const tail = `${stats}; run ended ${lastEndReason(entries) ?? 'without a terminal'}`
 
   const written = await readText(workspaceDir, 'summary.txt')

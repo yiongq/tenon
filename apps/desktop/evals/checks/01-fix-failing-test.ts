@@ -6,14 +6,18 @@
  *   1. test.mjs is byte-for-byte the fixture's (the fix is in the source, as the turn asks);
  *   2. `node test.mjs` exits 0 in the workspace;
  *   3. `formatCents` itself is fixed — a hidden probe, so a workaround in cart.js does not pass;
- *   4. the model ran the test after its last file change, and that run passed (the turn's last step).
+ *   4. the model ran the test after its last file change, and that run passed (the turn's last
+ *      step): a command that executes test.mjs (`node [flags] [dir/]test.mjs`, `npm test`, `pnpm
+ *      test`), not one that only names it (`cat test.mjs`), whose result holds the all-pass line.
  */
 import { readFile } from 'node:fs/promises'
 import type { EvalCheck } from './types.js'
 import { callsOf, fixturePath, readSession, readText, runNode, succeeded } from './support.js'
 
 const FIXTURE = '01-fix-failing-test'
-const TEST_RUN = /\btest\.mjs\b|\b(?:npm|pnpm) (?:run )?test\b/
+const TEST_RUN = /\bnode\b(?:\s+-\S+)*\s+(?:\S*\/)?test\.mjs\b|\b(?:npm|pnpm)\s+(?:run\s+)?test\b/
+/** test.mjs's last line when every case passed: `<n>/<n> passed`. Its source spells no digits. */
+const ALL_PASSED = /^(\d+)\/\1 passed$/m
 
 const PROBE = `
 import { formatCents } from './src/money.js'
@@ -52,7 +56,9 @@ const check: EvalCheck = async ({ tape, sessionId, workspaceDir }) => {
       TEST_RUN.test(call.input['command']),
   )
   const lastWrite = writes.at(-1)
-  const lastGreen = testRuns.findLast(succeeded)
+  const lastGreen = testRuns.findLast(
+    (call) => succeeded(call) && ALL_PASSED.test(call.result?.text ?? ''),
+  )
   if (
     lastGreen === undefined ||
     (lastWrite !== undefined && lastGreen.entryId < lastWrite.entryId)

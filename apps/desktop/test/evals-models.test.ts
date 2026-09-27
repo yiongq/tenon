@@ -2,7 +2,8 @@
  * The runner's column and its key (spec 02 §同题对比「评测专用行」, §评测集与测试宿主; H15, A9, M4): the
  * eval-only glm-5.3 row sits on the anthropic definition of the runner's registry and in no daily
  * table; each column's key variable is bound to the one host it may go to; the official Anthropic
- * key comes from the runner's environment only. And the `TENON_EVAL_*` variables.
+ * key comes from the runner's environment only. And the `TENON_EVAL_*` variables, which only the
+ * runner's environment sets: `.env.local` is read for a key and nothing else.
  */
 import {
   ANTHROPIC_PROVIDER_ID,
@@ -20,7 +21,14 @@ import {
   readKey,
   resolveColumn,
 } from '../evals/models.js'
-import { livePlan, runsOf, selectTasks } from '../evals/runner.js'
+import {
+  TASK_DEADLINE_MS,
+  deadlineOf,
+  livePlan,
+  planLine,
+  runsOf,
+  selectTasks,
+} from '../evals/runner.js'
 import type { EvalTask } from '../evals/task.js'
 
 describe('the eval-only row (§同题对比「评测专用行」)', () => {
@@ -140,7 +148,7 @@ function task(id: string, compare?: boolean): EvalTask {
   }
 }
 
-describe('TENON_EVAL_RUNS / _TASKS / _COMPARE_ONLY / _TIMING', () => {
+describe('TENON_EVAL_RUNS / _TASKS / _COMPARE_ONLY / _TIMING / _DEADLINE_MIN', () => {
   const tasks = [task('01-a', true), task('02-b'), task('03-c', true)]
 
   it('runs 3 times unless told, and refuses a count that is not a positive integer', () => {
@@ -161,13 +169,51 @@ describe('TENON_EVAL_RUNS / _TASKS / _COMPARE_ONLY / _TIMING', () => {
     ])
   })
 
-  it('plans a live run from the runner’s environment over .env.local', () => {
+  it('gives each task 45 minutes unless told, in whole minutes', () => {
+    expect(deadlineOf({})).toBe(TASK_DEADLINE_MS)
+    expect(TASK_DEADLINE_MS).toBe(45 * 60_000)
+    expect(deadlineOf({ TENON_EVAL_DEADLINE_MIN: '60' })).toBe(60 * 60_000)
+    expect(() => deadlineOf({ TENON_EVAL_DEADLINE_MIN: '0.5' })).toThrow(/positive integer/)
+  })
+
+  it('plans a live run from the runner’s environment alone; .env.local gives the key only', () => {
     const plan = livePlan(
-      { TENON_EVAL_MODEL: 'glm-5.3-flashx', TENON_EVAL_RUNS: '1', TENON_EVAL_TIMING: '1' },
-      { ZHIPU_API_KEY: 'from-file', TENON_EVAL_MODEL: 'glm-5.3' },
+      {
+        TENON_EVAL_MODEL: 'glm-5.3-flashx',
+        TENON_EVAL_RUNS: '1',
+        TENON_EVAL_TIMING: '1',
+        TENON_EVAL_DEADLINE_MIN: '20',
+      },
+      {
+        ZHIPU_API_KEY: 'from-file',
+        TENON_EVAL_MODEL: 'glm-5.3',
+        TENON_EVAL_RUNS: '5',
+        TENON_EVAL_TASKS: '02',
+      },
       tasks,
     )
-    expect(plan).toMatchObject({ key: 'from-file', runs: 1, timing: true })
+    expect(plan).toMatchObject({ key: 'from-file', runs: 1, timing: true, deadlineMs: 20 * 60_000 })
     expect(plan.column.modelId).toBe('glm-5.3-flashx')
+    expect(plan.tasks.map((t) => t.id)).toEqual(['01-a', '02-b', '03-c'])
+    // A stale selection in the file changes nothing, whatever the shell leaves unset.
+    const bare = livePlan({}, { ZHIPU_API_KEY: 'k', TENON_EVAL_MODEL: 'glm-5.3-flash' }, tasks)
+    expect(bare).toMatchObject({ runs: 3, timing: false, deadlineMs: TASK_DEADLINE_MS })
+    expect(bare.column.modelId).toBe('glm-5.3')
+    expect(bare.ignored).toEqual(['TENON_EVAL_MODEL'])
+  })
+
+  it('prints the plan in one line before the first request, naming the key’s variable only', () => {
+    const plan = livePlan(
+      { TENON_EVAL_MODEL: 'glm-5.3-flash', TENON_EVAL_TASKS: '01,03', ZHIPU_API_KEY: 'sk-secret' },
+      { TENON_EVAL_RUNS: '9' },
+      tasks,
+    )
+    const line = planLine(plan)
+    expect(line).toBe(
+      'eval column tenon-glm-5.3-flash-open.bigmodel.cn-api-paas-v4 (provider zhipu, model ' +
+        'glm-5.3-flash, effort null, key from $ZHIPU_API_KEY) · runs 3 · tasks 01-a, 03-c · ' +
+        'deadline 45 min per task · timing off · not read from .env.local: TENON_EVAL_RUNS',
+    )
+    expect(line).not.toContain('sk-secret')
   })
 })

@@ -5,11 +5,13 @@
  * without disturbing the rest.
  *
  * Pass: both files equal the fixture's with exactly that rename, line endings and the final newline
- * aside. The note carries what F2 and E2 record: the blocks, the calls to Edit after the first one,
- * and after how many blocks another tool succeeded.
+ * aside. The note carries what F2 and E2 record: the blocks, the calls to Edit in the requests
+ * after the first block, and after how many blocks the model did Edit's job another way: a Write to
+ * one of the two files, or a command that spells the new name (a rewrite has to), that succeeded.
  */
 import { readFile } from 'node:fs/promises'
 import type { EvalCheck } from './types.js'
+import type { CallView } from './support.js'
 import {
   callsOf,
   denialNote,
@@ -20,11 +22,23 @@ import {
   normalizeText,
   readSession,
   readText,
+  succeeded,
 } from './support.js'
 
 const FIXTURE = '02-rename-without-edit'
 const FILES = ['src/users.js', 'src/index.js']
 const DISABLED = 'Edit'
+
+/** Edit's job done another way: a Write to a target file, or a command that writes the new name. */
+function renamedAnotherWay(call: CallView): boolean {
+  if (!succeeded(call)) return false
+  const path = call.input['file_path']
+  if (call.name === 'Write') {
+    return typeof path === 'string' && FILES.some((f) => path === f || path.endsWith(`/${f}`))
+  }
+  const command = call.input['command']
+  return call.name === 'Bash' && typeof command === 'string' && /\bfetchUser\b/.test(command)
+}
 
 const check: EvalCheck = async ({ tape, sessionId, workspaceDir }) => {
   const problems: string[] = []
@@ -43,7 +57,7 @@ const check: EvalCheck = async ({ tape, sessionId, workspaceDir }) => {
   }
 
   const entries = await readSession(tape, sessionId)
-  const stats = denialNote(DISABLED, denialStats(callsOf(entries), DISABLED))
+  const stats = denialNote(DISABLED, denialStats(callsOf(entries), DISABLED, renamedAnotherWay))
   const tail = `${stats}; run ended ${lastEndReason(entries) ?? 'without a terminal'}`
   return problems.length === 0
     ? { pass: true, note: `renamed in both files; ${tail}` }

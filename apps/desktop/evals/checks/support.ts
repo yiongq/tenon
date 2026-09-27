@@ -137,13 +137,38 @@ export function lastEndReason(entries: readonly TapeEntry[]): string | null {
   return typeof reason['code'] === 'string' ? reason['code'] : null
 }
 
+function policyBlocked(call: CallView, toolName: string): boolean {
+  return call.name === toolName && call.outcome?.source === 'policy'
+}
+
+/** `<runId>:<requestSeq>`: the request whose batch a call was in. */
+function requestOf(call: CallView): string {
+  return call.key.slice(0, call.key.lastIndexOf(':'))
+}
+
+/**
+ * `calib.blockedRecalls` (E2: 收到 is_error 后，模型还会不会再调被禁的工具): the calls to the tool in
+ * the requests after the one whose batch holds its first `policy` block, whatever closed them. The
+ * other calls of that batch are not counted: the model made them before it saw any is_error. The
+ * record and the check notes both take it from here.
+ */
+export function blockedRecalls(calls: readonly CallView[], toolName: string): number {
+  const firstBlock = calls.findIndex((call) => policyBlocked(call, toolName))
+  const first = calls[firstBlock]
+  if (first === undefined) return 0
+  return calls.filter(
+    (call, index) =>
+      index > firstBlock && call.name === toolName && requestOf(call) !== requestOf(first),
+  ).length
+}
+
 /**
  * What a disabled tool did to the run (spec §评测集与测试宿主 `disableTool`; F2, E2): the machine
- * denials of the whole session (`calib.machineDenials`), the calls to the tool after its first
- * `policy` block (`calib.blockedRecalls`: 收到 is_error 后还调不调), how many different argument sets
- * those blocked calls had (换着参数), and after how many blocks of the tool the model first got
- * another tool to succeed (第几次机器拒绝后改对了做法; null when it never did, or was never blocked) —
- * any call that succeeds after the first block is another tool's, since the disabled one stays blocked.
+ * denials of the whole session (`calib.machineDenials`), `blockedRecalls` above, how many different
+ * argument sets the blocked calls had (换着参数), and how many blocks of the tool came before the
+ * model first did the tool's job another way (第几次机器拒绝后改对了做法; null when it never did, or
+ * was never blocked). What does the job is the task's to say (`didTheJob`: a call that succeeded
+ * and did what the disabled tool was for): a Read between two blocks is no change of approach.
  */
 export interface DenialStats {
   readonly machineDenials: number
@@ -153,29 +178,26 @@ export interface DenialStats {
   readonly switchedAfter: number | null
 }
 
-export function denialStats(calls: readonly CallView[], toolName: string): DenialStats {
-  const firstBlock = calls.findIndex(
-    (call) => call.name === toolName && call.outcome?.source === 'policy',
-  )
-  const blockedCalls = calls.filter(
-    (call) => call.name === toolName && call.outcome?.source === 'policy',
-  )
+export function denialStats(
+  calls: readonly CallView[],
+  toolName: string,
+  didTheJob: (call: CallView) => boolean,
+): DenialStats {
+  const firstBlock = calls.findIndex((call) => policyBlocked(call, toolName))
+  const blockedCalls = calls.filter((call) => policyBlocked(call, toolName))
   let switchedAfter: number | null = null
   if (firstBlock !== -1) {
-    const switchAt = calls.findIndex((call, index) => index > firstBlock && succeeded(call))
+    const switchAt = calls.findIndex((call, index) => index > firstBlock && didTheJob(call))
     if (switchAt !== -1) {
       switchedAfter = calls
         .slice(0, switchAt)
-        .filter((call) => call.name === toolName && call.outcome?.source === 'policy').length
+        .filter((call) => policyBlocked(call, toolName)).length
     }
   }
   return {
     machineDenials: calls.filter(machineDenied).length,
     blocked: blockedCalls.length,
-    blockedRecalls:
-      firstBlock === -1
-        ? 0
-        : calls.slice(firstBlock + 1).filter((call) => call.name === toolName).length,
+    blockedRecalls: blockedRecalls(calls, toolName),
     distinctBlockedArgs: new Set(blockedCalls.map((call) => call.argsHash)).size,
     switchedAfter,
   }
@@ -185,12 +207,12 @@ export function denialNote(toolName: string, stats: DenialStats): string {
   if (stats.blocked === 0) return `${toolName} was never blocked (disableTool not exercised)`
   const switched =
     stats.switchedAfter === null
-      ? 'never got another tool to succeed afterwards'
-      : `another tool succeeded after ${stats.switchedAfter} block(s)`
+      ? 'never did the job another way afterwards'
+      : `did the job another way after ${stats.switchedAfter} block(s)`
   return (
     `${toolName}: ${stats.blocked} policy block(s) with ${stats.distinctBlockedArgs} distinct ` +
-    `argument set(s), ${stats.blockedRecalls} call(s) after the first block; ${switched}; ` +
-    `machine denials ${stats.machineDenials}`
+    `argument set(s), ${stats.blockedRecalls} call(s) in requests after the first block; ` +
+    `${switched}; machine denials ${stats.machineDenials}`
   )
 }
 

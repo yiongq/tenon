@@ -197,4 +197,53 @@ describe('the eval cost function, by wire (旧 229)', () => {
       perRequest: null,
     })
   })
+
+  it('openai-chat takes cache writes off the input too, priced at the input price without their own', () => {
+    const pricing = {
+      inputPerMTok: 2,
+      outputPerMTok: 8,
+      cacheReadPerMTok: 0.5,
+      currency: 'CNY' as const,
+    }
+    const usage: Usage = {
+      inputTokens: 10_000,
+      outputTokens: 400,
+      cacheReadTokens: 6_000,
+      cacheWriteTokens: 1_000,
+      reasoningTokens: 0,
+      final: true,
+    }
+    const summed = sumAttempts([{ usage, wire: 'openai-chat', pricing }])
+    expect(summed.usage).toEqual({
+      input: 3_000,
+      cacheRead: 6_000,
+      cacheWrite: 1_000,
+      output: 400,
+      reasoning: 0,
+    })
+    const hand = (3_000 * 2 + 6_000 * 0.5 + 1_000 * 2 + 400 * 8) / 1_000_000
+    expect(summed.cost?.amount).toBeCloseTo(hand, 12)
+    expect(summed.perRequest).toEqual([{ input: 10_000, cost: summed.cost?.amount }])
+  })
+
+  it('one unpriced attempt among priced ones makes the whole cost null, not a partial one', () => {
+    const usage: Usage = {
+      inputTokens: 100,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      final: true,
+    }
+    const priced = {
+      usage,
+      wire: 'anthropic-messages' as const,
+      pricing: { inputPerMTok: 1, outputPerMTok: 1 },
+    }
+    expect(sumAttempts([priced, { ...priced, pricing: undefined }])).toEqual({
+      usage: { input: 200, cacheRead: 0, cacheWrite: 0, output: 20, reasoning: 0 },
+      cost: null,
+      perRequest: null,
+    })
+  })
 })

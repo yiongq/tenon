@@ -12,10 +12,12 @@
  *
  * `taskFileProblems` adds what zod cannot see: the id is the file's name, and every fixture file the
  * task references exists under `docs/evals/fixtures/` (the `.env` of a workspace is stored as
- * `dotenv.txt`, because `.gitignore` swallows `.env` at any depth; the host renames it on copy).
+ * `dotenv.txt`, because `.gitignore` swallows `.env` at any depth; the host renames it on copy),
+ * with no symlink on its path or anywhere under it, whether it points in or out.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isAbsolute, join, normalize, sep } from 'node:path'
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import type { Stats } from 'node:fs'
+import { isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { confirmReasonSchema } from '@tenon-app/contracts'
 import type {
   ConfirmReason,
@@ -143,6 +145,31 @@ export function fixtureFile(fixturesDir: string, path: string): string {
   return join(fixturesDir, path)
 }
 
+/**
+ * The first symlink on a fixture path or anywhere under it, as a path from `fixturesDir`, or null
+ * (also for a path that is not there). A fixture holds files and folders only (Revision (17) ⑤): a
+ * link, pointing in or out, would have the host work in or read whatever it points at. The folder
+ * `fixturesDir` itself may sit behind a link, as macOS's temp folder does.
+ */
+export function fixtureSymlink(fixturesDir: string, path: string): string | null {
+  const shown = (at: string): string => relative(fixturesDir, at).split(sep).join('/')
+  let at = fixturesDir
+  let stat: Stats | null = null
+  for (const part of normalize(path).split(sep)) {
+    if (part === '' || part === '.') continue
+    at = join(at, part)
+    stat = lstatSync(at, { throwIfNoEntry: false }) ?? null
+    if (stat === null) return null
+    if (stat.isSymbolicLink()) return shown(at)
+  }
+  if (stat?.isDirectory() ?? lstatSync(at).isDirectory()) {
+    for (const entry of readdirSync(at, { withFileTypes: true, recursive: true })) {
+      if (entry.isSymbolicLink()) return shown(join(entry.parentPath, entry.name))
+    }
+  }
+  return null
+}
+
 /** Every fixture a task references, with what it must be. */
 export function fixtureReferences(
   task: EvalTask,
@@ -185,6 +212,11 @@ export function taskFileProblems(options: {
   if (`${task.id}.json` !== name) problems.push(`${name}: id ${task.id} is not the file's name`)
   for (const ref of fixtureReferences(task)) {
     const at = fixtureFile(fixturesDir, ref.path)
+    const link = fixtureSymlink(fixturesDir, ref.path)
+    if (link !== null) {
+      problems.push(`${name}: fixture ${ref.path} has a symlink at ${link}`)
+      continue
+    }
     const found = existsSync(at) ? statSync(at) : null
     if (found === null) {
       problems.push(`${name}: fixture ${ref.path} does not exist`)

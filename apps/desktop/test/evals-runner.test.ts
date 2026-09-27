@@ -5,9 +5,11 @@
  * kernel service and the desktop's loop, with the test host answering the cards; then its script
  * checks run and the record is built from the Tape, passes record zod and is appended to a results
  * file that passes the format check. The column is the eval-only glm-5.3 row, priced in CNY, so the
- * cost is checked against a hand computation too.
+ * cost is checked against a hand computation too. And what keeps a paid run's record: the whole
+ * task's deadline and a cancelled run stop the session and still build it, a run directory that
+ * will not go does not cost it, and a Run that ended over the token limit fails the task.
  */
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROMPT_LAYER_HASH, PROMPT_LAYER_VERSION } from '@tenon-app/kernel'
@@ -21,10 +23,10 @@ import type { EvalColumn } from '../evals/models.js'
 import { evalRecordSchema } from '../evals/record.js'
 import type { EvalRecord } from '../evals/record.js'
 import { appendRecord, runTask, verdictOf } from '../evals/runner.js'
-import type { RunInspection } from '../evals/runner.js'
+import type { RunInspection, RunTaskOptions } from '../evals/runner.js'
 import type { EvalTask } from '../evals/task.js'
-import { startFakeAnthropic } from './support/fake-anthropic.js'
-import type { FakeAnthropic, ScriptedReply } from './support/fake-anthropic.js'
+import { deferred, startFakeAnthropic } from './support/fake-anthropic.js'
+import type { FakeAnthropic, ScriptedReply, ScriptedStep } from './support/fake-anthropic.js'
 
 const CHECKS = join(import.meta.dirname, 'support', 'eval-checks')
 const KEY = 'eval-offline-key-not-real'
@@ -88,11 +90,18 @@ const tool = (id: string, name: string, input: Record<string, unknown>): Scripte
   steps: [{ type: 'tool_use', id, name, input }],
 })
 const text = (reply: string): ScriptedReply => ({ steps: [{ type: 'text', text: reply }] })
+const readStep = (id: string, file: string): ScriptedStep => ({
+  type: 'tool_use',
+  id,
+  name: 'Read',
+  input: { file_path: file },
+})
 
 async function run(
   task: EvalTask,
   server: FakeAnthropic,
   fixturesDir: string,
+  options: Partial<RunTaskOptions> = {},
 ): Promise<{ record: EvalRecord; entries: TapeEntry[]; run: RunInspection }> {
   let seen: { run: RunInspection; entries: TapeEntry[] } | null = null
   const record = await runTask({
@@ -108,6 +117,7 @@ async function run(
     inspect: async (inspected) => {
       seen = { run: inspected, entries: await readAll(inspected.tape, inspected.sessionId) }
     },
+    ...options,
   })
   if (seen === null) throw new Error('inspect was not called')
   const { run: inspected, entries } = seen
@@ -203,9 +213,12 @@ describe('a task run end to end, offline', () => {
     expect(file).toBe(
       join(results, `2026-09-27-tenon-glm-5.3-127.0.0.1-${new URL(server.baseURL).port}.jsonl`),
     )
+    // A paid run appends one record per run to the same file: each stays a line of its own.
+    const second = { ...record, run: 2 }
+    expect(appendRecord(second, column(server), results)).toBe(file)
     const read = resultProblems(results)
     expect(read.problems).toEqual([])
-    expect(read.records.map((r) => r.record)).toEqual([record])
+    expect(read.records.map((r) => r.record)).toEqual([record, second])
   })
 
   it('records timing only when asked, and removes the run’s directory, workspace and HOME included', async () => {
@@ -254,6 +267,24 @@ describe('a task run end to end, offline', () => {
       ).record.timing,
     ).toBeUndefined()
   })
+
+  it('records no timing when the first attempt produced no content, as a retried 529', async () => {
+    const root = fixtures()
+    const server = await fake(() => [
+      { failWith: { status: 529, type: 'overloaded_error', message: 'Overloaded' } },
+      text('Hi.'),
+    ])
+    const { record, entries } = await run(
+      { ...BASE, id: '01-notes', turns: ['Hi'], checks: [{ kind: 'script', id: 'always-pass' }] },
+      server,
+      root,
+      { timing: true },
+    )
+    // Revision (17) ①: ttftMs is the first attempt's; the retry's would be another number.
+    expect(named(entries, 'provider/attempt_completed')).toHaveLength(2)
+    expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
+    expect(record.timing).toBeUndefined()
+  })
 })
 
 describe('disableTool and usageLimitTokens (§评测集与测试宿主)', () => {
@@ -288,6 +319,62 @@ describe('disableTool and usageLimitTokens (§评测集与测试宿主)', () => 
     expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed', toolRounds: 3 })
   })
 
+  it('counts a round per batch: afterRound 2 after a parallel first batch blocks from the third', async () => {
+    const root = fixtures()
+    const server = await fake((ws) => [
+      { steps: [readStep('toolu_1', `${ws}/a.txt`), readStep('toolu_2', `${ws}/notes.txt`)] },
+      { steps: [readStep('toolu_3', `${ws}/a.txt`)] },
+      { steps: [readStep('toolu_4', `${ws}/notes.txt`)] },
+      text('Read is off.'),
+    ])
+    const task: EvalTask = {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Read both files.'],
+      host: { disableTool: { name: 'Read', afterRound: 2 } },
+      checks: [{ kind: 'script', id: 'always-pass' }],
+    }
+    const { entries } = await run(task, server, root)
+    expect(named(entries, 'execution/tool_outcome').map((e) => e.payload['source'])).toEqual([
+      null,
+      null,
+      null,
+      'policy',
+    ])
+  })
+
+  it('counts a recall only in a later request, the same number in the record and the note (E2)', async () => {
+    const root = fixtures()
+    const server = await fake((ws) => [
+      { steps: [readStep('toolu_1', `${ws}/a.txt`)] },
+      // Four at once once Read is off: the model has seen no is_error when it makes any of them.
+      {
+        steps: ['toolu_2', 'toolu_3', 'toolu_4', 'toolu_5'].map((id) =>
+          readStep(id, `${ws}/a.txt`),
+        ),
+      },
+    ])
+    const task: EvalTask = {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Read a.txt.'],
+      host: { disableTool: { name: 'Read', afterRound: 1 } },
+      checks: [{ kind: 'script', id: 'read-denials' }],
+    }
+    const { record, entries } = await run(task, server, root)
+    // The third denial closes the rest of its batch (§上限、守卫与用量).
+    expect(named(entries, 'execution/tool_outcome').map((e) => e.payload['source'])).toEqual([
+      null,
+      'policy',
+      'policy',
+      'policy',
+      'blocked-repeatedly',
+    ])
+    expect(record.endReason).toBe('blocked-repeatedly')
+    expect(record.calib).toMatchObject({ machineDenials: 3, blockedRecalls: 0 })
+    expect(record.note).toContain('0 call(s) in requests after the first block')
+  })
+
   it('sets the token limit only when the task does, and a run that ends over it fails', async () => {
     const root = fixtures()
     const limited = await fake((ws) => [
@@ -319,6 +406,119 @@ describe('disableTool and usageLimitTokens (§评测集与测试宿主)', () => 
       verdict: 'pass',
     })
   })
+
+  it('fails a task one of whose Runs ended over the limit, though a later turn completed', async () => {
+    const root = fixtures()
+    const server = await fake((ws) => [
+      tool('toolu_1', 'Read', { file_path: `${ws}/a.txt` }),
+      text('ok'),
+    ])
+    const task: EvalTask = {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Read a.txt.', 'Now just say ok.'],
+      host: { usageLimitTokens: 1 },
+      checks: [{ kind: 'script', id: 'always-pass' }],
+    }
+    const { record } = await run(task, server, root)
+    // Both turns went out; the last Run completed, the first had ended over the limit.
+    expect(server.requests).toHaveLength(2)
+    expect(record.endReason).toBe('completed')
+    expect(record.verdict).toBe('fail')
+    expect(record.note).toContain('usage-limit')
+  })
+})
+
+/** A Write of `file`, slow enough that a chain of them takes time. */
+const slowWrite = (id: string, file: string): ScriptedReply => ({
+  steps: [{ type: 'tool_use', id, name: 'Write', input: { file_path: file, content: 'x\n' } }],
+  delayMs: 300,
+})
+
+describe('what keeps a paid run’s record', () => {
+  it('stops a task at its deadline, however short each Run of the chain, and records a fail', async () => {
+    const root = fixtures()
+    // Each file is a card, and each card ends a Run: five Runs of about 300 ms each.
+    const server = await fake((ws) => [
+      slowWrite('toolu_1', `${ws}/w1.txt`),
+      slowWrite('toolu_2', `${ws}/w2.txt`),
+      slowWrite('toolu_3', `${ws}/w3.txt`),
+      slowWrite('toolu_4', `${ws}/w4.txt`),
+      text('Done.'),
+    ])
+    const task: EvalTask = {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Write four files.'],
+      host: { answers: { default: 'allow' } },
+      checks: [{ kind: 'script', id: 'always-pass' }],
+    }
+    const { record } = await run(task, server, root, { runWaitMs: 5_000, deadlineMs: 700 })
+    expect(record.verdict).toBe('fail')
+    expect(record.note).toMatch(/^turn 1: .*the task's deadline of 700 ms passed/)
+    expect(record.note).not.toContain('did not end within 5000 ms')
+    expect(server.requests.length).toBeLessThan(5)
+    expect(evalRecordSchema.parse(record)).toEqual(record)
+  })
+
+  it('stops a cancelled run the same way: the note says so, and the run’s directory goes', async () => {
+    const root = fixtures()
+    const held = deferred()
+    const server = await fake(() => [
+      { hold: held.promise, steps: [{ type: 'text', text: 'late' }] },
+    ])
+    cleanups.push(() => held.resolve())
+    const cancel = new AbortController()
+    setTimeout(() => cancel.abort(new Error('the test run was aborted')), 100)
+    const { record, run: inspected } = await run(
+      { ...BASE, id: '01-notes', turns: ['Hi'], checks: [{ kind: 'script', id: 'always-pass' }] },
+      server,
+      root,
+      { signal: cancel.signal },
+    )
+    expect(record).toMatchObject({ verdict: 'fail', endReason: 'user-stopped' })
+    expect(record.note).toMatch(
+      /^turn 1: the run was cancelled \(the test run was aborted\); stopped/,
+    )
+    expect(() => realpathSync(inspected.dir)).toThrow(/ENOENT/)
+  })
+
+  it('returns the record when the run’s directory will not go, and logs the folder left', async () => {
+    const root = fixtures()
+    const server = await fake(() => [text('Hi.')])
+    const lines: string[] = []
+    let dir = ''
+    const record = await runTask({
+      task: {
+        ...BASE,
+        id: '01-notes',
+        turns: ['Hi'],
+        checks: [{ kind: 'script', id: 'always-pass' }],
+      },
+      run: 1,
+      column: column(server),
+      key: KEY,
+      date: '2026-09-27',
+      clientVersion: 'test-version',
+      fixturesDir: root,
+      checksDir: CHECKS,
+      log: (line) => lines.push(line),
+      inspect: (inspected) => {
+        // What a command could leave in TMPDIR: a read-only folder with a file in it.
+        dir = inspected.dir
+        const stuck = join(dir, 'tmp', 'ro')
+        mkdirSync(stuck)
+        writeFileSync(join(stuck, 'f'), '')
+        chmodSync(stuck, 0o555)
+        cleanups.push(() => {
+          chmodSync(stuck, 0o755)
+          rmSync(dir, { recursive: true, force: true })
+        })
+      },
+    })
+    expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
+    expect(lines.filter((line) => line.includes(`${dir} was not removed`))).toHaveLength(1)
+  })
 })
 
 describe('checks and verdicts (判分)', () => {
@@ -335,14 +535,14 @@ describe('checks and verdicts (判分)', () => {
       { id: 'b', pass: false, note: 'no' },
     ]
     const script = { checks: [{ kind: 'script' as const, id: 'a' }] }
-    expect(verdictOf(script, scripts.slice(0, 1), 'completed', [])).toEqual({
+    expect(verdictOf(script, scripts.slice(0, 1), ['completed'], [])).toEqual({
       verdict: 'pass',
       judgedBy: 'script',
       note: 'a: pass',
     })
-    expect(verdictOf(script, scripts, 'completed', []).verdict).toBe('fail')
+    expect(verdictOf(script, scripts, ['completed'], []).verdict).toBe('fail')
     const human = { checks: [...script.checks, { kind: 'human' as const, text: 'reads well' }] }
-    expect(verdictOf(human, scripts.slice(0, 1), 'completed', [])).toEqual({
+    expect(verdictOf(human, scripts.slice(0, 1), ['completed'], [])).toEqual({
       verdict: 'fail',
       judgedBy: 'human',
       note: 'a: pass; awaiting human: reads well',

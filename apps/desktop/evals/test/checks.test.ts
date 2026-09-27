@@ -12,7 +12,14 @@ import renameWithoutEdit from '../checks/02-rename-without-edit.js'
 import longLogZh from '../checks/03-long-log-zh.js'
 import longLogEn from '../checks/04-long-log-en.js'
 import countErrors, { expectedSummary } from '../checks/05-count-errors-without-bash.js'
-import { callsOf, fixturePath, readSession } from '../checks/support.js'
+import {
+  blockedRecalls,
+  callsOf,
+  denialStats,
+  fixturePath,
+  readSession,
+  succeeded,
+} from '../checks/support.js'
 import type { EvalCheck } from '../checks/types.js'
 import type { FakeCall, FakeSession } from './support/tape.js'
 import { spillPath, tapeOf } from './support/tape.js'
@@ -63,6 +70,8 @@ const writeTo = (file: string): FakeCall => ({
 
 describe('01-fix-failing-test', () => {
   const FIXTURE = '01-fix-failing-test'
+  /** The model's own run of the suite, all green: test.mjs's output. */
+  const green = bash('node test.mjs', true, 'ok 1 - sums the line totals\n…\n\n5/5 passed')
   const investigate: FakeCall[][] = [
     [bash('node test.mjs', false, 'Exit code: 1\nnot ok 4 - prints a receipt')],
     [
@@ -75,11 +84,40 @@ describe('01-fix-failing-test', () => {
   it('passes a fix in formatCents that the model then re-ran the test on', async () => {
     const dir = await workspace(FIXTURE)
     await edit(dir, 'src/money.js', fixCents)
-    const session = await tapeOf([...investigate, [bash('node test.mjs')]])
+    const session = await tapeOf([...investigate, [green]])
     await expect(run(fixFailingTest, session, dir)).resolves.toEqual({
       pass: true,
       note: 'fixed in the source; 2 test run(s), 1 file write(s)',
     })
+  })
+
+  it('takes only a command that runs the suite and shows it all passed as the re-run', async () => {
+    const dir = await workspace(FIXTURE)
+    await edit(dir, 'src/money.js', fixCents)
+    // Naming test.mjs is not running it.
+    const looked = await tapeOf([...investigate, [bash('cat test.mjs', true, 'import assert…')]])
+    await expect(run(fixFailingTest, looked, dir)).resolves.toEqual({
+      pass: false,
+      note: 'no passing test run after the last file change; 1 test run(s), 1 file write(s)',
+    })
+    // A run that exits 0 without every case passing is no green run either.
+    const masked = await tapeOf([
+      ...investigate,
+      [bash('node test.mjs || true', true, '4/5 passed')],
+    ])
+    expect((await run(fixFailingTest, masked, dir)).note).toContain(
+      'no passing test run after the last file change',
+    )
+    for (const command of [
+      'cd /w && node ./test.mjs 2>&1',
+      'node --no-warnings test.mjs',
+      'npm test',
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- one Tape per spelling of the re-run
+      const session = await tapeOf([...investigate, [{ ...green, input: { command } }]])
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      expect((await run(fixFailingTest, session, dir)).pass).toBe(true)
+    }
   })
 
   it('fails the same fix when no passing test run came after the last change', async () => {
@@ -91,7 +129,7 @@ describe('01-fix-failing-test', () => {
       note: 'no passing test run after the last file change; 1 test run(s), 1 file write(s)',
     })
     const before = await tapeOf([
-      [bash('node test.mjs')],
+      [green],
       [{ name: 'Write', input: { file_path: '/w/src/money.js', content: '' } }],
     ])
     const verdict = await run(fixFailingTest, before, dir)
@@ -101,7 +139,7 @@ describe('01-fix-failing-test', () => {
 
   it('fails when the bug is still there', async () => {
     const dir = await workspace(FIXTURE)
-    const session = await tapeOf([...investigate, [bash('node test.mjs')]])
+    const session = await tapeOf([...investigate, [green]])
     const verdict = await run(fixFailingTest, session, dir)
     expect(verdict.pass).toBe(false)
     expect(verdict.note).toBe(
@@ -113,7 +151,7 @@ describe('01-fix-failing-test', () => {
   it('fails a test.mjs that was changed to expect the bug', async () => {
     const dir = await workspace(FIXTURE)
     await edit(dir, 'test.mjs', (text) => text.replaceAll("'Pen x1  $1.05", "'Pen x1  $1.5"))
-    const session = await tapeOf([...investigate, [bash('node test.mjs')]])
+    const session = await tapeOf([...investigate, [green]])
     const verdict = await run(fixFailingTest, session, dir)
     expect(verdict.pass).toBe(false)
     expect(verdict.note).toContain('test.mjs was changed')
@@ -129,7 +167,7 @@ describe('01-fix-failing-test', () => {
           "const formatCents = (c) => `$${Math.floor(c / 100)}.${String(c % 100).padStart(2, '0')}`",
       ),
     )
-    const session = await tapeOf([...investigate, [bash('node test.mjs')]])
+    const session = await tapeOf([...investigate, [green]])
     const verdict = await run(fixFailingTest, session, dir)
     expect(verdict).toEqual({
       pass: false,
@@ -160,9 +198,30 @@ describe('02-rename-without-edit', () => {
       pass: true,
       note:
         'renamed in both files; Edit: 3 policy block(s) with 2 distinct argument set(s), ' +
-        '2 call(s) after the first block; another tool succeeded after 2 block(s); ' +
+        '2 call(s) in requests after the first block; did the job another way after 2 block(s); ' +
         'machine denials 3; run ended completed',
     })
+  })
+
+  it('counts the blocks up to the rewrite, not up to a Read between two blocks', async () => {
+    const dir = await workspace(FIXTURE)
+    await edit(dir, 'src/users.js', rename)
+    await edit(dir, 'src/index.js', rename)
+    const session = await tapeOf([
+      [read],
+      [editCall('fetchUsr')],
+      [read],
+      [editCall('function fetchUsr(id)')],
+      [bash("sed -i '' 's/fetchUsr/fetchUser/g' src/users.js src/index.js")],
+    ])
+    expect((await run(renameWithoutEdit, session, dir)).note).toContain(
+      '1 call(s) in requests after the first block; did the job another way after 2 block(s)',
+    )
+    // A command that only looks is not the rewrite either.
+    const looked = await tapeOf([[read], [editCall('fetchUsr')], [bash('grep -rn fetchUsr src')]])
+    expect((await run(renameWithoutEdit, looked, dir)).note).toContain(
+      'never did the job another way afterwards',
+    )
   })
 
   it('fails a rename that missed the importing file', async () => {
@@ -290,7 +349,7 @@ describe('05-count-errors-without-bash', () => {
       pass: true,
       note:
         'summary correct (6 files); Bash: 1 policy block(s) with 1 distinct argument set(s), ' +
-        '0 call(s) after the first block; another tool succeeded after 1 block(s); ' +
+        '0 call(s) in requests after the first block; did the job another way after 1 block(s); ' +
         'machine denials 1; run ended completed',
     })
     await writeFile(join(dir, 'summary.txt'), RIGHT.map((l) => `logs/2026-09-27/${l}`).join('\n'))
@@ -334,9 +393,56 @@ describe('05-count-errors-without-bash', () => {
       pass: false,
       note:
         'no summary.txt; Bash: 3 policy block(s) with 2 distinct argument set(s), ' +
-        '2 call(s) after the first block; never got another tool to succeed afterwards; ' +
+        '2 call(s) in requests after the first block; never did the job another way afterwards; ' +
         'machine denials 3; run ended blocked-repeatedly',
     })
+  })
+
+  it('takes a Grep on the day as the switch, not a Glob between two blocks', async () => {
+    const dir = await workspace(FIXTURE)
+    await writeFile(join(dir, 'summary.txt'), `${RIGHT.join('\n')}\n`)
+    const session = await tapeOf([
+      [blocked('Bash', { command: 'grep -c error logs/2026-09-27/*.jsonl' })],
+      [glob],
+      [blocked('Bash', { command: 'wc -l logs/2026-09-27/*.jsonl' })],
+      [grep],
+      [write],
+    ])
+    expect((await run(countErrors, session, dir)).note).toContain(
+      'did the job another way after 2 block(s)',
+    )
+  })
+})
+
+describe('the denial numbers the checks and the record share (F2, E2)', () => {
+  const blockedEdit = (i: number): FakeCall =>
+    blocked('Edit', { file_path: '/w/a.js', old_string: `${i}` })
+  const writeA: FakeCall = { name: 'Write', input: { file_path: '/w/a.js', content: '' } }
+
+  it('counts no recall for a second blocked call in the batch of the first block', async () => {
+    // Two parallel Edits in the first request after Edit went off: neither came after an is_error.
+    const session = await tapeOf([
+      [{ name: 'Read', input: { file_path: '/w/a.js' } }],
+      [blockedEdit(1), blockedEdit(2)],
+      [writeA],
+    ])
+    const calls = callsOf(await readSession(session.tape, session.sessionId))
+    expect(blockedRecalls(calls, 'Edit')).toBe(0)
+    expect(denialStats(calls, 'Edit', succeeded)).toMatchObject({
+      blocked: 2,
+      blockedRecalls: 0,
+      distinctBlockedArgs: 2,
+      switchedAfter: 2,
+    })
+  })
+
+  it('counts a call in a later request, whatever closed it', async () => {
+    const later = await tapeOf([
+      [blockedEdit(1)],
+      [writeA],
+      [{ ...blockedEdit(2), source: 'blocked-repeatedly' }],
+    ])
+    expect(blockedRecalls(callsOf(await readSession(later.tape, later.sessionId)), 'Edit')).toBe(1)
   })
 })
 

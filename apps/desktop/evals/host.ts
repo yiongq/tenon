@@ -7,6 +7,8 @@
  *     `dotenv.txt` renamed to `.env`), and the HOME and TMPDIR a command sees; a command's cwd is the
  *     workspace. The child's environment is PATH, HOME, TMPDIR and LANG and nothing else — no key —
  *     handed over as the kernel's `commandShell`. The Tape is the kernel's memory store (runner.ts).
+ *   - A fixture holds files and folders only: one with a symlink on its path or anywhere under it
+ *     is refused here as the format check refuses it; the copy reads by `lstat` and follows none.
  *   - Cards are answered by `ConfirmReason` from `host.answers`; an unlisted reason is denied,
  *     `outside-workspace` is always denied, and so is `command` in a task with `web`, whatever the
  *     task says (zod refuses such a task already; this is the second line). An allow's scope is the
@@ -24,7 +26,8 @@
  *     the memory host's `setPolicy` does — so the block is recorded as `policy`.
  */
 import {
-  cpSync,
+  copyFileSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -60,7 +63,7 @@ import { MemorySecrets } from '../src/main/host/secrets.js'
 import { pickShell } from '../src/main/host/shell-env.js'
 import { dedicatedFolderFor } from '../src/main/workspace.js'
 import type { EvalTask } from './task.js'
-import { fixtureFile, searchHitsSchema } from './task.js'
+import { fixtureFile, fixtureSymlink, searchHitsSchema } from './task.js'
 
 export const EVAL_USER_ID = 'eval'
 export const EVAL_TENANT_ID = 'eval'
@@ -256,14 +259,14 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
     let picked: AbsolutePath | null = null
     if (task.workspace !== undefined) {
       picked = absolutePath(join(dir, 'workspace'))
-      copyWorkspace(fixtureFile(fixturesDir, task.workspace), picked)
+      copyWorkspace(linkFree(fixturesDir, task.workspace), picked)
     }
     const fetched: string[] = []
     const desktop = createDesktopNetwork()
     const pages = Object.fromEntries(
       Object.entries(task.web?.pages ?? {}).map(([url, file]) => [
         url,
-        fixtureFile(fixturesDir, file),
+        linkFree(fixturesDir, file),
       ]),
     )
     const network: EvalNetwork =
@@ -276,7 +279,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
         ? null
         : fakeSearchBackend(
             searchHitsSchema.parse(
-              JSON.parse(readFileSync(fixtureFile(fixturesDir, task.web.search), 'utf8')),
+              JSON.parse(readFileSync(linkFree(fixturesDir, task.web.search), 'utf8')),
             ),
             searchHost,
           )
@@ -318,10 +321,31 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
   }
 }
 
+/** A fixture path, refused when a symlink is on it or under it: the format check's rule, again. */
+function linkFree(fixturesDir: string, path: string): string {
+  const link = fixtureSymlink(fixturesDir, path)
+  if (link !== null) throw new Error(`fixture ${path} has a symlink at ${link}`)
+  return fixtureFile(fixturesDir, path)
+}
+
 /** The fixture copied as it is, every `dotenv.txt` renamed to `.env` in its own folder. */
 export function copyWorkspace(from: string, to: string): void {
-  cpSync(from, to, { recursive: true, verbatimSymlinks: true })
+  copyTree(from, to)
   renameDotenv(to)
+}
+
+/** Files and folders, read by `lstat`: a link is never followed, and refused wherever it is. */
+function copyTree(from: string, to: string): void {
+  const stat = lstatSync(from)
+  if (stat.isSymbolicLink()) throw new Error(`a fixture holds a symlink: ${from}`)
+  if (stat.isDirectory()) {
+    mkdirSync(to)
+    for (const name of readdirSync(from)) copyTree(join(from, name), join(to, name))
+  } else if (stat.isFile()) {
+    copyFileSync(from, to)
+  } else {
+    throw new Error(`a fixture holds something that is not a file or a folder: ${from}`)
+  }
 }
 
 function renameDotenv(folder: string): void {

@@ -1,10 +1,19 @@
 /**
  * The evals format check in `pnpm test` (spec 02 §评测集与测试宿主; plan step 25, 旧 228's format half;
  * acceptance 45): the root vitest config runs the `evals` project, whose format suite never skips;
- * the checks take tasks, fixtures and results apart with no network and no key; and `.gitignore`
- * swallowing a fixture — a workspace's `.env` stored under its own name — is caught.
+ * the checks take tasks, fixtures and results apart with no network and no key; `.gitignore`
+ * swallowing a fixture — a workspace's `.env` stored under its own name — is caught; and so is a
+ * symlink anywhere in a fixture, pointing in or out (Revision (17) ⑤).
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -159,6 +168,62 @@ describe('pnpm test runs the evals format check (旧 228)', () => {
     ])
   })
 
+  it('names a workspace that is not there, or is not a folder', () => {
+    offline()
+    const dirs = layout(TASK)
+    const problems = (): string[] =>
+      taskSetProblems({ tasksDir: dirs.tasks, fixturesDir: dirs.fixtures, checksDir: dirs.checks })
+        .problems
+    const ws = join(dirs.fixtures, '07-web', 'ws')
+    rmSync(ws, { recursive: true })
+    expect(problems()).toEqual(['07-web.json: fixture 07-web/ws does not exist'])
+    writeFileSync(ws, '')
+    expect(problems()).toEqual(['07-web.json: fixture 07-web/ws is not a folder'])
+  })
+
+  it('refuses a symlink on a fixture’s path or anywhere under it, pointing in or out', () => {
+    offline()
+    const outside = temp('tenon-eval-outside-')
+    writeFileSync(join(outside, 'secret.txt'), 'CANARY-OUTSIDE')
+    const problems = (
+      task: Record<string, unknown>,
+      link: (fixtures: string) => void,
+    ): string[] => {
+      const dirs = layout(task)
+      link(dirs.fixtures)
+      return taskSetProblems({
+        tasksDir: dirs.tasks,
+        fixturesDir: dirs.fixtures,
+        checksDir: dirs.checks,
+      }).problems
+    }
+    // Deep in the workspace, even to a file beside it.
+    expect(
+      problems(TASK, (f) =>
+        symlinkSync(join(f, '07-web', 'ws', 'dotenv.txt'), join(f, '07-web', 'ws', 'env')),
+      ),
+    ).toEqual(['07-web.json: fixture 07-web/ws has a symlink at 07-web/ws/env'])
+    // The workspace itself, to a folder of this machine.
+    expect(
+      problems(TASK, (f) => {
+        rmSync(join(f, '07-web', 'ws'), { recursive: true })
+        symlinkSync(outside, join(f, '07-web', 'ws'))
+      }),
+    ).toEqual(['07-web.json: fixture 07-web/ws has a symlink at 07-web/ws'])
+    // A page, to a file of this machine.
+    expect(
+      problems(TASK, (f) => {
+        rmSync(join(f, '07-web', 'a.html'))
+        symlinkSync(join(outside, 'secret.txt'), join(f, '07-web', 'a.html'))
+      }),
+    ).toEqual(['07-web.json: fixture 07-web/a.html has a symlink at 07-web/a.html'])
+    // A path through a linked folder.
+    const through = { ...TASK, web: { pages: { 'https://a.test/': '07-web/up/secret.txt' } } }
+    expect(problems(through, (f) => symlinkSync(outside, join(f, '07-web', 'up')))).toEqual([
+      '07-web.json: fixture 07-web/up/secret.txt has a symlink at 07-web/up',
+    ])
+  })
+
   it('passes results lines that pass zod and names the ones that do not', () => {
     offline()
     const dir = temp('tenon-eval-results-')
@@ -191,7 +256,11 @@ describe('pnpm test runs the evals format check (旧 228)', () => {
     mkdirSync(join(dir, 'a', 'b'), { recursive: true })
     writeFileSync(join(dir, 'a', 'b', 'c.txt'), '')
     writeFileSync(join(dir, 'd.txt'), '')
-    expect(filesUnder(dir, dir)).toEqual(['a/b/c.txt', 'd.txt'])
+    // The walk sees dotfiles, so a real `.env` under a fixture reaches git's judgement.
+    writeFileSync(join(dir, 'a', '.env'), 'CANARY=not-a-real-key\n')
+    const walked = filesUnder(dir, dir)
+    expect(walked).toEqual(['a/.env', 'a/b/c.txt', 'd.txt'])
+    expect(gitIgnored(walked.map((path) => `${at}/${path}`))).toEqual([`${at}/a/.env`])
   })
 })
 

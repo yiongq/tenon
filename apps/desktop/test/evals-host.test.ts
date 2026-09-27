@@ -3,10 +3,20 @@
  * `outside-workspace` card is always denied, and so is a `command` card in a task with `web`, even
  * when a task object that never met zod says allow; a command runs with HOME and TMPDIR inside the
  * run's mkdtemp directory and an environment of PATH, HOME, TMPDIR and LANG, no key among them; and
- * a task file that gives either card an allow is refused by zod. The runs go through the runner
- * against a fake Anthropic endpoint on this machine, with the desktop's real fs and process.
+ * a task file that gives either card an allow is refused by zod; and a fixture with a symlink in it
+ * is refused, never followed. The runs go through the runner against a fake Anthropic endpoint on
+ * this machine, with the desktop's real fs and process.
  */
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import type { TapeEntry } from '@tenon-app/kernel'
@@ -16,6 +26,8 @@ import {
   CHILD_ENV_NAMES,
   autoAnswer,
   childEnv,
+  copyWorkspace,
+  createEvalHost,
   fakeFetchUntrusted,
   fakeSearchBackend,
   searchHostOf,
@@ -239,6 +251,12 @@ describe('a task file that allows what the host only denies is refused by zod (æ
       'host.answers.command',
     ])
     expect(issues({ ...web, host: { answers: { command: 'deny' } } })).toEqual([])
+    // Any web: search alone, or none of its members.
+    for (const only of [{ search: 'p/hits.json' }, {}]) {
+      expect(issues({ ...valid, web: only, host: { answers: { command: 'allow' } } })).toEqual([
+        'host.answers.command',
+      ])
+    }
   })
 
   it('refuses a workspace on a chat task, unknown keys, and a reason that is not a ConfirmReason', () => {
@@ -249,6 +267,68 @@ describe('a task file that allows what the host only denies is refused by zod (æ
     expect(issues({ ...valid, host: { answers: { sometimes: 'allow' } } })).not.toEqual([])
     expect(issues({ ...valid, host: { autoAllow: true } })).not.toEqual([])
     expect(issues({ ...valid, workspace: '../outside' })).toEqual(['workspace'])
+  })
+})
+
+describe('a fixture is copied and read without following a link (Revision (17) â‘¤)', () => {
+  function temp(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    return dir
+  }
+
+  it('copies files and folders, dotenv.txt renamed, and refuses a symlink anywhere in them', () => {
+    const root = temp('tenon-eval-copy-')
+    const from = join(root, 'fixture')
+    mkdirSync(join(from, 'sub'), { recursive: true })
+    writeFileSync(join(from, 'a.txt'), 'alpha\n')
+    writeFileSync(join(from, 'sub', 'dotenv.txt'), 'CANARY=not-a-real-key\n')
+    copyWorkspace(from, join(root, 'copy'))
+    expect(readFileSync(join(root, 'copy', 'a.txt'), 'utf8')).toBe('alpha\n')
+    expect(readFileSync(join(root, 'copy', 'sub', '.env'), 'utf8')).toBe('CANARY=not-a-real-key\n')
+
+    // A folder of this machine behind a link: never copied, and its dotenv.txt never renamed.
+    const owner = temp('tenon-eval-owner-')
+    writeFileSync(join(owner, 'dotenv.txt'), 'OWNER=real\n')
+    symlinkSync(owner, join(from, 'sub', 'linked'))
+    expect(() => copyWorkspace(from, join(root, 'again'))).toThrow(/symlink/)
+    expect(existsSync(join(owner, 'dotenv.txt'))).toBe(true)
+    expect(() => copyWorkspace(join(from, 'sub', 'linked'), join(root, 'third'))).toThrow(/symlink/)
+    expect(existsSync(join(owner, 'dotenv.txt'))).toBe(true)
+    // Pointing inside the fixture is refused too.
+    rmSync(join(from, 'sub', 'linked'))
+    symlinkSync(join(from, 'a.txt'), join(from, 'b.txt'))
+    expect(() => copyWorkspace(from, join(root, 'fourth'))).toThrow(/symlink/)
+  })
+
+  it('refuses a task whose workspace, page or search file has a link on its path', async () => {
+    const linked = temp('tenon-eval-fixtures-')
+    const owner = temp('tenon-eval-owner-')
+    writeFileSync(join(owner, 'secret.txt'), 'CANARY-OUTSIDE')
+    writeFileSync(join(owner, 'hits.json'), '[]')
+    mkdirSync(join(linked, '07-web'))
+    symlinkSync(owner, join(linked, '07-web', 'ws'))
+    symlinkSync(join(owner, 'secret.txt'), join(linked, '07-web', 'a.html'))
+    symlinkSync(join(owner, 'hits.json'), join(linked, '07-web', 'hits.json'))
+    const base: EvalTask = { ...COWORK, id: '07-web', turns: ['Go.'] }
+    const host = (task: EvalTask) =>
+      createEvalHost({
+        task,
+        sessionId: '00000000-0000-4000-8000-000000000001',
+        fixturesDir: linked,
+        baseURL: 'https://open.bigmodel.cn/api/anthropic',
+        log: () => {},
+      })
+    await expect(host({ ...base, workspace: '07-web/ws' })).rejects.toThrow(
+      'fixture 07-web/ws has a symlink at 07-web/ws',
+    )
+    const { workspace: _workspace, ...noWorkspace } = base
+    await expect(
+      host({ ...noWorkspace, web: { pages: { 'https://a.test/': '07-web/a.html' } } }),
+    ).rejects.toThrow('fixture 07-web/a.html has a symlink at 07-web/a.html')
+    await expect(host({ ...noWorkspace, web: { search: '07-web/hits.json' } })).rejects.toThrow(
+      'fixture 07-web/hits.json has a symlink at 07-web/hits.json',
+    )
   })
 })
 

@@ -13,10 +13,13 @@
  *
  * Each turn is sent as a user message; a Run that pauses on a card is answered by the host
  * (host.ts's `autoAnswer`), one that pauses on a question has it skipped, and the next turn goes when
- * the chain of Runs ends. Then the task's script checks run against the Tape, and the record is built
- * from the Tape and from what the host saw. The key is handed in by the caller, which read it inside
- * the eval process; it goes to the memory secrets and nowhere else, and no line of a record, a note
- * or a log names more than its variable.
+ * the chain of Runs ends. The whole task has one deadline: past it — or when the caller's signal
+ * aborts — the session is stopped, its Run is let end, and the task still gets a record, a fail
+ * whose note says why. Then the task's script checks run against the Tape, and the record is built
+ * from the Tape and from what the host saw; the run's directory goes last, and a directory that
+ * would not go is logged, never allowed to cost the record. The key is handed in by the caller,
+ * which read it inside the eval process; it goes to the memory secrets and nowhere else, and no
+ * line of a record, a note or a log names more than its variable.
  */
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -49,6 +52,7 @@ import { localDateOf } from '../src/main/locale.js'
 import { providerSecretKey } from '../src/main/provider.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
 import { protectedShellFiles } from '../src/main/workspace.js'
+import { blockedRecalls, callsOf } from './checks/support.js'
 import { readAll, tapeCost } from './cost.js'
 import { autoAnswer, createEvalHost, disabledToolPolicy } from './host.js'
 import type { EvalHost } from './host.js'
@@ -76,6 +80,22 @@ const BLOCK_SOURCES: ReadonlySet<string> = new Set([
 /** How long one Run may take before the runner stops it and records the task as not finished. */
 export const RUN_WAIT_MS = 15 * 60_000
 
+/**
+ * How long a whole task may take — every turn and every Run of each chain, from the first turn sent
+ * — before the runner stops it and records it as not finished: a chain of 3–4 Runs on glm-5.3 at
+ * max effort, with room. `TENON_EVAL_DEADLINE_MIN` sets it for a live run.
+ */
+export const TASK_DEADLINE_MS = 45 * 60_000
+
+/**
+ * What a task gets past its deadline — the stop and the stopped Run's end, the checks, the record —
+ * and so what the live test's timeout adds to the deadline: the runner ends every run itself.
+ */
+export const DEADLINE_MARGIN_MS = 5 * 60_000
+
+/** How long a stopped Run gets to end before the record is read anyway. */
+const STOP_SETTLE_MS = 10_000
+
 export interface RunTaskOptions {
   readonly task: EvalTask
   /** 1-based, within this invocation. */
@@ -93,6 +113,10 @@ export interface RunTaskOptions {
   /** The interface language the kernel's language hint names. The owner's: zh-CN. */
   readonly locale?: 'zh-CN' | 'en'
   readonly runWaitMs?: number
+  /** The whole task's deadline; `TASK_DEADLINE_MS` unless set. */
+  readonly deadlineMs?: number
+  /** Aborted (a cancelled test run): the session stops as at the deadline; the note says why. */
+  readonly signal?: AbortSignal
   readonly runnerEnv?: EnvRecord
   readonly log?: (line: string) => void
   /** Called after the checks, before the run's directory is removed: what a test reads the run by. */
@@ -140,19 +164,22 @@ class Watch {
     }
   }
 
-  /** The `index`-th run-ended of the root, or null once `ms` passed without it. */
-  async nth(index: number, ms: number): Promise<RunEnded | null> {
+  /** The `index`-th run-ended of the root; null once `ms` passed or `signal` aborted without it. */
+  async nth(index: number, ms: number, signal?: AbortSignal): Promise<RunEnded | null> {
     const deadline = performance.now() + ms
     while (this.ended.length <= index) {
       const left = deadline - performance.now()
-      if (left <= 0) return null
-      // oxlint-disable-next-line no-await-in-loop -- woken by the next run-ended, or by the deadline
+      if (left <= 0 || signal?.aborted === true) return null
+      // oxlint-disable-next-line no-await-in-loop -- woken by a run-ended, the time or the signal
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, left)
-        this.#wake = () => {
+        const wake = (): void => {
           clearTimeout(timer)
+          signal?.removeEventListener('abort', wake)
           resolve()
         }
+        const timer = setTimeout(wake, left)
+        signal?.addEventListener('abort', wake, { once: true })
+        this.#wake = wake
       })
       this.#wake = null
     }
@@ -230,17 +257,22 @@ async function* timed(
   sample.end = performance.now()
 }
 
-/** `timing` over the attempts that produced anything: the first's TTFT, output tokens per second. */
+/**
+ * `timing` (Revision (17) ①): the TTFT of the run's first attempt — none at all when that attempt
+ * produced no content, say a 429 that was retried — and output tokens per second over the attempts
+ * that produced content and read to the stream's end.
+ */
 function timingOf(samples: readonly TimingSample[]): EvalRecord['timing'] {
+  const first = samples[0]
+  if (first === undefined || first.first === null) return undefined
+  const ttftMs = Math.round(first.first - first.start)
   const done = samples.filter(
     (s): s is TimingSample & { first: number; end: number } => s.first !== null && s.end !== null,
   )
-  const first = done[0]
-  if (first === undefined) return undefined
   const seconds = done.reduce((sum, s) => sum + (s.end - s.first) / 1000, 0)
   const output = done.reduce((sum, s) => sum + s.output, 0)
   return {
-    ttftMs: Math.round(first.first - first.start),
+    ttftMs,
     outputTokensPerSec: seconds > 0 ? Math.round((output / seconds) * 10) / 10 : 0,
   }
 }
@@ -262,7 +294,10 @@ async function skipQuestions(store: TapeStore): Promise<AnswerCommand | null> {
   return { kind: 'question', sessionId: row.sessionId, requestId: decision.provenanceKey, answers }
 }
 
-/** Sends each turn and answers what its Runs pause on; the notes say what did not go to plan. */
+/**
+ * Sends each turn and answers what its Runs pause on, until the chains end, the task's deadline
+ * passes or the signal aborts; the notes say what did not go to plan.
+ */
 async function driveTurns(o: {
   readonly task: EvalTask
   readonly sessionId: string
@@ -270,33 +305,60 @@ async function driveTurns(o: {
   readonly store: TapeStore
   readonly watch: Watch
   readonly waitMs: number
+  readonly deadlineMs: number
+  readonly signal: AbortSignal | undefined
 }): Promise<string[]> {
-  const { task, sessionId, sessions, store, watch } = o
+  const { task, sessionId, sessions, store, watch, signal } = o
   const notes: string[] = []
+  const deadline = performance.now() + o.deadlineMs
+  /** Why the task stops here, or null while it may go on. */
+  const stopCause = (): string | null => {
+    if (signal?.aborted === true) return `the run was cancelled (${messageOf(signal.reason)})`
+    if (performance.now() >= deadline) {
+      return `the task's deadline of ${String(o.deadlineMs)} ms passed`
+    }
+    return null
+  }
   let seen = 0
   for (const [turn, text] of task.turns.entries()) {
+    const at = `turn ${String(turn + 1)}`
+    const before = stopCause()
+    if (before !== null) {
+      notes.push(`${at} not sent: ${before}`)
+      return notes
+    }
     // oxlint-disable-next-line no-await-in-loop -- turns go one after another, as a user sends them
     const sent = await sessions.send({ sessionId, origin: null, text })
     // `queued`: the last Run's lease was still settling; the kernel sends it when that Run is done.
     if (sent.status !== 'started' && sent.status !== 'queued') {
-      notes.push(`turn ${String(turn + 1)} not sent: ${JSON.stringify(sent)}`)
+      notes.push(`${at} not sent: ${JSON.stringify(sent)}`)
       return notes
     }
     for (;;) {
+      const wait = Math.min(o.waitMs, deadline - performance.now())
       // oxlint-disable-next-line no-await-in-loop -- one Run of the chain after another
-      const ended = await watch.nth(seen, o.waitMs)
+      const ended = await watch.nth(seen, wait, signal)
       if (ended === null) {
         notes.push(
-          `turn ${String(turn + 1)}: a Run did not end within ${String(o.waitMs)} ms; stopped`,
+          `${at}: ${stopCause() ?? `a Run did not end within ${String(o.waitMs)} ms`}; stopped`,
         )
         // oxlint-disable-next-line no-await-in-loop -- the stop, then its Run's end
         await sessions.stop({ rootSessionId: sessionId })
-        // oxlint-disable-next-line no-await-in-loop -- the stopped Run ends before the record is read
-        await watch.nth(seen, 10_000)
+        // The stopped Run ends before the record is read, whatever the signal says.
+        // oxlint-disable-next-line no-await-in-loop -- as above
+        if ((await watch.nth(seen, STOP_SETTLE_MS)) === null) {
+          notes.push(`${at}: the stopped Run did not end within ${String(STOP_SETTLE_MS)} ms`)
+        }
         return notes
       }
       seen += 1
       if (ended.reason.code !== 'paused') break
+      // A paused Run is not running: past the deadline it is left paused, and no new Run opens.
+      const late = stopCause()
+      if (late !== null) {
+        notes.push(`${at}: paused on ${ended.reason.waitingFor}, not answered: ${late}`)
+        return notes
+      }
       let answer: AnswerCommand | null = null
       if (ended.reason.waitingFor === 'approval') {
         // oxlint-disable-next-line no-await-in-loop -- the card this Run paused on
@@ -314,15 +376,13 @@ async function driveTurns(o: {
         answer = await skipQuestions(store)
       }
       if (answer === null) {
-        notes.push(
-          `turn ${String(turn + 1)}: paused on ${ended.reason.waitingFor}, nothing to answer`,
-        )
+        notes.push(`${at}: paused on ${ended.reason.waitingFor}, nothing to answer`)
         return notes
       }
       // oxlint-disable-next-line no-await-in-loop -- the answer opens the next Run of the chain
       const result = await sessions.answer({ ...answer, origin: null })
       if (result.status !== 'applied') {
-        notes.push(`turn ${String(turn + 1)}: answer ${result.status}`)
+        notes.push(`${at}: answer ${result.status}`)
         return notes
       }
     }
@@ -366,7 +426,12 @@ export async function runTask(o: RunTaskOptions): Promise<EvalRecord> {
   try {
     return await runOn(evalHost, sessionId, o, log)
   } finally {
-    evalHost.dispose()
+    // A folder the run left that will not go (one a command made read-only) costs no record.
+    try {
+      evalHost.dispose()
+    } catch (error) {
+      log(`[eval] the run's directory ${evalHost.dir} was not removed: ${messageOf(error)}`)
+    }
   }
 }
 
@@ -459,6 +524,8 @@ async function runOn(
     store,
     watch,
     waitMs: o.runWaitMs ?? RUN_WAIT_MS,
+    deadlineMs: o.deadlineMs ?? TASK_DEADLINE_MS,
+    signal: o.signal,
   })
   const durationMs = Math.round(performance.now() - started)
 
@@ -480,13 +547,20 @@ async function runOn(
   const costs = await tapeCost(store, sessionId)
   const endReason = watch.ended.at(-1)?.reason.code ?? null
   const last = costs.attempts.findLast((a) => a.sessionId === sessionId)
-  const judged = verdictOf(task, checks, endReason, notes)
+  const judged = verdictOf(
+    task,
+    checks,
+    watch.ended.map((e) => e.reason.code),
+    notes,
+  )
   const timing = samples === null ? undefined : timingOf(samples)
   const calib: NonNullable<EvalRecord['calib']> = {
     machineDenials: named(entries, 'execution/tool_outcome').filter((e) =>
       BLOCK_SOURCES.has(String(e.payload['source'])),
     ).length,
-    ...(disable === undefined ? {} : { blockedRecalls: blockedRecalls(entries, disable.name) }),
+    ...(disable === undefined
+      ? {}
+      : { blockedRecalls: blockedRecalls(callsOf(entries), disable.name) }),
     ...(costs.perRequest === null ? {} : { perRequest: costs.perRequest }),
   }
   const record: EvalRecord = {
@@ -525,18 +599,19 @@ async function runOn(
 /**
  * 判分: all-script tasks are judged by script and pass only when every check passes; a task with a
  * human check is judged by a human, who sets the verdict — until then it reads `fail`, and the note
- * carries the script results for reference. A run that ended over `usageLimitTokens` fails.
+ * carries the script results for reference. A run any of whose Runs (`endReasons`, the root's, in
+ * order) ended over `usageLimitTokens` fails, whatever the later turns did.
  */
 export function verdictOf(
   task: Pick<EvalTask, 'checks'>,
   checks: readonly { id: string; pass: boolean; note: string }[],
-  endReason: string | null,
+  endReasons: readonly string[],
   notes: readonly string[],
 ): Pick<EvalRecord, 'verdict' | 'judgedBy' | 'note'> {
   const humans = task.checks.flatMap((c) => (c.kind === 'human' ? [c.text] : []))
-  const overLimit = endReason === 'usage-limit'
+  const overLimit = endReasons.includes('usage-limit')
   const lines = [
-    ...(overLimit ? ['ended over usageLimitTokens (usage-limit)'] : []),
+    ...(overLimit ? ['a Run ended over usageLimitTokens (usage-limit)'] : []),
     ...notes,
     ...checks.map(
       (c) => `${c.id}: ${c.pass ? 'pass' : 'fail'}${c.note === '' ? '' : ` — ${c.note}`}`,
@@ -549,21 +624,6 @@ export function verdictOf(
     judgedBy: humans.length === 0 ? 'script' : 'human',
     note: lines.join('; '),
   }
-}
-
-/** Calls to the disabled tool after the first one the policy blocked (E2). */
-function blockedRecalls(entries: readonly TapeEntry[], toolName: string): number {
-  const calls = new Set(
-    named(entries, 'tool/call')
-      .filter((e) => e.payload['name'] === toolName)
-      .map((e) => e.provenanceKey.replace('tool:v1:call:', '')),
-  )
-  const blocked = named(entries, 'execution/tool_outcome').filter(
-    (e) =>
-      e.payload['source'] === 'policy' &&
-      calls.has(e.provenanceKey.replace('execution:v1:outcome:', '')),
-  ).length
-  return Math.max(0, blocked - 1)
 }
 
 function named(entries: readonly TapeEntry[], name: string): TapeEntry[] {
@@ -618,14 +678,24 @@ export function selectTasks(tasks: readonly EvalTask[], env: EnvRecord): EvalTas
   )
 }
 
+/** A positive integer variable, `fallback` when unset. */
+function positiveInteger(env: EnvRecord, name: string, fallback: number): number {
+  const raw = env[name]?.trim() ?? ''
+  if (raw === '') return fallback
+  const value = Number(raw)
+  if (!Number.isInteger(value) || value < 1)
+    throw new Error(`${name}=${raw} is not a positive integer`)
+  return value
+}
+
 /** `TENON_EVAL_RUNS`: a positive integer, 3 when unset. */
 export function runsOf(env: EnvRecord): number {
-  const raw = env['TENON_EVAL_RUNS']?.trim() ?? ''
-  if (raw === '') return 3
-  const runs = Number(raw)
-  if (!Number.isInteger(runs) || runs < 1)
-    throw new Error(`TENON_EVAL_RUNS=${raw} is not a positive integer`)
-  return runs
+  return positiveInteger(env, 'TENON_EVAL_RUNS', 3)
+}
+
+/** `TENON_EVAL_DEADLINE_MIN`: each task's deadline, in whole minutes; `TASK_DEADLINE_MS` unset. */
+export function deadlineOf(env: EnvRecord): number {
+  return positiveInteger(env, 'TENON_EVAL_DEADLINE_MIN', TASK_DEADLINE_MS / 60_000) * 60_000
 }
 
 export interface LivePlan {
@@ -634,22 +704,45 @@ export interface LivePlan {
   readonly runs: number
   readonly tasks: readonly EvalTask[]
   readonly timing: boolean
+  /** Each task's deadline, in ms. */
+  readonly deadlineMs: number
+  /** The `TENON_EVAL*` names `.env.local` holds, none of which the plan reads. */
+  readonly ignored: readonly string[]
 }
 
 /**
- * What `pnpm eval` runs, from the runner's environment and `.env.local` (`file`, parsed inside this
- * process only): the column, its key, the runs and the tasks. `TENON_EVAL_TIMING=1` records `timing`.
+ * What `pnpm eval` runs. Every `TENON_EVAL_*` choice — the column, the runs, the tasks, `timing`
+ * (`TENON_EVAL_TIMING=1`) and the deadline — comes from the runner's environment alone, so a stale
+ * line in a file never changes a paid run; `.env.local` (`file`, parsed inside this process only)
+ * is read for the key and nothing else (models.ts `readKey`).
  */
 export function livePlan(runner: EnvRecord, file: EnvRecord, tasks: readonly EvalTask[]): LivePlan {
-  const merged: Record<string, string | undefined> = { ...file, ...runner }
-  const column = resolveColumn(merged)
+  const column = resolveColumn(runner)
   return {
     column,
     key: readKey(column, runner, file),
-    runs: runsOf(merged),
-    tasks: selectTasks(tasks, merged),
-    timing: ['1', 'true'].includes(merged['TENON_EVAL_TIMING']?.trim() ?? ''),
+    runs: runsOf(runner),
+    tasks: selectTasks(tasks, runner),
+    timing: ['1', 'true'].includes(runner['TENON_EVAL_TIMING']?.trim() ?? ''),
+    deadlineMs: deadlineOf(runner),
+    ignored: Object.keys(file)
+      .filter((name) => name.startsWith('TENON_EVAL'))
+      .toSorted(),
   }
+}
+
+/** The plan as one line, printed before the first request: what the paid run will do. No key. */
+export function planLine(plan: LivePlan): string {
+  const { column } = plan
+  return [
+    `eval column ${columnSlug(column)} (provider ${column.providerId}, model ${column.modelId}, ` +
+      `effort ${String(column.effort)}, key from $${column.keyEnv})`,
+    `runs ${String(plan.runs)}`,
+    `tasks ${plan.tasks.map((task) => task.id).join(', ') || '(none)'}`,
+    `deadline ${String(plan.deadlineMs / 60_000)} min per task`,
+    `timing ${plan.timing ? 'on' : 'off'}`,
+    ...(plan.ignored.length === 0 ? [] : [`not read from .env.local: ${plan.ignored.join(', ')}`]),
+  ].join(' · ')
 }
 
 /** Appends a record to `<resultsDir>/<date>-<column>.jsonl`, checked first. Returns the file. */
