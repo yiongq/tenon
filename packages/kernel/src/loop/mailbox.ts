@@ -126,7 +126,7 @@ import {
   readSessionFacts,
   workspaceEntry,
 } from '../session/facts.js'
-import type { Profile } from '../session/facts.js'
+import type { Profile, SessionFacts } from '../session/facts.js'
 import { resolvePath } from '../permission/workspace.js'
 
 /**
@@ -263,6 +263,12 @@ export interface SessionFactsView {
   readonly drafted: boolean
   readonly profile: Profile
   readonly workspace: WorkspaceSetPayload | null
+  /**
+   * Where this session's history last went — the origin the prebuild's data-flow check compares
+   * with — so the model menu confirms against the same host (§模型选择「数据去向」). Null before the
+   * first Run, and for a draft.
+   */
+  readonly lastEndpointOrigin: string | null
 }
 
 export type SelectProfileQuery =
@@ -487,7 +493,7 @@ export function createLoop(deps: LoopDeps): Loop {
         sessionChoice: choiceOf(
           facts.established ? facts.modelChoice : (draft?.modelChoice ?? null),
         ),
-        previousOrigin: facts.lastEndpointOrigin,
+        previousOrigin: previousOriginOf(facts),
       })
       if ('needsConfirm' in resolved) return { kind: 'confirm', host: resolved.needsConfirm.host }
       providerId = resolved.providerId
@@ -2090,6 +2096,18 @@ export function createLoop(deps: LoopDeps): Loop {
     return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
   }
 
+  /**
+   * Where the session's history last went (§模型选择「数据去向」): the latest Run's recorded origin.
+   * A row written before plan step 19 recorded one has none; where its provider sends now is the
+   * nearest reading there is, and without it such a session — Ollama's history, say — would reach a
+   * public host with no confirmation.
+   */
+  function previousOriginOf(facts: SessionFacts): string | null {
+    const last = facts.lastSelected
+    if (last === null) return null
+    return last.endpointOrigin ?? connector.endpointOrigin(last.providerId)
+  }
+
   /** `connector.endpointOrigin` for a resumed Run's `model_selected`, or what the paused Run had. */
   function originNow(
     providerId: ProviderId,
@@ -2175,6 +2193,7 @@ export function createLoop(deps: LoopDeps): Loop {
         drafted: false,
         profile: facts.profile,
         workspace: facts.workspace,
+        lastEndpointOrigin: previousOriginOf(facts),
       }
     }
     const draft = drafts.get(sessionId)
@@ -2183,6 +2202,7 @@ export function createLoop(deps: LoopDeps): Loop {
       drafted: draft !== null,
       profile: draft?.profile ?? 'chat',
       workspace: draft?.profile === 'cowork' ? draft.workspace : null,
+      lastEndpointOrigin: null,
     }
   }
 

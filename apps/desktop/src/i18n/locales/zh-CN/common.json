@@ -127,7 +127,7 @@
       "opus55": "适合复杂的长任务",
       "opus5": "上一代 Opus（旧版）",
       "haiku45": "最快、成本最低",
-      "fable51": "需要组织开启 30 天数据保留",
+      "fable51": "需要组织或工作区开启 30 天数据保留",
       "glm53": "智谱 GLM-5.3",
       "glm53flash": "轻量版 GLM-5.3",
       "glm53flashx": "轻量版 GLM-5.3（FlashX）",
@@ -156,6 +156,7 @@
       "menu": "思考强度",
       "default": "{level}（默认）",
       "highest": "{level} · 用量最大",
+      "defaultHighest": "{level}（默认）· 用量最大",
       "level": {
         "low": "低",
         "medium": "中",

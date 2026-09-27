@@ -18,6 +18,7 @@
  * only for a choice ②–⑤ made, which nobody confirmed in the menu (§模型选择「数据去向」). The search
  * backend is plan step 28.
  */
+import type { Config } from '@tenon-app/contracts'
 import { ProviderConfigMissingError } from '@tenon-app/kernel'
 import type {
   HostAdapter,
@@ -31,7 +32,7 @@ import type {
   RunConnector,
 } from '@tenon-app/kernel'
 import { endpointOf, originOf } from './endpoint.js'
-import { readConfig } from './host/profile.js'
+import { configGeneration, readConfig, watchConfig } from './host/profile.js'
 import {
   BASE_URL_KEY,
   DEFAULT_MAX_TOKENS,
@@ -40,7 +41,7 @@ import {
   MODEL_ENV,
   declaredBaseURL,
   devEnv,
-  readProviderInputs,
+  readSettledInputs,
   selectModel,
   selectProviderId,
   unboundSecrets,
@@ -58,26 +59,51 @@ export interface RunConnectorOptions {
   /** The environment the development fallback reads. Tests pass a fixed one; main passes none. */
   readonly env?: EnvLike
   readonly log?: (line: string) => void
+  /**
+   * `config.json` as main read it at startup, before `bindLoop` and `recover()`: what the synchronous
+   * `endpointOrigin` answers from until the first write or read. Without it, the declared defaults.
+   */
+  readonly config?: Config
 }
 
 export function createRunConnector(options: RunConnectorOptions): RunConnector {
   const { host, providers } = options
   const log = options.log ?? ((line: string): void => console.warn(line))
   const env = (): EnvLike => devEnv({ isPackaged: options.isPackaged === true, env: options.env })
-  /** The origin each provider was last assembled against: what the synchronous read answers. */
-  const origins = new Map<ProviderId, string>()
+  /**
+   * `config.json`'s provider settings as last known — startup's, then every write's, then a read no
+   * write overlapped — so the synchronous `endpointOrigin` answers where `assemble` would send now,
+   * not a definition's default: a resume's `model_selected` after a restart records the configured
+   * host (§续跑「endpointOrigin 按实际发往的地址记」), and the data-flow check compares with it.
+   */
+  let stored: Config['providerConfig'] = options.config?.providerConfig ?? {}
+  watchConfig(host.identity, (config) => {
+    stored = config.providerConfig
+  })
+  /** A read's settings become the snapshot only while no write has landed since it finished. */
+  const remember = (config: Config, generation: number): void => {
+    if (configGeneration(host.identity) === generation) stored = config.providerConfig
+  }
+  const currentConfig = async (): Promise<Config> => {
+    const before = configGeneration(host.identity)
+    const config = await readConfig(host.fs, host.identity)
+    remember(config, before)
+    return config
+  }
 
   return {
     endpointOrigin(providerId): string | null {
-      // Synchronous by contract, so it answers from the last assembly, then from the definition's
-      // own default. Plan step 15 is its first reader (a resume's `model_selected`).
-      return origins.get(providerId) ?? defaultOrigin(providers.get(providerId))
+      // Synchronous by contract: `baseURLOf` over the snapshot, the way `assemble` resolves it —
+      // the stored base URL, the development variable, the declared default.
+      const definition = providers.get(providerId)
+      if (definition === null) return null
+      return originOf(baseURLOf(definition, stored[providerId], env()) ?? undefined)
     },
 
     async resolveChoice(q): Promise<ModelChoice | { needsConfirm: { host: string } }> {
       // ① wins, and was confirmed in the menu when it was chosen.
       if (q.sessionChoice !== null) return q.sessionChoice
-      const config = await readConfig(host.fs, host.identity)
+      const config = await currentConfig()
       const vars = env()
       // ② the profile's default, then ③ what the settings card saved (「新会话默认」, 01 修补 9 (b)).
       const saved = config.defaultModelByProfile[q.profile] ?? config.provider
@@ -109,7 +135,6 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
     },
 
     async assemble(q): Promise<RunAssembly> {
-      const config = await readConfig(host.fs, host.identity)
       const vars = env()
       const definition = providers.get(q.choice.providerId)
       // Chosen a moment ago, so the table has it; a quiet log, because the choice already said so.
@@ -120,13 +145,23 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       if (definition === null || model === null) {
         failure = new ProviderConfigMissingError(q.choice.providerId, 'a registered provider')
       } else {
-        const settings = config.providerConfig[definition.id]
-        const inputs = await readProviderInputs({ host, definition, settings, env: vars, log })
+        // The settings and the keys as one save left them: a save that moved the host between the
+        // two reads would pair its new key with the old base URL (01 修补 6「key 绑定主机」).
+        const read = await readSettledInputs({ host, definition, env: vars, log })
+        remember(read.config, read.generation)
+        const settings = read.config.providerConfig[definition.id]
+        const inputs = read.inputs
         origin = originOf(inputs.config[BASE_URL_KEY]) ?? origin
         // 「发送前再核一次」: a key bound to another host than the one this sends to is not used —
         // a configuration error, never a request (A9; 01 修补 6).
         const unbound = unboundSecrets(definition, settings, vars, inputs)
         try {
+          if (!read.settled) {
+            throw new ProviderConfigMissingError(
+              definition.id,
+              'a key read while no save was moving its host',
+            )
+          }
           if (unbound.length > 0) {
             throw new ProviderConfigMissingError(
               definition.id,
@@ -149,7 +184,6 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
           failure = error
         }
       }
-      if (origin !== null) origins.set(q.choice.providerId, origin)
       const info = model ?? unusableModel(q.choice)
       return {
         model: info,

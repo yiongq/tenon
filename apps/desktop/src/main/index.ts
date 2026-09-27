@@ -125,11 +125,8 @@ async function main(): Promise<void> {
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
   const preferred = preferredSystemLanguages()
-  const locale = await createLocaleController(
-    await readConfig(host.fs, host.identity),
-    preferred,
-    broadcast,
-  )
+  const startupConfig = await readConfig(host.fs, host.identity)
+  const locale = await createLocaleController(startupConfig, preferred, broadcast)
   // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
   // construction, the host's run-time half — the RunRegistry, the queue, the events — through
   // bindLoop, before anything can send. The protected shell files are computed in the user's home:
@@ -148,6 +145,8 @@ async function main(): Promise<void> {
             providers,
             isPackaged: app.isPackaged,
             log: (line) => console.warn(line),
+            // Before bindLoop and recover(): a resume's endpointOrigin is the configured host.
+            config: startupConfig,
           }),
           protectedFiles: protectedShellFiles(home),
           // A call reaching a request with no result: a thrown bug in development, a repair closure

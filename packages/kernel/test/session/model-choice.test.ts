@@ -1,6 +1,7 @@
 /**
  * The session's own model choice (spec 02 §模型选择, §会话事实「写入」, §主进程与 kernel 的循环接口
- * 「间接切公网」; plan step 19: 旧 123, 旧 33, 旧 184 and the draft case of open question 16).
+ * 「间接切公网」; plan step 19: 旧 123, 旧 33, 旧 184 and the draft case of open question 16; the two
+ * release cases plan step 17 left to step 19).
  */
 import { describe, expect, it } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
@@ -60,8 +61,27 @@ interface Harness {
   readonly provider: ScriptedProvider
 }
 
-function harness(): Harness {
-  const store = createMemoryTapeStore({ identity: IDENTITY })
+/**
+ * `legacy()` true: `session/model_selected` is written the way phase 1 and plan steps 9–18 wrote it,
+ * with no `endpointOrigin`.
+ */
+function harness(o: { legacy?: () => boolean } = {}): Harness {
+  const memory = createMemoryTapeStore({ identity: IDENTITY })
+  const store: TapeStore =
+    o.legacy === undefined
+      ? memory
+      : {
+          ...memory,
+          append: (batch) =>
+            memory.append({
+              ...batch,
+              entries: batch.entries.map((entry) => {
+                if (o.legacy?.() !== true || entry.name !== 'session/model_selected') return entry
+                const { endpointOrigin: _dropped, ...payload } = entry.payload
+                return { ...entry, payload }
+              }),
+            }),
+        }
   const provider = createScriptedProvider({ models: [ONE, TWO] })
   const loop = createTestLoopPorts({ connector: { provider, model: ONE, models: [ONE, TWO] } })
   const service = createTestSessionService(
@@ -91,6 +111,16 @@ async function entries(store: TapeStore, sessionId: string): Promise<TapeEntry[]
 
 function named(all: readonly TapeEntry[], name: string): TapeEntry[] {
   return all.filter((entry) => entry.name === name)
+}
+
+function userTexts(all: readonly TapeEntry[]): string[] {
+  return named(all, 'message/user').map(
+    (entry) => (entry.payload['content'] as { text: string }[])[0]?.text ?? '',
+  )
+}
+
+function heldHosts(h: Harness): Array<string | null> {
+  return h.loop.recorded.flatMap((event) => (event.type === 'queue-held' ? [event.host] : []))
 }
 
 async function send(h: Harness, sessionId: string, text: string): Promise<void> {
@@ -231,6 +261,114 @@ describe('the model choice (§模型选择)', () => {
       named(await entries(h.store, A), 'session/model_selected').at(-1)?.payload,
     ).toMatchObject({
       modelId: TWO.id,
+    })
+  })
+  it('releases the held message with those queued before it, and none queued after (旧 184)', async () => {
+    const h = harness()
+    await send(h, A, 'history')
+    await h.loop.queue.enqueue(A, 'queued before', { urgent: false })
+    h.loop.connector.needsConfirm('api.anthropic.com')
+    expect(await h.service.send({ sessionId: A, origin: null, text: 'held one' })).toMatchObject({
+      status: 'held',
+    })
+    await h.loop.queue.enqueue(A, 'queued after', { urgent: false })
+    h.provider.script(scriptedTurn({ deltas: ['sent'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['then'], usage: USAGE }))
+    await h.service.selectModel({ sessionId: A, choice: choice(TWO.id), origin: null })
+    // The released round: up to the held message, in queue order; the later one waits for its end.
+    expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    const released = JSON.stringify(h.provider.requests[1]?.body)
+    expect(released).toContain('queued before')
+    expect(released).toContain('held one')
+    expect(released).not.toContain('queued after')
+    await h.loop.runEnded()
+    expect(userTexts(await entries(h.store, A))).toEqual([
+      'history',
+      'queued before',
+      'held one',
+      'queued after',
+    ])
+  })
+
+  it('only clears the hold when the held message was withdrawn: nothing goes out (plan step 17)', async () => {
+    const h = harness()
+    await send(h, A, 'history')
+    await h.loop.queue.enqueue(A, 'still queued', { urgent: false })
+    h.loop.connector.needsConfirm('api.anthropic.com')
+    const held = await h.service.send({ sessionId: A, origin: null, text: 'held one' })
+    if (held.status !== 'held') throw new Error(`send answered ${JSON.stringify(held)}`)
+    // queue.ts's withdraw (chat.queue.act) takes it out by id.
+    await h.loop.queue.take(A, { upToSeq: null, urgentOnly: false, queuedId: held.queuedId })
+    const leases = h.loop.leaseLog.length
+    await h.service.selectModel({ sessionId: A, choice: choice(TWO.id), origin: null })
+    expect(heldHosts(h)).toEqual(['api.anthropic.com', null])
+    expect(h.loop.leaseLog).toHaveLength(leases)
+    expect(h.provider.requests).toHaveLength(1)
+    expect(h.loop.queued(A).map((item) => item.text)).toEqual(['still queued'])
+  })
+
+  it('takes nothing on a choice once another round has cleared the hold (plan step 17)', async () => {
+    const h = harness()
+    await send(h, A, 'history')
+    h.loop.connector.needsConfirm('api.anthropic.com')
+    expect(await h.service.send({ sessionId: A, origin: null, text: 'held one' })).toMatchObject({
+      status: 'held',
+    })
+    // A round with no needsConfirm opens (it takes the held message along) and clears the hold.
+    h.loop.connector.needsConfirm(null)
+    await send(h, A, 'on this machine')
+    expect(heldHosts(h)).toEqual(['api.anthropic.com', null])
+    await h.loop.queue.enqueue(A, 'queued later', { urgent: false })
+    const leases = h.loop.leaseLog.length
+    await h.service.selectModel({ sessionId: A, choice: choice(TWO.id), origin: null })
+    // Nothing more to release: no second clear, no Run, the queue as it was.
+    expect(heldHosts(h)).toEqual(['api.anthropic.com', null])
+    expect(h.loop.leaseLog).toHaveLength(leases)
+    expect(h.loop.queued(A).map((item) => item.text)).toEqual(['queued later'])
+  })
+
+  it('releases an auto-send hold with every queued message (queuedId null)', async () => {
+    const h = harness()
+    h.provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
+    const first = h.service.send({ sessionId: A, origin: null, text: 'one' })
+    await h.service.send({ sessionId: A, origin: null, text: 'two' })
+    await h.service.send({ sessionId: A, origin: null, text: 'three' })
+    const started = await first
+    if (started.status !== 'started') throw new Error(`send answered ${JSON.stringify(started)}`)
+    // The auto-send after it would switch to a public host: held, both left in the queue.
+    h.loop.connector.needsConfirm('api.anthropic.com')
+    await h.loop.runEnded({ runId: started.runId })
+    await expect.poll(() => heldHosts(h)).toEqual(['api.anthropic.com'])
+    expect(h.loop.queued(A).map((item) => item.text)).toEqual(['two', 'three'])
+    h.provider.script(scriptedTurn({ deltas: ['sent'], usage: USAGE }))
+    await h.service.selectModel({ sessionId: A, choice: choice(TWO.id), origin: null })
+    expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    expect(userTexts(await entries(h.store, A))).toEqual(['one', 'two', 'three'])
+    expect(h.loop.queued(A)).toEqual([])
+  })
+
+  it('compares with where a pre-step-19 Run’s provider sends when its row has no origin (s19-wire-3)', async () => {
+    let legacy = true
+    const h = harness({ legacy: () => legacy })
+    h.loop.connector.use({
+      provider: h.provider,
+      model: ONE,
+      models: [ONE, TWO],
+      endpointOrigin: 'http://localhost:11434',
+    })
+    await send(h, A, 'on this machine')
+    expect(
+      named(await entries(h.store, A), 'session/model_selected')[0]?.payload,
+    ).not.toHaveProperty('endpointOrigin')
+    // Without the fallback this session would read as having sent nowhere: no check at all.
+    expect(await h.service.sessionFacts({ sessionId: A })).toMatchObject({
+      lastEndpointOrigin: 'http://localhost:11434',
+    })
+    legacy = false
+    await send(h, A, 'again')
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      sessionChoice: null,
+      previousOrigin: 'http://localhost:11434',
     })
   })
 })

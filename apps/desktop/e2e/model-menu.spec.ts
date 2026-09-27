@@ -1,12 +1,13 @@
-import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
+import { deferred, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import type { Page } from '@playwright/test'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
+import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
-import { pushesOf, recordPushes } from './helpers/tools.js'
+import { providerEnv, pushesOf, recordPushes, send } from './helpers/tools.js'
 
 /** A `chat.queue` push as main sent it. */
 interface QueuePush {
@@ -115,7 +116,7 @@ test('asks before history on this computer goes to a public host, and can open a
   }
 })
 
-test('from one public host to another asks nothing, and a typed model’s row names its host as the others do (A9, A15)', async () => {
+test('asks by where the history went, not by the model in effect, and a typed model’s row names its host as the others do (A9, A15, s19-spec-1)', async () => {
   ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-public')
   seedConfig(userData, {
@@ -139,10 +140,15 @@ test('from one public host to another asks nothing, and a typed model’s row na
     await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
     await page.getByTestId('model-confirm-switch').click()
     await expect(current).toHaveText('glm-5.3-flash · Max')
-    // A public host → another public one: the history is out already, so nothing to confirm.
+    // Nothing has gone to zhipu yet, so another public host is asked about too, by its own name:
+    // the menu compares with where the history went, not with the model in effect (a public host
+    // to another after the history did go out asks nothing: renderer-data-flow.test.ts).
     await trigger.click()
     await page.getByTestId('model-row-anthropic-claude-sonnet-5').click()
-    await expect(page.getByTestId('model-confirm')).toHaveCount(0)
+    await expect(page.getByTestId('model-confirm')).toContainText(
+      'Earlier messages will be sent to api.anthropic.com',
+    )
+    await page.getByTestId('model-confirm-switch').click()
     await expect(current).toHaveText('claude-sonnet-5 · High')
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
@@ -299,6 +305,204 @@ test('withdrawing the held message clears the hold, and the next message held an
     await expect(bubble).toContainText('one more?')
     expect(server.requests).toHaveLength(1)
   } finally {
+    await app.close()
+  }
+})
+
+// Where no provider is ever reached: `.invalid` never resolves (RFC 6761), so a regression that sent
+// the history anyway would fail on the name, not reach a vendor. The e2e keychain is in memory.
+const UNREACHABLE_ZHIPU = 'https://zhipu.invalid/api/paas/v4/'
+
+test('a session on this computer whose default moved to a public host asks on any row or level of it (s19-spec-1, 验收 34)', async () => {
+  // The session never chose: it runs on the profile's default, which the settings card then moves
+  // to zhipu. The model in effect is public, the history is not — every choice in its menu, the
+  // ticked default's own row and a thinking level included, asks first, and nothing is sent.
+  ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  const server = ollama
+  const userData = makeUserDataDir('model-indirect')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: server.baseURL } },
+  })
+  const { app, page } = await launchTenon({ userData, env: COUNT_ROUTES })
+  try {
+    await page.getByTestId('composer-input').fill('keep this local')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    const saved = await page.evaluate(async (baseURL) => {
+      const configured = await window.tenon.invoke('provider.configure', {
+        id: 'zhipu',
+        values: { baseURL, apiKey: 'e2e-zhipu-key' },
+      })
+      const selected = await window.tenon.invoke('provider.select', {
+        providerId: 'zhipu',
+        modelId: 'glm-5.3-flash',
+      })
+      return [configured, selected]
+    }, UNREACHABLE_ZHIPU)
+    expect(saved).toEqual([
+      { ok: true, data: { ok: true } },
+      { ok: true, data: { ok: true } },
+    ])
+    const trigger = page.getByTestId('model-menu-trigger')
+    const confirm = page.getByTestId('model-confirm')
+    const asked = 'Earlier messages will be sent to zhipu.invalid'
+
+    // The default's own row, ticked as the model in effect (the menu reads it on opening).
+    await trigger.click()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
+    await expect(confirm).toContainText(asked)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    // A level of it. Its highest level is also its default, and says both (s19-spec-5).
+    await trigger.click()
+    await page.getByTestId('model-effort').hover()
+    await expect(page.getByTestId('model-effort-max')).toHaveText('Max (default) · uses the most')
+    await page.getByTestId('model-effort-high').click()
+    await expect(confirm).toContainText(asked)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    // A model typed for it.
+    await trigger.click()
+    await page.getByTestId('model-more').click()
+    await page.getByTestId('model-type-zhipu').click()
+    await page.getByTestId('type-model-input').fill('glm-own')
+    await page.getByTestId('type-model-use').click()
+    await expect(confirm).toContainText(asked)
+    await page.keyboard.press('Escape')
+
+    // Nothing was chosen and nothing sent: the session is where it was.
+    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    expect(await routeCalls(app, 'chat.send')).toBe(1)
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('in a task, the text-only rows are greyed and say why: Ollama’s and a typed model’s (旧 40, 旧 108, 验收 35)', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
+  const userData = makeUserDataDir('model-task-rows')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
+  })
+  try {
+    const trigger = page.getByTestId('model-menu-trigger')
+    const current = page.getByTestId('model-menu-current')
+    const reason = 'A task needs a model that can use tools'
+    // A chat lists them as any other row.
+    await trigger.click()
+    await expect(page.getByTestId('model-row-ollama-qwen3:8b')).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    await page.keyboard.press('Escape')
+
+    await page.getByTestId('mode-cowork').click()
+    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'cowork')
+    await trigger.click()
+    const ollamaRow = page.getByTestId('model-row-ollama-qwen3:8b')
+    await expect(ollamaRow).toHaveAttribute('aria-disabled', 'true')
+    await expect(ollamaRow).toContainText(reason)
+    // A verified row stays selectable.
+    await expect(page.getByTestId('model-row-anthropic-claude-sonnet-5')).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    // A greyed row does nothing.
+    await ollamaRow.click({ force: true })
+    await expect(current).toHaveText('claude-sonnet-5 · High')
+
+    // A typed id holds text conversations only: its row, once it is the session's, is greyed too.
+    await page.getByTestId('model-more').click()
+    await page.getByTestId('model-type-anthropic').click()
+    await page.getByTestId('type-model-input').fill('claude-own-model')
+    await page.getByTestId('type-model-use').click()
+    await expect(current).toHaveText('claude-own-model')
+    await trigger.click()
+    const typedRow = page.getByTestId('model-row-anthropic-claude-own-model')
+    await expect(typedRow).toHaveAttribute('aria-disabled', 'true')
+    await expect(typedRow).toContainText(reason)
+  } finally {
+    await app.close()
+  }
+})
+
+test('while a reply streams, the thinking levels say a change starts with the next message and restarts the cache (旧 186)', async () => {
+  const hold = deferred()
+  anthropic = await startFakeAnthropic({
+    replies: [
+      {
+        steps: [
+          { type: 'text', text: 'Still ' },
+          { type: 'wait', until: hold.promise },
+          { type: 'text', text: 'going.' },
+        ],
+        delayMs: 5,
+      },
+    ],
+  })
+  const userData = makeUserDataDir('model-cache-note')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
+  try {
+    await send(page, 'a long answer')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Still')
+    await page.getByTestId('model-menu-trigger').click()
+    await page.getByTestId('model-effort').hover()
+    await expect(page.getByTestId('model-next-message-cache')).toHaveText(
+      'Takes effect from the next message · Changing it makes the cache start over',
+    )
+    hold.resolve()
+  } finally {
+    hold.resolve()
+    await app.close()
+  }
+})
+
+test('「用新模型开新会话」 during a Run asks to leave first: staying keeps the session, stopping opens the empty one (旧 185)', async () => {
+  // One reply on Ollama, held open after its first chunk: a Run in progress, history on this computer.
+  ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5, holdAfter: 1 })
+  const server = ollama
+  const userData = makeUserDataDir('model-new-chat-leave')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: server.baseURL } },
+  })
+  const { app, page } = await launchTenon({ userData, env: { ZHIPU_API_KEY: 'e2e-zhipu-key' } })
+  try {
+    await send(page, 'keep this local')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('local')
+    const dialog = page.getByTestId('leave-run')
+    const newChatWithZhipu = async (): Promise<void> => {
+      await page.getByTestId('model-menu-trigger').click()
+      await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
+      await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+      await page.getByTestId('model-confirm-new-chat').click()
+      await expect(dialog).toBeVisible()
+    }
+    await newChatWithZhipu()
+    await dialog.getByTestId('leave-stay').click()
+    await expect(dialog).toBeHidden()
+    // Nothing moved: the same session, its Run still going.
+    await expect(page.getByTestId('user-text')).toHaveText('keep this local')
+    await expect(page.getByTestId('composer-stop')).toBeVisible()
+
+    await newChatWithZhipu()
+    await dialog.getByTestId('leave-stop').click()
+    // A new, empty chat on the new model, none of the old content.
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await expect(page.getByTestId('user-message')).toHaveCount(0)
+    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    server.release()
     await app.close()
   }
 })

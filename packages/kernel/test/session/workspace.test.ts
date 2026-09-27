@@ -147,6 +147,7 @@ describe('the draft before a session exists (open question 16)', () => {
       drafted: true,
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
+      lastEndpointOrigin: null,
     })
     await send(h, 'hello')
     const all = await entries(h.store)
@@ -163,11 +164,13 @@ describe('the draft before a session exists (open question 16)', () => {
     // One batch: one createdAt per fact, and nothing of another batch in between.
     expect(new Set(all.slice(0, 6).map((entry) => entry.entryId)).size).toBe(6)
     expect(await cowork(h)).toEqual({ ok: false, code: 'established' })
+    // Where its one Run sent: what the model menu confirms a switch against (§模型选择「数据去向」).
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toEqual({
       established: true,
       drafted: false,
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
+      lastEndpointOrigin: 'https://connector.test',
     })
     // 旧 180: the dedicated folder is named, not made — until the first write or command.
     expect(await h.host.fs.stat(DEDICATED)).toBeNull()
@@ -231,6 +234,7 @@ describe('the draft before a session exists (open question 16)', () => {
       drafted: false,
       profile: 'chat',
       workspace: null,
+      lastEndpointOrigin: null,
     })
     await cowork(h)
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toMatchObject({
@@ -245,6 +249,7 @@ describe('the draft before a session exists (open question 16)', () => {
       drafted: false,
       profile: 'chat',
       workspace: null,
+      lastEndpointOrigin: null,
     })
     await send(h, 'in the old one', OTHER)
     expect(named(await entries(h.store, OTHER), 'view/tool_table').length).toBe(1)

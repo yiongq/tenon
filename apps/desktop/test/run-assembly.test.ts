@@ -29,7 +29,7 @@ import type {
   StreamEvent,
 } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it } from 'vitest'
-import { writeConfig } from '../src/main/host/profile.js'
+import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import {
   DEFAULT_MAX_TOKENS,
   MAX_TOKENS_ENV,
@@ -387,6 +387,42 @@ describe('what the connector adds for the loop', () => {
     }
     expect(origins[ANTHROPIC_PROVIDER_ID]).toBe('https://api.anthropic.com')
     expect(origins[ZHIPU_PROVIDER_ID]).toBe('https://open.bigmodel.cn')
+  })
+
+  it('answers endpointOrigin from config.json before any assembly, and follows each write (s9-spec-2)', async () => {
+    // A resume after a restart writes its model_selected from this synchronous read before its
+    // assemble runs: it must name the configured host, not the definition's default (§续跑
+    // 「endpointOrigin 按实际发往的地址记」), or the next data-flow check compares with a wrong host.
+    const host = createMemoryHost()
+    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'http://127.0.0.1:4000' } },
+    })
+    // Built the way main builds it: with config.json as read at startup, before bindLoop.
+    const connector = createRunConnector({
+      host,
+      providers: registry(),
+      env: {},
+      log: () => {},
+      config: await readConfig(host.fs, host.identity),
+    })
+    expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('http://127.0.0.1:4000')
+    // Unconfigured providers answer their declared default; an unknown one nothing.
+    expect(connector.endpointOrigin(ZHIPU_PROVIDER_ID)).toBe('https://open.bigmodel.cn')
+    expect(connector.endpointOrigin('no-such-provider')).toBeNull()
+    // A save moves it, with no assembly in between.
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://relay.example/' } },
+    })
+    expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://relay.example')
+    // The development base URL counts where a send would take it, as assemble resolves it.
+    const dev = createRunConnector({
+      host: createMemoryHost(),
+      providers: registry(),
+      env: { ANTHROPIC_BASE_URL: 'http://localhost:8080/' },
+      log: () => {},
+    })
+    expect(dev.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('http://localhost:8080')
   })
 
   it('says where the model came from, and lets the session choice through untouched', async () => {
