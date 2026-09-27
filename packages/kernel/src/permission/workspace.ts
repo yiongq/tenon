@@ -5,9 +5,11 @@
  * Everything is compared as REAL paths: the path is normalised, then resolved through `HostFs.realpath`
  * — and when the entry does not exist yet (a file about to be written, a folder about to be made),
  * through its nearest existing parent, with the missing segments put back as the model wrote them.
- * The roots, the profile directory, the session's own spill directory and the protected files are
- * resolved by the same algorithm before they are compared, or a workspace under a link (macOS `/tmp`
- * → `/private/tmp`) would make everything in it read as outside.
+ * The roots, the profile directory and the protected files are resolved by the same algorithm before
+ * they are compared, or a workspace under a link (macOS `/tmp` → `/private/tmp`) would make everything
+ * in it read as outside. The session's own spill directory is not resolved itself: it is the resolved
+ * profile directory's `tool-output/<sessionId>`, so a link planted there places what it leads to as
+ * that place, not as the spill (step 4).
  *
  * A path the host finds but cannot name (`UnresolvableAliasError`: macOS's `/.vol/<dev>/<ino>`
  * reaches any file by inode) cannot be compared with anything, so it is placed `protected`: blocked
@@ -31,7 +33,7 @@ export interface PathVerdict {
 export interface PathScope {
   readonly roots: readonly AbsolutePath[] // 工作区根，选定时已解析；对话形态传 []
   readonly profileDir: AbsolutePath // 启动时解析一次
-  readonly ownSpillDir: AbsolutePath // <profileDir>/tool-output/<sessionId>，同样解析
+  readonly ownSpillDir: AbsolutePath // 解析过的 profileDir 下的 tool-output/<sessionId>，本身不解析
   readonly protectedFiles: readonly AbsolutePath[] // 保护名单里的 shell 配置文件，desktop 给出，启动时解析
 }
 

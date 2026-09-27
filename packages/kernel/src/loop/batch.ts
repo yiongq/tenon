@@ -15,7 +15,8 @@
  *
  *   1. find it in the frozen table — a name it does not hold is `tool-unavailable`;
  *   2. validate its arguments — `invalid-input`, or `tool-unavailable` for a schema that cannot be
- *      used — with no decision and no dispatch;
+ *      used — with no decision and no dispatch, the closure with the validator's message passing the
+ *      spill check;
  *   3. find its executor — none in this build is `tool-unavailable`, its definition still sent;
  *   4. decide: every layer's state computed here, the inspectors run first (a stop while they run
  *      writes no decision), then `decide()`;
@@ -68,7 +69,7 @@ import type { ToolExecution, ToolExecutor } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
-import type { ArgumentValidator } from '../tools/validate.js'
+import type { ArgumentValidator, ValidationVerdict } from '../tools/validate.js'
 import type { CommandRun, CommandShell } from '../tools/builtin/bash.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
@@ -192,7 +193,6 @@ export type BatchResult =
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
-  const { writer } = ctx
   const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
   let denials = ctx.denials
   const group = await runGroup(ctx, judge)
@@ -220,18 +220,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       const invalid = verdict !== null && !verdict.ok ? verdict : null
       try {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-        await close(
-          ctx,
-          call,
-          notRunFacts({
-            tape: ctx.tape,
-            now: ctx.now,
-            call: ref,
-            source: invalid?.source ?? 'tool-unavailable',
-            ...(invalid === null ? {} : { detail: invalid.reason }),
-            writer,
-          }),
-        )
+        await close(ctx, call, await unrunnableFacts(ctx, ref, invalid))
       } catch (error) {
         if (!(error instanceof RunWriteRefusedError)) throw error
         // A stop reached this closure's write first: the call was never dispatched, so it and the
@@ -452,6 +441,51 @@ async function runGroup(ctx: BatchContext, judge: JudgeContext): Promise<GroupEn
 /** A rejection seen where the promise is awaited, not here. */
 function noRejection(): void {}
 
+/**
+ * The closure of a call that cannot run (steps 1–3): not-run, blocked, with no decision. The reason,
+ * when there is one, is its second text block — for `invalid-input` the validator's message, which
+ * echoes the schema (a connector's enum of thousands) and has no bound — so it passes the one spill
+ * check as any other result does (§大响应落盘「判断点只有一个」).
+ */
+async function unrunnableFacts(
+  ctx: BatchContext,
+  ref: CallRef,
+  invalid: Extract<ValidationVerdict, { ok: false }> | null,
+): Promise<NewEntry[]> {
+  const source = invalid?.source ?? 'tool-unavailable'
+  const checked = await spillChecked({
+    fs: ctx.host.fs,
+    profileDir: ctx.host.identity.profileDir as AbsolutePath,
+    sessionId: ctx.sessionId,
+    call: ref,
+    result: {
+      content: closureContent({
+        source,
+        state: 'not-run',
+        ...(invalid === null ? {} : { detail: invalid.reason }),
+      }),
+      isError: true,
+      kernelAuthored: true,
+    },
+    log: ctx.log,
+  })
+  return resultFacts({
+    tape: ctx.tape,
+    now: ctx.now,
+    call: ref,
+    content: checked.content,
+    isError: checked.isError,
+    kernelAuthored: checked.kernelAuthored,
+    ...(checked.spill === undefined ? {} : { spill: checked.spill }),
+    effect: 'blocked',
+    state: 'not-run',
+    source,
+    // No decision fact: unknown (§载荷 ToolOutcomePayload.reversibility).
+    reversibility: 'unknown',
+    writer: ctx.writer,
+  })
+}
+
 function refOf(ctx: Pick<BatchContext, 'runId' | 'requestSeq'>, call: CompleteCall): CallRef {
   return {
     runId: ctx.runId,
@@ -507,7 +541,8 @@ async function execute(
  * with whatever it had produced as the second block (§点停止时各状态怎么收); a Bash timeout stays
  * `timed-out`, a stop after its kill began included. A call that ended normally before its closure is
  * recorded as it ended. The write wait begins listening for the stop the moment this is called.
- * Every executed call's result passes the spill check before it is built (§大响应落盘; the batch's
+ * Every executed call's result passes the spill check before it is built (§大响应落盘; so does the
+ * closure of a call whose arguments failed, which carries the validator's message — the batch's
  * other closures are the kernel's fixed notes, which never reach the threshold): a group member
  * spills as it ends, and its result is still written in call order.
  */
@@ -989,8 +1024,12 @@ export async function callFactsOf(
 
 /**
  * Where file paths are judged from: the workspace roots (real already: resolved when they were
- * chosen), the profile, this session's spill, the protected files — all resolved. The chat profile
- * has no workspace, so its roots are empty.
+ * chosen), the profile, the protected files — all resolved — and this session's spill, which is not:
+ * it is `tool-output/<sessionId>` under the resolved profile, as written. A link planted at
+ * `tool-output` or at `<sessionId>` leads elsewhere, and what is read through it is placed as that
+ * place — the profile, a protected file, outside — never as the spill's free read (§「在不在工作区里」
+ * 第 4 步; §大响应落盘「谁能读」: the one narrow way in). The chat profile has no workspace, so its
+ * roots are empty.
  */
 export async function pathScopeOf(
   ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles'>,
@@ -998,7 +1037,7 @@ export async function pathScopeOf(
 ): Promise<PathScope> {
   const fs = ctx.host.fs
   const profileDir = (await resolvePath(fs, ctx.host.identity.profileDir as AbsolutePath)).path
-  const ownSpillDir = (await resolvePath(fs, toolOutputDirFor(profileDir, ctx.sessionId))).path
+  const ownSpillDir = toolOutputDirFor(profileDir, ctx.sessionId)
   const protectedFiles = await Promise.all(
     ctx.protectedFiles.map(async (file) => (await resolvePath(fs, file)).path),
   )

@@ -57,9 +57,15 @@ export function spillFileName(call: CallRef): string {
  * bytes written, taken here, outside the append transaction. The full text and the path stay out of
  * every other payload: `spill.file` is the bare file name.
  *
- * A failed write — the folder, the file, a text too long to encode — makes the result is_error with
- * `MODEL_NOTES.spillFailed`: the preview, and no path, as no file holds the rest. The error goes to
- * the log only, since its message may name the path.
+ * A spill file is written once, under a name no earlier write used, so an entry already under that
+ * name is refused, not written through: a link planted at the next name, which `writeFile` would
+ * follow onto the file it names, or a dangling one (its `realpath` throws), which would create the
+ * file it points to — the same re-check as Write's (§「在不在工作区里」第 5 步). A check and the write
+ * after it still race, as there (第 6 步).
+ *
+ * A failed write — the folder, the file, a name already taken, a text too long to encode — makes the
+ * result is_error with `MODEL_NOTES.spillFailed`: the preview, and no path, as no file holds the rest.
+ * The error goes to the log only, since its message may name the path.
  */
 export async function spillChecked(q: {
   readonly fs: HostFs
@@ -81,6 +87,7 @@ export async function spillChecked(q: {
   try {
     bytes = new TextEncoder().encode(texts.join('\n'))
     await q.fs.mkdirp(dir)
+    if ((await q.fs.realpath(path)) !== null) throw new Error(`${path} is already there`)
     await q.fs.writeFile(path, bytes)
   } catch (error) {
     q.log(

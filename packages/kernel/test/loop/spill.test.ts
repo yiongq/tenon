@@ -2,8 +2,8 @@
  * Large results written to disk (spec 02 §大响应落盘, §本地持久化布局：只加一行; plan step 24: 旧 57,
  * 旧 188, 02 不变量 34). Real Runs on the memory host: the one check before `tool/result` is written,
  * whatever the tool and whether it failed — the real Grep, a connector's failure, a WebFetch stand-in,
- * the real Bash on a fake child — then what the model is sent afterwards, and the chat profile's Read
- * of the file.
+ * the real Bash on a fake child, a call whose arguments failed validation — then what the model is
+ * sent afterwards, and the chat profile's Read of the file.
  *
  * WebFetch has no executor until plan step 27, and the test registry's fake one only echoes its
  * input, which the Tape already holds in `tool/call`. So a connector tool, `web__fetch`, stands in:
@@ -28,6 +28,7 @@ import type {
   TapeEntry,
   TapeStore,
   ToolResultPayload,
+  ToolSpec,
   Usage,
 } from '../../src/index.js'
 import {
@@ -38,6 +39,7 @@ import {
 } from '../../src/loop/spill.js'
 import { STOP_EXIT_CONFIRM_MS, STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
+import { createArgumentValidator } from '../../src/tools/validate.js'
 import {
   createCounterIds,
   createScriptedProvider,
@@ -83,6 +85,27 @@ const USAGE: Usage = {
 
 const IMAGE = { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' } as const
 const IMAGE_BLOCK = { type: 'image', mediaType: 'image/png', data: 'iVBORw0KGgo=' } as const
+const IMAGE2 = { type: 'image', data: 'iVBORw0KGgoAAAANSUhEUg==', mimeType: 'image/png' } as const
+const IMAGE2_BLOCK = {
+  type: 'image',
+  mediaType: 'image/png',
+  data: 'iVBORw0KGgoAAAANSUhEUg==',
+} as const
+
+/**
+ * `tz__at`'s schema: a zone out of 2,000, the way a connector lists every timezone or repository. A
+ * zone not in it fails validation with a message that echoes the whole list.
+ */
+const ZONE_SCHEMA = {
+  type: 'object',
+  properties: {
+    zone: {
+      type: 'string',
+      enum: Array.from({ length: 2000 }, (_, i) => `Region/Some_City_Name_${String(i)}`),
+    },
+  },
+  required: ['zone'],
+}
 
 /**
  * A text of `chars` characters in lines, with `mark` at its very end — past any preview. Each line
@@ -101,9 +124,14 @@ interface Returned {
 }
 
 /** A connector with one tool, answering each call with the next of `queue`. */
-function connector(serverId: string, tool: string, queue: Returned[]): McpToolSource {
+function connector(
+  serverId: string,
+  tool: string,
+  queue: Returned[],
+  inputSchema: Record<string, unknown> = { type: 'object' },
+): McpToolSource {
   const connection = {
-    listTools: () => Promise.resolve([{ name: tool, inputSchema: { type: 'object' } }]),
+    listTools: () => Promise.resolve([{ name: tool, inputSchema }]),
     callTool: () => {
       const next = queue.shift()
       if (next === undefined) throw new Error(`${serverId}__${tool}: nothing queued`)
@@ -226,7 +254,11 @@ async function harness(
     connector: {
       provider,
       model: MODEL,
-      mcpSources: [connector('fx', 'emit', emits), connector('web', 'fetch', pages)],
+      mcpSources: [
+        connector('fx', 'emit', emits),
+        connector('web', 'fetch', pages),
+        connector('tz', 'at', [], ZONE_SCHEMA),
+      ],
     },
   })
   const logs: string[] = []
@@ -444,17 +476,19 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
     expect(await lastOutcome(h)).toMatchObject({ state: 'completed', source: null })
   })
 
-  it('spills a fetched page: its two texts joined by \\n, the image after the note and not counted', async () => {
+  it('spills a fetched page: its two texts joined by \\n, the images after the note in order and not counted', async () => {
     const h = await harness()
     const head = longText(20_000, 'HEAD-END')
     const tail = longText(15_000, 'PAGE-END')
-    h.pages.push({ content: [{ type: 'text', text: head }, IMAGE, { type: 'text', text: tail }] })
+    h.pages.push({
+      content: [{ type: 'text', text: head }, IMAGE, { type: 'text', text: tail }, IMAGE2],
+    })
     await runOnce(h, 'fetch', ['web__fetch', { url: 'https://a.example.com/page' }])
     const result = await expectSpilled(h, {
       full: `${head}\n${tail}`,
       mark: 'PAGE-END',
       isError: false,
-      images: [IMAGE_BLOCK],
+      images: [IMAGE_BLOCK, IMAGE2_BLOCK],
     })
     // The preview is the head's alone: the image between the two texts is not part of the text.
     expect(result.content[0]).toMatchObject({ text: expect.stringMatching(/\n\nx{58}中\n/) })
@@ -524,6 +558,34 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
     })
   })
 
+  it('spills the closure of a call whose arguments failed, when the validator’s message is past it', async () => {
+    const h = await harness()
+    const input = { zone: 'Mars/Base' }
+    const spec: ToolSpec = { name: 'tz__at', description: '', inputSchema: ZONE_SCHEMA }
+    const verdict = createArgumentValidator().check(
+      { source: 'mcp', originalName: 'at', spec },
+      input,
+    )
+    if (verdict.ok) throw new Error('the zone was valid')
+    await runOnce(h, 'what time is it there?', ['tz__at', input])
+    // The closure's note, then the validator's message, which lists every zone: one text, spilled.
+    const full = `${MODEL_NOTES.closure['invalid-input']?.['not-run'] ?? ''}\n${verdict.reason}`
+    expect(full.length).toBeGreaterThan(SPILL_THRESHOLD_CHARS)
+    // The list as the message joins it: the schema on the Tape holds each zone, never this.
+    const mark = '_1998","Region/Some_City_Name_1999"'
+    expect(full.indexOf(mark)).toBeGreaterThan(SPILL_PREVIEW_CHARS)
+    await expectSpilled(h, { full, mark, isError: true })
+    // Never judged, never run.
+    expect(await lastOutcome(h)).toMatchObject({
+      state: 'not-run',
+      source: 'invalid-input',
+      effect: 'blocked',
+    })
+    expect((await entries(h)).filter((entry) => entry.name === 'tool/permission_decided')).toEqual(
+      [],
+    )
+  })
+
   it('counts text only: an image, however large, never makes a result spill, and the limit is exclusive', async () => {
     const h = await harness()
     const big = { ...IMAGE, data: 'A'.repeat(4 * SPILL_THRESHOLD_CHARS) }
@@ -546,7 +608,7 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
   it('turns a result whose file cannot be written into is_error, with the preview and no path', async () => {
     const h = await harness({ refuseSpills: true })
     const full = longText(40_000, 'LOST-END')
-    h.pages.push({ content: [{ type: 'text', text: full }, IMAGE] })
+    h.pages.push({ content: [{ type: 'text', text: full }, IMAGE, IMAGE2] })
     await runOnce(h, 'fetch', ['web__fetch', { url: 'https://a.example.com/huge' }])
     const result = await lastResult(h)
     expect(result.spill).toBeUndefined()
@@ -558,6 +620,7 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
         text: fill(MODEL_NOTES.spillFailed, { preview: full.slice(0, SPILL_PREVIEW_CHARS) }),
       },
       IMAGE_BLOCK,
+      IMAGE2_BLOCK,
     ])
     // The call itself ran: its outcome is a normal one.
     expect(await lastOutcome(h)).toMatchObject({ state: 'completed', source: null })
@@ -570,6 +633,55 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
     expect(h.logs.filter((line) => line.includes('could not be saved'))).toHaveLength(1)
     expect(h.logs.join('\n')).toContain('ENOSPC')
   })
+})
+
+describe('a name already taken (§大响应落盘「写入」)', () => {
+  // The name is the call's identity, and the runId is in every note of the Run: an approved command
+  // could plant a link at the next one. A spill file is written once, so nothing there is written
+  // through — a link to a file would be overwritten, a dangling one would create what it names.
+  const TARGET = '/home/u/.zshrc'
+  it.each([
+    ['a link to a shell file', 'export PATH=/usr/bin\n'],
+    ['a dangling link', undefined],
+  ])(
+    'turns the result is_error when %s waits at the next name, and leaves the target as it was',
+    async (_what, before) => {
+      const h = await harness({
+        // The first spill's result on its way to the Tape: the link goes in at the next request's name.
+        beforeAppend: (batch, memory) => {
+          for (const entry of batch.entries) {
+            const spill = entry.name === 'tool/result' ? entry.payload['spill'] : undefined
+            if (spill === undefined) continue
+            const next = (spill as { file: string }).file.replace(/-1-0\.txt$/, '-2-0.txt')
+            memory.symlink(absolutePath(`${DIR}/${next}`), TARGET)
+          }
+        },
+      })
+      await h.memory.fs.mkdirp(absolutePath('/home/u'))
+      if (before !== undefined) await h.memory.fs.writeFile(absolutePath(TARGET), before)
+      const full = longText(40_000, 'SECOND-END')
+      h.emits.push(
+        { content: [{ type: 'text', text: longText(31_000, 'FIRST-END') }] },
+        { content: [{ type: 'text', text: full }] },
+      )
+      h.provider.script(reply(['fx__emit', {}]))
+      await runOnce(h, 'emit twice', ['fx__emit', {}])
+      const [first, second] = await results(h)
+      expect(first?.spill?.file).toMatch(/-1-0\.txt$/)
+      expect(second).toMatchObject({ isError: true, kernelAuthored: false })
+      expect(second?.spill).toBeUndefined()
+      expect(second?.content).toEqual([
+        {
+          type: 'text',
+          text: fill(MODEL_NOTES.spillFailed, { preview: full.slice(0, SPILL_PREVIEW_CHARS) }),
+        },
+      ])
+      expect(await lastOutcome(h)).toMatchObject({ state: 'completed', source: null })
+      const target = h.memory.files.get(TARGET)
+      expect(target === undefined ? undefined : new TextDecoder().decode(target)).toBe(before)
+      expect(h.logs.filter((line) => line.includes('could not be saved'))).toHaveLength(1)
+    },
+  )
 })
 
 describe('the preview', () => {

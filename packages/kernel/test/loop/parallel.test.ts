@@ -7,7 +7,8 @@
  * `rec.holding`, to wait until the case releases it — so a case decides which call ends first. Read,
  * Glob, Grep and Write are the real executors; WebSearch, WebFetch and Bash are the test registry's
  * fakes (WebSearch and WebFetch have no executor yet); `fs__look` is a connector tool the user always
- * allows.
+ * allows. The host's clock tells `hook.onNow` of each reading, so a case can land a stop at the moment
+ * the kernel stamps a fact.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
@@ -93,10 +94,14 @@ vi.mock('../../src/tools/executor.js', async (importOriginal) => {
   }
 })
 
+/** Called on every reading of the host clock, before it answers. */
+const hook: { onNow?: () => void } = {}
+
 beforeEach(() => {
   rec.holding = false
   rec.tick = 0
   rec.executions.length = 0
+  delete hook.onNow
 })
 
 // ----- the harness -------------------------------------------------------------------------------
@@ -178,9 +183,16 @@ async function harness(
     connector: { provider, model: MODEL, search: SEARCH, mcpSources: [lookSource([])] },
   })
   const logs: string[] = []
+  const clock = {
+    now: () => {
+      hook.onNow?.()
+      return memory.clock.now()
+    },
+    setTimeout: (fn: () => void, ms: number) => memory.clock.setTimeout(fn, ms),
+  }
   const service = createTestSessionService(
     {
-      host: memory,
+      host: { ...memory, clock },
       tape: store,
       ids: createCounterIds(),
       inspectors: [...inspectors],
@@ -541,6 +553,37 @@ describe('only the leading Read / Glob / Grep group overlaps (invariant 13; 旧 
     expect(overlapping()).toEqual([])
   })
 
+  it('forms no group from the rest of a resumed batch whose answered call is judged again and denied', async () => {
+    // Tightened while the card waits: the answer's re-judgement denies c (§等待模型), and the Run
+    // that resumes starts at a — past the cut, with no approved call, so still one at a time (F6).
+    const tightened = { on: false }
+    const tightening: InspectorRegistration = {
+      id: 'tightening',
+      kind: 'local-rule',
+      ceiling: 'deny',
+      beforeCall: (input) =>
+        Promise.resolve(
+          tightened.on && input.call.tool.originalName === 'Write'
+            ? { kind: 'deny', category: 'exfiltration', findings: [{ code: 'tightened' }] }
+            : { kind: 'none' },
+        ),
+    }
+    const h = await harness('cowork', [tightening])
+    const runId = await send(h, [WRITE_C, READ_A, READ_B])
+    expect((await ended(h, runId)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    tightened.on = true
+    rec.holding = true
+    await answer(h, 'allow')
+    expect((await drive(h)).reason).toEqual({ code: 'completed' })
+    expect(await outcomes(h)).toEqual([
+      '0 not-run inspector blocked',
+      '1 completed  read',
+      '2 completed  read',
+    ])
+    expect(rec.executions.map(({ label }) => label)).toEqual([`Read ${A}`, `Read ${B}`])
+    expect(overlapping()).toEqual([])
+  })
+
   it('dispatches consecutive Reads one at a time in the chat profile', async () => {
     const h = await harness('chat')
     rec.holding = true
@@ -614,6 +657,35 @@ describe('judging the members (§一批工具怎么执行 第 2 步, §挂点与
     expect(overlapping()).toEqual([[`Read ${A}`, `Read ${B}`]])
   })
 
+  it('never judges or dispatches a leading Read whose arguments are invalid: it closes invalid-input', async () => {
+    const h = await harness()
+    const runId = await send(h, [['Read', { file_path: A, offset: 'x' }], READ_B])
+    expect((await drive(h, runId)).reason).toEqual({ code: 'completed' })
+    expect(await ordinalsOf(h, 'tool/permission_decided')).toEqual([1])
+    expect(await ordinalsOf(h, 'execution/dispatch_committed')).toEqual([1])
+    expect(await outcomes(h)).toEqual(['0 not-run invalid-input blocked', '1 completed  read'])
+    expect(rec.executions.map(({ label }) => label)).toEqual([`Read ${B}`])
+  })
+
+  it('clears the machine-denial count with an allowed member, as a serial allow does (不变量 14)', async () => {
+    // Two protected denials, then a reply whose leading Read is allowed before a third: not three in
+    // a row, so the Run goes on (§上限、守卫与用量「中间有一次放行或问人就清零」).
+    const h = await harness()
+    const blocked: Call = ['Read', { file_path: `${PROFILE}/sessions.db` }]
+    h.provider.script(callsOf([blocked, blocked]))
+    h.provider.script(callsOf([READ_A, blocked]))
+    h.provider.script(done())
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await drive(h, sent.runId)).reason).toEqual({ code: 'completed' })
+    expect(await outcomes(h)).toEqual([
+      '0 not-run protected blocked',
+      '1 not-run protected blocked',
+      '0 completed  read',
+      '1 not-run protected blocked',
+    ])
+  })
+
   it('a stop while a later member is judged: the ones dispatched close first, the rest not-run with no decision', async () => {
     const seen: Array<[string, boolean]> = []
     const watch = watcher(seen, `Read ${B}`)
@@ -638,6 +710,44 @@ describe('judging the members (§一批工具怎么执行 第 2 步, §挂点与
 })
 
 // ----- a stop while the group runs ----------------------------------------------------------------
+
+describe('a stop that reaches a member’s decision and dispatch write first (§点停止时各状态怎么收)', () => {
+  it('writes neither, dispatches no more, and still closes the member already dispatched', async () => {
+    // Armed once b's inspectors answered; the kernel's next clock reading stamps b's decision, and
+    // the stop lands then — before that write's turn, which the mailbox then refuses.
+    const armed = { on: false, fired: false }
+    const arming: InspectorRegistration = {
+      id: 'arming',
+      kind: 'local-rule',
+      ceiling: 'ask',
+      beforeCall: (input) => {
+        if (rec.label(input.call.tool.originalName, input.call.args) === `Read ${B}`)
+          armed.on = true
+        return Promise.resolve({ kind: 'none' })
+      },
+    }
+    const h = await harness('cowork', [arming])
+    hook.onNow = () => {
+      if (!armed.on || armed.fired) return
+      armed.fired = true
+      void h.service.stop({ rootSessionId: SESSION })
+    }
+    rec.holding = true
+    const runId = await send(h, [READ_A, READ_B, READ_D])
+    await until(() => armed.fired, 'the stop landed')
+    await quiet()
+    release(`Read ${A}`)
+    expect((await ended(h, runId)).reason).toEqual({ code: 'user-stopped' })
+    expect(await ordinalsOf(h, 'tool/permission_decided')).toEqual([0])
+    expect(await ordinalsOf(h, 'execution/dispatch_committed')).toEqual([0])
+    expect(await outcomes(h)).toEqual([
+      '0 aborted stopped read',
+      '1 not-run stopped blocked',
+      '2 not-run stopped blocked',
+    ])
+    expect(rec.executions.map(({ label }) => label)).toEqual([`Read ${A}`])
+  })
+})
 
 describe('a stop while the parallel group runs (§点停止时各状态怎么收)', () => {
   for (const cause of ['user-stop', 'quit'] as const) {
