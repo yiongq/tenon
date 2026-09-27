@@ -8,8 +8,16 @@ import type { HostAdapter, McpConnection, McpToolSource, TapeStore } from '../..
 /** The connector tool the loop tests call: `look` on server `fs`, under its provider name. */
 export const LOOK = 'fs__look'
 
-/** A host whose timers fire at once, each delay recorded: a backoff is asserted, not waited for. */
-export function instantHost(delays: number[] = []): HostAdapter {
+/**
+ * A host whose timers fire at once, each delay recorded: a backoff is asserted, not waited for. A
+ * timer fires on the next microtask, so it beats an inspector's answer: every fake inspector would
+ * time out. With `answersFirst`, it fires on the next macrotask instead — once everything already
+ * settled has run — so a fake answers as scripted and only one that never answers times out.
+ */
+export function instantHost(
+  delays: number[] = [],
+  o: { readonly answersFirst?: boolean } = {},
+): HostAdapter {
   const host = createMemoryHost()
   let clock = 1_000
   return {
@@ -19,9 +27,11 @@ export function instantHost(delays: number[] = []): HostAdapter {
       setTimeout: (fn, ms): (() => void) => {
         delays.push(ms)
         let live = true
-        void Promise.resolve().then(() => {
+        const fire = (): void => {
           if (live) fn()
-        })
+        }
+        if (o.answersFirst === true) setTimeout(fire, 0)
+        else void Promise.resolve().then(fire)
         return () => {
           live = false
         }

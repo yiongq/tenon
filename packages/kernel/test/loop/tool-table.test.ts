@@ -1,11 +1,11 @@
 /**
  * The tool table in the loop (spec 02 §工具目录与冻结, §组装清单与内容寄存; plan step 10, 旧 139, 旧 35,
- * 旧 148, 旧 149 first half, 旧 150, 旧 151 first half, 旧 145 second half, 02 不变量 6).
+ * 旧 148, 旧 149, 旧 150, 旧 151, 旧 145, 02 不变量 6; step 12's 旧 124 for a tool disabled after
+ * the freeze or excluded at it).
  *
- * The product offers no builtin tool yet (each joins with its executor), so every case runs through
- * `createTestSessionService`'s test tool registry. What a CALL to a blocked, unknown or unimplemented
- * tool writes needs the per-round loop and the closures (plan steps 13 and 14); the cases here are
- * about which definitions each request carries and which facts record it.
+ * Most builtin tools reach the kernel through `createTestSessionService`'s test tool registry. The
+ * cases are about which definitions each request carries and which facts record it — and what a call
+ * to a tool blocked after the freeze, excluded at it or left without an implementation writes.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -27,6 +27,8 @@ import type {
   SessionService,
   TapeEntry,
   TapeStore,
+  PermissionDecidedPayload,
+  StreamEvent,
   ToolTablePayload,
   ToolsWithheldPayload,
   Usage,
@@ -39,8 +41,15 @@ import {
   createTestSessionService,
   fakeNetwork,
   scriptedTurn,
+  stopEvent,
 } from '../../src/testing/index.js'
-import type { ScriptedProvider, TestLoopPorts, TestServiceExtras } from '../../src/testing/index.js'
+import type {
+  ScriptedProvider,
+  TestLoopPorts,
+  TestServiceExtras,
+  TestToolRegistry,
+} from '../../src/testing/index.js'
+import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { readViewState } from '../../src/loop/run.js'
 import { rebuildToolTable } from '../../src/tools/table.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
@@ -94,9 +103,17 @@ interface Harness {
   readonly b: ScriptedProvider
 }
 
-function harness(extras: Omit<TestServiceExtras, 'tools'> = {}): Harness {
+function harness(
+  extras: Omit<TestServiceExtras, 'tools'> = {},
+  o: {
+    /** A restart: the same store under a new service, its ids past the first one's. */
+    readonly store?: TapeStore
+    readonly idsFrom?: number
+    readonly tools?: TestToolRegistry
+  } = {},
+): Harness {
   const host = createMemoryHost()
-  const store = createMemoryTapeStore({ identity: IDENTITY })
+  const store = o.store ?? createMemoryTapeStore({ identity: IDENTITY })
   const a = createScriptedProvider({ models: [MODEL_A, MODEL_A_TEXT] })
   const b = createScriptedProvider({ id: 'zhipu', models: [MODEL_B] })
   const loop = createTestLoopPorts({ connector: { provider: a, model: MODEL_A } })
@@ -104,12 +121,12 @@ function harness(extras: Omit<TestServiceExtras, 'tools'> = {}): Harness {
     {
       host,
       tape: store,
-      ids: createCounterIds(),
+      ids: createCounterIds({ start: o.idsFrom ?? 1 }),
       inspectors: [],
       connector: loop.connector,
       protectedFiles: [],
     },
-    { ...extras, tools: {} },
+    { ...extras, tools: o.tools ?? {} },
   )
   service.bindLoop(loop)
   return { host, store, service, loop, a, b }
@@ -121,6 +138,8 @@ interface SendWith {
   readonly search?: SearchBackend | null
   readonly mcpSources?: readonly McpToolSource[]
   readonly toolsWithheld?: 'provider-text-only' | null
+  /** The scripted provider's replies for this Run, in place of one plain answer. */
+  readonly turns?: readonly StreamEvent[][]
 }
 
 /** Distinct texts, so no message reads as a resend of the one before (01's retry rule). */
@@ -130,7 +149,8 @@ let messages = 0
 async function send(h: Harness, over: SendWith = {}, sessionId = SESSION): Promise<string> {
   const provider = over.provider ?? h.a
   if ('script' in provider) {
-    ;(provider as ScriptedProvider).script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
+    for (const turn of over.turns ?? [scriptedTurn({ deltas: ['ok'], usage: USAGE })])
+      (provider as ScriptedProvider).script(turn)
   }
   h.loop.connector.use({
     provider,
@@ -164,10 +184,49 @@ function toolNames(provider: ScriptedProvider, index = -1): string[] | undefined
   return body.tools?.map((definition) => definition.name)
 }
 
-/** A connection that lists these tools, in this order. */
-function source(serverId: string, tools: readonly Record<string, unknown>[]): McpToolSource {
-  const connection = { listTools: () => Promise.resolve(tools) } as unknown as McpConnection
+/** A connection that lists these tools, in this order, and records each call it runs. */
+function source(
+  serverId: string,
+  tools: readonly Record<string, unknown>[],
+  called: string[] = [],
+): McpToolSource {
+  const connection = {
+    listTools: () => Promise.resolve(tools),
+    callTool: (name: string) => {
+      called.push(name)
+      return Promise.resolve({ content: [{ type: 'text', text: `ran ${name}` }], isError: false })
+    },
+  } as unknown as McpConnection
   return { serverId, connection }
+}
+
+let calls = 0
+
+/** A reply that calls one tool, then waits for its result. */
+function callReply(name: string, input: Record<string, unknown> = {}): StreamEvent[] {
+  calls += 1
+  const id = `toolu_${String(calls)}`
+  return [
+    { type: 'tool-call-start', index: 1, id, name },
+    { type: 'tool-call-end', index: 1, id, name, input },
+    { type: 'usage', usage: USAGE },
+    stopEvent('tool-use', 'tool_use'),
+  ]
+}
+
+const answered = (): StreamEvent[] => scriptedTurn({ deltas: ['done'], usage: USAGE })
+
+/** A closed call's facts, read off the Tape: the result, the outcome and the decision, if any. */
+function closure(all: readonly TapeEntry[], at = -1) {
+  const result = named(all, 'tool/result').at(at)?.payload
+  const outcome = named(all, 'execution/tool_outcome').at(at)?.payload
+  return { result, outcome }
+}
+
+function decisionsOf(all: readonly TapeEntry[]): PermissionDecidedPayload[] {
+  return named(all, 'tool/permission_decided').map(
+    (entry) => entry.payload as unknown as PermissionDecidedPayload,
+  )
 }
 
 function tool(name: string, meta?: Record<string, unknown>): Record<string, unknown> {
@@ -354,7 +413,92 @@ describe('the table freezes per session × provider (E2)', () => {
     expect(named(await entries(h.store), 'view/tool_table')).toHaveLength(1)
   })
 
-  it('keeps requiresUserInteraction as frozen when the server later says otherwise (旧 145)', async () => {
+  it('blocks a call to a tool the user disabled after the freeze: user-disabled, the table unchanged (旧 149, 旧 124)', async () => {
+    let off = false
+    const h = harness({
+      userSetting: (key) => (off && key.toolName === 'beta' ? { connectorOff: true } : null),
+    })
+    const called: string[] = []
+    const sources = [source('fix', [tool('beta')], called)]
+    await send(h, { mcpSources: sources })
+    off = true
+    await send(h, { mcpSources: sources, turns: [callReply('fix__beta'), answered()] })
+    expect(called).toEqual([])
+    const all = await entries(h.store)
+    const { result, outcome } = closure(all)
+    expect(result).toMatchObject({
+      isError: true,
+      kernelAuthored: true,
+      content: [{ type: 'text', text: MODEL_NOTES.closure['user-disabled']['not-run'] }],
+    })
+    expect(outcome).toMatchObject({
+      effect: 'blocked',
+      state: 'not-run',
+      source: 'user-disabled',
+      facts: { toolName: 'beta' },
+    })
+    const [decided] = decisionsOf(all)
+    expect([decided?.record.verdict, decided?.record.decidedBy]).toEqual(['deny', 'user-disabled'])
+    expect(decided?.block).toEqual({ reason: 'user-disabled', facts: { toolName: 'beta' } })
+    expect(named(all, 'execution/dispatch_committed')).toEqual([])
+    // The receipt goes out, and the definitions stay what froze: one table, the same bytes.
+    const receipts = h.loop.recorded.filter((event) => event.type === 'tool-outcome')
+    expect(receipts.map((event) => event.outcome.source)).toEqual(['user-disabled'])
+    expect(named(all, 'view/tool_table')).toHaveLength(1)
+    const tools = h.a.requests.map((request) =>
+      JSON.stringify((request.body as { tools?: unknown }).tools),
+    )
+    expect(new Set(tools).size).toBe(1)
+    expect(toolNames(h.a)).toContain('fix__beta')
+  })
+
+  it('blocks it as policy when the policy denies it after the freeze (旧 149, 旧 124)', async () => {
+    const h = harness()
+    const called: string[] = []
+    const sources = [source('fix', [tool('beta')], called)]
+    await send(h, { mcpSources: sources })
+    h.host.setPolicy({
+      status: 'current',
+      version: 'p2',
+      snapshot: {
+        tools: [{ policyId: 'deny-beta', serverId: 'fix', effect: 'deny', toolName: 'beta' }],
+      },
+    })
+    await send(h, { mcpSources: sources, turns: [callReply('fix__beta'), answered()] })
+    expect(called).toEqual([])
+    const all = await entries(h.store)
+    expect(closure(all).outcome).toMatchObject({ state: 'not-run', source: 'policy' })
+    const [decided] = decisionsOf(all)
+    expect([decided?.record.decidedBy, decided?.policyVersion]).toEqual(['tenant-policy', 'p2'])
+    expect(named(all, 'view/tool_table')).toHaveLength(1)
+  })
+
+  it('keeps a tool excluded at the opening out of this session when re-enabled, with no decision for a call (旧 149, 旧 124)', async () => {
+    let never = true
+    const h = harness({
+      userSetting: (key) => (never && key.toolName === 'beta' ? { userSetting: 'never' } : null),
+    })
+    const called: string[] = []
+    const sources = [source('fix', [tool('beta')], called)]
+    await send(h, { mcpSources: sources })
+    expect(toolNames(h.a)).not.toContain('fix__beta')
+    never = false
+    // The model calls it anyway: it is not in the frozen table, so it is unavailable, not judged.
+    await send(h, { mcpSources: sources, turns: [callReply('fix__beta'), answered()] })
+    expect(toolNames(h.a)).not.toContain('fix__beta')
+    let all = await entries(h.store)
+    expect(closure(all).outcome).toMatchObject({ state: 'not-run', source: 'tool-unavailable' })
+    expect(decisionsOf(all)).toEqual([])
+    expect(called).toEqual([])
+    // A new session opens its own table, and there it is.
+    const other = '0b8f2a1c-3d4e-4f50-8a61-7b2c3d4e5f61'
+    await send(h, { mcpSources: sources }, other)
+    expect(toolNames(h.a)).toContain('fix__beta')
+    all = await entries(h.store)
+    expect(named(all, 'view/tool_table')).toHaveLength(1)
+  })
+
+  it('keeps requiresUserInteraction as frozen when the server later says otherwise, and asks on it (旧 145)', async () => {
     const h = harness()
     await send(h, {
       mcpSources: [source('fix', [tool('ask', { 'anthropic/requiresUserInteraction': true })])],
@@ -365,6 +509,64 @@ describe('the table freezes per session × provider (E2)', () => {
     expect(tables).toHaveLength(1)
     const frozen = tables[0]?.payload as unknown as ToolTablePayload
     expect(frozen.tools.find((t) => t.originalName === 'ask')?.requiresUserInteraction).toBe(true)
+
+    // Restarted on the same Tape, the server now saying false and the user always allowing the tool:
+    // the call still asks, as interaction-required, once (§工具来源、命名与权限键「改不了已冻结的标记」).
+    const restarted = harness(
+      { userSetting: () => ({ userSetting: 'always-allow' }) },
+      { store: h.store, idsFrom: 100 },
+    )
+    const called: string[] = []
+    await send(restarted, {
+      mcpSources: [source('fix', [tool('ask')], called)],
+      turns: [callReply('fix__ask')],
+    })
+    const pending = await restarted.service.currentPending({ sessionId: SESSION })
+    expect(pending?.card.reason).toBe('interaction-required')
+    expect(pending?.allowScope).toBe('once')
+    const decided = decisionsOf(await entries(h.store)).at(-1)
+    expect([decided?.record.verdict, decided?.record.decidedBy]).toEqual([
+      'ask',
+      'connector-confirm',
+    ])
+    expect(called).toEqual([])
+  })
+
+  it('closes a call to a frozen tool with no implementation as unavailable, uncounted, its definition kept (旧 151)', async () => {
+    const h = harness()
+    await send(h)
+    expect(toolNames(h.a)).toContain('WebFetch')
+    const frozen = named(await entries(h.store), 'provider/attempt_completed')[0]?.payload[
+      'toolDefinitionsHash'
+    ]
+    // Restarted on a build without WebFetch's executor: three calls in a row, then an answer.
+    const restarted = harness({}, { store: h.store, idsFrom: 100, tools: { WebFetch: null } })
+    const fetch = (): StreamEvent[] => callReply('WebFetch', { url: 'https://example.com/' })
+    await send(restarted, { turns: [fetch(), fetch(), fetch(), answered()] })
+    const all = await entries(h.store)
+    expect(named(all, 'execution/tool_outcome').map((e) => e.payload['source'])).toEqual([
+      'tool-unavailable',
+      'tool-unavailable',
+      'tool-unavailable',
+    ])
+    // Not a machine denial: the Run answers instead of ending blocked-repeatedly.
+    expect(named(all, 'execution/run_terminal').at(-1)?.payload['reason']).toEqual({
+      code: 'completed',
+    })
+    expect(decisionsOf(all)).toEqual([])
+    const receipts = restarted.loop.recorded.filter((event) => event.type === 'tool-outcome')
+    expect(receipts.map((event) => event.outcome.permission)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ])
+    for (let i = 0; i < restarted.a.requests.length; i += 1)
+      expect(toolNames(restarted.a, i)).toContain('WebFetch')
+    expect(
+      new Set(
+        named(all, 'provider/attempt_completed').map((e) => e.payload['toolDefinitionsHash']),
+      ),
+    ).toEqual(new Set([frozen]))
   })
 
   it('opens a fresh first-use table after a reset, generation 0, new incarnation (旧 151)', async () => {
