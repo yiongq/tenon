@@ -55,6 +55,18 @@ export class DesktopFs implements HostFs {
    * `UnresolvableAliasError`, which the kernel blocks like the protected list (spec 02
    * §「在不在工作区里」 step 2; owner 2026-09-27).
    *
+   * On macOS that check runs for every errno realpath(3) reports, not only ENOENT / ENOTDIR:
+   * `/.resolve/<n>/<path>` answers EINVAL while lstat, stat and a read all reach the file (s11-safety-2,
+   * probed on macOS 26.3). And the VFS has spellings realpath(3) gives back as they are, or names by
+   * something no protected path can equal: `/.nofollow/<path>` (the same path, links not followed),
+   * `/.vol/…`, and `/dev/fd/<n>`, a file this process holds open — `sessions.db` among them — which
+   * realpath(3) names `/dev/fd/<file name>`. A path under one of those roots, as given or as realpath(3)
+   * answers it (`/dev/stdout` is a link into `/dev/fd`), throws `UnresolvableAliasError` too, unless it
+   * is simply missing: then it is null, and the kernel meets the alias at the first parent that is
+   * there. Matched without regard to case: the root volume is case-insensitive, and `/DEV/fd/<n>` reads
+   * the same fd. Only an exact prefix is live — `//.nofollow/…` is an ordinary missing path — and
+   * realpath(3) folds such spellings into the alias, which the check on its answer catches.
+   *
    * On macOS the data volume is also mounted at /System/Volumes/Data, and realpath(3) leaves that
    * spelling as it is: `/System/Volumes/Data/Users/u/.zshrc` is `/Users/u/.zshrc` under another name
    * (a firmlink), and compared as a string it would read as outside the protected list. A result under
@@ -63,25 +75,50 @@ export class DesktopFs implements HostFs {
    */
   async realpath(path: AbsolutePath): Promise<AbsolutePath | null> {
     absolutePath(path)
+    let real: string
     try {
-      return absolutePath(await rootSpelling(await realpath(path)))
+      real = await realpath(path)
     } catch (err) {
-      if (!isErrno(err, 'ENOENT') && !isErrno(err, 'ENOTDIR')) throw err
+      const missing = isErrno(err, 'ENOENT') || isErrno(err, 'ENOTDIR')
+      if (!missing && !DARWIN) throw err
+      // Under an alias root, what is not simply missing is the alias: a name to be made there
+      // (`/.resolve/1/<path>/new`, EINVAL) included.
+      const failed = (): unknown =>
+        DARWIN && underAliasRoot(path) ? new UnresolvableAliasError(path, { cause: err }) : err
       const entry = entryOf(path)
       try {
         await lstat(entry)
       } catch (lstatErr) {
-        if (isErrno(lstatErr, 'ENOENT') || isErrno(lstatErr, 'ENOTDIR')) return null
-        throw err
+        // Missing: the kernel walks up, and meets the alias at the first parent that is there.
+        if (missing && (isErrno(lstatErr, 'ENOENT') || isErrno(lstatErr, 'ENOTDIR'))) return null
+        throw failed()
       }
       const followed = await stat(entry).then(
         () => true,
         () => false,
       )
       if (followed) throw new UnresolvableAliasError(path, { cause: err })
-      throw err
+      throw failed()
     }
+    if (DARWIN && (underAliasRoot(path) || underAliasRoot(real))) {
+      throw new UnresolvableAliasError(path)
+    }
+    return absolutePath(await rootSpelling(real))
   }
+}
+
+const DARWIN = process.platform === 'darwin'
+
+/**
+ * macOS's roots of other names for a file (s11-safety-2): `/.vol/<dev>/<ino>` by inode, `/.nofollow`
+ * and `/.resolve/<n>` over any path, `/dev/fd/<n>` over an open file. Each root itself included: a
+ * walk from it would reach the same files.
+ */
+const ALIAS_ROOTS = ['/.vol', '/.nofollow', '/.resolve', '/dev/fd']
+
+function underAliasRoot(path: string): boolean {
+  const folded = path.toLowerCase()
+  return ALIAS_ROOTS.some((root) => folded === root || folded.startsWith(`${root}/`))
 }
 
 /** The macOS data volume's own mount point, where every firmlinked folder has a second spelling. */

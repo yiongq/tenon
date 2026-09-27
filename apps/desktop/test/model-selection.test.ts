@@ -586,16 +586,24 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     }
   })
 
-  it('refuses the send, before any request, while saves keep landing during every read', async () => {
+  it('refuses the send, before any request, while saves keep moving its host during every read', async () => {
     // readSettledInputs gives up after its attempts with `settled: false`: a key that no single
     // save left beside this base URL is a configuration error, never a request.
     const store = new Map<string, string>()
     let host: HostAdapter | null = null
+    let saves = 0
     const settings = { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://a.example/api/paas/v4/' } }
     const secrets: HostSecrets = {
       get: async (key) => {
-        // Another save lands while the keychain is read — the same host each time.
-        if (host !== null) await writeConfig(host.fs, host.identity, { providerConfig: settings })
+        // Another save moves this provider's host while the keychain is read. A save that leaves
+        // its settings as they were cannot unpair a key from them, and does not count (rrE-2).
+        if (host !== null) {
+          saves += 1
+          const baseURL = `https://a${String(saves)}.example/api/paas/v4/`
+          await writeConfig(host.fs, host.identity, {
+            providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL } },
+          })
+        }
         return store.get(key) ?? null
       },
       set: (key, value) => {

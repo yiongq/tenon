@@ -174,6 +174,11 @@ export const workspaceRemove = defineRoute('workspace.remove', {
  * `lastEndpoint` (only added): where the session's history last went — the host the kernel's
  * data-flow check compares with — so the model menu asks before the same switches it holds
  * (§模型选择「数据去向」). Absent before the first Run.
+ *
+ * `chosen` (only added): the provider of the session's own choice (①, the draft's before the session
+ * exists) — confirmed in the menu when it was made, and sent with no data-flow check — so the menu
+ * does not ask again for the host it already confirmed (rrE-1). Absent while the choice in effect is
+ * a profile's default (②–⑤), which nobody confirmed.
  */
 export const sessionFactsResponse = z.object({
   established: z.boolean(),
@@ -182,6 +187,7 @@ export const sessionFactsResponse = z.object({
     .object({ folders: z.array(z.string().min(1)), origin: z.enum(['picked', 'dedicated']) })
     .nullable(),
   lastEndpoint: providerEndpointSchema.optional(),
+  chosen: z.object({ providerId: z.string().min(1) }).optional(),
 })
 export type SessionFactsResponse = z.infer<typeof sessionFactsResponse>
 

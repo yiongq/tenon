@@ -151,6 +151,7 @@ describe('the draft before a session exists (open question 16)', () => {
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
       lastEndpointOrigin: null,
+      chosen: null,
     })
     await send(h, 'hello')
     const all = await entries(h.store)
@@ -174,6 +175,7 @@ describe('the draft before a session exists (open question 16)', () => {
       profile: 'cowork',
       workspace: { folders: [DEDICATED], origin: 'dedicated' },
       lastEndpointOrigin: 'https://connector.test',
+      chosen: null,
     })
     // 旧 180: the dedicated folder is named, not made — until the first write or command.
     expect(await h.host.fs.stat(DEDICATED)).toBeNull()
@@ -238,6 +240,7 @@ describe('the draft before a session exists (open question 16)', () => {
       profile: 'chat',
       workspace: null,
       lastEndpointOrigin: null,
+      chosen: null,
     })
     await cowork(h)
     expect(await h.service.sessionFacts({ sessionId: SESSION })).toMatchObject({
@@ -253,6 +256,7 @@ describe('the draft before a session exists (open question 16)', () => {
       profile: 'chat',
       workspace: null,
       lastEndpointOrigin: null,
+      chosen: null,
     })
     await send(h, 'in the old one', OTHER)
     expect(named(await entries(h.store, OTHER), 'view/tool_table').length).toBe(1)

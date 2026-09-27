@@ -80,7 +80,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
   watchConfig(host.identity, (config) => {
     stored = config.providerConfig
   })
-  /** A read's settings become the snapshot only while no write has landed since it finished. */
+  /** A read's settings become the snapshot only while no write has landed since it was read. */
   const remember = (config: Config, generation: number): void => {
     if (configGeneration(host.identity) === generation) stored = config.providerConfig
   }
@@ -148,7 +148,9 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         // The settings and the keys as one save left them: a save that moved the host between the
         // two reads would pair its new key with the old base URL (01 修补 6「key 绑定主机」).
         const read = await readSettledInputs({ host, definition, env: vars, log })
-        remember(read.config, read.generation)
+        // Only a settled read's config is a snapshot at all; `remember` then keeps it only while no
+        // write of any key landed after it was read (rrE-2).
+        if (read.settled) remember(read.config, read.generation)
         const settings = read.config.providerConfig[definition.id]
         const inputs = read.inputs
         origin = originOf(inputs.config[BASE_URL_KEY]) ?? origin

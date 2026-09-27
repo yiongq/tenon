@@ -44,7 +44,8 @@ import { TypeModelDialog } from './TypeModelDialog'
  * thinking level — that would send history which went to this machine or a private network to a
  * public host turns the menu into a confirmation first: compared with where the history last went
  * (`session.facts`), not with the choice in effect, which a default moved elsewhere can already have
- * made public (lib/data-flow.ts). A round the kernel held for that reason opens the same confirmation.
+ * made public — unless the session's own choice already confirmed that host (lib/data-flow.ts). A
+ * round the kernel held for that reason opens the same confirmation.
  */
 
 type Row = ProviderEntryContract['models'][number]
@@ -165,20 +166,33 @@ export function ModelMenu(): JSX.Element {
       ? undefined
       : entryOf(choice.providerId)?.models.find((row) => row.id === choice.modelId)
 
-  /** Where this session's history last went, read at the moment of choosing (undefined: unread). */
-  const lastSent = async (): Promise<ProviderEndpoint | null | undefined> => {
+  /**
+   * Read at the moment of choosing: where this session's history last went (undefined: unread), and
+   * the host its own choice ① sends to now, which the user confirmed choosing it (null: a default is
+   * in effect, or unread; rrE-1).
+   */
+  const sentAndConfirmed = async (): Promise<{
+    last: ProviderEndpoint | null | undefined
+    confirmed: string | null
+  }> => {
     const facts = await invokeRoute(window.tenon, sessionFacts, { sessionId })
-    return facts.ok ? (facts.data.lastEndpoint ?? null) : undefined
+    if (!facts.ok) return { last: undefined, confirmed: null }
+    const chosen = facts.data.chosen
+    return {
+      last: facts.data.lastEndpoint ?? null,
+      confirmed: chosen === undefined ? null : (entryOf(chosen.providerId)?.endpoint.host ?? null),
+    }
   }
 
   /**
    * A choice made — a row, a hand-typed id or a level: the confirmation first when it would send
-   * history that went to this machine or a private network to a public host (A9, 验收 34); true
-   * when that is what it did.
+   * history that went to this machine or a private network to a public host (A9, 验收 34) the
+   * session's own choice has not already confirmed (rrE-1); true when that is what it did.
    */
   const commit = async (choice: Choice): Promise<boolean> => {
     const target = entryOf(choice.providerId)?.endpoint
-    const host = confirmHostFor(await lastSent(), target, hasHistory)
+    const { last, confirmed } = await sentAndConfirmed()
+    const host = confirmHostFor(last, target, hasHistory, confirmed)
     if (host !== null) {
       setView({ kind: 'confirm', host, choice })
       return true

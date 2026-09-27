@@ -510,6 +510,124 @@ describe('what the connector adds for the loop', () => {
     expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://relay.example')
   })
 
+  describe('a keychain read that other writes overlap (rrE-2)', () => {
+    const choice = {
+      providerId: ANTHROPIC_PROVIDER_ID,
+      modelId: 'claude-sonnet-5',
+      effort: null,
+      capabilitySource: 'builtin' as const,
+    }
+    const secretCount = anthropic().configKeys.filter((key) => key.secret).length
+
+    /**
+     * Anthropic at a.example with a keychain key, and a keychain whose every get first runs
+     * `during(n)` — a save landing while the send waits on the keychain (an unanswered prompt).
+     */
+    async function overlapped(during: (n: number, host: HostAdapter) => Promise<void>): Promise<{
+      host: HostAdapter
+      connector: ReturnType<typeof createRunConnector>
+      gets: () => number
+    }> {
+      const memory = createMemoryHost()
+      await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
+      await writeConfig(memory.fs, memory.identity, {
+        providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://a.example' } },
+      })
+      await memory.secrets.set(
+        keyFor(memory.identity, 'provider', ANTHROPIC_PROVIDER_ID, 'apiKey'),
+        'sk-a',
+      )
+      let gets = 0
+      const host: HostAdapter = {
+        ...memory,
+        secrets: {
+          get: async (key) => {
+            gets += 1
+            await during(gets, memory)
+            return memory.secrets.get(key)
+          },
+          set: (key, value) => memory.secrets.set(key, value),
+          delete: (key) => memory.secrets.delete(key),
+        },
+      }
+      const connector = createRunConnector({
+        host,
+        providers: registry(),
+        env: {},
+        log: () => {},
+        config: await readConfig(host.fs, host.identity),
+      })
+      return { host, connector, gets: () => gets }
+    }
+
+    const assemble = (connector: ReturnType<typeof createRunConnector>) =>
+      connector.assemble({
+        sessionId: 's',
+        rootSessionId: 's',
+        choice,
+        signal: new AbortController().signal,
+      })
+
+    it('neither reads the keychain again nor refuses the send for writes that are not its settings', async () => {
+      // A held round's release writes defaultModelByProfile while its prebuild reads the keychain
+      // (model-routes.ts); the locale, the sidebar and the folder list are saved at any time. None
+      // of them moves where this provider sends, so none unsettles the read (01 修补 6「key 绑定主机」).
+      const unrelated = [
+        { locale: 'en' as const },
+        { sidebarCollapsed: true },
+        { lastWorkspaceFolders: ['/w'] },
+        { defaultModelByProfile: { chat: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-4.6' } } },
+      ]
+      const { connector, gets } = await overlapped(async (n, host) => {
+        await writeConfig(host.fs, host.identity, unrelated[(n - 1) % unrelated.length] ?? {})
+      })
+      const assembly = await assemble(connector)
+      expect(() => assembly.provider()).not.toThrow()
+      expect(gets()).toBe(secretCount)
+      expect(assembly.endpointOrigin).toBe('https://a.example')
+    })
+
+    it("keeps another provider's save made during the read in the endpointOrigin snapshot", async () => {
+      // The read's own config.json predates that save: kept as the snapshot, it would roll the other
+      // provider back to where it sent before, and its next model_selected would name that host.
+      const { connector, gets } = await overlapped(async (n, host) => {
+        if (n !== 1) return
+        const { providerConfig } = await readConfig(host.fs, host.identity)
+        await writeConfig(host.fs, host.identity, {
+          providerConfig: {
+            ...providerConfig,
+            [ZHIPU_PROVIDER_ID]: { baseURL: 'https://z.example' },
+          },
+        })
+      })
+      const assembly = await assemble(connector)
+      expect(() => assembly.provider()).not.toThrow()
+      expect(gets()).toBe(secretCount)
+      expect(connector.endpointOrigin(ZHIPU_PROVIDER_ID)).toBe('https://z.example')
+      expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://a.example')
+    })
+
+    it('answers endpointOrigin from the newest save after a read its own saves never let settle', async () => {
+      // One save moving this provider's host in each attempt: the send is refused, and the config
+      // the last attempt read — older than the save that landed during it — is not remembered.
+      const { host, connector } = await overlapped(async (n, h) => {
+        if ((n - 1) % secretCount !== 0) return // the first get of each attempt
+        await writeConfig(h.fs, h.identity, {
+          providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: `https://b${String(n)}.example` } },
+        })
+      })
+      const assembly = await assemble(connector)
+      expect(() => assembly.provider()).toThrow(
+        expect.objectContaining({ key: 'a key read while no save was moving its host' }),
+      )
+      const onDisk = (await readConfig(host.fs, host.identity)).providerConfig[
+        ANTHROPIC_PROVIDER_ID
+      ]
+      expect(onDisk?.baseURL).toBe(`https://b${String(2 * secretCount + 1)}.example`)
+      expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe(onDisk?.baseURL)
+    })
+  })
+
   it('says where the model came from, and lets the session choice through untouched', async () => {
     const connector = createRunConnector({
       host: createMemoryHost(),

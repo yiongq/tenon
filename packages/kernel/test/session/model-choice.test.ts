@@ -233,6 +233,26 @@ describe('the model choice (§模型选择)', () => {
     })
   })
 
+  it('names ① in sessionFacts as the prebuild takes it: the draft’s, then the Tape’s, none on a default (rrE-1)', async () => {
+    // The model menu does not ask again for the host the session's own choice already confirmed;
+    // a default (②–⑤) is none, and a cleared session falls back to one.
+    const h = harness()
+    expect((await h.service.sessionFacts({ sessionId: A })).chosen).toBeNull()
+    await h.service.selectModel({ sessionId: A, choice: choice(TWO.id), origin: null })
+    expect((await h.service.sessionFacts({ sessionId: A })).chosen).toEqual({
+      providerId: 'anthropic',
+    })
+    await send(h, A, 'hello')
+    expect(h.loop.connector.resolved.at(-1)?.sessionChoice).toMatchObject({ modelId: TWO.id })
+    expect((await h.service.sessionFacts({ sessionId: A })).chosen).toEqual({
+      providerId: 'anthropic',
+    })
+    await h.service.resetSession(A)
+    expect((await h.service.sessionFacts({ sessionId: A })).chosen).toBeNull()
+    await send(h, B, 'on the default')
+    expect((await h.service.sessionFacts({ sessionId: B })).chosen).toBeNull()
+  })
+
   it('releases a message a public host held, with the ones queued before it (旧 184)', async () => {
     const h = harness()
     await send(h, A, 'history')
