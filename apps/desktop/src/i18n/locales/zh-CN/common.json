@@ -187,7 +187,10 @@
     "title": "停止这个任务？",
     "description": "任务还在进行。可以停止后离开，或者留在这里等它做完。",
     "stop": "停止任务",
-    "stay": "留在这里"
+    "stay": "留在这里",
+    "stopAndClose": "停止任务并关闭",
+    "stopAndQuit": "停止任务并退出",
+    "cancel": "取消"
   },
   "queue": {
     "queued": "排队中",

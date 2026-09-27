@@ -5,7 +5,7 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ProviderSettings } from '@/components/settings/ProviderSettings'
 import { Button } from '@/components/ui/button'
-import { cardOf } from '@/lib/end-card'
+import { cardOf, effectLineOf } from '@/lib/end-card'
 import type { EndVisual } from '@/lib/end-card'
 import { toolSentence } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
@@ -242,7 +242,7 @@ function FailureCard(props: {
 /**
  * ② of the card: this round's calls by state (§失败卡与结束原因, §点停止时各状态怎么收) — the completed
  * ones by name; a stopped one says its later writes did not happen, except a request already sent
- * out, which may have reached the other side.
+ * out, which may have reached the other side (lib/end-card.ts `effectLineOf`).
  */
 function effectsOf(
   turns: readonly Turn[],
@@ -266,11 +266,11 @@ function effectsOf(
   for (const turn of turns.slice(lastUser + 1, index + 1)) {
     for (const part of turn.parts) {
       if (part.kind !== 'tool' || part.outcome === null) continue
-      const { state, effect } = part.outcome
-      if (state === 'completed') done.push(part)
-      else if (state === 'aborted' && effect === 'external') stoppedSent += 1
-      else if (state === 'aborted') stopped += 1
-      else if (state === 'not-run') notRun += 1
+      const line = effectLineOf(part.name, part.outcome)
+      if (line === 'done') done.push(part)
+      else if (line === 'stopped-sent') stoppedSent += 1
+      else if (line === 'stopped') stopped += 1
+      else if (line === 'not-run') notRun += 1
       else uncertain += 1
     }
   }

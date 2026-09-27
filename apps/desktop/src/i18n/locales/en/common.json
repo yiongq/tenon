@@ -187,7 +187,10 @@
     "title": "Stop this task?",
     "description": "The task is still running. Stop it and leave, or stay here and let it finish.",
     "stop": "Stop task",
-    "stay": "Stay here"
+    "stay": "Stay here",
+    "stopAndClose": "Stop task and close",
+    "stopAndQuit": "Stop task and quit",
+    "cancel": "Cancel"
   },
   "queue": {
     "queued": "Queued",

@@ -169,7 +169,7 @@ for (const { title, tag, group } of ANTHROPIC_GROUPS) {
         await expect(page.getByTestId('composer-stop')).toHaveCount(0)
 
         const stoppedAt = await reply.innerText()
-        await page.waitForTimeout(2500)
+        await page.waitForTimeout(3_000)
         expect(await reply.innerText()).toBe(stoppedAt)
         expect(stoppedAt).not.toContain('400')
       } finally {
@@ -245,7 +245,7 @@ test.describe('live provider · zhipu', () => {
       await expect(page.getByTestId('composer-stop')).toHaveCount(0)
 
       const stoppedAt = await reply.innerText()
-      await page.waitForTimeout(2500)
+      await page.waitForTimeout(3_000)
       expect(await reply.innerText()).toBe(stoppedAt)
       expect(stoppedAt).not.toContain('400')
     } finally {
