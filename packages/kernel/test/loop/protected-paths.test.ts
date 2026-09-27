@@ -26,6 +26,7 @@ import {
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { GREP_TEXTS } from '../../src/tools/builtin/grep.js'
+import { withVolfs } from '../support/volfs.js'
 
 const HOME = '/home/u'
 const PROFILE = `${HOME}/prof`
@@ -74,7 +75,10 @@ interface Harness {
   readonly provider: ScriptedProvider
 }
 
-async function harness(): Promise<Harness> {
+/** `volfs`: the host's fs also names files by number, as macOS's /.vol does (support/volfs.ts). */
+async function harness(
+  o: { readonly volfs?: Readonly<Record<string, string>> } = {},
+): Promise<Harness> {
   const memory = createMemoryHost({ identity: IDENTITY })
   for (const [path, text] of Object.entries(FILES)) {
     // oxlint-disable-next-line no-await-in-loop -- the folder before the file in it
@@ -88,7 +92,7 @@ async function harness(): Promise<Harness> {
   const loop = createTestLoopPorts({ connector: { provider, model: MODEL } })
   const service = createTestSessionService(
     {
-      host: memory,
+      host: o.volfs === undefined ? memory : { ...memory, fs: withVolfs(memory.fs, o.volfs) },
       tape: store,
       ids: createCounterIds(),
       inspectors: [],
@@ -211,6 +215,71 @@ describe('the protected list in a task whose workspace is the home folder (旧 1
     expect(calls[4]).toMatchObject({ isError: false, text: GREP_TEXTS.none })
     // Glob under the profile directory lists this session's spill and nothing else there.
     expect(calls[7]?.text).toBe(`${OWN_SPILL}/r-1-0.txt`)
+    // No card, no answer, so no grant of any kind.
+    expect(h.memory.confirmRequests).toEqual([])
+    expect(entries.filter((entry) => entry.name === 'tool/approval_resolved')).toEqual([])
+  })
+})
+
+describe('a path the host finds but cannot name, in a task (owner 2026-09-27, s11-safety-2)', () => {
+  // §「在不在工作区里」 step 2: realpath cannot name a /.vol path, so nothing can be compared with the
+  // protected list. It is blocked like the list — not placed outside, where a card would offer allow.
+  it('blocks the volfs names of a workspace file, the shell file and the config without a card', async () => {
+    const h = await harness({
+      volfs: {
+        '10': `${HOME}/proj`,
+        '11': `${HOME}/proj/a.ts`,
+        '12': `${HOME}/.zshrc`,
+        '13': `${PROFILE}/config.json`,
+      },
+    })
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath(`${HOME}/proj`)] },
+      dedicated: DEDICATED,
+    })
+    // An allowed read between the blocked ones: three machine denials in a row would end the Run.
+    const read = { name: 'Read', input: { file_path: `${HOME}/proj/a.ts` } }
+    const code = await runOnce(
+      h,
+      { name: 'Read', input: { file_path: '/.vol/1/11' } },
+      read,
+      { name: 'Read', input: { file_path: '/.vol/1/12' } },
+      read,
+      { name: 'Read', input: { file_path: '/.vol/1/13' } },
+      read,
+      { name: 'Write', input: { file_path: '/.vol/1/10/new.txt', content: 'x' } },
+    )
+    expect(code).toBe('completed')
+    const { entries, calls } = await closed(h)
+    const blocked = ['not-run', 'protected']
+    const allowed = [
+      ['allow', 'user-grant', 'read-only'],
+      ['completed', null],
+    ]
+    expect(calls.map((call) => [call.decision, call.outcome])).toEqual([
+      [['deny', 'protected', 'read-only'], blocked],
+      allowed,
+      [['deny', 'protected', 'read-only'], blocked],
+      allowed,
+      [['deny', 'protected', 'read-only'], blocked],
+      allowed,
+      [['deny', 'protected', 'unknown'], blocked],
+    ])
+    // The block names the path as the model wrote it, normalised: the only name there is.
+    const targets = entries
+      .filter((entry) => entry.name === 'tool/permission_decided')
+      .map((entry) => (entry.payload as unknown as PermissionDecidedPayload).block)
+      .filter((block) => block !== undefined)
+    expect(targets).toEqual([
+      { reason: 'protected', facts: { toolName: 'Read', target: '/.vol/1/11' } },
+      { reason: 'protected', facts: { toolName: 'Read', target: '/.vol/1/12' } },
+      { reason: 'protected', facts: { toolName: 'Read', target: '/.vol/1/13' } },
+      { reason: 'protected', facts: { toolName: 'Write', target: '/.vol/1/10/new.txt' } },
+    ])
+    expect(calls[2]?.text).toContain('/.vol/1/12')
+    expect(calls.some((call) => call.text.includes('SECRET'))).toBe(false)
     // No card, no answer, so no grant of any kind.
     expect(h.memory.confirmRequests).toEqual([])
     expect(entries.filter((entry) => entry.name === 'tool/approval_resolved')).toEqual([])

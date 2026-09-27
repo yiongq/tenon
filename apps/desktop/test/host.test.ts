@@ -1,9 +1,25 @@
-import { lstat, mkdir, mkdtemp, readdir, realpath, rm, symlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { policyStateSchema } from '@tenon-app/contracts'
 import type { AbsolutePath, HostFs, PolicyState } from '@tenon-app/kernel'
-import { EMPTY_POLICY, absolutePath, createMemoryHost } from '@tenon-app/kernel'
+import {
+  EMPTY_POLICY,
+  UnresolvableAliasError,
+  absolutePath,
+  createMemoryHost,
+} from '@tenon-app/kernel'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { IpcConfirm } from '../src/main/host/confirm.js'
 import { DesktopFs } from '../src/main/host/fs.js'
@@ -260,6 +276,40 @@ describe('DesktopFs.realpath', () => {
     expect(await fs.realpath(at('outside/f.txt/x'))).toBeNull() // ENOTDIR
     expect(await fs.realpath(at('ws'))).toBe(join(root, 'ws'))
   })
+
+  // macOS's volfs reaches a file by inode, and realpath(3) cannot name what it reaches that way
+  // (§`HostFs.realpath`; owner 2026-09-27, s11-safety-2).
+  it.runIf(process.platform === 'darwin' && existsSync('/.vol'))(
+    'throws UnresolvableAliasError for a /.vol name, and keeps a missing name null',
+    async () => {
+      await fs.writeFile(at('ws/f.txt'), 'f')
+      const vol = async (relative: string): Promise<AbsolutePath> => {
+        const s = await stat(join(root, relative), { bigint: true })
+        return absolutePath(`/.vol/${String(s.dev)}/${String(s.ino)}`)
+      }
+      const file = await vol('ws/f.txt')
+      const folder = await vol('ws')
+      // The disk facts: realpath says ENOENT, as for a missing path; lstat sees a file; it reads.
+      await expect(realpath(file)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect((await lstat(file)).isFile()).toBe(true)
+      expect(await readFile(file, 'utf8')).toBe('f')
+      const thrown: unknown = await fs.realpath(file).catch((error: unknown) => error)
+      expect(thrown).toBeInstanceOf(UnresolvableAliasError)
+      expect(thrown).toMatchObject({ path: file, cause: { code: 'ENOENT' } })
+      for (const named of [folder, absolutePath(`${folder}/f.txt`)]) {
+        // oxlint-disable-next-line no-await-in-loop -- one path at a time
+        await expect(fs.realpath(named)).rejects.toBeInstanceOf(UnresolvableAliasError)
+      }
+      // A name not there yet is missing, as anywhere else.
+      expect(await fs.realpath(absolutePath(`${folder}/new.txt`))).toBeNull()
+      // A link to a /.vol name is dangling: the OS does not follow it either, so its own error stays.
+      await symlink(file, join(root, 'ws/to-vol'))
+      await expect(readFile(join(root, 'ws/to-vol'))).rejects.toMatchObject({ code: 'ENOENT' })
+      const linked: unknown = await fs.realpath(at('ws/to-vol')).catch((error: unknown) => error)
+      expect(linked).not.toBeInstanceOf(UnresolvableAliasError)
+      expect(linked).toMatchObject({ code: 'ENOENT' })
+    },
+  )
 
   it('throws on a link loop', async () => {
     await symlink('b', join(root, 'ws/a'))

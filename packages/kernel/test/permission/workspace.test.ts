@@ -9,6 +9,7 @@ import type { AbsolutePath, HostFs } from '../../src/index.js'
 import { isWithin, normalizePath } from '../../src/host/path.js'
 import { locatePath, resolvePath } from '../../src/permission/workspace.js'
 import type { PathScope } from '../../src/permission/workspace.js'
+import { withVolfs } from '../support/volfs.js'
 
 const p = (path: string): AbsolutePath => absolutePath(path)
 
@@ -153,5 +154,56 @@ describe('locatePath', () => {
       path: '/private/tmp/not-yet/ws',
       resolved: true,
     })
+  })
+})
+
+describe('a path the host finds but cannot name (owner 2026-09-27, s11-safety-2)', () => {
+  // macOS's /.vol/<dev>/<ino> reaches any file by inode, and realpath(3) cannot name it: nothing can be
+  // compared, so it is blocked like the protected list — never outside with a card to allow it.
+  it('places the volfs name of a workspace file, the shell file and the profile config as protected', async () => {
+    const { fs: memory, scope } = await world()
+    const fs = withVolfs(memory, {
+      '10': '/ws',
+      '11': '/ws/src/a.ts',
+      '12': '/home/.zshrc',
+      '13': '/profile/config.json',
+    })
+    for (const n of ['11', '12', '13']) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time
+      expect(await locatePath(fs, p(`/.vol/1/${n}`), scope)).toEqual({
+        real: `/.vol/1/${n}`,
+        place: 'protected',
+      })
+    }
+    // A new file under a folder's volfs name: the walk up meets the name it cannot resolve.
+    expect(await locatePath(fs, p('/.vol/1/10/new.txt'), scope)).toEqual({
+      real: '/.vol/1/10/new.txt',
+      place: 'protected',
+    })
+    // A chosen folder that contains everything does not release it.
+    expect((await locatePath(fs, p('/.vol/1/11'), { ...scope, roots: [p('/')] })).place).toBe(
+      'protected',
+    )
+    expect(await resolvePath(fs, p('/.vol/1/11'))).toEqual({
+      path: '/.vol/1/11',
+      resolved: false,
+      alias: true,
+    })
+  })
+
+  it('keeps a missing path and a dangling link where they were', async () => {
+    const { fs: memory, scope, host } = await world()
+    host.symlink(p('/ws/dangling'), '/nowhere/at/all')
+    const fs = withVolfs(memory, { '11': '/ws/src/a.ts' })
+    expect(await locatePath(fs, p('/outside/missing.txt'), scope)).toEqual({
+      real: '/outside/missing.txt',
+      place: 'outside',
+    })
+    expect(await locatePath(fs, p('/ws/dangling'), scope)).toEqual({
+      real: '/ws/dangling',
+      place: 'outside',
+    })
+    // A volfs number nothing has is a missing path too.
+    expect((await locatePath(fs, p('/.vol/1/99'), scope)).place).toBe('outside')
   })
 })

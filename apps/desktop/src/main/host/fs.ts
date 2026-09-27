@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { parse, sep } from 'node:path'
 import type { AbsolutePath, HostFs } from '@tenon-app/kernel'
-import { absolutePath } from '@tenon-app/kernel'
+import { UnresolvableAliasError, absolutePath } from '@tenon-app/kernel'
 
 /** Real filesystem access for the desktop host. Every path is re-checked to be absolute. */
 export class DesktopFs implements HostFs {
@@ -49,6 +49,12 @@ export class DesktopFs implements HostFs {
    * at the entry itself, so a trailing separator or `/.` is dropped first: with one, lstat follows
    * the link too, and `ws/evil/` would read as missing while mkdirp through it escapes.
    *
+   * When lstat sees the entry, stat tells the two apart: a dangling link cannot be followed, and its
+   * error is thrown as above; an entry stat can follow is there, and realpath(3) only cannot name it —
+   * macOS's `/.vol/<dev>/<ino>` reaches any file by inode that way. That throws
+   * `UnresolvableAliasError`, which the kernel blocks like the protected list (spec 02
+   * §「在不在工作区里」 step 2; owner 2026-09-27).
+   *
    * On macOS the data volume is also mounted at /System/Volumes/Data, and realpath(3) leaves that
    * spelling as it is: `/System/Volumes/Data/Users/u/.zshrc` is `/Users/u/.zshrc` under another name
    * (a firmlink), and compared as a string it would read as outside the protected list. A result under
@@ -61,11 +67,18 @@ export class DesktopFs implements HostFs {
       return absolutePath(await rootSpelling(await realpath(path)))
     } catch (err) {
       if (!isErrno(err, 'ENOENT') && !isErrno(err, 'ENOTDIR')) throw err
+      const entry = entryOf(path)
       try {
-        await lstat(entryOf(path))
+        await lstat(entry)
       } catch (lstatErr) {
         if (isErrno(lstatErr, 'ENOENT') || isErrno(lstatErr, 'ENOTDIR')) return null
+        throw err
       }
+      const followed = await stat(entry).then(
+        () => true,
+        () => false,
+      )
+      if (followed) throw new UnresolvableAliasError(path, { cause: err })
       throw err
     }
   }

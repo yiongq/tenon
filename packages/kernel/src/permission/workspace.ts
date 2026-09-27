@@ -9,9 +9,14 @@
  * resolved by the same algorithm before they are compared, or a workspace under a link (macOS `/tmp`
  * → `/private/tmp`) would make everything in it read as outside.
  *
+ * A path the host finds but cannot name (`UnresolvableAliasError`: macOS's `/.vol/<dev>/<ino>`
+ * reaches any file by inode) cannot be compared with anything, so it is placed `protected`: blocked
+ * with no card, like the protected list (owner 2026-09-27). Any other failure reads as outside.
+ *
  * Two known limits (D8): a link swapped between this judgement and the execution (a race phase 2 does
  * not handle), and a hard link in the workspace to a file outside it. Both are phase 4's to decide.
  */
+import { UnresolvableAliasError } from '../host/adapter.js'
 import type { AbsolutePath, HostFs } from '../host/adapter.js'
 import { fromParts, isWithin, normalizePath, pathParts } from '../host/path.js'
 
@@ -29,17 +34,22 @@ export interface PathScope {
   readonly protectedFiles: readonly AbsolutePath[] // 保护名单里的 shell 配置文件，desktop 给出，启动时解析
 }
 
-/** A path resolved to its real form; `resolved: false` when that cannot be done, which reads as outside. */
+/**
+ * A path resolved to its real form; `resolved: false` when that cannot be done, which reads as
+ * outside — or, with `alias`, as protected: the host found the entry but could not name it.
+ */
 export interface ResolvedPath {
   readonly path: AbsolutePath
   readonly resolved: boolean
+  readonly alias?: true
 }
 
 /**
  * Steps 1 and 2: normalise, then `realpath`, walking up past entries that do not exist yet. A null
  * all the way to the root (a drive that is not there, a disconnected share) or a `realpath` that
  * throws (a dangling link, a loop, EACCES) cannot be resolved: the normalised path is returned with
- * `resolved: false`.
+ * `resolved: false`, and `alias` when the throw was `UnresolvableAliasError` — for the path or for
+ * the parent it walked up to.
  */
 export async function resolvePath(fs: HostFs, path: AbsolutePath): Promise<ResolvedPath> {
   const normalized = normalizePath(path)
@@ -52,7 +62,10 @@ export async function resolvePath(fs: HostFs, path: AbsolutePath): Promise<Resol
     try {
       // oxlint-disable-next-line no-await-in-loop -- each parent is asked only once the child was missing
       real = await fs.realpath(current)
-    } catch {
+    } catch (error) {
+      if (error instanceof UnresolvableAliasError) {
+        return { path: normalized, resolved: false, alias: true }
+      }
       return { path: normalized, resolved: false }
     }
     if (real !== null) {
@@ -72,14 +85,17 @@ export async function resolvePath(fs: HostFs, path: AbsolutePath): Promise<Resol
 /**
  * Where a path falls (step 3), first match wins: the session's own spill directory; the rest of the
  * profile directory or a protected file — even inside a workspace root; a workspace root; outside.
- * A path that cannot be resolved is outside, with `real` the normalised path.
+ * A path that cannot be resolved is outside, with `real` the normalised path; one the host found but
+ * could not name is protected, with the same `real` (spec 02 §「在不在工作区里」 step 2; owner
+ * 2026-09-27).
  */
 export async function locatePath(
   fs: HostFs,
   path: AbsolutePath,
   scope: PathScope,
 ): Promise<PathVerdict> {
-  const { path: real, resolved } = await resolvePath(fs, path)
+  const { path: real, resolved, alias } = await resolvePath(fs, path)
+  if (alias === true) return { real, place: 'protected' }
   if (!resolved) return { real, place: 'outside' }
   return { real, place: placeOf(real, scope) }
 }
