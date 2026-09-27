@@ -5,13 +5,16 @@
  */
 import { chatEvent, chatEventSchema } from '@tenon-app/contracts'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
-import { createMemoryHost } from '@tenon-app/kernel'
-import type { RunLease, SessionEvent, SessionService } from '@tenon-app/kernel'
+import { absolutePath, createMemoryHost } from '@tenon-app/kernel'
+import type { CommandShell, RunLease, SessionEvent, SessionService } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import { localDateOf } from '../src/main/locale.js'
 import { createRunQueue } from '../src/main/queue.js'
 import { createRunEvents } from '../src/main/run-events.js'
+
+/** These cases run no Bash: the shell is a stand-in. */
+const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
 
 const ROOT = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
 const CHILD = '0b8f2a1c-3d4e-4f50-8a61-7b2c3d4e5f60'
@@ -361,6 +364,7 @@ describe('chat.send and the queue (plan step 17)', () => {
       clock: host.clock,
       send: (_channel, payload) => sent.push(payload),
       locale: () => 'en',
+      commandShell: NO_SHELL,
     })
     // The kernel queued it: something else held the root when its turn came.
     const sessions = {
@@ -396,6 +400,7 @@ describe('chat.send and the queue (plan step 17)', () => {
         if (channel === 'chat.queue') pushed.push(payload as { items: unknown[]; held?: unknown })
       },
       locale: () => 'en',
+      commandShell: NO_SHELL,
     })
     // A message left from before, then a direct send the kernel holds for a public host.
     const { queuedId: before } = await loop.queue.enqueue(ROOT, 'left from before', {

@@ -13,6 +13,7 @@ import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
+import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
 import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
@@ -90,6 +91,9 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 async function main(): Promise<void> {
+  // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
+  // `.env.local` (spec 02 §内置工具与参数「Bash」).
+  const startupEnv = snapshotEnv(process.env)
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
   await app.whenReady()
@@ -132,6 +136,16 @@ async function main(): Promise<void> {
   // bindLoop, before anything can send. The protected shell files are computed in the user's home:
   // the kernel reads no home of its own (§「在不在工作区里」).
   const home = absolutePath(app.getPath('home'))
+  // Bash's shell and the user's terminal environment, resolved once in the background from now on;
+  // a Bash call before it answers waits for it (host/shell-env.ts).
+  const commandShell = startCommandShell({
+    host,
+    shell: pickShell(),
+    startupEnv,
+    home,
+    isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
+  })
   const sessions =
     tape === null
       ? null
@@ -161,6 +175,7 @@ async function main(): Promise<void> {
           clock: host.clock,
           send: broadcast,
           locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
+          commandShell,
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)

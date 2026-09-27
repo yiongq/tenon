@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import {
   ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
+  absolutePath,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
@@ -20,6 +21,7 @@ import {
 } from '@tenon-app/kernel'
 import type {
   AbsolutePath,
+  CommandShell,
   HostAdapter,
   MessageRow,
   ModelInfo,
@@ -43,6 +45,9 @@ import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
 import { startFakeOpenAI } from './support/fake-openai.js'
+
+/** These cases run no Bash: the shell is a stand-in. */
+const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
@@ -170,6 +175,7 @@ function harness(options: { host?: HostAdapter; env?: Record<string, string> } =
     clock: host.clock,
     send: out.send,
     locale: () => 'en',
+    commandShell: NO_SHELL,
     log: noop,
   })
   sessions.bindLoop(loop.ports)
@@ -617,7 +623,13 @@ describe('the recovery gate (plan step 16: chat.send、chat.stop、「继续」�
       },
     } as unknown as SessionService
     const host = createMemoryHost()
-    const loop = createDesktopLoop({ clock: host.clock, send: noop, locale: () => 'en', log: noop })
+    const loop = createDesktopLoop({
+      clock: host.clock,
+      send: noop,
+      locale: () => 'en',
+      commandShell: NO_SHELL,
+      log: noop,
+    })
     const ipc = fakeIpc()
     const gate = Promise.withResolvers<void>()
     registerChatRoutes({
@@ -699,7 +711,13 @@ function scriptedHarness(): {
     if (channel === 'chat.event') chatEventSchema.parse(payload)
     out.send(channel, payload)
   }
-  const loop = createDesktopLoop({ clock: host.clock, send, locale: () => 'en', log: noop })
+  const loop = createDesktopLoop({
+    clock: host.clock,
+    send,
+    locale: () => 'en',
+    commandShell: NO_SHELL,
+    log: noop,
+  })
   sessions.bindLoop(loop.ports)
   const ipc = fakeIpc()
   registerChatRoutes({ send, ipcMain: ipc.ipcMain, sessions, loop, log: noop })
