@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ZHIPU_DEFAULT_BASE_URL,
   absolutePath,
+  anthropicDefinition,
   createMemoryHost,
   createMemoryTapeStore,
   createSessionService,
@@ -35,6 +36,8 @@ import type {
   ViewAssembledPayload,
 } from '../../src/index.js'
 import {
+  assertLastTurnIsUser,
+  assertToolPairing,
   createCounterIds,
   createScriptedProvider,
   createTestLoopPorts,
@@ -52,7 +55,9 @@ import type {
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { readViewState } from '../../src/loop/run.js'
 import { rebuildToolTable } from '../../src/tools/table.js'
+import * as anthropicFixture from '../provider/fixtures/anthropic-sse.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
+import { anthropicModel } from '../provider/wire/fixtures.js'
 
 const IDENTITY = { userId: 'table-user', tenantId: 'table-tenant', profileDir: '/tenon/table' }
 const SESSION = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
@@ -584,52 +589,199 @@ describe('the table freezes per session × provider (E2)', () => {
   })
 })
 
-/** Each request's messages start with the previous request's, and its tools are the same bytes. */
-function assertPrefixes(bodies: readonly { messages: unknown[]; tools?: unknown }[]): void {
-  expect(bodies.length).toBeGreaterThan(2)
-  for (let i = 1; i < bodies.length; i += 1) {
-    const previous = bodies[i - 1]
-    const current = bodies[i]
-    if (previous === undefined || current === undefined) throw new Error('missing request')
-    expect(current.messages.slice(0, previous.messages.length)).toEqual(previous.messages)
-    expect(JSON.stringify(current.tools)).toBe(JSON.stringify(bodies[0]?.tools))
+type Wire = 'anthropic-messages' | 'openai-chat'
+
+/** One reply on a wire: text, or one call to `name`. */
+function wireTurn(
+  wire: Wire,
+  call?: { readonly id: string; readonly name: string },
+): readonly string[] {
+  const asked = call === undefined ? [] : [{ id: call.id, name: call.name, args: '{}' }]
+  const texts = call === undefined ? ['Done.'] : []
+  return wire === 'anthropic-messages'
+    ? anthropicFixture.turnFrames(texts, asked, call === undefined ? 'end_turn' : 'tool_use')
+    : openAIFixture.turnFrames(texts, asked, call === undefined ? 'stop' : 'tool_calls')
+}
+
+/** A real adapter on a wire, over a fake network that answers these replies in order. */
+function wireProvider(
+  wire: Wire,
+  replies: readonly (readonly string[])[],
+): {
+  readonly provider: Provider
+  readonly net: ReturnType<typeof fakeNetwork>
+  readonly model: ModelInfo
+} {
+  const net = fakeNetwork(
+    replies.map((frames) => ({ kind: 'sse' as const, frames })),
+    {
+      checkRequest: (request) => {
+        assertToolPairing(request)
+        assertLastTurnIsUser(request)
+      },
+    },
+  )
+  const anthropic = wire === 'anthropic-messages'
+  const provider = (anthropic ? anthropicDefinition : zhipuDefinition).create({
+    network: net,
+    clock: { now: () => 0, setTimeout: () => () => undefined },
+    config: { baseURL: anthropic ? 'https://api.anthropic.test' : ZHIPU_DEFAULT_BASE_URL },
+    secrets: { apiKey: 'test-key-not-a-real-credential' },
+  })
+  const glm = zhipuDefinition.builtinModels.find((m) => m.id === 'glm-5.3-flash')
+  if (glm === undefined) throw new Error('no glm-5.3-flash row')
+  return { provider, net, model: anthropic ? anthropicModel() : glm }
+}
+
+/** A request body's system text and message list, as each wire carries them. */
+function prefixParts(
+  wire: Wire,
+  body: unknown,
+): { system: string; tools: string; messages: unknown[] } {
+  const b = body as { system?: unknown; tools?: unknown; messages: { role?: string }[] }
+  if (wire === 'anthropic-messages') {
+    return {
+      system: JSON.stringify(b.system),
+      tools: JSON.stringify(b.tools),
+      messages: b.messages,
+    }
+  }
+  return {
+    system: JSON.stringify(b.messages.filter((message) => message.role === 'system')),
+    tools: JSON.stringify(b.tools),
+    messages: b.messages,
   }
 }
 
-describe('the prefix discipline (A13; 旧 32, the part without approvals)', () => {
+describe('the five-step prefix fixture (A13; 旧 32, 验收 26)', () => {
+  /**
+   * On one wire, with the other as B: change the interface language, switch a tool off and have the
+   * model call it, allow a card in the Run that resumes, queue a message during a batch, then go to
+   * B and back. Every request to A carries the same system and tools bytes, and each one's messages
+   * start with the one before it.
+   */
+  async function fixture(wire: Wire): Promise<void> {
+    const other: Wire = wire === 'anthropic-messages' ? 'openai-chat' : 'anthropic-messages'
+    const a = wireProvider(wire, [
+      wireTurn(wire),
+      wireTurn(wire),
+      wireTurn(wire, { id: 'call_beta', name: 'fs__beta' }),
+      wireTurn(wire),
+      wireTurn(wire, { id: 'call_look', name: 'fs__look' }),
+      wireTurn(wire),
+      wireTurn(wire, { id: 'call_gamma', name: 'fs__gamma' }),
+      wireTurn(wire),
+      wireTurn(wire),
+    ])
+    const b = wireProvider(other, [wireTurn(other)])
+    let off = false
+    let interject = false
+    const called: string[] = []
+    const sources = [source('fs', [tool('beta'), tool('gamma'), tool('look')], called)]
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    let service: SessionService | undefined
+    const loop = createTestLoopPorts({
+      connector: { provider: a.provider, model: a.model, mcpSources: sources },
+      onEvent: (event) => {
+        // The interjection: a message sent while gamma's batch runs goes in at its boundary.
+        if (event.type !== 'tool-call' || !interject) return
+        interject = false
+        void service?.send({ sessionId: SESSION, origin: null, text: 'and one more thing' })
+      },
+    })
+    service = createTestSessionService(
+      {
+        host: createMemoryHost(),
+        tape: store,
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: loop.connector,
+        protectedFiles: [],
+      },
+      {
+        tools: {},
+        userSetting: (key) =>
+          key.toolName === 'gamma'
+            ? { userSetting: 'always-allow' }
+            : off && key.toolName === 'beta'
+              ? { connectorOff: true }
+              : null,
+      },
+    )
+    service.bindLoop(loop)
+    const say = async (text: string): Promise<string> => {
+      const sent = await service?.send({ sessionId: SESSION, origin: null, text })
+      if (sent?.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      return (await loop.runEnded({ runId: sent.runId })).reason.code
+    }
+    expect(await say('one')).toBe('completed')
+    // 1. The interface language changes: the system keeps the one the session started with.
+    loop.setLocale('zh-CN')
+    expect(await say('two')).toBe('completed')
+    // 2. A tool is switched off: the model calls it, and the call is blocked, not dropped.
+    off = true
+    expect(await say('three')).toBe('completed')
+    // 3. A card, allowed: the Run that resumes sends the next request.
+    expect(await say('four')).toBe('paused')
+    const pending = await service.currentPending({ sessionId: SESSION })
+    expect(
+      await service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending?.card.requestId ?? '',
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    expect((await loop.runEnded()).reason.code).toBe('completed')
+    // 4. A message queued during a batch.
+    interject = true
+    expect(await say('five')).toBe('completed')
+    // 5. To B and back to A.
+    loop.connector.use({ provider: b.provider, model: b.model, mcpSources: sources })
+    expect(await say('six')).toBe('completed')
+    loop.connector.use({ provider: a.provider, model: a.model, mcpSources: sources })
+    expect(await say('seven')).toBe('completed')
+
+    expect(a.net.checkFailures).toEqual([])
+    expect(called).toEqual(['look', 'gamma'])
+    const all = await entries(store)
+    const beta = named(all, 'execution/tool_outcome')[0]?.payload
+    expect(beta).toMatchObject({ effect: 'blocked', state: 'not-run', source: 'user-disabled' })
+    expect(named(all, 'tool/result')[0]?.payload['isError']).toBe(true)
+    expect(
+      named(all, 'message/user').some((entry) =>
+        JSON.stringify(entry.payload['content']).includes('and one more thing'),
+      ),
+    ).toBe(true)
+
+    const requests = a.net.requests.map((request) => prefixParts(wire, request.body))
+    expect(requests).toHaveLength(9)
+    const [first] = requests
+    for (let i = 1; i < requests.length; i += 1) {
+      const previous = requests[i - 1]
+      const current = requests[i]
+      if (first === undefined || previous === undefined || current === undefined)
+        throw new Error('missing request')
+      expect(current.system, `request ${String(i)}: system`).toBe(first.system)
+      expect(current.tools, `request ${String(i)}: tools`).toBe(first.tools)
+      expect(
+        current.messages.slice(0, previous.messages.length),
+        `request ${String(i)}: messages`,
+      ).toEqual(previous.messages)
+      expect(current.messages.length).toBeGreaterThan(previous.messages.length)
+    }
+    expect(first?.tools).toContain('fs__beta')
+  }
+
   it('holds on the Anthropic wire', async () => {
     expect.hasAssertions()
-    const h = harness()
-    const sources = [source('fix', [tool('beta')])]
-    for (let i = 0; i < 3; i += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- one message after the other
-      await send(h, { mcpSources: sources })
-    }
-    assertPrefixes(h.a.requests.map((request) => request.body as { messages: unknown[] }))
+    await fixture('anthropic-messages')
   })
 
   it('holds on the OpenAI-compatible wire', async () => {
     expect.hasAssertions()
-    const h = harness()
-    const net = fakeNetwork(
-      Array.from({ length: 3 }, () => ({
-        kind: 'sse' as const,
-        frames: openAIFixture.PLAIN_TEXT_FRAMES,
-      })),
-    )
-    const zhipu = zhipuDefinition.create({
-      network: net,
-      clock: { now: () => 0, setTimeout: () => () => undefined },
-      config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
-      secrets: { apiKey: 'test-key-not-a-real-credential' },
-    })
-    const glm = zhipuDefinition.builtinModels.find((m) => m.supportsToolCalling)
-    if (glm === undefined) throw new Error('no zhipu model with tools')
-    for (let i = 0; i < 3; i += 1) {
-      // oxlint-disable-next-line no-await-in-loop -- one message after the other
-      await send(h, { provider: zhipu, model: glm, mcpSources: [source('fix', [tool('beta')])] })
-    }
-    assertPrefixes(net.requests.map((request) => request.body as { messages: unknown[] }))
+    await fixture('openai-chat')
   })
 })
 
