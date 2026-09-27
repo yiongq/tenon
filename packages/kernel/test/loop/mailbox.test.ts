@@ -267,6 +267,7 @@ describe('a new round that cannot start writes nothing', () => {
       recorded: false,
       lastStop: null,
       errorCode: 'auth',
+      retryOf: null,
     })
   })
 
@@ -326,6 +327,35 @@ describe('a new round that cannot start writes nothing', () => {
       { type: 'queue-held', rootSessionId: SESSION, sessionId: SESSION, host: 'api.example.com' },
     ])
     expect(h.loop.liveLease(SESSION)).toBeNull()
+  })
+})
+
+describe('「重试」 on run-ended (plan step 20)', () => {
+  it('names the user message that opened a Run which dispatched nothing', async () => {
+    // §失败卡与结束原因: 「重试」 only for a Run a user message opened, with no dispatch_committed —
+    // decided here, where the Run's cause and its writes are known, not guessed from event order.
+    const h = harness()
+    h.provider.script(
+      scriptedTurn({
+        terminal: {
+          type: 'error',
+          code: 'invalid-request',
+          retryable: false,
+          providerCode: null,
+          detail: 'boom',
+        },
+      }),
+    )
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'hi' })
+    expect(sent.status).toBe('started')
+    if (sent.status === 'started') await h.loop.runEnded({ runId: sent.runId })
+    const opened = h.loop.recorded.find((event) => event.type === 'user-message')
+    const ended = h.loop.recorded.findLast((event) => event.type === 'run-ended')
+    expect(opened).toBeDefined()
+    expect(ended).toMatchObject({ reason: { code: 'provider-error' }, recorded: true })
+    expect(ended?.type === 'run-ended' ? ended.retryOf : undefined).toBe(
+      opened?.type === 'user-message' ? opened.messageId : 'none',
+    )
   })
 })
 

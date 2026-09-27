@@ -1,13 +1,7 @@
-import type {
-  ClosureSource,
-  ExecutionState,
-  ProviderErrorCode,
-  RunEndReason,
-} from '@tenon-app/kernel'
+import type { ProviderErrorCode, RunEndReason } from '@tenon-app/kernel'
 import { z } from 'zod'
 import { defineEvent, defineRoute } from '../route.js'
-import { decisionSummarySchema } from './approval.js'
-import { confirmTargetSchema } from './confirm.js'
+import { toolOutcomeViewShape } from './outcome.js'
 
 export const sessionIdSchema = z.string().min(1)
 
@@ -65,92 +59,33 @@ export const runEndReasonSchema = z.discriminatedUnion('code', [
 ]) satisfies z.ZodType<RunEndReason>
 export type RunEndReasonContract = z.infer<typeof runEndReasonSchema>
 
-/** How far a call got (spec 02 §原因码表). */
-export const executionStateSchema = z.enum([
-  'not-run',
-  'aborted',
-  'completed',
-  'uncertain',
-]) satisfies z.ZodType<ExecutionState>
-
-/** Why a call was closed rather than run to its end; only ever added to (spec 02 §原因码表). */
-export const closureSourceSchema = z.enum([
-  'policy',
-  'user-disabled',
-  'protected',
-  'inspector',
-  'user-rejected',
-  'stopped',
-  'timed-out',
-  'superseded',
-  'tool-unavailable',
-  'invalid-input',
-  'crashed',
-  'app-exit',
-  'output-truncated',
-  'step-limit',
-  'no-progress',
-  'usage-limit',
-  'blocked-repeatedly',
-  'content-filter',
-  'provider-error',
-  'repair',
-  'no-preference',
-  'unanswered',
-  'typed-answer',
-]) satisfies z.ZodType<ClosureSource>
+// The outcome view and its enums live in outcome.ts (session.ts reads them too); restated here.
+export {
+  closureSourceSchema,
+  executionStateSchema,
+  toolOutcomeViewSchema,
+  toolOutcomeViewShape,
+} from './outcome.js'
+export type { ToolOutcomeViewContract } from './outcome.js'
 
 /**
- * A closed call as the interface shows it (01 修补 6): the kernel's `ToolOutcomeView`. What the
- * model read is `output`; the decision crosses as its summary only (F8). The optional members are
- * exact, like the kernel type's: absent, never `undefined`.
+ * What became of a send (spec 02 plan step 20; the kernel's `SendResult` less `refused`, which is a
+ * route error): `started`, `queued` and `held` are followed by the events that show the message;
+ * after any other the renderer settles the message it showed, since nothing will name it.
  */
-export const toolOutcomeViewShape = {
-  effect: z.enum(['read', 'write', 'external', 'blocked']),
-  state: executionStateSchema,
-  source: closureSourceSchema.nullable(), // null = 正常执行完
-  facts: z.record(z.string(), z.string()).exactOptional(), // 只在 source 是拦截码时有，键按 BLOCKED_FACT_KEYS
-  output: z.string(),
-  permission: decisionSummarySchema.exactOptional(), // 没有判决事实的调用没有这一项（F8）
-  approval: z
-    .object({
-      outcome: z.enum([
-        'allowed',
-        'denied',
-        'cancelled-by-stop',
-        'superseded',
-        'tool-unavailable',
-        'denied-on-rejudge',
-      ]),
-      scope: z.enum(['once', 'session']).nullable(),
-      target: confirmTargetSchema,
-    })
-    .exactOptional(), // 只在出过卡的调用上有
-  question: z
-    .object({
-      answers: z.record(z.string(), z.array(z.string()).readonly().nullable()),
-      response: z.string().exactOptional(),
-    })
-    .exactOptional(), // 只在答过的 AskUserQuestion 上有（开放问题 18）
-  handoff: z
-    .object({
-      outcome: z.enum(['completed', 'partial', 'aborted', 'superseded', 'uncertain']),
-      childEndReason: z.string().nullable(),
-      childSessionId: z.string(),
-    })
-    .exactOptional(), // 只在 Agent 调用上有（开放问题 18）
-}
-/**
- * Not `satisfies z.ZodType<ToolOutcomeView>`: the kernel brands `ConfirmTarget`'s paths, which a
- * schema of the wire cannot produce. The contract test asserts the kernel view is one of these.
- */
-export const toolOutcomeViewSchema = z.object(toolOutcomeViewShape)
-export type ToolOutcomeViewContract = z.infer<typeof toolOutcomeViewSchema>
+export const sendStatusSchema = z.enum([
+  'started',
+  'queued',
+  'held',
+  'answered',
+  'not-sent',
+  'not-found',
+])
 
 /** Send one user message; the reply arrives as `chatEvent`s. */
 export const chatSend = defineRoute('chat.send', {
   request: z.object({ sessionId: sessionIdSchema, text: z.string().min(1) }),
-  response: z.object({ accepted: z.literal(true) }),
+  response: z.object({ accepted: z.literal(true), status: sendStatusSchema.optional() }),
 })
 
 /** Abort the in-flight reply of a session. Idempotent. */
@@ -180,6 +115,13 @@ export const chatEventSchema = z.discriminatedUnion('type', [
     stopReason: z.enum(['end-turn', 'aborted', 'error']),
     /** Spec 02 (H12): why the whole Run ended; phase 1's `stopReason` is unchanged beside it. */
     endReason: runEndReasonSchema.optional(),
+    /** Spec 02 (plan step 20): which Run ended, for the copied diagnostics; null when none was written. */
+    runId: z.string().min(1).nullable().optional(),
+    /**
+     * Spec 02 (plan step 20): the user message that opened the Run, when none of its calls was
+     * dispatched — 「重试」 resends it (§失败卡与结束原因); null for any other Run.
+     */
+    retryOf: z.string().min(1).nullable().optional(),
   }),
   z.object({
     type: z.literal('error'),
@@ -189,6 +131,9 @@ export const chatEventSchema = z.discriminatedUnion('type', [
     detail: z.string().optional(),
     /** Spec 02 (开放问题 16): on every Run's end; absent on an error that is not a Run's. */
     endReason: runEndReasonSchema.optional(),
+    /** Spec 02 (plan step 20): as on `done`; absent with `endReason`. */
+    runId: z.string().min(1).nullable().optional(),
+    retryOf: z.string().min(1).nullable().optional(),
   }),
   // Spec 02, 01 修补 6 (decisions H12, H3, A11, B1): only-added variants.
   z.object({ type: z.literal('thinking-delta'), sessionId: sessionIdSchema, delta: z.string() }),
@@ -263,7 +208,11 @@ export const chatQueueAct = defineRoute('chat.queue.act', {
       runId: z.string().min(1).nullable(),
     }),
   ]),
-  response: z.object({ status: z.enum(['applied', 'not-found']) }),
+  response: z.object({
+    status: z.enum(['applied', 'not-found']),
+    /** Spec 02 (plan step 20): for a send-now, what became of the send, as `chat.send`'s `status`. */
+    sendStatus: sendStatusSchema.optional(),
+  }),
 })
 
 /**
@@ -276,7 +225,7 @@ export const chatSendNow = defineRoute('chat.sendNow', {
     text: z.string().min(1),
     runId: z.string().min(1).nullable(),
   }),
-  response: z.object({ accepted: z.literal(true) }),
+  response: z.object({ accepted: z.literal(true), status: sendStatusSchema.optional() }),
 })
 
 /** main → renderer: start a fresh session (application menu / shortcut). */

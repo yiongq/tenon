@@ -17,15 +17,17 @@ import { readConfig } from './host/profile.js'
 import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
-import { hardenWebContents } from './navigation.js'
+import { hardenWebContents, isSameDocument } from './navigation.js'
 import { preferredSystemLanguages } from './preferred-languages.js'
 import { registerProviderRoutes } from './provider-routes.js'
 import { createRunConnector } from './run-assembly.js'
 import { registerSessionRoutes } from './session.js'
 import { registerApprovalRoutes } from './approval-routes.js'
 import { recoveryDelayMs, startRecovery } from './startup-recovery.js'
+import { e2eRouteSeam } from './e2e-routes.js'
 import { openSessionStore } from './tape/open.js'
 import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
+import { replayOnLoad } from './window-replay.js'
 import { registerModelRoutes } from './model-routes.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
@@ -91,11 +93,17 @@ async function main(): Promise<void> {
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
   await app.whenReady()
-  // Phase 0 needs no web permissions (camera, geolocation, notifications…): deny them all.
-  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
+  // No web permissions (camera, geolocation, notifications…) but one: the app's own document may
+  // write the clipboard, for the failure card's 「复制诊断信息」 (spec 02 §失败卡与结束原因). Reading it
+  // stays denied.
+  const mayWriteClipboard = (url: string, permission: string): boolean =>
+    permission === 'clipboard-sanitized-write' && isSameDocument(url, appUrl())
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) =>
+    callback(mayWriteClipboard(contents.getURL(), permission)),
   )
-  session.defaultSession.setPermissionCheckHandler(() => false)
+  session.defaultSession.setPermissionCheckHandler((contents, permission) =>
+    mayWriteClipboard(contents?.getURL() ?? '', permission),
+  )
   const host = await createDesktopHost({
     userDataDir: absolutePath(app.getPath('userData')),
     userId: LOCAL_USER_ID,
@@ -169,8 +177,12 @@ async function main(): Promise<void> {
   }
 
   const appTitle = (): string => locale.i18n.t('app.name')
-  const openWindow = (fresh = false): BrowserWindow =>
-    createWindow(locale.current, appTitle(), fresh)
+  const openWindow = (fresh = false): BrowserWindow => {
+    const opened = createWindow(locale.current, appTitle(), fresh)
+    // A document that loads — the first one, a new window, a reload — gets the state it missed.
+    replayOnLoad(opened.webContents, loop)
+    return opened
+  }
   const newChat = (): void => {
     const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     if (target) target.webContents.send(chatNew.channel, {})
@@ -187,12 +199,14 @@ async function main(): Promise<void> {
   })
   installMenu()
 
-  registerConfigRoutes(ipcMain, host, (next) => void locale.apply(next))
-  registerChatRoutes({ send: broadcast, ipcMain, sessions, loop, gate: recovery.ready })
-  registerSessionRoutes({ ipcMain, sessions, gate: recovery.ready })
-  registerApprovalRoutes({ ipcMain, sessions, gate: recovery.ready })
+  // `ipcMain` itself, except in a development build an e2e asked to count or fail routes (e2e-routes.ts).
+  const routes = e2eRouteSeam(ipcMain, app.isPackaged, process.env)
+  registerConfigRoutes(routes, host, (next) => void locale.apply(next))
+  registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
+  registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
+  registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerWorkspaceRoutes({
-    ipcMain,
+    ipcMain: routes,
     sessions,
     host,
     home,
@@ -212,13 +226,13 @@ async function main(): Promise<void> {
     },
   })
   registerProviderRoutes({
-    ipcMain,
+    ipcMain: routes,
     host,
     providers,
     isPackaged: app.isPackaged,
     log: (line) => console.warn(line),
   })
-  registerModelRoutes({ ipcMain, sessions, providers, host, gate: recovery.ready })
+  registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
   const win = openWindow()
   win.webContents.on('did-finish-load', () => {

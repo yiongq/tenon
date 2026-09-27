@@ -1,6 +1,6 @@
 import { registerRoute, sessionLatest, sessionMessages } from '@tenon-app/contracts'
 import type { ContentBlockContract, IpcMainLike, MessageRowContract } from '@tenon-app/contracts'
-import type { ContentBlock, MessageRow, SessionService } from '@tenon-app/kernel'
+import type { ContentBlock, SessionMessageRow, SessionService } from '@tenon-app/kernel'
 
 /**
  * Reading the stored conversation back (spec 01 §desktop 接线): what the renderer opens on after a
@@ -56,8 +56,16 @@ export function registerSessionRoutes({ ipcMain, sessions, gate }: SessionRoutes
  * A row whose content was nothing but vendor blocks keeps its place with empty content, so paging
  * by `limit` and `orderSeq` means the same thing on both sides of the boundary.
  */
-export function projectedRow(row: MessageRow): MessageRowContract {
-  return { ...row, content: row.content.flatMap(projectedBlock) }
+export function projectedRow(row: SessionMessageRow): MessageRowContract {
+  const { calls, ...rest } = row
+  return {
+    ...rest,
+    content: row.content.flatMap(projectedBlock),
+    // The calls a redraw needs (spec 02 01 修补 6), copied out of the kernel's answer.
+    ...(calls === undefined
+      ? {}
+      : { calls: calls.map((call) => ({ callKey: call.callKey, outcome: call.outcome })) }),
+  }
 }
 
 function projectedBlock(block: ContentBlock): ContentBlockContract[] {

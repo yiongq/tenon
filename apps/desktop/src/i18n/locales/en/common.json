@@ -80,7 +80,10 @@
     "placeholder": "Ask Tenon anything",
     "send": "Send",
     "stop": "Stop",
-    "disclaimer": "Tenon can make mistakes. Check important details."
+    "disclaimer": "Tenon can make mistakes. Check important details.",
+    "pendingHint": "Sending cancels the operation waiting above.",
+    "restoring": "Restoring your last conversation…",
+    "textOnlyTask": "This model can’t use tools, so it can’t run a task. Choose another model."
   },
   "thread": {
     "empty": "Start a conversation",
@@ -132,7 +135,7 @@
     },
     "mark": {
       "localTextOnly": "{host} · text conversation only",
-      "unverified": "Unverified · text conversation only"
+      "unverified": "Unverified · text conversation only · {host}"
     },
     "host": {
       "local": "This computer"
@@ -178,5 +181,173 @@
     },
     "typeModelFor": "{provider} · Type a model ID…",
     "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over"
+  },
+  "leave": {
+    "title": "Stop this task?",
+    "description": "The task is still running. Stop it and leave, or stay here and let it finish.",
+    "stop": "Stop task",
+    "stay": "Stay here"
+  },
+  "queue": {
+    "queued": "Queued",
+    "withdraw": "Withdraw",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "sendNow": "Send now"
+  },
+  "banner": {
+    "approval": "Another session is waiting for your approval",
+    "question": "Another session is waiting for your answer",
+    "resume": "Another session has unfinished work",
+    "goBack": "Go back"
+  },
+  "resume": {
+    "row": "Unfinished last time",
+    "continue": "Continue"
+  },
+  "tool": {
+    "Read": "Read {path}",
+    "Write": "Write {path}",
+    "Edit": "Edit {path}",
+    "Bash": "Run {command}",
+    "Glob": "Find files matching {pattern}",
+    "Grep": "Search files for {pattern}",
+    "WebSearch": "Search the web for {query}",
+    "WebFetch": "Fetch {url}",
+    "AskUserQuestion": "Ask you a question",
+    "Agent": "Hand a subtask to an agent: {description}",
+    "generic": "Use {toolName}",
+    "running": "Running…",
+    "details": "Details",
+    "input": "Input",
+    "output": "Output",
+    "error": "The tool reported an error."
+  },
+  "closure": {
+    "user-rejected": "You declined this.",
+    "superseded": "Not run: you sent a new message instead.",
+    "policy": "Blocked by your organization’s policy.",
+    "user-disabled": "Blocked: this tool is turned off.",
+    "protected": "Blocked: Tenon protects this location.",
+    "inspector": "Blocked by a permission check.",
+    "tool-unavailable": "Not run: this tool is unavailable.",
+    "invalid-input": "Not run: the arguments were invalid.",
+    "stopped": "Stopped.",
+    "app-exit": "Stopped because Tenon closed.",
+    "timed-out": "Stopped: it ran past its timeout.",
+    "crashed": "Tenon closed unexpectedly; it was not run again.",
+    "repair": "No result was recorded.",
+    "unanswered": "Not answered.",
+    "output-truncated": "Not run: the reply was cut off.",
+    "step-limit": "Not run: the task reached its step limit.",
+    "no-progress": "Not run: the calls were not making progress.",
+    "usage-limit": "Not run: the task reached its usage limit.",
+    "blocked-repeatedly": "Not run: too many calls in a row were blocked.",
+    "content-filter": "Not run: the content filter stopped the reply.",
+    "provider-error": "Not run: the model service returned an error.",
+    "no-preference": "No preference.",
+    "typed-answer": "Answered in your own words."
+  },
+  "blocked": {
+    "policy": "{toolName} is blocked by your organization’s policy.",
+    "user-disabled": "{toolName} is turned off.",
+    "protected": "{toolName} can’t reach {target}: Tenon protects it.",
+    "inspector": {
+      "exfiltration": "{toolName} was blocked by a permission check: it might send your data somewhere else.",
+      "inspector-failed": "{toolName} was blocked: a permission check on it did not finish."
+    },
+    "chatReadScope": "In a chat, {toolName} can only open files Tenon saved for this chat; {target} is not one of them.",
+    "told": "The model was told."
+  },
+  "confirm": {
+    "title": {
+      "file": {
+        "read": "Read this file?",
+        "write": "Change this file?"
+      },
+      "command": "Run this command?",
+      "network": {
+        "search": "Search the web?",
+        "url": "Fetch this page?"
+      },
+      "tool": "Use this connector tool?"
+    },
+    "reason": {
+      "irreversible": {
+        "file": "{toolName} makes a change to {path} that can’t be undone.",
+        "command": "{toolName} runs {command}, which can’t be undone.",
+        "tool": "{toolName} makes a change that can’t be undone.",
+        "network": "{toolName} makes a change that can’t be undone."
+      },
+      "outside-workspace": "{path} is outside the workspace ({workspace}).",
+      "network": "{toolName} sends data to {host}.",
+      "elevated": "This command asks for elevated rights: {command}",
+      "default": "{toolName} needs your approval.",
+      "policy": "Your organization asks for approval before {toolName}.",
+      "flagged": {
+        "exfiltration": "{toolName} might send your data somewhere else.",
+        "inspector-failed": "A permission check on {toolName} did not finish, so Tenon is asking you."
+      },
+      "command": "Every command asks first: {command} in {cwd}.",
+      "interaction-required": "{toolName} needs you to take part."
+    },
+    "irreversible": "This can’t be undone.",
+    "allow": "Allow",
+    "deny": "Deny",
+    "key": {
+      "enter": "⏎",
+      "esc": "Esc"
+    },
+    "scope": {
+      "once": "Just this once",
+      "session": "This session",
+      "sessionDomain": "This domain, this session",
+      "subtask": "This subtask",
+      "subtaskDomain": "This domain, this subtask"
+    },
+    "showChange": "Show the change",
+    "arguments": "Arguments",
+    "cwd": "in {cwd}",
+    "answered": {
+      "allowed": "Allowed · {scope}",
+      "denied": "Denied"
+    },
+    "notRun": "Not run"
+  },
+  "failure": {
+    "effects": {
+      "none": "No actions were taken.",
+      "notRun": "{count, plural, one {# call did not happen.} other {# calls did not happen.}}",
+      "uncertain": "{count, plural, one {# call may have run.} other {# calls may have run.}}",
+      "doneHeading": "{count, plural, one {One call completed:} other {# calls completed:}}",
+      "stopped": "{count, plural, one {One call was stopped partway; its later writes did not happen.} other {# calls were stopped partway; their later writes did not happen.}}",
+      "stoppedSent": "{count, plural, one {One request was stopped in flight and may have reached the other side.} other {# requests were stopped in flight and may have reached the other side.}}"
+    },
+    "continue": "Continue",
+    "retry": "Retry",
+    "settings": "Open settings",
+    "copy": "Copy diagnostics",
+    "copied": "Copied"
+  },
+  "summary": {
+    "line": "Read {read} · changed {write}{external, plural, =0 {} other { · sent data out}}"
+  },
+  "thinking": {
+    "label": "Thinking",
+    "took": "Thought for {seconds}s"
+  },
+  "mode": {
+    "label": "Mode",
+    "chat": "Chat",
+    "cowork": "Task"
+  },
+  "folder": {
+    "label": "Folders",
+    "dedicated": "Session folder",
+    "cwd": "commands run here",
+    "add": "Add folder…",
+    "prefill": "{count, plural, one {Use the last folder} other {Use the last # folders}}",
+    "remove": "Remove {name}"
   }
 }

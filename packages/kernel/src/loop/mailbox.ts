@@ -34,6 +34,7 @@ import type { InspectorRegistration } from '../permission/inspector.js'
 import { MODEL_NOTES } from '../prompts/index.js'
 import type {
   AppendResult,
+  ApprovalResolvedPayload,
   ContinuationPayload,
   FactWriter,
   ModelChoiceSetPayload,
@@ -97,6 +98,7 @@ import type { PausedBatch, PendingCard, PendingRoot, ResumeSetup, WaitingCall } 
 import { recoverTape, resumableOf } from './recovery.js'
 import type { Resumable } from './recovery.js'
 import { RunWriteRefusedError, placeOf, readSessionEntries } from './batch.js'
+import { approvalOf } from './calls.js'
 import type { Written } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
@@ -224,6 +226,8 @@ interface OpenedRound {
   readonly incarnationId: string
   /** The top of the Run's own pre-run batch. */
   readonly contextAtEntryId: number
+  /** The user message that opened the Run (its `run_started` cause); absent for any other opener. */
+  readonly openedBy?: string
 }
 
 /** A command's turn: done with a result, or out of the mailbox to prebuild and in again. */
@@ -535,6 +539,7 @@ export function createLoop(deps: LoopDeps): Loop {
       recorded: false,
       lastStop: null,
       errorCode: null,
+      retryOf: null,
     })
     return { status: 'not-sent', code: cause === 'user-stop' ? 'stopped' : 'app-exit' }
   }
@@ -564,6 +569,7 @@ export function createLoop(deps: LoopDeps): Loop {
       recorded: false,
       lastStop: null,
       errorCode: pre.errorCode,
+      retryOf: null,
     })
     return { status: 'not-sent', code: 'config-missing' }
   }
@@ -727,7 +733,7 @@ export function createLoop(deps: LoopDeps): Loop {
         // the new round — so the next request shows the model those results first (F11).
         const superseded = supersedeFacts(tape, now, waiting)
         await appendTo(waiting.sessionId, superseded)
-        emitClosures(ports, box, waiting.sessionId, superseded)
+        emitClosures(ports, box, waiting.sessionId, superseded, waiting)
       }
       opened = await openRound(ports, box, input.sessionId, messages, pre)
     } catch (error) {
@@ -819,7 +825,7 @@ export function createLoop(deps: LoopDeps): Loop {
         queuedId: message.queuedId,
       })
     }
-    return opened
+    return { ...opened, openedBy: last.messageId }
   }
 
   /**
@@ -1116,6 +1122,7 @@ export function createLoop(deps: LoopDeps): Loop {
       recorded: true,
       lastStop: null,
       errorCode: null,
+      retryOf: null,
     })
     return true
   }
@@ -1206,13 +1213,14 @@ export function createLoop(deps: LoopDeps): Loop {
       sessionId: waiting.sessionId,
       runId,
     })
-    emitClosures(ports, box, waiting.sessionId, entries)
+    emitClosures(ports, box, waiting.sessionId, entries, waiting)
     runEnded(ports, box, waiting.sessionId, {
       runId,
       reason,
       recorded: true,
       lastStop: null,
       errorCode: null,
+      retryOf: null,
     })
     autoSend(ports, box, waiting.sessionId, taken, origin)
     return { status: 'applied' }
@@ -1320,6 +1328,7 @@ export function createLoop(deps: LoopDeps): Loop {
       frozen.setup,
       resume,
       facts,
+      waiting,
     )
     return { status: 'applied' }
   }
@@ -1337,6 +1346,8 @@ export function createLoop(deps: LoopDeps): Loop {
     setup: ResumeSetup,
     resume: ResumeBatch,
     facts: readonly NewEntry[],
+    /** The answered call, when an answer opens it: its closures name that card, as the redraw does. */
+    answered: WaitingCall | null = null,
   ): Promise<string> {
     const runId = ids.uuid()
     const head = await tape.head(sessionId)
@@ -1356,7 +1367,7 @@ export function createLoop(deps: LoopDeps): Loop {
         },
       }),
     ])
-    emitClosures(ports, box, sessionId, facts)
+    emitClosures(ports, box, sessionId, facts, answered)
     startRun(ports, box, sessionId, opened, lease, setup.selected.providerId, () =>
       resumeSetup(box, sessionId, lease, setup, resume),
     )
@@ -1452,6 +1463,8 @@ export function createLoop(deps: LoopDeps): Loop {
           outcome: view,
         }),
     }
+    // Whether any of this Run's calls went out: a Run that dispatched one is not 「重试」's to resend.
+    let dispatched = false
     void (async (): Promise<void> => {
       let finished: RunFinish | null = null
       let failure: unknown = null
@@ -1488,7 +1501,11 @@ export function createLoop(deps: LoopDeps): Loop {
               if (lease.signal.aborted && entries.some(isDecisionOrDispatch)) {
                 throw new RunWriteRefusedError()
               }
-              return appendFirstWins(sessionId, incarnationId, entries)
+              const written = await appendFirstWins(sessionId, incarnationId, entries)
+              if (written.entries.some((entry) => entry.name === 'execution/dispatch_committed')) {
+                dispatched = true
+              }
+              return written
             }),
           onUnansweredCall: deps.onUnansweredCall,
           ...(built.resume === undefined ? {} : { resume: built.resume }),
@@ -1515,6 +1532,7 @@ export function createLoop(deps: LoopDeps): Loop {
             recorded: false,
             lastStop: null,
             errorCode: 'unknown',
+            retryOf: null,
           })
           return
         }
@@ -1526,6 +1544,17 @@ export function createLoop(deps: LoopDeps): Loop {
         } catch (error) {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
         }
+        // 「重试」 resends its opener as that same message only while it is still the last one (01
+        // spec.md:395): once a reply or an inserted message followed it, a resend would duplicate it.
+        // Read here, before the finish: from the finish to the auto-send nothing may await. A store
+        // closed by an exit answers nothing, and no 「重试」 is offered.
+        const stillLast =
+          recorded &&
+          opened.openedBy !== undefined &&
+          (await tape.listMessages({ sessionId, limit: 1 }).then(
+            ([last]) => last?.messageId === opened.openedBy,
+            () => false,
+          ))
         // 「从队列取什么」, between the terminal and the finish, in this same task.
         const taken = recorded ? await takeAfterEnd(ports, box, end.reason, lease) : []
         let card: ConfirmRequest | null = null
@@ -1548,6 +1577,7 @@ export function createLoop(deps: LoopDeps): Loop {
           recorded,
           lastStop: finished.lastStop,
           errorCode: finished.errorCode,
+          retryOf: stillLast ? retryOf(opened, dispatched) : null,
         })
         // In the same synchronous stretch as the finish: nothing else takes the root in between.
         autoSend(ports, box, sessionId, taken, origin)
@@ -1679,27 +1709,66 @@ export function createLoop(deps: LoopDeps): Loop {
   }
 
   /** `tool-outcome` for each closure a mailbox task committed — after the commit, never before. */
+  /**
+   * Announces the closures a mailbox task wrote (§工具调用的收口). The view is the one a redraw builds
+   * from the same facts (calls.ts): the closure's own `facts`; the decision in force — one this batch
+   * wrote (a re-judgement), else the waiting call's — so a live BlockedNotice has its slots; and the
+   * answer this batch resolved, so the answered row reads the same live and after a restart.
+   */
   function emitClosures(
     ports: LoopPorts,
     box: RootBox,
     sessionId: string,
     entries: readonly NewEntry[],
+    waiting: WaitingCall | null = null,
   ): void {
+    const decided = new Map<string, PermissionDecidedPayload>()
+    if (waiting !== null) {
+      decided.set(
+        callKeyOf(waiting.ref.runId, waiting.ref.requestSeq, waiting.ref.ordinal),
+        waiting.decision,
+      )
+    }
+    const resolved = new Map<string, ApprovalResolvedPayload>()
+    for (const entry of entries) {
+      if (entry.name === 'tool/permission_decided') {
+        decided.set(callOfFact(entry), entry.payload as unknown as PermissionDecidedPayload)
+      } else if (entry.name === 'tool/approval_resolved') {
+        resolved.set(callOfFact(entry), entry.payload as unknown as ApprovalResolvedPayload)
+      }
+    }
     for (const result of entries) {
       if (result.name !== 'tool/result') continue
       const key = callOfFact(result)
       const outcome = entries.find(
         (entry) => entry.name === 'execution/tool_outcome' && callOfFact(entry) === key,
-      )
-      const source = (outcome?.payload['source'] ?? null) as ClosureSource | null
-      if (source === null) continue
+      )?.payload
+      const source = (outcome?.['source'] ?? null) as ClosureSource | null
+      if (outcome === undefined || source === null) continue
+      const facts = outcome['facts'] as Record<string, string> | undefined
+      const permission = decided.get(key)?.summary
+      const resolution = resolved.get(key)
+      // The card the answer named: the waiting call's decision, as calls.ts reads it by `decisionKey`.
+      const target =
+        resolution === undefined
+          ? undefined
+          : resolution.decisionKey === waiting?.decisionKey
+            ? waiting.decision.confirm?.target
+            : decided.get(key)?.confirm?.target
       emit(ports, {
         type: 'tool-outcome',
         rootSessionId: box.rootSessionId,
         sessionId,
         callKey: key,
         providerToolCallId: String(result.payload['providerToolCallId']),
-        outcome: notRunView(source, [result]),
+        outcome: {
+          ...notRunView(source, [result]),
+          ...(facts === undefined ? {} : { facts: { ...facts } }),
+          ...(permission === undefined ? {} : { permission }),
+          ...(resolution === undefined || target === undefined
+            ? {}
+            : { approval: approvalOf(resolution, target) }),
+        },
       })
     }
   }
@@ -1723,7 +1792,7 @@ export function createLoop(deps: LoopDeps): Loop {
     if (waiting === null) return false
     const entries = stopFacts(tape, now, waiting)
     await appendTo(waiting.sessionId, entries)
-    emitClosures(ports, box, waiting.sessionId, entries)
+    emitClosures(ports, box, waiting.sessionId, entries, waiting)
     return true
   }
 
@@ -2476,6 +2545,14 @@ function stoppedAssembly(setup: ResumeSetup): RunAssembly {
 /** A tool fact's call, `<runId>:<requestSeq>:<i>` (§键与挂靠). */
 function callOfFact(entry: NewEntry): string {
   return `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
+}
+
+/**
+ * 「重试」's message (§失败卡与结束原因): the user message that opened the Run, when none of the Run's
+ * calls was dispatched; a Run an answer, 「继续」, a resume or a handoff opened has none.
+ */
+function retryOf(opened: OpenedRound, dispatched: boolean): string | null {
+  return opened.openedBy !== undefined && !dispatched ? opened.openedBy : null
 }
 
 /** Nothing queued, nothing running, no live lease: an entry may begin a lease. */

@@ -75,7 +75,7 @@ test('Stop aborts the in-flight reply down to the socket and keeps the partial t
     await expect(page.getByTestId('assistant-message').getByTestId('assistant-text')).toContainText(
       'word2',
     )
-    await page.getByTestId('composer-cancel').click()
+    await page.getByTestId('composer-stop').click()
 
     const server = fake
     await expect.poll(() => server.aborted, { timeout: 5000 }).toBe(true)
@@ -89,7 +89,7 @@ test('Stop aborts the in-flight reply down to the socket and keeps the partial t
   }
 })
 
-test('a provider failure shows localized copy chosen by its error code', async () => {
+test('a rejected key ends the Run on a failure card that sends the user to settings', async () => {
   fake = await startFakeAnthropic({
     chunks: [],
     failWith: { status: 401, type: 'authentication_error', message: 'invalid x-api-key' },
@@ -100,12 +100,19 @@ test('a provider failure shows localized copy chosen by its error code', async (
   try {
     await page.getByTestId('composer-input').fill('hi')
     await page.keyboard.press('Enter')
-    const error = page.getByTestId('message-error')
-    await expect(error).toHaveAttribute('data-error-code', 'auth')
-    await expect(error.getByTestId('message-error-text')).toHaveText(
-      'API 密钥被拒绝，请检查供应商设置。',
-    )
-    await expect(error.getByTestId('message-retry')).toHaveText('重试')
+    // A Run's failure reads its end code, never the error event's own code (spec 02 §失败卡与结束原因).
+    const card = page.getByTestId('failure-card')
+    await expect(card).toHaveAttribute('data-code', 'provider-error')
+    await expect(card).toHaveAttribute('data-visual', 'danger')
+    await expect(card.getByTestId('failure-what')).toHaveText('模型服务（anthropic）出错。')
+    // A failure interrupts: an alert, as phase 1's error was (components.md LiveRegion).
+    await expect(card).toHaveAttribute('role', 'alert')
+    await expect(card.getByTestId('failure-effects')).toHaveText('没有执行任何操作。')
+    const action = card.getByTestId('failure-action')
+    await expect(action).toHaveAttribute('data-action', 'settings')
+    await expect(action).toHaveText('去设置')
+    // 401 is one request, never retried (spec 02 验收 16).
+    expect(fake.requests).toHaveLength(1)
   } finally {
     await app.close()
   }
@@ -125,8 +132,11 @@ test('Retry re-sends the failed turn once and the reply then streams', async () 
   try {
     await page.getByTestId('composer-input').fill('question')
     await page.keyboard.press('Enter')
-    await expect(page.getByTestId('message-error')).toHaveAttribute('data-error-code', 'provider')
-    await page.getByTestId('message-retry').click()
+    const card = page.getByTestId('failure-card')
+    await expect(card).toHaveAttribute('data-code', 'provider-error')
+    // Started by a user message and nothing dispatched: 「重试」, which sends that message again.
+    await expect(card.getByTestId('failure-action')).toHaveAttribute('data-action', 'retry')
+    await card.getByTestId('failure-action').click()
     await expect(page.getByTestId('assistant-message').getByTestId('assistant-text')).toHaveText(
       'All good',
     )

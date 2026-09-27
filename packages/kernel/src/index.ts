@@ -323,9 +323,11 @@ export type {
   SendQuery,
   SendResult,
   SessionIncarnation,
+  SessionMessageRow,
   SessionService,
   SessionServiceOptions,
 } from './session/service.js'
+export type { RowCall } from './loop/calls.js'
 // The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
 // revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
 export { readEffectiveMessages } from './tape/replay.js'

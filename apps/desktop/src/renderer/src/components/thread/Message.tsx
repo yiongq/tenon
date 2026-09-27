@@ -2,7 +2,7 @@ import { MessagePrimitive } from '@assistant-ui/react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { blockRegistry, userBlockRegistry } from './block-registry'
-import { ThreadError } from './ThreadError'
+import { RunEndCard } from './RunEndCard'
 
 /** Right-aligned bubble, width-capped; interface font, because it is the user's own text. */
 export function UserMessage(): JSX.Element {
@@ -33,9 +33,7 @@ export function AssistantMessage(): JSX.Element {
       <div className="w-full text-text-primary">
         <MessagePrimitive.Parts components={blockRegistry} />
       </div>
-      <MessagePrimitive.Error>
-        <ThreadError />
-      </MessagePrimitive.Error>
+      <RunEndCard />
     </MessagePrimitive.Root>
   )
 }

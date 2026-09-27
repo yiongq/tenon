@@ -34,6 +34,7 @@ describe('ipc registry', () => {
       'chat.queue',
       'config.locale',
       'confirm.request',
+      'run.state',
     ])
     expect(new Set([...ROUTE_CHANNELS, ...EVENT_CHANNELS]).size).toBe(
       ROUTE_CHANNELS.length + EVENT_CHANNELS.length,

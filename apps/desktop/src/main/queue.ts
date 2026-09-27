@@ -23,6 +23,8 @@ export interface DesktopQueue extends RunQueue {
   edit(root: string, queuedId: string, text: string): boolean
   /** `queue-held` from the kernel: the host a held round waits on, or null once it is cleared. */
   setHeld(root: string, host: string | null): void
+  /** Every root whose queue is not empty, as `chat.queue` shows it: what a new window is re-sent. */
+  views(): ReadonlyArray<readonly [string, QueueView]>
 }
 
 export function createRunQueue(
@@ -33,12 +35,15 @@ export function createRunQueue(
   let nextSeq = 1
 
   const queueOf = (root: string): QueuedMessage[] => queues.get(root) ?? []
-  const notify = (root: string): void => {
+  const viewOf = (root: string): QueueView => {
     const host = held.get(root)
-    options.onChange?.(root, {
+    return {
       items: queueOf(root).map((item) => ({ queuedId: item.queuedId, text: item.text })),
       ...(host === undefined ? {} : { held: { host } }),
-    })
+    }
+  }
+  const notify = (root: string): void => {
+    options.onChange?.(root, viewOf(root))
   }
   const store = (root: string, items: QueuedMessage[]): void => {
     if (items.length === 0) queues.delete(root)
@@ -105,6 +110,11 @@ export function createRunQueue(
       if (host === null) held.delete(root)
       else held.set(root, host)
       notify(root)
+    },
+    views() {
+      return [...new Set([...queues.keys(), ...held.keys()])].map(
+        (root) => [root, viewOf(root)] as const,
+      )
     },
   }
 }

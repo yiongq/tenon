@@ -56,6 +56,9 @@ import type { ToolKey } from '../tools/table.js'
 import type { ForkOrigin, SessionStartPayload } from '../tape/entry.js'
 import { sessionStartKey } from '../tape/provenance.js'
 import type { MessageRow, TapeStore } from '../tape/store.js'
+import { callsByMessage } from '../loop/calls.js'
+import type { RowCall } from '../loop/calls.js'
+import { readSessionEntries } from '../loop/batch.js'
 import { createTape } from '../tape/tape.js'
 import type { TapeFact } from '../tape/tape.js'
 import { carryEntries, readSessionFacts } from './facts.js'
@@ -100,10 +103,16 @@ export interface SessionIncarnation {
   readonly startEntryId: number
 }
 
+/**
+ * A message row as a renderer reads it: the projection's row, and on an assistant row with tool
+ * calls, `calls[i]` for its i-th `tool-request` block (spec 02 01 修补 6).
+ */
+export type SessionMessageRow = MessageRow & { readonly calls?: readonly RowCall[] }
+
 /** What a renderer opens on: the newest session and the tail of its messages. */
 export interface LatestSession {
   readonly sessionId: string
-  readonly messages: readonly MessageRow[]
+  readonly messages: readonly SessionMessageRow[]
 }
 
 /** A message to send: its text, or the queued item to send now (plan step 17). */
@@ -205,7 +214,7 @@ export interface SessionService {
    */
   latestSession(q: { readonly limit: number }): Promise<LatestSession | null>
   /** One page of a session's messages. No cursor = the tail, which is where a reader opens. */
-  listMessages(q: ListMessagesQuery): Promise<MessageRow[]>
+  listMessages(q: ListMessagesQuery): Promise<SessionMessageRow[]>
   /**
    * Hands the loop the host's run-time ports. Called once, before `recover()`; a second call throws.
    * Before it, every loop command is `refused` (`send` with `not-bound`) and `stop` answers
@@ -303,6 +312,19 @@ export function constructSessionService(
     return typeof parent === 'string' ? parent : sessionId
   }
 
+  /** The rows with each assistant row's calls attached, read off the Tape once per page. */
+  async function withCalls(
+    sessionId: string,
+    rows: readonly MessageRow[],
+  ): Promise<SessionMessageRow[]> {
+    if (!rows.some((row) => row.role === 'assistant')) return [...rows]
+    const calls = callsByMessage(await readSessionEntries(tape, sessionId))
+    return rows.map((row) => {
+      const own = row.role === 'assistant' ? calls.get(row.messageId) : undefined
+      return own === undefined || own.length === 0 ? row : { ...row, calls: own }
+    })
+  }
+
   function startFact(
     sessionId: string,
     incarnationId: string,
@@ -381,12 +403,15 @@ export function constructSessionService(
       if (restorable === undefined) return null
       // A sub-agent's session opens as its root (B3, 01 修补 6「启动恢复」).
       const sessionId = await rootSessionOf(restorable.sessionId)
-      const messages = await tape.listMessages({ sessionId, limit: q.limit })
+      const messages = await withCalls(
+        sessionId,
+        await tape.listMessages({ sessionId, limit: q.limit }),
+      )
       return { sessionId, messages }
     },
 
-    listMessages(q): Promise<MessageRow[]> {
-      return tape.listMessages(q)
+    async listMessages(q): Promise<SessionMessageRow[]> {
+      return withCalls(q.sessionId, await tape.listMessages(q))
     },
 
     sessionFacts: (q) => loop.sessionFacts(q),

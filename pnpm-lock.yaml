@@ -123,6 +123,9 @@ importers:
         specifier: 'catalog:'
         version: 4.6.5
     devDependencies:
+      '@formatjs/icu-messageformat-parser':
+        specifier: 3.5.18
+        version: 3.5.18
       '@playwright/test':
         specifier: 'catalog:'
         version: 1.63.0

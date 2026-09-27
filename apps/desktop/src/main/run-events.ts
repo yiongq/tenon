@@ -159,12 +159,21 @@ function terminalEvent(
       code: ERROR_CODE[event.errorCode],
       detail,
       endReason: event.reason,
+      runId: event.runId,
+      retryOf: event.retryOf,
     }
   }
   const stopped = event.reason.code === 'user-stopped' || event.reason.code === 'shutdown-aborted'
   const stopReason: ChatStopReason =
     event.lastStop === null ? (stopped ? 'aborted' : 'end-turn') : STOP_REASON[event.lastStop]
-  return { type: 'done', sessionId, stopReason, endReason: event.reason }
+  return {
+    type: 'done',
+    sessionId,
+    stopReason,
+    endReason: event.reason,
+    runId: event.runId,
+    retryOf: event.retryOf,
+  }
 }
 
 /** The never-rendered `detail`: which Run ended, and by which end reason. */

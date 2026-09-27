@@ -2,12 +2,13 @@ import {
   chatContinue,
   chatQueueAct,
   chatQueueEvent,
+  runStateEvent,
   chatSend,
   chatSendNow,
   chatStop,
   registerRoute,
 } from '@tenon-app/contracts'
-import type { IpcMainLike } from '@tenon-app/contracts'
+import type { IpcMainLike, RouteResponse } from '@tenon-app/contracts'
 import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
   AbsolutePath,
@@ -113,10 +114,50 @@ function abortOne(entry: Registered, cause: RunAbortCause): void {
   if (!entry.controller.signal.aborted) entry.controller.abort(cause)
 }
 
-export function createRunRegistry(clock: Pick<HostClock, 'setTimeout'>): RunRegistry {
+/** What `run.state` says about a root: its un-aborted lease, and the Run that lease opened. */
+export interface RootRunState {
+  readonly running: boolean
+  readonly runId: string | null
+}
+
+export function createRunRegistry(
+  clock: Pick<HostClock, 'setTimeout'>,
+  onChange?: (rootSessionId: string, state: RootRunState) => void,
+): RunRegistry {
   const live = new Map<string, Registered>()
   const waiters = new Set<() => void>()
   let shuttingDown = false
+  /**
+   * `run.state` (§进行中、暂停与 RunRegistry「何时推」): a root whose two values changed is pushed once
+   * per synchronous stretch, with its last values — a `finish` and the next `begin` in one stretch
+   * (an auto-send) are one push.
+   */
+  const dirty = new Set<string>()
+  const stateOf = (root: string): RootRunState => {
+    const entry = live.get(root)
+    return entry === undefined
+      ? { running: false, runId: null }
+      : { running: !entry.controller.signal.aborted, runId: entry.runId }
+  }
+  const pushed = new Map<string, string>()
+  const changed = (root: string): void => {
+    if (onChange === undefined) return
+    if (dirty.size === 0) {
+      queueMicrotask(() => {
+        const batch = Array.from(dirty)
+        dirty.clear()
+        for (const each of batch) {
+          const state = stateOf(each)
+          const key = `${String(state.running)}:${String(state.runId)}`
+          if (pushed.get(each) === key) continue
+          pushed.set(each, key)
+          if (!state.running && state.runId === null) pushed.delete(each)
+          onChange(each, state)
+        }
+      })
+    }
+    dirty.add(root)
+  }
 
   const registry: RunRegistry = {
     begin(q) {
@@ -137,18 +178,26 @@ export function createRunRegistry(clock: Pick<HostClock, 'setTimeout'>): RunRegi
           get stopRequested(): boolean {
             return entry.stopRequested
           },
-          abort: (cause) => abortOne(entry, cause),
+          abort: (cause) => {
+            abortOne(entry, cause)
+            changed(q.rootSessionId)
+          },
           finish: () => {
             entry.detach()
             if (live.get(q.rootSessionId) === entry) live.delete(q.rootSessionId)
+            changed(q.rootSessionId)
             if (live.size === 0) for (const resolve of waiters) resolve()
           },
         },
       }
       // Watched from the moment the lease exists: a window that disappears while the Run is still
       // being prepared must not leave one behind either.
-      entry.detach = watchOwner(ownerOf(q.origin), () => abortOne(entry, 'close-window'))
+      entry.detach = watchOwner(ownerOf(q.origin), () => {
+        abortOne(entry, 'close-window')
+        changed(q.rootSessionId)
+      })
       live.set(q.rootSessionId, entry)
+      changed(q.rootSessionId)
       return entry.lease
     },
     running(origin) {
@@ -165,7 +214,10 @@ export function createRunRegistry(clock: Pick<HostClock, 'setTimeout'>): RunRegi
             ? root === target.rootSessionId
             : entry.origin === target.origin),
       )
-      for (const [, entry] of targets) abortOne(entry, cause)
+      for (const [root, entry] of targets) {
+        abortOne(entry, cause)
+        changed(root)
+      }
       return targets.length > 0
     },
     settled(timeoutMs) {
@@ -185,7 +237,9 @@ export function createRunRegistry(clock: Pick<HostClock, 'setTimeout'>): RunRegi
     },
     noteRunStarted(rootSessionId, runId) {
       const entry = live.get(rootSessionId)
-      if (entry !== undefined) entry.runId ??= runId
+      if (entry === undefined || entry.runId !== null) return
+      entry.runId = runId
+      changed(rootSessionId)
     },
     snapshot() {
       return [...live.entries()].map(([rootSessionId, entry]) => ({
@@ -215,7 +269,15 @@ export interface DesktopLoopOptions {
 
 export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
   const log = options.log ?? ((line: string): void => console.warn(line))
-  const registry = createRunRegistry(options.clock)
+  const registry = createRunRegistry(options.clock, (root, state) => {
+    try {
+      options.send(runStateEvent.channel, { sessionId: root, ...state })
+    } catch (error) {
+      log(
+        `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  })
   const queue = createRunQueue({
     onChange: (root, view) => {
       try {
@@ -265,16 +327,25 @@ export interface ChatDeps {
   readonly gate?: Promise<void>
 }
 
+type SendAnswer = RouteResponse<typeof chatSend>
+
+/** What the renderer is told of a send the kernel took (refused ones are route errors). */
+function answerOf(
+  result: Exclude<Awaited<ReturnType<SessionService['send']>>, { status: 'refused' }>,
+): SendAnswer {
+  return { accepted: true, status: result.status }
+}
+
 export function registerChatRoutes(deps: ChatDeps): void {
   const { send, ipcMain, sessions, loop, gate } = deps
   const log = deps.log ?? ((line: string): void => console.warn(line))
-  const accepted = { accepted: true as const }
 
   registerRoute(ipcMain, chatSend, async ({ sessionId, text }, event) => {
     await gate
-    const fail = (detail: string): typeof accepted => {
+    // Nothing of it was written: the renderer settles the message it showed (plan step 20).
+    const fail = (detail: string): SendAnswer => {
       emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail })
-      return accepted
+      return { accepted: true, status: 'not-sent' }
     }
     if (sessions === null || loop === null) return fail(NO_STORE)
     // Every id on the tape is a canonical UUID; a session id that is not one would be taken for a
@@ -286,7 +357,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
     // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
-    return accepted
+    return answerOf(result)
   })
 
   // Cmd/Ctrl+Enter: stop the Run the user saw, then this is the next message (H13).
@@ -294,7 +365,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     await gate
     if (sessions === null || loop === null) {
       emitChatEvent(send, log, { type: 'error', sessionId, code: 'unknown', detail: NO_STORE })
-      return accepted
+      return { accepted: true, status: 'not-sent' } satisfies SendAnswer
     }
     if (!isCanonicalUuid(sessionId)) throw new Error(NOT_A_SESSION_ID)
     const result = await sessions.send({
@@ -306,7 +377,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     if (result.status === 'refused') {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
-    return accepted
+    return answerOf(result)
   })
 
   // The queued bubble's actions: withdraw, edit, send now. The first two are the queue's own; a
@@ -329,7 +400,8 @@ export function registerChatRoutes(deps: ChatDeps): void {
     if (result.status === 'refused') {
       throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
     }
-    return status(result.status !== 'not-found')
+    // Held again for a public host: the renderer reopens the model menu's confirmation on it.
+    return { ...status(result.status !== 'not-found'), sendStatus: result.status }
   })
 
   registerRoute(ipcMain, chatStop, async ({ sessionId }) => {

@@ -137,6 +137,19 @@ describe('the queue', () => {
     expect(b.queuedId).not.toBe(c.queuedId)
     expect(await queue.peek(CHILD)).toEqual([])
   })
+
+  it('edits a message in place: it keeps its seq, so a batch boundary still takes it in turn', async () => {
+    // `chat.queue.act` edit (01 修补 6「排队、立即发送与继续」): the words change, the place does not —
+    // an insert up to a later message's seq still carries the edited one, ahead of it.
+    const queue = createRunQueue()
+    const a = await queue.enqueue(ROOT, 'a', { urgent: false })
+    const b = await queue.enqueue(ROOT, 'b', { urgent: false })
+    expect(queue.edit(ROOT, a.queuedId, 'a, edited')).toBe(true)
+    const [edited] = await queue.peek(ROOT)
+    expect(edited).toMatchObject({ queuedId: a.queuedId, seq: a.seq, text: 'a, edited' })
+    const taken = await queue.take(ROOT, { upToSeq: b.seq, urgentOnly: false })
+    expect(taken.map((item) => item.text)).toEqual(['a, edited', 'b'])
+  })
 })
 
 /** What run-events.ts sends for these loop events, and what it hands the registry. */
@@ -177,17 +190,19 @@ describe('run-events', () => {
     ])
   })
 
+  const ended = (over: Partial<Extract<SessionEvent, { type: 'run-ended' }>>): SessionEvent => ({
+    ...root,
+    type: 'run-ended',
+    runId: 'r1',
+    reason: { code: 'completed' },
+    recorded: true,
+    lastStop: 'end-turn',
+    errorCode: null,
+    retryOf: null,
+    ...over,
+  })
+
   it('ends a Run as done or error by 01’s tables', () => {
-    const ended = (over: Partial<Extract<SessionEvent, { type: 'run-ended' }>>): SessionEvent => ({
-      ...root,
-      type: 'run-ended',
-      runId: 'r1',
-      reason: { code: 'completed' },
-      recorded: true,
-      lastStop: 'end-turn',
-      errorCode: null,
-      ...over,
-    })
     const { chat } = mapped([
       ended({ lastStop: 'tool-use' }),
       ended({ lastStop: 'max-tokens', reason: { code: 'output-truncated', maxTokens: 1 } }),
@@ -228,6 +243,44 @@ describe('run-events', () => {
       'provider-error',
       'completed',
     ])
+    // And the Run itself, done and error alike: the failure card copies it (§失败卡与结束原因), and
+    // a provider error is the card that offers 「复制诊断信息」 most (plan step 20).
+    expect(chat.map((event) => ('runId' in event ? event.runId : 'absent'))).toEqual([
+      'r1',
+      'r1',
+      null,
+      null,
+      null,
+      'r1',
+    ])
+  })
+
+  it('passes the Run’s retryOf on done and error alike, null included (plan step 20)', () => {
+    // §chat.event: `retryOf` is `run-ended.retryOf` — 「重试」 is offered only when it is not null and
+    // resends the message it names; the renderer never infers it.
+    const providerError = {
+      code: 'provider-error',
+      providerId: 'anthropic',
+      errorCode: 'server',
+      providerReason: null,
+      attempts: 1,
+    } as const
+    const { chat } = mapped([
+      ended({ retryOf: 'm1' }),
+      ended({ lastStop: null, errorCode: 'server', reason: providerError, retryOf: 'm2' }),
+      ended({ lastStop: null, errorCode: 'server', reason: providerError }),
+      ended({ runId: null, lastStop: null, reason: { code: 'user-stopped' }, recorded: false }),
+      ended({ ...child, retryOf: 'm-child' }),
+    ])
+    expect(
+      chat.map((event) => [event.type, 'retryOf' in event ? event.retryOf : 'absent']),
+    ).toEqual([
+      ['done', 'm1'],
+      ['error', 'm2'],
+      ['error', null],
+      ['done', null],
+    ])
+    for (const event of chat) expect(chatEventSchema.parse(event)).toEqual(event)
   })
 
   it('forwards a root’s committed user message, and hands queue-held to the queue (plan step 17)', () => {
@@ -302,7 +355,8 @@ describe('chat.send and the queue (plan step 17)', () => {
     }
     registerChatRoutes({ send: () => {}, ipcMain, sessions, loop, log: () => {} })
     const answer = await handlers.get('chat.send')?.({}, { sessionId: ROOT, text: 'hi' })
-    expect(answer).toEqual({ ok: true, data: { accepted: true } })
+    // The kernel's own status goes back: the renderer keeps waiting for the queue push (plan step 20).
+    expect(answer).toEqual({ ok: true, data: { accepted: true, status: 'queued' } })
     expect((await loop.queue.peek(ROOT)).map((item) => item.text)).toEqual(['hi'])
     expect(sent).toEqual([
       { sessionId: ROOT, items: [{ queuedId: expect.any(String), text: 'hi' }] },

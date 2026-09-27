@@ -1,5 +1,4 @@
 import {
-  chatQueueEvent,
   invokeRoute,
   providerList,
   sessionFacts,
@@ -26,6 +25,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { useConversation } from '@/runtime/conversation'
 import { TypeModelDialog } from './TypeModelDialog'
 
@@ -80,13 +80,20 @@ export function ModelMenu(): JSX.Element {
   /** A catalogue key that arrives as DATA (a `nameKey`, a `purposeKey`), as the settings card does. */
   const fromData = (key: string): string => t(key as never)
   const { sessionId, startSession } = useConversation()
-  const running = useAuiState((s) => s.thread.isRunning)
+  const store = useSessionStore()
+  const snapshot = useSessionSnapshot()
+  // 「下一条消息起生效」 while a Run is live or something waits (§模型菜单与输入框) — main's state, not
+  // assistant-ui's, which this runtime never sets.
+  const running = snapshot.running || snapshot.pending !== null
   const hasHistory = useAuiState((s) => s.thread.messages.length > 0)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>(LIST)
   const [entries, setEntries] = useState<readonly ProviderEntryContract[]>([])
   const [current, setCurrent] = useState<SessionModelChoice | null>(null)
-  const [profile, setProfile] = useState<'chat' | 'cowork'>('chat')
+  const [loadedProfile, setProfile] = useState<'chat' | 'cowork'>('chat')
+  // The session's own facts first: ModeSwitch changes the profile without going through this menu.
+  const factsProfile = snapshot.facts?.profile ?? null
+  const profile = factsProfile ?? loadedProfile
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [typing, setTyping] = useState<ProviderEntryContract | null>(null)
 
@@ -100,27 +107,26 @@ export function ModelMenu(): JSX.Element {
     [sessionId],
   )
 
+  // Again when the profile changes: the model in effect is that profile's default until one is chosen.
   useEffect(() => {
     void reload()
-  }, [reload])
+  }, [reload, factsProfile])
 
-  // A round the kernel held for a public host: the menu opens on the same confirmation.
-  useEffect(
-    () =>
-      window.tenon.on(chatQueueEvent.channel, (payload) => {
-        const parsed = chatQueueEvent.payload.safeParse(payload)
-        if (!parsed.success || parsed.data.sessionId !== sessionId) return
-        const held = parsed.data.held
-        if (held === undefined) return
-        void invokeRoute(window.tenon, sessionModelChoice, { sessionId }).then((choice) => {
-          if (!choice.ok) return
-          setCurrent(choice.data)
-          setView({ kind: 'confirm', host: held.host, choice: choice.data })
-          setOpen(true)
-        })
-      }),
-    [sessionId],
-  )
+  // A round the kernel held for a public host — a queued send, or 「继续」 — opens the menu on the
+  // same confirmation, also when the hold was pushed before this session was on screen.
+  // Keyed on the hold's sequence alone: a queue push while a hold lasts (an edit, a withdraw) carries
+  // `held` again as a new object, and must not reopen a confirmation the user closed.
+  const { heldSeq } = snapshot
+  useEffect(() => {
+    const held = store.getSnapshot().held
+    if (held === null || heldSeq === 0) return
+    void invokeRoute(window.tenon, sessionModelChoice, { sessionId }).then((choice) => {
+      if (!choice.ok) return
+      setCurrent(choice.data)
+      setView({ kind: 'confirm', host: held.host, choice: choice.data })
+      setOpen(true)
+    })
+  }, [heldSeq, sessionId, store])
 
   const choose = async (choice: Choice): Promise<void> => {
     const written = await invokeRoute(window.tenon, sessionSelectModel, { sessionId, ...choice })
@@ -175,7 +181,9 @@ export function ModelMenu(): JSX.Element {
     if (row.mark === 'local-text-only') {
       return t('model.mark.localTextOnly', { host: hostLabel(entry) })
     }
-    if (row.mark === 'unverified-text-only') return t('model.mark.unverified')
+    if (row.mark === 'unverified-text-only') {
+      return t('model.mark.unverified', { host: hostLabel(entry) })
+    }
     const purpose = row.purposeKey === undefined ? row.id : fromData(row.purposeKey)
     return t('model.row.line', { purpose, host: hostLabel(entry) })
   }
@@ -196,6 +204,15 @@ export function ModelMenu(): JSX.Element {
         ? t('model.trigger.withEffort', { model: current.modelId, effort: levelName(effortShown) })
         : current.modelId
   const configured = entries.filter((entry) => entry.configured)
+  // A task whose model holds text conversations only cannot be sent (§表外模型与不发工具): the
+  // composer disables 「发送」 and says why.
+  const mark =
+    row?.mark ??
+    (current !== null && entryOf(current.providerId) !== undefined
+      ? 'unverified-text-only'
+      : undefined)
+  const textOnlyTask = profile === 'cowork' && mark !== undefined && mark !== 'verified'
+  useEffect(() => store.setTextOnlyTask(textOnlyTask), [store, textOnlyTask])
   const handTyped =
     current !== null && row === undefined && entryOf(current.providerId) !== undefined
       ? current
@@ -227,7 +244,13 @@ export function ModelMenu(): JSX.Element {
           </span>
           <ChevronDownIcon className="size-4 text-text-muted" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="top" className="min-w-72" data-testid="model-menu">
+        <DropdownMenuContent
+          align="end"
+          side="top"
+          // As wide as its rows, not its trigger: a purpose line never wraps (00 验收 12).
+          className="w-max min-w-72 max-w-(--available-width)"
+          data-testid="model-menu"
+        >
           {view.kind === 'confirm' ? (
             <DropdownMenuGroup data-testid="model-confirm">
               <DropdownMenuLabel className="max-w-72 whitespace-normal">
@@ -249,9 +272,14 @@ export function ModelMenu(): JSX.Element {
           ) : (
             <>
               {running ? (
-                <DropdownMenuLabel data-testid="model-next-message">
-                  {t('model.nextMessage')}
-                </DropdownMenuLabel>
+                // A group label must sit in a group (Base UI throws otherwise).
+                <DropdownMenuGroup>
+                  {/* Base UI hides a group label from assistive tech (it only names its group);
+                      this one is a note the menu is read with. */}
+                  <DropdownMenuLabel aria-hidden={false} data-testid="model-next-message">
+                    {t('model.nextMessage')}
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
               ) : null}
               {entries.map((entry) =>
                 entry.configured ? (
@@ -311,9 +339,15 @@ export function ModelMenu(): JSX.Element {
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent data-testid="model-effort-levels">
                       {running ? (
-                        <DropdownMenuLabel className="max-w-64 whitespace-normal">
-                          {t('model.nextMessageCache')}
-                        </DropdownMenuLabel>
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel
+                            aria-hidden={false}
+                            data-testid="model-next-message-cache"
+                            className="max-w-64 whitespace-normal"
+                          >
+                            {t('model.nextMessageCache')}
+                          </DropdownMenuLabel>
+                        </DropdownMenuGroup>
                       ) : null}
                       {row.effortLevels.map((level, i, all) => (
                         <DropdownMenuItem

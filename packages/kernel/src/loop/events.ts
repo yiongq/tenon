@@ -32,6 +32,7 @@ export type SessionEvent = { readonly rootSessionId: string; readonly sessionId:
       recorded: boolean // false：终态没进 Tape（新一轮缺 key；登记后 append 前被中止；退出时 TapeClosedError）
       lastStop: StopReason | null
       errorCode: ProviderErrorCode | null // 结束本 Run 的那次 error 事件的 code；新一轮缺 key（recorded: false）为 'auth'；被中止结束、没有 error 事件的为 null
+      retryOf: string | null // 打开本 Run 的用户消息的 messageId，且本 Run 没有任何 dispatch_committed：「重试」重发它（§失败卡与结束原因）；由答复、「继续」、续跑、交接打开的 Run 与没打开 Run 的为 null
     }
 )
 

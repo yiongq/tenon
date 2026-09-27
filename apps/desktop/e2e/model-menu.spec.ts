@@ -2,8 +2,21 @@ import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
+import type { Page } from '@playwright/test'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import type { LaunchedApp } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { pushesOf, recordPushes } from './helpers/tools.js'
+
+/** A `chat.queue` push as main sent it. */
+interface QueuePush {
+  readonly items: ReadonlyArray<{ readonly queuedId: string; readonly text: string }>
+  readonly held?: { readonly host: string }
+}
+
+/** zhipu's default endpoint, which nothing here sends to. */
+const ZHIPU_HOST = 'open.bigmodel.cn'
+const HELD_FOR_ZHIPU = `Earlier messages will be sent to ${ZHIPU_HOST}`
 
 /**
  * The model menu in the real shell (spec 02 §模型菜单与输入框; plan step 19: 旧 38, 旧 39, the menu
@@ -97,6 +110,194 @@ test('asks before history on this computer goes to a public host, and can open a
     await expect(page.getByTestId('thread-empty')).toBeVisible()
     await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
     expect(ollama.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('from one public host to another asks nothing, and a typed model’s row names its host as the others do (A9, A15)', async () => {
+  ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  const userData = makeUserDataDir('model-public')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: ollama.baseURL } },
+  })
+  // Anthropic on its own public host this time: a key and no base URL. Nothing is sent to it.
+  const { app, page } = await launchTenon({
+    userData,
+    env: { ZHIPU_API_KEY: 'e2e-zhipu-key', ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
+  })
+  try {
+    await page.getByTestId('composer-input').fill('some history')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    const current = page.getByTestId('model-menu-current')
+    const trigger = page.getByTestId('model-menu-trigger')
+    // This computer → a public host: the confirmation, then the switch.
+    await trigger.click()
+    await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
+    await page.getByTestId('model-confirm-switch').click()
+    await expect(current).toHaveText('glm-5.3-flash · Max')
+    // A public host → another public one: the history is out already, so nothing to confirm.
+    await trigger.click()
+    await page.getByTestId('model-row-anthropic-claude-sonnet-5').click()
+    await expect(page.getByTestId('model-confirm')).toHaveCount(0)
+    await expect(current).toHaveText('claude-sonnet-5 · High')
+
+    // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
+    await trigger.click()
+    await page.getByTestId('model-more').click()
+    await page.getByTestId('model-type-ollama').click()
+    await page.getByTestId('type-model-input').fill('my-local-model')
+    await page.getByTestId('type-model-use').click()
+    await expect(current).toHaveText('my-local-model')
+    await trigger.click()
+    await expect(page.getByTestId('model-row-ollama-my-local-model')).toContainText(
+      'Unverified · text conversation only · This computer',
+    )
+    expect(ollama.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a round held for a public host opens the menu on the same confirmation (间接切公网, §模型菜单与输入框)', async () => {
+  ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  const userData = makeUserDataDir('model-held')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: ollama.baseURL } },
+  })
+  const { app, page } = await launchTenon({ userData, env: { ZHIPU_API_KEY: 'e2e-zhipu-key' } })
+  try {
+    await page.getByTestId('composer-input').fill('keep this local')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    // The default moves to a public host in the settings card — not through this session's menu.
+    await page.getByTestId('account-row').click()
+    await page.getByTestId('account-providers').click()
+    await page.getByTestId('provider-select').selectOption('zhipu')
+    await page.getByTestId('model-select').selectOption('glm-5.3-flash')
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect(page.getByTestId('model-menu')).toHaveCount(0)
+
+    // The next message would take this history there: the kernel holds the round, and the menu
+    // opens by itself on the confirmation the menu's own switch shows.
+    await page.getByTestId('composer-input').fill('and this?')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('model-confirm')).toContainText(
+      'Earlier messages will be sent to open.bigmodel.cn',
+    )
+    await expect(page.getByTestId('queued-bubble')).toContainText('and this?')
+    expect(ollama.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+/**
+ * The session of the held-round tests below: a conversation on Ollama (this computer), then the
+ * default moved to zhipu's public host in the settings card, then a message the kernel holds for it —
+ * the menu open on its confirmation, closed again with Esc, the message queued and held.
+ */
+async function heldRound(page: Page, server: FakeOpenAI): Promise<void> {
+  await page.getByTestId('composer-input').fill('keep this local')
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+  await page.getByTestId('account-row').click()
+  await page.getByTestId('account-providers').click()
+  await page.getByTestId('provider-select').selectOption('zhipu')
+  await page.getByTestId('model-select').selectOption('glm-5.3-flash')
+  await page.getByTestId('provider-save').click()
+  await expect(page.getByTestId('provider-settings')).toBeHidden()
+
+  await page.getByTestId('composer-input').fill('and this?')
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('model-menu')).toBeHidden()
+  await expect(page.getByTestId('queued-bubble')).toContainText('and this?')
+  expect(server.requests).toHaveLength(1)
+}
+
+async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpenAI }> {
+  ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  const server = ollama
+  const userData = makeUserDataDir(tag)
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: server.baseURL } },
+  })
+  const launched = await launchTenon({ userData, env: { ZHIPU_API_KEY: 'e2e-zhipu-key' } })
+  return { ...launched, server }
+}
+
+// A queue push while the round is held carries `held` again; the confirmation the user closed stays
+// closed (§模型菜单与输入框: it opens once per hold).
+test('editing the held message leaves the closed confirmation closed (间接切公网, §模型菜单与输入框)', async () => {
+  const { app, page, server } = await launchHeld('model-held-edit')
+  try {
+    await heldRound(page, server)
+    await recordPushes(app)
+    const bubble = page.getByTestId('queued-bubble')
+    await bubble.getByTestId('queued-edit').click()
+    await bubble.getByTestId('queued-edit-input').fill('and this, edited?')
+    await bubble.getByTestId('queued-edit-save').click()
+    await expect(bubble).toContainText('and this, edited?')
+    // main pushed the edited queue, still held for the same host...
+    await expect
+      .poll(async () => (await pushesOf<QueuePush>(app, 'chat.queue')).at(-1))
+      .toMatchObject({ items: [{ text: 'and this, edited?' }], held: { host: ZHIPU_HOST } })
+    // ...which is no new hold: the menu stays closed.
+    await page.waitForTimeout(500)
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('model-confirm')).toHaveCount(0)
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('「立即发送」 on the held message is held again for the same host, and the confirmation opens again (间接切公网, §模型菜单与输入框)', async () => {
+  // Each needsConfirm is a new hold (§主进程与 kernel 的循环接口「间接切公网」): the queue push names
+  // the same host, so it is the route's own answer that reopens the menu (step 20 round 4).
+  const { app, page, server } = await launchHeld('model-held-send-now')
+  try {
+    await heldRound(page, server)
+    const bubble = page.getByTestId('queued-bubble')
+    await bubble.getByTestId('queued-send-now').click()
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    await expect(bubble).toContainText('and this?')
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('withdrawing the held message clears the hold, and the next message held anew opens the confirmation again (间接切公网, §模型菜单与输入框)', async () => {
+  const { app, page, server } = await launchHeld('model-held-again')
+  try {
+    await heldRound(page, server)
+    await recordPushes(app)
+    const bubble = page.getByTestId('queued-bubble')
+    await bubble.getByTestId('queued-withdraw').click()
+    await expect(bubble).toHaveCount(0)
+    // With nothing left to hold, main pushes the empty queue with no hold.
+    await expect
+      .poll(async () => (await pushesOf<QueuePush>(app, 'chat.queue')).at(-1))
+      .toEqual({ sessionId: expect.any(String), items: [] })
+    await page.waitForTimeout(300)
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+
+    await page.getByTestId('composer-input').fill('one more?')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    await expect(bubble).toContainText('one more?')
+    expect(server.requests).toHaveLength(1)
   } finally {
     await app.close()
   }

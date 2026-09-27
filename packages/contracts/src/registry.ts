@@ -12,6 +12,7 @@ import {
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
+import { runStateEvent } from './ipc/run.js'
 import {
   sessionFacts,
   sessionLatest,
@@ -59,6 +60,7 @@ export const ipcEvents = {
   chatQueueEvent,
   configLocale,
   confirmRequestEvent,
+  runStateEvent,
 } as const
 
 export const ROUTE_CHANNELS: readonly string[] = Object.values(ipcRoutes).map((r) => r.channel)

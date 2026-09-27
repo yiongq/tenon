@@ -35,6 +35,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@formatjs/icu-messageformat-parser": "3.5.18",
     "@playwright/test": "catalog:",
     "@tailwindcss/vite": "4.3.3",
     "@types/better-sqlite3": "9.6.0",

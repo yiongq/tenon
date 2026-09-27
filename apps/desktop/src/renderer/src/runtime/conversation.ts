@@ -18,3 +18,14 @@ export function useConversation(): Conversation {
   if (conversation === null) throw new Error('useConversation outside a ChatProvider')
   return conversation
 }
+
+/** Moving to another session by id — the banner's 「回去」 — through the leave dialog. */
+export interface Navigation {
+  readonly switchTo: (sessionId: string) => void
+}
+
+export const NavigationContext = createContext<Navigation>({ switchTo: () => {} })
+
+export function useNavigation(): Navigation {
+  return useContext(NavigationContext)
+}

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineRoute } from '../route.js'
+import { toolOutcomeViewSchema } from './outcome.js'
 import {
   effortSchema,
   modelIdSchema,
@@ -94,6 +95,15 @@ export const messageRowSchema = z.object({
   entryId: orderSeqSchema,
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
+  /**
+   * Spec 02 (01 修补 6): on an assistant row with tool calls, `calls[i]` belongs to its i-th
+   * `tool-request` block — its key, and its closed outcome or null while it has none. Assembled by
+   * the kernel; a redraw after a restart reads it where the live view read `tool-outcome`.
+   */
+  calls: z
+    .array(z.object({ callKey: z.string().min(1), outcome: toolOutcomeViewSchema.nullable() }))
+    .readonly()
+    .exactOptional(),
 })
 export type MessageRowContract = z.infer<typeof messageRowSchema>
 
