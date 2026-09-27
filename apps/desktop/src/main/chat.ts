@@ -49,6 +49,8 @@ import { createRunEvents, emitChatEvent } from './run-events.js'
 const NO_STORE = 'the session store is unavailable'
 const NOT_A_SESSION_ID = 'the session id is not a canonical uuid'
 const NOT_BOUND = 'the agent loop is not bound yet'
+/** The kernel's `shutting-down`: the RunRegistry refused the lease (`createRunRegistry`). */
+const REFUSED = 'the app is shutting down, or the session is being cleared or deleted'
 
 /** `chat.queue.act`'s answer: applied, or the item was no longer queued. */
 function status(applied: boolean): { status: 'applied' | 'not-found' } {
@@ -74,7 +76,10 @@ interface RunOwner {
  * `LoopPorts.leases.begin`.
  */
 export interface RunRegistry {
-  /** Registers a Run; after `beginShutdown` answers refused, and the kernel writes nothing. */
+  /**
+   * Registers a Run; after `beginShutdown`, or for a root being cleared or deleted
+   * (session-removal.ts), answers refused, and the kernel writes nothing.
+   */
   begin(q: {
     rootSessionId: string
     origin: RunOrigin | null
@@ -120,6 +125,13 @@ export interface RootRunState {
 export function createRunRegistry(
   clock: Pick<HostClock, 'setTimeout'>,
   onChange?: (rootSessionId: string, state: RootRunState) => void,
+  /**
+   * A root being cleared or deleted: no Run opens in it until that is done, by whatever way it would
+   * (spec 02 §大响应落盘「删除是 host 的义务」). The kernel's one refusal code is `shutting-down`
+   * (「拒绝码只增」); what it does with it is what a removal needs — writes nothing, and puts an
+   * auto-send's items back in the queue.
+   */
+  removing?: (rootSessionId: string) => boolean,
 ): RunRegistry {
   const live = new Map<string, Registered>()
   const waiters = new Set<() => void>()
@@ -158,7 +170,7 @@ export function createRunRegistry(
 
   const registry: RunRegistry = {
     begin(q) {
-      if (shuttingDown) return { refused: 'shutting-down' }
+      if (shuttingDown || removing?.(q.rootSessionId) === true) return { refused: 'shutting-down' }
       if (live.has(q.rootSessionId)) {
         // The kernel promises one live lease per root; a second begin is its bug, not a race.
         throw new Error(`RunRegistry: ${q.rootSessionId} already has a live lease`)
@@ -270,20 +282,26 @@ export interface DesktopLoopOptions {
   readonly locale: () => 'zh-CN' | 'en'
   /** Bash's shell and the user's terminal environment: host/shell-env.ts's `startCommandShell`. */
   readonly commandShell: CommandShell
+  /** The RunRegistry's `removing`: a root being cleared or deleted (session-removal.ts). */
+  readonly removing?: (rootSessionId: string) => boolean
   readonly log?: (line: string) => void
 }
 
 export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
   const log = options.log ?? ((line: string): void => console.warn(line))
-  const registry = createRunRegistry(options.clock, (root, state) => {
-    try {
-      options.send(runStateEvent.channel, { sessionId: root, ...state })
-    } catch (error) {
-      log(
-        `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-  })
+  const registry = createRunRegistry(
+    options.clock,
+    (root, state) => {
+      try {
+        options.send(runStateEvent.channel, { sessionId: root, ...state })
+      } catch (error) {
+        log(
+          `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    },
+    options.removing,
+  )
   const queue = createRunQueue({
     onChange: (root, view) => {
       try {
@@ -360,7 +378,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     // While a reply streams the kernel queues it: `chat.queue` shows it (01 修补 9 (a)).
     const result = await sessions.send({ sessionId, origin: ownerOf(senderOf(event)), text })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, sessionId, result)
     // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
@@ -382,7 +400,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
       ...(runId === null ? {} : { urgent: { runId } }),
     })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, sessionId, result)
     return answerOf(result)
@@ -406,7 +424,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
       ...(request.runId === null ? {} : { urgent: { runId: request.runId } }),
     })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, request.sessionId, result)
     // Held again for a public host: the renderer reopens the model menu's confirmation on it.
@@ -428,7 +446,9 @@ export function registerChatRoutes(deps: ChatDeps): void {
     switch (result.status) {
       case 'refused':
         // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
-        throw new Error('continue refused: the loop is not bound, or the app is shutting down')
+        throw new Error(
+          'continue refused: the loop is unbound, the app is quitting, or a removal is under way',
+        )
       case 'held':
         return { status: 'held' as const, host: result.host }
       default:
