@@ -6,6 +6,6 @@ export default defineConfig({
   test: {
     name: 'evals',
     environment: 'node',
-    include: ['*.test.ts'],
+    include: ['*.test.ts', 'test/**/*.test.ts'],
   },
 })
