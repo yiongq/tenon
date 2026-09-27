@@ -149,6 +149,7 @@ export {
 } from './ipc/provider.js'
 export type {
   ProviderConfigKeyContract,
+  ProviderEndpoint,
   ProviderEntryContract,
   ProviderWriteErrorCode,
   ProviderWriteResult,

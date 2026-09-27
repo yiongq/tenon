@@ -22,3 +22,13 @@ describe('the settings card wording', () => {
     expect(text('zh-CN', 'settings.providers.description')).toMatch(/^[^。]*新会话/)
   })
 })
+
+describe('Fable 5.1’s purpose line (s19-spec-6)', () => {
+  it('says what the vendor says: retention turned on for the organization or the workspace', () => {
+    // plan step 2's record: Anthropic's data-retention page names 「组织或工作区」.
+    expect(text('en', 'model.purpose.fable51')).toBe(
+      'Needs 30-day data retention turned on for your organization or workspace',
+    )
+    expect(text('zh-CN', 'model.purpose.fable51')).toBe('需要组织或工作区开启 30 天数据保留')
+  })
+})

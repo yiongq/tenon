@@ -5,7 +5,11 @@ import {
   sessionModelChoice,
   sessionSelectModel,
 } from '@tenon-app/contracts'
-import type { ProviderEntryContract, SessionModelChoice } from '@tenon-app/contracts'
+import type {
+  ProviderEndpoint,
+  ProviderEntryContract,
+  SessionModelChoice,
+} from '@tenon-app/contracts'
 import { useAuiState } from '@assistant-ui/react'
 import { CheckIcon, ChevronDownIcon } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -25,6 +29,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { confirmHostFor, heldConfirmHost } from '@/lib/data-flow'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { useConversation } from '@/runtime/conversation'
 import { TypeModelDialog } from './TypeModelDialog'
@@ -35,9 +40,11 @@ import { TypeModelDialog } from './TypeModelDialog'
  *
  * Grouped by provider, listing only configured ones; an unconfigured provider keeps one greyed row
  * that opens the settings card. Each row names its target host (「本机」 for loopback only). A row
- * that holds text conversations only is greyed in a task. A choice that would send a conversation
- * with history from this machine or a private network to a public host turns the menu into a
- * confirmation first; a round the kernel held for that reason opens the same confirmation.
+ * that holds text conversations only is greyed in a task. A choice — a row, a hand-typed id, a
+ * thinking level — that would send history which went to this machine or a private network to a
+ * public host turns the menu into a confirmation first: compared with where the history last went
+ * (`session.facts`), not with the choice in effect, which a default moved elsewhere can already have
+ * made public (lib/data-flow.ts). A round the kernel held for that reason opens the same confirmation.
  */
 
 type Row = ProviderEntryContract['models'][number]
@@ -120,10 +127,14 @@ export function ModelMenu(): JSX.Element {
   useEffect(() => {
     const held = store.getSnapshot().held
     if (held === null || heldSeq === 0) return
-    void invokeRoute(window.tenon, sessionModelChoice, { sessionId }).then((choice) => {
-      if (!choice.ok) return
-      setCurrent(choice.data)
-      setView({ kind: 'confirm', host: held.host, choice: choice.data })
+    void loadMenu(sessionId).then((loaded) => {
+      if (loaded.entries !== null) setEntries(loaded.entries)
+      const choice = loaded.choice
+      if (choice === null) return
+      setCurrent(choice)
+      // 「切换」 commits this choice: the page names where it sends now (lib/data-flow.ts).
+      const target = loaded.entries?.find((entry) => entry.id === choice.providerId)?.endpoint
+      setView({ kind: 'confirm', host: heldConfirmHost(held.host, target), choice })
       setOpen(true)
     })
   }, [heldSeq, sessionId, store])
@@ -154,25 +165,30 @@ export function ModelMenu(): JSX.Element {
       ? undefined
       : entryOf(choice.providerId)?.models.find((row) => row.id === choice.modelId)
 
+  /** Where this session's history last went, read at the moment of choosing (undefined: unread). */
+  const lastSent = async (): Promise<ProviderEndpoint | null | undefined> => {
+    const facts = await invokeRoute(window.tenon, sessionFacts, { sessionId })
+    return facts.ok ? (facts.data.lastEndpoint ?? null) : undefined
+  }
+
   /**
-   * A row picked: the confirmation first when a conversation with history would leave this machine
-   * or a private network for a public host (A9); true when that is what it did.
+   * A choice made — a row, a hand-typed id or a level: the confirmation first when it would send
+   * history that went to this machine or a private network to a public host (A9, 验收 34); true
+   * when that is what it did.
    */
-  const pick = (entry: ProviderEntryContract, row: { id: string }): boolean => {
-    const choice: Choice = { providerId: entry.id, modelId: row.id, effort: null }
-    const before = current === null ? undefined : entryOf(current.providerId)?.endpoint
-    const goesPublic =
-      hasHistory &&
-      before !== undefined &&
-      before.reach !== 'public' &&
-      entry.endpoint.reach === 'public'
-    if (goesPublic) {
-      setView({ kind: 'confirm', host: entry.endpoint.host, choice })
+  const commit = async (choice: Choice): Promise<boolean> => {
+    const target = entryOf(choice.providerId)?.endpoint
+    const host = confirmHostFor(await lastSent(), target, hasHistory)
+    if (host !== null) {
+      setView({ kind: 'confirm', host, choice })
       return true
     }
-    void choose(choice)
+    await choose(choice)
     return false
   }
+
+  const pick = (entry: ProviderEntryContract, row: { id: string }): Promise<boolean> =>
+    commit({ providerId: entry.id, modelId: row.id, effort: null })
 
   const hostLabel = (entry: ProviderEntryContract): string =>
     entry.endpoint.reach === 'loopback' ? t('model.host.local') : entry.endpoint.host
@@ -196,6 +212,18 @@ export function ModelMenu(): JSX.Element {
   }
 
   const row = rowOf(current)
+  /**
+   * 「`defaultEffort` 标「默认」，最高档注明用量代价」 (§模型菜单与输入框「思考强度 ›」): two marks that
+   * apply independently — GLM-5.3's default is its highest level, and still carries the cost note.
+   */
+  const effortLabel = (level: string, highest: boolean): string => {
+    const name = levelName(level)
+    const isDefault = level === row?.defaultEffort
+    if (isDefault && highest) return t('model.effort.defaultHighest', { level: name })
+    if (isDefault) return t('model.effort.default', { level: name })
+    if (highest) return t('model.effort.highest', { level: name })
+    return name
+  }
   const effortShown = current?.effort ?? row?.defaultEffort
   const triggerText =
     current === null
@@ -353,16 +381,20 @@ export function ModelMenu(): JSX.Element {
                         <DropdownMenuItem
                           key={level}
                           data-testid={`model-effort-${level}`}
-                          onClick={() => void choose({ ...current, effort: level })}
+                          // Open until `commit` decides: it may turn the menu into the confirmation.
+                          closeOnClick={false}
+                          onClick={() =>
+                            void commit({
+                              providerId: current.providerId,
+                              modelId: current.modelId,
+                              effort: level,
+                            })
+                          }
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">
                             {effortShown === level ? <CheckIcon /> : null}
                           </span>
-                          {level === row.defaultEffort
-                            ? t('model.effort.default', { level: levelName(level) })
-                            : i === all.length - 1
-                              ? t('model.effort.highest', { level: levelName(level) })
-                              : levelName(level)}
+                          {effortLabel(level, i === all.length - 1)}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuSubContent>
@@ -431,7 +463,9 @@ export function ModelMenu(): JSX.Element {
           const entry = typing
           setTyping(null)
           // The menu closed when the dialog opened: the confirmation needs it open again.
-          if (pick(entry, { id: modelId })) setOpen(true)
+          void pick(entry, { id: modelId }).then((asked) => {
+            if (asked) setOpen(true)
+          })
         }}
       />
     </>

@@ -37,10 +37,14 @@ export interface SessionFacts {
   readonly modelChoice: ModelChoiceSetPayload | null
   readonly modelChoiceFacts: number
   /**
-   * Where the latest Run sent (`session/model_selected.endpointOrigin`): what the data-flow check
-   * compares a new target with (§模型选择「数据去向」). Null before the first Run.
+   * The latest Run's `session/model_selected`: its provider, and where it sent (`endpointOrigin`,
+   * null on the rows phase 1 and plan steps 9–18 wrote without it). What the data-flow check compares
+   * a new target with (§模型选择「数据去向」); null before the first Run.
    */
-  readonly lastEndpointOrigin: string | null
+  readonly lastSelected: {
+    readonly providerId: string
+    readonly endpointOrigin: string | null
+  } | null
 }
 
 /** The facts of a session that does not exist: a chat with nothing chosen. */
@@ -53,7 +57,7 @@ export const NO_SESSION_FACTS: SessionFacts = {
   workspaceFacts: 0,
   modelChoice: null,
   modelChoiceFacts: 0,
-  lastEndpointOrigin: null,
+  lastSelected: null,
 }
 
 /** Folds one incarnation's entries, in Tape order. */
@@ -66,7 +70,7 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
   let workspaceFacts = 0
   let modelChoice: ModelChoiceSetPayload | null = null
   let modelChoiceFacts = 0
-  let lastEndpointOrigin: string | null = null
+  let lastSelected: SessionFacts['lastSelected'] = null
   for (const entry of entries) {
     if (entry.name === 'session/start') established = true
     else if (entry.name === 'session/profile_set') {
@@ -82,7 +86,10 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
       modelChoiceFacts += 1
     } else if (entry.name === 'session/model_selected') {
       const origin = entry.payload['endpointOrigin']
-      if (typeof origin === 'string') lastEndpointOrigin = origin
+      lastSelected = {
+        providerId: String(entry.payload['providerId']),
+        endpointOrigin: typeof origin === 'string' ? origin : null,
+      }
     }
   }
   return {
@@ -94,7 +101,7 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
     workspaceFacts,
     modelChoice,
     modelChoiceFacts,
-    lastEndpointOrigin,
+    lastSelected,
   }
 }
 

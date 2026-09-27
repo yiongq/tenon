@@ -4,6 +4,7 @@ import { toolOutcomeViewSchema } from './outcome.js'
 import {
   effortSchema,
   modelIdSchema,
+  providerEndpointSchema,
   providerIdSchema,
   providerWriteResultSchema,
 } from './provider.js'
@@ -169,6 +170,10 @@ export const workspaceRemove = defineRoute('workspace.remove', {
  * A session's profile and workspace (spec 02 §工作区「路由」): the Tape's once it is established, the
  * draft's before. A session neither established nor drafted is a chat with no workspace; phase 1's
  * sessions are established chats with none.
+ *
+ * `lastEndpoint` (only added): where the session's history last went — the host the kernel's
+ * data-flow check compares with — so the model menu asks before the same switches it holds
+ * (§模型选择「数据去向」). Absent before the first Run.
  */
 export const sessionFactsResponse = z.object({
   established: z.boolean(),
@@ -176,6 +181,7 @@ export const sessionFactsResponse = z.object({
   workspace: z
     .object({ folders: z.array(z.string().min(1)), origin: z.enum(['picked', 'dedicated']) })
     .nullable(),
+  lastEndpoint: providerEndpointSchema.optional(),
 })
 export type SessionFactsResponse = z.infer<typeof sessionFactsResponse>
 

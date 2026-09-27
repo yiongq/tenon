@@ -26,6 +26,7 @@ import {
   devEnv,
   providerSecretKey,
   readProviderInputs,
+  readSettledInputs,
   unboundSecrets,
 } from './provider.js'
 import type { EnvLike } from './provider.js'
@@ -70,20 +71,11 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
   const log = deps.log ?? ((line: string): void => console.warn(line))
   const env = (): EnvLike => devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
 
-  registerRoute(ipcMain, providerList, async () => {
-    const config = await readConfig(host.fs, host.identity)
-    return await Promise.all(
-      providers.list().map((definition) =>
-        describeProvider({
-          host,
-          definition,
-          settings: config.providerConfig[definition.id],
-          env: env(),
-          log,
-        }),
-      ),
-    )
-  })
+  registerRoute(ipcMain, providerList, async () =>
+    Promise.all(
+      providers.list().map((definition) => describeProvider({ host, definition, env: env(), log })),
+    ),
+  )
 
   registerRoute(ipcMain, providerConfigure, ({ id, values }) =>
     // In the profile's lock, the config read again inside it: two saves never cross, and a key
@@ -188,12 +180,21 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     await writeConfigHeld(host.fs, host.identity, {
       providerConfig: { ...all, [definition.id]: settings },
     })
-    await Promise.all(
-      secrets
-        .map((key) => ({ key, value: (values[key.name] ?? '').trim() }))
-        .filter(({ value }) => value !== '')
-        .map(({ key, value }) => host.secrets.set(name(key), value)),
-    )
+    // One at a time: a write that fails after another one succeeded must not leave that one
+    // stored — every declared secret is deleted again before the failure goes up (「任一步失败都停在
+    // 没有 key 的状态」).
+    const typed = secrets
+      .map((key) => ({ key, value: (values[key.name] ?? '').trim() }))
+      .filter(({ value }) => value !== '')
+    try {
+      for (const { key, value } of typed) {
+        // oxlint-disable-next-line no-await-in-loop -- in order, so a failure stops the rest
+        await host.secrets.set(name(key), value)
+      }
+    } catch (error) {
+      await Promise.allSettled(secrets.map((key) => host.secrets.delete(name(key))))
+      throw error
+    }
     return SAVED
   }
 
@@ -239,15 +240,16 @@ function refused(
 interface DescribeOptions {
   readonly host: HostAdapter
   readonly definition: ProviderDefinition
-  readonly settings: Readonly<Record<string, string>> | undefined
   /** Already narrowed by `devEnv`: `{}` on a packaged build. */
   readonly env: EnvLike
   readonly log: (line: string) => void
 }
 
 async function describeProvider(options: DescribeOptions): Promise<ProviderEntryContract> {
-  const { host, definition, settings, env, log } = options
-  const inputs = await readProviderInputs({ host, definition, settings, env, log })
+  const { definition, env } = options
+  // Settings and keys as one save left them, as a send reads them (run-assembly.ts).
+  const { config, inputs } = await readSettledInputs(options)
+  const settings = config.providerConfig[definition.id]
   // 「已配置」 is what a send on THIS build would find (01 修补 6): the keychain, the development
   // variables on a development build, and not a key bound to another host than the one used.
   const unbound = new Set(unboundSecrets(definition, settings, env, inputs))
@@ -270,7 +272,9 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
     nameKey: definition.nameKey,
     configKeys,
     models: definition.builtinModels.map((model) => menuRow(definition, model)),
-    configured: isConfigured(configKeys),
+    // A send refuses outright while any present key is bound to another host (plan step 19's
+    // reading ③, run-assembly.ts), so the provider is not ready either: 「发送时会被拒的 key 不算」.
+    configured: isConfigured(configKeys) && unbound.size === 0,
     endpoint,
   }
 }

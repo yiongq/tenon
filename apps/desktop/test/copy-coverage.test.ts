@@ -400,6 +400,20 @@ describe('the banner and the model menu copy', () => {
     expect(problems(marks.map((mark) => line[mark]))).toEqual([])
   })
 
+  it('has the thinking level’s marks, apart and together (s19-spec-5)', () => {
+    // §模型菜单与输入框「思考强度 ›」: the default is marked, the highest level carries its cost, and a
+    // default that is also the highest (GLM-5.3's max) carries both.
+    expect(
+      problems(
+        ['default', 'highest', 'defaultHighest'].map((mark) => ({
+          key: `model.effort.${mark}`,
+          args: ['level'],
+          what: `effort ${mark}`,
+        })),
+      ),
+    ).toEqual([])
+  })
+
   it('has the purpose sentence of every builtin model row, with nothing to fill', () => {
     const providers = createProviderRegistry()
     registerBuiltinProviders(providers)

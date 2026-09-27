@@ -16,6 +16,7 @@ import type {
   SessionService,
   WorkspaceChange,
 } from '@tenon-app/kernel'
+import { endpointOf } from './endpoint.js'
 import { readConfig, writeConfig } from './host/profile.js'
 
 /**
@@ -147,8 +148,12 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
   })
 }
 
-/** The route's shape: `drafted` stays in main, the arrays are copied out of the kernel's answer. */
+/**
+ * The route's shape: `drafted` stays in main, the arrays are copied out of the kernel's answer, and
+ * the last origin is classified here, where 「本机」 and the private side are read (endpoint.ts).
+ */
 function factsOf(view: SessionFactsView): SessionFactsResponse {
+  const lastEndpoint = endpointOf(view.lastEndpointOrigin ?? undefined)
   return {
     established: view.established,
     profile: view.profile,
@@ -156,5 +161,6 @@ function factsOf(view: SessionFactsView): SessionFactsResponse {
       view.workspace === null
         ? null
         : { folders: [...view.workspace.folders], origin: view.workspace.origin },
+    ...(lastEndpoint === null ? {} : { lastEndpoint }),
   }
 }

@@ -63,6 +63,9 @@ function fieldwise(raw: unknown): Config {
  * saved as a pair, and two saves never interleave a read and a write.
  */
 const configLocks = new Map<string, Promise<unknown>>()
+/** Per profile, like the lock: the writes counted so far, and who hears of the next one. */
+const generations = new Map<string, number>()
+const watchers = new Map<string, Set<(config: Config) => void>>()
 
 export function withConfigLock<T>(identity: HostIdentity, work: () => Promise<T>): Promise<T> {
   const key = identity.profileDir
@@ -98,5 +101,31 @@ export async function writeConfigHeld(
   const changes = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
   const next = configSchema.parse({ ...(await readConfig(fs, identity)), ...changes })
   await fs.writeFile(configPath(identity), `${JSON.stringify(next, null, 2)}\n`)
+  // Counted once the file holds it, and never before: a reader that saw the old generation before
+  // its read and the same one after cannot have read a key a later save stored (`configGeneration`).
+  const key = identity.profileDir
+  generations.set(key, configGeneration(identity) + 1)
+  for (const watcher of watchers.get(key) ?? []) watcher(next)
   return next
+}
+
+/**
+ * How many writes this process has made to the profile's `config.json`. A reader of `config.json`
+ * and then the keychain that sees the same generation before and after read both as ONE save left
+ * them: `provider.configure` stores a moved host's keys only after its config write is counted
+ * (01 修补 6「key 绑定主机」: 「由上面的保存规则与锁保证 key 与地址始终配对」 — on the read side too).
+ */
+export function configGeneration(identity: HostIdentity): number {
+  return generations.get(identity.profileDir) ?? 0
+}
+
+/** Hears every write, with what the file now holds; the returned function stops it. */
+export function watchConfig(identity: HostIdentity, watcher: (config: Config) => void): () => void {
+  const key = identity.profileDir
+  const set = watchers.get(key) ?? new Set<(config: Config) => void>()
+  watchers.set(key, set)
+  set.add(watcher)
+  return () => {
+    set.delete(watcher)
+  }
 }

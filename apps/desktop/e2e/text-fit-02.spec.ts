@@ -40,8 +40,9 @@ const ROW_LINE = '[data-testid^="model-row-"] > span:last-child > span:last-chil
 
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
   // The longest en lines — 「Balanced speed and capability · This computer」 (claude-sonnet-5) and
-  // 「Needs 30-day data retention turned on by your organization · This computer」 (claude-fable-5-1) —
-  // are the ones that wrapped while the popup kept its trigger's width; it grows to its rows now.
+  // 「Needs 30-day data retention turned on for your organization or workspace · This computer」
+  // (claude-fable-5-1) — are the ones that wrapped while the popup kept its trigger's width; it
+  // grows to its rows now.
   test(`every model row’s purpose and host line fits in the model menu in ${locale} (旧 223)`, async () => {
     const userData = makeUserDataDir(`fit-02-menu-${locale}`)
     seedConfig(userData, { locale })

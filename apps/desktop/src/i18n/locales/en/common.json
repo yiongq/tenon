@@ -127,7 +127,7 @@
       "opus55": "For complex, long tasks",
       "opus5": "Previous Opus (legacy)",
       "haiku45": "Fastest, lowest cost",
-      "fable51": "Needs 30-day data retention turned on by your organization",
+      "fable51": "Needs 30-day data retention turned on for your organization or workspace",
       "glm53": "Zhipu GLM-5.3",
       "glm53flash": "Lightweight GLM-5.3",
       "glm53flashx": "Lightweight GLM-5.3 (FlashX)",
@@ -156,6 +156,7 @@
       "menu": "Thinking effort",
       "default": "{level} (default)",
       "highest": "{level} · uses the most",
+      "defaultHighest": "{level} (default) · uses the most",
       "level": {
         "low": "Low",
         "medium": "Medium",

@@ -27,7 +27,9 @@ import {
   keyFor,
 } from '@tenon-app/kernel'
 import type { HostAdapter, ModelInfo, ProviderDefinition, ProviderId } from '@tenon-app/kernel'
+import type { Config } from '@tenon-app/contracts'
 import { hostOf } from './endpoint.js'
+import { configGeneration, readConfig } from './host/profile.js'
 
 /**
  * The environment a dev build falls back to, per provider and per `ConfigKey.name` (spec 01
@@ -148,6 +150,46 @@ export async function readProviderInputs(options: ReadInputsOptions): Promise<Pr
     if (source !== null) sources[key.name] = source
   }
   return { config, secrets, sources }
+}
+
+/** What `readSettledInputs` read, and whether one save left all of it. */
+export interface SettledInputs {
+  readonly config: Config
+  readonly inputs: ProviderInputs
+  /** No `config.json` write landed while it was read: the keys belong to this config's hosts. */
+  readonly settled: boolean
+  /** `configGeneration` when the read finished: a snapshot kept from it is current while unchanged. */
+  readonly generation: number
+}
+
+/** Reads again at most this many times while saves keep landing mid-read. */
+const SETTLE_ATTEMPTS = 3
+
+/**
+ * `config.json` and then a definition's inputs, as ONE save left them (01 修补 6「key 绑定主机」). A
+ * save that moves the host between the two reads would pair the new host's key with the old base URL
+ * — and send it there — because nothing on the send path holds the profile's lock (a keychain prompt
+ * must not hold every save). Read again while a write landed in between; `settled: false` after
+ * `SETTLE_ATTEMPTS`, which a send refuses as a configuration error.
+ */
+export async function readSettledInputs(
+  options: Omit<ReadInputsOptions, 'settings'>,
+): Promise<SettledInputs> {
+  const { host, definition } = options
+  let last: SettledInputs | null = null
+  for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
+    const before = configGeneration(host.identity)
+    // oxlint-disable-next-line no-await-in-loop -- a read again only when a save landed mid-read
+    const config = await readConfig(host.fs, host.identity)
+    const settings = config.providerConfig[definition.id]
+    // oxlint-disable-next-line no-await-in-loop -- the same read, its second half
+    const inputs = await readProviderInputs({ ...options, settings })
+    const generation = configGeneration(host.identity)
+    last = { config, inputs, settled: generation === before, generation }
+    if (last.settled) return last
+  }
+  if (last === null) throw new Error('readSettledInputs: no attempt ran')
+  return last
 }
 
 /** The config key a definition's endpoint is under. */

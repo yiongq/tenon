@@ -30,6 +30,7 @@ import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { registerModelRoutes } from '../src/main/model-routes.js'
 import { registerProviderRoutes } from '../src/main/provider-routes.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
+import { startFakeAnthropic } from './support/fake-anthropic.js'
 
 const SESSION = '5c1d9a2e-6b3d-4a71-9f52-0c8de7a11b91'
 const KEY = 'sk-bound-key-1'
@@ -176,6 +177,31 @@ describe('「已配置」 is what this build can use (旧 109)', () => {
     expect(entry.configKeys.find((key) => key.name === 'apiKey')?.configured).toBe(false)
     expect(entry.configured).toBe(false)
   })
+
+  it('is not ready while one of two keys is bound elsewhere, as the send refuses it (s19-spec-3)', async () => {
+    // The keychain apiKey belongs to the default host; the dev authToken to the relay the dev base
+    // URL names. The send refuses while any present key is unbound (step 19's reading ③), so the
+    // menu must not list the provider as ready although one credential is usable.
+    const host = await freshHost()
+    await host.secrets.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
+    const env = { ANTHROPIC_AUTH_TOKEN: 'tok-relay', ANTHROPIC_BASE_URL: 'https://relay.example/' }
+    const entry = entryOf(await (await routes({ host, env })).list(), ANTHROPIC_PROVIDER_ID)
+    expect(entry.configKeys.find((key) => key.name === 'apiKey')?.configured).toBe(false)
+    expect(entry.configKeys.find((key) => key.name === 'authToken')?.configured).toBe(true)
+    expect(entry.configured).toBe(false)
+    const assembly = await createRunConnector({ host, providers: registry(), env }).assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice: {
+        providerId: ANTHROPIC_PROVIDER_ID,
+        modelId: 'claude-sonnet-5',
+        effort: null,
+        capabilitySource: 'builtin',
+      },
+      signal: new AbortController().signal,
+    })
+    expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
+  })
 })
 
 describe('the key is bound to its host (A9; 旧 49)', () => {
@@ -220,7 +246,13 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     expect(
       await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken')),
     ).toBeNull()
-    for (const baseURL of ['https://ollama.com/v1/', 'https://eu.ollama.com/v1/']) {
+    // The fully qualified spellings are the same hosts (s19-safety-6).
+    for (const baseURL of [
+      'https://ollama.com/v1/',
+      'https://eu.ollama.com/v1/',
+      'https://ollama.com./v1/',
+      'https://api.ollama.com.:443/v1/',
+    ]) {
       expect(
         // oxlint-disable-next-line no-await-in-loop -- one save at a time
         await r.call('provider.configure', { id: OLLAMA_PROVIDER_ID, values: { baseURL } }),
@@ -279,6 +311,35 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     })
     expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
     expect(requests).toBe(0)
+  })
+
+  it('stops with no key when the second of two new keys cannot be stored (s19-spec-4)', async () => {
+    const store = new Map<string, string>()
+    const secrets: HostSecrets = {
+      get: (key) => Promise.resolve(store.get(key) ?? null),
+      set: (key, value) => {
+        if (value.length > 2560) return Promise.reject(new Error('the value is too large'))
+        store.set(key, value)
+        return Promise.resolve()
+      },
+      delete: (key) => {
+        store.delete(key)
+        return Promise.resolve()
+      },
+    }
+    const host = await freshHost(secrets)
+    const r = await routes({ host })
+    store.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
+    // apiKey is declared first and stores; authToken is over the keychain's limit and fails.
+    const result = await r.call('provider.configure', {
+      id: ANTHROPIC_PROVIDER_ID,
+      values: { baseURL: 'https://relay.example/', apiKey: 'sk-new', authToken: 'x'.repeat(3000) },
+    })
+    expect(result).toMatchObject({ ok: false })
+    expect([...store.keys()]).toEqual([])
+    expect(
+      (await readConfig(host.fs, host.identity)).providerConfig[ANTHROPIC_PROVIDER_ID]?.['baseURL'],
+    ).toBe('https://relay.example/')
   })
 
   it('stops with no key and the old host when config.json cannot be written after the delete', async () => {
@@ -377,6 +438,138 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     })
     expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
     expect(requests).toBe(0)
+  })
+})
+
+describe('a send reads the key and its host as one save left them (s19-safety-5)', () => {
+  it('never pairs a key a save stored for the new host with the old base URL', async () => {
+    // The keychain read of a send held open (an unanswered prompt) while a save moves the host:
+    // 01 修补 6 「由上面的保存规则与锁保证 key 与地址始终配对」 must hold on the read side too.
+    const store = new Map<string, string>()
+    const reached = Promise.withResolvers<void>()
+    const hold = Promise.withResolvers<void>()
+    let first = true
+    const secrets: HostSecrets = {
+      get: async (key) => {
+        if (first) {
+          first = false
+          reached.resolve()
+          await hold.promise
+        }
+        return store.get(key) ?? null
+      },
+      set: (key, value) => {
+        store.set(key, value)
+        return Promise.resolve()
+      },
+      delete: (key) => {
+        store.delete(key)
+        return Promise.resolve()
+      },
+    }
+    const host = await freshHost(secrets)
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://a.example/api/paas/v4/' } },
+    })
+    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), 'sk-for-A')
+    const sent: Array<{ url: string; auth: string | null }> = []
+    const connector = createRunConnector({
+      host: {
+        ...host,
+        network: {
+          fetch: (input, init) => {
+            sent.push({
+              url: String(input),
+              auth: new Headers(init?.headers as ConstructorParameters<typeof Headers>[0]).get(
+                'authorization',
+              ),
+            })
+            return Promise.reject(new Error('offline'))
+          },
+        },
+      } as HostAdapter,
+      providers: registry(),
+      env: {},
+    })
+    const assembling = connector.assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice: {
+        providerId: ZHIPU_PROVIDER_ID,
+        modelId: 'glm-5.3-flash',
+        effort: null,
+        capabilitySource: 'builtin',
+      },
+      signal: new AbortController().signal,
+    })
+    await reached.promise
+    const r = await routes({ host })
+    expect(
+      await r.call('provider.configure', {
+        id: ZHIPU_PROVIDER_ID,
+        values: { baseURL: 'https://b.example/api/paas/v4/', apiKey: 'sk-for-B' },
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    hold.resolve()
+    const assembly = await assembling
+    expect(assembly.endpointOrigin).toBe('https://b.example')
+    const provider = assembly.provider()
+    const encoded = provider.encode({
+      model: assembly.model,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      maxTokens: 16,
+    })
+    try {
+      for await (const event of provider.stream(encoded, {
+        identity: { runId: 'r1', requestSeq: 1, physicalAttempt: 1 },
+      })) {
+        if (event.type === 'error') break
+      }
+    } catch {
+      // Offline on purpose: only where it went, and with which key, matters.
+    }
+    expect(sent.length).toBeGreaterThan(0)
+    for (const request of sent) {
+      expect(request.url.startsWith('https://b.example/')).toBe(true)
+      expect(request.auth).toBe('Bearer sk-for-B')
+    }
+  })
+})
+
+describe('an environment key and a stored base URL on another host (旧 49, s19-spec-9)', () => {
+  it('refuses the send before any request, and does not count the key as configured', async () => {
+    // 01 修补 6: an environment key is valid for the environment's base URL or the default only —
+    // never for a host config.json names.
+    const host = await freshHost()
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://relay.example/' } },
+    })
+    const env = { ANTHROPIC_API_KEY: KEY }
+    let requests = 0
+    const connector = createRunConnector({
+      host: {
+        ...host,
+        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+      } as HostAdapter,
+      providers: registry(),
+      env,
+    })
+    const assembly = await connector.assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice: {
+        providerId: ANTHROPIC_PROVIDER_ID,
+        modelId: 'claude-sonnet-5',
+        effort: null,
+        capabilitySource: 'builtin',
+      },
+      signal: new AbortController().signal,
+    })
+    expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
+    expect(requests).toBe(0)
+    const entry = entryOf(await (await routes({ host, env })).list(), ANTHROPIC_PROVIDER_ID)
+    expect(entry.configKeys.find((key) => key.name === 'apiKey')?.configured).toBe(false)
+    expect(entry.configured).toBe(false)
   })
 })
 
@@ -572,5 +765,62 @@ describe('session.selectModel and session.modelChoice', () => {
     expect(await r.call('session.modelChoice', { sessionId: SESSION })).toMatchObject({
       data: { modelId: 'glm-own', capabilitySource: 'user' },
     })
+  })
+
+  it('falls back to the task default once a task session is cleared, not the chat’s (旧 37, 验收 33)', async () => {
+    // The real connector's ② layer: a cleared cowork session carries its profile (resetSession's
+    // carry) and no choice, so it reads `defaultModelByProfile.cowork` — not its own old choice, not
+    // the chat default, not `provider`.
+    const fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 1 })
+    try {
+      const memory = createMemoryHost({
+        network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      })
+      await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
+      const host: HostAdapter = memory
+      const env = { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: fake.baseURL }
+      const loop = createTestLoopPorts({})
+      const sessions = createSessionService({
+        host,
+        tape: createMemoryTapeStore({ identity: host.identity }),
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: createRunConnector({ host, providers: registry(), env }),
+        protectedFiles: [],
+      })
+      sessions.bindLoop(loop)
+      const r = await routes({ host, sessions, env })
+      await sessions.selectProfile({
+        sessionId: SESSION,
+        profile: 'cowork',
+        dedicated: '/home/u/Tenon/workspaces/x' as AbsolutePath,
+      })
+      await r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: ANTHROPIC_PROVIDER_ID,
+        modelId: 'claude-sonnet-5',
+        effort: null,
+      })
+      const sent = await sessions.send({ sessionId: SESSION, origin: null, text: 'hello' })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      await loop.runEnded({ runId: sent.runId })
+      // Another task's choice moved the task default since; the chat default is something else.
+      const opus = { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-opus-5-5' }
+      const haiku = { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-haiku-4-5-20251001' }
+      await writeConfig(host.fs, host.identity, {
+        provider: haiku,
+        defaultModelByProfile: { chat: haiku, cowork: opus },
+      })
+      const modelOf = async (): Promise<unknown> =>
+        ((await r.call('session.modelChoice', { sessionId: SESSION })) as { data: unknown }).data
+      expect(await modelOf()).toMatchObject({ modelId: 'claude-sonnet-5' })
+      await sessions.resetSession(SESSION)
+      expect(await sessions.sessionFacts({ sessionId: SESSION })).toMatchObject({
+        profile: 'cowork',
+      })
+      expect(await modelOf()).toMatchObject({ modelId: 'claude-opus-5-5' })
+    } finally {
+      await fake.close()
+    }
   })
 })

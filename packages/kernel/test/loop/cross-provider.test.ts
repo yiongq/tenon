@@ -1,6 +1,7 @@
 /**
  * Replaying history across providers and to a model that is sent no tools (spec 02 §模型选择「换模型
- * 时的历史」, §不带 tools 的请求与冻结后的变化; plan step 19: 旧 36 ① and ②, 旧 41's kernel half).
+ * 时的历史」, §不带 tools 的请求与冻结后的变化; plan step 19: 旧 36 ① and ②, 旧 41's kernel half), and
+ * the thinking level chosen in the menu reaching each wire (旧 186, 旧 226's level half; 验收 33).
  * Every request goes through a real adapter, with the pairing and last-turn assertions on every
  * fetch: the ids only have to be equal, so a charset difference between vendors is not caught here.
  */
@@ -73,9 +74,15 @@ function wireProvider(
   return { provider, net }
 }
 
-function zhipuModel(): ModelInfo {
-  const model = zhipuDefinition.builtinModels.find((row) => row.id === 'glm-5.3-flash')
-  if (model === undefined) throw new Error('no glm-5.3-flash row')
+function zhipuModel(id = 'glm-5.3-flash'): ModelInfo {
+  const model = zhipuDefinition.builtinModels.find((row) => row.id === id)
+  if (model === undefined) throw new Error(`no ${id} row`)
+  return model
+}
+
+function anthropicRow(id: string): ModelInfo {
+  const model = anthropicDefinition.builtinModels.find((row) => row.id === id)
+  if (model === undefined) throw new Error(`no ${id} row`)
   return model
 }
 
@@ -203,4 +210,60 @@ describe('a model sent no tools (旧 36 ①, 旧 41)', () => {
     expect(await send(h, 'hello')).toBe('completed')
     expect(z.net.requests[0]?.body as Record<string, unknown>).not.toHaveProperty('tools')
   })
+})
+
+describe('the thinking level chosen in the menu (旧 186, 旧 226, 验收 33)', () => {
+  async function snapshots(h: Harness): Promise<Array<Record<string, unknown>>> {
+    return (await entries(h.store))
+      .filter((entry) => entry.name === 'provider/attempt_completed')
+      .map((entry) => entry.payload['request'] as Record<string, unknown>)
+  }
+
+  // Per wire: the key the level travels in, and two rows that list levels.
+  for (const [wire, key, first, second] of [
+    ['openai-chat', 'reasoning_effort', zhipuModel(), zhipuModel('glm-5.3-flashx')],
+    [
+      'anthropic-messages',
+      'output_config',
+      anthropicRow('claude-sonnet-5'),
+      anthropicRow('claude-opus-5-5'),
+    ],
+  ] as const) {
+    it(`reaches the next Run’s request on the ${wire} wire, and clears with a model change`, async () => {
+      const w = wireProvider(wire, [textTurn(wire), textTurn(wire), textTurn(wire)])
+      const h = harness(w.provider, first)
+      h.loop.connector.use({
+        provider: w.provider,
+        model: first,
+        models: [first, second],
+        mcpSources: [lookSource([])],
+      })
+      // No level chosen: the model's own default, so nothing on the wire.
+      expect(await send(h, 'by default')).toBe('completed')
+      const choose = (model: ModelInfo, effort: string | null): Promise<unknown> =>
+        h.service.selectModel({
+          sessionId: SESSION,
+          choice: { providerId: model.providerId, modelId: model.id, effort },
+          origin: null,
+        })
+      await choose(first, 'high')
+      expect(await send(h, 'think harder')).toBe('completed')
+      // Another model: the level goes back to empty, its default (A11).
+      await choose(second, null)
+      expect(await send(h, 'on the other model')).toBe('completed')
+      const bodies = w.net.requests.map((request) => request.body as Record<string, unknown>)
+      expect(bodies.map((body) => body[key])).toEqual([
+        undefined,
+        wire === 'openai-chat' ? 'high' : { effort: 'high' },
+        undefined,
+      ])
+      expect(bodies.map((body) => body['model'])).toEqual([first.id, first.id, second.id])
+      expect((await snapshots(h)).map((request) => request['effort'])).toEqual([
+        undefined,
+        'high',
+        undefined,
+      ])
+      expect(w.net.checkFailures).toEqual([])
+    })
+  }
 })
