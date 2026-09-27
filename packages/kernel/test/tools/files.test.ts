@@ -1,9 +1,11 @@
 /**
  * Read, Glob and Grep (spec 02 §内置工具与参数「Read」「Glob、Grep」; plan step 18): the executors, on
  * the memory host. Read keeps every result under the spill threshold by whole lines (open question
- * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes;
- * both walks skip the protected list (§内置工具的默认档位; plan step 11: 旧 159).
+ * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes,
+ * and its engine (plan step 22): ripgrep's dialect, in time linear in the text; both walks skip the
+ * protected list (§内置工具的默认档位; plan step 11: 旧 159).
  */
+import { RE2JS } from 're2js'
 import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { AbsolutePath, MemoryHost } from '../../src/index.js'
@@ -336,9 +338,9 @@ describe('Grep', () => {
     )
   })
 
-  it('never shows half a surrogate pair, the pattern parsed without the u flag included', async () => {
-    // `\\"` is no escape under `u`, so this pattern falls back to code units, where `.` is half a
-    // character (§内置工具与参数「正则方言跟 ripgrep」; a lone surrogate would replay in every request).
+  it('never shows half a surrogate pair, a pattern of one lone surrogate included', async () => {
+    // `.` is a whole character (§内置工具与参数「正则方言跟 ripgrep」; a lone surrogate would replay
+    // in every request).
     const host = await hostWith({ '/ws/a.json': '{"t": "a😀b"}\n', '/ws/e.txt': '😀😀\n' })
     const cut = await run(
       grepExecutor,
@@ -349,15 +351,19 @@ describe('Grep', () => {
     )
     expect(textOf(cut)).toBe('/ws/a.json:1:"t": "a😀')
     expect(textOf(cut).isWellFormed()).toBe(true)
-    // A match that ends on a low half gets the high half back, and a character is shown once.
-    const halves = await run(
-      grepExecutor,
-      host,
-      'Grep',
-      { pattern: '\\ude00|\\"', output_mode: 'content', '-o': true, multiline: true },
-      absolutePath('/ws/e.txt'),
-    )
-    expect(textOf(halves)).toBe('/ws/e.txt:1:😀\n/ws/e.txt:1:😀')
+    // re2js finds a lone surrogate by its literal, inside a pair: a match on the low half gets the
+    // high half back, one on the high half its low half, and a character is shown once.
+    for (const half of ['\\x{DE00}', '\\x{D83D}']) {
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+      const halves = await run(
+        grepExecutor,
+        host,
+        'Grep',
+        { pattern: half, output_mode: 'content', '-o': true, multiline: true },
+        absolutePath('/ws/e.txt'),
+      )
+      expect(textOf(halves)).toBe('/ws/e.txt:1:😀\n/ws/e.txt:1:😀')
+    }
     const each = await run(
       grepExecutor,
       host,
@@ -412,8 +418,9 @@ describe('Grep', () => {
         return '/ws/long.txt'
       },
     } as unknown as AbsolutePath
-    // The pattern runs once or twice a line, once a multiline match: a few hundred fill the page,
-    // and only a count reads the whole file first — 110 000 runs — to build its one entry.
+    // The pattern runs once a line, and once more a match where the match is shown: a few hundred
+    // fill the page, and only a count reads the whole file first — 110 000 runs — to build its one
+    // entry.
     for (const [o, total, runsToFill] of [
       // Every tenth line matches: groups of five lines, the first of three, set apart by `--`.
       [grepOptions({ before: 2, after: 2 }), 3 + 9999 * 6, 1000],
@@ -423,17 +430,94 @@ describe('Grep', () => {
       const found: GrepPage = { offset: 0, end: GREP_HEAD_LIMIT, kept: [], total: 0 }
       built = 0
       let runs = 0
-      class Watched extends RegExp {
-        override exec(line: string): RegExpExecArray | null {
+      const counted =
+        <A extends unknown[], R>(search: (...args: A) => R) =>
+        (...args: A): R => {
           if (found.kept.length < GREP_HEAD_LIMIT) runs += 1
-          return super.exec(line)
+          return search(...args)
         }
+      const regex = RE2JS.compile('x', o.multiline ? RE2JS.DOTALL | RE2JS.MULTILINE : 0)
+      regex.test = counted(regex.test.bind(regex))
+      const matcherOf = regex.matcher.bind(regex)
+      regex.matcher = (input) => {
+        const matcher = matcherOf(input)
+        matcher.find = counted(matcher.find.bind(matcher))
+        return matcher
       }
-      entriesOf(found, path, text, new Watched('x', o.multiline ? 'gsu' : 'gu'), o)
+      entriesOf(found, path, text, regex, o)
       expect(found.total).toBe(total)
       expect(found.kept).toHaveLength(Math.min(total, GREP_HEAD_LIMIT))
       expect(built).toBeLessThanOrEqual(found.kept.length)
       expect(runs).toBeLessThanOrEqual(runsToFill)
+    }
+  })
+
+  it("reads ripgrep's dialect: inline flags, Unicode classes, and multiline ^ and $ at each line", async () => {
+    const host = await hostWith({ ...FILES, '/ws/u.txt': 'héllo 日本 12\nαβγ abc\n' })
+    const grep = async (input: Record<string, unknown>): Promise<string> =>
+      textOf(await run(grepExecutor, host, 'Grep', { output_mode: 'content', ...input }, WS))
+    // An inline flag, as ripgrep and RE2 read it: no JavaScript RegExp has `(?i)`.
+    expect(await grep({ pattern: '(?i)ALPHA' })).toBe(
+      '/ws/a.ts:1:const alpha = 1\n/ws/a.ts:3:// Alpha again\n/ws/b.py:1:alpha = 3',
+    )
+    // Unicode classes, a general category and a script by its bare name, each a whole character.
+    expect(await grep({ pattern: '\\p{L}+', '-o': true, glob: '*.txt' })).toBe(
+      '/ws/u.txt:1:héllo\n/ws/u.txt:1:日本\n/ws/u.txt:2:αβγ\n/ws/u.txt:2:abc',
+    )
+    expect(await grep({ pattern: '\\p{Greek}+', '-o': true })).toBe('/ws/u.txt:2:αβγ')
+    // Multiline is `rg -U --multiline-dotall`: a match runs across lines, and `^` and `$` match at
+    // each line's ends, not only the file's.
+    expect(await grep({ pattern: '2$\\n^// Alpha', multiline: true })).toBe(
+      '/ws/a.ts:2:const beta = 2\n/ws/a.ts:3:// Alpha again',
+    )
+  })
+
+  it("turns down a backreference and look-around, in ripgrep's words", async () => {
+    const host = await hostWith(FILES)
+    const bad = async (pattern: string): Promise<ToolExecution> =>
+      run(grepExecutor, host, 'Grep', { pattern }, WS)
+    const backreference = await bad('(a)\\1')
+    expect(backreference).toMatchObject({ isError: true, state: 'completed' })
+    expect(textOf(backreference)).toBe(
+      fill(GREP_TEXTS.invalidPattern, { message: GREP_TEXTS.backreference }),
+    )
+    // Look-ahead and look-behind alike; re2js alone would call the look-behind a bad group name.
+    for (const pattern of ['alpha(?=\\s)', '(?<=const )alpha']) {
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+      const lookaround = await bad(pattern)
+      expect(lookaround.isError).toBe(true)
+      expect(textOf(lookaround)).toBe(
+        fill(GREP_TEXTS.invalidPattern, { message: GREP_TEXTS.lookaround }),
+      )
+    }
+  })
+
+  it('runs a pathological pattern over a 30 000-character line in bounded time (s18-safety-2)', async () => {
+    // A backtracking RegExp takes exponential or high-polynomial time on each of these, and no stop
+    // can land inside a match: the main process serves every window meanwhile. re2js is linear.
+    // Nineteen `a`s spread over the line: `(.*a){20}` needs one more.
+    const spread = `${'x'.repeat(1578)}a`.repeat(19).padEnd(30_000, 'x')
+    const host = await hostWith({
+      '/ws/a.txt': `${'a'.repeat(30_000)}!\n`,
+      '/ws/x.txt': `${'x'.repeat(30_000)}\n`,
+      '/ws/s.txt': `${spread}\n`,
+    })
+    for (const [pattern, file] of [
+      ['(a+)+$', '/ws/a.txt'],
+      ['(x+x+)+y', '/ws/x.txt'],
+      ['(.*a){20}', '/ws/s.txt'],
+    ] as const) {
+      const started = performance.now()
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time, each timed
+      const result = await run(
+        grepExecutor,
+        host,
+        'Grep',
+        { pattern, output_mode: 'content' },
+        absolutePath(file),
+      )
+      expect(textOf(result)).toBe(GREP_TEXTS.none)
+      expect(performance.now() - started).toBeLessThan(1000)
     }
   })
 
