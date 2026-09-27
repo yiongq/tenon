@@ -64,6 +64,13 @@ export interface ModelNotes {
   /** A connector tool's inputSchema cannot be used at all (open question 16). */
   readonly schemaUnusable: string
   /**
+   * A connector call whose `callTool` threw — an elicitation refused, a result the SDK cannot read, a
+   * server gone (§工具来源、命名与权限键): `{message}` is the error's own text. The call did run.
+   */
+  readonly connectorFailed: string
+  /** A connector result with no content block at all. */
+  readonly connectorEmpty: string
+  /**
    * What `message/environment` says (open question 16): `wrap` has `{body}`, `date` has `{date}`,
    * `folders` has `{folders}` (one JSON string per line) and `dedicated` has `{folder}` (a JSON string).
    */
@@ -190,6 +197,8 @@ export const MODEL_NOTES: ModelNotes = {
   },
   schemaUnusable:
     'The input schema its server gave for this tool cannot be used to check arguments, so no call to it can run. Do not call it again in this session.',
+  connectorFailed: 'The tool call failed: {message}',
+  connectorEmpty: '(no output)',
   environment: {
     wrap: '<environment>\n{body}\n</environment>',
     date: 'Today’s date: {date}',
@@ -261,7 +270,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 1
+export const PROMPT_LAYER_VERSION = 2
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = '62cfe9ae7da9a26873d295566ace5d21277ed329c33f745309d7cd64175ae039'
+export const PROMPT_LAYER_HASH = '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc'
