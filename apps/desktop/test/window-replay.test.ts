@@ -6,13 +6,16 @@
  * is at that load. `DesktopQueue.views()` is what the queue half reads.
  */
 import { chatQueueEvent, runStateEvent } from '@tenon-app/contracts'
-import { createMemoryHost } from '@tenon-app/kernel'
-import type { RunLease } from '@tenon-app/kernel'
+import { absolutePath, createMemoryHost } from '@tenon-app/kernel'
+import type { CommandShell, RunLease } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { createDesktopLoop } from '../src/main/chat.js'
 import type { DesktopLoop } from '../src/main/chat.js'
 import { createRunQueue } from '../src/main/queue.js'
 import { replayOnLoad } from '../src/main/window-replay.js'
+
+/** These cases run no Bash: the shell is a stand-in. */
+const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
 
 const A = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
 const B = '0b8f2a1c-3d4e-4f50-8a61-7b2c3d4e5f60'
@@ -49,6 +52,7 @@ function desktopLoop(): { loop: DesktopLoop } {
     clock: createMemoryHost().clock,
     send: () => {},
     locale: () => 'en',
+    commandShell: NO_SHELL,
     log: () => {},
   })
   return { loop }

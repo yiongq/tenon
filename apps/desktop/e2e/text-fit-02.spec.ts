@@ -8,7 +8,9 @@ import { PAST_CLICK_GUARD_MS, newChatFromSidebar } from './helpers/navigation.js
 import { expect, test } from './helpers/test.js'
 import { expectSingleLineUnclipped } from './helpers/text-fit.js'
 import {
+  bashCall,
   callsReply,
+  editCall,
   makeFolderTree,
   providerEnv,
   readCall,
@@ -173,6 +175,71 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(page.getByTestId('thread-empty')).toBeVisible()
     } finally {
       hold.resolve()
+      await app.close()
+    }
+  })
+
+  test(`step 22’s write and irreversible cards fit at 1280x800 in ${locale} (旧 223)`, async () => {
+    const folders = makeFolderTree(`fit-22-${locale}`, { 'ws/a.txt': 'alpha\n' })
+    tree = folders
+    const ws = join(folders.real, 'ws')
+    const userData = makeUserDataDir(`fit-22-${locale}`)
+    seedConfig(userData, { locale })
+    fake = await startFakeAnthropic({
+      replies: [
+        callsReply(
+          editCall('toolu_edit', join(ws, 'a.txt'), 'alpha', 'beta', { replace_all: true }),
+        ),
+        callsReply(bashCall('toolu_rm', 'rm a.txt')),
+      ],
+    })
+    const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await startTask(app, page, ws)
+      const card = page.getByTestId('approval-card')
+
+      // A write card, its change open: the toggle, the two labels and the replace_all note.
+      await send(page, 'edit a')
+      await expect(card).toHaveCount(1)
+      await card.getByTestId('approval-change-toggle').click()
+      await expect(card.getByTestId('approval-change-label')).toHaveCount(2)
+      await expectSingleLineUnclipped(card.getByTestId('approval-change-label'), 2)
+      for (const part of [
+        'approval-title',
+        'approval-change-toggle',
+        'approval-change-note',
+        'approval-scope',
+        'approval-deny',
+        'approval-allow',
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one element at a time, so a failure names it
+        await expectSingleLineUnclipped(card.getByTestId(part))
+      }
+      await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+      await card.getByTestId('approval-deny').click()
+      await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+
+      // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and a bare 「允许」. Denied, nothing runs.
+      await send(page, 'delete a')
+      await expect(card).toHaveCount(1)
+      await expect(card.getByTestId('approval-irreversible')).toHaveCount(1)
+      for (const part of [
+        'approval-title',
+        'approval-irreversible',
+        'approval-scope',
+        'approval-deny',
+        'approval-allow',
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one element at a time, so a failure names it
+        await expectSingleLineUnclipped(card.getByTestId(part))
+      }
+      await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+      await card.getByTestId('approval-deny').click()
+      await expect(page.getByTestId('failure-card').last()).toHaveAttribute(
+        'data-code',
+        'user-rejected',
+      )
+    } finally {
       await app.close()
     }
   })

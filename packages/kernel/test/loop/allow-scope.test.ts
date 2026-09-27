@@ -219,11 +219,18 @@ interface Row {
 }
 
 /**
- * Top row first; each card is built so that no earlier row holds for it. The irreversible row, and
- * layer 4 ① of the first, have no card yet: nothing is `irreversible` until plan step 22's command
- * pattern table.
+ * Top row first; each card is built so that no earlier row holds for it. An irreversible command
+ * (plan step 22's pattern table) is layer 4 ① of the first row, and the second row once a policy
+ * releases it and only the manual mode asks.
  */
 const ROWS: readonly Row[] = [
+  {
+    row: 'must ask: layer 4 ① (an irreversible command)',
+    name: 'Bash',
+    input: { command: 'rm -rf build' },
+    scope: 'once',
+    reason: 'command',
+  },
   {
     row: 'must ask: layer 4 ② (a connector tool that needs the user, set to always allow)',
     name: 'confirm__press',
@@ -251,6 +258,26 @@ const ROWS: readonly Row[] = [
     scope: 'once',
     reason: 'flagged',
     arrange: (h) => h.inspector.answer(ASK),
+  },
+  {
+    row: 'irreversible, released by the policy (only the manual mode asks)',
+    name: 'Bash',
+    input: { command: 'git push origin main' },
+    scope: 'once',
+    reason: 'command',
+    arrange: (h) =>
+      h.memory.setPolicy(
+        policy({
+          tools: [
+            {
+              policyId: 'p2',
+              serverId: 'builtin',
+              toolName: 'Bash',
+              effect: 'release-irreversible',
+            },
+          ],
+        }),
+      ),
   },
   {
     row: 'outside the workspace (a Write)',

@@ -85,6 +85,32 @@ export function readCall(id: string, filePath: string, extra: Record<string, unk
   return { type: 'tool_use', id, name: 'Read', input: { file_path: filePath, ...extra } } as const
 }
 
+/** A `Write` call as the model asks for it: the whole content of `filePath`. */
+export function writeCall(id: string, filePath: string, content: string) {
+  return { type: 'tool_use', id, name: 'Write', input: { file_path: filePath, content } } as const
+}
+
+/** An `Edit` call as the model asks for it. */
+export function editCall(
+  id: string,
+  filePath: string,
+  oldString: string,
+  newString: string,
+  extra: Record<string, unknown> = {},
+) {
+  return {
+    type: 'tool_use',
+    id,
+    name: 'Edit',
+    input: { file_path: filePath, old_string: oldString, new_string: newString, ...extra },
+  } as const
+}
+
+/** A `Bash` call as the model asks for it; it runs in the workspace's first folder. */
+export function bashCall(id: string, command: string, extra: Record<string, unknown> = {}) {
+  return { type: 'tool_use', id, name: 'Bash', input: { command, ...extra } } as const
+}
+
 /** A reply of tool calls only (stop reason `tool_use`). */
 export function callsReply(...calls: ScriptedStep[]): ScriptedReply {
   return { steps: calls, delayMs: 5 }

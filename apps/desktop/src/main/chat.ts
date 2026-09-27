@@ -11,7 +11,6 @@ import {
 import type { IpcMainLike, RouteResponse } from '@tenon-app/contracts'
 import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
-  AbsolutePath,
   CommandShell,
   HostClock,
   LoopPorts,
@@ -50,16 +49,12 @@ import { createRunEvents, emitChatEvent } from './run-events.js'
 const NO_STORE = 'the session store is unavailable'
 const NOT_A_SESSION_ID = 'the session id is not a canonical uuid'
 const NOT_BOUND = 'the agent loop is not bound yet'
+/** The kernel's `shutting-down`: the RunRegistry refused the lease (`createRunRegistry`). */
+const REFUSED = 'the app is shutting down, or the session is being cleared or deleted'
 
 /** `chat.queue.act`'s answer: applied, or the item was no longer queued. */
 function status(applied: boolean): { status: 'applied' | 'not-found' } {
   return { status: applied ? 'applied' : 'not-found' }
-}
-
-/** Plan step 22 replaces this with shell-env.ts's shell and the user's terminal environment. */
-const PLACEHOLDER_SHELL: CommandShell = {
-  path: '/bin/sh' as AbsolutePath,
-  env: () => Promise.resolve({}),
 }
 
 /**
@@ -72,6 +67,8 @@ interface RunOwner {
   off(event: string, listener: (...args: unknown[]) => void): unknown
   /** A WebContents has it: a document already gone fires no `destroyed` for a lease begun later. */
   isDestroyed?(): boolean
+  /** Likewise for a document whose renderer is gone: no `render-process-gone` comes again. */
+  isCrashed?(): boolean
 }
 
 /**
@@ -79,7 +76,10 @@ interface RunOwner {
  * `LoopPorts.leases.begin`.
  */
 export interface RunRegistry {
-  /** Registers a Run; after `beginShutdown` answers refused, and the kernel writes nothing. */
+  /**
+   * Registers a Run; after `beginShutdown`, or for a root being cleared or deleted
+   * (session-removal.ts), answers refused, and the kernel writes nothing.
+   */
   begin(q: {
     rootSessionId: string
     origin: RunOrigin | null
@@ -93,6 +93,11 @@ export interface RunRegistry {
   ): boolean
   /** Resolves when every registered lease has finished, or after `timeoutMs`, whichever is first. */
   settled(timeoutMs: number): Promise<void>
+  /**
+   * Desktop-internal: resolves when the root's live lease, aborted or not, has finished — at once
+   * when it has none. No timeout: a removal waits for it (session-removal.ts).
+   */
+  settledRoot(rootSessionId: string): Promise<void>
   /** From now on `begin` refuses. */
   beginShutdown(): void
   /** Desktop-internal: the lease's first Run, whichever session of the tree it ran in. */
@@ -108,6 +113,8 @@ interface Registered {
   runId: string | null
   stopRequested: boolean
   detach: () => void
+  /** Resolved by the lease's `finish`: what `settledRoot` waits on. */
+  readonly finished: PromiseWithResolvers<void>
 }
 
 /** Aborts with the first cause only; a `user-stop` marks `stopRequested` whenever it comes. */
@@ -125,6 +132,13 @@ export interface RootRunState {
 export function createRunRegistry(
   clock: Pick<HostClock, 'setTimeout'>,
   onChange?: (rootSessionId: string, state: RootRunState) => void,
+  /**
+   * A root being cleared or deleted: no Run opens in it until that is done, by whatever way it would
+   * (spec 02 §大响应落盘「删除是 host 的义务」). The kernel's one refusal code is `shutting-down`
+   * (「拒绝码只增」); what it does with it is what a removal needs — writes nothing, and puts an
+   * auto-send's items back in the queue.
+   */
+  removing?: (rootSessionId: string) => boolean,
 ): RunRegistry {
   const live = new Map<string, Registered>()
   const waiters = new Set<() => void>()
@@ -163,7 +177,7 @@ export function createRunRegistry(
 
   const registry: RunRegistry = {
     begin(q) {
-      if (shuttingDown) return { refused: 'shutting-down' }
+      if (shuttingDown || removing?.(q.rootSessionId) === true) return { refused: 'shutting-down' }
       if (live.has(q.rootSessionId)) {
         // The kernel promises one live lease per root; a second begin is its bug, not a race.
         throw new Error(`RunRegistry: ${q.rootSessionId} already has a live lease`)
@@ -175,6 +189,7 @@ export function createRunRegistry(
         runId: null,
         stopRequested: false,
         detach: () => {},
+        finished: Promise.withResolvers<void>(),
         lease: {
           signal: controller.signal,
           get stopRequested(): boolean {
@@ -188,22 +203,25 @@ export function createRunRegistry(
             entry.detach()
             if (live.get(q.rootSessionId) === entry) live.delete(q.rootSessionId)
             changed(q.rootSessionId)
+            entry.finished.resolve()
             if (live.size === 0) for (const resolve of waiters) resolve()
           },
         },
       }
       // Watched from the moment the lease exists: a window that disappears while the Run is still
-      // being prepared must not leave one behind either.
+      // being prepared must not leave one behind either. What goes is the document, so what is
+      // aborted is every Run it began (§停止与退出「watchOwner」).
       const owner = ownerOf(q.origin)
       entry.detach = watchOwner(owner, () => {
-        abortOne(entry, 'close-window')
-        changed(q.rootSessionId)
+        if (q.origin !== null) registry.abort({ origin: q.origin }, 'close-window')
       })
       live.set(q.rootSessionId, entry)
       // A command that waited in the mailbox begins its lease with the origin it came with, and that
-      // window may have closed meanwhile: aborted at once, so the kernel writes nothing
-      // (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
-      if (owner?.isDestroyed?.() === true) abortOne(entry, 'close-window')
+      // window may have closed, or its renderer crashed, meanwhile: aborted at once, so the kernel
+      // writes nothing (「登记之后、append 之前被中止」) and no Run outlives the document that asked for it.
+      if (owner?.isDestroyed?.() === true || owner?.isCrashed?.() === true) {
+        abortOne(entry, 'close-window')
+      }
       changed(q.rootSessionId)
       return entry.lease
     },
@@ -239,6 +257,9 @@ export function createRunRegistry(
         waiters.add(done)
       })
     },
+    settledRoot(rootSessionId) {
+      return live.get(rootSessionId)?.finished.promise ?? Promise.resolve()
+    },
     beginShutdown() {
       shuttingDown = true
     },
@@ -271,20 +292,28 @@ export interface DesktopLoopOptions {
   readonly send: EventSender
   /** The interface language now; the kernel reads it when it assembles a system prompt. */
   readonly locale: () => 'zh-CN' | 'en'
+  /** Bash's shell and the user's terminal environment: host/shell-env.ts's `startCommandShell`. */
+  readonly commandShell: CommandShell
+  /** The RunRegistry's `removing`: a root being cleared or deleted (session-removal.ts). */
+  readonly removing?: (rootSessionId: string) => boolean
   readonly log?: (line: string) => void
 }
 
 export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
   const log = options.log ?? ((line: string): void => console.warn(line))
-  const registry = createRunRegistry(options.clock, (root, state) => {
-    try {
-      options.send(runStateEvent.channel, { sessionId: root, ...state })
-    } catch (error) {
-      log(
-        `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-  })
+  const registry = createRunRegistry(
+    options.clock,
+    (root, state) => {
+      try {
+        options.send(runStateEvent.channel, { sessionId: root, ...state })
+      } catch (error) {
+        log(
+          `[chat] dropped a run.state event: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    },
+    options.removing,
+  )
   const queue = createRunQueue({
     onChange: (root, view) => {
       try {
@@ -312,7 +341,7 @@ export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
       locale: () => options.locale(),
       // Open question 16 (owner 2026-09-26): the user's local date, in this machine's time zone.
       localDate: () => localDateOf(options.clock.now()),
-      commandShell: PLACEHOLDER_SHELL,
+      commandShell: options.commandShell,
     },
   }
 }
@@ -361,7 +390,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
     // While a reply streams the kernel queues it: `chat.queue` shows it (01 修补 9 (a)).
     const result = await sessions.send({ sessionId, origin: ownerOf(senderOf(event)), text })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, sessionId, result)
     // started, queued, held, not-sent (the loop already sent the terminal event), and the rest.
@@ -383,7 +412,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
       ...(runId === null ? {} : { urgent: { runId } }),
     })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, sessionId, result)
     return answerOf(result)
@@ -407,7 +436,7 @@ export function registerChatRoutes(deps: ChatDeps): void {
       ...(request.runId === null ? {} : { urgent: { runId: request.runId } }),
     })
     if (result.status === 'refused') {
-      throw new Error(result.code === 'not-bound' ? NOT_BOUND : 'the app is shutting down')
+      throw new Error(result.code === 'not-bound' ? NOT_BOUND : REFUSED)
     }
     noteHeld(loop.queue, request.sessionId, result)
     // Held again for a public host: the renderer reopens the model menu's confirmation on it.
@@ -429,7 +458,9 @@ export function registerChatRoutes(deps: ChatDeps): void {
     switch (result.status) {
       case 'refused':
         // A refusal is `ok: false` on every loop route (§主进程与 kernel 的循环接口).
-        throw new Error('continue refused: the loop is not bound, or the app is shutting down')
+        throw new Error(
+          'continue refused: the loop is unbound, the app is quitting, or a removal is under way',
+        )
       case 'held':
         return { status: 'held' as const, host: result.host }
       default:
@@ -464,22 +495,31 @@ function ownerOf(candidate: unknown): RunOwner | null {
   return hasListeners ? (candidate as unknown as RunOwner) : null
 }
 
-/** Calls `gone` once the owning document is replaced or destroyed; returns the detach. */
+/**
+ * Calls `gone` once the owning document is destroyed, its renderer is gone, or the main frame has a
+ * new document (a reload); returns the detach (spec 02 §停止与退出「watchOwner」). The caller aborts
+ * that document's Runs with `close-window`: no confirm, and a paused session — which has no lease — is
+ * not touched.
+ *
+ * A crashed or killed renderer takes its document with it, though the WebContents stays: only
+ * `render-process-gone` fires, and no `destroyed` or `did-navigate` until the window is closed or
+ * reloaded (measured on Electron 44.4.1, `forcefullyCrashRenderer()`).
+ *
+ * `did-navigate` is a main-frame navigation that committed; an in-page one (fragment, pushState)
+ * does not fire it. Not `did-start-navigation`: that fires first even for a navigation
+ * `hardenWebContents` then cancels in `will-frame-navigate` (measured on Electron 44.4.1, a
+ * `location.href` to another origin), which replaces no document.
+ */
 function watchOwner(owner: RunOwner | null, gone: () => void): () => void {
   if (owner === null) return (): void => {}
-  const onDestroyed = (): void => gone()
-  const onNavigation = (...args: unknown[]): void => {
-    // Electron's own `did-start-navigation` params. A main-frame navigation that is not a
-    // fragment / pushState one replaces the document; anything else leaves the Run alone.
-    const details = args[0]
-    if (!isRecord(details)) return
-    if (details['isMainFrame'] === true && details['isSameDocument'] === false) gone()
-  }
-  owner.on('destroyed', onDestroyed)
-  owner.on('did-start-navigation', onNavigation)
+  const onGone = (): void => gone()
+  owner.on('destroyed', onGone)
+  owner.on('render-process-gone', onGone)
+  owner.on('did-navigate', onGone)
   return (): void => {
-    owner.off('destroyed', onDestroyed)
-    owner.off('did-start-navigation', onNavigation)
+    owner.off('destroyed', onGone)
+    owner.off('render-process-gone', onGone)
+    owner.off('did-navigate', onGone)
   }
 }
 

@@ -7,7 +7,7 @@
 import { providerErrorCodeSchema, runEndReasonSchema } from '@tenon-app/contracts'
 import type { RunEndReasonContract } from '@tenon-app/contracts'
 import { describe, expect, it } from 'vitest'
-import { cardOf } from '../src/renderer/src/lib/end-card.js'
+import { cardOf, effectLineOf } from '../src/renderer/src/lib/end-card.js'
 
 type Code = RunEndReasonContract['code']
 type Row = { readonly visual: string; readonly action: string } | null
@@ -112,5 +112,25 @@ describe('cardOf (§失败卡与结束原因)', () => {
       ])
       expect([errorCode, cardOf(reason, false)]).toEqual([errorCode, DANGER_COPY])
     }
+  })
+})
+
+describe('② of the card: where each call of the round goes (§失败卡与结束原因, §点停止时各状态怎么收)', () => {
+  it('a stopped command wrote nothing after it; a stopped request may have reached the other side', () => {
+    // 旧 7's interface half: Bash's effect is `external`, but only a command whose `exited` came in
+    // the window is `aborted`, so 「后续写入未发生」 is written for it and for nothing still running.
+    expect(effectLineOf('Bash', { state: 'aborted', effect: 'external' })).toBe('stopped')
+    expect(effectLineOf('Bash', { state: 'uncertain', effect: 'external' })).toBe('uncertain')
+    expect(effectLineOf('Write', { state: 'aborted', effect: 'write' })).toBe('stopped')
+    expect(effectLineOf('Read', { state: 'aborted', effect: 'read' })).toBe('stopped')
+    // WebSearch / WebFetch in flight: 请求可能已到对方，不写「未发生」; a connector's tool the same.
+    for (const name of ['WebFetch', 'WebSearch', 'mcp__everything__echo']) {
+      expect([name, effectLineOf(name, { state: 'aborted', effect: 'external' })]).toEqual([
+        name,
+        'stopped-sent',
+      ])
+    }
+    expect(effectLineOf('Bash', { state: 'completed', effect: 'external' })).toBe('done')
+    expect(effectLineOf('Bash', { state: 'not-run', effect: 'blocked' })).toBe('not-run')
   })
 })

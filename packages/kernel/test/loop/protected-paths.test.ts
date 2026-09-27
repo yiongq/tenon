@@ -3,6 +3,7 @@
  * §「在不在工作区里」; plan step 11: 旧 158, 旧 159, 旧 179 — their loop halves). Real Runs on the
  * memory host, with the real Read, Glob and Grep: the workspace is the home folder, which holds the
  * profile directory and a shell file, the case the spec names (所选文件夹包含 profile 目录或家目录).
+ * Then the own spill with a link planted in its place (§「在不在工作区里」第 4 步; §大响应落盘「谁能读」).
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
@@ -62,6 +63,7 @@ const USAGE: Usage = {
 const FILES: Readonly<Record<string, string>> = {
   [`${HOME}/.zshrc`]: 'export TOKEN=SECRET-rc\n',
   [`${PROFILE}/config.json`]: '{"token":"SECRET-config"}\n',
+  [`${PROFILE}/sessions.db`]: 'SECRET-sessions\n',
   [`${PROFILE}/tool-output/${OTHER}/r-1-0.txt`]: 'other session SECRET-spill\n',
   [`${OWN_SPILL}/r-1-0.txt`]: 'own SECRET-own\n',
   [`${HOME}/proj/a.ts`]: 'const x = 1\n',
@@ -75,18 +77,24 @@ interface Harness {
   readonly provider: ScriptedProvider
 }
 
-/** `volfs`: the host's fs also names files by number, as macOS's /.vol does (support/volfs.ts). */
+/**
+ * `volfs`: the host's fs also names files by number, as macOS's /.vol does (support/volfs.ts).
+ * `spillLink`: the session's own spill folder is a link to this path, as an approved command could
+ * leave it, and holds nothing of its own.
+ */
 async function harness(
-  o: { readonly volfs?: Readonly<Record<string, string>> } = {},
+  o: { readonly volfs?: Readonly<Record<string, string>>; readonly spillLink?: string } = {},
 ): Promise<Harness> {
   const memory = createMemoryHost({ identity: IDENTITY })
   for (const [path, text] of Object.entries(FILES)) {
+    if (o.spillLink !== undefined && path.startsWith(`${OWN_SPILL}/`)) continue
     // oxlint-disable-next-line no-await-in-loop -- the folder before the file in it
     await memory.fs.mkdirp(absolutePath(path.slice(0, path.lastIndexOf('/'))))
     // oxlint-disable-next-line no-await-in-loop -- one file at a time
     await memory.fs.writeFile(absolutePath(path), text)
   }
   memory.symlink(absolutePath(`${HOME}/proj/rc`), `${HOME}/.zshrc`)
+  if (o.spillLink !== undefined) memory.symlink(absolutePath(OWN_SPILL), o.spillLink)
   const store = createMemoryTapeStore({ identity: IDENTITY })
   const provider = createScriptedProvider({ models: [MODEL] })
   const loop = createTestLoopPorts({ connector: { provider, model: MODEL } })
@@ -218,6 +226,41 @@ describe('the protected list in a task whose workspace is the home folder (旧 1
     // No card, no answer, so no grant of any kind.
     expect(h.memory.confirmRequests).toEqual([])
     expect(entries.filter((entry) => entry.name === 'tool/approval_resolved')).toEqual([])
+  })
+})
+
+describe('the shell file in another case, in a task whose workspace is the home folder', () => {
+  // The file is missing in that spelling, which it keeps (§「在不在工作区里」 step 2); on a
+  // case-insensitive volume the write would land on the protected file, so the compare folds case.
+  it('blocks the Write without a card, as it blocks the file itself', async () => {
+    const h = await harness()
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath(HOME)] },
+      dedicated: DEDICATED,
+    })
+    const code = await runOnce(
+      h,
+      { name: 'Write', input: { file_path: `${HOME}/.ZSHRC`, content: 'x' } },
+      { name: 'Read', input: { file_path: `${HOME}/proj/a.ts` } },
+      { name: 'Write', input: { file_path: `${HOME}/.ZshRc`, content: 'x' } },
+    )
+    expect(code).toBe('completed')
+    const blocked = [
+      ['deny', 'protected', 'unknown'],
+      ['not-run', 'protected'],
+    ]
+    expect((await closed(h)).calls.map((call) => [call.decision, call.outcome])).toEqual([
+      blocked,
+      [
+        ['allow', 'user-grant', 'read-only'],
+        ['completed', null],
+      ],
+      blocked,
+    ])
+    expect(h.memory.confirmRequests).toEqual([])
+    expect(await h.memory.fs.stat(absolutePath(`${HOME}/.ZSHRC`))).toBeNull()
   })
 })
 
@@ -354,4 +397,74 @@ describe('the chat profile reads only its own spill (旧 179)', () => {
     // Never a card, and never outside-workspace: nothing reaches HostConfirm.
     expect(h.memory.confirmRequests).toEqual([])
   })
+})
+
+describe('a link planted in place of the own spill folder (§「在不在工作区里」第 4 步; §大响应落盘「谁能读」)', () => {
+  // The own spill is tool-output/<id> under the profile, as written: what a link there leads to is
+  // placed where it lands, and never gets the spill's free read — the one narrow way in.
+  const LINKS = [
+    ['the Tape', `${PROFILE}/sessions.db`, OWN_SPILL],
+    ['another session’s spill', `${PROFILE}/tool-output/${OTHER}`, `${OWN_SPILL}/r-1-0.txt`],
+    ['the shell file', `${HOME}/.zshrc`, OWN_SPILL],
+  ] as const
+
+  it.each(LINKS)(
+    'blocks a Read and a Glob through a link to %s without a card, in a task',
+    async (_what, target, read) => {
+      const h = await harness({ spillLink: target })
+      await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+      await h.service.setWorkspace({
+        sessionId: SESSION,
+        change: { kind: 'add', folders: [absolutePath(`${HOME}/proj`)] },
+        dedicated: DEDICATED,
+      })
+      const code = await runOnce(
+        h,
+        { name: 'Read', input: { file_path: read } },
+        { name: 'Glob', input: { pattern: '**', path: OWN_SPILL } },
+      )
+      expect(code).toBe('completed')
+      const { calls } = await closed(h)
+      const blocked = [
+        ['deny', 'protected', 'read-only'],
+        ['not-run', 'protected'],
+      ]
+      expect(calls.map((call) => [call.decision, call.outcome])).toEqual([blocked, blocked])
+      expect(calls.some((call) => call.text.includes('SECRET'))).toBe(false)
+      expect(h.memory.confirmRequests).toEqual([])
+    },
+  )
+
+  it('asks for a Read through a link to a folder outside, as it would for that folder', async () => {
+    const h = await harness({ spillLink: '/srv/shared' })
+    await h.memory.fs.mkdirp(absolutePath('/srv/shared'))
+    await h.memory.fs.writeFile(absolutePath('/srv/shared/notes.txt'), 'SECRET-shared\n')
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath(`${HOME}/proj`)] },
+      dedicated: DEDICATED,
+    })
+    h.provider.script(reply({ name: 'Read', input: { file_path: `${OWN_SPILL}/notes.txt` } }))
+    const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
+    const pending = await h.service.currentPending({ sessionId: SESSION })
+    expect(pending?.card.reason).toBe('outside-workspace')
+    expect(pending?.card.target).toEqual({ type: 'path', path: '/srv/shared/notes.txt' })
+  })
+
+  it.each(LINKS)(
+    'blocks a Read through a link to %s in the chat profile',
+    async (_what, target, read) => {
+      const h = await harness({ spillLink: target })
+      expect(await runOnce(h, { name: 'Read', input: { file_path: read } })).toBe('completed')
+      const { calls } = await closed(h)
+      expect(calls.map((call) => [call.decision, call.outcome, call.isError])).toEqual([
+        [['deny', 'protected', 'read-only'], ['not-run', 'protected'], true],
+      ])
+      expect(calls.some((call) => call.text.includes('SECRET'))).toBe(false)
+      expect(h.memory.confirmRequests).toEqual([])
+    },
+  )
 })

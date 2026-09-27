@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { AbsolutePath, HostFs } from '../../src/index.js'
 import { isWithin, normalizePath } from '../../src/host/path.js'
+import { pathScopeOf } from '../../src/loop/batch.js'
 import { locatePath, resolvePath } from '../../src/permission/workspace.js'
 import type { PathScope } from '../../src/permission/workspace.js'
 import { withVolfs } from '../support/volfs.js'
@@ -92,6 +93,40 @@ describe('locatePath', () => {
     ).toBe('protected')
   })
 
+  it('compares the protected list without regard to case: a missing shell file in another case is protected', async () => {
+    const { fs, scope } = await world()
+    // ~/.zprofile does not exist: its name keeps the model's spelling (step 2), and on APFS a write
+    // of `.ZPROFILE` creates `.zprofile`.
+    const listed = { ...scope, roots: [p('/')], protectedFiles: [p('/home/.zprofile')] }
+    for (const spelling of ['.ZPROFILE', '.zProfile', '.zpro\uFB01le']) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time
+      expect(await locatePath(fs, p(`/home/${spelling}`), listed)).toEqual({
+        real: `/home/${spelling}`,
+        place: 'protected',
+      })
+    }
+    // The letters APFS folds onto ASCII ones fold here too: ſ onto s, the Kelvin sign onto k.
+    expect((await locatePath(fs, p('/home/.z\u017Fhrc'), scope)).place).toBe('protected')
+    expect((await locatePath(fs, p('/HOME/.ZSHRC'), { ...scope, roots: [p('/')] })).place).toBe(
+      'protected',
+    )
+    // Only the listed names: another file beside them is not.
+    expect((await locatePath(fs, p('/home/.zprofile.bak'), listed)).place).toBe('workspace')
+    expect((await locatePath(fs, p('/home/.zshrc2'), scope)).place).toBe('outside')
+  })
+
+  it('folds the protected list too: an entry in mixed case, as macOS’s /Users/<name> is, still protects', async () => {
+    const { fs, host, scope } = await world()
+    await host.fs.mkdirp(p('/Users/U'))
+    await host.fs.writeFile(p('/Users/U/.zshrc'), '')
+    const listed = { ...scope, roots: [p('/')], protectedFiles: [p('/Users/U/.zshrc')] }
+    // The exact spelling, and one in another case (missing on this case-sensitive host).
+    for (const path of ['/Users/U/.zshrc', '/Users/U/.ZSHRC']) {
+      // oxlint-disable-next-line no-await-in-loop -- one path at a time
+      expect(await locatePath(fs, p(path), listed)).toEqual({ real: path, place: 'protected' })
+    }
+  })
+
   it('places new files and new nested folders inside the workspace, keeping what the model wrote', async () => {
     const { fs, scope } = await world()
     expect(await locatePath(fs, p('/ws/new/deeper/file.txt'), scope)).toEqual({
@@ -166,6 +201,46 @@ describe('locatePath', () => {
       resolved: true,
     })
   })
+})
+
+describe('the scope a Run judges from (step 4)', () => {
+  const SID = '0c1d2e3f-4a5b-4c6d-8e7f-8a9b0c1d2e3f'
+
+  it('resolves the profile, and takes the own spill under it as written: a profile under a link still reads its spill', async () => {
+    const host = createMemoryHost({
+      identity: { userId: 'u', tenantId: 't', profileDir: '/tmp/prof' },
+    })
+    await host.fs.mkdirp(p('/private/tmp/prof'))
+    host.symlink(p('/tmp'), '/private/tmp')
+    const scope = await pathScopeOf({ host, sessionId: SID, protectedFiles: [] }, null)
+    expect(scope).toMatchObject({
+      profileDir: '/private/tmp/prof',
+      ownSpillDir: `/private/tmp/prof/tool-output/${SID}`,
+    })
+    // The note names the file through the profile's link; the folder is not there yet.
+    const note = p(`/tmp/prof/tool-output/${SID}/r-1-0.txt`)
+    expect((await locatePath(host.fs, note, scope)).place).toBe('own-spill')
+  })
+
+  it.each([
+    ['tool-output/<id>', `/prof/tool-output/${SID}`, '/', 'prof/config.json', 'protected'],
+    ['tool-output', '/prof/tool-output', '/outside', 'x.txt', 'outside'],
+  ] as const)(
+    'never follows a link planted at %s: what it leads to is placed as itself',
+    async (_at, link, target, rest, place) => {
+      const host = createMemoryHost({
+        identity: { userId: 'u', tenantId: 't', profileDir: '/prof' },
+      })
+      await host.fs.mkdirp(p(link.slice(0, link.lastIndexOf('/'))))
+      await host.fs.writeFile(p('/prof/config.json'), '{}')
+      await host.fs.mkdirp(p(`/outside/${SID}`))
+      host.symlink(p(link), target)
+      const scope = await pathScopeOf({ host, sessionId: SID, protectedFiles: [] }, null)
+      expect(scope.ownSpillDir).toBe(`/prof/tool-output/${SID}`)
+      const through = p(`/prof/tool-output/${SID}/${rest}`)
+      expect((await locatePath(host.fs, through, scope)).place).toBe(place)
+    },
+  )
 })
 
 describe('a path the host finds but cannot name (owner 2026-09-27, s11-safety-2)', () => {

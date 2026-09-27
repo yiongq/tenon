@@ -5,16 +5,19 @@
  * Everything is compared as REAL paths: the path is normalised, then resolved through `HostFs.realpath`
  * — and when the entry does not exist yet (a file about to be written, a folder about to be made),
  * through its nearest existing parent, with the missing segments put back as the model wrote them.
- * The roots, the profile directory, the session's own spill directory and the protected files are
- * resolved by the same algorithm before they are compared, or a workspace under a link (macOS `/tmp`
- * → `/private/tmp`) would make everything in it read as outside.
+ * The roots, the profile directory and the protected files are resolved by the same algorithm before
+ * they are compared, or a workspace under a link (macOS `/tmp` → `/private/tmp`) would make everything
+ * in it read as outside. The session's own spill directory is not resolved itself: it is the resolved
+ * profile directory's `tool-output/<sessionId>`, so a link planted there places what it leads to as
+ * that place, not as the spill (step 4).
  *
  * A path the host finds but cannot name (`UnresolvableAliasError`: macOS's `/.vol/<dev>/<ino>`
  * reaches any file by inode) cannot be compared with anything, so it is placed `protected`: blocked
  * with no card, like the protected list (owner 2026-09-27). Any other failure reads as outside.
  *
- * Two known limits (D8): a link swapped between this judgement and the execution (a race phase 2 does
- * not handle), and a hard link in the workspace to a file outside it. Both are phase 4's to decide.
+ * Two known limits (D8): a link swapped after Write and Edit resolve their path once more, just
+ * before they touch it (`stillNamesItself`, step 5), and before the write (a race phase 2 does not
+ * handle); and a hard link in the workspace to a file outside it. Both are phase 4's to decide.
  */
 import { UnresolvableAliasError } from '../host/adapter.js'
 import type { AbsolutePath, HostFs } from '../host/adapter.js'
@@ -30,7 +33,7 @@ export interface PathVerdict {
 export interface PathScope {
   readonly roots: readonly AbsolutePath[] // 工作区根，选定时已解析；对话形态传 []
   readonly profileDir: AbsolutePath // 启动时解析一次
-  readonly ownSpillDir: AbsolutePath // <profileDir>/tool-output/<sessionId>，同样解析
+  readonly ownSpillDir: AbsolutePath // 解析过的 profileDir 下的 tool-output/<sessionId>，本身不解析
   readonly protectedFiles: readonly AbsolutePath[] // 保护名单里的 shell 配置文件，desktop 给出，启动时解析
 }
 
@@ -100,10 +103,41 @@ export async function locatePath(
   return { real, place: placeOf(real, scope) }
 }
 
-/** Step 3 on a path already real. */
+/**
+ * Step 3 on a path already real. The protected files are compared without regard to case: a file
+ * that does not exist yet keeps the model's spelling (step 2), and on a case-insensitive volume
+ * (APFS: `.ZPROFILE` is written as `.zprofile`) a spelling in another case would create the protected
+ * file. Only more paths become protected: two paths equal in code units are equal folded.
+ */
 export function placeOf(real: AbsolutePath, scope: PathScope): PathPlace {
   if (isWithin(real, scope.ownSpillDir)) return 'own-spill'
-  if (isWithin(real, scope.profileDir) || scope.protectedFiles.includes(real)) return 'protected'
+  if (isWithin(real, scope.profileDir) || isProtectedFile(real, scope.protectedFiles)) {
+    return 'protected'
+  }
   if (scope.roots.some((root) => isWithin(real, root))) return 'workspace'
   return 'outside'
+}
+
+function isProtectedFile(real: AbsolutePath, files: readonly AbsolutePath[]): boolean {
+  let folded = foldedLists.get(files)
+  if (folded === undefined) {
+    folded = new Set(files.map((file) => foldCase(file)))
+    foldedLists.set(files, folded)
+  }
+  return folded.has(foldCase(real))
+}
+
+/** Each scope's list folded once: a walk places every file it meets. */
+const foldedLists = new WeakMap<readonly AbsolutePath[], ReadonlySet<string>>()
+
+/**
+ * The fold the protected compare uses: canonical decomposition (NFD, as APFS ignores the form), then
+ * lower, upper and lower case again. ASCII letters fold as they would anywhere; so does every
+ * character APFS folds onto the list's ASCII names — `ſ` onto `s`, the Kelvin sign onto `k`, `ﬁ` onto
+ * `fi`, `ẞ` onto `ss` (a sweep of U+0080–U+2FFFF against one- and two-letter names, 2026-09-27: all
+ * nine that APFS matched fold the same here). Where it is wider than APFS (`ı` onto `i`), it only
+ * blocks one more spelling.
+ */
+function foldCase(path: string): string {
+  return path.normalize('NFD').toLowerCase().toUpperCase().toLowerCase()
 }

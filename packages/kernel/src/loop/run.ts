@@ -78,6 +78,7 @@ import {
 import { replayContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
+import type { CommandShell } from '../tools/builtin/bash.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
@@ -124,6 +125,8 @@ export interface RunDriverContext {
   readonly toolsWithheld: 'provider-text-only' | null
   readonly search: SearchBackend | null
   readonly mcpSources: readonly McpToolSource[]
+  /** Bash's shell and base environment (`LoopPorts.commandShell`). */
+  readonly commandShell: CommandShell
   readonly inspectors: readonly InspectorRegistration[]
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -279,10 +282,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       mcpSources: ctx.mcpSources,
       testTools: ctx.testTools,
       search: ctx.search,
+      commandShell: ctx.commandShell,
       denials,
       strict: ctx.onUnansweredCall === 'throw',
       log: ctx.log,
       signal,
+      cause: () => abortCauseOf(ctx.lease),
       write,
       outcome: (call, view) =>
         ctx.emit.outcome(

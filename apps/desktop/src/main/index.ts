@@ -8,11 +8,12 @@ import {
   createSessionService,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
+import { app, autoUpdater, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
+import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
 import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
@@ -29,6 +30,12 @@ import { openSessionStore } from './tape/open.js'
 import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
 import { replayOnLoad } from './window-replay.js'
 import { registerModelRoutes } from './model-routes.js'
+import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
+import {
+  createSessionRemoval,
+  exposeSessionRemoval,
+  refuseWhileRemoving,
+} from './session-removal.js'
 
 // Phase 0 runs one local profile. Accounts and organisations arrive with the server host.
 const LOCAL_USER_ID = 'local'
@@ -90,6 +97,9 @@ app.on('web-contents-created', (_event, contents) => {
 })
 
 async function main(): Promise<void> {
+  // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
+  // `.env.local` (spec 02 §内置工具与参数「Bash」).
+  const startupEnv = snapshotEnv(process.env)
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
   await app.whenReady()
@@ -132,6 +142,16 @@ async function main(): Promise<void> {
   // bindLoop, before anything can send. The protected shell files are computed in the user's home:
   // the kernel reads no home of its own (§「在不在工作区里」).
   const home = absolutePath(app.getPath('home'))
+  // Bash's shell and the user's terminal environment, resolved once in the background from now on;
+  // a Bash call before it answers waits for it (host/shell-env.ts).
+  const commandShell = startCommandShell({
+    host,
+    shell: pickShell(),
+    startupEnv,
+    home,
+    isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
+  })
   const sessions =
     tape === null
       ? null
@@ -154,6 +174,20 @@ async function main(): Promise<void> {
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
           log: (line) => console.error(line),
         })
+  // Clearing and deleting a session, its tool-output folder with it (spec 02 §大响应落盘): its live
+  // Run stopped first, and until one completes, the session takes no send and opens no Run.
+  const removal =
+    sessions === null
+      ? null
+      : createSessionRemoval({
+          sessions,
+          // Bound late: the loop below takes this removal's `removing`.
+          runs: () => loop?.registry ?? null,
+          profileDir: absolutePath(host.identity.profileDir),
+          log: (line) => console.warn(line),
+        })
+  const removing = (sessionId: string): boolean => removal?.removing(sessionId) ?? false
+  exposeSessionRemoval(removal, app.isPackaged, process.env)
   const loop =
     sessions === null
       ? null
@@ -161,6 +195,8 @@ async function main(): Promise<void> {
           clock: host.clock,
           send: broadcast,
           locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
+          commandShell,
+          removing,
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
@@ -170,14 +206,32 @@ async function main(): Promise<void> {
     delayMs: recoveryDelayMs(app.isPackaged, process.env),
     log: (line) => console.error(line),
   })
-  if (tape !== null) {
-    // WAL: the last connection to close is what checkpoints the file.
-    app.on('will-quit', () => void tape.close())
+  // Closing a window and quitting (spec 02 §停止与退出): a Run in progress asks first, and the quit
+  // runs the six steps — its fifth closes the store (WAL: the last connection to close is what
+  // checkpoints the file), after the Runs it aborted have settled.
+  const shutdown = createShutdown<BrowserWindow>({
+    app,
+    dialog,
+    registry: loop?.registry ?? null,
+    tape,
+    t: (key) => locale.i18n.t(key),
+    parent: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
+    log: (line) => console.warn(line),
+  })
+  // Before the windows close: `quitAndInstall` sends no `before-quit` until they have (there is no
+  // auto-update yet; this is where it would stop the Runs).
+  try {
+    autoUpdater.on('before-quit-for-update', () => shutdown.beforeQuitForUpdate())
+  } catch (error) {
+    console.warn(
+      `[shutdown] no autoUpdater: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 
   const appTitle = (): string => locale.i18n.t('app.name')
   const openWindow = (fresh = false): BrowserWindow => {
     const opened = createWindow(locale.current, appTitle(), fresh)
+    opened.on('close', (event) => shutdown.onClose(opened, event))
     // A document that loads — the first one, a new window, a reload — gets the state it missed.
     replayOnLoad(opened.webContents, loop)
     return opened
@@ -199,7 +253,15 @@ async function main(): Promise<void> {
   installMenu()
 
   // `ipcMain` itself, except in a development build an e2e asked to count or fail routes (e2e-routes.ts).
-  const routes = e2eRouteSeam(ipcMain, app.isPackaged, process.env)
+  // Once the quit's third step ran, a route that opens a Run or writes a fact answers ok: false; so
+  // does a send to a session being cleared or deleted.
+  const routes = refuseWhileRemoving(
+    refuseWhileShuttingDown(
+      e2eRouteSeam(ipcMain, app.isPackaged, process.env),
+      () => shutdown.started,
+    ),
+    removing,
+  )
   registerConfigRoutes(routes, host, (next) => void locale.apply(next))
   registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
   registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
@@ -242,6 +304,8 @@ async function main(): Promise<void> {
   })
 }
 
+// Off macOS the last window closing quits. A Run it stopped is aborted, so the quit does not ask
+// again, but its fourth step still waits for that Run to settle (spec 02 §停止与退出).
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })

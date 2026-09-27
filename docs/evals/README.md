@@ -7,9 +7,28 @@
 - `tasks/<NN>-<slug>.json`：一题一个文件，共 20–30 题，形状是 `apps/desktop/evals/task.ts` 的 `EvalTask`。
 - `results/<YYYY-MM-DD>-<列>.jsonl`：一行一条记录，形状是 `apps/desktop/evals/record.ts` 的 `EvalRecord`。
 - `compare/<NN>-<slug>.md`：同题对比，写两边的结果、差在哪、原因。
-- `fixtures/<NN>-<slug>/`：工作区种子、假网页、假搜索结果。`.gitignore` 忽略任意层级的 `.env`，所以工作区里的 `.env` 存成 `dotenv.txt`，宿主复制时再改名；内容只放假的金丝雀值。
+- `fixtures/<NN>-<slug>/`：工作区种子、假网页、假搜索结果。`.gitignore` 忽略任意层级的 `.env`，所以工作区里的 `.env` 存成 `dotenv.txt`，宿主复制时再改名；内容只放假的金丝雀值。只放文件和文件夹，不放符号链接（指向里外都不行）：格式检查拒收，宿主复制和读取时再查一次，复制不跟随链接。
 - 录屏和 Claude Code 一侧的原始记录放在仓库外，记录里只留文件名（`raw`）。
 - 任何 provider key 的值都不进本目录；记录和命令里只写变量名（如 `$ZHIPU_API_KEY`）。
+
+## 题目索引
+
+检查脚本在 `apps/desktop/evals/checks/<id>.ts`，只看工作区文件和 Tape 事实，不看模型怎么措辞；note 里写 F2、E2、H9 要记的数。
+
+| 题 | 形态 | 测什么 | 同题对比 | 校准 |
+|---|---|---|---|---|
+| `01-fix-failing-test` | 任务 | 小的编码修复：跑 `node test.mjs`，从 cart.js 追到 money.js 的 `formatCents`，修好后再跑一次（最后一次改文件之后，要有一次执行 test.mjs 的命令——`node [参数] test.mjs`、`npm test`、`pnpm test`，`cat test.mjs` 这类只提到它的不算——且输出里有 `5/5 passed`）；test.mjs 不许改，另有暗测挡住只在 cart.js 里绕过去的改法 | 是 | — |
+| `02-rename-without-edit` | 任务 | 第 1 轮后 `disableTool` 关掉 Edit（F2、E2）：被策略拦下后换 Write 或命令把两个文件里的函数名改对，其余一字不动；note 记拦了几次、拦下后还调不调 Edit、第几次拦截后换了做法 | 否 | — |
+| `03-long-log-zh` | 任务 | 命令输出约 4.5 万字符的中文构建日志（超过落盘阈值），唯一的错误行在约 3.7 万字符处：靠预览加 Read 分段（或对落盘文件 Grep）找出错误码 | 是 | H9 |
+| `04-long-log-en` | 任务 | 同 03，英文测试日志约 4.6 万字符，真失败的一行在约 3.9 万字符处，另有重试后通过的干扰行 | 是 | H9 |
+| `05-count-errors-without-bash` | 任务 | 第 1 轮后关掉 Bash（F2）：换着命令反复撞同一条策略，连续 3 次即以 `blocked-repeatedly` 结束；要在那之前改用 Grep / Read 数出每个文件 `level` 为 `error` 的条数 | 否 | — |
+
+- 关工具的题（02、05）的 note 与 `calib`：「拦下后还调不调」（`calib.blockedRecalls`）数第一次 `policy` 拦截所在那次请求之后、各次请求里对被禁工具的调用，不论怎么收口；同一批里并行的调用模型还没见到 is_error，不算。note 和记录用同一个函数，数一定相同。「第几次拦截后换了做法」数的是模型第一次用别的办法做成被禁工具那件事之前被拦了几次，「做成」按题定：02 是一次成功的 Write（写 src/users.js 或 src/index.js）或命令里写出 `fetchUser` 的 Bash；05 是一次成功的、输入里带 `2026-09-27` 的 Grep / Read，或写 summary.txt 的 Write。两次拦截之间的一次 Read、Glob 不算换了做法。
+- 关工具的题（02、05）不进对比集：对照客户端没有会话中途改策略的办法。
+- 03、04 设 `usageLimitTokens: 500000` 作费用护栏（长输出反复读时防失控）；其余题不设。
+- 工具轮数（H11）每题都记在 `toolRounds`，`calibrates` 不单列。
+- 前 5 题没有对话形态：对话形态现在只有 Read（只能读本会话的落盘目录），能产生落盘的 WebSearch、WebFetch 在第 27、28 步，对话题随那两步加。
+- 夹具里的日志存成 `.jsonl`：`.gitignore` 忽略 `*.log`。03、04 的日志由脚本按固定种子生成，答案不在源码里。
 
 ## 列定义
 
@@ -29,12 +48,18 @@
 ```
 pnpm eval        # = pnpm build && TENON_EVAL=1 vitest run --project evals；不进 CI（同 test:live）
                  # TENON_EVAL_PROVIDER / _MODEL / _EFFORT / _RUNS（默认 3）/ _TASKS / _COMPARE_ONLY
+                 # TENON_EVAL_TIMING=1：记 timing（flashx 测速）
+                 # TENON_EVAL_DEADLINE_MIN：每题期限，整数分钟，默认 45
 pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基线建成（plan 第 34 步）时加进 CI，不进 pre-commit
 ```
 
 - 命令、运行器与 zod schema 在 `apps/desktop/evals/`。`pnpm test` 只跑格式检查（tasks 和 results 过 zod，fixture 引用的文件都在），不联网，不要 key。
-- key 只从进程环境读。发送前照常核对 key 绑定的主机，评测配置不开后门。
-- 判分：全部是 script 检查的题，`judgedBy` 记 `script`，全部通过才算 pass；只要有一条 human 检查，就记 `human`，脚本结果写进 note 供人参考。
+- `TENON_EVAL_*` 只从运行器的环境读（命令行前面写上），`.env.local` 里的一律不认；第一次请求之前打印一行解析出的列、次数、题目、期限和 timing，不含 key，`.env.local` 里有被忽略的 `TENON_EVAL_*` 也在这行列出。
+- key 只在运行器进程内读：智谱 key 先取运行器的环境，没有再取仓库根的 `.env.local`（在进程内解析成对象，不写进 `process.env`）；主对比列的官方 key 只从运行器的环境读，`.env.local` 里有就拒跑。命令和记录里只写变量名。发送前照常核对 key 绑定的主机，评测配置不开后门。
+- 期限：每题一个，从发出第一条消息算起，含所有轮次和每条链上的每个 Run（单个 Run 另有 15 分钟上限）。到时运行器停下会话、等 Run 结束，照样出一条记 fail 的记录，note 写明期限已过；vitest 的超时是期限加 5 分钟，所以不会有一次运行在测试超时后没人看着继续花钱。测试的 signal 被中止（vitest 自己的超时）时同样停下、删掉运行目录，这一条不写进结果文件。Ctrl-C 直接杀掉 vitest 进程：不写记录，临时目录和留在后台的命令可能残留，要手动清。
+- `timing`：`ttftMs` 取整次运行第一次 attempt 从发出到第一个内容事件；第一次 attempt 没有内容（例如 429 后重试）就不记 `timing`。
+- 判分：全部是 script 检查的题，`judgedBy` 记 `script`，全部通过才算 pass；只要有一条 human 检查，就记 `human`，脚本结果写进 note 供人参考。任何一个 Run 以 `usage-limit` 结束，该条记 fail（多轮的题不只看最后一个 Run）。
+- 运行目录删不掉（例如命令留下只读文件夹）时记一行日志，不影响这条记录。
 
 ## 费用口径
 

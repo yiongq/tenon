@@ -1,0 +1,13 @@
+{
+  "id": "03-long-log-zh",
+  "profile": "cowork",
+  "turns": [
+    "在工作区里运行 `node nightly.mjs`，它会输出昨晚夜间构建的完整日志。这次构建只有一条错误（警告不算）。把这条错误的错误码（形如 `E-1234`）写进工作区根目录的 answer.txt，只写错误码本身；再用一句话告诉我是哪个模块、哪一步出的错。"
+  ],
+  "workspace": "03-long-log-zh",
+  "host": { "answers": { "default": "allow", "command": "allow" }, "usageLimitTokens": 500000 },
+  "checks": [{ "kind": "script", "id": "03-long-log-zh" }],
+  "calibrates": ["H9"],
+  "compare": true,
+  "from": ["H9", "H15"]
+}

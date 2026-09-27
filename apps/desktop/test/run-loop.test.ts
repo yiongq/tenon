@@ -5,13 +5,16 @@
  */
 import { chatEvent, chatEventSchema } from '@tenon-app/contracts'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
-import { createMemoryHost } from '@tenon-app/kernel'
-import type { RunLease, SessionEvent, SessionService } from '@tenon-app/kernel'
+import { absolutePath, createMemoryHost } from '@tenon-app/kernel'
+import type { CommandShell, RunLease, SessionEvent, SessionService } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import { localDateOf } from '../src/main/locale.js'
 import { createRunQueue } from '../src/main/queue.js'
 import { createRunEvents } from '../src/main/run-events.js'
+
+/** These cases run no Bash: the shell is a stand-in. */
+const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
 
 const ROOT = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
 const CHILD = '0b8f2a1c-3d4e-4f50-8a61-7b2c3d4e5f60'
@@ -21,24 +24,31 @@ function lease(result: RunLease | { refused: 'shutting-down' }): RunLease {
   return result
 }
 
-/** A stand-in for a WebContents: the two events that say the document is gone. */
-function fakeOwner(): { owner: object; close(): void; listeners(): number } {
-  const listeners = new Map<string, Set<() => void>>()
+/** A stand-in for a WebContents: the events that say the document is gone. */
+function fakeOwner(): {
+  owner: object
+  close(): void
+  emit(name: string, ...args: unknown[]): void
+  listeners(): number
+} {
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   const owner = {
-    on(name: string, listener: () => void): void {
+    on(name: string, listener: (...args: unknown[]) => void): void {
       const set = listeners.get(name) ?? new Set()
       set.add(listener)
       listeners.set(name, set)
     },
-    off(name: string, listener: () => void): void {
+    off(name: string, listener: (...args: unknown[]) => void): void {
       listeners.get(name)?.delete(listener)
     },
   }
+  const emit = (name: string, ...args: unknown[]): void => {
+    for (const listener of listeners.get(name) ?? []) listener(...args)
+  }
   return {
     owner,
-    close: () => {
-      for (const listener of listeners.get('destroyed') ?? []) listener()
-    },
+    close: () => emit('destroyed'),
+    emit,
     listeners: () => [...listeners.values()].reduce((n, set) => n + set.size, 0),
   }
 }
@@ -88,6 +98,70 @@ describe('RunRegistry', () => {
     // Nothing is left listening on a webContents that outlives the lease.
     expect(window.listeners()).toBe(0)
     theirs.finish()
+  })
+
+  it('aborts the Runs of a document the main frame replaced, and none for a navigation main cancelled', () => {
+    // §停止与退出「watchOwner」: 主框架换了文档（重载）时调 abort({ origin }, 'close-window'), 只中止这个
+    // 文档登记的进行中 Run. Electron's order (44.4.1): a reload fires `did-start-navigation`, then
+    // `did-navigate`; a navigation `hardenWebContents` cancels fires only the first.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const other = fakeOwner()
+    const mine = lease(registry.begin({ rootSessionId: ROOT, origin: window.owner }))
+    const theirs = lease(registry.begin({ rootSessionId: CHILD, origin: other.owner }))
+    window.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    expect(mine.signal.aborted).toBe(false)
+    window.emit('did-navigate', {}, 'file:///app/index.html', 200, 'OK')
+    expect(mine.signal.reason).toBe('close-window')
+    // No stop was asked for: nothing a paused session holds is closed on its account.
+    expect(mine.stopRequested).toBe(false)
+    expect(theirs.signal.aborted).toBe(false)
+    expect(registry.running()).toEqual([CHILD])
+    mine.finish()
+    expect(window.listeners()).toBe(0)
+    theirs.finish()
+  })
+
+  it('aborts the Runs of a document whose renderer is gone, though the WebContents stays', () => {
+    // §停止与退出「watchOwner」: 文档被销毁. A crashed or killed renderer fires only
+    // `render-process-gone` (Electron 44.4.1): no `destroyed`, no `did-navigate` until a reload.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const other = fakeOwner()
+    const mine = lease(registry.begin({ rootSessionId: ROOT, origin: window.owner }))
+    const theirs = lease(registry.begin({ rootSessionId: CHILD, origin: other.owner }))
+    window.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 11 })
+    expect(mine.signal.reason).toBe('close-window')
+    expect(mine.stopRequested).toBe(false)
+    expect(theirs.signal.aborted).toBe(false)
+    expect(registry.running()).toEqual([CHILD])
+    mine.finish()
+    expect(window.listeners()).toBe(0)
+    theirs.finish()
+  })
+
+  it('aborts at once a lease begun for a document whose renderer is already gone', () => {
+    // A command that waited in the mailbox, begun after the crash: no second `render-process-gone`.
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const window = fakeOwner()
+    const late = lease(
+      registry.begin({
+        rootSessionId: ROOT,
+        origin: { ...window.owner, isDestroyed: () => false, isCrashed: () => true },
+      }),
+    )
+    expect(late.signal.reason).toBe('close-window')
+    expect(registry.running()).toEqual([])
+    late.finish()
+    // Reloaded since: a live renderer is left alone.
+    const mine = lease(
+      registry.begin({
+        rootSessionId: ROOT,
+        origin: { ...window.owner, isDestroyed: () => false, isCrashed: () => false },
+      }),
+    )
+    expect(mine.signal.aborted).toBe(false)
+    mine.finish()
   })
 
   it('aborts at once a lease begun for a document that is already gone', () => {
@@ -361,6 +435,7 @@ describe('chat.send and the queue (plan step 17)', () => {
       clock: host.clock,
       send: (_channel, payload) => sent.push(payload),
       locale: () => 'en',
+      commandShell: NO_SHELL,
     })
     // The kernel queued it: something else held the root when its turn came.
     const sessions = {
@@ -396,6 +471,7 @@ describe('chat.send and the queue (plan step 17)', () => {
         if (channel === 'chat.queue') pushed.push(payload as { items: unknown[]; held?: unknown })
       },
       locale: () => 'en',
+      commandShell: NO_SHELL,
     })
     // A message left from before, then a direct send the kernel holds for a public host.
     const { queuedId: before } = await loop.queue.enqueue(ROOT, 'left from before', {

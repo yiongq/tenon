@@ -33,8 +33,10 @@ export { KEY_SEPARATOR, keyFor } from './host/key.js'
 export {
   PROFILE_CONFIG_FILE,
   PROFILE_SUBDIRS,
+  TOOL_OUTPUT_DIR,
   assertProfileId,
   profileDirFor,
+  toolOutputDirFor,
 } from './host/profile.js'
 export { createMemoryHost } from './host/memory.js'
 export type { MemoryHost, MemoryHostOptions } from './host/memory.js'
@@ -334,6 +336,9 @@ export type {
   SessionServiceOptions,
 } from './session/service.js'
 export type { RowCall } from './loop/calls.js'
+// The prompt layer's version and hash, which every eval record cites (spec 02 §提示层「版本闸」;
+// plan step 25): the runner reads them here, the texts stay the kernel's.
+export { PROMPT_LAYER_HASH, PROMPT_LAYER_VERSION } from './prompts/index.js'
 // The fold read out of a store, ids and ordinals kept: what a caller that needs a message's id and
 // revision reads, and what `rebuildProviderContext` is the provider-facing projection of.
 export { readEffectiveMessages } from './tape/replay.js'
@@ -467,3 +472,7 @@ export type { CommandShell } from './tools/builtin/bash.js'
 // and the desktop (which resolves the protected shell files) use.
 export { locatePath, placeOf, resolvePath } from './permission/workspace.js'
 export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permission/workspace.js'
+
+// Spec 02 plan step 23 — 停止与退出. The quit waits the stop sequence's grace plus the in-process
+// write wait, and reads both here, so the desktop writes no number of its own (§停止与退出 第 4 步).
+export { STOP_TERM_GRACE_MS, STOP_WRITE_WAIT_MS } from './loop/limits.js'

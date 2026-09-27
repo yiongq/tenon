@@ -13,8 +13,9 @@
 import { randomUUID } from 'node:crypto'
 import { chatEvent, chatQueueEvent, runStateEvent } from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
-import { createMemoryHost, createMemoryTapeStore } from '@tenon-app/kernel'
+import { absolutePath, createMemoryHost, createMemoryTapeStore } from '@tenon-app/kernel'
 import type {
+  CommandShell,
   MemoryHost,
   ModelInfo,
   RunLease,
@@ -37,6 +38,9 @@ import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { DesktopLoop, RootRunState } from '../src/main/chat.js'
 import { replayOnLoad } from '../src/main/window-replay.js'
+
+/** These cases run no Bash: the shell is a stand-in. */
+const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
 
 const MODEL: ModelInfo = {
   id: 'claude-state-1',
@@ -141,6 +145,7 @@ function fakeWindow(): {
     close: () => emit('destroyed'),
     reload: () => {
       emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+      emit('did-navigate')
       emit('did-finish-load')
     },
   }
@@ -191,6 +196,7 @@ function harness(): Harness {
     clock: memory.clock,
     send: record,
     locale: () => 'en',
+    commandShell: NO_SHELL,
     log: () => {},
   })
   // The kernel's events reach run-events.ts unchanged; the case only keeps a copy of each.
@@ -572,6 +578,7 @@ function wired(): { loop: DesktopLoop; sent: Array<[string, unknown]> } {
     clock: createMemoryHost().clock,
     send: (channel, payload) => sent.push([channel, payload]),
     locale: () => 'en',
+    commandShell: NO_SHELL,
     log: () => {},
   })
   return { loop, sent }

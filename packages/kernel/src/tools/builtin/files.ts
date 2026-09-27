@@ -12,7 +12,7 @@
  */
 import type { AbsolutePath, HostFs } from '../../host/adapter.js'
 import { isWithin, joinPath } from '../../host/path.js'
-import { placeOf } from '../../permission/workspace.js'
+import { placeOf, resolvePath } from '../../permission/workspace.js'
 import type { PathScope } from '../../permission/workspace.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecution } from '../executor.js'
@@ -21,7 +21,7 @@ import type { ToolExecution } from '../executor.js'
 export const FILE_READ_MAX_BYTES = 64 * 1024 * 1024
 
 /** A file whose first this-many bytes hold a NUL is not text. */
-const BINARY_SNIFF_BYTES = 8192
+export const BINARY_SNIFF_BYTES = 8192
 
 /** The execution-time failures the file tools share (§参数校验与失败「执行期失败」). */
 export const FILE_TEXTS = {
@@ -31,7 +31,23 @@ export const FILE_TEXTS = {
   notText: '{path} is not a text file.',
   tooLarge: '{path} is {bytes} bytes, larger than the {max} bytes a file tool opens.',
   hostError: 'Reading {path} failed: {message}',
+  resolvesElsewhere:
+    '{path} now resolves elsewhere, through a link that leads to another path or to none, so nothing was written.',
 } as const
+
+/**
+ * Whether the real path a write was judged at still names itself, asked just before Write or Edit
+ * touches it (spec 02 §「在不在工作区里」第 5 步「文件工具也只对 real 执行」): resolved again, it comes
+ * back unchanged — the entry is there and no link leads from it, or it is missing under the same real
+ * parents. A link at the path or above it made or swapped since the judgement, a dangling link (a
+ * write through it creates the file wherever it points), a loop or a path that no longer resolves:
+ * false, and the call writes nothing. A swap between this check and the write stays the known race
+ * (第 6 步).
+ */
+export async function stillNamesItself(fs: HostFs, path: AbsolutePath): Promise<boolean> {
+  const now = await resolvePath(fs, path)
+  return now.resolved && now.path === path
+}
 
 /** What a call answers when the host's filesystem throws: a stop, or an is_error with its message. */
 export function whenThrown(error: unknown, path: AbsolutePath): ToolExecution {

@@ -1,4 +1,4 @@
-import type { RunEndReasonContract } from '@tenon-app/contracts'
+import type { RunEndReasonContract, ToolOutcomeViewContract } from '@tenon-app/contracts'
 
 type Code = RunEndReasonContract['code']
 export type EndVisual = 'neutral' | 'danger' | 'warning'
@@ -46,5 +46,32 @@ export function cardOf(
       const unhandled: never = code
       return unhandled
     }
+  }
+}
+
+/** Where one call of the round goes in ② of the card (§失败卡与结束原因). */
+export type EffectLine = 'done' | 'stopped' | 'stopped-sent' | 'not-run' | 'uncertain'
+
+/**
+ * One call's line in ② (§失败卡与结束原因, §点停止时各状态怎么收): a call stopped part-way says its
+ * later writes did not happen — for a command, `aborted` is written only once its `exited` came within
+ * the confirmation window, after the SIGKILL of its whole group, so the line never shows while the
+ * tree still runs — and a request already in flight (WebSearch, WebFetch, a connector's tool: effect
+ * `external`) may have reached the other side, so it never says that. Bash's effect is `external` too
+ * (§内置工具与参数), but it is a command, not a request.
+ */
+export function effectLineOf(
+  name: string,
+  outcome: Pick<ToolOutcomeViewContract, 'state' | 'effect'>,
+): EffectLine {
+  switch (outcome.state) {
+    case 'completed':
+      return 'done'
+    case 'aborted':
+      return outcome.effect === 'external' && name !== 'Bash' ? 'stopped-sent' : 'stopped'
+    case 'not-run':
+      return 'not-run'
+    default:
+      return 'uncertain'
   }
 }

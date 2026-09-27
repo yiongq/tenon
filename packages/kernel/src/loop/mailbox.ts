@@ -44,9 +44,10 @@ import type {
   RunStartedPayload,
   RunTerminalPayload,
   SessionStartPayload,
+  TapeEntry,
   WorkspaceSetPayload,
 } from '../tape/entry.js'
-import type { TapeUserMessagePayload } from '../tape/projection.js'
+import type { TapeAttemptCompletedPayload, TapeUserMessagePayload } from '../tape/projection.js'
 import { parseMessagePayload } from '../tape/projection.js'
 import {
   messageRevisionKey,
@@ -228,6 +229,17 @@ interface OpenedRound {
   readonly contextAtEntryId: number
   /** The user message that opened the Run (its `run_started` cause); absent for any other opener. */
   readonly openedBy?: string
+}
+
+/** The Run 「继续」 continues (§重试与「继续」). */
+interface Continuable {
+  readonly runId: string
+  readonly cause: ContinuationPayload['cause']
+  /**
+   * The truncated attempt's `maxTokens`, when that attempt wrote nothing into history — the cut fell
+   * inside the only tool call, with no thinking or text before it (01 invariant 5) — else null.
+   */
+  readonly emptyAt: number | null
 }
 
 /** A command's turn: done with a result, or out of the mailbox to prebuild and in again. */
@@ -950,9 +962,7 @@ export function createLoop(deps: LoopDeps): Loop {
    * What 「继续」 continues (§重试与「继续」): the session's latest Run, when it ended as `step-limit`
    * or `output-truncated` and no `message/user` came after it. Null when there is nothing to continue.
    */
-  async function continuable(
-    sessionId: string,
-  ): Promise<{ runId: string; cause: ContinuationPayload['cause'] } | null> {
+  async function continuable(sessionId: string): Promise<Continuable | null> {
     if ((await tape.head(sessionId)) === null) return null
     const entries = await readSessionEntries(tape, sessionId)
     let last: string | null = null
@@ -967,7 +977,12 @@ export function createLoop(deps: LoopDeps): Loop {
     const later = entries.some(
       (entry) => entry.name === 'message/user' && entry.entryId > terminal.entryId,
     )
-    return later ? null : { runId: last, cause: code }
+    if (later) return null
+    return {
+      runId: last,
+      cause: code,
+      emptyAt: code === 'output-truncated' ? emptyTruncationOf(entries, last) : null,
+    }
   }
 
   async function continueTurn(
@@ -1004,15 +1019,17 @@ export function createLoop(deps: LoopDeps): Loop {
       finish(box, lease)
       return { kind: 'done', result: { status: 'held', host: pre.host } }
     }
+    const raised = raisedMaxTokens(after.emptyAt, pre.assembly)
     let opened: OpenedRound
     try {
-      opened = await openContinue(ports, box, q.sessionId, pre, after)
+      opened = await openContinue(ports, box, q.sessionId, pre, after, raised !== null)
     } catch (error) {
       finish(box, lease)
       throw error
     }
+    const setup = roundSetup(pre)
     startRun(ports, box, q.sessionId, opened, lease, pre.provider.id, () =>
-      Promise.resolve(roundSetup(pre)),
+      Promise.resolve(raised === null ? setup : { ...setup, maxTokens: raised }),
     )
     return { kind: 'done', result: { status: 'started' } }
   }
@@ -1020,20 +1037,28 @@ export function createLoop(deps: LoopDeps): Loop {
   /**
    * The continuing Run's opening batch: `message/continuation` — the model-only English note, never
    * rendered, no `message/user` — then the Run's head, with cause `continue`. Its counters start
-   * from 0: the chain the guards read stops at a Run not started by a resume.
+   * from 0: the chain the guards read stops at a Run not started by a resume. A `whole` resend —
+   * after a truncation that kept nothing, with a raised limit — writes no note: the round goes out
+   * again as it was, and the cause names no message (§重试与「继续」).
    */
   async function openContinue(
     ports: LoopPorts,
     box: RootBox,
     sessionId: string,
     pre: Extract<Prebuild, { kind: 'ready' }>,
-    after: { runId: string; cause: ContinuationPayload['cause'] },
+    after: Continuable,
+    whole: boolean,
   ): Promise<OpenedRound> {
     assertModelBelongs(pre.assembly.model, pre.provider.id)
     const head = await tape.head(sessionId)
     if (head === null) throw new Error(`continue: session ${sessionId} has no head`)
-    const messageId = ids.uuid()
+    const messageId = whole ? null : ids.uuid()
     const runId = ids.uuid()
+    const cause = { kind: 'continue', afterRunId: after.runId, messageId } as const
+    if (messageId === null) {
+      const entries = runHead(sessionId, runId, cause, pre)
+      return appendOpening(ports, box, sessionId, runId, head.incarnationId, entries)
+    }
     const note: ContinuationPayload = {
       messageId,
       revision: FIRST_REVISION,
@@ -1052,7 +1077,7 @@ export function createLoop(deps: LoopDeps): Loop {
         payload: note,
         createdAt: now(),
       }),
-      ...runHead(sessionId, runId, { kind: 'continue', afterRunId: after.runId, messageId }, pre),
+      ...runHead(sessionId, runId, cause, pre),
     ]
     return appendOpening(ports, box, sessionId, runId, head.incarnationId, entries)
   }
@@ -1385,6 +1410,8 @@ export function createLoop(deps: LoopDeps): Loop {
           writer: resolver,
         }),
       ]
+      const cardTarget = waiting.decision.confirm?.target
+      const cardPath = cardTarget?.type === 'path' ? cardTarget.path : null
       resume = {
         ...rest,
         calls: [waiting.call, ...waiting.rest],
@@ -1393,6 +1420,10 @@ export function createLoop(deps: LoopDeps): Loop {
           decisionKey: waiting.decisionKey,
           summary: waiting.decision.summary,
           reversibility: waiting.decision.reversibility,
+          // The card's own real path, even when the re-judgement found it elsewhere and allowed
+          // that (a link to a granted file): the executor acts on the path the card named, and its
+          // re-check refuses it if a link has moved it since (§「在不在工作区里」第 5 步).
+          target: cardPath ?? judged.target,
         },
       }
     }
@@ -1569,6 +1600,7 @@ export function createLoop(deps: LoopDeps): Loop {
           toolsWithheld: built.assembly.toolsWithheld,
           search: built.assembly.search,
           mcpSources: built.assembly.mcpSources,
+          commandShell: ports.commandShell,
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
           userSetting: deps.userSetting,
@@ -1644,8 +1676,14 @@ export function createLoop(deps: LoopDeps): Loop {
         if (recorded && end.reason.code === 'paused') {
           if (lease.stopRequested) {
             // A stop that reached the pause while it committed: 暂停中停止, in this same task
-            // (「Run 结束」). The card never shows; `run-ended` still says `paused`.
-            await closePausedByStop(ports, box)
+            // (「Run 结束」). The card never shows; `run-ended` still says `paused`. A store closed by
+            // an exit meanwhile (TapeClosedError) only reaches the log: the lease is still finished,
+            // and the next start's recovery sees the card (§停止与退出 第 5 步).
+            await closePausedByStop(ports, box).catch((error: unknown) => {
+              log(
+                `[loop] run ${runId} of ${sessionId}: its stopped pause was not closed: ${describe(error)}`,
+              )
+            })
           } else if (!lease.signal.aborted) {
             card = cardOfEntries(sessionId, end.entries)
           }
@@ -1667,7 +1705,12 @@ export function createLoop(deps: LoopDeps): Loop {
         // Delivered once the pause is on the Tape (§答复与投递「投递」); the renderer also pulls it.
         if (card !== null) deliver(card)
       })
-    })()
+    })().catch((error: unknown) => {
+      // Nothing of a Run's end escapes as an unhandled rejection (§停止与退出 第 5 步): logged, and
+      // the lease finished if the end did not get that far.
+      log(`[loop] run ${runId} of ${sessionId} failed at its end: ${describe(error)}`)
+      if (box.lease === lease) finish(box, lease)
+    })
   }
 
   /**
@@ -2604,6 +2647,38 @@ function roundSetup(pre: Extract<Prebuild, { kind: 'ready' }>): RunSetup {
     effort: pre.choice.effort,
     assembly: pre.assembly,
   }
+}
+
+/**
+ * The max tokens of a Run's truncated attempt, when it kept nothing: the Run's last attempt stopped
+ * at `max-tokens`, and no `message/assistant` of the Run came after that request's context — the
+ * reply and its attempt are one batch (§一轮回复怎么分流「照 01」). Null otherwise.
+ */
+function emptyTruncationOf(entries: readonly TapeEntry[], runId: string): number | null {
+  const attempt = entries.findLast(
+    (entry) => entry.name === 'provider/attempt_completed' && entry.sourceId === runId,
+  )
+  const payload = attempt?.payload as TapeAttemptCompletedPayload | undefined
+  if (payload?.stop?.reason !== 'max-tokens') return null
+  const kept = entries.some(
+    (entry) =>
+      entry.name === 'message/assistant' &&
+      entry.payload['runId'] === runId &&
+      entry.entryId > payload.contextAtEntryId,
+  )
+  return kept ? null : payload.request.maxTokens
+}
+
+/**
+ * 「继续」's max tokens after a truncation that kept nothing (§重试与「继续」; owner 2026-09-27, A):
+ * twice the truncated attempt's, never past the model's `maxOutputTokens`, and never under what a
+ * Run of this assembly sends anyway. At the model's limit it stays there: the round is resent at the
+ * limit, since a note would ask the model to go on from a reply it never sees. Null only after a
+ * truncation that kept something, which 「继续」 continues with its note.
+ */
+function raisedMaxTokens(emptyAt: number | null, assembly: RunAssembly): number | null {
+  if (emptyAt === null) return null
+  return Math.max(Math.min(2 * emptyAt, assembly.model.maxOutputTokens), assembly.maxTokens)
 }
 
 /** The card an asking decision in these entries describes, or null. */

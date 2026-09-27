@@ -381,7 +381,7 @@
 
 ## ② 能改能跑（不能砍；做完时任务形态完整可用，但还没验收）
 
-- [ ] 22. **Write / Edit / Bash**（裁决 E1、E4、D10、D7、H7）
+- [x] 22. **Write / Edit / Bash**（裁决 E1、E4、D10、D7、H7）
   - 读：§内置工具与参数「Bash」；§可逆性；§内置工具的默认档位；§权限决策顺序「合并：两步」。
   - 交付物：Write（父目录不存在先 `mkdirp`）、Edit 执行器（Write、Edit、Bash 在本步进产品工具表）；Bash 起进程（`HostSandbox.wrap` + `HostProcess.spawn` + `afterExit`，同 connection.ts:48-61 的路径）与 `SandboxRequest`；命令保守模式表（`reversibility.ts`）、`command` 原因码、撤不回每次问并接进第 4 层 ①、卡上改动可展开；effect 取值按参数表。另：第 21 步实测 A2 的定案（owner 2026-09-27 选 A）——截断落在本轮什么都没写下的地方（唯一的工具调用中途、之前没有思考和文字）时，「继续」改为把 max_tokens 加倍（不超过模型的 maxOutputTokens）、整轮重发，本轮不进历史；spec §重试与「继续」 走 Revisions，kernel 的 `continueRun` 与 `run-ended` 相应改，测试：同一个截断场景第二次能完成、到上限仍截断时照常以 output-truncated 结束且不再加倍。
   - 验收：40；补齐 36 的写入卡与不可逆卡、19、20 与 37 里需要写入的部分；不变量 22（命令部分）。
@@ -392,7 +392,7 @@
     - 旧 215：工作区内的 Write：卡上显示路径，改动默认收起，展开为写入内容的纯文本，「允许」旁写「本会话」；同一文件本会话第二次写不出卡。
     - 旧 216：撤不回的卡（删除已有文件的 Bash）：单独一句「撤不回」；按钮为「拒绝 ⏎ Esc」「允许」（后者不带按键提示）；焦点进卡落在「拒绝」；在卡内按 ⏎，包括焦点在「允许」上时，都按拒绝收口，文件仍在；点「允许」，或焦点在「允许」上按 Space，才执行，期限写「只这一次」。Everything 夹具工具的卡仍是 ⏎ = 允许、期限「只这一次」，对象行是连接器 ID 加工具原名、分两段，参数默认展开（这一句是渲染端组件测试，desktop 不注册 MCP 来源）。
   - 暂定与待定：开放问题 17 已定（owner 2026-09-26，spec §内置工具与参数「Bash」）：`LoopPorts.commandShell`（第 9 步声明，desktop 先传占位，本步换成 `apps/desktop/src/main/host/shell-env.ts`）；argv 用 `exec 2>&1` 在 fd 层并 stderr；非零退出首行 `Exit code: N`、is_error；超时来源 `timed-out`（第 23 步验）。测试要点补：假 shell 脚本打印标记之间的 `env -0` 时取到它；超时或失败时退回启动环境、log 被调一次；`TENON_*`、`ELECTRON_*` 与开发构建的 key 名都不在结果里；`printf 'a\n'; printf 'b\n' >&2; printf 'c\n'` 得到 a、b、c 三行；`exit 3` 首行 `Exit code: 3`、is_error、completed / null；`true` 得到 `(no output)`；`sleep 30 &` 握着管道时，调用在退出后 `STOP_EXIT_CONFIRM_MS` 内返回；等 `env()` 时点停止记 not-run / `stopped`。命令模式表在 E1 / E4 用例之外收哪些（`rmdir`、`find -delete`、`git clean -f`、覆盖文件的 `mv`、`wget --post-data`、rsync 到远端等）按评测里的命令样本定，只许加往 `irreversible` 判的；Glob / Grep 的引擎与正则方言、要不要「先 Read 才能 Write / Edit」的守卫（定之前不做）、Read 的行号前缀会不会降低 Edit 命中率，都按评测题定；每次调用起新进程、`cd` 不跨调用保留（暂定）；Bash、WebSearch、WebFetch 的 effect 暂定 `external`（开放问题 11）。
-- [ ] 23. **停止即杀与关窗退出**（裁决 B1、B4、B18、H7）
+- [x] 23. **停止即杀与关窗退出**（裁决 B1、B4、B18、H7）
   - 读：§工具调用的收口「点停止时各状态怎么收」；§desktop 接线「停止与退出」「e2e 接缝」；§上限、守卫与用量 的常量。
   - 交付物：`STOP_TERM_GRACE_MS` / `STOP_EXIT_CONFIRM_MS` / `STOP_WRITE_WAIT_MS` 的校准；停止时六种状态的收口；无条件 SIGKILL 与确认窗口；进程内写操作等待；Bash 超时（`HostClock.setTimeout`，同一序列）；窗口 `close` 与 `before-quit` 的确认、六步关机顺序、`watchOwner` 新语义与 `RunAbortCause`、删掉 will-quit 里的 `void tape.close()`、迟到写入捕获 `TapeClosedError`、`dialog.showMessageBox` 的调用写法与 e2e 接缝。
   - 验收：41、42；补齐 22 的「立即发送」打断 Bash。
@@ -408,18 +408,18 @@
     - 旧 137：关机顺序单测（假 app、假 TapeStore）：没有进行中 Run 时 before-quit 不弹确认；`tape.close()` resolve 之前不再调 `app.quit()`；关机流程开始后 `chat.send`、`approval.respond` 返回 `ok: false`，不开 Run、不写事实；等待上限取 `STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS`，apps/desktop 里 grep 不到字面量 2500。
     - e2e 的原生确认框用 `electronApp.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: <i>, checkboxChecked: false }) })` 预设答案；有进行中 Run 的用例结束前也要预设，免得 teardown 卡在确认上。
   - 暂定与待定：三个 STOP 常量用「直接子进程退出、孙进程忽略 SIGTERM」与「父子都忽略」两个 fork 夹具在 macOS 与 Linux CI 各跑一遍，要求 1 秒内进程树清空，不够就调数、规则不变；校准同时决定退出第 4 步的等待，desktop 不改代码，只核对 `settled` 的入参随之变化；崩溃后残留的命令进程组只记 uncertain、不找也不杀（留到后续）。
-- [ ] 24. **长输出落盘与只读并行**（裁决 H9、H14、A13、F6、E4）
+- [x] 24. **长输出落盘与只读并行**（裁决 H9、H14、A13、F6、E4）
   - 读：§大响应落盘；§本地持久化布局：只加一行；§一批工具怎么执行。
   - 交付物：`toolOutputDirFor`、`loop/spill.ts`（`SpillRecord` 第 8 步已声明）、`MODEL_NOTES.spill`；desktop 清空、删除会话的「store 提交 → 删目录 → 完成」与完成前拒收发送；`loop/batch.ts` 的只读并行组，结果按调用序号缓冲写入（来不及就先串行交付，Tape 形状不变）。
   - 验收：43、44；不变量 13、34。
   - 测试要点：
-    - 旧 57、旧 188：成功、失败、WebFetch 各一例：一次结果的 text 总字符数超过 `SPILL_THRESHOLD_CHARS` 时，全文写进 `tool-output/<sessionId>/<file>`；`tool/result` 的 content 只有说明与预览，`kernelAuthored` 为 false；`spill.file` 不含 '/'；文件的 SHA-256 与字节数等于 `spill.sha256`、`spill.bytes`；任何 Tape 载荷里都没有全文，也没有绝对路径；两段 text 加一张图时，文件是两段以 `\n` 拼接，图片块原样留在 content 里、排在说明之后、不计入阈值；`toolOutputDirFor(profileDir, '../x')` 与大写的 UUID 都抛 TypeError；对话形态下 Read 这个路径不出卡；读别的会话的目录会被拦下；写盘失败回 is_error。
+    - 旧 57、旧 188：成功、失败、WebFetch 各一例：一次结果的 text 总字符数超过 `SPILL_THRESHOLD_CHARS` 时，全文写进 `tool-output/<sessionId>/<file>`；`tool/result` 的 content 只有说明与预览，`kernelAuthored` 为 false；`spill.file` 不含 '/'；文件的 SHA-256 与字节数等于 `spill.sha256`、`spill.bytes`；任何 Tape 载荷里都没有全文；绝对路径只在 `tool/result` content 的落盘说明里，`spill.file` 和别的字段都不带（spec Revisions (15)(16)）；两段 text 加一张图时，文件是两段以 `\n` 拼接，图片块原样留在 content 里、排在说明之后、不计入阈值；`toolOutputDirFor(profileDir, '../x')` 与大写的 UUID 都抛 TypeError；对话形态下 Read 这个路径不出卡；读别的会话的目录会被拦下；写盘失败回 is_error。
     - 旧 189：`deleteSession` / `resetSession` 完成之后目录不在；删除进行中该会话的发送不被接受；撤回单条消息之后落盘文件仍在；kernel 源码里没有删目录的调用。清空会话按「store 提交 → 删目录 → 完成」执行，清空之后新 incarnation 刚落盘的文件不会被异步删除吞掉。
     - 旧 23：「读 a、读 b、写 c、读 d」，a、b、d 都在工作区内：a、b 并行，两者的派发都早于任一个完成；c 出卡，d 排在 c 后面，拒绝 c 后 d 记 not-run；让 b 先于 a 完成，Tape 里的结果仍按调用顺序排。
     - 旧 126：d 没有被派发；`tool/result` 与 `tool_outcome` 按 a、b、c、d 的顺序出现；本会话即使已允许过搜索与域名，同批里 WebSearch、WebFetch、Bash、Write、MCP 工具也从不同时在途；对话形态里连续的 Read 逐个派发。
     - 不变量 13：假工具记录执行区间，只有最前面那组 Read / Glob / Grep 的区间允许重叠。
   - 暂定与待定：开放问题 24 已定（所有 Read 自己限长，第 18 步已做，阈值常量与计数函数已在）；对话形态 Read 一个落盘文件、超过阈值时不再落盘；删目录失败不在启动时清扫；阈值与预览在第 34 步校准。
-- [ ] 25. **评测运行器与小横评**（裁决 H15、M8、D7）
+- [x] 25. **评测运行器与小横评**（裁决 H15、M8、D7）
   - 读：§评测集与测试宿主；§记录格式与费用口径；§同题对比。
   - 交付物：`apps/desktop/evals/`（测试宿主、task 与 record 的 zod、checks、费用函数、models.ts 的评测专用行），根 vitest 的 `evals` project 与 `pnpm eval` / `pnpm evals:gate` 脚本，评测集前 5 题（01–05）；循环跑通后马上做 GLM 小横评。
   - 验收：45。
@@ -819,6 +819,115 @@
   - 复评与突变（2026-09-27，限流跑：一次一个区，vitest 限 2 个 worker，e2e 一次一个进程——先前满负荷并行把 owner 的机器跑得发烫，中途停过一次）：每区一个复评视角加核查，对照合并后的 `b4b08fa`，逐条看修复是否成立、合并有没有带回问题；成立 10 条，都是 minor 或「测试护不住修复」，驳回的里有 3 条是「spec 还没写」而 `6a29a84` 已写。突变视角每区一个、各在自己的 worktree（`wt/02-mutation-A`…`E`，`da42d4a`、`d693e4a`、`08162c1`、`8babead`、`483e9ef`、`52c81b1`）：杀掉 204 个变异体，补 52 个测试，没有查出产品缺陷；E 区 2 个存活变异体不补测试（ollama.com 的拒收在别的 provider 与近似域名上的行为 spec 没有规定，补了等于替 spec 定读法）。成立的 10 条里 9 条已修（kernel `9fe1346`：编码器第二份黄金请求带同模型 `vendorSource`、续跑在 begin 后与 append 前查中止、用户停下后自动发出取发紧急消息的那个窗口的 origin、`commandFrom` 兜底换成能护住它的失败点、Grep 逐行惰性、单文件内存有界；desktop `bee6150`：macOS 的 `/.nofollow`、`/.resolve`、`/dev/fd` 与任何 errno 都走别名检查、已确认过的同一公网主机不再重复确认（`session.facts` 只增 `chosen`）、读配置只数改了该 provider 设置的写入、held 确认页的主机有 e2e 护着），第 10 条是 s7-spec-1 的「值」一半，照读法 ① 留到阶段 6。spec 相应只增或澄清，记 Revisions (11)。
   - 等后面步骤的：Grep 的正则引擎与反向引用、环视的 `invalidPattern`（第 22 步）；`head_limit: 0` 的上限（第 34 步）；anchor `summary` 跨提示层版本重放（第 30 步）；`x-stainless-*` 的值（阶段 6）；`listSessions` 的并列游标（有批量导入时 amend 01）；undici 诊断通道记录器第一次真跑在下一次 `pnpm test:live`；model-menu.spec.ts 的悬停子菜单在满载下偶发超时，单跑都过，另修。navigation.spec.ts:138 的偶发失败是真缺陷，已修（`0c7cc13`）：新弹出的对话框还没接过焦点时按 Esc，`StopOnEscape` 当成停止发出了 `chat.stop`；现在页面上有打开的对话框或菜单时一律让给它，用例先把焦点移出对话框再按 Esc，竞态每次都跑到。
 
+- **2026-09-27 · 第 22 步（Write / Edit / Bash）**，分支 `wt/02-step22` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 133 个文件 2499 个用例过，build 过，e2e 110 个过）。验收 40 满足；36 的写入卡与不可逆卡、19、20、37 里要写入的部分补跑；不变量 22（命令部分）有测试。做法：四条实现线各用一个 worktree——K（Write、Edit、Bash 执行器与命令模式表，`3b3f56e`）、A（「继续」加倍，`005d969`，lead 改到上限仍整轮重发 `cab1897`）、G（Grep 换引擎，`5c09f6f`）、D（desktop 的 `shell-env.ts`，`a0ac9e4`）——并进之后一条 e2e 线（`4ff7ed6`）；四视角评审（spec、真进程、对抗、突变）各配核查，确认 14 条 → 三条修复线（`9cf9cc0`、`a75ce30`、`a7f0df6`）→ 复评加突变，确认 12 条 → 修（`4b24c3b`、`6dcc9e6`、`a886e59`）→ 复查，确认 4 条 → 修（`5730584`、`69d9b4f`、`e0facd8`）。限流跑：一次最多四个实现 agent，vitest 限 2 个 worker，同一时刻最多一个 Electron。
+  - 改了什么：
+    - kernel：Write（缺父目录先 `mkdirp`，专用文件夹因此在第一次写入时才建）、Edit（恰好一次，或 `replace_all`；`new_string` 按字面插入；不是严格 UTF-8 的文件拒改、保留 BOM）、Bash 执行器，三个进产品工具表。
+    - Bash：先等 `commandShell.env()`，与停止赛跑，停在这里记 not-run / stopped。经 `HostSandbox.wrap` + `HostProcess.spawn` 起进程，`SandboxRequest` 按 spec；stdin 立即关。stdout 按 UTF-8 流式解码，退出后最多再读 `STOP_EXIT_CONFIRM_MS`；首行 `Exit code: N` / `Killed by signal: SIGxxx`，没有输出时写 `(no output)`；最后调 `afterExit`。超时与停止同一序列（SIGTERM、`STOP_TERM_GRACE_MS` 后 SIGKILL），校准与旧 7 / 142 / 177 在第 23 步。
+    - 命令模式表（`reversibility.ts`）：按词边界匹配，与长度成线性。判 irreversible 的：rm、rmdir、`find … -delete`，带 `-X POST` / `-d` / `--data*` / `-F` / `--form` / `-T` / `--upload-file` / `--json` 的 curl，`wget --post-data` / `--post-file`，git push，`git clean -f`，scp，推到远端 `host:` 或 `rsync://` 的 rsync。命令词不分大小写，选项分。
+    - desktop：
+      - `shell-env.ts`：`main()` 第一行拍下启动环境；ready 后用登录 shell `-i -l -c` 在两个随机标记之间跑 `/usr/bin/env -0`，只算一次，10 秒没完就整树 SIGKILL，失败退回启动环境并记一行日志；去掉 `TENON_*`、`ELECTRON_*`，开发构建再去掉 `DEV_ENV_FALLBACK` 的名字；取代 `PLACEHOLDER_SHELL`。
+      - `DesktopFs.readFile` / `writeFile` 只收普通文件：先按路径 stat、再以 `O_NONBLOCK` 打开、再 fstat 句柄；FIFO、设备、socket 直接报错，不会卡住，也不会放走一个等在管道上的写入方。
+    - 审批卡 ⑤：Write 展开为写入内容的纯文本，Edit 为「把这段 / 改成」两段加 `replace_all` 提示，都经 `visible()`；连接器参数照旧 JSON、默认展开；卡片逻辑挪进 `lib/approval-card.ts`，供 node 测试。
+    - e2e `write-card.spec.ts` 8 个（旧 4、旧 20 两种、旧 215、旧 216、旧 218、旧 222 写入那半、硬链接基线）；`text-fit-02.spec.ts` 各语言加一例；Everything 夹具卡「⏎ = 允许」的组件测试补上。
+  - 本步的读法（lead 定，没有交 owner；改了 spec 的都记进 Revisions）：
+    - ① 「继续」加倍（Revisions (12)）：不追加续写提示（它要模型接着一段看不到的回复写），`run_started.cause.messageId` 为 null；`max_tokens` 取 min(2 × 截断那次, 模型的 `maxOutputTokens`)，不低于组装平常给的值；截断那次已在上限时仍按上限整轮重发（A 线原写退回续写、用组装的 64000，比上一轮还小，lead 改）；记进 attempt 的 `request.maxTokens`，本 Run 的续跑沿用；`run-ended` 与 chat.event 不增字段。
+    - ② Bash 的 argv 改为 `[shell, '-c', 'exec 2>&1; exec "$0" -c -- "$1"', shell, command]`（Revisions (13)）：zsh 先解析整段 `-c` 再执行，语法错误写到没人读的 stderr，模型只拿到 `Exit code: 1`；`--` 防止以「-」开头的命令被当成 shell 选项。代价：`.zshenv` 与 `$BASH_ENV` 每条命令读两次，本机约多 1.4 ms。
+    - ③ Write / Edit 执行前按 §「在不在工作区里」第 2 步再解析一次 `real`，不再指向它自己就不写、回 is_error / completed（Revisions (13)）：挡住悬空链接（经它能建出不存在的 `~/.zshenv`）、判定后建或换的链接，含上级目录；批准路径直接用卡上那条真实路径，不再重新定位——重新判定因链接到本会话已授权的文件而放宽时也一样。剩下的竞态只有复核到写入之间。
+    - ④ 与 `protectedFiles` 比较时折叠大小写（NFD、小写、大写、再小写）（Revisions (13)）：APFS 把 `.ZPROFILE` 写成 `.zprofile`，也把 `ſ`、开尔文符号、`ﬁ`、`ẞ` 折成普通字母，扫 U+0080–U+2FFFF 找到的九个都覆盖；只会有更多路径变成 `protected`。
+    - ⑤ Grep 的引擎（第 18 步读法 ⑦）：评测后选 re2js 2.8.6（MIT、ESM、无依赖，钉死版本）。对比：JS RegExp 在 `(a+)+$` 这类病态模式上超过 3 秒被杀；re2js 在 3 万字符的一行上 2–13 ms；`@bufbuild/re2` 没有匹配位置，`@re2tools/re2-wasm` 要 `node:fs` 加载，V8 的线性引擎要进程级开关，自写匹配器代价太大，可杀的 worker 要 02 没声明的 HostAdapter 成员。方言：`\d` `\w` `\s` 及其否定改写成 ripgrep 的 Unicode 定义（逐码位对 rg 15.2.0，只差 Unicode 17 新增的码位）；类运算 `&&` `--` `~~`、嵌套类、`\<` `\>` `\b{start}`、反向引用、环视一律 `invalidPattern`；`\b` `\B` 只认 ASCII（RE2 做不到 Unicode），写进工具描述与 spec（Revisions (14)）。典型语料（仓库 5.8 MB）改写前后 301 → 323 ms。
+    - ⑥ Grep 的四道界（Revisions (14)），关掉 s18-safety-2 的 Grep 一半：
+      - 程序大小超过 `GREP_MAX_PROGRAM`（3000）拒绝，远超的在编译前就按文本估计拒掉。
+      - 匹配一行（`multiline` 时整个文件）之前按字符数 × 指令数估工作量，超过 `GREP_LINE_WORK_MAX`（1000 万）就跳过那个文件、撤回它已找到的条目、在结果末尾写明跳过的「文件:行」，不算 is_error。不带 `-i` 的纯字面串每字符算 1：re2js 直接 `indexOf`，1000 万字符最多约 25 ms。复查实测过「一行太长就整次失败」会让 sourcemap、`.tsbuildinfo` 把整棵树的普通搜索一起弄丢，所以改为跳过。
+      - 整次调用超过 `GREP_TIME_BUDGET_MS`（30 秒）停下，回 is_error，附已找到的。
+      - 每约 50 ms 让出一次事件循环再查停止，停止记 aborted；时钟读取按程序大小计，字面串的便宜系数只用于单行的界。
+      - `ExecuteQuery` 因此只增必填的 `clock`。
+      - 三个数都待第 34 步校准；只有前缀是字面串的模式另算代价也留到那时。
+    - ⑦ 其余：
+      - 非零退出且没有输出时写 `Exit code: 3\n(no output)`，`(no output)` 只在正常退出时独占整段。
+      - 可能覆盖文件的 `mv` 要 stat 才能判，仍是 `unknown`；curl `-X PUT` / `DELETE`、`rsync --delete`、`unlink`、`shred` 两张清单都没列，也仍是 `unknown`，等评测样本。
+      - `git commit -m "push"` 这类会误判 irreversible，spec 允许往严里误判。
+      - shell-env 的探测进程用 `read-only` 档、cwd 为家目录；e2e 与开发时会跑开发者真实的登录 shell（spec 没有这个接缝）。
+      - 审批后停止时，批准的那个调用的收口取判决事实里的可逆性，同批其余记 `unknown`。
+  - 实测：本机 APFS 上工作区里指向外面的硬链接，经 Write 写入会改到外面的文件，判为工作区内、普通写入卡、本会话；只记回归基线、不断言拦下（第 11 步记录所说，D8 已知局限，阶段 4 裁决）。
+  - 等后面步骤的：
+    - 第 23 步：STOP 常量校准，旧 7 / 142 / 177，退出与关窗时来源记 `app-exit`（现在一律 `stopped`）。
+    - 第 24 步：Bash 大输出落盘（现在整段留在内存）。
+    - 第 25 步评测再定：要不要「先 Read 才能 Write / Edit」的守卫、Read 的行号前缀对 Edit 命中率的影响、命令表的样本、Grep 方言的剩余差异。
+    - 第 34 步：Grep 的三个常量、跳过清单要不要限长（上限处那一行在本机约 0.4 秒，在 CI 的 ubuntu 机器上约 1.5 秒，PR #19 的 CI 实测；计时测试的上限因此放宽到 5 秒）。
+    - 下一次 `pnpm test:live`（要 owner 的 key）：A2 加倍在智谱上重跑一遍；live 旧 62 加写入卡。
+
+- **2026-09-27 · 第 23 步（停止即杀与关窗退出）**，分支 `wt/02-step23` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 136 个文件 2556 个用例过，build 过，e2e 123 个过）。验收 41、42 满足（Linux 一半以 CI 上的 `stop-tree.test.ts` 为准）；22 的「立即发送」打断 Bash 补上。做法：三条实现线——K（kernel 的停止收口、写入等待与 `app-exit`，`e73bcbc`）、D（desktop 的关窗与退出、全部 e2e，`9e97e6d`；只有这条线跑 Electron）、P（真进程树与三个 STOP 常量，`8582232`）；四视角评审（spec、Electron 与进程实测、竞态、突变）各配核查，确认 9 条（1 条 blocker）→ 两条修复线（`9fcf63c`、`035f27e`）→ 复查 0 条。
+  - 改了什么：
+    - kernel：`BatchContext` 只增 `cause`，已派发、被退出或关窗中止的调用收口来源记 `app-exit`（用户停止仍是 `stopped`，Bash 超时仍是 `timed-out`）；进程内文件工具（Read、Write、Edit、Glob、Grep）停止后最多等 `STOP_WRITE_WAIT_MS`，超时记 uncertain，之后迟到的结果只记一行日志、不写 Tape；Run 收尾里暂停写入与停止相撞后存储关闭的 `TapeClosedError` 接住并记日志，租约照常收回。
+    - desktop 进程：`ChildHandle.kill` 在直接子进程退出后仍对 `-pid` 发信号，直到探到进程组已空（`kill(-pid, 0)`）；原来的 `if (hasExited) return` 让停止的 SIGKILL 到不了忽略 SIGTERM 的孙进程，树活过了停止、调用却记 aborted。
+    - desktop 退出：新增 `shutdown.ts`——关窗确认「停止任务并关闭 / 取消」；`before-quit` 六步只跑一次，第一次一律 `preventDefault`，有进行中的 Run 才确认，同一同步段 `beginShutdown()` 再 `abort('all', 'quit')`，`settled(STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS)`（从 kernel 导入，apps/desktop 里没有 2500），`tape.close()`，第 6 步隔一个宏任务再 `app.quit()`；`before-quit-for-update` 做第 3 步；关机开始后 12 条会开 Run 或写事实的路由回 `ok: false`；删掉 will-quit 里的 `void tape.close()`；确认框以 `dialog.showMessageBox(...)` 调用，文案与 `LeaveRunDialog` 共用 `leave` 组。
+    - `watchOwner`：改为文档销毁、主框架提交了新文档（`did-navigate`）或渲染进程没了（`render-process-gone`）时以 `close-window` 中止这个文档的 Run；`begin` 时文档已销毁或已崩溃也立即中止。
+    - 失败卡：被停下、`exited` 已确认的 Bash 写「后续写入未发生」，WebFetch、WebSearch 与连接器仍写「可能已到对方」。
+    - 测试：`stop.test.ts`（旧 177、142、143、230，`app-exit`，迟到写入）、`host-independence.test.ts` 的 `process.env` 扫描改用 esbuild 解析（原来的正则会被注释里的 `/*` 骗过、漏扫约 70 行）、`stop-tree.test.ts` 与两个 fork 夹具、`shutdown.test.ts`（旧 137，假 app 按 Electron 的重入规则写）、`run-loop.test.ts`、`e2e/stop-exit.spec.ts`（旧 13、136、14、旧 7 的界面一半、立即发送打断 Bash、排队项在退出时丢弃、macOS 上空闲时收 SIGTERM 能退出）。
+  - 实测（2026-09-27，macOS 26.3，Apple M5 10 核，每例空闲 10 次、再 2 核满载 5 次，结果一样）：夹具 (a) 直接子进程收 SIGTERM 就退、孙进程忽略：停止后 SIGKILL 在 500.2–502.6 ms，进程组清空（含僵尸）500.9–504.6 ms，调用返回 500.4–504.0 ms；修复之前这一例的组 5 秒内都没空。夹具 (b) 父子都忽略：SIGKILL 499.9–501.7 ms，`exited` 在 SIGKILL 后 0.3–0.5 ms，组清空 501.5–503.4 ms；`timeout: 1000` 时 SIGTERM 之后同样约 502 ms 清空。1 秒的预算还剩约一半，三个常量不改（500、500、2000），仍标待校准，第 34 步定稿。Electron 44.4.1 上实测：原生退出路径（Cmd+Q、Dock 的退出、SIGTERM）里，第 6 步的 `app.quit()` 若落在第一次 `before-quit` 的微任务里会重入 `Browser::Quit` 被复位，窗口关完只触发 `window-all-closed`，macOS 上应用不退、存储已关——隔一个宏任务就正常退出（评审 R2-1，blocker，已修）。
+  - 本步的读法（lead 定，没有交 owner）：
+    - ① `app-exit` 只给已派发、被关机中止的调用；没派发的照 §点停止时各状态怎么收 开头「同批后面还没派发的调用一律记 not-run / `stopped`」记 `stopped`，流里被退出截断的完整调用也一样；已派发、在收口前就做完的按实际结果记。两个评审都提出 §提示层 给 `app-exit` 列了 not-run 一格、现在走不到，两个核查按上面那句驳回；这处措辞张力留着，要改就一起改正文、代码与测试。
+    - ② 写入等待覆盖五个进程内文件工具（那一行把 Read 也写在里面），从停止那一刻计时，不停止的慢写不截断。中止原因在写收口时读，用户停止优先；Bash 超时的杀进程序列已开始后再来的停止或退出仍记 `timed-out`。
+    - ③ 关机后拒绝的路由含 `chat.stop`（暂停的会话里它会写 `cancelled-by-stop`，B4 不许退出作废卡片）；读路由、`config.set` 与 `provider.*` 不写 Tape 事实，照常答。
+    - ④ 确认框按钮 0 = 停止、1 = 取消，默认与 Esc 都是取消；`showMessageBox` 抛错按取消；取消之后下一次退出重新问；关窗确认还开着时来了退出，退出确认被 Electron 以窗口关闭撤下的不算取消，仍有进行中的 Run 就再问一次。
+    - ⑤ 渲染进程崩溃算「文档被销毁」。已知缺口：文档重载之前排进队列、重载之后才开始的命令挂在新文档上（`did-navigate` 早于租约）。
+    - ⑥ e2e 的原生确认框在每次启动时预设为「停止」并记进一个 JSONL；重启后渲染端对存下的 Run 不出失败卡（第 23 步之前就如此），所以「重启后终态为 shutdown-aborted」断言在 Tape 上。
+  - 等后面步骤的：提问的 `unanswered` 回填（第 26 步）；WebSearch、WebFetch 在途时中止网络请求（第 27、28 步）；在途的连接器调用停止时不传 signal、等服务器答复，spec 没写这一行；`packages/kernel/test/support/node-process.ts` 仍有同样的 `hasExited` 守卫（现有测试都不需要孙进程被杀，组的行为由 desktop 的 `stop-tree.test.ts` 覆盖）；STOP 常量与 Linux 的实测以 CI 为准，第 34 步定稿；spec 里指向 process.ts:194、chat.ts:307-323、index.ts:117-120 的行号已过时。
+
+- **2026-09-27 · 第 24 步（长输出落盘与只读并行）**，分支 `wt/02-step24` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 139 个文件 2623 个用例过，build 过，e2e 124 个过）。验收 43、44 满足；不变量 13 有测试，不变量 34 在压缩之外的部分有测试（压缩重建在第 30 步）。做法：三条实现线——S（kernel 落盘，`66b1001`）、P（只读并行组，`d8552aa`）、C（desktop 清空与删除的顺序，`b1623b9`；只有这条线跑 Electron）；合并时保留 P 把执行拆成「算出结果」与「按序写入」的结构，S 的落盘检查放在算结果那一步，并行组成员也都经过它。四视角评审（spec、并发与状态、对抗与数据安全、突变）各配核查，确认 13 条 → 两条修复线（`1757d7a`、`26910ce`）→ 复查 2 条测试缺口，lead 补上（`e619ed8`）。
+  - 改了什么：
+    - kernel 落盘（`loop/spill.ts` 的 `spillChecked`）：每个执行过的结果在写 `tool/result` 之前按全部 text 段的 UTF-16 长度判断，超过 `SPILL_THRESHOLD_CHARS` 就把各段以 `\n` 拼接、UTF-8 写进 `toolOutputDirFor(profileDir, sessionId)/<runId>-<requestSeq>-<i>.txt`（先 `mkdirp`、先写文件），content 换成 `MODEL_NOTES.spill`（预览取开头 `SPILL_PREVIEW_CHARS` 个字符、不拆代理对），图片块原样排在说明之后、不计入，`kernelAuthored` 为 false，`tool/result` 带 `spill {file, bytes, sha256}`；写盘失败改用新增的 `MODEL_NOTES.spillFailed`（只有预览、没有路径），回 is_error，错误原文只进日志。Bash 的大输出、被停下或超时的命令（停止说明加之前的输出一起算）、连接器结果、参数校验失败回执里校验器的原文都经过它。
+    - 落盘目录的判定：本会话的落盘目录取「解析过的 profile 目录 + `tool-output/<sessionId>`」，本身不再解析；落盘写入前若这个文件名已存在或是悬空链接就不写、按写盘失败处理。`toolOutputDirFor` 对不是 canonical UUID 的 id 抛 `TypeError`，与 `TOOL_OUTPUT_DIR` 一起从 kernel 入口导出。
+    - 只读并行组（`batch.ts` 的 `runGroup`）：从第 1 个调用起，挨在一起、参数合法、判为放行的工作区内 Read / Glob / Grep 逐个判定、写判决与派发（T1）、立即开始执行，不等前一个完成；遇到第一个不满足的就截断，截断处已经做过的判定由串行部分沿用，不再跑第二次 inspector。结果缓冲、按 `<i>` 写；之后一律串行，不再组第二组。
+    - desktop（`session-removal.ts`）：清空或删除会话时，先标记「正在移除」（同一同步段），停掉这个根会话在跑的 Run（`user-stop`）并等它的租约收完，再让存储提交，再 `fs.rm` 删 `tool-output/<sessionId>/`，然后才算完成；完成之前六条发送类路由回 `ok: false`（`handler-failed`），其余会开 Run 的路径在 `RunRegistry.begin` 处拒绝（沿用唯一的拒绝码 `shutting-down`）。`RunRegistry` 只增桌面内部的 `settledRoot`。
+    - 测试：`spill.test.ts`、`parallel.test.ts`、`protected-paths.test.ts` 与 `workspace.test.ts` 的链接用例、`profile.test.ts`、`session-removal.test.ts`（真 kernel 跑在 DesktopFs 上，删除途中有大输出的 Bash、并行读组在跑的情形都测了）、`e2e/tool-output.spec.ts`。
+  - 本步的读法（lead 定，没有交 owner；改了 spec 的记进 Revisions (15)(16)）：
+    - ① 落盘说明里的绝对路径是它唯一出现的地方，`spill.file` 与其余字段都不带（(15)；验收 43 与本步旧 57 的措辞随之改）。写盘失败时的内容取 `spillFailed`（(15)）。
+    - ② 落盘目录不跟随 `tool-output` 或 `<sessionId>` 上的链接（(16)）：评审实测把 `tool-output/<id>` 换成指向 `sessions.db`、别的会话目录或 `~/.zshrc` 的链接，原来的写法会把这些读当成本会话落盘目录的免问读取。落盘文件只写一次、写前复核（(16)），同第 22 步 Write 的复核；参数校验失败回执的第二段也过落盘判断（(16)）。
+    - ③ 文件名取发出这批调用的那次请求的 `(runId, requestSeq, i)`，审批后续跑写的文件仍在原 Run 的名下。
+    - ④ 「同时派发」读作：每个成员判定、写判决与派发、开始执行之后，才判定下一个，所以 inspector 看到的会话视图与串行时一致。只有批从第 0 个调用开始、没有已批准的调用时才组并行组（续跑的批不组）；对话形态不组。
+    - ⑤ 停止时并行组的每个成员各按停止表收口，写入等待都从停止那一刻计时；没派发的在成员结果之后记 not-run / stopped。
+    - ⑥ 删除会话前停掉的 Run 以 `user-stop` 中止：`quit` 与 `close-window` 表示应用要走，都不适用；暂停的会话没有活租约，不用等。等待不设上限：设了上限，迟到的结果会在删目录之后再落盘。
+    - ⑦ 02 没有清空或删除会话的界面入口（会话列表在阶段 6），e2e 经只在开发构建生效的 `TENON_E2E_SESSION_REMOVAL` 调用；spec §e2e 接缝 没列这个接缝。
+  - 等后面步骤的：
+    - 第 26、31 步：提问的自由文本答复与子 agent 交接的正文写入前也要调 `spillChecked`。
+    - 第 27 步：WebFetch 用真执行器的落盘用例（现在用连接器代替）。
+    - 第 30 步：不变量 34 在压缩重建时的部分。
+    - 第 31 步：删除根会话时连同子会话的落盘目录。
+    - 第 34 步：`SPILL_THRESHOLD_CHARS`、`SPILL_PREVIEW_CHARS` 校准。
+    - 已知、没改：
+      - 落盘写入不受停止后的等待上限约束，磁盘写挂住会拖住那个调用的收口（spec 没写）。
+      - Bash 输出在内存里最多约 2^29 个字符（第 22 步起）。
+      - 在途的连接器调用不接停止信号，停止与删除都要等服务器答复。
+      - 判断「碰过私有数据」时，`privateRead` 仍按模型给的写法比较落盘目录。
+      - 清空之后这个根会话的排队项、`held`、可续跑标记与待批卡片在 kernel 里仍在（清空之前就如此，也不止有 Run 的情形），要不要随清空一起清另议。
+      - `model-menu.spec.ts` 的悬停子菜单在满载下偶发超时，单跑都过。
+
+- **2026-09-28 · 第 25 步（评测运行器与小横评）**，分支 `wt/02-step25` → `feat/02-seg2`，完成（format、lint、typecheck、全部单测 147 个文件 2704 个用例过；`pnpm eval` 真跑三列，见下）。验收 45 满足。做法：两条实现线——R（运行器与测试宿主，`2c49bf1`）、T（前 5 题、夹具与判分，`cfb43d8`）；合并后对齐判分类型与测试范围（`69a4f9e`、`c958dc0`）；**真跑之前**先跑四视角评审（spec、真跑记录是否正确、测试宿主的安全边界、突变）各配核查，确认 20 条（13 个不同问题）→ 一条修复线（`4964fc8`）→ 复查 3 条，lead 补上（`8f8968d`）；冒烟之后发现计划行与日志被 vitest 吞掉，改写 stderr（`ed7ee7f`）。
+  - 改了什么：`apps/desktop/evals/`——`task.ts`（`EvalTask` / `EvalCheck` 与 zod：工作区外的卡、带 web 的题里的命令卡写 allow 一律拒收，夹具路径不得越出 `docs/evals/fixtures`、路径上与夹具里都不许有符号链接）、`record.ts`（`EvalRecord` 与 zod）、`host.ts`（每次运行一个 mkdtemp 目录放 profile、工作区（不跟随链接地复制，`dotenv.txt` 改名为 `.env`）、HOME 与 TMPDIR；Bash 的环境只有 PATH、HOME、TMPDIR、LANG；desktop 真实的 fs、process、network 与沙箱，secrets 用内存；审批卡按原因自动答复，没列的拒、`outside-workspace` 一律拒、带 web 的题 `command` 一律拒，作用域由 kernel 按卡上的 `allowScope` 给；可换的策略快照；假 SearchBackend 与假 `fetchUntrusted`）、`runner.ts`（经产品的 kernel 服务与 desktop 的 run-assembly 跑每一轮；每题一个总期限，默认 45 分钟，到点停下会话、照样出一条 fail 记录，vitest 的超时是期限加 5 分钟；任何一个 Run 以 `usage-limit` 结束就记 fail；记录的 clientVersion、提示层哈希、结束原因、工具轮数、按原因计的卡数、用量、费用、用时与测速）、`cost.ts`（按 Tape 算：每条 attempt 的最终 usage 乘冻结的 `pricing`，两条线的未命中缓存输入分别换算）、`models.ts`（评测专用的 glm-5.3 行，经 `/api/anthropic`、按 A9 绑定 `open.bigmodel.cn`；`BASELINE_COLUMN`）、`format.ts`（格式检查与门禁）、`checks/`（五题的判分与共用的 F2 / E2 计数）。根 vitest 注册 `evals` project，`pnpm eval` / `pnpm evals:gate` 两个脚本；`pnpm test` 只跑格式检查、不联网、不要 key。`docs/evals/`：前 5 题、夹具、三列结果、README 的题目索引与运行说明。kernel 入口只增 `PROMPT_LAYER_VERSION` / `PROMPT_LAYER_HASH` 的导出，`@tenon-app/kernel/testing` 只增 `createEvalSessionService`。spec Revisions (17)。
+  - 前 5 题（都是任务形态；对话形态现在只能读本会话的落盘目录，要等第 27、28 步的网页工具）：01 修一个失败的测试（compare）；02 第 1 轮后禁用 Edit、完成两个文件的改名（F2、E2）；03、04 中文、英文长日志里找关键行（H9，compare）；05 第 1 轮后禁用 Bash、统计错误条数（F2）。
+  - 实测（2026-09-28，open.bigmodel.cn `/paas/v4`，owner 的 key 只在评测进程内读；不传 effort；每题 3 次，flashx 只跑 1 次测速）：
+
+    | 模型 | 通过 | 花费 | 平均 / 最多工具轮数 | 平均 / 最长用时 |
+    |---|---|---|---|---|
+    | glm-5.3-flash | 13/15 | ¥0.22 | 5.7 / 10 | 45 / 88 秒 |
+    | glm-5.3 | 15/15 | ¥2.68 | 6.3 / 9 | 29 / 61 秒 |
+    | glm-5.3-flashx（1 次） | 4/5 | ¥0.14 | 5.6 / 8 | 24 / 36 秒；首字 3.1–3.4 秒，输出 175–195 token/秒 |
+
+    - 真跑合计约 ¥3.05（含一次冒烟 ¥0.01），plan 原估约 ¥35。
+    - flash 与 flashx 的失败都在「工具被禁」的题上：02、05 里换着参数连续三次撞上被禁的工具，以 `blocked-repeatedly` 结束。glm-5.3 在这两题上收到 is_error 之后再没调过被禁的工具（02 各 2 次拦截、05 各 1 次拦截之后改用别的做法）。
+    - 长日志两题 9 次落盘全部找到关键行，模型多用 Grep 搜落盘文件，Read 分段读只出现过几次（`offset/limit` 如 615/30、725/15）；flash 有一次在命令里直接 grep、输出没到阈值没落盘。
+    - 单题用量最多约 8 万 token（glm-5.3 的 05 题，¥0.36）。
+  - 本步的读法（lead 定，没有交 owner）：
+    - ① 基线模型定 glm-5.3（`BASELINE_COLUMN`）：通过率 15/15 对 13/15，flash 掉的正是多步任务里的恢复；一轮完整基线（25 题 × 3 次）按本次单价约 ¥13。owner 想改回 flash 只改这一行。
+    - ② 评测运行器不设全局 token 上限：单题最多约 8 万 token，费用护栏只用题目里的 `usageLimitTokens`（03、04 设了 50 万）。
+    - ③ 其余见 Revisions (17)：`TENON_EVAL_*` 只读运行器的环境、`.env.local` 只提供 key；`TENON_EVAL_TIMING`、`TENON_EVAL_DEADLINE_MIN` 两个变量；首字延迟取整次运行第一次 attempt，第一次 attempt 没有内容就不记；Ctrl-C 直接杀掉 vitest，不写记录，临时目录可能残留。
+  - 等后面步骤的：
+    - 第 26–31 步：提问、网页、子 agent 落地后，测试宿主已留的接缝接上（跳过提问、假搜索与假抓取），对话形态与 F5 的题随网页工具补。
+    - 第 34 步：补齐 20–30 题、同题对比集、门禁进 CI；门禁对必含题的识别按各题的 `from` 核一遍。
+    - live 用例里真跑的接线（期限、signal、计划行）没有单测，靠这次真跑验证过。
+    - 已知：每次运行留下一个 undici Agent 与一个配置监听，几十次运行无妨。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -836,9 +945,9 @@
 
 ## 交接
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）。① 在分支 `feat/02-seg1` 上进行，每段一个 PR：第 5–21 步已并进这个分支（都已勾）。① 的 PR 之前还有：第 5–19 步的突变视角与一轮复评审（正在跑）。2026-09-27 补评审确认的 137 条已由五个修复区与三项 owner 裁决处理，都在 `wt/02-catchup-merge` 上，见实施记录「① 补评审」。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，PR 进 dev。下一步是 ③ 的第 26 步（AskUserQuestion）。
 
-- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），① 的 PR 等突变视角跑完再开。
+- **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），突变视角与复评跑完后 ① 已合进 dev。多 agent 工作流一次最多四个实现 agent，vitest 限 `--maxWorkers=2`，同一时刻最多一个 Electron（2026-09-27 本机过热之后）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
 

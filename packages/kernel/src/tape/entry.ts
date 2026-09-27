@@ -412,7 +412,7 @@ export type RunStartedPayload = {
   cause:
     | { kind: 'user-message'; messageId: string } // 一个 Run 开头写了几条 message/user（自动发出、取代时带上排队项）的，取最后一条；「重试」重发的就是它
     | { kind: 'resume'; pausedRunId: string; batch: { runId: string; requestSeq: number } } // 审批答复、提问答复、收交接或打开可续跑会话时开的 Run；batch 指被续跑的那批调用所在的请求（F3、H6、H5）
-    | { kind: 'continue'; afterRunId: string; messageId: string } // 点「继续」开的 Run；messageId 指向 message/continuation
+    | { kind: 'continue'; afterRunId: string; messageId: string | null } // 点「继续」开的 Run；messageId 指向 message/continuation，截断时什么都没写下、整轮重发的为 null（§重试与「继续」）
 }
 export type DispatchCommittedPayload = CallRef & {
   name: string

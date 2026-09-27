@@ -187,7 +187,10 @@
     "title": "停止这个任务？",
     "description": "任务还在进行。可以停止后离开，或者留在这里等它做完。",
     "stop": "停止任务",
-    "stay": "留在这里"
+    "stay": "留在这里",
+    "stopAndClose": "停止任务并关闭",
+    "stopAndQuit": "停止任务并退出",
+    "cancel": "取消"
   },
   "queue": {
     "queued": "排队中",
@@ -308,6 +311,11 @@
       "subtaskDomain": "本次子任务里这个域名"
     },
     "showChange": "展开改动",
+    "change": {
+      "old": "把这段",
+      "new": "改成",
+      "replaceAll": "所有出现的地方都会替换。"
+    },
     "arguments": "参数",
     "cwd": "位于 {cwd}",
     "answered": {

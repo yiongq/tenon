@@ -1,0 +1,73 @@
+{"ts":"2026-09-27T00:02:23.025Z","level":"warn","service":"billing","msg":"deprecated header X-Client","trace":"t-655778"}
+{"ts":"2026-09-27T00:03:51.467Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-157811"}
+{"ts":"2026-09-27T00:04:12.123Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-418034"}
+{"ts":"2026-09-27T00:05:41.164Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-321439"}
+{"ts":"2026-09-27T00:06:08.291Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-952622"}
+{"ts":"2026-09-27T00:07:16.205Z","level":"info","service":"billing","msg":"health check ok","trace":"t-779490"}
+{"ts":"2026-09-27T00:07:50.194Z","level":"info","service":"billing","msg":"job finished","trace":"t-548168"}
+{"ts":"2026-09-27T00:08:22.587Z","level":"warn","service":"billing","msg":"queue depth 1200","trace":"t-649277"}
+{"ts":"2026-09-27T00:08:54.188Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-376472"}
+{"ts":"2026-09-27T00:09:27.684Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-712998"}
+{"ts":"2026-09-27T00:10:35.504Z","level":"info","service":"billing","msg":"health check ok","trace":"t-131376"}
+{"ts":"2026-09-27T00:12:17.044Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-965917"}
+{"ts":"2026-09-27T00:13:47.863Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-650771"}
+{"ts":"2026-09-27T00:14:22.623Z","level":"error","service":"billing","msg":"upstream timeout after 30000ms","trace":"t-641481"}
+{"ts":"2026-09-27T00:15:29.317Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-892548"}
+{"ts":"2026-09-27T00:16:26.713Z","level":"info","service":"billing","msg":"health check ok","trace":"t-771717"}
+{"ts":"2026-09-27T00:16:56.723Z","level":"info","service":"billing","msg":"health check ok","trace":"t-560261"}
+{"ts":"2026-09-27T00:17:34.771Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-439092"}
+{"ts":"2026-09-27T00:18:41.466Z","level":"warn","service":"billing","msg":"error rate above 1% for 2m","trace":"t-800219"}
+{"ts":"2026-09-27T00:19:17.843Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-666985"}
+{"ts":"2026-09-27T00:19:55.045Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-157995"}
+{"ts":"2026-09-27T00:20:59.289Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-535658"}
+{"ts":"2026-09-27T00:21:23.250Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-699686"}
+{"ts":"2026-09-27T00:22:48.312Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-351021"}
+{"ts":"2026-09-27T00:23:21.155Z","level":"error","service":"billing","msg":"unhandled rejection in handler","trace":"t-334060"}
+{"ts":"2026-09-27T00:23:58.211Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-507176"}
+{"ts":"2026-09-27T00:24:35.553Z","level":"warn","service":"billing","msg":"deprecated header X-Client","trace":"t-938029"}
+{"ts":"2026-09-27T00:25:09.849Z","level":"error","service":"billing","msg":"payment declined: card expired","trace":"t-142931"}
+{"ts":"2026-09-27T00:26:36.527Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-933048"}
+{"ts":"2026-09-27T00:26:58.892Z","level":"info","service":"billing","msg":"health check ok","trace":"t-302806"}
+{"ts":"2026-09-27T00:28:34.825Z","level":"info","service":"billing","msg":"health check ok","trace":"t-549702"}
+{"ts":"2026-09-27T00:29:45.947Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-403668"}
+{"ts":"2026-09-27T00:30:06.158Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-420976"}
+{"ts":"2026-09-27T00:30:31.403Z","level":"info","service":"billing","msg":"job finished","trace":"t-808623"}
+{"ts":"2026-09-27T00:31:08.157Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-599705"}
+{"ts":"2026-09-27T00:31:54.882Z","level":"info","service":"billing","msg":"health check ok","trace":"t-982769"}
+{"ts":"2026-09-27T00:32:31.188Z","level":"info","service":"billing","msg":"health check ok","trace":"t-415980"}
+{"ts":"2026-09-27T00:34:17.403Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-321933"}
+{"ts":"2026-09-27T00:35:07.525Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-285671"}
+{"ts":"2026-09-27T00:36:55.351Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-496450"}
+{"ts":"2026-09-27T00:37:28.591Z","level":"info","service":"billing","msg":"job finished","trace":"t-410770"}
+{"ts":"2026-09-27T00:38:43.206Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-608760"}
+{"ts":"2026-09-27T00:39:05.753Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-510228"}
+{"ts":"2026-09-27T00:40:40.591Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-766580"}
+{"ts":"2026-09-27T00:41:34.143Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-468501"}
+{"ts":"2026-09-27T00:43:09.280Z","level":"warn","service":"billing","msg":"error rate above 1% for 2m","trace":"t-904330"}
+{"ts":"2026-09-27T00:43:58.401Z","level":"info","service":"billing","msg":"job finished","trace":"t-342796"}
+{"ts":"2026-09-27T00:44:18.973Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-760757"}
+{"ts":"2026-09-27T00:45:04.131Z","level":"warn","service":"billing","msg":"slow query 812ms","trace":"t-864053"}
+{"ts":"2026-09-27T00:46:29.040Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-910001"}
+{"ts":"2026-09-27T00:47:41.364Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-853609"}
+{"ts":"2026-09-27T00:49:22.748Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-166369"}
+{"ts":"2026-09-27T00:51:08.171Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-259194"}
+{"ts":"2026-09-27T00:52:04.730Z","level":"info","service":"billing","msg":"job finished","trace":"t-622714"}
+{"ts":"2026-09-27T00:53:20.415Z","level":"warn","service":"billing","msg":"queue depth 1200","trace":"t-129068"}
+{"ts":"2026-09-27T00:54:39.851Z","level":"error","service":"billing","msg":"upstream timeout after 30000ms","trace":"t-272114"}
+{"ts":"2026-09-27T00:55:56.670Z","level":"info","service":"billing","msg":"retrying after upstream error, attempt 2 ok","trace":"t-710562"}
+{"ts":"2026-09-27T00:56:51.479Z","level":"warn","service":"billing","msg":"deprecated header X-Client","trace":"t-818064"}
+{"ts":"2026-09-27T00:57:49.093Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-302121"}
+{"ts":"2026-09-27T00:58:16.513Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-626672"}
+{"ts":"2026-09-27T00:59:13.911Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-505155"}
+{"ts":"2026-09-27T00:59:47.912Z","level":"info","service":"billing","msg":"GET /v1/orders 200","trace":"t-593932"}
+{"ts":"2026-09-27T01:01:37.285Z","level":"info","service":"billing","msg":"health check ok","trace":"t-919319"}
+{"ts":"2026-09-27T01:02:48.638Z","level":"info","service":"billing","msg":"job finished","trace":"t-251291"}
+{"ts":"2026-09-27T01:03:43.069Z","level":"info","service":"billing","msg":"job finished","trace":"t-385326"}
+{"ts":"2026-09-27T01:04:29.943Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-486523"}
+{"ts":"2026-09-27T01:05:07.517Z","level":"warn","service":"billing","msg":"error rate above 1% for 2m","trace":"t-297180"}
+{"ts":"2026-09-27T01:06:44.026Z","level":"info","service":"billing","msg":"POST /v1/carts 201","trace":"t-719640"}
+{"ts":"2026-09-27T01:07:23.513Z","level":"warn","service":"billing","msg":"slow query 812ms","trace":"t-567280"}
+{"ts":"2026-09-27T01:07:49.697Z","level":"info","service":"billing","msg":"error budget at 72% for this week","trace":"t-368980"}
+{"ts":"2026-09-27T01:09:13.653Z","level":"info","service":"billing","msg":"cache hit ratio 0.93","trace":"t-116313"}
+{"ts":"2026-09-27T01:10:09.597Z","level":"info","service":"billing","msg":"job finished","trace":"t-648879"}
+{"ts":"2026-09-27T01:11:53.879Z","level":"info","service":"billing","msg":"config reloaded","trace":"t-463276"}

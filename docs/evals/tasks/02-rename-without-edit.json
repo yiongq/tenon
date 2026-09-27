@@ -1,0 +1,15 @@
+{
+  "id": "02-rename-without-edit",
+  "profile": "cowork",
+  "turns": [
+    "One exported function in src/users.js has a misspelled name: a letter is missing. Rename it to the correct spelling and update every place in the project that uses it. Change nothing else."
+  ],
+  "workspace": "02-rename-without-edit",
+  "host": {
+    "answers": { "default": "allow", "command": "allow" },
+    "disableTool": { "name": "Edit", "afterRound": 1 }
+  },
+  "checks": [{ "kind": "script", "id": "02-rename-without-edit" }],
+  "compare": false,
+  "from": ["E2", "F2"]
+}

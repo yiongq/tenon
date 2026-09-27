@@ -19,6 +19,7 @@ import type {
 } from '../tape/entry.js'
 import { toolOutcomeKey, toolResultKey } from '../tape/provenance.js'
 import type { Tape } from '../tape/tape.js'
+import type { SpillRecord } from './spill.js'
 
 export type ExecutionState = 'not-run' | 'aborted' | 'completed' | 'uncertain'
 
@@ -75,6 +76,8 @@ export interface ResultFacts {
   readonly content: ResultContent
   readonly isError: boolean
   readonly kernelAuthored: boolean
+  /** The file the result's whole text went to (§大响应落盘): `spillChecked` gives it. */
+  readonly spill?: SpillRecord
   readonly effect: SideEffectClass
   readonly state: ExecutionState
   readonly source: ClosureSource | null
@@ -97,6 +100,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     isError: q.isError,
     content: [...q.content],
     kernelAuthored: q.kernelAuthored,
+    ...(q.spill === undefined ? {} : { spill: { ...q.spill } }),
     writer: q.writer,
   }
   const outcome: ToolOutcomePayload = {

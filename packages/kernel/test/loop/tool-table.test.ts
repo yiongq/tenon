@@ -301,7 +301,7 @@ describe('which tools a request carries', () => {
     expect(toolNames(h.a)).toEqual(['AskUserQuestion', 'Read', 'WebFetch', 'WebSearch'])
   })
 
-  it('carries the builtin tools that landed in the product: Read, then Glob and Grep in a task', async () => {
+  it('carries the builtin tools that landed in the product: Read, then the file tools and Bash in a task', async () => {
     const store = createMemoryTapeStore({ identity: IDENTITY })
     const provider = createScriptedProvider({ models: [MODEL_A] })
     const loop = createTestLoopPorts({ connector: { provider, model: MODEL_A } })
@@ -328,7 +328,8 @@ describe('which tools a request carries', () => {
     provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
     const second = await service.send({ sessionId: task, origin: null, text: 'hi' })
     if (second.status === 'started') await loop.runEnded({ runId: second.runId })
-    expect(toolNames(provider)).toEqual(['Glob', 'Grep', 'Read'])
+    // Plan step 22: Write, Edit and Bash joined the task table.
+    expect(toolNames(provider)).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write'])
   })
 })
 

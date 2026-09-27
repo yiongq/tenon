@@ -25,6 +25,13 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   1: '62cfe9ae7da9a26873d295566ace5d21277ed329c33f745309d7cd64175ae039',
   // The connector notes (connectorFailed, connectorEmpty) joined the layer (plan step 18 catch-up).
   2: '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc',
+  // Write, Edit and Bash's result templates and errors joined the layer, and Grep names look-around
+  // and backreferences as ripgrep does now that re2js turns them down, turns down what re2js would
+  // misread and too large a pattern, says \b and \B are ASCII, names the files skipped for a line
+  // too long for the pattern, and a search past its time budget; Write and Edit refuse a path that
+  // now resolves elsewhere (plan step 22, with its review's fixes, in place before release); the
+  // spill notes spill and spillFailed (plan step 24, in place before release).
+  3: 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e',
 }
 
 describe('the version gate', () => {
@@ -67,6 +74,7 @@ describe('the version gate', () => {
     const search = tool('WebSearch')
     const read = tool('Read')
     const edit = tool('Edit')
+    const bash = tool('Bash')
     const variants: PromptLayer[] = [
       { ...layer, SYSTEM_PROMPTS: { ...SYSTEM_PROMPTS, chat: `${SYSTEM_PROMPTS.chat}.` } },
       { ...layer, LOCALE_HINT: `${LOCALE_HINT} ` },
@@ -80,6 +88,18 @@ describe('the version gate', () => {
         MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorFailed: 'changed {message}' },
       },
       { ...layer, MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorEmpty: '(none)' } },
+      // The spill notes (plan step 24).
+      {
+        ...layer,
+        MODEL_NOTES: {
+          ...(layer.MODEL_NOTES as object),
+          spill: 'changed {bytes} {path} {preview}',
+        },
+      },
+      {
+        ...layer,
+        MODEL_NOTES: { ...(layer.MODEL_NOTES as object), spillFailed: 'changed {preview}' },
+      },
       // Both of WebSearch's variants are in the layer, each on its own.
       withTool('WebSearch', (t) => ({
         ...t,
@@ -103,6 +123,11 @@ describe('the version gate', () => {
       withTool('Edit', (t) => ({
         ...t,
         texts: { ...t.texts, sameStrings: `${edit.texts['sameStrings'] ?? ''}!` },
+      })),
+      // A command's result heading (plan step 22).
+      withTool('Bash', (t) => ({
+        ...t,
+        texts: { ...t.texts, exitCode: `${bash.texts['exitCode'] ?? ''}.` },
       })),
     ]
     expect(search.variants.map((v) => v.variant)).toEqual(['domainFilter', 'plain'])

@@ -57,7 +57,14 @@ export interface ModelNotes {
   } // plan step 31
   /** The model-only note a 「继续」 Run opens with (`message/continuation`; A2, H11). */
   readonly continuation: Readonly<Record<'output-truncated' | 'step-limit', string>>
-  readonly spill?: string // plan step 24
+  /**
+   * A result whose text went past `SPILL_THRESHOLD_CHARS` (§大响应落盘; H9): `{bytes}` is the file's
+   * UTF-8 byte count, `{path}` its absolute path — the only place the path is written — and
+   * `{preview}` the first `SPILL_PREVIEW_CHARS` characters of the whole text.
+   */
+  readonly spill: string
+  /** The same result when writing its file failed: `{preview}` only, and the result is is_error. */
+  readonly spillFailed: string
   readonly searchTruncated?: string // plan step 28
   readonly compactionRequest?: string // plan step 30
   readonly compactionWrap?: string // plan step 30
@@ -197,6 +204,11 @@ export const MODEL_NOTES: ModelNotes = {
   },
   schemaUnusable:
     'The input schema its server gave for this tool cannot be used to check arguments, so no call to it can run. Do not call it again in this session.',
+  // The preview goes last: it is the tool's own text, cut anywhere, and nothing follows it.
+  spill:
+    'This result is too long to include in full ({bytes} bytes), so Tenon saved all of it to this file:\n{path}\nUse Read on that file with offset and limit to read the parts you need. It begins:\n\n{preview}',
+  spillFailed:
+    'This result is too long to include in full, and Tenon could not save it to a file, so the rest of it is lost. It begins:\n\n{preview}',
   connectorFailed: 'The tool call failed: {message}',
   connectorEmpty: '(no output)',
   environment: {
@@ -270,7 +282,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 2
+export const PROMPT_LAYER_VERSION = 3
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc'
+export const PROMPT_LAYER_HASH = 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e'
