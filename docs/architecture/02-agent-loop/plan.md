@@ -520,7 +520,7 @@
     - 握着自己租约的子 Run 的 `run_terminal(completed)` 在 append 途中时点停止：`stopped: true`，不开父会话收交接的 Run，父会话的 Agent 调用记 aborted / `stopped`，交接 `childEndReason` 为 `completed`，fakeNetwork 不多调一次；停止改在交接生成（读子会话 Tape）途中到达，结果相同；子 Run 的 `run_terminal(paused)` 在 append 途中点停止：子会话写 `cancelled-by-stop`，父会话的 Agent 调用记 aborted / `stopped`，卡片消失，不开 Run。
     - 子会话可续跑时在根会话里发消息：先开子会话的续跑，这条留在父会话的队列，出现在父会话收交接的 Run 处理完同批后的第一次请求里，不出现在子会话的任何请求里；收交接的结果与父会话新 Run 的 `run_started`、`model_selected` 在同一次 append 里。
     - 子会话可续跑（含单调用批）：子会话的待批在启动时被收紧，`recover()` 把它列在根会话名下，父会话的 Agent 调用不补写、不生成交接；不打开再重启一次，Agent 调用仍按第 2 类保留；`approval.resume(root)` 开子会话的新 Run 处理同批剩下的，交接之后父会话续跑。
-  - 暂定与待定：开放问题 19（owner 给数之前这一步不开工）；开放问题 18 的到期与其余结局已定（owner 2026-09-26）：每次新 `requestSeq` 的主请求前查，满 300 秒不发、子 Run 以 `time-limit` 结束，交接 `partial`、不标 is_error；以其余原因结束一律 `partial`、不标 is_error、带 `childEndReason`；测试要点补：子会话累计 300 秒后下一次新请求不发，交接 partial、childEndReason 为 time-limit；子会话以 provider-error 结束时交接 partial、不标 is_error；子会话卡上期限写「本次子任务」（开放问题 18 已定）；子会话用任务形态那份系统提示；先写子会话再写父会话之间崩溃，父会话的 Agent 调用一律记 `uncertain`（开放问题 25 已定，2026-09-26）；开放问题 11 的子 agent 读法已确认。
+  - 暂定与待定：开放问题 19 已定（owner 2026-09-28：`SUBAGENT_STEP_LIMIT` 30、`SUBAGENT_TOKEN_LIMIT` 500 000，spec Revisions (20)；第 34 步按评测数据复核）；开放问题 18 的到期与其余结局已定（owner 2026-09-26）：每次新 `requestSeq` 的主请求前查，满 300 秒不发、子 Run 以 `time-limit` 结束，交接 `partial`、不标 is_error；以其余原因结束一律 `partial`、不标 is_error、带 `childEndReason`；测试要点补：子会话累计 300 秒后下一次新请求不发，交接 partial、childEndReason 为 time-limit；子会话以 provider-error 结束时交接 partial、不标 is_error；子会话卡上期限写「本次子任务」（开放问题 18 已定）；子会话用任务形态那份系统提示；先写子会话再写父会话之间崩溃，父会话的 Agent 调用一律记 `uncertain`（开放问题 25 已定，2026-09-26）；开放问题 11 的子 agent 读法已确认。
 - [ ] 32. **砍法落定**（裁决 M1）
   - 读：本文件开头的砍法；spec §验收标准 开头的删条目对照；§文档同步「砍的时候再改」。
   - 交付物：owner 定下砍不砍、砍哪些。如果砍：spec 顶部 Revisions 记下砍掉的目标和验收；§13 阶段 2 加带日期注记，指向新的 features spec（砍压缩连带 :881 的 B 与 :900「压缩重试 ≤ 2」；砍子 agent 注明 :886 (2) 由哪份 spec 实现、写进 :948 Research 的前置）；建好那份 spec 的骨架。触发过 M5-B 降级的，确认 Revisions 已逐条记下。
@@ -957,7 +957,6 @@
 
 - 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。
 - Anthropic 官方 key：起草时（2026-09-25）owner 已同意开，还没到手；在所在地区能不能开、怎么付款未核实；在 Console 预付少量 credits（预付本身就是花费上限，第 4 步）。到手后不进 `.env.local`、不进 shell profile，只经那一次 `pnpm test:live` 的进程环境以 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入（第 4 步）。最晚在第 28 步之前确认，开不了按 spec §Anthropic 保证档的退路 走 Revisions（开放问题 20）。
-- 给数：`SUBAGENT_STEP_LIMIT`、`SUBAGENT_TOKEN_LIMIT`（步数须小于 100），第 31 步开工前（开放问题 19）。
 - owner 补录：B1 #2（审批卡挂着时点停止，Cowork 作废还是保留卡片），最晚第 15 步前（开放问题 14）；F11 与 H13 #1（审批卡挂着时发新消息）；D7 三项（手动档下跑 `ls` 会不会先弹卡、新账号的初始审批档、覆盖已连接文件夹里的已有文件是否也不逐次问）；F6 #5（多张审批卡是否来自同一批、能否跳着答、拒绝一张后其余怎样）；F7 #3（子 agent 的审批卡出现在哪、会不会超时）；B3（停在任务页直接 Cmd+Q 再启动，落在首页还是该任务；落在任务页就按 B3-A 的改判重比 A 和 D）；H1 自查（自己的 Claude 消息框里还有没有 Chat / Cowork 选项）；Cowork 覆盖已有文件、跑 shell 命令时弹不弹卡。除 B1 #2 外都在同题对比开跑前补齐（第 34 步），补录后更新 docs/evals/README.md 已知差异清单的第 1 条和第 8 条。
 - owner 的 key 下次撞到智谱额度上限时，抓 1308、1310 报文的原文，供补 `resetAt` 的解析（第 7 步）。
 - M8 landing：在 ChatGPT 的 Data Controls 里关掉训练；主账号先不订 GLM Coding Plan；需要时买智谱资源包，并在账单上核对 flash 的实际单价与资源包的扣减方式。
