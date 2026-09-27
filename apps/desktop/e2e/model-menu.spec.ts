@@ -75,6 +75,25 @@ test('lists configured providers by host, greys the rest, and names the thinking
   }
 })
 
+test('names a private Ollama host by its address: only a loopback one reads as this computer (旧 185, 旧 219)', async () => {
+  // Nothing is sent: the row's host line comes from `provider.list` alone.
+  const userData = makeUserDataDir('model-menu-private')
+  seedConfig(userData, {
+    locale: 'en',
+    providerConfig: { ollama: { baseURL: 'http://192.168.1.20:11434/v1/' } },
+  })
+  const { app, page } = await launchTenon({ userData })
+  try {
+    await page.getByTestId('model-menu-trigger').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    const row = page.getByTestId('model-row-ollama-qwen3:8b')
+    await expect(row).toContainText('192.168.1.20 · text conversation only')
+    await expect(row).not.toContainText('This computer')
+  } finally {
+    await app.close()
+  }
+})
+
 test('asks before history on this computer goes to a public host, and can open a new chat instead (旧 38)', async () => {
   ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-confirm')

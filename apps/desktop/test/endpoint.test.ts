@@ -41,6 +41,34 @@ describe('endpointOf', () => {
     expect(endpointOf('http://[::ffff:8.8.8.8]/')?.reach).toBe('public')
   })
 
+  it('reads each private range and suffix to its edges (A9; plan step 19 暂定)', () => {
+    // A public host read as private is a switch nobody is asked about; each range is checked at
+    // both ends and just outside them.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['http://172.16.0.1/', 'private'],
+      ['http://172.31.255.254/', 'private'],
+      ['http://172.15.255.254/', 'public'],
+      ['http://172.32.0.1/', 'public'],
+      ['http://169.254.10.1/', 'private'],
+      ['http://169.253.10.1/', 'public'],
+      ['http://100.64.0.1/', 'private'],
+      ['http://100.127.255.254/', 'private'],
+      ['http://100.63.255.254/', 'public'],
+      ['http://100.128.0.1/', 'public'],
+      ['http://[fe80::1]/', 'private'],
+      ['http://[febf::1]/', 'private'],
+      ['http://[fec0::1]/', 'public'],
+      ['http://gpu.local:11434/', 'private'],
+      ['http://nas.lan/', 'private'],
+      ['http://svc.internal/', 'private'],
+      ['http://box.home.arpa/', 'private'],
+      ['https://example.localnet/', 'public'],
+    ]
+    for (const [url, expected] of cases) {
+      expect({ url, reach: endpointOf(url)?.reach }).toEqual({ url, reach: expected })
+    }
+  })
+
   it('drops the trailing dot of a fully qualified name (s19-safety-6)', () => {
     expect(hostOf('https://ollama.com./v1/')).toBe('ollama.com')
     expect(hostOf('https://api.ollama.com.:443/v1/')).toBe('api.ollama.com')
