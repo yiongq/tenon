@@ -647,6 +647,36 @@ describe('a clear or a delete while a Run is live: stopped first, and waited for
     expect(settled).toBe(true)
   })
 
+  it('settles one root while another root’s lease is still live', async () => {
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const session = randomUUID()
+    const mine = registry.begin({ rootSessionId: session, origin: null })
+    const theirs = registry.begin({ rootSessionId: randomUUID(), origin: null })
+    if ('refused' in mine || 'refused' in theirs) throw new Error('a lease was refused')
+    let settled = false
+    void registry.settledRoot(session).then(() => {
+      settled = true
+    })
+    mine.finish()
+    await flush()
+    expect(settled).toBe(true)
+    theirs.finish()
+  })
+
+  for (const operation of ['clear', 'delete'] as const) {
+    it(`${operation} neither stops nor waits for another session’s live Run`, async () => {
+      const r = rig({ live: {} })
+      const session = randomUUID()
+      await converse(r, session, 'hello')
+      const theirs = r.loop.registry.begin({ rootSessionId: randomUUID(), origin: null })
+      if ('refused' in theirs) throw new Error('a lease was refused')
+      await r.removal[operation](session)
+      expect(r.order).toEqual(['store committed', `rm tool-output/${session}`, 'removed'])
+      expect(theirs.signal.aborted).toBe(false)
+      theirs.finish()
+    })
+  }
+
   it('clear of a paused session: no lease to wait for, and the folder stays gone', async () => {
     const r = rig({ live: {} })
     const session = randomUUID()

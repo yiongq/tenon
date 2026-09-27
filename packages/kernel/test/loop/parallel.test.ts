@@ -664,6 +664,8 @@ describe('judging the members (§一批工具怎么执行 第 2 步, §挂点与
     expect(await ordinalsOf(h, 'tool/permission_decided')).toEqual([1])
     expect(await ordinalsOf(h, 'execution/dispatch_committed')).toEqual([1])
     expect(await outcomes(h)).toEqual(['0 not-run invalid-input blocked', '1 completed  read'])
+    // No decision fact, so its reversibility is 'unknown' (§载荷 ToolOutcomePayload).
+    expect((await named(h, 'execution/tool_outcome'))[0]?.payload['reversibility']).toBe('unknown')
     expect(rec.executions.map(({ label }) => label)).toEqual([`Read ${B}`])
   })
 
