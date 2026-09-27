@@ -5,7 +5,7 @@ Phase: 2 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project（82 条开工前裁决，2026-09-25 owner 拍板）; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter、§本地持久化布局、§国际化（裁决 D4、D5、D8、D12、E1、E4、F3、H9、A13）；[01-provider-and-tape](../01-provider-and-tape/spec.md) §所有权与依赖方向、§Provider 层、§Tape、§desktop 接线（裁决 A1–A9、A11、A12、A14、A15、B1–B6、B8、B14、B18、D11、F1、F3、H1、H3、H8、H10–H13、M3、M5、M6、M8）。只增不改（裁决 A4），全文见 §对 00-foundation 的修补、§对 01-provider-and-tape 的修补；不属纯粹只增的在后者第 9 小节点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（Provider 层选型与厂商分档，与本 spec 同时起草）
-Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。2026-09-26：开工前裁决表四行的落点对齐（第 1 步复核旧 75 时发现，规则本身不变）：B17 删去 §工具调用的收口（旧，该节无此规则）；D6 的 §Inspector 接口与合议（旧）改为 §内置工具的默认档位；F9 的 §判决记录与摘要（旧）改为 §载荷；§内置模型表的数据改动 的裁决标注补 A15。2026-09-26：glm-5.3-flash、glm-5.3-flashx 两行的 `supportsVision` 由 false（旧，§内置模型表的数据改动 写的「探测之前为 false」，即 01:706 的保守合成）定为 true，依据 plan 第 2 步的探测 V（2026-09-26：两行对 base64 传入的 64×64 纯红、纯蓝 PNG 都答对颜色，glm-5.3 对照返回 `400 1210`），旧开放问题 34 就此关闭；glm-5.3、glm-4.6 仍为 false。2026-09-26：owner 定开放问题第一轮，都在对应代码开工前，按 spec-driven-dev.md:52 就地修订：(1) 开放问题 15：`ConfirmTarget` 加第五种 `{ type: 'tool'; serverId; toolName }`（旧：四种形态，MCP 出卡暂缓），连接器卡的参数默认展开，五种形态的字符串字段都须非空；§`ConfirmRequest` 只增两个必填成员、§最小审批卡、§内置工具的默认档位 的 kind 一句、§判决记录与摘要 的卡片原料、§界面范围、验收 36、E4 一行与 §文档同步 的 components.md 一行同改；00 的 Amended by 行不改（它没列形态）。(2) 开放问题 16 的参数校验：来源码新增 `invalid-input`（§原因码表，`ClosureSource` 只增），校验器用 `@modelcontextprotocol/client` 的 `validators/cf-worker`，不加依赖；连接器 schema 本身用不了记 `tool-unavailable`，`MODEL_NOTES` 只增 `schemaUnusable`；内置附加检查改为三条（Edit 的 `old_string` 为空改由 schema 挡，加 WebSearch 两个域名参数同给）（旧：「来源码和校验器见 §开放问题」）；WebSearch 超出次数上限记哪个码另定（旧：「按参数不合法的同一路径」）。(3) 开放问题 16 的工作区变化与日期：新增 `message/environment`、`EnvironmentPayload`、必填的 `LoopPorts.localDate`（第 9 步声明）与 `MODEL_NOTES.environment`，§提示层 加「环境说明」，02 发本地日期（旧：§工作区「消息的 Tape 名字、文本和插入时点见 §开放问题……告知这一步不开工」，§提示层「形状定下就进 `MODEL_NOTES`」）；名字总表、§Tape slice、01 修补 7 的读取与投影、§每轮顺序、§重放怎么排、§前缀纪律、§挂点与会话视图、验收 32 同改。2026-09-26：owner 定开放问题第二、三轮（都在对应代码开工前）：(4) 开放问题 17：`LoopPorts` 只增必填的 `commandShell`（第 9 步声明，旧：「候选：经服务构造参数交入」），desktop 的 `shell-env.ts` 按用户终端解析基础环境；`ClosureSource` 只增 `timed-out`（旧：「超时后的执行状态与来源码……见 §开放问题」），§原因码表 加一行；stderr 在 fd 层并入 stdout，非零退出首行 `Exit code: N`、算 is_error（旧：「输出格式……见 §开放问题」）；验收 41 同改。(5) 开放问题 18 的三项：`RunEndReason` 只增 `time-limit`（结束码 17 → 18 个，验收 9、37、52 与 §结束原因词表 的文案条数同改；旧：「到期后怎么收尾还没定……定下之前不做到期检查」）；交接以其余原因结束一律 `partial`、不标 is_error（旧：占位）；HTML 由 kernel 的 WebFetch 用 `@mdream/js` 1.7.2 转，转前有 `FETCH_CONVERT_MAX_BYTES` 并按 charset 解码（旧：「在哪一层转、用哪个库未定」）。(6) WebSearch 超出次数上限记 `tool-unavailable`（旧：按参数不合法的同一路径）。2026-09-26：owner 定开放问题第四到六轮（都在对应代码开工前；各条的旧写法都是「见 §开放问题」或「暂定」）：(7) 12 外带检查写成 kernel 等价规则 `permission/exfiltration.ts`，02 不依赖 railguard，URL 豁免「去掉结尾标点」改为反复去掉、停止字符加反引号（§外带检查、§railguard 映射、§目录、§依赖方向与能力入口、F5 一行、验收 50 同改）；13 对话形态 Read 越界记 `protected`，回执用专用键 `blocked.chatReadScope`（§原因码表 的 `protected` 由两类改为三类，§决策表与各层输入 第 2 层、`LayerInputs.place`、拦截回执规则、`BlockedNotice` 同改）；21 按默认；22 两条线都本机抓取，T10 不再核；23 zhipu、anthropic 的内置行改了 baseURL 仍标 `verified`；24 删会话不删专用文件夹，所有 Read 自己按整行限长、从不落盘（§大响应落盘 的判断对 Read 永不成立，字符按 UTF-16 码元计）；25 空档一律 `uncertain`，`childEndReason` 为 null 时状态行填 `none`；16 的 `listing` 改为 01 修补 2 只增 `ModelInfo.listing?: 'main' | 'more'`（旧：desktop 主进程按 (providerId, modelId) 一张表），01 与本 spec 的 Amended by 摘要同补；18 子会话转上来的卡期限写「本次子任务」。(8) 16 的出错收尾：`chat.event` 的 error 变体只增可选 `endReason`（与 done 同形，每个 Run 结束都填；依据：`resetAt` 与 auth 的「去设置」只在 `RunEndReason` 里，失败卡要它），凡不写 `message/assistant` 的 attempt（三种作废与以 error 结束的）各发一次 `attempt-discarded`，撤回屏上半截（旧：只在「下一次 attempt 之前」发，最后一次失败的半截留在屏上、Tape 里没有）；16 的 Run 状态由 02 新开的推送事件 `run.state` 交给渲染端，`user-message` 进 chat.event 只增同名变体，「四个新变体」改为五个（01 修补 6、9 (o)、验收 9、H12 一行与 01 的 Amended by 同改；旧：「只增一个推送事件，或一条查询路由」未定）；16 的 key 绑定记录不另存，绑定主机取已存 baseURL 的主机，改主机那次保存先无条件删 key、再写配置、再写新 key，配置写入加锁（旧：「主进程同时记下当时生效 baseURL 的主机」，旧 key 暂定首用绑定）；18 的汇总卡与交接展开：`ToolResultPayload` 只增 `question`（`AskAnswerRecord`），`toolOutcomeViewShape` 只增可选的 `question`、`handoff`（旧：「数据从哪读见 §开放问题」）。(9) 16 的建会话前草稿放 kernel：删 `send` 的 `create?: SessionDraft`（旧：经 `send.create` 交给 kernel，形状随开放问题 16 定；只是占位，没有代码依赖），草稿成 kernel 内部类型、由该会话 mailbox 按到达先后读写，新增 `session.selectProfile`、`session.facts`，预填读 `config.get`（旧：「暂存路由的形状见 §开放问题」）；依据：放在 desktop 时「点发送后紧接着选的模型」会被悄悄丢掉，放进 mailbox 这个竞态就没了。改循环接口之前先给 models/ 的 model1 加了三个草稿场景与两条不变量（选择不丢、建会话那一批等于预建读到的草稿），两个可执行模型都是 0 违例。§主进程与 kernel 的循环接口 的 `send` 注释、方法清单、「mailbox」「租约」「新一轮先预建」、§会话形态「建立前暂存」、§工作区、§选择与五层解析、§目录、§启动恢复与发送防护 的闸、`ModeSwitch` 与 `FolderChip` 两行同改；冻结清单里的 `SessionDraft` 换成 `CommandShell`。2026-09-26：§工具来源、命名与权限键 的 elicitation 一句更正厂商事实（plan 第 10 步用自写的 MCP 夹具核出）：Tenon 的 `Client` 按 SDK 默认只协商 2025 代，2026-07-28 修订版的 `input_required` 协商不到，服务端硬发时 `callTool` 抛 `SdkError`（`INVALID_RESULT`）（旧：「`callTool` 抛 `SdkError`（`CapabilityNotSupported`，:6395）」，那是 SDK 协商到新一代时才走的路径）；行为不变：回 is_error、执行状态 completed、不出任何界面。2026-09-26：§不带 tools 的请求与冻结后的变化 补上智谱的实测结论（plan 第 10 步：历史里有工具调用、请求不带 tools，两条线都 200），本机没有 Ollama、未测；「会不会报错还没核实」一句对智谱不再成立，其余照旧。2026-09-26：§挂点与会话视图 的 `InspectedCall.tool` 只增 `serverId`（旧：`Pick<ToolTableItem, 'name' | 'source' | 'originalName'>`）：§决策表与各层输入 要 `decide` 按 `call.tool` 的 `(serverId, originalName)` 匹配策略规则，原来的 Pick 里没有 `serverId`，连接器工具匹配不了；plan 第 11 步写 `decide()` 时发现，字段只增。2026-09-26：§提示层「环境说明」补上 plan 第 18 步的实测结论（旧：「第 18 步实测……结论写回本节」）：智谱 `/paas/v4` 接受相邻的两条 user 消息，Ollama 未测；规则不变。 2026-09-27：plan 第 20 步的独立评审（四个视角加核查）后就地修订三处，规则只增或收紧：(1) 01 修补 6 的 `chat.event` done / error 再只增可选 `runId`（取 `run-ended.runId`，与 `endReason` 同在同缺）（旧：只有 `endReason`）；依据：失败卡「复制诊断信息」要 runId，渲染端从 `run.state` 推断会在拒绝开的 Run、没写进 Tape 的 Run 上拿到上一个 Run 的 id；(2) §最小审批卡 ②′ 的转义集合加上其余 `\p{Cf}`（标签字符、软连字符等）与 `\p{Default_Ignorable_Code_Point}`（变体选择符等）（旧：只列双向控制符、零宽字符与 C0 / C1）；依据：②′ 自己的不变量「卡上看到的串与将要执行的逐字符对应」，旧集合放过的字符字体不画，命令里能藏住载荷；(3) §界面范围 `BlockedNotice` 的 `inspector` 按 `category` 选句（`blocked.inspector.<category>`）（旧：`blocked.inspector` 一句，`{category}` 作槽位，把机器码写进句子；ICU select 不收带连字符的选择子 `inspector-failed`，所以按键分）。 2026-09-27：第 20 步第二轮评审（两个视角加核查、突变测试）后再就地只增两处：(4) `run-ended` 与 chat.event 的 done / error 只增 `retryOf`（旧：没有；渲染端按事件顺序推断「这个 Run 由用户消息触发、没有派发」）；依据：答复或续跑开的 Run 在第一次请求前会插入排队的消息，事件顺序上看不出它不是用户消息开的，第 20 步评审与真实 kernel 上的单测都复现了误给「重试」；kernel 知道 Run 的 cause 与有没有 `dispatch_committed`。(5) `chat.send`、`chat.sendNow` 的应答只增可选 `status`，`chat.queue.act` 的应答只增可选 `sendStatus`（send-now 时同值）（旧：只有 `accepted: true` / `status`）；依据：缺 key、预建中被停时什么都不写、也没有事件指名这条消息，渲染端的乐观显示会一直等 id，下一条消息的 id 会被错给它。 (6) §失败卡与结束原因「其余 `provider-error`」的「重试」补一个条件：打开 Run 的那条用户消息在 Run 结束时仍是 Tape 上最后一条（旧：只写「由用户消息触发、没有 `dispatch_committed`」）；依据：同一行要求「按 01 spec.md:395 用同一条用户消息重发」，而 01 的重发只在那条仍是最后一条时复用它，Run 已写下回复（被拦下的调用、截断的回复）或插进了排队消息时，按旧写法给的「重试」会写出第二份，第 20 步第三轮评审在真实 kernel 上复现；这是收紧，不放宽任何已给的动作。
+Revisions: 2026-09-25 首版。起草当日就地修订：瘦身（4603 → 约 3330 行）；owner 确认开放问题 3–11（01 修补 9 (b)(c)(p)(u) 按修补处理、AGENTS.md:24 的新措辞、智谱搜索默认档 `search_pro_quark`、OpenAI 读作能接不保证、「Claude Code 引擎」不进 02、推出的读法）；owner 定开放问题 1、2：循环接口取甲修正版（kernel 管循环，每个根会话一个 mailbox、最多一份活租约；`SessionServiceOptions` 只增 `inspectors`、`connector`、`protectedFiles` 三个必填成员；删 `runRequest`、`RunRequestQuery`、`RunResult`），启动时不跑续跑、打开会话才续跑；另定自动发出间接切公网先问、立即发送绑定 runId、缺 key 什么都不写三条；owner 按默认定开放问题 26；owner 把 Status 改为 ready。循环接口的并发规则经六轮评审与两个照本 spec 字面建的可执行模型核查（[models/](models/README.md)，改这些规则先跑它们）。评审期间的逐条改动与旧值不列：本文件入库前没有代码或其他 spec 依赖那些中间写法。2026-09-26：统一子会话的 URL 豁免。§授权、工作区与外带检查的继承 原写子会话也认根会话里的真人 `message/user`（旧），与 §挂点与会话视图 和开放问题 11 已确认的读法「子会话不认根会话的真人消息」冲突，改为只认父、子两边 WebSearch 结果的 `searchHitUrls`；`fetchUrlVouched` 注释与 §外带检查「豁免」同改；评审推导笔记时发现。2026-09-26：开工前裁决表四行的落点对齐（第 1 步复核旧 75 时发现，规则本身不变）：B17 删去 §工具调用的收口（旧，该节无此规则）；D6 的 §Inspector 接口与合议（旧）改为 §内置工具的默认档位；F9 的 §判决记录与摘要（旧）改为 §载荷；§内置模型表的数据改动 的裁决标注补 A15。2026-09-26：glm-5.3-flash、glm-5.3-flashx 两行的 `supportsVision` 由 false（旧，§内置模型表的数据改动 写的「探测之前为 false」，即 01:706 的保守合成）定为 true，依据 plan 第 2 步的探测 V（2026-09-26：两行对 base64 传入的 64×64 纯红、纯蓝 PNG 都答对颜色，glm-5.3 对照返回 `400 1210`），旧开放问题 34 就此关闭；glm-5.3、glm-4.6 仍为 false。2026-09-26：owner 定开放问题第一轮，都在对应代码开工前，按 spec-driven-dev.md:52 就地修订：(1) 开放问题 15：`ConfirmTarget` 加第五种 `{ type: 'tool'; serverId; toolName }`（旧：四种形态，MCP 出卡暂缓），连接器卡的参数默认展开，五种形态的字符串字段都须非空；§`ConfirmRequest` 只增两个必填成员、§最小审批卡、§内置工具的默认档位 的 kind 一句、§判决记录与摘要 的卡片原料、§界面范围、验收 36、E4 一行与 §文档同步 的 components.md 一行同改；00 的 Amended by 行不改（它没列形态）。(2) 开放问题 16 的参数校验：来源码新增 `invalid-input`（§原因码表，`ClosureSource` 只增），校验器用 `@modelcontextprotocol/client` 的 `validators/cf-worker`，不加依赖；连接器 schema 本身用不了记 `tool-unavailable`，`MODEL_NOTES` 只增 `schemaUnusable`；内置附加检查改为三条（Edit 的 `old_string` 为空改由 schema 挡，加 WebSearch 两个域名参数同给）（旧：「来源码和校验器见 §开放问题」）；WebSearch 超出次数上限记哪个码另定（旧：「按参数不合法的同一路径」）。(3) 开放问题 16 的工作区变化与日期：新增 `message/environment`、`EnvironmentPayload`、必填的 `LoopPorts.localDate`（第 9 步声明）与 `MODEL_NOTES.environment`，§提示层 加「环境说明」，02 发本地日期（旧：§工作区「消息的 Tape 名字、文本和插入时点见 §开放问题……告知这一步不开工」，§提示层「形状定下就进 `MODEL_NOTES`」）；名字总表、§Tape slice、01 修补 7 的读取与投影、§每轮顺序、§重放怎么排、§前缀纪律、§挂点与会话视图、验收 32 同改。2026-09-26：owner 定开放问题第二、三轮（都在对应代码开工前）：(4) 开放问题 17：`LoopPorts` 只增必填的 `commandShell`（第 9 步声明，旧：「候选：经服务构造参数交入」），desktop 的 `shell-env.ts` 按用户终端解析基础环境；`ClosureSource` 只增 `timed-out`（旧：「超时后的执行状态与来源码……见 §开放问题」），§原因码表 加一行；stderr 在 fd 层并入 stdout，非零退出首行 `Exit code: N`、算 is_error（旧：「输出格式……见 §开放问题」）；验收 41 同改。(5) 开放问题 18 的三项：`RunEndReason` 只增 `time-limit`（结束码 17 → 18 个，验收 9、37、52 与 §结束原因词表 的文案条数同改；旧：「到期后怎么收尾还没定……定下之前不做到期检查」）；交接以其余原因结束一律 `partial`、不标 is_error（旧：占位）；HTML 由 kernel 的 WebFetch 用 `@mdream/js` 1.7.2 转，转前有 `FETCH_CONVERT_MAX_BYTES` 并按 charset 解码（旧：「在哪一层转、用哪个库未定」）。(6) WebSearch 超出次数上限记 `tool-unavailable`（旧：按参数不合法的同一路径）。2026-09-26：owner 定开放问题第四到六轮（都在对应代码开工前；各条的旧写法都是「见 §开放问题」或「暂定」）：(7) 12 外带检查写成 kernel 等价规则 `permission/exfiltration.ts`，02 不依赖 railguard，URL 豁免「去掉结尾标点」改为反复去掉、停止字符加反引号（§外带检查、§railguard 映射、§目录、§依赖方向与能力入口、F5 一行、验收 50 同改）；13 对话形态 Read 越界记 `protected`，回执用专用键 `blocked.chatReadScope`（§原因码表 的 `protected` 由两类改为三类，§决策表与各层输入 第 2 层、`LayerInputs.place`、拦截回执规则、`BlockedNotice` 同改）；21 按默认；22 两条线都本机抓取，T10 不再核；23 zhipu、anthropic 的内置行改了 baseURL 仍标 `verified`；24 删会话不删专用文件夹，所有 Read 自己按整行限长、从不落盘（§大响应落盘 的判断对 Read 永不成立，字符按 UTF-16 码元计）；25 空档一律 `uncertain`，`childEndReason` 为 null 时状态行填 `none`；16 的 `listing` 改为 01 修补 2 只增 `ModelInfo.listing?: 'main' | 'more'`（旧：desktop 主进程按 (providerId, modelId) 一张表），01 与本 spec 的 Amended by 摘要同补；18 子会话转上来的卡期限写「本次子任务」。(8) 16 的出错收尾：`chat.event` 的 error 变体只增可选 `endReason`（与 done 同形，每个 Run 结束都填；依据：`resetAt` 与 auth 的「去设置」只在 `RunEndReason` 里，失败卡要它），凡不写 `message/assistant` 的 attempt（三种作废与以 error 结束的）各发一次 `attempt-discarded`，撤回屏上半截（旧：只在「下一次 attempt 之前」发，最后一次失败的半截留在屏上、Tape 里没有）；16 的 Run 状态由 02 新开的推送事件 `run.state` 交给渲染端，`user-message` 进 chat.event 只增同名变体，「四个新变体」改为五个（01 修补 6、9 (o)、验收 9、H12 一行与 01 的 Amended by 同改；旧：「只增一个推送事件，或一条查询路由」未定）；16 的 key 绑定记录不另存，绑定主机取已存 baseURL 的主机，改主机那次保存先无条件删 key、再写配置、再写新 key，配置写入加锁（旧：「主进程同时记下当时生效 baseURL 的主机」，旧 key 暂定首用绑定）；18 的汇总卡与交接展开：`ToolResultPayload` 只增 `question`（`AskAnswerRecord`），`toolOutcomeViewShape` 只增可选的 `question`、`handoff`（旧：「数据从哪读见 §开放问题」）。(9) 16 的建会话前草稿放 kernel：删 `send` 的 `create?: SessionDraft`（旧：经 `send.create` 交给 kernel，形状随开放问题 16 定；只是占位，没有代码依赖），草稿成 kernel 内部类型、由该会话 mailbox 按到达先后读写，新增 `session.selectProfile`、`session.facts`，预填读 `config.get`（旧：「暂存路由的形状见 §开放问题」）；依据：放在 desktop 时「点发送后紧接着选的模型」会被悄悄丢掉，放进 mailbox 这个竞态就没了。改循环接口之前先给 models/ 的 model1 加了三个草稿场景与两条不变量（选择不丢、建会话那一批等于预建读到的草稿），两个可执行模型都是 0 违例。§主进程与 kernel 的循环接口 的 `send` 注释、方法清单、「mailbox」「租约」「新一轮先预建」、§会话形态「建立前暂存」、§工作区、§选择与五层解析、§目录、§启动恢复与发送防护 的闸、`ModeSwitch` 与 `FolderChip` 两行同改；冻结清单里的 `SessionDraft` 换成 `CommandShell`。2026-09-26：§工具来源、命名与权限键 的 elicitation 一句更正厂商事实（plan 第 10 步用自写的 MCP 夹具核出）：Tenon 的 `Client` 按 SDK 默认只协商 2025 代，2026-07-28 修订版的 `input_required` 协商不到，服务端硬发时 `callTool` 抛 `SdkError`（`INVALID_RESULT`）（旧：「`callTool` 抛 `SdkError`（`CapabilityNotSupported`，:6395）」，那是 SDK 协商到新一代时才走的路径）；行为不变：回 is_error、执行状态 completed、不出任何界面。2026-09-26：§不带 tools 的请求与冻结后的变化 补上智谱的实测结论（plan 第 10 步：历史里有工具调用、请求不带 tools，两条线都 200），本机没有 Ollama、未测；「会不会报错还没核实」一句对智谱不再成立，其余照旧。2026-09-26：§挂点与会话视图 的 `InspectedCall.tool` 只增 `serverId`（旧：`Pick<ToolTableItem, 'name' | 'source' | 'originalName'>`）：§决策表与各层输入 要 `decide` 按 `call.tool` 的 `(serverId, originalName)` 匹配策略规则，原来的 Pick 里没有 `serverId`，连接器工具匹配不了；plan 第 11 步写 `decide()` 时发现，字段只增。2026-09-26：§提示层「环境说明」补上 plan 第 18 步的实测结论（旧：「第 18 步实测……结论写回本节」）：智谱 `/paas/v4` 接受相邻的两条 user 消息，Ollama 未测；规则不变。 2026-09-27：plan 第 20 步的独立评审（四个视角加核查）后就地修订三处，规则只增或收紧：(1) 01 修补 6 的 `chat.event` done / error 再只增可选 `runId`（取 `run-ended.runId`，与 `endReason` 同在同缺）（旧：只有 `endReason`）；依据：失败卡「复制诊断信息」要 runId，渲染端从 `run.state` 推断会在拒绝开的 Run、没写进 Tape 的 Run 上拿到上一个 Run 的 id；(2) §最小审批卡 ②′ 的转义集合加上其余 `\p{Cf}`（标签字符、软连字符等）与 `\p{Default_Ignorable_Code_Point}`（变体选择符等）（旧：只列双向控制符、零宽字符与 C0 / C1）；依据：②′ 自己的不变量「卡上看到的串与将要执行的逐字符对应」，旧集合放过的字符字体不画，命令里能藏住载荷；(3) §界面范围 `BlockedNotice` 的 `inspector` 按 `category` 选句（`blocked.inspector.<category>`）（旧：`blocked.inspector` 一句，`{category}` 作槽位，把机器码写进句子；ICU select 不收带连字符的选择子 `inspector-failed`，所以按键分）。 2026-09-27：第 20 步第二轮评审（两个视角加核查、突变测试）后再就地只增两处：(4) `run-ended` 与 chat.event 的 done / error 只增 `retryOf`（旧：没有；渲染端按事件顺序推断「这个 Run 由用户消息触发、没有派发」）；依据：答复或续跑开的 Run 在第一次请求前会插入排队的消息，事件顺序上看不出它不是用户消息开的，第 20 步评审与真实 kernel 上的单测都复现了误给「重试」；kernel 知道 Run 的 cause 与有没有 `dispatch_committed`。(5) `chat.send`、`chat.sendNow` 的应答只增可选 `status`，`chat.queue.act` 的应答只增可选 `sendStatus`（send-now 时同值）（旧：只有 `accepted: true` / `status`）；依据：缺 key、预建中被停时什么都不写、也没有事件指名这条消息，渲染端的乐观显示会一直等 id，下一条消息的 id 会被错给它。 (6) §失败卡与结束原因「其余 `provider-error`」的「重试」补一个条件：打开 Run 的那条用户消息在 Run 结束时仍是 Tape 上最后一条（旧：只写「由用户消息触发、没有 `dispatch_committed`」）；依据：同一行要求「按 01 spec.md:395 用同一条用户消息重发」，而 01 的重发只在那条仍是最后一条时复用它，Run 已写下回复（被拦下的调用、截断的回复）或插进了排队消息时，按旧写法给的「重试」会写出第二份，第 20 步第三轮评审在真实 kernel 上复现；这是收紧，不放宽任何已给的动作。 2026-09-27：① 补评审（plan 第 6–19 步，每步只读视角加核查，确认 137 条）之后，owner 定下三处读法分歧，补评审的修复另把几处正文与已落地的代码对齐：(7) owner 定 s6-spec-2 取甲：text、tool-request 块上的 `vendorFields` 与其他厂商数据一样过守卫规则 1、2，每组字段记一条 thinkingDecisions；这两种块只增可选键 `vendorSource`（BlockFold 附上字段时同写），`ThinkingDecision.reason` 只增 `missing-source`（本修订之前存下、没有来源的字段对任何目标都丢），anthropic-messages 编码器版本 2 → 3，openai-chat 线字节不变、版本仍为 1，判为回传的一组在该线本地拒绝（旧：Anthropic 线不论目标模型一律并回原块，openai-chat 线静默丢弃，两线都不记）；01 修补 2 的类型块与「厂商原样块」、01 修补 6 §session.messages 与内容块、验收 7 同改；依据：01 修补 2 把「已知块上的未知字段」列在过守卫的各项里，而 text、tool-request 自己不带 provider / providerModel，守卫无从比较。(8) owner 定 s7-wire-2 取乙：desktop 出网改用 npm 包 `undici` 7.29.1 自己的 `fetch`，经 `headersTimeout`、`bodyTimeout` 都为 0 的 `Agent` 发出（旧：按 01 spec.md:109 是 `globalThis.fetch` 一行，undici 默认的 300 秒在 kernel 之下截断首字节超时后紧接着的那次重发、其他端点的 SDK 10 分钟默认与放宽到 300 秒以上的空闲阈值，假时钟下 301 秒复现）；01 修补 4 加一条，第 9 小节加 (w)，验收 8 补一句，A5 的落点、第 8 小节的 Amended by 摘要与 01 顶部的同一行各补一处，01 修补 4 与 §本机抓取器 里 network.ts 的行号由 :8 改为 :22；apps/desktop 多一个运行时依赖（Electron 44.4.1 自带同一版，已核 `process.versions`）；依据：01 修补 4 与验收 8 的「其他端点不传（SDK 默认 10 分钟）」「紧接着的那次重发不设限」在 `globalThis.fetch` 下只成立到 300 秒，与 01 spec.md:109 的字面冲突，取 01 修补 4，`HostNetwork` 接口、provider 与 kernel 都不变。(9) owner 定 s11-safety-2 取乙：目录项在、也跟得到、`realpath` 却给不出真实路径的路径（macOS 的 `/.vol/<dev>/<ino>`，含上溯途中遇到的上级）判为 `protected`，文件工具调用在第 2 层拦下、不出卡；`HostFs.realpath` 为此只增一种带类型的抛错 `UnresolvableAliasError`（旧：「`realpath` 抛错：按 `outside`」，这类路径出工作区外卡，点「允许一次」就能经 `/.vol` 读到 shell 配置与 profile 配置）；§`HostFs.realpath`（只增）、§「在不在工作区里」第 2 步、不变量 21、验收 30、「测试要钉住的符号」、§目录 与 00 的 Amended by 摘要同改，悬空链接等其他抛错照旧判工作区外；依据：给不出真实路径就无从和保护名单比较，照 D8 判工作区外等于给保护名单开了放行入口，改判只收紧。(10) 补评审的修复落地后，下列几处按代码只增或澄清，规则不变：§`HostFs.realpath`（只增）补 macOS 数据卷 firmlink 一条（`/System/Volumes/Data/<X>` 与 `/<X>` 同 dev、同 ino 时返回后者；s11-safety-2 的另一半）；§提示层 `MODEL_NOTES` 只增 `connectorFailed`、`connectorEmpty`，「存在哪、重放取什么」表加一行（s18-spec-4：原是 executor.ts 里的两句字面量，提示层版本随之升到 2）；§组装清单与内容寄存 补「原文复算不出时报「被篡改」，不论表是否已变」（s6-spec-1、s10-spec-1，复核器 `packages/kernel/src/testing/attempt-recheck.ts`）；§工作区 的 `sessionFactsResponse` 只增可选 `lastEndpoint`（旧：没有），§模型选择「数据去向」写明菜单比的是本会话历史最后发往的主机、与 kernel 的数据去向检查同一个点，不比当前生效的选择（依据：按当前选择比会漏掉经形态默认的间接切换，s19-spec-1；`session.modelChoice` 维持原样）；`RunConnector.endpointOrigin` 的注释写明按 config.json、开发变量、定义默认的顺序算，与 `assemble` 发往的地址一致（s9-spec-2、s19-spec-2）。
 
 ## 背景与问题
 
@@ -141,7 +141,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 | A2 | 不加能力位；不变量「请求的最后一轮是 user」，02 不留例外 | §不变量；01 修补 3（末轮不是 user 时本地拒绝，01 修补 9 (k)） | 接服务端工具、服务端压缩或中途 system 消息的 spec 用 amend 放开 |
 | A3 | `view/assembled` 记组装清单，attempt 引用它；清单存实际生效的 `ModelInfo` 原文，按内容哈希只存一份 | §组装清单与内容寄存；01 修补 7（attempt 加清单引用、`encoder`、`modelWireHash` 三个可选键） | — |
 | A4 | 补一个必填成员按 amend 处理，并定为通用读法 | 01 修补 1；00 修补（引用同一读法）；`create()` 的 `clock` 扩为 `now` + `setTimeout`，01 修补 9 (h) | 写进 spec-driven-dev.md:54：owner 认可后单独改 |
-| A5 | 首字节超时只管官方端点；字节级空闲看门狗所有端点都设，官方 180 秒、其他 300 秒，做在出网接缝 | 01 修补 4；01 修补 2（`create()` 的 `clock`，01 修补 9 (h)）；§重试与「继续」 | Ollama 的阈值：进 agent 验收时实测 |
+| A5 | 首字节超时只管官方端点；字节级空闲看门狗所有端点都设，官方 180 秒、其他 300 秒，做在出网接缝 | 01 修补 4；01 修补 2（`create()` 的 `clock`，01 修补 9 (h)）；§重试与「继续」；desktop 出网关掉 undici 自带的两个超时，01 修补 9 (w)，owner 已确认（2026-09-27） | Ollama 的阈值：进 agent 验收时实测 |
 | A6 | 出网接缝加请求头白名单，02 的 beta 名单为空；`x-stainless-*` 另定；自定义厂商第一版不开自定义请求头和任意 `requestParams` | 01 修补 4（环境变量加的非凭据头被剥掉，01 修补 9 (j)）；§搜索与抓取（搜索后端调同一个白名单函数） | `x-stainless-*`：阶段 6 的隐私盘点 |
 | A7 | thinking 守卫两处未限定的读法都认可，记两句，代码不动 | 01 修补 3（master-reference.md:381「不丢就会 400」的前提已过时，01 修补 9 (f)；主参考原文不改） | 会话中途升级模型做成功能时评估 C，走 supersede |
 | A8 | 守卫只在 `encode()` 里跑，重放时原样透传 | 01 修补 3 | — |
@@ -253,7 +253,7 @@ owner 已同意开 Anthropic 官方 key，本 spec 按有 key 写（裁决 M4）
 
 ```
 packages/kernel/src/
-  host/adapter.ts        + policy 及 HostPolicy / PolicyState / TenantPolicy · HostFs.realpath · ConfirmReason / ConfirmRequest 新值与成员（修补 00）
+  host/adapter.ts        + policy 及 HostPolicy / PolicyState / TenantPolicy · HostFs.realpath 及 UnresolvableAliasError · ConfirmReason / ConfirmRequest 新值与成员（修补 00）
                          + HostNetwork.fetchUntrusted（修补 01）
   host/memory.ts         内存 host：可注入 PolicyState；fetchUntrusted 默认抛错
   host/profile.ts        + toolOutputDirFor，与 profileDirFor（:22）并列
@@ -341,7 +341,8 @@ export type CapabilitySource = 'builtin' | 'user' | 'synthesized'
 export interface ModelChoice { readonly providerId: ProviderId; readonly modelId: string
   readonly effort: string | null; readonly capabilitySource: CapabilitySource }
 export interface RunConnector {                  // desktop 的 run-assembly.ts 实现
-  /** 同步、不读密钥：同批写 session/model_selected 时用（§执行日志与恢复表 同批规则 2、3） */
+  /** 同步、不读密钥：同批写 session/model_selected 时用（§执行日志与恢复表 同批规则 2、3）。
+   *  按 config.json（启动时读、每次写入后更新）与开发变量、定义默认的顺序算，与 assemble 发往的地址一致（s9-spec-2、s19-spec-2） */
   endpointOrigin(providerId: ProviderId): string | null
   /** 五层的 ②–⑤ 加数据去向检查（§模型选择）；① 由 kernel 从 Tape 读出传入。不读密钥。
    *  数据去向检查只在 sessionChoice 为 null（选择来自 ②–⑤）时做，① 已在菜单里确认过 */
@@ -497,13 +498,21 @@ export interface HostFs {
   // …00 的五个方法不变
   /** 解析符号链接后的真实绝对路径。
    *  只有目录项本身不存在（lstat 也报 ENOENT / ENOTDIR）时才返回 null。
-   *  目录项存在但解析失败（悬空链接、ELOOP 等），以及其他错误，一律抛出。 */
+   *  目录项存在但解析失败（悬空链接、ELOOP 等），以及其他错误，一律抛出。
+   *  目录项在、也跟得到，却给不出真实路径（macOS 的 /.vol/<dev>/<ino>）：抛 UnresolvableAliasError。 */
   realpath(path: AbsolutePath): Promise<AbsolutePath | null>
+}
+
+// host/adapter.ts —— 只增；HostFs.realpath 唯一带类型的抛错，cause 为原错误（owner 2026-09-27）
+export class UnresolvableAliasError extends Error {
+  readonly path: AbsolutePath
 }
 ```
 
-- 桌面端用 `node:fs/promises` 的 `realpath`；报 ENOENT / ENOTDIR 时补一次 `lstat`，`lstat` 也报这两种之一才返回 null，否则抛原错误（悬空链接的 `realpath` 同样报 ENOENT，不能当「还不存在」）。调用方把抛错按「解析出错 → 工作区外」处理（裁决 D8）。
+- 桌面端用 `node:fs/promises` 的 `realpath`；报 ENOENT / ENOTDIR 时补一次 `lstat`，`lstat` 也报这两种之一才返回 null。`lstat` 看得到目录项时再补一次 `stat`：跟不过去就是悬空链接，抛原错误（悬空链接的 `realpath` 同样报 ENOENT，不能当「还不存在」）；跟得过去就是文件在那里、只是 realpath(3) 给不出名字，抛 `UnresolvableAliasError`，`cause` 为原错误。典型是 macOS 的 volfs：`/.vol/<dev>/<ino>` 按 inode 直达任意文件（2026-09-27 本机实测：`realpath` 报 ENOENT，`lstat`、`stat`、读文件都成功；指向 `/.vol/...` 的符号链接系统也跟不过去，读报 ENOENT，按悬空链接处理）。调用方把 `UnresolvableAliasError` 按保护名单处理，其余抛错按「解析出错 → 工作区外」处理（裁决 D8；owner 2026-09-27，s11-safety-2 取 B）。
+- macOS 的数据卷另挂在 `/System/Volumes/Data`，realpath(3) 对这种写法原样返回：`/System/Volumes/Data/Users/u/.zshrc` 与 `/Users/u/.zshrc` 是同一个文件（firmlink），按字符串比较会被当成保护名单之外。桌面端的结果落在 `/System/Volumes/Data/<X>` 下、且 `/<X>` 的 realpath 是同一个文件（同 dev、同 ino）时，返回 `/<X>`，同一个文件只有一个真实路径；这是 §「在不在工作区里」第 3 步按真实路径比较的实现，规则不变（补查评审 s11-safety-2 的 firmlink 一半）。
 - 判定算法和已知局限见 §「在不在工作区里」；审批卡「对象」里的路径就是解析后的真实路径（裁决 D8、H3）。
+- 内存宿主没有这类别名，`MemoryFs.realpath` 不抛 `UnresolvableAliasError`；测试要它时在 `MemoryFs` 外包一层 `HostFs`（`packages/kernel/test/support/volfs.ts`），不改内存宿主。
 
 ### 内存宿主（只增）
 
@@ -622,7 +631,7 @@ export type ConfirmTarget =
 1. 00 顶部现有的 `Amended by:`（01 那一行，00 spec 第 4 行）之下追加第二行。`Status` 不变，正文一字不动：
 
    ```
-   Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：`HostAdapter` 增加 `policy` 成员；`HostFs` 增加 `realpath`；`ConfirmReason` 增加 `policy` / `flagged` / `command` / `interaction-required` 及其必填键；`ConfirmRequest` 增加必填成员 `reversibility`、`target`；`HostConfirm` 补一条不变量「同一 requestId 可以重复投递，界面去重」；本地持久化布局增加 `tool-output/<sessionId>/`，host 删会话、清空会话时连它一起删；§国际化 的语言提示取会话开始时的语言。并回答本 spec 的开放问题「`HostConfirm` 与写进 transcript 的等待模型怎么衔接」。只增不改，全文与理由在该 spec）
+   Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：`HostAdapter` 增加 `policy` 成员；`HostFs` 增加 `realpath` 及其带类型的抛错 `UnresolvableAliasError`（2026-09-27 补）；`ConfirmReason` 增加 `policy` / `flagged` / `command` / `interaction-required` 及其必填键；`ConfirmRequest` 增加必填成员 `reversibility`、`target`；`HostConfirm` 补一条不变量「同一 requestId 可以重复投递，界面去重」；本地持久化布局增加 `tool-output/<sessionId>/`，host 删会话、清空会话时连它一起删；§国际化 的语言提示取会话开始时的语言。并回答本 spec 的开放问题「`HostConfirm` 与写进 transcript 的等待模型怎么衔接」。只增不改，全文与理由在该 spec）
    ```
 
 2. 修补的全文、日期、理由写在本节各小节。
@@ -684,12 +693,14 @@ export type ContentBlock =                           // 已存在（types.ts:191
   | { type: 'vendor'; provider: ProviderId; providerModel: string        // 新增：厂商原样块
       raw: Record<string, unknown>; replay: 'same-model' | 'never' }
 // text、thinking、redacted-thinking、tool-request 四种只增可选键 vendorFields?: Record<string, unknown>
+// text、tool-request 两种再只增可选键 vendorSource?: { provider: ProviderId; providerModel: string }：
+//   BlockFold 附上 vendorFields 时同写，取值与思考块的 provider / providerModel 戳相同（s6-spec-2，owner 2026-09-27）
 export type StreamEvent =                            // 已存在（types.ts:223）；error 只增可选键 timeout?: 'first-byte' | 'idle' 与 resetAt?: number
   | /* 01 的成员不变 */
   | { type: 'vendor-block'; index: number; raw: Record<string, unknown>; replay: 'same-model' | 'never' }
   | { type: 'vendor-fields'; index: number; fields: Record<string, unknown> }
   | { type: 'response-model'; modelId: string }     // 厂商回报的模型名，每个流至多一次（裁决 M5）
-// ThinkingDecision（types.ts:132）的 reason 只增 'server-executed' 与 'compacted'（H10）
+// ThinkingDecision（types.ts:132）的 reason 只增 'server-executed'、'compacted'（H10）与 'missing-source'（s6-spec-2）
 export interface ProviderDefinition {                // 已存在（types.ts:157）
   finishReasons?: Readonly<Record<string, StopReason>>   // 新增：openai-chat 线的补充词表
   create(args: { network: HostNetwork
@@ -703,6 +714,9 @@ export interface ProviderDefinition {                // 已存在（types.ts:157
 - `pricing` 供评测算费用（usage × 价格，记币种和汇率），智谱各行补上（裁决 M8）。`purposeKey` 的键里不放原始模型 id（i18next 的分隔符）；`purposeKey`、`listing` 都不进 `WIRE_MODEL_FIELDS`（裁决 H3、M5）。每个定义的第一行（新用户兜底，M5、A16）不能是 `listing: 'more'`。
 - `error.resetAt`（epoch 毫秒；裁决 H12）：Anthropic 的 `enforced_spend_limit_reached` 由适配器算成下月 1 日 00:00 UTC；智谱 1308、1310 等报文格式核实之前不填。
 - 厂商原样块（裁决 M3）：未知块、已知块上的未知字段、fallback 边界块都原样存进 Tape（anthropic-messages.ts:643-647 的 default 分支不再跳过）。encode() 让它们过 thinking 守卫，每项记进 thinkingDecisions：provider 或模型不同，按规则 1、2 丢；同厂商同模型，原样发回（`vendorFields` 并回原块，去向跟宿主块走）；`replay: 'never'` 一律不发，记 `drop / server-executed`。
+  - 「每项」对 `vendorFields` 按宿主块分（s6-spec-2，owner 2026-09-27）：thinking、redacted-thinking 上的字段随宿主块那一条决定走，不另记；text、tool-request 上的字段按同块的 `vendorSource` 单独判规则 1、2（`decideVendorFields`，与 `decideVendorBlock` 共用同一段判定，比 `thinkingModelId`），每组字段记一条：同厂商同模型记 `replay / same-model`，并回原块；否则记 `drop / foreign-provider` 或 `drop / model-changed`，宿主块照发，只去掉字段。宿主块本身不上线（空 text）时不判、不记。
+  - 本修订之前存下的字段没有 `vendorSource`：来源不明，任何目标都不发，记 `drop / missing-source`。不从 Tape 反查写下该消息的 Run 用的模型：那要读 `session/model_selected`、再经模型行换算成 `thinkingModelId`，而 `encode()` 是纯的，手里没有那张表；这类字段只存在于 02 开发期的本机 Tape 上，丢掉只是少回传一次厂商私有字段。
+  - openai-chat 线的解码器不产出 `vendor-fields`，单条文本又编成裸字符串，字段无处可放：守卫判丢的照记；判为回传的一组（只可能来自别的适配器的表）本地拒绝，抛 `ProviderInvalidArgumentError`，与判为回传的 `vendor` 块同一处理。这一改只多记决定、不改线上字节，openai-chat 编码器版本不动；anthropic-messages 编码器升到 3（01 修补 7「凡改变编码结果的提交都加一」）。
 - `replay: 'never'` 只给服务端执行的调用块及其结果块：Anthropic 的 `server_tool_use`、`mcp_tool_use`、`caller` 不是 direct 的 `tool_use`，智谱的 `tool_calls[type=mcp]`。只存档，不回传、不派发（裁决 M3、B1、H8；§工具调用的收口）。
 - `finishReasons` 是定义上的数据，加厂商只加数据（裁决 A12、M2、M6）：openai-chat.ts:891-913 的表原样保留，定义只能补它没有的原值；anthropic-messages 线不读。「厂商差异做成数据」的其余五项 02 不做（裁决 M6、M7）。
 - `clock`（裁决 A4、A5）：`clock.setTimeout` 只给第 4 小节的空闲看门狗用，首字节超时不经它，重试仍归循环。types.ts:167-171 与 apps/desktop/src/main/provider.ts:199「只给读数」的注释改写；desktop 两处调用（provider.ts:197、provider-routes.ts:276）与测试替身补传 `setTimeout`。
@@ -730,6 +744,7 @@ export interface ProviderDefinition {                // 已存在（types.ts:157
 - 首字节超时（裁决 A5）：只管 baseURL 主机为 `api.anthropic.com` 的请求，stream() 给 SDK 传单次请求的 `timeout = 180_000 + ceil(bodyBytes / 32_768) × 1000` 毫秒（`bodyBytes` = 请求体 JSON 的 UTF-8 字节数）。其他端点不传（SDK 默认 10 分钟）；`ctx.firstByteTimeout === false` 时也不传，循环只在首字节超时后紧接着的那次重发这样传。连接超时映射成 `error{ code: 'network', retryable: true, timeout: 'first-byte' }`；跑在 SDK 定时器上，不经 `clock`。
 - 字节级空闲看门狗：`fetchThroughHost`（wire/transport.ts:96）只增第四个参数 `watchdog?: { clock: Pick<HostClock, 'setTimeout'>; idleMs: number }`，`idleMs` 对 `api.anthropic.com` 取 180 000，其他端点取 300 000。拿到响应头开始计时，每到一块字节（含 ping）复位，响应体读完、被取消或出错时拆除；触发时取消底层响应体，以 transport.ts 新导出的 `StreamIdleTimeoutError` 出错，两个适配器映射成 `error{ code: 'network', retryable: true, timeout: 'idle' }`。
 - 两种超时都不碰调用方的 AbortSignal（与 `stop{ aborted }` 分开），重试与 H12 共用一套次数（§主循环与 Run 的结束）。不做事件级看门狗（SDK 吞 ping），不设总时长。
+- desktop 出网不另设时限（裁决 A5；01 修补 9 (w)，owner 2026-09-27）：`createDesktopNetwork`（apps/desktop/src/main/host/network.ts:22）用 npm 包 `undici` 自己的 `fetch`（apps/desktop 的运行时依赖，版本钉死 7.29.1，即 Electron 44.4.1 自带的那一版），经一个 `headersTimeout: 0`、`bodyTimeout: 0` 的 `Agent` 发出。undici 默认等响应头 300 秒、两块响应体之间 300 秒，会在 kernel 之下截断：首字节超时后紧接着的那次重发、其他端点的 SDK 默认 10 分钟、以及空闲看门狗的阈值（放宽到 300 秒以上时）；关掉之后，只剩首字节限制与看门狗两道时限。用 undici 自己的 `fetch`，不用 `globalThis.fetch` 加 dispatcher：dispatcher 只配造它的那份 undici，Node 22（CI 与单测）自带的是 undici 6。平台 fetch 造的 `Request` 对这份 undici 是外来类，按字段转交，init 照旧优先。其余不变：一跳、默认跟随重定向、调用方的 AbortSignal、拒绝即 reject `HostNetworkDeniedError`。
 - 请求头白名单（裁决 A6）是 `fetchThroughHost` 里的一个导出函数：只放行协议必需的头、凭据头、kernel 自己决定的 `anthropic-beta`（02 的名单为空）；其余剥掉，`ANTHROPIC_CUSTOM_HEADERS` 这类环境变量加的头出不去。`x-stainless-*` 整组暂时放行（按 01 开放问题 1 留到阶段 6）。搜索后端只经 `network.fetch` 出网，发请求前调同一个函数。以后 encode() 用到 beta，beta 列表进 `EncodedRequest` 与请求快照，在那次修补加键。
 - SDK 升级（`@anthropic-ai/sdk` 0.126→0.128、`openai` 7.17→7.23）单列一步，按「SDK 现实」变更：复核随 SDK 变化的那对保留键（anthropic-messages.ts 注释）和白名单；发出两个以上 beta 值之前必须完成（裁决 A16、M3；验收 3）。
 - `HostNetwork` 只增 `fetchUntrusted`（裁决 H8；须 owner 确认，见 (p)）：
@@ -743,7 +758,7 @@ export interface HostNetwork {                       // 已存在（01 spec.md:9
 }
 ```
 
-  同一改动补齐：desktop host（apps/desktop/src/main/host/network.ts:8）按上面的规则实现；内存 host（host/memory.ts:153）与 `fakeNetwork` 默认抛错，后者可按脚本回放。provider 用的 `fetch` 不变，Ollama 的 localhost:11434 不受影响。调用方、URL 过滤与授权见 §搜索与抓取。
+  同一改动补齐：desktop host（apps/desktop/src/main/host/network.ts:22）按上面的规则实现；内存 host（host/memory.ts:153）与 `fakeNetwork` 默认抛错，后者可按脚本回放。provider 用的 `fetch` 不变，Ollama 的 localhost:11434 不受影响。调用方、URL 过滤与授权见 §搜索与抓取。
 - 测试接缝（裁决 B1、H8；只增）：`fakeNetwork`（01 spec.md:110；fake-network.ts:200）只增可选的第二个参数，另新导出配对断言：
 
 ```ts
@@ -893,7 +908,7 @@ providerModelSchema = z.object({
 
 **session.messages 与内容块**（裁决 M3、B1）：
 - 响应是数组（session.ts:109），只增的写法是给 `messageRowSchema` 加可选的 `calls: z.array(z.object({ callKey: z.string().min(1), outcome: z.object(toolOutcomeViewShape).nullable() }))`，只在 assistant 行：`calls[i]` 对应这一行第 i 个 `tool-request` 块，还没有 `tool_outcome` 的为 null。暂定由 kernel 的投影组装，desktop 只转交。
-- 厂商原样块：contracts 逐块重述 `ContentBlock`（contracts/src/ipc/session.ts:45-74），contracts/test/session-types.test.ts 断言两边互赋。`vendorFields` 两向可赋、zod 解析时剥掉，不用改；`vendor` 块会破坏互赋并让 `session.latest` / `session.messages` 的响应校验失败。取乙（暂定）：投影在出主进程之前剥掉 `vendor` 块，contracts 不变，类型测试只断言 kernel 联合去掉 `vendor` 后的部分；改甲（`contentBlockSchema` 只增 `vendor` 变体，渲染端不显示）为只增。两条都满足验收 7。
+- 厂商原样块：contracts 逐块重述 `ContentBlock`（contracts/src/ipc/session.ts:45-74），contracts/test/session-types.test.ts 断言两边互赋。`vendorFields` 与 text、tool-request 上的 `vendorSource`（s6-spec-2）都是可选键，两向可赋，投影逐键重建时一并剥掉，不用改；`vendor` 块会破坏互赋并让 `session.latest` / `session.messages` 的响应校验失败。取乙（暂定）：投影在出主进程之前剥掉 `vendor` 块，contracts 不变，类型测试只断言 kernel 联合去掉 `vendor` 后的部分；改甲（`contentBlockSchema` 只增 `vendor` 变体，渲染端不显示）为只增。两条都满足验收 7。
 
 **表外模型手填**（裁决 M6、A15）：`provider.select` 与 `session.selectModel` 都接受表外 id，记成 `source: 'user'`；撤掉 provider-routes.ts:117 的 `unknown-model` 拒收（(c)），枚举值保留、不再返回。01 spec.md:706 的保守合成扩到设置卡和模型菜单的手填，合成规则一字不改，所以表外模型在 02 只能纯文本对话（§工具目录与冻结）。
 
@@ -960,13 +975,13 @@ endpointOrigin?: string                                // URL.origin：只留协
 
 - 01 spec 顶部，在 `Status: implemented` 之下加第一行 `Amended by`，01 正文一字不动（裁决 M3、A4）。这一行的内容是：
 
-  `Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo 的思考描述、pricing 两键、purposeKey 与 listing，ProviderRequest 的 effort / display / dropThinkingBefore，厂商原样块，create() 的 clock，encode() 末轮须为 user，出网请求头白名单与流式超时，StreamEvent error 的 timeout 与 resetAt，HostNetwork.fetchUntrusted，fakeNetwork 的请求校验与抓取回放选项，Anthropic 顶层 cache_control，只增的错误与 finish_reason 映射，attempt 与 session/model_selected 载荷新键（含摘要请求的 compaction），重放读取工具事实，readBySource 起点，resetSession 的 carry，TapeClosedError，撤回即终局，hash_ver 规则，待批投影表与第 2 号迁移，schema 检查器按迁移锚定，createSessionService 的 inspectors / connector / protectedFiles / onUnansweredCall / log，chat.event 的 done / error 的 endReason 与五个新变体，session.messages 助手行的 calls，生成中发送改为入队与 chat.queue 事件、chat.queue.act / chat.sendNow / chat.continue 路由，会话级选模型的路由与 config.json 两个新键，provider.list 的模型标记 / 档位 / purposeKey / listing / endpoint，表外模型手填，「已配置」的算法，key 绑定主机，启动恢复映射子会话。只增不改，全文与理由在该 spec，不属纯粹只增的几处在该节末尾点名；选型理由的更正见 [ADR-003](../../adr/adr-003-provider-layer.md)）`
+  `Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo 的思考描述、pricing 两键、purposeKey 与 listing，ProviderRequest 的 effort / display / dropThinkingBefore，厂商原样块，create() 的 clock，encode() 末轮须为 user，出网请求头白名单与流式超时（desktop 出网关掉 undici 自带的超时，2026-09-27 补），StreamEvent error 的 timeout 与 resetAt，HostNetwork.fetchUntrusted，fakeNetwork 的请求校验与抓取回放选项，Anthropic 顶层 cache_control，只增的错误与 finish_reason 映射，attempt 与 session/model_selected 载荷新键（含摘要请求的 compaction），重放读取工具事实，readBySource 起点，resetSession 的 carry，TapeClosedError，撤回即终局，hash_ver 规则，待批投影表与第 2 号迁移，schema 检查器按迁移锚定，createSessionService 的 inspectors / connector / protectedFiles / onUnansweredCall / log，chat.event 的 done / error 的 endReason 与五个新变体，session.messages 助手行的 calls，生成中发送改为入队与 chat.queue 事件、chat.queue.act / chat.sendNow / chat.continue 路由，会话级选模型的路由与 config.json 两个新键，provider.list 的模型标记 / 档位 / purposeKey / listing / endpoint，表外模型手填，「已配置」的算法，key 绑定主机，启动恢复映射子会话。只增不改，全文与理由在该 spec，不属纯粹只增的几处在该节末尾点名；选型理由的更正见 [ADR-003](../../adr/adr-003-provider-layer.md)）`
 - 01 plan.md:139 的 Open 条目（智谱的 `usageNeedsOptIn`）标为已结：智谱不开 opt-in 也给用量，01 spec.md:345 的 `include_usage` 理由不成立（裁决 A10）。plan 不受冻结规则约束，直接改。
 - 01 开放问题 2 已由厂商文档回答：智谱带工具时要回传 `reasoning_content`。glm-5.3、glm-4.6 按 01 spec.md:763 预留的「ModelInfo 一行改动」改为 `reasoning-content`，`clear_thinking` 暂用默认值，历史思考照守卫规则 4 回传；数据改动，放在 plan 第 0 步（裁决 A12；其余行见 §内置模型表的数据改动）。
 
 ### 9 点名：不属纯粹只增的改动（owner 已确认的标出）
 
-(b)(c)(p)(u) 已由 owner 确认（2026-09-25），见 §开放问题「改为 ready 之前必须定」第 3–6 条。
+(b)(c)(p)(u) 已由 owner 确认（2026-09-25），见 §开放问题「改为 ready 之前必须定」第 3–6 条。(w) 由 owner 2026-09-27 确认（补查评审 s7-wire-2）。
 
 | | 改了什么 | 为什么仍算 amend，或须 owner 确认 |
 |---|---|---|
@@ -992,6 +1007,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 | (t) | 服务端调用块由跳过或丢弃改为存成 `replay: 'never'` 的原样块：Anthropic 的 `server_tool_use`、`mcp_tool_use` 及结果块（anthropic-messages.ts:643-647）与 `caller` 非 direct 的 `tool_use`（:635），openai-chat 线的 `tool_calls[type=mcp]`（:790、:831）（裁决 B1、M3） | 01 spec 没规定这两条路径，Tape 内容变了，但这些块不回传，请求不变 |
 | (u) | `TapeResetSessionQuery`（store.ts:232；01 spec.md:474）只增可选的 `carry`（裁决 H1、D11）；01 spec.md:16 承诺阶段 1 之后「不改接口」，同一承诺也碰到 `listPendingApprovals`（F3）与 `readBySource` 的 `fromEntryId`（B5） | 后两者有裁决依据、按第 1 小节算只增，`carry` 没有；**owner 已确认（2026-09-25）**，不认可时的替代见 §开放问题 |
 | (v) | packages/kernel/src/testing/tape-conformance.ts:2157「同一会话两个并发 Run」：`runRequest` 删掉后，同一根会话的两次 `send` 经 mailbox 串行，第二条入队、不开第二个 Run，这条 conformance 用例的输出变了，改成两个会话各一个 Run（开放问题 1） | conformance 套是 01 plan 的实现，01 spec 没把「同会话可并发两个 Run」写成不变量或验收；两个 store 对 Tape 一致性的断言不变 |
+| (w) | 01 spec.md:109 写定 desktop 实现是一行 `{ fetch: (input, init) => globalThis.fetch(input, init) }`；现改为 undici 自己的 `fetch`，经 `headersTimeout`、`bodyTimeout` 都为 0 的 `Agent` 发出，apps/desktop 多一个运行时依赖 `undici` 7.29.1（裁决 A5；补查评审 s7-wire-2） | 01 修补 4 与验收 8（「其他端点不传（SDK 默认 10 分钟）」「紧接着的那次重发不设限」）在 `globalThis.fetch` 下只成立到 undici 默认的 300 秒，与 01 spec.md:109 的字面冲突，取 01 修补 4；`HostNetwork` 接口、provider 与 kernel 都不变，只改 host 实现，01 spec.md:109 的后半句（出网收口、白名单在 host 里做，不拓宽接口）照旧成立；**owner 已确认（2026-09-27）** |
 
 ## 会话形态、工作区与模型选择
 
@@ -1043,6 +1059,7 @@ endpointOrigin?: string                                // URL.origin：只留协
     established: z.boolean(),
     profile: z.enum(['chat', 'cowork']),
     workspace: z.object({ folders: z.array(z.string().min(1)), origin: z.enum(['picked', 'dedicated']) }).nullable(),
+    lastEndpoint: z.object({ host: z.string(), reach: z.enum(['loopback', 'private', 'public']) }).optional(), // 只增（补查评审 s19-spec-1）
   })
   export const sessionSelectProfile = defineRoute('session.selectProfile', {   // 写路由，进启动恢复的闸（开放问题 16）
     request: z.object({ sessionId: canonicalSessionIdSchema, profile: z.enum(['chat', 'cowork']) }).strict(),
@@ -1057,7 +1074,7 @@ endpointOrigin?: string                                // URL.origin：只留协
   })
 ```
 
-  既没建立也没草稿的会话答 `{ established: false, profile: 'chat', workspace: null }`，01 的旧会话答 `{ established: true, profile: 'chat', workspace: null }`。`session.modelChoice` 维持原样，不并进来。预填不开新路由，读 `config.get` 的 `lastWorkspaceFolders`，chip 每次展开都重读；`workspace.pick` 先经 kernel 的 `sessionFacts` 查 `not-cowork` 与 `unknown-session` 再弹目录框，kernel 的 `setWorkspace` 轮到时再查一次，`lastWorkspaceFolders` 只在 kernel 返回成功之后才写。`sessionFactsResponse` 照 `workspaceResultSchema` 的写法重述 kernel 类型，不另加双向互赋断言（开放问题 16，owner 2026-09-26）。
+  既没建立也没草稿的会话答 `{ established: false, profile: 'chat', workspace: null }`，01 的旧会话答 `{ established: true, profile: 'chat', workspace: null }`。`session.modelChoice` 维持原样，不并进来。预填不开新路由，读 `config.get` 的 `lastWorkspaceFolders`，chip 每次展开都重读；`workspace.pick` 先经 kernel 的 `sessionFacts` 查 `not-cowork` 与 `unknown-session` 再弹目录框，kernel 的 `setWorkspace` 轮到时再查一次，`lastWorkspaceFolders` 只在 kernel 返回成功之后才写。`sessionFactsResponse` 照 `workspaceResultSchema` 的写法重述 kernel 类型，不另加双向互赋断言（开放问题 16，owner 2026-09-26）。`lastEndpoint` 是本会话历史最后发往哪里：最近一个 Run 的 `model_selected.endpointOrigin`，没有这一项的旧行取它的 provider 现在发往的地址；主进程按 `provider.list` 的 `endpoint` 同一算法分类，第一个 Run 之前没有这个键（§模型选择「数据去向」）。
 
   界面读已建会话的形态、工作区列表和预填记录走哪条路由，与暂存路由一起见 §开放问题。
 - 列表有序，命令的 cwd 取 `folders[0]`。工作区事实记变化后的整张列表（真实绝对路径），并注明来源是 `picked` 还是 `dedicated`（裁决 D11）。
@@ -1078,7 +1095,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 - **换到上下文更小的模型**（裁决 H10）：下一次发送前，先按新模型的 `contextLimit` 过一遍压缩阈值，超过就先压缩再发（§撞墙兜底与换模型）。压缩还没做或已被砍时，照发，溢出以 `context-overflow`、`compactions: 0` 结束（暂定，见 §开放问题）。
 - **数据去向**（裁决 M5、A9）：
   - 菜单每行显示目标主机，按该 provider 当前 baseURL 的主机算。只有回环地址显示「本机」，其余地址（包括私网地址）都显示主机名；Ollama 的行也按实际 baseURL 算，不写死。
-  - 已有历史的会话，目标从回环或私网主机变成公网主机时，在菜单里原地二次确认「此前的内容会发往 <主机>」，确认之前对该主机 0 次请求；同时给出「用新模型开新会话」，新会话不带旧内容，有进行中的 Run 时先走 §离开会话 的确认。不用系统原生弹框（A9-B 已否）。私网算「本机」一侧、从回环切到私网不确认，是暂定读法（见 §开放问题）。
+  - 已有历史的会话，目标从回环或私网主机变成公网主机时，在菜单里原地二次确认「此前的内容会发往 <主机>」，确认之前对该主机 0 次请求；同时给出「用新模型开新会话」，新会话不带旧内容，有进行中的 Run 时先走 §离开会话 的确认。不用系统原生弹框（A9-B 已否）。私网算「本机」一侧、从回环切到私网不确认，是暂定读法（见 §开放问题）。菜单比的是本会话历史最后实际发往的主机（`session.facts` 的 `lastEndpoint`，与 kernel 数据去向检查比的同一个点），不是当前生效的选择；表里的行、手填的 ID、思考档位都按它比（补查评审 s19-spec-1）。
   - A9 的 key 绑定主机在切厂商时照样生效（01 修补 6）。
 - **已配置**（裁决 B14）：只有「已配置」的厂商可以选；未配置的厂商在菜单里只留一行置灰的组头「去设置填 key」。算法见 01 修补 6。
 
@@ -1320,7 +1337,7 @@ export type CompactionAnchorPayload = {
   - 参数：`attempt.request`；
   - 编码器：`attempt.encoder`。
 
-  重新编码后应得到同一个 promptHash。`modelWireHash` 与当前的表算出的不一致时，报「模型表已变」，不报「被篡改」（裁决 A3）。
+  重新编码后应得到同一个 promptHash。`modelWireHash` 与当前的表算出的不一致时，报「模型表已变」，不报「被篡改」（裁决 A3）；原文复算不出同一个 promptHash 时报「被篡改」，不论表是否已变——表变了本身从不报「被篡改」，但不能替 Tape 上的改动遮掩（补查评审 s6-spec-1、s10-spec-1；`packages/kernel/src/testing/attempt-recheck.ts`）。
 - **工具表**：
   - 同一张表内逐字不变（裁决 E2）。开表时机是这个 provider 第一次被用，与所用模型带不带工具无关；换到不带工具的模型时只写 `view/tools_withheld`，换回来按冻结的原文重发（裁决 E2）。
   - `excluded` 只记五种：`policy`、`user-disabled`、`connector-unauthorized`（E2），`over-limit`（H4：超出 provider 单次请求的工具数上限），`no-search-backend`（H8：当前 provider 没有搜索后端时 WebSearch 不进表，记下来「查看本次记录」才答得出「为什么没有搜索」）。不在该形态候选集里的工具，不算排除（裁决 E2、H4、H8、F8）。
@@ -2287,7 +2304,8 @@ export function locatePath(fs: HostFs, path: AbsolutePath, scope: {
    - 返回非 null：整条路径都存在，用返回值。
    - 返回 null：这个目录项不存在。把最后一段移进「余下段」，对上级目录重试，直到遇到已存在的上级目录，再把它的真实路径和余下段拼起来。余下段不可能是链接，靠 `realpath` 的口径成立：只有 `lstat` 也报 ENOENT / ENOTDIR 时才返回 null，悬空链接抛错（§`HostFs.realpath`（只增）；owner 已确认）。余下段保留模型给的写法，逐码元比较（暂定）。
    - 上溯到根仍为 null（不存在的盘符、断开的 UNC 共享）：按 `outside`。
-   - `realpath` 抛错：按 `outside`，`real` 取规范化后的路径（裁决 D8）。
+   - `realpath` 抛 `UnresolvableAliasError`（这条路径本身，或上溯途中的某个上级）：按 `protected`，`real` 取规范化后的路径。给不出真实路径就无从和保护名单比较，只能当它在名单里：文件工具调用在第 2 层拦下，拦截码 `protected`，`facts.target` 就是这个 `real`，不出卡、不给放行入口（owner 2026-09-27，s11-safety-2 取 B）。
+   - `realpath` 抛其他错（悬空链接、ELOOP、EACCES 等）：按 `outside`，`real` 取规范化后的路径（裁决 D8）。
 3. 按路径段比较（`/a/ws` 不包含 `/a/ws2`），解析过的部分区分大小写。desktop 必须用 `fs.promises.realpath` 或 `fs.realpathSync.native`（2026-09-25 本机 APFS 实测会把大小写规范成磁盘上的写法），不得用 JS 版的 `fs.realpathSync`。取第一个成立的：
    - 落在 `ownSpillDir` 内：`own-spill`；
    - 落在 `profileDir` 的其余部分，或等于 `protectedFiles` 之一：`protected`，即使同时落在某个工作区根之内（裁决 D11、D2、E4）；
@@ -2722,7 +2740,7 @@ export type SearchOutcome =
 
 1. **字面判定**：kernel 在判权限之前用 WHATWG `URL` 解析（十进制、十六进制之类的 IPv4 写法会被规范成点分形式），命中任一项直接拦下，拦截原因码 `protected`，不出卡、不给放行入口（裁决 H8、E4；§决策表与各层输入 第 2 层）：协议不是 `http:` / `https:`；URL 带用户名或密码；主机名不带点（`localhost` 也算；IPv6 字面量按地址判）；主机是 IP 字面量且落在回环 127.0.0.0/8、::1（0.0.0.0 与 :: 也算）、私网 10/8、172.16/12、192.168/16、fc00::/7、链路本地 169.254/16、fe80::/10；`::ffff:a.b.c.d` 按其中的 IPv4 判。
 2. **地址判定**：执行只经 `host.network.fetchUntrusted`，desktop 实现在 apps/desktop/src/main/host/fetch-untrusted.ts（新增）。每次调用重新解析 DNS，且只解析一次；结果里任一地址落在上面的地址段，就以 `HostNetworkDeniedError` reject；否则用检查过的那个地址建连接（钉住地址），TLS 的 SNI 和证书校验仍按原主机名，不带 cookie，不带任何凭据头。provider 用的 `network.fetch` 不变，Ollama 发往 localhost:11434 的请求不受影响（裁决 H8）。
-   - 测试接缝：`createDesktopNetwork(seams?: { lookup?, connectTarget? })`（network.ts:8 现在没有参数，只增）；只有测试传，index.ts 不传。
+   - 测试接缝：`createDesktopNetwork(seams?: { lookup?, connectTarget? })`（network.ts:22 现在没有参数，只增）；只有测试传，index.ts 不传。
    - 被拒时按拦截收口：`tool_outcome` 记 `state: 'not-run'`、`source: 'protected'`、`facts: { toolName: 'WebFetch', target: <主机名> }`，`effect` 记 `blocked`；出拦截回执、不给放行入口，结果 is_error，计入连续拦截上限（裁决 D5、B1、F2）。
 3. **重定向**：`fetchUntrusted` 把 3xx 原样返回，kernel 逐跳处理（裁决 H8）。没有 `Location` 或解析不了，回 is_error 带状态码。目标按当前 URL 绝对化后，主机名规范化后与当前主机相同：在内存里重走第 1 步和整套权限判定（含 F5 外带检查），不写新的判决事实，结论是放行才跟，否则按主机名不同处理、不出卡；跟随后的那一跳被 host 拒绝，仍按上面的拦截收口。主机名不同：不跟，结果 `is_error: false`，正文写状态码和绝对化后的目标 URL，模型要抓就再发一次 WebFetch。跳数上限暂取 20（Fetch 标准），第 21 跳回 is_error；跟过跳转的，结果里写上最终 URL。
 4. **成功与失败**：2xx 的 `text/html` 转成 Markdown：由 kernel 的 `tools/builtin/web-fetch` 在最后一跳用 `@mdream/js`（MIT，版本钉死，1.7.2）同步转，`origin` 传最终 URL，不经 host、不用 DOM；转换前先按 `Content-Type` 的 charset、没有再看 `<meta>`，用 `TextDecoder` 解码（`Response.text()` 固定按 UTF-8，GBK 站会乱码）；正文超过 `FETCH_CONVERT_MAX_BYTES`（暂取 1 MB，第 34 步校准）不转，回 is_error 并带字节数（代码块很多的页面转换是超线性的，转换跑在主进程里，期间停止键也进不来）（开放问题 18，owner 2026-09-26）；其余 `text/*` 原样返回；其他类型和没处理到的非 2xx 回 is_error，带类型或状态码；超过落盘阈值按 §大响应落盘 处理。
@@ -2884,6 +2902,8 @@ export const MODEL_NOTES: {
   compactionRequest: string
   compactionWrap: string // {summary}（H10）
   schemaUnusable: string // 连接器工具的 inputSchema 本身用不了（开放问题 16）
+  connectorFailed: string // {message}：连接器 callTool 抛出的错误原文；调用已执行（s18-spec-4）
+  connectorEmpty: string // 连接器结果一个内容块都没有（s18-spec-4）
   environment: { wrap: string; date: string; folders: string; dedicated: string } // wrap 槽位 {body}；date 槽位 {date}；folders 槽位 {folders}（每行一个 JSON 字符串形式的绝对路径）；dedicated 槽位 {folder}（开放问题 16）
 }
 export const PROMPT_LAYER_VERSION = 1 // 整数，只增不回退；提示层任何一处文本变了就加一
@@ -2905,6 +2925,7 @@ export const PROMPT_LAYER_HASH: string
 | `continuation` | `message/continuation` 的 content | 该事实没有这个字段 | 不渲染 |
 | `environment` | `message/environment` 的 content | 该事实没有这个字段 | 不渲染 |
 | `schemaUnusable` | 该调用的 `tool/result` content | true | 按 `tool_outcome.source` 查文案目录 |
+| `connectorFailed`、`connectorEmpty` | 该连接器调用的 `tool/result` content | false（调用执行过） | 照常显示 |
 | `compactionWrap` | `compaction/anchor` 的 `summary` 存包好之后的全文，重建时不再包一次 | 同上 | 分隔提示 |
 | `compactionRequest` | `provider/attempt_completed.compaction.requestText`，只用来复算 promptHash，不进重建后的上下文 | 同上 | 不渲染 |
 
@@ -3165,7 +3186,7 @@ ChildHandle.exited / ChildHandle.kill               // host/adapter.ts:69-71 —
 TapeEntry.createdAt; HostClock.now()                // tape/entry.ts:82; host/adapter.ts:144 —— 不变量 29
 HASH_VER; PROGRAM_SCHEMA_VERSION                    // tape/hash.ts:39; apps/desktop/src/main/tape/sqlite-store.ts:115 —— 评审规则
 // 新增（只增），形状以所引各节为准：
-HostFs.realpath                                     // §对 00-foundation 的修补 —— 不变量 21
+HostFs.realpath; UnresolvableAliasError             // §对 00-foundation 的修补 —— 不变量 21
 'key-host-binding'; TapeMessageRetractedError       // §对 01-provider-and-tape 的修补 —— 不变量 5、32
 attempt: assemblyRef / encoder / modelWireHash      // §对 01-provider-and-tape 的修补 —— 不变量 33
 ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— 不变量 14
@@ -3199,7 +3220,7 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 18. 本会话授权、域名授权或总是允许在场时，inspector 说问就出卡、说拒就拒；02 的拦截回执没有放行入口；回执放行上线后，第 1–3 层的拒绝仍不给放行（裁决 F9、D2）。
 19. `ipc/approval.ts` 里 `DecisionSummary` 的 schema 键集合恰为 `verdict`、`code`、`facts`；`DecisionRecord` 不从 contracts 导出；`tool/permission_decided.record` 只在 Tape（裁决 F8）。
 20. 内置工具的答复只产生 `once` 或 `session` 作用域；02 没有给内置工具设「总是允许」或「永不」的入口；阶段 3 的持久授权存储不接受内置工具的保留 serverId（裁决 D1）。
-21. 工作区判定：路径先规范化；已存在的解析整条路径，不存在的解析最近已存在的上级再拼余下的段；只有 `realpath` 抛错才判为工作区外；工作区根存真实路径（裁决 D8）。
+21. 工作区判定：路径先规范化；已存在的解析整条路径，不存在的解析最近已存在的上级再拼余下的段；`realpath` 抛 `UnresolvableAliasError` 的判为 `protected`，抛其他错的才判为工作区外；工作区根存真实路径（裁决 D8；owner 2026-09-27）。
 22. 可逆性只由 host 和租户策略给出：MCP 注解、inspector、模型输出都改不了；策略没声明的 MCP 工具恒为 `unknown`；WebSearch、WebFetch 恒为 `unknown`、原因 `network`；原因码 `irreversible` ⇒ 可逆性 `irreversible`；阶段 2 只产出 `read-only`、`unknown`、`irreversible`，命令永不判 `read-only`（裁决 E1、E4）。
 
 ### 等待与收口
@@ -3245,8 +3266,8 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 
 5. 对 00 的修补：缺 policy 的 host 编译失败；desktop 的 policy.current() 恒为空策略，并通过 policyStateSchema；confirmReasonSchema 的 9 个值等于 CONFIRM_FACT_KEYS 的键集合，缺必填键或 flagged 的 category 未登记时 parse 失败；ConfirmRequest 缺 reversibility 或 target 时被拒，原因为 irreversible 而可逆性不是 irreversible 时也被拒（裁决 D4、D5、E1、E4、F5、D12）。
 6. 思考形状：没有 thinkingSpec 的行，对 01 能编码、以 user 结尾的输入，body 和 promptHash 与 01 逐字节相同；末轮不是 user 时本地拒绝；Opus 5.5 关思考、越档的 effort、非默认采样值、adaptive 带 budgetTokens，都在本地拒绝，fakeNetwork 0 次；openai-chat 线把 effort 写成 reasoning_effort，未声明的档位本地拒绝；5.3 系三行恰好声明 low、high、max，glm-4.6 不声明；Opus 5.5 行的字段按 A16（裁决 A1、A2、A11、A16、M3）。
-7. 原样块与审计：未知块和未知字段同模型回放逐字节相同，换模型时被守卫丢弃并记进 thinkingDecisions；server_tool_use 和 caller 非 direct 的调用存成 replay: never，不派发、不回传；含原样块的会话 session.latest 仍通过响应校验；attempt 带 encoder、modelWireHash、responseModelId；只改 pricing 时 modelWireHash 不变；改模型表后复核报「模型表已变」而不是「被篡改」，用组装清单里的原文仍能复算 promptHash（裁决 M3、A3、B1）。
-8. 出网接缝（假时钟）：空闲阈值对 api.anthropic.com 为 180 秒、其他端点 300 秒，只要有字节到达就复位，超时后流以 error{network, timeout:'idle'} 结束；首字节超时只对官方端点、按公式传，紧接着的那次重发不设限；环境变量加的非凭据头和 anthropic-beta 都发不出去，x-stainless-* 仍在；supportsCacheControl 为真的行，body 顶层带不含 ttl 的 cache_control；A5 的智谱间隔实测有记录（裁决 A5、A6、H8、A4、M8）。
+7. 原样块与审计：未知块和未知字段同模型回放逐字节相同，换模型时被守卫丢弃并记进 thinkingDecisions（text、tool_use 上的字段按 `vendorSource` 判，每组一条；没有来源的一律丢，记 `drop / missing-source`）；server_tool_use 和 caller 非 direct 的调用存成 replay: never，不派发、不回传；含原样块的会话 session.latest 仍通过响应校验；attempt 带 encoder、modelWireHash、responseModelId；只改 pricing 时 modelWireHash 不变；改模型表后复核报「模型表已变」而不是「被篡改」，用组装清单里的原文仍能复算 promptHash（裁决 M3、A3、B1）。
+8. 出网接缝（假时钟）：空闲阈值对 api.anthropic.com 为 180 秒、其他端点 300 秒，只要有字节到达就复位，超时后流以 error{network, timeout:'idle'} 结束；首字节超时只对官方端点、按公式传，紧接着的那次重发不设限；环境变量加的非凭据头和 anthropic-beta 都发不出去，x-stainless-* 仍在；supportsCacheControl 为真的行，body 顶层带不含 ttl 的 cache_control；A5 的智谱间隔实测有记录；desktop 出网自身不截断：响应头晚于 300 秒、响应体静默 300 秒以上（没挂看门狗时）都照常到达，SDK 的 10 分钟默认与空闲看门狗照样收尾（apps/desktop/test/network.test.ts，假时钟驱动真 undici）（裁决 A5、A6、H8、A4、M8）。
 9. 错误与结束映射：Anthropic 的两种花费上限和智谱 1113、1308–1321 归 quota-exhausted，不重试；1302、1305 仍可重试；sensitive 读成 content-filter，model_context_window_exceeded 读成 context-overflow，network_error 保持 unknown 并按瞬时错误重发；done.stopReason 与 error.code 的映射不变，done、error 的 endReason 都可选；18 个结束码在两份 locale 里都有文案；五个新变体通过 chatEventSchema，ERROR_CODE 表对两个新码给出 unknown（裁决 H12、A12、H10）。
 10. key 绑定主机与「已配置」：只改地址的主机、没给全部已存机密填新值时，provider.configure 返回 key-host-binding，什么都不写；Ollama 的地址指向 ollama.com 时被拒；绑定主机不符的 key 在发送前按配置错误拒绝，0 次请求；「已配置」按本构建实际拿得到来算：打包版只看钥匙串，开发构建含环境变量，主机不符算 false（裁决 A9、B14）。
 11. Tape 端口修补（conformance，内存与 SQLite 两个 store 各一遍）：readBySource 带 fromEntryId 分页读完超过 1000 条的 run，仍只走索引；撤回后再写修订抛 TapeMessageRetractedError；close() 之后其余方法以 TapeClosedError reject，close 本身幂等；resetSession 带 carry 时同事务写入，任一条失败整体回滚；待批投影 rebuild 的结果与增量写出的逐行相同，PROJECTION_VERSION 为 2，第 1 号迁移不变；待批行按租户隔离（去掉租户谓词测试就变红）；check-tape-schema 按迁移号锚定 02 的 sql 块（裁决 B2、B4、B5、B8、F3、H1、D11）。
@@ -3268,7 +3289,7 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 27. MCP 来源：超长或含非法字符的名字，映射后匹配 ^[a-zA-Z0-9_-]{1,64}$，重启重放后不变；撞名时开表断言失败；夹具有 130 个工具时，智谱线的 tools 恰好 128 个（内置工具全在），其余记 over-limit；只有 _meta 里 requiresUserInteraction 严格为 true 的工具，每次都出 interaction-required 卡，任何档位和授权都免不掉，重启后按 Tape 保持；两种修订版的 elicitation 都被拒，不出任何界面；Everything 夹具的一次调用走完审批和 Tape（裁决 H4、D12、H6）。
 28. 决策表：decide() 对八层加旁注、两步合并的五档、第 1 层真值表的 16 格、三种放开、F9，各有一个同时断言判决和 decidedBy 的测试；例 1、例 2 按规则；答复作用域表逐行测（必须问、不可逆、工作区外、MCP 为 once，其余为 session），grant.key 等于 grantKey 的输出；注入 never 或 connectorOff 时拒绝；AskUserQuestion 和 Agent 的启动在两档下都放行；自动档只由测试注入，disableAutoMode 时回落手动档；policyVersion 写进判决和工具表；unavailable 在开表时排除所有工具，冻结后在第 1 层拦下；policy schema 与 TenantPolicy 类型互赋（裁决 D1、D2、D3、D4、D5、D6、D7、D10、D12、F9）。
 29. 手动档的默认姿态：工作区内的 Read、Glob、Grep 不问（workspace-folder）；工作区外的读出 outside-workspace 卡，只管这一次；工作区内的 Write 出卡，允许后同一文件本会话免问；profile 目录（包括别的会话的落盘目录）和 shell 配置文件，对文件工具一律拦下，唯一的窄口是本会话 tool-output 目录的只读调用，策略拒绝或 unavailable 时窄口也被拒；Glob、Grep 跳过受保护的子树；对话形态的 Read 只读得到本会话的落盘目录，其余路径拦下、不出卡；contracts 里没有切档路由，界面上没有档位选择器（裁决 D7、D9、D2、H9、E4、D11、H1）。
-30. 「在不在工作区里」：链接逃逸、悬空链接、上溯到根仍为 null、realpath 抛错，都判为工作区外；在工作区内新建文件、新建多层目录、带 .. 的路径、工作区根位于链接之下（macOS 的 /tmp），都判为工作区内；desktop host 与内存 host 的 realpath 结果一致，大小写取磁盘上的写法；硬链接只记基线，不断言（裁决 D8）。
+30. 「在不在工作区里」：链接逃逸、悬空链接、上溯到根仍为 null、realpath 抛其他错，都判为工作区外；目录项在而 realpath 给不出真实路径的（macOS 的 /.vol/<dev>/<ino>：工作区内的文件、shell 配置文件、profile 配置，以及文件夹别名下的新文件）判为 protected，文件工具调用被拦、不出卡（desktop 在 macOS 上用真实 /.vol 测，kernel 用包了 volfs 的 HostFs 测）；在工作区内新建文件、新建多层目录、带 .. 的路径、工作区根位于链接之下（macOS 的 /tmp），都判为工作区内；desktop host 与内存 host 的 realpath 结果一致，大小写取磁盘上的写法；硬链接只记基线，不断言（裁决 D8；owner 2026-09-27）。
 31. Inspector 与判决记录：给 decide() 的输入多加一条 inspector 结果，判决不会变宽（性质测试）；ask 型超时时出 flagged/inspector-failed 卡；deny 型出错时拒绝，计入连续上限，回给模型对应的那句英文；判定中点停止，不写判决事实，收口为 not-run/stopped；注册时带 afterResult 的，构造服务就抛错；desktop 注册的 inspector 全部是 ceiling:'ask'；每个轮到判定的调用都有一条判决事实，summary 存在载荷里，summarize 对每个可达组合都给出码；contracts 的路由 schema 里没有 steps、decidedBy、basis（裁决 F1、F8、F9、F10）。
 32. 会话形态与工作区：建会话前选的形态、文件夹和模型，与 session/start 同批写入；没选文件夹就用专用文件夹，它在第一次写入之前不存在，是命令的 cwd；移除文件夹之后，其下的写授权永久作废，加回来、重启都不复活；cwd 变了，命令授权作废；工作区变化只以追加消息告诉模型（`message/environment`，下一次边界请求或插话之后；跨过本地零点同样），system 和 tools 不变；预填不算授权；workspace.* 的请求带多余字段时解析失败，三个拒绝码按规则返回（裁决 D11、D8、H1、M5、A13、A9、D2）。
 33. 会话级选模型：两个会话各选不同的模型、交替发送，各自发往自己的模型，互不串；五层读取顺序各有一例；默认按形态记住，清空会话后回到默认；生成中改模型或改档，从下一条用户消息起生效；默认请求里不带 effort，选了档后，下一个 Run 的请求快照带这一档，换模型后回到空；设置卡只在改过下拉时才写键，保存后，新的对话会话和任务会话都用它（裁决 M5、A11、A16）。
