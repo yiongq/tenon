@@ -32,6 +32,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
+import { proxyStore } from '../loop/support.js'
 
 const IDENTITY = { userId: 'ws-user', tenantId: 'ws-tenant', profileDir: '/tenon/ws' }
 const SESSION = '7c1d9a2e-6b3d-4a71-9f52-0c8de7a11b41'
@@ -76,12 +77,15 @@ async function harness(
     locale?: 'zh-CN' | 'en'
     failing?: boolean
     onEvent?: (event: SessionEvent, loop: TestLoopPorts) => void
+    /** The store the service is given, in place of the memory one (a case that holds a call back). */
+    store?: (store: TapeStore) => TapeStore
   } = {},
 ): Promise<Harness> {
   const host = createMemoryHost({ identity: IDENTITY })
   await host.fs.mkdirp(X)
   await host.fs.mkdirp(Y)
-  const store = createMemoryTapeStore({ identity: IDENTITY })
+  const memory = createMemoryTapeStore({ identity: IDENTITY })
+  const store = o.store?.(memory) ?? memory
   const provider = createScriptedProvider({ models: [MODEL] })
   const loop: TestLoopPorts = createTestLoopPorts({
     connector: { provider, model: MODEL },
@@ -526,6 +530,65 @@ describe('the workspace (§工作区; D11)', () => {
     expect(after[2]?.payload).toEqual({ folders: [X], origin: 'picked' })
     expect(after[2]?.sourceSeq).toBe(0)
   })
+
+  it.each([
+    ['the change', true],
+    ['the clear', false],
+  ])(
+    'clears in the root’s mailbox, %s posted first: a workspace change beside it is never lost (§会话事实「写入」)',
+    async (_first, changeFirst) => {
+      // The store's reset is held back a few turns of the event loop, or until a fact is appended
+      // meanwhile: outside the mailbox, a change slips in between the read of the carry and the reset
+      // and is lost with the old incarnation.
+      let appends = 0
+      const h = await harness({
+        store: (memory) =>
+          proxyStore(memory, {
+            append: async (batch) => {
+              const result = await memory.append(batch)
+              appends += 1
+              return result
+            },
+            resetSession: async (q) => {
+              const before = appends
+              const quiet = (): boolean => appends === before
+              for (let turn = 0; turn < 20 && quiet(); turn += 1) {
+                // oxlint-disable-next-line no-await-in-loop -- one macrotask at a time, on purpose
+                await new Promise((resolve) => setTimeout(resolve, 0))
+              }
+              return memory.resetSession(q)
+            },
+          }),
+      })
+      await cowork(h)
+      await h.service.setWorkspace({
+        sessionId: SESSION,
+        change: { kind: 'add', folders: [X] },
+        dedicated: DEDICATED,
+      })
+      await send(h, 'first')
+      const change = (): ReturnType<SessionService['setWorkspace']> =>
+        h.service.setWorkspace({
+          sessionId: SESSION,
+          change: { kind: 'add', folders: [Y] },
+          dedicated: DEDICATED,
+        })
+      // Both are posted before either is awaited: the change lands before the carry is read, or on
+      // the new incarnation after the clear — never on the old one between the two.
+      const [changing, clearing] = changeFirst
+        ? [change(), h.service.resetSession(SESSION)]
+        : ((): [ReturnType<typeof change>, Promise<unknown>] => {
+            const cleared = h.service.resetSession(SESSION)
+            return [change(), cleared]
+          })()
+      const [answered] = await Promise.all([changing, clearing])
+      expect(answered).toEqual({ ok: true, folders: [X, Y], origin: 'picked' })
+      expect((await h.service.sessionFacts({ sessionId: SESSION })).workspace).toEqual({
+        folders: [X, Y],
+        origin: 'picked',
+      })
+    },
+  )
 })
 
 describe('the environment note (§提示层「环境说明」)', () => {
