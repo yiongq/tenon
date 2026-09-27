@@ -2,11 +2,11 @@
  * Read, Glob and Grep (spec 02 §内置工具与参数「Read」「Glob、Grep」; plan step 18): the executors, on
  * the memory host. Read keeps every result under the spill threshold by whole lines (open question
  * 24); Glob sorts by code unit and follows no link that leads outside the workspace; Grep's modes,
- * and its engine (plan step 22): ripgrep's dialect, in time linear in the text; both walks skip the
- * protected list (§内置工具的默认档位; plan step 11: 旧 159).
+ * and its engine (plan step 22): ripgrep's dialect, in time linear in the text, the program capped
+ * (adv-3); both walks skip the protected list (§内置工具的默认档位; plan step 11: 旧 159).
  */
 import { RE2JS } from 're2js'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { AbsolutePath, MemoryHost } from '../../src/index.js'
 import { SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
@@ -15,6 +15,7 @@ import { globMatcher } from '../../src/tools/builtin/files.js'
 import { GLOB_RESULT_LIMIT, GLOB_TEXTS, globExecutor } from '../../src/tools/builtin/glob.js'
 import {
   GREP_HEAD_LIMIT,
+  GREP_MAX_PROGRAM,
   GREP_TEXTS,
   entriesOf,
   grepExecutor,
@@ -253,6 +254,11 @@ describe('Glob', () => {
   })
 })
 
+/** Grep's answer to a pattern it turns down for `message`. */
+function invalidBecause(message: string): string {
+  return fill(GREP_TEXTS.invalidPattern, { message })
+}
+
 /** Grep's options as its executor reads them from a call: content mode, the defaults otherwise. */
 function grepOptions(o: Partial<GrepOptions>): GrepOptions {
   return {
@@ -490,6 +496,111 @@ describe('Grep', () => {
         fill(GREP_TEXTS.invalidPattern, { message: GREP_TEXTS.lookaround }),
       )
     }
+  })
+
+  it("reads ripgrep's Perl classes as Unicode, in a class and outside one (plat-2, mut-6)", async () => {
+    // ripgrep's \w, \d and \s are Unicode by default and RE2's are ASCII: before the rewrite, \w+
+    // found `h` and `llo` in héllo and nothing in Chinese, and \d+ no fullwidth or Arabic-Indic digit.
+    const host = await hostWith({
+      '/ws/u.txt': [
+        'user_name = zhang',
+        '用户名称 = 张三',
+        'héllo-x 日本',
+        '价格１２３元 ١٢٣ 12',
+        'a\u3000b\u00a0c',
+      ].join('\n'),
+    })
+    const grep = async (input: Record<string, unknown>): Promise<string> =>
+      textOf(await run(grepExecutor, host, 'Grep', { output_mode: 'content', ...input }, WS))
+    expect(await grep({ pattern: '\\w+ =', '-o': true })).toBe(
+      '/ws/u.txt:1:user_name =\n/ws/u.txt:2:用户名称 =',
+    )
+    expect(await grep({ pattern: '\\w+', '-o': true, '-n': false })).toBe(
+      ['user_name', 'zhang', '用户名称', '张三', 'héllo', 'x', '日本']
+        .concat(['价格１２３元', '١٢٣', '12', 'a', 'b', 'c'])
+        .map((word) => `/ws/u.txt:${word}`)
+        .join('\n'),
+    )
+    expect(await grep({ pattern: '\\d+', '-o': true })).toBe(
+      '/ws/u.txt:4:１２３\n/ws/u.txt:4:١٢٣\n/ws/u.txt:4:12',
+    )
+    // U+3000, the ideographic space, and U+00A0, the no-break space, are both white space.
+    expect(await grep({ pattern: 'a\\sb\\sc' })).toBe('/ws/u.txt:5:a\u3000b\u00a0c')
+    // In a class as well: with the hyphen, and beside \W, which becomes an alternative to the rest.
+    expect(await grep({ pattern: '[\\w-]+', '-o': true, '-n': false })).toContain(
+      '/ws/u.txt:héllo-x\n/ws/u.txt:日本',
+    )
+    expect(await grep({ pattern: '[=\\W]{3}', '-o': true })).toBe(
+      '/ws/u.txt:1: = \n/ws/u.txt:2: = ',
+    )
+    // re2js's reason for what it cannot parse quotes the pattern as written, not as rewritten.
+    expect(await grep({ pattern: '(\\w' })).toBe(
+      fill(GREP_TEXTS.invalidPattern, {
+        message: 'error parsing regexp: missing closing ): `(\\w`',
+      }),
+    )
+  })
+
+  it('turns down what re2js would read otherwise than ripgrep, rather than misread it (plat-2)', async () => {
+    const host = await hostWith({ '/ws/u.txt': 'user_name = 用户\n' })
+    const refusal = async (pattern: string): Promise<string> => {
+      const result = await run(grepExecutor, host, 'Grep', { pattern }, WS)
+      expect(result).toMatchObject({ isError: true, state: 'completed' })
+      return textOf(result)
+    }
+    // ripgrep's class set operations and nested classes, which re2js takes as literal characters:
+    // `[\w&&\p{Han}]` alone found user_name and zhang too.
+    for (const pattern of ['[\\w&&\\p{Han}]+', '[a-z--aeiou]', '[a~~b]', '[a[bc]]', '[--a]']) {
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+      expect(await refusal(pattern)).toBe(invalidBecause(GREP_TEXTS.classSet))
+    }
+    // An escaped `&` and a POSIX class are no set operation.
+    expect(textOf(await run(grepExecutor, host, 'Grep', { pattern: '[\\&&[:alpha:]]+' }, WS))).toBe(
+      '/ws/u.txt',
+    )
+    expect(await refusal('[^\\W_]+')).toBe(invalidBecause(GREP_TEXTS.negatedNonWord))
+    for (const pattern of ['\\<user', 'name\\>', '\\b{start}user']) {
+      // oxlint-disable-next-line no-await-in-loop -- one pattern at a time
+      expect(await refusal(pattern)).toBe(invalidBecause(GREP_TEXTS.wordBoundary))
+    }
+  })
+
+  it('turns down a program over the cap, before compiling one far over it (adv-3)', async () => {
+    const host = await hostWith({ '/ws/x.txt': `${'x'.repeat(10_000)}\n` })
+    const tooLarge = fill(GREP_TEXTS.invalidPattern, { message: GREP_TEXTS.tooLarge })
+    const grep = (pattern: string): Promise<ToolExecution> =>
+      run(grepExecutor, host, 'Grep', { pattern, output_mode: 'content' }, WS)
+    const compile = vi.spyOn(RE2JS, 'compile')
+    try {
+      // 4 002 instructions once compiled: over the cap, though its text is within ten times it.
+      const over = await grep('\\w{1000}'.repeat(4))
+      expect(over).toMatchObject({ isError: true, state: 'completed' })
+      expect(textOf(over)).toBe(tooLarge)
+      expect(compile).toHaveBeenCalledTimes(1)
+      // adv-3's pattern: 994 characters and 142 002 instructions, which took 1.9 s over a 10 KB line.
+      // Its text alone turns it down; re2js is not asked to compile it.
+      compile.mockClear()
+      expect(textOf(await grep('.{1000}'.repeat(142)))).toBe(tooLarge)
+      expect(compile).not.toHaveBeenCalled()
+    } finally {
+      compile.mockRestore()
+    }
+  })
+
+  it('runs a pattern just within the cap over a 1 MB line well within a second (adv-3)', async () => {
+    const host = await hostWith({ '/ws/x.txt': `${'x'.repeat(1 << 20)}\n` })
+    // Counted repeats up to the cap, the largest programs a model writes: `.{1000}` as often as it
+    // fits, then the rest, then a class the line never matches, so the whole line is read.
+    const rest = GREP_MAX_PROGRAM - 3
+    const pattern = `${'.{1000}'.repeat(Math.floor(rest / 1000))}.{${String(rest % 1000)}}[yz]`
+    expect(RE2JS.compile(pattern).programSize()).toBe(GREP_MAX_PROGRAM)
+    const started = performance.now()
+    const result = await run(grepExecutor, host, 'Grep', { pattern, output_mode: 'content' }, WS)
+    expect(textOf(result)).toBe(GREP_TEXTS.none)
+    expect(performance.now() - started).toBeLessThan(1000)
+    // A counted repeat as a model writes one passes, at two thirds of the cap.
+    const words = await run(grepExecutor, host, 'Grep', { pattern: '\\w{1,1000}[yz]' }, WS)
+    expect(textOf(words)).toBe(GREP_TEXTS.none)
   })
 
   it('runs a pathological pattern over a 30 000-character line in bounded time (s18-safety-2)', async () => {

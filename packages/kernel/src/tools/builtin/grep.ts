@@ -4,9 +4,23 @@
  * not text, too large or unreadable is skipped, as ripgrep skips it.
  *
  * The engine is re2js (plan step 22, weighed against a matcher of our own and a killable worker):
- * RE2's dialect, the family of ripgrep's default engine (「正则方言跟 ripgrep」), matched in time
- * linear in the text, so no pattern can hold the process every window is served from (s18-safety-2).
- * Like ripgrep without `--pcre2`, it has no look-around and no backreferences.
+ * RE2's dialect, the family of ripgrep's default engine, with the pattern first rewritten where the
+ * two read it differently (「正则方言跟 ripgrep」; `ripgrepPattern`). Like ripgrep without `--pcre2`,
+ * it has no look-around and no backreferences.
+ *
+ * What is bounded (s18-safety-2, adv-3), measured on re2js 2.8.6: matching takes time linear in the
+ * text, by a factor that grows with the compiled program, and the program is capped at
+ * `GREP_MAX_PROGRAM` instructions — checked on the text before compiling, and on the program after.
+ * The cap also bounds re2js's lazy DFA. It keeps at most 10 010 states, its fixed 8 MB budget read at
+ * 838 bytes a state (`RE2JS.compile` takes no budget; only `RE2Set` does, and it finds no positions),
+ * while each state holds two 256-entry tables and one entry per instruction it is in: about 50 MB
+ * full at any size, about 100 MB at the cap, where 142 000 instructions ran a line toward gigabytes.
+ * What is not bounded is how long one call holds the main process: files are searched there one by
+ * one, the stop checked only between them, and within the cap a line still costs 10 to 15 ms an
+ * instruction a MB when the DFA cannot settle, or under `-o` and multiline, which re2js matches on
+ * its NFA — 0.3 s a MB for a hostile pattern of 36 instructions, tens of seconds a MB at the cap.
+ * Counted repeats, the usual large patterns, settle: `.{1000}` written three times, 3 003
+ * instructions, takes 0.17 s over a 1 MB line.
  */
 import { RE2JS } from 're2js'
 import type { AbsolutePath } from '../../host/adapter.js'
@@ -45,12 +59,32 @@ export const GREP_TEXTS = {
   invalidPattern: 'The pattern is not a regular expression Grep can use: {message}',
   lookaround: 'look-around, including look-ahead and look-behind, is not supported',
   backreference: 'backreferences are not supported',
+  classSet: 'nested classes and the class set operations &&, -- and ~~ are not supported',
+  negatedNonWord: '\\W is not supported inside a negated class [^...]',
+  wordBoundary: '\\<, \\> and \\b{...} are not supported; \\b and \\B are',
+  tooLarge: 'the pattern is too large; shorten it or lower its repetition counts',
   invalidGlob: '{glob} is not a glob pattern Grep can read: {message}',
   unknownType: '{type} is not a file type Grep knows. Use glob to name the files instead.',
 } as const
 
 /** The default of head_limit (sdk-tools; 0 means no limit). */
 export const GREP_HEAD_LIMIT = 250
+
+/**
+ * The most instructions a compiled pattern may have (adv-3; re2js's own limit is about 3.3 million).
+ * Ordinary patterns compile to tens, `\w{1000}` to 1 002 and `\w{1,1000}` or `.{0,1000}` to about
+ * 2 000; `.{1000}` written 142 times, 994 characters, compiles to 142 002 and took 1.9 s over one
+ * 10 KB line. See the file's head for what the cap bounds and what it does not. 待校准（第 34 步）.
+ */
+export const GREP_MAX_PROGRAM = 3000
+
+/**
+ * The text's bound on the program above which a pattern is turned down without being compiled.
+ * The bound counts high (one-character alternatives compile to one class), so it gets ten times the
+ * cap; compiling costs re2js about 0.3 µs and 300 bytes an instruction, and a pattern at re2js's own
+ * limit took 1.1 s and 1 GB before the cap could be read.
+ */
+const TEXT_BOUND_LIMIT = 10 * GREP_MAX_PROGRAM
 
 /** The ripgrep types Grep knows (a subset of `rg --type-list`), as basename globs. */
 const TYPES: Readonly<Record<string, readonly string[]>> = {
@@ -208,10 +242,12 @@ function optionsOf(input: Readonly<Record<string, unknown>>): GrepOptions {
 }
 
 /**
- * The pattern compiled as ripgrep compiles it: `-i` folds case, and `multiline` is `rg -U
- * --multiline-dotall`, where `.` matches a newline and, since ripgrep always sets multi-line, `^` and
- * `$` match at each line's ends. A pattern re2js turns down comes back as `invalidPattern`, with
- * ripgrep's own reason for look-around and backreferences and re2js's for the rest.
+ * The pattern compiled as ripgrep compiles it: rewritten into its dialect (`ripgrepPattern`), `-i`
+ * folding case, and `multiline` as `rg -U --multiline-dotall`, where `.` matches a newline and, since
+ * ripgrep always sets multi-line, `^` and `$` match at each line's ends. A pattern turned down comes
+ * back as `invalidPattern`: with ripgrep's own reason for look-around and backreferences, re2js's for
+ * the rest of what it cannot parse — in the words of the pattern as written, not as rewritten — and
+ * `tooLarge` for a program over `GREP_MAX_PROGRAM`, by its text or once compiled.
  */
 function regexOf(
   pattern: string,
@@ -220,12 +256,206 @@ function regexOf(
 ): { value: RE2JS } | { failure: ReturnType<typeof failed> } {
   const flags =
     (ignoreCase ? RE2JS.CASE_INSENSITIVE : 0) | (multiline ? RE2JS.DOTALL | RE2JS.MULTILINE : 0)
+  const invalid = (message: string): { failure: ReturnType<typeof failed> } => ({
+    failure: failed(fill(GREP_TEXTS.invalidPattern, { message })),
+  })
+  const read = ripgrepPattern(pattern)
+  if ('message' in read) return invalid(read.message)
+  if (read.bound > TEXT_BOUND_LIMIT) return invalid(GREP_TEXTS.tooLarge)
+  let regex: RE2JS
   try {
-    return { value: RE2JS.compile(pattern, flags) }
+    regex = RE2JS.compile(read.source, flags)
   } catch (error) {
-    const message = unsupported(pattern) ?? (error instanceof Error ? error.message : String(error))
-    return { failure: failed(fill(GREP_TEXTS.invalidPattern, { message })) }
+    return invalid(unsupported(pattern) ?? compileError(pattern, flags, error))
   }
+  return regex.programSize() > GREP_MAX_PROGRAM ? invalid(GREP_TEXTS.tooLarge) : { value: regex }
+}
+
+/** re2js's reason for turning down the pattern as written, or else the rewritten one's `error`. */
+function compileError(pattern: string, flags: number, error: unknown): string {
+  try {
+    RE2JS.compile(pattern, flags)
+  } catch (original) {
+    return original instanceof Error ? original.message : String(original)
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * ripgrep's Unicode word characters (UTS #18, as its `\w` has them), as class items re2js reads:
+ * Alphabetic, marks, decimal digits, connector punctuation, and the two joiners. It starts and ends
+ * on a property, so a `-` beside it reads as it did beside `\w`.
+ */
+const WORD = '\\p{Alphabetic}\\p{M}\\x{200C}-\\x{200D}\\p{Nd}\\p{Pc}'
+
+/** ripgrep's Perl classes in a class; `\W` has no item re2js reads (see `classOf`). */
+const PERL_IN_CLASS: Readonly<Record<string, string>> = {
+  w: WORD,
+  d: '\\p{Nd}',
+  D: '\\P{Nd}',
+  s: '\\p{White_Space}',
+  S: '\\P{White_Space}',
+}
+
+/** ripgrep's `\W`, outside a class or as the alternative `classOf` writes for it. */
+const NON_WORD = `[^${WORD}]`
+
+/** ripgrep's Perl classes outside a class. */
+const PERL: Readonly<Record<string, string>> = { ...PERL_IN_CLASS, w: `[${WORD}]`, W: NON_WORD }
+
+/** What `ripgrepPattern` reads a pattern as: re2js's source for it, and a bound on its program. */
+interface ReadPattern {
+  readonly source: string
+  readonly bound: number
+}
+
+/**
+ * The pattern as ripgrep reads it, written for re2js (「正则方言跟 ripgrep」). ripgrep's `\d`, `\s` and
+ * `\w` and their negations are Unicode — `\p{Nd}`, `\p{White_Space}` and `WORD` — where RE2's are
+ * ASCII, so they are written out, outside a class and in one. Over every code point the result agrees
+ * with rg 15.2 except on the ones Unicode 17 added, which re2js's tables have and rg's do not; before,
+ * `\w` differed on 144 604. What re2js would misread without a word is turned down: ripgrep's nested
+ * classes and class set operations, which re2js takes as literal characters (`classOf`), and its
+ * `\<`, `\>` and `\b{…}`. Escapes are stepped over whole, and `\Q…\E` is left as written.
+ *
+ * Known gap: `\b` and `\B` stay ASCII. RE2 has no Unicode word boundary and none can be built without
+ * look-around, so `\b用户` misses 用户 at the start of a line or after a space, where ripgrep finds it.
+ *
+ * The walk also bounds the program re2js will compile, from the text: one instruction a character,
+ * escape or class (three for the alternative `classOf` may write), two more a group, one more an
+ * alternative or a `*`, `+` or `?`, and `{n,m}` its operand's bound plus one, times `m`.
+ */
+function ripgrepPattern(pattern: string): ReadPattern | { readonly message: string } {
+  let source = ''
+  // The bound of each enclosing group read so far, of the group being read, and of the last operand.
+  const groups: number[] = []
+  let bound = 2
+  let operand = 0
+  const emit = (text: string, size: number): void => {
+    source += text
+    bound += size
+    operand = size
+  }
+  for (let i = 0; i < pattern.length;) {
+    const c = pattern[i] ?? ''
+    const next = pattern[i + 1] ?? ''
+    const repeat =
+      c === '{' ? /^\{(\d{1,4})(?:(,)(\d{0,4}))?\}/.exec(pattern.slice(i, i + 11)) : null
+    if (c === '\\' && next === 'Q') {
+      const close = pattern.indexOf('\\E', i + 2)
+      const end = close === -1 ? pattern.length : close + 2
+      emit(pattern.slice(i, end), end - i)
+      i = end
+    } else if (c === '\\') {
+      if (
+        next === '<' ||
+        next === '>' ||
+        (next === 'b' && /^\{[a-z]/.test(pattern.slice(i + 2, i + 4)))
+      ) {
+        return { message: GREP_TEXTS.wordBoundary }
+      }
+      const end = escapeEnd(pattern, i)
+      emit(PERL[next] ?? pattern.slice(i, end), 1)
+      i = end
+    } else if (c === '[') {
+      const read = classOf(pattern, i)
+      if ('message' in read) return read
+      emit(read.source, read.size)
+      i = read.end
+    } else if (c === '(') {
+      groups.push(bound)
+      source += c
+      bound = 0
+      operand = 0
+      i += 1
+    } else if (c === ')') {
+      const inner = bound
+      bound = groups.pop() ?? 0
+      emit(c, inner + 2)
+      i += 1
+    } else if (c === '|' || c === '*' || c === '+' || c === '?') {
+      source += c
+      bound += 1
+      operand = c === '|' ? 0 : operand + 1
+      i += 1
+    } else if (repeat !== null) {
+      const least = Number(repeat[1])
+      const most =
+        repeat[2] === undefined ? least : repeat[3] === '' ? least + 1 : Number(repeat[3])
+      // re2js turns down a count over 1000 itself, with its own reason.
+      const times = Math.min(Math.max(least, most), 1001)
+      source += repeat[0]
+      bound += times * (operand + 1) - operand
+      operand = times * (operand + 1)
+      i += repeat[0].length
+    } else {
+      emit(c, 1)
+      i += 1
+    }
+  }
+  return { source, bound }
+}
+
+/** Where the escape at `i` ends: past its braces for `\p{…}`, `\P{…}` and `\x{…}`. */
+function escapeEnd(pattern: string, i: number): number {
+  const next = pattern[i + 1] ?? ''
+  if ((next === 'p' || next === 'P' || next === 'x') && pattern[i + 2] === '{') {
+    const close = pattern.indexOf('}', i + 3)
+    return close === -1 ? pattern.length : close + 1
+  }
+  return Math.min(i + 2, pattern.length)
+}
+
+/** What `classOf` reads a class as: re2js's source for it, where it ends, and its instructions. */
+interface ReadClass {
+  readonly source: string
+  readonly end: number
+  readonly size: number
+}
+
+/**
+ * The class that opens at `start`, read by RE2's rules — `^` first negates, `]` first is a literal,
+ * `[:name:]` is a POSIX class — and written for re2js. Perl classes are written out, and `\W`, which
+ * no class item can hold, becomes an alternative beside the rest; a negated class cannot take one,
+ * so there it is turned down. So is what ripgrep reads as a set operation and re2js as literal
+ * characters or a range: a nested class (an unescaped `[` that opens no POSIX class), `&&`, `~~` and
+ * `--` — even first, where ripgrep reads `[--a]` as `-` and `a`, and re2js as the range from `-` to
+ * `a`. An unclosed class is left for re2js to name.
+ */
+function classOf(pattern: string, start: number): ReadClass | { readonly message: string } {
+  let i = start + 1
+  const negated = pattern[i] === '^'
+  if (negated) i += 1
+  const first = i
+  let items = ''
+  let nonWord = false
+  while (i < pattern.length && (pattern[i] !== ']' || i === first)) {
+    const c = pattern[i] ?? ''
+    if (c === '\\') {
+      const end = escapeEnd(pattern, i)
+      const next = pattern[i + 1] ?? ''
+      if (next === 'W') nonWord = true
+      else items += PERL_IN_CLASS[next] ?? pattern.slice(i, end)
+      i = end
+    } else if (c === '[') {
+      const posix = /^\[:\^?[a-z]+:\]/.exec(pattern.slice(i, i + 12))
+      if (posix === null) return { message: GREP_TEXTS.classSet }
+      items += posix[0]
+      i += posix[0].length
+    } else if ((c === '&' || c === '~' || c === '-') && pattern[i + 1] === c) {
+      return { message: GREP_TEXTS.classSet }
+    } else {
+      items += c
+      i += 1
+    }
+  }
+  if (i >= pattern.length) return { source: pattern.slice(start), end: pattern.length, size: 1 }
+  const end = i + 1
+  if (!nonWord) return { source: `[${negated ? '^' : ''}${items}]`, end, size: 1 }
+  if (negated) return { message: GREP_TEXTS.negatedNonWord }
+  if (items === '') return { source: NON_WORD, end, size: 1 }
+  const others = `[${items.startsWith('^') ? '\\' : ''}${items}]`
+  return { source: `(?:${others}|${NON_WORD})`, end, size: 3 }
 }
 
 /**
