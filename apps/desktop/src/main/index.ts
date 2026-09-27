@@ -174,13 +174,15 @@ async function main(): Promise<void> {
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
           log: (line) => console.error(line),
         })
-  // Clearing and deleting a session, its tool-output folder with it (spec 02 §大响应落盘): until one
-  // completes, the session takes no send and opens no Run.
+  // Clearing and deleting a session, its tool-output folder with it (spec 02 §大响应落盘): its live
+  // Run stopped first, and until one completes, the session takes no send and opens no Run.
   const removal =
     sessions === null
       ? null
       : createSessionRemoval({
           sessions,
+          // Bound late: the loop below takes this removal's `removing`.
+          runs: () => loop?.registry ?? null,
           profileDir: absolutePath(host.identity.profileDir),
           log: (line) => console.warn(line),
         })

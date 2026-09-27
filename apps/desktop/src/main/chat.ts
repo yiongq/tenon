@@ -93,6 +93,11 @@ export interface RunRegistry {
   ): boolean
   /** Resolves when every registered lease has finished, or after `timeoutMs`, whichever is first. */
   settled(timeoutMs: number): Promise<void>
+  /**
+   * Desktop-internal: resolves when the root's live lease, aborted or not, has finished — at once
+   * when it has none. No timeout: a removal waits for it (session-removal.ts).
+   */
+  settledRoot(rootSessionId: string): Promise<void>
   /** From now on `begin` refuses. */
   beginShutdown(): void
   /** Desktop-internal: the lease's first Run, whichever session of the tree it ran in. */
@@ -108,6 +113,8 @@ interface Registered {
   runId: string | null
   stopRequested: boolean
   detach: () => void
+  /** Resolved by the lease's `finish`: what `settledRoot` waits on. */
+  readonly finished: PromiseWithResolvers<void>
 }
 
 /** Aborts with the first cause only; a `user-stop` marks `stopRequested` whenever it comes. */
@@ -182,6 +189,7 @@ export function createRunRegistry(
         runId: null,
         stopRequested: false,
         detach: () => {},
+        finished: Promise.withResolvers<void>(),
         lease: {
           signal: controller.signal,
           get stopRequested(): boolean {
@@ -195,6 +203,7 @@ export function createRunRegistry(
             entry.detach()
             if (live.get(q.rootSessionId) === entry) live.delete(q.rootSessionId)
             changed(q.rootSessionId)
+            entry.finished.resolve()
             if (live.size === 0) for (const resolve of waiters) resolve()
           },
         },
@@ -247,6 +256,9 @@ export function createRunRegistry(
         const cancel = clock.setTimeout(done, timeoutMs)
         waiters.add(done)
       })
+    },
+    settledRoot(rootSessionId) {
+      return live.get(rootSessionId)?.finished.promise ?? Promise.resolve()
     },
     beginShutdown() {
       shuttingDown = true
