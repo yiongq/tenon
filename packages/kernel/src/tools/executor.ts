@@ -10,7 +10,7 @@
  * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
-import type { AbsolutePath, HostFs } from '../host/adapter.js'
+import type { AbsolutePath, HostClock, HostFs } from '../host/adapter.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
 import type { PathScope } from '../permission/workspace.js'
@@ -53,6 +53,11 @@ export interface ExecuteQuery {
    */
   readonly scope: PathScope
   readonly fs: HostFs
+  /**
+   * The Run's host clock: Grep reads its time budget and its turns of the event loop from it
+   * (§内置工具与参数「时限」).
+   */
+  readonly clock: HostClock
   /**
    * What Bash runs with (§内置工具与参数「Bash」), its base environment awaited before the dispatch;
    * absent for every other tool.

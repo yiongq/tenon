@@ -94,6 +94,7 @@ function bash(b: Bash): Promise<ToolExecution> {
       protectedFiles: [],
     },
     fs: host.fs,
+    clock: host.clock,
     command: {
       commandId: 'toolu_1',
       shell: b.shell ?? SH,

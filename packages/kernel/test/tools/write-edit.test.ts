@@ -61,6 +61,7 @@ function run(
     target,
     scope: SCOPE,
     fs: host.fs,
+    clock: host.clock,
   })
 }
 

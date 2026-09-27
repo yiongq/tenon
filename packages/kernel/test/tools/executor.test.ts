@@ -15,6 +15,7 @@ function source(callTool: () => Promise<unknown>): McpToolSource {
 }
 
 function query(): ExecuteQuery {
+  const host = createMemoryHost()
   return {
     item: {
       source: 'mcp',
@@ -33,7 +34,8 @@ function query(): ExecuteQuery {
       ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
       protectedFiles: [],
     },
-    fs: createMemoryHost().fs,
+    fs: host.fs,
+    clock: host.clock,
   }
 }
 

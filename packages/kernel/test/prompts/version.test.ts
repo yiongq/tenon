@@ -26,9 +26,11 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // The connector notes (connectorFailed, connectorEmpty) joined the layer (plan step 18 catch-up).
   2: '562b33451d62c4df7c54ff6827876baf8a94affe1334382530c202838d0372fc',
   // Write, Edit and Bash's result templates and errors joined the layer, and Grep names look-around
-  // and backreferences as ripgrep does now that re2js turns them down (plan step 22; Write and Edit's
-  // refusal of a path that now resolves elsewhere added in place after its review, before release).
-  3: '82a8323ba9504f0f16cd9c757211850326a522a3d3e46602c7a3bcbb86fed515',
+  // and backreferences as ripgrep does now that re2js turns them down, turns down what re2js would
+  // misread and too large a pattern, says \b and \B are ASCII, names the files skipped for a line
+  // too long for the pattern, and a search past its time budget; Write and Edit refuse a path that
+  // now resolves elsewhere (plan step 22, with its review's fixes, in place before release).
+  3: 'fcac5ec9d27d79cc57f960a0d1be928a6acef815db6da168d527b7c6cb59f27c',
 }
 
 describe('the version gate', () => {
