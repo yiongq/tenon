@@ -2,11 +2,19 @@
  * Clearing and deleting a session with its tool-output folder (spec 02 §大响应落盘「删除是 host 的义务」,
  * §本地持久化布局：只加一行; plan step 24, 旧 189; acceptance 43's deletion half). The store is the
  * desktop's SQLite one in a temporary profile, the kernel is the real loop, the RunRegistry is
- * chat.ts's. The spilled files are written here with plain fs: the kernel's spill writer is not what
- * is under test.
+ * chat.ts's. The spilled files are written here with plain fs, except where a Run is live during the
+ * removal: there the kernel's own spill writer writes them, through the desktop's HostFs, on the disk
+ * the removal's rm works on.
  */
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, relative } from 'node:path'
 import {
   absolutePath,
@@ -17,10 +25,15 @@ import {
 } from '@tenon-app/kernel'
 import type {
   AbsolutePath,
+  ChildHandle,
   CommandShell,
+  HostAdapter,
   HostFs,
+  HostProcess,
+  MemoryHost,
   ModelInfo,
   SessionService,
+  StreamEvent,
   TapeStore,
 } from '@tenon-app/kernel'
 import {
@@ -29,6 +42,7 @@ import {
   createTestConnector,
   createTestSessionService,
   scriptedTurn,
+  stopEvent,
 } from '@tenon-app/kernel/testing'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { parseAst, transformWithEsbuild } from 'vite'
@@ -36,6 +50,8 @@ import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { DesktopLoop } from '../src/main/chat.js'
+import { SystemClock } from '../src/main/host/clock.js'
+import { DesktopFs } from '../src/main/host/fs.js'
 import {
   REFUSED_WHILE_REMOVING,
   createSessionRemoval,
@@ -43,7 +59,7 @@ import {
   removeFolder,
 } from '../src/main/session-removal.js'
 import type { SessionRemoval } from '../src/main/session-removal.js'
-import { openStore, removeTempProfiles } from './tape/fixtures.js'
+import { openStore, removeTempProfiles, tempProfileDir } from './tape/fixtures.js'
 
 const MODEL: ModelInfo = {
   id: 'claude-removal-1',
@@ -147,24 +163,76 @@ interface Rig {
   readonly ipc: ReturnType<typeof fakeIpc>
   /** In order: `store committed`, `rm <folder>`, `removed`, as each happened. */
   readonly order: string[]
+  /** At each step 2, the files the folder held, by name: none when it was not there. */
+  readonly atRm: string[][]
   readonly log: string[]
+  readonly kernelLog: string[]
+  /** The cards the kernel asked for. */
+  readonly confirms: MemoryHost['confirmRequests']
+  /** Step 1 waits for this, before the store is reached; open unless a test holds it. */
+  readonly storeGate: Gate
   /** Step 2 waits for this; open unless a test holds it. */
-  readonly folderGate: { hold(): void; release(): void }
+  readonly folderGate: Gate
+  /** A live rig's workspace folder, on the disk. */
+  readonly workspace: AbsolutePath
+}
+
+/** Open unless held; `hold` answers the release of that one hold, `release` the latest. */
+interface Gate {
+  hold(): () => void
+  release(): void
+}
+
+function gate(): Gate & { passed(): Promise<void> } {
+  let held: PromiseWithResolvers<void> | null = null
+  return {
+    passed: () => held?.promise ?? Promise.resolve(),
+    hold: () => {
+      const each = Promise.withResolvers<void>()
+      held = each
+      return () => each.resolve()
+    },
+    release: () => held?.resolve(),
+  }
 }
 
 /**
- * Main's wiring, as index.ts does it: the removal over the service, its `removing` into the
- * RunRegistry and around the route table, the chat and approval routes on that table.
+ * A kernel whose Runs run their tools: Bash, Read and Grep, on the desktop's HostFs and clock. Its
+ * profile directory is the store's, so what it spills is where the removal's rm looks.
+ */
+interface Live {
+  /** Where Bash's commands run. */
+  readonly process?: HostProcess
+  /** The kernel's HostFs, from the real one: a test may hold a call on it. */
+  readonly fs?: (disk: HostFs) => HostFs
+}
+
+/**
+ * Main's wiring, as index.ts does it: the removal over the service and the RunRegistry, its
+ * `removing` into that registry and around the route table, the chat and approval routes on that
+ * table.
  */
 function rig(
-  options: { sessions?: Pick<SessionService, 'resetSession' | 'deleteSession'> } = {},
+  options: { sessions?: Pick<SessionService, 'resetSession' | 'deleteSession'>; live?: Live } = {},
 ): Rig {
   const opened = openStore({ label: 'removal' })
   closers.push(() => opened.store.close())
   const profileDir = absolutePath(opened.profileDir)
   const tape = counted(opened.store)
-  const host = createMemoryHost()
+  const { live } = options
+  const memory = createMemoryHost({
+    identity: { profileDir },
+    ...(live?.process === undefined ? {} : { process: live.process }),
+  })
+  const disk = new DesktopFs()
+  const host: HostAdapter =
+    live === undefined
+      ? memory
+      : { ...memory, fs: live.fs?.(disk) ?? disk, clock: new SystemClock() }
+  const workspace = absolutePath(join(realpathSync(tempProfileDir('removal-work')), 'work'))
+  mkdirSync(workspace)
   const provider = createScriptedProvider({ models: [MODEL] })
+  const kernelLog: string[] = []
   const kernel = createTestSessionService(
     {
       host,
@@ -173,32 +241,45 @@ function rig(
       inspectors: [],
       connector: createTestConnector({ provider, model: MODEL }),
       protectedFiles: [],
+      log: (line) => kernelLog.push(line),
     },
-    { tools: {} },
+    live === undefined
+      ? { tools: {} }
+      : {
+          tools: { Bash: 'real', Read: 'real', Grep: 'real' },
+          userSetting: () => ({ userSetting: 'always-allow' }),
+        },
   )
   const { sessions, reached } = recorded(kernel)
   const order: string[] = []
+  const atRm: string[][] = []
   const log: string[] = []
-  let gate: PromiseWithResolvers<void> | null = null
+  const storeGate = gate()
+  const folderGate = gate()
   // The kernel's own reset and delete, each noted once the store committed it.
   const commits = options.sessions ?? kernel
   const removal = createSessionRemoval({
     sessions: {
       resetSession: async (sessionId) => {
+        await storeGate.passed()
         const incarnation = await commits.resetSession(sessionId)
         order.push('store committed')
         return incarnation
       },
       deleteSession: async (sessionId) => {
+        await storeGate.passed()
         await commits.deleteSession(sessionId)
         order.push('store committed')
       },
     },
+    // Bound late, as index.ts binds it: the loop below takes this removal's `removing`.
+    runs: () => loop.registry,
     profileDir,
     log: (line) => log.push(line),
     removeFolder: async (folder) => {
       order.push(`rm ${relative(profileDir, folder)}`)
-      if (gate !== null) await gate.promise
+      atRm.push(existsSync(folder) ? readdirSync(folder) : [])
+      await folderGate.passed()
       await removeFolder(folder)
       order.push('removed')
     },
@@ -227,13 +308,13 @@ function rig(
     removal,
     ipc,
     order,
+    atRm,
     log,
-    folderGate: {
-      hold: () => {
-        gate = Promise.withResolvers<void>()
-      },
-      release: () => gate?.resolve(),
-    },
+    kernelLog,
+    confirms: memory.confirmRequests,
+    storeGate,
+    folderGate,
+    workspace,
   }
 }
 
@@ -253,6 +334,131 @@ function spill(r: Rig, sessionId: string, text: string): string {
   mkdirSync(folder, { recursive: true })
   const file = join(folder, `${randomUUID()}-1-0.txt`)
   writeFileSync(file, text)
+  return file
+}
+
+/** A reply that makes these calls, then stops for their results. */
+function toolTurn(...calls: Array<[string, Record<string, unknown>]>): StreamEvent[] {
+  return [
+    ...calls.flatMap(([name, input], k): StreamEvent[] => {
+      const id = `toolu_${String(k + 1)}`
+      return [
+        { type: 'tool-call-start', index: k + 1, id, name },
+        { type: 'tool-call-end', index: k + 1, id, name, input },
+      ]
+    }),
+    stopEvent('tool-use', 'tool_use'),
+  ]
+}
+
+/** The cowork profile, with the live rig's workspace as its one folder. */
+async function cowork(r: Rig, sessionId: string): Promise<void> {
+  const dedicated = absolutePath(join(r.workspace, '..', 'dedicated'))
+  await r.kernel.selectProfile({ sessionId, profile: 'cowork', dedicated })
+  await r.kernel.setWorkspace({
+    sessionId,
+    change: { kind: 'add', folders: [r.workspace] },
+    dedicated,
+  })
+}
+
+/** The one card the session's Run paused on, answered through the route. */
+async function answer(r: Rig, sessionId: string, decision: 'allow' | 'deny'): Promise<unknown> {
+  await expect.poll(() => r.confirms.length).toBe(1)
+  const [card] = r.confirms
+  if (card === undefined) throw new Error('no card')
+  return r.ipc.call('approval.respond', {
+    kind: 'approval',
+    sessionId,
+    requestId: card.requestId,
+    decision,
+  })
+}
+
+/** A message whose Run is still going when this returns. */
+async function start(r: Rig, sessionId: string, text: string): Promise<void> {
+  expect(await r.ipc.call('chat.send', { sessionId, text })).toEqual({
+    ok: true,
+    data: { accepted: true, status: 'started' },
+  })
+}
+
+/** Until the removal has stopped the session's Run, or has completed without stopping it. */
+async function stoppedOrDone(r: Rig, removal: Promise<unknown>): Promise<void> {
+  let done = false
+  const settle = (): void => {
+    done = true
+  }
+  void removal.then(settle, settle)
+  await expect
+    .poll(() => done || r.loop.registry.snapshot().some((lease) => lease.aborted))
+    .toBe(true)
+}
+
+/** A command that prints `text` at once, then runs until it is killed or `end` is called. */
+function heldCommand(text: string): { process: HostProcess; spawned: Promise<void>; end(): void } {
+  const spawned = Promise.withResolvers<void>()
+  const ended = Promise.withResolvers<void>()
+  const process: HostProcess = {
+    spawn: () => {
+      const exited = Promise.withResolvers<{ code: number | null; signal: string | null }>()
+      const child: ChildHandle = {
+        pid: 9,
+        stdin: new WritableStream(),
+        stdout: new ReadableStream({
+          start: async (controller) => {
+            controller.enqueue(new TextEncoder().encode(text))
+            await ended.promise
+            controller.close()
+            exited.resolve({ code: 0, signal: null })
+          },
+        }),
+        stderr: new ReadableStream({ start: (controller) => controller.close() }),
+        exited: exited.promise,
+        kill: () => {
+          ended.resolve()
+          return Promise.resolve()
+        },
+      }
+      spawned.resolve()
+      return Promise.resolve(child)
+    },
+  }
+  return { process, spawned: spawned.promise, end: () => ended.resolve() }
+}
+
+/** The disk, each read of a file `held` names waiting for `release`; `reached` once one does. */
+function heldReads(held: (path: string) => boolean): {
+  fs: (disk: HostFs) => HostFs
+  reached: Promise<void>
+  release(): void
+} {
+  const reached = Promise.withResolvers<void>()
+  const released = Promise.withResolvers<void>()
+  return {
+    fs: (disk) => ({
+      readFile: async (path, opts) => {
+        if (held(path)) {
+          reached.resolve()
+          await released.promise
+        }
+        return disk.readFile(path, opts)
+      },
+      writeFile: (path, data) => disk.writeFile(path, data),
+      stat: (path) => disk.stat(path),
+      readdir: (path) => disk.readdir(path),
+      mkdirp: (path) => disk.mkdirp(path),
+      realpath: (path) => disk.realpath(path),
+    }),
+    reached: reached.promise,
+    release: () => released.resolve(),
+  }
+}
+
+/** 300 matching lines of 200 characters: a Grep of them is past the spill threshold. */
+function writeLarge(r: Rig, name: string): string {
+  const file = join(r.workspace, name)
+  writeFileSync(file, `${'needle '.padEnd(200, 'x')}\n`.repeat(300))
   return file
 }
 
@@ -357,6 +563,120 @@ describe('deleting a session: store commit → folder removed → done (旧 189)
   })
 })
 
+describe('a clear or a delete while a Run is live: stopped first, and waited for (旧 189)', () => {
+  for (const operation of ['clear', 'delete'] as const) {
+    it(`${operation}: a command's large output, spilled as it stops, goes with the folder`, async () => {
+      const command = heldCommand('x'.repeat(40_000))
+      const r = rig({ live: { process: command.process } })
+      const session = randomUUID()
+      const folder = toolOutputDirFor(r.profileDir, session)
+      await cowork(r, session)
+      r.provider.script(toolTurn(['Bash', { command: 'make' }]))
+      await start(r, session, 'build')
+      // Every command asks (E4): allowed, it runs in the Run the answer opens.
+      await answer(r, session, 'allow')
+      await command.spawned
+
+      const removal = r.removal[operation](session)
+      await stoppedOrDone(r, removal)
+      expect(r.order).toEqual([])
+      expect(await r.ipc.call('chat.send', { sessionId: session, text: 'more' })).toEqual(REFUSED)
+      // The command ends, killed by the stop or on its own; the removal goes on only after it.
+      command.end()
+      await removal
+      await expect.poll(() => r.loop.registry.snapshot()).toEqual([])
+      await flush()
+      expect(existsSync(folder)).toBe(false)
+      // What it printed was spilled as it stopped, before the store: it went with the folder.
+      expect(r.atRm).toEqual([[expect.stringMatching(/-1-0\.txt$/)]])
+      expect(r.order).toEqual(['store committed', `rm tool-output/${session}`, 'removed'])
+      // The Run's closing writes reached the incarnation it began in.
+      expect(r.kernelLog).toEqual([])
+    })
+
+    it(`${operation}: a parallel read group in flight spills nothing after the folder went`, async () => {
+      const reads = heldReads((path) => path.endsWith('/big.txt'))
+      const r = rig({ live: { fs: reads.fs } })
+      const session = randomUUID()
+      const folder = toolOutputDirFor(r.profileDir, session)
+      const small = join(r.workspace, 'small.txt')
+      writeFileSync(small, 'small\n')
+      const big = writeLarge(r, 'big.txt')
+      await cowork(r, session)
+      r.provider.script(
+        toolTurn(
+          ['Read', { file_path: small }],
+          ['Grep', { pattern: 'needle', path: big, output_mode: 'content' }],
+        ),
+      )
+      await start(r, session, 'look')
+      await reads.reached
+
+      const removal = r.removal[operation](session)
+      await stoppedOrDone(r, removal)
+      // The Grep's read returns: after the stop, it is cut short, not spilled.
+      reads.release()
+      await removal
+      await expect.poll(() => r.loop.registry.snapshot()).toEqual([])
+      await flush()
+      expect(existsSync(folder)).toBe(false)
+      expect(r.order).toEqual(['store committed', `rm tool-output/${session}`, 'removed'])
+      expect(r.kernelLog).toEqual([])
+    })
+  }
+
+  it('waits for the root’s live lease to finish, aborted or not, and for no other root', async () => {
+    const registry = createRunRegistry(createMemoryHost().clock)
+    const session = randomUUID()
+    const other = randomUUID()
+    // No lease: at once.
+    await registry.settledRoot(session)
+    const mine = registry.begin({ rootSessionId: session, origin: null })
+    const theirs = registry.begin({ rootSessionId: other, origin: null })
+    if ('refused' in mine || 'refused' in theirs) throw new Error('a lease was refused')
+    let settled = false
+    void registry.settledRoot(session).then(() => {
+      settled = true
+    })
+    mine.abort('user-stop')
+    theirs.finish()
+    await flush()
+    expect(settled).toBe(false)
+    mine.finish()
+    await flush()
+    expect(settled).toBe(true)
+  })
+
+  it('clear of a paused session: no lease to wait for, and the folder stays gone', async () => {
+    const r = rig({ live: {} })
+    const session = randomUUID()
+    const folder = toolOutputDirFor(r.profileDir, session)
+    const big = writeLarge(r, 'big.txt')
+    await cowork(r, session)
+    // A workspace read that spills, then a command that asks: the Run pauses on the card.
+    r.provider.script(
+      toolTurn(
+        ['Grep', { pattern: 'needle', path: big, output_mode: 'content' }],
+        ['Bash', { command: 'make' }],
+      ),
+    )
+    await start(r, session, 'look, then build')
+    await expect.poll(() => r.confirms.length).toBe(1)
+    await expect.poll(() => r.loop.registry.snapshot()).toEqual([])
+    expect(readdirSync(folder)).toHaveLength(1)
+
+    await r.removal.clear(session)
+    expect(existsSync(folder)).toBe(false)
+    // The old incarnation's card, answered: nothing runs, and nothing is written there.
+    expect(await answer(r, session, 'allow')).toEqual({ ok: true, data: { status: 'not-found' } })
+    await flush()
+    expect(r.loop.registry.snapshot()).toEqual([])
+    expect(r.provider.starts).toBe(1)
+    expect(existsSync(folder)).toBe(false)
+    expect(r.kernelLog).toEqual([])
+  })
+})
+
 describe('until a clear or a delete completes, the session takes no send (旧 189)', () => {
   for (const operation of ['clear', 'delete'] as const) {
     it(`${operation}: every send route answers ok: false, and nothing reaches the kernel`, async () => {
@@ -406,7 +726,41 @@ describe('until a clear or a delete completes, the session takes no send (旧 18
       await converse(r, session, 'after')
       expect(r.provider.starts).toBe(starts + 2)
     })
+
+    it(`${operation}: refuses a send from the call on, before the store has committed`, async () => {
+      const r = rig()
+      const session = randomUUID()
+      await converse(r, session, 'hello')
+      r.storeGate.hold()
+      const removal = r.removal[operation](session)
+      await flush()
+      expect(r.order).toEqual([])
+      expect(await r.ipc.call('chat.send', { sessionId: session, text: 'early' })).toEqual(REFUSED)
+      r.storeGate.release()
+      await removal
+      expect(r.order).toEqual(['store committed', `rm tool-output/${session}`, 'removed'])
+    })
   }
+
+  it('refuses sends until the last of two overlapping removals of a session completes', async () => {
+    const r = rig()
+    const session = randomUUID()
+    await converse(r, session, 'hello')
+    const releaseClear = r.folderGate.hold()
+    const cleared = r.removal.clear(session)
+    await expect.poll(() => r.order.length).toBe(2)
+    r.folderGate.hold()
+    const deleted = r.removal.delete(session)
+    await expect.poll(() => r.order.length).toBe(4)
+    r.folderGate.release()
+    await deleted
+    // The clear is still at its step 2: the session is still being removed.
+    expect(r.removal.removing(session)).toBe(true)
+    expect(await r.ipc.call('chat.send', { sessionId: session, text: 'between' })).toEqual(REFUSED)
+    releaseClear()
+    await cleared
+    expect(r.removal.removing(session)).toBe(false)
+  })
 
   it('refuses the sends, the queue’s send-now, 「继续」, the answer and the resume', () => {
     expect([...REFUSED_WHILE_REMOVING].toSorted()).toEqual(
@@ -463,6 +817,7 @@ describe('a removal that fails', () => {
         resetSession: () => Promise.reject(new Error('unused')),
         deleteSession: () => Promise.resolve(),
       },
+      runs: () => null,
       profileDir: absolutePath(opened.profileDir),
       log: (line) => log.push(line),
       removeFolder: () => Promise.reject(new Error('EACCES: permission denied')),

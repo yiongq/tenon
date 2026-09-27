@@ -10,6 +10,7 @@ import {
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { isCanonicalUuid, toolOutputDirFor } from '@tenon-app/kernel'
 import type { AbsolutePath, SessionIncarnation, SessionService } from '@tenon-app/kernel'
+import type { RunRegistry } from './chat.js'
 
 /**
  * Clearing and deleting a session (spec 02 §大响应落盘「删除是 host 的义务」, §本地持久化布局：只加一行;
@@ -17,15 +18,26 @@ import type { AbsolutePath, SessionIncarnation, SessionService } from '@tenon-ap
  * writes and never deletes (`HostFs` has no delete member), so the host that clears or deletes a
  * session deletes that folder too, in this order:
  *
+ *   0. the session's live Run, if it has one, is stopped (`user-stop`), and its lease has finished;
  *   1. the store's `resetSession` / `deleteSession` commits (through the kernel's service);
  *   2. the folder goes (`fs.rm`, recursive, force);
  *   3. only then is the operation complete.
+ *
+ * Step 0 because neither store call waits for a Run: a clear is a mailbox command, which runs between
+ * an open Run's own writes, and a delete skips the mailbox. A call still running at step 2 would spill
+ * after it: the old incarnation's full output back in the folder, for good after a delete, or where
+ * the new incarnation reads without a card after a clear. A stopped Run spills before its lease
+ * finishes, into the folder step 2 removes; a result later than its write wait is only logged
+ * (§点停止时各状态怎么收). `user-stop`, because the user asked; the other two causes say the app is
+ * going. A paused session has no lease, and its Run writes nothing more: nothing to wait for. A call
+ * that ignores the stop (a connector's) holds the removal until it returns, as it holds any stop.
  *
  * From the call until step 3 the session takes no send: a clear keeps the `sessionId`, and a Run of
  * the new incarnation that spilled before step 2 was done would lose its file to it. Two guards:
  * `refuseWhileRemoving` answers the send routes `ok: false` as they arrive, and the RunRegistry
  * refuses the root any lease (chat.ts), which covers every other way a Run opens — an auto-send, the
- * held message a model choice releases, the Run a stop writes to close a paused one.
+ * held message a model choice releases, the Run a stop writes to close a paused one. So no Run
+ * opens in it again after step 0.
  *
  * A store that throws leaves the folder alone: its facts still name those files. A folder that fails
  * to go is logged and the operation completes anyway; nothing sweeps it at startup (§大响应落盘).
@@ -44,6 +56,11 @@ export interface SessionRemoval {
 
 export interface SessionRemovalDeps {
   readonly sessions: Pick<SessionService, 'resetSession' | 'deleteSession'>
+  /**
+   * Step 0's: the RunRegistry (chat.ts), or null when there is no loop to open a Run. Read when a
+   * removal begins, not when this is made: main makes the removal before the loop and its registry.
+   */
+  readonly runs: () => Pick<RunRegistry, 'abort' | 'settledRoot'> | null
   /** The profile the store belongs to: `HostIdentity.profileDir`. */
   readonly profileDir: AbsolutePath
   readonly log: (line: string) => void
@@ -67,9 +84,13 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
       throw new TypeError(`session removal: "${sessionId}" is not a canonical UUID`)
     }
     const folder = toolOutputDirFor(deps.profileDir, sessionId)
-    // In the call's own synchronous stretch: a send right behind it is refused.
+    // In the call's own synchronous stretch: a send right behind it is refused, and so is a lease.
     pending.set(sessionId, (pending.get(sessionId) ?? 0) + 1)
     try {
+      // Step 0: the only lease the root can have is the one live now.
+      const runs = deps.runs()
+      runs?.abort({ rootSessionId: sessionId }, 'user-stop')
+      await runs?.settledRoot(sessionId)
       const committed = await commit()
       try {
         await remove(folder)
