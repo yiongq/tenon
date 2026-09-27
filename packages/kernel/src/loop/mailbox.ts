@@ -1410,6 +1410,8 @@ export function createLoop(deps: LoopDeps): Loop {
           writer: resolver,
         }),
       ]
+      const cardTarget = waiting.decision.confirm?.target
+      const cardPath = cardTarget?.type === 'path' ? cardTarget.path : null
       resume = {
         ...rest,
         calls: [waiting.call, ...waiting.rest],
@@ -1418,9 +1420,10 @@ export function createLoop(deps: LoopDeps): Loop {
           decisionKey: waiting.decisionKey,
           summary: waiting.decision.summary,
           reversibility: waiting.decision.reversibility,
-          // The card's real path, as the re-judgement placed it: the executor acts there, and its
+          // The card's own real path, even when the re-judgement found it elsewhere and allowed
+          // that (a link to a granted file): the executor acts on the path the card named, and its
           // re-check refuses it if a link has moved it since (§「在不在工作区里」第 5 步).
-          target: judged.target,
+          target: cardPath ?? judged.target,
         },
       }
     }

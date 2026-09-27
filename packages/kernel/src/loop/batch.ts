@@ -120,9 +120,9 @@ export interface ApprovedCall {
   readonly summary: DecisionSummary
   readonly reversibility: Reversibility
   /**
-   * Where a file tool acts: the real path the answer's re-judgement placed, the card's own; null for
-   * any other tool. Not located again after the dispatch — the executor's re-check guards this path
-   * (§「在不在工作区里」第 5 步).
+   * Where a file tool acts: the real path on the card it answered, even when the re-judgement found
+   * the call elsewhere; null for any other tool. Not located again after the dispatch — the
+   * executor's re-check guards this path (§「在不在工作区里」第 5 步).
    */
   readonly target: AbsolutePath | null
 }

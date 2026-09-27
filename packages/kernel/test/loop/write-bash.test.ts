@@ -486,6 +486,25 @@ describe('Write in the workspace (旧 215, the kernel half)', () => {
       source: null,
     })
   })
+
+  it('acts on the card’s path when a link to a granted file loosens the re-judgement', async () => {
+    const h = await harness({})
+    const granted = absolutePath(`${WORK}/b.md`)
+    const path = absolutePath(`${WORK}/a.md`)
+    await allow(h, await pausedOn(h, 'Write', { file_path: granted, content: 'b-orig' }))
+    const pending = await pausedOn(h, 'Write', { file_path: path, content: 'A' })
+    expect(pending.card.target).toEqual({ type: 'path', path })
+    // While the card waits, a.md becomes a link to b.md, which this session may write without a
+    // card: the answer's re-judgement allows, but the card named a.md (spec.md §等待模型「只能收紧」).
+    h.memory.symlink(path, granted)
+    h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
+    await allow(h, pending)
+    expect(await h.memory.fs.readFile(granted, { encoding: 'utf8' })).toBe('b-orig')
+    expect(await lastOf(h, 'tool/result')).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: fill(WRITE_TEXTS.resolvesElsewhere, { path }) }],
+    })
+  })
 })
 
 describe('the dedicated folder (旧 180)', () => {
