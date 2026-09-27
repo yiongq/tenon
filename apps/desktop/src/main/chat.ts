@@ -11,7 +11,6 @@ import {
 import type { IpcMainLike, RouteResponse } from '@tenon-app/contracts'
 import { isCanonicalUuid } from '@tenon-app/kernel'
 import type {
-  AbsolutePath,
   CommandShell,
   HostClock,
   LoopPorts,
@@ -54,12 +53,6 @@ const NOT_BOUND = 'the agent loop is not bound yet'
 /** `chat.queue.act`'s answer: applied, or the item was no longer queued. */
 function status(applied: boolean): { status: 'applied' | 'not-found' } {
   return { status: applied ? 'applied' : 'not-found' }
-}
-
-/** Plan step 22 replaces this with shell-env.ts's shell and the user's terminal environment. */
-const PLACEHOLDER_SHELL: CommandShell = {
-  path: '/bin/sh' as AbsolutePath,
-  env: () => Promise.resolve({}),
 }
 
 /**
@@ -271,6 +264,8 @@ export interface DesktopLoopOptions {
   readonly send: EventSender
   /** The interface language now; the kernel reads it when it assembles a system prompt. */
   readonly locale: () => 'zh-CN' | 'en'
+  /** Bash's shell and the user's terminal environment: host/shell-env.ts's `startCommandShell`. */
+  readonly commandShell: CommandShell
   readonly log?: (line: string) => void
 }
 
@@ -312,7 +307,7 @@ export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
       locale: () => options.locale(),
       // Open question 16 (owner 2026-09-26): the user's local date, in this machine's time zone.
       localDate: () => localDateOf(options.clock.now()),
-      commandShell: PLACEHOLDER_SHELL,
+      commandShell: options.commandShell,
     },
   }
 }
