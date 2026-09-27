@@ -14,6 +14,7 @@ import {
 } from '../../src/index.js'
 import type {
   ModelInfo,
+  SendResult,
   SessionEvent,
   SessionService,
   StreamEvent,
@@ -31,7 +32,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, lookSource } from './support.js'
+import { LOOK, lookSource, proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'queue-user', tenantId: 'queue-tenant', profileDir: '/tenon/queue' }
 const SESSION = '9a6b9a2e-6b3d-4a71-9f52-0c8de7a11b3d'
@@ -74,8 +75,12 @@ interface Harness {
  * `during` runs while a call executes: where a case sends while the Run is busy. The inspector says
  * nothing unless a case makes it ask.
  */
-function harness(during?: (h: Harness) => void | Promise<void>): Harness {
-  const store = createMemoryTapeStore({ identity: IDENTITY })
+function harness(
+  during?: (h: Harness) => void | Promise<void>,
+  wrap?: (inner: TapeStore) => TapeStore,
+): Harness {
+  const inner = createMemoryTapeStore({ identity: IDENTITY })
+  const store = wrap?.(inner) ?? inner
   const provider = createScriptedProvider({ models: [MODEL] })
   const executed: Record<string, unknown>[] = []
   const inspector = createFakeInspector({ id: 'asker', ceiling: 'ask', answer: { kind: 'none' } })
@@ -293,6 +298,60 @@ describe('send-now (「立即发送绑定 runId」)', () => {
     expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
   })
 
+  it('answers not-found for an item already inserted into the Run it names, and stops nothing', async () => {
+    // 「立即发送绑定 runId」: 已不在队列（…已插入…）的返回 not-found、什么都不做 — a stale bubble's
+    // send-now must not stop the Run its item already went into.
+    let queued: Promise<SendResult> | undefined
+    let late: Promise<SendResult> | undefined
+    let runId = ''
+    const h = harness(async (self) => {
+      if (queued === undefined) {
+        queued = self.service.send({ sessionId: SESSION, origin: null, text: 'also b' })
+        return
+      }
+      const first = await queued
+      if (first.status !== 'queued') throw new Error(`queued answered ${JSON.stringify(first)}`)
+      late ??= self.service.send({
+        sessionId: SESSION,
+        origin: null,
+        queuedId: first.queuedId,
+        urgent: { runId },
+      })
+      await late
+    })
+    h.provider.script(calls('a'))
+    h.provider.script(calls('b'))
+    h.provider.script(done())
+    runId = await startRun(h, 'check a')
+    expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'completed' })
+    expect(await late).toEqual({ status: 'not-found' })
+    expect(h.loop.leaseLog.map((lease) => lease.stopRequested)).toEqual([false])
+    expect(userTexts(await all(h))).toEqual(['check a', 'also b'])
+  })
+
+  it('answers not-found on an idle root before acting on the prebuild’s answer', async () => {
+    // A stale bubble's send-now with no key, or meeting a switch to a public host: nothing is
+    // written, no failure card, nothing held (models/model1: the item is looked up first).
+    const h = harness()
+    h.loop.connector.failProvider(new ProviderConfigMissingError('anthropic', 'apiKey'), 1)
+    expect(
+      await h.service.send({ sessionId: SESSION, origin: null, queuedId: 'queued-gone' }),
+    ).toEqual({ status: 'not-found' })
+    h.loop.connector.needsConfirm('api.example.com')
+    expect(
+      await h.service.send({ sessionId: SESSION, origin: null, queuedId: 'queued-gone' }),
+    ).toEqual({ status: 'not-found' })
+    expect(h.loop.recorded).toEqual([])
+    expect(h.loop.liveLease(SESSION)).toBeNull()
+    expect(h.loop.leaseLog.every((lease) => lease.finished)).toBe(true)
+    // Nothing is held: a later round goes out without asking.
+    h.loop.connector.needsConfirm(null)
+    h.loop.connector.failProvider(null)
+    h.provider.script(done())
+    await h.loop.runEnded({ runId: await startRun(h, 'now') })
+    expect(h.loop.recorded.filter((event) => event.type === 'queue-held')).toEqual([])
+  })
+
   it('sends a queued item now, with the items before it, when the Run it saw has ended', async () => {
     const h = harness()
     await h.loop.queue.enqueue(SESSION, 'before', { urgent: false })
@@ -341,6 +400,41 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
       ['two', false],
       ['three', false],
     ])
+  })
+
+  it('puts the items back once when the auto-send’s opening append fails', async () => {
+    // 「Run 结束」: a failed auto-send restores what it took — once (models/README: 排队消息不丢、不
+    // 重复); the turn and the auto-send's catch both see the failure.
+    let openings = 0
+    const h = harness(undefined, (inner) =>
+      proxyStore(inner, {
+        append: (batch) => {
+          if (batch.entries.some((entry) => entry.name === 'execution/run_started')) {
+            openings += 1
+            if (openings === 2) return Promise.reject(new Error('disk full'))
+          }
+          return inner.append(batch)
+        },
+      }),
+    )
+    h.provider.script(done())
+    h.provider.script(done())
+    const hold = h.loop.connector.holdAssemble()
+    const first = h.service.send({ sessionId: SESSION, origin: null, text: 'first' })
+    await hold.reached
+    const second = h.service.send({ sessionId: SESSION, origin: null, text: 'second' })
+    hold.release()
+    const started = await first
+    if (started.status !== 'started') throw new Error('not started')
+    expect(await second).toMatchObject({ status: 'queued' })
+    await h.loop.runEnded({ runId: started.runId })
+    await expect.poll(() => h.loop.liveLease(SESSION)).toBeNull()
+    await expect.poll(() => h.loop.queued(SESSION).length).toBeGreaterThan(0)
+    expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
+      ['second', false],
+    ])
+    await h.loop.runEnded({ runId: await startRun(h, 'third') })
+    expect(userTexts(await all(h))).toEqual(['first', 'second', 'third'])
   })
 
   it('sends nothing to a public host it would switch to indirectly, and says it is held', async () => {

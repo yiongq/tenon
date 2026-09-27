@@ -585,26 +585,47 @@ export function createLoop(deps: LoopDeps): Loop {
       return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
     }
     const root = box.rootSessionId
+    // 「立即发送绑定 runId」: an item no longer queued (an auto-send took it, it was inserted or
+    // withdrawn) answers not-found and does nothing — no Run stopped, no prebuild's answer acted on
+    // (models/model1 sendTurn: `qsend: item gone -> not-found` comes first).
+    if (!('text' in q)) {
+      const queued = (await ports.queue.peek(root)).some((item) => item.queuedId === q.queuedId)
+      if (lease !== null && lease.signal.aborted) {
+        return { kind: 'done', result: await abortedBeforeAppend(ports, box, lease) }
+      }
+      if (!queued) {
+        if (lease !== null) finish(box, lease)
+        return { kind: 'done', result: { status: 'not-found' } }
+      }
+    }
     // 「何时判定」: in progress means a Run already opened, an aborted one still closing included — and
     // the message is then marked urgent, so it goes first once that Run ends. A lease with no Run open
     // yet can only be this command's own here: such a holder lets nothing but itself run.
     if (box.lease !== null && box.runOpen) {
+      const live = box.lease
       // 「立即发送绑定 runId」: only the Run the user saw is stopped; one that already ended is not,
       // and this is an ordinary send.
-      if (q.urgent !== undefined && box.runId === q.urgent.runId) box.lease.abort('user-stop')
-      const urgent = box.lease.signal.aborted
-      if (urgent) box.urgentOrigin = q.origin
+      const stopsRun = q.urgent !== undefined && box.runId === q.urgent.runId
       if ('text' in q) {
+        if (stopsRun) live.abort('user-stop')
+        const urgent = live.signal.aborted
+        if (urgent) box.urgentOrigin = q.origin
         const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent })
         return { kind: 'done', result: { status: 'queued', queuedId } }
       }
-      // A queued item sent now: it stays where it is, marked urgent when its Run was stopped.
+      // A queued item sent now: taken before anything is stopped — one withdrawn meanwhile stops
+      // nothing — then back where it was, marked urgent when its Run was stopped.
       const [item] = await ports.queue.take(root, {
         upToSeq: null,
         urgentOnly: false,
         queuedId: q.queuedId,
       })
       if (item === undefined) return { kind: 'done', result: { status: 'not-found' } }
+      if (stopsRun) live.abort('user-stop')
+      const urgent = live.signal.aborted
+      if (urgent) box.urgentOrigin = q.origin
+      // The held item goes out next: it no longer waits on its own switch (「间接切公网」).
+      if (urgent && box.held?.queuedId === item.queuedId) clearHeld(ports, box, q.sessionId)
       await ports.queue.restore(root, [{ ...item, urgent: urgent || item.urgent }])
       return { kind: 'done', result: { status: 'queued', queuedId: item.queuedId } }
     }
@@ -2016,7 +2037,17 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null) finish(box, lease)
       throw error
     }
-    const judged = await post(box, 'command', lease, () => turn(lease, pre))
+    let judged: Turn<T>
+    try {
+      judged = await post(box, 'command', lease, () => turn(lease, pre))
+    } catch (error) {
+      // A turn that failed before its Run opened (a read of the Tape or the queue that threw): the
+      // lease it holds — the one it came in with, or one it began in the mailbox — is finished here,
+      // or the root would wait on it for good (「租约」: 最后没开 Run 的就 finish; models: 没有死锁).
+      // While this turn ran nobody else could begin one, so an unopened live lease is this one's.
+      if (box.lease !== null && !box.runOpen) finish(box, box.lease)
+      throw error
+    }
     if (judged.kind === 'done') return judged.result
     // Began in the mailbox: out to prebuild, and in again. Nothing is written in between.
     return commandFrom(box, sessionId, judged.lease, prebuild(sessionId, box, judged.lease), turn)
@@ -2494,13 +2525,22 @@ function beginLease(
   return begun
 }
 
-/** Taken items that did not go out, back at their seq and no longer urgent (「Run 结束」). */
+/**
+ * The lists of taken items already put back. A failed round is seen twice — by the turn that puts
+ * its items back and by the auto-send's catch — and a second `restore` would queue each item twice
+ * (models/README: 排队消息不丢、不重复). A list is never taken again once restored: a later `take`
+ * returns a new one.
+ */
+const restoredLists = new WeakSet<readonly QueuedMessage[]>()
+
+/** Taken items that did not go out, back at their seq and no longer urgent (「Run 结束」) — once. */
 async function restoreTaken(
   ports: LoopPorts,
   box: RootBox,
   taken: readonly QueuedMessage[] | null,
 ): Promise<void> {
-  if (taken === null || taken.length === 0) return
+  if (taken === null || taken.length === 0 || restoredLists.has(taken)) return
+  restoredLists.add(taken)
   await ports.queue.restore(
     box.rootSessionId,
     taken.map((item) => ({ ...item, urgent: false })),
