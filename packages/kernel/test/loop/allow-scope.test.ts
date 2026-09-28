@@ -16,7 +16,7 @@ import type {
   McpToolSource,
   MemoryHost,
   ModelInfo,
-  PendingCard,
+  PendingApproval,
   PolicyState,
   SearchBackend,
   SessionService,
@@ -35,7 +35,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, lookSource } from './support.js'
+import { LOOK, lookSource, pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'scope-user', tenantId: 'scope-tenant', profileDir: '/tenon/scope' }
 const SESSION = '6c3f9a2e-6b3d-4a71-9f52-0c8de7a11c02'
@@ -169,7 +169,7 @@ async function pausedOn(
   h: Harness,
   name: string,
   input: Record<string, unknown>,
-): Promise<PendingCard> {
+): Promise<PendingApproval> {
   h.provider.script(callOf(name, input))
   const sent = await h.service.send({ sessionId: SESSION, origin: null, text: `call ${name}` })
   if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
@@ -177,7 +177,7 @@ async function pausedOn(
     code: 'paused',
     waitingFor: 'approval',
   })
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   return pending
 }
@@ -188,7 +188,10 @@ async function resolutions(h: Harness): Promise<TapeEntry[]> {
 }
 
 /** Allows the card; the grant the answer wrote. */
-async function allow(h: Harness, pending: PendingCard): Promise<{ scope: string; key: string }> {
+async function allow(
+  h: Harness,
+  pending: PendingApproval,
+): Promise<{ scope: string; key: string }> {
   h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
   expect(
     await h.service.answer({
@@ -356,7 +359,7 @@ describe('allowScope is the grant.scope the same card’s allow writes (旧 217)
         origin: null,
       }),
     ).toEqual({ status: 'stale' })
-    const after = await h.service.currentPending({ sessionId: SESSION })
+    const after = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     if (after === null) throw new Error('no new card')
     expect(after.card.requestId).not.toBe(before.card.requestId)
     expect(after.card.reason).toBe('outside-workspace')

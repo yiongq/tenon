@@ -22,7 +22,9 @@
  *      writes no decision), then `decide()`;
  *   5. deny: the decision and a kernel-authored closure; the third machine denial in a row ends the
  *      Run as `blocked-repeatedly`. Ask: the decision is written with the Run's `paused` terminal, in
- *      one batch (同批规则 1). Allow: the decision and `dispatch_committed`, then — only once they are
+ *      one batch (同批规则 1). AskUserQuestion allowed: the same, its decision `awaits: 'question'` —
+ *      it has no executor, and its answer is its result (H6). Allow: the decision and
+ *      `dispatch_committed`, then — only once they are
  *      on the Tape (T1) — the executor, then its result and outcome, a result past the spill
  *      threshold written to disk first (§大响应落盘; plan step 24). Bash first awaits its base
  *      environment, raced against the stop (§内置工具与参数「Bash」): a stop that wins writes neither.
@@ -174,9 +176,13 @@ export class RunWriteRefusedError extends Error {
 
 export type BatchResult =
   | { readonly kind: 'done'; readonly denials: number }
-  /** A decision asks: it is written with the Run's `paused` terminal, in one batch. */
+  /**
+   * A decision asks, or an AskUserQuestion is allowed: it is written with the Run's `paused` terminal,
+   * in one batch, which says what the Run waits for.
+   */
   | {
       readonly kind: 'paused'
+      readonly waitingFor: 'approval' | 'question'
       readonly withTerminal: readonly NewEntry[]
       /** The asked call and the rest of the batch after it, which wait with it (§等待模型). */
       readonly waiting: readonly CallRef[]
@@ -212,10 +218,15 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
     }
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
     const verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    // AskUserQuestion runs nothing: allowed, it pauses the Run for the answer (H6). One the user
+    // allowed on a card — a policy that asks about it, which 02's product never has (open question
+    // 15) — is looked up as any other tool.
     const executor =
       item === undefined || verdict?.ok !== true
         ? null
-        : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
+        : isQuestion(item) && ctx.approved?.ordinal !== call.ordinal
+          ? 'question'
+          : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
     if (item === undefined || verdict === null || !verdict.ok || executor === null) {
       const invalid = verdict !== null && !verdict.ok ? verdict : null
       try {
@@ -239,7 +250,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       // removed meanwhile is judged by the new list at once (D11).
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
       const facts = held?.facts ?? (await callFactsOf(ctx))
-      if (ctx.approved?.ordinal === call.ordinal) {
+      if (ctx.approved?.ordinal === call.ordinal && executor !== 'question') {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
         denials = 0
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
@@ -277,12 +288,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       const { decision } = judged
       const decisionKey = permissionDecidedKey(ctx.runId, ctx.requestSeq, call.ordinal)
+      const answerWaits = executor === 'question' && decision.record.verdict === 'allow'
       const decided = decisionEntry({
         ...ctx,
         ref,
         argsHash: call.argsHash,
         judged,
         key: decisionKey,
+        ...(answerWaits ? { awaits: 'question' as const } : {}),
       })
       if (decision.record.verdict === 'deny') {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
@@ -297,7 +310,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       if (decision.record.verdict === 'ask') {
         // The card waits; the rest of the batch waits with it (§等待模型).
         const waiting = ctx.calls.slice(k).map((rest) => refOf(ctx, rest))
-        return { kind: 'paused', withTerminal: [decided], waiting }
+        return { kind: 'paused', waitingFor: 'approval', withTerminal: [decided], waiting }
+      }
+      if (executor === 'question') {
+        // Allowed, and it waits for the user's answer: its decision `awaits: 'question'`, with the
+        // Run's `paused` terminal (同批规则 1); the rest of the batch waits with it. No dispatch:
+        // the answer is its result (H6).
+        const waiting = ctx.calls.slice(k).map((rest) => refOf(ctx, rest))
+        return { kind: 'paused', waitingFor: 'question', withTerminal: [decided], waiting }
       }
       // ----- allowed: decision and dispatch first (T1), then the side effect -----------------------
       denials = 0
@@ -785,6 +805,9 @@ export function closedView(
       : { facts: outcome['facts'] as Record<string, string> }),
     output: textOf(result['content']),
     ...(permission === undefined ? {} : { permission }),
+    ...(result['question'] === undefined
+      ? {}
+      : { question: result['question'] as NonNullable<ToolOutcomeView['question']> }),
   }
 }
 
@@ -973,6 +996,8 @@ export function decisionEntry(q: {
   readonly judged: Extract<Judgement, { kind: 'judged' }>
   readonly key: string
   readonly rejudge?: number
+  /** An allowed AskUserQuestion: the Run pauses on it until the answer (H6). */
+  readonly awaits?: 'question'
   readonly writer: FactWriter
 }): NewEntry {
   const { decision } = q.judged
@@ -988,6 +1013,7 @@ export function decisionEntry(q: {
       ? { confirm: { ...decision.confirm, ...q.judged.card }, awaits: 'approval' as const }
       : {}),
     ...(decision.block === undefined ? {} : { block: decision.block }),
+    ...(q.awaits === undefined ? {} : { awaits: q.awaits }),
     ...(q.rejudge === undefined ? {} : { rejudge: q.rejudge }),
     writer: q.writer,
   }
@@ -1144,6 +1170,11 @@ export function effectOf(item: ToolTableItem): 'read' | 'write' | 'external' {
   if (item.source === 'builtin' && isBuiltinToolName(item.originalName))
     return BUILTIN_TOOLS[item.originalName].effect
   return 'external'
+}
+
+/** The builtin AskUserQuestion: the one tool whose allowed call waits for the user (H6). */
+export function isQuestion(item: ToolTableItem): boolean {
+  return item.source === 'builtin' && item.originalName === 'AskUserQuestion'
 }
 
 /** The deciding inspector step's failure, when it did not answer: its note is its own (F1). */

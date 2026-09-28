@@ -45,7 +45,7 @@ import type {
 import { modelWireHash } from '../../src/provider/wire/shared.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
-import { LOOK, lookSource, proxyStore } from './support.js'
+import { LOOK, lookSource, pendingCard, proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'answer-user', tenantId: 'answer-tenant', profileDir: '/tenon/answer' }
 const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
@@ -185,7 +185,7 @@ async function paused(h: Harness, ...ats: readonly string[]): Promise<string> {
 }
 
 async function requestIdOf(h: Harness): Promise<string> {
-  const card = await h.service.currentPending({ sessionId: SESSION })
+  const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (card === null) throw new Error('no card')
   return card.card.requestId
 }
@@ -247,7 +247,7 @@ describe('a card, and its answer', () => {
     expect(requestId).toMatch(/^tool:v1:decision:.+:1:0$/)
     expect(h.memory.confirmRequests.map((request) => request.requestId)).toEqual([requestId])
     expect(await rows(h)).toBe(1)
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending).toMatchObject({
       waitKind: 'approval',
       card: {
@@ -345,7 +345,7 @@ describe('a card, and its answer', () => {
         entry.provenanceKey?.includes(':rejudge:'),
       ),
     ).toEqual([])
-    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
     expect(await h.service.listPendingRoots({ limit: 20 })).toEqual([])
     // 旧 116 (§键与挂靠; 02 验收 12): all six facts of each call are under the paused Run's id, and
     // `writer` names who actually wrote each one — the Run that judged it, the resolver for the answer,
@@ -396,7 +396,9 @@ describe('a card, and its answer', () => {
     expect(h.executed).toEqual([])
     // The card still waits: its row, and the card itself for the next window to show.
     expect(await rows(h)).toBe(1)
-    expect((await h.service.currentPending({ sessionId: SESSION }))?.card.requestId).toBe(requestId)
+    expect(
+      pendingCard(await h.service.currentPending({ sessionId: SESSION }))?.card.requestId,
+    ).toBe(requestId)
     failing = false
     h.provider.script(done())
     expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
@@ -448,12 +450,12 @@ describe('a stop, a new message and the answers that lose to them', () => {
     expect(resolutions(entries)).toEqual(['cancelled-by-stop/stop'])
     expect(outcomes(entries)).toEqual(['0:not-run/stopped', '1:not-run/stopped'])
     expect(named(entries, 'execution/run_started')).toHaveLength(started)
-    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
     // 旧 10: 重启后也不再弹出 — a restarted service delivers no card and lists nothing to resume.
     const restarted = harness({ store: h.store, idsFrom: 1000 })
     expect(await restarted.service.recover()).toEqual({ resumable: [], errors: [] })
     expect(restarted.memory.confirmRequests).toEqual([])
-    expect(await restarted.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(pendingCard(await restarted.service.currentPending({ sessionId: SESSION }))).toBeNull()
     expect(await restarted.service.listPendingRoots({ limit: 20 })).toEqual([])
     expect(await answer(h, requestId, 'allow')).toEqual({ status: 'already-resolved' })
     expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: false })
@@ -604,7 +606,7 @@ describe('a stop, a new message and the answers that lose to them', () => {
     const entries = await all(h)
     expect(resolutions(entries)).toEqual(['cancelled-by-stop/stop'])
     expect(outcomes(entries)).toEqual(['0:not-run/stopped'])
-    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
     expect(await rows(h)).toBe(0)
     expect(await answer(h, fresh, 'allow')).toEqual({ status: 'already-resolved' })
   })
@@ -718,7 +720,7 @@ describe('the re-judgement before an allow (F3)', () => {
       resolutions: resolutions(await all(h)),
       delivered: h.memory.confirmRequests.map((request) => request.requestId.replace(old, 'old')),
       cardLeft:
-        (await h.service.currentPending({ sessionId: SESSION }))?.card.requestId.replace(
+        pendingCard(await h.service.currentPending({ sessionId: SESSION }))?.card.requestId.replace(
           old,
           'old',
         ) ?? null,
@@ -964,7 +966,7 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
     expect(await answering).toEqual({ status: 'refused' })
     // 以 quit 中止，Tape 逐字节不变、重启后卡还在.
     expect(await all(h)).toEqual(before)
-    expect(await h.service.currentPending({ sessionId: SESSION })).not.toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).not.toBeNull()
     const restarted = harness({ store: h.store, idsFrom: 1000 })
     expect(await restarted.service.recover()).toEqual({ resumable: [], errors: [] })
     expect(restarted.memory.confirmRequests.map((request) => request.requestId)).toEqual([
@@ -1052,7 +1054,7 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
       code: 'config-missing',
     })
     expect(await all(h)).toHaveLength(before)
-    expect(await h.service.currentPending({ sessionId: SESSION })).not.toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).not.toBeNull()
   })
 
   it('cancels the card, not supersedes it, when a stop lands in the new message’s prebuild', async () => {
@@ -1132,7 +1134,7 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
       reason: ended.reason,
       delivered: h.memory.confirmRequests.length,
       resolutions: resolutions(await all(h)),
-      cardLeft: (await h.service.currentPending({ sessionId: SESSION })) !== null,
+      cardLeft: pendingCard(await h.service.currentPending({ sessionId: SESSION })) !== null,
     }
   }
 
@@ -1199,7 +1201,7 @@ describe('the mailbox around an answer (§主进程与 kernel 的循环接口)',
     const h = harness()
     const requestId = await paused(h)
     h.memory.advance(400 * 24 * 60 * 60 * 1000)
-    expect(await h.service.currentPending({ sessionId: SESSION })).not.toBeNull()
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).not.toBeNull()
     h.provider.script(done())
     expect(await answer(h, requestId, 'allow')).toEqual({ status: 'applied' })
   })

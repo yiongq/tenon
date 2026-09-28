@@ -19,7 +19,7 @@ import type {
   McpToolSource,
   MemoryHost,
   ModelInfo,
-  PendingCard,
+  PendingApproval,
   RowCall,
   SessionEvent,
   SessionMessageRow,
@@ -41,7 +41,7 @@ import {
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { EDIT_SAME_STRINGS } from '../../src/tools/builtin/edit.js'
-import { LOOK, lookSource } from './support.js'
+import { LOOK, lookSource, pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'calls-user', tenantId: 'calls-tenant', profileDir: '/tenon/calls' }
 const SESSION = '5b2e9a2e-6b3d-4a71-9f52-0c8de7a11c01'
@@ -170,13 +170,17 @@ async function send(h: Harness, text: string): Promise<{ runId: string; code: st
   return { runId: sent.runId, code: ended.reason.code }
 }
 
-async function card(h: Harness): Promise<PendingCard> {
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+async function card(h: Harness): Promise<PendingApproval> {
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   return pending
 }
 
-async function answer(h: Harness, pending: PendingCard, decision: 'allow' | 'deny'): Promise<void> {
+async function answer(
+  h: Harness,
+  pending: PendingApproval,
+  decision: 'allow' | 'deny',
+): Promise<void> {
   const answered = await h.service.answer({
     kind: 'approval',
     sessionId: SESSION,
@@ -542,7 +546,7 @@ describe('calls on a redrawn row (01 修补 6)', () => {
   })
 
   /** Paused on a card for `look a`, then a policy that denies it, then 「允许」: denied on re-judgement. */
-  async function rejudged(): Promise<{ h: Harness; pending: PendingCard }> {
+  async function rejudged(): Promise<{ h: Harness; pending: PendingApproval }> {
     const h = harness()
     h.inspector.answer(ASK)
     h.provider.script(reply(look('a')))

@@ -53,7 +53,7 @@ import {
 import type { RecordedRequest, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
-import { LOOK, instantHost, lookSource } from './support.js'
+import { LOOK, instantHost, lookSource, pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'run-user', tenantId: 'run-tenant', profileDir: '/tenon/run' }
 const SESSION = '5a2c9a2e-6b3d-4a71-9f52-0c8de7a11b35'
@@ -1130,7 +1130,7 @@ const askAt = (at: string): ReturnType<typeof createFakeInspector> =>
 
 /** Answers the root's one card. */
 async function allow(h: Harness): Promise<void> {
-  const card = await h.service.currentPending({ sessionId: SESSION })
+  const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (card === null) throw new Error('no card')
   const answered = await h.service.answer({
     kind: 'approval',
@@ -1903,7 +1903,7 @@ describe('judging a call in the loop (旧 162, 旧 124, 旧 93)', () => {
     h.provider.script(callTurn([{ id: 'toolu_1', input: { at: 'a' } }]))
     // The write fails on the frozen copy: the inspector erred, so the call asks (its ceiling).
     expect((await send(h)).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.reason).toBe('flagged')
     h.provider.script(done())
     expect(

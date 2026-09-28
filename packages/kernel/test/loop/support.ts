@@ -8,6 +8,8 @@ import type {
   LoopPorts,
   McpConnection,
   McpToolSource,
+  PendingApproval,
+  PendingCard,
   RunOrigin,
   TapeStore,
 } from '../../src/index.js'
@@ -111,4 +113,13 @@ export function closedWindows(loop: LoopPorts, closed: readonly RunOrigin[]): Lo
       },
     },
   }
+}
+
+/**
+ * `currentPending`'s approval card, for a case that pauses on a card: a question waiting there is a
+ * bug in the case, so it throws (plan step 26 added the question variant).
+ */
+export function pendingCard(pending: PendingCard | null): PendingApproval | null {
+  if (pending?.waitKind === 'question') throw new Error('a question waits, not an approval card')
+  return pending
 }

@@ -28,6 +28,7 @@ import {
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { GREP_TEXTS } from '../../src/tools/builtin/grep.js'
 import { withVolfs } from '../support/volfs.js'
+import { pendingCard } from './support.js'
 
 const HOME = '/home/u'
 const PROFILE = `${HOME}/prof`
@@ -351,7 +352,7 @@ describe('a walk rooted outside the workspace, allowed on its card (旧 159; §�
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
     if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
     expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.reason).toBe('outside-workspace')
     h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
     expect(
@@ -449,7 +450,7 @@ describe('a link planted in place of the own spill folder (§「在不在工作�
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'go' })
     if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
     expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.reason).toBe('outside-workspace')
     expect(pending?.card.target).toEqual({ type: 'path', path: '/srv/shared/notes.txt' })
   })

@@ -50,7 +50,13 @@ export interface ModelNotes {
   >
   /** A denying inspector that timed out or failed (§Inspector 接口与合议); the source is `inspector`. */
   readonly inspectorFailed: Readonly<Record<'timeout' | 'error', string>>
-  readonly ask?: { readonly result: string; readonly noPreference: string; readonly typed: string } // plan step 26
+  /**
+   * AskUserQuestion's three answers (§提问工具 AskUserQuestion; H6; plan step 26): `result` has
+   * `{answers}` — one `ANSWER_LINE` of the tool's module per question — `noPreference` is the value a
+   * skipped question gets, and `typed` has `{answer}`, the reply as typed. A stop before the answer is
+   * the closure `unanswered`.
+   */
+  readonly ask: { readonly result: string; readonly noPreference: string; readonly typed: string }
   readonly handoff?: {
     readonly status: Readonly<Record<'partial' | 'aborted' | 'superseded' | 'uncertain', string>>
     readonly call: string
@@ -209,6 +215,13 @@ export const MODEL_NOTES: ModelNotes = {
     'This result is too long to include in full ({bytes} bytes), so Tenon saved all of it to this file:\n{path}\nUse Read on that file with offset and limit to read the parts you need. It begins:\n\n{preview}',
   spillFailed:
     'This result is too long to include in full, and Tenon could not save it to a file, so the rest of it is lost. It begins:\n\n{preview}',
+  // The answer goes last in `typed`: it is the user's own text, and nothing follows it.
+  ask: {
+    result: 'The user answered your questions:\n{answers}\nContinue with these answers in mind.',
+    noPreference: 'No preference (the user skipped this question)',
+    typed:
+      'The user did not choose from the options and replied in their own words instead:\n{answer}',
+  },
   connectorFailed: 'The tool call failed: {message}',
   connectorEmpty: '(no output)',
   environment: {
@@ -282,7 +295,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 3
+export const PROMPT_LAYER_VERSION = 4
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e'
+export const PROMPT_LAYER_HASH = 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3'

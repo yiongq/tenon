@@ -45,6 +45,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
+import { pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'stop-user', tenantId: 'stop-tenant', profileDir: '/tenon/stop' }
 const SESSION = '7d3b2a1c-4e5f-4a6b-9c8d-0e1f2a3b4c5d'
@@ -355,7 +356,7 @@ async function allowed(h: Harness, calls: readonly Call[]): Promise<string> {
     code: 'paused',
     waitingFor: 'approval',
   })
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   const answered = await h.service.answer({
     kind: 'approval',

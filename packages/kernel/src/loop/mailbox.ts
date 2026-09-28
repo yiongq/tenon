@@ -85,6 +85,8 @@ import {
   confirmRequestOf,
   frozenBatchOf,
   pausedBatchOf,
+  questionAnswerFacts,
+  questionReplyOf,
   rejectFacts,
   rejudgeDecisionOf,
   rejudgeWaiting,
@@ -98,11 +100,12 @@ import {
 import type { PausedBatch, PendingCard, PendingRoot, ResumeSetup, WaitingCall } from './answer.js'
 import { recoverTape, resumableOf } from './recovery.js'
 import type { Resumable } from './recovery.js'
-import { RunWriteRefusedError, placeOf, readSessionEntries } from './batch.js'
+import { RunWriteRefusedError, closedView, placeOf, readSessionEntries } from './batch.js'
 import { approvalOf } from './calls.js'
 import type { Written } from './batch.js'
-import type { ClosureSource } from './closure.js'
 import { notRunFacts } from './closure.js'
+import { typedReply } from '../tools/builtin/ask-user-question.js'
+import type { AskReply } from '../tools/builtin/ask-user-question.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
 import { openToolTable } from '../tools/table.js'
@@ -114,7 +117,6 @@ import {
   abortedEndReason,
   callKeyOf,
   driveRun,
-  notRunView,
   userTextContent,
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
@@ -370,6 +372,13 @@ export function createLoop(deps: LoopDeps): Loop {
   const rootOf = (sessionId: string): string => roots.get(sessionId) ?? sessionId
   /** The resumable set (§主进程与 kernel 的循环接口「recover」): filled by `recover()`, per root. */
   const resumables = new Map<string, Resumable>()
+  /**
+   * The roots known to wait on a question (「新一轮先预建」: a send there prebuilds nothing, since it
+   * answers the question): added when such a pause commits and by `recover()`, dropped when the
+   * question gets its result. Only a hint — a send's turn reads the Tape — so a stale entry costs a
+   * prebuild at the turn, never a wrong judgement.
+   */
+  const questionWaits = new Set<string>()
   /** The drafts of sessions not yet established (§会话形态「建立前暂存」): only mailboxes write them. */
   const drafts = createDraftStore()
   let bound: LoopPorts | null = null
@@ -670,8 +679,8 @@ export function createLoop(deps: LoopDeps): Loop {
       return { kind: 'done', result: { status: 'queued', queuedId: item.queuedId } }
     }
     // A resumable root resumes first and this message waits in the queue (§插话与输入框状态表); a
-    // card waiting is superseded by the new round (§多卡、拒绝与取代); plan step 26 answers a
-    // question with the text instead.
+    // card waiting is superseded by the new round (§多卡、拒绝与取代); a question waiting is answered
+    // with the text instead (「等提问」, H6).
     const resumed = await resumeFirst(ports, box, q.origin, lease)
     if (resumed !== null && typeof resumed === 'object' && 'aborted' in resumed) {
       // The lease this send came in with, or the one the resume began for it at its turn.
@@ -684,6 +693,13 @@ export function createLoop(deps: LoopDeps): Loop {
       const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent: false })
       return { kind: 'done', result: { status: 'queued', queuedId } }
     }
+    const waiting = await waitingOf(tape, root)
+    if (waiting?.waitKind === 'question') {
+      // A prebuild, if the send made one, is dropped with its failure: the answer resumes the
+      // paused batch on its frozen model (「新一轮先预建」「打字回复不预建」).
+      return { kind: 'done', result: await typedAnswer(ports, box, q, lease, waiting) }
+    }
+    questionWaits.delete(root)
     if (pre === null) {
       // Entered without a prebuild (the root looked resumable, and is not): prebuild now.
       if (lease !== null) return { kind: 'again', lease }
@@ -750,6 +766,14 @@ export function createLoop(deps: LoopDeps): Loop {
     if (lease.signal.aborted) {
       await restoreTaken(ports, box, input.taken)
       return abortedBeforeAppend(ports, box, lease)
+    }
+    if (waiting?.waitKind === 'question') {
+      // 等提问 keeps the queue as it is (§插话与输入框状态表): an auto-send — a held round released,
+      // say — puts its items back, for the request after the answer. A question is never
+      // superseded; a direct send answers it (`sendTurn`) and never gets here.
+      await restoreTaken(ports, box, input.taken)
+      finish(box, lease)
+      return { status: 'not-sent', code: 'config-missing' }
     }
     if (pre.kind === 'confirm') {
       // 「间接切公网」: 0 requests and no fact; the message waits in the queue for the menu's
@@ -1244,8 +1268,16 @@ export function createLoop(deps: LoopDeps): Loop {
         return { status: target }
       }
       if (q.kind === 'question') {
-        // A question can only be waiting once AskUserQuestion pauses a Run (plan step 26).
-        throw new Error('answering a question is plan step 26')
+        const answered = await answerQuestion(
+          ports,
+          box,
+          target,
+          questionReplyOf(target, q.answers),
+          lease,
+          q.origin,
+        )
+        if (typeof answered === 'object') return await abortedAnswer(ports, box, answered.aborted)
+        return { status: answered }
       }
       if (lease === null) {
         // Its turn opens a Run, and it holds no lease: begun here, in the mailbox (「租约」).
@@ -1260,6 +1292,114 @@ export function createLoop(deps: LoopDeps): Loop {
       if (lease !== null && box.lease === lease) finish(box, lease)
       throw error
     }
+  }
+
+  /**
+   * 提问答复 (§每种答复同批写什么): the answer as the question's result and the new Run's head, in one
+   * append; the Run resumes the rest of the batch (§续跑), on the lease the command holds or one begun
+   * here (「租约」). No re-judgement — an answer allows nothing — and no card. `invalid` writes
+   * nothing and finishes the lease; `aborted` names a lease a stop or an exit reached before the
+   * append, for the caller to close by its cause (「登记之后、append 之前被中止」).
+   */
+  async function answerQuestion(
+    ports: LoopPorts,
+    box: RootBox,
+    waiting: WaitingCall,
+    reply: AskReply | 'invalid',
+    held: RunLease | null,
+    origin: RunOrigin | null,
+  ): Promise<'applied' | 'invalid' | 'refused' | { readonly aborted: RunLease }> {
+    if (held?.signal.aborted === true) return { aborted: held }
+    if (reply === 'invalid') {
+      if (held !== null) finish(box, held)
+      return 'invalid'
+    }
+    let lease = held
+    if (lease === null) {
+      const begun = beginLease(ports, box, origin)
+      if ('refused' in begun) return 'refused'
+      lease = hold(box, begun)
+    }
+    let opened: string | null
+    try {
+      const frozen = await frozenBatchOf(tape, waiting)
+      if (lease.signal.aborted) return { aborted: lease }
+      const facts = await questionAnswerFacts({ tape, now, host: deps.host, log, waiting, reply })
+      if (lease.signal.aborted) return { aborted: lease }
+      opened = await openResumed(
+        ports,
+        box,
+        waiting.sessionId,
+        lease,
+        pausedBatchOf(waiting),
+        frozen.setup,
+        {
+          runId: waiting.ref.runId,
+          requestSeq: waiting.ref.requestSeq,
+          calls: waiting.rest,
+          approved: null,
+        },
+        facts,
+        waiting,
+      )
+    } catch (error) {
+      // Nothing opened: the lease — this command's, or the one begun here — is finished (「租约」).
+      if (box.lease === lease && !box.runOpen) finish(box, lease)
+      throw error
+    }
+    if (opened === null) return { aborted: lease }
+    questionWaits.delete(box.rootSessionId)
+    return 'applied'
+  }
+
+  /**
+   * 等提问时按发送 (§插话与输入框状态表; H6): the text, as typed, is the question's answer — `answers`
+   * {}, `response` the text, source `typed-answer` — and no `message/user` is written. A queued item
+   * sent now answers it the same way, taken from the queue; the other items stay queued, and go in
+   * before the request after the answer. The continuation Run opens on this send's lease: the one it
+   * began at its entry, or one begun here.
+   */
+  async function typedAnswer(
+    ports: LoopPorts,
+    box: RootBox,
+    q: SendQuery,
+    lease: RunLease | null,
+    waiting: WaitingCall,
+  ): Promise<SendResult> {
+    let taken: readonly QueuedMessage[] | null = null
+    let text: string
+    if ('text' in q) text = q.text
+    else {
+      taken = await ports.queue.take(box.rootSessionId, {
+        upToSeq: null,
+        urgentOnly: false,
+        queuedId: q.queuedId,
+      })
+      const [item] = taken
+      if (item === undefined) {
+        if (lease !== null) finish(box, lease)
+        return { status: 'not-found' }
+      }
+      text = item.text
+    }
+    let answered: Awaited<ReturnType<typeof answerQuestion>>
+    try {
+      answered = await answerQuestion(ports, box, waiting, typedReply(text), lease, q.origin)
+    } catch (error) {
+      await restoreTaken(ports, box, taken)
+      throw error
+    }
+    if (answered === 'applied') {
+      // The held item answered the question: it no longer waits on its own switch.
+      if (taken?.some((item) => item.queuedId === box.held?.queuedId) === true) {
+        clearHeld(ports, box, q.sessionId)
+      }
+      return { status: 'answered' }
+    }
+    await restoreTaken(ports, box, taken)
+    if (answered === 'refused') return { status: 'refused', code: 'shutting-down' }
+    if (answered === 'invalid') throw new Error('a typed answer is never invalid')
+    return abortedBeforeAppend(ports, box, answered.aborted)
   }
 
   /**
@@ -1688,6 +1828,9 @@ export function createLoop(deps: LoopDeps): Loop {
             card = cardOfEntries(sessionId, end.entries)
           }
           // A quit or a closed window writes nothing more: the card survives the restart (B4).
+          if (!lease.stopRequested && end.reason.waitingFor === 'question') {
+            questionWaits.add(box.rootSessionId)
+          }
         }
         const origin = autoSendOrigin(box, lease, taken)
         finish(box, lease)
@@ -1874,13 +2017,17 @@ export function createLoop(deps: LoopDeps): Loop {
     for (const result of entries) {
       if (result.name !== 'tool/result') continue
       const key = callOfFact(result)
-      const outcome = entries.find(
-        (entry) => entry.name === 'execution/tool_outcome' && callOfFact(entry) === key,
-      )?.payload
-      const source = (outcome?.['source'] ?? null) as ClosureSource | null
-      if (outcome === undefined || source === null) continue
-      const facts = outcome['facts'] as Record<string, string> | undefined
-      const permission = decided.get(key)?.summary
+      // What the facts say, as a redraw reads them: an unanswered question aborted, an answered one
+      // completed with its record (calls.ts).
+      const view = closedView(
+        entries.filter(
+          (entry) =>
+            (entry.name === 'tool/result' || entry.name === 'execution/tool_outcome') &&
+            callOfFact(entry) === key,
+        ),
+        decided.get(key)?.summary,
+      )
+      if (view === null) continue
       const resolution = resolved.get(key)
       // The card the answer named: the waiting call's decision, as calls.ts reads it by `decisionKey`.
       const target =
@@ -1896,9 +2043,7 @@ export function createLoop(deps: LoopDeps): Loop {
         callKey: key,
         providerToolCallId: String(result.payload['providerToolCallId']),
         outcome: {
-          ...notRunView(source, [result]),
-          ...(facts === undefined ? {} : { facts: { ...facts } }),
-          ...(permission === undefined ? {} : { permission }),
+          ...view,
           ...(resolution === undefined || target === undefined
             ? {}
             : { approval: approvalOf(resolution, target) }),
@@ -1926,6 +2071,7 @@ export function createLoop(deps: LoopDeps): Loop {
     if (waiting === null) return false
     const entries = stopFacts(tape, now, waiting)
     await appendTo(waiting.sessionId, entries)
+    questionWaits.delete(box.rootSessionId)
     emitClosures(ports, box, waiting.sessionId, entries, waiting)
     return true
   }
@@ -2456,6 +2602,9 @@ export function createLoop(deps: LoopDeps): Loop {
         rootSessionId: rootOf(item.sessionId),
       }))
       for (const item of resumable) resumables.set(item.rootSessionId, item)
+      for (const row of await tape.listPendingApprovals({ limit: MAX_READ_LIMIT })) {
+        if (row.waitKind === 'question') questionWaits.add(rootOf(row.sessionId))
+      }
       // Delivered at least once; the renderer pulls `approval.current` on opening a session anyway.
       for (const card of recovered.cards) deliver(card)
       return { resumable, errors: recovered.errors }
@@ -2510,8 +2659,9 @@ export function createLoop(deps: LoopDeps): Loop {
         q,
         (lease, pre) => sendTurn(ports, box, q, lease, pre),
         (code) => ({ status: 'refused', code }),
-        // A root known at the entry to be resumable resumes first: nothing to prebuild (「新一轮先预建」).
-        !resumables.has(box.rootSessionId),
+        // A root known at the entry to be resumable resumes first, and one known to wait on a
+        // question is answered: nothing to prebuild (「新一轮先预建」).
+        !resumables.has(box.rootSessionId) && !questionWaits.has(box.rootSessionId),
       )
     },
 
@@ -2555,8 +2705,18 @@ export function createLoop(deps: LoopDeps): Loop {
 
     async currentPending(q): Promise<PendingCard | null> {
       const waiting = await waitingOf(tape, rootOf(q.sessionId))
-      // A question's card is plan step 26's.
-      if (waiting === null || waiting.waitKind !== 'approval') return null
+      if (waiting === null) return null
+      const callKey = callKeyOf(waiting.ref.runId, waiting.ref.requestSeq, waiting.ref.ordinal)
+      if (waiting.waitKind === 'question') {
+        // No card: the widget reads the questions from the reply's `tool-request` block.
+        return {
+          waitKind: 'question',
+          requestId: waiting.decisionKey,
+          sessionId: waiting.sessionId,
+          toolRequestId: waiting.ref.providerToolCallId,
+          callKey,
+        }
+      }
       const card = confirmRequestOf(waiting.sessionId, waiting.decisionKey, waiting.decision)
       if (card === null) return null
       const { item } = await frozenBatchOf(tape, waiting)
@@ -2573,7 +2733,6 @@ export function createLoop(deps: LoopDeps): Loop {
               item,
               waiting.call.input,
             )
-      const callKey = callKeyOf(waiting.ref.runId, waiting.ref.requestSeq, waiting.ref.ordinal)
       return {
         waitKind: 'approval',
         card,

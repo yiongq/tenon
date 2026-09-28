@@ -35,7 +35,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, lookSource } from './support.js'
+import { LOOK, lookSource, pendingCard } from './support.js'
 
 // ----- the recorder ------------------------------------------------------------------------------
 
@@ -366,7 +366,7 @@ async function resultTexts(h: Harness): Promise<string[]> {
 }
 
 async function answer(h: Harness, decision: 'allow' | 'deny'): Promise<void> {
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   expect(
     await h.service.answer({
@@ -420,7 +420,7 @@ describe('「读 a、读 b、写 c、读 d」 (旧 23, 旧 126; 验收 44)', () 
       'permission_decided 2',
     ])
     expect(await resultTexts(h)).toEqual(['1\ta', '1\tb'])
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.target).toEqual({ type: 'path', path: C })
     expect(overlapping()).toEqual([[`Read ${A}`, `Read ${B}`]])
   }

@@ -50,7 +50,7 @@ import type {
   TestLoopPorts,
   TestToolRegistry,
 } from '../../src/testing/index.js'
-import { LOOK, closedWindows, lookSource, proxyStore } from './support.js'
+import { LOOK, closedWindows, lookSource, pendingCard, proxyStore } from './support.js'
 
 const IDENTITY = {
   userId: 'recover-user',
@@ -188,7 +188,7 @@ async function send(s: Service, text = `message ${String((texts += 1))}`): Promi
 }
 
 async function requestIdOf(s: Service): Promise<string> {
-  const card = await s.service.currentPending({ sessionId: SESSION })
+  const card = pendingCard(await s.service.currentPending({ sessionId: SESSION }))
   if (card === null) throw new Error('no card')
   return card.card.requestId
 }

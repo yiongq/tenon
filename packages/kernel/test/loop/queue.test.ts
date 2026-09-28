@@ -33,7 +33,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, closedWindows, lookSource, proxyStore } from './support.js'
+import { LOOK, closedWindows, lookSource, pendingCard, proxyStore } from './support.js'
 
 const IDENTITY = { userId: 'queue-user', tenantId: 'queue-tenant', profileDir: '/tenon/queue' }
 const SESSION = '9a6b9a2e-6b3d-4a71-9f52-0c8de7a11b3d'
@@ -230,7 +230,7 @@ describe('a message sent while a Run is busy (旧 22, 旧 132)', () => {
     expect(h.loop.queued(SESSION)).toHaveLength(1)
     h.inspector.answer({ kind: 'none' })
     h.provider.script(done())
-    const card = await h.service.currentPending({ sessionId: SESSION })
+    const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(
       await h.service.answer({
         kind: 'approval',
@@ -263,7 +263,7 @@ describe('a message sent while a Run is busy (旧 22, 旧 132)', () => {
       waitingFor: 'approval',
     })
     expect(await queued).toMatchObject({ status: 'queued' })
-    const card = await h.service.currentPending({ sessionId: SESSION })
+    const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     h.provider.script(done())
     expect(
       await h.service.answer({
@@ -506,7 +506,7 @@ describe('send-now (「立即发送绑定 runId」)', () => {
     h.loop.connector.needsConfirm(null)
     h.inspector.answer({ kind: 'none' })
     h.provider.script(done())
-    const card = await h.service.currentPending({ sessionId: SESSION })
+    const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     heldId = held.queuedId
     expect(
       await h.service.answer({
@@ -595,17 +595,20 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     // The lease that took them is finished only once they are back: the message behind it goes
     // out with them, in their order (models/README: 排队消息…按规定次序发出), however slow the
     // host's restore is.
-    let reads = 0
+    let failNextRead = false
     const restoring = Promise.withResolvers<void>()
     const h = harness(
       undefined,
       (inner) =>
         proxyStore(inner, {
-          // The auto-send's read of the pause fails: the second round's.
-          listPendingApprovals: (q) =>
-            (reads += 1) === 2
-              ? Promise.reject(new Error('SQLITE_IOERR: disk I/O error'))
-              : inner.listPendingApprovals(q),
+          // Armed only when the auto-send has reached its prebuild.
+          listPendingApprovals: (q) => {
+            if (failNextRead) {
+              failNextRead = false
+              return Promise.reject(new Error('SQLITE_IOERR: disk I/O error'))
+            }
+            return inner.listPendingApprovals(q)
+          },
         }),
       (loop) => ({
         ...loop,
@@ -629,6 +632,7 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     // The auto-send is prebuilding with 'second'; 'third' waits in the mailbox behind it.
     await hold.reached
     const third = h.service.send({ sessionId: SESSION, origin: null, text: 'third' })
+    failNextRead = true
     hold.release()
     await new Promise((resolve) => {
       setTimeout(resolve, 20)

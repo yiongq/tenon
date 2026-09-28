@@ -58,6 +58,7 @@ import { rebuildToolTable } from '../../src/tools/table.js'
 import * as anthropicFixture from '../provider/fixtures/anthropic-sse.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
 import { anthropicModel } from '../provider/wire/fixtures.js'
+import { pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'table-user', tenantId: 'table-tenant', profileDir: '/tenon/table' }
 const SESSION = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
@@ -317,8 +318,8 @@ describe('which tools a request carries', () => {
     provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
     const sent = await service.send({ sessionId: SESSION, origin: null, text: 'hi' })
     if (sent.status === 'started') await loop.runEnded({ runId: sent.runId })
-    // Plan step 18: Read is the chat table's only landed tool; the rest join with their steps.
-    expect(toolNames(provider)).toEqual(['Read'])
+    // Plan step 26: AskUserQuestion joins both profiles.
+    expect(toolNames(provider)).toEqual(['AskUserQuestion', 'Read'])
     const task = '5e2d8b3f-7c4e-4b82-8a63-1d9ef8b22c45'
     await service.selectProfile({
       sessionId: task,
@@ -329,7 +330,15 @@ describe('which tools a request carries', () => {
     const second = await service.send({ sessionId: task, origin: null, text: 'hi' })
     if (second.status === 'started') await loop.runEnded({ runId: second.runId })
     // Plan step 22: Write, Edit and Bash joined the task table.
-    expect(toolNames(provider)).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write'])
+    expect(toolNames(provider)).toEqual([
+      'AskUserQuestion',
+      'Bash',
+      'Edit',
+      'Glob',
+      'Grep',
+      'Read',
+      'Write',
+    ])
   })
 })
 
@@ -527,7 +536,7 @@ describe('the table freezes per session × provider (E2)', () => {
       mcpSources: [source('fix', [tool('ask')], called)],
       turns: [callReply('fix__ask')],
     })
-    const pending = await restarted.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await restarted.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.reason).toBe('interaction-required')
     expect(pending?.allowScope).toBe('once')
     const decided = decisionsOf(await entries(h.store)).at(-1)
@@ -724,7 +733,7 @@ describe('the five-step prefix fixture (A13; 旧 32, 验收 26)', () => {
     expect(await say('three')).toBe('completed')
     // 3. A card, allowed: the Run that resumes sends the next request.
     expect(await say('four')).toBe('paused')
-    const pending = await service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await service.currentPending({ sessionId: SESSION }))
     expect(
       await service.answer({
         kind: 'approval',

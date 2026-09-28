@@ -32,6 +32,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // now resolves elsewhere (plan step 22, with its review's fixes, in place before release); the
   // spill notes spill and spillFailed (plan step 24, in place before release).
   3: 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e',
+  // AskUserQuestion answer templates (plan step 26).
+  4: 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3',
 }
 
 describe('the version gate', () => {
