@@ -947,6 +947,44 @@
 
 第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26 步正在做。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
 
+- **2026-09-28 暂停，交给下一个 agent（owner 要求，可能是 Codex）**。现场：
+  - **分支**：dev 已含第 0 步与 ①②（PR #17–#19）和 Cowork 补录（PR #20）。③ 的分支是 `feat/02-seg3`（远端与本地都在 `a2edd4a`），比 dev 只多文档提交：spec Revisions (20)–(23)、Open 的更新、评审强度。
+  - **第 26 步做了一半，都没提交、没评审、没跑全套测试**，按不可信草稿处理：
+    - kernel 线在 `.claude/worktrees/t26K`（分支 `wt/02-s26-K`，27 个文件，约 +526 行）。
+    - desktop 与渲染端线在 `.claude/worktrees/t26D`（分支 `wt/02-s26-D`，23 个文件，约 +1671 行，含新文件 `AskWidget.tsx`、`AskSummaryCard.tsx`、`ComposerSlots.tsx`、`lib/ask.ts`、`e2e/ask.spec.ts`、`test/renderer-ask.test.ts`）。
+    - 两份草稿另有本地快照 `refs/wip/s26-K`、`refs/wip/s26-D`（没推送；`git diff 139b6b1 refs/wip/s26-K` 可看全文）。
+    - 两条线都改了 `packages/kernel/src/index.ts`、`loop/answer.ts`、`loop/mailbox.ts`（desktop 线还改了 `session/service.ts`），合并时要对齐。
+    - 草稿若在 spec 第 8 行加了 Revisions (18)(19)，要改号成 (24) 起（(20)–(23) 已占）。
+    - 若改了提示层文本，要升 `PROMPT_LAYER_VERSION` 到 4 并加 `LAYER_HISTORY` 一行：3 已随 ② 进 dev，不能原地改哈希。
+    - 基底 worktree `.claude/worktrees/t26`（`wt/02-step26`）只有上面那些文档提交。
+  - **下一步**：
+    - 把两份草稿按第 26 步的交付物与测试要点做完，各自过 format、lint、typecheck 与相关测试，并进 `wt/02-step26`，跑全套（单测、build、e2e）。
+    - 第 26 步用轻评审：一个视角加突变测试，修一轮。
+    - 在实施记录写第 26 步，推到 `feat/02-seg3`；然后照本文件做第 27 步起。
+  - **评审强度**（owner 2026-09-28）：第 26、32、34 步轻评审；第 27–31、33 步完整评审，每步几个视角各配一个核查者、修到收敛；突变测试（把生产代码改坏、看测试变红）每步都做。
+  - **流程**：
+    - 每段一个分支一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，记进 Open、排到段末，再往下做。
+    - 每步的记录格式照第 22–25 步：做法、改了什么、本步的读法、实测、等后面步骤的。
+    - spec 的就地修订一律记进第 8 行的 Revisions。
+  - **key**：
+    - 智谱 key 只在仓库根的 `.env.local` 里，只在测试或评测进程内读，不进命令行、不打印。worktree 里没有这个文件，要用时临时放一个指向主 checkout 那份的符号链接，用完删掉（第 25 步就是这样做的）。
+    - Anthropic 官方 key 在 macOS 登录钥匙串（服务名 `tenon-live-anthropic`），只在那一次 `pnpm test:live` 的命令里读出、作为 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入。读之前先告诉 owner（macOS 会弹窗），不进 `.env.local`、不进 shell profile、不打印。
+    - 预付 $25：第 33 步用 Opus 5.5（spec 点名的项），其余能用 Sonnet 5 的用 Sonnet 5；累计到 $15 先停下问 owner。智谱评测到 2026-09-28 共花约 ¥3.05。
+  - **机器与测试**：
+    - owner 的机器过热过：vitest 一律 `--maxWorkers=2`，同一时刻最多一个 Electron。
+    - e2e 前若环境里有 `ELECTRON_RUN_AS_NODE` 要先去掉（`env -u ELECTRON_RUN_AS_NODE …`）。
+    - `model-menu.spec.ts` 的悬停子菜单在满载下偶发超时，单跑都过。
+  - **git 的坑**：
+    - 新 worktree 先 `pnpm install --frozen-lockfile --offline` 再提交，否则 hook 跑不起来。
+    - lefthook 会把未暂存的改动先藏起来再跑检查，提交时让暂存区等于工作区（`git add -A`）。
+    - 提交标题 ≤ 50 字符，否则 commitlint 拒收；不用 `--no-verify`。
+    - 合并提交用 git 默认的「Merge branch …」标题（自定义的 `merge:` 类型会被拒）。
+    - 从本地 `feat/02-seg3` 开新 worktree 之前先 `git fetch origin && git branch -f feat/02-seg3 origin/feat/02-seg3`：用 `git push origin wt/…:feat/02-seg3` 推送不会更新本地分支，这个坑踩过两次。
+  - **owner 那边剩的**：
+    - 新账号默认审批档（可不验）；
+    - Fable 5.1 的 30 天数据保留（不开就跳过第 33 步那一项）；
+    - 第 34 步 Claude Desktop 一侧的对照，可以照 `../tenon-uxkit/recordings/` 的做法由 GPT 录。
+
 - **2026-09-26 中午账号的每周用量到顶（2026-09-30 20:00 北京时间重置），多 agent 工作流中断**。第 6、8 步是接手 agent 留下的草稿收尾，第 7、9–19 步由本会话直接写；这十四步当时没跑独立评审，第 5 步没跑突变视角。2026-09-27 起多 agent 工作流又能跑（中途有过一次 403 中断，重试即恢复），第 20 步已照多视角加核查、突变的做法跑完；第 5–19 步的补评审已于 2026-09-27 跑完（第 6–19 步只读视角加核查，修复与 owner 裁决见实施记录「① 补评审」），突变视角与复评跑完后 ① 已合进 dev。多 agent 工作流一次最多四个实现 agent，vitest 限 `--maxWorkers=2`，同一时刻最多一个 Electron（2026-09-27 本机过热之后）。
 - 开放问题 12–18、21–25 已于 2026-09-26 由 owner 全部按推荐定下，写回 spec 并记 Revisions (1)–(9)；plan 各步的「暂定与待定」与测试要点同步改了。余下只有要 owner 给数、给 key、补录的 14、19、20。建会话前草稿那一条先给 models/ 的 model1 加了三个草稿场景，两个可执行模型都是 0 违例。提案与核查原文在仓库外 `../tenon-notes/2026-09-26-spec02-open-question-proposals.json`。
 - T6 已定 A（owner 2026-09-26）。owner 2026-09-26 让实现者自行推进到 02 完成：每段一个分支、一个 PR，CI 绿了合进 dev；遇到 spec 标「不开工」或要 owner 给数、给 key、补录的，排到同段最后，记进 Open 再往下走。
