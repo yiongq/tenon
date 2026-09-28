@@ -488,3 +488,12 @@ export {
 } from './tools/search/backends.js'
 
 export { exfiltrationInspector, exfiltrationOpinion } from './permission/exfiltration.js'
+
+export {
+  compactionThreshold,
+  checksThinkingPrefix,
+  COMPACT_RATIO,
+  COMPACT_ABS_CAP,
+  COMPACT_KEEP_TURNS,
+  COMPACT_RETRY_CAP,
+} from './loop/compaction.js'

@@ -26,6 +26,7 @@ import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { createBlockAccumulator } from '../provider/base.js'
 import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
+import { MODEL_NOTES, fill, systemPrompt } from '../prompts/index.js'
 import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
@@ -50,6 +51,7 @@ import {
   systemHash,
 } from '../provider/wire/shared.js'
 import type {
+  CompactionAnchorPayload,
   MessageStatus,
   NewEntry,
   RunUsageLine,
@@ -67,6 +69,7 @@ import type {
   TapeAttemptStop,
 } from '../tape/projection.js'
 import {
+  compactionAnchorKey,
   assembledKey,
   attemptCompletedKey,
   messageRevisionKey,
@@ -75,6 +78,17 @@ import {
   toolsWithheldKey,
   viewContentKey,
 } from '../tape/provenance.js'
+import {
+  compactionCut,
+  compactionThreshold,
+  checksThinkingPrefix,
+  estimateInput,
+  isBoundaryRun,
+  latestAnchor,
+  turnStarts,
+  summaryThinking,
+  COMPACT_RETRY_CAP,
+} from './compaction.js'
 import { replayContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
@@ -99,7 +113,6 @@ import {
   latestEnvironment,
   sameEnvironment,
 } from './environment.js'
-import { systemPrompt } from '../prompts/index.js'
 import { readSessionFacts } from '../session/facts.js'
 import type { Profile } from '../session/facts.js'
 
@@ -133,8 +146,13 @@ export interface RunDriverContext {
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
   /** A token limit for this Run (off by default; evals and sub-agents set one, H11). */
   readonly tokenLimit: number | null
+  readonly compactionThreshold?: number | null
   readonly lease: RunLease
-  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  readonly openTable: (q: {
+    providerId: string
+    generation: number
+    reason: 'first-use' | 'after-compaction'
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
   /**
    * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
    * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
@@ -199,7 +217,7 @@ export interface RunFinish {
 export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const { tape, runId } = ctx
   const signal = ctx.lease.signal
-  const state = await readViewState(tape, ctx.sessionId)
+  let state = await readViewState(tape, ctx.sessionId)
   const { profile } = await readSessionFacts(tape, ctx.sessionId)
   const chain = await chainCounters(tape, ctx.sessionId, runId)
   const validator = createArgumentValidator()
@@ -207,6 +225,10 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   let steps = 0
   let pin = ctx.pin
   let requestSeq = 0
+  let mainRequests = 0
+  let thresholdChecked = false
+  let overflowCompactions = 0
+  const boundaryRun = isBoundaryRun(await readSessionEntries(tape, ctx.sessionId), runId)
   let denials = chain.denials
   const batches = [...chain.batches]
   let lastStop: StopReason | null = null
@@ -319,6 +341,171 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const entry = environmentEntry({ tape, now: ctx.now, messageId: ctx.ids.uuid(), state: now })
     await write([entry])
   }
+  const compact = async (
+    provider: Provider,
+    assembled: AssembledRequest,
+    boundaryRequest: boolean,
+    trigger: CompactionAnchorPayload['trigger'],
+  ): Promise<'skipped' | 'done' | RunFinish> => {
+    const entries = await readSessionEntries(tape, ctx.sessionId)
+    const cut = compactionCut(
+      entries,
+      boundaryRequest,
+      trigger.code === 'overflow' && trigger.retry === 2 ? 1 : 2,
+    )
+    if (cut === null) return 'skipped'
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+      errorCode = null
+      return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+    }
+    const contextAtEntryId = pin
+    const replay = await replayContext(tape, {
+      sessionId: ctx.sessionId,
+      atEntryId: pin,
+      target: ctx.model,
+      beforeOrderSeq: cut.keepFromEntryId,
+    })
+    const requestText = MODEL_NOTES.compactionRequest
+    const messages: InternalMessage[] = [
+      ...replay.messages,
+      { role: 'user', content: [{ type: 'text', text: requestText }] },
+    ]
+    const request: ProviderRequest = {
+      model: ctx.model,
+      messages,
+      maxTokens: ctx.maxTokens,
+      ...(assembled.system === null ? {} : { system: assembled.system }),
+      ...summaryThinking(ctx.model),
+      dropThinkingBefore: messages.length,
+    }
+    requestSeq += 1
+    const summarySeq = requestSeq
+    const assemblyRef = assembledKey(runId, summarySeq)
+    const original = assembled.facts.find((e) => e.name === 'view/assembled')!
+    const manifest = { ...(original.payload as unknown as ViewAssembledPayload), tools: null }
+    await write([
+      ...assembled.facts.filter(
+        (e) => e.name === 'view/content' && e.payload['type'] !== 'tool_spec',
+      ),
+      tape.writer('view').entry('view/assembled', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        sourceSeq: summarySeq,
+        provenanceKey: assemblyRef,
+        payload: manifest,
+        createdAt: ctx.now(),
+      }),
+    ])
+    state.system = assembled.system
+    state.requested = true
+    const encoded = provider.encode(request)
+    const advice = provider.retryAdvice()
+    const resends = Math.max(0, Math.min(advice.maxAttempts - 1, RETRY_CAP))
+    let physicalAttempt = 0
+    let delay = advice.baseDelayMs
+    let firstByteTimeout: false | undefined
+    for (;;) {
+      physicalAttempt += 1
+      const identity = { runId, requestSeq: summarySeq, physicalAttempt }
+      // oxlint-disable-next-line no-await-in-loop -- one physical summary attempt at a time
+      const attempt = await streamAttempt({
+        ctx,
+        provider,
+        encoded,
+        identity,
+        signal,
+        firstByteTimeout,
+        publish: false,
+      })
+      addUsage(usage, attempt)
+      counted += limitTokensOf(attempt.usage, encoderOf(encoded)?.wire ?? null)
+      lastStop = attempt.stop?.reason ?? null
+      errorCode = attempt.error?.code ?? null
+      // oxlint-disable-next-line no-await-in-loop -- audit every summary attempt before any retry or anchor
+      await write([
+        attemptFact(ctx, {
+          encoded,
+          request,
+          attempt,
+          contextAtEntryId,
+          identity,
+          assemblyRef,
+          compaction: { keepFromEntryId: cut.keepFromEntryId, requestText },
+        }),
+      ])
+      if (signal.aborted || attempt.stop?.reason === 'aborted') return aborted()
+      const route = routeOf(attempt, ctx.maxTokens)
+      if (route.kind === 'discard' && route.transient && physicalAttempt <= resends) {
+        if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+          errorCode = null
+          return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+        }
+        firstByteTimeout = attempt.timeout === 'first-byte' ? false : undefined
+        // oxlint-disable-next-line no-await-in-loop -- H12 backoff does not advance the payload identity
+        if (!(await wait(ctx.host, attempt.error?.retryAfterMs ?? delay, signal))) return aborted()
+        delay *= 2
+        continue
+      }
+      if (attempt.error?.code === 'context-overflow' || attempt.stop?.reason === 'context-overflow')
+        return finish({ code: 'context-overflow', compactions: 0 })
+      if (
+        attempt.error !== null ||
+        (attempt.stop?.reason !== 'end-turn' && attempt.stop?.reason !== 'stop-sequence')
+      ) {
+        errorCode = attempt.error?.code ?? null
+        lastStop = attempt.stop?.reason ?? null
+        return finish(providerError(attempt, physicalAttempt))
+      }
+      if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+        errorCode = null
+        return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+      }
+      const text = attempt.content
+        .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+      const generation = state.generation + 1
+      const providerIds = new Set([...state.tables.values()].map((table) => table.providerId))
+      providerIds.add(ctx.model.providerId)
+      const tableFacts: NewEntry[] = []
+      for (const providerId of providerIds) {
+        // oxlint-disable-next-line no-await-in-loop -- assemble other providers outside the mailbox, under this lease
+        const fresh = await ctx.openTable({ providerId, generation, reason: 'after-compaction' })
+        tableFacts.push(
+          ...toolTableFacts({
+            view: tape.writer('view'),
+            sessionId: ctx.sessionId,
+            table: fresh.table,
+            policy: fresh.policy,
+            now: ctx.now,
+          }),
+        )
+      }
+      if (signal.aborted) return aborted()
+      const payload: CompactionAnchorPayload = {
+        ...cut,
+        summary: fill(MODEL_NOTES.compactionWrap, { summary: text }),
+        summarizer: { providerId: ctx.model.providerId, modelId: ctx.model.id },
+        trigger,
+        generation,
+      }
+      // oxlint-disable-next-line no-await-in-loop -- anchor and all replacement tables are one atomic append
+      await write([
+        tape.writer('compaction').entry('compaction/anchor', {
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          sourceSeq: summarySeq,
+          provenanceKey: compactionAnchorKey(runId, summarySeq),
+          payload,
+          createdAt: ctx.now(),
+        }),
+        ...new Map(tableFacts.map((fact) => [fact.provenanceKey, fact])).values(),
+      ])
+      // oxlint-disable-next-line no-await-in-loop -- memory follows the committed generation only
+      state = await readViewState(tape, ctx.sessionId)
+      return 'done'
+    }
+  }
   const batchEnd = (result: BatchResult): RunFinish | null => {
     if (result.kind === 'paused') {
       return finish(
@@ -358,8 +545,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
 
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
   // and answers `stop{ aborted }`, so every request of the Run leaves its attempt fact (01 invariant 2).
-  for (;;) {
-    requestSeq += 1
+  requests: for (;;) {
     let provider: Provider
     try {
       provider = ctx.provider()
@@ -388,7 +574,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     }
     // oxlint-disable-next-line no-await-in-loop -- the queued messages join before this request
     const inserted = await boundary()
-    if (inserted || (requestSeq === 1 && ctx.resume === undefined)) {
+    if (inserted || (mainRequests === 0 && ctx.resume === undefined)) {
       // oxlint-disable-next-line no-await-in-loop -- the note joins before this request's context
       await environment()
     }
@@ -399,7 +585,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       incarnationId: ctx.incarnationId,
       runId,
-      requestSeq,
+      requestSeq: requestSeq + 1,
       model: ctx.model,
       toolsWithheld: ctx.toolsWithheld,
       state,
@@ -409,7 +595,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     })
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
-    const request: ProviderRequest = {
+    let request: ProviderRequest = {
       model: ctx.model,
       ...(assembled.system === null ? {} : { system: assembled.system }),
       messages,
@@ -422,6 +608,52 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       ...(ctx.model.thinkingSpec?.displays?.includes('summarized') === true
         ? { display: 'summarized' as const }
         : {}),
+    }
+    const boundaryRequest = mainRequests === 0 && boundaryRun
+    // oxlint-disable-next-line no-await-in-loop -- each payload reads evidence left by the preceding one
+    const entries = await readSessionEntries(tape, ctx.sessionId)
+    if (!thresholdChecked) {
+      thresholdChecked = true
+      const estimated = estimateInput(entries, request)
+      const threshold = ctx.compactionThreshold ?? compactionThreshold(ctx.model)
+      if (estimated > threshold && (boundaryRequest || !checksThinkingPrefix(ctx.model))) {
+        // oxlint-disable-next-line no-await-in-loop -- summary must finish before this payload can be sent
+        const compacted = await compact(provider, assembled, boundaryRequest, {
+          code: 'threshold',
+          estimatedInputTokens: estimated,
+          thresholdTokens: threshold,
+        })
+        if (compacted !== 'skipped' && compacted !== 'done') return compacted
+        if (compacted === 'done') continue requests
+      }
+    }
+    requestSeq += 1
+    const anchor = latestAnchor(entries)
+    if (anchor !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- the committed anchor determines this request’s cutoff
+      const replay = await replayContext(tape, {
+        sessionId: ctx.sessionId,
+        atEntryId: pin,
+        target: ctx.model,
+      })
+      const lastBoundary = entries.findLast(
+        (entry) =>
+          entry.name === 'execution/run_started' &&
+          entry.sourceId !== null &&
+          isBoundaryRun(entries, entry.sourceId),
+      )
+      const crossedBoundary = lastBoundary !== undefined && lastBoundary.entryId > anchor.entryId
+      const turnWasCompacted =
+        !crossedBoundary &&
+        !boundaryRequest &&
+        anchor.payload['keepFromEntryId'] === turnStarts(entries).at(-1)
+      const cutoff = crossedBoundary
+        ? lastBoundary.entryId
+        : turnWasCompacted
+          ? Number(anchor.payload['keepFromEntryId'])
+          : anchor.entryId
+      const index = replay.orderSeqs.findIndex((seq) => seq >= cutoff)
+      request = { ...request, dropThinkingBefore: index < 0 ? messages.length : index }
     }
     // ONCE per payload — and the encoded request is what every attempt of it streams.
     const encoded = provider.encode(request)
@@ -467,6 +699,26 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         // oxlint-disable-next-line no-await-in-loop -- the discarded attempt is on the Tape before the resend
         await write([attemptEntry])
         ctx.emit.discarded(runId)
+        if (
+          attempt.error?.code === 'context-overflow' ||
+          attempt.stop?.reason === 'context-overflow'
+        ) {
+          if (
+            overflowCompactions >= COMPACT_RETRY_CAP ||
+            (!boundaryRequest && checksThinkingPrefix(ctx.model))
+          )
+            return finish({ code: 'context-overflow', compactions: overflowCompactions })
+          // oxlint-disable-next-line no-await-in-loop -- summary must finish before this payload can be sent
+          const compacted = await compact(provider, assembled, boundaryRequest, {
+            code: 'overflow',
+            retry: (overflowCompactions + 1) as 1 | 2,
+          })
+          if (compacted === 'skipped')
+            return finish({ code: 'context-overflow', compactions: overflowCompactions })
+          if (compacted !== 'done') return compacted
+          overflowCompactions += 1
+          continue requests
+        }
         if (route.transient && physicalAttempt <= resends) {
           // §上限「token 上限」: checked after every attempt — over the limit, no resend goes out.
           if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
@@ -545,6 +797,9 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       // ----- step 4: the batch -----------------------------------------------------------------
       // oxlint-disable-next-line no-await-in-loop -- the batch runs before the next request is built
       const result = await batch({ runId, requestSeq, table: assembled.table, calls })
+      mainRequests += 1
+      thresholdChecked = false
+      overflowCompactions = 0
       steps += 1
       batches.push(signature)
       const ended = batchEnd(result)
@@ -578,6 +833,7 @@ async function streamAttempt(q: {
   readonly identity: RequestIdentity
   readonly signal: AbortSignal
   readonly firstByteTimeout: false | undefined
+  readonly publish?: boolean
 }): Promise<AttemptOutcome> {
   const { ctx, provider, encoded, identity } = q
   // A thinking block is stamped with the guard's model identity rather than the wire id, so a block
@@ -616,7 +872,7 @@ async function streamAttempt(q: {
         break
       case 'text-delta':
       case 'thinking-delta':
-        ctx.emit.delta(identity.runId, event.type, event.text)
+        if (q.publish !== false) ctx.emit.delta(identity.runId, event.type, event.text)
         blocks.apply(event)
         break
       default:
@@ -831,6 +1087,7 @@ function attemptFact(
     readonly contextAtEntryId: number
     readonly identity: RequestIdentity
     readonly assemblyRef: string
+    readonly compaction?: { keepFromEntryId: number; requestText: string }
   },
 ): NewEntry {
   const { encoded, attempt, identity } = q
@@ -849,6 +1106,7 @@ function attemptFact(
     modelWireHash: modelWireHash(ctx.model),
     ...(attempt.responseModelId === null ? {} : { responseModelId: attempt.responseModelId }),
     assemblyRef: q.assemblyRef,
+    ...(q.compaction === undefined ? {} : { compaction: q.compaction }),
   }
   return ctx.tape.writer('provider').entry('provider/attempt_completed', {
     sourceType: 'runtime_event',
@@ -1209,7 +1467,11 @@ export interface AssembleQuery {
   readonly toolsWithheld: 'provider-text-only' | null
   readonly state: ViewState
   /** Opens the table of this provider and generation; called only when the Tape has none. */
-  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  readonly openTable: (q: {
+    providerId: string
+    generation: number
+    reason: 'first-use' | 'after-compaction'
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
   /** The session's profile (`session/profile_set`): which of the two system prompts (H1). */
   readonly profile: Profile
   /** The interface language, read only when the system text is assembled. */
@@ -1260,7 +1522,11 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
   let table: FrozenToolTable
   let opened = false
   if (stored === undefined) {
-    const fresh = await q.openTable()
+    const fresh = await q.openTable({
+      providerId,
+      generation: q.state.generation,
+      reason: 'first-use',
+    })
     table = fresh.table
     opened = true
     facts.push(

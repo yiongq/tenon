@@ -1008,3 +1008,169 @@ test.describe('live search probe · anthropic official', () => {
     })
   }
 })
+
+/** Steps 30/33: exercise the specified summary prefix before wiring compaction into the loop. */
+test.describe('live compaction prefix probe · anthropic official', () => {
+  test.describe.configure({ timeout: 600_000 })
+  const group = LIVE ? officialGroup(process.env, fromFile, pick, MAX_TOKENS) : NOT_LIVE
+  test.skip(group.kind === 'absent', group.kind === 'absent' ? group.reason : '')
+  test('Opus 5.5 classifies prefix enforcement and accepts a thinking-free summary', async () => {
+    if (group.kind !== 'ready') throw new Error('Official prefix probe configuration refused')
+    type Block = { type: string; id?: string; signature?: string; [key: string]: unknown }
+    type Message = { role: 'user' | 'assistant'; content: string | Block[] }
+    type Answer = {
+      content?: Block[]
+      stop_reason?: string
+      usage?: Record<string, unknown>
+      input_transformations?: unknown[]
+      error?: { type?: string; message?: string }
+    }
+    const model = 'claude-opus-5-5'
+    const rows: unknown[] = []
+    const base = {
+      model,
+      max_tokens: 4096,
+      stream: false,
+      system: 'You are a protocol test assistant. Follow the user task briefly.',
+      tools: [
+        {
+          name: 'lookup',
+          description: 'Returns a public fixture value for the computed counts. Call once.',
+          input_schema: {
+            type: 'object',
+            properties: { total: { type: 'integer' }, odd: { type: 'integer' } },
+            required: ['total', 'odd'],
+            additionalProperties: false,
+          },
+        },
+      ],
+    }
+    const request = async (label: string, body: Record<string, unknown>, strict = false) => {
+      const response = await globalThis.fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'x-api-key': group.env['ANTHROPIC_API_KEY'] ?? '',
+          ...(strict ? { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } : {}),
+        },
+        body: JSON.stringify({
+          ...body,
+          ...(strict
+            ? {
+                thinking: {
+                  type: 'adaptive',
+                  block_binding: { prefix_mismatch_behavior: 'error' },
+                },
+              }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(150_000),
+      })
+      const answer = (await response.json()) as Answer
+      rows.push({
+        label,
+        date: new Date().toISOString(),
+        host: 'api.anthropic.com',
+        model,
+        status: response.status,
+        strict,
+        usage: answer.usage ?? null,
+        stopReason: answer.stop_reason ?? null,
+        errorType: answer.error?.type ?? null,
+        mentionsBindingHeader:
+          answer.error?.message?.includes('thinking-binding-controls') ?? false,
+        inputTransformationCount: answer.input_transformations?.length ?? 0,
+        blocks: (answer.content ?? []).map((block) => ({
+          type: block.type,
+          signed: typeof block.signature === 'string' && block.signature.length > 0,
+          emptyThinking: block.type === 'thinking' ? block['thinking'] === '' : undefined,
+        })),
+      })
+      return { status: response.status, answer }
+    }
+    try {
+      const messages: Message[] = [
+        {
+          role: 'user',
+          content:
+            'Determine how many positive integers below 500 have exactly six positive divisors, and how many of those are odd. Call lookup exactly once with these two counts as total and odd. After its result reply DONE.',
+        },
+      ]
+      const first = await request('signed-tool-call', { ...base, messages })
+      expect(first.status).toBe(200)
+      expect(first.answer.stop_reason).toBe('tool_use')
+      expect(
+        first.answer.content?.some(
+          (block) =>
+            block.type === 'thinking' &&
+            typeof block.signature === 'string' &&
+            block.signature.length > 0,
+        ),
+      ).toBe(true)
+      const calls = first.answer.content?.filter((block) => block.type === 'tool_use') ?? []
+      expect(calls).toHaveLength(1)
+      messages.push(
+        { role: 'assistant', content: first.answer.content ?? [] },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: calls[0]?.id, content: 'PUBLIC_FIXTURE_VALUE' },
+          ],
+        },
+      )
+      const changed = await request('changed-prefix-account-check', {
+        ...base,
+        system: `${base.system} The prefix has deliberately changed.`,
+        messages,
+      })
+      expect([200, 400]).toContain(changed.status)
+      const strict = changed.status === 200
+      if (!strict)
+        expect(changed.answer.error?.message?.includes('thinking-binding-controls')).toBe(true)
+      const completion = await request('original-prefix-tool-result', { ...base, messages }, strict)
+      expect(completion.status).toBe(200)
+      expect(completion.answer.stop_reason).toBe('end_turn')
+      expect(
+        strict
+          ? completion.answer.input_transformations
+          : (completion.answer.input_transformations ?? []),
+      ).toEqual([])
+      messages.push({ role: 'assistant', content: completion.answer.content ?? [] })
+      const summaryMessages = messages.map((message) => ({
+        role: message.role,
+        content: Array.isArray(message.content)
+          ? message.content.filter(
+              (block) => !['thinking', 'redacted_thinking'].includes(block.type),
+            )
+          : message.content,
+      }))
+      summaryMessages.push({
+        role: 'user',
+        content: 'Summarize this completed task in one sentence.',
+      })
+      const summary = await request(
+        'summary-without-thinking-or-tools',
+        { model, max_tokens: 4096, stream: false, system: base.system, messages: summaryMessages },
+        strict,
+      )
+      expect(summary.status).toBe(200)
+      expect(summary.answer.stop_reason).toBe('end_turn')
+      expect(
+        strict
+          ? summary.answer.input_transformations
+          : (summary.answer.input_transformations ?? []),
+      ).toEqual([])
+    } finally {
+      const output = pick('TENON_LIVE_RECORD_DIR')
+      const destination =
+        output === undefined
+          ? test.info().outputPath('compaction-prefix-probe.json')
+          : join(output, 'compaction-prefix-probe.json')
+      mkdirSync(dirname(destination), { recursive: true })
+      writeFileSync(destination, JSON.stringify(rows, null, 2))
+      process.stderr.write(`${JSON.stringify(rows)}\n`)
+    }
+  })
+})

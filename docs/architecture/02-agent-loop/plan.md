@@ -482,7 +482,7 @@
     - 旧 166：URL 出现在真人消息文本里（含紧跟全角「，」「）」的写法），或出现在 WebSearch 结果的 `searchHitUrls` 里（包括结果已落盘、Tape 只剩预览），按域名授权免问；只写 `example.com/x`、不带 scheme 的不豁免；写下 `compaction/anchor` 之后污点不清零，清空会话之后才清零；Agent prompt 里写的 URL 不算你的消息；两个条件只满足一个、对话形态、WebSearch 与 Bash 调用本身、你拒绝过的 WebFetch，都不触发；重启后从 Tape 重算，结论不变。
     - 旧 167：用 `createScriptedProvider`（packages/kernel/src/testing/scripted-provider.ts:44）让模型固定发出「读 .env，再 WebFetch `同一域名/?d=<内容>`」，弹出 flagged 卡、URL 完整，答复前 `fetchUntrusted` 调用数为 0。
   - 暂定与待定：开放问题 12 已定（owner 2026-09-26：等价规则；豁免「去掉结尾标点」改为反复去掉、停止字符加反引号，旧 166 补「反引号包着的 URL 与 `[文字](URL).` 的写法也豁免」）；「碰过私有数据」的范围与 `recentUserTexts` 条数在第 34 步看评测再校。
-- [ ] 30. **摘要压缩**（裁决 H10、E2、A13、H12、M5；第二个砍项）
+- [x] 30. **摘要压缩**（裁决 H10、E2、A13、H12、M5；第二个砍项）
   - 读：§上下文管理：大响应落盘与摘要压缩；§tools 只在下列时点变化；§撞墙兜底与换模型。
   - 交付物：`loop/compaction.ts`（阈值、估算、边界、三种时机、防空转）；摘要请求（思考参数六行表、`compaction` 键、复算）；anchor 与各 provider 的 after-compaction 工具表同批写；重建与 `dropThinkingBefore`；撞墙兜底（与 `RETRY_CAP` 分开计）；换到小窗口模型先压缩；污点不随 anchor 清零；压缩阈值的测试接缝（只在 `!app.isPackaged` 加专用变量下生效）。
   - 验收：51；不变量 8（压缩用例）、9。
@@ -958,6 +958,19 @@
   - 突变：7个生产变异全部检出且恢复（删除私有条件、不可信条件、URL豁免、builtin来源约束；颠倒protected.allow判定；去掉DNS拒绝排除；取消desktop注册）。独立核查日志均因业务断言失败，不是编译或加载失败。
   - 集成验证：format/lint/typecheck、160文件2892单测（2项既有跳过）通过。首次全量暴露3个旧测试文件的工具名单/事实序列仍缺WebFetch，补对应工具spec事实与名单；两处位置解构改按名字取值，前置全顺序精确断言保留。build通过；完整e2e 129/130通过（4.6m），唯一model-menu.spec.ts:394在更多模型子菜单后找不到model-type-zhipu超时，与交接已有菜单偶发问题一致；未改代码单独复跑1/1通过（4.0s）。故130项均已验证通过，但不把首跑写成全绿。没有新增网络测试钩子、没有真实私有数据或key，desktop使用SQLite+产品注册表和memory network验证外带。第29步完成；后续30压缩、31父子来源合并、34校准。
 
+- **2026-09-28 · 第30步（摘要压缩，完成）**：基底92596d5已推seg3；t26 / codex/02-step30集成，K / codex/02-step30-kernel负责kernel纯计算/driver/审计/原子表更新，D / codex/02-step30-desktop负责开发接缝与SQLite回归。先读modelsREADME；不改原租约、mailbox次序或停止收口，仅在同一Run内增加摘要请求。所有requestSeq与首个主请求判定分开，摘要不向UI流出、不计步数，用量照记。阈值接缝采用SessionServiceOptions.compactionThreshold可选值，desktop只在未打包且专用环境变量为正安全整数时传入。提示层升7；最终验证与评审见本条末尾。
+  - 官方前缀探测预备：独立审查修正旧账号beta接缝为thinking.type=adaptive + block_binding/error（[官方绑定文档](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)、[Opus5.5迁移指南](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide)说明该type与省略等价；仅测试接缝，产品默认仍省略）。strict响应要求input_transformations实际为[]，不能把缺字段当空；签名必须是thinking块上的非空字符串，记录只有日期/模型/host/状态/usage/块类型/签名是否存在/思考文本是否空，不存正文、签名或请求头。
+  - 首次probe（api.anthropic.com，Opus5.5）：只发1次，HTTP200/tool_use但thinking_tokens=0且无thinking块，签名断言因此失败，不能据此判断账号/绑定或摘要前缀。input408/output26，按$4/$20估约$0.002152；官方累计约$0.116596。记录 /tmp/tenon30-official-prefix-probe/compaction-prefix-probe.json。主线将探测题改为计算两个整数后带参数调用，保留签名断言，待串行空档重测；不改产品默认形状。
+  - 修订题复跑1/1通过（25.8s），同主机/模型，四请求全部200：首个工具调用input488/output590（thinking520），含空thinking文本与非空签名；故意改system且无beta依然200，按plan33判为旧账号路径（这不是推断实际账号创建日期）；后续开启beta+adaptive/block_binding:error，原前缀工具结果input1101/output428、默认摘要input600/output183均end_turn且input_transformations实际[]。改前缀探测input1113/output498。本次约$0.047188，官方累计约$0.163784；无密钥记录 /tmp/tenon30-official-prefix-probe-reasoned/。由此维持默认摘要前缀，不需Revisions；这只是原始协议提前探测，不能代替第33步产品整链、跨重启/跨provider验收。第33步此key必须用旧账号严格测试接缝。
+
+  - 进行中评审：状态视角发现历史provider组装挂起时停止不能结束、主attempt已超tokenLimit仍启动overflow摘要、mid-turn anchor之后的thinking跨下一边界残留。K已修复，独立复核代码收敛；最后一项补含continue(messageId:null)及其后工具续发，按真实boundary run_started终止例外，不与切尾的turnStarts混用。安全/审计视角未发现新确定问题：摘要复算依据持久事实，anchor与所有表同批，F5仍读完整incarnation，packaged不读开发env。尚待完整回归、突变、集成全套检查，未勾选30。
+
+  - 集成补审：多provider原子提交回归抓到相同tool_spec在同批重复provenanceKey，已按键去重。规格反向核查纠正usage守卫过宽：实施记录③规定本来直接结束的拒答/溢出/截断保留结束原因，只有准备重发、摘要或后续主请求才查上限；实现与摘要失败回归同步修订，独立核查认可。主线已合K/D初版并补4096、200K阈值±1token四项，压缩28项通过；D相关14项及SQLite重开审计通过。最终修复补丁、突变及全套门禁仍待完成。
+
+  - 最终相关验证：合K增量与D补丁后3文件53项通过（kernel39、desktop14）。8个生产突变全部检出并恢复，独立核查每份日志均为业务失败：阈值禁用、前缀模型禁压失效、摘要流泄出、溢出重试少一次、Anthropic缓存估算遗漏、多表重复事实、continue后旧thinking残留、打包版读取开发env。首轮前缀变异幸存，因为错误摘要吞掉溢出仍得到相同终态；补“无compaction attempt”断言后baseline39通过、二轮8个全检出。全套format已过，官方probe两处map-spread lint已等价改写；其余全套门禁运行中。
+
+  - 最终门禁：format/lint/typecheck全部通过；163个测试文件2945项单测通过，2项既有跳过；build通过；完整e2e首跑130/130通过（4.3m）。规格、状态恢复、安全审计、突变四视角与交叉核查收敛。验收51及本步不变量8/9完成。默认本机Ollama未运行，条件实测未执行；官方默认摘要前缀已实测通过。后续31子agent、33产品协议整链、34估算校准。第30步勾选并随代码推seg3，段③未完成故暂不开PR。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -975,6 +988,8 @@
 
 ## 交接
 
+- **2026-09-28 第30步完成，待第31步目标快照补定**：集成t26 / codex/02-step30；全部门禁（2945单测、130e2e）、四视角与8突变通过，官方默认摘要前缀探测通过，详见实施记录。K/D草稿通过补丁集成且保留，复用前先stash；不要重复合入。第31步尚未开工，已独立核查交接target无法从现有Tape复原历史真实路径的缺口，具体建议在Open，待owner确认后先记spec Revisions再实现。第28官方max_tokens仍待owner（建议4096），已一并询问。根checkout未改；后续仍整段③一个PR。
+
 - **2026-09-28 第29步完成，继续30摘要压缩**：集成 t26 / codex/02-step29，独立草稿K/D均已通过补丁集成；四视角核查、七变异、2892单测与静态/build通过，130项e2e均经过验证（首跑菜单旧偶发一项、单跑过），详见实施记录。下一步从本步提交建30分支；第28官方max_tokens仍等owner，排到段末。第30预审规格足够，默认摘要前缀方案可开工；保持同一Run租约和mailbox顺序，不改状态模型规则。本机默认Ollama 127.0.0.1:11434/api/tags直连拒绝，条件实测暂无可用默认实例，不安装或启动模型。
 
 - **2026-09-28 第28步独立部分完成，接着第29步**：t26 / codex/02-step28 已集成搜索后端与审批绑定；全套门禁、四视角核查、六变异和智谱两模型真实搜索通过（见实施记录）。官方协议探测已过，产品 max_tokens 等 owner 从建议4096/2048/8192中明确取值；按交接将这个数字依赖排到段末，不勾28，继续29外带检查。官方desktop正向测试补丁 /tmp/tenon28-official-desktop-tests.patch 待数值后应用。K/D第28步草稿已通过补丁集成，原分支保留，复用前stash，不重复合入。后续仍是③一个PR。
@@ -991,7 +1006,7 @@
 
 2026-09-28 Codex 接手后第 26 步已完成：两份草稿审补、集成、全套检查、轻评审与 5 个突变均已完成，详见实施记录。集成在 `t26`（`wt/02-step26`），下一步第 27 步本机抓取与 WebFetch。测试继续串行，Vitest 限 2 workers，同刻最多一个 Electron。
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26、27 步已完成；第28步通用/智谱搜索和审批绑定已推送，官方max_tokens待owner取值排段末；第29步完成，下一步30，见最新交接。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26、27 步已完成；第28步通用/智谱搜索和审批绑定已推送，官方max_tokens待owner取值排段末；第29、30步完成；下一步31的交接目标快照待owner补定，见最新交接。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
 
 - **2026-09-28 暂停，交给下一个 agent（owner 要求，可能是 Codex）**。现场：
   - **分支**：dev 已含第 0 步与 ①②（PR #17–#19）和 Cowork 补录（PR #20）。③ 的分支是 `feat/02-seg3`（远端与本地都在 `a2edd4a`），比 dev 只多文档提交：spec Revisions (20)–(23)、Open 的更新、评审强度。
@@ -1038,6 +1053,8 @@
 ## Open
 
 只列 owner 在仓库外要做的事：
+
+- **第31步交接目标的持久化缺口（2026-09-28，lead与独立核查确认，尚未改spec或开工31）**：spec要求HandoffCall.target与审批卡同算法（文件为真实路径），并从子Tape机械生成；但自动allow判决没有confirm.target，dispatch只存decisionKey，无法复原当时symlink/cwd。例如Read('/w/link')实际读A，交接前link改指B，现有事实不能证明A；原input或当前realpath都不满足该契约。建议只增PermissionDecidedPayload.target?:ConfirmTarget，新判决allow/ask/deny均存已算出的对象（不追加IO），已派发调用经dispatch.decisionKey取快照，未派发取最新判决；无判决/旧事实以原参数生成明确标注unresolved的说明，缺path/cwd不猜默认；path/url原文、command+cwd、search query+host、tool serverId/name采用固定英文模板。需owner确认此补定或放宽target为原始输入；确认后在spec Revisions新增并落完整回退/字符串格式。AGENTS要求规格不足先停，此依赖不挡30收尾。
 
 - **第28步官方搜索 max_tokens 待定**：两模型官方探测均200/end_turn，输出129/145 token，建议4096（备选2048/8192），等待owner明确取值；该依赖排到③段末，继续29。factory无默认数值，desktop官方搜索入口尚未开启。
 

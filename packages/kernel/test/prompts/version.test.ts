@@ -38,6 +38,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   5: 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03',
   // WebSearch result, truncation and quota notes (plan step 28).
   6: '17146efa744b39f5e7e2f867291820d40517f9add47bc718ae88d5cb6bd9a951',
+  // Compaction request and persisted summary wrapper (plan step 30).
+  7: 'f73d2efd58af2bc6176398adcf423c0a8194bdb3e210ce458f83e75fbca61ef0',
 }
 
 describe('the version gate', () => {

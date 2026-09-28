@@ -267,6 +267,7 @@ export interface LoopDeps {
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** A token limit on every Run (H11): off in the product; evals, sub-agents and tests set one. */
   readonly tokenLimit: number | null
+  readonly compactionThreshold: number | null
   /** A call that reaches a request with no result: throw, or repair and log (§兜底). */
   readonly onUnansweredCall: 'throw' | 'repair'
 }
@@ -1751,8 +1752,42 @@ export function createLoop(deps: LoopDeps): Loop {
           userSetting: deps.userSetting,
           testTools: deps.testTools,
           tokenLimit: deps.tokenLimit,
+          compactionThreshold: deps.compactionThreshold,
           lease,
-          openTable: () => openTable(incarnationId, built.assembly, built.profile),
+          openTable: async (q) => {
+            let assembly = built.assembly
+            if (q.providerId !== built.model.providerId) {
+              const entries = await readSessionEntries(tape, sessionId)
+              const selected = entries.findLast(
+                (e) =>
+                  e.name === 'session/model_selected' && e.payload['providerId'] === q.providerId,
+              )
+              if (selected === undefined) throw new Error('used provider has no selected model')
+              const assembling = deps.connector.assemble({
+                sessionId,
+                rootSessionId: root,
+                signal: lease.signal,
+                choice: {
+                  providerId: q.providerId,
+                  modelId: String(selected.payload['modelId']),
+                  effort: (selected.payload['effort'] as string | null | undefined) ?? null,
+                  capabilitySource:
+                    (selected.payload['capabilitySource'] as
+                      | ModelChoice['capabilitySource']
+                      | undefined) ?? 'builtin',
+                },
+              })
+              assembling.catch(() => undefined)
+              assembly = await Promise.race([
+                assembling,
+                whenAborted(lease.signal).then((): RunAssembly => ({
+                  ...built.assembly,
+                  mcpSources: [],
+                })),
+              ])
+            }
+            return openTable(incarnationId, assembly, built.profile, q)
+          },
           // A write task that finds its lease aborted writes no decision, no dispatch and no closure
           // of a call found unusable (§主进程与 kernel 的循环接口「mailbox」): the batch closes the
           // call as stopped instead.
@@ -2197,6 +2232,7 @@ export function createLoop(deps: LoopDeps): Loop {
     incarnationId: string,
     assembly: RunAssembly,
     profile: Profile,
+    q: { providerId: string; generation: number; reason: 'first-use' | 'after-compaction' },
   ): Promise<{ table: FrozenToolTable; policy: PolicyState }> {
     const policy = deps.host.policy.current()
     const candidates = [
@@ -2208,10 +2244,10 @@ export function createLoop(deps: LoopDeps): Loop {
       ...(await mcpCandidates(assembly.mcpSources)),
     ]
     const table = openToolTable({
-      providerId: assembly.model.providerId,
+      providerId: q.providerId,
       incarnationId,
-      generation: 0,
-      reason: 'first-use',
+      generation: q.generation,
+      reason: q.reason,
       candidates,
       policy,
       tenantId: deps.host.identity.tenantId,
@@ -2925,7 +2961,11 @@ function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
  * closes as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped).
  */
 function isRefusedAfterStop(entry: NewEntry): boolean {
-  if (entry.name === 'tool/permission_decided' || entry.name === 'execution/dispatch_committed') {
+  if (
+    entry.name === 'compaction/anchor' ||
+    entry.name === 'tool/permission_decided' ||
+    entry.name === 'execution/dispatch_committed'
+  ) {
     return true
   }
   const source = entry.name === 'execution/tool_outcome' ? entry.payload['source'] : undefined
