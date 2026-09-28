@@ -1085,8 +1085,8 @@
 | 52 | subagent-run核独立child Tape/profile_set、父工具子集、无嵌套Agent/Question或parent_link、父子pause/恢复/原行handoff、step30/time300s partial非error及usage归入收集父Run。security核父授权继承、父workspace因果变更失效、子授权不回流、私有/不可信父子并集；handoff覆盖provider-error partial。e2e原父行卡、拒绝一次、重启后同requestId可答与handoff。 | child等待/重启deadline整链接线已补耐久回归，待主线最终总跑；不能仅纯elapsed函数代替。U packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-security.test.ts packages/kernel/test/loop/subagent-handoff.test.ts；E e2e/subagent.spec.ts |
 | 53 | subagent-run stop/supersede、borrowed/own lease窗口、暂停commit与退出竞态、父queue不入child请求、崩溃child先恢复/父handoff uncertain、不新发provider、长恢复结果spill均断言；handoff从Tape列调用而非模型生成；stop套件核命令确认退出收口。 | 覆盖；未发现新的生产缺陷。；U packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-handoff.test.ts packages/kernel/test/loop/stop.test.ts |
 | 54 | 2026-09-28 api.anthropic.com：shapes日志Opus5/Sonnet5/Opus5.5通过，protocol-first内dated Haiku、omitted signed往返、历史有tools后无tools、二次cache命中通过；cut-long内ping/truncated继续通过。product-final内restart（改实际构建description并新会话正控制）与同会话6阶段组合链通过；search-final最终Sonnet5/Opus5两真实WebSearch+Read冒烟2/2，5wire/4stream complete证据在对应目录。 | 协议项已有真实证据，不能整条勾完：Claude评测/同题对比尚未完成。Fable组织未开30天保留，按已定条件skip而非错误；保留“未实测”标记。01罕见redacted/error/unknown帧未观测，不能声称每种帧真实出现，当前可观测帧已有真实SDK+adapter逐值对照。；L见下。 |
-| 55 | 20题/16compare、chat/cowork及from必含标签；gate检查3条当前prompt层baseline记录，CI已加evals:gate；17全文误判已修且主线报告16checks通过。 | 未完成：baseline×3正在跑；Claude Desktop10题受窗口不可见暂缓；Claude Code glm5.3交互probe与同模型列还需实际记录。不能拿采集kit或伪Tape代替。；`pnpm evals:gate`（基线落盘后）；真实eval按主线调度。 |
-| 56 | 27–34均找到带编号的自动测试/describe；production seams有!isPackaged+专用env门槛，相关packaged拒绝回归；CI声明完整门禁。历史unit-final3027pass+2skip，不是干净clone当前提交证明。 | 未完成：lead承诺最后clean clone实际install/build/lint/typecheck/test/e2e及PR CI；本轮未执行秘密值扫描，也未遍历全部开放问题/不变量1–26（其他分工），不作全无key或全收敛声明。；新clone：`pnpm install --frozen-lockfile`、`pnpm build`、`pnpm lint`、`pnpm typecheck`、`pnpm test --maxWorkers=2`、`pnpm test:e2e`；另format与evals:gate。 |
+| 55 | 20题/16compare、chat/cowork及from必含标签；有效prompt8基线20×3已收齐59pass/1真实fail，原六条宿主错误排除并保留。17全文误判修复、三轮均完整读取。干净clone的evals:gate为30pass/1skip，CI已加门禁。 | 部分完成：Claude Desktop10题受不可见窗口阻塞；Claude Code01与WebFetch两探路通过，余9题、官方10题和Tenon同入口列仍缺，自动审批所需明确授权见Open。不能拿采集kit或伪Tape代替。 |
+| 56 | 不变量1–34均有带编号的自动测试；production seams有!isPackaged+专用env门槛及拒绝回归；745份最终仓库/证据扫描无已配置key原值/官方key形态，生产src禁用凭据路径扫描为空。0612431干净clone已实际offline install、format/lint/typecheck/build、3051单测+2skip与30项eval gate+1skip全过。 | 清理审计已完成；该clone完整e2e132/132通过；PR #21的ci作业已通过，Linux e2e仍运行中。外部验收54/55未齐，不能将spec改implemented。 |
 
 ### 不变量记录
 
@@ -1156,6 +1156,8 @@
 
 ## 清理记录
 
+- **2026-09-28 干净clone全套门禁通过**：实现提交`0612431`，使用`git clone --no-local --branch codex/02-step31`创建独立`/tmp/tenon02-clean-0612431`，实际跑`pnpm install --frozen-lockfile --offline`、format:check、lint、typecheck、test --maxWorkers=2、build、evals:gate --maxWorkers=2、`env -u ELECTRON_RUN_AS_NODE pnpm test:e2e`。结果：3051单测通过/2既有skip（171文件通过）、30评测门禁通过/1既有skip、132 Electron e2e全部通过（4.2m），clone的git status仍干净。日志`/tmp/tenon35-clean-*.log`已持久备份。最终745份仓库与证据文件秘密值扫描无匹配。段③已推到`feat/02-seg3`并建draft PR #21；ci作业通过，Linux e2e运行中。
+
 - 本轮已完成证据另存至仓库外持久目录 `/Users/gq/.codex/visualizations/2026/09/28/01a0e57e-3cff-7f83-a0aa-8ce343d18af7/tenon-spec02-evidence/`，按原目录名保留raw、审计计量和门禁日志；运行中结果结束后补同步。正式results中的raw仍只写文件名。
 
 - 2026-09-28：主线全量3049 tests通过、2既有skip；format/lint/typecheck通过，e2e132/132通过。对应日志`/tmp/tenon35-full-unit.log`、`/tmp/tenon35-{format,lint,typecheck}.log`、`/tmp/tenon34-e2e-current.log`。这不是最后干净clone证明。
@@ -1174,6 +1176,8 @@
 
 
 ## 交接
+
+- **2026-09-28 最新现场：实现已提交推送，干净clone全绿，外部对照待必要输入**：t26/codex/02-step31，代码提交0612431，段③draft PR https://github.com/yiongq/tenon/pull/21 → dev。26–32均完成；33官方协议项完成但Claude评测列未齐；34有效基线20×3和校准完成，同题对照尚缺；35逐条审计、清理及干净clone全套已完成，必须等54/55验收齐后才改implemented。全套3051unit/132e2e/30eval gate通过，既有skip另计。当前无付费或Electron进程、无临时key链接；根checkout未改。后续先处理Open首项的两项具体外发授权和Claude可见窗口，再跑官方10题、CLI其余9题及Tenon匹配入口列，补真实10题Desktop记录；无需重做已完成基线或源码评审。PR保留draft，CI全绿也不替代外部验收。
 
 - **2026-09-28 最终基线收齐，进入干净clone/CI**：t26/codex/02-step31。第26–32步完成；33协议验证完成、34有效基线20×3为59pass/1真实fail，6条宿主故障原始记录另存且重跑全过。基线已报告费用¥52.459700，故障六轮¥0.549024，Flash长任务专项¥1.25186016分别记账。根单Run峰值9、同消息审批续跑链峰值11，子Run最大用量计数3466；所有校准常量保留，完整口径见calibration文档。评测门禁30pass/1skip。评测searchTarget透传遗漏已修，并用两个业务回归做红绿突变；临时密钥链接移除，所有付费进程结束。当前实现即将提交后跑真正干净clone全套门禁；33/34外部对照仍受Open列出的自动审批与不可见Claude窗口阻塞，spec保持ready，PR先建draft，不把尚无证据的外部验收勾成完成。
 
