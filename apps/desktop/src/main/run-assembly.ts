@@ -21,6 +21,7 @@
 import type { Config } from '@tenon-app/contracts'
 import {
   ProviderConfigMissingError,
+  createAnthropicSearchDefinition,
   prepareZhipuSearchQuery,
   zhipuSearchDefinition,
 } from '@tenon-app/kernel'
@@ -111,12 +112,15 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       const definition = providers.get(providerId)
       if (definition === null) return null
       const backend = searchDefinitionFor(
-        providerId,
+        definition,
         baseURLOf(definition, stored[providerId], env()),
       )
       // Definitions' query transformations are pure; selecting a target must never read a key.
       if (backend?.id === 'zhipu') {
         return { host: 'open.bigmodel.cn', ...prepareZhipuSearchQuery(query) }
+      }
+      if (backend?.id === 'anthropic') {
+        return { host: 'api.anthropic.com', query, truncated: false }
       }
       return null
     },
@@ -204,7 +208,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
             secrets: inputs.secrets,
           })
           const searchDefinition = searchDefinitionFor(
-            definition.id,
+            definition,
             inputs.config[BASE_URL_KEY] ?? null,
           )
           if (searchDefinition !== null) {
@@ -310,11 +314,14 @@ function positiveInteger(value: string | undefined): number | null {
 
 /** Search is available only on the supported provider/host combinations (spec 02 §工具形状与后端选择). */
 function searchDefinitionFor(
-  providerId: ProviderId,
+  definition: ProviderDefinition,
   baseURL: string | null,
 ): SearchBackendDefinition | null {
-  if (providerId !== 'zhipu' && providerId !== 'anthropic') return null
+  if (definition.id !== 'zhipu' && definition.id !== 'anthropic') return null
   const host = hostOf(baseURL ?? undefined)
   if (host === 'open.bigmodel.cn') return zhipuSearchDefinition
+  if (definition.id === 'anthropic' && host === 'api.anthropic.com') {
+    return createAnthropicSearchDefinition({ maxTokens: 4096, models: definition.builtinModels })
+  }
   return null
 }

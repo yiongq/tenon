@@ -1,0 +1,24 @@
+{
+  "id": "15-update-release-plan",
+  "profile": "cowork",
+  "turns": [
+    "读取plan.json，把版本改1.1，features末尾追加import，owner保持不变。",
+    "需求调整：移除export，保留import，追加audit；owner改Bo，版本保持1.1，更新plan.json。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "15-update-release-plan"
+    }
+  ],
+  "compare": true,
+  "workspace": "15-update-release-plan",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}

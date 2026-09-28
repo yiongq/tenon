@@ -14,6 +14,7 @@ import {
   confirmRequestEvent,
   invokeRoute,
   sessionFacts,
+  sessionMessages,
 } from '@tenon-app/contracts'
 import type { ChatEvent, MessageRowContract, SessionFactsResponse } from '@tenon-app/contracts'
 import type { TenonBridge } from '../../../preload/index'
@@ -64,6 +65,10 @@ export interface SessionSnapshot {
   readonly held: { readonly host: string } | null
   /** Bumped by each round held for a public host (a queue push or 「继续」): the menu's confirmation. */
   readonly heldSeq: number
+  readonly pendingCall: {
+    readonly name: string
+    readonly input: Readonly<Record<string, unknown>>
+  } | null
   readonly pending: Pending | null
   /** When the current card arrived: clicks within `APPROVAL_CLICK_GUARD_MS` do nothing. */
   readonly pendingSince: number
@@ -143,6 +148,7 @@ export class SessionStore {
       queue: queued.items,
       held: queued.held,
       heldSeq: queued.heldSeq,
+      pendingCall: null,
       pending: null,
       pendingSince: 0,
       answered: new Map(),
@@ -165,6 +171,7 @@ export class SessionStore {
 
   #set(next: Partial<SessionSnapshot>): void {
     this.#snapshot = { ...this.#snapshot, ...next }
+    if (this.#snapshot.pending === null) this.#snapshot = { ...this.#snapshot, pendingCall: null }
     for (const listener of this.#listeners) listener()
   }
 
@@ -316,12 +323,44 @@ export class SessionStore {
       before !== null &&
       pending !== null &&
       before.waitKind === pending.waitKind &&
-      requestIdOf(before) === requestIdOf(pending)
+      requestIdOf(before) === requestIdOf(pending) &&
+      (before.waitKind !== 'approval' ||
+        pending.waitKind !== 'approval' ||
+        before.card.sessionId === pending.card.sessionId)
     // By `requestId`: the same card delivered twice is one card (§HostConfirm 可重复投递), and a
     // question read again is the same question — its widget keeps what was chosen so far.
-    if (same) return
+    if (
+      same &&
+      (pending?.waitKind !== 'approval' ||
+        pending.card.sessionId === this.sessionId ||
+        this.#snapshot.pendingCall !== null)
+    )
+      return
     if (before === null && pending === null) return
-    this.#set({ pending, pendingSince: pending === null ? 0 : Date.now() })
+    if (!same)
+      this.#set({ pending, pendingCall: null, pendingSince: pending === null ? 0 : Date.now() })
+    if (pending?.waitKind !== 'approval' || pending.card.sessionId === this.sessionId) return
+    // A forwarded card belongs to the child: read its actual arguments, never the parent Agent's.
+    const response = await invokeRoute(this.#bridge, sessionMessages, {
+      sessionId: pending.card.sessionId,
+      limit: 1000,
+    })
+    const current = this.#snapshot.pending
+    if (
+      current?.waitKind !== 'approval' ||
+      current.card.requestId !== pending.card.requestId ||
+      current.card.sessionId !== pending.card.sessionId ||
+      current.callKey !== pending.callKey ||
+      !response.ok
+    )
+      return
+    const part = threadFromRows(response.data)
+      .turns.flatMap((turn) => turn.parts)
+      .find((item) => item.kind === 'tool' && item.callKey === pending.callKey)
+    if (part?.kind === 'tool' && this.#snapshot.pendingCall === null) {
+      // The forwarded card becomes visible now; its click guard starts at this point.
+      this.#set({ pendingCall: { name: part.name, input: part.input }, pendingSince: Date.now() })
+    }
   }
 
   async refreshFacts(): Promise<void> {

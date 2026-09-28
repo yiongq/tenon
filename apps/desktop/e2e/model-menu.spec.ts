@@ -45,7 +45,7 @@ test('lists configured providers by host, greys the rest, and names the thinking
   })
   try {
     // Nothing chosen: the first row, and its default level.
-    await expect(page.getByTestId('model-menu-current')).toHaveText('claude-sonnet-5 · High')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('claude-opus-5-5 · Medium')
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
@@ -494,7 +494,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     )
     // A greyed row does nothing.
     await ollamaRow.click({ force: true })
-    await expect(current).toHaveText('claude-sonnet-5 · High')
+    await expect(current).toHaveText('claude-opus-5-5 · Medium')
 
     // A typed id holds text conversations only: its row, once it is the session's, is greyed too.
     await page.getByTestId('model-more').click()

@@ -256,7 +256,7 @@ function abortedWithCalls(entries: readonly TapeEntry[]): boolean {
   )
 }
 
-describe('a stop at any point leaves every call paired (旧 1, stop half)', () => {
+describe('02 不变量 23: a stop at any point leaves every call paired (旧 1, stop half)', () => {
   // 旧 1: 停止取 200 个随机时点，覆盖流式中、工具执行中、等审批三种状态 (做法照 01 验收 7). Each round
   // draws where its stop lands: after an SSE frame — inside and between tool_use blocks too — after
   // a loop event, while the k-th call runs, or while a card waits.
@@ -696,6 +696,10 @@ describe('replay after a retraction and a late result', () => {
         ),
     )
     const messageId = String(withCall?.payload['messageId'])
+    // Both renderer read routes must have something to remove; avoid a vacuous absent-row check.
+    const before = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+    expect(before.find((row) => row.messageId === messageId)?.calls).toHaveLength(1)
+
     const head = await h.store.head(SESSION)
     if (head === null) throw new Error('no head')
     const tape = createTape(h.store)
@@ -712,6 +716,16 @@ describe('replay after a retraction and a late result', () => {
         }),
       ],
     })
+    // session.messages and session.latest are the actual redraw inputs; withdrawn tool facts
+    // remain on the append-only Tape but may not reappear as a free-standing ToolRow.
+    const visible = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+    const latest = await h.service.latestSession({ limit: 100 })
+    expect(latest?.sessionId).toBe(SESSION)
+    for (const rows of [visible, latest?.messages ?? []]) {
+      expect(rows.some((row) => row.messageId === messageId)).toBe(false)
+      expect(rows.flatMap((row) => row.calls ?? [])).toEqual([])
+      expect(JSON.stringify(rows)).not.toContain('call_gone')
+    }
     await send(h, 'and now?')
     const body = JSON.stringify(h.net.requests.at(-1)?.body)
     expect(body).not.toContain('call_gone')

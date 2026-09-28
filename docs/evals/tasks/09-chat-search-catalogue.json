@@ -1,0 +1,27 @@
+{
+  "id": "09-chat-search-catalogue",
+  "profile": "chat",
+  "turns": [
+    "用 WebSearch 查找 demo observatory catalogue，只依据本次搜索结果，回答严格JSON数组，按name排序，每项 {\"name\":名称,\"url\":URL}，不要Markdown。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "09-chat-search-catalogue"
+    }
+  ],
+  "compare": true,
+  "from": ["H15", "H1"],
+  "web": {
+    "search": "09-chat-search-catalogue/search.json"
+  },
+  "host": {
+    "answers": {
+      "default": "allow",
+      "network": "allow",
+      "flagged": "deny",
+      "command": "deny",
+      "outside-workspace": "deny"
+    }
+  }
+}

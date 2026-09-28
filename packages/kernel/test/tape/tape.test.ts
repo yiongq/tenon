@@ -437,7 +437,7 @@ describe('tape facade', () => {
 
   // Plan step 8, 旧 59 and 旧 113 (02 不变量 32): the look-up pages, so no number of revisions in front
   // of the tombstone hides it.
-  it('refuses a revision when the retraction sits past the first page of the message', async () => {
+  it('02 不变量 32: refuses a revision when the retraction sits past the first page of the message', async () => {
     const tape = await withSession()
     const writer = tape.writer('message')
     let clock = 1_700_000_020_000

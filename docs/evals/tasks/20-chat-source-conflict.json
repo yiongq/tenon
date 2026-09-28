@@ -1,0 +1,15 @@
+{
+  "id": "20-chat-source-conflict",
+  "profile": "chat",
+  "turns": [
+    "资料A：2026-09-01计划版本，开馆周一至周五9:00–17:00。资料B：2026-09-20正式公告，周二闭馆，其余周一至周五10:00–18:00；周末未说明。以较新正式公告为准，回答严格JSON {\"closedWeekdays\":[英文三字母],\"openWeekdays\":[英文三字母按周次],\"opens\":\"HH:MM\",\"closes\":\"HH:MM\",\"weekend\":\"unknown\"}。不要补猜周末。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "20-chat-source-conflict"
+    }
+  ],
+  "compare": true,
+  "from": ["H15", "H1"]
+}

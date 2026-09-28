@@ -9,13 +9,24 @@
  * task's deadline and a cancelled run stop the session and still build it, a run directory that
  * will not go does not cost it, and a Run that ended over the token limit fails the task.
  */
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  symlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PROMPT_LAYER_HASH, PROMPT_LAYER_VERSION } from '@tenon-app/kernel'
 import type { TapeEntry } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readAll } from '../evals/cost.js'
+import { redactEvidence, validateRawDirectory } from '../evals/raw.js'
 import { resultProblems } from '../evals/format.js'
 import { loadCheck } from '../evals/load-check.js'
 import { EVAL_GLM_53_ANTHROPIC } from '../evals/models.js'
@@ -200,6 +211,7 @@ describe('a task run end to end, offline', () => {
     // AskUserQuestion joins at step 26; WebFetch joins with its inspector at step 29.
     const bodies = server.requests.map((r) => r.body as { tools?: { name: string }[] })
     expect(bodies[0]?.tools?.map((t) => t.name)).toEqual([
+      'Agent',
       'AskUserQuestion',
       'Bash',
       'Edit',
@@ -648,4 +660,172 @@ describe('checks and verdicts (判分)', () => {
       note: 'a: pass; awaiting human: reads well',
     })
   })
+})
+
+describe('eval child approvals and optional raw evidence', () => {
+  it('answers two child Write cards across Runs and retains child facts without secrets', async () => {
+    const root = fixtures()
+    const rawDir = realpathSync(mkdtempSync(join(tmpdir(), 'tenon-eval-raw-')))
+    cleanups.push(() => rmSync(rawDir, { recursive: true, force: true }))
+    const server = await fake((ws) => [
+      tool('agent', 'Agent', {
+        description: 'update two files',
+        prompt: 'Write notes.txt and a.txt',
+      }),
+      tool('write1', 'Write', { file_path: `${ws}/notes.txt`, content: 'fixed\n' }),
+      tool('write2', 'Write', { file_path: `${ws}/a.txt`, content: 'updated\n' }),
+      text(`Child finished. ${KEY}`),
+      text('Parent finished.'),
+    ])
+    const {
+      record,
+      entries,
+      run: inspection,
+    } = await run(
+      {
+        ...BASE,
+        id: '01-notes',
+        turns: ['Delegate the edits.'],
+        host: { answers: { default: 'allow' } },
+        checks: [{ kind: 'script', id: 'always-pass' }],
+      },
+      server,
+      root,
+      { rawDir },
+    )
+    expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
+    expect(server.requests).toHaveLength(5)
+    const parentLink = named(entries, 'session/parent_link')[0]
+    if (parentLink === undefined) throw new Error('child link missing')
+    const childId = (parentLink.payload['child'] as { sessionId: string }).sessionId
+    expect(inspection.cards).toHaveLength(2)
+    expect(inspection.cards.every((card) => card.sessionId === childId)).toBe(true)
+    const child = await readAll(inspection.tape, childId)
+    expect(named(child, 'execution/run_terminal').map((e) => e.payload['reason'])).toEqual([
+      { code: 'paused', waitingFor: 'approval' },
+      { code: 'paused', waitingFor: 'approval' },
+      { code: 'completed' },
+    ])
+    expect(record.raw).toMatch(/^eval-.*\.json$/)
+    const raw = readFileSync(join(rawDir, record.raw!), 'utf8')
+    expect(raw).not.toContain(KEY)
+    expect(raw).not.toContain('x-api-key')
+    expect(raw).not.toContain('authorization')
+    const saved = JSON.parse(raw) as {
+      sessions: { sessionId: string; entries: unknown[] }[]
+      cards: unknown[]
+      fetched: string[]
+    }
+    expect(saved.sessions.map((session) => session.sessionId)).toEqual([
+      inspection.sessionId,
+      childId,
+    ])
+    expect(saved.sessions[1]?.entries).toHaveLength(child.length)
+    expect(saved.cards).toHaveLength(2)
+    expect(saved.fetched).toEqual([])
+    expect(readdirSync(rawDir)).toEqual([record.raw])
+    expect(() => realpathSync(inspection.dir)).toThrow(/ENOENT/)
+  })
+
+  it('writes no raw file by default and rejects repository and symlink destinations', async () => {
+    const root = fixtures()
+    const server = await fake(() => [text('Done.')])
+    const { record } = await run(
+      { ...BASE, id: '01-notes', turns: ['Hi'], checks: [{ kind: 'script', id: 'always-pass' }] },
+      server,
+      root,
+    )
+    expect(record.raw).toBeUndefined()
+    expect(() => validateRawDirectory('relative')).toThrow(/absolute/)
+    expect(() => validateRawDirectory(import.meta.dirname)).toThrow(/outside/)
+    const link = join(root, 'repo-link')
+    symlinkSync(import.meta.dirname, link)
+    expect(() => validateRawDirectory(join(link, 'not-created'))).toThrow(/outside/)
+  })
+})
+
+it('removes the temporary host even if raw evidence cannot be written', async () => {
+  const root = fixtures()
+  const server = await fake(() => [text('Done.')])
+  const rawDir = join(root, 'existing-file')
+  writeFileSync(rawDir, 'not a directory')
+  let hostDir: string | undefined
+  await expect(
+    runTask({
+      task: {
+        ...BASE,
+        id: '01-notes',
+        turns: ['Hi'],
+        checks: [{ kind: 'script', id: 'always-pass' }],
+      },
+      run: 1,
+      column: column(server),
+      key: KEY,
+      date: '2026-09-27',
+      clientVersion: 'test',
+      fixturesDir: root,
+      checksDir: CHECKS,
+      rawDir,
+      inspect: (inspection) => {
+        hostDir = inspection.dir
+      },
+    }),
+  ).rejects.toThrow(/EEXIST|ENOTDIR/)
+  expect(hostDir).toBeDefined()
+  expect(() => realpathSync(hostDir!)).toThrow(/ENOENT/)
+})
+
+it('uses the root stop reason and cleans up when an approved child times out', async () => {
+  const root = fixtures()
+  const held = deferred()
+  cleanups.push(() => held.resolve())
+  const server = await fake((ws) => [
+    tool('agent', 'Agent', { description: 'update', prompt: 'Write notes.txt' }),
+    tool('write', 'Write', { file_path: `${ws}/notes.txt`, content: 'fixed\n' }),
+    { hold: held.promise, steps: [{ type: 'text', text: 'late child' }] },
+  ])
+  const {
+    record,
+    run: inspected,
+    entries,
+  } = await run(
+    {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Delegate an edit.'],
+      host: { answers: { default: 'allow' } },
+      checks: [{ kind: 'script', id: 'always-pass' }],
+    },
+    server,
+    root,
+    { deadlineMs: 300, runWaitMs: 5000 },
+  )
+  expect(record).toMatchObject({ verdict: 'fail', endReason: 'paused' })
+  expect(named(entries, 'execution/run_terminal').at(-1)?.payload['reason']).toEqual({
+    code: 'paused',
+    waitingFor: 'subagent',
+  })
+  expect(record.note).not.toContain('did not end within')
+  const link = named(entries, 'session/parent_link')[0]!
+  const child = await readAll(
+    inspected.tape,
+    (link.payload['child'] as { sessionId: string }).sessionId,
+  )
+  expect(named(child, 'execution/run_terminal').at(-1)?.payload['reason']).toEqual({
+    code: 'user-stopped',
+  })
+  expect(() => realpathSync(inspected.dir)).toThrow(/ENOENT/)
+})
+
+it('redacts credentials from evidence keys and values, including echoed note text', () => {
+  expect(
+    redactEvidence(
+      {
+        note: `provider said ${KEY}`,
+        headers: { authorization: KEY },
+        payload: { apiKey: KEY, authToken: KEY, 'x-api-key': KEY, [KEY]: `echo ${KEY}` },
+      },
+      KEY,
+    ),
+  ).toEqual({ note: 'provider said [key]', payload: { '[key]': 'echo [key]' } })
 })

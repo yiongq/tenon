@@ -1,0 +1,37 @@
+{
+  "id": "08-seven-page-research",
+  "profile": "cowork",
+  "turns": [
+    "先读 project.json，随后用 WebSearch 搜索 north station capacity。抓取五条搜索结果各自页面，再顺着结果页面内的两个 Supplement 链接抓取补充页。不能只靠搜索摘要。把五个capacity之和、两个reserve之和写入 research.json，格式 {\"capacity\":整数,\"reserve\":整数}。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "08-seven-page-research"
+    }
+  ],
+  "compare": true,
+  "workspace": "08-seven-page-research/workspace",
+  "web": {
+    "search": "08-seven-page-research/search.json",
+    "pages": {
+      "https://research.example.test/result-1": "08-seven-page-research/page-1.html",
+      "https://research.example.test/result-2": "08-seven-page-research/page-2.html",
+      "https://research.example.test/result-3": "08-seven-page-research/page-3.html",
+      "https://research.example.test/result-4": "08-seven-page-research/page-4.html",
+      "https://research.example.test/result-5": "08-seven-page-research/page-5.html",
+      "https://research.example.test/detail-1": "08-seven-page-research/detail-1.html",
+      "https://research.example.test/detail-2": "08-seven-page-research/detail-2.html"
+    }
+  },
+  "host": {
+    "answers": {
+      "default": "allow",
+      "network": "allow",
+      "flagged": "allow",
+      "command": "deny",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["F5", "H15"]
+}

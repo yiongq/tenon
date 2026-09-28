@@ -1,14 +1,15 @@
 /**
  * Anthropic Messages streaming fixtures.
  *
- * NOT RECORDED FROM A LIVE ENDPOINT. The spec asks for recorded SSE, but this run may not touch
- * real credentials or call a provider, so every frame below is hand-built from Anthropic's
+ * HAND-BUILT FIXTURES, live-cross-checked on 2026-09-28 (spec 02 step 33 old-72).
+ * Plain text, thinking/signature, tool input, usage and ping shapes were compared to two official
+ * Opus 5.5 streams and replayed through the SDK/adapter. Extra live metadata is documented in
+ * spec 02 plan; rare redacted/error/unknown frames remain unobserved. These frames still use
+ * invented ids and values, built from Anthropic's
  * documented streaming wire format: one `event:` line, one `data:` line carrying the documented
  * event object, a terminating blank line, and the `ping` events the API interleaves. The event
- * names, the object shapes and the order (message_start → content_block_* → message_delta →
- * message_stop) are the documented ones; the numbers and ids are invented. Whoever first runs
- * `pnpm test:live` against the real endpoint should diff one real stream against these and record
- * what differs.
+ * names, object shapes and order (message_start → content_block_* → message_delta →
+ * message_stop) follow the documented protocol; the values are intentionally stable.
  *
  * One frame per array entry, because that is how fakeNetwork's StreamGate releases them: a frame
  * boundary is the unit an abort test can stop at.

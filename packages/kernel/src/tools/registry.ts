@@ -35,6 +35,7 @@ export interface ToolTableItem extends ToolOrigin {
  * 28, Agent step 31. Until then kernel tests reach them through `createTestSessionService`.
  */
 export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToolName>([
+  'Agent',
   'AskUserQuestion',
   'WebSearch',
   'WebFetch',

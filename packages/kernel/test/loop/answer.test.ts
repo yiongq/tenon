@@ -612,7 +612,7 @@ describe('a stop, a new message and the answers that lose to them', () => {
   })
 })
 
-describe('the re-judgement before an allow (F3)', () => {
+describe('02 不变量 26: the re-judgement before an allow (F3)', () => {
   it('tightens to a denial the policy now makes: denied-on-rejudge, not run, and the batch goes on (旧 4)', async () => {
     const appends: string[][] = []
     const inner = createMemoryTapeStore({ identity: IDENTITY })
@@ -871,7 +871,7 @@ describe('the resumed Run (§续跑)', () => {
     expect(h.provider.starts).toBe(starts)
   })
 
-  it('keeps the paused Run’s provider, model, source, effort, system and tools across an upgrade (旧 15, 旧 16, 不变量 25)', async () => {
+  it('02 不变量 11 / 02 不变量 25: keeps provider, model, source, effort, system and tools across an upgrade', async () => {
     const row = anthropicDefinition.builtinModels.find((model) => model.id === 'claude-sonnet-5')
     if (row === undefined) throw new Error('no claude-sonnet-5 row')
     const store = createMemoryTapeStore({ identity: IDENTITY })

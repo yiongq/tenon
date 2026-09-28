@@ -193,6 +193,7 @@ export function resolvedEntry(q: {
   readonly outcome: ApprovalResolvedPayload['outcome']
   readonly via: ApprovalResolvedPayload['via']
   readonly grant?: ApprovalResolvedPayload['grant']
+  readonly parentWorkspaceKey?: string
   readonly writer: FactWriter
 }): NewEntry {
   const { ref } = q.waiting
@@ -203,6 +204,7 @@ export function resolvedEntry(q: {
     outcome: q.outcome,
     via: q.via,
     grant: q.grant ?? null,
+    ...(q.parentWorkspaceKey === undefined ? {} : { parentWorkspaceKey: q.parentWorkspaceKey }),
     writer: q.writer,
   }
   return q.tape.writer('tool').entry('tool/approval_resolved', {

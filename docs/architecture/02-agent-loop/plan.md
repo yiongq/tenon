@@ -457,7 +457,7 @@
     - 旧 211：`text/plain` 原样返回，`application/octet-stream` 回 is_error 并带类型；超过阈值的页面按 H9 落盘，结果只有预览、路径和大小；HTML 转 Markdown 的验收等库定下后补。
     - 旧 212（WebFetch 部分）：第一次访问 a.example.com 出卡，target 为完整 URL；同主机再抓不出卡；b.example.com、sub.a.example.com 都要出卡；`grant.key` 等于 `grantKey(BUILTIN_SERVER_ID, 'WebFetch', { kind: 'domain', host })`；`A.Example.COM.` 规范化为 `a.example.com`。
   - 暂定与待定：开放问题 12 已定（kernel 等价规则，第 29 步）；开放问题 21、22 已定（按默认；两条线都本机抓取，WebFetch 不设时限、按精确主机名授权）；开放问题 5（`fetchUntrusted`）已确认按修补；开放问题 18 的 HTML 转换已定（owner 2026-09-26）：kernel 的 `tools/builtin/web-fetch` 用 `@mdream/js` 1.7.2（钉死），packages/kernel 加这个依赖，host-independence.test.ts 加它的 browser 平台打包探针；转换前按 charset 用 `TextDecoder` 解码，正文超过 `FETCH_CONVERT_MAX_BYTES`（暂取 1 MB）回 is_error 带字节数；测试要点补：script、style 的内容不进结果，相对链接按最终 URL 转绝对，表格转成 Markdown 表，5000 层嵌套不抛错，GBK 页面不乱码，超上限的正文不转换；开放问题 22（智谱线改不改走 `/reader`）；跳数上限暂取 20（第 34 步校准）；同主机跳转之后那一跳被 host 拒绝的算拦截（`protected`，计入 F2，出回执；暂定）；CGNAT 等地址段不拦（阶段 4）。
-- [ ] 28. **智谱与 Anthropic 搜索后端**（裁决 H8、A6、A9、M4、M2、E1、D1、F5）
+- [x] 28. **智谱与 Anthropic 搜索后端**（裁决 H8、A6、A9、M4、M2、E1、D1、F5）
   - 读：§工具形状与后端选择；§智谱后端；§Anthropic 后端；§审批、授权与费用。
   - 交付物：`tools/search/` 的类型、智谱后端（`search_pro_quark`、70 码点截断、1701–1703）、Anthropic 后端（非流式子请求、按 `forcedToolChoice` 挑型号、多块合并）；run-assembly 按主机选后端并做 key 绑定主机的检查；WebSearch 工具（域名参数随后端的 `domainFilter`）；每个根会话 200 次；审批与后端域名授权；写 `searchHitUrls`；WebSearch 在本步进产品工具表。官方 key 没到手时 Anthropic 线不提供 WebSearch，记为保证档待补。
   - 验收：48、49；补齐 39 的 WebSearch 往返（〔智谱 live〕，后端 `search_pro_quark`，flashx 与 flash 各一遍）与 8 的「搜索后端过同一个白名单函数」。
@@ -498,7 +498,7 @@
     - 不变量 9：会查前缀的模型夹具在回合中途让估算越过阈值，断言不写 anchor、最后一条 assistant 的思考块仍在；不查前缀的夹具断言 `keepFromEntryId` 等于当前回合的起点，当前回合的思考块照常回传。不变量 8 的测试会话补一次摘要压缩。
     - 实测：有本机实例时，Ollama 4096 档超过 num_ctx 的实际行为；智谱 200K 溢出的返回形式用第 21 步的记录。
   - 暂定与待定：`checksThinkingPrefix` 在函数里按 modelId 列出（Opus 5.5、Fable 5.1）；摘要请求的前缀按默认做法（丢掉全部思考块、system 取冻结原文、不带 tools），最好在本步前拿到第 33 步那次带压缩的前缀测试，之后才出的走 Revisions；摘要请求重试用尽以 `provider-error` 结束、历史不变；待摘要部分本身超过新模型窗口时照发，溢出以 `compactions: 0` 结束；不画 anchor 分隔提示；压缩后 system 不重组。
-- [ ] 31. **子 agent**（裁决 H5、F7、F2、F3、B3、D11、H11、F5、F11、H13、B1；第一个砍项）
+- [x] 31. **子 agent**（裁决 H5、F7、F2、F3、B3、D11、H11、F5、F11、H13、B1；第一个砍项）
   - 读：§子 agent 契约；§授权、工作区与外带检查的继承。
   - 交付物：Agent 工具、子会话与 `parent_link`、工具集收窄、沿用父 Run 的模型、授权与工作区现算继承、跨父子的外带检查、暂停与转发、排队消息只在父会话、`subagentElapsedMs` 与期限、交接与用量、停止 / 新消息 / 退出 / 重启的连带、`session.latest` 与 `approval.list` 映射回根会话、单工具回执行，Agent 在本步进产品工具表；`SUBAGENT_STEP_LIMIT`、`SUBAGENT_TOKEN_LIMIT` 在 Revisions 记下 owner 给的数之后才声明。
   - 验收：52、53；不变量 29、30；补齐 17、18、46 与 20 的子 agent 部分。
@@ -520,8 +520,9 @@
     - 握着自己租约的子 Run 的 `run_terminal(completed)` 在 append 途中时点停止：`stopped: true`，不开父会话收交接的 Run，父会话的 Agent 调用记 aborted / `stopped`，交接 `childEndReason` 为 `completed`，fakeNetwork 不多调一次；停止改在交接生成（读子会话 Tape）途中到达，结果相同；子 Run 的 `run_terminal(paused)` 在 append 途中点停止：子会话写 `cancelled-by-stop`，父会话的 Agent 调用记 aborted / `stopped`，卡片消失，不开 Run。
     - 子会话可续跑时在根会话里发消息：先开子会话的续跑，这条留在父会话的队列，出现在父会话收交接的 Run 处理完同批后的第一次请求里，不出现在子会话的任何请求里；收交接的结果与父会话新 Run 的 `run_started`、`model_selected` 在同一次 append 里。
     - 子会话可续跑（含单调用批）：子会话的待批在启动时被收紧，`recover()` 把它列在根会话名下，父会话的 Agent 调用不补写、不生成交接；不打开再重启一次，Agent 调用仍按第 2 类保留；`approval.resume(root)` 开子会话的新 Run 处理同批剩下的，交接之后父会话续跑。
+    - 子 agent 的 `finalReply` 超过 `SPILL_THRESHOLD_CHARS`：`tool/result.handoff.finalReply` 保留全文，父会话的 spill 文件与 `spill` 元数据保存全文，模型可见 content 只有预览/路径；恢复器写 uncertain handoff 时同样执行 H9。
   - 暂定与待定：开放问题 19 已定（owner 2026-09-28：`SUBAGENT_STEP_LIMIT` 30、`SUBAGENT_TOKEN_LIMIT` 500 000，spec Revisions (20)；第 34 步按评测数据复核）；开放问题 18 的到期与其余结局已定（owner 2026-09-26）：每次新 `requestSeq` 的主请求前查，满 300 秒不发、子 Run 以 `time-limit` 结束，交接 `partial`、不标 is_error；以其余原因结束一律 `partial`、不标 is_error、带 `childEndReason`；测试要点补：子会话累计 300 秒后下一次新请求不发，交接 partial、childEndReason 为 time-limit；子会话以 provider-error 结束时交接 partial、不标 is_error；子会话卡上期限写「本次子任务」（开放问题 18 已定）；子会话用任务形态那份系统提示；先写子会话再写父会话之间崩溃，父会话的 Agent 调用一律记 `uncertain`（开放问题 25 已定，2026-09-26）；开放问题 11 的子 agent 读法已确认。
-- [ ] 32. **砍法落定**（裁决 M1）
+- [x] 32. **砍法落定**（裁决 M1）
   - 读：本文件开头的砍法；spec §验收标准 开头的删条目对照；§文档同步「砍的时候再改」。
   - 交付物：owner 定下砍不砍、砍哪些。如果砍：spec 顶部 Revisions 记下砍掉的目标和验收；§13 阶段 2 加带日期注记，指向新的 features spec（砍压缩连带 :881 的 B 与 :900「压缩重试 ≤ 2」；砍子 agent 注明 :886 (2) 由哪份 spec 实现、写进 :948 Research 的前置）；建好那份 spec 的骨架。触发过 M5-B 降级的，确认 Revisions 已逐条记下。
   - 验收：无。
@@ -577,6 +578,19 @@
     - 旧 86：§开放问题 的每条都有结论（写回对应节并记 Revisions，或链到后续 spec），有期限的要么在期限前定下并记进 Revisions，要么代码与「定之前按」一致；标「不开工」的，决定进 Revisions 之前没有合并对应代码；owner 补录在同题对比开跑前补齐。
 
 ## 实施记录
+
+- **2026-09-28 · 第34步基线全集完成**：当前prompt8的glm-5.3 / open.bigmodel.cn/api/paas/v4已收齐20题×3有效记录，59pass/1fail；唯一真实失败为04/2的工作区外日志路径被拒绝。另保留08/09原六条宿主故障及修复重跑，不计入模型成绩，有效基线已报告费用¥52.459700，宿主故障¥0.549024。第17长档案三轮均完整读取60份且账本准确；Flash1M专项另列、完整60份通过、2anchors、已报告¥1.25186016。`pnpm evals:gate --maxWorkers=2`通过30项+1既有skip，CI加入同门禁并固定两worker。基线脚本退出0，临时.env.local链接已移除，无付费进程在跑。校准证据见docs/evals/calibration-2026-09-28.md。仍待官方Claude列、Desktop至少10题、CLI同模型其余9题及Tenon匹配入口列，故34不勾选、spec仍ready。
+
+- **2026-09-28 · 第34步校准中间证据**：搜索修复后08/09各三次均pass；08每轮实际7页、先文件后搜索后抓取、两链接各flagged，共2额外卡且0超额。旧六条宿主故障raw单列，不作模型成绩；聚合器`/tmp/tenon34-calibration/aggregate.py`同时读取两目录、保留原始行并按有效task/run去重。真实基线尚未全集结束。local-rule独立离线性能测量用原Tape的pre-decision前缀、冻结工具及原参数重建45输入（6ask/39none，18–110条事实），意见与原记录全部一致；各200次/预热1000，共9000次，在Apple M5/Node22.22实测runInspectors管线p95 0.005292ms/max0.130333ms，view构造p95约0.007ms/max0.19825ms，sourceHashesStillMatch=true。保留2000ms；不将它称作原基线内计时，不覆盖冷启动、满载或child union。报告与source/raw哈希在`/tmp/tenon34-calibration/inspector-performance.json`。
+
+- **2026-09-28 · 第34步真实基线发现评测搜索包装器遗漏**：第08/09题初次运行中的WebSearch审批后被tool-unavailable关闭，根因是eval watchedConnector未转发第28步新增searchTarget；产品connector本身正确。补fake backend优先、无fake时转发inner目标，两条真实runner/假SSE回归验证70 Unicode码点query、host、一次审批与一次搜索、模型收到成功结果；故意移除该转发两项均以search未执行的AssertionError变红，恢复后相关22项通过。原错误记录与raw保留，不归为模型失败。当前基线仍在采其余题，08/09三次各另行复跑（/tmp/tenon34-baseline-search-rerun.log、同名raw目录），最终统计排除原六条宿主故障记录，不仅以gate计数冒充有效基线。
+
+- **2026-09-28 · 第31步完成**：冻结/预算、状态恢复、权限继承与外带、desktop转发与清理四视角收敛；最后H9停止竞态回归修前红、修后76项通过，两处正文spill突变均被业务断言检出并恢复。完整Electron e2e本轮132/132通过（4.3m，`/tmp/tenon34-e2e-current.log`），format/lint/typecheck及build通过。第35步审计补强测试已另行集成待统一复跑，不据此提前勾33–35。
+
+- **2026-09-28 · 第31步 H9 收敛与第34步基线启动**：撤回旧现场误报的 JudgeContext 丢值；handoffFacts 三调用点已显式传父ID。长交接保留结构化审计、模型正文统一spill；恢复覆盖首次spill失败后成功重建、已有spill拒绝覆盖且审计保留。独立复评发现写盘 await 后停止漏检：own lease会开新父Run，borrowed会误记completed；两个回归修前均红，修后kernel恢复/生命周期/安全/交接共76项过，独立复评收敛。两个H9突变均被正文长度业务断言检出并恢复（/tmp/tenon31-h9-mutation-{handoff,recovery}.log）。评测运行器补连续子审批、子超时停止与根终态区分、可选仓库外脱敏raw，整合20项过；题17全文判分拒绝前缀/中间缺口及generator推答案，允许完整分段，16项过。format/lint/typecheck通过；build通过。第35步新增双协议模型/effort冻结回归2项及1个突变已由独立审计员执行通过，已合入，16个其他不变量编号对应既有真实断言补齐。第34步当前prompt8基线20题×3正在t26运行（/tmp/tenon34-baseline-live.log，raw=/tmp/tenon34-baseline-raw）；临时.env.local链接仅用于本次运行，结束移除。Claude Code隔离交互探路已启，default/manual、glm-5.3、/api/anthropic；Desktop窗口截图停滞且录屏无可见窗口，已请owner保持解锁，其他工作继续。尚未完成34/35，spec仍ready。
+
+
+- **2026-09-28 · 第33步最终搜索与第34步开跑前核验**：Sonnet5与Opus5各一次真实WebSearch往返并Read工作区冒烟，2/2通过（`/tmp/tenon33-search-final.log`、同名目录证据）；各5条wire均200、4条stream protocol均complete，无captureFailure，搜索子请求均由既定Sonnet5/max_tokens4096执行。官方本次主请求按Tape用量计$0.0542058，已知累计$1.0550464，非流式搜索子请求用量未存Tape，累计3次各预留$0.50预算，不将预留额写作账单。state只读末轮复评无新增阻断，确认重试必须同次启动、同请求体后续200+complete；SSE先存原文、统一abort/settle；A16前提已满足。全量测试发现model-selection默认值断言仍是Sonnet5，改为Rev28的Opus5.5，其余3026项通过；全套正在重跑。34的12项判分回归和6个变异已过，记录`/tmp/tenon34-mutations-20260928-130834`，全部为业务AssertionError且恢复后12/12通过；真实基线未开跑。
 
 - **2026-09-26 · 第 1 步（修补与文档落地）**，分支 `docs/02-step1-doc-sync`，完成（format、lint、typecheck 过；一个提交）。
   - 改了什么：00 spec 顶部加第二行、01 spec 顶部加第一行 `Amended by`，全文取自 spec §这次修补怎么记录 与 01 修补 8，正文一字不动；master-reference.md 按 §主参考 master-reference.md 的表逐行改，§4.11 旧六行表换成指向 02 §权限决策顺序 的带日期指针并按原行列出变化，阶段 3 加两条、阶段 4 加七条开工前裁决；goose-mechanisms.md:546 更正为「按注册顺序串行执行，取最严，confidence 只写日志」（落地前按 aaif-goose/goose@80c1197 `tool_inspection.rs` 复核属实）；AGENTS.md:24 按 owner 确认的措辞改写，其余不动；components.md 就地改行（`ApprovalCard` 拆两行、插入 `FolderChip`，各改动行的「规格」列加「02 §界面范围（2026-09-25）」链接）；parity-audit 只在文末追加「2026-09-25 补记」；.env.example 改两处说明、加三条注释；01 plan.md:139 标已结、:155 更正；新建 docs/evals/README.md。每处带 `（2026-09-25 改，见 [02 §<节名>](<路径>)）` 指针；行号按 e3bb32f 核对过，落地时按引文定位。
@@ -971,13 +985,184 @@
 
   - 最终门禁：format/lint/typecheck全部通过；163个测试文件2945项单测通过，2项既有跳过；build通过；完整e2e首跑130/130通过（4.3m）。规格、状态恢复、安全审计、突变四视角与交叉核查收敛。验收51及本步不变量8/9完成。默认本机Ollama未运行，条件实测未执行；官方默认摘要前缀已实测通过。后续31子agent、33产品协议整链、34估算校准。第30步勾选并随代码推seg3，段③未完成故暂不开PR。
 
+- **2026-09-28 第28步官方入口补齐 / 第31步进行中**：owner「按建议继续」确认4096与目标快照，Revisions25提交9f3a345。t26/codex/02-step31集成；t26K/codex/02-step31-kernel负责循环、父子权限/恢复与目标快照，t26D/codex/02-step31-desktop负责官方搜索收尾与桌面展示，lead负责subagent纯函数/limits/提示层。K/D的30草稿已stash后复用。
+  - 31中间验证：K已交首份production preview（主线已应用`/tmp/tenon31-kernel-preview.patch`），生命周期补测仍在K区；lead新增独立安全测试9项在K区通过（父搜索来源豁免、模型prompt/根真人URL不豁免、子风险向父/后继子任务传递但子搜索URL不回流、授权只向下传递）。K生命周期13项通过；恢复评审发现交接开启父租约后停止的null分支漏释放，以及Agent收口reversibility与判决不一致，正修复并补回归。D渲染端111测试通过，未合D31，未跑31全套。33预备接缝独立补丁`/tmp/tenon33-probe.patch`通过9单测及静态检查，尚未合入、没有付费请求。
+  - 28补齐：官方backend按当前anthropic注册模型表选择Sonnet5/Opus5，maxTokens4096；searchTarget同规则且不读key，旧兼容后端不变。D相关39测试及追加search17、主线合入后的search17通过；4096→2048突变由请求体断言检出并恢复。此前28完整评审/全套/真实key探测保留；产品官方整链仍在33验收。本轮未读新key，未新增费用。
+  - 31纯helper：buildSubagentHandoff / handoffText / subagentElapsedMs / subagentElapsedFromTape；目标精确按dispatch判决、未派发最新判决、旧confirm、unresolved顺序读取；冻结历史路径，不读当前fs。累计时间不含暂停/停机/恢复写入，续跑事实按writer.runId归属。limits为30步/500000 token/300000ms；提示层升8。全仓typecheck与相关33项（helpers11、prompt5、search17）通过，独立只读核查未发现缺陷。父子完整循环、UI、四视角/突变/全量尚未完成，不勾31。
+
+
+- **2026-09-28 第32步范围核查**：沿用owner已确认全部实现、不砍项的决定；第27–31步保留，不新建承接被砍功能的features spec。独立核查plan第19步与当前实现，未触发M5-B跨厂商降级，因此§文档同步“砍的时候再改”的迁移注记不适用。本步仅范围决定，无生产变更可作突变；相关能力的突变覆盖保留在27–31实施记录。第31仍有H9交接冲突待裁决，不影响本步保留全部功能的范围决定；32完成。
+
+
+- **2026-09-28 第33步形状首轮（部分，未完成）**：`pnpm test:live --grep 'production thinking shape'`，官方主机`api.anthropic.com`；Opus5、Sonnet5、Opus5.5各1请求均HTTP200/end_turn，真实production encoder生成adaptive+summarized。usage分别input/output=24/15、24/4、26/16，均无缓存，按冻结模型价格估算新增$0.001007，累计约$0.164791。Haiku用例在联网前因草稿alias不匹配本地固定模型id失败，已改为`claude-haiku-4-5-20251001`待重跑；Fable未确认30天保留，条件跳过。记录`/tmp/tenon33-shapes/`、日志`/tmp/tenon33-shapes.log`；key仅该测试进程环境，无.env链接。此轮只证明shape，不证明strict前缀。D产品组和raw组已合草稿，独立评审发现失败证据/停止清理缺口，正在修；未跑D真实请求。
+
+- **2026-09-28 第33步raw协议首轮（部分）**：Haiku固定id enabled/budget1024 shape通过；Opus5.5 omitted工具往返通过，thinking文本为空且签名非空，观察到ping在约6.17秒/1.81秒（仅这次请求，不能据此保证长推理）；去工具表的历史按真实guard drop/target-drops后use/result原样，通过严格校验。Opus5.5缓存对照：无顶层cache_control两次cache_read=0；有cache_control首次创建13340tokens、第二次命中13340，改effort low→high仍命中13340；所有strict成功响应实际input_transformations=[]。Opus5截断探针第一请求400：thinking.disabled.block_binding不允许，此请求无usage；不是产品缺陷，探针改adaptive+strict、自动工具选择、1024→2048，待重跑。5测试4通过1失败，/tmp/tenon33-protocol-first/与对应.log保存真实body/脱敏error/usage；新增估算$0.222259，累计约$0.387050。Fable仍按条件未跑，33未勾。
+
+- **2026-09-28 第28步收尾完成**：官方max_tokens=4096已按owner裁决落地，官方backend选择/审批绑定的既有四视角评审和4096→2048突变均通过，39相关测试及后续全量检查通过。沿用首轮Sonnet5 disabled/Opus5 omitted强制搜索的官方实测结论，智谱两型号真实往返保留；本步所有实现依赖解除，勾28。官方产品WebSearch往返按plan另归33验收，仍需补跑，不把raw探针当产品链已过。实现尚随当前集成diff待提交。
+
+- **第33步Opus5截断探针第二轮（未触发目标场景）**：adaptive+auto请求200、实际input_transformations=[]，但模型回复文字end_turn而未调用工具，不能算截断验收；usage433/351，估算$0.010940，累计约$0.397990。已查[官方Thinking文档](https://platform.claude.com/docs/en/build-with-claude/thinking)：Opus5 adaptive支持forced tool use；探针恢复强制store，同时按真实“继续”规则区分保留下来的完整块与空轮，只有空轮翻倍，不回放半截JSON。待重跑，未修改产品。
+
+- **2026-09-28 第33步长思考与截断续写实测**：`pnpm test:live --grep 'partial tool|omitted long reasoning'` 2/2通过，主机均api.anthropic.com，日志/tmp/tenon33-cut-long.log、证据同名目录。Opus5.5 omitted thinking + high effort长思考57.23s，ping在32.30s、44.23s，完整message_stop，输入188/输出5412（thinking4025）；最大含首尾间隔32.30s，远低于180s，保留官方阈值。Opus5 adaptive+forced store工具在max_tokens1024处截断，partialTools=1、无完整block；照现有空回复规则不留半截tool_use，原上下文提高2048重试，仍max_tokens且partialTools=1，两次均200、实际input_transformations=[]，没有400；本项证明空回复续写形状接受，不声称完成5000次HELLO任务或覆盖保留thinking分支。费用新增约$0.191352，官方累计$0.589342。之前disabled+block_binding 400及auto没有调用工具的失败探测保留记录，不算验收通过。
+
+
+- **第33步接缝突变独立复核**：baseline 11项通过；5项变异均在运行期被行为断言检出（packaged guard反转首先抛禁止读取环境的业务错误，其余包含明确AssertionError），不是编译/导入错误。binding error→ignore、redirect error→follow、删除实际transformations字段门槛、删除complete门槛均被对应断言检出，生产五处已恢复；记录/tmp/tenon33-mutations.json。
+
+- **第33步组合链前两轮失败，证据更正**：两轮各4个请求严格200，但禁用Read后仍有dispatch。初次仅看到refusal就判断禁用生效不准确，复查Tape推翻：草稿使用的userSetting只适用于MCP，内置Read未被禁用。当前已改memory.setPolicy内置Read deny，并断言policy/not-run、无dispatch、新值不泄漏；尚待重跑。这是测试接缝错误，不改产品权限架构。原证据/tmp/tenon33-combined与/tmp/tenon33-combined-2均保留，cleanupComplete=true；每轮链接已清。费用新增第一轮$0.029252、第二轮$0.029252，官方累计约$0.647847。
+
+- **第33步组合链第三轮**：Read→策略禁用Read已真实通过（policy/not-run、无dispatch、无新值泄漏），成功来到Write暂停卡；测试将PendingApproval.callKey误比成provenanceKey而失败，已按现有runId:requestSeq:ordinal修正。这轮5个官方请求200，未用智谱；新增约$0.034254，累计$0.682100。/tmp/tenon33-combined-3保留，finally停止暂停卡，cleanupComplete=true。后续重跑整链，不以通过前两阶段替代完整验收。
+
+- **第34步独立准备（未开跑评测）**：K交06–20新增题目/fixture/check草稿，目标总20题16compare且含chat/cowork。D轻评审发现06第三次策略拒绝仍可completed误绿、07只认一种外带URL拼写、08仅按call事实排序无法证明先读后搜索再抓页，已修且经D复评、已合主线，不作为完整评测完成。Claude Code本机2.1.280可用，未读取CLI凭据或运行模型。
+
+- **第33步组合链第四轮**：全部业务阶段实走到compaction/anchor，真实智谱Glob的tool id已回放到官方，所有收到的响应200且strict实际[]。两次TLS连接未建立即失败被产品成功重试；测试仍按固定物理请求数判断，导致summary-main-wire-mismatch，整测试未绿。已改仅允许Tape明确network错误且后续完全相同body重试成功的null-status请求，strict仍要求所有收到的官方响应complete/实际[]，不允许HTTP错误。/tmp/tenon33-combined-4，新增$0.085121与智谱¥0.003841，官方累计$0.767221。
+
+- **第33步产品/SSE组首轮**：5项中1过、2失败、2因serial组跳过。原始omitted工具往返通过并保存实际SSE（/tmp/tenon33-product-and-sse）：两条流经fakeNetwork→真实SDK/adapter逐值验证text、thinking、signature、tool input及input/output/cache/reasoning用量；与01三组fixture比，新增metadata为message.container/diagnostics/stop_details、usage.cache_creation/service_tier/inference_geo及delta.container/stop_details，所观察帧没有缺失夹具所需字段。未观测redacted/error/unknown等罕见帧，不能声称全部种类已实测。组合链第五轮到摘要时收到HTTP200/refusal，产品以provider-error停止，仍算失败；没有将拒绝当验收通过。restart被关闭后app.process句柄失效的测试清理错误掩盖，D正在离线复现；两搜索尚未执行。此组已知新增约$0.067748、智谱¥0.004109，官方累计约$0.834970；桌面失败从保留的测试profile只读恢复1次Opus5.5调用（input4/output137/cacheWrite4529），补计$0.025401，总累计$0.860371；事实已存同目录recovered-restart-facts.json。26项离线（SSE15、34判分8、格式3）通过，三处34判分缺口修复经D复评。
+
+- **第33步严格前缀产品验收通过，搜索重试断言待复跑**：/tmp/tenon33-product-final中旧65同会话整链与旧66跨重启两项正式通过；旧66另开新会话证明修改后的Read描述确已加载，而原暂停续跑仍用原Opus5.5和原工具表。组合链12物理请求含1次TLS失败，后续同body成功，9个实际收到的官方SSE均200/complete/实际[]。Sonnet5 WebSearch与Read均执行完，测试因TLS失败的null-status记录不接受而红，Opus5搜索未跑。新断言只允许本launch中记录的原始请求体相同且后续成功的重试，不借旧会话错误计数，待复跑。已知新增主请求$0.140470、智谱¥0.003928；官方已知累计$1.000841，另1次官方搜索子请求用量未进Tape，先保留$0.50预算余量而不伪造实扣金额。严格前缀验收已满足A16调序前置，Revisions28按既有owner决定把新用户默认首行换为Opus5.5，33整体仍未勾选（搜索、34列未全完成）。
+
+- **第34步轻评审与突变完成（真实评测尚未开始）**：20题16compare及4个长文档判分回归已合，三缺口修复经独立复评；6个判分突变均命中对应业务AssertionError且字节恢复，恢复后12项判分测试通过，日志/tmp/tenon34-mutations-20260928-130834。包括第三拦截结束码、外带URL变体、结果事实因果先后，以及长任务的全文/起始offset/完整60份三个门槛。源fixture输出改用stdout.write以通过根lint，题意和expected不变。尚未跑任何34真实列，不勾34。
+
 ## 验收记录
 
-（第 35 步填写）
+### 第 35 步分组审计（2026-09-28，待最终门禁）
+
+三组分别读取完整规格、测试输入和实际断言，核查既有 live 记录。下表“覆盖”指断言覆盖，**不等于本轮执行通过**；新增回归和最终冻结提交的全套/干净 clone 门禁由主线统一记录，未完成前不据此勾第 35 步或改 implemented。第 35 步已运行的旧 model-freeze 双线 2/2 与续发 effort 业务突变有效；后加 continue 等分支不借用此结果。
+
+路径：K=`packages/kernel/test`，D=`apps/desktop/test`，E=`apps/desktop/e2e`，C=`packages/contracts/test`；表内省略前缀的 kernel 目录沿用 K，`e2e/` 沿用 desktop。A–G、U1–U6、E1–E2 是下面的复跑组；`U <文件>` 按统一 Vitest 模板，`E <文件>` 按 Playwright 模板。每项还须过最终共享门禁。
+
+| 验收 | 已核实际断言与证据 | 边界及复跑 |
+|---|---|---|
+| 1 | K/provider/definitions.test.ts:1055 精确四行顺序；1060 逐行工具、reasoning-content、tool_stream；1132 四模型逐个 same-model 有工具回传、无工具不回传、换模型丢弃；811 精确三家。D/model-selection.test.ts 的选择矩阵接受内置行。plan:595 记录 2026-09-26 flashx live 2/2（3.2s 回复/6.2s 停止），同段 TS 探针四行均接收 tool_stream。 | 不能把当年的样本称为所有当前模型 live。复跑仅官方按量凭据、沿现有 live 启动器，不把 key 写命令/文件。；A；live 历史复核 |
+| 2 | 已读 `git show ee0e1e6`：master-reference、goose、AGENTS 在同一提交，00/01 spec 各只增一行 Amended by，spec-driven-dev 无 diff。plan:584–593 对 common.json 延至19及 ADR-003 在 PR14（9d5d852）的说明；落点文件都在提交清单。 | 字面“文档同步一次落地”与实际 common.json 后置是已记录实施安排，不编造同提交；最终结论应同时引 step19 本地化记录。旧公用文档后来被合法修订，审历史提交而非要求今天总 diff 只有一行。；G（git 文档审计） |
+| 3 | plan:630–643 逐项记录 browser bundle、全局 fetch=0、env 诱饵、RESERVED_KEYS、实际 header 五项，明确新旧 SDK 比较、两个 mutation 已还原。K/host-independence.test.ts 真 esbuild browser；wire/*-stream.test.ts 全局 fetch 拒绝计数；thinking-shapes 的 reserved keys；network-seams:423/452 env headers。 | env 诱饵在裸 SDK 本来会透出，历史记录明确将修复留给第7步；今天白名单测试证实收口，不能描述成“裸 SDK 不读 env”。当前包精确版本 0.128/7.23 的锁文件仍需最终 install/build 门禁验证。；A + G |
+| 4 | plan:590 记录83行（82+B17）逐id、节名与字母核对及四处修订；当前裁决仍逐行列出范围/落点/后续，M5-B按降级表述。H8搜索默认落点可检索 search_pro_quark。 | 属人工规格审稿，无业务测试可替代；历史逐项核对记录可以引用，本轮未重做83行全文的语义评审，不能写成本轮再次全部确认。第35整体验收须另保留最终裁决表审稿结果。；G |
+| 5 | K/host/memory.test.ts:153–167 用 @ts-expect-error 去掉 policy；D/host.test.ts:108–116 EmptyPolicy恒空且过schema。C/confirm.test.ts:139 九值与键集合、145缺每槽、191未注册category、229缺reversibility/target、236不可逆一致性；policy.test.ts:50/76/84状态及非法规则。 | 编译拒绝必须跑 tsc，单 vitest 不证明 @ts-expect-error。；A + typecheck |
+| 6 | thinking-shapes:140 使用 pre02 753101e 的固定哈希金值，覆盖无thinkingSpec各线历史；297 六种非法Opus55请求经本地拒绝助手断言0 fetch；421 reasoning_effort准确且无选择不发送；435未声明档拒绝；628末轮assistant拒绝。definitions:1172精确三GLM行low/high/max及4.6无；1202 Opus55整对象字段。 | 金值证明选定复杂输入回归，不是对所有01输入的数学证明；新增字段分支覆盖及旧套件共同作验收。无另行缺口。；A |
+| 7 | vendor-blocks:212/235 对 unknown/redacted/text/tool_use 的 canonical JSON逐块比对；309/325换模型删除并保留Tape原文；355/375每组decision含missing-source；468三server块never且下次wire无ID；533 attempt三字段；552只改pricing hash不变。attempt-recheck:254换表 verdict而用旧snapshot仍verified；286/318真篡改失败。D/session-projection:28剥vendor后messageRowSchema通过。 | session.latest完整桥路的原样块场景由投影单测+路由组合支持，不是单独Electron原样块测试；不宣称此case由真实未知厂商块live触发。；A + B |
+| 8 | network-seams:149/166 180/300s、171每ping字节复位且timer清除；301 SDK timeout头按180+ceil(bytes/32768)，relay及重发600；323首字节超时网络错误；359 cache_control无ttl；423/452完整headers相等且stainless保留。D/network:134/149真undici假时钟超过300s仍收到；247 SDK600s、266 idle收尾。plan:693 A5四场景首字节/最大间隔表。 | A5历史真实样本只适用于记录的模型与任务；不把proxy/官方不同超时规则混为一谈。官方beta只在显式dev-only验收seam，产品白名单依旧无beta。；A + B |
+| 9 | network-seams:548/576 Anthropic两种spend上限及嵌套、587智谱quota与1302/1305 retryable；485 sensitive/context/network_error映射。loop/run:597/624/759/790实际loop对discard及不重试；C/chat-event:117十八endReason可选、两个新error码拒收到旧表unknown；D/end-reason-copy:18码两locale槽集合。 | spec正文的quota集合为1113、1308–1311、1313–1321，1312仍rate-limit。审计误把验收缩写读成连续区间，新增断言因此失败，生产映射正确；主线正校正验收文字与测试。A+B+C，待最终总跑。 |
+| 10 | D/model-selection:214只改host返回key-host-binding，key与config保持；237全部Anthropic凭据及Ollama主域/子域/尾点；662 env host不符provider()抛ProviderConfigMissingError、requests=0、configured=false；170 dev env true与packaged false。另读钥匙串过程中地址变化用settled-input矩阵验证最终host/key一对。 | 这证明Tenon显式HostNetwork派发的host绑定，不扩大称任意底层redirect都已由这些测试证明。搜索另在不变量4聚合。；B |
+| 11 | `src/testing/tape-conformance.ts`:2663 1000+分页与起点含边界；2746逐方法close错误和幂等；2868 carry顺序及错误整批拒绝，2938投影失败整reset回滚；2978同backing同session的跨tenant删除/重建隔离；3070 rebuild逐行相等。D/tape/sqlite-store:1084 EXPLAIN索引与fromEntryId无临时排序；projection.test:273版本2；schema-checker逐迁移锚定。 | 内存和SQLite共同调用同conformance是实测入口，不是两次同内存；最终命令必须含D conformance。第1号迁移未变需git/schema门禁，不用测试名字代替。历史tenant mutation可引用plan，当前未重做。；D + schema |
+| 12 | K/tape/tape:214所有保留名及前缀拒通用入口、312 slice/kind gate；entry/facts与conformance证明幂等。answer:266–380 六事实原runId/writer逐项数组、rejudge空、两个allow同事务头；382失败后Tape完全不变；run:1546 ask+paused同append。session/model-choice:134预选择与session/start顺序、快速选择序列。tool-table内容寄存与恢复覆盖同hash内容复用。 | “每种名字所有身份列”由writer/schema矩阵共同验，不是仅看entry.test.ts；运行时语义+typecheck均需要。；C + D |
+| 13 | host-independence:100 import契约/railguard/DNS/socket扫描；111 provider字面量扫描、browser build；session/service:210–239缺三依赖、旧exports/runRequest/system/tools的编译反例，246 bind前refused且stop false；C policy/approval/chat-event/model-choice-types双向结构互赋。 | 实际调用点数量随31已增加，“六处”是原实施清单而非应冻结为6；检查所有现有构造点显式注入，以编译为门禁。不以grep字符串声称无任何动态绕过。；A + C + typecheck/lint |
+| 14 | pairing:264/355两wire各200 stop/crash点，461逐k拒绝及checkFailures空；574缺结果throw且0请求；586 repair一闭合一log；722后写result重排相邻；682撤回后wire无call/result。 | **已补未跑**：682原来只断言下一请求；新增双读路径断言：撤回前listMessages确有1 call，撤回后listMessages及latestSession均无该message/calls/provider call ID。这两路正是desktop session.ts:26/36的界面重绘输入；没有新增撤回UI入口。见单独retracted-calls-view patch。；C + D；建议补边界 |
+| 15 | run:534完整工具not-run/truncated、半截无call、continue配对；597 refusal无assistant/call，624 overflow/network_error同类；647content-filter、662pause、689server混合只执行client、710纯server结束；724 Zhipu type=mcp用真实adapter。 | 后续30使overflow允许摘要再发；以当前spec完整压缩规则解释终态，不能把“discard本次attempt”误写成永不重试。；C |
+| 16 | run:759三attempt及1s/2s回退；861 maxAttempts=2的min分支；777 timeout+network_error同requestSeq、firstByteTimeout序列[undefined,false,undefined]；874混合失败耗尽；790 auth/quota只一次；833请求1/2各两失败后成功并usage六次。 | 脚本provider验证调度，真实SDK默认重试关闭另由provider suite覆盖；两层都要跑。；A + C |
+| 17 | run:1022第101调用not-run且100dispatch，continue无新user而有模型提示、下次steps1；1158/1177 60+40含重启；962第四重复不执行及一字节变化，995拒绝3次；1051usage-limit后无再请求；833重试usage。compaction:402摘要retry usage及step不加；subagent-run:76/668 child用量在collecting父Run一次合并。 | Run单terminal由各harness/runEnded及stop/recovery套件多窗口联合覆盖，非每条测试都全局断言。不会把child所有历史usage重复加入当前父Run，已有专门归属测试。；C |
+| 18 | recovery:852记录dispatch提交之后才execute；931同键不同writer0执行，pairing:856同内容重复dispatch0执行；263未派发crashed、286派发uncertain；361等待保留paused；394超过1000完整180结果。485单调用收紧无卡可续跑；524第二重启still paused且0assemble/provider、打开才续；671send先队列。subagent-run恢复链测试覆盖父Agent不提前交接。 | 读到实现/断言，不把memory recovery直接称SQLite崩溃可靠；Desktop持久恢复由E/recovery及D startup另覆盖。复跑需要两层。；C + E |
+| 19 | E/write-card:58重启同requestId单卡、文件批准前不存在、批准后内容、原model、原callKey和结果；answer:751撤tool、616收紧、656旧stale新applied、503/511 stop/allow竞态唯一结果；E/approval:147重投递和已答不复活。 | 竞态精确调度在kernel单测，Electron实证卡/写入/重启；不谎称每个policy race都由Electron覆盖。；C + E |
+| 20 | answer:409拒绝append精确7项、无请求与未执行；444 stop cancelled无新Run且新service恢复无卡；519/540 superseded结果在新消息前、queued消息顺序及wire结果相邻；266单pending row；E/write-card:132两Write第二排队、第一allow后第二成卡；E/approval:334 Esc拒绝结束。 | 拒绝isError由共同closure/pairing和UI事件测试支持；主线最终跑合并组。；C + E |
+| 21 | `packages/kernel/test/loop/answer.test.ts:874` 重建service、改模型/effort/语言/工具描述后，model_selected载荷和attemptSnapshot相等、原effort=low、system事实仅一条；:927缺key仍执行批准调用，auth/attempts=0、provider starts不增；:810撤下模型仍请求原id并provider-error。官方旧66正式绿记录额外覆盖重启。 | 覆盖完整；复跑 U1。 |
+| 22 | `loop/queue.test.ts` 实际断言相同文字两条独立message、插入在结果之后、暂停保留queue、结束自动发；sendNow旧run已过/已取走不stop新run；:540缺key Tape条数不增且两条queue原序；:646 held后starts仍1、queue保留。`e2e/queue.spec.ts` 覆盖按钮与Cmd/Ctrl+Enter、终态user-stopped及顺序。 | 覆盖；进程树收干净由stop-tree/stop-exit实际进程测试组合，最终跑U1、E1。 |
+| 23 | `e2e/navigation.spec.ts:70` 留在原会话直到completed、chat.stop=0，空闲New仍0；:108 stop=1；:138暂停离开/回去答卡；:314 macOS关末窗New Chat；:440重启两待批、当前卡可答、横幅1条，新建后2条；question文案在ask.spec；resume计数在recovery.spec:287/385。 | 覆盖；macOS限定分支在本机E1执行，Linux不能替代。 |
+| 24 | `e2e/recovery.spec.ts:95` 延迟期间Enter/快捷键/强制点按钮均chat.send=0、sendNow=0，持久消息仍user/assistant、provider请求仅旧1次；解除后可发；:138通过真实ok:false接缝解除禁发。 | 覆盖；E1。 |
+| 25 | `tools/builtin.test.ts:55` 逐工具properties与参数表相等、additionalProperties=false；:78禁止danger/risk/self-mode；:113 effect枚举；:145 chat4/cowork10。`loop/tool-table.test.ts:285`有无search实际开表；`loop/calls.test.ts:655`非法内置/MCP参数断言无判决/dispatch/card、not-run invalid-input；parallel的非法Read也不执行。 | 覆盖；U2。 |
+| 26 | `tools/table.test.ts:99`代码元排序；`loop/tool-table.test.ts` A→B→A、禁用前excluded与无判决、禁用后blocked及tools不变、撤实现unavailable、reset generation0；:668五阶段真实双wire fixture，断言9请求system/tools字节相等、逐请求messages前缀、更长、checkFailures=[]；withheld一次及返回哈希恢复。 | 覆盖；U2。 |
+| 27 | `tools/table.test.ts`非法/超长映射、冲突throw、130 connector截128且builtin保留/over-limit；payload重建保留interaction flag；`loop/tool-table.test.ts:518`服务端后改false仍按冻结true出卡；`mcp/everything-table.test.ts:132/228`实际MCP调用经过approval与Tape；elicitation两revision拒绝由MCP夹具组。 | 覆盖；U2（MCP测试需本地进程许可）。 |
+| 28 | `permission/decide.test.ts`分层verdictOf同时取verdict+decidedBy；16格truth table、release三类、两例、F9；Agent/Ask在两档放行；`permission/grants.test.ts:111–178`once/session逐行、不可逆被策略release后仍once、键区分tool/cwd；table.test unavailable全excluded；policy schema互赋由contracts类型测试。 | 覆盖；U3。 |
+| 29 | `permission/decide.test.ts` workspace/own-spill/protected/deny与unavailable优先；`loop/write-bash.test.ts`Write同文件session授权实际复用；`tools`文件执行器遍历保护目录回归；chat Read边界由loop Read/权限夹具。产品IPC只允许profile/workspace，不提供approvalMode。 | 覆盖；U3与文件工具组；没有把测试auto seam当产品开关。 |
+| 30 | `permission/workspace.test.ts:66`真实路径分类，链接逃逸/悬空/loop/nullroot/新多层/根链接；:249包volfs的HostFs protected；desktop `workspace-locate.test.ts`本机realpath、错大小写、/tmp；真实volfs受macOS条件约束。 | 覆盖；U3，本机OS分支重跑。硬链接仅基线符合条文，不要求拒绝。 |
+| 31 | `permission/inspector.test.ts:335`8类layer输入×前意见×新增意见，rank(after)>=rank(before)；超时/异常/停止signal分别assert；服务构造afterResult拒绝；`apps/desktop/test/inspectors.test.ts`实际注册表全ask且只有exfiltration、receipt-override源码只声明；contracts approval键/禁导出递归验证；decide summarize可达组合逐码。 | 覆盖；U3。 |
+| 32 | `session/workspace.test.ts:145`draft与start同batch；缺key保留draft；:393移除授权永久失效，:470待卡收紧；:361system/tools不变仅environment追加；:604零点参数化、:706插话后环境；grants.test:223 cwd变命令授权作废；desktop workspace目录惰性与contracts strict routes。 | 覆盖；U4。 |
+| 33 | `session/model-choice.test.ts`两个session各provider choice、reset默认；`apps/desktop/test/model-selection.test.ts:724`五层实际解析顺序、:912默认记录不含effort、:1061task默认；`loop/model-freeze.test.ts`在途改选择不影响当前续发；模型菜单及设置卡e2e覆盖effort重置/只有改dropdown才落键。 | 覆盖；U4、E2。 |
+| 34 | `model-selection.test.ts:764`默认本机/私网→公网持有历史需确认；:154私网host文字；kernel queue held保持0新增请求；`e2e/model-menu.spec.ts:97`取消/确认与新会话不带旧历史，:546进行中先离开确认；配置状态按key bound-host。 | 覆盖；U4、E2。 |
+| 35 | `loop/cross-provider.test.ts`双向call id回放checkFailures=[]、手填id同provider无tools且capabilitySource=user、Ollama任务形态无tools；tool-table text-only两形态；model-selection:844保守能力合成，菜单任务置灰。官方旧65成功包含真实Zhipu id→Anthropic。 | 覆盖，M5-B条件未触发，不执行降级验收；U4、E2。 |
+| 36 | `renderer-approval-card.test.ts`connector对象分列与默认展开escaped JSON；不可逆focus deny、所有Enter deny、Space保留原button；Write/Edit内容预览与不可见字符；keys.test once/session/domain/subtask枚举；`e2e/approval.spec.ts:61`真实行anchor、allow后collapse、restart重画；search/url对象由对应cards测试。 | 覆盖；U5、E1。 |
+| 37 | `end-reason-copy.test.ts`严格18码、两locale集合及插值；copy-coverage生成所有reason/kind/category/closure组合并要求文案；end-card retry/continue/auth分支；thread-model同一round单summary、pause不新增；`e2e/text-fit-02.spec.ts`双语宽度实测，run-end/queue/model-menu行为。 | 覆盖；U5、E2。 |
+| 38 | `prompts/version.test.ts:48–130`当前hash/历史version一一对应、逐一修改系统/notes/工具变体必改hash；closure表英文字串；loop spill/continue/compaction以及SQLite重开审计从持久内容复算hash；thinking-default实际body summarized、无effort；renderer first-sentence与thinking delta起止计时。 | 覆盖；U6；不能把仅当前hash单测代替旧Tape重放组，最终需一起跑。 |
+| 39 | plan第21步完整记录：2026-09-27 open.bigmodel.cn 7 live全部通过，旧64重启3遍；flashx/flash各4次200且cause user-message,user-message,resume；effort low/high/max实值；64字符及非法名映射回调；140万字符glm4.6流式与非流式均400/1261→context-overflow、不重试；01流式/停止仍过。第28步flashx/flash真实quark搜索2/2。源码live-provider对body/Tape/思考回传有断言。 | 历史证据满足，不要求为审计重新付费。需要重复时L1，须lead串行/key流程。 |
+| 40 | `permission/commands.test.ts`IRREVERSIBLE/UNKNOWN列表覆盖rm/curl -X POST/-d/-F/upload/git push/scp与GET/ls/parse失败；所有样本never read-only且reason command；grants.once不可逆优先；write-bash真实session命令授权与cwd/原文不同重新问。MCP注解unknown在decide:236；inspector只有收紧判决、不持有可逆性写口。 | 覆盖；U3。 |
+| 41 | desktop stop-tree使用真实HostProcess+Bash，两种SIGTERM忽略树；ps查整个进程组，stop/timeout至空树<1000ms，结果返回时exit/pipe结束且无人存活。kernel stop断言TERM→KILL、never-exited uncertain、120000默认、非零退出、Read两次FS间停、Write等待、迟到零追加、常量约束；stop-exit e2e断言不能树还活就显示“后续写入未发生”。 | 实现/回归覆盖；本机历史全套有通过证据，Linux CI当前提交的实际成功链接仍需收尾提供，配置ubuntu会运行该非Windows测试。；U apps/desktop/test/stop-tree.test.ts packages/kernel/test/loop/stop.test.ts packages/kernel/test/tools/bash.test.ts；E e2e/stop-exit.spec.ts |
+| 42 | stop-exit真实quit/close-window中止、重启仍shutdown-aborted及app-exit；取消后完成；待批退出不确认，重启原卡可答。shutdown单测核无Run不询问、store close先于quit、等待常量之和、开始shutdown后各写路由拒绝且不写事实。 | 覆盖；需冻结提交重跑，不能用单元dialog模拟代替e2e。；U apps/desktop/test/shutdown.test.ts；E e2e/stop-exit.spec.ts |
+| 43 | spill测试检查多text总阈值、图片保留、不泄漏全文、file/bytes/sha256、路径仅说明、同会话Read免问/异会话拒；session-removal断言clear/delete与store成功顺序、期间拒发、撤回留文件、canonical id、根/子目录及symlink目标保留；subagent长handoff审计例外与模型可见spill分别断言。 | 覆盖；H9只删除根及子tool-output目录，不扩展为级联删子Tape；是已明定边界。；U packages/kernel/test/loop/spill.test.ts packages/kernel/test/loop/subagent-run.test.ts apps/desktop/test/session-removal.test.ts |
+| 44 | parallel.test在a/b均未结束时确认二者dispatch；b先结束Tape仍无result，a后按0/1写；c审批拒后d not-run；通过overlapping记录确认其他工具和chat Read串行。 | 覆盖本条。更强的“并行vs全串行下一body相同”是下面不变量31尚缺直接对照断言，勿混为已证。；U packages/kernel/test/loop/parallel.test.ts |
+| 45 | evals-format证明默认test包含不skip格式套件、无key/网络、fixture不被ignore吞；host防御性拒outside-workspace和web.command，即便坏task对象allow；zod同时拒配置；真实子进程打印env仅PATH/HOME/TMPDIR/LANG且路径临时；cost断言两wire手算及缺pricing=null。 | 覆盖。；U apps/desktop/test/evals-format.test.ts apps/desktop/test/evals-host.test.ts apps/desktop/test/evals-cost.test.ts apps/desktop/evals/format.test.ts |
+| 46 | question原子append含permission_decided+paused，invalid未知key前后Tape相同，skip/null、数组及typed原文、停未答、重启卡与续跑冻结provider；ask e2e核重启、多选/Other与打字；child工具子集及调用拒绝见subagent-run。 | 覆盖；审批优先及renderer问答竞态由session-store/renderer-ask补充。；U packages/kernel/test/loop/question.test.ts packages/kernel/test/loop/subagent-run.test.ts apps/desktop/test/session-store.test.ts apps/desktop/test/renderer-ask.test.ts；E e2e/ask.spec.ts |
+| 47 | fetch-address拒绝非法URL/私网/十进制/映射IPv6；fetch-untrusted单DNS全部地址、混合地址拒绝、每次重查、socket钉住、原TLS证书/SNI、abort含握手；web-fetch-network真实kernel+本机假服务器核302-to-loopback无目标请求、DNS换回环拒绝且provider loopback照常；kernel核同host重判、cross-host不跟、20/21跳、protected连续计数、类型错误/长页spill。 | 覆盖；CGNAT明确暂不扩展。；U packages/kernel/test/permission/fetch-address.test.ts packages/kernel/test/tools/web-fetch.test.ts packages/kernel/test/loop/web-fetch.test.ts apps/desktop/test/fetch-untrusted.test.ts apps/desktop/test/web-fetch-network.test.ts |
+| 48 | search-assembly参数化provider+host、同provider跨host、unboundSecrets、dev回落同对象、packaged禁回落、authToken；backend断言70码点、quark、白名单、1701–1703一次请求、官方非stream/any/4096固定选型、多块合并；loop第200次真dispatch、第201次无permission/dispatch，跨父子计数去重。 | 覆盖；官方实际搜索最终2/2，见54。；U apps/desktop/test/search-assembly.test.ts packages/kernel/test/tools/search-backends.test.ts packages/kernel/test/loop/web-search.test.ts |
+| 49 | web-search原始input保留但卡/实际发送为截断query+host；变host/query stale换卡且零发送；searchHitUrls去重规范化随spill保留。web-fetch exact normalized host会话授权；grants/session-view分别核grantKey与不可信来源。 | 覆盖。；U packages/kernel/test/loop/web-search.test.ts packages/kernel/test/loop/web-fetch.test.ts packages/kernel/test/permission/grants.test.ts packages/kernel/test/permission/session-view.test.ts |
+| 50 | 真实loop先授权host→读.env→新URL出flagged完整target且未新增fetch；恢复原卡、一次允许后第二个新URL仍问，grant scope once；真人backtick/Markdown/标点URL豁免；纯条件矩阵chat/search/单条件不触发，anchor后条件仍在、clear新incarnation清零。SQLite真实desktop inspector注册边界。 | 覆盖；“不生成域名授权”是无session效力，不要求grant字段为null。；U packages/kernel/test/permission/exfiltration.test.ts packages/kernel/test/permission/session-view.test.ts packages/kernel/test/loop/exfiltration.test.ts apps/desktop/test/exfiltration-persistence.test.ts |
+| 51 | compaction断言阈值3276/150000/150000、summary→main序号、所有历史provider表与anchor同batch；中途仅旧回合/current工具结果字节相等；prefix模型中途overflow compactions0；thinking drop/compacted及summaryThinking各模式；最多2cycles精确5请求；小窗口换型先压缩。SQLite reopen后从Tape复算summary hash、packaged同env不会触发。 | 覆盖。；U packages/kernel/test/loop/compaction.test.ts apps/desktop/test/compaction-persistence.test.ts apps/desktop/test/compaction-test-seam.test.ts |
+| 52 | subagent-run核独立child Tape/profile_set、父工具子集、无嵌套Agent/Question或parent_link、父子pause/恢复/原行handoff、step30/time300s partial非error及usage归入收集父Run。security核父授权继承、父workspace因果变更失效、子授权不回流、私有/不可信父子并集；handoff覆盖provider-error partial。e2e原父行卡、拒绝一次、重启后同requestId可答与handoff。 | child等待/重启deadline整链接线已补耐久回归，待主线最终总跑；不能仅纯elapsed函数代替。U packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-security.test.ts packages/kernel/test/loop/subagent-handoff.test.ts；E e2e/subagent.spec.ts |
+| 53 | subagent-run stop/supersede、borrowed/own lease窗口、暂停commit与退出竞态、父queue不入child请求、崩溃child先恢复/父handoff uncertain、不新发provider、长恢复结果spill均断言；handoff从Tape列调用而非模型生成；stop套件核命令确认退出收口。 | 覆盖；未发现新的生产缺陷。；U packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-handoff.test.ts packages/kernel/test/loop/stop.test.ts |
+| 54 | 2026-09-28 api.anthropic.com：shapes日志Opus5/Sonnet5/Opus5.5通过，protocol-first内dated Haiku、omitted signed往返、历史有tools后无tools、二次cache命中通过；cut-long内ping/truncated继续通过。product-final内restart（改实际构建description并新会话正控制）与同会话6阶段组合链通过；search-final最终Sonnet5/Opus5两真实WebSearch+Read冒烟2/2，5wire/4stream complete证据在对应目录。 | 协议项已有真实证据，不能整条勾完：Claude评测/同题对比尚未完成。Fable组织未开30天保留，按已定条件skip而非错误；保留“未实测”标记。01罕见redacted/error/unknown帧未观测，不能声称每种帧真实出现，当前可观测帧已有真实SDK+adapter逐值对照。；L见下。 |
+| 55 | 20题/16compare、chat/cowork及from必含标签；gate检查3条当前prompt层baseline记录，CI已加evals:gate；17全文误判已修且主线报告16checks通过。 | 未完成：baseline×3正在跑；Claude Desktop10题受窗口不可见暂缓；Claude Code glm5.3交互probe与同模型列还需实际记录。不能拿采集kit或伪Tape代替。；`pnpm evals:gate`（基线落盘后）；真实eval按主线调度。 |
+| 56 | 27–34均找到带编号的自动测试/describe；production seams有!isPackaged+专用env门槛，相关packaged拒绝回归；CI声明完整门禁。历史unit-final3027pass+2skip，不是干净clone当前提交证明。 | 未完成：lead承诺最后clean clone实际install/build/lint/typecheck/test/e2e及PR CI；本轮未执行秘密值扫描，也未遍历全部开放问题/不变量1–26（其他分工），不作全无key或全收敛声明。；新clone：`pnpm install --frozen-lockfile`、`pnpm build`、`pnpm lint`、`pnpm typecheck`、`pnpm test --maxWorkers=2`、`pnpm test:e2e`；另format与evals:gate。 |
+
+### 不变量记录
+
+| 不变量 | 已核实际断言 | 边界及复跑 |
+|---|---|---|
+| 1 | thinking-shapes:591两线effort/display相同body字符串、promptHash/toolHash，network/clock均0。 | 固定测试输入+所有编码分支单测；本轮不宣称形式化纯函数证明。 |
+| 2 | thinking-shapes:628两线新旧model本地异常0网络；run截断continue末user及pairing。 | 与1同组。 |
+| 3 | network-seams:423/452 env前后headers整个对象相等、无beta；search-backends:183官方search认证头使用白名单。 | 产品不带beta；step33专门开发验收入口是已批准例外，packaged否决测试不能遗漏。 |
+| 4 | model-selection:662拒错绑定且0fetch；D/search-assembly:218绑定不符后端缺失；K/loop/web-search等待改host与批准到dispatch窗口匹配目标。 | 分别是开表前exclude与开表后is_error，不能只拿configure拒绝测试代表所有阶段。 |
+| 5 | model-selection:214保存拒绝及config/key原值；237全凭据和Ollama子域。 | 沙箱系统keychain写失败另有测试，本条不承诺两种持久介质任意故障下原子提交。 |
+| 6 | tool-table:243逐attempt从assemblyRef/tableKey重建hash，:801带→不带→恢复hashtools_withheld；:770跨9请求tools字节相同；表重开及权限收紧另测。 | helper当前示例用Anthropic encoder；两wire实际冻结字节矩阵在五步fixture，不将单helper泛化为两线hash本身覆盖。 |
+| 7 | tool-table:668五步换locale/禁tool/批准/插话/换provider返回，:770system逐字等首请求；run:442环境旧文按存储原样；workspace/session事实测试追加而不改旧。 | **本轮补强** compaction:90同incarnation所有主请求assembly systemHash一致，明确排除摘要自己的prompt；原先仅通过现有五步/重启旁证不足以钉压缩分支。新增断言未跑。 |
+| 8 | tool-table:770两线每请求完整历史prefix相等；pairing:512跨批准相同；compaction:163当前turn signed块原样。 | **明确延期，非缺口** spec:2085 明定02无中间消息编辑入口，先写入不变量，出现写入方以后再amend守卫；:178 B17与:99非目标一致。因此本轮不添加生产逻辑或人为启用编辑后thinking测试。 |
+| 9 | compaction:163当前回合first entry切点、thinking完整；192 prefix-check模型不midturn；248下一新turn旧thinking丢，新thinking保留；312continue(null)结束例外。 | 已覆盖真实修复窗口；模型历史回放和估算不是由本条单测包办。 |
+| 10 | anthropic-messages:58 exact image source=base64；openai-chat:58 exact data URI。输入契约没有url/document/file_id块。 | 正常支持的image路径覆盖；任意JS强转绕TS传非法对象由provider参数拒绝套件负责。 |
+| 11 | answer:874修改locale/model/effort/MCP及Read描述后新service恢复、selected和attemptSnapshot完全相同；官方step33restart实际记录冷启动沿用旧表，fresh session使用新描述。 | 真官方样本是特定Opus55，不能泛化Fable未执行三次切换；本条离线模型无关行为已钉。 |
+| 12 | 已交model-freeze两wire gate流中改model/effort，当前工具续发旧值、下一userRun新值；answer:782/874覆盖待批/恢复冻结；D/model-selection:724五层解析逐项。 | **本轮补强** 同一双线fixture再加“截断后continue”分支，真实wire显示新选择；弥补继续入口以前只有五层resolver单测的旁证。新增2case未跑。 |
+| 13 | parallel:500记录实际执行重叠，前三R/G/G有三对overlap、后8工具全部不重叠；543spill开头无组；556恢复deny无组；587chat只读串行。 | 与允许/问人/拒绝切点其它矩阵共同覆盖；不承诺glob/fs底层内部实现并行度。 |
+| 14 | run.test guards三拦截终止/余项blocked-repeatedly、放行和问人清零、非四源不计；subagent-run拒绝子卡仍继续且父完成。 | 待统一总跑；见下列 U 组。 |
+| 15 | inspector.test:317有真实@ts-expect-error ask ceiling不能deny；运行器合议最严，confidence不参与协议。 | 待统一总跑；见下列 U 组。 |
+| 16 | inspector.test:101/127/148/219实测假时钟、signal、record与confirm；run.test:1767止于判定无decision、not-run/stopped。 | 待统一总跑；见下列 U 组。 |
+| 17 | desktop inspectors.test直接遍历注册表，并源码扫receipt-override仅字面量；不依赖测试假registry。 | 待统一总跑；见下列 U 组。 |
+| 18 | decide.test:557 session/domain/always均不压过inspector ask/deny；BlockedNotice无允许动作。 | 待统一总跑；见下列 U 组。 |
+| 19 | contracts approval.test:66/90确切三键且额外字段拒绝、递归路由无steps/decidedBy/basis、导出无DecisionRecord。 | 待统一总跑；见下列 U 组。 |
+| 20 | grants.test once/session优先表与键；产品没有builtin always/never入口。阶段3持久授权存储不属于当前实现，不能把将来存储端验收称已执行。 | 待统一总跑；见下列 U 组。 |
+| 21 | workspace.test:66命名组，包含volfs protected、普通realpath失败outside及真实root。 | 待统一总跑；见下列 U 组。 |
+| 22 | **已纠正早先误报**：contracts confirm.test:236/259已有精确编号，实际irreversible蕴含约束；decide:236注解剥离/unknown；grants/commands补host权限表。无需新编号。 | 待统一总跑；见下列 U 组。 |
+| 23 | pairing.test命名stop200随机点、recovery对应crash、各拒绝位置及两wire checkFailures；throw/repair/撤回有独立用例。 | 待统一总跑；见下列 U 组。 |
+| 24 | stop.test:488 exited永不resolve→uncertain、may-have-run文案；真实stop-tree验证进程组清空；WebSearch/WebFetch中止external effect避免“未发生后续写入”。 | 待统一总跑；见下列 U 组。 |
+| 25 | answer.test:874逐字段snapshot、:810下线仍原模型，:927缺key0请求不换；与验收21共用实际路径。 | 待统一总跑；见下列 U 组。 |
+| 26 | answer.test:615 rejudge组验证stale新卡、deny/unavailable；:342 unchanged无rejudge事实；recovery.test:481/508收紧/不变重投；即使策略放宽也保留原卡钉住对象。 | 待统一总跑；见下列 U 组。 |
+| 27 | answer.test两并发allow精确applied/already-resolved、一条allowed/card与一次执行；session-store重复requestId不增卡、不重置点击保护窗、答完重投不复活。 | U packages/kernel/test/loop/answer.test.ts apps/desktop/test/session-store.test.ts |
+| 28 | answer.test前拨400天待批仍可答；stop-exit等待退出无确认、重启原卡可批准，recovery同样恢复。 | U answer.test/recovery.test；E stop-exit；未另造“expired”。 |
+| 29 | subagent-handoff编号describe核paused gaps及恢复事实不能扩大elapsed；subagent-run到期前已请求产生的Read继续执行、下一请求停止。 | 等待600秒不计、恢复后的120000→299999→300000，以及同载荷重试/摘要跨deadline边界由第35步新增测试补强；待主线最终总跑，不宣称已通过。U packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-handoff.test.ts packages/kernel/test/loop/compaction.test.ts |
+| 30 | 编号测试Agent/Question调用均tool-unavailable、child无新的parent_link/permission；安全套件子授权不回流，冻结扩展测试保持child工具表一代。父lease+串行子结构对应树单pending/单child。 | U subagent-run/subagent-security；未将“编号标题存在”当所有子句的唯一证据。 |
+| 31 | pairing编号测试结果/outcome ordinals[0,1,2]；parallel b先完等待a后按调用序写，stop闭合也同序。 | 并行/全串行同输入的事实及下一body直接对照由第35步新增回归补强，待主线最终总跑。U packages/kernel/test/loop/pairing.test.ts packages/kernel/test/loop/parallel.test.ts |
+| 32 | shared tape-conformance编号case拒retracted后的revision、readAll前后完全相同、同retraction重放created=false；memory与SQLite均注册conformance；tape.test还测跨页retraction。 | U packages/kernel/test/tape/tape.test.ts packages/kernel/test/tape/memory-store.test.ts apps/desktop/test/tape/conformance.test.ts |
+| 33 | attempt-recheck编号case两wire五attempt、空注册表仍从stored originals重编码同hash，sent=false取[]；表wire变动报model-table-changed，与修改Tape原文tampered区分；SQLite summary另复算。 | U packages/kernel/test/provider/attempt-recheck.test.ts apps/desktop/test/compaction-persistence.test.ts；覆盖。 |
+| 34 | spill编号describe下一请求/下一Run/重启/模板修改均发送stored content逐字相同；compaction当前保留tool_result等于原content；文件全文只经Read，图片不被文本阈值删。 | U packages/kernel/test/loop/spill.test.ts packages/kernel/test/loop/compaction.test.ts；覆盖。 |
+
+### 统一复跑命令与真实未验证项
+
+离线单测模板：`pnpm exec vitest run <表列文件> --maxWorkers=2`。Electron 模板：`pnpm --filter @tenon-app/desktop exec playwright test <表列e2e文件> --workers=1`。主线串行调度，不与 live/评测并跑；typecheck 必须单独执行，Vitest 不证明编译反例。
+
+- A：`pnpm exec vitest run packages/kernel/test/provider packages/kernel/test/host-independence.test.ts packages/kernel/test/host/memory.test.ts packages/contracts/test/confirm.test.ts packages/contracts/test/policy.test.ts --maxWorkers=2`
+- B：`pnpm exec vitest run apps/desktop/test/model-selection.test.ts apps/desktop/test/run-assembly.test.ts apps/desktop/test/search-assembly.test.ts apps/desktop/test/session-projection.test.ts apps/desktop/test/network.test.ts apps/desktop/test/end-reason-copy.test.ts apps/desktop/test/host.test.ts --maxWorkers=2`
+- C：`pnpm exec vitest run packages/kernel/test/loop/run.test.ts packages/kernel/test/loop/answer.test.ts packages/kernel/test/loop/recovery.test.ts packages/kernel/test/loop/pairing.test.ts packages/kernel/test/loop/tool-table.test.ts packages/kernel/test/loop/compaction.test.ts packages/kernel/test/loop/subagent-run.test.ts packages/kernel/test/loop/subagent-security.test.ts packages/kernel/test/loop/model-freeze.test.ts packages/kernel/test/loop/parallel.test.ts packages/kernel/test/session packages/contracts/test/approval.test.ts packages/contracts/test/chat-event.test.ts packages/contracts/test/model-choice-types.test.ts --maxWorkers=2`
+- D：`pnpm exec vitest run packages/kernel/test/tape apps/desktop/test/tape --maxWorkers=2`
+- E（仅主线另排Electron）：`pnpm --filter @tenon-app/desktop exec playwright test e2e/recovery.spec.ts e2e/approval.spec.ts e2e/write-card.spec.ts --workers=1`
+- G：`git show ee0e1e6 --stat`；`git diff ee0e1e6^ ee0e1e6 -- docs/architecture/00-foundation/spec.md docs/architecture/01-provider-and-tape/spec.md docs/spec-driven-dev.md`；最后 `pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm tape:check`、`pnpm build`。SDK及文档历史证据不需付费复跑。
+- U1: `pnpm exec vitest run packages/kernel/test/loop/answer.test.ts packages/kernel/test/loop/queue.test.ts packages/kernel/test/loop/stop.test.ts --maxWorkers=2`
+- U2: `pnpm exec vitest run packages/kernel/test/tools packages/kernel/test/loop/tool-table.test.ts packages/kernel/test/loop/calls.test.ts packages/kernel/test/mcp --maxWorkers=2`
+- U3: `pnpm exec vitest run packages/kernel/test/permission packages/kernel/test/loop/write-bash.test.ts packages/contracts/test/approval.test.ts packages/contracts/test/confirm.test.ts apps/desktop/test/inspectors.test.ts apps/desktop/test/workspace-locate.test.ts --maxWorkers=2`
+- U4: `pnpm exec vitest run packages/kernel/test/session packages/kernel/test/loop/cross-provider.test.ts packages/kernel/test/loop/model-freeze.test.ts apps/desktop/test/model-selection.test.ts --maxWorkers=2`
+- U5: `pnpm exec vitest run apps/desktop/test/renderer-approval-card.test.ts apps/desktop/test/renderer-approval-keys.test.ts apps/desktop/test/renderer-thread-model.test.ts apps/desktop/test/renderer-end-card.test.ts apps/desktop/test/copy-coverage.test.ts apps/desktop/test/end-reason-copy.test.ts --maxWorkers=2`
+- U6: `pnpm exec vitest run packages/kernel/test/prompts packages/kernel/test/loop/spill.test.ts packages/kernel/test/loop/compaction.test.ts packages/kernel/test/loop/thinking-default.test.ts --maxWorkers=2`，另执行desktop SQLite compaction审计文件（随全量unit）。
+- E1: `pnpm --filter @tenon-app/desktop exec playwright test e2e/navigation.spec.ts e2e/recovery.spec.ts e2e/approval.spec.ts e2e/queue.spec.ts e2e/ask.spec.ts e2e/stop-exit.spec.ts --workers=1`
+- E2: `pnpm --filter @tenon-app/desktop exec playwright test e2e/model-menu.spec.ts e2e/run-end.spec.ts e2e/text-fit-02.spec.ts e2e/thinking.spec.ts --workers=1`
+- L1（非本次必要重付费）: `pnpm test:live --grep 'live agent · zhipu'`；如重复1261长输入探针，沿用plan记录的独立probe，不把普通小请求冒充>200K验收。
+
+- 最终干净 clone：`pnpm install --frozen-lockfile`、`pnpm format:check`、`pnpm lint`、`pnpm typecheck`、`pnpm test --maxWorkers=2`、`pnpm build`、`pnpm test:e2e`，基线齐全后 `pnpm evals:gate`；最终 commit/CI 链接和结果另由主线填写，不能用工作区历史全绿代替。
+- 2026-09-28 官方主机 `api.anthropic.com`：Opus 5/Sonnet 5/Opus 5.5 形状、dated Haiku、omitted工具往返、无tools历史、缓存命中、长思考ping与截断续写已有成功记录；产品restart/combined成功，Sonnet 5/Opus 5实际WebSearch+Read最终2/2（29.9s）。取各日志的成功用例，不把含早期失败的整文件改称全部通过。01逐帧重放只证明实际观测帧，redacted/error/未知delta未真实观测。Fable的组织30天保留未配置，形状及三次切换保留条件skip；默认本机Ollama未运行，不启动它补测。
+- 历史官方证据：`/tmp/tenon33-shapes.log`、`/tmp/tenon33-protocol-first.log`、`/tmp/tenon33-cut-long.log`、`/tmp/tenon33-product-final.log`、`/tmp/tenon33-search-final.log`及同名目录。最终交接应保存必要脱敏证据，临时路径不是长期仓库保证。
+- 只有主线安全注入进程凭据后才可复跑：`TENON_LIVE_OFFICIAL_PROTOCOL=1 TENON_LIVE_CAPTURE_SSE=1 pnpm test:live --grep 'production thinking shape|omitted thinking|omitted long reasoning|strict history|strict top-level cache|partial tool input'`；产品组 `TENON_LIVE_OFFICIAL_AGENT=1 pnpm test:live --grep 'same-session disable approval|restart resumes|real WebSearch round trip'`。key只沿已授权进程注入，记录目录在仓库外；不默认授权再次付费。
+- 尚待最终结果：当前prompt层baseline×3、Claude模型评测与同题对比、Claude Desktop可见窗口交互（此前不可见）、当前提交Linux CI、干净clone全套、秘密值扫描和清理。不得把收集脚手架当已完成评测。macOS大小写不敏感卷/硬链接按D8只记已知边界；D8 的 Windows 两项未验证，不能以macOS/Linux结果替代。
+- 审计纠错：不变量8中间编辑后的思考守卫由spec前缀纪律第7条/B17明确留后续amend，不是02缺口；验收9的1312保持rate-limit，误测全闭区间不是生产bug；H9此前错误失败现场撤回，以已核26/26为准。新测试和范围文案修正仍等待主线最终总跑记录。
 
 ## 清理记录
 
-（第 35 步填写）
+- 本轮已完成证据另存至仓库外持久目录 `/Users/gq/.codex/visualizations/2026/09/28/01a0e57e-3cff-7f83-a0aa-8ce343d18af7/tenon-spec02-evidence/`，按原目录名保留raw、审计计量和门禁日志；运行中结果结束后补同步。正式results中的raw仍只写文件名。
+
+- 2026-09-28：主线全量3049 tests通过、2既有skip；format/lint/typecheck通过，e2e132/132通过。对应日志`/tmp/tenon35-full-unit.log`、`/tmp/tenon35-{format,lint,typecheck}.log`、`/tmp/tenon34-e2e-current.log`。这不是最后干净clone证明。
+- 不变量命名扫描1–34齐全，三个生产src目录未找到验收56列出的订阅凭据路径/端点。675个仓库与本轮原始证据文件扫描未发现已配置智谱key原值及官方key形态；仍需基线/对比最终落盘后复扫，不读取官方key来做扫描。
+- 官方协议接缝只在`!isPackaged`且`TENON_TEST_OFFICIAL_PROTOCOL`为strict/record时生效；packaged及未设置变量返回原network的回归已在全量单测执行。主产品默认不设置beta头、prefix_mismatch或记录请求。
+- 待最终commit后干净clone门禁及CI；Windows目录联接/subst未验证，硬链接与大小写不敏感卷仍是已声明边界。
+
 
 ## 起草记录（2026-09-25）
 
@@ -986,7 +1171,23 @@
 - 验收的新旧对照：新验收在各步「验收」一行，被它吸收的旧编号逐条标在同一步的「旧 N」里（新 1 ← 旧 87、89–91；2 ← 77–83；3 ← 44、232；4 ← 75、76；5 ← 92、94、95；6 ← 45、46、88、98–100；7 ← 42、43、101、112；8 ← 48、102–104、231；9 ← 47、105、106；10 ← 49、109；11 ← 58–61、110、111、113；12 ← 114–118、123；13 ← 236–238；14 ← 1、122、178；15 ← 12、30、128、129；16 ← 29、130；17 ← 3、27、28、127、131；18 ← 119–121、168、171；19 ← 4、97、169、170；20 ← 10、20、21、173、174；21 ← 15、16、34、172；22 ← 22、132；23 ← 17、134、135；24 ← 18、138；25 ← 139–141、147；26 ← 32、35、148–151；27 ← 24、50、55、144–146；28 ← 5、93、152–156；29 ← 53、157–159、179；30 ← 51、160；31 ← 124、125、162、163；32 ← 180–183；33 ← 33、37、107、186、187；34 ← 38、39、184、185；35 ← 36、40、41、108、235；36 ← 214–218；37 ← 6、219–223；38 ← 224–226；39 ← 62–64、233；40 ← 52、96、161；41 ← 7、142、143、177、230；42 ← 13、14、136、137；43 ← 57、188、189；44 ← 23、126；45 ← 227–229；46 ← 11、24、133、175、176；47 ← 56、208–211；48 ← 203–207、239；49 ← 212、213；50 ← 54、164–167；51 ← 2、31、190–194；52 ← 19、25、26、195–198；53 ← 11、199–202、230；54 ← 65–72、234；55 ← 8、9；56 ← 73、74、84–86）。
 - 开放问题的去向：须 ready 前定或须 owner 定的 24 条留在 spec §开放问题（ready 前第 1、2 条即旧第 148、83 条，2026-09-25 已定）；「待校准的数值」「要实测的」改成本 plan 各步的测试要点与暂定项，引用旧号的在条目里注明（如旧开放问题 34、48、49、94、95、97、124、145）；其余写成所在节的暂定规则，或并进 §开放问题「留到后续阶段」。瘦身前的旧稿只留在起草会话，不入库。
 
+
+
 ## 交接
+
+- **2026-09-28 最终基线收齐，进入干净clone/CI**：t26/codex/02-step31。第26–32步完成；33协议验证完成、34有效基线20×3为59pass/1真实fail，6条宿主故障原始记录另存且重跑全过。基线已报告费用¥52.459700，故障六轮¥0.549024，Flash长任务专项¥1.25186016分别记账。根单Run峰值9、同消息审批续跑链峰值11，子Run最大用量计数3466；所有校准常量保留，完整口径见calibration文档。评测门禁30pass/1skip。评测searchTarget透传遗漏已修，并用两个业务回归做红绿突变；临时密钥链接移除，所有付费进程结束。当前实现即将提交后跑真正干净clone全套门禁；33/34外部对照仍受Open列出的自动审批与不可见Claude窗口阻塞，spec保持ready，PR先建draft，不把尚无证据的外部验收勾成完成。
+
+- **2026-09-28 当前现场更新：31已完成，34/35收尾进行中**：t26/codex/02-step31。完整e2e132/132、全量单测3049通过+2既有skip（170文件通过）、format/lint/typecheck全绿；验收56条与不变量34条逐项审计表已写入本plan。新增期限等待/重启、retry/summary豁免、并行与串行事实和body等价、模型/effort冻结、撤回投影等回归均已实际运行；首次补测误把1312归quota已校正，spec详细表原本排除它，验收9缩写漂移通过Revisions30修正，生产未改。当前prompt8基线20×3仍运行，记录实时追加；不是最终结果。Claude Code01通过真实工具往返及产物核查；WebFetch预检false/true均成功，原始会话在仓库外，对比方法见docs/evals/compare/00-2026-09-28-method.md。后续官方10题和CLI其余9题分别被自动审批要求明确载荷/目的地授权，已向owner提问，未读取官方key/未启动受阻调用。Desktop仍无可录窗口，已询问owner解锁；所有不依赖这些输入的工作继续。spec仍ready，不声称完成34/35或提交合并。
+
+- **2026-09-28 当前现场：31待最终复评，33协议通过，34题库完成待真实基线**：唯一集成区为t26/codex/02-step31，HEAD 9f3a345；31/33/34增量尚未提交，根checkout未改，K/D旧草稿不要重复合入。31生命周期、安全、恢复与8个突变已核，handoff全文与H9边界已按Rev29补定，长正文落盘回归加入；待最终四视角复评与mutation收敛后勾选。28、32已勾选。33的同会话组合链、跨重启、原始SSE与01夹具对照均通过，Sonnet5/Opus5产品搜索最终2/2通过；Fable未开30天保留按条件跳过。按A16既定条件调序Opus5.5为新用户默认，Rev28已记；33仍待34的Claude评测列。34已有20题/16对比题及判分回归，6个变异业务断言检出并恢复，尚无当前prompt层8的全集基线。最终静态门禁format/lint/typecheck通过；全量3027单测+2既有skip、build通过。Electron e2e首轮131/132：唯一失败为既有model-menu禁用Ollama行瞬时不可见，单项重跑通过（132项均有至少一次通过）。官方已知费用累计约$1.055046，另为未取得用量的3次搜索子请求保留$1.50预算余量（不是实计费用）；智谱本轮3次组合链约¥0.011877。凭据只在测试进程，临时.env.local链接已移除。下一步：完成31四视角复评与突变、勾选；完成33与34独立评审记录，跑34当前提示层基线全集×3及Claude列/同题对比。
+
+- **2026-09-28 第31步最终检查中**：t26/codex/02-step31为唯一最新实现，K/D中断草稿已接回、补齐并评审，勿重复合入。Rev26父工作区因果引用已实现，13项安全回归通过。P1父续跑租约释放、P2Agent可逆性、borrowed child刚提交paused时quit/close-window误收口均修复，生命周期18项通过；两条退出窗口回归先复现失败、修后通过，重启保留原卡，符合既有状态模型childPauseP规则。恢复/安全/desktop最终只读复评未发现新阻断，冻结/预算视角进行中。8项突变均为业务断言失败且已恢复，核查者已核日志，脚本已同步最终工具表用例选择。中间版2991单测+2 skip与131/131 Electron e2e通过；最后退出修复后format/lint/typecheck/build通过，正在重跑全量单测与e2e。H9只清理根与子工具落盘目录，不级联删除/reset子Tape事实；clear/delete均验证symlink目标和用户文件保留。31尚未勾选/提交/推送，spec仍ready。无新key读取，官方费用累计仍约$0.163784。
+
+- **2026-09-28 H9 回归状态更正**：此前两次回复及本条旧记录错误沿用了修复前失败，且把未证实的 JudgeContext 丢值猜测当成定位；现已撤回。实际问题是新加 handoffFacts 的 spill 参数先引用了不存在的 box、随后引用了 CallRef 不存在的 sessionId，已改为三个调用点显式传父会话 ID。当前子生命周期26/26通过（含长正文落盘），未发现 JudgeContext 丢值。继续补恢复长正文/写盘失败回归、最终复评与第34步真实基线；31仍待完整门禁后勾选。
+
+- **2026-09-28 第31步末轮复评与33独立预备**：冻结/预算视角确认两个额外缺陷并经lead核查：子交接汇总漏扣OpenAI cacheWrite且未clamp，以及成功保留父lease后child run-ended事件先于box.hold可被重入stop错过。5项新回归在旧生产全红、修后23项生命周期通过，补丁/tmp/tenon31-budget-lease.patch已合主线。Agent长交接与H9的规格冲突待owner，见Open；31未完成。33只集成受dev-only限制的官方SSE证据接缝（/tmp/tenon33-probe.patch），普通Playwright排除全部live-*.spec.ts；D与state在独立区准备产品和raw协议测试，无key读取/付费请求。
+
+- **2026-09-28 第31步推进中，分工触发账号用量限制**：owner最新「继续」已批准父工作区授权因果引用，Revisions26已写spec，不能再次询问。K/D分工报usage limit后停止：K区仍有未交付的修复与测试，主线只集成较早`/tmp/tenon31-kernel-preview.patch`；K最近报告生命周期13+lead安全9通过，P1交接开父Run之前stop漏释放与P2Agent可逆性正在修。D区有已评审UI preview `/tmp/tenon31-desktop-preview.patch`（未合主线），并有未完子落盘目录清理。主线helper5文件+28官方2文件+K初始preview+安全9tests+spec/plan均未提交。全套31门禁/完整四视角收敛仍未完成。独立33预备补丁`/tmp/tenon33-probe.patch`已过9测试，未合入。后续先接回K/D最新草稿，补parentWorkspaceKey与剩余矩阵，再集成测试；不要重复套已合preview或把任何草稿当验收通过。当前没有后台测试/新key读取，官方费用累计仍约$0.163784。
 
 - **2026-09-28 owner「按建议继续」**：已确认第28官方搜索max_tokens=4096与第31判决目标快照/旧记录unresolved方案，spec Revisions (25)。先补完28官方desktop入口，再开31；本轮继续推进剩余步骤，不需重复询问这两项。
 
@@ -1054,13 +1255,18 @@
 
 ## Open
 
+- **第34步外部验收当前阻塞（2026-09-28）**：自动审批先后拒绝官方10题和Claude Code其余9题启动，理由均为未明确确认拟发送载荷与第三方目的地；受阻调用未启动、官方key未读取。已向owner请求一次具体授权：10道合成题/15份专用夹具（约11KB）→api.anthropic.com，keychain `tenon-live-anthropic`、累计$15停止线；剩余9道合成题→open.bigmodel.cn/api/anthropic，经现有智谱key、原计划整列¥60–130。范围清单在仓库外`tenon34-official-egress-scope.json`与`tenon34-claude-collection/egress-scope-audit.json`；不以换客户端或路径绕过审查。Desktop辅助功能可读但实际点击报noWindowsAvailable、录屏枚举不到可见窗口；已请owner解锁并保持Claude在当前桌面可见。等待这些必要输入时已完成所有独立基线、校准、代码门禁工作，后续仅据真实对照结果勾33/34和implemented。
+
+
+- **第31步子会话授权与父工作区的因果引用（owner 已以「继续」确认，Revisions 26）**：K与独立核查确认，父子Tape的entryId只各自单调，createdAt可能同ms；既有run_started/environment/target无法区分「子授权→父移除→加回」与「父移除→加回→子新授权」，前者必须永久失效。已定给ApprovalResolvedPayload增可选parentWorkspaceKey（父workspace_set的provenanceKey），子文件/命令session授权同批存父当前workspace事实引用，重建时从该点重放父后续撤销；旧/失效引用不采纳子自身文件/命令session授权，下次重新询问。网络授权与正常父继承不变，不改Host/IPC/数据库。owner已确认，依赖解除；已实现并通过同毫秒移除/加回、新旧授权、cwd撤销及重启回归。
+
 只列 owner 在仓库外要做的事：
 
 - **第31步目标快照已定（2026-09-28，owner「按建议继续」，Revisions 25）**：spec要求HandoffCall.target与审批卡同算法（文件为真实路径），并从子Tape机械生成；但自动allow判决没有confirm.target，dispatch只存decisionKey，无法复原当时symlink/cwd。例如Read('/w/link')实际读A，交接前link改指B，现有事实不能证明A；原input或当前realpath都不满足该契约。建议只增PermissionDecidedPayload.target?:ConfirmTarget，新判决allow/ask/deny均存已算出的对象（不追加IO），已派发调用经dispatch.decisionKey取快照，未派发取最新判决；无判决/旧事实以原参数生成明确标注unresolved的说明，缺path/cwd不猜默认；path/url原文、command+cwd、search query+host、tool serverId/name采用固定英文模板。owner已确认按建议补定，完整读取顺序、旧事实回退与字符串格式已写spec，依赖解除。
 
-- **第28步官方搜索 max_tokens 已定**：owner「按建议继续」确认4096（Revisions 25）；两模型官方探测均200/end_turn，输出129/145 token。现在接入desktop官方搜索入口并补测。
+- **第28步官方搜索 max_tokens 已定**：owner「按建议继续」确认4096（Revisions 25）；两模型官方探测均200/end_turn，输出129/145 token。desktop官方搜索已接入；第33步两模型真实搜索均已通过。
 
-- **第 28 步搜索审批规格缺口已定（2026-09-28，owner 以「继续」接受建议，Revisions (24)）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。已定：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。接口、续跑/答复、恢复规则已补，下一步实现并补两个竞态窗口回归。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
+- **第 28 步搜索审批规格缺口已定（2026-09-28，owner 以「继续」接受建议，Revisions (24)）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。已定：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。接口、续跑/答复、恢复规则已补，实现及两个竞态窗口回归均已完成；官方max_tokens按Revisions25定为4096。
 
 
 - 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。

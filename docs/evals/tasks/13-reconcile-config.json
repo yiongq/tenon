@@ -1,0 +1,23 @@
+{
+  "id": "13-reconcile-config",
+  "profile": "cowork",
+  "turns": [
+    "合并base.json与override.json：override覆盖，null表示删除键，其他base键保留。写 effective.json，不改输入。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "13-reconcile-config"
+    }
+  ],
+  "compare": true,
+  "workspace": "13-reconcile-config",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}

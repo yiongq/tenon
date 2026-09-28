@@ -23,6 +23,7 @@ import {
   registerRoute,
   runStateEvent,
   sessionFacts,
+  sessionMessages,
 } from '@tenon-app/contracts'
 import type {
   EventDef,
@@ -111,6 +112,7 @@ function fakeBridge(): FakeBridge {
     },
   }
   // What an idle main answers: nothing waits, nothing resumes, every command accepted.
+  fake.handle(sessionMessages, () => [])
   fake.handle(approvalCurrent, () => null)
   fake.handle(approvalList, () => [])
   fake.handle(approvalResume, () => ({ status: 'none' as const }))
@@ -468,6 +470,66 @@ describe('the approval card', () => {
     // A new card restarts the click guard (APPROVAL_CLICK_GUARD_MS, §最小审批卡「排队行」).
     expect(store.getSnapshot().pendingSince).toBe(30_000)
     expect(store.getSnapshot().answered.size).toBe(0)
+  })
+
+  it('loads child approval arguments and discards a read after the pending card changes', async () => {
+    const fake = fakeBridge()
+    const childCard = card(R1, {
+      callKey: `${RUN}:2:0`,
+      anchorCallKey: CALL,
+      card: { ...card(R1).card, sessionId: OTHER },
+    })
+    let current: PendingCard | null = childCard
+    fake.handle(approvalCurrent, () => current)
+    const childRow: MessageRowContract = {
+      ...row('child-message', 'assistant', '', 4),
+      sessionId: OTHER,
+      content: [
+        {
+          type: 'tool-request',
+          id: 'child-write',
+          name: 'Write',
+          input: { file_path: '/a', content: 'child change' },
+        },
+      ],
+      calls: [{ callKey: childCard.callKey, outcome: null }],
+    }
+    let release!: (rows: MessageRowContract[]) => void
+    fake.handle(
+      sessionMessages,
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }),
+    )
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    const first = store.refreshPending()
+    await settle()
+    expect(store.getSnapshot().pendingCall).toBeNull()
+    expect(fake.calls(sessionMessages)).toEqual([{ sessionId: OTHER, limit: 1000 }])
+    current = null
+    await store.refreshPending()
+    release([childRow])
+    await first
+    expect(store.getSnapshot().pendingCall).toBeNull()
+
+    current = childCard
+    fake.handle(sessionMessages, () => {
+      vi.setSystemTime(20_000)
+      return [childRow]
+    })
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingCall).toEqual({
+      name: 'Write',
+      input: { file_path: '/a', content: 'child change' },
+    })
+    expect(store.getSnapshot().pendingSince).toBe(20_000)
+    vi.setSystemTime(30_000)
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingSince).toBe(20_000)
+    current = card(R2)
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingCall).toBeNull()
   })
 
   it('collapses a denial with no scope, and a sub-agent’s allow as the subtask’s', async () => {

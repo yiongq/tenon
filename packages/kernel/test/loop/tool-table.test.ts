@@ -331,6 +331,7 @@ describe('which tools a request carries', () => {
     if (second.status === 'started') await loop.runEnded({ runId: second.runId })
     // Plan step 22: Write, Edit and Bash joined the task table.
     expect(toolNames(provider)).toEqual([
+      'Agent',
       'AskUserQuestion',
       'Bash',
       'Edit',
@@ -343,7 +344,7 @@ describe('which tools a request carries', () => {
   })
 })
 
-describe('the table freezes per session × provider (E2)', () => {
+describe('02 不变量 6: the table freezes per session × provider (E2)', () => {
   it('writes B’s table on the first switch, and none on the way back to A (旧 35)', async () => {
     const h = harness()
     await send(h)
@@ -664,7 +665,7 @@ function prefixParts(
   }
 }
 
-describe('the five-step prefix fixture (A13; 旧 32, 验收 26)', () => {
+describe('02 不变量 7 / 02 不变量 8: the five-step prefix fixture (A13; 旧 32, 验收 26)', () => {
   /**
    * On one wire, with the other as B: change the interface language, switch a tool off and have the
    * model call it, allow a card in the Run that resumes, queue a message during a batch, then go to

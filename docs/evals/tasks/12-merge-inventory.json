@@ -1,0 +1,23 @@
+{
+  "id": "12-merge-inventory",
+  "profile": "cowork",
+  "turns": [
+    "合并 east.json 和 west.json 库存，同sku相加，按sku升序，写 inventory.json 数组，只含sku/qty。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "12-merge-inventory"
+    }
+  ],
+  "compare": true,
+  "workspace": "12-merge-inventory",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}

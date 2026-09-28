@@ -183,6 +183,7 @@ async function main(): Promise<void> {
       ? null
       : createSessionRemoval({
           sessions,
+          ...(tape === null ? {} : { tape }),
           // Bound late: the loop below takes this removal's `removing`.
           runs: () => loop?.registry ?? null,
           profileDir: absolutePath(host.identity.profileDir),

@@ -13,6 +13,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -21,6 +22,7 @@ import {
   createEntryWriter,
   createMemoryHost,
   messageRetractedKey,
+  parentLinkKey,
   toolOutputDirFor,
 } from '@tenon-app/kernel'
 import type {
@@ -259,6 +261,7 @@ function rig(
   // The kernel's own reset and delete, each noted once the store committed it.
   const commits = options.sessions ?? kernel
   const removal = createSessionRemoval({
+    tape: tape.store,
     sessions: {
       resetSession: async (sessionId) => {
         await storeGate.passed()
@@ -989,3 +992,51 @@ describe('the kernel deletes no folder (旧 189; §大响应落盘「kernel 不�
     >()
   })
 })
+
+it.each(['clear', 'delete'] as const)(
+  'removes linked child spills after %s while preserving workspace and symlink targets',
+  async (action) => {
+    const r = rig()
+    const session = randomUUID()
+    const children = [randomUUID(), randomUUID()]
+    await converse(r, session, 'hello')
+    const head = await r.store.head(session)
+    if (head === null) throw new Error('missing parent')
+    const runId = randomUUID()
+    await r.store.append({
+      sessionId: session,
+      incarnationId: head.incarnationId,
+      entries: children.map((child, ordinal) =>
+        createEntryWriter('session')('session/parent_link', {
+          sourceType: 'runtime_event',
+          sourceId: runId,
+          sourceSeq: 0,
+          provenanceKey: parentLinkKey(runId, 0, ordinal),
+          payload: {
+            ordinal,
+            providerToolCallId: `agent-${ordinal}`,
+            child: { sessionId: child, incarnationId: randomUUID() },
+            tools: [],
+            stepLimit: 30,
+            deadlineMs: 300000,
+          },
+          createdAt: 1000,
+        }),
+      ),
+    })
+    const parentFile = spill(r, session, 'parent output')
+    const childFile = spill(r, children[0]!, 'child output')
+    const kept = join(r.workspace, 'keep.txt')
+    writeFileSync(kept, 'user file')
+    const link = toolOutputDirFor(r.profileDir, children[1]!)
+    symlinkSync(r.workspace, link)
+    await r.removal[action](session)
+    expect(existsSync(parentFile)).toBe(false)
+    expect(existsSync(childFile)).toBe(false)
+    expect(existsSync(link)).toBe(false)
+    expect(readFileSync(kept, 'utf8')).toBe('user file')
+    expect(r.order[0]).toBe('store committed')
+    expect(r.order.filter((step) => step.startsWith('rm '))).toHaveLength(3)
+    expect(r.log).toEqual([])
+  },
+)

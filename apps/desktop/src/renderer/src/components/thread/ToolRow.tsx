@@ -115,7 +115,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             <>
               <p className="text-micro text-text-muted">{t('tool.output')}</p>
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary">
-                {outcome.output}
+                {props.toolName === 'Agent' ? visible(outcome.output) : outcome.output}
               </pre>
             </>
           )}
@@ -124,7 +124,8 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
       {answered === null ? null : <AnsweredRow answered={answered} />}
       {summary === null ? null : <AskSummaryCard summary={summary} />}
       {asking ? <QueuedRows callKey={callKey} /> : null}
-      {pending === null ? null : (
+      {pending === null ||
+      (pending.card.sessionId !== store.sessionId && snapshot.pendingCall === null) ? null : (
         <>
           {/* A new requestId is a new card (§最小审批卡「数据」): it mounts afresh, with no focus or
               expanded change carried over from the card it replaced. */}
@@ -132,11 +133,19 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             key={pending.card.requestId}
             pending={pending}
             since={snapshot.pendingSince}
-            toolName={props.toolName}
-            input={input}
+            toolName={
+              pending.card.sessionId === store.sessionId
+                ? props.toolName
+                : (snapshot.pendingCall?.name ?? '')
+            }
+            input={
+              pending.card.sessionId === store.sessionId
+                ? input
+                : (snapshot.pendingCall?.input ?? {})
+            }
             onRespond={(decision) => void store.respond(decision)}
           />
-          <QueuedRows callKey={pending.callKey} />
+          <QueuedRows callKey={pending.anchorCallKey} />
         </>
       )}
     </div>

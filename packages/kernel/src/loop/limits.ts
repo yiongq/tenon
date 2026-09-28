@@ -4,9 +4,12 @@
  * three STOP_* waits are the stop and Bash-timeout sequence's (plan step 23 measured the first two on
  * two fork fixtures, apps/desktop/test/stop-tree.test.ts, which CI also runs on Linux; they stay
  * 待校准 until step 34).
- * SUBAGENT_STEP_LIMIT and SUBAGENT_TOKEN_LIMIT are declared once the owner gives the numbers.
+ * Child limits were approved in spec 02 Revisions (20); step 34 calibrates them.
  */
 export const STEP_LIMIT = 100 // 主会话，每条用户消息（H11 ownerNote）
+export const SUBAGENT_STEP_LIMIT = 30
+export const SUBAGENT_TOKEN_LIMIT = 500_000
+export const SUBAGENT_DEADLINE_MS = 300_000
 export const NO_PROGRESS_REPEATS = 4 // master-reference.md:900
 export const MACHINE_DENIAL_CAP = 3 // F2
 export const RETRY_CAP = 2 // 02 全局重试上限，待校准（H12）

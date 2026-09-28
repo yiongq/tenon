@@ -16,8 +16,8 @@
  * the base input price (2.5% on Claude Fable 5.1 and Claude Mythos 5.1, 5% on Claude Opus 5.5)",
  * and the four older rows were re-checked against their own pages and still match.
  *
- * The order is the owner's, not the vendor's (02 decision A16): Sonnet 5 first and Opus 5.5 second
- * until an official key passes the Anthropic group's prefix acceptance, then Opus 5.5 first. The
+ * The order follows 02 decision A16: Opus 5.5 first after the official prefix acceptance passed
+ * on 2026-09-28 (plan step 33: tool freezing, provider round trip, compaction and restart). The
  * first row is only the fallback for a user who never picked a model (02 decision M5); the
  * overview itself now says to start with Opus 5.5. Whatever a caller does with this table, it is
  * data — a host that wants another model passes its own `ModelInfo`.
@@ -94,30 +94,6 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
  */
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
-    id: 'claude-sonnet-5',
-    purposeKey: 'model.purpose.sonnet5',
-    providerId: ANTHROPIC_PROVIDER_ID,
-    contextLimit: 1_000_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: true,
-    supportsCacheControl: true,
-    thinkingPreservationFormat: 'signed-blocks',
-    usageNeedsOptIn: false,
-    thinkingSpec: {
-      mode: 'adaptive',
-      defaultOn: true,
-      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-      defaultEffort: 'high',
-      displays: ['summarized', 'omitted'],
-      defaultDisplay: 'omitted',
-      samplingDefaultsOnly: true,
-    },
-    pricing: { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2 },
-  },
-  {
     // A fixed id with no date suffix; the alias is the same string. The 5-minute cache-write price
     // is the one recorded (the 1-hour tier is $8). Thinking always on, five effort levels from low
     // to max with medium the default, no forced `tool_choice`, sampling parameters at their
@@ -145,6 +121,30 @@ const MODELS: readonly ModelInfo[] = frozenModels([
       forcedToolChoice: false,
     },
     pricing: { inputPerMTok: 4, outputPerMTok: 20, cacheReadPerMTok: 0.2, cacheWritePerMTok: 5 },
+  },
+  {
+    id: 'claude-sonnet-5',
+    purposeKey: 'model.purpose.sonnet5',
+    providerId: ANTHROPIC_PROVIDER_ID,
+    contextLimit: 1_000_000,
+    maxOutputTokens: 128_000,
+    reasoning: true,
+    supportsToolCalling: true,
+    supportsStreamingToolCalls: true,
+    supportsVision: true,
+    supportsCacheControl: true,
+    thinkingPreservationFormat: 'signed-blocks',
+    usageNeedsOptIn: false,
+    thinkingSpec: {
+      mode: 'adaptive',
+      defaultOn: true,
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+      displays: ['summarized', 'omitted'],
+      defaultDisplay: 'omitted',
+      samplingDefaultsOnly: true,
+    },
+    pricing: { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.2 },
   },
   {
     // Legacy ("still available") since Opus 5.5; the deprecations page still lists it as Active,

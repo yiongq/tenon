@@ -1,0 +1,36 @@
+{
+  "id": "17-long-evidence-ledger",
+  "profile": "cowork",
+  "turns": [
+    "运行 node generate.mjs 生成60份档案。后续每轮按要求用Read读取指定的全部文件（不要用Bash/Grep抽取末行），从各文件末尾FINAL_APPROVED_CODE记录最终批准代码，逐轮维护ledger.json数组，每项 {\"id\":\"两位编号\",\"code\":整数}。本轮只生成档案。",
+    "本轮用Read读取corpus/01.txt至corpus/06.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/07.txt至corpus/12.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/13.txt至corpus/18.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/19.txt至corpus/24.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/25.txt至corpus/30.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/31.txt至corpus/36.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/37.txt至corpus/42.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/43.txt至corpus/48.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/49.txt至corpus/54.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "本轮用Read读取corpus/55.txt至corpus/60.txt六份完整档案。不要用搜索或命令跳读；把六项加入ledger.json，保留之前项、按id排序。只回复已处理的编号。",
+    "核对ledger.json包含01至60共60项、无重复编号。不要重读档案，用已保存的记录，按id升序写最终ledger.json。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "17-long-evidence-ledger"
+    }
+  ],
+  "compare": false,
+  "workspace": "17-long-evidence-ledger",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    },
+    "usageLimitTokens": 600000
+  },
+  "calibrates": ["H10", "H11"],
+  "from": ["H10", "H11"]
+}

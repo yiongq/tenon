@@ -1,3 +1,4 @@
+import type { SubagentHandoff } from './subagent.js'
 /**
  * How a single tool call is closed (spec 02 §原因码表, §写入：谁写、写几次). §02 的 Tape 事实, §子 agent
  * 契约 and §权限引擎 · Inspector 与判决记录 reference these names; the vocabulary only grows.
@@ -80,6 +81,7 @@ export interface ResultFacts {
   /** The file the result's whole text went to (§大响应落盘): `spillChecked` gives it. */
   readonly spill?: SpillRecord
   /** An answered AskUserQuestion's record, for the summary card (open question 18). */
+  readonly handoff?: SubagentHandoff
   readonly question?: AskAnswerRecord
   readonly searchHitUrls?: readonly string[]
   readonly effect: SideEffectClass
@@ -105,6 +107,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     content: [...q.content],
     kernelAuthored: q.kernelAuthored,
     ...(q.spill === undefined ? {} : { spill: { ...q.spill } }),
+    ...(q.handoff === undefined ? {} : { handoff: q.handoff }),
     ...(q.question === undefined ? {} : { question: q.question }),
     ...(q.searchHitUrls === undefined ? {} : { searchHitUrls: [...q.searchHitUrls] }),
     writer: q.writer,

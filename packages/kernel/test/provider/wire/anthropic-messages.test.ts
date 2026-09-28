@@ -29,7 +29,7 @@ function bodyOf(req: ProviderRequest, providerId = 'anthropic'): Record<string, 
 }
 
 describe('encodeAnthropicMessages', () => {
-  it('builds the documented body', () => {
+  it('02 不变量 10: builds the documented body', () => {
     const body = bodyOf({
       model: anthropicModel(),
       system: 'You are terse.',

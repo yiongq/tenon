@@ -40,6 +40,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   6: '17146efa744b39f5e7e2f867291820d40517f9add47bc718ae88d5cb6bd9a951',
   // Compaction request and persisted summary wrapper (plan step 30).
   7: 'f73d2efd58af2bc6176398adcf423c0a8194bdb3e210ce458f83e75fbca61ef0',
+  // Child handoff status, call and immutable target templates (plan step 31).
+  8: 'c483d606ca52cd19eaa008afd4e0cb6c58b4bafc93dee0c110d33db636fb5fd0',
 }
 
 describe('the version gate', () => {

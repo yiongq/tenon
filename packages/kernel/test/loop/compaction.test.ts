@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import type * as RunModule from '../../src/loop/run.js'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore, compactionThreshold } from '../../src/index.js'
 import type { ModelInfo, StreamEvent } from '../../src/index.js'
 import {
@@ -10,6 +11,29 @@ import {
   scriptedTurn,
   stopEvent,
 } from '../../src/testing/index.js'
+
+// Deadline is an existing RunDriverContext contract. Inject it only in the selected test so a
+// root with historical turns can exercise the same driver's summary path as a time-limited child.
+const deadline = vi.hoisted(() => ({ from: null as number | null }))
+vi.mock('../../src/loop/run.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof RunModule>()
+  return {
+    ...actual,
+    driveRun: (ctx: Parameters<typeof actual.driveRun>[0]) =>
+      actual.driveRun(
+        deadline.from === null
+          ? ctx
+          : {
+              ...ctx,
+              deadlineMs: 300000,
+              elapsed: async () => ctx.host.clock.now() - deadline.from!,
+            },
+      ),
+  }
+})
+beforeEach(() => {
+  deadline.from = null
+})
 
 const SESSION = 'b5afcab9-1f3c-4c9b-9df0-f9db36678f92'
 const MODEL: ModelInfo = {
@@ -106,6 +130,17 @@ describe('compaction in a Run', () => {
         })
       ).verdict,
     ).toBe('verified')
+    // Invariant 7: every main request keeps the incarnation's frozen system after compaction.
+    // Summary requests have a separate prompt and are deliberately outside this comparison.
+    const mainAssemblies = attempts
+      .filter((attempt) => attempt.payload['compaction'] === undefined)
+      .map((attempt) => facts.find((fact) => fact.provenanceKey === attempt.payload['assemblyRef']))
+    expect(mainAssemblies.length).toBeGreaterThan(1)
+    const originalSystem = mainAssemblies[0]?.payload['systemHash']
+    expect(originalSystem).toEqual(expect.any(String))
+    expect(mainAssemblies.map((assembly) => assembly?.payload['systemHash'])).toEqual(
+      mainAssemblies.map(() => originalSystem),
+    )
     expect(attempts.at(-1)?.sourceSeq).toBe(2)
     expect(JSON.stringify(attempts.at(-1)?.payload)).not.toContain('PRIVATE_SUMMARY')
     expect(JSON.stringify(h.loop.recorded.slice(eventStart))).not.toContain('PRIVATE_SUMMARY')
@@ -160,7 +195,7 @@ function readCall(tokens = 2000): StreamEvent[] {
     stopEvent('tool-use', 'tool_use'),
   ]
 }
-it('compacts only older turns mid-turn, then cannot compact the same content again', async () => {
+it('02 不变量 9: compacts only older turns mid-turn, then cannot compact the same content again', async () => {
   const h = harness()
   await seed(h, 10)
   h.provider.script(readCall())
@@ -688,3 +723,42 @@ it.each(['error', 'stop'] as const)(
     expect(ended.lastStop).toBe(signal === 'error' ? null : 'context-overflow')
   },
 )
+
+it('02 不变量 29: sends an overflow summary past the deadline but not the next main payload', async () => {
+  const h = harness(MODEL, 100000)
+  await seed(h, 10)
+  deadline.from = h.host.clock.now()
+  let crossed = false
+  const stream = h.provider.stream.bind(h.provider)
+  h.provider.stream = (encoded, ctx) => {
+    const source = stream(encoded, ctx)
+    return (async function* () {
+      for await (const event of source) {
+        yield event
+        if (!crossed && event.type === 'text-delta' && event.text === 'cross summary deadline') {
+          crossed = true
+          h.host.advance(300000)
+        }
+      }
+    })()
+  }
+  h.provider.script([
+    { type: 'text-delta', index: 0, text: 'cross summary deadline' },
+    ...overflow(),
+  ])
+  h.provider.script(reply('summary completed after the deadline'))
+  const before = h.provider.starts
+  expect((await send(h)).reason).toEqual({ code: 'time-limit', limitMs: 300000 })
+  expect(h.provider.starts - before).toBe(2)
+  const facts = await entries(h)
+  expect(facts.filter((entry) => entry.name === 'compaction/anchor')).toHaveLength(1)
+  const attempts = facts.filter((entry) => entry.name === 'provider/attempt_completed').slice(-2)
+  expect(attempts[0]!.payload['compaction']).toBeUndefined()
+  expect(attempts[1]!.payload['compaction']).toBeDefined()
+  expect(attempts.map((attempt) => attempt.sourceSeq)).toEqual([
+    expect.any(Number),
+    expect.any(Number),
+  ])
+  expect(attempts[1]!.sourceSeq).toBeGreaterThan(attempts[0]!.sourceSeq!)
+  expect(JSON.stringify(h.provider.requests.at(-1)!.body)).toContain('old question 0')
+})

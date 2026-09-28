@@ -1,0 +1,24 @@
+{
+  "id": "14-delegate-invoice-audit",
+  "profile": "cowork",
+  "turns": [
+    "请用 Agent 委派一个子任务：读取 invoices.json，计算未付发票总额和id列表，只读不修改。等子任务交接后，由你写 audit.json，格式 {\"unpaidTotal\":整数,\"ids\":[按id升序]}。不要自己代替子任务读取发票。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "14-delegate-invoice-audit"
+    }
+  ],
+  "compare": true,
+  "workspace": "14-delegate-invoice-audit",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "calibrates": ["H11"],
+  "from": ["H5", "H11", "H15"]
+}

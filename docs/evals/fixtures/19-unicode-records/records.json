@@ -1,0 +1,5 @@
+[
+  { "id": 3, "label": "书 📚", "active": true },
+  { "id": 1, "label": "Café", "active": true },
+  { "id": 2, "label": "隐藏", "active": false }
+]

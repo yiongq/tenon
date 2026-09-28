@@ -1,3 +1,5 @@
+import type { CallRef } from './closure.js'
+import type { SubagentHandoff } from './subagent.js'
 /**
  * The mailbox: one serial point per root session (spec 02 §主进程与 kernel 的循环接口「mailbox」
  * 「租约」「何时判定」「新一轮先预建」「缺 key」「登记之后、append 之前被中止」「停止」).
@@ -41,6 +43,8 @@ import type {
   ModelSelectedPayload,
   NewEntry,
   PermissionDecidedPayload,
+  ParentLinkPayload,
+  ToolTablePayload,
   RunStartedPayload,
   RunTerminalPayload,
   SessionStartPayload,
@@ -51,6 +55,8 @@ import type { TapeAttemptCompletedPayload, TapeUserMessagePayload } from '../tap
 import { parseMessagePayload } from '../tape/projection.js'
 import {
   messageRevisionKey,
+  parentLinkKey,
+  profileSetKey,
   modelSelectedKey,
   runStartedKey,
   runTerminalKey,
@@ -92,6 +98,8 @@ import {
   rejudgeWaiting,
   resolvedEntry,
   resumeHead,
+  resumeSetupOf,
+  batchClosures,
   stopFacts,
   supersedeFacts,
   tightenedFacts,
@@ -102,13 +110,16 @@ import { recoverTape, resumableOf } from './recovery.js'
 import type { Resumable } from './recovery.js'
 import { RunWriteRefusedError, closedView, placeOf, readSessionEntries } from './batch.js'
 import { approvalOf } from './calls.js'
-import type { Written } from './batch.js'
-import { notRunFacts } from './closure.js'
+import type { Written, AgentDispatch, AgentDispatchResult } from './batch.js'
+import { buildSubagentHandoff, handoffText, subagentElapsedFromTape } from './subagent.js'
+import { SUBAGENT_STEP_LIMIT, SUBAGENT_TOKEN_LIMIT, SUBAGENT_DEADLINE_MS } from './limits.js'
+import { notRunFacts, resultFacts } from './closure.js'
+import { spillChecked } from './spill.js'
 import { typedReply } from '../tools/builtin/ask-user-question.js'
 import type { AskReply } from '../tools/builtin/ask-user-question.js'
 import { mcpCandidates } from '../tools/mcp-source.js'
 import { builtinCandidates } from '../tools/registry.js'
-import { openToolTable } from '../tools/table.js'
+import { openToolTable, rebuildToolTable, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ResumeBatch, RunDriverContext, RunFinish } from './run.js'
 import {
@@ -117,6 +128,7 @@ import {
   abortedEndReason,
   callKeyOf,
   driveRun,
+  readViewState,
   userTextContent,
 } from './run.js'
 import type { RunEndReason } from './terminal.js'
@@ -694,7 +706,7 @@ export function createLoop(deps: LoopDeps): Loop {
       const { queuedId } = await ports.queue.enqueue(root, q.text, { urgent: false })
       return { kind: 'done', result: { status: 'queued', queuedId } }
     }
-    const waiting = await waitingOf(tape, root)
+    const waiting = await treeWaiting(root)
     if (waiting?.waitKind === 'question') {
       // A prebuild, if the send made one, is dropped with its failure: the answer resumes the
       // paused batch on its frozen model (「新一轮先预建」「打字回复不预建」).
@@ -755,7 +767,7 @@ export function createLoop(deps: LoopDeps): Loop {
     }
     let waiting: WaitingCall | null
     try {
-      waiting = await waitingOf(tape, root)
+      waiting = await treeWaiting(root)
     } catch (error) {
       // An auto-send's items go back before its lease does: what waits behind it finds the queue
       // as it was, in order (models/README: 排队消息…按规定次序发出).
@@ -828,6 +840,8 @@ export function createLoop(deps: LoopDeps): Loop {
         // the new round — so the next request shows the model those results first (F11).
         const superseded = supersedeFacts(tape, now, waiting)
         await appendTo(waiting.sessionId, superseded)
+        if (waiting.sessionId !== root)
+          await closeParentChild(ports, box, 'superseded', 'superseded')
         emitClosures(ports, box, waiting.sessionId, superseded, waiting)
       }
       opened = await openRound(ports, box, input.sessionId, messages, pre)
@@ -1231,6 +1245,7 @@ export function createLoop(deps: LoopDeps): Loop {
           createdAt: now(),
         }),
       ])
+      if (item.sessionId !== root) await closeParentChild(ports, box, 'aborted', 'stopped')
     } finally {
       finish(box, lease)
     }
@@ -1434,6 +1449,37 @@ export function createLoop(deps: LoopDeps): Loop {
   ): Promise<AnswerResult> {
     const frozen = await frozenBatchOf(tape, waiting)
     if (lease.signal.aborted) return abortedAnswer(ports, box, lease)
+    if (waiting.sessionId !== box.rootSessionId) {
+      const writer: FactWriter = { by: 'resolver' }
+      const facts = [
+        resolvedEntry({ tape, now, waiting, outcome: 'denied', via: 'card', writer }),
+        ...batchClosures({
+          tape,
+          now,
+          waiting,
+          calls: [waiting.call],
+          source: 'user-rejected',
+          writer,
+        }),
+      ]
+      const opened = await openResumed(
+        ports,
+        box,
+        waiting.sessionId,
+        lease,
+        pausedBatchOf(waiting),
+        frozen.setup,
+        {
+          runId: waiting.ref.runId,
+          requestSeq: waiting.ref.requestSeq,
+          calls: waiting.rest,
+          approved: null,
+        },
+        facts,
+        waiting,
+      )
+      return opened === null ? abortedAnswer(ports, box, lease) : { status: 'applied' }
+    }
     const runId = ids.uuid()
     const { entries, reason } = rejectFacts({
       tape,
@@ -1542,11 +1588,21 @@ export function createLoop(deps: LoopDeps): Loop {
         kind: 'call' as const,
         argsHash: waiting.call.argsHash,
       }
+      let parentWorkspaceKey: string | undefined
+      if (scope === 'session' && (object.kind === 'file' || object.kind === 'command')) {
+        const parent = (await readSessionFacts(tape, waiting.sessionId)).subagentOf
+        if (parent !== null) {
+          parentWorkspaceKey = (await readSessionEntries(tape, parent.sessionId)).findLast(
+            (entry) => entry.name === 'session/workspace_set',
+          )?.provenanceKey
+        }
+      }
       facts = [
         resolvedEntry({
           tape,
           now,
           waiting,
+          ...(parentWorkspaceKey === undefined ? {} : { parentWorkspaceKey }),
           outcome: 'allowed',
           via: 'card',
           grant: { scope, key: grantKey(item.serverId, item.originalName, object) },
@@ -1612,7 +1668,12 @@ export function createLoop(deps: LoopDeps): Loop {
     if (head === null) throw new Error(`resume: session ${sessionId} has no head`)
     if (lease.signal.aborted) return null
     const opened = await appendOpening(ports, box, sessionId, runId, head.incarnationId, [
-      ...facts,
+      ...facts.map((fact) =>
+        resume.handoff === undefined ||
+        (fact.payload['handoff'] === undefined && fact.name !== 'execution/tool_outcome')
+          ? fact
+          : { ...fact, payload: { ...fact.payload, writer: { by: 'run', runId } } },
+      ),
       // The paused Run's model and capabilities; where it sends now, by the synchronous read.
       ...resumeHead({
         tape,
@@ -1686,6 +1747,419 @@ export function createLoop(deps: LoopDeps): Loop {
    * answer opened — the paused batch's frozen facts and an `assemble` called here, outside the mailbox
    * (§主进程与 kernel 的循环接口「续跑」).
    */
+  async function linkedChild(root: string): Promise<{
+    entry: TapeEntry
+    link: ParentLinkPayload & CallRef
+  } | null> {
+    const entries = await readSessionEntries(tape, root)
+    const entry = entries.findLast(
+      (e) =>
+        e.name === 'session/parent_link' &&
+        !entries.some(
+          (r) =>
+            r.name === 'tool/result' &&
+            r.sourceId === e.sourceId &&
+            r.sourceSeq === e.sourceSeq &&
+            r.payload['ordinal'] === e.payload['ordinal'],
+        ),
+    )
+    if (entry === undefined) return null
+    const link = {
+      ...(entry.payload as ParentLinkPayload),
+      runId: String(entry.sourceId),
+      requestSeq: Number(entry.sourceSeq),
+    }
+    roots.set(link.child.sessionId, root)
+    return { entry, link }
+  }
+
+  async function treeWaiting(root: string): Promise<WaitingCall | null> {
+    const own = await waitingOf(tape, root)
+    if (own !== null) return own
+    const child = await linkedChild(root)
+    return child === null ? null : waitingOf(tape, child.link.child.sessionId)
+  }
+
+  async function closeParentChild(
+    ports: LoopPorts,
+    box: RootBox,
+    outcome: 'aborted' | 'superseded',
+    source: 'stopped' | 'app-exit' | 'superseded',
+  ): Promise<void> {
+    const child = await linkedChild(box.rootSessionId)
+    if (child === null) return
+    const entries = await readSessionEntries(tape, box.rootSessionId)
+    const childEntries = await readSessionEntries(tape, child.link.child.sessionId)
+    const writer: FactWriter = { by: 'resolver' }
+    const result = await handoffFacts(
+      child.link,
+      box.rootSessionId,
+      childEntries,
+      writer,
+      outcome,
+      source,
+    )
+    const rest = entries.filter(
+      (e) =>
+        e.name === 'tool/call' &&
+        e.sourceId === child.link.runId &&
+        e.sourceSeq === child.link.requestSeq &&
+        Number(e.payload['ordinal']) > child.link.ordinal &&
+        !entries.some(
+          (r) =>
+            r.name === 'tool/result' &&
+            r.sourceId === e.sourceId &&
+            r.sourceSeq === e.sourceSeq &&
+            r.payload['ordinal'] === e.payload['ordinal'],
+        ),
+    )
+    const facts = [
+      ...result.entries,
+      ...rest.flatMap((e) =>
+        notRunFacts({
+          tape,
+          now,
+          call: {
+            runId: child.link.runId,
+            requestSeq: child.link.requestSeq,
+            ordinal: Number(e.payload['ordinal']),
+            providerToolCallId: String(e.payload['providerToolCallId']),
+          },
+          source,
+          writer,
+        }),
+      ),
+    ]
+    await appendTo(box.rootSessionId, facts)
+    emitClosures(ports, box, box.rootSessionId, facts)
+  }
+
+  async function endOwnChild(
+    ports: LoopPorts,
+    box: RootBox,
+    sessionId: string,
+    lease: RunLease,
+    finished: RunFinish,
+    end: ReturnType<typeof terminalOf>,
+  ): Promise<void> {
+    const childRunId = box.runId
+    const ended = () =>
+      runEnded(ports, box, sessionId, {
+        runId: childRunId,
+        reason: end.reason,
+        recorded: true,
+        lastStop: finished.lastStop,
+        errorCode: end.aborted ? null : finished.errorCode,
+        retryOf: null,
+      })
+    if (end.reason.code === 'paused') {
+      let card: ConfirmRequest | null = null
+      if (lease.stopRequested) await closePausedByStop(ports, box)
+      else if (!lease.signal.aborted) card = cardOfEntries(sessionId, end.entries)
+      finish(box, lease)
+      ended()
+      if (card !== null) deliver(card)
+      return
+    }
+    const child = await linkedChild(box.rootSessionId)
+    if (child === null) {
+      finish(box, lease)
+      return
+    }
+    const childEntries = await readSessionEntries(tape, sessionId)
+    const parentEntries = await readSessionEntries(tape, box.rootSessionId)
+    const result = lease.signal.aborted
+      ? null
+      : await handoffFacts(child.link, box.rootSessionId, childEntries, { by: 'resolver' })
+    // A stop during spill IO still owns the child lease and must not open a parent Run.
+    if (result === null || lease.signal.aborted) {
+      await closeParentChild(ports, box, 'aborted', lease.stopRequested ? 'stopped' : 'app-exit')
+      const taken = await takeAfterEnd(ports, box, abortedEndReason(abortCauseOf(lease)), lease)
+      const origin = autoSendOrigin(box, lease, taken)
+      finish(box, lease)
+      ended()
+      autoSend(ports, box, box.rootSessionId, taken, origin)
+      return
+    }
+    const rest = parentEntries
+      .filter(
+        (e) =>
+          e.name === 'tool/call' &&
+          e.sourceId === child.link.runId &&
+          e.sourceSeq === child.link.requestSeq &&
+          Number(e.payload['ordinal']) > child.link.ordinal &&
+          !parentEntries.some(
+            (r) =>
+              r.name === 'tool/result' &&
+              r.sourceId === e.sourceId &&
+              r.sourceSeq === e.sourceSeq &&
+              r.payload['ordinal'] === e.payload['ordinal'],
+          ),
+      )
+      .map((e) => ({
+        ordinal: Number(e.payload['ordinal']),
+        providerToolCallId: String(e.payload['providerToolCallId']),
+        name: String(e.payload['name']),
+        input: e.payload['input'] as Record<string, unknown>,
+        argsHash: String(e.payload['argsHash']),
+      }))
+    const paused = parentEntries.findLast(
+      (e) =>
+        e.name === 'execution/run_terminal' &&
+        (e.payload as RunTerminalPayload).reason.code === 'paused',
+    )
+    const setup = resumeSetupOf(parentEntries, child.link)
+    // No await between releasing the child's own lease and reserving the parent's.
+    const origin = box.origin
+    finish(box, lease)
+    const begun = beginLease(ports, box, origin)
+    if ('refused' in begun) {
+      ended()
+      return
+    }
+    const next = hold(box, begun)
+    ended()
+    try {
+      const opened = await openResumed(
+        ports,
+        box,
+        box.rootSessionId,
+        next,
+        {
+          pausedRunId: String(paused?.sourceId ?? child.link.runId),
+          batch: { runId: child.link.runId, requestSeq: child.link.requestSeq },
+        },
+        setup,
+        {
+          runId: child.link.runId,
+          requestSeq: child.link.requestSeq,
+          calls: rest,
+          approved: null,
+          handoff: result.handoff,
+        },
+        result.entries,
+      )
+      if (opened === null) {
+        await closeParentChild(ports, box, 'aborted', next.stopRequested ? 'stopped' : 'app-exit')
+        const taken = await takeAfterEnd(ports, box, abortedEndReason(abortCauseOf(next)), next)
+        const autoOrigin = autoSendOrigin(box, next, taken)
+        finish(box, next)
+        autoSend(ports, box, box.rootSessionId, taken, autoOrigin)
+      }
+    } catch (error) {
+      if (box.lease === next) finish(box, next)
+      throw error
+    }
+  }
+
+  async function handoffFacts(
+    link: ParentLinkPayload & CallRef,
+    parentSessionId: string,
+    childEntries: readonly TapeEntry[],
+    writer: FactWriter,
+    outcome?: 'aborted' | 'superseded' | 'uncertain',
+    source: 'stopped' | 'app-exit' | 'superseded' | 'crashed' | null = null,
+  ): Promise<{ entries: NewEntry[]; handoff: SubagentHandoff }> {
+    const handoff = buildSubagentHandoff(childEntries, {
+      childSessionId: link.child.sessionId,
+      ...(outcome === undefined ? {} : { outcome }),
+    })
+    const isError =
+      handoff.outcome === 'aborted' ||
+      handoff.outcome === 'superseded' ||
+      handoff.outcome === 'uncertain'
+    const checked = await spillChecked({
+      fs: deps.host.fs,
+      profileDir: deps.host.identity.profileDir as AbsolutePath,
+      sessionId: parentSessionId,
+      call: link,
+      result: {
+        content: [{ type: 'text', text: handoffText(handoff) }],
+        isError,
+        kernelAuthored: true,
+      },
+      log: deps.log,
+    })
+    return {
+      handoff,
+      entries: resultFacts({
+        tape,
+        now,
+        call: link,
+        content: checked.content,
+        isError: checked.isError,
+        kernelAuthored: checked.kernelAuthored,
+        ...(checked.spill === undefined ? {} : { spill: checked.spill }),
+        handoff,
+        effect: 'external',
+        state: handoff.outcome === 'uncertain' ? 'uncertain' : isError ? 'aborted' : 'completed',
+        source,
+        reversibility: 'unknown',
+        writer,
+      }),
+    }
+  }
+
+  async function dispatchChild(
+    ports: LoopPorts,
+    box: RootBox,
+    parentId: string,
+    parentIncarnation: string,
+    lease: RunLease,
+    built: RunSetup,
+    q: AgentDispatch,
+  ): Promise<AgentDispatchResult> {
+    const childId = ids.uuid()
+    const incarnationId = ids.uuid()
+    const policy = deps.host.policy.current()
+    const table = openToolTable({
+      providerId: built.model.providerId,
+      incarnationId,
+      generation: 0,
+      reason: 'first-use',
+      candidates: q.table.items.filter(
+        (item) => item.name !== 'Agent' && item.name !== 'AskUserQuestion',
+      ),
+      policy,
+      tenantId: deps.host.identity.tenantId,
+      userSetting: deps.userSetting,
+      hasSearchBackend: built.assembly.search !== null,
+    })
+    const link: ParentLinkPayload & CallRef = {
+      ...q.call,
+      child: { sessionId: childId, incarnationId },
+      tools: table.items.map((item) => item.name),
+      stepLimit: SUBAGENT_STEP_LIMIT,
+      deadlineMs: SUBAGENT_DEADLINE_MS,
+    }
+    const key = parentLinkKey(q.call.runId, q.call.requestSeq, q.call.ordinal)
+    const runId = ids.uuid()
+    const messageId = ids.uuid()
+    const childOpening = await post(box, 'run', null, async () => {
+      if (lease.signal.aborted) throw new RunWriteRefusedError()
+      await appendFirstWins(parentId, parentIncarnation, [
+        ...q.dispatch,
+        sessionSlice.entry('session/parent_link', {
+          sourceType: 'runtime_event',
+          sourceId: q.call.runId,
+          sourceSeq: q.call.requestSeq,
+          provenanceKey: key,
+          payload: {
+            ordinal: link.ordinal,
+            providerToolCallId: link.providerToolCallId,
+            child: link.child,
+            tools: link.tools,
+            stepLimit: link.stepLimit,
+            deadlineMs: link.deadlineMs,
+          },
+          createdAt: now(),
+        }),
+      ])
+      const pre: Extract<Prebuild, { kind: 'ready' }> = {
+        kind: 'ready',
+        choice: {
+          providerId: built.model.providerId,
+          modelId: built.model.id,
+          effort: built.effort,
+          capabilitySource: built.assembly.capabilitySource,
+        },
+        assembly: { ...built.assembly, model: built.model },
+        provider: built.provider(),
+        profile: 'cowork',
+        draft: null,
+      }
+      const opening = [
+        startEntry(childId, incarnationId),
+        sessionSlice.entry('session/profile_set', {
+          sourceType: 'session',
+          sourceId: childId,
+          provenanceKey: profileSetKey(incarnationId),
+          payload: { profile: 'cowork', subagentOf: { sessionId: parentId, linkKey: key } },
+          createdAt: now(),
+        }),
+        messageSlice.entry('message/user', {
+          sourceType: 'message',
+          sourceId: messageId,
+          sourceSeq: 0,
+          provenanceKey: messageRevisionKey(messageId, 0),
+          payload: {
+            messageId,
+            revision: 0,
+            role: 'user',
+            content: userTextContent(String(q.input['prompt'])),
+            status: 'complete',
+          },
+          createdAt: now(),
+        }),
+        ...runHead(childId, runId, { kind: 'user-message', messageId }, pre),
+        ...toolTableFacts({ view: tape.writer('view'), sessionId: childId, table, policy, now }),
+      ]
+      const receipts = await tape.appendEntries({
+        sessionId: childId,
+        incarnationId,
+        entries: opening,
+      })
+      roots.set(childId, parentId)
+      emit(ports, { type: 'run-started', rootSessionId: parentId, sessionId: childId, runId })
+      return { runId, incarnationId, contextAtEntryId: Math.max(...receipts.map((r) => r.entryId)) }
+    })
+    const ended = await new Promise<RunFinish | null>((resolve) =>
+      startRun(
+        ports,
+        box,
+        childId,
+        childOpening,
+        lease,
+        built.model.providerId,
+        () =>
+          Promise.resolve({
+            provider: built.provider,
+            assembly: built.assembly,
+            model: built.model,
+            maxTokens: built.maxTokens,
+            effort: built.effort,
+            profile: 'cowork',
+          }),
+        resolve,
+      ),
+    )
+    if (ended === null) throw new Error('child failed without a terminal')
+    if (ended.reason.code === 'paused' && !lease.signal.aborted) return { kind: 'paused' }
+    if (ended.reason.code === 'paused' && !lease.stopRequested) {
+      const waiting = await waitingOf(tape, childId)
+      // Quit during the child pause append leaves a durable card; preserve the parent's wait too.
+      if (waiting !== null && !lease.stopRequested) return { kind: 'paused' }
+    }
+    if (ended.reason.code === 'paused' && lease.stopRequested)
+      await post(box, 'run', null, async () => {
+        const waiting = await waitingOf(tape, childId)
+        if (waiting !== null) await appendTo(childId, stopFacts(tape, now, waiting))
+      })
+    const childEntries = await readSessionEntries(tape, childId)
+    const stopped = lease.signal.aborted
+    let result = await handoffFacts(
+      link,
+      box.rootSessionId,
+      childEntries,
+      { by: 'run', runId: box.runId! },
+      stopped ? 'aborted' : undefined,
+      stopped ? (lease.stopRequested ? 'stopped' : 'app-exit') : null,
+    )
+    if (!stopped && lease.signal.aborted) {
+      // The original spill is immutable; rebuilding an aborted result safely falls back to the
+      // failure preview if that file already exists, while retaining the full audit handoff.
+      result = await handoffFacts(
+        link,
+        box.rootSessionId,
+        childEntries,
+        { by: 'run', runId: box.runId! },
+        'aborted',
+        lease.stopRequested ? 'stopped' : 'app-exit',
+      )
+    }
+    return { kind: 'done', ...result }
+  }
+
   function startRun(
     ports: LoopPorts,
     box: RootBox,
@@ -1694,6 +2168,7 @@ export function createLoop(deps: LoopDeps): Loop {
     lease: RunLease,
     providerId: ProviderId,
     setup: () => Promise<RunSetup>,
+    borrowed?: (finished: RunFinish | null) => void,
   ): void {
     const { runId, incarnationId } = opened
     const root = box.rootSessionId
@@ -1729,6 +2204,7 @@ export function createLoop(deps: LoopDeps): Loop {
       let failure: unknown = null
       try {
         const built = await setup()
+        const child = (await readSessionFacts(tape, sessionId)).subagentOf !== null
         finished = await driveRun({
           tape,
           ids,
@@ -1751,7 +2227,18 @@ export function createLoop(deps: LoopDeps): Loop {
           protectedFiles: deps.protectedFiles,
           userSetting: deps.userSetting,
           testTools: deps.testTools,
-          tokenLimit: deps.tokenLimit,
+          tokenLimit: child ? SUBAGENT_TOKEN_LIMIT : deps.tokenLimit,
+          ...(child
+            ? {
+                stepLimit: SUBAGENT_STEP_LIMIT,
+                deadlineMs: SUBAGENT_DEADLINE_MS,
+                elapsed: async () =>
+                  subagentElapsedFromTape(await readSessionEntries(tape, sessionId), now()),
+              }
+            : {
+                agent: (q: AgentDispatch) =>
+                  dispatchChild(ports, box, sessionId, incarnationId, lease, built, q),
+              }),
           compactionThreshold: deps.compactionThreshold,
           lease,
           openTable: async (q) => {
@@ -1786,6 +2273,30 @@ export function createLoop(deps: LoopDeps): Loop {
                 })),
               ])
             }
+            if (child) {
+              const all = await readSessionEntries(tape, sessionId)
+              const initial = all.find((e) => e.name === 'view/tool_table')
+              if (initial === undefined) throw new Error('child has no frozen initial table')
+              const state = await readViewState(tape, sessionId)
+              const initialTable = rebuildToolTable(
+                initial.provenanceKey,
+                initial.payload as ToolTablePayload,
+                state.specs,
+              )
+              const policy = deps.host.policy.current()
+              return {
+                policy,
+                table: openToolTable({
+                  ...q,
+                  incarnationId,
+                  candidates: initialTable.items,
+                  policy,
+                  tenantId: deps.host.identity.tenantId,
+                  userSetting: deps.userSetting,
+                  hasSearchBackend: assembly.search !== null,
+                }),
+              }
+            }
             return openTable(incarnationId, assembly, built.profile, q)
           },
           // A write task that finds its lease aborted writes no decision, no dispatch and no closure
@@ -1807,15 +2318,34 @@ export function createLoop(deps: LoopDeps): Loop {
           locale: () => ports.locale({ sessionId }),
           localDate: () => ports.localDate({ sessionId }),
           insertQueued: () =>
-            post(box, 'run', null, () =>
-              insertAtBoundary(ports, box, sessionId, incarnationId, lease, runId),
-            ),
+            child
+              ? Promise.resolve(null)
+              : post(box, 'run', null, () =>
+                  insertAtBoundary(ports, box, sessionId, incarnationId, lease, runId),
+                ),
           emit: events,
         })
       } catch (error) {
         failure = error
       }
       await post(box, 'run', null, async () => {
+        if (borrowed !== undefined) {
+          if (finished !== null) {
+            const end = terminalOf(finished, lease, runId)
+            await tape.appendEntries({ sessionId, incarnationId, entries: end.entries })
+            emitClosures(ports, box, sessionId, end.entries)
+            runEnded(ports, box, sessionId, {
+              runId,
+              reason: end.reason,
+              recorded: true,
+              lastStop: finished.lastStop,
+              errorCode: end.aborted ? null : finished.errorCode,
+              retryOf: null,
+            })
+          }
+          borrowed(finished)
+          return
+        }
         if (finished === null) {
           // A programmer error, a session deleted underneath the Run, a store closed by an exit: no
           // terminal is written, and plan step 16's recovery closes what the Run left open.
@@ -1831,6 +2361,15 @@ export function createLoop(deps: LoopDeps): Loop {
           })
           return
         }
+        if (
+          finished.reason.code === 'paused' &&
+          finished.reason.waitingFor === 'subagent' &&
+          lease.stopRequested
+        ) {
+          await closePausedByStop(ports, box)
+          // The Agent was dispatched: its aborted handoff replaces generic not-run closure.
+          finished = { ...finished, waiting: [] }
+        }
         const end = terminalOf(finished, lease, runId)
         let recorded = false
         try {
@@ -1838,6 +2377,11 @@ export function createLoop(deps: LoopDeps): Loop {
           recorded = true
         } catch (error) {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
+        }
+        if (recorded && sessionId !== root) {
+          emitClosures(ports, box, sessionId, end.entries)
+          await endOwnChild(ports, box, sessionId, lease, finished, end)
+          return
         }
         // 「重试」 resends its opener as that same message only while it is still the last one (01
         // spec.md:395): once a reply or an inserted message followed it, a resend would duplicate it.
@@ -1865,7 +2409,11 @@ export function createLoop(deps: LoopDeps): Loop {
               )
             })
           } else if (!lease.signal.aborted) {
-            card = cardOfEntries(sessionId, end.entries)
+            const waiting = end.reason.waitingFor === 'subagent' ? await treeWaiting(root) : null
+            card =
+              waiting === null
+                ? cardOfEntries(sessionId, end.entries)
+                : confirmRequestOf(waiting.sessionId, waiting.decisionKey, waiting.decision)
           }
           // A quit or a closed window writes nothing more: the card survives the restart (B4).
           if (!lease.stopRequested && end.reason.waitingFor === 'question') {
@@ -1892,7 +2440,8 @@ export function createLoop(deps: LoopDeps): Loop {
       // Nothing of a Run's end escapes as an unhandled rejection (§停止与退出 第 5 步): logged, and
       // the lease finished if the end did not get that far.
       log(`[loop] run ${runId} of ${sessionId} failed at its end: ${describe(error)}`)
-      if (box.lease === lease) finish(box, lease)
+      if (borrowed !== undefined) borrowed(null)
+      else if (box.lease === lease) finish(box, lease)
     })
   }
 
@@ -2107,10 +2656,12 @@ export function createLoop(deps: LoopDeps): Loop {
    * its batch close not-run / `stopped`, and no Run opens. True when there was a card.
    */
   async function closePausedByStop(ports: LoopPorts, box: RootBox): Promise<boolean> {
-    const waiting = await waitingOf(tape, box.rootSessionId)
+    const waiting = await treeWaiting(box.rootSessionId)
     if (waiting === null) return false
     const entries = stopFacts(tape, now, waiting)
     await appendTo(waiting.sessionId, entries)
+    if (waiting.sessionId !== box.rootSessionId)
+      await closeParentChild(ports, box, 'aborted', 'stopped')
     questionWaits.delete(box.rootSessionId)
     emitClosures(ports, box, waiting.sessionId, entries, waiting)
     return true
@@ -2199,7 +2750,13 @@ export function createLoop(deps: LoopDeps): Loop {
     runId: string,
   ): { reason: RunEndReason; entries: NewEntry[]; aborted: boolean } {
     const writer = { by: 'run', runId } as const
-    const aborted = lease.signal.aborted
+    // A borrowed child's pause is already durable before the parent reaches this terminal task.
+    // Closing a window or quitting preserves both sides of that wait; explicit stop still closes it.
+    const keepChildWait =
+      finished.reason.code === 'paused' &&
+      finished.reason.waitingFor === 'subagent' &&
+      !lease.stopRequested
+    const aborted = lease.signal.aborted && !keepChildWait
     const reason = aborted ? abortedEndReason(abortCauseOf(lease)) : finished.reason
     const stopped = aborted ? finished.waiting : []
     const entries: NewEntry[] = aborted
@@ -2639,6 +3196,7 @@ export function createLoop(deps: LoopDeps): Loop {
         testTools: deps.testTools,
         strict: deps.onUnansweredCall === 'throw',
       })
+      for (const [child, root] of recovered.roots) roots.set(child, root)
       const resumable = recovered.resumable.map((item) => ({
         ...item,
         rootSessionId: rootOf(item.sessionId),
@@ -2708,6 +3266,7 @@ export function createLoop(deps: LoopDeps): Loop {
     },
 
     continueRun(q): Promise<ContinueRunResult> {
+      if (rootOf(q.sessionId) !== q.sessionId) return Promise.resolve({ status: 'not-available' })
       const ports = bound
       if (ports === null) return Promise.resolve({ status: 'refused' })
       if (!isCanonicalUuid(q.sessionId)) {
@@ -2746,7 +3305,7 @@ export function createLoop(deps: LoopDeps): Loop {
     },
 
     async currentPending(q): Promise<PendingCard | null> {
-      const waiting = await waitingOf(tape, rootOf(q.sessionId))
+      const waiting = await treeWaiting(rootOf(q.sessionId))
       if (waiting === null) return null
       const callKey = callKeyOf(waiting.ref.runId, waiting.ref.requestSeq, waiting.ref.ordinal)
       if (waiting.waitKind === 'question') {
@@ -2780,7 +3339,14 @@ export function createLoop(deps: LoopDeps): Loop {
         card,
         callKey,
         // A sub-agent's card hangs under the parent's Agent call (plan step 31); a root's under its own.
-        anchorCallKey: callKey,
+        anchorCallKey:
+          waiting.sessionId === rootOf(q.sessionId)
+            ? callKey
+            : await linkedChild(rootOf(q.sessionId)).then((child) =>
+                child === null
+                  ? callKey
+                  : callKeyOf(child.link.runId, child.link.requestSeq, child.link.ordinal),
+              ),
         allowScope: answerScope({
           decision: { record: waiting.decision.record, summary: waiting.decision.summary },
           reversibility: waiting.decision.reversibility,

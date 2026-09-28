@@ -211,7 +211,7 @@ describe('「已配置」 is what this build can use (旧 109)', () => {
   })
 })
 
-describe('the key is bound to its host (A9; 旧 49)', () => {
+describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧 49)', () => {
   it('refuses a save that moves the host without the stored key, and writes nothing', async () => {
     const r = await routes()
     await r.host.secrets.set(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
@@ -746,7 +746,7 @@ describe('the five layers and the data-flow check (旧 107, 旧 184)', () => {
     ).toMatchObject({ providerId: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flashx' })
     expect(await resolve()).toMatchObject({
       providerId: ANTHROPIC_PROVIDER_ID,
-      modelId: 'claude-sonnet-5',
+      modelId: 'claude-opus-5-5',
       effort: null,
       capabilitySource: 'builtin',
     })

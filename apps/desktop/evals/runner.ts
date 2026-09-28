@@ -64,6 +64,7 @@ import { evalRecordSchema } from './record.js'
 import type { EvalTask } from './task.js'
 import { EVALS_DOCS_DIR } from './task.js'
 import { taskSetProblems } from './format.js'
+import { redactEvidence, validateRawDirectory, writeRawInspection } from './raw.js'
 
 export const FIXTURES_DIR = join(EVALS_DOCS_DIR, 'fixtures')
 export const TASKS_DIR = join(EVALS_DOCS_DIR, 'tasks')
@@ -121,6 +122,8 @@ export interface RunTaskOptions {
   readonly log?: (line: string) => void
   /** Called after the checks, before the run's directory is removed: what a test reads the run by. */
   readonly inspect?: (run: RunInspection) => Promise<void> | void
+  /** Optional repository-external directory, only used by the eval harness. */
+  readonly rawDir?: string
 }
 
 /** A finished run as `inspect` sees it: the check context, plus the run's directory. */
@@ -146,10 +149,13 @@ interface TimingSample {
 /** What the runner sees of the loop while a task runs. */
 class Watch {
   readonly ended: RunEnded[] = []
+  readonly rootEnded: RunEnded[] = []
+  stopping = false
   /** Every batch with a closed call, as `<runId>:<requestSeq>`: the rounds done so far. */
   readonly rounds = new Set<string>()
   #wake: (() => void) | null = null
   readonly #root: string
+  #rootWaitingForChild = false
 
   constructor(root: string) {
     this.#root = root
@@ -158,13 +164,18 @@ class Watch {
   event(e: SessionEvent): void {
     if (e.rootSessionId !== this.#root) return
     if (e.type === 'tool-outcome') this.rounds.add(e.callKey.slice(0, e.callKey.lastIndexOf(':')))
-    if (e.type === 'run-ended' && e.sessionId === this.#root) {
+    if (e.type === 'run-ended') {
+      if (e.sessionId === this.#root) {
+        this.rootEnded.push(e)
+        this.#rootWaitingForChild = e.reason.code === 'paused' && e.reason.waitingFor === 'subagent'
+      } else if (!(this.#rootWaitingForChild && (e.reason.code === 'paused' || this.stopping)))
+        return
       this.ended.push(e)
       this.#wake?.()
     }
   }
 
-  /** The `index`-th run-ended of the root; null once `ms` passed or `signal` aborted without it. */
+  /** The next root end or forwarded child pause; null on the deadline or cancellation. */
   async nth(index: number, ms: number, signal?: AbortSignal): Promise<RunEnded | null> {
     const deadline = performance.now() + ms
     while (this.ended.length <= index) {
@@ -202,6 +213,11 @@ function watchedConnector(
 ): RunConnector {
   return {
     endpointOrigin: (providerId) => inner.endpointOrigin(providerId),
+    searchTarget(providerId, query) {
+      return hooks.search === null
+        ? (inner.searchTarget?.(providerId, query) ?? null)
+        : { host: hooks.search.host, ...hooks.search.prepareQuery(query) }
+    },
     resolveChoice: (q) => inner.resolveChoice(q),
     async assemble(q) {
       const assembly = await inner.assemble(q)
@@ -342,6 +358,7 @@ async function driveTurns(o: {
         notes.push(
           `${at}: ${stopCause() ?? `a Run did not end within ${String(o.waitMs)} ms`}; stopped`,
         )
+        watch.stopping = true
         // oxlint-disable-next-line no-await-in-loop -- the stop, then its Run's end
         await sessions.stop({ rootSessionId: sessionId })
         // The stopped Run ends before the record is read, whatever the signal says.
@@ -360,7 +377,7 @@ async function driveTurns(o: {
         return notes
       }
       let answer: AnswerCommand | null = null
-      if (ended.reason.waitingFor === 'approval') {
+      if (ended.reason.waitingFor === 'approval' || ended.reason.waitingFor === 'subagent') {
         // oxlint-disable-next-line no-await-in-loop -- the card this Run paused on
         const pending = await sessions.currentPending({ sessionId })
         if (pending?.waitKind === 'approval') {
@@ -370,6 +387,9 @@ async function driveTurns(o: {
             requestId: pending.card.requestId,
             decision: autoAnswer(pending.card.reason, task),
           }
+        } else if (pending?.waitKind === 'question') {
+          // oxlint-disable-next-line no-await-in-loop -- answer the forwarded question before continuing
+          answer = await skipQuestions(store)
         }
       } else if (ended.reason.waitingFor === 'question') {
         // oxlint-disable-next-line no-await-in-loop -- the question this Run paused on
@@ -413,7 +433,9 @@ async function runChecks(o: {
 
 export async function runTask(o: RunTaskOptions): Promise<EvalRecord> {
   const { task, column } = o
-  const log = o.log ?? ((): void => {})
+  if (o.rawDir !== undefined) validateRawDirectory(o.rawDir)
+  const sink = o.log ?? ((): void => {})
+  const log = (line: string): void => sink(o.key === '' ? line : line.replaceAll(o.key, '[key]'))
   const sessionId = randomUUID()
   const evalHost = await createEvalHost({
     task,
@@ -535,22 +557,25 @@ async function runOn(
     checksDir: o.checksDir ?? CHECKS_DIR,
     ctx: { tape: store, sessionId, workspaceDir: evalHost.workspaceDir, cards },
   })
-  await o.inspect?.({
+  const inspection: RunInspection = {
     tape: store,
     sessionId,
     workspaceDir: evalHost.workspaceDir,
     cards,
     dir: evalHost.dir,
     fetched: evalHost.fetched,
-  })
+  }
+  await o.inspect?.(inspection)
+  const raw =
+    o.rawDir === undefined ? undefined : await writeRawInspection(o.rawDir, inspection, o.key)
   const entries = await readAll(store, sessionId)
   const costs = await tapeCost(store, sessionId)
-  const endReason = watch.ended.at(-1)?.reason.code ?? null
+  const endReason = watch.rootEnded.at(-1)?.reason.code ?? null
   const last = costs.attempts.findLast((a) => a.sessionId === sessionId)
   const judged = verdictOf(
     task,
     checks,
-    watch.ended.map((e) => e.reason.code),
+    watch.rootEnded.map((e) => e.reason.code),
     notes,
   )
   const timing = samples === null ? undefined : timingOf(samples)
@@ -592,8 +617,9 @@ async function runOn(
     durationMs,
     ...(timing === undefined ? {} : { timing }),
     calib,
+    ...(raw === undefined ? {} : { raw }),
   }
-  return evalRecordSchema.parse(record)
+  return evalRecordSchema.parse(redactEvidence(record, o.key))
 }
 
 /**

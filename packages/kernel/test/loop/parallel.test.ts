@@ -1,3 +1,4 @@
+import type * as DecideModule from '../../src/permission/decide.js'
 /**
  * The parallel group of workspace reads (spec 02 §一批工具怎么执行, §执行日志与恢复表 T1,
  * §点停止时各状态怎么收; invariant 13; plan step 24: 旧 23, 旧 126, 验收 44).
@@ -49,6 +50,7 @@ const rec = vi.hoisted(() => {
   return {
     /** While true, each execution waits for its `release` before its executor runs. */
     holding: false,
+    serial: false,
     tick: 0,
     executions: [] as Execution[],
     /** A call as the cases name it: the tool and what it acts on. */
@@ -94,11 +96,22 @@ vi.mock('../../src/tools/executor.js', async (importOriginal) => {
   }
 })
 
+// Exercise the real serial batch branch without changing the permission verdict or tool table.
+vi.mock('../../src/permission/decide.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof DecideModule>()
+  return {
+    ...actual,
+    canRunInParallel: (...args: Parameters<typeof actual.canRunInParallel>) =>
+      !rec.serial && actual.canRunInParallel(...args),
+  }
+})
+
 /** Called on every reading of the host clock, before it answers. */
 const hook: { onNow?: () => void } = {}
 
 beforeEach(() => {
   rec.holding = false
+  rec.serial = false
   rec.tick = 0
   rec.executions.length = 0
   delete hook.onNow
@@ -484,7 +497,7 @@ describe('「读 a、读 b、写 c、读 d」 (旧 23, 旧 126; 验收 44)', () 
 
 // ----- invariant 13 ------------------------------------------------------------------------------
 
-describe('only the leading Read / Glob / Grep group overlaps (invariant 13; 旧 126)', () => {
+describe('02 不变量 13: only the leading Read / Glob / Grep group overlaps (旧 126)', () => {
   /** Answers every card allow until the Run ends otherwise: each answer grants for the session. */
   async function allowEach(h: Harness, runId: string): Promise<void> {
     let end = await ended(h, runId)
@@ -805,4 +818,58 @@ describe('a stop while the parallel group runs (§点停止时各状态怎么收
       ])
     })
   }
+})
+
+it('02 不变量 31: parallel and serial execution preserve results, outcomes and the next wire body', async () => {
+  const run = async (serial: boolean) => {
+    rec.serial = serial
+    rec.holding = true
+    rec.tick = 0
+    rec.executions.length = 0
+    nextCall = 1
+    const h = await harness()
+    const id = await send(h, [READ_A, READ_B])
+    await until(() => rec.executions.length === (serial ? 1 : 2), 'initial reads dispatched')
+    await quiet()
+    expect(rec.executions.map((e) => e.label)).toEqual(
+      serial ? [`Read ${A}`] : [`Read ${A}`, `Read ${B}`],
+    )
+    let earlyResults: unknown[] = []
+    if (serial) {
+      release(`Read ${A}`)
+      await until(() => rec.executions.length === 2, 'second serial read')
+      release(`Read ${B}`)
+    } else {
+      release(`Read ${B}`)
+      await quiet()
+      earlyResults = await named(h, 'tool/result')
+      release(`Read ${A}`)
+    }
+    expect(earlyResults).toEqual([])
+    expect((await ended(h, id)).reason).toEqual({ code: 'completed' })
+    expect(overlapping()).toEqual(serial ? [] : [[`Read ${A}`, `Read ${B}`]])
+    expect(h.provider.requests).toHaveLength(2)
+    const recordedEntries = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    // Only the append positions differ: parallel dispatches precede either result. Compare every
+    // persisted identity/payload field, without normalizing tool IDs, result text or wire content.
+    const facts = recordedEntries
+      .filter((e) => e.name === 'tool/result' || e.name === 'execution/tool_outcome')
+      .map(
+        ({ name, kind, sourceType, sourceId, sourceSeq, provenanceKey, payload, createdAt }) => ({
+          name,
+          kind,
+          sourceType,
+          sourceId,
+          sourceSeq,
+          provenanceKey,
+          payload,
+          createdAt,
+        }),
+      )
+    expect(facts).toHaveLength(4)
+    return { facts, body: h.provider.requests[1]!.body }
+  }
+  const parallel = await run(false)
+  const serial = await run(true)
+  expect(parallel).toEqual(serial)
 })

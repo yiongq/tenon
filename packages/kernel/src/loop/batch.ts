@@ -1,3 +1,4 @@
+import type { SubagentHandoff } from './subagent.js'
 /**
  * One batch of tool calls (spec 02 §一批工具怎么执行, §权限决策顺序, §原因码表; plan steps 13, 24).
  *
@@ -33,7 +34,7 @@
  * member as §点停止时各状态怎么收 says — each with its own write wait, counted from the stop — and then
  * the calls not dispatched, not-run / stopped, after the members' results.
  */
-import type { AbsolutePath, HostAdapter, Reversibility } from '../host/adapter.js'
+import type { AbsolutePath, ConfirmTarget, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
 import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
@@ -92,7 +93,25 @@ export interface CompleteCall {
   readonly argsHash: string
 }
 
+export interface AgentDispatch {
+  readonly dispatch: readonly NewEntry[]
+  readonly call: CallRef
+  readonly input: Record<string, unknown>
+  readonly table: FrozenToolTable
+  readonly reversibility: Reversibility
+  readonly summary: DecisionSummary
+}
+export type AgentDispatchResult =
+  | { readonly kind: 'paused' }
+  | {
+      readonly kind: 'done'
+      readonly entries: readonly NewEntry[]
+      readonly handoff: SubagentHandoff
+    }
+
 export interface BatchContext {
+  readonly budgetExceeded?: () => number | null
+  readonly agent?: (q: AgentDispatch) => Promise<AgentDispatchResult>
   readonly tape: Tape
   readonly now: () => number
   readonly host: HostAdapter
@@ -185,7 +204,7 @@ export type BatchResult =
    */
   | {
       readonly kind: 'paused'
-      readonly waitingFor: 'approval' | 'question'
+      readonly waitingFor: 'approval' | 'question' | 'subagent'
       readonly withTerminal: readonly NewEntry[]
       /** The asked call and the rest of the batch after it, which wait with it (§等待模型). */
       readonly waiting: readonly CallRef[]
@@ -199,6 +218,7 @@ export type BatchResult =
       readonly count: number
       readonly rest: readonly CallRef[]
     }
+  | { readonly kind: 'usage-limit'; readonly tokenLimit: number; readonly rest: readonly CallRef[] }
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
@@ -249,9 +269,11 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
     const executor =
       item === undefined || verdict?.ok !== true
         ? null
-        : isQuestion(item) && ctx.approved?.ordinal !== call.ordinal
-          ? 'question'
-          : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
+        : item.source === 'builtin' && item.originalName === 'Agent' && ctx.agent !== undefined
+          ? 'agent'
+          : isQuestion(item) && ctx.approved?.ordinal !== call.ordinal
+            ? 'question'
+            : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
     if (item === undefined || verdict === null || !verdict.ok || executor === null) {
       const invalid = verdict !== null && !verdict.ok ? verdict : null
       try {
@@ -286,13 +308,45 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-        const repair = await dispatchOnce(ctx, call, item, [dispatch], dispatch)
+        const repair =
+          // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
+          executor === 'agent' ? null : await dispatchOnce(ctx, call, item, [dispatch], dispatch)
         if (repair !== null) {
           // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
           await close(ctx, call, repair)
           continue
         }
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+        if (executor === 'agent') {
+          // oxlint-disable-next-line no-await-in-loop -- the parent waits for its single child
+          const child = await ctx.agent!({
+            dispatch: [dispatch],
+            call: ref,
+            input: call.input,
+            table: ctx.table,
+            reversibility: ctx.approved.reversibility,
+            summary: ctx.approved.summary,
+          })
+          if (child.kind === 'paused')
+            return {
+              kind: 'paused',
+              waitingFor: 'subagent',
+              withTerminal: [],
+              waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
+            }
+          // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
+          await close(ctx, call, child.entries, ctx.approved.summary)
+          const budget = ctx.budgetExceeded?.() ?? null
+          if (budget !== null)
+            return {
+              kind: 'usage-limit',
+              tokenLimit: budget,
+              rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
+            }
+          denials = 0
+          continue
+        }
+        // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
         const blocked = await execute(ctx, call, item, executor, {
           reversibility: ctx.approved.reversibility,
           summary: ctx.approved.summary,
@@ -362,13 +416,47 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-      const repair = await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
+      const repair =
+        executor === 'agent'
+          ? null
+          : // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
+            await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
       if (repair !== null) {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await close(ctx, call, repair)
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
+      if (executor === 'agent') {
+        // oxlint-disable-next-line no-await-in-loop -- the parent waits for its single child
+        const child = await ctx.agent!({
+          dispatch: [decided, dispatch],
+          call: ref,
+          input: call.input,
+          table: ctx.table,
+          reversibility: judged.reversibility,
+          summary: decision.summary,
+        })
+        if (child.kind === 'paused')
+          return {
+            kind: 'paused',
+            waitingFor: 'subagent',
+            withTerminal: [],
+            waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
+          }
+        // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
+        await close(ctx, call, child.entries, decision.summary)
+        const budget = ctx.budgetExceeded?.() ?? null
+        if (budget !== null)
+          return {
+            kind: 'usage-limit',
+            tokenLimit: budget,
+            rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
+          }
+        denials = 0
+        continue
+      }
+      // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
       const blocked = await execute(ctx, call, item, executor, {
         reversibility: judged.reversibility,
         summary: decision.summary,
@@ -867,6 +955,9 @@ export function closedView(
       : { facts: outcome['facts'] as Record<string, string> }),
     output: textOf(result['content']),
     ...(permission === undefined ? {} : { permission }),
+    ...(result['handoff'] === undefined
+      ? {}
+      : { handoff: result['handoff'] as NonNullable<ToolOutcomeView['handoff']> }),
     ...(result['question'] === undefined
       ? {}
       : { question: result['question'] as NonNullable<ToolOutcomeView['question']> }),
@@ -942,6 +1033,7 @@ export type Judgement =
       readonly target: AbsolutePath | null
       readonly policyVersion: string
       /** The card's kind and object, when it asks. */
+      readonly decisionTarget?: ConfirmTarget
       readonly card?: Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'>
       /** What an allowed answer grants (§作用域与授权键); null when nothing but this call would. */
       readonly grantObject: GrantObject | null
@@ -959,17 +1051,39 @@ export async function judgeCall(
   call: Pick<CompleteCall, 'input'>,
   given?: CallFacts,
 ): Promise<Judgement> {
-  const { entries, profile, scope: paths } = given ?? (await callFactsOf(ctx))
+  const facts = given ?? (await callFactsOf(ctx))
+  const { entries, profile, scope: paths } = facts
   const reversibility = reversibilityOf(item, call.input)
   const located = await locate(ctx.host, item, call.input, paths)
   const place = located === undefined ? undefined : placeFor(profile, located)
   const inspected = inspectedOf(item, call.input, reversibility)
-  const view = buildSessionView(entries, {
+  const ownView = buildSessionView(entries, {
     call: inspected,
     profile,
     ownSpillDir: paths.ownSpillDir,
     child: sessionFactsOf(entries).subagentOf !== null,
   })
+  const related = buildSessionView(facts.relatedEntries ?? [], {
+    call: inspected,
+    profile: 'cowork',
+    ownSpillDir: paths.ownSpillDir,
+    child: true,
+  })
+  const parentView = buildSessionView(facts.parentEntries ?? [], {
+    call: inspected,
+    profile: 'cowork',
+    ownSpillDir: paths.ownSpillDir,
+    child: true,
+  })
+  const view = {
+    ...ownView,
+    nonReadOnlyCalls: [...ownView.nonReadOnlyCalls, ...related.nonReadOnlyCalls],
+    untrustedSources: [...new Set([...ownView.untrustedSources, ...related.untrustedSources])],
+    touchedPrivateData: ownView.touchedPrivateData || related.touchedPrivateData,
+    ...(ownView.fetchUrlVouched === undefined
+      ? {}
+      : { fetchUrlVouched: ownView.fetchUrlVouched || parentView.fetchUrlVouched === true }),
+  }
   const urlBlocked =
     item.source === 'builtin' &&
     item.originalName === 'WebFetch' &&
@@ -1002,10 +1116,19 @@ export async function judgeCall(
         })
       : null
   const object = grantObjectOf(item, call.input, located, workspace, ctx.searchHost)
-  const grantFrom =
+  const ownGrant =
     object === null || (item.originalName === 'WebSearch' && ctx.ignoreSearchGrant === true)
       ? undefined
-      : sessionGrants(grantFactsOf(entries)).get(grantKey(item.serverId, item.originalName, object))
+      : ownSessionGrants(entries, facts.parentEntries ?? []).get(
+          grantKey(item.serverId, item.originalName, object),
+        )
+  const inheritedGrant =
+    object === null || (item.originalName === 'WebSearch' && ctx.ignoreSearchGrant === true)
+      ? undefined
+      : sessionGrants(grantFactsOf(facts.parentEntries ?? [])).get(
+          grantKey(item.serverId, item.originalName, object),
+        )
+  const grantFrom = ownGrant ?? inheritedGrant
   const decision = decide({
     call: inspected,
     callReason,
@@ -1020,7 +1143,13 @@ export async function judgeCall(
       sessionGrant:
         grantFrom === undefined || object === null
           ? null
-          : { kind: sessionGrantKindOf(object), grantFrom },
+          : {
+              kind: sessionGrantKindOf(object),
+              grantFrom,
+              ...(ownGrant === undefined && inheritedGrant !== undefined
+                ? { inherited: true as const }
+                : {}),
+            },
       approvalMode: 'manual',
     },
     inspectors: inspection.outcomes,
@@ -1033,6 +1162,15 @@ export async function judgeCall(
     ...(place === undefined ? {} : { place }),
     target: located?.real ?? null,
     policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
+    decisionTarget: cardOf(
+      item,
+      item.originalName === 'WebSearch' && ctx.prepareSearch !== undefined
+        ? { ...call.input, query: ctx.prepareSearch(String(call.input['query'])).query }
+        : call.input,
+      located,
+      workspace,
+      ctx.searchHost,
+    ).target,
     ...(decision.record.verdict === 'ask'
       ? {
           card: cardOf(
@@ -1091,6 +1229,7 @@ export function decisionEntry(q: {
     record: decision.record,
     summary: decision.summary,
     policyVersion: q.judged.policyVersion,
+    ...(q.judged.decisionTarget === undefined ? {} : { target: q.judged.decisionTarget }),
     ...(decision.confirm !== undefined && q.judged.card !== undefined
       ? { confirm: { ...decision.confirm, ...q.judged.card }, awaits: 'approval' as const }
       : {}),
@@ -1114,6 +1253,8 @@ export function decisionEntry(q: {
  * profile (`session/profile_set`; phase 1's sessions are chats) and where its paths are judged from.
  */
 export interface CallFacts {
+  readonly parentEntries?: readonly TapeEntry[]
+  readonly relatedEntries?: readonly TapeEntry[]
   readonly entries: readonly TapeEntry[]
   readonly profile: 'chat' | 'cowork'
   readonly scope: PathScope
@@ -1127,7 +1268,28 @@ export async function callFactsOf(
   const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
   const facts = sessionFactsOf(entries)
   const workspace = await workspaceOf(ctx.tape, facts)
-  return { entries, profile: facts.profile, scope: await pathScopeOf(ctx, workspace), workspace }
+  const parentEntries =
+    facts.subagentOf === null ? [] : await readSessionEntries(ctx.tape, facts.subagentOf.sessionId)
+  const relatedEntries: TapeEntry[] = [...parentEntries]
+  {
+    const handed = new Set(
+      (facts.subagentOf === null ? entries : parentEntries)
+        .filter((e) => e.name === 'tool/result' && e.payload['handoff'] !== undefined)
+        .map((e) => (e.payload['handoff'] as { childSessionId: string }).childSessionId),
+    )
+    for (const child of handed) {
+      // oxlint-disable-next-line no-await-in-loop -- one linked child at a time, never model text
+      relatedEntries.push(...(await readSessionEntries(ctx.tape, child)))
+    }
+  }
+  return {
+    entries,
+    parentEntries,
+    relatedEntries,
+    profile: facts.profile,
+    scope: await pathScopeOf(ctx, workspace),
+    workspace,
+  }
 }
 
 /**
@@ -1267,6 +1429,43 @@ function failedStatusOf(decision: Decision): 'timeout' | 'error' | undefined {
   if (deciding.some((step) => step.status === 'ok')) return undefined
   const failed = deciding.find((step) => step.status !== 'ok')?.status
   return failed === 'timeout' || failed === 'error' ? failed : undefined
+}
+
+/** A child's workspace-sensitive grants carry a causal parent fact, never a wall-clock guess. */
+function ownSessionGrants(entries: readonly TapeEntry[], parent: readonly TapeEntry[]) {
+  const grants = sessionGrants(grantFactsOf(entries))
+  if (sessionFactsOf(entries).subagentOf === null) return grants
+  const approvals = new Map(
+    entries
+      .filter((entry) => entry.name === 'tool/approval_resolved')
+      .map((entry) => [entry.provenanceKey, entry]),
+  )
+  for (const [key, source] of grants) {
+    const kind: unknown = (JSON.parse(key) as unknown[])[2]
+    if (kind !== 'file' && kind !== 'command') continue
+    const approval = approvals.get(source.approvalKey)
+    const workspaceKey = approval?.payload['parentWorkspaceKey']
+    const at =
+      typeof workspaceKey === 'string'
+        ? parent.findIndex(
+            (entry) =>
+              entry.name === 'session/workspace_set' && entry.provenanceKey === workspaceKey,
+          )
+        : -1
+    if (at < 0 || approval === undefined) {
+      grants.delete(key)
+      continue
+    }
+    const baseline = parent[at]!
+    const replay = sessionGrants([
+      ...grantFactsOf([baseline, approval]),
+      ...grantFactsOf(
+        parent.slice(at + 1).filter((entry) => entry.name === 'session/workspace_set'),
+      ),
+    ])
+    if (!replay.has(key)) grants.delete(key)
+  }
+  return grants
 }
 
 function grantFactsOf(entries: readonly TapeEntry[]): GrantFact[] {

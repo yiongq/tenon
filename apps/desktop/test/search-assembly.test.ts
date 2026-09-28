@@ -1,6 +1,7 @@
 /** Search selection and credentials are host responsibilities (spec 02 step 28, Revisions 24). */
 import {
   ProviderConfigMissingError,
+  anthropicDefinition,
   createMemoryHost,
   createProviderRegistry,
   keyFor,
@@ -251,6 +252,14 @@ describe('searchTarget is synchronous and reads the current config snapshot with
       providerConfig: { anthropic: { baseURL: 'https://relay.example/' } },
     })
     expect(connector.searchTarget?.('anthropic', 'words')).toBeNull()
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { anthropic: { baseURL: 'https://api.anthropic.com' } },
+    })
+    expect(connector.searchTarget?.('anthropic', '🌏'.repeat(90))).toEqual({
+      host: 'api.anthropic.com',
+      query: '🌏'.repeat(90),
+      truncated: false,
+    })
     expect(get).not.toHaveBeenCalled()
     expect(requests).toEqual([])
   })
@@ -269,5 +278,63 @@ describe('searchTarget is synchronous and reads the current config snapshot with
     expect((await assemble(connector, providers, providerId)).search).toBeNull()
     expect(connector.searchTarget?.(providerId, 'words')).toBeNull()
     expect(requests).toEqual([])
+  })
+})
+
+describe('official search model selection is independent of the conversation model', () => {
+  it('excludes search when neither candidate supports forced tool choice', async () => {
+    const { host, requests } = await network()
+    const providers = createProviderRegistry()
+    providers.register({
+      ...anthropicDefinition,
+      builtinModels: anthropicDefinition.builtinModels.map((model) =>
+        model.thinkingSpec === undefined
+          ? model
+          : Object.assign({}, model, {
+              thinkingSpec: Object.assign({}, model.thinkingSpec, { forcedToolChoice: false }),
+            }),
+      ),
+    })
+    await key(host, 'anthropic', 'official-key')
+    const connector = createRunConnector({ host, providers, env: {}, log: () => {} })
+    expect((await assemble(connector, providers, 'anthropic')).search).toBeNull()
+    expect(connector.searchTarget?.('anthropic', 'words')).toBeNull()
+    expect(requests).toEqual([])
+  })
+
+  it.each([
+    { disabled: [] as string[], expected: 'claude-sonnet-5' },
+    { disabled: ['claude-sonnet-5'], expected: 'claude-opus-5' },
+  ])('excludes $disabled and selects $expected', async ({ disabled, expected }) => {
+    const { host, requests } = await network()
+    const providers = createProviderRegistry()
+    providers.register({
+      ...anthropicDefinition,
+      builtinModels: anthropicDefinition.builtinModels.map((model) =>
+        disabled.includes(model.id)
+          ? model.thinkingSpec === undefined
+            ? model
+            : Object.assign({}, model, {
+                thinkingSpec: Object.assign({}, model.thinkingSpec, { forcedToolChoice: false }),
+              })
+          : model,
+      ),
+    })
+    await key(host, 'anthropic', 'official-key')
+    const connector = createRunConnector({ host, providers, env: {}, log: () => {} })
+    const assembly = await assemble(connector, providers, 'anthropic')
+    expect(assembly.search?.host).toBe('api.anthropic.com')
+    expect(assembly.search?.domainFilter).toBe(true)
+    const query = '🌏'.repeat(100)
+    expect(connector.searchTarget?.('anthropic', query)).toEqual({
+      host: 'api.anthropic.com',
+      query,
+      truncated: false,
+    })
+    await assembly.search?.search({ query, signal: new AbortController().signal })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
+    expect(requests[0]?.headers.get('x-api-key')).toBe('official-key')
+    expect(requests[0]?.body).toMatchObject({ model: expected, max_tokens: 4096 })
   })
 })

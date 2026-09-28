@@ -1,3 +1,4 @@
+import type { SubagentHandoff } from './subagent.js'
 /**
  * A Run (spec 02 §Run 的生命周期与每轮顺序, §一轮回复怎么分流, §上限、守卫与用量, §重试与「继续」):
  * the requests of one trigger, outside the mailbox. Every fact it writes goes in through the mailbox
@@ -99,7 +100,7 @@ import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { ApprovedCall, BatchResult, CompleteCall, Written } from './batch.js'
+import type { ApprovedCall, BatchContext, BatchResult, CompleteCall, Written } from './batch.js'
 import { closedView, effectOf, readSessionEntries, runBatch } from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
@@ -120,6 +121,10 @@ import type { Profile } from '../session/facts.js'
 export const FIRST_REVISION = 0
 
 export interface RunDriverContext {
+  readonly agent?: BatchContext['agent']
+  readonly stepLimit?: number
+  readonly elapsed?: () => Promise<number>
+  readonly deadlineMs?: number
   readonly tape: Tape
   readonly ids: IdSource
   readonly now: () => number
@@ -188,6 +193,7 @@ export interface RunDriverContext {
 
 /** The paused batch a resuming Run finishes: its request, the calls still to handle, the approved one. */
 export interface ResumeBatch {
+  readonly handoff?: SubagentHandoff
   readonly runId: string
   readonly requestSeq: number
   readonly calls: readonly CompleteCall[]
@@ -222,6 +228,9 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const chain = await chainCounters(tape, ctx.sessionId, runId)
   const validator = createArgumentValidator()
   const usage = new Map<string, RunUsageLine>()
+  if (ctx.resume?.handoff !== undefined)
+    for (const line of ctx.resume.handoff.usage)
+      usage.set(`subagent:${line.providerId}:${line.modelId}`, { ...line, origin: 'subagent' })
   let steps = 0
   let pin = ctx.pin
   let requestSeq = 0
@@ -235,6 +244,16 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   let errorCode: ProviderErrorCode | null = null
   /** What the token limit counts so far: every attempt's uncached input plus output (H11). */
   let counted = 0
+  if (ctx.resume?.handoff !== undefined) {
+    const latest = (await readSessionEntries(tape, ctx.sessionId)).findLast(
+      (e) => e.name === 'provider/attempt_completed',
+    )
+    const wire = (
+      latest?.payload['encoder'] as { wire?: 'anthropic-messages' | 'openai-chat' } | undefined
+    )?.wire
+    for (const line of ctx.resume.handoff.usage)
+      counted += limitTokensOf({ ...line, final: true }, wire ?? null)
+  }
   const finish = (
     reason: RunEndReason,
     extra: Partial<Pick<RunFinish, 'withTerminal' | 'waiting'>> = {},
@@ -297,6 +316,38 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       ...q,
       writer: { by: 'run', runId },
+      ...(ctx.agent === undefined
+        ? {}
+        : {
+            agent: async (call) => {
+              const result = await ctx.agent!(call)
+              const latest = (await readSessionEntries(tape, ctx.sessionId)).findLast(
+                (e) => e.name === 'provider/attempt_completed',
+              )
+              const wire = (
+                latest?.payload['encoder'] as
+                  | { wire?: 'anthropic-messages' | 'openai-chat' }
+                  | undefined
+              )?.wire
+              if (result.kind === 'done')
+                for (const line of result.handoff.usage) {
+                  counted += limitTokensOf({ ...line, final: true }, wire ?? null)
+                  const key = `subagent:${line.providerId}:${line.modelId}`
+                  const prior = usage.get(key)
+                  usage.set(key, {
+                    ...line,
+                    origin: 'subagent',
+                    requests: (prior?.requests ?? 0) + line.requests,
+                    inputTokens: (prior?.inputTokens ?? 0) + line.inputTokens,
+                    outputTokens: (prior?.outputTokens ?? 0) + line.outputTokens,
+                    cacheReadTokens: (prior?.cacheReadTokens ?? 0) + line.cacheReadTokens,
+                    cacheWriteTokens: (prior?.cacheWriteTokens ?? 0) + line.cacheWriteTokens,
+                    reasoningTokens: (prior?.reasoningTokens ?? 0) + line.reasoningTokens,
+                  })
+                }
+              return result
+            },
+          }),
       inspectors: ctx.inspectors,
       validator,
       protectedFiles: ctx.protectedFiles,
@@ -306,6 +357,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       search: ctx.search,
       commandShell: ctx.commandShell,
       denials,
+      budgetExceeded: () =>
+        ctx.tokenLimit !== null && counted > ctx.tokenLimit ? ctx.tokenLimit : null,
       strict: ctx.onUnansweredCall === 'throw',
       log: ctx.log,
       signal,
@@ -507,6 +560,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     }
   }
   const batchEnd = (result: BatchResult): RunFinish | null => {
+    if (result.kind === 'usage-limit')
+      return endClosing(
+        { code: 'usage-limit', tokenLimit: result.tokenLimit },
+        result.rest,
+        'usage-limit',
+      )
     if (result.kind === 'paused') {
       return finish(
         { code: 'paused', waitingFor: result.waitingFor },
@@ -525,6 +584,17 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   }
 
   if (ctx.resume !== undefined) {
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit)
+      return endClosing(
+        { code: 'usage-limit', tokenLimit: ctx.tokenLimit },
+        ctx.resume.calls.map((call) => ({
+          runId: ctx.resume!.runId,
+          requestSeq: ctx.resume!.requestSeq,
+          ordinal: call.ordinal,
+          providerToolCallId: call.providerToolCallId,
+        })),
+        'usage-limit',
+      )
     // §续跑: the paused batch first — the approved call, then the rest in order — under the frozen
     // table of the batch's provider. It was counted as a step when it paused, so it is not again.
     const tableKey = toolTableKey(ctx.incarnationId, state.generation, ctx.model.providerId)
@@ -546,6 +616,13 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
   // and answers `stop{ aborted }`, so every request of the Run leaves its attempt fact (01 invariant 2).
   requests: for (;;) {
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit)
+      return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+    if (ctx.elapsed !== undefined && ctx.deadlineMs !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- deadline is recomputed before each new main payload
+      if ((await ctx.elapsed()) >= ctx.deadlineMs)
+        return finish({ code: 'time-limit', limitMs: ctx.deadlineMs })
+    }
     let provider: Provider
     try {
       provider = ctx.provider()
@@ -776,8 +853,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
 
       // ----- step 3: the three guards, before any decision -------------------------------------
       const signature = JSON.stringify(calls.map((call) => [call.name, call.argsHash]))
-      if (chain.steps + steps >= STEP_LIMIT) {
-        return endClosing({ code: 'step-limit', limit: STEP_LIMIT }, refs, 'step-limit')
+      if (chain.steps + steps >= (ctx.stepLimit ?? STEP_LIMIT)) {
+        return endClosing(
+          { code: 'step-limit', limit: ctx.stepLimit ?? STEP_LIMIT },
+          refs,
+          'step-limit',
+        )
       }
       const previous = batches.slice(-(NO_PROGRESS_REPEATS - 1))
       if (

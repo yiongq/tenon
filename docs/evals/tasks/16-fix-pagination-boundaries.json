@@ -1,0 +1,23 @@
+{
+  "id": "16-fix-pagination-boundaries",
+  "profile": "cowork",
+  "turns": [
+    "修复paginate.js分页函数：size必须是正整数，否则抛RangeError；空输入返回[]；每页不超过size，不多出空页，元素保持原顺序且不得修改输入数组。不要改test.mjs。先修复再运行node test.mjs避免当前size=0的死循环。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "16-fix-pagination-boundaries"
+    }
+  ],
+  "compare": true,
+  "workspace": "16-fix-pagination-boundaries",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}
