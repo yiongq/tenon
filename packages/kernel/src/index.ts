@@ -486,3 +486,5 @@ export {
   selectAnthropicSearchModel,
   parseAnthropicSearchResponse,
 } from './tools/search/backends.js'
+
+export { exfiltrationInspector, exfiltrationOpinion } from './permission/exfiltration.js'

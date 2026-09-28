@@ -37,6 +37,7 @@ export interface ToolTableItem extends ToolOrigin {
 export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToolName>([
   'AskUserQuestion',
   'WebSearch',
+  'WebFetch',
   'Read',
   'Write',
   'Edit',

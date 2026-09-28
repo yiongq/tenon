@@ -569,6 +569,14 @@ const TURN_SHAPE: readonly unknown[] = [
     meta: {},
   },
   {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
+    meta: {},
+  },
+  {
     name: 'view/tool_table',
     kind: 'event',
     sourceType: 'session',
@@ -732,7 +740,12 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, note, , , , , , , assistant, , attempt] = entries
+      const [modelSelected, note, assistant, attempt] = [
+        'session/model_selected',
+        'message/environment',
+        'message/assistant',
+        'provider/attempt_completed',
+      ].map((name) => entries.find((entry) => entry.name === name))
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,

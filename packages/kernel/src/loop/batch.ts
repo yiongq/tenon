@@ -968,6 +968,7 @@ export async function judgeCall(
     call: inspected,
     profile,
     ownSpillDir: paths.ownSpillDir,
+    child: sessionFactsOf(entries).subagentOf !== null,
   })
   const urlBlocked =
     item.source === 'builtin' &&

@@ -388,7 +388,7 @@ describe('session lifecycle', () => {
     const ran = await run(h, sessionId, 'a question')
     const entries = await allEntries(h.store, sessionId)
     // With no draft the session is a chat (spec 02 §会话形态): its profile shares the anchor's batch;
-    // the Run writes the environment note, then the request's content (model, system, AskUserQuestion and Read specs).
+    // the Run writes the environment note, then the request's content (model, system, AskUserQuestion, Read and WebFetch specs).
     expect(entries.map((entry) => entry.name)).toEqual([
       'session/start',
       'session/profile_set',
@@ -396,6 +396,7 @@ describe('session lifecycle', () => {
       'execution/run_started',
       'session/model_selected',
       'message/environment',
+      'view/content',
       'view/content',
       'view/content',
       'view/content',
@@ -505,6 +506,7 @@ describe('one request', () => {
       'view/content',
       'view/content',
       'view/content',
+      'view/content',
       'view/tool_table',
       'view/assembled',
       'message/assistant',
@@ -514,8 +516,16 @@ describe('one request', () => {
     // The user's turn, the Run's start and the model choice land BEFORE the request, in one
     // transaction; the Run's environment note tops the context; the assistant message and the
     // attempt fact land together after the request.
-    const [, user, started, model, note, , , , , , assembled, assistant, attempt, terminal] =
-      entries
+    const [user, started, model, note, assembled, assistant, attempt, terminal] = [
+      'message/user',
+      'execution/run_started',
+      'session/model_selected',
+      'message/environment',
+      'view/assembled',
+      'message/assistant',
+      'provider/attempt_completed',
+      'execution/run_terminal',
+    ].map((name) => entries.find((entry) => entry.name === name))
     expect(started?.sourceId).toBe(ran.runId)
     expect(started?.payload).toEqual({
       cause: { kind: 'user-message', messageId: user?.payload['messageId'] },
@@ -570,7 +580,7 @@ describe('one request', () => {
       tools?: Array<{ name: string }>
     }
     expect(body.system).toBe(system)
-    expect(body.tools?.map((tool) => tool.name)).toEqual(['AskUserQuestion', 'Read'])
+    expect(body.tools?.map((tool) => tool.name)).toEqual(['AskUserQuestion', 'Read', 'WebFetch'])
   })
 
   it('persists a truncated turn as complete and ends the Run as output-truncated', async () => {
@@ -650,6 +660,7 @@ describe('one request', () => {
       'execution/run_started',
       'session/model_selected',
       'message/environment',
+      'view/content',
       'view/content',
       'view/content',
       'view/content',

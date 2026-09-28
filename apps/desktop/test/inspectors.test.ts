@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { exfiltrationInspector } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { desktopInspectors } from '../src/main/inspectors.js'
 
@@ -30,7 +31,12 @@ describe('the desktop’s inspectors', () => {
         afterResult: undefined,
       })
     }
-    expect(desktopInspectors().length).toBeLessThanOrEqual(1)
+    expect(desktopInspectors()).toEqual([exfiltrationInspector])
+    expect(desktopInspectors()[0]).toMatchObject({
+      id: 'exfiltration',
+      ceiling: 'ask',
+      kind: 'local-rule',
+    })
   })
 
   it('02 不变量 17: keeps the answer source receipt-override as a literal nothing writes', () => {

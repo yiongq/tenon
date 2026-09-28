@@ -197,7 +197,7 @@ describe('a task run end to end, offline', () => {
       false,
     )
     // The product's table, not the test registry's ten: createEvalSessionService adds a limit only.
-    // AskUserQuestion is in it from plan step 26.
+    // AskUserQuestion joins at step 26; WebFetch joins with its inspector at step 29.
     const bodies = server.requests.map((r) => r.body as { tools?: { name: string }[] })
     expect(bodies[0]?.tools?.map((t) => t.name)).toEqual([
       'AskUserQuestion',
@@ -206,6 +206,7 @@ describe('a task run end to end, offline', () => {
       'Glob',
       'Grep',
       'Read',
+      'WebFetch',
       'Write',
     ])
 

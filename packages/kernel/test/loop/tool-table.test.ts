@@ -319,7 +319,7 @@ describe('which tools a request carries', () => {
     const sent = await service.send({ sessionId: SESSION, origin: null, text: 'hi' })
     if (sent.status === 'started') await loop.runEnded({ runId: sent.runId })
     // Plan step 26: AskUserQuestion joins both profiles.
-    expect(toolNames(provider)).toEqual(['AskUserQuestion', 'Read'])
+    expect(toolNames(provider)).toEqual(['AskUserQuestion', 'Read', 'WebFetch'])
     const task = '5e2d8b3f-7c4e-4b82-8a63-1d9ef8b22c45'
     await service.selectProfile({
       sessionId: task,
@@ -337,6 +337,7 @@ describe('which tools a request carries', () => {
       'Glob',
       'Grep',
       'Read',
+      'WebFetch',
       'Write',
     ])
   })
