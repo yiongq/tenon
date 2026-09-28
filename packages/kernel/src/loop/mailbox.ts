@@ -1482,6 +1482,8 @@ export function createLoop(deps: LoopDeps): Loop {
     const resolver: FactWriter = { by: 'resolver' }
     const { item } = frozen
     const rejudged = await rejudgeWaiting({
+      searchTarget: deps.connector.searchTarget?.bind(deps.connector),
+      providerId: frozen.setup.selected.providerId,
       judge: {
         tape,
         host: deps.host,
@@ -1564,6 +1566,9 @@ export function createLoop(deps: LoopDeps): Loop {
           // that (a link to a granted file): the executor acts on the path the card named, and its
           // re-check refuses it if a link has moved it since (§「在不在工作区里」第 5 步).
           target: cardPath ?? judged.target,
+          ...(cardTarget?.type === 'search'
+            ? { searchTarget: { host: cardTarget.host, query: cardTarget.query } }
+            : {}),
         },
       }
     }
@@ -2587,6 +2592,7 @@ export function createLoop(deps: LoopDeps): Loop {
     async recover(): Promise<RecoverResult> {
       if (bound === null) throw new Error('recover() before bindLoop()')
       const recovered = await recoverTape({
+        searchTarget: deps.connector.searchTarget?.bind(deps.connector),
         tape,
         now,
         log,

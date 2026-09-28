@@ -81,6 +81,7 @@ export interface ResultFacts {
   readonly spill?: SpillRecord
   /** An answered AskUserQuestion's record, for the summary card (open question 18). */
   readonly question?: AskAnswerRecord
+  readonly searchHitUrls?: readonly string[]
   readonly effect: SideEffectClass
   readonly state: ExecutionState
   readonly source: ClosureSource | null
@@ -105,6 +106,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     kernelAuthored: q.kernelAuthored,
     ...(q.spill === undefined ? {} : { spill: { ...q.spill } }),
     ...(q.question === undefined ? {} : { question: q.question }),
+    ...(q.searchHitUrls === undefined ? {} : { searchHitUrls: [...q.searchHitUrls] }),
     writer: q.writer,
   }
   const outcome: ToolOutcomePayload = {

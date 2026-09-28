@@ -10,6 +10,7 @@
  * Run, that Run's head — so a crash leaves either nothing (the card is still answerable) or all of it.
  */
 import type { AbsolutePath, ConfirmRequest, HostAdapter } from '../host/adapter.js'
+import type { RunConnector } from './ports.js'
 import type { ModelInfo } from '../provider/types.js'
 import type {
   ApprovalResolvedPayload,
@@ -594,6 +595,8 @@ export async function frozenBatchOf(
  */
 export async function rejudgeWaiting(q: {
   readonly judge: Omit<JudgeContext, 'sessionId' | 'searchHost'>
+  readonly searchTarget?: RunConnector['searchTarget']
+  readonly providerId?: string
   readonly waiting: WaitingCall
   readonly item: ToolTableItem | undefined
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
@@ -607,11 +610,22 @@ export async function rejudgeWaiting(q: {
     return { kind: 'unavailable' }
   }
   const target = waiting.decision.confirm?.target
+  const searching = item.source === 'builtin' && item.originalName === 'WebSearch'
+  const current = searching
+    ? q.searchTarget?.(q.providerId ?? '', String(waiting.call.input['query']))
+    : null
+  if (searching && current == null) return { kind: 'unavailable' }
+  const changed =
+    searching &&
+    current != null &&
+    (target?.type !== 'search' || target.host !== current.host || target.query !== current.query)
   const judged = await judgeCall(
     {
       ...q.judge,
       sessionId: waiting.sessionId,
-      searchHost: target?.type === 'search' ? target.host : null,
+      searchHost: current?.host ?? null,
+      ...(current == null ? {} : { prepareSearch: () => current }),
+      ignoreSearchGrant: changed,
     },
     item,
     waiting.call,

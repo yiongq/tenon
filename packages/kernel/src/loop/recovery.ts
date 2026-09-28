@@ -51,7 +51,10 @@ import { closureContent, repairFacts, resultFacts } from './closure.js'
 import { readViewState } from './run.js'
 import type { RunEndReason } from './terminal.js'
 
+import type { RunConnector } from './ports.js'
+
 export interface RecoveryDeps {
+  readonly searchTarget?: RunConnector['searchTarget']
   readonly tape: Tape
   readonly now: () => number
   readonly log: (line: string) => void
@@ -403,8 +406,10 @@ async function rejudgeAtStartup(
 ): Promise<ConfirmRequest | null> {
   const waiting = await waitingOf(deps.tape, sessionId)
   if (waiting === null || waiting.waitKind !== 'approval') return null
-  const { item } = await frozenBatchOf(deps.tape, waiting)
+  const { item, setup } = await frozenBatchOf(deps.tape, waiting)
   const rejudged = await rejudgeWaiting({
+    searchTarget: deps.searchTarget,
+    providerId: setup.selected.providerId,
     judge: {
       tape: deps.tape,
       host: deps.host,

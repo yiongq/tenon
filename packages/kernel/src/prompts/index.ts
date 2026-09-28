@@ -71,7 +71,7 @@ export interface ModelNotes {
   readonly spill: string
   /** The same result when writing its file failed: `{preview}` only, and the result is is_error. */
   readonly spillFailed: string
-  readonly searchTruncated?: string // plan step 28
+  readonly searchTruncated: string
   readonly compactionRequest?: string // plan step 30
   readonly compactionWrap?: string // plan step 30
   /** A connector tool's inputSchema cannot be used at all (open question 16). */
@@ -224,6 +224,7 @@ export const MODEL_NOTES: ModelNotes = {
   },
   connectorFailed: 'The tool call failed: {message}',
   connectorEmpty: '(no output)',
+  searchTruncated: 'The search query was shortened to 70 Unicode code points: {query}',
   environment: {
     wrap: '<environment>\n{body}\n</environment>',
     date: 'Today’s date: {date}',
@@ -295,7 +296,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 5
+export const PROMPT_LAYER_VERSION = 6
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03'
+export const PROMPT_LAYER_HASH = '17146efa744b39f5e7e2f867291820d40517f9add47bc718ae88d5cb6bd9a951'

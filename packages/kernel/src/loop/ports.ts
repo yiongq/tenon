@@ -30,6 +30,15 @@ export interface RunConnector {
   // desktop 的 run-assembly.ts 实现
   /** 同步、不读密钥：同批写 session/model_selected 时用（§执行日志与恢复表 同批规则 2、3） */
   endpointOrigin(providerId: ProviderId): string | null
+  /** Pure current-config target for paused search approval, without reading credentials. */
+  searchTarget?(
+    providerId: ProviderId,
+    query: string,
+  ): {
+    readonly host: SearchBackend['host']
+    readonly query: string
+    readonly truncated: boolean
+  } | null
   /** 五层的 ②–⑤ 加数据去向检查（§模型选择）；① 由 kernel 从 Tape 读出传入。不读密钥。
    *  数据去向检查只在 sessionChoice 为 null（选择来自 ②–⑤）时做，① 已在菜单里确认过 */
   resolveChoice(q: {

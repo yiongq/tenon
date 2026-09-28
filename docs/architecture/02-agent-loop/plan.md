@@ -942,6 +942,16 @@
   - 突变：六个生产变异均被持久测试检出并完整恢复：跳过 canFollow 重判、放宽 HTML 上限、跳数差一、去掉最终 URL、DNS some 改 every、清零 DNS 拒绝计数；失败分别落在对应重定向、正文保护、混合地址与跨批/跨请求三连拒绝断言。恢复后上述全量 2830 项通过。网络测试只用本机 HTTP/TLS 假服务器，测试证书/私钥为公开测试夹具，未用真实 key；TLS 握手挂起回归断言对端 socket 真正关闭。
   - 等后面步骤的：第 29 步接入外带检查并开放产品 WebFetch；第 34 步校准跳数/转换上限与提示层评测。
 
+
+- **2026-09-28 · 第 28 步（搜索后端，进行中）**：spec Revisions (24) 补定审批目标与实际搜索后端绑定（791b6df），规格独立评审无阻塞项；kernel 与 desktop 独立 worktree 实现中。集成 checkout t26 / codex/02-step28；kernel t26K / codex/02-step28-kernel；desktop t26D / codex/02-step28-desktop。测试全局串行，Vitest maxWorkers=2。
+  - 官方探测（`pnpm test:live --grep 'live search probe'`，固定 api.anthropic.com，两次请求，无重试）：Sonnet 5 显式 disabled、Opus 5 不传 thinking，均 tool_choice any、web_search_20250305/max_uses=1、非流式，max_tokens 取各自模型表上限 128000（探测不压输出，不是产品值）。两者都 HTTP 200、end_turn、1 次搜索、9 条命中。Sonnet input12887/output129/thinking0；Opus input12751/output145/thinking0。验证两条强制工具设置均可用。
+  - 按仓库模型定价，本次 token 费用约 $0.094444，按 spec 搜索费 $10/千次另计 $0.02，合计约 $0.114444（非账单实扣）；官方累计已知付费请求仅这两次（先前 GET models 不计本次 token），距 owner 的 $15 停止线尚远。凭据由 macOS `tenon-live-anthropic` 一次读取，只交本次 pnpm test:live 环境；没有写文件、没有打印。无凭据探测记录在 /tmp/tenon28-official-probe/。已向 owner 提议产品 max_tokens=4096（替代 2048/8192），按 plan 等待明确取值，第33步复核。
+  - 本步读法：anthropic 定义走 open.bigmodel.cn/api/anthropic 时，智谱搜索后端沿用同一 inputs.secrets，按 apiKey、authToken 顺序取首个非空值作 Bearer；不另读/存 key。这由已有“同一个对象”、anthropic 支持 authToken 及旧203的兼容路径共同确定。
+  - 模型范围复核：spec 提交后才补读 models/README；独立规格视角确认 Revisions24 不改变模型已有的租约/mailbox/队列事件交错（同步 searchTarget，无新增 await 或租约动作；stale/tightened/unavailable 均复用既有分支）。模型本来没有 host/query 或工具派发语义，因此未虚构扩展、未把旧模型说成绑定证明；绑定由实际 loop 的两个竞态窗口、恢复零组装/零请求、stale 保留待批及唯一 approval_resolved 持久回归验证。
+  - 首轮实现已集成：kernel 后端、WebSearch 产品工具表、query 变换、host 授权、200 次根/子额度、searchHitUrls 落盘保留、Revisions24 绑定与恢复；desktop 智谱/兼容接口按 settled 的同一 secrets 选后端，同步目标不读 key。提示层 5→6。K相关24文件408项、修订后3文件30项；D相关3文件36项均通过；主线补测试后3文件39项通过。官方产品入口尚未启用，其3项正向desktop测试在 /tmp/tenon28-official-desktop-tests.patch，待owner数字后应用并接factory，当前无跳过伪绿。
+  - 评审与突变：规格、状态/并发恢复、安全、主线协议/生命周期核查已进行；确认一个测试P2——批准后host场景也改query，删host检查仍绿。先复现变异存活，再改成仅host变化，复评通过。六个变异现全部被检出：删host绑定、删query绑定、quota >=200 改 >200、换目标不忽略已有grant、70码点改71、丢searchHitUrls；临时生产改动全部恢复。集成 format/lint/typecheck、157文件2869单测（2项既有跳过）、build 已过；130项e2e全过（4.2m）。flashx/flash搜索live复跑2/2通过（25.6s）：每个模型一次web_search POST/quark/search_intent=false、HTTP200、有链接结果、暂停审批后完成，searchHitUrls非空/去重/无片段。首轮两次请求均成功，但测试误把“必定命中官网”当协议要求而失败；删除搜索排名假设，并经独立核查删除原始显示URL与规范化URL逐字相等的错误断言。规范化/落盘一致性由固定输入的单测覆盖。四次搜索按每次¥0.05暂估加token约¥0.035220，本次共约¥0.235220，累计约¥3.29（非实扣，账单待核）。无密钥记录在 /tmp/tenon28-zhipu-live-fixed/。尚不勾第28步。
+
+
 ## 验收记录
 
 （第 35 步填写）
@@ -958,6 +968,8 @@
 - 开放问题的去向：须 ready 前定或须 owner 定的 24 条留在 spec §开放问题（ready 前第 1、2 条即旧第 148、83 条，2026-09-25 已定）；「待校准的数值」「要实测的」改成本 plan 各步的测试要点与暂定项，引用旧号的在条目里注明（如旧开放问题 34、48、49、94、95、97、124、145）；其余写成所在节的暂定规则，或并进 §开放问题「留到后续阶段」。瘦身前的旧稿只留在起草会话，不入库。
 
 ## 交接
+
+- **2026-09-28 第28步独立部分完成，接着第29步**：t26 / codex/02-step28 已集成搜索后端与审批绑定；全套门禁、四视角核查、六变异和智谱两模型真实搜索通过（见实施记录）。官方协议探测已过，产品 max_tokens 等 owner 从建议4096/2048/8192中明确取值；按交接将这个数字依赖排到段末，不勾28，继续29外带检查。官方desktop正向测试补丁 /tmp/tenon28-official-desktop-tests.patch 待数值后应用。K/D第28步草稿已通过补丁集成，原分支保留，复用前stash，不重复合入。后续仍是③一个PR。
 
 - **2026-09-28 第 28 步恢复开工**：owner 回复「继续」，按上一条建议补定搜索审批竞态（Revisions 24）。第 27 步 a8b950d 已推 seg3；复用 t26、t26K、t26D 的独立 checkout，旧草稿保存 stash 后从该提交开第28步分支。先实现/测试智谱与通用搜索、审批绑定，再补官方 probe 与 Anthropic max_tokens 定值。当前第28步未完成。
 
@@ -1019,11 +1031,13 @@
 
 只列 owner 在仓库外要做的事：
 
+- **第28步官方搜索 max_tokens 待定**：两模型官方探测均200/end_turn，输出129/145 token，建议4096（备选2048/8192），等待owner明确取值；该依赖排到③段末，继续29。factory无默认数值，desktop官方搜索入口尚未开启。
+
 - **第 28 步搜索审批规格缺口已定（2026-09-28，owner 以「继续」接受建议，Revisions (24)）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。已定：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。接口、续跑/答复、恢复规则已补，下一步实现并补两个竞态窗口回归。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
 
 
 - 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。
-- Anthropic 官方 key：2026-09-28 已开通（开放问题 20 已定，spec Revisions (21)）。存于 macOS 登录钥匙串，服务名 `tenon-live-anthropic`；用时由 lead 在那一次 `pnpm test:live` 的命令里读出、作为 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入，读之前先提醒 owner（macOS 会弹窗）。`GET /v1/models` 已核验 200。余下给 owner 的只有两件：在 Console 预付 credits（建议 $30，预付额即花费上限）；跑 Fable 5.1 那一项之前确认组织已开 30 天数据保留，不开就跳过那一项。
+- Anthropic 官方 key：2026-09-28 已开通（开放问题 20 已定，spec Revisions (21)）。存于 macOS 登录钥匙串，服务名 `tenon-live-anthropic`；用时由 lead 在那一次 `pnpm test:live` 的命令里读出、作为 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入，读之前先提醒 owner（macOS 会弹窗）。`GET /v1/models` 已核验 200。按 2026-09-28 交接已预付 $25，累计到 $15 停下问 owner；第28步官方搜索探测已通过，费用记录见实施记录。尚需跑 Fable 5.1 那一项之前确认组织已开 30 天数据保留，不开就跳过该项。
 - owner 补录（2026-09-28 GPT 照 uxkit 做法录完，PR #20 已合进 dev；证据在 uxkit `recordings/2026-09-28/`，结论在 docs/ux/parity-audit-2026-09-12.md 的同日补记，已知差异清单第 1、8 条已更新）：B1 #2 与本 spec 一致（停止作废卡片，开放问题 14 已定，Revisions (22)）；F6 #5 的「逐张出卡」、F7 #3 的「不超时、卡在主消息流」与本 spec 一致；D7 第 1、3 项与覆盖文件、跑命令在 Cowork Manual 下都不弹卡，属已知差异第 1 条；B3、H1 见上一次核对（09-22 录屏）。两处差异 owner 2026-09-28 维持 Tenon 的做法（F11 发送即取代待批；F2 你拒绝一张就结束本轮），写成已知差异第 9、10 条（spec Revisions (23)）。仍未验证：新账号的默认审批档（D7 第 2 项；官方帮助说新体验默认 Manual，本机账号为 Auto）。
 - owner 的 key 下次撞到智谱额度上限时，抓 1308、1310 报文的原文，供补 `resetAt` 的解析（第 7 步）。
 - M8 landing：在 ChatGPT 的 Data Controls 里关掉训练；主账号先不订 GLM Coding Plan；需要时买智谱资源包，并在账单上核对 flash 的实际单价与资源包的扣减方式。

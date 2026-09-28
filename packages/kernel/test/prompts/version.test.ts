@@ -36,6 +36,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   4: 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3',
   // WebFetch responses, conversion limits and redirects (plan step 27).
   5: 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03',
+  // WebSearch result, truncation and quota notes (plan step 28).
+  6: '17146efa744b39f5e7e2f867291820d40517f9add47bc718ae88d5cb6bd9a951',
 }
 
 describe('the version gate', () => {

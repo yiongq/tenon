@@ -70,6 +70,7 @@ import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
 import type { ToolExecution, ToolExecutor } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
+import { SEARCH_TEXTS } from '../tools/builtin/web-search.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ArgumentValidator, ValidationVerdict } from '../tools/validate.js'
@@ -137,6 +138,7 @@ export interface BatchContext {
 
 /** A call the user allowed on its card: the decision it answered, which its dispatch names (T1). */
 export interface ApprovedCall {
+  readonly searchTarget?: { readonly host: string; readonly query: string }
   readonly ordinal: number
   readonly decisionKey: string
   readonly summary: DecisionSummary
@@ -200,7 +202,11 @@ export type BatchResult =
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
-  const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
+  const judge: JudgeContext = {
+    ...ctx,
+    searchHost: ctx.search?.host ?? null,
+    prepareSearch: ctx.search?.prepareQuery,
+  }
   let denials = ctx.denials
   const group = await runGroup(ctx, judge)
   if (group.stopped) {
@@ -218,7 +224,25 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       return { kind: 'stopped' }
     }
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
-    const verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    let verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    if (verdict?.ok && item?.source === 'builtin' && item.originalName === 'WebSearch') {
+      const prepared = ctx.search?.prepareQuery(String(call.input['query']))
+      const approved =
+        ctx.approved?.ordinal === call.ordinal ? ctx.approved.searchTarget : undefined
+      if (
+        ctx.search === null ||
+        (ctx.approved?.ordinal === call.ordinal &&
+          (approved === undefined ||
+            approved.host !== ctx.search.host ||
+            approved.query !== prepared?.query))
+      ) {
+        verdict = { ok: false, source: 'tool-unavailable', reason: SEARCH_TEXTS.changed }
+      } else {
+        // oxlint-disable-next-line no-await-in-loop -- quota includes preceding dispatches in this batch
+        if ((await searchDispatchCount(ctx.tape, ctx.sessionId)) >= 200)
+          verdict = { ok: false, source: 'tool-unavailable', reason: SEARCH_TEXTS.quota }
+      }
+    }
     // AskUserQuestion runs nothing: allowed, it pauses the Run for the answer (H6). One the user
     // allowed on a card — a policy that asks about it, which 02's product never has (open question
     // 15) — is looked up as any other tool.
@@ -600,6 +624,7 @@ async function perform(
     scope: q.scope,
     fs: ctx.host.fs,
     clock: ctx.host.clock,
+    ...(ctx.search === null ? {} : { search: ctx.search }),
     ...(item.source === 'builtin' && item.originalName === 'WebFetch'
       ? {
           webFetch: {
@@ -654,6 +679,7 @@ async function perform(
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
+    ...(execution.searchHitUrls === undefined ? {} : { searchHitUrls: execution.searchHitUrls }),
     effect: execution.state === 'not-run' ? 'blocked' : effectOf(item),
     ...(execution.facts === undefined ? {} : { facts: execution.facts }),
     state: execution.state,
@@ -900,6 +926,8 @@ export interface JudgeContext {
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
   readonly searchHost: string | null
+  readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
+  readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
 }
 
@@ -974,7 +1002,7 @@ export async function judgeCall(
       : null
   const object = grantObjectOf(item, call.input, located, workspace, ctx.searchHost)
   const grantFrom =
-    object === null
+    object === null || (item.originalName === 'WebSearch' && ctx.ignoreSearchGrant === true)
       ? undefined
       : sessionGrants(grantFactsOf(entries)).get(grantKey(item.serverId, item.originalName, object))
   const decision = decide({
@@ -1005,7 +1033,17 @@ export async function judgeCall(
     target: located?.real ?? null,
     policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
     ...(decision.record.verdict === 'ask'
-      ? { card: cardOf(item, call.input, located, workspace, ctx.searchHost) }
+      ? {
+          card: cardOf(
+            item,
+            item.originalName === 'WebSearch' && ctx.prepareSearch !== undefined
+              ? { ...call.input, query: ctx.prepareSearch(String(call.input['query'])).query }
+              : call.input,
+            located,
+            workspace,
+            ctx.searchHost,
+          ),
+        }
       : {}),
     grantObject: object,
     ...(failed === undefined ? {} : { failed }),
@@ -1284,3 +1322,30 @@ function textOf(content: unknown): string {
     .map((block) => block.text)
     .join('\n')
 }
+
+/** Root and linked child dispatch facts are the quota; no derived counter is persisted. */
+export async function searchDispatchCount(
+  tape: Pick<Tape, 'readRange'>,
+  sessionId: string,
+): Promise<number> {
+  const own = await readSessionEntries(tape, sessionId)
+  const rootId = sessionFactsOf(own).subagentOf?.sessionId ?? sessionId
+  const root = rootId === sessionId ? own : await readSessionEntries(tape, rootId)
+  const ids = new Set(
+    root
+      .filter((e) => e.name === 'session/parent_link')
+      .map((e) => (e.payload['child'] as { sessionId: string }).sessionId),
+  )
+  ids.delete(rootId)
+  let total = countSearchDispatches(root)
+  for (const id of ids) {
+    // oxlint-disable-next-line no-await-in-loop -- bound memory to one child tape at a time
+    total += countSearchDispatches(id === sessionId ? own : await readSessionEntries(tape, id))
+  }
+  return total
+}
+
+const countSearchDispatches = (entries: readonly TapeEntry[]) =>
+  entries.filter(
+    (e) => e.name === 'execution/dispatch_committed' && e.payload['name'] === 'WebSearch',
+  ).length

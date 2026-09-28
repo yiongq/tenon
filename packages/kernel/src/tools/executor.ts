@@ -26,9 +26,12 @@ import { grepExecutor } from './builtin/grep.js'
 import { readExecutor } from './builtin/read.js'
 import { writeExecutor } from './builtin/write.js'
 import { webFetchExecutor } from './builtin/web-fetch.js'
+import type { SearchBackend } from './search/types.js'
+import { webSearchExecutor } from './builtin/web-search.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
+  readonly searchHitUrls?: readonly string[]
   readonly content: ResultContent
   readonly isError: boolean
   readonly state: ExecutionState
@@ -42,6 +45,7 @@ export interface ToolExecution {
 }
 
 export interface ExecuteQuery {
+  readonly search?: SearchBackend
   readonly item: ToolTableItem
   readonly input: Record<string, unknown>
   readonly signal: AbortSignal
@@ -84,6 +88,7 @@ export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExe
   Glob: globExecutor,
   Grep: grepExecutor,
   WebFetch: webFetchExecutor,
+  WebSearch: webSearchExecutor,
 }
 
 /**

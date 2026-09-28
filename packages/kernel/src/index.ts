@@ -478,3 +478,11 @@ export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permissi
 export { STOP_TERM_GRACE_MS, STOP_WRITE_WAIT_MS } from './loop/limits.js'
 
 export { isBlockedFetchAddress } from './permission/fetch-address.js'
+
+export {
+  zhipuSearchDefinition,
+  prepareZhipuSearchQuery,
+  createAnthropicSearchDefinition,
+  selectAnthropicSearchModel,
+  parseAnthropicSearchResponse,
+} from './tools/search/backends.js'
