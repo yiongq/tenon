@@ -988,6 +988,8 @@
 
 ## 交接
 
+- **2026-09-28 owner「按建议继续」**：已确认第28官方搜索max_tokens=4096与第31判决目标快照/旧记录unresolved方案，spec Revisions (25)。先补完28官方desktop入口，再开31；本轮继续推进剩余步骤，不需重复询问这两项。
+
 - **2026-09-28 第30步完成，待第31步目标快照补定**：集成t26 / codex/02-step30；全部门禁（2945单测、130e2e）、四视角与8突变通过，官方默认摘要前缀探测通过，详见实施记录。K/D草稿通过补丁集成且保留，复用前先stash；不要重复合入。第31步尚未开工，已独立核查交接target无法从现有Tape复原历史真实路径的缺口，具体建议在Open，待owner确认后先记spec Revisions再实现。第28官方max_tokens仍待owner（建议4096），已一并询问。根checkout未改；后续仍整段③一个PR。
 
 - **2026-09-28 第29步完成，继续30摘要压缩**：集成 t26 / codex/02-step29，独立草稿K/D均已通过补丁集成；四视角核查、七变异、2892单测与静态/build通过，130项e2e均经过验证（首跑菜单旧偶发一项、单跑过），详见实施记录。下一步从本步提交建30分支；第28官方max_tokens仍等owner，排到段末。第30预审规格足够，默认摘要前缀方案可开工；保持同一Run租约和mailbox顺序，不改状态模型规则。本机默认Ollama 127.0.0.1:11434/api/tags直连拒绝，条件实测暂无可用默认实例，不安装或启动模型。
@@ -1054,9 +1056,9 @@
 
 只列 owner 在仓库外要做的事：
 
-- **第31步交接目标的持久化缺口（2026-09-28，lead与独立核查确认，尚未改spec或开工31）**：spec要求HandoffCall.target与审批卡同算法（文件为真实路径），并从子Tape机械生成；但自动allow判决没有confirm.target，dispatch只存decisionKey，无法复原当时symlink/cwd。例如Read('/w/link')实际读A，交接前link改指B，现有事实不能证明A；原input或当前realpath都不满足该契约。建议只增PermissionDecidedPayload.target?:ConfirmTarget，新判决allow/ask/deny均存已算出的对象（不追加IO），已派发调用经dispatch.decisionKey取快照，未派发取最新判决；无判决/旧事实以原参数生成明确标注unresolved的说明，缺path/cwd不猜默认；path/url原文、command+cwd、search query+host、tool serverId/name采用固定英文模板。需owner确认此补定或放宽target为原始输入；确认后在spec Revisions新增并落完整回退/字符串格式。AGENTS要求规格不足先停，此依赖不挡30收尾。
+- **第31步目标快照已定（2026-09-28，owner「按建议继续」，Revisions 25）**：spec要求HandoffCall.target与审批卡同算法（文件为真实路径），并从子Tape机械生成；但自动allow判决没有confirm.target，dispatch只存decisionKey，无法复原当时symlink/cwd。例如Read('/w/link')实际读A，交接前link改指B，现有事实不能证明A；原input或当前realpath都不满足该契约。建议只增PermissionDecidedPayload.target?:ConfirmTarget，新判决allow/ask/deny均存已算出的对象（不追加IO），已派发调用经dispatch.decisionKey取快照，未派发取最新判决；无判决/旧事实以原参数生成明确标注unresolved的说明，缺path/cwd不猜默认；path/url原文、command+cwd、search query+host、tool serverId/name采用固定英文模板。owner已确认按建议补定，完整读取顺序、旧事实回退与字符串格式已写spec，依赖解除。
 
-- **第28步官方搜索 max_tokens 待定**：两模型官方探测均200/end_turn，输出129/145 token，建议4096（备选2048/8192），等待owner明确取值；该依赖排到③段末，继续29。factory无默认数值，desktop官方搜索入口尚未开启。
+- **第28步官方搜索 max_tokens 已定**：owner「按建议继续」确认4096（Revisions 25）；两模型官方探测均200/end_turn，输出129/145 token。现在接入desktop官方搜索入口并补测。
 
 - **第 28 步搜索审批规格缺口已定（2026-09-28，owner 以「继续」接受建议，Revisions (24)）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。已定：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。接口、续跑/答复、恢复规则已补，下一步实现并补两个竞态窗口回归。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
 
