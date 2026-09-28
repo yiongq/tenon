@@ -358,6 +358,7 @@ describe('run.state for the Runs a route opens', () => {
     expect(h.states).toEqual([preparing, runningAs(r1 ?? ''), idle])
     const pending = await h.sessions.currentPending({ sessionId: h.root })
     expect(pending).not.toBeNull()
+    if (pending?.waitKind !== 'approval') throw new Error('expected an approval')
 
     h.scripted.script(scriptedTurn({ deltas: ['fetched'], usage: USAGE }))
     expect(

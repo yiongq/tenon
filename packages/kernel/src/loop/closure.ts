@@ -11,6 +11,7 @@ import type { Reversibility } from '../host/adapter.js'
 import { MODEL_NOTES, fill } from '../prompts/index.js'
 import type { ContentBlock } from '../provider/types.js'
 import type {
+  AskAnswerRecord,
   FactWriter,
   NewEntry,
   SideEffectClass,
@@ -78,6 +79,8 @@ export interface ResultFacts {
   readonly kernelAuthored: boolean
   /** The file the result's whole text went to (§大响应落盘): `spillChecked` gives it. */
   readonly spill?: SpillRecord
+  /** An answered AskUserQuestion's record, for the summary card (open question 18). */
+  readonly question?: AskAnswerRecord
   readonly effect: SideEffectClass
   readonly state: ExecutionState
   readonly source: ClosureSource | null
@@ -101,6 +104,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     content: [...q.content],
     kernelAuthored: q.kernelAuthored,
     ...(q.spill === undefined ? {} : { spill: { ...q.spill } }),
+    ...(q.question === undefined ? {} : { question: q.question }),
     writer: q.writer,
   }
   const outcome: ToolOutcomePayload = {

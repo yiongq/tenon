@@ -104,6 +104,8 @@ function viewOf(
     ...(resolution === undefined || target === undefined
       ? {}
       : { approval: approvalOf(resolution, target) }),
+    // An answered question's record, for the summary card (open question 18).
+    ...(result.question === undefined ? {} : { question: result.question }),
   }
 }
 

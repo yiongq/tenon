@@ -39,7 +39,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { LOOK, lookSource } from './support.js'
+import { LOOK, lookSource, pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'retry-user', tenantId: 'retry-tenant', profileDir: '/tenon/retry' }
 const SESSION = '6c3e9a2e-6b3d-4a71-9f52-0c8de7a11d02'
@@ -225,7 +225,7 @@ async function writtenId(h: Harness, text: string): Promise<string> {
 }
 
 async function card(h: Harness): Promise<string> {
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   return pending.card.requestId
 }

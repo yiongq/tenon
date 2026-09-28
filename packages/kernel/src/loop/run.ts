@@ -322,7 +322,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const batchEnd = (result: BatchResult): RunFinish | null => {
     if (result.kind === 'paused') {
       return finish(
-        { code: 'paused', waitingFor: 'approval' },
+        { code: 'paused', waitingFor: result.waitingFor },
         { withTerminal: result.withTerminal, waiting: result.waiting },
       )
     }

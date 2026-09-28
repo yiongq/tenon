@@ -35,7 +35,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { proxyStore } from '../loop/support.js'
+import { pendingCard, proxyStore } from '../loop/support.js'
 
 const IDENTITY = { userId: 'ws-user', tenantId: 'ws-tenant', profileDir: '/tenon/ws' }
 const SESSION = '7c1d9a2e-6b3d-4a71-9f52-0c8de7a11b41'
@@ -424,7 +424,7 @@ describe('the workspace (§工作区; D11)', () => {
     // In the workspace a Write asks once; allowed, the same file is free for the session.
     expect(await sendWrite('w1')).toBe('paused')
     h.provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
-    const card = await h.service.currentPending({ sessionId: SESSION })
+    const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(card?.allowScope).toBe('session')
     await h.service.answer({
       kind: 'approval',
@@ -442,7 +442,7 @@ describe('the workspace (§工作区; D11)', () => {
       dedicated: DEDICATED,
     })
     expect(await sendWrite('w3')).toBe('paused')
-    const outside = await h.service.currentPending({ sessionId: SESSION })
+    const outside = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(outside?.card.reason).toBe('outside-workspace')
     expect(outside?.allowScope).toBe('once')
     // X back: the grant does not come back with it (D2 only tightens).
@@ -452,9 +452,9 @@ describe('the workspace (§工作区; D11)', () => {
       dedicated: DEDICATED,
     })
     expect(await sendWrite('w4')).toBe('paused')
-    expect((await h.service.currentPending({ sessionId: SESSION }))?.card.reason).not.toBe(
-      'outside-workspace',
-    )
+    expect(
+      pendingCard(await h.service.currentPending({ sessionId: SESSION }))?.card.reason,
+    ).not.toBe('outside-workspace')
     // One note per changed state at a boundary request: none for the resumed Run, none for w2.
     expect(
       named(await entries(h.store), 'message/environment').map(
@@ -490,7 +490,7 @@ describe('the workspace (§工作区; D11)', () => {
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'write it' })
     if (sent.status !== 'started') throw new Error('not started')
     expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
-    const before = await h.service.currentPending({ sessionId: SESSION })
+    const before = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     await h.service.setWorkspace({
       sessionId: SESSION,
       change: { kind: 'remove', folder: X },
@@ -505,7 +505,7 @@ describe('the workspace (§工作区; D11)', () => {
       origin: null,
     })
     expect(answered).toEqual({ status: 'stale' })
-    const after = await h.service.currentPending({ sessionId: SESSION })
+    const after = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(after?.card.reason).toBe('outside-workspace')
     expect(after?.allowScope).toBe('once')
   })

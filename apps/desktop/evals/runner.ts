@@ -363,7 +363,7 @@ async function driveTurns(o: {
       if (ended.reason.waitingFor === 'approval') {
         // oxlint-disable-next-line no-await-in-loop -- the card this Run paused on
         const pending = await sessions.currentPending({ sessionId })
-        if (pending !== null) {
+        if (pending?.waitKind === 'approval') {
           answer = {
             kind: 'approval',
             sessionId: pending.card.sessionId,

@@ -439,7 +439,7 @@ export type {
 } from './loop/ports.js'
 export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
 export type { AnswerCommand } from './loop/waiting.js'
-export type { PendingCard, PendingRoot } from './loop/answer.js'
+export type { PendingApproval, PendingCard, PendingQuestion, PendingRoot } from './loop/answer.js'
 // Plan step 18: the home page's choices and the workspace, as the session service answers them.
 export type {
   SelectModelQuery,
