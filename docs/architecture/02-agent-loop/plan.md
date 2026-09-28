@@ -959,6 +959,8 @@
 
 ## 交接
 
+- **2026-09-28 第 28 步恢复开工**：owner 回复「继续」，按上一条建议补定搜索审批竞态（Revisions 24）。第 27 步 a8b950d 已推 seg3；复用 t26、t26K、t26D 的独立 checkout，旧草稿保存 stash 后从该提交开第28步分支。先实现/测试智谱与通用搜索、审批绑定，再补官方 probe 与 Anthropic max_tokens 定值。当前第28步未完成。
+
 - **2026-09-28 第 27 步完成，待第 28 步规格补定**：集成在 `t26` 的 `codex/02-step27`；第 26 步 `fd2aa42` 已推 seg3，第 27 步本条随代码提交推 seg3。format/lint/typecheck、2830 单测、build、130 e2e 全绿，四视角评审三项修复已复评，6 个变异全部检出且恢复，详见实施记录。第 28 步尚未写代码：两次独立预读确认搜索批准与实际后端存在未定义竞态，已向 owner 提出具体补定方案，见 Open；收到裁决后先补 spec Revisions，再继续第 28 步。没有读取真实 key。t26K/D 的第 27 步分工草稿已通过补丁集成；原分支与 /tmp/tenon27-*.patch 保留，不要重复合入。根 checkout 未改。后续 PR 仍按整段 ③ 一个 PR，当前未开 PR。
 
 - **2026-09-28 第 27 步开工**：第 26 步最终提交 `fd2aa42` 已推送 `feat/02-seg3`。复用 `t26` 为集成 checkout（分支 `codex/02-step27`），`t26K` 的 `codex/02-step27-kernel` 负责 kernel 与接口，`t26D` 的 `codex/02-step27-host` 负责 desktop fetchUntrusted 与集成测试；独立评审 checkout 复用 `ask-question-review/tenon`。目前尚未完成或验证第 27 步，WebFetch 不进入产品工具表。下一步集成后按四视角加核查、突变测试与全套检查收敛。
@@ -1017,7 +1019,7 @@
 
 只列 owner 在仓库外要做的事：
 
-- **第 28 步开工前发现的规格缺口（2026-09-28，两次独立核查，待 owner 定）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。建议待确认：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。须在接口、续跑/答复、恢复三节补规格并追加 Revisions，再补两个竞态窗口回归。未自行变更 spec 或开始第 28 步代码。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
+- **第 28 步搜索审批规格缺口已定（2026-09-28，owner 以「继续」接受建议，Revisions (24)）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。已定：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。接口、续跑/答复、恢复规则已补，下一步实现并补两个竞态窗口回归。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
 
 
 - 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。
