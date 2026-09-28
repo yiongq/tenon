@@ -84,3 +84,5 @@ pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基�
 6. **入口**：同模型列切换入口之前，Tenon 走 OpenAI 兼容入口，Claude Code 走 Anthropic 兼容入口。后者把输出攒成大块再吐，特性支持也没有清单。
 7. **OpenCode 顶上时**：它对 zai / zhipuai 会发 `clear_thinking:false`，Tenon 不发（A12）。
 8. **录屏的体验版本**：2026-09-28 首页复核仍有 Chat / Cowork，测试前本账号新任务为 Auto；菜单有 Manual / Auto / Skip 三档，补录使用 Manual（H1）。本机安装包版本 2.7032.0，界面提示待更新 v2.9939.2，未更新；不以安装包版本判断服务端体验。[官方帮助](https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork)所述「新体验默认 Manual」与本机实测分列，新账号默认档未实测。证据：私有 uxkit `recordings/2026-09-28/home-cowork-auto.png`、`00b-dynamic-check.mp4` 及 [补记](../ux/parity-audit-2026-09-12.md#2026-09-28-补记cowork-审批行为补录)。
+9. **卡挂着时发新消息**：Tenon 发送即取代待批——没答的卡记 `superseded`，这些调用和同批后面未处理的写 not-run，然后开新一轮，输入框事先提示「发送会取消上面待批的操作」（F11、H13）。Cowork 的原卡保留、新消息进入消息流但不处理，要先点拒绝才继续（2026-09-28 补录）。owner 2026-09-28 看过补录后维持 Tenon 的做法。
+10. **拒绝一张卡之后**：Tenon 你拒绝就结束本轮，同批其余记 not-run，等你的下一条指令（F2 选 A）。Cowork 同批的下一张卡照常出现，一张一张答（2026-09-28 补录）。owner 2026-09-28 维持 Tenon 的做法。
