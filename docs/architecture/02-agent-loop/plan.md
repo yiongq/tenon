@@ -432,7 +432,7 @@
 
 ## ③ 其余（先做不砍的，再按砍法倒序做）
 
-- [ ] 26. **提问**（裁决 H6、F3、B1、H13、F6）
+- [x] 26. **提问**（裁决 H6、F3、B1、H13、F6）
   - 读：§提问工具 AskUserQuestion；§等待模型：审批、提问与拒绝；§阶段 2 做的组件 的 `AskWidget`。
   - 交付物：AskUserQuestion 的上限校验、结果模板与三种回填、`awaits: 'question'` 与暂停同批、`approval.respond` 的 question 分支、等提问时的打字回答（`chat.send` 进同一个串行队列）、停止记 `unanswered`、最小 widget、汇总卡、同批后续调用以排队行叠在那次 AskUserQuestion 的行下；AskUserQuestion 在本步进产品工具表。
   - 验收：46。
@@ -928,6 +928,12 @@
     - live 用例里真跑的接线（期限、signal、计划行）没有单测，靠这次真跑验证过。
     - 已知：每次运行留下一个 undici Agent 与一个配置监听，几十次运行无妨。
 
+- **2026-09-28 · 第 26 步（提问 AskUserQuestion）**，分支 `wt/02-step26` → `feat/02-seg3`，完成（format、lint、typecheck、149 个单测文件 2736 项通过、2 项既有跳过，build 通过，Electron e2e 130 项通过）。验收 46 除第 31 步子会话部分外满足。做法：按不可信草稿审查 t26K 与 t26D；kernel 补全提交 `60700a2`，desktop 补全提交 `c05a910`（集成为 `7ca260d`）；本步一个独立视角轻评审未发现范围内阻塞项，5 个定向生产变异全部被现有测试检出并恢复，恢复后 3 文件 88 项通过。变异对应：去掉未知答案键拒收、丢掉 question 持久化、unanswered 不标 isError、打字原文 trim（以上由 question.test.ts 检出）、拆分含逗号的选项 label（renderer-ask.test.ts 检出）。未为突变增加生产抽象或镜像测试。全量检查首次发现 provider/definitions 与 session/service 的 7 个旧断言仍按只有 Read 的工具表计数，已增加 AskUserQuestion 的 content 事实与工具名期望，生产代码未变；修后全套通过。
+  - 改了什么：AskUserQuestion 进入产品工具表；允许判决与 question 暂停终态同批追加，答复与新 Run 起始事实同批追加；答复、打字与停止经同一 mailbox，打字沿用 send 租约和原批冻结的 provider，不写额外用户消息；停止回填 unanswered 并收口同批余项。答案使用版本化固定模板，结构化 question 记录供 live 与重绘的汇总卡共用，自由文本经过落盘检查。提示层 3 → 4，历史哈希只追加。desktop 增加分页、单选/多选、其他、跳过 widget 与汇总卡，后续调用叠在提问行下，补中英文文案与待答输入提示。
+  - 本步的读法：未派发的提问 effect 按既有映射为 blocked；只有 null 或缺键按跳过，显式空数组按数组连接规则保留空串；打字与其他答案保留首尾空白，空白输入仍不能提交。共用 currentPending 的联合类型，不另加 currentQuestion 接口。策略点名 AskUserQuestion 要求审批的组合仍按开放问题 15 留到 6b。
+  - 已验证：kernel 相关 23 文件 388 项通过（新增 11 项提问回归）；desktop 相关 5 文件 122 项通过；两线 format、lint、typecheck 与提交 hooks 通过；desktop build 与提问 e2e 6 项通过。Electron 1280×800 下待答与汇总卡视觉检查通过，零 pageerror/console.error。测试均限 2 workers，Electron 单进程；本机监听测试在允许 localhost 的环境运行。未使用真实模型或 key。
+  - 等后面步骤的：验收 46 的子会话工具表排除 AskUserQuestion 在第 31 步补齐；提示层 4 的完整模型评测与基线在第 34 步重跑。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -949,7 +955,7 @@
 
 - **2026-09-28 第 26 步 kernel 草稿接手补全（t26K）**：已按 t26 最新 spec 与交接审读，补齐 question 暂停、answer/typed/stop、恢复投影、同批续跑与汇总记录；currentPending 返回审批/提问联合类型（无独立 currentQuestion），提示层升 4 并追加历史。修正未派发提问的 effect 为 blocked；空答案数组按原文连接为空串，不扩展成跳过。补 11 个持久回归覆盖未知键零写入、模板回放、跳过/多选、重启、打字原文、当前所选 provider 缺 key 时沿用 send 租约与冻结 provider、队列插入、停止、输入上限以及暂停/答复原子追加。相关 23 文件 388 测试通过（maxWorkers=2）；format/lint/typecheck 在提交前检查。desktop/evals 与 run-state-push 仅补现有审批消费者的 waitKind 缩窄。下一步：并入 t26，与 desktop 草稿集成，跑全套、轻评审与突变；本条不将第 26 步标完成。
 
-2026-09-28 Codex 接手：从第 26 步继续。`t26K` 与 `t26D` 原草稿正在各自 worktree 对照本分支最新 spec 审查、补齐；未合并、未完成验证，不能视为交付。集成仍在 `t26`（`wt/02-step26`）。测试串行，Vitest 限 2 workers，同刻最多一个 Electron。下一步先完成两线相关检查，再集成、全套检查、轻评审与突变测试，更新实施记录后推送 `feat/02-seg3`。
+2026-09-28 Codex 接手后第 26 步已完成：两份草稿审补、集成、全套检查、轻评审与 5 个突变均已完成，详见实施记录。集成在 `t26`（`wt/02-step26`），下一步第 27 步本机抓取与 WebFetch。测试继续串行，Vitest 限 2 workers，同刻最多一个 Electron。
 
 第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26 步正在做。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
 

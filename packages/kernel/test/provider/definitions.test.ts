@@ -551,7 +551,15 @@ const TURN_SHAPE: readonly unknown[] = [
     payloadKeys: ['hash', 'text', 'type'],
     meta: {},
   },
-  // The product table's one chat tool from plan step 18 on: Read.
+  // The product chat table at plan step 26: AskUserQuestion and Read.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
+    meta: {},
+  },
   {
     name: 'view/content',
     kind: 'event',
@@ -724,7 +732,7 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, note, , , , , , assistant, , attempt] = entries
+      const [, , , modelSelected, note, , , , , , , assistant, , attempt] = entries
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
