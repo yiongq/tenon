@@ -197,8 +197,10 @@ describe('a task run end to end, offline', () => {
       false,
     )
     // The product's table, not the test registry's ten: createEvalSessionService adds a limit only.
+    // AskUserQuestion is in it from plan step 26.
     const bodies = server.requests.map((r) => r.body as { tools?: { name: string }[] })
     expect(bodies[0]?.tools?.map((t) => t.name)).toEqual([
+      'AskUserQuestion',
       'Bash',
       'Edit',
       'Glob',
@@ -284,6 +286,84 @@ describe('a task run end to end, offline', () => {
     expect(named(entries, 'provider/attempt_completed')).toHaveLength(2)
     expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
     expect(record.timing).toBeUndefined()
+  })
+})
+
+describe('a question in an eval run (§评测集与测试宿主「跳过提问」; plan step 26)', () => {
+  it('is skipped: every question answered null, recorded no-preference, and the chain goes on', async () => {
+    const root = fixtures()
+    const questions = [
+      {
+        question: 'Which file first?',
+        header: 'Order',
+        options: [
+          { label: 'notes.txt', description: 'The broken one' },
+          { label: 'a.txt', description: 'The other one' },
+        ],
+        multiSelect: false,
+      },
+      {
+        question: 'Which checks?',
+        header: 'Checks',
+        options: [
+          { label: 'lint, fast', description: 'A label that holds 「, 」' },
+          { label: 'tests', description: '' },
+        ],
+        multiSelect: true,
+      },
+    ]
+    const server = await fake((ws) => [
+      // A batch: the question, then a read that waits behind it (F6).
+      {
+        steps: [
+          { type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: { questions } },
+          readStep('toolu_read', `${ws}/a.txt`),
+        ],
+      },
+      text('No preference, so notes.txt first.'),
+    ])
+    const task: EvalTask = {
+      ...BASE,
+      id: '01-notes',
+      turns: ['Read the files in the order I choose.'],
+      checks: [{ kind: 'script', id: 'always-pass' }],
+    }
+    const { record, entries } = await run(task, server, root)
+
+    // The Run paused on the question, and the skip opened the next one (a resume).
+    const terminals = named(entries, 'execution/run_terminal').map((e) => e.payload['reason'])
+    expect(terminals).toEqual([{ code: 'paused', waitingFor: 'question' }, { code: 'completed' }])
+    expect(
+      named(entries, 'execution/run_started').map(
+        (e) => (e.payload['cause'] as { kind: string }).kind,
+      ),
+    ).toEqual(['user-message', 'resume'])
+    // Every question by its own text, null: the approval.respond path's skip (§提问工具「跳过」).
+    const [asked, read] = named(entries, 'tool/result')
+    expect(asked?.payload['question']).toEqual({
+      answers: { 'Which file first?': null, 'Which checks?': null },
+    })
+    expect(asked?.payload['isError']).toBe(false)
+    expect(named(entries, 'execution/tool_outcome').map((e) => e.payload['source'])).toEqual([
+      'no-preference',
+      null,
+    ])
+    expect(named(entries, 'execution/tool_outcome')[0]?.payload['state']).toBe('completed')
+    expect(read?.payload['isError']).toBe(false)
+    // The model read the answer in the next request, not as an error, then the read's result.
+    const second = server.requests[1]?.body as {
+      messages: Array<{ role: string; content: unknown }>
+    }
+    const results = second.messages
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .filter((block: { type?: string }) => block.type === 'tool_result') as Array<{
+      tool_use_id: string
+      is_error?: boolean
+    }>
+    expect(results.map((block) => block.tool_use_id)).toEqual(['toolu_ask', 'toolu_read'])
+    expect(results[0]?.is_error ?? false).toBe(false)
+    // A question is no card: the host answered none, and the task passed.
+    expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed', cards: {} })
   })
 })
 

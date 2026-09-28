@@ -17,6 +17,7 @@ import {
 } from '@tenon-app/contracts'
 import type { ChatEvent, MessageRowContract, SessionFactsResponse } from '@tenon-app/contracts'
 import type { TenonBridge } from '../../../preload/index'
+import type { AskAnswers } from '../lib/ask'
 import { queueOf, queuedTextOf } from './queue-state'
 import type { QueuedItem } from './queue-state'
 import { runStateOf, subscribeRunState } from './run-state'
@@ -37,7 +38,17 @@ export type PendingCard = Extract<
   NonNullable<Awaited<ReturnType<typeof readCurrent>>>,
   { waitKind: 'approval' }
 >
+/** What `approval.current` answers for a question (plan step 26): the call; its input holds the rest. */
+export type PendingQuestion = Extract<
+  NonNullable<Awaited<ReturnType<typeof readCurrent>>>,
+  { waitKind: 'question' }
+>
 type Pending = NonNullable<Awaited<ReturnType<typeof readCurrent>>>
+
+/** The decision a card or a question stands for: what an answer names, and what dedupes a read. */
+function requestIdOf(pending: Pending): string {
+  return pending.waitKind === 'approval' ? pending.card.requestId : pending.requestId
+}
 
 /** An answer this window gave, kept until the row's own outcome says so (a live collapse). */
 export interface Answered {
@@ -58,6 +69,11 @@ export interface SessionSnapshot {
   readonly pendingSince: number
   /** Keyed by the row the card hung under (`anchorCallKey`), where the collapsed line shows. */
   readonly answered: ReadonlyMap<string, Answered>
+  /**
+   * A question this window answered, by its call's key: the summary card's data until the call's
+   * own outcome brings it (`tool-outcome`'s `question`; open question 18).
+   */
+  readonly asked: ReadonlyMap<string, AskAnswers>
   /** The kernel's resumable set holds this root (`approval.list`'s `resume` row). */
   readonly resumable: boolean
   readonly facts: SessionFactsResponse | null
@@ -72,6 +88,15 @@ export interface SessionSnapshot {
 function readCurrent(bridge: TenonBridge, sessionId: string) {
   return invokeRoute(bridge, approvalCurrent, { sessionId }).then((result) =>
     result.ok ? result.data : null,
+  )
+}
+
+/** Whether the call has its outcome in the thread already (live or redrawn). */
+function hasOutcome(model: ThreadModel, callKey: string): boolean {
+  return model.turns.some((turn) =>
+    turn.parts.some(
+      (part) => part.kind === 'tool' && part.callKey === callKey && part.outcome !== null,
+    ),
   )
 }
 
@@ -121,6 +146,7 @@ export class SessionStore {
       pending: null,
       pendingSince: 0,
       answered: new Map(),
+      asked: new Map(),
       resumable: false,
       facts: null,
       running: run.running,
@@ -240,6 +266,18 @@ export class SessionStore {
         this.#set({ pending: null, pendingSince: 0 })
         void this.refreshPending()
       }
+      // The question has its result — answered, typed, or 「未作答」 after a stop: the widget goes,
+      // and the summary card under its row reads the result (§阶段 2 做的组件 `AskSummaryCard`).
+      if (pending?.waitKind === 'question' && event.callKey === pending.callKey) {
+        this.#set({ pending: null, pendingSince: 0 })
+        void this.refreshPending()
+      }
+      const asked = this.#snapshot.asked
+      if (asked.has(event.callKey) && event.question !== undefined) {
+        const kept = new Map(asked)
+        kept.delete(event.callKey)
+        this.#set({ asked: kept })
+      }
     }
     if (event.type === 'user-message') {
       // A message that went in while something waited supersedes it (§多卡、拒绝与取代).
@@ -277,10 +315,10 @@ export class SessionStore {
     const same =
       before !== null &&
       pending !== null &&
-      before.waitKind === 'approval' &&
-      pending.waitKind === 'approval' &&
-      before.card.requestId === pending.card.requestId
-    // By `requestId`: the same card delivered twice is one card (§HostConfirm 可重复投递).
+      before.waitKind === pending.waitKind &&
+      requestIdOf(before) === requestIdOf(pending)
+    // By `requestId`: the same card delivered twice is one card (§HostConfirm 可重复投递), and a
+    // question read again is the same question — its widget keeps what was chosen so far.
     if (same) return
     if (before === null && pending === null) return
     this.#set({ pending, pendingSince: pending === null ? 0 : Date.now() })
@@ -307,7 +345,12 @@ export class SessionStore {
     await this.refreshResumable()
   }
 
-  /** Shows the message at once; the `user-message` gives it its id, a queue push moves it to a bubble. */
+  /**
+   * Shows the message at once; the `user-message` gives it its id, a queue push moves it to a bubble.
+   * While a question waits the kernel takes it as the typed answer (§插话与输入框状态表「等提问」): it
+   * is not drawn meanwhile, and on `answered` it goes — it is no message, and the question's summary
+   * card shows it as the reply.
+   */
   async #sendShown(
     text: string,
     route: () => Promise<
@@ -317,16 +360,35 @@ export class SessionStore {
   ): Promise<void> {
     if (this.sendBlock() !== null) return
     const id = nextLocalId()
-    this.#set({ model: withSentText(this.#snapshot.model, text, id, Date.now()) })
+    const question = this.#snapshot.pending?.waitKind === 'question' ? this.#snapshot.pending : null
+    this.#set({
+      model: withSentText(this.#snapshot.model, text, id, Date.now(), question !== null),
+    })
     const sent = await route()
     // Refused outright (recovery gate, shutting down): nothing was sent, so nothing is shown.
     if (!sent.ok) {
       this.#set({ model: withoutTurn(this.#snapshot.model, id) })
       return
     }
+    const status = sent.data.status
+    if (status === 'answered') {
+      const model = withoutTurn(this.#snapshot.model, id)
+      const asked = new Map(this.#snapshot.asked)
+      // The call's outcome may be here already, with the record; until it is, this window's own.
+      if (question !== null && !hasOutcome(model, question.callKey)) {
+        asked.set(question.callKey, { answers: {}, response: text })
+      }
+      const answeredHere = question !== null && this.#snapshot.pending === question
+      this.#set({
+        model,
+        asked,
+        ...(answeredHere ? { pending: null, pendingSince: 0 } : {}),
+      })
+      await this.refreshPending()
+      return
+    }
     // Taken, but nothing was written and no event will name it (a missing key, a stop in the
     // prebuild): it stays shown as sent, and a later message's id is never given to it.
-    const status = sent.data.status
     if (status !== undefined && !EVENTS_FOLLOW.has(status)) {
       this.#set({ model: withSettled(this.#snapshot.model, id) })
     }
@@ -405,6 +467,32 @@ export class SessionStore {
       this.#set({ answered: collapsed, pending: null, pendingSince: 0 })
     }
     // `stale` shows the new card; anything else re-reads what waits.
+    await this.refreshPending()
+  }
+
+  /**
+   * The widget's answers (§答复与投递 `approval.respond` question): every question by its own text,
+   * null where skipped. `stale` or anything else reads what waits again.
+   */
+  async answerQuestion(answers: Readonly<Record<string, readonly string[] | null>>): Promise<void> {
+    const pending = this.#snapshot.pending
+    if (pending?.waitKind !== 'question') return
+    const answered = await invokeRoute(this.#bridge, approvalRespond, {
+      kind: 'question',
+      sessionId: pending.sessionId,
+      requestId: pending.requestId,
+      answers,
+    })
+    if (answered.ok && answered.data.status === 'applied') {
+      const asked = new Map(this.#snapshot.asked)
+      if (!hasOutcome(this.#snapshot.model, pending.callKey)) {
+        asked.set(pending.callKey, { answers })
+      }
+      this.#set({
+        asked,
+        ...(this.#snapshot.pending === pending ? { pending: null, pendingSince: 0 } : {}),
+      })
+    }
     await this.refreshPending()
   }
 

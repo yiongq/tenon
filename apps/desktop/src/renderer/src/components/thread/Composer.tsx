@@ -32,7 +32,8 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
  * The composer (spec 02 §模型菜单与输入框「输入框」; H13, B1, F11, H6, B15): send and stop side by
  * side while a Run is live — sending then queues; Cmd/Ctrl+Enter stops the Run the user sees and
  * sends this next. Stop is its own button calling `chat.stop`, shown while a Run is in progress, while
- * a card waits and while the session can resume — never assistant-ui's cancel, which a remount fires.
+ * a card or a question waits and while the session can resume — never assistant-ui's cancel, which a
+ * remount fires. While a question waits, 「发送」 is its typed answer (§插话与输入框状态表「等提问」).
  */
 export function Composer(): JSX.Element {
   const { t } = useTranslation()
@@ -49,9 +50,10 @@ export function Composer(): JSX.Element {
     }
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault()
-      const text = aui.composer().getState().text.trim()
+      const raw = aui.composer().getState().text
+      const text = snapshot.pending?.waitKind === 'question' ? raw : raw.trim()
       // The same two reasons that disable 「发送」 hold here (B15: 按回车也不发送).
-      if (text === '' || store.sendBlock() !== null) return
+      if (text.trim() === '' || store.sendBlock() !== null) return
       aui.composer().setText('')
       // While a card or a question waits, Cmd/Ctrl+Enter is a plain send (§插话与输入框状态表).
       void (snapshot.running ? store.sendNow(text) : store.send(text))
@@ -66,7 +68,12 @@ export function Composer(): JSX.Element {
         <ComposerPrimitive.Input
           data-testid="composer-input"
           rows={1}
-          placeholder={t('composer.placeholder')}
+          // While a question waits, sending is the answer (§模型菜单与输入框「提示与禁发」; components.md:80).
+          placeholder={t(
+            snapshot.pending?.waitKind === 'question'
+              ? 'composer.placeholderQuestion'
+              : 'composer.placeholder',
+          )}
           onKeyDown={onKeyDown}
           className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 font-sans text-ui text-text-primary outline-none placeholder:text-text-muted"
         />

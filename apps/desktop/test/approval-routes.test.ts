@@ -1,7 +1,8 @@
 /**
- * The approval routes only forward (spec 02 §答复与投递; plan step 15): `approval.respond` to the
- * kernel's `answer`, with the document that answered as the origin, a refusal as `ok: false`;
- * `approval.current` to `currentPending`, through the contracts schema.
+ * The approval routes only forward (spec 02 §答复与投递; plan steps 15 and 26): `approval.respond`
+ * to the kernel's `answer`, with the document that answered as the origin, a refusal as `ok: false`;
+ * `approval.current` to `currentPending` (an approval or a question), through the
+ * contracts schema.
  */
 import type { IpcMainLike } from '@tenon-app/contracts'
 import type { AnswerCommand, PendingCard, RunOrigin, SessionService } from '@tenon-app/kernel'
@@ -48,7 +49,21 @@ const CARD: PendingCard = {
   allowScope: 'once',
 }
 
-function stubSessions(answerStatus: string): {
+const QUESTION: Extract<
+  NonNullable<Awaited<ReturnType<SessionService['currentPending']>>>,
+  { waitKind: 'question' }
+> = {
+  waitKind: 'question',
+  requestId: REQUEST,
+  sessionId: SESSION,
+  toolRequestId: 'toolu_ask',
+  callKey: '00000000-0000-4000-8000-000000000001:1:0',
+}
+
+function stubSessions(
+  answerStatus: string,
+  pending: PendingCard | null = CARD,
+): {
   sessions: SessionService
   answers: Array<AnswerCommand & { origin: RunOrigin | null }>
 } {
@@ -58,7 +73,7 @@ function stubSessions(answerStatus: string): {
       answers.push(q)
       return Promise.resolve({ status: answerStatus })
     },
-    currentPending: () => Promise.resolve(CARD),
+    currentPending: () => Promise.resolve(pending),
     listPendingRoots: (q: { limit: number }) =>
       Promise.resolve(
         [
@@ -116,6 +131,68 @@ describe('approval routes', () => {
         decision: 'allow',
       }),
     ).toEqual({ ok: true, data: { status: 'not-found' } })
+  })
+})
+
+describe('a question through the approval routes (plan step 26)', () => {
+  it('forwards the pending question, approval, or empty state', async () => {
+    const asked = fakeIpc()
+    registerApprovalRoutes({
+      ipcMain: asked.ipcMain,
+      sessions: stubSessions('applied', QUESTION).sessions,
+    })
+    expect(await asked.call('approval.current', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: QUESTION,
+    })
+    // The kernel owns which call waits; the route forwards the selected approval unchanged.
+    const both = fakeIpc()
+    registerApprovalRoutes({
+      ipcMain: both.ipcMain,
+      sessions: stubSessions('applied', CARD).sessions,
+    })
+    expect(await both.call('approval.current', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: CARD,
+    })
+    const none = fakeIpc()
+    registerApprovalRoutes({
+      ipcMain: none.ipcMain,
+      sessions: stubSessions('applied', null).sessions,
+    })
+    expect(await none.call('approval.current', { sessionId: SESSION })).toEqual({
+      ok: true,
+      data: null,
+    })
+  })
+
+  it('passes a question’s answers through to the kernel as they came, nulls and all', async () => {
+    const ipc = fakeIpc()
+    const { sessions, answers } = stubSessions('applied', QUESTION)
+    registerApprovalRoutes({ ipcMain: ipc.ipcMain, sessions })
+    const sender = { on: () => undefined, off: () => undefined }
+    const request = {
+      kind: 'question',
+      sessionId: SESSION,
+      requestId: REQUEST,
+      // A label may hold 「, 」 itself: the kernel joins, the route never splits or joins.
+      answers: { 'Which colour?': ['red, dark', 'blue'], 'Which size?': null },
+    }
+    expect(await ipc.call('approval.respond', request, { sender })).toEqual({
+      ok: true,
+      data: { status: 'applied' },
+    })
+    expect(answers).toEqual([{ ...request, origin: sender }])
+    // The kernel's `invalid` (a key that is not a question) goes back as it is.
+    const refusing = fakeIpc()
+    registerApprovalRoutes({
+      ipcMain: refusing.ipcMain,
+      sessions: stubSessions('invalid', QUESTION).sessions,
+    })
+    expect(await refusing.call('approval.respond', request)).toEqual({
+      ok: true,
+      data: { status: 'invalid' },
+    })
   })
 })
 

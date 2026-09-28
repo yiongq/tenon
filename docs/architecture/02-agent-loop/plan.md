@@ -945,6 +945,8 @@
 
 ## 交接
 
+- **2026-09-28 · 第 26 步 desktop 草稿审补（t26D）已交付实现线，待主线集成评审**：按不可信草稿审查 widget、汇总卡、renderer 状态与路由测试。删除草稿额外的 `currentQuestion` API，和 K 线统一为 `currentPending` 的 approval/question union（K 提交 `60700a2` 已 cherry-pick 为 `3b79f5f`）；修复「其他」与输入框打字回答的首尾空格丢失、显式空数组被误画成跳过、重复选项标签的 React key、提交失败未处理的 Promise、长题面挤出输入框。format/lint/typecheck 全过，相关 desktop 5 个文件 122 个测试通过，build 通过，ask e2e 6/6 通过（widget 多选/其他/分页与同批排队、双语跳过、打字回答与排队消息、重启恢复待答后停止、审批先于提问）。首次 sandbox 中 localhost listener 被 EPERM 拒绝导致 eval-runner 超时，提权后同组全部通过。Browser plugin 不可用，按现有 Playwright Electron 配置核验；另一次临时插桩确认 1280×800 的 app URL/title、非空页面、无错误遮罩与 pageerror/console.error，截图在 `/tmp/tenon-t26D-question.png`、`/tmp/tenon-t26D-summary.png`，目视无裁切重叠；插桩已还原，未测移动端。下一步主线合 D 提交、全量门禁与一个视角加突变的轻评审，修一轮再记正式第 26 步实施记录并推 seg3；本条不勾选第 26 步。
+
 - **2026-09-28 第 26 步 kernel 草稿接手补全（t26K）**：已按 t26 最新 spec 与交接审读，补齐 question 暂停、answer/typed/stop、恢复投影、同批续跑与汇总记录；currentPending 返回审批/提问联合类型（无独立 currentQuestion），提示层升 4 并追加历史。修正未派发提问的 effect 为 blocked；空答案数组按原文连接为空串，不扩展成跳过。补 11 个持久回归覆盖未知键零写入、模板回放、跳过/多选、重启、打字原文、当前所选 provider 缺 key 时沿用 send 租约与冻结 provider、队列插入、停止、输入上限以及暂停/答复原子追加。相关 23 文件 388 测试通过（maxWorkers=2）；format/lint/typecheck 在提交前检查。desktop/evals 与 run-state-push 仅补现有审批消费者的 waitKind 缩窄。下一步：并入 t26，与 desktop 草稿集成，跑全套、轻评审与突变；本条不将第 26 步标完成。
 
 2026-09-28 Codex 接手：从第 26 步继续。`t26K` 与 `t26D` 原草稿正在各自 worktree 对照本分支最新 spec 审查、补齐；未合并、未完成验证，不能视为交付。集成仍在 `t26`（`wt/02-step26`）。测试串行，Vitest 限 2 workers，同刻最多一个 Electron。下一步先完成两线相关检查，再集成、全套检查、轻评审与突变测试，更新实施记录后推送 `feat/02-seg3`。

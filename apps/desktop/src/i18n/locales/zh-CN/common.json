@@ -78,6 +78,7 @@
   },
   "composer": {
     "placeholder": "想让 Tenon 做什么",
+    "placeholderQuestion": "或者直接在这里回复…",
     "send": "发送",
     "stop": "停止",
     "disclaimer": "Tenon 可能会出错，重要信息请核实。",
@@ -205,6 +206,21 @@
     "question": "另一个会话在等你回答",
     "resume": "另一个会话有没做完的操作",
     "goBack": "回去"
+  },
+  "ask": {
+    "label": "Tenon 在问你",
+    "pager": "{index} / {count}",
+    "previous": "上一题",
+    "multiSelect": "可以选多项",
+    "other": "其他…",
+    "otherLabel": "其他",
+    "skip": "跳过",
+    "next": "下一题",
+    "submit": "提交",
+    "replyHint": "也可以直接在下面的输入框里回复。",
+    "noPreference": "无偏好",
+    "unanswered": "未作答",
+    "reply": "你直接回复："
   },
   "resume": {
     "row": "上次没做完",

@@ -78,6 +78,7 @@
   },
   "composer": {
     "placeholder": "Ask Tenon anything",
+    "placeholderQuestion": "Or reply here directly…",
     "send": "Send",
     "stop": "Stop",
     "disclaimer": "Tenon can make mistakes. Check important details.",
@@ -205,6 +206,21 @@
     "question": "Another session is waiting for your answer",
     "resume": "Another session has unfinished work",
     "goBack": "Go back"
+  },
+  "ask": {
+    "label": "Tenon is asking you",
+    "pager": "{index} / {count}",
+    "previous": "Previous",
+    "multiSelect": "Choose any that apply",
+    "other": "Other…",
+    "otherLabel": "Other",
+    "skip": "Skip",
+    "next": "Next question",
+    "submit": "Submit",
+    "replyHint": "Or reply in the box below.",
+    "noPreference": "No preference",
+    "unanswered": "Not answered",
+    "reply": "You replied:"
   },
   "resume": {
     "row": "Unfinished last time",
