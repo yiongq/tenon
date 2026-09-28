@@ -72,7 +72,7 @@ pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基�
 
 照抄自 02 §已知差异清单；第 1 条与第 8 条等 owner 补录后更新（plan 第 34 步）。
 
-1. **手动档问的范围**：Tenon 的写入，每个文件本会话问一次；命令按原文本会话问一次，只读命令也问（E4）；撤不回的只放行这一次（D10）（D7）。Claude Code 的 default 模式对 ls、cat、grep、git 只读形式等只读命令免问；Bash 的「不再询问」按仓库永久保存；文件编辑的授权到会话结束（Claude 底表 §9）。Cowork 的 Manual 档在已授权的文件夹里读写，不逐次问（D7、H3）。Cowork 覆盖已有文件、跑 shell 命令时弹不弹卡，还等 owner 补录。
+1. **手动档问的范围**：Tenon 的写入，每个文件本会话问一次；命令按原文本会话问一次，只读命令也问（E4）；撤不回的只放行这一次（D10）（D7）。Claude Code 的 default 模式对 ls、cat、grep、git 只读形式等只读命令免问；Bash 的「不再询问」按仓库永久保存；文件编辑的授权到会话结束（Claude 底表 §9）。2026-09-28 Cowork Manual 补录中，在已连接的专用文件夹、同一会话内依次运行 ls、覆盖已有文件、新建文件、追加、shell 重定向写入、python3 --version、原样重复 ls，七项均未出现审批卡，文件状态逐项经终端核验；删除另有文件夹级、本会话有效的权限卡。本结果限这些操作与授权条件，不能泛化为任意命令免问（D7、H3）。见 [补录事实与证据边界](../ux/parity-audit-2026-09-12.md#2026-09-28-补记cowork-审批行为补录)。
 2. **子 agent**：Tenon 前台串行（H5），Claude Code 默认后台并发。
 3. **命令**：Tenon 超时就杀，没有后台命令（H7）；Claude Code 超时后转到后台。所以需要长驻进程的题，Tenon 会失败。
 4. **执行代码**：对话形态不能执行代码（H1、H8），Claude Chat 能在沙箱里跑。
@@ -83,4 +83,4 @@ pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基�
    - Cowork 的本机会话在设备上抓取。
 6. **入口**：同模型列切换入口之前，Tenon 走 OpenAI 兼容入口，Claude Code 走 Anthropic 兼容入口。后者把输出攒成大块再吐，特性支持也没有清单。
 7. **OpenCode 顶上时**：它对 zai / zhipuai 会发 `clear_thinking:false`，Tenon 不发（A12）。
-8. **录屏的体验版本**：owner 的录屏是 Claude 的旧体验，Chat 与 Cowork 还是分开的（H1）。
+8. **录屏的体验版本**：2026-09-28 首页复核仍有 Chat / Cowork，测试前本账号新任务为 Auto；菜单有 Manual / Auto / Skip 三档，补录使用 Manual（H1）。本机安装包版本 2.7032.0，界面提示待更新 v2.9939.2，未更新；不以安装包版本判断服务端体验。[官方帮助](https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork)所述「新体验默认 Manual」与本机实测分列，新账号默认档未实测。证据：私有 uxkit `recordings/2026-09-28/home-cowork-auto.png`、`00b-dynamic-check.mp4` 及 [补记](../ux/parity-audit-2026-09-12.md#2026-09-28-补记cowork-审批行为补录)。
