@@ -163,7 +163,12 @@ interface Harness {
 function harness(options: { host?: HostAdapter; env?: Record<string, string> } = {}): Harness {
   const host =
     options.host ??
-    createMemoryHost({ network: { fetch: (input, init) => globalThis.fetch(input, init) } })
+    createMemoryHost({
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: (input, init) => globalThis.fetch(input, init),
+      },
+    })
   const tape = createMemoryTapeStore({ identity: host.identity })
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
@@ -297,7 +302,10 @@ describe('chat routes', () => {
     fake = await startFakeAnthropic({ chunks: ['never'], delayMs: 5 })
     // A keychain that answers slowly: the window in which the UI already shows Stop.
     const host = createMemoryHost({
-      network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: (input, init) => globalThis.fetch(input, init),
+      },
     })
     const keychain = Promise.withResolvers<string | null>()
     host.secrets.get = () => keychain.promise
@@ -532,7 +540,10 @@ describe('chat routes', () => {
     const openai = await startFakeOpenAI({ chunks: ['你好', '，Tenon'], delayMs: 5 })
     try {
       const host = createMemoryHost({
-        network: { fetch: (input, init) => globalThis.fetch(input, init) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: (input, init) => globalThis.fetch(input, init),
+        },
       })
       await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
       await writeConfig(host.fs, host.identity, {

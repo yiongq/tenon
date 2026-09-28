@@ -10,7 +10,7 @@
  * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
-import type { AbsolutePath, HostClock, HostFs } from '../host/adapter.js'
+import type { AbsolutePath, FetchLike, HostClock, HostFs } from '../host/adapter.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
 import type { PathScope } from '../permission/workspace.js'
@@ -25,17 +25,20 @@ import { globExecutor } from './builtin/glob.js'
 import { grepExecutor } from './builtin/grep.js'
 import { readExecutor } from './builtin/read.js'
 import { writeExecutor } from './builtin/write.js'
+import { webFetchExecutor } from './builtin/web-fetch.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
   readonly content: ResultContent
   readonly isError: boolean
-  readonly state: Exclude<ExecutionState, 'not-run'>
+  readonly state: ExecutionState
   /**
-   * Why a call that did not complete ended, when the stop is not why: only Bash's timeout (§原因码表
-   * `timed-out`). The batch writes that code's note, `content` as its second block.
+   * Why a call that did not complete ended, when the stop is not why: Bash's timeout or a host
+   * refusal before WebFetch could connect (§原因码表 `timed-out`, `protected`). The batch writes that code's note, `content` as its second block.
    */
-  readonly source?: 'timed-out'
+  readonly source?: 'timed-out' | 'protected'
+  /** Host refusal after dispatch: the network boundary's blocked target. */
+  readonly facts?: Readonly<Record<string, string>>
 }
 
 export interface ExecuteQuery {
@@ -63,6 +66,11 @@ export interface ExecuteQuery {
    * absent for every other tool.
    */
   readonly command?: CommandRun
+  /** WebFetch only: one-hop host egress and the in-memory permission recheck for redirects. */
+  readonly webFetch?: {
+    readonly fetch: FetchLike
+    readonly canFollow: (url: string) => Promise<boolean>
+  }
 }
 
 export type ToolExecutor = (q: ExecuteQuery) => Promise<ToolExecution>
@@ -75,6 +83,7 @@ export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExe
   Bash: bashExecutor,
   Glob: globExecutor,
   Grep: grepExecutor,
+  WebFetch: webFetchExecutor,
 }
 
 /**

@@ -44,11 +44,11 @@ async function bundleErrors(entry: string): Promise<string[]> {
 }
 
 /** The same build, for a dependency no kernel file imports yet. */
-async function bundleImportErrors(module: string): Promise<string[]> {
+async function bundleImportErrors(module: string, imported = 'default'): Promise<string[]> {
   try {
     const result = await build({
       stdin: {
-        contents: `import mod from '${module}'\nexport default mod\n`,
+        contents: `import { ${imported} as mod } from '${module}'\nexport default mod\n`,
         resolveDir: kernelDir,
         sourcefile: 'dependency-probe.ts',
         loader: 'ts',
@@ -87,6 +87,10 @@ function processEnvReads(text: string): string[] {
 }
 
 describe('kernel host independence', () => {
+  it('bundles the pinned HTML converter without Node or DOM globals', async () => {
+    expect(await bundleImportErrors('@mdream/js', 'htmlToMarkdown')).toEqual([])
+  })
+
   it('imports neither contracts nor railguard, and opens no socket or resolver of its own (旧 236)', () => {
     const offenders = sourcesUnder('src').filter(({ text }) =>
       /from\s+['"](?:@tenon-app\/contracts|railguard|node:dns|node:net|dns|net)(?:\/[^'"]*)?['"]/.test(

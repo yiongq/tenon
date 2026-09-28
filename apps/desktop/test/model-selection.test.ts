@@ -299,7 +299,10 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: {},
@@ -471,7 +474,10 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: { ANTHROPIC_BASE_URL: 'https://relay.example/' },
@@ -528,6 +534,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
       host: {
         ...host,
         network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
           fetch: (input, init) => {
             sent.push({
               url: String(input),
@@ -622,7 +629,10 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: {},
@@ -661,7 +671,10 @@ describe('an environment key and a stored base URL on another host (旧 49, s19-
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env,
@@ -1052,7 +1065,10 @@ describe('session.selectModel and session.modelChoice', () => {
     const fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 1 })
     try {
       const memory = createMemoryHost({
-        network: { fetch: (input, init) => globalThis.fetch(input, init) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: (input, init) => globalThis.fetch(input, init),
+        },
       })
       await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
       const host: HostAdapter = memory

@@ -444,7 +444,7 @@
     - 旧 175：等提问时重启，`approval.current` 返回提问；跳过的题得到「无偏好」标记；多选 `['x', 'y']` 成为 `'x, y'`；未知的答案键返回 `invalid`、不写事实；等提问时 `chat.send` 成为打字回答（answers 为 {}，response 为原文），不写 `message/user`；停止记 `unanswered`。
     - 旧 176：在「其他」里打的字放进 `answers[题目原文]`；tool_result 文本来自固定模板，重放逐字不变；审批与提问同时待答时先出审批卡，审批答完才出提问卡。
   - 暂定与待定：开放问题 18 的汇总卡数据已定（owner 2026-09-26）：`ToolResultPayload.question` 与视图的 `question`，只有 `approval.respond` 路径把没答的题补成 null，打字回复保留原文；测试要点补：重启后汇总卡与 live 一致；多选的 label 自带「, 」时仍分项显示；`unanswered` 标 is_error（开放问题 11，已确认）；子会话工具表里没有它（第 31 步验）。
-- [ ] 27. **本机抓取与 WebFetch**（裁决 H8、F10、E4、D5、F2、H9；最后一个可砍项）
+- [x] 27. **本机抓取与 WebFetch**（裁决 H8、F10、E4、D5、F2、H9；最后一个可砍项）
   - 读：§本机抓取器；§审批、授权与费用；01 修补 4（`fetchUntrusted`）；01 修补 9 (p)。
   - 交付物：`HostNetwork.fetchUntrusted` 修补与 desktop `host/fetch-untrusted.ts`（DNS 解析一次、判地址、钉地址、3xx 原样返回、`createDesktopNetwork(seams?)` 测试接缝），内存 host 与 fakeNetwork 同改；WebFetch 的字面判定、逐跳重定向、HTML 转 Markdown、落盘、审批与主机名授权、host 拒绝的收口。外带检查（第 29 步）接上之前，WebFetch 不进工具表：本步的 kernel 测试与 desktop 集成测试经 `createTestSessionService` 的注册表把 WebFetch 设为 `'real'`。
   - 验收：47。
@@ -934,6 +934,14 @@
   - 已验证：kernel 相关 23 文件 388 项通过（新增 11 项提问回归）；desktop 相关 5 文件 122 项通过；两线 format、lint、typecheck 与提交 hooks 通过；desktop build 与提问 e2e 6 项通过。Electron 1280×800 下待答与汇总卡视觉检查通过，零 pageerror/console.error。测试均限 2 workers，Electron 单进程；本机监听测试在允许 localhost 的环境运行。未使用真实模型或 key。
   - 等后面步骤的：验收 46 的子会话工具表排除 AskUserQuestion 在第 31 步补齐；提示层 4 的完整模型评测与基线在第 34 步重跑。
 
+
+- **2026-09-28 · 第 27 步（本机抓取与 WebFetch）**，集成分支 `codex/02-step27`（checkout 复用 `t26`）。完成：format、lint、typecheck、154 个单测文件 2830 项通过、2 项既有跳过，build 通过，Electron e2e 130 项通过（4.2 分钟）。验收 47 满足。
+  - 改了什么：HostNetwork 增必填 fetchUntrusted，memory/fake 默认拒绝；desktop 单次解析并检查所有 DNS 地址、连接钉住已检查地址、保留原 Host/SNI/证书校验，强制 GET/manual/omit 且不转发调用方头与 body，无传输超时，DNS/连接/TLS/响应头/正文均跟随停止。kernel 字面地址保护、精确主机名授权、同主机逐跳内存重判、最多 20 次跳转、HTML charset 解码与 @mdream/js 1.7.2 转换、1,000,000 字节上限、既有长结果落盘；DNS 拒绝按 protected 收口并计入连续三次拒绝。提示层 4 → 5，只追加历史。
+  - 本步的读法：WebFetch 仅经测试注册表的 real 开启，第 29 步外带检查接入前不进产品工具表；CGNAT 等额外地址范围照 spec 留阶段 4。跟过跳转的 completed 结果无论成功、HTTP/MIME/Location/正文/网络错误均带最终 URL；protected 和 aborted 保持原契约。没有变更 spec 决策。
+  - 评审：规格交付物、网络安全、状态/并发/恢复、资源生命周期/host 边界四视角；实现线与主线核查发现后修复三项：TLS 握手未完成时 undici Agent.destroy 无法触达 socket（实测复现，显式绑定 signal 销毁 connector 实际返回 socket）；TLS 测试移除 Node 22.15/22.19 才有的 CA API，保留真实握手/错域验证（22.12 兼容为静态 API 核查）；跳转后失败结果遗漏最终 URL（五种持久回归）。复评无未关闭问题。
+  - 突变：六个生产变异均被持久测试检出并完整恢复：跳过 canFollow 重判、放宽 HTML 上限、跳数差一、去掉最终 URL、DNS some 改 every、清零 DNS 拒绝计数；失败分别落在对应重定向、正文保护、混合地址与跨批/跨请求三连拒绝断言。恢复后上述全量 2830 项通过。网络测试只用本机 HTTP/TLS 假服务器，测试证书/私钥为公开测试夹具，未用真实 key；TLS 握手挂起回归断言对端 socket 真正关闭。
+  - 等后面步骤的：第 29 步接入外带检查并开放产品 WebFetch；第 34 步校准跳数/转换上限与提示层评测。
+
 ## 验收记录
 
 （第 35 步填写）
@@ -951,13 +959,17 @@
 
 ## 交接
 
+- **2026-09-28 第 27 步完成，待第 28 步规格补定**：集成在 `t26` 的 `codex/02-step27`；第 26 步 `fd2aa42` 已推 seg3，第 27 步本条随代码提交推 seg3。format/lint/typecheck、2830 单测、build、130 e2e 全绿，四视角评审三项修复已复评，6 个变异全部检出且恢复，详见实施记录。第 28 步尚未写代码：两次独立预读确认搜索批准与实际后端存在未定义竞态，已向 owner 提出具体补定方案，见 Open；收到裁决后先补 spec Revisions，再继续第 28 步。没有读取真实 key。t26K/D 的第 27 步分工草稿已通过补丁集成；原分支与 /tmp/tenon27-*.patch 保留，不要重复合入。根 checkout 未改。后续 PR 仍按整段 ③ 一个 PR，当前未开 PR。
+
+- **2026-09-28 第 27 步开工**：第 26 步最终提交 `fd2aa42` 已推送 `feat/02-seg3`。复用 `t26` 为集成 checkout（分支 `codex/02-step27`），`t26K` 的 `codex/02-step27-kernel` 负责 kernel 与接口，`t26D` 的 `codex/02-step27-host` 负责 desktop fetchUntrusted 与集成测试；独立评审 checkout 复用 `ask-question-review/tenon`。目前尚未完成或验证第 27 步，WebFetch 不进入产品工具表。下一步集成后按四视角加核查、突变测试与全套检查收敛。
+
 - **2026-09-28 · 第 26 步 desktop 草稿审补（t26D）已交付实现线，待主线集成评审**：按不可信草稿审查 widget、汇总卡、renderer 状态与路由测试。删除草稿额外的 `currentQuestion` API，和 K 线统一为 `currentPending` 的 approval/question union（K 提交 `60700a2` 已 cherry-pick 为 `3b79f5f`）；修复「其他」与输入框打字回答的首尾空格丢失、显式空数组被误画成跳过、重复选项标签的 React key、提交失败未处理的 Promise、长题面挤出输入框。format/lint/typecheck 全过，相关 desktop 5 个文件 122 个测试通过，build 通过，ask e2e 6/6 通过（widget 多选/其他/分页与同批排队、双语跳过、打字回答与排队消息、重启恢复待答后停止、审批先于提问）。首次 sandbox 中 localhost listener 被 EPERM 拒绝导致 eval-runner 超时，提权后同组全部通过。Browser plugin 不可用，按现有 Playwright Electron 配置核验；另一次临时插桩确认 1280×800 的 app URL/title、非空页面、无错误遮罩与 pageerror/console.error，截图在 `/tmp/tenon-t26D-question.png`、`/tmp/tenon-t26D-summary.png`，目视无裁切重叠；插桩已还原，未测移动端。下一步主线合 D 提交、全量门禁与一个视角加突变的轻评审，修一轮再记正式第 26 步实施记录并推 seg3；本条不勾选第 26 步。
 
 - **2026-09-28 第 26 步 kernel 草稿接手补全（t26K）**：已按 t26 最新 spec 与交接审读，补齐 question 暂停、answer/typed/stop、恢复投影、同批续跑与汇总记录；currentPending 返回审批/提问联合类型（无独立 currentQuestion），提示层升 4 并追加历史。修正未派发提问的 effect 为 blocked；空答案数组按原文连接为空串，不扩展成跳过。补 11 个持久回归覆盖未知键零写入、模板回放、跳过/多选、重启、打字原文、当前所选 provider 缺 key 时沿用 send 租约与冻结 provider、队列插入、停止、输入上限以及暂停/答复原子追加。相关 23 文件 388 测试通过（maxWorkers=2）；format/lint/typecheck 在提交前检查。desktop/evals 与 run-state-push 仅补现有审批消费者的 waitKind 缩窄。下一步：并入 t26，与 desktop 草稿集成，跑全套、轻评审与突变；本条不将第 26 步标完成。
 
 2026-09-28 Codex 接手后第 26 步已完成：两份草稿审补、集成、全套检查、轻评审与 5 个突变均已完成，详见实施记录。集成在 `t26`（`wt/02-step26`），下一步第 27 步本机抓取与 WebFetch。测试继续串行，Vitest 限 2 workers，同刻最多一个 Electron。
 
-第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26 步正在做。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
+第 0 步第 1–4 步已合进 dev（PR #17，2026-09-26）；① 第 5–21 步已合进 dev（PR #18，2026-09-27，含 ① 补评审的修复与复评、突变视角）。② 在分支 `feat/02-seg2` 上进行（从 dev 开）：第 22–25 步已完成，② 段做完，已合进 dev（PR #19）。③ 在分支 `feat/02-seg3` 上进行，第 26、27 步已完成，第 28 步开工预读发现搜索审批/后端切换规格缺口，见 Open。评审强度（owner 2026-09-28 定）：第 26、32、34 步只跑一个视角加突变测试、修一轮；第 27–31、33 步照旧跑四个视角加核查、修到收敛。
 
 - **2026-09-28 暂停，交给下一个 agent（owner 要求，可能是 Codex）**。现场：
   - **分支**：dev 已含第 0 步与 ①②（PR #17–#19）和 Cowork 补录（PR #20）。③ 的分支是 `feat/02-seg3`（远端与本地都在 `a2edd4a`），比 dev 只多文档提交：spec Revisions (20)–(23)、Open 的更新、评审强度。
@@ -1004,6 +1016,9 @@
 ## Open
 
 只列 owner 在仓库外要做的事：
+
+- **第 28 步开工前发现的规格缺口（2026-09-28，两次独立核查，待 owner 定）**：搜索卡的 host A 在 `rejudgeWaiting` 中从旧卡读取；批准事实提交后 `resumeSetup` 才 assemble，已批准调用在 batch 中跳过重判。等待期间 A→B，以及批准提交到 assemble 之间 B→C，均可能把旧后端的批准用于新后端。spec 要求换后端再问、mailbox 不 assemble、续跑 endpointOrigin 可变，但没有定义当前搜索目标的无密钥读取及审批目标与实际后端的绑定/不一致收口。建议待确认：审批前读当前 host、prepareQuery 与可用性，A→B 时旧答复 stale；提交后再变则本次 tool-unavailable、不联网，后续新调用重新审批；启动恢复同规则。须在接口、续跑/答复、恢复三节补规格并追加 Revisions，再补两个竞态窗口回归。未自行变更 spec 或开始第 28 步代码。Anthropic max_tokens 仍按既有规则先官方 probe、再 owner 定值。
+
 
 - 核对 S1 的次日账单：`search_pro_quark` 是否按每次 ¥0.05 扣（第 2 步；spec 开放问题 8）。顺带记下 T10（`/paas/v4/reader`）有没有扣费，不挡任何一步（开放问题 22 已定本机抓取）。
 - Anthropic 官方 key：2026-09-28 已开通（开放问题 20 已定，spec Revisions (21)）。存于 macOS 登录钥匙串，服务名 `tenon-live-anthropic`；用时由 lead 在那一次 `pnpm test:live` 的命令里读出、作为 `TENON_LIVE_ANTHROPIC_OFFICIAL_KEY` 传入，读之前先提醒 owner（macOS 会弹窗）。`GET /v1/models` 已核验 200。余下给 owner 的只有两件：在 Console 预付 credits（建议 $30，预付额即花费上限）；跑 Fable 5.1 那一项之前确认组织已开 30 天数据保留，不开就跳过那一项。

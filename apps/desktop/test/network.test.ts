@@ -294,3 +294,40 @@ describe("the kernel's own limits still end a request on the desktop egress", ()
     })
   })
 })
+
+const untrusted = () =>
+  createDesktopNetwork({
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    connectTarget: () => ({ address: '127.0.0.1', family: 4 }),
+  }).fetchUntrusted
+
+describe('untrusted fetch also has no transport timeout (step 27)', () => {
+  it('waits past 300 s for headers', async () => {
+    const server = await serve()
+    const pending = untrusted()(server.url.replace('127.0.0.1', 'fetch.example')).then((response) =>
+      response.text(),
+    )
+    const settled = Promise.allSettled([pending])
+    const held = await server.next()
+    await settle()
+    await vi.advanceTimersByTimeAsync(LONG_WAIT_MS)
+    held.res.end('late')
+    const [result] = await settled
+    expect(outcome(result as PromiseSettledResult<string>)).toBe('ok:late')
+  })
+
+  it('keeps streaming after a body is quiet past 300 s', async () => {
+    const server = await serve()
+    const pending = untrusted()(server.url.replace('127.0.0.1', 'fetch.example'))
+    const held = await server.next()
+    held.res.writeHead(200, { 'content-type': 'text/plain' })
+    held.res.write('first ')
+    const body = (await pending).text()
+    const settled = Promise.allSettled([body])
+    await settle()
+    await vi.advanceTimersByTimeAsync(LONG_WAIT_MS)
+    held.res.end('last')
+    const [result] = await settled
+    expect(outcome(result as PromiseSettledResult<string>)).toBe('ok:first last')
+  })
+})

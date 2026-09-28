@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.128.0",
+    "@mdream/js": "1.7.2",
     "@modelcontextprotocol/client": "2.0.0",
     "@noble/hashes": "2.4.0",
     "openai": "7.23.0",

@@ -295,7 +295,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 4
+export const PROMPT_LAYER_VERSION = 5
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3'
+export const PROMPT_LAYER_HASH = 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03'

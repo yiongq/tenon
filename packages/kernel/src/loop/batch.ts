@@ -35,6 +35,7 @@
  */
 import type { AbsolutePath, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
+import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
 import { grantKey, sessionGrantKindOf, sessionGrants } from '../permission/grants.js'
@@ -252,7 +253,6 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       const facts = held?.facts ?? (await callFactsOf(ctx))
       if (ctx.approved?.ordinal === call.ordinal && executor !== 'question') {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
-        denials = 0
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         const command = await commandRunOf(ctx, call, item, facts)
         if (command === 'stopped') {
@@ -269,13 +269,21 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           continue
         }
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-        await execute(ctx, call, item, executor, {
+        const blocked = await execute(ctx, call, item, executor, {
           reversibility: ctx.approved.reversibility,
           summary: ctx.approved.summary,
           target: ctx.approved.target,
           scope: facts.scope,
           command,
         })
+        denials = blocked ? denials + 1 : 0
+        if (denials >= MACHINE_DENIAL_CAP) {
+          return {
+            kind: 'blocked-repeatedly',
+            count: denials,
+            rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
+          }
+        }
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
@@ -320,7 +328,6 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         return { kind: 'paused', waitingFor: 'question', withTerminal: [decided], waiting }
       }
       // ----- allowed: decision and dispatch first (T1), then the side effect -----------------------
-      denials = 0
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
       const command = await commandRunOf(ctx, call, item, facts)
       if (command === 'stopped') {
@@ -338,13 +345,21 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await execute(ctx, call, item, executor, {
+      const blocked = await execute(ctx, call, item, executor, {
         reversibility: judged.reversibility,
         summary: decision.summary,
         target: judged.target,
         scope: facts.scope,
         command,
       })
+      denials = blocked ? denials + 1 : 0
+      if (denials >= MACHINE_DENIAL_CAP) {
+        return {
+          kind: 'blocked-repeatedly',
+          count: denials,
+          rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
+        }
+      }
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
@@ -550,8 +565,12 @@ async function execute(
   item: ToolTableItem,
   executor: ToolExecutor,
   q: Performed,
-): Promise<void> {
-  await close(ctx, call, await perform(ctx, call, item, executor, q), q.summary)
+): Promise<boolean> {
+  const facts = await perform(ctx, call, item, executor, q)
+  await close(ctx, call, facts, q.summary)
+  return facts.some(
+    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['source'] === 'protected',
+  )
 }
 
 /**
@@ -581,6 +600,21 @@ async function perform(
     scope: q.scope,
     fs: ctx.host.fs,
     clock: ctx.host.clock,
+    ...(item.source === 'builtin' && item.originalName === 'WebFetch'
+      ? {
+          webFetch: {
+            fetch: ctx.host.network.fetchUntrusted,
+            canFollow: async (url: string) => {
+              const judged = await judgeCall(
+                { ...ctx, searchHost: ctx.search?.host ?? null },
+                item,
+                { input: { url } },
+              )
+              return judged.kind === 'judged' && judged.decision.record.verdict === 'allow'
+            },
+          },
+        }
+      : {}),
     ...(q.command === undefined ? {} : { command: q.command }),
   })
   const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
@@ -604,6 +638,7 @@ async function perform(
           : closureContent({
               source,
               state: execution.state,
+              ...(execution.facts === undefined ? {} : { facts: execution.facts }),
               ...(output === '' ? {} : { detail: output }),
             }),
       isError: stopped || execution.isError,
@@ -619,7 +654,8 @@ async function perform(
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
-    effect: effectOf(item),
+    effect: execution.state === 'not-run' ? 'blocked' : effectOf(item),
+    ...(execution.facts === undefined ? {} : { facts: execution.facts }),
     state: execution.state,
     source,
     reversibility: q.reversibility,
@@ -905,12 +941,18 @@ export async function judgeCall(
     profile,
     ownSpillDir: paths.ownSpillDir,
   })
-  const inspection = await runInspectors({
-    inspectors: ctx.inspectors,
-    input: { call: inspected, view },
-    setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
-    signal: ctx.signal,
-  })
+  const urlBlocked =
+    item.source === 'builtin' &&
+    item.originalName === 'WebFetch' &&
+    isBlockedFetchUrl(String(call.input['url'] ?? ''))
+  const inspection = urlBlocked
+    ? { stopped: false, outcomes: [] }
+    : await runInspectors({
+        inspectors: ctx.inspectors,
+        input: { call: inspected, view },
+        setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
+        signal: ctx.signal,
+      })
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
   const workspace = paths.roots[0] ?? null
@@ -940,6 +982,7 @@ export async function judgeCall(
     callReason,
     layers: {
       policy,
+      ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
       ...(setting?.userSetting === undefined ? {} : { userSetting: setting.userSetting }),

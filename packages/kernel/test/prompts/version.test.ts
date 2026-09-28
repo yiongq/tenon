@@ -34,6 +34,8 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   3: 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e',
   // AskUserQuestion answer templates (plan step 26).
   4: 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3',
+  // WebFetch responses, conversion limits and redirects (plan step 27).
+  5: 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03',
 }
 
 describe('the version gate', () => {

@@ -804,7 +804,10 @@ test.describe('live agent · zhipu', () => {
     const model = zhipuDefinition.builtinModels.find((row) => row.id === FLASH)
     if (model === undefined) throw new Error(`${FLASH} is not a builtin zhipu row`)
     const provider = zhipuDefinition.create({
-      network: { fetch: recordingFetch(requests) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: recordingFetch(requests),
+      },
       clock: REAL_CLOCK,
       // The declared host only, as the app's key binding (A9) allows: an env key never goes elsewhere.
       config: { baseURL: ZHIPU_DEFAULT_BASE_URL },

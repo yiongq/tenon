@@ -206,6 +206,7 @@ describe('the watchdog is torn down when the body is read to the end (旧 103, 0
     const time = countingClock()
     const encoder = new TextEncoder()
     const network: HostNetwork = {
+      fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -320,6 +321,7 @@ describe('the first-byte limit (旧 48, 旧 103)', () => {
   it('ends the stream as a retryable first-byte network error when no header arrives', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const hanging: HostNetwork = {
+      fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
       fetch: (_input, init) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {

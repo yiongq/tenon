@@ -294,6 +294,11 @@ const noProcess: HostProcess = {
 }
 
 const noNetwork: HostNetwork = {
+  fetchUntrusted: async () => {
+    throw new Error(
+      'MemoryHost: network.fetchUntrusted is unavailable; inject a HostNetwork (fakeNetwork)',
+    )
+  },
   fetch: async () => {
     throw new Error('MemoryHost: network.fetch is unavailable; inject a HostNetwork (fakeNetwork)')
   },

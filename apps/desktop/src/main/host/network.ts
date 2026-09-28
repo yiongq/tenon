@@ -1,6 +1,8 @@
 import type { FetchLike, HostNetwork } from '@tenon-app/kernel'
 import { Agent, fetch as undiciFetch } from 'undici'
 import type { RequestInit as UndiciRequestInit } from 'undici'
+import { createUntrustedFetch } from './fetch-untrusted.js'
+import type { UntrustedNetworkSeams } from './fetch-untrusted.js'
 
 /**
  * undici's own time limits on the desktop egress, both off (spec 02, 01 修补 4 and 01 修补 9 (w);
@@ -19,7 +21,7 @@ const NO_TRANSPORT_LIMITS = { headersTimeout: 0, bodyTimeout: 0 } as const
  * live here (a refusal rejects with HostNetworkDeniedError), never in the kernel, and never as a
  * `globalThis.fetch ?? …` fallback inside a provider.
  */
-export function createDesktopNetwork(): HostNetwork {
+export function createDesktopNetwork(seams?: UntrustedNetworkSeams): HostNetwork {
   const dispatcher = new Agent(NO_TRANSPORT_LIMITS)
   const fetch: FetchLike = (input, init) => {
     const [target, fields] =
@@ -28,7 +30,7 @@ export function createDesktopNetwork(): HostNetwork {
     // (@types/node's undici-types), whose FormData the compiler will not match to this one's.
     return undiciFetch(target, { ...fields, dispatcher } as UndiciRequestInit)
   }
-  return { fetch }
+  return { fetch, fetchUntrusted: createUntrustedFetch(seams) }
 }
 
 /**

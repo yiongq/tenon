@@ -233,6 +233,8 @@ export type FetchLike = (input: string | URL | Request, init?: RequestInit) => P
  */
 export interface HostNetwork {
   readonly fetch: FetchLike
+  /** Fetch one untrusted hop; reject unsafe DNS addresses and pin the checked address. */
+  readonly fetchUntrusted: FetchLike
 }
 
 /**
