@@ -1,10 +1,17 @@
 import { subagentElapsedFromTape } from '../../src/loop/subagent.js'
 import { encodeOpenAIChat } from '../../src/provider/wire/openai-chat.js'
 import { SPILL_PREVIEW_CHARS } from '../../src/loop/spill.js'
+import { STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import type { SessionEvent } from '../../src/loop/events.js'
 import { expect, it } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
-import type { ModelInfo, StreamEvent, TapeEntry } from '../../src/index.js'
+import type {
+  MemoryHost,
+  ModelInfo,
+  StreamEvent,
+  TapeEntry,
+  ToolTablePayload,
+} from '../../src/index.js'
 import {
   createCounterIds,
   createScriptedProvider,
@@ -13,6 +20,9 @@ import {
   scriptedTurn,
   stopEvent,
 } from '../../src/testing/index.js'
+import type { TestToolRegistry } from '../../src/testing/index.js'
+import { fakeChild } from './support.js'
+import type { FakeChild } from './support.js'
 const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
 const MODEL: ModelInfo = {
   id: 'child-model',
@@ -47,8 +57,9 @@ function harness(
   tokenLimit?: number,
   onEvent?: (event: SessionEvent) => void,
   agent: 'real' | 'fake' = 'real',
+  o: { readonly host?: MemoryHost; readonly tools?: TestToolRegistry } = {},
 ) {
-  const host = createMemoryHost()
+  const host = o.host ?? createMemoryHost()
   const store = createMemoryTapeStore({ identity: host.identity })
   const provider = createScriptedProvider({ models: [MODEL] })
   const loop = createTestLoopPorts({
@@ -66,7 +77,7 @@ function harness(
       protectedFiles: [],
       log: (line) => logs.push(line),
     },
-    { tools: { Agent: agent }, ...(tokenLimit === undefined ? {} : { tokenLimit }) },
+    { tools: { ...o.tools, Agent: agent }, ...(tokenLimit === undefined ? {} : { tokenLimit }) },
   )
   service.bindLoop(loop)
   return { host, store, provider, loop, service, logs }
@@ -100,6 +111,16 @@ function factOf(entries: readonly TapeEntry[], name: string, providerToolCallId:
   return entries.find(
     (e) => e.name === name && e.payload['providerToolCallId'] === providerToolCallId,
   )?.payload
+}
+/** Each Run's end reason code, in Tape order. */
+function runEnds(entries: readonly TapeEntry[]): string[] {
+  return entries
+    .filter((e) => e.name === 'execution/run_terminal')
+    .map((e) => (e.payload['reason'] as { code: string }).code)
+}
+/** A tool table's tools by name and specHash. */
+function toolKeys(table: ToolTablePayload): { name: string; specHash: string }[] {
+  return table.tools.map((t) => ({ name: t.name, specHash: t.specHash }))
 }
 /** The same store and host under a new service: a restart. */
 function restarted(h: ReturnType<typeof harness>, start = 100) {
@@ -317,6 +338,78 @@ it.each(['allow', 'deny'] as const)(
   },
 )
 
+// §原因码表 `user-rejected`: 子会话里只有被拒的那个记它，同批后续照常处理 — unlike the main session,
+// where the rest of the batch takes the same code.
+it('02 不变量 14: a rejected child card closes only that call; the rest of the child batch runs', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(call('Agent', { description: 'write task', prompt: 'write then list' }))
+  h.provider.script([
+    { type: 'tool-call-start', index: 0, id: 'write', name: 'Write' },
+    {
+      type: 'tool-call-end',
+      index: 0,
+      id: 'write',
+      name: 'Write',
+      input: { file_path: '/work/a.txt', content: 'hello' },
+    },
+    { type: 'tool-call-start', index: 1, id: 'glob', name: 'Glob' },
+    {
+      type: 'tool-call-end',
+      index: 1,
+      id: 'glob',
+      name: 'Glob',
+      input: { pattern: '*.txt', path: '/work' },
+    },
+    { type: 'usage', usage },
+    stopEvent('tool-use', 'tool_use'),
+  ])
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent task' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const pending = await h.service.currentPending({ sessionId: SESSION })
+  if (pending?.waitKind !== 'approval') throw new Error('child card missing')
+  const childId = pending.card.sessionId
+  expect(childId).not.toBe(SESSION)
+  h.provider.script(scriptedTurn({ deltas: ['child done'], usage }))
+  h.provider.script(scriptedTurn({ deltas: ['parent done'], usage }))
+  expect(
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: childId,
+      requestId: pending.card.requestId,
+      decision: 'deny',
+      origin: null,
+    }),
+  ).toEqual({ status: 'applied' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'completed' })
+  const child = (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries
+  // Only the Write is rejected; the Glob after it is judged, dispatched and run.
+  expect(
+    child
+      .filter((e) => e.name === 'execution/tool_outcome')
+      .map((e) => [e.payload['providerToolCallId'], e.payload['state'], e.payload['source']]),
+  ).toEqual([
+    ['write', 'not-run', 'user-rejected'],
+    ['glob', 'completed', null],
+  ])
+  expect(factOf(child, 'execution/dispatch_committed', 'glob')).toBeDefined()
+  // The child goes on to its next request, and neither session ends on the rejection.
+  expect(h.provider.starts).toBe(4)
+  expect(runEnds(child)).toEqual(['paused', 'completed'])
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(runEnds(parent)).toEqual(['paused', 'completed'])
+  expect(factOf(parent, 'tool/result', 'tool1')?.['handoff']).toMatchObject({
+    outcome: 'completed',
+    childEndReason: 'completed',
+    finalReply: 'child done',
+    calls: [
+      { toolName: 'Write', state: 'not-run', source: 'user-rejected' },
+      { toolName: 'Glob', state: 'completed', source: null },
+    ],
+  })
+  expect(h.logs).toEqual([])
+})
+
 it.each(['stop', 'supersede'] as const)(
   'closes a child approval and parent handoff before %s',
   async (action) => {
@@ -356,6 +449,99 @@ it.each(['stop', 'supersede'] as const)(
     expect(h.loop.liveLease(SESSION)).toBeNull()
   },
 )
+
+// 02 验收 53「在跑的命令先确认退出，再写收口」; §停止、新消息、退出与重启「点停止」: 子会话在跑：先杀掉在跑的
+// 调用、进程确认退出之后再记录，子 Run 以 user-stopped 结束；父会话的 Agent 调用记 aborted、来源 stopped.
+it('stops a child running a command: its closures and the parent handoff wait for the process to exit', async () => {
+  const spawned: FakeChild[] = []
+  let clock: MemoryHost | null = null
+  const host = createMemoryHost({
+    process: {
+      spawn: () => {
+        const fake = fakeChild(() => clock?.clock.now() ?? 0, 'hangs')
+        spawned.push(fake)
+        return Promise.resolve(fake.child)
+      },
+    },
+  })
+  clock = host
+  const h = harness(undefined, undefined, 'real', { host, tools: { Bash: 'real' } })
+  await setup(h)
+  await h.host.fs.mkdirp(absolutePath('/work'))
+  h.provider.script(call('Agent', { description: 'build task', prompt: 'run the build' }))
+  h.provider.script(call('Bash', { command: 'make' }, 'bash'))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const pending = await h.service.currentPending({ sessionId: SESSION })
+  if (pending?.waitKind !== 'approval') throw new Error('child card missing')
+  const childId = pending.card.sessionId
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: childId,
+    requestId: pending.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  await expect.poll(() => spawned.length).toBe(1)
+  const command = spawned[0]!
+  command.write('building\n')
+  // Every fact either session commits from the stop on, with the moment the process exits.
+  const order: string[] = []
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    const written = await append(batch)
+    for (const e of batch.entries)
+      order.push(`${batch.sessionId === SESSION ? 'parent' : 'child'}:${e.name}`)
+    return written
+  }
+  expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+  await expect.poll(() => command.kills.map((kill) => kill.signal)).toEqual(['SIGTERM'])
+  h.host.advance(STOP_TERM_GRACE_MS)
+  await expect.poll(() => command.kills.map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGKILL'])
+  // Killed, not yet confirmed gone: neither the child nor the parent has written anything.
+  expect(order).toEqual([])
+  order.push('EXITED')
+  command.exit(null, 'SIGKILL')
+  await expect.poll(() => h.loop.liveLease(SESSION)).toBeNull()
+  expect(
+    order.filter(
+      (name) =>
+        name === 'EXITED' ||
+        name.endsWith(':tool/result') ||
+        name.endsWith(':execution/tool_outcome') ||
+        name.endsWith(':execution/run_terminal'),
+    ),
+  ).toEqual([
+    'EXITED',
+    'child:tool/result',
+    'child:execution/tool_outcome',
+    'child:execution/run_terminal',
+    'parent:tool/result',
+    'parent:execution/tool_outcome',
+  ])
+  const child = (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries
+  expect(factOf(child, 'execution/tool_outcome', 'bash')).toMatchObject({
+    state: 'aborted',
+    source: 'stopped',
+  })
+  expect(child.findLast((e) => e.name === 'execution/run_terminal')?.payload['reason']).toEqual({
+    code: 'user-stopped',
+  })
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'execution/tool_outcome', 'tool1')).toMatchObject({
+    state: 'aborted',
+    source: 'stopped',
+  })
+  expect(factOf(parent, 'tool/result', 'tool1')).toMatchObject({
+    isError: true,
+    handoff: {
+      outcome: 'aborted',
+      childEndReason: 'user-stopped',
+      calls: [{ toolName: 'Bash', state: 'aborted', source: 'stopped' }],
+    },
+  })
+  expect(h.logs).toEqual([])
+})
 
 it('recovers a paused child before its parent and preserves the live Agent call', async () => {
   const h = harness()
@@ -652,6 +838,177 @@ it('02 不变量 30 — refuses recursive Agent and AskUserQuestion calls withou
   ).toEqual(['tool-unavailable', 'tool-unavailable'])
 })
 
+// §会话、识别与工具集「工具表」: the parent's frozen text, less Agent and AskUserQuestion, less what is
+// banned now. A ban lifted after the parent froze its table does not reach the child.
+it('02 不变量 30: the child tool table is a subset of the parent table frozen for the same provider', async () => {
+  const h = harness()
+  h.host.setPolicy({
+    status: 'current',
+    version: 'no-grep',
+    snapshot: {
+      tools: [{ policyId: 'ban', serverId: 'builtin', toolName: 'Grep', effect: 'deny' }],
+    },
+  })
+  await setup(h)
+  h.provider.script(scriptedTurn({ deltas: ['first answer'], usage }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'first' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'completed' })
+  h.host.setPolicy({ status: 'current', version: 'unrestricted', snapshot: { tools: [] } })
+  h.provider.script(call('Agent', { description: 'search task', prompt: 'search the work' }))
+  h.provider.script(call('Grep', { pattern: 'secret', path: '/work' }, 'grep'))
+  h.provider.script(scriptedTurn({ deltas: ['child done'], usage }))
+  h.provider.script(scriptedTurn({ deltas: ['parent done'], usage }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'delegate' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'completed' })
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  const frozen = parent.filter((e) => e.name === 'view/tool_table')
+  expect(frozen).toHaveLength(1)
+  const parentTable = frozen[0]!.payload as unknown as ToolTablePayload
+  expect(parentTable.tools.map((t) => t.name)).not.toContain('Grep')
+  const link = parent.find((e) => e.name === 'session/parent_link')!
+  const childId = (link.payload['child'] as { sessionId: string }).sessionId
+  const child = (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries
+  const childTable = child.find((e) => e.name === 'view/tool_table')!
+    .payload as unknown as ToolTablePayload
+  expect(childTable.providerId).toBe(parentTable.providerId)
+  // By name and specHash, every child tool is the parent's frozen one; nothing is banned now, so
+  // the child has all of them but the two.
+  expect(toolKeys(childTable)).toEqual(
+    toolKeys(parentTable).filter((t) => t.name !== 'Agent' && t.name !== 'AskUserQuestion'),
+  )
+  expect(link.payload['tools']).toEqual(childTable.tools.map((t) => t.name))
+  // The tool the parent's table left out is unavailable in the child: not judged, not dispatched.
+  expect(factOf(child, 'execution/tool_outcome', 'grep')).toMatchObject({
+    state: 'not-run',
+    source: 'tool-unavailable',
+  })
+  expect(child.some((e) => e.name === 'execution/dispatch_committed')).toBe(false)
+  expect(h.logs).toEqual([])
+})
+
+// §暂停、转发、排队与期限: 一棵会话树同一时刻最多一行待批、最多一个没结束的子会话; Agent 调用一律串行
+// (H14), and the parent goes on only once a child has handed off (H5).
+it('02 不变量 30: two Agent calls of one batch run one child at a time, each handed off before the next starts', async () => {
+  const h = harness()
+  await setup(h)
+  // Each child's start, its Run's end and the parent's link and handoff, in commit order; and how
+  // many children were started and not yet ended at once.
+  const children: string[] = []
+  const label = (sessionId: string): string => {
+    if (sessionId === SESSION) return 'parent'
+    if (!children.includes(sessionId)) children.push(sessionId)
+    return `child${String(children.indexOf(sessionId) + 1)}`
+  }
+  const order: string[] = []
+  let open = 0
+  let mostOpen = 0
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    const written = await append(batch)
+    const who = label(batch.sessionId)
+    for (const e of batch.entries) {
+      const child = who !== 'parent'
+      const ends =
+        e.name === 'execution/run_terminal' &&
+        (e.payload['reason'] as { code: string }).code !== 'paused'
+      if (child && e.name === 'session/start') open += 1
+      if (child && ends) open -= 1
+      mostOpen = Math.max(mostOpen, open)
+      if (
+        (child && (e.name === 'session/start' || ends)) ||
+        (!child && e.name === 'session/parent_link') ||
+        (!child && e.name === 'tool/result' && e.payload['handoff'] !== undefined)
+      )
+        order.push(`${who}:${e.name}`)
+    }
+    return written
+  }
+  h.provider.script([
+    { type: 'tool-call-start', index: 0, id: 'first', name: 'Agent' },
+    {
+      type: 'tool-call-end',
+      index: 0,
+      id: 'first',
+      name: 'Agent',
+      input: { description: 'first task', prompt: 'first work' },
+    },
+    { type: 'tool-call-start', index: 1, id: 'second', name: 'Agent' },
+    {
+      type: 'tool-call-end',
+      index: 1,
+      id: 'second',
+      name: 'Agent',
+      input: { description: 'second task', prompt: 'second work' },
+    },
+    { type: 'usage', usage },
+    stopEvent('tool-use', 'tool_use'),
+  ])
+  h.provider.script(scriptedTurn({ deltas: ['first child'], usage }))
+  h.provider.script(scriptedTurn({ deltas: ['second child'], usage }))
+  h.provider.script(scriptedTurn({ deltas: ['parent done'], usage }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'completed' })
+  expect(order).toEqual([
+    'parent:session/parent_link',
+    'child1:session/start',
+    'child1:execution/run_terminal',
+    'parent:tool/result',
+    'parent:session/parent_link',
+    'child2:session/start',
+    'child2:execution/run_terminal',
+    'parent:tool/result',
+  ])
+  expect(mostOpen).toBe(1)
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'tool/result', 'first')?.['handoff']).toMatchObject({
+    outcome: 'completed',
+    finalReply: 'first child',
+  })
+  expect(factOf(parent, 'tool/result', 'second')?.['handoff']).toMatchObject({
+    outcome: 'completed',
+    finalReply: 'second child',
+  })
+  expect(h.logs).toEqual([])
+})
+
+it('02 不变量 30: a child card waiting beside an asking sibling is the tree’s one pending row', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(agentThen('Write', { file_path: '/work/b', content: 'y' }))
+  h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const pending = await h.service.currentPending({ sessionId: SESSION })
+  if (pending?.waitKind !== 'approval') throw new Error('child card missing')
+  const childId = pending.card.sessionId
+  // One row, the child's; the sibling, which would ask too, is not judged while the child waits.
+  expect((await h.store.listPendingApprovals({ limit: 20 })).map((row) => row.sessionId)).toEqual([
+    childId,
+  ])
+  let parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'tool/permission_decided', 'sib')).toBeUndefined()
+  h.provider.script(scriptedTurn({ deltas: ['child done'], usage }))
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: childId,
+    requestId: pending.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+  // Handed off, the sibling is judged and asks: still one row, now the parent's.
+  expect((await h.store.listPendingApprovals({ limit: 20 })).map((row) => row.sessionId)).toEqual([
+    SESSION,
+  ])
+  parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  const handoff = parent.find((e) => e.name === 'tool/result' && e.payload['handoff'])!
+  const decided = parent.find(
+    (e) => e.name === 'tool/permission_decided' && e.payload['providerToolCallId'] === 'sib',
+  )!
+  expect(handoff.entryId).toBeLessThan(decided.entryId)
+  expect(h.logs).toEqual([])
+})
+
 it('stops at the child deadline before another main request, preserving a partial handoff', async () => {
   const h = harness()
   await setup(h)
@@ -928,6 +1285,95 @@ it('recovers a parent link whose child never started as uncertain (window ④)',
     source: 'crashed',
   })
   expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({ state: 'not-run' })
+})
+
+// 02 验收 53 (§停止、新消息、退出与重启「重启恢复」「崩溃时子 agent 正在跑」; §启动恢复与发送防护 第 1 步):
+// the child is recovered first, its call in flight uncertain; then the parent's Agent call, whose
+// handoff reads the child's recovered Tape; nothing runs again.
+it('recovers a child that crashed with a call in flight: child first, both sides uncertain, nothing re-run', async () => {
+  const h = harness(undefined, undefined, 'real', { tools: { Read: 'real' } })
+  await setup(h)
+  await h.host.fs.mkdirp(absolutePath('/work'))
+  await h.host.fs.writeFile(absolutePath('/work/a'), 'child evidence')
+  const readFile = h.host.fs.readFile.bind(h.host.fs)
+  let reads = 0
+  h.host.fs.readFile = (path, opts) => {
+    if (path === '/work/a') reads += 1
+    return readFile(path, opts)
+  }
+  h.provider.script(call('Agent', { description: 'read task', prompt: 'read a' }))
+  h.provider.script(call('Read', { file_path: '/work/a' }, 'read'))
+  // The child's Read ran; the process dies as its result is written, and nothing after it lands.
+  const append = h.store.append.bind(h.store)
+  let crashed = false
+  h.store.append = async (batch) => {
+    if (batch.sessionId !== SESSION && batch.entries.some((e) => e.name === 'tool/result'))
+      crashed = true
+    if (crashed) throw new Error('crash with the child call in flight')
+    return append(batch)
+  }
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  await expect.poll(() => crashed).toBe(true)
+  await expect.poll(() => h.loop.liveLease(SESSION)).toBeNull()
+  expect(reads).toBe(1)
+  const childId = (
+    (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries.find(
+      (e) => e.name === 'session/parent_link',
+    )!.payload['child'] as { sessionId: string }
+  ).sessionId
+  expect(
+    (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries.some(
+      (e) => e.name === 'tool/result' || e.name === 'execution/run_terminal',
+    ),
+  ).toBe(false)
+  h.store.append = append
+  const { service } = restarted(h)
+  // What recovery writes, in order: the child's session before the parent's.
+  const order: string[] = []
+  h.store.append = async (batch) => {
+    const written = await append(batch)
+    for (const e of batch.entries)
+      order.push(`${batch.sessionId === SESSION ? 'parent' : 'child'}:${e.name}`)
+    return written
+  }
+  const starts = h.provider.starts
+  expect((await service.recover()).errors).toEqual([])
+  expect(h.provider.starts).toBe(starts)
+  expect(reads).toBe(1)
+  expect(order.indexOf('child:execution/run_terminal')).toBeGreaterThanOrEqual(0)
+  expect(order.indexOf('child:execution/run_terminal')).toBeLessThan(
+    order.indexOf('parent:tool/result'),
+  )
+  const child = (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries
+  expect(factOf(child, 'execution/tool_outcome', 'read')).toMatchObject({
+    state: 'uncertain',
+    source: 'crashed',
+    writer: { by: 'recovery' },
+  })
+  expect(child.filter((e) => e.name === 'execution/dispatch_committed')).toHaveLength(1)
+  expect(child.findLast((e) => e.name === 'execution/run_terminal')?.payload['reason']).toEqual({
+    code: 'recovered',
+  })
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'execution/tool_outcome', 'tool1')).toMatchObject({
+    state: 'uncertain',
+    source: 'crashed',
+  })
+  expect(factOf(parent, 'tool/result', 'tool1')).toMatchObject({
+    isError: true,
+    handoff: {
+      outcome: 'uncertain',
+      childEndReason: 'recovered',
+      calls: [{ toolName: 'Read', target: '/work/a', state: 'uncertain', source: 'crashed' }],
+    },
+  })
+  expect(parent.findLast((e) => e.name === 'execution/run_terminal')?.payload['reason']).toEqual({
+    code: 'recovered',
+  })
+  // A second recovery finds nothing open and writes nothing.
+  const written = order.length
+  expect((await service.recover()).errors).toEqual([])
+  expect(order).toHaveLength(written)
 })
 
 it('preserves the parent waiting through two recoveries when the child approval becomes resumable', async () => {
