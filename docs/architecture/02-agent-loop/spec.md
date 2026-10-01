@@ -1,6 +1,6 @@
 # 02 · Agent loop
 
-Status: ready
+Status: implemented
 Phase: 2 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project（82 条开工前裁决，2026-09-25 owner 拍板）; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter、§本地持久化布局、§国际化（裁决 D4、D5、D8、D12、E1、E4、F3、H9、A13）；[01-provider-and-tape](../01-provider-and-tape/spec.md) §所有权与依赖方向、§Provider 层、§Tape、§desktop 接线（裁决 A1–A9、A11、A12、A14、A15、B1–B6、B8、B14、B18、D11、F1、F3、H1、H3、H8、H10–H13、M3、M5、M6、M8）。只增不改（裁决 A4），全文见 §对 00-foundation 的修补、§对 01-provider-and-tape 的修补；不属纯粹只增的在后者第 9 小节点名
