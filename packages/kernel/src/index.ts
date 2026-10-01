@@ -353,7 +353,7 @@ export { assertBatchOpensIncarnation } from './tape/store.js'
 // steps that implement them do not change the shapes), the new port errors and queries, the
 // pending-approval projection, the memory store's shared backing and the phase-2 key builders.
 export type { BlockReason, ClosureSource, ExecutionState } from './loop/closure.js'
-export type { SpillRecord } from './loop/spill.js'
+export type { SpillMark, SpillRecord } from './loop/spill.js'
 export type { HandoffCall, SubagentHandoff } from './loop/subagent.js'
 export type { RunEndReason } from './loop/terminal.js'
 export type { Decision } from './permission/decide.js'

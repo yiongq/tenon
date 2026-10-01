@@ -128,6 +128,7 @@ describe('the summary card (open question 18)', () => {
         { question: SIZES, answer: { kind: 'no-preference' } },
       ],
       response: null,
+      preview: null,
     })
   })
 
@@ -161,7 +162,28 @@ describe('the summary card (open question 18)', () => {
         { question: SIZES, answer: { kind: 'typed' } },
       ],
       response: 'the blue one, please',
+      preview: null,
     })
+  })
+
+  it('says where a long answer’s full text is when the record kept only its start (H9)', () => {
+    for (const preview of ['spilled', 'unsaved'] as const) {
+      expect(
+        summaryOf(
+          [COLOUR],
+          { source: 'typed-answer', question: { answers: {}, response: 'start', preview } },
+          null,
+        ),
+      ).toMatchObject({ response: 'start', preview })
+      expect(
+        summaryOf(
+          [COLOUR],
+          { source: null, question: { answers: { 'Which colour?': ['start'] }, preview } },
+          null,
+        ),
+      ).toMatchObject({ rows: [{ answer: { kind: 'answered', items: ['start'] } }], preview })
+    }
+    expect(summaryOf([COLOUR], { source: 'unanswered' }, null)?.preview).toBeNull()
   })
 
   it('a stop shows 未作答 on every question, whatever this window recorded', () => {

@@ -276,7 +276,183 @@ describe('pnpm test runs the evals format check (旧 228)', () => {
   })
 })
 
+/**
+ * A set the gate opens on (§评测集与测试宿主; plan step 34): 20 tasks — F2 ×2, F5 ×2, an E2 with
+ * `host.disableTool`, H9 ×2 and H10 calibrating, 10 compare split over both profiles — and 3 records
+ * each on the baseline column at the current prompt version.
+ */
+const BASELINE = 'tenon-glm-5.3-open.bigmodel.cn-api-paas-v4'
+const PROMPT = 8
+function passingSet(): { tasks: EvalTask[]; records: { file: string; record: EvalRecord }[] } {
+  const tasks: EvalTask[] = Array.from({ length: 20 }, (_, i) => ({
+    id: `${String(i + 1).padStart(2, '0')}-task`,
+    profile: i % 2 === 0 ? 'chat' : 'cowork',
+    turns: ['Go.'],
+    checks: [{ kind: 'human', text: 'done' }],
+    from: [['F2', 'F2', 'F5', 'F5', 'E2'][i] ?? 'H3'],
+    ...(i === 4 ? { host: { disableTool: { name: 'Edit', afterRound: 1 } } } : {}),
+    ...(i >= 5 && i <= 7 ? { calibrates: [i === 7 ? 'H10' : 'H9'] as ('H9' | 'H10')[] } : {}),
+    ...(i >= 10 ? { compare: true } : {}),
+  }))
+  return { tasks, records: tasks.flatMap((task) => recordsOf(task.id)) }
+}
+function recordsOf(
+  taskId: string,
+  o: { runs?: number; version?: number; client?: string; model?: string } = {},
+): { file: string; record: EvalRecord }[] {
+  return Array.from({ length: o.runs ?? 3 }, (_, i) => ({
+    file: 'results.jsonl',
+    record: {
+      ...RECORD,
+      taskId,
+      run: i + 1,
+      column: {
+        client: (o.client ?? 'tenon') as EvalRecord['column']['client'],
+        model: o.model ?? 'glm-5.3',
+        endpoint: 'open.bigmodel.cn/api/paas/v4',
+      },
+      prompt: {
+        version: o.version ?? PROMPT,
+        hash: 'h',
+        systemHash: 's',
+        toolDefinitionsHash: 't',
+      },
+    },
+  }))
+}
+function gateOf(set: ReturnType<typeof passingSet>): string[] {
+  return gateProblems({ ...set, baseline: BASELINE, promptVersion: PROMPT })
+}
+/** The set with task 01's records replaced by these. */
+function withRecords(
+  records: { file: string; record: EvalRecord }[],
+): ReturnType<typeof passingSet> {
+  const set = passingSet()
+  return {
+    tasks: set.tasks,
+    records: [...set.records.filter(({ record }) => record.taskId !== '01-task'), ...records],
+  }
+}
+function withTasks(change: (tasks: EvalTask[]) => EvalTask[]): ReturnType<typeof passingSet> {
+  const set = passingSet()
+  const tasks = change(set.tasks)
+  return { tasks, records: tasks.flatMap((task) => recordsOf(task.id)) }
+}
+
 describe('the gate (skipped until plan step 34)', () => {
+  it('opens on a set that meets every condition', () => {
+    expect(gateOf(passingSet())).toEqual([])
+  })
+
+  // One broken condition each: every filter of the gate names its own problem.
+  it.each([
+    [
+      '31 tasks',
+      withTasks((tasks) => [
+        ...tasks,
+        ...Array.from({ length: 11 }, (_, i) => ({ ...tasks[19]!, id: `${String(i + 21)}-task` })),
+      ]),
+      '31 tasks; the set holds 20–30',
+    ],
+    [
+      '19 tasks',
+      withTasks((tasks) => tasks.filter((_, i) => i !== 8)),
+      '19 tasks; the set holds 20–30',
+    ],
+    [
+      'one F2 task',
+      withTasks((tasks) => tasks.map((t, i) => (i === 1 ? { ...t, from: ['H3'] } : t))),
+      '1 task(s) from F2, 2 required (switching tool after a policy block, and hitting one policy again)',
+    ],
+    [
+      'one F5 task',
+      withTasks((tasks) => tasks.map((t, i) => (i === 3 ? { ...t, from: ['H3'] } : t))),
+      '1 task(s) from F5, 2 required (the exfiltration page, and the task-profile fetch of 5 + 2 pages)',
+    ],
+    [
+      // With no E2 task, none sets disableTool either.
+      'no E2 task',
+      withTasks((tasks) => tasks.map((t, i) => (i === 4 ? { ...t, from: ['H3'] } : t))),
+      [
+        '0 task(s) from E2, 1 required (disableTool after round N)',
+        'no E2 task sets host.disableTool',
+      ],
+    ],
+    [
+      'an E2 task without disableTool',
+      withTasks((tasks) =>
+        tasks.map((t, i) => {
+          if (i !== 4) return t
+          const { host: _host, ...rest } = t
+          return rest
+        }),
+      ),
+      'no E2 task sets host.disableTool',
+    ],
+    [
+      'one H9 task',
+      withTasks((tasks) =>
+        tasks.map((t, i) => {
+          if (i !== 6) return t
+          const { calibrates: _calibrates, ...rest } = t
+          return rest
+        }),
+      ),
+      'H9 needs two tasks: a long Chinese and a long English output',
+    ],
+    [
+      'no H10 task',
+      withTasks((tasks) =>
+        tasks.map((t, i) => {
+          if (i !== 7) return t
+          const { calibrates: _calibrates, ...rest } = t
+          return rest
+        }),
+      ),
+      'H10 needs the long task on the 1M window',
+    ],
+    [
+      '9 compare tasks',
+      withTasks((tasks) =>
+        tasks.map((t, i) => {
+          if (i !== 19) return t
+          const { compare: _compare, ...rest } = t
+          return rest
+        }),
+      ),
+      '9 compare tasks; at least 10',
+    ],
+    [
+      'compare tasks only in chat',
+      withTasks((tasks) =>
+        tasks.map((t) => (t.compare === true ? { ...t, profile: 'chat' as const } : t)),
+      ),
+      'no compare task in the cowork profile',
+    ],
+    [
+      'two records',
+      withRecords(recordsOf('01-task', { runs: 2 })),
+      '01-task: 2 baseline record(s) at prompt version 8, 3 required',
+    ],
+    [
+      'records of the prompt version before',
+      withRecords(recordsOf('01-task', { version: PROMPT - 1 })),
+      '01-task: 0 baseline record(s) at prompt version 8, 3 required',
+    ],
+    [
+      'records of another client',
+      withRecords(recordsOf('01-task', { client: 'claude-code' })),
+      '01-task: 0 baseline record(s) at prompt version 8, 3 required',
+    ],
+    [
+      'records of another column',
+      withRecords(recordsOf('01-task', { model: 'glm-5.3-flash' })),
+      '01-task: 0 baseline record(s) at prompt version 8, 3 required',
+    ],
+  ])('stays closed on %s', (_name, set, problem) => {
+    expect(gateOf(set)).toEqual(Array.isArray(problem) ? problem : [problem])
+  })
+
   it('stays closed without a baseline column, too few tasks or compare tasks', () => {
     const problems = gateProblems({
       tasks: [TASK as EvalTask],

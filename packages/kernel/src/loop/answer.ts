@@ -37,7 +37,7 @@ import {
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import { canonicalJson } from '../tape/canonical-json.js'
-import { answeredReply, questionTextsOf } from '../tools/builtin/ask-user-question.js'
+import { answeredReply, questionTextsOf, storedRecord } from '../tools/builtin/ask-user-question.js'
 import type { AskReply, QuestionAnswers } from '../tools/builtin/ask-user-question.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
@@ -302,8 +302,9 @@ export function questionReplyOf(
 /**
  * The answer to a waiting question (§每种答复同批写什么「提问答复」), before the new Run's head: its
  * `tool/result` — the fixed template, through the spill check like any result the user's own text
- * can make long (§大响应落盘; plan step 24) — with the summary card's record, and its `tool_outcome`,
- * completed, source `no-preference`, `typed-answer` or null.
+ * can make long (§大响应落盘; plan step 24) — with the summary card's record, cut like the content
+ * when the result spills, and its `tool_outcome`, completed, source `no-preference`, `typed-answer`
+ * or null.
  */
 export async function questionAnswerFacts(q: {
   readonly tape: Tape
@@ -330,7 +331,8 @@ export async function questionAnswerFacts(q: {
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
-    question: reply.record,
+    // Past the threshold the answer's full text is the spill file's alone (H9; Revisions 31).
+    question: storedRecord(reply.record, checked.mark),
     effect: 'blocked',
     state: 'completed',
     source: reply.source,

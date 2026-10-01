@@ -9,11 +9,12 @@ import { visible } from '@/lib/visible'
  * item of its own, so a label that holds 「, 」 is never split — 「无偏好」 for one skipped, 「未作答」
  * for each after a stop, and a reply typed in the composer as it was typed. The model's words (the
  * questions, the labels) are escaped as the card escapes its object (②′). The same from the live
- * outcome and from the stored one after a restart.
+ * outcome and from the stored one after a restart. An answer past the spill threshold is stored
+ * only to its start (H9): the card shows that start, and a line saying where the full text is.
  */
 export function AskSummaryCard(props: { readonly summary: AskSummary }): JSX.Element {
   const { t } = useTranslation()
-  const { rows, response } = props.summary
+  const { rows, response, preview } = props.summary
   return (
     <div
       data-testid="ask-summary"
@@ -63,6 +64,12 @@ export function AskSummaryCard(props: { readonly summary: AskSummary }): JSX.Ele
             {response}
           </p>
         </div>
+      )}
+      {/* A long answer the Tape kept only to its start: where the full text is (H9). */}
+      {preview === null ? null : (
+        <p data-testid="ask-summary-preview" className="text-text-muted">
+          {t(preview === 'spilled' ? 'preview.spilled' : 'preview.unsaved')}
+        </p>
       )}
     </div>
   )

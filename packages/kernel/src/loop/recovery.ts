@@ -53,7 +53,7 @@ import { readViewState } from './run.js'
 import type { RunEndReason } from './terminal.js'
 
 import { sessionFactsOf } from '../session/facts.js'
-import { buildSubagentHandoff, handoffText } from './subagent.js'
+import { buildSubagentHandoff, handoffText, storedHandoff } from './subagent.js'
 import { spillChecked } from './spill.js'
 import type { RunConnector } from './ports.js'
 
@@ -154,7 +154,7 @@ async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise
     // oxlint-disable-next-line no-await-in-loop -- resumable children keep the parent Agent waiting
     const resumable = await resumableOf(deps.tape, link.child.sessionId)
     if (waiting !== null || resumable !== null) continue
-    const handoff = buildSubagentHandoff(child, {
+    const built = buildSubagentHandoff(child, {
       childSessionId: link.child.sessionId,
       outcome: 'uncertain',
     })
@@ -171,7 +171,7 @@ async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise
       sessionId,
       call: ref,
       result: {
-        content: [{ type: 'text', text: handoffText(handoff) }],
+        content: [{ type: 'text', text: handoffText(built) }],
         isError: true,
         kernelAuthored: true,
       },
@@ -182,7 +182,8 @@ async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise
       now: deps.now,
       call: ref,
       content: checked.content,
-      handoff,
+      // Past the threshold the reply's full text is the spill file's alone (H9; Revisions 31).
+      handoff: storedHandoff(built, checked.mark),
       isError: checked.isError,
       kernelAuthored: checked.kernelAuthored,
       ...(checked.spill === undefined ? {} : { spill: checked.spill }),

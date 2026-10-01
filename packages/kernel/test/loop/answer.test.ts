@@ -263,6 +263,25 @@ describe('a card, and its answer', () => {
     expect(pending?.card.facts).toEqual({ category: 'exfiltration', toolName: 'look' })
   })
 
+  // A question's answer names no question here (§答复与投递「invalid」: kind ≠ wait_kind).
+  it('refuses a question answer on the card’s requestId and writes nothing', async () => {
+    const h = harness()
+    const requestId = await paused(h)
+    const before = await all(h)
+    expect(
+      await h.service.answer({
+        kind: 'question',
+        sessionId: SESSION,
+        requestId,
+        answers: {},
+        origin: null,
+      }),
+    ).toEqual({ status: 'invalid' })
+    expect(await all(h)).toEqual(before)
+    expect(h.executed).toEqual([])
+    expect(await rows(h)).toBe(1)
+  })
+
   it('allows: resumes the batch with that call, under the same model, and the next card waits alone (旧 174, 旧 116)', async () => {
     const appends: string[][] = []
     const inner = createMemoryTapeStore({ identity: IDENTITY })

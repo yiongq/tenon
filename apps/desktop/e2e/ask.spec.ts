@@ -80,6 +80,7 @@ const COPY = {
     pager: (index: number, count: number) => `${String(index)} / ${String(count)}`,
     banner: '另一个会话在等你回答',
     placeholder: '或者直接在这里回复…',
+    preview: '内容太长，这里只留了开头；全文在 Tenon 为这个会话保存的文件里，模型可以读取。',
   },
   en: {
     noPreference: 'No preference',
@@ -90,6 +91,8 @@ const COPY = {
     pager: (index: number, count: number) => `${String(index)} / ${String(count)}`,
     banner: 'Another session is waiting for your answer',
     placeholder: 'Or reply here directly…',
+    preview:
+      'Too long to keep here in full, so this is only the start. The full text is in a file Tenon saved for this session, which the model can read.',
   },
 } as const satisfies Record<Locale, unknown>
 
@@ -343,6 +346,52 @@ test('a send while the question waits is its answer: no message, a new Run, and 
     })
   } finally {
     await app.close()
+  }
+})
+
+// H9 for everyone (Revisions 31, owner 2026-10-01): a long answer is the spill file's alone.
+test('a long typed reply keeps only its start on the summary card, which says the full text is saved, live and after a restart', async () => {
+  fake = await startFakeAnthropic({
+    replies: [callsReply(askCall('toolu_ask', [COLOUR])), textReply('Noted.')],
+  })
+  const server = fake
+  const userData = makeUserDataDir('ask-long')
+  seedConfig(userData, { locale: 'zh-CN' })
+  const text = 'a long reply in my own words '.repeat(1400)
+  expect(text.length).toBeGreaterThan(40_000)
+  const start = text.slice(0, 2000)
+
+  const first = await launchTenon({ userData, env: providerEnv(server.baseURL) })
+  try {
+    const { page } = first
+    await send(page, 'pick a colour for me')
+    await expect(page.getByTestId('ask-widget')).toBeVisible()
+    await send(page, text)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Noted.')
+    const summary = page.getByTestId('ask-summary')
+    await expect(summary.getByTestId('ask-summary-preview')).toHaveText(COPY['zh-CN'].preview)
+    expect(await summary.getByTestId('ask-summary-response').textContent()).toBe(start)
+  } finally {
+    await first.app.close()
+  }
+
+  const facts = tapeFacts(userData)
+  expect(named(facts, 'tool/result')[0]?.payload['question']).toEqual({
+    answers: {},
+    response: start,
+    preview: 'spilled',
+  })
+  expect(facts.filter((fact) => JSON.stringify(fact.payload).includes(text))).toEqual([])
+  const [, second] = messageBodies(server)
+  expect(JSON.stringify(second)).not.toContain(text)
+
+  const again = await launchTenon({ userData, env: providerEnv(server.baseURL) })
+  try {
+    const summary = again.page.getByTestId('ask-summary')
+    await expect(summary.getByTestId('ask-summary-preview')).toHaveText(COPY['zh-CN'].preview)
+    expect(await summary.getByTestId('ask-summary-response').textContent()).toBe(start)
+  } finally {
+    await again.app.close()
   }
 })
 

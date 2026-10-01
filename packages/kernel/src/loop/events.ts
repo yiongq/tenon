@@ -8,6 +8,7 @@ import type { DecisionSummary } from '../permission/record.js'
 import type { ProviderErrorCode, StopReason } from '../provider/types.js'
 import type { SideEffectClass } from '../tape/entry.js'
 import type { ClosureSource, ExecutionState } from './closure.js'
+import type { SpillMark } from './spill.js'
 import type { SubagentHandoff } from './subagent.js'
 import type { RunEndReason } from './terminal.js'
 
@@ -61,10 +62,24 @@ export interface ToolOutcomeView {
   readonly question?: {
     readonly answers: Readonly<Record<string, readonly string[] | null>>
     readonly response?: string
+    readonly preview?: SpillMark // 有回答只存了开头时才有（H9，Revisions 31）
   } // 只在答过的 AskUserQuestion 上有（开放问题 18）
   readonly handoff?: {
     readonly outcome: SubagentHandoff['outcome']
     readonly childEndReason: string | null
     readonly childSessionId: string
+    readonly finalReply: string // 交接存下的子任务回复；结果落盘时只有开头（H9）
+    readonly preview?: SpillMark // finalReply 只存了开头时才有（Revisions 31）
   } // 只在 Agent 调用上有（开放问题 18）
+}
+
+/** The handoff as a view shows it: its Tape fact without the rows the interface does not read. */
+export function handoffView(handoff: SubagentHandoff): NonNullable<ToolOutcomeView['handoff']> {
+  return {
+    outcome: handoff.outcome,
+    childEndReason: handoff.childEndReason,
+    childSessionId: handoff.childSessionId,
+    finalReply: handoff.finalReply,
+    ...(handoff.preview === undefined ? {} : { preview: handoff.preview }),
+  }
 }

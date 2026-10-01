@@ -151,7 +151,8 @@ it('runs a child under its parent lease and records one mechanical handoff with 
   )
 })
 
-it('keeps a long handoff as audit data and spills the model-facing Agent result', async () => {
+// H9 for everyone (Revisions 31, owner 2026-10-01): a long handoff is the spill file's alone.
+it('spills a long handoff: the Agent result and its handoff keep only the start', async () => {
   const h = harness()
   await setup(h)
   const reply = 'child evidence '.repeat(3000)
@@ -164,8 +165,11 @@ it('keeps a long handoff as audit data and spills the model-facing Agent result'
 
   const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
   const result = parent.find((entry) => entry.name === 'tool/result' && entry.payload['handoff'])!
-  const handoff = result.payload['handoff'] as { finalReply: string }
-  expect(handoff.finalReply).toBe(reply)
+  expect(result.payload['handoff']).toMatchObject({
+    outcome: 'completed',
+    finalReply: reply.slice(0, SPILL_PREVIEW_CHARS),
+    preview: 'spilled',
+  })
   expect(result.payload['spill']).toMatchObject({
     bytes: expect.any(Number),
     sha256: expect.any(String),
@@ -182,6 +186,28 @@ it('keeps a long handoff as audit data and spills the model-facing Agent result'
     `${h.host.identity.profileDir}/tool-output/${SESSION}/${spill.file}`,
   )
   expect(await h.host.fs.readFile(spillPath, { encoding: 'utf8' })).toBe(reply)
+  // No payload of the parent holds the reply; in the child, only its own assistant message does.
+  const holding = (entries: readonly { name: string; payload: unknown }[]) =>
+    entries.filter((e) => JSON.stringify(e.payload).includes(reply)).map((e) => e.name)
+  expect(holding(parent)).toEqual([])
+  const childId = (
+    parent.find((e) => e.name === 'session/parent_link')!.payload['child'] as { sessionId: string }
+  ).sessionId
+  const child = (await h.store.readRange({ sessionId: childId, limit: 1000 })).entries
+  expect(holding(child)).toEqual(['message/assistant'])
+  // The row's expansion reads the same start, live and redrawn.
+  const view = {
+    outcome: 'completed',
+    childEndReason: 'completed',
+    childSessionId: childId,
+    finalReply: reply.slice(0, SPILL_PREVIEW_CHARS),
+    preview: 'spilled',
+  }
+  expect(
+    h.loop.recorded.find((e) => e.type === 'tool-outcome' && e.outcome.handoff !== undefined),
+  ).toMatchObject({ outcome: { handoff: view } })
+  const rows = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+  expect(rows.flatMap((row) => row.calls ?? []).map((c) => c.outcome?.handoff)).toContainEqual(view)
 })
 
 it.each(['allow', 'deny'] as const)(
@@ -451,11 +477,17 @@ it.each([false, true])(
     expect(stopped).toBe(true)
     expect(h.provider.starts).toBe(own ? 3 : 2)
     const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
-    expect(parent.find((e) => e.name === 'tool/result')?.payload['handoff']).toMatchObject({
+    // The aborted result is rebuilt under the name the first spill took, so its write is refused:
+    // the reply keeps its start and nothing holds the rest (H9; Revisions 31).
+    const result = parent.find((e) => e.name === 'tool/result')
+    expect(result?.payload['handoff']).toMatchObject({
       outcome: 'aborted',
       childEndReason: 'completed',
-      finalReply: reply,
+      finalReply: reply.slice(0, SPILL_PREVIEW_CHARS),
+      preview: 'unsaved',
     })
+    expect(result?.payload['spill']).toBeUndefined()
+    expect(parent.filter((e) => JSON.stringify(e.payload).includes(reply))).toEqual([])
     expect(parent.filter((e) => e.name === 'execution/run_started')).toHaveLength(1)
   },
 )
@@ -620,11 +652,15 @@ it.each([
     expect((await service.recover()).errors).toEqual([])
     expect(h.provider.starts).toBe(starts)
     const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    // A long reply keeps its start: `spilled` when recovery wrote the file, `unsaved` when the
+    // pre-crash file took its name (H9; Revisions 31).
     expect(parent.find((e) => e.name === 'tool/result')?.payload['handoff']).toMatchObject({
       outcome: 'uncertain',
       childEndReason: 'completed',
-      finalReply: reply,
+      finalReply: long ? reply.slice(0, SPILL_PREVIEW_CHARS) : reply,
+      ...(long ? { preview: own ? 'unsaved' : 'spilled' } : {}),
     })
+    expect(parent.some((e) => JSON.stringify(e.payload).includes(reply))).toBe(!long)
     expect(parent.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
       state: 'uncertain',
       source: 'crashed',

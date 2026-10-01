@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ProviderConfigMissingError,
+  absolutePath,
   createMemoryHost,
   createMemoryTapeStore,
 } from '../../src/index.js'
@@ -14,7 +15,13 @@ import {
   scriptedTurn,
   stopEvent,
 } from '../../src/testing/index.js'
-import { answeredReply, typedReply } from '../../src/tools/builtin/ask-user-question.js'
+import { SPILL_PREVIEW_CHARS, SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
+import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
+import {
+  ASK_NOT_UNIQUE,
+  answeredReply,
+  typedReply,
+} from '../../src/tools/builtin/ask-user-question.js'
 import { LOOK, lookSource, proxyStore } from './support.js'
 
 const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
@@ -68,9 +75,10 @@ function harness(store = createMemoryTapeStore({ identity: IDENTITY }), start = 
   const loop = createTestLoopPorts({
     connector: { provider, model: MODEL, mcpSources: [lookSource(executed)] },
   })
+  const host = createMemoryHost({ identity: IDENTITY })
   const service = createTestSessionService(
     {
-      host: createMemoryHost(),
+      host,
       tape: store,
       ids: createCounterIds({ start }),
       inspectors: [],
@@ -81,7 +89,7 @@ function harness(store = createMemoryTapeStore({ identity: IDENTITY }), start = 
     { tools: { AskUserQuestion: 'real' }, userSetting: () => ({ userSetting: 'always-allow' }) },
   )
   service.bindLoop(loop)
-  return { provider, executed, loop, service, store }
+  return { provider, executed, loop, service, store, host }
 }
 type Harness = ReturnType<typeof harness>
 async function entries(store: TapeStore) {
@@ -97,6 +105,30 @@ async function pause(h: Harness, withRest = false) {
   return pending
 }
 const done = () => scriptedTurn({ deltas: ['Done'], usage: USAGE })
+/** The text of the `ask` call's tool_result in the last request the model got. */
+function replayedAnswer(h: Harness): string {
+  const body = h.provider.requests.at(-1)?.body as {
+    messages: { content: { type: string; tool_use_id?: string; content?: unknown }[] }[]
+  }
+  const block = body.messages
+    .flatMap((message) => message.content)
+    .find((part) => part.type === 'tool_result' && part.tool_use_id === 'ask')
+  return JSON.stringify(block?.content)
+}
+/** The answer's `tool/result` and the spill file holding its full text (§大响应落盘). */
+async function spilledAnswer(h: Harness) {
+  const facts = await entries(h.store)
+  const result = facts.find(
+    (e) => e.name === 'tool/result' && e.payload['providerToolCallId'] === 'ask',
+  )
+  const spill = result?.payload['spill'] as { file: string; bytes: number } | undefined
+  if (result === undefined || spill === undefined) throw new Error('the answer did not spill')
+  const file = await h.host.fs.readFile(
+    absolutePath(`${IDENTITY.profileDir}/tool-output/${SESSION}/${spill.file}`),
+    { encoding: 'utf8' },
+  )
+  return { facts, result, file }
+}
 
 describe('question answers', () => {
   it('joins arrays without splitting labels, skips only null/missing, rejects unknown keys', () => {
@@ -110,7 +142,10 @@ describe('question answers', () => {
     })
     if (reply === 'invalid') throw new Error('invalid')
     expect(reply.text).toContain('"Pick?" = "x, y, z"')
+    // The skipped one reads as the no-preference mark (§提问工具「跳过」; 验收 46).
+    expect(reply.text).toContain(`"Why?" = ${JSON.stringify(MODEL_NOTES.ask.noPreference)}`)
     expect(reply.text).toContain('"Empty?" = ""')
+    expect(answeredReply(['Pick?'], { 'Pick?': ['z'] })).toMatchObject({ source: null })
     expect(answeredReply(['Pick?'], { unknown: null })).toBe('invalid')
     expect(typedReply('  raw\ntext  ')).toMatchObject({
       source: 'typed-answer',
@@ -156,6 +191,9 @@ describe('question answers', () => {
       .flatMap((message) => message.content)
       .find((block) => block.type === 'tool_result' && block.tool_use_id === 'ask')
     expect(replay?.content).toEqual(result?.payload['content'])
+    expect(replayedAnswer(h)).toContain(
+      JSON.stringify(`"Why?" = ${JSON.stringify(MODEL_NOTES.ask.noPreference)}`).slice(1, -1),
+    )
     expect(result?.payload['question']).toEqual({
       answers: { 'Pick?': ['x, y', 'z'], 'Why?': null },
     })
@@ -194,6 +232,13 @@ describe('question answers', () => {
       answers: {},
       response: '  my\nanswer  ',
     })
+    // What the model reads is the user's words, as typed (§提问工具「直接打字」).
+    expect(replayedAnswer(h)).toContain(
+      JSON.stringify(fill(MODEL_NOTES.ask.typed, { answer: '  my\nanswer  ' })).slice(1, -1),
+    )
+    expect(facts.find((e) => e.name === 'execution/tool_outcome')?.payload['source']).toBe(
+      'typed-answer',
+    )
   })
 
   it('uses the send lease and frozen provider despite a missing key on the current selection', async () => {
@@ -306,5 +351,166 @@ describe('question answers', () => {
     expect(facts.find((e) => e.name === 'execution/tool_outcome')?.payload['source']).toBe(
       'invalid-input',
     )
+  })
+
+  // An answer is keyed by its question and its labels: two alike would lose one (Revisions 31).
+  it.each([
+    { questions: [question('Same?'), { ...question('Same?'), multiSelect: false }] },
+    {
+      questions: [
+        {
+          ...question(),
+          options: [
+            { label: 'z', description: 'First' },
+            { label: 'z', description: 'Second' },
+          ],
+        },
+      ],
+    },
+  ])('rejects a repeated question or label as the Agent SDK does: %j', async (input) => {
+    const h = harness()
+    h.provider.script(calls(input))
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'Ask' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    const facts = await entries(h.store)
+    expect(facts.filter((e) => e.name === 'tool/permission_decided')).toEqual([])
+    expect(facts.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+      state: 'not-run',
+      source: 'invalid-input',
+    })
+    expect(
+      JSON.stringify(facts.find((e) => e.name === 'tool/result')?.payload['content']),
+    ).toContain(ASK_NOT_UNIQUE)
+  })
+
+  it('records source null and every answer when each question is answered', async () => {
+    const h = harness()
+    const pending = await pause(h)
+    h.provider.script(done())
+    expect(
+      await h.service.answer({
+        kind: 'question',
+        sessionId: SESSION,
+        requestId: pending.requestId,
+        answers: { 'Pick?': ['z'], 'Why?': ['x, y'] },
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    await h.loop.runEnded()
+    const facts = await entries(h.store)
+    expect(
+      facts.find(
+        (e) => e.name === 'execution/tool_outcome' && e.payload['providerToolCallId'] === 'ask',
+      )?.payload,
+    ).toMatchObject({ state: 'completed', source: null })
+    expect(replayedAnswer(h)).toContain(JSON.stringify('"Why?" = "x, y"').slice(1, -1))
+    expect(replayedAnswer(h)).not.toContain(
+      JSON.stringify(MODEL_NOTES.ask.noPreference).slice(1, -1),
+    )
+  })
+
+  // An answer of the other kind names no card it can answer (§答复与投递「invalid」).
+  it('refuses an approval answer on the question’s requestId and writes nothing', async () => {
+    const h = harness()
+    const pending = await pause(h)
+    const before = await entries(h.store)
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'invalid' })
+    expect(await entries(h.store)).toEqual(before)
+    expect(await h.service.currentPending({ sessionId: SESSION })).toEqual(pending)
+  })
+})
+
+/**
+ * H9 for everyone (Revisions 31, owner 2026-10-01): an answer past the threshold is the spill file's
+ * alone. The model reads the preview, the record keeps each answer's start and says so, and no
+ * payload of the session holds the full text.
+ */
+/** 40 000 characters of `seed`, past `SPILL_THRESHOLD_CHARS`. */
+function long(seed: string): string {
+  return `${seed}-`.repeat(Math.ceil(40_000 / (seed.length + 1))).slice(0, 40_000)
+}
+
+describe('a long answer', () => {
+  it('spills a 40 000-character typed reply: the record keeps its start, no payload the whole', async () => {
+    const h = harness()
+    await pause(h)
+    const text = long('typed answer')
+    expect(text.length).toBe(40_000)
+    h.provider.script(done())
+    expect(await h.service.send({ sessionId: SESSION, origin: null, text })).toEqual({
+      status: 'answered',
+    })
+    await h.loop.runEnded()
+    const { facts, result, file } = await spilledAnswer(h)
+    expect(file).toBe(fill(MODEL_NOTES.ask.typed, { answer: text }))
+    expect(result.payload['question']).toEqual({
+      answers: {},
+      response: text.slice(0, SPILL_PREVIEW_CHARS),
+      preview: 'spilled',
+    })
+    expect(facts.filter((e) => JSON.stringify(e.payload).includes(text))).toEqual([])
+    expect(replayedAnswer(h)).not.toContain(text)
+    expect(
+      h.loop.recorded.find((e) => e.type === 'tool-outcome' && e.providerToolCallId === 'ask'),
+    ).toMatchObject({ outcome: { question: result.payload['question'] } })
+  })
+
+  it('spills a long 「其他」 answer the same way, keeping the short ones whole', async () => {
+    const h = harness()
+    const pending = await pause(h)
+    const other = long('my own words')
+    h.provider.script(done())
+    expect(
+      await h.service.answer({
+        kind: 'question',
+        sessionId: SESSION,
+        requestId: pending.requestId,
+        answers: { 'Pick?': ['z', other], 'Why?': ['x, y'] },
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    await h.loop.runEnded()
+    const { facts, result, file } = await spilledAnswer(h)
+    expect(other.length).toBeGreaterThan(SPILL_THRESHOLD_CHARS)
+    expect(file).toContain(`"Pick?" = ${JSON.stringify(`z, ${other}`)}`)
+    expect(result.payload['question']).toEqual({
+      answers: { 'Pick?': ['z', other.slice(0, SPILL_PREVIEW_CHARS)], 'Why?': ['x, y'] },
+      preview: 'spilled',
+    })
+    expect(facts.filter((e) => JSON.stringify(e.payload).includes(other))).toEqual([])
+    expect(
+      facts.find(
+        (e) => e.name === 'execution/tool_outcome' && e.payload['providerToolCallId'] === 'ask',
+      )?.payload,
+    ).toMatchObject({ state: 'completed', source: null })
+  })
+
+  it('keeps only the start, marked unsaved, when the spill file cannot be written', async () => {
+    const h = harness()
+    await pause(h)
+    const text = long('lost words')
+    h.host.fs.writeFile = async () => {
+      throw new Error('disk full')
+    }
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text })
+    await h.loop.runEnded()
+    const facts = await entries(h.store)
+    const result = facts.find((e) => e.name === 'tool/result')
+    expect(result?.payload).toMatchObject({
+      isError: true,
+      question: { answers: {}, response: text.slice(0, SPILL_PREVIEW_CHARS), preview: 'unsaved' },
+    })
+    expect(result?.payload['spill']).toBeUndefined()
+    expect(facts.filter((e) => JSON.stringify(e.payload).includes(text))).toEqual([])
   })
 })

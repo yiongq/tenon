@@ -222,6 +222,10 @@
     "unanswered": "Not answered",
     "reply": "You replied:"
   },
+  "preview": {
+    "spilled": "Too long to keep here in full, so this is only the start. The full text is in a file Tenon saved for this session, which the model can read.",
+    "unsaved": "Too long to keep here in full, so this is only the start. The full text could not be saved."
+  },
   "resume": {
     "row": "Unfinished last time",
     "continue": "Continue"
