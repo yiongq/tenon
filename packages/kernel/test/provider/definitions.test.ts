@@ -23,6 +23,7 @@ import {
   OLLAMA_DEFAULT_API_KEY,
   OLLAMA_DEFAULT_BASE_URL,
   ProviderAlreadyRegisteredError,
+  WIRE_MODEL_FIELDS,
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROVIDER_ID,
   anthropicDefinition,
@@ -31,10 +32,12 @@ import {
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  encodeAnthropicMessages,
   encodeOpenAIChat,
   modelWireHash,
   ollamaDefinition,
   OpenAIChatProvider,
+  checksThinkingPrefix,
   registerBuiltinProviders,
   zhipuDefinition,
 } from '../../src/index.js'
@@ -775,8 +778,8 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(attempt?.payload['encoder']).toEqual({
         wire: testCase.definition.wire,
         // anthropic-messages 2 added the top-level cache_control, 3 the vendor-fields guard
-        // (s6-spec-2; encoder-version.test.ts).
-        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 1,
+        // (s6-spec-2); openai-chat 2 the row's maxTokensField (M6; encoder-version.test.ts).
+        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 2,
         sdk: expect.stringMatching(
           testCase.definition.wire === 'anthropic-messages'
             ? /^@anthropic-ai\/sdk@\d/
@@ -1286,6 +1289,89 @@ describe('the model rows spec 02 changes', () => {
     ])
   })
 })
+
+describe('the definition data M6 adds (§对 01 的修补 1、2)', () => {
+  it('caps zhipu at 128 tools per request and leaves anthropic and ollama uncapped (T13)', () => {
+    expect(
+      Object.fromEntries(BUILTIN_PROVIDERS.map((d) => [d.id, d.maxToolsPerRequest ?? null])),
+    ).toEqual({ anthropic: null, zhipu: 128, ollama: null })
+  })
+
+  it('writes maxTokensField on no builtin row, so every builtin body keeps max_tokens (T10)', () => {
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        expect([definition.id, model.id, Object.hasOwn(model, 'maxTokensField')]).toEqual([
+          definition.id,
+          model.id,
+          false,
+        ])
+      }
+    }
+  })
+
+  it('M6 不变量 17 (builtin and frozen rows): Opus 5.5 and Fable 5.1 check the prefix, by data and by id', () => {
+    const flagged = BUILTIN_PROVIDERS.flatMap((definition) =>
+      definition.builtinModels
+        .filter((model) => Object.hasOwn(model, 'checksThinkingPrefix'))
+        .map((model) => [definition.id, model.id, model.checksThinkingPrefix]),
+    )
+    expect(flagged).toEqual([
+      ['anthropic', 'claude-opus-5-5', true],
+      ['anthropic', 'claude-fable-5-1', true],
+    ])
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        expect([model.id, checksThinkingPrefix(model)]).toEqual([
+          model.id,
+          model.id === 'claude-opus-5-5' || model.id === 'claude-fable-5-1',
+        ])
+      }
+    }
+    // A row frozen before M6 has no key: 02's rule by id alone, whatever the provider.
+    const frozen = (id: string): ModelInfo => ({ ...openAIModelRow(), id })
+    expect(checksThinkingPrefix(frozen('claude-opus-5-5'))).toBe(true)
+    expect(checksThinkingPrefix(frozen('claude-fable-5-1'))).toBe(true)
+    expect(checksThinkingPrefix(frozen('claude-sonnet-5'))).toBe(false)
+    // A row that says so is read as it says, its id notwithstanding (custom rows write false).
+    expect(
+      checksThinkingPrefix({ ...frozen('claude-opus-5-5'), checksThinkingPrefix: false }),
+    ).toBe(false)
+    expect(checksThinkingPrefix({ ...frozen('glm-5.3'), checksThinkingPrefix: true })).toBe(true)
+  })
+
+  it('M6 不变量 5 (builtin rows): checksThinkingPrefix moves no byte, promptHash or modelWireHash', () => {
+    // §对 02 的修补 6: the key is not a wire field, so the rows that write it encode and hash as they
+    // did before M6, and an attempt recorded then still re-verifies (02 不变量 33).
+    expect((WIRE_MODEL_FIELDS as readonly string[]).includes('checksThinkingPrefix')).toBe(false)
+    for (const definition of BUILTIN_PROVIDERS) {
+      const encode =
+        definition.wire === 'anthropic-messages' ? encodeAnthropicMessages : encodeOpenAIChat
+      for (const model of definition.builtinModels) {
+        const { checksThinkingPrefix: _flag, ...before } = model
+        const encoded = (row: ModelInfo) =>
+          encode(
+            { model: row, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+            definition.id,
+          )
+        const now = encoded(model)
+        const then = encoded(before)
+        expect([model.id, modelWireHash(model), now.promptHash, now.body]).toEqual([
+          model.id,
+          modelWireHash(before),
+          then.promptHash,
+          then.body,
+        ])
+      }
+    }
+  })
+})
+
+/** A row as 02 froze it: zhipu's first, no M6 key. */
+function openAIModelRow(): ModelInfo {
+  const row = zhipuDefinition.builtinModels[0]
+  if (row === undefined) throw new Error('zhipu has no rows')
+  return { ...row }
+}
 
 function defaultOf(definition: ProviderDefinition, name: string): string | undefined {
   return definition.configKeys.find((key) => key.name === name)?.default

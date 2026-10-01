@@ -2041,6 +2041,7 @@ export function createLoop(deps: LoopDeps): Loop {
       tenantId: deps.host.identity.tenantId,
       userSetting: deps.userSetting,
       hasSearchBackend: built.assembly.search !== null,
+      toolsPerRequest: toolsPerRequest(built.model.providerId),
     })
     const link: ParentLinkPayload & CallRef = {
       ...q.call,
@@ -2314,6 +2315,7 @@ export function createLoop(deps: LoopDeps): Loop {
                   tenantId: deps.host.identity.tenantId,
                   userSetting: deps.userSetting,
                   hasSearchBackend: assembly.search !== null,
+                  toolsPerRequest: toolsPerRequest(q.providerId),
                 }),
               }
             }
@@ -2830,8 +2832,17 @@ export function createLoop(deps: LoopDeps): Loop {
       tenantId: deps.host.identity.tenantId,
       userSetting: deps.userSetting,
       hasSearchBackend: assembly.search !== null,
+      toolsPerRequest: toolsPerRequest(q.providerId),
     })
     return { table, policy }
+  }
+
+  /**
+   * The cap every opening reads, a compaction's reopening and a sub-agent's included (M6 §对 02 的修补
+   * 4, T13): the connector's `toolsPerRequest`; a connector without the member caps nothing.
+   */
+  function toolsPerRequest(providerId: ProviderId): number | null {
+    return connector.toolsPerRequest?.(providerId) ?? null
   }
 
   // ----- facts the round reads and writes ------------------------------------------------------

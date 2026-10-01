@@ -10,7 +10,12 @@
  * verifier re-encoding it trusts that "same encoder" means "same bytes".
  */
 import { describe, expect, it } from 'vitest'
-import { encodeAnthropicMessages, encodeOpenAIChat, encoderOf } from '../../../src/index.js'
+import {
+  encodeAnthropicMessages,
+  encodeOpenAIChat,
+  encoderOf,
+  modelWireHash,
+} from '../../../src/index.js'
 import type { EncodedRequest, ModelInfo, ProviderRequest } from '../../../src/index.js'
 import { PNG_DATA, SIGNATURE, TOOL, assistant, user } from './fixtures.js'
 
@@ -19,7 +24,9 @@ import { PNG_DATA, SIGNATURE, TOOL, assistant, user } from './fixtures.js'
  * 3cb1249 (step 7), which added the top-level `cache_control` and left the version at 1; 3 judges the
  * vendor fields of text and tool_use blocks by their `vendorSource` (s6-spec-2, owner 2026-09-27) —
  * the golden text block has none, so its `citations` no longer go out. openai-chat never sent those
- * fields, so its bytes, and its version, stayed.
+ * fields, so its bytes, and its version, stayed. openai-chat 2 writes the output limit under the
+ * row's `maxTokensField` (M6 §对 01 的修补 3, T10): the golden row names `max_completion_tokens`, and
+ * the same request on a row without the key is still row 1 (below).
  */
 const GOLDEN: Readonly<
   Record<'anthropic-messages' | 'openai-chat', Readonly<Record<number, string>>>
@@ -31,7 +38,18 @@ const GOLDEN: Readonly<
   },
   'openai-chat': {
     1: 'bf2278ab5d0fcfa5d95d523b4756ac6dfa0dcb9e220e6f525a596799c3e9e21a',
+    2: 'bf62c43f6a9c9f044e9591bfd9cb43c739d0e7f6e348fb885876c0af8704703f',
   },
+}
+
+/**
+ * modelWireHash of the golden rows as they stood before M6 (M6 不变量 5): `WIRE_MODEL_FIELDS` gained
+ * `maxTokensField`, and a row that leaves it out must hash as it did, or every attempt recorded
+ * before M6 would read as made under another model table.
+ */
+const GOLDEN_WIRE_HASH: Readonly<Record<'anthropic-messages' | 'openai-chat', string>> = {
+  'anthropic-messages': '7798ded8ec0a944109e43dcd633778c3327a0583ac2b1334a31fd46ebea15711',
+  'openai-chat': '5b0aff622cf665672c7d9153241690b8a4678b6e0a16df79ac9c081a8b1c78e5',
 }
 
 /**
@@ -82,7 +100,11 @@ const OPENAI_ROW: ModelInfo = {
   usageNeedsOptIn: true,
   requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
   thinkingSpec: { mode: 'effort-only', defaultOn: true, effortLevels: ['low', 'high', 'max'] },
+  maxTokensField: 'max_completion_tokens',
 }
+
+/** OPENAI_ROW as a builtin row is: without M6's key, so 01's `max_tokens`. */
+const { maxTokensField: _field, ...OPENAI_ROW_WITHOUT_FIELD } = OPENAI_ROW
 
 /** A same-model history with a tool pair, an image, vendor fields and a vendor block, ending on user. */
 function goldenRequest(model: ModelInfo): ProviderRequest {
@@ -218,5 +240,23 @@ describe('encoder.version moves with the bytes (01 修补 7, invariant 33)', () 
       'The anthropic-messages encoding changed. Raise its ENCODER.version by one and append a row to both tables; never edit one.',
     ).toBe(GOLDEN_FIELDS[versionOf(encoded)])
     expect(new Set(Object.values(GOLDEN_FIELDS)).size).toBe(versions.length)
+  })
+
+  it('M6 不变量 5: a row without maxTokensField is still openai-chat 1’s bytes and modelWireHash', () => {
+    const encoded = encodeOpenAIChat(goldenRequest(OPENAI_ROW_WITHOUT_FIELD), 'zhipu')
+    expect(
+      encoded.promptHash,
+      'A row without maxTokensField must encode as before M6: builtin rows never write the key.',
+    ).toBe(GOLDEN['openai-chat'][1])
+    expect(encoded.body).toHaveProperty('max_tokens', 8192)
+    expect(encoded.body).not.toHaveProperty('max_completion_tokens')
+    // Row 2's request differs only by the key the row names, carrying the same limit.
+    const named = encodeOpenAIChat(goldenRequest(OPENAI_ROW), 'zhipu')
+    expect(named.body).toHaveProperty('max_completion_tokens', 8192)
+    expect(named.body).not.toHaveProperty('max_tokens')
+    expect(modelWireHash(OPENAI_ROW_WITHOUT_FIELD)).toBe(GOLDEN_WIRE_HASH['openai-chat'])
+    expect(modelWireHash(ANTHROPIC_ROW)).toBe(GOLDEN_WIRE_HASH['anthropic-messages'])
+    // The key is a wire field: naming it moves the hash.
+    expect(modelWireHash(OPENAI_ROW)).not.toBe(GOLDEN_WIRE_HASH['openai-chat'])
   })
 })

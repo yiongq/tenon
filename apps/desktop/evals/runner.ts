@@ -202,9 +202,9 @@ class Watch {
 /**
  * The desktop's connector, seen through: the fake search backend of a `web` task goes into the
  * assembly, and each request passes `beforeStream` — where `disableTool` swaps the policy — and, for a
- * speed run, a clock.
+ * speed run, a clock. Every other member is forwarded as it is (M6 §点名 (g)). Exported for its test.
  */
-function watchedConnector(
+export function watchedConnector(
   inner: RunConnector,
   hooks: {
     readonly search: SearchBackend | null
@@ -214,6 +214,7 @@ function watchedConnector(
 ): RunConnector {
   return {
     endpointOrigin: (providerId) => inner.endpointOrigin(providerId),
+    toolsPerRequest: (providerId) => inner.toolsPerRequest?.(providerId) ?? null,
     searchTarget(providerId, query) {
       return hooks.search === null
         ? (inner.searchTarget?.(providerId, query) ?? null)

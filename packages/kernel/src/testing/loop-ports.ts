@@ -12,7 +12,8 @@
  *   - **the queue** holds each root's messages in `seq` order; `take` removes, `restore` puts back
  *     at the original `seq`.
  *   - **the connector** answers from a script a case can change between sends: the model and the
- *     provider it builds, a `needsConfirm`, a `provider()` that throws, an `assemble` held open.
+ *     provider it builds, its cap on tools per request, a `needsConfirm`, a `provider()` that
+ *     throws, an `assemble` held open.
  *
  * No timers (the kernel lint gate): a case holds something open with a promise it resolves by hand.
  */
@@ -47,6 +48,8 @@ export interface TestConnectorScript {
   /** Default the model's `maxOutputTokens`. */
   readonly maxTokens?: number
   readonly toolsWithheld?: RunAssembly['toolsWithheld']
+  /** What `toolsPerRequest` answers for this provider (M6 §对 02 的修补 4). Default null: no cap. */
+  readonly toolsPerRequest?: number | null
   readonly search?: SearchBackend | null
   readonly mcpSources?: readonly McpToolSource[]
 }
@@ -306,6 +309,9 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
     },
     endpointOrigin(providerId: ProviderId): string | null {
       return script?.provider.id === providerId ? (script.endpointOrigin ?? DEFAULT_ORIGIN) : null
+    },
+    toolsPerRequest(providerId: ProviderId): number | null {
+      return script?.provider.id === providerId ? (script.toolsPerRequest ?? null) : null
     },
     resolveChoice(q): Promise<ModelChoice | { needsConfirm: { host: string } }> {
       calls.resolveChoice += 1

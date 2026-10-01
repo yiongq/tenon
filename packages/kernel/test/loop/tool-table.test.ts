@@ -144,6 +144,8 @@ interface SendWith {
   readonly search?: SearchBackend | null
   readonly mcpSources?: readonly McpToolSource[]
   readonly toolsWithheld?: 'provider-text-only' | null
+  /** What the connector's `toolsPerRequest` answers for the provider (M6); default null. */
+  readonly toolsPerRequest?: number | null
   /** The scripted provider's replies for this Run, in place of one plain answer. */
   readonly turns?: readonly StreamEvent[][]
 }
@@ -164,6 +166,7 @@ async function send(h: Harness, over: SendWith = {}, sessionId = SESSION): Promi
     search: over.search ?? null,
     mcpSources: over.mcpSources ?? [],
     toolsWithheld: over.toolsWithheld ?? null,
+    toolsPerRequest: over.toolsPerRequest ?? null,
   })
   messages += 1
   const sent = await h.service.send({
@@ -841,5 +844,111 @@ describe('requests that carry no tools (A14, A15)', () => {
       ),
     ).toEqual(['provider-text-only'])
     await assertToolHashes(h.store)
+  })
+})
+
+describe('the cap on tools per request is the connector’s (M6 §对 02 的修补 4, §点名 (g); T13)', () => {
+  /** One server with 130 connector tools: the fixture 02 验收 27 names. */
+  const crowded = (): McpToolSource =>
+    source(
+      'fix',
+      Array.from({ length: 130 }, (_, i) => tool(`t${String(i).padStart(3, '0')}`)),
+    )
+
+  it('sends exactly 128 tools on zhipu when the connector says 128, builtin ones kept (02 验收 27)', async () => {
+    const h = harness()
+    await send(h, { provider: h.b, mcpSources: [crowded()], toolsPerRequest: 128 })
+    const names = toolNames(h.b) ?? []
+    expect(names).toHaveLength(128)
+    // The chat profile's three builtins (no search backend), then 125 of the 130 in name order.
+    expect(names.slice(0, 4)).toEqual(['AskUserQuestion', 'Read', 'WebFetch', 'fix__t000'])
+    const table = named(await entries(h.store), 'view/tool_table')[0]
+      ?.payload as unknown as ToolTablePayload
+    expect(
+      table.excluded.filter((entry) => entry.code === 'over-limit').map((e) => e.originalName),
+    ).toEqual(['t125', 't126', 't127', 't128', 't129'])
+    // A connector that answers null for the provider caps nothing.
+    await send(
+      h,
+      { provider: h.b, mcpSources: [crowded()] },
+      '0b8f2a1c-3d4e-4f50-8a61-7b2c3d4e5f60',
+    )
+    expect(toolNames(h.b)).toHaveLength(133)
+  })
+
+  it('caps nothing for a connector that does not implement toolsPerRequest (验收 23)', async () => {
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const provider = createScriptedProvider({ id: 'zhipu', models: [MODEL_B] })
+    const loop = createTestLoopPorts({
+      // 128 here would cap, were the member there to answer it.
+      connector: { provider, model: MODEL_B, mcpSources: [crowded()], toolsPerRequest: 128 },
+    })
+    const { toolsPerRequest: _absent, ...connector } = loop.connector
+    const service = createTestSessionService(
+      {
+        host: createMemoryHost(),
+        tape: store,
+        ids: createCounterIds(),
+        inspectors: [],
+        connector,
+        protectedFiles: [],
+      },
+      { tools: {} },
+    )
+    service.bindLoop(loop)
+    provider.script(scriptedTurn({ deltas: ['ok'], usage: USAGE }))
+    const sent = await service.send({ sessionId: SESSION, origin: null, text: 'hi' })
+    if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+    await loop.runEnded({ runId: sent.runId })
+    expect(toolNames(provider)).toHaveLength(133)
+  })
+
+  it('caps the table a summary compaction reopens as it capped the first one', async () => {
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const provider = createScriptedProvider({ id: 'zhipu', models: [MODEL_B] })
+    // The three builtins and two of the 130: small enough that any uncapped table shows.
+    const loop = createTestLoopPorts({
+      connector: { provider, model: MODEL_B, mcpSources: [crowded()], toolsPerRequest: 5 },
+    })
+    const service = createTestSessionService(
+      {
+        host: createMemoryHost(),
+        tape: store,
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: loop.connector,
+        protectedFiles: [],
+        compactionThreshold: 1000,
+      },
+      { tools: {} },
+    )
+    service.bindLoop(loop)
+    const ask = async (text: string): Promise<void> => {
+      const sent = await service.send({ sessionId: SESSION, origin: null, text })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      await loop.runEnded({ runId: sent.runId })
+    }
+    // Three turns, the last past the threshold: the fourth Run summarizes before its request.
+    for (const [i, inputTokens] of [10, 10, 2000].entries()) {
+      provider.script(scriptedTurn({ deltas: ['ok'], usage: { ...USAGE, inputTokens } }))
+      // oxlint-disable-next-line no-await-in-loop -- successive turns give the cut its boundaries
+      await ask(`turn ${String(i)}`)
+    }
+    provider.script(scriptedTurn({ deltas: ['summary'], usage: USAGE }))
+    provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+    await ask('after the threshold')
+    const reopened = named(await entries(store), 'view/tool_table')
+      .map((entry) => entry.payload as unknown as ToolTablePayload)
+      .filter((table) => table.reason === 'after-compaction')
+    expect(reopened.map((table) => [table.providerId, table.generation])).toEqual([['zhipu', 1]])
+    expect(reopened[0]?.tools.map((item) => item.name)).toEqual([
+      'AskUserQuestion',
+      'Read',
+      'WebFetch',
+      'fix__t000',
+      'fix__t001',
+    ])
+    expect(reopened[0]?.excluded.filter((entry) => entry.code === 'over-limit')).toHaveLength(128)
+    expect(toolNames(provider)).toHaveLength(5)
   })
 })

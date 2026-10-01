@@ -108,6 +108,11 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       return originOf(baseURLOf(definition, stored[providerId], env()) ?? undefined)
     },
 
+    // M6 §对 02 的修补 4 (T13): the definition's cap, as data; synchronous and reads no secret.
+    toolsPerRequest(providerId): number | null {
+      return providers.get(providerId)?.maxToolsPerRequest ?? null
+    },
+
     searchTarget(providerId, query) {
       const definition = providers.get(providerId)
       if (definition === null) return null

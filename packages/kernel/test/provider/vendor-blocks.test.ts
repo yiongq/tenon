@@ -592,6 +592,8 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
         }),
         'openai-chat',
       ],
+      // M6 §对 02 的修补 6: the output limit's key is read, so it is a wire field.
+      [openAIModel({ maxTokensField: 'max_completion_tokens' }), 'openai-chat'],
     ]
     for (const [model, wire] of rows) {
       const req: ProviderRequest = {
@@ -613,9 +615,13 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     // And the watch reached the guard: an encoder that read nothing, or a request that never got
     // past the body keys, would pass the line above.
     expect(
-      ['thinkingSpec', 'thinkingPreservationFormat', 'canonicalId', 'reasoningEchoField'].filter(
-        (key) => !read.has(key),
-      ),
+      [
+        'thinkingSpec',
+        'thinkingPreservationFormat',
+        'canonicalId',
+        'reasoningEchoField',
+        'maxTokensField',
+      ].filter((key) => !read.has(key)),
     ).toEqual([])
   })
 })

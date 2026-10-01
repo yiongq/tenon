@@ -22,20 +22,28 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PROMPT_LAYER_HASH, PROMPT_LAYER_VERSION } from '@tenon-app/kernel'
+import {
+  ANTHROPIC_PROVIDER_ID,
+  OLLAMA_PROVIDER_ID,
+  PROMPT_LAYER_HASH,
+  PROMPT_LAYER_VERSION,
+  ZHIPU_PROVIDER_ID,
+  createMemoryHost,
+} from '@tenon-app/kernel'
 import type { TapeEntry } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it } from 'vitest'
 import { readAll } from '../evals/cost.js'
 import { redactEvidence, validateRawDirectory } from '../evals/raw.js'
 import { resultProblems } from '../evals/format.js'
 import { loadCheck } from '../evals/load-check.js'
-import { EVAL_GLM_53_ANTHROPIC } from '../evals/models.js'
+import { EVAL_GLM_53_ANTHROPIC, evalProviderRegistry } from '../evals/models.js'
 import type { EvalColumn } from '../evals/models.js'
 import { evalRecordSchema } from '../evals/record.js'
 import type { EvalRecord } from '../evals/record.js'
-import { appendRecord, runTask, verdictOf } from '../evals/runner.js'
+import { appendRecord, runTask, verdictOf, watchedConnector } from '../evals/runner.js'
 import type { RunInspection, RunTaskOptions } from '../evals/runner.js'
 import type { EvalTask } from '../evals/task.js'
+import { createRunConnector } from '../src/main/run-assembly.js'
 import { deferred, startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic, ScriptedReply, ScriptedStep } from './support/fake-anthropic.js'
 
@@ -630,6 +638,23 @@ describe('what keeps a paid run’s record', () => {
     })
     expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
     expect(lines.filter((line) => line.includes(`${dir} was not removed`))).toHaveLength(1)
+  })
+})
+
+describe('the connector the runner hands the kernel (M6 §点名 (g))', () => {
+  it('still caps zhipu at 128 tools per request through the wrapper, and anthropic and ollama not at all', () => {
+    const connector = watchedConnector(
+      createRunConnector({
+        host: createMemoryHost(),
+        providers: evalProviderRegistry(),
+        env: {},
+        log: () => {},
+      }),
+      { search: null, beforeStream: () => {}, timing: null },
+    )
+    expect(connector.toolsPerRequest?.(ZHIPU_PROVIDER_ID)).toBe(128)
+    expect(connector.toolsPerRequest?.(ANTHROPIC_PROVIDER_ID)).toBeNull()
+    expect(connector.toolsPerRequest?.(OLLAMA_PROVIDER_ID)).toBeNull()
   })
 })
 
