@@ -3,6 +3,7 @@
 - **状态**：采纳（2026-09-26 owner 确认；依据裁决 M3、M7、M2、M6、M8）
 - **日期**：2026-09-25
 - **背景**：阶段 2 要让 agent 在智谱和 Anthropic 上都过验收。owner 追问过「要支持各种厂商，要不要引入 AI SDK」。复核发现 01 spec.md:126-131 的选型理由大半不准；按 amend 规则 01 正文不能改，所以更正落在这份 ADR（[spec-driven-dev](../spec-driven-dev.md)「改变决定」：跨阶段的技术选型写 ADR）
+- **勘误**（2026-10-02）：自定义厂商实例的 id 以 `custom-<uuid>`（uuid 小写）为准，见 [custom-vendors spec](../features/custom-vendors/spec.md)（T1）；本文「厂商分档」写的 `custom:<uuid>` 放不进 Tape 工具表键的身份段。
 
 ---
 

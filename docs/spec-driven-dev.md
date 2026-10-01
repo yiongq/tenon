@@ -2,7 +2,7 @@
 
 规格是主产物，代码服务于规格。对实质性的工作，先写一份 RFC 式的 `spec.md` 说清问题、行为、设计决定、不变量和验收标准，再动手。小改动不走这套。
 
-这套做法参考了 DeepChat 的 `docs/spec-driven-dev.md`（Apache-2.0）并按 Tenon 的分工简化：**架构在 Claude Desktop 项目里讨论并写成 spec，实现在 Claude Code / Codex 里做**，`spec.md` 就是两边的交接物。
+这套做法参考了 DeepChat 的 `docs/spec-driven-dev.md`（Apache-2.0）并按 Tenon 的分工简化：**架构由 owner 拍板、写成 spec，在哪个会话里讨论都行；实现在 Claude Code / Codex 里做**，`spec.md` 就是两边的交接物。
 
 ## 什么时候走 SDD
 
@@ -59,9 +59,9 @@
 
 ## 和代码 agent 的交接
 
-- 开工不需要指令。agent 自己找当前阶段：序号最小、`Status: ready`、`plan.md` 里还有未勾选步骤的那份 spec，从第一个未勾选的步骤（或交接记录里写的半成品状态）接着做，动手前说一句选了哪份 spec 哪一步。要指定别的目标时才说「按 `docs/<...>/spec.md` 实现」。
+- 开工不需要指令。agent 自己找当前阶段：序号最小、`Status: ready`、`plan.md` 里还有未勾选步骤的那份 spec（没有这样的 architecture spec 时，找 `docs/features/*/spec.md` 里 `Status: ready` 且 plan 有未勾选步骤的那份，同时有两份就问），从第一个未勾选的步骤（或交接记录里写的半成品状态）接着做，动手前说一句选了哪份 spec 哪一步。要指定别的目标时才说「按 `docs/<...>/spec.md` 实现」。
 - agent 读 `AGENTS.md`（硬规则）→ 读 spec → 维护 plan → 跑门禁 → 标 status。
-- spec 不够用时 agent 应停下来说缺什么，而不是自己补架构。缺的部分回到 Claude Desktop 项目里讨论后补进 spec。
+- spec 不够用时 agent 应停下来说缺什么，而不是自己补架构。缺的部分由 owner 拍板后补进 spec。
 - 门禁（format / lint / typecheck / test）由 git hooks（lefthook）和 CI 强制，对 Claude Code、Codex 和人一视同仁，不依赖 agent 自觉。
 - **Claude Code 与 Codex 交叉开发**：两边互不记得对方的会话，`plan.md` 是唯一的交接面。每次停下之前必须把"做完的 / 做到一半的（代码停在什么状态）/ 下一步"写进 `plan.md`；同一个 worktree 同一时间只让一个 agent 干活，并行用 `git worktree`。
 
