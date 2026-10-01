@@ -10,6 +10,7 @@ import {
   ZHIPU_DEFAULT_BASE_URL,
   anthropicDefinition,
   createMemoryTapeStore,
+  ollamaDefinition,
   zhipuDefinition,
 } from '../../src/index.js'
 import type { ModelInfo, Provider, SessionService, TapeEntry, TapeStore } from '../../src/index.js'
@@ -48,6 +49,7 @@ function textTurn(wire: Wire): readonly string[] {
 function wireProvider(
   wire: Wire,
   exchanges: readonly (readonly string[])[],
+  ollama = false,
 ): {
   provider: Provider
   net: FakeNetwork
@@ -61,15 +63,21 @@ function wireProvider(
       },
     },
   )
-  const definition = wire === 'anthropic-messages' ? anthropicDefinition : zhipuDefinition
+  const definition = ollama
+    ? ollamaDefinition
+    : wire === 'anthropic-messages'
+      ? anthropicDefinition
+      : zhipuDefinition
   const provider = definition.create({
     network: net,
     clock: { now: () => 0, setTimeout: () => () => undefined },
-    config: {
-      baseURL:
-        wire === 'anthropic-messages' ? 'https://api.anthropic.test' : ZHIPU_DEFAULT_BASE_URL,
-    },
-    secrets: { apiKey: 'test-key-not-a-real-credential' },
+    config: ollama
+      ? {}
+      : {
+          baseURL:
+            wire === 'anthropic-messages' ? 'https://api.anthropic.test' : ZHIPU_DEFAULT_BASE_URL,
+        },
+    secrets: ollama ? {} : { apiKey: 'test-key-not-a-real-credential' },
   })
   return { provider, net }
 }
@@ -209,6 +217,43 @@ describe('a model sent no tools (旧 36 ①, 旧 41)', () => {
     })
     expect(await send(h, 'hello')).toBe('completed')
     expect(z.net.requests[0]?.body as Record<string, unknown>).not.toHaveProperty('tools')
+  })
+
+  it('sends Ollama no tools key with tool blocks in the history, and the history still pairs (验收 35)', async () => {
+    const z = wireProvider('openai-chat', [
+      callTurn('openai-chat', 'call_o1'),
+      textTurn('openai-chat'),
+    ])
+    const o = wireProvider('openai-chat', [textTurn('openai-chat')], true)
+    const h = harness(z.provider, zhipuModel())
+    expect(await send(h, 'look first')).toBe('completed')
+    expect(z.net.requests[0]?.body).toHaveProperty('tools')
+    const ollama = ollamaDefinition.builtinModels[0]
+    if (ollama === undefined) throw new Error('no ollama row')
+    h.loop.connector.use({
+      provider: o.provider,
+      model: ollama,
+      toolsWithheld: 'provider-text-only',
+      mcpSources: [lookSource([])],
+    })
+    expect(await send(h, 'now on Ollama')).toBe('completed')
+    const last = o.net.requests.at(-1)?.body as Record<string, unknown>
+    expect(last).not.toHaveProperty('tools')
+    // The call and its result go back as they are, paired (checked on the fetch).
+    expect(last['messages']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          tool_calls: [expect.objectContaining({ id: 'call_o1' })],
+        }),
+        expect.objectContaining({ role: 'tool', tool_call_id: 'call_o1' }),
+      ]),
+    )
+    expect(o.net.checkFailures).toEqual([])
+    const withheld = (await entries(h.store)).filter(
+      (entry) => entry.name === 'view/tools_withheld',
+    )
+    expect(withheld.map((entry) => entry.payload['reason'])).toEqual(['provider-text-only'])
   })
 })
 

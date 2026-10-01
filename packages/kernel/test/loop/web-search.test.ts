@@ -4,6 +4,7 @@ import {
   createMemoryHost,
   createMemoryTapeStore,
   prepareZhipuSearchQuery,
+  zhipuSearchDefinition,
 } from '../../src/index.js'
 import type { ModelInfo, StreamEvent, SearchBackend, SearchHit } from '../../src/index.js'
 import {
@@ -11,11 +12,15 @@ import {
   createScriptedProvider,
   createTestLoopPorts,
   createTestSessionService,
+  fakeNetwork,
   scriptedTurn,
   stopEvent,
 } from '../../src/testing/index.js'
 import { SPILL_THRESHOLD_CHARS } from '../../src/loop/spill.js'
 import { searchDispatchCount } from '../../src/loop/batch.js'
+import { grantKey } from '../../src/permission/grants.js'
+import { fill } from '../../src/prompts/index.js'
+import { SEARCH_TEXTS } from '../../src/tools/builtin/web-search.js'
 
 const SESSION = '7c4e9a2e-6b3d-4a71-9f52-0c8de7a11b37'
 const IDENTITY = { userId: 'fetch', tenantId: 'fetch', profileDir: '/tenon/fetch' }
@@ -171,6 +176,49 @@ describe('WebSearch approval, dispatch and persistence', () => {
     })
     expect(facts.filter((e) => e.name === 'execution/dispatch_committed')).toHaveLength(1)
   })
+  it('stores the session grant under grantKey’s search key for the backend host (验收 49)', async () => {
+    const search = backend('open.bigmodel.cn')
+    const h = harness(search)
+    await start(h, 'query')
+    h.provider.script(done())
+    await allow(h)
+    expect(
+      (await all(h)).find((e) => e.name === 'tool/approval_resolved')?.payload['grant'],
+    ).toEqual({
+      scope: 'session',
+      key: grantKey('builtin', 'WebSearch', { kind: 'search', host: search.host }),
+    })
+  })
+  it.each(['1701', '1702', '1703'])(
+    'returns Zhipu search error %s to the model as is_error, after one request (验收 48)',
+    async (code) => {
+      const network = fakeNetwork([
+        { kind: 'json', body: { error: { code: Number(code), message: 'bad query' } } },
+      ])
+      const h = harness(zhipuSearchDefinition.create({ network, secrets: { apiKey: 'key' } }))
+      await start(h, 'query')
+      h.provider.script(done())
+      expect((await allow(h)).reason).toEqual({ code: 'completed' })
+      const facts = await all(h)
+      expect(facts.find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+        isError: true,
+        content: [
+          { type: 'text', text: fill(SEARCH_TEXTS.failed, { code, message: 'bad query' }) },
+        ],
+      })
+      expect(facts.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+        state: 'completed',
+        source: null,
+      })
+      const sent = h.provider.requests.at(-1)?.body as { messages: { content: unknown }[] }
+      expect(sent.messages.at(-1)?.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'tool_result', tool_use_id: 'fetch0', is_error: true }),
+        ]),
+      )
+      expect(network.requests).toHaveLength(1)
+    },
+  )
   it.each(['host', 'query'] as const)(
     'invalidates an old card when %s changes before allow',
     async (what) => {

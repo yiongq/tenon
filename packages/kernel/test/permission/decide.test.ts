@@ -554,16 +554,21 @@ describe('the spec’s two worked examples (旧 152)', () => {
 })
 
 describe('F9 and the auto mode', () => {
-  it('02 不变量 18: asks or denies on an inspector even under a session grant or always-allow', () => {
-    for (const over of [
-      { sessionGrant: SESSION_GRANT },
-      { userSetting: 'always-allow' as const },
-    ]) {
-      expect(verdictOf(run(builtin('WebFetch'), over, undefined, [ask('ex')]))).toEqual([
+  it('02 不变量 18: asks or denies on an inspector even under a session, domain or search grant, or always-allow', () => {
+    // 不变量 18: 本会话授权、域名授权或总是允许在场时，inspector 说问就出卡、说拒就拒.
+    for (const [tool, over] of [
+      ['WebFetch', { sessionGrant: SESSION_GRANT }],
+      ['WebFetch', { sessionGrant: { ...SESSION_GRANT, kind: 'session-domain' as const } }],
+      ['WebSearch', { sessionGrant: { ...SESSION_GRANT, kind: 'session-search' as const } }],
+      ['WebFetch', { userSetting: 'always-allow' as const }],
+    ] as const) {
+      // The grant alone lets the call through; only the inspector holds it back.
+      expect(verdictOf(run(builtin(tool), over))[0]).toBe('allow')
+      expect(verdictOf(run(builtin(tool), over, undefined, [ask('ex')]))).toEqual([
         'ask',
         'inspector',
       ])
-      expect(verdictOf(run(builtin('WebFetch'), over, undefined, [deny('strict')]))).toEqual([
+      expect(verdictOf(run(builtin(tool), over, undefined, [deny('strict')]))).toEqual([
         'deny',
         'inspector',
       ])
