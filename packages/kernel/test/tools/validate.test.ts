@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
 import type { BuiltinToolName } from '../../src/tools/builtin/tool.js'
+import { ASK_NOT_UNIQUE } from '../../src/tools/builtin/ask-user-question.js'
 import { EDIT_SAME_STRINGS } from '../../src/tools/builtin/edit.js'
 import { WEB_SEARCH_BOTH_DOMAIN_LISTS } from '../../src/tools/builtin/web-search.js'
 import { createArgumentValidator } from '../../src/tools/validate.js'
@@ -30,7 +31,7 @@ function connector(inputSchema: Record<string, unknown>) {
 
 function question(header: string, options = 2): Record<string, unknown> {
   return {
-    question: 'Which one?',
+    question: `Which ${header}?`,
     header,
     options: Array.from({ length: options }, (_, i) => ({ label: `o${i}`, description: '' })),
     multiSelect: false,
@@ -104,6 +105,16 @@ describe('builtin arguments', () => {
     expect(ask([question('😀'.repeat(12))])).toBe(true)
     expect(ask([question('😀'.repeat(13))])).toBe(false)
     expect(ask([question('x'.repeat(13))])).toBe(false)
+    // An answer is keyed by its question and its labels, so neither may repeat (Revisions 31).
+    const same = { ...question('b'), question: 'Which a?' }
+    expect(
+      validator.check(builtin('AskUserQuestion'), { questions: [question('a'), same] }),
+    ).toEqual({ ok: false, source: 'invalid-input', reason: ASK_NOT_UNIQUE })
+    const twice = [
+      { label: 'o0', description: '' },
+      { label: 'o0', description: 'again' },
+    ]
+    expect(ask([{ ...question('a'), options: twice }])).toBe(false)
   })
 })
 

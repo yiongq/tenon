@@ -111,7 +111,12 @@ import type { Resumable } from './recovery.js'
 import { RunWriteRefusedError, closedView, placeOf, readSessionEntries } from './batch.js'
 import { approvalOf } from './calls.js'
 import type { Written, AgentDispatch, AgentDispatchResult } from './batch.js'
-import { buildSubagentHandoff, handoffText, subagentElapsedFromTape } from './subagent.js'
+import {
+  buildSubagentHandoff,
+  handoffText,
+  storedHandoff,
+  subagentElapsedFromTape,
+} from './subagent.js'
 import { SUBAGENT_STEP_LIMIT, SUBAGENT_TOKEN_LIMIT, SUBAGENT_DEADLINE_MS } from './limits.js'
 import { notRunFacts, resultFacts } from './closure.js'
 import { spillChecked } from './spill.js'
@@ -1960,26 +1965,26 @@ export function createLoop(deps: LoopDeps): Loop {
     outcome?: 'aborted' | 'superseded' | 'uncertain',
     source: 'stopped' | 'app-exit' | 'superseded' | 'crashed' | null = null,
   ): Promise<{ entries: NewEntry[]; handoff: SubagentHandoff }> {
-    const handoff = buildSubagentHandoff(childEntries, {
+    const built = buildSubagentHandoff(childEntries, {
       childSessionId: link.child.sessionId,
       ...(outcome === undefined ? {} : { outcome }),
     })
     const isError =
-      handoff.outcome === 'aborted' ||
-      handoff.outcome === 'superseded' ||
-      handoff.outcome === 'uncertain'
+      built.outcome === 'aborted' || built.outcome === 'superseded' || built.outcome === 'uncertain'
     const checked = await spillChecked({
       fs: deps.host.fs,
       profileDir: deps.host.identity.profileDir as AbsolutePath,
       sessionId: parentSessionId,
       call: link,
       result: {
-        content: [{ type: 'text', text: handoffText(handoff) }],
+        content: [{ type: 'text', text: handoffText(built) }],
         isError,
         kernelAuthored: true,
       },
       log: deps.log,
     })
+    // Past the threshold the reply's full text is the spill file's alone (H9; Revisions 31).
+    const handoff = storedHandoff(built, checked.mark)
     return {
       handoff,
       entries: resultFacts({
@@ -2147,7 +2152,7 @@ export function createLoop(deps: LoopDeps): Loop {
     )
     if (!stopped && lease.signal.aborted) {
       // The original spill is immutable; rebuilding an aborted result safely falls back to the
-      // failure preview if that file already exists, while retaining the full audit handoff.
+      // failure preview if that file already exists, and its handoff's reply is cut as `unsaved`.
       result = await handoffFacts(
         link,
         box.rootSessionId,

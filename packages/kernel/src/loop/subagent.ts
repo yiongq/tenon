@@ -19,15 +19,18 @@ import type {
 } from '../tape/entry.js'
 import { effectiveMessages } from '../tape/replay.js'
 import type { ClosureSource, ExecutionState } from './closure.js'
+import { factText } from './spill.js'
+import type { SpillMark } from './spill.js'
 import type { RunEndReason } from './terminal.js'
 
 export interface SubagentHandoff {
   readonly childSessionId: string
   readonly outcome: 'completed' | 'partial' | 'aborted' | 'superseded' | 'uncertain'
   readonly childEndReason: RunEndReason['code'] | null // 子会话最后一个 Run 的结束原因；子会话停在等待上时被停止或取代，记 null
-  readonly finalReply: string // 子会话最后一条 message/assistant 的文本块原样拼接，没有就是 ''
+  readonly finalReply: string // 子会话最后一条 message/assistant 的文本块原样拼接，没有就是 ''；结果过阈值时只存开头（H9）
   readonly calls: readonly HandoffCall[] // 子会话的每个工具调用各占一行，按 Tape 顺序
   readonly usage: readonly RunUsageLine[] // 子会话各 Run 的 run_terminal.usage，按 (providerId, modelId) 合并，origin 为 'own'
+  readonly preview?: SpillMark // finalReply 被截成开头时才有：全文在落盘文件（spilled）或没存下（unsaved）（Revisions 31）
 }
 
 export interface HandoffCall {
@@ -203,4 +206,19 @@ export function handoffText(handoff: SubagentHandoff): string {
         .join('\n'),
     )
   return parts.join('\n\n')
+}
+
+/**
+ * The handoff as its `tool/result` stores it (H9 has no exception: Revisions 31). While the Agent
+ * result stays under the spill threshold, as built; past it, the full text is the spill file's
+ * alone, so `finalReply` keeps its first `SPILL_PREVIEW_CHARS` characters and `preview` says where
+ * the rest is. `calls` and `usage` stay whole: a row per child call and per model.
+ */
+export function storedHandoff(
+  handoff: SubagentHandoff,
+  mark: SpillMark | undefined,
+): SubagentHandoff {
+  const kept = factText(handoff.finalReply, mark)
+  if (!kept.cut || mark === undefined) return handoff
+  return { ...handoff, finalReply: kept.text, preview: mark }
 }

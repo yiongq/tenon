@@ -2,18 +2,20 @@
  * AskUserQuestion (spec 02 §提问工具 AskUserQuestion). The limits follow the Agent SDK
  * (sdk-tools:1102-1110, :3759-3766); a header counts Unicode code points, which is Tenon's reading of
  * the SDK's "max 12 chars" — JSON Schema's `maxLength` counts code points too. The schema holds every
- * limit (1–4 questions, 2–4 options, a header of 12 code points), so a call past one closes as
- * `invalid-input` before any decision (§参数校验与失败).
+ * limit (1–4 questions, 2–4 options, a header of 12 code points), and the check the SDK's uniqueness,
+ * so a call past one closes as `invalid-input` before any decision (§参数校验与失败).
  *
  * It has no executor (plan step 26): an allowed call pauses its Run for the answer (H6), and the
  * answer is written as its result. What the model reads is the fixed template of `MODEL_NOTES.ask`,
  * one `ANSWER_LINE` per question, filled once and stored (A13); what the summary card reads is the
  * `AskAnswerRecord` written with it (open question 18).
  */
+import { factText } from '../../loop/spill.js'
+import type { SpillMark } from '../../loop/spill.js'
 import { MODEL_NOTES, fill } from '../../prompts/index.js'
 import type { AskAnswerRecord } from '../../tape/entry.js'
 import type { BuiltinTool } from './tool.js'
-import { BOTH_PROFILES, noChecks } from './tool.js'
+import { BOTH_PROFILES } from './tool.js'
 
 /** The input the schema below describes. */
 export interface AskUserQuestionInput {
@@ -43,6 +45,26 @@ const DESCRIPTION = [
  * as a JSON string, so a line break typed into 「其他」 cannot make a line of its own.
  */
 export const ANSWER_LINE = '{question} = {answer}'
+
+/** The Agent SDK's own reason, word for word: an answer is keyed by its question and its labels. */
+export const ASK_NOT_UNIQUE =
+  'Question texts must be unique, option labels must be unique within each question.'
+
+/**
+ * The check beyond the schema (§提问工具; Revisions 31): two questions with one text would share one
+ * answer, and two options with one label one pick, so either is `invalid-input`, as the Agent SDK
+ * refuses it. Only called on arguments the schema accepted.
+ */
+function uniqueChecks(args: Readonly<Record<string, unknown>>): string | null {
+  const questions = args['questions'] as AskUserQuestionInput['questions']
+  const texts = questions.map((question) => question.question)
+  if (new Set(texts).size < texts.length) return ASK_NOT_UNIQUE
+  for (const question of questions) {
+    const labels = question.options.map((option) => option.label)
+    if (new Set(labels).size < labels.length) return ASK_NOT_UNIQUE
+  }
+  return null
+}
 
 export const ASK_USER_QUESTION_TOOL: BuiltinTool = {
   name: 'AskUserQuestion',
@@ -101,8 +123,8 @@ export const ASK_USER_QUESTION_TOOL: BuiltinTool = {
   // 暂定 (§内置工具与参数, owner 2026-09-25).
   effect: 'read',
   profiles: BOTH_PROFILES,
-  check: noChecks,
-  texts: { answerLine: ANSWER_LINE },
+  check: uniqueChecks,
+  texts: { answerLine: ANSWER_LINE, notUnique: ASK_NOT_UNIQUE },
 }
 
 /** `approval.respond`'s answers (§答复与投递): by question text; null is a skipped question. */
@@ -168,6 +190,36 @@ export function typedReply(text: string): AskReply {
     record: { answers: {}, response: text },
     source: 'typed-answer',
   }
+}
+
+/**
+ * The record as its `tool/result` stores it (H9 has no exception: Revisions 31). While the result
+ * stays under the spill threshold, as given; past it, the full answer is the spill file's alone, so
+ * each answer — a label, the words in 「其他」, a typed reply — keeps its first `SPILL_PREVIEW_CHARS`
+ * characters, and `preview` says where the rest is. The question texts, its keys, stay whole: they
+ * are the call's own input.
+ */
+export function storedRecord(
+  record: AskAnswerRecord,
+  mark: SpillMark | undefined,
+): AskAnswerRecord {
+  if (mark === undefined) return record
+  let cut = false
+  const keep = (text: string): string => {
+    const kept = factText(text, mark)
+    cut ||= kept.cut
+    return kept.text
+  }
+  const stored: AskAnswerRecord = {
+    answers: Object.fromEntries(
+      Object.entries(record.answers).map(([question, labels]) => [
+        question,
+        labels === null ? null : labels.map(keep),
+      ]),
+    ),
+    ...(record.response === undefined ? {} : { response: keep(record.response) }),
+  }
+  return cut ? { ...stored, preview: mark } : record
 }
 
 /** `AskUserQuestionResult` through the fixed template (§提问工具「回给模型」): what the model reads. */

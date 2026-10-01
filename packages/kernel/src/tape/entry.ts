@@ -12,7 +12,7 @@
  */
 import type { AbsolutePath, ConfirmRequest, ConfirmTarget, Reversibility } from '../host/adapter.js'
 import type { ClosureSource, ExecutionState } from '../loop/closure.js'
-import type { SpillRecord } from '../loop/spill.js'
+import type { SpillMark, SpillRecord } from '../loop/spill.js'
 import type { SubagentHandoff } from '../loop/subagent.js'
 import type { RunEndReason } from '../loop/terminal.js'
 import type { Decision } from '../permission/decide.js'
@@ -391,11 +391,13 @@ export type ApprovalResolvedPayload = CallRef & {
  * The ask summary card's data (spec 02 §提问工具 AskUserQuestion; open question 18): the same shape
  * as `approval.respond`'s question request, written by the resolver in the same batch as the
  * content. Only the approval.respond path fills an unanswered question with null; a typed reply
- * keeps `answers` as {} and its text in `response`.
+ * keeps `answers` as {} and its text in `response`. Past the spill threshold the record keeps only
+ * the start of each answer, and `preview` says where the full text is (H9; Revisions 31).
  */
 export interface AskAnswerRecord {
   answers: Record<string, string[] | null> // 键为题目原文；null = 跳过
   response?: string
+  preview?: SpillMark // 结果过了 SPILL_THRESHOLD_CHARS、有回答被截成开头时才有（H9，Revisions 31）
 }
 
 export type ToolResultPayload = CallRef & {

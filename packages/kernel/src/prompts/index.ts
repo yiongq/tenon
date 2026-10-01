@@ -322,4 +322,4 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
 export const PROMPT_LAYER_VERSION = 8
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = 'c483d606ca52cd19eaa008afd4e0cb6c58b4bafc93dee0c110d33db636fb5fd0'
+export const PROMPT_LAYER_HASH = '10862cde7511727be9843ebc06443903fc21cc5361a6173fa2df21453509469d'

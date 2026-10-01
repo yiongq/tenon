@@ -14,6 +14,7 @@ import type {
   ToolOutcomePayload,
   ToolResultPayload,
 } from '../tape/entry.js'
+import { handoffView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
 export interface RowCall {
@@ -104,6 +105,8 @@ function viewOf(
     ...(resolution === undefined || target === undefined
       ? {}
       : { approval: approvalOf(resolution, target) }),
+    // An Agent call's handoff, for its row's expansion, as live (open question 18).
+    ...(result.handoff === undefined ? {} : { handoff: handoffView(result.handoff) }),
     // An answered question's record, for the summary card (open question 18).
     ...(result.question === undefined ? {} : { question: result.question }),
   }

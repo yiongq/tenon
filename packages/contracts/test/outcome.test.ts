@@ -159,7 +159,7 @@ describe('ipc/outcome.ts', () => {
   it('refuses a handoff that names no child session (01 修补 6: childSessionId min(1))', () => {
     const handoff = (childSessionId: string) => ({
       ...ASKED,
-      handoff: { outcome: 'aborted', childEndReason: null, childSessionId },
+      handoff: { outcome: 'aborted', childEndReason: null, childSessionId, finalReply: '' },
     })
     expect(toolOutcomeViewSchema.safeParse(handoff(SESSION)).success).toBe(true)
     expect(toolOutcomeViewSchema.safeParse(handoff('')).success).toBe(false)
@@ -170,6 +170,32 @@ describe('ipc/outcome.ts', () => {
       providerToolCallId: 't',
     }
     expect(chatEventSchema.safeParse({ ...event, ...handoff('') }).success).toBe(false)
+  })
+
+  it('carries the start a long handoff or answer kept, and where the rest is (H9; Revisions 31)', () => {
+    const handoff = { outcome: 'completed', childEndReason: 'completed', childSessionId: SESSION }
+    const view = (extra: Record<string, unknown>) => ({ ...ASKED, ...extra })
+    for (const preview of ['spilled', 'unsaved']) {
+      expect(
+        toolOutcomeViewSchema.safeParse(view({ handoff: { ...handoff, finalReply: 'a', preview } }))
+          .success,
+      ).toBe(true)
+      expect(
+        toolOutcomeViewSchema.safeParse(view({ question: { answers: {}, response: 'a', preview } }))
+          .success,
+      ).toBe(true)
+    }
+    // The reply is the expansion's text: a handoff never crosses without it.
+    expect(toolOutcomeViewSchema.safeParse(view({ handoff })).success).toBe(false)
+    expect(
+      toolOutcomeViewSchema.safeParse(
+        view({ handoff: { ...handoff, finalReply: 'a', preview: 'lost' } }),
+      ).success,
+    ).toBe(false)
+    expect(
+      toolOutcomeViewSchema.safeParse(view({ question: { answers: {}, preview: undefined } }))
+        .success,
+    ).toBe(false)
   })
 
   it('keeps optional members exact, and the answer’s scope to the two a card gives', () => {

@@ -82,6 +82,7 @@ import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause } from './ports.js'
+import { handoffView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
 /** One complete client call of a reply, as `tool/call` records it. */
@@ -957,7 +958,7 @@ export function closedView(
     ...(permission === undefined ? {} : { permission }),
     ...(result['handoff'] === undefined
       ? {}
-      : { handoff: result['handoff'] as NonNullable<ToolOutcomeView['handoff']> }),
+      : { handoff: handoffView(result['handoff'] as SubagentHandoff) }),
     ...(result['question'] === undefined
       ? {}
       : { question: result['question'] as NonNullable<ToolOutcomeView['question']> }),

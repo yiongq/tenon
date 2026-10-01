@@ -19,10 +19,15 @@ export interface AskQuestion {
   readonly multiSelect: boolean
 }
 
-/** `AskAnswerRecord` (§提问工具): keyed by the question's own text; null = skipped. */
+/**
+ * `AskAnswerRecord` (§提问工具): keyed by the question's own text; null = skipped. `preview` is set
+ * when a long answer was kept only to its start (H9; Revisions 31): `spilled`, the full text is in
+ * the session's spill file; `unsaved`, that write failed.
+ */
 export interface AskAnswers {
   readonly answers: Readonly<Record<string, readonly string[] | null>>
   readonly response?: string
+  readonly preview?: 'spilled' | 'unsaved'
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -139,6 +144,8 @@ export interface AskSummary {
   readonly rows: ReadonlyArray<{ readonly question: AskQuestion; readonly answer: SummaryAnswer }>
   /** The reply typed in the composer, as typed (`response`); null when the widget answered. */
   readonly response: string | null
+  /** A long answer the result kept only to its start, and where its full text is; null when whole. */
+  readonly preview: 'spilled' | 'unsaved' | null
 }
 
 /**
@@ -147,6 +154,7 @@ export interface AskSummary {
  * `unanswered` shows 「未作答」 on every question. `answered` is this window's own record of an answer
  * it gave, for the moment before the call's outcome arrives. Null when there is nothing to sum up:
  * no answer yet, or a result that is neither an answer nor a stop (the row's closure line says why).
+ * A record whose long answers were kept only to their start says so in `preview` (H9).
  */
 export function summaryOf(
   questions: readonly AskQuestion[],
@@ -157,6 +165,7 @@ export function summaryOf(
     return {
       rows: questions.map((question) => ({ question, answer: { kind: 'unanswered' } })),
       response: null,
+      preview: null,
     }
   }
   // A result of one of the three answers (§原因码表: source null, `no-preference`, `typed-answer`)
@@ -168,10 +177,12 @@ export function summaryOf(
     outcome.source === 'typed-answer'
   const record = outcome?.question ?? (answerSource ? answered : null)
   if (record === null) return null
+  const preview = record.preview ?? null
   if (record.response !== undefined) {
     return {
       rows: questions.map((question) => ({ question, answer: { kind: 'typed' } })),
       response: record.response,
+      preview,
     }
   }
   return {
@@ -188,5 +199,6 @@ export function summaryOf(
       }
     }),
     response: null,
+    preview,
   }
 }

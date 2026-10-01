@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Page } from '@playwright/test'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
   callsReply,
@@ -113,6 +115,69 @@ test('a child’s cards stay under its parent row and its handoff survives resta
       await expect(third.page.getByTestId('approval-card')).toHaveCount(0)
     } finally {
       await third.app.close()
+    }
+  } finally {
+    await fake.close()
+    folders.dispose()
+  }
+})
+
+// H9 for everyone (Revisions 31, owner 2026-10-01): a long handoff is the spill file's alone.
+test('a long handoff shows only its start when expanded, and says where the full text is, after a restart too', async () => {
+  test.setTimeout(90_000)
+  const folders = makeFolderTree('subagent-long', { 'ws/context.txt': 'parent context' })
+  const reply = 'child evidence line '.repeat(2400)
+  const start = reply.slice(0, 2000)
+  const note =
+    'Too long to keep here in full, so this is only the start. The full text is in a file Tenon saved for this session, which the model can read.'
+  const fake = await startFakeAnthropic({
+    replies: [
+      callsReply({
+        type: 'tool_use',
+        id: 'toolu_agent',
+        name: 'Agent',
+        input: { description: 'Collect the evidence', prompt: 'Collect it all.' },
+      }),
+      textReply(reply),
+      textReply('Parent read the handoff.'),
+    ],
+  })
+  const userData = makeUserDataDir('subagent-long')
+  seedConfig(userData, { locale: 'en' })
+  const expanded = async (page: Page) => {
+    const row = page.getByTestId('tool-row').filter({ hasText: 'Collect the evidence' })
+    await row.getByTestId('tool-row-line').click()
+    await expect(row.getByTestId('tool-row-preview')).toHaveText(note)
+    // The output is the reply's start, not the model's English note with the file's path.
+    expect(await row.getByTestId('tool-row-details').locator('pre').nth(1).textContent()).toBe(
+      start,
+    )
+  }
+  try {
+    const first = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await startTask(first.app, first.page, join(folders.real, 'ws'))
+      await send(first.page, 'Delegate the evidence collection.')
+      await expect(first.page.getByTestId('assistant-text').last()).toHaveText(
+        'Parent read the handoff.',
+      )
+      await expanded(first.page)
+    } finally {
+      await first.app.close()
+    }
+    const facts = tapeFacts(userData)
+    const [result] = named(facts, 'tool/result')
+    expect(result?.payload['handoff']).toMatchObject({ finalReply: start, preview: 'spilled' })
+    // Only the child's own assistant message holds the reply; no tool result does.
+    expect(
+      facts.filter((fact) => JSON.stringify(fact.payload).includes(reply)).map((f) => f.name),
+    ).toEqual(['message/assistant'])
+
+    const again = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await expanded(again.page)
+    } finally {
+      await again.app.close()
     }
   } finally {
     await fake.close()
