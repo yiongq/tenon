@@ -15,7 +15,7 @@
 
 ## 步骤
 
-- [ ] 1. 核对文档同步已落地（起草时做的）：AGENTS.md:7、:9 与 docs/spec-driven-dev.md:62 的开工规则，spec-driven-dev.md:5、:64 的措辞；01、02 顶部的 `Amended by`；ADR-003 的勘误行。只核对，不重复改。
+- [x] 1. 核对文档同步已落地（起草时做的）：AGENTS.md:7、:9 与 docs/spec-driven-dev.md:62 的开工规则，spec-driven-dev.md:5、:64 的措辞；01、02 顶部的 `Amended by`；ADR-003 的勘误行。只核对，不重复改。
   - 测试要点：`git diff e6c7bf5 -- AGENTS.md docs/spec-driven-dev.md docs/architecture/01-provider-and-tape/spec.md docs/architecture/02-agent-loop/spec.md docs/adr/adr-003-provider-layer.md`：01、02 各只多一行，ADR-003 只多一行，spec-driven-dev.md 只动 :5、:62、:64（验收 31）。
 - [ ] 2. 只增的类型与契约（spec §对 01 的修补 1、2、4、5，§对 02 的修补 1–4）：`ModelInfo.maxTokensField`、`checksThinkingPrefix`；`ProviderDefinition.maxToolsPerRequest`；`CapabilitySource`、`ToolsWithheldPayload.reason`、`RunAssembly.toolsWithheld` 只增值；`RunConnector.toolsPerRequest?`；contracts 的 `modelMarkSchema`、`providerEntrySchema`、`providerWriteErrorCodeSchema`、`configSchema.customVendors`、新文件 `ipc/custom-vendor.ts` 的 schema 与路由定义（还不注册）。加 `probed` 的同一步补两份 locale 的 `model.mark.probed`、`model.mark.unprobed`，copy-coverage 的行标记表改成 4 个（apps/desktop/test/copy-coverage.test.ts:386-387）；加两个写入码的同一步补 ProviderSettings.tsx:404-412 的 `ERROR_KEY` 与两份 locale 的 `settings.providers.error.officialHostOnly`、`settings.providers.error.subscriptionEndpoint`。
   - 测试要点：contracts 与 kernel 的类型互赋测试补 `ProbeSnapshot`、`CapabilitySource`、wire 联合；contracts 的 `CUSTOM_ID_REGEX` 与 kernel 的 `CUSTOM_PROVIDER_ID_PATTERN` 逐字相同；旧 config.json 解析出 `customVendors: []`（验收 11 的前半；坏条目只丢自己的后半在第 5 步）。
@@ -45,7 +45,7 @@
 
 ## 实施记录
 
-（开工后按步追加。）
+- **第 1 步（2026-10-02）**：`git diff e6c7bf5` 核对：01、02、ADR-003 各多一行，spec-driven-dev.md 只动 :5、:62、:64，AGENTS.md 只动 :7、:9（验收 31 的文档部分）。分支 `feat/m6-seg1`（第 2–4 步）。
 
 ## Open
 
