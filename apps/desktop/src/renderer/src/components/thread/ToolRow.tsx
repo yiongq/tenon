@@ -115,8 +115,9 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             <>
               <p className="text-micro text-text-muted">{t('tool.output')}</p>
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary">
-                {/* A handoff past the spill threshold: the start of the sub-agent's reply the Tape
-                    kept, not the model's English note about the file (H9). */}
+                {/* A handoff whose reply was cut (`preview`): the start of the sub-agent's reply the
+                    Tape kept, not the model's English note about the file (H9). One spilled only by
+                    its call lines kept the reply whole and shows its output like any tool's. */}
                 {props.toolName === 'Agent'
                   ? visible(
                       outcome.handoff?.preview === undefined

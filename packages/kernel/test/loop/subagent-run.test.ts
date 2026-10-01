@@ -43,7 +43,11 @@ function call(name: string, input: Record<string, unknown>, id = 'tool1'): Strea
     stopEvent('tool-use', 'tool_use'),
   ]
 }
-function harness(tokenLimit?: number, onEvent?: (event: SessionEvent) => void) {
+function harness(
+  tokenLimit?: number,
+  onEvent?: (event: SessionEvent) => void,
+  agent: 'real' | 'fake' = 'real',
+) {
   const host = createMemoryHost()
   const store = createMemoryTapeStore({ identity: host.identity })
   const provider = createScriptedProvider({ models: [MODEL] })
@@ -62,7 +66,7 @@ function harness(tokenLimit?: number, onEvent?: (event: SessionEvent) => void) {
       protectedFiles: [],
       log: (line) => logs.push(line),
     },
-    { tools: { Agent: 'real' }, ...(tokenLimit === undefined ? {} : { tokenLimit }) },
+    { tools: { Agent: agent }, ...(tokenLimit === undefined ? {} : { tokenLimit }) },
   )
   service.bindLoop(loop)
   return { host, store, provider, loop, service, logs }
@@ -208,6 +212,65 @@ it('spills a long handoff: the Agent result and its handoff keep only the start'
   ).toMatchObject({ outcome: { handoff: view } })
   const rows = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
   expect(rows.flatMap((row) => row.calls ?? []).map((c) => c.outcome?.handoff)).toContainEqual(view)
+})
+
+// `preview` marks a reply cut to its start (Revisions 31, §交接「长交接」). An Agent result past the
+// threshold only by its call lines keeps its short reply whole and has no `preview`, so its row
+// shows the result's content, the spill note, as any other spilled tool's row does.
+it('spills a handoff long only by its call lines: the short reply stays whole, without preview', async () => {
+  const h = harness()
+  await setup(h)
+  const content = 'unwritten evidence '.repeat(1700)
+  h.provider.script(call('Agent', { description: 'write task', prompt: 'write the fixture' }))
+  // The child's budget stops the Write before it is judged: the call's target is unresolved, with
+  // the whole input in it.
+  h.provider.script([
+    { type: 'text-delta', index: 3, text: 'I could not finish.' },
+    ...call('Write', { file_path: '/work/a', content }).map((event) =>
+      event.type === 'usage'
+        ? { type: 'usage' as const, usage: { ...usage, inputTokens: 500001 } }
+        : event,
+    ),
+  ])
+  h.provider.script(scriptedTurn({ deltas: ['parent answer'], usage }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'delegate write' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'completed' })
+  expect(h.logs).toEqual([])
+
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  const result = parent.find((entry) => entry.name === 'tool/result' && entry.payload['handoff'])!
+  const handoff = result.payload['handoff'] as { calls: { target: string }[] }
+  expect(handoff).toMatchObject({
+    outcome: 'partial',
+    childEndReason: 'usage-limit',
+    finalReply: 'I could not finish.',
+    calls: [{ toolName: 'Write', state: 'not-run', source: 'usage-limit' }],
+  })
+  expect(handoff.calls[0]!.target).toContain(content)
+  expect(handoff).not.toHaveProperty('preview')
+  expect(result.payload['spill']).toMatchObject({ bytes: expect.any(Number) })
+  const output = (result.payload['content'] as { type: string; text?: string }[])
+    .map((block) => block.text ?? '')
+    .join('')
+  expect(output).toContain('tool-output')
+  // Live and redrawn, the view has no preview and its output is the spill note.
+  const live = h.loop.recorded.find(
+    (e) => e.type === 'tool-outcome' && e.outcome.handoff !== undefined,
+  )
+  expect(live).toMatchObject({ outcome: { output } })
+  const rows = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+  const redrawn = rows.flatMap((row) => row.calls ?? []).find((c) => c.outcome?.handoff)
+  expect(redrawn?.outcome?.output).toBe(output)
+  for (const view of [
+    live?.type === 'tool-outcome' ? live.outcome.handoff : undefined,
+    redrawn?.outcome?.handoff,
+  ])
+    expect(view).toEqual({
+      outcome: 'partial',
+      childEndReason: 'usage-limit',
+      childSessionId: expect.any(String),
+      finalReply: 'I could not finish.',
+    })
 })
 
 it.each(['allow', 'deny'] as const)(
@@ -392,55 +455,95 @@ it('rechecks stop after a child own-lease completed terminal commits and sends n
   expect(parent.filter((e) => e.name === 'execution/run_started')).toHaveLength(1)
 })
 
-it('rechecks stop before a borrowed-lease child handoff is written and hands off aborted', async () => {
-  const h = harness()
-  await setup(h)
-  h.provider.script(call('Agent', { description: 'check task', prompt: 'child' }))
-  h.provider.script(scriptedTurn({ deltas: ['committed child answer'], usage }))
-  let committed = false
-  let stopped: boolean | null = null
-  const append = h.store.append.bind(h.store)
-  h.store.append = async (batch) => {
-    const written = await append(batch)
-    if (
-      batch.sessionId !== SESSION &&
-      batch.entries.some(
-        (e) =>
-          e.name === 'execution/run_terminal' &&
-          (e.payload['reason'] as { code: string }).code === 'completed',
+// Both ends a child commits (`completed`, and `partial` by its step limit), at both Agent sites:
+// judged in the batch, and allowed on a card the tenant policy raised (layer 1 asks). 02's product
+// never asks about Agent (spec 02 open question 15 leaves that card to 6b): its re-judgement finds
+// no builtin executor and closes the call tool-unavailable. The test registry's fake Agent passes
+// that re-judgement, and the resumed batch still runs the child, so the approved site is reached.
+it.each([
+  { end: 'completed', site: 'judged' },
+  { end: 'step-limit', site: 'judged' },
+  { end: 'completed', site: 'approved' },
+  { end: 'step-limit', site: 'approved' },
+] as const)(
+  'rechecks stop before a borrowed-lease child handoff is written and hands off aborted (child $end, $site Agent)',
+  async ({ end, site }) => {
+    const h = harness(undefined, undefined, site === 'approved' ? 'fake' : 'real')
+    await setup(h)
+    if (site === 'approved')
+      h.host.setPolicy({
+        status: 'current',
+        version: 'v1',
+        snapshot: {
+          tools: [{ policyId: 'p1', serverId: 'builtin', toolName: 'Agent', effect: 'ask' }],
+        },
+      })
+    h.provider.script(call('Agent', { description: 'check task', prompt: 'child' }))
+    if (end === 'completed')
+      h.provider.script(scriptedTurn({ deltas: ['committed child answer'], usage }))
+    else
+      for (let i = 0; i < 31; i += 1)
+        h.provider.script(call('Read', { file_path: `/work/file-${i}` }))
+    let committed = false
+    let stopped: boolean | null = null
+    const append = h.store.append.bind(h.store)
+    h.store.append = async (batch) => {
+      const written = await append(batch)
+      if (
+        batch.sessionId !== SESSION &&
+        batch.entries.some(
+          (e) =>
+            e.name === 'execution/run_terminal' &&
+            (e.payload['reason'] as { code: string }).code === end,
+        )
       )
-    )
-      committed = true
-    return written
-  }
-  // The parent Run's first read of its own Tape once the child handed off: past the child's own
-  // re-check, before the parent's write of the handoff.
-  const readRange = h.store.readRange.bind(h.store)
-  h.store.readRange = async (q) => {
-    if (committed && stopped === null && q.sessionId === SESSION)
-      stopped = (await h.service.stop({ rootSessionId: SESSION })).stopped
-    return readRange(q)
-  }
-  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
-  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'user-stopped' })
-  expect(stopped).toBe(true)
-  expect(h.provider.starts).toBe(2)
-  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
-  expect(parent.find((e) => e.name === 'tool/result')?.payload).toMatchObject({
-    isError: true,
-    handoff: {
-      outcome: 'aborted',
-      childEndReason: 'completed',
-      finalReply: 'committed child answer',
-    },
-  })
-  expect(parent.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
-    state: 'aborted',
-    source: 'stopped',
-  })
-  expect(parent.filter((e) => e.name === 'tool/result')).toHaveLength(1)
-  expect(h.logs).toEqual([])
-})
+        committed = true
+      return written
+    }
+    // The parent Run's first read of its own Tape once the child handed off: past the child's own
+    // re-check, before the parent's write of the handoff.
+    const readRange = h.store.readRange.bind(h.store)
+    h.store.readRange = async (q) => {
+      if (committed && stopped === null && q.sessionId === SESSION)
+        stopped = (await h.service.stop({ rootSessionId: SESSION })).stopped
+      return readRange(q)
+    }
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+    let ended = await rootEnd(h.loop)
+    if (site === 'approved') {
+      // The Agent call's own card, in the parent: allowing it runs the child.
+      const pending = await h.service.currentPending({ sessionId: SESSION })
+      if (pending?.waitKind !== 'approval' || pending.card.sessionId !== SESSION)
+        throw new Error(`no parent card; the Run ended ${JSON.stringify(ended.reason)}`)
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: pending.card.requestId,
+        decision: 'allow',
+        origin: null,
+      })
+      ended = await rootEnd(h.loop)
+    }
+    expect(ended.reason).toEqual({ code: 'user-stopped' })
+    expect(stopped).toBe(true)
+    expect(h.provider.starts).toBe(end === 'completed' ? 2 : 32)
+    const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    expect(parent.find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+      isError: true,
+      handoff: {
+        outcome: 'aborted',
+        childEndReason: end,
+        ...(end === 'completed' ? { finalReply: 'committed child answer' } : {}),
+      },
+    })
+    expect(parent.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+      state: 'aborted',
+      source: 'stopped',
+    })
+    expect(parent.filter((e) => e.name === 'tool/result')).toHaveLength(1)
+    expect(h.logs).toEqual([])
+  },
+)
 
 it.each([false, true])(
   'stops during handoff spill without resuming the parent (own=%s)',

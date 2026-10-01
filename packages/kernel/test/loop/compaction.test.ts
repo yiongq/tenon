@@ -501,6 +501,48 @@ it('02 不变量 8: after a boundary compaction, echoes each later thinking bloc
     expect(request.thinkingDecisions.filter((d) => d.action === 'drop')).toHaveLength(2)
 })
 
+it('Revisions 32: after a mid-turn anchor, later turns keep the cut at the first boundary', async () => {
+  const h = harness({ ...MODEL, reasoning: true, thinkingPreservationFormat: 'signed-blocks' })
+  await seed(h, 10)
+  // Turn T compacts mid-turn and thinks in the exempt window; T+1 is the first boundary after the
+  // anchor and thinks before a tool round; T+2 is the second boundary.
+  h.provider.script(readCall())
+  h.provider.script(reply('summary'))
+  h.provider.script([...thinking('W'), ...readCall(10)])
+  h.provider.script(reply('T done'))
+  expect((await send(h, 'turn T')).reason.code).toBe('completed')
+  h.provider.script([...thinking('B1'), ...readCall(10)])
+  h.provider.script(reply('T+1 done'))
+  expect((await send(h, 'turn T+1')).reason.code).toBe('completed')
+  h.provider.script(reply('T+2 done'))
+  expect((await send(h, 'turn T+2')).reason.code).toBe('completed')
+  expect((await entries(h)).filter((e) => e.name === 'compaction/anchor')).toHaveLength(1)
+
+  // Requests 0–2 are the seed, 3 made the call, 4 is the summary, 5–6 finish T, 7–8 are T+1.
+  const requests = h.provider.requests
+  expect(requests).toHaveLength(10)
+  assertThinkingPrefixes(
+    requests,
+    new Map([
+      ['sig-W', 5],
+      ['sig-B1', 7],
+    ]),
+  )
+  const echoes = (signature: string) =>
+    requests.flatMap((request, at) =>
+      (request.body as PrefixBody).messages.some((m) => thinkingOf(m).includes(signature))
+        ? [at]
+        : [],
+    )
+  // The window's block ends at T+1; T+1's own block goes on at T+2, cut at T+1's run_started.
+  expect(echoes('sig-W')).toEqual([6])
+  expect(echoes('sig-B1')).toEqual([8, 9])
+  for (const request of requests.slice(7))
+    expect(request.thinkingDecisions.filter((d) => d.action === 'drop')).toEqual([
+      { action: 'drop', reason: 'compacted' },
+    ])
+})
+
 it('stops while reopening a historical provider whose assembly never resolves', async () => {
   const h = harness()
   await seed(h)

@@ -129,14 +129,25 @@ describe('WebFetch content', () => {
     expect(text(result)).toBe('中文')
   })
 
-  it.each(['text/html', 'text/plain; charset=bogus'])(
-    'reads a UTF-16 BOM when %s gives no usable label',
-    async (type) => {
-      const units = [...'<p>中文</p>'].map((c) => c.charCodeAt(0))
-      const bytes = new Uint8Array([0xff, 0xfe, ...units.flatMap((u) => [u & 255, u >> 8])])
-      expect(text(await execute(async () => response(bytes, type)))).toContain('中文')
-    },
-  )
+  it.each([
+    ['LE', 'text/html'],
+    ['LE', 'text/plain; charset=bogus'],
+    ['BE', 'text/html'],
+    ['BE', 'text/plain; charset=bogus'],
+  ] as const)('reads a UTF-16%s BOM when %s gives no usable label', async (order, type) => {
+    const units = [...'<p>中文</p>'].map((c) => c.charCodeAt(0))
+    const bytes =
+      order === 'LE'
+        ? new Uint8Array([0xff, 0xfe, ...units.flatMap((u) => [u & 255, u >> 8])])
+        : new Uint8Array([0xfe, 0xff, ...units.flatMap((u) => [u >> 8, u & 255])])
+    expect(text(await execute(async () => response(bytes, type)))).toContain('中文')
+  })
+
+  // Revisions (33): charset, then <meta>, then the BOM. The <meta> is read in the latin1 view.
+  it('lets a <meta> charset win over a UTF-16 BOM', async () => {
+    const bytes = new Uint8Array([0xff, 0xfe, ...gbk('<meta charset=gbk><p>中文</p>')])
+    expect(text(await execute(async () => response(bytes)))).toContain('中文')
+  })
 
   it.each(['text/html', 'text/plain'])(
     'rejects an oversized %s body before decoding and cancels the remaining stream',
