@@ -580,6 +580,16 @@
 
 ## 实施记录
 
+- **2026-10-01 · 提示层第 9 版与基线重跑（第 34 步）**：FA、FN 两轨改了提示层文字（AskUserQuestion 重复题目与 label 的说明、WebFetch 超限提示不限 HTML），FA 记录里写的「第 8 版原地更新」不成立：`docs/evals/results` 已有第 8 版的 60 条基线记录。改为第 8 版恢复原哈希 `c483d606…`，升第 9 版 `93c6eb14…`，`LAYER_HISTORY` 加第 9 行；evals:gate 随之在第 9 版下缺记录、按预期变红。owner 2026-10-01 批准重跑基线（估 ¥50，¥75 止损）。
+  - 运行：glm-5.3 · `open.bigmodel.cn/api/paas/v4`，20 题 × 3，`TENON_EVAL_PROVIDER=zhipu`；花费看门狗每 60 秒累计一次，超 ¥75 杀进程。
+  - 结果（第一轮）：49 条真跑 48 pass；08 第 3 次是模型真失败（没按「先读文件、再搜索、再抓取」的顺序）。17 第 2 次跑到第 41 次请求、17 第 3 次与 18、19、20 全部 9 次撞上智谱 `429 1113`「余额不足或无可用资源包」，记 `quota-exhausted`，不是模型成绩。实花 ¥28.28（按 Tape）。
+  - 待 owner 充值后只补这 11 条（17 × 2 约 ¥26–39，其余约 ¥0.4），删掉余额不足的记录，再跑 evals:gate。
+- **2026-10-01 · 第 34 步同题对比（四列）与第 33 步的 Claude 模型列（旧 72）**：分支 `wt/02-step34-ext`、`wt/02-step34-judge` → `wt/02-seg3-fix`。owner 选方案 1：A、C、D 由 lead 跑，B 由 GPT 照 lead 写的步骤录屏、lead 判分。同一批 10 题（01、03、11、12、13、15、16、19 任务形态，18、20 对话形态），每列每题 1 次；结果与逐题对比在 [docs/evals/compare/00-2026-10-01-summary.md](../../evals/compare/00-2026-10-01-summary.md)。
+  - A：Tenon（`a41a73f`，提示层 8）+ claude-sonnet-5 · api.anthropic.com，官方 key 从钥匙串读入进程，10/10，$0.2158（按 Tape）。这一列也是第 33 步旧 72 的「用这把 key 跑 Claude 模型列」。
+  - B：Claude Desktop 2.9939.2 + Sonnet 5 High，Cowork Manual，10/10（人工判，判法见汇总文档）；订阅，费用记 null。证据在私有 uxkit `recordings/2026-10-01-compare/`。8 道 Cowork 题每题只有开始时两张文件夹卡、操作卡 0 张，已知差异第 1、8 条据此补记（spec Revisions (34)）。
+  - C：Tenon + glm-5.3 · open.bigmodel.cn/api/anthropic，9/10，¥0.7928。16 失败：工作区外卡被测试宿主拒绝、Run 以 user-rejected 结束。先误判为 Tenon 缺陷，给运行器加「拒绝的卡记下对象与事实」（`94e753f`）后复跑 12 次（13 次里 4 次出卡，约 ¥0.25）：卡上是模型抄错的长临时路径（漏字或错字），确实不在工作区，Tenon 判定正确。
+  - D：Claude Code 2.1.280 + glm-5.3，同一入口，交互 default 档经 tmux 驱动，三个模型槽都是 glm-5.3，HOME 隔离，key 只在启动器进程里读；01 用 09-28 那次，其余 9 题 10-01 跑，全过；约 ¥2.1（按 transcript 估，含作废的 03 首次）。03 首次因驱动规则错拒了写 /tmp 的命令，作废重跑；测试写下的 /tmp/nightly.log 已删。
+  - 原始 transcript 与驱动记录在 `../tenon-notes/evals-raw/2026-10-01/`，不进仓库。
 - **2026-10-01 · 第三段复核修复（FS）**：分支 `wt/02-s3-FS`（基于 `a41a73f`，PR #21 的复核），压缩与子 agent 状态的九条发现。
   - 修复：
     - R3-1：`compact()` 写 anchor 的任务因租约已中止被拒（`RunWriteRefusedError`）时按停止结束：`user-stopped`、不写 anchor、终态照写，摘要请求的用量留在 `run_terminal.usage`。原来 Run 没有终态，`run-ended{ recorded: false }` 报 provider-error/unknown。
@@ -1294,7 +1304,8 @@
 
 ## Open
 
-- **第34步外部验收当前阻塞（2026-09-28）**：自动审批先后拒绝官方10题和Claude Code其余9题启动，理由均为未明确确认拟发送载荷与第三方目的地；受阻调用未启动、官方key未读取。已向owner请求一次具体授权：10道合成题/15份专用夹具（约11KB）→api.anthropic.com，keychain `tenon-live-anthropic`、累计$15停止线；剩余9道合成题→open.bigmodel.cn/api/anthropic，经现有智谱key、原计划整列¥60–130。范围清单在仓库外`tenon34-official-egress-scope.json`与`tenon34-claude-collection/egress-scope-audit.json`；不以换客户端或路径绕过审查。Desktop辅助功能可读但实际点击报noWindowsAvailable、录屏枚举不到可见窗口；已请owner解锁并保持Claude在当前桌面可见。等待这些必要输入时已完成所有独立基线、校准、代码门禁工作，后续仅据真实对照结果勾33/34和implemented。
+- **第34步外部验收（2026-09-28 受阻，2026-10-01 已解除）**：owner 选方案 1，A、C、D 列由 lead 跑，B 列由 GPT 录、lead 判；四列已跑完，见实施记录同日条目。剩下的只有提示层第 9 版的基线补跑，等下一条的充值。
+- **智谱余额用尽（2026-10-01）**：基线重跑时 `429 1113`「余额不足或无可用资源包」。请 owner 充值（建议 ¥50 以上）；充好后 lead 补跑 11 条，见实施记录「提示层第 9 版与基线重跑」。
 
 
 - **第31步子会话授权与父工作区的因果引用（owner 已以「继续」确认，Revisions 26）**：K与独立核查确认，父子Tape的entryId只各自单调，createdAt可能同ms；既有run_started/environment/target无法区分「子授权→父移除→加回」与「父移除→加回→子新授权」，前者必须永久失效。已定给ApprovalResolvedPayload增可选parentWorkspaceKey（父workspace_set的provenanceKey），子文件/命令session授权同批存父当前workspace事实引用，重建时从该点重放父后续撤销；旧/失效引用不采纳子自身文件/命令session授权，下次重新询问。网络授权与正常父继承不变，不改Host/IPC/数据库。owner已确认，依赖解除；已实现并通过同毫秒移除/加回、新旧授权、cwd撤销及重启回归。
