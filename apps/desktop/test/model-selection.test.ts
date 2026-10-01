@@ -244,6 +244,12 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
         values: { ...move, apiKey: 'sk-new' },
       }),
     ).toMatchObject({ data: { ok: false, code: 'key-host-binding' } })
+    // 「什么都不写」: the typed key is not stored early, and the host still reads as the old one.
+    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken'))).toBe(
+      'tok',
+    )
+    expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual({})
     expect(
       await r.call('provider.configure', {
         id: ANTHROPIC_PROVIDER_ID,
@@ -253,6 +259,11 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     expect(
       await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken')),
     ).toBeNull()
+    const saved = (await readConfig(r.host.fs, r.host.identity)).providerConfig
+    // Ollama declares no secret (its apiKey lives in config.json), so this keychain entry is
+    // planted only to see that a refusal neither stores the typed key there nor clears it.
+    const ollamaKey = secretKey(r.host, OLLAMA_PROVIDER_ID, 'apiKey')
+    await r.host.secrets.set(ollamaKey, 'sk-planted')
     // The fully qualified spellings are the same hosts (s19-safety-6).
     for (const baseURL of [
       'https://ollama.com/v1/',
@@ -262,8 +273,16 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     ]) {
       expect(
         // oxlint-disable-next-line no-await-in-loop -- one save at a time
-        await r.call('provider.configure', { id: OLLAMA_PROVIDER_ID, values: { baseURL } }),
+        await r.call('provider.configure', {
+          id: OLLAMA_PROVIDER_ID,
+          values: { baseURL, apiKey: 'sk-cloud' },
+        }),
       ).toMatchObject({ data: { ok: false, code: 'key-host-binding', configKey: 'baseURL' } })
+      // 「config.json 和钥匙串不变」.
+      // oxlint-disable-next-line no-await-in-loop -- one save at a time
+      expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual(saved)
+      // oxlint-disable-next-line no-await-in-loop -- one save at a time
+      expect(await r.host.secrets.get(ollamaKey)).toBe('sk-planted')
     }
   })
 

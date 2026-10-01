@@ -351,6 +351,19 @@ describe('run-events', () => {
     ])
   })
 
+  it('maps both of 02’s new provider codes to unknown, like 01’s fallback (acceptance 9)', () => {
+    // §错误与结束映射: the table only gains `quota-exhausted` and `account-config`, both `unknown`;
+    // the finer reason travels as the Run's endReason.
+    const { chat } = mapped([
+      ended({ lastStop: null, errorCode: 'quota-exhausted' }),
+      ended({ lastStop: null, errorCode: 'account-config' }),
+    ])
+    expect(chat.map((event) => (event.type === 'error' ? event.code : event.type))).toEqual([
+      'unknown',
+      'unknown',
+    ])
+  })
+
   it('passes the Run’s retryOf on done and error alike, null included (plan step 20)', () => {
     // §chat.event: `retryOf` is `run-ended.retryOf` — 「重试」 is offered only when it is not null and
     // resends the message it names; the renderer never infers it.

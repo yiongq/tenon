@@ -4,9 +4,10 @@ import { deferred, messageBodies, startFakeAnthropic } from '../test/support/fak
 import type { FakeAnthropic, ScriptedReply } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { Locale } from './helpers/launch.js'
-import { allowCard } from './helpers/navigation.js'
+import { allowCard, newChatFromSidebar } from './helpers/navigation.js'
 import { named, runEnds, tapeFacts, userTexts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
+import { expectSingleLineUnclipped } from './helpers/text-fit.js'
 import {
   callsReply,
   makeFolderTree,
@@ -79,6 +80,7 @@ const COPY = {
     queued: '排队中',
     pager: (index: number, count: number) => `${String(index)} / ${String(count)}`,
     banner: '另一个会话在等你回答',
+    approvalBanner: '另一个会话在等你批准',
     placeholder: '或者直接在这里回复…',
     preview: '内容太长，这里只留了开头；全文在 Tenon 为这个会话保存的文件里，模型可以读取。',
   },
@@ -90,6 +92,7 @@ const COPY = {
     queued: 'Queued',
     pager: (index: number, count: number) => `${String(index)} / ${String(count)}`,
     banner: 'Another session is waiting for your answer',
+    approvalBanner: 'Another session is waiting for your approval',
     placeholder: 'Or reply here directly…',
     preview:
       'Too long to keep here in full, so this is only the start. The full text is in a file Tenon saved for this session, which the model can read.',
@@ -293,6 +296,63 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(row.getByTestId('ask-summary-mark')).toHaveText(copy.noPreference)
     } finally {
       await again.app.close()
+    }
+  })
+}
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`the banner words a waiting question apart from a waiting card, and 「回去」 brings the widget back (验收 23, 旧 134, ${locale})`, async () => {
+    const copy = COPY[locale]
+    tree = makeFolderTree(`ask-banner-${locale}`, { 'ws/a.txt': 'alpha\n', 'outside.txt': 'out\n' })
+    const ws = join(tree.real, 'ws')
+    fake = await startFakeAnthropic({
+      replies: [
+        callsReply(readCall('toolu_read', join(tree.real, 'outside.txt'))),
+        callsReply(askCall('toolu_ask', [COLOUR])),
+        textReply('Any colour, then.'),
+      ],
+    })
+    const userData = makeUserDataDir(`ask-banner-${locale}`)
+    seedConfig(userData, { locale })
+    const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      // Session A waits on a card (a task reading outside its folder).
+      await startTask(app, page, ws)
+      await send(page, 'read outside')
+      await expect(page.getByTestId('approval-card')).toHaveCount(1)
+      // Session B waits on a question.
+      await newChatFromSidebar(page)
+      await expect(page.getByTestId('thread-empty')).toBeVisible()
+      await send(page, 'pick a colour for me')
+      await expect(page.getByTestId('ask-widget')).toBeVisible()
+
+      // From a third session, both are listed, each in its own words (§离开会话 第 5 条).
+      await newChatFromSidebar(page)
+      await expect(page.getByTestId('thread-empty')).toBeVisible()
+      const rows = page.getByTestId('pending-banner-row')
+      await expect(rows).toHaveCount(2)
+      const question = page.locator('[data-testid="pending-banner-row"][data-wait-kind="question"]')
+      const approval = page.locator('[data-testid="pending-banner-row"][data-wait-kind="approval"]')
+      await expect(question).toHaveCount(1)
+      await expect(approval).toHaveCount(1)
+      await expect(question.locator('span').first()).toHaveText(copy.banner)
+      await expect(approval.locator('span').first()).toHaveText(copy.approvalBanner)
+      // The question row's words fit on one line, unclipped, at 1280x800 (验收 37).
+      await expectSingleLineUnclipped(question)
+
+      // 「回去」 on the question's row: its widget is answerable right there, and it is no longer listed.
+      await question.getByTestId('pending-banner-go').click()
+      await expect(page.getByTestId('user-text')).toHaveText('pick a colour for me')
+      const widget = page.getByTestId('ask-widget')
+      await expect(widget).toBeVisible()
+      await expect(widget.getByTestId('ask-question')).toHaveText(COLOUR.question)
+      await expect(rows).toHaveCount(1)
+      await expect(rows).toHaveAttribute('data-wait-kind', 'approval')
+      await widget.getByTestId('ask-skip').click()
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('Any colour, then.')
+      expect(fake.requests).toHaveLength(3)
+    } finally {
+      await app.close()
     }
   })
 }

@@ -28,7 +28,7 @@
   "settings": {
     "providers": {
       "title": "Models and keys",
-      "description": "Choose the provider and the default model for new chats. Keys are kept in the system keychain, never in a settings file.",
+      "description": "Choose the default provider and model for new chats. Keys are kept in the system keychain, never in a settings file.",
       "close": "Close",
       "loading": "Loading…",
       "provider": "Provider",
