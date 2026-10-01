@@ -1,0 +1,52 @@
+# 自定义厂商（M6）— 执行计划
+
+对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。每一步结束时仓库都是绿的。「验收 N」指 spec §验收标准，「M6 不变量 N」指 §不变量，「开放问题 N」指 §开放问题，「点名 (x)」指 §点名 表里的行。spec 已 `ready`（owner 2026-10-02 过目推出的读法并定 Q15–Q17）。
+
+## 开工前读
+
+- **评审强度**：第 4、5、7、8 步（探测、存储与 key、运行时、点名改动）每步四个视角——照 spec 逐条、真进程、对抗、突变（把生产代码改坏一次，看测试变不变红）——各配一个核查者，修到确认的问题收敛为零。其余步骤一个视角加突变，修一轮。live 步只核记录与证据。
+- **key**：
+  - 智谱：`.env.local` 的 `ZHIPU_API_KEY` 只在 `pnpm test:live` 的测试进程里读（apps/desktop/e2e/live-provider.spec.ts 的 `parseEnv`）。agent 的进程环境里没有它，不要据此说「没有 key」，也不要把它导进 shell。
+  - DeepSeek：owner 充值后存进 macOS 登录钥匙串，服务名 `tenon-live-deepseek`（照 Anthropic 官方 key 的 `tenon-live-anthropic`）。lead 只在那一次 `pnpm test:live` 的命令里读出、作为 `TENON_LIVE_DEEPSEEK_KEY` 传入；读之前先提醒 owner（macOS 会弹窗）。不进 `.env.local`、不进 shell profile、不打印、不写进命令字面量。`.env.local` 里出现它时 live 组拒跑（照官方 key 组，apps/desktop/e2e/helpers/live-env.ts:78-111）。`TENON_LIVE_DEEPSEEK_KEY` 加进 `NEVER_INHERITED`（apps/desktop/e2e/helpers/app-env.ts:20-27，apps/desktop/test/live-env.test.ts 同步钉住）；只由 DeepSeek 组的测试进程读出，经设置卡填进实例。
+  - Anthropic 官方 key（钥匙串 `tenon-live-anthropic`）：本 spec 的验收不用。只在 lead 决定回归 02 的官方组时按同样规矩读。
+  - 任何 key 不进 Tape、日志、plan 与 `docs/evals`。
+- **机器约束**：vitest 一律 `--maxWorkers=2`；同一时刻最多一个 Electron（e2e、live、真进程评审都算）。
+- **owner 的事**：开放问题 1、2；DeepSeek 充值与 key（第 12 步前）；owner 自己的 `.env.local` 随点名 (d) 改（agent 不读不改它，只在交接里提醒）。
+
+## 步骤
+
+- [ ] 1. 核对文档同步已落地（起草时做的）：AGENTS.md:7、:9 与 docs/spec-driven-dev.md:62 的开工规则，spec-driven-dev.md:5、:64 的措辞；01、02 顶部的 `Amended by`；ADR-003 的勘误行。只核对，不重复改。
+  - 测试要点：`git diff e6c7bf5 -- AGENTS.md docs/spec-driven-dev.md docs/architecture/01-provider-and-tape/spec.md docs/architecture/02-agent-loop/spec.md docs/adr/adr-003-provider-layer.md`：01、02 各只多一行，ADR-003 只多一行，spec-driven-dev.md 只动 :5、:62、:64（验收 31）。
+- [ ] 2. 只增的类型与契约（spec §对 01 的修补 1、2、4、5，§对 02 的修补 1–4）：`ModelInfo.maxTokensField`、`checksThinkingPrefix`；`ProviderDefinition.maxToolsPerRequest`；`CapabilitySource`、`ToolsWithheldPayload.reason`、`RunAssembly.toolsWithheld` 只增值；`RunConnector.toolsPerRequest?`；contracts 的 `modelMarkSchema`、`providerEntrySchema`、`providerWriteErrorCodeSchema`、`configSchema.customVendors`、新文件 `ipc/custom-vendor.ts` 的 schema 与路由定义（还不注册）。加 `probed` 的同一步补两份 locale 的 `model.mark.probed`、`model.mark.unprobed`，copy-coverage 的行标记表改成 4 个（apps/desktop/test/copy-coverage.test.ts:386-387）；加两个写入码的同一步补 ProviderSettings.tsx:404-412 的 `ERROR_KEY` 与两份 locale 的 `settings.providers.error.officialHostOnly`、`settings.providers.error.subscriptionEndpoint`。
+  - 测试要点：contracts 与 kernel 的类型互赋测试补 `ProbeSnapshot`、`CapabilitySource`、wire 联合；contracts 的 `CUSTOM_ID_REGEX` 与 kernel 的 `CUSTOM_PROVIDER_ID_PATTERN` 逐字相同；旧 config.json 解析出 `customVendors: []`（验收 11 的前半；坏条目只丢自己的后半在第 5 步）。
+- [ ] 3. kernel 的编码与数据面（§对 01 的修补 2、3，§对 02 的修补 4–6）：openai-chat 编码器的 `maxTokensField`、`RESERVED_KEYS` 加 `max_completion_tokens`、编码器版本 1 → 2 与金样（`OPENAI_ROW` 加 `maxTokensField`、追加版本 2 的哈希、去掉该字段仍等于版本 1，见 spec §对 01 的修补 3）；`WIRE_MODEL_FIELDS` 加 `maxTokensField`；`checksThinkingPrefix` 改读字段，anthropic.ts 两行写 `true`，缺省照 02 只按 id 回落；openai-chat.ts:137-138 的透传注释改写；`TOOLS_PER_REQUEST` 撤掉（点名 (g)），zhipu.ts 写 `maxToolsPerRequest: 128`，开表经 `connector.toolsPerRequest`；同一步 desktop 的 `createRunConnector` 实现它（`registry.get(id)?.maxToolsPerRequest ?? null`），evals/runner.ts 的 `watchedConnector` 与 kernel 的 `createTestConnector` 转发它。
+  - 测试要点：M6 不变量 5、17 的内置与旧行部分；内置行 body、promptHash、modelWireHash 与改动前逐字节相同；Proxy 测试仍把 encode 钉在 `WIRE_MODEL_FIELDS`；130 个工具的夹具智谱线仍恰好 128（02 验收 27 不回退），没有 `toolsPerRequest` 的 connector 不裁（验收 23 的 kernel 部分）；run-assembly 测试断言 zhipu 为 128、anthropic 与 ollama 为 null，评测包装后的 connector 仍给 128；冻结的旧 Opus 5.5 行不做回合中途压缩（packages/kernel/test/loop/compaction.test.ts 里 providerId 为 zhipu、id 改成 claude-opus-5-5 的用例照旧通过，不改）。
+- [ ] 4. kernel 的工厂与探测（§实例描述与通用工厂，§模型行「合成」，§探测）：`definitions/custom.ts`（`customVendorDefinition`、`customModelInfo`）；`provider/probe.ts`（两步、三态、原因码、T10 重试、`tee()` 分流检查器、② 的行即通过后的行）；`provider/remote-models.ts`（/models 的 id 与六个上限键）。
+  - 测试要点：01 验收 1 的第四定义路径参数化两条线（验收 2，M6 不变量 4）；实例 id 进 `toolTableKey` 在两个 store 的 conformance 里通过（验收 1，M6 不变量 1）；两个指向同一厂商的实例互丢思考块（验收 22 的守卫部分）；探测的每个原因码一个夹具（验收 15），T10 一个（验收 16），三个不透明字段夹具与 DeepSeek 按文档、智谱按实测形状写的通过夹具（验收 17，M6 不变量 10）；执行器 0 次、无 Tape 事实（M6 不变量 8）；② 行与通过后合成的行 `modelWireHash` 相等（M6 不变量 9）；自定义行写 `checksThinkingPrefix: false`、id 叫 claude-opus-5-5 也读作 false（M6 不变量 17 的自定义行部分）；`signal` 中止时 `probeModel` reject、不造快照；夹具文件头标「按文档、未实测」与出处 URL（验收 13、30）。
+- [ ] 5. desktop 的存储、注册表视图、地址与预设（§注册表视图，§地址校验，§预设，§key，§存储）：`custom-vendors/registry.ts`、`address.ts`、`presets.ts`；主进程把组合视图交给 run-assembly、provider 与模型路由（apps/desktop/src/main/index.ts:136-137、:165-172、:292-299）；`customVendors` 逐条校验（模型行 id 去重），过不了地址校验的条目照造定义、`create()` 拒绝；新建、改名与模型、删除、保存 key 的写入顺序；改了实例条目计入 `providerSettingsGeneration`。开放问题 1、3 在本步收尾前问 owner，没定的照 spec 不带、不拦；owner 答复晚于本步的，只改 presets.ts、address.ts、§地址校验 规则 4 与验收 4、6 的期望（spec 记 Revisions），在第 13 步前补上。
+  - 测试要点：验收 1 的铸 id 部分、4、6、8、9、10、11 与 M6 不变量 3、13、14（含手改成公网 `http://` 的实例）；每种写入在每一步注入失败（钥匙串写、删，config 写），断言终态；手改 config 给实例写 `providerConfig.baseURL` 不改发往的主机、`provider.list` 的 `endpoint` 与 `endpointOrigin`；一条坏条目不让其他实例丢失。
+- [ ] 6. desktop 的路由（§IPC）：注册 `customVendor.*` 六条路由；`provider.configure` 对实例只收 `apiKey` 并先清快照；`provider.list` 给实例条目（`displayName`、通用 `nameKey`、按快照与 `reachOf` 算 `mark`、地址被拒时的 `refused`）；`provider.select`、`session.selectModel` 对实例表外 id 回 `unknown-model`；`fetchModels` 只在调用时请求；探测路由（单实例互斥、过期结果不存、中止回 `aborted`、回环与私网回 `local-endpoint`）。
+  - 测试要点：验收 3、5、12、14、18 的路由部分与 M6 不变量 2、12；所有应答过响应 schema，没有任何字段带 key（验收 8）。
+- [ ] 7. desktop 的运行时（§运行时）：`assemble` 对实例按读稳定后那份 `customVendors` 重造行（§注册表视图）；run-assembly 给 `capabilitySource`（`probed` / `user`，冻结的 `probed` 照传）、`toolsWithheld`（`not-probed` / `provider-text-only`）；`session.modelChoice` 路由对实例按当前行改写；实例的行没了不做保守合成、`assemble` 不 reject；搜索选择不动。
+  - 测试要点：验收 19、20、21、23、24、25 的主进程与 kernel 部分；M6 不变量 6、7、11、15、18；保存 key 清掉快照后，暂停中的 Run 续跑照冻结的 `capabilitySource` 发工具（`toolsWithheld` 为 null），下一条消息起不带工具；保存 key 与 `assemble` 交错（落在读稳定的重读里）时，新 key 下的请求不带 tools、`toolsWithheld` 为 `not-probed`。
+- [ ] 8. 点名改动（§点名 (a)–(f) 与测试接缝）：内置 `zhipu`、`anthropic` 只认官方 https 源与 `refused`；`zhipu` 的订阅路径拒存、已存的读作未配置；`DEV_ENV_FALLBACK` 的源规则；删 `searchDefinitionFor` 的 `/api/anthropic` 分支；`.env.example` 照点名 (d) 改写（第 5–11 行改注释，第 24、26–27 行删，第 29–30、39–42 行改写，`TENON_PROVIDER=zhipu` 改为默认生效，Q16）；填 key 助手加官方 key 守卫；删掉 Anthropic 线仿真组（live-provider.spec.ts 的组、apps/desktop/e2e/helpers/live-env.ts 的 `emulationGroup`、live-env.test 的对应用例），(c) 之后它启动的是未配置的应用。测试接缝 `TENON_TEST_ORIGIN_MAP`（照 spec §点名 末条：只改投到回环、要 `TENON_DEV_ENV=off`、进 `NEVER_INHERITED`、live 套件见到就拒跑）：22 个非 live 的 e2e（`providerEnv` 等）与 chat、evals 单测迁到接缝上，按 §点名 末条重定基线。评测夹具测试同步迁：`EVAL_GLM_53_ANTHROPIC` 改成工厂造的 anthropic-messages 实例列，主机用公网形主机改投到假服务器，`createEvalHost` 的网络（evals/host.ts:265）用与主进程同一个改投函数包一层；runner 对实例列写 `customVendors` 而不写 `providerConfig`（evals/runner.ts:480），交给 `createRunConnector` 的是 `evalProviderRegistry()` 加这份 `customVendors` 的组合视图（evals/runner.ts:489），跑前探测，假服务器先编排两次探测回复；evals-search-runner 的搜索用例改到 zhipu 列或官方 anthropic 列（实例没有 WebSearch，Q10）；evals-runner、evals-host、evals-models 测试同步改，runner 给这一列的实例定义包一层评测专用 pricing（¥8 / ¥28，Q17），evals-runner 的费用断言照旧成立（点名 (d)）。
+  - 测试要点：验收 26、27 与 M6 不变量 16、19；步末 `pnpm test`、`pnpm test:e2e`、`pnpm evals:gate` 全绿；原有「anthropic 指向 open.bigmodel.cn/api/anthropic 用智谱后端」的 run-assembly 用例改为断言读作未配置、0 次请求；`.env.example` 的改动在交接里提醒 owner 同步自己的 `.env.local`。
+- [ ] 9. 界面（§运行时「行标记」、§实例被删或改坏，§预设）：设置卡的实例区（预设、地区与线、只读地址、其他兼容端点、key、按量 key 提醒、获取模型列表、上限、探测按钮与 T4 文案、原因码文案、没有搜索的说明）；ModelMenu 的 `probed` 行、「尚未通过探测」文案、任务形态置灰规则、实例分组与 `displayName`、不给实例手填 id；失败卡与触发器的「已删除」文案；内置厂商与实例被拒地址（`refused`）的提示；通用 ProviderSettings 卡跳过实例条目；两份 locale 其余新键；`docs/ux/components.md:95` 补两种行标记。
+  - 测试要点：验收 7（渲染端单测断言两条 key 提醒按主机出现）；locale 键存在性单测覆盖通用 `provider.custom.*`、全部 `customVendor.probe.reason.*`、`customVendor.probe.passed`、`error.customVendorGone`；copy-coverage 用 `covers<>` 覆盖 customVendorErrorCodeSchema、fetchModels 失败码、probe `refused` 码（含 `aborted`）、`refused` 的四个码与 providerWriteErrorCodeSchema 的两个新码；ModelMenu 单测断言 `probed` 行在任务形态可选、`unverified-text-only` 实例行置灰。
+- [ ] 10. e2e（假服务器）：`fake-openai.ts` 补可编排的 `tool_calls` 与思考字段；`SeededConfig` 加 `customVendors`；实例用 `https://vendor.e2e.test` 经测试接缝改投；整条流程：建实例 → 获取列表 → 探测通过 → 任务形态一次往返 → 保存 key 变回仅文字 → 删实例 → 会话失败卡文案；探测失败（400、不透明字段）；回环实例没有探测按钮；内置厂商改主机被拒。
+  - 测试要点：验收 3、4、9、10、14、18、19、25、26 的界面部分；真进程里看事件与路由应答的先后（02 第 20 步的教训）。
+- [ ] 11. 〔智谱 live〕live 套件加两组实例（openai-chat → `https://open.bigmodel.cn/api/paas/v4` + `glm-5.3-flashx`；anthropic-messages → `https://open.bigmodel.cn/api/anthropic` + `glm-4.7-flash`；key 都取 `ZHIPU_API_KEY`），经 Playwright 在设置卡里建、填 key（内存机密接缝）、探测、跑一次工具往返；真跑评测之前先探测实例列。两组与内置智谱组顺序跑（1302）。`TENON_LIVE_DEEPSEEK_KEY` 的 `NEVER_INHERITED` 与 `.env.local` 拒跑也在本步落（不要 key，live-env.test 钉住）。开放问题 2 在本步第一次跑之后按记录问 owner。
+  - 测试要点：验收 28；记录写日期、模型、请求主机与探测快照（不含 key）；`evals:gate` 仍过。
+- [ ] 12. 〔DeepSeek live〕DeepSeek 组：`https://api.deepseek.com` + `deepseek-flash`，key 照「开工前读」从钥匙串传入；获取列表预填、探测、带工具跨两轮的会话。owner 没给 key 之前本步不开工，排到最后。
+  - 测试要点：验收 29；每次请求都回传了 `reasoning_content`（fakeNetwork 之外用请求记录核）。
+- [ ] 13. 对照 spec 全部验收标准逐条验证，结果、命令与证据位置记在本文件；每条不变量有名字带「M6 不变量 N」的测试（验收 32）。
+- [ ] 14. 清理临时探针、夹具草稿与调试输出；确认 kernel 够不着 desktop 的假服务器、仓库里没有任何 key 的值。
+- [ ] 15. spec 顶部改 `Status: implemented`，写交接。
+
+## 实施记录
+
+（开工后按步追加。）
+
+## Open
+
+- 开放问题 1（方舟的 Anthropic 路径）、开放问题 2（glm-4.7-flash 能否过探测）。
