@@ -22,7 +22,8 @@ import type { FolderTree } from './helpers/tools.js'
  * 00 acceptance 12's bilingual 「不换行不截断」 regression over the rest of phase 2's new components
  * (spec 02 §界面范围: 新组件的界面文字纳入回归; acceptance 37), the ones text-fit-02.spec.ts does not
  * reach: ModeSwitch, FolderChip, AskWidget, AskSummaryCard, ThinkingBlock, the round's summary line,
- * a ToolRow's closure line, the model menu's confirmation, and the resume row with its banner row.
+ * a ToolRow's closure line, the model menu's confirmation, and the resume row with its banner row
+ * (ask.spec.ts measures the question's banner row, where it already has one waiting).
  * What the model wrote — a question, an option, a thinking sentence, a tool's object — is content and
  * is not measured; every element measured here holds interface words, or a short folder name beside
  * them.
@@ -66,7 +67,7 @@ function askCall(id: string, count: 1 | 2) {
 }
 
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
-  test(`the mode switch, folder chip, question widget, its summaries, thinking, the round’s line, a closure line and the confirmation fit at 1280x800 in ${locale} (验收 37)`, async () => {
+  test(`the mode switch, folder chip and its prefill, question widget, its summaries, thinking, the round’s line, a closure line and the confirmation fit at 1280x800 in ${locale} (验收 37)`, async () => {
     const folders = makeFolderTree(`fit-02-rest-${locale}`, { 'ws/a.txt': 'alpha\n' })
     tree = folders
     const ws = join(folders.real, 'ws')
@@ -113,7 +114,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expectSingleLineUnclipped(chip.locator(':scope > span').first())
       await expectSingleLineUnclipped(chip.getByTestId('folder-item'))
       await expectSingleLineUnclipped(chip.getByTestId('folder-add'))
-      // A picked folder: its short name and 「命令在这里运行」.
+      // A picked folder: its short name and 「命令在这里运行」. Its prefill offer is measured last,
+      // from the next task.
       await startTask(app, page, ws)
       await expectSingleLineUnclipped(chip.getByTestId('folder-item'))
 
@@ -176,6 +178,13 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await page.keyboard.press('Escape')
       await expect(page.getByTestId('model-menu')).toBeHidden()
       await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelId)
+
+      // The next task: FolderChip offers the folder this one picked (「用上次的 1 个文件夹」).
+      await newChatFromSidebar(page)
+      await page.getByTestId('mode-cowork').click()
+      await expect(chip.getByTestId('folder-item')).toHaveCount(1)
+      await expect(chip.getByTestId('folder-prefill')).toHaveAttribute('title', ws)
+      await expectSingleLineUnclipped(chip.getByTestId('folder-prefill'))
       expect(server.requests).toHaveLength(5)
     } finally {
       await app.close()

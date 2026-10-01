@@ -7,6 +7,7 @@ import type { Locale } from './helpers/launch.js'
 import { allowCard, newChatFromSidebar } from './helpers/navigation.js'
 import { named, runEnds, tapeFacts, userTexts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
+import { expectSingleLineUnclipped } from './helpers/text-fit.js'
 import {
   callsReply,
   makeFolderTree,
@@ -336,6 +337,8 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(approval).toHaveCount(1)
       await expect(question.locator('span').first()).toHaveText(copy.banner)
       await expect(approval.locator('span').first()).toHaveText(copy.approvalBanner)
+      // The question row's words fit on one line, unclipped, at 1280x800 (验收 37).
+      await expectSingleLineUnclipped(question)
 
       // 「回去」 on the question's row: its widget is answerable right there, and it is no longer listed.
       await question.getByTestId('pending-banner-go').click()
