@@ -189,3 +189,20 @@ describe('a write’s change (§最小审批卡 ⑤; 旧 215)', () => {
     ])
   })
 })
+
+describe('a network card’s object line (§最小审批卡 ②; acceptance 36)', () => {
+  it('a search is the query, then the backend’s host under it, both escaped (②′)', () => {
+    const target = { type: 'search', query: 'tenon‮ release', host: 'open.bigmodel.cn' } as const
+    expect(objectParts(en.t, target)).toEqual([
+      { text: 'tenon\\u{202E} release', role: 'value' },
+      { text: 'open.bigmodel.cn', role: 'host' },
+    ])
+  })
+
+  it('a fetch is the full URL — path, query and fragment — never the host alone', () => {
+    const target = { type: 'url', url: 'https://example.com/a/b?q=1#x' } as const
+    expect(objectParts(en.t, target)).toEqual([
+      { text: 'https://example.com/a/b?q=1#x', role: 'value' },
+    ])
+  })
+})
