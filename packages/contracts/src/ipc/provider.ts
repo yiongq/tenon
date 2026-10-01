@@ -33,9 +33,16 @@ export const effortSchema = z.string().min(1)
 /**
  * What a row is (spec 02 01 修补 6; A14, A15, 开放问题 23): a builtin row of zhipu or anthropic —
  * whatever host their base URL points at — is `verified`; an Ollama row sends no tools; a
- * hand-typed id is unverified and text-only. `probed` joins with a later spec, as an addition.
+ * hand-typed id is unverified and text-only. M6 02 修补 1 adds `probed`, a public custom vendor's
+ * row that passed its probe (§运行时「行标记」); one without a passing probe stays
+ * `unverified-text-only`, and a loopback or private one is `local-text-only`.
  */
-export const modelMarkSchema = z.enum(['verified', 'local-text-only', 'unverified-text-only'])
+export const modelMarkSchema = z.enum([
+  'verified',
+  'local-text-only',
+  'unverified-text-only',
+  'probed',
+])
 export type ModelMark = z.infer<typeof modelMarkSchema>
 
 /**
@@ -92,6 +99,23 @@ export const providerEndpointSchema = z.object({
 })
 export type ProviderEndpoint = z.infer<typeof providerEndpointSchema>
 
+/**
+ * Why an address is refused (M6 01 修补 4): a builtin zhipu or anthropic address outside its official
+ * https origin (`official-host-only`, with that origin; §点名 (b), (c)), a zhipu path on the
+ * subscription endpoint (`subscription-endpoint`; §点名 (b)), or a custom instance's address that
+ * fails §地址校验 (that table's code; §存储). Such an entry reads as not configured.
+ */
+export const providerRefusalSchema = z.object({
+  code: z.enum([
+    'official-host-only',
+    'subscription-endpoint',
+    'invalid-address',
+    'https-required',
+  ]),
+  origin: z.string().optional(),
+})
+export type ProviderRefusal = z.infer<typeof providerRefusalSchema>
+
 /** One registered definition. `configured` = this provider could run as it stands. */
 export const providerEntrySchema = z.object({
   id: providerIdSchema,
@@ -100,6 +124,13 @@ export const providerEntrySchema = z.object({
   models: z.array(providerModelSchema),
   configured: z.boolean(),
   endpoint: providerEndpointSchema,
+  /**
+   * M6 01 修补 4: the name the user gave a custom instance, on its entry only. The renderer prefers
+   * it to `nameKey`, which for an instance is the generic `provider.custom.name`.
+   */
+  displayName: z.string().min(1).max(64).optional(),
+  /** M6 01 修补 4: present when the address in force is refused (`providerRefusalSchema`). */
+  refused: providerRefusalSchema.optional(),
 })
 export type ProviderEntryContract = z.infer<typeof providerEntrySchema>
 
@@ -113,8 +144,11 @@ export const providerList = defineRoute('provider.list', {
  * can cause by typing (a base URL the wire cannot use); `key-host-binding` a save that moves the
  * base URL to another host without re-entering every stored key, or an Ollama URL on ollama.com
  * (A9; spec 02 01 修补 6). The rest are a renderer asking for something no definition declares,
- * which the data-driven card never does; `unknown-model` is kept and no longer returned (a
- * hand-typed id is accepted, 01 修补 9 (c)).
+ * which the data-driven card never does; `unknown-model` was kept unreturned (a hand-typed id is
+ * accepted, 01 修补 9 (c)) and M6 returns it again for an id a custom instance does not list
+ * (§列表与上限). M6 01 修补 4 adds `official-host-only` — a builtin zhipu or anthropic base URL
+ * outside its official https origin (§点名 (a)) — and `subscription-endpoint`, a zhipu path on the
+ * subscription endpoint (§点名 (e)).
  */
 export const providerWriteErrorCodeSchema = z.enum([
   'unknown-provider',
@@ -122,6 +156,8 @@ export const providerWriteErrorCodeSchema = z.enum([
   'unknown-model',
   'invalid-value',
   'key-host-binding',
+  'official-host-only',
+  'subscription-endpoint',
 ])
 export type ProviderWriteErrorCode = z.infer<typeof providerWriteErrorCodeSchema>
 

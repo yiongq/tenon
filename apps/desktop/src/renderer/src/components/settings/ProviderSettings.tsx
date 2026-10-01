@@ -407,6 +407,8 @@ const ERROR_KEY = {
   'unknown-model': 'settings.providers.error.unknownModel',
   'invalid-value': 'settings.providers.error.invalidValue',
   'key-host-binding': 'settings.providers.error.keyHostBinding',
+  'official-host-only': 'settings.providers.error.officialHostOnly',
+  'subscription-endpoint': 'settings.providers.error.subscriptionEndpoint',
   'no-model': 'settings.providers.error.noModel',
   unavailable: 'settings.providers.error.unavailable',
 } as const satisfies Record<CardErrorCode, string>

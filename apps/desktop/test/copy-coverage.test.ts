@@ -379,11 +379,13 @@ describe('the banner and the model menu copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
-  it('has the second line of each of the three row marks', () => {
+  it('has the second line of each of the four row marks', () => {
     // §模型菜单「行标记」: `verified` writes the purpose sentence and the target host;
     // `local-text-only` 「<主机> · 仅文字对话」; `unverified-text-only` 「未验证 · 仅文字对话 · <主机>」 (each row ends with its host).
+    // M6 02 修补 1: `probed` 「本机探测 · 不保证 · <主机>」, and a custom instance's row without a
+    // passing probe keeps `unverified-text-only` with its own line 「尚未通过探测 · 仅文字对话 · <主机>」.
     const marks = providerModelSchema.shape.mark.options
-    expect(marks).toHaveLength(3)
+    expect(marks).toHaveLength(4)
     const line: Readonly<Record<(typeof marks)[number], Expectation>> = {
       verified: { key: 'model.row.line', args: ['purpose', 'host'], what: 'verified' },
       'local-text-only': {
@@ -396,8 +398,14 @@ describe('the banner and the model menu copy', () => {
         args: ['host'],
         what: 'unverified-text-only',
       },
+      probed: { key: 'model.mark.probed', args: ['host'], what: 'probed' },
     }
-    expect(problems(marks.map((mark) => line[mark]))).toEqual([])
+    const unprobed: Expectation = {
+      key: 'model.mark.unprobed',
+      args: ['host'],
+      what: 'unverified-text-only, custom instance',
+    }
+    expect(problems([...marks.map((mark) => line[mark]), unprobed])).toEqual([])
   })
 
   it('has the thinking level’s marks, apart and together (s19-spec-5)', () => {

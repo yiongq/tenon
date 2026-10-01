@@ -204,8 +204,11 @@ export type MessageRetractedPayload = {
 export type ModelSelectedPayload = {
   providerId: string
   modelId: string
-  /** Spec 02, 01 修补 7 (M5): a builtin row, a hand-typed id, or the dev-time synthesis. */
-  capabilitySource?: 'builtin' | 'user' | 'synthesized'
+  /**
+   * Spec 02, 01 修补 7 (M5): a builtin row, a hand-typed id, or the dev-time synthesis; M6 02 修补 2
+   * adds `probed`, a custom vendor's row that passed its probe.
+   */
+  capabilitySource?: 'builtin' | 'user' | 'synthesized' | 'probed'
   /** Spec 02, 01 修补 7: `URL.origin` of where the run sends — scheme, host and port only. */
   endpointOrigin?: string
 }
@@ -330,7 +333,7 @@ export type ToolsWithheldPayload = {
   providerId: ProviderId
   modelId: string
   tableKey: string // tableKey 指仍然冻结着的那张表
-  reason: 'model-without-tools' | 'provider-text-only' // 前者：表外或不支持工具的模型（A15）；后者：Ollama（A14）
+  reason: 'model-without-tools' | 'provider-text-only' | 'not-probed' // 表外或不支持工具的模型（A15）；Ollama 与回环、私网实例（A14）；公网实例没通过探测的行（M6 02 修补 3）
 }
 export type ViewAssembledPayload = {
   modelInfoHash: string // 指向 view/content(model_info)

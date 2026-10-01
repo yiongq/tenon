@@ -314,6 +314,9 @@ export {
   ollamaDefinition,
 } from './provider/definitions/ollama.js'
 export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'
+// M6: custom vendors — the instance id and what a probe leaves behind (§实例 id, §探测).
+export { CUSTOM_PROVIDER_ID_PATTERN } from './provider/definitions/custom.js'
+export type { ProbeReason, ProbeSnapshot } from './provider/probe.js'
 
 // The kernel session service: creates / resets / deletes sessions, reads the projections back, and
 // owns the agent loop (spec 02 §主进程与 kernel 的循环接口). It takes the store as an INSTANCE and

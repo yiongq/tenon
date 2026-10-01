@@ -46,6 +46,22 @@ describe('desktop profiles', () => {
     expect(await readConfig(fs, identity)).toMatchObject({ locale: 'auto' })
   })
 
+  it('reads a config.json written before M6 with no custom vendors and every other key kept', async () => {
+    // M6 验收 11 (first half; T8): the file has no `customVendors`, and nothing migrates it.
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    const before = {
+      locale: 'en',
+      sidebarCollapsed: true,
+      provider: { id: 'zhipu', modelId: 'glm-5.3' },
+      providerConfig: { zhipu: { baseURL: 'https://open.bigmodel.cn/api/paas/v4/' } },
+      defaultModelByProfile: { cowork: { id: 'anthropic', modelId: 'my-model', source: 'user' } },
+      lastWorkspaceFolders: ['/work/a'],
+    }
+    await fs.writeFile(configPath(identity), JSON.stringify(before))
+    expect(await readConfig(fs, identity)).toEqual({ ...before, customVendors: [] })
+  })
+
   it('lets one bad field cost that field and nothing else', async () => {
     const fs = new DesktopFs()
     const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
@@ -63,6 +79,7 @@ describe('desktop profiles', () => {
       providerConfig: {},
       defaultModelByProfile: {},
       lastWorkspaceFolders: [],
+      customVendors: [],
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })

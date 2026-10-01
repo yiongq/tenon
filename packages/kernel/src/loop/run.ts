@@ -112,7 +112,7 @@ import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
 import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
-import type { McpToolSource, RunAbortCause, RunLease } from './ports.js'
+import type { McpToolSource, RunAbortCause, RunAssembly, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
 import {
   environmentEntry,
@@ -146,7 +146,7 @@ export interface RunDriverContext {
   readonly model: ModelInfo
   readonly maxTokens: number
   readonly effort: string | null
-  readonly toolsWithheld: 'provider-text-only' | null
+  readonly toolsWithheld: RunAssembly['toolsWithheld']
   readonly search: SearchBackend | null
   readonly mcpSources: readonly McpToolSource[]
   /** Bash's shell and base environment (`LoopPorts.commandShell`). */
@@ -1560,7 +1560,7 @@ export interface AssembleQuery {
   readonly requestSeq: number
   readonly model: ModelInfo
   /** `RunAssembly.toolsWithheld` (A14): the kernel only reads the mark, never the provider id. */
-  readonly toolsWithheld: 'provider-text-only' | null
+  readonly toolsWithheld: RunAssembly['toolsWithheld']
   readonly state: ViewState
   /** Opens the table of this provider and generation; called only when the Tape has none. */
   readonly openTable: (q: {

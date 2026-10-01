@@ -143,6 +143,7 @@ export {
   providerEntrySchema,
   providerList,
   providerModelSchema,
+  providerRefusalSchema,
   providerSelect,
   providerWriteErrorCodeSchema,
   providerWriteResultSchema,
@@ -151,11 +152,34 @@ export type {
   ProviderConfigKeyContract,
   ProviderEndpoint,
   ProviderEntryContract,
+  ProviderRefusal,
   ProviderWriteErrorCode,
   ProviderWriteResult,
 } from './ipc/provider.js'
 export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js'
 export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'
+
+// M6 §IPC: custom vendors — the instances in config.json, the presets and their routes. The routes
+// join `ipcRoutes` once main registers their handlers.
+export {
+  CUSTOM_ID_REGEX,
+  customModelSchema,
+  customProviderIdSchema,
+  customVendorCreate,
+  customVendorDelete,
+  customVendorErrorCodeSchema,
+  customVendorFetchModels,
+  customVendorList,
+  customVendorProbe,
+  customVendorSchema,
+  customVendorUpdate,
+  customVendorWriteResultSchema,
+  probeReasonSchema,
+  probeSnapshotSchema,
+  vendorPresetSchema,
+  wireSchema,
+} from './ipc/custom-vendor.js'
+export type { CustomVendorContract, CustomVendorErrorCode } from './ipc/custom-vendor.js'
 
 // Spec 02 plan step 12: the decision summary, the only half of a decision that crosses IPC.
 export {

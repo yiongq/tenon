@@ -46,7 +46,9 @@
         "unknownModel": "这个模型不属于该供应商。",
         "noModel": "这个供应商没有可选的模型，选不了。",
         "unavailable": "没能保存设置，请重试。",
-        "keyHostBinding": "密钥只属于保存它时的主机。要换主机，请在同一次保存里重新填写或清空每个已存的密钥。Ollama 的地址只能是本机或局域网。"
+        "keyHostBinding": "密钥只属于保存它时的主机。要换主机，请在同一次保存里重新填写或清空每个已存的密钥。Ollama 的地址只能是本机或局域网。",
+        "officialHostOnly": "内置供应商只能用官方地址；这个地址只能用自定义厂商接入。",
+        "subscriptionEndpoint": "这是 GLM Coding Plan 的订阅地址，不能用于 Tenon。请改用按量付费的地址。"
       },
       "customModel": "或手填模型 ID",
       "customModelHint": "列表外的模型未经验证，只能纯文字对话。"
@@ -136,7 +138,9 @@
     },
     "mark": {
       "localTextOnly": "{host} · 仅文字对话",
-      "unverified": "未验证 · 仅文字对话 · {host}"
+      "unverified": "未验证 · 仅文字对话 · {host}",
+      "probed": "本机探测 · 不保证 · {host}",
+      "unprobed": "尚未通过探测 · 仅文字对话 · {host}"
     },
     "host": {
       "local": "本机"

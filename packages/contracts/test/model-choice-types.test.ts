@@ -32,13 +32,16 @@ describe('the session model choice', () => {
         effort: null,
       }).success,
     ).toBe(true)
-    expect(
+    // M6 02 修补 2: `probed` is a custom instance's row that passed its probe; nothing else joins.
+    const custom = 'custom-0f1d9a2e-6b3d-4a71-9f52-0c8de7a11b71'
+    const answer = (capabilitySource: string) =>
       sessionModelChoiceResponse.safeParse({
-        providerId: 'anthropic',
-        modelId: 'my-own-model',
+        providerId: custom,
+        modelId: 'deepseek-flash',
         effort: null,
-        capabilitySource: 'probed',
-      }).success,
-    ).toBe(false)
+        capabilitySource,
+      }).success
+    expect(answer('probed')).toBe(true)
+    expect(answer('guessed')).toBe(false)
   })
 })

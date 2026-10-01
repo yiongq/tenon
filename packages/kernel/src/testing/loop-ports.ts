@@ -46,7 +46,7 @@ export interface TestConnectorScript {
   readonly endpointOrigin?: string
   /** Default the model's `maxOutputTokens`. */
   readonly maxTokens?: number
-  readonly toolsWithheld?: 'provider-text-only' | null
+  readonly toolsWithheld?: RunAssembly['toolsWithheld']
   readonly search?: SearchBackend | null
   readonly mcpSources?: readonly McpToolSource[]
 }
