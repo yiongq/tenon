@@ -14,6 +14,8 @@ import { BOTH_PROFILES, noChecks } from './tool.js'
 
 export const FETCH_CONVERT_MAX_BYTES = 1_000_000
 export const FETCH_MAX_REDIRECTS = 20
+/** WHATWG HTML's「prescan a byte stream」looks for a `<meta>` charset in this many bytes at most. */
+const META_PRESCAN_BYTES = 1024
 
 const TEXTS = {
   redirect:
@@ -23,7 +25,7 @@ const TEXTS = {
   status: 'WebFetch failed with HTTP {status}.',
   type: 'WebFetch cannot read this content type: {type}.',
   missingType: '(missing)',
-  tooLarge: 'The HTML page exceeds the conversion limit of {limit} bytes ({bytes} bytes received).',
+  tooLarge: 'The page exceeds the WebFetch limit of {limit} bytes ({bytes} bytes received).',
   failed: 'WebFetch failed: {message}',
   finalUrl: 'Final URL: {url}\n\n{content}',
 } as const
@@ -107,31 +109,29 @@ export const webFetchExecutor: ToolExecutor = async (q) => {
         const type = header.split(';')[0]?.trim().toLowerCase() ?? ''
         if (!type.startsWith('text/'))
           return finish(fill(TEXTS.type, { type: type || TEXTS.missingType }), true)
-        let content: string
-        if (type === 'text/html') {
-          // Stop retaining bytes as soon as the conversion cap is exceeded. No converter runs then.
-          // oxlint-disable-next-line no-await-in-loop -- only the final hop reads its body
-          const bytes = await htmlBytes(response)
-          if (typeof bytes === 'number')
-            return finish(
-              fill(TEXTS.tooLarge, {
-                limit: String(FETCH_CONVERT_MAX_BYTES),
-                bytes: String(bytes),
-              }),
-              true,
-            )
-          const charset = charsetOf(header) ?? metaCharset(bytes) ?? 'utf-8'
-          const html = new TextDecoder(charset).decode(bytes)
-          q.signal.throwIfAborted()
-          content = htmlToMarkdown(html, { origin: current })
-        } else {
-          // oxlint-disable-next-line no-await-in-loop -- the response belongs to the final hop
-          content = await response.text()
-        }
+        // Every text body stops retaining bytes as soon as the cap is exceeded, counted after HTTP
+        // decompression: no converter runs then, and a gzip bomb never fills the main process.
+        // oxlint-disable-next-line no-await-in-loop -- only the final hop reads its body
+        const bytes = await bodyBytes(response)
+        if (typeof bytes === 'number')
+          return finish(
+            fill(TEXTS.tooLarge, { limit: String(FETCH_CONVERT_MAX_BYTES), bytes: String(bytes) }),
+            true,
+          )
+        // Header charset, then `<meta>` (HTML only), then a UTF-16 BOM, then UTF-8.
+        const html = type === 'text/html'
+        const decoded = (
+          decoderOf(charsetOf(header)) ??
+          (html ? metaDecoder(bytes) : undefined) ??
+          decoderOf(bomCharset(bytes)) ??
+          new TextDecoder('utf-8')
+        ).decode(bytes)
+        q.signal.throwIfAborted()
+        const content = html ? htmlToMarkdown(decoded, { origin: current }) : decoded
         q.signal.throwIfAborted()
         return finish(content)
       } finally {
-        // Redirects, errors and oversized HTML all relinquish the body and its host connection.
+        // Redirects, errors and oversized bodies all relinquish the body and its host connection.
         // oxlint-disable-next-line no-await-in-loop -- finish this hop before starting another
         if (!response.bodyUsed) await response.body?.cancel().catch(() => {})
       }
@@ -159,7 +159,7 @@ function output(text: string, isError = false): ToolExecution {
 }
 
 /** Counts decoded HTTP body bytes before charset decoding or synchronous Markdown conversion. */
-async function htmlBytes(response: Response): Promise<Uint8Array | number> {
+async function bodyBytes(response: Response): Promise<Uint8Array | number> {
   if (response.body === null) return new Uint8Array()
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -197,20 +197,46 @@ function charsetOf(value: string): string | undefined {
     ?.trim()
 }
 
-/** Meta attribute order and quoting vary; HTTP charset always wins over these HTML hints. */
-function metaCharset(bytes: Uint8Array): string | undefined {
-  const source = new TextDecoder('latin1').decode(bytes)
-  for (const [tag] of source.matchAll(/<meta\b[^>]*>/giu)) {
+/** An unknown label is a failure, as in WHATWG's「get an encoding」, so the next source decides. */
+function decoderOf(label: string | undefined): TextDecoder | undefined {
+  if (label === undefined) return undefined
+  try {
+    return new TextDecoder(label)
+  } catch {
+    // A RangeError: not a label TextDecoder supports.
+    return undefined
+  }
+}
+
+/** UTF-16 needs its BOM to be read at all; TextDecoder already drops a UTF-8 one. */
+function bomCharset(bytes: Uint8Array): string | undefined {
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return 'utf-16be'
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return 'utf-16le'
+  return undefined
+}
+
+/**
+ * Meta attribute order and quoting vary; HTTP charset always wins over these HTML hints. Only the
+ * prescan window is read, and neither pattern rescans: an unclosed tag runs to the window's end
+ * once, and an attribute name cannot start inside another word.
+ */
+function metaDecoder(bytes: Uint8Array): TextDecoder | undefined {
+  const source = new TextDecoder('latin1').decode(bytes.subarray(0, META_PRESCAN_BYTES))
+  for (const [, tag = ''] of source.matchAll(/<meta\b([^>]*)/giu)) {
     const attributes = new Map<string, string>()
-    for (const match of tag.matchAll(/([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gu)) {
+    for (const match of tag.matchAll(
+      /(?<![\w-])([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gu,
+    )) {
       attributes.set((match[1] ?? '').toLowerCase(), match[2] ?? match[3] ?? match[4] ?? '')
     }
     const charset = attributes.get('charset')
-    if (charset) return charset
-    if (attributes.get('http-equiv')?.toLowerCase() === 'content-type') {
-      const fromContent = charsetOf(attributes.get('content') ?? '')
-      if (fromContent !== undefined) return fromContent
-    }
+    const fromContent =
+      attributes.get('http-equiv')?.toLowerCase() === 'content-type'
+        ? charsetOf(attributes.get('content') ?? '')
+        : undefined
+    // An unknown label moves on to the next <meta>, as the WHATWG prescan does.
+    const decoder = decoderOf(charset || fromContent)
+    if (decoder !== undefined) return decoder
   }
   return undefined
 }

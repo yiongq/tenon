@@ -42,6 +42,11 @@ const text = (result: ToolExecution) =>
   result.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')
 const response = (body: BodyInit, type = 'text/html') =>
   new Response(body, { headers: { 'content-type': type } })
+/** `html` with its one 中文 encoded as GBK and the rest as ASCII. */
+const gbk = (html: string) => {
+  const [before, after] = html.split('中文').map((part) => new TextEncoder().encode(part))
+  return new Uint8Array([...(before ?? []), 0xd6, 0xd0, 0xce, 0xc4, ...(after ?? [])])
+}
 
 describe('WebFetch content', () => {
   it('converts HTML with absolute links and tables but no script/style contents', async () => {
@@ -87,21 +92,80 @@ describe('WebFetch content', () => {
     expect(text(await execute(async () => response('<p>中文</p>')))).toBe('中文')
   })
 
-  it('rejects oversized HTML before conversion and cancels the remaining stream', async () => {
-    const cancel = vi.fn<() => void>()
+  it.each([
+    ['repeated unclosed tags', '<meta '.repeat(Math.floor(FETCH_CONVERT_MAX_BYTES / 6))],
+    ['one long attribute name', `<meta ${'a'.repeat(FETCH_CONVERT_MAX_BYTES - 7)}>`],
+  ])('prescans a hostile 1 MB page with %s in bounded time', async (_shape, page) => {
+    const started = performance.now()
+    const result = await execute(async () => response(page))
+    expect(result.isError).toBe(false)
+    // A whole-body scan with rescanning patterns took about a minute on the first shape.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('looks for a <meta> charset only in the first 1024 bytes', async () => {
+    const late = `<!--${'x'.repeat(1024)}--><meta charset="gbk"><p>中文</p>`
+    expect(text(await execute(async () => response(late)))).toContain('中文')
+  })
+
+  it.each([
+    ['an unknown header label to the meta', 'text/html; charset=utf8mb4', '<meta charset="gbk">'],
+    [
+      'an unknown meta label to the next meta',
+      'text/html',
+      '<meta charset="foo"><meta charset=gbk>',
+    ],
+  ])('falls back from %s', async (_case, type, meta) => {
+    const result = await execute(async () => response(gbk(`${meta}<p>中文</p>`), type))
+    expect(result.isError).toBe(false)
+    expect(text(result)).toContain('中文')
+  })
+
+  it('decodes as UTF-8 when no label is known', async () => {
     const result = await execute(async () =>
-      response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new Uint8Array(FETCH_CONVERT_MAX_BYTES + 1))
-          },
-          cancel,
-        }),
-      ),
+      response('<meta charset="foo"><p>中文</p>', 'text/html; charset=utf8mb4'),
     )
-    expect(result.isError).toBe(true)
-    expect(text(result)).toContain(String(FETCH_CONVERT_MAX_BYTES + 1))
-    expect(cancel).toHaveBeenCalledOnce()
+    expect(result.isError).toBe(false)
+    expect(text(result)).toBe('中文')
+  })
+
+  it.each(['text/html', 'text/plain; charset=bogus'])(
+    'reads a UTF-16 BOM when %s gives no usable label',
+    async (type) => {
+      const units = [...'<p>中文</p>'].map((c) => c.charCodeAt(0))
+      const bytes = new Uint8Array([0xff, 0xfe, ...units.flatMap((u) => [u & 255, u >> 8])])
+      expect(text(await execute(async () => response(bytes, type)))).toContain('中文')
+    },
+  )
+
+  it.each(['text/html', 'text/plain'])(
+    'rejects an oversized %s body before decoding and cancels the remaining stream',
+    async (type) => {
+      const cancel = vi.fn<() => void>()
+      const result = await execute(async () =>
+        response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new Uint8Array(FETCH_CONVERT_MAX_BYTES + 1))
+            },
+            cancel,
+          }),
+          type,
+        ),
+      )
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain(String(FETCH_CONVERT_MAX_BYTES + 1))
+      expect(cancel).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('decodes other text by its header charset alone, without reading <meta>', async () => {
+    expect(text(await execute(async () => response(gbk('中文'), 'text/plain; charset=gbk')))).toBe(
+      '中文',
+    )
+    expect(
+      text(await execute(async () => response('<meta charset="gbk">中文', 'text/plain'))),
+    ).toBe('<meta charset="gbk">中文')
   })
 
   it('returns plain text unchanged, and reports non-text types and HTTP errors', async () => {

@@ -7,6 +7,8 @@ describe('WebFetch literal boundary', () => {
     'file:///etc/passwd',
     'ftp://public.example/file',
     'https://u:p@public.example',
+    'http://user@public.example',
+    'http://:password@public.example',
     'http://localhost',
     'http://LOCALHOST.',
     'http://printer',
@@ -15,6 +17,8 @@ describe('WebFetch literal boundary', () => {
     'http://0x7f000001',
     'http://127.1',
     'http://0177.0.0.1',
+    'http://127.1.2.3',
+    'http://127.255.255.254',
     'http://10.1.2.3',
     'http://172.16.1.1',
     'http://172.31.255.255',
@@ -48,7 +52,16 @@ describe('WebFetch literal boundary', () => {
   })
 
   it('uses the same literal IP ranges for DNS results, without widening to CGNAT', () => {
-    for (const address of ['127.0.0.1', '10.0.0.1', '::1', '::ffff:7f00:1', 'fe80::1', 'not-an-ip'])
+    for (const address of [
+      '127.0.0.1',
+      '127.8.9.10',
+      '10.0.0.1',
+      '::1',
+      '::ffff:7f00:1',
+      '::ffff:127.8.9.10',
+      'fe80::1',
+      'not-an-ip',
+    ])
       expect(isBlockedFetchAddress(address)).toBe(true)
     for (const address of ['8.8.8.8', '100.64.1.1', '2001:4860::8888', '::ffff:808:808'])
       expect(isBlockedFetchAddress(address)).toBe(false)

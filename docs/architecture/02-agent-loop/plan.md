@@ -1021,6 +1021,14 @@
 
 - **第34步轻评审与突变完成（真实评测尚未开始）**：20题16compare及4个长文档判分回归已合，三缺口修复经独立复评；6个判分突变均命中对应业务AssertionError且字节恢复，恢复后12项判分测试通过，日志/tmp/tenon34-mutations-20260928-130834。包括第三拦截结束码、外带URL变体、结果事实因果先后，以及长任务的全文/起始offset/完整60份三个门槛。源fixture输出改用stdout.write以通过根lint，题意和expected不变。尚未跑任何34真实列，不勾34。
 
+- **2026-10-01 · 第三段复核修复（FN）**，分支 `wt/02-s3-FN`（基于 `feat/02-seg3` 的 `a41a73f`），WebFetch 抓取安全四条。
+  - 读了什么：spec §本机抓取器 第 1、4 条与 Revisions；`tools/builtin/web-fetch.ts`、`permission/fetch-address.ts`、desktop `host/fetch-untrusted.ts`；R2 评审与核查的探针（`s3r/R2/`、`s3r/R2/verify/`）；提示层版本闸：dev 上 `PROMPT_LAYER_VERSION` 仍是 3，第 8 版只在未合的 `feat/02-seg3`，按未发布就地更新哈希、不升版本。
+  - R2-1（阻断）：`<meta>` 预扫只看前 1024 字节（`META_PRESCAN_BYTES`，WHATWG prescan 的窗口），两个正则改成不回扫的写法（标签不再要求收尾 `>`，属性名用后行断言不从词中间起）。两道各自都够：去掉窗口、保留新正则，1 MB 的 `'<meta '×N` 与 `<meta aaaa…>` 仍是 19 ms、10 ms；保留窗口、换回旧正则，15 ms、5 ms。新测：两种 1 MB 恶意页各在 1 秒内完成（现 11 ms、5 ms）；1024 字节之后的 `<meta charset=gbk>` 不生效。突变：换回原函数，按比例缩到 240 KB / 80 KB 已是 3,379 ms / 5,103 ms，测试红（1 MB 原样要一分钟和十几分钟，不跑）；只去窗口，窗口那条红。
+  - R2-2（主要）：`htmlBytes` 改名 `bodyBytes`，所有 `text/*` 都经它读，`FETCH_CONVERT_MAX_BYTES` 按解压后的字节计，超限回 is_error 带字节数；非 HTML 也按 charset 用 `TextDecoder` 解码，不再走 `Response.text()`。`tooLarge` 措辞改为不限 HTML。spec 修订 (33)。新测：kernel 两类超限都取消剩余流；`text/plain; charset=gbk` 解对、`text/plain` 不读 `<meta>`；desktop web-fetch-network 起真 node:http，16 MiB 的 gzip 炸弹（约 16 KB）分别按 `text/plain`、`text/html` 经 `createDesktopNetwork` 抓，结果 is_error，读到的字节数大于压缩包、远小于解压全长。突变：非 HTML 改回 `response.text()`，desktop 的 `text/plain` 那条与 kernel 三条红。
+  - R2-3（次要）：编码依次取 header charset、`<meta>`（仅 HTML）、UTF-16 BOM、UTF-8，`TextDecoder` 不认的标签跳到下一个来源，`<meta>` 里不认的跳到下一个 `<meta>`。新测：`charset=utf8mb4` 退到 meta、`<meta charset=foo>` 退到下一个 meta、全不认退 UTF-8、UTF-16 BOM 在 HTML 与 `text/plain; charset=bogus` 下都读对。突变：去掉 try/catch 四条红；不认的 meta 停扫一条红；去掉 BOM 两条红。
+  - M-fetch-literal-gaps（测试）：字面拦截补 `http://127.1.2.3`、`http://127.255.255.254`、只带用户名的 `http://user@public.example`、只带密码的 `http://:password@public.example`；DNS 地址补 `127.8.9.10`、`::ffff:127.8.9.10`。突变 f1（`a === 127 && b === 0`）三条红、f6（去用户名判定）一条红、去密码判定一条红，都已恢复。
+  - 检查：typecheck、lint、format:check 通过；vitest `--maxWorkers=2` 依次跑 kernel 项目 88 个文件 1602 个用例、desktop 项目 66 个文件 1280 个用例，全过。没跑 Electron 与 e2e。
+
 ## 验收记录
 
 ### 第 35 步分组审计（2026-09-28，待最终门禁）

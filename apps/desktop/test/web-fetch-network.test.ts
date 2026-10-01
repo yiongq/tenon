@@ -1,4 +1,5 @@
 /** Real kernel WebFetch plus desktop DNS pinning, using only local HTTP servers (step 27). */
+import { gzipSync } from 'node:zlib'
 import { HostNetworkDeniedError, createMemoryHost, createMemoryTapeStore } from '@tenon-app/kernel'
 import type { HostNetwork, ModelInfo, StreamEvent } from '@tenon-app/kernel'
 import {
@@ -155,4 +156,28 @@ describe('kernel WebFetch cannot turn a public URL into a local request', () => 
     expect(served.requests).toHaveLength(2)
     expect(lookup).toHaveBeenCalledTimes(3)
   })
+})
+
+describe('kernel WebFetch bounds the bytes it reads after decompression', () => {
+  it.each(['text/plain', 'text/html'])(
+    'stops reading a gzip bomb served as %s just past the limit',
+    async (type) => {
+      const inflated = 16 * 1024 * 1024
+      const bomb = gzipSync(Buffer.alloc(inflated, 0x61), { level: 9 })
+      const served = await server((_req, res) => {
+        res.writeHead(200, { 'content-type': type, 'content-encoding': 'gzip' })
+        res.end(bomb)
+      })
+      const h = harness(
+        createDesktopNetwork({ lookup: async () => [PUBLIC], connectTarget: () => LOOPBACK }),
+      )
+      await startAndAllow(h, served.publicUrl)
+      const result = (await facts(h, 'tool/result'))[0]?.payload
+      expect(result?.['isError']).toBe(true)
+      const received = Number(/\((\d+) bytes received\)/u.exec(JSON.stringify(result))?.[1])
+      // Counted after undici gunzips: past the limit, far short of the inflated body.
+      expect(received).toBeGreaterThan(bomb.byteLength)
+      expect(received).toBeLessThan(inflated / 4)
+    },
+  )
 })
