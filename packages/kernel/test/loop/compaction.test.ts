@@ -2,7 +2,8 @@ import type * as RunModule from '../../src/loop/run.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore, compactionThreshold } from '../../src/index.js'
 import type { EncodedRequest, ModelInfo, StreamEvent } from '../../src/index.js'
-import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
+import { encodeOpenAIChat } from '../../src/provider/wire/openai-chat.js'
+import { LOCALE_HINT, MODEL_NOTES, fill } from '../../src/prompts/index.js'
 import {
   recheckAttempt,
   createCounterIds,
@@ -166,6 +167,34 @@ describe('compaction in a Run', () => {
     expect(terminal.payload['steps']).toBe(0)
     expect(terminal.payload['usage']).toEqual(
       expect.arrayContaining([expect.objectContaining({ outputTokens: 10 })]),
+    )
+  })
+  it('02 不变量 7: keeps the frozen system through a compaction after the interface language changes', async () => {
+    const h = harness()
+    await seed(h)
+    // The next system text would now be assembled in zh-CN; this incarnation's stays en.
+    h.loop.setLocale('zh-CN')
+    h.provider.script(reply('summary'))
+    h.provider.script(reply('after compaction'))
+    expect((await send(h, 'new question')).reason.code).toBe('completed')
+    h.provider.script(reply('later'))
+    expect((await send(h, 'later question')).reason.code).toBe('completed')
+    const facts = await entries(h)
+    expect(facts.filter((e) => e.name === 'compaction/anchor')).toHaveLength(1)
+    const hashes = facts
+      .filter((e) => e.name === 'view/assembled')
+      .map((e) => e.payload['systemHash'])
+    expect(hashes).toHaveLength(6)
+    expect(hashes).toEqual(hashes.map(() => hashes[0]))
+    const systems = h.provider.requests.map((r) => (r.body as { system?: unknown }).system)
+    expect(systems[0]).toEqual(expect.stringContaining(fill(LOCALE_HINT, { locale: 'en' })))
+    expect(systems).toEqual(systems.map(() => systems[0]))
+    // A new incarnation is where the language changes: its system is assembled in zh-CN.
+    await h.service.resetSession(SESSION)
+    h.provider.script(reply('fresh'))
+    expect((await send(h, 'fresh question')).reason.code).toBe('completed')
+    expect((h.provider.requests.at(-1)!.body as { system?: unknown }).system).toEqual(
+      expect.stringContaining(fill(LOCALE_HINT, { locale: 'zh-CN' })),
     )
   })
   it('allows only two overflow-compaction-resend cycles and records exactly five requests', async () => {
@@ -649,6 +678,86 @@ it.each([
     }),
   ).toEqual(expected)
 })
+
+// §摘要请求「思考参数」, the rows a session can pick an effort on (budget and the rows without a
+// thinkingSpec list no levels). The row's own levels, defaults and displays are the built-in ones.
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+const SHOWN = { displays: ['summarized', 'omitted'], defaultDisplay: 'omitted' } as const
+it.each([
+  [
+    'adaptive',
+    { mode: 'adaptive', defaultOn: true, effortLevels: LEVELS, defaultEffort: 'high', ...SHOWN },
+    { thinking: { enabled: false } },
+    { thinking: { type: 'disabled' } },
+  ],
+  [
+    'adaptive-gated',
+    {
+      mode: 'adaptive-gated',
+      defaultOn: true,
+      effortLevels: LEVELS,
+      defaultEffort: 'high',
+      disableMaxEffort: 'high',
+      ...SHOWN,
+    },
+    { thinking: { enabled: false }, effort: 'high' },
+    { thinking: { type: 'disabled' }, output_config: { effort: 'high' } },
+  ],
+  [
+    'always-on',
+    { mode: 'always-on', defaultOn: true, effortLevels: LEVELS, defaultEffort: 'medium', ...SHOWN },
+    {},
+    {},
+  ],
+  [
+    'effort-only',
+    {
+      mode: 'effort-only',
+      defaultOn: true,
+      effortLevels: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    },
+    {},
+    {},
+  ],
+] as const)(
+  'does not carry the session effort or display into the summary request on a %s row',
+  async (mode, thinkingSpec, snapshot, wire) => {
+    const model: ModelInfo = { ...MODEL, reasoning: true, thinkingSpec }
+    const h = harness(model)
+    // effort-only rows belong to the openai-chat wire; the scripted stream is the same.
+    if (mode === 'effort-only') h.provider.encode = (req) => encodeOpenAIChat(req, 'zhipu')
+    await h.service.selectModel({
+      sessionId: SESSION,
+      origin: null,
+      choice: { providerId: model.providerId, modelId: model.id, effort: 'low' },
+    })
+    await seed(h)
+    h.provider.script(reply('summary'))
+    h.provider.script(reply('done'))
+    expect((await send(h, 'new question')).reason.code).toBe('completed')
+    const attempts = (await entries(h)).filter((e) => e.name === 'provider/attempt_completed')
+    const at = attempts.findIndex((e) => e.payload['compaction'] !== undefined)
+    expect(at).toBe(3)
+    // The main requests carry the session's effort (and display while thinking is on)...
+    const display = mode === 'effort-only' ? {} : { display: 'summarized' }
+    for (const main of [attempts[at - 1]!, attempts[at + 1]!])
+      expect(main.payload['request']).toMatchObject({ effort: 'low', ...display })
+    // ...the summary request carries exactly the row's thinking parameters, and no display.
+    expect(attempts[at]!.payload['request']).toEqual({
+      systemHash: expect.any(String),
+      maxTokens: expect.any(Number),
+      dropThinkingBefore: expect.any(Number),
+      ...snapshot,
+    })
+    const body = h.provider.requests[at]!.body as Record<string, unknown>
+    expect({
+      thinking: body['thinking'],
+      output_config: body['output_config'],
+      reasoning_effort: body['reasoning_effort'],
+    }).toEqual(wire)
+  },
+)
 
 it('handles a context-overflow error signal as a compactable payload', async () => {
   const h = harness(MODEL, 100000)

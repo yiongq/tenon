@@ -236,6 +236,48 @@ it('a parent file grant permits the child and is explicitly marked inherited', a
   )
 })
 
+it.each(['kept', 'removed', 'removed-and-readded'] as const)(
+  'a parent file grant the child inherits is void once the parent removes its folder: %s',
+  async (change) => {
+    const h = await harness()
+    const shared = absolutePath('/shared')
+    await h.host.fs.mkdirp(shared)
+    const workspace = (folders: 'add' | 'remove') =>
+      h.service.setWorkspace({
+        sessionId: SESSION,
+        change:
+          folders === 'add'
+            ? { kind: 'add', folders: [shared] }
+            : { kind: 'remove', folder: shared },
+        dedicated: absolutePath('/work'),
+      })
+    await workspace('add')
+    h.provider.script(call('Write', { file_path: '/shared/a.txt', content: 'parent' }))
+    await send(h)
+    h.provider.script(done())
+    expect((await allow(h)).reason.code).toBe('completed')
+    // Removal voids the parent's own grant for good; adding the folder back does not revive it.
+    if (change !== 'kept') await workspace('remove')
+    if (change === 'removed-and-readded') await workspace('add')
+    h.provider.script(call('Agent', { description: 'update file', prompt: 'update the file' }))
+    h.provider.script(call('Write', { file_path: '/shared/a.txt', content: 'child' }))
+    h.provider.script(done())
+    h.provider.script(done())
+    const inherited = change === 'kept'
+    expect((await send(h)).reason).toEqual(
+      inherited ? { code: 'completed' } : { code: 'paused', waitingFor: 'subagent' },
+    )
+    const card = await h.service.currentPending({ sessionId: SESSION })
+    expect(card?.waitKind === 'approval' ? card.card.target : null).toEqual(
+      inherited ? null : { type: 'path', path: '/shared/a.txt' },
+    )
+    expect(card?.waitKind === 'approval' && card.card.sessionId === SESSION).toBe(false)
+    expect(await h.host.fs.readFile(absolutePath('/shared/a.txt'), { encoding: 'utf8' })).toBe(
+      inherited ? 'child' : 'parent',
+    )
+  },
+)
+
 it.each(['parent', 'sibling'] as const)(
   'a child search result does not vouch for a later %s fetch',
   async (destination) => {
