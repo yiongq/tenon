@@ -29,10 +29,11 @@ import type { RunRegistry } from './chat.js'
  *   2. the folder goes (`fs.rm`, recursive, force);
  *   3. only then is the operation complete.
  *
- * Step 0 because neither store call waits for a Run: a clear is a mailbox command, which runs between
- * an open Run's own writes, and a delete skips the mailbox. A call still running at step 2 would spill
- * after it: the old incarnation's full output back in the folder, for good after a delete, or where
- * the new incarnation reads without a card after a clear. A stopped Run spills before its lease
+ * Step 0 because neither store call waits for a Run: a clear or a delete is a mailbox command, which
+ * runs between an open Run's own writes (and first closes a sub-agent card the tree waits on, whose
+ * Tape outlives the root's facts). A call still running at step 2 would spill after it: the old
+ * incarnation's full output back in the folder, for good after a delete, or where the new
+ * incarnation reads without a card after a clear. A stopped Run spills before its lease
  * finishes, into the folder step 2 removes; a result later than its write wait is only logged
  * (§点停止时各状态怎么收). `user-stop`, because the user asked; the other two causes say the app is
  * going. A paused session has no lease, and its Run writes nothing more: nothing to wait for. A call

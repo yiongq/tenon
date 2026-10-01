@@ -1,7 +1,8 @@
 import type * as RunModule from '../../src/loop/run.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore, compactionThreshold } from '../../src/index.js'
-import type { ModelInfo, StreamEvent } from '../../src/index.js'
+import type { EncodedRequest, ModelInfo, StreamEvent } from '../../src/index.js'
+import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
 import {
   recheckAttempt,
   createCounterIds,
@@ -118,6 +119,18 @@ describe('compaction in a Run', () => {
     const facts = await entries(h)
     const anchor = facts.find((e) => e.name === 'compaction/anchor')!
     expect(anchor).toBeDefined()
+    // §重建: a boundary cut keeps COMPACT_KEEP_TURNS (2) whole turns before the current one; §摘要请求:
+    // it covers through the entry just before them, and stores the summary as sent, wrapped.
+    const kept = facts.find(
+      (e) => e.name === 'message/user' && JSON.stringify(e.payload).includes('old question 1'),
+    )!
+    expect(anchor.payload['keepFromEntryId']).toBe(kept.entryId)
+    expect(anchor.payload['coversThroughEntryId']).toBe(
+      facts.findLast((e) => e.entryId < kept.entryId)?.entryId,
+    )
+    expect(anchor.payload['summary']).toBe(
+      fill(MODEL_NOTES.compactionWrap, { summary: 'PRIVATE_SUMMARY' }),
+    )
     const attempts = facts.filter((e) => e.name === 'provider/attempt_completed')
     const summary = attempts.find((e) => e.payload['compaction'] !== undefined)!
     expect(summary.sourceSeq).toBe(1)
@@ -267,6 +280,56 @@ it('aborts a partial summary without an anchor or visible assistant content', as
   expect(JSON.stringify(h.loop.recorded)).not.toContain('partial')
 })
 
+it('ends as stopped with no anchor when the stop reaches the anchor write first', async () => {
+  const h = harness()
+  await seed(h)
+  // A message sent while the summary is out holds the mailbox until the case lets it go, so the
+  // anchor's write task waits behind it, past the Run's last look at the signal.
+  const gate = Promise.withResolvers<void>()
+  const enqueue = h.loop.queue.enqueue.bind(h.loop.queue)
+  h.loop.queue.enqueue = async (...args) => {
+    await gate.promise
+    return enqueue(...args)
+  }
+  const summarized = Promise.withResolvers<void>()
+  let queued: Promise<unknown> | undefined
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    const written = await append(batch)
+    if (
+      batch.entries.some(
+        (e) => e.name === 'provider/attempt_completed' && e.payload['compaction'] !== undefined,
+      )
+    ) {
+      queued ??= h.service.send({ sessionId: SESSION, origin: null, text: 'one more thing' })
+      summarized.resolve()
+    }
+    return written
+  }
+  h.provider.script(reply('summary'))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'new question' })
+  await summarized.promise
+  await new Promise((resolve) => {
+    setTimeout(resolve, 20)
+  })
+  expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+  gate.resolve()
+  const ended = await h.loop.runEnded()
+  expect(ended.reason).toEqual({ code: 'user-stopped' })
+  expect(ended.recorded).toBe(true)
+  expect(await queued).toMatchObject({ status: 'queued' })
+  const facts = await entries(h)
+  expect(facts.some((e) => e.name === 'compaction/anchor')).toBe(false)
+  expect(facts.filter((e) => e.name === 'execution/run_terminal')).toHaveLength(
+    facts.filter((e) => e.name === 'execution/run_started').length,
+  )
+  // The summary attempt's usage is still this Run's (H11).
+  expect(facts.findLast((e) => e.name === 'execution/run_terminal')?.payload['usage']).toEqual(
+    expect.arrayContaining([expect.objectContaining({ requests: 1, outputTokens: 5 })]),
+  )
+  expect(h.logs).toEqual([])
+})
+
 it('does not send an overflow summary after the main attempt exhausts the token limit', async () => {
   const h = harness(MODEL, 100000, 100)
   await seed(h, 10)
@@ -306,6 +369,136 @@ it('drops thinking produced after a mid-turn anchor at the next boundary and its
     expect(JSON.stringify(request.body)).not.toContain('AFTER_ANCHOR_THINKING')
     expect(JSON.stringify(request.body)).not.toContain('signed-after-anchor')
   }
+})
+
+it('02 不变量 9: keeps the current turn’s thinking through a mid-turn compaction until the next boundary', async () => {
+  const h = harness({ ...MODEL, reasoning: true, thinkingPreservationFormat: 'signed-blocks' })
+  await seed(h, 10)
+  h.provider.script([
+    { type: 'thinking-delta', index: 2, text: 'BEFORE_ANCHOR_THINKING' },
+    { type: 'thinking-signature', index: 2, signature: 'signed-before-anchor' },
+    ...readCall(),
+  ])
+  h.provider.script(reply('summary'))
+  h.provider.script(readCall(10))
+  h.provider.script(reply('done'))
+  expect((await send(h, 'compacted turn')).reason.code).toBe('completed')
+  expect((await entries(h)).filter((e) => e.name === 'compaction/anchor')).toHaveLength(1)
+  // Requests 0–2 are the seed, 3 made the call, 4 is the summary; the turn goes on in 5 and 6.
+  const after = h.provider.requests.slice(5)
+  expect(after).toHaveLength(2)
+  for (const request of after) {
+    expect(JSON.stringify(request.body)).toContain('BEFORE_ANCHOR_THINKING')
+    expect(JSON.stringify(request.body)).toContain('signed-before-anchor')
+    expect(request.thinkingDecisions).not.toContainEqual({ action: 'drop', reason: 'compacted' })
+  }
+  // The next boundary request ends the exception: the block is dropped as compacted.
+  h.provider.script(reply('next done'))
+  await send(h, 'next boundary')
+  const next = h.provider.requests.at(-1)!
+  expect(JSON.stringify(next.body)).not.toContain('BEFORE_ANCHOR_THINKING')
+  expect(next.thinkingDecisions).toContainEqual({ action: 'drop', reason: 'compacted' })
+})
+
+/** The Anthropic body the scripted provider encodes, as far as 02 不变量 8 reads it. */
+interface PrefixBody {
+  readonly system?: unknown
+  readonly tools?: unknown
+  readonly messages: readonly { readonly content: unknown }[]
+}
+function thinkingOf(message: { readonly content: unknown }): string[] {
+  if (!Array.isArray(message.content)) return []
+  return (message.content as { type: string; signature?: string }[])
+    .filter((block) => block.type === 'thinking')
+    .map((block) => String(block.signature))
+}
+/**
+ * 02 不变量 8: every thinking block a request carries went out under the prefix it was produced in —
+ * the producing request's system, tools and messages, byte for byte, right before it.
+ */
+function assertThinkingPrefixes(
+  requests: readonly EncodedRequest[],
+  producedBy: ReadonlyMap<string, number>,
+): void {
+  for (const [at, request] of requests.entries()) {
+    const body = request.body as PrefixBody
+    for (const [index, message] of body.messages.entries()) {
+      for (const signature of thinkingOf(message)) {
+        const producer = producedBy.get(signature)
+        if (producer === undefined) throw new Error(`request ${String(at)}: unknown ${signature}`)
+        const origin = requests[producer]!.body as PrefixBody
+        expect(index, `request ${String(at)}: ${signature} position`).toBe(origin.messages.length)
+        expect(JSON.stringify(body.system), `request ${String(at)}: system`).toBe(
+          JSON.stringify(origin.system),
+        )
+        expect(JSON.stringify(body.tools), `request ${String(at)}: tools`).toBe(
+          JSON.stringify(origin.tools),
+        )
+        expect(JSON.stringify(body.messages.slice(0, index)), `request ${String(at)}: prefix`).toBe(
+          JSON.stringify(origin.messages),
+        )
+      }
+    }
+  }
+}
+function thinking(tag: string): StreamEvent[] {
+  return [
+    { type: 'thinking-delta', index: 2, text: `THINKING_${tag}` },
+    { type: 'thinking-signature', index: 2, signature: `sig-${tag}` },
+  ]
+}
+
+it('02 不变量 8: after a boundary compaction, echoes each later thinking block under its own prefix', async () => {
+  // A prefix-checking model: no mid-turn compaction, so no window is exempt.
+  const h = harness({
+    ...MODEL,
+    id: 'claude-opus-5-5',
+    reasoning: true,
+    thinkingPreservationFormat: 'signed-blocks',
+  })
+  for (let i = 0; i < 3; i += 1) {
+    h.provider.script([...thinking(String(i)), ...reply(`old${i}`, i === 2 ? 2000 : 10)])
+    // oxlint-disable-next-line no-await-in-loop -- successive user turns establish distinct compaction boundaries
+    await send(h, `old question ${i}`)
+  }
+  // Turn T compacts at its boundary, then thinks and calls; T+1 thinks and calls; T+2 answers.
+  h.provider.script(reply('summary'))
+  h.provider.script([...thinking('T'), ...readCall(10)])
+  h.provider.script(reply('T done'))
+  expect((await send(h, 'turn T')).reason.code).toBe('completed')
+  h.provider.script([...thinking('U'), ...readCall(10)])
+  h.provider.script(reply('U done'))
+  expect((await send(h, 'turn T+1')).reason.code).toBe('completed')
+  h.provider.script(reply('V done'))
+  expect((await send(h, 'turn T+2')).reason.code).toBe('completed')
+  expect((await entries(h)).filter((e) => e.name === 'compaction/anchor')).toHaveLength(1)
+
+  const requests = h.provider.requests
+  expect(requests).toHaveLength(9)
+  assertThinkingPrefixes(
+    requests,
+    new Map([
+      ['sig-0', 0],
+      ['sig-1', 1],
+      ['sig-2', 2],
+      ['sig-T', 4],
+      ['sig-U', 6],
+    ]),
+  )
+  const echoes = (signature: string) =>
+    requests.flatMap((request, at) =>
+      (request.body as PrefixBody).messages.some((m) => thinkingOf(m).includes(signature))
+        ? [at]
+        : [],
+    )
+  // The kept tail loses its thinking at the anchor (request 3 is the summary)...
+  expect(echoes('sig-1')).toEqual([2])
+  expect(echoes('sig-2')).toEqual([])
+  // ...and what was written after it goes on being echoed, its prefix unchanged, in later turns.
+  expect(echoes('sig-T')).toEqual([5, 6, 7, 8])
+  expect(echoes('sig-U')).toEqual([7, 8])
+  for (const request of requests.slice(6))
+    expect(request.thinkingDecisions.filter((d) => d.action === 'drop')).toHaveLength(2)
 })
 
 it('stops while reopening a historical provider whose assembly never resolves', async () => {
