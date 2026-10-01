@@ -24,6 +24,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import {
@@ -381,11 +382,18 @@ async function driveTurns(o: {
         // oxlint-disable-next-line no-await-in-loop -- the card this Run paused on
         const pending = await sessions.currentPending({ sessionId })
         if (pending?.waitKind === 'approval') {
+          const decision = autoAnswer(pending.card.reason, task)
+          // A denied card's object goes into the note, so a record can tell what the host refused.
+          if (decision === 'deny') {
+            notes.push(
+              `${at}: denied a ${pending.card.reason} card on ${shownTarget(pending.card.target)}, facts ${JSON.stringify(pending.card.facts).replaceAll(homedir(), '~')}`,
+            )
+          }
           answer = {
             kind: 'approval',
             sessionId: pending.card.sessionId,
             requestId: pending.card.requestId,
-            decision: autoAnswer(pending.card.reason, task),
+            decision,
           }
         } else if (pending?.waitKind === 'question') {
           // oxlint-disable-next-line no-await-in-loop -- answer the forwarded question before continuing
@@ -654,6 +662,11 @@ export function verdictOf(
 
 function named(entries: readonly TapeEntry[], name: string): TapeEntry[] {
   return entries.filter((entry) => entry.name === name)
+}
+
+/** A card's object for a note, with the home folder shown as `~`. */
+function shownTarget(target: ConfirmRequest['target']): string {
+  return JSON.stringify(target).replaceAll(homedir(), '~')
 }
 
 function countByReason(cards: readonly ConfirmRequest[]): Record<string, number> {
