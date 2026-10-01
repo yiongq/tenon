@@ -1,9 +1,11 @@
 /**
  * What the loop tests share: a host whose timers fire at once, the connector tool every batch calls,
- * a store a case can reach into, and leases begun the way the desktop begins them.
+ * a store a case can reach into, leases begun the way the desktop begins them, and a fake command
+ * child that answers the kill signals as a case scripts.
  */
 import { createMemoryHost } from '../../src/index.js'
 import type {
+  ChildHandle,
   HostAdapter,
   LoopPorts,
   McpConnection,
@@ -122,4 +124,56 @@ export function closedWindows(loop: LoopPorts, closed: readonly RunOrigin[]): Lo
 export function pendingCard(pending: PendingCard | null): PendingApproval | null {
   if (pending?.waitKind === 'question') throw new Error('a question waits, not an approval card')
   return pending
+}
+
+/** How a fake child answers the kill signals (stop.test.ts, subagent-run.test.ts). */
+export type KillAnswer = 'dies' | 'hangs' | 'term-exits'
+
+export interface FakeChild {
+  readonly child: ChildHandle
+  /** Each signal sent, with the host clock's reading when it was sent. */
+  readonly kills: Array<{ readonly signal: string; readonly at: number }>
+  write(text: string): void
+  /** The direct child exits: its output ends and `exited` resolves. */
+  exit(code: number | null, signal?: string | null): void
+}
+
+/**
+ * A child that ignores SIGTERM. On SIGKILL it exits at once (`'dies'`), or `exited` stays pending
+ * (`'hangs'`: the case calls `exit` itself, or never does). `'term-exits'`: the direct child exits on
+ * SIGTERM, as one whose own children ignore it would.
+ */
+export function fakeChild(now: () => number, onKill: KillAnswer): FakeChild {
+  let out: ReadableStreamDefaultController<Uint8Array> | undefined
+  const exited = Promise.withResolvers<{ code: number | null; signal: string | null }>()
+  const kills: Array<{ signal: string; at: number }> = []
+  let gone = false
+  const exit = (code: number | null, signal: string | null = null): void => {
+    if (gone) return
+    gone = true
+    out?.close()
+    exited.resolve({ code, signal })
+  }
+  return {
+    child: {
+      pid: 4242,
+      stdin: new WritableStream<Uint8Array>(),
+      stdout: new ReadableStream<Uint8Array>({
+        start: (controller) => {
+          out = controller
+        },
+      }),
+      stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
+      exited: exited.promise,
+      kill: (signal = 'SIGTERM') => {
+        kills.push({ signal, at: now() })
+        if (signal === 'SIGKILL' && onKill === 'dies') exit(null, 'SIGKILL')
+        if (signal === 'SIGTERM' && onKill === 'term-exits') exit(null, 'SIGTERM')
+        return Promise.resolve()
+      },
+    },
+    write: (text) => out?.enqueue(new TextEncoder().encode(text)),
+    exit,
+    kills,
+  }
 }
