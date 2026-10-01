@@ -1019,6 +1019,32 @@ describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
     )
   })
 
+  it('02 不变量 14: counts denied batches toward no-progress, which the denial count leaves alone', async () => {
+    // 不变量 14: 机器拒绝计数「不改 no-progress 计数」. Two denied batches, one that runs, and the
+    // fourth identical one is the repeat.
+    let judged = 0
+    const deny = createFakeInspector({
+      id: 'deny-twice',
+      ceiling: 'deny',
+      answer: () =>
+        (judged += 1) <= 2
+          ? { kind: 'deny', category: 'exfiltration', findings: [{ code: 'test' }] }
+          : { kind: 'none' },
+    })
+    const h = harness({ inspectors: [deny.registration], answersFirst: true })
+    for (let i = 0; i < 4; i += 1)
+      h.provider.script(callTurn([{ id: `toolu_${String(i)}`, input: { at: 'same' } }]))
+    expect((await send(h)).reason).toEqual({ code: 'no-progress', repeats: 4 })
+    expect(outcomes(await all(h))).toEqual([
+      'not-run/inspector',
+      'not-run/inspector',
+      'completed/null',
+      'not-run/no-progress',
+    ])
+    expect(h.executed).toEqual([{ at: 'same' }])
+    expect(h.provider.starts).toBe(4)
+  })
+
   it(
     'stops at the step limit, and 「继续」 starts the count again',
     { timeout: 30_000 },

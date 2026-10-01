@@ -240,6 +240,28 @@ describe('WebFetch in the agent loop', () => {
     expect(h.provider.starts).toBe(3)
   })
 
+  it('02 不变量 14: a card clears the denial count, so an approved fetch refused at DNS counts one', async () => {
+    // §上限「连续被拦截」: 中间有一次放行或问人就清零. Two blocks, then a card: the approved fetch the
+    // DNS check refuses is the first denial after the card, not the third in a row; two more end it.
+    const h = harness([{ kind: 'denied' }])
+    h.provider.script(calls('http://localhost'))
+    h.provider.script(calls('file:///etc/passwd'))
+    h.provider.script(calls('https://a.example/asked'))
+    expect(
+      await h.service.send({ sessionId: SESSION, origin: null, text: 'Fetch pages' }),
+    ).toMatchObject({ status: 'started' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    h.provider.script(calls('http://2130706433'))
+    h.provider.script(calls('http://[::ffff:7f00:1]'))
+    expect((await allow(h)).reason).toEqual({ code: 'blocked-repeatedly', count: 3 })
+    const outcomes = (await all(h)).filter((e) => e.name === 'execution/tool_outcome')
+    expect(
+      outcomes.map((e) => `${String(e.payload['state'])}/${String(e.payload['source'])}`),
+    ).toEqual(Array.from({ length: 5 }, () => 'not-run/protected'))
+    expect(h.net.untrustedRequests).toHaveLength(1)
+    expect(h.provider.starts).toBe(5)
+  })
+
   it('spills long pages and leaves only a preview, path and size in the replayed result', async () => {
     const body = 'long page\n'.repeat(SPILL_THRESHOLD_CHARS)
     const h = harness([page(body)])

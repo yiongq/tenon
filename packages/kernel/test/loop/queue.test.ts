@@ -548,7 +548,12 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     h.loop.connector.failProvider(new ProviderConfigMissingError('anthropic', 'apiKey'), 1)
     await h.loop.runEnded({ runId: started.runId })
     const before = (await all(h)).length
-    expect(await h.loop.runEnded({ runId: null })).toMatchObject({ recorded: false })
+    // 「缺 key」: the missing-key failure card is drawn from errorCode auth (验收 22).
+    expect(await h.loop.runEnded({ runId: null })).toMatchObject({
+      recorded: false,
+      errorCode: 'auth',
+      reason: { code: 'provider-error', errorCode: 'auth', attempts: 0 },
+    })
     expect(await all(h)).toHaveLength(before)
     expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
       ['two', false],
@@ -823,7 +828,11 @@ describe('the auto-send after a Run (「Run 结束」「从队列取什么」)',
     runId = await startRun(h, 'long task')
     expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
     expect(await urgent).toMatchObject({ status: 'queued' })
-    expect(await h.loop.runEnded({ runId: null })).toMatchObject({ recorded: false })
+    expect(await h.loop.runEnded({ runId: null })).toMatchObject({
+      recorded: false,
+      errorCode: 'auth',
+      reason: { code: 'provider-error', errorCode: 'auth', attempts: 0 },
+    })
     expect(h.loop.queued(SESSION).map((item) => [item.text, item.urgent])).toEqual([
       ['stop, do this', false],
     ])
