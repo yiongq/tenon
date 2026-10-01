@@ -107,6 +107,11 @@ export type AgentDispatchResult =
       readonly kind: 'done'
       readonly entries: readonly NewEntry[]
       readonly handoff: SubagentHandoff
+      /**
+       * The same handoff as `aborted` (§交接: 子会话已提交终态、父会话收交接之前被停止), for a stop that
+       * reached the write of `entries` first. Built only then, so a handoff that lands spills once.
+       */
+      readonly aborted: () => Promise<{ readonly entries: readonly NewEntry[] }>
     }
 
 export interface BatchContext {
@@ -335,7 +340,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
               waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
             }
           // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
-          await close(ctx, call, child.entries, ctx.approved.summary)
+          await closeHandoff(ctx, call, child, ctx.approved.summary)
           const budget = ctx.budgetExceeded?.() ?? null
           if (budget !== null)
             return {
@@ -445,7 +450,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
             waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
           }
         // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
-        await close(ctx, call, child.entries, decision.summary)
+        await closeHandoff(ctx, call, child, decision.summary)
         const budget = ctx.budgetExceeded?.() ?? null
         if (budget !== null)
           return {
@@ -977,6 +982,25 @@ async function close(
     | undefined
   const view = closedView(written.entries, summary ?? denied?.summary)
   if (view !== null) ctx.outcome(call, view)
+}
+
+/**
+ * The Agent call's result is its child's handoff. A stop that reached the write first leaves a
+ * completed or partial handoff unwritten (the mailbox refuses it), and the aborted one goes instead;
+ * the calls after it then close as stopped like any undispatched call (§停止、新消息、退出与重启).
+ */
+async function closeHandoff(
+  ctx: BatchContext,
+  call: CompleteCall,
+  child: Extract<AgentDispatchResult, { kind: 'done' }>,
+  summary: DecisionSummary,
+): Promise<void> {
+  try {
+    await close(ctx, call, child.entries, summary)
+  } catch (error) {
+    if (!(error instanceof RunWriteRefusedError)) throw error
+    await close(ctx, call, (await child.aborted()).entries, summary)
+  }
 }
 
 /**

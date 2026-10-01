@@ -384,7 +384,7 @@ export function constructSessionService(
     resetSession(sessionId: string): Promise<SessionIncarnation> {
       // In the root's mailbox (§会话事实「写入」): the carry rewrites `session/*` facts, so the facts it
       // is built from are read in the same turn that commits it.
-      return loop.resetTurn(sessionId, async () => {
+      return loop.removalTurn(sessionId, async () => {
         // A NEW incarnation: reusing the current one would make the two generations
         // hash-indistinguishable. The store refuses that, and refuses a session it has no head row
         // for.
@@ -402,7 +402,8 @@ export function constructSessionService(
     },
 
     deleteSession(sessionId: string): Promise<void> {
-      return tape.deleteSession(sessionId)
+      // The root's mailbox too: a sub-agent card its tree waits on is closed first (§待批表).
+      return loop.removalTurn(sessionId, () => tape.deleteSession(sessionId))
     },
 
     async latestSession(q): Promise<LatestSession | null> {

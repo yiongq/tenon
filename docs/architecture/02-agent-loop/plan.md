@@ -579,6 +579,22 @@
 
 ## 实施记录
 
+- **2026-10-01 · 第三段复核修复（FS）**：分支 `wt/02-s3-FS`（基于 `a41a73f`，PR #21 的复核），压缩与子 agent 状态的九条发现。
+  - 修复：
+    - R3-1：`compact()` 写 anchor 的任务因租约已中止被拒（`RunWriteRefusedError`）时按停止结束：`user-stopped`、不写 anchor、终态照写，摘要请求的用量留在 `run_terminal.usage`。原来 Run 没有终态，`run-ended{ recorded: false }` 报 provider-error/unknown。
+    - R3-2：思考块截止点。边界 anchor 一律取 anchor 本身；只有回合中途 anchor（`keepFromEntryId` 等于它切的那个回合的起点）在下一次边界之后取 anchor 之后第一个边界的 `run_started`。原来任何 anchor 之后每个新回合都截到最后一个边界，上一回合在 anchor 之后产生、前缀没变的思考块被丢。
+    - R3-3：清空、删除根会话都进根 mailbox 的同一个命令任务（`Loop.resetTurn` 改名 `removalTurn`，`deleteSession` 也走它）。树在等的待批在子会话时，先照暂停中停止收口（子会话 `cancelled-by-stop`，父会话 Agent 记 aborted / stopped、同批 not-run），再提交 store；提交后去掉根的可续跑项与提问标记。`listPendingRoots`、`recover()` 的卡片投递与可续跑列表只认根会话当前 incarnation 仍链接的子会话（`ofLiveTree`），旧数据里的孤儿行不再列出。
+    - R3-4：父会话租约已中止时，Run 的写入任务拒收 handoff 为 completed / partial 的 Agent 结果；batch 接住后改写 `dispatchChild` 给的 `aborted()` 交接（只在被拒时生成，正常路径不二次落盘）。借用租约下停止落在交接写入之前，交接记 `aborted`、`childEndReason: completed`、is_error。
+  - 读法：
+    - R3-3：子会话的待批由根会话的清空或删除收口。§待批表「一棵会话树最多一行」、§离开会话「每个有待答项或可续跑项的根会话一行」，而子会话 Tape 按 H9 的已定边界不随根删除，所以只能在提交前照 §停止、新消息、退出与重启「先写子会话，再写父会话」收口；父会话那一半随后被物理清掉，store 失败时树仍是一致的已停止状态。可续跑的子会话不写子会话的 Run（移除期间 RunRegistry 拒绝租约），靠去掉内存项加 `ofLiveTree` 判定；没绑定 loop 时不收口，同样靠判定兜底。
+    - R3-2：回合中途 anchor 的例外终点。spec 原文只写「到下一次边界请求之前照常回传」；第 30 步已按不变量 8 在下一边界把窗口里产生的块一并丢弃并有两条测试。本次把这段只留给回合中途 anchor，写进 spec Revisions (32)。
+    - 提示层文字没改，版本 8 不动。
+  - 测试（每条修复都去掉一次确认变红，再恢复）：
+    - `compaction.test.ts`：「ends as stopped with no anchor when the stop reaches the anchor write first」（R3-1；去掉 catch 时为 provider-error）；「02 不变量 8: after a boundary compaction…」（R3-2 与 R3-5 的不变量 8：每个回传的思考块与产生它的请求 system、tools 和它之前的消息逐字节相同，anchor 之后的块在后续回合照常回传；旧截止点下 `[5]` 不等于 `[5, 6, 7, 8]`）；「02 不变量 9: keeps the current turn’s thinking…」（R4 c11 杀）；「summarizes before…」补 `keepFromEntryId`、`coversThroughEntryId` 与 `compactionWrap` 三项断言（c1、c5、c12 杀）。
+    - `subagent-run.test.ts`：借用租约交接写入前停止（R3-4；去掉拒收即红）；根会话清空、删除各一例（R3-3 收口）与孤儿待批、孤儿可续跑项一例（`ofLiveTree` 三处与去掉可续跑项各自突变都红）；崩溃空档 ②（own=false/true）、③、④ 各一例，都记 uncertain / crashed，`childEndReason` 依次 user-stopped、null、null，恢复不发请求；「closes a child approval and parent handoff before %s」父批加第二个调用，断言 Agent 调用 aborted、is_error 与同批 not-run 的来源（k1、k2、k4、k7 杀）；子会话可续跑时点停止（k8 杀，之后再发一条能跑完）。
+    - desktop：`session-removal.ts` 只改注释（删除也走 mailbox）。
+  - 检查：`pnpm typecheck`、`pnpm lint`、`pnpm format:check` 通过；kernel 项目 vitest（`--maxWorkers=2`）88 个文件 1600 项通过；desktop 只跑 `session-removal.test.ts`，28 项通过。没跑 Electron 与 e2e。
+
 - **2026-09-28 · 第34步基线全集完成**：当前prompt8的glm-5.3 / open.bigmodel.cn/api/paas/v4已收齐20题×3有效记录，59pass/1fail；唯一真实失败为04/2的工作区外日志路径被拒绝。另保留08/09原六条宿主故障及修复重跑，不计入模型成绩，有效基线已报告费用¥52.459700，宿主故障¥0.549024。第17长档案三轮均完整读取60份且账本准确；Flash1M专项另列、完整60份通过、2anchors、已报告¥1.25186016。`pnpm evals:gate --maxWorkers=2`通过30项+1既有skip，CI加入同门禁并固定两worker。基线脚本退出0，临时.env.local链接已移除，无付费进程在跑。校准证据见docs/evals/calibration-2026-09-28.md。仍待官方Claude列、Desktop至少10题、CLI同模型其余9题及Tenon匹配入口列，故34不勾选、spec仍ready。
 
 - **2026-09-28 · 第34步校准中间证据**：搜索修复后08/09各三次均pass；08每轮实际7页、先文件后搜索后抓取、两链接各flagged，共2额外卡且0超额。旧六条宿主故障raw单列，不作模型成绩；聚合器`/tmp/tenon34-calibration/aggregate.py`同时读取两目录、保留原始行并按有效task/run去重。真实基线尚未全集结束。local-rule独立离线性能测量用原Tape的pre-decision前缀、冻结工具及原参数重建45输入（6ask/39none，18–110条事实），意见与原记录全部一致；各200次/预热1000，共9000次，在Apple M5/Node22.22实测runInspectors管线p95 0.005292ms/max0.130333ms，view构造p95约0.007ms/max0.19825ms，sourceHashesStillMatch=true。保留2000ms；不将它称作原基线内计时，不覆盖冷启动、满载或child union。报告与source/raw哈希在`/tmp/tenon34-calibration/inspector-performance.json`。

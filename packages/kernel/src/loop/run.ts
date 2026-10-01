@@ -101,7 +101,13 @@ import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
 import type { ApprovedCall, BatchContext, BatchResult, CompleteCall, Written } from './batch.js'
-import { closedView, effectOf, readSessionEntries, runBatch } from './batch.js'
+import {
+  RunWriteRefusedError,
+  closedView,
+  effectOf,
+  readSessionEntries,
+  runBatch,
+} from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
@@ -542,18 +548,25 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         trigger,
         generation,
       }
-      // oxlint-disable-next-line no-await-in-loop -- anchor and all replacement tables are one atomic append
-      await write([
-        tape.writer('compaction').entry('compaction/anchor', {
-          sourceType: 'runtime_event',
-          sourceId: runId,
-          sourceSeq: summarySeq,
-          provenanceKey: compactionAnchorKey(runId, summarySeq),
-          payload,
-          createdAt: ctx.now(),
-        }),
-        ...new Map(tableFacts.map((fact) => [fact.provenanceKey, fact])).values(),
-      ])
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- anchor and all replacement tables are one atomic append
+        await write([
+          tape.writer('compaction').entry('compaction/anchor', {
+            sourceType: 'runtime_event',
+            sourceId: runId,
+            sourceSeq: summarySeq,
+            provenanceKey: compactionAnchorKey(runId, summarySeq),
+            payload,
+            createdAt: ctx.now(),
+          }),
+          ...new Map(tableFacts.map((fact) => [fact.provenanceKey, fact])).values(),
+        ])
+      } catch (error) {
+        // A stop that reached the anchor's write task first: no anchor, the history unchanged, and
+        // the Run ends as stopped (§摘要请求「停止时 Run 以 user-stopped 结束」).
+        if (!(error instanceof RunWriteRefusedError)) throw error
+        return aborted()
+      }
       // oxlint-disable-next-line no-await-in-loop -- memory follows the committed generation only
       state = await readViewState(tape, ctx.sessionId)
       return 'done'
@@ -713,22 +726,24 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         atEntryId: pin,
         target: ctx.model,
       })
-      const lastBoundary = entries.findLast(
-        (entry) =>
-          entry.name === 'execution/run_started' &&
-          entry.sourceId !== null &&
-          isBoundaryRun(entries, entry.sourceId),
-      )
-      const crossedBoundary = lastBoundary !== undefined && lastBoundary.entryId > anchor.entryId
-      const turnWasCompacted =
-        !crossedBoundary &&
-        !boundaryRequest &&
-        anchor.payload['keepFromEntryId'] === turnStarts(entries).at(-1)
-      const cutoff = crossedBoundary
-        ? lastBoundary.entryId
-        : turnWasCompacted
-          ? Number(anchor.payload['keepFromEntryId'])
-          : anchor.entryId
+      // §重建、保留尾巴与思考块: the thinking in facts written before the latest anchor is dropped. Only
+      // a mid-turn anchor (its keepFrom is the start of the turn it cut) keeps the turn's thinking,
+      // until the next boundary request; from that boundary on, the cut is that boundary's
+      // run_started, because what the window produced was sent after blocks echoed off their
+      // original prefix (02 不变量 8). A boundary anchor's cut stays at the anchor in later turns.
+      const keepFrom = Number(anchor.payload['keepFromEntryId'])
+      const midTurnAnchor =
+        keepFrom === turnStarts(entries.filter((entry) => entry.entryId < anchor.entryId)).at(-1)
+      const nextBoundary = midTurnAnchor
+        ? entries.find(
+            (entry) =>
+              entry.name === 'execution/run_started' &&
+              entry.entryId > anchor.entryId &&
+              entry.sourceId !== null &&
+              isBoundaryRun(entries, entry.sourceId),
+          )
+        : undefined
+      const cutoff = !midTurnAnchor ? anchor.entryId : (nextBoundary?.entryId ?? keepFrom)
       const index = replay.orderSeqs.findIndex((seq) => seq >= cutoff)
       request = { ...request, dropThinkingBefore: index < 0 ? messages.length : index }
     }

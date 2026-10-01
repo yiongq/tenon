@@ -357,11 +357,13 @@ export interface Loop {
   }): Promise<WorkspaceResult>
   /**
    * Runs a clear of the session (`resetSession`: the facts read, the carry built, the store's reset)
-   * as one command turn of its root's mailbox, where every other `session/*` fact is written
-   * (§会话事实「写入」): a workspace change that arrives meanwhile lands before the read or after the
-   * reset, never in between, where it would be lost with the old incarnation.
+   * or its delete as one command turn of its root's mailbox, where every other `session/*` fact is
+   * written (§会话事实「写入」): a workspace change that arrives meanwhile lands before the read or
+   * after the reset, never in between, where it would be lost with the old incarnation. A root's
+   * sub-agent card is closed first in the same turn, as 暂停中停止 closes it: the child's Tape outlives
+   * the root's facts, and its row would stay in `approval.list` with nothing to answer (§待批表).
    */
-  resetTurn<T>(sessionId: string, reset: () => Promise<T>): Promise<T>
+  removalTurn<T>(sessionId: string, remove: () => Promise<T>): Promise<T>
   recover(): Promise<RecoverResult>
   resume(q: { rootSessionId: string; origin: RunOrigin | null }): Promise<ResumeResult>
   send(q: SendQuery): Promise<SendResult>
@@ -1773,6 +1775,16 @@ export function createLoop(deps: LoopDeps): Loop {
     return { entry, link }
   }
 
+  /**
+   * Whether a session's card or resumable item is its tree's: a root's always is, a sub-agent's only
+   * while its root's current incarnation still links it. A child Tape outlives a cleared or deleted
+   * root (H9 removes only the output folders), and what it still waits on has no answer (§待批表).
+   */
+  async function ofLiveTree(sessionId: string): Promise<boolean> {
+    const root = rootOf(sessionId)
+    return root === sessionId || (await linkedChild(root))?.link.child.sessionId === sessionId
+  }
+
   async function treeWaiting(root: string): Promise<WaitingCall | null> {
     const own = await waitingOf(tape, root)
     if (own !== null) return own
@@ -2137,27 +2149,30 @@ export function createLoop(deps: LoopDeps): Loop {
       })
     const childEntries = await readSessionEntries(tape, childId)
     const stopped = lease.signal.aborted
+    const writer: FactWriter = { by: 'run', runId: box.runId! }
     let result = await handoffFacts(
       link,
       box.rootSessionId,
       childEntries,
-      { by: 'run', runId: box.runId! },
+      writer,
       stopped ? 'aborted' : undefined,
       stopped ? (lease.stopRequested ? 'stopped' : 'app-exit') : null,
     )
-    if (!stopped && lease.signal.aborted) {
-      // The original spill is immutable; rebuilding an aborted result safely falls back to the
-      // failure preview if that file already exists, while retaining the full audit handoff.
-      result = await handoffFacts(
+    // The original spill is immutable; rebuilding an aborted result safely falls back to the
+    // failure preview if that file already exists, while retaining the full audit handoff.
+    const aborted = () =>
+      handoffFacts(
         link,
         box.rootSessionId,
         childEntries,
-        { by: 'run', runId: box.runId! },
+        writer,
         'aborted',
         lease.stopRequested ? 'stopped' : 'app-exit',
       )
-    }
-    return { kind: 'done', ...result }
+    if (!stopped && lease.signal.aborted) result = await aborted()
+    // A stop after this point still finds the parent's write task first, which refuses a handoff
+    // that is not aborted: the batch then writes `aborted()` (§交接).
+    return { kind: 'done', ...result, aborted }
   }
 
   function startRun(
@@ -3178,8 +3193,23 @@ export function createLoop(deps: LoopDeps): Loop {
       return post(mailboxOf(rootOf(q.sessionId)), 'command', null, () => setWorkspaceTurn(q))
     },
 
-    resetTurn<T>(sessionId: string, reset: () => Promise<T>): Promise<T> {
-      return post(mailboxOf(rootOf(sessionId)), 'command', null, reset)
+    removalTurn<T>(sessionId: string, remove: () => Promise<T>): Promise<T> {
+      const box = mailboxOf(rootOf(sessionId))
+      const root = box.rootSessionId === sessionId
+      return post(box, 'command', null, async () => {
+        // With no loop bound there is no one to tell; a row left so is not listed (`ofLiveTree`).
+        if (root && bound !== null) {
+          const waiting = await treeWaiting(sessionId)
+          if (waiting !== null && waiting.sessionId !== sessionId)
+            await closePausedByStop(bound, box)
+        }
+        const removed = await remove()
+        if (root) {
+          resumables.delete(sessionId)
+          questionWaits.delete(sessionId)
+        }
+        return removed
+      })
     },
 
     async recover(): Promise<RecoverResult> {
@@ -3197,16 +3227,21 @@ export function createLoop(deps: LoopDeps): Loop {
         strict: deps.onUnansweredCall === 'throw',
       })
       for (const [child, root] of recovered.roots) roots.set(child, root)
-      const resumable = recovered.resumable.map((item) => ({
-        ...item,
-        rootSessionId: rootOf(item.sessionId),
-      }))
+      const resumable: Resumable[] = []
+      for (const item of recovered.resumable) {
+        // oxlint-disable-next-line no-await-in-loop -- one root's Tape read per sub-agent item
+        if (await ofLiveTree(item.sessionId))
+          resumable.push({ ...item, rootSessionId: rootOf(item.sessionId) })
+      }
       for (const item of resumable) resumables.set(item.rootSessionId, item)
       for (const row of await tape.listPendingApprovals({ limit: MAX_READ_LIMIT })) {
         if (row.waitKind === 'question') questionWaits.add(rootOf(row.sessionId))
       }
       // Delivered at least once; the renderer pulls `approval.current` on opening a session anyway.
-      for (const card of recovered.cards) deliver(card)
+      for (const card of recovered.cards) {
+        // oxlint-disable-next-line no-await-in-loop -- one root's Tape read per sub-agent card
+        if (await ofLiveTree(card.sessionId)) deliver(card)
+      }
       return { resumable, errors: recovered.errors }
     },
 
@@ -3235,7 +3270,9 @@ export function createLoop(deps: LoopDeps): Loop {
       const byRoot = new Map<string, PendingRoot>()
       for (const row of rows) {
         const root = rootOf(row.sessionId)
-        if (!byRoot.has(root)) byRoot.set(root, { sessionId: root, waitKind: row.waitKind })
+        // oxlint-disable-next-line no-await-in-loop -- one root's Tape read per sub-agent row
+        if (!byRoot.has(root) && (await ofLiveTree(row.sessionId)))
+          byRoot.set(root, { sessionId: root, waitKind: row.waitKind })
       }
       for (const root of resumables.keys()) {
         if (!byRoot.has(root)) byRoot.set(root, { sessionId: root, waitKind: 'resume' })
@@ -3524,7 +3561,9 @@ function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
 /**
  * What a Run's write task refuses once its lease is aborted (「mailbox」): a decision, a dispatch,
  * and the not-run closure of a call found unusable — a call not yet dispatched when the stop came
- * closes as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped).
+ * closes as stopped (§点停止时各状态怎么收: 同批后面还没派发的调用一律记 not-run / stopped). Also an
+ * anchor (§摘要请求: 停止时不写 anchor), and an Agent result whose handoff is not the aborted one:
+ * a child that committed its end before the stop still hands off `aborted` (§交接).
  */
 function isRefusedAfterStop(entry: NewEntry): boolean {
   if (
@@ -3533,6 +3572,10 @@ function isRefusedAfterStop(entry: NewEntry): boolean {
     entry.name === 'execution/dispatch_committed'
   ) {
     return true
+  }
+  if (entry.name === 'tool/result') {
+    const outcome = (entry.payload['handoff'] as SubagentHandoff | undefined)?.outcome
+    return outcome === 'completed' || outcome === 'partial'
   }
   const source = entry.name === 'execution/tool_outcome' ? entry.payload['source'] : undefined
   return source === 'tool-unavailable' || source === 'invalid-input'

@@ -4,7 +4,7 @@ import { SPILL_PREVIEW_CHARS } from '../../src/loop/spill.js'
 import type { SessionEvent } from '../../src/loop/events.js'
 import { expect, it } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
-import type { ModelInfo, StreamEvent } from '../../src/index.js'
+import type { ModelInfo, StreamEvent, TapeEntry } from '../../src/index.js'
 import {
   createCounterIds,
   createScriptedProvider,
@@ -73,6 +73,46 @@ async function setup(h: ReturnType<typeof harness>) {
     profile: 'cowork',
     dedicated: absolutePath('/work'),
   })
+}
+/** One parent reply: the Agent call `agent`, then a second call `sib` of the same batch. */
+function agentThen(name: string, input: Record<string, unknown>): StreamEvent[] {
+  return [
+    { type: 'tool-call-start', index: 0, id: 'agent', name: 'Agent' },
+    {
+      type: 'tool-call-end',
+      index: 0,
+      id: 'agent',
+      name: 'Agent',
+      input: { description: 'child task', prompt: 'child work' },
+    },
+    { type: 'tool-call-start', index: 1, id: 'sib', name },
+    { type: 'tool-call-end', index: 1, id: 'sib', name, input },
+    { type: 'usage', usage },
+    stopEvent('tool-use', 'tool_use'),
+  ]
+}
+/** A call's `name` fact (its result or its outcome) by the provider's tool call id. */
+function factOf(entries: readonly TapeEntry[], name: string, providerToolCallId: string) {
+  return entries.find(
+    (e) => e.name === name && e.payload['providerToolCallId'] === providerToolCallId,
+  )?.payload
+}
+/** The same store and host under a new service: a restart. */
+function restarted(h: ReturnType<typeof harness>, start = 100) {
+  const loop = createTestLoopPorts({ connector: { provider: h.provider, model: MODEL } })
+  const service = createTestSessionService(
+    {
+      host: h.host,
+      tape: h.store,
+      ids: createCounterIds({ start }),
+      connector: loop.connector,
+      inspectors: [],
+      protectedFiles: [],
+    },
+    { tools: { Agent: 'real' } },
+  )
+  service.bindLoop(loop)
+  return { loop, service }
 }
 it('runs a child under its parent lease and records one mechanical handoff with separate usage', async () => {
   const h = harness()
@@ -193,7 +233,7 @@ it.each(['stop', 'supersede'] as const)(
   async (action) => {
     const h = harness()
     await setup(h)
-    h.provider.script(call('Agent', { description: 'write task', prompt: 'write' }))
+    h.provider.script(agentThen('Write', { file_path: '/work/b', content: 'y' }))
     h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
     await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
     await rootEnd(h.loop)
@@ -210,6 +250,18 @@ it.each(['stop', 'supersede'] as const)(
       outcome: action === 'stop' ? 'aborted' : 'superseded',
       childEndReason: null,
       calls: [{ state: 'not-run', source: action === 'stop' ? 'stopped' : 'superseded' }],
+    })
+    // The parent side (§停止、新消息、退出与重启): the Agent call aborted and is_error, its batch's
+    // later call not-run, both with the same source.
+    const source = action === 'stop' ? 'stopped' : 'superseded'
+    expect(factOf(parent, 'execution/tool_outcome', 'agent')).toMatchObject({
+      state: 'aborted',
+      source,
+    })
+    expect(factOf(parent, 'tool/result', 'agent')?.['isError']).toBe(true)
+    expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({
+      state: 'not-run',
+      source,
     })
     expect(h.logs).toEqual([])
     expect(h.loop.liveLease(SESSION)).toBeNull()
@@ -312,6 +364,56 @@ it('rechecks stop after a child own-lease completed terminal commits and sends n
     finalReply: 'committed child answer',
   })
   expect(parent.filter((e) => e.name === 'execution/run_started')).toHaveLength(1)
+})
+
+it('rechecks stop before a borrowed-lease child handoff is written and hands off aborted', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(call('Agent', { description: 'check task', prompt: 'child' }))
+  h.provider.script(scriptedTurn({ deltas: ['committed child answer'], usage }))
+  let committed = false
+  let stopped: boolean | null = null
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    const written = await append(batch)
+    if (
+      batch.sessionId !== SESSION &&
+      batch.entries.some(
+        (e) =>
+          e.name === 'execution/run_terminal' &&
+          (e.payload['reason'] as { code: string }).code === 'completed',
+      )
+    )
+      committed = true
+    return written
+  }
+  // The parent Run's first read of its own Tape once the child handed off: past the child's own
+  // re-check, before the parent's write of the handoff.
+  const readRange = h.store.readRange.bind(h.store)
+  h.store.readRange = async (q) => {
+    if (committed && stopped === null && q.sessionId === SESSION)
+      stopped = (await h.service.stop({ rootSessionId: SESSION })).stopped
+    return readRange(q)
+  }
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'user-stopped' })
+  expect(stopped).toBe(true)
+  expect(h.provider.starts).toBe(2)
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(parent.find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+    isError: true,
+    handoff: {
+      outcome: 'aborted',
+      childEndReason: 'completed',
+      finalReply: 'committed child answer',
+    },
+  })
+  expect(parent.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+    state: 'aborted',
+    source: 'stopped',
+  })
+  expect(parent.filter((e) => e.name === 'tool/result')).toHaveLength(1)
+  expect(h.logs).toEqual([])
 })
 
 it.each([false, true])(
@@ -552,6 +654,143 @@ it.each([
   },
 )
 
+it.each([false, true])(
+  'recovers the child-stopped/parent-result crash gap as uncertain (window ②, own=%s)',
+  async (own) => {
+    const h = harness()
+    await setup(h)
+    const stream = h.provider.stream.bind(h.provider)
+    h.provider.stream = (encoded, ctx) => {
+      const source = stream(encoded, ctx)
+      return (async function* () {
+        for await (const event of source) {
+          yield event
+          if (event.type === 'text-delta' && event.text === 'child working')
+            await h.service.stop({ rootSessionId: SESSION })
+        }
+      })()
+    }
+    h.provider.script(agentThen('Read', { file_path: '/work/after' }))
+    if (own) h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+    // The child Run's `user-stopped` commits; the process dies before the parent's next write.
+    const append = h.store.append.bind(h.store)
+    let armed = false
+    h.store.append = async (batch) => {
+      if (armed && batch.sessionId === SESSION) throw new Error('crash after child user-stopped')
+      const written = await append(batch)
+      if (
+        batch.sessionId !== SESSION &&
+        batch.entries.some(
+          (e) =>
+            e.name === 'execution/run_terminal' &&
+            (e.payload['reason'] as { code: string }).code === 'user-stopped',
+        )
+      )
+        armed = true
+      return written
+    }
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+    if (own) {
+      await rootEnd(h.loop)
+      const pending = await h.service.currentPending({ sessionId: SESSION })
+      if (pending?.waitKind !== 'approval') throw new Error('missing child card')
+      h.provider.script(scriptedTurn({ deltas: ['child working', 'more'], usage }))
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: pending.card.sessionId,
+        requestId: pending.card.requestId,
+        decision: 'allow',
+        origin: null,
+      })
+    } else h.provider.script(scriptedTurn({ deltas: ['child working', 'more'], usage }))
+    await expect.poll(() => armed).toBe(true)
+    await expect.poll(() => h.loop.liveLease(SESSION)).toBeNull()
+    h.store.append = append
+    const { service } = restarted(h)
+    const starts = h.provider.starts
+    expect((await service.recover()).errors).toEqual([])
+    expect(h.provider.starts).toBe(starts)
+    const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    expect(factOf(parent, 'tool/result', 'agent')).toMatchObject({
+      isError: true,
+      handoff: { outcome: 'uncertain', childEndReason: 'user-stopped' },
+    })
+    expect(factOf(parent, 'execution/tool_outcome', 'agent')).toMatchObject({
+      state: 'uncertain',
+      source: 'crashed',
+    })
+    expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({ state: 'not-run' })
+  },
+)
+
+it('recovers the child-cancelled/parent-result crash gap as uncertain (window ③)', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(agentThen('Read', { file_path: '/work/after' }))
+  h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  // The stop writes the child's `cancelled-by-stop`; the process dies before the parent's write.
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    if (batch.sessionId === SESSION) throw new Error('crash after child cancel')
+    return append(batch)
+  }
+  await expect(h.service.stop({ rootSessionId: SESSION })).rejects.toThrow('crash after child')
+  h.store.append = append
+  const { service } = restarted(h)
+  const starts = h.provider.starts
+  const recovered = await service.recover()
+  expect(recovered).toMatchObject({ errors: [], resumable: [] })
+  expect(h.provider.starts).toBe(starts)
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'tool/result', 'agent')?.['handoff']).toMatchObject({
+    outcome: 'uncertain',
+    childEndReason: null,
+    finalReply: '',
+    calls: [{ toolName: 'Write', state: 'not-run', source: 'stopped' }],
+  })
+  expect(factOf(parent, 'execution/tool_outcome', 'agent')).toMatchObject({
+    state: 'uncertain',
+    source: 'crashed',
+  })
+  expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({ state: 'not-run' })
+  expect(await service.currentPending({ sessionId: SESSION })).toBeNull()
+})
+
+it('recovers a parent link whose child never started as uncertain (window ④)', async () => {
+  const h = harness()
+  await setup(h)
+  // The parent's dispatch and parent_link commit; the process dies before the child's session/start.
+  const append = h.store.append.bind(h.store)
+  h.store.append = async (batch) => {
+    if (batch.sessionId !== SESSION && batch.entries.some((e) => e.name === 'session/start'))
+      throw new Error('crash before child start')
+    return append(batch)
+  }
+  h.provider.script(agentThen('Read', { file_path: '/work/after' }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  expect((await rootEnd(h.loop)).recorded).toBe(false)
+  h.store.append = append
+  const { service } = restarted(h)
+  const starts = h.provider.starts
+  expect((await service.recover()).errors).toEqual([])
+  expect(h.provider.starts).toBe(starts)
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(parent.filter((e) => e.name === 'session/parent_link')).toHaveLength(1)
+  expect(factOf(parent, 'tool/result', 'agent')?.['handoff']).toMatchObject({
+    outcome: 'uncertain',
+    childEndReason: null,
+    finalReply: '',
+    calls: [],
+  })
+  expect(factOf(parent, 'execution/tool_outcome', 'agent')).toMatchObject({
+    state: 'uncertain',
+    source: 'crashed',
+  })
+  expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({ state: 'not-run' })
+})
+
 it('preserves the parent waiting through two recoveries when the child approval becomes resumable', async () => {
   const h = harness()
   await setup(h)
@@ -595,6 +834,125 @@ it('preserves the parent waiting through two recoveries when the child approval 
   })
   expect((await rootEnd(loop)).reason).toEqual({ code: 'completed' })
   expect(loop.liveLease(SESSION)).toBeNull()
+})
+
+it('stops a root whose resumable item is in the child and closes the parent Agent call', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(agentThen('Write', { file_path: '/work/b', content: 'y' }))
+  h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  await rootEnd(h.loop)
+  h.host.setPolicy({
+    status: 'current',
+    version: 'no-write',
+    snapshot: {
+      tools: [{ policyId: 'ban', serverId: 'builtin', toolName: 'Write', effect: 'deny' }],
+    },
+  })
+  const { loop, service } = restarted(h)
+  expect((await service.recover()).resumable).toEqual([
+    expect.objectContaining({ rootSessionId: SESSION }),
+  ])
+  expect(await service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+  const parent = (await h.store.readRange({ sessionId: SESSION, limit: 1000 })).entries
+  expect(factOf(parent, 'execution/tool_outcome', 'agent')).toMatchObject({
+    state: 'aborted',
+    source: 'stopped',
+  })
+  expect(factOf(parent, 'tool/result', 'agent')).toMatchObject({
+    isError: true,
+    handoff: { outcome: 'aborted' },
+  })
+  expect(factOf(parent, 'execution/tool_outcome', 'sib')).toMatchObject({
+    state: 'not-run',
+    source: 'stopped',
+  })
+  expect((await service.recover()).resumable).toEqual([])
+  // Nothing waits any more: the next message pairs every call and runs.
+  h.provider.script(scriptedTurn({ deltas: ['next answer'], usage }))
+  await service.send({ sessionId: SESSION, origin: null, text: 'next' })
+  expect((await rootEnd(loop)).reason).toEqual({ code: 'completed' })
+})
+
+it.each(['reset', 'delete'] as const)(
+  'closes the child card its tree waits on when the root is cleared or deleted (%s)',
+  async (action) => {
+    const h = harness()
+    await setup(h)
+    h.provider.script(call('Agent', { description: 'write task', prompt: 'write' }))
+    h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+    expect((await rootEnd(h.loop)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+    const pending = await h.service.currentPending({ sessionId: SESSION })
+    if (pending?.waitKind !== 'approval') throw new Error('missing child card')
+    if (action === 'reset') await h.service.resetSession(SESSION)
+    else await h.service.deleteSession(SESSION)
+    // §待批表: the child's Tape outlives the root's facts, so its row is closed, not left listed.
+    expect(await h.service.listPendingRoots({ limit: 20 })).toEqual([])
+    const child = (await h.store.readRange({ sessionId: pending.card.sessionId, limit: 1000 }))
+      .entries
+    expect(child.find((e) => e.name === 'tool/approval_resolved')?.payload).toMatchObject({
+      outcome: 'cancelled-by-stop',
+    })
+    expect(await h.store.listPendingApprovals({ limit: 20 })).toEqual([])
+    const { service } = restarted(h)
+    const delivered = h.host.confirmRequests.length
+    expect(await service.recover()).toMatchObject({ errors: [], resumable: [] })
+    expect(h.host.confirmRequests).toHaveLength(delivered)
+    expect(await service.listPendingRoots({ limit: 20 })).toEqual([])
+    expect(
+      await service.answer({
+        kind: 'approval',
+        sessionId: pending.card.sessionId,
+        requestId: pending.card.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'already-resolved' })
+  },
+)
+
+it('lists no orphan child card or resumable item once its root no longer links it', async () => {
+  const h = harness()
+  await setup(h)
+  h.provider.script(call('Agent', { description: 'write task', prompt: 'write' }))
+  h.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  await rootEnd(h.loop)
+  // A child left waiting by a root removed under the store (an earlier build's clear) is not the
+  // tree's: neither listed nor delivered at startup.
+  const orphan = harness()
+  await h.store.deleteSession(SESSION)
+  expect(await h.service.listPendingRoots({ limit: 20 })).toEqual([])
+  const first = restarted(h)
+  const delivered = h.host.confirmRequests.length
+  expect(await first.service.recover()).toMatchObject({ errors: [], resumable: [] })
+  expect(h.host.confirmRequests).toHaveLength(delivered)
+  expect(await first.service.listPendingRoots({ limit: 20 })).toEqual([])
+  // A resumable child: a clear drops the root's item, and a restart does not bring it back.
+  await setup(orphan)
+  orphan.provider.script(call('Agent', { description: 'write task', prompt: 'write' }))
+  orphan.provider.script(call('Write', { file_path: '/work/a', content: 'x' }))
+  await orphan.service.send({ sessionId: SESSION, origin: null, text: 'parent' })
+  await rootEnd(orphan.loop)
+  orphan.host.setPolicy({
+    status: 'current',
+    version: 'no-write',
+    snapshot: {
+      tools: [{ policyId: 'ban', serverId: 'builtin', toolName: 'Write', effect: 'deny' }],
+    },
+  })
+  const second = restarted(orphan)
+  expect((await second.service.recover()).resumable).toHaveLength(1)
+  await second.service.resetSession(SESSION)
+  expect(await second.service.listPendingRoots({ limit: 20 })).toEqual([])
+  expect(await second.service.resume({ rootSessionId: SESSION, origin: null })).toEqual({
+    status: 'none',
+  })
+  const third = restarted(orphan, 200)
+  expect(await third.service.recover()).toMatchObject({ errors: [], resumable: [] })
+  expect(await third.service.listPendingRoots({ limit: 20 })).toEqual([])
 })
 
 it('closes and releases a newly reserved parent lease when stop lands before its head append', async () => {
