@@ -122,8 +122,12 @@ function runEnds(entries: readonly TapeEntry[]): string[] {
 function toolKeys(table: ToolTablePayload): { name: string; specHash: string }[] {
   return table.tools.map((t) => ({ name: t.name, specHash: t.specHash }))
 }
-/** The same store and host under a new service: a restart. */
-function restarted(h: ReturnType<typeof harness>, start = 100) {
+/** The same store and host under a new service: a restart, with `o.tools` beside the real Agent. */
+function restarted(
+  h: ReturnType<typeof harness>,
+  start = 100,
+  o: { readonly tools?: TestToolRegistry } = {},
+) {
   const loop = createTestLoopPorts({ connector: { provider: h.provider, model: MODEL } })
   const service = createTestSessionService(
     {
@@ -134,7 +138,7 @@ function restarted(h: ReturnType<typeof harness>, start = 100) {
       inspectors: [],
       protectedFiles: [],
     },
-    { tools: { Agent: 'real' } },
+    { tools: { ...o.tools, Agent: 'real' } },
   )
   service.bindLoop(loop)
   return { loop, service }
@@ -1327,7 +1331,8 @@ it('recovers a child that crashed with a call in flight: child first, both sides
     ),
   ).toBe(false)
   h.store.append = append
-  const { service } = restarted(h)
+  // Read is real after the restart too: a re-run would read the file again.
+  const { service } = restarted(h, 100, { tools: { Read: 'real' } })
   // What recovery writes, in order: the child's session before the parent's.
   const order: string[] = []
   h.store.append = async (batch) => {
