@@ -278,6 +278,47 @@ it.each(['kept', 'removed', 'removed-and-readded'] as const)(
   },
 )
 
+it('a running child loses an inherited parent file grant the moment the parent removes its folder', async () => {
+  const h = await harness()
+  const shared = absolutePath('/shared')
+  await h.host.fs.mkdirp(shared)
+  const workspace = (change: 'add' | 'remove') =>
+    h.service.setWorkspace({
+      sessionId: SESSION,
+      change:
+        change === 'add' ? { kind: 'add', folders: [shared] } : { kind: 'remove', folder: shared },
+      dedicated: absolutePath('/work'),
+    })
+  await workspace('add')
+  h.provider.script(call('Write', { file_path: '/shared/a.txt', content: 'parent' }))
+  await send(h)
+  h.provider.script(done())
+  expect((await allow(h)).reason.code).toBe('completed')
+  // The child is spawned while the grant holds and pauses on a card a workspace change leaves valid.
+  h.provider.script(call('Agent', { description: 'update file', prompt: 'update the file' }))
+  h.provider.script(call('WebFetch', { url: URL }))
+  expect((await send(h)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const fetch = await pending(h)
+  expect(fetch.card.sessionId).not.toBe(SESSION)
+  await workspace('remove')
+  h.provider.script(call('Write', { file_path: '/shared/a.txt', content: 'child' }))
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: fetch.card.sessionId,
+    requestId: fetch.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  expect((await h.loop.runEnded()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+  expect((await pending(h)).card).toMatchObject({
+    sessionId: fetch.card.sessionId,
+    target: { type: 'path', path: '/shared/a.txt' },
+  })
+  expect(await h.host.fs.readFile(absolutePath('/shared/a.txt'), { encoding: 'utf8' })).toBe(
+    'parent',
+  )
+})
+
 it.each(['parent', 'sibling'] as const)(
   'a child search result does not vouch for a later %s fetch',
   async (destination) => {
