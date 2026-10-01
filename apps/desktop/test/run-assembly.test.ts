@@ -132,7 +132,10 @@ describe('the connector builds what phase 1 resolved', () => {
   it('sends the keychain credential and never the environment one', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
     const host = createMemoryHost({
-      network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: (input, init) => globalThis.fetch(input, init),
+      },
     })
     await host.secrets.set(
       keyFor(host.identity, 'provider', ANTHROPIC_PROVIDER_ID, 'apiKey'),
@@ -156,7 +159,10 @@ describe('the connector builds what phase 1 resolved', () => {
   it('falls back to the environment only when the keychain holds nothing', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
     const host = createMemoryHost({
-      network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: (input, init) => globalThis.fetch(input, init),
+      },
     })
     const { provider, model } = await resolveThrough({
       host,
@@ -310,7 +316,10 @@ describe('the connector builds what phase 1 resolved', () => {
   it('keeps the environment in charge when the keychain cannot be read', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
     const host = createMemoryHost({
-      network: { fetch: (input, init) => globalThis.fetch(input, init) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: (input, init) => globalThis.fetch(input, init),
+      },
     })
     host.secrets.get = () => Promise.reject(new Error('the keychain is locked'))
     const lines: string[] = []

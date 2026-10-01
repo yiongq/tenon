@@ -31,12 +31,35 @@ export function textChars(content: ResultContent): number {
   return chars
 }
 
+/**
+ * Where the full text of a result past the threshold is (H9; Revisions 31): `spilled`, in its spill
+ * file; `unsaved`, nowhere, as the write failed and only the preview is left.
+ */
+export type SpillMark = 'spilled' | 'unsaved'
+
 /** A result as its `tool/result` is written: what the model reads, and the file its text went to. */
 export interface CheckedResult {
   readonly content: ResultContent
   readonly isError: boolean
   readonly kernelAuthored: boolean
   readonly spill?: SpillRecord
+  /** Set when the text passed `SPILL_THRESHOLD_CHARS`, whether or not the write went through. */
+  readonly mark?: SpillMark
+}
+
+/**
+ * What a structured fact written with a result keeps of one of its texts (H9 has no exception:
+ * Revisions 31). While the result stays under the threshold, the text; past it, the full text is the
+ * spill file's alone, and the fact keeps its first `SPILL_PREVIEW_CHARS` characters, cut as the
+ * preview is. `cut` says whether anything was cut off.
+ */
+export function factText(
+  text: string,
+  mark: SpillMark | undefined,
+): { text: string; cut: boolean } {
+  if (mark === undefined) return { text, cut: false }
+  const kept = spillPreview([text])
+  return { text: kept, cut: kept.length < text.length }
 }
 
 /**
@@ -55,7 +78,8 @@ export function spillFileName(call: CallRef): string {
  * the image blocks after it as they were. The note carries the tool's own text, so it is not
  * kernel-authored, and it is stored filled: a replay sends it as stored (A13). The hash is of the
  * bytes written, taken here, outside the append transaction. The full text and the path stay out of
- * every other payload: `spill.file` is the bare file name.
+ * every other payload: `spill.file` is the bare file name, and a structured fact written with the
+ * result — an Agent's handoff, a question's answer — keeps its texts through `factText` by `mark`.
  *
  * A spill file is written once, under a name no earlier write used, so an entry already under that
  * name is refused, not written through: a link planted at the next name, which `writeFile` would
@@ -97,6 +121,7 @@ export async function spillChecked(q: {
       content: [{ type: 'text', text: fill(MODEL_NOTES.spillFailed, { preview }) }, ...images],
       isError: true,
       kernelAuthored: false,
+      mark: 'unsaved',
     }
   }
   const spill: SpillRecord = { file, bytes: bytes.length, sha256: sha256Hex(bytes) }
@@ -106,6 +131,7 @@ export async function spillChecked(q: {
     isError: q.result.isError,
     kernelAuthored: false,
     spill,
+    mark: 'spilled',
   }
 }
 

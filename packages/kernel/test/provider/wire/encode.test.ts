@@ -188,6 +188,7 @@ describe.each(WIRES)('$name encode() is pure', ({ encode, request, providerId, p
     // await, so `callCount` alone would still read 0 inside this synchronous test.
     let entered = 0
     const watched: HostNetwork = {
+      fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
       fetch: (input, init) => {
         entered += 1
         return net.fetch(input, init)

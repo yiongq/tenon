@@ -75,7 +75,7 @@ export const DOTENV_FIXTURE_NAME = 'dotenv.txt'
 export const CHILD_ENV_NAMES = ['PATH', 'HOME', 'TMPDIR', 'LANG'] as const
 
 /** The network the host hands the kernel: the desktop's, with `fetchUntrusted` faked for `web`. */
-export type EvalNetwork = HostNetwork & { readonly fetchUntrusted?: FetchLike }
+export type EvalNetwork = HostNetwork
 
 /**
  * How the host answers a card: from `host.answers` by reason, deny when unlisted; never an allow

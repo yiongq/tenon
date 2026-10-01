@@ -9,7 +9,7 @@ import type { PlaywrightTestConfig } from '@playwright/test'
  * - `playwright.config.ts` is the default (`pnpm test:e2e`) and ignores `LIVE_SPEC`.
  * - `playwright.live.config.ts` is the manual one (`pnpm test:live`) and matches only it.
  */
-export const LIVE_SPEC = '**/live-provider.spec.ts'
+export const LIVE_SPEC = '**/live-*.spec.ts'
 
 export const shared = {
   testDir: './e2e',

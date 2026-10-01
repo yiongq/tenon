@@ -551,7 +551,23 @@ const TURN_SHAPE: readonly unknown[] = [
     payloadKeys: ['hash', 'text', 'type'],
     meta: {},
   },
-  // The product table's one chat tool from plan step 18 on: Read.
+  // The product chat table at plan step 26: AskUserQuestion and Read.
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
+    meta: {},
+  },
+  {
+    name: 'view/content',
+    kind: 'event',
+    sourceType: 'session',
+    sourceSeq: null,
+    payloadKeys: ['hash', 'spec', 'type'],
+    meta: {},
+  },
   {
     name: 'view/content',
     kind: 'event',
@@ -724,7 +740,12 @@ describe('acceptance 1 — one call path, four providers', () => {
       // ordering or an extra payload key would be a provider the tape's readers have to branch on.
       expect(entries.map(describeFact)).toEqual(TURN_SHAPE)
       // …and the values, which are the only thing that may differ.
-      const [, , , modelSelected, note, , , , , , assistant, , attempt] = entries
+      const [modelSelected, note, assistant, attempt] = [
+        'session/model_selected',
+        'message/environment',
+        'message/assistant',
+        'provider/attempt_completed',
+      ].map((name) => entries.find((entry) => entry.name === name))
       expect(modelSelected?.payload).toEqual({
         providerId: testCase.definition.id,
         modelId: model.id,
@@ -1179,7 +1200,9 @@ describe('the model rows spec 02 changes', () => {
   })
 
   it('declares the Opus 5.5 thinking shape decision A16 asks for (旧 88)', () => {
-    expect(anthropicDefinition.builtinModels[1]?.thinkingSpec).toEqual({
+    expect(
+      anthropicDefinition.builtinModels.find((row) => row.id === 'claude-opus-5-5')?.thinkingSpec,
+    ).toEqual({
       mode: 'always-on',
       defaultOn: true,
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -1202,8 +1225,8 @@ describe('the model rows spec 02 changes', () => {
         model.thinkingSpec?.forcedToolChoice,
       ]),
     ).toEqual([
-      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
       ['claude-opus-5-5', 'always-on', true, 'medium', undefined, false],
+      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
       ['claude-opus-5', 'adaptive-gated', true, 'high', 'high', undefined],
       ['claude-haiku-4-5-20251001', 'budget', false, undefined, undefined, undefined],
       ['claude-fable-5-1', 'always-on', true, 'high', undefined, false],
@@ -1224,16 +1247,16 @@ describe('the model rows spec 02 changes', () => {
     }
   })
 
-  it('puts Sonnet 5 first and Opus 5.5 second until the prefix acceptance passes', () => {
-    // 02 decision A16's ownerNote: the order changes once an official key passes, not before.
+  it('puts Opus 5.5 first after the official prefix acceptance passes', () => {
+    // 02 decision A16: official strict-prefix acceptance passed on 2026-09-28 (plan step 33).
     expect(anthropicDefinition.builtinModels.map((model) => model.id)).toEqual([
-      'claude-sonnet-5',
       'claude-opus-5-5',
+      'claude-sonnet-5',
       'claude-opus-5',
       'claude-haiku-4-5-20251001',
       'claude-fable-5-1',
     ])
-    const opus = anthropicDefinition.builtinModels[1]
+    const opus = anthropicDefinition.builtinModels[0]
     expect(opus).toMatchObject({
       id: 'claude-opus-5-5',
       providerId: 'anthropic',

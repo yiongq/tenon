@@ -42,7 +42,7 @@ import type { FakeNetwork, StreamGate, TestLoopPorts } from '../../src/testing/i
 import * as anthropicFixture from '../provider/fixtures/anthropic-sse.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
 import { anthropicModel } from '../provider/wire/fixtures.js'
-import { LOOK, instantHost, lookSource, proxyStore } from './support.js'
+import { LOOK, instantHost, lookSource, pendingCard, proxyStore } from './support.js'
 
 const IDENTITY = {
   userId: 'pairing-user',
@@ -256,7 +256,7 @@ function abortedWithCalls(entries: readonly TapeEntry[]): boolean {
   )
 }
 
-describe('a stop at any point leaves every call paired (旧 1, stop half)', () => {
+describe('02 不变量 23: a stop at any point leaves every call paired (旧 1, stop half)', () => {
   // 旧 1: 停止取 200 个随机时点，覆盖流式中、工具执行中、等审批三种状态 (做法照 01 验收 7). Each round
   // draws where its stop lands: after an SSE frame — inside and between tool_use blocks too — after
   // a loop event, while the k-th call runs, or while a card waits.
@@ -396,7 +396,7 @@ describe('a crash at any point leaves every call paired after recovery (旧 1, c
           const ended = sent.status === 'started' ? await before.loop.runEnded() : null
           if (kind === 'answered' && ended?.reason.code === 'paused') {
             // oxlint-disable-next-line no-await-in-loop -- the card the answer resumes from
-            const card = await before.service.currentPending({ sessionId: SESSION })
+            const card = pendingCard(await before.service.currentPending({ sessionId: SESSION }))
             // oxlint-disable-next-line no-await-in-loop -- the answer opens the resumed Run
             const answered = await before.service.answer({
               kind: 'approval',
@@ -427,7 +427,8 @@ describe('a crash at any point leaves every call paired after recovery (旧 1, c
         expect(recovered.errors).toEqual([])
         if (recovered.resumable.length > 0) seen.resumable += 1
         // oxlint-disable-next-line no-await-in-loop -- what the recovery left waiting
-        if ((await after.service.currentPending({ sessionId: SESSION })) !== null) seen.card += 1
+        if (pendingCard(await after.service.currentPending({ sessionId: SESSION })) !== null)
+          seen.card += 1
         // oxlint-disable-next-line no-await-in-loop -- the next message after the restart
         const next = await after.service.send({
           sessionId: SESSION,
@@ -472,7 +473,7 @@ describe('rejecting each call of a batch in turn leaves every call paired (旧 1
           expect((await send(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
           for (let j = 1; j <= k; j += 1) {
             // oxlint-disable-next-line no-await-in-loop -- one card at a time, in the batch's order
-            const card = await h.service.currentPending({ sessionId: SESSION })
+            const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
             // oxlint-disable-next-line no-await-in-loop -- the answer opens the next Run
             const answered = await h.service.answer({
               kind: 'approval',
@@ -521,7 +522,7 @@ describe('the prefix discipline across an approval (A13; 旧 32「跨 Run 批准
       expect((await send(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
       // The interface language changes while the card waits: the system stays the paused one's.
       h.loop.setLocale('zh-CN')
-      const card = await h.service.currentPending({ sessionId: SESSION })
+      const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
       expect(
         await h.service.answer({
           kind: 'approval',
@@ -695,6 +696,10 @@ describe('replay after a retraction and a late result', () => {
         ),
     )
     const messageId = String(withCall?.payload['messageId'])
+    // Both renderer read routes must have something to remove; avoid a vacuous absent-row check.
+    const before = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+    expect(before.find((row) => row.messageId === messageId)?.calls).toHaveLength(1)
+
     const head = await h.store.head(SESSION)
     if (head === null) throw new Error('no head')
     const tape = createTape(h.store)
@@ -711,6 +716,16 @@ describe('replay after a retraction and a late result', () => {
         }),
       ],
     })
+    // session.messages and session.latest are the actual redraw inputs; withdrawn tool facts
+    // remain on the append-only Tape but may not reappear as a free-standing ToolRow.
+    const visible = await h.service.listMessages({ sessionId: SESSION, limit: 100 })
+    const latest = await h.service.latestSession({ limit: 100 })
+    expect(latest?.sessionId).toBe(SESSION)
+    for (const rows of [visible, latest?.messages ?? []]) {
+      expect(rows.some((row) => row.messageId === messageId)).toBe(false)
+      expect(rows.flatMap((row) => row.calls ?? [])).toEqual([])
+      expect(JSON.stringify(rows)).not.toContain('call_gone')
+    }
     await send(h, 'and now?')
     const body = JSON.stringify(h.net.requests.at(-1)?.body)
     expect(body).not.toContain('call_gone')
@@ -758,7 +773,7 @@ describe('replay after a retraction and a late result', () => {
         }),
       ],
     })
-    const card = await h.service.currentPending({ sessionId: SESSION })
+    const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     if (card === null) throw new Error('no card')
     expect(
       await h.service.answer({

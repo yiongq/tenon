@@ -53,7 +53,7 @@ import {
 import type { RecordedRequest, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
-import { LOOK, instantHost, lookSource } from './support.js'
+import { LOOK, instantHost, lookSource, pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'run-user', tenantId: 'run-tenant', profileDir: '/tenon/run' }
 const SESSION = '5a2c9a2e-6b3d-4a71-9f52-0c8de7a11b35'
@@ -1019,6 +1019,32 @@ describe('the guards (旧 3, 02 不变量 14, 旧 27, 旧 127, 旧 28)', () => {
     )
   })
 
+  it('02 不变量 14: counts denied batches toward no-progress, which the denial count leaves alone', async () => {
+    // 不变量 14: 机器拒绝计数「不改 no-progress 计数」. Two denied batches, one that runs, and the
+    // fourth identical one is the repeat.
+    let judged = 0
+    const deny = createFakeInspector({
+      id: 'deny-twice',
+      ceiling: 'deny',
+      answer: () =>
+        (judged += 1) <= 2
+          ? { kind: 'deny', category: 'exfiltration', findings: [{ code: 'test' }] }
+          : { kind: 'none' },
+    })
+    const h = harness({ inspectors: [deny.registration], answersFirst: true })
+    for (let i = 0; i < 4; i += 1)
+      h.provider.script(callTurn([{ id: `toolu_${String(i)}`, input: { at: 'same' } }]))
+    expect((await send(h)).reason).toEqual({ code: 'no-progress', repeats: 4 })
+    expect(outcomes(await all(h))).toEqual([
+      'not-run/inspector',
+      'not-run/inspector',
+      'completed/null',
+      'not-run/no-progress',
+    ])
+    expect(h.executed).toEqual([{ at: 'same' }])
+    expect(h.provider.starts).toBe(4)
+  })
+
   it(
     'stops at the step limit, and 「继续」 starts the count again',
     { timeout: 30_000 },
@@ -1130,7 +1156,7 @@ const askAt = (at: string): ReturnType<typeof createFakeInspector> =>
 
 /** Answers the root's one card. */
 async function allow(h: Harness): Promise<void> {
-  const card = await h.service.currentPending({ sessionId: SESSION })
+  const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (card === null) throw new Error('no card')
   const answered = await h.service.answer({
     kind: 'approval',
@@ -1903,7 +1929,7 @@ describe('judging a call in the loop (旧 162, 旧 124, 旧 93)', () => {
     h.provider.script(callTurn([{ id: 'toolu_1', input: { at: 'a' } }]))
     // The write fails on the frozen copy: the inspector erred, so the call asks (its ceiling).
     expect((await send(h)).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     expect(pending?.card.reason).toBe('flagged')
     h.provider.script(done())
     expect(

@@ -114,8 +114,7 @@ export interface FakeNetwork extends HostNetwork {
   readonly untrustedRequests: readonly RecordedRequest[]
   /**
    * Replays `options.untrusted` with its own cursor — `fetch`'s script and `requests` never see
-   * these calls. Without that option every call is recorded and then rejects. (`HostNetwork` gains
-   * the member itself in plan step 27; until then only this double has it.)
+   * these calls. Without that option every call is recorded and then rejects.
    */
   readonly fetchUntrusted: FetchLike
 }

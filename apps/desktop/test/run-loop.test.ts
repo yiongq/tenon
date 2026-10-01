@@ -351,6 +351,19 @@ describe('run-events', () => {
     ])
   })
 
+  it('maps both of 02’s new provider codes to unknown, like 01’s fallback (acceptance 9)', () => {
+    // §错误与结束映射: the table only gains `quota-exhausted` and `account-config`, both `unknown`;
+    // the finer reason travels as the Run's endReason.
+    const { chat } = mapped([
+      ended({ lastStop: null, errorCode: 'quota-exhausted' }),
+      ended({ lastStop: null, errorCode: 'account-config' }),
+    ])
+    expect(chat.map((event) => (event.type === 'error' ? event.code : event.type))).toEqual([
+      'unknown',
+      'unknown',
+    ])
+  })
+
   it('passes the Run’s retryOf on done and error alike, null included (plan step 20)', () => {
     // §chat.event: `retryOf` is `run-ended.retryOf` — 「重试」 is offered only when it is not null and
     // resends the message it names; the renderer never infers it.
@@ -458,6 +471,48 @@ describe('chat.send and the queue (plan step 17)', () => {
     expect(sent).toEqual([
       { sessionId: ROOT, items: [{ queuedId: expect.any(String), text: 'hi' }] },
     ])
+  })
+
+  it('takes a typed reply to a question as answered: accepted, never queued (plan step 26)', async () => {
+    // §插话与输入框状态表「等提问」: 输入的原文作为当前问题的答案 — the kernel writes it as the call's
+    // result (`answered`); the route neither refuses it nor makes it a queue item.
+    const host = createMemoryHost()
+    const pushed: unknown[] = []
+    const loop = createDesktopLoop({
+      clock: host.clock,
+      send: (channel, payload) => {
+        if (channel === 'chat.queue') pushed.push(payload)
+      },
+      locale: () => 'en',
+      commandShell: NO_SHELL,
+    })
+    const sent: unknown[] = []
+    const sessions = {
+      send: (q: unknown) => {
+        sent.push(q)
+        return Promise.resolve({ status: 'answered' })
+      },
+    } as unknown as SessionService
+    const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
+    const ipcMain: IpcMainLike = {
+      handle(channel, listener) {
+        handlers.set(channel, listener)
+      },
+    }
+    registerChatRoutes({ send: () => {}, ipcMain, sessions, loop, log: () => {} })
+    expect(
+      await handlers.get('chat.send')?.({}, { sessionId: ROOT, text: 'the blue one' }),
+    ).toEqual({ ok: true, data: { accepted: true, status: 'answered' } })
+    // Cmd/Ctrl+Enter while a question waits is a plain send (§插话与输入框状态表).
+    expect(
+      await handlers.get('chat.sendNow')?.({}, { sessionId: ROOT, text: 'no, red', runId: null }),
+    ).toEqual({ ok: true, data: { accepted: true, status: 'answered' } })
+    expect(sent).toEqual([
+      { sessionId: ROOT, origin: null, text: 'the blue one' },
+      { sessionId: ROOT, origin: null, text: 'no, red' },
+    ])
+    expect(await loop.queue.peek(ROOT)).toEqual([])
+    expect(pushed).toEqual([])
   })
 
   it('clears held when the held message is withdrawn, and keeps it for any other', async () => {

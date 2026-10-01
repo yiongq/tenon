@@ -211,7 +211,7 @@ describe('「已配置」 is what this build can use (旧 109)', () => {
   })
 })
 
-describe('the key is bound to its host (A9; 旧 49)', () => {
+describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧 49)', () => {
   it('refuses a save that moves the host without the stored key, and writes nothing', async () => {
     const r = await routes()
     await r.host.secrets.set(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
@@ -244,6 +244,12 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
         values: { ...move, apiKey: 'sk-new' },
       }),
     ).toMatchObject({ data: { ok: false, code: 'key-host-binding' } })
+    // 「什么都不写」: the typed key is not stored early, and the host still reads as the old one.
+    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken'))).toBe(
+      'tok',
+    )
+    expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual({})
     expect(
       await r.call('provider.configure', {
         id: ANTHROPIC_PROVIDER_ID,
@@ -253,6 +259,11 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     expect(
       await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken')),
     ).toBeNull()
+    const saved = (await readConfig(r.host.fs, r.host.identity)).providerConfig
+    // Ollama declares no secret (its apiKey lives in config.json), so this keychain entry is
+    // planted only to see that a refusal neither stores the typed key there nor clears it.
+    const ollamaKey = secretKey(r.host, OLLAMA_PROVIDER_ID, 'apiKey')
+    await r.host.secrets.set(ollamaKey, 'sk-planted')
     // The fully qualified spellings are the same hosts (s19-safety-6).
     for (const baseURL of [
       'https://ollama.com/v1/',
@@ -262,8 +273,16 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     ]) {
       expect(
         // oxlint-disable-next-line no-await-in-loop -- one save at a time
-        await r.call('provider.configure', { id: OLLAMA_PROVIDER_ID, values: { baseURL } }),
+        await r.call('provider.configure', {
+          id: OLLAMA_PROVIDER_ID,
+          values: { baseURL, apiKey: 'sk-cloud' },
+        }),
       ).toMatchObject({ data: { ok: false, code: 'key-host-binding', configKey: 'baseURL' } })
+      // 「config.json 和钥匙串不变」.
+      // oxlint-disable-next-line no-await-in-loop -- one save at a time
+      expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual(saved)
+      // oxlint-disable-next-line no-await-in-loop -- one save at a time
+      expect(await r.host.secrets.get(ollamaKey)).toBe('sk-planted')
     }
   })
 
@@ -299,7 +318,10 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: {},
@@ -471,7 +493,10 @@ describe('the key is bound to its host (A9; 旧 49)', () => {
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: { ANTHROPIC_BASE_URL: 'https://relay.example/' },
@@ -528,6 +553,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
       host: {
         ...host,
         network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
           fetch: (input, init) => {
             sent.push({
               url: String(input),
@@ -622,7 +648,10 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env: {},
@@ -661,7 +690,10 @@ describe('an environment key and a stored base URL on another host (旧 49, s19-
     const connector = createRunConnector({
       host: {
         ...host,
-        network: { fetch: () => ((requests += 1), Promise.reject(new Error('no'))) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: () => ((requests += 1), Promise.reject(new Error('no'))),
+        },
       } as HostAdapter,
       providers: registry(),
       env,
@@ -733,7 +765,7 @@ describe('the five layers and the data-flow check (旧 107, 旧 184)', () => {
     ).toMatchObject({ providerId: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flashx' })
     expect(await resolve()).toMatchObject({
       providerId: ANTHROPIC_PROVIDER_ID,
-      modelId: 'claude-sonnet-5',
+      modelId: 'claude-opus-5-5',
       effort: null,
       capabilitySource: 'builtin',
     })
@@ -1052,7 +1084,10 @@ describe('session.selectModel and session.modelChoice', () => {
     const fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 1 })
     try {
       const memory = createMemoryHost({
-        network: { fetch: (input, init) => globalThis.fetch(input, init) },
+        network: {
+          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+          fetch: (input, init) => globalThis.fetch(input, init),
+        },
       })
       await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
       const host: HostAdapter = memory

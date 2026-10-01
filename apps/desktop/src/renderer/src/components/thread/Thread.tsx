@@ -2,6 +2,7 @@ import { ThreadPrimitive, useThreadViewportStore } from '@assistant-ui/react'
 import { useEffect } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ComposerSlots } from '@/components/composer/ComposerSlots'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { Composer } from './Composer'
 import { AssistantMessage, UserMessage } from './Message'
@@ -104,6 +105,7 @@ export function Thread(): JSX.Element {
 
       <div className="px-6 pb-6">
         <div className="mx-auto w-full max-w-[720px]">
+          <ComposerSlots />
           <Composer />
         </div>
       </div>

@@ -4,6 +4,7 @@ import { IpcConfirm } from './confirm.js'
 import type { EventSender } from './confirm.js'
 import { DesktopFs } from './fs.js'
 import { createDesktopNetwork } from './network.js'
+import { officialProtocolTestNetwork } from './official-protocol-test-seam.js'
 import { createHostProcess } from './process.js'
 import { EmptyPolicy } from './policy.js'
 import { openProfile } from './profile.js'
@@ -46,7 +47,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<Ho
     sandbox: new PassthroughSandbox(options.log),
     confirm: new IpcConfirm(options.send),
     clock: new SystemClock(),
-    network: createDesktopNetwork(),
+    network: officialProtocolTestNetwork(createDesktopNetwork(), options.isPackaged, process.env),
     policy: new EmptyPolicy(),
   }
 }

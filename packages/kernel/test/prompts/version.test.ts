@@ -32,6 +32,19 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // now resolves elsewhere (plan step 22, with its review's fixes, in place before release); the
   // spill notes spill and spillFailed (plan step 24, in place before release).
   3: 'd046474b503d180a3cedc5dbfbb1ec8e4640d9427a44b715852635278c20ac4e',
+  // AskUserQuestion answer templates (plan step 26).
+  4: 'e53349377170024981cf254d0b1293ae973312c6423de5936b1f7b9db0f5d7f3',
+  // WebFetch responses, conversion limits and redirects (plan step 27).
+  5: 'f6da93d4bb8e1d04ffca0f013566270d2001c2045392eb3bc8ac786c19996b03',
+  // WebSearch result, truncation and quota notes (plan step 28).
+  6: '17146efa744b39f5e7e2f867291820d40517f9add47bc718ae88d5cb6bd9a951',
+  // Compaction request and persisted summary wrapper (plan step 30).
+  7: 'f73d2efd58af2bc6176398adcf423c0a8194bdb3e210ce458f83e75fbca61ef0',
+  // Child handoff status, call and immutable target templates (plan step 31).
+  8: 'c483d606ca52cd19eaa008afd4e0cb6c58b4bafc93dee0c110d33db636fb5fd0',
+  // Segment 3 review fixes: WebFetch's size-limit text covers every text body, not only HTML;
+  // AskUserQuestion's reason for a repeated question or option label.
+  9: '93c6eb146501e0b453da8b1107cc0e5f5e0dd4f8787c5959fdf5efed9d8081a7',
 }
 
 describe('the version gate', () => {

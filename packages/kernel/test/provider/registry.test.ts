@@ -11,6 +11,7 @@ import {
 import type { HostNetwork, Provider, ProviderDefinition } from '../../src/index.js'
 
 const NETWORK: HostNetwork = {
+  fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
   fetch: () => Promise.reject(new Error('the registry never opens a connection')),
 }
 

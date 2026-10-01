@@ -9,7 +9,8 @@
  * new one. Each answer is one append: the resolution, the closures it causes and, when it opens a
  * Run, that Run's head — so a crash leaves either nothing (the card is still answerable) or all of it.
  */
-import type { ConfirmRequest } from '../host/adapter.js'
+import type { AbsolutePath, ConfirmRequest, HostAdapter } from '../host/adapter.js'
+import type { RunConnector } from './ports.js'
 import type { ModelInfo } from '../provider/types.js'
 import type {
   ApprovalResolvedPayload,
@@ -36,6 +37,8 @@ import {
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import { canonicalJson } from '../tape/canonical-json.js'
+import { answeredReply, questionTextsOf, storedRecord } from '../tools/builtin/ask-user-question.js'
+import type { AskReply, QuestionAnswers } from '../tools/builtin/ask-user-question.js'
 import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
@@ -44,7 +47,8 @@ import { blockFacts, decisionEntry, judgeCall, readSessionEntries } from './batc
 import type { CompleteCall, JudgeContext, Judgement } from './batch.js'
 import { readViewState } from './run.js'
 import type { CallRef, ClosureSource } from './closure.js'
-import { notRunFacts } from './closure.js'
+import { closureContent, notRunFacts, resultFacts } from './closure.js'
+import { spillChecked } from './spill.js'
 import type { RunEndReason } from './terminal.js'
 
 /** The call a paused root waits on, read back from the Tape. */
@@ -189,6 +193,7 @@ export function resolvedEntry(q: {
   readonly outcome: ApprovalResolvedPayload['outcome']
   readonly via: ApprovalResolvedPayload['via']
   readonly grant?: ApprovalResolvedPayload['grant']
+  readonly parentWorkspaceKey?: string
   readonly writer: FactWriter
 }): NewEntry {
   const { ref } = q.waiting
@@ -199,6 +204,7 @@ export function resolvedEntry(q: {
     outcome: q.outcome,
     via: q.via,
     grant: q.grant ?? null,
+    ...(q.parentWorkspaceKey === undefined ? {} : { parentWorkspaceKey: q.parentWorkspaceKey }),
     writer: q.writer,
   }
   return q.tape.writer('tool').entry('tool/approval_resolved', {
@@ -245,14 +251,30 @@ export function batchClosures(q: {
 
 /**
  * A stop while the root waits (§每种答复同批写什么「暂停中停止」): the card is cancelled and this call
- * and the rest of the batch close not-run / `stopped`; no Run opens. A question's stop is plan step
- * 26's, with the question tool.
+ * and the rest of the batch close not-run / `stopped`; no Run opens. A question stopped before its
+ * answer is filled `unanswered` — aborted, is_error — and the rest of its batch closes not-run /
+ * `stopped` (§点停止时各状态怎么收「等提问」).
  */
 export function stopFacts(tape: Tape, now: () => number, waiting: WaitingCall): NewEntry[] {
-  if (waiting.waitKind === 'question') {
-    throw new Error('a stop while a question waits is plan step 26 (AskUserQuestion)')
-  }
   const writer: FactWriter = { by: 'resolver' }
+  if (waiting.waitKind === 'question') {
+    return [
+      ...resultFacts({
+        tape,
+        now,
+        call: waiting.ref,
+        content: closureContent({ source: 'unanswered', state: 'aborted' }),
+        isError: true,
+        kernelAuthored: true,
+        effect: 'blocked',
+        state: 'aborted',
+        source: 'unanswered',
+        reversibility: waiting.decision.reversibility,
+        writer,
+      }),
+      ...batchClosures({ tape, now, waiting, calls: waiting.rest, source: 'stopped', writer }),
+    ]
+  }
   return [
     resolvedEntry({ tape, now, waiting, outcome: 'cancelled-by-stop', via: 'stop', writer }),
     ...batchClosures({
@@ -264,6 +286,59 @@ export function stopFacts(tape: Tape, now: () => number, waiting: WaitingCall): 
       writer,
     }),
   ]
+}
+
+/**
+ * The reply `approval.respond` gave to a waiting question, or `invalid` when its answers name a
+ * question the call did not ask (§答复与投递「status」): nothing is written then.
+ */
+export function questionReplyOf(
+  waiting: WaitingCall,
+  answers: QuestionAnswers,
+): AskReply | 'invalid' {
+  return answeredReply(questionTextsOf(waiting.call.input), answers)
+}
+
+/**
+ * The answer to a waiting question (§每种答复同批写什么「提问答复」), before the new Run's head: its
+ * `tool/result` — the fixed template, through the spill check like any result the user's own text
+ * can make long (§大响应落盘; plan step 24) — with the summary card's record, cut like the content
+ * when the result spills, and its `tool_outcome`, completed, source `no-preference`, `typed-answer`
+ * or null.
+ */
+export async function questionAnswerFacts(q: {
+  readonly tape: Tape
+  readonly now: () => number
+  readonly host: Pick<HostAdapter, 'fs' | 'identity'>
+  readonly log: (line: string) => void
+  readonly waiting: WaitingCall
+  readonly reply: AskReply
+}): Promise<NewEntry[]> {
+  const { waiting, reply } = q
+  const checked = await spillChecked({
+    fs: q.host.fs,
+    profileDir: q.host.identity.profileDir as AbsolutePath,
+    sessionId: waiting.sessionId,
+    call: waiting.ref,
+    result: { content: [{ type: 'text', text: reply.text }], isError: false, kernelAuthored: true },
+    log: q.log,
+  })
+  return resultFacts({
+    tape: q.tape,
+    now: q.now,
+    call: waiting.ref,
+    content: checked.content,
+    isError: checked.isError,
+    kernelAuthored: checked.kernelAuthored,
+    ...(checked.spill === undefined ? {} : { spill: checked.spill }),
+    // Past the threshold the answer's full text is the spill file's alone (H9; Revisions 31).
+    question: storedRecord(reply.record, checked.mark),
+    effect: 'blocked',
+    state: 'completed',
+    source: reply.source,
+    reversibility: waiting.decision.reversibility,
+    writer: { by: 'resolver' },
+  })
 }
 
 /** A new message while the card waits (§多卡、拒绝与取代「取代」): superseded, and the rest with it. */
@@ -433,15 +508,30 @@ export function resumeSetupOf(
 }
 
 /**
- * What `approval.current` shows (§答复与投递, §调用的键与读写的数据): the card, the call's key, the row
- * it hangs under, and the scope an「允许」would grant.
+ * What `approval.current` shows (§答复与投递, §调用的键与读写的数据): the approval card, or the
+ * question that waits (plan step 26 adds the second variant).
  */
-export interface PendingCard {
+export type PendingCard = PendingApproval | PendingQuestion
+
+/** The approval card: the card, the call's key, the row it hangs under, and the scope an「允许」grants. */
+export interface PendingApproval {
   readonly waitKind: 'approval'
   readonly card: ConfirmRequest
   readonly callKey: string
   readonly anchorCallKey: string
   readonly allowScope: 'once' | 'session'
+}
+
+/**
+ * The question that waits: its `requestId` (the allowing decision's provenance key), the session its
+ * call is in, the `tool-request` block the widget reads the questions from, and the call's key.
+ */
+export interface PendingQuestion {
+  readonly waitKind: 'question'
+  readonly requestId: string
+  readonly sessionId: string
+  readonly toolRequestId: string
+  readonly callKey: string
 }
 
 /** One row of `approval.list`: a root that waits on an answer, or that can be resumed (§离开会话). */
@@ -509,6 +599,8 @@ export async function frozenBatchOf(
  */
 export async function rejudgeWaiting(q: {
   readonly judge: Omit<JudgeContext, 'sessionId' | 'searchHost'>
+  readonly searchTarget?: RunConnector['searchTarget']
+  readonly providerId?: string
   readonly waiting: WaitingCall
   readonly item: ToolTableItem | undefined
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
@@ -522,11 +614,22 @@ export async function rejudgeWaiting(q: {
     return { kind: 'unavailable' }
   }
   const target = waiting.decision.confirm?.target
+  const searching = item.source === 'builtin' && item.originalName === 'WebSearch'
+  const current = searching
+    ? q.searchTarget?.(q.providerId ?? '', String(waiting.call.input['query']))
+    : null
+  if (searching && current == null) return { kind: 'unavailable' }
+  const changed =
+    searching &&
+    current != null &&
+    (target?.type !== 'search' || target.host !== current.host || target.query !== current.query)
   const judged = await judgeCall(
     {
       ...q.judge,
       sessionId: waiting.sessionId,
-      searchHost: target?.type === 'search' ? target.host : null,
+      searchHost: current?.host ?? null,
+      ...(current == null ? {} : { prepareSearch: () => current }),
+      ignoreSearchGrant: changed,
     },
     item,
     waiting.call,

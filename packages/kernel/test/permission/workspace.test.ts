@@ -63,7 +63,7 @@ async function world(): Promise<{
   return { fs: host.fs, scope, host }
 }
 
-describe('locatePath', () => {
+describe('02 不变量 21: locatePath', () => {
   it('places the workspace, the session’s own spill, the protected list and the rest', async () => {
     const { fs, scope } = await world()
     expect(await locatePath(fs, p('/ws/src/a.ts'), scope)).toEqual({

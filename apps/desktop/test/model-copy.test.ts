@@ -14,12 +14,28 @@ function text(locale: Locale, key: string): string {
   return node
 }
 
+/** The first sentence, its full stop included. */
+function first(line: string): string {
+  return line.split(/(?<=[.。])/u)[0] ?? ''
+}
+
 describe('the settings card wording', () => {
   it('names the model field the default for new chats, in both languages', () => {
     expect(text('en', 'settings.providers.model')).toBe('Default model for new chats')
     expect(text('zh-CN', 'settings.providers.model')).toBe('新会话默认模型')
     expect(text('en', 'settings.providers.description')).toMatch(/^[^.]*new chats/)
     expect(text('zh-CN', 'settings.providers.description')).toMatch(/^[^。]*新会话/)
+  })
+
+  it('opens the description with the spec’s first half: the provider is a default too (M5)', () => {
+    // §UX 文档与其余文件: 前半句 →「选择新会话默认使用的供应商与模型 / Choose the default provider and
+    // model for new chats」, 后半句不动.
+    expect(first(text('en', 'settings.providers.description'))).toBe(
+      'Choose the default provider and model for new chats.',
+    )
+    expect(first(text('zh-CN', 'settings.providers.description'))).toBe(
+      '选择新会话默认使用的供应商与模型。',
+    )
   })
 })
 

@@ -19,7 +19,9 @@ export interface TurnCustom {
 }
 
 export function toThreadMessages(model: ThreadModel): ThreadMessageLike[] {
-  return model.turns.map((turn, index) => toMessage(model.turns, turn, index))
+  // A reply typed while a question waits is drawn only once it turns out to be a message.
+  const turns = model.turns.filter((turn) => turn.answering !== true)
+  return turns.map((turn, index) => toMessage(turns, turn, index))
 }
 
 function toMessage(turns: readonly Turn[], turn: Turn, index: number): ThreadMessageLike {

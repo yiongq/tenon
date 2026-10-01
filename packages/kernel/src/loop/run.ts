@@ -1,3 +1,4 @@
+import type { SubagentHandoff } from './subagent.js'
 /**
  * A Run (spec 02 §Run 的生命周期与每轮顺序, §一轮回复怎么分流, §上限、守卫与用量, §重试与「继续」):
  * the requests of one trigger, outside the mailbox. Every fact it writes goes in through the mailbox
@@ -26,6 +27,7 @@ import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { createBlockAccumulator } from '../provider/base.js'
 import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '../provider/errors.js'
+import { MODEL_NOTES, fill, systemPrompt } from '../prompts/index.js'
 import { thinkingModelId } from '../provider/thinking.js'
 import type {
   ContentBlock,
@@ -50,6 +52,7 @@ import {
   systemHash,
 } from '../provider/wire/shared.js'
 import type {
+  CompactionAnchorPayload,
   MessageStatus,
   NewEntry,
   RunUsageLine,
@@ -67,6 +70,7 @@ import type {
   TapeAttemptStop,
 } from '../tape/projection.js'
 import {
+  compactionAnchorKey,
   assembledKey,
   attemptCompletedKey,
   messageRevisionKey,
@@ -75,6 +79,17 @@ import {
   toolsWithheldKey,
   viewContentKey,
 } from '../tape/provenance.js'
+import {
+  compactionCut,
+  compactionThreshold,
+  checksThinkingPrefix,
+  estimateInput,
+  isBoundaryRun,
+  latestAnchor,
+  turnStarts,
+  summaryThinking,
+  COMPACT_RETRY_CAP,
+} from './compaction.js'
 import { replayContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
@@ -85,8 +100,14 @@ import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { ApprovedCall, BatchResult, CompleteCall, Written } from './batch.js'
-import { closedView, effectOf, readSessionEntries, runBatch } from './batch.js'
+import type { ApprovedCall, BatchContext, BatchResult, CompleteCall, Written } from './batch.js'
+import {
+  RunWriteRefusedError,
+  closedView,
+  effectOf,
+  readSessionEntries,
+  runBatch,
+} from './batch.js'
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
@@ -99,7 +120,6 @@ import {
   latestEnvironment,
   sameEnvironment,
 } from './environment.js'
-import { systemPrompt } from '../prompts/index.js'
 import { readSessionFacts } from '../session/facts.js'
 import type { Profile } from '../session/facts.js'
 
@@ -107,6 +127,10 @@ import type { Profile } from '../session/facts.js'
 export const FIRST_REVISION = 0
 
 export interface RunDriverContext {
+  readonly agent?: BatchContext['agent']
+  readonly stepLimit?: number
+  readonly elapsed?: () => Promise<number>
+  readonly deadlineMs?: number
   readonly tape: Tape
   readonly ids: IdSource
   readonly now: () => number
@@ -133,8 +157,13 @@ export interface RunDriverContext {
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
   /** A token limit for this Run (off by default; evals and sub-agents set one, H11). */
   readonly tokenLimit: number | null
+  readonly compactionThreshold?: number | null
   readonly lease: RunLease
-  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  readonly openTable: (q: {
+    providerId: string
+    generation: number
+    reason: 'first-use' | 'after-compaction'
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
   /**
    * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
    * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
@@ -170,6 +199,7 @@ export interface RunDriverContext {
 
 /** The paused batch a resuming Run finishes: its request, the calls still to handle, the approved one. */
 export interface ResumeBatch {
+  readonly handoff?: SubagentHandoff
   readonly runId: string
   readonly requestSeq: number
   readonly calls: readonly CompleteCall[]
@@ -199,20 +229,37 @@ export interface RunFinish {
 export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   const { tape, runId } = ctx
   const signal = ctx.lease.signal
-  const state = await readViewState(tape, ctx.sessionId)
+  let state = await readViewState(tape, ctx.sessionId)
   const { profile } = await readSessionFacts(tape, ctx.sessionId)
   const chain = await chainCounters(tape, ctx.sessionId, runId)
   const validator = createArgumentValidator()
   const usage = new Map<string, RunUsageLine>()
+  if (ctx.resume?.handoff !== undefined)
+    for (const line of ctx.resume.handoff.usage)
+      usage.set(`subagent:${line.providerId}:${line.modelId}`, { ...line, origin: 'subagent' })
   let steps = 0
   let pin = ctx.pin
   let requestSeq = 0
+  let mainRequests = 0
+  let thresholdChecked = false
+  let overflowCompactions = 0
+  const boundaryRun = isBoundaryRun(await readSessionEntries(tape, ctx.sessionId), runId)
   let denials = chain.denials
   const batches = [...chain.batches]
   let lastStop: StopReason | null = null
   let errorCode: ProviderErrorCode | null = null
   /** What the token limit counts so far: every attempt's uncached input plus output (H11). */
   let counted = 0
+  if (ctx.resume?.handoff !== undefined) {
+    const latest = (await readSessionEntries(tape, ctx.sessionId)).findLast(
+      (e) => e.name === 'provider/attempt_completed',
+    )
+    const wire = (
+      latest?.payload['encoder'] as { wire?: 'anthropic-messages' | 'openai-chat' } | undefined
+    )?.wire
+    for (const line of ctx.resume.handoff.usage)
+      counted += limitTokensOf({ ...line, final: true }, wire ?? null)
+  }
   const finish = (
     reason: RunEndReason,
     extra: Partial<Pick<RunFinish, 'withTerminal' | 'waiting'>> = {},
@@ -275,6 +322,38 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       ...q,
       writer: { by: 'run', runId },
+      ...(ctx.agent === undefined
+        ? {}
+        : {
+            agent: async (call) => {
+              const result = await ctx.agent!(call)
+              const latest = (await readSessionEntries(tape, ctx.sessionId)).findLast(
+                (e) => e.name === 'provider/attempt_completed',
+              )
+              const wire = (
+                latest?.payload['encoder'] as
+                  | { wire?: 'anthropic-messages' | 'openai-chat' }
+                  | undefined
+              )?.wire
+              if (result.kind === 'done')
+                for (const line of result.handoff.usage) {
+                  counted += limitTokensOf({ ...line, final: true }, wire ?? null)
+                  const key = `subagent:${line.providerId}:${line.modelId}`
+                  const prior = usage.get(key)
+                  usage.set(key, {
+                    ...line,
+                    origin: 'subagent',
+                    requests: (prior?.requests ?? 0) + line.requests,
+                    inputTokens: (prior?.inputTokens ?? 0) + line.inputTokens,
+                    outputTokens: (prior?.outputTokens ?? 0) + line.outputTokens,
+                    cacheReadTokens: (prior?.cacheReadTokens ?? 0) + line.cacheReadTokens,
+                    cacheWriteTokens: (prior?.cacheWriteTokens ?? 0) + line.cacheWriteTokens,
+                    reasoningTokens: (prior?.reasoningTokens ?? 0) + line.reasoningTokens,
+                  })
+                }
+              return result
+            },
+          }),
       inspectors: ctx.inspectors,
       validator,
       protectedFiles: ctx.protectedFiles,
@@ -284,6 +363,8 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       search: ctx.search,
       commandShell: ctx.commandShell,
       denials,
+      budgetExceeded: () =>
+        ctx.tokenLimit !== null && counted > ctx.tokenLimit ? ctx.tokenLimit : null,
       strict: ctx.onUnansweredCall === 'throw',
       log: ctx.log,
       signal,
@@ -319,10 +400,188 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const entry = environmentEntry({ tape, now: ctx.now, messageId: ctx.ids.uuid(), state: now })
     await write([entry])
   }
+  const compact = async (
+    provider: Provider,
+    assembled: AssembledRequest,
+    boundaryRequest: boolean,
+    trigger: CompactionAnchorPayload['trigger'],
+  ): Promise<'skipped' | 'done' | RunFinish> => {
+    const entries = await readSessionEntries(tape, ctx.sessionId)
+    const cut = compactionCut(
+      entries,
+      boundaryRequest,
+      trigger.code === 'overflow' && trigger.retry === 2 ? 1 : 2,
+    )
+    if (cut === null) return 'skipped'
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+      errorCode = null
+      return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+    }
+    const contextAtEntryId = pin
+    const replay = await replayContext(tape, {
+      sessionId: ctx.sessionId,
+      atEntryId: pin,
+      target: ctx.model,
+      beforeOrderSeq: cut.keepFromEntryId,
+    })
+    const requestText = MODEL_NOTES.compactionRequest
+    const messages: InternalMessage[] = [
+      ...replay.messages,
+      { role: 'user', content: [{ type: 'text', text: requestText }] },
+    ]
+    const request: ProviderRequest = {
+      model: ctx.model,
+      messages,
+      maxTokens: ctx.maxTokens,
+      ...(assembled.system === null ? {} : { system: assembled.system }),
+      ...summaryThinking(ctx.model),
+      dropThinkingBefore: messages.length,
+    }
+    requestSeq += 1
+    const summarySeq = requestSeq
+    const assemblyRef = assembledKey(runId, summarySeq)
+    const original = assembled.facts.find((e) => e.name === 'view/assembled')!
+    const manifest = { ...(original.payload as unknown as ViewAssembledPayload), tools: null }
+    await write([
+      ...assembled.facts.filter(
+        (e) => e.name === 'view/content' && e.payload['type'] !== 'tool_spec',
+      ),
+      tape.writer('view').entry('view/assembled', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        sourceSeq: summarySeq,
+        provenanceKey: assemblyRef,
+        payload: manifest,
+        createdAt: ctx.now(),
+      }),
+    ])
+    state.system = assembled.system
+    state.requested = true
+    const encoded = provider.encode(request)
+    const advice = provider.retryAdvice()
+    const resends = Math.max(0, Math.min(advice.maxAttempts - 1, RETRY_CAP))
+    let physicalAttempt = 0
+    let delay = advice.baseDelayMs
+    let firstByteTimeout: false | undefined
+    for (;;) {
+      physicalAttempt += 1
+      const identity = { runId, requestSeq: summarySeq, physicalAttempt }
+      // oxlint-disable-next-line no-await-in-loop -- one physical summary attempt at a time
+      const attempt = await streamAttempt({
+        ctx,
+        provider,
+        encoded,
+        identity,
+        signal,
+        firstByteTimeout,
+        publish: false,
+      })
+      addUsage(usage, attempt)
+      counted += limitTokensOf(attempt.usage, encoderOf(encoded)?.wire ?? null)
+      lastStop = attempt.stop?.reason ?? null
+      errorCode = attempt.error?.code ?? null
+      // oxlint-disable-next-line no-await-in-loop -- audit every summary attempt before any retry or anchor
+      await write([
+        attemptFact(ctx, {
+          encoded,
+          request,
+          attempt,
+          contextAtEntryId,
+          identity,
+          assemblyRef,
+          compaction: { keepFromEntryId: cut.keepFromEntryId, requestText },
+        }),
+      ])
+      if (signal.aborted || attempt.stop?.reason === 'aborted') return aborted()
+      const route = routeOf(attempt, ctx.maxTokens)
+      if (route.kind === 'discard' && route.transient && physicalAttempt <= resends) {
+        if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+          errorCode = null
+          return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+        }
+        firstByteTimeout = attempt.timeout === 'first-byte' ? false : undefined
+        // oxlint-disable-next-line no-await-in-loop -- H12 backoff does not advance the payload identity
+        if (!(await wait(ctx.host, attempt.error?.retryAfterMs ?? delay, signal))) return aborted()
+        delay *= 2
+        continue
+      }
+      if (attempt.error?.code === 'context-overflow' || attempt.stop?.reason === 'context-overflow')
+        return finish({ code: 'context-overflow', compactions: 0 })
+      if (
+        attempt.error !== null ||
+        (attempt.stop?.reason !== 'end-turn' && attempt.stop?.reason !== 'stop-sequence')
+      ) {
+        errorCode = attempt.error?.code ?? null
+        lastStop = attempt.stop?.reason ?? null
+        return finish(providerError(attempt, physicalAttempt))
+      }
+      if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
+        errorCode = null
+        return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+      }
+      const text = attempt.content
+        .filter((b): b is Extract<ContentBlock, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
+      const generation = state.generation + 1
+      const providerIds = new Set([...state.tables.values()].map((table) => table.providerId))
+      providerIds.add(ctx.model.providerId)
+      const tableFacts: NewEntry[] = []
+      for (const providerId of providerIds) {
+        // oxlint-disable-next-line no-await-in-loop -- assemble other providers outside the mailbox, under this lease
+        const fresh = await ctx.openTable({ providerId, generation, reason: 'after-compaction' })
+        tableFacts.push(
+          ...toolTableFacts({
+            view: tape.writer('view'),
+            sessionId: ctx.sessionId,
+            table: fresh.table,
+            policy: fresh.policy,
+            now: ctx.now,
+          }),
+        )
+      }
+      if (signal.aborted) return aborted()
+      const payload: CompactionAnchorPayload = {
+        ...cut,
+        summary: fill(MODEL_NOTES.compactionWrap, { summary: text }),
+        summarizer: { providerId: ctx.model.providerId, modelId: ctx.model.id },
+        trigger,
+        generation,
+      }
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- anchor and all replacement tables are one atomic append
+        await write([
+          tape.writer('compaction').entry('compaction/anchor', {
+            sourceType: 'runtime_event',
+            sourceId: runId,
+            sourceSeq: summarySeq,
+            provenanceKey: compactionAnchorKey(runId, summarySeq),
+            payload,
+            createdAt: ctx.now(),
+          }),
+          ...new Map(tableFacts.map((fact) => [fact.provenanceKey, fact])).values(),
+        ])
+      } catch (error) {
+        // A stop that reached the anchor's write task first: no anchor, the history unchanged, and
+        // the Run ends as stopped (§摘要请求「停止时 Run 以 user-stopped 结束」).
+        if (!(error instanceof RunWriteRefusedError)) throw error
+        return aborted()
+      }
+      // oxlint-disable-next-line no-await-in-loop -- memory follows the committed generation only
+      state = await readViewState(tape, ctx.sessionId)
+      return 'done'
+    }
+  }
   const batchEnd = (result: BatchResult): RunFinish | null => {
+    if (result.kind === 'usage-limit')
+      return endClosing(
+        { code: 'usage-limit', tokenLimit: result.tokenLimit },
+        result.rest,
+        'usage-limit',
+      )
     if (result.kind === 'paused') {
       return finish(
-        { code: 'paused', waitingFor: 'approval' },
+        { code: 'paused', waitingFor: result.waitingFor },
         { withTerminal: result.withTerminal, waiting: result.waiting },
       )
     }
@@ -338,6 +597,17 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   }
 
   if (ctx.resume !== undefined) {
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit)
+      return endClosing(
+        { code: 'usage-limit', tokenLimit: ctx.tokenLimit },
+        ctx.resume.calls.map((call) => ({
+          runId: ctx.resume!.runId,
+          requestSeq: ctx.resume!.requestSeq,
+          ordinal: call.ordinal,
+          providerToolCallId: call.providerToolCallId,
+        })),
+        'usage-limit',
+      )
     // §续跑: the paused batch first — the approved call, then the rest in order — under the frozen
     // table of the batch's provider. It was counted as a step when it paused, so it is not again.
     const tableKey = toolTableKey(ctx.incarnationId, state.generation, ctx.model.providerId)
@@ -358,8 +628,14 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
 
   // No abort check before a request: an aborted signal reaches the provider, which starts no stream
   // and answers `stop{ aborted }`, so every request of the Run leaves its attempt fact (01 invariant 2).
-  for (;;) {
-    requestSeq += 1
+  requests: for (;;) {
+    if (ctx.tokenLimit !== null && counted > ctx.tokenLimit)
+      return finish({ code: 'usage-limit', tokenLimit: ctx.tokenLimit })
+    if (ctx.elapsed !== undefined && ctx.deadlineMs !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- deadline is recomputed before each new main payload
+      if ((await ctx.elapsed()) >= ctx.deadlineMs)
+        return finish({ code: 'time-limit', limitMs: ctx.deadlineMs })
+    }
     let provider: Provider
     try {
       provider = ctx.provider()
@@ -388,7 +664,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     }
     // oxlint-disable-next-line no-await-in-loop -- the queued messages join before this request
     const inserted = await boundary()
-    if (inserted || (requestSeq === 1 && ctx.resume === undefined)) {
+    if (inserted || (mainRequests === 0 && ctx.resume === undefined)) {
       // oxlint-disable-next-line no-await-in-loop -- the note joins before this request's context
       await environment()
     }
@@ -399,7 +675,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       incarnationId: ctx.incarnationId,
       runId,
-      requestSeq,
+      requestSeq: requestSeq + 1,
       model: ctx.model,
       toolsWithheld: ctx.toolsWithheld,
       state,
@@ -409,7 +685,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     })
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
-    const request: ProviderRequest = {
+    let request: ProviderRequest = {
       model: ctx.model,
       ...(assembled.system === null ? {} : { system: assembled.system }),
       messages,
@@ -422,6 +698,54 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       ...(ctx.model.thinkingSpec?.displays?.includes('summarized') === true
         ? { display: 'summarized' as const }
         : {}),
+    }
+    const boundaryRequest = mainRequests === 0 && boundaryRun
+    // oxlint-disable-next-line no-await-in-loop -- each payload reads evidence left by the preceding one
+    const entries = await readSessionEntries(tape, ctx.sessionId)
+    if (!thresholdChecked) {
+      thresholdChecked = true
+      const estimated = estimateInput(entries, request)
+      const threshold = ctx.compactionThreshold ?? compactionThreshold(ctx.model)
+      if (estimated > threshold && (boundaryRequest || !checksThinkingPrefix(ctx.model))) {
+        // oxlint-disable-next-line no-await-in-loop -- summary must finish before this payload can be sent
+        const compacted = await compact(provider, assembled, boundaryRequest, {
+          code: 'threshold',
+          estimatedInputTokens: estimated,
+          thresholdTokens: threshold,
+        })
+        if (compacted !== 'skipped' && compacted !== 'done') return compacted
+        if (compacted === 'done') continue requests
+      }
+    }
+    requestSeq += 1
+    const anchor = latestAnchor(entries)
+    if (anchor !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- the committed anchor determines this request’s cutoff
+      const replay = await replayContext(tape, {
+        sessionId: ctx.sessionId,
+        atEntryId: pin,
+        target: ctx.model,
+      })
+      // §重建、保留尾巴与思考块: the thinking in facts written before the latest anchor is dropped. Only
+      // a mid-turn anchor (its keepFrom is the start of the turn it cut) keeps the turn's thinking,
+      // until the next boundary request; from that boundary on, the cut is that boundary's
+      // run_started, because what the window produced was sent after blocks echoed off their
+      // original prefix (02 不变量 8). A boundary anchor's cut stays at the anchor in later turns.
+      const keepFrom = Number(anchor.payload['keepFromEntryId'])
+      const midTurnAnchor =
+        keepFrom === turnStarts(entries.filter((entry) => entry.entryId < anchor.entryId)).at(-1)
+      const nextBoundary = midTurnAnchor
+        ? entries.find(
+            (entry) =>
+              entry.name === 'execution/run_started' &&
+              entry.entryId > anchor.entryId &&
+              entry.sourceId !== null &&
+              isBoundaryRun(entries, entry.sourceId),
+          )
+        : undefined
+      const cutoff = !midTurnAnchor ? anchor.entryId : (nextBoundary?.entryId ?? keepFrom)
+      const index = replay.orderSeqs.findIndex((seq) => seq >= cutoff)
+      request = { ...request, dropThinkingBefore: index < 0 ? messages.length : index }
     }
     // ONCE per payload — and the encoded request is what every attempt of it streams.
     const encoded = provider.encode(request)
@@ -467,6 +791,26 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         // oxlint-disable-next-line no-await-in-loop -- the discarded attempt is on the Tape before the resend
         await write([attemptEntry])
         ctx.emit.discarded(runId)
+        if (
+          attempt.error?.code === 'context-overflow' ||
+          attempt.stop?.reason === 'context-overflow'
+        ) {
+          if (
+            overflowCompactions >= COMPACT_RETRY_CAP ||
+            (!boundaryRequest && checksThinkingPrefix(ctx.model))
+          )
+            return finish({ code: 'context-overflow', compactions: overflowCompactions })
+          // oxlint-disable-next-line no-await-in-loop -- summary must finish before this payload can be sent
+          const compacted = await compact(provider, assembled, boundaryRequest, {
+            code: 'overflow',
+            retry: (overflowCompactions + 1) as 1 | 2,
+          })
+          if (compacted === 'skipped')
+            return finish({ code: 'context-overflow', compactions: overflowCompactions })
+          if (compacted !== 'done') return compacted
+          overflowCompactions += 1
+          continue requests
+        }
         if (route.transient && physicalAttempt <= resends) {
           // §上限「token 上限」: checked after every attempt — over the limit, no resend goes out.
           if (ctx.tokenLimit !== null && counted > ctx.tokenLimit) {
@@ -524,8 +868,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
 
       // ----- step 3: the three guards, before any decision -------------------------------------
       const signature = JSON.stringify(calls.map((call) => [call.name, call.argsHash]))
-      if (chain.steps + steps >= STEP_LIMIT) {
-        return endClosing({ code: 'step-limit', limit: STEP_LIMIT }, refs, 'step-limit')
+      if (chain.steps + steps >= (ctx.stepLimit ?? STEP_LIMIT)) {
+        return endClosing(
+          { code: 'step-limit', limit: ctx.stepLimit ?? STEP_LIMIT },
+          refs,
+          'step-limit',
+        )
       }
       const previous = batches.slice(-(NO_PROGRESS_REPEATS - 1))
       if (
@@ -545,6 +893,9 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       // ----- step 4: the batch -----------------------------------------------------------------
       // oxlint-disable-next-line no-await-in-loop -- the batch runs before the next request is built
       const result = await batch({ runId, requestSeq, table: assembled.table, calls })
+      mainRequests += 1
+      thresholdChecked = false
+      overflowCompactions = 0
       steps += 1
       batches.push(signature)
       const ended = batchEnd(result)
@@ -578,6 +929,7 @@ async function streamAttempt(q: {
   readonly identity: RequestIdentity
   readonly signal: AbortSignal
   readonly firstByteTimeout: false | undefined
+  readonly publish?: boolean
 }): Promise<AttemptOutcome> {
   const { ctx, provider, encoded, identity } = q
   // A thinking block is stamped with the guard's model identity rather than the wire id, so a block
@@ -616,7 +968,7 @@ async function streamAttempt(q: {
         break
       case 'text-delta':
       case 'thinking-delta':
-        ctx.emit.delta(identity.runId, event.type, event.text)
+        if (q.publish !== false) ctx.emit.delta(identity.runId, event.type, event.text)
         blocks.apply(event)
         break
       default:
@@ -831,6 +1183,7 @@ function attemptFact(
     readonly contextAtEntryId: number
     readonly identity: RequestIdentity
     readonly assemblyRef: string
+    readonly compaction?: { keepFromEntryId: number; requestText: string }
   },
 ): NewEntry {
   const { encoded, attempt, identity } = q
@@ -849,6 +1202,7 @@ function attemptFact(
     modelWireHash: modelWireHash(ctx.model),
     ...(attempt.responseModelId === null ? {} : { responseModelId: attempt.responseModelId }),
     assemblyRef: q.assemblyRef,
+    ...(q.compaction === undefined ? {} : { compaction: q.compaction }),
   }
   return ctx.tape.writer('provider').entry('provider/attempt_completed', {
     sourceType: 'runtime_event',
@@ -1209,7 +1563,11 @@ export interface AssembleQuery {
   readonly toolsWithheld: 'provider-text-only' | null
   readonly state: ViewState
   /** Opens the table of this provider and generation; called only when the Tape has none. */
-  readonly openTable: () => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  readonly openTable: (q: {
+    providerId: string
+    generation: number
+    reason: 'first-use' | 'after-compaction'
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
   /** The session's profile (`session/profile_set`): which of the two system prompts (H1). */
   readonly profile: Profile
   /** The interface language, read only when the system text is assembled. */
@@ -1260,7 +1618,11 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
   let table: FrozenToolTable
   let opened = false
   if (stored === undefined) {
-    const fresh = await q.openTable()
+    const fresh = await q.openTable({
+      providerId,
+      generation: q.state.generation,
+      reason: 'first-use',
+    })
     table = fresh.table
     opened = true
     facts.push(

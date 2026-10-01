@@ -327,6 +327,51 @@ describe('the ceiling narrows what an inspector can type (F1)', () => {
     ]
     expect(registrations.map((r) => r.ceiling)).toEqual(['ask', 'ask', 'deny'])
   })
+
+  it('02 不变量 15: confidence does not move a verdict; it only goes into the record', () => {
+    // §Inspector 接口与合议: 几个意见取最严…`confidence` 只进判决记录.
+    type Finding = { code: string; confidence?: number }
+    const outcomeOf = (kind: 'ask' | 'deny', finding: Finding): InspectorOutcome =>
+      kind === 'ask'
+        ? {
+            inspectorId: 'x',
+            ceiling: 'ask',
+            status: 'ok',
+            opinion: { ...EXFIL, findings: [finding] },
+          }
+        : {
+            inspectorId: 'x',
+            ceiling: 'deny',
+            status: 'ok',
+            opinion: { kind: 'deny', category: 'exfiltration', findings: [finding] },
+          }
+    for (const over of [{}, { userSetting: 'always-allow' as const }]) {
+      for (const kind of ['ask', 'deny'] as const) {
+        for (const finding of [
+          { code: 'x', confidence: 0 },
+          { code: 'x', confidence: 1 },
+          { code: 'x' },
+        ]) {
+          const { record } = decideWith([outcomeOf(kind, finding)], over)
+          expect({ verdict: record.verdict, decidedBy: record.decidedBy }).toEqual({
+            verdict: kind,
+            decidedBy: 'inspector',
+          })
+          expect(record.steps.find((step) => step.by === 'inspector')).toMatchObject({
+            said: kind,
+            basis: { findings: [finding] },
+          })
+        }
+      }
+    }
+    // The strictest wins whatever each is sure of: an unsure denial beside a sure ask still denies.
+    const unsureDeny = outcomeOf('deny', { code: 'x', confidence: 0 })
+    const sureAsk = { ...outcomeOf('ask', { code: 'x', confidence: 1 }), inspectorId: 'y' }
+    expect(decideWith([sureAsk, unsureDeny]).record).toMatchObject({
+      verdict: 'deny',
+      decidedBy: 'inspector',
+    })
+  })
 })
 
 describe('an inspector result never widens a verdict (F1)', () => {

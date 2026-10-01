@@ -23,6 +23,7 @@ import {
   registerRoute,
   runStateEvent,
   sessionFacts,
+  sessionMessages,
 } from '@tenon-app/contracts'
 import type {
   EventDef,
@@ -40,7 +41,8 @@ import { listenForQueue } from '../src/renderer/src/runtime/queue-state.js'
 import { listenForRunState } from '../src/renderer/src/runtime/run-state.js'
 import { APPROVAL_LIST_LIMIT, SessionStore } from '../src/renderer/src/runtime/session-store.js'
 import { retryable } from '../src/renderer/src/runtime/thread-model.js'
-import type { PendingCard } from '../src/renderer/src/runtime/session-store.js'
+import type { PendingCard, PendingQuestion } from '../src/renderer/src/runtime/session-store.js'
+import { toThreadMessages } from '../src/renderer/src/runtime/to-thread-messages.js'
 
 const SESSION = '3f2a9c1e-5b7d-4e8f-9a0b-1c2d3e4f5a6b'
 const OTHER = '9e8d7c6b-5a49-4382-9716-05f4e3d2c1b0'
@@ -110,6 +112,7 @@ function fakeBridge(): FakeBridge {
     },
   }
   // What an idle main answers: nothing waits, nothing resumes, every command accepted.
+  fake.handle(sessionMessages, () => [])
   fake.handle(approvalCurrent, () => null)
   fake.handle(approvalList, () => [])
   fake.handle(approvalResume, () => ({ status: 'none' as const }))
@@ -467,6 +470,66 @@ describe('the approval card', () => {
     // A new card restarts the click guard (APPROVAL_CLICK_GUARD_MS, §最小审批卡「排队行」).
     expect(store.getSnapshot().pendingSince).toBe(30_000)
     expect(store.getSnapshot().answered.size).toBe(0)
+  })
+
+  it('loads child approval arguments and discards a read after the pending card changes', async () => {
+    const fake = fakeBridge()
+    const childCard = card(R1, {
+      callKey: `${RUN}:2:0`,
+      anchorCallKey: CALL,
+      card: { ...card(R1).card, sessionId: OTHER },
+    })
+    let current: PendingCard | null = childCard
+    fake.handle(approvalCurrent, () => current)
+    const childRow: MessageRowContract = {
+      ...row('child-message', 'assistant', '', 4),
+      sessionId: OTHER,
+      content: [
+        {
+          type: 'tool-request',
+          id: 'child-write',
+          name: 'Write',
+          input: { file_path: '/a', content: 'child change' },
+        },
+      ],
+      calls: [{ callKey: childCard.callKey, outcome: null }],
+    }
+    let release!: (rows: MessageRowContract[]) => void
+    fake.handle(
+      sessionMessages,
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        }),
+    )
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    const first = store.refreshPending()
+    await settle()
+    expect(store.getSnapshot().pendingCall).toBeNull()
+    expect(fake.calls(sessionMessages)).toEqual([{ sessionId: OTHER, limit: 1000 }])
+    current = null
+    await store.refreshPending()
+    release([childRow])
+    await first
+    expect(store.getSnapshot().pendingCall).toBeNull()
+
+    current = childCard
+    fake.handle(sessionMessages, () => {
+      vi.setSystemTime(20_000)
+      return [childRow]
+    })
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingCall).toEqual({
+      name: 'Write',
+      input: { file_path: '/a', content: 'child change' },
+    })
+    expect(store.getSnapshot().pendingSince).toBe(20_000)
+    vi.setSystemTime(30_000)
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingSince).toBe(20_000)
+    current = card(R2)
+    await store.refreshPending()
+    expect(store.getSnapshot().pendingCall).toBeNull()
   })
 
   it('collapses a denial with no scope, and a sub-agent’s allow as the subtask’s', async () => {
@@ -1276,7 +1339,28 @@ describe('what a send answers (chat.send / chat.sendNow `status`, plan step 20)'
   }
 
   for (const [name, route, sendWith] of SENDS) {
-    for (const status of ['answered', 'not-sent', 'not-found'] as const) {
+    it(`${name}, answered: the words were a question's typed answer, no message — they go (plan step 26)`, async () => {
+      // §插话与输入框状态表「等提问」: 输入的原文作为当前问题的答案, 不写 message/user — even when this
+      // window had not read the question yet; the summary card shows the words as the reply.
+      const fake = fakeBridge()
+      const store = new SessionStore(SESSION, fake.bridge, [])
+      const detach = store.attach()
+      fake.handle(route, () => ({ accepted: true as const, status: 'answered' as const }))
+      await sendWith(store, 'the blue one')
+      expect(turns(store)).toEqual([])
+      fake.handle(chatSend, () => ({ accepted: true as const, status: 'started' as const }))
+      await store.send('next')
+      fake.emit(chatEvent, {
+        type: 'user-message',
+        sessionId: SESSION,
+        messageId: 'm-next',
+        queuedId: null,
+      })
+      expect(turns(store)).toEqual([['user: next', 'm-next', false]])
+      detach()
+    })
+
+    for (const status of ['not-sent', 'not-found'] as const) {
       it(`${name}, ${status}: nothing will name the message, so it stays as sent and takes no later id`, async () => {
         // §chat.event (plan step 20 只增): after anything but started, queued and held nothing was
         // written; the renderer settles the message it showed and no longer waits for its id.
@@ -1573,5 +1657,199 @@ describe('attach(): what was pushed between the store’s construction and its a
     detach()
     offQueue()
     offRunState()
+  })
+})
+
+describe('a question (plan step 26; §答复与投递, §插话与输入框状态表「等提问」)', () => {
+  const ASK = `${RUN}:1:0`
+  const LATER = `${RUN}:1:1`
+  const Q1 = `tool:v1:decision:${RUN}:1:0`
+
+  function question(requestId = Q1): PendingQuestion {
+    return {
+      waitKind: 'question',
+      requestId,
+      sessionId: SESSION,
+      toolRequestId: 'toolu_ask',
+      callKey: ASK,
+    }
+  }
+
+  /** The assistant row that asked, redrawn: an AskUserQuestion and a Read after it, neither closed. */
+  function askingRow(): MessageRowContract {
+    return {
+      ...row('m-ask', 'assistant', '', 2),
+      content: [
+        {
+          type: 'tool-request',
+          id: 'toolu_ask',
+          name: 'AskUserQuestion',
+          input: {
+            questions: [
+              {
+                question: 'Which colour?',
+                header: 'Colour',
+                options: [
+                  { label: 'red', description: '' },
+                  { label: 'blue', description: '' },
+                ],
+                multiSelect: false,
+              },
+            ],
+          },
+        },
+        { type: 'tool-request', id: 'toolu_read', name: 'Read', input: { file_path: '/a' } },
+      ],
+      calls: [
+        { callKey: ASK, outcome: null },
+        { callKey: LATER, outcome: null },
+      ],
+    }
+  }
+
+  it('answers with every question by its text, and the widget goes once the call has its result', async () => {
+    const fake = fakeBridge()
+    let current: PendingQuestion | null = question()
+    fake.handle(approvalCurrent, () => current)
+    const store = new SessionStore(SESSION, fake.bridge, [
+      row('m1', 'user', 'pick', 1),
+      askingRow(),
+    ])
+    const detach = store.attach()
+    await store.open({ resume: false })
+    expect(store.getSnapshot().pending).toEqual(question())
+    // Read again — a `paused` end, a push — it is the same question: nothing changes.
+    const before = store.getSnapshot()
+    await store.refreshPending()
+    expect(store.getSnapshot()).toBe(before)
+
+    current = null
+    const answers = { 'Which colour?': ['blue'] }
+    await store.answerQuestion(answers)
+    expect(fake.calls(approvalRespond)).toEqual([
+      { kind: 'question', sessionId: SESSION, requestId: Q1, answers },
+    ])
+    expect(store.getSnapshot().pending).toBeNull()
+    // Until the outcome brings the record, the summary card reads this window's.
+    expect(store.getSnapshot().asked.get(ASK)).toEqual({ answers })
+    fake.emit(chatEvent, {
+      type: 'tool-outcome',
+      sessionId: SESSION,
+      callKey: ASK,
+      providerToolCallId: 'toolu_ask',
+      effect: 'read',
+      state: 'completed',
+      source: null,
+      output: 'User has answered your questions: "Which colour?"="blue".',
+      question: { answers },
+    })
+    expect(store.getSnapshot().asked.has(ASK)).toBe(false)
+    detach()
+  })
+
+  it('a stale answer reads the question again and records nothing', async () => {
+    const fake = fakeBridge()
+    const answers: Array<PendingQuestion | null> = [question(), question(`${Q1}:rejudge:1`)]
+    fake.handle(approvalCurrent, () => answers.shift() ?? null)
+    fake.handle(approvalRespond, () => ({ status: 'stale' as const }))
+    const store = new SessionStore(SESSION, fake.bridge, [askingRow()])
+    await store.open({ resume: false })
+    await store.answerQuestion({ 'Which colour?': null })
+    expect(store.getSnapshot().asked.size).toBe(0)
+    const shown = store.getSnapshot().pending
+    expect(shown?.waitKind === 'question' ? shown.requestId : null).toBe(`${Q1}:rejudge:1`)
+  })
+
+  it('goes when a stop closes the call unanswered, and reads what waits again', async () => {
+    const fake = fakeBridge()
+    let current: PendingQuestion | null = question()
+    fake.handle(approvalCurrent, () => current)
+    const store = new SessionStore(SESSION, fake.bridge, [askingRow()])
+    const detach = store.attach()
+    await store.open({ resume: false })
+    current = null
+    fake.emit(chatEvent, {
+      type: 'tool-outcome',
+      sessionId: SESSION,
+      callKey: ASK,
+      providerToolCallId: 'toolu_ask',
+      effect: 'read',
+      state: 'aborted',
+      source: 'unanswered',
+      output: 'The user stopped before answering.',
+    })
+    expect(store.getSnapshot().pending).toBeNull()
+    expect(fake.calls(approvalCurrent)).toHaveLength(2)
+    detach()
+  })
+
+  it('a send while it waits is the typed answer: never drawn as a message, recorded as the reply', async () => {
+    const fake = fakeBridge()
+    let current: PendingQuestion | null = question()
+    fake.handle(approvalCurrent, () => current)
+    const sent = Promise.withResolvers<void>()
+    fake.handle(chatSend, async () => {
+      await sent.promise
+      current = null
+      return { accepted: true as const, status: 'answered' as const }
+    })
+    const store = new SessionStore(SESSION, fake.bridge, [
+      row('m1', 'user', 'pick', 1),
+      askingRow(),
+    ])
+    const detach = store.attach()
+    await store.open({ resume: false })
+    const sending = store.send('the blue one')
+    // On its way it is not drawn: most likely it is the answer, which is no message.
+    expect(store.getSnapshot().model.turns.at(-1)).toMatchObject({ answering: true })
+    expect(toThreadMessages(store.getSnapshot().model).map((message) => message.id)).toEqual([
+      'm1',
+      'm-ask',
+    ])
+    sent.resolve()
+    await sending
+    expect(fake.calls(chatSend)).toEqual([{ sessionId: SESSION, text: 'the blue one' }])
+    expect(thread(store)).toEqual(['user: pick', 'assistant: '])
+    expect(store.getSnapshot().pending).toBeNull()
+    expect(store.getSnapshot().asked.get(ASK)).toEqual({ answers: {}, response: 'the blue one' })
+    detach()
+  })
+
+  it('a send while it waits that became a message after all is drawn once the kernel names it', async () => {
+    // The question was answered elsewhere a moment before: the kernel wrote this as a message.
+    const fake = fakeBridge()
+    fake.handle(approvalCurrent, () => question())
+    fake.handle(chatSend, () => {
+      fake.emit(chatEvent, {
+        type: 'user-message',
+        sessionId: SESSION,
+        messageId: 'm-typed',
+        queuedId: null,
+      })
+      return { accepted: true as const, status: 'started' as const }
+    })
+    const store = new SessionStore(SESSION, fake.bridge, [askingRow()])
+    const detach = store.attach()
+    await store.open({ resume: false })
+    await store.send('the blue one')
+    const turn = store.getSnapshot().model.turns.at(-1)
+    expect(turn).toMatchObject({ id: 'm-typed', optimistic: false })
+    expect(turn?.answering).toBeUndefined()
+    expect(toThreadMessages(store.getSnapshot().model).map((message) => message.id)).toEqual([
+      'm-ask',
+      'm-typed',
+    ])
+    expect(store.getSnapshot().asked.size).toBe(0)
+    detach()
+  })
+
+  it('a send with no question waiting is drawn at once, as ever', async () => {
+    const fake = fakeBridge()
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    await store.open({ resume: false })
+    void store.send('hello')
+    expect(store.getSnapshot().model.turns.at(-1)?.answering).toBeUndefined()
+    expect(toThreadMessages(store.getSnapshot().model)).toHaveLength(1)
+    await settle()
   })
 })

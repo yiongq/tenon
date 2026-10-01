@@ -300,6 +300,10 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
   }
 
   return {
+    searchTarget(providerId, query) {
+      const backend = script?.provider.id === providerId ? script.search : null
+      return backend == null ? null : { host: backend.host, ...backend.prepareQuery(query) }
+    },
     endpointOrigin(providerId: ProviderId): string | null {
       return script?.provider.id === providerId ? (script.endpointOrigin ?? DEFAULT_ORIGIN) : null
     },

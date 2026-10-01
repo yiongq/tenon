@@ -7,6 +7,7 @@ import type { ElectronApplication, Page, TestInfo } from '@playwright/test'
 import Database from 'better-sqlite3'
 import {
   ZHIPU_DEFAULT_BASE_URL,
+  anthropicDefinition,
   createMemoryHost,
   createMemoryTapeStore,
   zhipuDefinition,
@@ -604,6 +605,57 @@ test.describe('live agent · zhipu', () => {
   }
 
   for (const model of AGENT_MODELS) {
+    test(`WebSearch completes a real quark round trip (step 28, ${model})`, async () => {
+      const userData = profile(`28-search-${model}`, model)
+      const { app, page } = await launch(userData)
+      try {
+        await send(
+          page,
+          'Call WebSearch exactly once to find the official TypeScript website. After the result, reply with SEARCH_DONE and one link from the results. Do not call other tools.',
+        )
+        const card = page.getByTestId('approval-card')
+        await expect(card).toContainText('open.bigmodel.cn', { timeout: TURN_MS })
+        await allowCard(page)
+        await settles(page, 'SEARCH_DONE')
+        await expect(page.getByTestId('failure-card')).toHaveCount(0)
+        const searchRequests = await app.evaluate(() =>
+          (
+            (
+              globalThis as unknown as {
+                liveRequests?: {
+                  url: string
+                  method: string
+                  body: unknown
+                  status: number | null
+                }[]
+              }
+            ).liveRequests ?? []
+          ).filter((entry) => entry.url === 'https://open.bigmodel.cn/api/paas/v4/web_search'),
+        )
+        expect(searchRequests).toHaveLength(1)
+        expect(searchRequests[0]).toMatchObject({
+          method: 'POST',
+          status: 200,
+          body: { search_engine: 'search_pro_quark', search_intent: false },
+        })
+        requests.push(...(searchRequests as WireRequest[]))
+      } finally {
+        await close(app)
+      }
+      facts = tapeFacts(userData)
+      expect(named(facts, 'tool/call').map((fact) => fact.payload['name'])).toEqual(['WebSearch'])
+      const results = named(facts, 'tool/result')
+      expect(results).toHaveLength(1)
+      expect(results[0]?.payload['isError']).toBe(false)
+      const hitUrls = results[0]?.payload['searchHitUrls'] as string[]
+      expect(hitUrls.length).toBeGreaterThan(0)
+      expect(new Set(hitUrls).size).toBe(hitUrls.length)
+      for (const url of hitUrls) {
+        expect(new URL(url).hash).toBe('')
+      }
+      expect(runsOf(facts).ends).toEqual(['paused', 'completed'])
+    })
+
     test(`a task conversation with tools: two round trips over two turns, one allowed on the card, and every Run completes (旧 62, ${model})`, async () => {
       const alpha = codeword('ALPHA')
       const beta = codeword('BETA')
@@ -804,7 +856,10 @@ test.describe('live agent · zhipu', () => {
     const model = zhipuDefinition.builtinModels.find((row) => row.id === FLASH)
     if (model === undefined) throw new Error(`${FLASH} is not a builtin zhipu row`)
     const provider = zhipuDefinition.create({
-      network: { fetch: recordingFetch(requests) },
+      network: {
+        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
+        fetch: recordingFetch(requests),
+      },
       clock: REAL_CLOCK,
       // The declared host only, as the app's key binding (A9) allows: an env key never goes elsewhere.
       config: { baseURL: ZHIPU_DEFAULT_BASE_URL },
@@ -876,5 +931,246 @@ test.describe('live agent · zhipu', () => {
     expect(assistant?.tool_calls?.map((call) => call.function.name)).toEqual([lookup])
     const reply = named(facts, 'message/assistant').at(-1)?.payload['content']
     expect(JSON.stringify(reply)).toContain(delta)
+  })
+})
+
+/** Step 28: official protocol probe, one request per model and no SDK retries or main Tape. */
+test.describe('live search probe · anthropic official', () => {
+  test.describe.configure({ timeout: 180_000 })
+  const group = LIVE ? officialGroup(process.env, fromFile, pick, MAX_TOKENS) : NOT_LIVE
+  test.skip(group.kind === 'absent', group.kind === 'absent' ? group.reason : '')
+  for (const modelId of ['claude-sonnet-5', 'claude-opus-5']) {
+    test(`forced search with ${modelId} records uncapped output usage`, async () => {
+      const testInfo = test.info()
+      if (group.kind !== 'ready') throw new Error('Official search probe configuration refused')
+      const model = anthropicDefinition.builtinModels.find((row) => row.id === modelId)
+      if (model === undefined) throw new Error('Official search probe model is missing')
+      const request = {
+        model: modelId,
+        max_tokens: model.maxOutputTokens,
+        stream: false,
+        ...(modelId === 'claude-sonnet-5' ? { thinking: { type: 'disabled' } } : {}),
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }],
+        tool_choice: { type: 'any' },
+        messages: [
+          {
+            role: 'user',
+            content:
+              'Search for the official TypeScript website. Return one relevant link briefly.',
+          },
+        ],
+      }
+      const response = await globalThis.fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'x-api-key': group.env['ANTHROPIC_API_KEY'] ?? '',
+        },
+        body: JSON.stringify(request),
+        signal: AbortSignal.timeout(150_000),
+      })
+      const body = (await response.json()) as {
+        stop_reason?: string
+        usage?: { input_tokens?: number; output_tokens?: number; server_tool_use?: unknown }
+        content?: { type: string; content?: unknown }[]
+        error?: { type?: string }
+      }
+      const record = {
+        model: modelId,
+        status: response.status,
+        maxTokens: model.maxOutputTokens,
+        thinking: request.thinking ?? 'default',
+        stopReason: body.stop_reason ?? null,
+        usage: body.usage ?? null,
+        errorType: body.error?.type ?? null,
+        searchBlocks: (body.content ?? [])
+          .filter((block) => block.type === 'web_search_tool_result')
+          .map((block) => ({
+            successful: Array.isArray(block.content),
+            hits: Array.isArray(block.content) ? block.content.length : 0,
+          })),
+      }
+      const output = pick('TENON_LIVE_RECORD_DIR')
+      const destination =
+        output === undefined
+          ? testInfo.outputPath(`${modelId}-search-probe.json`)
+          : join(output, `${modelId}-search-probe.json`)
+      mkdirSync(dirname(destination), { recursive: true })
+      writeFileSync(destination, JSON.stringify(record, null, 2))
+      process.stderr.write(`${JSON.stringify(record)}\n`)
+      expect(response.status).toBe(200)
+      expect(record.searchBlocks.some((block) => block.successful)).toBe(true)
+      expect(body.stop_reason).not.toBe('pause_turn')
+      expect(body.stop_reason).not.toBe('max_tokens')
+      expect(body.usage?.output_tokens).toBeGreaterThan(0)
+    })
+  }
+})
+
+/** Steps 30/33: exercise the specified summary prefix before wiring compaction into the loop. */
+test.describe('live compaction prefix probe · anthropic official', () => {
+  test.describe.configure({ timeout: 600_000 })
+  const group = LIVE ? officialGroup(process.env, fromFile, pick, MAX_TOKENS) : NOT_LIVE
+  test.skip(group.kind === 'absent', group.kind === 'absent' ? group.reason : '')
+  test('Opus 5.5 classifies prefix enforcement and accepts a thinking-free summary', async () => {
+    if (group.kind !== 'ready') throw new Error('Official prefix probe configuration refused')
+    type Block = { type: string; id?: string; signature?: string; [key: string]: unknown }
+    type Message = { role: 'user' | 'assistant'; content: string | Block[] }
+    type Answer = {
+      content?: Block[]
+      stop_reason?: string
+      usage?: Record<string, unknown>
+      input_transformations?: unknown[]
+      error?: { type?: string; message?: string }
+    }
+    const model = 'claude-opus-5-5'
+    const rows: unknown[] = []
+    const base = {
+      model,
+      max_tokens: 4096,
+      stream: false,
+      system: 'You are a protocol test assistant. Follow the user task briefly.',
+      tools: [
+        {
+          name: 'lookup',
+          description: 'Returns a public fixture value for the computed counts. Call once.',
+          input_schema: {
+            type: 'object',
+            properties: { total: { type: 'integer' }, odd: { type: 'integer' } },
+            required: ['total', 'odd'],
+            additionalProperties: false,
+          },
+        },
+      ],
+    }
+    const request = async (label: string, body: Record<string, unknown>, strict = false) => {
+      const response = await globalThis.fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'x-api-key': group.env['ANTHROPIC_API_KEY'] ?? '',
+          ...(strict ? { 'anthropic-beta': 'thinking-binding-controls-2026-08-01' } : {}),
+        },
+        body: JSON.stringify({
+          ...body,
+          ...(strict
+            ? {
+                thinking: {
+                  type: 'adaptive',
+                  block_binding: { prefix_mismatch_behavior: 'error' },
+                },
+              }
+            : {}),
+        }),
+        signal: AbortSignal.timeout(150_000),
+      })
+      const answer = (await response.json()) as Answer
+      rows.push({
+        label,
+        date: new Date().toISOString(),
+        host: 'api.anthropic.com',
+        model,
+        status: response.status,
+        strict,
+        usage: answer.usage ?? null,
+        stopReason: answer.stop_reason ?? null,
+        errorType: answer.error?.type ?? null,
+        mentionsBindingHeader:
+          answer.error?.message?.includes('thinking-binding-controls') ?? false,
+        inputTransformationCount: answer.input_transformations?.length ?? 0,
+        blocks: (answer.content ?? []).map((block) => ({
+          type: block.type,
+          signed: typeof block.signature === 'string' && block.signature.length > 0,
+          emptyThinking: block.type === 'thinking' ? block['thinking'] === '' : undefined,
+        })),
+      })
+      return { status: response.status, answer }
+    }
+    try {
+      const messages: Message[] = [
+        {
+          role: 'user',
+          content:
+            'Determine how many positive integers below 500 have exactly six positive divisors, and how many of those are odd. Call lookup exactly once with these two counts as total and odd. After its result reply DONE.',
+        },
+      ]
+      const first = await request('signed-tool-call', { ...base, messages })
+      expect(first.status).toBe(200)
+      expect(first.answer.stop_reason).toBe('tool_use')
+      expect(
+        first.answer.content?.some(
+          (block) =>
+            block.type === 'thinking' &&
+            typeof block.signature === 'string' &&
+            block.signature.length > 0,
+        ),
+      ).toBe(true)
+      const calls = first.answer.content?.filter((block) => block.type === 'tool_use') ?? []
+      expect(calls).toHaveLength(1)
+      messages.push(
+        { role: 'assistant', content: first.answer.content ?? [] },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: calls[0]?.id, content: 'PUBLIC_FIXTURE_VALUE' },
+          ],
+        },
+      )
+      const changed = await request('changed-prefix-account-check', {
+        ...base,
+        system: `${base.system} The prefix has deliberately changed.`,
+        messages,
+      })
+      expect([200, 400]).toContain(changed.status)
+      const strict = changed.status === 200
+      if (!strict)
+        expect(changed.answer.error?.message?.includes('thinking-binding-controls')).toBe(true)
+      const completion = await request('original-prefix-tool-result', { ...base, messages }, strict)
+      expect(completion.status).toBe(200)
+      expect(completion.answer.stop_reason).toBe('end_turn')
+      expect(
+        strict
+          ? completion.answer.input_transformations
+          : (completion.answer.input_transformations ?? []),
+      ).toEqual([])
+      messages.push({ role: 'assistant', content: completion.answer.content ?? [] })
+      const summaryMessages = messages.map((message) => ({
+        role: message.role,
+        content: Array.isArray(message.content)
+          ? message.content.filter(
+              (block) => !['thinking', 'redacted_thinking'].includes(block.type),
+            )
+          : message.content,
+      }))
+      summaryMessages.push({
+        role: 'user',
+        content: 'Summarize this completed task in one sentence.',
+      })
+      const summary = await request(
+        'summary-without-thinking-or-tools',
+        { model, max_tokens: 4096, stream: false, system: base.system, messages: summaryMessages },
+        strict,
+      )
+      expect(summary.status).toBe(200)
+      expect(summary.answer.stop_reason).toBe('end_turn')
+      expect(
+        strict
+          ? summary.answer.input_transformations
+          : (summary.answer.input_transformations ?? []),
+      ).toEqual([])
+    } finally {
+      const output = pick('TENON_LIVE_RECORD_DIR')
+      const destination =
+        output === undefined
+          ? test.info().outputPath('compaction-prefix-probe.json')
+          : join(output, 'compaction-prefix-probe.json')
+      mkdirSync(dirname(destination), { recursive: true })
+      writeFileSync(destination, JSON.stringify(rows, null, 2))
+      process.stderr.write(`${JSON.stringify(rows)}\n`)
+    }
   })
 })

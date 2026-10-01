@@ -11,8 +11,7 @@
  * incarnation from `session/start` on, compaction anchors ignored and retracted calls counted.
  */
 import type { AbsolutePath, Reversibility } from '../host/adapter.js'
-import { isWithin, isAbsolutePath, normalizePath } from '../host/path.js'
-import type { TapeEntry } from '../tape/entry.js'
+import type { PermissionDecidedPayload, TapeEntry } from '../tape/entry.js'
 import type { ToolTableItem } from '../tools/registry.js'
 
 export interface InspectedCall {
@@ -66,10 +65,11 @@ export interface SessionViewQuery {
 export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQuery): SessionView {
   const texts = humanTexts(entries)
   const byKey = new Map(entries.map((entry) => [entry.provenanceKey, entry]))
-  const calls = new Map<string, TapeEntry>()
-  for (const entry of entries) {
-    if (entry.name === 'tool/call') calls.set(callKey(entry), entry)
-  }
+  const outcomes = new Map(
+    entries
+      .filter((entry) => entry.name === 'execution/tool_outcome')
+      .map((entry) => [callKey(entry), entry]),
+  )
   const nonReadOnlyCalls: { toolName: string; reversibility: Reversibility }[] = []
   const untrusted = new Set<string>()
   let touchedPrivateData = false
@@ -78,8 +78,14 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
     const decision = byKey.get(String(dispatch.payload['decisionKey'] ?? ''))
     const reversibility = (decision?.payload['reversibility'] ?? 'unknown') as Reversibility
     if (reversibility !== 'read-only') nonReadOnlyCalls.push({ toolName: name, reversibility })
-    if (name === 'WebSearch' || name === 'WebFetch') untrusted.add(name)
-    if (q.profile === 'cowork' && privateRead(name, calls.get(callKey(dispatch)), q.ownSpillDir)) {
+    const outcome = outcomes.get(callKey(dispatch))
+    // DNS refusal is recorded after dispatch, but is still a protected, not-run call (F5).
+    const dnsBlocked =
+      name === 'WebFetch' &&
+      outcome?.payload['state'] === 'not-run' &&
+      outcome.payload['source'] === 'protected'
+    if ((name === 'WebSearch' || name === 'WebFetch') && !dnsBlocked) untrusted.add(name)
+    if (q.profile === 'cowork' && privateRead(name, decision)) {
       touchedPrivateData = true
     }
   }
@@ -175,21 +181,18 @@ function humanTexts(entries: readonly TapeEntry[]): string[] {
 }
 
 /**
- * A dispatched call that reads private data (§外带检查「碰过私有数据」): any Bash, or a Read or Grep
- * whose target is not under the session's own spill directory. Glob returns paths only and does not
- * count. A Grep without a path searches the workspace.
+ * A dispatched private read: any Bash, or Read/Grep unless its referenced decision placed its real
+ * target in the session's own spill directory. Glob returns paths only and never counts.
  */
-function privateRead(
-  name: string,
-  call: TapeEntry | undefined,
-  ownSpillDir: AbsolutePath,
-): boolean {
+function privateRead(name: string, decision: TapeEntry | undefined): boolean {
   if (name === 'Bash') return true
   if (name !== 'Read' && name !== 'Grep') return false
-  const input = call?.payload['input'] as Record<string, unknown> | undefined
-  const target = input?.[name === 'Read' ? 'file_path' : 'path']
-  if (typeof target !== 'string' || !isAbsolutePath(target)) return true
-  return !isWithin(normalizePath(target), ownSpillDir)
+  // The referenced decision classified the real target. Raw input can name a symlink, and a
+  // resumed call stays pinned to the answered card's target even if a later recheck loosens.
+  const record = (decision?.payload as PermissionDecidedPayload | undefined)?.record
+  return !record?.steps.some(
+    (step) => step.by === 'protected' && step.said === 'allow' && step.status === 'ok',
+  )
 }
 
 /** A call's identity across its tool/ and execution/ facts: (runId, requestSeq, ordinal). */

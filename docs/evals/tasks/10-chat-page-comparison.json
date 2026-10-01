@@ -1,0 +1,30 @@
+{
+  "id": "10-chat-page-comparison",
+  "profile": "chat",
+  "turns": [
+    "分别抓取 https://compare.example.test/a 和 https://compare.example.test/b，比较净重。回答严格JSON {\"heavier\":\"a或b\",\"differenceGrams\":整数}，不使用其他来源。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "10-chat-page-comparison"
+    }
+  ],
+  "compare": true,
+  "from": ["H15", "H1"],
+  "web": {
+    "pages": {
+      "https://compare.example.test/a": "10-chat-page-comparison/a.html",
+      "https://compare.example.test/b": "10-chat-page-comparison/b.html"
+    }
+  },
+  "host": {
+    "answers": {
+      "default": "allow",
+      "network": "allow",
+      "flagged": "deny",
+      "command": "deny",
+      "outside-workspace": "deny"
+    }
+  }
+}

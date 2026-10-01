@@ -1,0 +1,15 @@
+{
+  "id": "18-chat-shift-scheduling",
+  "profile": "chat",
+  "turns": [
+    "排三天值班：周一只能Ada或Bo；周二只能Bo或Cy；周三必须Ada。每人恰好一天。输出严格JSON {\"Mon\":姓名,\"Tue\":姓名,\"Wed\":姓名}，不要Markdown。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "18-chat-shift-scheduling"
+    }
+  ],
+  "compare": true,
+  "from": ["H15", "H1"]
+}

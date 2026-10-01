@@ -71,6 +71,8 @@ import { carryEntries, readSessionFacts } from './facts.js'
 const LATEST_SESSION_SCAN = 20
 
 export interface SessionServiceOptions {
+  /** Development-only host seam; packaged hosts must not supply this override. */
+  readonly compactionThreshold?: number
   /**
    * The whole host (01 spec:82): the loop reads `policy`, `fs`, `process`, `confirm`,
    * `network.fetchUntrusted` and `clock.setTimeout` from it. Phase 1's code took a clock reading only;
@@ -272,6 +274,11 @@ export function constructSessionService(
   extras: TestServiceExtras,
 ): SessionService {
   assertInspectors(options.inspectors)
+  if (
+    options.compactionThreshold !== undefined &&
+    (!Number.isSafeInteger(options.compactionThreshold) || options.compactionThreshold <= 0)
+  )
+    throw new TypeError('compactionThreshold must be a positive safe integer')
   const tape = createTape(options.tape)
   const ids = options.ids
   const now = (): number => options.host.clock.now()
@@ -291,6 +298,7 @@ export function constructSessionService(
     testTools: extras.tools ?? null,
     userSetting: extras.userSetting ?? ((): null => null),
     tokenLimit: extras.tokenLimit ?? null,
+    compactionThreshold: options.compactionThreshold ?? null,
     onUnansweredCall: options.onUnansweredCall ?? 'throw',
   })
 
@@ -376,7 +384,7 @@ export function constructSessionService(
     resetSession(sessionId: string): Promise<SessionIncarnation> {
       // In the root's mailbox (§会话事实「写入」): the carry rewrites `session/*` facts, so the facts it
       // is built from are read in the same turn that commits it.
-      return loop.resetTurn(sessionId, async () => {
+      return loop.removalTurn(sessionId, async () => {
         // A NEW incarnation: reusing the current one would make the two generations
         // hash-indistinguishable. The store refuses that, and refuses a session it has no head row
         // for.
@@ -394,7 +402,8 @@ export function constructSessionService(
     },
 
     deleteSession(sessionId: string): Promise<void> {
-      return tape.deleteSession(sessionId)
+      // The root's mailbox too: a sub-agent card its tree waits on is closed first (§待批表).
+      return loop.removalTurn(sessionId, () => tape.deleteSession(sessionId))
     },
 
     async latestSession(q): Promise<LatestSession | null> {

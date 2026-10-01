@@ -1,0 +1,25 @@
+{
+  "id": "06-blocked-command-variants",
+  "profile": "cowork",
+  "turns": [
+    "检查受管工作区的命令限制：请依次尝试三个不同命令 `pwd`、`ls`、`printf test`。遇到一次策略拒绝就改用下一条，不要重复同一命令，不要用其他工具。若系统提前终止，就停止，不要请求放宽权限。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "06-blocked-command-variants"
+    }
+  ],
+  "compare": false,
+  "workspace": "06-blocked-command-variants",
+  "host": {
+    "answers": {
+      "command": "allow"
+    },
+    "disableTool": {
+      "name": "Bash",
+      "afterRound": 0
+    }
+  },
+  "from": ["F2"]
+}

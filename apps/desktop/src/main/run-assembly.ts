@@ -15,11 +15,16 @@
  * `resolveChoice` answers ②–⑤ of the five layers (01 修补 6「五层解析」): ② the profile's default
  * (`defaultModelByProfile`), ③ `config.json`'s `provider`, ④ the development variables, ⑤ the first
  * builtin. ① — the session's own choice — arrives from the kernel and wins; the data-flow check is
- * only for a choice ②–⑤ made, which nobody confirmed in the menu (§模型选择「数据去向」). The search
- * backend is plan step 28.
+ * only for a choice ②–⑤ made, which nobody confirmed in the menu (§模型选择「数据去向」). Search
+ * selection uses this same endpoint and resolved credentials; `searchTarget` reads only the snapshot.
  */
 import type { Config } from '@tenon-app/contracts'
-import { ProviderConfigMissingError } from '@tenon-app/kernel'
+import {
+  ProviderConfigMissingError,
+  createAnthropicSearchDefinition,
+  prepareZhipuSearchQuery,
+  zhipuSearchDefinition,
+} from '@tenon-app/kernel'
 import type {
   HostAdapter,
   ModelChoice,
@@ -30,11 +35,14 @@ import type {
   ProviderRegistry,
   RunAssembly,
   RunConnector,
+  SearchBackend,
+  SearchBackendDefinition,
 } from '@tenon-app/kernel'
-import { endpointOf, originOf } from './endpoint.js'
+import { endpointOf, hostOf, originOf } from './endpoint.js'
 import { configGeneration, readConfig, watchConfig } from './host/profile.js'
 import {
   BASE_URL_KEY,
+  boundHost,
   DEFAULT_MAX_TOKENS,
   DEV_ENV_FALLBACK,
   MAX_TOKENS_ENV,
@@ -100,6 +108,23 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       return originOf(baseURLOf(definition, stored[providerId], env()) ?? undefined)
     },
 
+    searchTarget(providerId, query) {
+      const definition = providers.get(providerId)
+      if (definition === null) return null
+      const backend = searchDefinitionFor(
+        definition,
+        baseURLOf(definition, stored[providerId], env()),
+      )
+      // Definitions' query transformations are pure; selecting a target must never read a key.
+      if (backend?.id === 'zhipu') {
+        return { host: 'open.bigmodel.cn', ...prepareZhipuSearchQuery(query) }
+      }
+      if (backend?.id === 'anthropic') {
+        return { host: 'api.anthropic.com', query, truncated: false }
+      }
+      return null
+    },
+
     async resolveChoice(q): Promise<ModelChoice | { needsConfirm: { host: string } }> {
       // ① wins, and was confirmed in the menu when it was chosen.
       if (q.sessionChoice !== null) return q.sessionChoice
@@ -140,6 +165,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       // Chosen a moment ago, so the table has it; a quiet log, because the choice already said so.
       const model = definition === null ? null : selectModel(definition, q.choice.modelId, () => {})
       let provider: Provider | null = null
+      let search: SearchBackend | null = null
       let failure: unknown = null
       let origin = defaultOrigin(definition)
       if (definition === null || model === null) {
@@ -181,6 +207,23 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
             config: inputs.config,
             secrets: inputs.secrets,
           })
+          const searchDefinition = searchDefinitionFor(
+            definition,
+            inputs.config[BASE_URL_KEY] ?? null,
+          )
+          if (searchDefinition !== null) {
+            const backendHost =
+              searchDefinition.id === 'zhipu' ? 'open.bigmodel.cn' : 'api.anthropic.com'
+            // The same resolved secrets object as the provider, with its same source/host binding.
+            // Never project a second key or read another provider's keychain account for search.
+            if (
+              Object.values(inputs.sources).every(
+                (source) => boundHost(definition, settings, vars, source) === backendHost,
+              )
+            ) {
+              search = searchDefinition.create({ network: host.network, secrets: inputs.secrets })
+            }
+          }
         } catch (error) {
           // A missing key or an unusable base URL: the kernel reads it off `provider()`.
           failure = error
@@ -195,7 +238,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
           positiveInteger(vars[MAX_TOKENS_ENV]) ??
           Math.min(DEFAULT_MAX_TOKENS, info.maxOutputTokens),
         toolsWithheld: TEXT_ONLY_PROVIDERS.has(q.choice.providerId) ? 'provider-text-only' : null,
-        search: null,
+        search,
         mcpSources: [],
         provider(): Provider {
           if (provider === null) throw failure
@@ -267,4 +310,18 @@ function trimmed(value: string | null | undefined): string | null {
 function positiveInteger(value: string | undefined): number | null {
   const parsed = Number(value)
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
+/** Search is available only on the supported provider/host combinations (spec 02 §工具形状与后端选择). */
+function searchDefinitionFor(
+  definition: ProviderDefinition,
+  baseURL: string | null,
+): SearchBackendDefinition | null {
+  if (definition.id !== 'zhipu' && definition.id !== 'anthropic') return null
+  const host = hostOf(baseURL ?? undefined)
+  if (host === 'open.bigmodel.cn') return zhipuSearchDefinition
+  if (definition.id === 'anthropic' && host === 'api.anthropic.com') {
+    return createAnthropicSearchDefinition({ maxTokens: 4096, models: definition.builtinModels })
+  }
+  return null
 }

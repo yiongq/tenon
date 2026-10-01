@@ -1,3 +1,4 @@
+import type { SubagentHandoff } from './subagent.js'
 /**
  * One batch of tool calls (spec 02 §一批工具怎么执行, §权限决策顺序, §原因码表; plan steps 13, 24).
  *
@@ -22,7 +23,9 @@
  *      writes no decision), then `decide()`;
  *   5. deny: the decision and a kernel-authored closure; the third machine denial in a row ends the
  *      Run as `blocked-repeatedly`. Ask: the decision is written with the Run's `paused` terminal, in
- *      one batch (同批规则 1). Allow: the decision and `dispatch_committed`, then — only once they are
+ *      one batch (同批规则 1). AskUserQuestion allowed: the same, its decision `awaits: 'question'` —
+ *      it has no executor, and its answer is its result (H6). Allow: the decision and
+ *      `dispatch_committed`, then — only once they are
  *      on the Tape (T1) — the executor, then its result and outcome, a result past the spill
  *      threshold written to disk first (§大响应落盘; plan step 24). Bash first awaits its base
  *      environment, raced against the stop (§内置工具与参数「Bash」): a stop that wins writes neither.
@@ -31,8 +34,9 @@
  * member as §点停止时各状态怎么收 says — each with its own write wait, counted from the stop — and then
  * the calls not dispatched, not-run / stopped, after the members' results.
  */
-import type { AbsolutePath, HostAdapter, Reversibility } from '../host/adapter.js'
+import type { AbsolutePath, ConfirmTarget, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
+import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
 import { grantKey, sessionGrantKindOf, sessionGrants } from '../permission/grants.js'
@@ -67,6 +71,7 @@ import type { BuiltinToolName } from '../tools/builtin/tool.js'
 import { executorFor } from '../tools/executor.js'
 import type { ToolExecution, ToolExecutor } from '../tools/executor.js'
 import type { ToolTableItem } from '../tools/registry.js'
+import { SEARCH_TEXTS } from '../tools/builtin/web-search.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { ArgumentValidator, ValidationVerdict } from '../tools/validate.js'
@@ -77,6 +82,7 @@ import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause } from './ports.js'
+import { handoffView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
 /** One complete client call of a reply, as `tool/call` records it. */
@@ -88,7 +94,30 @@ export interface CompleteCall {
   readonly argsHash: string
 }
 
+export interface AgentDispatch {
+  readonly dispatch: readonly NewEntry[]
+  readonly call: CallRef
+  readonly input: Record<string, unknown>
+  readonly table: FrozenToolTable
+  readonly reversibility: Reversibility
+  readonly summary: DecisionSummary
+}
+export type AgentDispatchResult =
+  | { readonly kind: 'paused' }
+  | {
+      readonly kind: 'done'
+      readonly entries: readonly NewEntry[]
+      readonly handoff: SubagentHandoff
+      /**
+       * The same handoff as `aborted` (§交接: 子会话已提交终态、父会话收交接之前被停止), for a stop that
+       * reached the write of `entries` first. Built only then, so a handoff that lands spills once.
+       */
+      readonly aborted: () => Promise<{ readonly entries: readonly NewEntry[] }>
+    }
+
 export interface BatchContext {
+  readonly budgetExceeded?: () => number | null
+  readonly agent?: (q: AgentDispatch) => Promise<AgentDispatchResult>
   readonly tape: Tape
   readonly now: () => number
   readonly host: HostAdapter
@@ -134,6 +163,7 @@ export interface BatchContext {
 
 /** A call the user allowed on its card: the decision it answered, which its dispatch names (T1). */
 export interface ApprovedCall {
+  readonly searchTarget?: { readonly host: string; readonly query: string }
   readonly ordinal: number
   readonly decisionKey: string
   readonly summary: DecisionSummary
@@ -174,9 +204,13 @@ export class RunWriteRefusedError extends Error {
 
 export type BatchResult =
   | { readonly kind: 'done'; readonly denials: number }
-  /** A decision asks: it is written with the Run's `paused` terminal, in one batch. */
+  /**
+   * A decision asks, or an AskUserQuestion is allowed: it is written with the Run's `paused` terminal,
+   * in one batch, which says what the Run waits for.
+   */
   | {
       readonly kind: 'paused'
+      readonly waitingFor: 'approval' | 'question' | 'subagent'
       readonly withTerminal: readonly NewEntry[]
       /** The asked call and the rest of the batch after it, which wait with it (§等待模型). */
       readonly waiting: readonly CallRef[]
@@ -190,10 +224,15 @@ export type BatchResult =
       readonly count: number
       readonly rest: readonly CallRef[]
     }
+  | { readonly kind: 'usage-limit'; readonly tokenLimit: number; readonly rest: readonly CallRef[] }
   | { readonly kind: 'stopped' }
 
 export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
-  const judge: JudgeContext = { ...ctx, searchHost: ctx.search?.host ?? null }
+  const judge: JudgeContext = {
+    ...ctx,
+    searchHost: ctx.search?.host ?? null,
+    prepareSearch: ctx.search?.prepareQuery,
+  }
   let denials = ctx.denials
   const group = await runGroup(ctx, judge)
   if (group.stopped) {
@@ -211,11 +250,36 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       return { kind: 'stopped' }
     }
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
-    const verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    let verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    if (verdict?.ok && item?.source === 'builtin' && item.originalName === 'WebSearch') {
+      const prepared = ctx.search?.prepareQuery(String(call.input['query']))
+      const approved =
+        ctx.approved?.ordinal === call.ordinal ? ctx.approved.searchTarget : undefined
+      if (
+        ctx.search === null ||
+        (ctx.approved?.ordinal === call.ordinal &&
+          (approved === undefined ||
+            approved.host !== ctx.search.host ||
+            approved.query !== prepared?.query))
+      ) {
+        verdict = { ok: false, source: 'tool-unavailable', reason: SEARCH_TEXTS.changed }
+      } else {
+        // oxlint-disable-next-line no-await-in-loop -- quota includes preceding dispatches in this batch
+        if ((await searchDispatchCount(ctx.tape, ctx.sessionId)) >= 200)
+          verdict = { ok: false, source: 'tool-unavailable', reason: SEARCH_TEXTS.quota }
+      }
+    }
+    // AskUserQuestion runs nothing: allowed, it pauses the Run for the answer (H6). One the user
+    // allowed on a card — a policy that asks about it, which 02's product never has (open question
+    // 15) — is looked up as any other tool.
     const executor =
       item === undefined || verdict?.ok !== true
         ? null
-        : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
+        : item.source === 'builtin' && item.originalName === 'Agent' && ctx.agent !== undefined
+          ? 'agent'
+          : isQuestion(item) && ctx.approved?.ordinal !== call.ordinal
+            ? 'question'
+            : executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
     if (item === undefined || verdict === null || !verdict.ok || executor === null) {
       const invalid = verdict !== null && !verdict.ok ? verdict : null
       try {
@@ -239,9 +303,8 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       // removed meanwhile is judged by the new list at once (D11).
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
       const facts = held?.facts ?? (await callFactsOf(ctx))
-      if (ctx.approved?.ordinal === call.ordinal) {
+      if (ctx.approved?.ordinal === call.ordinal && executor !== 'question') {
         // Allowed on its card: dispatched on the decision the answer resolved, not judged again.
-        denials = 0
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         const command = await commandRunOf(ctx, call, item, facts)
         if (command === 'stopped') {
@@ -251,20 +314,60 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-        const repair = await dispatchOnce(ctx, call, item, [dispatch], dispatch)
+        const repair =
+          // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
+          executor === 'agent' ? null : await dispatchOnce(ctx, call, item, [dispatch], dispatch)
         if (repair !== null) {
           // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
           await close(ctx, call, repair)
           continue
         }
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-        await execute(ctx, call, item, executor, {
+        if (executor === 'agent') {
+          // oxlint-disable-next-line no-await-in-loop -- the parent waits for its single child
+          const child = await ctx.agent!({
+            dispatch: [dispatch],
+            call: ref,
+            input: call.input,
+            table: ctx.table,
+            reversibility: ctx.approved.reversibility,
+            summary: ctx.approved.summary,
+          })
+          if (child.kind === 'paused')
+            return {
+              kind: 'paused',
+              waitingFor: 'subagent',
+              withTerminal: [],
+              waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
+            }
+          // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
+          await closeHandoff(ctx, call, child, ctx.approved.summary)
+          const budget = ctx.budgetExceeded?.() ?? null
+          if (budget !== null)
+            return {
+              kind: 'usage-limit',
+              tokenLimit: budget,
+              rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
+            }
+          denials = 0
+          continue
+        }
+        // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
+        const blocked = await execute(ctx, call, item, executor, {
           reversibility: ctx.approved.reversibility,
           summary: ctx.approved.summary,
           target: ctx.approved.target,
           scope: facts.scope,
           command,
         })
+        denials = blocked ? denials + 1 : 0
+        if (denials >= MACHINE_DENIAL_CAP) {
+          return {
+            kind: 'blocked-repeatedly',
+            count: denials,
+            rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
+          }
+        }
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
@@ -277,12 +380,14 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       const { decision } = judged
       const decisionKey = permissionDecidedKey(ctx.runId, ctx.requestSeq, call.ordinal)
+      const answerWaits = executor === 'question' && decision.record.verdict === 'allow'
       const decided = decisionEntry({
         ...ctx,
         ref,
         argsHash: call.argsHash,
         judged,
         key: decisionKey,
+        ...(answerWaits ? { awaits: 'question' as const } : {}),
       })
       if (decision.record.verdict === 'deny') {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
@@ -297,10 +402,16 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       if (decision.record.verdict === 'ask') {
         // The card waits; the rest of the batch waits with it (§等待模型).
         const waiting = ctx.calls.slice(k).map((rest) => refOf(ctx, rest))
-        return { kind: 'paused', withTerminal: [decided], waiting }
+        return { kind: 'paused', waitingFor: 'approval', withTerminal: [decided], waiting }
+      }
+      if (executor === 'question') {
+        // Allowed, and it waits for the user's answer: its decision `awaits: 'question'`, with the
+        // Run's `paused` terminal (同批规则 1); the rest of the batch waits with it. No dispatch:
+        // the answer is its result (H6).
+        const waiting = ctx.calls.slice(k).map((rest) => refOf(ctx, rest))
+        return { kind: 'paused', waitingFor: 'question', withTerminal: [decided], waiting }
       }
       // ----- allowed: decision and dispatch first (T1), then the side effect -----------------------
-      denials = 0
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
       const command = await commandRunOf(ctx, call, item, facts)
       if (command === 'stopped') {
@@ -311,20 +422,62 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       }
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
-      const repair = await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
+      const repair =
+        executor === 'agent'
+          ? null
+          : // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
+            await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
       if (repair !== null) {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await close(ctx, call, repair)
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
-      await execute(ctx, call, item, executor, {
+      if (executor === 'agent') {
+        // oxlint-disable-next-line no-await-in-loop -- the parent waits for its single child
+        const child = await ctx.agent!({
+          dispatch: [decided, dispatch],
+          call: ref,
+          input: call.input,
+          table: ctx.table,
+          reversibility: judged.reversibility,
+          summary: decision.summary,
+        })
+        if (child.kind === 'paused')
+          return {
+            kind: 'paused',
+            waitingFor: 'subagent',
+            withTerminal: [],
+            waiting: ctx.calls.slice(k).map((c) => refOf(ctx, c)),
+          }
+        // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
+        await closeHandoff(ctx, call, child, decision.summary)
+        const budget = ctx.budgetExceeded?.() ?? null
+        if (budget !== null)
+          return {
+            kind: 'usage-limit',
+            tokenLimit: budget,
+            rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
+          }
+        denials = 0
+        continue
+      }
+      // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
+      const blocked = await execute(ctx, call, item, executor, {
         reversibility: judged.reversibility,
         summary: decision.summary,
         target: judged.target,
         scope: facts.scope,
         command,
       })
+      denials = blocked ? denials + 1 : 0
+      if (denials >= MACHINE_DENIAL_CAP) {
+        return {
+          kind: 'blocked-repeatedly',
+          count: denials,
+          rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
+        }
+      }
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
@@ -530,8 +683,12 @@ async function execute(
   item: ToolTableItem,
   executor: ToolExecutor,
   q: Performed,
-): Promise<void> {
-  await close(ctx, call, await perform(ctx, call, item, executor, q), q.summary)
+): Promise<boolean> {
+  const facts = await perform(ctx, call, item, executor, q)
+  await close(ctx, call, facts, q.summary)
+  return facts.some(
+    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['source'] === 'protected',
+  )
 }
 
 /**
@@ -561,6 +718,22 @@ async function perform(
     scope: q.scope,
     fs: ctx.host.fs,
     clock: ctx.host.clock,
+    ...(ctx.search === null ? {} : { search: ctx.search }),
+    ...(item.source === 'builtin' && item.originalName === 'WebFetch'
+      ? {
+          webFetch: {
+            fetch: ctx.host.network.fetchUntrusted,
+            canFollow: async (url: string) => {
+              const judged = await judgeCall(
+                { ...ctx, searchHost: ctx.search?.host ?? null },
+                item,
+                { input: { url } },
+              )
+              return judged.kind === 'judged' && judged.decision.record.verdict === 'allow'
+            },
+          },
+        }
+      : {}),
     ...(q.command === undefined ? {} : { command: q.command }),
   })
   const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
@@ -584,6 +757,7 @@ async function perform(
           : closureContent({
               source,
               state: execution.state,
+              ...(execution.facts === undefined ? {} : { facts: execution.facts }),
               ...(output === '' ? {} : { detail: output }),
             }),
       isError: stopped || execution.isError,
@@ -599,7 +773,9 @@ async function perform(
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
-    effect: effectOf(item),
+    ...(execution.searchHitUrls === undefined ? {} : { searchHitUrls: execution.searchHitUrls }),
+    effect: execution.state === 'not-run' ? 'blocked' : effectOf(item),
+    ...(execution.facts === undefined ? {} : { facts: execution.facts }),
     state: execution.state,
     source,
     reversibility: q.reversibility,
@@ -785,6 +961,12 @@ export function closedView(
       : { facts: outcome['facts'] as Record<string, string> }),
     output: textOf(result['content']),
     ...(permission === undefined ? {} : { permission }),
+    ...(result['handoff'] === undefined
+      ? {}
+      : { handoff: handoffView(result['handoff'] as SubagentHandoff) }),
+    ...(result['question'] === undefined
+      ? {}
+      : { question: result['question'] as NonNullable<ToolOutcomeView['question']> }),
   }
 }
 
@@ -801,6 +983,25 @@ async function close(
     | undefined
   const view = closedView(written.entries, summary ?? denied?.summary)
   if (view !== null) ctx.outcome(call, view)
+}
+
+/**
+ * The Agent call's result is its child's handoff. A stop that reached the write first leaves a
+ * completed or partial handoff unwritten (the mailbox refuses it), and the aborted one goes instead;
+ * the calls after it then close as stopped like any undispatched call (§停止、新消息、退出与重启).
+ */
+async function closeHandoff(
+  ctx: BatchContext,
+  call: CompleteCall,
+  child: Extract<AgentDispatchResult, { kind: 'done' }>,
+  summary: DecisionSummary,
+): Promise<void> {
+  try {
+    await close(ctx, call, child.entries, summary)
+  } catch (error) {
+    if (!(error instanceof RunWriteRefusedError)) throw error
+    await close(ctx, call, (await child.aborted()).entries, summary)
+  }
 }
 
 /**
@@ -841,6 +1042,8 @@ export interface JudgeContext {
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
   readonly searchHost: string | null
+  readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
+  readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
 }
 
@@ -855,6 +1058,7 @@ export type Judgement =
       readonly target: AbsolutePath | null
       readonly policyVersion: string
       /** The card's kind and object, when it asks. */
+      readonly decisionTarget?: ConfirmTarget
       readonly card?: Pick<NonNullable<PermissionDecidedPayload['confirm']>, 'kind' | 'target'>
       /** What an allowed answer grants (§作用域与授权键); null when nothing but this call would. */
       readonly grantObject: GrantObject | null
@@ -872,22 +1076,51 @@ export async function judgeCall(
   call: Pick<CompleteCall, 'input'>,
   given?: CallFacts,
 ): Promise<Judgement> {
-  const { entries, profile, scope: paths } = given ?? (await callFactsOf(ctx))
+  const facts = given ?? (await callFactsOf(ctx))
+  const { entries, profile, scope: paths } = facts
   const reversibility = reversibilityOf(item, call.input)
   const located = await locate(ctx.host, item, call.input, paths)
   const place = located === undefined ? undefined : placeFor(profile, located)
   const inspected = inspectedOf(item, call.input, reversibility)
-  const view = buildSessionView(entries, {
+  const ownView = buildSessionView(entries, {
     call: inspected,
     profile,
     ownSpillDir: paths.ownSpillDir,
+    child: sessionFactsOf(entries).subagentOf !== null,
   })
-  const inspection = await runInspectors({
-    inspectors: ctx.inspectors,
-    input: { call: inspected, view },
-    setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
-    signal: ctx.signal,
+  const related = buildSessionView(facts.relatedEntries ?? [], {
+    call: inspected,
+    profile: 'cowork',
+    ownSpillDir: paths.ownSpillDir,
+    child: true,
   })
+  const parentView = buildSessionView(facts.parentEntries ?? [], {
+    call: inspected,
+    profile: 'cowork',
+    ownSpillDir: paths.ownSpillDir,
+    child: true,
+  })
+  const view = {
+    ...ownView,
+    nonReadOnlyCalls: [...ownView.nonReadOnlyCalls, ...related.nonReadOnlyCalls],
+    untrustedSources: [...new Set([...ownView.untrustedSources, ...related.untrustedSources])],
+    touchedPrivateData: ownView.touchedPrivateData || related.touchedPrivateData,
+    ...(ownView.fetchUrlVouched === undefined
+      ? {}
+      : { fetchUrlVouched: ownView.fetchUrlVouched || parentView.fetchUrlVouched === true }),
+  }
+  const urlBlocked =
+    item.source === 'builtin' &&
+    item.originalName === 'WebFetch' &&
+    isBlockedFetchUrl(String(call.input['url'] ?? ''))
+  const inspection = urlBlocked
+    ? { stopped: false, outcomes: [] }
+    : await runInspectors({
+        inspectors: ctx.inspectors,
+        input: { call: inspected, view },
+        setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
+        signal: ctx.signal,
+      })
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
   const workspace = paths.roots[0] ?? null
@@ -908,15 +1141,25 @@ export async function judgeCall(
         })
       : null
   const object = grantObjectOf(item, call.input, located, workspace, ctx.searchHost)
-  const grantFrom =
-    object === null
+  const ownGrant =
+    object === null || (item.originalName === 'WebSearch' && ctx.ignoreSearchGrant === true)
       ? undefined
-      : sessionGrants(grantFactsOf(entries)).get(grantKey(item.serverId, item.originalName, object))
+      : ownSessionGrants(entries, facts.parentEntries ?? []).get(
+          grantKey(item.serverId, item.originalName, object),
+        )
+  const inheritedGrant =
+    object === null || (item.originalName === 'WebSearch' && ctx.ignoreSearchGrant === true)
+      ? undefined
+      : sessionGrants(grantFactsOf(facts.parentEntries ?? [])).get(
+          grantKey(item.serverId, item.originalName, object),
+        )
+  const grantFrom = ownGrant ?? inheritedGrant
   const decision = decide({
     call: inspected,
     callReason,
     layers: {
       policy,
+      ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
       ...(setting?.userSetting === undefined ? {} : { userSetting: setting.userSetting }),
@@ -925,7 +1168,13 @@ export async function judgeCall(
       sessionGrant:
         grantFrom === undefined || object === null
           ? null
-          : { kind: sessionGrantKindOf(object), grantFrom },
+          : {
+              kind: sessionGrantKindOf(object),
+              grantFrom,
+              ...(ownGrant === undefined && inheritedGrant !== undefined
+                ? { inherited: true as const }
+                : {}),
+            },
       approvalMode: 'manual',
     },
     inspectors: inspection.outcomes,
@@ -938,8 +1187,27 @@ export async function judgeCall(
     ...(place === undefined ? {} : { place }),
     target: located?.real ?? null,
     policyVersion: policy.status === 'unavailable' ? 'unavailable' : policy.version,
+    decisionTarget: cardOf(
+      item,
+      item.originalName === 'WebSearch' && ctx.prepareSearch !== undefined
+        ? { ...call.input, query: ctx.prepareSearch(String(call.input['query'])).query }
+        : call.input,
+      located,
+      workspace,
+      ctx.searchHost,
+    ).target,
     ...(decision.record.verdict === 'ask'
-      ? { card: cardOf(item, call.input, located, workspace, ctx.searchHost) }
+      ? {
+          card: cardOf(
+            item,
+            item.originalName === 'WebSearch' && ctx.prepareSearch !== undefined
+              ? { ...call.input, query: ctx.prepareSearch(String(call.input['query'])).query }
+              : call.input,
+            located,
+            workspace,
+            ctx.searchHost,
+          ),
+        }
       : {}),
     grantObject: object,
     ...(failed === undefined ? {} : { failed }),
@@ -973,6 +1241,8 @@ export function decisionEntry(q: {
   readonly judged: Extract<Judgement, { kind: 'judged' }>
   readonly key: string
   readonly rejudge?: number
+  /** An allowed AskUserQuestion: the Run pauses on it until the answer (H6). */
+  readonly awaits?: 'question'
   readonly writer: FactWriter
 }): NewEntry {
   const { decision } = q.judged
@@ -984,10 +1254,12 @@ export function decisionEntry(q: {
     record: decision.record,
     summary: decision.summary,
     policyVersion: q.judged.policyVersion,
+    ...(q.judged.decisionTarget === undefined ? {} : { target: q.judged.decisionTarget }),
     ...(decision.confirm !== undefined && q.judged.card !== undefined
       ? { confirm: { ...decision.confirm, ...q.judged.card }, awaits: 'approval' as const }
       : {}),
     ...(decision.block === undefined ? {} : { block: decision.block }),
+    ...(q.awaits === undefined ? {} : { awaits: q.awaits }),
     ...(q.rejudge === undefined ? {} : { rejudge: q.rejudge }),
     writer: q.writer,
   }
@@ -1006,6 +1278,8 @@ export function decisionEntry(q: {
  * profile (`session/profile_set`; phase 1's sessions are chats) and where its paths are judged from.
  */
 export interface CallFacts {
+  readonly parentEntries?: readonly TapeEntry[]
+  readonly relatedEntries?: readonly TapeEntry[]
   readonly entries: readonly TapeEntry[]
   readonly profile: 'chat' | 'cowork'
   readonly scope: PathScope
@@ -1019,7 +1293,28 @@ export async function callFactsOf(
   const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
   const facts = sessionFactsOf(entries)
   const workspace = await workspaceOf(ctx.tape, facts)
-  return { entries, profile: facts.profile, scope: await pathScopeOf(ctx, workspace), workspace }
+  const parentEntries =
+    facts.subagentOf === null ? [] : await readSessionEntries(ctx.tape, facts.subagentOf.sessionId)
+  const relatedEntries: TapeEntry[] = [...parentEntries]
+  {
+    const handed = new Set(
+      (facts.subagentOf === null ? entries : parentEntries)
+        .filter((e) => e.name === 'tool/result' && e.payload['handoff'] !== undefined)
+        .map((e) => (e.payload['handoff'] as { childSessionId: string }).childSessionId),
+    )
+    for (const child of handed) {
+      // oxlint-disable-next-line no-await-in-loop -- one linked child at a time, never model text
+      relatedEntries.push(...(await readSessionEntries(ctx.tape, child)))
+    }
+  }
+  return {
+    entries,
+    parentEntries,
+    relatedEntries,
+    profile: facts.profile,
+    scope: await pathScopeOf(ctx, workspace),
+    workspace,
+  }
 }
 
 /**
@@ -1146,6 +1441,11 @@ export function effectOf(item: ToolTableItem): 'read' | 'write' | 'external' {
   return 'external'
 }
 
+/** The builtin AskUserQuestion: the one tool whose allowed call waits for the user (H6). */
+export function isQuestion(item: ToolTableItem): boolean {
+  return item.source === 'builtin' && item.originalName === 'AskUserQuestion'
+}
+
 /** The deciding inspector step's failure, when it did not answer: its note is its own (F1). */
 function failedStatusOf(decision: Decision): 'timeout' | 'error' | undefined {
   const deciding = decision.record.steps.filter(
@@ -1154,6 +1454,43 @@ function failedStatusOf(decision: Decision): 'timeout' | 'error' | undefined {
   if (deciding.some((step) => step.status === 'ok')) return undefined
   const failed = deciding.find((step) => step.status !== 'ok')?.status
   return failed === 'timeout' || failed === 'error' ? failed : undefined
+}
+
+/** A child's workspace-sensitive grants carry a causal parent fact, never a wall-clock guess. */
+function ownSessionGrants(entries: readonly TapeEntry[], parent: readonly TapeEntry[]) {
+  const grants = sessionGrants(grantFactsOf(entries))
+  if (sessionFactsOf(entries).subagentOf === null) return grants
+  const approvals = new Map(
+    entries
+      .filter((entry) => entry.name === 'tool/approval_resolved')
+      .map((entry) => [entry.provenanceKey, entry]),
+  )
+  for (const [key, source] of grants) {
+    const kind: unknown = (JSON.parse(key) as unknown[])[2]
+    if (kind !== 'file' && kind !== 'command') continue
+    const approval = approvals.get(source.approvalKey)
+    const workspaceKey = approval?.payload['parentWorkspaceKey']
+    const at =
+      typeof workspaceKey === 'string'
+        ? parent.findIndex(
+            (entry) =>
+              entry.name === 'session/workspace_set' && entry.provenanceKey === workspaceKey,
+          )
+        : -1
+    if (at < 0 || approval === undefined) {
+      grants.delete(key)
+      continue
+    }
+    const baseline = parent[at]!
+    const replay = sessionGrants([
+      ...grantFactsOf([baseline, approval]),
+      ...grantFactsOf(
+        parent.slice(at + 1).filter((entry) => entry.name === 'session/workspace_set'),
+      ),
+    ])
+    if (!replay.has(key)) grants.delete(key)
+  }
+  return grants
 }
 
 function grantFactsOf(entries: readonly TapeEntry[]): GrantFact[] {
@@ -1210,3 +1547,30 @@ function textOf(content: unknown): string {
     .map((block) => block.text)
     .join('\n')
 }
+
+/** Root and linked child dispatch facts are the quota; no derived counter is persisted. */
+export async function searchDispatchCount(
+  tape: Pick<Tape, 'readRange'>,
+  sessionId: string,
+): Promise<number> {
+  const own = await readSessionEntries(tape, sessionId)
+  const rootId = sessionFactsOf(own).subagentOf?.sessionId ?? sessionId
+  const root = rootId === sessionId ? own : await readSessionEntries(tape, rootId)
+  const ids = new Set(
+    root
+      .filter((e) => e.name === 'session/parent_link')
+      .map((e) => (e.payload['child'] as { sessionId: string }).sessionId),
+  )
+  ids.delete(rootId)
+  let total = countSearchDispatches(root)
+  for (const id of ids) {
+    // oxlint-disable-next-line no-await-in-loop -- bound memory to one child tape at a time
+    total += countSearchDispatches(id === sessionId ? own : await readSessionEntries(tape, id))
+  }
+  return total
+}
+
+const countSearchDispatches = (entries: readonly TapeEntry[]) =>
+  entries.filter(
+    (e) => e.name === 'execution/dispatch_committed' && e.payload['name'] === 'WebSearch',
+  ).length

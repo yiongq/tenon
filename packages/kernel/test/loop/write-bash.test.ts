@@ -26,7 +26,7 @@ import type {
   McpToolSource,
   MemoryHost,
   ModelInfo,
-  PendingCard,
+  PendingApproval,
   SandboxRequest,
   SessionService,
   SpawnSpec,
@@ -52,6 +52,7 @@ import {
 } from '../../src/testing/index.js'
 import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
 import { createNodeProcess } from '../support/node-process.js'
+import { pendingCard } from './support.js'
 
 const IDENTITY = { userId: 'cmd-user', tenantId: 'cmd-tenant', profileDir: '/tenon/cmd' }
 const SESSION = '3a7c1e9b-2d4f-4b6a-8c1e-5f9a2b3c4d51'
@@ -261,13 +262,13 @@ async function pausedOn(
   name: string,
   input: Record<string, unknown>,
   later: readonly LaterCall[] = [],
-): Promise<PendingCard> {
+): Promise<PendingApproval> {
   const runId = await send(h, name, input, later)
   expect((await h.loop.runEnded({ runId })).reason).toEqual({
     code: 'paused',
     waitingFor: 'approval',
   })
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   return pending
 }
@@ -277,11 +278,11 @@ async function ranFree(h: Harness, name: string, input: Record<string, unknown>)
   const runId = await send(h, name, input)
   h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
   expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'completed' })
-  expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+  expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
 }
 
 /** Allows the card and lets the resumed Run finish on a text reply. */
-async function allow(h: Harness, pending: PendingCard): Promise<void> {
+async function allow(h: Harness, pending: PendingApproval): Promise<void> {
   h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
   expect(
     await h.service.answer({
@@ -317,7 +318,7 @@ async function outcomes(h: Harness): Promise<string[]> {
 }
 
 /** Answers the card allow without waiting for the answer: the resumed Run may be held meanwhile. */
-function allowing(h: Harness, pending: PendingCard): ReturnType<SessionService['answer']> {
+function allowing(h: Harness, pending: PendingApproval): ReturnType<SessionService['answer']> {
   return h.service.answer({
     kind: 'approval',
     sessionId: SESSION,

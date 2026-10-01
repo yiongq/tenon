@@ -1,0 +1,27 @@
+[
+  {
+    "title": "Station 1",
+    "url": "https://research.example.test/result-1",
+    "snippet": "Official station capacity"
+  },
+  {
+    "title": "Station 2",
+    "url": "https://research.example.test/result-2",
+    "snippet": "Official station capacity"
+  },
+  {
+    "title": "Station 3",
+    "url": "https://research.example.test/result-3",
+    "snippet": "Official station capacity"
+  },
+  {
+    "title": "Station 4",
+    "url": "https://research.example.test/result-4",
+    "snippet": "Official station capacity"
+  },
+  {
+    "title": "Station 5",
+    "url": "https://research.example.test/result-5",
+    "snippet": "Official station capacity"
+  }
+]

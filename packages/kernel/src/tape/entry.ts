@@ -12,7 +12,7 @@
  */
 import type { AbsolutePath, ConfirmRequest, ConfirmTarget, Reversibility } from '../host/adapter.js'
 import type { ClosureSource, ExecutionState } from '../loop/closure.js'
-import type { SpillRecord } from '../loop/spill.js'
+import type { SpillMark, SpillRecord } from '../loop/spill.js'
 import type { SubagentHandoff } from '../loop/subagent.js'
 import type { RunEndReason } from '../loop/terminal.js'
 import type { Decision } from '../permission/decide.js'
@@ -356,6 +356,7 @@ export type ToolCallPayload = CallRef & {
   argsHash: string // name 是发给模型的名字；argsHash = canonicalHash(input)
 }
 export type PermissionDecidedPayload = CallRef & {
+  target?: ConfirmTarget // 判决当时的卡片对象；旧事实没有时交接使用纯fallback
   argsHash: string
   reversibility: Reversibility // host 的判定（E1）；tool_outcome 从这里取
   record: DecisionRecord // verdict、decidedBy、steps，只进 Tape（F8）
@@ -373,6 +374,7 @@ export type PermissionDecidedPayload = CallRef & {
 }
 export type GrantScope = 'once' | 'session' | 'persistent' // 阶段 6 只增 'task'（D1）；02 的审批卡只产出前两个
 export type ApprovalResolvedPayload = CallRef & {
+  parentWorkspaceKey?: string // 父当前workspace_set的provenanceKey，仅子文件/命令session授权
   decisionKey: string // 所答的那条判决（当时最新的一条）的 provenanceKey
   outcome:
     | 'allowed'
@@ -389,11 +391,13 @@ export type ApprovalResolvedPayload = CallRef & {
  * The ask summary card's data (spec 02 §提问工具 AskUserQuestion; open question 18): the same shape
  * as `approval.respond`'s question request, written by the resolver in the same batch as the
  * content. Only the approval.respond path fills an unanswered question with null; a typed reply
- * keeps `answers` as {} and its text in `response`.
+ * keeps `answers` as {} and its text in `response`. Past the spill threshold the record keeps only
+ * the start of each answer, and `preview` says where the full text is (H9; Revisions 31).
  */
 export interface AskAnswerRecord {
   answers: Record<string, string[] | null> // 键为题目原文；null = 跳过
   response?: string
+  preview?: SpillMark // 结果过了 SPILL_THRESHOLD_CHARS、有回答被截成开头时才有（H9，Revisions 31）
 }
 
 export type ToolResultPayload = CallRef & {

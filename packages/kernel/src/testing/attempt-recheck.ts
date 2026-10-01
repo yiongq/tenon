@@ -46,7 +46,7 @@ import type { EncoderInfo } from '../provider/wire/shared.js'
 import type { TapeEntry, ViewAssembledPayload, ViewContentPayload } from '../tape/entry.js'
 import type { TapeAttemptCompletedPayload } from '../tape/projection.js'
 import { assembledKey, viewContentKey } from '../tape/provenance.js'
-import { rebuildProviderContext } from '../tape/replay.js'
+import { rebuildProviderContext, replayContext } from '../tape/replay.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { TapeReader } from '../tape/store.js'
 
@@ -199,11 +199,24 @@ async function rebuildRequest(
   const snapshot = fact.request
   let messages: ProviderRequest['messages']
   try {
-    messages = await rebuildProviderContext(store, {
-      sessionId: q.sessionId,
-      atEntryId: fact.contextAtEntryId,
-      target: model,
-    })
+    if (fact.compaction === undefined) {
+      messages = await rebuildProviderContext(store, {
+        sessionId: q.sessionId,
+        atEntryId: fact.contextAtEntryId,
+        target: model,
+      })
+    } else {
+      const replay = await replayContext(store, {
+        sessionId: q.sessionId,
+        atEntryId: fact.contextAtEntryId,
+        target: model,
+        beforeOrderSeq: fact.compaction.keepFromEntryId,
+      })
+      messages = [
+        ...replay.messages,
+        { role: 'user', content: [{ type: 'text', text: fact.compaction.requestText }] },
+      ]
+    }
   } catch (error) {
     // A fact that no longer folds (TapeProjectionError) is a Tape that does not reproduce the record.
     problems.push(

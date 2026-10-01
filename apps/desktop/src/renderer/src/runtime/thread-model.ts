@@ -66,6 +66,12 @@ export interface Turn {
   readonly createdAt: number
   /** A user turn sent from this window and not yet written: its id is still a local one. */
   readonly optimistic?: boolean
+  /**
+   * Sent while a question waited, so most likely its typed answer, which is no message
+   * (§插话与输入框状态表「等提问」): not drawn until the kernel says what it became — the answer takes
+   * it away, a `user-message` or a settled send shows it after all.
+   */
+  readonly answering?: boolean
   readonly end?: RunEnd
   /** For an assistant turn a live Run started: that Run (`RunTrack.seq`). */
   readonly run?: number
@@ -137,12 +143,16 @@ export function threadFromRows(rows: readonly MessageRowContract[]): ThreadModel
   }
 }
 
-/** The user's message, shown at once; the kernel's `user-message` gives it its id. */
+/**
+ * The user's message, shown at once; the kernel's `user-message` gives it its id. One sent while a
+ * question waits is kept `answering`, not drawn, until the route says whether it was the answer.
+ */
 export function withSentText(
   model: ThreadModel,
   text: string,
   id: string,
   now: number,
+  answering = false,
 ): ThreadModel {
   return {
     ...model,
@@ -156,9 +166,16 @@ export function withSentText(
         runId: null,
         createdAt: now,
         optimistic: true,
+        ...(answering ? { answering: true } : {}),
       },
     ],
   }
+}
+
+/** A written or settled message is drawn, whatever it was sent as. */
+function shown(turn: Turn): Turn {
+  const { answering: _answering, ...rest } = turn
+  return { ...rest, optimistic: false }
 }
 
 /** Takes back a message that went to the queue instead (it shows as a queued bubble there). */
@@ -239,7 +256,7 @@ function userMessage(
     if (index < 0) return model
     const turns = [...model.turns]
     const turn = turns[index] as Turn
-    turns[index] = { ...turn, id: event.messageId, optimistic: false }
+    turns[index] = { ...shown(turn), id: event.messageId }
     return { ...model, turns }
   }
   const text = ctx.queuedText(event.queuedId)
@@ -443,7 +460,7 @@ export function withSettled(model: ThreadModel, id: string): ThreadModel {
   const turns = model.turns.flatMap((turn): Turn[] => {
     if (turn === answer) return []
     if (turn !== echo) return [turn]
-    const settled: Turn = { ...echo, optimistic: false }
+    const settled: Turn = shown(echo)
     if (answer === undefined) return [settled]
     const { answers: _answers, ...moved } = answer
     return [settled, moved]

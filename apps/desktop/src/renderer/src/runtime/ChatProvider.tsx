@@ -40,10 +40,7 @@ export function useSessionSnapshot(): SessionSnapshot {
 }
 
 function textOf(message: AppendMessage): string {
-  return message.content
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .join('')
-    .trim()
+  return message.content.map((part) => (part.type === 'text' ? part.text : '')).join('')
 }
 
 /**
@@ -83,8 +80,9 @@ export function ChatProvider({
     // The two reasons sending is disabled (§模型菜单与输入框「提示与禁发」); the composer says which.
     isSendDisabled: !snapshot.canSend || snapshot.textOnlyTask,
     onNew: async (message) => {
-      const text = textOf(message)
-      if (text !== '') await store.send(text)
+      const raw = textOf(message)
+      const text = store.getSnapshot().pending?.waitKind === 'question' ? raw : raw.trim()
+      if (text.trim() !== '') await store.send(text)
     },
     onCancel: () => store.stop(),
     // assistant-ui's reload names the user message before the reply: the same resend as 「重试」.

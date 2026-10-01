@@ -49,7 +49,7 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
-import { proxyStore } from './support.js'
+import { pendingCard, proxyStore } from './support.js'
 
 const PROFILE = '/tenon/profiles/spill-user/spill-tenant'
 const IDENTITY = { userId: 'spill-user', tenantId: 'spill-tenant', profileDir: PROFILE }
@@ -501,7 +501,7 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'build' })
     if (sent.status !== 'started') throw new Error('not started')
     expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     if (pending === null) throw new Error('no card')
     h.provider.script(scriptedTurn({ deltas: ['Done.'], usage: USAGE }))
     expect(
@@ -527,7 +527,7 @@ describe('a result past the threshold is written to disk (旧 57, 旧 188)', () 
     const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'build' })
     if (sent.status !== 'started') throw new Error('not started')
     expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
-    const pending = await h.service.currentPending({ sessionId: SESSION })
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
     if (pending === null) throw new Error('no card')
     expect(
       await h.service.answer({

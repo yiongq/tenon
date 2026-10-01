@@ -13,7 +13,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { absolutePath, createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
 import type {
   AbsolutePath,
-  ChildHandle,
   DenyOpinion,
   HostFs,
   HostProcess,
@@ -45,6 +44,8 @@ import {
   stopEvent,
 } from '../../src/testing/index.js'
 import type { ScriptedProvider, TestLoopPorts } from '../../src/testing/index.js'
+import { fakeChild, pendingCard } from './support.js'
+import type { FakeChild, KillAnswer } from './support.js'
 
 const IDENTITY = { userId: 'stop-user', tenantId: 'stop-tenant', profileDir: '/tenon/stop' }
 const SESSION = '7d3b2a1c-4e5f-4a6b-9c8d-0e1f2a3b4c5d'
@@ -91,59 +92,6 @@ async function until(check: () => boolean | Promise<boolean>, what: string): Pro
     await settle()
   }
   throw new Error(`never: ${what}`)
-}
-
-// ----- a fake child ------------------------------------------------------------------------------
-
-type KillAnswer = 'dies' | 'hangs' | 'term-exits'
-
-interface FakeChild {
-  readonly child: ChildHandle
-  /** Each signal sent, with the host clock's reading when it was sent. */
-  readonly kills: Array<{ readonly signal: string; readonly at: number }>
-  write(text: string): void
-  /** The direct child exits: its output ends and `exited` resolves. */
-  exit(code: number | null, signal?: string | null): void
-}
-
-/**
- * A child that ignores SIGTERM. On SIGKILL it exits at once (`'dies'`), or `exited` stays pending
- * (`'hangs'`: the case calls `exit` itself, or never does). `'term-exits'`: the direct child exits on
- * SIGTERM, as one whose own children ignore it would.
- */
-function fakeChild(now: () => number, onKill: KillAnswer): FakeChild {
-  let out: ReadableStreamDefaultController<Uint8Array> | undefined
-  const exited = Promise.withResolvers<{ code: number | null; signal: string | null }>()
-  const kills: Array<{ signal: string; at: number }> = []
-  let gone = false
-  const exit = (code: number | null, signal: string | null = null): void => {
-    if (gone) return
-    gone = true
-    out?.close()
-    exited.resolve({ code, signal })
-  }
-  return {
-    child: {
-      pid: 4242,
-      stdin: new WritableStream<Uint8Array>(),
-      stdout: new ReadableStream<Uint8Array>({
-        start: (controller) => {
-          out = controller
-        },
-      }),
-      stderr: new ReadableStream<Uint8Array>({ start: (controller) => controller.close() }),
-      exited: exited.promise,
-      kill: (signal = 'SIGTERM') => {
-        kills.push({ signal, at: now() })
-        if (signal === 'SIGKILL' && onKill === 'dies') exit(null, 'SIGKILL')
-        if (signal === 'SIGTERM' && onKill === 'term-exits') exit(null, 'SIGTERM')
-        return Promise.resolve()
-      },
-    },
-    write: (text) => out?.enqueue(new TextEncoder().encode(text)),
-    exit,
-    kills,
-  }
 }
 
 // ----- the harness ------------------------------------------------------------------------------
@@ -355,7 +303,7 @@ async function allowed(h: Harness, calls: readonly Call[]): Promise<string> {
     code: 'paused',
     waitingFor: 'approval',
   })
-  const pending = await h.service.currentPending({ sessionId: SESSION })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('no card')
   const answered = await h.service.answer({
     kind: 'approval',
@@ -484,7 +432,7 @@ describe('a stop in each state (旧 177; §点停止时各状态怎么收)', () 
     expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before\n')
   })
 
-  it('records a command whose `exited` never comes uncertain, and the view says it may have run', async () => {
+  it('02 不变量 24: records a command whose `exited` never comes uncertain, and the view says it may have run', async () => {
     const h = await harness({ onKill: 'hangs' })
     const runId = await allowed(h, [['Bash', { command: 'make' }]])
     const child = await spawned(h)

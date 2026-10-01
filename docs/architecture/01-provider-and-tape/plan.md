@@ -88,6 +88,7 @@
 - 第一次整套运行：Anthropic 线 3/3 通过；zhipu 组 2/2 **失败**，原因不在代码——免费模型 `glm-4.7-flash` 在 OpenAI 兼容端点回 `429 / code 1302「您的账户已达到速率限制」`（前面三个用例刚连续打过它）。适配器把它正确归成 `rate-limit`，界面显示了对应文案。同一个 key 换内置的 `glm-4.6` 单独重跑 zhipu 组：2/2 通过（6.9 秒、12.3 秒）。**教训**：live 套件里两组别共用同一个免费模型。
 - **智谱的 `usageNeedsOptIn: false` 已确认正确**（Open 里那条可以关掉）：用 curl 抓了三条真实流（不带 / 带 `stream_options.include_usage` / `thinking: disabled`），用量在不 opt-in 时就给，挂在带 `finish_reason` 的**同一个块**上而不是尾部空 `choices` 块；带上 `stream_options` 被接受但没有任何区别；流以 `[DONE]` 结束，没有 `event:` 行。先 `reasoning_content` 后 `content`，用量含 `completion_tokens_details.reasoning_tokens` 与 `prompt_tokens_details.cached_tokens`——与手写的 zhipu 夹具一致，夹具注释已改为「已对照真实流确认」。真实线上多出两处适配器不读的细节：每个 delta 都重复带 `role`，finish 块的 delta 带一个 `content` 键。
 - **没能对照的**：Anthropic 线的夹具。owner 的端点是智谱对 Anthropic 线协议的**仿真**，不是 Anthropic 本身；三个 live 用例在它上面通过，说明适配器吃得下这份仿真，但不能证明手写夹具与 Anthropic 官方的流逐帧一致。要等有 Anthropic 官方 key 的人来对。Ollama 的两项探测同样仍开着。
+- **2026-09-28 补对照（02 第33步）**：官方 api.anthropic.com / claude-opus-5-5 两条原始 SSE 已保存并经真实 SDK/adapter 离线回放，文本、thinking/signature、tool input、usage/cache/reasoning 与 ping 的实际值/事件形状已核。相比手写夹具只见已知附加 metadata（container、diagnostics、stop_details、cache_creation、service_tier、inference_geo），未见已观察事件缺少夹具所需字段。罕见 redacted/error/unknown 帧未在这两条流中出现，仍不声称真实对照；原始文件与字段差异见 02 plan 第33步记录。Ollama 未验证项不变。
 
 **耗时**（macOS arm64，Node 22.22.0）：5000 条分页读 9 ms；1 万条分页 `verifyChain` 72 ms。
 

@@ -9,7 +9,13 @@ import {
 } from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { isCanonicalUuid, toolOutputDirFor } from '@tenon-app/kernel'
-import type { AbsolutePath, SessionIncarnation, SessionService } from '@tenon-app/kernel'
+import type {
+  AbsolutePath,
+  SessionIncarnation,
+  SessionService,
+  TapeStore,
+  ParentLinkPayload,
+} from '@tenon-app/kernel'
 import type { RunRegistry } from './chat.js'
 
 /**
@@ -23,10 +29,11 @@ import type { RunRegistry } from './chat.js'
  *   2. the folder goes (`fs.rm`, recursive, force);
  *   3. only then is the operation complete.
  *
- * Step 0 because neither store call waits for a Run: a clear is a mailbox command, which runs between
- * an open Run's own writes, and a delete skips the mailbox. A call still running at step 2 would spill
- * after it: the old incarnation's full output back in the folder, for good after a delete, or where
- * the new incarnation reads without a card after a clear. A stopped Run spills before its lease
+ * Step 0 because neither store call waits for a Run: a clear or a delete is a mailbox command, which
+ * runs between an open Run's own writes (and first closes a sub-agent card the tree waits on, whose
+ * Tape outlives the root's facts). A call still running at step 2 would spill after it: the old
+ * incarnation's full output back in the folder, for good after a delete, or where the new
+ * incarnation reads without a card after a clear. A stopped Run spills before its lease
  * finishes, into the folder step 2 removes; a result later than its write wait is only logged
  * (§点停止时各状态怎么收). `user-stop`, because the user asked; the other two causes say the app is
  * going. A paused session has no lease, and its Run writes nothing more: nothing to wait for. A call
@@ -56,6 +63,8 @@ export interface SessionRemoval {
 
 export interface SessionRemovalDeps {
   readonly sessions: Pick<SessionService, 'resetSession' | 'deleteSession'>
+  /** Parent links are read before mutation; only profile-owned spill directories are removed. */
+  readonly tape?: Pick<TapeStore, 'head' | 'readRange'>
   /**
    * Step 0's: the RunRegistry (chat.ts), or null when there is no loop to open a Run. Read when a
    * removal begins, not when this is made: main makes the removal before the loop and its registry.
@@ -91,14 +100,18 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
       const runs = deps.runs()
       runs?.abort({ rootSessionId: sessionId }, 'user-stop')
       await runs?.settledRoot(sessionId)
+      const children = await childOutputFolders(deps.tape, deps.profileDir, sessionId)
       const committed = await commit()
-      try {
-        await remove(folder)
-      } catch (error) {
-        deps.log(
-          `[session] ${sessionId}: its tool output was not removed, and nothing sweeps it later: ` +
-            (error instanceof Error ? error.message : String(error)),
-        )
+      for (const outputFolder of new Set([folder, ...children])) {
+        try {
+          // oxlint-disable-next-line no-await-in-loop -- every directory is removed after the store commits
+          await remove(outputFolder)
+        } catch (error) {
+          deps.log(
+            `[session] ${sessionId}: its tool output was not removed, and nothing sweeps it later: ` +
+              (error instanceof Error ? error.message : String(error)),
+          )
+        }
       }
       return committed
     } finally {
@@ -113,6 +126,37 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
     delete: (sessionId) => removal(sessionId, () => deps.sessions.deleteSession(sessionId)),
     removing: (sessionId) => pending.has(sessionId),
   }
+}
+
+/** Two-level trees: enumerate recorded children, never user-selected or dedicated workspaces. */
+async function childOutputFolders(
+  tape: SessionRemovalDeps['tape'],
+  profileDir: AbsolutePath,
+  sessionId: string,
+): Promise<AbsolutePath[]> {
+  if (tape === undefined) return []
+  const head = await tape.head(sessionId)
+  if (head === null) return []
+  const folders = new Set<AbsolutePath>()
+  let fromEntryId: number | undefined
+  do {
+    // oxlint-disable-next-line no-await-in-loop -- page one pinned incarnation before deleting its facts
+    const page = await tape.readRange({
+      sessionId,
+      incarnationId: head.incarnationId,
+      atEntryId: head.lastEntryId,
+      limit: 1000,
+      ...(fromEntryId === undefined ? {} : { fromEntryId }),
+    })
+    for (const entry of page.entries) {
+      if (entry.name !== 'session/parent_link') continue
+      const link = entry.payload as unknown as ParentLinkPayload
+      folders.add(toolOutputDirFor(profileDir, link.child.sessionId))
+    }
+    if (page.nextFromEntryId === null) break
+    fromEntryId = page.nextFromEntryId
+  } while (fromEntryId !== undefined)
+  return [...folders]
 }
 
 /**

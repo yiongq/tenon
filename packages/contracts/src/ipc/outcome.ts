@@ -9,6 +9,7 @@ import type {
   DecisionSummary,
   DecisionSummaryCode,
   ExecutionState,
+  SpillMark,
 } from '@tenon-app/kernel'
 import { z } from 'zod'
 import { confirmTargetSchema } from './confirm.js'
@@ -85,6 +86,12 @@ export const closureSourceSchema = z.enum([
 ]) satisfies z.ZodType<ClosureSource>
 
 /**
+ * Where the full text of a fact cut to its start is (H9; Revisions 31): `spilled`, in the session's
+ * spill file, which the model can Read; `unsaved`, nowhere, as that write failed.
+ */
+export const spillMarkSchema = z.enum(['spilled', 'unsaved']) satisfies z.ZodType<SpillMark>
+
+/**
  * A closed call as the interface shows it (01 修补 6): the kernel's `ToolOutcomeView`. What the
  * model read is `output`; the decision crosses as its summary only (F8). The optional members are
  * exact, like the kernel type's: absent, never `undefined`.
@@ -114,6 +121,7 @@ export const toolOutcomeViewShape = {
     .object({
       answers: z.record(z.string(), z.array(z.string()).readonly().nullable()),
       response: z.string().exactOptional(),
+      preview: spillMarkSchema.exactOptional(), // 有回答只存了开头时才有（H9，Revisions 31）
     })
     .exactOptional(), // 只在答过的 AskUserQuestion 上有（开放问题 18）
   handoff: z
@@ -121,6 +129,8 @@ export const toolOutcomeViewShape = {
       outcome: z.enum(['completed', 'partial', 'aborted', 'superseded', 'uncertain']),
       childEndReason: z.string().nullable(),
       childSessionId: z.string().min(1),
+      finalReply: z.string(), // 交接存下的子任务回复；结果落盘时只有开头（H9）
+      preview: spillMarkSchema.exactOptional(), // finalReply 只存了开头时才有（Revisions 31）
     })
     .exactOptional(), // 只在 Agent 调用上有（开放问题 18）
 }

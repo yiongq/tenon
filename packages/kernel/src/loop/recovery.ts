@@ -19,6 +19,7 @@ import type { UserToolSetting } from '../permission/decide.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import type {
   FactWriter,
+  ParentLinkPayload,
   NewEntry,
   PermissionDecidedPayload,
   RunStartedPayload,
@@ -51,7 +52,13 @@ import { closureContent, repairFacts, resultFacts } from './closure.js'
 import { readViewState } from './run.js'
 import type { RunEndReason } from './terminal.js'
 
+import { sessionFactsOf } from '../session/facts.js'
+import { buildSubagentHandoff, handoffText, storedHandoff } from './subagent.js'
+import { spillChecked } from './spill.js'
+import type { RunConnector } from './ports.js'
+
 export interface RecoveryDeps {
+  readonly searchTarget?: RunConnector['searchTarget']
   readonly tape: Tape
   readonly now: () => number
   readonly log: (line: string) => void
@@ -72,6 +79,7 @@ export interface Resumable {
 }
 
 export interface Recovered {
+  readonly roots: ReadonlyMap<string, string>
   readonly resumable: readonly Resumable[]
   readonly errors: readonly string[]
   /** The cards still to deliver, once the rest is on the Tape. */
@@ -92,9 +100,20 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
   const resumable: Resumable[] = []
   const errors: string[] = []
   const cards: ConfirmRequest[] = []
-  for (const sessionId of await allSessions(deps, errors)) {
+  const sessions = await allSessions(deps, errors)
+  const roots = new Map<string, string>()
+  for (const sessionId of sessions) {
+    // oxlint-disable-next-line no-await-in-loop -- discovery precedes recovery, no model calls
+    const facts = sessionFactsOf(await readSessionEntries(deps.tape, sessionId))
+    if (facts.subagentOf !== null) roots.set(sessionId, facts.subagentOf.sessionId)
+  }
+  for (const sessionId of sessions.toSorted(
+    (a, b) => Number(roots.has(b)) - Number(roots.has(a)),
+  )) {
     try {
       // oxlint-disable-next-line no-await-in-loop -- one session after another: each is one append per Run
+      await recoverChildLinks(deps, sessionId)
+      // oxlint-disable-next-line no-await-in-loop -- child handoffs are settled before parent run recovery
       await closeUnfinishedRuns(deps, sessionId, errors)
       // oxlint-disable-next-line no-await-in-loop -- the re-judgement reads what the rewrite wrote
       const card = await rejudgeAtStartup(deps, sessionId)
@@ -102,7 +121,11 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
       // oxlint-disable-next-line no-await-in-loop -- the list is read from the Tape as it now stands
       const item = await resumableOf(deps.tape, sessionId)
       if (item !== null)
-        resumable.push({ rootSessionId: sessionId, sessionId, runId: item.pausedRunId })
+        resumable.push({
+          rootSessionId: roots.get(sessionId) ?? sessionId,
+          sessionId,
+          runId: item.pausedRunId,
+        })
     } catch (error) {
       if (deps.strict && error instanceof RecoveryCorruptionError) throw error
       const line = `[recovery] ${sessionId}: ${error instanceof Error ? error.message : String(error)}`
@@ -110,7 +133,95 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
       errors.push(line)
     }
   }
-  return { resumable, errors, cards }
+  return { resumable, errors, cards, roots }
+}
+
+async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise<void> {
+  const entries = await readSessionEntries(deps.tape, sessionId)
+  const head = await deps.tape.head(sessionId)
+  if (head === null) return
+  const links = entries.filter(
+    (e) =>
+      e.name === 'session/parent_link' &&
+      !entries.some((r) => r.name === 'tool/result' && callOf(r) === callOf(e)),
+  )
+  for (const entry of links) {
+    const link = entry.payload as ParentLinkPayload
+    // oxlint-disable-next-line no-await-in-loop -- children were recovered first; now inspect their durable state
+    const child = await readSessionEntries(deps.tape, link.child.sessionId)
+    // oxlint-disable-next-line no-await-in-loop -- waiting children keep the parent Agent waiting
+    const waiting = await waitingOf(deps.tape, link.child.sessionId)
+    // oxlint-disable-next-line no-await-in-loop -- resumable children keep the parent Agent waiting
+    const resumable = await resumableOf(deps.tape, link.child.sessionId)
+    if (waiting !== null || resumable !== null) continue
+    const built = buildSubagentHandoff(child, {
+      childSessionId: link.child.sessionId,
+      outcome: 'uncertain',
+    })
+    const ref = {
+      runId: String(entry.sourceId),
+      requestSeq: Number(entry.sourceSeq),
+      ordinal: link.ordinal,
+      providerToolCallId: link.providerToolCallId,
+    }
+    // oxlint-disable-next-line no-await-in-loop -- each recovered handoff spills before its facts commit
+    const checked = await spillChecked({
+      fs: deps.host.fs,
+      profileDir: deps.host.identity.profileDir as AbsolutePath,
+      sessionId,
+      call: ref,
+      result: {
+        content: [{ type: 'text', text: handoffText(built) }],
+        isError: true,
+        kernelAuthored: true,
+      },
+      log: deps.log,
+    })
+    const closures = resultFacts({
+      tape: deps.tape,
+      now: deps.now,
+      call: ref,
+      content: checked.content,
+      // Past the threshold the reply's full text is the spill file's alone (H9; Revisions 31).
+      handoff: storedHandoff(built, checked.mark),
+      isError: checked.isError,
+      kernelAuthored: checked.kernelAuthored,
+      ...(checked.spill === undefined ? {} : { spill: checked.spill }),
+      effect: 'external',
+      state: 'uncertain',
+      source: 'crashed',
+      reversibility: 'unknown',
+      writer: RECOVERY,
+    })
+    const rest = entries.filter(
+      (e) =>
+        e.name === 'tool/call' &&
+        e.sourceId === entry.sourceId &&
+        e.sourceSeq === entry.sourceSeq &&
+        Number(e.payload['ordinal']) > link.ordinal &&
+        !entries.some((r) => r.name === 'tool/result' && callOf(r) === callOf(e)),
+    )
+    for (const call of rest)
+      closures.push(
+        ...crashedFacts(
+          deps,
+          {
+            runId: ref.runId,
+            requestSeq: ref.requestSeq,
+            ordinal: Number(call.payload['ordinal']),
+            providerToolCallId: String(call.payload['providerToolCallId']),
+          },
+          'not-run',
+          'blocked',
+        ),
+      )
+    // oxlint-disable-next-line no-await-in-loop -- each child-to-parent gap is closed once, after child facts
+    await deps.tape.appendEntries({
+      sessionId,
+      incarnationId: head.incarnationId,
+      entries: closures,
+    })
+  }
 }
 
 /**
@@ -201,7 +312,7 @@ async function closeUnfinishedRuns(
         : []
     const facts = [...own, ...batch]
     const closures: NewEntry[] = []
-    let waitingFor: 'approval' | 'question' | null = null
+    let waitingFor: 'approval' | 'question' | 'subagent' | null = null
     const calls = facts
       .filter((entry) => entry.name === 'tool/call')
       .toSorted(
@@ -234,6 +345,18 @@ async function closeUnfinishedRuns(
       const waitKind = pending.get(key)
       if (waitKind !== undefined) {
         waitingFor = waitKind
+        continue
+      }
+      const pendingChild = entries.find(
+        (e) =>
+          e.name === 'session/parent_link' &&
+          e.sourceId === call.sourceId &&
+          e.sourceSeq === call.sourceSeq &&
+          Number(e.payload['ordinal']) <= ref.ordinal &&
+          !entries.some((r) => r.name === 'tool/result' && callOf(r) === callOf(e)),
+      )
+      if (pendingChild !== undefined) {
+        waitingFor = 'subagent'
         continue
       }
       // 3 损坏: one of the pair, a dispatch no decision allows, or ids that disagree.
@@ -403,8 +526,10 @@ async function rejudgeAtStartup(
 ): Promise<ConfirmRequest | null> {
   const waiting = await waitingOf(deps.tape, sessionId)
   if (waiting === null || waiting.waitKind !== 'approval') return null
-  const { item } = await frozenBatchOf(deps.tape, waiting)
+  const { item, setup } = await frozenBatchOf(deps.tape, waiting)
   const rejudged = await rejudgeWaiting({
+    searchTarget: deps.searchTarget,
+    providerId: setup.selected.providerId,
     judge: {
       tape: deps.tape,
       host: deps.host,

@@ -6,8 +6,9 @@
  * change as overriding a block from its receipt (F9): inspectors.test.ts pins that every registration
  * here asks, and the commit that changes that test has to carry the override with it.
  */
+import { exfiltrationInspector } from '@tenon-app/kernel'
 import type { InspectorRegistration } from '@tenon-app/kernel'
 
 export function desktopInspectors(): readonly InspectorRegistration[] {
-  return []
+  return [exfiltrationInspector]
 }

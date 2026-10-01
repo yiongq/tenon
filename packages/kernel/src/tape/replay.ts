@@ -293,9 +293,10 @@ export interface MismatchedTurn {
  */
 export async function replayContext(
   store: TapeReader,
-  q: RebuildProviderContextQuery,
+  q: RebuildProviderContextQuery & { readonly beforeOrderSeq?: number },
 ): Promise<{
   messages: InternalMessage[]
+  orderSeqs: number[]
   unanswered: UnansweredCall[]
   mismatched: MismatchedTurn[]
 }> {
@@ -303,13 +304,17 @@ export async function replayContext(
   const cut = latestCompaction(entries)
   const tools = toolFactsOf(entries)
   const messages: InternalMessage[] = []
+  const orderSeqs: number[] = []
   const unanswered: UnansweredCall[] = []
   const mismatched: MismatchedTurn[] = []
   for (const message of effectiveMessages(entries)) {
     if (cut !== null && message.orderSeq < cut.keepFromEntryId) continue
+    if (q.beforeOrderSeq !== undefined && message.orderSeq >= q.beforeOrderSeq) continue
     if (message.role !== 'assistant') {
-      if (message.content.length > 0)
+      if (message.content.length > 0) {
         messages.push({ role: message.role, content: [...message.content] })
+        orderSeqs.push(message.orderSeq)
+      }
       continue
     }
     const calls = tools.calls.get(message.messageId) ?? []
@@ -328,7 +333,10 @@ export async function replayContext(
       })
     }
     const content = agrees ? placeCalls(message.content, calls) : byFacts(message.content, calls)
-    if (content.length > 0) messages.push({ role: 'assistant', content })
+    if (content.length > 0) {
+      messages.push({ role: 'assistant', content })
+      orderSeqs.push(message.orderSeq)
+    }
     // The results follow their assistant turn, in <i> order — wherever the Tape holds them.
     const responses: ContentBlock[] = []
     for (const call of calls) {
@@ -352,12 +360,16 @@ export async function replayContext(
         isError: result.isError,
       })
     }
-    if (responses.length > 0) messages.push({ role: 'user', content: responses })
+    if (responses.length > 0) {
+      messages.push({ role: 'user', content: responses })
+      orderSeqs.push(message.orderSeq)
+    }
   }
-  if (cut === null) return { messages, unanswered, mismatched }
+  if (cut === null) return { messages, orderSeqs, unanswered, mismatched }
   // The summary is stored as it was sent (after `compactionWrap`), so replay takes it verbatim.
   return {
     messages: [{ role: 'user', content: [{ type: 'text', text: cut.summary }] }, ...messages],
+    orderSeqs: [-1, ...orderSeqs],
     unanswered,
     mismatched,
   }

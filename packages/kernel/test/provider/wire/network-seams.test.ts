@@ -38,7 +38,9 @@ const IDENTITY = {
   requestSeq: 1,
   physicalAttempt: 1,
 }
-const SONNET = anthropicDefinition.builtinModels[0] as ModelInfo
+const SONNET = anthropicDefinition.builtinModels.find(
+  (row) => row.id === 'claude-sonnet-5',
+) as ModelInfo
 const GLM = zhipuDefinition.builtinModels[0] as ModelInfo
 const EMULATION_BASE_URL = 'https://open.bigmodel.cn/api/anthropic'
 
@@ -206,6 +208,7 @@ describe('the watchdog is torn down when the body is read to the end (旧 103, 0
     const time = countingClock()
     const encoder = new TextEncoder()
     const network: HostNetwork = {
+      fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
       fetch: () =>
         Promise.resolve(
           new Response(
@@ -320,6 +323,7 @@ describe('the first-byte limit (旧 48, 旧 103)', () => {
   it('ends the stream as a retryable first-byte network error when no header arrives', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const hanging: HostNetwork = {
+      fetchUntrusted: () => Promise.reject(new Error('provider must not fetch untrusted URLs')),
       fetch: (_input, init) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => {
@@ -581,7 +585,12 @@ describe('quota-exhausted (旧 105)', () => {
   })
 
   it('reads zhipu’s balance and quota codes as not retryable, and 1302, 1305 as retryable', async () => {
-    for (const code of ['1113', '1308', '1310', '1316']) {
+    for (const code of [
+      '1113',
+      ...Array.from({ length: 14 }, (_, i) => String(1308 + i)).filter(
+        (candidate) => candidate !== '1312',
+      ),
+    ]) {
       // oxlint-disable-next-line no-await-in-loop -- one error at a time
       expect(await errorOf(zhipuDefinition, GLM, 429, zhipuErrorBody(code))).toMatchObject({
         code: 'quota-exhausted',
@@ -589,7 +598,7 @@ describe('quota-exhausted (旧 105)', () => {
         providerCode: code,
       })
     }
-    for (const code of ['1302', '1305']) {
+    for (const code of ['1302', '1305', '1312']) {
       // oxlint-disable-next-line no-await-in-loop -- one error at a time
       expect(await errorOf(zhipuDefinition, GLM, 429, zhipuErrorBody(code))).toMatchObject({
         code: 'rate-limit',

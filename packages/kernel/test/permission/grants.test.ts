@@ -107,7 +107,7 @@ describe('grantKey', () => {
   })
 })
 
-describe('the answer scope, top row first', () => {
+describe('02 不变量 20: the answer scope, top row first', () => {
   it('holds once for a must-ask card, an irreversible call, a path outside, a connector tool', () => {
     expect(
       scope(decision('tool', 'mcp', { requiresUserInteraction: true }), {

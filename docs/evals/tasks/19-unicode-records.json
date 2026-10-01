@@ -1,0 +1,23 @@
+{
+  "id": "19-unicode-records",
+  "profile": "cowork",
+  "turns": [
+    "读records.json，筛选active为true；label按Unicode NFC规范化；按id升序写 public.json，仅id和label，保留emoji和中文。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "19-unicode-records"
+    }
+  ],
+  "compare": true,
+  "workspace": "19-unicode-records",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}

@@ -49,7 +49,8 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: pnpm test --maxWorkers=2
+      - run: pnpm evals:gate --maxWorkers=2
 
   e2e:
     name: e2e

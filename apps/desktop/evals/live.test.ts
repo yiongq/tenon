@@ -51,6 +51,7 @@ const cases =
 // Taken once, before the first record is appended.
 const version = LIVE ? clientVersion() : ''
 const date = today()
+const rawDir = process.env['TENON_EVAL_RAW_DIR']
 
 describe.skipIf(!process.env['TENON_EVAL'])('live eval', () => {
   beforeAll(() => {
@@ -80,6 +81,7 @@ describe.skipIf(!process.env['TENON_EVAL'])('live eval', () => {
           timing: live.timing,
           deadlineMs: live.deadlineMs,
           signal,
+          ...(rawDir === undefined ? {} : { rawDir }),
           log,
         })
         if (signal.aborted) {

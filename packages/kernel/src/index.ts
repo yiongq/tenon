@@ -353,7 +353,7 @@ export { assertBatchOpensIncarnation } from './tape/store.js'
 // steps that implement them do not change the shapes), the new port errors and queries, the
 // pending-approval projection, the memory store's shared backing and the phase-2 key builders.
 export type { BlockReason, ClosureSource, ExecutionState } from './loop/closure.js'
-export type { SpillRecord } from './loop/spill.js'
+export type { SpillMark, SpillRecord } from './loop/spill.js'
 export type { HandoffCall, SubagentHandoff } from './loop/subagent.js'
 export type { RunEndReason } from './loop/terminal.js'
 export type { Decision } from './permission/decide.js'
@@ -439,7 +439,7 @@ export type {
 } from './loop/ports.js'
 export type { SessionEvent, ToolOutcomeView } from './loop/events.js'
 export type { AnswerCommand } from './loop/waiting.js'
-export type { PendingCard, PendingRoot } from './loop/answer.js'
+export type { PendingApproval, PendingCard, PendingQuestion, PendingRoot } from './loop/answer.js'
 // Plan step 18: the home page's choices and the workspace, as the session service answers them.
 export type {
   SelectModelQuery,
@@ -476,3 +476,24 @@ export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permissi
 // Spec 02 plan step 23 — 停止与退出. The quit waits the stop sequence's grace plus the in-process
 // write wait, and reads both here, so the desktop writes no number of its own (§停止与退出 第 4 步).
 export { STOP_TERM_GRACE_MS, STOP_WRITE_WAIT_MS } from './loop/limits.js'
+
+export { isBlockedFetchAddress } from './permission/fetch-address.js'
+
+export {
+  zhipuSearchDefinition,
+  prepareZhipuSearchQuery,
+  createAnthropicSearchDefinition,
+  selectAnthropicSearchModel,
+  parseAnthropicSearchResponse,
+} from './tools/search/backends.js'
+
+export { exfiltrationInspector, exfiltrationOpinion } from './permission/exfiltration.js'
+
+export {
+  compactionThreshold,
+  checksThinkingPrefix,
+  COMPACT_RATIO,
+  COMPACT_ABS_CAP,
+  COMPACT_KEEP_TURNS,
+  COMPACT_RETRY_CAP,
+} from './loop/compaction.js'

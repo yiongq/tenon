@@ -4,12 +4,14 @@ import { useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
+import { questionsOf, summaryOf } from '@/lib/ask'
 import { toolObject, toolSentence } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import type { Answered, SessionSnapshot } from '@/runtime/session-store'
 import { ApprovalCard, ObjectLine, scopeKey } from './ApprovalCard'
+import { AskSummaryCard } from './AskSummaryCard'
 
 /** The four block codes (§原因码表): they get a `BlockedNotice`, not a closure line. */
 const BLOCK_CODES: ReadonlySet<string> = new Set([
@@ -24,7 +26,9 @@ const BLOCK_CODES: ReadonlySet<string> = new Set([
  * a connector tool's generic one with its name. Expanded, its input and output as plain text — a
  * tool result is untrusted content, and JSON never shows by default. A call that did not complete
  * says why, by its closure code; a blocked one carries the `BlockedNotice`; the card waiting on it
- * hangs below it, with the batch's later calls queued under the card.
+ * hangs below it, with the batch's later calls queued under the card. An AskUserQuestion that waits
+ * has the batch's later calls queued under its row — its widget is above the composer — and once it
+ * has its result, the summary card (§阶段 2 做的组件 `AskSummaryCard`).
  */
 export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const { t } = useTranslation()
@@ -49,6 +53,12 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
           subtask: false,
         }
       : null)
+  // The question this call asks waits on the widget above the composer, not on a card here.
+  const asking = snapshot.pending?.waitKind === 'question' && snapshot.pending.callKey === callKey
+  const summary =
+    props.toolName === 'AskUserQuestion'
+      ? summaryOf(questionsOf(input), outcome, snapshot.asked.get(callKey) ?? null)
+      : null
   const blocked = outcome !== null && outcome.source !== null && BLOCK_CODES.has(outcome.source)
   // A later call of the batch while a card waits: it is the queued row under that card, not a row
   // of its own saying it runs (§最小审批卡「排队行」).
@@ -70,7 +80,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         className="flex w-full items-baseline gap-2 text-left text-text-secondary"
       >
         <span className="min-w-0 break-words">{toolSentence(t, props.toolName, input)}</span>
-        {outcome === null && pending === null ? (
+        {outcome === null && pending === null && !asking && summary === null ? (
           <span className="shrink-0 text-micro text-text-muted">{t('tool.running')}</span>
         ) : null}
       </button>
@@ -105,14 +115,31 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             <>
               <p className="text-micro text-text-muted">{t('tool.output')}</p>
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary">
-                {outcome.output}
+                {/* A handoff whose reply was cut (`preview`): the start of the sub-agent's reply the
+                    Tape kept, not the model's English note about the file (H9). One spilled only by
+                    its call lines kept the reply whole and shows its output like any tool's. */}
+                {props.toolName === 'Agent'
+                  ? visible(
+                      outcome.handoff?.preview === undefined
+                        ? outcome.output
+                        : outcome.handoff.finalReply,
+                    )
+                  : outcome.output}
               </pre>
+              {outcome.handoff?.preview === undefined ? null : (
+                <p data-testid="tool-row-preview" className="text-micro text-text-muted">
+                  {t(outcome.handoff.preview === 'spilled' ? 'preview.spilled' : 'preview.unsaved')}
+                </p>
+              )}
             </>
           )}
         </div>
       ) : null}
       {answered === null ? null : <AnsweredRow answered={answered} />}
-      {pending === null ? null : (
+      {summary === null ? null : <AskSummaryCard summary={summary} />}
+      {asking ? <QueuedRows callKey={callKey} /> : null}
+      {pending === null ||
+      (pending.card.sessionId !== store.sessionId && snapshot.pendingCall === null) ? null : (
         <>
           {/* A new requestId is a new card (§最小审批卡「数据」): it mounts afresh, with no focus or
               expanded change carried over from the card it replaced. */}
@@ -120,11 +147,19 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             key={pending.card.requestId}
             pending={pending}
             since={snapshot.pendingSince}
-            toolName={props.toolName}
-            input={input}
+            toolName={
+              pending.card.sessionId === store.sessionId
+                ? props.toolName
+                : (snapshot.pendingCall?.name ?? '')
+            }
+            input={
+              pending.card.sessionId === store.sessionId
+                ? input
+                : (snapshot.pendingCall?.input ?? {})
+            }
             onRespond={(decision) => void store.respond(decision)}
           />
-          <QueuedRows callKey={pending.callKey} />
+          <QueuedRows callKey={pending.anchorCallKey} />
         </>
       )}
     </div>
@@ -141,16 +176,21 @@ function visibleFacts(facts: Readonly<Record<string, unknown>>): Record<string, 
   )
 }
 
-/** Whether a call waits, unanswerable, behind the card an earlier call of its batch holds (F6). */
+/**
+ * Whether a call waits, unanswerable, behind the card an earlier call of its batch holds (F6), or
+ * behind the question one asks (§阶段 2 做的组件: 同批后面的调用以排队行叠在那次 AskUserQuestion 的行下).
+ */
 function queuedBehindCard(snapshot: SessionSnapshot, callKey: string): boolean {
   const pending = snapshot.pending
-  if (pending?.waitKind !== 'approval') return false
+  if (pending === null) return false
   const turn = snapshot.model.turns.find((candidate) =>
     candidate.parts.some((part) => part.kind === 'tool' && part.callKey === callKey),
   )
   if (turn === undefined) return false
   const keys = turn.parts.flatMap((part) => (part.kind === 'tool' ? [part.callKey] : []))
-  const anchor = keys.indexOf(pending.anchorCallKey)
+  const anchor = keys.indexOf(
+    pending.waitKind === 'approval' ? pending.anchorCallKey : pending.callKey,
+  )
   return anchor >= 0 && keys.indexOf(callKey) > anchor
 }
 
@@ -204,7 +244,10 @@ function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
   )
 }
 
-/** The batch's later calls, one queued row each, under the card; they cannot be answered (F6). */
+/**
+ * The batch's later calls, one queued row each, under the card or the waiting question's row; they
+ * cannot be answered (F6).
+ */
 function QueuedRows(props: { readonly callKey: string }): JSX.Element | null {
   const { t } = useTranslation()
   const snapshot = useSessionSnapshot()

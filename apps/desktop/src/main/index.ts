@@ -15,6 +15,7 @@ import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
 import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
+import { compactionTestOptions } from './compaction-test-seam.js'
 import { desktopInspectors } from './inspectors.js'
 import { createLocaleController } from './locale.js'
 import { buildApplicationMenu } from './menu.js'
@@ -160,6 +161,7 @@ async function main(): Promise<void> {
           tape,
           ids: { uuid: (): string => randomUUID() },
           inspectors: desktopInspectors(),
+          ...compactionTestOptions(app.isPackaged, process.env),
           connector: createRunConnector({
             host,
             providers,
@@ -181,6 +183,7 @@ async function main(): Promise<void> {
       ? null
       : createSessionRemoval({
           sessions,
+          ...(tape === null ? {} : { tape }),
           // Bound late: the loop below takes this removal's `removing`.
           runs: () => loop?.registry ?? null,
           profileDir: absolutePath(host.identity.profileDir),

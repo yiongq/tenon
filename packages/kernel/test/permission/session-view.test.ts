@@ -60,7 +60,23 @@ function dispatched(
     ),
     entry(
       'tool/permission_decided',
-      { ordinal, reversibility },
+      {
+        ordinal,
+        reversibility,
+        record: {
+          steps: [
+            {
+              by: 'protected',
+              said: String(input['file_path'] ?? input['path'] ?? '').startsWith(
+                '/profile/tool-output/s1/',
+              )
+                ? 'allow'
+                : 'none',
+              status: 'ok',
+            },
+          ],
+        },
+      },
       { sourceId: runId, sourceSeq: 1, key: decisionKey },
     ),
     entry(
@@ -231,5 +247,83 @@ describe('URLs in a message (§外带检查「豁免」)', () => {
   it('compares parsed hrefs without the fragment', () => {
     expect(comparableUrl('https://A.test/p#frag')).toBe('https://a.test/p')
     expect(comparableUrl('not a url')).toBeNull()
+  })
+})
+
+describe('exfiltration evidence boundaries', () => {
+  const query = {
+    call: call('WebFetch', { url: 'https://a.test/leak' }),
+    profile: 'cowork' as const,
+    ownSpillDir: SPILL,
+  }
+  it('uses exactly the dispatched decision, retaining its protected step even if the verdict asked', () => {
+    const entries = dispatched('Read', { file_path: '/workspace/link' }, 'read-only')
+    const decision = entries[1]!
+    decision.payload['record'] = {
+      verdict: 'ask',
+      decidedBy: 'inspector',
+      steps: [{ by: 'protected', said: 'allow', status: 'ok' }],
+    }
+    // An unreferenced later recheck cannot change where the approved call actually ran.
+    const later = entry(
+      'tool/permission_decided',
+      { record: { steps: [{ by: 'protected', said: 'none', status: 'ok' }] } },
+      { key: 'later' },
+    )
+    expect(buildSessionView([...entries, later], query).touchedPrivateData).toBe(false)
+    decision.payload['record'] = { steps: [{ by: 'protected', said: 'none', status: 'ok' }] }
+    expect(buildSessionView([...entries, later], query).touchedPrivateData).toBe(true)
+    delete decision.payload['record']
+    expect(buildSessionView(entries, query).touchedPrivateData).toBe(true)
+  })
+  it('excludes a DNS blocked dispatch without removing previous untrusted sources or in-flight ones', () => {
+    const fetch = dispatched('WebFetch', { url: 'https://a.test' }, 'unknown')
+    const dispatch = fetch[2]!
+    const outcome = entry(
+      'execution/tool_outcome',
+      { ordinal: 0, state: 'not-run', source: 'protected', effect: 'blocked' },
+      { sourceId: dispatch.sourceId!, sourceSeq: dispatch.sourceSeq! },
+    )
+    expect(buildSessionView(fetch, query).untrustedSources).toEqual(['WebFetch'])
+    expect(buildSessionView([...fetch, outcome], query).untrustedSources).toEqual([])
+    expect(
+      buildSessionView([...dispatched('WebSearch', {}, 'unknown'), ...fetch, outcome], query)
+        .untrustedSources,
+    ).toEqual(['WebSearch'])
+    outcome.payload['state'] = 'aborted'
+    outcome.payload['source'] = 'stopped'
+    expect(buildSessionView([...fetch, outcome], query).untrustedSources).toEqual(['WebFetch'])
+  })
+  it('retains evidence across compaction, ignores undispatched calls, and rejects Agent-prompt URL exemptions', () => {
+    const evidence = [
+      ...dispatched('Read', { file_path: '/workspace/.env' }, 'read-only'),
+      ...dispatched('WebFetch', {}, 'unknown'),
+    ]
+    const anchor = entry('compaction/anchor', { summary: 'innocent' })
+    expect(buildSessionView([...evidence, anchor], query)).toMatchObject({
+      touchedPrivateData: true,
+      untrustedSources: ['WebFetch'],
+    })
+    expect(
+      buildSessionView([entry('tool/call', { name: 'WebFetch' })], query).untrustedSources,
+    ).toEqual([])
+    const human = user('https://a.test/leak')
+    expect(buildSessionView([...evidence, human], { ...query, child: true }).fetchUrlVouched).toBe(
+      false,
+    )
+    expect(
+      buildSessionView(
+        [
+          ...evidence,
+          human,
+          entry('tool/result', {
+            searchHitUrls: ['https://a.test/leak'],
+            spill: { file: 'result.txt' },
+          }),
+        ],
+        { ...query, child: true },
+      ).fetchUrlVouched,
+    ).toBe(true)
+    expect(buildSessionView(evidence, { ...query, profile: 'chat' }).touchedPrivateData).toBe(false)
   })
 })

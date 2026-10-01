@@ -43,7 +43,7 @@ const TRAILING_USER = user({ type: 'text', text: 'and then?' })
 const TRAILING_WIRE = { role: 'user', content: 'and then?' }
 
 describe('encodeOpenAIChat', () => {
-  it('builds the documented body', () => {
+  it('02 不变量 10: builds the documented body', () => {
     const body = bodyOf({
       model: openAIModel(),
       system: 'You are terse.',

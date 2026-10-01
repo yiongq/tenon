@@ -19,6 +19,7 @@ import {
 import { createArgumentValidator } from '../../src/tools/validate.js'
 import { createNodeProcess } from '../support/node-process.js'
 import { serverEverythingSpawnSpec } from '../support/server-everything.js'
+import { pendingCard } from '../loop/support.js'
 
 const MODEL: ModelInfo = {
   id: 'claude-everything',
@@ -178,7 +179,7 @@ describe('the Everything fixture in a tool table', () => {
         waitingFor: 'approval',
       })
       // The connector card names the server and the tool as the server calls it (开放问题 15).
-      const pending = await service.currentPending({ sessionId: SESSION })
+      const pending = pendingCard(await service.currentPending({ sessionId: SESSION }))
       expect(pending?.card).toMatchObject({
         kind: 'tool',
         reason: 'flagged',
@@ -263,7 +264,7 @@ describe('one Everything call through a card and the Tape (acceptance 27)', () =
       if (sent.status !== 'started') throw new Error(JSON.stringify(sent))
       expect((await loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
       // A connector tool of unknown reversibility, in the manual mode: a tool card, held once.
-      const pending = await service.currentPending({ sessionId: SESSION })
+      const pending = pendingCard(await service.currentPending({ sessionId: SESSION }))
       expect(pending?.card).toMatchObject({
         kind: 'tool',
         target: { type: 'tool', serverId: 'everything', toolName: 'echo' },

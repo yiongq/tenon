@@ -166,10 +166,10 @@ export function callReasonOf(q: CallReasonQuery): CallReason {
   return { reason: 'default', facts: { toolName } }
 }
 
-/** A URL's host, lower-cased; the full normalisation of §搜索与抓取 arrives with plan step 27. */
+/** A URL's exact host, lower-cased without its DNS root dot (§搜索与抓取).  */
 export function hostOfUrl(url: string): string {
   try {
-    return new URL(url).hostname.toLowerCase()
+    return new URL(url).hostname.toLowerCase().replace(/\.$/u, '')
   } catch {
     return ''
   }

@@ -1,0 +1,23 @@
+{
+  "id": "11-normalize-contacts",
+  "profile": "cowork",
+  "turns": [
+    "清洗 contacts.csv：姓名去两端空白，邮箱去空白并转小写；空邮箱丢弃；按邮箱去重，保留首次姓名；按邮箱排序。写 contacts.json 数组，每项只有name/email。"
+  ],
+  "checks": [
+    {
+      "kind": "script",
+      "id": "11-normalize-contacts"
+    }
+  ],
+  "compare": true,
+  "workspace": "11-normalize-contacts",
+  "host": {
+    "answers": {
+      "default": "allow",
+      "command": "allow",
+      "outside-workspace": "deny"
+    }
+  },
+  "from": ["H15", "H1"]
+}
