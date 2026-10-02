@@ -15,7 +15,7 @@ import { ALLOWED_HEADERS as OPENAI_HEADERS } from '../../src/provider/wire/opena
 import { IDLE_MS_OTHER } from '../../src/provider/wire/transport.js'
 import { createStreamGate, fakeNetwork } from '../../src/testing/index.js'
 import type { FakeExchange } from '../../src/testing/index.js'
-import { DEEPSEEK_MODELS_BODY } from './fixtures/probe-documented.js'
+import { DEEPSEEK_MODELS_BODY, DEEPSEEK_WRONG_KEY } from './fixtures/probe-documented.js'
 
 const KEY = 'test-key-not-a-real-credential'
 /** A clock whose timers never fire: every body below arrives whole. */
@@ -163,10 +163,15 @@ describe('fetchRemoteModels (§列表与上限)', () => {
           { name: 'no id' },
           { id: 'a' },
           42,
+          // A row id carries no surrounding whitespace (contracts customModelSchema): never prefilled.
+          { id: ' d' },
+          { id: 'e ' },
+          { id: ' ' },
+          { id: 'f g' },
         ],
       },
     })
-    expect(result).toEqual({ ok: true, models: [{ id: 'a' }, { id: 'c' }] })
+    expect(result).toEqual({ ok: true, models: [{ id: 'a' }, { id: 'c' }, { id: 'f g' }] })
     const long = await list(OPENAI, {
       kind: 'json',
       body: { data: [{ id: 'x'.repeat(201) }, { id: 'y'.repeat(200) }] },
@@ -267,6 +272,12 @@ describe('fetchRemoteModels (§列表与上限)', () => {
     {
       name: 'a refused key',
       exchange: { kind: 'json', status: 401, body: { error: { message: 'bad key sk-secret' } } },
+      result: { ok: false, code: 'auth', status: 401 },
+    },
+    {
+      // M6 §点名 (h): the list, the run and the probe all read this 401 as `auth`.
+      name: 'DeepSeek’s live wrong-key 401 (code invalid_request_error)',
+      exchange: { kind: 'json', ...DEEPSEEK_WRONG_KEY },
       result: { ok: false, code: 'auth', status: 401 },
     },
     {

@@ -141,4 +141,15 @@ describe('the custom vendor contracts', () => {
     expect(vendor([ROW], `custom-${ID.slice(7).toUpperCase()}`)).toBe(false)
     expect(customVendorUpdate.request.safeParse({ id: ID, models: [ROW, ROW] }).success).toBe(false)
   })
+
+  it('take a row id only without surrounding whitespace: a new session’s default trims it (§列表与上限)', () => {
+    for (const id of [`${ROW.id} `, ` ${ROW.id}`, `${ROW.id}\n`, ' ']) {
+      expect(vendor([{ ...ROW, id }])).toBe(false)
+      expect(
+        customVendorUpdate.request.safeParse({ id: ID, models: [{ ...ROW, id }] }).success,
+      ).toBe(false)
+    }
+    // Inner whitespace is the vendor's own: only the ends are refused.
+    expect(vendor([{ ...ROW, id: 'vendor model' }])).toBe(true)
+  })
 })

@@ -198,6 +198,34 @@ describe('desktop profiles', () => {
     expect(written.customVendors).toEqual(entries)
   })
 
+  it('drops a row whose id has surrounding whitespace and keeps its instance (§存储, §列表与上限)', async () => {
+    // Revisions 2026-10-02: the schema refuses such a row (a new session's default trims its id), and
+    // a hand edit costs that row, not the instance and its key binding; the next write keeps it gone.
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    const a = { id: ID_A, displayName: 'A', wire: 'openai-chat', baseURL: 'https://a.example/v1' }
+    // Either end, and control whitespace: trimming only one end would let a row through to the
+    // schema, which drops the whole instance.
+    const padded = ['model-a ', ' model-b', 'model-c\n'].map((id) => ({
+      id,
+      contextLimit: 1,
+      maxOutputTokens: 8_000,
+    }))
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({ customVendors: [{ ...a, models: [...padded, ...rows(64_000)] }] }),
+    )
+    const lines: string[] = []
+    expect((await readConfig(fs, identity, (line) => lines.push(line))).customVendors).toEqual([
+      { ...a, models: rows(64_000) },
+    ])
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('customVendors[0]')
+    expect(lines.join('\n')).not.toMatch(/model-|example/)
+    await writeConfig(fs, identity, { sidebarCollapsed: true })
+    expect((await readConfig(fs, identity)).customVendors).toEqual([{ ...a, models: rows(64_000) }])
+  })
+
   it('judges the schema before repeated ids: a broken entry does not hide a valid one with its id', async () => {
     // §存储: entries the schema refuses are dropped first; the first of a repeated id is kept among
     // what is left (验收 11: only the broken entry is lost).

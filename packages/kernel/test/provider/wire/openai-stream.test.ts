@@ -512,6 +512,31 @@ const ERROR_CASES: readonly ErrorCase[] = [
     providerCode: 'invalid_api_key',
   },
   {
+    // M6 §点名 (h): the 401 wins over a non-retryable vocabulary entry, which the 403 below keeps.
+    name: '401 whose body names only the generic invalid_request_error type',
+    fixture: fixture.UNAUTHORIZED_GENERIC_TYPE,
+    code: 'auth',
+    retryable: false,
+    providerCode: 'invalid_request_error',
+  },
+  {
+    // M6 §运行时「错误」: 403 不动 — the body's non-retryable type still comes before the status.
+    name: '403 with the same body',
+    fixture: fixture.FORBIDDEN_GENERIC_TYPE,
+    code: 'invalid-request',
+    retryable: false,
+    providerCode: 'invalid_request_error',
+  },
+  {
+    // M6 §运行时「错误」: 403 不动 — with no known code in the body, the status table still reads it
+    // as `auth`.
+    name: '403 whose code the vocabulary does not know',
+    fixture: fixture.FORBIDDEN_UNKNOWN_CODE,
+    code: 'auth',
+    retryable: false,
+    providerCode: 'forbidden',
+  },
+  {
     name: '429 with retry-after seconds',
     fixture: fixture.RATE_LIMITED,
     code: 'rate-limit',

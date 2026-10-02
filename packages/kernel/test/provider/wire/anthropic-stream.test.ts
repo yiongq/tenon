@@ -542,6 +542,22 @@ const ERROR_CASES: readonly ErrorCase[] = [
     providerCode: 'authentication_error',
   },
   {
+    // M6 §点名 (h): the 401 decides, not the `error.type` the body names.
+    name: '401 in OpenAI’s envelope naming invalid_request_error',
+    fixture: fixture.UNAUTHORIZED_OPENAI_BODY,
+    code: 'auth',
+    retryable: false,
+    providerCode: 'invalid_request_error',
+  },
+  {
+    // M6 §运行时「错误」: 403 不动 — the status table still reads it as `auth`.
+    name: '403',
+    fixture: fixture.FORBIDDEN,
+    code: 'auth',
+    retryable: false,
+    providerCode: 'permission_error',
+  },
+  {
     name: '429 with retry-after seconds',
     fixture: fixture.RATE_LIMITED_SECONDS,
     code: 'rate-limit',

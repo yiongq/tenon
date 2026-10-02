@@ -24,6 +24,7 @@ import {
 import type {
   CustomModelRow,
   HostIdentity,
+  ModelInfo,
   ProviderDefinition,
   ProviderId,
   ProviderRegistry,
@@ -139,6 +140,40 @@ export function instanceRow(row: CustomVendorContract['models'][number]): Custom
 /** Whether a provider id names a custom vendor instance (T1) rather than a builtin. */
 export function isInstanceId(id: string): boolean {
   return CUSTOM_PROVIDER_ID_PATTERN.test(id)
+}
+
+/** An instance's row as one read of `config.json` lists it, made by the factory. */
+export interface InstanceRow {
+  readonly entry: CustomVendorContract
+  readonly definition: ProviderDefinition
+  readonly model: ModelInfo
+}
+
+/**
+ * An instance's row as `config` lists it now, made by the factory from that entry — never the view's
+ * older definition, and never synthesised (M6 §注册表视图, §实例被删或改坏; 推出的读法 31, 44): null
+ * when the instance or the row is gone, which a send refuses as a configuration error.
+ */
+export function instanceRowOf(
+  config: Config,
+  providerId: string,
+  modelId: string,
+): InstanceRow | null {
+  const entry = config.customVendors.find((candidate) => candidate.id === providerId)
+  if (entry === undefined) return null
+  const definition = instanceDefinition(entry)
+  const model = definition.builtinModels.find((candidate) => candidate.id === modelId)
+  return model === undefined ? null : { entry, definition, model }
+}
+
+/**
+ * Whether an instance's row is `probed` (M6 §运行时「行标记」; 推出的读法 27): a public instance's row
+ * the factory gave tools, which it does only off a passing snapshot (M6 不变量 6). A loopback or
+ * private instance's row never is, a passing snapshot written into `config.json` by hand included
+ * (§合成「通过」; Q7).
+ */
+export function isProbedRow(row: InstanceRow): boolean {
+  return instanceReach(row.entry) === 'public' && row.model.supportsToolCalling
 }
 
 /**

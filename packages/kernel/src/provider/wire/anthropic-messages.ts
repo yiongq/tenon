@@ -1330,6 +1330,8 @@ function classifyAnthropicError(
   if (status === 400 && vendorMessage(error).startsWith('You have reached your specified')) {
     return 'quota-exhausted'
   }
+  // The status table comes before the body's `error.type`, so a 401 reads as `auth` whatever type
+  // the body names (M6 §点名 (h)); neither check above it looks at a 401.
   if (status !== undefined) return statusErrorCode(status, errorMessage(error))
   if (providerCode !== null && Object.hasOwn(ERROR_TYPES, providerCode)) {
     const code = ERROR_TYPES[providerCode as AnthropicErrorType]

@@ -61,9 +61,18 @@ export const probeSnapshotSchema = z.object({
   unknownFields: z.array(z.string().max(64)).max(16),
 })
 
+/**
+ * A row id carries no surrounding whitespace (§列表与上限, §存储; Revisions 2026-10-02): `resolveChoice`
+ * trims a saved ② / ③ model id, and `assemble` looks an instance's row up by exact id with no
+ * synthesis, so a padded id would name a row no new session could reach — or a neighbour's.
+ */
+const rowIdSchema = modelIdSchema.refine((id) => id === id.trim(), {
+  error: 'a model row id carries no surrounding whitespace',
+})
+
 /** A model row: its limits are the user's (T6), its probe is optional (none = never probed). */
 export const customModelSchema = z.object({
-  id: modelIdSchema,
+  id: rowIdSchema,
   contextLimit: z.number().int().positive(),
   maxOutputTokens: z.number().int().positive(),
   probe: probeSnapshotSchema.optional(),

@@ -76,10 +76,11 @@ function withoutInstanceSettings(
 
 /**
  * `config.json`'s `customVendors`, one entry at a time (M6 §存储; 推出的读法 13). Whole-field
- * fallback would let one bad entry cost every instance, and the next write persist that. So: a
- * repeated model id keeps its first row, an entry the schema refuses is dropped, a repeated instance
- * id keeps its first entry. The log names the entry's index and what failed — schema paths and issue
- * codes only, never a value, so never an address.
+ * fallback would let one bad entry cost every instance, and the next write persist that. So: a row
+ * whose id has surrounding whitespace is dropped (Revisions 2026-10-02: a hand edit costs that row,
+ * not the instance and its key binding), a repeated model id keeps its first row, an entry the schema
+ * refuses is dropped, a repeated instance id keeps its first entry. The log names the entry's index
+ * and what failed — schema paths and issue codes only, never a value, so never an address.
  *
  * An address that fails §地址校验 is NOT dropped here: the registry view keeps such an instance and
  * reads it as not configured (`custom-vendors/registry.ts`).
@@ -93,7 +94,7 @@ function readCustomVendors(value: unknown, log: (line: string) => void): CustomV
   const kept: CustomVendorContract[] = []
   const ids = new Set<string>()
   value.forEach((entry: unknown, index) => {
-    const parsed = customVendorSchema.safeParse(firstRowPerModelId(entry))
+    const parsed = customVendorSchema.safeParse(readableRows(entry, index, log))
     if (!parsed.success) {
       const reasons = parsed.error.issues.map(
         (issue) => `${issue.path.map(String).join('.') || '(entry)'}: ${issue.code}`,
@@ -111,20 +112,33 @@ function readCustomVendors(value: unknown, log: (line: string) => void): CustomV
   return kept
 }
 
-/** An entry with each model id's first row only; anything else is left for the schema to judge. */
-function firstRowPerModelId(entry: unknown): unknown {
+/**
+ * An entry with each model id's first row only, and no row whose id has surrounding whitespace (the
+ * schema refuses one, which would drop the whole entry); anything else is left for the schema.
+ */
+function readableRows(entry: unknown, index: number, log: (line: string) => void): unknown {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
   const models = (entry as Record<string, unknown>)['models']
   if (!Array.isArray(models)) return entry
   const seen = new Set<string>()
+  let padded = 0
   const rows = models.filter((row: unknown) => {
     const id =
       typeof row === 'object' && row !== null ? (row as Record<string, unknown>)['id'] : undefined
     if (typeof id !== 'string') return true
+    if (id !== id.trim()) {
+      padded += 1
+      return false
+    }
     if (seen.has(id)) return false
     seen.add(id)
     return true
   })
+  if (padded > 0) {
+    log(
+      `[config] customVendors[${index}]: ${padded} row(s) dropped (id has surrounding whitespace)`,
+    )
+  }
   return { ...entry, models: rows }
 }
 

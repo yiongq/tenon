@@ -60,8 +60,15 @@ export interface RemoteModelsQuery {
   readonly signal?: AbortSignal
 }
 
-/** `modelIdSchema`'s bounds (contracts provider.ts): an id outside them could not be offered anyway. */
+/**
+ * A model row id's bounds (contracts custom-vendor.ts `customModelSchema`): an id outside them could
+ * not be saved anyway — at most 200 characters, and no surrounding whitespace (§列表与上限).
+ */
 const MAX_MODEL_ID = 200
+
+function isRowId(id: unknown): id is string {
+  return typeof id === 'string' && id !== '' && id.length <= MAX_MODEL_ID && id === id.trim()
+}
 
 /** §列表与上限: the response headers must arrive within this, or the list answers `service`. */
 const HEADERS_MS = 30_000
@@ -165,7 +172,7 @@ export async function fetchRemoteModels(q: RemoteModelsQuery): Promise<RemoteMod
   for (const item of data) {
     if (!isRecord(item)) continue
     const id = item['id']
-    if (typeof id !== 'string' || id === '' || id.length > MAX_MODEL_ID || seen.has(id)) continue
+    if (!isRowId(id) || seen.has(id)) continue
     seen.add(id)
     const contextLimit = firstPositive(CONTEXT_KEYS.map((key) => item[key]))
     const topProvider = item['top_provider']

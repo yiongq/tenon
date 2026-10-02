@@ -1185,6 +1185,11 @@ function classifyOpenAIError(
   // rejected fetch as `new APIConnectionError({ cause })`, so the denial arrives one or two links
   // down (see fetchThroughHost for why a timeout cannot swallow it).
   if (hasEgressDenial(chain)) return 'egress-denied'
+  // M6 §点名 (h): a 401 is the credential refused, whatever the body names, so it is read before
+  // the vocabulary below. DeepSeek's wrong key answers 401 with OpenAI's generic `code:
+  // invalid_request_error`, which read as a refused request. A 403 still takes the path below
+  // (§运行时「错误」: 403 不动).
+  if (status === 401) return 'auth'
   const vocabulary = vocabularyCode(providerCode)
   // Before the status table, but only for a code the vendor uses to name a PERMANENT condition: a
   // status is a class of failure while `code` is the failure itself, and where the two disagree it

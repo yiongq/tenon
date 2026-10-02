@@ -432,6 +432,21 @@ describe('customVendor.list, create, update and delete (M6 §IPC)', () => {
       { ...refusedEntry, refused: { code: 'https-required' } },
     ])
   })
+
+  it('refuses a row id with surrounding whitespace, writing nothing (§列表与上限; Revisions 2026-10-02)', async () => {
+    // A new session's default trims a saved model id (resolveChoice) and `assemble` looks the row up
+    // by exact id: a padded row could never be reached from ② / ③.
+    const h = await seeded([instance({ id: ID })])
+    await h.ok('customVendor.update', { id: ID, displayName: 'Vendor' })
+    const before = await h.file()
+    const result = await h.call('customVendor.update', {
+      id: ID,
+      models: [{ ...ROW, id: `${MODEL} ` }],
+    })
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
+    expect(await h.file()).toBe(before)
+    expect([...h.keychain.values]).toEqual([[h.keyOf(ID), KEY]])
+  })
 })
 
 describe('provider.list for instances (M6 01 修补 4, 6; §运行时「行标记」)', () => {
