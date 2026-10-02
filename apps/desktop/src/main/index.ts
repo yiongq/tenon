@@ -10,6 +10,7 @@ import {
 } from '@tenon-app/kernel'
 import { app, autoUpdater, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
+import { createProviderView } from './custom-vendors/registry.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
@@ -133,10 +134,14 @@ async function main(): Promise<void> {
     now: () => host.clock.now(),
     log: (line) => console.error(line),
   })
-  const providers = createProviderRegistry()
-  registerBuiltinProviders(providers)
+  const builtin = createProviderRegistry()
+  registerBuiltinProviders(builtin)
   const preferred = preferredSystemLanguages()
   const startupConfig = await readConfig(host.fs, host.identity)
+  // M6 §注册表视图 (01 修补 6「desktop 接线」): run assembly, the provider routes and the model routes
+  // all take the builtin definitions plus the custom vendor instances, the latter following every
+  // write of `config.json` from this startup read on.
+  const providers = createProviderView({ builtin, identity: host.identity, config: startupConfig })
   const locale = await createLocaleController(startupConfig, preferred, broadcast)
   // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
   // construction, the host's run-time half — the RunRegistry, the queue, the events — through

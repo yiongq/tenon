@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import type { Stats } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
-import { parse, sep } from 'node:path'
+import { basename, dirname, join, parse, sep } from 'node:path'
 import type { AbsolutePath, HostFs } from '@tenon-app/kernel'
 import { UnresolvableAliasError, absolutePath } from '@tenon-app/kernel'
 
@@ -61,6 +62,33 @@ export class DesktopFs implements HostFs {
       await handle.writeFile(data)
     } finally {
       await handle.close()
+    }
+  }
+
+  /**
+   * Replaces a file whole by way of a temporary file in the same directory, renamed over it (M6
+   * §写入规则): a reader sees the old content or the new and never a cut one, and a write that fails
+   * before the rename — out of space (ENOSPC), past the size limit (EFBIG), any throw — leaves the old
+   * file as it was. The temporary file is created exclusively, so nothing put there under its name is
+   * written through, is flushed before the rename, and is removed on any failure. Only `config.json`'s
+   * writer uses this (host/profile.ts); `writeFile`, which the agent's Write tool reaches, is unchanged.
+   */
+  async replaceFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
+    absolutePath(path)
+    const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
+    try {
+      const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
+      try {
+        await handle.writeFile(data)
+        await handle.sync()
+      } finally {
+        await handle.close()
+      }
+      await rename(temp, path)
+    } catch (err) {
+      // The failure is what the caller hears; a temporary file that cannot be removed is left.
+      await rm(temp, { force: true }).catch(() => undefined)
+      throw err
     }
   }
 
