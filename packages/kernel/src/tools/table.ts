@@ -22,7 +22,7 @@ import type {
 } from '../tape/entry.js'
 import { toolTableKey, viewContentKey } from '../tape/provenance.js'
 import type { TapeWriter } from '../tape/tape.js'
-import { TOOLS_PER_REQUEST, assertToolNames } from './registry.js'
+import { assertToolNames } from './registry.js'
 import type { ToolCandidate, ToolTableItem } from './registry.js'
 
 /** The table in memory. Every value type is the Tape's (§02 的 Tape 事实). */
@@ -56,6 +56,11 @@ export interface OpenTableQuery {
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** Whether the Run has a search backend; WebSearch without one is `no-search-backend` (H8). */
   readonly hasSearchBackend: boolean
+  /**
+   * At most this many tools in one request: `RunConnector.toolsPerRequest` for this provider, read
+   * at the opening (M6 §对 02 的修补 4, T13). Null = no cap by count.
+   */
+  readonly toolsPerRequest: number | null
 }
 
 /**
@@ -87,7 +92,7 @@ export function openToolTable(q: OpenTableQuery): FrozenToolTable {
       exclude(candidate, 'no-search-backend')
     } else kept.push(candidate)
   }
-  const cap = TOOLS_PER_REQUEST.get(q.providerId) ?? Number.POSITIVE_INFINITY
+  const cap = q.toolsPerRequest ?? Number.POSITIVE_INFINITY
   const builtins = kept.filter((candidate) => candidate.source === 'builtin').length
   let room = cap - builtins
   const items: ToolTableItem[] = []

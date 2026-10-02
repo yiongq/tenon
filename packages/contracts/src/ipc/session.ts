@@ -224,12 +224,15 @@ export const sessionSelectModel = defineRoute('session.selectModel', {
   response: providerWriteResultSchema,
 })
 
-/** The choice in force for this session, by the five layers (01 修补 6「五层解析」). */
+/**
+ * The choice in force for this session, by the five layers (01 修补 6「五层解析」). M6 02 修补 2 adds
+ * `probed` to `capabilitySource`: a custom vendor's row that passed its probe.
+ */
 export const sessionModelChoiceResponse = z.object({
   providerId: providerIdSchema,
   modelId: modelIdSchema,
   effort: effortSchema.nullable(),
-  capabilitySource: z.enum(['builtin', 'user', 'synthesized']),
+  capabilitySource: z.enum(['builtin', 'user', 'synthesized', 'probed']),
 })
 export type SessionModelChoice = z.infer<typeof sessionModelChoiceResponse>
 

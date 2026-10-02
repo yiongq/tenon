@@ -17,7 +17,8 @@ import type { CommandShell } from '../tools/builtin/bash.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { SessionEvent } from './events.js'
 
-export type CapabilitySource = 'builtin' | 'user' | 'synthesized'
+/** M6, 02 修补 2: `probed` is a custom vendor's row that passed its probe (§运行时「行标记」). */
+export type CapabilitySource = 'builtin' | 'user' | 'synthesized' | 'probed'
 
 export interface ModelChoice {
   readonly providerId: ProviderId
@@ -30,6 +31,11 @@ export interface RunConnector {
   // desktop 的 run-assembly.ts 实现
   /** 同步、不读密钥：同批写 session/model_selected 时用（§执行日志与恢复表 同批规则 2、3） */
   endpointOrigin(providerId: ProviderId): string | null
+  /**
+   * M6, 02 修补 4 (T13): at most this many tools in one request for this provider — the
+   * definition's `maxToolsPerRequest`. Synchronous, reads no secret; absent or null = no cap by count.
+   */
+  toolsPerRequest?(providerId: ProviderId): number | null
   /** Pure current-config target for paused search approval, without reading credentials. */
   searchTarget?(
     providerId: ProviderId,
@@ -62,7 +68,8 @@ export interface RunAssembly {
   readonly capabilitySource: CapabilitySource
   readonly endpointOrigin: string
   readonly maxTokens: number
-  readonly toolsWithheld: 'provider-text-only' | null // Ollama 范围规则（A14）；值与 ToolsWithheldPayload.reason 同名
+  /** Ollama 范围规则（A14）；M6 02 修补 3：公网自定义实例没通过探测的行为 'not-probed'。值与 ToolsWithheldPayload.reason 同名 */
+  readonly toolsWithheld: 'provider-text-only' | 'not-probed' | null
   readonly search: SearchBackend | null // Run 开始就建好；null 即 no-search-backend（§搜索与抓取）
   readonly mcpSources: readonly McpToolSource[] // 阶段 2 只有 kernel 测试的 Everything 夹具（H4）
   provider(): Provider // 缺 key、主机不符抛 ProviderConfigMissingError

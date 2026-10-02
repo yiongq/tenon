@@ -398,6 +398,19 @@ describe('what the connector adds for the loop', () => {
     expect(origins[ZHIPU_PROVIDER_ID]).toBe('https://open.bigmodel.cn')
   })
 
+  it('caps tools per request from the definition: zhipu 128, anthropic and ollama none (M6 §对 02 的修补 4)', () => {
+    const connector = createRunConnector({
+      host: createMemoryHost(),
+      providers: registry(),
+      env: {},
+      log: () => {},
+    })
+    expect(connector.toolsPerRequest?.(ZHIPU_PROVIDER_ID)).toBe(128)
+    expect(connector.toolsPerRequest?.(ANTHROPIC_PROVIDER_ID)).toBeNull()
+    expect(connector.toolsPerRequest?.(OLLAMA_PROVIDER_ID)).toBeNull()
+    expect(connector.toolsPerRequest?.('custom-unregistered')).toBeNull()
+  })
+
   it('answers endpointOrigin from config.json before any assembly, and follows each write (s9-spec-2)', async () => {
     // A resume after a restart writes its model_selected from this synchronous read before its
     // assemble runs: it must name the configured host, not the definition's default (§续跑

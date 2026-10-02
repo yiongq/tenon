@@ -23,6 +23,7 @@ import {
   OLLAMA_DEFAULT_API_KEY,
   OLLAMA_DEFAULT_BASE_URL,
   ProviderAlreadyRegisteredError,
+  WIRE_MODEL_FIELDS,
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROVIDER_ID,
   anthropicDefinition,
@@ -31,10 +32,13 @@ import {
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
+  encodeAnthropicMessages,
   encodeOpenAIChat,
   modelWireHash,
   ollamaDefinition,
   OpenAIChatProvider,
+  checksThinkingPrefix,
+  customVendorDefinition,
   registerBuiltinProviders,
   zhipuDefinition,
 } from '../../src/index.js'
@@ -42,6 +46,7 @@ import type {
   ContentBlock,
   InternalMessage,
   ModelInfo,
+  ProbeSnapshot,
   ProviderDefinition,
   ProviderRegistry,
   StopReason,
@@ -121,6 +126,36 @@ const acmeDefinition: ProviderDefinition = {
     })
   },
 }
+
+/**
+ * M6 验收 2: the same path once more for two custom-vendor instances, one per wire — pure data through
+ * the generic factory, no definition file. Their rows passed a probe, so they carry tools.
+ */
+const PASSED: ProbeSnapshot = {
+  outcome: 'passed',
+  reason: null,
+  probedAt: NOW,
+  reasoningField: 'reasoning_content',
+  maxTokensField: 'max_tokens',
+  usageSeen: true,
+  responseModelId: null,
+  unknownFields: [],
+}
+const INSTANCE_ROW = { id: 'vendor-model', contextLimit: 131_072, maxOutputTokens: 8192 }
+const OPENAI_INSTANCE = customVendorDefinition({
+  id: 'custom-1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed',
+  wire: 'openai-chat',
+  baseURL: 'https://api.vendor.test/v1',
+  keyRequired: true,
+  models: [{ ...INSTANCE_ROW, probe: PASSED }],
+})
+const ANTHROPIC_INSTANCE = customVendorDefinition({
+  id: 'custom-6ec0bd7f-11c0-43da-975e-2a8ad9ebae0b',
+  wire: 'anthropic-messages',
+  baseURL: 'https://api.vendor.test/anthropic',
+  keyRequired: true,
+  models: [{ ...INSTANCE_ROW, probe: { ...PASSED, reasoningField: null, maxTokensField: null } }],
+})
 
 interface DriveCase {
   readonly name: string
@@ -241,6 +276,40 @@ const CASES: readonly DriveCase[] = [
     usage: openAIUsage(),
     url: `${ACME_BASE_URL}/chat/completions`,
     credential: { name: 'authorization', value: `Bearer ${API_KEY}` },
+  },
+  {
+    name: 'a custom openai-chat instance (M6 验收 2)',
+    definition: OPENAI_INSTANCE,
+    frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
+    secrets: { apiKey: API_KEY },
+    config: {},
+    content: textThenCall(
+      openAIFixture.TOOL_PREAMBLE,
+      openAIFixture.TOOL_ID,
+      openAIFixture.TOOL_NAME,
+    ),
+    stop: { reason: 'tool-use', providerReason: 'tool_calls' },
+    usage: openAIUsage(),
+    url: 'https://api.vendor.test/v1/chat/completions',
+    credential: { name: 'authorization', value: `Bearer ${API_KEY}` },
+  },
+  {
+    name: 'a custom anthropic-messages instance (M6 验收 2)',
+    definition: ANTHROPIC_INSTANCE,
+    frames: anthropicFixture.ONE_TOOL_CALL_FRAMES,
+    closing: anthropicFixture.PLAIN_TEXT_FRAMES,
+    secrets: { apiKey: API_KEY },
+    config: {},
+    content: textThenCall(
+      anthropicFixture.TOOL_PREAMBLE,
+      anthropicFixture.TOOL_ID,
+      anthropicFixture.TOOL_NAME,
+    ),
+    stop: { reason: 'tool-use', providerReason: 'tool_use' },
+    usage: anthropicUsage(),
+    url: 'https://api.vendor.test/anthropic/v1/messages',
+    credential: { name: 'x-api-key', value: API_KEY },
   },
 ]
 
@@ -687,6 +756,9 @@ describe('acceptance 1 — one call path, four providers', () => {
   // The fourth provider: one `register()` call with a definition written in this file. No class,
   // no encoder, no branch anywhere in the kernel.
   registry.register(acmeDefinition)
+  // M6 验收 2: and two instances the generic factory made from data, one per wire.
+  registry.register(OPENAI_INSTANCE)
+  registry.register(ANTHROPIC_INSTANCE)
 
   for (const testCase of CASES) {
     it(`drives ${testCase.name} through the same path`, async () => {
@@ -775,8 +847,8 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(attempt?.payload['encoder']).toEqual({
         wire: testCase.definition.wire,
         // anthropic-messages 2 added the top-level cache_control, 3 the vendor-fields guard
-        // (s6-spec-2; encoder-version.test.ts).
-        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 1,
+        // (s6-spec-2); openai-chat 2 the row's maxTokensField (M6; encoder-version.test.ts).
+        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 2,
         sdk: expect.stringMatching(
           testCase.definition.wire === 'anthropic-messages'
             ? /^@anthropic-ai\/sdk@\d/
@@ -801,6 +873,8 @@ describe('acceptance 1 — one call path, four providers', () => {
       'zhipu',
       'ollama',
       ACME_ID,
+      OPENAI_INSTANCE.id,
+      ANTHROPIC_INSTANCE.id,
     ])
     // A second definition claiming an id would silently re-point every configured credential.
     expect(() => registerBuiltinProviders(registry)).toThrow(ProviderAlreadyRegisteredError)
@@ -999,6 +1073,29 @@ describe('builtin provider definitions', () => {
       ;(row.requestParams as Record<string, unknown>)['thinking'] = 'off'
     }).toThrow(TypeError)
     expect(zhipuDefinition.builtinModels[0]?.contextLimit).toBe(limit)
+  })
+
+  it('hands out models a caller cannot edit through an instance provider, on both wires (M6 §实例描述与通用工厂)', async () => {
+    for (const definition of [OPENAI_INSTANCE, ANTHROPIC_INSTANCE]) {
+      const provider = definition.create({
+        network: fakeNetwork([]),
+        clock: { now: () => NOW, setTimeout: () => () => undefined },
+        config: {},
+        secrets: { apiKey: API_KEY },
+      })
+      // oxlint-disable-next-line no-await-in-loop -- one instance at a time
+      const models = await provider.models()
+      expect(models).toEqual(definition.builtinModels)
+      models.pop()
+      // oxlint-disable-next-line no-await-in-loop -- one instance at a time
+      const row = (await provider.models())[0]
+      if (row === undefined) throw new Error(`${definition.id} has no row`)
+      expect(row).toEqual(definition.builtinModels[0])
+      expect(() => {
+        row.contextLimit = 1
+      }).toThrow(TypeError)
+      expect(definition.builtinModels[0]?.contextLimit).toBe(INSTANCE_ROW.contextLimit)
+    }
   })
 })
 
@@ -1286,6 +1383,89 @@ describe('the model rows spec 02 changes', () => {
     ])
   })
 })
+
+describe('the definition data M6 adds (§对 01 的修补 1、2)', () => {
+  it('caps zhipu at 128 tools per request and leaves anthropic and ollama uncapped (T13)', () => {
+    expect(
+      Object.fromEntries(BUILTIN_PROVIDERS.map((d) => [d.id, d.maxToolsPerRequest ?? null])),
+    ).toEqual({ anthropic: null, zhipu: 128, ollama: null })
+  })
+
+  it('writes maxTokensField on no builtin row, so every builtin body keeps max_tokens (T10)', () => {
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        expect([definition.id, model.id, Object.hasOwn(model, 'maxTokensField')]).toEqual([
+          definition.id,
+          model.id,
+          false,
+        ])
+      }
+    }
+  })
+
+  it('M6 不变量 17 (builtin and frozen rows): Opus 5.5 and Fable 5.1 check the prefix, by data and by id', () => {
+    const flagged = BUILTIN_PROVIDERS.flatMap((definition) =>
+      definition.builtinModels
+        .filter((model) => Object.hasOwn(model, 'checksThinkingPrefix'))
+        .map((model) => [definition.id, model.id, model.checksThinkingPrefix]),
+    )
+    expect(flagged).toEqual([
+      ['anthropic', 'claude-opus-5-5', true],
+      ['anthropic', 'claude-fable-5-1', true],
+    ])
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const model of definition.builtinModels) {
+        expect([model.id, checksThinkingPrefix(model)]).toEqual([
+          model.id,
+          model.id === 'claude-opus-5-5' || model.id === 'claude-fable-5-1',
+        ])
+      }
+    }
+    // A row frozen before M6 has no key: 02's rule by id alone, whatever the provider.
+    const frozen = (id: string): ModelInfo => ({ ...openAIModelRow(), id })
+    expect(checksThinkingPrefix(frozen('claude-opus-5-5'))).toBe(true)
+    expect(checksThinkingPrefix(frozen('claude-fable-5-1'))).toBe(true)
+    expect(checksThinkingPrefix(frozen('claude-sonnet-5'))).toBe(false)
+    // A row that says so is read as it says, its id notwithstanding (custom rows write false).
+    expect(
+      checksThinkingPrefix({ ...frozen('claude-opus-5-5'), checksThinkingPrefix: false }),
+    ).toBe(false)
+    expect(checksThinkingPrefix({ ...frozen('glm-5.3'), checksThinkingPrefix: true })).toBe(true)
+  })
+
+  it('M6 不变量 5 (builtin rows): checksThinkingPrefix moves no byte, promptHash or modelWireHash', () => {
+    // §对 02 的修补 6: the key is not a wire field, so the rows that write it encode and hash as they
+    // did before M6, and an attempt recorded then still re-verifies (02 不变量 33).
+    expect((WIRE_MODEL_FIELDS as readonly string[]).includes('checksThinkingPrefix')).toBe(false)
+    for (const definition of BUILTIN_PROVIDERS) {
+      const encode =
+        definition.wire === 'anthropic-messages' ? encodeAnthropicMessages : encodeOpenAIChat
+      for (const model of definition.builtinModels) {
+        const { checksThinkingPrefix: _flag, ...before } = model
+        const encoded = (row: ModelInfo) =>
+          encode(
+            { model: row, messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+            definition.id,
+          )
+        const now = encoded(model)
+        const then = encoded(before)
+        expect([model.id, modelWireHash(model), now.promptHash, now.body]).toEqual([
+          model.id,
+          modelWireHash(before),
+          then.promptHash,
+          then.body,
+        ])
+      }
+    }
+  })
+})
+
+/** A row as 02 froze it: zhipu's first, no M6 key. */
+function openAIModelRow(): ModelInfo {
+  const row = zhipuDefinition.builtinModels[0]
+  if (row === undefined) throw new Error('zhipu has no rows')
+  return { ...row }
+}
 
 function defaultOf(definition: ProviderDefinition, name: string): string | undefined {
   return definition.configKeys.find((key) => key.name === name)?.default

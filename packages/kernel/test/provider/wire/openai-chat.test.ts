@@ -6,7 +6,11 @@
  * later edit that renames a wire key has to change it here too.
  */
 import { describe, expect, it } from 'vitest'
-import { ProviderInvalidArgumentError, encodeOpenAIChat } from '../../../src/index.js'
+import {
+  ProviderInvalidArgumentError,
+  encodeOpenAIChat,
+  requestSnapshot,
+} from '../../../src/index.js'
 import type { ContentBlock, ProviderRequest } from '../../../src/index.js'
 import {
   PNG_DATA,
@@ -109,6 +113,25 @@ describe('encodeOpenAIChat', () => {
       stream: true,
       messages: [{ role: 'user', content: 'hello' }],
     })
+  })
+
+  it('writes the output limit under the key the row names (M6 §对 01 的修补 3, T10)', () => {
+    const model = openAIModel({ usageNeedsOptIn: false, maxTokensField: 'max_completion_tokens' })
+    expect(bodyOf(requestOf(model))).toEqual({
+      model: 'glm-test',
+      max_completion_tokens: 4096,
+      stream: true,
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+    // The request's own limit wins as it does for max_tokens, and the snapshot records it.
+    const limited: ProviderRequest = { ...requestOf(model), maxTokens: 300 }
+    expect(bodyOf(limited)).toMatchObject({ max_completion_tokens: 300 })
+    expect(requestSnapshot(limited).maxTokens).toBe(300)
+    // Naming 01's own key is 01's body.
+    const plain = openAIModel({ usageNeedsOptIn: false })
+    expect(bodyOf(requestOf({ ...plain, maxTokensField: 'max_tokens' }))).toEqual(
+      bodyOf(requestOf(plain)),
+    )
   })
 
   it('asks for usage only when the model needs the opt-in', () => {
@@ -410,14 +433,15 @@ describe('encodeOpenAIChat and requestParams', () => {
   })
 
   it('refuses to let requestParams take over a key this wire reserves', () => {
-    // A vendor that spells the output limit differently sets its own key. `stream_options` is here
-    // because `include_usage: false` on a `usageNeedsOptIn` model would silently empty the usage of
-    // every attempt fact; `max_tokens`, `temperature` and `tools` because the request snapshot and
-    // `toolDefinitionsHash` are taken over them.
+    // `stream_options` is here because `include_usage: false` on a `usageNeedsOptIn` model would
+    // silently empty the usage of every attempt fact; `max_tokens`, `temperature` and `tools` because
+    // the request snapshot and `toolDefinitionsHash` are taken over them; `max_completion_tokens`
+    // because the row's `maxTokensField` writes it (M6 §对 01 的修补 3).
     for (const key of [
       'model',
       'messages',
       'max_tokens',
+      'max_completion_tokens',
       'stream',
       'stream_options',
       'temperature',

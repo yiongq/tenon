@@ -94,8 +94,10 @@ const WIRE = 'openai-chat'
  * the SDK no per-request timeout, and no `x-stainless-helper-method`, which only the SDK's helpers
  * set. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot rewrite them. Re-read
  * this list with every SDK pin.
+ *
+ * Exported for a custom vendor's model list, which goes out under the same list (M6 §列表与上限).
  */
-const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+export const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
   names: Object.freeze([
     'content-type',
     'authorization',
@@ -115,13 +117,15 @@ const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
  * 1 is spec 02's encoder — `reasoning_effort`, the vendor blocks and the trailing-user rule; add one
  * with every change to what it encodes, and a row to test/provider/wire/encoder-version.test.ts.
  * Recording a decision for the vendor fields of text and tool-request blocks (s6-spec-2, owner
- * 2026-09-27) changed no byte — this wire never sent them — so the version stayed at 1.
+ * 2026-09-27) changed no byte — this wire never sent them — so the version stayed at 1. Version 2
+ * writes the output limit under the row's `maxTokensField` (M6 §对 01 的修补 3, T10); a row without
+ * the key is still version 1's bytes (M6 不变量 5).
  * Exported for the attempt re-check (02 不变量 33), which covers only the records this build's
  * encoder wrote.
  */
 export const OPENAI_CHAT_ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
-  version: 1,
+  version: 2,
   sdk: `openai@${SDK_VERSION}`,
 })
 
@@ -134,8 +138,8 @@ const MEDIA_TYPES: readonly string[] = ['image/png', 'image/jpeg', 'image/gif', 
  * a non-stream response shape the adapter's whole event loop cannot read, and `include_usage: false`
  * on a `usageNeedsOptIn` model would silently empty the `usage` of every `provider/attempt_completed`
  * fact. `max_tokens`, `tools` and `temperature` are what the request snapshot and
- * `toolDefinitionsHash` are taken over. A vendor that spells the output limit differently sets its
- * own key (this wire's own `max_completion_tokens`, say), which is a passthrough like any other.
+ * `toolDefinitionsHash` are taken over. `max_completion_tokens`, the other spelling of the output
+ * limit, is written from `maxTokensField` (M6 §对 01 的修补 3, T10).
  *
  * `thinking` is deliberately NOT here: this encoder never writes it, and `requestParams` is the
  * seam the spec chose for zhipu's non-OpenAI thinking parameter (§内置 provider). `system` is
@@ -145,6 +149,7 @@ const RESERVED_KEYS: readonly string[] = [
   'model',
   'messages',
   'max_tokens',
+  'max_completion_tokens',
   'stream',
   'stream_options',
   'temperature',
@@ -211,7 +216,8 @@ export function encodeOpenAIChat(req: ProviderRequest, providerId: ProviderId): 
     // The WIRE id, never `canonicalId`: the endpoint only knows its own name.
     model: req.model.id,
     messages,
-    max_tokens: effectiveMaxTokens(req),
+    // M6 §对 01 的修补 3 (T10): the key the row names, in max_tokens' place; absent = 01's key.
+    [req.model.maxTokensField ?? 'max_tokens']: effectiveMaxTokens(req),
     stream: true,
   }
   // Without the opt-in this wire reports no usage at all; with it, the usage arrives in a

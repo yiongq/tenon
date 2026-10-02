@@ -31,9 +31,11 @@
 import type { HostAdapter, HostIdentity } from '../host/adapter.js'
 import { createMemoryHost } from '../host/memory.js'
 import { absolutePath } from '../host/path.js'
+import type { PolicyState } from '../host/policy.js'
 import { environmentText } from '../loop/environment.js'
 import type { SessionEvent } from '../loop/events.js'
 import type { RunEndReason } from '../loop/terminal.js'
+import { customVendorDefinition } from '../provider/definitions/custom.js'
 import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
 import { canonicalHash, systemHash } from '../provider/wire/shared.js'
 import { createSessionService } from '../session/service.js'
@@ -106,6 +108,8 @@ import {
   TapeStaleIncarnationError,
 } from '../tape/store.js'
 import { createTape } from '../tape/tape.js'
+import { PRODUCT_BUILTINS, builtinCandidates } from '../tools/registry.js'
+import { openToolTable, toolTableFacts } from '../tools/table.js'
 import { createCounterIds } from './fake-ids.js'
 import { createScriptedProvider, scriptedTurn, stopEvent } from './scripted-provider.js'
 import type { ScriptedProvider } from './scripted-provider.js'
@@ -722,6 +726,9 @@ function pendingOf(fixture: Fixture, sessionId?: string): Promise<PendingApprova
 // -------------------------------------------------------------------------------------------------
 // Session-service fixtures — a scripted provider, one fixed model, one fixed system prompt and tool
 // -------------------------------------------------------------------------------------------------
+
+/** A custom-vendor instance id (M6 §实例 id, T1). */
+const CUSTOM_INSTANCE_ID = 'custom-1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed'
 
 /** The provider id the scripted provider answers to; the encoder refuses a foreign model. */
 const SCRIPT_PROVIDER_ID = 'anthropic'
@@ -3461,6 +3468,75 @@ export function tapeConformanceCases(
           [1, 'glm-5.3'],
         ],
         'the two choices in order',
+      )
+    },
+  )
+
+  // ----- M6 验收 1: a custom instance's id inside a tool table key ---------------------------------
+
+  add(
+    'M6 不变量 1: a table opened on a custom instance is keyed by its id and kept as written',
+    async (open) => {
+      const fixture = await open()
+      await appendAll(fixture, [startEntry(fixture, fixture.incarnationId)])
+      const instance = customVendorDefinition({
+        id: CUSTOM_INSTANCE_ID,
+        wire: 'openai-chat',
+        baseURL: 'https://api.vendor.test/v1',
+        keyRequired: true,
+        models: [],
+      })
+      const policy: PolicyState = { status: 'current', version: 'm6', snapshot: { tools: [] } }
+      const table = openToolTable({
+        providerId: instance.id,
+        incarnationId: fixture.incarnationId,
+        generation: 0,
+        reason: 'first-use',
+        candidates: builtinCandidates({
+          profile: 'cowork',
+          available: (name) => PRODUCT_BUILTINS.has(name),
+          search: null,
+        }),
+        policy,
+        tenantId: TENANT.tenantId,
+        userSetting: () => null,
+        hasSearchBackend: false,
+        toolsPerRequest: instance.maxToolsPerRequest ?? null,
+      })
+      const key = `view:v1:tool_table:${fixture.incarnationId}:0:${CUSTOM_INSTANCE_ID}`
+      assertEqual(table.tableKey, key, 'the key carries the instance id as its provider segment')
+      const facts = toolTableFacts({
+        view: createTape(fixture.store).writer('view'),
+        sessionId: fixture.sessionId,
+        table,
+        policy,
+        now: fixture.at,
+      })
+      const written = await appendAll(fixture, facts)
+      assertEqual(
+        written.map((result) => result.created),
+        facts.map(() => true),
+        'the specs and the table are written',
+      )
+      const stored = (await readAll(fixture.store, fixture.sessionId)).find(
+        (entry) => entry.provenanceKey === key,
+      )
+      if (stored === undefined) fail('the table is not found by its key')
+      assertEqual(stored.name, 'view/tool_table', 'the fact under that key is the table')
+      assertEqual(stored.payload['providerId'], CUSTOM_INSTANCE_ID, 'its provider is the instance')
+      assertEqual(
+        (stored.payload['excluded'] as { originalName: string; code: string }[]).map((entry) => [
+          entry.originalName,
+          entry.code,
+        ]),
+        [['WebSearch', 'no-search-backend']],
+        'an instance has no search backend (Q10)',
+      )
+      const again = await appendAll(fixture, facts)
+      assertEqual(
+        again.map((result) => result.created),
+        facts.map(() => false),
+        'the same table again is idempotent',
       )
     },
   )

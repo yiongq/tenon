@@ -148,13 +148,16 @@ export function thinkingIsOn(req: ProviderRequest): boolean {
 /**
  * The ModelInfo fields encode() reads (spec 02, 01 修补 7) — and therefore the only ones
  * `modelWireHash` covers. An encoder that starts reading another field adds it here in the same
- * change; a test watches encode() through a Proxy to hold both wires to it.
+ * change; a test watches encode() through a Proxy to hold both wires to it. `maxTokensField` is
+ * M6's (§对 02 的修补 6): a row without it hashes as before, since an absent key is not picked.
+ * `checksThinkingPrefix` is not here: encode() never reads it.
  */
 export const WIRE_MODEL_FIELDS = Object.freeze([
   'id',
   'providerId',
   'canonicalId',
   'maxOutputTokens',
+  'maxTokensField',
   'thinkingPreservationFormat',
   'reasoningEchoField',
   'usageNeedsOptIn',

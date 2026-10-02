@@ -94,8 +94,10 @@ const WIRE = 'anthropic-messages'
  * `ANTHROPIC_CUSTOM_HEADERS` line cannot rewrite them; `anthropic-beta` is the kernel's to decide and
  * 02 decides none. `x-stainless-helper` / `-helper-method` are left out: the SDK sends them only for
  * objects its own helpers built, and encode() builds plain ones. Re-read this list with every SDK pin.
+ *
+ * Exported for a custom vendor's model list, which goes out under the same list (M6 §列表与上限).
  */
-const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+export const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
   names: Object.freeze([
     'content-type',
     'x-api-key',

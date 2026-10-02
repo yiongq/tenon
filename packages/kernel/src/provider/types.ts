@@ -73,6 +73,17 @@ export interface ModelInfo {
    * WIRE_MODEL_FIELDS; a definition's first row (the new-user fallback) is never `'more'`.
    */
   listing?: 'main' | 'more'
+  /**
+   * M6, 01 修补 1 (T10): which key carries the output limit. Absent = `'max_tokens'`, 01's
+   * behaviour; only the openai-chat wire reads it, and an anthropic-messages row never writes it.
+   */
+  maxTokensField?: 'max_tokens' | 'max_completion_tokens'
+  /**
+   * M6, 01 修补 1 (Q2): whether this model checks the thinking blocks it produced as a prefix when
+   * they are echoed (02 §压缩时机与估算). Absent = 02's rule by id alone (§运行时「前缀检查」).
+   * encode() never reads it, so it is not in WIRE_MODEL_FIELDS.
+   */
+  checksThinkingPrefix?: boolean
 }
 
 /**
@@ -245,6 +256,11 @@ export interface ProviderDefinition {
    * when the provider is built. The anthropic-messages wire does not read it.
    */
   finishReasons?: Readonly<Record<string, StopReason>>
+  /**
+   * M6, 01 修补 2 (T13): at most this many tools in one request, as data. Absent = no cap by
+   * count. The kernel reads it only through `RunConnector.toolsPerRequest`.
+   */
+  maxToolsPerRequest?: number
   /** Host capabilities enter only through here. */
   create(args: {
     network: HostNetwork

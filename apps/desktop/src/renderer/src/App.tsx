@@ -43,6 +43,7 @@ export function App(): JSX.Element {
     providerConfig: {},
     defaultModelByProfile: {},
     lastWorkspaceFolders: [],
+    customVendors: [],
   })
   /** Until `session.latest` answers, nothing can be sent (spec 02 §启动恢复与发送防护, B15). */
   const [restoring, setRestoring] = useState(() => !window.tenon.startsNewChat)

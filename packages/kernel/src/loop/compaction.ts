@@ -13,8 +13,16 @@ export const COMPACT_CHARS_PER_TOKEN = 4
 export function compactionThreshold(model: ModelInfo): number {
   return Math.min(Math.floor(model.contextLimit * COMPACT_RATIO), COMPACT_ABS_CAP)
 }
+/**
+ * Whether the model checks its echoed thinking blocks as a prefix (02 §压缩时机与估算). M6 §运行时
+ * 「前缀检查」: the row says so (`ModelInfo.checksThinkingPrefix`); a row without the key — every row
+ * frozen on a Tape before M6 — falls back to 02's rule by id alone, whatever its `providerId`.
+ */
 export function checksThinkingPrefix(model: ModelInfo): boolean {
-  return model.id === 'claude-opus-5-5' || model.id === 'claude-fable-5-1'
+  return (
+    model.checksThinkingPrefix ??
+    (model.id === 'claude-opus-5-5' || model.id === 'claude-fable-5-1')
+  )
 }
 export function summaryThinking(model: ModelInfo): Pick<ProviderRequest, 'thinking' | 'effort'> {
   switch (model.thinkingSpec?.mode) {

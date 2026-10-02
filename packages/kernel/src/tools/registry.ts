@@ -6,11 +6,11 @@
  * connects to (only the kernel tests' Everything fixture, H4). What a provider runs on its own side is
  * neither modelled nor sent.
  *
- * `ToolTableItem` and the reserved builtin server id were declared in plan step 9; the naming rule,
- * the per-request cap and the candidate set are plan step 10's.
+ * `ToolTableItem` and the reserved builtin server id were declared in plan step 9; the naming rule
+ * and the candidate set are plan step 10's. The per-request cap is the definition's
+ * `maxToolsPerRequest`, read through `RunConnector.toolsPerRequest` (M6 §点名 (g), T13).
  */
-import { ZHIPU_PROVIDER_ID } from '../provider/definitions/zhipu.js'
-import type { ProviderId, ToolSpec } from '../provider/types.js'
+import type { ToolSpec } from '../provider/types.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import { sha256Hex } from '../tape/hash.js'
 import type { ToolOrigin } from '../tape/entry.js'
@@ -45,15 +45,6 @@ export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToo
   'Bash',
   'Glob',
   'Grep',
-])
-
-/**
- * How many tools one request may carry, by provider (H4; 暂定). Zhipu takes 128. Anthropic is not
- * capped by count (400 only past 10 000 deferred tools or 4 MB of definitions); a provider phase 2
- * sends no tools to needs no entry. Builtin tools are never trimmed.
- */
-export const TOOLS_PER_REQUEST: ReadonlyMap<ProviderId, number> = new Map([
-  [ZHIPU_PROVIDER_ID, 128],
 ])
 
 /** What a provider name must look like: the intersection of Zhipu's and Anthropic's rules (H4). */

@@ -219,6 +219,8 @@ export const zhipuDefinition: ProviderDefinition = {
   // Spec 02, 01 修补 5 (A12, H10): the two finish_reason values this vendor adds. `network_error` is
   // not declared: it stays `unknown` with its raw value in providerReason, and the loop resends.
   finishReasons: FINISH_REASONS,
+  // M6 §对 01 的修补 2 (T13): 02's H4 cap, moved here from the kernel's former TOOLS_PER_REQUEST.
+  maxToolsPerRequest: 128,
   create(args: {
     network: HostNetwork
     clock: Pick<HostClock, 'now' | 'setTimeout'>

@@ -120,6 +120,8 @@ const MODELS: readonly ModelInfo[] = frozenModels([
       samplingDefaultsOnly: true,
       forcedToolChoice: false,
     },
+    // M6 §运行时「前缀检查」: the data 02's id rule stood for; encode() never reads it.
+    checksThinkingPrefix: true,
     pricing: { inputPerMTok: 4, outputPerMTok: 20, cacheReadPerMTok: 0.2, cacheWritePerMTok: 5 },
   },
   {
@@ -224,6 +226,8 @@ const MODELS: readonly ModelInfo[] = frozenModels([
       samplingDefaultsOnly: true,
       forcedToolChoice: false,
     },
+    // M6 §运行时「前缀检查」, as on Opus 5.5.
+    checksThinkingPrefix: true,
     pricing: { inputPerMTok: 10, outputPerMTok: 50, cacheReadPerMTok: 0.25 },
   },
 ])

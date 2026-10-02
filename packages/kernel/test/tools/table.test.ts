@@ -4,7 +4,13 @@
  * which facts record it — is test/loop/tool-table.test.ts.
  */
 import { describe, expect, it } from 'vitest'
-import { EMPTY_POLICY, ZHIPU_PROVIDER_ID, canonicalJson, sha256Hex } from '../../src/index.js'
+import {
+  EMPTY_POLICY,
+  ZHIPU_PROVIDER_ID,
+  canonicalJson,
+  sha256Hex,
+  zhipuDefinition,
+} from '../../src/index.js'
 import type { McpConnection, PolicyState, ToolSpec } from '../../src/index.js'
 import { BUILTIN_TOOL_NAMES } from '../../src/tools/builtin/index.js'
 import { mcpCandidates } from '../../src/tools/mcp-source.js'
@@ -37,6 +43,7 @@ function open(over: Partial<OpenTableQuery> & Pick<OpenTableQuery, 'candidates'>
     tenantId: 'tenant',
     userSetting: () => null,
     hasSearchBackend: true,
+    toolsPerRequest: null,
     ...over,
   })
 }
@@ -156,12 +163,16 @@ describe('opening a table (§开表与排除)', () => {
     expect(new Set(table.excluded.map((entry) => entry.code))).toEqual(new Set(['policy']))
   })
 
-  it('caps Zhipu at 128 tools, builtin ones first, and does not cap Anthropic', () => {
+  it('caps a request at the cap it is given, builtin ones first, and caps nothing without one (M6 §对 02 的修补 4)', () => {
     const connectors = Array.from({ length: 130 }, (_, i) =>
       connectorTool('fixture', `tool_${String(i).padStart(3, '0')}`),
     )
     const builtins = builtinCandidates({ profile: 'cowork', available: () => true, search: null })
-    const zhipu = open({ providerId: ZHIPU_PROVIDER_ID, candidates: [...connectors, ...builtins] })
+    const zhipu = open({
+      providerId: ZHIPU_PROVIDER_ID,
+      candidates: [...connectors, ...builtins],
+      toolsPerRequest: zhipuDefinition.maxToolsPerRequest ?? null,
+    })
     expect(zhipu.items).toHaveLength(128)
     for (const name of BUILTIN_TOOL_NAMES.filter((n) => n !== 'WebSearch')) {
       expect(zhipu.items.map((item) => item.name)).toContain(name)

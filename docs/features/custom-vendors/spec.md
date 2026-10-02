@@ -5,7 +5,7 @@ Kind: features
 Owner: 裁决由 owner 拍板（2026-10-01 第一轮，2026-10-02 第二到四轮；13 题都选推荐项，T1–T13 照写，裁决卡、选择记录与厂商调研原文在仓库外 `../tenon-notes/2026-10-02-m6-custom-vendors/`）；起草在 Claude Code（2026-10-02）
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层、§desktop 接线；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2、6、7 小节立的成员）、§主进程与 kernel 的循环接口、§02 的 Tape 事实、§会话形态、工作区与模型选择（表外模型与不发工具）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§上下文管理、§搜索与抓取、§界面范围。只增不改，全文见 §对 01 的修补、§对 02 的修补；不属纯粹只增的在 §点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（厂商分档：本 spec 是「能接上」一档的交付物，ADR-003:48）
-Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只取描述（readConfig 剔除实例的 providerConfig）、续跑按冻结的 capabilitySource 发工具、key 保存在写完钥匙串后计数、openai-chat 实例请求用量、没通过的 anthropic 行照回传签名、百炼新加坡补 Anthropic 地址、订阅地址事实更正并加开放问题 3、实例出网不跟随重定向、内置厂商按官方 https 源判、开发默认不改 TENON_PROVIDER、点名补 (g) 与测试接缝）；同日第二轮评审修订（前缀检查缺省照 02 只按 id、自定义行写 false；被拒地址改用 `refused`（码与源）并覆盖实例；探测中止回 `aborted`；assemble 按与 key 同一次读重造实例行；测试接缝只改投到回环、不继承、要 `TENON_DEV_ENV=off`；金样改法；模型行 id 去重；已知键加 `name`；百炼 429 限流探测记 `rate-limit`；订阅条款依据更正并补方舟 Agent Plan；方舟 key 链接定下，开放问题 1 收窄；.env.example 与评测同模型列的实际后果）；同日 owner 定三题（Q15 别家订阅地址第一版不拦；Q16 开发期日常对话走内置智谱，`TENON_PROVIDER=zhipu` 默认生效；Q17 评测同模型列照算费用），撤掉开放问题 3，过目接受 §推出的读法，Status 改 ready
+Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只取描述（readConfig 剔除实例的 providerConfig）、续跑按冻结的 capabilitySource 发工具、key 保存在写完钥匙串后计数、openai-chat 实例请求用量、没通过的 anthropic 行照回传签名、百炼新加坡补 Anthropic 地址、订阅地址事实更正并加开放问题 3、实例出网不跟随重定向、内置厂商按官方 https 源判、开发默认不改 TENON_PROVIDER、点名补 (g) 与测试接缝）；同日第二轮评审修订（前缀检查缺省照 02 只按 id、自定义行写 false；被拒地址改用 `refused`（码与源）并覆盖实例；探测中止回 `aborted`；assemble 按与 key 同一次读重造实例行；测试接缝只改投到回环、不继承、要 `TENON_DEV_ENV=off`；金样改法；模型行 id 去重；已知键加 `name`；百炼 429 限流探测记 `rate-limit`；订阅条款依据更正并补方舟 Agent Plan；方舟 key 链接定下，开放问题 1 收窄；.env.example 与评测同模型列的实际后果）；同日 owner 定三题（Q15 别家订阅地址第一版不拦；Q16 开发期日常对话走内置智谱，`TENON_PROVIDER=zhipu` 默认生效；Q17 评测同模型列照算费用），撤掉开放问题 3，过目接受 §推出的读法，Status 改 ready；同日实现第 4 步时就地修订：§合成 的 `maxTokensField` 不看 `outcome`（旧：只给通过的行写；改因：与验收 16 矛盾，没通过的行退回仅文字时对拒收 `max_tokens` 的端点每次 400）；§列表与上限 补响应头 30 秒、正文 8 MiB 两个上限（旧：没写，永不应答的 /models 只能等 signal）；§探测「何时、走哪条路」检查器按 SSE 事件读（与 openai SDK 解码器同）、读到 `[DONE]` 即停、读的字节不超过适配器读到的、非 2xx 的响应体不分流，一个事件（旧：一行）解析不了就跳过；§不认识的字段 的「每个 SSE 块」改为「每个 SSE 事件」（旧：按 `data:` 行读，未写停读与界限；改因：解码器按整个事件解析，多行 data 与 BOM 按行读会误判；读过 `[DONE]` 或读过适配器的检查器，在端点不关流、空闲看门狗撤流或错误体不结束时会卡住探测与实例的探测锁）；§两步 T10 的 `unsupported_parameter` 一支加「且 `detail` 含 `max_tokens`」，§推出的读法 22 同改（旧：只看 `providerCode` 为 `unsupported_parameter`；改因：OpenAI 对任何参数都回这个码，别的参数（如 `tools`）的 `unsupported_parameter` 会让 ① 重发、快照记 `max_completion_tokens`，而 §合成 不看 `outcome`，没通过的行就改发端点从没认过的 `max_completion_tokens`）；§结果与原因码 表下加一条：anthropic-messages 线 ① 报 `malformed_tool_input`（tool_use 的 input 不是 JSON 对象）记 `bad-tool-call`（旧：没写，按表里的 `unknown` 落到 `service`；改因：同一种模型错误在 openai-chat 线是解码器丢掉调用、记 `bad-tool-call`，记 `service` 会把用户引去查网络）；§两步 T10 末句改为快照的字段只在 ① 回答了时改写（重发过记 `max_completion_tokens`，没重发且 ① 没报错记 `max_tokens`，其余沿用该行原快照的值、没有原快照记 `max_tokens`）（旧：「重发过就在快照记 max_completion_tokens，否则记 max_tokens」；改因：§合成 不看 `outcome`，学到 `max_completion_tokens` 的行重新探测时 ① 遇上 429、5xx、断网或发出之前就失败，会被记回 `max_tokens`，此后仅文字的请求每次 400）；§结果与原因码 表下加一条：① 折叠出的轮编不进 ②（canonicalJson 拒收工具输入或厂商块）时不发 ②、记 `bad-tool-call`（旧：没写，编码的报错漏出 `probeModel`，它便在没有中止时 reject、不造快照，违背「只在中止时 reject」）
 
 ## 背景与问题
 
@@ -252,7 +252,7 @@ export const customVendorSchema = z.object({
 | 输出 | `max_output_tokens`、`max_completions_tokens`、`top_provider.max_completion_tokens`，同上 | DeepSeek；千帆；OpenRouter |
 
 - 取到的上限只预填，用户可改。上下文和输出两样都要有正整数才能保存这一行；没有就不能保存，不落到 01 spec:708 的 128000 / 4096（T6）。
-- 列表取不到（404、非 JSON、没有 `data`）回 `unsupported`，界面提示手填。方舟文档没写数据面的 /models（只在控制面、Access Key 鉴权的 ListFoundationModels 里列模型；volcengine.com/docs/82379/1262847），取不到时照此回 `unsupported`。
+- 列表取不到（404、非 JSON、没有 `data`）回 `unsupported`，界面提示手填。响应头 30 秒内没到回 `service`（`status: null`）；正文超过 8 MiB 就停读、回 `unsupported`；正文中途停顿照实例请求的字节级空闲上限；应用退出时经 `signal` 中止。方舟文档没写数据面的 /models（只在控制面、Access Key 鉴权的 ListFoundationModels 里列模型；volcengine.com/docs/82379/1262847），取不到时照此回 `unsupported`。
 - 菜单里不给自定义实例手填模型 ID：模型只在设置卡里加，带上限（推出：T6）。`provider.select`、`session.selectModel` 对实例里没有的模型 id 返回 `unknown-model`（这个码在 contracts 里保留着，provider.ts:119-125）；内置厂商的手填照 02 不变。
 
 ### 合成（`customModelInfo`）
@@ -272,7 +272,7 @@ export const customVendorSchema = z.object({
 | `reasoningEchoField` | openai-chat 且有 `reasoningField` 时取它；否则不写 | 不写 |
 | `usageNeedsOptIn` | openai-chat：true（发 `stream_options.include_usage`，用量仍只读块级 `usage`，即 T10 的标准路径；百炼、方舟、千帆、OpenAI、腾讯 TokenHub 的文档写明流式用量只在开了它时给，Kimi 不开时用量在非标准的 `choices[0].usage`，DeepSeek、智谱、OpenRouter 开了照收；推出）；anthropic-messages：false（该线编码器不读它） | 同左 |
 | `pricing`、`thinkingSpec`、`requestParams`、`purposeKey`、`listing` | 不写（§非目标；T5；Q9） | 同左 |
-| `maxTokensField`（新增） | 快照为 `'max_completion_tokens'` 时写它，否则不写（T10） | 不写 |
+| `maxTokensField`（新增） | openai-chat 线、快照为 `'max_completion_tokens'` 时写它，否则不写（T10） | 同左：这是线上的事实，不是能力，不看 `outcome` |
 | `checksThinkingPrefix`（新增） | 写 false（Q2；缺省会按 02 的 id 规则回落，§运行时「前缀检查」） | 同左 |
 
 - 「通过」只看 `probe.outcome === 'passed'`。回环、私网实例永远拿不到通过的快照（探测被拒）；手改 config.json 塞进去的也不开工具，由 §运行时 的范围规则挡住。
@@ -304,7 +304,7 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 
 - 请求走该实例自己的 Provider：`definition.create()` 之后同一个 `encode()` 与 `stream()`（推出：这样 A9、A6 的白名单、出网收口与真实请求一致）。发之前过 02 的读稳定与 key 绑定检查（apps/desktop/src/main/provider.ts:184-247）；不过就不发，结果为失败、原因 `config`。
 - 探测请求不进任何会话的 Tape，不写 `provider/attempt_completed`；不带会话内容（T4）。数据去向的确认只管会话历史（02 spec:1107），探测不触发它。
-- `network` 外包一层分流：照原样转给 `host.network.fetch`，把响应体 `tee()` 一份给检查器（只用 web 标准 API，kernel 的出网口仍只有 `HostNetwork`，01 spec:109）。检查器读 SSE 的 `data:` 行，做两件事：认出思考字段（下文 ①）、找不认识的字段（§不认识的字段）。一行解析不了就跳过，坏帧由适配器自己报。
+- `network` 外包一层分流：照原样转给 `host.network.fetch`，把响应体 `tee()` 一份给检查器（只用 web 标准 API，kernel 的出网口仍只有 `HostNetwork`，01 spec:109）。检查器按 SSE 事件读（与 openai SDK 的解码器同），读到 `[DONE]` 即停，读的字节不超过适配器读到的；非 2xx 的响应体不分流。它做两件事：认出思考字段（下文 ①）、找不认识的字段（§不认识的字段）。一个事件解析不了就跳过，坏帧由适配器自己报。
 - 同一实例同一时刻只跑一个探测，第二个回 `busy`。
 - 保存：在配置锁里写进该行的 `probe`，前提是实例与模型 id 还在、且探测读稳定时以来该实例的 `providerSettingsGeneration` 没变（期间保存或清空 key、改名、改模型、删实例都算变；保存 key 在写完钥匙串后恒计一次）。不满足就不存，应答带 `saved: false`。锁内先看 `signal.aborted`，为真不存、照下条回 `aborted`。
 - 中止的探测（应用退出、保存 key）回 `refused`、`aborted`，删除中止的回 `not-found`；都不存结果，该行原快照不动；退出时不为探测写 config.json。`probeModel` 见 `signal` 中止（含 `stop{ reason: 'aborted' }`）就以中止 reject，不造快照；`stop{aborted}` 不进 §结果与原因码 的表。
@@ -321,7 +321,7 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 
 ① 第一次请求，行用 `customModelInfo(row 去掉 probe)` 再把 `supportsToolCalling` 置真（没有历史，回传格式不影响字节；推出）。
 
-- `max_tokens` 被拒（T10）：只在 openai-chat 线、只在 ①：错误为 `invalid-request`、`status` 400，且错误点名了替代字段——`providerCode` 为 `unsupported_parameter`，或 `detail` 同时含 `max_tokens` 与 `max_completion_tokens`（OpenAI 原文 "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."）——换 `maxTokensField: 'max_completion_tokens'` 重发一次；还拒就按下表判。只提到 `max_tokens` 的 400（取值越界、超窗）不重发，记 `request-rejected`。重发过就在快照记 `max_completion_tokens`，否则记 `max_tokens`。
+- `max_tokens` 被拒（T10）：只在 openai-chat 线、只在 ①：错误为 `invalid-request`、`status` 400，且错误点名了替代字段——`providerCode` 为 `unsupported_parameter` 且 `detail` 含 `max_tokens`，或 `detail` 同时含 `max_tokens` 与 `max_completion_tokens`（OpenAI 原文 "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."）——换 `maxTokensField: 'max_completion_tokens'` 重发一次；还拒就按下表判。只提到 `max_tokens` 的 400（取值越界、超窗）不重发，记 `request-rejected`。快照的字段：重发过记 `max_completion_tokens`；没重发且 ① 没有报错（端点收下了 `max_tokens`）记 `max_tokens`；其余（发出之前失败、① 报错且没重发）沿用该行原快照的值，没有原快照记 `max_tokens`。
 - 端点拒收 `stream_options`（openai-chat 行一律带它，§合成）同样按下表记 `request-rejected`。
 - 思考字段：检查器按解码器的同一表达式取 `reasoning_content ?? reasoning`，取到非空文本时记取到它的那个键名，否则记 null（openai-chat.ts:824）。
 
@@ -349,11 +349,13 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 
 - `rate-limit`、`service` 是「报错」，照 Q5 记失败，文案提示稍后再试；`status` 为 402 先于 `invalid-request` 判，记 `quota`；`status` 为 429 且错误码为 `invalid-request` 时同样先判，记 `rate-limit`（百炼的限流，§运行时「错误」）。
 - 不认识的字段优先：同一次响应既有错误又有不认识的字段，按 `opaque-fields` 记。
+- anthropic-messages 线把 input 不是 JSON 对象的 tool_use 报成错误（码 `unknown`，`providerCode` 为 `malformed_tool_input`）；① 见到它记 `bad-tool-call`（「没有完整的调用」），不按 `unknown` 记 `service`。openai-chat 线的解码器丢掉这样的调用，① 停在 `tool-use` 没有完整调用，同样记 `bad-tool-call`。
+- ① 折叠出的轮编不进 ②（canonicalJson 拒收其中的工具输入或厂商块：带 `toJSON` 键、嵌套超过 100 层）时不发 ②，记 `bad-tool-call`（Tenon 没法把这次调用带回去，与上条同理）；不用 `echo-rejected`，那条文案说的是端点拒收，而这里什么也没发。
 - 顺带记下：`usageSeen`（任一次拿到 final 用量）；`responseModelId`（StreamEvent `response-model`，超过 200 字符截断，只显示，不判对错：DeepSeek 等有文档写明的别名路由）。
 
 ### 不认识的字段（Q14）
 
-- 只在 openai-chat 线查。范围：每个 SSE 块 `choices[*].delta`（非流式时是 `choices[*].message`）对象上的键；其中 `tool_calls[*]` 每个对象上的键；以及它的 `function` 对象上的键。块级与 choice 级的键（`id`、`model`、`usage`、`logprobs`、`finish_reason`、`system_fingerprint` 等）不查。
+- 只在 openai-chat 线查。范围：每个 SSE 事件 `choices[*].delta`（非流式时是 `choices[*].message`）对象上的键；其中 `tool_calls[*]` 每个对象上的键；以及它的 `function` 对象上的键。块级与 choice 级的键（`id`、`model`、`usage`、`logprobs`、`finish_reason`、`system_fingerprint` 等）不查。
 - 已知键：delta / message 上 `role`、`name`、`content`、`reasoning_content`、`reasoning`、`tool_calls`；tool_call 上 `index`、`id`、`type`、`function`；function 上 `name`、`arguments`。即解码器读的键去掉 tool_call 上的 `custom`、加 `role` 与 delta / message 上的 `name`（推出：带 `custom` 的调用解码器跳过，无法往返；`name` 是参与者名，不需回传，MiniMax 的 openai-chat 线每帧带 `name: "MiniMax AI"`，platform.minimax.io/docs/api-reference/text-chat-openai.md）。
 - 值为 `null`、空串、空数组、空对象的键算没出现。键名区分大小写。检查器按出现顺序最多记 16 个键名，每个截到 64 字符。
 - 验收目标不会被误判：智谱 `open.bigmodel.cn` 的流式 delta 只有 `role`、`content`、`reasoning_content`、`tool_calls`（另有只在 `glm-4-voice` 上出现的 `audio`），tool_call 只有 `index`、`id`、`type`、`function{name, arguments}`（docs.bigmodel.cn 对话补全参考），与 2026-09-22 的实测流一致（glm-4.6，packages/kernel/test/provider/fixtures/openai-sse.ts:117-121：每个 delta 都重复 `role`，收尾块的 delta 带 `content` 键）；DeepSeek 的 delta 只有 `content`、`reasoning_content`、`role`、`tool_calls`，收尾块里 `role` 为 null（api-docs.deepseek.com/api/create-chat-completion 的示例）。两家都在已知集合内。
@@ -680,7 +682,7 @@ export interface ModelInfo {                              // 已存在（package
 19. 探测的工具表是任务形态在该实例下会冻结的那张；让模型调 `Read`，结果合成为 `ok`。
 20. 探测输出上限取运行时会给的值，不另设；改了某行的输出上限即清该行快照。
 21. ① 的行把 `supportsToolCalling` 置真；② 的行就是通过后会存的那一行。
-22. `max_tokens` 换字段重试的判定：openai-chat、①、400 且错误点名了替代字段（`unsupported_parameter`，或详情同时含两个字段名），只重试一次。
+22. `max_tokens` 换字段重试的判定：openai-chat、①、400 且错误点名了替代字段（`unsupported_parameter` 且详情含 `max_tokens`，或详情同时含两个字段名），只重试一次。
 23. 同一实例同一时刻只跑一个探测；探测期间实例条目或 key 被改过、或探测被中止，就不存结果；中止回 `aborted`（删除中止的回 `not-found`），不造快照。
 24. 报错的探测一律记失败（含限流与服务错误），文案提示可以再试；402 记 `quota`；429 且错误码为 `invalid-request`（百炼限流）记 `rate-limit`；同一次响应既有错误又有不认识的字段，按 `opaque-fields` 记。
 25. Q14 的已知键集合是解码器读的键去掉 tool_call 上的 `custom`、加 `role` 与 delta / message 上的 `name`（MiniMax 每帧带 `name: "MiniMax AI"`，是参与者名，不需回传）；值为 null 或空的键算没出现；块级与 choice 级的键不查；最多记 16 个键名。

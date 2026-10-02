@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineEvent, defineRoute } from '../route.js'
+import { customVendorSchema } from './custom-vendor.js'
 
 export const localeSchema = z.enum(['zh-CN', 'en'])
 export type Locale = z.infer<typeof localeSchema>
@@ -51,6 +52,12 @@ export const configSchema = z.object({
    * since the renderer cannot hand a path in (A9). Falling back to the dedicated folder leaves it.
    */
   lastWorkspaceFolders: z.array(z.string().min(1)).default([]),
+  /**
+   * M6 01 修补 5 (T8): the custom vendor instances, in the order the menu lists them. Main writes
+   * it; `config.set` does not take it. A file from before M6 has none and reads as `[]`; a build
+   * from before M6 drops it on its next write (no configVersion, T8).
+   */
+  customVendors: z.array(customVendorSchema).default([]),
 })
 export type Config = z.infer<typeof configSchema>
 

@@ -46,7 +46,9 @@
         "unknownModel": "That model is not part of this provider.",
         "noModel": "This provider offers no model, so it cannot be selected.",
         "unavailable": "Settings could not be saved. Try again.",
-        "keyHostBinding": "A key stays with the host it was saved for. To use another host, type each stored key again or clear it in the same save. Ollama's endpoint must be on this computer or a local network."
+        "keyHostBinding": "A key stays with the host it was saved for. To use another host, type each stored key again or clear it in the same save. Ollama's endpoint must be on this computer or a local network.",
+        "officialHostOnly": "A built-in provider only takes its official address; this address can only be added as a custom provider.",
+        "subscriptionEndpoint": "This is the GLM Coding Plan subscription address, which Tenon cannot use. Use the pay-as-you-go address instead."
       },
       "customModel": "Or type a model ID",
       "customModelHint": "A model that is not in the list is unverified and holds text conversations only."
@@ -136,7 +138,9 @@
     },
     "mark": {
       "localTextOnly": "{host} · text conversation only",
-      "unverified": "Unverified · text conversation only · {host}"
+      "unverified": "Unverified · text conversation only · {host}",
+      "probed": "Probed on this computer · not guaranteed · {host}",
+      "unprobed": "No passing probe · text conversation only · {host}"
     },
     "host": {
       "local": "This computer"
