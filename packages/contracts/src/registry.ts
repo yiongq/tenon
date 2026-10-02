@@ -11,6 +11,15 @@ import {
 } from './ipc/chat.js'
 import { configGet, configLocale, configSet } from './ipc/config.js'
 import { confirmRequestEvent } from './ipc/confirm.js'
+import {
+  customVendorCancelProbe,
+  customVendorCreate,
+  customVendorDelete,
+  customVendorFetchModels,
+  customVendorList,
+  customVendorProbe,
+  customVendorUpdate,
+} from './ipc/custom-vendor.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
 import { runStateEvent } from './ipc/run.js'
 import {
@@ -41,6 +50,13 @@ export const ipcRoutes = {
   chatStop,
   configGet,
   configSet,
+  customVendorCancelProbe,
+  customVendorCreate,
+  customVendorDelete,
+  customVendorFetchModels,
+  customVendorList,
+  customVendorProbe,
+  customVendorUpdate,
   providerConfigure,
   providerList,
   providerSelect,

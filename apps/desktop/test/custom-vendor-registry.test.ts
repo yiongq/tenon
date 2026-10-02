@@ -4,8 +4,8 @@
  * what that means for the three consumers main wires it into (01 修补 6「desktop 接线」): run assembly,
  * provider.list, and through them where a request goes (M6 不变量 3).
  *
- * The rows' marks, `displayName` and `refused` on provider.list are plan step 6's; rebuilding an
- * instance's rows from the settled read in `assemble` is step 7's.
+ * The rows' marks, `displayName` and `refused` on provider.list are custom-vendor-routes.test.ts's;
+ * rebuilding an instance's rows from the settled read in `assemble` is plan step 7's.
  */
 import { randomUUID } from 'node:crypto'
 import {

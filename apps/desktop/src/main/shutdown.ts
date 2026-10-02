@@ -170,6 +170,12 @@ export interface ShutdownDeps<W extends ClosingWindow> {
 export interface Shutdown<W extends ClosingWindow> {
   /** From step 3 on: the refused routes answer `ok: false`, and no window's close asks. */
   readonly started: boolean
+  /**
+   * Aborted at step 3, once the quit is certain (a cancelled confirm leaves it alone): what main's
+   * own calls with no Run behind them stop on — a custom vendor's probe and model list (M6 §探测
+   * `signal`, §列表与上限「应用退出时经 signal 中止」).
+   */
+  readonly signal: AbortSignal
   /** A window's `close` event. */
   onClose(win: W, event: { preventDefault(): void }): void
   /** `autoUpdater`'s `before-quit-for-update`: step 3, with `quit`. */
@@ -191,6 +197,7 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
    */
   const closing = new WeakSet<W>()
   const gone = (win: W): boolean => closing.has(win) || win.isDestroyed()
+  const stopped = new AbortController()
 
   /** True when the user chose to stop; a confirm that fails is a cancel, and is logged. */
   const confirm = async (kind: 'close' | 'quit', over: W | null): Promise<boolean> => {
@@ -225,6 +232,7 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
     started = true
     registry?.beginShutdown()
     registry?.abort('all', 'quit')
+    stopped.abort('quit')
   }
 
   const quit = async (): Promise<void> => {
@@ -271,6 +279,7 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
     get started() {
       return started
     },
+    signal: stopped.signal,
     onClose(win, event) {
       if (started) return
       if (asking.has(win)) {

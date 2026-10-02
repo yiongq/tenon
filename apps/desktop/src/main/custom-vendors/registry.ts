@@ -9,8 +9,14 @@
  * instance takes effect without a restart. The builtin entries keep their order and content;
  * instances come after them, in `customVendors`'s order.
  */
-import type { Config, CustomVendorContract, ProviderRefusal } from '@tenon-app/contracts'
+import type {
+  Config,
+  CustomVendorContract,
+  ProviderRefusal,
+  ProviderWriteErrorCode,
+} from '@tenon-app/contracts'
 import {
+  CUSTOM_PROVIDER_ID_PATTERN,
   ProviderConfigMissingError,
   ProviderInvalidArgumentError,
   customVendorDefinition,
@@ -23,6 +29,7 @@ import type {
   ProviderRegistry,
 } from '@tenon-app/kernel'
 import { endpointOf } from '../endpoint.js'
+import type { Reach } from '../endpoint.js'
 import { watchConfig } from '../host/profile.js'
 import { checkAddress } from './address.js'
 
@@ -83,18 +90,12 @@ export function createProviderView(options: ProviderViewOptions): ProviderRegist
  * `create()` throws `ProviderConfigMissingError`, so nothing is ever sent to it (§存储; M6 不变量 3).
  */
 export function instanceDefinition(entry: CustomVendorContract): ProviderDefinition {
-  const reach = endpointOf(entry.baseURL)?.reach ?? 'public'
   const definition = customVendorDefinition({
     id: entry.id,
     wire: entry.wire,
     baseURL: entry.baseURL,
-    keyRequired: reach === 'public',
-    models: entry.models.map((row): CustomModelRow => ({
-      id: row.id,
-      contextLimit: row.contextLimit,
-      maxOutputTokens: row.maxOutputTokens,
-      ...(row.probe === undefined ? {} : { probe: row.probe }),
-    })),
+    keyRequired: instanceReach(entry) === 'public',
+    models: entry.models.map(instanceRow),
   })
   if (instanceRefusal(entry) === null) return definition
   return {
@@ -114,4 +115,45 @@ export function instanceRefusal(
 ): ProviderRefusal | null {
   const check = checkAddress(entry.baseURL, entry.wire)
   return check.ok ? null : { code: check.code }
+}
+
+/**
+ * Where an instance's address points, by spelling (Q7; `reachOf`): `loopback` and `private` are the
+ * instances that may go without a key (§key), send no tools and are never probed (§回环与私网). An
+ * address that does not parse reads as public — it is refused anyway (§存储).
+ */
+export function instanceReach(entry: Pick<CustomVendorContract, 'baseURL'>): Reach {
+  return endpointOf(entry.baseURL)?.reach ?? 'public'
+}
+
+/** A `config.json` model row as the kernel's factory and probe take it. */
+export function instanceRow(row: CustomVendorContract['models'][number]): CustomModelRow {
+  return {
+    id: row.id,
+    contextLimit: row.contextLimit,
+    maxOutputTokens: row.maxOutputTokens,
+    ...(row.probe === undefined ? {} : { probe: row.probe }),
+  }
+}
+
+/** Whether a provider id names a custom vendor instance (T1) rather than a builtin. */
+export function isInstanceId(id: string): boolean {
+  return CUSTOM_PROVIDER_ID_PATTERN.test(id)
+}
+
+/**
+ * Why a choice of an instance's row cannot be written (§列表与上限; 验收 12, 25): the instance or its
+ * row is not in `config` — `config.json` as read inside the profile's lock, so a delete or a row
+ * removal that held the lock first is seen. A choice that went through anyway would put back the
+ * new-session default the delete just cleared. null for a builtin id, or a row the instance lists.
+ */
+export function instanceChoiceRefusal(
+  config: Config,
+  providerId: string,
+  modelId: string,
+): Extract<ProviderWriteErrorCode, 'unknown-provider' | 'unknown-model'> | null {
+  if (!isInstanceId(providerId)) return null
+  const entry = config.customVendors.find((candidate) => candidate.id === providerId)
+  if (entry === undefined) return 'unknown-provider'
+  return entry.models.some((row) => row.id === modelId) ? null : 'unknown-model'
 }

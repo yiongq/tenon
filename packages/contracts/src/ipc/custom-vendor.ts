@@ -3,8 +3,8 @@ import { defineRoute } from '../route.js'
 import { PROVIDER_VALUE_MAX_LENGTH, modelIdSchema, providerRefusalSchema } from './provider.js'
 
 /**
- * Custom vendors over IPC (M6 §IPC, §存储): the instances in `config.json`, the presets, and the six
- * routes the settings card's instance section uses.
+ * Custom vendors over IPC (M6 §IPC, §存储): the instances in `config.json`, the presets, and the
+ * seven routes the settings card's instance section uses.
  *
  * The rule of `provider.ts` holds here too: a key travels renderer → main only, inside
  * `customVendor.create`'s request, and no response has a field one could travel back in. A later
@@ -12,7 +12,7 @@ import { PROVIDER_VALUE_MAX_LENGTH, modelIdSchema, providerRefusalSchema } from 
  *
  * T2 at the route layer (§IPC): `customVendor.update` is `.strict()`, so a request naming `wire`
  * or `baseURL` fails the schema; `provider.configure` takes any key name in its schema, and its
- * handler refuses `baseURL` for an instance with `invalid-value` (plan step 6).
+ * handler refuses `baseURL` for an instance with `invalid-value` (provider-routes.ts).
  *
  * The shapes restate the kernel's (`CUSTOM_PROVIDER_ID_PATTERN`, `ProbeSnapshot`, the wire union)
  * rather than importing them, for the reason `session.ts` gives; a contracts test holds each pair
@@ -213,4 +213,14 @@ export const customVendorProbe = defineRoute('customVendor.probe', {
       code: z.enum(['not-found', 'unknown-model', 'local-endpoint', 'busy', 'aborted']),
     }),
   ]),
+})
+
+/**
+ * The user cancels a running probe (§探测「何时、走哪条路」; Revisions 2026-10-02): main aborts that
+ * probe's signal, and `customVendor.probe` answers `refused` / `aborted` with nothing stored.
+ * `cancelled` is false, and nothing happens, when the instance has no probe running.
+ */
+export const customVendorCancelProbe = defineRoute('customVendor.cancelProbe', {
+  request: z.object({ id: customProviderIdSchema }).strict(),
+  response: z.object({ cancelled: z.boolean() }),
 })

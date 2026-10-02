@@ -166,6 +166,11 @@ export interface SettledInputs {
    * current while it is unchanged — any write after the read, of any key, is newer than `config`.
    */
   readonly generation: number
+  /**
+   * `providerSettingsGeneration` of this provider while this read ran: unchanged since then, no
+   * write changed its settings or its key after the read (M6 §探测「保存」, 推出的读法 12).
+   */
+  readonly settingsGeneration: number
 }
 
 /** Reads again at most this many times while saves keep landing mid-read. */
@@ -195,7 +200,7 @@ export async function readSettledInputs(
     // oxlint-disable-next-line no-await-in-loop -- the same read, its second half
     const inputs = await readProviderInputs({ ...options, settings })
     const settled = providerSettingsGeneration(host.identity, definition.id) === before
-    last = { config, inputs, settled, generation }
+    last = { config, inputs, settled, generation, settingsGeneration: before }
     if (settled) return last
   }
   if (last === null) throw new Error('readSettledInputs: no attempt ran')

@@ -5,6 +5,7 @@ import {
   registerRoute,
 } from '@tenon-app/contracts'
 import type {
+  CustomVendorContract,
   IpcMainLike,
   ProviderConfigKeyContract,
   ProviderEntryContract,
@@ -18,8 +19,17 @@ import type {
   ProviderDefinition,
   ProviderRegistry,
 } from '@tenon-app/kernel'
+import {
+  instanceChoiceRefusal,
+  instanceDefinition,
+  instanceReach,
+  instanceRefusal,
+  isInstanceId,
+} from './custom-vendors/registry.js'
+import type { ProbeRuns } from './custom-vendors/routes.js'
+import { saveCustomVendorKeyHeld } from './custom-vendors/store.js'
 import { endpointOf, hostOf } from './endpoint.js'
-import { readConfig, withConfigLock, writeConfig, writeConfigHeld } from './host/profile.js'
+import { readConfig, withConfigLock, writeConfigHeld } from './host/profile.js'
 import {
   BASE_URL_KEY,
   declaredBaseURL,
@@ -34,7 +44,9 @@ import { TEXT_ONLY_PROVIDERS } from './run-assembly.js'
 
 /**
  * The three provider routes (spec 01 §desktop 接线) — everything the settings card needs and
- * nothing more: read what is declared, save what was typed, choose what the next run uses.
+ * nothing more: read what is declared, save what was typed, choose what the next run uses. A custom
+ * vendor instance (M6 01 修补 6) is listed with its name and its probe marks, takes its key here and
+ * nothing else, and offers only the rows it lists.
  *
  * Two properties this file owes the rest of the system:
  *
@@ -61,6 +73,8 @@ export interface ProviderRoutesDeps {
   isPackaged?: boolean
   /** The environment the development fallback reads. Tests pass a fixed one; main passes none. */
   env?: EnvLike
+  /** M6 §写入规则: an instance's key save aborts its running probe first (custom-vendors/routes.ts). */
+  probes?: Pick<ProbeRuns, 'abort'>
 }
 
 /** Saved. The card re-reads `provider.list` afterwards rather than trusting an echoed value. */
@@ -71,11 +85,12 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
   const log = deps.log ?? ((line: string): void => console.warn(line))
   const env = (): EnvLike => devEnv({ isPackaged: deps.isPackaged === true, env: deps.env })
 
-  registerRoute(ipcMain, providerList, async () =>
-    Promise.all(
+  registerRoute(ipcMain, providerList, async () => {
+    const entries = await Promise.all(
       providers.list().map((definition) => describeProvider({ host, definition, env: env(), log })),
-    ),
-  )
+    )
+    return entries.filter((entry): entry is ProviderEntryContract => entry !== null)
+  })
 
   registerRoute(ipcMain, providerConfigure, ({ id, values }) =>
     // In the profile's lock, the config read again inside it: two saves never cross, and a key
@@ -93,6 +108,7 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     for (const name of Object.keys(values)) {
       if (!declared.has(name)) return refused('unknown-key', name)
     }
+    if (isInstanceId(id)) return configureInstance(id, values)
 
     const config = await readConfig(host.fs, host.identity)
     const stored = config.providerConfig[id] ?? {}
@@ -135,6 +151,25 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
       providerConfig: { ...config.providerConfig, [id]: settings },
     })
     return SAVED
+  }
+
+  /**
+   * An instance's save (M6 §IPC, §写入规则「保存实例的 key」): its key and nothing else. The address
+   * is its description's, fixed once it exists (T2; M6 不变量 2), so a `baseURL` is refused before
+   * anything is written, whatever else came with it; `providerConfig` is never written for an
+   * instance (§注册表视图). The key save aborts a running probe of the instance, then clears every
+   * row's snapshot, then stores the key (T3).
+   */
+  async function configureInstance(
+    id: string,
+    values: Readonly<Record<string, string>>,
+  ): Promise<ProviderWriteResult> {
+    if (Object.hasOwn(values, BASE_URL_KEY)) return refused('invalid-value', BASE_URL_KEY)
+    const apiKey = values[INSTANCE_KEY]
+    if (apiKey === undefined) return SAVED
+    deps.probes?.abort(id, 'key')
+    const saved = await saveCustomVendorKeyHeld({ host }, id, apiKey)
+    return saved.ok ? SAVED : refused('unknown-provider', null)
   }
 
   /**
@@ -202,15 +237,39 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     const definition = providers.get(providerId)
     if (definition === null) return refused('unknown-provider', null)
     // A hand-typed id is accepted and marked (M6, A15; 01 修补 9 (c)): its capabilities are the
-    // conservative synthesis, so it only ever holds a text conversation.
+    // conservative synthesis, so it only ever holds a text conversation. Not on an instance: its
+    // rows carry the limits the user set (M6 §列表与上限; T6).
+    if (isInstanceId(providerId) && !listsModel(definition, modelId)) {
+      return refused('unknown-model', null)
+    }
     const selection = selectionOf(definition, modelId)
-    // The card's 「新会话默认模型」: both profiles' defaults and `provider` (§模型选择「设置卡」).
-    await writeConfig(host.fs, host.identity, {
-      provider: selection,
-      defaultModelByProfile: { chat: selection, cowork: selection },
+    return withConfigLock(host.identity, async () => {
+      // The instance and its row again, as the lock leaves them: a delete that held it first must
+      // not have its cleared default written back (M6 §写入规则「删除」; 验收 25).
+      if (isInstanceId(providerId)) {
+        const gone = instanceChoiceRefusal(
+          await readConfig(host.fs, host.identity),
+          providerId,
+          modelId,
+        )
+        if (gone !== null) return refused(gone, null)
+      }
+      // The card's 「新会话默认模型」: both profiles' defaults and `provider` (§模型选择「设置卡」).
+      await writeConfigHeld(host.fs, host.identity, {
+        provider: selection,
+        defaultModelByProfile: { chat: selection, cowork: selection },
+      })
+      return SAVED
     })
-    return SAVED
   })
+}
+
+/** The one key an instance takes through `provider.configure` (§key). */
+const INSTANCE_KEY = 'apiKey'
+
+/** Whether the definition's table has this id. */
+function listsModel(definition: ProviderDefinition, modelId: string): boolean {
+  return definition.builtinModels.some((model) => model.id === modelId)
 }
 
 /** What `config.json` records for a choice: the id, marked when no builtin table has it. */
@@ -245,10 +304,19 @@ interface DescribeOptions {
   readonly log: (line: string) => void
 }
 
-async function describeProvider(options: DescribeOptions): Promise<ProviderEntryContract> {
+/**
+ * One `provider.list` entry, or null for an instance this read no longer finds (deleted since the
+ * view listed it).
+ */
+async function describeProvider(options: DescribeOptions): Promise<ProviderEntryContract | null> {
   const { definition, env } = options
   // Settings and keys as one save left them, as a send reads them (run-assembly.ts).
   const { config, inputs } = await readSettledInputs(options)
+  // M6 01 修补 6「provider.list」: an instance is described from the entry this same read found.
+  const instance = isInstanceId(definition.id)
+    ? (config.customVendors.find((entry) => entry.id === definition.id) ?? null)
+    : null
+  if (isInstanceId(definition.id) && instance === null) return null
   const settings = config.providerConfig[definition.id]
   // 「已配置」 is what a send on THIS build would find (01 修补 6): the keychain, the development
   // variables on a development build, and not a key bound to another host than the one used.
@@ -267,6 +335,9 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
       : hasValue(settings?.[key.name]) || hasValue(key.default),
   }))
   const endpoint = endpointOf(inputs.config[BASE_URL_KEY]) ?? { host: '', reach: 'public' as const }
+  if (instance !== null) {
+    return describeInstance(definition, instance, configKeys, unbound, endpoint)
+  }
   return {
     id: definition.id,
     nameKey: definition.nameKey,
@@ -276,6 +347,46 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
     // reading ③, run-assembly.ts), so the provider is not ready either: 「发送时会被拒的 key 不算」.
     configured: isConfigured(configKeys) && unbound.size === 0,
     endpoint,
+  }
+}
+
+/**
+ * An instance's entry (M6 01 修补 4, 6; §运行时「行标记」): the user's name, the generic `nameKey`,
+ * each row marked by its probe and its reach, no thinking levels (T5), and `refused` when the stored
+ * address fails §地址校验 — which also makes it not configured (§存储; M6 不变量 3). A loopback or
+ * private instance needs no stored key: only its binding counts (§key; 推出的读法 7).
+ */
+function describeInstance(
+  definition: ProviderDefinition,
+  instance: CustomVendorContract,
+  configKeys: readonly ProviderConfigKeyContract[],
+  unbound: ReadonlySet<string>,
+  endpoint: ProviderEntryContract['endpoint'],
+): ProviderEntryContract {
+  const local = instanceReach(instance) !== 'public'
+  const refusal = instanceRefusal(instance)
+  const models = instanceDefinition(instance).builtinModels.map(
+    (model): ProviderEntryContract['models'][number] => ({
+      id: model.id,
+      // M6 不变量 6: tools, and so `probed`, only off a passing snapshot; never for a local one (Q7).
+      mark: local
+        ? 'local-text-only'
+        : model.supportsToolCalling
+          ? 'probed'
+          : 'unverified-text-only',
+      listing: 'main',
+    }),
+  )
+  const keys = local ? requiredConfigured(configKeys) : isConfigured(configKeys)
+  return {
+    id: definition.id,
+    nameKey: definition.nameKey,
+    displayName: instance.displayName,
+    configKeys: [...configKeys],
+    models,
+    configured: keys && unbound.size === 0 && refusal === null,
+    endpoint,
+    ...(refusal === null ? {} : { refused: refusal }),
   }
 }
 
@@ -309,9 +420,14 @@ function menuRow(
  * bound to another host than the one the provider sends to does not count at all.
  */
 function isConfigured(keys: readonly ProviderConfigKeyContract[]): boolean {
-  if (keys.some((key) => key.required && !key.configured)) return false
+  if (!requiredConfigured(keys)) return false
   const secrets = keys.filter((key) => key.secret)
   return secrets.length === 0 || secrets.some((key) => key.configured)
+}
+
+/** Every REQUIRED key has a value: `isConfigured`'s first clause alone. */
+function requiredConfigured(keys: readonly ProviderConfigKeyContract[]): boolean {
+  return !keys.some((key) => key.required && !key.configured)
 }
 
 function hasValue(value: string | undefined): boolean {

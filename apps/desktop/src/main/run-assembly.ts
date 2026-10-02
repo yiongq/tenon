@@ -239,9 +239,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         model: info,
         capabilitySource: q.choice.capabilitySource,
         endpointOrigin: origin ?? 'null',
-        maxTokens:
-          positiveInteger(vars[MAX_TOKENS_ENV]) ??
-          Math.min(DEFAULT_MAX_TOKENS, info.maxOutputTokens),
+        maxTokens: requestMaxTokens(vars, info),
         toolsWithheld: TEXT_ONLY_PROVIDERS.has(q.choice.providerId) ? 'provider-text-only' : null,
         search,
         mcpSources: [],
@@ -252,6 +250,16 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       }
     },
   }
+}
+
+/**
+ * `RunAssembly.maxTokens`: `TENON_MAX_TOKENS` on a development build, else phase 0's cap or the
+ * row's own smaller limit. A custom vendor's probe asks with the same value (M6 §探测 `maxTokens`).
+ */
+export function requestMaxTokens(vars: EnvLike, model: Pick<ModelInfo, 'maxOutputTokens'>): number {
+  return (
+    positiveInteger(vars[MAX_TOKENS_ENV]) ?? Math.min(DEFAULT_MAX_TOKENS, model.maxOutputTokens)
+  )
 }
 
 /** A registered definition, or the configuration error a missing one is. */

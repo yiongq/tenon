@@ -1,8 +1,7 @@
 /**
  * Writing custom vendor instances (M6 §写入规则, §key, §地址校验): create, rename and change the
  * rows, delete, and save the key — each in the profile's config lock, the one `provider.configure`
- * takes (01 修补 6), with `config.json` read again inside it. The routes that call these are plan
- * step 6's.
+ * takes (01 修补 6), with `config.json` read again inside it.
  *
  * The orders are the spec's, chosen for what a failure halfway leaves behind:
  *
@@ -14,7 +13,8 @@
  *     stops at 「快照已清、旧 key 还在」, tools off (T3).
  *
  * A key is only ever under `keyFor(identity, 'provider', <instance id>, 'apiKey')`; neither it nor
- * an address is ever logged (M6 不变量 14).
+ * an address is ever logged (M6 不变量 14). The routes are `routes.ts` (delete, create, update) and
+ * `provider.configure` (the key save).
  */
 import { PROVIDER_VALUE_MAX_LENGTH } from '@tenon-app/contracts'
 import type {
@@ -180,26 +180,32 @@ export function updateCustomVendor(
  * the key is what disables it (「先失效再删 key」, 推出的读法 11).
  */
 export function deleteCustomVendor(deps: CustomVendorStoreDeps, id: string): Promise<WriteResult> {
+  return withConfigLock(deps.host.identity, () => deleteCustomVendorHeld(deps, id))
+}
+
+/** `deleteCustomVendor`, whose caller already holds the profile's lock (the delete route). */
+export async function deleteCustomVendorHeld(
+  deps: Pick<CustomVendorStoreDeps, 'host' | 'log'>,
+  id: string,
+): Promise<WriteResult> {
   const { host, log } = deps
-  return withConfigLock(host.identity, async () => {
-    const config = await readConfig(host.fs, host.identity)
-    const entry = config.customVendors.find((candidate) => candidate.id === id)
-    if (entry === undefined) return refused('not-found')
-    const secrets = instanceDefinition(entry).configKeys.filter((key) => key.secret)
-    try {
-      await Promise.all(
-        secrets.map((key) => host.secrets.delete(providerSecretKey(host, id, key.name))),
-      )
-    } catch {
-      log(`[custom-vendor] ${id}: the keychain could not delete the key; nothing was deleted`)
-      return refused('keychain')
-    }
-    await writeConfigHeld(host.fs, host.identity, {
-      customVendors: config.customVendors.filter((candidate) => candidate.id !== id),
-      ...withoutDefaults(config, (s) => s.id === id),
-    })
-    return SAVED
+  const config = await readConfig(host.fs, host.identity)
+  const entry = config.customVendors.find((candidate) => candidate.id === id)
+  if (entry === undefined) return refused('not-found')
+  const secrets = instanceDefinition(entry).configKeys.filter((key) => key.secret)
+  try {
+    await Promise.all(
+      secrets.map((key) => host.secrets.delete(providerSecretKey(host, id, key.name))),
+    )
+  } catch {
+    log(`[custom-vendor] ${id}: the keychain could not delete the key; nothing was deleted`)
+    return refused('keychain')
+  }
+  await writeConfigHeld(host.fs, host.identity, {
+    customVendors: config.customVendors.filter((candidate) => candidate.id !== id),
+    ...withoutDefaults(config, (s) => s.id === id),
   })
+  return SAVED
 }
 
 /** `saveCustomVendorKeyHeld` in the profile's lock. */

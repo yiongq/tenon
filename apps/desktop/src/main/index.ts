@@ -11,6 +11,7 @@ import {
 import { app, autoUpdater, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { createProviderView } from './custom-vendors/registry.js'
+import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/routes.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
@@ -294,10 +295,24 @@ async function main(): Promise<void> {
       return picked.canceled ? null : picked.filePaths
     },
   })
+  // M6 §探测: one probe per instance at a time; a key save (provider.configure) and a delete abort it.
+  const probes = createProbeRuns()
   registerProviderRoutes({
     ipcMain: routes,
     host,
     providers,
+    isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
+    probes,
+  })
+  registerCustomVendorRoutes({
+    ipcMain: routes,
+    host,
+    providers,
+    probes,
+    uuid: () => randomUUID(),
+    // Shutdown step 3: a probe or a model list does not outlive the quit (§探测, §列表与上限).
+    signal: shutdown.signal,
     isPackaged: app.isPackaged,
     log: (line) => console.warn(line),
   })
