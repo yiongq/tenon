@@ -76,5 +76,5 @@
 ## Open
 
 - 开放问题 1（方舟的 Anthropic 路径）、开放问题 2（glm-4.7-flash 能否过探测）。
-- 探测没有用户取消（第 4 步第五轮评审 PROC5-1，**挡第 6 步**）：响应一直在到的探测只有 `signal` 能结束。SSE 注释行每到一个字节就重置空闲看门狗（DeepSeek 的 `: keep-alive` 最长 10 分钟，OpenRouter 的 `: OPENROUTER PROCESSING`），SDK 的 600 s 只管等响应头；`signal` 只在应用退出、删实例、保存 key 时中止，§IPC 没有让用户取消探测的路由，实例的探测锁这期间一直回 `busy`。第 6 步之前由 lead 或 owner 在 spec 定下并记 Revisions。倾向用户取消：`customVendor.cancelProbe {id}` 路由或设置卡带的中止，中止探测的 `signal`、回 `refused/aborted`、不存，合 T4「思考模型每次可能较长」与推出的读法 20（探测不另设输出上限）。另一条路是总时长上限、由第 6 步的路由到点中止 `signal`，会截断正当的长思考探测，选它就得在 spec 写出数字与到点时卡片的文案。两条路 kernel 都不定数字，`probeModel` 见 `signal` 已干净结束。
+- ~~探测没有用户取消~~（PROC5-1）：lead 2026-10-02 定为用户取消，spec §IPC 只增 `customVendor.cancelProbe`、§何时 写明不设总时长上限，记 Revisions；第 6 步注册这条路由，第 9 步做「取消」按钮。
 - 02 的观察，不挡 M6（第 4 步评审）：02 spec:3259 写到子 agent 里的摘要请求，但子会话只有一个回合（`run_started` 只有 `user-message`），`compactionCut` 在子会话里恒为 null，代码从不压缩子会话，mailbox.ts 子会话重开工具表那一支走不到。是 02 文本多写了还是代码少做了，留给 owner 或阶段 6 做子 agent 并发时再看。
