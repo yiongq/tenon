@@ -101,7 +101,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 async function main(): Promise<void> {
   // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
-  // `.env.local` (spec 02 §内置工具与参数「Bash」).
+  // `.env.local` (spec 02 §内置工具与参数「Bash」); so is the origin map seam's (M6 §点名「测试接缝」).
   const startupEnv = snapshotEnv(process.env)
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
@@ -124,6 +124,7 @@ async function main(): Promise<void> {
     send: broadcast,
     log: (line) => console.warn(line),
     isPackaged: app.isPackaged,
+    startupEnv,
   })
 
   // The conversation store, the provider table and the one kernel service that writes facts. The

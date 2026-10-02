@@ -25,7 +25,7 @@ import {
   createTestSessionService,
 } from '@tenon-app/kernel/testing'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
-import { compact, emulationGroup, officialGroup } from './helpers/live-env.js'
+import { compact, officialGroup } from './helpers/live-env.js'
 import type { LiveGroup } from './helpers/live-env.js'
 import { expect, test } from './helpers/test.js'
 import { makeFolderTree, send, startTask } from './helpers/tools.js'
@@ -39,14 +39,14 @@ import type { FolderTree } from './helpers/tools.js'
  *
  *   1. Put the non-official credentials in the repo-root `.env.local` (gitignored, never read by
  *      any other test):
- *        ANTHROPIC_BASE_URL=…      Zhipu's Anthropic-compatible endpoint (…/api/anthropic)
- *        ANTHROPIC_AUTH_TOKEN=…    the Zhipu key; with the base URL, enables the emulation group
- *        TENON_LIVE_MODEL=…        its model, glm-4.7-flash (spec 02 §模型与密钥)
  *        ZHIPU_API_KEY=…           enables the zhipu groups (acceptance 21, and spec 02's
  *                                  acceptance 39 below); absent ⇒ they skip
- *        TENON_LIVE_ZHIPU_MODEL=…  glm-5.3-flashx (unset ⇒ glm-4.6); never the emulation group's
- *                                  free model, which 1302-limits a second group on the same key
+ *        TENON_LIVE_ZHIPU_MODEL=…  glm-5.3-flashx (unset ⇒ glm-4.6); not glm-4.7-flash, whose free
+ *                                  tier 1302-limits consecutive requests on the same key
  *        TENON_LIVE_RECORD_DIR=…   optional: where the agent group writes what went on the wire
+ *      The Anthropic wire to Zhipu's /api/anthropic is a custom vendor instance now (M6 §点名 (d)):
+ *      the ANTHROPIC_BASE_URL emulation group is gone, since anthropic reads that address as not
+ *      configured. TENON_TEST_ORIGIN_MAP anywhere in sight refuses the whole run.
  *   2. The official Anthropic key, when there is one, NEVER goes into `.env.local` or a shell
  *      profile. Hand it to this one run only, as TENON_LIVE_ANTHROPIC_OFFICIAL_KEY in the command's
  *      environment (from a password manager, not typed into the command line); absent ⇒ the
@@ -85,15 +85,10 @@ const MAX_TOKENS = pick('TENON_LIVE_MAX_TOKENS', 'TENON_MAX_TOKENS') ?? '2048'
 const NOT_LIVE: LiveGroup = { kind: 'absent', reason: 'opt-in' }
 
 /**
- * The Anthropic wire twice, on two endpoints that never share a key: Zhipu's emulation (the
- * adapter swallows it; not the guarantee tier) and the official API (spec 02 §模型与密钥).
+ * The Anthropic wire on the official API (spec 02 §模型与密钥). Its emulation behind Zhipu's
+ * /api/anthropic went with M6 §点名 (c), (d).
  */
 const ANTHROPIC_GROUPS: readonly { title: string; tag: string; group: LiveGroup }[] = [
-  {
-    title: 'live provider · anthropic emulation',
-    tag: 'live',
-    group: LIVE ? emulationGroup(pick, MAX_TOKENS) : NOT_LIVE,
-  },
   {
     title: 'live provider · anthropic official',
     tag: 'live-official',
@@ -210,11 +205,9 @@ test.describe('live provider · zhipu', () => {
     const userData = makeUserDataDir(`live-zhipu-${tag}`)
     seedConfig(userData, {
       locale: 'en',
+      // The definition's own official endpoint: a Zhipu gateway is a custom vendor instance (M6
+      // §点名 (a), (b)).
       provider: { id: 'zhipu', modelId: model },
-      // A gateway, when one is configured; otherwise the definition's own default endpoint.
-      ...(pick('TENON_LIVE_ZHIPU_BASE_URL') === undefined
-        ? {}
-        : { providerConfig: { zhipu: { baseURL: pick('TENON_LIVE_ZHIPU_BASE_URL') ?? '' } } }),
     })
     return launchTenon({ userData, env, secrets: 'keychain' })
   }

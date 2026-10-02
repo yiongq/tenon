@@ -27,7 +27,8 @@ import {
   keyFor,
 } from '@tenon-app/kernel'
 import type { HostAdapter, ModelInfo, ProviderDefinition, ProviderId } from '@tenon-app/kernel'
-import type { Config } from '@tenon-app/contracts'
+import type { Config, ProviderRefusal } from '@tenon-app/contracts'
+import { isSubscriptionPath } from './custom-vendors/address.js'
 import { hostOf } from './endpoint.js'
 import { configGeneration, providerSettingsGeneration, readConfig } from './host/profile.js'
 
@@ -46,6 +47,60 @@ export const DEV_ENV_FALLBACK: Readonly<Record<ProviderId, Readonly<Record<strin
   [ZHIPU_PROVIDER_ID]: {
     apiKey: 'ZHIPU_API_KEY',
   },
+}
+
+/**
+ * The one https origin each of 02's guaranteed builtins may send to (M6 §点名 (a)–(c); 推出的读法
+ * 36): scheme, host and port compared, the path left free. Any other endpoint is a custom vendor
+ * instance's job — which is where a compatible endpoint's key and probe live.
+ */
+export const OFFICIAL_ORIGINS: Readonly<Record<ProviderId, string>> = {
+  [ANTHROPIC_PROVIDER_ID]: 'https://api.anthropic.com',
+  [ZHIPU_PROVIDER_ID]: 'https://open.bigmodel.cn',
+}
+
+/** `providerRefusalSchema`'s two codes for a builtin, which are also `provider.configure`'s. */
+export type BuiltinRefusal = ProviderRefusal & {
+  readonly code: 'official-host-only' | 'subscription-endpoint'
+}
+
+/**
+ * Why a builtin's base URL in force — stored, the development variable, or the declared default —
+ * is refused (M6 §点名 (a), (b), (c), (e); M6 不变量 16), or null when it is not. A zhipu http(s)
+ * path on the GLM Coding Plan endpoint is `subscription-endpoint` (§地址校验 4) whatever its origin,
+ * so Z.ai's coding path is never sent on to be added as a custom vendor; anything else that is not
+ * https on the official host and port is `official-host-only`, with the origin found when there is
+ * one to show. Scheme, host and port are compared part by part: a `blob:` URL's `origin` is its
+ * inner URL's, which must not pass for the official one. A provider with no official origin
+ * (Ollama) is never refused here. Judged on the URL as configured, never on where a test seam
+ * redirects it (M6 不变量 19).
+ */
+export function builtinRefusal(
+  providerId: ProviderId,
+  baseURL: string | undefined,
+): BuiltinRefusal | null {
+  const official = OFFICIAL_ORIGINS[providerId]
+  if (official === undefined) return null
+  const url = parsedURL(baseURL)
+  const web = url !== null && (url.protocol === 'https:' || url.protocol === 'http:')
+  if (web && providerId === ZHIPU_PROVIDER_ID && isSubscriptionPath(url.pathname)) {
+    return { code: 'subscription-endpoint' }
+  }
+  if (url !== null && url.protocol === 'https:' && url.origin === official) return null
+  // An opaque origin (`file:`, `data:`) serialises as the string "null", and a `blob:` URL's is
+  // its inner URL's: neither is an origin the user configured, so there is none to show.
+  return url === null || url.protocol === 'blob:' || url.origin === 'null'
+    ? { code: 'official-host-only' }
+    : { code: 'official-host-only', origin: url.origin }
+}
+
+function parsedURL(value: string | undefined): URL | null {
+  if (value === undefined || value.trim() === '') return null
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
 }
 
 /** What a caller hands `ProviderRequest.maxTokens` when the model table's own limit is too big. */

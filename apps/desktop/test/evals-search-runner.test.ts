@@ -1,4 +1,8 @@
-/** The eval wrapper must preserve search target binding through an actual approval and resume. */
+/**
+ * The eval wrapper must preserve search target binding through an actual approval and resume. On
+ * the official anthropic column, its origin sent to a fake on this machine (M6 §点名「测试接缝」): the
+ * eval-only instance column has no WebSearch (Q10).
+ */
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,7 +12,7 @@ import { readAll } from '../evals/cost.js'
 import { fakeSearchBackend } from '../evals/host.js'
 import type * as EvalHostModule from '../evals/host.js'
 import type * as AssemblyModule from '../src/main/run-assembly.js'
-import { EVAL_GLM_53_ANTHROPIC } from '../evals/models.js'
+import { resolveColumn } from '../evals/models.js'
 import { runTask } from '../evals/runner.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 
@@ -26,6 +30,7 @@ const state = vi.hoisted(() => ({
 
 // The conversation uses the real desktop connector against a localhost SSE server. Only the
 // search transport is replaced, so neither branch can contact a real search service.
+const OFFICIAL = resolveColumn({ TENON_EVAL_PROVIDER: 'anthropic' })
 vi.mock('../evals/host.js', async (load) => {
   const actual = await load<typeof EvalHostModule>()
   return {
@@ -107,14 +112,8 @@ it.each([true, false])(
         from: ['H8', 'H15'],
       },
       run: 1,
-      column: {
-        providerId: 'anthropic',
-        modelId: EVAL_GLM_53_ANTHROPIC.id,
-        baseURL: server.baseURL,
-        keyEnv: 'ZHIPU_API_KEY',
-        keyFromProcessOnly: false,
-        effort: null,
-      },
+      column: OFFICIAL,
+      originMap: `${OFFICIAL.baseURL}=${server.baseURL}`,
       key: 'offline-search-fixture',
       date: '2026-09-28',
       clientVersion: 'test-version',

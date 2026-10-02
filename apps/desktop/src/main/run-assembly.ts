@@ -23,7 +23,9 @@
  */
 import type { Config } from '@tenon-app/contracts'
 import {
+  ANTHROPIC_PROVIDER_ID,
   ProviderConfigMissingError,
+  ZHIPU_PROVIDER_ID,
   createAnthropicSearchDefinition,
   prepareZhipuSearchQuery,
   zhipuSearchDefinition,
@@ -53,10 +55,12 @@ import { configGeneration, readConfig, watchConfig } from './host/profile.js'
 import {
   BASE_URL_KEY,
   boundHost,
+  builtinRefusal,
   DEFAULT_MAX_TOKENS,
   DEV_ENV_FALLBACK,
   MAX_TOKENS_ENV,
   MODEL_ENV,
+  OFFICIAL_ORIGINS,
   declaredBaseURL,
   devEnv,
   readSettledInputs,
@@ -88,6 +92,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
   const { host, providers } = options
   const log = options.log ?? ((line: string): void => console.warn(line))
   const env = (): EnvLike => devEnv({ isPackaged: options.isPackaged === true, env: options.env })
+  logRefusedDevEndpoints(env(), options.config?.providerConfig ?? {}, log)
   /**
    * `config.json`'s provider settings as last known — startup's, then every write's, then a read no
    * write overlapped — so the synchronous `endpointOrigin` answers where `assemble` would send now,
@@ -231,11 +236,20 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         // 「发送前再核一次」: a key bound to another host than the one this sends to is not used —
         // a configuration error, never a request (A9; 01 修补 6).
         const unbound = unboundSecrets(viewed, settings, vars, inputs)
+        // M6 §点名 (b), (c): zhipu or anthropic configured outside its official origin, or zhipu on
+        // the subscription path, reads as not configured — 0 requests (M6 不变量 16).
+        const refusal = builtinRefusal(viewed.id, inputs.config[BASE_URL_KEY])
         try {
           // M6 §实例被删或改坏 (T12): the instance or its row is gone — `provider()` refuses, as for
           // a missing key, and `assemble` itself resolves (ports.ts).
           if (definition === null || model === null) {
             throw new ProviderConfigMissingError(providerId, 'an instance that lists this model')
+          }
+          if (refusal !== null) {
+            throw new ProviderConfigMissingError(
+              definition.id,
+              `its official endpoint (${refusal.code}); another endpoint is a custom vendor`,
+            )
           }
           if (!read.settled) {
             throw new ProviderConfigMissingError(
@@ -297,6 +311,37 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         },
       }
     },
+  }
+}
+
+/**
+ * M6 §点名 (c): `DEV_ENV_FALLBACK` still reads a base URL variable (`ANTHROPIC_BASE_URL`), and one
+ * outside the provider's official origin leaves it not configured — `provider.list` says `refused`,
+ * a send sends nothing. One line at construction tells the developer why, naming the origin only
+ * (never a path or userinfo). The variable only fills what config.json lacks, so a provider with an
+ * address saved at startup is skipped, and the line says a later save still wins. A packaged build
+ * reads no variable, so it never logs this.
+ */
+function logRefusedDevEndpoints(
+  vars: EnvLike,
+  stored: Config['providerConfig'],
+  log: (line: string) => void,
+): void {
+  for (const [providerId, names] of Object.entries(DEV_ENV_FALLBACK)) {
+    const name = names[BASE_URL_KEY]
+    const value = name === undefined ? null : trimmed(vars[name])
+    if (name === undefined || value === null) continue
+    if (trimmed(stored[providerId]?.[BASE_URL_KEY]) !== null) continue
+    const refusal = builtinRefusal(providerId, value)
+    if (refusal === null) continue
+    const why =
+      refusal.code === 'subscription-endpoint'
+        ? 'is a subscription endpoint'
+        : `points at ${refusal.origin ?? 'no origin'}, not ${OFFICIAL_ORIGINS[providerId] ?? ''}`
+    log(
+      `[provider] ${name} ${why}: unless an address is saved in the settings card, ${providerId} ` +
+        'reads as not configured; another endpoint is a custom vendor (settings card)',
+    )
   }
 }
 
@@ -396,15 +441,21 @@ function positiveInteger(value: string | undefined): number | null {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-/** Search is available only on the supported provider/host combinations (spec 02 §工具形状与后端选择). */
+/**
+ * Search is available only on the supported provider/host combinations (spec 02 §工具形状与后端选择):
+ * zhipu on its own host, anthropic on api.anthropic.com. M6 §点名 (f) removed 02 spec:2738's third,
+ * anthropic pointed at Zhipu's /api/anthropic: §点名 (a) leaves no input that reaches it, and an
+ * instance — the Anthropic wire to Zhipu now — has no search (Q10).
+ */
 function searchDefinitionFor(
   definition: ProviderDefinition,
   baseURL: string | null,
 ): SearchBackendDefinition | null {
-  if (definition.id !== 'zhipu' && definition.id !== 'anthropic') return null
   const host = hostOf(baseURL ?? undefined)
-  if (host === 'open.bigmodel.cn') return zhipuSearchDefinition
-  if (definition.id === 'anthropic' && host === 'api.anthropic.com') {
+  if (definition.id === ZHIPU_PROVIDER_ID && host === 'open.bigmodel.cn') {
+    return zhipuSearchDefinition
+  }
+  if (definition.id === ANTHROPIC_PROVIDER_ID && host === 'api.anthropic.com') {
     return createAnthropicSearchDefinition({ maxTokens: 4096, models: definition.builtinModels })
   }
   return null

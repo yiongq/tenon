@@ -4,13 +4,16 @@ import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { ZHIPU_ORIGIN, providerEnv } from './helpers/tools.js'
 
 /**
  * Acceptance 6 in the real shell: switch the provider in the settings card, type a key, save —
  * and the NEXT message goes to the other wire, with what was typed in its Authorization header.
  *
  * Two endpoints stand side by side for the whole run, so "it went to the new one" is not an
- * absence of evidence: the Anthropic fake is still listening and still counts its requests.
+ * absence of evidence: the Anthropic fake is still listening and still counts its requests. Both
+ * providers keep their official addresses — the only ones they take (M6 §点名 (a)) — and the origin
+ * map test seam sends each to its fake.
  *
  * Credentials travel through the card into `TENON_SECRETS=memory` (the e2e seam): nothing here
  * touches the OS keychain, and nothing here is a real key.
@@ -47,7 +50,7 @@ test('acceptance 6: the settings card switches the provider the next message goe
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({
     userData,
-    env: { ANTHROPIC_BASE_URL: first.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
+    env: providerEnv(first.baseURL, { [ZHIPU_ORIGIN]: second.baseURL }),
   })
 
   try {
@@ -71,9 +74,7 @@ test('acceptance 6: the settings card switches the provider the next message goe
     // list come from the zhipu DEFINITION, not from any renderer code naming it.
     await page.getByTestId('provider-select').selectOption('zhipu')
     await expect(page.getByTestId('provider-status-apiKey')).toHaveText('No key stored yet.')
-    // Endpoint first, key second: on a fresh profile the endpoint is judged before any credential
-    // exists, so this order is the one where an over-eager refusal would show up.
-    await page.getByTestId('provider-config-baseURL').fill(second.baseURL)
+    // The endpoint stays zhipu's official one: the key is all there is to type.
     await page.getByTestId('provider-config-apiKey').fill(ZHIPU_KEY)
     await page.getByTestId('model-select').selectOption(ZHIPU_MODEL)
     await page.getByTestId('provider-save').click()
@@ -94,7 +95,7 @@ test('acceptance 6: the settings card switches the provider the next message goe
     // The request landed on the OpenAI-compatible endpoint, with the key that was typed.
     expect(second.requests).toHaveLength(1)
     const request = second.requests[0]
-    expect(request?.path).toBe('/v1/chat/completions')
+    expect(request?.path).toBe('/api/paas/v4/chat/completions')
     expect(request?.headers['authorization']).toBe(`Bearer ${ZHIPU_KEY}`)
     expect(request?.body).toMatchObject({ model: ZHIPU_MODEL, stream: true })
     const body = request?.body as { messages: Array<{ role: string }> }
@@ -136,10 +137,7 @@ test('a base URL this wire cannot use is reported in the card, not as a crash', 
   anthropic = await startFakeAnthropic({ chunks: ['unused'] })
   const userData = makeUserDataDir('provider-card-invalid')
   seedConfig(userData, { locale: 'en' })
-  const { app, page } = await launchTenon({
-    userData,
-    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
-  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
 
   try {
     await page.getByTestId('account-row').click()
@@ -149,7 +147,8 @@ test('a base URL this wire cannot use is reported in the card, not as a crash', 
     // The endpoint goes in ALONE and on a fresh profile, which is the case a credential check
     // could hide: both wires validate their credentials before their base URL, so a provider
     // whose key is not stored yet must still have its URL judged.
-    await page.getByTestId('provider-config-baseURL').fill('https://gateway.example/v1')
+    const baseURL = page.getByTestId('provider-config-baseURL')
+    await baseURL.fill('https://api.anthropic.com/v1')
     await page.getByTestId('provider-save').click()
     const error = page.getByTestId('provider-error')
     await expect(error).toHaveAttribute('data-error-code', 'invalid-value')
@@ -157,10 +156,17 @@ test('a base URL this wire cannot use is reported in the card, not as a crash', 
     await expect(page.getByTestId('provider-settings')).toBeVisible()
     // Pointed at the field that was written — the endpoint, not whichever key name the message
     // happens to contain.
-    await expect(page.getByTestId('provider-config-baseURL')).toHaveAttribute(
-      'aria-invalid',
-      'true',
+    await expect(baseURL).toHaveAttribute('aria-invalid', 'true')
+    // Another endpoint altogether is a custom vendor's (M6 §点名 (a), 验收 26): refused with its
+    // own copy, before the definition is asked.
+    await baseURL.fill('https://gateway.example')
+    await page.getByTestId('provider-save').click()
+    await expect(error).toHaveAttribute('data-error-code', 'official-host-only')
+    await expect(error).toHaveText(
+      'A built-in provider only takes its official address; this address can only be added as a custom provider.',
     )
+    await expect(baseURL).toHaveAttribute('aria-invalid', 'true')
+    expect(anthropic.requests).toHaveLength(0)
   } finally {
     await app.close()
   }

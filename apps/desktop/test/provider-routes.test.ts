@@ -4,6 +4,9 @@
  * The security boundary first: a stored secret must not come back over IPC in any form. The rest
  * pins where each kind of value goes — keychain for secrets, `config.json` for the others — and
  * that a value no client could be built from is reported to the card instead of being written.
+ * And M6 §点名 (a), (b), (c), (e) (验收 26, M6 不变量 16): zhipu and anthropic take their official
+ * https origin only, zhipu no subscription path; an address in force outside them reads as not
+ * configured, says why in `refused`, and a send sends nothing.
  */
 import {
   ANTHROPIC_PROVIDER_ID,
@@ -14,11 +17,12 @@ import {
   keyFor,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { AbsolutePath, HostAdapter, ProviderDefinition } from '@tenon-app/kernel'
+import type { AbsolutePath, FetchLike, HostAdapter, ProviderDefinition } from '@tenon-app/kernel'
 import type { IpcMainLike, ProviderEntryContract } from '@tenon-app/contracts'
 import { describe, expect, it } from 'vitest'
-import { readConfig } from '../src/main/host/profile.js'
+import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { registerProviderRoutes } from '../src/main/provider-routes.js'
+import { createRunConnector } from '../src/main/run-assembly.js'
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown
 
@@ -29,20 +33,30 @@ interface Harness {
   entry(id: string): Promise<ProviderEntryContract>
 }
 
-/** The profile directory exists before main registers a route: `openProfile` creates it. */
-async function harness(extra: readonly ProviderDefinition[] = []): Promise<Harness> {
+/**
+ * The profile directory exists before main registers a route: `openProfile` creates it. `env` is a
+ * development build's environment; `fetch` the host network's (the memory host's when absent).
+ */
+async function harness(
+  extra: readonly ProviderDefinition[] = [],
+  options: { env?: Record<string, string>; fetch?: FetchLike } = {},
+): Promise<Harness> {
   const handlers = new Map<string, Handler>()
   const ipcMain: IpcMainLike = {
     handle(channel, listener) {
       handlers.set(channel, listener)
     },
   }
-  const host = createMemoryHost()
+  const memory = createMemoryHost()
+  const host =
+    options.fetch === undefined
+      ? memory
+      : createMemoryHost({ network: { ...memory.network, fetch: options.fetch } })
   await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
   for (const definition of extra) providers.register(definition)
-  registerProviderRoutes({ ipcMain, host, providers, log: () => {} })
+  registerProviderRoutes({ ipcMain, host, providers, env: options.env ?? {}, log: () => {} })
 
   const call = async (channel: string, payload: unknown): Promise<unknown> => {
     const handler = handlers.get(channel)
@@ -182,13 +196,13 @@ describe('provider.configure', () => {
     expect(
       await h.call('provider.configure', {
         id: ZHIPU_PROVIDER_ID,
-        values: { apiKey: KEY, baseURL: 'https://gateway.example/v1' },
+        values: { apiKey: KEY, baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
 
     const config = await readConfig(h.host.fs, h.host.identity)
     expect(config.providerConfig[ZHIPU_PROVIDER_ID]).toEqual({
-      baseURL: 'https://gateway.example/v1',
+      baseURL: 'https://open.bigmodel.cn/api/paas/v4',
     })
     // The file on disk holds no credential — the point of the split.
     expect(JSON.stringify(config)).not.toContain(KEY)
@@ -201,14 +215,14 @@ describe('provider.configure', () => {
     const h = await harness()
     await h.call('provider.configure', {
       id: ANTHROPIC_PROVIDER_ID,
-      values: { apiKey: KEY, baseURL: 'https://gateway.example' },
+      values: { apiKey: KEY, baseURL: 'https://api.anthropic.com' },
     })
     // A second save that mentions only one key leaves the other alone.
     await h.call('provider.configure', { id: ANTHROPIC_PROVIDER_ID, values: { apiKey: '' } })
 
     const config = await readConfig(h.host.fs, h.host.identity)
     expect(config.providerConfig[ANTHROPIC_PROVIDER_ID]).toEqual({
-      baseURL: 'https://gateway.example',
+      baseURL: 'https://api.anthropic.com',
     })
     expect(
       await h.host.secrets.get(
@@ -225,7 +239,7 @@ describe('provider.configure', () => {
     expect(
       await h.call('provider.configure', {
         id: ANTHROPIC_PROVIDER_ID,
-        values: { baseURL: 'https://gateway.example/v1' },
+        values: { baseURL: 'https://api.anthropic.com/v1' },
       }),
     ).toEqual({
       ok: true,
@@ -240,8 +254,9 @@ describe('provider.configure', () => {
     // The fresh-profile path, and the one a credential check could hide: both wires validate
     // their credentials BEFORE the base URL, so a provider with no key would never reach the URL
     // rules and every value would look acceptable.
+    // On the official origin, past §点名 (a)'s rule, which a foreign address never gets beyond.
     const refusals = await Promise.all(
-      ['https://gateway.example/v1', 'file:///etc/passwd', 'not a url'].map((baseURL) =>
+      ['https://api.anthropic.com/v1', 'https://api.anthropic.com/?token=abc'].map((baseURL) =>
         h.call('provider.configure', { id: ANTHROPIC_PROVIDER_ID, values: { baseURL } }),
       ),
     )
@@ -255,7 +270,7 @@ describe('provider.configure', () => {
     expect(
       await h.call('provider.configure', {
         id: ZHIPU_PROVIDER_ID,
-        values: { baseURL: 'https://gateway.example?token=abc' },
+        values: { baseURL: 'https://open.bigmodel.cn/api/paas/v4?token=abc' },
       }),
     ).toEqual({ ok: true, data: { ok: false, code: 'invalid-value', configKey: 'baseURL' } })
 
@@ -271,7 +286,7 @@ describe('provider.configure', () => {
     expect(
       await h.call('provider.configure', {
         id: ANTHROPIC_PROVIDER_ID,
-        values: { baseURL: 'https://relay.example/apiKey/v1' },
+        values: { baseURL: 'https://api.anthropic.com/apiKey/v1' },
       }),
     ).toEqual({ ok: true, data: { ok: false, code: 'invalid-value', configKey: 'baseURL' } })
   })
@@ -283,7 +298,7 @@ describe('provider.configure', () => {
     expect(
       await h.call('provider.configure', {
         id: ZHIPU_PROVIDER_ID,
-        values: { baseURL: 'https://gateway.example/v1' },
+        values: { baseURL: 'https://open.bigmodel.cn/api/paas/v4' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
     expect((await h.entry(ZHIPU_PROVIDER_ID)).configured).toBe(false)
@@ -303,6 +318,210 @@ describe('provider.configure', () => {
     })
     const config = await readConfig(h.host.fs, h.host.identity)
     expect(config.providerConfig[ZHIPU_PROVIDER_ID]).toBeUndefined()
+  })
+})
+
+describe('the builtins’ official origins (M6 §点名 (a), (b), (c), (e); 验收 26)', () => {
+  const FOREIGN: readonly (readonly [string, string])[] = [
+    [ANTHROPIC_PROVIDER_ID, 'https://open.bigmodel.cn/api/anthropic'],
+    [ANTHROPIC_PROVIDER_ID, 'https://gateway.example'],
+    [ANTHROPIC_PROVIDER_ID, 'http://api.anthropic.com'],
+    [ANTHROPIC_PROVIDER_ID, 'https://api.anthropic.com:8443'],
+    [ANTHROPIC_PROVIDER_ID, 'https://api.anthropic.com.evil.test'],
+    [ZHIPU_PROVIDER_ID, 'https://api.z.ai/api/paas/v4'],
+    [ZHIPU_PROVIDER_ID, 'http://open.bigmodel.cn/api/paas/v4'],
+    [ZHIPU_PROVIDER_ID, 'https://open.bigmodel.cn:8443/api/paas/v4'],
+    [ZHIPU_PROVIDER_ID, 'http://127.0.0.1:4000/v1'],
+  ]
+
+  it.each(FOREIGN)(
+    'refuses %s at %s with official-host-only, and writes nothing',
+    async (id, baseURL) => {
+      const h = await harness()
+      expect(await h.call('provider.configure', { id, values: { apiKey: KEY, baseURL } })).toEqual({
+        ok: true,
+        data: { ok: false, code: 'official-host-only', configKey: 'baseURL' },
+      })
+      expect((await readConfig(h.host.fs, h.host.identity)).providerConfig[id]).toBeUndefined()
+      expect(await h.host.secrets.get(keyFor(h.host.identity, 'provider', id, 'apiKey'))).toBeNull()
+    },
+  )
+
+  // Not a web URL at all (§地址校验 rule 1's order): the definition's own check answers, not the
+  // official-origin rule, whose copy would point at a custom vendor that refuses it too.
+  it.each([
+    [ANTHROPIC_PROVIDER_ID, 'not a url'],
+    [ANTHROPIC_PROVIDER_ID, 'file:///etc/passwd'],
+    // A blob URL's `origin` is its inner URL's, yet it is no http(s) address to send to.
+    [ANTHROPIC_PROVIDER_ID, 'blob:https://api.anthropic.com/'],
+    // The official host or the subscription path, typed without the scheme.
+    [ANTHROPIC_PROVIDER_ID, 'api.anthropic.com'],
+    [ZHIPU_PROVIDER_ID, 'open.bigmodel.cn/api/coding/paas/v4'],
+  ])('refuses %s at %s with invalid-value, and writes nothing', async (id, baseURL) => {
+    const h = await harness()
+    expect(await h.call('provider.configure', { id, values: { apiKey: KEY, baseURL } })).toEqual({
+      ok: true,
+      data: { ok: false, code: 'invalid-value', configKey: 'baseURL' },
+    })
+    expect((await readConfig(h.host.fs, h.host.identity)).providerConfig[id]).toBeUndefined()
+    expect(await h.host.secrets.get(keyFor(h.host.identity, 'provider', id, 'apiKey'))).toBeNull()
+  })
+
+  it.each([
+    'https://open.bigmodel.cn/api/coding/paas/v4',
+    'https://open.bigmodel.cn/API/Coding//PaaS/v4/',
+    'https://open.bigmodel.cn/api/coding%2Fpaas/v4',
+    // Z.ai's GLM Coding Plan (Q13): the subscription, not a custom vendor's address to add.
+    'https://api.z.ai/api/coding/paas/v4',
+  ])('refuses zhipu on the subscription path %s with subscription-endpoint', async (baseURL) => {
+    const h = await harness()
+    expect(
+      await h.call('provider.configure', {
+        id: ZHIPU_PROVIDER_ID,
+        values: { apiKey: KEY, baseURL },
+      }),
+    ).toEqual({
+      ok: true,
+      data: { ok: false, code: 'subscription-endpoint', configKey: 'baseURL' },
+    })
+    expect((await readConfig(h.host.fs, h.host.identity)).providerConfig).toEqual({})
+    expect(
+      await h.host.secrets.get(keyFor(h.host.identity, 'provider', ZHIPU_PROVIDER_ID, 'apiKey')),
+    ).toBeNull()
+  })
+
+  it('takes the official origin with any path or the default port, and a blank value back', async () => {
+    const h = await harness()
+    // The subscription path is zhipu's rule alone (§点名 (b), (e)): anthropic takes it.
+    for (const baseURL of [
+      'https://API.anthropic.com:443/',
+      'https://api.anthropic.com/x',
+      'https://api.anthropic.com/api/coding/paas/v4',
+      '',
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- saves one after another
+      const saved = await h.call('provider.configure', {
+        id: ANTHROPIC_PROVIDER_ID,
+        values: { apiKey: KEY, baseURL },
+      })
+      expect(saved).toEqual({ ok: true, data: { ok: true } })
+      // Each one listed as in force, read back before the next save.
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      expect((await h.entry(ANTHROPIC_PROVIDER_ID)).refused).toBeUndefined()
+    }
+    // Zhipu's own: the pay-as-you-go path, and its Anthropic-wire path on the same origin.
+    expect(
+      await h.call('provider.configure', {
+        id: ZHIPU_PROVIDER_ID,
+        values: { apiKey: KEY, baseURL: 'https://open.bigmodel.cn/api/paas/v4/' },
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+  })
+
+  it('M6 不变量 16: an address in force off the official origin, or on zhipu’s subscription path, is not configured and sends nothing', async () => {
+    const requests: string[] = []
+    const fetch: FetchLike = (input) => {
+      requests.push(String(input))
+      return Promise.reject(new Error('no request may leave'))
+    }
+    const cases: readonly {
+      readonly id: string
+      readonly stored?: string
+      readonly env?: Record<string, string>
+      readonly refused: ProviderEntryContract['refused']
+    }[] = [
+      {
+        id: ANTHROPIC_PROVIDER_ID,
+        stored: 'https://open.bigmodel.cn/api/anthropic/',
+        refused: { code: 'official-host-only', origin: 'https://open.bigmodel.cn' },
+      },
+      {
+        id: ZHIPU_PROVIDER_ID,
+        stored: 'https://api.z.ai/api/paas/v4',
+        refused: { code: 'official-host-only', origin: 'https://api.z.ai' },
+      },
+      {
+        id: ZHIPU_PROVIDER_ID,
+        stored: 'https://open.bigmodel.cn/api/coding/paas/v4',
+        refused: { code: 'subscription-endpoint' },
+      },
+      {
+        id: ZHIPU_PROVIDER_ID,
+        stored: 'https://api.z.ai/api/coding/paas/v4',
+        refused: { code: 'subscription-endpoint' },
+      },
+      // No origin to show: an opaque one, and a blob URL wrapping the official one.
+      {
+        id: ANTHROPIC_PROVIDER_ID,
+        stored: 'file:///etc/passwd',
+        refused: { code: 'official-host-only' },
+      },
+      {
+        id: ANTHROPIC_PROVIDER_ID,
+        stored: 'blob:https://api.anthropic.com/',
+        refused: { code: 'official-host-only' },
+      },
+      // §点名 (c): the development variable, on a development build.
+      {
+        id: ANTHROPIC_PROVIDER_ID,
+        env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:4000' },
+        refused: { code: 'official-host-only', origin: 'http://127.0.0.1:4000' },
+      },
+      {
+        id: ANTHROPIC_PROVIDER_ID,
+        env: { ANTHROPIC_BASE_URL: 'blob:https://api.anthropic.com/' },
+        refused: { code: 'official-host-only' },
+      },
+    ]
+    for (const { id, stored, env, refused } of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- one profile per case
+      const h = await harness([], { fetch, ...(env === undefined ? {} : { env }) })
+      if (stored !== undefined) {
+        // An address saved before M6 (or by hand): not migrated.
+        // oxlint-disable-next-line no-await-in-loop -- as above
+        await writeConfig(h.host.fs, h.host.identity, {
+          provider: { id, modelId: id === ZHIPU_PROVIDER_ID ? 'glm-4.6' : 'claude-sonnet-5' },
+          providerConfig: { [id]: { baseURL: stored } },
+        })
+      }
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await h.host.secrets.set(keyFor(h.host.identity, 'provider', id, 'apiKey'), KEY)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const entry = await h.entry(id)
+      expect(entry.configured).toBe(false)
+      expect(entry.refused).toEqual(refused)
+      const providers = createProviderRegistry()
+      registerBuiltinProviders(providers)
+      const connector = createRunConnector({
+        host: h.host,
+        providers,
+        env: env ?? {},
+        log: () => {},
+      })
+      const model = providers.get(id)?.builtinModels[0]
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const assembly = await connector.assemble({
+        sessionId: 's',
+        rootSessionId: 's',
+        choice: {
+          providerId: id,
+          modelId: model?.id ?? '',
+          effort: null,
+          capabilitySource: 'builtin',
+        },
+        signal: new AbortController().signal,
+      })
+      expect(() => assembly.provider()).toThrow(
+        expect.objectContaining({ name: 'ProviderConfigMissingError' }),
+      )
+      expect(assembly.search).toBeNull()
+    }
+    expect(requests).toEqual([])
+  })
+
+  it('lists the official addresses with no refusal', async () => {
+    const h = await harness()
+    for (const entry of await h.list()) expect(entry).not.toHaveProperty('refused')
   })
 })
 

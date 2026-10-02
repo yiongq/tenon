@@ -27,6 +27,7 @@ import { createDesktopHost, useMemorySecrets } from '../src/main/host/index.js'
 import { EmptyPolicy } from '../src/main/host/policy.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import { MemorySecrets } from '../src/main/host/secrets.js'
+import { snapshotEnv } from '../src/main/host/shell-env.js'
 
 describe('PassthroughSandbox', () => {
   const base = {
@@ -136,6 +137,7 @@ describe('the desktop policy', () => {
         send: () => {},
         log: () => {},
         isPackaged: false,
+        startupEnv: snapshotEnv({}),
       })
       expect(host.policy).toBeInstanceOf(EmptyPolicy)
       expect(host.policy.current()).toEqual(personal)

@@ -2,6 +2,7 @@ import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { providerEnv } from './helpers/tools.js'
 
 /**
  * Acceptance 5: restart the desktop and the last conversation is still there — on screen AND in
@@ -19,10 +20,6 @@ test.afterEach(async () => {
   await fake?.close()
   fake = undefined
 })
-
-function providerEnv(baseURL: string): Record<string, string> {
-  return { ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' }
-}
 
 test('a conversation survives a restart, on screen and on the wire', async () => {
   fake = await startFakeAnthropic({ chunks: ['Noted', '.'], delayMs: 10 })

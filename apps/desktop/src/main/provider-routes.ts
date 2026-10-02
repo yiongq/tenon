@@ -32,6 +32,7 @@ import { endpointOf, hostOf } from './endpoint.js'
 import { readConfig, withConfigLock, writeConfigHeld } from './host/profile.js'
 import {
   BASE_URL_KEY,
+  builtinRefusal,
   declaredBaseURL,
   devEnv,
   providerSecretKey,
@@ -109,6 +110,16 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
       if (!declared.has(name)) return refused('unknown-key', name)
     }
     if (isInstanceId(id)) return configureInstance(id, values)
+    // M6 §点名 (a), (e): zhipu and anthropic take their official https origin only, and zhipu no
+    // subscription path; a blank value goes back to the declared default. Refused before anything
+    // is read or written — another endpoint is a custom vendor instance (Q8, Q13). Only a web URL
+    // is judged so: one that does not parse, or is not http(s), is not an endpoint at all and
+    // `create()` answers `invalid-value` below (§地址校验 rule 1's order) — no custom vendor takes it.
+    if (Object.hasOwn(values, BASE_URL_KEY)) {
+      const typed = nonEmpty(values[BASE_URL_KEY])?.trim() ?? declaredBaseURL(definition)
+      const refusal = isWebURL(typed) ? builtinRefusal(id, typed) : null
+      if (refusal !== null) return refused(refusal.code, BASE_URL_KEY)
+    }
 
     const config = await readConfig(host.fs, host.identity)
     const stored = config.providerConfig[id] ?? {}
@@ -285,6 +296,17 @@ function isOllamaCloud(host: string): boolean {
   return host === 'ollama.com' || host.endsWith('.ollama.com')
 }
 
+/** Parses as a URL whose protocol is `https:` or `http:` (M6 §地址校验 rule 1). */
+function isWebURL(value: string | undefined): boolean {
+  if (value === undefined) return false
+  try {
+    const { protocol } = new URL(value)
+    return protocol === 'https:' || protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 function nonEmpty(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === '' ? undefined : value
 }
@@ -338,6 +360,9 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
   if (instance !== null) {
     return describeInstance(definition, instance, configKeys, unbound, endpoint)
   }
+  // M6 §点名 (b), (c): an address in force outside the official origin, or zhipu's subscription
+  // path, reads as not configured and says why; a send refuses it the same way (run-assembly.ts).
+  const refusal = builtinRefusal(definition.id, inputs.config[BASE_URL_KEY])
   return {
     id: definition.id,
     nameKey: definition.nameKey,
@@ -345,8 +370,9 @@ async function describeProvider(options: DescribeOptions): Promise<ProviderEntry
     models: definition.builtinModels.map((model) => menuRow(definition, model)),
     // A send refuses outright while any present key is bound to another host (plan step 19's
     // reading ③, run-assembly.ts), so the provider is not ready either: 「发送时会被拒的 key 不算」.
-    configured: isConfigured(configKeys) && unbound.size === 0,
+    configured: isConfigured(configKeys) && unbound.size === 0 && refusal === null,
     endpoint,
+    ...(refusal === null ? {} : { refused: refusal }),
   }
 }
 
@@ -398,7 +424,8 @@ function menuRow(
   const spec = model.thinkingSpec
   return {
     id: model.id,
-    // Ollama sends no tools (A14); zhipu's and anthropic's rows stay verified wherever they point.
+    // Ollama sends no tools (A14); zhipu's and anthropic's rows are verified, and send to their
+    // official origin only (M6 §点名 (a), (b)).
     mark: TEXT_ONLY_PROVIDERS.has(definition.id) ? 'local-text-only' : 'verified',
     ...(model.purposeKey === undefined ? {} : { purposeKey: model.purposeKey }),
     listing: model.listing ?? 'main',

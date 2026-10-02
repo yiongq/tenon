@@ -5,11 +5,13 @@ import type { EventSender } from './confirm.js'
 import { DesktopFs } from './fs.js'
 import { createDesktopNetwork } from './network.js'
 import { officialProtocolTestNetwork } from './official-protocol-test-seam.js'
+import { originMapTestNetwork } from './origin-map-test-seam.js'
 import { createHostProcess } from './process.js'
 import { EmptyPolicy } from './policy.js'
 import { openProfile } from './profile.js'
 import { PassthroughSandbox } from './sandbox.js'
 import { KeychainSecrets, MemorySecrets } from './secrets.js'
+import type { StartupEnv } from './shell-env.js'
 
 export interface DesktopHostOptions {
   /** Electron's `app.getPath('userData')`, already absolute. */
@@ -21,6 +23,12 @@ export interface DesktopHostOptions {
   log: (line: string) => void
   /** `app.isPackaged`, passed in rather than read so this module stays free of electron. */
   isPackaged: boolean
+  /**
+   * The environment Tenon was started with — main's snapshot from before `loadDevEnv` — which the
+   * origin map seam reads, so a `.env.local` cannot turn it on (M6 §点名「测试接缝」). Only
+   * `snapshotEnv` makes one: `process.env` is a type error here.
+   */
+  startupEnv: StartupEnv
 }
 
 /**
@@ -47,7 +55,12 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<Ho
     sandbox: new PassthroughSandbox(options.log),
     confirm: new IpcConfirm(options.send),
     clock: new SystemClock(),
-    network: officialProtocolTestNetwork(createDesktopNetwork(), options.isPackaged, process.env),
+    // The origin map innermost: the official protocol seam sees the URL as configured (M6 不变量 19).
+    network: officialProtocolTestNetwork(
+      originMapTestNetwork(createDesktopNetwork(), options.isPackaged, options.startupEnv),
+      options.isPackaged,
+      process.env,
+    ),
     policy: new EmptyPolicy(),
   }
 }

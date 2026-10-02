@@ -1,35 +1,34 @@
 /**
  * The model table the eval runner sends through, and the column a run writes to (spec 02 §同题对比
- * 「评测专用行」; H15, A9, M4).
+ * 「评测专用行」; H15, A9, M4; M6 §点名 (d)).
  *
- * The eval-only row: glm-5.3 on the ANTHROPIC definition, sent to Zhipu's Anthropic-compatible
- * endpoint `https://open.bigmodel.cn/api/anthropic` with `ZHIPU_API_KEY` as `apiKey` (`x-api-key`).
- * Tools on, no `thinkingSpec`. It is registered only by `evalProviderRegistry()` — the runner's own
- * registry — and never by `registerBuiltinProviders`, so the daily table and the model menu do not
- * have it. The row's data follows plan step 2's probe T8 (2026-09-26): the endpoint answers every
- * request with `thinking` blocks carrying a 24-character `signature` whether or not `thinking` is
- * sent, and a thinking + tool_use round trip echoed as sent completes (`signed-blocks`); it accepts
- * `cache_control` but caches implicitly and reports no cache writes (`supportsCacheControl: false`);
- * `thinking`, `display` and `output_config.effort` are accepted with no visible effect, hence no
- * `thinkingSpec`. The limits and the price are glm-5.3's own row on the zhipu definition (zhipu.ts):
- * the same model, billed per token by the same vendor.
+ * The eval-only column: glm-5.3 on Zhipu's Anthropic-compatible endpoint
+ * `https://open.bigmodel.cn/api/anthropic` with `ZHIPU_API_KEY` as the key (`x-api-key`). Since M6
+ * it is a custom vendor instance (an anthropic-messages entry of `customVendors`), not a row of the
+ * anthropic definition: anthropic takes api.anthropic.com only (§点名 (a)). The runner writes the
+ * entry into the run's profile, probes the row with the product's `probeModel` before anything else
+ * — a row that does not pass is not run (M6 推出的读法 35) — and sends through the product's
+ * registry view. Its limits are glm-5.3's own row on the zhipu definition (zhipu.ts). An instance
+ * row has no `pricing` (§合成), so the runner prices this column at its own eval-only price, the
+ * same model's per-token price at the same vendor (Q17). The column keeps its name: client, model
+ * and endpoint are those of the 02 row (`TENON_EVAL_PROVIDER=anthropic`, `TENON_EVAL_MODEL=glm-5.3`
+ * still name it), and an instance has no WebSearch (Q10).
  *
  * Keys (A9, M4): a column names the variable its key is read from, and the host that variable is
  * bound to. `ZHIPU_API_KEY` only ever goes to open.bigmodel.cn; the official Anthropic key only to
  * api.anthropic.com, and only from the runner's own environment — the live suite's variable and its
  * rule (e2e/helpers/app-env.ts, e2e/helpers/live-env.ts), so the owner keeps one name for that key.
  */
+import type { CustomVendorContract } from '@tenon-app/contracts'
 import {
   ANTHROPIC_DEFAULT_BASE_URL,
   ANTHROPIC_PROVIDER_ID,
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROVIDER_ID,
-  anthropicDefinition,
   createProviderRegistry,
-  ollamaDefinition,
-  zhipuDefinition,
+  registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { ModelInfo, ProviderDefinition, ProviderRegistry } from '@tenon-app/kernel'
+import type { ModelInfo, ProviderRegistry } from '@tenon-app/kernel'
 import { OFFICIAL_KEY_ENV, looksOfficial } from '../e2e/helpers/app-env.js'
 
 /** Zhipu's Anthropic-compatible endpoint (the SDK appends `/v1/messages`). */
@@ -41,52 +40,66 @@ export const KEY_HOSTS: Readonly<Record<string, string>> = {
   [OFFICIAL_KEY_ENV]: 'api.anthropic.com',
 }
 
-export const EVAL_GLM_53_ANTHROPIC: ModelInfo = Object.freeze({
-  id: 'glm-5.3',
-  providerId: ANTHROPIC_PROVIDER_ID,
-  contextLimit: 1_000_000,
-  maxOutputTokens: 128_000,
-  reasoning: true,
-  supportsToolCalling: true,
-  supportsStreamingToolCalls: true,
-  supportsVision: false,
-  supportsCacheControl: false,
-  thinkingPreservationFormat: 'signed-blocks',
-  usageNeedsOptIn: false,
-  pricing: Object.freeze({
-    inputPerMTok: 8,
-    outputPerMTok: 28,
-    cacheReadPerMTok: 2,
-    currency: 'CNY',
-  }),
-} satisfies ModelInfo)
+/** The eval-only instance's model: glm-5.3, with the limits of its zhipu.ts row. */
+export const EVAL_INSTANCE_MODEL_ID = 'glm-5.3'
 
-/** The anthropic definition with the eval-only row after its builtin rows; nothing else differs. */
-export const EVAL_ANTHROPIC_DEFINITION: ProviderDefinition = {
-  ...anthropicDefinition,
-  builtinModels: [...anthropicDefinition.builtinModels, EVAL_GLM_53_ANTHROPIC],
-}
+/**
+ * The eval-only instance (M6 §点名 (d)): the `customVendors` entry the runner writes, unprobed. Its
+ * id is fixed — each run has a profile of its own — and matches `CUSTOM_PROVIDER_ID_PATTERN` (T1).
+ */
+export const EVAL_INSTANCE: CustomVendorContract = Object.freeze({
+  id: 'custom-00000000-0000-4000-8000-000000000053',
+  displayName: 'GLM-5.3 · Anthropic wire (eval)',
+  wire: 'anthropic-messages' as const,
+  baseURL: ZHIPU_ANTHROPIC_BASE_URL,
+  models: [{ id: EVAL_INSTANCE_MODEL_ID, contextLimit: 1_000_000, maxOutputTokens: 128_000 }],
+})
 
-/** The registry the runner hands the desktop's Run connector: the builtin three, anthropic widened. */
+/**
+ * The price the runner reads the instance column's cost at (Q17; §点名 (d)): glm-5.3's, per million
+ * tokens, in CNY — ¥8 in, ¥28 out, ¥2 for a cached read. Never a model row's: no instance row has
+ * one.
+ */
+export const EVAL_INSTANCE_PRICING: NonNullable<ModelInfo['pricing']> = Object.freeze({
+  inputPerMTok: 8,
+  outputPerMTok: 28,
+  cacheReadPerMTok: 2,
+  currency: 'CNY' as const,
+})
+
+/**
+ * The registry under the runner's view: the builtin three, as the app has them. The instance column
+ * joins it through the product's registry view (custom-vendors/registry.ts), never by registration.
+ */
 export function evalProviderRegistry(): ProviderRegistry {
   const registry = createProviderRegistry()
-  for (const definition of [EVAL_ANTHROPIC_DEFINITION, zhipuDefinition, ollamaDefinition]) {
-    registry.register(definition)
-  }
+  registerBuiltinProviders(registry)
   return registry
+}
+
+/** What the runner writes for an instance column, and the price it reads its cost at. */
+export interface EvalInstance {
+  readonly entry: CustomVendorContract
+  readonly pricing: NonNullable<ModelInfo['pricing']>
 }
 
 /** A Tenon column: client × model × endpoint, and where its key comes from. */
 export interface EvalColumn {
+  /** A builtin's id, or the instance's (`custom-<uuid>`). */
   readonly providerId: string
   readonly modelId: string
-  /** What `config.json`'s `providerConfig[providerId].baseURL` holds for the run. */
+  /**
+   * Where the column sends: `config.json`'s `providerConfig[providerId].baseURL` for a builtin, the
+   * instance's own address for an instance.
+   */
   readonly baseURL: string
   /** The variable the key is read from. Records and commands name only it, never its value. */
   readonly keyEnv: string
   /** Only the runner's own environment may hold the key (the official Anthropic key). */
   readonly keyFromProcessOnly: boolean
   readonly effort: string | null
+  /** The custom vendor instance the column is (M6 §点名 (d)); null for a builtin column. */
+  readonly instance: EvalInstance | null
 }
 
 /**
@@ -113,8 +126,10 @@ export type EnvRecord = Readonly<Record<string, string | undefined>>
 
 /**
  * The column `TENON_EVAL_PROVIDER` / `_MODEL` / `_EFFORT` name. The provider defaults to zhipu and
- * the model to the definition's first row, as a new user's fallback does. Throws for anything that
- * could not run as a table row, or whose key would travel to a host it is not bound to.
+ * the model to the definition's first row, as a new user's fallback does; `anthropic` with
+ * `glm-5.3` is the eval-only instance column (M6 §点名 (d)), which has no effort levels. Throws for
+ * anything that could not run as a table row, or whose key would travel to a host it is not bound
+ * to.
  */
 export function resolveColumn(env: EnvRecord): EvalColumn {
   const providerId = blank(env['TENON_EVAL_PROVIDER']) ?? ZHIPU_PROVIDER_ID
@@ -127,16 +142,26 @@ export function resolveColumn(env: EnvRecord): EvalColumn {
     throw new Error(`TENON_EVAL_PROVIDER=${providerId}: the runner runs zhipu or anthropic only`)
   }
   const modelId = blank(env['TENON_EVAL_MODEL']) ?? definition.builtinModels[0]?.id
+  const instance = providerId === ANTHROPIC_PROVIDER_ID && modelId === EVAL_INSTANCE_MODEL_ID
   const model = definition.builtinModels.find((row) => row.id === modelId)
-  if (modelId === undefined || model === undefined) {
+  if (modelId === undefined || (model === undefined && !instance)) {
     throw new Error(`TENON_EVAL_MODEL=${String(modelId)} is not a row of the ${providerId} table`)
   }
   const effort = blank(env['TENON_EVAL_EFFORT'])
-  if (effort !== null && !(model.thinkingSpec?.effortLevels ?? []).includes(effort)) {
+  if (effort !== null && !(model?.thinkingSpec?.effortLevels ?? []).includes(effort)) {
     throw new Error(`TENON_EVAL_EFFORT=${effort} is not an effort level of ${modelId}`)
   }
-  const column: EvalColumn =
-    providerId === ZHIPU_PROVIDER_ID
+  const column: EvalColumn = instance
+    ? {
+        providerId: EVAL_INSTANCE.id,
+        modelId,
+        baseURL: EVAL_INSTANCE.baseURL,
+        keyEnv: 'ZHIPU_API_KEY',
+        keyFromProcessOnly: false,
+        effort,
+        instance: { entry: EVAL_INSTANCE, pricing: EVAL_INSTANCE_PRICING },
+      }
+    : providerId === ZHIPU_PROVIDER_ID
       ? {
           providerId,
           modelId,
@@ -144,24 +169,17 @@ export function resolveColumn(env: EnvRecord): EvalColumn {
           keyEnv: 'ZHIPU_API_KEY',
           keyFromProcessOnly: false,
           effort,
+          instance: null,
         }
-      : model === EVAL_GLM_53_ANTHROPIC
-        ? {
-            providerId,
-            modelId,
-            baseURL: ZHIPU_ANTHROPIC_BASE_URL,
-            keyEnv: 'ZHIPU_API_KEY',
-            keyFromProcessOnly: false,
-            effort,
-          }
-        : {
-            providerId,
-            modelId,
-            baseURL: ANTHROPIC_DEFAULT_BASE_URL,
-            keyEnv: OFFICIAL_KEY_ENV,
-            keyFromProcessOnly: true,
-            effort,
-          }
+      : {
+          providerId,
+          modelId,
+          baseURL: ANTHROPIC_DEFAULT_BASE_URL,
+          keyEnv: OFFICIAL_KEY_ENV,
+          keyFromProcessOnly: true,
+          effort,
+          instance: null,
+        }
   assertKeyBound(column)
   return column
 }

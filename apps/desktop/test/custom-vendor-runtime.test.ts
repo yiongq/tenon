@@ -623,6 +623,36 @@ describe('a row’s tools and capabilitySource come from its probe (M6 §运行�
     },
   )
 
+  // The twin on api.anthropic.com: a row named like one the Anthropic search backend picks still
+  // gets none, because the instance is not the builtin anthropic (M6 §搜索, Q10).
+  it('M6 不变量 15, 验收 21: an anthropic-messages instance at https://api.anthropic.com listing claude-sonnet-5 has no WebSearch', async () => {
+    const row = { ...TOOL_ROW, id: 'claude-sonnet-5' }
+    const h = await harness(
+      [
+        instance({
+          id: ID,
+          wire: 'anthropic-messages',
+          baseURL: 'https://api.anthropic.com',
+          models: [row],
+        }),
+      ],
+      [ANTHROPIC_ANSWER],
+    )
+    await choose(h, row.id)
+    expect((await send(h, 'hello')).reason.code).toBe('completed')
+    expect(h.network.requests.map((request) => request.url)).toEqual([
+      'https://api.anthropic.com/v1/messages',
+    ])
+    const [table] = await payloads(h, 'view/tool_table')
+    const tools = (table?.['tools'] as { name: string }[] | undefined)?.map((tool) => tool.name)
+    expect(tools).toContain('WebFetch')
+    expect(tools).not.toContain('WebSearch')
+    expect(table?.['excluded']).toEqual([
+      expect.objectContaining({ originalName: 'WebSearch', code: 'no-search-backend' }),
+    ])
+    expect(h.connector.searchTarget?.(ID, 'q')).toBeNull()
+  })
+
   it.each([
     ['loopback', LOCAL],
     ['private', PRIVATE],

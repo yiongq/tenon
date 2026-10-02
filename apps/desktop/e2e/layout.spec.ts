@@ -3,6 +3,7 @@ import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { providerEnv } from './helpers/tools.js'
 
 /**
  * The shell must never scroll: only the thread viewport does.
@@ -82,7 +83,7 @@ test('a thread taller than the window scrolls itself, never the shell', async ()
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({
     userData,
-    env: { ANTHROPIC_BASE_URL: fake.baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' },
+    env: providerEnv(fake.baseURL),
     contentSize: { width: 1280, height: 780 },
   })
   try {
@@ -172,7 +173,7 @@ test('a message sent while the thread is scrolled up brings the thread to its en
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({
     userData,
-    env: { ANTHROPIC_BASE_URL: fake.baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' },
+    env: providerEnv(fake.baseURL),
     contentSize: { width: 1280, height: 780 },
   })
   const distanceToBottom = async (): Promise<number> => {

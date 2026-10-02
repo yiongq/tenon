@@ -2,9 +2,11 @@ import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { providerEnv } from './helpers/tools.js'
 
 /**
- * Acceptance 4 in the real shell, against a local Anthropic-compatible endpoint: the reply
+ * Acceptance 4 in the real shell, against a local fake standing in for api.anthropic.com (the
+ * origin map test seam, M6 §点名「测试接缝」): the reply
  * streams into the thread, Stop aborts the request down to the socket, provider failures
  * show localized copy chosen by error code, and the page never violates its CSP.
  */
@@ -14,10 +16,6 @@ test.afterEach(async () => {
   await fake?.close()
   fake = undefined
 })
-
-function providerEnv(baseURL: string): Record<string, string> {
-  return { ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' }
-}
 
 test('a reply streams into the thread as rendered markdown', async () => {
   fake = await startFakeAnthropic({

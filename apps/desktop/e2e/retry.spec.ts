@@ -7,7 +7,15 @@ import type { FailWith, FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
-import { providerEnv, pushesOf, recordPushes, send, textReply } from './helpers/tools.js'
+import {
+  ANTHROPIC_ORIGIN,
+  originMap,
+  providerEnv,
+  pushesOf,
+  recordPushes,
+  send,
+  textReply,
+} from './helpers/tools.js'
 
 /**
  * Whose message 「重试」 sends, and where an end goes (spec 02 §失败卡与结束原因, §重试与「继续」; plan
@@ -184,8 +192,12 @@ test('with no key the message stays, the 「去设置」 card comes below it, an
   const server = fake
   const userData = makeUserDataDir('retry-no-key')
   seedConfig(userData, { locale: 'en' })
-  // No key anywhere: not in the environment, not in the store.
-  const { app, page } = await launchTenon({ userData })
+  // No key anywhere: not in the environment, not in the store. api.anthropic.com's requests go to
+  // the fake (the origin map test seam), once there is a key to send.
+  const { app, page } = await launchTenon({
+    userData,
+    env: originMap({ [ANTHROPIC_ORIGIN]: server.baseURL }),
+  })
   try {
     await send(page, 'hello there')
     const card = page.getByTestId('failure-card')
@@ -210,7 +222,6 @@ test('with no key the message stays, the 「去设置」 card comes below it, an
     await page.getByTestId('failure-action').last().click()
     await expect(page.getByTestId('provider-settings')).toBeVisible()
     await page.getByTestId('provider-select').selectOption('anthropic')
-    await page.getByTestId('provider-config-baseURL').fill(server.baseURL)
     await page.getByTestId('provider-config-apiKey').fill('e2e-typed-key')
     await page.getByTestId('provider-save').click()
     await expect(page.getByTestId('provider-settings')).toBeHidden()

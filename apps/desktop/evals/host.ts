@@ -16,7 +16,8 @@
  *     「本会话」 wherever §作用域与授权键 lets the card offer it (`PendingCard.allowScope`).
  *   - Questions are skipped (runner.ts).
  *   - A task with `web` gets a fake `SearchBackend` reading `web.search` — `host` and `domainFilter`
- *     are those of the column's real backend, so the ToolSpec variant is the product's — and a fake
+ *     are those of the column's real backend, so the ToolSpec variant is the product's; a column
+ *     with none (an instance, M6 §点名 (f), Q10) gets none — and a fake
  *     `fetchUntrusted` reading `web.pages`, 404 for a URL not in the table. Neither leaves the
  *     machine; the conversation itself goes to the real network. Nothing is filtered by URL at the
  *     network layer: the Anthropic search backend and the conversation share one URL.
@@ -24,6 +25,9 @@
  *     they will find, `RunAssembly.search` and `HostNetwork.fetchUntrusted`.
  *   - `disableTool`: after round N, the policy is swapped for a snapshot that denies the tool — as
  *     the memory host's `setPolicy` does — so the block is recorded as `policy`.
+ *   - The offline tests' origin map (`originMap`): the desktop network wrapped by the e2e seam's
+ *     own redirect, so a column keeps its real address and its requests reach a fake server on this
+ *     machine (M6 §点名「测试接缝」). A live run never sets it.
  */
 import {
   copyFileSync,
@@ -56,12 +60,14 @@ import type {
 import { SystemClock } from '../src/main/host/clock.js'
 import { DesktopFs } from '../src/main/host/fs.js'
 import { createDesktopNetwork } from '../src/main/host/network.js'
+import { parseOriginMap, redirectOrigins } from '../src/main/host/origin-map-test-seam.js'
 import { createHostProcess } from '../src/main/host/process.js'
 import { openProfile } from '../src/main/host/profile.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import { MemorySecrets } from '../src/main/host/secrets.js'
 import { pickShell } from '../src/main/host/shell-env.js'
 import { dedicatedFolderFor } from '../src/main/workspace.js'
+import type { EvalColumn } from './models.js'
 import type { EvalTask } from './task.js'
 import { fixtureFile, fixtureSymlink, searchHitsSchema } from './task.js'
 
@@ -149,10 +155,18 @@ export class RecordingConfirm implements HostConfirm {
   }
 }
 
-/** The search backend a column's host has (§工具形状与后端选择), or none. */
-export function searchHostOf(baseURL: string): SearchBackend['host'] | null {
-  const host = new URL(baseURL).hostname
-  return host === 'open.bigmodel.cn' || host === 'api.anthropic.com' ? host : null
+/**
+ * The search backend a column has (§工具形状与后端选择), or none: zhipu on its own host, anthropic on
+ * api.anthropic.com — the product's rule (run-assembly.ts), M6 §点名 (f) included: an instance has no
+ * search, whatever host it sends to (Q10).
+ */
+export function searchHostOf(
+  column: Pick<EvalColumn, 'providerId' | 'baseURL'>,
+): SearchBackend['host'] | null {
+  const host = new URL(column.baseURL).hostname
+  if (column.providerId === 'zhipu' && host === 'open.bigmodel.cn') return host
+  if (column.providerId === 'anthropic' && host === 'api.anthropic.com') return host
+  return null
 }
 
 /** The fake `SearchBackend`: every query gets the same hits, the column's real host and filter. */
@@ -231,11 +245,17 @@ export interface EvalHostOptions {
   readonly sessionId: string
   /** `docs/evals/fixtures/`. */
   readonly fixturesDir: string
-  /** The column's base URL: which search backend's host the fake one takes. */
-  readonly baseURL: string
+  /** The column: which search backend's host the fake one takes (`searchHostOf`). */
+  readonly column: Pick<EvalColumn, 'providerId' | 'baseURL'>
   readonly log: (line: string) => void
   /** The runner's environment, which PATH and LANG come from. */
   readonly runnerEnv?: Readonly<Record<string, string | undefined>>
+  /**
+   * Offline tests only: `TENON_TEST_ORIGIN_MAP`'s format, each https origin sent to a fake server
+   * on this machine through the e2e seam's own redirect (M6 §点名「测试接缝」). A live run never
+   * sets it.
+   */
+  readonly originMap?: string
 }
 
 export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost> {
@@ -262,7 +282,10 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
       copyWorkspace(linkFree(fixturesDir, task.workspace), picked)
     }
     const fetched: string[] = []
-    const desktop = createDesktopNetwork()
+    const desktop =
+      options.originMap === undefined
+        ? createDesktopNetwork()
+        : redirectOrigins(createDesktopNetwork(), parseOriginMap(options.originMap))
     const pages = Object.fromEntries(
       Object.entries(task.web?.pages ?? {}).map(([url, file]) => [
         url,
@@ -273,7 +296,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
       task.web === undefined
         ? desktop
         : { ...desktop, fetchUntrusted: fakeFetchUntrusted(pages, fetched) }
-    const searchHost = searchHostOf(options.baseURL)
+    const searchHost = searchHostOf(options.column)
     const search =
       task.web?.search === undefined || searchHost === null
         ? null

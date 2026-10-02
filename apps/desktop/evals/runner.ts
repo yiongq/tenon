@@ -3,13 +3,17 @@
  * one run, one `EvalRecord`.
  *
  * A run is the product's path with the test host under it. The Run connector is the desktop's own
- * (`createRunConnector`, run-assembly.ts) over the runner's provider registry (models.ts adds the
- * eval-only row), reading `config.json` and the secrets as the settings card leaves them: the
- * column's provider and model chosen, its base URL saved beside its key — so the key-bound-host check
- * (A9) runs before every send as it does for a user. No development fallback is read (`env: {}`),
- * so nothing in the runner's shell can redirect a request. The loop's host half is the desktop's
- * (`createDesktopLoop`); the kernel service is the product's, with H11's token limit only when the
- * task sets `usageLimitTokens` (`createEvalSessionService`).
+ * (`createRunConnector`, run-assembly.ts) over the product's registry view (the builtin three and
+ * the profile's `customVendors`), reading `config.json` and the secrets as the settings card leaves
+ * them: the column's provider and model chosen, its base URL saved beside its key — so the
+ * key-bound-host check (A9) runs before every send as it does for a user. The eval-only instance
+ * column (models.ts; M6 §点名 (d)) is written as its `customVendors` entry instead, and probed with
+ * the product's `probeModel` before the first turn: a row that does not pass is not run, and the
+ * passing snapshot is stored as the probe route stores it, so the row has its tools (M6 推出的读法
+ * 35). Its cost is read at the column's own price (Q17). No development fallback is read
+ * (`env: {}`), so nothing in the runner's shell can redirect a request. The loop's host half is
+ * the desktop's (`createDesktopLoop`); the kernel service is the product's, with H11's token limit
+ * only when the task sets `usageLimitTokens` (`createEvalSessionService`).
  *
  * Each turn is sent as a user message; a Run that pauses on a card is answered by the host
  * (host.ts's `autoAnswer`), one that pauses on a question has it skipped, and the next turn goes when
@@ -31,11 +35,13 @@ import {
   PROMPT_LAYER_HASH,
   PROMPT_LAYER_VERSION,
   createMemoryTapeStore,
+  probeModel,
   toolCallKey,
 } from '@tenon-app/kernel'
 import type {
   AnswerCommand,
   ConfirmRequest,
+  HostAdapter,
   Provider,
   RunConnector,
   SearchBackend,
@@ -47,11 +53,16 @@ import type {
 } from '@tenon-app/kernel'
 import { createEvalSessionService } from '@tenon-app/kernel/testing'
 import { createDesktopLoop } from '../src/main/chat.js'
+import {
+  createProviderView,
+  instanceDefinition,
+  instanceRow,
+} from '../src/main/custom-vendors/registry.js'
 import { writeConfig } from '../src/main/host/profile.js'
 import { desktopInspectors } from '../src/main/inspectors.js'
 import { localDateOf } from '../src/main/locale.js'
-import { providerSecretKey } from '../src/main/provider.js'
-import { createRunConnector } from '../src/main/run-assembly.js'
+import { providerSecretKey, readSettledInputs } from '../src/main/provider.js'
+import { createRunConnector, requestMaxTokens } from '../src/main/run-assembly.js'
 import { protectedShellFiles } from '../src/main/workspace.js'
 import { blockedRecalls, callsOf } from './checks/support.js'
 import { readAll, tapeCost } from './cost.js'
@@ -59,7 +70,7 @@ import { autoAnswer, createEvalHost, disabledToolPolicy } from './host.js'
 import type { EvalHost } from './host.js'
 import { CHECKS_DIR, loadCheck } from './load-check.js'
 import { columnSlug, endpointOf, evalProviderRegistry, readKey, resolveColumn } from './models.js'
-import type { EnvRecord, EvalColumn } from './models.js'
+import type { EnvRecord, EvalColumn, EvalInstance } from './models.js'
 import type { EvalRecord } from './record.js'
 import { evalRecordSchema } from './record.js'
 import type { EvalTask } from './task.js'
@@ -125,6 +136,11 @@ export interface RunTaskOptions {
   readonly inspect?: (run: RunInspection) => Promise<void> | void
   /** Optional repository-external directory, only used by the eval harness. */
   readonly rawDir?: string
+  /**
+   * Offline tests only: the fake servers standing in for the column's origins, in
+   * `TENON_TEST_ORIGIN_MAP`'s format (evals/host.ts; M6 §点名「测试接缝」). A live run never sets it.
+   */
+  readonly originMap?: string
 }
 
 /** A finished run as `inspect` sees it: the check context, plus the run's directory. */
@@ -450,9 +466,10 @@ export async function runTask(o: RunTaskOptions): Promise<EvalRecord> {
     task,
     sessionId,
     fixturesDir: o.fixturesDir ?? FIXTURES_DIR,
-    baseURL: column.baseURL,
+    column,
     log,
     ...(o.runnerEnv === undefined ? {} : { runnerEnv: o.runnerEnv }),
+    ...(o.originMap === undefined ? {} : { originMap: o.originMap }),
   })
   try {
     return await runOn(evalHost, sessionId, o, log)
@@ -475,19 +492,30 @@ async function runOn(
   const { task, column } = o
   const host = evalHost.adapter
   // The column as the settings card leaves it: provider and model chosen, the base URL saved with
-  // the key it is bound to.
-  const config = await writeConfig(host.fs, host.identity, {
+  // the key it is bound to — or, for an instance column, its entry (M6 §点名 (d)), never a
+  // `providerConfig` the instance would not read (§注册表视图).
+  let config = await writeConfig(host.fs, host.identity, {
     provider: { id: column.providerId, modelId: column.modelId },
-    providerConfig: { [column.providerId]: { baseURL: column.baseURL } },
+    ...(column.instance === null
+      ? { providerConfig: { [column.providerId]: { baseURL: column.baseURL } } }
+      : { customVendors: [column.instance.entry] }),
   })
   await evalHost.secrets.set(providerSecretKey(host, column.providerId, 'apiKey'), o.key)
+  if (column.instance !== null) {
+    config = await probeColumn(host, column.instance, column.modelId, o.signal, log)
+  }
+  const providers = createProviderView({
+    builtin: evalProviderRegistry(),
+    identity: host.identity,
+    config,
+  })
   const store = createMemoryTapeStore({ identity: host.identity })
   const watch = new Watch(sessionId)
   const disable = task.host?.disableTool
   let disabled = false
   const samples: TimingSample[] | null = o.timing === true ? [] : null
   const connector = watchedConnector(
-    createRunConnector({ host, providers: evalProviderRegistry(), env: {}, log, config }),
+    createRunConnector({ host, providers, env: {}, log, config }),
     {
       search: evalHost.search,
       beforeStream: () => {
@@ -578,7 +606,7 @@ async function runOn(
   const raw =
     o.rawDir === undefined ? undefined : await writeRawInspection(o.rawDir, inspection, o.key)
   const entries = await readAll(store, sessionId)
-  const costs = await tapeCost(store, sessionId)
+  const costs = await tapeCost(store, sessionId, column.instance?.pricing)
   const endReason = watch.rootEnded.at(-1)?.reason.code ?? null
   const last = costs.attempts.findLast((a) => a.sessionId === sessionId)
   const judged = verdictOf(
@@ -629,6 +657,54 @@ async function runOn(
     ...(raw === undefined ? {} : { raw }),
   }
   return evalRecordSchema.parse(redactEvidence(record, o.key))
+}
+
+/**
+ * The instance column's probe (M6 推出的读法 35): the product's `probeModel` on the instance's row,
+ * with the key and the entry read as the probe route reads them (custom-vendors/routes.ts), then
+ * the snapshot stored on the row, as the route stores a result. A row that does not pass is not
+ * run: this throws naming the outcome and the reason, and no record is built. Returns
+ * `config.json` as the write left it.
+ */
+async function probeColumn(
+  host: HostAdapter,
+  instance: EvalInstance,
+  modelId: string,
+  signal: AbortSignal | undefined,
+  log: (line: string) => void,
+): Promise<Awaited<ReturnType<typeof writeConfig>>> {
+  const definition = instanceDefinition(instance.entry)
+  const read = await readSettledInputs({ host, definition, env: {}, log })
+  const entry = read.config.customVendors.find((candidate) => candidate.id === instance.entry.id)
+  const row = entry?.models.find((candidate) => candidate.id === modelId)
+  if (entry === undefined || row === undefined) {
+    throw new Error(`the instance column has no row ${modelId}`)
+  }
+  const snapshot = await probeModel({
+    definition,
+    row: instanceRow(row),
+    network: host.network,
+    clock: { now: () => host.clock.now(), setTimeout: (fn, ms) => host.clock.setTimeout(fn, ms) },
+    config: read.inputs.config,
+    secrets: read.inputs.secrets,
+    maxTokens: requestMaxTokens({}, row),
+    policy: host.policy.current(),
+    tenantId: host.identity.tenantId,
+    ids: { uuid: () => randomUUID() },
+    signal: signal ?? new AbortController().signal,
+  })
+  if (snapshot.outcome !== 'passed') {
+    throw new Error(
+      `the instance column ${entry.baseURL} · ${modelId} did not pass its probe ` +
+        `(${snapshot.outcome}, ${String(snapshot.reason)}): not run`,
+    )
+  }
+  return writeConfig(host.fs, host.identity, {
+    customVendors: read.config.customVendors.with(read.config.customVendors.indexOf(entry), {
+      ...entry,
+      models: entry.models.with(entry.models.indexOf(row), { ...row, probe: snapshot }),
+    }),
+  })
 }
 
 /**

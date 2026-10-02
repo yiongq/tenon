@@ -116,10 +116,7 @@ test('the model menu follows the mode switch: a task on its own verified default
     cowork: { id: 'anthropic', modelId: 'claude-opus-5-5' },
   }
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
-  const { app, page } = await launchTenon({
-    userData,
-    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
-  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     const modes = page.getByTestId('mode-switch')
     const current = page.getByTestId('model-menu-current')

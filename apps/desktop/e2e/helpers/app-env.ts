@@ -2,6 +2,9 @@
  * The environment a launched app process gets. Out of `launchTenon` and free of Playwright so that
  * apps/desktop/test/live-env.test.ts can pin it in CI, where nothing ever launches with a real key.
  */
+import { ORIGIN_MAP_ENV } from '../../src/main/host/origin-map-test-seam.js'
+
+export { ORIGIN_MAP_ENV }
 
 /** Where a live run keeps the official Anthropic key: the runner's own environment, nothing else. */
 export const OFFICIAL_KEY_ENV = 'TENON_LIVE_ANTHROPIC_OFFICIAL_KEY'
@@ -12,8 +15,9 @@ export const OFFICIAL_HOST = 'api.anthropic.com'
 /**
  * Never copied from the runner's environment into an app: every variable the desktop reads a
  * provider credential or endpoint from (`DEV_ENV_FALLBACK`, src/main/provider.ts — the unit test
- * keeps the two lists in step), the official key's own variable, and ELECTRON_RUN_AS_NODE, which is
- * set inside Electron-hosted terminals and would turn the electron binary into plain Node. A test's
+ * keeps the two lists in step), the official key's own variable, the origin map test seam (M6
+ * §点名「测试接缝」: a test's map travels through `env` only), and ELECTRON_RUN_AS_NODE, which is set
+ * inside Electron-hosted terminals and would turn the electron binary into plain Node. A test's
  * credentials travel through `env` alone; a key exported in a developer's shell would otherwise
  * reach every app a test launches, next to whatever base URL that test points it at.
  */
@@ -23,6 +27,7 @@ export const NEVER_INHERITED: readonly string[] = [
   'ANTHROPIC_BASE_URL',
   'ZHIPU_API_KEY',
   OFFICIAL_KEY_ENV,
+  ORIGIN_MAP_ENV,
   'ELECTRON_RUN_AS_NODE',
 ]
 
@@ -78,11 +83,31 @@ export function isOfficialBaseURL(baseURL: string): boolean {
  * Refuses an app environment that holds a key that looks like Anthropic's own beside an
  * ANTHROPIC_BASE_URL on any other host (spec 02 §模型与密钥): the anthropic definition hands both
  * credentials to the SDK, so that key would travel to the other host. A blank base URL is the
- * default endpoint, as the desktop reads it. Names only in the message, never a value.
+ * default endpoint, as the desktop reads it. Also refused, beside the origin map test seam (M6
+ * §点名「测试接缝」), which sends api.anthropic.com's requests to a fake server on this machine: any
+ * official-looking value, and any secrets store but `memory` — the keychain is shared by every
+ * profile, and the key a developer keeps there is one this check cannot see (02 M4). Names only in
+ * the message, never a value.
  */
 export function assertOfficialKeyStaysHome(
   env: Readonly<Record<string, string | undefined>>,
 ): void {
+  if (env[ORIGIN_MAP_ENV] !== undefined) {
+    const official = Object.keys(env).filter((name) => looksOfficial(env[name] ?? ''))
+    if (official.length > 0) {
+      throw new Error(
+        `${official.join(' and ')} looks like an official Anthropic key, and ${ORIGIN_MAP_ENV} ` +
+          'redirects requests to this machine: refusing to launch (M6 §点名「测试接缝」)',
+      )
+    }
+    if (env['TENON_SECRETS'] !== 'memory') {
+      throw new Error(
+        `${ORIGIN_MAP_ENV} needs TENON_SECRETS=memory: the keychain is shared by every profile, ` +
+          'and its official Anthropic key would go to this machine: refusing to launch ' +
+          '(M6 §点名「测试接缝」, 02 M4)',
+      )
+    }
+  }
   const baseURL = env['ANTHROPIC_BASE_URL']?.trim() ?? ''
   if (baseURL === '' || isOfficialBaseURL(baseURL)) return
   const carriers = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].filter((name) =>
@@ -93,4 +118,28 @@ export function assertOfficialKeyStaysHome(
     `${carriers.join(' and ')} looks like an official Anthropic key, and ANTHROPIC_BASE_URL is not ` +
       `${OFFICIAL_HOST}: refusing to launch (spec 02 §模型与密钥)`,
   )
+}
+
+/**
+ * The key-filling helpers' guard for a custom vendor instance (M6 §点名; 02 裁决 M4): an
+ * official-looking key goes into an instance whose base URL is on api.anthropic.com, and into no
+ * other. The launch-time check cannot see an instance's key — it is typed into the app, not handed
+ * in its environment — so the e2e and live helpers that fill one call this first, and fill nothing
+ * when it throws. Names no value.
+ */
+export function assertInstanceKeyStaysHome(baseURL: string, key: string): void {
+  if (!looksOfficial(key) || isOfficialBaseURL(baseURL)) return
+  throw new Error(
+    `the key for the instance at ${hostLabel(baseURL)} looks like an official Anthropic key, ` +
+      `which goes to ${OFFICIAL_HOST} only: refusing to fill it in (02 M4)`,
+  )
+}
+
+/** A base URL's host for a message, or a placeholder for one that does not parse. */
+function hostLabel(baseURL: string): string {
+  try {
+    return new URL(baseURL.trim()).host
+  } catch {
+    return 'an unparseable address'
+  }
 }

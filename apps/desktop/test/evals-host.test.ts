@@ -4,8 +4,9 @@
  * when a task object that never met zod says allow; a command runs with HOME and TMPDIR inside the
  * run's mkdtemp directory and an environment of PATH, HOME, TMPDIR and LANG, no key among them; and
  * a task file that gives either card an allow is refused by zod; and a fixture with a symlink in it
- * is refused, never followed. The runs go through the runner against a fake Anthropic endpoint on
- * this machine, with the desktop's real fs and process.
+ * is refused, never followed. The runs go through the runner on the eval-only instance column, its
+ * address sent to a fake Anthropic endpoint on this machine (M6 §点名 (d), 「测试接缝」), with the
+ * desktop's real fs and process.
  */
 import {
   existsSync,
@@ -32,13 +33,13 @@ import {
   fakeSearchBackend,
   searchHostOf,
 } from '../evals/host.js'
-import { EVAL_GLM_53_ANTHROPIC } from '../evals/models.js'
 import { runTask } from '../evals/runner.js'
 import type { RunInspection } from '../evals/runner.js'
 import { evalTaskSchema } from '../evals/task.js'
 import type { EvalTask } from '../evals/task.js'
-import { startFakeAnthropic } from './support/fake-anthropic.js'
-import type { FakeAnthropic, ScriptedReply } from './support/fake-anthropic.js'
+import { INSTANCE_COLUMN, originMapTo, startInstanceFake } from './support/eval-column.js'
+import type { InstanceFake } from './support/eval-column.js'
+import type { ScriptedReply } from './support/fake-anthropic.js'
 
 const CHECKS = join(import.meta.dirname, 'support', 'eval-checks')
 
@@ -60,8 +61,9 @@ function fixtures(): string {
   return root
 }
 
-async function fake(replies: readonly ScriptedReply[]): Promise<FakeAnthropic> {
-  const server = await startFakeAnthropic({ delayMs: 1, replies })
+/** The fake for the instance column: the probe's two replies, then `replies`. */
+async function fake(replies: readonly ScriptedReply[]): Promise<InstanceFake> {
+  const server = await startInstanceFake((index) => replies[index])
   cleanups.push(() => server.close())
   return server
 }
@@ -72,20 +74,14 @@ const tool = (name: string, input: Record<string, unknown>): ScriptedReply => ({
 
 async function run(
   task: EvalTask,
-  server: FakeAnthropic,
+  server: InstanceFake,
 ): Promise<{ entries: TapeEntry[]; inspected: RunInspection; endReason: string | null }> {
   let seen: { entries: TapeEntry[]; inspected: RunInspection } | null = null
   const record = await runTask({
     task,
     run: 1,
-    column: {
-      providerId: 'anthropic',
-      modelId: EVAL_GLM_53_ANTHROPIC.id,
-      baseURL: server.baseURL,
-      keyEnv: 'ZHIPU_API_KEY',
-      keyFromProcessOnly: false,
-      effort: null,
-    },
+    column: INSTANCE_COLUMN,
+    originMap: originMapTo(INSTANCE_COLUMN, server),
     key: 'eval-offline-key-not-real',
     date: '2026-09-27',
     clientVersion: 'test-version',
@@ -316,7 +312,8 @@ describe('a fixture is copied and read without following a link (Revision (17) �
         task,
         sessionId: '00000000-0000-4000-8000-000000000001',
         fixturesDir: linked,
-        baseURL: 'https://open.bigmodel.cn/api/anthropic',
+        // A column with a search backend, so the search file is read at all (an instance has none).
+        column: { providerId: 'zhipu', baseURL: 'https://open.bigmodel.cn/api/paas/v4/' },
         log: () => {},
       })
     await expect(host({ ...base, workspace: '07-web/ws' })).rejects.toThrow(
@@ -352,10 +349,16 @@ describe('the fake network of a web task', () => {
 
   it('searches with the column’s real host and filter, from web.search, without the network', async () => {
     const hits = [{ title: 'A', url: 'https://example.com/a' }]
-    expect(searchHostOf('https://open.bigmodel.cn/api/paas/v4/')).toBe('open.bigmodel.cn')
-    expect(searchHostOf('https://open.bigmodel.cn/api/anthropic')).toBe('open.bigmodel.cn')
-    expect(searchHostOf('https://api.anthropic.com')).toBe('api.anthropic.com')
-    expect(searchHostOf('http://127.0.0.1:9')).toBeNull()
+    const zhipuColumn = { providerId: 'zhipu', baseURL: 'https://open.bigmodel.cn/api/paas/v4/' }
+    expect(searchHostOf(zhipuColumn)).toBe('open.bigmodel.cn')
+    const official = { providerId: 'anthropic', baseURL: 'https://api.anthropic.com' }
+    expect(searchHostOf(official)).toBe('api.anthropic.com')
+    // M6 §点名 (f), Q10: an instance has no search, on Zhipu's host or any other (the product's).
+    expect(searchHostOf(INSTANCE_COLUMN)).toBeNull()
+    expect(
+      searchHostOf({ providerId: 'anthropic', baseURL: 'https://open.bigmodel.cn/api/anthropic' }),
+    ).toBeNull()
+    expect(searchHostOf({ providerId: 'zhipu', baseURL: 'http://127.0.0.1:9' })).toBeNull()
     const zhipu = fakeSearchBackend(hits, 'open.bigmodel.cn')
     expect(zhipu.domainFilter).toBe(false)
     expect(zhipu.prepareQuery('字'.repeat(71))).toEqual({ query: '字'.repeat(70), truncated: true })

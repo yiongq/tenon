@@ -8,18 +8,21 @@ import {
   OLLAMA_PROVIDER_ID,
   ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
+  anthropicDefinition,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
   createSessionService,
   keyFor,
   registerBuiltinProviders,
+  zhipuDefinition,
 } from '@tenon-app/kernel'
 import type {
   AbsolutePath,
   HostAdapter,
   HostSecrets,
   ModelChoice,
+  ProviderDefinition,
   ProviderRegistry,
   SessionService,
 } from '@tenon-app/kernel'
@@ -31,15 +34,30 @@ import { registerModelRoutes } from '../src/main/model-routes.js'
 import { registerProviderRoutes } from '../src/main/provider-routes.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
+import { ANTHROPIC_ORIGIN, seamNetwork } from './support/seam-network.js'
 
 const SESSION = '5c1d9a2e-6b3d-4a71-9f52-0c8de7a11b91'
 const KEY = 'sk-bound-key-1'
 
 type Handler = (event: unknown, payload: unknown) => unknown
 
+/**
+ * A definition under another id, whose address may move: 02 不变量 4 and 5 bind a key to its host for
+ * every definition, and zhipu and anthropic themselves now take their official origin only (M6
+ * §点名 (a)), so the moves below are a relay's. Its rows and the client it builds stay the base's.
+ */
+function relayOf(base: ProviderDefinition, id: string): ProviderDefinition {
+  return { ...base, id }
+}
+/** zhipu's definition (the OpenAI wire) and anthropic's, as relays. */
+const RELAY = 'relay'
+const RELAY_ANTHROPIC = 'relay-anthropic'
+
 function registry(): ProviderRegistry {
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
+  providers.register(relayOf(zhipuDefinition, RELAY))
+  providers.register(relayOf(anthropicDefinition, RELAY_ANTHROPIC))
   return providers
 }
 
@@ -186,17 +204,24 @@ describe('「已配置」 is what this build can use (旧 109)', () => {
   })
 
   it('is not ready while one of two keys is bound elsewhere, as the send refuses it (s19-spec-3)', async () => {
-    // The keychain apiKey belongs to the default host; the dev authToken to the relay the dev base
-    // URL names. The send refuses while any present key is unbound (step 19's reading ③), so the
-    // menu must not list the provider as ready although one credential is usable.
+    // The keychain apiKey belongs to the saved official address, which is in force; the dev
+    // authToken to the relay the dev base URL names. The send refuses while any present key is
+    // unbound (step 19's reading ③), so the menu must not list the provider as ready although one
+    // credential is usable. The saved address keeps the relay out of force, so this is the binding
+    // check and not the official-origin refusal (M6 §点名 (a)).
     const host = await freshHost()
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://api.anthropic.com' } },
+    })
     await host.secrets.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
     const env = { ANTHROPIC_AUTH_TOKEN: 'tok-relay', ANTHROPIC_BASE_URL: 'https://relay.example/' }
     const entry = entryOf(await (await routes({ host, env })).list(), ANTHROPIC_PROVIDER_ID)
-    expect(entry.configKeys.find((key) => key.name === 'apiKey')?.configured).toBe(false)
-    expect(entry.configKeys.find((key) => key.name === 'authToken')?.configured).toBe(true)
+    expect(entry.refused).toBeUndefined()
+    expect(entry.configKeys.find((key) => key.name === 'apiKey')?.configured).toBe(true)
+    expect(entry.configKeys.find((key) => key.name === 'authToken')?.configured).toBe(false)
     expect(entry.configured).toBe(false)
-    const assembly = await createRunConnector({ host, providers: registry(), env }).assemble({
+    const connector = createRunConnector({ host, providers: registry(), env, log: () => {} })
+    const assembly = await connector.assemble({
       sessionId: SESSION,
       rootSessionId: SESSION,
       choice: {
@@ -212,53 +237,50 @@ describe('「已配置」 is what this build can use (旧 109)', () => {
 })
 
 describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧 49)', () => {
+  // The moves are a relay's: zhipu and anthropic refuse another origin outright (M6 §点名 (a)).
   it('refuses a save that moves the host without the stored key, and writes nothing', async () => {
     const r = await routes()
-    await r.host.secrets.set(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    await r.host.secrets.set(secretKey(r.host, RELAY, 'apiKey'), KEY)
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://gateway.example/api/paas/v4/' },
       }),
     ).toEqual({ ok: true, data: { ok: false, code: 'key-host-binding', configKey: 'baseURL' } })
-    expect(await r.host.secrets.get(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY, 'apiKey'))).toBe(KEY)
     expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual({})
     // With the key typed again, the move goes through and the key is the new one.
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://gateway.example/api/paas/v4/', apiKey: 'sk-new' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
-    expect(await r.host.secrets.get(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe('sk-new')
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY, 'apiKey'))).toBe('sk-new')
   })
 
-  it('asks for every stored credential of Anthropic, and refuses ollama.com for Ollama', async () => {
+  it('asks for every stored credential of an Anthropic-wire definition, and refuses ollama.com for Ollama', async () => {
     const r = await routes()
-    await r.host.secrets.set(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
-    await r.host.secrets.set(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken'), 'tok')
+    await r.host.secrets.set(secretKey(r.host, RELAY_ANTHROPIC, 'apiKey'), KEY)
+    await r.host.secrets.set(secretKey(r.host, RELAY_ANTHROPIC, 'authToken'), 'tok')
     const move = { baseURL: 'https://relay.example/' }
     expect(
       await r.call('provider.configure', {
-        id: ANTHROPIC_PROVIDER_ID,
+        id: RELAY_ANTHROPIC,
         values: { ...move, apiKey: 'sk-new' },
       }),
     ).toMatchObject({ data: { ok: false, code: 'key-host-binding' } })
     // 「什么都不写」: the typed key is not stored early, and the host still reads as the old one.
-    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'apiKey'))).toBe(KEY)
-    expect(await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken'))).toBe(
-      'tok',
-    )
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY_ANTHROPIC, 'apiKey'))).toBe(KEY)
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY_ANTHROPIC, 'authToken'))).toBe('tok')
     expect((await readConfig(r.host.fs, r.host.identity)).providerConfig).toEqual({})
     expect(
       await r.call('provider.configure', {
-        id: ANTHROPIC_PROVIDER_ID,
+        id: RELAY_ANTHROPIC,
         values: { ...move, apiKey: 'sk-new', authToken: '' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
-    expect(
-      await r.host.secrets.get(secretKey(r.host, ANTHROPIC_PROVIDER_ID, 'authToken')),
-    ).toBeNull()
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY_ANTHROPIC, 'authToken'))).toBeNull()
     const saved = (await readConfig(r.host.fs, r.host.identity)).providerConfig
     // Ollama declares no secret (its apiKey lives in config.json), so this keychain entry is
     // planted only to see that a refusal neither stores the typed key there nor clears it.
@@ -303,16 +325,16 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     }
     const host = await freshHost(secrets)
     const r = await routes({ host })
-    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    store.set(secretKey(host, RELAY, 'apiKey'), KEY)
     const result = await r.call('provider.configure', {
-      id: ZHIPU_PROVIDER_ID,
+      id: RELAY,
       values: { baseURL: 'https://gateway.example/api/paas/v4/', apiKey: 'x'.repeat(3000) },
     })
     expect(result).toMatchObject({ ok: false })
     expect(store.size).toBe(0)
-    expect(
-      (await readConfig(host.fs, host.identity)).providerConfig[ZHIPU_PROVIDER_ID]?.['baseURL'],
-    ).toBe('https://gateway.example/api/paas/v4/')
+    expect((await readConfig(host.fs, host.identity)).providerConfig[RELAY]?.['baseURL']).toBe(
+      'https://gateway.example/api/paas/v4/',
+    )
     // No key: a send is a configuration error, and nothing reaches the network.
     let requests = 0
     const connector = createRunConnector({
@@ -327,7 +349,7 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
       env: {},
     })
     const choice: ModelChoice = {
-      providerId: ZHIPU_PROVIDER_ID,
+      providerId: RELAY,
       modelId: 'glm-5.3-flash',
       effort: null,
       capabilitySource: 'builtin',
@@ -358,16 +380,16 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     }
     const host = await freshHost(secrets)
     const r = await routes({ host })
-    store.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
+    store.set(secretKey(host, RELAY_ANTHROPIC, 'apiKey'), KEY)
     // apiKey is declared first and stores; authToken is over the keychain's limit and fails.
     const result = await r.call('provider.configure', {
-      id: ANTHROPIC_PROVIDER_ID,
+      id: RELAY_ANTHROPIC,
       values: { baseURL: 'https://relay.example/', apiKey: 'sk-new', authToken: 'x'.repeat(3000) },
     })
     expect(result).toMatchObject({ ok: false })
     expect([...store.keys()]).toEqual([])
     expect(
-      (await readConfig(host.fs, host.identity)).providerConfig[ANTHROPIC_PROVIDER_ID]?.['baseURL'],
+      (await readConfig(host.fs, host.identity)).providerConfig[RELAY_ANTHROPIC]?.['baseURL'],
     ).toBe('https://relay.example/')
   })
 
@@ -391,14 +413,14 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
       },
     }
     const r = await routes({ host })
-    await host.secrets.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    await host.secrets.set(secretKey(host, RELAY, 'apiKey'), KEY)
     failWrite = true
     const result = await r.call('provider.configure', {
-      id: ZHIPU_PROVIDER_ID,
+      id: RELAY,
       values: { baseURL: 'https://gateway.example/api/paas/v4/', apiKey: 'sk-new' },
     })
     expect(result).toMatchObject({ ok: false })
-    expect(await host.secrets.get(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBeNull()
+    expect(await host.secrets.get(secretKey(host, RELAY, 'apiKey'))).toBeNull()
     expect((await readConfig(host.fs, host.identity)).providerConfig).toEqual({})
   })
 
@@ -406,18 +428,18 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     const r = await routes()
     await Promise.all([
       r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://one.example/api/paas/v4/', apiKey: 'sk-one' },
       }),
       r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://two.example/api/paas/v4/', apiKey: 'sk-two' },
       }),
     ])
-    const baseURL = (await readConfig(r.host.fs, r.host.identity)).providerConfig[
-      ZHIPU_PROVIDER_ID
-    ]?.['baseURL']
-    const key = await r.host.secrets.get(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'))
+    const baseURL = (await readConfig(r.host.fs, r.host.identity)).providerConfig[RELAY]?.[
+      'baseURL'
+    ]
+    const key = await r.host.secrets.get(secretKey(r.host, RELAY, 'apiKey'))
     expect([baseURL, key]).toEqual(
       baseURL?.includes('two') === true
         ? ['https://two.example/api/paas/v4/', 'sk-two']
@@ -435,7 +457,7 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     const r = await routes({ host })
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://gateway.example/api/paas/v4/' },
       }),
     ).toMatchObject({ data: { ok: false, code: 'key-host-binding' } })
@@ -455,15 +477,15 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     }
     const host = await freshHost(secrets)
     const r = await routes({ host })
-    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    store.set(secretKey(host, RELAY, 'apiKey'), KEY)
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://gateway.example/api/paas/v4/', apiKey: 'sk-new' },
       }),
     ).toEqual({ ok: true, data: { ok: false, code: 'key-host-binding', configKey: 'baseURL' } })
     expect((await readConfig(host.fs, host.identity)).providerConfig).toEqual({})
-    expect(store.get(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe(KEY)
+    expect(store.get(secretKey(host, RELAY, 'apiKey'))).toBe(KEY)
   })
 
   it('asks for no key again when a save keeps the stored host (01 修补 6「key 绑定主机」)', async () => {
@@ -471,24 +493,28 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
     // on the same relay is no move.
     const r = await routes()
     await writeConfig(r.host.fs, r.host.identity, {
-      providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://gateway.example/api/paas/v4/' } },
+      providerConfig: { [RELAY]: { baseURL: 'https://gateway.example/api/paas/v4/' } },
     })
-    await r.host.secrets.set(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
+    await r.host.secrets.set(secretKey(r.host, RELAY, 'apiKey'), KEY)
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://gateway.example/v4/' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
-    expect(await r.host.secrets.get(secretKey(r.host, ZHIPU_PROVIDER_ID, 'apiKey'))).toBe(KEY)
-    expect(
-      (await readConfig(r.host.fs, r.host.identity)).providerConfig[ZHIPU_PROVIDER_ID]?.['baseURL'],
-    ).toBe('https://gateway.example/v4/')
+    expect(await r.host.secrets.get(secretKey(r.host, RELAY, 'apiKey'))).toBe(KEY)
+    expect((await readConfig(r.host.fs, r.host.identity)).providerConfig[RELAY]?.['baseURL']).toBe(
+      'https://gateway.example/v4/',
+    )
   })
 
   it('refuses a send with a key bound elsewhere, before any request (发送前再核一次)', async () => {
+    // The saved official address is in force; the environment key belongs to the environment's
+    // relay (§点名 (a) leaves this the input that reaches the check).
     const host = await freshHost()
-    await host.secrets.set(secretKey(host, ANTHROPIC_PROVIDER_ID, 'apiKey'), KEY)
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://api.anthropic.com' } },
+    })
     let requests = 0
     const connector = createRunConnector({
       host: {
@@ -499,7 +525,8 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
         },
       } as HostAdapter,
       providers: registry(),
-      env: { ANTHROPIC_BASE_URL: 'https://relay.example/' },
+      env: { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: 'https://relay.example/' },
+      log: () => {},
     })
     const assembly = await connector.assemble({
       sessionId: SESSION,
@@ -545,9 +572,9 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     }
     const host = await freshHost(secrets)
     await writeConfig(host.fs, host.identity, {
-      providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://a.example/api/paas/v4/' } },
+      providerConfig: { [RELAY]: { baseURL: 'https://a.example/api/paas/v4/' } },
     })
-    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), 'sk-for-A')
+    store.set(secretKey(host, RELAY, 'apiKey'), 'sk-for-A')
     const sent: Array<{ url: string; auth: string | null }> = []
     const connector = createRunConnector({
       host: {
@@ -572,7 +599,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
       sessionId: SESSION,
       rootSessionId: SESSION,
       choice: {
-        providerId: ZHIPU_PROVIDER_ID,
+        providerId: RELAY,
         modelId: 'glm-5.3-flash',
         effort: null,
         capabilitySource: 'builtin',
@@ -583,7 +610,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     const r = await routes({ host })
     expect(
       await r.call('provider.configure', {
-        id: ZHIPU_PROVIDER_ID,
+        id: RELAY,
         values: { baseURL: 'https://b.example/api/paas/v4/', apiKey: 'sk-for-B' },
       }),
     ).toEqual({ ok: true, data: { ok: true } })
@@ -618,7 +645,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     const store = new Map<string, string>()
     let host: HostAdapter | null = null
     let saves = 0
-    const settings = { [ZHIPU_PROVIDER_ID]: { baseURL: 'https://a.example/api/paas/v4/' } }
+    const settings = { [RELAY]: { baseURL: 'https://a.example/api/paas/v4/' } }
     const secrets: HostSecrets = {
       get: async (key) => {
         // Another save moves this provider's host while the keychain is read. A save that leaves
@@ -627,7 +654,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
           saves += 1
           const baseURL = `https://a${String(saves)}.example/api/paas/v4/`
           await writeConfig(host.fs, host.identity, {
-            providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL } },
+            providerConfig: { [RELAY]: { baseURL } },
           })
         }
         return store.get(key) ?? null
@@ -643,7 +670,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
     }
     host = await freshHost(secrets)
     await writeConfig(host.fs, host.identity, { providerConfig: settings })
-    store.set(secretKey(host, ZHIPU_PROVIDER_ID, 'apiKey'), 'sk-for-A')
+    store.set(secretKey(host, RELAY, 'apiKey'), 'sk-for-A')
     let requests = 0
     const connector = createRunConnector({
       host: {
@@ -660,7 +687,7 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
       sessionId: SESSION,
       rootSessionId: SESSION,
       choice: {
-        providerId: ZHIPU_PROVIDER_ID,
+        providerId: RELAY,
         modelId: 'glm-5.3-flash',
         effort: null,
         capabilitySource: 'builtin',
@@ -680,12 +707,13 @@ describe('a send reads the key and its host as one save left them (s19-safety-5)
 describe('an environment key and a stored base URL on another host (旧 49, s19-spec-9)', () => {
   it('refuses the send before any request, and does not count the key as configured', async () => {
     // 01 修补 6: an environment key is valid for the environment's base URL or the default only —
-    // never for a host config.json names.
+    // never for a host config.json names. The saved address is the official one (the only one
+    // anthropic takes, M6 §点名 (a)) and the environment's is a relay.
     const host = await freshHost()
     await writeConfig(host.fs, host.identity, {
-      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://relay.example/' } },
+      providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://api.anthropic.com' } },
     })
-    const env = { ANTHROPIC_API_KEY: KEY }
+    const env = { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: 'https://relay.example/' }
     let requests = 0
     const connector = createRunConnector({
       host: {
@@ -697,6 +725,7 @@ describe('an environment key and a stored base URL on another host (旧 49, s19-
       } as HostAdapter,
       providers: registry(),
       env,
+      log: () => {},
     })
     const assembly = await connector.assemble({
       sessionId: SESSION,
@@ -1084,14 +1113,11 @@ describe('session.selectModel and session.modelChoice', () => {
     const fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 1 })
     try {
       const memory = createMemoryHost({
-        network: {
-          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-          fetch: (input, init) => globalThis.fetch(input, init),
-        },
+        network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL }),
       })
       await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
       const host: HostAdapter = memory
-      const env = { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: fake.baseURL }
+      const env = { ANTHROPIC_API_KEY: KEY }
       const loop = createTestLoopPorts({})
       const sessions = createSessionService({
         host,

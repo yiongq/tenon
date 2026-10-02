@@ -6,6 +6,8 @@
  * is now also asked of the transcript, because the transcript is what the next request is built
  * from. The provider is the real kernel adapter talking to the `node:http` fake over the host's
  * network seam: this is a HOST-level test, and the kernel is never allowed to reach that server.
+ * The providers keep their official origins and the network sends those to the fakes, as the e2e
+ * origin map does (M6 §点名「测试接缝」): another base URL reads as not configured.
  */
 import { randomUUID } from 'node:crypto'
 import {
@@ -45,6 +47,7 @@ import { registerSessionRoutes } from '../src/main/session.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
 import { startFakeOpenAI } from './support/fake-openai.js'
+import { ANTHROPIC_ORIGIN, ZHIPU_ORIGIN, seamNetwork } from './support/seam-network.js'
 
 /** These cases run no Bash: the shell is a stand-in. */
 const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
@@ -160,14 +163,15 @@ interface Harness {
  * `ANTHROPIC_AUTH_TOKEN` or `TENON_MAX_TOKENS` exported would otherwise be running a different
  * test from CI's — with their own credential resolved and sent to the fake server.
  */
-function harness(options: { host?: HostAdapter; env?: Record<string, string> } = {}): Harness {
+function harness(
+  options: { host?: HostAdapter; env?: Record<string, string>; upstream?: string } = {},
+): Harness {
   const host =
     options.host ??
     createMemoryHost({
-      network: {
-        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-        fetch: (input, init) => globalThis.fetch(input, init),
-      },
+      network: seamNetwork(
+        options.upstream === undefined ? {} : { [ANTHROPIC_ORIGIN]: options.upstream },
+      ),
     })
   const tape = createMemoryTapeStore({ identity: host.identity })
   const providers = createProviderRegistry()
@@ -209,9 +213,12 @@ function said(row: MessageRow): string {
   return row.content.map((block) => (block.type === 'text' ? block.text : '')).join('')
 }
 
-/** The whole environment the provider resolution sees in a test: a key and the fake endpoint. */
-function withKey(baseURL: string): Record<string, string> {
-  return { ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: baseURL }
+/**
+ * The whole environment the provider resolution sees in a test — a key — and the fake endpoint
+ * standing in for api.anthropic.com.
+ */
+function withKey(baseURL: string): { env: Record<string, string>; upstream: string } {
+  return { env: { ANTHROPIC_API_KEY: 'test-key' }, upstream: baseURL }
 }
 
 describe('chat routes', () => {
@@ -223,7 +230,7 @@ describe('chat routes', () => {
 
   it('streams text deltas, finishes with end-turn and records the turn', async () => {
     fake = await startFakeAnthropic({ chunks: ['Hello', ', ', 'Tenon'], delayMs: 5 })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
 
     const accepted = await ipc.call('chat.send', { sessionId, text: 'hi' })
     expect(accepted).toEqual({ ok: true, data: { accepted: true, status: 'started' } })
@@ -266,7 +273,7 @@ describe('chat routes', () => {
       chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 40,
     })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
 
     await ipc.call('chat.send', { sessionId, text: 'hi' })
     await out.waitFor('text-delta')
@@ -301,15 +308,10 @@ describe('chat routes', () => {
   it('a stop that lands before the stream exists still cancels the run', async () => {
     fake = await startFakeAnthropic({ chunks: ['never'], delayMs: 5 })
     // A keychain that answers slowly: the window in which the UI already shows Stop.
-    const host = createMemoryHost({
-      network: {
-        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-        fetch: (input, init) => globalThis.fetch(input, init),
-      },
-    })
+    const host = createMemoryHost({ network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL }) })
     const keychain = Promise.withResolvers<string | null>()
     host.secrets.get = () => keychain.promise
-    const { ipc, out, sessions, sessionId } = harness({ host, env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness({ host, env: withKey(fake.baseURL).env })
 
     const sending = ipc.call('chat.send', { sessionId, text: 'hi' })
     expect(await ipc.call('chat.stop', { sessionId })).toEqual({
@@ -335,7 +337,7 @@ describe('chat routes', () => {
       chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 30,
     })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
 
     await ipc.call('chat.send', { sessionId, text: 'first' })
     await out.waitFor('text-delta')
@@ -361,7 +363,7 @@ describe('chat routes', () => {
       failWith: { status: 400, type: 'invalid_request_error', message: 'boom' },
       failTimes: 1,
     })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
 
     await ipc.call('chat.send', { sessionId, text: 'question' })
     const failed = await out.waitFor('error')
@@ -394,7 +396,7 @@ describe('chat routes', () => {
         message: 'You have reached your specified API usage limits.',
       },
     })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
     await ipc.call('chat.send', { sessionId, text: 'question' })
     // quota-exhausted maps to 01's fallback; the finer reason travels as the Run's endReason.
     expect(await out.waitFor('error')).toMatchObject({ code: 'unknown' })
@@ -402,7 +404,7 @@ describe('chat routes', () => {
 
   it('releases the session before the terminal event goes out', async () => {
     fake = await startFakeAnthropic({ chunks: ['done'], delayMs: 5 })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
 
     // Asked from INSIDE the send of the terminal event: whoever reacts to `done` by sending again
     // must not be told a reply is still streaming.
@@ -417,7 +419,7 @@ describe('chat routes', () => {
 
   it('queues a message sent while a reply streams, and sends it once that reply is done', async () => {
     fake = await startFakeAnthropic({ chunks: ['one ', 'two ', 'three'], delayMs: 20 })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
 
     await ipc.call('chat.send', { sessionId, text: 'hi' })
     await out.waitFor('text-delta')
@@ -446,9 +448,7 @@ describe('chat routes', () => {
 
   it('reports a missing credential as auth before making any request', async () => {
     fake = await startFakeAnthropic({ chunks: ['never'] })
-    const { ipc, out, sessions, sessionId } = harness({
-      env: { ANTHROPIC_BASE_URL: fake.baseURL },
-    })
+    const { ipc, out, sessions, sessionId } = harness({ upstream: fake.baseURL })
 
     expect(await ipc.call('chat.send', { sessionId, text: 'hi' })).toEqual({
       ok: true,
@@ -465,7 +465,7 @@ describe('chat routes', () => {
       chunks: [],
       failWith: { status: 401, type: 'authentication_error', message: 'invalid x-api-key' },
     })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
 
     await ipc.call('chat.send', { sessionId, text: 'hi' })
     const error = await out.waitFor('error')
@@ -477,7 +477,7 @@ describe('chat routes', () => {
       chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 30,
     })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
     const win = fakeWindow()
 
     await ipc.call('chat.send', { sessionId, text: 'hi' }, win.event)
@@ -502,7 +502,7 @@ describe('chat routes', () => {
       chunks: Array.from({ length: 500 }, (_, i) => `w${i} `),
       delayMs: 30,
     })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
     const win = fakeWindow()
 
     await ipc.call('chat.send', { sessionId, text: 'hi' }, win.event)
@@ -519,7 +519,7 @@ describe('chat routes', () => {
       chunks: Array.from({ length: 20 }, (_, i) => `w${i} `),
       delayMs: 10,
     })
-    const { ipc, out, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessionId } = harness(withKey(fake.baseURL))
     const win = fakeWindow()
 
     await ipc.call('chat.send', { sessionId, text: 'hi' }, win.event)
@@ -540,28 +540,25 @@ describe('chat routes', () => {
     const openai = await startFakeOpenAI({ chunks: ['你好', '，Tenon'], delayMs: 5 })
     try {
       const host = createMemoryHost({
-        network: {
-          fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-          fetch: (input, init) => globalThis.fetch(input, init),
-        },
+        network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL, [ZHIPU_ORIGIN]: openai.baseURL }),
       })
       await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
       await writeConfig(host.fs, host.identity, {
         provider: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-4.6' },
-        providerConfig: { [ZHIPU_PROVIDER_ID]: { baseURL: openai.baseURL } },
       })
       await host.secrets.set(
         keyFor(host.identity, 'provider', ZHIPU_PROVIDER_ID, 'apiKey'),
         'zhipu-key',
       )
-      const { ipc, out, sessions, sessionId } = harness({ host, env: withKey(fake.baseURL) })
+      const { ipc, out, sessions, sessionId } = harness({ host, env: withKey(fake.baseURL).env })
 
       await ipc.call('chat.send', { sessionId, text: 'hi' })
       expect(await out.waitFor('done')).toMatchObject({ stopReason: 'end-turn' })
       expect(textOf(out.events)).toBe('你好，Tenon')
       expect(fake.requests).toHaveLength(0)
       expect(openai.requests).toHaveLength(1)
-      expect(openai.requests[0]?.path).toBe('/v1/chat/completions')
+      // zhipu's declared default, sent to the fake standing in for its origin.
+      expect(openai.requests[0]?.path).toBe('/api/paas/v4/chat/completions')
       expect(openai.requests[0]?.headers['authorization']).toBe('Bearer zhipu-key')
       expect(openai.requests[0]?.body).toMatchObject({ model: 'glm-4.6', stream: true })
       const assistant = (await sessions.listMessages({ sessionId, limit: 10 })).at(-1)
@@ -573,7 +570,7 @@ describe('chat routes', () => {
 
   it('continues a truncated reply through chat.continue, with a note only the model sees', async () => {
     fake = await startFakeAnthropic({ chunks: ['half'], delayMs: 1, stopReasons: ['max_tokens'] })
-    const { ipc, out, sessions, sessionId } = harness({ env: withKey(fake.baseURL) })
+    const { ipc, out, sessions, sessionId } = harness(withKey(fake.baseURL))
     const doneEvents = (): ChatEvent[] => out.events.filter((event) => event.type === 'done')
 
     await ipc.call('chat.send', { sessionId, text: 'write it all' })

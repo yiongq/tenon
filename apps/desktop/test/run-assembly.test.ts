@@ -39,6 +39,7 @@ import {
 import { createRunConnector } from '../src/main/run-assembly.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
+import { ANTHROPIC_ORIGIN, seamNetwork } from './support/seam-network.js'
 
 function registry(): ProviderRegistry {
   const providers = createProviderRegistry()
@@ -131,12 +132,7 @@ describe('the connector builds what phase 1 resolved', () => {
 
   it('sends the keychain credential and never the environment one', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
-    const host = createMemoryHost({
-      network: {
-        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-        fetch: (input, init) => globalThis.fetch(input, init),
-      },
-    })
+    const host = createMemoryHost({ network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL }) })
     await host.secrets.set(
       keyFor(host.identity, 'provider', ANTHROPIC_PROVIDER_ID, 'apiKey'),
       'from-keychain',
@@ -145,7 +141,7 @@ describe('the connector builds what phase 1 resolved', () => {
       host,
       providers: registry(),
       providerId: ANTHROPIC_PROVIDER_ID,
-      settings: { baseURL: fake.baseURL },
+      settings: { baseURL: ANTHROPIC_ORIGIN },
       env: { ANTHROPIC_API_KEY: 'from-environment', TENON_MAX_TOKENS: '321' },
       log: () => {},
     })
@@ -158,12 +154,7 @@ describe('the connector builds what phase 1 resolved', () => {
 
   it('falls back to the environment only when the keychain holds nothing', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
-    const host = createMemoryHost({
-      network: {
-        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-        fetch: (input, init) => globalThis.fetch(input, init),
-      },
-    })
+    const host = createMemoryHost({ network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL }) })
     const { provider, model } = await resolveThrough({
       host,
       providers: registry(),
@@ -172,7 +163,7 @@ describe('the connector builds what phase 1 resolved', () => {
       env: {
         ANTHROPIC_API_KEY: '   ',
         ANTHROPIC_AUTH_TOKEN: 'from-environment',
-        ANTHROPIC_BASE_URL: fake.baseURL,
+        ANTHROPIC_BASE_URL: ANTHROPIC_ORIGIN,
         [MODEL_ENV]: 'claude-haiku-4-5-20251001',
       },
       log: () => {},
@@ -315,19 +306,14 @@ describe('the connector builds what phase 1 resolved', () => {
 
   it('keeps the environment in charge when the keychain cannot be read', async () => {
     fake = await startFakeAnthropic({ chunks: ['hi'], delayMs: 1 })
-    const host = createMemoryHost({
-      network: {
-        fetchUntrusted: createMemoryHost().network.fetchUntrusted,
-        fetch: (input, init) => globalThis.fetch(input, init),
-      },
-    })
+    const host = createMemoryHost({ network: seamNetwork({ [ANTHROPIC_ORIGIN]: fake.baseURL }) })
     host.secrets.get = () => Promise.reject(new Error('the keychain is locked'))
     const lines: string[] = []
     const resolved = await resolveThrough({
       host,
       providers: registry(),
       providerId: ANTHROPIC_PROVIDER_ID,
-      env: { ANTHROPIC_API_KEY: 'from-environment', ANTHROPIC_BASE_URL: fake.baseURL },
+      env: { ANTHROPIC_API_KEY: 'from-environment' },
       log: (line) => lines.push(line),
     })
     expect(resolved.provider.id).toBe(ANTHROPIC_PROVIDER_ID)
@@ -533,8 +519,18 @@ describe('what the connector adds for the loop', () => {
   })
 
   describe('a keychain read that other writes overlap (rrE-2)', () => {
+    /**
+     * The anthropic definition under a fourth id, whose address may move: zhipu and anthropic take
+     * their official origin only (M6 §点名 (a)), and the read-settle rule is every definition's.
+     */
+    const RELAY = 'relay'
+    const relayRegistry = (): ProviderRegistry => {
+      const providers = registry()
+      providers.register({ ...anthropic(), id: RELAY })
+      return providers
+    }
     const choice = {
-      providerId: ANTHROPIC_PROVIDER_ID,
+      providerId: RELAY,
       modelId: 'claude-sonnet-5',
       effort: null,
       capabilitySource: 'builtin' as const,
@@ -542,7 +538,7 @@ describe('what the connector adds for the loop', () => {
     const secretCount = anthropic().configKeys.filter((key) => key.secret).length
 
     /**
-     * Anthropic at a.example with a keychain key, and a keychain whose every get first runs
+     * The relay at a.example with a keychain key, and a keychain whose every get first runs
      * `during(n)` — a save landing while the send waits on the keychain (an unanswered prompt).
      */
     async function overlapped(during: (n: number, host: HostAdapter) => Promise<void>): Promise<{
@@ -553,12 +549,9 @@ describe('what the connector adds for the loop', () => {
       const memory = createMemoryHost()
       await memory.fs.mkdirp(memory.identity.profileDir as AbsolutePath)
       await writeConfig(memory.fs, memory.identity, {
-        providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: 'https://a.example' } },
+        providerConfig: { [RELAY]: { baseURL: 'https://a.example' } },
       })
-      await memory.secrets.set(
-        keyFor(memory.identity, 'provider', ANTHROPIC_PROVIDER_ID, 'apiKey'),
-        'sk-a',
-      )
+      await memory.secrets.set(keyFor(memory.identity, 'provider', RELAY, 'apiKey'), 'sk-a')
       let gets = 0
       const host: HostAdapter = {
         ...memory,
@@ -574,7 +567,7 @@ describe('what the connector adds for the loop', () => {
       }
       const connector = createRunConnector({
         host,
-        providers: registry(),
+        providers: relayRegistry(),
         env: {},
         log: () => {},
         config: await readConfig(host.fs, host.identity),
@@ -626,7 +619,7 @@ describe('what the connector adds for the loop', () => {
       expect(() => assembly.provider()).not.toThrow()
       expect(gets()).toBe(secretCount)
       expect(connector.endpointOrigin(ZHIPU_PROVIDER_ID)).toBe('https://z.example')
-      expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe('https://a.example')
+      expect(connector.endpointOrigin(RELAY)).toBe('https://a.example')
     })
 
     it('answers endpointOrigin from the newest save after a read its own saves never let settle', async () => {
@@ -635,18 +628,16 @@ describe('what the connector adds for the loop', () => {
       const { host, connector } = await overlapped(async (n, h) => {
         if ((n - 1) % secretCount !== 0) return // the first get of each attempt
         await writeConfig(h.fs, h.identity, {
-          providerConfig: { [ANTHROPIC_PROVIDER_ID]: { baseURL: `https://b${String(n)}.example` } },
+          providerConfig: { [RELAY]: { baseURL: `https://b${String(n)}.example` } },
         })
       })
       const assembly = await assemble(connector)
       expect(() => assembly.provider()).toThrow(
         expect.objectContaining({ key: 'a key read while no save was moving its host' }),
       )
-      const onDisk = (await readConfig(host.fs, host.identity)).providerConfig[
-        ANTHROPIC_PROVIDER_ID
-      ]
+      const onDisk = (await readConfig(host.fs, host.identity)).providerConfig[RELAY]
       expect(onDisk?.baseURL).toBe(`https://b${String(2 * secretCount + 1)}.example`)
-      expect(connector.endpointOrigin(ANTHROPIC_PROVIDER_ID)).toBe(onDisk?.baseURL)
+      expect(connector.endpointOrigin(RELAY)).toBe(onDisk?.baseURL)
     })
   })
 
