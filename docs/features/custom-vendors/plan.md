@@ -120,7 +120,8 @@
 
 ## Open
 
-- 开放问题 1（方舟的 Anthropic 路径）、开放问题 2（glm-4.7-flash 能否过探测）。
+- ~~开放问题 1~~：owner 2026-10-03 定方舟预设第一版不带 Anthropic 线（spec Q18）。开放问题 2（glm-4.7-flash 能否过探测）在第 11 步第一次跑之后问。
+- 第二段（第 5–8 步）PR #24 合进 dev（c4394f2）。第三段分支 `feat/m6-seg3`（第 9–10 步）。owner 的 `.env.local` 按新 `.env.example` 同步（删 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`，可删 `TENON_LIVE_MODEL`、`TENON_LIVE_AUTH_TOKEN`，保留 `TENON_PROVIDER=zhipu`）。
 - ~~探测没有用户取消~~（PROC5-1）：lead 2026-10-02 定为用户取消，spec §IPC 只增 `customVendor.cancelProbe`、§何时 写明不设总时长上限，记 Revisions；第 6 步注册这条路由，第 9 步做「取消」按钮。
 - ~~读与写撞上时读丢实例~~（PROC-2）与 ~~写入中途失败丢实例~~（PROC-R2-1、ADV2-1、PROC-R3-1）：lead 2026-10-02 定为 config.json 的写入改临时文件加改名（spec §写入规则，记 Revisions），随第 5 步收尾落；手改坏文件接受为已知局限。
 - ~~清快照也清掉学到的 `maxTokensField`~~（ADV5-2）：lead 2026-10-02 接受为已知局限（spec §存储），重新探测即恢复。
