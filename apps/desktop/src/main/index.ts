@@ -10,6 +10,8 @@ import {
 } from '@tenon-app/kernel'
 import { app, autoUpdater, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
+import { createProviderView } from './custom-vendors/registry.js'
+import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/routes.js'
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
@@ -99,7 +101,7 @@ app.on('web-contents-created', (_event, contents) => {
 
 async function main(): Promise<void> {
   // First, before loadDevEnv: Bash's fallback environment is the one Tenon was started with, never
-  // `.env.local` (spec 02 §内置工具与参数「Bash」).
+  // `.env.local` (spec 02 §内置工具与参数「Bash」); so is the origin map seam's (M6 §点名「测试接缝」).
   const startupEnv = snapshotEnv(process.env)
   const devEnv = loadDevEnv()
   if (devEnv) console.warn('[dev-env] loaded', devEnv)
@@ -122,6 +124,7 @@ async function main(): Promise<void> {
     send: broadcast,
     log: (line) => console.warn(line),
     isPackaged: app.isPackaged,
+    startupEnv,
   })
 
   // The conversation store, the provider table and the one kernel service that writes facts. The
@@ -133,10 +136,14 @@ async function main(): Promise<void> {
     now: () => host.clock.now(),
     log: (line) => console.error(line),
   })
-  const providers = createProviderRegistry()
-  registerBuiltinProviders(providers)
+  const builtin = createProviderRegistry()
+  registerBuiltinProviders(builtin)
   const preferred = preferredSystemLanguages()
   const startupConfig = await readConfig(host.fs, host.identity)
+  // M6 §注册表视图 (01 修补 6「desktop 接线」): run assembly, the provider routes and the model routes
+  // all take the builtin definitions plus the custom vendor instances, the latter following every
+  // write of `config.json` from this startup read on.
+  const providers = createProviderView({ builtin, identity: host.identity, config: startupConfig })
   const locale = await createLocaleController(startupConfig, preferred, broadcast)
   // The agent loop is the kernel's (spec 02 §主进程与 kernel 的循环接口): the connector goes in at
   // construction, the host's run-time half — the RunRegistry, the queue, the events — through
@@ -289,10 +296,24 @@ async function main(): Promise<void> {
       return picked.canceled ? null : picked.filePaths
     },
   })
+  // M6 §探测: one probe per instance at a time; a key save (provider.configure) and a delete abort it.
+  const probes = createProbeRuns()
   registerProviderRoutes({
     ipcMain: routes,
     host,
     providers,
+    isPackaged: app.isPackaged,
+    log: (line) => console.warn(line),
+    probes,
+  })
+  registerCustomVendorRoutes({
+    ipcMain: routes,
+    host,
+    providers,
+    probes,
+    uuid: () => randomUUID(),
+    // Shutdown step 3: a probe or a model list does not outlive the quit (§探测, §列表与上限).
+    signal: shutdown.signal,
     isPackaged: app.isPackaged,
     log: (line) => console.warn(line),
   })

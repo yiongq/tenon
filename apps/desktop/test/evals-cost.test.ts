@@ -159,10 +159,22 @@ describe('the eval cost function, by wire (旧 229)', () => {
       final: true,
     }
     provider.script(scriptedTurn({ deltas: ['hello'], usage }))
-    const cost = await tapeCost(await tapeOf(provider, unpriced), SESSION)
+    const tape = await tapeOf(provider, unpriced)
+    const cost = await tapeCost(tape, SESSION)
     expect(cost.usage).toEqual({ input: 10, cacheRead: 0, cacheWrite: 0, output: 5, reasoning: 0 })
     expect(cost.cost).toBeNull()
     expect(cost.perRequest).toBeNull()
+    // The eval-only instance column's rows are such rows (M6 §合成): the runner prices it at the
+    // column's own price instead (§点名 (d), Q17).
+    const column = {
+      inputPerMTok: 8,
+      outputPerMTok: 28,
+      cacheReadPerMTok: 2,
+      currency: 'CNY' as const,
+    }
+    const priced = await tapeCost(tape, SESSION, column)
+    expect(priced.cost).toEqual({ amount: (10 * 8 + 5 * 28) / 1_000_000, currency: 'CNY' })
+    expect(priced.perRequest).toEqual([{ input: 10, cost: (10 * 8 + 5 * 28) / 1_000_000 }])
   })
 
   it('a missing cache price is the input price; currency defaults to USD; two currencies cost null', () => {

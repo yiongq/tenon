@@ -477,6 +477,34 @@ export const UNAUTHORIZED: HttpErrorFixture = {
   body: errorBody('invalid_api_key', 'Incorrect API key provided', 'invalid_request_error'),
 }
 
+/**
+ * A 401 whose body names no auth code, only OpenAI's generic `type: invalid_request_error` (`code`
+ * null): the vocabulary would read that type as a refused request, but the 401 decides (M6 §点名
+ * (h)). The same body at 403 is FORBIDDEN_GENERIC_TYPE.
+ */
+const GENERIC_TYPE_BODY = {
+  error: {
+    message: 'Incorrect API key provided',
+    type: 'invalid_request_error',
+    param: null,
+    code: null,
+  },
+}
+
+export const UNAUTHORIZED_GENERIC_TYPE: HttpErrorFixture = { status: 401, body: GENERIC_TYPE_BODY }
+
+/** M6 §运行时「错误」: 403 不动, so this body's type still decides at 403. */
+export const FORBIDDEN_GENERIC_TYPE: HttpErrorFixture = { status: 403, body: GENERIC_TYPE_BODY }
+
+/**
+ * A 403 whose `code` is not in this wire's vocabulary, so the status table decides: `auth`, as it
+ * did before M6 (§运行时「错误」: 403 不动).
+ */
+export const FORBIDDEN_UNKNOWN_CODE: HttpErrorFixture = {
+  status: 403,
+  body: { error: { code: 'forbidden', message: 'Access to this resource is forbidden' } },
+}
+
 export const RETRY_AFTER_SECONDS = 20
 
 export const RATE_LIMITED: HttpErrorFixture = {

@@ -3,15 +3,27 @@
  * itself never runs there. What is proven is the environment each app process would get — the
  * group's variables composed over a runner environment that holds everything a careless shell or
  * `.env.local` could hold — so no path forwards an official Anthropic key next to a foreign base URL.
+ * And M6 验收 27: the origin map test seam is never inherited, never shares an app environment with
+ * an official-looking key, and stops the live suite; an official-looking key is never filled into
+ * an instance on another host than api.anthropic.com.
  */
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { Page } from '@playwright/test'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   NEVER_INHERITED,
   OFFICIAL_KEY_ENV,
+  ORIGIN_MAP_ENV,
   appEnvironment,
+  assertInstanceKeyStaysHome,
   assertOfficialKeyStaysHome,
 } from '../e2e/helpers/app-env.js'
-import { OFFICIAL_MODEL_ENV, emulationGroup, officialGroup } from '../e2e/helpers/live-env.js'
+import { OFFICIAL_MODEL_ENV, officialGroup, originMapRefusal } from '../e2e/helpers/live-env.js'
+import { createInstance, saveInstanceKey } from '../e2e/helpers/instances.js'
+import liveGlobalSetup from '../e2e/helpers/live-global-setup.js'
+import liveConfig from '../playwright.live.config.js'
 import type { EnvRecord, LiveGroup } from '../e2e/helpers/live-env.js'
 import { DEV_ENV_FALLBACK } from '../src/main/provider.js'
 
@@ -32,7 +44,7 @@ const LOOKALIKE_URLS = [
   'open.bigmodel.cn/api/anthropic',
 ]
 
-/** Everything `.env.local` holds for the emulation group, plus the mistakes the rule is about. */
+/** What an older `.env.local` holds (the emulation group's variables, M6 §点名 (d)). */
 const FILE: EnvRecord = {
   ANTHROPIC_BASE_URL: EMULATION_URL,
   ANTHROPIC_AUTH_TOKEN: ZHIPU_KEY,
@@ -53,6 +65,7 @@ const RUNNER: EnvRecord = {
   ANTHROPIC_AUTH_TOKEN: 'shell-token',
   ANTHROPIC_API_KEY: OFFICIAL_KEY,
   ZHIPU_API_KEY: 'shell-zhipu',
+  [ORIGIN_MAP_ENV]: 'https://api.anthropic.com=http://127.0.0.1:4000',
   ELECTRON_RUN_AS_NODE: '1',
 }
 
@@ -90,6 +103,14 @@ describe('appEnvironment', () => {
     })
   })
 
+  it('M6 验收 27: never inherits the origin map; a test hands it in through env alone', () => {
+    expect(NEVER_INHERITED).toContain(ORIGIN_MAP_ENV)
+    expect(ORIGIN_MAP_ENV).toBe('TENON_TEST_ORIGIN_MAP')
+    expect(appEnvironment(RUNNER, {})).not.toHaveProperty(ORIGIN_MAP_ENV)
+    const map = 'https://open.bigmodel.cn=http://127.0.0.1:4100'
+    expect(appEnvironment(RUNNER, { env: { [ORIGIN_MAP_ENV]: map } })[ORIGIN_MAP_ENV]).toBe(map)
+  })
+
   it('drops every variable the desktop reads provider settings from', () => {
     const readByDesktop = Object.values(DEV_ENV_FALLBACK).flatMap((names) => Object.values(names))
     expect(readByDesktop.length).toBeGreaterThan(0)
@@ -122,63 +143,172 @@ describe('appEnvironment', () => {
       }),
     ).not.toThrow()
   })
+
+  it('refuses the origin map beside any official-looking value, under any name, naming no value', () => {
+    const map = 'https://api.anthropic.com=http://127.0.0.1:4000'
+    for (const value of OFFICIAL_LOOKING) {
+      for (const name of ['ANTHROPIC_API_KEY', 'SOME_OTHER_NAME']) {
+        const env = { [ORIGIN_MAP_ENV]: map, [name]: ` ${value}` }
+        expect(() => appEnvironment({}, { env })).toThrow(`${name} looks like an official`)
+        expect(() => assertOfficialKeyStaysHome(env)).not.toThrow(value)
+      }
+      // Inherited from the runner's shell, the value is refused all the same.
+      expect(() =>
+        appEnvironment({ SOME_OTHER_NAME: value }, { env: { [ORIGIN_MAP_ENV]: map } }),
+      ).toThrow(/SOME_OTHER_NAME looks like an official/)
+    }
+    // The e2e suite's own setup: the map, a test key, nothing official.
+    expect(() =>
+      appEnvironment({}, { env: { [ORIGIN_MAP_ENV]: map, ANTHROPIC_API_KEY: 'e2e-test-key' } }),
+    ).not.toThrow()
+  })
+
+  it('refuses the origin map beside the keychain, which every profile shares (02 M4)', () => {
+    // The key a developer keeps in the keychain is invisible to the check above, and the seam
+    // would send it to the fake: the map goes with the in-memory store only.
+    const env = { [ORIGIN_MAP_ENV]: 'https://api.anthropic.com=http://127.0.0.1:4000' }
+    expect(() => appEnvironment({}, { secrets: 'keychain', env })).toThrow(
+      `${ORIGIN_MAP_ENV} needs TENON_SECRETS=memory`,
+    )
+    expect(() => appEnvironment({}, { env: { ...env, TENON_SECRETS: 'keychain' } })).toThrow(
+      `${ORIGIN_MAP_ENV} needs TENON_SECRETS=memory`,
+    )
+    expect(() => assertOfficialKeyStaysHome(env)).toThrow('needs TENON_SECRETS=memory')
+    // Without the map the keychain is the live suite's to use.
+    expect(() => appEnvironment({}, { secrets: 'keychain' })).not.toThrow()
+    expect(() => appEnvironment({}, { secrets: 'memory', env })).not.toThrow()
+  })
 })
 
-describe('the emulation group', () => {
-  it('forwards the base URL and auth token only, never an official key', () => {
-    const env = launched(emulationGroup(lookupIn({}, FILE), '2048'))
-    expect(env).toMatchObject({
-      TENON_PROVIDER: 'anthropic',
-      ANTHROPIC_BASE_URL: EMULATION_URL,
-      ANTHROPIC_AUTH_TOKEN: ZHIPU_KEY,
-      TENON_MODEL: 'glm-4.7-flash',
-      TENON_MAX_TOKENS: '2048',
-    })
-    expect(env).not.toHaveProperty('ANTHROPIC_API_KEY')
-    expect(env).not.toHaveProperty(OFFICIAL_KEY_ENV)
-    expect(Object.values(env)).not.toContain(OFFICIAL_KEY)
-  })
-
-  it('never reads ANTHROPIC_API_KEY or OFFICIAL_KEY_ENV, even where the lookup would find one', () => {
-    const group = emulationGroup(lookupIn({ ANTHROPIC_API_KEY: OFFICIAL_KEY }, FILE), '2048')
-    expect(Object.values(ready(group))).not.toContain(OFFICIAL_KEY)
-    // Neither is a fallback for a missing auth token: with only one of them, the group skips.
-    for (const only of [
-      { ANTHROPIC_API_KEY: 'not-official-key' },
-      { [OFFICIAL_KEY_ENV]: OFFICIAL_KEY },
-    ]) {
-      const alone = emulationGroup(lookupIn({ ANTHROPIC_BASE_URL: EMULATION_URL, ...only }), '1')
-      expect(alone).toMatchObject({ kind: 'absent' })
-      expect(JSON.stringify(alone)).not.toContain('not-official-key')
-      expect(JSON.stringify(alone)).not.toContain(OFFICIAL_KEY)
-    }
-  })
-
-  it('refuses a token that looks official, or a base URL that is missing or official', () => {
+describe('the instance key guard (M6 §点名, 验收 27)', () => {
+  it('refuses an official-looking key for an instance on any host but api.anthropic.com', () => {
     for (const value of OFFICIAL_LOOKING) {
-      // Exported in the runner's shell, the token is found ahead of `.env.local`'s.
-      const official = emulationGroup(lookupIn({ ANTHROPIC_AUTH_TOKEN: value }, FILE), '1')
-      expect(official).toMatchObject({ kind: 'refused' })
-      expect(JSON.stringify(official)).not.toContain(value)
+      for (const baseURL of [EMULATION_URL, 'https://vendor.e2e.test', ...LOOKALIKE_URLS]) {
+        expect(() => assertInstanceKeyStaysHome(baseURL, ` ${value}`)).toThrow(
+          /looks like an official Anthropic key/,
+        )
+        expect(() => assertInstanceKeyStaysHome(baseURL, value)).not.toThrow(value)
+      }
+      expect(() => assertInstanceKeyStaysHome('https://api.anthropic.com', value)).not.toThrow()
     }
-    const noBase = emulationGroup(lookupIn({ ANTHROPIC_AUTH_TOKEN: ZHIPU_KEY }), '1')
-    expect(noBase).toMatchObject({ kind: 'refused' })
-    const home = emulationGroup(
-      lookupIn({ ANTHROPIC_BASE_URL: 'https://api.anthropic.com/' }, FILE),
-      '1',
-    )
-    expect(home).toMatchObject({ kind: 'refused' })
-    // A host that only looks official is foreign: the endpoint the group emulates, not refused.
-    const lookalike = emulationGroup(
-      lookupIn({ ANTHROPIC_BASE_URL: 'https://api.anthropic.com.evil.test' }, FILE),
-      '1',
-    )
-    expect(lookalike).toMatchObject({ kind: 'ready' })
+    // Any other key goes anywhere the instance points.
+    expect(() => assertInstanceKeyStaysHome(EMULATION_URL, ZHIPU_KEY)).not.toThrow()
+    expect(() => assertInstanceKeyStaysHome('http://127.0.0.1:8080/v1', 'local')).not.toThrow()
+  })
+})
+
+const VENDOR = 'https://vendor.e2e.test'
+/** A Page whose `evaluate` records each bridge call and answers from `answers` in order. */
+function page(answers: unknown[]) {
+  const evaluate = vi.fn<(...call: unknown[]) => Promise<unknown>>(async () => answers.shift())
+  return { page: { evaluate } as unknown as Page, evaluate }
+}
+/** `customVendor.list`'s answer with one instance at `baseURL`. */
+function listing(baseURL: string) {
+  return { ok: true, data: { instances: [{ id: 'custom-1', baseURL }] } }
+}
+/** The live global setup's refusal, or null when it lets the run go on. */
+function globalSetupRefusal(): string | null {
+  try {
+    liveGlobalSetup()
+    return null
+  } catch (error) {
+    return (error as Error).message
+  }
+}
+
+describe('the helpers that fill an instance’s key run the guard first (M6 §点名, 验收 27)', () => {
+  it('createInstance refuses an official-looking key for another host, invoking nothing', async () => {
+    const { page: refused, evaluate } = page([])
+    await expect(
+      createInstance(refused, {
+        displayName: 'Vendor',
+        wire: 'anthropic-messages',
+        baseURL: VENDOR,
+        apiKey: OFFICIAL_KEY,
+      }),
+    ).rejects.toThrow(/official Anthropic key/)
+    expect(evaluate).not.toHaveBeenCalled()
+    // Any other key reaches customVendor.create.
+    const { page: allowed, evaluate: sent } = page([{ ok: true, data: { ok: true, id: 'x' } }])
+    await expect(
+      createInstance(allowed, {
+        displayName: 'Vendor',
+        wire: 'anthropic-messages',
+        baseURL: VENDOR,
+        apiKey: ZHIPU_KEY,
+      }),
+    ).resolves.toBe('x')
+    expect(sent).toHaveBeenCalledTimes(1)
+    expect(sent.mock.calls[0]?.[1]).toMatchObject({
+      source: { baseURL: VENDOR },
+      apiKey: ZHIPU_KEY,
+    })
   })
 
-  it('skips when no token is configured', () => {
-    expect(emulationGroup(lookupIn({ ANTHROPIC_BASE_URL: EMULATION_URL }), '1')).toMatchObject({
-      kind: 'absent',
+  it('saveInstanceKey reads where the key would go, and refuses before provider.configure', async () => {
+    const { page: refused, evaluate } = page([listing(VENDOR)])
+    await expect(saveInstanceKey(refused, 'custom-1', OFFICIAL_KEY)).rejects.toThrow(
+      /official Anthropic key/,
+    )
+    // The list only: provider.configure was never invoked.
+    expect(evaluate).toHaveBeenCalledTimes(1)
+    const { page: allowed, evaluate: sent } = page([
+      listing('https://api.anthropic.com'),
+      { ok: true, data: { ok: true } },
+    ])
+    await expect(saveInstanceKey(allowed, 'custom-1', OFFICIAL_KEY)).resolves.toBeUndefined()
+    expect(sent).toHaveBeenCalledTimes(2)
+    expect(sent.mock.calls[1]?.[1]).toEqual({ id: 'custom-1', values: { apiKey: OFFICIAL_KEY } })
+  })
+})
+
+describe('the live suite and the origin map (验收 27)', () => {
+  it('refuses to run when the runner’s environment or .env.local holds it, naming no value', () => {
+    const map = 'https://api.anthropic.com=http://127.0.0.1:4000'
+    expect(originMapRefusal({ PATH: '/usr/bin' }, FILE)).toBeNull()
+    for (const [runner, file] of [
+      [{ [ORIGIN_MAP_ENV]: map }, FILE],
+      [{}, { ...FILE, [ORIGIN_MAP_ENV]: map }],
+      [{ [ORIGIN_MAP_ENV]: '' }, {}],
+    ] as const) {
+      const refusal = originMapRefusal(runner, file)
+      expect(refusal).toContain(ORIGIN_MAP_ENV)
+      expect(refusal).not.toContain('127.0.0.1')
+    }
+  })
+
+  describe('the live config’s global setup', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+      vi.restoreAllMocks()
+    })
+
+    it('is what `pnpm test:live` runs before any spec', () => {
+      expect(liveConfig.globalSetup).toBe('./e2e/helpers/live-global-setup.ts')
+    })
+
+    it('throws on the map in the runner’s environment or the repo-root .env.local, naming no value', async () => {
+      // apps/desktop's two parents are the repo root it reads `.env.local` from: a temp dir here,
+      // never the developer's own file.
+      const root = await mkdtemp(join(tmpdir(), 'tenon-live-setup-'))
+      try {
+        vi.spyOn(process, 'cwd').mockReturnValue(join(root, 'a', 'b'))
+        const map = 'https://api.anthropic.com=http://127.0.0.1:4000'
+        vi.stubEnv(ORIGIN_MAP_ENV, undefined)
+        expect(globalSetupRefusal()).toBeNull()
+        vi.stubEnv(ORIGIN_MAP_ENV, map)
+        const fromRunner = globalSetupRefusal()
+        vi.stubEnv(ORIGIN_MAP_ENV, undefined)
+        await writeFile(join(root, '.env.local'), `${ORIGIN_MAP_ENV}=${map}\n`)
+        const fromFile = globalSetupRefusal()
+        for (const message of [fromRunner, fromFile]) {
+          expect(message).toContain(ORIGIN_MAP_ENV)
+          expect(message).not.toContain('127.0.0.1')
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
     })
   })
 })
@@ -195,7 +325,7 @@ describe('the official group', () => {
     expect(env).not.toHaveProperty('ANTHROPIC_BASE_URL')
     expect(env).not.toHaveProperty('ANTHROPIC_AUTH_TOKEN')
     expect(env).not.toHaveProperty(OFFICIAL_KEY_ENV)
-    // Neither the emulation group's model nor the runner's daily TENON_MODEL is this group's:
+    // Neither `.env.local`'s TENON_LIVE_MODEL nor the runner's daily TENON_MODEL is this group's:
     // blank, which the desktop reads as unset, means the definition's first row.
     expect(env['TENON_MODEL']).toBe('')
   })
@@ -232,16 +362,13 @@ describe('the official group', () => {
     }
   })
 
-  it('coexists with the emulation group in one run without either seeing the other key', () => {
+  it('runs on the official key alone when the old emulation variables are still in .env.local', () => {
     // The owner's setup: the official key exported for this one run, the rest in .env.local.
     const runner: EnvRecord = { PATH: '/usr/bin', [OFFICIAL_KEY_ENV]: OFFICIAL_KEY }
-    const lookup = lookupIn(runner, FILE)
-    const inRun = (group: LiveGroup): Record<string, string> =>
-      appEnvironment(runner, { env: ready(group), secrets: 'memory' })
-    const emulation = inRun(emulationGroup(lookup, '1'))
-    const official = inRun(officialGroup(runner, FILE, lookup, '1'))
-    expect(Object.values(emulation)).not.toContain(OFFICIAL_KEY)
-    expect(emulation['ANTHROPIC_BASE_URL']).toBe(EMULATION_URL)
+    const official = appEnvironment(runner, {
+      env: ready(officialGroup(runner, FILE, lookupIn(runner, FILE), '1')),
+      secrets: 'memory',
+    })
     expect(Object.values(official)).not.toContain(ZHIPU_KEY)
     expect(official['ANTHROPIC_API_KEY']).toBe(OFFICIAL_KEY)
     expect(official['ANTHROPIC_BASE_URL']).toBeUndefined()

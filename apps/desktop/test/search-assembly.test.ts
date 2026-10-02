@@ -1,4 +1,8 @@
-/** Search selection and credentials are host responsibilities (spec 02 step 28, Revisions 24). */
+/**
+ * Search selection and credentials are host responsibilities (spec 02 step 28, Revisions 24). M6
+ * §点名 (f): zhipu searches on its own host and anthropic on api.anthropic.com, nothing else — the
+ * branch that searched Zhipu for anthropic pointed at /api/anthropic is gone with §点名 (a)–(c).
+ */
 import {
   ProviderConfigMissingError,
   anthropicDefinition,
@@ -10,7 +14,7 @@ import {
 } from '@tenon-app/kernel'
 import type { AbsolutePath, HostAdapter, ProviderRegistry, RunConnector } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { writeConfig } from '../src/main/host/profile.js'
+import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
 
 afterEach(() => vi.restoreAllMocks())
@@ -56,16 +60,6 @@ async function network() {
 
 const ZHIPU_CASES = [
   { providerId: 'zhipu', baseURL: 'https://open.bigmodel.cn/api/paas/v4/', credential: 'apiKey' },
-  {
-    providerId: 'anthropic',
-    baseURL: 'https://open.bigmodel.cn/api/anthropic',
-    credential: 'apiKey',
-  },
-  {
-    providerId: 'anthropic',
-    baseURL: 'https://open.bigmodel.cn/api/anthropic',
-    credential: 'authToken',
-  },
 ] as const
 
 describe('the search backend uses the provider’s resolved credentials', () => {
@@ -114,6 +108,74 @@ describe('the search backend uses the provider’s resolved credentials', () => 
     },
   )
 
+  it.each(['apiKey', 'authToken'] as const)(
+    '验收 26: anthropic at Zhipu’s /api/anthropic with %s reads as not configured — no search, no request',
+    async (credential) => {
+      const { requests, host } = await network()
+      const providers = registry()
+      const baseURL = 'https://open.bigmodel.cn/api/anthropic'
+      await writeConfig(host.fs, host.identity, { providerConfig: { anthropic: { baseURL } } })
+      await key(host, 'anthropic', 'stored-provider-key', credential)
+      const lines: string[] = []
+      const connector = createRunConnector({ host, providers, env: {}, log: (l) => lines.push(l) })
+      const assembly = await assemble(connector, providers, 'anthropic')
+      expect(assembly.search).toBeNull()
+      expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
+      expect(connector.searchTarget?.('anthropic', 'words')).toBeNull()
+      // The development variable reads the same (§点名 (c)), and says so in one line.
+      const dev = createRunConnector({
+        host: (await network()).host,
+        providers,
+        env: { ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_AUTH_TOKEN: 'env-key' },
+        log: (l) => lines.push(l),
+      })
+      const fromEnv = await assemble(dev, providers, 'anthropic')
+      expect(fromEnv.search).toBeNull()
+      expect(() => fromEnv.provider()).toThrow(ProviderConfigMissingError)
+      expect(dev.searchTarget?.('anthropic', 'words')).toBeNull()
+      expect(requests).toEqual([])
+      expect(lines.filter((line) => line.includes('ANTHROPIC_BASE_URL'))).toEqual([
+        '[provider] ANTHROPIC_BASE_URL points at https://open.bigmodel.cn, not ' +
+          'https://api.anthropic.com: unless an address is saved in the settings card, anthropic ' +
+          'reads as not configured; another endpoint is a custom vendor (settings card)',
+      ])
+    },
+  )
+
+  it('验收 26: logs nothing for that variable once an address is saved, or on a packaged build', async () => {
+    // The variable only fills what config.json lacks (§点名 (c)「照旧」): a saved official address
+    // is in force, so anthropic is configured and the line would be false. A packaged build reads
+    // no variable at all.
+    const { requests, host } = await network()
+    const providers = registry()
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { anthropic: { baseURL: 'https://api.anthropic.com' } },
+    })
+    await key(host, 'anthropic', 'stored-provider-key')
+    const lines: string[] = []
+    const env = { ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic' }
+    const saved = createRunConnector({
+      host,
+      providers,
+      env,
+      // What main read at startup (index.ts), before the first send.
+      config: await readConfig(host.fs, host.identity),
+      log: (l) => lines.push(l),
+    })
+    const assembly = await assemble(saved, providers, 'anthropic')
+    expect(() => assembly.provider()).not.toThrow()
+    expect(assembly.search?.host).toBe('api.anthropic.com')
+    createRunConnector({
+      host: (await network()).host,
+      providers,
+      isPackaged: true,
+      env,
+      log: (l) => lines.push(l),
+    })
+    expect(lines).toEqual([])
+    expect(requests).toEqual([])
+  })
+
   it('uses the development environment fallback, and a stored key wins over it', async () => {
     const { requests, host } = await network()
     const providers = registry()
@@ -154,7 +216,7 @@ describe('the search backend uses the provider’s resolved credentials', () => 
     })
   })
 
-  it('retries a credential read crossed by a host save before constructing search', async () => {
+  it('retries a credential read crossed by a save of its settings before constructing search', async () => {
     const { host, requests } = await network()
     const providers = registry()
     await key(host, 'anthropic', 'old-official-key')
@@ -180,17 +242,19 @@ describe('the search backend uses the provider’s resolved credentials', () => 
     const connector = createRunConnector({ host, providers, env: {}, log: () => {} })
     const pending = assemble(connector, providers, 'anthropic')
     await reached
-    await key(host, 'anthropic', 'new-bigmodel-key')
+    // Its key and its settings saved while the read waits on the keychain: still the official
+    // origin (the only one it takes, M6 §点名 (a)), and still a save of this provider's settings.
+    await key(host, 'anthropic', 'new-official-key')
     await writeConfig(host.fs, host.identity, {
-      providerConfig: { anthropic: { baseURL: 'https://open.bigmodel.cn/api/anthropic' } },
+      providerConfig: { anthropic: { baseURL: 'https://api.anthropic.com/' } },
     })
     release()
     const assembly = await pending
-    expect(assembly.search?.host).toBe('open.bigmodel.cn')
+    expect(assembly.search?.host).toBe('api.anthropic.com')
     await assembly.search?.search({ query: 'after save', signal: new AbortController().signal })
     expect(requests).toHaveLength(1)
-    expect(requests[0]?.headers.get('authorization')).toBe('Bearer new-bigmodel-key')
-    expect(connector.searchTarget?.('anthropic', 'after save')?.host).toBe('open.bigmodel.cn')
+    expect(requests[0]?.headers.get('x-api-key')).toBe('new-official-key')
+    expect(connector.searchTarget?.('anthropic', 'after save')?.host).toBe('api.anthropic.com')
   })
 
   it.each(['apiKey', 'authToken'] as const)(
@@ -202,29 +266,35 @@ describe('the search backend uses the provider’s resolved credentials', () => 
         host,
         providers,
         env: {
-          ANTHROPIC_BASE_URL: 'https://open.bigmodel.cn/api/anthropic',
+          ANTHROPIC_BASE_URL: 'https://api.anthropic.com/',
           [credential === 'apiKey' ? 'ANTHROPIC_API_KEY' : 'ANTHROPIC_AUTH_TOKEN']: 'env-key',
         },
         log: () => {},
       })
       const assembly = await assemble(connector, providers, 'anthropic')
-      expect(assembly.search?.host).toBe('open.bigmodel.cn')
+      expect(assembly.search?.host).toBe('api.anthropic.com')
       await assembly.search?.search({ query: 'words', signal: new AbortController().signal })
-      expect(requests[0]?.headers.get('authorization')).toBe('Bearer env-key')
-      expect(connector.searchTarget?.('anthropic', 'words')?.host).toBe('open.bigmodel.cn')
+      expect(
+        credential === 'apiKey'
+          ? requests[0]?.headers.get('x-api-key')
+          : requests[0]?.headers.get('authorization'),
+      ).toBe(credential === 'apiKey' ? 'env-key' : 'Bearer env-key')
+      expect(connector.searchTarget?.('anthropic', 'words')?.host).toBe('api.anthropic.com')
     },
   )
 
   it('does not forward an environment key bound to a different host', async () => {
+    // 02 不变量 4: the saved official address is in force, and the environment key belongs to the
+    // environment's base URL — the only input that still reaches the binding check (§点名 (a)).
     const { requests, host } = await network()
     const providers = registry()
     await writeConfig(host.fs, host.identity, {
-      providerConfig: { anthropic: { baseURL: 'https://open.bigmodel.cn/api/anthropic' } },
+      providerConfig: { anthropic: { baseURL: 'https://api.anthropic.com' } },
     })
     const connector = createRunConnector({
       host,
       providers,
-      env: { ANTHROPIC_API_KEY: 'official-host-key' },
+      env: { ANTHROPIC_API_KEY: 'relay-key', ANTHROPIC_BASE_URL: 'https://relay.example/' },
       log: () => {},
     })
     const assembly = await assemble(connector, providers, 'anthropic')
@@ -240,14 +310,16 @@ describe('searchTarget is synchronous and reads the current config snapshot with
     const providers = registry()
     const get = vi.spyOn(host.secrets, 'get')
     const connector = createRunConnector({ host, providers, env: {}, log: () => {} })
-    await writeConfig(host.fs, host.identity, {
-      providerConfig: { anthropic: { baseURL: 'https://open.bigmodel.cn/api/anthropic' } },
-    })
-    expect(connector.searchTarget?.('anthropic', '🌏'.repeat(90))).toEqual({
+    expect(connector.searchTarget?.('zhipu', '🌏'.repeat(90))).toEqual({
       host: 'open.bigmodel.cn',
       query: '🌏'.repeat(70),
       truncated: true,
     })
+    // M6 §点名 (f): Zhipu's host is zhipu's search backend only.
+    await writeConfig(host.fs, host.identity, {
+      providerConfig: { anthropic: { baseURL: 'https://open.bigmodel.cn/api/anthropic' } },
+    })
+    expect(connector.searchTarget?.('anthropic', 'words')).toBeNull()
     await writeConfig(host.fs, host.identity, {
       providerConfig: { anthropic: { baseURL: 'https://relay.example/' } },
     })

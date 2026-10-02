@@ -5,7 +5,7 @@ Kind: features
 Owner: 裁决由 owner 拍板（2026-10-01 第一轮，2026-10-02 第二到四轮；13 题都选推荐项，T1–T13 照写，裁决卡、选择记录与厂商调研原文在仓库外 `../tenon-notes/2026-10-02-m6-custom-vendors/`）；起草在 Claude Code（2026-10-02）
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层、§desktop 接线；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2、6、7 小节立的成员）、§主进程与 kernel 的循环接口、§02 的 Tape 事实、§会话形态、工作区与模型选择（表外模型与不发工具）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§上下文管理、§搜索与抓取、§界面范围。只增不改，全文见 §对 01 的修补、§对 02 的修补；不属纯粹只增的在 §点名
 Related: [ADR-003](../../adr/adr-003-provider-layer.md)（厂商分档：本 spec 是「能接上」一档的交付物，ADR-003:48）
-Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只取描述（readConfig 剔除实例的 providerConfig）、续跑按冻结的 capabilitySource 发工具、key 保存在写完钥匙串后计数、openai-chat 实例请求用量、没通过的 anthropic 行照回传签名、百炼新加坡补 Anthropic 地址、订阅地址事实更正并加开放问题 3、实例出网不跟随重定向、内置厂商按官方 https 源判、开发默认不改 TENON_PROVIDER、点名补 (g) 与测试接缝）；同日第二轮评审修订（前缀检查缺省照 02 只按 id、自定义行写 false；被拒地址改用 `refused`（码与源）并覆盖实例；探测中止回 `aborted`；assemble 按与 key 同一次读重造实例行；测试接缝只改投到回环、不继承、要 `TENON_DEV_ENV=off`；金样改法；模型行 id 去重；已知键加 `name`；百炼 429 限流探测记 `rate-limit`；订阅条款依据更正并补方舟 Agent Plan；方舟 key 链接定下，开放问题 1 收窄；.env.example 与评测同模型列的实际后果）；同日 owner 定三题（Q15 别家订阅地址第一版不拦；Q16 开发期日常对话走内置智谱，`TENON_PROVIDER=zhipu` 默认生效；Q17 评测同模型列照算费用），撤掉开放问题 3，过目接受 §推出的读法，Status 改 ready；同日实现第 4 步时就地修订：§合成 的 `maxTokensField` 不看 `outcome`（旧：只给通过的行写；改因：与验收 16 矛盾，没通过的行退回仅文字时对拒收 `max_tokens` 的端点每次 400）；§列表与上限 补响应头 30 秒、正文 8 MiB 两个上限（旧：没写，永不应答的 /models 只能等 signal）；§探测「何时、走哪条路」检查器按 SSE 事件读（与 openai SDK 解码器同）、读到 `[DONE]` 即停、读的字节不超过适配器读到的、非 2xx 的响应体不分流，一个事件（旧：一行）解析不了就跳过；§不认识的字段 的「每个 SSE 块」改为「每个 SSE 事件」（旧：按 `data:` 行读，未写停读与界限；改因：解码器按整个事件解析，多行 data 与 BOM 按行读会误判；读过 `[DONE]` 或读过适配器的检查器，在端点不关流、空闲看门狗撤流或错误体不结束时会卡住探测与实例的探测锁）；§两步 T10 的 `unsupported_parameter` 一支加「且 `detail` 含 `max_tokens`」，§推出的读法 22 同改（旧：只看 `providerCode` 为 `unsupported_parameter`；改因：OpenAI 对任何参数都回这个码，别的参数（如 `tools`）的 `unsupported_parameter` 会让 ① 重发、快照记 `max_completion_tokens`，而 §合成 不看 `outcome`，没通过的行就改发端点从没认过的 `max_completion_tokens`）；§结果与原因码 表下加一条：anthropic-messages 线 ① 报 `malformed_tool_input`（tool_use 的 input 不是 JSON 对象）记 `bad-tool-call`（旧：没写，按表里的 `unknown` 落到 `service`；改因：同一种模型错误在 openai-chat 线是解码器丢掉调用、记 `bad-tool-call`，记 `service` 会把用户引去查网络）；§两步 T10 末句改为快照的字段只在 ① 回答了时改写（重发过记 `max_completion_tokens`，没重发且 ① 没报错记 `max_tokens`，其余沿用该行原快照的值、没有原快照记 `max_tokens`）（旧：「重发过就在快照记 max_completion_tokens，否则记 max_tokens」；改因：§合成 不看 `outcome`，学到 `max_completion_tokens` 的行重新探测时 ① 遇上 429、5xx、断网或发出之前就失败，会被记回 `max_tokens`，此后仅文字的请求每次 400）；§结果与原因码 表下加一条：① 折叠出的轮编不进 ②（canonicalJson 拒收工具输入或厂商块）时不发 ②、记 `bad-tool-call`（旧：没写，编码的报错漏出 `probeModel`，它便在没有中止时 reject、不造快照，违背「只在中止时 reject」）
+Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只取描述（readConfig 剔除实例的 providerConfig）、续跑按冻结的 capabilitySource 发工具、key 保存在写完钥匙串后计数、openai-chat 实例请求用量、没通过的 anthropic 行照回传签名、百炼新加坡补 Anthropic 地址、订阅地址事实更正并加开放问题 3、实例出网不跟随重定向、内置厂商按官方 https 源判、开发默认不改 TENON_PROVIDER、点名补 (g) 与测试接缝）；同日第二轮评审修订（前缀检查缺省照 02 只按 id、自定义行写 false；被拒地址改用 `refused`（码与源）并覆盖实例；探测中止回 `aborted`；assemble 按与 key 同一次读重造实例行；测试接缝只改投到回环、不继承、要 `TENON_DEV_ENV=off`；金样改法；模型行 id 去重；已知键加 `name`；百炼 429 限流探测记 `rate-limit`；订阅条款依据更正并补方舟 Agent Plan；方舟 key 链接定下，开放问题 1 收窄；.env.example 与评测同模型列的实际后果）；同日 owner 定三题（Q15 别家订阅地址第一版不拦；Q16 开发期日常对话走内置智谱，`TENON_PROVIDER=zhipu` 默认生效；Q17 评测同模型列照算费用），撤掉开放问题 3，过目接受 §推出的读法，Status 改 ready；同日实现第 4 步时就地修订：§合成 的 `maxTokensField` 不看 `outcome`（旧：只给通过的行写；改因：与验收 16 矛盾，没通过的行退回仅文字时对拒收 `max_tokens` 的端点每次 400）；§列表与上限 补响应头 30 秒、正文 8 MiB 两个上限（旧：没写，永不应答的 /models 只能等 signal）；§探测「何时、走哪条路」检查器按 SSE 事件读（与 openai SDK 解码器同）、读到 `[DONE]` 即停、读的字节不超过适配器读到的、非 2xx 的响应体不分流，一个事件（旧：一行）解析不了就跳过；§不认识的字段 的「每个 SSE 块」改为「每个 SSE 事件」（旧：按 `data:` 行读，未写停读与界限；改因：解码器按整个事件解析，多行 data 与 BOM 按行读会误判；读过 `[DONE]` 或读过适配器的检查器，在端点不关流、空闲看门狗撤流或错误体不结束时会卡住探测与实例的探测锁）；§两步 T10 的 `unsupported_parameter` 一支加「且 `detail` 含 `max_tokens`」，§推出的读法 22 同改（旧：只看 `providerCode` 为 `unsupported_parameter`；改因：OpenAI 对任何参数都回这个码，别的参数（如 `tools`）的 `unsupported_parameter` 会让 ① 重发、快照记 `max_completion_tokens`，而 §合成 不看 `outcome`，没通过的行就改发端点从没认过的 `max_completion_tokens`）；§结果与原因码 表下加一条：anthropic-messages 线 ① 报 `malformed_tool_input`（tool_use 的 input 不是 JSON 对象）记 `bad-tool-call`（旧：没写，按表里的 `unknown` 落到 `service`；改因：同一种模型错误在 openai-chat 线是解码器丢掉调用、记 `bad-tool-call`，记 `service` 会把用户引去查网络）；§两步 T10 末句改为快照的字段只在 ① 回答了时改写（重发过记 `max_completion_tokens`，没重发且 ① 没报错记 `max_tokens`，其余沿用该行原快照的值、没有原快照记 `max_tokens`）（旧：「重发过就在快照记 max_completion_tokens，否则记 max_tokens」；改因：§合成 不看 `outcome`，学到 `max_completion_tokens` 的行重新探测时 ① 遇上 429、5xx、断网或发出之前就失败，会被记回 `max_tokens`，此后仅文字的请求每次 400）；§结果与原因码 表下加一条：① 折叠出的轮编不进 ②（canonicalJson 拒收工具输入或厂商块）时不发 ②、记 `bad-tool-call`（旧：没写，编码的报错漏出 `probeModel`，它便在没有中止时 reject、不造快照，违背「只在中止时 reject」）；同日开第 6 步前补用户取消探测：§IPC 只增路由 `customVendor.cancelProbe`，设置卡探测中显示「取消」，中止回 `aborted`、不存（旧：没写，SSE 注释行不断重置空闲看门狗时探测只有应用退出、删实例、保存 key 能结束，实例一直回 `busy`；不设总时长上限，因为会截断正当的长思考探测）；同日第 5 步评审后定：config.json 的写入改为临时文件加改名（旧：没写，`DesktopFs` 先截断再写，锁外读可能读到半个文件、写到一半失败会丢掉全部实例）；手改坏文件与清快照丢掉 `maxTokensField` 两处写成已知局限；同日第 7 步第二轮评审后定：模型行 id 不带首尾空白（`customModelSchema.id` 加 refine，`customVendor.update` 拒收，/models 返回的这种 id 跳过、不预填，`readConfig` 先丢掉这一行并记日志、不丢实例，见 §存储、§列表与上限）（旧：没写，`modelIdSchema` 收首尾空白；改因：`resolveChoice` 对 ② / ③ 的模型 id 取 trim，`assemble` 对实例只按 id 精确找行、不合成（§实例被删或改坏），这样的行新会话永远够不着、每条首发都是 `config-missing`，或落到去掉空白后同名的另一行；`resolveChoice` 照 §行标记 不改）；同日第 7 步第三轮评审后记：§错误（T11）的已知局限加 DeepSeek 错 key 的 401（`type: authentication_error`、`code: invalid_request_error`，2026-10-01 实录）在 openai-chat 线运行时读作 `invalid-request`、探测记 `request-rejected`（anthropic-messages 线与 /models 读作 `auth`），验收 24 改为钉三个现状（旧：只列智谱数字码与百炼 429；改因：DeepSeek 预设走 openai-chat 线，共用词表先读通用的 `code`、不看 401，错 key 的用户看到通用的请求被拒，不是 key 的文案；照「第一版不改」只记不改映射）；同日第 7 步第四轮评审后记：§错误（T11）的已知局限加预设厂商表示余额或计费停用的 429（Kimi `exceeded_current_quota_error`，方舟 `SetLimitExceeded` 与免费额度的 `QuotaExceeded`，百炼 `PrepaidBillOverdue`、`PostpaidBillOverdue`、`BudgetLimitExceeded`、`CommodityNotPurchased`）：两条线按 429 读作可重试的 `rate-limit`，运行时重发到 3 次、以限流失败卡结束，探测记 `rate-limit`；验收 24 改为钉四个现状，加 Kimi 的按文档夹具（旧：已知局限只列智谱数字码、百炼 TPM 的 `insufficient_quota` 与 DeepSeek 错 key 的 401，验收 24 钉三个；改因：这类 429 落在六个预设里的三个（Kimi、方舟、百炼），余额用完的用户看到的是限流、稍后再试，第 9 步的文案与第 12 步的实测要按同一份现状读；照「第一版不改」只记不改映射）；同日第 7 步评审后定：HTTP 401 一律读作 `auth`（点名 (h)；旧：按体里的类型判，DeepSeek 错 key 显示成请求被拒）；余额类 429 读作限流写成已知局限；评测同模型列的价格改在 runner 算费用时给（旧：包在实例定义外，到不了模型行；§需求价格条、Q17 行、读法 17 同步改）；同日第 7 步收尾评审后对齐点名 (h)：§错误（T11）已知局限删去 DeepSeek 错 key 那句，实录的 body 并入 401 那条；验收 24 改为钉三个现状，DeepSeek 错 key 的 401 两条线运行时与探测都读作 `auth`，没有已知码的 403 仍读作 `auth`；「403 不动」的括注改为如实的读法（旧：已知局限与验收 24 仍写 openai-chat 线读作 `invalid-request`、探测记 `request-rejected`，括注写「02 把部分 403 归作 `account-config`」；改因：与点名 (h) 及改过的测试矛盾，02 与代码里都没有把 403 归作 `account-config` 的映射）；同日第 8 步第四轮评审后定：§点名 测试接缝还要 `TENON_SECRETS=memory`，否则主进程与 e2e 启动器拒绝启动（旧：只要 `TENON_DEV_ENV=off`，守卫只看环境里的值；改因：钥匙串各 profile 共用，接缝开着、机密走钥匙串时，开发者存在钥匙串里的官方 Anthropic key 会被改投到本机假服务器，02 裁决 M4）
 
 ## 背景与问题
 
@@ -34,7 +34,7 @@ Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只�
 - 自定义实例的网络搜索（裁决 Q10）。WebFetch 照常。
 - openai-chat 线的不透明字段往返（裁决 Q14）。
 - 图片：自定义行 `supportsVision` 一律 false，探测不测图片（推出）。
-- 价格：自定义行没有 `pricing`，界面不算它的费用；评测的同模型列由 runner 包一层评测专用 pricing（Q17）。
+- 价格：自定义行没有 `pricing`，界面不算它的费用；评测的同模型列由 runner 算费用时用该列的评测专用价（Q17，§点名 (d)）。
 - 按厂商的错误词表（T11）；可配的用量路径（T10）。
 - 回环、私网实例的工具（裁决 Q7）。窗口策略随「Ollama 进 agent 验收」那份 spec（02 spec:83、:154）。
 - 订阅登录（02 裁决 M8）；新线协议（`openai-responses` 按 ADR-003 另做，不加 ai-sdk 线）。
@@ -75,7 +75,7 @@ Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只�
 | T13 | 每请求工具数上限改成定义上的数据，实例缺省 128 | §对 01 的修补；§对 02 的修补 |
 | Q15 | （2026-10-02）别家的订阅地址第一版不拦：条款明文禁止自建应用的只有智谱；百炼允许的工具里有桌面客户端，Kimi 允许第三方工具，方舟措辞含糊 | §地址校验 |
 | Q16 | （2026-10-02）开发期日常对话走内置智谱：`.env.example` 的 `TENON_PROVIDER=zhipu` 默认生效 | §点名 (d) |
-| Q17 | （2026-10-02）评测同模型列照算费用：runner 给该列的实例定义包一层评测专用 pricing | §点名 (d) |
+| Q17 | （2026-10-02）评测同模型列照算费用：runner 算费用时用该列的评测专用价，实例定义不带 pricing | §点名 (d) |
 
 ## 身份、工厂与注册表视图
 
@@ -208,7 +208,7 @@ export const probeSnapshotSchema = z.object({
   unknownFields: z.array(z.string().max(64)).max(16),                    // Q14：只记键名，不记值
 })
 export const customModelSchema = z.object({
-  id: modelIdSchema,
+  id: modelIdSchema.refine((id) => id === id.trim()),                    // 不带首尾空白（§列表与上限）
   contextLimit: z.number().int().positive(),
   maxOutputTokens: z.number().int().positive(),
   probe: probeSnapshotSchema.optional(),                                 // T3：按（实例，模型）存
@@ -224,13 +224,14 @@ export const customVendorSchema = z.object({
 })
 ```
 
-- 只由主进程写，不进 `configSetRequestSchema`（config.ts:81-84）。`readConfig` 对 `customVendors` 单独逐条过 schema：先把条目内 id 重复的模型行只留第一行，再过 schema，不过的丢掉，实例 id 重复的只留第一条，日志只记条目下标与原因、不记地址，其余照读（推出：`readConfig` 现在对坏字段整字段回落到默认，apps/desktop/src/main/host/profile.ts:36-58，一条坏条目会让下一次写入清掉全部实例）。过了 schema 的条目再按 §地址校验 1–5（按条目的 wire）判；不过的保留，注册表视图照样为它造定义，但把它的 `create()` 换成抛 `ProviderConfigMissingError`，`customVendor.fetchModels` 在发出前回 `config`、探测在发出前记失败 `config`，都是 0 次请求；`provider.list` 给它 `configured: false` 与 `refused`（码同 §地址校验 表，§对 01 的修补 4），`customVendor.list` 的这一条带同一个 `refused`，设置卡据此标出（推出：手改与旧文件同样要过 A9 与 Q13）。
+- 只由主进程写，不进 `configSetRequestSchema`（config.ts:81-84）。`readConfig` 对 `customVendors` 单独逐条过 schema：先丢掉条目内 id 带首尾空白的模型行（日志只记条目下标，手改只丢这一行、不丢实例与它的 key 绑定），把 id 重复的模型行只留第一行，再过 schema，不过的丢掉，实例 id 重复的只留第一条，日志只记条目下标与原因、不记地址，其余照读（推出：`readConfig` 现在对坏字段整字段回落到默认，apps/desktop/src/main/host/profile.ts:36-58，一条坏条目会让下一次写入清掉全部实例）。过了 schema 的条目再按 §地址校验 1–5（按条目的 wire）判；不过的保留，注册表视图照样为它造定义，但把它的 `create()` 换成抛 `ProviderConfigMissingError`，`customVendor.fetchModels` 在发出前回 `config`、探测在发出前记失败 `config`，都是 0 次请求；`provider.list` 给它 `configured: false` 与 `refused`（码同 §地址校验 表，§对 01 的修补 4），`customVendor.list` 的这一条带同一个 `refused`，设置卡据此标出（推出：手改与旧文件同样要过 A9 与 Q13）。
 - 快照非机密，跟着模型行放在 config.json（T3）。不设过期时间，不存 key 指纹（T3）。快照不进 `ModelInfo`，只由它推出 ModelInfo 的几个字段（§模型行）。
 - 降级：M6 之前的构建按 02 的 configSchema 剥掉不认识的 `customVendors`，下次写入就没了；钥匙串里留下孤儿 key（`HostSecrets` 不能列举）。接受，不加 configVersion（T8）。
+- 已知局限（接受）：手改 config.json 改到解析不了时照 02 读作默认，下次写入就丢掉全部实例、留下孤儿 key——手改不在支持范围内；保存 key、改输出上限清掉整份快照时，学到的 `maxTokensField` 一并清掉，重新探测即恢复。
 
 ### 写入规则
 
-全部在每个 profile 的配置锁里串行，与 `provider.configure` 同一把锁（01 修补 6），锁内重读 config.json。
+全部在每个 profile 的配置锁里串行，与 `provider.configure` 同一把锁（01 修补 6），锁内重读 config.json。config.json 的每次写入都先写同目录的临时文件、再改名替换（只改主进程写 config.json 的那条路径，不改 `HostFs` 的通用写入）：锁外的读只会看到旧文件或新文件，写到一半失败时旧文件不动。
 
 - **新建**：校验地址（预设按 §IPC 从 presets.ts 取）→ 铸 id → 写 key（有的话）→ 写 config.json 加条目。写 config 失败就删回刚写的 key 再抛；回删也失败时记一行日志（只记实例 id）。这把孤儿 key 的账户含永不复用的 id，任何路径都读不到它（推出）。
 - **保存实例的 key**（`provider.configure`，T3）：先写 config.json，把该实例每行的 `probe` 清掉，再写钥匙串。写 key 失败时停在「快照已清、旧 key 还在」，工具是关的。这一顺序与 02 对同主机保存的「先写机密」相反（推出：T3 要的是失败时工具关着）。
@@ -251,6 +252,7 @@ export const customVendorSchema = z.object({
 | 上下文 | `context_window`、`context_length`、`max_model_len`，取第一个正整数 | DeepSeek；Kimi、千帆、OpenRouter；vLLM |
 | 输出 | `max_output_tokens`、`max_completions_tokens`、`top_provider.max_completion_tokens`，同上 | DeepSeek；千帆；OpenRouter |
 
+- 模型行的 id 不带首尾空白（§存储 的 `customModelSchema`）：`customVendor.update` 拒收，/models 返回的这种 id 跳过、不预填，设置卡手填的 id 先去掉首尾空白再发（推出：`resolveChoice` 对 ② / ③ 的模型 id 取 trim，§实例被删或改坏 的 `assemble` 只按 id 精确找行、不合成，带空白的行新会话够不着）。
 - 取到的上限只预填，用户可改。上下文和输出两样都要有正整数才能保存这一行；没有就不能保存，不落到 01 spec:708 的 128000 / 4096（T6）。
 - 列表取不到（404、非 JSON、没有 `data`）回 `unsupported`，界面提示手填。响应头 30 秒内没到回 `service`（`status: null`）；正文超过 8 MiB 就停读、回 `unsupported`；正文中途停顿照实例请求的字节级空闲上限；应用退出时经 `signal` 中止。方舟文档没写数据面的 /models（只在控制面、Access Key 鉴权的 ListFoundationModels 里列模型；volcengine.com/docs/82379/1262847），取不到时照此回 `unsupported`。
 - 菜单里不给自定义实例手填模型 ID：模型只在设置卡里加，带上限（推出：T6）。`provider.select`、`session.selectModel` 对实例里没有的模型 id 返回 `unknown-model`（这个码在 contracts 里保留着，provider.ts:119-125）；内置厂商的手填照 02 不变。
@@ -305,7 +307,7 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 - 请求走该实例自己的 Provider：`definition.create()` 之后同一个 `encode()` 与 `stream()`（推出：这样 A9、A6 的白名单、出网收口与真实请求一致）。发之前过 02 的读稳定与 key 绑定检查（apps/desktop/src/main/provider.ts:184-247）；不过就不发，结果为失败、原因 `config`。
 - 探测请求不进任何会话的 Tape，不写 `provider/attempt_completed`；不带会话内容（T4）。数据去向的确认只管会话历史（02 spec:1107），探测不触发它。
 - `network` 外包一层分流：照原样转给 `host.network.fetch`，把响应体 `tee()` 一份给检查器（只用 web 标准 API，kernel 的出网口仍只有 `HostNetwork`，01 spec:109）。检查器按 SSE 事件读（与 openai SDK 的解码器同），读到 `[DONE]` 即停，读的字节不超过适配器读到的；非 2xx 的响应体不分流。它做两件事：认出思考字段（下文 ①）、找不认识的字段（§不认识的字段）。一个事件解析不了就跳过，坏帧由适配器自己报。
-- 同一实例同一时刻只跑一个探测，第二个回 `busy`。
+- 同一实例同一时刻只跑一个探测，第二个回 `busy`。探测没有总时长上限（思考模型一步可能很长，T4）；设置卡在探测进行中显示「取消」，点了走 `customVendor.cancelProbe`，主进程中止该探测的 `signal`，`customVendor.probe` 回 `refused`、`aborted`，不存结果，该行原快照不动。
 - 保存：在配置锁里写进该行的 `probe`，前提是实例与模型 id 还在、且探测读稳定时以来该实例的 `providerSettingsGeneration` 没变（期间保存或清空 key、改名、改模型、删实例都算变；保存 key 在写完钥匙串后恒计一次）。不满足就不存，应答带 `saved: false`。锁内先看 `signal.aborted`，为真不存、照下条回 `aborted`。
 - 中止的探测（应用退出、保存 key）回 `refused`、`aborted`，删除中止的回 `not-found`；都不存结果，该行原快照不动；退出时不为探测写 config.json。`probeModel` 见 `signal` 中止（含 `stop{ reason: 'aborted' }`）就以中止 reject，不造快照；`stop{aborted}` 不进 §结果与原因码 的表。
 
@@ -402,7 +404,9 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 ### 错误（T11）
 
 - 实例只认两条线已有的标准映射，不声明 `finishReasons`，不加按厂商的错误词表（T11）。
-- 已知局限：openai-chat 线的错误映射里写死了智谱的数字码（1113、1261、1302、1308–1311、1313–1321）和中文溢出短语（openai-chat.ts:1222-1258、errors.ts:234-235），对所有走这条线的厂商生效；Anthropic 线的花费上限识别同样对所有网关生效（anthropic-messages.ts:1292-1330）。别家碰巧回同样的码会被这样归类。百炼的 TPM/TPS 限流回 429 `insufficient_quota`（help.aliyun.com/zh/model-studio/error-code），按 OpenAI 词表读作不可重试的 `invalid-request`（openai-chat.ts:1249、:1190）。第一版不改。
+- 已知局限：openai-chat 线的错误映射里写死了智谱的数字码（1113、1261、1302、1308–1311、1313–1321）和中文溢出短语（openai-chat.ts:1222-1258、errors.ts:234-235），对所有走这条线的厂商生效；Anthropic 线的花费上限识别同样对所有网关生效（anthropic-messages.ts:1292-1330）。别家碰巧回同样的码会被这样归类。百炼的 TPM/TPS 限流回 429 `insufficient_quota`（help.aliyun.com/zh/model-studio/error-code），按 OpenAI 词表读作不可重试的 `invalid-request`（openai-chat.ts:1249、:1190）。有的预设厂商用 429 表示余额或计费停用，不是限流，等多久都不会好：Kimi 的 `exceeded_current_quota_error`（两条路由；platform.kimi.ai/docs/api/errors），方舟的 `SetLimitExceeded`（用量上限，服务已暂停）与免费额度用完的 `QuotaExceeded`（方舟另有排队任务超限的 `QuotaExceeded`，是真的可重试限流，只看码分不开；volcengine.com/docs/82379/1299023），百炼的 `PrepaidBillOverdue`、`PostpaidBillOverdue`、`BudgetLimitExceeded`、`CommodityNotPurchased`（help.aliyun.com/zh/model-studio/error-code）。两条线都按 429 读作可重试的 `rate-limit`：运行时重发到 3 次，以限流失败卡（稍后再试）结束；探测记 `rate-limit`。第一版不改。
+- HTTP 401 一律读作 `auth`，先于响应体里的错误码与类型（点名 (h)）：DeepSeek 对错 key 回 401 `{type: 'authentication_error', code: 'invalid_request_error'}`（2026-10-01 实录，厂商调研，两条路由同一个 body），openai-chat 线原先先读 `code`、归成 `invalid-request`，运行时与探测都显示成「请求被拒」；现在两条线运行时与探测都读作 `auth`，/models 按状态回 `auth`。403 不动：体里没有已知码时照状态表读作 `auth`；openai-chat 线体里的不可重试词表码仍先于状态（如带 `invalid_request_error` 的 403 读作 `invalid-request`）。
+- 已知局限（接受）：Kimi、方舟、百炼的余额或账单类 429 照 HTTP 码读作可重试的 `rate-limit`，重试次数照 02 的上限；第一版不加按厂商的词表（T11）。
 - 已知局限：会话中途从别的 provider 或模型切到 DeepSeek 这类「带 tools 时要求所有历史轮的 `reasoning_content`」的端点（api-docs.deepseek.com/guides/thinking_mode），守卫规则 1、2 丢掉的轮会让每次带工具的请求 400；探测测不出，第一版不处理，失败卡照 02。
 
 ### 实例被删或改坏（T12）
@@ -471,6 +475,10 @@ export const customVendorProbe = defineRoute('customVendor.probe', {
     z.object({ status: z.literal('refused'), code: z.enum(['not-found', 'unknown-model', 'local-endpoint', 'busy', 'aborted']) }),
   ]),
 })
+export const customVendorCancelProbe = defineRoute('customVendor.cancelProbe', { // 用户取消进行中的探测
+  request: z.object({ id: customProviderIdSchema }).strict(),
+  response: z.object({ cancelled: z.boolean() }), // 该实例没有进行中的探测时为 false，什么都不做
+})
 ```
 
 - T2 在路由层：`update` 用 `.strict()`，带 `baseURL` 或 `wire` 的请求过不了 schema；`provider.configure` 对实例只收 `apiKey`，带 `baseURL` 回 `invalid-value`（`configKey: 'baseURL'`），什么都不写。
@@ -528,15 +536,16 @@ export interface ModelInfo {                              // 已存在（package
 | (a) | `provider.configure` 拒绝把 `zhipu` 的 `baseURL` 改到源 `https://open.bigmodel.cn` 以外、把 `anthropic` 的改到 `https://api.anthropic.com` 以外（协议、主机、端口都比），返回 `official-host-only`（`configKey: 'baseURL'`），什么都不写；02 允许改指别处并仍标 `verified`（02 spec:78、:2886；开放问题 23，02 spec:3389）（Q8） | 02 spec:3402 把这些行交给 M6 二选一，并要求点名；owner 选「改走自定义入口」 |
 | (b) | 已存的非官方地址升级后读作未配置：`provider.list` 的 `configured` 为 false 并带 `refused`（`official-host-only` 与被拒的源），设置卡一句话提示「这个地址只能用自定义厂商接入」并给「新建自定义厂商」按钮；内置 `zhipu` 已存地址的路径过不了 §地址校验 4 时同样读作未配置，`refused` 的码为 `subscription-endpoint`，设置卡用它的文案，不给按钮；发送按 `ProviderConfigMissingError` 拒绝，0 次请求；不自动迁移（Q8） | 同上；不做迁移，因为仓库没发过版，只影响 owner |
 | (c) | 开发期回落：`DEV_ENV_FALLBACK`（apps/desktop/src/main/provider.ts:40-49）照旧读 `ANTHROPIC_BASE_URL`，指向官方源以外时 `anthropic` 读作未配置、`provider.list` 照 (b) 带 `refused`、记一行日志（Q8）。01 spec:708 的变量名不变 | 收紧环境变量能给的值；实例没有环境变量入口，开发期改在设置卡建实例 |
-| (d) | `.env.example`：第 5–11 行（`ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` 与兼容端点的 key 说明）改成注释：Anthropic 线的开发对话在设置卡建 anthropic-messages 实例（`https://open.bigmodel.cn/api/anthropic`，按量 key）并在模型菜单选中；`ANTHROPIC_AUTH_TOKEN` 不再给兼容端点用（否则 key 绑到默认主机 api.anthropic.com）。第 23–27 行只留 `TENON_LIVE_MAX_TOKENS`（:25，各组都读），`TENON_LIVE_MODEL`、`TENON_LIVE_AUTH_TOKEN` 只有仿真组读，随它删掉；第 29–30 行改成「内置智谱组与两组智谱实例都用 `ZHIPU_API_KEY`（按量 key）」；第 39–42 行改成「默认 zhipu；改成 anthropic 只走官方端点，Anthropic 线的开发对话在模型菜单选实例」；`TENON_PROVIDER=zhipu`（:43）改为默认生效，开发期日常对话走内置智谱（Q16）。live 套件的 Anthropic 线仿真组（apps/desktop/e2e/live-provider.spec.ts，glm-4.7-flash 经智谱 `/api/anthropic`）改成 anthropic-messages 实例组；评测专用行 `EVAL_GLM_53_ANTHROPIC`（apps/desktop/evals/models.ts）不再挂在 `anthropic` 定义上，改成实例列（Q8） | 测试与开发设置，不是产品契约；评测记录的列名不变（client、model、endpoint 都不变）；实例行没有 pricing，评测 runner 给这一列的实例定义包一层评测专用的 pricing（¥8 / ¥28 每百万 token，照今天的 `EVAL_ANTHROPIC_DEFINITION`），02 同模型列（02 spec:3078）的费用照算（Q17） |
+| (d) | `.env.example`：第 5–11 行（`ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic` 与兼容端点的 key 说明）改成注释：Anthropic 线的开发对话在设置卡建 anthropic-messages 实例（`https://open.bigmodel.cn/api/anthropic`，按量 key）并在模型菜单选中；`ANTHROPIC_AUTH_TOKEN` 不再给兼容端点用（否则 key 绑到默认主机 api.anthropic.com）。第 23–27 行只留 `TENON_LIVE_MAX_TOKENS`（:25，各组都读），`TENON_LIVE_MODEL`、`TENON_LIVE_AUTH_TOKEN` 只有仿真组读，随它删掉；第 29–30 行改成「内置智谱组与两组智谱实例都用 `ZHIPU_API_KEY`（按量 key）」；第 39–42 行改成「默认 zhipu；改成 anthropic 只走官方端点，Anthropic 线的开发对话在模型菜单选实例」；`TENON_PROVIDER=zhipu`（:43）改为默认生效，开发期日常对话走内置智谱（Q16）。live 套件的 Anthropic 线仿真组（apps/desktop/e2e/live-provider.spec.ts，glm-4.7-flash 经智谱 `/api/anthropic`）改成 anthropic-messages 实例组；评测专用行 `EVAL_GLM_53_ANTHROPIC`（apps/desktop/evals/models.ts）不再挂在 `anthropic` 定义上，改成实例列（Q8） | 测试与开发设置，不是产品契约；评测记录的列名不变（client、model、endpoint 都不变）；实例行没有 pricing，评测 runner 算费用时，这一列用它的评测专用价（¥8 / ¥28 每百万 token），不读 model_info 的 `pricing`（实例行每个 Run 由工厂按 `customVendors` 重造，包在定义外的价格到不了模型行），02 同模型列（02 spec:3078）的费用照算（Q17） |
 | (e) | 内置 `zhipu` 的 `baseURL` 路径含 `/api/coding/paas/v4` 时拒存，返回 `subscription-endpoint`（Q13 的手填规则同样管内置厂商的手填地址） | 收紧未限定的选型；Coding Plan 不得在自建应用里调用（ADR-003「订阅登录不是 provider」） |
 | (f) | 删掉 02 spec:2738 的分支「`anthropic` 定义指向 `/api/anthropic` 时用智谱搜索」：`searchDefinitionFor`（run-assembly.ts:316-327）只剩 zhipu → 智谱后端、anthropic + `api.anthropic.com` → Anthropic 后端（Q8） | 有 (a) 之后这条分支没有输入能走到；02 正文不改，以本条为准 |
 | (g) | `TOOLS_PER_REQUEST`（packages/kernel/src/tools/registry.ts:55）撤掉、开表改读 `RunConnector.toolsPerRequest`（T13）：不实现它的 connector 不再按 zhipu 128 裁。仓库内三个实现方同一改动里补上：desktop 的 run-assembly.ts、apps/desktop/evals/runner.ts:207 的 `watchedConnector`（逐个转发成员）、kernel testing/loop-ports.ts:288 的 `createTestConnector` | 收紧 02 spec:2005 标「暂定」的选型；产品与评测今天只有内置工具，内置工具从不被裁（table.ts:64-65） |
+| (h) | 两条线的错误映射里，HTTP 401 先于响应体的错误类型读作 `auth`（§运行时「错误」）：同样的 401 响应体，原先可能归成 `invalid-request` | 收紧一个原本按体判的分类；401 就是凭据被拒，内置厂商的 401 本来都读作 `auth` |
 
 - 02 的 key 绑定主机、「已配置」算法（01 修补 6）不变，只多「源不是官方源」与 zhipu 订阅路径两种读作未配置；实例另见 §key。
 - 评测的实例列跑之前先用同一个 `probeModel` 探测，不通过就不跑（推出：Q6 的工具只在探测通过后开，评测不另开豁免）。
 - 测试宿主的官方 key 守卫扩到实例：e2e 与 live 往实例填 key 的助手在填入前检查，值像官方 key（`sk-ant-` 开头）而实例主机不是 `api.anthropic.com`，就抛错、不填（02 裁决 M4；启动时的 `assertOfficialKeyStaysHome`，apps/desktop/e2e/helpers/app-env.ts:83-97，看不到实例 key）。
-- 测试接缝（推出）：未打包、`TENON_DEV_ENV=off`（只由测试启动器设，apps/desktop/e2e/helpers/app-env.ts:53；所以 `pnpm dev` 与 `.env.local` 开不了它）且设了 `TENON_TEST_ORIGIN_MAP`（`<https 源>=<http://127.0.0.1:port>`，逗号分隔）时，host.network 外面包一层，把列出的源改投到本机假服务器；左边不是 https 源、右边不是 `http://127.0.0.1:<port>` 或 `http://[::1]:<port>` 时主进程拒绝启动。做法照 apps/desktop/src/main/host/official-protocol-test-seam.ts:21-29，打包构建不读这个变量，`TENON_*` 也进不了 agent 的命令（apps/desktop/src/main/host/shell-env.ts:39）。官方源判定、`reachOf`、key 绑定与 A9 一律按改投之前的 URL 判。它进 `NEVER_INHERITED`（app-env.ts:20-27，apps/desktop/test/live-env.test.ts 钉住），只经 e2e 助手的 `options.env` 传；`assertOfficialKeyStaysHome` 在它存在且环境里有像官方 key 的值（`sk-ant-`）时拒绝启动；live 套件在运行者环境或 `.env.local` 里见到它就拒跑（否则官方组的 key 会被改投，02 裁决 M4）。02 现有指向 127.0.0.1 的 e2e（apps/desktop/e2e/helpers/tools.ts:13-15 的 `providerEnv` 等）与 desktop 单测改成「官方源 + 本接缝」（单测也可改用 fakeNetwork）；实例的 e2e 用 `https://vendor.e2e.test` 这类公网形主机。改投后内置行就是官方主机，`searchDefinitionFor` 会为 zhipu、anthropic 建搜索后端，依赖工具表或主机显示的 e2e 断言随之重定基线；专测回环显示、「从本机切到公网」确认的用例改用 Ollama 或回环实例。
+- 测试接缝（推出）：未打包、`TENON_DEV_ENV=off`（只由测试启动器设，apps/desktop/e2e/helpers/app-env.ts:53；所以 `pnpm dev` 与 `.env.local` 开不了它）且设了 `TENON_TEST_ORIGIN_MAP`（`<https 源>=<http://127.0.0.1:port>`，逗号分隔）时，host.network 外面包一层，把列出的源改投到本机假服务器；左边不是 https 源、右边不是 `http://127.0.0.1:<port>` 或 `http://[::1]:<port>` 时主进程拒绝启动。做法照 apps/desktop/src/main/host/official-protocol-test-seam.ts:21-29，打包构建不读这个变量，`TENON_*` 也进不了 agent 的命令（apps/desktop/src/main/host/shell-env.ts:39）。官方源判定、`reachOf`、key 绑定与 A9 一律按改投之前的 URL 判。它进 `NEVER_INHERITED`（app-env.ts:20-27，apps/desktop/test/live-env.test.ts 钉住），只经 e2e 助手的 `options.env` 传；`assertOfficialKeyStaysHome` 在它存在且环境里有像官方 key 的值（`sk-ant-`）时拒绝启动。它还要 `TENON_SECRETS=memory`（测试启动器缺省就是）：钥匙串各 profile 共用同一个账户，开发者日常存的官方 key 在那里、环境里的守卫看不见，所以设了映射而机密不走内存时主进程与 e2e 启动器都拒绝启动（02 裁决 M4）；live 套件在运行者环境或 `.env.local` 里见到它就拒跑（否则官方组的 key 会被改投，02 裁决 M4）。02 现有指向 127.0.0.1 的 e2e（apps/desktop/e2e/helpers/tools.ts:13-15 的 `providerEnv` 等）与 desktop 单测改成「官方源 + 本接缝」（单测也可改用 fakeNetwork）；实例的 e2e 用 `https://vendor.e2e.test` 这类公网形主机。改投后内置行就是官方主机，`searchDefinitionFor` 会为 zhipu、anthropic 建搜索后端，依赖工具表或主机显示的 e2e 断言随之重定基线；专测回环显示、「从本机切到公网」确认的用例改用 Ollama 或回环实例。
 
 ## 文档同步
 
@@ -601,7 +610,7 @@ export interface ModelInfo {                              // 已存在（package
 
 12. 不点「获取模型列表」时对 /models 0 次请求；/models 带 §列表与上限 的字段时预填；上下文或输出缺一样的行不能保存；可以手填 id；`provider.select`、`session.selectModel` 对实例表外 id 回 `unknown-model`（T6、T7）。
 13. 通过的行逐字段等于 §模型行 的合成表；没通过的行不带工具，openai-chat 行 `thinkingPreservationFormat` 为 `drop`、anthropic-messages 行为 `signed-blocks`；openai-chat 实例行的请求带 `stream_options.include_usage: true`，百炼按文档写的夹具（用量只在末尾空 choices 块）探测记 `usageSeen: true`。
-14. 探测只在点按钮时发，按钮旁有 T4 的文案；每次至多 3 次请求：通过时 2 次（T10 换字段重试时 3 次），① 没测出来或失败时不发 ②，发出前失败 0 次；经实例自己的 Provider 与 host 网络，请求头都过 A6 白名单，请求里没有会话内容，任何会话的 Tape 都不多事实（T4）。探测中保存 key 回 `aborted`、删除实例回 `not-found`，都不存结果，原快照不变。
+14. 探测只在点按钮时发，按钮旁有 T4 的文案；每次至多 3 次请求：通过时 2 次（T10 换字段重试时 3 次），① 没测出来或失败时不发 ②，发出前失败 0 次；经实例自己的 Provider 与 host 网络，请求头都过 A6 白名单，请求里没有会话内容，任何会话的 Tape 都不多事实（T4）。探测中保存 key 或点「取消」（`customVendor.cancelProbe`）回 `aborted`、删除实例回 `not-found`，都不存结果，原快照不变。
 15. 两步：① 回工具调用、② 正常收尾 → 通过；① 只回文字 → 没测出来；① 报错 → 失败（按错误码）；② 报 400 → `echo-rejected`；每个原因码在 zh-CN、en 都有非空文案；快照记下 `usageSeen` 与 `responseModelId`，响应里的模型名与请求的 id 不同不影响结果（Q5）。
 16. ① 因 `max_tokens` 被按字段名拒绝时换 `max_completion_tokens` 重试一次，快照记下；之后这一行的请求只写 `max_completion_tokens`；只提到 `max_tokens` 的取值越界 400 不重试、记 `request-rejected`（T10）。
 17. 响应 delta 或 tool_call 上带 `encrypted_content`、`reasoning_details`、`extra_content` 的三个夹具探测失败（`opaque-fields`，文案列出键名）；DeepSeek 按文档写的夹具、智谱按实测形状写的夹具（每帧带 `role`、收尾块 delta 带 `content`；含值为 null 的键）、MiniMax 按文档写的 openai-chat 夹具（每帧 delta 带 `name: "MiniMax AI"`、`audio_content: ''`）通过（Q14）。
@@ -614,7 +623,7 @@ export interface ModelInfo {                              // 已存在（package
 21. 实例的工具表里没有 WebSearch（`excluded` 记 `no-search-backend`），有 WebFetch；设置卡写明没有搜索（Q10）。
 22. anthropic-messages 实例：非空签名的思考块同模型原样回传，空签名的记 `drop / missing-signature`；两个指向同一厂商的实例互相丢掉对方的思考块（`foreign-provider`）；自定义行做回合中途压缩，Opus 5.5、Fable 5.1 内置行（含冻结的旧行）不做（Q2）。
 23. 实例的请求最多 128 个工具，智谱仍是 128，Anthropic、Ollama 不按个数裁；超出照 02 记 `over-limit`（T13）。
-24. 实例返回智谱数字码时按共用词表归类，百炼按文档写的 429 `insufficient_quota` 夹具在运行时读作 `invalid-request`，这两个现状有测试钉住（T11 已知局限）；同一夹具在探测里记 `rate-limit`。
+24. 实例返回智谱数字码时按共用词表归类，百炼按文档写的 429 `insufficient_quota` 夹具在运行时读作 `invalid-request`，Kimi 按文档写的余额 429 `exceeded_current_quota_error` 夹具在运行时读作 `rate-limit`、重发到 3 次，这三个现状有测试钉住（T11 已知局限）；百炼与 Kimi 的夹具在探测里记 `rate-limit`。DeepSeek 实录的错 key 401（`code: invalid_request_error`）两条线运行时与探测都读作 `auth`，/models 回 `auth`；没有已知码的 403 两条线仍读作 `auth`（点名 (h)）。
 25. 删掉会话正在用的实例或从列表删掉那个模型后：新消息不发出、不写事实，续跑以 provider 错误结束，都不换模型；失败卡与菜单显示 §实例被删或改坏 的文案（T12）。删掉作为新会话默认的实例或模型后，新会话照常可发。
 
 ### 内置厂商（点名）
@@ -677,7 +686,7 @@ export interface ModelInfo {                              // 已存在（package
 14. /models 只读 `data[].id` 与六个上限键，见 §列表与上限。
 15. 菜单里不给自定义实例手填模型 ID；表外 id 对实例回 `unknown-model`。
 16. openai-chat 没通过的行回传格式为 `drop`（无 tools 时规则 4 本就不回传）；anthropic-messages 行一律 `signed-blocks`。
-17. 自定义行 `reasoning`、`supportsCacheControl`、`supportsVision` 一律 false，没有 `pricing`（界面不算费用；评测同模型列由 runner 包一层评测专用 pricing，Q17）。
+17. 自定义行 `reasoning`、`supportsCacheControl`、`supportsVision` 一律 false，没有 `pricing`（界面不算费用；评测同模型列由 runner 算费用时用该列的评测专用价，Q17）。
 18. 探测在主进程跑，经实例自己的 Provider；用 `tee()` 分流读原始响应，认思考字段、查不认识的字段。
 19. 探测的工具表是任务形态在该实例下会冻结的那张；让模型调 `Read`，结果合成为 `ok`。
 20. 探测输出上限取运行时会给的值，不另设；改了某行的输出上限即清该行快照。
@@ -705,3 +714,4 @@ export interface ModelInfo {                              // 已存在（package
 42. e2e 与单测经只在未打包且 `TENON_DEV_ENV=off` 时生效的 `TENON_TEST_ORIGIN_MAP`，把官方源与公网形主机改投到本机回环的假服务器；它不被继承，live 套件见到它拒跑。
 43. 百炼预设只带北京、新加坡两地区，用 DashScope 共享域名（不带 WorkspaceId）；美国（弗吉尼亚）、中国香港走「其他兼容端点」。
 44. `assemble` 对实例按与 key 同一次读出的 config 重造行，不用进入时视图给的定义。
+45. 探测不设总时长上限；用户取消走只增的 `customVendor.cancelProbe`，中止与保存 key 的中止同样回 `aborted`、不存。

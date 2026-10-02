@@ -2,6 +2,8 @@ import { symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
+import { startFakeOpenAI } from '../test/support/fake-openai.js'
+import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { Locale } from './helpers/launch.js'
 import { newChatFromSidebar, repoint } from './helpers/navigation.js'
@@ -29,16 +31,22 @@ import type { FolderTree } from './helpers/tools.js'
  * them.
  */
 let fake: FakeAnthropic | undefined
+let ollama: FakeOpenAI | undefined
 let tree: FolderTree | undefined
 
 test.afterEach(async () => {
   await fake?.close()
+  await ollama?.close()
   fake = undefined
+  ollama = undefined
   tree?.dispose()
   tree = undefined
 })
 
-/** The session's default: the fake endpoint on this computer, never zhipu's public host. */
+/**
+ * The session's default: anthropic, whose official host the origin map test seam sends to the fake
+ * (M6 §点名「测试接缝」) — a public host, so the confirmation is measured from a chat on Ollama.
+ */
 const PROVIDER = { id: 'anthropic', modelId: 'claude-sonnet-5' } as const
 
 /** An `AskUserQuestion` call: one single choice, then one multiple choice. */
@@ -73,7 +81,14 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     const ws = join(folders.real, 'ws')
     const file = join(ws, 'a.txt')
     const userData = makeUserDataDir(`fit-02-rest-${locale}`)
-    seedConfig(userData, { locale, provider: PROVIDER })
+    // Ollama on a loopback fake: the history on this computer the confirmation is about.
+    ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+    const local = ollama
+    seedConfig(userData, {
+      locale,
+      provider: PROVIDER,
+      providerConfig: { ollama: { baseURL: local.baseURL } },
+    })
     fake = await startFakeAnthropic({
       replies: [
         // Round 1: thinking, two questions, and a Read queued behind them; both are skipped.
@@ -95,7 +110,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     })
     const server = fake
     // A key for zhipu, whose public host the confirmation names. Nothing is ever sent there: the
-    // confirmation is backed out of, and the session stays on the fake endpoint.
+    // confirmation is backed out of, and the chat stays on Ollama.
     const { app, page } = await launchTenon({
       userData,
       env: { ...providerEnv(server.baseURL), ZHIPU_API_KEY: 'e2e-zhipu-key' },
@@ -168,7 +183,13 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expectSingleLineUnclipped(closure)
       expect(server.requests).toHaveLength(5)
 
-      // The model menu's confirmation before history leaves this computer: its two choices.
+      // The model menu's confirmation before history leaves this computer: a chat on Ollama, then
+      // zhipu's public host — its two choices.
+      await newChatFromSidebar(page)
+      await page.getByTestId('model-menu-trigger').click()
+      await page.getByTestId('model-row-ollama-qwen3:8b').click()
+      await send(page, 'keep this local')
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('local answer')
       await page.getByTestId('model-menu-trigger').click()
       await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
       const confirm = page.getByTestId('model-confirm')
@@ -177,7 +198,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expectSingleLineUnclipped(page.getByTestId('model-confirm-new-chat'))
       await page.keyboard.press('Escape')
       await expect(page.getByTestId('model-menu')).toBeHidden()
-      await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelId)
+      await expect(page.getByTestId('model-menu-current')).toContainText('qwen3:8b')
+      expect(local.requests).toHaveLength(1)
 
       // The next task: FolderChip offers the folder this one picked (「用上次的 1 个文件夹」).
       await newChatFromSidebar(page)

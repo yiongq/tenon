@@ -7,7 +7,15 @@ import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
-import { providerEnv, pushesOf, recordPushes, send } from './helpers/tools.js'
+import {
+  ANTHROPIC_ORIGIN,
+  ZHIPU_ORIGIN,
+  originMap,
+  providerEnv,
+  pushesOf,
+  recordPushes,
+  send,
+} from './helpers/tools.js'
 
 /** A `chat.queue` push as main sent it. */
 interface QueuePush {
@@ -21,38 +29,40 @@ const HELD_FOR_ZHIPU = `Earlier messages will be sent to ${ZHIPU_HOST}`
 
 /**
  * The model menu in the real shell (spec 02 §模型菜单与输入框; plan step 19: 旧 38, 旧 39, the menu
- * half of 旧 186 and 旧 37). A fake endpoint stands in for each provider that is sent to; zhipu keeps
- * its public default host, so the confirmation before history leaves this computer can be seen —
- * nothing here sends to it.
+ * half of 旧 186 and 旧 37). A fake endpoint stands in for each provider that is sent to. zhipu and
+ * anthropic keep their official public hosts — the origin map test seam sends their requests to the
+ * fakes (M6 §点名「测试接缝」) — so the confirmation before history leaves this computer can be seen;
+ * the history on this computer is Ollama's, on a loopback fake.
  */
 let anthropic: FakeAnthropic | undefined
 let ollama: FakeOpenAI | undefined
+let zhipu: FakeOpenAI | undefined
 
 test.afterEach(async () => {
   await anthropic?.close()
   await ollama?.close()
+  await zhipu?.close()
   anthropic = undefined
   ollama = undefined
+  zhipu = undefined
 })
 
 test('lists configured providers by host, greys the rest, and names the thinking level (旧 39, 旧 186)', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   const userData = makeUserDataDir('model-menu')
   seedConfig(userData, { locale: 'en' })
-  const { app, page } = await launchTenon({
-    userData,
-    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
-  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     // Nothing chosen: the first row, and its default level.
     await expect(page.getByTestId('model-menu-current')).toHaveText('claude-opus-5-5 · Medium')
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
-    // The fake endpoint is on this computer; Ollama's default is too.
-    await expect(page.getByTestId('model-row-anthropic-claude-sonnet-5')).toContainText(
-      'This computer',
-    )
+    // anthropic's row names its own host (the fake behind it is the seam's business); Ollama's
+    // default is on this computer.
+    const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5')
+    await expect(sonnet).toContainText('api.anthropic.com')
+    await expect(sonnet).not.toContainText('This computer')
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toContainText(
       'This computer · text conversation only',
     )
@@ -255,8 +265,15 @@ async function heldRound(page: Page, server: FakeOpenAI): Promise<void> {
   expect(server.requests).toHaveLength(1)
 }
 
+/**
+ * The held-round session's app: Ollama on a loopback fake, and zhipu's and anthropic's official
+ * origins sent to fakes of their own, which a regression that sent the history anyway would reach
+ * instead of a vendor (`zhipu`, `anthropic`).
+ */
 async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpenAI }> {
   ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  zhipu = await startFakeOpenAI({ chunks: ['zhipu'], delayMs: 5 })
+  anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   const server = ollama
   const userData = makeUserDataDir(tag)
   seedConfig(userData, {
@@ -264,7 +281,13 @@ async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpen
     provider: { id: 'ollama', modelId: 'qwen3:8b' },
     providerConfig: { ollama: { baseURL: server.baseURL } },
   })
-  const launched = await launchTenon({ userData, env: { ZHIPU_API_KEY: 'e2e-zhipu-key' } })
+  const launched = await launchTenon({
+    userData,
+    env: {
+      ZHIPU_API_KEY: 'e2e-zhipu-key',
+      ...originMap({ [ZHIPU_ORIGIN]: zhipu.baseURL, [ANTHROPIC_ORIGIN]: anthropic.baseURL }),
+    },
+  })
   return { ...launched, server }
 }
 
@@ -335,11 +358,6 @@ test('withdrawing the held message clears the hold, and the next message held an
   }
 })
 
-// Where no provider is ever reached: `.invalid` never resolves (RFC 6761), so a regression that sent
-// the history anyway would fail on the name, not reach a vendor. The e2e keychain is in memory.
-const UNREACHABLE_ZHIPU = 'https://zhipu.invalid/api/paas/v4/'
-const UNREACHABLE_ANTHROPIC = 'https://anthropic.invalid/'
-
 test('a round held for one public host, confirmed after the default moved to another, names the host 「切换」 sends to (s19-safety-3)', async () => {
   // Held for zhipu, closed with Esc; then the default moves again, to a second public host, while
   // the round stays held. Back in the session the confirmation opens again and must name where the
@@ -347,17 +365,17 @@ test('a round held for one public host, confirmed after the default moved to ano
   const { app, page, server } = await launchHeld('model-held-moved')
   try {
     await heldRound(page, server)
-    const saved = await page.evaluate(async (baseURL) => {
+    const saved = await page.evaluate(async () => {
       const configured = await window.tenon.invoke('provider.configure', {
         id: 'anthropic',
-        values: { baseURL, apiKey: 'e2e-anthropic-key' },
+        values: { apiKey: 'e2e-anthropic-key' },
       })
       const selected = await window.tenon.invoke('provider.select', {
         providerId: 'anthropic',
         modelId: 'claude-sonnet-5',
       })
       return [configured, selected]
-    }, UNREACHABLE_ANTHROPIC)
+    })
     expect(saved).toEqual([
       { ok: true, data: { ok: true } },
       { ok: true, data: { ok: true } },
@@ -366,12 +384,12 @@ test('a round held for one public host, confirmed after the default moved to ano
     // menu opens by itself (phase 2 has no session list to leave and come back through).
     await page.reload()
     const confirm = page.getByTestId('model-confirm')
-    await expect(confirm).toContainText('Earlier messages will be sent to anthropic.invalid')
+    await expect(confirm).toContainText('Earlier messages will be sent to api.anthropic.com')
     await expect(confirm).not.toContainText(ZHIPU_HOST)
     await expect(page.getByTestId('queued-bubble')).toContainText('and this?')
     await page.getByTestId('model-confirm-switch').click()
-    // The held message went out on what the page named: the Run's record says anthropic.invalid,
-    // and zhipu got nothing.
+    // The held message went out on what the page named: the Run's record says api.anthropic.com,
+    // its fake got it, and zhipu got nothing.
     const lastHost = (): Promise<string | undefined> =>
       page.evaluate(async () => {
         const latest = (await window.tenon.invoke('session.latest', { limit: 1 })) as {
@@ -383,8 +401,10 @@ test('a round held for one public host, confirmed after the default moved to ano
         })) as { data: { lastEndpoint?: { host: string } } }
         return facts.data.lastEndpoint?.host
       })
-    await expect.poll(lastHost).toBe('anthropic.invalid')
+    await expect.poll(lastHost).toBe('api.anthropic.com')
     await expect(page.getByTestId('queued-bubble')).toHaveCount(0)
+    expect(anthropic?.requests).toHaveLength(1)
+    expect(zhipu?.requests).toHaveLength(0)
     expect(server.requests).toHaveLength(1)
   } finally {
     await app.close()
@@ -396,6 +416,8 @@ test('a session on this computer whose default moved to a public host asks on an
   // to zhipu. The model in effect is public, the history is not — every choice in its menu, the
   // ticked default's own row and a thinking level included, asks first, and nothing is sent.
   ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
+  // zhipu's official origin goes to a fake of its own: a regression that sent would reach it.
+  zhipu = await startFakeOpenAI({ chunks: ['zhipu'], delayMs: 5 })
   const server = ollama
   const userData = makeUserDataDir('model-indirect')
   seedConfig(userData, {
@@ -403,29 +425,32 @@ test('a session on this computer whose default moved to a public host asks on an
     provider: { id: 'ollama', modelId: 'qwen3:8b' },
     providerConfig: { ollama: { baseURL: server.baseURL } },
   })
-  const { app, page } = await launchTenon({ userData, env: COUNT_ROUTES })
+  const { app, page } = await launchTenon({
+    userData,
+    env: { ...COUNT_ROUTES, ...originMap({ [ZHIPU_ORIGIN]: zhipu.baseURL }) },
+  })
   try {
     await page.getByTestId('composer-input').fill('keep this local')
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
-    const saved = await page.evaluate(async (baseURL) => {
+    const saved = await page.evaluate(async () => {
       const configured = await window.tenon.invoke('provider.configure', {
         id: 'zhipu',
-        values: { baseURL, apiKey: 'e2e-zhipu-key' },
+        values: { apiKey: 'e2e-zhipu-key' },
       })
       const selected = await window.tenon.invoke('provider.select', {
         providerId: 'zhipu',
         modelId: 'glm-5.3-flash',
       })
       return [configured, selected]
-    }, UNREACHABLE_ZHIPU)
+    })
     expect(saved).toEqual([
       { ok: true, data: { ok: true } },
       { ok: true, data: { ok: true } },
     ])
     const trigger = page.getByTestId('model-menu-trigger')
     const confirm = page.getByTestId('model-confirm')
-    const asked = 'Earlier messages will be sent to zhipu.invalid'
+    const asked = HELD_FOR_ZHIPU
 
     // The default's own row, ticked as the model in effect (the menu reads it on opening).
     await trigger.click()
@@ -456,6 +481,7 @@ test('a session on this computer whose default moved to a public host asks on an
     expect(await routeCalls(app, 'session.selectModel')).toBe(0)
     expect(await routeCalls(app, 'chat.send')).toBe(1)
     expect(server.requests).toHaveLength(1)
+    expect(zhipu.requests).toHaveLength(0)
   } finally {
     await app.close()
   }
@@ -465,10 +491,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   const userData = makeUserDataDir('model-task-rows')
   seedConfig(userData, { locale: 'en' })
-  const { app, page } = await launchTenon({
-    userData,
-    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
-  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     const trigger = page.getByTestId('model-menu-trigger')
     const current = page.getByTestId('model-menu-current')
@@ -623,10 +646,7 @@ test('keeps a default per profile: a new session in each starts on it (旧 37)',
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   const userData = makeUserDataDir('model-profiles')
   seedConfig(userData, { locale: 'en' })
-  const { app, page } = await launchTenon({
-    userData,
-    env: { ANTHROPIC_BASE_URL: anthropic.baseURL, ANTHROPIC_API_KEY: 'e2e-anthropic-key' },
-  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     // The chat on screen chooses X in the menu.
     await page.getByTestId('model-menu-trigger').click()

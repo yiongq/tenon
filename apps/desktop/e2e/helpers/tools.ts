@@ -8,10 +8,35 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ElectronApplication, Page } from '@playwright/test'
 import type { ScriptedReply, ScriptedStep } from '../../test/support/fake-anthropic.js'
+import { ORIGIN_MAP_ENV } from './app-env.js'
 import { expect } from './test.js'
 
-export function providerEnv(baseURL: string): Record<string, string> {
-  return { ANTHROPIC_BASE_URL: baseURL, ANTHROPIC_API_KEY: 'e2e-test-key' }
+/** The official origins the fakes stand in for (M6 §点名 (a): the builtins take no other). */
+export const ANTHROPIC_ORIGIN = 'https://api.anthropic.com'
+export const ZHIPU_ORIGIN = 'https://open.bigmodel.cn'
+
+/**
+ * The origin map test seam's variable (M6 §点名「测试接缝」): each https origin in `to` sent to the
+ * fake server standing in for it (its base URL; the map takes its origin). The app keeps the real
+ * address — what it shows, binds a key to and judges — and only the transport reaches this machine.
+ */
+export function originMap(to: Readonly<Record<string, string>>): Record<string, string> {
+  const pairs = Object.entries(to).map(([from, url]) => `${from}=${new URL(url).origin}`)
+  return { [ORIGIN_MAP_ENV]: pairs.join(',') }
+}
+
+/**
+ * anthropic at api.anthropic.com with a test key, sent to the fake at `baseURL`; `also` maps more
+ * origins in the same variable (zhipu's fake, say).
+ */
+export function providerEnv(
+  baseURL: string,
+  also: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  return {
+    ANTHROPIC_API_KEY: 'e2e-test-key',
+    ...originMap({ [ANTHROPIC_ORIGIN]: baseURL, ...also }),
+  }
 }
 
 /**

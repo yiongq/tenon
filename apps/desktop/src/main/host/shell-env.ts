@@ -40,6 +40,14 @@ const STRIPPED_PREFIXES = ['TENON_', 'ELECTRON_'] as const
 
 export type EnvRecord = Readonly<Record<string, string>>
 
+declare const startupBrand: unique symbol
+/**
+ * The environment Tenon was started with, as only `snapshotEnv` makes it: `process.env` — which
+ * `loadDevEnv` has filled from `.env.local` by the time main() passes it on — does not type-check
+ * where this is asked for (spec 02 §内置工具与参数「Bash」; M6 §点名「测试接缝」).
+ */
+export type StartupEnv = EnvRecord & { readonly [startupBrand]: true }
+
 /** `os.userInfo().shell`, or null where it is unset or the user has no passwd entry. */
 function loginShell(): string | null {
   try {
@@ -78,12 +86,12 @@ export function pickShell(
 }
 
 /** A copy of `process.env` as it is now; main() takes it before `loadDevEnv` touches anything. */
-export function snapshotEnv(env: NodeJS.ProcessEnv = process.env): EnvRecord {
+export function snapshotEnv(env: NodeJS.ProcessEnv = process.env): StartupEnv {
   const copy: Record<string, string> = {}
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined) copy[name] = value
   }
-  return Object.freeze(copy)
+  return Object.freeze(copy) as StartupEnv
 }
 
 /** `env` without `TENON_*`, `ELECTRON_*` and, unless packaged, the dev build's provider variables. */
@@ -104,7 +112,7 @@ export interface CommandShellOptions {
   /** `pickShell()`. */
   readonly shell: AbsolutePath
   /** `snapshotEnv()` from the top of main(): the probe's own env, and the fallback. */
-  readonly startupEnv: EnvRecord
+  readonly startupEnv: StartupEnv
   /** Where the probe runs, as a new terminal opens in it. */
   readonly home: AbsolutePath
   readonly isPackaged: boolean

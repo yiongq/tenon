@@ -665,6 +665,23 @@ describe('every reason code (§结果与原因码; 验收 15)', () => {
     const run = await probe(vendor('openai-chat'), [json(doc.BAILIAN_THROTTLED)])
     expect(run.snapshot).toMatchObject({ outcome: 'failed', reason: 'rate-limit' })
   })
+
+  it('按文档、未实测 Kimi: a 429 exceeded_current_quota_error (an empty balance) records rate-limit (T11, 验收 24)', async () => {
+    const run = await probe(vendor('openai-chat'), [json(doc.KIMI_BALANCE_EXHAUSTED)])
+    expect(run.snapshot).toMatchObject({ outcome: 'failed', reason: 'rate-limit' })
+    expect(run.net.callCount).toBe(1)
+  })
+
+  it.each(['openai-chat', 'anthropic-messages'] as const)(
+    'DeepSeek’s live wrong-key 401 (code invalid_request_error) on %s records auth (M6 §点名 (h))',
+    async (wire) => {
+      // The 401 is read before the body's generic code on both wires; the run time agrees
+      // (custom-vendor-runtime.test.ts), and so does /models (remote-models.test.ts).
+      const run = await probe(vendor(wire), [json(doc.DEEPSEEK_WRONG_KEY)])
+      expect(run.snapshot).toMatchObject({ outcome: 'failed', reason: 'auth' })
+      expect(run.net.callCount).toBe(1)
+    },
+  )
 })
 
 describe('T10: the output-limit field (验收 16)', () => {

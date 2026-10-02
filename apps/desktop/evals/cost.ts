@@ -12,6 +12,8 @@
  *   - `reasoningTokens` are part of `outputTokens` already and are not priced again.
  *   - Currency is `pricing.currency`, USD when absent (01 修补 2). A missing cache price is the input
  *     price. An attempt with usage and no `pricing` makes the whole cost null, as do two currencies.
+ *   - A custom vendor instance's row has no `pricing` (M6 §合成): the eval-only instance column is
+ *     priced at the column's own price instead, for every attempt (M6 §点名 (d), Q17).
  *
  * `perRequest` (`EvalRecord.calib`, H10) gives each request's input TOTAL — what §压缩时机与估算
  * estimates the context by: `inputTokens + cacheReadTokens + cacheWriteTokens` on anthropic-messages,
@@ -111,8 +113,15 @@ export async function sessionIdsOf(tape: TapeReader, rootSessionId: string): Pro
   return ids
 }
 
-/** One session's attempts, each with the pricing its assembly froze. */
-export function attemptsOf(sessionId: string, entries: readonly TapeEntry[]): AttemptFacts[] {
+/**
+ * One session's attempts, each with the pricing its assembly froze — or `priced`, the column's own
+ * price, when the caller gives one (an instance column, M6 §点名 (d)).
+ */
+export function attemptsOf(
+  sessionId: string,
+  entries: readonly TapeEntry[],
+  priced?: Pricing,
+): AttemptFacts[] {
   const byKey = new Map(entries.map((entry) => [entry.provenanceKey, entry]))
   const attempts: AttemptFacts[] = []
   for (const entry of entries) {
@@ -134,18 +143,22 @@ export function attemptsOf(sessionId: string, entries: readonly TapeEntry[]): At
       toolDefinitionsHash: payload['toolDefinitionsHash'] as string,
       usage: (payload['usage'] as Usage | null) ?? null,
       wire: encoder?.wire ?? null,
-      pricing: model?.pricing,
+      pricing: priced ?? model?.pricing,
     })
   }
   return attempts
 }
 
-/** Sums the attempts of `rootSessionId` and its sub-agents. */
-export async function tapeCost(tape: TapeReader, rootSessionId: string): Promise<TapeCost> {
+/** Sums the attempts of `rootSessionId` and its sub-agents, at `priced` when given (attemptsOf). */
+export async function tapeCost(
+  tape: TapeReader,
+  rootSessionId: string,
+  priced?: Pricing,
+): Promise<TapeCost> {
   const attempts: AttemptFacts[] = []
   for (const sessionId of await sessionIdsOf(tape, rootSessionId)) {
     // oxlint-disable-next-line no-await-in-loop -- sessions one after another
-    attempts.push(...attemptsOf(sessionId, await readAll(tape, sessionId)))
+    attempts.push(...attemptsOf(sessionId, await readAll(tape, sessionId), priced))
   }
   return { ...sumAttempts(attempts), attempts }
 }

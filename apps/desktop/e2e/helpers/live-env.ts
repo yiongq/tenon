@@ -1,5 +1,5 @@
 /**
- * What each Anthropic-wire live group hands the app it launches (spec 02 §模型与密钥; plan step 4).
+ * What the Anthropic-wire live group hands the app it launches (spec 02 §模型与密钥; plan step 4).
  *
  * An official Anthropic key never shares an environment with a base URL other than
  * api.anthropic.com, and here that holds by construction rather than by care:
@@ -7,21 +7,25 @@
  *   - `appEnvironment` drops every provider variable the runner exports (NEVER_INHERITED), so an
  *     app sees only what its group sets — and it refuses to launch an official-looking key beside
  *     a foreign base URL, whoever put them there;
- *   - the emulation group (glm-4.7-flash behind Zhipu's /api/anthropic) forwards a base URL and an
- *     auth token only: it never reads ANTHROPIC_API_KEY or OFFICIAL_KEY_ENV, and refuses a token
- *     that looks official or a base URL on the official host;
  *   - the official group takes its key from OFFICIAL_KEY_ENV in the runner's own environment —
  *     never from `.env.local`, which it refuses to find the key in — and sets ANTHROPIC_API_KEY
  *     alone: no base URL, no auth token, so the definition's default endpoint is the only one it
  *     can reach.
  *
- * Both groups run on the in-memory secrets seam. With the real keychain, a key saved through the
- * settings card in daily use would be read ahead of these variables, and that is how an official
- * key could reach the emulation endpoint after all. The zhipu group keeps the keychain path covered.
+ * The emulation group that ran glm-4.7-flash behind Zhipu's /api/anthropic through
+ * ANTHROPIC_BASE_URL is gone (M6 §点名 (c), (d)): anthropic now reads that address as not
+ * configured, and the Anthropic wire to Zhipu is a custom vendor instance (step 11's live group).
+ *
+ * The whole live suite refuses to run while the origin map test seam is in sight
+ * (`originMapRefusal`): it would send the official key's requests to this machine (02 M4).
+ *
+ * The group runs on the in-memory secrets seam. With the real keychain, a key saved through the
+ * settings card in daily use would be read ahead of these variables. The zhipu group keeps the
+ * keychain path covered.
  *
  * Pure: every input is an argument, so apps/desktop/test/live-env.test.ts pins it in CI.
  */
-import { OFFICIAL_KEY_ENV, isOfficialBaseURL, looksOfficial } from './app-env.js'
+import { OFFICIAL_KEY_ENV, ORIGIN_MAP_ENV, looksOfficial } from './app-env.js'
 
 /** The model the official group runs on; unset, the anthropic definition's first builtin row. */
 export const OFFICIAL_MODEL_ENV = 'TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL'
@@ -37,39 +41,6 @@ export type LiveGroup =
   | { readonly kind: 'absent'; readonly reason: string }
   /** Configured in a way that could leak a key: the group fails instead of running. */
   | { readonly kind: 'refused'; readonly reason: string }
-
-/** glm-4.7-flash (TENON_LIVE_MODEL) on Zhipu's Anthropic-compatible endpoint, from `.env.local`. */
-export function emulationGroup(pick: Lookup, maxTokens: string): LiveGroup {
-  const token = pick('TENON_LIVE_AUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN')
-  if (token === undefined) {
-    return { kind: 'absent', reason: 'no ANTHROPIC_AUTH_TOKEN (or TENON_LIVE_AUTH_TOKEN) found' }
-  }
-  if (looksOfficial(token)) {
-    return {
-      kind: 'refused',
-      reason: `the emulation group's token looks like an official Anthropic key; that key travels only as ${OFFICIAL_KEY_ENV}`,
-    }
-  }
-  const baseURL = pick('ANTHROPIC_BASE_URL')
-  if (baseURL === undefined || isOfficialBaseURL(baseURL)) {
-    return {
-      kind: 'refused',
-      reason:
-        'the emulation group needs ANTHROPIC_BASE_URL on the endpoint it emulates, not on ' +
-        `api.anthropic.com (the official API has its own group, ${OFFICIAL_KEY_ENV})`,
-    }
-  }
-  return {
-    kind: 'ready',
-    env: compact({
-      TENON_PROVIDER: 'anthropic',
-      ANTHROPIC_BASE_URL: baseURL,
-      ANTHROPIC_AUTH_TOKEN: token,
-      TENON_MODEL: pick('TENON_LIVE_MODEL', 'TENON_MODEL'),
-      TENON_MAX_TOKENS: maxTokens,
-    }),
-  }
-}
 
 /**
  * The official API with a prepaid Console key. `runner` is the runner's own environment, the only
@@ -116,4 +87,21 @@ export function compact(wanted: EnvRecord): Record<string, string> {
     if (value !== undefined) env[name] = value
   }
   return env
+}
+
+/**
+ * Why the live suite must not run here, or null (M6 §点名「测试接缝」, 验收 27): the origin map
+ * test seam in the runner's environment or in `.env.local` (`file`). Launched apps never inherit
+ * it, but a live run is no place for a switch that sends api.anthropic.com's requests elsewhere —
+ * the official key would follow them (02 M4). Names the variable, never a value.
+ */
+export function originMapRefusal(runner: EnvRecord, file: EnvRecord): string | null {
+  const where = [
+    ...(runner[ORIGIN_MAP_ENV] === undefined ? [] : ["this run's environment"]),
+    ...(file[ORIGIN_MAP_ENV] === undefined ? [] : ['.env.local']),
+  ]
+  return where.length === 0
+    ? null
+    : `${ORIGIN_MAP_ENV} is set in ${where.join(' and ')}: the live suite refuses to run with ` +
+        'the test seam that redirects requests to this machine (remove it)'
 }

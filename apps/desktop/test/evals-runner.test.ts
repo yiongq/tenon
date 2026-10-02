@@ -4,10 +4,12 @@
  * settings card leaves them — to a fake Anthropic endpoint on this machine, through the product's
  * kernel service and the desktop's loop, with the test host answering the cards; then its script
  * checks run and the record is built from the Tape, passes record zod and is appended to a results
- * file that passes the format check. The column is the eval-only glm-5.3 row, priced in CNY, so the
- * cost is checked against a hand computation too. And what keeps a paid run's record: the whole
- * task's deadline and a cancelled run stop the session and still build it, a run directory that
- * will not go does not cost it, and a Run that ended over the token limit fails the task.
+ * file that passes the format check. The column is the eval-only glm-5.3 instance column (M6 §点名
+ * (d)): its entry written, its row probed first, its address sent to the fake by the test seam, and
+ * its cost read at its own CNY price, so the cost is checked against a hand computation too. And
+ * what keeps a paid run's record: the whole task's deadline and a cancelled run stop the session
+ * and still build it, a run directory that will not go does not cost it, and a Run that ended over
+ * the token limit fails the task.
  */
 import {
   chmodSync,
@@ -36,16 +38,17 @@ import { readAll } from '../evals/cost.js'
 import { redactEvidence, validateRawDirectory } from '../evals/raw.js'
 import { resultProblems } from '../evals/format.js'
 import { loadCheck } from '../evals/load-check.js'
-import { EVAL_GLM_53_ANTHROPIC, evalProviderRegistry } from '../evals/models.js'
-import type { EvalColumn } from '../evals/models.js'
+import { evalProviderRegistry } from '../evals/models.js'
 import { evalRecordSchema } from '../evals/record.js'
 import type { EvalRecord } from '../evals/record.js'
 import { appendRecord, runTask, verdictOf, watchedConnector } from '../evals/runner.js'
 import type { RunInspection, RunTaskOptions } from '../evals/runner.js'
 import type { EvalTask } from '../evals/task.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
+import { INSTANCE_COLUMN, originMapTo, startInstanceFake } from './support/eval-column.js'
+import type { InstanceFake } from './support/eval-column.js'
 import { deferred, startFakeAnthropic } from './support/fake-anthropic.js'
-import type { FakeAnthropic, ScriptedReply, ScriptedStep } from './support/fake-anthropic.js'
+import type { ScriptedReply, ScriptedStep } from './support/fake-anthropic.js'
 
 const CHECKS = join(import.meta.dirname, 'support', 'eval-checks')
 const KEY = 'eval-offline-key-not-real'
@@ -85,24 +88,16 @@ function workspaceOf(body: unknown): string {
   return found[1]
 }
 
-async function fake(replies: (ws: string) => readonly ScriptedReply[]): Promise<FakeAnthropic> {
-  const server = await startFakeAnthropic({
-    delayMs: 1,
-    replies: (index, body) => replies(workspaceOf(body))[index],
-  })
+/** The fake for the instance column: the probe's two replies, then the task's by index. */
+async function fake(replies: (ws: string) => readonly ScriptedReply[]): Promise<InstanceFake> {
+  const server = await startInstanceFake((index, body) => replies(workspaceOf(body))[index])
   cleanups.push(() => server.close())
   return server
 }
 
-function column(server: FakeAnthropic): EvalColumn {
-  return {
-    providerId: 'anthropic',
-    modelId: EVAL_GLM_53_ANTHROPIC.id,
-    baseURL: server.baseURL,
-    keyEnv: 'ZHIPU_API_KEY',
-    keyFromProcessOnly: false,
-    effort: null,
-  }
+/** `runTask`'s column options: the instance column, its origin sent to `server`. */
+function onColumn(server: InstanceFake): Pick<RunTaskOptions, 'column' | 'originMap'> {
+  return { column: INSTANCE_COLUMN, originMap: originMapTo(INSTANCE_COLUMN, server) }
 }
 
 const tool = (id: string, name: string, input: Record<string, unknown>): ScriptedReply => ({
@@ -118,7 +113,7 @@ const readStep = (id: string, file: string): ScriptedStep => ({
 
 async function run(
   task: EvalTask,
-  server: FakeAnthropic,
+  server: InstanceFake,
   fixturesDir: string,
   options: Partial<RunTaskOptions> = {},
 ): Promise<{ record: EvalRecord; entries: TapeEntry[]; run: RunInspection }> {
@@ -126,7 +121,7 @@ async function run(
   const record = await runTask({
     task,
     run: 1,
-    column: column(server),
+    ...onColumn(server),
     key: KEY,
     date: '2026-09-27',
     clientVersion: 'test-version',
@@ -151,6 +146,11 @@ const BASE: Omit<EvalTask, 'id' | 'turns' | 'checks'> = {
   profile: 'cowork',
   workspace: '01-notes',
   from: ['H15'],
+}
+
+/** A request body's `max_tokens`. */
+function maxTokensOf(request: { body: unknown }): number | undefined {
+  return (request.body as { max_tokens?: number }).max_tokens
 }
 
 describe('a task run end to end, offline', () => {
@@ -182,7 +182,8 @@ describe('a task run end to end, offline', () => {
       taskId: '01-notes',
       run: 1,
       date: '2026-09-27',
-      column: { client: 'tenon', model: 'glm-5.3', endpoint: new URL(server.baseURL).host },
+      // The column's name is the 02 row's: client, model and endpoint (M6 §点名 (d)).
+      column: { client: 'tenon', model: 'glm-5.3', endpoint: 'open.bigmodel.cn/api/anthropic' },
       clientVersion: 'test-version',
       auth: 'api-key',
       effort: null,
@@ -199,7 +200,8 @@ describe('a task run end to end, offline', () => {
       toolRounds: 2,
       cards: { default: 1 },
       usage,
-      // glm-5.3 on the eval-only row: ¥8 in, ¥28 out per million tokens.
+      // The instance column's own price (Q17): ¥8 in, ¥28 out per million tokens. Its rows carry
+      // none, so this is the runner's, never model_info's.
       cost: { amount: (3 * 8 + 3 * 28) / 1_000_000, currency: 'CNY' },
       durationMs: record.durationMs,
       calib: {
@@ -210,6 +212,13 @@ describe('a task run end to end, offline', () => {
     expect(record.durationMs).toBeGreaterThanOrEqual(0)
     expect(evalRecordSchema.parse(record)).toEqual(record)
 
+    // The probe went first (M6 推出的读法 35), with the key and nothing of the task (T4).
+    expect(server.probes.map((request) => request.headers['x-api-key'])).toEqual([KEY, KEY])
+    expect(JSON.stringify(server.probes.map((request) => request.body))).not.toMatch(/notes\.txt/)
+    // And with the output cap the runs use, as the product's probe route does (M6 §探测 `maxTokens`):
+    // the row's 128k limit under phase 0's 64k cap.
+    expect(server.requests.map(maxTokensOf)).toEqual([64_000, 64_000, 64_000])
+    expect(server.probes.map(maxTokensOf)).toEqual([64_000, 64_000])
     // The key went as `x-api-key`, to this endpoint only, with no bearer beside it.
     expect(server.requests.map((request) => request.headers['x-api-key'])).toEqual([KEY, KEY, KEY])
     expect(server.requests.some((request) => request.headers.authorization !== undefined)).toBe(
@@ -232,16 +241,78 @@ describe('a task run end to end, offline', () => {
 
     const results = realpathSync(mkdtempSync(join(tmpdir(), 'tenon-eval-results-')))
     cleanups.push(() => rmSync(results, { recursive: true, force: true }))
-    const file = appendRecord(record, column(server), results)
+    const file = appendRecord(record, INSTANCE_COLUMN, results)
     expect(file).toBe(
-      join(results, `2026-09-27-tenon-glm-5.3-127.0.0.1-${new URL(server.baseURL).port}.jsonl`),
+      join(results, '2026-09-27-tenon-glm-5.3-open.bigmodel.cn-api-anthropic.jsonl'),
     )
     // A paid run appends one record per run to the same file: each stays a line of its own.
     const second = { ...record, run: 2 }
-    expect(appendRecord(second, column(server), results)).toBe(file)
+    expect(appendRecord(second, INSTANCE_COLUMN, results)).toBe(file)
     const read = resultProblems(results)
     expect(read.problems).toEqual([])
     expect(read.records.map((r) => r.record)).toEqual([record, second])
+  })
+
+  it('probes the instance column before the first turn, and runs no row that does not pass (M6 推出的读法 35)', async () => {
+    const root = fixtures()
+    // ① answers text only: not detected — a row with no tools, which the runner does not run.
+    const server = await startFakeAnthropic({ delayMs: 1, replies: [text('No tool call.')] })
+    cleanups.push(() => server.close())
+    await expect(
+      runTask({
+        task: {
+          ...BASE,
+          id: '01-notes',
+          turns: ['Hi'],
+          checks: [{ kind: 'script', id: 'always-pass' }],
+        },
+        run: 1,
+        column: INSTANCE_COLUMN,
+        originMap: originMapTo(INSTANCE_COLUMN, server),
+        key: KEY,
+        date: '2026-09-27',
+        clientVersion: 'test-version',
+        fixturesDir: root,
+        checksDir: CHECKS,
+      }),
+    ).rejects.toThrow(/did not pass its probe \(not-detected/)
+    // ① alone went out: no ② after a row that called no tool, and nothing of the task.
+    expect(server.requests).toHaveLength(1)
+    expect(JSON.stringify(server.requests[0]?.body)).toContain('/tenon-probe/ping.txt')
+  })
+
+  it('stops the instance column’s probe when the run is cancelled (M6 §探测 has no time limit)', async () => {
+    const root = fixtures()
+    // ① never answers until the test lets it: only the run's cancel can end the probe.
+    const held = deferred()
+    const server = await startFakeAnthropic({
+      delayMs: 1,
+      replies: [{ hold: held.promise, steps: [{ type: 'text', text: 'late' }] }],
+    })
+    cleanups.push(() => server.close())
+    cleanups.push(() => held.resolve())
+    const cancel = new AbortController()
+    const ran = runTask({
+      task: {
+        ...BASE,
+        id: '01-notes',
+        turns: ['Hi'],
+        checks: [{ kind: 'script', id: 'always-pass' }],
+      },
+      run: 1,
+      column: INSTANCE_COLUMN,
+      originMap: originMapTo(INSTANCE_COLUMN, server),
+      key: KEY,
+      date: '2026-09-27',
+      clientVersion: 'test-version',
+      fixturesDir: root,
+      checksDir: CHECKS,
+      signal: cancel.signal,
+    })
+    await expect.poll(() => server.requests.length).toBe(1)
+    cancel.abort(new Error('the test run was aborted'))
+    await expect(ran).rejects.toThrow('the test run was aborted')
+    expect(server.requests).toHaveLength(1)
   })
 
   it('records timing only when asked, and removes the run’s directory, workspace and HOME included', async () => {
@@ -258,7 +329,7 @@ describe('a task run end to end, offline', () => {
         checks: [{ kind: 'script', id: 'always-pass' }],
       },
       run: 1,
-      column: column(server),
+      ...onColumn(server),
       key: KEY,
       date: '2026-09-27',
       clientVersion: 'test-version',
@@ -616,7 +687,7 @@ describe('what keeps a paid run’s record', () => {
         checks: [{ kind: 'script', id: 'always-pass' }],
       },
       run: 1,
-      column: column(server),
+      ...onColumn(server),
       key: KEY,
       date: '2026-09-27',
       clientVersion: 'test-version',
@@ -720,6 +791,8 @@ describe('eval child approvals and optional raw evidence', () => {
     )
     expect(record).toMatchObject({ verdict: 'pass', endReason: 'completed' })
     expect(server.requests).toHaveLength(5)
+    // The child session's three attempts are priced at the column's ¥8 / ¥28 too (§点名 (d), Q17).
+    expect(record.cost).toEqual({ amount: (5 * 8 + 5 * 28) / 1_000_000, currency: 'CNY' })
     const parentLink = named(entries, 'session/parent_link')[0]
     if (parentLink === undefined) throw new Error('child link missing')
     const childId = (parentLink.payload['child'] as { sessionId: string }).sessionId
@@ -784,7 +857,7 @@ it('removes the temporary host even if raw evidence cannot be written', async ()
         checks: [{ kind: 'script', id: 'always-pass' }],
       },
       run: 1,
-      column: column(server),
+      ...onColumn(server),
       key: KEY,
       date: '2026-09-27',
       clientVersion: 'test',

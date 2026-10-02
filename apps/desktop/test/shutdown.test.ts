@@ -316,6 +316,8 @@ describe('before-quit: the six steps (§停止与退出「退出」)', () => {
     await flush()
     expect(running.signal.aborted).toBe(false)
     expect(r.shutdown.started).toBe(false)
+    // A probe or a model list in main goes on too (M6 §探测 `signal`).
+    expect(r.shutdown.signal.aborted).toBe(false)
     expect(r.tape.closes()).toBe(0)
     expect(r.app.quits()).toBe(0)
     expect(r.app.exited()).toBe(false)
@@ -425,6 +427,8 @@ describe('before-quit: the six steps (§停止与退出「退出」)', () => {
       refused: 'shutting-down',
     })
     expect(r.shutdown.started).toBe(true)
+    // M6 §探测 `signal`: a probe or a model list in main stops with the Runs.
+    expect(r.shutdown.signal.aborted).toBe(true)
   })
 
   it('waits STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS for the aborted Runs, then closes the store', async () => {

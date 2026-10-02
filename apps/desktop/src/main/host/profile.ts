@@ -1,7 +1,14 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { AbsolutePath, HostFs, HostIdentity } from '@tenon-app/kernel'
-import { PROFILE_CONFIG_FILE, PROFILE_SUBDIRS, joinPath, profileDirFor } from '@tenon-app/kernel'
-import type { Config, ConfigPatch } from '@tenon-app/contracts'
-import { configSchema } from '@tenon-app/contracts'
+import {
+  CUSTOM_PROVIDER_ID_PATTERN,
+  PROFILE_CONFIG_FILE,
+  PROFILE_SUBDIRS,
+  joinPath,
+  profileDirFor,
+} from '@tenon-app/kernel'
+import type { Config, ConfigPatch, CustomVendorContract } from '@tenon-app/contracts'
+import { configSchema, customVendorSchema } from '@tenon-app/contracts'
 
 /**
  * Creates `<root>/profiles/<userId>/<tenantId>/` with its phase-0 sub-directories
@@ -23,8 +30,17 @@ export function configPath(identity: HostIdentity): AbsolutePath {
   return joinPath(identity.profileDir as AbsolutePath, PROFILE_CONFIG_FILE)
 }
 
-/** Missing or unreadable config falls back to defaults; a corrupt file is not fatal. */
-export async function readConfig(fs: HostFs, identity: HostIdentity): Promise<Config> {
+/**
+ * Missing or unreadable config falls back to defaults; a corrupt file is not fatal.
+ *
+ * M6 §存储: `customVendors` is read entry by entry (`readCustomVendors`), and `providerConfig`'s
+ * entries under an instance id are dropped (`withoutInstanceSettings`).
+ */
+export async function readConfig(
+  fs: HostFs,
+  identity: HostIdentity,
+  log: (line: string) => void = (line) => console.warn(line),
+): Promise<Config> {
   const path = configPath(identity)
   if ((await fs.stat(path)) === null) return configSchema.parse({})
   let raw: unknown
@@ -33,8 +49,97 @@ export async function readConfig(fs: HostFs, identity: HostIdentity): Promise<Co
   } catch {
     return configSchema.parse({})
   }
-  const parsed = configSchema.safeParse(raw)
-  return parsed.success ? parsed.data : fieldwise(raw)
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return configSchema.parse({})
+  const { customVendors, ...rest } = raw as Record<string, unknown>
+  const parsed = configSchema.safeParse(rest)
+  const config = parsed.success ? parsed.data : fieldwise(rest)
+  return {
+    ...config,
+    providerConfig: withoutInstanceSettings(config.providerConfig),
+    customVendors: readCustomVendors(customVendors, log),
+  }
+}
+
+/**
+ * `providerConfig` with no entry under an instance id. An instance's address is its description's
+ * alone (M6 §注册表视图; 推出的读法 3; M6 不变量 3), so the key binding, `provider.list`'s endpoint,
+ * `endpointOrigin` and the data-flow check all fall back to the declared default. Applied on read and
+ * on write alike — whichever route writes, such an entry reaches neither the file nor a watcher.
+ */
+function withoutInstanceSettings(
+  providerConfig: Config['providerConfig'],
+): Config['providerConfig'] {
+  return Object.fromEntries(
+    Object.entries(providerConfig).filter(([id]) => !CUSTOM_PROVIDER_ID_PATTERN.test(id)),
+  )
+}
+
+/**
+ * `config.json`'s `customVendors`, one entry at a time (M6 §存储; 推出的读法 13). Whole-field
+ * fallback would let one bad entry cost every instance, and the next write persist that. So: a row
+ * whose id has surrounding whitespace is dropped (Revisions 2026-10-02: a hand edit costs that row,
+ * not the instance and its key binding), a repeated model id keeps its first row, an entry the schema
+ * refuses is dropped, a repeated instance id keeps its first entry. The log names the entry's index
+ * and what failed — schema paths and issue codes only, never a value, so never an address.
+ *
+ * An address that fails §地址校验 is NOT dropped here: the registry view keeps such an instance and
+ * reads it as not configured (`custom-vendors/registry.ts`).
+ */
+function readCustomVendors(value: unknown, log: (line: string) => void): CustomVendorContract[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) {
+    log('[config] customVendors is not a list; read as none')
+    return []
+  }
+  const kept: CustomVendorContract[] = []
+  const ids = new Set<string>()
+  value.forEach((entry: unknown, index) => {
+    const parsed = customVendorSchema.safeParse(readableRows(entry, index, log))
+    if (!parsed.success) {
+      const reasons = parsed.error.issues.map(
+        (issue) => `${issue.path.map(String).join('.') || '(entry)'}: ${issue.code}`,
+      )
+      log(`[config] customVendors[${index}] dropped (${reasons.join('; ')})`)
+      return
+    }
+    if (ids.has(parsed.data.id)) {
+      log(`[config] customVendors[${index}] dropped (its id repeats an earlier entry)`)
+      return
+    }
+    ids.add(parsed.data.id)
+    kept.push(parsed.data)
+  })
+  return kept
+}
+
+/**
+ * An entry with each model id's first row only, and no row whose id has surrounding whitespace (the
+ * schema refuses one, which would drop the whole entry); anything else is left for the schema.
+ */
+function readableRows(entry: unknown, index: number, log: (line: string) => void): unknown {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return entry
+  const models = (entry as Record<string, unknown>)['models']
+  if (!Array.isArray(models)) return entry
+  const seen = new Set<string>()
+  let padded = 0
+  const rows = models.filter((row: unknown) => {
+    const id =
+      typeof row === 'object' && row !== null ? (row as Record<string, unknown>)['id'] : undefined
+    if (typeof id !== 'string') return true
+    if (id !== id.trim()) {
+      padded += 1
+      return false
+    }
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+  if (padded > 0) {
+    log(
+      `[config] customVendors[${index}]: ${padded} row(s) dropped (id has surrounding whitespace)`,
+    )
+  }
+  return { ...entry, models: rows }
 }
 
 /**
@@ -102,8 +207,10 @@ export async function writeConfigHeld(
   // An explicit `undefined` in the patch means "leave it alone", not "reset to default".
   const changes = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
   const previous = await readConfig(fs, identity)
-  const next = configSchema.parse({ ...previous, ...changes })
-  await fs.writeFile(configPath(identity), `${JSON.stringify(next, null, 2)}\n`)
+  const merged = configSchema.parse({ ...previous, ...changes })
+  // M6 不变量 3: what the file, the counts below and the watchers see, never only what a read sees.
+  const next = { ...merged, providerConfig: withoutInstanceSettings(merged.providerConfig) }
+  await replaceConfigFile(fs, configPath(identity), `${JSON.stringify(next, null, 2)}\n`)
   // Counted once the file holds it, and never before: a reader that saw the old generation before
   // its read and the same one after cannot have read a key a later save stored (`configGeneration`).
   const key = identity.profileDir
@@ -118,8 +225,49 @@ export async function writeConfigHeld(
       moved.set(id, (moved.get(id) ?? 0) + 1)
     }
   }
+  // M6 §写入规则: a write that changed an instance's entry — created, renamed, its rows or their
+  // snapshots changed, deleted — counts as a change of that instance's settings.
+  const vendorsBefore = new Map(previous.customVendors.map((entry) => [entry.id, entry]))
+  const vendorsAfter = new Map(next.customVendors.map((entry) => [entry.id, entry]))
+  for (const id of new Set([...vendorsBefore.keys(), ...vendorsAfter.keys()])) {
+    if (!isDeepStrictEqual(vendorsBefore.get(id), vendorsAfter.get(id))) {
+      moved.set(id, (moved.get(id) ?? 0) + 1)
+    }
+  }
   for (const watcher of watchers.get(key) ?? []) watcher(next)
   return next
+}
+
+/** A host fs that can replace a file whole, the way `DesktopFs.replaceFile` does. */
+interface ReplacingFs extends HostFs {
+  replaceFile(path: AbsolutePath, data: Uint8Array | string): Promise<void>
+}
+
+/**
+ * `config.json`'s every write (M6 §写入规则): a temporary file in the same directory, renamed over it,
+ * so a read outside the lock sees the old file or the new one, and a write that fails partway leaves
+ * the old one and its instances. The desktop host does that (`DesktopFs.replaceFile`); a host without
+ * it — the memory host, which swaps a file's whole content in one step anyway — writes as it always
+ * has. `HostFs.writeFile` itself is left alone: the agent's Write tool uses it too.
+ */
+function replaceConfigFile(fs: HostFs, path: AbsolutePath, text: string): Promise<void> {
+  const replacing = fs as Partial<ReplacingFs>
+  return typeof replacing.replaceFile === 'function'
+    ? replacing.replaceFile(path, text)
+    : fs.writeFile(path, text)
+}
+
+/**
+ * One more change of a provider's settings, with no write of `config.json` (M6 §写入规则; 推出的读法
+ * 12): an instance's key save counts once its keychain write is done — or has failed — whether or not
+ * its entry changed, so a probe or a read that began between the two writes cannot keep what it read.
+ * The caller holds the profile's lock.
+ */
+export function countProviderSettingsWrite(identity: HostIdentity, providerId: string): void {
+  const key = identity.profileDir
+  const moved = settingsGenerations.get(key) ?? new Map<string, number>()
+  settingsGenerations.set(key, moved)
+  moved.set(providerId, (moved.get(providerId) ?? 0) + 1)
 }
 
 /**

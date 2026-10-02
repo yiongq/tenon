@@ -379,6 +379,34 @@ export const UNAUTHORIZED: HttpErrorFixture = {
   body: errorBody('authentication_error', 'invalid x-api-key'),
 }
 
+/**
+ * A compatible gateway's 401 in OpenAI's envelope, whose `error.type` this wire's table reads as a
+ * refused request when no status comes with it: the 401 decides (M6 §点名 (h)).
+ */
+export const UNAUTHORIZED_OPENAI_BODY: HttpErrorFixture = {
+  status: 401,
+  body: {
+    error: {
+      message: 'Incorrect API key provided',
+      type: 'invalid_request_error',
+      param: null,
+      code: 'invalid_request_error',
+    },
+  },
+}
+
+/**
+ * The vendor's own 403 envelope. The status table reads it as `auth` before the body's
+ * `error.type` is consulted, as it did before M6 (§运行时「错误」: 403 不动).
+ */
+export const FORBIDDEN: HttpErrorFixture = {
+  status: 403,
+  body: errorBody(
+    'permission_error',
+    'Your API key does not have permission to use the specified resource.',
+  ),
+}
+
 export const RETRY_AFTER_SECONDS = 30
 
 export const RATE_LIMITED_SECONDS: HttpErrorFixture = {

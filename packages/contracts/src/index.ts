@@ -159,12 +159,12 @@ export type {
 export { configSetRequestSchema, providerSelectionSchema } from './ipc/config.js'
 export type { ConfigSetRequest, ProviderSelection } from './ipc/config.js'
 
-// M6 §IPC: custom vendors — the instances in config.json, the presets and their routes. The routes
-// join `ipcRoutes` once main registers their handlers.
+// M6 §IPC: custom vendors — the instances in config.json, the presets and their routes.
 export {
   CUSTOM_ID_REGEX,
   customModelSchema,
   customProviderIdSchema,
+  customVendorCancelProbe,
   customVendorCreate,
   customVendorDelete,
   customVendorErrorCodeSchema,

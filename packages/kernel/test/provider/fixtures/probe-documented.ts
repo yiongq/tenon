@@ -3,7 +3,8 @@
  * each written from the vendor's own documentation and never compared with a live stream. Where a
  * vendor page is silent on a detail, the frame takes the OpenAI chat-completions chunk shape and the
  * comment says so; ids, texts and token counts are invented. Whoever first probes one of these
- * vendors live should diff a real stream against its fixture and record what differs.
+ * vendors live should diff a real stream against its fixture and record what differs. The one
+ * exception is DEEPSEEK_WRONG_KEY, a body recorded live (its comment says where).
  *
  * Sources (read through the M6 vendor survey, 2026-10-02):
  * - DeepSeek: https://api-docs.deepseek.com/api/create-chat-completion,
@@ -12,7 +13,8 @@
  * - Kimi (国内 and 国际 share the docs): https://platform.kimi.com/docs/api/chat,
  *   https://platform.kimi.com/docs/guide/utilize-the-streaming-output-feature-of-kimi-api,
  *   https://platform.kimi.com/docs/guide/use-thinking-models,
- *   https://platform.kimi.com/docs/guide/use-kimi-api-to-complete-tool-calls
+ *   https://platform.kimi.com/docs/guide/use-kimi-api-to-complete-tool-calls,
+ *   https://platform.kimi.ai/docs/api/errors
  * - Alibaba Bailian: https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions,
  *   https://help.aliyun.com/zh/model-studio/qwen-function-calling,
  *   https://help.aliyun.com/zh/model-studio/error-code
@@ -228,6 +230,41 @@ export const BAILIAN_THROTTLED = {
       param: null,
       message: 'Allocated quota exceeded, please increase your quota limit.',
       type: 'insufficient_quota',
+    },
+  },
+} as const
+
+/**
+ * Kimi's 429 for an exhausted balance (`exceeded_current_quota_error`, which its error page says no
+ * retry clears; https://platform.kimi.ai/docs/api/errors), in the chat route's `{error:{type,
+ * message}}` envelope; the message is invented. Both wires read a 429 by its status as a retryable
+ * `rate-limit` (T11's known limit, 验收 24).
+ */
+export const KIMI_BALANCE_EXHAUSTED = {
+  status: 429,
+  body: {
+    error: {
+      type: 'exceeded_current_quota_error',
+      message: 'Your account balance is insufficient, please recharge.',
+    },
+  },
+} as const
+
+/**
+ * Not 按文档: the body DeepSeek returned live on 2026-10-01 for an invalid key, identical on its
+ * openai-chat and Anthropic routes (M6 vendor survey, vendor-matrix.json, DeepSeek errors-and-limits;
+ * the key masked as the vendor masks it). `type` says authentication while `code` is OpenAI's generic
+ * `invalid_request_error`, which the openai-chat vocabulary would read as a refused request; the 401
+ * is read first on both wires (M6 §点名 (h)).
+ */
+export const DEEPSEEK_WRONG_KEY = {
+  status: 401,
+  body: {
+    error: {
+      message: 'Authentication Fails, Your api key: ****alid is invalid ...',
+      type: 'authentication_error',
+      param: null,
+      code: 'invalid_request_error',
     },
   },
 } as const

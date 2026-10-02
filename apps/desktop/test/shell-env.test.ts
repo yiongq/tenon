@@ -17,14 +17,14 @@ import {
   startCommandShell,
   withoutTenonVars,
 } from '../src/main/host/shell-env.js'
-import type { EnvRecord } from '../src/main/host/shell-env.js'
+import type { EnvRecord, StartupEnv } from '../src/main/host/shell-env.js'
 import { DEV_ENV_FALLBACK } from '../src/main/provider.js'
 
 const DEV_KEY_NAMES = Object.values(DEV_ENV_FALLBACK).flatMap((names) => Object.values(names))
 
 /** What main() would have snapshotted: Tenon's and Electron's own variables, a dev key, a user token. */
-function startupEnvIn(home: string): EnvRecord {
-  return {
+function startupEnvIn(home: string): StartupEnv {
+  return snapshotEnv({
     PATH: '/usr/bin:/bin',
     HOME: home,
     STARTUP_ONLY: 'kept',
@@ -32,7 +32,7 @@ function startupEnvIn(home: string): EnvRecord {
     ELECTRON_RUN_AS_NODE: '1',
     TENON_DEV_ENV: 'off',
     ...Object.fromEntries(DEV_KEY_NAMES.map((name) => [name, `dev-${name}`])),
-  }
+  })
 }
 
 function fakeClock(): { clock: HostClock; timers: { fn: () => void; ms: number }[] } {
