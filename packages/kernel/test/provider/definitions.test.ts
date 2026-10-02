@@ -38,6 +38,7 @@ import {
   ollamaDefinition,
   OpenAIChatProvider,
   checksThinkingPrefix,
+  customVendorDefinition,
   registerBuiltinProviders,
   zhipuDefinition,
 } from '../../src/index.js'
@@ -45,6 +46,7 @@ import type {
   ContentBlock,
   InternalMessage,
   ModelInfo,
+  ProbeSnapshot,
   ProviderDefinition,
   ProviderRegistry,
   StopReason,
@@ -124,6 +126,36 @@ const acmeDefinition: ProviderDefinition = {
     })
   },
 }
+
+/**
+ * M6 验收 2: the same path once more for two custom-vendor instances, one per wire — pure data through
+ * the generic factory, no definition file. Their rows passed a probe, so they carry tools.
+ */
+const PASSED: ProbeSnapshot = {
+  outcome: 'passed',
+  reason: null,
+  probedAt: NOW,
+  reasoningField: 'reasoning_content',
+  maxTokensField: 'max_tokens',
+  usageSeen: true,
+  responseModelId: null,
+  unknownFields: [],
+}
+const INSTANCE_ROW = { id: 'vendor-model', contextLimit: 131_072, maxOutputTokens: 8192 }
+const OPENAI_INSTANCE = customVendorDefinition({
+  id: 'custom-1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed',
+  wire: 'openai-chat',
+  baseURL: 'https://api.vendor.test/v1',
+  keyRequired: true,
+  models: [{ ...INSTANCE_ROW, probe: PASSED }],
+})
+const ANTHROPIC_INSTANCE = customVendorDefinition({
+  id: 'custom-6ec0bd7f-11c0-43da-975e-2a8ad9ebae0b',
+  wire: 'anthropic-messages',
+  baseURL: 'https://api.vendor.test/anthropic',
+  keyRequired: true,
+  models: [{ ...INSTANCE_ROW, probe: { ...PASSED, reasoningField: null, maxTokensField: null } }],
+})
 
 interface DriveCase {
   readonly name: string
@@ -244,6 +276,40 @@ const CASES: readonly DriveCase[] = [
     usage: openAIUsage(),
     url: `${ACME_BASE_URL}/chat/completions`,
     credential: { name: 'authorization', value: `Bearer ${API_KEY}` },
+  },
+  {
+    name: 'a custom openai-chat instance (M6 验收 2)',
+    definition: OPENAI_INSTANCE,
+    frames: openAIFixture.TEXT_THEN_TOOL_CALL_FRAMES,
+    closing: openAIFixture.PLAIN_TEXT_FRAMES,
+    secrets: { apiKey: API_KEY },
+    config: {},
+    content: textThenCall(
+      openAIFixture.TOOL_PREAMBLE,
+      openAIFixture.TOOL_ID,
+      openAIFixture.TOOL_NAME,
+    ),
+    stop: { reason: 'tool-use', providerReason: 'tool_calls' },
+    usage: openAIUsage(),
+    url: 'https://api.vendor.test/v1/chat/completions',
+    credential: { name: 'authorization', value: `Bearer ${API_KEY}` },
+  },
+  {
+    name: 'a custom anthropic-messages instance (M6 验收 2)',
+    definition: ANTHROPIC_INSTANCE,
+    frames: anthropicFixture.ONE_TOOL_CALL_FRAMES,
+    closing: anthropicFixture.PLAIN_TEXT_FRAMES,
+    secrets: { apiKey: API_KEY },
+    config: {},
+    content: textThenCall(
+      anthropicFixture.TOOL_PREAMBLE,
+      anthropicFixture.TOOL_ID,
+      anthropicFixture.TOOL_NAME,
+    ),
+    stop: { reason: 'tool-use', providerReason: 'tool_use' },
+    usage: anthropicUsage(),
+    url: 'https://api.vendor.test/anthropic/v1/messages',
+    credential: { name: 'x-api-key', value: API_KEY },
   },
 ]
 
@@ -690,6 +756,9 @@ describe('acceptance 1 — one call path, four providers', () => {
   // The fourth provider: one `register()` call with a definition written in this file. No class,
   // no encoder, no branch anywhere in the kernel.
   registry.register(acmeDefinition)
+  // M6 验收 2: and two instances the generic factory made from data, one per wire.
+  registry.register(OPENAI_INSTANCE)
+  registry.register(ANTHROPIC_INSTANCE)
 
   for (const testCase of CASES) {
     it(`drives ${testCase.name} through the same path`, async () => {
@@ -804,6 +873,8 @@ describe('acceptance 1 — one call path, four providers', () => {
       'zhipu',
       'ollama',
       ACME_ID,
+      OPENAI_INSTANCE.id,
+      ANTHROPIC_INSTANCE.id,
     ])
     // A second definition claiming an id would silently re-point every configured credential.
     expect(() => registerBuiltinProviders(registry)).toThrow(ProviderAlreadyRegisteredError)
@@ -1002,6 +1073,29 @@ describe('builtin provider definitions', () => {
       ;(row.requestParams as Record<string, unknown>)['thinking'] = 'off'
     }).toThrow(TypeError)
     expect(zhipuDefinition.builtinModels[0]?.contextLimit).toBe(limit)
+  })
+
+  it('hands out models a caller cannot edit through an instance provider, on both wires (M6 §实例描述与通用工厂)', async () => {
+    for (const definition of [OPENAI_INSTANCE, ANTHROPIC_INSTANCE]) {
+      const provider = definition.create({
+        network: fakeNetwork([]),
+        clock: { now: () => NOW, setTimeout: () => () => undefined },
+        config: {},
+        secrets: { apiKey: API_KEY },
+      })
+      // oxlint-disable-next-line no-await-in-loop -- one instance at a time
+      const models = await provider.models()
+      expect(models).toEqual(definition.builtinModels)
+      models.pop()
+      // oxlint-disable-next-line no-await-in-loop -- one instance at a time
+      const row = (await provider.models())[0]
+      if (row === undefined) throw new Error(`${definition.id} has no row`)
+      expect(row).toEqual(definition.builtinModels[0])
+      expect(() => {
+        row.contextLimit = 1
+      }).toThrow(TypeError)
+      expect(definition.builtinModels[0]?.contextLimit).toBe(INSTANCE_ROW.contextLimit)
+    }
   })
 })
 

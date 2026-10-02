@@ -2315,6 +2315,8 @@ export function createLoop(deps: LoopDeps): Loop {
                   tenantId: deps.host.identity.tenantId,
                   userSetting: deps.userSetting,
                   hasSearchBackend: assembly.search !== null,
+                  // M6 §对 02 的修补 4. Untested: only a child's compaction reaches it, and a child
+                  // has one turn (no compaction cut); its candidates were capped at dispatch.
                   toolsPerRequest: toolsPerRequest(q.providerId),
                 }),
               }

@@ -94,8 +94,10 @@ const WIRE = 'openai-chat'
  * the SDK no per-request timeout, and no `x-stainless-helper-method`, which only the SDK's helpers
  * set. The fixed values are pinned, so an `OPENAI_CUSTOM_HEADERS` line cannot rewrite them. Re-read
  * this list with every SDK pin.
+ *
+ * Exported for a custom vendor's model list, which goes out under the same list (M6 §列表与上限).
  */
-const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
+export const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
   names: Object.freeze([
     'content-type',
     'authorization',

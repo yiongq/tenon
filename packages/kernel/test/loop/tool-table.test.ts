@@ -951,4 +951,77 @@ describe('the cap on tools per request is the connector’s (M6 §对 02 的修�
     expect(reopened[0]?.excluded.filter((entry) => entry.code === 'over-limit')).toHaveLength(128)
     expect(toolNames(provider)).toHaveLength(5)
   })
+
+  it('caps a sub-agent’s table by the cap the connector answers when it is dispatched', async () => {
+    // The cap is read at every opening, a sub-agent's included (mailbox `dispatchChild`). A child's
+    // candidates are its parent's frozen table, so only a cap that moved since that table froze can
+    // show whether the child's opening read it: null when the parent's table opens, then a cap that
+    // leaves the child its builtins and two of the 130.
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const provider = createScriptedProvider({ id: 'zhipu', models: [MODEL_B] })
+    const loop = createTestLoopPorts({
+      connector: { provider, model: MODEL_B, mcpSources: [crowded()] },
+    })
+    let cap: number | null = null
+    const service = createTestSessionService(
+      {
+        host: createMemoryHost(),
+        tape: store,
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: { ...loop.connector, toolsPerRequest: () => cap },
+        protectedFiles: [],
+      },
+      { tools: { Agent: 'real' } },
+    )
+    service.bindLoop(loop)
+    await service.selectProfile({
+      sessionId: SESSION,
+      profile: 'cowork',
+      dedicated: absolutePath('/home/u/Tenon/workspaces/u/t/task'),
+    })
+    const ask = async (text: string): Promise<void> => {
+      const sent = await service.send({ sessionId: SESSION, origin: null, text })
+      if (sent.status !== 'started') throw new Error(`send answered ${JSON.stringify(sent)}`)
+      await loop.runEnded({ runId: sent.runId })
+    }
+    provider.script(scriptedTurn({ deltas: ['first'], usage: USAGE }))
+    await ask('freeze the parent table')
+    const [parentTable] = named(await entries(store), 'view/tool_table').map(
+      (entry) => entry.payload as unknown as ToolTablePayload,
+    )
+    // Uncapped when it froze: every connector tool is in it.
+    expect(parentTable?.tools.filter((item) => item.source === 'mcp')).toHaveLength(130)
+    const childBuiltins = (parentTable?.tools ?? []).filter(
+      (item) =>
+        item.source === 'builtin' && item.name !== 'Agent' && item.name !== 'AskUserQuestion',
+    )
+    cap = childBuiltins.length + 2
+    provider.script([
+      { type: 'tool-call-start', index: 0, id: 'agent', name: 'Agent' },
+      {
+        type: 'tool-call-end',
+        index: 0,
+        id: 'agent',
+        name: 'Agent',
+        input: { description: 'child task', prompt: 'child work' },
+      },
+      { type: 'usage', usage: USAGE },
+      stopEvent('tool-use', 'tool_use'),
+    ])
+    provider.script(scriptedTurn({ deltas: ['child done'], usage: USAGE }))
+    provider.script(scriptedTurn({ deltas: ['parent done'], usage: USAGE }))
+    await ask('delegate')
+    const link = named(await entries(store), 'session/parent_link')[0]
+    const childId = (link?.payload['child'] as { sessionId: string } | undefined)?.sessionId
+    const childTable = named(await entries(store, childId), 'view/tool_table')[0]
+      ?.payload as unknown as ToolTablePayload
+    expect(childTable.tools.map((item) => item.name)).toEqual(
+      [...childBuiltins.map((item) => item.name), 'fix__t000', 'fix__t001'].toSorted(),
+    )
+    expect(childTable.excluded.filter((entry) => entry.code === 'over-limit')).toHaveLength(128)
+    expect(link?.payload['tools']).toEqual(childTable.tools.map((item) => item.name))
+    // The child's request carried that table, and no more.
+    expect(toolNames(provider, -2)).toHaveLength(cap)
+  })
 })
