@@ -19,13 +19,17 @@
  * The whole live suite refuses to run while the origin map test seam is in sight
  * (`originMapRefusal`): it would send the official key's requests to this machine (02 M4).
  *
+ * The DeepSeek key (`deepseekKey`, M6 验收 29) follows the official key's rule: the runner's own
+ * environment only, refused when `.env.local` holds it. It is typed into an instance's settings
+ * card, never handed to an app's environment.
+ *
  * The group runs on the in-memory secrets seam. With the real keychain, a key saved through the
  * settings card in daily use would be read ahead of these variables. The zhipu group keeps the
  * keychain path covered.
  *
  * Pure: every input is an argument, so apps/desktop/test/live-env.test.ts pins it in CI.
  */
-import { OFFICIAL_KEY_ENV, ORIGIN_MAP_ENV, looksOfficial } from './app-env.js'
+import { DEEPSEEK_KEY_ENV, OFFICIAL_KEY_ENV, ORIGIN_MAP_ENV, looksOfficial } from './app-env.js'
 
 /** The model the official group runs on; unset, the anthropic definition's first builtin row. */
 export const OFFICIAL_MODEL_ENV = 'TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL'
@@ -79,6 +83,37 @@ export function officialGroup(
       TENON_MAX_TOKENS: maxTokens,
     }),
   }
+}
+
+/** A live key a group types into an instance's settings card, never into an app's environment. */
+export type InstanceKey =
+  | { readonly kind: 'ready'; readonly key: string }
+  /** Not handed in: the group skips. */
+  | { readonly kind: 'absent'; readonly reason: string }
+  /** Kept where it never goes: the group fails instead of running. */
+  | { readonly kind: 'refused'; readonly reason: string }
+
+/**
+ * The DeepSeek group's key (M6 plan「开工前读」key; 验收 29): DEEPSEEK_KEY_ENV in `runner`, the
+ * runner's own environment, which the lead fills from the login keychain for that one run. Found in
+ * `file` (`.env.local`) under that name, whatever it holds, the group is refused rather than run,
+ * as the official group is: that key never goes there. Names the variable, never a value.
+ */
+export function deepseekKey(runner: EnvRecord, file: EnvRecord): InstanceKey {
+  if (file[DEEPSEEK_KEY_ENV] !== undefined) {
+    return {
+      kind: 'refused',
+      reason: `.env.local holds ${DEEPSEEK_KEY_ENV}; it never goes there — remove it and pass it in this run's environment only`,
+    }
+  }
+  const key = runner[DEEPSEEK_KEY_ENV]?.trim()
+  if (key === undefined || key === '') {
+    return {
+      kind: 'absent',
+      reason: `no ${DEEPSEEK_KEY_ENV} in this run's environment (never in .env.local or a shell profile)`,
+    }
+  }
+  return { kind: 'ready', key }
 }
 
 export function compact(wanted: EnvRecord): Record<string, string> {

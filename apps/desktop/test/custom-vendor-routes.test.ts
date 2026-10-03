@@ -500,25 +500,38 @@ describe('provider.list for instances (M6 01 修补 4, 6; §运行时「行标�
     expect((await listing).map((entry) => entry.id)).toEqual(builtinIds)
   })
 
-  it('M6 不变量 3: an address that fails §地址校验 is listed refused and not configured, and sends nothing — no model list, no probe', async () => {
-    const stored = instance({ id: ID, baseURL: 'http://api.example.com/v1' })
-    const h = await seeded([stored])
-    expect(await h.entry(ID)).toMatchObject({
-      configured: false,
-      refused: { code: 'https-required' },
-      endpoint: { host: 'api.example.com', reach: 'public' },
-    })
-    expect(await h.ok('customVendor.fetchModels', { id: ID })).toEqual({
-      ok: false,
-      code: 'config',
-    })
-    const probed = await probe(h)
-    expect(probed).toMatchObject({
-      status: 'done',
-      snapshot: { outcome: 'failed', reason: 'config' },
-    })
-    expect(h.network.callCount).toBe(0)
-  })
+  it.each([
+    ['a public http:// address', 'openai-chat', 'http://api.example.com/v1', 'https-required'],
+    ['a query', 'openai-chat', 'https://api.example.com/v1?x=1', 'invalid-address'],
+    [
+      'the GLM Coding Plan path',
+      'openai-chat',
+      'https://open.bigmodel.cn/api/coding/paas/v4',
+      'subscription-endpoint',
+    ],
+    ['a trailing /v1', 'anthropic-messages', 'https://api.example.com/v1', 'invalid-address'],
+  ] as const)(
+    'M6 不变量 3: %s (%s, %s) edited in by hand is listed refused as %s and not configured, and sends nothing — no model list, no probe',
+    async (_what, wire, baseURL, code) => {
+      const stored = instance({ id: ID, wire, baseURL })
+      const h = await seeded([stored])
+      expect(await h.entry(ID)).toMatchObject({
+        configured: false,
+        refused: { code },
+        endpoint: { host: new URL(baseURL).hostname, reach: 'public' },
+      })
+      expect(await h.ok('customVendor.fetchModels', { id: ID })).toEqual({
+        ok: false,
+        code: 'config',
+      })
+      const probed = await probe(h)
+      expect(probed).toMatchObject({
+        status: 'done',
+        snapshot: { outcome: 'failed', reason: 'config' },
+      })
+      expect(h.network.callCount).toBe(0)
+    },
+  )
 })
 
 describe('provider.configure for an instance (§IPC; T2, T3)', () => {
@@ -1119,8 +1132,8 @@ describe('createProbeRuns (§何时、走哪条路)', () => {
   )
 })
 
-describe('验收 8: no answer carries the key', () => {
-  it('every custom vendor route, provider.list and provider.configure answer through their schemas without it', async () => {
+describe('验收 8, M6 不变量 14: the key is in the keychain alone, and no answer carries it', () => {
+  it('M6 不变量 14: every custom vendor route, provider.list and provider.configure answer through their schemas without it; the keychain holds it under the tenant’s account', async () => {
     const h = await harness({
       script: [{ kind: 'json', body: { data: [{ id: MODEL }] } }, CALL, ANSWER],
     })
@@ -1136,6 +1149,10 @@ describe('验收 8: no answer carries the key', () => {
       source: { kind: 'custom', baseURL: BASE },
       apiKey: KEY,
     })) as { id: string }
+    // §key, T8: one account, `<tenantId>:provider:custom-<uuid>:apiKey`, and nothing else stored.
+    const account = `${h.host.identity.tenantId}:provider:${created.id}:apiKey`
+    expect(h.keyOf(created.id)).toBe(account)
+    expect([...h.keychain.values]).toEqual([[account, KEY]])
     await keep('customVendor.update', { id: created.id, models: [ROW] })
     await keep('customVendor.fetchModels', { id: created.id })
     await keep('customVendor.probe', { id: created.id, modelId: MODEL })
@@ -1143,6 +1160,7 @@ describe('验收 8: no answer carries the key', () => {
     await keep('customVendor.list', {})
     await keep('provider.list', {})
     await keep('provider.configure', { id: created.id, values: { apiKey: NEW_KEY } })
+    expect([...h.keychain.values]).toEqual([[account, NEW_KEY]])
     await keep('provider.list', {})
     await keep('customVendor.delete', { id: created.id })
     const seen = JSON.stringify([answers, h.lines, await h.file()])
