@@ -40,8 +40,8 @@
 - [x] 12. 〔DeepSeek live〕DeepSeek 组：`https://api.deepseek.com` + `deepseek-flash`，key 照「开工前读」从钥匙串传入；获取列表预填、探测、带工具跨两轮的会话。owner 没给 key 之前本步不开工，排到最后。
   - 测试要点：验收 29；每次请求都回传了 `reasoning_content`（fakeNetwork 之外用请求记录核）。
 - [x] 13. 对照 spec 全部验收标准逐条验证，结果、命令与证据位置记在本文件；每条不变量有名字带「M6 不变量 N」的测试（验收 32）。
-- [ ] 14. 清理临时探针、夹具草稿与调试输出；确认 kernel 够不着 desktop 的假服务器、仓库里没有任何 key 的值。
-- [ ] 15. spec 顶部改 `Status: implemented`，写交接。
+- [x] 14. 清理临时探针、夹具草稿与调试输出；确认 kernel 够不着 desktop 的假服务器、仓库里没有任何 key 的值。
+- [x] 15. spec 顶部改 `Status: implemented`，写交接。
 
 ## 实施记录
 
@@ -151,6 +151,8 @@
   - 收尾（2026-10-03，lead 首跑 DeepSeek 组后）：lead 实跑只在探测断言失败：deepseek-flash 在 ① 流出空的 `reasoning_content`、② 起才思考，快照 `reasoningField` 为 null；lead 修订 spec（§合成 两行、推出的读法 16、验收 29、Revisions），本轮只落这次修订。kernel `customModelInfo`：通过的 openai-chat 行一律 `reasoning-content`，`reasoningEchoField` 取快照的字段、没有取 `reasoning_content`；没通过的 openai-chat 行仍 `drop`、不写回传字段；anthropic-messages 不变；探测 ② 照旧用假定通过的快照经 `customModelInfo` 造行，M6 不变量 9 不受影响。测试：custom-vendor.test 的通过行逐字段一例改为新规则（另核 `reasoning` 拼法照回），加两例：快照没认出字段的通过行在之后带工具的请求里以 `reasoning_content` 回传思考（无工具照规则 4 不回传）；不带思考块的历史在新旧两种规则下 body 与 promptHash 都相同；probe.test 不变量 9（① 无思考）一例加 ② 的行逐字段等于存下的行、且回传为 `reasoning_content`。把规则改回旧的突变：通过行逐字段、之后回传、探测不变量 9 三例变红（新旧等价一例按设计两种规则都过），恢复后 cmp 核过。live 组：探测断言改为 `reasoningField` 是 `reasoning_content` 或 null；回传断言改为凡带思考的助手轮之后每次请求都以 `reasoning_content` 回传、没思考的轮不带（新助手 `expectedEchoes`，reasoning-echo.test 加 2 例），探测 ② 在 ① 思考过时回传、没思考时不带，另要求最后一个请求里至少一轮带回思考（回传真被用到）；仍不出 400。门禁：`pnpm format`、`pnpm format:check`（622 个文件）、`pnpm lint`、`pnpm typecheck` 全过；`pnpm test --maxWorkers=2` 184 个文件过、2 个跳过，3548 个用例过、2 个跳过；`pnpm evals:gate --maxWorkers=2` 4 个文件过、1 个跳过，30 个用例过、1 个跳过。没跑 live、没碰钥匙串与 api.deepseek.com；本步仍未勾，等 lead 重跑 DeepSeek 组。
   - 收尾评审收口（2026-10-03）：评审没有确认的问题；跑了 10 个突变，全被抓到：回传字段写给没通过的 openai-chat 行、写给通过的 anthropic-messages 行，缺省拼法改成 `reasoning`，不取快照认出的拼法，通过行的格式回到旧规则（回传字段照写），所有 openai-chat 行不看 `outcome` 都 `reasoning-content`，回传字段只在快照认出时写（custom-vendor.test、probe.test 变红）；探测 ② 沿用 ① 的行而不经 `customModelInfo`（probe.test 7 例红，M6 不变量 9）；`expectedEchoes` 不把空思考记 null 的两种写法（reasoning-echo.test 两例红）。修补者没改代码。门禁：`pnpm format`、`pnpm format:check`（622 个文件）、`pnpm lint`（oxlint 0 警告，i18n、colors、copy、tape 检查都过）、`pnpm typecheck` 全过；`pnpm test --maxWorkers=2` 184 个文件过、2 个跳过，3548 个用例过、2 个跳过；`pnpm evals:gate --maxWorkers=2` 4 个文件过、1 个跳过，30 个用例过、1 个跳过。live 组仍没跑；本步仍未勾，等 lead 重跑 DeepSeek 组、记录写好、验收 29 过了再勾。没有提交。
   - lead 实跑（2026-10-03）：key 只在那一次命令里从钥匙串 `tenon-live-deepseek` 读出、作为 `TENON_LIVE_DEEPSEEK_KEY` 传入；`--trace off`、不设 `CI`（Playwright 的 trace 与 HTML 报告会记下填进输入框的值），跑完删 `test-results`。第一次（01:57 UTC）失败：探测通过但 `reasoningField: null`。lead 直连 API 核实：deepseek-flash 在探测 ① 流出空的 `reasoning_content`、带工具结果的 ② 起才思考；带工具时缺回传与带回传都回 200，文档说的 400 没出现。照旧规则这一行之后的思考都不回传，spec 改为通过的 openai-chat 行一律回传、认不出时取 `reasoning_content`（记 Revisions，验收 29 放宽思考字段），代码随第 12 步收尾改。第二次（02:15 UTC）1 passed（8.3 s）：`GET /models` 预填 1048576 / 393216；探测 passed（`reasoningField: null`、`usageSeen: true`）；两轮任务各一次 Read，7 次请求全 200、全发往 api.deepseek.com；第一轮带思考的回复在第二轮的两次请求里都以 `reasoning_content` 回传，不带思考的工具轮不回传。记录不含 key（grep 核过），原文在仓库外 `tenon-notes/2026-10-02-m6-custom-vendors/live-2026-10-03-deepseek/`。验收 29 通过。
+  - 第 14 步（2026-10-03）：`git ls-files` 与未跟踪文件里没有 `zz-`、`.tmp`、调试脚本；M6 新增的生产源码（`packages/*/src`、`apps/desktop/src`）里没有 `console.log`；kernel 源码只在注释里提到 apps/desktop 与假服务器，没有 import；第 13 步干净 clone 已扫过全部跟踪文件，没有真实 key（只有带 decoy、test、not-real 字样的夹具串）。live 记录不在仓库里（在 tenon-notes）。
+  - 第 15 步（2026-10-03）：spec 改 `Status: implemented`，写交接。
 
 ## 验收记录
 
@@ -216,6 +218,18 @@
 复跑不变量：U `-t "M6 不变量" packages/kernel/test apps/desktop/test`（13 个文件，86 例）。
 
 干净 clone 门禁：`c4ee020`（本步补测试之前）clone 到临时目录，Node 22.22.0、pnpm 10.30.2。`pnpm install --frozen-lockfile --offline` 过（686 个包）；`pnpm build` 过；`pnpm format:check` 过（622 个文件）；`pnpm lint` 过（oxlint 0 警告 0 错误，i18n、colors、copy、tape 检查都过）；`pnpm typecheck` 过；`pnpm test --maxWorkers=2` 184 个文件过、2 个跳过，3548 例过、2 个跳过；`env -u ELECTRON_RUN_AS_NODE pnpm test:e2e` 147/147（4.5 分钟，1 个 worker）；`pnpm evals:gate --maxWorkers=2` 4 个文件过、1 个跳过，30 例过、1 个跳过。跑完删了 clone，没有残留的 Electron。本步补的测试只动 4 个测试文件，在工作树上另跑：`pnpm format:check`、`pnpm lint`、`pnpm typecheck` 过；`pnpm test --maxWorkers=2` 184 个文件过、2 个跳过，3557 例过、2 个跳过（+9）；`pnpm build` 后 e2e/custom-vendor.spec.ts 8/8（24.7 秒）。带补测试的 e2e 全套没在干净 clone 上重跑。
+
+## 交接
+
+- **2026-10-03 · M6 完成，spec 改为 `Status: implemented`**。四段各一个 PR 合进 dev：第一段 kernel（第 1–4 步）PR #23，第二段 desktop（第 5–8 步）PR #24，第三段界面与 e2e（第 9–10 步）PR #25，第四段 live 与收尾（第 11–15 步）见本分支的 PR。
+- 验收：32 条与 19 条不变量逐条见 §验收记录；live 两条（验收 28 智谱当自定义厂商两条线、验收 29 DeepSeek）由 lead 实跑，原始记录在仓库外 `tenon-notes/2026-10-02-m6-custom-vendors/`。
+- 实现中 lead 定的 spec 修订都在 spec 顶部 `Revisions:`；owner 在实现中定的只有 Q18（方舟不带 Anthropic 线）。开放问题全部关闭。
+- 已知局限（接受，见 spec）：手改坏 config.json 会丢实例；清快照会丢学到的输出上限字段名；余额类 429 读作限流；openai-chat 共用词表里的智谱数字码对所有厂商生效；模型菜单在账户行打开的设置卡里改动实例后，要再打开一次才刷新（02 同样）。
+- 实测与文档不符、写进 spec 的：deepseek-flash 在探测 ① 不思考、带工具缺回传也不报 400（文档说会）；方舟 Anthropic 端点路径两页文档不一。
+- 02 的观察（不挡 M6，见 Open）：子会话从不压缩，与 02 spec:3259 的文字不一致。
+- owner：`.env.local` 已按新 `.env.example` 改（`TENON_PROVIDER=zhipu`，注释掉 `ANTHROPIC_BASE_URL`、`ANTHROPIC_AUTH_TOKEN`）；可再删 `TENON_LIVE_MODEL`、`TENON_LIVE_AUTH_TOKEN`。DeepSeek key 在钥匙串 `tenon-live-deepseek`（账户 tenon），以后跑 DeepSeek live 照「开工前读」。
+- 本地 worktree `.claude/worktrees/m6s1`–`m6s4` 与分支 `feat/m6-seg1`–`seg4`、`docs/m6-custom-vendors-spec` 都已合进 dev，等 owner 点头再删。
+- 下一步：dev 上没有 `Status: ready` 的 spec，需要 owner 开新 spec（主参考 §13 的阶段 3 MCP host 完整版，或可选的 M8「Claude Code 引擎」）。
 
 ## Open
 

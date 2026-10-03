@@ -1,6 +1,6 @@
 # 自定义厂商（M6）
 
-Status: ready
+Status: implemented
 Kind: features
 Owner: 裁决由 owner 拍板（2026-10-01 第一轮，2026-10-02 第二到四轮；13 题都选推荐项，T1–T13 照写，裁决卡、选择记录与厂商调研原文在仓库外 `../tenon-notes/2026-10-02-m6-custom-vendors/`）；起草在 Claude Code（2026-10-02）
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层、§desktop 接线；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2、6、7 小节立的成员）、§主进程与 kernel 的循环接口、§02 的 Tape 事实、§会话形态、工作区与模型选择（表外模型与不发工具）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§上下文管理、§搜索与抓取、§界面范围。只增不改，全文见 §对 01 的修补、§对 02 的修补；不属纯粹只增的在 §点名
