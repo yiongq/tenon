@@ -12,10 +12,15 @@
  * key present only in English answer for zh-CN, which is exactly the omission this test exists to
  * catch.
  */
-import { createProviderRegistry, registerBuiltinProviders } from '@tenon-app/kernel'
+import {
+  createProviderRegistry,
+  customVendorDefinition,
+  registerBuiltinProviders,
+} from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { SUPPORTED_LOCALES, resources } from '../src/i18n/resources.js'
 import type { Locale } from '../src/i18n/resources.js'
+import { vendorPresets } from '../src/main/custom-vendors/presets.js'
 
 /** A definition's keys carry no namespace, so they live in the default one. */
 function lookup(locale: Locale, key: string): unknown {
@@ -58,6 +63,50 @@ describe('provider catalogue keys', () => {
         }
       }
     }
+    expect(missing).toEqual([])
+  })
+
+  it('has the generic name and labels every custom vendor instance shares, on both wires', () => {
+    // M6 §实例描述与通用工厂: an instance's `nameKey` and labels are the generic `provider.custom.*`;
+    // the user's name travels as `displayName`, never as a catalogue key.
+    const missing: string[] = []
+    for (const wire of ['openai-chat', 'anthropic-messages'] as const) {
+      const definition = customVendorDefinition({
+        id: 'custom-0b5c2f4e-8a1d-4c3b-9e7f-2a6d8c0e4f11',
+        wire,
+        baseURL:
+          wire === 'openai-chat' ? 'https://api.deepseek.com' : 'https://api.minimax.io/anthropic',
+        keyRequired: true,
+        models: [],
+      })
+      const keys = [definition.nameKey, ...definition.configKeys.map((key) => key.labelKey)]
+      expect(keys).toEqual([
+        'provider.custom.name',
+        ...definition.configKeys.map((key) => `provider.custom.config.${key.name}`),
+      ])
+      for (const locale of SUPPORTED_LOCALES) {
+        for (const key of keys) {
+          const value = lookup(locale, key)
+          if (typeof value !== 'string' || value.trim() === '') missing.push(`${locale}: ${key}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
+  })
+
+  it('has every preset’s name and every region’s label the settings card shows (M6 §预设)', () => {
+    const keys: string[] = []
+    for (const preset of vendorPresets()) {
+      keys.push(preset.nameKey)
+      for (const region of preset.regions) keys.push(region.labelKey)
+    }
+    expect(keys.length).toBeGreaterThan(6)
+    const missing = SUPPORTED_LOCALES.flatMap((locale) =>
+      keys.flatMap((key) => {
+        const value = lookup(locale, key)
+        return typeof value === 'string' && value.trim() !== '' ? [] : [`${locale}: ${key}`]
+      }),
+    )
     expect(missing).toEqual([])
   })
 

@@ -1,15 +1,18 @@
 import { useAuiState } from '@assistant-ui/react'
+import { invokeRoute, providerList, sessionModelChoice } from '@tenon-app/contracts'
 import type { RunEndReasonContract } from '@tenon-app/contracts'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ProviderSettings } from '@/components/settings/ProviderSettings'
 import { Button } from '@/components/ui/button'
+import { customVendorGone, isInstanceId } from '@/lib/custom-vendor'
 import { cardOf, effectLineOf } from '@/lib/end-card'
 import type { EndVisual } from '@/lib/end-card'
 import { toolSentence } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
+import { useConversation } from '@/runtime/conversation'
 import type { SessionSnapshot } from '@/runtime/session-store'
 import type { ChatErrorCode, ToolPart, Turn } from '@/runtime/thread-model'
 import type { TurnCustom } from '@/runtime/to-thread-messages'
@@ -137,6 +140,39 @@ function SummaryLine(props: { readonly summary: NonNullable<TurnCustom['summary'
   )
 }
 
+/**
+ * M6 §实例被删或改坏「文案单列」: a provider error refusing a custom vendor instance — a new round finds
+ * no definition or row and refuses as a missing key would, `errorCode: 'auth'`; a continuation that
+ * cannot build its frozen provider ends the same way — while `provider.list` no longer lists that
+ * instance or the row the session chose on it. False until both reads answer: the card keeps 02's
+ * sentence rather than guess. A cleared key keeps the instance listed, and with it 02's copy.
+ */
+function useCustomVendorGone(reason: RunEndReasonContract): boolean {
+  const { sessionId } = useConversation()
+  const providerId =
+    reason.code === 'provider-error' &&
+    reason.errorCode === 'auth' &&
+    isInstanceId(reason.providerId)
+      ? reason.providerId
+      : null
+  const [gone, setGone] = useState(false)
+  useEffect(() => {
+    if (providerId === null) return
+    let current = true
+    void Promise.all([
+      invokeRoute(window.tenon, providerList, {}),
+      invokeRoute(window.tenon, sessionModelChoice, { sessionId }),
+    ]).then(([list, choice]) => {
+      if (!current || !list.ok) return
+      setGone(customVendorGone(providerId, choice.ok ? choice.data : null, list.data))
+    })
+    return () => {
+      current = false
+    }
+  }, [providerId, sessionId])
+  return gone
+}
+
 function FailureCard(props: {
   readonly reason: RunEndReasonContract
   readonly runId: string | null
@@ -148,6 +184,7 @@ function FailureCard(props: {
   const snapshot = useSessionSnapshot()
   const [copied, setCopied] = useState(false)
   const [settings, setSettings] = useState(false)
+  const gone = useCustomVendorGone(props.reason)
   const shape = cardOf(props.reason, props.retryOf !== null)
   if (shape === null) return null
   const turns = snapshot.model.turns
@@ -202,8 +239,10 @@ function FailureCard(props: {
       data-visual={shape.visual}
       className={`mt-2 flex flex-col gap-1 rounded-sm border px-3 py-2 font-sans text-ui-sm ${VISUAL_CLASS[shape.visual]}`}
     >
-      <p data-testid="failure-what">
-        {tx(t, `runEnd.${props.reason.code}`, slotsOf(props.reason, i18n.language))}
+      <p data-testid="failure-what" data-custom-vendor-gone={gone}>
+        {gone
+          ? t('error.customVendorGone')
+          : tx(t, `runEnd.${props.reason.code}`, slotsOf(props.reason, i18n.language))}
       </p>
       <div data-testid="failure-effects" className="text-text-secondary">
         {effects.none ? <p>{t('failure.effects.none')}</p> : null}

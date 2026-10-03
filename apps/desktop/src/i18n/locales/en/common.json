@@ -50,6 +50,12 @@
         "officialHostOnly": "A built-in provider only takes its official address; this address can only be added as a custom provider.",
         "subscriptionEndpoint": "This is the GLM Coding Plan subscription address, which Tenon cannot use. Use the pay-as-you-go address instead."
       },
+      "refused": {
+        "official-host-only": "The saved address is not this provider's official one, so the provider reads as not configured. That address can only be added as a custom provider.",
+        "subscription-endpoint": "The saved address is the GLM Coding Plan subscription address, which Tenon cannot use, so the provider reads as not configured. Use the pay-as-you-go address instead.",
+        "invalid-address": "This address cannot be used, so the provider reads as not configured. Create the custom provider again with a valid address.",
+        "https-required": "A public address must use https, so the provider reads as not configured. Create the custom provider again with an https address."
+      },
       "customModel": "Or type a model ID",
       "customModelHint": "A model that is not in the list is unverified and holds text conversations only."
     }
@@ -74,6 +80,13 @@
       "name": "Ollama (local)",
       "config": {
         "apiKey": "API key (ignored by Ollama)",
+        "baseURL": "Endpoint"
+      }
+    },
+    "custom": {
+      "name": "Custom provider",
+      "config": {
+        "apiKey": "API key",
         "baseURL": "Endpoint"
       }
     }
@@ -102,6 +115,7 @@
     "rate-limit": "The model service is rate-limiting requests. Try again in a moment.",
     "provider": "The model service returned an error.",
     "unknown": "Something went wrong.",
+    "customVendorGone": "This conversation's custom provider or model was removed. Pick another model in the model menu and send again.",
     "retry": "Retry"
   },
   "runEnd": {
@@ -151,7 +165,8 @@
     },
     "trigger": {
       "withEffort": "{model} · {effort}",
-      "label": "Model"
+      "label": "Model",
+      "removed": "{model} (removed)"
     },
     "notConfigured": "{provider} · Add a key in Settings",
     "more": "More models",
@@ -187,6 +202,136 @@
     },
     "typeModelFor": "{provider} · Type a model ID…",
     "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over"
+  },
+  "customVendor": {
+    "section": {
+      "title": "Custom providers",
+      "noSearch": "Custom providers offer no web search; web fetch works as usual."
+    },
+    "preset": {
+      "deepseek": "DeepSeek",
+      "kimi": "Kimi (Moonshot AI)",
+      "bailian": "Alibaba Cloud Model Studio",
+      "ark": "Volcengine Ark",
+      "minimax": "MiniMax",
+      "zai": "Z.ai (Zhipu international)"
+    },
+    "region": {
+      "default": "Default",
+      "cn": "China",
+      "global": "International",
+      "cnBeijing": "China North 2 (Beijing)",
+      "singapore": "Singapore"
+    },
+    "wire": {
+      "openai-chat": "OpenAI-compatible (Chat Completions)",
+      "anthropic-messages": "Anthropic-compatible (Messages)"
+    },
+    "field": {
+      "source": "Provider",
+      "region": "Region",
+      "wire": "API format",
+      "address": "Endpoint",
+      "name": "Name",
+      "key": "API key",
+      "models": "Models"
+    },
+    "create": {
+      "open": "New custom provider",
+      "other": "Other compatible endpoint",
+      "presetAddress": "A preset's address is fixed. For another address, choose Other compatible endpoint.",
+      "fixed": "The endpoint and the API format cannot be changed once created; to change them, create another custom provider.",
+      "keyPage": "Get a key",
+      "submit": "Create",
+      "creating": "Creating…",
+      "cancel": "Cancel"
+    },
+    "instance": {
+      "summary": "{wire} · {address}",
+      "rename": "Rename",
+      "addressFixed": "Fixed once created; to use another address, create another custom provider.",
+      "fromPreset": "From the {preset} preset; fixed once created.",
+      "delete": "Delete",
+      "deleteWarning": "Deleting also removes its stored key.",
+      "deleteConfirm": "Delete it",
+      "keep": "Keep"
+    },
+    "key": {
+      "save": "Save key",
+      "clearsProbes": "Saving a key clears every probe result of this provider; probe again afterwards.",
+      "reminder": {
+        "zhipu": "Only a pay-as-you-go key may be used here; a GLM Coding Plan key must not be used in Tenon (subscription agreement, article 6, clause 2).",
+        "minimax": "Use the pay-as-you-go key from the Interface Key page, not a Token Plan / M Plan subscription key."
+      }
+    },
+    "models": {
+      "none": "No models yet. Type a model ID, or fetch the model list first.",
+      "fetch": "Fetch model list",
+      "fetching": "Fetching…",
+      "fetchEmpty": "The endpoint listed no models; type the model ID.",
+      "fromList": "From the list",
+      "pick": "Choose a model…",
+      "id": "Model ID",
+      "contextLimit": "Context limit (tokens)",
+      "maxOutputTokens": "Output limit (tokens)",
+      "limitsHint": "Both limits are required; a fetched list only prefills them.",
+      "save": "Save model",
+      "edit": "Edit",
+      "remove": "Remove",
+      "limits": "Context {contextTokens} · output {outputTokens}",
+      "invalid": {
+        "id": "Type a model ID.",
+        "limits": "The context and output limits must both be positive whole numbers."
+      },
+      "fetchError": {
+        "not-found": "This custom provider no longer exists.",
+        "config": "The key is not set up; save it first.",
+        "auth": "The key was rejected.",
+        "unsupported": "This endpoint does not list its models; type the model ID.",
+        "service": "The service failed or could not be reached; try again later."
+      }
+    },
+    "probe": {
+      "run": "Probe",
+      "running": "Probing…",
+      "cancel": "Cancel",
+      "cost": "Probing uses your key for 2–3 requests; each may take a while on a thinking model.",
+      "local": "An endpoint on this computer or a local network holds text conversations only and is not probed.",
+      "none": "Not probed yet · text conversation only",
+      "passed": "Probed on this computer · not guaranteed",
+      "notSaved": "Not saved: this provider's settings changed during the probe. Probe again.",
+      "reason": {
+        "no-tool-call": "The model did not call a tool this time; try again",
+        "output-limit": "It ran out of output tokens; try again or raise the output limit",
+        "no-finish": "It did not finish normally after the tool result",
+        "config": "The key is not set up",
+        "auth": "The key was rejected",
+        "quota": "Out of quota or balance",
+        "rate-limit": "Rate limited; try again later",
+        "request-rejected": "The endpoint refused a request with tools",
+        "echo-rejected": "The endpoint refused the tool result or the thinking echo",
+        "bad-tool-call": "The model's tool call was malformed",
+        "opaque-fields": "It returns fields Tenon cannot send back: {fields}",
+        "service": "The service failed or could not be reached"
+      },
+      "refused": {
+        "not-found": "This custom provider no longer exists.",
+        "unknown-model": "This model is no longer in the list.",
+        "local-endpoint": "An endpoint on this computer or a local network is not probed.",
+        "busy": "A probe of this provider is already running. Cancel it, or try again when it is done.",
+        "aborted": "Probe stopped; nothing was saved."
+      }
+    },
+    "error": {
+      "invalid-address": "The address must be a full http(s) URL with no user name, password, query or fragment; an Anthropic-compatible one must not end in /v1.",
+      "https-required": "A public address must use https; http is only for this computer or a local network.",
+      "subscription-endpoint": "This is the GLM Coding Plan subscription address, which Tenon cannot use. Use the pay-as-you-go address instead.",
+      "key-required": "A public endpoint needs a key.",
+      "not-found": "This custom provider no longer exists.",
+      "keychain": "The system keychain could not be used; nothing was changed. Try again.",
+      "name": "Give it a name.",
+      "unavailable": "That could not be done. Try again."
+    }
   },
   "leave": {
     "title": "Stop this task?",

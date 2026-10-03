@@ -11,7 +11,6 @@ import type {
   ProviderSelection,
   ProviderWriteErrorCode,
 } from '@tenon-app/contracts'
-import { ChevronDownIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { FormEvent, JSX, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +25,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { PROVIDER_WRITE_ERROR_KEY, REFUSAL_KEY } from '@/lib/provider-copy'
+import { CustomVendorSection } from './CustomVendorSection'
+import { Chooser, Field } from './fields'
 
 /**
  * Models and keys (spec 01 §desktop 接线, 验收 6): the provider to use, one field per declared
@@ -41,6 +43,12 @@ import { Input } from '@/components/ui/input'
  * only a field the user actually edited is sent — so saving the form does not silently rewrite a
  * key that was left alone. Clearing one deliberately is what deletes it, and the field says so
  * before the save rather than after.
+ *
+ * Custom vendor instances (M6) are not rendered by that loop: the generic form skips every entry
+ * that carries a `displayName` — only an instance's does (§IPC) — and the instance section below it
+ * shows an instance's key, its read-only address and its model rows (CustomVendorSection.tsx). A
+ * builtin whose stored address is refused reads as not configured and says why (§点名 (b)); an
+ * address off the official origin also offers 「新建自定义厂商」, a subscription path does not.
  */
 export interface ProviderSettingsProps {
   open: boolean
@@ -90,7 +98,8 @@ async function read(): Promise<Loaded | null> {
   ])
   if (!list.ok || !config.ok) return null
   return {
-    entries: list.data,
+    // M6 §IPC: the instance section shows the instances; this form, the builtins.
+    entries: list.data.filter((entry) => entry.displayName === undefined),
     settings: config.data.providerConfig,
     saved: config.data.provider,
   }
@@ -112,6 +121,10 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [error, setError] = useState<CardError | null>(null)
   const [saving, setSaving] = useState(false)
+  /** The instance section's create form is open (M6; §点名 (b)'s button opens it too). */
+  const [creating, setCreating] = useState(false)
+  /** One of the instance section's writes is in flight: the card stays open, as for `saving`. */
+  const [sectionBusy, setSectionBusy] = useState(false)
   const chooser = useRef<HTMLSelectElement | null>(null)
   /** One shot per opening: the fields do not exist yet when the dialog takes initial focus. */
   const wantsFocus = useRef(false)
@@ -136,6 +149,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
       setSaved(loaded.saved)
       setError(null)
       setSaving(false)
+      setCreating(false)
       setDraft(selected === null ? null : newDraft(selected, loaded.settings, loaded.saved))
     })
   }, [open])
@@ -248,7 +262,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
       // Not while a write is in flight: on an unsigned dev build the keychain raises an OS prompt,
       // and an Escape taken during it would discard the typed key with the save half done.
       onOpenChange={(next) => {
-        if (saving) return
+        if (saving || sectionBusy) return
         if (next) onOpenChange(true)
         else close()
       }}
@@ -262,17 +276,28 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
           <DialogTitle>{t('settings.providers.title')}</DialogTitle>
           <DialogDescription>{t('settings.providers.description')}</DialogDescription>
         </DialogHeader>
-        <form className="flex flex-col gap-4" aria-busy={saving} onSubmit={onSubmit}>
+        {/* `min-w-0`: this is a grid item of the popup, and its automatic minimum would be the
+            instance cards' unwrapped one-line summaries (wire · address); the popup's column would
+            grow to fit them and push the cards and Save past its edge. At 0 the column keeps the
+            popup's width and those lines truncate. */}
+        <div className="flex min-w-0 flex-col gap-4">
           {/* The fields scroll, the footer does not: a definition may declare more keys than fit
               on a short screen, and a Save button below the fold is a Save button nobody finds.
-              The inset margin keeps the focus ring off the scroll container's edge. */}
+              The inset margin keeps the focus ring off the scroll container's edge. The instance
+              section scrolls with the form but is not in it: its buttons write on their own, and
+              Enter in one of its fields must not save the form above. */}
           <div className="-mx-1 flex max-h-[60vh] flex-col gap-4 overflow-y-auto px-1">
             {entries === null || entry === null || draft === null ? (
               <p className="font-sans text-ui-sm text-text-muted" data-testid="provider-loading">
                 {t('settings.providers.loading')}
               </p>
             ) : (
-              <>
+              <form
+                id={`${fieldId}-form`}
+                className="flex flex-col gap-4"
+                aria-busy={saving}
+                onSubmit={onSubmit}
+              >
                 <Field label={t('settings.providers.provider')} htmlFor={`${fieldId}-provider`}>
                   <Chooser
                     id={`${fieldId}-provider`}
@@ -289,6 +314,27 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
                     }}
                   />
                 </Field>
+
+                {entry.refused === undefined ? null : (
+                  <div
+                    data-testid="provider-refused"
+                    data-refusal-code={entry.refused.code}
+                    className="flex flex-col items-start gap-2 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
+                  >
+                    <p>{t(REFUSAL_KEY[entry.refused.code])}</p>
+                    {entry.refused.code === 'official-host-only' ? (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        data-testid="provider-refused-new-custom"
+                        onClick={() => setCreating(true)}
+                      >
+                        {t('customVendor.create.open')}
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
 
                 {orderedKeys(entry.configKeys).map((key) => (
                   <Field
@@ -369,7 +415,15 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
                     {t('settings.providers.customModelHint')}
                   </span>
                 </Field>
-              </>
+              </form>
+            )}
+            {entries === null ? null : (
+              <CustomVendorSection
+                open={open}
+                creating={creating}
+                onCreatingChange={setCreating}
+                onBusyChange={setSectionBusy}
+              />
             )}
           </div>
 
@@ -386,15 +440,26 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
 
           <DialogFooter>
             <DialogClose
-              render={<Button variant="outline" data-testid="provider-cancel" disabled={saving} />}
+              render={
+                <Button
+                  variant="outline"
+                  data-testid="provider-cancel"
+                  disabled={saving || sectionBusy}
+                />
+              }
             >
               {t('settings.providers.cancel')}
             </DialogClose>
-            <Button type="submit" data-testid="provider-save" disabled={saving || draft === null}>
+            <Button
+              type="submit"
+              form={`${fieldId}-form`}
+              data-testid="provider-save"
+              disabled={saving || draft === null}
+            >
               {t(saving ? 'settings.providers.saving' : 'settings.providers.save')}
             </Button>
           </DialogFooter>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -402,13 +467,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
 
 /** Spec「国际化」: every code maps to a catalogue key, never to a sentence built here. */
 const ERROR_KEY = {
-  'unknown-provider': 'settings.providers.error.unknownProvider',
-  'unknown-key': 'settings.providers.error.unknownKey',
-  'unknown-model': 'settings.providers.error.unknownModel',
-  'invalid-value': 'settings.providers.error.invalidValue',
-  'key-host-binding': 'settings.providers.error.keyHostBinding',
-  'official-host-only': 'settings.providers.error.officialHostOnly',
-  'subscription-endpoint': 'settings.providers.error.subscriptionEndpoint',
+  ...PROVIDER_WRITE_ERROR_KEY,
   'no-model': 'settings.providers.error.noModel',
   unavailable: 'settings.providers.error.unavailable',
 } as const satisfies Record<CardErrorCode, string>
@@ -482,61 +541,4 @@ function withoutSecrets(draft: Draft): Draft {
     ),
     edited: draft.edited.filter((name) => !draft.secretKeys.includes(name)),
   }
-}
-
-function Field(props: {
-  label: string
-  htmlFor: string
-  children: JSX.Element | readonly (JSX.Element | null)[]
-}): JSX.Element {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label
-        htmlFor={props.htmlFor}
-        className="font-sans text-ui-sm font-medium text-text-secondary"
-      >
-        {props.label}
-      </label>
-      {props.children}
-    </div>
-  )
-}
-
-/**
- * One choice out of a list, as a NATIVE select.
- *
- * Not the menu the account row uses, and not one of the `ui/` popup primitives: every one of them
- * is portalled at `--t-z-popover`, which tokens.md puts BELOW `--t-z-modal` — inside this dialog
- * the list opens underneath the card and cannot be clicked (measured). A native select is drawn
- * by the platform above every layer, is keyboard-operable everywhere, and needs no new z token.
- * If a later phase wants the menu look here, it needs an "above the modal" layer in tokens.md
- * first, which is a design decision rather than a class on one component.
- */
-function Chooser(props: {
-  id: string
-  testId: string
-  value: string
-  options: ReadonlyArray<{ value: string; label: string }>
-  onChange: (value: string) => void
-  inputRef?: RefObject<HTMLSelectElement | null>
-}): JSX.Element {
-  return (
-    <div className="relative">
-      <select
-        id={props.id}
-        data-testid={props.testId}
-        {...(props.inputRef === undefined ? {} : { ref: props.inputRef })}
-        value={props.value}
-        onChange={(event) => props.onChange(event.target.value)}
-        className="ctl-h w-full appearance-none rounded-lg border border-input bg-transparent pr-8 pl-2.5 font-sans text-ui text-text-primary transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-      >
-        {props.options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-text-muted" />
-    </div>
-  )
 }
