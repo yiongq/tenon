@@ -13,13 +13,22 @@ export const OFFICIAL_KEY_ENV = 'TENON_LIVE_ANTHROPIC_OFFICIAL_KEY'
 export const OFFICIAL_HOST = 'api.anthropic.com'
 
 /**
+ * Where a live run keeps the DeepSeek key (M6 plan「开工前读」key; 验收 29): the runner's own
+ * environment, handed in from the login keychain for that one run, nothing else. Only the DeepSeek
+ * group's test process reads it, and types it into an instance's settings card — no app is ever
+ * launched with it.
+ */
+export const DEEPSEEK_KEY_ENV = 'TENON_LIVE_DEEPSEEK_KEY'
+
+/**
  * Never copied from the runner's environment into an app: every variable the desktop reads a
  * provider credential or endpoint from (`DEV_ENV_FALLBACK`, src/main/provider.ts — the unit test
- * keeps the two lists in step), the official key's own variable, the origin map test seam (M6
- * §点名「测试接缝」: a test's map travels through `env` only), and ELECTRON_RUN_AS_NODE, which is set
- * inside Electron-hosted terminals and would turn the electron binary into plain Node. A test's
- * credentials travel through `env` alone; a key exported in a developer's shell would otherwise
- * reach every app a test launches, next to whatever base URL that test points it at.
+ * keeps the two lists in step), the official and DeepSeek keys' own variables, the origin map test
+ * seam (M6 §点名「测试接缝」: a test's map travels through `env` only), and ELECTRON_RUN_AS_NODE,
+ * which is set inside Electron-hosted terminals and would turn the electron binary into plain Node.
+ * A test's credentials travel through `env` or the settings card alone; a key exported in a
+ * developer's shell would otherwise reach every app a test launches, next to whatever base URL that
+ * test points it at.
  */
 export const NEVER_INHERITED: readonly string[] = [
   'ANTHROPIC_API_KEY',
@@ -27,6 +36,7 @@ export const NEVER_INHERITED: readonly string[] = [
   'ANTHROPIC_BASE_URL',
   'ZHIPU_API_KEY',
   OFFICIAL_KEY_ENV,
+  DEEPSEEK_KEY_ENV,
   ORIGIN_MAP_ENV,
   'ELECTRON_RUN_AS_NODE',
 ]

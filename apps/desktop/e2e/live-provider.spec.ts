@@ -24,6 +24,7 @@ import {
   createTestLoopPorts,
   createTestSessionService,
 } from '@tenon-app/kernel/testing'
+import { createInstanceInCard } from './helpers/instances.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { compact, officialGroup } from './helpers/live-env.js'
 import type { LiveGroup } from './helpers/live-env.js'
@@ -33,17 +34,21 @@ import type { FolderTree } from './helpers/tools.js'
 
 /**
  * Acceptances 4 and 21 against REAL endpoints — the only automated coverage the spec gives the
- * real keychain path and the real wire formats. Opt-in: CI never runs it.
+ * real keychain path and the real wire formats — and M6 acceptance 28's custom vendor instances.
+ * Opt-in: CI never runs it.
  *
  * HOW TO RUN IT
  *
  *   1. Put the non-official credentials in the repo-root `.env.local` (gitignored, never read by
  *      any other test):
- *        ZHIPU_API_KEY=…           enables the zhipu groups (acceptance 21, and spec 02's
- *                                  acceptance 39 below); absent ⇒ they skip
+ *        ZHIPU_API_KEY=…           enables the zhipu groups (acceptance 21, spec 02's acceptance 39
+ *                                  and M6 acceptance 28's two instances, whose key is typed into
+ *                                  the settings card); absent ⇒ they skip
  *        TENON_LIVE_ZHIPU_MODEL=…  glm-5.3-flashx (unset ⇒ glm-4.6); not glm-4.7-flash, whose free
  *                                  tier 1302-limits consecutive requests on the same key
- *        TENON_LIVE_RECORD_DIR=…   optional: where the agent group writes what went on the wire
+ *        TENON_LIVE_RECORD_DIR=…   optional: where the agent group and the M6 instance groups write
+ *                                  what went on the wire; unset, the instance groups write to each
+ *                                  test's output folder, which the next run clears
  *      The Anthropic wire to Zhipu's /api/anthropic is a custom vendor instance now (M6 §点名 (d)):
  *      the ANTHROPIC_BASE_URL emulation group is gone, since anthropic reads that address as not
  *      configured. TENON_TEST_ORIGIN_MAP anywhere in sight refuses the whole run.
@@ -365,12 +370,18 @@ async function recordRequests(app: ElectronApplication): Promise<void> {
   })
 }
 
-/** The chat-completions requests main sent since `recordRequests`, in order. */
-async function requestsOf(app: ElectronApplication): Promise<WireRequest[]> {
+/**
+ * The requests main sent since `recordRequests` to a URL ending in `path` (chat completions unless
+ * told otherwise; `''` for every request), in order.
+ */
+async function requestsOf(
+  app: ElectronApplication,
+  path = '/chat/completions',
+): Promise<WireRequest[]> {
   const all = (await app.evaluate(
     () => (globalThis as unknown as { liveRequests?: unknown[] }).liveRequests ?? [],
   )) as WireRequest[]
-  return all.filter((request) => request.url.endsWith('/chat/completions'))
+  return all.filter((request) => request.url.endsWith(path))
 }
 
 /** The same record in this process, for the kernel case: the platform fetch, one hop. */
@@ -926,6 +937,295 @@ test.describe('live agent · zhipu', () => {
     expect(JSON.stringify(reply)).toContain(delta)
   })
 })
+
+/**
+ * M6 验收 28 (plan step 11, 〔智谱 live〕): custom vendor instances on Zhipu's two pay-as-you-go
+ * addresses, set up the way a user does — 「其他兼容端点」 on the settings card with the key typed in,
+ * a model row with its limits, 「探测」 — then one task round trip with a tool on the probed row.
+ *
+ * The key is the zhipu groups' own (`.env.example`: both instance groups use ZHIPU_API_KEY). It is
+ * typed into the card, never handed to the app's environment; `createInstanceInCard` runs the
+ * instance key guard first (M6 §点名, 02 M4), and the in-memory secrets seam keeps it out of the
+ * login keychain. These groups run after the builtin zhipu ones and, like the whole suite, one test
+ * at a time (`workers: 1`, playwright.shared.ts), so no two requests on the key overlap (1302).
+ *
+ * glm-4.7-flash is the free tier that 1302-limits consecutive requests, and it has never carried
+ * tools on /api/anthropic (M6 开放问题 2): whatever its probe answers is in the record before
+ * anything is asserted, and the owner decides from it. Each case writes that record — the date, the
+ * model, the hosts its requests went to, the probe snapshot, then each request's URL, method, JSON
+ * body and status (never a header, so never the key) and its Tape's attempts — to
+ * TENON_LIVE_RECORD_DIR, or to the test's output folder when that is unset.
+ */
+interface ZhipuInstance {
+  readonly title: string
+  readonly tag: string
+  readonly wire: 'openai-chat' | 'anthropic-messages'
+  readonly baseURL: string
+  readonly model: string
+  /** Where the wire's model requests go under `baseURL`. */
+  readonly path: string
+  /** What 验收 28 asks of the stored snapshot. */
+  readonly probe: Readonly<Record<string, unknown>>
+}
+
+const ZHIPU_INSTANCES: readonly ZhipuInstance[] = [
+  {
+    title: 'live custom vendor · zhipu openai-chat',
+    tag: 'openai',
+    wire: 'openai-chat',
+    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-5.3-flashx',
+    path: '/chat/completions',
+    // The thinking field ① saw, which ② and every later turn send back (§合成).
+    probe: { outcome: 'passed', reason: null, reasoningField: 'reasoning_content' },
+  },
+  {
+    title: 'live custom vendor · zhipu anthropic-messages',
+    tag: 'anthropic',
+    wire: 'anthropic-messages',
+    baseURL: 'https://open.bigmodel.cn/api/anthropic',
+    model: 'glm-4.7-flash',
+    path: '/v1/messages',
+    probe: { outcome: 'passed', reason: null },
+  },
+]
+
+/**
+ * The limits typed into each instance row (§列表与上限 T6: the user's own, both required). The
+ * test's values, not the vendor's published ones: no history or reply here comes near either, and
+ * the output limit equals the cap every request of these cases goes out with.
+ */
+const INSTANCE_ROW = { contextLimit: 128_000, maxOutputTokens: Number(AGENT_MAX_TOKENS) }
+/** A probe is two model turns, three with §两步 T10's retry. */
+const PROBE_MS = 2 * TURN_MS
+
+/** What one instance case leaves for the live record in plan.md. */
+interface InstanceRecord {
+  readonly date: string
+  readonly wire: ZhipuInstance['wire']
+  readonly baseURL: string
+  readonly model: string
+  /** Every host main sent a request to in this case, the probe's included. */
+  hosts: string[]
+  /** The row's stored snapshot after 「探测」; null while there is none. */
+  probe: Readonly<Record<string, unknown>> | null
+  requests: WireRequest[]
+  attempts: unknown[]
+  ends: unknown[]
+}
+
+/** The tools a model request offers, by name, on either wire. */
+function offeredTools(body: unknown): string[] {
+  const tools =
+    (body as { tools?: ReadonlyArray<{ name?: string; function?: { name: string } }> } | null)
+      ?.tools ?? []
+  return tools.map((tool) => tool.function?.name ?? tool.name ?? '')
+}
+
+/** The stored probe snapshot of an instance's row, as `customVendor.list` answers it. */
+async function probeOf(
+  page: Page,
+  id: string,
+  model: string,
+): Promise<Readonly<Record<string, unknown>> | null> {
+  const answer = (await page.evaluate(() => window.tenon.invoke('customVendor.list', {}))) as {
+    data?: {
+      instances: ReadonlyArray<{
+        id: string
+        models: ReadonlyArray<{ id: string; probe?: Readonly<Record<string, unknown>> }>
+      }>
+    }
+  }
+  const instance = answer.data?.instances.find((entry) => entry.id === id)
+  return instance?.models.find((row) => row.id === model)?.probe ?? null
+}
+
+/**
+ * The case's record as JSON, under TENON_LIVE_RECORD_DIR or the test's output folder. The file
+ * name carries the record's date, so 开放问题 2's two runs 60 s apart both stay in one folder.
+ */
+function writeInstanceRecord(info: TestInfo, record: InstanceRecord): void {
+  const slug = info.title
+    .replaceAll(/[^A-Za-z0-9.]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '')
+    .slice(-100)
+  const file = `${slug}-${record.date.replaceAll(':', '-')}.json`
+  const destination = RECORD_DIR === undefined ? info.outputPath(file) : join(RECORD_DIR, file)
+  mkdirSync(dirname(destination), { recursive: true })
+  writeFileSync(
+    destination,
+    `${JSON.stringify({ title: info.title, status: info.status, ...record }, null, 2)}\n`,
+  )
+  const { date, model, hosts, probe } = record
+  process.stderr.write(`${JSON.stringify({ date, model, hosts, probe })}\n`)
+}
+
+for (const instance of ZHIPU_INSTANCES) {
+  test.describe(instance.title, () => {
+    const key = LIVE ? pick('TENON_LIVE_ZHIPU_KEY', 'ZHIPU_API_KEY') : undefined
+    test.skip(!LIVE, 'opt-in: run `pnpm test:live` with credentials in .env.local')
+    test.skip(
+      LIVE && key === undefined,
+      `no zhipu key found: fill in ZHIPU_API_KEY in ${ENV_FILE} to run M6 acceptance 28`,
+    )
+    test.describe.configure({ timeout: 900_000 })
+
+    let record: InstanceRecord | undefined
+    let tree: FolderTree | undefined
+
+    test.afterEach(() => {
+      if (record !== undefined) writeInstanceRecord(test.info(), record)
+      record = undefined
+      tree?.dispose()
+      tree = undefined
+    })
+
+    test(`created on the settings card, probed, then a task round trip with a tool (M6 验收 28, ${instance.model})`, async () => {
+      const epsilon = codeword('EPSILON')
+      const folders = makeFolderTree(`live-instance-${instance.tag}`, {
+        'ws/notes.txt': `Project notes.\nThe codeword is ${epsilon}.\n`,
+      })
+      tree = folders
+      const workspace = join(folders.real, 'ws')
+      const notes = join(workspace, 'notes.txt')
+      const userData = makeUserDataDir(`live-instance-${instance.tag}`)
+      seedConfig(userData, { locale: 'en' })
+      const kept: InstanceRecord = {
+        date: new Date().toISOString(),
+        wire: instance.wire,
+        baseURL: instance.baseURL,
+        model: instance.model,
+        hosts: [],
+        probe: null,
+        requests: [],
+        attempts: [],
+        ends: [],
+      }
+      record = kept
+      // No provider variable: the key goes in through the card, onto the in-memory secrets seam.
+      const { app, page } = await launchTenon({
+        userData,
+        env: { TENON_MAX_TOKENS: AGENT_MAX_TOKENS },
+        secrets: 'memory',
+      })
+      await recordRequests(app)
+      let id = ''
+      let probeSent = 0
+      try {
+        await page.getByTestId('account-row').click()
+        await page.getByTestId('account-providers').click()
+        await expect(page.getByTestId('custom-vendors')).toBeVisible()
+        id = await createInstanceInCard(page, {
+          displayName: `Zhipu · ${instance.wire}`,
+          wire: instance.wire,
+          baseURL: instance.baseURL,
+          apiKey: key ?? '',
+        })
+        await page.getByTestId(`custom-vendor-row-id-${id}`).fill(instance.model)
+        await page
+          .getByTestId(`custom-vendor-row-context-${id}`)
+          .fill(String(INSTANCE_ROW.contextLimit))
+        await page
+          .getByTestId(`custom-vendor-row-output-${id}`)
+          .fill(String(INSTANCE_ROW.maxOutputTokens))
+        await page.getByTestId(`custom-vendor-row-save-${id}`).click()
+        const row = `${id}-${instance.model}`
+        await expect(page.getByTestId(`custom-vendor-row-${row}`)).toBeVisible()
+        // Neither the instance nor its row sent anything (T7).
+        expect(await requestsOf(app, '')).toHaveLength(0)
+
+        // 「探测」: over once the row shows a stored snapshot, or the probe's answer beside it.
+        await page.getByTestId(`custom-vendor-probe-${row}`).click()
+        await expect(
+          page
+            .locator(`[data-testid="custom-vendor-probe-status-${row}"]:not([data-outcome="none"])`)
+            .or(page.getByTestId(`custom-vendor-probe-answer-${row}`))
+            .first(),
+        ).toBeVisible({ timeout: PROBE_MS })
+        kept.probe = await probeOf(page, id, instance.model)
+        probeSent = (await requestsOf(app, instance.path)).length
+        expect(kept.probe).toMatchObject(instance.probe)
+        await page.getByTestId('provider-cancel').click()
+        await expect(page.getByTestId('provider-settings')).toBeHidden()
+
+        // The task, on the probed row: chosen in the menu, which offers it to a task (Q6).
+        await startTask(app, page, workspace)
+        await page.getByTestId('model-menu-trigger').click()
+        const choice = page.getByTestId(`model-row-${row}`)
+        await expect(choice).not.toHaveAttribute('aria-disabled', 'true')
+        await choice.click()
+        await expect(page.getByTestId('model-menu')).toBeHidden()
+        await expect(page.getByTestId('model-menu-current')).toHaveText(instance.model)
+        await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+        await send(
+          page,
+          `Use the Read tool to read ${notes}. Reply with the codeword in it and nothing else.`,
+        )
+        await settles(page, epsilon)
+        // A Read in the workspace asks nothing.
+        await expect(page.getByTestId('approval-card')).toHaveCount(0)
+        expect(await page.getByTestId('tool-row').count()).toBeGreaterThanOrEqual(1)
+        await expect(page.getByTestId('failure-card')).toHaveCount(0)
+        await expect(page.getByTestId('message-error')).toHaveCount(0)
+      } finally {
+        try {
+          const sent = await requestsOf(app, '')
+          kept.hosts = [...new Set(sent.map((request) => new URL(request.url).host))]
+          kept.requests = sent
+        } finally {
+          await app.close()
+        }
+      }
+
+      const facts = tapeFacts(userData)
+      kept.attempts = named(facts, 'provider/attempt_completed').map((fact) => fact.payload)
+      kept.ends = named(facts, 'execution/run_terminal').map((fact) => fact.payload['reason'])
+
+      // The Tape: the probed row chose the tools (M6 §不发工具) for its instance's own origin (不变量 3).
+      expect(named(facts, 'session/model_selected').map((fact) => fact.payload)).toEqual([
+        {
+          providerId: id,
+          modelId: instance.model,
+          capabilitySource: 'probed',
+          endpointOrigin: new URL(instance.baseURL).origin,
+        },
+      ])
+      expect(named(facts, 'view/tools_withheld')).toHaveLength(0)
+      const calls = named(facts, 'tool/call')
+      expect(calls.map((fact) => fact.payload['name'])).toContain('Read')
+      const results = named(facts, 'tool/result')
+      expect(results.map((fact) => fact.payload['providerToolCallId'])).toEqual(
+        calls.map((fact) => fact.payload['providerToolCallId']),
+      )
+      expect(JSON.stringify(results.map((fact) => fact.payload['content']))).toContain(epsilon)
+      expect(runsOf(facts)).toEqual({ ends: ['completed'], causes: ['user-message'] })
+
+      // The wire: the probe and the round went to the instance's address and nowhere else (不变量 3);
+      // the round's requests each offered Read and no WebSearch (不变量 15), and carried no
+      // thinking parameter (不变量 11).
+      expect(kept.hosts).toEqual([new URL(instance.baseURL).host])
+      const wire = kept.requests.filter((request) => request.url.endsWith(instance.path))
+      for (const request of wire) {
+        expect(request.url.startsWith(`${instance.baseURL}/`)).toBe(true)
+        expect(request.body?.model).toBe(instance.model)
+      }
+      // 验收 28 asks that one round trip completes, which the Tape above says; a 429 (1302) the loop
+      // retried (§错误, up to 3 times) still completes it, so it stays in the record for 开放问题 2
+      // rather than failing here. A 400 (an echo the endpoint refused) or any other error fails.
+      const round = wire.slice(probeSent)
+      const statuses = round.map((request) => request.status)
+      expect(statuses.filter((status) => status !== 200 && status !== 429)).toEqual([])
+      expect(round.at(-1)?.status).toBe(200)
+      expect(statuses.filter((status) => status === 200).length).toBeGreaterThanOrEqual(2)
+      for (const request of round) {
+        expect(offeredTools(request.body)).toContain('Read')
+        expect(offeredTools(request.body)).not.toContain('WebSearch')
+        expect(request.body).not.toHaveProperty('thinking')
+        expect(request.body).not.toHaveProperty('reasoning_effort')
+      }
+    })
+  })
+}
 
 /** Step 28: official protocol probe, one request per model and no SDK retries or main Tape. */
 test.describe('live search probe · anthropic official', () => {

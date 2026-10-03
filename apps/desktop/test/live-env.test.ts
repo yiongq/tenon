@@ -5,7 +5,8 @@
  * `.env.local` could hold — so no path forwards an official Anthropic key next to a foreign base URL.
  * And M6 验收 27: the origin map test seam is never inherited, never shares an app environment with
  * an official-looking key, and stops the live suite; an official-looking key is never filled into
- * an instance on another host than api.anthropic.com.
+ * an instance on another host than api.anthropic.com. And the DeepSeek key (M6 验收 29, plan「开工前读」
+ * key): never inherited, read from the runner's environment alone, refused in `.env.local`.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -13,6 +14,7 @@ import { join } from 'node:path'
 import type { Page } from '@playwright/test'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEEPSEEK_KEY_ENV,
   NEVER_INHERITED,
   OFFICIAL_KEY_ENV,
   ORIGIN_MAP_ENV,
@@ -20,7 +22,12 @@ import {
   assertInstanceKeyStaysHome,
   assertOfficialKeyStaysHome,
 } from '../e2e/helpers/app-env.js'
-import { OFFICIAL_MODEL_ENV, officialGroup, originMapRefusal } from '../e2e/helpers/live-env.js'
+import {
+  OFFICIAL_MODEL_ENV,
+  deepseekKey,
+  officialGroup,
+  originMapRefusal,
+} from '../e2e/helpers/live-env.js'
 import {
   createInstance,
   createInstanceInCard,
@@ -40,6 +47,7 @@ const OFFICIAL_LOOKING = [
   'sk-ant-admin01-test-admin-key-not-real',
 ]
 const ZHIPU_KEY = 'zhipu-id.zhipu-secret-not-real'
+const DEEPSEEK_KEY = 'sk-deepseek-test-key-not-real'
 const EMULATION_URL = 'https://open.bigmodel.cn/api/anthropic'
 /** Base URLs that only look like the official host, and one that does not parse (no scheme). */
 const LOOKALIKE_URLS = [
@@ -66,6 +74,7 @@ const RUNNER: EnvRecord = {
   HOME: '/Users/someone',
   TENON_MODEL: 'glm-5.3-flash',
   [OFFICIAL_KEY_ENV]: OFFICIAL_KEY,
+  [DEEPSEEK_KEY_ENV]: DEEPSEEK_KEY,
   ANTHROPIC_BASE_URL: 'https://gateway.example.test',
   ANTHROPIC_AUTH_TOKEN: 'shell-token',
   ANTHROPIC_API_KEY: OFFICIAL_KEY,
@@ -114,6 +123,14 @@ describe('appEnvironment', () => {
     expect(appEnvironment(RUNNER, {})).not.toHaveProperty(ORIGIN_MAP_ENV)
     const map = 'https://open.bigmodel.cn=http://127.0.0.1:4100'
     expect(appEnvironment(RUNNER, { env: { [ORIGIN_MAP_ENV]: map } })[ORIGIN_MAP_ENV]).toBe(map)
+  })
+
+  it('M6 验收 29: never inherits the DeepSeek key, which no app is launched with', () => {
+    expect(DEEPSEEK_KEY_ENV).toBe('TENON_LIVE_DEEPSEEK_KEY')
+    expect(NEVER_INHERITED).toContain(DEEPSEEK_KEY_ENV)
+    for (const secrets of ['memory', 'keychain'] as const) {
+      expect(Object.values(appEnvironment(RUNNER, { secrets }))).not.toContain(DEEPSEEK_KEY)
+    }
   })
 
   it('drops every variable the desktop reads provider settings from', () => {
@@ -340,6 +357,34 @@ describe('the live suite and the origin map (验收 27)', () => {
         await rm(root, { recursive: true, force: true })
       }
     })
+  })
+})
+
+describe('the DeepSeek key (M6 验收 29, plan「开工前读」key)', () => {
+  it('is read from the runner’s environment alone', () => {
+    expect(deepseekKey({ [DEEPSEEK_KEY_ENV]: ` ${DEEPSEEK_KEY} ` }, FILE)).toEqual({
+      kind: 'ready',
+      key: DEEPSEEK_KEY,
+    })
+    for (const runner of [{}, { [DEEPSEEK_KEY_ENV]: '  ' }, { DEEPSEEK_API_KEY: DEEPSEEK_KEY }]) {
+      expect(deepseekKey(runner, FILE)).toMatchObject({ kind: 'absent' })
+    }
+  })
+
+  it('refuses the group when .env.local holds it, whatever it holds, naming no value', () => {
+    const other = 'not-a-deepseek-value'
+    for (const value of [DEEPSEEK_KEY, other, '']) {
+      const file = { ...FILE, [DEEPSEEK_KEY_ENV]: value }
+      // Refused even when this run's environment hands the key in as it should.
+      for (const runner of [{}, { [DEEPSEEK_KEY_ENV]: DEEPSEEK_KEY }]) {
+        const key = deepseekKey(runner, file)
+        expect(key).toMatchObject({ kind: 'refused' })
+        const said = JSON.stringify(key)
+        expect(said).toContain(DEEPSEEK_KEY_ENV)
+        expect(said).not.toContain(DEEPSEEK_KEY)
+        expect(said).not.toContain(other)
+      }
+    }
   })
 })
 
