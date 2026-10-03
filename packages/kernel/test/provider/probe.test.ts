@@ -26,6 +26,7 @@ import type {
   ProviderDefinition,
 } from '../../src/index.js'
 import { PROBE_PROMPT, PROBE_TOOL_RESULT } from '../../src/provider/probe.js'
+import { ALLOWED_HEADERS as ANTHROPIC_HEADERS } from '../../src/provider/wire/anthropic-messages.js'
 import { ALLOWED_HEADERS } from '../../src/provider/wire/openai-chat.js'
 import { IDLE_MS_OTHER } from '../../src/provider/wire/transport.js'
 import { createCounterIds, createStreamGate, fakeNetwork } from '../../src/testing/index.js'
@@ -255,6 +256,49 @@ describe('the two steps (§两步, Q5)', () => {
     expect(last).toEqual({ role: 'tool', tool_call_id: 'call_probe_1', content: 'ok' })
     expect(run.net.untrustedRequests).toEqual([])
   })
+
+  const wires = [
+    {
+      label: 'openai-chat',
+      wire: 'openai-chat',
+      script: [CALL, ANSWER],
+      headers: ALLOWED_HEADERS,
+    },
+    {
+      label: 'anthropic-messages, 按文档、未实测 Anthropic Messages',
+      wire: 'anthropic-messages',
+      script: [
+        sse(doc.anthropicCallFrames('vendor-model', doc.ANTHROPIC_SIGNATURE)),
+        sse(doc.anthropicAnswerFrames('vendor-model')),
+      ],
+      headers: ANTHROPIC_HEADERS,
+    },
+  ] as const
+  for (const { label, wire, script, headers } of wires) {
+    it(`M6 不变量 3, 验收 14 (${label}): both requests follow no redirect and carry no header outside the wire’s A6 allowlist`, async () => {
+      const redirects: (RequestRedirect | undefined)[] = []
+      const net = fakeNetwork(script)
+      const network: HostNetwork = {
+        fetch: (input, init) => {
+          redirects.push(init?.redirect)
+          return net.fetch(input, init)
+        },
+        fetchUntrusted: net.fetchUntrusted,
+      }
+      const d = vendor(wire)
+      const snapshot = await probeModel(
+        query(d, fakeNetwork([]), customVendorDefinition(d), { network }),
+      )
+      expect(snapshot.outcome).toBe('passed')
+      // A 3xx reads as a failure of the request, never as a hop to another host (M6 不变量 3).
+      expect(redirects).toEqual(['error', 'error'])
+      const allowed = new Set([...headers.names, ...Object.keys(headers.pinned)])
+      expect(net.requests).toHaveLength(2)
+      for (const request of net.requests) {
+        expect(Object.keys(request.headers).filter((name) => !allowed.has(name))).toEqual([])
+      }
+    })
+  }
 
   it('M6 不变量 9: ② sends the very row a pass stores', async () => {
     const d = vendor('openai-chat', zhipu.ZHIPU_MODEL)
@@ -1005,6 +1049,22 @@ describe('fields the openai-chat wire cannot send back (§不认识的字段, Q1
     })
   }
 
+  it('验收 30 — 按文档、未实测 Z.ai (智谱国际站): the Zhipu frames stand for it and pass at its preset’s address', async () => {
+    // fixtures/probe-zhipu.ts: no z.ai stream has been recorded; its docs give bigmodel's shape.
+    const base = 'https://api.z.ai/api/paas/v4'
+    const run = await probe(vendor('openai-chat', zhipu.ZHIPU_MODEL, { baseURL: base }), [
+      sse(zhipu.ZHIPU_CALL_FRAMES),
+      sse(zhipu.ZHIPU_ANSWER_FRAMES),
+    ])
+    expect(run.snapshot).toEqual(
+      snapshotOf({ reasoningField: 'reasoning_content', responseModelId: zhipu.ZHIPU_MODEL }),
+    )
+    expect(run.net.requests.map((request) => request.url)).toEqual([
+      `${base}/chat/completions`,
+      `${base}/chat/completions`,
+    ])
+  })
+
   it('按文档、未实测 DeepSeek: records reasoning_content and echoes it in ② (验收 29 的形状)', async () => {
     const run = await probe(vendor('openai-chat', doc.DEEPSEEK_MODEL), [
       sse(doc.DEEPSEEK_CALL_FRAMES),
@@ -1242,11 +1302,27 @@ describe('fields the openai-chat wire cannot send back (§不认识的字段, Q1
     expect(run.snapshot.unknownFields.every((name) => name.length <= 64)).toBe(true)
   })
 
-  it('checks tool calls and their function objects as well', async () => {
-    const onCall = await probe(vendor('openai-chat'), [sse(callWith({ custom_sig: 's' }, {}))])
-    expect(onCall.snapshot.unknownFields).toEqual(['custom_sig'])
-    const onFunction = await probe(vendor('openai-chat'), [sse(callWith({}, { strict: true }))])
-    expect(onFunction.snapshot.unknownFields).toEqual(['strict'])
+  it('M6 不变量 10: an unknown key on a tool call or on its function object fails ① as opaque-fields', async () => {
+    const onCall = await probe(vendor('openai-chat'), [
+      sse(callWith({ custom_sig: 's' }, {})),
+      ANSWER,
+    ])
+    expect(onCall.snapshot).toMatchObject({
+      outcome: 'failed',
+      reason: 'opaque-fields',
+      unknownFields: ['custom_sig'],
+    })
+    expect(onCall.net.callCount).toBe(1)
+    const onFunction = await probe(vendor('openai-chat'), [
+      sse(callWith({}, { strict: true })),
+      ANSWER,
+    ])
+    expect(onFunction.snapshot).toMatchObject({
+      outcome: 'failed',
+      reason: 'opaque-fields',
+      unknownFields: ['strict'],
+    })
+    expect(onFunction.net.callCount).toBe(1)
   })
 
   it('takes a tool call’s `custom` as unknown: the decoder skips such a call (Q14)', async () => {
@@ -1341,7 +1417,7 @@ describe('fields the openai-chat wire cannot send back (§不认识的字段, Q1
 
   const framings: readonly { name: string; exchange: FakeExchange }[] = [
     {
-      name: 'a body that came back whole (`choices[*].message`)',
+      name: 'a body that came back whole (`choices[*].message`, M6 不变量 10)',
       exchange: json({
         status: 200,
         body: {

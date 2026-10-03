@@ -612,8 +612,12 @@ test('「取消」 stops a running probe; a probe left running by a closed card 
 
 const LOCAL_ID = 'custom-0b7e3c1a-5d2f-4e8b-9a61-3f0c2d4e5a6b'
 const LOCAL_MODEL = 'qwen-local'
+/** On a local network (Q7): never reached here — nothing is sent to it. */
+const PRIVATE_ID = 'custom-1c8f4d2e-6a3b-4f7c-8d9e-0a1b2c3d4e5f'
+const PRIVATE_HOST = '192.168.77.10'
+const PRIVATE_MODEL = 'qwen-lan'
 
-test('an instance on this computer has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
+test('an instance on this computer or a local network has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
   local = await startFakeOpenAI({ chunks: ['local ', 'reply'], delayMs: 5 })
   const server = local
   const userData = makeUserDataDir('vendor-local')
@@ -627,39 +631,72 @@ test('an instance on this computer has no 「探测」, holds text conversations
         baseURL: server.baseURL,
         models: [{ id: LOCAL_MODEL, contextLimit: 32_000, maxOutputTokens: 4_096 }],
       },
+      {
+        id: PRIVATE_ID,
+        displayName: 'Box down the hall',
+        wire: 'openai-chat',
+        baseURL: `http://${PRIVATE_HOST}:8000/v1`,
+        models: [{ id: PRIVATE_MODEL, contextLimit: 32_000, maxOutputTokens: 4_096 }],
+      },
     ],
   })
   const { app, page } = await launchTenon({ userData })
   try {
     await openCard(page)
-    await expect(page.getByTestId(`custom-vendor-row-${LOCAL_ID}-${LOCAL_MODEL}`)).toBeVisible()
-    await expect(page.getByTestId(`custom-vendor-probe-note-${LOCAL_ID}`)).toHaveText(
-      'An endpoint on this computer or a local network holds text conversations only and is not probed.',
-    )
-    await expect(page.getByTestId(`custom-vendor-probe-${LOCAL_ID}-${LOCAL_MODEL}`)).toHaveCount(0)
-    await expect(
-      page.getByTestId(`custom-vendor-probe-status-${LOCAL_ID}-${LOCAL_MODEL}`),
-    ).toHaveCount(0)
+    // Two instances start folded.
+    for (const [id, model] of [
+      [LOCAL_ID, LOCAL_MODEL],
+      [PRIVATE_ID, PRIVATE_MODEL],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one card at a time
+      await page.getByTestId(`custom-vendor-toggle-${id}`).click()
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(page.getByTestId(`custom-vendor-row-${id}-${model}`)).toBeVisible()
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(page.getByTestId(`custom-vendor-probe-note-${id}`)).toHaveText(
+        'An endpoint on this computer or a local network holds text conversations only and is not probed.',
+      )
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(page.getByTestId(`custom-vendor-probe-${id}-${model}`)).toHaveCount(0)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(page.getByTestId(`custom-vendor-probe-status-${id}-${model}`)).toHaveCount(0)
+    }
     await closeCard(page)
     // Main refuses one asked for anyway, before anything is sent.
-    const refused = await page.evaluate(
-      (request) => window.tenon.invoke('customVendor.probe', request),
-      { id: LOCAL_ID, modelId: LOCAL_MODEL },
-    )
-    expect(refused).toMatchObject({ ok: true, data: { status: 'refused', code: 'local-endpoint' } })
+    for (const [id, model] of [
+      [LOCAL_ID, LOCAL_MODEL],
+      [PRIVATE_ID, PRIVATE_MODEL],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one probe at a time
+      const refused = await page.evaluate(
+        (request) => window.tenon.invoke('customVendor.probe', request),
+        { id, modelId: model },
+      )
+      expect(refused).toMatchObject({
+        ok: true,
+        data: { status: 'refused', code: 'local-endpoint' },
+      })
+    }
     expect(server.requests).toHaveLength(0)
 
     // No key and still configured: a chat can pick it; a task greys it.
     const trigger = page.getByTestId('model-menu-trigger')
     const row = page.getByTestId(`model-row-${LOCAL_ID}-${LOCAL_MODEL}`)
+    const lan = page.getByTestId(`model-row-${PRIVATE_ID}-${PRIVATE_MODEL}`)
     await page.getByTestId('mode-cowork').click()
     await trigger.click()
-    await expect(row).toHaveAttribute('aria-disabled', 'true')
-    await expect(row).toContainText('A task needs a model that can use tools')
+    for (const each of [row, lan]) {
+      // oxlint-disable-next-line no-await-in-loop -- one row at a time
+      await expect(each).toHaveAttribute('aria-disabled', 'true')
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(each).toContainText('A task needs a model that can use tools')
+    }
     await page.keyboard.press('Escape')
     await page.getByTestId('mode-chat').click()
     await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'chat')
     await trigger.click()
+    await expect(lan).not.toHaveAttribute('aria-disabled', 'true')
+    await expect(lan).toContainText(`${PRIVATE_HOST} · text conversation only`)
     await expect(row).not.toHaveAttribute('aria-disabled', 'true')
     await expect(row).toContainText('This computer · text conversation only')
     await row.click()
@@ -669,6 +706,110 @@ test('an instance on this computer has no 「探测」, holds text conversations
     await expect(page.getByTestId('assistant-text').last()).toHaveText('local reply')
     expect(completionRequests(server)).toHaveLength(1)
     expect(completionRequests(server)[0]?.body).not.toHaveProperty('tools')
+  } finally {
+    await app.close()
+  }
+})
+
+const ZHIPU_INSTANCE = 'custom-2d9a5e3f-7b4c-4a8d-9e0f-1b2c3d4e5f60'
+const MINIMAX_INSTANCE = 'custom-3e0b6f4a-8c5d-4b9e-8f1a-2c3d4e5f6a71'
+const PLAIN_INSTANCE = 'custom-4f1c7a5b-9d6e-4c0f-9a2b-3d4e5f6a7b82'
+/** §地址校验's two sentences, zh-CN. */
+const ZHIPU_REMINDER =
+  '只能填按量付费的 key；GLM Coding Plan 的 key 不得用于 Tenon（订阅协议第六条第 2 款）'
+const MINIMAX_REMINDER = '填『接口密钥』页的按量 key，不要填 Token Plan / M Plan 的订阅 key'
+
+test('the pay-as-you-go reminder shows under the key field of an instance on a Zhipu or MiniMax host and of the new form on those addresses, and nowhere else (M6 验收 7, Q13)', async () => {
+  const userData = makeUserDataDir('vendor-reminder')
+  // No key stored and no row: nothing here is ever sent anywhere.
+  seedConfig(userData, {
+    locale: 'zh-CN',
+    customVendors: [
+      {
+        id: ZHIPU_INSTANCE,
+        displayName: 'GLM 按量',
+        wire: 'anthropic-messages',
+        baseURL: 'https://open.bigmodel.cn/api/anthropic',
+        models: [],
+      },
+      {
+        id: MINIMAX_INSTANCE,
+        displayName: 'MiniMax 按量',
+        wire: 'anthropic-messages',
+        baseURL: 'https://api.minimaxi.com/anthropic',
+        models: [],
+      },
+      {
+        id: PLAIN_INSTANCE,
+        displayName: NAME,
+        wire: 'openai-chat',
+        baseURL: VENDOR_URL,
+        models: [],
+      },
+    ],
+  })
+  const { app, page } = await launchTenon({ userData })
+  try {
+    await openCard(page)
+    for (const [id, text] of [
+      [ZHIPU_INSTANCE, ZHIPU_REMINDER],
+      [MINIMAX_INSTANCE, MINIMAX_REMINDER],
+      [PLAIN_INSTANCE, null],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one card at a time
+      await page.getByTestId(`custom-vendor-toggle-${id}`).click()
+      const card = page.getByTestId(`custom-vendor-${id}`)
+      const key = card.getByTestId(`custom-vendor-key-${id}`)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(key).toBeVisible()
+      const reminder = card.getByTestId(`custom-vendor-reminder-${id}`)
+      if (text === null) {
+        // oxlint-disable-next-line no-await-in-loop -- as above
+        await expect(reminder).toHaveCount(0)
+        continue
+      }
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(reminder).toHaveText(text)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const [field, line] = await Promise.all([key.boundingBox(), reminder.boundingBox()])
+      expect(line?.y).toBeGreaterThan(field?.y ?? Number.POSITIVE_INFINITY)
+    }
+
+    // The new form: the reminder follows the address the form would store.
+    await page.getByTestId('custom-vendor-new').click()
+    const source = page.getByTestId('custom-vendor-new-source')
+    const region = page.getByTestId('custom-vendor-new-region')
+    const wire = page.getByTestId('custom-vendor-new-wire')
+    const shown = page.getByTestId('custom-vendor-new-address')
+    const reminder = page.getByTestId('custom-vendor-new-reminder')
+    await source.selectOption('zai')
+    await expect(shown).toHaveText('https://api.z.ai/api/paas/v4')
+    await expect(reminder).toHaveText(ZHIPU_REMINDER)
+    await source.selectOption('minimax')
+    for (const [where, address] of [
+      ['cn', 'https://api.minimax.cn/anthropic'],
+      ['global', 'https://api.minimax.io/anthropic'],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one region at a time
+      await region.selectOption(where)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(shown).toHaveText(address)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await expect(reminder).toHaveText(MINIMAX_REMINDER)
+    }
+    await source.selectOption('deepseek')
+    await expect(shown).toHaveText('https://api.deepseek.com')
+    await expect(reminder).toHaveCount(0)
+    // 「其他兼容端点」: the typed address decides.
+    await source.selectOption('')
+    await wire.selectOption('openai-chat')
+    const typed = page.getByTestId('custom-vendor-new-baseurl')
+    await typed.fill('https://open.bigmodel.cn/api/paas/v4')
+    await expect(reminder).toHaveText(ZHIPU_REMINDER)
+    await typed.fill(VENDOR_URL)
+    await expect(reminder).toHaveCount(0)
+    await page.getByTestId('custom-vendor-new-cancel').click()
+    expect(await instances(page)).toHaveLength(3)
   } finally {
     await app.close()
   }

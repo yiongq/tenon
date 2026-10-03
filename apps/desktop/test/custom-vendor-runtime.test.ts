@@ -12,6 +12,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import {
+  ANTHROPIC_PROVIDER_ID,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
@@ -56,8 +57,10 @@ const LOCAL_ID = 'custom-3e8d5b2f-6c7a-4d9e-8f1a-2b3c4d5e6f70'
 const PRIVATE_ID = 'custom-4f9e6c3a-7d8b-4e0f-9a2b-3c4d5e6f7a81'
 const SESSION = '6d2e0b3f-7c4a-4b82-9a63-1d9ef8b22c02'
 const OTHER_SESSION = '7e3f1c4a-8d5b-4c93-8b74-2e0fa9c33d13'
+const NEW_SESSION = '8f4a2d5b-9e6c-4da4-9c85-3f1ab0d44e24'
 const KEY = 'sk-m6-runtime-test-5e2a91'
 const NEW_KEY = 'sk-m6-runtime-new-8c3f07'
+const ANTHROPIC_KEY = 'anthropic-runtime-test-key-not-real'
 const BASE = 'https://vendor.test/v1'
 const COMPLETIONS = `${BASE}/chat/completions`
 
@@ -935,6 +938,31 @@ describe('an instance deleted or broken under a session (§实例被删或改坏
     },
   )
 
+  it.each(removals.slice(0, 2))(
+    '验收 25: when %s while it is new sessions’ default, a new session falls back to ④⑤ and sends as usual',
+    async (_removal, remove) => {
+      const selected = { id: ID, modelId: TOOL_ROW.id }
+      const h = await harness([instance({ id: ID })], [ANTHROPIC_ANSWER], {
+        provider: selected,
+        defaultModelByProfile: { chat: selected, cowork: selected },
+      })
+      h.keychain.values.set(h.keyOf(ANTHROPIC_PROVIDER_ID), ANTHROPIC_KEY)
+      expect(await remove(h)).toEqual({ ok: true })
+      const config = await readConfig(h.host.fs, h.host.identity, log)
+      expect(config.provider).toBeNull()
+      expect(config.defaultModelByProfile).toEqual({})
+
+      // A session that never chose: ② and ③ are gone, ④ is nothing on a packaged build, ⑤ answers.
+      expect((await send(h, 'hello', NEW_SESSION)).reason.code).toBe('completed')
+      expect(h.network.requests.map((request) => request.url)).toEqual([
+        'https://api.anthropic.com/v1/messages',
+      ])
+      expect(await payloads(h, 'session/model_selected', NEW_SESSION)).toEqual([
+        expect.objectContaining({ providerId: ANTHROPIC_PROVIDER_ID }),
+      ])
+    },
+  )
+
   it('when its row is removed while the send’s assembly waits on the keychain, the read the key came from decides: not sent, nothing written', async () => {
     const h = await harness([instance({ id: ID })], [answer()])
     await choose(h, TOOL_ROW.id)
@@ -948,6 +976,57 @@ describe('an instance deleted or broken under a session (§实例被删或改坏
     expect(await sending).toEqual({ status: 'not-sent', code: 'config-missing' })
     expect(h.network.callCount).toBe(0)
     expect(await entries(h)).toEqual(before)
+  })
+})
+
+describe('a probe beside the sessions (§探测; M6 不变量 8)', () => {
+  it('M6 不变量 8, 验收 14: a probe writes no fact to any session’s Tape, begins no Run and runs no tool', async () => {
+    const h = await harness(
+      [instance({ id: ID })],
+      [
+        // The session's round on the passing row.
+        answer(),
+        // The probe of the text row: ① the Read its prompt asks for, ② an answer.
+        callOf('Read', { file_path: '/tenon-probe/ping.txt' }),
+        answer('It said ok.'),
+      ],
+    )
+    await choose(h, TOOL_ROW.id)
+    expect((await send(h, 'hello')).reason.code).toBe('completed')
+    await choose(h, TEXT_ROW.id, { sessionId: OTHER_SESSION })
+    const tapes = async (): Promise<[string, TapeEntry[]][]> => {
+      const sessions = await h.tape.listSessions({ limit: 100 })
+      return Promise.all(
+        sessions.map(async ({ sessionId }): Promise<[string, TapeEntry[]]> => [
+          sessionId,
+          await entries(h, sessionId),
+        ]),
+      )
+    }
+    const before = await tapes()
+    expect(before.map(([sessionId]) => sessionId)).toContain(SESSION)
+    const events = h.loop.recorded.length
+    const leases = h.loop.leaseLog.length
+
+    expect(await h.ok('customVendor.probe', { id: ID, modelId: TEXT_ROW.id })).toMatchObject({
+      status: 'done',
+      saved: true,
+      snapshot: { outcome: 'passed' },
+    })
+    expect(h.network.callCount).toBe(3)
+    // No session gained, lost or changed a fact; the loop saw no Run and no event.
+    expect(await tapes()).toEqual(before)
+    expect(h.loop.recorded).toHaveLength(events)
+    expect(h.loop.leaseLog).toHaveLength(leases)
+    // ①: the fixed prompt alone, no session content (T4); ②: the call answered with the probe's
+    // fixed text — no executor ran the Read, which would have come back as a missing file.
+    const [, one, two] = bodies(h)
+    expect(one?.['messages']).toEqual([{ role: 'user', content: expect.any(String) }])
+    expect((two?.['messages'] as unknown[] | undefined)?.at(-1)).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_Read',
+      content: 'ok',
+    })
   })
 })
 
