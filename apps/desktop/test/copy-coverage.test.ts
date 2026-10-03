@@ -28,9 +28,13 @@ import {
   confirmKindSchema,
   confirmReasonSchema,
   confirmTargetSchema,
+  customVendorErrorCodeSchema,
   flaggedCategorySchema,
   pendingRootSchema,
+  probeReasonSchema,
   providerModelSchema,
+  providerRefusalSchema,
+  providerWriteErrorCodeSchema,
   requiredFactKeys,
   reversibilitySchema,
   runEndReasonSchema,
@@ -52,6 +56,20 @@ import { describe, expect, it } from 'vitest'
 import { BLOCKED_FACT_KEYS } from '../../../packages/kernel/src/loop/closure.js'
 import { SUPPORTED_LOCALES, resources } from '../src/i18n/resources.js'
 import type { Locale } from '../src/i18n/resources.js'
+import {
+  FETCH_MODELS_KEY,
+  KEY_REMINDER_KEY,
+  PROBE_REASON_KEY,
+  PROBE_REFUSED_KEY,
+  VENDOR_ERROR_KEY,
+} from '../src/renderer/src/lib/custom-vendor.js'
+import type {
+  FetchModelsCode,
+  KeyReminder,
+  ProbeReason,
+  ProbeRefusedCode,
+} from '../src/renderer/src/lib/custom-vendor.js'
+import { PROVIDER_WRITE_ERROR_KEY, REFUSAL_KEY } from '../src/renderer/src/lib/provider-copy.js'
 import type { PendingCard } from '../src/renderer/src/runtime/session-store.js'
 import type { TurnSummary } from '../src/renderer/src/runtime/thread-model.js'
 
@@ -436,6 +454,108 @@ describe('the banner and the model menu copy', () => {
       )
     expect(expected.length).toBeGreaterThan(0)
     expect(problems(expected)).toEqual([])
+  })
+})
+
+describe('the custom vendor copy (M6 plan step 9)', () => {
+  // The tables the settings card and the model menu read (lib/custom-vendor.ts, lib/provider-copy.ts):
+  // each code of the contract, walked from the contract's own enum or a `covers<>` list of its union.
+
+  it('has the passing line and a sentence for every probe reason, naming only its fields', () => {
+    // §结果与原因码: `customVendor.probe.reason.<code>`, `opaque-fields` listing the fields (Q14).
+    const reasons = covers<ProbeReason>()(probeReasonSchema.options, true)
+    expect(reasons).toHaveLength(12)
+    const expected: Expectation[] = reasons.map((reason) => ({
+      key: PROBE_REASON_KEY[reason],
+      args: reason === 'opaque-fields' ? ['fields'] : [],
+      what: `probe reason ${reason}`,
+    }))
+    expected.push({ key: 'customVendor.probe.passed', args: [], what: 'probe passed' })
+    expect(expected.every(({ key }) => key.startsWith('customVendor.probe.'))).toBe(true)
+    expect(problems(expected)).toEqual([])
+  })
+
+  it('has a sentence for every refused probe code, aborted included, and every model list failure', () => {
+    const refused = covers<ProbeRefusedCode>()(
+      ['not-found', 'unknown-model', 'local-endpoint', 'busy', 'aborted'],
+      true,
+    )
+    const fetched = covers<FetchModelsCode>()(
+      ['not-found', 'config', 'auth', 'unsupported', 'service'],
+      true,
+    )
+    expect(
+      problems([
+        ...refused.map((code) => ({
+          key: PROBE_REFUSED_KEY[code],
+          args: [],
+          what: `probe refused ${code}`,
+        })),
+        ...fetched.map((code) => ({
+          key: FETCH_MODELS_KEY[code],
+          args: [],
+          what: `fetchModels ${code}`,
+        })),
+        { key: 'customVendor.probe.notSaved', args: [], what: 'probe done, not saved' },
+      ]),
+    ).toEqual([])
+  })
+
+  it('has a sentence for every custom vendor write refusal', () => {
+    const codes = covers<(typeof customVendorErrorCodeSchema.options)[number]>()(
+      customVendorErrorCodeSchema.options,
+      true,
+    )
+    expect(codes).toHaveLength(6)
+    expect(
+      problems(
+        codes.map((code) => ({ key: VENDOR_ERROR_KEY[code], args: [], what: `write ${code}` })),
+      ),
+    ).toEqual([])
+  })
+
+  it('has the line of each of the four refused-address codes, and of the two new write codes', () => {
+    // M6 01 修补 4: `refused` on a builtin's or an instance's entry; `official-host-only` and
+    // `subscription-endpoint` from provider.configure (§点名 (a), (e)).
+    const refusals = providerRefusalSchema.shape.code.options
+    expect(refusals).toHaveLength(4)
+    const writes = providerWriteErrorCodeSchema.options
+    expect(writes).toContain('official-host-only')
+    expect(writes).toContain('subscription-endpoint')
+    expect(
+      problems([
+        ...refusals.map((code) => ({ key: REFUSAL_KEY[code], args: [], what: `refused ${code}` })),
+        ...writes.map((code) => ({
+          key: PROVIDER_WRITE_ERROR_KEY[code],
+          args: [],
+          what: `provider write ${code}`,
+        })),
+      ]),
+    ).toEqual([])
+  })
+
+  it('has the removed-instance lines, the two key reminders and the sentences with slots', () => {
+    const reminders = covers<KeyReminder>()(['zhipu', 'minimax'], true)
+    expect(
+      problems([
+        { key: 'error.customVendorGone', args: [], what: '§实例被删或改坏, the failure card' },
+        { key: 'model.trigger.removed', args: ['model'], what: '§实例被删或改坏, the trigger' },
+        ...reminders.map((reminder) => ({
+          key: KEY_REMINDER_KEY[reminder],
+          args: [],
+          what: `Q13 reminder ${reminder}`,
+        })),
+        {
+          key: 'customVendor.models.limits',
+          args: ['contextTokens', 'outputTokens'],
+          what: 'a row’s limits',
+        },
+        { key: 'customVendor.instance.summary', args: ['address', 'wire'], what: 'card header' },
+        { key: 'customVendor.instance.fromPreset', args: ['preset'], what: 'preset address' },
+        { key: 'customVendor.section.noSearch', args: [], what: 'Q10' },
+        { key: 'customVendor.probe.cost', args: [], what: 'T4' },
+      ]),
+    ).toEqual([])
   })
 })
 

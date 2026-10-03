@@ -50,6 +50,12 @@
         "officialHostOnly": "内置供应商只能用官方地址；这个地址只能用自定义厂商接入。",
         "subscriptionEndpoint": "这是 GLM Coding Plan 的订阅地址，不能用于 Tenon。请改用按量付费的地址。"
       },
+      "refused": {
+        "official-host-only": "存着的地址不是这个供应商的官方地址，所以读作未配置。这个地址只能用自定义厂商接入。",
+        "subscription-endpoint": "存着的地址是 GLM Coding Plan 的订阅地址，不能用于 Tenon，所以读作未配置。请改用按量付费的地址。",
+        "invalid-address": "这个地址用不了，所以读作未配置。请用正确的地址重新新建自定义厂商。",
+        "https-required": "公网地址必须用 https，所以这里读作未配置。请用 https 地址重新新建自定义厂商。"
+      },
       "customModel": "或手填模型 ID",
       "customModelHint": "列表外的模型未经验证，只能纯文字对话。"
     }
@@ -74,6 +80,13 @@
       "name": "Ollama（本机）",
       "config": {
         "apiKey": "API 密钥（Ollama 不校验）",
+        "baseURL": "接口地址"
+      }
+    },
+    "custom": {
+      "name": "自定义厂商",
+      "config": {
+        "apiKey": "API 密钥",
         "baseURL": "接口地址"
       }
     }
@@ -102,6 +115,7 @@
     "rate-limit": "模型服务限流中，请稍后再试。",
     "provider": "模型服务返回了错误。",
     "unknown": "出了点问题。",
+    "customVendorGone": "这个会话用的自定义厂商或模型已删除。在模型菜单里换一个模型再发送。",
     "retry": "重试"
   },
   "runEnd": {
@@ -151,7 +165,8 @@
     },
     "trigger": {
       "withEffort": "{model} · {effort}",
-      "label": "模型"
+      "label": "模型",
+      "removed": "{model}（已删除）"
     },
     "notConfigured": "{provider} · 去设置填 key",
     "more": "更多模型",
@@ -187,6 +202,136 @@
     },
     "typeModelFor": "{provider} · 手填模型 ID…",
     "nextMessageCache": "下一条消息起生效 · 改档会让缓存失效"
+  },
+  "customVendor": {
+    "section": {
+      "title": "自定义厂商",
+      "noSearch": "自定义厂商不提供网络搜索；网页抓取照常。"
+    },
+    "preset": {
+      "deepseek": "DeepSeek",
+      "kimi": "Kimi（月之暗面）",
+      "bailian": "阿里云百炼",
+      "ark": "火山方舟",
+      "minimax": "MiniMax",
+      "zai": "智谱国际站（Z.ai）"
+    },
+    "region": {
+      "default": "默认",
+      "cn": "国内",
+      "global": "国际",
+      "cnBeijing": "华北2（北京）",
+      "singapore": "新加坡"
+    },
+    "wire": {
+      "openai-chat": "OpenAI 兼容（Chat Completions）",
+      "anthropic-messages": "Anthropic 兼容（Messages）"
+    },
+    "field": {
+      "source": "厂商",
+      "region": "地区",
+      "wire": "接口协议",
+      "address": "接口地址",
+      "name": "名称",
+      "key": "API 密钥",
+      "models": "模型"
+    },
+    "create": {
+      "open": "新建自定义厂商",
+      "other": "其他兼容端点",
+      "presetAddress": "预设的地址不能改；要用别的地址，请选「其他兼容端点」。",
+      "fixed": "建好之后接口地址与接口协议不能再改；要改请另建一个。",
+      "keyPage": "去取 key",
+      "submit": "创建",
+      "creating": "创建中…",
+      "cancel": "取消"
+    },
+    "instance": {
+      "summary": "{wire} · {address}",
+      "rename": "改名",
+      "addressFixed": "建好之后不能改；要换地址请另建一个。",
+      "fromPreset": "来自预设「{preset}」，建好之后不能改。",
+      "delete": "删除",
+      "deleteWarning": "删除会一并删掉存着的 key。",
+      "deleteConfirm": "确认删除",
+      "keep": "不删了"
+    },
+    "key": {
+      "save": "保存 key",
+      "clearsProbes": "保存 key 会清掉这个厂商的全部探测结果，之后要重新探测。",
+      "reminder": {
+        "zhipu": "只能填按量付费的 key；GLM Coding Plan 的 key 不得用于 Tenon（订阅协议第六条第 2 款）",
+        "minimax": "填『接口密钥』页的按量 key，不要填 Token Plan / M Plan 的订阅 key"
+      }
+    },
+    "models": {
+      "none": "还没有模型。手填模型 ID，或先获取模型列表。",
+      "fetch": "获取模型列表",
+      "fetching": "获取中…",
+      "fetchEmpty": "端点没有列出模型，请手填模型 ID。",
+      "fromList": "从列表选",
+      "pick": "选一个模型…",
+      "id": "模型 ID",
+      "contextLimit": "上下文上限（token）",
+      "maxOutputTokens": "输出上限（token）",
+      "limitsHint": "两个上限都要填；获取到的列表只是预填。",
+      "save": "保存这个模型",
+      "edit": "修改",
+      "remove": "移除",
+      "limits": "上下文 {contextTokens} · 输出 {outputTokens}",
+      "invalid": {
+        "id": "请填模型 ID。",
+        "limits": "上下文与输出上限都要填正整数。"
+      },
+      "fetchError": {
+        "not-found": "这个自定义厂商已经不在了。",
+        "config": "key 还没配好，请先保存 key。",
+        "auth": "key 无效或没有权限。",
+        "unsupported": "这个端点不提供模型列表，请手填模型 ID。",
+        "service": "服务出错或连不上，请稍后再试。"
+      }
+    },
+    "probe": {
+      "run": "探测",
+      "running": "探测中…",
+      "cancel": "取消",
+      "cost": "会用你的 key 发 2–3 次请求，思考模型每次可能较长",
+      "local": "本机或局域网的端点只能文字对话，不探测。",
+      "none": "尚未探测 · 仅文字对话",
+      "passed": "本机探测通过 · 不保证",
+      "notSaved": "没有保存：探测期间这个厂商的设置变了，请重新探测。",
+      "reason": {
+        "no-tool-call": "模型这次没有调用工具，可以再试一次",
+        "output-limit": "输出上限内没答完，可以再试或调大输出上限",
+        "no-finish": "带上工具结果后没有正常收尾",
+        "config": "key 没配好",
+        "auth": "key 无效或没有权限",
+        "quota": "额度或余额不足",
+        "rate-limit": "请求太频繁，稍后再试",
+        "request-rejected": "端点拒绝了带工具的请求",
+        "echo-rejected": "端点拒绝了工具结果或思考回传",
+        "bad-tool-call": "模型发出的工具调用不完整",
+        "opaque-fields": "有无法回传的字段：{fields}",
+        "service": "服务出错或连不上"
+      },
+      "refused": {
+        "not-found": "这个自定义厂商已经不在了。",
+        "unknown-model": "这个模型已不在列表里。",
+        "local-endpoint": "本机或局域网的端点不探测。",
+        "busy": "这个厂商有一个探测正在进行。可以取消它，或等它结束再试。",
+        "aborted": "探测已停止，没有保存结果。"
+      }
+    },
+    "error": {
+      "invalid-address": "地址要是完整的 http(s) 网址，不带用户名、密码、查询串或 #；Anthropic 兼容的地址不以 /v1 结尾。",
+      "https-required": "公网地址必须用 https；http 只给本机或局域网。",
+      "subscription-endpoint": "这是 GLM Coding Plan 的订阅地址，不能用于 Tenon。请改用按量付费的地址。",
+      "key-required": "公网端点要填 key。",
+      "not-found": "这个自定义厂商已经不在了。",
+      "keychain": "系统钥匙串读写失败，什么都没改，请重试。",
+      "name": "请起个名字。",
+      "unavailable": "没能完成，请重试。"
+    }
   },
   "leave": {
     "title": "停止这个任务？",

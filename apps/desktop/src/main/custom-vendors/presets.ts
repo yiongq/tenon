@@ -7,8 +7,9 @@
  *
  * Addresses and links as §预设's table has them, checked against the vendors' documents on 2026-10-02
  * (sources per row in the spec). Only pay-as-you-go addresses, never a subscription path (Q13).
- * Volcengine Ark has no anthropic-messages address until 开放问题 1 is settled; Z.ai only its
- * openai-chat one (its `/api/anthropic` appears in the GLM Coding Plan documents only).
+ * Volcengine Ark has no anthropic-messages address in the first version (Q18, 2026-10-03: its two
+ * documents disagree on the path); Z.ai only its openai-chat one (its `/api/anthropic` appears in
+ * the GLM Coding Plan documents only).
  */
 import type { RouteResponse, customVendorList } from '@tenon-app/contracts'
 import type { CustomWire } from './address.js'
@@ -86,7 +87,7 @@ const PRESETS: readonly VendorPreset[] = [
   },
   {
     // One region in China; BytePlus ModelArk is another platform. No anthropic-messages address
-    // until 开放问题 1 is settled: the two documents disagree on its path.
+    // (Q18): the two documents disagree on its path.
     id: 'ark',
     nameKey: 'customVendor.preset.ark',
     defaultWire: 'openai-chat',

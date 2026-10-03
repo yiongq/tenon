@@ -29,6 +29,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { customVendorGone, holdsTools, markLineKey } from '@/lib/custom-vendor'
 import { confirmHostFor, heldConfirmHost } from '@/lib/data-flow'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { useConversation } from '@/runtime/conversation'
@@ -46,6 +47,13 @@ import { TypeModelDialog } from './TypeModelDialog'
  * (`session.facts`), not with the choice in effect, which a default moved elsewhere can already have
  * made public — unless the session's own choice already confirmed that host (lib/data-flow.ts). A
  * round the kernel held for that reason opens the same confirmation.
+ *
+ * A custom vendor instance (M6 §运行时「行标记、菜单与任务形态」) is one group of its own after the
+ * builtins, named by its `displayName`. A row that passed its probe is `probed` and can be sent in a
+ * task; one without a passing probe reads 「尚未通过探测」 and is greyed there like every row that holds
+ * text conversations only. An instance offers no hand-typed id (§列表与上限: its rows are added on the
+ * settings card, with their limits), and a session whose instance or row was removed shows its model
+ * id marked 「（已删除）」 (§实例被删或改坏).
  */
 
 type Row = ProviderEntryContract['models'][number]
@@ -97,6 +105,8 @@ export function ModelMenu(): JSX.Element {
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>(LIST)
   const [entries, setEntries] = useState<readonly ProviderEntryContract[]>([])
+  // Whether `entries` was ever read: before that, a session's instance is not 「已删除」, only unread.
+  const [listed, setListed] = useState(false)
   const [current, setCurrent] = useState<SessionModelChoice | null>(null)
   const [loadedProfile, setProfile] = useState<'chat' | 'cowork'>('chat')
   // The session's own facts first: ModeSwitch changes the profile without going through this menu.
@@ -108,7 +118,10 @@ export function ModelMenu(): JSX.Element {
   const reload = useCallback(
     (): Promise<void> =>
       loadMenu(sessionId).then((loaded) => {
-        if (loaded.entries !== null) setEntries(loaded.entries)
+        if (loaded.entries !== null) {
+          setEntries(loaded.entries)
+          setListed(true)
+        }
         if (loaded.choice !== null) setCurrent(loaded.choice)
         if (loaded.profile !== null) setProfile(loaded.profile)
       }),
@@ -129,7 +142,10 @@ export function ModelMenu(): JSX.Element {
     const held = store.getSnapshot().held
     if (held === null || heldSeq === 0) return
     void loadMenu(sessionId).then((loaded) => {
-      if (loaded.entries !== null) setEntries(loaded.entries)
+      if (loaded.entries !== null) {
+        setEntries(loaded.entries)
+        setListed(true)
+      }
       const choice = loaded.choice
       if (choice === null) return
       setCurrent(choice)
@@ -204,18 +220,18 @@ export function ModelMenu(): JSX.Element {
   const pick = (entry: ProviderEntryContract, row: { id: string }): Promise<boolean> =>
     commit({ providerId: entry.id, modelId: row.id, effort: null })
 
+  /** An instance by the name the user gave it (M6 01 修补 4); a builtin by its catalogue name. */
+  const nameOf = (entry: ProviderEntryContract): string =>
+    entry.displayName ?? fromData(entry.nameKey)
+
   const hostLabel = (entry: ProviderEntryContract): string =>
     entry.endpoint.reach === 'loopback' ? t('model.host.local') : entry.endpoint.host
 
   const secondLine = (entry: ProviderEntryContract, row: Row): string => {
-    if (row.mark === 'local-text-only') {
-      return t('model.mark.localTextOnly', { host: hostLabel(entry) })
-    }
-    if (row.mark === 'unverified-text-only') {
-      return t('model.mark.unverified', { host: hostLabel(entry) })
-    }
+    const key = markLineKey(row.mark, entry.displayName !== undefined)
+    if (key !== 'model.row.line') return t(key, { host: hostLabel(entry) })
     const purpose = row.purposeKey === undefined ? row.id : fromData(row.purposeKey)
-    return t('model.row.line', { purpose, host: hostLabel(entry) })
+    return t(key, { purpose, host: hostLabel(entry) })
   }
 
   /** A level's name from the catalogue; a vendor level it has no entry for shows as the vendor's. */
@@ -239,24 +255,42 @@ export function ModelMenu(): JSX.Element {
     return name
   }
   const effortShown = current?.effort ?? row?.defaultEffort
+  // §实例被删或改坏: the session's instance, or its row, is no longer listed.
+  const gone = current !== null && listed && customVendorGone(current.providerId, current, entries)
   const triggerText =
     current === null
       ? t('model.trigger.label')
-      : row?.effortLevels !== undefined && effortShown !== undefined
-        ? t('model.trigger.withEffort', { model: current.modelId, effort: levelName(effortShown) })
-        : current.modelId
+      : gone
+        ? t('model.trigger.removed', { model: current.modelId })
+        : row?.effortLevels !== undefined && effortShown !== undefined
+          ? t('model.trigger.withEffort', {
+              model: current.modelId,
+              effort: levelName(effortShown),
+            })
+          : current.modelId
   const configured = entries.filter((entry) => entry.configured)
+  // 「手填模型 ID」 is a builtin's only: an instance's rows come from the settings card (§列表与上限).
+  const typable = configured.filter((entry) => entry.displayName === undefined)
+  const moreRows = configured.flatMap((entry) =>
+    entry.models
+      .filter((candidate) => candidate.listing === 'more')
+      .map((candidate) => ({ entry, candidate })),
+  )
+  const currentEntry = current === null ? undefined : entryOf(current.providerId)
   // A task whose model holds text conversations only cannot be sent (§表外模型与不发工具): the
-  // composer disables 「发送」 and says why.
-  const mark =
-    row?.mark ??
-    (current !== null && entryOf(current.providerId) !== undefined
-      ? 'unverified-text-only'
-      : undefined)
-  const textOnlyTask = profile === 'cowork' && mark !== undefined && mark !== 'verified'
+  // composer disables 「发送」 and says why. A probed instance row can (M6 Q6). A removed instance
+  // row is not held here: the send is refused as a missing key and its card says it was removed.
+  const mark = gone
+    ? undefined
+    : (row?.mark ?? (currentEntry !== undefined ? 'unverified-text-only' : undefined))
+  const textOnlyTask = profile === 'cowork' && mark !== undefined && !holdsTools(mark)
   useEffect(() => store.setTextOnlyTask(textOnlyTask), [store, textOnlyTask])
+  // An instance has no hand-typed row: a choice its list lacks is a removed row (§实例被删或改坏).
   const handTyped =
-    current !== null && row === undefined && entryOf(current.providerId) !== undefined
+    current !== null &&
+    row === undefined &&
+    currentEntry !== undefined &&
+    currentEntry.displayName === undefined
       ? current
       : null
 
@@ -326,15 +360,14 @@ export function ModelMenu(): JSX.Element {
               {entries.map((entry) =>
                 entry.configured ? (
                   <DropdownMenuGroup key={entry.id} data-testid={`model-group-${entry.id}`}>
-                    <DropdownMenuLabel>{fromData(entry.nameKey)}</DropdownMenuLabel>
+                    <DropdownMenuLabel>{nameOf(entry)}</DropdownMenuLabel>
                     {[
                       ...entry.models.filter((candidate) => candidate.listing === 'main'),
                       ...(handTyped?.providerId === entry.id
                         ? [HAND_TYPED(handTyped.modelId)]
                         : []),
                     ].map((candidate) => {
-                      const textOnly = candidate.mark !== 'verified'
-                      const blocked = profile === 'cowork' && textOnly
+                      const blocked = profile === 'cowork' && !holdsTools(candidate.mark)
                       const checked =
                         current?.providerId === entry.id && current.modelId === candidate.id
                       return (
@@ -368,7 +401,7 @@ export function ModelMenu(): JSX.Element {
                     className="text-text-muted"
                     onClick={() => setSettingsOpen(true)}
                   >
-                    {t('model.notConfigured', { provider: fromData(entry.nameKey) })}
+                    {t('model.notConfigured', { provider: nameOf(entry) })}
                   </DropdownMenuItem>
                 ),
               )}
@@ -416,38 +449,34 @@ export function ModelMenu(): JSX.Element {
                 </>
               ) : null}
               <DropdownMenuSeparator />
-              {configured.length === 0 ? null : (
+              {moreRows.length === 0 && typable.length === 0 ? null : (
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger data-testid="model-more">
                     {t('model.more')}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
-                    {configured.flatMap((entry) =>
-                      entry.models
-                        .filter((candidate) => candidate.listing === 'more')
-                        .map((candidate) => (
-                          <DropdownMenuItem
-                            key={`${entry.id}-${candidate.id}`}
-                            data-testid={`model-row-${entry.id}-${candidate.id}`}
-                            closeOnClick={false}
-                            onClick={() => void pick(entry, candidate)}
-                          >
-                            <span className="flex min-w-0 flex-col">
-                              <span className="text-ui text-text-primary">{candidate.id}</span>
-                              <span className="text-micro text-text-muted">
-                                {secondLine(entry, candidate)}
-                              </span>
-                            </span>
-                          </DropdownMenuItem>
-                        )),
-                    )}
-                    {configured.map((entry) => (
+                    {moreRows.map(({ entry, candidate }) => (
+                      <DropdownMenuItem
+                        key={`${entry.id}-${candidate.id}`}
+                        data-testid={`model-row-${entry.id}-${candidate.id}`}
+                        closeOnClick={false}
+                        onClick={() => void pick(entry, candidate)}
+                      >
+                        <span className="flex min-w-0 flex-col">
+                          <span className="text-ui text-text-primary">{candidate.id}</span>
+                          <span className="text-micro text-text-muted">
+                            {secondLine(entry, candidate)}
+                          </span>
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                    {typable.map((entry) => (
                       <DropdownMenuItem
                         key={`${entry.id}-type`}
                         data-testid={`model-type-${entry.id}`}
                         onClick={() => setTyping(entry)}
                       >
-                        {t('model.typeModelFor', { provider: fromData(entry.nameKey) })}
+                        {t('model.typeModelFor', { provider: nameOf(entry) })}
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuSubContent>
@@ -470,7 +499,7 @@ export function ModelMenu(): JSX.Element {
       <TypeModelDialog
         key={typing?.id ?? 'closed'}
         entry={typing}
-        providerName={typing === null ? '' : fromData(typing.nameKey)}
+        providerName={typing === null ? '' : nameOf(typing)}
         onClose={() => setTyping(null)}
         onUse={(modelId) => {
           if (typing === null) return
