@@ -62,6 +62,39 @@ export interface SeededConfig {
   readonly provider?: { readonly id: string; readonly modelId: string }
   /** Non-secret provider settings, as `provider.configure` writes them. Never a credential. */
   readonly providerConfig?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  /**
+   * Custom vendor instances (M6 §存储, contracts `customVendorSchema`), as the settings card writes
+   * them. Never a key: an instance's key lives in the secrets store only (T8), so a public instance
+   * seeded here reads as not configured until a test saves one (helpers/instances.ts).
+   */
+  readonly customVendors?: readonly SeededInstance[]
+}
+
+/** One `customVendors` entry: `custom-<uuid>`, its name, wire, fixed address and model rows. */
+export interface SeededInstance {
+  readonly id: string
+  readonly displayName: string
+  readonly wire: 'openai-chat' | 'anthropic-messages'
+  readonly baseURL: string
+  readonly presetId?: string
+  readonly models: readonly SeededRow[]
+}
+
+/** A model row with its limits and, when it was probed, its snapshot (M6 §存储 `probe`). */
+export interface SeededRow {
+  readonly id: string
+  readonly contextLimit: number
+  readonly maxOutputTokens: number
+  readonly probe?: {
+    readonly outcome: 'passed' | 'not-detected' | 'failed'
+    readonly reason: string | null
+    readonly probedAt: number
+    readonly reasoningField: 'reasoning_content' | 'reasoning' | null
+    readonly maxTokensField: 'max_tokens' | 'max_completion_tokens' | null
+    readonly usageSeen: boolean
+    readonly responseModelId: string | null
+    readonly unknownFields: readonly string[]
+  }
 }
 
 /** Seeds `config.json` before the first launch, as if the user had already chosen. */

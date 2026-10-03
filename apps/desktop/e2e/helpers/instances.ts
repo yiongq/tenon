@@ -1,9 +1,12 @@
 /**
- * Custom vendor instances for e2e and live specs (M6 §IPC), set up over the renderer's own bridge.
- * Every helper that puts a key into an instance runs `assertInstanceKeyStaysHome` first and fills
- * nothing when it throws: an official-looking key goes into an instance on api.anthropic.com only
- * (M6 §点名; 02 M4). The launch-time check (`assertOfficialKeyStaysHome`) never sees an instance's
- * key, which is typed into the app rather than handed in its environment.
+ * Custom vendor instances for e2e and live specs (M6 §IPC), set up over the renderer's own bridge
+ * (`createInstance`, `saveInstanceKey`) or typed into the settings card the way a user does
+ * (`createInstanceInCard`, `saveInstanceKeyInCard`; Playwright locators only, no DOM types, so the
+ * unit tests can import them too). Every helper that puts a key into an instance runs
+ * `assertInstanceKeyStaysHome` first and fills nothing when it throws: an official-looking key
+ * goes into an instance on api.anthropic.com only (M6 §点名; 02 M4). The launch-time check
+ * (`assertOfficialKeyStaysHome`) never sees an instance's key, which is typed into the app rather
+ * than handed in its environment.
  */
 import type { Page } from '@playwright/test'
 import type { TenonBridge } from '../../src/preload/index.js'
@@ -42,13 +45,25 @@ export async function createInstance(page: Page, instance: NewInstance): Promise
   return answer.data.id
 }
 
-/** `provider.configure` with an instance's new key, after the guard reads where it would go. */
-export async function saveInstanceKey(page: Page, id: string, apiKey: string): Promise<void> {
+/** The instances `customVendor.list` answers, in their order: ids and addresses only. */
+async function listInstances(page: Page): Promise<{ id: string; baseURL: string }[]> {
   const listed = (await page.evaluate(
     async () => await (globalThis as unknown as Renderer).tenon.invoke('customVendor.list', {}),
   )) as { ok: boolean; data?: { instances: { id: string; baseURL: string }[] } }
-  const baseURL = listed.data?.instances.find((entry) => entry.id === id)?.baseURL
+  if (!listed.ok || listed.data === undefined) throw new Error('customVendor.list failed')
+  return listed.data.instances
+}
+
+/** Where an instance's key would go: its fixed address (T2), read from main. */
+async function addressOf(page: Page, id: string): Promise<string> {
+  const baseURL = (await listInstances(page)).find((entry) => entry.id === id)?.baseURL
   if (baseURL === undefined) throw new Error(`no custom vendor instance ${id}`)
+  return baseURL
+}
+
+/** `provider.configure` with an instance's new key, after the guard reads where it would go. */
+export async function saveInstanceKey(page: Page, id: string, apiKey: string): Promise<void> {
+  const baseURL = await addressOf(page, id)
   assertInstanceKeyStaysHome(baseURL, apiKey)
   const answer = (await page.evaluate(
     async (request) =>
@@ -57,5 +72,67 @@ export async function saveInstanceKey(page: Page, id: string, apiKey: string): P
   )) as { ok: boolean; data?: { ok: boolean } }
   if (!answer.ok || answer.data?.ok !== true) {
     throw new Error(`provider.configure was refused for ${id}: ${JSON.stringify(answer.data)}`)
+  }
+}
+
+/** How long a settings card write may take before a helper gives up on it. */
+const CARD_WRITE_MS = 10_000
+
+/**
+ * 「新建自定义厂商」 on the settings card, which must be open: 「其他兼容端点」 with the address, the
+ * wire, the name and the key typed, then 「创建」 (M6 §IPC `customVendor.create`, the path a user
+ * takes). Resolves to the new instance's id once the form has closed; throws with the form's own
+ * refusal (its catalogue key) when it stays open.
+ */
+export async function createInstanceInCard(page: Page, instance: NewInstance): Promise<string> {
+  assertInstanceKeyStaysHome(instance.baseURL, instance.apiKey)
+  const before = new Set((await listInstances(page)).map((entry) => entry.id))
+  await page.getByTestId('custom-vendor-new').click()
+  // 「其他兼容端点」 is the source with no preset id (CustomVendorSection.tsx `OTHER`).
+  await page.getByTestId('custom-vendor-new-source').selectOption('')
+  await page.getByTestId('custom-vendor-new-wire').selectOption(instance.wire)
+  await page.getByTestId('custom-vendor-new-baseurl').fill(instance.baseURL)
+  await page.getByTestId('custom-vendor-new-name').fill(instance.displayName)
+  await page.getByTestId('custom-vendor-new-key').fill(instance.apiKey)
+  await page.getByTestId('custom-vendor-new-submit').click()
+  // Created: the form closes and its 「新建自定义厂商」 button is back. Refused: the form says why.
+  const error = page.getByTestId('custom-vendor-new-error')
+  await page.getByTestId('custom-vendor-new').or(error).first().waitFor({ timeout: CARD_WRITE_MS })
+  if (await error.isVisible()) {
+    throw new Error(`the card refused the instance: ${await error.getAttribute('data-message')}`)
+  }
+  const created = (await listInstances(page)).filter((entry) => !before.has(entry.id))
+  if (created.length !== 1) throw new Error(`expected one new instance, found ${created.length}`)
+  return created[0]?.id ?? ''
+}
+
+/**
+ * Types an instance's key into its card on the open settings card and presses 「保存 key」 (M6 §key:
+ * `provider.configure`, which clears every probe of it). The guard reads where the key would go
+ * first and types nothing when it throws. Resolves once the card took it — the field empties —
+ * and throws with the card's own refusal otherwise.
+ */
+export async function saveInstanceKeyInCard(page: Page, id: string, apiKey: string): Promise<void> {
+  // An empty field would read as saved at once: clearing a key is a step of a test's own.
+  if (apiKey === '') throw new Error('saveInstanceKeyInCard types a key; it does not clear one')
+  assertInstanceKeyStaysHome(await addressOf(page, id), apiKey)
+  const toggle = page.getByTestId(`custom-vendor-toggle-${id}`)
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  const field = page.getByTestId(`custom-vendor-key-${id}`)
+  await field.fill(apiKey)
+  await page.getByTestId(`custom-vendor-key-save-${id}`).click()
+  const message = page.getByTestId(`custom-vendor-message-${id}`)
+  const deadline = Date.now() + CARD_WRITE_MS
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- polled until the write answers
+    if (await message.isVisible()) {
+      // oxlint-disable-next-line no-await-in-loop -- once, on the way out
+      throw new Error(`the card refused the key: ${await message.getAttribute('data-message')}`)
+    }
+    // oxlint-disable-next-line no-await-in-loop -- polled until the write answers
+    if ((await field.inputValue()) === '') return
+    if (Date.now() > deadline) throw new Error(`the key of ${id} was not saved in time`)
+    // oxlint-disable-next-line no-await-in-loop -- polled until the write answers
+    await page.waitForTimeout(50)
   }
 }

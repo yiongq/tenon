@@ -21,7 +21,12 @@ import {
   assertOfficialKeyStaysHome,
 } from '../e2e/helpers/app-env.js'
 import { OFFICIAL_MODEL_ENV, officialGroup, originMapRefusal } from '../e2e/helpers/live-env.js'
-import { createInstance, saveInstanceKey } from '../e2e/helpers/instances.js'
+import {
+  createInstance,
+  createInstanceInCard,
+  saveInstanceKey,
+  saveInstanceKeyInCard,
+} from '../e2e/helpers/instances.js'
 import liveGlobalSetup from '../e2e/helpers/live-global-setup.js'
 import liveConfig from '../playwright.live.config.js'
 import type { EnvRecord, LiveGroup } from '../e2e/helpers/live-env.js'
@@ -198,10 +203,14 @@ describe('the instance key guard (M6 §点名, 验收 27)', () => {
 })
 
 const VENDOR = 'https://vendor.e2e.test'
-/** A Page whose `evaluate` records each bridge call and answers from `answers` in order. */
+/**
+ * A Page whose `evaluate` records each bridge call and answers from `answers` in order; its
+ * `getByTestId` records what a helper would have typed into or pressed on the settings card.
+ */
 function page(answers: unknown[]) {
   const evaluate = vi.fn<(...call: unknown[]) => Promise<unknown>>(async () => answers.shift())
-  return { page: { evaluate } as unknown as Page, evaluate }
+  const getByTestId = vi.fn<(testId: string) => never>()
+  return { page: { evaluate, getByTestId } as unknown as Page, evaluate, getByTestId }
 }
 /** `customVendor.list`'s answer with one instance at `baseURL`. */
 function listing(baseURL: string) {
@@ -260,6 +269,27 @@ describe('the helpers that fill an instance’s key run the guard first (M6 §�
     await expect(saveInstanceKey(allowed, 'custom-1', OFFICIAL_KEY)).resolves.toBeUndefined()
     expect(sent).toHaveBeenCalledTimes(2)
     expect(sent.mock.calls[1]?.[1]).toEqual({ id: 'custom-1', values: { apiKey: OFFICIAL_KEY } })
+  })
+
+  it('the settings card helpers refuse it before touching the card (第 10 步: the path a user takes)', async () => {
+    const { page: creating, evaluate, getByTestId } = page([])
+    await expect(
+      createInstanceInCard(creating, {
+        displayName: 'Vendor',
+        wire: 'anthropic-messages',
+        baseURL: VENDOR,
+        apiKey: OFFICIAL_KEY,
+      }),
+    ).rejects.toThrow(/official Anthropic key/)
+    expect(evaluate).not.toHaveBeenCalled()
+    expect(getByTestId).not.toHaveBeenCalled()
+    // The key field: the address is read first (the list), and nothing on the card is typed into.
+    const { page: keying, evaluate: read, getByTestId: typed } = page([listing(VENDOR)])
+    await expect(saveInstanceKeyInCard(keying, 'custom-1', OFFICIAL_KEY)).rejects.toThrow(
+      /official Anthropic key/,
+    )
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(typed).not.toHaveBeenCalled()
   })
 })
 
