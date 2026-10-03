@@ -6,7 +6,8 @@
  * And M6 验收 27: the origin map test seam is never inherited, never shares an app environment with
  * an official-looking key, and stops the live suite; an official-looking key is never filled into
  * an instance on another host than api.anthropic.com. And the DeepSeek key (M6 验收 29, plan「开工前读」
- * key): never inherited, read from the runner's environment alone, refused in `.env.local`.
+ * key): never inherited, read from the runner's environment alone, refused in `.env.local`; typed
+ * into a preset instance only once the card shows the address the guard read (第 12 步).
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -233,6 +234,37 @@ function page(answers: unknown[]) {
 function listing(baseURL: string) {
   return { ok: true, data: { instances: [{ id: 'custom-1', baseURL }] } }
 }
+const DEEPSEEK_URL = 'https://api.deepseek.com'
+/** The DeepSeek live group's instance: the preset's openai-chat address (M6 §预设). */
+const DEEPSEEK_PRESET = {
+  displayName: 'DeepSeek',
+  preset: 'deepseek',
+  region: 'default',
+  wire: 'openai-chat',
+  baseURL: DEEPSEEK_URL,
+  apiKey: DEEPSEEK_KEY,
+} as const
+/**
+ * A Page with the create form on it: `evaluate` answers from `answers` in order, the preset's
+ * read-only address reads `address`, the form closes on submit without a refusal, and `log` keeps
+ * what was pressed, chosen, read and typed on the card, in order.
+ */
+function cardPage(answers: unknown[], address: string) {
+  const log: string[] = []
+  const evaluate = vi.fn<(...call: unknown[]) => Promise<unknown>>(async () => answers.shift())
+  const locator = (testId: string) => ({
+    click: async () => void log.push(`click ${testId}`),
+    selectOption: async (value: string) => void log.push(`select ${testId} ${value}`),
+    fill: async (value: string) => void log.push(`fill ${testId} ${value}`),
+    textContent: async () => {
+      log.push(`read ${testId}`)
+      return address
+    },
+    or: () => ({ first: () => ({ waitFor: async () => undefined }) }),
+    isVisible: async () => false,
+  })
+  return { page: { evaluate, getByTestId: vi.fn<typeof locator>(locator) } as unknown as Page, log }
+}
 /** The live global setup's refusal, or null when it lets the run go on. */
 function globalSetupRefusal(): string | null {
   try {
@@ -307,6 +339,94 @@ describe('the helpers that fill an instance’s key run the guard first (M6 §�
     )
     expect(read).toHaveBeenCalledTimes(1)
     expect(typed).not.toHaveBeenCalled()
+    // A preset's address is guarded as a typed one is (第 12 步: DeepSeek from its preset).
+    const { page: preset, evaluate: listed, getByTestId: chosen } = page([])
+    await expect(
+      createInstanceInCard(preset, { ...DEEPSEEK_PRESET, apiKey: OFFICIAL_KEY }),
+    ).rejects.toThrow(/official Anthropic key/)
+    expect(listed).not.toHaveBeenCalled()
+    expect(chosen).not.toHaveBeenCalled()
+  })
+})
+
+describe('a preset instance on the settings card (M6 验收 29, §预设)', () => {
+  it('types the key only once the card shows the guarded address, and no address', async () => {
+    const { page: shown, log } = cardPage(
+      [{ ok: true, data: { instances: [] } }, listing(DEEPSEEK_URL)],
+      DEEPSEEK_URL,
+    )
+    await expect(createInstanceInCard(shown, DEEPSEEK_PRESET)).resolves.toBe('custom-1')
+    expect(log).toEqual([
+      'click custom-vendor-new',
+      'select custom-vendor-new-source deepseek',
+      'select custom-vendor-new-region default',
+      'select custom-vendor-new-wire openai-chat',
+      'read custom-vendor-new-address',
+      'fill custom-vendor-new-name DeepSeek',
+      `fill custom-vendor-new-key ${DEEPSEEK_KEY}`,
+      'click custom-vendor-new-submit',
+    ])
+  })
+
+  it('types no key when the preset gives another address, naming no key', async () => {
+    const { page: shown, log } = cardPage([{ ok: true, data: { instances: [] } }], VENDOR)
+    const refused = createInstanceInCard(shown, DEEPSEEK_PRESET)
+    await expect(refused).rejects.toThrow(/gives https:\/\/vendor\.e2e\.test, not .*typing no key/)
+    await expect(refused).rejects.not.toThrow(DEEPSEEK_KEY)
+    expect(log.filter((line) => line.startsWith('fill custom-vendor-new-key'))).toEqual([])
+    expect(log).not.toContain('click custom-vendor-new-submit')
+    // The same host on another path (the preset's anthropic-messages address) is another address.
+    const { page: sameHost, log: tried } = cardPage(
+      [{ ok: true, data: { instances: [] } }],
+      `${DEEPSEEK_URL}/anthropic`,
+    )
+    await expect(createInstanceInCard(sameHost, DEEPSEEK_PRESET)).rejects.toThrow(
+      /gives https:\/\/api\.deepseek\.com\/anthropic, not .*typing no key/,
+    )
+    expect(tried.filter((line) => line.startsWith('fill custom-vendor-new-key'))).toEqual([])
+    expect(tried).not.toContain('click custom-vendor-new-submit')
+  })
+
+  it('refuses an instance main stored at another address than the preset showed', async () => {
+    const { page: shown } = cardPage(
+      [{ ok: true, data: { instances: [] } }, listing(VENDOR)],
+      DEEPSEEK_URL,
+    )
+    await expect(createInstanceInCard(shown, DEEPSEEK_PRESET)).rejects.toThrow(
+      /is at https:\/\/vendor\.e2e\.test, not https:\/\/api\.deepseek\.com/,
+    )
+    // The same host on another path is another address, as on the card.
+    const { page: sameHost } = cardPage(
+      [{ ok: true, data: { instances: [] } }, listing(`${DEEPSEEK_URL}/anthropic`)],
+      DEEPSEEK_URL,
+    )
+    await expect(createInstanceInCard(sameHost, DEEPSEEK_PRESET)).rejects.toThrow(
+      /is at https:\/\/api\.deepseek\.com\/anthropic, not https:\/\/api\.deepseek\.com/,
+    )
+  })
+
+  it('a typed address never touches the preset fields', async () => {
+    const { page: typed, log } = cardPage(
+      [{ ok: true, data: { instances: [] } }, listing(VENDOR)],
+      DEEPSEEK_URL,
+    )
+    await expect(
+      createInstanceInCard(typed, {
+        displayName: 'Vendor',
+        wire: 'openai-chat',
+        baseURL: VENDOR,
+        apiKey: ZHIPU_KEY,
+      }),
+    ).resolves.toBe('custom-1')
+    expect(log).toEqual([
+      'click custom-vendor-new',
+      'select custom-vendor-new-source ',
+      'select custom-vendor-new-wire openai-chat',
+      `fill custom-vendor-new-baseurl ${VENDOR}`,
+      'fill custom-vendor-new-name Vendor',
+      `fill custom-vendor-new-key ${ZHIPU_KEY}`,
+      'click custom-vendor-new-submit',
+    ])
   })
 })
 

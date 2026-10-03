@@ -68,6 +68,11 @@ export interface CustomModelRow {
  * writes whatever the outcome (§合成; 验收 16), so a row that fell back to text only still sends the
  * one output field its endpoint takes. `checksThinkingPrefix` is written false on every row, so an id
  * that happens to be one of 02's two prefix-checking models still reads false (Q2; M6 不变量 17).
+ *
+ * A passed openai-chat row always echoes thinking (§合成 `thinkingPreservationFormat`,
+ * `reasoningEchoField`; 推出的读法 16): under the field the probe saw, `reasoning_content` when it saw
+ * none — a vendor may think only from ② on (deepseek-flash, 2026-10-03), and the echo moves no byte
+ * until the history holds a thinking block.
  */
 export function customModelInfo(
   d: Pick<CustomVendorDescription, 'id' | 'wire'>,
@@ -75,10 +80,9 @@ export function customModelInfo(
 ): ModelInfo {
   const passed = row.probe?.outcome === 'passed'
   const openAIChat = d.wire === 'openai-chat'
-  // Read only off a passing snapshot, and only on the wire that has the field: an
-  // anthropic-messages row writes neither this nor `maxTokensField` (T10), whatever a hand-edited
-  // snapshot holds.
-  const reasoningField = passed && openAIChat ? (row.probe?.reasoningField ?? null) : null
+  // Only a passing row on the wire that has the field echoes: an anthropic-messages row writes
+  // neither this nor `maxTokensField` (T10), whatever a hand-edited snapshot holds.
+  const echoes = passed && openAIChat
   const model: ModelInfo = {
     id: row.id,
     providerId: d.id,
@@ -92,18 +96,19 @@ export function customModelInfo(
     supportsVision: false,
     supportsCacheControl: false,
     // Q2: a non-empty signature goes back verbatim on the anthropic wire whatever the probe said;
-    // the openai-chat wire echoes only the thinking field the probe saw.
+    // the openai-chat wire echoes on a passed row alone (§合成; 推出的读法 16).
     thinkingPreservationFormat: openAIChat
-      ? reasoningField === null
-        ? 'drop'
-        : 'reasoning-content'
+      ? passed
+        ? 'reasoning-content'
+        : 'drop'
       : 'signed-blocks',
     // §模型行「合成」: the openai-chat wire asks for usage (`stream_options.include_usage`) and
     // reads it on the standard path only; the anthropic encoder never reads this field.
     usageNeedsOptIn: openAIChat,
     checksThinkingPrefix: false,
   }
-  if (reasoningField !== null) model.reasoningEchoField = reasoningField
+  // §合成「reasoningEchoField」: the snapshot's field, `reasoning_content` when ① showed none.
+  if (echoes) model.reasoningEchoField = row.probe?.reasoningField ?? 'reasoning_content'
   // §合成「maxTokensField」: not gated on `outcome` (验收 16): an endpoint that refused `max_tokens`
   // refuses it on a text-only request too.
   if (openAIChat && row.probe?.maxTokensField === 'max_completion_tokens') {

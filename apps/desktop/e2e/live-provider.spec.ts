@@ -26,16 +26,17 @@ import {
 } from '@tenon-app/kernel/testing'
 import { createInstanceInCard } from './helpers/instances.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
-import { compact, officialGroup } from './helpers/live-env.js'
-import type { LiveGroup } from './helpers/live-env.js'
+import { compact, deepseekKey, officialGroup } from './helpers/live-env.js'
+import type { InstanceKey, LiveGroup } from './helpers/live-env.js'
+import { echoGaps, echoedReasoning, expectedEchoes } from './helpers/reasoning-echo.js'
 import { expect, test } from './helpers/test.js'
 import { makeFolderTree, send, startTask } from './helpers/tools.js'
 import type { FolderTree } from './helpers/tools.js'
 
 /**
  * Acceptances 4 and 21 against REAL endpoints — the only automated coverage the spec gives the
- * real keychain path and the real wire formats — and M6 acceptance 28's custom vendor instances.
- * Opt-in: CI never runs it.
+ * real keychain path and the real wire formats — and M6 acceptances 28 and 29's custom vendor
+ * instances. Opt-in: CI never runs it.
  *
  * HOW TO RUN IT
  *
@@ -57,6 +58,11 @@ import type { FolderTree } from './helpers/tools.js'
  *      environment (from a password manager, not typed into the command line); absent ⇒ the
  *      official group skips. TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL picks its model (default: the
  *      definition's first row). helpers/live-env.ts says why the two Anthropic groups cannot mix.
+ *      The DeepSeek key (M6 验收 29) follows the same rule: TENON_LIVE_DEEPSEEK_KEY in this run's
+ *      environment only, read from the login keychain (service `tenon-live-deepseek`) for that one
+ *      run and never typed into the command line; absent ⇒ the DeepSeek instance group skips,
+ *      found in `.env.local` ⇒ it fails. It is typed into the instance's settings card, never
+ *      handed to an app's environment.
  *   3. `pnpm test:live`, the ONLY command that selects `playwright.live.config.ts` — the default
  *      config ignores this file, so `pnpm test:e2e` cannot collect it whatever is in your shell.
  *
@@ -1009,6 +1015,8 @@ interface InstanceRecord {
   hosts: string[]
   /** The row's stored snapshot after 「探测」; null while there is none. */
   probe: Readonly<Record<string, unknown>> | null
+  /** The two limits 「获取模型列表」 prefilled, as the fields held them (DeepSeek, 验收 29). */
+  prefilled?: { contextLimit: string; maxOutputTokens: string }
   requests: WireRequest[]
   attempts: unknown[]
   ends: unknown[]
@@ -1022,22 +1030,30 @@ function offeredTools(body: unknown): string[] {
   return tools.map((tool) => tool.function?.name ?? tool.name ?? '')
 }
 
+/** An instance's model row as `customVendor.list` answers it. */
+interface ListedRow {
+  readonly id: string
+  readonly contextLimit: number
+  readonly maxOutputTokens: number
+  readonly probe?: Readonly<Record<string, unknown>>
+}
+
+/** An instance's row for `model` as `customVendor.list` answers it; null when it has none. */
+async function rowOf(page: Page, id: string, model: string): Promise<ListedRow | null> {
+  const answer = (await page.evaluate(() => window.tenon.invoke('customVendor.list', {}))) as {
+    data?: { instances: ReadonlyArray<{ id: string; models: readonly ListedRow[] }> }
+  }
+  const instance = answer.data?.instances.find((entry) => entry.id === id)
+  return instance?.models.find((row) => row.id === model) ?? null
+}
+
 /** The stored probe snapshot of an instance's row, as `customVendor.list` answers it. */
 async function probeOf(
   page: Page,
   id: string,
   model: string,
 ): Promise<Readonly<Record<string, unknown>> | null> {
-  const answer = (await page.evaluate(() => window.tenon.invoke('customVendor.list', {}))) as {
-    data?: {
-      instances: ReadonlyArray<{
-        id: string
-        models: ReadonlyArray<{ id: string; probe?: Readonly<Record<string, unknown>> }>
-      }>
-    }
-  }
-  const instance = answer.data?.instances.find((entry) => entry.id === id)
-  return instance?.models.find((row) => row.id === model)?.probe ?? null
+  return (await rowOf(page, id, model))?.probe ?? null
 }
 
 /**
@@ -1056,8 +1072,8 @@ function writeInstanceRecord(info: TestInfo, record: InstanceRecord): void {
     destination,
     `${JSON.stringify({ title: info.title, status: info.status, ...record }, null, 2)}\n`,
   )
-  const { date, model, hosts, probe } = record
-  process.stderr.write(`${JSON.stringify({ date, model, hosts, probe })}\n`)
+  const { date, model, hosts, probe, prefilled } = record
+  process.stderr.write(`${JSON.stringify({ date, model, hosts, probe, prefilled })}\n`)
 }
 
 for (const instance of ZHIPU_INSTANCES) {
@@ -1226,6 +1242,296 @@ for (const instance of ZHIPU_INSTANCES) {
     })
   })
 }
+
+/**
+ * M6 验收 29 (plan step 12, 〔DeepSeek live〕): an openai-chat instance on DeepSeek made from its
+ * preset on the settings card; 「获取模型列表」 prefills deepseek-flash's two limits from GET /models
+ * (`context_window`, `max_output_tokens`: §列表与上限); 「探测」 passes with usage seen and
+ * `reasoning_content` or no thinking field (验收 29 as revised 2026-10-03: deepseek-flash streams an
+ * empty `reasoning_content` in ① and thinks from ② on); then a task session with tools over two user
+ * turns, each reading a file.
+ *
+ * DeepSeek thinks by default and documents a 400 for a request that carries tools without every
+ * earlier assistant turn's `reasoning_content` — a turn that made no tool call included (vendor
+ * research: api-docs.deepseek.com/guides/thinking_mode; M6 §错误's known limit is the other side of
+ * it; deepseek-flash answered 200 either way on 2026-10-03). A passed row echoes under
+ * `reasoning_content` whatever ① showed (§模型行「合成」; 推出的读法 16). The request record shows
+ * it, not the fake network: every assistant turn that carried thinking goes back with it in every
+ * later request, in order, the probe's ② included, and no request was answered 400.
+ *
+ * The key is TENON_LIVE_DEEPSEEK_KEY in this run's environment alone (plan「开工前读」key: the lead
+ * reads it from the login keychain for that one run); `deepseekKey` fails the group when
+ * `.env.local` holds it. It is typed into the create form on the in-memory secrets seam, never
+ * handed to an app's environment. The record is the zhipu instance groups' plus the two prefilled
+ * limits.
+ */
+const DEEPSEEK = {
+  title: 'live custom vendor · deepseek openai-chat',
+  preset: 'deepseek',
+  region: 'default',
+  wire: 'openai-chat',
+  baseURL: 'https://api.deepseek.com',
+  model: 'deepseek-flash',
+  path: '/chat/completions',
+} as const
+/** A limit field as the card holds it once prefilled: a positive integer, in digits. */
+const POSITIVE_INTEGER = /^[1-9]\d*$/
+/** The model list's own bound (§列表与上限: response headers within 30 s), with room to show it. */
+const LIST_MS = 60_000
+
+/** A status the loop resends after (§错误): a 429, or a 5xx. */
+function retried(status: number | null): boolean {
+  return status === 429 || (status !== null && status >= 500)
+}
+
+/** A turn only a Read of `file` can answer. */
+function readTurn(lead: string, file: string): string {
+  return `${lead} the Read tool to read ${file}. Reply with the codeword in it and nothing else.`
+}
+
+/** Each `message/assistant`'s thinking text, in the order written. */
+function assistantThinking(facts: readonly Fact[]): string[] {
+  return named(facts, 'message/assistant').map((fact) =>
+    (fact.payload['content'] as Array<{ type: string; text?: string }>)
+      .filter((block) => block.type === 'thinking')
+      .map((block) => block.text ?? '')
+      .join(''),
+  )
+}
+
+test.describe(DEEPSEEK.title, () => {
+  const key: InstanceKey = LIVE
+    ? deepseekKey(process.env, fromFile)
+    : { kind: 'absent', reason: 'opt-in' }
+  test.skip(!LIVE, 'opt-in: run `pnpm test:live` with TENON_LIVE_DEEPSEEK_KEY in its environment')
+  test.skip(
+    LIVE && key.kind === 'absent',
+    `skipped: ${key.kind === 'absent' ? key.reason : ''} (see the header of this file)`,
+  )
+  test.describe.configure({ timeout: 1_200_000 })
+
+  let record: InstanceRecord | undefined
+  let tree: FolderTree | undefined
+
+  test.beforeAll(() => {
+    // A key kept where it never goes fails the group rather than skipping it.
+    if (key.kind === 'refused') throw new Error(`${DEEPSEEK.title}: ${key.reason}`)
+  })
+
+  test.afterEach(() => {
+    if (record !== undefined) writeInstanceRecord(test.info(), record)
+    record = undefined
+    tree?.dispose()
+    tree = undefined
+  })
+
+  test('preset, list, probe, two task turns with tools (M6 验收 29, deepseek-flash)', async () => {
+    const alpha = codeword('ALPHA')
+    const beta = codeword('BETA')
+    const folders = makeFolderTree('live-instance-deepseek', {
+      'ws/first.txt': `First notes.\nThe codeword is ${alpha}.\n`,
+      'ws/second.txt': `Second notes.\nThe codeword is ${beta}.\n`,
+    })
+    tree = folders
+    const workspace = join(folders.real, 'ws')
+    const userData = makeUserDataDir('live-instance-deepseek')
+    seedConfig(userData, { locale: 'en' })
+    const kept: InstanceRecord = {
+      date: new Date().toISOString(),
+      wire: DEEPSEEK.wire,
+      baseURL: DEEPSEEK.baseURL,
+      model: DEEPSEEK.model,
+      hosts: [],
+      probe: null,
+      requests: [],
+      attempts: [],
+      ends: [],
+    }
+    record = kept
+    // No provider variable: the key goes in through the card, onto the in-memory secrets seam.
+    const { app, page } = await launchTenon({
+      userData,
+      env: { TENON_MAX_TOKENS: AGENT_MAX_TOKENS },
+      secrets: 'memory',
+    })
+    await recordRequests(app)
+    let id = ''
+    let probeSent = 0
+    try {
+      await page.getByTestId('account-row').click()
+      await page.getByTestId('account-providers').click()
+      await expect(page.getByTestId('custom-vendors')).toBeVisible()
+      // The preset's address is read-only; the helper types the key only once the card shows it.
+      id = await createInstanceInCard(page, {
+        displayName: 'DeepSeek',
+        preset: DEEPSEEK.preset,
+        region: DEEPSEEK.region,
+        wire: DEEPSEEK.wire,
+        baseURL: DEEPSEEK.baseURL,
+        apiKey: key.kind === 'ready' ? key.key : '',
+      })
+      // Creating it sent nothing (T7).
+      expect(await requestsOf(app, '')).toHaveLength(0)
+
+      // 「获取模型列表」: one GET, only now (T7); picking the model prefills both limits (§列表与上限).
+      await page.getByTestId(`custom-vendor-fetch-${id}`).click()
+      const fetched = page.getByTestId(`custom-vendor-fetched-${id}`)
+      const message = page.getByTestId(`custom-vendor-message-${id}`)
+      await expect(fetched.or(message).first()).toBeVisible({ timeout: LIST_MS })
+      await expect(message).toHaveCount(0)
+      expect(
+        (await requestsOf(app, '')).map((sent) => `${sent.method} ${sent.url} ${sent.status}`),
+      ).toEqual([`GET ${DEEPSEEK.baseURL}/models 200`])
+      // Listed, or `selectOption` would wait out the whole case.
+      await expect(fetched.locator(`option[value="${DEEPSEEK.model}"]`)).toHaveCount(1)
+      await fetched.selectOption(DEEPSEEK.model)
+      await expect(page.getByTestId(`custom-vendor-row-id-${id}`)).toHaveValue(DEEPSEEK.model)
+      const prefilled = {
+        contextLimit: await page.getByTestId(`custom-vendor-row-context-${id}`).inputValue(),
+        maxOutputTokens: await page.getByTestId(`custom-vendor-row-output-${id}`).inputValue(),
+      }
+      kept.prefilled = prefilled
+      expect(prefilled.contextLimit).toMatch(POSITIVE_INTEGER)
+      expect(prefilled.maxOutputTokens).toMatch(POSITIVE_INTEGER)
+      // Saved as prefilled, nothing typed over it.
+      await page.getByTestId(`custom-vendor-row-save-${id}`).click()
+      const row = `${id}-${DEEPSEEK.model}`
+      await expect(page.getByTestId(`custom-vendor-row-${row}`)).toBeVisible()
+      expect(await rowOf(page, id, DEEPSEEK.model)).toMatchObject({
+        contextLimit: Number(prefilled.contextLimit),
+        maxOutputTokens: Number(prefilled.maxOutputTokens),
+      })
+
+      // 「探测」: over once the row shows a stored snapshot, or the probe's answer beside it.
+      await page.getByTestId(`custom-vendor-probe-${row}`).click()
+      await expect(
+        page
+          .locator(`[data-testid="custom-vendor-probe-status-${row}"]:not([data-outcome="none"])`)
+          .or(page.getByTestId(`custom-vendor-probe-answer-${row}`))
+          .first(),
+      ).toBeVisible({ timeout: PROBE_MS })
+      kept.probe = await probeOf(page, id, DEEPSEEK.model)
+      probeSent = (await requestsOf(app, DEEPSEEK.path)).length
+      expect(kept.probe).toMatchObject({ outcome: 'passed', reason: null, usageSeen: true })
+      // 验收 29: `reasoning_content`, or none when the model did not think in ①; never `reasoning`.
+      expect(['reasoning_content', null]).toContain(kept.probe?.['reasoningField'])
+      await page.getByTestId('provider-cancel').click()
+      await expect(page.getByTestId('provider-settings')).toBeHidden()
+
+      // Two user turns on the probed row, each with a Read: the second carries the first's turns.
+      await startTask(app, page, workspace)
+      await page.getByTestId('model-menu-trigger').click()
+      const choice = page.getByTestId(`model-row-${row}`)
+      await expect(choice).not.toHaveAttribute('aria-disabled', 'true')
+      await choice.click()
+      await expect(page.getByTestId('model-menu')).toBeHidden()
+      await expect(page.getByTestId('model-menu-current')).toHaveText(DEEPSEEK.model)
+      await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+      await send(page, readTurn('Use', join(workspace, 'first.txt')))
+      await settles(page, alpha)
+      await send(page, readTurn('Now use', join(workspace, 'second.txt')))
+      await settles(page, beta)
+      // A Read in the workspace asks nothing.
+      await expect(page.getByTestId('approval-card')).toHaveCount(0)
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
+      await expect(page.getByTestId('message-error')).toHaveCount(0)
+    } finally {
+      try {
+        const sent = await requestsOf(app, '')
+        kept.hosts = [...new Set(sent.map((request) => new URL(request.url).host))]
+        kept.requests = sent
+      } finally {
+        await app.close()
+      }
+    }
+
+    const facts = tapeFacts(userData)
+    kept.attempts = named(facts, 'provider/attempt_completed').map((fact) => fact.payload)
+    kept.ends = named(facts, 'execution/run_terminal').map((fact) => fact.payload['reason'])
+
+    // The Tape: two Runs on the probed row, with the tools (M6 §不发工具), at its own origin (不变量 3).
+    const selected = {
+      providerId: id,
+      modelId: DEEPSEEK.model,
+      capabilitySource: 'probed',
+      endpointOrigin: DEEPSEEK.baseURL,
+    }
+    expect(named(facts, 'session/model_selected').map((fact) => fact.payload)).toEqual([
+      selected,
+      selected,
+    ])
+    expect(named(facts, 'view/tools_withheld')).toHaveLength(0)
+    const calls = named(facts, 'tool/call')
+    expect(calls.filter((fact) => fact.payload['name'] === 'Read').length).toBeGreaterThanOrEqual(2)
+    const results = named(facts, 'tool/result')
+    expect(results.map((fact) => fact.payload['providerToolCallId'])).toEqual(
+      calls.map((fact) => fact.payload['providerToolCallId']),
+    )
+    const read = JSON.stringify(results.map((fact) => fact.payload['content']))
+    expect(read).toContain(alpha)
+    expect(read).toContain(beta)
+    expect(runsOf(facts)).toEqual({
+      ends: ['completed', 'completed'],
+      causes: ['user-message', 'user-message'],
+    })
+
+    // The wire: the list, the probe and both turns went to the preset's address alone (不变量 3),
+    // and no request was answered 400 — DeepSeek's answer to an echo left out (验收 29).
+    expect(kept.hosts).toEqual([new URL(DEEPSEEK.baseURL).host])
+    expect(kept.requests.map((request) => request.status)).not.toContain(400)
+    const chat = kept.requests.filter((request) => request.url.endsWith(DEEPSEEK.path))
+    for (const request of chat) {
+      expect(request.url.startsWith(`${DEEPSEEK.baseURL}/`)).toBe(true)
+      expect(request.body?.model).toBe(DEEPSEEK.model)
+    }
+    // A 429 or 5xx the loop retried (§错误) still lets a turn complete, as the Tape says it did;
+    // anything else fails. Each turn is at least a call and its answer.
+    const round = chat.slice(probeSent)
+    const statuses = round.map((request) => request.status)
+    expect(statuses.filter((status) => status !== 200 && !retried(status))).toEqual([])
+    expect(round.at(-1)?.status).toBe(200)
+    expect(statuses.filter((status) => status === 200).length).toBeGreaterThanOrEqual(4)
+    for (const request of round) {
+      expect(offeredTools(request.body)).toContain('Read')
+      expect(offeredTools(request.body)).not.toContain('WebSearch')
+      // No thinking parameter (不变量 11): DeepSeek thinks by default.
+      expect(request.body).not.toHaveProperty('thinking')
+      expect(request.body).not.toHaveProperty('reasoning_effort')
+    }
+
+    // 验收 29「凡带思考内容的助手轮，之后每次请求都以 reasoning_content 回传」: the probe's ② carries
+    // ①'s turn back with its thinking when ① thought (the snapshot names the field) and with none
+    // when it did not.
+    const probeTwo = chat.slice(0, probeSent).filter((request) => {
+      return echoedReasoning(request.body).length > 0
+    })
+    expect(probeTwo).toHaveLength(1)
+    const thoughtInOne = kept.probe?.['reasoningField'] === 'reasoning_content'
+    expect(echoGaps(probeTwo.map((request) => request.body))).toEqual(
+      thoughtInOne ? [] : [{ request: 0, turn: 0 }],
+    )
+    // Each session request carries the Tape's thinking of the turns before it, in order, a turn
+    // that did not think with none; the last one all of them but its own answer's: the first
+    // turn's reply, which made no tool call, among them.
+    const thinking = assistantThinking(facts)
+    expect(thinking.length).toBeGreaterThanOrEqual(4)
+    const expected = expectedEchoes(thinking)
+    expect(echoedReasoning(round[0]?.body ?? null)).toEqual([])
+    for (const request of round) {
+      const echoed = echoedReasoning(request.body)
+      expect(echoed).toEqual(expected.slice(0, echoed.length))
+    }
+    const last = round.at(-1)?.body ?? null
+    expect(echoedReasoning(last)).toEqual(expected.slice(0, -1))
+    // The echo was exercised: some earlier turn thought, and it went back.
+    expect(echoedReasoning(last).some((text) => text !== null)).toBe(true)
+    expect(
+      last?.messages?.some(
+        (message) => message.role === 'assistant' && (message.tool_calls ?? []).length === 0,
+      ),
+    ).toBe(true)
+  })
+})
 
 /** Step 28: official protocol probe, one request per model and no SDK retries or main Tape. */
 test.describe('live search probe · anthropic official', () => {

@@ -357,7 +357,14 @@ describe('the two steps (§两步, Q5)', () => {
     const row = d.models[0]
     if (row === undefined) throw new Error('no row')
     const stored = customModelInfo(d, { ...row, probe: run.snapshot })
+    expect(run.models[1]).toEqual(stored)
     expect(modelWireHash(run.models[1] as ModelInfo)).toBe(modelWireHash(stored))
+    // No field seen in ①, and the row a pass stores still echoes, under `reasoning_content` (§合成;
+    // 推出的读法 16): thinking that only starts in ② goes back on the row's later requests.
+    expect(stored).toMatchObject({
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+    })
     // The other way round: ① reports no usage, ② does.
     const reverse = await probe(d, [
       sse(openAIFixture.NO_USAGE_FRAMES.slice(0, 1).concat(CALL_WITHOUT_USAGE)),

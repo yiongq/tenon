@@ -24,6 +24,7 @@ import type {
   CustomVendorDescription,
   HostNetwork,
   InternalMessage,
+  ModelInfo,
   ProbeSnapshot,
   Provider,
   TapeEntry,
@@ -239,7 +240,8 @@ describe('customModelInfo (§模型行「合成」; 验收 13)', () => {
       maxTokensField: 'max_completion_tokens',
       checksThinkingPrefix: false,
     })
-    // No thinking field seen: nothing to echo, and max_tokens is the default key, so not written.
+    // No thinking field seen in ①: it still echoes, under `reasoning_content` (§合成; 推出的读法 16),
+    // and max_tokens is the default key, so not written.
     expect(customModelInfo(d, { ...ROW, probe: passed() })).toEqual({
       id: 'vendor-model',
       providerId: OPENAI_ID,
@@ -250,10 +252,82 @@ describe('customModelInfo (§模型行「合成」; 验收 13)', () => {
       supportsStreamingToolCalls: true,
       supportsVision: false,
       supportsCacheControl: false,
-      thinkingPreservationFormat: 'drop',
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
       usageNeedsOptIn: true,
       checksThinkingPrefix: false,
     })
+    // The `reasoning` spelling the probe saw is the one echoed.
+    expect(
+      customModelInfo(d, { ...ROW, probe: passed({ reasoningField: 'reasoning' }) }),
+    ).toMatchObject({
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning',
+    })
+  })
+
+  it('推出的读法 16: a passed row that saw no thinking field in ① echoes later thinking as reasoning_content', () => {
+    // deepseek-flash (2026-10-03): empty `reasoning_content` in ①, thinking from ② on.
+    const model = customModelInfo(description('openai-chat'), { ...ROW, probe: passed() })
+    const encoded = encodeOpenAIChat(
+      { model, messages: thinkingFrom(OPENAI_ID), tools: [READ_TOOL] },
+      OPENAI_ID,
+    )
+    expect(encoded.thinkingDecisions).toEqual([{ action: 'echo', reason: 'same-model' }])
+    const [, assistant] = (encoded.body as { messages: Record<string, unknown>[] }).messages
+    expect(assistant).toEqual({
+      role: 'assistant',
+      content: 'answer',
+      reasoning_content: 'thinking on an instance',
+    })
+    // Without tools rule 4 sends nothing back, as on any reasoning-content row.
+    const bare = encodeOpenAIChat({ model, messages: thinkingFrom(OPENAI_ID) }, OPENAI_ID)
+    expect(bare.thinkingDecisions).toEqual([{ action: 'drop', reason: 'no-tools' }])
+    expect(JSON.stringify(bare.body)).not.toContain('reasoning_content')
+  })
+
+  it('推出的读法 16: a history with no thinking blocks encodes identically under the old and the revised rule', () => {
+    const revised = customModelInfo(description('openai-chat'), { ...ROW, probe: passed() })
+    // The rule before 2026-10-03: no thinking field in the snapshot meant `drop` and no echo field.
+    const { reasoningEchoField: _field, ...rest } = revised
+    const old: ModelInfo = { ...rest, thinkingPreservationFormat: 'drop' }
+    const messages: InternalMessage[] = [
+      ASK,
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Reading.' },
+          { type: 'tool-request', id: 'call_1', name: 'Read', input: { file_path: '/a.txt' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool-response',
+            id: 'call_1',
+            content: [{ type: 'text', text: 'ALPHA' }],
+            isError: false,
+          },
+        ],
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'ALPHA' }] },
+      ASK,
+    ]
+    for (const tools of [[READ_TOOL], undefined]) {
+      const before = encodeOpenAIChat(
+        { model: old, messages, ...(tools ? { tools } : {}) },
+        OPENAI_ID,
+      )
+      const after = encodeOpenAIChat(
+        { model: revised, messages, ...(tools ? { tools } : {}) },
+        OPENAI_ID,
+      )
+      expect(after.body).toEqual(before.body)
+      expect(after.promptHash).toBe(before.promptHash)
+      expect(after.thinkingDecisions).toEqual([])
+      expect(before.thinkingDecisions).toEqual([])
+    }
   })
 
   it('synthesises a passed anthropic-messages row, which never writes the openai-chat fields', () => {

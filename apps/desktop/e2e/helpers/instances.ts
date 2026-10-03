@@ -21,7 +21,7 @@ type Renderer = { readonly tenon: TenonBridge }
 export interface NewInstance {
   readonly displayName: string
   readonly wire: 'openai-chat' | 'anthropic-messages'
-  /** «其他兼容端点»: the address as typed. Presets are chosen on the settings card. */
+  /** «其他兼容端点»: the address as typed; a `PresetInstance`'s, the one its region gives. */
   readonly baseURL: string
   readonly apiKey: string
 }
@@ -79,19 +79,49 @@ export async function saveInstanceKey(page: Page, id: string, apiKey: string): P
 const CARD_WRITE_MS = 10_000
 
 /**
- * 「新建自定义厂商」 on the settings card, which must be open: 「其他兼容端点」 with the address, the
- * wire, the name and the key typed, then 「创建」 (M6 §IPC `customVendor.create`, the path a user
- * takes). Resolves to the new instance's id once the form has closed; throws with the form's own
- * refusal (its catalogue key) when it stays open.
+ * A preset's region on the settings card (M6 §预设): main looks its address up by the two ids, so
+ * `baseURL` here is the address the test expects that region to give for `wire` — what the guard
+ * reads, and what the card must show before the key is typed.
  */
-export async function createInstanceInCard(page: Page, instance: NewInstance): Promise<string> {
+export interface PresetInstance extends NewInstance {
+  readonly preset: string
+  readonly region: string
+}
+
+/**
+ * 「新建自定义厂商」 on the settings card, which must be open: 「其他兼容端点」 with the address typed,
+ * or a preset with its region, then the wire, the name and the key, then 「创建」 (M6 §IPC
+ * `customVendor.create`, the path a user takes). A preset's read-only address must be `baseURL`
+ * before the key is typed, and the instance main stored must be at it. Resolves to the new
+ * instance's id once the form has closed; throws with the form's own refusal (its catalogue key)
+ * when it stays open.
+ */
+export async function createInstanceInCard(
+  page: Page,
+  instance: NewInstance | PresetInstance,
+): Promise<string> {
   assertInstanceKeyStaysHome(instance.baseURL, instance.apiKey)
   const before = new Set((await listInstances(page)).map((entry) => entry.id))
   await page.getByTestId('custom-vendor-new').click()
-  // 「其他兼容端点」 is the source with no preset id (CustomVendorSection.tsx `OTHER`).
-  await page.getByTestId('custom-vendor-new-source').selectOption('')
-  await page.getByTestId('custom-vendor-new-wire').selectOption(instance.wire)
-  await page.getByTestId('custom-vendor-new-baseurl').fill(instance.baseURL)
+  const preset = 'preset' in instance ? instance : null
+  if (preset === null) {
+    // 「其他兼容端点」 is the source with no preset id (CustomVendorSection.tsx `OTHER`).
+    await page.getByTestId('custom-vendor-new-source').selectOption('')
+    await page.getByTestId('custom-vendor-new-wire').selectOption(instance.wire)
+    await page.getByTestId('custom-vendor-new-baseurl').fill(instance.baseURL)
+  } else {
+    await page.getByTestId('custom-vendor-new-source').selectOption(preset.preset)
+    await page.getByTestId('custom-vendor-new-region').selectOption(preset.region)
+    await page.getByTestId('custom-vendor-new-wire').selectOption(preset.wire)
+    // The guard read `baseURL`: a preset that gives another address gets no key typed for it.
+    const shown = await page.getByTestId('custom-vendor-new-address').textContent()
+    if (shown !== preset.baseURL) {
+      throw new Error(
+        `preset ${preset.preset} (${preset.region}, ${preset.wire}) gives ${String(shown)}, ` +
+          `not ${preset.baseURL}: typing no key`,
+      )
+    }
+  }
   await page.getByTestId('custom-vendor-new-name').fill(instance.displayName)
   await page.getByTestId('custom-vendor-new-key').fill(instance.apiKey)
   await page.getByTestId('custom-vendor-new-submit').click()
@@ -103,7 +133,12 @@ export async function createInstanceInCard(page: Page, instance: NewInstance): P
   }
   const created = (await listInstances(page)).filter((entry) => !before.has(entry.id))
   if (created.length !== 1) throw new Error(`expected one new instance, found ${created.length}`)
-  return created[0]?.id ?? ''
+  const [made] = created
+  // Main resolved the preset itself (§预设): its key goes where it stored, so that must be it too.
+  if (preset !== null && made?.baseURL !== preset.baseURL) {
+    throw new Error(`the preset instance is at ${String(made?.baseURL)}, not ${preset.baseURL}`)
+  }
+  return made?.id ?? ''
 }
 
 /**
