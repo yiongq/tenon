@@ -218,9 +218,9 @@ packages/            内部共享包
 
 | 包 | 版本 | 用途 |
 |---|---|---|
-| **`@modelcontextprotocol/client`** | **2.0.0** | **你要用这个** |
-| `@modelcontextprotocol/server` / `core` / `node` | 2.0.0 | |
-| `@modelcontextprotocol/sdk` | 1.30.0 | v1 老包，**保底维护到 2027-01 前后** |
+| **`@modelcontextprotocol/client`** | **2.3.1** | **你要用这个**（2026-10-08 改：版本按 npm 刷新，原 2.0.0 / 1.30.0，见 [03 §SDK 升级](03-mcp-host/spec.md)） |
+| `@modelcontextprotocol/server` / `core` / `node` | 2.3.1 / 2.3.1 / 2.1.1 | |
+| `@modelcontextprotocol/sdk` | 1.32.1 | v1 老包，**保底维护到 2027-01 前后** |
 
 ⚠️ **v2 文档在 `/v2/` 路径下**。搜到的教程八成是 v1 的（`StdioClientTransport` 那套），会把你带沟里。
 
@@ -254,7 +254,7 @@ packages/            内部共享包
 
 **两个 Goose 的实现细节直接抄**：
 - **超时不是简单 drop future，而是向 server 发 `notifications/cancelled`**。很多 host 漏掉，导致 server 侧任务泄漏。
-- **会话上下文通过 MCP meta 注入**（session_id / working_dir / tool_call_request_id），MCP server 能知道自己在哪个会话为哪次调用服务。
+- **会话上下文通过 MCP meta 注入**（session_id / working_dir / tool_call_request_id），MCP server 能知道自己在哪个会话为哪次调用服务。阶段 3 评估后不做：远程 server 会拿到本机路径与跨调用的关联 id（2026-10-08 改，见 [03 §协议代际](03-mcp-host/spec.md)）。
 
 **联调**：`Everything` server 当对端，`npx @modelcontextprotocol/inspector --tui` 当示波器。
 
@@ -748,7 +748,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 **用法边界**：fixtures 用来**看**结构和状态（打开 `fixtures/index.html` 逐个对照），不复制 class 串、不引用 `css/`；`tokens.css` 只抄键名。uxkit 整包放仓库外的私人目录。
 
-**UX 与阶段的对应**：阶段 0 = 令牌 + 基础组件 + 壳层 + Composer 最小态 + 消息流基础；阶段 2 = Thinking 块、流式态、中断，以及 02 §界面范围 列出的最小版；阶段 3 = 6 种工具块、审批弹窗（均指完整版）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）；阶段 5 = 产物块、Artifacts 页与右面板；阶段 6 = 空 / 加载 / 错误态、动效目录、响应式全部过一遍（§10 清单）。Scheduled / Projects / Customize 页面跟随各自后端能力出现。
+**UX 与阶段的对应**：阶段 0 = 令牌 + 基础组件 + 壳层 + Composer 最小态 + 消息流基础；阶段 2 = Thinking 块、流式态、中断，以及 02 §界面范围 列出的最小版；阶段 3 = MCP 直接相关的界面：连接器栏、添加确认框、审批卡的可逆性刻度、工具行的副作用段与可逆性标记、连接器卡的 server 名与「定义已变」；其余工具块、带样式的改动预览与持久文件夹授权挪到阶段 4，SkillReadSubRow 随阶段 5 的 Skills（2026-10-08 改，见 [03 §界面](03-mcp-host/spec.md)；原为「6 种工具块、审批弹窗（均指完整版）」，2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）；阶段 5 = 产物块、Artifacts 页与右面板；阶段 6 = 空 / 加载 / 错误态、动效目录、响应式全部过一遍（§10 清单）。Scheduled / Projects / Customize 页面跟随各自后端能力出现。
 
 ## 9. 优秀客户端参考与拆解方法
 
@@ -907,14 +907,14 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 ### 阶段 3：MCP host 完整版（2–3 周）
 
-- MCP 设置界面、OAuth（CIMD 优先、DCR 兜底、凭证按 issuer 分键进 keychain）、工具调用卡片、权限确认弹窗（完整版；最小版在阶段 2）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）
-- 扩展配置 schema：显式 `type`、`envs`/`env_keys` 分离、`available_tools` 白名单
+- MCP 设置界面、OAuth（CIMD 优先、DCR 兜底、凭证按 issuer 分键进 keychain）、工具调用卡片、权限确认弹窗（完整版；最小版在阶段 2）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）。阶段 3 只做 MCP 相关的部分：审批卡的可逆性刻度、连接器卡的 server 名与「定义已变」；带样式的改动预览挪阶段 4（2026-10-08 改，见 [03 §界面](03-mcp-host/spec.md)）
+- 扩展配置 schema：显式 `type`、`envs`/`env_keys` 分离、`available_tools` 白名单。不用白名单语义：三态逐个记在 server 条目下，`available_tools` 只在导入、导出配置时与「永不」互转，阶段 3 没有导入导出、不做（2026-10-08 改，见 [03 §配置与机密](03-mcp-host/spec.md)）
 - stdio 子进程管理：spawn → 握手超时 → 崩溃重连 → stderr 落日志 → 进程树清理 → **超时向 server 发 cancelled**
 - **读**：[deepchat-mechanisms](../reference/deepchat-mechanisms.md) §四、LibreChat `packages/api/src/mcp/`（OAuth 落地）
-- **开工前裁决**：02 留下两条（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）：
+- **开工前裁决**：02 留下两条（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）。**裁决结果**（2026-10-08）：逐条见 [03 §裁决索引](03-mcp-host/spec.md)——中途工具维持 E2-C（Q15 A）；连接器卡先按 02 上线，同题对比超过 2 倍才加「本会话允许」（Q13 A）。原列的两条：
   - 中途连上的 MCP 工具是否即时生效：支持的 Anthropic 模型用 E2-D，其余用 E2-F，或仍到下个会话（裁决 E2）
   - 连接器卡要不要加「以后都允许」（D1-A2）或「本会话允许」，按同题对比的确认次数定（裁决 D1、D10）
-- **验收**：Everything server 的每类能力（tools / prompts / resources / sampling / elicitation / listChanged）各一个 e2e；超时后 server 侧能观测到 `notifications/cancelled`；子进程崩溃后状态正确且 stderr 进错误对象；OAuth `iss` 不匹配时拒绝兑换 code；工具名按 02 的命名规则稳定（以 `{server}__{tool}` 为基础，非法字符替换，超长截断并加哈希后缀；替换过的名字也加后缀），映射表进 Tape（2026-09-25 改，见 [02 §工具来源、命名与权限键](02-agent-loop/spec.md)）
+- **验收**：Everything server 的每类能力（tools / prompts / resources / listChanged）各一个 e2e，tools 的 listChanged 用自写夹具；sampling 已在 2026-07-28 弃用、elicitation 照 02 的 H6 在阶段 3 之后，都不做（2026-10-08 改，见 [03 §验收标准](03-mcp-host/spec.md)）；超时后 server 侧能观测到 `notifications/cancelled`；子进程崩溃后状态正确且 stderr 进错误对象；OAuth `iss` 不匹配时拒绝兑换 code；工具名按 02 的命名规则稳定（以 `{server}__{tool}` 为基础，非法字符替换，超长截断并加哈希后缀；替换过的名字也加后缀），映射表进 Tape（2026-09-25 改，见 [02 §工具来源、命名与权限键](02-agent-loop/spec.md)）
 
 ### 阶段 4：沙箱 + 文件桥（1–2 周）
 
@@ -949,7 +949,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - **Customize 页**六个 tab 与扩展层的存储 / 开关模型（§4.12）：组件级开关、三层优先级、租户作用域
 - Skills：三级渐进加载、目录 / ZIP / URL 安装、与 Claude Code 互导（学 DeepChat `src/main/skill/`）
 - Plugins + marketplace：`plugin.json` / `.mcp.json` 解析、Git 仓库当市场、sha256 校验、按角色声明的连接器绑定
-- Connectors 目录 + 远程 OAuth：目录 ID 绑定、三档标签、CIMD 优先 / DCR 兜底、`iss` 校验、按 issuer 分键
+- Connectors 目录：目录 ID 绑定、三档标签；远程 OAuth 复用阶段 3（2026-10-08 改，见 [03 §远程 server 与 OAuth](03-mcp-host/spec.md)；原为「Connectors 目录 + 远程 OAuth：……CIMD 优先 / DCR 兜底、`iss` 校验、按 issuer 分键」）
 - .mcpb：`user_config` → 表单 → keychain → 模板插值；**运行时分发**（学 Cherry `BinaryManager` 或 DeepChat `toolchains/`）
 - Artifacts：自建 iframe 先支持 HTML/SVG
 - MCP Apps：sandboxed iframe + CSP（学 DeepChat `src/main/mcp/apps/`，主 renderer 开 `sandbox: true`）
@@ -997,7 +997,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 项目 | 许可证 | 档位 |
 |---|---|---|
 | DeepChat、Goose、sandbox-runtime、Jan、AionUi、Codex CLI、Streamdown、AI Elements、MCP-UI | Apache-2.0 | 🟢 |
-| LibreChat、assistant-ui、shadcn/ui、lobe-ui、OpenCode、Hermes Agent、AnythingLLM、Cline、MCP SDK / mcpb / ext-apps / inspector | MIT | 🟢 |
+| LibreChat、assistant-ui、shadcn/ui、lobe-ui、OpenCode、Hermes Agent、AnythingLLM、Cline、MCP SDK / mcpb / ext-apps / inspector | MIT（MCP SDK v2 自 2.3.0 起 Apache-2.0，2026-10-08 改，见 [03 §SDK 升级](03-mcp-host/spec.md)） | 🟢 |
 | OpenWork | 主体 MIT；`/ee` 企业版 | 🟢 / 🔴 |
 | Open Claude Cowork | MIT（依赖 Claude Agent SDK 🔴） | 🟢 |
 | anthropics/skills 示例 | 多数 Apache-2.0 ✅ | 🟢 |
