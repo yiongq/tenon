@@ -155,3 +155,29 @@ it('queued validation aborts immediately and overflow is refused without waiting
     await worker.close()
   }
 })
+
+it('03 读法 69: abort releases both queue slots before resolving and does not decrement them twice', async () => {
+  const worker = createSchemaWorker({ maxQueue: 2, timeoutMs: 500 })
+  try {
+    const active = worker.validate({
+      schema: schemaChain('anchor', 32),
+      instance: {},
+      signal: signal(),
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    const a = new AbortController(),
+      b = new AbortController()
+    const one = worker.validate({ schema: {}, instance: {}, signal: a.signal }),
+      two = worker.validate({ schema: {}, instance: {}, signal: b.signal })
+    a.abort()
+    b.abort()
+    // Enqueue synchronously before the aborted jobs are reached or their promises are awaited.
+    const next = worker.validate({ schema: { type: 'number' }, instance: 1, signal: signal() })
+    expect(await one).toEqual({ ok: false, unusable: 'timeout' })
+    expect(await two).toEqual({ ok: false, unusable: 'timeout' })
+    expect(await active).toEqual({ ok: false, unusable: 'timeout' })
+    expect(await next).toEqual({ ok: true })
+  } finally {
+    await worker.close()
+  }
+})

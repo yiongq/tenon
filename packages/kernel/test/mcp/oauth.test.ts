@@ -677,3 +677,18 @@ it('03 验收 21: with no PRM and the PRM path answering 500, invalid_grant refr
   expect(h.unauthorized).toHaveBeenCalled()
   expect(h.open).toHaveBeenCalledTimes(1)
 })
+
+it('03 读法 68: forgetting an evicted issuer discards memory tokens and the same provider registers and authorizes it again', async () => {
+  const h = await setup()
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  const hash = h.runtime.issuers[0]!
+  expect(await h.provider.tokens()).toBeDefined()
+  await h.store.deleteTokens(hash)
+  await h.store.deleteClient(hash)
+  h.runtime.issuers = []
+  h.provider.forgetIssuer(hash)
+  expect(await h.provider.tokens()).toBeUndefined()
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  expect(h.authServer.requests.filter((r) => r.path === '/register')).toHaveLength(2)
+  expect(h.authServer.requests.filter((r) => r.path === '/authorize')).toHaveLength(2)
+})

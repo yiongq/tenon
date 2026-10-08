@@ -236,6 +236,19 @@
 
 ### 第三段：界面与 e2e（`feat/03-seg3`）
 
+- [x] 14a. 第二段遗留（PR #36 最后一条 lead 评论，`765325f` 的第二轮审查；先完成以下 9 项再开第 14 步）
+  1. 按 PR #39 / 读法 69 修 worker 队列：排队中 abort 立即、仅一次减 waiting，先减再 resolve；满队 / 中止回 timeout。上限 2 时两条排队均中止，下一条应正常校验。
+  2. 按读法 67：draft header 名只查字符集，保留名由存储回 invalid-header；真实路由测试 Content-Type。
+  3. 按读法 68：淘汰 issuer 时 provider 丢掉该 issuer 内存令牌；同一次运行再登录按新 issuer 处理。
+  4. 验收 52：用 keyFor 独立构造最终 8 个 issuer（含新 issuer）的全部账户，先种值，删除后均为空；只删前 7 个的突变必须红。
+  5. 淘汰失败经 pool.login 返回 keychain，补真实登录路径回归。
+  6. 验收 24：本次运行确认后撤销，断言进程停、needs-consent 与空进程组。
+  7. 验收 38：先 always-allow，定义改变后放行，断言 setting=ask、哈希更新。
+  8. 把「02 不变量 20」标签移到 mcp-routes 的 builtin 拒绝测试。
+  9. 修 runtime 缓存写入偶发失败：先等已排好的缓存写完成再装 spy，或只计 config 写入后的写。
+  - 命令：U schema-worker / mcp-store / mcp-routes / mcp-runtime / kernel mcp oauth / pool；G。逐项验证突变并记录。
+  - 完成：九项全部完成；U 126 + 池 / 存储补强 64 通过，G 3788 通过 / 2 跳过，format / lint / typecheck 绿。8 项行为突变全部红；池自动淘汰初次没有红，补淘汰瞬间 provider.tokens() 为空的断言后重跑红。标签已移到 builtin 测试；runtime 等两次握手的四次实际缓存写完成后才装 spy，不靠睡眠。
+
 渲染端的单测照 M6 的写法（逻辑放 `apps/desktop/src/renderer/src/lib/*.ts` 的纯函数，单测在 `apps/desktop/test/renderer-*.test.ts`，例如 lib/custom-vendor.ts 与 renderer-custom-vendor.test.ts）：desktop 的 vitest 是 node 环境、只收 `test/**/*.test.ts`（apps/desktop/vitest.config.ts），没有 DOM 测试环境，不新增。焦点、`aria-current` 这类要渲染才看得到的断言放第 17 步的 e2e。
 
 - [ ] 14. 设置弹窗与连接器栏（spec §设置弹窗的「连接器」栏；Q11-1、Q11-2、Q14、Q4-2、Q2、T20；读法 38）
@@ -312,6 +325,12 @@
 - [ ] 25. spec 顶部改 `Status: implemented`，写交接。前提：第 20 步已完成（或 owner 明确同意砍法 ③ 且已照改），第 23 步全部通过。之后本文件不再有未勾的步骤。
 
 ## 实施记录
+
+- **2026-10-08 · 第三段 14a 完成，14 开始**：已完成第二段遗留九项与突变、门禁。第 14–17 步尚未完成；接下来统一设置弹窗、连接器表单与审批 / 工具行提示，再单 Electron 跑真实界面和 OAuth 回归。Browser 插件 / browser skill 未提供，按 frontend-testing-debugging 技能使用仓库 Playwright Electron；验证流程是账户菜单 → 连接器 → 添加 / 确认 / 放行 / 登录 → 状态与卡片渲染正确。
+
+
+- **2026-10-08 · 第三段开工**：新 worktree `ffcc/tenon`，从最新 origin/dev `03b3504` 建 `feat/03-seg3`，已先 pnpm install（受限下载重试后授权联网完成）。第 14a 的九项按 PR #36 最后一条 lead 评论加到第三段最前面，当前先做遗留，之后第 14–17 步。提示层保持 10；E2E 同时最多一个 Electron；PR 目标 dev，做完 Ready、不合并。
+
 
 - **2026-10-08 · PR #36 lead 审查修复（完成）**
   - 先合 dev（`a582a02`，含 PR #37 / #38）。Open 的精确码与第九个 issuer 两条已解决；第 10–13 步全部完成，没有本轮待实现分支。提示层文案、哈希与 PROMPT_LAYER_VERSION=10 未改，免费 gate 沿用 lead 的 v10 基线，未跑付费 9a。

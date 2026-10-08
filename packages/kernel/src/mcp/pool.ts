@@ -978,6 +978,11 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               runtime.transport.type === 'http' &&
               old.runtime.transport.protocol !== runtime.transport.protocol)
           const consent = old.runtime.consented
+          if (old.runtime.transport.type === 'http' && runtime.transport.type === 'http') {
+            const retained = new Set(runtime.transport.oauth.issuers)
+            for (const hash of old.runtime.transport.oauth.issuers)
+              if (!retained.has(hash)) old.oauth?.forgetIssuer(hash)
+          }
           old.runtime = runtime
           if (!runtime.consented) {
             void stop(old, 'needs-consent')

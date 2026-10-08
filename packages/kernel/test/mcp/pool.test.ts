@@ -1296,3 +1296,164 @@ it('03 验收 51: the injected port accepts valid output without altering the se
   expect(await pool.routes()[0]!.connection.callTool('echo', {})).toEqual(result)
   expect(validate).toHaveBeenCalledOnce()
 })
+
+it('03 验收 52: issuer eviction failure during pool.login returns keychain', async () => {
+  const { startFakeAuthServer } = await import('../support/http-fixture.js')
+  const auth = await startFakeAuthServer(),
+    fixture = await startHttpFixture({
+      era: 'legacy',
+      authUrl: auth.url,
+      requireToken: 'fixture-access-1',
+    })
+  cleanup.push(
+    () => auth.close(),
+    () => fixture.close(),
+  )
+  const initial = runtime({
+    transport: {
+      type: 'http',
+      url: fixture.url,
+      fetch,
+      protocol: 'legacy',
+      headerKeys: [],
+      oauth: {
+        issuers: Array.from({ length: 8 }, (_, i) => String(i).padStart(16, '0')),
+        ownClient: null,
+        clientMetadataUrl: null,
+        dcrRedirectPort: 53280,
+      },
+    },
+  })
+  const host = createMemoryHost(),
+    pool = createMcpPool({
+      host,
+      ids: { uuid: () => crypto.randomUUID() },
+      baseEnv: async () => ({}),
+      homeDir: absolutePath('/'),
+      resolveCommand: async () => ({ ok: false, code: 'command-not-found' }),
+      runtimeOf: () => initial,
+      onPin: async () => {},
+      onIssuer: async () => {
+        throw new Error('keychain eviction refused')
+      },
+      log: () => {},
+      onChange: () => {},
+    })
+  cleanup.push(() => {
+    const p = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    return p
+  })
+  pool.apply([initial])
+  await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('unauthorized'))
+  let callback = new URLSearchParams()
+  const ui: McpLoginUi = {
+    listen: async (port) => ({
+      port,
+      close: async () => {},
+      waitForCallback: async () => callback,
+    }),
+    openUrl: async (url) => {
+      const r = await fetch(url, { redirect: 'manual' })
+      callback = new URL(r.headers.get('location')!).searchParams
+    },
+  }
+  expect(await pool.login('fixture', ui)).toEqual({ ok: false, code: 'keychain' })
+})
+
+it('03 读法 68: pool apply evicts provider memory and re-login of that issuer authorizes again in the same run', async () => {
+  const { startFakeAuthServer } = await import('../support/http-fixture.js')
+  const { keyFor } = await import('../../src/index.js')
+  const auth = await startFakeAuthServer(),
+    fixture = await startHttpFixture({
+      era: 'legacy',
+      authUrl: auth.url,
+      requireToken: 'fixture-access-1',
+    })
+  cleanup.push(
+    () => auth.close(),
+    () => fixture.close(),
+  )
+  const oauth = await import('../../src/mcp/oauth.js')
+  const makeProvider = oauth.createMcpOAuthProvider
+  const providers: ReturnType<typeof makeProvider>[] = []
+  vi.spyOn(oauth, 'createMcpOAuthProvider').mockImplementation((q) => {
+    const provider = makeProvider(q)
+    providers.push(provider)
+    return provider
+  })
+  const host = createMemoryHost()
+  let current = runtime({
+    transport: {
+      type: 'http',
+      url: fixture.url,
+      fetch,
+      protocol: 'legacy',
+      headerKeys: [],
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+  })
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async () => ({ ok: false, code: 'command-not-found' }),
+    runtimeOf: () => current,
+    onPin: async () => {},
+    onIssuer: async (_, issuer) => {
+      if (current.transport.type !== 'http') throw new Error('fixture')
+      current = {
+        ...current,
+        transport: {
+          ...current.transport,
+          oauth: { ...current.transport.oauth, issuers: [issuer.hash] },
+        },
+      }
+      pool.apply([current])
+    },
+    log: () => {},
+    onChange: () => {},
+  })
+  cleanup.push(() => {
+    const p = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    return p
+  })
+  pool.apply([current])
+  await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('unauthorized'))
+  let callback = new URLSearchParams()
+  const ui: McpLoginUi = {
+    listen: async (port) => ({
+      port,
+      close: async () => {},
+      waitForCallback: async () => callback,
+    }),
+    openUrl: async (url) => {
+      const r = await fetch(url, { redirect: 'manual' })
+      callback = new URL(r.headers.get('location')!).searchParams
+    },
+  }
+  expect(await pool.login('fixture', ui)).toEqual({ ok: true })
+  await connected(pool)
+  if (current.transport.type !== 'http') throw new Error('fixture')
+  const hash = current.transport.oauth.issuers[0]!
+  const accounts = [
+    keyFor(host.identity, 'mcp', 'fixture', 'oauth', hash, 'client'),
+    ...['a', 'b'].flatMap((slot) =>
+      Array.from({ length: 4 }, (_, i) =>
+        keyFor(host.identity, 'mcp', 'fixture', 'oauth', hash, 'tokens', slot, String(i)),
+      ),
+    ),
+  ]
+  await Promise.all(accounts.map((key) => host.secrets.delete(key)))
+  current = {
+    ...current,
+    transport: { ...current.transport, oauth: { ...current.transport.oauth, issuers: [] } },
+  }
+  pool.apply([current])
+  expect(await providers[0]!.tokens()).toBeUndefined()
+  expect(await pool.login('fixture', ui)).toEqual({ ok: true })
+  expect(auth.requests.filter((r) => r.path === '/authorize')).toHaveLength(2)
+  expect(auth.requests.filter((r) => r.path === '/register')).toHaveLength(2)
+})

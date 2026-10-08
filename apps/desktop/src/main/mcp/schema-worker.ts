@@ -82,8 +82,15 @@ export function createSchemaWorker(
       waiting++
       const result = Promise.withResolvers<SchemaVerdict>()
       let skipped = false
+      let queued = true
+      const dequeue = () => {
+        if (!queued) return
+        queued = false
+        waiting--
+      }
       const abort = () => {
         skipped = true
+        dequeue()
         result.resolve({ ok: false, unusable: 'timeout' })
         input.signal.removeEventListener('abort', abort)
         pendingAborts.delete(abort)
@@ -91,7 +98,7 @@ export function createSchemaWorker(
       pendingAborts.add(abort)
       input.signal.addEventListener('abort', abort, { once: true })
       const job = queue.then(async () => {
-        waiting--
+        dequeue()
         input.signal.removeEventListener('abort', abort)
         pendingAborts.delete(abort)
         if (!skipped) result.resolve(await run(input))
