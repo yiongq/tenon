@@ -82,3 +82,15 @@ export const listenMcpCallback: McpLoginUi['listen'] = async (port) => {
     },
   }
 }
+
+/** Opt-in local test listener; packaged and normal development/live launches ignore the switch. */
+export function usesMcpCallbackTestPort(q: {
+  isPackaged: boolean
+  env: Readonly<Record<string, string | undefined>>
+}): boolean {
+  return (
+    !q.isPackaged &&
+    q.env['TENON_DEV_ENV'] === 'off' &&
+    q.env['TENON_TEST_MCP_CALLBACK_PORT'] === 'auto'
+  )
+}

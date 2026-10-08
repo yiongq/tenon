@@ -16,7 +16,7 @@ import { createHostProcess } from '../src/main/host/process.js'
 import { createMcpLogSink } from '../src/main/mcp/log-sink.js'
 import { resolveMcpCommand } from '../src/main/mcp/resolve-command.js'
 import { createMcpFetch } from '../src/main/mcp/fetch.js'
-import { listenMcpCallback } from '../src/main/mcp/loopback.js'
+import { listenMcpCallback, usesMcpCallbackTestPort } from '../src/main/mcp/loopback.js'
 import { createMcpOpenUrl } from '../src/main/mcp/open-url.js'
 import { listen, closeServer } from './support/untrusted-server.js'
 vi.mock('node:fs/promises', { spy: true })
@@ -392,4 +392,15 @@ it('03 验收 19: direct seam uses the actual e2e off environment, manual redire
   expect(net).toHaveBeenCalledTimes(2)
   expect(net.mock.calls[0]?.[1]?.redirect).toBe('manual')
   expect(String(net.mock.calls[1]?.[0])).toContain('/callback?state=x')
+})
+
+it('03 验收 18 / 18a-1: callback auto requires unpackaged and actual e2e off environment', () => {
+  const env = { TENON_DEV_ENV: 'off', TENON_TEST_MCP_CALLBACK_PORT: 'auto' }
+  expect(usesMcpCallbackTestPort({ isPackaged: false, env })).toBe(true)
+  expect(usesMcpCallbackTestPort({ isPackaged: true, env })).toBe(false)
+  for (const value of [undefined, '1', 'on', ''])
+    expect(
+      usesMcpCallbackTestPort({ isPackaged: false, env: { ...env, TENON_DEV_ENV: value } }),
+    ).toBe(false)
+  expect(usesMcpCallbackTestPort({ isPackaged: false, env: { TENON_DEV_ENV: 'off' } })).toBe(false)
 })

@@ -554,3 +554,5 @@ export { McpInvalidOutputError } from './mcp/connection.js'
 export { builtinCandidates, PRODUCT_BUILTINS } from './tools/registry.js'
 export { mcpCandidates } from './tools/mcp-source.js'
 export { openToolTable } from './tools/table.js'
+
+export { validateClientMetadataUrl } from '@modelcontextprotocol/client'

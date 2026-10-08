@@ -49,6 +49,7 @@ import type {
   RouteRequest,
   mcpSave,
   McpServerView,
+  McpWarning,
   ChatEvent,
   ConfirmRequestInput,
   RunEndReasonContract,
@@ -647,20 +648,21 @@ it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-lon
         args: [],
         what: code,
       })),
-      ...(['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'] as const).map(
-        (code) => ({
-          key: `mcp.warning.${code}`,
-          args:
-            code === 'home-path' || code === 'ssh-path'
-              ? ['arg']
-              : code === 'unpinned-package'
-                ? ['package']
-                : code === 'risky-env'
-                  ? ['name']
-                  : [],
-          what: code,
-        }),
-      ),
+      ...covers<McpWarning['kind']>()(
+        ['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'],
+        true,
+      ).map((code) => ({
+        key: `mcp.warning.${code}`,
+        args:
+          code === 'home-path' || code === 'ssh-path'
+            ? ['arg']
+            : code === 'unpinned-package'
+              ? ['package']
+              : code === 'risky-env'
+                ? ['name']
+                : [],
+        what: code,
+      })),
     ]),
   ).toEqual([])
 })

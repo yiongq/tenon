@@ -40,7 +40,7 @@ import {
 import type { IpcMainLike, McpDraft, McpWarning, McpServerView } from '@tenon-app/contracts'
 import type { DesktopMcp } from './controller.js'
 import { resolveMcpCommand } from './resolve-command.js'
-import { listenMcpCallback } from './loopback.js'
+import { listenMcpCallback, usesMcpCallbackTestPort } from './loopback.js'
 import { createMcpOpenUrl } from './open-url.js'
 import { mcpAddress } from './address.js'
 import { visible } from '../../renderer/src/lib/visible.js'
@@ -306,10 +306,7 @@ export function registerMcpRoutes(q: {
     mcp.pool.login(id, {
       listen: async (port) => {
         // Test-only: the application binds port 0 and reports the actual bound port. No probe/close race.
-        const auto =
-          !q.isPackaged &&
-          q.env['TENON_DEV_ENV'] === 'off' &&
-          q.env['TENON_TEST_MCP_CALLBACK_PORT'] === 'auto'
+        const auto = usesMcpCallbackTestPort(q)
         const listener = await listenMcpCallback(auto ? 0 : port)
         if (auto)
           (globalThis as { tenonMcpCallbackPort?: number }).tenonMcpCallbackPort = listener.port

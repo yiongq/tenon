@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { validateClientMetadataUrl } from '@tenon-app/kernel'
 // Consent is independent of process PATH and secret values; live hashes are checked on every call.
 import { expect, it, vi } from 'vitest'
 import { mcpServerSchema } from '@tenon-app/contracts'
-import { mcpRuntimes, launchHash } from '../src/main/mcp/runtime.js'
+import { mcpRuntimes, launchHash, CIMD_CLIENT_METADATA_URL } from '../src/main/mcp/runtime.js'
 import { mcpUserSetting } from '../src/main/mcp/user-setting.js'
 import { createMcpConsent } from '../src/main/mcp/consent.js'
 import { mcpDraft, mcpHarness } from './support/mcp-harness.js'
@@ -330,4 +332,31 @@ it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stoppe
     await mcp.close({ deadlineMs: 1000 })
     await rm(root, { recursive: true, force: true })
   }
+})
+
+it('03 验收 17 (product): CIMD URL is https with a path, SDK-valid and equals the hosted client_id', () => {
+  const expected = 'https://yiongq.github.io/tenon/oauth/client-metadata.json'
+  expect(CIMD_CLIENT_METADATA_URL).toBe(expected)
+  const url = new URL(CIMD_CLIENT_METADATA_URL!)
+  expect(url.protocol).toBe('https:')
+  expect(url.pathname).not.toBe('/')
+  expect(() => validateClientMetadataUrl(CIMD_CLIENT_METADATA_URL!)).not.toThrow()
+  const metadata = JSON.parse(
+    readFileSync(new URL('../oauth/client-metadata.json', import.meta.url), 'utf8'),
+  )
+  expect(metadata.client_id).toBe(CIMD_CLIENT_METADATA_URL)
+  const remote = server()
+  remote.transport = {
+    type: 'http',
+    url: 'https://fixture.example/mcp',
+    header_keys: [],
+    protocol: 'auto',
+    oauth: { ownClient: null, issuers: [] },
+  }
+  const runtime = mcpRuntimes(
+    [remote],
+    createMcpConsent(() => {}),
+    fetchFactory,
+  )[0]!
+  expect(runtime.transport).toMatchObject({ type: 'http', oauth: { clientMetadataUrl: expected } })
 })

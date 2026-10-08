@@ -131,11 +131,9 @@ export function compact(wanted: EnvRecord): Record<string, string> {
  * the official key would follow them (02 M4). Names the variable, never a value.
  */
 export function originMapRefusal(runner: EnvRecord, file: EnvRecord): string | null {
-  if (
-    runner['TENON_TEST_MCP_OPEN_URL'] !== undefined ||
-    file['TENON_TEST_MCP_OPEN_URL'] !== undefined
-  )
-    return 'TENON_TEST_MCP_OPEN_URL is unsafe in a live run'
+  for (const name of ['TENON_TEST_MCP_OPEN_URL', 'TENON_TEST_MCP_CALLBACK_PORT'])
+    if (runner[name] !== undefined || file[name] !== undefined)
+      return `${name} is unsafe in a live run`
   const where = [
     ...(runner[ORIGIN_MAP_ENV] === undefined ? [] : ["this run's environment"]),
     ...(file[ORIGIN_MAP_ENV] === undefined ? [] : ['.env.local']),

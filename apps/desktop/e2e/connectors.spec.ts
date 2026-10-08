@@ -73,7 +73,7 @@ test('03 验收 24/25: full argv, warnings, cancel focus, run and persistent con
     expect((await mcpServers(launched.page)).find((s) => s.id === 'run')?.needsConsent).toBe(true)
     await launched.page
       .getByTestId('connector-run')
-      .getByRole('button', { name: /Notes run/ })
+      .getByRole('button', { name: /^Notes run/ })
       .click()
     await launched.page.getByTestId('connector-connect').click()
     await launched.page.getByTestId('grant-run').click()
@@ -153,7 +153,7 @@ test('03 验收 38/39/45: new-tool review affects next table; changed frozen def
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     await expect(page.getByTestId('tool-setting-echo').locator('..').locator('+ span')).toHaveText(
       '新会话生效',
@@ -186,6 +186,7 @@ test('03 验收 38/39/45: new-tool review affects next table; changed frozen def
     )
     await expect(card.locator('[aria-current="true"]')).toHaveText('未知')
     await expect(card.getByTestId('reversibility-scale').locator('span')).toHaveCount(5)
+    await expect(card.getByTestId('reversibility-scale')).toHaveRole('group')
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-deny').click()
     await expect(card).toBeHidden()
@@ -221,17 +222,25 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
       textReply('never session'),
       callsReply(connectorCall('toolu_allowed', 'echo')),
       textReply('allowed session'),
+      callsReply(connectorCall('toolu_pid_before', 'pid')),
+      textReply('before restart'),
+      callsReply(connectorCall('toolu_pid_after', 'pid')),
+      textReply('after restart'),
     ],
   })
   const userData = makeUserDataDir('connector-controls')
-  seedConfig(userData, { locale: 'en', mcpServers: [stdioConfig()] })
+  const activity = join(userData, 'activity.log')
+  seedConfig(userData, {
+    locale: 'en',
+    mcpServers: [stdioConfig('notes', ['--activity-file', activity])],
+  })
   const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
   try {
     await connected(page)
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     const detail = page.getByTestId('connector-detail'),
       select = page.getByTestId('tool-setting-echo')
@@ -252,9 +261,13 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     await select.selectOption('always-allow')
+    await page.getByTestId('tool-setting-pid').selectOption('always-allow')
+    await expect
+      .poll(async () => (await mcpServers(page))[0]?.tools.pid?.setting)
+      .toBe('always-allow')
     await closeSettings(page)
     await newChatFromSidebar(page)
     await send(page, 'allowed session')
@@ -264,17 +277,43 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await expect(page.getByTestId('tool-side-effects')).toContainText('Side effects')
     await expect(page.getByTestId('tool-side-effects')).toContainText('Unknown')
     await expect(page.getByTestId('tool-effect-marker')).toBeVisible()
+    await newChatFromSidebar(page)
+    await send(page, 'before restart')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('before restart')
+    const beforePid = JSON.parse(
+      resultOf(fake.requests[4]!.body, 'toolu_pid_before').content[0]!.text!,
+    )
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     await detail.getByRole('button', { name: 'Restart', exact: true }).click()
     await connected(page)
+    await closeSettings(page)
+    await newChatFromSidebar(page)
+    await send(page, 'after restart')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('after restart')
+    const afterPid = JSON.parse(
+      resultOf(fake.requests[6]!.body, 'toolu_pid_after').content[0]!.text!,
+    )
+    expect(afterPid).not.toBe(beforePid)
+    await openConnectors(page)
+    await page
+      .getByTestId('connector-notes')
+      .getByRole('button', { name: /^Notes fixture/ })
+      .click()
+    const listsBefore = readFileSync(activity, 'utf8').split('tools/list').length
     await detail.getByRole('button', { name: 'Refresh tools', exact: true }).click()
+    await expect
+      .poll(() => readFileSync(activity, 'utf8').split('tools/list').length)
+      .toBeGreaterThan(listsBefore)
     await detail.getByRole('button', { name: 'View log', exact: true }).click()
-    await expect(page.getByTestId('connector-review-dialog')).toBeVisible()
+    await expect(page.getByTestId('connector-review-dialog')).toContainText('fixture stderr: ready')
     await page.getByTestId('connector-review-dialog').locator('[data-slot="dialog-close"]').click()
+    await expect(page.getByTestId('instructions-next-session')).toHaveText(
+      'Applies to new sessions',
+    )
     await page.getByTestId('connector-instructions').click()
     await expect.poll(async () => (await mcpServers(page))[0]?.instructions.enabled).toBe(true)
     await page.getByTestId('connector-edit').click()
@@ -310,10 +349,14 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await page.getByTestId('connector-save').click()
     await page.getByTestId('grant-persistent').click()
     await connected(page, 'other')
+    await expect(page.getByTestId('connector-down-notes')).toHaveAccessibleName(
+      'Move Notes notes down',
+    )
     await page.getByTestId('connector-down-notes').click()
     await expect
       .poll(async () => (await mcpServers(page)).map((s) => s.id))
       .toEqual(['other', 'notes'])
+    await expect(page.getByTestId('connector-up-notes')).toHaveAccessibleName('Move Notes notes up')
     await page.getByTestId('connector-up-notes').click()
     await expect
       .poll(async () => (await mcpServers(page)).map((s) => s.id))
@@ -397,7 +440,7 @@ test('03 验收 4/44: crashed process shows its error and stderr tail', async ()
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     await page.getByTestId('tool-setting-crash').selectOption('always-allow')
     await closeSettings(page)
@@ -405,7 +448,7 @@ test('03 验收 4/44: crashed process shows its error and stderr tail', async ()
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     hold.resolve()
     await expect(page.getByTestId('connector-detail')).toContainText(
@@ -429,18 +472,28 @@ test('03 验收 38/39: release uses the viewed hash, stale refreshes and server 
   const { app, page } = await launchTenon({ userData })
   try {
     await connected(page)
-    writeFileSync(file, JSON.stringify({ description: 'one\u202Etext' }))
-    await expect.poll(async () => (await mcpServers(page))[0]?.toolViews[0]?.review).toBe('changed')
     await openConnectors(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /Notes fixture/ })
+      .getByRole('button', { name: /^Notes fixture/ })
       .click()
     const tool = page.getByTestId('connector-tool-echo')
+    await page.getByTestId('tool-setting-echo').selectOption('always-allow')
+    await expect
+      .poll(async () => (await mcpServers(page))[0]?.tools.echo?.setting)
+      .toBe('always-allow')
+    writeFileSync(file, JSON.stringify({ description: 'one\u202Etext' }))
+    await expect.poll(async () => (await mcpServers(page))[0]?.toolViews[0]?.review).toBe('changed')
     await expect(page.getByTestId('tool-setting-echo')).toBeDisabled()
     await expect(tool).toContainText('one\\u{202E}text')
+    await expect(page.getByTestId('tool-release-echo')).toBeDisabled()
+    await expect(tool).toContainText('View changes before releasing')
+    await expect(page.getByTestId('tool-release-echo').locator('+ span')).toHaveText(
+      'Applies to new sessions',
+    )
     await tool.getByRole('button', { name: 'View changes' }).click()
     await expect(page.getByTestId('connector-review-dialog')).toContainText('one\\u{202E}text')
+    await expect(page.getByTestId('connector-review-dialog')).toContainText('initial')
     writeFileSync(file, JSON.stringify({ description: 'two\u202Etext' }))
     await expect
       .poll(async () => (await mcpServers(page))[0]?.toolViews[0]?.description)
@@ -448,13 +501,51 @@ test('03 验收 38/39: release uses the viewed hash, stale refreshes and server 
     await page.getByTestId('connector-review-dialog').locator('[data-slot="dialog-close"]').click()
     await page.getByTestId('tool-release-echo').click()
     await expect(page.getByTestId('connector-detail').getByRole('alert')).toHaveText(
-      'Definition changed again; refresh',
+      'Definition changed again; view changes again',
     )
+    await expect(page.getByTestId('tool-release-echo')).toBeDisabled()
     await tool.getByRole('button', { name: 'View changes' }).click()
+    await expect(page.getByTestId('connector-review-dialog')).toContainText('initial')
     await expect(page.getByTestId('connector-review-dialog')).toContainText('two\\u{202E}text')
     await page.getByTestId('connector-review-dialog').locator('[data-slot="dialog-close"]').click()
     await page.getByTestId('tool-release-echo').click()
     await expect(page.getByTestId('tool-setting-echo')).toBeEnabled()
+    await expect(page.getByTestId('tool-setting-echo')).toHaveValue('ask')
+    await expect.poll(async () => (await mcpServers(page))[0]?.tools.echo?.setting).toBe('ask')
+    // A completed review must not enable release for the next definition change.
+    writeFileSync(file, JSON.stringify({ description: 'third definition' }))
+    await expect
+      .poll(async () => (await mcpServers(page))[0]?.toolViews[0]?.description)
+      .toBe('third definition')
+    await expect(page.getByTestId('tool-release-echo')).toBeDisabled()
+  } finally {
+    await app.close()
+  }
+})
+
+test('03 验收 24 / 18a-5: re-confirming an insecure public address shows the precise preview failure', async () => {
+  const userData = makeUserDataDir('connector-preview-error')
+  const server = stdioConfig()
+  server.transport = {
+    type: 'http',
+    url: 'http://example.com/mcp',
+    header_keys: [],
+    protocol: 'auto',
+    oauth: { ownClient: null, issuers: [] },
+  }
+  server.consent = null
+  seedConfig(userData, { locale: 'en', mcpServers: [server] })
+  const { app, page } = await launchTenon({ userData })
+  try {
+    await openConnectors(page)
+    await page
+      .getByTestId('connector-notes')
+      .getByRole('button', { name: /^Notes fixture/ })
+      .click()
+    await page.getByTestId('connector-connect').click()
+    await expect(page.getByTestId('connector-detail').getByRole('alert')).toHaveText(
+      'Public addresses require HTTPS',
+    )
   } finally {
     await app.close()
   }

@@ -32,7 +32,7 @@
 | 一 | `feat/03-seg1` | 1–9a | SDK 升级、契约、夹具、kernel（连接、环境、定义、连接池、工具表与收口、OAuth）、提示层基线评测 |
 | 二 | `feat/03-seg2` | 10–13 | desktop 主进程（配置存储、宿主件、接线、IPC） |
 | 三 | `feat/03-seg3` | 14–17 | 界面与 e2e |
-| 四 | `feat/03-seg4a`，之后 `feat/03-seg4b`… | 18、22、24 先成一个 PR；19（及 19a / 19b）、20、21 按 owner 的输入各自一个 PR；最后一个 PR 做 23、25 | 同题对比、CIMD、live、核对与收尾 |
+| 四 | `feat/03-seg4a`，之后 `feat/03-seg4b`… | 18a、20、22、24 先成一个 PR；18/19/19a/19b 已撤销；21 等 owner 在场；最后一个 PR 做 23、25 | CIMD、live、核对与收尾 |
 
 ## 砍法（工期超出时）
 
@@ -283,11 +283,22 @@
   - 突变：① 让 `GrantDialog` 的「以后都允许」按「允许」写 → (1) 的重启部分红；② `ConnectorStatusNotice` 永不显示 → (4) 红；③ 默认焦点放「允许」→ (1) 红；④ 刻度不设 `aria-current` → (5) 红。
   - 完成：EA 全过；P 绿；第三段 PR（UI 改动写 BEFORE / AFTER），lead 审查后合并。
 
-### 第四段：同题对比、CIMD、live 与收尾（`feat/03-seg4a` 起）
+### 第四段：CIMD、live 与收尾（`feat/03-seg4a` 起）
 
-先做第 18、22、24 步，作为第一个 PR 合并；第 19（19a、19b）、21 步各等 owner 的输入，到了就各开一个 PR；第 20 步不用等（CIMD 地址已定），可并进第一个 PR；第 23、25 步放在最后一个 PR，前提是 19–21 都已完成或已按砍法正式砍掉。owner 的输入迟迟不来时，spec 保持 `ready`、不标 implemented，交接里写明在等什么。
+先做第 18a 的 8 项，再做第 20、22、24 步，作为第一个 PR；第 18、19、19a、19b 已撤销（2026-10-08，见 spec 读法 70）；第 21 步 Notion live 等 owner 在场；第 20 步不用等（CIMD 地址已定），可并进第一个 PR；第 23、25 步放在最后一个 PR，前提是 20–21 都已完成或已按砍法正式砍掉。owner 的输入迟迟不来时，spec 保持 `ready`、不标 implemented，交接里写明在等什么。
 
-- [ ] 18. 同题对比的准备（spec §连接器卡；Q13；读法 44）
+- [x] 18a. 第三段遗留（PR #40 最后一条 lead 评论，`e04dafe` 第二轮）——8 项最先做，第 1 项必须在第 21 步之前完成。
+  - [x] 1. 回调端口接缝守卫：`TENON_TEST_MCP_CALLBACK_PORT=auto` 加进 `NEVER_INHERITED` 与 live 的 `originMapRefusal` 拒跑名单；单测断言打包版及 `TENON_DEV_ENV` 不为 off 都忽略接缝。
+  - [x] 2. 重启/刷新/日志 e2e 具体断言：重启后 pid 工具返回值改变；刷新后夹具收到新的 tools/list；日志含夹具一行 stderr。
+  - [x] 3. 查看变化/放行：同时断言旧文本 initial 与新文本；放行后三态 ask，覆盖先设总是允许再放行；开关旁与放行旁的新会话生效提示。
+  - [x] 4. stale 后删 reviewed[key]，提示「定义又变了，请重新查看变化」；查看前放行禁用且解释原因。
+  - [x] 5. connect() 保留 preview 返回的具体错误码，不折成 unavailable。
+  - [x] 6. 无障碍：审批刻度 aria-label div 加 role=group；上/下移 aria-label 带 server 名。
+  - [x] 7. 恢复 copy-coverage 的 covers<McpWarning['kind']>() 穷举；排队两条中止后快 schema 成功断言恢复；只减一次另段补满队并断言下一条拒绝，验证两项突变都红。
+  - [x] 8. refreshMcp 抽成可注入 invoke 的函数，测试两次刷新乱序返回保留后发的一次。
+  - 命令：相关 U、G、P；相关 Electron e2e 单 worker/单 Electron；突变逐项验证守卫、观察断言、stale 失效、精确码及乱序保护。
+
+- [x] 18. 已撤销（2026-10-08，见 spec 读法 70）。原计划： 同题对比的准备（spec §连接器卡；Q13；读法 44）
   - 文件：新 `apps/desktop/evals/mcp-notes-server.mjs`：手写 JSON-RPC（照 packages/kernel/test/support/fixtures/tools-server.mjs），只说 2025 代，无依赖，参数是数据文件的绝对路径；工具 `list_notes`、`read_note(id)`、`search_notes(query)`、`create_note(title, body, tags?)`、`update_note(id, body)`、`tag_note(id, tag)`、`delete_note(id)`。种子 `docs/evals/fixtures/30-mcp-notes/notes.json`：8 条笔记，含标题「临时」「待办」「已完成」，标签 `draft`、`review`、无标签各若干，n2、n5 两条可合并。记录模板 `docs/evals/compare/30-mcp-confirmations.md`：两边的配置方法（Claude Desktop 用 `claude_desktop_config.json` 写 `node` 的绝对路径与本文件，数据文件每题前从种子复制一份）、10 道题、计数口径、结论格。10 道题：① 列出所有笔记标题；② 找到提到「发布」的笔记并总结；③ 读 n3，说出它的标签；④ 新建「周会纪要」，三条要点；⑤ 把所有 `draft` 改标为 `review`；⑥ 删除标题为「临时」的笔记；⑦ 把 n2 与 n5 合并成一条新笔记并删掉原来两条；⑧ 给没有标签的笔记都加上 `inbox`；⑨ 统计每个标签下各几条（只读）；⑩ 把「待办」里已完成的项移到「已完成」。
   - 覆盖：验收 47 的前提。
   - 测试：新 `apps/desktop/test/evals-mcp-notes.test.ts`：起 server，对种子的临时副本跑一遍 7 个工具，结果与种子一致地变化。
@@ -295,17 +306,17 @@
   - 突变：① `delete_note` 不写回文件 → 测试红。
   - 完成：G 绿。
 
-- [ ] 19. 同题对比实跑（Q13）。Tenon 一侧由 lead 跑，Claude Desktop 一侧由 owner 跑。
+- [x] 19. 已撤销（2026-10-08，见 spec 读法 70）。原计划： 同题对比实跑（Q13）。Tenon 一侧由 lead 跑，Claude Desktop 一侧由 owner 跑。
   - Tenon 一侧：`pnpm build` 后起应用（`env -u ELECTRON_RUN_AS_NODE`），连接器栏加 notes server、选「允许」，模型照 02 §同题对比 主对比列（02:3077，Opus 5.5 或 Sonnet 5，官方 key 走 02 的取法；没有官方 key 时照 02:3085 用 GLM 并在每条记录写明）。手动档，每题新会话，卡上一律点「允许」；每题的确认次数从该会话的 Tape 数 `tool/permission_decided` 里 `awaits: 'approval'` 的条数。
   - Claude Desktop 一侧（owner）：同一份 server 与种子，选同一个模型；每题只点「Allow once」记次数；再整套跑一遍只点「Always allow」记次数作参考。录屏放仓库外，记录里只写文件名。
   - 判定：Tenon 每题平均确认次数 > 2 × Claude「Allow once」的平均 → 触发；结论写进 `docs/evals/compare/30-mcp-confirmations.md`。
   - 覆盖：验收 47。
   - 完成：记录文件提交；触发就做 19a、19b，没触发就把两步勾上、写「未触发」。
 
-- [ ] 19a. （只在第 19 步触发时）起草一份只增修补 02 与 03 的 feature spec（照 M6 的格式与 spec §连接器卡：答复作用域表 MCP 一行、`approval.current` 的 `allowScope`、卡上第三个钮「本会话允许」、不可逆与 requiresUserInteraction 的卡不出），03 与 02 只加 `Amended by`，不就地改 03（读法 55；docs/spec-driven-dev.md:52）。交 owner 过目。
-- [ ] 19b. （只在第 19 步触发时）owner 把 19a 的 spec 标 `ready` 之后开工：按它实现 kernel 的答复作用域函数（packages/kernel/src/permission/grants.ts）、`approval.current` 的 `allowScope`、`ApprovalCard` 的第三个钮；测试照那份 spec 的验收；突变：不可逆的卡也出这个钮 → 红。
+- [x] 19a. 已撤销（2026-10-08，见 spec 读法 70）。原计划： （只在第 19 步触发时）起草一份只增修补 02 与 03 的 feature spec（照 M6 的格式与 spec §连接器卡：答复作用域表 MCP 一行、`approval.current` 的 `allowScope`、卡上第三个钮「本会话允许」、不可逆与 requiresUserInteraction 的卡不出），03 与 02 只加 `Amended by`，不就地改 03（读法 55；docs/spec-driven-dev.md:52）。交 owner 过目。
+- [x] 19b. 已撤销（2026-10-08，见 spec 读法 70）。原计划： （只在第 19 步触发时）owner 把 19a 的 spec 标 `ready` 之后开工：按它实现 kernel 的答复作用域函数（packages/kernel/src/permission/grants.ts）、`approval.current` 的 `allowScope`、`ApprovalCard` 的第三个钮；测试照那份 spec 的验收；突变：不可逆的卡也出这个钮 → 红。
 
-- [ ] 20. CIMD 常量（开放问题 1 已定：`https://yiongq.github.io/tenon/oauth/client-metadata.json`）
+- [x] 20. CIMD 常量（开放问题 1 已定：`https://yiongq.github.io/tenon/oauth/client-metadata.json`）
   - 文件：`apps/desktop/src/main/mcp/runtime.ts` 的 `CIMD_CLIENT_METADATA_URL` 改成 `https://yiongq.github.io/tenon/oauth/client-metadata.json`。托管文件 `apps/desktop/oauth/client-metadata.json` 与发布它的 `.github/workflows/pages.yml` 已在仓库（2026-10-08 随 spec 修订进来），本步不改；以后改这个 JSON，合进 dev 后由该工作流自动发布。kernel 从 `@tenon-app/kernel` 重新导出 SDK 的 `validateClientMetadataUrl`（desktop 不直接依赖 `@modelcontextprotocol/*`，apps/desktop/package.json）。
   - 覆盖：验收 17（产品常量部分）。
   - 测试：`apps/desktop/test/mcp-runtime.test.ts` 加「03 验收 17 (product): the CIMD URL is https with a path, passes validateClientMetadataUrl and equals client_id in the hosted JSON」（读仓库里的 JSON）。
@@ -313,18 +324,31 @@
   - 突变：① 常量改成 `http://` → 测试红。
   - 完成：G 绿。owner 明确同意按砍法 ③ 退到 Q9 A 时，本步改为「`CIMD_CLIENT_METADATA_URL` 恒为 null、验收 17 照砍法改」，同样记 Revisions。
 
-- [ ] 21. 〔live〕真实远程 OAuth（Q16；开放问题 2；owner 选定厂商并在场之前不开工）
+- [ ] 21. 〔live〕真实远程 OAuth（Q16；开放问题 2 已定 Notion `https://mcp.notion.com/mcp`；等 owner 在场才跑）
   - 文件：新 `apps/desktop/e2e/live-mcp-oauth.spec.ts`（`TENON_LIVE=1` 才跑；用真实钥匙串，照 apps/desktop/e2e/helpers/live-env.ts 的 zhipu 组覆盖钥匙串的写法；模型用 live-env 的 zhipu 组，key 由 live spec 自己从进程环境读（live-env.ts 的读法），不经 origin-map 接缝，live 配置见到它就拒跑，live-env.ts:133；不设 `TENON_TEST_MCP_OPEN_URL`）：设置栏加该厂商的远程地址 → 点「登录」→ owner 在系统浏览器里登录 → 等回调（最长 120 s）→ 列出工具 → 调一个只读工具成功（一轮模型回合）→ 删除连接器 → 经 `electronApp.evaluate` 调主进程的 `secrets.get` 读这台的每个令牌账户，只断言为 null，不打印值。
   - 覆盖：验收 48。
   - 命令：先提醒 owner（macOS 钥匙串弹窗、浏览器登录、一轮智谱请求的花费）；`pnpm build`；在 apps/desktop 下 `env -u ELECTRON_RUN_AS_NODE TENON_LIVE=1 npx playwright test --config=playwright.live.config.ts -g "live mcp oauth" --headed`。不设 `CI`（会出 html 报告，可能写进填过的值）。
   - 完成：记录日期、厂商、地址的源、走了哪条客户端身份、工具数、调用结果、实际花费（不含令牌与 client secret，grep 核一遍）写进实施记录；原始记录放仓库外 `tenon-notes/2026-10-03-phase3-mcp/live-*`。
 
-- [ ] 22. 核对文档同步（验收 49）：`git diff 1ed9d64 -- docs/architecture/master-reference.md docs/architecture/02-agent-loop/spec.md docs/architecture/01-provider-and-tape/spec.md docs/architecture/00-foundation/spec.md docs/ux/components.md`：主参考只动 :221-223、:257、:751、:910、:911、:914、:917、:952、:1000 九处，行数不变；02 只多一行 `Amended by`；01 只多一行 `Amended by`（第 6 行）；00 没变；components.md 只动 spec §文档同步 列的行，含开放问题 11 定下的五行（:52、:89、:101、:102、:123）。只核对，不重复改。
-- [ ] 23. 对照 spec 全部验收逐条验证，结果、命令与证据位置记在「验收记录」（表头照 M6：验收 | 结论 | 证据（测试文件:行与用例名）| 命令）；每条不变量有名字带「03 不变量 N」的测试；每条判「通过」的由另一个 agent 独立核查。验收 50：在一个新 clone 上跑 `pnpm install && pnpm build && G && pnpm evals:gate && EA`，结果写进验收记录。前提：第 19–21 步都已完成，或已按砍法正式砍掉并记了 Revisions。
-- [ ] 24. 清理：删临时探针、夹具草稿与调试输出；`git status` 只有本段改动；确认 kernel 够不着 desktop 的假服务器；仓库、Tape、日志、plan 里没有任何机密的值（`git grep` 夹具 token 前缀与真实厂商的 token 前缀）。
+- [x] 22. 核对文档同步（验收 49）：`git diff 1ed9d64 -- docs/architecture/master-reference.md docs/architecture/02-agent-loop/spec.md docs/architecture/01-provider-and-tape/spec.md docs/architecture/00-foundation/spec.md docs/ux/components.md`：主参考只动 :221-223、:257、:751、:910、:911、:914、:917、:952、:1000 九处，行数不变；02 只多一行 `Amended by`；01 只多一行 `Amended by`（第 6 行）；00 没变；components.md 只动 spec §文档同步 列的行，含开放问题 11 定下的五行（:52、:89、:101、:102、:123）。只核对，不重复改。
+- [ ] 23. 对照 spec 全部验收逐条验证，结果、命令与证据位置记在「验收记录」（表头照 M6：验收 | 结论 | 证据（测试文件:行与用例名）| 命令）；每条不变量有名字带「03 不变量 N」的测试；每条判「通过」的由另一个 agent 独立核查。验收 50：在一个新 clone 上跑 `pnpm install && pnpm build && G && pnpm evals:gate && EA`，结果写进验收记录。前提：第 20–21 步都已完成，或已按砍法正式砍掉并记了 Revisions。
+- [x] 24. 清理：删临时探针、夹具草稿与调试输出；`git status` 只有本段改动；确认 kernel 够不着 desktop 的假服务器；仓库、Tape、日志、plan 里没有任何机密的值（`git grep` 夹具 token 前缀与真实厂商的 token 前缀）。
 - [ ] 25. spec 顶部改 `Status: implemented`，写交接。前提：第 20 步已完成（或 owner 明确同意砍法 ③ 且已照改），第 23 步全部通过。之后本文件不再有未勾的步骤。
 
 ## 实施记录
+
+- **2026-10-08 · 第 20、22、24 步完成**
+  - 20：产品常量为 https://yiongq.github.io/tenon/oauth/client-metadata.json；kernel 重新导出 SDK validateClientMetadataUrl，desktop 不加 SDK 依赖。mcp-runtime 6 项 U 绿，覆盖 https/非根路径、SDK 校验、托管 client_id 相同与 HTTP runtime 接线；http 常量突变红并恢复。curl --fail --location 取回 JSON 与仓库 cmp 相同，SHA-256 fe74fc340cc42b85523422736466d78d653809157737aef77f1d7257e4794337；托管文件与 pages 工作流未改。
+  - 22：git diff 1ed9d64 核对五份文档。master-reference 1246 行不变，只改 221–223、257、751、910、911、914、917、952、1000；01/02 分别只插入第 6/5 行 Amended by，删去该新增行后与旧正文逐字节一致；00 完全相同；components 197 行不变，只改 52、68、87、89、90、101、102、123、129–131、133–135、137、138。没有重复改文档。
+  - 24：没有同题对比代码或笔记夹具，没有临时探针/调试输出。kernel/src 对 desktop 的命中仅为注释，未导入假服务器。凭证前缀扫描只命中 live-env 与 anthropic-stream 的 not-real/decoy 测试诱饵，未读 .env.local，未输出凭证值。提示层文件相对 dev 无差异，版本 10。
+  - 最终门禁：G 204 文件 / 3811 通过，2 文件 / 2 测试跳过；format/lint/typecheck/build 绿；G 后 P 的免费 evals:gate 30 通过 / 1 跳过；普通 EA 单 worker / 单 Electron 169 通过（5.8 min）。成功放行也清查看哈希的最后边界追加后，重跑 G 仍 3811 绿，重新构建后的相关 E 3 项绿；该边界绿→突变红→恢复绿。全段共 12 项突变红且恢复。
+  - 下一步 lead 审查本 PR（dev/Ready，不合并）。21 是 Notion live，等 owner 在场；23/25 留最后；spec 仍 ready。PR #41 尚未合入时遵循本轮 owner 的撤销指令，合入后同步读法 70/开放问题 14。
+
+- **2026-10-08 · 第 18a 步完成**：8 项第三段遗留逐项完成。回调接缝防继承/live 拒跑与打包/dev 守卫；重启 PID 变化、刷新实际 tools/list、日志实际 stderr；旧/新定义对比、always 放行退 ask、新会话提示；stale 清已查看哈希、禁用及原因、重新查看文案；preview 精确码；刻度 group 与排序带名；警示枚举 covers 和快 schema / 只减一次独立断言；refreshMcp 注入 invoke 与乱序回归。
+  - G 3810 通过 / 2 跳过，format/lint/typecheck/build 绿；相关 U 86 项绿；相关 E 17 项绿（单 worker/单 Electron）。10 项突变全部红并恢复：回调 packaged/dev 守卫、排队中止不释放、出队重复减、刷新乱序、重启空操作、刷新空操作、日志空文本、stale 保留旧哈希、预览泛化错误。恢复后 G 和相关 E 再绿。
+  - 新回归需要夹具活动记录 tools/list、stderr 就绪行与初始 definition-file 内容；这些仅在显式测试参数下启用。排序可访问名称补上 server 名后，旧 e2e 详情入口改为名字前缀定位，避免误选移动按钮。第 18 从未写代码，四项撤销标记已落 plan。下一步 20、22、24。
+
+- **2026-10-08 · 第四段开工**：feat/03-seg4a 已更新到 origin/dev ff387eb（PR #40），pnpm install 完成且 lockfile 不变。18a 的 8 项最先做；本 PR 只做 18a、20、22、24。18/19/19a/19b 按 owner 指令撤销；18 未写任何代码。PR #41 spec 修订尚待合入，后续同步。Notion live 等 owner 在场；23/25 留最后；提示层保持 10，Electron 串行。
 
 - **2026-10-08 · PR #40 lead 审查修复 · 完成**
   - blocker：OAuth direct 接缝按实际启动 env `off` 启用；保留原三道守卫。三条 OAuth e2e 均断言系统浏览器零调用；iss 不匹配时令牌端点零请求。测试专用回调接缝仅在未打包 + dev env off + 显式 auto 变量时绑定端口 0，应用报告实际端口，无探测后关闭的竞争。
@@ -434,6 +458,14 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 ## 交接
 
+- **2026-10-08 · 第四段首个 PR · 完成**
+  - 分支：feat/03-seg4a 从最新 dev ff387eb（PR #40）开工；实现提交 b0fc4e7。PR [#42](https://github.com/yiongq/tenon/pull/42) 指向 dev，Ready for review、未合并。改动为第三段遗留、CIMD 常量/导出/测试、plan 核对与回归；没有半成品或临时探针。先 pnpm install，lockfile 无变化。
+  - 做完：18a 全部 8 项、20、22、24；18/19/19a/19b 已撤销（2026-10-08，见 spec 读法 70），没有实现同题对比。spec 未改、保持 ready；提示层文案/哈希/版本未改，PROMPT_LAYER_VERSION=10。
+  - 门禁：G 3811 通过 / 2 跳过；P 30 通过 / 1 跳过；EA 单 Electron 169 通过；最终边界修复后重构建 E 3 项通过；12 项突变红且恢复。命令与精确文档核对见实施记录。
+  - 给审查者：核对回调接缝的 packaged/dev/live 防护、真实 PID/tools-list/stderr 观察、两种哈希清理和刷新乱序，以及产品 CIMD URL。PR 目标 dev，完成后 Ready，不合并。
+  - 给 owner：21 已定 Notion https://mcp.notion.com/mcp，等 owner 在场再跑；23/25 留最后一个 PR。PR #41 的撤销同题对比 / 读法 70 修订合入后同步；本 PR 不重复写该 spec。
+  - 下一步：lead 审查 PR #42；21、23、25 留后续 PR。远端 CI 作为交付门禁，代码和本地检查已完成。
+
 - **2026-10-08 · 第二轮审查返修完成**
   - 分支：当前独立 worktree 为 `codex/pr29-round2`；交付推至 `feat/03-seg1` / PR #29 → dev，保持 Ready、不合并。
   - 完成：最新 lead 评论的 1–7 条、补测试与标签逐项落实；实现 / 测试 / 14 项突变证据见本 plan 实施记录。第 2 条只改写入时机，版本 10、文案与哈希不变。
@@ -488,6 +520,8 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 ## Open
 
+- **2026-10-08 · 已解决：第四段基线**：PR #40 已合入 origin/dev ff387eb，本分支已快进更新；plan 重放冲突已解决，第三段实现与历史记录保留。
+
 - **2026-10-08 · 已解决（PR #37，读法 68 / 验收 52）：第九个 issuer。** 已合最新 dev；满 8 个时在配置锁里先删最旧 issuer 的 8 片令牌与 client，再改列表、再由 token store 写新机密。删失败回 keychain 并恢复已删账户，列表保持不变；后续 server 删除覆盖余下所有账户。
 - **2026-10-08 · 已解决（PR #37，读法 67 / 验收 52）：保存精确诊断。** draft 请求 schema 只查形状并逐层 strict；保存的 create / update 经路由回 blocked-env、duplicate-env、invalid-id，配置读取 schema 保留全部语义限制，违规条目单独丢弃并记录原因。
 - **2026-10-08 · 已解决（PR #33）：第 7 步崩溃尾巴的状态契约缺口。** 合 dev 的提交 `17e8deb` 包含 PR #33；spec 读法 64 写定 `error` 是最近一次失败、只增 `crashed`。kernel / contracts 枚举同步；每次崩溃保留脱敏且最多 20 行 / 4 KiB 的尾巴，重连成功、用户重启或用户停止清空，crash-limit 保留。验收 4 回归及丢失 / 未清空突变均已验证。
@@ -507,5 +541,5 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 - **2026-10-08 · 用户指令**：第 9a 步跳过，由 lead 跑；第一段 PR 描述必须写「等 lead 跑」，本次不合并。
 
 - 开放问题 1 已定（2026-10-08）：CIMD 地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`，托管文件与发布工作流已在仓库，不挡开工。
-- 开放问题 2（live 厂商）挡第 21 步；开放问题 11–13 已于 2026-10-08 定（照推荐，见 spec）。
+- 开放问题 2 已定 Notion https://mcp.notion.com/mcp；第 21 步仅等 owner 在场。开放问题 14 由 owner 实际使用反馈触发后续 feature spec，本 PR 不实现本会话允许；开放问题 11–13 已于 2026-10-08 定（照推荐，见 spec）。
 - **已解决（lead `98c45e1`）：第 9a 步基线记录已接入，evals:gate 绿。** 第一段仍等 lead 再审通过，本次不合并。
