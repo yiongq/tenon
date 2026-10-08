@@ -3,9 +3,9 @@
 Status: ready
 Phase: 3 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: 裁决由 owner 拍板（2026-10-08 四轮，Q1–Q16 都选推荐项，T1–T49 全收，T17、T24 已并入 Q11-2、Q4-2；裁决卡 `cards-v1.md`、选择记录 `picks.md` 与调研原文在仓库外 `../tenon-notes/2026-10-03-phase3-mcp/`）；起草在 Claude Code（2026-10-08）；实现由 Codex 做，lead（Claude Code）在每段 PR 合并前审查（owner 2026-10-08 定）
-Amends: [02-agent-loop](../02-agent-loop/spec.md) §主进程与 kernel 的循环接口（`RunAssembly`、`McpToolSource` 只增可选成员）、§依赖方向与能力入口（`SessionServiceOptions` 只增可选成员）、§02 的 Tape 事实（排除码、`view/tool_table` 的 `tools[]` 只增 `definitionHash`、`tool/permission_decided` 只增，新名字 `message/server_instructions`）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§权限决策顺序（作用域与授权键）、§工具调用的收口（原因码表）、§提示层与评测、§停止与退出（退出第 4 步并行关连接池）、§界面范围、01 修补 6 立的工具结果视图、02 §答复与投递 立的 `approval.current`。只增不改，全文见 §对 02 的修补；碰到 02 旧文字的条目在 §点名。[01-provider-and-tape](../01-provider-and-tape/spec.md)：`createSessionService` 的构造参数只增可选的 `userSetting`，config.json 只增 `mcpServers`（02、M6 加同类成员都记作修补 01 的先例），正文不改。`HostAdapter` 不加成员，00 不修补（T1）
+Amends: [02-agent-loop](../02-agent-loop/spec.md) §主进程与 kernel 的循环接口（`RunAssembly`、`McpToolSource` 只增可选成员）、§依赖方向与能力入口（`SessionServiceOptions` 只增可选成员 `userSetting`、`schemaValidator`）、§02 的 Tape 事实（排除码、`view/tool_table` 的 `tools[]` 只增 `definitionHash`、`tool/permission_decided` 只增，新名字 `message/server_instructions`）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§权限决策顺序（作用域与授权键）、§工具调用的收口（原因码表）、§提示层与评测、§停止与退出（退出第 4 步并行关连接池）、§界面范围、01 修补 6 立的工具结果视图、02 §答复与投递 立的 `approval.current`。只增不改，全文见 §对 02 的修补；碰到 02 旧文字的条目在 §点名。[01-provider-and-tape](../01-provider-and-tape/spec.md)：`createSessionService` 的构造参数只增可选的 `userSetting`，config.json 只增 `mcpServers`（02、M6 加同类成员都记作修补 01 的先例），正文不改。`HostAdapter` 不加成员，00 不修补（T1）
 Related: [master-reference](../master-reference.md) §4.3、§4.12、§13 阶段 3–5；[custom-vendors](../../features/custom-vendors/spec.md)（config.json 写入规则、钥匙串删除顺序、测试接缝的先例）
-Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready；2026-10-08 owner 定开放问题 1：CIMD 地址用 tenon 仓库的 GitHub Pages（`https://yiongq.github.io/tenon/oauth/client-metadata.json`），托管文件 `apps/desktop/oauth/client-metadata.json` 与发布工作流 `.github/workflows/pages.yml` 随本次修订进仓库，plan 第 20 步改为只改常量、补测试；2026-10-08 第一段实现开工时补（实现者在第 2 步前停下指出，尚无代码依赖）：冻结的 `definitionHash` 落进 `view/tool_table` 的 `tools[]` 与 `ToolTableItem`（只增，§对 02 的修补 15），重建冻结表时原样恢复，冻结项缺它时「总是允许」不成立、照每次问（读法 61；§三态、§Tape 事实、不变量 8、验收 38 同改）（旧：只写了 `ToolKey.definitionHash` 取冻结项的哈希，没写冻结项从哪来；改因：Tape 只存 `specHash`，不含 outputSchema 与 requiresUserInteraction，恢复会话后无从还原）；同时更正首版合入时误挂在 §对 02 的修补 11–13 后的「已定」标记，移回 §开放问题 11–13；2026-10-08 第一段第 4 步补（实现者停下指出，§超时、取消与断流尚无合入的代码依赖）：调用的总长封顶改由连接层自己的计时器中止信号实现，不交给 SDK 的 `maxTotalTimeout`（旧：`maxTotalTimeoutMs` 原样作为 SDK 的 `maxTotalTimeout`；改因：2.3.1 的它到点只拒绝本地 Promise，不发 `notifications/cancelled`、不关新代 HTTP 请求，server 继续执行，违反 T10 与验收 30）；§超时、取消与断流、验收 30、读法 62 同改；2026-10-08 第一段第 9 步补（实现者在 Open 指出，第 9 步尚无合入的代码依赖）：`McpOAuthRuntime` 只增 `issuers`（config `oauth.issuers` 原样，provider 当前 issuer 的初值），`onIssuer` 改为带 `{ hash, url }` 与 `write: 'tokens' | 'client'`，第一次为令牌写时同一次写入 `ownClient.issuer`（旧：runtime 没有 `issuers`，provider 不带 ctx 时拿不到当前 issuer；`onIssuer` 只带哈希，写不回 `ownClient.issuer` 原文）；§写入规则「记 issuer」、§客户端身份、§provider 契约 `tokens`、验收 17、读法 63 同改；2026-10-08 第一段第 7 步补（实现者在 Open 指出）：崩溃的 stderr 尾巴放进状态的 `error`，错误码只增 `crashed`，`error` 改读作「最近一次失败」、按 §状态机「崩溃」的时点设与清（旧：`error` 只配 phase `error` 的码，崩溃后进 `restarting` / `stopped` 时没有放尾巴的地方，与验收 4 冲突）；§进程树「错误对象」、§状态机「崩溃」、验收 4、读法 64 同改；2026-10-08 第一段审查后补：`validateResourceURL` 只在没有 PRM 时由 provider 提供，有 PRM 时交给 SDK 比对并原样发 `resource`（旧：provider 一律实现它、有 PRM 时自己照 `checkResourceAllowed` 比对；改因：实现里两个参数方向写反，只写到 origin 的 PRM resource 登录被拒；且带了这个方法 SDK 就改发 URL 的 `href`，不带路径的 resource 多出尾斜杠，正是 2.3.1 修过的 #1968）；§登录流程 7、读法 65 同改
+Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready；2026-10-08 owner 定开放问题 1：CIMD 地址用 tenon 仓库的 GitHub Pages（`https://yiongq.github.io/tenon/oauth/client-metadata.json`），托管文件 `apps/desktop/oauth/client-metadata.json` 与发布工作流 `.github/workflows/pages.yml` 随本次修订进仓库，plan 第 20 步改为只改常量、补测试；2026-10-08 第一段实现开工时补（实现者在第 2 步前停下指出，尚无代码依赖）：冻结的 `definitionHash` 落进 `view/tool_table` 的 `tools[]` 与 `ToolTableItem`（只增，§对 02 的修补 15），重建冻结表时原样恢复，冻结项缺它时「总是允许」不成立、照每次问（读法 61；§三态、§Tape 事实、不变量 8、验收 38 同改）（旧：只写了 `ToolKey.definitionHash` 取冻结项的哈希，没写冻结项从哪来；改因：Tape 只存 `specHash`，不含 outputSchema 与 requiresUserInteraction，恢复会话后无从还原）；同时更正首版合入时误挂在 §对 02 的修补 11–13 后的「已定」标记，移回 §开放问题 11–13；2026-10-08 第一段第 4 步补（实现者停下指出，§超时、取消与断流尚无合入的代码依赖）：调用的总长封顶改由连接层自己的计时器中止信号实现，不交给 SDK 的 `maxTotalTimeout`（旧：`maxTotalTimeoutMs` 原样作为 SDK 的 `maxTotalTimeout`；改因：2.3.1 的它到点只拒绝本地 Promise，不发 `notifications/cancelled`、不关新代 HTTP 请求，server 继续执行，违反 T10 与验收 30）；§超时、取消与断流、验收 30、读法 62 同改；2026-10-08 第一段第 9 步补（实现者在 Open 指出，第 9 步尚无合入的代码依赖）：`McpOAuthRuntime` 只增 `issuers`（config `oauth.issuers` 原样，provider 当前 issuer 的初值），`onIssuer` 改为带 `{ hash, url }` 与 `write: 'tokens' | 'client'`，第一次为令牌写时同一次写入 `ownClient.issuer`（旧：runtime 没有 `issuers`，provider 不带 ctx 时拿不到当前 issuer；`onIssuer` 只带哈希，写不回 `ownClient.issuer` 原文）；§写入规则「记 issuer」、§客户端身份、§provider 契约 `tokens`、验收 17、读法 63 同改；2026-10-08 第一段第 7 步补（实现者在 Open 指出）：崩溃的 stderr 尾巴放进状态的 `error`，错误码只增 `crashed`，`error` 改读作「最近一次失败」、按 §状态机「崩溃」的时点设与清（旧：`error` 只配 phase `error` 的码，崩溃后进 `restarting` / `stopped` 时没有放尾巴的地方，与验收 4 冲突）；§进程树「错误对象」、§状态机「崩溃」、验收 4、读法 64 同改；2026-10-08 第一段审查后补：`validateResourceURL` 只在没有 PRM 时由 provider 提供，有 PRM 时交给 SDK 比对并原样发 `resource`（旧：provider 一律实现它、有 PRM 时自己照 `checkResourceAllowed` 比对；改因：实现里两个参数方向写反，只写到 origin 的 PRM resource 登录被拒；且带了这个方法 SDK 就改发 URL 的 `href`，不带路径的 resource 多出尾斜杠，正是 2.3.1 修过的 #1968）；§登录流程 7、读法 65 同改；2026-10-08 第一段合入后、第二段开工前 owner 定（选 A）：T23 的展开数上限 ⑥ 撤销，连接器工具的入参与结构化输出改在 desktop 的 worker 线程里限时 2 s 校验（新增 ⑦），SDK 改传总回合格的校验器、结构化输出由池校验（① 改），kernel 经 `SessionServiceOptions` 只增 `schemaValidator`（§对 02 的修补 16、§对 01 的修补 3）（旧：① SDK 用 CfWorker 在主线程校验输出，⑥ 静态计数 `$ref` 展开、超 10 000 记 `invalid-definition`；改因：静态计数三轮审查共被绕过 13 种写法，递归配深层实例无从静态封顶，主线程会被卡住）；验收 32、33 改，新增验收 51、读法 66，读法 53 标撤销；plan 第二段加第 11a 步与第 10a 步（第一段遗留：刷新时 PRM 路径 5xx 掩盖 `invalid_grant`）
 
 引用写法照裁决卡：`02:N` = docs/architecture/02-agent-loop/spec.md 第 N 行，`00:N`、`01:N` 同理；`主参考:N` = master-reference.md；`M6:N` = docs/features/custom-vendors/spec.md；`comp:N` = docs/ux/components.md；Q、T 编号是裁决卡的题号；`spec-3`、`sdk-12`、`hosts-m4` 这类是仓库外 `verified-facts.md` 的事实编号（被推翻的 sdk-25、sdk-26、claude-13 不引）；`SDK变更:N` = typescript-sdk @b0225220 的 packages/client/CHANGELOG.md；`2.3.1 dist/…` = `@modelcontextprotocol/client` 2.3.1 的发布包；`规范/…` = modelcontextprotocol 仓库 @0a11bf68 的 docs/specification/2026-07-28/…；`ccmcp:N`、`cauth:N`、`cdext:N`、`cdcfg:N`、`midconv:N` 同裁决卡页头。代码路径相对仓库根。所有行号按 dev `1ed9d64`；02 的行号是本 spec 给 02 加 `Amended by` 那一行之前的（加了之后 02 第 5 行起的行号都要加一），与裁决卡一致；01 同理（本 spec 给 01 加的 `Amended by` 在第 6 行，01 第 6 行起加一）。
 
@@ -95,7 +95,7 @@ Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚�
 | T20 | 「新会话生效」挂在连接器栏的开关与三态旁；「永不」的说明句；声明 requiresUserInteraction 的工具不出「总是允许」 | §界面 |
 | T21 | 持久授权存储拒收 `builtin`，补 02 不变量 20 后半句的测试 | §工具表「三态」；验收 37 |
 | T22 | 新排除码 `connector-unavailable`、`name-collision`、`invalid-definition`、`definition-changed`，排在 `connector-unauthorized` 之后、`over-limit` 之前 | §工具表「开表排除」 |
-| T23 | schema 加固五条：CfWorker 校验输出、单个定义 64 KB / 32 层、单台 1000 个 / 5 MiB、慢正则初筛、网络 `$ref` 不解引用；②④⑤ 对 inputSchema 与 outputSchema 都查（「描述 + schema」） | §工具表「定义的上限与 schema 加固」 |
+| T23 | schema 加固：单个定义 64 KB / 32 层、单台 1000 个 / 5 MiB、慢正则初筛、网络 `$ref` 不解引用；②④⑤ 对 inputSchema 与 outputSchema 都查（「描述 + schema」）；连接器工具的入参与结构化输出在 worker 线程里限时 2 s 校验（⑦，2026-10-08 owner 选 A，取代 ⑥ 的展开数上限）；SDK 不做输出校验 | §工具表「定义的上限与 schema 加固」 |
 | T24 | 作废（并入 Q4-2） | — |
 | T25 | 不往 `_meta` 注入 session_id / working_dir / 调用 id；主参考:257 改「阶段 3 评估后不做」 | §协议代际；§文档同步 |
 | T26 | 添加、改命令或地址时出确认框：完整 argv 逐项列出、不截断、转义不可见字符；sudo、rm -rf、主目录、~/.ssh 加警示 | §界面「确认框」 |
@@ -611,14 +611,26 @@ export interface McpLoginUi {
 
 ### 定义的上限与 schema 加固（T23）
 
-① `Client` 传 `jsonSchemaValidator: new CfWorkerJsonSchemaValidator()`：SDK 在 Node 上默认用 AJV 校验结构化输出（开 `allErrors`、不校验 schema，security-m3），改成与入参校验同一个校验器（packages/kernel/src/tools/validate.ts:6-11；02 开放问题 16）。
+① SDK 不做输出校验：`Client` 传一个总回「合格」的 `jsonSchemaValidator`（读法 66）。结构化输出由池在 `callTool` 返回后，拿它最近一次列表里该工具的 outputSchema 送进 ⑦ 的限时校验；不合或超时都抛 `McpInvalidOutputError`，executor 照 `connectorFailed` / completed 收口（调用已执行，02:2928），与原先 SDK 判出不合时的收口相同。（旧：传 `new CfWorkerJsonSchemaValidator()`，SDK 在主线程同步校验，限不了时。）
 ② 单个工具定义（描述、inputSchema 与 outputSchema 的规范化 JSON，T23「描述 + schema」）超过 65 536 字节，或 inputSchema、outputSchema 任一的对象 / 数组嵌套超过 32 层（根算 1 层），开表排除，记 `invalid-definition`。
 ③ 一台 server 的工具超过 1000 个或列表规范化后超过 5 MiB，这台进「出错」`tools-limit`、整台不进表。LibreChat 用同样的数字但截断（librechat packages/api/src/mcp/mcpConfig.ts:28-31）；Tenon 不截断，因为截掉的工具 Tape 里没有排除记录。
 ④ 慢正则初筛（在 validate.ts，按现有 `schemaUnusable` 收口：这次调用 `tool-unavailable`）：`pattern` 或 `patternProperties` 的键超过 1024 字符；或正则源串命中下面任一初筛式——一个带量词的分组里还有量词 `/\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{]/`，或两支相同的分组再带量词 `/\(([^|()]+)\|\1\)[+*{]/`。这只是初筛、覆盖不全（security-17、security-18）；能否让 CfWorker 改用 re2js 匹配见 §开放问题 3。
 ⑤ `$ref` 不以 `#` 开头的（网络或外部引用）不解引用，按 `schemaUnusable` 收口（security-10）。
-⑥ 展开数上限（读法 53）：② 的大小与深度挡不住经本地 `$ref` 的组合爆炸——`$defs` 里 dN = `{ allOf: [{ $ref: dN+1 }, { $ref: dN+1 }] }`，链长 24 时 schema 只有 1 591 字节、JSON 深度约 5，CfWorker 校验 `{}` 就要 6.4 s，每多一层约翻倍（审查实测；修订时复测链长 16、18、20 分别 34、97、370 ms，记在 `spec-review-r1.json` protocol-security-7）；校验是同步的，kernel 跑在 Electron 主进程里（apps/desktop/src/main/index.ts:166），入参校验又在权限判决之前（packages/kernel/src/tools/validate.ts:2-4）。所以从根出发，沿本地 `$ref` 与组合、子 schema 关键字（`allOf`、`anyOf`、`oneOf`、`not`、`if` / `then` / `else`、`items`、`prefixItems`、`properties`、`patternProperties`、`additionalProperties`、`$defs` 等）按路径计数，展开后访问的子 schema 超过 10 000 个就记 `invalid-definition`；同一 `$ref` 在一条路径上第二次出现（递归）按一次计、不再展开。
+⑥ （2026-10-08 撤销，换成 ⑦；读法 53、66。）原规则：沿本地 `$ref` 与组合关键字静态计数，展开后超过 10 000 个子 schema 就记 `invalid-definition`。撤销原因：静态计数要与 CfWorker 的引用解析逐字一致，差一点就是绕过口子（三轮审查找到 13 种写法：`$anchor`、重复 anchor、只有片段的 `$id`、嵌套 `$id` 的双重登记、相对 `$id`、数字或空 `$id`、元组 `items`、`dependencies` 等）；而且同一实例位置上有两个递归引用时，耗时随实例深度翻倍，静态上无从封顶。随 ⑥ 一起删掉的还有为它加的 id 合法性检查（`invalid-id` 会误伤 `example: { id: 42 }` 这类正常 schema）。
+⑦ 限时校验（读法 66）：连接器工具的入参与结构化输出都交给 desktop 主进程里一个常驻的 `node:worker_threads` 线程，用同一个 `@cfworker/json-schema` 校验。每一条限时 2 000 ms，从 worker 开始处理这一条算起（排队不计时，worker 一次只处理一条）；到时就终止这个 worker，下一条来时重起。入参校验超时按 `schemaUnusable` 收口（`tool-unavailable` / not-run，与 ④⑤ 同一条路）；输出校验超时抛 `McpInvalidOutputError`。worker 里编译 schema 出错（悬空或外部引用等）回 `unusable: 'schema'`，收口同 ⑤。kernel 经 `SessionServiceOptions` 只增的可选成员 `schemaValidator` 拿到它（§对 02 的修补 16、§对 01 的修补 3）；没有它时（kernel 测试、02 的测试入口）照旧在进程内同步校验。内置工具的 schema 是 Tenon 自己的，照旧在进程内同步校验。限时是真实计时（worker 的终止不经 `HostClock`），测试用很短的真实限时。
 
-②④⑤⑥ 对 inputSchema 与 outputSchema 一样查（security-10 两者都点名）。outputSchema 由 SDK 拿它最近一次列表里的那份校验 server 发来的 `structuredContent`（2.3.1 dist/index.mjs:4244、:4275-4279），schema 与数据都由 server 控制，所以：开表时 outputSchema 不合格的工具记 `invalid-definition`；表冻结之后池拿到的新列表里某工具的 outputSchema 不合格，代理在发 `tools/call` 之前就按 `schemaUnusable` 收口为 `tool-unavailable`。池对拿到的每份列表（连上、listChanged、刷新）都做这几项检查，结果随 `McpLiveTool` 交出。
+```ts
+// packages/kernel/src/tools/validate.ts —— 新增（03）
+export type SchemaVerdict =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly errors: readonly string[] }        // 不合
+  | { readonly ok: false; readonly unusable: 'timeout' | 'schema' }   // 超时，或 schema 本身用不了
+export interface SchemaValidatorPort {
+  validate(q: { readonly schema: unknown; readonly instance: unknown; readonly signal: AbortSignal }): Promise<SchemaVerdict>
+}
+```
+
+②④⑤ 对 inputSchema 与 outputSchema 一样查（security-10 两者都点名）。outputSchema 由 SDK 拿它最近一次列表里的那份校验 server 发来的 `structuredContent`（2.3.1 dist/index.mjs:4244、:4275-4279），schema 与数据都由 server 控制，所以：开表时 outputSchema 不合格的工具记 `invalid-definition`；表冻结之后池拿到的新列表里某工具的 outputSchema 不合格，代理在发 `tools/call` 之前就按 `schemaUnusable` 收口为 `tool-unavailable`。池对拿到的每份列表（连上、listChanged、刷新）都做这几项检查，结果随 `McpLiveTool` 交出。
 
 ### 开表排除（T22、T47）
 
@@ -687,7 +699,7 @@ export interface McpLoginUi {
 | 旧代 server 发 `elicitation/create` 等 | 不变 | SDK 回 -32601；02:1978 原状 | Q3 |
 | `input_required` 打到旧代协商的连接上 | 不变 | `callTool` 抛 `INVALID_RESULT`，is_error、completed（02:1978） | Q3 |
 | 结果没有任何内容块 | 不变 | `connectorEmpty`（02:2929） | 02 |
-| 参数 schema 用不了（含慢正则初筛、外部 `$ref`） | 不变 | `tool-unavailable` / not-run（`schemaUnusable`） | T23 |
+| 参数 schema 用不了（含慢正则初筛、外部 `$ref`、⑦ 的限时校验超时） | 不变 | `tool-unavailable` / not-run（`schemaUnusable`） | T23 |
 
 - 日志与错误对象见 §进程树、stderr 与日志。连接器栏对每个错误码有一句中英文案（§界面）。
 - 对 2026-07-28 规范 MUST 的有意偏离有两处：T49（断流不重发 `tools/call`）；T36 让回环、私网 server 的发现地址可以是同类主机上的 `http:`（规范/basic/authorization/security-considerations.mdx:42 要求授权服务器各端点 MUST 一律 https，例外的依据是 security-9 的 SHOULD 与 T36 的裁决）。stdio 不探测是对 SHOULD 的偏离（Q2）。
@@ -856,13 +868,15 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 13. **第 3 层产生方、开表排除与连接器栏**：02 写明「来源随阶段 3 的连接器入口定」（02:2126、:2210、:2211），本 spec 兑现，不改规则。
 14. **退出第 4 步并行关连接池**（02:1844，§停止与退出 的退出顺序；apps/desktop/src/main/shutdown.ts:253-255）：`registry.settled(SHUTDOWN_SETTLE_MS)` 与 `pool.close({ deadlineMs: SHUTDOWN_SETTLE_MS })` 一起等。`pool.close` 对每台发 stdin EOF、关 HTTP 连接，不走 close 平时的两段 2 s 宽限（stdio-transport.ts:8、:89-94），到 `deadlineMs` 对仍有存活进程的组无条件 SIGKILL（desktop spawn 时 `detached`，每台是自己的组长，apps/desktop/src/main/host/process.ts:59）。退出总时长的上限不变（SHUTDOWN_SETTLE_MS = 500 + 2000 ms，shutdown.ts:62、loop/limits.ts:16、:18）；不这样做，忽略 EOF 的 server 与它的孙进程会在退出后留下来（不变量 18）。
 15. **`ToolTablePayload.tools[]`（packages/kernel/src/tape/entry.ts）与 `ToolTableItem`（packages/kernel/src/tools/registry.ts）只增可选 `definitionHash`**（Q14；02:1992 冻结的是开表时的定义）：开表时 MCP 项写入候选从原始定义算的哈希，`toolTableFacts` 落进 `view/tool_table`，`rebuildToolTable` 原样恢复；第 5 条的 `ToolKey.definitionHash` 一律取自冻结项，不取池或配置里的当前值——同一份 `ToolSpec` 配不同 outputSchema 时 `specHash` 相同而定义哈希不同，所以不能从 `specHash` 推回。冻结的 MCP 项没有这个字段时（03 之前写的表；产品里 03 之前 `mcpSources` 恒为空，run-assembly.ts:307，只有测试会写出这种表），第 6 层的「总是允许」不成立、照「每次问」，不带 `definitionChanged`；「永不」与停用照拦（读法 61）。
+16. **`SessionServiceOptions` 只增可选成员 `schemaValidator?: SchemaValidatorPort`**（T23 ⑦；02 §依赖方向与能力入口，service.ts:73-98）：kernel 对连接器工具的入参校验有它时改走它（异步），内置工具与没有它时照 02 进程内同步校验；校验结果的收口（不合 → 02 的参数错误；`unusable` → `schemaUnusable` / `tool-unavailable`）不变。这个构造参数是 01 立的，同时记作修补 01（§对 01 的修补 3）。
 
 ## 对 01 的修补
 
-01 已 `implemented`。下面两条只增，01 正文不改，01 顶部加一行 `Amended by`（§文档同步）。02 给 `createSessionService` 加构造成员、M6 给 config.json 加 `customVendors`，都记作修补 01（01 顶部两行 `Amended by`），这里照做。
+01 已 `implemented`。下面三条只增，01 正文不改，01 顶部加一行 `Amended by`（§文档同步）。02 给 `createSessionService` 加构造成员、M6 给 config.json 加 `customVendors`，都记作修补 01（01 顶部两行 `Amended by`），这里照做。
 
 1. **`createSessionService` 的构造参数只增可选的 `userSetting`**（01:84 立的构造入口；类型与语义见 §对 02 的修补 4）。
 2. **config.json 只增键 `mcpServers`**（01:705 立的 config.json；schema 与写入规则见 §配置与机密）。
+3. **`createSessionService` 的构造参数只增可选的 `schemaValidator`**（T23 ⑦；类型与语义见 §对 02 的修补 16）。
 
 ## 点名（T45 附表）
 
@@ -986,8 +1000,8 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 ### 工具表与权限
 
 31. 同台重名的两个工具都记 `name-collision`，开表不抛错；栏里写「重名，未提供」（T16）。〔K/loop/tool-table.test.ts、D/renderer-connectors.test.ts〕
-32. 定义（含 outputSchema）超 64 KB、inputSchema 或 outputSchema 嵌套超 32 层、或 `$ref` 展开超 10 000 个子 schema → `invalid-definition`，链长 40 的 `$ref` 定义在 100 ms 内判完；超 1000 个工具或 5 MiB → 「出错」`tools-limit`、整台不在表里（T23 ②③⑥）。〔K/mcp/definition.test.ts、K/loop/tool-table.test.ts、K/mcp/pool.test.ts〕
-33. 结构化输出不合 outputSchema 时由 CfWorker 判出（与入参同一校验器）；inputSchema 命中慢正则初筛或 pattern 超 1024 字符、或有外部 `$ref` 的工具，调用时 `tool-unavailable`；表冻结后新列表里 outputSchema 有同样问题的工具，调用时 `tool-unavailable`、server 没收到 `tools/call`（T23 ①④⑤）。〔K/tools/validate.test.ts、K/mcp/connection.test.ts、K/mcp/pool.test.ts〕
+32. 定义（含 outputSchema）超 64 KB、inputSchema 或 outputSchema 嵌套超 32 层→ `invalid-definition`；超 1000 个工具或 5 MiB → 「出错」`tools-limit`、整台不在表里（T23 ②③）。〔K/mcp/definition.test.ts、K/loop/tool-table.test.ts、K/mcp/pool.test.ts〕
+33. 结构化输出不合 outputSchema 时由 ⑦ 的校验判出，抛 `McpInvalidOutputError`、`connectorFailed` / completed；SDK 自己不校验（传入的校验器总回合格）；inputSchema 命中慢正则初筛或 pattern 超 1024 字符、或有外部 `$ref` 的工具，调用时 `tool-unavailable`；表冻结后新列表里 outputSchema 有同样问题的工具，调用时 `tool-unavailable`、server 没收到 `tools/call`（T23 ①④⑤⑦）。〔K/tools/validate.test.ts、K/mcp/connection.test.ts、K/mcp/pool.test.ts〕
 34. 一个工具同时命中几条排除时，记 §开表排除 顺序里的第一个（T22）。〔K/loop/tool-table.test.ts〕
 35. 超上限：按连接器顺序、同台按名裁，内置工具不裁；重排之后下一张表随之变；`mcp.list` 的 `overLimit` 给出未提供的个数（Q11-2）。〔K/loop/tool-table.test.ts、D/mcp-routes.test.ts〕
 36. 三态：「永不」的工具开表记 `user-disabled`，冻结后才设的调用时拦下；「总是允许」不出卡（策略指定不可逆时照 02 例 2 也放行），策略要求每次问时照样出卡；声明 requiresUserInteraction 的工具栏里没有「总是允许」、路由回 `interaction-required`，策略要求问的回 `policy-asks`；停用或删除的 server，冻结表里它的工具调用时按 `user-disabled` 拦；`readOnlyHint: true` 的工具在手动档照样出卡（T18–T20、T46）。〔K/loop/mcp-run.test.ts、D/mcp-routes.test.ts〕
@@ -1014,6 +1028,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 48. 〔live，厂商待 owner 定〕在 owner 选的那家（Linear / Notion / Sentry）上：设置栏加远程连接器、登录（真实浏览器）、列出工具、调一个只读工具成功；令牌只在钥匙串；删除连接器后这台的账户都读不到值（Q16）。〔E/live-mcp-oauth.spec.ts〕
 49. 文档：主参考九处、01 与 02 顶部各一行、components.md 各行照 §文档同步 改了，01、02 正文与 00 不变。〔plan 的 git diff 核对〕
 50. 干净 clone 上 install、build、lint、typecheck、test、`evals:gate`、`test:e2e` 全过；§不变量 每条有名字带「03 不变量 N」的测试；仓库、Tape、日志、plan 里没有任何机密的值。
+51. 限时校验：`schema-chains.ts` 里的全部形状（含三轮审查找到的 `$anchor` 链、重复 anchor、只有片段的 `$id`、嵌套 `$id`、相对 `$id`、数字与空 `$id`、元组 `items`、`dependencies`，以及同一实例位置的两个递归引用配深层实例）作为连接器工具的 inputSchema 时，调用在限时内收口 `tool-unavailable` / not-run，作为 outputSchema 时收口 `connectorFailed` / completed；校验期间主线程上一个 10 ms 的计时器按时触发；超时之后 worker 被终止，下一条在新 worker 里正常校验；普通 schema 的入参与输出照常判（合格、不合格各一例）；`example: { id: 42 }` 这类 schema 照常可用（T23 ⑦，读法 66）。〔D/schema-worker.test.ts、K/tools/validate.test.ts、K/mcp/pool.test.ts〕
 
 主参考 §13 阶段 3 验收（:917，按 Q3 改后）对照：
 
@@ -1125,7 +1140,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 50. 派发过、被停止的连接器调用记 `uncertain`：02 的停止收口表没有连接器那一行，这一条由本 spec 定。
 51. 单个响应流断开不改这台的状态；只读请求的那次重发遇到网络失败，才按 §状态机 的远程断开处理。
 52. 429 只在连接、重连阶段让整台进「出错」`rate-limited`；已连接时只让那次调用以 `connectorFailed` / completed 失败。
-53. T23 ⑥：沿本地 `$ref` 与组合关键字展开，访问的子 schema 超过 10 000 个就记 `invalid-definition`，同一路径上重复的 `$ref` 按一次计（10 000 这个数由起草定，审查实测链长 24 已要 6.4 s）。
+53. T23 ⑥：沿本地 `$ref` 与组合关键字展开，访问的子 schema 超过 10 000 个就记 `invalid-definition`，同一路径上重复的 `$ref` 按一次计（10 000 这个数由起草定，审查实测链长 24 已要 6.4 s）。（2026-10-08 撤销，见读法 66。）
 54. 定义哈希含 outputSchema：它不进 `ToolSpec`，却决定 SDK 怎么校验结果，变了也按 Q14 扣下。
 55. 同题对比触发「本会话允许」后，另起一份只增的 feature spec，不就地改 03（那时已有代码依赖 03 的契约）。
 56. 砍法的触发线「从第 1 步起已用的工作日 + 余下步骤的估计 > 15 个工作日」取预算 2–3 周的上限，由起草定；lead 在第 6 步完成时与每段 PR 审查时判，估计与依据写进实施记录。
@@ -1138,3 +1153,4 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 63. provider 的当前 issuer 来自 `McpOAuthRuntime.issuers`（config `oauth.issuers` 原样）的最后一个，登录中 `onIssuer` 成功后就地改为新的；`onIssuer` 带 issuer 原文与写入类别，`ownClient.issuer` 在第一次为令牌写时与哈希同一次写入（第一段第 9 步实现时发现，2026-10-08）。
 64. 状态的 `error` 是「最近一次失败」，不只跟着 phase `error`：崩溃记 `crashed`（只增的错误码，contracts 同步）连同那个进程的 stderr 尾巴，进「已连接」、点「重启」或因用户操作进「已停止」时清空，`crash-limit` 停下后保留（第一段第 7 步实现时发现，2026-10-08）。
 65. resource 参数：有 PRM 时 provider 不带 `validateResourceURL`，交给 SDK 的 `checkResourceAllowed` 与原样发送；只在没有 PRM 时带它、返回规范化的 server URI，满足规范「不论支不支持都发」（第一段审查时发现：自己实现比对把参数方向写反，且带了这个方法后 SDK 会给不带路径的 resource 加尾斜杠，2026-10-08）。
+66. T23 的展开数上限（⑥）撤销，改为 ⑦：连接器工具的入参与结构化输出在 desktop 的 worker 线程里限时 2 s 校验，超时按 schema 用不了收口；SDK 不做输出校验，由池在返回后校验。原因：静态预估要与校验库的引用解析逐字一致，三轮审查找到 13 种绕法，且递归配深层实例在静态上无从封顶（2026-10-08 owner 选 A）。②③④⑤ 的便宜检查保留，为 ⑥ 加的 id 检查一并删掉。
