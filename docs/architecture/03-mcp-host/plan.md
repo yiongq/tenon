@@ -313,7 +313,7 @@
 ## 交接
 
 - **2026-10-08 · 第 2–3 步完成 / 第 4 步半成品并卡住**
-  - 分支：`feat/03-seg1`；已合入 dev PR #30（合并提交 `462ffd0`）；PR [#29](https://github.com/yiongq/tenon/pull/29) 仍为 draft，未合并。
+  - 分支与实现提交：`feat/03-seg1` @ `c5d2106`；未提交改动：无；已合入 dev PR #30（合并提交 `462ffd0`）；PR [#29](https://github.com/yiongq/tenon/pull/29) 仍为 draft，未合并。
   - 做完的：第 2 步新增契约、提示层版本 10、两份 locale；第 3 步 stdio / HTTP / OAuth / tree / crash 夹具。原冻结哈希持久化阻塞已解决，Open 过时 draft 条目已删。
   - 半成品：第 4 步 client 选项、HTTP fetch 包装、连接层、无条件进程组强杀、executor 取消与两种未执行收口已写，MCP / executor 32 用例绿；有 SDK 总时限取消冲突（见 Open）。验收 12 的 x-mcp-header、41 的实际通知日志、Everything prompts/resources 与第 4 步五项突变尚未全部完成，不能勾第 4 步；第 5–9 步未开始。
   - 门禁：第 2 步 G 绿（3564 通过 / 2 跳过）；第 3 步 G 绿（3569 通过 / 2 跳过）；第 4 步最终门禁见实施记录。P 中 build 会验证，evals:gate 因提示层 10 缺基线记录预期红；9a 按用户要求不跑，等 lead 跑。无 Electron / live 测试。
