@@ -68,6 +68,7 @@ export function createMcpStore(q: {
     save(request: RouteRequest<typeof mcpSave>): Promise<McpWriteResult> {
       return withConfigLock(host.identity, async () => {
         const draft = request.draft
+        if (draft.id === 'builtin') return refused('invalid-id')
         if (draft.transport.type === 'stdio') {
           const stdio = draft.transport
           const names = [...Object.keys(draft.transport.envs), ...draft.transport.env_keys]
@@ -195,7 +196,14 @@ export function createMcpStore(q: {
             await host.secrets
               .delete(account)
               .catch(() => q.log(`[mcp] removed secret cleanup failed: ${next.id}`))
-        if (values.length) q.pool().restart(next.id)
+        if (
+          values.length ||
+          (old?.transport.type === 'http' &&
+            t.type === 'http' &&
+            (JSON.stringify(old.transport.header_keys) !== JSON.stringify(t.header_keys) ||
+              JSON.stringify(old.transport.oauth.ownClient) !== JSON.stringify(t.oauth.ownClient)))
+        )
+          q.pool().restart(next.id)
         return saved
       })
     },
@@ -205,6 +213,7 @@ export function createMcpStore(q: {
         const server = config.mcpServers.find((s) => s.id === id)
         if (!server) return refused('not-found')
         deleting.add(id)
+        await q.pool().retire(id)
         q.apply(config.mcpServers.filter((s) => s.id !== id))
         try {
           for (const account of mcpAccounts(server, host)) await host.secrets.delete(account)
@@ -251,7 +260,7 @@ export function createMcpStore(q: {
           .status()
           .find((v) => v.serverId === id)
           ?.tools?.find((v) => v.originalName === tool)
-        if (!live) return refused('not-found')
+        if (!s.tools[tool] || !live) return refused('not-found')
         if (setting === 'always-allow') {
           if (live.requiresUserInteraction) return refused('interaction-required')
           const policy = host.policy.current()
@@ -272,7 +281,7 @@ export function createMcpStore(q: {
             ...s.tools,
             [tool]: {
               setting,
-              definitionHash: s.tools[tool]?.definitionHash ?? live.definitionHash,
+              definitionHash: s.tools[tool]!.definitionHash,
             },
           },
         }
@@ -340,15 +349,45 @@ export function createMcpStore(q: {
             },
       ),
     recordIssuer(id: string, issuer: { hash: string; url: string }, kind: 'tokens' | 'client') {
-      return mutate(id, (s) => {
+      return withConfigLock(host.identity, async () => {
+        const config = await current()
+        const s = config.mcpServers.find((entry) => entry.id === id)
+        if (!s || deleting.has(id)) return refused('not-found')
         if (s.transport.type !== 'http') return refused('not-found')
         const oauth = s.transport.oauth
-        return {
+        let issuers = oauth.issuers.filter((h) => h !== issuer.hash)
+        if (issuers.length === 8) {
+          const accounts = mcpAccounts(
+            {
+              ...s,
+              transport: {
+                ...s.transport,
+                header_keys: [],
+                oauth: { ownClient: null, issuers: [issuers[0]!] },
+              },
+            },
+            host,
+          )
+          const previous = new Map<string, string | null>()
+          const attempted: [string, string][] = []
+          try {
+            for (const account of accounts) previous.set(account, await host.secrets.get(account))
+            for (const account of accounts) {
+              attempted.push([account, ''])
+              await host.secrets.delete(account)
+            }
+          } catch {
+            await rollback(attempted, previous, host, q.log, id)
+            return refused('keychain')
+          }
+          issuers = issuers.slice(1)
+        }
+        const next: McpServer = {
           ...s,
           transport: {
             ...s.transport,
             oauth: {
-              issuers: [...oauth.issuers.filter((h) => h !== issuer.hash), issuer.hash],
+              issuers: [...issuers, issuer.hash],
               ownClient:
                 kind === 'tokens' && oauth.ownClient?.issuer === null
                   ? { ...oauth.ownClient, issuer: issuer.url }
@@ -356,6 +395,8 @@ export function createMcpStore(q: {
             },
           },
         }
+        await write(config.mcpServers.map((entry) => (entry.id === id ? next : entry)))
+        return saved
       })
     },
   }

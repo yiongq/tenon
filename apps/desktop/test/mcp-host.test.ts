@@ -1,5 +1,6 @@
 // Real local listeners, files and child processes verify the privileged boundary.
 // oxlint-disable no-await-in-loop
+import * as files from 'node:fs/promises'
 import { mkdtemp, writeFile, chmod, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,7 @@ import { createServer as createTcpServer } from 'node:net'
 import type { Socket, AddressInfo } from 'node:net'
 import { readFileSync } from 'node:fs'
 import tls from 'node:tls'
+import http from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost, connectStdioServer } from '@tenon-app/kernel'
 import { createHostProcess } from '../src/main/host/process.js'
@@ -17,6 +19,7 @@ import { createMcpFetch } from '../src/main/mcp/fetch.js'
 import { listenMcpCallback } from '../src/main/mcp/loopback.js'
 import { createMcpOpenUrl } from '../src/main/mcp/open-url.js'
 import { listen, closeServer } from './support/untrusted-server.js'
+vi.mock('node:fs/promises', { spy: true })
 const cleanup: (() => Promise<unknown>)[] = []
 afterEach(async () => {
   vi.useRealTimers()
@@ -61,6 +64,10 @@ it('03 验收 8: PATH is resolved on each spawn; absolute, missing and Windows s
   })
 })
 it('03 验收 10 (fetch): reach checks refuse protected URLs without making requests; same-origin skips DNS', async () => {
+  const closed = createTcpServer()
+  await new Promise<void>((done) => closed.listen(0, '127.0.0.1', done))
+  const closedPort = (closed.address() as AddressInfo).port
+  await new Promise<void>((done) => closed.close(() => done()))
   const host = createMemoryHost(),
     fetch = vi.fn<typeof globalThis.fetch>(
       async () => new Response('', { status: 302, headers: { location: 'https://other.example' } }),
@@ -75,10 +82,16 @@ it('03 验收 10 (fetch): reach checks refuse protected URLs without making requ
     'https://10.1.1.1',
     'https://169.254.169.254',
     'https://u:p@public.example',
-  ])
-    await expect(createMcpFetch('https://mcp.example', network, { lookup })(url)).rejects.toThrow(
-      /./,
-    )
+  ]) {
+    const target = new URL(url)
+    target.port = String(closedPort)
+    await expect(
+      createMcpFetch('https://mcp.example', network, {
+        lookup,
+        connectTarget: () => ({ address: '127.0.0.1', family: 4 }),
+      })(target),
+    ).rejects.toThrow(/./)
+  }
   expect(fetch).not.toHaveBeenCalled()
   expect(lookup).not.toHaveBeenCalled()
   expect(
@@ -87,6 +100,7 @@ it('03 验收 10 (fetch): reach checks refuse protected URLs without making requ
   ).toBe(302)
   expect(lookup).not.toHaveBeenCalled()
   expect(fetch.mock.calls).toHaveLength(1)
+  expect(fetch.mock.calls[0]?.[1]?.redirect).toBe('manual')
   await createMcpFetch('http://127.0.0.1', network)('http://127.0.0.1/callback')
   await createMcpFetch('http://10.1.1.1', network)('http://10.2.1.1/token')
   await expect(createMcpFetch('http://10.1.1.1', network)('https://127.0.0.1')).rejects.toThrow(/./)
@@ -151,7 +165,9 @@ it('03 验收 10 (fetch, DNS): checks every answer before a socket; pins the che
   expect(target).toHaveBeenCalledExactlyOnceWith(publicAddress)
 })
 it('03 验收 18: wrong state keeps waiting, correct state closes; busy port, timeout and cancellation close listeners', async () => {
+  const binding = vi.spyOn(http.Server.prototype, 'listen')
   const listener = await listenMcpCallback(0)
+  expect(binding.mock.calls[0]?.[1]).toBe('127.0.0.1')
   cleanup.push(() => listener.close())
   const waiting = listener.waitForCallback('right', 120_000)
   const url = `http://127.0.0.1:${listener.port}/callback`
@@ -168,6 +184,7 @@ it('03 验收 18: wrong state keeps waiting, correct state closes; busy port, ti
   await vi.advanceTimersByTimeAsync(120_000)
   await failure
   vi.useRealTimers()
+  await expect(fetch(`http://127.0.0.1:${slow.port}/callback`)).rejects.toThrow(/./)
   await slow.close()
   const cancelled = await listenMcpCallback(0)
   const pending = cancelled.waitForCallback('right', 120_000)
@@ -196,6 +213,9 @@ it('03 验收 19: unsafe URLs never reach shell; the direct seam requires develo
       'file:///tmp/x',
       'vbscript:x',
       'http://public.example',
+      'http://10.0.0.5',
+      'http://printer.local',
+      'http://intranet',
     ])
       await expect(open(new URL(url))).rejects.toMatchObject({ code: 'unsafe-url' })
     await open(new URL('https://public.example/login'))
@@ -312,4 +332,43 @@ it('03 验收 10 (fetch cancellation): aborting a stalled TLS handshake closes t
   abort.abort()
   expect((await settled)[0]).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' } })
   await expect.poll(() => peer.destroyed).toBe(true)
+})
+
+it('03 验收 8: Windows PATH respects PATHEXT, refuses cmd/bat and directories, and never searches relative paths', async () => {
+  const access = vi.spyOn(files, 'access').mockResolvedValue(undefined)
+  const stat = vi
+    .spyOn(files, 'stat')
+    .mockResolvedValue({ isFile: () => true } as Awaited<ReturnType<typeof files.stat>>)
+  for (const extension of ['.CMD', '.BAT']) {
+    access.mockClear()
+    expect(await resolveMcpCommand('npx', 'C:\\bin', 'win32', extension + ';.EXE')).toEqual({
+      ok: false,
+      code: 'windows-unsupported',
+    })
+    expect(access.mock.calls[0]?.[0]).toBe('C:\\bin\\npx' + extension)
+  }
+  stat.mockResolvedValue({ isFile: () => false } as Awaited<ReturnType<typeof files.stat>>)
+  expect(await resolveMcpCommand('directory', 'C:\\bin', 'win32', '.EXE')).toEqual({
+    ok: false,
+    code: 'command-not-found',
+  })
+  access.mockClear()
+  expect(await resolveMcpCommand('./x', 'C:\\bin', 'win32')).toEqual({
+    ok: false,
+    code: 'command-not-found',
+  })
+  expect(await resolveMcpCommand('../x', '/bin')).toEqual({ ok: false, code: 'command-not-found' })
+  expect(access).not.toHaveBeenCalled()
+})
+
+it('03 验收 10: address normalization removes path slashes and fragments while preserving the query', async () => {
+  const { mcpAddress } = await import('../src/main/mcp/address.js')
+  expect(mcpAddress('https://example.com/mcp///?next=/#fragment')).toEqual({
+    ok: true,
+    url: 'https://example.com/mcp?next=/',
+  })
+  expect(mcpAddress('https://example.com/#fragment')).toEqual({
+    ok: true,
+    url: 'https://example.com',
+  })
 })

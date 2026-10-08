@@ -55,13 +55,16 @@ export function previewMcpWarnings(draft: McpDraft, home: string): McpWarning[] 
   if (args.has('sudo')) warnings.push({ kind: 'sudo' })
   if (
     args.has('rm') &&
-    t.args.some((arg) => arg === '--recursive' || /^-.*r.*f|^-.*f.*r/i.test(arg))
+    (t.args.includes('--recursive') ||
+      (/r/i.test(t.args.filter((arg) => arg.startsWith('-')).join('')) &&
+        /f/i.test(t.args.filter((arg) => arg.startsWith('-')).join(''))))
   )
     warnings.push({ kind: 'rm-rf' })
   for (const arg of t.args) {
     if (arg === '~' || arg.startsWith('~/') || arg === home || arg.startsWith(home + '/'))
-      warnings.push({ kind: 'home-path', arg })
-    if (arg.replace(/^~(?=\/|$)/, home).includes('/.ssh')) warnings.push({ kind: 'ssh-path', arg })
+      warnings.push({ kind: 'home-path', arg: visible(arg) })
+    if (arg.replace(/^~(?=\/|$)/, home).includes('/.ssh'))
+      warnings.push({ kind: 'ssh-path', arg: visible(arg) })
   }
   if (executable === 'npx' || executable === 'uvx') {
     const pkg = t.args.find((arg) => !arg.startsWith('-'))
@@ -74,6 +77,7 @@ export function previewMcpWarnings(draft: McpDraft, home: string): McpWarning[] 
         (pkg.startsWith('@')
           ? pkg.lastIndexOf('@') === 0
           : !pkg.includes('@') && !pkg.includes('==')) ||
+        !version ||
         version === 'latest'
       )
         warnings.push({ kind: 'unpinned-package', package: pkg })
@@ -252,7 +256,7 @@ export function registerMcpRoutes(q: {
   registerRoute(ipcMain, mcpConnect, ({ id, consent }) => mcp.store.connect(id, consent))
   registerRoute(ipcMain, mcpRevoke, ({ id }) => mcp.store.revoke(id))
   registerRoute(ipcMain, mcpRestart, ({ id }) => {
-    const restarted = mcp.pool.status().some((s) => s.serverId === id)
+    const restarted = mcp.pool.status().some((s) => s.serverId === id) && !mcp.needsConsent(id)
     if (restarted) mcp.pool.restart(id)
     return { restarted }
   })

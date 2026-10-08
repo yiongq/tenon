@@ -22,13 +22,15 @@ function setup() {
   void host.fs.mkdirp(absolutePath(host.identity.profileDir))
   const apply = vi.fn<(servers: readonly McpServer[]) => void>()
   const restart = vi.fn<() => void>()
-  const pool = { status: () => [], restart } as unknown as McpPool
+  const retire = vi.fn<() => Promise<void>>(async () => {})
+  const log = vi.fn<(line: string) => void>()
+  const pool = { status: () => [], restart, retire } as unknown as McpPool
   const store = createMcpStore({
     host,
     apply,
     pool: () => pool,
     consent: createMcpConsent(() => {}),
-    log: () => {},
+    log,
   })
   const save = (
     d = draft(),
@@ -41,6 +43,8 @@ function setup() {
     store,
     apply,
     restart,
+    retire,
+    log,
     save,
     config: () => readConfig(host.fs, host.identity),
   }
@@ -61,6 +65,12 @@ it('03 验收 22: isolated invalid entries and duplicate ids keep only the first
       ],
     }),
   )
+  const reasons: string[] = []
+  await readConfig(h.host.fs, h.host.identity, (line) => reasons.push(line))
+  expect(reasons).toEqual([
+    '[config] mcpServers[1] dropped: invalid-schema',
+    '[config] mcpServers[2] dropped: duplicate-id',
+  ])
   expect((await h.config()).mcpServers.map((s) => [s.id, s.displayName])).toEqual([
     ['notes', 'notes'],
     ['other', 'notes'],
@@ -96,7 +106,7 @@ it('03 验收 7 (store): injection env names in either collection are refused in
     expect(set).not.toHaveBeenCalled()
   }
 })
-it('a launch change resets always-allow in the same config write; secret values never enter launchHash', async () => {
+it('02 不变量 20 / 03 不变量 4: a launch change resets always-allow in the same config write; secret values never enter launchHash', async () => {
   const h = setup()
   await h.save()
   await h.store.pin('notes', [{ name: 'echo', definitionHash: 'a'.repeat(64) }])
@@ -143,6 +153,7 @@ it('03 验收 26 / 03 不变量 16: deletion retires the pool before keychain, f
   const deleted: string[] = []
   const remove = vi.spyOn(h.host.secrets, 'delete').mockImplementation(async (account) => {
     expect(h.apply).toHaveBeenCalledWith([])
+    expect(h.retire).toHaveBeenCalledWith('notes')
     expect(h.store.isDeleting('notes')).toBe(true)
     deleted.push(account)
     throw new Error('fixture refused')
@@ -201,7 +212,9 @@ it('03 验收 27 (store): keychain failure or a secret over 2560 UTF-8 bytes wri
     ok: false,
     code: 'secret-too-long',
   })
-  vi.spyOn(h.host.secrets, 'set').mockRejectedValue(new Error('fixture keychain failed'))
+  const writes = vi.spyOn(h.host.secrets, 'set')
+  expect(writes).not.toHaveBeenCalled()
+  writes.mockRejectedValue(new Error('fixture keychain failed'))
   expect(await h.save(d, { env: { TOKEN: 'fixture' }, headers: {} })).toEqual({
     ok: false,
     code: 'keychain',
@@ -219,6 +232,7 @@ it('a config write failure rolls back newly declared secrets without logging the
   expect(
     await h.host.secrets.get(keyFor(h.host.identity, 'mcp', 'notes', 'env', 'TOKEN')),
   ).toBeNull()
+  expect(JSON.stringify(h.log.mock.calls)).not.toContain('fixture-secret')
 })
 
 it('a failed secret read preserves existing credentials and performs no rollback writes', async () => {
@@ -336,7 +350,7 @@ it('config failure restores credentials before reapplying the previous run conse
   expect(consent.matches('notes', originalHash)).toBe(true)
 })
 
-it('03 不变量 16: the issuer cap never silently forgets declared keychain accounts', async () => {
+it('03 验收 52 / 03 不变量 16: ninth issuer deletes oldest accounts before config, rolls back failure, and remaining accounts are deleted with server', async () => {
   const h = setup(),
     d = draft()
   d.transport = {
@@ -350,13 +364,193 @@ it('03 不变量 16: the issuer cap never silently forgets declared keychain acc
   for (let i = 0; i < 8; i++)
     await h.store.recordIssuer(
       'notes',
-      { hash: i.toString(16).padStart(16, '0'), url: 'https://issuer.example/' + i },
+      { hash: String(i).padStart(16, '0'), url: 'https://issuer.example/' + i },
       'client',
     )
-  const before = await h.config()
-  await expect(
-    h.store.recordIssuer('notes', { hash: 'f'.repeat(16), url: 'https://ninth.example' }, 'client'),
-  ).rejects.toBeInstanceOf(Error)
+  const before = await h.config(),
+    accounts = mcpAccounts(before.mcpServers[0]!, h.host)
+  for (const account of accounts) await h.host.secrets.set(account, 'fixture')
+  const ninth = { hash: 'f'.repeat(16), url: 'https://ninth.example' }
+  const original = h.host.secrets.delete
+  const remove = vi
+    .spyOn(h.host.secrets, 'delete')
+    .mockImplementationOnce(original)
+    .mockRejectedValueOnce(new Error('denied'))
+  expect(await h.store.recordIssuer('notes', ninth, 'client')).toEqual({
+    ok: false,
+    code: 'keychain',
+  })
   expect(await h.config()).toEqual(before)
-  expect(mcpAccounts(before.mcpServers[0]!, h.host)).toHaveLength(72)
+  expect(await Promise.all(accounts.map((k) => h.host.secrets.get(k)))).toEqual(
+    accounts.map(() => 'fixture'),
+  )
+  remove.mockRestore()
+  const deleted = vi.spyOn(h.host.secrets, 'delete')
+  const unwatch = watchConfig(h.host.identity, () => {
+    expect(deleted.mock.calls.map(([k]) => k)).toEqual(accounts.slice(0, 9))
+  })
+  expect(await h.store.recordIssuer('notes', ninth, 'client')).toEqual({ ok: true })
+  expect(deleted.mock.calls.map(([k]) => k)).toEqual(accounts.slice(0, 9))
+  unwatch()
+  const next = (await h.config()).mcpServers[0]!
+  expect(next.transport.type === 'http' && next.transport.oauth.issuers).toEqual([
+    ...Array.from({ length: 7 }, (_, i) => String(i + 1).padStart(16, '0')),
+    ninth.hash,
+  ])
+  expect(await h.store.delete('notes')).toEqual({ ok: true })
+  expect(await Promise.all(accounts.map((k) => h.host.secrets.get(k)))).toEqual(
+    accounts.map(() => null),
+  )
+})
+
+it('03 验收 27: exact byte limit, required secrets, removed accounts and valid reorder are enforced', async () => {
+  const h = setup(),
+    d = draft()
+  d.transport = { type: 'stdio', command: '/bin/node', args: [], envs: {}, env_keys: ['TOKEN'] }
+  const set = vi.spyOn(h.host.secrets, 'set')
+  expect(await h.save(d)).toEqual({ ok: false, code: 'secret-required' })
+  expect(await h.save(d, { env: { TOKEN: 'x'.repeat(2561) }, headers: {} })).toEqual({
+    ok: false,
+    code: 'secret-too-long',
+  })
+  expect(set).not.toHaveBeenCalled()
+  expect(await h.save(d, { env: { TOKEN: 'x'.repeat(2560) }, headers: {} })).toEqual({ ok: true })
+  const hash = (await h.config()).mcpServers[0]?.consent?.launchHash
+  await h.save(d, { env: { TOKEN: 'different-secret' }, headers: {} }, 'update')
+  expect((await h.config()).mcpServers[0]?.consent?.launchHash).toBe(hash)
+  await h.save(
+    { ...d, transport: { ...d.transport, env_keys: [] } },
+    { env: {}, headers: {} },
+    'update',
+  )
+  expect(
+    await h.host.secrets.get(keyFor(h.host.identity, 'mcp', 'notes', 'env', 'TOKEN')),
+  ).toBeNull()
+  await h.save(draft('two'))
+  const before = await h.config()
+  for (const ids of [['notes'], ['notes', 'notes'], ['notes', 'unknown']])
+    expect(await h.store.reorder(ids)).toEqual({ ok: false, code: 'invalid-id' })
+  expect(await h.config()).toEqual(before)
+  expect(await h.store.reorder(['two', 'notes'])).toEqual({ ok: true })
+  expect((await h.config()).mcpServers.map((s) => s.id)).toEqual(['two', 'notes'])
+  expect(await h.store.setEnabled('notes', false)).toEqual({ ok: true })
+  expect((await h.config()).mcpServers.find((s) => s.id === 'notes')?.enabled).toBe(false)
+})
+it('03 验收 52 / 读法 59: issuer ordering is recency and header or own-client removal restarts once', async () => {
+  const h = setup(),
+    d = draft()
+  d.transport = {
+    type: 'http',
+    url: 'https://mcp.example/',
+    header_keys: ['x-token'],
+    protocol: 'auto',
+    oauth: { ownClient: { clientId: 'own', redirectPort: 53280, hasSecret: false } },
+  }
+  await h.save(d, { env: {}, headers: { 'x-token': 'fake' } })
+  const a = { hash: 'a'.repeat(16), url: 'https://a.example' },
+    b = { hash: 'b'.repeat(16), url: 'https://b.example' }
+  await h.store.recordIssuer('notes', a, 'client')
+  await h.store.recordIssuer('notes', b, 'client')
+  await h.store.recordIssuer('notes', a, 'client')
+  const t = (await h.config()).mcpServers[0]!.transport
+  expect(t.type === 'http' && t.oauth.issuers).toEqual([b.hash, a.hash])
+  h.restart.mockClear()
+  await h.save(
+    { ...d, transport: { ...d.transport, header_keys: [] } },
+    { env: {}, headers: {} },
+    'update',
+  )
+  expect(h.restart).toHaveBeenCalledExactlyOnceWith('notes')
+  h.restart.mockClear()
+  await h.save(
+    { ...d, transport: { ...d.transport, header_keys: [], oauth: { ownClient: null } } },
+    { env: {}, headers: {} },
+    'update',
+  )
+  expect(h.restart).toHaveBeenCalledExactlyOnceWith('notes')
+})
+
+it('03 不变量 16: retirement drains an already-started token shard write before deleting accounts, and blocked issuer callbacks cannot deadlock the config lock', async () => {
+  const { createMcpTokenStore } = await import('../../../packages/kernel/src/mcp/token-store.js')
+  const h = setup(),
+    d = draft()
+  d.transport = {
+    type: 'http',
+    url: 'https://mcp.example',
+    protocol: 'auto',
+    header_keys: [],
+    oauth: { ownClient: null },
+  }
+  await h.save(d)
+  const issuer = { hash: 'a'.repeat(16), url: 'https://issuer.example' }
+  const tokens = createMcpTokenStore({
+    identity: h.host.identity,
+    secrets: h.host.secrets,
+    serverId: 'notes',
+    ids: { uuid: () => crypto.randomUUID() },
+    deleting: () => h.store.isDeleting('notes'),
+    onIssuer: async (i, k) => {
+      if (!(await h.store.recordIssuer('notes', i, k)).ok) throw new Error('retired')
+    },
+    log: () => {},
+  })
+  h.retire.mockImplementation(() => tokens.retire())
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>(),
+    original = h.host.secrets.set.bind(h.host.secrets)
+  vi.spyOn(h.host.secrets, 'set').mockImplementationOnce(async (k, v) => {
+    entered.resolve()
+    await release.promise
+    await original(k, v)
+  })
+  const writing = tokens.saveTokens(issuer, { access_token: 'fixture', token_type: 'Bearer' })
+  await entered.promise
+  const remove = vi.spyOn(h.host.secrets, 'delete')
+  const deletion = h.store.delete('notes')
+  await vi.waitFor(() => expect(h.retire).toHaveBeenCalled())
+  expect(remove).not.toHaveBeenCalled()
+  release.resolve()
+  await writing
+  expect(await deletion).toEqual({ ok: true })
+  expect(await tokens.tokens(issuer.hash)).toBeUndefined()
+  await expect(tokens.saveClient(issuer, { client_id: 'late' })).rejects.toThrow('keychain')
+})
+
+it('03 不变量 16: deletion completes while an issuer callback awaits the config lock; the late client cannot write', async () => {
+  const { createMcpTokenStore } = await import('../../../packages/kernel/src/mcp/token-store.js')
+  const h = setup(),
+    d = draft()
+  d.transport = {
+    type: 'http',
+    url: 'https://mcp.example',
+    protocol: 'auto',
+    header_keys: [],
+    oauth: { ownClient: null },
+  }
+  await h.save(d)
+  const entered = Promise.withResolvers<void>(),
+    release = Promise.withResolvers<void>()
+  const tokens = createMcpTokenStore({
+    identity: h.host.identity,
+    secrets: h.host.secrets,
+    serverId: 'notes',
+    ids: { uuid: () => crypto.randomUUID() },
+    deleting: () => h.store.isDeleting('notes'),
+    onIssuer: async (i, k) => {
+      entered.resolve()
+      await release.promise
+      if (!(await h.store.recordIssuer('notes', i, k)).ok) throw new Error('retired')
+    },
+    log: () => {},
+  })
+  h.retire.mockImplementation(() => tokens.retire())
+  const set = vi.spyOn(h.host.secrets, 'set')
+  const refused = tokens
+    .saveClient({ hash: 'a'.repeat(16), url: 'https://issuer.example' }, { client_id: 'late' })
+    .catch((e) => e)
+  await entered.promise
+  expect(await h.store.delete('notes')).toEqual({ ok: true })
+  release.resolve()
+  expect(await refused).toBeInstanceOf(Error)
+  expect(set).not.toHaveBeenCalled()
 })

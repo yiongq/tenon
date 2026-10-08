@@ -11,7 +11,7 @@ export function createMcpOpenUrl(q: {
     const reach = endpointOf(value.href)?.reach
     if (
       !['http:', 'https:'].includes(value.protocol) ||
-      (value.protocol === 'http:' && reach === 'public') ||
+      (value.protocol === 'http:' && reach !== 'loopback') ||
       value.username ||
       value.password
     )

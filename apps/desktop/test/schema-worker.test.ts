@@ -93,3 +93,65 @@ it.each(hostileSchemaShapes())(
     }
   },
 )
+
+it('03 验收 51: worker agrees with synchronous validation on dialect selection and error locations', async () => {
+  const { synchronousSchemaVerdict } =
+    await import('../../../packages/kernel/src/tools/validate.js')
+  const worker = createSchemaWorker()
+  try {
+    for (const schema of [
+      true,
+      false,
+      null,
+      { type: 'object', properties: { count: { type: 'number' } } },
+      { type: 'array', prefixItems: [{ type: 'number' }], items: false },
+      {
+        $schema: 'https://json-schema.org/draft-07/schema#',
+        $ref: '#/$defs/any',
+        $defs: { any: {} },
+        type: 'number',
+      },
+      {
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        type: 'array',
+        items: [{ type: 'number' }],
+      },
+      { $schema: 'https://json-schema.org/draft/2019-09/schema', type: 'object' },
+      { $schema: 'https://unsupported.example/schema', type: 'object' },
+    ]) {
+      for (const instance of [{ count: 'bad' }, [1], ['bad']]) {
+        expect(await worker.validate({ schema, instance, signal: signal() })).toEqual(
+          synchronousSchemaVerdict(schema, instance),
+        )
+      }
+    }
+  } finally {
+    await worker.close()
+  }
+})
+it('queued validation aborts immediately and overflow is refused without waiting for the active deadline', async () => {
+  const worker = createSchemaWorker({ timeoutMs: 600, maxQueue: 2 })
+  try {
+    const active = worker.validate({
+      schema: schemaChain('anchor', 32),
+      instance: {},
+      signal: signal(),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const abort = new AbortController()
+    const queued = worker.validate({ schema: {}, instance: {}, signal: abort.signal })
+    const next = worker.validate({ schema: {}, instance: {}, signal: signal() })
+    const start = performance.now()
+    expect(await worker.validate({ schema: {}, instance: {}, signal: signal() })).toEqual({
+      ok: false,
+      unusable: 'timeout',
+    })
+    abort.abort()
+    expect(await queued).toEqual({ ok: false, unusable: 'timeout' })
+    expect(performance.now() - start).toBeLessThan(100)
+    expect(await active).toEqual({ ok: false, unusable: 'timeout' })
+    expect(await next).toEqual({ ok: true })
+  } finally {
+    await worker.close()
+  }
+})

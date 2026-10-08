@@ -1,7 +1,12 @@
 import { spawn } from 'node:child_process'
+const stubborn = process.argv.includes('--stubborn')
+if (stubborn) process.on('SIGTERM', () => {})
 spawn(
   process.execPath,
-  ['-e', 'process.stdin.resume(); process.stdin.on("end", () => {}); setTimeout(() => {}, 60000)'],
+  [
+    '-e',
+    'process.on("SIGTERM", () => {}); process.stdin.resume(); process.stdin.on("end", () => {}); setTimeout(() => {}, 60000)',
+  ],
   { stdio: process.argv.includes('--serve') ? ['ignore', 'inherit', 'inherit'] : 'inherit' },
 )
 if (process.argv.includes('--serve')) {
@@ -13,4 +18,7 @@ if (process.argv.includes('--serve')) {
   })
 }
 process.stdin.resume()
-process.stdin.on('end', () => process.exit(0))
+process.stdin.on('end', () => {
+  if (!stubborn) process.exit(0)
+})
+if (stubborn) setInterval(() => {}, 60_000)

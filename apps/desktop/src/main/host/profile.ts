@@ -68,7 +68,9 @@ function readMcpServers(value: unknown, log: (line: string) => void): Config['mc
   value.forEach((entry, index) => {
     const parsed = mcpServerSchema.safeParse(entry)
     if (!parsed.success || seen.has(parsed.data.id)) {
-      log(`[config] mcpServers[${index}] dropped`)
+      log(
+        `[config] mcpServers[${index}] dropped: ${parsed.success ? 'duplicate-id' : 'invalid-schema'}`,
+      )
       return
     }
     seen.add(parsed.data.id)

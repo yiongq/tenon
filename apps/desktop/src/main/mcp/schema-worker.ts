@@ -2,10 +2,12 @@ import { Worker } from 'node:worker_threads'
 import type { SchemaValidatorPort, SchemaVerdict } from '@tenon-app/kernel'
 /** One worker, one active job. Queueing time is excluded from the per-job deadline. */
 export function createSchemaWorker(
-  q: { timeoutMs?: number; createWorker?: () => Worker } = {},
+  q: { timeoutMs?: number; createWorker?: () => Worker; maxQueue?: number } = {},
 ): SchemaValidatorPort & { close(): Promise<void> } {
   let worker: Worker | null = null
   let queue: Promise<unknown> = Promise.resolve()
+  let waiting = 0
+  const pendingAborts = new Set<() => void>()
   let closed = false
   let cancel: (() => void) | null = null
   const run = async (
@@ -75,12 +77,31 @@ export function createSchemaWorker(
   }
   return {
     validate(input) {
-      const result = queue.then(() => run(input))
-      queue = result.catch(() => {})
-      return result
+      if (closed || input.signal.aborted || waiting >= (q.maxQueue ?? 64))
+        return Promise.resolve({ ok: false, unusable: 'timeout' } as const)
+      waiting++
+      const result = Promise.withResolvers<SchemaVerdict>()
+      let skipped = false
+      const abort = () => {
+        skipped = true
+        result.resolve({ ok: false, unusable: 'timeout' })
+        input.signal.removeEventListener('abort', abort)
+        pendingAborts.delete(abort)
+      }
+      pendingAborts.add(abort)
+      input.signal.addEventListener('abort', abort, { once: true })
+      const job = queue.then(async () => {
+        waiting--
+        input.signal.removeEventListener('abort', abort)
+        pendingAborts.delete(abort)
+        if (!skipped) result.resolve(await run(input))
+      })
+      queue = job.catch(() => result.resolve({ ok: false, unusable: 'schema' }))
+      return result.promise
     },
     async close() {
       closed = true
+      for (const abort of pendingAborts) abort()
       cancel?.()
       const current = worker
       worker = null

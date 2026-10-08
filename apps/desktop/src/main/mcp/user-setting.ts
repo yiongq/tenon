@@ -10,13 +10,12 @@ export function mcpUserSetting(
     if (!server?.enabled) return { connectorOff: true }
     const setting = server.tools[key.toolName]
     if (setting?.setting === 'never') return { userSetting: 'never' }
-    const live = status()
-      .find((s) => s.serverId === key.serverId)
-      ?.tools?.find((t) => t.originalName === key.toolName)
+    const tools = status().find((s) => s.serverId === key.serverId)?.tools
+    const live = tools?.find((t) => t.originalName === key.toolName)
     const changed =
       key.definitionHash !== undefined &&
-      live !== undefined &&
-      live.definitionHash !== key.definitionHash
+      tools != null &&
+      live?.definitionHash !== key.definitionHash
     if (setting?.setting === 'always-allow') {
       if (
         key.definitionHash !== undefined &&

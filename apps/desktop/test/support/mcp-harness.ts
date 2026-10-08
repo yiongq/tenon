@@ -23,7 +23,7 @@ export const mcpDraft = (id = 'notes'): McpDraft => ({
     command: process.execPath,
     args: [
       new URL(
-        '../../../../../../packages/kernel/test/support/fixtures/modern-server.mjs',
+        '../../../../packages/kernel/test/support/fixtures/modern-server.mjs',
         import.meta.url,
       ).pathname,
       'dual',

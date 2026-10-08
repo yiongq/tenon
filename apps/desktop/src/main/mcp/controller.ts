@@ -60,8 +60,9 @@ export function createDesktopMcp(q: {
     onChange: q.changed,
   })
   const unwatch = watchConfig(q.host.identity, (next) => {
+    const changed = JSON.stringify(config.mcpServers) !== JSON.stringify(next.mcpServers)
     config = next
-    apply(config.mcpServers)
+    if (changed) apply(config.mcpServers)
     q.changed()
   })
   apply(config.mcpServers)

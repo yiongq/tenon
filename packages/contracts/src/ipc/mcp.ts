@@ -130,14 +130,28 @@ export function serverIdOfMappedName(name: string): string | null {
 const ownDraft = mcpTransportSchema.options[1].shape.oauth.shape.ownClient
   .unwrap()
   .omit({ issuer: true })
+  .strict()
   .nullable()
-const draftHttp = mcpTransportSchema.options[1].extend({ oauth: z.object({ ownClient: ownDraft }) })
+const draftHttp = mcpTransportSchema.options[1]
+  .extend({ oauth: z.object({ ownClient: ownDraft }).strict() })
+  .strict()
+const draftStdio = z
+  .object({
+    type: z.literal('stdio'),
+    command: z.string().trim().min(1).max(1024),
+    args: z.array(z.string().max(4096)).max(64),
+    envs: z.record(envNameSchema, z.string().max(4096)),
+    env_keys: z.array(envNameSchema).max(32),
+  })
+  .strict()
 export const mcpDraftSchema = mcpServerSchema
   .omit({ enabled: true, consent: true, toolsPinned: true, tools: true })
   .extend({
-    transport: z.discriminatedUnion('type', [mcpTransportSchema.options[0], draftHttp]),
-    instructions: z.object({ enabled: z.boolean() }),
+    id: z.string().regex(MCP_SERVER_ID_PATTERN),
+    transport: z.discriminatedUnion('type', [draftStdio, draftHttp]),
+    instructions: z.object({ enabled: z.boolean() }).strict(),
   })
+  .strict()
 export type McpDraft = z.infer<typeof mcpDraftSchema>
 export const mcpWriteErrorCodeSchema = z.enum([
   'invalid-id',

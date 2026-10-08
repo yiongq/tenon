@@ -105,6 +105,7 @@ export interface McpPool {
   routes(): readonly McpToolSource[]
   /** 开表候选：先等还在连接的（连接中、等待重启）最多 waitMs 或到 signal，再分成已连接与缺席 */
   tableSources(q: { readonly waitMs: number; readonly signal: AbortSignal }): Promise<McpRunSources>
+  retire(id: string): Promise<void>
   restart(serverId: string): void // 用户点「重启」、机密改值：崩溃计数清零
   refreshTools(serverId: string): Promise<void> // T42
   cancelLogin(serverId: string): boolean
@@ -858,7 +859,11 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               maxTotalTimeoutMs: Math.min(10 * s.runtime.callTimeoutMs, 3_600_000),
             }),
           )
-          if (tool?.outputSchema !== undefined && result.structuredContent !== undefined) {
+          if (
+            tool?.outputSchema !== undefined &&
+            result.structuredContent !== undefined &&
+            !result.isError
+          ) {
             const verdict = options.schemaValidator
               ? await options.schemaValidator.validate({
                   schema: tool.outputSchema,
@@ -1028,6 +1033,16 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           })),
       }
     },
+    async retire(id) {
+      const s = states.get(id)
+      if (!s) return
+      s.retired = true
+      const stopped = stop(s)
+      await s.tokenStore?.retire()
+      await stopped
+      await s.write
+      states.delete(id)
+    },
     restart(id) {
       const s = states.get(id)
       if (s?.runtime.consented) {
@@ -1069,7 +1084,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       let cancel!: () => void
       const deadline = new Promise<void>((resolve) => {
         cancel = host.clock.setTimeout(() => {
-          void Promise.all(
+          void Promise.allSettled(
             all.flatMap((s) => [...s.children].map((child) => child.kill('SIGKILL'))),
           ).then(() => resolve())
         }, q.deadlineMs)

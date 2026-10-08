@@ -21,6 +21,7 @@ export interface McpTokenTransaction {
   deleteClient(issuerHash: string): Promise<void>
 }
 export interface McpTokenStore extends McpTokenTransaction {
+  retire(): Promise<void>
   withLock<T>(work: (transaction: McpTokenTransaction) => Promise<T>): Promise<T>
 }
 interface Group {
@@ -38,6 +39,23 @@ export function createMcpTokenStore(q: {
   readonly log: (line: string) => void
 }): McpTokenStore {
   let queue = Promise.resolve()
+  let retired = false
+  const writes = new Set<Promise<void>>()
+  const secrets: HostSecrets = {
+    get: (key) => q.secrets.get(key),
+    set: (key, value) => secretWrite(() => q.secrets.set(key, value)),
+    delete: (key) => secretWrite(() => q.secrets.delete(key)),
+  }
+  function secretWrite(work: () => Promise<void>): Promise<void> {
+    if (retired || q.deleting()) return Promise.reject(new McpKeychainError())
+    const pending = work()
+    writes.add(pending)
+    void pending.then(
+      () => writes.delete(pending),
+      () => writes.delete(pending),
+    )
+    return pending
+  }
   const account = (hash: string, ...parts: string[]) =>
     keyFor(q.identity, 'mcp', q.serverId, 'oauth', hash, ...parts)
   const keys = (hash: string, slot: 'a' | 'b') =>
@@ -45,7 +63,7 @@ export function createMcpTokenStore(q: {
   async function groups(hash: string): Promise<Group[]> {
     const found = await Promise.all(
       (['a', 'b'] as const).map(async (slot) => {
-        const shards = await Promise.all(keys(hash, slot).map((key) => q.secrets.get(key)))
+        const shards = await Promise.all(keys(hash, slot).map((key) => secrets.get(key)))
         const parts = shards.map((shard) => shard?.split('.') ?? [])
         const first = parts[0]!
         const generation = first[0]?.match(/^(\d+)-[^.]+$/)?.[1]
@@ -90,9 +108,9 @@ export function createMcpTokenStore(q: {
       )
   }
   async function writable(issuer: McpIssuer, write: 'tokens' | 'client') {
-    if (q.deleting()) throw new McpKeychainError()
+    if (retired || q.deleting()) throw new McpKeychainError()
     await q.onIssuer(issuer, write)
-    if (q.deleting()) throw new McpKeychainError()
+    if (retired || q.deleting()) throw new McpKeychainError()
   }
   const rawTransaction: McpTokenTransaction = {
     async tokens(hash) {
@@ -112,9 +130,9 @@ export function createMcpTokenStore(q: {
       await writable(issuer, 'tokens')
       // Write fragments sequentially; a failed write leaves only an ignored partial new group.
       for (let i = 0; i < n; i++) {
-        if (q.deleting()) throw new McpKeychainError()
+        if (retired || q.deleting()) throw new McpKeychainError()
         // oxlint-disable-next-line no-await-in-loop
-        await q.secrets.set(
+        await secrets.set(
           account(hash, 'tokens', slot, String(i)),
           `${generation}.${n}.${i}.${encoded.slice(i * 2300, (i + 1) * 2300)}`,
         )
@@ -122,17 +140,15 @@ export function createMcpTokenStore(q: {
       if (current)
         await Promise.all(
           keys(hash, current.slot).map((key) =>
-            q.secrets.delete(key).catch(() => q.log('MCP old token fragment could not be deleted')),
+            secrets.delete(key).catch(() => q.log('MCP old token fragment could not be deleted')),
           ),
         )
     },
     async deleteTokens(hash) {
-      await Promise.all(
-        [...keys(hash, 'a'), ...keys(hash, 'b')].map((key) => q.secrets.delete(key)),
-      )
+      await Promise.all([...keys(hash, 'a'), ...keys(hash, 'b')].map((key) => secrets.delete(key)))
     },
     async client(hash) {
-      const raw = await q.secrets.get(account(hash, 'client'))
+      const raw = await secrets.get(account(hash, 'client'))
       if (raw === null) return undefined
       try {
         const client = JSON.parse(raw) as StoredOAuthClientInformation
@@ -154,10 +170,10 @@ export function createMcpTokenStore(q: {
         Object.entries(client).filter(([name]) => allowed.has(name)),
       )
       await writable(issuer, 'client')
-      await q.secrets.set(account(hash, 'client'), JSON.stringify(stored))
+      await secrets.set(account(hash, 'client'), JSON.stringify(stored))
     },
     async deleteClient(hash) {
-      await q.secrets.delete(account(hash, 'client'))
+      await secrets.delete(account(hash, 'client'))
     },
   }
   const keychain = async <T>(work: Promise<T>): Promise<T> =>
@@ -181,6 +197,10 @@ export function createMcpTokenStore(q: {
     return before.then(() => work(transaction)).finally(release)
   }
   return {
+    async retire() {
+      retired = true
+      await Promise.allSettled(writes)
+    },
     withLock,
     tokens: (hash) => withLock((tx) => tx.tokens(hash)),
     saveTokens: (hash, tokens) => withLock((tx) => tx.saveTokens(hash, tokens)),

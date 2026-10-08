@@ -74,7 +74,11 @@ export function hostileSchemaShapes(
   for (let i = 0; i < depth; i++) tupleInstance = [tupleInstance]
   shapes[3] = {
     name: 'tuple',
-    schema: { $defs: tupleDefs, $ref: '#/$defs/d0' },
+    schema: {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      $defs: tupleDefs,
+      $ref: '#/$defs/d0',
+    },
     instance: tupleInstance,
   }
   const base = schemaChain('anchor', depth) as Record<string, unknown>
@@ -102,6 +106,7 @@ export function hostileSchemaShapes(
   shapes.push({
     name: 'recursive-ref',
     schema: {
+      $schema: 'https://json-schema.org/draft/2019-09/schema',
       $recursiveAnchor: true,
       type: 'object',
       properties: { next: { allOf: [{ $recursiveRef: '#' }, { $recursiveRef: '#' }] } },
@@ -131,5 +136,20 @@ export function hostileSchemaShapes(
   let instance: Record<string, unknown> = {}
   for (let i = 0; i < depth; i++) instance = { next: instance }
   shapes.push({ name: 'instance-recursion', schema: recursive, instance })
+  shapes.push({
+    name: 'duplicate-anchor',
+    schema: { ...base, decoy: { $anchor: 'a0' }, $ref: '#a1' },
+    instance: { x: 1, y: 1 },
+  })
+  for (const [name, id] of [
+    ['nested-id', 'https://nested.example/schema'],
+    ['relative-id', 'inner'],
+  ] as const) {
+    shapes.push({
+      name,
+      schema: { $id: 'https://root.example/schema', properties: { payload: { ...base, $id: id } } },
+      instance: { payload: { x: 1, y: 1 } },
+    })
+  }
   return shapes
 }

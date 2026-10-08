@@ -72,6 +72,10 @@ it('03 验收 36 / 38 (desktop) / 03 不变量 8: frozen, pinned and live hashes
     } as unknown as McpServerStatus,
   ]
   expect(setting(key)).toEqual({ userSetting: 'ask', definitionChanged: true })
+  statuses = [{ serverId: s.id, tools: [] } as unknown as McpServerStatus]
+  expect(setting(key)).toEqual({ userSetting: 'ask', definitionChanged: true })
+  statuses = [{ serverId: s.id, tools: null } as unknown as McpServerStatus]
+  expect(setting(key)).toEqual({ userSetting: 'always-allow' })
   statuses = []
   expect(setting({ ...key, definitionHash: 'b'.repeat(64) })).toEqual({
     userSetting: 'ask',
@@ -223,6 +227,90 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
     remove.mockRestore()
     expect(await mcp.store.delete('one')).toEqual({ ok: true })
     expect(await host.secrets.get(keyFor(host.identity, 'mcp', 'one', 'env', 'TOKEN'))).toBeNull()
+  } finally {
+    await mcp.close({ deadlineMs: 1000 })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stopped, PATH changes on restart, revoke stops the connected process; unrelated config writes do not reapply', async () => {
+  const { mkdtemp, mkdir, symlink, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { createMemoryHost, absolutePath } = await import('@tenon-app/kernel')
+  const { DesktopFs } = await import('../src/main/host/fs.js')
+  const { SystemClock } = await import('../src/main/host/clock.js')
+  const { createHostProcess } = await import('../src/main/host/process.js')
+  const { createDesktopMcp } = await import('../src/main/mcp/controller.js')
+  const { readConfig, writeConfig } = await import('../src/main/host/profile.js')
+  const { createSchemaWorker } = await import('../src/main/mcp/schema-worker.js')
+  const root = await mkdtemp(join(tmpdir(), 'tenon-mcp-seeded-')),
+    a = join(root, 'a'),
+    b = join(root, 'b')
+  await Promise.all([mkdir(a), mkdir(b)])
+  await Promise.all([
+    symlink(process.execPath, join(a, 'fixture-node')),
+    symlink(process.execPath, join(b, 'fixture-node')),
+  ])
+  const port = createHostProcess(),
+    spawn = vi.fn<typeof port.spawn>((q, s) => port.spawn(q, s))
+  const host = Object.assign(
+    createMemoryHost({ identity: { profileDir: root }, process: { spawn } }),
+    { fs: new DesktopFs(), clock: new SystemClock() },
+  )
+  const s = server()
+  s.id = 'confirmed'
+  s.transport = {
+    type: 'stdio',
+    command: 'fixture-node',
+    args: [
+      new URL('../../../packages/kernel/test/support/fixtures/modern-server.mjs', import.meta.url)
+        .pathname,
+      'dual',
+    ],
+    envs: {},
+    env_keys: [],
+  }
+  s.consent = { launchHash: launchHash(s) }
+  const config = {
+    ...(await readConfig(host.fs, host.identity)),
+    mcpServers: [s, { ...s, id: 'unconfirmed', consent: null }],
+  }
+  await writeConfig(host.fs, host.identity, config)
+  let path = a
+  const mcp = createDesktopMcp({
+    host,
+    config,
+    home: absolutePath('/'),
+    baseEnv: async () => ({ PATH: path }),
+    uuid: () => crypto.randomUUID(),
+    changed: () => {},
+    schemaValidator: createSchemaWorker(),
+  })
+  try {
+    await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('connected'))
+    expect(mcp.pool.status()[1]).toMatchObject({ phase: 'stopped', stopReason: 'needs-consent' })
+    expect(mcp.needsConsent('unconfirmed')).toBe(true)
+    expect(spawn.mock.calls[0]?.[0].argv[0]).toBe(join(a, 'fixture-node'))
+    path = b
+    mcp.pool.restart('confirmed')
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('connected'))
+    expect(spawn.mock.calls[1]?.[0].argv[0]).toBe(join(b, 'fixture-node'))
+    expect(mcp.needsConsent('confirmed')).toBe(false)
+    const apply = vi.spyOn(mcp.pool, 'apply'),
+      write = vi.spyOn(host.fs, 'writeFile')
+    await writeConfig(host.fs, host.identity, { locale: 'en' })
+    expect(apply).not.toHaveBeenCalled()
+    expect(write.mock.calls.filter(([p]) => String(p).includes('/mcp/'))).toEqual([])
+    const child = await spawn.mock.results[1]!.value
+    await mcp.store.revoke('confirmed')
+    await vi.waitFor(() =>
+      expect(mcp.pool.status()[0]).toMatchObject({ phase: 'stopped', stopReason: 'needs-consent' }),
+    )
+    expect(mcp.needsConsent('confirmed')).toBe(true)
+    await child.exited
+    expect(() => process.kill(-child.pid, 0)).toThrow(/./)
   } finally {
     await mcp.close({ deadlineMs: 1000 })
     await rm(root, { recursive: true, force: true })

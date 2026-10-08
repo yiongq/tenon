@@ -7,6 +7,7 @@ import { startHttpFixture } from '../../../packages/kernel/test/support/http-fix
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { named, tapeFacts } from './helpers/tape.js'
 import { callsReply, textReply, providerEnv, send } from './helpers/tools.js'
 
 test('MCP main process: the bundled schema worker validates a real connector call and quit closes the pool', async () => {
@@ -155,5 +156,89 @@ test('MCP Everything: a seeded profile connects and a model message calls the re
   } finally {
     await app.close()
     await fake.close()
+  }
+})
+
+test('T23 ⑦: a recursive connector input closes tool-unavailable within three seconds while the main process stays responsive', async () => {
+  const { hostileSchemaShapes } =
+    await import('../../../packages/kernel/test/support/schema-chains.js')
+  const shape = hostileSchemaShapes().find((s) => s.name === 'instance-recursion')!
+  const server = await startHttpFixture({
+    era: 'modern',
+    inputSchema: shape.schema as Record<string, unknown>,
+  })
+  const fake = await startFakeAnthropic({
+    replies: [
+      callsReply({
+        type: 'tool_use',
+        id: 'recursive',
+        name: 'notes__echo',
+        input: shape.instance as Record<string, unknown>,
+      }),
+      textReply('Recursive call closed.'),
+    ],
+  })
+  const userData = makeUserDataDir('mcp-recursive')
+  const { app, page } = await launchTenon({
+    userData,
+    env: providerEnv(fake.baseURL),
+  })
+  try {
+    const saved = await page.evaluate(
+      (url) =>
+        window.tenon.invoke('mcp.save', {
+          mode: 'create',
+          draft: {
+            id: 'notes',
+            displayName: 'notes',
+            source: 'manual',
+            transport: {
+              type: 'http',
+              url,
+              protocol: 'auto',
+              header_keys: [],
+              oauth: { ownClient: null },
+            },
+            handshakeTimeoutSec: null,
+            callTimeoutSec: null,
+            instructions: { enabled: false },
+          },
+          consent: 'persistent',
+          secrets: { env: {}, headers: {} },
+        }),
+      server.url,
+    )
+    expect(saved).toEqual({ ok: true, data: { ok: true } })
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const r = (await window.tenon.invoke('mcp.list', {})) as {
+            ok: boolean
+            data: { servers: McpServerView[] }
+          }
+          return r.ok ? r.data.servers[0]?.status.phase : null
+        }),
+      )
+      .toBe('connected')
+    const started = Date.now()
+    await send(page, 'Call notes echo.')
+    await new Promise((r) => setTimeout(r, 100))
+    expect(
+      await Promise.race([
+        page.evaluate(() => window.tenon.invoke('mcp.list', {})).then(() => true),
+        new Promise((r) => setTimeout(() => r(false), 500)),
+      ]),
+    ).toBe(true)
+    await expect.poll(() => fake.requests.length, { timeout: 3000, intervals: [25] }).toBe(2)
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(JSON.stringify(fake.requests[1]?.body)).toContain('cannot be used to check arguments')
+    expect(
+      named(tapeFacts(userData), 'execution/tool_outcome').map((f) => f.payload),
+    ).toContainEqual(expect.objectContaining({ source: 'tool-unavailable', state: 'not-run' }))
+    expect(server.requests.some((r) => r.method === 'tools/call')).toBe(false)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Recursive call closed.')
+  } finally {
+    await app.close()
+    await Promise.all([server.close(), fake.close()])
   }
 })

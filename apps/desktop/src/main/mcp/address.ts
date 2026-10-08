@@ -13,5 +13,6 @@ export function mcpAddress(
   if (url.protocol === 'http:' && endpointOf(url.href)?.reach === 'public')
     return { ok: false, code: 'https-required' }
   url.hash = ''
-  return { ok: true, url: url.href }
+  url.pathname = url.pathname.replace(/\/+$/, '')
+  return { ok: true, url: url.pathname === '/' ? url.origin + url.search : url.href }
 }
