@@ -109,7 +109,7 @@ async function setup(
     issuerWrites,
   }
 }
-it('03 验收 15: missing S256, no S256 or unavailable metadata never authorize or open a browser', async () => {
+it('03 验收 15 / 03 不变量 14: missing S256, no S256 or unavailable metadata never authorize or open a browser', async () => {
   for (const opts of [
     { pkceField: 'missing' },
     { pkceField: 'no-s256' },
@@ -117,13 +117,16 @@ it('03 验收 15: missing S256, no S256 or unavailable metadata never authorize 
   ] as const) {
     const h = await setup(opts)
     const result = await h.provider.login(h.ui)
-    expect(result.ok).toBe(false)
+    expect(result).toEqual({
+      ok: false,
+      code: 'metadataDown' in opts ? 'metadata-unreachable' : 'pkce-unsupported',
+    })
     expect(h.open).not.toHaveBeenCalled()
     expect(h.authServer.requests.some((r) => r.path === '/authorize')).toBe(false)
     expect(h.authServer.requests.some((r) => r.path === '/register')).toBe(false)
   }
 })
-it('03 验收 16: callback iss mismatch, wrong iss on access_denied and metadata mismatch make no token requests', async () => {
+it('03 验收 16 / 03 不变量 14: callback iss mismatch, wrong iss on access_denied and metadata mismatch make no token requests', async () => {
   for (const opts of [
     { issInCallback: 'https://wrong.test' },
     { issInCallback: 'https://wrong.test', callbackError: 'access_denied' },
@@ -240,6 +243,10 @@ it('03 验收 20 (provider): tokens without ctx are cached; two concurrent 401s 
   })
   expect(h.authServer.requests.slice(before).filter((r) => r.path === '/register')).toHaveLength(0)
   expect(h.open).toHaveBeenCalledTimes(1)
+  expect(await h.store.tokens(h.runtime.issuers.at(-1)!)).toMatchObject({
+    access_token: 'fixture-access-2',
+    refresh_token: 'fixture-refresh-2',
+  })
 })
 it('03 验收 21 / 03 不变量 21: invalid_grant or invalid_client refresh requires login and cannot register or openUrl', async () => {
   for (const refreshResult of ['invalid_grant', 'invalid_client'] as const) {
@@ -288,7 +295,16 @@ it('03 验收 11 / 12 / 21: transport and auth share fetch; another-origin AS re
     fixture.requests.every((r) => r.headers['x-fixture-static'] === 'fixture-static-value'),
   ).toBe(true)
   expect(h.authServer.requests.every((r) => r.headers['x-fixture-static'] === undefined)).toBe(true)
-  expect(h.handed.mock.calls.length).toBeGreaterThan(h.authServer.requests.length)
+  for (const path of new Set(
+    h.authServer.requests.filter((r) => r.path !== '/authorize').map((r) => r.path),
+  )) {
+    const handed = h.handed.mock.calls.filter(
+      ([input]) =>
+        new URL(input instanceof Request ? input.url : String(input)).href ===
+        h.authServer.url + path,
+    )
+    expect(handed).toHaveLength(h.authServer.requests.filter((r) => r.path === path).length)
+  }
   const registrations = h.authServer.requests.filter((r) => r.path === '/register').length
   fixture.set({ requireToken: 'never-accepted' })
   await expect(connection.callTool('echo', {})).rejects.toMatchObject({
@@ -458,4 +474,110 @@ it('03 验收 17: changing the discovered issuer registers a new DCR client inst
   expect((await h.store.client(old))?.issuer).toBe(h.authServer.url)
   expect((await h.store.client(h.runtime.issuers.at(-1)!))?.issuer).toBe(next.url)
   expect(h.runtime.ownClient).toBeNull()
+})
+
+it('03 验收 16 / 03 不变量 14: a correct iss access_denied is denied, while an error callback missing required iss is mismatched', async () => {
+  const denied = await setup({ callbackError: 'access_denied' })
+  expect(await denied.provider.login(denied.ui)).toEqual({ ok: false, code: 'denied' })
+  const missing = await setup({ callbackError: 'access_denied', issInCallback: null })
+  expect(await missing.provider.login(missing.ui)).toEqual({ ok: false, code: 'iss-mismatch' })
+  expect(missing.authServer.requests.filter((r) => r.path === '/token')).toHaveLength(0)
+})
+
+it('03 验收 17: null CIMD URL and absent server support independently select DCR', async () => {
+  const withoutUrl = await setup({ cimd: true, authNone: true }, { clientMetadataUrl: null })
+  expect(await withoutUrl.provider.login(withoutUrl.ui)).toEqual({ ok: true })
+  expect(withoutUrl.authServer.requests.filter((r) => r.path === '/register')).toHaveLength(1)
+  const unsupported = await setup(
+    { cimd: false, authNone: true },
+    { clientMetadataUrl: 'https://metadata.example/client.json' },
+  )
+  expect(await unsupported.provider.login(unsupported.ui)).toEqual({ ok: true })
+  expect(unsupported.authServer.requests.filter((r) => r.path === '/register')).toHaveLength(1)
+})
+
+it('03 验收 17: direct own clientInformation refuses a changed issuer before reading the secret', async () => {
+  const h = await setup(
+    {},
+    {
+      ownClient: {
+        clientId: 'fixture-own',
+        redirectPort: 53289,
+        hasSecret: true,
+        issuer: 'https://bound.example',
+      },
+    },
+  )
+  const get = vi.spyOn(h.host.secrets, 'get')
+  await expect(h.provider.clientInformation({ issuer: 'https://other' })).rejects.toMatchObject({
+    code: 'issuer-changed',
+  })
+  expect(get).not.toHaveBeenCalled()
+})
+
+it('读法 65: PRM origin accepts the server and is sent byte-for-byte without a trailing slash; a narrower child resource refuses login', async () => {
+  const accepted = await setup()
+  accepted.authServer.set({ prmResource: new URL(accepted.authServer.url).origin })
+  expect(await accepted.provider.login(accepted.ui)).toEqual({ ok: true })
+  expect(accepted.provider).not.toHaveProperty('validateResourceURL')
+  expect(accepted.authServer.requests.find((r) => r.path === '/token')?.body['resource']).toBe(
+    new URL(accepted.authServer.url).origin,
+  )
+  const authorize = new URL(String(accepted.open.mock.calls[0]![0]))
+  expect(authorize.searchParams.get('resource')).toBe(new URL(accepted.authServer.url).origin)
+  const rejected = await setup()
+  rejected.authServer.set({ prmResource: rejected.authServer.url + '/child' })
+  expect(await rejected.provider.login(rejected.ui)).toEqual({
+    ok: false,
+    code: 'metadata-unreachable',
+  })
+  expect(rejected.open).not.toHaveBeenCalled()
+})
+
+it('03 验收 20: a rejected keychain read is evicted; tokens and login recover when keychain access returns', async () => {
+  const h = await setup()
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  const provider = createMcpOAuthProvider({
+    serverId: 'fixture',
+    serverUrl: h.authServer.url,
+    fetch: h.handed,
+    runtime: () => h.runtime,
+    identity: h.host.identity,
+    secrets: h.host.secrets,
+    ids: { uuid: () => crypto.randomUUID() },
+    store: h.store,
+    currentIssuerHash: () => h.runtime.issuers.at(-1) ?? null,
+    onUnauthorized: () => {},
+    addSecret: () => {},
+  })
+  const get = vi
+    .spyOn(h.host.secrets, 'get')
+    .mockRejectedValueOnce(new Error('fixture keychain refused'))
+  await expect(provider.tokens()).rejects.toMatchObject({ name: 'McpKeychainError' })
+  get.mockRestore()
+  expect(await provider.tokens()).toMatchObject({ access_token: 'fixture-access-1' })
+  expect(await provider.login(h.ui)).toEqual({ ok: true })
+})
+
+it('minor OAuth errors: refresh network failure and server 5xx propagate without marking unauthorized', async () => {
+  for (const network of [true, false]) {
+    const h = await setup()
+    expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+    if (network) {
+      const original = h.handed.getMockImplementation()!
+      h.handed.mockImplementation(async (input, init) => {
+        if (new URL(input instanceof Request ? input.url : String(input)).pathname === '/token')
+          throw new TypeError('fixture network down')
+        return original(input, init)
+      })
+    } else h.authServer.set({ tokenStatus: 503 })
+    const result = await h.provider.authProvider.onUnauthorized!({
+      response: new Response(null, { status: 401 }),
+      serverUrl: new URL(h.authServer.url),
+      fetchFn: fetch,
+    }).catch((error: unknown) => error)
+    expect(result).toBeInstanceOf(Error)
+    expect(result).not.toMatchObject({ name: 'McpUnauthorizedError' })
+    expect(h.unauthorized).not.toHaveBeenCalled()
+  }
 })

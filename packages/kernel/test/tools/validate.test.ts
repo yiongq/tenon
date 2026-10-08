@@ -1,3 +1,4 @@
+import { schemaChain } from '../support/schema-chains.js'
 /**
  * Argument validation before any permission decision (spec 02 §内置工具与参数「参数校验与失败」; plan
  * step 10, 旧 141 and the connector half; open question 16). What a failed call writes — the
@@ -178,6 +179,20 @@ it('03 验收 33: external refs are refused before constructing a validator', ()
     expect(
       fresh.check(connector({ type: 'object', $ref: 'https://example.test/schema' }), {}),
     ).toMatchObject({ source: 'tool-unavailable' })
+    expect(compile).not.toHaveBeenCalled()
+  } finally {
+    compile.mockRestore()
+  }
+})
+
+it('03 验收 32: anchor and dependencies chains are refused before CfWorker compiles, including fragment ids', () => {
+  const compile = vi.spyOn(CfWorkerJsonSchemaValidator.prototype, 'getValidator')
+  try {
+    for (const kind of ['anchor', 'fragment-id', 'dependencies'] as const) {
+      expect(
+        createArgumentValidator().check(connector(schemaChain(kind)), { x: 1, y: 1 }),
+      ).toMatchObject({ ok: false, source: 'tool-unavailable', reason: MODEL_NOTES.schemaUnusable })
+    }
     expect(compile).not.toHaveBeenCalled()
   } finally {
     compile.mockRestore()

@@ -138,8 +138,8 @@ export async function connectStdioServer(
 }
 
 export class McpConnectionError extends Error {
-  readonly code: 'modern-only' | 'era-negotiation-failed'
-  constructor(code: 'modern-only' | 'era-negotiation-failed') {
+  readonly code: 'modern-only' | 'era-negotiation-failed' | 'handshake-failed'
+  constructor(code: 'modern-only' | 'era-negotiation-failed' | 'handshake-failed') {
     super(code)
     this.code = code
     this.name = 'McpConnectionError'
@@ -170,13 +170,15 @@ export function isMcpAuthError(error: unknown): boolean {
     error instanceof McpUnauthorizedError ||
     error instanceof UnauthorizedError ||
     error instanceof InsufficientScopeError ||
-    error instanceof OAuthError ||
+    (error instanceof OAuthError && ['invalid_grant', 'invalid_client'].includes(error.code)) ||
     (error instanceof SdkHttpError && error.code === SdkErrorCode.ClientHttpAuthentication)
   )
 }
 function modernVersionsOnly(data: unknown): boolean {
   if (typeof data !== 'object' || data === null) return false
-  const versions = (data as Record<string, unknown>)['supportedVersions']
+  const versions =
+    (data as Record<string, unknown>)['supported'] ??
+    (data as Record<string, unknown>)['supportedVersions']
   return (
     Array.isArray(versions) &&
     versions.length > 0 &&
@@ -223,8 +225,15 @@ export async function connectHttpServer(
     })
   } catch (error) {
     await transport.close().catch(() => {})
-    if (error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed)
+    if (error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed) {
+      if (error.cause instanceof TypeError) throw error.cause
+      const status = (error.data as Record<string, unknown> | undefined)?.['status']
+      if (typeof status === 'number' && status >= 500)
+        throw new McpConnectionError('handshake-failed')
+      if (error.message.includes('closed during'))
+        throw new TypeError('MCP probe connection closed', { cause: error })
       throw new McpConnectionError('era-negotiation-failed')
+    }
     throw error
   }
   let resolve!: (value: { code: null; signal: null }) => void

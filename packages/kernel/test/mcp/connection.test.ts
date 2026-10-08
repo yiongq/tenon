@@ -34,7 +34,7 @@ async function connect(mode = 'dual', logs: string[] = []) {
   connections.push(c)
   return c
 }
-it('03 验收 33 / 03 不变量 17: the client validates structured output with CfWorker and declares no capabilities', () => {
+it('03 验收 33: the client validates structured output with CfWorker and declares no capabilities', () => {
   const options = mcpClientOptions()
   expect(options.jsonSchemaValidator).toBeInstanceOf(CfWorkerJsonSchemaValidator)
   expect(options.listMaxPages).toBe(64)
@@ -100,7 +100,7 @@ it('03 验收 13: stdio stays legacy and a modern-only stdio server is modern-on
   expect((await connect()).era).toBe('legacy')
   await expect(connect('modern-only')).rejects.toMatchObject({ code: 'modern-only' })
 })
-it('03 验收 30: stopping a stdio call sends notifications/cancelled', async () => {
+it('03 验收 30 / 03 不变量 17: stopping a stdio call sends notifications/cancelled', async () => {
   const logs: string[] = []
   const c = await connect('dual', logs)
   const stop = new AbortController()
@@ -166,7 +166,6 @@ it('03 验收 30: the total deadline timer is cleared after success, error and c
   for (const outcome of ['success', 'error', 'stop'] as const) {
     const caller = new AbortController()
     spy.mockImplementationOnce(async (_params, options) => {
-      expect(options).not.toHaveProperty('maxTotalTimeout')
       if (outcome === 'success') return { content: [] }
       if (outcome === 'error') throw new Error('fixture error')
       return new Promise((_resolve, reject) => {
@@ -181,6 +180,7 @@ it('03 验收 30: the total deadline timer is cleared after success, error and c
     // Sequential outcomes exercise the same connection without leaving deadline timers behind.
     // oxlint-disable-next-line no-await-in-loop
     await settled
+    expect(spy.mock.calls.at(-1)?.[1]).not.toHaveProperty('maxTotalTimeout')
     expect(vi.getTimerCount()).toBe(initialTimers)
   }
   spy.mockImplementation(original)
@@ -202,4 +202,27 @@ it('03 验收 41: initialize declares no capabilities, never sets a log level an
   expect(
     frames.some((m) => 'method' in m && ['server/discover', 'logging/setLevel'].includes(m.method)),
   ).toBe(false)
+})
+
+it('minor modern-only: hand-written -32602 data.supported is recognized without supportedVersions', async () => {
+  await expect(
+    connectStdioServer(createMemoryHost({ process: createNodeProcess() }), {
+      name: 'modern-only',
+      spawn: {
+        argv: [
+          process.execPath,
+          new URL('../support/fixtures/modern-only-reply.mjs', import.meta.url).pathname,
+        ],
+        cwd: absolutePath('/'),
+        env: {},
+        stdio: 'pipe',
+      },
+      sandbox: { profile: 'full-access', workspace: [] },
+    }),
+  ).rejects.toMatchObject({ code: 'modern-only' })
+})
+
+it('03 验收 42: a real legacy dual stdio connection exposes the exact fixture instructions', async () => {
+  const { INSTRUCTIONS } = await import('../support/fixtures/modern-server.mjs')
+  expect((await connect('dual')).instructions).toBe(INSTRUCTIONS)
 })

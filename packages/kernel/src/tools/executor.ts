@@ -115,10 +115,8 @@ export function mcpExecutor(source: McpToolSource): ToolExecutor {
     try {
       const result = await source.connection.callTool(q.item.originalName, q.input, {
         signal: q.signal,
-        timeoutMs: 60_000,
         onprogress: () => {},
         resetTimeoutOnProgress: true,
-        maxTotalTimeoutMs: 600_000,
       })
       return {
         content: mcpContent(result.content as unknown[]),

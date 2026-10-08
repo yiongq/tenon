@@ -574,6 +574,13 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
               .filter((fact) => fact.name !== 'message/server_instructions')
               .map((fact) => [fact.provenanceKey, fact]),
           ).values(),
+          environmentEntry({
+            tape,
+            now: ctx.now,
+            messageId: ctx.ids.uuid(),
+            // oxlint-disable-next-line no-await-in-loop -- the anchor includes its fresh environment before server notes
+            state: await environmentNow(tape, ctx.sessionId, ctx.localDate()),
+          }),
           ...tableFacts.filter((fact) => fact.name === 'message/server_instructions'),
         ])
       } catch (error) {
@@ -704,8 +711,11 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     )
     if (hasInstructions) {
       // oxlint-disable-next-line no-await-in-loop -- publish the opening and its messages together before replay
-      await write(assembled.facts)
-      recordAssembly(state, assembled)
+      await write(assembled.facts.filter((fact) => fact.name !== 'view/assembled'))
+      recordAssembly(state, {
+        ...assembled,
+        facts: assembled.facts.filter((fact) => fact.name !== 'view/assembled'),
+      })
     }
     // oxlint-disable-next-line no-await-in-loop -- replay follows the committed opening messages
     const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
@@ -776,11 +786,13 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const contextAtEntryId = pin
     // The content first, then the manifest, then the bytes leave, then the attempt (A3).
     // oxlint-disable-next-line no-await-in-loop -- the content before the manifest before the bytes (A3)
-    if (!hasInstructions) {
-      // oxlint-disable-next-line no-await-in-loop -- one manifest per request
-      await write(assembled.facts)
-      recordAssembly(state, assembled)
-    }
+    // oxlint-disable-next-line no-await-in-loop -- one manifest per request after threshold checks
+    await write(
+      hasInstructions
+        ? assembled.facts.filter((fact) => fact.name === 'view/assembled')
+        : assembled.facts,
+    )
+    recordAssembly(state, assembled)
 
     const advice = provider.retryAdvice()
     const resends = Math.max(0, Math.min(advice.maxAttempts - 1, RETRY_CAP))

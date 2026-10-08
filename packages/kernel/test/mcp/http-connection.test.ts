@@ -45,7 +45,11 @@ it('03 不变量 1 / 03 验收 43 / 03 不变量 22: every HTTP request uses the
   await connection.callTool('echo', { x: 1 })
   expect(count()).toBe(fixture.requests.length)
   for (const r of fixture.requests)
-    expect(JSON.stringify(r.meta)).not.toMatch(/session_id|working_dir|call_id/)
+    expect(
+      Object.keys((r.meta as Record<string, unknown>) ?? {}).every(
+        (key) => key === 'progressToken' || key.startsWith('io.modelcontextprotocol/'),
+      ),
+    ).toBe(true)
 })
 it('03 验收 40 / 03 验收 41: prompts, resources and unsupported elicitation', async () => {
   const { connection } = await setup('modern')
@@ -110,7 +114,7 @@ it('03 验收 14 (T49 call) / 03 不变量 10: broken stream reports its id and 
   expect(breaks).toMatchObject([{ method: 'tools/call' }])
   expect(fixture.requests.filter((r) => r.method === 'tools/call')).toHaveLength(1)
 })
-it('03 验收 30 (HTTP): legacy cancellation notifies; modern cancellation closes only its request', async () => {
+it('03 验收 30 / 03 不变量 17 (HTTP): legacy cancellation notifies; modern cancellation closes only its request', async () => {
   for (const era of ['legacy', 'modern'] as const) {
     const { fixture, connection } = await setup(era)
     const stop = new AbortController()
@@ -169,4 +173,81 @@ it('03 验收 30 (HTTP): idle and total deadlines cancel legacy calls and close 
       }
     }
   }
+})
+
+it('03 验收 2: HTTP handshake timeout is passed to Client.connect', async () => {
+  const { Client } = await import('@modelcontextprotocol/client')
+  const fixture = await startHttpFixture({ era: 'legacy' })
+  dispose.push(() => fixture.close())
+  const connect = vi.spyOn(Client.prototype, 'connect')
+  try {
+    const connection = await connectHttpServer({
+      name: 'fixture',
+      url: fixture.url,
+      fetch,
+      protocol: 'legacy',
+      handshakeTimeoutMs: 84000,
+    })
+    dispose.push(() => connection.close())
+    expect(connect.mock.calls[0]?.[1]).toMatchObject({ timeout: 84000 })
+  } finally {
+    connect.mockRestore()
+  }
+})
+
+it('03 验收 12 / 03 不变量 13: every outgoing header belongs to SDK, fetch, or the configured static names', async () => {
+  const fixture = await startHttpFixture({ era: 'modern' })
+  dispose.push(() => fixture.close())
+  const connection = await connectHttpServer({
+    name: 'fixture',
+    url: fixture.url,
+    fetch,
+    staticHeaders: { 'X-Fixture-Static': 'fixture-static' },
+  })
+  dispose.push(() => connection.close())
+  await connection.listTools()
+  await connection.callTool('echo', { trace: 'fixture-trace' }, { onprogress: () => {} })
+  const allowed = new Set([
+    'host',
+    'connection',
+    'content-type',
+    'accept',
+    'accept-language',
+    'sec-fetch-mode',
+    'user-agent',
+    'accept-encoding',
+    'content-length',
+    'mcp-protocol-version',
+    'mcp-session-id',
+    'mcp-method',
+    'mcp-name',
+    'mcp-param-x-fixture-trace',
+    'x-fixture-static',
+  ])
+  const names = new Set(fixture.requests.flatMap((r) => Object.keys(r.headers)))
+  expect([...names].filter((name) => !allowed.has(name))).toEqual([])
+})
+
+it('03 验收 42: a real modern HTTP connection exposes the exact fixture instructions', async () => {
+  const { INSTRUCTIONS } = await import('../support/fixtures/modern-server.mjs')
+  expect((await setup('modern')).connection.instructions).toBe(INSTRUCTIONS)
+})
+
+it('03 验收 13: an auto probe 5xx is handshake-failed, while a rejected fetch keeps its original TypeError', async () => {
+  const fixture = await startHttpFixture({ era: 'modern', failConnect: '503' })
+  dispose.push(() => fixture.close())
+  await expect(
+    connectHttpServer({ name: 'fixture', url: fixture.url, fetch, protocol: 'auto' }),
+  ).rejects.toMatchObject({ code: 'handshake-failed' })
+  const network = new TypeError('fixture auto network failure')
+  await expect(
+    connectHttpServer({
+      name: 'fixture',
+      url: fixture.url,
+      fetch: async () => {
+        throw network
+      },
+      protocol: 'auto',
+    }),
+  ).rejects.toBe(network)
 })

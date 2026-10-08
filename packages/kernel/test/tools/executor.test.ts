@@ -3,7 +3,7 @@
  * §提示层「规则与位置」; plan step 18, 旧 224): a `callTool` that throws and a result with no content
  * both answer with a note from the prompt layer, so the version gate covers what they store.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { McpConnection, McpToolSource } from '../../src/index.js'
 import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
@@ -148,4 +148,16 @@ it('03 验收 30 (executor): the live stop signal reaches the connection; timeou
       }),
     )(query()),
   ).toMatchObject({ state: 'completed', isError: true })
+})
+
+it('03 验收 9: the executor forwards cancellation but does not inject a competing fixed timeout', async () => {
+  const callTool = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+  const q = query()
+  await mcpExecutor({ serverId: 'fs', connection: { callTool } as unknown as McpConnection })(q)
+  const options = callTool.mock.calls[0]?.[2]
+  expect(options).toEqual({
+    signal: q.signal,
+    onprogress: expect.any(Function),
+    resetTimeoutOnProgress: true,
+  })
 })

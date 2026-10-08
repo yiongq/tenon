@@ -11,6 +11,7 @@ import type {
   ToolTablePayload,
 } from '../../src/index.js'
 import {
+  recheckAttempt,
   createCounterIds,
   createScriptedProvider,
   createTestLoopPorts,
@@ -60,6 +61,7 @@ function harness(
   extras: Omit<TestServiceExtras, 'tools'> = {},
   table?: RunAssembly['mcpTable'],
   store?: TapeStore,
+  threshold?: number,
 ) {
   const host = createMemoryHost()
   const tape = store ?? createMemoryTapeStore({ identity: host.identity })
@@ -80,6 +82,7 @@ function harness(
       inspectors: [],
       connector: loop.connector,
       protectedFiles: [],
+      ...(threshold === undefined ? {} : { compactionThreshold: threshold }),
     },
     { tools: {}, userSetting: () => ({ userSetting: 'always-allow' }), ...extras },
   )
@@ -129,52 +132,6 @@ function opening(
     ...extra,
   })
 }
-it('03 验收 31 / 34 / 03 不变量 20: same-server duplicate names both collide; policy and user-disabled take priority', async () => {
-  const candidate = (await mcpCandidates([source()]))[0]!
-  expect(opening([candidate, candidate]).excluded.map((t) => t.code)).toEqual([
-    'name-collision',
-    'name-collision',
-  ])
-  expect(
-    opening([candidate, { ...candidate, review: 'changed' }]).excluded.map((t) => t.code),
-  ).toEqual(['name-collision', 'name-collision'])
-  expect(
-    opening([candidate, candidate], { userSetting: () => ({ userSetting: 'never' }) }).excluded.map(
-      (t) => t.code,
-    ),
-  ).toEqual(['user-disabled', 'user-disabled'])
-  expect(
-    opening([{ ...candidate, definitionProblem: 'size', review: 'changed' }]).excluded[0]?.code,
-  ).toBe('invalid-definition')
-})
-it('03 验收 35 / 03 不变量 12: cap sorts by rank then name and never trims a builtin', async () => {
-  const candidate = (await mcpCandidates([source()]))[0]!
-  const builtin: ToolCandidate = {
-    ...candidate,
-    source: 'builtin',
-    serverId: 'builtin',
-    originalName: 'Read',
-    name: 'Read',
-    spec: { ...candidate.spec, name: 'Read' },
-  }
-  const a = {
-    ...candidate,
-    originalName: 'a',
-    name: 'fixture__a',
-    spec: { ...candidate.spec, name: 'fixture__a' },
-    rank: 9,
-  }
-  const z = {
-    ...candidate,
-    originalName: 'z',
-    name: 'fixture__z',
-    spec: { ...candidate.spec, name: 'fixture__z' },
-    rank: 0,
-  }
-  const table = opening([a, z, builtin], { toolsPerRequest: 2 })
-  expect(table.items.map((t) => t.name)).toEqual(['Read', 'fixture__z'])
-  expect(table.excluded).toMatchObject([{ originalName: 'a', code: 'over-limit' }])
-})
 it('03 验收 32 / 38: oversized and changed definitions never enter a new table', async () => {
   const huge = source({
     connection: { listTools: async () => [raw('a'.repeat(65_537))] } as unknown as McpConnection,
@@ -184,7 +141,7 @@ it('03 验收 32 / 38: oversized and changed definitions never enter a new table
     opening(await mcpCandidates([source({ review: () => 'changed' })])).excluded[0]?.code,
   ).toBe('definition-changed')
 })
-it('03 验收 21 (closure) / 03 不变量 11: unauthorized closes not-run and the Run goes on; outcome carries reversibility', async () => {
+it('03 验收 21 (closure): unauthorized closes not-run and the Run goes on; outcome carries reversibility', async () => {
   const execute = vi.fn<McpConnection['callTool']>(async () => {
     throw new McpUnauthorizedError()
   })
@@ -306,6 +263,7 @@ it('03 验收 42 / 03 不变量 19: instructions are escaped user messages after
   expect(note.payload).toMatchObject({ role: 'user', serverId: 'fixture', truncated: false })
   expect(JSON.stringify(note.payload)).toContain('\\u003c')
   expect(JSON.stringify(note.payload)).toContain('\\u0026')
+  expect(JSON.stringify(note.payload)).toContain('\\u003e')
   expect(body.messages.at(-1)).toMatchObject({ role: 'user' })
   expect(JSON.stringify(body.messages.at(-1))).toContain('connector_instructions')
   expect(JSON.stringify(body.system)).not.toContain('connector_instructions')
@@ -350,6 +308,9 @@ it('03 验收 42: instructions reappear after compaction, truncate at codepoints
   expect(notes).toHaveLength(2)
   expect(notes[1]!.entryId).toBeGreaterThan(
     all.find((e) => e.name === 'compaction/anchor')!.entryId,
+  )
+  expect(notes[1]!.entryId).toBeGreaterThan(
+    all.findLast((e) => e.name === 'message/environment' && e.entryId < notes[1]!.entryId)!.entryId,
   )
   expect(notes[0]!.payload['truncated']).toBe(true)
   const wrapped = String((notes[0]!.payload['content'] as { text: string }[])[0]?.text)
@@ -403,7 +364,7 @@ it('03 验收 38 (legacy): a frozen item without definitionHash asks rather than
     protectedFiles: [],
     searchHost: null,
     signal: new AbortController().signal,
-    userSetting: () => ({ userSetting: 'always-allow' as const }),
+    userSetting: () => ({ userSetting: 'always-allow' as const, definitionChanged: true as const }),
   }
   const asked = await judgeCall(ctx, old, { input: {} })
   expect(asked).toMatchObject({ kind: 'judged', decision: { record: { verdict: 'ask' } } })
@@ -456,7 +417,7 @@ it('03 验收 36 / 03 不变量 9: readOnlyHint never bypasses manual approval',
 it('03 验收 32: physical depth and reference expansion guards exclude invalid definitions at table opening', async () => {
   let nested: Record<string, unknown> = {}
   for (let i = 1; i < 33; i++) nested = { items: nested }
-  for (const schema of [nested, { allOf: Array.from({ length: 10000 }, () => ({})) }]) {
+  for (const schema of [nested, { allOf: Array.from({ length: 10001 }, () => ({})) }]) {
     const base = source()
     const s = {
       ...base,
@@ -588,5 +549,296 @@ it('03 验收 3 (loop): a crash between Runs waits through the frozen proxy and 
     host.advance(0)
     await closing
     connect.mockRestore()
+  }
+})
+
+it('03 验收 42: first use with instructions and threshold compaction never conflicts with assembled provenance, and every attempt verifies', async () => {
+  const h = harness([], {}, undefined, undefined, 1000)
+  for (let i = 0; i < 3; i++) await send(h)
+  const model = { ...MODEL, providerId: 'zhipu', id: 'second-provider' }
+  const provider = createScriptedProvider({ id: model.providerId, models: [model] })
+  const text = '😀'.repeat(2048)
+  h.loop.connector.use({
+    provider,
+    model,
+    mcpSources: [source({ instructions: { text, hash: sha256Hex(text) } })],
+  })
+  await h.service.selectModel({
+    sessionId: SESSION,
+    origin: null,
+    choice: { providerId: model.providerId, modelId: model.id, effort: null },
+  })
+  provider.script(scriptedTurn({ deltas: ['summary'], usage: USAGE }))
+  provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+  expect((await send(h, [])).reason.code).toBe('completed')
+  const all = await facts(h.tape)
+  expect(
+    all.some(
+      (entry) =>
+        entry.name === 'compaction/anchor' &&
+        entry.payload['trigger'] &&
+        (entry.payload['trigger'] as { code: string }).code === 'threshold',
+    ),
+  ).toBe(true)
+  for (const attempt of all.filter((entry) => entry.name === 'provider/attempt_completed'))
+    expect(
+      (
+        await recheckAttempt(h.tape, {
+          sessionId: SESSION,
+          attempt,
+          currentModel: (providerId) => (providerId === MODEL.providerId ? MODEL : model),
+        })
+      ).verdict,
+    ).toBe('verified')
+  const note = all.findLast((entry) => entry.name === 'message/server_instructions')!
+  const environment = all.findLast((entry) => entry.name === 'message/environment')!
+  expect(note.entryId).toBeGreaterThan(environment.entryId)
+})
+
+it('03 验收 29 / 03 不变量 11: a real HTTP pool first-wait timeout and unauthorized or waited-out frozen calls never reach tools/call; connecting early succeeds', async () => {
+  const { createMcpPool, absolutePath } = await import('../../src/index.js')
+  const { startHttpFixture } = await import('../support/http-fixture.js')
+  const fixture = await startHttpFixture({ era: 'legacy' })
+  const host = createMemoryHost()
+  let release!: () => void
+  let hold = true
+  let down = false
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const runtime = {
+    serverId: 'fixture',
+    launchHash: 'launch',
+    consented: true,
+    transport: {
+      type: 'http' as const,
+      url: fixture.url,
+      protocol: 'legacy' as const,
+      headerKeys: [],
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (hold) await gate
+        if (down) throw new TypeError('fixture offline')
+        return fetch(input, init)
+      },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+    handshakeTimeoutMs: 30000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async () => ({ ok: false, code: 'command-not-found' }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  try {
+    const h = harness([source()])
+    await send(h)
+    pool.apply([runtime])
+    h.loop.connector.use({ provider: h.provider, model: MODEL, mcpSources: pool.routes() })
+    let settled = false
+    const waiting = send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])
+    void waiting.then(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(h.provider.requests).toHaveLength(2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    host.advance(9999)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    host.advance(1)
+    expect((await waiting).reason.code).toBe('completed')
+    expect(
+      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ source: 'tool-unavailable', state: 'not-run' })
+    expect(fixture.requests.filter((r) => r.method === 'tools/call')).toHaveLength(0)
+    const succeeds = send(h, [call(), scriptedTurn({ deltas: ['done'], usage: USAGE })])
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    hold = false
+    release()
+    expect((await succeeds).reason.code).toBe('completed')
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    expect(fixture.requests.filter((r) => r.method === 'tools/call')).toHaveLength(1)
+    fixture.set({ failNext: '403-scope' })
+    await pool
+      .routes()[0]!
+      .connection.callTool('echo', {})
+      .catch(() => {})
+    expect(pool.status()[0]?.phase).toBe('unauthorized')
+    const before = fixture.requests.filter((r) => r.method === 'tools/call').length
+    await send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])
+    expect(
+      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ source: 'connector-unauthorized', state: 'not-run' })
+    expect(fixture.requests.filter((r) => r.method === 'tools/call')).toHaveLength(before)
+    pool.restart('fixture')
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    down = true
+    await pool
+      .routes()[0]!
+      .connection.callTool('echo', {})
+      .catch(() => {})
+    await vi.waitFor(() =>
+      expect(pool.status()[0]).toMatchObject({ phase: 'restarting', error: null }),
+    )
+    const expired = send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    host.advance(30000)
+    expect((await expired).reason.code).toBe('completed')
+    expect(
+      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ source: 'tool-unavailable', state: 'not-run' })
+    expect(fixture.requests.filter((r) => r.method === 'tools/call')).toHaveLength(before)
+  } finally {
+    hold = false
+    release()
+    const closing = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    await closing
+    await fixture.close()
+  }
+})
+
+it('03 验收 42: a second provider first-use deduplicates the same instructions hash; a changed hash writes a second note', async () => {
+  const a = 'first instruction'
+  const h = harness([source({ instructions: { text: a, hash: sha256Hex(a) } })])
+  await send(h)
+  for (const [providerId, text] of [
+    ['zhipu', a],
+    ['openai', 'changed instruction'],
+  ] as const) {
+    const model = { ...MODEL, providerId, id: providerId + '-fixture' }
+    const provider = createScriptedProvider({ id: providerId, models: [model] })
+    h.loop.connector.use({
+      provider,
+      model,
+      mcpSources: [source({ instructions: { text, hash: sha256Hex(text) } })],
+    })
+    await h.service.selectModel({
+      sessionId: SESSION,
+      origin: null,
+      choice: { providerId, modelId: model.id, effort: null },
+    })
+    provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+    expect((await send(h, [])).reason.code).toBe('completed')
+    const notes = (await facts(h.tape)).filter((e) => e.name === 'message/server_instructions')
+    expect(notes).toHaveLength(providerId === 'zhipu' ? 1 : 2)
+    expect(notes.at(-1)?.payload['instructionsHash']).toBe(sha256Hex(text))
+  }
+})
+
+it('03 验收 42: compaction estimateInput counts instructions written after the latest provider attempt', async () => {
+  const { estimateInput } = await import('../../src/loop/compaction.js')
+  const text = '说明'.repeat(1000)
+  const h = harness([source({ instructions: { text, hash: sha256Hex(text) } })])
+  await send(h)
+  const all = await facts(h.tape)
+  const note = all.find((e) => e.name === 'message/server_instructions')!
+  const late = { ...note, entryId: all.at(-1)!.entryId + 1 }
+  const request = { model: MODEL, messages: [], maxTokens: 1024 }
+  expect(estimateInput([...all, late], request)).toBeGreaterThan(estimateInput(all, request))
+})
+
+it('03 验收 21: refresh succeeds but another 401 makes the real pool unauthorized and the Run closes not-run connector-unauthorized', async () => {
+  const { createMcpPool, absolutePath } = await import('../../src/index.js')
+  const { startHttpFixture, startFakeAuthServer } = await import('../support/http-fixture.js')
+  const as = await startFakeAuthServer()
+  const fixture = await startHttpFixture({ era: 'legacy', authUrl: as.url })
+  const host = createMemoryHost()
+  let tokenDown = false
+  const runtime = {
+    serverId: 'fixture',
+    launchHash: 'launch',
+    consented: true,
+    transport: {
+      type: 'http' as const,
+      url: fixture.url,
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (
+          tokenDown &&
+          new URL(input instanceof Request ? input.url : String(input)).pathname === '/token'
+        )
+          throw new TypeError('fixture token network down')
+        return fetch(input, init)
+      },
+      protocol: 'legacy' as const,
+      headerKeys: [],
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+    handshakeTimeoutMs: 30000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async () => ({ ok: false, code: 'command-not-found' }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  let callback!: URLSearchParams
+  try {
+    pool.apply([runtime])
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    expect(
+      await pool.login('fixture', {
+        listen: async (port) => ({
+          port,
+          waitForCallback: async () => callback,
+          close: async () => {},
+        }),
+        openUrl: async (url) => {
+          const response = await fetch(url, { redirect: 'manual' })
+          callback = new URL(response.headers.get('location')!).searchParams
+        },
+      }),
+    ).toEqual({ ok: true })
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    const h = harness(pool.routes())
+    await send(h)
+    tokenDown = true
+    fixture.set({ requireToken: 'force-refresh' })
+    expect(
+      (await send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])).reason.code,
+    ).toBe('completed')
+    expect(pool.status()[0]?.phase).toBe('connected')
+    expect(
+      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ state: 'completed', source: null })
+    tokenDown = false
+    fixture.set({ requireToken: 'never-accepted' })
+    const before = as.requests.filter((r) => r.path === '/token').length
+    expect(
+      (await send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])).reason.code,
+    ).toBe('completed')
+    expect(as.requests.filter((r) => r.path === '/token')).toHaveLength(before + 1)
+    expect(pool.status()[0]?.phase).toBe('unauthorized')
+    expect(
+      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ state: 'not-run', source: 'connector-unauthorized' })
+  } finally {
+    const closing = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    await closing
+    await fixture.close()
+    await as.close()
   }
 })

@@ -74,6 +74,22 @@ it('callTimeoutSec outside 1–3600 is clamped, not refused', () => {
       transport: { ...server.transport, envs: { ld_preload: 'x' } },
     }).success,
   ).toBe(false)
+  expect(
+    mcpServerSchema.safeParse({
+      ...server,
+      transport: { ...server.transport, env_keys: ['dyld_insert_libraries'] },
+    }).success,
+  ).toBe(false)
+  expect(
+    mcpServerSchema.parse({
+      ...server,
+      transport: {
+        ...server.transport,
+        envs: {},
+        env_keys: ['NODE_OPTIONS', 'npm_config_x'],
+      },
+    }).transport,
+  ).toMatchObject({ env_keys: ['NODE_OPTIONS', 'npm_config_x'] })
 })
 
 it('03 验收 4: crashed is an accepted recent-failure code', () => {

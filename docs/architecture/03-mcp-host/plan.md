@@ -296,6 +296,20 @@
 
 ## 实施记录
 
+- **2026-10-08 · PR #29 lead 再审修复**：按 PR #29 评论逐条修，先合入 dev PR #34（读法 65）。提示层文案 / PROMPT_LAYER_VERSION=10 / 哈希保持不变；9a 由 lead 在自己的 worktree 跑，推送前 pull 接上记录。评论中的 blocker、实现 bug、补测试与 minor 均已实施，新增回归与突变通过；最终 G / build 和推送前 pull 在下方记结果。不进入第二段、不合并 PR。
+  - [x] blocker 1：CfWorker 的 anchor / fragment id / 未知键 / dependencies / recursiveRef / 未解本地 ref 与 10000/10001 边界。
+  - [x] blocker 2：说明批次不在阈值压缩之前写 view/assembled；阈值路径与 recheckAttempt。
+  - [x] 实现 3–6：auto 网络 / 5xx 分类、重启定时器取消、crash-limit close 和句柄清理、两条 launch 变化路径共用重置。
+  - [x] 实现 7–9：有 PRM 不挂 validateResourceURL、钥匙串 rejected Promise 可恢复、超时只取池值。
+  - [x] 补测试：验收 29 两阶段等待 / 成功 / loop 收口；池说明钉住四态；new 与 changed；多 provider 说明去重 / 哈希变化 / 转义 > / estimateInput / 真实 instructions；真实 HTTP 不派发；OAuth handed 全请求计数 / 持久轮换 / 再 401；握手传时限 / 改 launch / 中间值 / 超时分类；OAuth PKCE / CIMD / denied / error iss / 直接 client issuer；meta 与头白名单；env_keys；排除优先级 / 最终排序 / 无哈希 definitionChanged；移出 mock 的断言。
+  - [x] minor：supported 字段、stopReason 先 announce、cacheLoaded、压缩 environment 顺序、approval.outcome 枚举、crashed 两份 locale、OAuth 非授权错误透传、测试标签与文件位置。
+
+  - 证据文件：`mcp/definition.test.ts` 与 `tools/validate.test.ts` 共享 anchor / fragment-id / 未知键 dependencies 链，校验器 spy 保证危险定义被提前拒绝；`loop/mcp-run.test.ts` 覆盖带说明首次开表的阈值压缩、逐次 recheckAttempt、真实 HTTP 池零派发、首连成功与 401 刷新收口、OAuth AS 网络失败不改变 phase；`mcp/pool.test.ts` 覆盖计时、重置、cacheLoaded、钉住四态和关闭句柄；`mcp/oauth.test.ts` 核对 handed 的每个 AS 请求与 durable tokens；`mcp/http-connection.test.ts` 核对 connect 参数、原始错误、头和 meta 白名单。其余按评论移到 `loop/tool-table.test.ts`、contracts 和 executor 的主体断言。
+  - 新增突变 35 项均红：schema 六项（anchor、fragment-id、未知键 dependencies、recursiveRef、本地未解 ref、根计数）；提前写 manifest；auto 网络 / 5xx；不取消旧 timer、第三次崩溃不 close、timer 路径不重置、保留旧 OAuth、重连不清已关闭句柄；有 PRM 仍验证 URI；缓存 rejected tokens；executor 固定超时；忽略 supported；不等 cacheLoaded；忽略说明 enabled / pin、忽略 new review、说明去重忽略 hash、不转义 >、estimateInput 不计说明、压缩漏补说明；AS 网络误触发池重启；不在 announce 前设置 stopReason；登录 / 刷新改 global fetch；不持久写轮换组；漏 HTTP 握手 timeout；注入 sessionId meta / Tenon 请求头；不按名重排裁剪项。临时源码均 finally 恢复。首次“停用说明”用例仅有不匹配 pin，突变未红，已补匹配 pin 且停用后重跑红；executor 改为完整选项断言。HTTP 握手脚本最初匹配到 stdio，未记为有效突变，按 HTTP 函数范围重跑红。
+  - 提示层检查：`src/prompts` 相对 `9b2ddbc` 无 diff；`PROMPT_LAYER_VERSION=10`，哈希仍为 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c`。locale 只新增 crashed 文案，不修改模型提示层。
+  - 最终门禁：`pnpm format:check` / `pnpm lint` / `pnpm typecheck` 绿；`pnpm test --maxWorkers=2` 为 195 文件 / 3699 测试通过，2 文件 / 2 测试跳过；`pnpm build` 绿。
+  - 交接：原有 `AGENTS.md` 的无关本地改动保留、不纳入提交。下一步为提交修复、pull lead 的评测提交、跑 `evals:gate`、推送并保持 PR #29 Ready for review；pull 与评测门禁结果随后补记。
+
 - **2026-10-08 · 第 7–9 步收尾**：合入 dev PR #32 / #33（`17e8deb`），Open 两条缺口均已解决。补了首次自带 client 的 issuer 原文 / tokens 回写类别、启动时恢复最后 issuer、空列表不读钥匙串、新 issuer 重新 DCR 注册、crashed 尾巴 / crash-limit 保留 / 重连与用户操作清空、跨池缓存恢复与坏缓存、池退出并行关闭与到点强杀（leader 已退出仍杀组）的回归。连接池代理跨两个 Run 等重启后成功，冻结工具表不变；在途崩溃照既有 connectorFailed 文本、completed 收口；未授权连续三次不吃机器阻断上限。阶段与错误码的 kernel ↔ contracts 双向类型钉放在 contracts/test/mcp.test.ts（避免 kernel 新增 contracts 依赖）。
 - **最终突变**：合新契约后重跑 7 的七项、8 的九项、9 的八项，全部红；额外验证刷新 Promise 合一，以及 PR #32 的忽略启动 issuer / 丢原文 / 误用 client 写类别、PR #33 的漏记 crashed / 重连不清空，共 30 项全红。8⑤ 统计键改为同台后格式变成多行，初次脚本未匹配，不算已跑；用最终代码准确匹配重跑，撞名优先级回归红。临时改动均 finally 恢复，相关回归恢复绿。收尾新增异步钉住期间删除不重建缓存、超长 Unicode 单行尾巴有界两例。
 - **最终门禁**：最终 format:check / lint / typecheck 绿，全套 195 文件 / 3666 测试通过、2 文件 / 2 测试跳过；build 绿。`pnpm evals:gate --maxWorkers=2` 为预期红：20 题均缺提示层 10 的 3 条基线；未跑真实评测、未使用真实 key。9a 等 lead 跑。

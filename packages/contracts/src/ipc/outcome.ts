@@ -112,7 +112,6 @@ export const toolOutcomeViewShape = {
         'denied',
         'cancelled-by-stop',
         'superseded',
-        'connector-unauthorized',
         'tool-unavailable',
         'denied-on-rejudge',
       ]),

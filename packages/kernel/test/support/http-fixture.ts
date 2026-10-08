@@ -6,7 +6,7 @@ import { createFixtureServer, createFixtureTools } from './fixtures/modern-serve
 export interface HttpFixtureOptions {
   era?: 'modern' | 'legacy' | 'probe-204' | 'probe-non-json'
   failNext?: '401' | '403-scope' | '429' | 'break-stream' | undefined
-  failConnect?: '429' | undefined
+  failConnect?: '429' | '503' | undefined
   authUrl?: string
   requireToken?: string | undefined
 }
@@ -81,6 +81,11 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
         res.writeHead(403, {
           'www-authenticate': 'Bearer error="insufficient_scope", scope="extra"',
         })
+        res.end()
+        return
+      }
+      if (fail === '503') {
+        res.writeHead(503)
         res.end()
         return
       }
@@ -224,6 +229,7 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
 }
 
 export interface FakeAuthOptions {
+  prmResource?: string
   prm?: boolean
   pkceField?: 'missing' | 'no-s256' | 'ok'
   metadataDown?: boolean
@@ -233,6 +239,7 @@ export interface FakeAuthOptions {
   authNone?: boolean
   registration?: boolean
   rotateRefresh?: boolean
+  tokenStatus?: number
   refreshResult?: 'ok' | 'invalid_grant' | 'invalid_client'
   after401?: boolean
   callbackError?: 'access_denied' | null
@@ -256,7 +263,9 @@ export async function startFakeAuthServer(initial: FakeAuthOptions = {}) {
       if (u.pathname.includes('.well-known/oauth-protected-resource')) {
         json(
           res,
-          opts.prm === false ? {} : { resource: url, authorization_servers: [url] },
+          opts.prm === false
+            ? {}
+            : { resource: opts.prmResource ?? url, authorization_servers: [url] },
           opts.prm === false ? 404 : 200,
         )
         return
@@ -280,7 +289,7 @@ export async function startFakeAuthServer(initial: FakeAuthOptions = {}) {
                 code_challenge_methods_supported:
                   opts.pkceField === 'no-s256' ? ['plain'] : ['S256'],
               }),
-          client_id_metadata_document_supported: opts.cimd ?? false,
+          ...(opts.cimd === undefined ? {} : { client_id_metadata_document_supported: opts.cimd }),
           token_endpoint_auth_methods_supported:
             opts.authNone === false ? ['client_secret_basic'] : ['none', 'client_secret_post'],
           authorization_response_iss_parameter_supported: true,
@@ -305,6 +314,10 @@ export async function startFakeAuthServer(initial: FakeAuthOptions = {}) {
         return
       }
       if (u.pathname === '/token') {
+        if (opts.tokenStatus) {
+          json(res, { error: 'server_error' }, opts.tokenStatus)
+          return
+        }
         if (
           body['grant_type'] === 'refresh_token' &&
           opts.refreshResult &&

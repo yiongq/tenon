@@ -178,6 +178,7 @@ interface ServerState {
   controller: AbortController
   children: Set<ChildHandle>
   timer: (() => void) | null
+  cacheLoaded: Promise<void>
   ready: Promise<void>
   write: Promise<void>
   raw: McpToolList
@@ -332,7 +333,8 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     )
     return Object.fromEntries(entries)
   }
-  async function stop(s: ServerState) {
+  async function stop(s: ServerState, reason: McpServerStatus['stopReason'] = null) {
+    s.status.stopReason = reason
     s.generation++
     s.oauth?.cancelLogin()
     s.timer?.()
@@ -342,9 +344,11 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     s.status.error = null
     s.status.restartInMs = null
     const connection = s.connection
+    const children = [...s.children]
     s.connection = null
     announce(s)
     await connection?.close().catch(() => {})
+    children.forEach((child) => s.children.delete(child))
     s.finish()
   }
   function retry(s: ServerState, remote: boolean) {
@@ -365,7 +369,13 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       if (s.crashes >= 3) {
         s.status.phase = 'stopped'
         s.status.stopReason = 'crash-limit'
+        const connection = s.connection
+        const children = [...s.children]
         s.connection = null
+        void connection
+          ?.close()
+          .catch(() => {})
+          .then(() => children.forEach((child) => s.children.delete(child)))
         s.finish()
         announce(s)
         return
@@ -379,21 +389,19 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       s.timer = null
       const runtime = options.runtimeOf(s.runtime.serverId)
       if (!runtime || !runtime.consented) {
-        void stop(s)
+        void stop(s, runtime && !runtime.consented ? 'needs-consent' : null)
         return
       }
-      if (runtime.launchHash !== s.runtime.launchHash) {
-        s.crashes = 0
-        s.lastCrash = null
-        s.networkAttempt = 0
-        s.status.firstConnect = true
-      }
+      if (runtime.launchHash !== s.runtime.launchHash) resetLaunch(s, runtime)
       s.runtime = runtime
       launch(s)
     }, delay)
   }
   function launch(s: ServerState) {
+    s.timer?.()
+    s.timer = null
     const previous = s.connection
+    const children = [...s.children]
     s.connection = null
     s.controller.abort(new Error('MCP reconnect'))
     s.controller = new AbortController()
@@ -405,6 +413,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     s.ready = s.ready
       .then(async () => {
         await previous?.close().catch(() => {})
+        children.forEach((child) => s.children.delete(child))
         s.stderr = []
         if (s.retired || generation !== s.generation) return
         await start(s, generation)
@@ -488,7 +497,10 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         })
         const handed: FetchLike = async (input, init) => {
           const request = new Request(input, init)
-          let listens = request.method === 'GET'
+          const serverRequest =
+            new URL(request.url).origin === new URL(transport.url).origin &&
+            new URL(request.url).pathname === new URL(transport.url).pathname
+          let listens = serverRequest && request.method === 'GET'
           if (request.method === 'POST') {
             try {
               const body = (await request.clone().json()) as {
@@ -538,7 +550,12 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               { status: response.status, headers: response.headers },
             )
           } catch (e) {
-            if (!request.signal.aborted && active() && s.status.phase === 'connected')
+            if (
+              serverRequest &&
+              !request.signal.aborted &&
+              active() &&
+              s.status.phase === 'connected'
+            )
               retry(s, true)
             throw e
           }
@@ -779,6 +796,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       controller: new AbortController(),
       children: new Set(),
       timer: null,
+      cacheLoaded: Promise.resolve(),
       ready: Promise.resolve(),
       write: Promise.resolve(),
       raw: [],
@@ -909,6 +927,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         /* reconstructable cache */
       }
     })()
+    s.cacheLoaded = s.ready
     return s
   }
   return {
@@ -940,18 +959,9 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           const consent = old.runtime.consented
           old.runtime = runtime
           if (!runtime.consented) {
-            void stop(old)
-            old.status.stopReason = 'needs-consent'
+            void stop(old, 'needs-consent')
           } else if (changed || !consent) {
-            old.oauth?.cancelLogin()
-            old.oauth = null
-            old.oauthIssuerHash =
-              runtime.transport.type === 'http'
-                ? (runtime.transport.oauth.issuers.at(-1) ?? null)
-                : null
-            old.crashes = 0
-            old.networkAttempt = 0
-            old.status.firstConnect = true
+            resetLaunch(old, runtime)
             launch(old)
           } else {
             old.status.tools =
@@ -984,6 +994,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     routes: () => sorted().map((s) => s.source),
     async tableSources(q) {
       const current = sorted()
+      await Promise.all(current.map((s) => s.cacheLoaded))
       await Promise.all(current.map((s) => wait(s, q.waitMs, q.signal)))
       return {
         sources: sorted()
@@ -1078,4 +1089,16 @@ function classify(e: unknown): McpErrorCode {
 
 function waiting(s: ServerState): boolean {
   return s.status.phase === 'connecting' || s.status.phase === 'restarting'
+}
+
+function resetLaunch(s: ServerState, runtime: McpServerRuntime) {
+  s.oauth?.cancelLogin()
+  s.oauth = null
+  s.oauthIssuerHash =
+    runtime.transport.type === 'http' ? (runtime.transport.oauth.issuers.at(-1) ?? null) : null
+  s.crashes = 0
+  s.lastCrash = null
+  s.networkAttempt = 0
+  s.status.firstConnect = true
+  s.status.error = null
 }

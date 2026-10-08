@@ -540,6 +540,7 @@
     },
     "error": {
       "handshake-timeout": "连接超时",
+      "crashed": "进程意外退出",
       "handshake-failed": "连接失败",
       "modern-only": "只支持 2026-07-28",
       "era-negotiation-failed": "协议协商失败，改为只用旧代",

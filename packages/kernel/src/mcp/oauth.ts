@@ -31,7 +31,9 @@ import {
   discoverOAuthServerInfo,
   IssuerMismatchError,
   UnauthorizedError,
-  checkResourceAllowed,
+  AuthorizationServerMismatchError,
+  OAuthError,
+  OAuthErrorCode,
 } from '@modelcontextprotocol/client'
 import type {
   AuthProvider,
@@ -43,7 +45,7 @@ import type {
 import type { FetchLike, HostIdentity, HostSecrets } from '../host/adapter.js'
 import { keyFor } from '../host/key.js'
 import { sha256Hex } from '../tape/hash.js'
-import { McpUnauthorizedError } from './connection.js'
+import { McpUnauthorizedError, isMcpAuthError } from './connection.js'
 import type { McpOAuthRuntime } from './pool.js'
 import { McpKeychainError } from './token-store.js'
 import type { McpTokenStore, McpTokenTransaction } from './token-store.js'
@@ -85,6 +87,7 @@ export function createMcpOAuthProvider(q: {
   let loginState: LoginState | null = null
   let loginAbort: AbortController | null = null
   let lastRedirect: string | null = null
+  let lastDiscovery: OAuthDiscoveryState | undefined
   let lastSavedHash: string | null = q.runtime().issuers.at(-1) ?? null
   let refresh: Promise<void> | null = null
   let listener: Awaited<ReturnType<McpLoginUi['listen']>> | null = null
@@ -99,13 +102,19 @@ export function createMcpOAuthProvider(q: {
     if (!memory.has(hash))
       memory.set(
         hash,
-        tx.tokens(hash).then((value) => {
-          if (value) {
-            q.addSecret(value.access_token)
-            if (value.refresh_token) q.addSecret(value.refresh_token)
-          }
-          return value
-        }),
+        tx
+          .tokens(hash)
+          .then((value) => {
+            if (value) {
+              q.addSecret(value.access_token)
+              if (value.refresh_token) q.addSecret(value.refresh_token)
+            }
+            return value
+          })
+          .catch((error) => {
+            memory.delete(hash)
+            throw error
+          }),
       )
     return memory.get(hash)!
   }
@@ -225,22 +234,15 @@ export function createMcpOAuthProvider(q: {
       return loginState.verifier
     },
     saveDiscoveryState: (value) => {
-      if (loginState) loginState.discovery = value
+      if (loginState) {
+        loginState.discovery = value
+        lastDiscovery = value
+      }
       if (active() && value.authorizationServerMetadata?.issuer)
         q.onDiscovery?.(value.authorizationServerMetadata.issuer)
     },
     discoveryState: () => loginState?.discovery,
     invalidateCredentials: invalidate,
-    async validateResourceURL(serverUrl, resource) {
-      if (
-        resource !== undefined &&
-        !checkResourceAllowed({ requestedResource: resource, configuredResource: serverUrl })
-      )
-        throw new LoginError('metadata-unreachable')
-      const url = new URL(resource ?? serverUrl)
-      url.hash = ''
-      return url
-    },
   }
   const authProvider: AuthProvider = {
     token: async () => (await tokens())?.access_token,
@@ -252,8 +254,25 @@ export function createMcpOAuthProvider(q: {
           if (!current?.refresh_token || !(await client(undefined, tx)))
             throw new UnauthorizedError()
           let temporaryVerifier = ''
-          let temporaryDiscovery: OAuthDiscoveryState | undefined
+          const discovered =
+            lastDiscovery ?? (await discoverOAuthServerInfo(q.serverUrl, { fetchFn: q.fetch }))
+          let temporaryDiscovery: OAuthDiscoveryState | undefined = discovered
           // Deliberately omits saveClientInformation and clientMetadataUrl: invalid_client must not register.
+          let transientFailure: unknown
+          const refreshFetch: FetchLike = async (input, init) => {
+            try {
+              const response = await q.fetch(input, init)
+              if (response.status >= 500)
+                transientFailure = new OAuthError(
+                  OAuthErrorCode.ServerError,
+                  `OAuth server returned HTTP ${response.status}`,
+                )
+              return response
+            } catch (error) {
+              transientFailure = error
+              throw error
+            }
+          }
           const noninteractive: OAuthClientProvider = {
             get redirectUrl() {
               return provider.redirectUrl
@@ -270,6 +289,7 @@ export function createMcpOAuthProvider(q: {
               if (scope === 'all' || scope === 'discovery') temporaryDiscovery = undefined
             },
             redirectToAuthorization: () => {
+              if (transientFailure) throw transientFailure
               q.onUnauthorized()
               throw new UnauthorizedError()
             },
@@ -283,15 +303,33 @@ export function createMcpOAuthProvider(q: {
                 q.onDiscovery?.(value.authorizationServerMetadata.issuer)
             },
             discoveryState: () => temporaryDiscovery,
-            validateResourceURL: provider.validateResourceURL!,
           }
-          if (
-            (await auth(noninteractive, { serverUrl: q.serverUrl, fetchFn: q.fetch })) !==
-            'AUTHORIZED'
-          )
-            throw new UnauthorizedError()
+          resourcePolicy(noninteractive, discovered)
+          try {
+            const result = await auth(noninteractive, {
+              serverUrl: q.serverUrl,
+              fetchFn: refreshFetch,
+            })
+            if (transientFailure) throw transientFailure
+            if (result !== 'AUTHORIZED') throw new UnauthorizedError()
+          } catch (error) {
+            throw transientFailure ?? error
+          }
         })
-        .catch(() => {
+        .catch((error) => {
+          const registrationUnavailable =
+            error instanceof Error &&
+            error.message === 'OAuth client information must be saveable for dynamic registration'
+          const authError =
+            error instanceof OAuthError
+              ? ['invalid_grant', 'invalid_client'].includes(error.code)
+              : isMcpAuthError(error)
+          if (
+            !authError &&
+            !registrationUnavailable &&
+            !(error instanceof AuthorizationServerMismatchError)
+          )
+            throw error
           q.onUnauthorized()
           throw new McpUnauthorizedError()
         })
@@ -322,6 +360,7 @@ export function createMcpOAuthProvider(q: {
             : 'metadata-unreachable',
       }
     }
+    resourcePolicy(provider, info)
     const metadata = info.authorizationServerMetadata
     if (!metadata) return { ok: false, code: 'metadata-unreachable' }
     if (!metadata.code_challenge_methods_supported?.includes('S256'))
@@ -458,6 +497,12 @@ class LoginError extends Error {
 }
 function loginCode(error: unknown): LoginCode {
   if (
+    error instanceof Error &&
+    error.message.startsWith('Protected resource ') &&
+    error.message.includes('does not match expected')
+  )
+    return 'metadata-unreachable'
+  if (
     typeof error === 'object' &&
     error !== null &&
     'code' in error &&
@@ -465,4 +510,14 @@ function loginCode(error: unknown): LoginCode {
   )
     return error.code as LoginCode
   return 'network'
+}
+
+function resourcePolicy(target: OAuthClientProvider, discovery: OAuthDiscoveryState) {
+  if (discovery.resourceMetadata) delete target.validateResourceURL
+  else
+    target.validateResourceURL = async (serverUrl) => {
+      const url = new URL(serverUrl)
+      url.hash = ''
+      return url
+    }
 }

@@ -370,43 +370,46 @@ it('03 验收 14 (T49 read): broken stream retries tools/list, resources/read an
   expect(phase(pool)).toBe('connected')
 })
 
-it('03 验收 14: remote retries after 1,2,4,8,16 s then errors network; launch changes cancel pending retries', async () => {
-  const fixture = await startHttpFixture({ era: 'legacy' })
-  cleanup.push(() => fixture.close())
-  let down = false
-  let attempts = 0
-  const handed = async (input: RequestInfo | URL, init?: RequestInit) => {
-    if (down) {
-      attempts++
-      throw new TypeError('fixture network down')
+it.each(['legacy', 'auto'] as const)(
+  '03 验收 14: %s remote retries after 1,2,4,8,16 s then errors network',
+  async (protocol) => {
+    const fixture = await startHttpFixture({ era: 'legacy' })
+    cleanup.push(() => fixture.close())
+    let down = false
+    let attempts = 0
+    const handed = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (down) {
+        attempts++
+        throw new TypeError('fixture network down')
+      }
+      return fetch(input, init)
     }
-    return fetch(input, init)
-  }
-  const initial = runtime({
-    transport: {
-      type: 'http',
-      url: fixture.url,
-      fetch: handed,
-      protocol: 'legacy',
-      headerKeys: [],
-      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
-    },
-  })
-  const { pool, host } = setup(initial)
-  await connected(pool)
-  down = true
-  await expect(pool.routes()[0]!.connection.callTool('echo', {})).rejects.toThrow(/network down/)
-  for (const delay of [1000, 2000, 4000, 8000, 16000]) {
-    await vi.waitFor(() => expect(pool.status()[0]?.restartInMs).toBe(delay))
-    const before = attempts
-    host.advance(delay - 1)
-    expect(attempts).toBe(before)
-    host.advance(1)
-    await vi.waitFor(() => expect(attempts).toBeGreaterThan(before))
-  }
-  await vi.waitFor(() => expect(pool.status()[0]?.error?.code).toBe('network'))
-  expect(attempts).toBe(6)
-})
+    const initial = runtime({
+      transport: {
+        type: 'http',
+        url: fixture.url,
+        fetch: handed,
+        protocol,
+        headerKeys: [],
+        oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      },
+    })
+    const { pool, host } = setup(initial)
+    await connected(pool)
+    down = true
+    await expect(pool.routes()[0]!.connection.callTool('echo', {})).rejects.toThrow(/network down/)
+    for (const delay of [1000, 2000, 4000, 8000, 16000]) {
+      await vi.waitFor(() => expect(pool.status()[0]?.restartInMs).toBe(delay))
+      const before = attempts
+      host.advance(delay - 1)
+      expect(attempts).toBe(before)
+      host.advance(1)
+      await vi.waitFor(() => expect(attempts).toBeGreaterThan(before))
+    }
+    await vi.waitFor(() => expect(pool.status()[0]?.error?.code).toBe('network'))
+    expect(attempts).toBe(6)
+  },
+)
 it('03 验收 39 / 33: list_changed marks added tools new and refuses a changed unsafe output before tools/call', async () => {
   const initial = runtime({
     transport: {
@@ -574,7 +577,7 @@ it('03 验收 21: login resumes the same route after unauthorized, next call suc
   await expect(route.callTool('echo', {})).rejects.toBeInstanceOf(connections.McpUnauthorizedError)
   expect(phase(pool)).toBe('unauthorized')
 })
-it('03 不变量 11: a broken concurrent call never cancels the neighboring request', async () => {
+it('03 验收 14: a broken concurrent call never cancels the neighboring request', async () => {
   const fixture = await startHttpFixture({ era: 'legacy' })
   cleanup.push(() => fixture.close())
   const initial = runtime({
@@ -813,4 +816,286 @@ it('03 验收 4: one oversized Unicode stderr line retains a valid bounded suffi
   expect(new TextEncoder().encode(tail).length).toBeLessThanOrEqual(4096)
   expect(tail.endsWith('last-marker')).toBe(true)
   expect(tail).not.toContain('\uFFFD')
+})
+
+it('03 验收 29: first-connecting calls stay pending at 9999 ms, time out at 10000 without dispatch, or succeed as soon as connected', async () => {
+  const resolves: ((connection: McpConnection) => void)[] = []
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(
+    () => new Promise((resolve) => resolves.push(resolve)),
+  )
+  const timed = setup()
+  const succeeds = setup()
+  await vi.waitFor(() => expect(resolves).toHaveLength(2))
+  const failed = timed.pool
+    .routes()[0]!
+    .connection.callTool('echo', {})
+    .catch((error: unknown) => error)
+  let settled = false
+  void failed.then(() => {
+    settled = true
+  })
+  timed.host.advance(9999)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(settled).toBe(false)
+  timed.host.advance(1)
+  expect(await failed).toBeInstanceOf(connections.McpServerUnavailableError)
+  const first = fakeConnection()
+  resolves[0]!(first.c)
+  await connected(timed.pool)
+  expect(first.c.callTool).not.toHaveBeenCalled()
+  const second = fakeConnection()
+  const called = succeeds.pool.routes()[0]!.connection.callTool('echo', {})
+  resolves[1]!(second.c)
+  expect(await called).toEqual({ content: [] })
+  expect(second.c.callTool).toHaveBeenCalledTimes(1)
+})
+
+it('03 验收 29: tableSources waits during restart and returns sources when the retry connects within the window', async () => {
+  const first = fakeConnection()
+  const second = fakeConnection()
+  vi.spyOn(connections, 'connectStdioServer')
+    .mockResolvedValueOnce(first.c)
+    .mockResolvedValueOnce(second.c)
+  const { pool, host } = setup()
+  await connected(pool)
+  first.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  let settled = false
+  const table = pool.tableSources({ waitMs: 10000, signal: new AbortController().signal })
+  void table.then(() => {
+    settled = true
+  })
+  host.advance(999)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(settled).toBe(false)
+  host.advance(1)
+  expect((await table).sources).toHaveLength(1)
+  expect((await table).absent).toEqual([])
+})
+
+it('03 验收 14: applying a changed launch cancels the pending retry; expired old delay never launches a third connection', async () => {
+  const first = fakeConnection()
+  const connect = vi
+    .spyOn(connections, 'connectStdioServer')
+    .mockResolvedValueOnce(first.c)
+    .mockImplementation(async () => fakeConnection().c)
+  const { pool, host } = setup()
+  await connected(pool)
+  first.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  pool.apply([runtime({ launchHash: 'changed' })])
+  await connected(pool)
+  expect(connect).toHaveBeenCalledTimes(2)
+  expect(connect.mock.calls[1]![1].handshakeTimeoutMs).toBe(120000)
+  host.advance(10000)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(connect).toHaveBeenCalledTimes(2)
+})
+
+it('03 验收 3: crash-limit closes the third connection and runtimeOf consent removal announces needs-consent', async () => {
+  const attempts = Array.from({ length: 4 }, fakeConnection)
+  let attempt = 0
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async () => attempts[attempt++]!.c)
+  const { pool, host, current } = setup()
+  await connected(pool)
+  for (let i = 0; i < 3; i++) {
+    attempts[i]!.exit()
+    await vi.waitFor(() => expect(phase(pool)).toBe(i < 2 ? 'restarting' : 'stopped'))
+    if (i < 2) {
+      host.advance((i + 1) * 1000)
+      await connected(pool)
+    }
+  }
+  expect(attempts[2]!.c.close).toHaveBeenCalledTimes(1)
+  pool.restart('fixture')
+  await connected(pool)
+  attempts[3]!.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  current.set('fixture', runtime({ consented: false }))
+  host.advance(1000)
+  expect(pool.status()[0]?.stopReason).toBe('needs-consent')
+})
+
+it('Q4-2: a real pool exposes instructions only when enabled and pinned to the live hash, including after reconnect and release', async () => {
+  const first = { ...fakeConnection().c, instructions: 'instructions v1' }
+  const second = { ...fakeConnection().c, instructions: 'instructions v2' }
+  vi.spyOn(connections, 'connectStdioServer')
+    .mockResolvedValueOnce(first)
+    .mockResolvedValueOnce(second)
+  const { pool } = setup()
+  await connected(pool)
+  expect(pool.routes()[0]?.instructions).toBeUndefined()
+  const hash = pool.status()[0]!.instructions!.hash
+  pool.apply([runtime({ instructions: { enabled: false, pinHash: hash } })])
+  expect(pool.routes()[0]?.instructions).toBeUndefined()
+  pool.apply([runtime({ instructions: { enabled: true, pinHash: hash } })])
+  expect(pool.routes()[0]?.instructions).toEqual({ text: first.instructions, hash })
+  pool.restart('fixture')
+  await connected(pool)
+  expect(pool.routes()[0]?.instructions).toBeUndefined()
+  const changed = pool.status()[0]!.instructions!.hash
+  pool.apply([runtime({ instructions: { enabled: true, pinHash: changed } })])
+  expect(pool.routes()[0]?.instructions).toEqual({ text: second.instructions, hash: changed })
+})
+
+it('03 验收 2 / 9: pool call timeout has one per-server source, including the 3600-second total cap', async () => {
+  for (const callTimeoutMs of [1000, 123000, 3600000]) {
+    const fake = fakeConnection()
+    vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+    const { pool } = setup(runtime({ callTimeoutMs }))
+    await connected(pool)
+    await pool.routes()[0]!.connection.callTool('echo', {}, { timeoutMs: 1, maxTotalTimeoutMs: 2 })
+    expect(vi.mocked(fake.c.callTool).mock.calls[0]?.[2]).toMatchObject({
+      timeoutMs: callTimeoutMs,
+      maxTotalTimeoutMs: Math.min(10 * callTimeoutMs, 3600000),
+    })
+  }
+})
+
+it('minor cacheLoaded: tableSources awaits the initial cache even for a stopped unconsented server', async () => {
+  const { pool, host } = setup(runtime({ consented: false }), false, false)
+  let release!: (value: string) => void
+  vi.spyOn(host.fs, 'readFile').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve
+      }),
+  )
+  pool.apply([runtime({ consented: false })])
+  const result = pool.tableSources({ waitMs: 10000, signal: new AbortController().signal })
+  let settled = false
+  void result.then(() => {
+    settled = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(settled).toBe(false)
+  release(
+    JSON.stringify({
+      version: 1,
+      connectedLaunchHash: 'launch',
+      lastTools: [{ name: 'cached', definitionHash: 'hash' }],
+      pinnedDefinitions: {},
+      pinnedInstructions: null,
+      oauth: null,
+    }),
+  )
+  expect((await result).absent[0]?.cachedTools).toEqual(['cached'])
+})
+
+it('minor stopReason: consent removal publishes needs-consent in the first change notification', async () => {
+  vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fakeConnection().c)
+  const { pool, onChange } = setup()
+  await connected(pool)
+  const changes: unknown[] = []
+  onChange.mockImplementation(() => changes.push(pool.status()[0]?.stopReason))
+  pool.apply([runtime({ consented: false })])
+  expect(changes[0]).toBe('needs-consent')
+})
+
+it('03 验收 2: cached handshakes between 30 and 120 seconds pass through; RequestTimeout becomes handshake-timeout', async () => {
+  const { SdkError, SdkErrorCode } = await import('@modelcontextprotocol/client')
+  const connect = vi
+    .spyOn(connections, 'connectStdioServer')
+    .mockImplementation(async () => fakeConnection().c)
+  const { pool } = setup()
+  await connected(pool)
+  pool.apply([runtime({ handshakeTimeoutMs: 84000 })])
+  pool.restart('fixture')
+  await connected(pool)
+  expect(connect.mock.calls[1]?.[1].handshakeTimeoutMs).toBe(84000)
+  connect.mockRejectedValue(new SdkError(SdkErrorCode.RequestTimeout, 'fixture timeout'))
+  pool.restart('fixture')
+  await vi.waitFor(() => expect(pool.status()[0]?.error?.code).toBe('handshake-timeout'))
+})
+
+it('03 验收 14: a runtimeOf launch change resets OAuth and error just like apply, and takes the new issuer snapshot', async () => {
+  const first = fakeConnection()
+  const connect = vi
+    .spyOn(connections, 'connectHttpServer')
+    .mockResolvedValueOnce(first.c)
+    .mockImplementation(async () => fakeConnection().c)
+  const initial = runtime({
+    transport: {
+      type: 'http',
+      url: 'https://old.example/mcp',
+      fetch,
+      protocol: 'legacy',
+      headerKeys: [],
+      oauth: {
+        ownClient: null,
+        clientMetadataUrl: null,
+        dcrRedirectPort: 53280,
+        issuers: ['aaaaaaaaaaaaaaaa'],
+      },
+    },
+  })
+  const { pool, host, current } = setup(initial)
+  await connected(pool)
+  first.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  current.set('fixture', {
+    ...initial,
+    launchHash: 'new',
+    transport: {
+      ...(initial.transport as Extract<McpServerRuntime['transport'], { type: 'http' }>),
+      url: 'https://new.example/mcp',
+      oauth: {
+        ownClient: null,
+        clientMetadataUrl: null,
+        dcrRedirectPort: 53280,
+        issuers: ['bbbbbbbbbbbbbbbb'],
+      },
+    },
+  })
+  host.advance(1000)
+  await connected(pool)
+  expect(connect.mock.calls[1]?.[0].url).toBe('https://new.example/mcp')
+  expect(connect.mock.calls[1]?.[0].authProvider).not.toBe(connect.mock.calls[0]?.[0].authProvider)
+  expect(connect.mock.calls[1]?.[0].handshakeTimeoutMs).toBe(120000)
+  expect(pool.status()[0]?.error).toBeNull()
+  pool.apply([current.get('fixture')!])
+  expect(connect).toHaveBeenCalledTimes(2)
+})
+
+it('03 验收 3 / 4: reconnect discards closed process handles before a later shutdown deadline', async () => {
+  const { pool, host } = setup(runtime(), false, false)
+  const kills = [
+    vi.fn<ChildHandle['kill']>(async () => {}),
+    vi.fn<ChildHandle['kill']>(async () => {}),
+  ]
+  const children = kills.map(
+    (kill, i) =>
+      ({
+        stdin: new WritableStream(),
+        stdout: new ReadableStream(),
+        stderr: new ReadableStream(),
+        exited: Promise.resolve({ code: 0, signal: null }),
+        pid: 100 + i,
+        kill,
+      }) as ChildHandle,
+  )
+  vi.spyOn(host.process, 'spawn')
+    .mockResolvedValueOnce(children[0]!)
+    .mockResolvedValueOnce(children[1]!)
+  const first = fakeConnection()
+  const second = fakeConnection()
+  vi.mocked(second.c.close).mockImplementation(async () => new Promise(() => {}))
+  let attempt = 0
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async (wrapped, spec) => {
+    await wrapped.process.spawn(spec.spawn)
+    return attempt++ === 0 ? first.c : second.c
+  })
+  pool.apply([runtime()])
+  await connected(pool)
+  first.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  host.advance(1000)
+  await connected(pool)
+  expect(first.c.close).toHaveBeenCalledOnce()
+  const closing = pool.close({ deadlineMs: 250 })
+  await vi.waitFor(() => expect(second.c.close).toHaveBeenCalledOnce())
+  host.advance(250)
+  await closing
+  expect(kills[0]).not.toHaveBeenCalled()
+  expect(kills[1]).toHaveBeenCalledExactlyOnceWith('SIGKILL')
 })

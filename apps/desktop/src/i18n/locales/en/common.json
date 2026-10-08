@@ -540,6 +540,7 @@
     },
     "error": {
       "handshake-timeout": "Connection timed out",
+      "crashed": "The process exited unexpectedly",
       "handshake-failed": "Connection failed",
       "modern-only": "Only supports 2026-07-28",
       "era-negotiation-failed": "Protocol negotiation failed; use legacy only",

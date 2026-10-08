@@ -1,3 +1,4 @@
+import { schemaChain } from '../support/schema-chains.js'
 import { expect, it } from 'vitest'
 import {
   definitionProblem,
@@ -60,8 +61,8 @@ it('03 验收 32: a 40-link branching $ref chain is invalid within 100 ms in eit
   expect(performance.now() - start).toBeLessThan(100)
 })
 it('03 验收 32: the expansion boundary is 10000, and recursive refs stop along their path', () => {
-  expect(schemaProblem({ allOf: Array.from({ length: 9999 }, () => ({})) })).toBeNull()
-  expect(schemaProblem({ allOf: Array.from({ length: 10000 }, () => ({})) })).toBe(
+  expect(schemaProblem({ allOf: Array.from({ length: 10000 }, () => ({})) })).toBeNull()
+  expect(schemaProblem({ allOf: Array.from({ length: 10001 }, () => ({})) })).toBe(
     'schema-expansion',
   )
   expect(schemaProblem({ properties: { self: { $ref: '#' } } })).toBeNull()
@@ -85,4 +86,14 @@ it('03 验收 32: 1000 tools and 5 MiB pass, 1001 tools and one more byte fail',
   expect(
     toolsOverLimit([{ ...empty, description: 'a'.repeat(5 * 1024 * 1024 - overhead + 1) }]),
   ).toBe(true)
+})
+
+it('03 验收 32: anchor, fragment-id and dependencies under unknown keys cannot bypass reference expansion limits', () => {
+  for (const kind of ['anchor', 'fragment-id', 'dependencies'] as const) {
+    const schema = schemaChain(kind)
+    expect(schemaProblem(schema)).toBe('schema-expansion')
+    expect(definitionProblem({ inputSchema: schema })).toBe('schema-expansion')
+  }
+  expect(schemaProblem({ $ref: '#missing' })).toBe('invalid-ref')
+  expect(schemaProblem({ $recursiveRef: '#missing' })).toBe('invalid-ref')
 })

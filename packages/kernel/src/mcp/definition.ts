@@ -18,20 +18,6 @@ export function mcpDefinitionHash(tool: {
 }
 
 const encoder = new TextEncoder()
-const single = new Set([
-  'not',
-  'if',
-  'then',
-  'else',
-  'items',
-  'additionalProperties',
-  'additionalItems',
-  'contains',
-  'propertyNames',
-  'unevaluatedProperties',
-  'unevaluatedItems',
-  'contentSchema',
-])
 const maps = new Set([
   'properties',
   'patternProperties',
@@ -62,58 +48,117 @@ function tooDeep(value: unknown): boolean {
   }
   return false
 }
-function resolve(root: unknown, ref: string): unknown {
-  if (ref === '#') return root
-  if (!ref.startsWith('#/')) return undefined
-  let value = root
-  for (const token of ref.slice(2).split('/')) {
-    if (!object(value) && !Array.isArray(value)) return undefined
-    value = (value as Record<string, unknown>)[
-      decodeURIComponent(token).replaceAll('~1', '/').replaceAll('~0', '~')
-    ]
-  }
-  return value
+// Match the schema locations registered by CfWorker, including extensions under unknown keys.
+const ignored = new Set([
+  'id',
+  '$id',
+  '$ref',
+  '$recursiveRef',
+  '$schema',
+  '$anchor',
+  '$vocabulary',
+  '$comment',
+  'default',
+  'enum',
+  'const',
+  'required',
+  'type',
+  'maximum',
+  'minimum',
+  'exclusiveMaximum',
+  'exclusiveMinimum',
+  'multipleOf',
+  'maxLength',
+  'minLength',
+  'pattern',
+  'format',
+  'maxItems',
+  'minItems',
+  'uniqueItems',
+  'maxProperties',
+  'minProperties',
+])
+function pointer(key: string): string {
+  return encodeURI(key.replaceAll('~', '~0').replaceAll('/', '~1'))
 }
-/** Walk schema keywords, counting each reference expansion per path, never exponentially running it. */
+function children(value: Record<string, unknown>): { value: unknown; path: string }[] {
+  const result: { value: unknown; path: string }[] = []
+  for (const [key, child] of Object.entries(value)) {
+    if (ignored.has(key)) continue
+    const path = '/' + pointer(key)
+    if (Array.isArray(child)) {
+      if (arrays.has(key))
+        child.forEach((subschema, i) => result.push({ value: subschema, path: `${path}/${i}` }))
+    } else if ((maps.has(key) || key === 'dependencies') && object(child)) {
+      for (const [name, subschema] of Object.entries(child))
+        result.push({ value: subschema, path: `${path}/${pointer(name)}` })
+    } else result.push({ value: child, path })
+  }
+  return result.filter((child) => typeof child.value === 'boolean' || object(child.value))
+}
+/** Resolve local ids and anchors before counting expansions; no validator runs during this pass. */
 export function schemaProblem(root: unknown, screen = true): string | null {
-  const pending: { value: unknown; refs: ReadonlySet<string> }[] = [
-    { value: root, refs: new Set() },
-  ]
-  let count = 0
-  while (pending.length) {
-    const { value, refs } = pending.pop()!
-    if (typeof value !== 'boolean' && !object(value)) continue
-    if (++count > 10_000) return 'schema-expansion'
-    if (!object(value)) continue
-    const ref = value['$ref']
-    if (typeof ref === 'string') {
-      if (screen && !ref.startsWith('#')) return 'external-ref'
-      if (ref.startsWith('#') && !refs.has(ref)) {
-        let target: unknown
-        try {
-          target = resolve(root, ref)
-        } catch {
-          return 'invalid-ref'
+  const lookup = new Map<string, unknown>()
+  const bases = new WeakMap<object, string>()
+  const nodes = [{ value: root, base: 'https://tenon.invalid/schema', path: '' }]
+  let physical = -1
+  try {
+    while (nodes.length) {
+      const { value, base, path } = nodes.pop()!
+      if (typeof value !== 'boolean' && !object(value)) continue
+      if (++physical > 10_000) return 'schema-expansion'
+      let scope = base
+      let localPath = path
+      if (object(value)) {
+        const id = value['$id'] ?? value['id']
+        if (typeof id === 'string') {
+          const url = new URL(id, base)
+          lookup.set(url.href, value)
+          if (!url.hash) {
+            scope = url.href
+            localPath = ''
+          }
         }
-        pending.push({ value: target, refs: new Set([...refs, ref]) })
+        bases.set(value, scope)
+        if (typeof value['$anchor'] === 'string')
+          lookup.set(new URL('#' + value['$anchor'], scope).href, value)
       }
+      lookup.set(new URL(path ? '#' + path : '', base).href, value)
+      lookup.set(new URL(localPath ? '#' + localPath : '', scope).href, value)
+      if (object(value))
+        for (const child of children(value))
+          nodes.push({ value: child.value, base: scope, path: localPath + child.path })
     }
-    for (const [key, child] of Object.entries(value)) {
-      if (screen && key === 'pattern' && typeof child === 'string' && slowPattern(child))
+    const pending: { value: unknown; refs: ReadonlySet<string> }[] = [
+      { value: root, refs: new Set() },
+    ]
+    let count = -1 // The root is not one of its sub-schemas.
+    while (pending.length) {
+      const { value, refs } = pending.pop()!
+      if (typeof value !== 'boolean' && !object(value)) continue
+      if (++count > 10_000) return 'schema-expansion'
+      if (!object(value)) continue
+      for (const key of ['$ref', '$recursiveRef']) {
+        const ref = value[key]
+        if (typeof ref !== 'string') continue
+        const url = new URL(ref, bases.get(value))
+        if (url.hash === '') url.hash = ''
+        const uri = url.href
+        if (!lookup.has(uri)) return screen && !ref.startsWith('#') ? 'external-ref' : 'invalid-ref'
+        if (!refs.has(uri)) pending.push({ value: lookup.get(uri), refs: new Set([...refs, uri]) })
+      }
+      if (screen && typeof value['pattern'] === 'string' && slowPattern(value['pattern']))
         return 'slow-pattern'
-      if (maps.has(key) && object(child)) {
-        for (const [name, schema] of Object.entries(child)) {
-          if (screen && key === 'patternProperties' && slowPattern(name)) return 'slow-pattern'
-          pending.push({ value: schema, refs })
-        }
-      } else if (arrays.has(key) && Array.isArray(child)) {
-        for (const schema of child) pending.push({ value: schema, refs })
-      } else if (single.has(key)) {
-        if (key === 'items' && Array.isArray(child)) {
-          for (const schema of child) pending.push({ value: schema, refs })
-        } else pending.push({ value: child, refs })
-      }
+      if (
+        screen &&
+        object(value['patternProperties']) &&
+        Object.keys(value['patternProperties']).some(slowPattern)
+      )
+        return 'slow-pattern'
+      for (const child of children(value)) pending.push({ value: child.value, refs })
     }
+  } catch {
+    return 'invalid-ref'
   }
   return null
 }
