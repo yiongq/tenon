@@ -569,7 +569,7 @@ CC 记录（2026-10-09）：用 `git clone --no-local --branch feat/03-seg4b <�
   - 分支 feat/03-seg4b，基于最新 origin/dev f57b420。本轮改动仅两个 minor、live 测试作者工作与 plan 验收表；提示层保持 10、spec 保持 ready。
   - 21 仅写不跑，48 待 live；47 已撤销；23 的 52 行表及 22 不变量索引已整理，独立核查待 lead；25 按 owner 要求不做。
   - 门禁：本工作树 G/P/build 绿、EA 169 通过；干净 clone CC 的 install/build/G/P/EA 绿，最终 live 摘要源码仅经静态门禁，未运行 live。验收表 52 条及 22 不变量的所有文件:行/用例名已逐个核定位，47/48 标记与 21/23/25 未勾状态均已校验。源码提交 803b983、219aca0、3ddf622，无临时探针、无机密值、lockfile 无变化；本轮 diff 已提交。
-  - 交付：feat/03-seg4b → dev PR，Ready for review，不合并；远端 CI 作为 PR 门禁，结果在 PR checks。下一步 lead 独立核查验收表，在 owner 在场时跑第 21 步，补日期/身份路径/工具数/实际调用与费用（无机密），原始记录置仓库外 tenon-notes/2026-10-03-phase3-mcp/live-*；之后完成 23，再由后续指令推进 25。
+  - 交付：PR [#43](https://github.com/yiongq/tenon/pull/43)，feat/03-seg4b → dev，Ready for review、未合并；远端 CI 作为 PR 门禁，结果在 PR checks。下一步 lead 独立核查验收表，在 owner 在场时跑第 21 步，补日期/身份路径/工具数/实际调用与费用（无机密），原始记录置仓库外 tenon-notes/2026-10-03-phase3-mcp/live-*；之后完成 23，再由后续指令推进 25。
 
 - **2026-10-08 · 第四段首个 PR · 完成**
   - 分支：feat/03-seg4a 从最新 dev ff387eb（PR #40）开工；实现提交 b0fc4e7。PR [#42](https://github.com/yiongq/tenon/pull/42) 指向 dev，Ready for review、未合并。改动为第三段遗留、CIMD 常量/导出/测试、plan 核对与回归；没有半成品或临时探针。先 pnpm install，lockfile 无变化。
