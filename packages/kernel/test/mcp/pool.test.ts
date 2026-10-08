@@ -51,7 +51,12 @@ function fakeConnection() {
   } as unknown as McpConnection
   return { c, exit }
 }
-function setup(initial = runtime(), real = false, start = true) {
+function setup(
+  initial = runtime(),
+  real = false,
+  start = true,
+  schemaValidator?: McpPoolOptions['schemaValidator'],
+) {
   const host = createMemoryHost(real ? { process: createNodeProcess() } : {})
   const current = new Map([[initial.serverId, initial]])
   const onPin = vi.fn<McpPoolOptions['onPin']>(async () => {})
@@ -59,6 +64,7 @@ function setup(initial = runtime(), real = false, start = true) {
   const onChange = vi.fn<() => void>()
   const pool = createMcpPool({
     host,
+    ...(schemaValidator ? { schemaValidator } : {}),
     ids: { uuid: () => crypto.randomUUID() },
     baseEnv: async () => ({ HOME: '/', PATH: '/bin', GITHUB_TOKEN: 'never-inherit' }),
     homeDir: absolutePath('/'),
@@ -1171,4 +1177,122 @@ it('03 验收 14: a connection closed while the HTTP server leaves the auto prob
   expect(phase(pool)).toBe('error')
   expect(probeErrors).toHaveLength(1)
   expect(fixture.requests.every((request) => request.method === 'server/discover')).toBe(true)
+})
+
+it.each([
+  { ok: false, errors: ['wrong'] },
+  { ok: false, unusable: 'timeout' },
+  { ok: false, unusable: 'schema' },
+] as const)(
+  '03 验收 33: output is checked by the injected validator after tools/call; an invalid or unusable output throws McpInvalidOutputError: %j',
+  async (verdict) => {
+    const fake = fakeConnection()
+    vi.mocked(fake.c.listTools).mockResolvedValue([
+      { ...tools[0]!, outputSchema: { type: 'object' } },
+    ])
+    vi.mocked(fake.c.callTool).mockResolvedValue({ content: [], structuredContent: { fixture: 1 } })
+    vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+    const validate = vi.fn<NonNullable<McpPoolOptions['schemaValidator']>['validate']>(
+      async () => verdict,
+    )
+    const { pool } = setup(runtime(), false, true, { validate })
+    await connected(pool)
+    await expect(pool.routes()[0]!.connection.callTool('echo', {})).rejects.toMatchObject({
+      name: 'McpInvalidOutputError',
+    })
+    expect(fake.c.callTool).toHaveBeenCalledTimes(1)
+    expect(validate).toHaveBeenCalledExactlyOnceWith({
+      schema: { type: 'object' },
+      instance: { fixture: 1 },
+      signal: expect.any(AbortSignal),
+    })
+    expect(phase(pool)).toBe('connected')
+  },
+)
+
+it('03 验收 33 / 51: valid structured output returns unchanged, invalid output fails with the real validator, and isError bypasses output validation', async () => {
+  const fake = fakeConnection(),
+    schema = { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } }
+  vi.mocked(fake.c.listTools).mockResolvedValue([{ ...tools[0]!, outputSchema: schema }])
+  vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+  const { pool } = setup(runtime())
+  await connected(pool)
+  const valid = { content: [], structuredContent: { ok: true } }
+  vi.mocked(fake.c.callTool).mockResolvedValue(valid)
+  expect(await pool.routes()[0]!.connection.callTool('echo', {})).toEqual(valid)
+  vi.mocked(fake.c.callTool).mockResolvedValue({ content: [], structuredContent: { ok: 'wrong' } })
+  await expect(pool.routes()[0]!.connection.callTool('echo', {})).rejects.toMatchObject({
+    name: 'McpInvalidOutputError',
+  })
+  const error = {
+    isError: true,
+    content: [{ type: 'text' as const, text: 'server error detail' }],
+    structuredContent: { ok: 'wrong' },
+  }
+  vi.mocked(fake.c.callTool).mockResolvedValue(error)
+  expect(await pool.routes()[0]!.connection.callTool('echo', {})).toEqual(error)
+})
+
+it('03 验收 28: a rejected deadline SIGKILL still settles close without unhandled rejection', async () => {
+  const { pool, host } = setup(runtime(), false, false)
+  const kills = [
+    vi.fn<ChildHandle['kill']>(async () => {
+      throw new Error('EPERM')
+    }),
+    vi.fn<ChildHandle['kill']>(async () => {
+      throw new Error('EPERM')
+    }),
+  ]
+  const children = kills.map(
+    (kill, i) =>
+      ({
+        stdin: new WritableStream(),
+        stdout: new ReadableStream(),
+        stderr: new ReadableStream(),
+        exited: Promise.resolve({ code: 0, signal: null }),
+        pid: 100 + i,
+        kill,
+      }) as ChildHandle,
+  )
+  vi.spyOn(host.process, 'spawn')
+    .mockResolvedValueOnce(children[0]!)
+    .mockResolvedValueOnce(children[1]!)
+  const first = fakeConnection()
+  const second = fakeConnection()
+  vi.mocked(second.c.close).mockImplementation(async () => new Promise(() => {}))
+  let attempt = 0
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async (wrapped, spec) => {
+    await wrapped.process.spawn(spec.spawn)
+    return attempt++ === 0 ? first.c : second.c
+  })
+  pool.apply([runtime()])
+  await connected(pool)
+  first.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  host.advance(1000)
+  await connected(pool)
+  expect(first.c.close).toHaveBeenCalledOnce()
+  const closing = pool.close({ deadlineMs: 250 })
+  await vi.waitFor(() => expect(second.c.close).toHaveBeenCalledOnce())
+  host.advance(250)
+  await closing
+  expect(kills[0]).not.toHaveBeenCalled()
+  expect(kills[1]).toHaveBeenCalledExactlyOnceWith('SIGKILL')
+})
+
+it('03 验收 51: the injected port accepts valid output without altering the server result', async () => {
+  const fake = fakeConnection(),
+    result = { content: [], structuredContent: { ok: true } }
+  vi.mocked(fake.c.listTools).mockResolvedValue([
+    { ...tools[0]!, outputSchema: { type: 'object' } },
+  ])
+  vi.mocked(fake.c.callTool).mockResolvedValue(result)
+  vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+  const validate = vi.fn<NonNullable<McpPoolOptions['schemaValidator']>['validate']>(async () => ({
+    ok: true,
+  }))
+  const { pool } = setup(runtime(), false, true, { validate })
+  await connected(pool)
+  expect(await pool.routes()[0]!.connection.callTool('echo', {})).toEqual(result)
+  expect(validate).toHaveBeenCalledOnce()
 })

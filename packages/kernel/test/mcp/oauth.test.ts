@@ -656,3 +656,24 @@ it('03 验收 21: a tolerated PRM 5xx cannot undo an authorized refresh or its p
     refresh_token: 'fixture-refresh-2',
   })
 })
+
+it('03 验收 21: with no PRM and the PRM path answering 500, invalid_grant refresh requires login', async () => {
+  const h = await setup({ prm: false })
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  h.authServer.set({ refreshResult: 'invalid_grant' })
+  const original = h.handed.getMockImplementation()!
+  h.handed.mockImplementation(async (input, init) => {
+    if (new Request(input, init).url.includes('.well-known/oauth-protected-resource'))
+      return new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } })
+    return original(input, init)
+  })
+  await expect(
+    h.provider.authProvider.onUnauthorized!({
+      response: new Response(null, { status: 401 }),
+      serverUrl: new URL(h.authServer.url),
+      fetchFn: fetch,
+    }),
+  ).rejects.toMatchObject({ name: 'McpUnauthorizedError' })
+  expect(h.unauthorized).toHaveBeenCalled()
+  expect(h.open).toHaveBeenCalledTimes(1)
+})

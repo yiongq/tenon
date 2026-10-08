@@ -74,7 +74,7 @@ import type { ToolTableItem } from '../tools/registry.js'
 import { SEARCH_TEXTS } from '../tools/builtin/web-search.js'
 import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
-import type { ArgumentValidator, ValidationVerdict } from '../tools/validate.js'
+import type { AsyncArgumentValidator, ValidationVerdict } from '../tools/validate.js'
 import type { CommandRun, CommandShell } from '../tools/builtin/bash.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
@@ -133,7 +133,7 @@ export interface BatchContext {
   /** A resumed batch's approved call: dispatched on its answered decision, not judged again (§续跑). */
   readonly approved?: ApprovedCall
   readonly inspectors: readonly InspectorRegistration[]
-  readonly validator: ArgumentValidator
+  readonly validator: AsyncArgumentValidator
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   readonly mcpSources: readonly McpToolSource[]
@@ -250,7 +250,13 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       return { kind: 'stopped' }
     }
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
-    let verdict = item === undefined ? null : ctx.validator.check(item, call.input)
+    // oxlint-disable-next-line no-await-in-loop -- validation precedes this call’s permission decision
+    let verdict = item === undefined ? null : await ctx.validator.check(item, call.input)
+    if (ctx.signal.aborted) {
+      // oxlint-disable-next-line no-await-in-loop -- a stop during validation closes the rest without dispatch
+      await closeRest(ctx, ctx.calls.slice(k), 'stopped')
+      return { kind: 'stopped' }
+    }
     if (verdict?.ok && item?.source === 'builtin' && item.originalName === 'WebSearch') {
       const prepared = ctx.search?.prepareQuery(String(call.input['query']))
       const approved =
@@ -528,14 +534,16 @@ async function runGroup(ctx: BatchContext, judge: JudgeContext): Promise<GroupEn
   for (const call of leading ? ctx.calls : []) {
     if (ctx.signal.aborted) break
     const item = ctx.table.items.find((candidate) => candidate.name === call.name)
+    // oxlint-disable no-await-in-loop -- validate each candidate before including it in the parallel group
     if (
       item === undefined ||
       item.source !== 'builtin' ||
       !PARALLEL_TOOL_NAMES.has(item.originalName) ||
-      !ctx.validator.check(item, call.input).ok
+      !(await ctx.validator.check(item, call.input)).ok
     ) {
       break
     }
+    // oxlint-enable no-await-in-loop
     const executor = executorFor({ item, mcpSources: ctx.mcpSources, testTools: ctx.testTools })
     if (executor === null) break
     // oxlint-disable-next-line no-await-in-loop -- the view reads the dispatches before this call's

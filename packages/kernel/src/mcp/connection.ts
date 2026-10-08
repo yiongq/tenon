@@ -350,3 +350,10 @@ async function callWithDeadline(
     clearTimeout(timer)
   }
 }
+
+export class McpInvalidOutputError extends Error {
+  override name = 'McpInvalidOutputError'
+  constructor() {
+    super('MCP structured output is invalid or its schema is unusable')
+  }
+}

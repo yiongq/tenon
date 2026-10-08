@@ -185,22 +185,22 @@
 
 ### 第二段：desktop 主进程（`feat/03-seg2`）
 
-- [ ] 10. 配置存储（spec §配置与机密 全节；Q7、Q8-2、Q11-1、Q14、T15、T18、T34、T35）
-  - 文件：新 `apps/desktop/src/main/mcp/store.ts`（create / update / delete / setEnabled / reorder / setToolSetting / release / setInstructions / connect / revoke / pin（池的 `onPin`）/ recordIssuer（池的 `onIssuer`，挪到末尾），全部在 `withConfigLock` 里、经临时文件改名；launchHash；改 launch 时总是允许改回每次问；写入顺序照 spec §写入规则：删除先让池停掉这台（`apply` 去掉它，provider 拒写），再删钥匙串，失败就重新 `apply` 恢复；机密值按 UTF-8 超 2560 字节回 `secret-too-long`）；`apps/desktop/src/main/host/profile.ts`（`readConfig` 对 `mcpServers` 逐条校验，坏条目只丢自己，重复 id 留第一条）。
+- [x] 10. 配置存储（spec §配置与机密 全节；Q7、Q8-2、Q11-1、Q14、T15、T18、T34、T35）
+  - 文件：新 `apps/desktop/src/main/mcp/store.ts`（create / update / delete / setEnabled / reorder / setToolSetting / release / setInstructions / connect / revoke / pin（池的 `onPin`）/ recordIssuer（池的 `onIssuer`，挪到末尾），全部在 `withConfigLock` 里、经临时文件改名；launchHash；改 launch 时总是允许改回每次问；写入顺序照 spec §写入规则：删除先 `await pool.retire(id)`（禁止后续令牌写并等待在途钥匙串写 / 缓存写），再 `apply` 去掉它，再删钥匙串，失败就重新 `apply` 恢复；机密值按 UTF-8 超 2560 字节回 `secret-too-long`）；`apps/desktop/src/main/host/profile.ts`（`readConfig` 对 `mcpServers` 逐条校验，坏条目只丢自己，重复 id 留第一条）。
   - 覆盖：验收 7（存储部分）、22、26、27（`secret-too-long`）；03 不变量 16。
   - 测试：新 `apps/desktop/test/mcp-store.test.ts`（内存钥匙串，可注入失败）：「03 验收 22: one bad entry drops alone, a duplicate id keeps the first, writes go through the lock and a rename」；「03 验收 26: the pool drops the server before the keychain delete; a keychain delete failure refuses, leaves config.json unchanged and restores the server; success removes every declared account including 8 shards per issuer and the client」；「03 不变量 16」；「03 验收 7 (store): a blocked name in envs or env_keys, any case, is blocked-env and writes nothing」；「a launch change resets always-allow to ask in the same write」；「recordIssuer moves the issuer to the end before the first token save」；「a keychain write failure is keychain and stores nothing (T34)」；「03 验收 27 (store): a secret over 2560 UTF-8 bytes is secret-too-long and writes nothing」。
   - 命令：U `apps/desktop/test/mcp-store.test.ts apps/desktop/test/profile.test.ts`；G。
   - 突变：① 删除时先写 config 再删钥匙串 → 「03 验收 26」红；② 改 launch 不重置总是允许 → 对应用例红；③ 拒存名单改成大小写敏感 → 「03 验收 7 (store)」红；④ 删除不先停池 → 「03 验收 26」红。
   - 完成：G 绿。
 
-- [ ] 10a. 第一段遗留（spec §provider 契约「错误映射」）
+- [x] 10a. 第一段遗留（spec §provider 契约「错误映射」）
   - 文件：`packages/kernel/src/mcp/oauth.ts`：刷新用的 fetch 不把 `.well-known/oauth-protected-resource` 的 5xx 记成 `transientFailure`（SDK 本来就容忍这一步失败），或令牌被作废后清掉它。
   - 测试：`packages/kernel/test/mcp/oauth.test.ts` 加「03 验收 21: with no PRM and the PRM path answering 500, a refresh that gets invalid_grant is McpUnauthorizedError」。
   - 命令：U `packages/kernel/test/mcp/oauth.test.ts`；G。
   - 突变：① 把 PRM 的 5xx 照记 → 该例红。
   - 完成：G 绿。
 
-- [ ] 11. 主进程宿主件（spec §启动「命令解析」、§进程树、§地址与出网、§登录流程 5、6 与测试接缝；T11、T12、T27、T30、T31、T36、T38、T43）
+- [x] 11. 主进程宿主件（spec §启动「命令解析」、§进程树、§地址与出网、§登录流程 5、6 与测试接缝；T11、T12、T27、T30、T31、T36、T38、T43）
   - 文件：新 `apps/desktop/src/main/mcp/log-sink.ts`（追加写 `logs/mcp-<id>.log`，超 1 MB 轮转 `.1`、`.2`）、`resolve-command.ts`（绝对路径照用；否则按 PATH 找可执行文件；`process.platform === 'win32'` 且结果以 `.cmd` / `.bat` 结尾 → `windows-unsupported`；平台可注入）、`fetch.ts`（`createMcpFetch(serverUrl, network)`：spec §地址与出网 的放行规则，`https:` 与 `http:` 一样按 `reachOf` 判回环、私网；公网 server 的跨源目标先解析主机名，任一结果 `isBlockedFetchAddress` 即拒，放行时钉定查过的地址、方法头 body 照发，lookup 与连接目标可注入，照 apps/desktop/src/main/host/fetch-untrusted.ts 的接缝）、`loopback.ts`（`listen(port)`：只在 127.0.0.1 监听；`waitForCallback(state, timeoutMs)`；state 不对回 400 继续等；端口被占回 `port-in-use`）、`open-url.ts`（T31 校验 + `shell.openExternal`；测试接缝 `TENON_TEST_MCP_OPEN_URL=direct`，照 apps/desktop/src/main/host/official-protocol-test-seam.ts 的守卫写法，加进 `NEVER_INHERITED`（apps/desktop/e2e/helpers/app-env.ts:33-42）与 live 拒跑）。
   - 覆盖：验收 4（轮转）、5、8（解析部分）、10（fetch 部分）、18（回环部分）、19；03 不变量 18。
   - 测试：新 `apps/desktop/test/mcp-host.test.ts`：「03 验收 4: the log rotates at 1 MB and keeps three files」；「03 验收 5: after close the process group of tree-server is empty, also after a failed handshake」（用 desktop 真实的 `HostProcess`，夹具路径取 packages/kernel/test/support/fixtures）；「03 不变量 18」；「03 验收 8: a bare command resolves through PATH on each spawn; an absolute one is used as is; a missing one is command-not-found; win32 .cmd is windows-unsupported」；「03 验收 10 (fetch): http to a public host is refused; loopback http is allowed only for a loopback server; a public server's https discovery URL at 127.0.0.1, 10.x or 169.254.169.254 makes no request; a cross-origin redirect is not followed」；「03 验收 18: wrong state gets 400 and keeps waiting, the right one closes, 120 s times out, a busy port is port-in-use」；「03 验收 19: javascript:, data:, file:, vbscript: and public http are unsafe-url; a valid URL goes to shell.openExternal only」。`apps/desktop/test/live-env.test.ts` 加 `TENON_TEST_MCP_OPEN_URL` 在 `NEVER_INHERITED` 与 live 拒跑。；「03 验收 10 (fetch, DNS): a public server's cross-origin discovery host resolving to 10.x or 127.0.0.1 is refused with zero requests; an allowed one connects to the checked address with method, headers and body intact; same-origin requests skip DNS」
@@ -208,7 +208,7 @@
   - 突变：① 去掉第 4 步加的组强杀 → 「03 验收 5」红；② 回环监听收到第一个回调就关 → 「03 验收 18」红；③ `open-url` 放行 `file:` → 「03 验收 19」红；④ 测试接缝不看 `TENON_DEV_ENV` → live-env.test 红；⑤ `fetch.ts` 对 `https:` 一律放行 → 「03 验收 10 (fetch)」红；⑥ `fetch.ts` 跳过 DNS 检查 → 「03 验收 10 (fetch, DNS)」红。
   - 完成：G 绿。
 
-- [ ] 11a. 限时 schema 校验（spec §定义的上限与 schema 加固 ①⑦，T23；读法 66；验收 32、33、51）
+- [x] 11a. 限时 schema 校验（spec §定义的上限与 schema 加固 ①⑦，T23；读法 66；验收 32、33、51）
   - 文件：
     - kernel：`tools/validate.ts` 加 `SchemaVerdict`、`SchemaValidatorPort`；连接器工具的入参校验有 `schemaValidator` 时改走它（异步），内置工具照旧同步；`session/service.ts` 的 `SessionServiceOptions` 只增 `schemaValidator?` 并传到 batch。`mcp/client.ts` 改传总回合格的 `jsonSchemaValidator`；`mcp/pool.ts` 在代理的 `callTool` 返回后，有 outputSchema 与 `structuredContent` 时经 `schemaValidator`（没有就进程内同步）校验，不合或超时抛 `McpInvalidOutputError`。`mcp/definition.ts` 删掉展开数计数与为它加的 id 检查（`invalid-id`、`schema-expansion` 等码与对应测试一起删），② 的大小与深度、③④⑤ 保留。
     - desktop：新 `apps/desktop/src/main/mcp/schema-worker.ts`（常驻 `node:worker_threads` worker，worker 内用 `@cfworker/json-schema` 的 `Validator`；按条排队，一次一条；每条从开始处理起限时 2 000 ms，到时 `worker.terminate()` 并让这一条回 `{ ok: false, unusable: 'timeout' }`，下一条来时重起；编译出错回 `unusable: 'schema'`；退出时随池一起关）。worker 脚本按 electron-vite 的 worker 写法打进主进程包；`index.ts` 把它作为 `schemaValidator` 交给 `createSessionService`，也交给池用于输出校验。
@@ -218,7 +218,7 @@
   - 突变：① 不终止超时的 worker（只拒 Promise）→ 主线程计时器那句红；② 输出改回 SDK 校验（传 CfWorker 校验器）→「SDK validator always accepts」红；③ 连接器入参改回进程内同步校验 → 验收 51 (kernel) 红；④ 超时后不重起 → 「next call succeeds」红。
   - 完成：G 绿；E 那一个 e2e 绿。
 
-- [ ] 12. 接线（spec §接口 的 desktop 部分、§开表与调用时的等待、§三态 的产生方、§launchHash 与确认、§对 02 的修补 14；Q5、Q11-1、T7、T19、T21、T48）
+- [x] 12. 接线（spec §接口 的 desktop 部分、§开表与调用时的等待、§三态 的产生方、§launchHash 与确认、§对 02 的修补 14；Q5、Q11-1、T7、T19、T21、T48）
   - 文件：新 `apps/desktop/src/main/mcp/consent.ts`（本次运行的确认，内存；任何变化都立即 `pool.apply(当前快照)`）、`runtime.ts`（config 条目 + 确认 → `McpServerRuntime`；`CIMD_CLIENT_METADATA_URL = null`、`DCR_REDIRECT_PORT = 53280`）、`user-setting.ts`（spec §三态 的规则，读 config 快照与 `pool.status()`）；`apps/desktop/src/main/index.ts`（读完 config 后建池，`watchConfig` 时 `apply`，把 `userSetting` 交给 `createSessionService`）；`run-assembly.ts`（`mcpSources: pool.routes()`，`mcpTable: (signal) => pool.tableSources({ waitMs: 10_000, signal })`，组装不等）；`shutdown.ts`（第 4 步 `Promise.all([registry.settled(SHUTDOWN_SETTLE_MS), pool.close({ deadlineMs: SHUTDOWN_SETTLE_MS })])`，shutdown.ts:253-255）。
   - 覆盖：验收 6（desktop）、8（runtime）、24（runtime）、26（runtime）、27（runtime）、28、29（desktop）、36（desktop）、38（desktop）；03 不变量 3、4（runtime）、8。
   - 测试：新 `apps/desktop/test/mcp-runtime.test.ts`：「03 验收 28: start connects every enabled consented server in parallel, two sessions share one process, run-assembly hands routes() and tableSources」；「03 验收 24 (runtime): allow lasts this run, always-allow survives a restart until the launch changes; after a restart, mcp.connect run connects without a config write」；「03 不变量 3」；「03 验收 29 (desktop): assembly never waits; mcpTable waits up to 10 s」；「03 验收 36 (desktop): a disabled or deleted server reads connectorOff」；「03 验收 38 (desktop): always-allow needs pin = frozen and live = frozen or unknown」；「03 不变量 8」；「03 验收 6 (desktop): the env_keys value is not in argv, config, logs or any reply」；「03 验收 8 (runtime): a PATH change between spawns needs no new consent」；「03 验收 27 (runtime): config.json, the mcp/ cache and the log of a connected server hold no secret value; a save with a new secret value restarts the server with it and needs no consent」；「03 验收 26 (runtime): once a delete takes the server out of the pool, a refresh still in flight, onIssuer and a DCR save write nothing to the keychain; a failed keychain delete puts the server back and it reconnects」。`shutdown.test.ts` 加「03 验收 28 (quit): quit closes the pool alongside the Runs within SHUTDOWN_SETTLE_MS and the EOF-ignoring tree-server's group is empty」。
@@ -226,7 +226,7 @@
   - 突变：① 确认检查只看「启用」→ 「03 不变量 3」红；② `userSetting` 不比 live 哈希 → 「03 不变量 8」红；③ `mcpTable` 不等 → 「03 验收 29 (desktop)」红；④ 记内存确认后不 `apply` → 「03 验收 24 (runtime)」的重启后连接那句红；⑤ 退出时不关池 → 「03 验收 28 (quit)」红。
   - 完成：G 绿、两个 E 绿；dev 构建手动起一次（`env -u ELECTRON_RUN_AS_NODE pnpm dev`），用一份写好 `mcpServers` 的测试 profile 配一个 Everything、发一条用到它的消息；截图放仓库外 `tenon-notes/2026-10-03-phase3-mcp/`，实施记录只写文件名（不含机密）。
 
-- [ ] 13. IPC 路由（spec §IPC；T21、T26、T28、Q8-2、Q11-2）
+- [x] 13. IPC 路由（spec §IPC；T21、T26、T28、Q8-2、Q11-2）
   - 文件：新 `apps/desktop/src/main/mcp/routes.ts`（spec §IPC 表里每条路由 + `mcp.changed` 事件；`mcp.preview` 的警示照 spec §确认框 的字符串规则；`overLimit` 按读法 27 算；`mcp.save` 写了新机密值后 `pool.restart`），在 `index.ts` 用 `registerRoute` 注册，并登记进 `packages/contracts/src/registry.ts`。
   - 覆盖：验收 7、10（地址部分）、23（路由部分）、24（路由部分）、25（preview）、27、35（`overLimit`）、36（路由部分）、37、38（路由部分）；03 不变量 4。
   - 测试：新 `apps/desktop/test/mcp-routes.test.ts`：「03 验收 7: blocked names are refused, warning names are saved with risky-env, a name in both is duplicate-env」；「03 验收 10: public http, userinfo and unparsable addresses are refused; loopback and private http are saved」；「03 验收 23: update cannot change the id」；「03 验收 24: create and a launch change without consent are consent-required; cancel writes nothing; revoke stops and needs consent」；「03 验收 25: preview lists every argv element in full, the resolved path, no env_keys value, and sudo / rm-rf / home / .ssh / unpinned / risky-env warnings」；「03 验收 27: no reply of any mcp.* route carries a secret value; a value over 2560 bytes is secret-too-long」；「03 不变量 4」；「03 验收 35: overLimit gives the omitted count per capped provider」；「03 验收 36: always-allow is refused with interaction-required or policy-asks」；「03 验收 37 / 02 不变量 20: the persistent store refuses builtin」；「03 验收 38 (routes): reviewChange gives before and after while the cache exists, and before null after it is deleted」；release 的 `stale`。
@@ -312,6 +312,28 @@
 - [ ] 25. spec 顶部改 `Status: implemented`，写交接。前提：第 20 步已完成（或 owner 明确同意砍法 ③ 且已照改），第 23 步全部通过。之后本文件不再有未勾的步骤。
 
 ## 实施记录
+
+- **2026-10-08 · PR #36 lead 审查修复（完成）**
+  - 先合 dev（`a582a02`，含 PR #37 / #38）。Open 的精确码与第九个 issuer 两条已解决；第 10–13 步全部完成，没有本轮待实现分支。提示层文案、哈希与 PROMPT_LAYER_VERSION=10 未改，免费 gate 沿用 lead 的 v10 基线，未跑付费 9a。
+  - 6 major：未放行的工具设 ask / always 都拒绝，setToolSetting 只用旧 pin；有列表而缺工具退 ask / definitionChanged；截止 SIGKILL 单个拒绝不拖住 close；私网 http 登录 URL 拒绝；isError 保留原始错误、不校验 structuredContent；合格输出在注入端口与真实回退校验器下原样返回，不合格输出拒绝。
+  - minor：worker 按 SDK 的 dialect 选择与错误位置判，排队中止立即响应、队列最多 64；地址去路径尾斜杠但保留 query；draft 与嵌套对象 strict；删除在配置锁里 await pool.retire，退役先禁止后续令牌写并等待已开始的钥匙串写与缓存写（不等待可能排队取配置锁的 issuer 回调）；警示 arg 过 visible，npx 空版本报警；未确认 restart=false；坏配置日志说明 schema / duplicate-id；Windows 按 PATHEXT 查文件、拒 cmd / bat、不搜索相对路径；无关配置写入跳过池 apply。
+  - PR #38：rm -r -f、-R --force 按组合参数报警；改 header_keys 或 ownClient（包括只删）与新机密值一样重启一次。PR #37：第九个 issuer 先清旧 9 个账户再改配置，删失败恢复已删值；create / update 经 IPC 返回 blocked-env、duplicate-env、invalid-id，配置 / 钥匙串不变。
+  - 审查的补测试已逐项落地：启用且已连接的撤销、预置 persistent / needs-consent、两次真实 spawn 换 PATH、风险 env_keys / 大小写 / npm_config_、resolved、cap=内置数+1 的 omitted=1、release / stale / one-time pin、issuer a/b/a、2560 / 2561 字节与零钥匙串写、reorder / secret-required / removed-secret / enabled / instructions / policy-ask、127.0.0.1 监听与超时后端口关闭、manual redirect 与已关闭的本机连接目标、Run 未 settle 前并行 close、真实 createDesktopMcp 退出与 stubborn 组长走截止 SIGKILL、重复 anchor / 嵌套与相对 id、修夹具路径、02 不变量 20 及机密不进哈希 / 日志、invalid-address 精确断言。
+  - 门禁：format:check / lint / typecheck / build 绿；G：200 文件通过、2 文件跳过，3783 通过 / 2 跳过；免费 evals:gate：30 通过 / 1 跳过。普通相关 E：MCP 3、smoke 4、stop-exit 13，共 20 个不同用例全绿；递归 inputSchema 在约 3 s 内落 tool-unavailable / not-run，主进程 IPC 保持响应。
+  - 突变：原计划 24 项重新全部红；本轮 36 项实现 / 边界突变全部红，worker dialect 与 home-path 可见性初次漏检已补强断言、精确重跑红，空版本匹配修正后红。打包 main 临时撤掉 SessionService 的 worker 注入时递归 E2E 超时红，产物 finally 恢复、隔离进程无残留，再构建后 E 绿；共 61 项。临时源码、探针与产物均已恢复，脚本 / 日志仅在 /tmp。
+  - 交接：推送到 `feat/03-seg2` / PR #36，保持 Ready for review、目标 dev，不合并。下一步由 lead 按评论清单复核，预算砍法由 lead 审查时判；第三段第 14 步未开工。原有 AGENTS.md 修改保留、不提交。
+
+- **2026-10-08 · 第二段完成 · `feat/03-seg2`（按用户要求，Open 两个缺口的受影响部分跳过）**：从 `origin/dev c1ff6bc` 起、先 install；实现第 10、10a、11、11a、12、13 步。配置逐条读 / 并发锁 / 原子替换 / 机密先写与失败恢复 / 删除先退池再删全部声明账户，首个 own-client issuer 与 issuer 挪尾；PRM 500 不掩盖 invalid_grant；宿主 PATH / Windows 脚本拒绝、三文件日志轮转、回环 state / 忙端口 / 120 s / 取消 / 提前回调、openExternal 守卫与开发接缝、HTTPS 与 HTTP 的 reach / 全 DNS 答案检查 / 地址钉定 / 请求原样传递 / 不跟重定向 / TLS 卡住后中止关 socket均已接入。机密轮换强制重启且不重确认，失败恢复先还钥匙串再恢复旧 run consent；真实进程和退出时 EOF 孤儿进程组的回归通过。
+  - worker：常驻、逐条排队，从开始处理起 2 000 ms；超时真实 terminate，下一条重起，主线程保持计时；构造 / 编译错误、信号取消、空闲生命周期也收口。SDK 校验器恒接受，输入经 SessionService / batch 注入端口，输出在池的 callTool 之后经同一端口；内置与 kernel 无端口的同步回退保留。删静态展开计数与 id 限制，大小 / 深度 / 外部 ref / 危险正则的廉价检查保留。`schema-chains.ts` 压力形状 13 例（anchor、fragment id、未知键 dependencies、tuple、数值 / 空 / 布尔 / 对象 / 零 id、legacy id、pointer、recursiveRef、深实例递归）各在真实 200 ms 时限内终止；普通校验与 example id 42 正常，下一条成功；输出失败 completed / connectorFailed、输入超时 not-run / tool-unavailable、校验中停止 not-run / stopped 的 loop 回归绿。直接新增 desktop 依赖 `@cfworker/json-schema 4.1.1`，lockfile 20 行加 / 8 行删；worker 脚本及 CfWorker 打入 electron-vite 主进程包（worker chunk 约 42 KB）。
+  - 接线 / IPC：应用共享池、watchConfig 与内存确认即时 apply、10 s 只在开表等、三态比较 pinned / frozen / live、全部 mcp 路由和 changed 事件；preview 复用现有不可见字符函数，reviewChange 为排序缩进 JSON，缓存消失为 null；overLimit 复用 provider 的已配置判定并按 cowork 内置表计数。两项 Open 不放宽已有 contracts、不静默丢 issuer：保存精确 IPC 诊断码、满 8 个后的第九 issuer 策略，均保留当前安全拒绝，其余功能完成。
+  - 突变：第 10 四项、10a 一项、11 六项、11a 四项、12 五项、13 四项，共 24 项全部红；TLS 中止不关 socket 的额外一项也红。全部临时源码 finally 恢复。删除不先退池最初被 mock 内的断言吞掉，已加外部 apply 顺序断言、重跑红；内存确认突变初次匹配到了 restore 而非 allow，按 allow 精确定位重跑红；最终全 24 项重新跑过，HTTPS / DNS 在共用固定地址连接器后再次红。
+  - 最终门禁：format:check / lint / typecheck / build 绿；`pnpm test --maxWorkers=2` 为 200 文件 / 3762 测试通过、2 文件 / 2 测试跳过；免费 `pnpm evals:gate --maxWorkers=2` 为 4 文件 / 30 测试通过、1 跳过，使用 lead 已提交的 v10 基线，未跑付费 9a。普通 EA（`env -u ELECTRON_RUN_AS_NODE ... playwright test --workers=1`）150 / 150 通过；MCP bundled worker、smoke、stop-exit 的 E 均绿。最终两条保存异常分支的改动分别有 U / G 回归，build 再跑绿；EA 正常流程未重复扩跑。
+  - dev 观测：已以 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 起过隔离测试 profile；原生 UI 工具只能读窗口，输入未生效，因此没有把该次人工发送记成功。改由可重复的 Everything seeded-profile 回归在 dev renderer + dev main 构建中实际发送并完成 `everything__echo`，全程内存机密 / 本地假 provider，无真实请求；截图 `seg2-everything-dev.png` 放仓库外 `tenon-notes/2026-10-03-phase3-mcp/`。同一回归已加入普通 E，打包构建也通过。
+  - 提示层：相对 `c1ff6bc` 的 `packages/kernel/src/prompts` 无 diff，版本 10，哈希 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c` 未变。原有 AGENTS.md 修改保留、不提交。
+  - 交接：实现提交 `02e8b04`，PR [#36](https://github.com/yiongq/tenon/pull/36) 指向 dev / Ready for review，不合并；lead 审查代码、25 项突变及两项 Open，并按用户指令在审查时判预算。第三段从第 14 步起，表单接线前先写定 Open 的精确诊断读法；本段不自行决定新策略。
+
+
+- **2026-10-08 · 第二段开工（`feat/03-seg2`）**：已先 `pnpm install --frozen-lockfile`，从最新 `origin/dev` 的 `c1ff6bc` 建分支，包含第一段与 PR #35 的 T23 worker 修订。范围仅第 10、10a、11、11a、12、13 步；提示层文案 / 版本 10 / 哈希不动。先实施配置存储与独立的 10a，再做主进程宿主件、限时 worker、接线和 IPC；遇到缺口记 Open，跳过受影响部分继续独立工作。原有 AGENTS.md 无关本地改动保留。
 
 - **2026-10-08 · PR #29 第二轮修复（基于 `80ed98c`）**：目标为 03 第一段审查返修，不开第 10 步；当前 worktree `/Users/gq/.codex/worktrees/7c49/tenon` 的独立分支 `codex/pr29-round2`，最终推到 PR 的 `feat/03-seg1`。
   - [x] blocker 1：`items` 元组计入遍历；id 照 `$id || id` 取，字段存在时解析结果必须为非空字符串，否则 `invalid-id`。`schema-chains.ts` 加 tuple / numeric-id / empty-id 与便宜诱饵，definition / validate 六种链均提前拒绝，危险定义不交给 CfWorker。
@@ -434,6 +456,8 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 ## Open
 
+- **2026-10-08 · 已解决（PR #37，读法 68 / 验收 52）：第九个 issuer。** 已合最新 dev；满 8 个时在配置锁里先删最旧 issuer 的 8 片令牌与 client，再改列表、再由 token store 写新机密。删失败回 keychain 并恢复已删账户，列表保持不变；后续 server 删除覆盖余下所有账户。
+- **2026-10-08 · 已解决（PR #37，读法 67 / 验收 52）：保存精确诊断。** draft 请求 schema 只查形状并逐层 strict；保存的 create / update 经路由回 blocked-env、duplicate-env、invalid-id，配置读取 schema 保留全部语义限制，违规条目单独丢弃并记录原因。
 - **2026-10-08 · 已解决（PR #33）：第 7 步崩溃尾巴的状态契约缺口。** 合 dev 的提交 `17e8deb` 包含 PR #33；spec 读法 64 写定 `error` 是最近一次失败、只增 `crashed`。kernel / contracts 枚举同步；每次崩溃保留脱敏且最多 20 行 / 4 KiB 的尾巴，重连成功、用户重启或用户停止清空，crash-limit 保留。验收 4 回归及丢失 / 未清空突变均已验证。
 
 - **2026-10-08 · 已解决（PR #32）：第 9 步 issuer 的 runtime / 写回契约缺口。** 合 dev 的提交 `17e8deb` 包含 PR #32；`McpOAuthRuntime.issuers` 给启动时最后一组，`onIssuer` 带 `{ hash, url }` 与 `tokens | client`。令牌存储在钥匙串写前按新参数回调，池写成功后更新内存当前 issuer；首次自带 client 登录用已核过的 issuer 原文，经 tokens 回调与哈希同次配置写入。新 provider 恢复与缓存令牌、空列表不读钥匙串、首次绑定与后续换 issuer 拒绝已有回归；这些路径不再跳过。

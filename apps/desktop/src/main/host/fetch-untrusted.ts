@@ -27,7 +27,10 @@ const lookup = async (hostname: string): Promise<readonly FetchAddress[]> => {
 }
 
 /** DNS itself cannot be cancelled, but an aborted lookup must never progress to a socket. */
-function abortable<T>(pending: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+export function abortable<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | null | undefined,
+): Promise<T> {
   if (signal === undefined || signal === null) return pending
   return new Promise<T>((resolve, reject) => {
     const aborted = (): void => reject(signal.reason)
@@ -81,38 +84,7 @@ export function createUntrustedFetch(seams: UntrustedNetworkSeams = {}): FetchLi
     const checked = addresses[0] as FetchAddress
     const target = seams.connectTarget?.(checked) ?? checked
     signal?.throwIfAborted()
-    const connect = buildConnector({
-      timeout: 0,
-      rejectUnauthorized: true,
-      // Even a caller's IP-literal URL is checked against that IP, never against a test seam target.
-      checkServerIdentity: (_server, certificate) => checkServerIdentity(hostname, certificate),
-    })
-    const dispatcher = new Agent({
-      headersTimeout: 0,
-      bodyTimeout: 0,
-      connect: (options, callback) => {
-        // undici 7.29.1 returns this socket, although its connector declaration says void. Before
-        // the handshake completes Client has no HTTPContext, so Agent.destroy() cannot reach it.
-        const socket = connect(
-          {
-            ...options,
-            hostname: target.address,
-            servername: isIP(hostname) === 0 ? hostname : '',
-          },
-          callback,
-        ) as unknown as Socket
-        if (signal !== undefined && signal !== null) {
-          const abort = (): void => {
-            socket.destroy(
-              signal.reason instanceof Error ? signal.reason : new Error('Untrusted fetch aborted'),
-            )
-          }
-          signal.addEventListener('abort', abort, { once: true })
-          socket.once('close', () => signal.removeEventListener('abort', abort))
-          if (signal.aborted) abort()
-        }
-      },
-    })
+    const dispatcher = createPinnedDispatcher(hostname, target, signal)
     try {
       const response = await undiciFetch(url, {
         method: 'GET',
@@ -129,4 +101,43 @@ export function createUntrustedFetch(seams: UntrustedNetworkSeams = {}): FetchLi
       throw error
     }
   }
+}
+
+export function createPinnedDispatcher(
+  hostname: string,
+  target: FetchAddress,
+  signal: AbortSignal | null | undefined,
+): Agent {
+  const connect = buildConnector({
+    timeout: 0,
+    rejectUnauthorized: true,
+    // Even a caller's IP-literal URL is checked against that IP, never against a test seam target.
+    checkServerIdentity: (_server, certificate) => checkServerIdentity(hostname, certificate),
+  })
+  return new Agent({
+    headersTimeout: 0,
+    bodyTimeout: 0,
+    connect: (options, callback) => {
+      // undici 7.29.1 returns this socket, although its connector declaration says void. Before
+      // the handshake completes Client has no HTTPContext, so Agent.destroy() cannot reach it.
+      const socket = connect(
+        {
+          ...options,
+          hostname: target.address,
+          servername: isIP(hostname) === 0 ? hostname : '',
+        },
+        callback,
+      ) as unknown as Socket
+      if (signal !== undefined && signal !== null) {
+        const abort = (): void => {
+          socket.destroy(
+            signal.reason instanceof Error ? signal.reason : new Error('Untrusted fetch aborted'),
+          )
+        }
+        signal.addEventListener('abort', abort, { once: true })
+        socket.once('close', () => signal.removeEventListener('abort', abort))
+        if (signal.aborted) abort()
+      }
+    },
+  })
 }

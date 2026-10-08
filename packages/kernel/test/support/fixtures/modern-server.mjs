@@ -76,11 +76,7 @@ export function createFixtureServer(tools = createFixtureTools()) {
       tools.push({ name: 'added', description: 'new', inputSchema: { type: 'object' } })
     if (name === 'change-desc') tools[0].description = 'changed echo'
     if (name === 'change-output') {
-      const defs = {}
-      for (let i = 0; i < 40; i++)
-        defs[`d${i}`] = { allOf: [{ $ref: `#/$defs/d${i + 1}` }, { $ref: `#/$defs/d${i + 1}` }] }
-      defs.d40 = { type: 'object' }
-      tools[0].outputSchema = { $defs: defs, $ref: '#/$defs/d0' }
+      tools[0].outputSchema = { $ref: 'https://unsafe.example/schema' }
     }
     if (['add-tool', 'change-desc', 'change-output'].includes(name))
       await server.sendToolListChanged()
@@ -104,6 +100,8 @@ export function createFixtureServer(tools = createFixtureTools()) {
   return server
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--log-fixture-secret'))
+    process.stderr.write('fixture credential ' + process.env['TOKEN'] + '\n')
   const at = process.argv.indexOf('--start-delay-ms')
   if (at >= 0) await new Promise((resolve) => setTimeout(resolve, Number(process.argv[at + 1])))
   const transport = new StdioServerTransport()

@@ -7,6 +7,7 @@ export interface HttpFixtureOptions {
   era?: 'modern' | 'legacy' | 'probe-204' | 'probe-non-json' | 'probe-hang'
   failNext?: '401' | '403-scope' | '429' | 'break-stream' | undefined
   failConnect?: '429' | '503' | undefined
+  inputSchema?: Record<string, unknown>
   authUrl?: string
   requireToken?: string | undefined
 }
@@ -30,6 +31,7 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
   const requests: FixtureRequest[] = []
   const cancelledRequests: unknown[] = []
   const sharedTools = createFixtureTools()
+  if (opts.inputSchema) sharedTools[0]!.inputSchema = opts.inputSchema
   const modern = createMcpHandler(() => createFixtureServer(sharedTools), { legacy: 'reject' })
   const pending = new Map<unknown, { timer: ReturnType<typeof setTimeout>; res: ServerResponse }>()
   const legacyTools = [

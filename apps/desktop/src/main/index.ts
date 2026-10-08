@@ -1,7 +1,12 @@
+// oxlint-disable-next-line import/default -- electron-vite emits this worker factory from the query
+import SchemaThread from './mcp/schema-thread.mjs?nodeWorker'
+import { createSchemaWorker } from './mcp/schema-worker.js'
+import { createDesktopMcp } from './mcp/controller.js'
+import { registerMcpRoutes } from './mcp/routes.js'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { chatNew, configLocale } from '@tenon-app/contracts'
+import { chatNew, configLocale, mcpChanged } from '@tenon-app/contracts'
 import {
   absolutePath,
   createProviderRegistry,
@@ -160,17 +165,30 @@ async function main(): Promise<void> {
     isPackaged: app.isPackaged,
     log: (line) => console.warn(line),
   })
+  const schemaValidator = createSchemaWorker({ createWorker: () => SchemaThread({}) })
+  const mcp = createDesktopMcp({
+    host,
+    config: startupConfig,
+    home,
+    baseEnv: commandShell.env,
+    uuid: randomUUID,
+    schemaValidator,
+    changed: () => broadcast(mcpChanged.channel, mcpChanged.payload.parse({})),
+  })
   const sessions =
     tape === null
       ? null
       : createSessionService({
           host,
+          schemaValidator,
+          userSetting: mcp.userSetting,
           tape,
           ids: { uuid: (): string => randomUUID() },
           inspectors: desktopInspectors(),
           ...compactionTestOptions(app.isPackaged, process.env),
           connector: createRunConnector({
             host,
+            mcpPool: mcp.pool,
             providers,
             isPackaged: app.isPackaged,
             log: (line) => console.warn(line),
@@ -223,6 +241,7 @@ async function main(): Promise<void> {
     app,
     dialog,
     registry: loop?.registry ?? null,
+    mcp,
     tape,
     t: (key) => locale.i18n.t(key),
     parent: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
@@ -272,6 +291,17 @@ async function main(): Promise<void> {
     ),
     removing,
   )
+  registerMcpRoutes({
+    ipcMain: routes,
+    mcp,
+    host,
+    providers,
+    home,
+    baseEnv: commandShell.env,
+    isPackaged: app.isPackaged,
+    env: process.env,
+    openExternal: (url) => shell.openExternal(url),
+  })
   registerConfigRoutes(routes, host, (next) => void locale.apply(next))
   registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
   registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })

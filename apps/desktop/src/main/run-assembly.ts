@@ -34,6 +34,7 @@ import type {
   HostAdapter,
   ModelChoice,
   ModelInfo,
+  McpPool,
   Provider,
   ProviderDefinition,
   ProviderId,
@@ -74,6 +75,7 @@ import type { EnvLike } from './provider.js'
 export const TEXT_ONLY_PROVIDERS: ReadonlySet<ProviderId> = new Set(['ollama'])
 
 export interface RunConnectorOptions {
+  readonly mcpPool?: McpPool
   readonly host: HostAdapter
   readonly providers: ProviderRegistry
   /** `app.isPackaged`: a packaged build takes no credential, endpoint or choice from the environment. */
@@ -304,7 +306,13 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         maxTokens: requestMaxTokens(vars, info),
         toolsWithheld: range.toolsWithheld,
         search,
-        mcpSources: [],
+        mcpSources: options.mcpPool?.routes() ?? [],
+        ...(options.mcpPool
+          ? {
+              mcpTable: (signal: AbortSignal) =>
+                options.mcpPool!.tableSources({ waitMs: 10_000, signal }),
+            }
+          : {}),
         provider(): Provider {
           if (provider === null) throw failure
           return provider

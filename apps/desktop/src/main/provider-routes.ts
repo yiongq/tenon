@@ -330,7 +330,9 @@ interface DescribeOptions {
  * One `provider.list` entry, or null for an instance this read no longer finds (deleted since the
  * view listed it).
  */
-async function describeProvider(options: DescribeOptions): Promise<ProviderEntryContract | null> {
+export async function describeProvider(
+  options: DescribeOptions,
+): Promise<ProviderEntryContract | null> {
   const { definition, env } = options
   // Settings and keys as one save left them, as a send reads them (run-assembly.ts).
   const { config, inputs } = await readSettledInputs(options)

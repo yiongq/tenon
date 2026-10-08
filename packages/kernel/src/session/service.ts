@@ -1,3 +1,4 @@
+import type { SchemaValidatorPort } from '../tools/validate.js'
 /**
  * The kernel session service (spec 01 §所有权与依赖方向, §entry 模型, §投影与重放; spec 02
  * §主进程与 kernel 的循环接口).
@@ -71,6 +72,7 @@ import { carryEntries, readSessionFacts } from './facts.js'
 const LATEST_SESSION_SCAN = 20
 
 export interface SessionServiceOptions {
+  readonly schemaValidator?: SchemaValidatorPort
   readonly userSetting?: (key: ToolKey) => UserToolSetting | null
   /** Development-only host seam; packaged hosts must not supply this override. */
   readonly compactionThreshold?: number
@@ -297,6 +299,7 @@ export function constructSessionService(
     builtinAvailable:
       extras.tools === undefined ? (name) => PRODUCT_BUILTINS.has(name) : () => true,
     testTools: extras.tools ?? null,
+    ...(options.schemaValidator ? { schemaValidator: options.schemaValidator } : {}),
     userSetting: extras.userSetting ?? options.userSetting ?? ((): null => null),
     tokenLimit: extras.tokenLimit ?? null,
     compactionThreshold: options.compactionThreshold ?? null,

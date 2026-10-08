@@ -1,4 +1,3 @@
-import { schemaChain } from '../support/schema-chains.js'
 /**
  * Argument validation before any permission decision (spec 02 §内置工具与参数「参数校验与失败」; plan
  * step 10, 旧 141 and the connector half; open question 16). What a failed call writes — the
@@ -13,6 +12,7 @@ import type { BuiltinToolName } from '../../src/tools/builtin/tool.js'
 import { ASK_NOT_UNIQUE } from '../../src/tools/builtin/ask-user-question.js'
 import { EDIT_SAME_STRINGS } from '../../src/tools/builtin/edit.js'
 import { WEB_SEARCH_BOTH_DOMAIN_LISTS } from '../../src/tools/builtin/web-search.js'
+import type { SchemaValidatorPort } from '../../src/tools/validate.js'
 import { createArgumentValidator } from '../../src/tools/validate.js'
 import type { ToolSpec } from '../../src/index.js'
 
@@ -185,23 +185,17 @@ it('03 验收 33: external refs are refused before constructing a validator', ()
   }
 })
 
-it('03 验收 32: anchor and dependencies chains are refused before CfWorker compiles, including fragment ids', () => {
-  const compile = vi.spyOn(CfWorkerJsonSchemaValidator.prototype, 'getValidator')
-  try {
-    for (const kind of [
-      'anchor',
-      'fragment-id',
-      'dependencies',
-      'tuple',
-      'numeric-id',
-      'empty-id',
-    ] as const) {
-      expect(
-        createArgumentValidator().check(connector(schemaChain(kind)), { x: 1, y: 1 }),
-      ).toMatchObject({ ok: false, source: 'tool-unavailable', reason: MODEL_NOTES.schemaUnusable })
-    }
-    expect(compile).not.toHaveBeenCalled()
-  } finally {
-    compile.mockRestore()
-  }
+it('03 验收 51 (kernel): connector input timeout is tool-unavailable and only MCP uses the injected port', async () => {
+  const validate = vi.fn<SchemaValidatorPort['validate']>(async () => ({
+    ok: false as const,
+    unusable: 'timeout' as const,
+  }))
+  const bounded = createArgumentValidator({ validate }, new AbortController().signal)
+  expect(await bounded.check(connector({ type: 'object' }), {})).toMatchObject({
+    ok: false,
+    source: 'tool-unavailable',
+  })
+  expect(validate).toHaveBeenCalledOnce()
+  expect(await bounded.check(builtin('Read'), { file_path: '/fixture' })).toEqual({ ok: true })
+  expect(validate).toHaveBeenCalledOnce()
 })

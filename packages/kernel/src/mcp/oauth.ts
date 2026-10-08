@@ -262,7 +262,10 @@ export function createMcpOAuthProvider(q: {
           const refreshFetch: FetchLike = async (input, init) => {
             try {
               const response = await q.fetch(input, init)
-              if (response.status >= 500)
+              if (
+                response.status >= 500 &&
+                !new Request(input, init).url.includes('.well-known/oauth-protected-resource')
+              )
                 transientFailure = new OAuthError(
                   OAuthErrorCode.ServerError,
                   `OAuth server returned HTTP ${response.status}`,

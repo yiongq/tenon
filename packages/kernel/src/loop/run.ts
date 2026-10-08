@@ -1,3 +1,4 @@
+import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { SubagentHandoff } from './subagent.js'
 /**
  * A Run (spec 02 §Run 的生命周期与每轮顺序, §一轮回复怎么分流, §上限、守卫与用量, §重试与「继续」):
@@ -128,6 +129,7 @@ import type { Profile } from '../session/facts.js'
 export const FIRST_REVISION = 0
 
 export interface RunDriverContext {
+  readonly schemaValidator?: SchemaValidatorPort
   readonly agent?: BatchContext['agent']
   readonly stepLimit?: number
   readonly elapsed?: () => Promise<number>
@@ -233,7 +235,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   let state = await readViewState(tape, ctx.sessionId)
   const { profile } = await readSessionFacts(tape, ctx.sessionId)
   const chain = await chainCounters(tape, ctx.sessionId, runId)
-  const validator = createArgumentValidator()
+  const validator = createArgumentValidator(ctx.schemaValidator, signal)
   const usage = new Map<string, RunUsageLine>()
   if (ctx.resume?.handoff !== undefined)
     for (const line of ctx.resume.handoff.usage)

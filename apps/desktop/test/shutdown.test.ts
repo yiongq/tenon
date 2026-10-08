@@ -32,7 +32,7 @@ import {
   scriptedTurn,
 } from '@tenon-app/kernel/testing'
 import type { IpcMainLike } from '@tenon-app/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { RunRegistry } from '../src/main/chat.js'
@@ -230,7 +230,12 @@ interface Rig {
   readonly log: string[]
 }
 
-function rig(options: { registry?: RunRegistry } = {}): Rig {
+function rig(
+  options: {
+    registry?: RunRegistry
+    mcp?: { close(q: { deadlineMs: number }): Promise<void> }
+  } = {},
+): Rig {
   const app = fakeApp()
   const dialog = fakeDialog()
   const tape = fakeTape()
@@ -242,6 +247,7 @@ function rig(options: { registry?: RunRegistry } = {}): Rig {
     app: app.app,
     dialog: dialog.dialog,
     registry,
+    ...(options.mcp ? { mcp: options.mcp } : {}),
     tape: tape.tape,
     t,
     parent: () => win,
@@ -891,3 +897,109 @@ describe('the quit’s wait is the kernel’s', () => {
     expect(found).toEqual([])
   })
 })
+
+it('03 验收 28 (quit): the pool closes alongside Runs at the shared deadline before the tape', async () => {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const close = vi.fn<(q: { deadlineMs: number }) => Promise<void>>(() => promise)
+  const h = rig({ mcp: { close } })
+  const running = lease(h.registry.begin({ rootSessionId: ROOT, origin: null }))
+  h.app.userQuits()
+  await flush()
+  h.dialog.answer(0, EXIT_CONFIRM_STOP)
+  await flush()
+  expect(close).toHaveBeenCalledExactlyOnceWith({ deadlineMs: SHUTDOWN_SETTLE_MS })
+  expect(h.tape.closes()).toBe(0)
+  resolve()
+  running.finish()
+  await flush()
+  expect(h.tape.closes()).toBe(1)
+  h.tape.resolve()
+  await vi.waitFor(() => expect(h.app.quits()).toBe(1))
+})
+
+it.each([false, true])(
+  '03 验收 28 (quit, process): desktop controller closes the process group at the shared deadline (stubborn=%s)',
+  async (stubborn) => {
+    const { createDesktopMcp } = await import('../src/main/mcp/controller.js')
+    const { createSchemaWorker } = await import('../src/main/mcp/schema-worker.js')
+    const { readConfig } = await import('../src/main/host/profile.js')
+    const { createHostProcess } = await import('../src/main/host/process.js')
+    const { SystemClock } = await import('../src/main/host/clock.js')
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const root = await mkdtemp(join(tmpdir(), 'tenon-mcp-quit-'))
+    const processPort = createHostProcess()
+    let pid = 0
+    const kills: string[] = []
+    const host = Object.assign(
+      createMemoryHost({
+        identity: { profileDir: root },
+        process: {
+          spawn: async (spec, signal) => {
+            const child = await processPort.spawn(spec, signal)
+            pid = child.pid
+            return {
+              ...child,
+              kill: async (sig) => {
+                kills.push(sig ?? 'SIGTERM')
+                await child.kill(sig)
+              },
+            }
+          },
+        },
+      }),
+      { clock: new SystemClock() },
+    )
+    await host.fs.mkdirp(absolutePath(root))
+    const mcp = createDesktopMcp({
+      host,
+      config: await readConfig(host.fs, host.identity),
+      home: absolutePath('/'),
+      baseEnv: async () => ({ PATH: '/bin:/usr/bin' }),
+      uuid: randomUUID,
+      changed: () => {},
+      schemaValidator: createSchemaWorker(),
+    })
+    try {
+      await mcp.store.save({
+        mode: 'create',
+        draft: {
+          id: 'tree',
+          displayName: 'tree',
+          source: 'manual',
+          transport: {
+            type: 'stdio',
+            command: process.execPath,
+            args: [
+              new URL(
+                '../../../packages/kernel/test/support/fixtures/tree-server.mjs',
+                import.meta.url,
+              ).pathname,
+              '--serve',
+              ...(stubborn ? ['--stubborn'] : []),
+            ],
+            envs: {},
+            env_keys: [],
+          },
+          handshakeTimeoutSec: null,
+          callTimeoutSec: null,
+          instructions: { enabled: false },
+        },
+        consent: 'persistent',
+        secrets: { env: {}, headers: {} },
+      })
+      await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('connected'))
+      const h = rig({ mcp }),
+        start = performance.now()
+      h.tape.resolve()
+      h.app.userQuits()
+      await vi.waitFor(() => expect(h.app.quits()).toBe(1), { timeout: SHUTDOWN_SETTLE_MS + 1000 })
+      expect(performance.now() - start).toBeLessThan(SHUTDOWN_SETTLE_MS + 1000)
+      expect(!stubborn || kills.includes('SIGKILL')).toBe(true)
+      await vi.waitFor(() => expect(() => process.kill(-pid, 0)).toThrow(/./))
+    } finally {
+      await mcp.close({ deadlineMs: 0 })
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)

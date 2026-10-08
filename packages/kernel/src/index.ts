@@ -545,3 +545,12 @@ export type {
   McpPinRequest,
 } from './mcp/pool.js'
 export type { McpLoginUi, McpLoginResult } from './mcp/oauth.js'
+
+export type { ToolKey } from './tools/table.js'
+export type { UserToolSetting } from './permission/decide.js'
+export type { SchemaVerdict, SchemaValidatorPort } from './tools/validate.js'
+export { McpInvalidOutputError } from './mcp/connection.js'
+
+export { builtinCandidates, PRODUCT_BUILTINS } from './tools/registry.js'
+export { mcpCandidates } from './tools/mcp-source.js'
+export { openToolTable } from './tools/table.js'

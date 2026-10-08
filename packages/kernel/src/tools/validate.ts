@@ -34,7 +34,32 @@ export interface ArgumentValidator {
 
 type Compiled = (input: unknown) => { valid: boolean; errorMessage: string | undefined }
 
-export function createArgumentValidator(): ArgumentValidator {
+export type SchemaVerdict =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly errors: readonly string[] }
+  | { readonly ok: false; readonly unusable: 'timeout' | 'schema' }
+export interface SchemaValidatorPort {
+  validate(q: {
+    readonly schema: unknown
+    readonly instance: unknown
+    readonly signal: AbortSignal
+  }): Promise<SchemaVerdict>
+}
+export interface AsyncArgumentValidator {
+  check(
+    item: Pick<ToolTableItem, 'source' | 'originalName' | 'spec'>,
+    args: unknown,
+  ): Promise<ValidationVerdict> | ValidationVerdict
+}
+export function createArgumentValidator(): ArgumentValidator
+export function createArgumentValidator(
+  port: SchemaValidatorPort | undefined,
+  signal: AbortSignal,
+): AsyncArgumentValidator
+export function createArgumentValidator(
+  port?: SchemaValidatorPort,
+  signal?: AbortSignal,
+): AsyncArgumentValidator {
   const engine = new CfWorkerJsonSchemaValidator()
   // Per spec object: a table's specs are fixed once it is frozen, so a Run compiles each once.
   const compiled = new WeakMap<object, Compiled | Error>()
@@ -55,7 +80,19 @@ export function createArgumentValidator(): ArgumentValidator {
   }
 
   return {
-    check(item, args): ValidationVerdict {
+    check(item, args): ValidationVerdict | Promise<ValidationVerdict> {
+      if (item.source === 'mcp' && port) {
+        if (schemaProblem(item.spec.inputSchema) !== null) return unusable()
+        return port
+          .validate({ schema: item.spec.inputSchema, instance: args, signal: signal! })
+          .then<ValidationVerdict>((verdict) =>
+            verdict.ok
+              ? { ok: true }
+              : 'unusable' in verdict
+                ? unusable()
+                : { ok: false, source: 'invalid-input', reason: verdict.errors.join('; ') },
+          )
+      }
       const validator = compile(item.spec.inputSchema)
       if (validator instanceof Error) return unusable()
       let outcome: ReturnType<Compiled>
@@ -78,4 +115,16 @@ export function createArgumentValidator(): ArgumentValidator {
 
 function unusable(): ValidationVerdict {
   return { ok: false, source: 'tool-unavailable', reason: MODEL_NOTES.schemaUnusable }
+}
+
+export function synchronousSchemaVerdict(schema: unknown, instance: unknown): SchemaVerdict {
+  try {
+    if (schemaProblem(schema) !== null) return { ok: false, unusable: 'schema' }
+    const result = new CfWorkerJsonSchemaValidator().getValidator(
+      structuredClone(schema) as Record<string, unknown>,
+    )(instance)
+    return result.valid ? { ok: true } : { ok: false, errors: [result.errorMessage ?? 'invalid'] }
+  } catch {
+    return { ok: false, unusable: 'schema' }
+  }
 }

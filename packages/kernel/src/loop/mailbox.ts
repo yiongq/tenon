@@ -1,3 +1,4 @@
+import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { CallRef } from './closure.js'
 import type { SubagentHandoff } from './subagent.js'
 /**
@@ -268,6 +269,7 @@ type Turn<T> =
   | { readonly kind: 'again'; readonly lease: RunLease }
 
 export interface LoopDeps {
+  readonly schemaValidator?: SchemaValidatorPort
   readonly tape: Tape
   readonly ids: IdSource
   readonly now: () => number
@@ -2248,6 +2250,7 @@ export function createLoop(deps: LoopDeps): Loop {
           commandShell: ports.commandShell,
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
+          ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),
           userSetting: deps.userSetting,
           testTools: deps.testTools,
           tokenLimit: child ? SUBAGENT_TOKEN_LIMIT : deps.tokenLimit,
@@ -2315,6 +2318,7 @@ export function createLoop(deps: LoopDeps): Loop {
                   candidates: initialTable.items,
                   policy,
                   tenantId: deps.host.identity.tenantId,
+                  ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),
                   userSetting: deps.userSetting,
                   hasSearchBackend: assembly.search !== null,
                   // M6 §对 02 的修补 4. Untested: only a child's compaction reaches it, and a child
