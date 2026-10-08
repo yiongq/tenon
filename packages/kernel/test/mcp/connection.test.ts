@@ -3,6 +3,7 @@ import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/valida
 import { afterEach, expect, it, vi } from 'vitest'
 import { absolutePath, connectStdioServer, createMemoryHost } from '../../src/index.js'
 import type { ChildHandle, McpConnection } from '../../src/index.js'
+import { ChildStdioTransport } from '../../src/mcp/stdio-transport.js'
 import { mcpClientOptions } from '../../src/mcp/client.js'
 import { createNodeProcess } from '../support/node-process.js'
 
@@ -28,6 +29,7 @@ async function connect(mode = 'dual', logs: string[] = []) {
     sandbox: { profile: 'full-access', workspace: [] },
     transport: { onStderr: (line) => logs.push(line) },
     handshakeTimeoutMs: 1000,
+    log: (line) => logs.push(line),
   })
   connections.push(c)
   return c
@@ -109,7 +111,7 @@ it('03 验收 30: stopping a stdio call sends notifications/cancelled', async ()
   expect(await rejection).toMatchObject({ message: expect.stringMatching(/stop/i) })
   await vi.waitFor(() => expect(logs.some((line) => line.startsWith('cancelled '))).toBe(true))
 })
-it('SDK progress resets the timer and maxTotalTimeout rejects (cancellation gap in plan Open)', async () => {
+it('03 验收 30: progress resets the idle timer, but the total deadline cancels at ten times', async () => {
   const logs: string[] = []
   const c = await connect('dual', logs)
   let progress = 0
@@ -128,18 +130,24 @@ it('SDK progress resets the timer and maxTotalTimeout rejects (cancellation gap 
     ),
   ).resolves.toHaveProperty('content')
   expect(progress).toBeGreaterThan(1)
+  const caller = new AbortController()
+  const started = Date.now()
   await expect(
     c.callTool(
       'slow',
       { ms: 3000 },
       {
+        signal: caller.signal,
         timeoutMs: 180,
         onprogress: () => {},
         resetTimeoutOnProgress: true,
         maxTotalTimeoutMs: 1800,
       },
     ),
-  ).rejects.toThrow(/time/i)
+  ).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
+  expect(Date.now() - started).toBeLessThan(2400)
+  expect(caller.signal.aborted).toBe(false)
+  await vi.waitFor(() => expect(logs.some((line) => line.startsWith('cancelled '))).toBe(true))
 })
 
 it('03 验收 30: an ordinary stdio timeout sends notifications/cancelled', async () => {
@@ -147,4 +155,51 @@ it('03 验收 30: an ordinary stdio timeout sends notifications/cancelled', asyn
   const c = await connect('dual', logs)
   await expect(c.callTool('slow', { ms: 1000 }, { timeoutMs: 80 })).rejects.toThrow(/time/i)
   await vi.waitFor(() => expect(logs.some((line) => line.startsWith('cancelled '))).toBe(true))
+})
+
+it('03 验收 30: the total deadline timer is cleared after success, error and caller cancellation', async () => {
+  const c = await connect()
+  const original = c.client.callTool.bind(c.client)
+  const spy = vi.spyOn(c.client, 'callTool')
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const initialTimers = vi.getTimerCount()
+  for (const outcome of ['success', 'error', 'stop'] as const) {
+    const caller = new AbortController()
+    spy.mockImplementationOnce(async (_params, options) => {
+      expect(options).not.toHaveProperty('maxTotalTimeout')
+      if (outcome === 'success') return { content: [] }
+      if (outcome === 'error') throw new Error('fixture error')
+      return new Promise((_resolve, reject) => {
+        options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+          once: true,
+        })
+      })
+    })
+    const pending = c.callTool('echo', {}, { signal: caller.signal, maxTotalTimeoutMs: 1000 })
+    const settled = pending.catch(() => undefined)
+    if (outcome === 'stop') caller.abort(new Error('stop'))
+    // Sequential outcomes exercise the same connection without leaving deadline timers behind.
+    // oxlint-disable-next-line no-await-in-loop
+    await settled
+    expect(vi.getTimerCount()).toBe(initialTimers)
+  }
+  spy.mockImplementation(original)
+})
+
+it('03 验收 41: initialize declares no capabilities, never sets a log level and logs notifications', async () => {
+  const sent = vi.spyOn(ChildStdioTransport.prototype, 'send')
+  const logs: string[] = []
+  const c = await connect('dual', logs)
+  await c.callTool('echo', {})
+  await vi.waitFor(() => expect(logs.join(' ')).toContain('fixture log'))
+  const frames = sent.mock.calls.map(([message]) => message)
+  expect(frames).toContainEqual(
+    expect.objectContaining({
+      method: 'initialize',
+      params: expect.objectContaining({ capabilities: {} }),
+    }),
+  )
+  expect(
+    frames.some((m) => 'method' in m && ['server/discover', 'logging/setLevel'].includes(m.method)),
+  ).toBe(false)
 })

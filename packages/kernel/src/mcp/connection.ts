@@ -7,6 +7,7 @@ import {
   OAuthError,
   SdkHttpError,
   SdkErrorCode,
+  SdkError,
 } from '@modelcontextprotocol/client'
 import type {
   AuthProvider,
@@ -222,6 +223,8 @@ export async function connectHttpServer(
     })
   } catch (error) {
     await transport.close().catch(() => {})
+    if (error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed)
+      throw new McpConnectionError('era-negotiation-failed')
     throw error
   }
   let resolve!: (value: { code: null; signal: null }) => void
@@ -249,7 +252,6 @@ function requestOptions(q?: McpCallOptions): RequestOptions {
     ...(q?.resetTimeoutOnProgress === undefined
       ? {}
       : { resetTimeoutOnProgress: q.resetTimeoutOnProgress }),
-    ...(q?.maxTotalTimeoutMs === undefined ? {} : { maxTotalTimeout: q.maxTotalTimeoutMs }),
   }
 }
 function logNotifications(client: Client, log?: (line: string) => void) {
@@ -284,7 +286,7 @@ function connected(
       return (await client.listTools(undefined, { cacheMode: 'refresh' })).tools
     },
     callTool(name, args, options) {
-      return client.callTool({ name, arguments: args }, requestOptions(options))
+      return callWithDeadline(client, name, args, options)
     },
     listPrompts(options) {
       return client.listPrompts(undefined, requestOptions(options))
@@ -307,5 +309,33 @@ function connected(
         throw error
       }
     },
+  }
+}
+
+/** A hard deadline must use SDK cancellation, including when progress keeps the idle timer alive. */
+async function callWithDeadline(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  options?: McpCallOptions,
+): Promise<McpCallToolResult> {
+  if (options?.maxTotalTimeoutMs === undefined)
+    return client.callTool({ name, arguments: args }, requestOptions(options))
+  const deadline = new AbortController()
+  const signal =
+    options.signal === undefined
+      ? deadline.signal
+      : AbortSignal.any([options.signal, deadline.signal])
+  // Spec 03 §超时、取消与断流: this deadline shares the SDK real timer domain.
+  // oxlint-disable-next-line no-restricted-globals
+  const timer = setTimeout(
+    () =>
+      deadline.abort(new SdkError(SdkErrorCode.RequestTimeout, 'MCP total time limit exceeded')),
+    options.maxTotalTimeoutMs,
+  )
+  try {
+    return await client.callTool({ name, arguments: args }, requestOptions({ ...options, signal }))
+  } finally {
+    clearTimeout(timer)
   }
 }

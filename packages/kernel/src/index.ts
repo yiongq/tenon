@@ -527,3 +527,5 @@ export {
   McpResourceNotFoundError,
 } from './mcp/connection.js'
 export type { McpHttpServerSpec } from './mcp/connection.js'
+
+export { mcpDefinitionHash, definitionProblem, toolsOverLimit } from './mcp/definition.js'

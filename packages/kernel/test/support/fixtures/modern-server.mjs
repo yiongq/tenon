@@ -17,11 +17,23 @@ export function createFixtureServer() {
     },
   )
   const tools = ['echo', 'slow', 'elicit', 'add-tool', 'change-desc', 'change-output', 'pid'].map(
-    (name) => ({ name, description: name, inputSchema: { type: 'object' } }),
+    (name) => ({
+      name,
+      description: name,
+      inputSchema: {
+        type: 'object',
+        properties: { trace: { type: 'string', 'x-mcp-header': 'X-Fixture-Trace' } },
+      },
+    }),
   )
   server.setRequestHandler('tools/list', () => ({ tools }))
   server.setRequestHandler('tools/call', async (request, ctx) => {
     const { name, arguments: args = {} } = request.params
+    if (name === 'echo')
+      await ctx.mcpReq.notify({
+        method: 'notifications/message',
+        params: { level: 'info', data: 'fixture log' },
+      })
     if (name === 'slow') {
       const started = Date.now()
       const ms = Number(args.ms ?? 500)

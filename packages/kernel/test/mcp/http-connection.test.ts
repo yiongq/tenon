@@ -1,6 +1,7 @@
 // Fixture permutations run sequentially to keep counters and close assertions isolated.
-// oxlint-disable no-await-in-loop
-import { afterEach, expect, it } from 'vitest'
+// Cancellation observations differ by the negotiated protocol era.
+// oxlint-disable no-await-in-loop, no-conditional-expect
+import { afterEach, expect, it, vi } from 'vitest'
 import { connectHttpServer, McpResourceNotFoundError } from '../../src/index.js'
 import type { McpConnection } from '../../src/index.js'
 import { wrapMcpFetch } from '../../src/mcp/http-fetch.js'
@@ -34,7 +35,7 @@ it('03 验收 13: auto reaches modern or legacy; bad 2xx probes fail; legacy ski
   expect((await setup('modern')).connection.era).toBe('modern')
   expect((await setup('legacy')).connection.era).toBe('legacy')
   for (const era of ['probe-204', 'probe-non-json'] as const)
-    await expect(setup(era)).rejects.toMatchObject({ code: expect.anything() })
+    await expect(setup(era)).rejects.toMatchObject({ code: 'era-negotiation-failed' })
   const { fixture } = await setup('legacy', 'legacy')
   expect(fixture.requests.some((r) => r.method === 'server/discover')).toBe(false)
 })
@@ -129,3 +130,43 @@ export type KernelOnlyConnection = Pick<
   McpConnection,
   'listPrompts' | 'getPrompt' | 'listResources' | 'readResource'
 >
+
+it('03 验收 12: x-mcp-header is mirrored by the SDK', async () => {
+  const { fixture, connection } = await setup('modern')
+  await connection.listTools()
+  await connection.callTool('echo', { trace: 'fixture-trace' })
+  expect(
+    fixture.requests.find((r) => r.method === 'tools/call')?.headers['mcp-param-x-fixture-trace'],
+  ).toBe('fixture-trace')
+})
+it('03 验收 30 (HTTP): idle and total deadlines cancel legacy calls and close modern requests', async () => {
+  for (const era of ['legacy', 'modern'] as const) {
+    for (const total of [false, true]) {
+      const { fixture, connection } = await setup(era)
+      const caller = new AbortController()
+      await expect(
+        connection.callTool(
+          'slow',
+          { ms: 1200 },
+          {
+            signal: caller.signal,
+            timeoutMs: total ? 1000 : 150,
+            ...(total
+              ? { maxTotalTimeoutMs: 250, onprogress: () => {}, resetTimeoutOnProgress: true }
+              : {}),
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
+      expect(caller.signal.aborted).toBe(false)
+      if (era === 'legacy')
+        await vi.waitFor(() =>
+          expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(true),
+        )
+      else {
+        const requestId = fixture.requests.find((r) => r.method === 'tools/call')?.body['id']
+        await vi.waitFor(() => expect(fixture.cancelledRequests).toContain(requestId))
+        expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(false)
+      }
+    }
+  }
+})

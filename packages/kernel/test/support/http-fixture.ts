@@ -28,6 +28,7 @@ function json(res: ServerResponse, value: unknown, status = 200) {
 export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
   let opts = { ...initial }
   const requests: FixtureRequest[] = []
+  const cancelledRequests: unknown[] = []
   const modern = createMcpHandler(createFixtureServer, { legacy: 'reject' })
   const pending = new Map<unknown, { timer: ReturnType<typeof setTimeout>; res: ServerResponse }>()
   const legacyTools = [
@@ -59,6 +60,9 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
         headers: { ...req.headers },
         body,
         meta: (body['params'] as Record<string, unknown> | undefined)?.['_meta'],
+      })
+      res.on('close', () => {
+        if (!res.writableEnded) cancelledRequests.push(body['id'])
       })
       const fail = opts.failConnect ?? (method === 'tools/call' ? opts.failNext : undefined)
       if (method === 'tools/call') opts = { ...opts, failNext: undefined }
@@ -201,6 +205,7 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
   return {
     url,
     requests,
+    cancelledRequests,
     set(next: HttpFixtureOptions) {
       opts = { ...opts, ...next }
     },

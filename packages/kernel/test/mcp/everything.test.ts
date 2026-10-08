@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { absolutePath, connectStdioServer, createMemoryHost } from '../../src/index.js'
+import {
+  absolutePath,
+  connectStdioServer,
+  createMemoryHost,
+  McpResourceNotFoundError,
+} from '../../src/index.js'
 import type { HostClock } from '../../src/index.js'
 import { createNodeProcess } from '../support/node-process.js'
 import { serverEverythingSpawnSpec } from '../support/server-everything.js'
@@ -78,4 +83,24 @@ describe('a server whose stream breaks but whose process stays alive', () => {
     await conn.close()
     await conn.close()
   }, 15_000)
+})
+
+it('03 验收 40 (Everything): lists and gets a prompt, lists and reads a resource, maps -32002', async () => {
+  const conn = await connectStdioServer(createMemoryHost({ process: createNodeProcess() }), {
+    name: 'everything',
+    spawn: serverEverythingSpawnSpec(),
+    sandbox: { profile: 'full-access', workspace: [] },
+  })
+  try {
+    expect((await conn.listPrompts?.())?.prompts.map((p) => p.name)).toContain('simple-prompt')
+    expect(await conn.getPrompt?.('simple-prompt')).toHaveProperty('messages')
+    const resources = (await conn.listResources?.())?.resources ?? []
+    expect(resources.length).toBeGreaterThan(0)
+    expect(await conn.readResource?.(resources[0]!.uri)).toHaveProperty('contents')
+    await expect(conn.readResource?.('demo://missing')).rejects.toBeInstanceOf(
+      McpResourceNotFoundError,
+    )
+  } finally {
+    await conn.close()
+  }
 })

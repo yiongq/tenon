@@ -11,6 +11,7 @@
  * fault: that call closes as `tool-unavailable`, with `MODEL_NOTES.schemaUnusable` as the reason.
  */
 import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/validators/cf-worker'
+import { schemaProblem } from '../mcp/definition.js'
 import { MODEL_NOTES } from '../prompts/index.js'
 import { BUILTIN_TOOLS, isBuiltinToolName } from './builtin/index.js'
 import type { ToolTableItem } from './registry.js'
@@ -43,6 +44,7 @@ export function createArgumentValidator(): ArgumentValidator {
     if (cached !== undefined) return cached
     let result: Compiled | Error
     try {
+      if (schemaProblem(schema) !== null) throw new Error('Unsafe MCP schema')
       // A copy: the engine annotates the schema object it is given, and this one is a frozen fact.
       result = engine.getValidator(structuredClone(schema)) as Compiled
     } catch (error) {

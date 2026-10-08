@@ -125,3 +125,27 @@ it('03: unavailable and unauthorized close not-run with their source; stop close
     )({ ...query(), signal: stop.signal }),
   ).toMatchObject({ state: 'uncertain', content: [], isError: true })
 })
+
+it('03 验收 30 (executor): the live stop signal reaches the connection; timeouts remain completed', async () => {
+  const stop = new AbortController()
+  let forwarded!: AbortSignal
+  const connection = {
+    callTool: async (_name: string, _args: unknown, options: { signal: AbortSignal }) => {
+      forwarded = options.signal
+      return new Promise((_resolve, reject) => {
+        forwarded.addEventListener('abort', () => reject(forwarded.reason), { once: true })
+      })
+    },
+  } as unknown as McpConnection
+  const pending = mcpExecutor({ serverId: 'fs', connection })({ ...query(), signal: stop.signal })
+  expect(forwarded).toBe(stop.signal)
+  stop.abort(new Error('stop'))
+  expect(await pending).toMatchObject({ state: 'uncertain', content: [], isError: true })
+  expect(
+    await mcpExecutor(
+      source(async () => {
+        throw new Error('MCP total time limit exceeded')
+      }),
+    )(query()),
+  ).toMatchObject({ state: 'completed', isError: true })
+})
