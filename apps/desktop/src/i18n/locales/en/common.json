@@ -703,7 +703,7 @@
       "modern": "Modern"
     },
     "reviewBeforeRelease": "View changes before releasing",
-    "moveUp": "Move {name} up",
-    "moveDown": "Move {name} down"
+    "moveUp": "Move up: {name}",
+    "moveDown": "Move down: {name}"
   }
 }

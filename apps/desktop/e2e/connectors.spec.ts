@@ -350,19 +350,27 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await page.getByTestId('grant-persistent').click()
     await connected(page, 'other')
     await expect(page.getByTestId('connector-down-notes')).toHaveAccessibleName(
-      'Move Notes notes down',
+      'Move down: Notes notes',
     )
     await page.getByTestId('connector-down-notes').click()
     await expect
       .poll(async () => (await mcpServers(page)).map((s) => s.id))
       .toEqual(['other', 'notes'])
-    await expect(page.getByTestId('connector-up-notes')).toHaveAccessibleName('Move Notes notes up')
+    await expect(page.getByTestId('connector-up-notes')).toHaveAccessibleName(
+      'Move up: Notes notes',
+    )
     await page.getByTestId('connector-up-notes').click()
     await expect
       .poll(async () => (await mcpServers(page)).map((s) => s.id))
       .toEqual(['notes', 'other'])
-    await page.getByTestId('connector-other').getByRole('switch').click()
+    // Acceptance 44: the hint belongs to the enable switch, not another control in the row.
+    const enable = page.getByTestId('connector-other').getByRole('switch')
+    const enableHint = enable.locator('xpath=following-sibling::span')
+    await expect(enableHint).toHaveText('Applies to new sessions')
+    await expect(enableHint).toBeVisible()
+    await enable.click()
     await expect(page.getByTestId('connector-other')).toContainText('Disabled')
+    await expect(enableHint).toHaveText('Applies to new sessions')
     await page.getByTestId('connector-other').getByRole('switch').click()
     await connected(page, 'other')
   } finally {
