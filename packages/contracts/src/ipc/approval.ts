@@ -53,6 +53,7 @@ export const approvalCurrent = defineRoute('approval.current', {
     .discriminatedUnion('waitKind', [
       z.object({
         waitKind: z.literal('approval'),
+        definitionChanged: z.literal(true).exactOptional(),
         card: confirmRequestEventPayloadSchema,
         callKey: z.string().min(1),
         anchorCallKey: z.string().min(1),

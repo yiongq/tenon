@@ -98,3 +98,30 @@ describe('mcpExecutor’s fixed texts come from the prompt layer', () => {
     })
   })
 })
+
+it('03: unavailable and unauthorized close not-run with their source; stop closes uncertain', async () => {
+  const { McpServerUnavailableError, McpUnauthorizedError } =
+    await import('../../src/mcp/connection.js')
+  for (const [error, expected] of [
+    [new McpServerUnavailableError(), 'tool-unavailable'],
+    [new McpUnauthorizedError(), 'connector-unauthorized'],
+  ] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop
+      await mcpExecutor(
+        source(async () => {
+          throw error
+        }),
+      )(query()),
+    ).toMatchObject({ state: 'not-run', source: expected, kernelAuthored: true, isError: true })
+  }
+  const stop = new AbortController()
+  stop.abort()
+  expect(
+    await mcpExecutor(
+      source(async () => {
+        throw new Error('stop')
+      }),
+    )({ ...query(), signal: stop.signal }),
+  ).toMatchObject({ state: 'uncertain', content: [], isError: true })
+})

@@ -33,6 +33,7 @@ export type ClosureSource =
   | 'stopped'
   | 'timed-out' // Bash ran past its timeout (open question 17)
   | 'superseded'
+  | 'connector-unauthorized'
   | 'tool-unavailable'
   | 'invalid-input' // arguments failed validation before permission (open question 16)
   | 'crashed'

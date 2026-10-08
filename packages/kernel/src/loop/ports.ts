@@ -64,6 +64,11 @@ export interface RunConnector {
 }
 
 export interface RunAssembly {
+  mcpTable?(signal: AbortSignal): Promise<{
+    readonly sources: readonly McpToolSource[]
+    readonly absent: readonly McpAbsentSource[]
+  }>
+
   readonly model: ModelInfo // 只用于新一轮；续跑取 Tape 冻结的 view/content(model_info)（A3、不变量 33）
   readonly capabilitySource: CapabilitySource
   readonly endpointOrigin: string
@@ -75,7 +80,17 @@ export interface RunAssembly {
   provider(): Provider // 缺 key、主机不符抛 ProviderConfigMissingError
 }
 
+export interface McpAbsentSource {
+  readonly serverId: string
+  readonly code: 'connector-unavailable' | 'connector-unauthorized'
+  readonly cachedTools: readonly string[]
+}
+
 export interface McpToolSource {
+  readonly rank?: number
+  review?(tool: { originalName: string; definitionHash: string }): 'ok' | 'changed' | 'new'
+  readonly instructions?: { readonly text: string; readonly hash: string }
+
   readonly serverId: string
   readonly connection: McpConnection
 }

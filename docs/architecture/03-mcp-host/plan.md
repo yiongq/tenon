@@ -57,7 +57,7 @@
   - 突变：① 在 connection.ts 给 `new Client` 临时加 `{ versionNegotiation: { mode: 'auto' } }` → fixture-server.test.ts 的 stdio 断言变红（证明它钉住 stdio 走 legacy，Q2）。
   - 完成：G 绿；实施记录写装上的版本与 lockfile 变化行数。
 
-- [ ] 2. 只增的类型与契约（spec §对 02 的修补 1–11 与 15 的类型、§对 01 的修补、§IPC、§配置；不接行为）
+- [x] 2. 只增的类型与契约（spec §对 02 的修补 1–11 与 15 的类型、§对 01 的修补、§IPC、§配置；不接行为）
   - 文件：kernel——`tape/entry.ts`（`ToolTablePayload.tools[]` 只增可选 `definitionHash`、`ToolExclusionCode` 加四值、`ServerInstructionsPayload`、`PermissionDecidedPayload.definitionChanged?`）、`tools/registry.ts`（`ToolTableItem` 只增可选 `definitionHash`）、`tape/names.ts` 与 `tape/projection.ts`（登记 `message/server_instructions`，身份与 provenance 同 `message/environment`）、`tape/replay.ts`（`isFoldedMessage` 加这个名字，:59-65）、`loop/compaction.ts`（token 估算的名字表加它，:104-110）、`testing/tape-conformance.ts`（照 `message/environment` 登记）、`loop/closure.ts`（`ClosureSource` 加 `connector-unauthorized`）、`loop/events.ts`（`ToolOutcomeView.reversibility?`）、`loop/answer.ts`（`PendingApproval.definitionChanged?`）、`mcp/connection.ts`（`McpCallOptions` 类型与 `McpConnection` 可选成员的类型，实现留第 4 步）、`loop/ports.ts`（`McpToolSource` 三个可选成员、`McpAbsentSource`、`RunAssembly.mcpTable?`）、`tools/table.ts`（`ToolKey.definitionHash?`）、`permission/decide.ts`（`UserToolSetting.definitionChanged?`）、`session/service.ts`（`SessionServiceOptions.userSetting?`，接法：`extras.userSetting ?? options.userSetting ?? (() => null)`）、`prompts/index.ts`（`MODEL_NOTES.closure['connector-unauthorized']['not-run']` 与 `serverInstructions`，原文照 spec §对 02 的修补 7、8；`PROMPT_LAYER_VERSION` 9 → 10、`PROMPT_LAYER_HASH` 更新）。contracts——新文件 `ipc/mcp.ts`（spec §配置 与 §IPC 的全部 schema、`LINKER_INJECTION_ENV`、`RISKY_ENV_NAMES` 与前缀 `npm_config_`、`serverIdOfMappedName`、路由与事件定义，不注册）、`ipc/config.ts`（`mcpServers`）、`ipc/outcome.ts`（`closureSourceSchema` 加值、`toolOutcomeViewShape.reversibility` 用 `exactOptional`）、`ipc/approval.ts`（`definitionChanged: z.literal(true).exactOptional()`）；`registry.ts` 留到第 13 步与处理函数一起登记。desktop——两份 locale 给每个新枚举值加文案键（`mcp.*`，文案照 spec §界面 的中文与对应英文），`App.tsx` 初始 config 补 `mcpServers: []`。
   - 覆盖：验收 22（前半：旧 config 读作 `[]`）、23（schema 部分）、40（「产品里没有路由」那句）、46（键存在）。
   - 测试：新 `packages/contracts/test/mcp.test.ts`：「03 验收 23: the server id schema refuses uppercase, `_`, `:`, more than 24 characters and builtin」；「03 验收 40 (routes): ipcRoutes has no prompts or resources route」；「callTimeoutSec outside 1–3600 is clamped, not refused」（T9 的边界：0 → 1、3601 → 3600）；`MCP_SERVER_ID_PATTERN` 与 kernel 用的式子逐字相同用运行时断言（`expect(KERNEL_PATTERN.source).toBe(MCP_SERVER_ID_PATTERN.source)`，正则字面量没有字面类型，类型钉钉不住）。kernel 与 contracts 的类型钉（照 packages/contracts/test/chat-event.test.ts:40-41 的写法）：`ClosureSource` 双向；`ToolOutcomeView` 与 `toolOutcomeViewShape`、`PendingApproval` 的卡与 approval 变体，整型的钉照旧单向（kernel 给 ConfirmTarget 的路径加了品牌，outcome.test.ts:64-65、approval.test.ts:110-111），新成员 `reversibility`、`definitionChanged` 另加逐键双向钉（键两边都有、值类型互赋）；`ToolExclusionCode` 在 contracts 没有整份 enum，钉 `mcp.list` 工具视图的 `unavailable` 值是它的子集。`McpServerStatus['phase']` 的互赋钉在第 7 步加（这个类型第 7 步才有）。`apps/desktop/test/profile.test.ts` 加「03 验收 22: a config.json from before 03 reads mcpServers as [] and keeps the other keys」；`packages/kernel/test/prompts/version.test.ts` 与 `closure.test.ts` 照新键更新；`packages/kernel/test/tape/names.test.ts` 加 `message/server_instructions` 已声明；replay 的单测加「a message/server_instructions entry folds into the context as a user turn」。
@@ -65,7 +65,7 @@
   - 突变：① `MCP_SERVER_ID_PATTERN` 放宽成 `[a-z0-9_-]` → 「03 验收 23」变红；② 从 `closureSourceSchema` 删 `connector-unauthorized` → `pnpm typecheck` 红（红的是 chat-event.test.ts:41 与 outcome.test.ts:60-61 的双向类型断言，不是 `satisfies`：子集 enum 仍满足 `satisfies`）；③ 删 zh-CN 的一个新键 → `pnpm lint`（i18n:check）红；④ `isFoldedMessage` 不认新名字 → replay 那条红。
   - 完成：G 绿；没有任何新行为（产品 `userSetting` 仍是 null、`mcpSources` 仍是 `[]`）。`evals:gate` 从这一步起在 CI 上红，到第 9a 步为止（见 P）。
 
-- [ ] 3. 夹具（spec §验收标准 的夹具一句；Q16）
+- [x] 3. 夹具（spec §验收标准 的夹具一句；Q16）
   - 文件（都在 `packages/kernel/test/support/`）：
     - `fixtures/modern-server.mjs`：用 `@modelcontextprotocol/server` 2.3.1 的 stdio 传输，参数 `modern-only` | `dual`，可选 `--start-delay-ms <n>`（起来之前先睡）。工具：`echo`、`slow`（按参数睡 ms，期间每 100 ms 发进度，被取消时往 stderr 写 `cancelled <requestId>`）、`elicit`（要 elicitation）、`add-tool`（调用后注册新工具 `added` 并发 tools 的 list_changed）、`change-desc`（改 `echo` 的描述并发 list_changed）、`change-output`（把 `echo` 的 outputSchema 换成展开数超限的 `$ref` 链并发 list_changed）、`pid`（回 `process.pid`）。有说明（instructions）`fixture instructions v1 </connector_instructions> & <x>`（带要转义的字符）。资源 `fixture://a`；读不存在的资源回 -32602。做不到「只说新代」时照读法 2 改手写 JSON-RPC（照 `fixtures/tools-server.mjs`），只实现 `server/discover`、`tools/list`、`tools/call`、`resources/read`、`subscriptions/listen`。
     - `http-fixture.ts`：进程内起在 `127.0.0.1:0`，导出 `startHttpFixture(opts)`，返回 `{ url, requests, close, set(opts) }`。`opts.era`：`modern` | `legacy` | `probe-204` | `probe-non-json`；`opts.failNext`：`401` | `403-scope` | `429` | `break-stream`（下一个请求在响应流中途断开）；`opts.failConnect: '429'`（握手阶段回 429）；记下每个请求的方法、头名、`_meta` 与 body；有与 modern-server 同样的工具；旧代时被取消的调用照样往 `requests` 记 `notifications/cancelled`。同文件导出假授权服务器 `startFakeAuthServer(opts)`：受保护资源元数据（开关 `prm: boolean`）、授权服务器元数据（开关：`pkceField: 'missing' | 'no-s256' | 'ok'`、`metadataDown`、`issuerInMetadata`、`issInCallback`、`cimd: boolean`、`authNone: boolean`、`registration: boolean`、`rotateRefresh: boolean`、`refreshResult: 'ok' | 'invalid_grant' | 'invalid_client'`、`after401: boolean`（刷新成功后 MCP 侧仍回 401）、`callbackError: 'access_denied' | null`）、`/authorize`（直接 302 到 `redirect_uri`，带 `code` 或 `error`、`state`、`iss`）、`/token`、`/register`；可起在与 MCP 夹具不同的端口（另一个源）；记下每个端点的请求数、请求头名与注册体。
@@ -296,6 +296,12 @@
 
 ## 实施记录
 
+- **2026-10-08 · 第 4 步半成品 · `feat/03-seg1`**：完成连接层主要接法与回归，SDK 实际 `callTool(params, options)` 为两个参数，Tenon 的第三可选参映射到 SDK 第二参（发布包类型适配，不改 spec 行为）。stdio legacy 与 HTTP auto/legacy、120 s 静默握手、普通超时取消、进度重置与 SDK 总时限拒绝、HTTP 同源头与 token 优先、资源缺失、拒 elicitation、断流不重发工具调用、executor not-run/uncertain 回归通过。**不能勾完成**：SDK 总时限取消冲突见 Open，第 4 步剩余验收和五项突变尚未完成。最终 G 绿：189 文件 / 3582 测试通过、2 文件 / 2 测试跳过；build 绿。`pnpm evals:gate --maxWorkers=2` 预期红：20 题在提示层 10 均为 0 条基线记录；未运行 `pnpm eval`，无真实 key / 费用，9a 等 lead 跑。无调试探针或 failing 测试留在仓库。
+
+- **2026-10-08 · 第 3 步 · `feat/03-seg1`**：新 stdio 夹具用 SDK `serveStdio` 的 `legacy: reject/serve`，无需手写 modern-only 协议。HTTP 新代用 SDK `createMcpHandler.fetch`，旧代与假 OAuth 端点按测试需求手写；tree/crash 夹具起停通过。U：5 测试绿；G：187 文件 / 3569 测试通过、2 跳过。discover 突变最初挂在 Server handler 被 SDK 入口覆盖、未红；改在实际 stdio 响应传输处注入 discover 错误，modern-only 用例红，恢复后 5 用例绿。这个故障入口留作握手回归夹具。
+
+- **2026-10-08 · 第 2 步 · `feat/03-seg1`**：合入 dev `e7e5ee9`（合并提交 `462ffd0`），PR #30 阻塞已解决，过时 draft 开工限制已删。新增契约按 03 §对 02 的修补 1–11、15 与对 01 的修补实施；MCP 路由仅定义、未注册，产品尚无连接器来源。提示层版本 10，哈希 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c`。G 绿：186 文件 / 3564 测试通过、2 跳过。四项突变（ID 放宽、closure 枚举漏项、中文漏键、重放漏新名字）均红，恢复后 typecheck、lint 与相关 20 测试绿。第 9a 步按用户要求不跑，等 lead 跑。
+
 - **2026-10-08 · 第 1 步 · `feat/03-seg1`**：client/core 2.3.1，测试依赖 server 2.3.1、node 2.1.1；Everything 2026.8.31 不动，调用点无类型适配，打包方式不变。lockfile 46 行增加、9 行删除。U MCP：4 文件 / 12 测试通过；G：format、lint、typecheck 通过，全套 185 文件 / 3558 测试通过、2 文件 / 2 测试跳过；build 通过。全套需允许本机回环服务器，沙箱下模型选择用例曾超时，允许回环后单独 29 测试和全套通过。突变：临时改 Client 为 auto，fixture-server 的 2025 协商断言及对应 loop 用例红；恢复后 5 测试通过。
 
 （每步完成时追加：日期、分支与提交、做法、改了什么、评审修补、留给后面的、实测（命令与结果、测试数）、突变结果。）
@@ -305,6 +311,16 @@
 （第 23 步填。）
 
 ## 交接
+
+- **2026-10-08 · 第 2–3 步完成 / 第 4 步半成品并卡住**
+  - 分支：`feat/03-seg1`；已合入 dev PR #30（合并提交 `462ffd0`）；PR [#29](https://github.com/yiongq/tenon/pull/29) 仍为 draft，未合并。
+  - 做完的：第 2 步新增契约、提示层版本 10、两份 locale；第 3 步 stdio / HTTP / OAuth / tree / crash 夹具。原冻结哈希持久化阻塞已解决，Open 过时 draft 条目已删。
+  - 半成品：第 4 步 client 选项、HTTP fetch 包装、连接层、无条件进程组强杀、executor 取消与两种未执行收口已写，MCP / executor 32 用例绿；有 SDK 总时限取消冲突（见 Open）。验收 12 的 x-mcp-header、41 的实际通知日志、Everything prompts/resources 与第 4 步五项突变尚未全部完成，不能勾第 4 步；第 5–9 步未开始。
+  - 门禁：第 2 步 G 绿（3564 通过 / 2 跳过）；第 3 步 G 绿（3569 通过 / 2 跳过）；第 4 步最终门禁见实施记录。P 中 build 会验证，evals:gate 因提示层 10 缺基线记录预期红；9a 按用户要求不跑，等 lead 跑。无 Electron / live 测试。
+  - 突变：第 2 步四项全部红→绿；第 3 步 discover Server handler 覆盖突变未红，改为传输真实响应错误后红→绿。第 4 步突变未做。
+  - 给审查者：优先核验 SDK maxTotalTimeout 的取消行为；没有以普通 timeout 的绿色结果替代这一条。
+  - 给 owner：9a 仍跳过；第 2–9 步尚未全部完成，不能按用户条件将 PR #29 Ready for review。
+  - 下一步：先决定并修补第 4 步总时限取消机制，完成第 4 步剩余验证，再按顺序继续第 5–9 步。
 
 - **2026-10-08 · 第 1 步完成 / 第 2 步前卡住**
   - 分支与实现提交：`feat/03-seg1` @ `ce1d36e`，从 dev `16068ca` 开出；draft PR [#29](https://github.com/yiongq/tenon/pull/29) 指向 dev，未合并。改动仅 kernel package.json、pnpm-lock.yaml、SDK 版本回归测试及本 plan；没有半成品生产代码。
@@ -329,11 +345,14 @@
 
 ## Open
 
-- **2026-10-08 · 第一段阻塞：冻结定义哈希的持久化契约缺失。** spec §三态、第 3 层与第 6 层、§对 02 的修补 5 要求把冻结项的 `definitionHash` 交给 `userSetting`；§定义钉住 / 读法 54 定义该哈希包含 `outputSchema`，并明确它不在 `ToolSpec` 中。但现有 `ToolTableItem`（`packages/kernel/src/tools/registry.ts`）、`ToolTablePayload.tools[]`（`packages/kernel/src/tape/entry.ts`）、`toolTableFacts` / `rebuildToolTable`（`packages/kernel/src/tools/table.ts`）都没有保存或恢复这个哈希。Tape 仅有 `specHash`、`requiresUserInteraction`；同一 spec 配两份不同 outputSchema 会有不同 definitionHash，却产生相同的现有工具表事实，恢复、续跑时无法还原冻结值。不能用当前 config pin 或池的实时哈希替代，否则定义变化会覆盖冻结依据，违反 03 不变量 6、8 和 02 的 Tape 恢复规则。
-  - **需 owner / lead 补进 spec 的决定**：冻结哈希放进哪项 Tape 载荷及内存项（建议给 `ToolTablePayload.tools[]` 和 `ToolTableItem` 只增可选 `definitionHash`，开表保存、重建原样恢复）；03 之前已有冻结表没有该字段时的第 3 / 6 层行为（建议不可授予 always-allow，仍可每次审批）；相应类型契约修补与恢复回归验收。这两项在当前 spec 的 Tape 表、对 02 的修补和第 2 / 8 步中未写定。未自行改 spec 或实现这个设计。
+- **2026-10-08 · 第 4 步阻塞：SDK 总时限到达不取消调用，与验收 30 冲突。** 已按 §超时、取消与断流把 `timeout`、`signal`、`onprogress`、`resetTimeoutOnProgress`、`maxTotalTimeout` 原样交给 client 2.3.1。普通 stdio / legacy HTTP 超时与停止可以观察到 `notifications/cancelled`；新代 HTTP 停止不发该通知。真实 dual stdio 的 slow(ms=3000)，调用 timeout=180 ms、进度每 100 ms、resetTimeoutOnProgress=true、maxTotalTimeout=1800 ms：SDK 按总时限拒绝，但夹具继续执行，不出现 cancelled；原先在总时限测试末追加的 cancelled 断言等待 1 s 后红，撤掉探针后现有回归绿。
+  - SDK 发布包 `@modelcontextprotocol/client@2.3.1/dist/src-WCy6ifGf.mjs`：`_resetTimeout` :5806–5817 到总时限时直接 throw；`_onprogress` :6030–6036 直接调用 responseHandler(error)；responseHandler :6210 将 responseReceived 设 true；cancel :6190 见 responseReceived 就返回。该分支没有通知旧代，也没有 abort 新代 HTTP 的 requestAbort。普通 timeoutHandler 则调用 cancel，因此普通超时测试通过并不能证明总时限取消。
+  - spec §超时、取消与断流明确规定「调用超时、进度重置与总长封顶都是 SDK 用真实 setTimeout 走的计时，不走 HostClock」，第 1 步又固定 client 2.3.1；独立加总时限计时器、改 SDK 版本或修补 SDK 内部均会改变这项机制。需 lead / owner 写定修补方式与 Revisions，再实现并补总时限取消回归。尚未自行改 spec、另设计计时器或修改 node_modules。
+
+- **2026-10-08 · 已解决（PR #30）：冻结定义哈希的持久化契约。** spec §三态、第 3 层与第 6 层、§对 02 的修补 5 要求把冻结项的 `definitionHash` 交给 `userSetting`；§定义钉住 / 读法 54 定义该哈希包含 `outputSchema`，并明确它不在 `ToolSpec` 中。但现有 `ToolTableItem`（`packages/kernel/src/tools/registry.ts`）、`ToolTablePayload.tools[]`（`packages/kernel/src/tape/entry.ts`）、`toolTableFacts` / `rebuildToolTable`（`packages/kernel/src/tools/table.ts`）都没有保存或恢复这个哈希。Tape 仅有 `specHash`、`requiresUserInteraction`；同一 spec 配两份不同 outputSchema 会有不同 definitionHash，却产生相同的现有工具表事实，恢复、续跑时无法还原冻结值。不能用当前 config pin 或池的实时哈希替代，否则定义变化会覆盖冻结依据，违反 03 不变量 6、8 和 02 的 Tape 恢复规则。
+  - **需 owner / lead 补进 spec 的决定**：冻结哈希放进哪项 Tape 载荷及内存项（建议给 `ToolTablePayload.tools[]` 和 `ToolTableItem` 只增可选 `definitionHash`，开表保存、重建原样恢复）；03 之前已有冻结表没有该字段时的第 3 / 6 层行为（建议不可授予 always-allow，仍可每次审批）；相应类型契约修补与恢复回归验收。这两项在当前 spec 的 Tape 表、对 02 的修补和第 2 / 8 步中未写定。已由 PR #30 补入 spec §对 02 的修补 15、读法 61 和验收 38；本次按补充契约实现。
 - **2026-10-08 · 用户指令**：第 9a 步跳过，由 lead 跑；第一段 PR 描述必须写「等 lead 跑」，本次不合并。
 
-- spec `draft`：owner 过目 §推出的读法 59 条、确认 §开放问题 并把 Status 改为 `ready` 之前不开工。
 - 开放问题 1 已定（2026-10-08）：CIMD 地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`，托管文件与发布工作流已在仓库，不挡开工。
 - 开放问题 2（live 厂商）挡第 21 步；开放问题 11–13 已于 2026-10-08 定（照推荐，见 spec）。
 - 第 9a 步的基线评测要智谱 key 与费用，第一段 PR 等它的记录才能合并。

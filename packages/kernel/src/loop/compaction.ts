@@ -107,6 +107,7 @@ export function estimateInput(entries: readonly TapeEntry[], request: ProviderRe
         (e.name === 'message/user' ||
           e.name === 'message/continuation' ||
           e.name === 'message/environment' ||
+          e.name === 'message/server_instructions' ||
           e.name === 'tool/result'),
     )
     .map((e) => e.payload['content'])

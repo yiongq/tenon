@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defineEvent, defineRoute } from '../route.js'
+import { mcpServerSchema } from './mcp.js'
 import { customVendorSchema } from './custom-vendor.js'
 
 export const localeSchema = z.enum(['zh-CN', 'en'])
@@ -32,6 +33,7 @@ export type ProviderSelection = z.infer<typeof providerSelectionSchema>
  * key — parses into a valid Config rather than being discarded as corrupt.
  */
 export const configSchema = z.object({
+  mcpServers: z.array(mcpServerSchema).default([]),
   locale: localeSettingSchema.default('auto'),
   sidebarCollapsed: z.boolean().default(false),
   provider: providerSelectionSchema.nullable().default(null),

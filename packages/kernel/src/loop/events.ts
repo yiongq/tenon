@@ -3,7 +3,7 @@
  * sent AFTER the fact it reports is committed; the desktop's run-events.ts forwards only a root
  * session's events to the renderer (01 修补 6).
  */
-import type { ConfirmTarget } from '../host/adapter.js'
+import type { ConfirmTarget, Reversibility } from '../host/adapter.js'
 import type { DecisionSummary } from '../permission/record.js'
 import type { ProviderErrorCode, StopReason } from '../provider/types.js'
 import type { SideEffectClass } from '../tape/entry.js'
@@ -42,6 +42,7 @@ export type SessionEvent = { readonly rootSessionId: string; readonly sessionId:
  * (01 修补 6), declared here because the kernel does not import contracts.
  */
 export interface ToolOutcomeView {
+  readonly reversibility?: Reversibility
   readonly effect: SideEffectClass // 01 的四个值
   readonly state: ExecutionState
   readonly source: ClosureSource | null // null = 正常执行完

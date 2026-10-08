@@ -318,6 +318,10 @@ export type ToolExclusionCode =
   | 'policy'
   | 'user-disabled'
   | 'connector-unauthorized'
+  | 'connector-unavailable'
+  | 'name-collision'
+  | 'invalid-definition'
+  | 'definition-changed'
   | 'over-limit'
   | 'no-search-backend'
 export type ToolOrigin = { source: 'builtin' | 'mcp'; serverId: string; originalName: string } // §内置工具与工具来源 的 ToolTableItem 继承它
@@ -326,7 +330,14 @@ export type ToolTablePayload = {
   generation: number
   reason: 'first-use' | 'after-compaction'
   policyVersion: string // 开表时那次 policy.current() 的 version；unavailable 时记 'unavailable'（D4）
-  tools: Array<ToolOrigin & { name: string; specHash: string; requiresUserInteraction: boolean }> // 按 name 码元升序；name 是 H4 映射后发给模型的名字
+  tools: Array<
+    ToolOrigin & {
+      name: string
+      specHash: string
+      requiresUserInteraction: boolean
+      definitionHash?: string
+    }
+  > // 按 name 码元升序；name 是 H4 映射后发给模型的名字
   excluded: Array<ToolOrigin & { code: ToolExclusionCode }>
 }
 export type ToolsWithheldPayload = {
@@ -351,6 +362,12 @@ export type EnvironmentPayload = UserMessagePayload<ContentBlock> & {
   workspace: WorkspaceSetPayload | null // 对话形态为 null；子会话取父会话此刻最新的 workspace_set
 } // content 只有一段 MODEL_NOTES.environment 填好的英文（开放问题 16）
 
+export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
+  serverId: string
+  instructionsHash: string
+  truncated: boolean
+}
+
 // tool/
 export type ToolCallPayload = CallRef & {
   messageId: string // 这个调用所属的 message/assistant，撤回时据此连带隐藏（B2）
@@ -359,6 +376,7 @@ export type ToolCallPayload = CallRef & {
   argsHash: string // name 是发给模型的名字；argsHash = canonicalHash(input)
 }
 export type PermissionDecidedPayload = CallRef & {
+  definitionChanged?: true
   target?: ConfirmTarget // 判决当时的卡片对象；旧事实没有时交接使用纯fallback
   argsHash: string
   reversibility: Reversibility // host 的判定（E1）；tool_outcome 从这里取

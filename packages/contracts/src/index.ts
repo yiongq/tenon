@@ -196,3 +196,5 @@ export type { DecisionSummaryContract } from './ipc/approval.js'
 // Spec 02 plan step 20: whether a root session has a Run in progress, as main sees it.
 export { runStateEvent } from './ipc/run.js'
 export type { RunState } from './ipc/run.js'
+
+export * from './ipc/mcp.js'

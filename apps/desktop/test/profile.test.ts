@@ -82,6 +82,7 @@ describe('desktop profiles', () => {
     expect(await readConfig(fs, identity, (line) => lines.push(line))).toEqual({
       ...before,
       customVendors: [],
+      mcpServers: [],
     })
     expect(lines).toEqual([])
   })
@@ -104,6 +105,7 @@ describe('desktop profiles', () => {
       defaultModelByProfile: {},
       lastWorkspaceFolders: [],
       customVendors: [],
+      mcpServers: [],
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })
@@ -166,6 +168,7 @@ describe('desktop profiles', () => {
     expect(await readConfig(fs, identity, (line) => notAList.push(line))).toMatchObject({
       locale: 'zh-CN',
       customVendors: [],
+      mcpServers: [],
     })
     expect(notAList).toHaveLength(1)
     expect(notAList[0]).toContain('customVendors')
@@ -364,3 +367,22 @@ const ID_A = 'custom-0b7e1c5a-3d2f-4e6a-9b8c-1d2e3f4a5b6c'
 const ID_B = 'custom-1c8f2d6b-4e3a-4f7b-8c9d-2e3f4a5b6c7d'
 const ID_C = 'custom-2d9a3e7c-5f4b-4a8c-9d0e-3f4a5b6c7d8e'
 const ID_D = 'custom-3e0b4f8d-6a5c-4b9d-8e1f-4a5b6c7d8e9f'
+
+it('03 验收 22: a config.json from before 03 reads mcpServers as [] and keeps the other keys', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'tenon-before-03-'))
+  try {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'tenant-before-03')
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({ locale: 'en', sidebarCollapsed: true }),
+    )
+    expect(await readConfig(fs, identity)).toMatchObject({
+      locale: 'en',
+      sidebarCollapsed: true,
+      mcpServers: [],
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

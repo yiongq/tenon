@@ -287,7 +287,7 @@ describe('the approval card copy', () => {
 describe('the tool row copy', () => {
   it('has a closure line for every ClosureSource, with nothing to fill', () => {
     // A closed call's `facts` exist only for a block code (§原因码表), so a closure line has no slots.
-    expect(CLOSURE_SOURCES).toHaveLength(23)
+    expect(CLOSURE_SOURCES).toHaveLength(24)
     const expected = CLOSURE_SOURCES.map((source) => ({
       key: `closure.${source}`,
       args: [],

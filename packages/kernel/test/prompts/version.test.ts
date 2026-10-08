@@ -45,6 +45,7 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // Segment 3 review fixes: WebFetch's size-limit text covers every text body, not only HTML;
   // AskUserQuestion's reason for a repeated question or option label.
   9: '93c6eb146501e0b453da8b1107cc0e5f5e0dd4f8787c5959fdf5efed9d8081a7',
+  10: '05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c',
 }
 
 describe('the version gate', () => {

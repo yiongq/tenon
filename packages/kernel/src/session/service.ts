@@ -71,6 +71,7 @@ import { carryEntries, readSessionFacts } from './facts.js'
 const LATEST_SESSION_SCAN = 20
 
 export interface SessionServiceOptions {
+  readonly userSetting?: (key: ToolKey) => UserToolSetting | null
   /** Development-only host seam; packaged hosts must not supply this override. */
   readonly compactionThreshold?: number
   /**
@@ -296,7 +297,7 @@ export function constructSessionService(
     builtinAvailable:
       extras.tools === undefined ? (name) => PRODUCT_BUILTINS.has(name) : () => true,
     testTools: extras.tools ?? null,
-    userSetting: extras.userSetting ?? ((): null => null),
+    userSetting: extras.userSetting ?? options.userSetting ?? ((): null => null),
     tokenLimit: extras.tokenLimit ?? null,
     compactionThreshold: options.compactionThreshold ?? null,
     onUnansweredCall: options.onUnansweredCall ?? 'throw',

@@ -47,6 +47,7 @@ export type ConnectorToolSetting = 'always-allow' | 'ask' | 'never'
 
 /** What layer 3 reads for one tool. Phase 2 has no producer: only tests inject it. */
 export interface UserToolSetting {
+  readonly definitionChanged?: true
   readonly connectorOff?: true
   readonly userSetting?: ConnectorToolSetting
 }

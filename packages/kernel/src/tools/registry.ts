@@ -22,6 +22,7 @@ import type { BuiltinToolName, ToolProfile } from './builtin/tool.js'
 export const BUILTIN_SERVER_ID = 'builtin'
 
 export interface ToolTableItem extends ToolOrigin {
+  readonly definitionHash?: string
   name: string // 发给 provider 的名字，满足 ^[a-zA-Z0-9_-]{1,64}$；内置工具 === originalName
   spec: ToolSpec // spec.name === name
   requiresUserInteraction: boolean // 裁决 D12；内置工具恒为 false
@@ -115,3 +116,5 @@ export function assertToolNames(items: readonly Pick<ToolCandidate, 'name' | 'so
     seen.add(item.name)
   }
 }
+
+export const MCP_SERVER_ID_PATTERN = /^[a-z0-9-]{1,24}$/

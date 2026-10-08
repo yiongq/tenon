@@ -37,6 +37,7 @@ export interface FrozenToolTable {
 
 /** A connector tool's layer-3 key (H4, D1): the tenant, the server, the ORIGINAL name. */
 export interface ToolKey {
+  readonly definitionHash?: string
   readonly tenantId: string
   readonly serverId: string
   readonly toolName: string

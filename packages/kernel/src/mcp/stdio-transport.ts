@@ -93,6 +93,7 @@ export class ChildStdioTransport implements Transport {
         await this.#child.exited
       }
     }
+    await this.#child.kill('SIGKILL')
     // Cancel both readers: a descendant that inherited a pipe keeps it open past `exited`.
     await Promise.allSettled([this.#reader?.cancel(), this.#stderrReader?.cancel()])
     this.#finish()

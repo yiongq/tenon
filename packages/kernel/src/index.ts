@@ -514,3 +514,16 @@ export {
   COMPACT_KEEP_TURNS,
   COMPACT_RETRY_CAP,
 } from './loop/compaction.js'
+
+export type { McpCallOptions } from './mcp/connection.js'
+export type { McpAbsentSource } from './loop/ports.js'
+export type { ServerInstructionsPayload } from './tape/entry.js'
+
+export {
+  connectHttpServer,
+  McpConnectionError,
+  McpServerUnavailableError,
+  McpUnauthorizedError,
+  McpResourceNotFoundError,
+} from './mcp/connection.js'
+export type { McpHttpServerSpec } from './mcp/connection.js'

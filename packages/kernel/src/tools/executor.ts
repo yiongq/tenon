@@ -11,6 +11,7 @@
  * `tool-unavailable`, with its definition still in the table (E2).
  */
 import type { AbsolutePath, FetchLike, HostClock, HostFs } from '../host/adapter.js'
+import { McpServerUnavailableError, McpUnauthorizedError } from '../mcp/connection.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
 import type { PathScope } from '../permission/workspace.js'
@@ -39,7 +40,8 @@ export interface ToolExecution {
    * Why a call that did not complete ended, when the stop is not why: Bash's timeout or a host
    * refusal before WebFetch could connect (§原因码表 `timed-out`, `protected`). The batch writes that code's note, `content` as its second block.
    */
-  readonly source?: 'timed-out' | 'protected'
+  readonly source?: 'timed-out' | 'protected' | 'tool-unavailable' | 'connector-unauthorized'
+  readonly kernelAuthored?: boolean
   /** Host refusal after dispatch: the network boundary's blocked target. */
   readonly facts?: Readonly<Record<string, string>>
 }
@@ -111,13 +113,31 @@ export const fakeExecutor: ToolExecutor = (q) =>
 export function mcpExecutor(source: McpToolSource): ToolExecutor {
   return async (q) => {
     try {
-      const result = await source.connection.callTool(q.item.originalName, q.input)
+      const result = await source.connection.callTool(q.item.originalName, q.input, {
+        signal: q.signal,
+        timeoutMs: 60_000,
+        onprogress: () => {},
+        resetTimeoutOnProgress: true,
+        maxTotalTimeoutMs: 600_000,
+      })
       return {
         content: mcpContent(result.content as unknown[]),
         isError: result.isError === true,
         state: 'completed',
       }
     } catch (error) {
+      if (q.signal.aborted) return { state: 'uncertain', content: [], isError: true }
+      if (error instanceof McpServerUnavailableError || error instanceof McpUnauthorizedError) {
+        const failureSource =
+          error instanceof McpUnauthorizedError ? 'connector-unauthorized' : 'tool-unavailable'
+        return {
+          state: 'not-run',
+          content: [],
+          isError: true,
+          source: failureSource,
+          kernelAuthored: true,
+        }
+      }
       const message = error instanceof Error ? error.message : String(error)
       return {
         content: [{ type: 'text', text: fill(MODEL_NOTES.connectorFailed, { message }) }],
