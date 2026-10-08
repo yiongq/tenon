@@ -4,7 +4,7 @@ import { createMcpHandler } from '@modelcontextprotocol/server'
 import { createFixtureServer, createFixtureTools } from './fixtures/modern-server.mjs'
 
 export interface HttpFixtureOptions {
-  era?: 'modern' | 'legacy' | 'probe-204' | 'probe-non-json'
+  era?: 'modern' | 'legacy' | 'probe-204' | 'probe-non-json' | 'probe-hang'
   failNext?: '401' | '403-scope' | '429' | 'break-stream' | undefined
   failConnect?: '429' | '503' | undefined
   authUrl?: string
@@ -100,6 +100,7 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
         setImmediate(() => res.destroy())
         return
       }
+      if (method === 'server/discover' && opts.era === 'probe-hang') return
       if (method === 'server/discover' && opts.era === 'probe-204') {
         res.writeHead(204)
         res.end()

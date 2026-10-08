@@ -938,7 +938,7 @@ it('Q4-2: a real pool exposes instructions only when enabled and pinned to the l
   expect(pool.routes()[0]?.instructions).toEqual({ text: second.instructions, hash: changed })
 })
 
-it('03 验收 2 / 9: pool call timeout has one per-server source, including the 3600-second total cap', async () => {
+it('03 验收 30 (T9): pool call timeout has one per-server source, including the 3600-second total cap', async () => {
   for (const callTimeoutMs of [1000, 123000, 3600000]) {
     const fake = fakeConnection()
     vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
@@ -1098,4 +1098,77 @@ it('03 验收 3 / 4: reconnect discards closed process handles before a later sh
   await closing
   expect(kills[0]).not.toHaveBeenCalled()
   expect(kills[1]).toHaveBeenCalledExactlyOnceWith('SIGKILL')
+})
+
+it('03 验收 14: apply and runtimeOf clear the crash error while a changed launch is still connecting', async () => {
+  for (const byTimer of [false, true]) {
+    const first = fakeConnection()
+    let resolve!: (connection: McpConnection) => void
+    const gate = new Promise<McpConnection>((done) => {
+      resolve = done
+    })
+    vi.spyOn(connections, 'connectStdioServer')
+      .mockResolvedValueOnce(first.c)
+      .mockReturnValueOnce(gate)
+    const { pool, host, current } = setup()
+    await connected(pool)
+    first.exit()
+    await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+    expect(pool.status()[0]?.error?.code).toBe('crashed')
+    const changed = runtime({ launchHash: 'changed' })
+    current.set('fixture', changed)
+    if (byTimer) host.advance(1000)
+    else pool.apply([changed])
+    try {
+      expect(phase(pool)).toBe('connecting')
+      expect(pool.status()[0]?.error).toBeNull()
+    } finally {
+      resolve(fakeConnection().c)
+    }
+    await connected(pool)
+    vi.mocked(connections.connectStdioServer).mockRestore()
+  }
+})
+
+it('03 验收 14: a connection closed while the HTTP server leaves the auto probe unanswered is classified as network', async () => {
+  const { Client } = await import('@modelcontextprotocol/client')
+  const fixture = await startHttpFixture({ era: 'probe-hang' })
+  cleanup.push(() => fixture.close())
+  const original = Client.prototype.connect
+  const probeErrors: unknown[] = []
+  vi.spyOn(Client.prototype, 'connect').mockImplementation(async function (
+    this: InstanceType<typeof Client>,
+    transport,
+    options,
+  ) {
+    const before = fixture.requests.length
+    const pending = original.call(this, transport, options)
+    void pending.catch(() => {})
+    await vi.waitFor(() => expect(fixture.requests.length).toBeGreaterThan(before))
+    await transport.close()
+    try {
+      await pending
+    } catch (error) {
+      probeErrors.push(error)
+      throw error
+    }
+  })
+  const { pool } = setup(
+    runtime({
+      transport: {
+        type: 'http',
+        url: fixture.url,
+        fetch,
+        protocol: 'auto',
+        headerKeys: [],
+        oauth: { ownClient: null, clientMetadataUrl: null, issuers: [], dcrRedirectPort: 53280 },
+      },
+    }),
+  )
+  await vi.waitFor(() => expect(probeErrors).toHaveLength(1))
+  expect(probeErrors[0]).toMatchObject({ message: expect.stringContaining('closed during') })
+  await vi.waitFor(() => expect(pool.status()[0]?.error?.code).toBe('network'))
+  expect(phase(pool)).toBe('error')
+  expect(probeErrors).toHaveLength(1)
+  expect(fixture.requests.every((request) => request.method === 'server/discover')).toBe(true)
 })

@@ -310,8 +310,7 @@ export function createMcpOAuthProvider(q: {
               serverUrl: q.serverUrl,
               fetchFn: refreshFetch,
             })
-            if (transientFailure) throw transientFailure
-            if (result !== 'AUTHORIZED') throw new UnauthorizedError()
+            if (result !== 'AUTHORIZED') throw transientFailure ?? new UnauthorizedError()
           } catch (error) {
             throw transientFailure ?? error
           }
@@ -327,7 +326,8 @@ export function createMcpOAuthProvider(q: {
           if (
             !authError &&
             !registrationUnavailable &&
-            !(error instanceof AuthorizationServerMismatchError)
+            !(error instanceof AuthorizationServerMismatchError) &&
+            !(error instanceof LoginError)
           )
             throw error
           q.onUnauthorized()
@@ -445,6 +445,7 @@ export function createMcpOAuthProvider(q: {
         ...(iss === undefined ? {} : { iss }),
         fetchFn: loginFetch,
       })
+      lastDiscovery = loginState.discovery
       return { ok: true }
     } catch (e) {
       return {

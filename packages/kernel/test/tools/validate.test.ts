@@ -188,7 +188,14 @@ it('03 验收 33: external refs are refused before constructing a validator', ()
 it('03 验收 32: anchor and dependencies chains are refused before CfWorker compiles, including fragment ids', () => {
   const compile = vi.spyOn(CfWorkerJsonSchemaValidator.prototype, 'getValidator')
   try {
-    for (const kind of ['anchor', 'fragment-id', 'dependencies'] as const) {
+    for (const kind of [
+      'anchor',
+      'fragment-id',
+      'dependencies',
+      'tuple',
+      'numeric-id',
+      'empty-id',
+    ] as const) {
       expect(
         createArgumentValidator().check(connector(schemaChain(kind)), { x: 1, y: 1 }),
       ).toMatchObject({ ok: false, source: 'tool-unavailable', reason: MODEL_NOTES.schemaUnusable })

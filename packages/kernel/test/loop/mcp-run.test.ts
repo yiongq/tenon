@@ -593,6 +593,9 @@ it('03 验收 42: first use with instructions and threshold compaction never con
   const note = all.findLast((entry) => entry.name === 'message/server_instructions')!
   const environment = all.findLast((entry) => entry.name === 'message/environment')!
   expect(note.entryId).toBeGreaterThan(environment.entryId)
+  expect(
+    JSON.stringify(provider.requests.at(-1)!.body).match(/<connector_instructions/g),
+  ).toHaveLength(1)
 })
 
 it('03 验收 29 / 03 不变量 11: a real HTTP pool first-wait timeout and unauthorized or waited-out frozen calls never reach tools/call; connecting early succeeds', async () => {
@@ -841,4 +844,87 @@ it('03 验收 21: refresh succeeds but another 401 makes the real pool unauthori
     await fixture.close()
     await as.close()
   }
+})
+
+it('02 environment timing / 03 验收 42: a mid-Run overflow without instructions writes no environment after its anchor', async () => {
+  const h = harness([source()])
+  for (let i = 0; i < 3; i++) await send(h)
+  const overflow: StreamEvent[] = [
+    { type: 'usage', usage: USAGE },
+    stopEvent('context-overflow', 'model_context_window_exceeded'),
+  ]
+  expect(
+    (
+      await send(h, [
+        call(),
+        overflow,
+        scriptedTurn({ deltas: ['summary'], usage: USAGE }),
+        scriptedTurn({ deltas: ['done'], usage: USAGE }),
+      ])
+    ).reason.code,
+  ).toBe('completed')
+  const all = await facts(h.tape)
+  const anchor = all.findLast((entry) => entry.name === 'compaction/anchor')!
+  expect(anchor).toBeDefined()
+  expect(
+    all.filter((entry) => entry.entryId > anchor.entryId && entry.name === 'message/environment'),
+  ).toEqual([])
+})
+
+it('03 验收 33: external and dangling input refs remain in the tool table but calls close unavailable without dispatch', async () => {
+  for (const ref of ['https://example.test/schema', '#missing', 'https://[']) {
+    const execute = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+    const s = source({
+      connection: {
+        listTools: async () => [{ ...raw(), inputSchema: { $ref: ref } }],
+        callTool: execute,
+      } as unknown as McpConnection,
+    })
+    const table = opening(await mcpCandidates([s]))
+    expect(table.items.map((item) => item.name)).toEqual(['fixture__echo'])
+    expect(table.excluded).toEqual([])
+    const h = harness([s])
+    expect(
+      (await send(h, [call(), scriptedTurn({ deltas: ['done'], usage: USAGE })])).reason.code,
+    ).toBe('completed')
+    expect(execute).not.toHaveBeenCalled()
+    expect(
+      (await facts(h.tape)).findLast((entry) => entry.name === 'execution/tool_outcome')?.payload,
+    ).toMatchObject({ state: 'not-run', source: 'tool-unavailable' })
+  }
+})
+
+it('03 验收 42: mid-Run compaction keeps an already-written instruction once in the retained tail', async () => {
+  const h = harness([source()])
+  for (let i = 0; i < 3; i++) await send(h)
+  const model = { ...MODEL, providerId: 'zhipu', id: 'new-provider' }
+  const provider = createScriptedProvider({ id: model.providerId, models: [model] })
+  const text = 'instructions opened at the start of this Run'
+  h.loop.connector.use({
+    provider,
+    model,
+    mcpSources: [source({ instructions: { text, hash: sha256Hex(text) } })],
+  })
+  await h.service.selectModel({
+    sessionId: SESSION,
+    origin: null,
+    choice: { providerId: model.providerId, modelId: model.id, effort: null },
+  })
+  provider.script(call())
+  provider.script([
+    { type: 'usage', usage: USAGE },
+    stopEvent('context-overflow', 'model_context_window_exceeded'),
+  ])
+  provider.script(scriptedTurn({ deltas: ['summary'], usage: USAGE }))
+  provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+  expect((await send(h, [])).reason.code).toBe('completed')
+  const all = await facts(h.tape)
+  const anchor = all.findLast((entry) => entry.name === 'compaction/anchor')!
+  const notes = all.filter((entry) => entry.name === 'message/server_instructions')
+  expect(notes).toHaveLength(1)
+  expect(notes[0]!.entryId).toBeGreaterThanOrEqual(anchor.payload['keepFromEntryId'] as number)
+  expect(notes[0]!.entryId).toBeLessThan(anchor.entryId)
+  expect(
+    JSON.stringify(provider.requests.at(-1)!.body).match(/<connector_instructions/g),
+  ).toHaveLength(1)
 })

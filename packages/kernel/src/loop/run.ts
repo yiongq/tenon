@@ -56,6 +56,7 @@ import type {
   MessageStatus,
   NewEntry,
   RunUsageLine,
+  ServerInstructionsPayload,
   TapeEntry,
   ToolCallPayload,
   ToolTablePayload,
@@ -534,7 +535,10 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
           ...(fresh.facts ?? []).filter(
             (fact) =>
               fact.name !== 'message/server_instructions' ||
-              !tableFacts.some(
+              ![
+                ...entries.filter((entry) => entry.entryId >= cut.keepFromEntryId),
+                ...tableFacts,
+              ].some(
                 (old) =>
                   old.name === fact.name &&
                   old.payload['serverId'] === fact.payload['serverId'] &&
@@ -574,13 +578,17 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
               .filter((fact) => fact.name !== 'message/server_instructions')
               .map((fact) => [fact.provenanceKey, fact]),
           ).values(),
-          environmentEntry({
-            tape,
-            now: ctx.now,
-            messageId: ctx.ids.uuid(),
-            // oxlint-disable-next-line no-await-in-loop -- the anchor includes its fresh environment before server notes
-            state: await environmentNow(tape, ctx.sessionId, ctx.localDate()),
-          }),
+          ...(tableFacts.some((fact) => fact.name === 'message/server_instructions')
+            ? [
+                environmentEntry({
+                  tape,
+                  now: ctx.now,
+                  messageId: ctx.ids.uuid(),
+                  // oxlint-disable-next-line no-await-in-loop -- only a replacement server note needs a preceding environment
+                  state: await environmentNow(tape, ctx.sessionId, ctx.localDate()),
+                }),
+              ]
+            : []),
           ...tableFacts.filter((fact) => fact.name === 'message/server_instructions'),
         ])
       } catch (error) {
@@ -705,20 +713,18 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       profile,
       locale: ctx.locale,
     })
-    // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
-    const hasInstructions = assembled.facts.some(
-      (fact) => fact.name === 'message/server_instructions',
-    )
-    if (hasInstructions) {
-      // oxlint-disable-next-line no-await-in-loop -- publish the opening and its messages together before replay
-      await write(assembled.facts.filter((fact) => fact.name !== 'view/assembled'))
-      recordAssembly(state, {
-        ...assembled,
-        facts: assembled.facts.filter((fact) => fact.name !== 'view/assembled'),
-      })
-    }
-    // oxlint-disable-next-line no-await-in-loop -- replay follows the committed opening messages
-    const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
+    const instructionMessages: InternalMessage[] = assembled.facts
+      .filter((fact) => fact.name === 'message/server_instructions')
+      .map((fact) => ({
+        role: 'user',
+        content: [...(fact.payload as unknown as ServerInstructionsPayload).content],
+      }))
+    const hasInstructions = instructionMessages.length > 0
+    const messages = [
+      // oxlint-disable-next-line no-await-in-loop -- pending opening messages are estimated before they are committed
+      ...(await pairedContext(ctx, assembled.table, pin, write, () => pin)),
+      ...instructionMessages,
+    ]
     let request: ProviderRequest = {
       model: ctx.model,
       ...(assembled.system === null ? {} : { system: assembled.system }),
@@ -738,7 +744,11 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const entries = await readSessionEntries(tape, ctx.sessionId)
     if (!thresholdChecked) {
       thresholdChecked = true
-      const estimated = estimateInput(entries, request)
+      const estimated = estimateInput(
+        entries,
+        request,
+        instructionMessages.map((message) => message.content),
+      )
       const threshold = ctx.compactionThreshold ?? compactionThreshold(ctx.model)
       if (estimated > threshold && (boundaryRequest || !checksThinkingPrefix(ctx.model))) {
         // oxlint-disable-next-line no-await-in-loop -- summary must finish before this payload can be sent
@@ -780,6 +790,15 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       const cutoff = !midTurnAnchor ? anchor.entryId : (nextBoundary?.entryId ?? keepFrom)
       const index = replay.orderSeqs.findIndex((seq) => seq >= cutoff)
       request = { ...request, dropThinkingBefore: index < 0 ? messages.length : index }
+    }
+    if (hasInstructions) {
+      // oxlint-disable-next-line no-await-in-loop -- publish notes with their opening only after threshold compaction is decided
+      await write(assembled.facts.filter((fact) => fact.name !== 'view/assembled'))
+      request = {
+        ...request,
+        // oxlint-disable-next-line no-await-in-loop -- send the canonical replay of the committed notes
+        messages: await pairedContext(ctx, assembled.table, pin, write, () => pin),
+      }
     }
     // ONCE per payload — and the encoded request is what every attempt of it streams.
     const encoded = provider.encode(request)

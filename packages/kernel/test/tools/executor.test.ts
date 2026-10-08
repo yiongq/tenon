@@ -150,7 +150,7 @@ it('03 验收 30 (executor): the live stop signal reaches the connection; timeou
   ).toMatchObject({ state: 'completed', isError: true })
 })
 
-it('03 验收 9: the executor forwards cancellation but does not inject a competing fixed timeout', async () => {
+it('03 验收 30 (T9): the executor forwards cancellation but does not inject a competing fixed timeout', async () => {
   const callTool = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
   const q = query()
   await mcpExecutor({ serverId: 'fs', connection: { callTool } as unknown as McpConnection })(q)

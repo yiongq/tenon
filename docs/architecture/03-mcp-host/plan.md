@@ -296,6 +296,17 @@
 
 ## 实施记录
 
+- **2026-10-08 · PR #29 第二轮修复（基于 `80ed98c`）**：目标为 03 第一段审查返修，不开第 10 步；当前 worktree `/Users/gq/.codex/worktrees/7c49/tenon` 的独立分支 `codex/pr29-round2`，最终推到 PR 的 `feat/03-seg1`。
+  - [x] blocker 1：`items` 元组计入遍历；id 照 `$id || id` 取，字段存在时解析结果必须为非空字符串，否则 `invalid-id`。`schema-chains.ts` 加 tuple / numeric-id / empty-id 与便宜诱饵，definition / validate 六种链均提前拒绝，危险定义不交给 CfWorker。
+  - [x] blocker 2：锚点只在同时补写说明时写 environment，恢复没有说明时 Run 中途压缩的 02 时序；不改环境文案。`mcp-run.test.ts` 的 mid-Run overflow 无说明例断言锚点之后没有 environment。
+  - [x] major 3：首次开表的新说明在阈值判定后才随开表批次落盘，估算仍计入待写内容；after-compaction 开表按实际保留尾巴与同批事实去重。首次带说明的阈值路径逐个 recheckAttempt verified、最终 body 只有一条说明；同一 Run 已落盘说明位于 keepFrom 尾巴的 overflow 路径也只写 / 发一条。
+  - [x] 回退 4：`screen=false` 跳过未解与不可解析 input ref；外部、悬空及坏 URL 三支均经 mcp-source / table 保留在表，调用收口 tool-unavailable / not-run、零派发。
+  - [x] 回退 5–7：非交互的 LoginError 收成 McpUnauthorizedError（自带 client 的 issuer 变化 / 未绑定两支）；只有非 AUTHORIZED 才抛 transientFailure（缺 PRM、刷新重新取 PRM 得 503 时仍刷新成功且轮换落盘）；成功登录保存 discovery（origin resource 的刷新原文发送、没有多余 well-known 请求）。
+  - [x] 补测试 / 标签：apply 与 runtimeOf 路径的 connect 均挂起，在 connecting 时直接断言 error=null；真实 HTTP 探测未回应时触发 SDK transport close，主体断言 SDK 的 closed during 错误与池 network 分类；executor / pool 的 T9 标签改为「03 验收 30 (T9)」。首次网络握手失败仍按原状态机进 error，退避回归仍覆盖已连接后断网。
+  - 新增突变 14 项全部红：漏元组 items、id 改回 ??、放过数值 id、无条件环境写入、提前落盘说明、忽略保留尾巴去重、开表拒未解 ref、开表拒坏外部 URL、漏 LoginError 映射、AUTHORIZED 前抛 transientFailure、漏保存登录 discovery、漏估算待写说明、漏 resetLaunch 清 error、探测关闭误记代际错误；每项 finally 恢复。
+  - 提示层：`src/prompts` 相对 `80ed98c` 无 diff；版本保持 10，哈希保持 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c`。保留 lead 的原始 9a 记录，不跑付费评测。原有 AGENTS.md 无关修改保留、不提交。
+  - 最终门禁：`pnpm format:check` / `pnpm lint` / `pnpm typecheck` 绿；`pnpm test --maxWorkers=2` 为 195 文件 / 3708 测试通过、2 文件 / 2 测试跳过；`pnpm build` 绿；`pnpm evals:gate --maxWorkers=2` 为 4 文件 / 30 测试通过、1 文件 / 1 测试跳过，P 绿。全部临时突变恢复，临时探针清理；随本轮提交推送，PR 保持 Ready、不合并。
+
 - **2026-10-08 · PR #29 lead 再审修复**：按 PR #29 评论逐条修，先合入 dev PR #34（读法 65）。提示层文案 / PROMPT_LAYER_VERSION=10 / 哈希保持不变；9a 由 lead 在自己的 worktree 跑，推送前 pull 接上记录。评论中的 blocker、实现 bug、补测试与 minor 均已实施，新增回归与突变通过；最终 G / build 和推送前 pull 在下方记结果。不进入第二段、不合并 PR。
   - [x] blocker 1：CfWorker 的 anchor / fragment id / 未知键 / dependencies / recursiveRef / 未解本地 ref 与 10000/10001 边界。
   - [x] blocker 2：说明批次不在阈值压缩之前写 view/assembled；阈值路径与 recheckAttempt。
@@ -351,6 +362,13 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 （第 23 步填。）
 
 ## 交接
+
+- **2026-10-08 · 第二轮审查返修完成**
+  - 分支：当前独立 worktree 为 `codex/pr29-round2`；交付推至 `feat/03-seg1` / PR #29 → dev，保持 Ready、不合并。
+  - 完成：最新 lead 评论的 1–7 条、补测试与标签逐项落实；实现 / 测试 / 14 项突变证据见本 plan 实施记录。第 2 条只改写入时机，版本 10、文案与哈希不变。
+  - 门禁：G/P 全绿（3708 单测、30 评测门禁测试通过）；9a 记录为 lead 的既有提交，未跑真实付费评测。
+  - 工作树：原有 `AGENTS.md` 无关修改保留、不纳入提交；其余本轮改动随提交推送，临时突变源码已恢复。
+  - 下一步：lead 第三轮复核最新清单与新增突变；第 10 步仍属第二段后续 PR。本次不自行合并。
 
 - **2026-10-08 · 第一段完成 / 待 lead 审查**
   - 分支：`feat/03-seg1`；PR #29 → `dev`。第 1–9 步实现与本段回归 / 突变完成，7b 自动重启、8b server 说明、9b CIMD 全部保留；第 9a 步按用户要求跳过，等 lead 跑。spec 保持 ready（第二至四段尚未实施）。

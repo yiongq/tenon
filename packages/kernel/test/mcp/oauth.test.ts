@@ -581,3 +581,78 @@ it('minor OAuth errors: refresh network failure and server 5xx propagate without
     expect(h.unauthorized).not.toHaveBeenCalled()
   }
 })
+
+it('03 验收 21: session refresh with a changed or unbound own-client issuer requires login before registration', async () => {
+  for (const issuer of ['https://other', null]) {
+    const h = await setup(
+      {},
+      { ownClient: { clientId: 'own', hasSecret: false, issuer: null, redirectPort: 53280 } },
+    )
+    expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+    h.runtime.ownClient = { ...h.runtime.ownClient!, issuer }
+    const before = h.authServer.requests.length
+    await expect(
+      h.provider.authProvider.onUnauthorized!({
+        response: new Response(null, { status: 401 }),
+        serverUrl: new URL(h.authServer.url),
+        fetchFn: fetch,
+      }),
+    ).rejects.toMatchObject({ name: 'McpUnauthorizedError' })
+    expect(h.unauthorized).toHaveBeenCalled()
+    expect(
+      h.authServer.requests
+        .slice(before)
+        .filter((request) => request.path === '/register' || request.path === '/token'),
+    ).toEqual([])
+    expect(h.open).toHaveBeenCalledTimes(1)
+  }
+})
+
+it('03 验收 21 / 读法 65: refresh reuses successful login discovery and sends origin resource verbatim', async () => {
+  const h = await setup()
+  h.authServer.set({ prmResource: h.authServer.url })
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  const before = h.authServer.requests.length
+  await h.provider.authProvider.onUnauthorized!({
+    response: new Response(null, { status: 401 }),
+    serverUrl: new URL(h.authServer.url),
+    fetchFn: fetch,
+  })
+  const fresh = h.authServer.requests.slice(before)
+  expect(fresh.filter((request) => request.path.includes('.well-known'))).toEqual([])
+  expect(fresh.filter((request) => request.path === '/token')).toHaveLength(1)
+  expect(fresh.find((request) => request.path === '/token')?.body['resource']).toBe(
+    h.authServer.url,
+  )
+  expect(await h.store.tokens(h.runtime.issuers.at(-1)!)).toMatchObject({
+    access_token: 'fixture-access-2',
+    refresh_token: 'fixture-refresh-2',
+  })
+})
+
+it('03 验收 21: a tolerated PRM 5xx cannot undo an authorized refresh or its persisted rotated tokens', async () => {
+  const h = await setup({ prm: false })
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  const original = h.handed.getMockImplementation()!
+  let unavailable = 0
+  h.handed.mockImplementation(async (input, init) => {
+    if (new Request(input, init).url.includes('.well-known/oauth-protected-resource')) {
+      unavailable++
+      return new Response('{}', { status: 503, headers: { 'content-type': 'application/json' } })
+    }
+    return original(input, init)
+  })
+  await expect(
+    h.provider.authProvider.onUnauthorized!({
+      response: new Response(null, { status: 401 }),
+      serverUrl: new URL(h.authServer.url),
+      fetchFn: fetch,
+    }),
+  ).resolves.toBeUndefined()
+  expect(unavailable).toBeGreaterThan(0)
+  expect(h.unauthorized).not.toHaveBeenCalled()
+  expect(await h.store.tokens(h.runtime.issuers.at(-1)!)).toMatchObject({
+    access_token: 'fixture-access-2',
+    refresh_token: 'fixture-refresh-2',
+  })
+})

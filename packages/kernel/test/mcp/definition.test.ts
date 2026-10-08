@@ -89,11 +89,25 @@ it('03 验收 32: 1000 tools and 5 MiB pass, 1001 tools and one more byte fail',
 })
 
 it('03 验收 32: anchor, fragment-id and dependencies under unknown keys cannot bypass reference expansion limits', () => {
-  for (const kind of ['anchor', 'fragment-id', 'dependencies'] as const) {
+  for (const kind of [
+    'anchor',
+    'fragment-id',
+    'dependencies',
+    'tuple',
+    'numeric-id',
+    'empty-id',
+  ] as const) {
     const schema = schemaChain(kind)
-    expect(schemaProblem(schema)).toBe('schema-expansion')
-    expect(definitionProblem({ inputSchema: schema })).toBe('schema-expansion')
+    const expected = kind === 'numeric-id' ? 'invalid-id' : 'schema-expansion'
+    expect(schemaProblem(schema)).toBe(expected)
+    expect(definitionProblem({ inputSchema: schema })).toBe(expected)
   }
   expect(schemaProblem({ $ref: '#missing' })).toBe('invalid-ref')
   expect(schemaProblem({ $recursiveRef: '#missing' })).toBe('invalid-ref')
+})
+
+it('03 验收 32: a present id must resolve to a nonempty string using $id || id', () => {
+  for (const schema of [{ $id: 123 }, { $id: '' }, { id: null }, { $id: false }, { id: 0 }])
+    expect(schemaProblem(schema, false)).toBe('invalid-id')
+  expect(schemaProblem({ $id: '', id: 'https://e.test/x', $ref: '#' })).toBeNull()
 })

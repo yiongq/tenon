@@ -81,7 +81,11 @@ export function compactionCut(
 export function roughTokens(value: unknown): number {
   return Math.ceil(JSON.stringify(value).length / COMPACT_CHARS_PER_TOKEN)
 }
-export function estimateInput(entries: readonly TapeEntry[], request: ProviderRequest): number {
+export function estimateInput(
+  entries: readonly TapeEntry[],
+  request: ProviderRequest,
+  pendingContent: readonly unknown[] = [],
+): number {
   const anchorId = latestAnchor(entries)?.entryId ?? -1
   const latest = entries.findLast(
     (e) =>
@@ -111,5 +115,6 @@ export function estimateInput(entries: readonly TapeEntry[], request: ProviderRe
           e.name === 'tool/result'),
     )
     .map((e) => e.payload['content'])
+  added.push(...pendingContent)
   return input + usage.outputTokens + (added.length === 0 ? 0 : roughTokens(added))
 }

@@ -25,7 +25,7 @@ const maps = new Set([
   'definitions',
   'dependentSchemas',
 ])
-const arrays = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems'])
+const arrays = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems', 'items'])
 const nestedQuantifier = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)[+*{]/
 const duplicateAlternative = /\(([^|()]+)\|\1\)[+*{]/
 function slowPattern(pattern: string): boolean {
@@ -110,8 +110,9 @@ export function schemaProblem(root: unknown, screen = true): string | null {
       let scope = base
       let localPath = path
       if (object(value)) {
-        const id = value['$id'] ?? value['id']
-        if (typeof id === 'string') {
+        const id = value['$id'] || value['id']
+        if ('$id' in value || 'id' in value) {
+          if (typeof id !== 'string' || id.length === 0) return 'invalid-id'
           const url = new URL(id, base)
           lookup.set(url.href, value)
           if (!url.hash) {
@@ -141,10 +142,19 @@ export function schemaProblem(root: unknown, screen = true): string | null {
       for (const key of ['$ref', '$recursiveRef']) {
         const ref = value[key]
         if (typeof ref !== 'string') continue
-        const url = new URL(ref, bases.get(value))
+        let url: URL
+        try {
+          url = new URL(ref, bases.get(value))
+        } catch {
+          if (!screen) continue
+          return ref.startsWith('#') ? 'invalid-ref' : 'external-ref'
+        }
         if (url.hash === '') url.hash = ''
         const uri = url.href
-        if (!lookup.has(uri)) return screen && !ref.startsWith('#') ? 'external-ref' : 'invalid-ref'
+        if (!lookup.has(uri)) {
+          if (!screen) continue
+          return !ref.startsWith('#') ? 'external-ref' : 'invalid-ref'
+        }
         if (!refs.has(uri)) pending.push({ value: lookup.get(uri), refs: new Set([...refs, uri]) })
       }
       if (screen && typeof value['pattern'] === 'string' && slowPattern(value['pattern']))
