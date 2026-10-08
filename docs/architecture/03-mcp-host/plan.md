@@ -49,7 +49,7 @@
 
 ### 第一段：kernel（`feat/03-seg1`）
 
-- [ ] 1. SDK 升级（spec §SDK 升级；T2、T4、T44）
+- [x] 1. SDK 升级（spec §SDK 升级；T2、T4、T44）
   - 文件：`packages/kernel/package.json`（`@modelcontextprotocol/client` 2.0.0 → 2.3.1；devDependencies 加 `@modelcontextprotocol/server` 2.3.1、`@modelcontextprotocol/node` 2.1.1；server-everything 不动）、`pnpm-lock.yaml`、编译不过的调用点（只做类型适配，不改行为）。新测试 `packages/kernel/test/mcp/sdk-upgrade.test.ts`。
   - 覆盖：验收 1。
   - 测试：「03 验收 1: the kernel depends on @modelcontextprotocol/client 2.3.1 and server-everything 2026.8.31」（用 `createRequire` 读两个包的 package.json）。K/mcp/everything.test.ts、everything-table.test.ts、fixture-server.test.ts 一行不改照过。
@@ -296,6 +296,8 @@
 
 ## 实施记录
 
+- **2026-10-08 · 第 1 步 · `feat/03-seg1`**：client/core 2.3.1，测试依赖 server 2.3.1、node 2.1.1；Everything 2026.8.31 不动，调用点无类型适配，打包方式不变。lockfile 46 行增加、9 行删除。U MCP：4 文件 / 12 测试通过；G：format、lint、typecheck 通过，全套 185 文件 / 3558 测试通过、2 文件 / 2 测试跳过；build 通过。全套需允许本机回环服务器，沙箱下模型选择用例曾超时，允许回环后单独 29 测试和全套通过。突变：临时改 Client 为 auto，fixture-server 的 2025 协商断言及对应 loop 用例红；恢复后 5 测试通过。
+
 （每步完成时追加：日期、分支与提交、做法、改了什么、评审修补、留给后面的、实测（命令与结果、测试数）、突变结果。）
 
 ## 验收记录
@@ -303,6 +305,15 @@
 （第 23 步填。）
 
 ## 交接
+
+- **2026-10-08 · 第 1 步完成 / 第 2 步前卡住**
+  - 分支：`feat/03-seg1`，从 dev `16068ca` 开出。改动仅 kernel package.json、pnpm-lock.yaml、SDK 版本回归测试及本 plan；没有半成品生产代码。
+  - 做完的：第 1 步，03 验收 1；旧 MCP 测试保持原样通过。
+  - 门禁：G 绿（3558 测试通过、2 跳过）；build 绿；P 未跑（尚未改提示层）；E 不适用。
+  - 突变：Client auto 导致旧代协商断言红；恢复后 5 用例绿。
+  - 给审查者：核对 Open 中冻结 definitionHash 的持久化缺口。spec 尚未有这部分代码依赖，可由 owner / lead 在 ready spec 的 Revisions 记录补充。
+  - 给 owner：第 9a 步按用户要求跳过，等 lead 跑；不合并 PR。
+  - 下一步：先补上述契约与旧表兼容规则，再从第 2 步开始，继续到第 9 步。
 
 模板（每次停下都加一条，最新的在上）：
 
@@ -317,6 +328,10 @@
   - 下一步：第 N+1 步
 
 ## Open
+
+- **2026-10-08 · 第一段阻塞：冻结定义哈希的持久化契约缺失。** spec §三态、第 3 层与第 6 层、§对 02 的修补 5 要求把冻结项的 `definitionHash` 交给 `userSetting`；§定义钉住 / 读法 54 定义该哈希包含 `outputSchema`，并明确它不在 `ToolSpec` 中。但现有 `ToolTableItem`（`packages/kernel/src/tools/registry.ts`）、`ToolTablePayload.tools[]`（`packages/kernel/src/tape/entry.ts`）、`toolTableFacts` / `rebuildToolTable`（`packages/kernel/src/tools/table.ts`）都没有保存或恢复这个哈希。Tape 仅有 `specHash`、`requiresUserInteraction`；同一 spec 配两份不同 outputSchema 会有不同 definitionHash，却产生相同的现有工具表事实，恢复、续跑时无法还原冻结值。不能用当前 config pin 或池的实时哈希替代，否则定义变化会覆盖冻结依据，违反 03 不变量 6、8 和 02 的 Tape 恢复规则。
+  - **需 owner / lead 补进 spec 的决定**：冻结哈希放进哪项 Tape 载荷及内存项（建议给 `ToolTablePayload.tools[]` 和 `ToolTableItem` 只增可选 `definitionHash`，开表保存、重建原样恢复）；03 之前已有冻结表没有该字段时的第 3 / 6 层行为（建议不可授予 always-allow，仍可每次审批）；相应类型契约修补与恢复回归验收。这两项在当前 spec 的 Tape 表、对 02 的修补和第 2 / 8 步中未写定。未自行改 spec 或实现这个设计。
+- **2026-10-08 · 用户指令**：第 9a 步跳过，由 lead 跑；第一段 PR 描述必须写「等 lead 跑」，本次不合并。
 
 - spec `draft`：owner 过目 §推出的读法 59 条、确认 §开放问题 并把 Status 改为 `ready` 之前不开工。
 - 开放问题 1 已定（2026-10-08）：CIMD 地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`，托管文件与发布工作流已在仓库，不挡开工。
