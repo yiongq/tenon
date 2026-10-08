@@ -132,7 +132,11 @@ export function mcpExecutor(source: McpToolSource): ToolExecutor {
           error instanceof McpUnauthorizedError ? 'connector-unauthorized' : 'tool-unavailable'
         return {
           state: 'not-run',
-          content: [],
+          content:
+            error instanceof McpServerUnavailableError &&
+            error.reason === MODEL_NOTES.schemaUnusable
+              ? [{ type: 'text', text: MODEL_NOTES.schemaUnusable }]
+              : [],
           isError: true,
           source: failureSource,
           kernelAuthored: true,

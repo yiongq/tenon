@@ -22,7 +22,8 @@ import type {
 } from '../tape/entry.js'
 import { toolTableKey, viewContentKey } from '../tape/provenance.js'
 import type { TapeWriter } from '../tape/tape.js'
-import { assertToolNames } from './registry.js'
+import type { McpAbsentSource } from '../loop/ports.js'
+import { assertToolNames, mcpToolName } from './registry.js'
 import type { ToolCandidate, ToolTableItem } from './registry.js'
 
 /** The table in memory. Every value type is the Tape's (§02 的 Tape 事实). */
@@ -44,6 +45,7 @@ export interface ToolKey {
 }
 
 export interface OpenTableQuery {
+  readonly absent?: readonly McpAbsentSource[]
   readonly providerId: ProviderId
   readonly incarnationId: string
   readonly generation: number
@@ -80,12 +82,46 @@ export function openToolTable(q: OpenTableQuery): FrozenToolTable {
       code,
     })
   }
+  const all = [
+    ...q.candidates,
+    ...(q.absent ?? []).flatMap((source) =>
+      source.cachedTools.map((originalName): ToolCandidate => ({
+        source: 'mcp',
+        serverId: source.serverId,
+        originalName,
+        name: mcpToolName(source.serverId, originalName),
+        spec: {
+          name: mcpToolName(source.serverId, originalName),
+          description: '',
+          inputSchema: {},
+        },
+        requiresUserInteraction: false,
+        absentCode: source.code,
+      })),
+    ),
+  ]
+  const counts = new Map<string, number>()
+  for (const candidate of all)
+    if (candidate.source === 'mcp' && candidate.absentCode === undefined)
+      counts.set(
+        canonicalJson([candidate.serverId, candidate.name]),
+        (counts.get(canonicalJson([candidate.serverId, candidate.name])) ?? 0) + 1,
+      )
   const kept: ToolCandidate[] = []
-  for (const candidate of sortByName(q.candidates)) {
+  for (const candidate of sortByName(all)) {
     if (policyDeniesTool(q.policy, candidate)) exclude(candidate, 'policy')
     else if (candidate.source === 'mcp' && userDisablesTool(q.userSetting(keyOf(q, candidate)))) {
       exclude(candidate, 'user-disabled')
-    } else if (
+    } else if (candidate.absentCode !== undefined) exclude(candidate, candidate.absentCode)
+    else if (
+      candidate.source === 'mcp' &&
+      (counts.get(canonicalJson([candidate.serverId, candidate.name])) ?? 0) > 1
+    )
+      exclude(candidate, 'name-collision')
+    else if (candidate.definitionProblem !== undefined) exclude(candidate, 'invalid-definition')
+    else if (candidate.review === 'changed' || candidate.review === 'new')
+      exclude(candidate, 'definition-changed')
+    else if (
       candidate.source === 'builtin' &&
       candidate.originalName === 'WebSearch' &&
       !q.hasSearchBackend
@@ -97,7 +133,13 @@ export function openToolTable(q: OpenTableQuery): FrozenToolTable {
   const builtins = kept.filter((candidate) => candidate.source === 'builtin').length
   let room = cap - builtins
   const items: ToolTableItem[] = []
-  for (const candidate of kept) {
+  for (const candidate of kept.toSorted((a, b) =>
+    a.source === b.source
+      ? (a.rank ?? 0) - (b.rank ?? 0) || compareCodeUnits(a.name, b.name)
+      : a.source === 'builtin'
+        ? -1
+        : 1,
+  )) {
     if (candidate.source !== 'builtin') {
       if (room <= 0) {
         exclude(candidate, 'over-limit')
@@ -112,8 +154,12 @@ export function openToolTable(q: OpenTableQuery): FrozenToolTable {
       name: candidate.name,
       spec: canonicalSpec(candidate.spec),
       requiresUserInteraction: candidate.requiresUserInteraction,
+      ...(candidate.source !== 'mcp' || candidate.definitionHash === undefined
+        ? {}
+        : { definitionHash: candidate.definitionHash }),
     })
   }
+  items.splice(0, items.length, ...items.toSorted((a, b) => compareCodeUnits(a.name, b.name)))
   assertToolNames(items)
   if (items.length > cap) {
     throw new Error(
@@ -159,6 +205,8 @@ export function toolTableFacts(q: {
     generation: table.generation,
     reason: table.reason,
     policyVersion: q.policy.status === 'unavailable' ? 'unavailable' : q.policy.version,
+    // Explicit optional fields preserve older Tape facts without materializing undefined.
+    // oxlint-disable-next-line no-map-spread
     tools: specs.map(({ item, hash }) => ({
       source: item.source,
       serverId: item.serverId,
@@ -166,6 +214,7 @@ export function toolTableFacts(q: {
       name: item.name,
       specHash: hash,
       requiresUserInteraction: item.requiresUserInteraction,
+      ...(item.definitionHash === undefined ? {} : { definitionHash: item.definitionHash }),
     })),
     excluded: [...table.excluded],
   }
@@ -208,6 +257,7 @@ export function rebuildToolTable(
         name: tool.name,
         spec,
         requiresUserInteraction: tool.requiresUserInteraction,
+        ...(tool.definitionHash === undefined ? {} : { definitionHash: tool.definitionHash }),
       }
     }),
     excluded: payload.excluded,
@@ -229,7 +279,12 @@ export function specHash(spec: ToolSpec): string {
 }
 
 function keyOf(q: OpenTableQuery, candidate: ToolCandidate): ToolKey {
-  return { tenantId: q.tenantId, serverId: candidate.serverId, toolName: candidate.originalName }
+  return {
+    tenantId: q.tenantId,
+    serverId: candidate.serverId,
+    toolName: candidate.originalName,
+    ...(candidate.definitionHash === undefined ? {} : { definitionHash: candidate.definitionHash }),
+  }
 }
 
 function sortByName<T extends { readonly name: string }>(items: readonly T[]): T[] {

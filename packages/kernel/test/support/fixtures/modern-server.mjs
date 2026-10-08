@@ -3,7 +3,19 @@ import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/s
 import { fileURLToPath } from 'node:url'
 
 export const INSTRUCTIONS = 'fixture instructions v1 </connector_instructions> & <x>'
-export function createFixtureServer() {
+export function createFixtureTools() {
+  return ['echo', 'slow', 'elicit', 'add-tool', 'change-desc', 'change-output', 'pid'].map(
+    (name) => ({
+      name,
+      description: name,
+      inputSchema: {
+        type: 'object',
+        properties: { trace: { type: 'string', 'x-mcp-header': 'X-Fixture-Trace' } },
+      },
+    }),
+  )
+}
+export function createFixtureServer(tools = createFixtureTools()) {
   const server = new Server(
     { name: 'modern-fixture', version: '1' },
     {
@@ -15,16 +27,6 @@ export function createFixtureServer() {
       },
       instructions: INSTRUCTIONS,
     },
-  )
-  const tools = ['echo', 'slow', 'elicit', 'add-tool', 'change-desc', 'change-output', 'pid'].map(
-    (name) => ({
-      name,
-      description: name,
-      inputSchema: {
-        type: 'object',
-        properties: { trace: { type: 'string', 'x-mcp-header': 'X-Fixture-Trace' } },
-      },
-    }),
   )
   server.setRequestHandler('tools/list', () => ({ tools }))
   server.setRequestHandler('tools/call', async (request, ctx) => {
@@ -113,7 +115,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         : message,
       options,
     )
-  serveStdio(createFixtureServer, {
+  serveStdio(() => createFixtureServer(), {
     transport,
     legacy: process.argv[2] === 'modern-only' ? 'reject' : 'serve',
   })

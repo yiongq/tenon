@@ -33,7 +33,7 @@ import type { ModelInfo, Provider, ProviderErrorCode, ProviderId } from '../prov
 import { assertModelBelongs } from '../provider/wire/shared.js'
 import { canonicalJson } from '../tape/canonical-json.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
-import { MODEL_NOTES } from '../prompts/index.js'
+import { MODEL_NOTES, fill } from '../prompts/index.js'
 import type {
   AppendResult,
   ApprovalResolvedPayload,
@@ -75,6 +75,7 @@ import type {
 import type { SessionEvent } from './events.js'
 import type {
   LoopPorts,
+  McpToolSource,
   ModelChoice,
   QueuedMessage,
   RunAssembly,
@@ -2225,6 +2226,7 @@ export function createLoop(deps: LoopDeps): Loop {
       let failure: unknown = null
       try {
         const built = await setup()
+        const dispatchSources = [...built.assembly.mcpSources]
         const child = (await readSessionFacts(tape, sessionId)).subagentOf !== null
         finished = await driveRun({
           tape,
@@ -2242,7 +2244,7 @@ export function createLoop(deps: LoopDeps): Loop {
           effort: built.effort,
           toolsWithheld: built.assembly.toolsWithheld,
           search: built.assembly.search,
-          mcpSources: built.assembly.mcpSources,
+          mcpSources: dispatchSources,
           commandShell: ports.commandShell,
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
@@ -2321,7 +2323,14 @@ export function createLoop(deps: LoopDeps): Loop {
                 }),
               }
             }
-            return openTable(incarnationId, assembly, built.profile, q)
+            return openTable(
+              incarnationId,
+              { ...assembly, mcpSources: dispatchSources },
+              built.profile,
+              q,
+              sessionId,
+              lease.signal,
+            )
           },
           // A write task that finds its lease aborted writes no decision, no dispatch and no closure
           // of a call found unusable (§主进程与 kernel 的循环接口「mailbox」): the batch closes the
@@ -2814,7 +2823,16 @@ export function createLoop(deps: LoopDeps): Loop {
     assembly: RunAssembly,
     profile: Profile,
     q: { providerId: string; generation: number; reason: 'first-use' | 'after-compaction' },
-  ): Promise<{ table: FrozenToolTable; policy: PolicyState }> {
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<{ table: FrozenToolTable; policy: PolicyState; facts: readonly NewEntry[] }> {
+    const selected =
+      assembly.mcpTable === undefined
+        ? { sources: assembly.mcpSources, absent: [] }
+        : await assembly.mcpTable(signal)
+    const dispatch = assembly.mcpSources as McpToolSource[]
+    for (const source of selected.sources)
+      if (!dispatch.some((old) => old.serverId === source.serverId)) dispatch.push(source)
     const policy = deps.host.policy.current()
     const candidates = [
       ...builtinCandidates({
@@ -2822,7 +2840,7 @@ export function createLoop(deps: LoopDeps): Loop {
         available: deps.builtinAvailable,
         search: assembly.search,
       }),
-      ...(await mcpCandidates(assembly.mcpSources)),
+      ...(await mcpCandidates(selected.sources)),
     ]
     const table = openToolTable({
       providerId: q.providerId,
@@ -2830,13 +2848,65 @@ export function createLoop(deps: LoopDeps): Loop {
       generation: q.generation,
       reason: q.reason,
       candidates,
+      absent: selected.absent,
       policy,
       tenantId: deps.host.identity.tenantId,
       userSetting: deps.userSetting,
       hasSearchBackend: assembly.search !== null,
       toolsPerRequest: toolsPerRequest(q.providerId),
     })
-    return { table, policy }
+    const entries = await readSessionEntries(tape, sessionId)
+    const anchor = entries.findLast((entry) => entry.name === 'compaction/anchor')?.entryId ?? 0
+    const facts: NewEntry[] = []
+    for (const source of selected.sources) {
+      const instructions = source.instructions
+      if (
+        !instructions ||
+        (q.reason !== 'after-compaction' &&
+          entries.some(
+            (entry) =>
+              entry.entryId > anchor &&
+              entry.name === 'message/server_instructions' &&
+              entry.payload['serverId'] === source.serverId &&
+              entry.payload['instructionsHash'] === instructions.hash,
+          ))
+      )
+        continue
+      const messageId = ids.uuid()
+      const codepoints = Array.from(instructions.text)
+      const json = JSON.stringify(codepoints.slice(0, 2048).join(''))
+        .replaceAll('<', '\\u003c')
+        .replaceAll('>', '\\u003e')
+        .replaceAll('&', '\\u0026')
+      facts.push(
+        messageSlice.entry('message/server_instructions', {
+          sourceType: 'message',
+          sourceId: messageId,
+          sourceSeq: 0,
+          provenanceKey: messageRevisionKey(messageId, 0),
+          payload: {
+            messageId,
+            revision: 0,
+            role: 'user',
+            status: 'complete',
+            serverId: source.serverId,
+            instructionsHash: instructions.hash,
+            truncated: codepoints.length > 2048,
+            content: [
+              {
+                type: 'text',
+                text: fill(MODEL_NOTES.serverInstructions, {
+                  serverId: source.serverId,
+                  instructions: json,
+                }),
+              },
+            ],
+          },
+          createdAt: now(),
+        }),
+      )
+    }
+    return { table, policy, facts }
   }
 
   /**
@@ -3391,6 +3461,9 @@ export function createLoop(deps: LoopDeps): Loop {
             )
       return {
         waitKind: 'approval',
+        ...(waiting.decision.definitionChanged === undefined
+          ? {}
+          : { definitionChanged: waiting.decision.definitionChanged }),
         card,
         callKey,
         // A sub-agent's card hangs under the parent's Agent call (plan step 31); a root's under its own.

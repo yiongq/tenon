@@ -72,7 +72,7 @@ export interface McpConnection {
   readonly client: Client
   readonly serverVersion: ReturnType<Client['getServerVersion']>
   readonly protocolVersion: string | undefined
-  listTools(): Promise<McpToolList>
+  listTools(options?: McpCallOptions): Promise<McpToolList>
   callTool(
     name: string,
     args: Record<string, unknown>,
@@ -282,8 +282,10 @@ function connected(
     get instructions() {
       return client.getInstructions() ?? ''
     },
-    async listTools() {
-      return (await client.listTools(undefined, { cacheMode: 'refresh' })).tools
+    async listTools(options) {
+      return (
+        await client.listTools(undefined, { ...requestOptions(options), cacheMode: 'refresh' })
+      ).tools
     },
     callTool(name, args, options) {
       return callWithDeadline(client, name, args, options)

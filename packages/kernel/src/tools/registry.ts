@@ -71,6 +71,11 @@ export function mcpToolName(serverId: string, originalName: string): string {
 
 /** One tool as a table may take it: where it is from, the spec under its provider name, D12's flag. */
 export interface ToolCandidate extends ToolOrigin {
+  readonly definitionHash?: string
+  readonly rank?: number
+  readonly review?: 'ok' | 'changed' | 'new'
+  readonly definitionProblem?: string
+  readonly absentCode?: 'connector-unauthorized' | 'connector-unavailable'
   readonly name: string
   readonly spec: ToolSpec
   readonly requiresUserInteraction: boolean

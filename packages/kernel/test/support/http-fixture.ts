@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createMcpHandler } from '@modelcontextprotocol/server'
-import { createFixtureServer } from './fixtures/modern-server.mjs'
+import { createFixtureServer, createFixtureTools } from './fixtures/modern-server.mjs'
 
 export interface HttpFixtureOptions {
   era?: 'modern' | 'legacy' | 'probe-204' | 'probe-non-json'
@@ -29,7 +29,8 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
   let opts = { ...initial }
   const requests: FixtureRequest[] = []
   const cancelledRequests: unknown[] = []
-  const modern = createMcpHandler(createFixtureServer, { legacy: 'reject' })
+  const sharedTools = createFixtureTools()
+  const modern = createMcpHandler(() => createFixtureServer(sharedTools), { legacy: 'reject' })
   const pending = new Map<unknown, { timer: ReturnType<typeof setTimeout>; res: ServerResponse }>()
   const legacyTools = [
     'echo',

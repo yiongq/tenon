@@ -163,7 +163,7 @@ export interface RunDriverContext {
     providerId: string
     generation: number
     reason: 'first-use' | 'after-compaction'
-  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState; facts?: readonly NewEntry[] }>
   /**
    * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
    * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
@@ -531,6 +531,16 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
         // oxlint-disable-next-line no-await-in-loop -- assemble other providers outside the mailbox, under this lease
         const fresh = await ctx.openTable({ providerId, generation, reason: 'after-compaction' })
         tableFacts.push(
+          ...(fresh.facts ?? []).filter(
+            (fact) =>
+              fact.name !== 'message/server_instructions' ||
+              !tableFacts.some(
+                (old) =>
+                  old.name === fact.name &&
+                  old.payload['serverId'] === fact.payload['serverId'] &&
+                  old.payload['instructionsHash'] === fact.payload['instructionsHash'],
+              ),
+          ),
           ...toolTableFacts({
             view: tape.writer('view'),
             sessionId: ctx.sessionId,
@@ -559,7 +569,12 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
             payload,
             createdAt: ctx.now(),
           }),
-          ...new Map(tableFacts.map((fact) => [fact.provenanceKey, fact])).values(),
+          ...new Map(
+            tableFacts
+              .filter((fact) => fact.name !== 'message/server_instructions')
+              .map((fact) => [fact.provenanceKey, fact]),
+          ).values(),
+          ...tableFacts.filter((fact) => fact.name === 'message/server_instructions'),
         ])
       } catch (error) {
         // A stop that reached the anchor's write task first: no anchor, the history unchanged, and
@@ -684,6 +699,15 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       locale: ctx.locale,
     })
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
+    const hasInstructions = assembled.facts.some(
+      (fact) => fact.name === 'message/server_instructions',
+    )
+    if (hasInstructions) {
+      // oxlint-disable-next-line no-await-in-loop -- publish the opening and its messages together before replay
+      await write(assembled.facts)
+      recordAssembly(state, assembled)
+    }
+    // oxlint-disable-next-line no-await-in-loop -- replay follows the committed opening messages
     const messages = await pairedContext(ctx, assembled.table, pin, write, () => pin)
     let request: ProviderRequest = {
       model: ctx.model,
@@ -752,8 +776,11 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     const contextAtEntryId = pin
     // The content first, then the manifest, then the bytes leave, then the attempt (A3).
     // oxlint-disable-next-line no-await-in-loop -- the content before the manifest before the bytes (A3)
-    await write(assembled.facts)
-    recordAssembly(state, assembled)
+    if (!hasInstructions) {
+      // oxlint-disable-next-line no-await-in-loop -- one manifest per request
+      await write(assembled.facts)
+      recordAssembly(state, assembled)
+    }
 
     const advice = provider.retryAdvice()
     const resends = Math.max(0, Math.min(advice.maxAttempts - 1, RETRY_CAP))
@@ -1290,6 +1317,15 @@ export function notRunView(source: ClosureSource, entries: readonly NewEntry[]):
     effect: 'blocked',
     state: 'not-run',
     source,
+    ...(entries.find((entry) => entry.name === 'execution/tool_outcome')?.payload[
+      'reversibility'
+    ] === undefined
+      ? {}
+      : {
+          reversibility: entries.find((entry) => entry.name === 'execution/tool_outcome')!.payload[
+            'reversibility'
+          ] as NonNullable<ToolOutcomeView['reversibility']>,
+        }),
     output: content.map((block) => block.text ?? '').join('\n'),
   }
 }
@@ -1460,6 +1496,7 @@ function recordAssembly(state: ViewState, assembled: AssembledRequest): void {
         name: item.name,
         specHash: specHash(item.spec),
         requiresUserInteraction: item.requiresUserInteraction,
+        ...(item.definitionHash === undefined ? {} : { definitionHash: item.definitionHash }),
       })),
       excluded: [...table.excluded],
     }
@@ -1567,7 +1604,7 @@ export interface AssembleQuery {
     providerId: string
     generation: number
     reason: 'first-use' | 'after-compaction'
-  }) => Promise<{ table: FrozenToolTable; policy: PolicyState }>
+  }) => Promise<{ table: FrozenToolTable; policy: PolicyState; facts?: readonly NewEntry[] }>
   /** The session's profile (`session/profile_set`): which of the two system prompts (H1). */
   readonly profile: Profile
   /** The interface language, read only when the system text is assembled. */
@@ -1617,6 +1654,7 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
   const stored = q.state.tables.get(tableKey)
   let table: FrozenToolTable
   let opened = false
+  let openingFacts: readonly NewEntry[] = []
   if (stored === undefined) {
     const fresh = await q.openTable({
       providerId,
@@ -1624,6 +1662,7 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
       reason: 'first-use',
     })
     table = fresh.table
+    openingFacts = fresh.facts ?? []
     opened = true
     facts.push(
       ...toolTableFacts({ view, sessionId: q.sessionId, table, policy: fresh.policy, now: q.now }),
@@ -1672,7 +1711,7 @@ export async function assembleRequest(q: AssembleQuery): Promise<AssembledReques
     table,
     opened,
     sent,
-    facts,
+    facts: [...facts, ...openingFacts],
     assemblyRef,
   }
 }

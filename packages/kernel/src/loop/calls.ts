@@ -99,6 +99,7 @@ function viewOf(
     effect: outcome.effect,
     state: outcome.state,
     source: outcome.source,
+    ...(outcome.reversibility === undefined ? {} : { reversibility: outcome.reversibility }),
     ...(outcome.facts === undefined ? {} : { facts: { ...outcome.facts } }),
     output: textOf(result.content),
     ...(decision === undefined ? {} : { permission: decision.summary }),

@@ -109,7 +109,7 @@
   - 突变：① `buildStdioEnv` 先 `...base` 再叠 → 两条都红；② 去掉 `LC_` 前缀 → 「03 验收 6」红；③ 不拆多行机密 → 「03 验收 27 (multi-line)」红。
   - 完成：G 绿。
 
-- [ ] 6. 定义哈希与 schema 加固（实现、测试与突变完成；lead 砍法检查点待判）（spec §定义的上限与 schema 加固、§定义钉住「定义哈希」；T23 ②③④⑤⑥）
+- [x] 6. 定义哈希与 schema 加固（spec §定义的上限与 schema 加固、§定义钉住「定义哈希」；T23 ②③④⑤⑥）
   - 文件：新 `packages/kernel/src/mcp/definition.ts`：`mcpDefinitionHash(tool)`（照 spec 的式子，含 outputSchema）、`definitionProblem(tool)`（描述 + inputSchema + outputSchema 超 65 536 字节、任一 schema 超 32 层、`$ref` 展开超 10 000 个子 schema、outputSchema 里的慢正则与外部 `$ref`）、`toolsOverLimit(list)`（1000 个或 5 MiB）。`packages/kernel/src/tools/validate.ts`：inputSchema 的慢正则初筛（spec 列的两条式子与 1024 字符）与非 `#` 开头的 `$ref`，都按现有 `schemaUnusable` 收口；`$ref` 展开计数在构造校验器之前做。
   - 覆盖：验收 32（判定函数）、33 ④⑤。
   - 测试：新 `packages/kernel/test/mcp/definition.test.ts`：哈希对键序稳定、改描述、outputSchema 或 requiresUserInteraction 就变；64 KB / 32 层边界各一（65 536 字节不排、65 537 排；32 层不排、33 层排；outputSchema 同样）；「03 验收 32: a 40-link $ref chain is invalid-definition within 100 ms」与 10 000 / 10 001 的边界；1000 / 1001 个、5 MiB 边界。`packages/kernel/test/tools/validate.test.ts` 加「03 验收 33: a nested-quantifier pattern, a 1025-character pattern and an external $ref are schemaUnusable」与一个正常 pattern 不受影响。
@@ -139,7 +139,7 @@
   - 突变：① 第 2 次崩溃等待改成 1 s → 「03 验收 3」红；② 重启前不调 `runtimeOf` → 「03 验收 3」红；③ 首次握手超时恒为 30 s → 「03 验收 2」红；④ `tableSources` 不等 → 「03 验收 29 (pool)」红；⑤ 已连接时的 429 也让整台出错 → 「03 验收 14」红；⑥ 等待只看 `firstConnect` → 「…a call during a reconnect handshake…」红；⑦ 不监听 resources 的 list_changed → 「03 验收 39 (Everything)」红。
   - 完成：G 绿；实施记录写开放问题 5 的观察。
 
-- [ ] 8. 工具表、判决与收口（spec §开表排除、§超上限裁剪、§命名与撞名、§三态 的 kernel 部分、§定义钉住、§开表与调用时的等待、§server 说明；T16、T19、T22、T23 ②⑥、T47、T48、Q10 的收口、Q11-2、Q14、Q4-2）
+- [x] 8. 工具表、判决与收口（spec §开表排除、§超上限裁剪、§命名与撞名、§三态 的 kernel 部分、§定义钉住、§开表与调用时的等待、§server 说明；T16、T19、T22、T23 ②⑥、T47、T48、Q10 的收口、Q11-2、Q14、Q4-2）
   - 文件：`packages/kernel/src/tools/table.ts`（开表把候选的 `definitionHash` 写进 MCP 项与 `view/tool_table` 的 `tools[]`、`rebuildToolTable` 原样恢复（spec §对 02 的修补 15）、缺席来源的缓存工具、撞名、`invalid-definition`、`review` 给的 `definition-changed`、排除顺序照 spec 九条、超上限按（rank，映射名）裁）；`tools/mcp-source.ts`（候选带 rank、review、从原始定义算的定义哈希与 `definitionProblem`）；`loop/batch.ts`（查第 3、6 层时带冻结项的 `definitionHash`（恢复的表同样；缺就不带，userSetting 按 spec 读法 61 不给总是允许）；`definitionChanged` 抄进判决事实；executor 交来的 `source` 照收口）；`loop/mailbox.ts`（`openTable` 有 `assembly.mcpTable` 时调它并传本次 Run 的 signal，候选取它的 `sources`、缺席取 `absent`，`sources` 里 `mcpSources` 没有的 serverId 补进本 Run 的派发来源（spec 读法 60），没有时照旧；构造待批时 `definitionChanged` 从判决取，mailbox.ts:3393-3412）；`loop/calls.ts`、`loop/batch.ts`、`loop/run.ts` 的工具结果视图填 `reversibility`（calls.ts:92、batch.ts:947、run.ts:1286）；收口文本取第 2 步的新键。
     - 8b（砍法 ① 时跳过）：`loop/mailbox.ts` 开表时按来源 `instructions` 追加 `message/server_instructions`（同批、上下文去重、压缩后补写、`<`、`>`、`&` 转义）。
   - 覆盖：验收 3（loop 部分）、21（kernel，用假来源抛 `McpUnauthorizedError`）、29（loop 部分）、30（loop 部分）、31、32 ②⑥、34、35（kernel）、36（kernel）、38（kernel）、42；03 不变量 6、7、9、11、12、19、20。
@@ -296,6 +296,21 @@
 
 ## 实施记录
 
+- **第 7–9 步合入新契约前 G**：format:check / lint / typecheck 绿；全套 195 文件 / 3654 测试通过、2 文件 / 2 测试跳过。第 8 步完成；第 7、9 步待合 PR #32 / #33 后补齐，9a 等 lead 跑。
+
+- **2026-10-08 · 第 7–9 步独立部分**：连接池、应用级代理、缓存、沙箱启动、120 s 首连、等待与重连、1/2 s 崩溃重启和 1/2/4/8/16 s 网络退避、429 分流、只读断流新 id 重发、outputSchema 调用前拒绝已实现。工具表按同台候选算撞名、按 rank 裁剪，冻结 definitionHash 跨 Tape 恢复；三态、待批 definitionChanged、未执行收口、结果 reversibility 与 server 说明（同批、JSON 包装、转义、去重、压缩后补写）已接入。OAuth 分片、互斥锁、PKCE / iss、DCR / CIMD / 已绑定自带 client、最小非交互 AuthProvider、并发刷新合一、登录恢复同代理、取消、跨源静态头保护已实现。第 7 步崩溃尾巴与第 9 步启动 issuer / 首次自带 issuer 写回按 Open 暂缺；dev 已收到 PR #32 / #33，当前改动提交后合入并补齐，不在这里停止。
+- **第 7–9 步突变**：7 的七项、8 的九项、9 的八项均已逐项实施。7④“不等待”与 8⑧“重绘不填 reversibility”首次未红，补“截止前尚未返回”的宏任务断言与 Tape 重绘行断言后均红；7⑥ 同样补强后由重连到达时限例抓住。9⑥ 拆为两处保护：删除令牌写入锁使并发写的第二代完整组断言红；删除刷新 Promise 复用使并发 401 的单次刷新断言红（单删锁不会绕过 Promise 合一）。其余突变各自所列回归均红，全部恢复后相关四文件 51 测试绿；后补冻结正文和 readOnlyHint 手动审批两例及旧跨台撞名例共 25 测试绿。合入新契约后补测与最终 G 另记。
+- **第 7 步开放问题 5 实测**：Everything 2026.8.31 的 `getServerCapabilities()` 实际声明 `tools: { listChanged: true }`；用 data URI 调 `gzip-file-as-resource` 后 300 ms 内收到 tools 的 list_changed 1 次，工具数前后均 13。和 plan 的“不声明能力”假设不同，记录实际结果、不加工具通知断言；resources list_changed 的池快照回归有持久断言。临时观察探针在仓库外，收尾删除。
+
+lead 第 6 步检查点结论（2026-10-08）：不砍。
+已用约 1 个工作日（第 1–6 步当天完成，依据 feat/03-seg1 的提交时间）；
+余下估计约 9 个工作日：第一段剩余 1、第二段 1.5、第三段 2、
+第四段 2.5（含 owner 的同题对比与 live OAuth）、lead 审查与 9a 共 2。
+合计约 10 < 15，砍法 ①②③④ 都不触发：7b 自动重启、8b server 说明、
+9b 与第 20 步 CIMD 全部保留。
+
+- **2026-10-08 · 用户后续指令**：后面各段 PR 的砍法检查由 lead 在审查时判，不用为它停下；9a 仍跳过。
+
 - **2026-10-08 · 第 4 步完成 · `feat/03-seg1`**：合入 dev PR #31（合并提交 `87cad8e`），Open 的总时限阻塞已解决。stdio / HTTP 共用连接层真实计时器，内部 AbortController 与调用方 signal 经 AbortSignal.any 合并，不传 SDK maxTotalTimeout；finally 清计时器。持续进度下总时限到点观察到 stdio cancelled，调用方 signal 未中止；HTTP 普通与总时限到点，旧代收到 cancelled、新代请求响应流被关闭且无 cancelled。补齐实际 notifications/message 日志、空 initialize capabilities、无 logging/setLevel / discover、SDK Mcp-Param-* 映射、Everything prompts/resources 与缺失资源、executor 实时信号和 completed 超时收口。HTTP 204 / 非 JSON 探测映射到 era-negotiation-failed。U MCP / executor 39 测试绿；新增第 6 步后最终 G：191 文件 / 3600 测试通过，2 文件 / 2 测试跳过；build 绿。七项突变均红→恢复后绿：executor signal、握手 timeout、CfWorker、交入 fetch、静态头跨源泄漏（删除同源限制，覆盖 requestInit.headers 式泄漏的行为）、改回 SDK 总时限、finally 不清计时器。原 fixture-server 02 断言未改。evals:gate 仍预期红：20 题缺提示层 10 的基线记录；9a 等 lead 跑，未使用真实 key。
 
 - **2026-10-08 · 第 5 步完成 · `feat/03-seg1`**：新增 env.ts，按白名单 / PATH / LC_ → envs → env_keys 覆盖；秘密完整值及 CR / LF 分行片段仅长度 ≥ 4 才脱敏，最长先替换、替换全部出现。U 3 测试绿；继承全部环境、删除 LC_、不拆多行三项突变均红→恢复后绿。最终 G 与 build 同第 4 步记录。
@@ -358,7 +373,11 @@
 
 ## Open
 
-- **2026-10-08 · 第 6 步 lead 检查点待判，挡第 7–9 步。** 第 6 步实现、回归、三项突变与 G / build 已完成；本 plan §砍法明确「lead 在两个时点判：第 6 步完成时（第 7、8、9 步开工之前）」与「估计由 lead 给，连同依据写进实施记录」。目前文件未提供已用 + 余下工作日估计、依据或保留 / 砍功能裁决；不能由实现者代 lead 编造。已请求 owner 提供 lead 判断，所需具体输入：工期估计与依据，以及自动重启 / server 说明 / CIMD 是否保留。按最新用户指令，先完成所有不依赖此项的第 4–6 步实现与验证；剩余第 7–9 步均受同一前置检查点影响，所以未开工，PR #29 保持 draft。用户可明确覆盖该流程；当前未自行变更 spec 架构或裁决。
+- **2026-10-08 · 第 7 步崩溃尾巴的状态契约缺口（先跳过这项，继续其余测试）**：验收 4 要「出错与崩溃时状态带最后 20 行、不超过 4 KB」，但 McpServerStatus 只有 error: { code: McpErrorCode; stderrTail: string } | null；McpErrorCode 没有崩溃码，重启 / crash-limit 停止时也没有无 code 的尾巴成员。需写定崩溃时尾巴放哪里（例如状态只增独立 stderrTail，或 error 允许崩溃专用码）；不能擅用 handshake-failed / network 冒充 stdio 崩溃。已实现并测试日志脱敏和出错时 error.stderrTail；崩溃时尾巴展示这项暂跳过，其余生命周期与第 8、9 步继续。
+
+- **2026-10-08 · 第 9 步部分契约缺口（先跳过受影响部分，继续独立实现）**：provider 无 ctx 的 tokens() 要取 config.oauth.issuers 的最后一项，但 §连接池接口 McpServerRuntime / McpOAuthRuntime 没有 issuers（缓存 oauth 只有发现时的原始 issuer，不等价于配置最后一次保存的组，不能替代）。同时首次自带 client 登录成功须写 ownClient.issuer（原始 issuer），池唯一回写 onIssuer(serverId, issuerHash) 只收哈希、只能登记账户 hash，无法回写原始 issuer；runtimeOf 也只返回缺这两项的 runtime。需明确 issuer 列表怎样交入 provider，以及自带 issuer 原文写回 callback / 契约。不能让 kernel 直接读写 desktop config.json 或从哈希反推原文。本次按用户要求：先做第 7、8 步和第 9 步不依赖此输入的令牌分片与 provider 部分；受影响的池 OAuth 启动恢复和自带 issuer 首次持久化暂不做，不先停下。
+
+- **2026-10-08 · 已解决（lead 2026-10-08）：第 6 步砍法检查点。** 第 6 步实现、回归、三项突变与 G / build 已完成；本 plan §砍法明确「lead 在两个时点判：第 6 步完成时（第 7、8、9 步开工之前）」与「估计由 lead 给，连同依据写进实施记录」。目前文件未提供已用 + 余下工作日估计、依据或保留 / 砍功能裁决；不能由实现者代 lead 编造。已请求 owner 提供 lead 判断，所需具体输入：工期估计与依据，以及自动重启 / server 说明 / CIMD 是否保留。按最新用户指令，先完成所有不依赖此项的第 4–6 步实现与验证；剩余第 7–9 步均受同一前置检查点影响，所以未开工，PR #29 保持 draft。lead 已给出不砍结论（原文见实施记录）；第 7–9 步前置条件已满足。后续各段 PR 的砍法检查由 lead 在审查时判，不为它停下。
 
 - **2026-10-08 · 已解决（PR #31）：SDK 总时限到达不取消调用，与验收 30 冲突。** 已按 §超时、取消与断流把 `timeout`、`signal`、`onprogress`、`resetTimeoutOnProgress`、`maxTotalTimeout` 原样交给 client 2.3.1。普通 stdio / legacy HTTP 超时与停止可以观察到 `notifications/cancelled`；新代 HTTP 停止不发该通知。真实 dual stdio 的 slow(ms=3000)，调用 timeout=180 ms、进度每 100 ms、resetTimeoutOnProgress=true、maxTotalTimeout=1800 ms：SDK 按总时限拒绝，但夹具继续执行，不出现 cancelled；原先在总时限测试末追加的 cancelled 断言等待 1 s 后红，撤掉探针后现有回归绿。
   - SDK 发布包 `@modelcontextprotocol/client@2.3.1/dist/src-WCy6ifGf.mjs`：`_resetTimeout` :5806–5817 到总时限时直接 throw；`_onprogress` :6030–6036 直接调用 responseHandler(error)；responseHandler :6210 将 responseReceived 设 true；cancel :6190 见 responseReceived 就返回。该分支没有通知旧代，也没有 abort 新代 HTTP 的 requestAbort。普通 timeoutHandler 则调用 cancel，因此普通超时测试通过并不能证明总时限取消。

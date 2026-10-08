@@ -529,3 +529,19 @@ export {
 export type { McpHttpServerSpec } from './mcp/connection.js'
 
 export { mcpDefinitionHash, definitionProblem, toolsOverLimit } from './mcp/definition.js'
+
+export { createMcpPool } from './mcp/pool.js'
+export type {
+  McpPool,
+  McpPoolOptions,
+  McpServerRuntime,
+  McpServerStatus,
+  McpLiveTool,
+  McpTransportRuntime,
+  McpOAuthRuntime,
+  McpRunSources,
+  McpServerCache,
+  McpErrorCode,
+  McpPinRequest,
+} from './mcp/pool.js'
+export type { McpLoginUi, McpLoginResult } from './mcp/oauth.js'
