@@ -106,7 +106,7 @@ it('03 验收 7 (store): injection env names in either collection are refused in
     expect(set).not.toHaveBeenCalled()
   }
 })
-it('02 不变量 20 / 03 不变量 4: a launch change resets always-allow in the same config write; secret values never enter launchHash', async () => {
+it('03 不变量 4: a launch change resets always-allow in the same config write; secret values never enter launchHash', async () => {
   const h = setup()
   await h.save()
   await h.store.pin('notes', [{ name: 'echo', definitionHash: 'a'.repeat(64) }])
@@ -397,7 +397,23 @@ it('03 验收 52 / 03 不变量 16: ninth issuer deletes oldest accounts before 
     ...Array.from({ length: 7 }, (_, i) => String(i + 1).padStart(16, '0')),
     ninth.hash,
   ])
+  const expected = [
+    ...Array.from({ length: 7 }, (_, i) => String(i + 1).padStart(16, '0')),
+    ninth.hash,
+    // oxlint-disable-next-line oxc/no-map-spread -- independent expected issuer/account expansion
+  ].flatMap((hash) => [
+    keyFor(h.host.identity, 'mcp', 'notes', 'oauth', hash, 'client'),
+    ...['a', 'b'].flatMap((slot) =>
+      Array.from({ length: 4 }, (_, i) =>
+        keyFor(h.host.identity, 'mcp', 'notes', 'oauth', hash, 'tokens', slot, String(i)),
+      ),
+    ),
+  ])
+  for (const account of expected) await h.host.secrets.set(account, 'fixture-final')
   expect(await h.store.delete('notes')).toEqual({ ok: true })
+  expect(await Promise.all(expected.map((k) => h.host.secrets.get(k)))).toEqual(
+    Array(72).fill(null),
+  )
   expect(await Promise.all(accounts.map((k) => h.host.secrets.get(k)))).toEqual(
     accounts.map(() => null),
   )

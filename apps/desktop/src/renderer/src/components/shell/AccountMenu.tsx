@@ -3,7 +3,7 @@ import { CircleUserIcon, KeyRoundIcon, LanguagesIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ProviderSettings } from '@/components/settings/ProviderSettings'
+import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -36,6 +36,7 @@ export interface AccountMenuProps {
 export function AccountMenu({ locale, onLocaleChange }: AccountMenuProps): JSX.Element {
   const { t } = useTranslation()
   const [providersOpen, setProvidersOpen] = useState(false)
+  const [pane, setPane] = useState<'providers' | 'connectors'>('providers')
   // The menu is gone by the time the card opens, so the card returns focus here itself.
   const accountRow = useRef<HTMLButtonElement | null>(null)
   return (
@@ -57,9 +58,24 @@ export function AccountMenu({ locale, onLocaleChange }: AccountMenuProps): JSX.E
           <span className="truncate">{t('account.localUser')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" className="min-w-48">
-          <DropdownMenuItem data-testid="account-providers" onClick={() => setProvidersOpen(true)}>
+          <DropdownMenuItem
+            data-testid="account-providers"
+            onClick={() => {
+              setPane('providers')
+              setProvidersOpen(true)
+            }}
+          >
             <KeyRoundIcon />
             {t('account.providers')}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            data-testid="account-connectors"
+            onClick={() => {
+              setPane('connectors')
+              setProvidersOpen(true)
+            }}
+          >
+            {t('mcp.title')}
           </DropdownMenuItem>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid="account-language">
@@ -89,7 +105,8 @@ export function AccountMenu({ locale, onLocaleChange }: AccountMenuProps): JSX.E
           </DropdownMenuSub>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ProviderSettings
+      <SettingsModal
+        pane={pane}
         open={providersOpen}
         onOpenChange={setProvidersOpen}
         finalFocus={accountRow}

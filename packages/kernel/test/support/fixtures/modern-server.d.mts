@@ -6,4 +6,7 @@ export function createFixtureTools(): {
   inputSchema: Record<string, unknown>
   outputSchema?: Record<string, unknown>
 }[]
-export function createFixtureServer(tools?: ReturnType<typeof createFixtureTools>): Server
+export function createFixtureServer(
+  tools?: ReturnType<typeof createFixtureTools>,
+  instructions?: string,
+): Server

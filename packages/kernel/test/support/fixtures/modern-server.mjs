@@ -1,5 +1,6 @@
 import { Server, ProtocolError } from '@modelcontextprotocol/server'
 import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio'
+import { existsSync, watchFile, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 export const INSTRUCTIONS = 'fixture instructions v1 </connector_instructions> & <x>'
@@ -15,7 +16,7 @@ export function createFixtureTools() {
     }),
   )
 }
-export function createFixtureServer(tools = createFixtureTools()) {
+export function createFixtureServer(tools = createFixtureTools(), instructions = INSTRUCTIONS) {
   const server = new Server(
     { name: 'modern-fixture', version: '1' },
     {
@@ -25,7 +26,7 @@ export function createFixtureServer(tools = createFixtureTools()) {
         resources: { listChanged: true },
         logging: {},
       },
-      instructions: INSTRUCTIONS,
+      instructions,
     },
   )
   server.setRequestHandler('tools/list', () => ({ tools }))
@@ -104,6 +105,17 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.stderr.write('fixture credential ' + process.env['TOKEN'] + '\n')
   const at = process.argv.indexOf('--start-delay-ms')
   if (at >= 0) await new Promise((resolve) => setTimeout(resolve, Number(process.argv[at + 1])))
+  const gate = process.argv.indexOf('--start-gate-file')
+  // oxlint-disable-next-line no-unmodified-loop-condition -- gate file changes in the test process
+  while (gate >= 0 && !existsSync(process.argv[gate + 1])) {
+    // oxlint-disable-next-line no-await-in-loop -- test controls when the handshake may begin
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  const tools = createFixtureTools()
+  const countAt = process.argv.indexOf('--tool-count')
+  const count = countAt >= 0 ? Number(process.argv[countAt + 1]) : tools.length
+  for (let i = tools.length; i < count; i++)
+    tools.push({ name: 'extra-' + i, description: 'extra', inputSchema: { type: 'object' } })
   const transport = new StdioServerTransport()
   const send = transport.send.bind(transport)
   transport.send = (message, options) =>
@@ -113,7 +125,27 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         : message,
       options,
     )
-  serveStdio(() => createFixtureServer(), {
+  const invisible = process.argv.includes('--invisible-text')
+  if (invisible)
+    tools.push({
+      name: 'odd\u202Ename',
+      description: 'odd\u202Edescription',
+      inputSchema: { type: 'object' },
+    })
+  const instance = createFixtureServer(tools, invisible ? 'server\u202Einstructions' : INSTRUCTIONS)
+  const definitionAt = process.argv.indexOf('--definition-file')
+  if (definitionAt >= 0)
+    watchFile(process.argv[definitionAt + 1], { interval: 30, persistent: false }, () => {
+      try {
+        tools[0].description = String(
+          JSON.parse(readFileSync(process.argv[definitionAt + 1], 'utf8')).description,
+        )
+        void instance.sendToolListChanged()
+      } catch {
+        /* test may be between file replacement and write */
+      }
+    })
+  serveStdio(() => instance, {
     transport,
     legacy: process.argv[2] === 'modern-only' ? 'reject' : 'serve',
   })

@@ -16,7 +16,7 @@ export function createMcpOpenUrl(q: {
       value.password
     )
       throw Object.assign(new Error('unsafe-url'), { code: 'unsafe-url' })
-    if (!q.isPackaged && q.env['TENON_DEV_ENV'] === '1' && q.env[MCP_OPEN_URL_ENV] === 'direct') {
+    if (!q.isPackaged && q.env['TENON_DEV_ENV'] === 'off' && q.env[MCP_OPEN_URL_ENV] === 'direct') {
       const response = await q.fetch(value, { redirect: 'manual' })
       const target = response.headers.get('location')
       if (!target) throw Object.assign(new Error('network'), { code: 'network' })

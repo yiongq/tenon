@@ -2,8 +2,18 @@ import { useRef, useState } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { changeView, defaultButton, keyAnswer, keyHints, objectParts } from '@/lib/approval-card'
+import {
+  connectorCardName,
+  definitionNotice,
+  changeView,
+  defaultButton,
+  keyAnswer,
+  keyHints,
+  objectParts,
+} from '@/lib/approval-card'
 import { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey } from '@/lib/approval-keys'
+import { reversibilityScale } from '@/lib/reversibility-scale'
+import { useMcp } from '@/runtime/mcp-store'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import type { PendingCard } from '@/runtime/session-store'
@@ -82,6 +92,9 @@ export function ApprovalCard(props: {
 }): JSX.Element {
   const { t } = useTranslation()
   const { card } = props.pending
+  const { servers } = useMcp()
+  const serverName = connectorCardName(card.target, servers)
+  const notice = definitionNotice(props.pending.definitionChanged)
   const allowRef = useRef<HTMLButtonElement | null>(null)
   const denyRef = useRef<HTMLButtonElement | null>(null)
   const change = changeView(card, props.toolName, props.input)
@@ -131,9 +144,30 @@ export function ApprovalCard(props: {
       <p className="text-ui font-medium text-text-primary" data-testid="approval-title">
         {t(titleKey(card) as never)}
       </p>
+      <div
+        aria-label={t('mcp.reversibilityScale')}
+        data-testid="reversibility-scale"
+        className="flex flex-wrap gap-2 text-micro"
+      >
+        {reversibilityScale(card.reversibility).map((cell) => (
+          <span
+            key={cell.value}
+            aria-current={cell.current ? 'true' : undefined}
+            className={cell.current ? 'font-semibold text-text-primary' : 'text-text-muted'}
+          >
+            {t(cell.key)}
+          </span>
+        ))}
+      </div>
       <div data-testid="approval-object">
         <ObjectLine target={card.target} />
       </div>
+      {serverName ? (
+        <p data-testid="approval-server" className="break-all">
+          {visible(serverName)}
+        </p>
+      ) : null}
+      {notice ? <p data-testid="approval-definition-changed">{t(notice)}</p> : null}
       <p className="text-ui-sm text-text-secondary" data-testid="approval-reason">
         {tx(t, reasonKey(card), visibleFacts(card.facts))}
       </p>

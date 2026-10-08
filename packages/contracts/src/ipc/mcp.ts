@@ -133,7 +133,10 @@ const ownDraft = mcpTransportSchema.options[1].shape.oauth.shape.ownClient
   .strict()
   .nullable()
 const draftHttp = mcpTransportSchema.options[1]
-  .extend({ oauth: z.object({ ownClient: ownDraft }).strict() })
+  .extend({
+    header_keys: z.array(z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/)).max(16),
+    oauth: z.object({ ownClient: ownDraft }).strict(),
+  })
   .strict()
 const draftStdio = z
   .object({
@@ -178,7 +181,7 @@ const secretValueSchema = z.string().min(1).max(8192)
 export const mcpSecretsSchema = z
   .object({
     env: z.record(envNameSchema, secretValueSchema),
-    headers: z.record(headerNameSchema, secretValueSchema),
+    headers: z.record(z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/), secretValueSchema),
     ownClientSecret: secretValueSchema.optional(),
   })
   .strict()

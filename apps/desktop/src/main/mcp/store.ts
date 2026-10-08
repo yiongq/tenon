@@ -2,7 +2,12 @@
 // oxlint-disable no-await-in-loop
 import { unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { LINKER_INJECTION_ENV, mcpDraftSchema, mcpServerSchema } from '@tenon-app/contracts'
+import {
+  LINKER_INJECTION_ENV,
+  mcpDraftSchema,
+  mcpServerSchema,
+  headerNameSchema,
+} from '@tenon-app/contracts'
 import type {
   McpServer,
   RouteRequest,
@@ -90,6 +95,12 @@ export function createMcpStore(q: {
           )
         const transport = checked.data.transport
         if (transport.type === 'http') {
+          if (
+            [...transport.header_keys, ...Object.keys(request.secrets.headers)].some(
+              (name) => !headerNameSchema.safeParse(name).success,
+            )
+          )
+            return refused('invalid-header')
           const address = mcpAddress(transport.url)
           if (!address.ok) return refused(address.code)
           transport.url = address.url

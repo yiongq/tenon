@@ -277,6 +277,12 @@ it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stoppe
     mcpServers: [s, { ...s, id: 'unconfirmed', consent: null }],
   }
   await writeConfig(host.fs, host.identity, config)
+  let cacheWrites = 0
+  const originalWrite = host.fs.writeFile.bind(host.fs)
+  host.fs.writeFile = async (target, data) => {
+    await originalWrite(target, data)
+    if (String(target).endsWith('/mcp/confirmed.json')) cacheWrites++
+  }
   let path = a
   const mcp = createDesktopMcp({
     host,
@@ -292,18 +298,27 @@ it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stoppe
     expect(mcp.pool.status()[1]).toMatchObject({ phase: 'stopped', stopReason: 'needs-consent' })
     expect(mcp.needsConsent('unconfirmed')).toBe(true)
     expect(spawn.mock.calls[0]?.[0].argv[0]).toBe(join(a, 'fixture-node'))
+    await vi.waitFor(() => expect(cacheWrites).toBeGreaterThanOrEqual(2))
     path = b
     mcp.pool.restart('confirmed')
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2))
     await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('connected'))
     expect(spawn.mock.calls[1]?.[0].argv[0]).toBe(join(b, 'fixture-node'))
     expect(mcp.needsConsent('confirmed')).toBe(false)
+    // Each completed handshake queues list and connected cache writes; drain both rounds.
+    await vi.waitFor(() => expect(cacheWrites).toBeGreaterThanOrEqual(4))
     const apply = vi.spyOn(mcp.pool, 'apply'),
       write = vi.spyOn(host.fs, 'writeFile')
     await writeConfig(host.fs, host.identity, { locale: 'en' })
     expect(apply).not.toHaveBeenCalled()
     expect(write.mock.calls.filter(([p]) => String(p).includes('/mcp/'))).toEqual([])
-    const child = await spawn.mock.results[1]!.value
+    await mcp.store.revoke('confirmed')
+    await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('stopped'))
+    await mcp.store.connect('confirmed', 'run')
+    await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(3))
+    await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('connected'))
+    expect(mcp.config().mcpServers[0]?.consent).toBeNull()
+    const child = await spawn.mock.results[2]!.value
     await mcp.store.revoke('confirmed')
     await vi.waitFor(() =>
       expect(mcp.pool.status()[0]).toMatchObject({ phase: 'stopped', stopReason: 'needs-consent' }),

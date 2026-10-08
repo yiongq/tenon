@@ -15,7 +15,7 @@ import { CheckIcon, ChevronDownIcon } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ProviderSettings } from '@/components/settings/ProviderSettings'
+import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -489,7 +489,7 @@ export function ModelMenu(): JSX.Element {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      <ProviderSettings
+      <SettingsModal
         open={settingsOpen}
         onOpenChange={(next) => {
           setSettingsOpen(next)

@@ -203,7 +203,7 @@ it('03 验收 19: unsafe URLs never reach shell; the direct seam requires develo
         }),
     )
   for (const q of [
-    { isPackaged: true, env: { TENON_DEV_ENV: '1', TENON_TEST_MCP_OPEN_URL: 'direct' } },
+    { isPackaged: true, env: { TENON_DEV_ENV: 'off', TENON_TEST_MCP_OPEN_URL: 'direct' } },
     { isPackaged: false, env: { TENON_TEST_MCP_OPEN_URL: 'direct' } },
   ]) {
     const open = createMcpOpenUrl({ ...q, openExternal: shell, fetch: net })
@@ -371,4 +371,25 @@ it('03 验收 10: address normalization removes path slashes and fragments while
     ok: true,
     url: 'https://example.com',
   })
+})
+
+it('03 验收 19: direct seam uses the actual e2e off environment, manual redirects and no system browser', async () => {
+  const shell = vi.fn<() => Promise<void>>(async () => {}),
+    net = vi.fn<typeof fetch>(
+      async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://127.0.0.1:1234/callback?state=x' },
+        }),
+    )
+  await createMcpOpenUrl({
+    isPackaged: false,
+    env: { TENON_DEV_ENV: 'off', TENON_TEST_MCP_OPEN_URL: 'direct' },
+    openExternal: shell,
+    fetch: net,
+  })(new URL('http://127.0.0.1:2345/authorize'))
+  expect(shell).not.toHaveBeenCalled()
+  expect(net).toHaveBeenCalledTimes(2)
+  expect(net.mock.calls[0]?.[1]?.redirect).toBe('manual')
+  expect(String(net.mock.calls[1]?.[0])).toContain('/callback?state=x')
 })

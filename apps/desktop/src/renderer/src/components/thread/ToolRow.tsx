@@ -1,5 +1,10 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
+import { invokeRoute, mcpLogin } from '@tenon-app/contracts'
+import { AlertTriangle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { mcpAction } from '@/runtime/mcp-store'
+import { toolRowEffect } from '@/lib/tool-row-effect'
 import { useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -35,9 +40,12 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
   const [open, setOpen] = useState(false)
+  const [loginBusy, setLoginBusy] = useState(false)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
+  const effect = toolRowEffect(outcome, props.toolName)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending
@@ -80,6 +88,17 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         className="flex w-full items-baseline gap-2 text-left text-text-secondary"
       >
         <span className="min-w-0 break-words">{toolSentence(t, props.toolName, input)}</span>
+        {effect?.marker ? (
+          <span data-testid="tool-effect-marker" className="shrink-0">
+            <AlertTriangle aria-hidden className="inline size-3" />
+            <span className="sr-only">
+              {t('mcp.effectMarker', {
+                effect: t(effect.effectKey),
+                reversibility: t(effect.reversibilityKey),
+              })}
+            </span>
+          </span>
+        ) : null}
         {outcome === null && pending === null && !asking && summary === null ? (
           <span className="shrink-0 text-micro text-text-muted">{t('tool.running')}</span>
         ) : null}
@@ -88,6 +107,25 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         <p data-testid="tool-row-closure" className="text-micro text-text-muted">
           {t(closureKey as never)}
         </p>
+      ) : null}
+      {effect?.loginServerId ? (
+        <div>
+          <Button
+            data-testid="tool-relogin"
+            variant="outline"
+            size="sm"
+            disabled={loginBusy}
+            onClick={() => {
+              setLoginBusy(true)
+              void mcpAction(invokeRoute(window.tenon, mcpLogin, { id: effect.loginServerId! }))
+                .then(setLoginError)
+                .finally(() => setLoginBusy(false))
+            }}
+          >
+            {t('mcp.relogin')}
+          </Button>
+          {loginError ? <p role="alert">{t(`mcp.error.${loginError}` as never)}</p> : null}
+        </div>
       ) : null}
       {blocked && outcome !== null ? (
         <BlockedNotice
@@ -133,6 +171,17 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
               )}
             </>
           )}
+          {effect ? (
+            <div data-testid="tool-side-effects">
+              <p>{t('mcp.effect')}</p>
+              <p>
+                {t('mcp.marker', {
+                  effect: t(effect.effectKey),
+                  reversibility: t(effect.reversibilityKey),
+                })}
+              </p>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {answered === null ? null : <AnsweredRow answered={answered} />}

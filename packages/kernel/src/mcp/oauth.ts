@@ -53,6 +53,7 @@ import type { McpTokenStore, McpTokenTransaction } from './token-store.js'
 export interface McpOAuthProvider extends OAuthClientProvider {
   readonly authProvider: AuthProvider
   login(ui: McpLoginUi): Promise<McpLoginResult>
+  forgetIssuer(hash: string): void
   cancelLogin(): boolean
 }
 type LoginCode = Extract<McpLoginResult, { ok: false }>['code']
@@ -475,6 +476,9 @@ export function createMcpOAuthProvider(q: {
   }
   return Object.assign(provider, {
     authProvider,
+    forgetIssuer(hash: string) {
+      memory.delete(hash)
+    },
     cancelLogin() {
       if (!loginAbort) return false
       loginAbort.abort(new LoginError('cancelled'))

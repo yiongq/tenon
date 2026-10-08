@@ -1,6 +1,9 @@
 import type { JSX } from 'react'
 import { questionsOf } from '@/lib/ask'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
+import { useMcp } from '@/runtime/mcp-store'
+import { composerSlot } from '@/lib/composer-slots'
+import { ConnectorStatusNotice } from './ConnectorStatusNotice'
 import { AskWidget } from './AskWidget'
 
 /**
@@ -13,6 +16,9 @@ export function ComposerSlots(): JSX.Element | null {
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
   const pending = snapshot.pending
+  const { servers } = useMcp()
+  const slot = composerSlot(pending?.waitKind === 'question', servers)
+  if (slot?.kind === 'connecting') return <ConnectorStatusNotice name={slot.name} />
   if (pending?.waitKind !== 'question') return null
   const call = snapshot.model.turns
     .flatMap((turn) => turn.parts)

@@ -155,7 +155,7 @@ it('03 验收 25: preview has complete visible argv, resolved path, every warnin
     )
   }
 })
-it('03 验收 36 / 37 / 38 (routes): builtin is refused; interaction and policy prevent always-allow; review cache absence is null and release rejects stale hashes', async () => {
+it('03 验收 36 / 37 / 38 / 02 不变量 20 (routes): builtin is refused; interaction and policy prevent always-allow; review cache absence is null and release rejects stale hashes', async () => {
   const h = await setup()
   await save(h)
   const hash = 'a'.repeat(64),
@@ -177,12 +177,14 @@ it('03 验收 36 / 37 / 38 (routes): builtin is refused; interaction and policy 
   expect(
     await h.call('mcp.setToolSetting', { id: 'notes', tool: 'echo', setting: 'always-allow' }),
   ).toEqual({ ok: false, code: 'interaction-required' })
+  expect((await h.call('mcp.list', {})).servers[0]?.toolViews[0]?.alwaysAllowOffered).toBe(false)
   tool.requiresUserInteraction = false
   const original = h.host.policy.current
   h.host.policy.current = () => ({ status: 'unavailable' }) as ReturnType<typeof original>
   expect(
     await h.call('mcp.setToolSetting', { id: 'notes', tool: 'echo', setting: 'always-allow' }),
   ).toEqual({ ok: false, code: 'policy-asks' })
+  expect((await h.call('mcp.list', {})).servers[0]?.toolViews[0]?.alwaysAllowOffered).toBe(false)
   h.host.policy.current = original
   expect(
     await h.call('mcp.release', {
@@ -333,6 +335,21 @@ it('03 验收 24 / 38: launch update needs consent, unreviewed tools cannot set 
   const pinned = h.mcp.config()
   await h.mcp.store.pin('notes', [{ name: 'other', definitionHash: 'b'.repeat(64) }])
   expect(h.mcp.config()).toEqual(pinned)
+  expect(
+    await h.call('mcp.setToolSetting', { id: 'notes', tool: 'new', setting: 'always-allow' }),
+  ).toEqual({ ok: true })
+  tool.definitionHash = 'b'.repeat(64)
+  expect(
+    await h.call('mcp.release', {
+      id: 'notes',
+      target: { tool: 'new' },
+      definitionHash: tool.definitionHash,
+    }),
+  ).toEqual({ ok: true })
+  expect(h.mcp.config().mcpServers[0]?.tools.new).toEqual({
+    setting: 'ask',
+    definitionHash: tool.definitionHash,
+  })
   const current = h.host.policy.current()
   if (current.status !== 'unavailable')
     h.host.policy.current = () => ({
@@ -416,5 +433,52 @@ it('03 验收 52: HTTP draft transport, oauth and own-client objects reject extr
       ),
     ).toMatchObject({ ok: false, error: { code: 'invalid-request' } })
   }
+  expect(h.mcp.config().mcpServers).toEqual([])
+})
+
+it('03 读法 67: reserved HTTP header names reach storage and return invalid-header without writes', async () => {
+  const h = await setup(),
+    d = mcpDraft()
+  d.transport = {
+    type: 'http',
+    url: 'https://example.com',
+    protocol: 'auto',
+    header_keys: ['Content-Type'],
+    oauth: { ownClient: null },
+  }
+  expect(await save(h, d, 'persistent', { env: {}, headers: {} })).toEqual({
+    ok: false,
+    code: 'invalid-header',
+  })
+  expect(h.mcp.config().mcpServers).toEqual([])
+})
+
+it('03 验收 44: disabled or never-pinned instructions have no pending change', async () => {
+  const h = await setup()
+  await save(h)
+  const status = h.mcp.pool.status()[0]!
+  h.mcp.pool.status = () => [{ ...status, instructions: { text: 'fixture', hash: 'a'.repeat(64) } }]
+  expect((await h.call('mcp.list', {})).servers[0]?.instructionsView?.review).toBe('ok')
+  await h.call('mcp.setInstructions', { id: 'notes', enabled: true })
+  expect((await h.call('mcp.list', {})).servers[0]?.instructionsView?.review).toBe('ok')
+})
+
+it('03 读法 67: reserved header with a supplied value returns invalid-header through validated IPC', async () => {
+  const h = await setup(),
+    d = mcpDraft()
+  d.transport = {
+    type: 'http',
+    url: 'https://example.com',
+    protocol: 'auto',
+    header_keys: ['Content-Type'],
+    oauth: { ownClient: null },
+  }
+  const write = vi.spyOn(h.host.fs, 'writeFile'),
+    secret = vi.spyOn(h.host.secrets, 'set')
+  expect(
+    await save(h, d, 'persistent', { env: {}, headers: { 'Content-Type': 'fixture' } }),
+  ).toEqual({ ok: false, code: 'invalid-header' })
+  expect(write).not.toHaveBeenCalled()
+  expect(secret).not.toHaveBeenCalled()
   expect(h.mcp.config().mcpServers).toEqual([])
 })

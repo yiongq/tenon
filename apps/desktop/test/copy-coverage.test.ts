@@ -1,3 +1,5 @@
+import type { connectorStatus } from '../src/renderer/src/lib/connectors.js'
+import { CONNECTOR_STATUSES, TOOL_SETTING_KEY } from '../src/renderer/src/lib/connectors.js'
 /**
  * Copy coverage for the interface's codes (spec 02 验收 37; plan step 20, 旧 6 and the copy-coverage
  * unit test), written like provider-catalogue.test.ts: every value a code can take has a non-empty
@@ -24,6 +26,10 @@ import {
 } from '@tenon-app/kernel'
 import type { BlockReason, ClosureSource, ConfirmReason, PendingRoot } from '@tenon-app/kernel'
 import {
+  mcpErrorCodeSchema,
+  mcpWriteErrorCodeSchema,
+  mcpLoginErrorSchema,
+  toolSettingSchema,
   closureSourceSchema,
   confirmKindSchema,
   confirmReasonSchema,
@@ -39,7 +45,14 @@ import {
   reversibilitySchema,
   runEndReasonSchema,
 } from '@tenon-app/contracts'
-import type { ChatEvent, ConfirmRequestInput, RunEndReasonContract } from '@tenon-app/contracts'
+import type {
+  RouteRequest,
+  mcpSave,
+  McpServerView,
+  ChatEvent,
+  ConfirmRequestInput,
+  RunEndReasonContract,
+} from '@tenon-app/contracts'
 import {
   isArgumentElement,
   isDateElement,
@@ -573,4 +586,81 @@ describe('the gate itself', () => {
       argumentsOf('{a} {n, plural, one {# {b}} other {{c}}} {s, select, x {{d}} other {}}'),
     ).toEqual(['a', 'b', 'c', 'd', 'n', 's'])
   })
+})
+
+it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-long', () => {
+  const reviewed = covers<McpServerView['toolViews'][number]['review']>()(
+    ['ok', 'changed', 'new'],
+    true,
+  )
+  const unavailable = covers<NonNullable<McpServerView['toolViews'][number]['unavailable']>>()(
+    ['name-collision', 'invalid-definition'],
+    true,
+  )
+  const era = covers<NonNullable<McpServerView['status']['era']>>()(['modern', 'legacy'], true)
+  const protocols = covers<Extract<McpServerView['transport'], { type: 'http' }>['protocol']>()(
+    ['auto', 'legacy'],
+    true,
+  )
+  const consents = covers<NonNullable<RouteRequest<typeof mcpSave>['consent']>>()(
+    ['run', 'persistent'],
+    true,
+  )
+  const statuses = covers<ReturnType<typeof connectorStatus>>()(CONNECTOR_STATUSES, true)
+  expect(
+    problems([
+      ...[
+        ...mcpErrorCodeSchema.options,
+        ...mcpWriteErrorCodeSchema.options,
+        ...mcpLoginErrorSchema.options,
+      ].map((code) => ({ key: `mcp.error.${code}`, args: [], what: code })),
+      ...statuses.map((code) => ({
+        key: `mcp.status.${code}`,
+        args:
+          code === 'error'
+            ? ['error']
+            : code === 'connected'
+              ? ['version', 'n']
+              : code === 'restarting'
+                ? ['seconds']
+                : [],
+        what: code,
+      })),
+      ...reviewed
+        .filter((code) => code !== 'ok')
+        .map((code) => ({
+          key: code === 'new' ? 'mcp.newTool' : 'mcp.definitionChanged',
+          args: [],
+          what: code,
+        })),
+      ...unavailable.map((code) => ({ key: `mcp.unavailable.${code}`, args: [], what: code })),
+      ...era.map((code) => ({ key: `mcp.era.${code}`, args: [], what: code })),
+      ...protocols.map((code) => ({ key: `mcp.${code}`, args: [], what: code })),
+      ...consents.map((code) => ({ key: `mcp.grant.${code}`, args: [], what: code })),
+      ...toolSettingSchema.options.map((code) => ({
+        key: TOOL_SETTING_KEY[code],
+        args: [],
+        what: code,
+      })),
+      ...reversibilitySchema.options.map((code) => ({
+        key: `mcp.reversibility.${code}`,
+        args: [],
+        what: code,
+      })),
+      ...(['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'] as const).map(
+        (code) => ({
+          key: `mcp.warning.${code}`,
+          args:
+            code === 'home-path' || code === 'ssh-path'
+              ? ['arg']
+              : code === 'unpinned-package'
+                ? ['package']
+                : code === 'risky-env'
+                  ? ['name']
+                  : [],
+          what: code,
+        }),
+      ),
+    ]),
+  ).toEqual([])
 })
