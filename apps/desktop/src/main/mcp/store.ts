@@ -95,7 +95,11 @@ export function createMcpStore(q: {
           )
         const transport = checked.data.transport
         if (transport.type === 'http') {
-          if (transport.header_keys.some((name) => !headerNameSchema.safeParse(name).success))
+          if (
+            [...transport.header_keys, ...Object.keys(request.secrets.headers)].some(
+              (name) => !headerNameSchema.safeParse(name).success,
+            )
+          )
             return refused('invalid-header')
           const address = mcpAddress(transport.url)
           if (!address.ok) return refused(address.code)

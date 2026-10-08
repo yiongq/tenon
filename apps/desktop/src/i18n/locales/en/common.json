@@ -540,7 +540,7 @@
     "back": "Back to list",
     "enabled": "Enable {name}",
     "nextSession": "Applies to new sessions",
-    "neverNote": "Removed from the model’s tools; direct calls are blocked too",
+    "neverNote": "Calls in this session are blocked; new sessions won't offer it",
     "drag": "Drag to reorder",
     "overLimit": "{provider} tool limit: {n} additional tools unavailable",
     "always": "Always allow",
@@ -573,7 +573,7 @@
     "save": "Save",
     "type": "Type",
     "hasSecret": "Own client requires a secret",
-    "formNote": "Use JSON arrays for arguments and key names, and JSON objects for environment variables and secrets. Saved secrets are never displayed; leave blank to retain them.",
+    "formNote": "Use JSON arrays for arguments and key names, and JSON objects for environment variables. Saved secrets are never displayed; leave blank to retain them.",
     "grantTitle": "Allow connection to {name}?",
     "grantLocal": "Check the command, arguments, and environment variables to be launched.",
     "grantRemote": "Check the remote address and header names.",
@@ -592,12 +592,12 @@
     "status": {
       "connecting": "Connecting",
       "connected": "Connected · {version} · {n} tools",
-      "restarting": "Restarting in {seconds}s",
+      "restarting": "Disconnected · reconnecting in {seconds}s",
       "stopped": "Stopped",
       "needs-consent": "Confirmation required",
-      "crash-limit": "Crash limit reached",
+      "crash-limit": "Stopped · see log",
       "unauthorized": "Login required",
-      "error": "Connection failed",
+      "error": "Error: {error}",
       "disabled": "Disabled"
     },
     "form": {
@@ -645,7 +645,7 @@
       "read": "Read",
       "write": "Write",
       "external": "External",
-      "blocked": "Blocked"
+      "blocked": "Not run"
     },
     "error": {
       "handshake-timeout": "Connection timed out",
@@ -687,47 +687,20 @@
       "unsafe-url": "Unsafe sign-in URL",
       "cancelled": "Sign-in cancelled",
       "unavailable": "Temporarily unavailable",
-      "invalid-form": "Invalid form format"
-    },
-    "phase": {
-      "stopped": "Stopped",
-      "connecting": "Connecting",
-      "connected": "Connected",
-      "restarting": "Disconnected, reconnecting soon",
-      "error": "Error",
-      "unauthorized": "Sign in required"
-    },
-    "value": {
-      "always-allow": "Always allow",
-      "ask": "Ask every time",
-      "never": "Never",
-      "ok": "Reviewed",
-      "changed": "Definition changed · Review required",
-      "new": "New · Review required",
-      "needs-consent": "Consent required",
-      "crash-limit": "Stopped · See log",
-      "name-collision": "Duplicate name, unavailable",
-      "invalid-definition": "Invalid definition, unavailable",
-      "definition-changed": "Definition changed · Review required",
-      "connector-unavailable": "Connector unavailable",
-      "connector-unauthorized": "Sign in again",
-      "auto": "Automatic",
-      "legacy": "Legacy only",
-      "modern": "Modern",
-      "stdio": "Local",
-      "http": "Remote",
-      "manual": "Added manually",
-      "run": "Allow",
-      "persistent": "Always allow",
-      "sudo": "Uses sudo",
-      "rm-rf": "Performs recursive deletion",
-      "home-path": "Uses a home directory path",
-      "ssh-path": "Uses an .ssh path",
-      "unpinned-package": "Package version is not pinned",
-      "risky-env": "Environment variable may affect execution"
+      "invalid-form": "Invalid form format",
+      "restart-refused": "Not restarted; confirm or enable the connector first"
     },
     "nameId": "{name} · {id}",
     "idType": "{id} · {type}",
-    "protocolSelected": "Protocol: {protocol}"
+    "protocolSelected": "Protocol: {protocol}",
+    "up": "Move up",
+    "down": "Move down",
+    "secretField": "{name} (secret)",
+    "reversibilityScale": "Reversibility",
+    "effectMarker": "Side effects: {effect} · {reversibility}",
+    "era": {
+      "legacy": "Legacy",
+      "modern": "Modern"
+    }
   }
 }

@@ -573,7 +573,7 @@
     "save": "保存",
     "type": "类型",
     "hasSecret": "自备客户端需要密钥",
-    "formNote": "参数和键名使用 JSON 数组，环境变量和密钥使用 JSON 对象。已保存的密钥不会回显；留空保留。",
+    "formNote": "参数和键名使用 JSON 数组，环境变量使用 JSON 对象。已保存的密钥不会回显；留空保留。",
     "grantTitle": "允许连接 {name}？",
     "grantLocal": "请核对要启动的命令、参数和环境变量。",
     "grantRemote": "请核对远程地址与请求头名称。",
@@ -592,12 +592,12 @@
     "status": {
       "connecting": "正在连接",
       "connected": "已连接 · {version} · {n} 个工具",
-      "restarting": "{seconds} 秒后重启",
+      "restarting": "已断开 · {seconds} 秒后重连",
       "stopped": "已停止",
-      "needs-consent": "待确认",
-      "crash-limit": "已达崩溃上限",
+      "needs-consent": "需要确认",
+      "crash-limit": "已停止 · 看日志",
       "unauthorized": "需要登录",
-      "error": "连接失败",
+      "error": "出错：{error}",
       "disabled": "已停用"
     },
     "form": {
@@ -687,47 +687,20 @@
       "unsafe-url": "登录地址不安全",
       "cancelled": "登录已取消",
       "unavailable": "暂时不可用",
-      "invalid-form": "表单格式无效"
-    },
-    "phase": {
-      "stopped": "已停止",
-      "connecting": "正在连接",
-      "connected": "已连接",
-      "restarting": "已断开，等待重连",
-      "error": "出错",
-      "unauthorized": "需要登录"
-    },
-    "value": {
-      "always-allow": "总是允许",
-      "ask": "每次问",
-      "never": "永不",
-      "ok": "已确认",
-      "changed": "定义已变 · 待确认",
-      "new": "新出现 · 待确认",
-      "needs-consent": "需要确认",
-      "crash-limit": "已停止 · 看日志",
-      "name-collision": "重名，未提供",
-      "invalid-definition": "定义超限，未提供",
-      "definition-changed": "定义已变 · 待确认",
-      "connector-unavailable": "连接器不可用",
-      "connector-unauthorized": "需要重新登录",
-      "auto": "自动",
-      "legacy": "只用旧代",
-      "modern": "新代",
-      "stdio": "本地",
-      "http": "远程",
-      "manual": "手动添加",
-      "run": "允许",
-      "persistent": "以后都允许",
-      "sudo": "将使用 sudo",
-      "rm-rf": "将执行递归删除",
-      "home-path": "使用主目录路径",
-      "ssh-path": "使用 .ssh 路径",
-      "unpinned-package": "包版本未固定",
-      "risky-env": "环境变量可能影响执行"
+      "invalid-form": "表单格式无效",
+      "restart-refused": "未重启，请先确认连接或启用连接器"
     },
     "nameId": "{name} · {id}",
     "idType": "{id} · {type}",
-    "protocolSelected": "协议：{protocol}"
+    "protocolSelected": "协议：{protocol}",
+    "up": "上移",
+    "down": "下移",
+    "secretField": "{name}（密钥）",
+    "reversibilityScale": "可逆性",
+    "effectMarker": "副作用：{effect} · {reversibility}",
+    "era": {
+      "legacy": "旧代",
+      "modern": "新代"
+    }
   }
 }

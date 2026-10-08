@@ -276,9 +276,9 @@
   - 完成：G 绿。
 
 - [x] 17. e2e（spec §界面、§登录流程 的测试接缝；Q5、Q11-1、Q14、Q15、Q10）
-  - 文件：新 `apps/desktop/e2e/connectors.spec.ts`、`apps/desktop/e2e/connector-oauth.spec.ts`、`apps/desktop/e2e/text-fit-03.spec.ts`；`e2e/helpers` 加填表助手（命令写 `process.execPath` 的绝对路径，参数指向 packages/kernel/test/support/fixtures 的夹具）。HTTP 夹具与假授权服务器在测试进程里起（`127.0.0.1`），app 用 `TENON_TEST_MCP_OPEN_URL=direct`、走自带 client（端口由测试取一个空闲端口）。
+  - 文件：新 `apps/desktop/e2e/connectors.spec.ts`、`apps/desktop/e2e/connector-oauth.spec.ts`、`apps/desktop/e2e/text-fit-03.spec.ts`；`e2e/helpers` 加填表助手（命令写 `process.execPath` 的绝对路径，参数指向 packages/kernel/test/support/fixtures 的夹具）。HTTP 夹具与假授权服务器在测试进程里起（`127.0.0.1`），app 用 `TENON_TEST_MCP_OPEN_URL=direct`、走自带 client（测试专用接缝由应用绑定端口 0 并报告实际端口，不探测再关闭）。
   - 覆盖：验收 21（界面）、24、25、28、29（提示）、38、39、44、45、46（不换行不截断）。
-  - 测试：connectors.spec.ts：(1) 「03 验收 24/25: add a stdio server, see the full argv and warnings, the dialog's focus starts on 取消, choose 允许, it connects; relaunch the app, it needs consent」；(2) 「03 验收 28: two sessions call the same server and the pid tool returns one pid」（modern-server 的 `pid` 工具）；(3) 「03 验收 38/39: add-tool makes a new tool pending; 查看变化 and 放行 put it in the next session's table; change-desc during a session shows 定义已变 on the card」；(4) 「03 验收 29: the composer shows 正在连接 while a slow server starts」（modern-server `--start-delay-ms 3000`）；(5) 「03 验收 45: an approval card shows the scale with aria-current on the card's value and the server name」。connector-oauth.spec.ts：「03 验收 21 (UI): a 401 row offers 重新登录, login through the fake server, the next call succeeds」；「03 验收 18 (UI): a busy own-client port shows 端口被占用」。text-fit-03.spec.ts：「03 验收 46: zh-CN and en connector pane, dialog and card fit without clipping」（照 e2e/text-fit-02.spec.ts 的判法）。
+  - 测试：connectors.spec.ts：(1) 「03 验收 24/25: add a stdio server, see the full argv and warnings, the dialog's focus starts on 取消, choose 允许, it connects; relaunch the app, it needs consent」；(2) 「03 验收 28: two sessions call the same server and the pid tool returns one pid」（modern-server 的 `pid` 工具）；(3) 「03 验收 38/39: add-tool makes a new tool pending; 查看变化 and 放行 put it in the next session's table; change-desc during a session shows 定义已变 on the card」；(4) 「03 验收 29: the composer shows 正在连接 while a slow server starts」（modern-server `--start-gate-file`，测试看到提示后写入信号文件）；(5) 「03 验收 45: an approval card shows the scale with aria-current on the card's value and the server name」。connector-oauth.spec.ts：「03 验收 21 (UI): a 401 row offers 重新登录, login through the fake server, the next call succeeds」；「03 验收 18 (UI): a busy own-client port shows 端口被占用」。text-fit-03.spec.ts：「03 验收 46: zh-CN and en connector pane, dialog and card fit without clipping」（照 e2e/text-fit-02.spec.ts 的判法）。
   - 命令：E `e2e/connectors.spec.ts`、E `e2e/connector-oauth.spec.ts`、E `e2e/text-fit-03.spec.ts`；再 EA 全套。
   - 突变：① 让 `GrantDialog` 的「以后都允许」按「允许」写 → (1) 的重启部分红；② `ConnectorStatusNotice` 永不显示 → (4) 红；③ 默认焦点放「允许」→ (1) 红；④ 刻度不设 `aria-current` → (5) 红。
   - 完成：EA 全过；P 绿；第三段 PR（UI 改动写 BEFORE / AFTER），lead 审查后合并。
@@ -325,6 +325,14 @@
 - [ ] 25. spec 顶部改 `Status: implemented`，写交接。前提：第 20 步已完成（或 owner 明确同意砍法 ③ 且已照改），第 23 步全部通过。之后本文件不再有未勾的步骤。
 
 ## 实施记录
+
+- **2026-10-08 · PR #40 lead 审查修复 · 完成**
+  - blocker：OAuth direct 接缝按实际启动 env `off` 启用；保留原三道守卫。三条 OAuth e2e 均断言系统浏览器零调用；iss 不匹配时令牌端点零请求。测试专用回调接缝仅在未打包 + dev env off + 显式 auto 变量时绑定端口 0，应用报告实际端口，无探测后关闭的竞争。
+  - major（评论第 2–9 条）：env/header 每项独立 password 输入，传输类型隔离值；ProviderSettings 上报 saving/sectionBusy，外层关闭与切栏保护；IPC 密钥头键只查形状，存储返回 invalid-header，invalid-request 映射 invalid-form；关闭或从未钉住的说明 review 为 ok；下移插到目标之后并提供上/下移按钮；状态按 spec 表且错误带诊断，删除死 phase/value 文案，copy-coverage 查实际返回值；放行前新会话工具表与 Tape 排除断言；所有连接器控件、权限三态、撤销/重新确认、删除同 id 重建机密与 provider 上限文案均经 UI 回归。
+  - minor：保存用 grantResult；env 值/键变化；完整 argv、解析路径、主目录/npx/risky-env、不可见字符转义；代际翻译、工具名 select 可访问名、待确认菜单禁用；查看时捕获哈希，stale 刷新；restart false 提示及 mcpAction 单测；RUI/policy 的 alwaysAllowOffered false；无 reversibility 写操作 unknown；副作用和重新登录双语布局；垂直 Tabs/哈希上下文与审批刻度/工具标记读屏；崩溃错误/尾巴和信号控制慢启动。修复审查新增测试发现的删除后残留详情选择，以及详情/日志标题行高裁切。
+  - 突变红→恢复：队列去掉防重复减守卫、source.review 恒为 ok、密钥改回 text、OAuth env 改回 1、外层去掉写入关闭保护。M6 测试持续持有写入超过退出动画，防止立即可见断言假绿。
+  - 门禁：format/lint/typecheck/build 绿；完整 G 204 文件 / 3806 通过，2 文件 / 2 测试跳过；免费 evals:gate 30 通过 / 1 跳过；完整 EA 单 worker / 单 Electron 168 通过（5.8 分钟）。OAuth/ProviderSettings、连接器 9 项与双语 text-fit 4 项均包含在 EA 中。9a 不重跑，提示层文案/版本/哈希均未改。
+  - 分支 `feat/03-seg3`；本轮实现与回归提交见 git log，无半成品或临时探针。提示层保持 10；第四段未开工。PR #40 保持 Ready，远端 ci/e2e/ci-ok 全绿作为交付门禁；下一步 lead 复核本轮清单，不自行合并。
 
 - **2026-10-08 · 第三段 14a、14–17 完成**：统一 SettingsModal 的模型与密钥 / 连接器两栏；账户、模型菜单、失败卡入口接入，旧 provider 表单内容与行为复用。连接器列表支持状态、开关、拖动与超上限提示，详情提供三态 / 新会话提示、定义对比与放行、说明、日志、重启、刷新、登录、撤销、编辑、删除。添加 / 编辑表单通过主进程预览，GrantDialog 完整显示 argv、解析路径、明文环境与密钥名、六种警示；取消不写，默认焦点取消。审批卡增加五格 aria-current、server 显示名和定义变化说明；ToolRow 增副作用段 / 可逆性标记 / 401 重新登录；首次连接提示低于问答槽位。
   - 最终门禁：`pnpm format` / `pnpm lint` / `pnpm typecheck` / `pnpm build` 全绿；相关 U 48 项绿（两语文案枚举 covers，包含 HTTP protocol、consent 和四个新增排除码）；`pnpm test` 203 文件、3799 测试通过、2 跳过；`pnpm evals:gate` 4 文件、30 测试通过、1 跳过；`pnpm --filter @tenon-app/desktop test:e2e` 单 worker 全套 159 项通过（5.3 min）。旧四个 E 单独 32 项绿，新增 E 单独 8 项绿；源码恢复后再跑完整门禁。

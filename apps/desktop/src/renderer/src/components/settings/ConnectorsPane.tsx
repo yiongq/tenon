@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { invokeRoute, mcpReorder, mcpSetEnabled } from '@tenon-app/contracts'
+import { invokeRoute, providerList, mcpReorder, mcpSetEnabled } from '@tenon-app/contracts'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { connectorStatus, MCP_EFFECTIVE_NEXT } from '@/lib/connectors'
+import { reorderConnector, connectorStatus, MCP_EFFECTIVE_NEXT } from '@/lib/connectors'
 import { useMcp, mcpAction } from '@/runtime/mcp-store'
 import { ConnectorDetail } from './ConnectorDetail'
 import { ConnectorForm } from './ConnectorForm'
@@ -14,11 +14,23 @@ export function ConnectorsPane() {
     [adding, setAdding] = useState(false),
     [drag, setDrag] = useState<string | null>(null),
     [error, setError] = useState<string | null>(null)
+  const [providers, setProviders] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void invokeRoute(window.tenon, providerList, {}).then((r) => {
+      if (r.ok)
+        setProviders(
+          Object.fromEntries(r.data.map((p) => [p.id, p.displayName ?? t(p.nameKey as never)])),
+        )
+    })
+  }, [t])
   const server = servers.find((s) => s.id === selected)
   const reorder = async (id: string) => {
     if (!drag || drag === id) return
-    const ids = servers.map((s) => s.id).filter((s) => s !== drag)
-    ids.splice(ids.indexOf(id), 0, drag)
+    const ids = reorderConnector(
+      servers.map((s) => s.id),
+      drag,
+      id,
+    )
     setError(await mcpAction(invokeRoute(window.tenon, mcpReorder, { ids })))
     setDrag(null)
   }
@@ -29,7 +41,7 @@ export function ConnectorsPane() {
           <Button variant="ghost" onClick={() => setSelected(null)}>
             {t('mcp.back')}
           </Button>
-          <ConnectorDetail server={server} />
+          <ConnectorDetail server={server} onDeleted={() => setSelected(null)} />
         </>
       ) : (
         <>
@@ -64,10 +76,55 @@ export function ConnectorsPane() {
                     {t(`mcp.status.${connectorStatus(s)}` as never, {
                       version: s.status.protocolVersion ?? '',
                       n: s.toolViews.length,
+                      error: s.status.error ? t(`mcp.error.${s.status.error.code}`) : '',
                       seconds: Math.ceil((s.status.restartInMs ?? 0) / 1000),
                     })}
                   </span>
                 </button>
+                <div className="flex flex-col gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`connector-up-${s.id}`}
+                    disabled={servers.indexOf(s) === 0}
+                    onClick={() => {
+                      const target = servers[servers.indexOf(s) - 1]
+                      if (target)
+                        void mcpAction(
+                          invokeRoute(window.tenon, mcpReorder, {
+                            ids: reorderConnector(
+                              servers.map((v) => v.id),
+                              s.id,
+                              target.id,
+                            ),
+                          }),
+                        ).then(setError)
+                    }}
+                  >
+                    {t('mcp.up')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`connector-down-${s.id}`}
+                    disabled={servers.indexOf(s) === servers.length - 1}
+                    onClick={() => {
+                      const target = servers[servers.indexOf(s) + 1]
+                      if (target)
+                        void mcpAction(
+                          invokeRoute(window.tenon, mcpReorder, {
+                            ids: reorderConnector(
+                              servers.map((v) => v.id),
+                              s.id,
+                              target.id,
+                            ),
+                          }),
+                        ).then(setError)
+                    }}
+                  >
+                    {t('mcp.down')}
+                  </Button>
+                </div>
                 <div className="flex shrink-0 flex-col gap-1">
                   <Switch
                     checked={s.enabled}
@@ -86,7 +143,10 @@ export function ConnectorsPane() {
           {servers.length === 0 ? <p>{t('mcp.empty')}</p> : null}
           {overLimit.map((limit) => (
             <p key={limit.providerId}>
-              {t('mcp.overLimit', { provider: limit.providerId, n: limit.omitted })}
+              {t('mcp.overLimit', {
+                provider: providers[limit.providerId] ?? limit.providerId,
+                n: limit.omitted,
+              })}
             </p>
           ))}
           <p className="text-micro text-text-muted">{t('mcp.drag')}</p>

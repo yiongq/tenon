@@ -1,3 +1,4 @@
+import { mcpAction as applyAction } from '@/lib/mcp-action'
 import { invokeRoute, mcpList, mcpChanged } from '@tenon-app/contracts'
 import type { RouteResponse, IpcResult } from '@tenon-app/contracts'
 import { useSyncExternalStore } from 'react'
@@ -33,15 +34,6 @@ function subscribe(notify: () => void) {
 export function useMcp() {
   return useSyncExternalStore(subscribe, () => snapshot)
 }
-export async function mcpAction(promise: Promise<IpcResult<unknown>>): Promise<string | null> {
-  try {
-    const result = await promise
-    if (!result.ok) return 'unavailable'
-    const data = result.data as { ok?: boolean; code?: string }
-    if (data.ok === false) return data.code ?? 'unavailable'
-    await refreshMcp()
-    return null
-  } catch {
-    return 'unavailable'
-  }
+export function mcpAction(promise: Promise<IpcResult<unknown>>) {
+  return applyAction(promise, refreshMcp)
 }

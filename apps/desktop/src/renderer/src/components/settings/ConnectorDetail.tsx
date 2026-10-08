@@ -37,11 +37,19 @@ import {
   MCP_NEVER_NOTE,
   connectorStatus,
 } from '@/lib/connectors'
+import { visible } from '@/lib/visible'
+import { grantResult } from '@/lib/connector-consent'
 import { mcpAction } from '@/runtime/mcp-store'
 import { Chooser } from './fields'
 import { ConnectorForm } from './ConnectorForm'
 import { GrantDialog } from './GrantDialog'
-export function ConnectorDetail({ server: s }: { server: McpServerView }) {
+export function ConnectorDetail({
+  server: s,
+  onDeleted,
+}: {
+  server: McpServerView
+  onDeleted?: () => void
+}) {
   const { t } = useTranslation(),
     [editing, setEditing] = useState(false),
     [removing, setRemoving] = useState(false),
@@ -53,7 +61,9 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
       null,
     )
   const write = async (p: Parameters<typeof mcpAction>[0]) => {
-    setError(await mcpAction(p))
+    const code = await mcpAction(p)
+    setError(code)
+    return code
   }
   const login = async () => {
     setBusy(true)
@@ -69,7 +79,17 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
     const r = await invokeRoute(window.tenon, mcpReviewChange, { id: s.id, target })
     if (r.ok) setReview(r.data)
     else setError('unavailable')
+    if (r.ok)
+      setReviewed((old) => ({
+        ...old,
+        ['tool' in target ? 'tool:' + target.tool : 'instructions']:
+          'tool' in target
+            ? (s.toolViews.find((v) => v.originalName === target.tool)?.definitionHash ?? '')
+            : (s.instructionsView?.hash ?? ''),
+      }))
   }
+  const [reviewed, setReviewed] = useState<Record<string, string>>({})
+  const releaseHash = (key: string) => reviewed[key]
   return (
     <div data-testid="connector-detail" className="flex min-w-0 flex-col gap-3">
       <h3 className="break-all font-medium">
@@ -77,6 +97,7 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
       </h3>
       <p>
         {t(`mcp.status.${connectorStatus(s)}` as never, {
+          error: s.status.error ? t(`mcp.error.${s.status.error.code}`) : '',
           version: s.status.protocolVersion ?? '',
           n: s.toolViews.length,
           seconds: Math.ceil((s.status.restartInMs ?? 0) / 1000),
@@ -84,7 +105,7 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
       </p>
       <p>
         {t('mcp.protocolValue', {
-          era: s.status.era ?? '—',
+          era: s.status.era ? t(`mcp.era.${s.status.era}`) : '—',
           version: s.status.protocolVersion ?? '—',
         })}
       </p>
@@ -128,13 +149,14 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
             data-testid={`connector-tool-${tool.originalName}`}
             className="flex min-w-0 flex-col gap-1 rounded-md border border-border-default p-2"
           >
-            <span className="break-all font-medium">{tool.originalName}</span>
-            <p className="whitespace-pre-wrap break-all text-ui-sm">{tool.description}</p>
+            <span className="break-all font-medium">{visible(tool.originalName)}</span>
+            <p className="whitespace-pre-wrap break-all text-ui-sm">{visible(tool.description)}</p>
             <Chooser
               id={`${s.id}-${tool.originalName}`}
               testId={`tool-setting-${tool.originalName}`}
               value={tool.setting}
-              disabled={tool.review === 'new'}
+              disabled={tool.review !== 'ok'}
+              ariaLabel={visible(tool.originalName)}
               options={toolSettings(tool).map((value) => ({
                 value,
                 label: t(TOOL_SETTING_KEY[value]),
@@ -166,12 +188,13 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
                   <Button
                     size="sm"
                     data-testid={`tool-release-${tool.originalName}`}
+                    disabled={!releaseHash('tool:' + tool.originalName)}
                     onClick={() =>
                       void write(
                         invokeRoute(window.tenon, mcpRelease, {
                           id: s.id,
                           target: { tool: tool.originalName },
-                          definitionHash: tool.definitionHash,
+                          definitionHash: releaseHash('tool:' + tool.originalName)!,
                         }),
                       )
                     }
@@ -189,15 +212,16 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
         <>
           <label className="flex gap-2 items-center">
             <Switch
+              data-testid="connector-instructions"
               checked={s.instructions.enabled}
               onCheckedChange={(enabled) =>
                 void write(invokeRoute(window.tenon, mcpSetInstructions, { id: s.id, enabled }))
               }
             />
-            {t('mcp.instructions')}
+            <span data-testid="connector-instructions-label">{t('mcp.instructions')}</span>
           </label>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all">
-            {s.instructionsView.text}
+            {visible(s.instructionsView.text)}
           </pre>
           {s.instructionsView.review === 'changed' ? (
             <div className="flex flex-wrap gap-2">
@@ -206,12 +230,13 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
                 {t('mcp.viewChange')}
               </Button>
               <Button
+                disabled={!releaseHash('instructions')}
                 onClick={() =>
                   void write(
                     invokeRoute(window.tenon, mcpRelease, {
                       id: s.id,
                       target: { instructions: true },
-                      definitionHash: s.instructionsView!.hash,
+                      definitionHash: releaseHash('instructions')!,
                     }),
                   )
                 }
@@ -295,10 +320,14 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
         busy={busy}
         onConfirm={() => {
           setBusy(true)
-          void write(invokeRoute(window.tenon, mcpDelete, { id: s.id })).finally(() => {
-            setBusy(false)
-            setRemoving(false)
-          })
+          void write(invokeRoute(window.tenon, mcpDelete, { id: s.id }))
+            .then((code) => {
+              if (code === null) onDeleted?.()
+            })
+            .finally(() => {
+              setBusy(false)
+              setRemoving(false)
+            })
         }}
       />
       {grant ? (
@@ -309,8 +338,9 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
           preview={grant}
           onChoose={(choice) => {
             setGrant(null)
-            if (choice !== 'cancel')
-              void write(invokeRoute(window.tenon, mcpConnect, { id: s.id, consent: choice }))
+            const consent = grantResult(choice)
+            if (consent !== null)
+              void write(invokeRoute(window.tenon, mcpConnect, { id: s.id, consent }))
           }}
         />
       ) : null}
@@ -329,17 +359,21 @@ export function ConnectorDetail({ server: s }: { server: McpServerView }) {
           className="sm:max-w-2xl max-h-[85vh] overflow-y-auto"
         >
           <DialogHeader>
-            <DialogTitle>{t(log !== null ? 'mcp.log' : 'mcp.viewChange')}</DialogTitle>
+            <DialogTitle className="leading-normal">
+              {t(log !== null ? 'mcp.log' : 'mcp.viewChange')}
+            </DialogTitle>
             <DialogDescription>{t('mcp.reviewNote')}</DialogDescription>
           </DialogHeader>
           {review ? (
             <>
               <h4>{t('mcp.before')}</h4>
               <pre className="overflow-auto whitespace-pre-wrap break-all">
-                {review.before ?? t('mcp.noBefore')}
+                {review.before === null ? t('mcp.noBefore') : visible(review.before)}
               </pre>
               <h4>{t('mcp.after')}</h4>
-              <pre className="overflow-auto whitespace-pre-wrap break-all">{review.after}</pre>
+              <pre className="overflow-auto whitespace-pre-wrap break-all">
+                {visible(review.after)}
+              </pre>
             </>
           ) : (
             <pre className="overflow-auto whitespace-pre-wrap break-all">{log}</pre>

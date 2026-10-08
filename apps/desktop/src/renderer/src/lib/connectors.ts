@@ -20,7 +20,18 @@ export function toolSettings(tool: McpServerView['toolViews'][number]) {
     (setting) => setting !== 'always-allow' || tool.alwaysAllowOffered,
   )
 }
-export function connectorStatus(server: McpServerView): string {
+export const CONNECTOR_STATUSES = [
+  'disabled',
+  'needs-consent',
+  'crash-limit',
+  'stopped',
+  'connecting',
+  'connected',
+  'restarting',
+  'error',
+  'unauthorized',
+] as const
+export function connectorStatus(server: McpServerView): (typeof CONNECTOR_STATUSES)[number] {
   if (!server.enabled) return 'disabled'
   if (server.needsConsent) return 'needs-consent'
   if (server.status.phase === 'stopped' && server.status.stopReason === 'crash-limit')
@@ -57,4 +68,13 @@ export function draftOf(server: McpServerView) {
     callTimeoutSec: server.callTimeoutSec,
     instructions: { enabled: server.instructions.enabled },
   }
+}
+
+export function reorderConnector(ids: readonly string[], from: string, target: string): string[] {
+  const source = ids.indexOf(from),
+    destination = ids.indexOf(target)
+  if (source < 0 || destination < 0 || source === destination) return [...ids]
+  const next = ids.filter((id) => id !== from)
+  next.splice(destination, 0, from)
+  return next
 }

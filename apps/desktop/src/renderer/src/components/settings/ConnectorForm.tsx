@@ -13,7 +13,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { launchChanged } from '@/lib/connector-consent'
+import { grantResult, secretNames, enteredSecrets, launchChanged } from '@/lib/connector-consent'
 import { mcpAction } from '@/runtime/mcp-store'
 import { Field, Chooser } from './fields'
 import { GrantDialog } from './GrantDialog'
@@ -43,8 +43,6 @@ export function ConnectorForm(props: {
         : '53280',
     handshake: String(s?.handshakeTimeoutSec ?? ''),
     timeout: String(s?.callTimeoutSec ?? ''),
-    secretEnv: '{}',
-    secretHeaders: '{}',
     clientSecret: '',
   }
   const [values, setValues] = useState(initial),
@@ -54,6 +52,25 @@ export function ConnectorForm(props: {
     [hasSecret, setHasSecret] = useState(
       transport?.type === 'http' && transport.oauth.ownClient?.hasSecret === true,
     )
+  const [secretValues, setSecretValues] = useState<Record<string, string>>({})
+  const names = secretNames(kind === 'stdio' ? values.envKeys : values.headers)
+  const currentSecrets = Object.fromEntries(
+    names.map((name) => [name, secretValues[`${kind}:${name}`] ?? '']),
+  )
+  const secretFields = names.map((name) => (
+    <Field key={name} label={t('mcp.secretField', { name })} htmlFor={`${prefix}-secret-${name}`}>
+      <Input
+        id={`${prefix}-secret-${name}`}
+        data-testid={`mcp-secret-${name}`}
+        type="password"
+        autoComplete="off"
+        value={currentSecrets[name] ?? ''}
+        onChange={(event) =>
+          setSecretValues((old) => ({ ...old, [`${kind}:${name}`]: event.target.value }))
+        }
+      />
+    </Field>
+  ))
   const [busy, setBusy] = useState(false),
     [error, setError] = useState<string | null>(null),
     [grant, setGrant] = useState<{
@@ -128,9 +145,11 @@ export function ConnectorForm(props: {
           draft: value,
           consent,
           secrets: {
-            env: JSON.parse(values.secretEnv),
-            headers: JSON.parse(values.secretHeaders),
-            ...(values.clientSecret ? { ownClientSecret: values.clientSecret } : {}),
+            env: kind === 'stdio' ? enteredSecrets(names, currentSecrets) : {},
+            headers: kind === 'http' ? enteredSecrets(names, currentSecrets) : {},
+            ...(kind === 'http' && values.clientSecret
+              ? { ownClientSecret: values.clientSecret }
+              : {}),
           },
         }),
       )
@@ -209,13 +228,13 @@ export function ConnectorForm(props: {
                 {field('args', true)}
                 {field('envs', true)}
                 {field('envKeys', true)}
-                {field('secretEnv', true)}
+                {secretFields}
               </>
             ) : (
               <>
                 {field('url')}
                 {field('headers', true)}
-                {field('secretHeaders', true)}
+                {secretFields}
                 <Field label={t('mcp.protocol')} htmlFor={`${prefix}-protocol`}>
                   <Chooser
                     id={`${prefix}-protocol`}
@@ -262,8 +281,9 @@ export function ConnectorForm(props: {
           {...grant}
           busy={busy}
           onChoose={(choice) => {
-            if (choice === 'cancel') setGrant(null)
-            else void save(grant.draft, choice)
+            const consent = grantResult(choice)
+            if (consent === null) setGrant(null)
+            else void save(grant.draft, consent)
           }}
         />
       ) : null}

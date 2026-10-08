@@ -92,7 +92,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
           <span data-testid="tool-effect-marker" className="shrink-0">
             <AlertTriangle aria-hidden className="inline size-3" />
             <span className="sr-only">
-              {t('mcp.marker', {
+              {t('mcp.effectMarker', {
                 effect: t(effect.effectKey),
                 reversibility: t(effect.reversibilityKey),
               })}

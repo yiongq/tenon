@@ -144,7 +144,11 @@ export function ApprovalCard(props: {
       <p className="text-ui font-medium text-text-primary" data-testid="approval-title">
         {t(titleKey(card) as never)}
       </p>
-      <div data-testid="reversibility-scale" className="flex flex-wrap gap-2 text-micro">
+      <div
+        aria-label={t('mcp.reversibilityScale')}
+        data-testid="reversibility-scale"
+        className="flex flex-wrap gap-2 text-micro"
+      >
         {reversibilityScale(card.reversibility).map((cell) => (
           <span
             key={cell.value}

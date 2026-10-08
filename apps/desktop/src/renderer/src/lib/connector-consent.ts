@@ -40,3 +40,17 @@ export function resolvedCopy(path: string | null) {
     ? { key: 'mcp.resolved' as const, args: { path: visible(path) } }
     : { key: 'mcp.commandMissing' as const, args: {} }
 }
+
+export function secretNames(json: string): string[] {
+  try {
+    const value: unknown = JSON.parse(json)
+    return Array.isArray(value)
+      ? [...new Set(value.filter((v): v is string => typeof v === 'string'))]
+      : []
+  } catch {
+    return []
+  }
+}
+export function enteredSecrets(names: readonly string[], values: Readonly<Record<string, string>>) {
+  return Object.fromEntries(names.flatMap((name) => (values[name] ? [[name, values[name]]] : [])))
+}

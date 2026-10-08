@@ -171,3 +171,52 @@ test('a base URL this wire cannot use is reported in the card, not as a crash', 
     await app.close()
   }
 })
+
+test('M6 regression: saving keeps settings open on Escape and disables pane switching; hash preserves context', async () => {
+  const userData = makeUserDataDir('settings-busy')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData })
+  try {
+    await app.evaluate(({ ipcMain }) => {
+      const handlers = Reflect.get(ipcMain, '_invokeHandlers') as Map<
+        string,
+        (...args: unknown[]) => Promise<unknown>
+      >
+      const original = handlers.get('provider.configure')!
+      handlers.set('provider.configure', async (...args) => {
+        await new Promise<void>((done) => {
+          ;(globalThis as { finishProviderSave?: () => void }).finishProviderSave = done
+        })
+        return original(...args)
+      })
+    })
+    await page.evaluate(() => {
+      window.location.hash = '#context'
+    })
+    await page.getByTestId('account-row').click()
+    await page.getByTestId('account-providers').click()
+    await expect(page.getByTestId('settings-providers')).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#settings/providers')
+    await page.getByTestId('provider-config-apiKey').fill('e2e-fixture-key')
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('settings-connectors')).toBeDisabled()
+    await page.keyboard.press('Escape')
+    // Keep the IPC write held beyond the dialog exit animation; immediate visibility can race it.
+    await page.waitForTimeout(350)
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await app.evaluate(() =>
+      (globalThis as { finishProviderSave?: () => void }).finishProviderSave?.(),
+    )
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#context')
+    await page.evaluate(() => {
+      window.location.hash = '#settings/connectors'
+    })
+    await expect(page.getByTestId('connectors-pane')).toBeVisible()
+    await expect(page.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
+    await page.keyboard.press('Escape')
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#context')
+  } finally {
+    await app.close()
+  }
+})

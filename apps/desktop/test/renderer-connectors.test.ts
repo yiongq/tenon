@@ -11,12 +11,15 @@ import {
   MCP_EFFECTIVE_NEXT,
   MCP_NEVER_NOTE,
   MCP_ACTIONS,
+  reorderConnector,
   connectorStatus,
   toolSettings,
   unavailableKey,
   draftOf,
 } from '../src/renderer/src/lib/connectors.js'
 import {
+  secretNames,
+  enteredSecrets,
   grantEnvironment,
   resolvedCopy,
   GRANT_BUTTONS,
@@ -146,4 +149,52 @@ it('03 验收 25 (render): resolved path, key names without values, and every wa
     expect(
       i.t(`mcp.warning.${kind}`, { arg: '~/.ssh', package: 'fixture', name: 'PATH' }),
     ).not.toBe(`mcp.warning.${kind}`)
+})
+
+it('sort supports adjacent down/up and reaching either end without dropping IDs', () => {
+  expect(reorderConnector(['a', 'b', 'c'], 'a', 'b')).toEqual(['b', 'a', 'c'])
+  expect(reorderConnector(['a', 'b', 'c'], 'a', 'c')).toEqual(['b', 'c', 'a'])
+  expect(reorderConnector(['a', 'b', 'c'], 'c', 'a')).toEqual(['c', 'a', 'b'])
+})
+it('only changing envs values or adding a secret name changes launch; secrets are built from named password fields', () => {
+  const s = serverView(),
+    d = draftOf(s)
+  expect(
+    launchChanged(s, {
+      ...d,
+      transport: {
+        type: 'stdio',
+        command: '/usr/bin/node',
+        args: [],
+        envs: { VALUE: 'changed' },
+        env_keys: [],
+      },
+    }),
+  ).toBe(true)
+  expect(
+    launchChanged(s, {
+      ...d,
+      transport: {
+        type: 'stdio',
+        command: '/usr/bin/node',
+        args: [],
+        envs: {},
+        env_keys: ['TOKEN'],
+      },
+    }),
+  ).toBe(true)
+  expect(secretNames('["TOKEN","OTHER"]')).toEqual(['TOKEN', 'OTHER'])
+  expect(
+    enteredSecrets(['TOKEN', 'OTHER'], { TOKEN: 'fixture', OTHER: '', REMOVED: 'removed' }),
+  ).toEqual({ TOKEN: 'fixture' })
+  expect(
+    grantEnvironment({
+      type: 'stdio',
+      command: 'node',
+      args: [],
+      envs: { VALUE: 'a\u202Eb' },
+      env_keys: [],
+    }).plain,
+  ).toEqual(['VALUE=a\\u{202E}b'])
+  expect(resolvedCopy('/a\u202Eb').args).toEqual({ path: '/a\\u{202E}b' })
 })

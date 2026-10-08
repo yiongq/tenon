@@ -53,6 +53,7 @@ import { Chooser, Field } from './fields'
 export interface ProviderSettingsProps {
   open: boolean
   embedded?: boolean
+  onBusyChange?: (busy: boolean) => void
   onOpenChange: (open: boolean) => void
   /** Where focus goes when the card closes — the row the account menu opened it from. */
   finalFocus?: RefObject<HTMLElement | null>
@@ -126,6 +127,10 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
   const [creating, setCreating] = useState(false)
   /** One of the instance section's writes is in flight: the card stays open, as for `saving`. */
   const [sectionBusy, setSectionBusy] = useState(false)
+  const { onBusyChange } = props
+  useEffect(() => {
+    onBusyChange?.(saving || sectionBusy)
+  }, [saving, sectionBusy, onBusyChange])
   const chooser = useRef<HTMLSelectElement | null>(null)
   /** One shot per opening: the fields do not exist yet when the dialog takes initial focus. */
   const wantsFocus = useRef(false)
@@ -246,6 +251,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
         if (!chosen.ok) return await fail({ code: 'unavailable', configKey: null }, wrote)
         if (!chosen.data.ok) return await fail(chosen.data, wrote)
       }
+      props.onBusyChange?.(false)
       close()
     } finally {
       setSaving(false)

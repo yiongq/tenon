@@ -137,7 +137,12 @@ export function registerMcpRoutes(q: {
         instructionsView: status.instructions
           ? {
               ...status.instructions,
-              review: status.instructions.hash === server.instructions.pinHash ? 'ok' : 'changed',
+              review:
+                !server.instructions.enabled ||
+                server.instructions.pinHash === null ||
+                status.instructions.hash === server.instructions.pinHash
+                  ? 'ok'
+                  : 'changed',
             }
           : null,
         toolViews: (status.tools ?? []).map((tool) => {
@@ -299,7 +304,17 @@ export function registerMcpRoutes(q: {
   })
   registerRoute(ipcMain, mcpLogin, ({ id }) =>
     mcp.pool.login(id, {
-      listen: listenMcpCallback,
+      listen: async (port) => {
+        // Test-only: the application binds port 0 and reports the actual bound port. No probe/close race.
+        const auto =
+          !q.isPackaged &&
+          q.env['TENON_DEV_ENV'] === 'off' &&
+          q.env['TENON_TEST_MCP_CALLBACK_PORT'] === 'auto'
+        const listener = await listenMcpCallback(auto ? 0 : port)
+        if (auto)
+          (globalThis as { tenonMcpCallbackPort?: number }).tenonMcpCallbackPort = listener.port
+        return listener
+      },
       openUrl: createMcpOpenUrl({
         isPackaged: q.isPackaged,
         env: q.env,

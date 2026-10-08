@@ -33,11 +33,13 @@ export function Chooser(props: {
   options: ReadonlyArray<{ value: string; label: string }>
   onChange: (value: string) => void
   inputRef?: RefObject<HTMLSelectElement | null>
+  ariaLabel?: string
   disabled?: boolean
 }): JSX.Element {
   return (
     <div className="relative">
       <select
+        aria-label={props.ariaLabel}
         id={props.id}
         data-testid={props.testId}
         {...(props.inputRef === undefined ? {} : { ref: props.inputRef })}

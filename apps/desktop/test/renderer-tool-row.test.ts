@@ -37,3 +37,12 @@ it('03 验收 45: side effects, write/external markers, and unauthorized-only re
   expect(toolRowEffect(denied, 'Read')?.loginServerId).toBeNull()
   expect(toolRowEffect(null, 'notes__echo')).toBeNull()
 })
+
+it('write without reversibility defaults to unknown and carries a side-effect marker', () => {
+  expect(
+    toolRowEffect(
+      { effect: 'write', state: 'completed', source: null, output: 'ok' },
+      'notes__echo',
+    ),
+  ).toMatchObject({ reversibilityKey: 'mcp.reversibility.unknown', marker: true })
+})
