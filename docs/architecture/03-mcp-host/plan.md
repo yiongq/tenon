@@ -459,12 +459,12 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 ## 交接
 
 - **2026-10-08 · 第四段首个 PR · 完成**
-  - 分支：feat/03-seg4a 从最新 dev ff387eb（PR #40）开工；实现提交见 git log。改动为第三段遗留、CIMD 常量/导出/测试、plan 核对与回归；没有半成品或临时探针。先 pnpm install，lockfile 无变化。
+  - 分支：feat/03-seg4a 从最新 dev ff387eb（PR #40）开工；实现提交 b0fc4e7。PR [#42](https://github.com/yiongq/tenon/pull/42) 指向 dev，Ready for review、未合并。改动为第三段遗留、CIMD 常量/导出/测试、plan 核对与回归；没有半成品或临时探针。先 pnpm install，lockfile 无变化。
   - 做完：18a 全部 8 项、20、22、24；18/19/19a/19b 已撤销（2026-10-08，见 spec 读法 70），没有实现同题对比。spec 未改、保持 ready；提示层文案/哈希/版本未改，PROMPT_LAYER_VERSION=10。
   - 门禁：G 3811 通过 / 2 跳过；P 30 通过 / 1 跳过；EA 单 Electron 169 通过；最终边界修复后重构建 E 3 项通过；12 项突变红且恢复。命令与精确文档核对见实施记录。
   - 给审查者：核对回调接缝的 packaged/dev/live 防护、真实 PID/tools-list/stderr 观察、两种哈希清理和刷新乱序，以及产品 CIMD URL。PR 目标 dev，完成后 Ready，不合并。
   - 给 owner：21 已定 Notion https://mcp.notion.com/mcp，等 owner 在场再跑；23/25 留最后一个 PR。PR #41 的撤销同题对比 / 读法 70 修订合入后同步；本 PR 不重复写该 spec。
-  - 下一步：lead 审查第四段首个 PR；21、23、25 留后续 PR。
+  - 下一步：lead 审查 PR #42；21、23、25 留后续 PR。远端 CI 作为交付门禁，代码和本地检查已完成。
 
 - **2026-10-08 · 第二轮审查返修完成**
   - 分支：当前独立 worktree 为 `codex/pr29-round2`；交付推至 `feat/03-seg1` / PR #29 → dev，保持 Ready、不合并。
