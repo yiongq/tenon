@@ -991,9 +991,10 @@ async function assertPinIsThisRunsOwnBatch(
   if (receipt === undefined) {
     fail(`attempt ${entry.entryId}: no session/model_selected for run ${runId}`)
   }
-  const note = entries.find(
+  const note = entries.findLast(
     (candidate) =>
-      candidate.name === 'message/environment' &&
+      (candidate.name === 'message/environment' ||
+        candidate.name === 'message/server_instructions') &&
       candidate.entryId > receipt.entryId &&
       candidate.entryId < entry.entryId,
   )

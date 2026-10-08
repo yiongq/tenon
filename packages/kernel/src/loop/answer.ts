@@ -515,6 +515,7 @@ export type PendingCard = PendingApproval | PendingQuestion
 
 /** The approval card: the card, the call's key, the row it hangs under, and the scope an「允许」grants. */
 export interface PendingApproval {
+  readonly definitionChanged?: true
   readonly waitKind: 'approval'
   readonly card: ConfirmRequest
   readonly callKey: string

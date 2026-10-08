@@ -587,3 +587,13 @@ describe('rebuildProviderContext', () => {
     expect(context).toEqual([])
   })
 })
+
+it('a message/server_instructions entry folds into the context as a user turn', () => {
+  const entry = messageEntry(1, 'connector-note', 0, 'user', [
+    { type: 'text', text: 'connector information' },
+  ])
+  entry.name = 'message/server_instructions'
+  expect(effectiveMessages([entry])).toMatchObject([
+    { role: 'user', content: [{ type: 'text', text: 'connector information' }] },
+  ])
+})

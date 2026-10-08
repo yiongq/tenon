@@ -1,10 +1,12 @@
+import { schemaChain } from '../support/schema-chains.js'
 /**
  * Argument validation before any permission decision (spec 02 §内置工具与参数「参数校验与失败」; plan
  * step 10, 旧 141 and the connector half; open question 16). What a failed call writes — the
  * `invalid-input` closure, no card, no decision, no dispatch — is the per-round loop's (plan steps 13
  * and 14); this file pins the verdicts it acts on.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/validators/cf-worker'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { BUILTIN_TOOLS } from '../../src/tools/builtin/index.js'
 import type { BuiltinToolName } from '../../src/tools/builtin/tool.js'
@@ -147,4 +149,59 @@ describe('connector arguments', () => {
     const dangling = connector({ type: 'object', properties: { q: { $ref: '#/$defs/missing' } } })
     expect(validator.check(dangling, { q: 1 })).toEqual(unusable)
   })
+})
+
+it('03 验收 33: nested quantifiers, duplicate alternatives, oversized patterns and external refs are schemaUnusable', () => {
+  for (const schema of [
+    { type: 'object', properties: { x: { pattern: '(a+)+' } } },
+    { type: 'object', properties: { x: { pattern: '(a|a)+' } } },
+    { type: 'object', properties: { x: { pattern: 'a'.repeat(1025) } } },
+    { type: 'object', patternProperties: { '(a+)+': {} } },
+    { type: 'object', $ref: 'https://example.test/schema' },
+  ])
+    expect(validator.check(connector(schema), {})).toEqual({
+      ok: false,
+      source: 'tool-unavailable',
+      reason: MODEL_NOTES.schemaUnusable,
+    })
+  expect(
+    validator.check(
+      connector({ type: 'object', properties: { x: { type: 'string', pattern: '^a+$' } } }),
+      { x: 'aaa' },
+    ),
+  ).toEqual({ ok: true })
+})
+
+it('03 验收 33: external refs are refused before constructing a validator', () => {
+  const compile = vi.spyOn(CfWorkerJsonSchemaValidator.prototype, 'getValidator')
+  try {
+    const fresh = createArgumentValidator()
+    expect(
+      fresh.check(connector({ type: 'object', $ref: 'https://example.test/schema' }), {}),
+    ).toMatchObject({ source: 'tool-unavailable' })
+    expect(compile).not.toHaveBeenCalled()
+  } finally {
+    compile.mockRestore()
+  }
+})
+
+it('03 验收 32: anchor and dependencies chains are refused before CfWorker compiles, including fragment ids', () => {
+  const compile = vi.spyOn(CfWorkerJsonSchemaValidator.prototype, 'getValidator')
+  try {
+    for (const kind of [
+      'anchor',
+      'fragment-id',
+      'dependencies',
+      'tuple',
+      'numeric-id',
+      'empty-id',
+    ] as const) {
+      expect(
+        createArgumentValidator().check(connector(schemaChain(kind)), { x: 1, y: 1 }),
+      ).toMatchObject({ ok: false, source: 'tool-unavailable', reason: MODEL_NOTES.schemaUnusable })
+    }
+    expect(compile).not.toHaveBeenCalled()
+  } finally {
+    compile.mockRestore()
+  }
 })

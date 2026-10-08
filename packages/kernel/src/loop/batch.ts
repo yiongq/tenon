@@ -955,6 +955,11 @@ export function closedView(
   return {
     effect: outcome['effect'] as ToolOutcomeView['effect'],
     state: outcome['state'] as ToolOutcomeView['state'],
+    ...(outcome['reversibility'] === undefined
+      ? {}
+      : {
+          reversibility: outcome['reversibility'] as NonNullable<ToolOutcomeView['reversibility']>,
+        }),
     source: (outcome['source'] ?? null) as ToolOutcomeView['source'],
     ...(outcome['facts'] === undefined
       ? {}
@@ -1051,6 +1056,7 @@ export type Judgement =
   | { readonly kind: 'stopped' }
   | {
       readonly kind: 'judged'
+      readonly definitionChanged?: true
       readonly decision: Decision
       readonly reversibility: Reversibility
       readonly place?: PathPlace
@@ -1138,6 +1144,7 @@ export async function judgeCall(
           tenantId: ctx.host.identity.tenantId,
           serverId: item.serverId,
           toolName: item.originalName,
+          ...(item.definitionHash === undefined ? {} : { definitionHash: item.definitionHash }),
         })
       : null
   const object = grantObjectOf(item, call.input, located, workspace, ctx.searchHost)
@@ -1162,7 +1169,16 @@ export async function judgeCall(
       ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
-      ...(setting?.userSetting === undefined ? {} : { userSetting: setting.userSetting }),
+      ...(setting?.userSetting === undefined
+        ? {}
+        : {
+            userSetting:
+              item.source === 'mcp' &&
+              item.definitionHash === undefined &&
+              setting.userSetting === 'always-allow'
+                ? ('ask' as const)
+                : setting.userSetting,
+          }),
       reversibility: { value: reversibility, source: 'host' },
       requiresUserInteraction: item.requiresUserInteraction,
       sessionGrant:
@@ -1182,6 +1198,9 @@ export async function judgeCall(
   const failed = decision.record.decidedBy === 'inspector' ? failedStatusOf(decision) : undefined
   return {
     kind: 'judged',
+    ...(item.definitionHash === undefined || setting?.definitionChanged !== true
+      ? {}
+      : { definitionChanged: true as const }),
     decision,
     reversibility,
     ...(place === undefined ? {} : { place }),
@@ -1251,6 +1270,9 @@ export function decisionEntry(q: {
     providerToolCallId: q.ref.providerToolCallId,
     argsHash: q.argsHash,
     reversibility: q.judged.reversibility,
+    ...(q.judged.definitionChanged === undefined
+      ? {}
+      : { definitionChanged: q.judged.definitionChanged }),
     record: decision.record,
     summary: decision.summary,
     policyVersion: q.judged.policyVersion,

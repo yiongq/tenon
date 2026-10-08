@@ -49,6 +49,7 @@ import type {
   CompactionAnchorPayload,
   ContinuationPayload,
   EnvironmentPayload,
+  ServerInstructionsPayload,
   DispatchCommittedPayload,
   MessagePayload,
   MessageRetractedPayload,
@@ -152,6 +153,7 @@ export interface TapePayloadByName {
   'view/assembled': ViewAssembledPayload
   'message/continuation': ContinuationPayload
   'message/environment': EnvironmentPayload
+  'message/server_instructions': ServerInstructionsPayload
   'tool/call': ToolCallPayload
   'tool/permission_decided': PermissionDecidedPayload
   'tool/approval_resolved': ApprovalResolvedPayload

@@ -34,7 +34,7 @@ export class ChildStdioTransport implements Transport {
   #reader?: ReadableStreamDefaultReader<Uint8Array>
   #stderrReader?: ReadableStreamDefaultReader<Uint8Array>
   #started = false
-  #closing = false
+  #closeTask: Promise<void> | null = null
   #finished = false
   #protocolVersion?: string
 
@@ -78,9 +78,12 @@ export class ChildStdioTransport implements Transport {
    * Graceful shutdown: stdin EOF first (well-behaved servers exit 0 on EOF), SIGTERM
    * after `graceMs`, SIGKILL after another `graceMs`. Never leaks a child.
    */
-  async close(): Promise<void> {
-    if (this.#closing) return
-    this.#closing = true
+  close(): Promise<void> {
+    this.#closeTask ??= this.#shutdown()
+    return this.#closeTask
+  }
+
+  async #shutdown(): Promise<void> {
     try {
       await this.#writer?.close()
     } catch {
@@ -93,6 +96,7 @@ export class ChildStdioTransport implements Transport {
         await this.#child.exited
       }
     }
+    await this.#child.kill('SIGKILL')
     // Cancel both readers: a descendant that inherited a pipe keeps it open past `exited`.
     await Promise.allSettled([this.#reader?.cancel(), this.#stderrReader?.cancel()])
     this.#finish()

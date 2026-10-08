@@ -12,7 +12,7 @@ import type {
   SpillMark,
 } from '@tenon-app/kernel'
 import { z } from 'zod'
-import { confirmTargetSchema } from './confirm.js'
+import { confirmTargetSchema, reversibilitySchema } from './confirm.js'
 
 /** The summary codes, only ever added to (§判决记录与摘要). */
 export const decisionSummaryCodeSchema = z.enum([
@@ -68,6 +68,7 @@ export const closureSourceSchema = z.enum([
   'stopped',
   'timed-out',
   'superseded',
+  'connector-unauthorized',
   'tool-unavailable',
   'invalid-input',
   'crashed',
@@ -97,6 +98,7 @@ export const spillMarkSchema = z.enum(['spilled', 'unsaved']) satisfies z.ZodTyp
  * exact, like the kernel type's: absent, never `undefined`.
  */
 export const toolOutcomeViewShape = {
+  reversibility: reversibilitySchema.exactOptional(),
   effect: z.enum(['read', 'write', 'external', 'blocked']),
   state: executionStateSchema,
   source: closureSourceSchema.nullable(), // null = 正常执行完

@@ -249,6 +249,14 @@ const declarations = [
     sourceSeq: 0,
   },
   {
+    name: 'message/server_instructions',
+    kind: 'message',
+    slice: 'message',
+    sourceType: 'message',
+    sourceId: 'required',
+    sourceSeq: 0,
+  },
+  {
     name: 'tool/call',
     kind: 'tool_call',
     slice: 'tool',

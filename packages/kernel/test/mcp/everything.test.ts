@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { absolutePath, connectStdioServer, createMemoryHost } from '../../src/index.js'
+import {
+  absolutePath,
+  connectStdioServer,
+  createMemoryHost,
+  McpResourceNotFoundError,
+} from '../../src/index.js'
+import type { McpServerRuntime } from '../../src/mcp/pool.js'
 import type { HostClock } from '../../src/index.js'
 import { createNodeProcess } from '../support/node-process.js'
 import { serverEverythingSpawnSpec } from '../support/server-everything.js'
@@ -79,3 +85,81 @@ describe('a server whose stream breaks but whose process stays alive', () => {
     await conn.close()
   }, 15_000)
 })
+
+it('03 验收 40 (Everything): lists and gets a prompt, lists and reads a resource, maps -32002', async () => {
+  const conn = await connectStdioServer(createMemoryHost({ process: createNodeProcess() }), {
+    name: 'everything',
+    spawn: serverEverythingSpawnSpec(),
+    sandbox: { profile: 'full-access', workspace: [] },
+  })
+  try {
+    expect((await conn.listPrompts?.())?.prompts.map((p) => p.name)).toContain('simple-prompt')
+    expect(await conn.getPrompt?.('simple-prompt')).toHaveProperty('messages')
+    const resources = (await conn.listResources?.())?.resources ?? []
+    expect(resources.length).toBeGreaterThan(0)
+    expect(await conn.readResource?.(resources[0]!.uri)).toHaveProperty('contents')
+    await expect(conn.readResource?.('demo://missing')).rejects.toBeInstanceOf(
+      McpResourceNotFoundError,
+    )
+  } finally {
+    await conn.close()
+  }
+})
+
+it('03 验收 39 (Everything): gzip-file-as-resource with a data URI changes the resources snapshot', async () => {
+  const { createMcpPool } = await import('../../src/mcp/pool.js')
+  const { vi } = await import('vitest')
+  const host = createMemoryHost({ process: createNodeProcess() })
+  const spawn = serverEverythingSpawnSpec()
+  const runtime: McpServerRuntime = {
+    serverId: 'everything',
+    launchHash: 'fixture-launch',
+    consented: true,
+    transport: {
+      type: 'stdio',
+      command: spawn.argv[0]!,
+      args: spawn.argv.slice(1),
+      envs: {},
+      envKeys: [],
+    },
+    handshakeTimeoutMs: 30_000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const changed = vi.fn<() => void>()
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => spawn.env,
+    homeDir: spawn.cwd,
+    resolveCommand: async (command) => ({ ok: true, path: absolutePath(command) }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: changed,
+  })
+  pool.apply([runtime])
+  try {
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    const proxy = pool.routes()[0]!.connection
+    const before = await proxy.listResources?.()
+    const changes = changed.mock.calls.length
+    await proxy.callTool('gzip-file-as-resource', {
+      data: 'data:text/plain,fixture%20resource',
+      name: 'fixture.txt.gz',
+      outputType: 'resourceLink',
+    })
+    await vi.waitFor(() => expect(changed.mock.calls.length).toBeGreaterThan(changes))
+    const after = await proxy.listResources?.()
+    expect(after?.resources.length).toBeGreaterThan(before?.resources.length ?? 0)
+    expect(after?.resources.some((r) => r.name === 'fixture.txt.gz')).toBe(true)
+  } finally {
+    const closing = pool.close({ deadlineMs: 1000 })
+    host.advance(1000)
+    await closing
+  }
+}, 20_000)

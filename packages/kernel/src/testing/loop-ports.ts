@@ -52,6 +52,7 @@ export interface TestConnectorScript {
   readonly toolsPerRequest?: number | null
   readonly search?: SearchBackend | null
   readonly mcpSources?: readonly McpToolSource[]
+  readonly mcpTable?: RunAssembly['mcpTable']
 }
 
 export interface TestConnector extends RunConnector {
@@ -349,6 +350,7 @@ export function createTestConnector(initial?: TestConnectorScript): TestConnecto
         toolsWithheld: s.toolsWithheld ?? null,
         search: s.search ?? null,
         mcpSources: s.mcpSources ?? [],
+        ...(s.mcpTable === undefined ? {} : { mcpTable: s.mcpTable }),
         provider(): Provider {
           calls.provider += 1
           if (providerError !== null && providerFailures > 0) {

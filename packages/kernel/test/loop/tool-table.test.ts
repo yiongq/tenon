@@ -1,3 +1,6 @@
+import { mcpCandidates } from '../../src/tools/mcp-source.js'
+import { EMPTY_POLICY } from '../../src/host/policy.js'
+import type { ToolCandidate } from '../../src/tools/registry.js'
 /**
  * The tool table in the loop (spec 02 §工具目录与冻结, §组装清单与内容寄存; plan step 10, 旧 139, 旧 35,
  * 旧 148, 旧 149, 旧 150, 旧 151, 旧 145, 02 不变量 6; step 12's 旧 124 for a tool disabled after
@@ -54,7 +57,7 @@ import type {
 } from '../../src/testing/index.js'
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { readViewState } from '../../src/loop/run.js'
-import { rebuildToolTable } from '../../src/tools/table.js'
+import { rebuildToolTable, openToolTable } from '../../src/tools/table.js'
 import * as anthropicFixture from '../provider/fixtures/anthropic-sse.js'
 import * as openAIFixture from '../provider/fixtures/openai-sse.js'
 import { anthropicModel } from '../provider/wire/fixtures.js'
@@ -1024,4 +1027,108 @@ describe('the cap on tools per request is the connector’s (M6 §对 02 的修�
     // The child's request carried that table, and no more.
     expect(toolNames(provider, -2)).toHaveLength(cap)
   })
+})
+
+function opening03(
+  candidates: readonly ToolCandidate[],
+  extra: Partial<Parameters<typeof openToolTable>[0]> = {},
+) {
+  return openToolTable({
+    providerId: 'anthropic',
+    incarnationId: SESSION,
+    generation: 0,
+    reason: 'first-use',
+    candidates,
+    tenantId: 'tenant',
+    policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+    userSetting: () => null,
+    hasSearchBackend: false,
+    toolsPerRequest: null,
+    ...extra,
+  })
+}
+function source03(): McpToolSource {
+  return {
+    serverId: 'fixture',
+    connection: {
+      listTools: async () => [
+        { name: 'echo', description: 'fixture', inputSchema: { type: 'object' } },
+      ],
+    } as unknown as McpConnection,
+  }
+}
+it('03 验收 31 / 34 / 03 不变量 12: same-server duplicate names both collide; policy and user-disabled take priority', async () => {
+  const candidate = (await mcpCandidates([source03()]))[0]!
+  expect(opening03([candidate, candidate]).excluded.map((t) => t.code)).toEqual([
+    'name-collision',
+    'name-collision',
+  ])
+  expect(
+    opening03([candidate, { ...candidate, review: 'changed' }]).excluded.map((t) => t.code),
+  ).toEqual(['name-collision', 'name-collision'])
+  expect(
+    opening03([candidate, candidate], {
+      userSetting: () => ({ userSetting: 'never' }),
+    }).excluded.map((t) => t.code),
+  ).toEqual(['user-disabled', 'user-disabled'])
+  expect(
+    opening03([candidate, { ...candidate, definitionProblem: 'size' }]).excluded.map((t) => t.code),
+  ).toEqual(['name-collision', 'name-collision'])
+  expect(
+    opening03([{ ...candidate, definitionProblem: 'size', review: 'changed' }]).excluded[0]?.code,
+  ).toBe('invalid-definition')
+})
+it('03 验收 35 / 03 不变量 20: cap sorts by rank then name and never trims a builtin', async () => {
+  const candidate = (await mcpCandidates([source03()]))[0]!
+  const builtin: ToolCandidate = {
+    ...candidate,
+    source: 'builtin',
+    serverId: 'builtin',
+    originalName: 'Read',
+    name: 'Read',
+    spec: { ...candidate.spec, name: 'Read' },
+  }
+  const a = {
+    ...candidate,
+    originalName: 'a',
+    name: 'fixture__a',
+    spec: { ...candidate.spec, name: 'fixture__a' },
+    rank: 9,
+  }
+  const z = {
+    ...candidate,
+    originalName: 'z',
+    name: 'fixture__z',
+    spec: { ...candidate.spec, name: 'fixture__z' },
+    rank: 0,
+  }
+  expect(
+    opening03(
+      [
+        a,
+        z,
+        builtin,
+        {
+          ...a,
+          originalName: 'b',
+          name: 'fixture__b',
+          rank: 20,
+          spec: { ...a.spec, name: 'fixture__b' },
+        },
+      ],
+      { toolsPerRequest: 3 },
+    ).items.map((t) => t.name),
+  ).toEqual(['Read', 'fixture__a', 'fixture__z'])
+  const table = opening03([a, z, builtin], { toolsPerRequest: 2 })
+  expect(table.items.map((t) => t.name)).toEqual(['Read', 'fixture__z'])
+  expect(table.excluded).toMatchObject([{ originalName: 'a', code: 'over-limit' }])
+})
+
+it('03 不变量 7: both new and changed definitions are excluded and absent from items', async () => {
+  const candidate = (await mcpCandidates([source03()]))[0]!
+  for (const review of ['new', 'changed'] as const) {
+    const table = opening03([{ ...candidate, review }])
+    expect(table.items).toEqual([])
+    expect(table.excluded[0]?.code).toBe('definition-changed')
+  }
 })

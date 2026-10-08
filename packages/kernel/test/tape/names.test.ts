@@ -62,6 +62,7 @@ const PHASE_2_NAMES: ReadonlyArray<readonly [string, string, string]> = [
   ['view/assembled', 'view/event', 'runtime_event/required/ordinal'],
   ['message/continuation', 'message/message', 'message/required/0'],
   ['message/environment', 'message/message', 'message/required/0'],
+  ['message/server_instructions', 'message/message', 'message/required/0'],
   ['tool/call', 'tool/tool_call', 'runtime_event/required/ordinal'],
   ['tool/permission_decided', 'tool/event', 'runtime_event/required/ordinal'],
   ['tool/approval_resolved', 'tool/event', 'runtime_event/required/ordinal'],
@@ -683,5 +684,15 @@ describe('the NewEntry a writer produces', () => {
     const b = writer('message/user', userFields)
     expect(a).toEqual(b)
     expect(a).not.toBe(b)
+  })
+})
+
+it('03: declares server instructions with the environment identity', () => {
+  expect(declaredTapeName('message/server_instructions')).toMatchObject({
+    kind: 'message',
+    slice: 'message',
+    sourceType: 'message',
+    sourceId: 'required',
+    sourceSeq: 0,
   })
 })

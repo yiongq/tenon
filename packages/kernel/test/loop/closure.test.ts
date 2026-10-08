@@ -18,6 +18,7 @@ const CELLS = {
   protected: ['not-run'],
   inspector: ['not-run'],
   'tool-unavailable': ['not-run'],
+  'connector-unauthorized': ['not-run'],
   'invalid-input': ['not-run'],
   'output-truncated': ['not-run'],
   'step-limit': ['not-run'],

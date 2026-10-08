@@ -3,7 +3,7 @@
  * §提示层「规则与位置」; plan step 18, 旧 224): a `callTool` that throws and a result with no content
  * both answer with a note from the prompt layer, so the version gate covers what they store.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { McpConnection, McpToolSource } from '../../src/index.js'
 import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
@@ -96,5 +96,68 @@ describe('mcpExecutor’s fixed texts come from the prompt layer', () => {
     await withNote('connectorEmpty', '(nothing came back)', async () => {
       expect((await run(query())).content).toEqual([{ type: 'text', text: '(nothing came back)' }])
     })
+  })
+})
+
+it('03: unavailable and unauthorized close not-run with their source; stop closes uncertain', async () => {
+  const { McpServerUnavailableError, McpUnauthorizedError } =
+    await import('../../src/mcp/connection.js')
+  for (const [error, expected] of [
+    [new McpServerUnavailableError(), 'tool-unavailable'],
+    [new McpUnauthorizedError(), 'connector-unauthorized'],
+  ] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop
+      await mcpExecutor(
+        source(async () => {
+          throw error
+        }),
+      )(query()),
+    ).toMatchObject({ state: 'not-run', source: expected, kernelAuthored: true, isError: true })
+  }
+  const stop = new AbortController()
+  stop.abort()
+  expect(
+    await mcpExecutor(
+      source(async () => {
+        throw new Error('stop')
+      }),
+    )({ ...query(), signal: stop.signal }),
+  ).toMatchObject({ state: 'uncertain', content: [], isError: true })
+})
+
+it('03 验收 30 (executor): the live stop signal reaches the connection; timeouts remain completed', async () => {
+  const stop = new AbortController()
+  let forwarded!: AbortSignal
+  const connection = {
+    callTool: async (_name: string, _args: unknown, options: { signal: AbortSignal }) => {
+      forwarded = options.signal
+      return new Promise((_resolve, reject) => {
+        forwarded.addEventListener('abort', () => reject(forwarded.reason), { once: true })
+      })
+    },
+  } as unknown as McpConnection
+  const pending = mcpExecutor({ serverId: 'fs', connection })({ ...query(), signal: stop.signal })
+  expect(forwarded).toBe(stop.signal)
+  stop.abort(new Error('stop'))
+  expect(await pending).toMatchObject({ state: 'uncertain', content: [], isError: true })
+  expect(
+    await mcpExecutor(
+      source(async () => {
+        throw new Error('MCP total time limit exceeded')
+      }),
+    )(query()),
+  ).toMatchObject({ state: 'completed', isError: true })
+})
+
+it('03 验收 30 (T9): the executor forwards cancellation but does not inject a competing fixed timeout', async () => {
+  const callTool = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+  const q = query()
+  await mcpExecutor({ serverId: 'fs', connection: { callTool } as unknown as McpConnection })(q)
+  const options = callTool.mock.calls[0]?.[2]
+  expect(options).toEqual({
+    signal: q.signal,
+    onprogress: expect.any(Function),
+    resetTimeoutOnProgress: true,
   })
 })

@@ -36,7 +36,7 @@ export function createNodeProcess(): HostProcess {
         })
       })
       const kill = async (sig: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): Promise<void> => {
-        if (hasExited || child.pid === undefined) return
+        if (child.pid === undefined || (process.platform === 'win32' && hasExited)) return
         try {
           process.kill(process.platform === 'win32' ? child.pid : -child.pid, sig)
         } catch {

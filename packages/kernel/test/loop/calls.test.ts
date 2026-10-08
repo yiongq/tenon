@@ -75,6 +75,7 @@ const ASK = { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }
 /** The members `ToolOutcomeView` declares; a view carrying anything else leaks a Tape field. */
 const VIEW_KEYS = new Set([
   'effect',
+  'reversibility',
   'state',
   'source',
   'facts',
@@ -384,6 +385,7 @@ describe('calls on a redrawn row (01 修补 6)', () => {
       effect: 'blocked',
       state: 'not-run',
       source: 'user-rejected',
+      reversibility: 'unknown',
       output: MODEL_NOTES.closure['user-rejected']['not-run'],
       approval: { outcome: 'denied', scope: null, target: pending.card.target },
       permission: { verdict: 'ask' },
@@ -395,6 +397,7 @@ describe('calls on a redrawn row (01 修补 6)', () => {
       effect: 'blocked',
       state: 'not-run',
       source: 'user-rejected',
+      reversibility: 'unknown',
       output: MODEL_NOTES.closure['user-rejected']['not-run'],
     })
     expect(outcomeOf(calls, 1)).toEqual(live(h).get(calls[1]?.callKey ?? ''))
