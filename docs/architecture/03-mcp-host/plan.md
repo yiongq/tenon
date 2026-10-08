@@ -346,7 +346,7 @@
   - live 编译检查：pnpm exec tsc -p apps/desktop/tsconfig.e2e.json --noEmit 通过；HostSecrets 源模块转 CJS 的导出用惰性 native stub 静态核对，未实例化真实钥匙串。默认 EA 的 **/live-*.spec.ts 排除规则涵盖新文件；没有新生产 IPC 或机密读取接缝。
   - 23：验收记录 1–52 每条有结论/文件:行/用例名/命令，22 个不变量定位索引齐全；所有「本地通过」待 lead 独立核查，47 已撤销、48 待 live。干净 clone 结果在验收 50 的 CC 记录回填；不提前勾 21/23/25，不改 spec 的 ready 状态。
   - 本地门禁：G 的 204 文件 / 3811 测试通过、2 文件 / 2 测试跳过；build 通过；evals:gate 30 通过 / 1 跳过（既有 v10 基线，不重跑 9a）；普通 EA 单 Electron 正在验证，完成后更新本记录。提示层相对 f57b420 无 diff，PROMPT_LAYER_VERSION=10。
-  - 49 文档同步重新核对：与第 22 步既有记录相同，五份文档本轮均无改动；清理与凭证扫描在交付前记录。
+  - 49 文档同步重新核对：与第 22 步既有记录相同，五份文档本轮均无改动；本轮源码/文档凭证前缀扫描的 7 处仅在 live-env.test.ts 与 evals-models.test.ts，为 not-real 与短占位夹具；无真实值。未使用真实机密，普通 e2e 的 profile/Tape/日志由内存机密夹具生成；live 的真实存储隔离仍随验收 48 等 lead 实跑。
 
 - **2026-10-08 · 第 20、22、24 步完成**
   - 20：产品常量为 https://yiongq.github.io/tenon/oauth/client-metadata.json；kernel 重新导出 SDK validateClientMetadataUrl，desktop 不加 SDK 依赖。mcp-runtime 6 项 U 绿，覆盖 https/非根路径、SDK 校验、托管 client_id 相同与 HTTP runtime 接线；http 常量突变红并恢复。curl --fail --location 取回 JSON 与仓库 cmp 相同，SHA-256 fe74fc340cc42b85523422736466d78d653809157737aef77f1d7257e4794337；托管文件与 pages 工作流未改。

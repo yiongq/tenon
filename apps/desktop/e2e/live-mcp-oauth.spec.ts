@@ -174,7 +174,8 @@ test.describe('live mcp oauth · Notion', () => {
               tool: name,
               setting: value,
             })
-            return (result as { ok: boolean }).ok
+            const reply = result as { ok: boolean; data?: { ok: boolean } }
+            return reply.ok && reply.data?.ok === true
           },
           { id, name: tool.originalName, setting },
         )
