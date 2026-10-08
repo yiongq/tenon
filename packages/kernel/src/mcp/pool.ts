@@ -46,6 +46,7 @@ export type McpTransportRuntime =
       readonly oauth: McpOAuthRuntime
     }
 export interface McpOAuthRuntime {
+  readonly issuers: readonly string[]
   readonly ownClient: {
     readonly clientId: string
     readonly redirectPort: number
@@ -86,7 +87,11 @@ export interface McpPoolOptions {
   readonly runtimeOf: (serverId: string) => McpServerRuntime | null // 重连前重读（Q6）
   readonly log: (serverId: string, line: string) => void // 已脱敏（T12）
   readonly onPin: (serverId: string, q: McpPinRequest) => Promise<void> // 第一次成功列表时整表钉住（Q14）
-  readonly onIssuer: (serverId: string, issuerHash: string) => Promise<void> // 写钥匙串前先记进 config，挪到末尾（T35）
+  readonly onIssuer: (
+    serverId: string,
+    issuer: { readonly hash: string; readonly url: string },
+    write: 'tokens' | 'client',
+  ) => Promise<void> // 写钥匙串前先记进 config，挪到末尾（T35）
   readonly onChange: () => void // 状态、列表、说明变了
 }
 export interface McpPool {
@@ -118,6 +123,7 @@ export type McpErrorCode =
   | 'network'
   | 'rate-limited'
   | 'keychain'
+  | 'crashed'
 export interface McpServerStatus {
   readonly serverId: string
   readonly phase: 'stopped' | 'connecting' | 'connected' | 'restarting' | 'error' | 'unauthorized'
@@ -220,9 +226,15 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     while (encoder.encode(s.stderr.join('\n')).length > 4096) {
       if (s.stderr.length > 1) s.stderr.shift()
       else {
-        s.stderr[0] = Array.from(s.stderr[0] ?? '')
-          .slice(1)
-          .join('')
+        const points = Array.from(s.stderr[0] ?? '')
+        let low = 0
+        let high = points.length
+        while (low < high) {
+          const middle = Math.floor((low + high) / 2)
+          if (encoder.encode(points.slice(middle).join('')).length > 4096) low = middle + 1
+          else high = middle
+        }
+        s.stderr[0] = points.slice(low).join('')
       }
     }
     options.log(s.runtime.serverId, safe)
@@ -284,6 +296,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       await options.onPin(s.runtime.serverId, {
         tools: live.map((t) => ({ name: t.originalName, definitionHash: t.definitionHash })),
       })
+      if (s.retired || generation !== s.generation) return
       s.cache = {
         ...s.cache,
         pinnedDefinitions: Object.fromEntries(live.map((t) => [t.originalName, t.definition])),
@@ -326,6 +339,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     s.timer = null
     s.controller.abort(new Error('MCP server stopped'))
     s.status.phase = 'stopped'
+    s.status.error = null
     s.status.restartInMs = null
     const connection = s.connection
     s.connection = null
@@ -344,6 +358,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       }
       delay = 1000 * 2 ** s.networkAttempt++
     } else {
+      s.status.error = { code: 'crashed', stderrTail: s.stderr.join('\n') }
       const now = host.clock.now()
       s.crashes = s.lastCrash !== null && now - s.lastCrash <= 60_000 ? s.crashes + 1 : 1
       s.lastCrash = now
@@ -384,13 +399,13 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     s.controller = new AbortController()
     const generation = ++s.generation
     s.status.phase = 'connecting'
-    s.status.error = null
     s.status.stopReason = null
     s.status.restartInMs = null
     announce(s)
     s.ready = s.ready
       .then(async () => {
         await previous?.close().catch(() => {})
+        s.stderr = []
         if (s.retired || generation !== s.generation) return
         await start(s, generation)
       })
@@ -539,9 +554,9 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               ids: options.ids,
               deleting: () => s.retired || !s.runtime.consented,
               log: (line) => log(s, line),
-              onIssuer: async (hash) => {
-                await options.onIssuer(runtime.serverId, hash)
-                s.oauthIssuerHash = hash
+              onIssuer: async (issuer, write) => {
+                await options.onIssuer(runtime.serverId, issuer, write)
+                s.oauthIssuerHash = issuer.hash
               },
             })
           s.tokenStore = store
@@ -555,6 +570,10 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
             },
             isActive: () => s.oauth === oauth && !s.retired && s.runtime.consented,
             requiredScope: () => s.requiredScope,
+            onDiscovery: (issuer) => {
+              s.cache = { ...s.cache, oauth: { issuer, discoveredAt: host.clock.now() } }
+              save(s)
+            },
             runtime: () => {
               if (s.runtime.transport.type !== 'http') throw new McpServerUnavailableError()
               return s.runtime.transport.oauth
@@ -612,6 +631,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         s.cache = { ...s.cache, pinnedInstructions: text }
       save(s)
       s.status.phase = 'connected'
+      s.status.error = null
       s.networkAttempt = 0
       s.status.firstConnect = false
       s.status.era = connection.era ?? 'legacy'
@@ -738,7 +758,8 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       tokenStore: null,
       httpFetch: null,
       requiredScope: undefined,
-      oauthIssuerHash: null,
+      oauthIssuerHash:
+        runtime.transport.type === 'http' ? (runtime.transport.oauth.issuers.at(-1) ?? null) : null,
       status: {
         serverId: runtime.serverId,
         phase: 'stopped',
@@ -865,9 +886,9 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     }
     s.ready = (async () => {
       try {
-        const data = JSON.parse(
-          String(await host.fs.readFile(path(s), { encoding: 'utf8' })),
-        ) as McpServerCache
+        const json = String(await host.fs.readFile(path(s), { encoding: 'utf8' }))
+        if (encoder.encode(json).length > 5 * 1024 * 1024) return
+        const data = JSON.parse(json) as McpServerCache
         if (
           data.version === 1 &&
           Array.isArray(data.lastTools) &&
@@ -877,6 +898,9 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           ) &&
           data.pinnedDefinitions !== null &&
           typeof data.pinnedDefinitions === 'object' &&
+          !Array.isArray(data.pinnedDefinitions) &&
+          (data.oauth === null ||
+            (typeof data.oauth?.issuer === 'string' && Number.isFinite(data.oauth.discoveredAt))) &&
           (data.pinnedInstructions === null || typeof data.pinnedInstructions === 'string') &&
           (data.connectedLaunchHash === null || typeof data.connectedLaunchHash === 'string')
         )
@@ -921,7 +945,10 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           } else if (changed || !consent) {
             old.oauth?.cancelLogin()
             old.oauth = null
-            old.oauthIssuerHash = null
+            old.oauthIssuerHash =
+              runtime.transport.type === 'http'
+                ? (runtime.transport.oauth.issuers.at(-1) ?? null)
+                : null
             old.crashes = 0
             old.networkAttempt = 0
             old.status.firstConnect = true
@@ -980,6 +1007,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         s.crashes = 0
         s.lastCrash = null
         s.networkAttempt = 0
+        s.status.error = null
         s.timer?.()
         s.timer = null
         launch(s)

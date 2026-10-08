@@ -72,19 +72,20 @@ export function createMcpOAuthProvider(q: {
   readonly identity: HostIdentity
   readonly secrets: HostSecrets
   readonly store: McpTokenStore
-  /** Input from config.oauth.issuers; its pool runtime contract remains in plan Open. */
+  /** Current issuer after a successful configuration write. */
   readonly currentIssuerHash: () => string | null
   readonly onUnauthorized: () => void
   readonly addSecret: (value: string) => void
   readonly requiredScope?: () => string | undefined
   readonly isActive?: () => boolean
+  readonly onDiscovery?: (issuer: string) => void
 }): McpOAuthProvider {
   const active = () => q.isActive?.() ?? true
   const memory = new Map<string, Promise<StoredOAuthTokens | undefined>>()
   let loginState: LoginState | null = null
   let loginAbort: AbortController | null = null
   let lastRedirect: string | null = null
-  let lastSavedHash: string | null = null
+  let lastSavedHash: string | null = q.runtime().issuers.at(-1) ?? null
   let refresh: Promise<void> | null = null
   let listener: Awaited<ReturnType<McpLoginUi['listen']>> | null = null
   const hashOf = (ctx?: OAuthClientInformationContext) =>
@@ -112,11 +113,9 @@ export function createMcpOAuthProvider(q: {
     if (!active()) throw new UnauthorizedError()
     const own = q.runtime().ownClient
     if (own) {
-      // The first own-client issuer write-back requires the missing callback in plan Open.
-      // Only the already-bound path is implemented until that contract is supplied.
-      if (own.issuer === null) throw new LoginError('needs-client')
-      if (ctx?.issuer !== undefined && own.issuer !== ctx.issuer)
-        throw new LoginError('issuer-changed')
+      const issuer = own.issuer ?? (loginState ? ctx?.issuer : undefined)
+      if (issuer === undefined) throw new LoginError('needs-client')
+      if (ctx?.issuer !== undefined && issuer !== ctx.issuer) throw new LoginError('issuer-changed')
       const secret = own.hasSecret
         ? await q.secrets.get(keyFor(q.identity, 'mcp', q.serverId, 'oauth', 'own', 'secret'))
         : null
@@ -124,7 +123,7 @@ export function createMcpOAuthProvider(q: {
       if (secret !== null) q.addSecret(secret)
       return {
         client_id: own.clientId,
-        issuer: own.issuer,
+        issuer,
         ...(secret === null ? {} : { client_secret: secret }),
       }
     }
@@ -146,8 +145,8 @@ export function createMcpOAuthProvider(q: {
     if (!active()) throw new McpKeychainError()
     loginState?.abort.signal.throwIfAborted()
     const hash = hashOf(ctx)
-    if (hash === null) throw new McpKeychainError()
-    await tx.saveTokens(hash, value)
+    if (hash === null || ctx?.issuer === undefined) throw new McpKeychainError()
+    await tx.saveTokens({ hash, url: ctx.issuer }, value)
     lastSavedHash = hash
     memory.set(hash, Promise.resolve(value))
     q.addSecret(value.access_token)
@@ -204,9 +203,9 @@ export function createMcpOAuthProvider(q: {
       if (!active()) throw new McpKeychainError()
       loginState?.abort.signal.throwIfAborted()
       const hash = hashOf(ctx)
-      if (hash === null) throw new McpKeychainError()
+      if (hash === null || ctx?.issuer === undefined) throw new McpKeychainError()
       if (value.client_secret) q.addSecret(value.client_secret)
-      if (q.runtime().ownClient === null) await q.store.saveClient(hash, value)
+      if (q.runtime().ownClient === null) await q.store.saveClient({ hash, url: ctx.issuer }, value)
     },
     tokens,
     saveTokens,
@@ -227,6 +226,8 @@ export function createMcpOAuthProvider(q: {
     },
     saveDiscoveryState: (value) => {
       if (loginState) loginState.discovery = value
+      if (active() && value.authorizationServerMetadata?.issuer)
+        q.onDiscovery?.(value.authorizationServerMetadata.issuer)
     },
     discoveryState: () => loginState?.discovery,
     invalidateCredentials: invalidate,
@@ -278,6 +279,8 @@ export function createMcpOAuthProvider(q: {
             codeVerifier: () => temporaryVerifier,
             saveDiscoveryState: (value) => {
               temporaryDiscovery = value
+              if (active() && value.authorizationServerMetadata?.issuer)
+                q.onDiscovery?.(value.authorizationServerMetadata.issuer)
             },
             discoveryState: () => temporaryDiscovery,
             validateResourceURL: provider.validateResourceURL!,
@@ -340,9 +343,6 @@ export function createMcpOAuthProvider(q: {
       runtime.ownClient.issuer !== metadata.issuer
     )
       return { ok: false, code: 'issuer-changed' }
-    // First own-client binding is held until the original-issuer callback is specified.
-    if (runtime.ownClient && runtime.ownClient.issuer === null)
-      return { ok: false, code: 'needs-client' }
     try {
       listener = await ui.listen(
         route === 'own'

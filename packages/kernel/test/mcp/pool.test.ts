@@ -1,6 +1,7 @@
 // State-machine permutations are sequential so a server is never doubled.
 // oxlint-disable no-await-in-loop
 import { afterEach, expect, it, vi } from 'vitest'
+import type { ChildHandle } from '../../src/index.js'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import { createMcpPool } from '../../src/mcp/pool.js'
 import type { McpPool, McpServerRuntime, McpPoolOptions } from '../../src/mcp/pool.js'
@@ -307,7 +308,7 @@ it('03 验收 14: connected HTTP 429 fails only its call; connecting 429 errors 
       fetch,
       protocol: 'legacy',
       headerKeys: [],
-      oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
     },
   })
   const { pool, host } = setup(initial)
@@ -345,7 +346,7 @@ it('03 验收 14 (T49 read): broken stream retries tools/list, resources/read an
         fetch: handed,
         protocol: 'legacy',
         headerKeys: [],
-        oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+        oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
       },
     }),
   )
@@ -388,7 +389,7 @@ it('03 验收 14: remote retries after 1,2,4,8,16 s then errors network; launch 
       fetch: handed,
       protocol: 'legacy',
       headerKeys: [],
-      oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
     },
   })
   const { pool, host } = setup(initial)
@@ -534,7 +535,7 @@ it('03 验收 21: login resumes the same route after unauthorized, next call suc
       fetch,
       protocol: 'legacy',
       headerKeys: [],
-      oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
     },
   })
   const { pool } = setup(initial)
@@ -583,7 +584,7 @@ it('03 不变量 11: a broken concurrent call never cancels the neighboring requ
       fetch,
       protocol: 'legacy',
       headerKeys: [],
-      oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
     },
   })
   const { pool } = setup(initial)
@@ -648,7 +649,7 @@ it('03 验收 12 (pool): static headers are read from tenant keychain accounts w
       protocol: 'legacy',
       fetch,
       headerKeys: ['X-Fixture-Static'],
-      oauth: { ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
     },
   })
   const { pool, host } = setup(initial, false, false)
@@ -658,4 +659,158 @@ it('03 验收 12 (pool): static headers are read from tenant keychain accounts w
   expect(fixture.requests.find((r) => r.method === 'initialize')?.headers['x-fixture-static']).toBe(
     'fixture-static-secret',
   )
+})
+
+it('03 验收 4: crashes retain bounded redacted stderr through restart and crash-limit; connection, restart and user stop clear the recent failure', async () => {
+  const connectionsByAttempt = Array.from({ length: 4 }, fakeConnection)
+  let attempt = 0
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async (_host, spec) => {
+    for (let i = 0; i < 30; i++)
+      spec.transport?.onStderr?.(`${i}: ${'界'.repeat(200)} fixture-secret plain-visible`)
+    return connectionsByAttempt[attempt++]!.c
+  })
+  const initial = runtime({
+    transport: {
+      type: 'stdio',
+      command: '/bin/node',
+      args: [],
+      envs: { PLAIN: 'plain-visible' },
+      envKeys: ['SECRET'],
+    },
+  })
+  const { pool, host, logs } = setup(initial, false, false)
+  await host.secrets.set('tenant:mcp:fixture:env:SECRET', 'fixture-secret')
+  pool.apply([initial])
+  await connected(pool)
+  for (let i = 0; i < 3; i++) {
+    connectionsByAttempt[i]!.exit()
+    await vi.waitFor(() => expect(phase(pool)).toBe(i === 2 ? 'stopped' : 'restarting'))
+    const failure = pool.status()[0]!.error!
+    expect(failure.code).toBe('crashed')
+    expect(failure.stderrTail).toContain('29:')
+    expect(failure.stderrTail).toContain('plain-visible')
+    expect(failure.stderrTail).toContain('***')
+    expect(failure.stderrTail).not.toContain('fixture-secret')
+    expect(failure.stderrTail.split('\n').length).toBeLessThanOrEqual(20)
+    expect(new TextEncoder().encode(failure.stderrTail).length).toBeLessThanOrEqual(4096)
+    if (i < 2) {
+      host.advance((i + 1) * 1000)
+      await connected(pool)
+    }
+    expect(pool.status()[0]!.error).toEqual(i < 2 ? null : failure)
+  }
+  expect(pool.status()[0]!.stopReason).toBe('crash-limit')
+  expect(logs.join('\n')).not.toContain('fixture-secret')
+  pool.restart('fixture')
+  expect(pool.status()[0]!.error).toBeNull()
+  await connected(pool)
+  connectionsByAttempt[3]!.exit()
+  await vi.waitFor(() => expect(phase(pool)).toBe('restarting'))
+  pool.apply([{ ...initial, consented: false }])
+  expect(phase(pool)).toBe('stopped')
+  expect(pool.status()[0]!.error).toBeNull()
+})
+
+it('cached success restores handshake timeout across a new pool; malformed and unknown caches contribute no absent tools', async () => {
+  const fake = fakeConnection()
+  const connect = vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+  const { pool, host } = setup(runtime(), false, false)
+  const cached = {
+    version: 1,
+    connectedLaunchHash: 'launch',
+    lastTools: [{ name: 'cached', definitionHash: 'hash' }],
+    pinnedDefinitions: {},
+    pinnedInstructions: null,
+    oauth: null,
+  }
+  vi.spyOn(host.fs, 'readFile').mockResolvedValue(JSON.stringify(cached))
+  pool.apply([runtime()])
+  await connected(pool)
+  expect(connect.mock.calls[0]?.[1].handshakeTimeoutMs).toBe(30_000)
+  for (const corrupt of [
+    { ...cached, version: 2 },
+    { ...cached, lastTools: [{ name: null }] },
+    null,
+  ]) {
+    const h = setup(runtime({ consented: false }), false, false)
+    vi.spyOn(h.host.fs, 'readFile').mockResolvedValue(JSON.stringify(corrupt))
+    h.pool.apply([runtime({ consented: false })])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const result = await h.pool.tableSources({
+      waitMs: 10_000,
+      signal: new AbortController().signal,
+    })
+    expect(result.absent[0]?.cachedTools).toEqual([])
+  }
+})
+
+it('close shuts connections in parallel and kills every tracked process group at its deadline, even after its leader exited', async () => {
+  const initial = runtime()
+  const { pool, host } = setup(initial, false, false)
+  const killGroup = vi.fn<ChildHandle['kill']>(async () => {})
+  const child = {
+    stdin: new WritableStream(),
+    stdout: new ReadableStream(),
+    stderr: new ReadableStream(),
+    exited: Promise.resolve({ code: 0, signal: null }),
+    pid: 123,
+    kill: killGroup,
+  } as ChildHandle
+  vi.spyOn(host.process, 'spawn').mockResolvedValue(child)
+  const closes: string[] = []
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async (wrappedHost, spec) => {
+    await wrappedHost.process.spawn(spec.spawn)
+    const c = fakeConnection().c
+    return {
+      ...c,
+      close: async () => {
+        closes.push(spec.name)
+        await new Promise(() => {})
+      },
+    }
+  })
+  pool.apply([initial, { ...initial, serverId: 'other' }])
+  await vi.waitFor(() => expect(pool.status().every((s) => s.phase === 'connected')).toBe(true))
+  const closing = pool.close({ deadlineMs: 250 })
+  await vi.waitFor(() => expect(closes).toHaveLength(2))
+  host.advance(249)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(killGroup).not.toHaveBeenCalled()
+  host.advance(1)
+  await closing
+  expect(killGroup).toHaveBeenCalledTimes(2)
+  expect(killGroup).toHaveBeenNthCalledWith(1, 'SIGKILL')
+})
+
+it('removal while first pin callback is pending never resurrects the reconstructable cache', async () => {
+  vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fakeConnection().c)
+  const { pool, host, onPin } = setup(runtime(), false, false)
+  let release!: () => void
+  onPin.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+  )
+  const write = vi.spyOn(host.fs, 'writeFile')
+  pool.apply([runtime()])
+  await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+  pool.apply([])
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(pool.routes()).toEqual([])
+  expect(write).not.toHaveBeenCalled()
+})
+
+it('03 验收 4: one oversized Unicode stderr line retains a valid bounded suffix', async () => {
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async (_host, spec) => {
+    spec.transport?.onStderr?.(`${'😀'.repeat(20000)}last-marker`)
+    throw new Error('fixture failure')
+  })
+  const { pool } = setup()
+  await vi.waitFor(() => expect(phase(pool)).toBe('error'))
+  const tail = pool.status()[0]!.error!.stderrTail
+  expect(new TextEncoder().encode(tail).length).toBeLessThanOrEqual(4096)
+  expect(tail.endsWith('last-marker')).toBe(true)
+  expect(tail).not.toContain('\uFFFD')
 })

@@ -117,7 +117,7 @@
   - 突变：① 深度上限改成 33 → definition.test 边界例红；② 删 `$ref` 检查 → 「03 验收 33」红；③ 展开计数不查 outputSchema → 「03 验收 32」的 outputSchema 例红。
   - 完成：G 绿。**砍法检查点**：lead 照「砍法」判一次，结论写进实施记录，再开第 7 步。
 
-- [ ] 7. 连接池（spec §连接池与生命周期 全节、§mcp/ 缓存、§进程树 的 stderr 尾巴、§超时、取消与断流 的重发；Q5、Q6、T7、T8、T13、T14、T41、T47、T48 的池部分、T49、Q14 的列表与 review、Q15）
+- [x] 7. 连接池（spec §连接池与生命周期 全节、§mcp/ 缓存、§进程树 的 stderr 尾巴、§超时、取消与断流 的重发；Q5、Q6、T7、T8、T13、T14、T41、T47、T48 的池部分、T49、Q14 的列表与 review、Q15）
   - 文件：新 `packages/kernel/src/mcp/pool.ts`（spec §接口 的全部类型与 `createMcpPool(options)`），`packages/kernel/src/index.ts` 导出。池自己的计时只用 `host.clock`；握手与调用超时交给 SDK（第 4 步）。缓存经 `host.fs` 读写 `<profileDir>/mcp/<serverId>.json`（`version: 1`，超 5 MiB 不写）。`routes()`：每台启用的 server 一个代理（含需要确认的）；`tableSources({ waitMs, signal })`：等「连接中」（首次或重连）与「等待重启」的最多 `waitMs`，再分 `sources` 与 `absent`。代理满足 `McpConnection` 全部成员（spec §接口 末两条）；代理 `callTool` 的等待：首次连接最多 10 s，非首次的连接中与等待重启从到达起最多一个握手超时，等不到抛 `McpServerUnavailableError`；「需要登录」抛 `McpUnauthorizedError`；新列表里 outputSchema 不合格（第 6 步的 `definitionProblem`）的工具在发之前抛 `McpServerUnavailableError` 并标 `schemaUnusable`。429 只在连接阶段进「出错」。三种只读请求用池自己的 `AbortController` 发，`onStreamBreak` 时中止并用新 id 重发一次；`tools/call` 断流时中止、抛错。`close({ deadlineMs })`：并行 EOF / 关连接，到点对仍有存活进程的组 SIGKILL。
     - 7b（砍法 ② 时跳过）：崩溃自动重启（1 s / 2 s、60 s 窗口、第 3 次停）与重启期间调用的等待。
   - 覆盖：验收 2（池部分）、3（池部分）、4（池部分）、6（missing-secret）、9、12（静态头值来自钥匙串）、14（重连、429、只读重发部分）、29（池的等待部分）、32 ③、33（outputSchema 冻结后部分）、39（池部分）；03 不变量 2。
@@ -158,7 +158,7 @@
   - 突变：① 裁剪改回只按名 → 「03 验收 35」红；② 跳过 `review` → 「03 验收 38 (kernel)」红；③ 说明写进 system → 「03 验收 42」红；④ `McpUnauthorizedError` 收成 `connectorFailed` → 「03 验收 21 (closure)」红；⑤ `definition-changed` 排到 `name-collision` 之前 → 「03 验收 34」红；⑥ `openTable` 不调 `mcpTable`、改用 `mcpSources` → 「…only a Run that opens a table…」与 29 的缺席例红；⑦ 不转义 `<` → 「03 验收 42」红；⑧ 视图不填 `reversibility` → 对应用例红；⑨ `rebuildToolTable` 丢掉 `definitionHash` → 「03 验收 38 (resume)」红。
   - 完成：kernel 全套与 G 绿。
 
-- [ ] 9. OAuth 的 kernel 侧（spec §客户端身份、§登录流程、§provider 契约、§会话里遇到要登录、§机密「令牌分片」「并发」；T6、T30、T32、T33、T34、Q9、Q10）
+- [x] 9. OAuth 的 kernel 侧（spec §客户端身份、§登录流程、§provider 契约、§会话里遇到要登录、§机密「令牌分片」「并发」；T6、T30、T32、T33、T34、Q9、Q10）
   - 文件：新 `packages/kernel/src/mcp/token-store.ts`（账户与分片照 spec；单调代号；读写删只经 `HostSecrets`；每台一把异步互斥锁）；新 `packages/kernel/src/mcp/oauth.ts`（`createMcpOAuthProvider` 照 §provider 契约 逐项实现：无 ctx 的 `tokens()` 取 `oauth.issuers` 末尾的组、内存副本；`invalidateCredentials` 各 scope；按登录存在内存的 state、verifier、discoveryState；`redirectUrl` 在登录之外取上次的回调地址；`validateResourceURL`；自带 client 在 `clientInformation(ctx)` 里比 issuer；「删除中」拒写。非交互用的最小 `AuthProvider { token, onUnauthorized }` 与独立的 provider 实例；并发的 401 复用同一个刷新 Promise；错误映射；`McpLoginUi`、`McpLoginResult`、登录序列：元数据 → PKCE 检查 → `saveDiscoveryState` → 定路与端口 → `listen` → `auth()` → `openUrl` → `waitForCallback(state)`（带 `error` 时先比 `iss`）→ `auth({ authorizationCode, iss })`；写钥匙串前调 `onIssuer`）；`pool.ts` 接上 `login` 与这个 provider。
     - 9b（砍法 ③ 时跳过）：CIMD 分支（`clientMetadataUrl` 非 null 且服务器声明支持时走 CIMD）。
   - 覆盖：验收 11、12（另一个源的授权服务器）、15、16、17（kernel 部分）、18（kernel 部分：端口选择与超时）、20、21（刷新与登录部分）；03 不变量 14、15、21。
@@ -174,7 +174,7 @@
     - 「03 不变量 21: a 401 during a call never calls openUrl」；「03 不变量 14」
     新 `packages/kernel/test/mcp/token-store.test.ts`：「03 验收 20: tokens over 2560 bytes are sharded within 4; rotation writes the new group before deleting the old; an interruption between reads the new group; a partial group is ignored; 5 shards and a throwing keychain are keychain; two concurrent saveTokens leave one complete group」；「03 不变量 15」。
   - 命令：U `packages/kernel/test/mcp/oauth.test.ts packages/kernel/test/mcp/token-store.test.ts packages/kernel/test/loop/mcp-run.test.ts`；G。
-  - 突变：① 删 PKCE 检查 → 「03 验收 15」红；② 不把 `iss` 传给 `auth()` → 「03 验收 16」红；③ 新组写进当前 slot → 「03 验收 20」红；④ 不调 `onIssuer` → 「03 验收 17」里断言调用顺序的那句红；⑤ 非交互时也调 `openUrl` → 「03 不变量 21」红；⑥ 去掉互斥锁 → 「…two concurrent 401s send one refresh」红；⑦ 非交互改回传 `OAuthClientProvider` → 「…no /register request…」红；⑧ 非交互用的 provider 实例实现 `saveClientInformation` → 「…invalid_client sends no /register request」红。
+  - 突变：① 删 PKCE 检查 → 「03 验收 15」红；② 不把 `iss` 传给 `auth()` → 「03 验收 16」红；③ 新组写进当前 slot → 「03 验收 20」红；④ 不调 `onIssuer` → 「03 验收 17」里断言调用顺序的那句红；⑤ 非交互时也调 `openUrl` → 「03 不变量 21」红；⑥ 去掉令牌写入互斥锁 → 并发 saveTokens 的第二代完整组断言红；另删刷新 Promise 复用 → 「…two concurrent 401s send one refresh」红（两层保护各自验证）；⑦ 非交互改回传 `OAuthClientProvider` → 「…no /register request…」红；⑧ 非交互用的 provider 实例实现 `saveClientInformation` → 「…invalid_client sends no /register request」红。
   - 完成：G 绿。
 
 - [ ] 9a. 提示层基线评测（02:2956「改了必跑」；第 2 步把 `PROMPT_LAYER_VERSION` 加到 10）
@@ -296,6 +296,10 @@
 
 ## 实施记录
 
+- **2026-10-08 · 第 7–9 步收尾**：合入 dev PR #32 / #33（`17e8deb`），Open 两条缺口均已解决。补了首次自带 client 的 issuer 原文 / tokens 回写类别、启动时恢复最后 issuer、空列表不读钥匙串、新 issuer 重新 DCR 注册、crashed 尾巴 / crash-limit 保留 / 重连与用户操作清空、跨池缓存恢复与坏缓存、池退出并行关闭与到点强杀（leader 已退出仍杀组）的回归。连接池代理跨两个 Run 等重启后成功，冻结工具表不变；在途崩溃照既有 connectorFailed 文本、completed 收口；未授权连续三次不吃机器阻断上限。阶段与错误码的 kernel ↔ contracts 双向类型钉放在 contracts/test/mcp.test.ts（避免 kernel 新增 contracts 依赖）。
+- **最终突变**：合新契约后重跑 7 的七项、8 的九项、9 的八项，全部红；额外验证刷新 Promise 合一，以及 PR #32 的忽略启动 issuer / 丢原文 / 误用 client 写类别、PR #33 的漏记 crashed / 重连不清空，共 30 项全红。8⑤ 统计键改为同台后格式变成多行，初次脚本未匹配，不算已跑；用最终代码准确匹配重跑，撞名优先级回归红。临时改动均 finally 恢复，相关回归恢复绿。收尾新增异步钉住期间删除不重建缓存、超长 Unicode 单行尾巴有界两例。
+- **最终门禁**：最终 format:check / lint / typecheck 绿，全套 195 文件 / 3666 测试通过、2 文件 / 2 测试跳过；build 绿。`pnpm evals:gate --maxWorkers=2` 为预期红：20 题均缺提示层 10 的 3 条基线；未跑真实评测、未使用真实 key。9a 等 lead 跑。
+
 - **第 7–9 步合入新契约前 G**：format:check / lint / typecheck 绿；全套 195 文件 / 3654 测试通过、2 文件 / 2 测试跳过。第 8 步完成；第 7、9 步待合 PR #32 / #33 后补齐，9a 等 lead 跑。
 
 - **2026-10-08 · 第 7–9 步独立部分**：连接池、应用级代理、缓存、沙箱启动、120 s 首连、等待与重连、1/2 s 崩溃重启和 1/2/4/8/16 s 网络退避、429 分流、只读断流新 id 重发、outputSchema 调用前拒绝已实现。工具表按同台候选算撞名、按 rank 裁剪，冻结 definitionHash 跨 Tape 恢复；三态、待批 definitionChanged、未执行收口、结果 reversibility 与 server 说明（同批、JSON 包装、转义、去重、压缩后补写）已接入。OAuth 分片、互斥锁、PKCE / iss、DCR / CIMD / 已绑定自带 client、最小非交互 AuthProvider、并发刷新合一、登录恢复同代理、取消、跨源静态头保护已实现。第 7 步崩溃尾巴与第 9 步启动 issuer / 首次自带 issuer 写回按 Open 暂缺；dev 已收到 PR #32 / #33，当前改动提交后合入并补齐，不在这里停止。
@@ -332,6 +336,13 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 （第 23 步填。）
 
 ## 交接
+
+- **2026-10-08 · 第一段完成 / 待 lead 审查**
+  - 分支：`feat/03-seg1`；PR #29 → `dev`。第 1–9 步实现与本段回归 / 突变完成，7b 自动重启、8b server 说明、9b CIMD 全部保留；第 9a 步按用户要求跳过，等 lead 跑。spec 保持 ready（第二至四段尚未实施）。
+  - 原文 lead 预算结论已写入实施记录，Open 对应项已解决；后续砍法由 lead 在各段 PR 审查判，不再作为实现者开工暂停点。
+  - 工作区：另有非本任务的 AGENTS.md 文案修改，保留未提交，不纳入本 PR；其余本段改动提交推送。
+  - 给 lead：核对第 7–9 步实际断言与 30 项突变结果，尤其崩溃尾巴、OAuth 非交互不注册、首次自带 issuer 回写、冻结表恢复与 server 说明的同批事实。Everything 的实际能力声明 / 通知观察见实施记录。
+  - 下一步：最终 G 与 build 通过，本次提交并推送、更新 PR 描述并设 Ready for review，不合并。接下来由 lead 审查第一段及跑 9a；第二段从第 10 步开始，不在本次请求内。
 
 - **2026-10-08 · 第 4–5 步完成 / 第 6 步验证完成、检查点待判**
   - 分支：`feat/03-seg1`，已合入 dev PR #31（合并提交 `87cad8e`）。最新实现提交见 git log；本次改动仅第 4–6 步代码、耐久回归与 plan，无临时探针或失败测试。
@@ -373,9 +384,9 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 ## Open
 
-- **2026-10-08 · 第 7 步崩溃尾巴的状态契约缺口（先跳过这项，继续其余测试）**：验收 4 要「出错与崩溃时状态带最后 20 行、不超过 4 KB」，但 McpServerStatus 只有 error: { code: McpErrorCode; stderrTail: string } | null；McpErrorCode 没有崩溃码，重启 / crash-limit 停止时也没有无 code 的尾巴成员。需写定崩溃时尾巴放哪里（例如状态只增独立 stderrTail，或 error 允许崩溃专用码）；不能擅用 handshake-failed / network 冒充 stdio 崩溃。已实现并测试日志脱敏和出错时 error.stderrTail；崩溃时尾巴展示这项暂跳过，其余生命周期与第 8、9 步继续。
+- **2026-10-08 · 已解决（PR #33）：第 7 步崩溃尾巴的状态契约缺口。** 合 dev 的提交 `17e8deb` 包含 PR #33；spec 读法 64 写定 `error` 是最近一次失败、只增 `crashed`。kernel / contracts 枚举同步；每次崩溃保留脱敏且最多 20 行 / 4 KiB 的尾巴，重连成功、用户重启或用户停止清空，crash-limit 保留。验收 4 回归及丢失 / 未清空突变均已验证。
 
-- **2026-10-08 · 第 9 步部分契约缺口（先跳过受影响部分，继续独立实现）**：provider 无 ctx 的 tokens() 要取 config.oauth.issuers 的最后一项，但 §连接池接口 McpServerRuntime / McpOAuthRuntime 没有 issuers（缓存 oauth 只有发现时的原始 issuer，不等价于配置最后一次保存的组，不能替代）。同时首次自带 client 登录成功须写 ownClient.issuer（原始 issuer），池唯一回写 onIssuer(serverId, issuerHash) 只收哈希、只能登记账户 hash，无法回写原始 issuer；runtimeOf 也只返回缺这两项的 runtime。需明确 issuer 列表怎样交入 provider，以及自带 issuer 原文写回 callback / 契约。不能让 kernel 直接读写 desktop config.json 或从哈希反推原文。本次按用户要求：先做第 7、8 步和第 9 步不依赖此输入的令牌分片与 provider 部分；受影响的池 OAuth 启动恢复和自带 issuer 首次持久化暂不做，不先停下。
+- **2026-10-08 · 已解决（PR #32）：第 9 步 issuer 的 runtime / 写回契约缺口。** 合 dev 的提交 `17e8deb` 包含 PR #32；`McpOAuthRuntime.issuers` 给启动时最后一组，`onIssuer` 带 `{ hash, url }` 与 `tokens | client`。令牌存储在钥匙串写前按新参数回调，池写成功后更新内存当前 issuer；首次自带 client 登录用已核过的 issuer 原文，经 tokens 回调与哈希同次配置写入。新 provider 恢复与缓存令牌、空列表不读钥匙串、首次绑定与后续换 issuer 拒绝已有回归；这些路径不再跳过。
 
 - **2026-10-08 · 已解决（lead 2026-10-08）：第 6 步砍法检查点。** 第 6 步实现、回归、三项突变与 G / build 已完成；本 plan §砍法明确「lead 在两个时点判：第 6 步完成时（第 7、8、9 步开工之前）」与「估计由 lead 给，连同依据写进实施记录」。目前文件未提供已用 + 余下工作日估计、依据或保留 / 砍功能裁决；不能由实现者代 lead 编造。已请求 owner 提供 lead 判断，所需具体输入：工期估计与依据，以及自动重启 / server 说明 / CIMD 是否保留。按最新用户指令，先完成所有不依赖此项的第 4–6 步实现与验证；剩余第 7–9 步均受同一前置检查点影响，所以未开工，PR #29 保持 draft。lead 已给出不砍结论（原文见实施记录）；第 7–9 步前置条件已满足。后续各段 PR 的砍法检查由 lead 在审查时判，不为它停下。
 

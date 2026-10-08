@@ -30,17 +30,17 @@ it('03 验收 20 / 03 不变量 15: long tokens shard within four bounded values
     expect(new TextEncoder().encode(value).length).toBeLessThanOrEqual(2560)
     calls.push('write')
   })
-  await store.saveTokens('h', tokens('x'.repeat(5000)))
+  await store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('x'.repeat(5000)))
   expect(set).toHaveBeenCalledTimes(3)
   expect(calls[0]).toBe('issuer')
 })
 it('03 验收 20: rotation writes the complete new group before deleting old; interruption leaves old complete group readable', async () => {
   const { host, store } = setup()
-  await store.saveTokens('h', tokens('old'))
+  await store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('old'))
   const del = vi.spyOn(host.secrets, 'delete').mockImplementation(async () => {
     throw new Error('fixture delete fails')
   })
-  await store.saveTokens('h', tokens('new'))
+  await store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('new'))
   expect(await store.tokens('h')).toEqual(tokens('new'))
   expect(del).toHaveBeenCalledTimes(4)
   del.mockRestore()
@@ -52,9 +52,9 @@ it('03 验收 20: rotation writes the complete new group before deleting old; in
     if (++writes === 2) throw new Error('fixture write fails')
     await original(key, value)
   })
-  await expect(store.saveTokens('h', tokens('z'.repeat(5000)))).rejects.toBeInstanceOf(
-    McpKeychainError,
-  )
+  await expect(
+    store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('z'.repeat(5000))),
+  ).rejects.toBeInstanceOf(McpKeychainError)
   expect(await store.tokens('h')).toEqual(tokens('new'))
   fail.mockRestore()
 })
@@ -63,16 +63,19 @@ it('03 验收 20: a partial group is ignored; five shards write nothing; a throw
   await host.secrets.set('tenant:mcp:fixture:oauth:h:tokens:a:0', '1-fixture.2.0.e30')
   expect(await store.tokens('h')).toBeUndefined()
   const set = vi.spyOn(host.secrets, 'set')
-  await expect(store.saveTokens('h', tokens('x'.repeat(10000)))).rejects.toBeInstanceOf(
-    McpKeychainError,
-  )
+  await expect(
+    store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('x'.repeat(10000))),
+  ).rejects.toBeInstanceOf(McpKeychainError)
   expect(set).not.toHaveBeenCalled()
   vi.spyOn(host.secrets, 'get').mockRejectedValue(new Error('fixture read fails'))
   await expect(store.tokens('h')).rejects.toBeInstanceOf(McpKeychainError)
 })
 it('03 验收 20: concurrent saves leave one complete group; delete removes all eight shards', async () => {
   const { host, store } = setup()
-  await Promise.all([store.saveTokens('h', tokens('one')), store.saveTokens('h', tokens('two'))])
+  await Promise.all([
+    store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('one')),
+    store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('two')),
+  ])
   expect(await store.tokens('h')).toEqual(tokens('two'))
   const shards = await Promise.all(
     ['a', 'b'].map((slot) => host.secrets.get(`tenant:mcp:fixture:oauth:h:tokens:${slot}:0`)),
@@ -95,16 +98,16 @@ it('03 不变量 15: deleting refuses writes; client records contain only the de
     log: () => {},
   })
   const set = vi.spyOn(host.secrets, 'set')
-  await expect(store.saveTokens('h', tokens('never-saved'))).rejects.toBeInstanceOf(
-    McpKeychainError,
-  )
+  await expect(
+    store.saveTokens({ hash: 'h', url: 'https://fixture.invalid' }, tokens('never-saved')),
+  ).rejects.toBeInstanceOf(McpKeychainError)
   expect(set).not.toHaveBeenCalled()
 })
 
 it('client storage filters undeclared fields and preserves issuer and client credentials', async () => {
   const { store, host } = setup()
   const set = vi.spyOn(host.secrets, 'set')
-  await store.saveClient('h', {
+  await store.saveClient({ hash: 'h', url: 'https://fixture.invalid' }, {
     client_id: 'fixture-client',
     client_secret: 'fixture-secret',
     issuer: 'https://fixture.invalid',

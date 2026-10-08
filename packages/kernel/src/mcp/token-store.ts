@@ -8,12 +8,16 @@ export class McpKeychainError extends Error {
     this.name = 'McpKeychainError'
   }
 }
+export interface McpIssuer {
+  readonly hash: string
+  readonly url: string
+}
 export interface McpTokenTransaction {
   tokens(issuerHash: string): Promise<StoredOAuthTokens | undefined>
-  saveTokens(issuerHash: string, tokens: StoredOAuthTokens): Promise<void>
+  saveTokens(issuer: McpIssuer, tokens: StoredOAuthTokens): Promise<void>
   deleteTokens(issuerHash: string): Promise<void>
   client(issuerHash: string): Promise<StoredOAuthClientInformation | undefined>
-  saveClient(issuerHash: string, client: StoredOAuthClientInformation): Promise<void>
+  saveClient(issuer: McpIssuer, client: StoredOAuthClientInformation): Promise<void>
   deleteClient(issuerHash: string): Promise<void>
 }
 export interface McpTokenStore extends McpTokenTransaction {
@@ -29,7 +33,7 @@ export function createMcpTokenStore(q: {
   readonly identity: HostIdentity
   readonly serverId: string
   readonly ids: { uuid(): string }
-  readonly onIssuer: (issuerHash: string) => Promise<void>
+  readonly onIssuer: (issuer: McpIssuer, write: 'tokens' | 'client') => Promise<void>
   readonly deleting: () => boolean
   readonly log: (line: string) => void
 }): McpTokenStore {
@@ -85,16 +89,17 @@ export function createMcpTokenStore(q: {
         a.generation === b.generation ? 0 : a.generation > b.generation ? -1 : 1,
       )
   }
-  async function writable(hash: string) {
+  async function writable(issuer: McpIssuer, write: 'tokens' | 'client') {
     if (q.deleting()) throw new McpKeychainError()
-    await q.onIssuer(hash)
+    await q.onIssuer(issuer, write)
     if (q.deleting()) throw new McpKeychainError()
   }
   const rawTransaction: McpTokenTransaction = {
     async tokens(hash) {
       return (await groups(hash))[0]?.tokens
     },
-    async saveTokens(hash, tokens) {
+    async saveTokens(issuer, tokens) {
+      const hash = issuer.hash
       const binary = Array.from(new TextEncoder().encode(JSON.stringify(tokens)), (byte) =>
         String.fromCharCode(byte),
       ).join('')
@@ -104,7 +109,7 @@ export function createMcpTokenStore(q: {
       const current = (await groups(hash))[0]
       const slot = current?.slot === 'a' ? 'b' : 'a'
       const generation = `${(current?.generation ?? 0n) + 1n}-${q.ids.uuid()}`
-      await writable(hash)
+      await writable(issuer, 'tokens')
       // Write fragments sequentially; a failed write leaves only an ignored partial new group.
       for (let i = 0; i < n; i++) {
         if (q.deleting()) throw new McpKeychainError()
@@ -136,7 +141,8 @@ export function createMcpTokenStore(q: {
         return undefined
       }
     },
-    async saveClient(hash, client) {
+    async saveClient(issuer, client) {
+      const hash = issuer.hash
       const allowed = new Set([
         'client_id',
         'client_secret',
@@ -147,7 +153,7 @@ export function createMcpTokenStore(q: {
       const stored = Object.fromEntries(
         Object.entries(client).filter(([name]) => allowed.has(name)),
       )
-      await writable(hash)
+      await writable(issuer, 'client')
       await q.secrets.set(account(hash, 'client'), JSON.stringify(stored))
     },
     async deleteClient(hash) {

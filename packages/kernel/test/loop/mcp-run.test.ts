@@ -21,7 +21,7 @@ import {
 import type { TestServiceExtras } from '../../src/testing/index.js'
 import { anthropicModel } from '../provider/wire/fixtures.js'
 import { McpUnauthorizedError } from '../../src/mcp/connection.js'
-import { MODEL_NOTES } from '../../src/prompts/index.js'
+import { MODEL_NOTES, fill } from '../../src/prompts/index.js'
 import { sha256Hex } from '../../src/tape/hash.js'
 import { mcpCandidates } from '../../src/tools/mcp-source.js'
 import { openToolTable, rebuildToolTable, specHash } from '../../src/tools/table.js'
@@ -451,4 +451,142 @@ it('03 验收 36 / 03 不变量 9: readOnlyHint never bypasses manual approval',
   expect((await send(h, [call()])).reason.code).toBe('paused')
   expect(await h.service.currentPending({ sessionId: SESSION })).not.toBeNull()
   expect(execute).not.toHaveBeenCalled()
+})
+
+it('03 验收 32: physical depth and reference expansion guards exclude invalid definitions at table opening', async () => {
+  let nested: Record<string, unknown> = {}
+  for (let i = 1; i < 33; i++) nested = { items: nested }
+  for (const schema of [nested, { allOf: Array.from({ length: 10000 }, () => ({})) }]) {
+    const base = source()
+    const s = {
+      ...base,
+      connection: {
+        ...base.connection,
+        listTools: async () => [{ ...raw(), inputSchema: { type: 'object' as const, ...schema } }],
+      } as McpConnection,
+    }
+    expect(opening(await mcpCandidates([s])).excluded[0]?.code).toBe('invalid-definition')
+  }
+})
+
+it('03 验收 21: repeated unauthorized calls never consume the machine-blocked cap and the Run continues', async () => {
+  const execute = vi.fn<McpConnection['callTool']>(async () => {
+    throw new McpUnauthorizedError()
+  })
+  const h = harness([source({}, execute)])
+  expect(
+    (await send(h, [call(), call(), call(), scriptedTurn({ deltas: ['done'], usage: USAGE })]))
+      .reason.code,
+  ).toBe('completed')
+  expect(execute).toHaveBeenCalledTimes(3)
+  const outcomes = (await facts(h.tape)).filter((entry) => entry.name === 'execution/tool_outcome')
+  expect(outcomes).toHaveLength(3)
+  expect(
+    outcomes.every(
+      (entry) =>
+        entry.payload['source'] === 'connector-unauthorized' &&
+        entry.payload['state'] === 'not-run',
+    ),
+  ).toBe(true)
+})
+
+it('03 验收 3 (loop): a crash between Runs waits through the frozen proxy and succeeds; an in-flight crash closes connectorFailed completed', async () => {
+  const { createMcpPool } = await import('../../src/mcp/pool.js')
+  const connections = await import('../../src/mcp/connection.js')
+  const { absolutePath } = await import('../../src/index.js')
+  const host = createMemoryHost()
+  const make = () => {
+    let exit!: () => void
+    const execute = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+    const connection = {
+      name: 'fixture',
+      client: {},
+      instructions: '',
+      era: 'legacy',
+      protocolVersion: '2025-11-25',
+      serverVersion: undefined,
+      listTools: async () => [raw()],
+      callTool: execute,
+      close: async () => {},
+      exited: new Promise<{ code: number; signal: null }>((resolve) => {
+        exit = () => resolve({ code: 1, signal: null })
+      }),
+    } as unknown as McpConnection
+    return { connection, execute, exit }
+  }
+  const first = make()
+  const second = make()
+  const connect = vi
+    .spyOn(connections, 'connectStdioServer')
+    .mockResolvedValueOnce(first.connection)
+    .mockResolvedValueOnce(second.connection)
+  const runtime = {
+    serverId: 'fixture',
+    launchHash: 'launch',
+    consented: true,
+    transport: { type: 'stdio' as const, command: '/bin/node', args: [], envs: {}, envKeys: [] },
+    handshakeTimeoutMs: 30000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async () => ({ ok: true, path: absolutePath('/bin/node') }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  try {
+    pool.apply([runtime])
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    const h = harness(pool.routes())
+    await send(h)
+    const table = (await facts(h.tape)).find((entry) => entry.name === 'view/tool_table')!.payload
+    first.exit()
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('restarting'))
+    const waiting = send(h, [call(), scriptedTurn({ deltas: ['done'], usage: USAGE })])
+    await vi.waitFor(() => expect(h.provider.requests).toHaveLength(2))
+    expect(second.execute).not.toHaveBeenCalled()
+    host.advance(1000)
+    expect((await waiting).reason.code).toBe('completed')
+    expect(second.execute).toHaveBeenCalledTimes(1)
+    let fail!: (error: Error) => void
+    second.execute.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject
+        }),
+    )
+    const running = send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])
+    await vi.waitFor(() => expect(fail).toBeTypeOf('function'))
+    second.exit()
+    fail(new Error('fixture crashed'))
+    expect((await running).reason.code).toBe('completed')
+    const all = await facts(h.tape)
+    expect(
+      all.filter((entry) => entry.name === 'view/tool_table').map((entry) => entry.payload),
+    ).toEqual([table])
+    expect(all.findLast((entry) => entry.name === 'execution/tool_outcome')?.payload).toMatchObject(
+      { state: 'completed', source: null },
+    )
+    expect(all.findLast((entry) => entry.name === 'tool/result')?.payload).toMatchObject({
+      isError: true,
+      content: [
+        { type: 'text', text: fill(MODEL_NOTES.connectorFailed, { message: 'fixture crashed' }) },
+      ],
+    })
+  } finally {
+    const closing = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    await closing
+    connect.mockRestore()
+  }
 })

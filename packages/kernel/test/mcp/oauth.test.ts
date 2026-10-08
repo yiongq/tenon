@@ -26,19 +26,25 @@ async function setup(
   const host = createMemoryHost()
   let issuerHash: string | null = null
   const order: string[] = []
+  const issuerWrites: { issuer: { hash: string; url: string }; write: string }[] = []
   const store = createMcpTokenStore({
     secrets: host.secrets,
     identity: host.identity,
     serverId: 'fixture',
     ids: { uuid: () => crypto.randomUUID() },
     deleting: () => false,
-    onIssuer: async (hash) => {
+    onIssuer: async (issuer, write) => {
+      issuerWrites.push({ issuer, write })
+      if (write === 'tokens' && runtime.ownClient?.issuer === null)
+        runtime.ownClient = { ...runtime.ownClient, issuer: issuer.url }
+      runtime.issuers = [...runtime.issuers.filter((hash) => hash !== issuer.hash), issuer.hash]
       order.push('issuer')
-      issuerHash = hash
+      issuerHash = issuer.hash
     },
     log: () => {},
   })
   const runtime: { -readonly [K in keyof McpOAuthRuntime]: McpOAuthRuntime[K] } = {
+    issuers: [],
     ownClient: null,
     clientMetadataUrl: null,
     dcrRedirectPort: 53280,
@@ -100,6 +106,7 @@ async function setup(
     handed,
     unauthorized,
     order,
+    issuerWrites,
   }
 }
 it('03 验收 15: missing S256, no S256 or unavailable metadata never authorize or open a browser', async () => {
@@ -377,4 +384,78 @@ it('cancelLogin aborts discovery before opening or listening, and a concurrent l
   expect(await login).toEqual({ ok: false, code: 'cancelled' })
   expect(h.open).not.toHaveBeenCalled()
   expect(h.ports).toEqual([])
+})
+
+it('03 验收 17: first own-client tokens write carries raw issuer and binds it, without DCR; later issuer mismatch sends no secret', async () => {
+  const h = await setup(
+    {},
+    { ownClient: { clientId: 'fixture-own', redirectPort: 53289, hasSecret: true, issuer: null } },
+  )
+  await h.host.secrets.set('tenant:mcp:fixture:oauth:own:secret', 'fixture-own-secret')
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  expect(h.runtime.ownClient?.issuer).toBe(h.authServer.url)
+  expect(h.issuerWrites).toEqual([
+    { issuer: { url: h.authServer.url, hash: h.runtime.issuers.at(-1) }, write: 'tokens' },
+  ])
+  expect(h.authServer.requests.filter((r) => r.path === '/register')).toHaveLength(0)
+  const before = h.authServer.requests.length
+  h.runtime.ownClient = { ...h.runtime.ownClient!, issuer: 'https://changed.invalid' }
+  expect(await h.provider.login(h.ui)).toEqual({ ok: false, code: 'issuer-changed' })
+  expect(
+    h.authServer.requests
+      .slice(before)
+      .filter((r) => r.path === '/token' || r.path === '/register'),
+  ).toHaveLength(0)
+})
+
+it('03 验收 20: a fresh provider restores the last configured issuer and caches its tokens; an empty issuer list reads nothing', async () => {
+  const h = await setup()
+  const tokens = { access_token: 'fixture-restored', token_type: 'Bearer' }
+  await h.store.saveTokens(
+    { hash: 'first', url: 'https://first.invalid' },
+    { ...tokens, access_token: 'fixture-first' },
+  )
+  await h.store.saveTokens({ hash: 'last', url: 'https://last.invalid' }, tokens)
+  const fresh = () =>
+    createMcpOAuthProvider({
+      serverId: 'fixture',
+      serverUrl: h.authServer.url,
+      fetch: h.handed,
+      runtime: () => h.runtime,
+      identity: h.host.identity,
+      secrets: h.host.secrets,
+      ids: { uuid: () => crypto.randomUUID() },
+      store: h.store,
+      currentIssuerHash: () => null,
+      onUnauthorized: () => {},
+      addSecret: () => {},
+    })
+  const restored = fresh()
+  const get = vi.spyOn(h.host.secrets, 'get')
+  expect(await restored.tokens()).toEqual(tokens)
+  expect(get).toHaveBeenCalledTimes(8)
+  expect(await restored.tokens()).toEqual(tokens)
+  expect(get).toHaveBeenCalledTimes(8)
+  h.runtime.issuers = []
+  expect(await fresh().tokens()).toBeUndefined()
+  expect(get).toHaveBeenCalledTimes(8)
+})
+
+it('03 验收 17: changing the discovered issuer registers a new DCR client instead of reusing the old issuer group', async () => {
+  const fixture = await startHttpFixture({ era: 'legacy' })
+  cleanup.push(() => fixture.close())
+  const h = await setup({}, {}, fixture.url)
+  fixture.set({ authUrl: h.authServer.url })
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  const old = h.runtime.issuers.at(-1)!
+  const next = await startFakeAuthServer()
+  cleanup.push(() => next.close())
+  fixture.set({ authUrl: next.url })
+  expect(await h.provider.login(h.ui)).toEqual({ ok: true })
+  expect(h.authServer.requests.filter((r) => r.path === '/register')).toHaveLength(1)
+  expect(next.requests.filter((r) => r.path === '/register')).toHaveLength(1)
+  expect(h.runtime.issuers.at(-1)).not.toBe(old)
+  expect((await h.store.client(old))?.issuer).toBe(h.authServer.url)
+  expect((await h.store.client(h.runtime.issuers.at(-1)!))?.issuer).toBe(next.url)
+  expect(h.runtime.ownClient).toBeNull()
 })

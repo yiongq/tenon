@@ -179,6 +179,7 @@ export const mcpPhaseSchema = z.enum([
 export const mcpErrorCodeSchema = z.enum([
   'handshake-timeout',
   'handshake-failed',
+  'crashed',
   'modern-only',
   'era-negotiation-failed',
   'command-not-found',

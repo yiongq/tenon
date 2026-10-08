@@ -1,5 +1,7 @@
 import type {
   ClosureSource,
+  McpServerStatus,
+  McpErrorCode,
   PendingApproval,
   ToolExclusionCode,
   ToolOutcomeView,
@@ -9,8 +11,9 @@ import type { z } from 'zod'
 import { MCP_SERVER_ID_PATTERN as KERNEL_PATTERN } from '../../kernel/src/tools/registry.js'
 import type { approvalCurrent, closureSourceSchema, toolOutcomeViewSchema } from '../src/index.js'
 import { ipcRoutes } from '../src/index.js'
-import type { mcpToolViewSchema } from '../src/ipc/mcp.js'
+import type { mcpToolViewSchema, mcpPhaseSchema } from '../src/ipc/mcp.js'
 import {
+  mcpErrorCodeSchema,
   MCP_SERVER_ID_PATTERN,
   mcpServerIdSchema,
   mcpServerSchema,
@@ -19,6 +22,8 @@ import {
 
 type Assert<T extends true> = T
 type Both<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
+export type Phases = Assert<Both<McpServerStatus['phase'], z.infer<typeof mcpPhaseSchema>>>
+export type Errors = Assert<Both<McpErrorCode, z.infer<typeof mcpErrorCodeSchema>>>
 type Approval = Extract<
   NonNullable<z.infer<typeof approvalCurrent.response>>,
   { waitKind: 'approval' }
@@ -69,4 +74,8 @@ it('callTimeoutSec outside 1–3600 is clamped, not refused', () => {
       transport: { ...server.transport, envs: { ld_preload: 'x' } },
     }).success,
   ).toBe(false)
+})
+
+it('03 验收 4: crashed is an accepted recent-failure code', () => {
+  expect(mcpErrorCodeSchema.parse('crashed')).toBe('crashed')
 })
