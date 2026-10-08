@@ -193,6 +193,13 @@
   - 突变：① 删除时先写 config 再删钥匙串 → 「03 验收 26」红；② 改 launch 不重置总是允许 → 对应用例红；③ 拒存名单改成大小写敏感 → 「03 验收 7 (store)」红；④ 删除不先停池 → 「03 验收 26」红。
   - 完成：G 绿。
 
+- [ ] 10a. 第一段遗留（spec §provider 契约「错误映射」）
+  - 文件：`packages/kernel/src/mcp/oauth.ts`：刷新用的 fetch 不把 `.well-known/oauth-protected-resource` 的 5xx 记成 `transientFailure`（SDK 本来就容忍这一步失败），或令牌被作废后清掉它。
+  - 测试：`packages/kernel/test/mcp/oauth.test.ts` 加「03 验收 21: with no PRM and the PRM path answering 500, a refresh that gets invalid_grant is McpUnauthorizedError」。
+  - 命令：U `packages/kernel/test/mcp/oauth.test.ts`；G。
+  - 突变：① 把 PRM 的 5xx 照记 → 该例红。
+  - 完成：G 绿。
+
 - [ ] 11. 主进程宿主件（spec §启动「命令解析」、§进程树、§地址与出网、§登录流程 5、6 与测试接缝；T11、T12、T27、T30、T31、T36、T38、T43）
   - 文件：新 `apps/desktop/src/main/mcp/log-sink.ts`（追加写 `logs/mcp-<id>.log`，超 1 MB 轮转 `.1`、`.2`）、`resolve-command.ts`（绝对路径照用；否则按 PATH 找可执行文件；`process.platform === 'win32'` 且结果以 `.cmd` / `.bat` 结尾 → `windows-unsupported`；平台可注入）、`fetch.ts`（`createMcpFetch(serverUrl, network)`：spec §地址与出网 的放行规则，`https:` 与 `http:` 一样按 `reachOf` 判回环、私网；公网 server 的跨源目标先解析主机名，任一结果 `isBlockedFetchAddress` 即拒，放行时钉定查过的地址、方法头 body 照发，lookup 与连接目标可注入，照 apps/desktop/src/main/host/fetch-untrusted.ts 的接缝）、`loopback.ts`（`listen(port)`：只在 127.0.0.1 监听；`waitForCallback(state, timeoutMs)`；state 不对回 400 继续等；端口被占回 `port-in-use`）、`open-url.ts`（T31 校验 + `shell.openExternal`；测试接缝 `TENON_TEST_MCP_OPEN_URL=direct`，照 apps/desktop/src/main/host/official-protocol-test-seam.ts 的守卫写法，加进 `NEVER_INHERITED`（apps/desktop/e2e/helpers/app-env.ts:33-42）与 live 拒跑）。
   - 覆盖：验收 4（轮转）、5、8（解析部分）、10（fetch 部分）、18（回环部分）、19；03 不变量 18。
@@ -200,6 +207,16 @@
   - 命令：U `apps/desktop/test/mcp-host.test.ts apps/desktop/test/live-env.test.ts`；G。
   - 突变：① 去掉第 4 步加的组强杀 → 「03 验收 5」红；② 回环监听收到第一个回调就关 → 「03 验收 18」红；③ `open-url` 放行 `file:` → 「03 验收 19」红；④ 测试接缝不看 `TENON_DEV_ENV` → live-env.test 红；⑤ `fetch.ts` 对 `https:` 一律放行 → 「03 验收 10 (fetch)」红；⑥ `fetch.ts` 跳过 DNS 检查 → 「03 验收 10 (fetch, DNS)」红。
   - 完成：G 绿。
+
+- [ ] 11a. 限时 schema 校验（spec §定义的上限与 schema 加固 ①⑦，T23；读法 66；验收 32、33、51）
+  - 文件：
+    - kernel：`tools/validate.ts` 加 `SchemaVerdict`、`SchemaValidatorPort`；连接器工具的入参校验有 `schemaValidator` 时改走它（异步），内置工具照旧同步；`session/service.ts` 的 `SessionServiceOptions` 只增 `schemaValidator?` 并传到 batch。`mcp/client.ts` 改传总回合格的 `jsonSchemaValidator`；`mcp/pool.ts` 在代理的 `callTool` 返回后，有 outputSchema 与 `structuredContent` 时经 `schemaValidator`（没有就进程内同步）校验，不合或超时抛 `McpInvalidOutputError`。`mcp/definition.ts` 删掉展开数计数与为它加的 id 检查（`invalid-id`、`schema-expansion` 等码与对应测试一起删），② 的大小与深度、③④⑤ 保留。
+    - desktop：新 `apps/desktop/src/main/mcp/schema-worker.ts`（常驻 `node:worker_threads` worker，worker 内用 `@cfworker/json-schema` 的 `Validator`；按条排队，一次一条；每条从开始处理起限时 2 000 ms，到时 `worker.terminate()` 并让这一条回 `{ ok: false, unusable: 'timeout' }`，下一条来时重起；编译出错回 `unusable: 'schema'`；退出时随池一起关）。worker 脚本按 electron-vite 的 worker 写法打进主进程包；`index.ts` 把它作为 `schemaValidator` 交给 `createSessionService`，也交给池用于输出校验。
+  - 覆盖：验收 32、33、51；读法 66。
+  - 测试：新 `apps/desktop/test/schema-worker.test.ts`：「03 验收 51: every shape in schema-chains.ts times out within the limit and the main thread keeps ticking; the next call succeeds in a fresh worker; ordinary schemas pass and fail as usual; example {id: 42} stays usable」（限时用 200 ms 的真实计时；主线程上 10 ms 的计时器在校验期间按时触发）；`packages/kernel/test/tools/validate.test.ts`、`packages/kernel/test/mcp/pool.test.ts` 加「03 验收 33: structuredContent is validated by the injected validator after callTool; invalid or timeout is McpInvalidOutputError → connectorFailed / completed; the SDK validator always accepts」与「03 验收 51 (kernel): a connector input whose validator answers unusable timeout closes tool-unavailable / not-run」。`schema-chains.ts` 补齐三轮审查找到的全部形状。
+  - 命令：U `apps/desktop/test/schema-worker.test.ts packages/kernel/test/tools/validate.test.ts packages/kernel/test/mcp/pool.test.ts`；G；E（任意一个已有的 MCP e2e，确认打包后的 worker 能起来）。
+  - 突变：① 不终止超时的 worker（只拒 Promise）→ 主线程计时器那句红；② 输出改回 SDK 校验（传 CfWorker 校验器）→「SDK validator always accepts」红；③ 连接器入参改回进程内同步校验 → 验收 51 (kernel) 红；④ 超时后不重起 → 「next call succeeds」红。
+  - 完成：G 绿；E 那一个 e2e 绿。
 
 - [ ] 12. 接线（spec §接口 的 desktop 部分、§开表与调用时的等待、§三态 的产生方、§launchHash 与确认、§对 02 的修补 14；Q5、Q11-1、T7、T19、T21、T48）
   - 文件：新 `apps/desktop/src/main/mcp/consent.ts`（本次运行的确认，内存；任何变化都立即 `pool.apply(当前快照)`）、`runtime.ts`（config 条目 + 确认 → `McpServerRuntime`；`CIMD_CLIENT_METADATA_URL = null`、`DCR_REDIRECT_PORT = 53280`）、`user-setting.ts`（spec §三态 的规则，读 config 快照与 `pool.status()`）；`apps/desktop/src/main/index.ts`（读完 config 后建池，`watchConfig` 时 `apply`，把 `userSetting` 交给 `createSessionService`）；`run-assembly.ts`（`mcpSources: pool.routes()`，`mcpTable: (signal) => pool.tableSources({ waitMs: 10_000, signal })`，组装不等）；`shutdown.ts`（第 4 步 `Promise.all([registry.settled(SHUTDOWN_SETTLE_MS), pool.close({ deadlineMs: SHUTDOWN_SETTLE_MS })])`，shutdown.ts:253-255）。
