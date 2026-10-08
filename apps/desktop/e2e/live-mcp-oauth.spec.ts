@@ -229,20 +229,38 @@ test.describe('live mcp oauth · Notion', () => {
       await expect(row).toHaveCount(0)
       deleted = true
       expect((await absentAccounts(app, accounts)).every(Boolean)).toBe(true)
-      test.info().annotations.push({
-        type: 'live-summary',
-        description: JSON.stringify({
-          date: new Date().toISOString(),
-          vendor: 'Notion',
-          address: NOTION_URL,
-          source: 'spec Open 2 / owner 2026-10-08',
-          clientIdentity: 'DCR',
-          tools: server.toolViews.length,
-          readonlyCall: 'success',
-          model,
-          cost: 'lead records actual zhipu usage/cost outside the repository',
-        }),
+      // The passing-test fixture deletes this isolated profile. Preserve only numeric usage and
+      // non-secret observations in stdout so lead can save them under tenon-notes/live-* and add
+      // the actual billed cost. Never print a request, result, token or full Tape entry.
+      const usage = named(facts, 'provider/attempt_completed').map((fact) => {
+        const values = fact.payload['usage'] as Record<string, unknown> | null
+        return Object.fromEntries(
+          [
+            'inputTokens',
+            'outputTokens',
+            'cacheReadTokens',
+            'cacheWriteTokens',
+            'reasoningTokens',
+          ].map((field) => {
+            const value = values?.[field]
+            return [field, typeof value === 'number' && Number.isFinite(value) ? value : null]
+          }),
+        )
       })
+      const summary = {
+        date: new Date().toISOString(),
+        vendor: 'Notion',
+        address: NOTION_URL,
+        source: 'spec Open 2 / owner 2026-10-08',
+        clientIdentity: 'DCR',
+        tools: server.toolViews.length,
+        readonlyCall: 'success',
+        model,
+        usage,
+        cost: 'lead records actual billed zhipu cost outside the repository',
+      }
+      console.info('Notion live summary (no credentials or content):', JSON.stringify(summary))
+      test.info().annotations.push({ type: 'live-summary', description: JSON.stringify(summary) })
     } finally {
       try {
         // A timeout or failed model round must not orphan this randomly named connector's tokens.
