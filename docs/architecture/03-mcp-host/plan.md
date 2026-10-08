@@ -320,7 +320,7 @@
   - 最终门禁：format:check / lint / typecheck / build 绿；`pnpm test --maxWorkers=2` 为 200 文件 / 3762 测试通过、2 文件 / 2 测试跳过；免费 `pnpm evals:gate --maxWorkers=2` 为 4 文件 / 30 测试通过、1 跳过，使用 lead 已提交的 v10 基线，未跑付费 9a。普通 EA（`env -u ELECTRON_RUN_AS_NODE ... playwright test --workers=1`）150 / 150 通过；MCP bundled worker、smoke、stop-exit 的 E 均绿。最终两条保存异常分支的改动分别有 U / G 回归，build 再跑绿；EA 正常流程未重复扩跑。
   - dev 观测：已以 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 起过隔离测试 profile；原生 UI 工具只能读窗口，输入未生效，因此没有把该次人工发送记成功。改由可重复的 Everything seeded-profile 回归在 dev renderer + dev main 构建中实际发送并完成 `everything__echo`，全程内存机密 / 本地假 provider，无真实请求；截图 `seg2-everything-dev.png` 放仓库外 `tenon-notes/2026-10-03-phase3-mcp/`。同一回归已加入普通 E，打包构建也通过。
   - 提示层：相对 `c1ff6bc` 的 `packages/kernel/src/prompts` 无 diff，版本 10，哈希 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c` 未变。原有 AGENTS.md 修改保留、不提交。
-  - 交接：本段 PR 指向 dev / Ready for review，不合并；lead 审查代码、25 项突变及两项 Open，并按用户指令在审查时判预算。第三段从第 14 步起，表单接线前先写定 Open 的精确诊断读法；本段不自行决定新策略。
+  - 交接：实现提交 `02e8b04`，PR [#36](https://github.com/yiongq/tenon/pull/36) 指向 dev / Ready for review，不合并；lead 审查代码、25 项突变及两项 Open，并按用户指令在审查时判预算。第三段从第 14 步起，表单接线前先写定 Open 的精确诊断读法；本段不自行决定新策略。
 
 
 - **2026-10-08 · 第二段开工（`feat/03-seg2`）**：已先 `pnpm install --frozen-lockfile`，从最新 `origin/dev` 的 `c1ff6bc` 建分支，包含第一段与 PR #35 的 T23 worker 修订。范围仅第 10、10a、11、11a、12、13 步；提示层文案 / 版本 10 / 哈希不动。先实施配置存储与独立的 10a，再做主进程宿主件、限时 worker、接线和 IPC；遇到缺口记 Open，跳过受影响部分继续独立工作。原有 AGENTS.md 无关本地改动保留。
