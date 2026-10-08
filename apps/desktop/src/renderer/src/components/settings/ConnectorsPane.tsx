@@ -85,6 +85,7 @@ export function ConnectorsPane() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    aria-label={t('mcp.moveUp', { name: s.displayName })}
                     data-testid={`connector-up-${s.id}`}
                     disabled={servers.indexOf(s) === 0}
                     onClick={() => {
@@ -106,6 +107,7 @@ export function ConnectorsPane() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    aria-label={t('mcp.moveDown', { name: s.displayName })}
                     data-testid={`connector-down-${s.id}`}
                     disabled={servers.indexOf(s) === servers.length - 1}
                     onClick={() => {

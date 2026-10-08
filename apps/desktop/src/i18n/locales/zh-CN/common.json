@@ -673,7 +673,7 @@
       "consent-required": "需要确认",
       "interaction-required": "此工具需要用户交互",
       "policy-asks": "策略要求每次确认",
-      "stale": "定义已再次变化，请刷新",
+      "stale": "定义又变了，请重新查看变化",
       "not-found": "找不到连接器",
       "metadata-unreachable": "无法取得登录元数据",
       "pkce-unsupported": "不支持 S256 PKCE",
@@ -701,6 +701,9 @@
     "era": {
       "legacy": "旧代",
       "modern": "新代"
-    }
+    },
+    "reviewBeforeRelease": "请先查看变化，再放行",
+    "moveUp": "上移 {name}",
+    "moveDown": "下移 {name}"
   }
 }

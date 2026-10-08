@@ -2,7 +2,8 @@ import { canonicalJson, sha256Hex } from '@tenon-app/kernel'
 import type { McpServerRuntime, HostNetwork } from '@tenon-app/kernel'
 import type { McpServer } from '@tenon-app/contracts'
 import type { McpConsent } from './consent.js'
-export const CIMD_CLIENT_METADATA_URL: string | null = null
+export const CIMD_CLIENT_METADATA_URL: string | null =
+  'https://yiongq.github.io/tenon/oauth/client-metadata.json'
 export const DCR_REDIRECT_PORT = 53280
 export function launchHash(server: Pick<McpServer, 'transport'>): string {
   const t = server.transport

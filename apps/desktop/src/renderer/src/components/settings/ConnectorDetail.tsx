@@ -72,8 +72,9 @@ export function ConnectorDetail({
   }
   const connect = async () => {
     const r = await invokeRoute(window.tenon, mcpPreview, { draft: draftOf(s) })
-    if (r.ok && r.data.ok) setGrant(r.data)
-    else setError('unavailable')
+    if (!r.ok) setError(r.error.code === 'invalid-request' ? 'invalid-form' : 'unavailable')
+    else if (!r.data.ok) setError(r.data.code)
+    else setGrant(r.data)
   }
   const view = async (target: { tool: string } | { instructions: true }) => {
     const r = await invokeRoute(window.tenon, mcpReviewChange, { id: s.id, target })
@@ -90,6 +91,21 @@ export function ConnectorDetail({
   }
   const [reviewed, setReviewed] = useState<Record<string, string>>({})
   const releaseHash = (key: string) => reviewed[key]
+  const release = async (target: { tool: string } | { instructions: true }, key: string) => {
+    const code = await write(
+      invokeRoute(window.tenon, mcpRelease, {
+        id: s.id,
+        target,
+        definitionHash: reviewed[key]!,
+      }),
+    )
+    if (code === 'stale' || code === null)
+      setReviewed((old) => {
+        const next = { ...old }
+        delete next[key]
+        return next
+      })
+  }
   return (
     <div data-testid="connector-detail" className="flex min-w-0 flex-col gap-3">
       <h3 className="break-all font-medium">
@@ -190,18 +206,15 @@ export function ConnectorDetail({
                     data-testid={`tool-release-${tool.originalName}`}
                     disabled={!releaseHash('tool:' + tool.originalName)}
                     onClick={() =>
-                      void write(
-                        invokeRoute(window.tenon, mcpRelease, {
-                          id: s.id,
-                          target: { tool: tool.originalName },
-                          definitionHash: releaseHash('tool:' + tool.originalName)!,
-                        }),
-                      )
+                      void release({ tool: tool.originalName }, 'tool:' + tool.originalName)
                     }
                   >
                     {t('mcp.release')}
                   </Button>
                   <span className="text-micro">{t(MCP_EFFECTIVE_NEXT)}</span>
+                  {!releaseHash('tool:' + tool.originalName) ? (
+                    <span className="text-micro">{t('mcp.reviewBeforeRelease')}</span>
+                  ) : null}
                 </div>
               </>
             ) : null}
@@ -220,6 +233,9 @@ export function ConnectorDetail({
             />
             <span data-testid="connector-instructions-label">{t('mcp.instructions')}</span>
           </label>
+          <span data-testid="instructions-next-session" className="text-micro">
+            {t(MCP_EFFECTIVE_NEXT)}
+          </span>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all">
             {visible(s.instructionsView.text)}
           </pre>
@@ -231,19 +247,12 @@ export function ConnectorDetail({
               </Button>
               <Button
                 disabled={!releaseHash('instructions')}
-                onClick={() =>
-                  void write(
-                    invokeRoute(window.tenon, mcpRelease, {
-                      id: s.id,
-                      target: { instructions: true },
-                      definitionHash: releaseHash('instructions')!,
-                    }),
-                  )
-                }
+                onClick={() => void release({ instructions: true }, 'instructions')}
               >
                 {t('mcp.release')}
               </Button>
               <span>{t(MCP_EFFECTIVE_NEXT)}</span>
+              {!releaseHash('instructions') ? <span>{t('mcp.reviewBeforeRelease')}</span> : null}
             </div>
           ) : null}
         </>

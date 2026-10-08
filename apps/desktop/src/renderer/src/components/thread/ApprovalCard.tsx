@@ -145,6 +145,8 @@ export function ApprovalCard(props: {
         {t(titleKey(card) as never)}
       </p>
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- readonly scale is an ARIA group, not form controls
+        role="group"
         aria-label={t('mcp.reversibilityScale')}
         data-testid="reversibility-scale"
         className="flex flex-wrap gap-2 text-micro"

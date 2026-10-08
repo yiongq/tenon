@@ -83,7 +83,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       const word = (zh: string, en: string) => (locale === 'zh-CN' ? zh : en)
       await page
         .getByTestId('connector-notes')
-        .getByRole('button', { name: /Notes fixture/ })
+        .getByRole('button', { name: /^Notes fixture/ })
         .click()
       const detail = page.getByTestId('connector-detail')
       await expect(detail).toContainText('odd\\u{202E}name')
@@ -190,7 +190,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await openConnectors(page)
       await page
         .getByTestId('connector-notes')
-        .getByRole('button', { name: /Notes fixture/ })
+        .getByRole('button', { name: /^Notes fixture/ })
         .click()
       await page.getByTestId('tool-setting-echo').selectOption('always-allow')
       await closeSettings(page)

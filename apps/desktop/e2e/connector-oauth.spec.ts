@@ -113,7 +113,7 @@ test('03 验收 18 (UI): busy own-client callback port shows 端口被占用', a
     await connected(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /HTTP Notes/ })
+      .getByRole('button', { name: /^HTTP Notes/ })
       .click()
     await page.getByTestId('connector-login').click()
     await expect(page.getByTestId('connector-detail').getByRole('alert')).toHaveText('端口被占用')
@@ -154,7 +154,7 @@ test('03 验收 16 (UI): mismatched iss refuses login and never requests a token
     await connected(page)
     await page
       .getByTestId('connector-notes')
-      .getByRole('button', { name: /HTTP Notes/ })
+      .getByRole('button', { name: /^HTTP Notes/ })
       .click()
     await page.getByTestId('connector-login').click()
     await expect(page.getByTestId('connector-detail').getByRole('alert')).toHaveText(

@@ -673,7 +673,7 @@
       "consent-required": "Consent required",
       "interaction-required": "This tool requires user interaction",
       "policy-asks": "Policy requires approval each time",
-      "stale": "Definition changed again; refresh",
+      "stale": "Definition changed again; view changes again",
       "not-found": "Connector not found",
       "metadata-unreachable": "Login metadata unavailable",
       "pkce-unsupported": "S256 PKCE is not supported",
@@ -701,6 +701,9 @@
     "era": {
       "legacy": "Legacy",
       "modern": "Modern"
-    }
+    },
+    "reviewBeforeRelease": "View changes before releasing",
+    "moveUp": "Move {name} up",
+    "moveDown": "Move {name} down"
   }
 }

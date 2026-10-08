@@ -585,3 +585,14 @@ it('03 验收 19: the OAuth test browser switch is never inherited and refuses a
     expect(refusal).not.toContain(marker)
   }
 })
+
+it('03 验收 18 / 18a-1: callback port switch is never inherited and both live sources refuse it', () => {
+  const name = 'TENON_TEST_MCP_CALLBACK_PORT'
+  expect(NEVER_INHERITED).toContain(name)
+  expect(appEnvironment({ [name]: 'auto' }, {})).not.toHaveProperty(name)
+  for (const [runner, file] of [
+    [{ [name]: 'auto' }, {}],
+    [{}, { [name]: 'auto' }],
+  ])
+    expect(originMapRefusal(runner!, file!)).toContain(name)
+})
