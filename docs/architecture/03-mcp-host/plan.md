@@ -345,7 +345,7 @@
   - 21 仅编写：Notion 地址取 spec 开放问题 2，readonly notion-search 的来源为 Notion 官方 supported-tools 文档；显式将其他 MCP 工具设 never，search 设 ask，审批前核对调用名和 tool target，不靠 readOnlyHint 放行；验证 Tape 单次 dispatch、isError=false、completed/source=null。TENON_LIVE=1 才跑，拒 CI / origin-map / 浏览器与回调端口接缝；trace/screenshot/video 关，钥匙串真实，回调最多 120 s。环境中的智谱 key 临时覆盖原 provider 钥匙串值，仅在主进程内保留并 finally 恢复；随机 serverId 避免触碰已有连接器账户。删除后主进程实际 KeychainSecrets.get 检查每个 issuer 的 8 片、client 及 own secret，仅回传缺失布尔值；失败也尝试真实删除路由，finally 关闭 Electron。成功时只输出日期/身份路径/工具数/结果和白名单数值用量，供 lead 在 profile 清理前保存到仓库外并补实际账单花费；不输出请求、响应或 Tape 内容。未运行 live、未读 .env.local、未触碰真实钥匙串、未发生真实请求或付费。
   - live 编译检查：pnpm exec tsc -p apps/desktop/tsconfig.e2e.json --noEmit 通过；HostSecrets 源模块转 CJS 的导出用惰性 native stub 静态核对，未实例化真实钥匙串。默认 EA 的 **/live-*.spec.ts 排除规则涵盖新文件；没有新生产 IPC 或机密读取接缝。
   - 23：验收记录 1–52 每条有结论/文件:行/用例名/命令，22 个不变量定位索引齐全；所有「本地通过」待 lead 独立核查，47 已撤销、48 待 live。干净 clone 结果在验收 50 的 CC 记录回填；不提前勾 21/23/25，不改 spec 的 ready 状态。
-  - 本地门禁：G 的 204 文件 / 3811 测试通过、2 文件 / 2 测试跳过；build 通过；evals:gate 30 通过 / 1 跳过（既有 v10 基线，不重跑 9a）；普通 EA 单 Electron 正在验证，完成后更新本记录。提示层相对 f57b420 无 diff，PROMPT_LAYER_VERSION=10。
+  - 本地门禁：G 的 204 文件 / 3811 测试通过、2 文件 / 2 测试跳过；build 通过；evals:gate 30 通过 / 1 跳过（既有 v10 基线，不重跑 9a）；普通 EA 单 Electron 169 / 169 通过（5.9 min），包含两个 minor 的 controls 用例。提示层相对 f57b420 无 diff，PROMPT_LAYER_VERSION=10。
   - 49 文档同步重新核对：与第 22 步既有记录相同，五份文档本轮均无改动；本轮源码/文档凭证前缀扫描的 7 处仅在 live-env.test.ts 与 evals-models.test.ts，为 not-real 与短占位夹具；无真实值。未使用真实机密，普通 e2e 的 profile/Tape/日志由内存机密夹具生成；live 的真实存储隔离仍随验收 48 等 lead 实跑。
 
 - **2026-10-08 · 第 20、22、24 步完成**
@@ -467,7 +467,7 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 2026-10-09 · 第四段 b。以下 52 条按当前 spec 逐条登记；K/C/D/E 路径前缀与 spec 一致，U/G/P/EA 见「开工前读」。证据列给出测试文件、行号及用例原名；对应文件的整个套件随 G / EA 跑，不只运行列出的定位用例。`%s` 与 `${locale}` 为参数化用例名。
 
-「本地通过」只表示本轮实现者运行了对应门禁并核对证据入口，**待 lead 独立核查实际断言与突变**，不等于第 23 步最终完成。验收 48 未运行，47 已撤销；第 21、23、25 步保持未勾，spec 保持 ready。验收 50 的干净 clone 结果在本节更新，不能拿原工作树代替。
+「本地通过」只表示本轮实现者运行了对应门禁并核对证据入口，**待 lead 独立核查实际断言与突变**，不等于第 23 步最终完成。验收 48 未运行，47 已撤销；第 21、23、25 步保持未勾，spec 保持 ready。验收 50 的干净 clone 结果已记录在本节，未拿原工作树代替。
 
 | 验收 | 结论 | 证据 | 命令 |
 |---|---|---|---|
@@ -520,7 +520,7 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 | 47. 同题对比 | 已撤销 | spec §验收 47、读法 70；owner 2026-10-08 撤销同题对比 | 不运行 |
 | 48. Notion live OAuth | 待 live | `E/live-mcp-oauth.spec.ts:68` — `03 验收 48: real browser, DCR, readonly model call and keychain deletion` | 仅静态检查：`pnpm exec tsc -p apps/desktop/tsconfig.e2e.json --noEmit`；实际运行命令见第 21 步（本轮不跑） |
 | 49. 文档同步 | 本地通过；待独立核查 | 第 22 步实施记录；本轮重查 diff：master 九处及行数、01/02 仅 Amended by、00 未变、components 仅指定行 | `git diff 1ed9d64 -- docs/architecture/master-reference.md docs/architecture/02-agent-loop/spec.md docs/architecture/01-provider-and-tape/spec.md docs/architecture/00-foundation/spec.md docs/ux/components.md` |
-| 50. 干净 clone/不变量/机密 | 待干净 clone 完成；待独立核查 | 下方 CC 记录与 22 条不变量索引；原工作树 G/P 通过不代替本条 | CC（下方完整命令）；凭证扫描（见本轮实施记录） |
+| 50. 干净 clone/不变量/机密 | 本地通过；待独立核查 | 下方 CC 记录与 22 条不变量索引；本轮凭证扫描仅有短占位/not-real 夹具，真实 live 隔离随 48 待验证 | CC（下方完整命令）；凭证扫描（见本轮实施记录） |
 | 51. worker 限时校验 | 本地通过；待独立核查 | `K/tools/validate.test.ts:188` — `03 验收 51 (kernel): connector input timeout is tool-unavailable and only MCP uses the injected port`<br>`K/mcp/definition.test.ts:66` — `03 验收 32 / 51: ordinary annotation ids are not static schema errors`<br>`K/mcp/pool.test.ts:1213` — `03 验收 33 / 51: valid structured output returns unchanged, invalid output fails with the real validator, and isError bypasses output validation`<br>`K/loop/mcp-run.test.ts:935` — `03 验收 51 (kernel): a connector input timing out in the injected validator closes tool-unavailable / not-run without dispatch`<br>`D/schema-worker.test.ts:11` — `03 验收 51: ordinary schemas pass and fail; example id 42 is usable; a cancelled call cannot stall the queue`<br>`D/schema-worker.test.ts:40` — `03 验收 51: hostile reference chains cannot block the main thread; a timed-out worker is terminated and the next call starts fresh`<br>`D/schema-worker.test.ts:75` — `03 验收 51: $name cannot exhaust the main thread and an ordinary queued item succeeds after termination`<br>`D/schema-worker.test.ts:97` — `03 验收 51: worker agrees with synchronous validation on dialect selection and error locations` | U `apps/desktop/test/schema-worker.test.ts` `packages/kernel/test/loop/mcp-run.test.ts` `packages/kernel/test/mcp/definition.test.ts` `packages/kernel/test/mcp/pool.test.ts` `packages/kernel/test/tools/validate.test.ts` |
 | 52. 精确 IPC 码/第九 issuer | 本地通过；待独立核查 | `K/mcp/pool.test.ts:1300` — `03 验收 52: issuer eviction failure during pool.login returns keychain`<br>`D/mcp-routes.test.ts:243` — `03 验收 52: create and update return precise semantic codes without config or keychain changes; nested request objects are strict`<br>`D/mcp-store.test.ts:353` — `03 验收 52 / 03 不变量 16: ninth issuer deletes oldest accounts before config, rolls back failure, and remaining accounts are deleted with server`<br>`D/mcp-store.test.ts:455` — `03 验收 52 / 读法 59: issuer ordering is recency and header or own-client removal restarts once` | U `apps/desktop/test/mcp-routes.test.ts` `apps/desktop/test/mcp-store.test.ts` `packages/kernel/test/mcp/pool.test.ts` |
 
@@ -534,7 +534,7 @@ pnpm evals:gate --maxWorkers=2
 env -u ELECTRON_RUN_AS_NODE pnpm test:e2e
 ```
 
-CC 记录：待本分支实现提交生成后新 clone 验证并回填；临时 clone 不作为交接工件。
+CC 记录（2026-10-09）：用 `git clone --no-local --branch feat/03-seg4b <本地仓库绝对路径> <新临时目录>` 从提交对象创建独立 clone，不复制工作树、node_modules、构建产物或 profile；起点 803b983，快进到 219aca0 后重新 build/G/P/EA。install 成功（lockfile 未变），build / format / lint / typecheck 全绿；204 文件 / 3811 单测通过，2 文件 / 2 测试跳过；evals:gate 4 文件 / 30 通过、1 跳过；普通 EA 169 通过（5.9 min，workers=1），未收集 live。随后 3ddf622 仅补未运行 live 的数值摘要和本 plan，在 clone 上快进后 format/lint/typecheck 再次通过；219aca0→3ddf622 无生产代码或普通测试差异。临时 clone 不作为交接工件；此处仍待 lead 独立核查，实际 Notion 账户隔离待 48。
 
 不变量定位索引（spec 当前为 1–22，每项均有命名用例；随 G 执行，待 lead 独立核查）：
 
@@ -565,10 +565,11 @@ CC 记录：待本分支实现提交生成后新 clone 验证并回填；临时 
 
 ## 交接
 
-- **2026-10-09 · 第四段 b · 待验证/交付**
+- **2026-10-09 · 第四段 b · 实现与本地验证完成 / 待 lead**
   - 分支 feat/03-seg4b，基于最新 origin/dev f57b420。本轮改动仅两个 minor、live 测试作者工作与 plan 验收表；提示层保持 10、spec 保持 ready。
   - 21 仅写不跑，48 待 live；47 已撤销；23 的 52 行表及 22 不变量索引已整理，独立核查待 lead；25 按 owner 要求不做。
-  - 下一步：完成普通 EA、干净 clone CC 与凭证扫描，回填记录，提交并开 dev PR 设 Ready for review；不合并。lead 在 owner 在场时跑第 21 步，补日期/身份路径/工具数/实际调用与费用（无机密），原始记录置仓库外 tenon-notes/2026-10-03-phase3-mcp/live-*，之后做 23 独立复核，再由后续指令推进 25。
+  - 门禁：本工作树 G/P/build 绿、EA 169 通过；干净 clone CC 的 install/build/G/P/EA 绿，最终 live 摘要源码仅经静态门禁，未运行 live。验收表 52 条及 22 不变量的所有文件:行/用例名已逐个核定位，47/48 标记与 21/23/25 未勾状态均已校验。源码提交 803b983、219aca0、3ddf622，无临时探针、无机密值、lockfile 无变化；本轮 diff 已提交。
+  - 交付：feat/03-seg4b → dev PR，Ready for review，不合并；远端 CI 作为 PR 门禁，结果在 PR checks。下一步 lead 独立核查验收表，在 owner 在场时跑第 21 步，补日期/身份路径/工具数/实际调用与费用（无机密），原始记录置仓库外 tenon-notes/2026-10-03-phase3-mcp/live-*；之后完成 23，再由后续指令推进 25。
 
 - **2026-10-08 · 第四段首个 PR · 完成**
   - 分支：feat/03-seg4a 从最新 dev ff387eb（PR #40）开工；实现提交 b0fc4e7。PR [#42](https://github.com/yiongq/tenon/pull/42) 指向 dev，Ready for review、未合并。改动为第三段遗留、CIMD 常量/导出/测试、plan 核对与回归；没有半成品或临时探针。先 pnpm install，lockfile 无变化。
