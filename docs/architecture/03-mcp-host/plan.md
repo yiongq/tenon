@@ -307,7 +307,7 @@
 ## 交接
 
 - **2026-10-08 · 第 1 步完成 / 第 2 步前卡住**
-  - 分支：`feat/03-seg1`，从 dev `16068ca` 开出。改动仅 kernel package.json、pnpm-lock.yaml、SDK 版本回归测试及本 plan；没有半成品生产代码。
+  - 分支与实现提交：`feat/03-seg1` @ `ce1d36e`，从 dev `16068ca` 开出；draft PR [#29](https://github.com/yiongq/tenon/pull/29) 指向 dev，未合并。改动仅 kernel package.json、pnpm-lock.yaml、SDK 版本回归测试及本 plan；没有半成品生产代码。
   - 做完的：第 1 步，03 验收 1；旧 MCP 测试保持原样通过。
   - 门禁：G 绿（3558 测试通过、2 跳过）；build 绿；P 未跑（尚未改提示层）；E 不适用。
   - 突变：Client auto 导致旧代协商断言红；恢复后 5 用例绿。
