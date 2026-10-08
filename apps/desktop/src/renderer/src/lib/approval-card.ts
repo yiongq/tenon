@@ -135,3 +135,16 @@ export function keyAnswer(
   if (card.reversibility === 'irreversible') return 'deny'
   return from === 'other' ? null : 'allow'
 }
+
+/** The connector may have been deleted since the frozen call was assembled. */
+export function connectorCardName(
+  target: Target,
+  servers: readonly { id: string; displayName: string }[],
+): string | null {
+  return target.type === 'tool' && target.serverId !== 'builtin'
+    ? (servers.find((s) => s.id === target.serverId)?.displayName ?? target.serverId)
+    : null
+}
+export function definitionNotice(changed: boolean | undefined) {
+  return changed ? ('mcp.definitionNotice' as const) : null
+}

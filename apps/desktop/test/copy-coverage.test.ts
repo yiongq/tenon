@@ -22,8 +22,19 @@ import {
   createProviderRegistry,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { BlockReason, ClosureSource, ConfirmReason, PendingRoot } from '@tenon-app/kernel'
+import type {
+  BlockReason,
+  ClosureSource,
+  ConfirmReason,
+  PendingRoot,
+  ToolExclusionCode,
+} from '@tenon-app/kernel'
 import {
+  mcpErrorCodeSchema,
+  mcpWriteErrorCodeSchema,
+  mcpLoginErrorSchema,
+  mcpPhaseSchema,
+  toolSettingSchema,
   closureSourceSchema,
   confirmKindSchema,
   confirmReasonSchema,
@@ -39,7 +50,15 @@ import {
   reversibilitySchema,
   runEndReasonSchema,
 } from '@tenon-app/contracts'
-import type { ChatEvent, ConfirmRequestInput, RunEndReasonContract } from '@tenon-app/contracts'
+import type {
+  RouteRequest,
+  mcpSave,
+  McpServerView,
+  McpWarning,
+  ChatEvent,
+  ConfirmRequestInput,
+  RunEndReasonContract,
+} from '@tenon-app/contracts'
 import {
   isArgumentElement,
   isDateElement,
@@ -573,4 +592,71 @@ describe('the gate itself', () => {
       argumentsOf('{a} {n, plural, one {# {b}} other {{c}}} {s, select, x {{d}} other {}}'),
     ).toEqual(['a', 'b', 'c', 'd', 'n', 's'])
   })
+})
+
+it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-long', () => {
+  const values = [
+    ...covers<McpServerView['toolViews'][number]['review']>()(['ok', 'changed', 'new'], true),
+    ...covers<NonNullable<McpServerView['toolViews'][number]['unavailable']>>()(
+      ['name-collision', 'invalid-definition'],
+      true,
+    ),
+    ...covers<NonNullable<McpServerView['status']['stopReason']>>()(
+      ['needs-consent', 'crash-limit'],
+      true,
+    ),
+    ...covers<NonNullable<McpServerView['status']['era']>>()(['modern', 'legacy'], true),
+    ...covers<McpServerView['transport']['type']>()(['stdio', 'http'], true),
+    ...covers<McpServerView['source']>()(['manual'], true),
+    ...toolSettingSchema.options,
+    ...covers<McpWarning['kind']>()(
+      ['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'],
+      true,
+    ),
+    ...covers<Extract<McpServerView['transport'], { type: 'http' }>['protocol']>()(
+      ['auto', 'legacy'],
+      true,
+    ),
+    ...covers<NonNullable<RouteRequest<typeof mcpSave>['consent']>>()(['run', 'persistent'], true),
+    ...covers<
+      Exclude<
+        ToolExclusionCode,
+        'policy' | 'user-disabled' | 'connector-unauthorized' | 'over-limit' | 'no-search-backend'
+      >
+    >()(
+      ['name-collision', 'invalid-definition', 'definition-changed', 'connector-unavailable'],
+      true,
+    ),
+    'connector-unauthorized',
+  ]
+  expect(
+    problems([
+      ...[
+        ...mcpErrorCodeSchema.options,
+        ...mcpWriteErrorCodeSchema.options,
+        ...mcpLoginErrorSchema.options,
+      ].map((code) => ({ key: `mcp.error.${code}`, args: [], what: code })),
+      ...mcpPhaseSchema.options.map((code) => ({ key: `mcp.phase.${code}`, args: [], what: code })),
+      ...values.map((code) => ({ key: `mcp.value.${code}`, args: [], what: code })),
+      ...reversibilitySchema.options.map((code) => ({
+        key: `mcp.reversibility.${code}`,
+        args: [],
+        what: code,
+      })),
+      ...(['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'] as const).map(
+        (code) => ({
+          key: `mcp.warning.${code}`,
+          args:
+            code === 'home-path' || code === 'ssh-path'
+              ? ['arg']
+              : code === 'unpinned-package'
+                ? ['package']
+                : code === 'risky-env'
+                  ? ['name']
+                  : [],
+          what: code,
+        }),
+      ),
+    ]),
+  ).toEqual([])
 })

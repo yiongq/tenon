@@ -530,13 +530,122 @@
     "remove": "Remove {name}"
   },
   "mcp": {
-    "phase": {
-      "stopped": "Stopped",
+    "settings": "Settings",
+    "title": "Connectors",
+    "description": "Manage MCP connectors, tools, and permissions.",
+    "local": "Local",
+    "remote": "Remote",
+    "empty": "No connectors yet",
+    "add": "Add connector",
+    "back": "Back to list",
+    "enabled": "Enable {name}",
+    "nextSession": "Applies to new sessions",
+    "neverNote": "Removed from the model’s tools; direct calls are blocked too",
+    "drag": "Drag to reorder",
+    "overLimit": "{provider} tool limit: {n} additional tools unavailable",
+    "always": "Always allow",
+    "ask": "Ask",
+    "never": "Never",
+    "newTool": "New tool, awaiting confirmation",
+    "definitionChanged": "Definition changed; confirmation required",
+    "viewChange": "View changes",
+    "release": "Accept new definition",
+    "instructions": "Provide server instructions",
+    "timeouts": "Handshake {handshake}s · Call {call}s",
+    "protocol": "Protocol",
+    "protocolValue": "Protocol {era} · {version}",
+    "auto": "Auto",
+    "legacy": "Legacy",
+    "changeLegacy": "Change protocol",
+    "confirmConnect": "Confirm and connect",
+    "log": "View log",
+    "restart": "Restart",
+    "refresh": "Refresh tools",
+    "login": "Log in",
+    "relogin": "Log in again",
+    "cancelLogin": "Cancel login",
+    "revoke": "Revoke authorization",
+    "edit": "Edit",
+    "delete": "Delete",
+    "deleteTitle": "Delete connector?",
+    "deleteNote": "The configuration and secrets for {name} will be deleted.",
+    "cancel": "Cancel",
+    "save": "Save",
+    "type": "Type",
+    "hasSecret": "Own client requires a secret",
+    "formNote": "Use JSON arrays for arguments and key names, and JSON objects for environment variables and secrets. Saved secrets are never displayed; leave blank to retain them.",
+    "grantTitle": "Allow connection to {name}?",
+    "grantLocal": "Check the command, arguments, and environment variables to be launched.",
+    "grantRemote": "Check the remote address and header names.",
+    "resolved": "Resolved path: {path}",
+    "commandMissing": "Command not found",
+    "keychainName": "{name} (keychain)",
+    "origin": "Origin: {origin}",
+    "reviewNote": "Compare the old and new definitions before accepting.",
+    "before": "Previous definition",
+    "after": "New definition",
+    "noBefore": "No previously confirmed definition",
+    "connecting": "Connecting to {name}…",
+    "definitionNotice": "This tool’s definition changed during the session; always allow does not apply to this call.",
+    "effect": "Side effects",
+    "marker": "{effect} · {reversibility}",
+    "status": {
       "connecting": "Connecting",
-      "connected": "Connected",
-      "restarting": "Disconnected, reconnecting soon",
-      "error": "Error",
-      "unauthorized": "Sign in required"
+      "connected": "Connected · {version} · {n} tools",
+      "restarting": "Restarting in {seconds}s",
+      "stopped": "Stopped",
+      "needs-consent": "Confirmation required",
+      "crash-limit": "Crash limit reached",
+      "unauthorized": "Login required",
+      "error": "Connection failed",
+      "disabled": "Disabled"
+    },
+    "form": {
+      "id": "ID",
+      "displayName": "Display name",
+      "command": "Command",
+      "args": "Arguments (JSON)",
+      "envs": "Environment (JSON)",
+      "envKeys": "Secret environment names (JSON)",
+      "secretEnv": "Environment secrets (JSON)",
+      "url": "URL",
+      "headers": "Header names (JSON)",
+      "secretHeaders": "Header secrets (JSON)",
+      "clientId": "Client ID",
+      "port": "Callback port",
+      "clientSecret": "Client secret",
+      "handshake": "Handshake timeout (seconds)",
+      "timeout": "Call timeout (seconds)"
+    },
+    "warning": {
+      "sudo": "Command uses sudo",
+      "rm-rf": "Command includes rm -rf",
+      "home-path": "Argument accesses the home directory: {arg}",
+      "ssh-path": "Argument accesses the SSH directory: {arg}",
+      "unpinned-package": "Package version is not pinned: {package}",
+      "risky-env": "Environment variable may change command behavior: {name}"
+    },
+    "grant": {
+      "cancel": "Cancel",
+      "persistent": "Always allow on this machine",
+      "run": "Allow"
+    },
+    "unavailable": {
+      "name-collision": "Name collision; unavailable",
+      "invalid-definition": "Invalid definition; unavailable"
+    },
+    "reversibility": {
+      "read-only": "Read only",
+      "revertible": "Revertible",
+      "snapshotted": "Snapshotted",
+      "irreversible": "Irreversible",
+      "unknown": "Unknown"
+    },
+    "effects": {
+      "read": "Read",
+      "write": "Write",
+      "external": "External",
+      "blocked": "Blocked"
     },
     "error": {
       "handshake-timeout": "Connection timed out",
@@ -576,7 +685,17 @@
       "timeout": "Sign-in timed out",
       "port-in-use": "Port is in use",
       "unsafe-url": "Unsafe sign-in URL",
-      "cancelled": "Sign-in cancelled"
+      "cancelled": "Sign-in cancelled",
+      "unavailable": "Temporarily unavailable",
+      "invalid-form": "Invalid form format"
+    },
+    "phase": {
+      "stopped": "Stopped",
+      "connecting": "Connecting",
+      "connected": "Connected",
+      "restarting": "Disconnected, reconnecting soon",
+      "error": "Error",
+      "unauthorized": "Sign in required"
     },
     "value": {
       "always-allow": "Always allow",
@@ -606,6 +725,9 @@
       "ssh-path": "Uses an .ssh path",
       "unpinned-package": "Package version is not pinned",
       "risky-env": "Environment variable may affect execution"
-    }
+    },
+    "nameId": "{name} · {id}",
+    "idType": "{id} · {type}",
+    "protocolSelected": "Protocol: {protocol}"
   }
 }

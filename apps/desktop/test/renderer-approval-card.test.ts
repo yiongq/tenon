@@ -1,3 +1,4 @@
+import { reversibilityScale } from '../src/renderer/src/lib/reversibility-scale.js'
 /**
  * What the minimal approval card shows and how its keys answer (spec 02 §最小审批卡 ②, ⑤, ⑥ and
  * 「按键」; plan step 22: 旧 215's change, 旧 216's key table, and the Everything fixture tool's card,
@@ -9,6 +10,8 @@ import type { i18n as I18n } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createI18n } from '../src/i18n/create-instance.js'
 import {
+  connectorCardName,
+  definitionNotice,
   changeView,
   defaultButton,
   keyAnswer,
@@ -210,4 +213,26 @@ describe('a network card’s object line (§最小审批卡 ②; acceptance 36)'
       { text: 'https://example.com/a/b\\u{202E}gpj.exe?q=1#x', role: 'value' },
     ])
   })
+})
+
+it('03 验收 45: scale marks current value; connector shows server name and changed-definition notice', () => {
+  for (const current of [
+    'read-only',
+    'revertible',
+    'snapshotted',
+    'irreversible',
+    'unknown',
+  ] as const) {
+    const cells = reversibilityScale(current)
+    expect(cells).toHaveLength(5)
+    expect(cells.filter((c) => c.current).map((c) => c.value)).toEqual([current])
+  }
+  expect(
+    connectorCardName(EVERYTHING.target, [{ id: 'everything', displayName: 'Everything server' }]),
+  ).toBe('Everything server')
+  expect(connectorCardName(EVERYTHING.target, [])).toBe('everything')
+  expect(connectorCardName(WRITE.target, [])).toBeNull()
+  expect(definitionNotice(true)).toBe('mcp.definitionNotice')
+  expect(definitionNotice(undefined)).toBeNull()
+  expect(zh.t(definitionNotice(true)!)).toBe('这个工具的定义在会话中变了，总是允许这次不生效')
 })

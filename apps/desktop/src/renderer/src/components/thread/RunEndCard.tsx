@@ -4,7 +4,7 @@ import type { RunEndReasonContract } from '@tenon-app/contracts'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ProviderSettings } from '@/components/settings/ProviderSettings'
+import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
 import { customVendorGone, isInstanceId } from '@/lib/custom-vendor'
 import { cardOf, effectLineOf } from '@/lib/end-card'
@@ -272,7 +272,7 @@ function FailureCard(props: {
         </div>
       )}
       {shape.action === 'settings' ? (
-        <ProviderSettings open={settings} onOpenChange={setSettings} />
+        <SettingsModal open={settings} onOpenChange={setSettings} />
       ) : null}
     </div>
   )
