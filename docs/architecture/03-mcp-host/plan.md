@@ -177,7 +177,7 @@
   - 突变：① 删 PKCE 检查 → 「03 验收 15」红；② 不把 `iss` 传给 `auth()` → 「03 验收 16」红；③ 新组写进当前 slot → 「03 验收 20」红；④ 不调 `onIssuer` → 「03 验收 17」里断言调用顺序的那句红；⑤ 非交互时也调 `openUrl` → 「03 不变量 21」红；⑥ 去掉令牌写入互斥锁 → 并发 saveTokens 的第二代完整组断言红；另删刷新 Promise 复用 → 「…two concurrent 401s send one refresh」红（两层保护各自验证）；⑦ 非交互改回传 `OAuthClientProvider` → 「…no /register request…」红；⑧ 非交互用的 provider 实例实现 `saveClientInformation` → 「…invalid_client sends no /register request」红。
   - 完成：G 绿。
 
-- [ ] 9a. 提示层基线评测（02:2956「改了必跑」；第 2 步把 `PROMPT_LAYER_VERSION` 加到 10）
+- [x] 9a. 提示层基线评测（02:2956「改了必跑」；第 2 步把 `PROMPT_LAYER_VERSION` 加到 10）
   - 做法：有智谱 key 的一方（lead 或 owner，见「owner 的事」）在基线列 `tenon-glm-5.3-open.bigmodel.cn-api-paas-v4`（apps/desktop/evals/models.ts 的 `BASELINE_COLUMN`）上跑 `pnpm eval`，每题 3 次；记录照 02 的格式写进 `docs/evals/results/<日期>-tenon-glm-5.3-open.bigmodel.cn-api-paas-v4.jsonl`，随第一段 PR 提交。
   - 覆盖：验收 50 的 `evals:gate`。
   - 命令：P（`evals:gate` 由红转绿）。
@@ -308,7 +308,8 @@
   - 新增突变 35 项均红：schema 六项（anchor、fragment-id、未知键 dependencies、recursiveRef、本地未解 ref、根计数）；提前写 manifest；auto 网络 / 5xx；不取消旧 timer、第三次崩溃不 close、timer 路径不重置、保留旧 OAuth、重连不清已关闭句柄；有 PRM 仍验证 URI；缓存 rejected tokens；executor 固定超时；忽略 supported；不等 cacheLoaded；忽略说明 enabled / pin、忽略 new review、说明去重忽略 hash、不转义 >、estimateInput 不计说明、压缩漏补说明；AS 网络误触发池重启；不在 announce 前设置 stopReason；登录 / 刷新改 global fetch；不持久写轮换组；漏 HTTP 握手 timeout；注入 sessionId meta / Tenon 请求头；不按名重排裁剪项。临时源码均 finally 恢复。首次“停用说明”用例仅有不匹配 pin，突变未红，已补匹配 pin 且停用后重跑红；executor 改为完整选项断言。HTTP 握手脚本最初匹配到 stdio，未记为有效突变，按 HTTP 函数范围重跑红。
   - 提示层检查：`src/prompts` 相对 `9b2ddbc` 无 diff；`PROMPT_LAYER_VERSION=10`，哈希仍为 `05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c`。locale 只新增 crashed 文案，不修改模型提示层。
   - 最终门禁：`pnpm format:check` / `pnpm lint` / `pnpm typecheck` 绿；`pnpm test --maxWorkers=2` 为 195 文件 / 3699 测试通过，2 文件 / 2 测试跳过；`pnpm build` 绿。
-  - 交接：原有 `AGENTS.md` 的无关本地改动保留、不纳入提交。下一步为提交修复、pull lead 的评测提交、跑 `evals:gate`、推送并保持 PR #29 Ready for review；pull 与评测门禁结果随后补记。
+  - 推送前已 pull lead 的 `98c45e1 test(evals): record the v10 baseline run`，保留其 60 条原始记录：`docs/evals/results/2026-10-08-tenon-glm-5.3-open.bigmodel.cn-api-paas-v4.jsonl`（20 题 × 3，记录 verdict 均 pass，合计约 ¥49.75146）。`pnpm evals:gate --maxWorkers=2` 绿：4 文件 / 30 测试通过，1 文件 / 1 测试跳过；P 全绿，第 9a 步由 lead 完成、据记录勾选，实现者未跑付费评测。提示层哈希与记录匹配。
+  - 交接：修复提交 `473720b`，PR #29 保持 Ready for review、目标 dev、不合并；下一步由 lead 对本审查清单复核，第二段第 10 步仍在后续 PR。原有 `AGENTS.md` 无关本地改动保留、不纳入提交。
 
 - **2026-10-08 · 第 7–9 步收尾**：合入 dev PR #32 / #33（`17e8deb`），Open 两条缺口均已解决。补了首次自带 client 的 issuer 原文 / tokens 回写类别、启动时恢复最后 issuer、空列表不读钥匙串、新 issuer 重新 DCR 注册、crashed 尾巴 / crash-limit 保留 / 重连与用户操作清空、跨池缓存恢复与坏缓存、池退出并行关闭与到点强杀（leader 已退出仍杀组）的回归。连接池代理跨两个 Run 等重启后成功，冻结工具表不变；在途崩溃照既有 connectorFailed 文本、completed 收口；未授权连续三次不吃机器阻断上限。阶段与错误码的 kernel ↔ contracts 双向类型钉放在 contracts/test/mcp.test.ts（避免 kernel 新增 contracts 依赖）。
 - **最终突变**：合新契约后重跑 7 的七项、8 的九项、9 的八项，全部红；额外验证刷新 Promise 合一，以及 PR #32 的忽略启动 issuer / 丢原文 / 误用 client 写类别、PR #33 的漏记 crashed / 重连不清空，共 30 项全红。8⑤ 统计键改为同台后格式变成多行，初次脚本未匹配，不算已跑；用最终代码准确匹配重跑，撞名优先级回归红。临时改动均 finally 恢复，相关回归恢复绿。收尾新增异步钉住期间删除不重建缓存、超长 Unicode 单行尾巴有界两例。
@@ -416,4 +417,4 @@ lead 第 6 步检查点结论（2026-10-08）：不砍。
 
 - 开放问题 1 已定（2026-10-08）：CIMD 地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`，托管文件与发布工作流已在仓库，不挡开工。
 - 开放问题 2（live 厂商）挡第 21 步；开放问题 11–13 已于 2026-10-08 定（照推荐，见 spec）。
-- 第 9a 步的基线评测要智谱 key 与费用，第一段 PR 等它的记录才能合并。
+- **已解决（lead `98c45e1`）：第 9a 步基线记录已接入，evals:gate 绿。** 第一段仍等 lead 再审通过，本次不合并。
