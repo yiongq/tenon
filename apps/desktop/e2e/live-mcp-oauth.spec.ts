@@ -1,12 +1,14 @@
 /**
  * Manual spec 03 acceptance 48. Lead runs this only with the owner present: macOS may ask for
  * keychain access, the system browser needs a Notion login, and one zhipu tool round is paid.
- * Keys come only from this process's environment. Never run this file in CI or collect traces.
+ * The zhipu key comes from this process's environment, else from the repo-root `.env.local`, parsed
+ * in this process like live-provider.spec.ts. Never run this file in CI or collect traces.
  * Notion's documented read-only search: https://developers.notion.com/guides/mcp/mcp-supported-tools
  */
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { parseEnv } from 'node:util'
 import { transformWithEsbuild } from 'vite'
 import type { ElectronApplication } from '@playwright/test'
 import type { McpServer } from '@tenon-app/contracts'
@@ -21,6 +23,9 @@ import { send, waitingApproval } from './helpers/tools.js'
 import { PAST_CLICK_GUARD_MS } from './helpers/navigation.js'
 
 const LIVE = process.env['TENON_LIVE'] === '1'
+const ENV_FILE = resolve(process.cwd(), '../../.env.local')
+// Parsed into an object, never into process.env (the same reading as live-provider.spec.ts).
+const fromFile = LIVE && existsSync(ENV_FILE) ? parseEnv(readFileSync(ENV_FILE, 'utf8')) : {}
 const NOTION_URL = 'https://mcp.notion.com/mcp'
 const identity = { tenantId: 'personal' }
 const providerAccount = keyFor(identity, 'provider', 'zhipu', 'apiKey')
@@ -66,14 +71,16 @@ test.describe('live mcp oauth · Notion', () => {
   test.use({ trace: 'off', screenshot: 'off', video: 'off' })
 
   test('03 验收 48: real browser, DCR, readonly model call and keychain deletion', async () => {
-    // Fail rather than silently bypassing a dangerous setup. The live config also checks its
-    // dotenv source; this spec itself never reads an env file or opens a fixture browser.
-    const refusal = originMapRefusal(process.env, {})
+    // Fail rather than silently bypassing a dangerous setup: a test seam in the runner's
+    // environment or in `.env.local` refuses the run. This spec never opens a fixture browser.
+    const refusal = originMapRefusal(process.env, fromFile)
     if (refusal !== null) throw new Error(refusal)
     if (process.env['CI']) throw new Error('live OAuth must be run manually without CI')
-    const key = process.env['TENON_LIVE_ZHIPU_KEY']?.trim() || process.env['ZHIPU_API_KEY']?.trim()
-    if (!key)
-      throw new Error('pass TENON_LIVE_ZHIPU_KEY or ZHIPU_API_KEY in the process environment')
+    const key =
+      process.env['TENON_LIVE_ZHIPU_KEY']?.trim() ||
+      process.env['ZHIPU_API_KEY']?.trim() ||
+      fromFile['ZHIPU_API_KEY']?.trim()
+    if (!key) throw new Error('no ZHIPU_API_KEY in the process environment or .env.local')
     const model = process.env['TENON_LIVE_ZHIPU_MODEL']?.trim() || 'glm-5.3-flash'
     const userData = makeUserDataDir('live-notion')
     const id = 'live-notion-' + randomUUID().slice(0, 8)
