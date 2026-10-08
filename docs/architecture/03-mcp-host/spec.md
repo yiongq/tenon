@@ -5,7 +5,7 @@ Phase: 3 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: 裁决由 owner 拍板（2026-10-08 四轮，Q1–Q16 都选推荐项，T1–T49 全收，T17、T24 已并入 Q11-2、Q4-2；裁决卡 `cards-v1.md`、选择记录 `picks.md` 与调研原文在仓库外 `../tenon-notes/2026-10-03-phase3-mcp/`）；起草在 Claude Code（2026-10-08）；实现由 Codex 做，lead（Claude Code）在每段 PR 合并前审查（owner 2026-10-08 定）
 Amends: [02-agent-loop](../02-agent-loop/spec.md) §主进程与 kernel 的循环接口（`RunAssembly`、`McpToolSource` 只增可选成员）、§依赖方向与能力入口（`SessionServiceOptions` 只增可选成员 `userSetting`、`schemaValidator`）、§02 的 Tape 事实（排除码、`view/tool_table` 的 `tools[]` 只增 `definitionHash`、`tool/permission_decided` 只增，新名字 `message/server_instructions`）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§权限决策顺序（作用域与授权键）、§工具调用的收口（原因码表）、§提示层与评测、§停止与退出（退出第 4 步并行关连接池）、§界面范围、01 修补 6 立的工具结果视图、02 §答复与投递 立的 `approval.current`。只增不改，全文见 §对 02 的修补；碰到 02 旧文字的条目在 §点名。[01-provider-and-tape](../01-provider-and-tape/spec.md)：`createSessionService` 的构造参数只增可选的 `userSetting`，config.json 只增 `mcpServers`（02、M6 加同类成员都记作修补 01 的先例），正文不改。`HostAdapter` 不加成员，00 不修补（T1）
 Related: [master-reference](../master-reference.md) §4.3、§4.12、§13 阶段 3–5；[custom-vendors](../../features/custom-vendors/spec.md)（config.json 写入规则、钥匙串删除顺序、测试接缝的先例）
-Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready；2026-10-08 owner 定开放问题 1：CIMD 地址用 tenon 仓库的 GitHub Pages（`https://yiongq.github.io/tenon/oauth/client-metadata.json`），托管文件 `apps/desktop/oauth/client-metadata.json` 与发布工作流 `.github/workflows/pages.yml` 随本次修订进仓库，plan 第 20 步改为只改常量、补测试；2026-10-08 第一段实现开工时补（实现者在第 2 步前停下指出，尚无代码依赖）：冻结的 `definitionHash` 落进 `view/tool_table` 的 `tools[]` 与 `ToolTableItem`（只增，§对 02 的修补 15），重建冻结表时原样恢复，冻结项缺它时「总是允许」不成立、照每次问（读法 61；§三态、§Tape 事实、不变量 8、验收 38 同改）（旧：只写了 `ToolKey.definitionHash` 取冻结项的哈希，没写冻结项从哪来；改因：Tape 只存 `specHash`，不含 outputSchema 与 requiresUserInteraction，恢复会话后无从还原）；同时更正首版合入时误挂在 §对 02 的修补 11–13 后的「已定」标记，移回 §开放问题 11–13；2026-10-08 第一段第 4 步补（实现者停下指出，§超时、取消与断流尚无合入的代码依赖）：调用的总长封顶改由连接层自己的计时器中止信号实现，不交给 SDK 的 `maxTotalTimeout`（旧：`maxTotalTimeoutMs` 原样作为 SDK 的 `maxTotalTimeout`；改因：2.3.1 的它到点只拒绝本地 Promise，不发 `notifications/cancelled`、不关新代 HTTP 请求，server 继续执行，违反 T10 与验收 30）；§超时、取消与断流、验收 30、读法 62 同改；2026-10-08 第一段第 9 步补（实现者在 Open 指出，第 9 步尚无合入的代码依赖）：`McpOAuthRuntime` 只增 `issuers`（config `oauth.issuers` 原样，provider 当前 issuer 的初值），`onIssuer` 改为带 `{ hash, url }` 与 `write: 'tokens' | 'client'`，第一次为令牌写时同一次写入 `ownClient.issuer`（旧：runtime 没有 `issuers`，provider 不带 ctx 时拿不到当前 issuer；`onIssuer` 只带哈希，写不回 `ownClient.issuer` 原文）；§写入规则「记 issuer」、§客户端身份、§provider 契约 `tokens`、验收 17、读法 63 同改；2026-10-08 第一段第 7 步补（实现者在 Open 指出）：崩溃的 stderr 尾巴放进状态的 `error`，错误码只增 `crashed`，`error` 改读作「最近一次失败」、按 §状态机「崩溃」的时点设与清（旧：`error` 只配 phase `error` 的码，崩溃后进 `restarting` / `stopped` 时没有放尾巴的地方，与验收 4 冲突）；§进程树「错误对象」、§状态机「崩溃」、验收 4、读法 64 同改；2026-10-08 第一段审查后补：`validateResourceURL` 只在没有 PRM 时由 provider 提供，有 PRM 时交给 SDK 比对并原样发 `resource`（旧：provider 一律实现它、有 PRM 时自己照 `checkResourceAllowed` 比对；改因：实现里两个参数方向写反，只写到 origin 的 PRM resource 登录被拒；且带了这个方法 SDK 就改发 URL 的 `href`，不带路径的 resource 多出尾斜杠，正是 2.3.1 修过的 #1968）；§登录流程 7、读法 65 同改；2026-10-08 第一段合入后、第二段开工前 owner 定（选 A）：T23 的展开数上限 ⑥ 撤销，连接器工具的入参与结构化输出改在 desktop 的 worker 线程里限时 2 s 校验（新增 ⑦），SDK 改传总回合格的校验器、结构化输出由池校验（① 改），kernel 经 `SessionServiceOptions` 只增 `schemaValidator`（§对 02 的修补 16、§对 01 的修补 3）（旧：① SDK 用 CfWorker 在主线程校验输出，⑥ 静态计数 `$ref` 展开、超 10 000 记 `invalid-definition`；改因：静态计数三轮审查共被绕过 13 种写法，递归配深层实例无从静态封顶，主线程会被卡住）；验收 32、33 改，新增验收 51、读法 66，读法 53 标撤销；plan 第二段加第 11a 步与第 10a 步（第一段遗留：刷新时 PRM 路径 5xx 掩盖 `invalid_grant`）；2026-10-08 第二段实现时补（实现者在 Open 指出）：IPC 的 `mcpDraftSchema` 只查形状，拒存名、两边重名与 `builtin` 交路由与存储判、回精确码（旧：draft schema 复用带 refine 的条目 schema，这几种在路由入口就成了通用 `invalid-request`，与 §IPC 列的码和验收 7 矛盾）；`oauth.issuers` 满 8 个时淘汰最旧的 issuer（先删钥匙串、再改 config）（旧：没写第 9 个怎么办）；§IPC、§写入规则「第 9 个 issuer」、验收 52、读法 67、68 同改；2026-10-08 第二段审查后补：`rm-rf` 警示按 `-` 开头的参数合起来判（旧：要求同一个参数里同时含 r 与 f，`rm -r -f ~` 不警示）；`header_keys` 或 `ownClient` 变了也重启这台（旧：只有写了新机密值才重启，删掉一个静态头后连接仍带着旧值直到下次重连）；§确认框、读法 59 同改；2026-10-08 第二段第二轮审查后补：⑦ 写明排队上限 64 条与满队、排队中止的回法（读法 69）；保留请求头名也交存储判、回 `invalid-header`（读法 67）；淘汰 issuer 时 provider 丢掉它的内存令牌副本（读法 68）（旧：实现里加了上限但 spec 没写、被中止的排队条目一直占名额；保留头名在路由入口就成了 `invalid-request`；淘汰只删钥匙串、同一次运行再登录仍用内存里的旧令牌）
+Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready；2026-10-08 owner 定开放问题 1：CIMD 地址用 tenon 仓库的 GitHub Pages（`https://yiongq.github.io/tenon/oauth/client-metadata.json`），托管文件 `apps/desktop/oauth/client-metadata.json` 与发布工作流 `.github/workflows/pages.yml` 随本次修订进仓库，plan 第 20 步改为只改常量、补测试；2026-10-08 第一段实现开工时补（实现者在第 2 步前停下指出，尚无代码依赖）：冻结的 `definitionHash` 落进 `view/tool_table` 的 `tools[]` 与 `ToolTableItem`（只增，§对 02 的修补 15），重建冻结表时原样恢复，冻结项缺它时「总是允许」不成立、照每次问（读法 61；§三态、§Tape 事实、不变量 8、验收 38 同改）（旧：只写了 `ToolKey.definitionHash` 取冻结项的哈希，没写冻结项从哪来；改因：Tape 只存 `specHash`，不含 outputSchema 与 requiresUserInteraction，恢复会话后无从还原）；同时更正首版合入时误挂在 §对 02 的修补 11–13 后的「已定」标记，移回 §开放问题 11–13；2026-10-08 第一段第 4 步补（实现者停下指出，§超时、取消与断流尚无合入的代码依赖）：调用的总长封顶改由连接层自己的计时器中止信号实现，不交给 SDK 的 `maxTotalTimeout`（旧：`maxTotalTimeoutMs` 原样作为 SDK 的 `maxTotalTimeout`；改因：2.3.1 的它到点只拒绝本地 Promise，不发 `notifications/cancelled`、不关新代 HTTP 请求，server 继续执行，违反 T10 与验收 30）；§超时、取消与断流、验收 30、读法 62 同改；2026-10-08 第一段第 9 步补（实现者在 Open 指出，第 9 步尚无合入的代码依赖）：`McpOAuthRuntime` 只增 `issuers`（config `oauth.issuers` 原样，provider 当前 issuer 的初值），`onIssuer` 改为带 `{ hash, url }` 与 `write: 'tokens' | 'client'`，第一次为令牌写时同一次写入 `ownClient.issuer`（旧：runtime 没有 `issuers`，provider 不带 ctx 时拿不到当前 issuer；`onIssuer` 只带哈希，写不回 `ownClient.issuer` 原文）；§写入规则「记 issuer」、§客户端身份、§provider 契约 `tokens`、验收 17、读法 63 同改；2026-10-08 第一段第 7 步补（实现者在 Open 指出）：崩溃的 stderr 尾巴放进状态的 `error`，错误码只增 `crashed`，`error` 改读作「最近一次失败」、按 §状态机「崩溃」的时点设与清（旧：`error` 只配 phase `error` 的码，崩溃后进 `restarting` / `stopped` 时没有放尾巴的地方，与验收 4 冲突）；§进程树「错误对象」、§状态机「崩溃」、验收 4、读法 64 同改；2026-10-08 第一段审查后补：`validateResourceURL` 只在没有 PRM 时由 provider 提供，有 PRM 时交给 SDK 比对并原样发 `resource`（旧：provider 一律实现它、有 PRM 时自己照 `checkResourceAllowed` 比对；改因：实现里两个参数方向写反，只写到 origin 的 PRM resource 登录被拒；且带了这个方法 SDK 就改发 URL 的 `href`，不带路径的 resource 多出尾斜杠，正是 2.3.1 修过的 #1968）；§登录流程 7、读法 65 同改；2026-10-08 第一段合入后、第二段开工前 owner 定（选 A）：T23 的展开数上限 ⑥ 撤销，连接器工具的入参与结构化输出改在 desktop 的 worker 线程里限时 2 s 校验（新增 ⑦），SDK 改传总回合格的校验器、结构化输出由池校验（① 改），kernel 经 `SessionServiceOptions` 只增 `schemaValidator`（§对 02 的修补 16、§对 01 的修补 3）（旧：① SDK 用 CfWorker 在主线程校验输出，⑥ 静态计数 `$ref` 展开、超 10 000 记 `invalid-definition`；改因：静态计数三轮审查共被绕过 13 种写法，递归配深层实例无从静态封顶，主线程会被卡住）；验收 32、33 改，新增验收 51、读法 66，读法 53 标撤销；plan 第二段加第 11a 步与第 10a 步（第一段遗留：刷新时 PRM 路径 5xx 掩盖 `invalid_grant`）；2026-10-08 第二段实现时补（实现者在 Open 指出）：IPC 的 `mcpDraftSchema` 只查形状，拒存名、两边重名与 `builtin` 交路由与存储判、回精确码（旧：draft schema 复用带 refine 的条目 schema，这几种在路由入口就成了通用 `invalid-request`，与 §IPC 列的码和验收 7 矛盾）；`oauth.issuers` 满 8 个时淘汰最旧的 issuer（先删钥匙串、再改 config）（旧：没写第 9 个怎么办）；§IPC、§写入规则「第 9 个 issuer」、验收 52、读法 67、68 同改；2026-10-08 第二段审查后补：`rm-rf` 警示按 `-` 开头的参数合起来判（旧：要求同一个参数里同时含 r 与 f，`rm -r -f ~` 不警示）；`header_keys` 或 `ownClient` 变了也重启这台（旧：只有写了新机密值才重启，删掉一个静态头后连接仍带着旧值直到下次重连）；§确认框、读法 59 同改；2026-10-08 第二段第二轮审查后补：⑦ 写明排队上限 64 条与满队、排队中止的回法（读法 69）；保留请求头名也交存储判、回 `invalid-header`（读法 67）；淘汰 issuer 时 provider 丢掉它的内存令牌副本（读法 68）（旧：实现里加了上限但 spec 没写、被中止的排队条目一直占名额；保留头名在路由入口就成了 `invalid-request`；淘汰只删钥匙串、同一次运行再登录仍用内存里的旧令牌）；2026-10-08 owner 定：同题对比撤销（Q13 的后续步骤、验收 47、读法 44 撤，plan 第 18、19、19a、19b 步撤，点名 (h) 不再适用，「本会话允许」改为开放问题 14，读法 70）（旧：plan 跑 10 道题 Tenon 对 Claude Desktop，确认次数超过 2 倍就加按钮；改因：按约定口径比不出审批设计的差别，且自动操作 Claude Desktop 违反消费者条款）；开放问题 2 定为 Notion（`https://mcp.notion.com/mcp`），验收 48 同改
 
 引用写法照裁决卡：`02:N` = docs/architecture/02-agent-loop/spec.md 第 N 行，`00:N`、`01:N` 同理；`主参考:N` = master-reference.md；`M6:N` = docs/features/custom-vendors/spec.md；`comp:N` = docs/ux/components.md；Q、T 编号是裁决卡的题号；`spec-3`、`sdk-12`、`hosts-m4` 这类是仓库外 `verified-facts.md` 的事实编号（被推翻的 sdk-25、sdk-26、claude-13 不引）；`SDK变更:N` = typescript-sdk @b0225220 的 packages/client/CHANGELOG.md；`2.3.1 dist/…` = `@modelcontextprotocol/client` 2.3.1 的发布包；`规范/…` = modelcontextprotocol 仓库 @0a11bf68 的 docs/specification/2026-07-28/…；`ccmcp:N`、`cauth:N`、`cdext:N`、`cdcfg:N`、`midconv:N` 同裁决卡页头。代码路径相对仓库根。所有行号按 dev `1ed9d64`；02 的行号是本 spec 给 02 加 `Amended by` 那一行之前的（加了之后 02 第 5 行起的行号都要加一），与裁决卡一致；01 同理（本 spec 给 01 加的 `Amended by` 在第 6 行，01 第 6 行起加一）。
 
@@ -28,7 +28,7 @@ Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚�
 2. 远程 server 支持 OAuth（自带 client > CIMD > DCR）和静态请求头，令牌按 issuer 分键进钥匙串（Q1、Q9、T32）。
 3. 连接器工具进 02 的「会话 × provider」工具表，审批只走 02 决策表；三态、定义钉住、超上限按连接器顺序裁（Q11、Q14、T46）。
 4. stdio 六件事（主参考:912）与远程重连都有确定的状态和收口（Q6、T8–T14、T49）。
-5. 验收以夹具为主，另有一家真实远程 OAuth 的 live 和一次同题对比（Q13、Q16）。
+5. 验收以夹具为主，另有一家真实远程 OAuth 的 live（Notion，Q16）；同题对比已撤销（Q13，2026-10-08 owner 定）。
 
 ### 非目标
 
@@ -36,7 +36,7 @@ Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚�
 - sampling、roots、elicitation，以及调 `logging/setLevel`（Q3）；Tasks 扩展与 DPoP（T39）。
 - prompts、resources 的产品入口（Q4-1）。
 - 会话中途让新工具生效（E2-D、E2-F、`tool_addition`）与中途 system 消息（Q15）。
-- 卡上的「本会话允许」「以后都允许」（Q13：先按 02，同题对比之后再定）。
+- 卡上的「本会话允许」「以后都允许」（Q13：先按 02；同题对比已撤销，要不要加见 §开放问题 14）。
 - 导入别家配置（Q7）；默认拦裸 `@latest`、OSV 恶意包查询（T28，阶段 5）。
 - 往 `_meta` 注入会话上下文（T25）。
 - 非 MCP 的完整界面（Q12，挪阶段 4、5，见 §界面「挪走的」）。
@@ -69,7 +69,7 @@ Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚�
 | Q11-1 | 全局开关；设置弹窗加「连接器」栏；确认框「允许」= 本次运行期间、「以后都允许」= 直到命令 / 参数 / envs 键值 / env_keys 键 / 地址变化 | §界面；§配置「launchHash 与确认」 |
 | Q11-2 | 超上限按连接器在栏里的顺序（可拖动）裁，同台内按名；内置工具不裁；栏里按 provider 显示「超出上限，未提供 n 个」 | §工具表「超上限裁剪」 |
 | Q12 | 阶段 3 只做 MCP 直接相关的界面；其余挪阶段 4，SkillReadSubRow 随阶段 5；components.md 另有五行阶段 3 的非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5（开放问题 11，owner 2026-10-08 定） | §界面；§文档同步；§开放问题 11 |
-| Q13 | 先按 02 上线（连接器卡只认这一次）；plan 加同题对比，Tenon 平均确认次数超过 Claude Desktop 只点 Allow once 的 2 倍就加「本会话允许」 | §工具表「连接器卡」；plan |
+| Q13 | 先按 02 上线（连接器卡只认这一次）；原定的同题对比 2026-10-08 由 owner 撤销（按约定口径两边都是每次调用都确认，比不出审批设计的差别，且自动操作 Claude Desktop 违反消费者条款），「本会话允许」改为开放问题 14 | §工具表「连接器卡」；plan |
 | Q14 | D：确认过之后定义变了或新出现的工具从下一张表起扣下（`definition-changed`），「查看变化」「放行」，放行后每次问；specHash 变则总是允许作废；命令、参数、环境、地址变则整台总是允许作废；哈希与三态同条目同次写 | §工具表「定义钉住」 |
 | Q15 | 维持 E2-C：listChanged 与手动刷新只更新连接器栏和下一张表的候选；不往 02 的时点表加行；02:3443「7 个模型」按事实更正记 | §连接池「listChanged 与手动刷新」；§点名 |
 | Q16 | 夹具为主（Everything 旧代；自写新代夹具 stdio 与 HTTP；本机假授权服务器）+ 一家真实远程 OAuth live；厂商 owner 待给 | §验收标准；§开放问题 2 |
@@ -675,7 +675,7 @@ export interface SchemaValidatorPort {
 ### 连接器卡（Q13、D10-F）
 
 - 阶段 3 先按 02 上线：连接器卡的「允许」只认这一次，`grant.scope` 恒为 `once`（02:2215、:2222），卡上不给「本会话允许」「以后都允许」（Q13 A）。
-- plan 里的同题对比（Q13）：10 道用连接器的题，Tenon 与 Claude Desktop 各跑一遍，Claude 一侧只点「Allow once」（再记一遍只点「Always allow」时的次数作参考），数确认次数。Tenon 每题平均确认次数超过 Claude 只点 Allow once 时的 2 倍，就加「本会话允许」：卡上第三个钮，作用域 `session`，撤不回（`reversibility === 'irreversible'`）与 requiresUserInteraction 的卡不出。触发时不就地改本 spec（那时已有代码依赖 03 的契约，docs/spec-driven-dev.md:52），另起一份只增修补 02 与 03 的 feature spec（照 M6 的格式：答复作用域表 MCP 一行、`approval.current` 的 `allowScope`、卡上第三个钮），按 §点名 (h) 处理 02:2215、:2222；owner 把它标 ready 之后在 plan 第 19b 步实现（读法 55）。题数与倍数 owner 可改。
+- 同题对比（Q13）：2026-10-08 owner 撤销，本 spec 不再做，读法 70。原文：10 道连接器题 Tenon 与 Claude Desktop 各跑一遍、Claude 一侧只点「Allow once」，Tenon 平均确认次数超过 2 倍就加「本会话允许」。撤销原因：按这个口径两边都是每次调用都弹确认，比出的只是两个模型各调了几次工具（裁决卡当时就写了「不会一开始就触发」）；Claude Desktop 一侧若交给程序自动跑，又违反 Anthropic 消费者条款对自动化访问的限制。「本会话允许」要不要加见 §开放问题 14。
 
 ### 中途变化（Q15 A）
 
@@ -894,7 +894,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 | (e) | 02:2210 | 「设置 › 权限」在阶段 3 落在连接器栏（Q11） | 点名 (i) | 02:2210 写明「用户入口在阶段 3」 |
 | (f) | 02:2151、:2177、:2210 | 「总是允许」只在定义没变时成立；D 另扣下变了的工具（Q14） | 点名 (ii) + 只增 | 02 没规定定义变了怎么办；`definition-changed` 是新增枚举值 |
 | (g) | 02:2928、:2951 | 401 / 403 的调用记「未执行」与新提示键（Q10） | 只增 | 401 是阶段 3 才有的新情况；`connectorFailed` 对其余抛错不变 |
-| (h) | 02:2215、:2222、:3453 | 只在同题对比触发时：连接器卡加「本会话允许」（Q13 A 的后续） | 点名 (i) | 02:195、:247、:3453 把这个按钮交给阶段 3 |
+| (h) | 02:2215、:2222、:3453 | （2026-10-08 随同题对比撤销，本 spec 不改；留给开放问题 14 那份后续 spec） | — | 02:195、:247、:3453 把这个按钮交给阶段 3 |
 | (i) | 02:3443 | 「7 个 Anthropic 模型」以官方页现列的 9 个为准（Q15） | 事实更正 | 不改规则 |
 | (j) | 02:2959 | server 说明以追加消息进上下文（Q4-2 B） | 只增 | 新增一种消息事实，system 规则不动 |
 | (k) | 02:196、:1093、:2333、:2629、:3175、:3177、:3181、:3398 | 非 MCP 界面挪到阶段 4（Q12 A；SkillReadSubRow 随阶段 5） | 点名 (i) | 这些是 02 的「去向」排期，02:3396 写明它们「不收、不做、不挡 02」，不涉及已实现的行为或契约 |
@@ -922,7 +922,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 - 02 顶部加一行 `Amended by`，正文一字不改（docs/spec-driven-dev.md:54）。01 顶部加一行 `Amended by`（§对 01 的修补），正文不改。00 不加（`HostAdapter` 不加成员，T1）。
 - `docs/ux/components.md`：`SettingsModal`（:68；沙箱档位那句注明随阶段 4，「模型与密钥」并进同一弹窗那半句标「03 读法 38」与 owner 接受的日期）、`FolderChip`（:87）、`AttachToggles`（:90）、`ToolGroupHeader`、`CommandSubRow`、`SkillReadSubRow`、`ReadOnlyFoldRow`、`SubtaskRow`、`ActivityTimeline`（:129-135）、完整 `ApprovalCard`（:137）、`GrantDialog`（:138）按 Q12 改阶段列并加带日期的补记，「规格」列追加「03 §界面（2026-10-08）」；`SessionStatusDot`（:52）、`AttachMenu`（:89）、`AttachmentChip`（:101）、`AttachmentLightbox`（:102）改阶段 4，`ObjectChip`（:123）改阶段 5，同样加补记（开放问题 11）。
 
-实现时改（列在 plan）：两份 locale 的新键；`docs/evals/compare/` 的同题对比记录（Q13）。
+实现时改（列在 plan）：两份 locale 的新键。
 
 ## 不变量
 
@@ -953,7 +953,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 
 ## 验收标准
 
-全部通过才能标 implemented。每条至少有一个标题含「03 验收 N」的测试（live 与同题对比除外，见各条）。不注明的在 CI 里跑夹具。命令照 plan「开工前读」。路径前缀：K = `packages/kernel/test`，C = `packages/contracts/test`，D = `apps/desktop/test`，E = `apps/desktop/e2e`。夹具：Everything（旧代 stdio）、`modern-server`（新代 stdio，`@modelcontextprotocol/server` 2.3.1）、`http-fixture`（进程内 HTTP server，新代 / 旧代两种，带假授权服务器）、`tree-server`（会留孙进程）、`crash-server`、`tools-server`（02 已有）。
+全部通过才能标 implemented。每条至少有一个标题含「03 验收 N」的测试（live 除外，见该条）。不注明的在 CI 里跑夹具。命令照 plan「开工前读」。路径前缀：K = `packages/kernel/test`，C = `packages/contracts/test`，D = `apps/desktop/test`，E = `apps/desktop/e2e`。夹具：Everything（旧代 stdio）、`modern-server`（新代 stdio，`@modelcontextprotocol/server` 2.3.1）、`http-fixture`（进程内 HTTP server，新代 / 旧代两种，带假授权服务器）、`tree-server`（会留孙进程）、`crash-server`、`tools-server`（02 已有）。
 
 ### SDK 与夹具
 
@@ -1027,8 +1027,8 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 
 ### 验证与收尾
 
-47. 同题对比（Q13）：10 道连接器题两边的确认次数、平均值与「是否超过 2 倍」的结论记在 `docs/evals/compare/30-mcp-confirmations.md`；触发时 §连接器卡 说的那份 feature spec 已 ready 并实现。〔owner 跑 Claude Desktop 一侧；记录文件〕
-48. 〔live，厂商待 owner 定〕在 owner 选的那家（Linear / Notion / Sentry）上：设置栏加远程连接器、登录（真实浏览器）、列出工具、调一个只读工具成功；令牌只在钥匙串；删除连接器后这台的账户都读不到值（Q16）。〔E/live-mcp-oauth.spec.ts〕
+47. （2026-10-08 撤销：同题对比随 Q13 的修订撤掉，见读法 70。）
+48. 〔live〕在 Notion（`https://mcp.notion.com/mcp`，Streamable HTTP，DCR 自动注册，owner 2026-10-08 选定）上：设置栏加远程连接器、登录（真实浏览器）、列出工具、调一个只读工具成功；令牌只在钥匙串；删除连接器后这台的账户都读不到值（Q16）。〔E/live-mcp-oauth.spec.ts〕
 49. 文档：主参考九处、01 与 02 顶部各一行、components.md 各行照 §文档同步 改了，01、02 正文与 00 不变。〔plan 的 git diff 核对〕
 50. 干净 clone 上 install、build、lint、typecheck、test、`evals:gate`、`test:e2e` 全过；§不变量 每条有名字带「03 不变量 N」的测试；仓库、Tape、日志、plan 里没有任何机密的值。
 51. 限时校验：`schema-chains.ts` 里的全部形状（含三轮审查找到的 `$anchor` 链、重复 anchor、只有片段的 `$id`、嵌套 `$id`、相对 `$id`、数字与空 `$id`、元组 `items`、`dependencies`，以及同一实例位置的两个递归引用配深层实例）作为连接器工具的 inputSchema 时，调用在限时内收口 `tool-unavailable` / not-run，作为 outputSchema 时收口 `connectorFailed` / completed；校验期间主线程上一个 10 ms 的计时器按时触发；超时之后 worker 被终止，下一条在新 worker 里正常校验；普通 schema 的入参与输出照常判（合格、不合格各一例）；`example: { id: 42 }` 这类 schema 照常可用（T23 ⑦，读法 66）。〔D/schema-worker.test.ts、K/tools/validate.test.ts、K/mcp/pool.test.ts〕
@@ -1049,10 +1049,10 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 
 ## 开放问题
 
-第 1、11–13 条 owner 已于 2026-10-08 定（规则已写进正文，留在这里备查）。第 2 条只能由 owner 给，实现者不代选、不照任何「推荐」先做；其余 owner 待定，没定之前照「推荐」做。
+第 1、2、11–13 条 owner 已于 2026-10-08 定（规则已写进正文，留在这里备查）。其余 owner 待定，没定之前照「推荐」做。
 
 1. **CIMD 的长期 https 地址（Q9）**。owner 定的期限：写 spec 或实现之前（picks.md:18），所以列为开工前要给的东西。没给之前 `CIMD_CLIENT_METADATA_URL` 为 null，CIMD 路关着，顺序只剩「自带 client > DCR」，CIMD 只在 kernel 测试里用假地址测；plan 第 20 步挡着，第 23、25 步在第 20 步完成或 owner 明确同意按砍法 ③ 退到 Q9 A 之前不做（验收 17）。地址只由 owner 给；地址一换，已有授权都要重登（Q9 的代价）。 **已定（owner 2026-10-08）：用 tenon 仓库的 GitHub Pages，地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`；文件 `apps/desktop/oauth/client-metadata.json` 与发布它的 `.github/workflows/pages.yml` 已进仓库，不再挡开工，第 20 步只改常量与补测试。地址跟着 GitHub 用户名与仓库名走：改名或迁仓库地址就变，已有授权都要重登。**
-2. **真实 OAuth live 的厂商（Q16）**：Linear / Notion / Sentry 由 owner 选一家（mcp-sign-in 页把三家都列为 DCR）。只由 owner 定，没定之前验收 48 那一步不开工。
+2. **真实 OAuth live 的厂商（Q16）**：Linear / Notion / Sentry 由 owner 选一家（mcp-sign-in 页把三家都列为 DCR）。只由 owner 定，没定之前验收 48 那一步不开工。 **已定（owner 2026-10-08）：Notion，`https://mcp.notion.com/mcp`（Notion 官方远程 MCP，Streamable HTTP + OAuth，客户端自动注册，developers.notion.com/guides/mcp/get-started-with-mcp）。第 21 步实测时 owner 在场，用浏览器登录一次。**
 3. **re2js 匹配（T23 ④）**：kernel 已依赖线性时间的 re2js（packages/kernel/src/tools/builtin/grep.ts:34），但能否让 CfWorker 的 `pattern` 改用它匹配没核实。推荐：阶段 3 维持初筛；有人核实 CfWorker 的可替换点后另立一步。
 4. **Windows（T43）**：cmd.exe 包装、Job Object（整棵进程树一起关，security-22），以及 Windows 的基础环境白名单（`SystemRoot`、`ComSpec` 等不在 Q8-1 的名单里，很多程序缺了起不来）。推荐：Windows 进验收那一阶段一起定，阶段 3 只做 `windows-unsupported` 提示。
 5. **Everything 在不声明能力时会不会发 tools 的 list_changed**（Q16，未核实）。推荐：tools 的 listChanged 由新代夹具测，Everything 只测 resources；第 7 步顺手记一次 Everything 的实际行为，不改验收。
@@ -1064,6 +1064,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 11. **components.md 里五行非 MCP 的阶段 3 组件挪到哪**（Q12 A 的范围之外、挪走名单之内都没有它们）：`SessionStatusDot`（comp:52）、`AttachMenu`（comp:89）、`AttachmentChip`（comp:101）、`AttachmentLightbox`（comp:102）、`ObjectChip`（comp:123）。推荐：与其余非 MCP 界面一起挪阶段 4（`ObjectChip` 随用它的 `SkillReadSubRow` 去阶段 5）；定了之后给这五行加带日期的补记，列进 §文档同步。什么时候定：spec 标 ready 之前，最晚第 22 步。 **已定（owner 2026-10-08 定）：照推荐。**已写进 §界面 与 §文档同步。
 12. **会话里遇到 401 时，要不要允许 SDK 自动做 DCR 注册**（§provider 契约「非交互路径」）。允许的话会话里会静默写钥匙串、向授权服务器注册，并可能覆盖进行中那次登录的记录。推荐：不允许，会话里只刷新，注册只在用户点「登录」时做（与 Q10「会话里不自动开浏览器」、§客户端身份「登录开始时定路」一致）；没定之前照推荐做。 **已定（owner 2026-10-08 定）：照推荐。**§provider 契约「非交互路径」照此。
 13. **公网 server 的跨源发现地址要不要按 DNS 结果也拒回环、私网**。§地址与出网 只按拼写拒（同 T36）；一个公网域名解析到 `10.x` 时照样放行。按 DNS 拒（复用 apps/desktop/src/main/host/fetch-untrusted.ts:56-80 的 `isBlockedFetchAddress` 并钉定解析出的地址）能挡住 DNS 重绑定，代价是企业 VPN 里「公网写法、内网解析」的授权服务器会被拒。推荐：对与 server 不同源的发现地址按 DNS 拒，server 自己的源不查。T38 明定专用 fetch 包 `HostNetwork.fetch`、不是 `fetchUntrusted`，这条推荐等于改它，所以没定之前只按拼写拒。 **已定（owner 2026-10-08 定）：照推荐。**T38 收紧，见 §地址与出网「DNS」与验收 10。
+14. **连接器卡要不要加「本会话允许」**（Q13，同题对比撤销后留下的）。阶段 3 不加，卡上照 02 只认这一次。owner 实际使用中觉得确认弹得太多时，另起一份只增修补 02 与 03 的 feature spec 加这个钮（作用域 `session`，撤不回与 requiresUserInteraction 的卡不出；02:195、:247、:3453 把这个钮交给了阶段 3 之后的 spec），不就地改 03。
 
 ## 被否决的方案
 
@@ -1081,7 +1082,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 - **Q10-B 暂停等登录 / C 直接开浏览器**：B 多一种待答类型、要满足 02 对待批的全部要求；C 打扰最大；改判：无。
 - **Q11-1 B 按会话开关**：每个会话多一份开关状态进 Tape，且按 E2 冻结做不到即开即用；改判：无。**Q11-2 a 字母序 / c 平均分配**：a 让 serverId 靠后的整台先没；c 名额让渡要另定；改判：无。
 - **Q12-B 照主参考全做 / C 加持久文件夹授权**：B 工期明显超出；C 多一块非 MCP 的工作；改判：无。
-- **Q13-B 现在就加「本会话允许」/ C 改 A2**：B 批一次后本会话可不限次地调（02:3453）；C 疲劳时一键跨会话放行（02:3448）；改判：同题对比按 2 倍规则触发时加 B 的按钮。
+- **Q13-B 现在就加「本会话允许」/ C 改 A2**：B 批一次后本会话可不限次地调（02:3453）；C 疲劳时一键跨会话放行（02:3448）；改判：owner 实际使用中觉得确认过多时加 B 的按钮（开放问题 14）。
 - **Q14-A 只作废总是允许 / B 只提示 / C 不管**：A 防不住只改描述的投毒，B、C 更弱；改判：无。
 - **Q15-B 新用户回合重开表 / C 按值加工具 / D C+B**：B 每变一次智谱缓存清零（02plan:680）；C、D 依赖 beta、只在 Claude API、要修补 02 不变量 2 与 3；改判：按 02:3409 第 2 条路以后加。
 - **Q16-B 只用夹具 / C 再把 conformance 放进 CI**：B 的 OAuth 只能标「按规范、未实测」；C 不覆盖新代特性；改判：开放问题 8。
@@ -1135,7 +1136,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 41. 工具行的「重新登录」靠 `serverIdOfMappedName` 从映射名找 server（T15 保证第一个 `__` 之前就是 serverId）。
 42. 工具结果视图只增 `reversibility`，供副作用段与可逆性标记用。
 43. 「查看日志」只读当前日志文件的最后 64 KB。
-44. 同题对比用仓库里的一个手写旧代「笔记」夹具 server 作连接器，两边配置同一份；Tenon 一侧的模型照 02 §同题对比 的主对比列（02:3077），没有官方 key 时照 02:3085 的退路。
+44. 同题对比用仓库里的一个手写旧代「笔记」夹具 server 作连接器，两边配置同一份；Tenon 一侧的模型照 02 §同题对比 的主对比列（02:3077），没有官方 key 时照 02:3085 的退路。（2026-10-08 随同题对比撤销。）
 45. live OAuth 的令牌走真实钥匙串（Q16「令牌只在钥匙串」），跑完删除连接器以清掉它们。
 46. e2e 走假授权服务器的登录靠测试接缝 `TENON_TEST_MCP_OPEN_URL=direct`（只在未打包且 `TENON_DEV_ENV=off` 时生效，不被继承，live 套件见到就拒跑）。
 47. 开表时的 10 s 等待覆盖「连接中」（首次或重连）与「等待重启」的 server，不只首次连接（Q5「开表时还在连接的」）；只有真正开表的 Run 才等。
@@ -1146,7 +1147,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 52. 429 只在连接、重连阶段让整台进「出错」`rate-limited`；已连接时只让那次调用以 `connectorFailed` / completed 失败。
 53. T23 ⑥：沿本地 `$ref` 与组合关键字展开，访问的子 schema 超过 10 000 个就记 `invalid-definition`，同一路径上重复的 `$ref` 按一次计（10 000 这个数由起草定，审查实测链长 24 已要 6.4 s）。（2026-10-08 撤销，见读法 66。）
 54. 定义哈希含 outputSchema：它不进 `ToolSpec`，却决定 SDK 怎么校验结果，变了也按 Q14 扣下。
-55. 同题对比触发「本会话允许」后，另起一份只增的 feature spec，不就地改 03（那时已有代码依赖 03 的契约）。
+55. 同题对比触发「本会话允许」后，另起一份只增的 feature spec，不就地改 03（那时已有代码依赖 03 的契约）。（2026-10-08 改：同题对比撤销，这份 feature spec 改由开放问题 14 触发。）
 56. 砍法的触发线「从第 1 步起已用的工作日 + 余下步骤的估计 > 15 个工作日」取预算 2–3 周的上限，由起草定；lead 在第 6 步完成时与每段 PR 审查时判，估计与依据写进实施记录。
 57. 裁决卡砍法 ①「Q4 维持 A」读作 Q4-2 退到 A（不用 server 说明）。另一种读法是「Q4-1 维持 A」，可 Q4-1 已经是 A，那样 ① 什么都省不下，所以取前者。
 58. `oauth.issuers` 按最近一次登录排序，最后一个是当前 issuer；不带 ctx 的 `tokens()` 取它的令牌，不另加 config 字段。
@@ -1161,3 +1162,4 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 67. IPC 请求的 `mcpDraftSchema` 只查形状；拒存名、两边重名与保留 id 由路由与存储判、回精确码，好让表单说清是哪一条；config.json 读取用的条目 schema 照旧全带这些规则（第二段实现时发现，2026-10-08）。 保留的请求头名（`headerNameSchema` 里拒的那几个）同样只在存储判、回 `invalid-header`，draft 里的 header 名只查字符集（第二段审查补）。
 68. `oauth.issuers` 满 8 个时登录新 issuer，淘汰最旧的：先删它的钥匙串账户、删成才改 config，删失败整次回 `keychain`；被淘汰的 issuer 再登录当作新的（第二段实现时发现，2026-10-08）。 淘汰时同时让这台的 provider 丢掉该 issuer 的内存令牌副本，同一次运行里再登录这个 issuer 才真正当作新的（第二段审查补）。
 69. 限时校验的队列最多 64 条，排满的新条目与排队中被中止的条目都立即回 `unusable: 'timeout'`；输出校验因此失败时，这次已执行的调用照 `connectorFailed` / completed 收口（第二段审查补，2026-10-08）。
+70. 同题对比（Q13 原定的 plan 步骤、验收 47、读法 44）撤销：按约定口径两边都是每次调用都确认，比不出审批设计的差别；Claude Desktop 一侧交给程序自动跑违反消费者条款。plan 第 18、19、19a、19b 步一并撤销，「本会话允许」改为开放问题 14（2026-10-08 owner 定）。
