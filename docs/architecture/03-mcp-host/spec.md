@@ -5,7 +5,7 @@ Phase: 3 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: 裁决由 owner 拍板（2026-10-08 四轮，Q1–Q16 都选推荐项，T1–T49 全收，T17、T24 已并入 Q11-2、Q4-2；裁决卡 `cards-v1.md`、选择记录 `picks.md` 与调研原文在仓库外 `../tenon-notes/2026-10-03-phase3-mcp/`）；起草在 Claude Code（2026-10-08）；实现由 Codex 做，lead（Claude Code）在每段 PR 合并前审查（owner 2026-10-08 定）
 Amends: [02-agent-loop](../02-agent-loop/spec.md) §主进程与 kernel 的循环接口（`RunAssembly`、`McpToolSource` 只增可选成员）、§依赖方向与能力入口（`SessionServiceOptions` 只增可选成员）、§02 的 Tape 事实（排除码、`tool/permission_decided` 只增，新名字 `message/server_instructions`）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§权限决策顺序（作用域与授权键）、§工具调用的收口（原因码表）、§提示层与评测、§停止与退出（退出第 4 步并行关连接池）、§界面范围、01 修补 6 立的工具结果视图、02 §答复与投递 立的 `approval.current`。只增不改，全文见 §对 02 的修补；碰到 02 旧文字的条目在 §点名。[01-provider-and-tape](../01-provider-and-tape/spec.md)：`createSessionService` 的构造参数只增可选的 `userSetting`，config.json 只增 `mcpServers`（02、M6 加同类成员都记作修补 01 的先例），正文不改。`HostAdapter` 不加成员，00 不修补（T1）
 Related: [master-reference](../master-reference.md) §4.3、§4.12、§13 阶段 3–5；[custom-vendors](../../features/custom-vendors/spec.md)（config.json 写入规则、钥匙串删除顺序、测试接缝的先例）
-Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready
+Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚无代码依赖，记录在仓库外 `spec-review-r1.json`）：派发路由与开表候选分开（`RunAssembly.mcpAbsent` 改为可选的 `mcpTable`，只在开表时等 10 s，每台启用的 server 都有转发来源），重连中的调用同样等一个握手超时；握手、调用超时交给 SDK 的计时并写明传法；补 OAuth provider 契约（无 ctx 取令牌、`invalidateCredentials`、按登录存的 verifier 与发现状态、每台一把锁与并发刷新合一、错误映射）；静态头只发同源、公网 server 的发现地址拒回环与私网字面量、断流的识别与重发、429 只在连接阶段进出错；outputSchema 与 `$ref` 展开数纳入 T23、定义哈希含 outputSchema；内存确认变化即 `apply`、机密改值即重启、删除先停连接、退出与 Run 并行关池；server 说明转义 `<`、`>`、`&`；补 01 的 Amends、主参考 :910/:911/:914 的补记；plan 补提示层基线评测、CIMD 地址的期限与收尾顺序、超工期检查点、渲染端测试落到 lib 纯函数；新增开放问题 11–13 与读法 47–59；终检补：非交互用的 provider 实例不实现 `saveClientInformation`（刷新得 invalid_client 时不在会话里注册）、类型钉按 kernel 的品牌路径分整型单向与新键逐键双向、带 error 的回调照规范的 iss 表核对；lead 终检补：开表时 `mcpTable` 的 `sources` 里组装时没有的 server 补进本 Run 的派发来源（读法 60）；2026-10-08 owner 定开放问题 11–13 都照推荐（11：components.md 五行非 MCP 组件挪阶段 4、`ObjectChip` 随阶段 5；12：会话里不自动注册；13：公网 server 的跨源发现地址按 DNS 结果拒回环、私网并钉定地址，T38 由此收紧，§地址与出网 与验收 10 同改），定实现由 Codex 做、lead 每段审查，过目接受 §推出的读法 1–60，Status 改 ready；2026-10-08 owner 定开放问题 1：CIMD 地址用 tenon 仓库的 GitHub Pages（`https://yiongq.github.io/tenon/oauth/client-metadata.json`），托管文件 `apps/desktop/oauth/client-metadata.json` 与发布工作流 `.github/workflows/pages.yml` 随本次修订进仓库，plan 第 20 步改为只改常量、补测试
 
 引用写法照裁决卡：`02:N` = docs/architecture/02-agent-loop/spec.md 第 N 行，`00:N`、`01:N` 同理；`主参考:N` = master-reference.md；`M6:N` = docs/features/custom-vendors/spec.md；`comp:N` = docs/ux/components.md；Q、T 编号是裁决卡的题号；`spec-3`、`sdk-12`、`hosts-m4` 这类是仓库外 `verified-facts.md` 的事实编号（被推翻的 sdk-25、sdk-26、claude-13 不引）；`SDK变更:N` = typescript-sdk @b0225220 的 packages/client/CHANGELOG.md；`2.3.1 dist/…` = `@modelcontextprotocol/client` 2.3.1 的发布包；`规范/…` = modelcontextprotocol 仓库 @0a11bf68 的 docs/specification/2026-07-28/…；`ccmcp:N`、`cauth:N`、`cdext:N`、`cdcfg:N`、`midconv:N` 同裁决卡页头。代码路径相对仓库根。所有行号按 dev `1ed9d64`；02 的行号是本 spec 给 02 加 `Amended by` 那一行之前的（加了之后 02 第 5 行起的行号都要加一），与裁决卡一致；01 同理（本 spec 给 01 加的 `Amended by` 在第 6 行，01 第 6 行起加一）。
 
@@ -64,7 +64,7 @@ Revisions: 2026-10-08 首版；2026-10-08 五角度审查后就地修订（尚�
 | Q7 | 存 config.json 的 `mcpServers`，规则照 M6；`mcp/` 只放可重建缓存；不做导入 | §配置与机密 |
 | Q8-1 | 最小白名单 + 终端 PATH，再叠 `envs`（明文）与 `env_keys`（钥匙串，spawn 时取） | §本地 server「环境」 |
 | Q8-2 | 只拦 7 个动态链接注入变量，名单其余的保存时警告、照存 | 同上 |
-| Q9 | 自带 client > CIMD > DCR（`application_type: native`）；Tenon 托管静态 CIMD JSON；长期地址 owner 待给 | §远程「客户端身份」；§开放问题 1 |
+| Q9 | 自带 client > CIMD > DCR（`application_type: native`）；Tenon 托管静态 CIMD JSON，地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`（tenon 仓库的 GitHub Pages） | §远程「客户端身份」；§开放问题 1 |
 | Q10 | 刷新失败或 401 → 这次调用 is_error、「未执行」、新提示键，工具行下「重新登录」；Run 不暂停、不自动开浏览器；403 补授权同样处理；开表时无凭证按缓存记 `connector-unauthorized` | §远程「会话里遇到要登录」 |
 | Q11-1 | 全局开关；设置弹窗加「连接器」栏；确认框「允许」= 本次运行期间、「以后都允许」= 直到命令 / 参数 / envs 键值 / env_keys 键 / 地址变化 | §界面；§配置「launchHash 与确认」 |
 | Q11-2 | 超上限按连接器在栏里的顺序（可拖动）裁，同台内按名；内置工具不裁；栏里按 provider 显示「超出上限，未提供 n 个」 | §工具表「超上限裁剪」 |
@@ -536,7 +536,7 @@ export interface McpCallOptions {
 | 否则，元数据有 `registration_endpoint` | DCR：`application_type: 'native'`，`token_endpoint_auth_method: 'none'`，`client_name: 'Tenon'`（规范 client-registration.mdx:160-167） | 固定 `http://127.0.0.1:53280/callback`（照 T30 的先例，cdext:68、:80） |
 | 都不行 | 登录结果 `needs-client`，栏里提示去对方后台注册、填自带 client | — |
 
-- `CIMD_CLIENT_METADATA_URL` 是 desktop 主进程里的一个常量，owner 给出长期 https 地址之前为 `null`，CIMD 这条路关着（§开放问题 1）。托管的静态 JSON（T30；照 Claude Code 的文件，cauth:180-186）：
+- `CIMD_CLIENT_METADATA_URL` 是 desktop 主进程里的一个常量，地址定为 `https://yiongq.github.io/tenon/oauth/client-metadata.json`（§开放问题 1，owner 2026-10-08 定）；plan 第 20 步把常量改成它之前为 `null`，CIMD 这条路关着。托管的静态 JSON 就是仓库里的 `apps/desktop/oauth/client-metadata.json`，`client_id` 等于该地址；`.github/workflows/pages.yml` 在 dev 上它变动时把这一个文件发布到 tenon 仓库的 GitHub Pages。内容（T30；照 Claude Code 的文件，cauth:180-186）：
 
 ```json
 { "client_id": "<CIMD_CLIENT_METADATA_URL>", "client_name": "Tenon",
@@ -1026,9 +1026,9 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 
 ## 开放问题
 
-第 11–13 条 owner 已于 2026-10-08 定（照推荐，规则已写进正文，留在这里备查）。第 1、2 条只能由 owner 给，实现者不代选、不照任何「推荐」先做；其余 owner 待定，没定之前照「推荐」做。
+第 1、11–13 条 owner 已于 2026-10-08 定（规则已写进正文，留在这里备查）。第 2 条只能由 owner 给，实现者不代选、不照任何「推荐」先做；其余 owner 待定，没定之前照「推荐」做。
 
-1. **CIMD 的长期 https 地址（Q9）**。owner 定的期限：写 spec 或实现之前（picks.md:18），所以列为开工前要给的东西。没给之前 `CIMD_CLIENT_METADATA_URL` 为 null，CIMD 路关着，顺序只剩「自带 client > DCR」，CIMD 只在 kernel 测试里用假地址测；plan 第 20 步挡着，第 23、25 步在第 20 步完成或 owner 明确同意按砍法 ③ 退到 Q9 A 之前不做（验收 17）。地址只由 owner 给；地址一换，已有授权都要重登（Q9 的代价）。
+1. **CIMD 的长期 https 地址（Q9）**。owner 定的期限：写 spec 或实现之前（picks.md:18），所以列为开工前要给的东西。没给之前 `CIMD_CLIENT_METADATA_URL` 为 null，CIMD 路关着，顺序只剩「自带 client > DCR」，CIMD 只在 kernel 测试里用假地址测；plan 第 20 步挡着，第 23、25 步在第 20 步完成或 owner 明确同意按砍法 ③ 退到 Q9 A 之前不做（验收 17）。地址只由 owner 给；地址一换，已有授权都要重登（Q9 的代价）。 **已定（owner 2026-10-08）：用 tenon 仓库的 GitHub Pages，地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`；文件 `apps/desktop/oauth/client-metadata.json` 与发布它的 `.github/workflows/pages.yml` 已进仓库，不再挡开工，第 20 步只改常量与补测试。地址跟着 GitHub 用户名与仓库名走：改名或迁仓库地址就变，已有授权都要重登。**
 2. **真实 OAuth live 的厂商（Q16）**：Linear / Notion / Sentry 由 owner 选一家（mcp-sign-in 页把三家都列为 DCR）。只由 owner 定，没定之前验收 48 那一步不开工。
 3. **re2js 匹配（T23 ④）**：kernel 已依赖线性时间的 re2js（packages/kernel/src/tools/builtin/grep.ts:34），但能否让 CfWorker 的 `pattern` 改用它匹配没核实。推荐：阶段 3 维持初筛；有人核实 CfWorker 的可替换点后另立一步。
 4. **Windows（T43）**：cmd.exe 包装、Job Object（整棵进程树一起关，security-22），以及 Windows 的基础环境白名单（`SystemRoot`、`ComSpec` 等不在 Q8-1 的名单里，很多程序缺了起不来）。推荐：Windows 进验收那一阶段一起定，阶段 3 只做 `windows-unsupported` 提示。

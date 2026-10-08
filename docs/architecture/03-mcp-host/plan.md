@@ -21,7 +21,6 @@
 - **Git**：从 `dev` 开分支 `feat/03-seg1`…`feat/03-seg4`（第四段按下面「分段」拆成几个 PR），各一个 PR 指向 `dev`。Conventional Commits，subject 不超过 50 个字符（超了 commitlint 会悄悄丢掉这次提交），不加 AI co-author，不 `--no-verify`，不 `push --force`，不删分支。lefthook 的 pre-commit 会先 stash 未暂存的改动：提交时暂存区要与工作树一致。
 - **交接**：停下之前——不论原因——在「交接」加一条结构化条目（模板见该节）。工作要么已提交，要么是分支上描述清楚的 diff；不在 `/tmp` 或会话 scratchpad 留补丁让下一个人去取，临时探针提交前删掉。
 - **owner 的事**：
-  - 开工前：开放问题 1 的 CIMD 长期 https 地址（owner 定的期限是「写 spec 或实现前」，picks.md:18）。
   - 第 9a 步：基线评测要智谱 key 与一次全集（每题 3 次）的费用；没有 key 的编码 agent 照常推送，第一段 PR 等这一步的记录提交后才能合并（02:3003 的规则）。
   - 第 19 步：同题对比的 Claude Desktop 一侧；触发时 owner 拍板那份 feature spec。
   - 第 21 步前：开放问题 2（live 厂商），live 登录时在场。
@@ -256,7 +255,7 @@
 
 ### 第四段：同题对比、CIMD、live 与收尾（`feat/03-seg4a` 起）
 
-先做第 18、22、24 步，作为第一个 PR 合并；第 19（19a、19b）、20、21 步各等 owner 的输入，到了就各开一个 PR；第 23、25 步放在最后一个 PR，前提是 19–21 都已完成或已按砍法正式砍掉。（owner 同意先开工、地址后给的情形）owner 迟迟不给 CIMD 地址时，spec 保持 `ready`、不标 implemented，交接里写明在等什么。
+先做第 18、22、24 步，作为第一个 PR 合并；第 19（19a、19b）、21 步各等 owner 的输入，到了就各开一个 PR；第 20 步不用等（CIMD 地址已定），可并进第一个 PR；第 23、25 步放在最后一个 PR，前提是 19–21 都已完成或已按砍法正式砍掉。owner 的输入迟迟不来时，spec 保持 `ready`、不标 implemented，交接里写明在等什么。
 
 - [ ] 18. 同题对比的准备（spec §连接器卡；Q13；读法 44）
   - 文件：新 `apps/desktop/evals/mcp-notes-server.mjs`：手写 JSON-RPC（照 packages/kernel/test/support/fixtures/tools-server.mjs），只说 2025 代，无依赖，参数是数据文件的绝对路径；工具 `list_notes`、`read_note(id)`、`search_notes(query)`、`create_note(title, body, tags?)`、`update_note(id, body)`、`tag_note(id, tag)`、`delete_note(id)`。种子 `docs/evals/fixtures/30-mcp-notes/notes.json`：8 条笔记，含标题「临时」「待办」「已完成」，标签 `draft`、`review`、无标签各若干，n2、n5 两条可合并。记录模板 `docs/evals/compare/30-mcp-confirmations.md`：两边的配置方法（Claude Desktop 用 `claude_desktop_config.json` 写 `node` 的绝对路径与本文件，数据文件每题前从种子复制一份）、10 道题、计数口径、结论格。10 道题：① 列出所有笔记标题；② 找到提到「发布」的笔记并总结；③ 读 n3，说出它的标签；④ 新建「周会纪要」，三条要点；⑤ 把所有 `draft` 改标为 `review`；⑥ 删除标题为「临时」的笔记；⑦ 把 n2 与 n5 合并成一条新笔记并删掉原来两条；⑧ 给没有标签的笔记都加上 `inbox`；⑨ 统计每个标签下各几条（只读）；⑩ 把「待办」里已完成的项移到「已完成」。
@@ -276,8 +275,8 @@
 - [ ] 19a. （只在第 19 步触发时）起草一份只增修补 02 与 03 的 feature spec（照 M6 的格式与 spec §连接器卡：答复作用域表 MCP 一行、`approval.current` 的 `allowScope`、卡上第三个钮「本会话允许」、不可逆与 requiresUserInteraction 的卡不出），03 与 02 只加 `Amended by`，不就地改 03（读法 55；docs/spec-driven-dev.md:52）。交 owner 过目。
 - [ ] 19b. （只在第 19 步触发时）owner 把 19a 的 spec 标 `ready` 之后开工：按它实现 kernel 的答复作用域函数（packages/kernel/src/permission/grants.ts）、`approval.current` 的 `allowScope`、`ApprovalCard` 的第三个钮；测试照那份 spec 的验收；突变：不可逆的卡也出这个钮 → 红。
 
-- [ ] 20. CIMD 常量与托管文件（开放问题 1；owner 给出地址之前不开工，先做第 22 步）
-  - 文件：`apps/desktop/src/main/mcp/runtime.ts` 的 `CIMD_CLIENT_METADATA_URL` 改成 owner 给的地址；新 `apps/desktop/oauth/client-metadata.json`（内容照 spec §客户端身份 的 JSON，`client_id` 为该地址）；owner 把这个文件放到该地址。spec 开放问题 1 划掉（spec 这时还不是 implemented）。kernel 从 `@tenon-app/kernel` 重新导出 SDK 的 `validateClientMetadataUrl`（desktop 不直接依赖 `@modelcontextprotocol/*`，apps/desktop/package.json）。
+- [ ] 20. CIMD 常量（开放问题 1 已定：`https://yiongq.github.io/tenon/oauth/client-metadata.json`）
+  - 文件：`apps/desktop/src/main/mcp/runtime.ts` 的 `CIMD_CLIENT_METADATA_URL` 改成 `https://yiongq.github.io/tenon/oauth/client-metadata.json`。托管文件 `apps/desktop/oauth/client-metadata.json` 与发布它的 `.github/workflows/pages.yml` 已在仓库（2026-10-08 随 spec 修订进来），本步不改；以后改这个 JSON，合进 dev 后由该工作流自动发布。kernel 从 `@tenon-app/kernel` 重新导出 SDK 的 `validateClientMetadataUrl`（desktop 不直接依赖 `@modelcontextprotocol/*`，apps/desktop/package.json）。
   - 覆盖：验收 17（产品常量部分）。
   - 测试：`apps/desktop/test/mcp-runtime.test.ts` 加「03 验收 17 (product): the CIMD URL is https with a path, passes validateClientMetadataUrl and equals client_id in the hosted JSON」（读仓库里的 JSON）。
   - 命令：U `apps/desktop/test/mcp-runtime.test.ts`；G；`curl -s <地址>` 取回的 JSON 与仓库文件逐字节相同（结果写进实施记录）。
@@ -320,6 +319,6 @@
 ## Open
 
 - spec `draft`：owner 过目 §推出的读法 59 条、确认 §开放问题 并把 Status 改为 `ready` 之前不开工。
-- 开工前 owner 要给：开放问题 1（CIMD 长期 https 地址，picks.md:18 定的期限是「写 spec 或实现前」）。owner 明确同意先开工、地址后给时，到第 20 步仍没有，就停下问 owner：给地址，或明确同意按砍法 ③ 退到 Q9 A；第 23、25 步在这之前不做。
+- 开放问题 1 已定（2026-10-08）：CIMD 地址 `https://yiongq.github.io/tenon/oauth/client-metadata.json`，托管文件与发布工作流已在仓库，不挡开工。
 - 开放问题 2（live 厂商）挡第 21 步；开放问题 11–13 已于 2026-10-08 定（照推荐，见 spec）。
 - 第 9a 步的基线评测要智谱 key 与费用，第一段 PR 等它的记录才能合并。
