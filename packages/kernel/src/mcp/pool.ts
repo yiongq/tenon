@@ -1,3 +1,5 @@
+import { synchronousSchemaVerdict } from '../tools/validate.js'
+import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { AbsolutePath, ChildHandle, FetchLike, HostAdapter } from '../host/adapter.js'
 import { absolutePath } from '../host/path.js'
 import { keyFor } from '../host/key.js'
@@ -13,6 +15,7 @@ import {
   connectStdioServer,
   isMcpAuthError,
   McpConnectionError,
+  McpInvalidOutputError,
   McpServerUnavailableError,
   McpUnauthorizedError,
 } from './connection.js'
@@ -73,6 +76,7 @@ export interface McpServerRuntime {
   readonly instructions: { readonly enabled: boolean; readonly pinHash: string | null } // Q4-2
 }
 export interface McpPoolOptions {
+  readonly schemaValidator?: SchemaValidatorPort
   readonly host: Pick<HostAdapter, 'identity' | 'fs' | 'secrets' | 'process' | 'sandbox' | 'clock'>
   readonly ids: { uuid(): string }
   readonly baseEnv: () => Promise<Readonly<Record<string, string>>> // shell-env 的终端环境（Q8-1）
@@ -103,6 +107,7 @@ export interface McpPool {
   tableSources(q: { readonly waitMs: number; readonly signal: AbortSignal }): Promise<McpRunSources>
   restart(serverId: string): void // 用户点「重启」、机密改值：崩溃计数清零
   refreshTools(serverId: string): Promise<void> // T42
+  cancelLogin(serverId: string): boolean
   login(serverId: string, ui: McpLoginUi): Promise<McpLoginResult> // §登录流程
   close(q: { readonly deadlineMs: number }): Promise<void> // 退出时：并行关全部，到 deadlineMs 对仍活着的进程组无条件 SIGKILL
 }
@@ -843,7 +848,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         )
           throw new McpServerUnavailableError(MODEL_NOTES.schemaUnusable)
         try {
-          return await rpc(s, 'tools/call', q, (signal) =>
+          const result = await rpc(s, 'tools/call', q, (signal) =>
             connection.callTool(name, args, {
               ...q,
               signal,
@@ -853,6 +858,17 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               maxTotalTimeoutMs: Math.min(10 * s.runtime.callTimeoutMs, 3_600_000),
             }),
           )
+          if (tool?.outputSchema !== undefined && result.structuredContent !== undefined) {
+            const verdict = options.schemaValidator
+              ? await options.schemaValidator.validate({
+                  schema: tool.outputSchema,
+                  instance: result.structuredContent,
+                  signal: q?.signal ?? s.controller.signal,
+                })
+              : synchronousSchemaVerdict(tool.outputSchema, result.structuredContent)
+            if (!verdict.ok) throw new McpInvalidOutputError()
+          }
+          return result
         } catch (e) {
           if (e instanceof InsufficientScopeError) s.requiredScope = e.requiredScope
           if (isMcpAuthError(e)) {
@@ -1028,6 +1044,9 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
       const s = states.get(id)
       if (!s) throw new McpServerUnavailableError()
       await refresh(s)
+    },
+    cancelLogin(id) {
+      return states.get(id)?.oauth?.cancelLogin() ?? false
     },
     async login(id, ui) {
       const s = states.get(id)

@@ -569,3 +569,19 @@ describe('the official group', () => {
     expect(official['ANTHROPIC_BASE_URL']).toBeUndefined()
   })
 })
+
+it('03 验收 19: the OAuth test browser switch is never inherited and refuses a live run', () => {
+  expect(NEVER_INHERITED).toContain('TENON_TEST_MCP_OPEN_URL')
+  const marker = 'fixture-browser-switch'
+  expect(
+    appEnvironment({ TENON_TEST_MCP_OPEN_URL: marker }, { env: {}, secrets: 'memory' }),
+  ).not.toHaveProperty('TENON_TEST_MCP_OPEN_URL')
+  for (const [runner, file] of [
+    [{ TENON_TEST_MCP_OPEN_URL: marker }, {}],
+    [{}, { TENON_TEST_MCP_OPEN_URL: marker }],
+  ]) {
+    const refusal = originMapRefusal(runner!, file!)
+    expect(refusal).toContain('TENON_TEST_MCP_OPEN_URL')
+    expect(refusal).not.toContain(marker)
+  }
+})

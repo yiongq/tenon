@@ -4,6 +4,7 @@ import { expect, it, vi } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
 import type {
   McpConnection,
+  SchemaValidatorPort,
   McpToolSource,
   RunAssembly,
   TapeStore,
@@ -62,6 +63,7 @@ function harness(
   table?: RunAssembly['mcpTable'],
   store?: TapeStore,
   threshold?: number,
+  schemaValidator?: SchemaValidatorPort,
 ) {
   const host = createMemoryHost()
   const tape = store ?? createMemoryTapeStore({ identity: host.identity })
@@ -77,6 +79,7 @@ function harness(
   const service = createTestSessionService(
     {
       host,
+      ...(schemaValidator ? { schemaValidator } : {}),
       tape,
       ids: createCounterIds({ start: store ? 1000 : 1 }),
       inspectors: [],
@@ -414,10 +417,10 @@ it('03 验收 36 / 03 不变量 9: readOnlyHint never bypasses manual approval',
   expect(execute).not.toHaveBeenCalled()
 })
 
-it('03 验收 32: physical depth and reference expansion guards exclude invalid definitions at table opening', async () => {
+it('03 验收 32: physical depth and size guards exclude invalid definitions at table opening', async () => {
   let nested: Record<string, unknown> = {}
   for (let i = 1; i < 33; i++) nested = { items: nested }
-  for (const schema of [nested, { allOf: Array.from({ length: 10001 }, () => ({})) }]) {
+  for (const schema of [nested, { description: 'x'.repeat(65537) }]) {
     const base = source()
     const s = {
       ...base,
@@ -927,4 +930,68 @@ it('03 验收 42: mid-Run compaction keeps an already-written instruction once i
   expect(
     JSON.stringify(provider.requests.at(-1)!.body).match(/<connector_instructions/g),
   ).toHaveLength(1)
+})
+
+it('03 验收 51 (kernel): a connector input timing out in the injected validator closes tool-unavailable / not-run without dispatch', async () => {
+  const execute = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+  const validate = vi.fn<SchemaValidatorPort['validate']>(async () => ({
+    ok: false as const,
+    unusable: 'timeout' as const,
+  }))
+  const h = harness([source({}, execute)], {}, undefined, undefined, undefined, { validate })
+  await send(h, [call(), scriptedTurn({ deltas: ['done'], usage: USAGE })])
+  expect(validate).toHaveBeenCalledTimes(1)
+  expect(execute).not.toHaveBeenCalled()
+  const entries = await facts(h.tape)
+  expect(entries.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+    state: 'not-run',
+    source: 'tool-unavailable',
+  })
+})
+it('03 验收 33 (closure): invalid structured output closes connectorFailed / completed', async () => {
+  const { McpInvalidOutputError } = await import('../../src/mcp/connection.js')
+  const h = harness([
+    source({}, async () => {
+      throw new McpInvalidOutputError()
+    }),
+  ])
+  await send(h, [call(), scriptedTurn({ deltas: ['done'], usage: USAGE })])
+  const entries = await facts(h.tape)
+  expect(entries.find((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+    state: 'completed',
+    source: null,
+  })
+  expect(entries.find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+    isError: true,
+    content: expect.arrayContaining([
+      {
+        type: 'text',
+        text: fill(MODEL_NOTES.connectorFailed, {
+          message: 'MCP structured output is invalid or its schema is unusable',
+        }),
+      },
+    ]),
+  })
+})
+
+it('03 验收 51 (stop): stopping during async schema validation closes stopped / not-run and never dispatches', async () => {
+  const entered = Promise.withResolvers<void>()
+  const execute = vi.fn<McpConnection['callTool']>(async () => ({ content: [] }))
+  const validate: SchemaValidatorPort['validate'] = ({ signal }) => {
+    entered.resolve()
+    return new Promise((resolve) => {
+      signal.addEventListener('abort', () => resolve({ ok: false, unusable: 'timeout' }), {
+        once: true,
+      })
+    })
+  }
+  const h = harness([source({}, execute)], {}, undefined, undefined, undefined, { validate })
+  const ending = send(h, [call()])
+  await entered.promise
+  await h.service.stop({ rootSessionId: SESSION })
+  await ending
+  expect(execute).not.toHaveBeenCalled()
+  expect(
+    (await facts(h.tape)).find((e) => e.name === 'execution/tool_outcome')?.payload,
+  ).toMatchObject({ source: 'stopped', state: 'not-run' })
 })

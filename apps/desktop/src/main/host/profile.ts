@@ -8,7 +8,7 @@ import {
   profileDirFor,
 } from '@tenon-app/kernel'
 import type { Config, ConfigPatch, CustomVendorContract } from '@tenon-app/contracts'
-import { configSchema, customVendorSchema } from '@tenon-app/contracts'
+import { configSchema, customVendorSchema, mcpServerSchema } from '@tenon-app/contracts'
 
 /**
  * Creates `<root>/profiles/<userId>/<tenantId>/` with its phase-0 sub-directories
@@ -50,14 +50,31 @@ export async function readConfig(
     return configSchema.parse({})
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return configSchema.parse({})
-  const { customVendors, ...rest } = raw as Record<string, unknown>
+  const { customVendors, mcpServers, ...rest } = raw as Record<string, unknown>
   const parsed = configSchema.safeParse(rest)
   const config = parsed.success ? parsed.data : fieldwise(rest)
   return {
     ...config,
     providerConfig: withoutInstanceSettings(config.providerConfig),
     customVendors: readCustomVendors(customVendors, log),
+    mcpServers: readMcpServers(mcpServers, log),
   }
+}
+
+function readMcpServers(value: unknown, log: (line: string) => void): Config['mcpServers'] {
+  if (!Array.isArray(value)) return []
+  const kept: Config['mcpServers'] = []
+  const seen = new Set<string>()
+  value.forEach((entry, index) => {
+    const parsed = mcpServerSchema.safeParse(entry)
+    if (!parsed.success || seen.has(parsed.data.id)) {
+      log(`[config] mcpServers[${index}] dropped`)
+      return
+    }
+    seen.add(parsed.data.id)
+    kept.push(parsed.data)
+  })
+  return kept
 }
 
 /**

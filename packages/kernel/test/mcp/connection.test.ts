@@ -1,5 +1,4 @@
 import { Client } from '@modelcontextprotocol/client'
-import { CfWorkerJsonSchemaValidator } from '@modelcontextprotocol/client/validators/cf-worker'
 import { afterEach, expect, it, vi } from 'vitest'
 import { absolutePath, connectStdioServer, createMemoryHost } from '../../src/index.js'
 import type { ChildHandle, McpConnection } from '../../src/index.js'
@@ -34,9 +33,13 @@ async function connect(mode = 'dual', logs: string[] = []) {
   connections.push(c)
   return c
 }
-it('03 验收 33: the client validates structured output with CfWorker and declares no capabilities', () => {
+it('03 验收 33: the SDK validator always accepts; output validation belongs to the bounded pool port', () => {
   const options = mcpClientOptions()
-  expect(options.jsonSchemaValidator).toBeInstanceOf(CfWorkerJsonSchemaValidator)
+  expect(options.jsonSchemaValidator!.getValidator({ type: 'string' })(42)).toEqual({
+    valid: true,
+    data: 42,
+    errorMessage: undefined,
+  })
   expect(options.listMaxPages).toBe(64)
   expect(options).not.toHaveProperty('capabilities')
   expect(options.versionNegotiation).toEqual({ mode: 'legacy' })

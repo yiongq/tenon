@@ -32,7 +32,7 @@ import {
   scriptedTurn,
 } from '@tenon-app/kernel/testing'
 import type { IpcMainLike } from '@tenon-app/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { RunRegistry } from '../src/main/chat.js'
@@ -230,7 +230,12 @@ interface Rig {
   readonly log: string[]
 }
 
-function rig(options: { registry?: RunRegistry } = {}): Rig {
+function rig(
+  options: {
+    registry?: RunRegistry
+    mcp?: { close(q: { deadlineMs: number }): Promise<void> }
+  } = {},
+): Rig {
   const app = fakeApp()
   const dialog = fakeDialog()
   const tape = fakeTape()
@@ -242,6 +247,7 @@ function rig(options: { registry?: RunRegistry } = {}): Rig {
     app: app.app,
     dialog: dialog.dialog,
     registry,
+    ...(options.mcp ? { mcp: options.mcp } : {}),
     tape: tape.tape,
     t,
     parent: () => win,
@@ -890,4 +896,86 @@ describe('the quit’s wait is the kernel’s', () => {
     )
     expect(found).toEqual([])
   })
+})
+
+it('03 验收 28 (quit): the pool closes alongside Runs at the shared deadline before the tape', async () => {
+  const { promise, resolve } = Promise.withResolvers<void>()
+  const close = vi.fn<(q: { deadlineMs: number }) => Promise<void>>(() => promise)
+  const h = rig({ mcp: { close } })
+  h.app.userQuits()
+  await flush()
+  expect(close).toHaveBeenCalledExactlyOnceWith({ deadlineMs: SHUTDOWN_SETTLE_MS })
+  expect(h.tape.closes()).toBe(0)
+  resolve()
+  await flush()
+  expect(h.tape.closes()).toBe(1)
+  h.tape.resolve()
+  await vi.waitFor(() => expect(h.app.quits()).toBe(1))
+})
+
+it('03 验收 28 (quit, process): quitting closes the EOF-ignoring tree-server group within the shared deadline', async () => {
+  const { createMcpPool } = await import('@tenon-app/kernel')
+  const { createHostProcess } = await import('../src/main/host/process.js')
+  const { SystemClock } = await import('../src/main/host/clock.js')
+  const processPort = createHostProcess()
+  let pid = 0
+  const host = Object.assign(
+    createMemoryHost({
+      process: {
+        spawn: async (spec, signal) => {
+          const child = await processPort.spawn(spec, signal)
+          pid = child.pid
+          return child
+        },
+      },
+    }),
+    { clock: new SystemClock() },
+  )
+  const runtime = {
+    serverId: 'tree',
+    launchHash: 'fixture',
+    consented: true,
+    transport: {
+      type: 'stdio' as const,
+      command: process.execPath,
+      args: [
+        new URL('../../../packages/kernel/test/support/fixtures/tree-server.mjs', import.meta.url)
+          .pathname,
+        '--serve',
+      ],
+      envs: {},
+      envKeys: [],
+    },
+    handshakeTimeoutMs: 1000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: randomUUID },
+    baseEnv: async () => ({ PATH: '/bin:/usr/bin' }),
+    homeDir: absolutePath('/'),
+    resolveCommand: async (command) => ({ ok: true, path: absolutePath(command) }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  try {
+    pool.apply([runtime])
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    const h = rig({ mcp: pool }),
+      start = performance.now()
+    h.tape.resolve()
+    h.app.userQuits()
+    await vi.waitFor(() => expect(h.app.quits()).toBe(1), { timeout: SHUTDOWN_SETTLE_MS + 1000 })
+    expect(performance.now() - start).toBeLessThan(SHUTDOWN_SETTLE_MS + 1000)
+    expect(() => process.kill(-pid, 0)).toThrow(/./)
+  } finally {
+    await pool.close({ deadlineMs: 0 })
+  }
 })

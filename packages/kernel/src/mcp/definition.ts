@@ -96,79 +96,22 @@ function children(value: Record<string, unknown>): { value: unknown; path: strin
   }
   return result.filter((child) => typeof child.value === 'boolean' || object(child.value))
 }
-/** Resolve local ids and anchors before counting expansions; no validator runs during this pass. */
+/** Cheap preflight only; connector validation is bounded by the desktop worker (T23 ⑦). */
 export function schemaProblem(root: unknown, screen = true): string | null {
-  const lookup = new Map<string, unknown>()
-  const bases = new WeakMap<object, string>()
-  const nodes = [{ value: root, base: 'https://tenon.invalid/schema', path: '' }]
-  let physical = -1
-  try {
-    while (nodes.length) {
-      const { value, base, path } = nodes.pop()!
-      if (typeof value !== 'boolean' && !object(value)) continue
-      if (++physical > 10_000) return 'schema-expansion'
-      let scope = base
-      let localPath = path
-      if (object(value)) {
-        const id = value['$id'] || value['id']
-        if ('$id' in value || 'id' in value) {
-          if (typeof id !== 'string' || id.length === 0) return 'invalid-id'
-          const url = new URL(id, base)
-          lookup.set(url.href, value)
-          if (!url.hash) {
-            scope = url.href
-            localPath = ''
-          }
-        }
-        bases.set(value, scope)
-        if (typeof value['$anchor'] === 'string')
-          lookup.set(new URL('#' + value['$anchor'], scope).href, value)
-      }
-      lookup.set(new URL(path ? '#' + path : '', base).href, value)
-      lookup.set(new URL(localPath ? '#' + localPath : '', scope).href, value)
-      if (object(value))
-        for (const child of children(value))
-          nodes.push({ value: child.value, base: scope, path: localPath + child.path })
-    }
-    const pending: { value: unknown; refs: ReadonlySet<string> }[] = [
-      { value: root, refs: new Set() },
-    ]
-    let count = -1 // The root is not one of its sub-schemas.
-    while (pending.length) {
-      const { value, refs } = pending.pop()!
-      if (typeof value !== 'boolean' && !object(value)) continue
-      if (++count > 10_000) return 'schema-expansion'
-      if (!object(value)) continue
-      for (const key of ['$ref', '$recursiveRef']) {
-        const ref = value[key]
-        if (typeof ref !== 'string') continue
-        let url: URL
-        try {
-          url = new URL(ref, bases.get(value))
-        } catch {
-          if (!screen) continue
-          return ref.startsWith('#') ? 'invalid-ref' : 'external-ref'
-        }
-        if (url.hash === '') url.hash = ''
-        const uri = url.href
-        if (!lookup.has(uri)) {
-          if (!screen) continue
-          return !ref.startsWith('#') ? 'external-ref' : 'invalid-ref'
-        }
-        if (!refs.has(uri)) pending.push({ value: lookup.get(uri), refs: new Set([...refs, uri]) })
-      }
-      if (screen && typeof value['pattern'] === 'string' && slowPattern(value['pattern']))
-        return 'slow-pattern'
-      if (
-        screen &&
-        object(value['patternProperties']) &&
-        Object.keys(value['patternProperties']).some(slowPattern)
-      )
-        return 'slow-pattern'
-      for (const child of children(value)) pending.push({ value: child.value, refs })
-    }
-  } catch {
-    return 'invalid-ref'
+  if (!screen) return null
+  const pending = [root]
+  while (pending.length) {
+    const value = pending.pop()
+    if (!object(value)) continue
+    for (const key of ['$ref', '$recursiveRef'])
+      if (typeof value[key] === 'string' && !value[key].startsWith('#')) return 'external-ref'
+    if (typeof value['pattern'] === 'string' && slowPattern(value['pattern'])) return 'slow-pattern'
+    if (
+      object(value['patternProperties']) &&
+      Object.keys(value['patternProperties']).some(slowPattern)
+    )
+      return 'slow-pattern'
+    pending.push(...children(value).map((child) => child.value))
   }
   return null
 }

@@ -5,7 +5,7 @@ import { defineConfig } from 'electron-vite'
 
 // Workspace packages are bundled into main/preload: a packaged app has no node_modules
 // next to out/, so a bare `import ... from '@tenon-app/kernel'` would fail there.
-const workspaceDeps = ['@tenon-app/kernel', '@tenon-app/contracts']
+const workspaceDeps = ['@tenon-app/kernel', '@tenon-app/contracts', '@cfworker/json-schema']
 
 // electron-vite 5's version table stops at Electron 39. Electron 44.4.1 embeds
 // Node 24.21 / Chrome 152; revisit these targets on every Electron major bump.

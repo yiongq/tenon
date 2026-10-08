@@ -22,13 +22,14 @@ import type {
   AbsolutePath,
   HostAdapter,
   ModelInfo,
+  McpPool,
   Provider,
   ProviderDefinition,
   ProviderRegistry,
   RequestIdentity,
   StreamEvent,
 } from '@tenon-app/kernel'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { configPath, readConfig, writeConfig } from '../src/main/host/profile.js'
 import {
   DEFAULT_MAX_TOKENS,
@@ -669,4 +670,33 @@ describe('what the connector adds for the loop', () => {
     }
     expect(await builtin.resolveChoice({ ...choose, sessionChoice: session })).toBe(session)
   })
+})
+
+it('03 验收 28 / 29 (desktop): assembly never waits; routes are shared and opening asks the pool for ten seconds', async () => {
+  const host = createMemoryHost()
+  await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+  const routes: ReturnType<McpPool['routes']> = []
+  const tableSources = vi.fn<McpPool['tableSources']>(() => new Promise(() => {}))
+  const pool = { routes: () => routes, tableSources } as unknown as McpPool
+  const connector = createRunConnector({
+    host,
+    providers: registry(),
+    env: { ANTHROPIC_API_KEY: 'fixture-key' },
+    isPackaged: false,
+    log: () => {},
+    mcpPool: pool,
+  })
+  const choice = await connector.resolveChoice({
+    sessionId: 's',
+    profile: 'chat',
+    sessionChoice: null,
+    previousOrigin: null,
+  })
+  if ('needsConfirm' in choice) throw new Error('unexpected confirm')
+  const signal = new AbortController().signal
+  const assembly = await connector.assemble({ sessionId: 's', rootSessionId: 's', choice, signal })
+  expect(assembly.mcpSources).toBe(routes)
+  expect(tableSources).not.toHaveBeenCalled()
+  void assembly.mcpTable!(signal)
+  expect(tableSources).toHaveBeenCalledExactlyOnceWith({ waitMs: 10_000, signal })
 })

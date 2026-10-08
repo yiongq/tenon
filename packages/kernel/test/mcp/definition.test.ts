@@ -1,11 +1,5 @@
-import { schemaChain } from '../support/schema-chains.js'
 import { expect, it } from 'vitest'
-import {
-  definitionProblem,
-  mcpDefinitionHash,
-  schemaProblem,
-  toolsOverLimit,
-} from '../../src/mcp/definition.js'
+import { definitionProblem, mcpDefinitionHash, toolsOverLimit } from '../../src/mcp/definition.js'
 import { canonicalJson } from '../../src/tape/canonical-json.js'
 
 const empty = { description: '', inputSchema: { type: 'object' } }
@@ -13,12 +7,6 @@ function nested(depth: number): Record<string, unknown> {
   let schema: Record<string, unknown> = {}
   for (let i = 1; i < depth; i++) schema = { items: schema }
   return schema
-}
-function exploding(): Record<string, unknown> {
-  const defs: Record<string, unknown> = { d40: { type: 'object' } }
-  for (let i = 0; i < 40; i++)
-    defs[`d${i}`] = { allOf: [{ $ref: `#/$defs/d${i + 1}` }, { $ref: `#/$defs/d${i + 1}` }] }
-  return { $defs: defs, $ref: '#/$defs/d0' }
 }
 it('definition hashes are stable across key order and change with description, outputSchema or interaction', () => {
   const a = { spec: { name: 's__x', ...empty }, requiresUserInteraction: false }
@@ -54,19 +42,6 @@ it('03 验收 32: 32 physical levels passes and 33 fails in either schema', () =
   expect(definitionProblem({ ...empty, outputSchema: nested(32) })).toBeNull()
   expect(definitionProblem({ ...empty, outputSchema: nested(33) })).toBe('schema-depth')
 })
-it('03 验收 32: a 40-link branching $ref chain is invalid within 100 ms in either schema', () => {
-  const start = performance.now()
-  expect(definitionProblem({ ...empty, inputSchema: exploding() })).toBe('schema-expansion')
-  expect(definitionProblem({ ...empty, outputSchema: exploding() })).toBe('schema-expansion')
-  expect(performance.now() - start).toBeLessThan(100)
-})
-it('03 验收 32: the expansion boundary is 10000, and recursive refs stop along their path', () => {
-  expect(schemaProblem({ allOf: Array.from({ length: 10000 }, () => ({})) })).toBeNull()
-  expect(schemaProblem({ allOf: Array.from({ length: 10001 }, () => ({})) })).toBe(
-    'schema-expansion',
-  )
-  expect(schemaProblem({ properties: { self: { $ref: '#' } } })).toBeNull()
-})
 it('03 验收 33: unsafe output patterns and external refs are invalid definitions', () => {
   expect(definitionProblem({ ...empty, outputSchema: { pattern: '(a+)+' } })).toBe('slow-pattern')
   expect(
@@ -88,26 +63,6 @@ it('03 验收 32: 1000 tools and 5 MiB pass, 1001 tools and one more byte fail',
   ).toBe(true)
 })
 
-it('03 验收 32: anchor, fragment-id and dependencies under unknown keys cannot bypass reference expansion limits', () => {
-  for (const kind of [
-    'anchor',
-    'fragment-id',
-    'dependencies',
-    'tuple',
-    'numeric-id',
-    'empty-id',
-  ] as const) {
-    const schema = schemaChain(kind)
-    const expected = kind === 'numeric-id' ? 'invalid-id' : 'schema-expansion'
-    expect(schemaProblem(schema)).toBe(expected)
-    expect(definitionProblem({ inputSchema: schema })).toBe(expected)
-  }
-  expect(schemaProblem({ $ref: '#missing' })).toBe('invalid-ref')
-  expect(schemaProblem({ $recursiveRef: '#missing' })).toBe('invalid-ref')
-})
-
-it('03 验收 32: a present id must resolve to a nonempty string using $id || id', () => {
-  for (const schema of [{ $id: 123 }, { $id: '' }, { id: null }, { $id: false }, { id: 0 }])
-    expect(schemaProblem(schema, false)).toBe('invalid-id')
-  expect(schemaProblem({ $id: '', id: 'https://e.test/x', $ref: '#' })).toBeNull()
+it('03 验收 32 / 51: ordinary annotation ids are not static schema errors', () => {
+  expect(definitionProblem({ inputSchema: { type: 'object', example: { id: 42 } } })).toBeNull()
 })

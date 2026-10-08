@@ -1,3 +1,23 @@
+import {
+  mcpList,
+  mcpPreview,
+  mcpSave,
+  mcpDelete,
+  mcpSetEnabled,
+  mcpReorder,
+  mcpSetToolSetting,
+  mcpRelease,
+  mcpReviewChange,
+  mcpSetInstructions,
+  mcpConnect,
+  mcpRestart,
+  mcpRevoke,
+  mcpRefreshTools,
+  mcpLogin,
+  mcpCancelLogin,
+  mcpReadLog,
+  mcpChanged,
+} from './ipc/mcp.js'
 import { approvalCurrent, approvalList, approvalRespond, approvalResume } from './ipc/approval.js'
 import {
   chatContinue,
@@ -39,6 +59,23 @@ import {
  * channels listed here; main only registers handlers for routes listed here.
  */
 export const ipcRoutes = {
+  mcpList,
+  mcpPreview,
+  mcpSave,
+  mcpDelete,
+  mcpSetEnabled,
+  mcpReorder,
+  mcpSetToolSetting,
+  mcpRelease,
+  mcpReviewChange,
+  mcpSetInstructions,
+  mcpConnect,
+  mcpRestart,
+  mcpRevoke,
+  mcpRefreshTools,
+  mcpLogin,
+  mcpCancelLogin,
+  mcpReadLog,
   approvalCurrent,
   approvalList,
   approvalRespond,
@@ -71,6 +108,7 @@ export const ipcRoutes = {
   workspaceUsePrefill,
 } as const
 export const ipcEvents = {
+  mcpChanged,
   chatEvent,
   chatNew,
   chatQueueEvent,

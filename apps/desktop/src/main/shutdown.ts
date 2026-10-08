@@ -155,6 +155,7 @@ export interface ShutdownApp {
 }
 
 export interface ShutdownDeps<W extends ClosingWindow> {
+  readonly mcp?: { close(q: { deadlineMs: number }): Promise<void> }
   readonly app: ShutdownApp
   readonly dialog: ExitDialog<W>
   /** null exactly when the store could not be opened: no Run can be in progress. */
@@ -252,7 +253,10 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
     }
     stopEverything()
     // Step 4.
-    await registry?.settled(SHUTDOWN_SETTLE_MS)
+    await Promise.all([
+      registry?.settled(SHUTDOWN_SETTLE_MS),
+      deps.mcp?.close({ deadlineMs: SHUTDOWN_SETTLE_MS }),
+    ])
     // Step 5.
     if (deps.tape !== null) {
       try {

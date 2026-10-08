@@ -51,7 +51,12 @@ function fakeConnection() {
   } as unknown as McpConnection
   return { c, exit }
 }
-function setup(initial = runtime(), real = false, start = true) {
+function setup(
+  initial = runtime(),
+  real = false,
+  start = true,
+  schemaValidator?: McpPoolOptions['schemaValidator'],
+) {
   const host = createMemoryHost(real ? { process: createNodeProcess() } : {})
   const current = new Map([[initial.serverId, initial]])
   const onPin = vi.fn<McpPoolOptions['onPin']>(async () => {})
@@ -59,6 +64,7 @@ function setup(initial = runtime(), real = false, start = true) {
   const onChange = vi.fn<() => void>()
   const pool = createMcpPool({
     host,
+    ...(schemaValidator ? { schemaValidator } : {}),
     ids: { uuid: () => crypto.randomUUID() },
     baseEnv: async () => ({ HOME: '/', PATH: '/bin', GITHUB_TOKEN: 'never-inherit' }),
     homeDir: absolutePath('/'),
@@ -1172,3 +1178,34 @@ it('03 验收 14: a connection closed while the HTTP server leaves the auto prob
   expect(probeErrors).toHaveLength(1)
   expect(fixture.requests.every((request) => request.method === 'server/discover')).toBe(true)
 })
+
+it.each([
+  { ok: false, errors: ['wrong'] },
+  { ok: false, unusable: 'timeout' },
+  { ok: false, unusable: 'schema' },
+] as const)(
+  '03 验收 33: output is checked by the injected validator after tools/call; an invalid or unusable output throws McpInvalidOutputError: %j',
+  async (verdict) => {
+    const fake = fakeConnection()
+    vi.mocked(fake.c.listTools).mockResolvedValue([
+      { ...tools[0]!, outputSchema: { type: 'object' } },
+    ])
+    vi.mocked(fake.c.callTool).mockResolvedValue({ content: [], structuredContent: { fixture: 1 } })
+    vi.spyOn(connections, 'connectStdioServer').mockResolvedValue(fake.c)
+    const validate = vi.fn<NonNullable<McpPoolOptions['schemaValidator']>['validate']>(
+      async () => verdict,
+    )
+    const { pool } = setup(runtime(), false, true, { validate })
+    await connected(pool)
+    await expect(pool.routes()[0]!.connection.callTool('echo', {})).rejects.toMatchObject({
+      name: 'McpInvalidOutputError',
+    })
+    expect(fake.c.callTool).toHaveBeenCalledTimes(1)
+    expect(validate).toHaveBeenCalledExactlyOnceWith({
+      schema: { type: 'object' },
+      instance: { fixture: 1 },
+      signal: expect.any(AbortSignal),
+    })
+    expect(phase(pool)).toBe('connected')
+  },
+)

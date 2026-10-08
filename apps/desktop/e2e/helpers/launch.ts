@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { _electron as electron } from '@playwright/test'
+import type { McpServer } from '@tenon-app/contracts'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { appEnvironment } from './app-env.js'
 import { exitConfirmsIn, stubExitConfirm } from './exit.js'
@@ -68,6 +69,7 @@ export interface SeededConfig {
    * seeded here reads as not configured until a test saves one (helpers/instances.ts).
    */
   readonly customVendors?: readonly SeededInstance[]
+  readonly mcpServers?: readonly McpServer[]
 }
 
 /** One `customVendors` entry: `custom-<uuid>`, its name, wire, fixed address and model rows. */

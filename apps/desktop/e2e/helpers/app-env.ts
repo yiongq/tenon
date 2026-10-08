@@ -38,6 +38,7 @@ export const NEVER_INHERITED: readonly string[] = [
   OFFICIAL_KEY_ENV,
   DEEPSEEK_KEY_ENV,
   ORIGIN_MAP_ENV,
+  'TENON_TEST_MCP_OPEN_URL',
   'ELECTRON_RUN_AS_NODE',
 ]
 
