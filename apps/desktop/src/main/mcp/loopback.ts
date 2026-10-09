@@ -1,6 +1,8 @@
 import { createServer } from 'node:http'
 import type { ServerResponse } from 'node:http'
-import type { McpLoginUi } from '@tenon-app/kernel'
+import type { McpLoginUi, McpLoginResult } from '@tenon-app/kernel'
+import { createI18n } from '../../i18n/create-instance.js'
+import type { Locale } from '../../i18n/resources.js'
 export class McpLoopbackError extends Error {
   readonly code: 'port-in-use' | 'timeout' | 'cancelled'
   constructor(code: 'port-in-use' | 'timeout' | 'cancelled') {
@@ -8,39 +10,76 @@ export class McpLoopbackError extends Error {
     this.code = code
   }
 }
-export const listenMcpCallback: McpLoginUi['listen'] = async (port) => {
+export type McpCallbackListener = Awaited<ReturnType<McpLoginUi['listen']>> & {
+  complete(result: McpLoginResult): void
+}
+const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"']/g,
+    (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!,
+  )
+export async function listenMcpCallback(
+  port: number,
+  page: { locale: Locale; displayName: string } = { locale: 'en', displayName: '' },
+): Promise<McpCallbackListener> {
+  const i18n = await createI18n(page.locale, () => {})
   let wanted: string | null = null
   let resolve: ((value: URLSearchParams) => void) | null = null
   let reject: ((error: Error) => void) | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
+  let pageTimer: ReturnType<typeof setTimeout> | undefined
   let closed = false
+  let callback: ServerResponse | null = null
   const early: { url: URL; res: ServerResponse }[] = []
+  const reply = (res: ServerResponse, status: number, message: string) => {
+    res.writeHead(status, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    })
+    res.end(
+      `<!doctype html><html lang="${page.locale}"><meta charset="utf-8"><title>${escapeHtml(i18n.t('app.name'))}</title><body><p>${escapeHtml(message)}</p></body></html>`,
+    )
+  }
+  const invalid = (res: ServerResponse) => reply(res, 400, i18n.t('mcp.callback.invalid'))
+  // Do not await server.close: it waits for the response which the route still has to complete.
+  const stopListening = () => {
+    closed = true
+    server.close()
+    server.closeIdleConnections()
+  }
+  const finishPage = (message: string) => {
+    if (!callback) return
+    clearTimeout(pageTimer)
+    const res = callback
+    callback = null
+    res.once('finish', () => server.closeIdleConnections())
+    reply(res, 200, message)
+    stopListening()
+  }
   const respond = (url: URL, res: ServerResponse) => {
     if (
       url.pathname !== '/callback' ||
       closed ||
+      callback ||
       (wanted !== null && url.searchParams.get('state') !== wanted)
     ) {
-      res.writeHead(400)
-      res.end()
+      invalid(res)
       return
     }
     if (wanted === null) {
       if (early.length < 32) early.push({ url, res })
-      else {
-        res.writeHead(400)
-        res.end()
-      }
+      else invalid(res)
       return
     }
-    res.writeHead(200, { 'content-type': 'text/plain' })
-    res.end('')
+    callback = res
+    // The 30 seconds start at the state-matched callback, independently of the 120 s login wait.
+    pageTimer = setTimeout(() => finishPage(i18n.t('mcp.callback.pending')), 30_000)
     resolve?.(url.searchParams)
     resolve = null
     reject = null
     clearTimeout(timer)
-    closed = true
-    server.close()
   }
   const server = createServer((req, res) =>
     respond(new URL(req.url ?? '/', 'http://127.0.0.1'), res),
@@ -63,9 +102,8 @@ export const listenMcpCallback: McpLoginUi['listen'] = async (port) => {
           reject?.(new McpLoopbackError('timeout'))
           reject = null
           resolve = null
-          closed = true
-          server.closeAllConnections()
-          server.close()
+          for (const item of early.splice(0)) invalid(item.res)
+          stopListening()
         }, timeoutMs)
         for (const item of early.splice(0)) respond(item.url, item.res)
       })
@@ -75,10 +113,15 @@ export const listenMcpCallback: McpLoginUi['listen'] = async (port) => {
       reject?.(new McpLoopbackError('cancelled'))
       reject = null
       resolve = null
-      if (closed) return
-      closed = true
-      server.closeAllConnections()
-      await new Promise<void>((done) => server.close(() => done()))
+      for (const item of early.splice(0)) invalid(item.res)
+      stopListening()
+    },
+    complete(result) {
+      finishPage(
+        result.ok
+          ? i18n.t('mcp.callback.success', { name: page.displayName })
+          : i18n.t(`mcp.callback.${result.code}`),
+      )
     },
   }
 }

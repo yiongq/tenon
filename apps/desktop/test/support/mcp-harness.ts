@@ -64,6 +64,7 @@ export async function mcpHarness() {
     isPackaged: false,
     env: {},
     openExternal: async () => {},
+    locale: () => (mcp.config().locale === 'zh-CN' ? 'zh-CN' : 'en'),
   })
   return {
     host,

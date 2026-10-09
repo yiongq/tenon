@@ -7,6 +7,7 @@ import type { McpDraft, McpServer } from '@tenon-app/contracts'
 import { createMcpStore, mcpAccounts } from '../src/main/mcp/store.js'
 import { createMcpConsent } from '../src/main/mcp/consent.js'
 import { launchHash } from '../src/main/mcp/runtime.js'
+import { mcpHarness } from './support/mcp-harness.js'
 import { configPath, readConfig, watchConfig } from '../src/main/host/profile.js'
 const draft = (id = 'notes'): McpDraft => ({
   id,
@@ -90,20 +91,30 @@ it('03 验收 22 / 03 不变量 16: concurrent stores share the config lock and 
   expect(replaced).toHaveLength(2)
 })
 it('03 验收 7 (store): injection env names in either collection are refused in every case without writes', async () => {
-  for (const secret of [false, true]) {
-    const h = setup()
-    const d = draft()
-    d.transport = {
-      type: 'stdio',
-      command: '/bin/node',
-      args: [],
-      envs: secret ? {} : { dyld_insert_libraries: 'fixture' },
-      env_keys: secret ? ['ld_preload'] : [],
+  for (const name of [
+    'DYLD_INSERT_LIBRARIES',
+    'DYLD_LIBRARY_PATH',
+    'DYLD_FRAMEWORK_PATH',
+    'LD_PRELOAD',
+    'LD_LIBRARY_PATH',
+    'LD_AUDIT',
+    'DYLD_FALLBACK_LIBRARY_PATH',
+  ]) {
+    for (const secret of [false, true]) {
+      const h = setup()
+      const d = draft()
+      d.transport = {
+        type: 'stdio',
+        command: '/bin/node',
+        args: [],
+        envs: secret ? {} : { [name.toLowerCase()]: 'fixture' },
+        env_keys: secret ? [name.toLowerCase()] : [],
+      }
+      const set = vi.spyOn(h.host.secrets, 'set')
+      expect(await h.save(d)).toEqual({ ok: false, code: 'blocked-env' })
+      expect((await h.config()).mcpServers).toEqual([])
+      expect(set).not.toHaveBeenCalled()
     }
-    const set = vi.spyOn(h.host.secrets, 'set')
-    expect(await h.save(d)).toEqual({ ok: false, code: 'blocked-env' })
-    expect((await h.config()).mcpServers).toEqual([])
-    expect(set).not.toHaveBeenCalled()
   }
 })
 it('03 不变量 4: a launch change resets always-allow in the same config write; secret values never enter launchHash', async () => {
@@ -150,19 +161,22 @@ it('03 验收 26 / 03 不变量 16: deletion retires the pool before keychain, f
     await h.store.recordIssuer('notes', { hash, url: 'https://issuer.example' }, 'tokens')
   const before = await h.config()
   const accounts = mcpAccounts(before.mcpServers[0]!, h.host)
+  h.apply.mockClear()
   const deleted: string[] = []
   const remove = vi.spyOn(h.host.secrets, 'delete').mockImplementation(async (account) => {
-    expect(h.apply).toHaveBeenCalledWith([])
+    expect(h.apply).not.toHaveBeenCalled()
     expect(h.retire).toHaveBeenCalledWith('notes')
     expect(h.store.isDeleting('notes')).toBe(true)
     deleted.push(account)
     throw new Error('fixture refused')
   })
   expect(await h.store.delete('notes')).toEqual({ ok: false, code: 'keychain' })
-  expect(h.apply.mock.calls[0]?.[0]).toEqual([])
+  expect(h.apply.mock.calls[0]?.[0]).toEqual(before.mcpServers)
   expect(await h.config()).toEqual(before)
   expect(h.apply).toHaveBeenLastCalledWith(before.mcpServers)
+  h.apply.mockClear()
   remove.mockImplementation(async (account) => {
+    expect(h.apply).not.toHaveBeenCalled()
     expect(h.store.isDeleting('notes')).toBe(true)
     deleted.push(account)
   })
@@ -208,11 +222,11 @@ it('03 验收 27 (store): keychain failure or a secret over 2560 UTF-8 bytes wri
   const h = setup()
   const d = draft()
   d.transport = { type: 'stdio', command: '/bin/node', args: [], envs: {}, env_keys: ['TOKEN'] }
+  const writes = vi.spyOn(h.host.secrets, 'set')
   expect(await h.save(d, { env: { TOKEN: '界'.repeat(854) }, headers: {} })).toEqual({
     ok: false,
     code: 'secret-too-long',
   })
-  const writes = vi.spyOn(h.host.secrets, 'set')
   expect(writes).not.toHaveBeenCalled()
   writes.mockRejectedValue(new Error('fixture keychain failed'))
   expect(await h.save(d, { env: { TOKEN: 'fixture' }, headers: {} })).toEqual({
@@ -570,3 +584,81 @@ it('03 不变量 16: deletion completes while an issuer callback awaits the conf
   expect(await refused).toBeInstanceOf(Error)
   expect(set).not.toHaveBeenCalled()
 })
+
+it.each(['command-not-found', 'windows-unsupported'] as const)(
+  '03 验收 8: saving succeeds when the pool reports %s',
+  async (code) => {
+    const h = setup()
+    await h.save()
+    h.pool.status = () =>
+      [
+        { serverId: 'notes', phase: 'error', error: { code, stderrTail: '' } },
+      ] as unknown as ReturnType<McpPool['status']>
+    const next = { ...draft(), displayName: 'Saved despite command error' }
+    expect(await h.save(next, { env: {}, headers: {} }, 'update')).toEqual({ ok: true })
+    expect((await h.config()).mcpServers[0]?.displayName).toBe(next.displayName)
+    expect(h.pool.status()[0]?.error?.code).toBe(code)
+  },
+)
+it.each([false, true])(
+  '03 验收 26 / 53: the stopped row remains listed throughout keychain deletion, failure=%s',
+  async (fail) => {
+    const h = await mcpHarness()
+    const release = Promise.withResolvers<void>()
+    let pending: ReturnType<typeof h.mcp.store.delete> | undefined
+    try {
+      const d = draft()
+      d.transport = {
+        type: 'stdio',
+        command: '/missing/node',
+        args: [],
+        envs: {},
+        env_keys: ['TOKEN'],
+      }
+      await h.mcp.store.save({
+        mode: 'create',
+        draft: d,
+        secrets: { env: { TOKEN: 'fixture' }, headers: {} },
+        consent: 'persistent',
+      })
+      const entered = Promise.withResolvers<void>()
+      const remove = h.host.secrets.delete.bind(h.host.secrets)
+      vi.spyOn(h.host.secrets, 'delete').mockImplementation(async (account) => {
+        entered.resolve()
+        await release.promise
+        if (fail) throw new Error('fixture denied')
+        await remove(account)
+      })
+      const apply = vi.spyOn(h.mcp.pool, 'apply')
+      pending = h.mcp.store.delete('notes')
+      await entered.promise
+      expect(apply).not.toHaveBeenCalled()
+      const during = await h.call('mcp.list', {})
+      expect(during.servers).toHaveLength(1)
+      expect(during.servers[0]?.status.phase).toBe('stopped')
+      release.resolve()
+      expect(await pending).toEqual(fail ? { ok: false, code: 'keychain' } : { ok: true })
+      expect((await h.call('mcp.list', {})).servers.map((s) => s.id)).toEqual(fail ? ['notes'] : [])
+      expect(h.mcp.store.isDeleting('notes')).toBe(false)
+    } finally {
+      release.resolve()
+      await pending?.catch(() => {})
+      await h.close()
+    }
+  },
+)
+it.each(['retire', 'config'] as const)(
+  '03 验收 26 / 53: %s failure preserves the row and reapplies the snapshot',
+  async (step) => {
+    const h = setup()
+    await h.save()
+    const before = await h.config()
+    if (step === 'retire') h.retire.mockRejectedValueOnce(new Error('fixture failure'))
+    else vi.spyOn(h.host.fs, 'writeFile').mockRejectedValueOnce(new Error('fixture failure'))
+    h.apply.mockClear()
+    await expect(h.store.delete('notes')).rejects.toThrow('fixture failure')
+    expect(await h.config()).toEqual(before)
+    expect(h.apply).toHaveBeenCalledExactlyOnceWith(before.mcpServers)
+    expect(h.store.isDeleting('notes')).toBe(false)
+  },
+)
