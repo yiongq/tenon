@@ -1,6 +1,6 @@
 # 03 · MCP host 完整版
 
-Status: ready
+Status: implemented
 Phase: 3 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: 裁决由 owner 拍板（2026-10-08 四轮，Q1–Q16 都选推荐项，T1–T49 全收，T17、T24 已并入 Q11-2、Q4-2；裁决卡 `cards-v1.md`、选择记录 `picks.md` 与调研原文在仓库外 `../tenon-notes/2026-10-03-phase3-mcp/`）；起草在 Claude Code（2026-10-08）；实现由 Codex 做，lead（Claude Code）在每段 PR 合并前审查（owner 2026-10-08 定）
 Amends: [02-agent-loop](../02-agent-loop/spec.md) §主进程与 kernel 的循环接口（`RunAssembly`、`McpToolSource` 只增可选成员）、§依赖方向与能力入口（`SessionServiceOptions` 只增可选成员 `userSetting`、`schemaValidator`）、§02 的 Tape 事实（排除码、`view/tool_table` 的 `tools[]` 只增 `definitionHash`、`tool/permission_decided` 只增，新名字 `message/server_instructions`）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§权限决策顺序（作用域与授权键）、§工具调用的收口（原因码表）、§提示层与评测、§停止与退出（退出第 4 步并行关连接池）、§界面范围、01 修补 6 立的工具结果视图、02 §答复与投递 立的 `approval.current`。只增不改，全文见 §对 02 的修补；碰到 02 旧文字的条目在 §点名。[01-provider-and-tape](../01-provider-and-tape/spec.md)：`createSessionService` 的构造参数只增可选的 `userSetting`，config.json 只增 `mcpServers`（02、M6 加同类成员都记作修补 01 的先例），正文不改。`HostAdapter` 不加成员，00 不修补（T1）
