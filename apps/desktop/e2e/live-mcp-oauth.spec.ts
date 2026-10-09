@@ -124,10 +124,12 @@ async function tokenLeaks(
   )
 }
 
+// Top level: screenshot and video options force a new worker, which a describe group cannot do.
+test.use({ trace: 'off', screenshot: 'off', video: 'off' })
+
 test.describe('live mcp oauth · Notion', () => {
   test.skip(!LIVE, 'opt-in only: TENON_LIVE=1, lead and owner present')
   test.describe.configure({ timeout: 600_000 })
-  test.use({ trace: 'off', screenshot: 'off', video: 'off' })
 
   test('03 验收 48: real browser, DCR, readonly model call and keychain deletion', async () => {
     // Fail rather than silently bypassing a dangerous setup: a test seam in the runner's
