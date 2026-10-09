@@ -65,6 +65,65 @@ async function absentAccounts(app: ElectronApplication, accounts: string[]): Pro
   }, accounts)
 }
 
+/**
+ * Acceptance 48 「令牌只在钥匙串」: decode the token groups inside Electron main and look for their
+ * token strings in every file under the profile. Only counts and relative file names come back.
+ */
+async function tokenLeaks(
+  app: ElectronApplication,
+  root: string,
+  slotAccounts: string[],
+): Promise<{ decoded: number; files: string[] }> {
+  return app.evaluate(
+    async (_electron, { dir, keys }) => {
+      const state = (globalThis as { liveMcpSecrets?: MainSecrets }).liveMcpSecrets
+      if (!state) throw new Error('live keychain reader was not installed')
+      const { readdirSync, readFileSync: read, statSync } = await import('node:fs')
+      const { join, relative } = await import('node:path')
+      const values = await Promise.all(
+        keys.map(async (key) => [key, await state.secrets.get(key)] as const),
+      )
+      const bySlot = new Map<string, string[]>()
+      for (const [key, shard] of values) {
+        const group = key.replace(/:\d+$/, '')
+        if (shard !== null) bySlot.set(group, [...(bySlot.get(group) ?? []), shard])
+      }
+      const tokens: string[] = []
+      for (const shards of bySlot.values()) {
+        try {
+          const parts = shards
+            .map((shard) => shard.split('.'))
+            .toSorted((a, b) => Number(a[2]) - Number(b[2]))
+          const encoded = parts.map((part) => part[3] ?? '').join('')
+          const json = Buffer.from(encoded, 'base64url').toString('utf8')
+          const stored = JSON.parse(json) as Record<string, unknown>
+          for (const field of ['access_token', 'refresh_token', 'id_token']) {
+            const value = stored[field]
+            if (typeof value === 'string' && value.length >= 8) tokens.push(value)
+          }
+        } catch {
+          // An unreadable group carries no token to look for.
+        }
+      }
+      const needles = tokens.map((token) => Buffer.from(token, 'utf8'))
+      const files: string[] = []
+      const walk = (path: string): void => {
+        for (const entry of readdirSync(path, { withFileTypes: true })) {
+          const full = join(path, entry.name)
+          if (entry.isDirectory()) walk(full)
+          else if (entry.isFile() && statSync(full).size <= 64 * 1024 * 1024) {
+            const body = read(full)
+            if (needles.some((needle) => body.includes(needle))) files.push(relative(dir, full))
+          }
+        }
+      }
+      walk(dir)
+      return { decoded: tokens.length, files }
+    },
+    { dir: root, keys: slotAccounts },
+  )
+}
+
 test.describe('live mcp oauth · Notion', () => {
   test.skip(!LIVE, 'opt-in only: TENON_LIVE=1, lead and owner present')
   test.describe.configure({ timeout: 600_000 })
@@ -162,9 +221,12 @@ test.describe('live mcp oauth · Notion', () => {
       expect(accounts.length).toBeGreaterThan(1)
       const clients = accounts.filter((account) => account.endsWith(':client'))
       const slots = accounts.filter((account) => account.includes(':tokens:'))
-      // Prevent vacuous cleanup checks; an existing DCR client and real token must precede delete.
-      expect((await absentAccounts(app, clients)).some((absent) => !absent)).toBe(true)
+      // Prevent vacuous cleanup checks: a real token must precede delete. The client identity is
+      // whatever the order own > CIMD > DCR picked; DCR leaves a client account, CIMD does not.
       expect((await absentAccounts(app, slots)).some((absent) => !absent)).toBe(true)
+      const clientIdentity = (await absentAccounts(app, clients)).some((absent) => !absent)
+        ? 'DCR'
+        : 'CIMD'
       const search = server.toolViews.find((tool) => tool.originalName === 'notion-search')
       expect(search !== undefined && search.unavailable === null).toBe(true)
       if (!search) throw new Error('Notion did not list the documented readonly search tool')
@@ -225,6 +287,13 @@ test.describe('live mcp oauth · Notion', () => {
       expect(named(facts, 'execution/tool_outcome')[0]?.payload['state']).toBe('completed')
       expect(named(facts, 'execution/tool_outcome')[0]?.payload['source']).toBeNull()
       // The body/result can contain private Notion data: never attach it or print it.
+      const leaks = await tokenLeaks(
+        app,
+        userData,
+        accountsIn(userData, id).filter((a) => a.includes(':tokens:')),
+      )
+      expect(leaks.decoded).toBeGreaterThan(0)
+      expect(leaks.files).toEqual([])
       accounts = [...new Set([...accounts, ...accountsIn(userData, id)])]
       await openConnectors(page)
       await row.getByRole('button', { name: /^Notion live/ }).click()
@@ -259,7 +328,7 @@ test.describe('live mcp oauth · Notion', () => {
         vendor: 'Notion',
         address: NOTION_URL,
         source: 'spec Open 2 / owner 2026-10-08',
-        clientIdentity: 'DCR',
+        clientIdentity,
         tools: server.toolViews.length,
         readonlyCall: 'success',
         model,
