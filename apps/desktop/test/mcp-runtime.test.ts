@@ -361,7 +361,16 @@ it('03 验收 17 (product): CIMD URL is https with a path, SDK-valid and equals 
   const metadata = JSON.parse(
     readFileSync(new URL('../oauth/client-metadata.json', import.meta.url), 'utf8'),
   )
-  expect(metadata.client_id).toBe(CIMD_CLIENT_METADATA_URL)
+  // The whole document is pinned to spec §客户端身份: Pages publishes it on merge to dev, so a
+  // changed redirect_uris or auth method must fail CI rather than ship silently.
+  expect(metadata).toEqual({
+    client_id: CIMD_CLIENT_METADATA_URL,
+    client_name: 'Tenon',
+    redirect_uris: ['http://127.0.0.1/callback', 'http://localhost/callback'],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  })
   const remote = server()
   remote.transport = {
     type: 'http',

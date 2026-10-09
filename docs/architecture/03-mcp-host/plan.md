@@ -346,7 +346,8 @@
   - desktop 的 vitest 配置加了 React 插件与 `@` 别名，供 `renderer-connectors.test.ts` 静态渲染组件；desktop 全套 84 文件 / 1639 测试通过。
   - lead 复核：kernel 6 个文件连跑 3 次 137 项全过；lead 复跑突变 10 项全红（缺席码顺序、unauthorized 码、静态头脱敏、总时限、删除顺序、CSP、路由不交结果、显示名不转义、说明 review 恒 ok 等）。E `connector-oauth.spec.ts` + `connectors.spec.ts` 单 Electron 13 项通过。
   - 验收表证据行号按用例名整体重定位（本轮改过的测试文件行号都有移动），验收 21、30 的旧用例名换成拆分后的新用例。
-  - 仓库设置（owner 2026-10-09 同意）：开启自动合并；dev 与 main 都要求 `ci-ok`。规则写进 AGENTS.md §Git。
+  - 仓库设置（owner 2026-10-09 同意）：开启自动合并；dev 与 main 都要求 `ci-ok`。规则写进 AGENTS.md §Git：改 `.github/workflows/**` 或 `apps/desktop/oauth/**` 的 PR 不开自动合并，等 owner 说合。
+  - 托管的 CIMD 文档整份按 spec §客户端身份 固定在 `D/mcp-runtime.test.ts` 的「03 验收 17 (product)」里（合进 dev 即发布到 Pages）；突变：`redirect_uris` 多一个地址 → 红。
 
 - **2026-10-09 · 第 21 步 live（lead，owner 在场）**
   - 结果：通过。Notion `https://mcp.notion.com/mcp`（地址源：spec 开放问题 2），实际客户端身份 CIMD（Notion 声明支持 CIMD、令牌端点不要求认证；回调用的是临时端口，DCR 固定用 53280），47 个工具，只读 `notion-search` 调用成功，泄漏扫描 0，删除后各账户都读不到值。模型 glm-5.3-flash，两次请求共约 8.4k 输入 / 90 输出 token，花费极小。原始摘要在仓库外 `tenon-notes/2026-10-03-phase3-mcp/live-2026-10-09-notion.json`，不含令牌与 client secret。
