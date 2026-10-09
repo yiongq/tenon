@@ -755,7 +755,16 @@ it('03 验收 42: compaction estimateInput counts instructions written after the
   expect(estimateInput([...all, late], request)).toBeGreaterThan(estimateInput(all, request))
 })
 
-it('03 验收 21: refresh succeeds but another 401 makes the real pool unauthorized and the Run closes not-run connector-unauthorized', async () => {
+it.each([
+  {
+    failure: 'network',
+    title: 'refresh network failure closes connectorFailed/completed without unauthorized',
+  },
+  {
+    failure: '401',
+    title: 'refresh succeeds but another 401 closes not-run connector-unauthorized',
+  },
+])('03 验收 21: $title (real pool)', async ({ failure }) => {
   const { createMcpPool, absolutePath } = await import('../../src/index.js')
   const { startHttpFixture, startFakeAuthServer } = await import('../support/http-fixture.js')
   const as = await startFakeAuthServer()
@@ -820,26 +829,39 @@ it('03 验收 21: refresh succeeds but another 401 makes the real pool unauthori
     await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
     const h = harness(pool.routes())
     await send(h)
-    tokenDown = true
-    fixture.set({ requireToken: 'force-refresh' })
-    expect(
-      (await send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])).reason.code,
-    ).toBe('completed')
-    expect(pool.status()[0]?.phase).toBe('connected')
-    expect(
-      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
-    ).toMatchObject({ state: 'completed', source: null })
-    tokenDown = false
+    tokenDown = failure === 'network'
     fixture.set({ requireToken: 'never-accepted' })
-    const before = as.requests.filter((r) => r.path === '/token').length
+    const before = as.requests.length
+    const requestsBefore = h.provider.requests.length
     expect(
       (await send(h, [call(), scriptedTurn({ deltas: ['continued'], usage: USAGE })])).reason.code,
     ).toBe('completed')
-    expect(as.requests.filter((r) => r.path === '/token')).toHaveLength(before + 1)
-    expect(pool.status()[0]?.phase).toBe('unauthorized')
+    expect(h.provider.requests).toHaveLength(requestsBefore + 2)
     expect(
-      (await facts(h.tape)).findLast((e) => e.name === 'execution/tool_outcome')?.payload,
-    ).toMatchObject({ state: 'not-run', source: 'connector-unauthorized' })
+      as.requests.slice(before).filter((r) => r.path === '/register' || r.path === '/authorize'),
+    ).toEqual([])
+    expect(as.requests.slice(before).filter((r) => r.path === '/token')).toHaveLength(
+      failure === 'network' ? 0 : 1,
+    )
+    expect(pool.status()[0]?.phase).toBe(failure === 'network' ? 'connected' : 'unauthorized')
+    const all = await facts(h.tape)
+    expect(all.findLast((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject(
+      failure === 'network'
+        ? { state: 'completed', source: null }
+        : { state: 'not-run', source: 'connector-unauthorized' },
+    )
+    expect(all.findLast((e) => e.name === 'tool/result')?.payload).toMatchObject({
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text:
+            failure === 'network'
+              ? fill(MODEL_NOTES.connectorFailed, { message: 'fixture token network down' })
+              : MODEL_NOTES.closure['connector-unauthorized']['not-run'],
+        },
+      ],
+    })
   } finally {
     const closing = pool.close({ deadlineMs: 0 })
     host.advance(0)
@@ -994,4 +1016,73 @@ it('03 验收 51 (stop): stopping during async schema validation closes stopped 
   expect(
     (await facts(h.tape)).find((e) => e.name === 'execution/tool_outcome')?.payload,
   ).toMatchObject({ source: 'stopped', state: 'not-run' })
+})
+
+it('03 验收 12: invalid x-mcp-header tools never become candidates or Tape exclusions', async () => {
+  const { createMcpPool, absolutePath } = await import('../../src/index.js')
+  const { startHttpFixture } = await import('../support/http-fixture.js')
+  const fixture = await startHttpFixture({
+    era: 'modern',
+    inputSchema: {
+      type: 'object',
+      properties: { trace: { type: 'string', 'x-mcp-header': 'invalid header name' } },
+    },
+  })
+  const host = createMemoryHost()
+  const runtime = {
+    serverId: 'fixture',
+    launchHash: 'launch',
+    consented: true,
+    transport: {
+      type: 'http' as const,
+      url: fixture.url,
+      fetch,
+      protocol: 'auto' as const,
+      headerKeys: [],
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+    handshakeTimeoutMs: 30000,
+    callTimeoutMs: 1000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async () => ({ ok: false, code: 'command-not-found' }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  try {
+    pool.apply([runtime])
+    await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+    const sources = (await pool.tableSources({ waitMs: 0, signal: new AbortController().signal }))
+      .sources
+    const candidates = await mcpCandidates(sources)
+    expect(candidates.map((tool) => tool.originalName)).toContain('slow')
+    expect(candidates.map((tool) => tool.originalName)).not.toContain('echo')
+    const h = harness(pool.routes(), {}, (signal) => pool.tableSources({ waitMs: 0, signal }))
+    await send(h)
+    const table = (await facts(h.tape)).find((entry) => entry.name === 'view/tool_table')!
+      .payload as unknown as ToolTablePayload
+    expect(table.tools.map((tool) => tool.name)).toContain('fixture__slow')
+    expect(table.tools.map((tool) => tool.name)).not.toContain('fixture__echo')
+    expect(
+      table.excluded.filter((tool) => tool.serverId === 'fixture' && tool.originalName === 'echo'),
+    ).toEqual([])
+  } finally {
+    warning.mockRestore()
+    const closing = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    await closing
+    await fixture.close()
+  }
 })

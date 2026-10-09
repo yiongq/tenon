@@ -253,7 +253,7 @@ it('03 验收 32: more than 1000 tools errors tools-limit', async () => {
     (await pool.tableSources({ waitMs: 0, signal: new AbortController().signal })).sources,
   ).toEqual([])
 })
-it('03 验收 9 / 03 不变量 2: real spawn uses sandbox, home cwd, allowlisted env and log redaction', async () => {
+it('03 验收 6 / 9 / 03 不变量 2: real spawn uses sandbox, home cwd, allowlisted env and log redaction', async () => {
   const initial = runtime({
     transport: {
       type: 'stdio',
@@ -266,6 +266,7 @@ it('03 验收 9 / 03 不变量 2: real spawn uses sandbox, home cwd, allowlisted
   const host = createMemoryHost({ process: createNodeProcess() })
   await host.secrets.set('tenant:mcp:fixture:env:SECRET_TOKEN', 'fixture-private')
   await host.secrets.set('tenant:mcp:fixture:env:MULTI_SECRET', 'first-secret\nsecond-secret')
+  const spawn = vi.spyOn(host.process, 'spawn')
   const wrap = vi.spyOn(host.sandbox, 'wrap')
   const log: string[] = []
   const pool = createMcpPool({
@@ -295,7 +296,19 @@ it('03 验收 9 / 03 不变量 2: real spawn uses sandbox, home cwd, allowlisted
       workspace: [],
     }),
   )
+  if (initial.transport.type !== 'stdio') throw new Error('expected stdio fixture')
   expect(wrap.mock.calls[0]?.[0].env).not.toHaveProperty('GITHUB_TOKEN')
+  expect(wrap.mock.calls[0]?.[0].argv).toEqual([
+    initial.transport.command,
+    ...initial.transport.args,
+  ])
+  expect(spawn.mock.calls[0]?.[0].argv).toEqual([
+    initial.transport.command,
+    ...initial.transport.args,
+  ])
+  expect(JSON.stringify(spawn.mock.calls[0]?.[0].argv)).not.toMatch(
+    /fixture-private|first-secret|second-secret/,
+  )
   expect(log.join('\n')).not.toMatch(/fixture-private|first-secret|second-secret/)
   expect(log).toContain('visible')
   expect(log.filter((line) => line === '***')).toHaveLength(3)
@@ -571,10 +584,16 @@ it('03 验收 21: login resumes the same route after unauthorized, next call suc
   expect(pool.routes()[0]!.connection).toBe(route)
   expect(await route.callTool('echo', {})).toHaveProperty('content')
   expect(phase(pool)).toBe('connected')
+  const cachedNames = (await route.listTools()).map((tool) => tool.name)
   const registrations = authServer.requests.filter((r) => r.path === '/register').length
   authServer.set({ refreshResult: 'invalid_client' })
   fixture.set({ failNext: '401' })
   await expect(route.callTool('echo', {})).rejects.toBeInstanceOf(connections.McpUnauthorizedError)
+  expect(phase(pool)).toBe('unauthorized')
+  expect(await pool.tableSources({ waitMs: 0, signal: new AbortController().signal })).toEqual({
+    sources: [],
+    absent: [{ serverId: 'fixture', cachedTools: cachedNames, code: 'connector-unauthorized' }],
+  })
   expect(authServer.requests.filter((r) => r.path === '/register')).toHaveLength(registrations)
   authServer.set({ refreshResult: 'ok' })
   fixture.set({ requireToken: undefined })
@@ -1456,4 +1475,78 @@ it('03 读法 68: pool apply evicts provider memory and re-login of that issuer 
   expect(await pool.login('fixture', ui)).toEqual({ ok: true })
   expect(auth.requests.filter((r) => r.path === '/authorize')).toHaveLength(2)
   expect(auth.requests.filter((r) => r.path === '/register')).toHaveLength(2)
+})
+
+it('03 验收 4: static header values are replaced by *** in every logged occurrence', async () => {
+  const secret = 'fixture-static-log-secret'
+  vi.spyOn(connections, 'connectHttpServer').mockImplementation(async (spec) => {
+    expect(spec.staticHeaders).toEqual({ 'X-Fixture-Static': secret })
+    spec.log?.(`public ${secret} and ${secret}`)
+    return fakeConnection().c
+  })
+  const initial = runtime({
+    transport: {
+      type: 'http',
+      url: 'https://fixture.invalid/mcp',
+      fetch: async () => {
+        throw new Error('unexpected network request')
+      },
+      protocol: 'legacy',
+      headerKeys: ['X-Fixture-Static'],
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+  })
+  const { pool, host, logs } = setup(initial, false, false)
+  await host.secrets.set('tenant:mcp:fixture:header:x-fixture-static', secret)
+  pool.apply([initial])
+  await connected(pool)
+  expect(logs).toEqual(['public *** and ***'])
+})
+
+it('03 验收 35: applying reordered config changes ranks and the next capped table without reconnecting', async () => {
+  const { mcpCandidates } = await import('../../src/tools/mcp-source.js')
+  const { openToolTable } = await import('../../src/tools/table.js')
+  const { EMPTY_POLICY } = await import('../../src/host/policy.js')
+  const connect = vi
+    .spyOn(connections, 'connectStdioServer')
+    .mockImplementation(async () => fakeConnection().c)
+  const a = runtime({ serverId: 'a', rank: 0 })
+  const z = runtime({ serverId: 'z', rank: 1 })
+  const { pool } = setup(a, false, false)
+  pool.apply([a, z])
+  await vi.waitFor(() =>
+    expect(pool.status().map((s) => s.phase)).toEqual(['connected', 'connected']),
+  )
+  const table = async (generation: number) =>
+    openToolTable({
+      providerId: 'anthropic',
+      incarnationId: '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34',
+      generation,
+      reason: generation === 0 ? 'first-use' : 'after-compaction',
+      candidates: await mcpCandidates(
+        (await pool.tableSources({ waitMs: 0, signal: new AbortController().signal })).sources,
+      ),
+      tenantId: 'tenant',
+      policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+      userSetting: () => null,
+      hasSearchBackend: false,
+      toolsPerRequest: 1,
+    })
+  const frozen = await table(0)
+  expect(frozen.items.map((t) => t.name)).toEqual(['a__echo'])
+  pool.apply([
+    { ...z, rank: 0 },
+    { ...a, rank: 1 },
+  ])
+  expect(pool.routes().map((s) => [s.serverId, s.rank])).toEqual([
+    ['z', 0],
+    ['a', 1],
+  ])
+  const next = await table(1)
+  expect(next.items.map((t) => t.name)).toEqual(['z__echo'])
+  expect(next.excluded).toEqual([
+    { source: 'mcp', serverId: 'a', originalName: 'echo', code: 'over-limit' },
+  ])
+  expect(frozen.items.map((t) => t.name)).toEqual(['a__echo'])
+  expect(connect).toHaveBeenCalledTimes(2)
 })

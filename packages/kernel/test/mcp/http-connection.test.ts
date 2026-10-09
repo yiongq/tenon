@@ -127,6 +127,11 @@ it('03 验收 30 / 03 不变量 17 (HTTP): legacy cancellation notifies; modern 
     expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(
       era === 'legacy',
     )
+    if (era === 'modern') {
+      const requestId = fixture.requests.find((r) => r.method === 'tools/call')?.body['id']
+      expect(requestId).toBeDefined()
+      await vi.waitFor(() => expect(fixture.cancelledRequests).toContain(requestId))
+    }
   }
 })
 // Pin the optional surface without a renderer route.
@@ -143,37 +148,85 @@ it('03 验收 12: x-mcp-header is mirrored by the SDK', async () => {
     fixture.requests.find((r) => r.method === 'tools/call')?.headers['mcp-param-x-fixture-trace'],
   ).toBe('fixture-trace')
 })
-it('03 验收 30 (HTTP): idle and total deadlines cancel legacy calls and close modern requests', async () => {
-  for (const era of ['legacy', 'modern'] as const) {
-    for (const total of [false, true]) {
-      const { fixture, connection } = await setup(era)
-      const caller = new AbortController()
-      await expect(
-        connection.callTool(
+it.each(['legacy', 'modern'] as const)(
+  '03 验收 30 (HTTP): %s idle timeout cancels its server request',
+  async (era) => {
+    const { fixture, connection } = await setup(era)
+    const caller = new AbortController()
+    await expect(
+      connection.callTool('slow', { ms: 1200 }, { signal: caller.signal, timeoutMs: 150 }),
+    ).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
+    expect(caller.signal.aborted).toBe(false)
+    if (era === 'legacy')
+      await vi.waitFor(() =>
+        expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(true),
+      )
+    else {
+      const requestId = fixture.requests.find((r) => r.method === 'tools/call')?.body['id']
+      await vi.waitFor(() => expect(fixture.cancelledRequests).toContain(requestId))
+      expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(false)
+    }
+  },
+)
+
+it.each(['legacy', 'modern'] as const)(
+  '03 验收 30 (HTTP): %s total deadline at ten times uses fake setTimeout and cancels on the server',
+  async (era) => {
+    const { fixture, connection } = await setup(era)
+    const caller = new AbortController()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      let settled = false
+      let progress = 0
+      const deadlineAt = Date.now() + 1800
+      const pending = connection
+        .callTool(
           'slow',
-          { ms: 1200 },
+          { ms: 3000 },
           {
             signal: caller.signal,
-            timeoutMs: total ? 1000 : 150,
-            ...(total
-              ? { maxTotalTimeoutMs: 250, onprogress: () => {}, resetTimeoutOnProgress: true }
-              : {}),
+            timeoutMs: era === 'modern' ? 180 : 10000,
+            maxTotalTimeoutMs: 1800,
+            onprogress: () => {
+              progress++
+            },
+            resetTimeoutOnProgress: true,
           },
-        ),
-      ).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
+        )
+        .catch((error: unknown) => {
+          settled = true
+          return error
+        })
+      await vi.waitFor(() =>
+        expect(fixture.requests.some((r) => r.method === 'tools/call')).toBe(true),
+      )
+      const requestId = fixture.requests.find((r) => r.method === 'tools/call')!.body['id']
+      // Deliver each progress frame over the real loopback socket before advancing the next tick.
+      if (era === 'modern') {
+        for (let i = 0; i < 17; i++) {
+          await vi.waitFor(() => expect(progress).toBeGreaterThan(i), { interval: 1 })
+        }
+      }
+      await vi.advanceTimersByTimeAsync(deadlineAt - Date.now() - 1)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(settled).toBe(true)
+      expect(await pending).toMatchObject({ code: 'REQUEST_TIMEOUT' })
       expect(caller.signal.aborted).toBe(false)
       if (era === 'legacy')
         await vi.waitFor(() =>
           expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(true),
         )
       else {
-        const requestId = fixture.requests.find((r) => r.method === 'tools/call')?.body['id']
+        expect(progress).toBeGreaterThan(1)
         await vi.waitFor(() => expect(fixture.cancelledRequests).toContain(requestId))
         expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(false)
       }
+    } finally {
+      vi.useRealTimers()
     }
-  }
-})
+  },
+)
 
 it('03 验收 2: HTTP handshake timeout is passed to Client.connect', async () => {
   const { Client } = await import('@modelcontextprotocol/client')
@@ -251,3 +304,25 @@ it('03 验收 13: an auto probe 5xx is handshake-failed, while a rejected fetch 
     }),
   ).rejects.toBe(network)
 })
+
+it.each(['legacy', 'modern'] as const)(
+  '03 验收 41: %s HTTP sends no logging/setLevel and discover declares no capabilities',
+  async (era) => {
+    const { fixture, connection } = await setup(era)
+    await connection.listTools()
+    await connection.callTool('echo', {})
+    await connection.listPrompts?.()
+    await connection.listResources?.()
+    expect(fixture.requests.filter((r) => r.method === 'logging/setLevel')).toEqual([])
+    if (era === 'modern') {
+      const discover = fixture.requests.find((r) => r.method === 'server/discover')!.body
+      expect(discover).not.toHaveProperty('capabilities')
+      expect(discover['params']).not.toHaveProperty('capabilities')
+      expect(
+        (discover['params'] as { _meta: Record<string, unknown> })['_meta'][
+          'io.modelcontextprotocol/clientCapabilities'
+        ],
+      ).toEqual({})
+    }
+  },
+)
