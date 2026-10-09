@@ -100,7 +100,8 @@ async function clientRoute(
 
 /**
  * Acceptance 48 「令牌只在钥匙串」: decode the token groups inside Electron main and look for their
- * token strings in every file under the profile. Only counts and relative file names come back.
+ * token strings in every file under the profile, whatever its size: files are read in chunks that
+ * overlap by the longest token, so no file is skipped. Only counts and relative file names come back.
  */
 async function tokenLeaks(
   app: ElectronApplication,
@@ -111,7 +112,7 @@ async function tokenLeaks(
     async (_electron, { dir, keys }) => {
       const state = (globalThis as { liveMcpSecrets?: MainSecrets }).liveMcpSecrets
       if (!state) throw new Error('live keychain reader was not installed')
-      const { readdirSync, readFileSync: read, statSync } = process.getBuiltinModule('node:fs')
+      const { closeSync, openSync, readdirSync, readSync } = process.getBuiltinModule('node:fs')
       const { join, relative } = process.getBuiltinModule('node:path')
       const values = await Promise.all(
         keys.map(async (key) => [key, await state.secrets.get(key)] as const),
@@ -139,15 +140,31 @@ async function tokenLeaks(
         }
       }
       const needles = tokens.map((token) => Buffer.from(token, 'utf8'))
+      const longest = Math.max(1, ...needles.map((needle) => needle.length))
+      const chunk = 8 * 1024 * 1024
+      const holds = (full: string): boolean => {
+        const fd = openSync(full, 'r')
+        try {
+          const buffer = Buffer.alloc(chunk + longest - 1)
+          let carried = 0
+          for (;;) {
+            const read = readSync(fd, buffer, carried, chunk, null)
+            const view = buffer.subarray(0, carried + read)
+            if (needles.some((needle) => view.includes(needle))) return true
+            if (read === 0) return false
+            carried = Math.min(longest - 1, view.length)
+            buffer.copyWithin(0, view.length - carried, view.length)
+          }
+        } finally {
+          closeSync(fd)
+        }
+      }
       const files: string[] = []
       const walk = (path: string): void => {
         for (const entry of readdirSync(path, { withFileTypes: true })) {
           const full = join(path, entry.name)
           if (entry.isDirectory()) walk(full)
-          else if (entry.isFile() && statSync(full).size <= 64 * 1024 * 1024) {
-            const body = read(full)
-            if (needles.some((needle) => body.includes(needle))) files.push(relative(dir, full))
-          }
+          else if (entry.isFile() && holds(full)) files.push(relative(dir, full))
         }
       }
       walk(dir)
