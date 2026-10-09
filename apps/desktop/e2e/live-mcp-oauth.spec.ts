@@ -21,6 +21,7 @@ import { compact, originMapRefusal } from './helpers/live-env.js'
 import { named, tapeFacts } from './helpers/tape.js'
 import { send, waitingApproval } from './helpers/tools.js'
 import { PAST_CLICK_GUARD_MS } from './helpers/navigation.js'
+import { CIMD_CLIENT_METADATA_URL } from '../src/main/mcp/runtime.js'
 
 const LIVE = process.env['TENON_LIVE'] === '1'
 const ENV_FILE = resolve(process.cwd(), '../../.env.local')
@@ -63,6 +64,38 @@ async function absentAccounts(app: ElectronApplication, accounts: string[]): Pro
     if (!state) throw new Error('live keychain reader was not installed')
     return Promise.all(keys.map(async (key) => (await state.secrets.get(key)) === null))
   }, accounts)
+}
+
+/**
+ * The SDK stores a client for CIMD too, with the metadata URL as client_id; only a DCR client has
+ * another id. The comparison runs in main and only the label crosses the evaluate boundary.
+ */
+async function clientRoute(
+  app: ElectronApplication,
+  clients: string[],
+): Promise<'CIMD' | 'DCR' | 'none'> {
+  return app.evaluate(
+    async (_electron, { keys, cimd }) => {
+      const state = (globalThis as { liveMcpSecrets?: MainSecrets }).liveMcpSecrets
+      if (!state) throw new Error('live keychain reader was not installed')
+      const ids = await Promise.all(
+        keys.map(async (key) => {
+          const raw = await state.secrets.get(key)
+          if (raw === null) return null
+          try {
+            const id = (JSON.parse(raw) as { client_id?: unknown }).client_id
+            return typeof id === 'string' ? id : null
+          } catch {
+            return null
+          }
+        }),
+      )
+      const present = ids.filter((id) => id !== null)
+      if (present.length === 0) return 'none'
+      return present.some((id) => id === cimd) ? 'CIMD' : 'DCR'
+    },
+    { keys: clients, cimd: CIMD_CLIENT_METADATA_URL },
+  )
 }
 
 /**
@@ -131,7 +164,7 @@ test.describe('live mcp oauth · Notion', () => {
   test.skip(!LIVE, 'opt-in only: TENON_LIVE=1, lead and owner present')
   test.describe.configure({ timeout: 600_000 })
 
-  test('03 验收 48: real browser, DCR, readonly model call and keychain deletion', async () => {
+  test('03 验收 48: real browser, CIMD or DCR, readonly model call and keychain deletion', async () => {
     // Fail rather than silently bypassing a dangerous setup: a test seam in the runner's
     // environment or in `.env.local` refuses the run. This spec never opens a fixture browser.
     const refusal = originMapRefusal(process.env, fromFile)
@@ -223,12 +256,11 @@ test.describe('live mcp oauth · Notion', () => {
       expect(accounts.length).toBeGreaterThan(1)
       const clients = accounts.filter((account) => account.endsWith(':client'))
       const slots = accounts.filter((account) => account.includes(':tokens:'))
-      // Prevent vacuous cleanup checks: a real token must precede delete. The client identity is
-      // whatever the order own > CIMD > DCR picked; DCR leaves a client account, CIMD does not.
+      // Prevent vacuous cleanup checks: a real token must precede delete. No own client is
+      // configured, so the order own > CIMD > DCR leaves CIMD or DCR (spec §登录流程).
       expect((await absentAccounts(app, slots)).some((absent) => !absent)).toBe(true)
-      const clientIdentity = (await absentAccounts(app, clients)).some((absent) => !absent)
-        ? 'DCR'
-        : 'CIMD'
+      const clientIdentity = await clientRoute(app, clients)
+      expect(['CIMD', 'DCR']).toContain(clientIdentity)
       const search = server.toolViews.find((tool) => tool.originalName === 'notion-search')
       expect(search !== undefined && search.unavailable === null).toBe(true)
       if (!search) throw new Error('Notion did not list the documented readonly search tool')
