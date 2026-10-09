@@ -1,3 +1,4 @@
+// oxlint-disable no-await-in-loop -- each server is populated and checked in isolation
 import { readFileSync } from 'node:fs'
 import { validateClientMetadataUrl } from '@tenon-app/kernel'
 // Consent is independent of process PATH and secret values; live hashes are checked on every call.
@@ -7,7 +8,7 @@ import { mcpRuntimes, launchHash, CIMD_CLIENT_METADATA_URL } from '../src/main/m
 import { mcpUserSetting } from '../src/main/mcp/user-setting.js'
 import { createMcpConsent } from '../src/main/mcp/consent.js'
 import { mcpDraft, mcpHarness } from './support/mcp-harness.js'
-import type { McpServerStatus } from '@tenon-app/kernel'
+import type { McpServerStatus, HostAdapter } from '@tenon-app/kernel'
 const fetchFactory = () => fetch
 const server = () =>
   mcpServerSchema.parse({
@@ -130,8 +131,14 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
   const { readConfig } = await import('../src/main/host/profile.js')
   const { createSchemaWorker } = await import('../src/main/mcp/schema-worker.js')
   const root = await mkdtemp(join(tmpdir(), 'tenon-mcp-runtime-'))
+  const starts: number[] = []
+  const connectedAt = new Map<string, number>()
+  let desktop: ReturnType<typeof createDesktopMcp> | undefined
   const processPort = createHostProcess(),
-    spawn = vi.fn<typeof processPort.spawn>((spec, signal) => processPort.spawn(spec, signal))
+    spawn = vi.fn<typeof processPort.spawn>((spec, signal) => {
+      starts.push(performance.now())
+      return processPort.spawn(spec, signal)
+    })
   const host = Object.assign(
     createMemoryHost({ identity: { profileDir: root }, process: { spawn } }),
     { fs: new DesktopFs(), clock: new SystemClock() },
@@ -142,9 +149,14 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
     home: absolutePath('/'),
     baseEnv: async () => ({ PATH: '/bin:/usr/bin', GITHUB_TOKEN: 'must-not-inherit' }),
     uuid: () => crypto.randomUUID(),
-    changed: () => {},
+    changed: () => {
+      for (const status of desktop?.pool.status() ?? [])
+        if (status.phase === 'connected' && !connectedAt.has(status.serverId))
+          connectedAt.set(status.serverId, performance.now())
+    },
     schemaValidator: createSchemaWorker(),
   })
+  desktop = mcp
   try {
     const draft = mcpDraft()
     draft.transport = {
@@ -176,6 +188,10 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
       expect(mcp.pool.status().map((s) => s.phase)).toEqual(['connected', 'connected']),
     )
     expect(spawn).toHaveBeenCalledTimes(2)
+    expect(connectedAt.has('one')).toBe(true)
+    expect(connectedAt.has('two')).toBe(true)
+    expect(starts[1]!).toBeLessThan(connectedAt.get('one')!)
+    expect(starts[0]!).toBeLessThan(connectedAt.get('two')!)
     expect(
       spawn.mock.calls.every(
         ([spec]) =>
@@ -205,6 +221,7 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
     expect(spawn.mock.calls.at(-1)?.[0].env.TOKEN).toBe('fake-credential-after')
     expect(mcp.config().mcpServers.find((s) => s.id === 'one')!.consent).toEqual(before)
     expect(mcp.needsConsent('one')).toBe(false)
+    await assertSecretFreeTape(host, mcp)
     await mcp.logs.close()
     const files = [
       join(root, 'config.json'),
@@ -359,4 +376,165 @@ it('03 验收 17 (product): CIMD URL is https with a path, SDK-valid and equals 
     fetchFactory,
   )[0]!
   expect(runtime.transport).toMatchObject({ type: 'http', oauth: { clientMetadataUrl: expected } })
+})
+
+async function assertSecretFreeTape(
+  host: HostAdapter,
+  mcp: Awaited<ReturnType<typeof mcpHarness>>['mcp'],
+) {
+  const { createMemoryTapeStore } = await import('@tenon-app/kernel')
+  const {
+    createCounterIds,
+    createScriptedProvider,
+    createTestLoopPorts,
+    createTestSessionService,
+    scriptedTurn,
+  } = await import('@tenon-app/kernel/testing')
+  const { anthropicModel } = await import('../../../packages/kernel/test/provider/wire/fixtures.js')
+  const tape = createMemoryTapeStore({ identity: host.identity })
+  const model = anthropicModel({ reasoning: false })
+  const provider = createScriptedProvider({ models: [model] })
+  const loop = createTestLoopPorts({
+    connector: { provider, model, mcpSources: mcp.pool.routes() },
+  })
+  const service = createTestSessionService(
+    {
+      host,
+      tape,
+      ids: createCounterIds(),
+      inspectors: [],
+      connector: loop.connector,
+      protectedFiles: [],
+    },
+    { tools: {}, userSetting: mcp.userSetting },
+  )
+  service.bindLoop(loop)
+  provider.script(
+    scriptedTurn({
+      deltas: ['done'],
+      usage: {
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        reasoningTokens: 0,
+        final: true,
+      },
+    }),
+  )
+  const sessionId = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
+  const sent = await service.send({
+    sessionId,
+    origin: null,
+    text: 'List the available connector tools.',
+  })
+  expect(sent.status).toBe('started')
+  if (sent.status !== 'started') throw new Error('run did not start')
+  await loop.runEnded({ runId: sent.runId })
+  const entries = (await tape.readRange({ sessionId, limit: 1000 })).entries
+  expect(entries.some((e) => e.name === 'view/tool_table')).toBe(true)
+  expect(
+    entries.some(
+      (e) => e.name === 'view/content' && JSON.stringify(e.payload).includes('one__echo'),
+    ),
+  ).toBe(true)
+  const recorded = JSON.stringify(entries)
+  expect(recorded).not.toContain('fake-credential-before')
+  expect(recorded).not.toContain('fake-credential-after')
+}
+it('03 验收 26: deletion removes every OAuth shard and client through real readers while preserving the other server', async () => {
+  const { keyFor } = await import('@tenon-app/kernel')
+  const { createMcpTokenStore } = await import('../../../packages/kernel/src/mcp/token-store.js')
+  const { mcpAccounts } = await import('../src/main/mcp/store.js')
+  const h = await mcpHarness()
+  const issuer = { hash: 'a'.repeat(16), url: 'https://issuer.example' }
+  const stores = new Map<string, ReturnType<typeof createMcpTokenStore>>()
+  try {
+    for (const id of ['one', 'two']) {
+      const draft = mcpDraft(id)
+      draft.transport = {
+        type: 'http',
+        url: 'https://fixture.example/mcp',
+        protocol: 'legacy',
+        header_keys: ['X-Token'],
+        oauth: { ownClient: { clientId: 'own', hasSecret: true, redirectPort: 53280 } },
+      }
+      // oxlint-disable-next-line no-await-in-loop -- isolated server accounts
+      expect(
+        await h.mcp.store.save({
+          mode: 'create',
+          draft,
+          secrets: {
+            env: {},
+            headers: { 'X-Token': `header-${id}` },
+            ownClientSecret: `own-${id}`,
+          },
+          consent: 'persistent',
+        }),
+      ).toEqual({ ok: true })
+      const store = createMcpTokenStore({
+        secrets: h.host.secrets,
+        identity: h.host.identity,
+        serverId: id,
+        ids: { uuid: () => crypto.randomUUID() },
+        onIssuer: async (value, kind) => {
+          await h.mcp.store.recordIssuer(id, value, kind)
+        },
+        deleting: () => false,
+        log: () => {},
+      })
+      stores.set(id, store)
+      const tokens = {
+        access_token: `access-${id}`,
+        token_type: 'Bearer',
+        refresh_token: id.repeat(2000),
+      }
+      // oxlint-disable-next-line no-await-in-loop -- use the actual token serialization
+      await store.saveTokens(issuer, tokens)
+      // oxlint-disable-next-line no-await-in-loop -- actual client serialization
+      await store.saveClient(issuer, { client_id: `client-${id}`, client_secret: `secret-${id}` })
+      // Populate all eight declared accounts, including an obsolete incomplete group.
+      for (const i of [0, 1, 2, 3]) {
+        // oxlint-disable-next-line no-await-in-loop -- intentionally retained obsolete fragments
+        await h.host.secrets.set(
+          keyFor(h.host.identity, 'mcp', id, 'oauth', issuer.hash, 'tokens', 'b', String(i)),
+          'obsolete-fragment',
+        )
+      }
+      // oxlint-disable-next-line no-await-in-loop -- prove the real reader works before deletion
+      expect(await store.tokens(issuer.hash)).toEqual(tokens)
+      // oxlint-disable-next-line no-await-in-loop -- prove the client reader works before deletion
+      expect(await store.client(issuer.hash)).toMatchObject({ client_id: `client-${id}` })
+    }
+    const before = h.mcp.config().mcpServers
+    const one = mcpAccounts(
+      before.find((s) => s.id === 'one')!,
+      h.host,
+    )
+    const two = mcpAccounts(
+      before.find((s) => s.id === 'two')!,
+      h.host,
+    )
+    const otherValues = await Promise.all(two.map((key) => h.host.secrets.get(key)))
+    expect(
+      (await Promise.all(one.map((key) => h.host.secrets.get(key)))).every(
+        (value) => value !== null,
+      ),
+    ).toBe(true)
+    expect(one).toHaveLength(11)
+    expect(await h.mcp.store.delete('one')).toEqual({ ok: true })
+    expect(await Promise.all(one.map((key) => h.host.secrets.get(key)))).toEqual(
+      Array(11).fill(null),
+    )
+    expect(await stores.get('one')!.tokens(issuer.hash)).toBeUndefined()
+    expect(await stores.get('one')!.client(issuer.hash)).toBeUndefined()
+    expect(await Promise.all(two.map((key) => h.host.secrets.get(key)))).toEqual(otherValues)
+    expect(await stores.get('two')!.tokens(issuer.hash)).toMatchObject({
+      access_token: 'access-two',
+    })
+    expect(await stores.get('two')!.client(issuer.hash)).toMatchObject({ client_id: 'client-two' })
+    expect(h.mcp.config().mcpServers.map((s) => s.id)).toEqual(['two'])
+  } finally {
+    await h.close()
+  }
 })

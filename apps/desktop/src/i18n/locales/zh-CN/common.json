@@ -704,6 +704,24 @@
     },
     "reviewBeforeRelease": "请先查看变化，再放行",
     "moveUp": "上移 {name}",
-    "moveDown": "下移 {name}"
+    "moveDown": "下移 {name}",
+    "callback": {
+      "success": "已登录 {name}，可以关闭这个页面回到 Tenon",
+      "pending": "正在完成登录，可以回到 Tenon 查看结果",
+      "invalid": "这不是 Tenon 发起的登录，或已过期",
+      "metadata-unreachable": "登录失败：无法获取授权服务器的元数据",
+      "pkce-unsupported": "登录失败：授权服务器不支持 S256 PKCE",
+      "issuer-mismatch": "登录失败：元数据中的授权服务器身份不匹配",
+      "iss-mismatch": "登录失败：回调中的授权服务器身份不匹配",
+      "needs-client": "登录需要先注册并填写自带客户端",
+      "issuer-changed": "授权服务器已变更，请重新配置客户端后登录",
+      "denied": "授权服务器拒绝了这次登录",
+      "timeout": "登录已超时，可以回到 Tenon 重试",
+      "port-in-use": "登录失败：回调端口被占用",
+      "unsafe-url": "登录失败：授权地址不安全",
+      "cancelled": "这次登录已取消",
+      "keychain": "登录失败：无法将凭据存入钥匙串",
+      "network": "登录失败：网络请求出错"
+    }
   }
 }

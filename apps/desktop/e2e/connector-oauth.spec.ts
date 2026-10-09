@@ -75,8 +75,22 @@ test('03 验收 21 (UI): 401 offers relogin, own-client login succeeds, same fro
     const button = page.getByTestId('tool-relogin')
     await expect(button).toBeVisible()
     http.set({ requireToken: 'fixture-access-1' })
+    await app.evaluate(() => {
+      const { ServerResponse } = process.getBuiltinModule('node:http')
+      const end = ServerResponse.prototype.end
+      ServerResponse.prototype.end = function (...args: unknown[]) {
+        if (this.req.url?.startsWith('/callback?'))
+          (globalThis as { tenonCallbackPage?: string }).tenonCallbackPage = String(args[0] ?? '')
+        return Reflect.apply(end, this, args)
+      }
+    })
     await button.click()
     await connected(page)
+    await expect
+      .poll(() =>
+        app.evaluate(() => (globalThis as { tenonCallbackPage?: string }).tenonCallbackPage ?? ''),
+      )
+      .toContain('已登录 HTTP Notes，可以关闭这个页面回到 Tenon')
     expect(await browserCalls(app)).toBe(0)
     expect(
       await app.evaluate(

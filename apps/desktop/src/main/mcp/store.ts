@@ -224,8 +224,13 @@ export function createMcpStore(q: {
         const server = config.mcpServers.find((s) => s.id === id)
         if (!server) return refused('not-found')
         deleting.add(id)
-        await q.pool().retire(id)
-        q.apply(config.mcpServers.filter((s) => s.id !== id))
+        try {
+          await q.pool().retire(id)
+        } catch (error) {
+          deleting.delete(id)
+          q.apply(config.mcpServers)
+          throw error
+        }
         try {
           for (const account of mcpAccounts(server, host)) await host.secrets.delete(account)
         } catch {
@@ -240,6 +245,7 @@ export function createMcpStore(q: {
           q.apply(config.mcpServers)
           throw error
         }
+        q.apply(config.mcpServers.filter((s) => s.id !== id))
         q.consent.revoke(id)
         await unlink(join(host.identity.profileDir, 'mcp', `${id}.json`)).catch((error) => {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
