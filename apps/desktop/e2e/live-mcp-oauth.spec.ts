@@ -306,7 +306,11 @@ test.describe('live mcp oauth · Notion', () => {
       await page.getByTestId('connector-delete-confirm').click()
       await expect(row).toHaveCount(0)
       deleted = true
-      expect((await absentAccounts(app, accounts)).every(Boolean)).toBe(true)
+      // The row leaves the list when the pool drops the server, before the keychain deletes finish
+      // (store.delete applies first): wait for the route's deletes rather than racing them.
+      await expect
+        .poll(async () => (await absentAccounts(app, accounts)).every(Boolean), { timeout: 30_000 })
+        .toBe(true)
       // The passing-test fixture deletes this isolated profile. Preserve only numeric usage and
       // non-secret observations in stdout so lead can save them under tenon-notes/live-* and add
       // the actual billed cost. Never print a request, result, token or full Tape entry.
@@ -354,7 +358,11 @@ test.describe('live mcp oauth · Notion', () => {
               return reply.ok && reply.data?.ok === true
             }, id)
             expect(ok).toBe(true)
-            expect((await absentAccounts(app, accounts)).every(Boolean)).toBe(true)
+            await expect
+              .poll(async () => (await absentAccounts(app, accounts)).every(Boolean), {
+                timeout: 30_000,
+              })
+              .toBe(true)
           }
         }
       } finally {
