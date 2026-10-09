@@ -703,7 +703,25 @@
       "modern": "Modern"
     },
     "reviewBeforeRelease": "View changes before releasing",
-    "moveUp": "Move {name} up",
-    "moveDown": "Move {name} down"
+    "moveUp": "Move up: {name}",
+    "moveDown": "Move down: {name}",
+    "callback": {
+      "success": "Signed in to {name}. You can close this page and return to Tenon.",
+      "pending": "Finishing sign-in. You can return to Tenon to check the result.",
+      "invalid": "This sign-in was not started by Tenon, or has expired.",
+      "metadata-unreachable": "Sign-in failed because the authorization metadata could not be reached.",
+      "pkce-unsupported": "Sign-in failed because the server does not support S256 PKCE.",
+      "issuer-mismatch": "Sign-in failed because the metadata issuer does not match.",
+      "iss-mismatch": "Sign-in failed because the callback issuer does not match.",
+      "needs-client": "Sign-in requires your own registered client.",
+      "issuer-changed": "The authorization issuer changed. Reconfigure your client to sign in.",
+      "denied": "Sign-in was denied by the authorization server.",
+      "timeout": "Sign-in timed out. Return to Tenon to try again.",
+      "port-in-use": "Sign-in failed because the callback port is in use.",
+      "unsafe-url": "Sign-in failed because the authorization URL is unsafe.",
+      "cancelled": "Sign-in was cancelled.",
+      "keychain": "Sign-in failed because credentials could not be stored in the keychain.",
+      "network": "Sign-in failed because of a network error."
+    }
   }
 }

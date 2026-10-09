@@ -1132,3 +1132,32 @@ it('03 不变量 7: both new and changed definitions are excluded and absent fro
     expect(table.excluded[0]?.code).toBe('definition-changed')
   }
 })
+
+it.each(['connector-unauthorized', 'connector-unavailable'] as const)(
+  '03 验收 34: %s cached tools obey policy, then user-disabled, then absence',
+  (code) => {
+    const table = opening03([], {
+      absent: [{ serverId: 'fixture', code, cachedTools: ['policy', 'never', 'off', 'absent'] }],
+      policy: {
+        status: 'current',
+        version: 'deny',
+        snapshot: {
+          tools: [{ policyId: 'deny', serverId: 'fixture', toolName: 'policy', effect: 'deny' }],
+        },
+      },
+      userSetting: (key) =>
+        key.toolName === 'off'
+          ? { connectorOff: true }
+          : key.toolName === 'policy' || key.toolName === 'never'
+            ? { userSetting: 'never' }
+            : null,
+    })
+    expect(table.items).toEqual([])
+    expect(table.excluded).toEqual([
+      { source: 'mcp', serverId: 'fixture', originalName: 'absent', code },
+      { source: 'mcp', serverId: 'fixture', originalName: 'never', code: 'user-disabled' },
+      { source: 'mcp', serverId: 'fixture', originalName: 'off', code: 'user-disabled' },
+      { source: 'mcp', serverId: 'fixture', originalName: 'policy', code: 'policy' },
+    ])
+  },
+)

@@ -1,3 +1,6 @@
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { I18nextProvider } from 'react-i18next'
 import { describe, expect, it } from 'vitest'
 import {
   mcpErrorCodeSchema,
@@ -197,4 +200,51 @@ it('only changing envs values or adding a secret name changes launch; secrets ar
     }).plain,
   ).toEqual(['VALUE=a\\u{202E}b'])
   expect(resolvedCopy('/a\u202Eb').args).toEqual({ path: '/a\\u{202E}b' })
+})
+
+it('03 验收 13: the error detail renders 改为只用旧代 only for HTTP era-negotiation-failed', async () => {
+  const i18n = await createI18n('zh-CN', () => {})
+  // Runtime import keeps this renderer component in its own JSX/DOM TypeScript project.
+  const componentPath = '../src/renderer/src/components/settings/ConnectorDetail.tsx'
+  const { ConnectorDetail } = await import(componentPath)
+  const remote = serverView({
+    transport: {
+      type: 'http',
+      url: 'https://fixture.example',
+      protocol: 'auto',
+      header_keys: [],
+      oauth: { ownClient: null, issuers: [] },
+    },
+  })
+  const render = (server: ReturnType<typeof serverView>) =>
+    renderToStaticMarkup(
+      createElement(I18nextProvider, { i18n }, createElement(ConnectorDetail, { server })),
+    )
+  expect(
+    render({
+      ...remote,
+      status: {
+        ...remote.status,
+        phase: 'error',
+        error: { code: 'era-negotiation-failed', stderrTail: '' },
+      },
+    }),
+  ).toMatch(/<button[^>]*>改为只用旧代<\/button>/)
+  expect(
+    render({
+      ...remote,
+      status: { ...remote.status, phase: 'error', error: { code: 'network', stderrTail: '' } },
+    }),
+  ).not.toMatch(/<button[^>]*>改为只用旧代<\/button>/)
+  expect(
+    render(
+      serverView({
+        status: {
+          ...remote.status,
+          phase: 'error',
+          error: { code: 'era-negotiation-failed', stderrTail: '' },
+        },
+      }),
+    ),
+  ).not.toMatch(/<button[^>]*>改为只用旧代<\/button>/)
 })

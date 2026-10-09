@@ -463,6 +463,24 @@ it('03 验收 44: disabled or never-pinned instructions have no pending change',
   expect((await h.call('mcp.list', {})).servers[0]?.instructionsView?.review).toBe('ok')
 })
 
+it('03 验收 42: instructions that change after their pin show a pending review until released', async () => {
+  const h = await setup()
+  await save(h)
+  const status = h.mcp.pool.status()[0]!
+  let instructions = { text: 'fixture', hash: 'a'.repeat(64) }
+  h.mcp.pool.status = () => [{ ...status, instructions }]
+  const review = async () => (await h.call('mcp.list', {})).servers[0]?.instructionsView?.review
+  await h.call('mcp.setInstructions', { id: 'notes', enabled: true })
+  const release = (definitionHash: string) =>
+    h.call('mcp.release', { id: 'notes', target: { instructions: true }, definitionHash })
+  expect(await release('a'.repeat(64))).toEqual({ ok: true })
+  expect(await review()).toBe('ok')
+  instructions = { text: 'changed', hash: 'b'.repeat(64) }
+  expect(await review()).toBe('changed')
+  expect(await release('b'.repeat(64))).toEqual({ ok: true })
+  expect(await review()).toBe('ok')
+})
+
 it('03 读法 67: reserved header with a supplied value returns invalid-header through validated IPC', async () => {
   const h = await setup(),
     d = mcpDraft()
@@ -481,4 +499,22 @@ it('03 读法 67: reserved header with a supplied value returns invalid-header t
   expect(write).not.toHaveBeenCalled()
   expect(secret).not.toHaveBeenCalled()
   expect(h.mcp.config().mcpServers).toEqual([])
+})
+
+it('03 验收 53: mcp.login supplies the application locale, display name and result to its retained callback', async () => {
+  const h = await setup()
+  await save(h, { ...mcpDraft(), displayName: 'Route Notes' })
+  const { writeConfig } = await import('../src/main/host/profile.js')
+  await writeConfig(h.host.fs, h.host.identity, { locale: 'zh-CN' })
+  let response: Promise<Response> | undefined
+  vi.spyOn(h.mcp.pool, 'login').mockImplementation(async (_id, ui) => {
+    const listener = await ui.listen(0)
+    const waiting = listener.waitForCallback('route-state', 120_000)
+    response = fetch(`http://127.0.0.1:${listener.port}/callback?state=route-state`)
+    await waiting
+    await listener.close()
+    return { ok: true }
+  })
+  expect(await h.call('mcp.login', { id: 'notes' })).toEqual({ ok: true })
+  expect(await (await response!).text()).toContain('已登录 Route Notes，可以关闭这个页面回到 Tenon')
 })

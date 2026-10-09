@@ -38,9 +38,11 @@ import {
   mcpReadLog,
 } from '@tenon-app/contracts'
 import type { IpcMainLike, McpDraft, McpWarning, McpServerView } from '@tenon-app/contracts'
+import type { Locale } from '../../i18n/resources.js'
 import type { DesktopMcp } from './controller.js'
 import { resolveMcpCommand } from './resolve-command.js'
 import { listenMcpCallback, usesMcpCallbackTestPort } from './loopback.js'
+import type { McpCallbackListener } from './loopback.js'
 import { createMcpOpenUrl } from './open-url.js'
 import { mcpAddress } from './address.js'
 import { visible } from '../../renderer/src/lib/visible.js'
@@ -119,6 +121,7 @@ export function registerMcpRoutes(q: {
   isPackaged: boolean
   env: Readonly<Record<string, string | undefined>>
   openExternal: (url: string) => Promise<unknown>
+  locale: () => Locale
 }) {
   const { ipcMain, mcp } = q
   registerRoute(ipcMain, mcpList, async () => {
@@ -302,12 +305,18 @@ export function registerMcpRoutes(q: {
       after: prettyDefinition(status?.instructions?.text ?? ''),
     }
   })
-  registerRoute(ipcMain, mcpLogin, ({ id }) =>
-    mcp.pool.login(id, {
+  registerRoute(ipcMain, mcpLogin, async ({ id }) => {
+    const config = mcp.config()
+    let callback: McpCallbackListener | undefined
+    const result = await mcp.pool.login(id, {
       listen: async (port) => {
         // Test-only: the application binds port 0 and reports the actual bound port. No probe/close race.
         const auto = usesMcpCallbackTestPort(q)
-        const listener = await listenMcpCallback(auto ? 0 : port)
+        const listener = await listenMcpCallback(auto ? 0 : port, {
+          locale: q.locale(),
+          displayName: config.mcpServers.find((s) => s.id === id)?.displayName ?? id,
+        })
+        callback = listener
         if (auto)
           (globalThis as { tenonMcpCallbackPort?: number }).tenonMcpCallbackPort = listener.port
         return listener
@@ -318,8 +327,10 @@ export function registerMcpRoutes(q: {
         openExternal: q.openExternal,
         fetch: q.host.network.fetch,
       }),
-    }),
-  )
+    })
+    callback?.complete(result)
+    return result
+  })
   // Revoking a pending login closes its listener through the existing pool/provider cancellation path.
   registerRoute(ipcMain, mcpCancelLogin, ({ id }) => ({ cancelled: mcp.pool.cancelLogin(id) }))
 }

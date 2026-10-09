@@ -163,3 +163,50 @@ it('03 验收 39 (Everything): gzip-file-as-resource with a data URI changes the
     await closing
   }
 }, 20_000)
+
+it('03 验收 40: the product tool table contains only builtins and Everything tools, never prompts or resources', async () => {
+  const { builtinCandidates, PRODUCT_BUILTINS, mcpCandidates, openToolTable } =
+    await import('../../src/index.js')
+  const { EMPTY_POLICY } = await import('../../src/host/policy.js')
+  const conn = await connectStdioServer(createMemoryHost({ process: createNodeProcess() }), {
+    name: 'everything',
+    spawn: serverEverythingSpawnSpec(),
+    sandbox: { profile: 'full-access', workspace: [] },
+  })
+  try {
+    const tools = await conn.listTools()
+    const prompts = await conn.listPrompts!()
+    const resources = await conn.listResources!()
+    expect(prompts.prompts.length).toBeGreaterThan(0)
+    expect(resources.resources.length).toBeGreaterThan(0)
+    const builtin = builtinCandidates({
+      profile: 'cowork',
+      available: (name) => PRODUCT_BUILTINS.has(name),
+      search: null,
+    })
+    const table = openToolTable({
+      providerId: 'anthropic',
+      incarnationId: '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34',
+      generation: 0,
+      reason: 'first-use',
+      candidates: [
+        ...builtin,
+        ...(await mcpCandidates([{ serverId: 'everything', connection: conn }])),
+      ],
+      tenantId: 'tenant',
+      policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+      userSetting: () => null,
+      hasSearchBackend: true,
+      toolsPerRequest: null,
+    })
+    expect(table.items.map((tool) => tool.name)).toEqual(
+      [
+        ...builtin.map((tool) => tool.name),
+        ...tools.map((tool) => `everything__${tool.name}`),
+      ].toSorted(),
+    )
+    expect(table.excluded).toEqual([])
+  } finally {
+    await conn.close()
+  }
+})

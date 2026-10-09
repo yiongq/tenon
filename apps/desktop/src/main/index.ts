@@ -292,6 +292,7 @@ async function main(): Promise<void> {
     removing,
   )
   registerMcpRoutes({
+    locale: () => locale.current,
     ipcMain: routes,
     mcp,
     host,

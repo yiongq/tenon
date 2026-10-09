@@ -5,7 +5,9 @@ import { mkdtemp, writeFile, chmod, readFile, readdir, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:https'
-import { createServer as createTcpServer } from 'node:net'
+import { createServer as createTcpServer, createConnection } from 'node:net'
+import { mcpLoginErrorSchema } from '@tenon-app/contracts'
+import { createI18n } from '../src/i18n/create-instance.js'
 import type { Socket, AddressInfo } from 'node:net'
 import { readFileSync } from 'node:fs'
 import tls from 'node:tls'
@@ -173,8 +175,11 @@ it('03 验收 18: wrong state keeps waiting, correct state closes; busy port, ti
   const url = `http://127.0.0.1:${listener.port}/callback`
   expect((await fetch(url + '?state=wrong')).status).toBe(400)
   await expect(listenMcpCallback(listener.port)).rejects.toMatchObject({ code: 'port-in-use' })
-  expect((await fetch(url + '?state=right&code=fixture')).status).toBe(200)
+  const response = fetch(url + '?state=right&code=fixture')
   expect((await waiting).get('code')).toBe('fixture')
+  await listener.close()
+  listener.complete({ ok: true })
+  expect((await response).status).toBe(200)
   await expect(fetch(url)).rejects.toThrow(/./)
   const slow = await listenMcpCallback(0)
   vi.useFakeTimers()
@@ -304,8 +309,10 @@ it('03 验收 18: an early browser callback is held until auth starts waiting fo
   const callback = fetch(`http://127.0.0.1:${listener.port}/callback?state=right&code=early`)
   await new Promise((r) => setTimeout(r, 20))
   const waiting = listener.waitForCallback('right', 120_000)
-  expect((await callback).status).toBe(200)
   expect((await waiting).get('code')).toBe('early')
+  await listener.close()
+  listener.complete({ ok: true })
+  expect((await callback).status).toBe(200)
 })
 
 it('03 验收 10 (fetch cancellation): aborting a stalled TLS handshake closes the pinned socket', async () => {
@@ -403,4 +410,177 @@ it('03 验收 18 / 18a-1: callback auto requires unpackaged and actual e2e off e
       usesMcpCallbackTestPort({ isPackaged: false, env: { ...env, TENON_DEV_ENV: value } }),
     ).toBe(false)
   expect(usesMcpCallbackTestPort({ isPackaged: false, env: { TENON_DEV_ENV: 'off' } })).toBe(false)
+})
+
+async function tcpConnect(port: number) {
+  return new Promise<void>((resolve, reject) => {
+    const socket = createConnection({ host: '127.0.0.1', port })
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve()
+    })
+    socket.once('error', reject)
+  })
+}
+function securePage(response: Response, body: string) {
+  expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')
+  expect(response.headers.get('content-security-policy')).toBe(
+    "default-src 'none'; style-src 'unsafe-inline'",
+  )
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  expect(response.headers.get('referrer-policy')).toBe('no-referrer')
+  const all = body + JSON.stringify([...response.headers])
+  for (const value of [
+    'private-code',
+    'private-state',
+    'private-token',
+    '<script',
+    'http://',
+    'https://',
+  ])
+    expect(all).not.toContain(value)
+}
+it.each(['zh-CN', 'en'] as const)(
+  '03 验收 53: %s callback pages describe every result with safe HTML and headers',
+  async (locale) => {
+    const i = await createI18n(locale, () => {})
+    for (const code of [null, ...mcpLoginErrorSchema.options]) {
+      // oxlint-disable-next-line no-await-in-loop -- independent callback listeners
+      const listener = await listenMcpCallback(0, { locale, displayName: 'Notes <&>' })
+      const waiting = listener.waitForCallback('private-state', 120_000)
+      const pending = fetch(
+        `http://127.0.0.1:${listener.port}/callback?state=private-state&code=private-code&token=private-token`,
+      )
+      // oxlint-disable-next-line no-await-in-loop -- wait for the request to be retained
+      await waiting
+      // oxlint-disable-next-line no-await-in-loop -- kernel closes before the route completes the page
+      await listener.close()
+      listener.complete(code === null ? { ok: true } : { ok: false, code })
+      // oxlint-disable-next-line no-await-in-loop -- each response is asserted separately
+      const response = await pending
+      // oxlint-disable-next-line no-await-in-loop -- each body is asserted separately
+      const body = await response.text()
+      expect(response.status).toBe(200)
+      expect(body).toContain(
+        code === null
+          ? i.t('mcp.callback.success', { name: 'Notes &lt;&amp;&gt;' })
+          : i.t(`mcp.callback.${code}`),
+      )
+      expect(body).toContain(`lang="${locale}"`)
+      expect(body.includes('Notes &lt;&amp;&gt;')).toBe(code === null)
+      securePage(response, body)
+      // oxlint-disable-next-line no-await-in-loop -- verify the port itself, not merely HTTP failure
+      await expect(tcpConnect(listener.port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+    }
+  },
+)
+it('03 验收 53: mismatched state returns a safe localized 400 and still accepts the real login', async () => {
+  const listener = await listenMcpCallback(0, { locale: 'zh-CN', displayName: 'Notes' })
+  cleanup.push(() => listener.close())
+  const waiting = listener.waitForCallback('private-state', 120_000)
+  const response = await fetch(
+    `http://127.0.0.1:${listener.port}/callback?state=wrong&code=private-code`,
+  )
+  const body = await response.text()
+  expect(response.status).toBe(400)
+  expect(body).toContain('这不是 Tenon 发起的登录，或已过期')
+  securePage(response, body)
+  await tcpConnect(listener.port)
+  const good = fetch(`http://127.0.0.1:${listener.port}/callback?state=private-state`)
+  await waiting
+  await listener.close()
+  listener.complete({ ok: true })
+  expect((await good).status).toBe(200)
+})
+it('03 验收 53: no login result by 30 seconds returns the pending page and closes idle connections', async () => {
+  const listener = await listenMcpCallback(0, { locale: 'zh-CN', displayName: 'Notes' })
+  cleanup.push(() => listener.close())
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const waiting = listener.waitForCallback('private-state', 120_000)
+  let finished = false
+  const pending = fetch(
+    `http://127.0.0.1:${listener.port}/callback?state=private-state&code=private-code`,
+  ).then((response) => {
+    finished = true
+    return response
+  })
+  await waiting
+  await listener.close()
+  await vi.advanceTimersByTimeAsync(29_999)
+  expect(finished).toBe(false)
+  await vi.advanceTimersByTimeAsync(1)
+  const response = await pending
+  const body = await response.text()
+  expect(response.status).toBe(200)
+  expect(body).toContain('正在完成登录，可以回到 Tenon 查看结果')
+  securePage(response, body)
+  listener.complete({ ok: true })
+  vi.useRealTimers()
+  await expect(tcpConnect(listener.port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+})
+it('03 验收 18: TCP is refused before login and after success, failure, cancellation or timeout', async () => {
+  const reserved = createTcpServer()
+  await new Promise<void>((done) => reserved.listen(0, '127.0.0.1', done))
+  const port = (reserved.address() as AddressInfo).port
+  await new Promise<void>((done) => reserved.close(() => done()))
+  await expect(tcpConnect(port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+  for (const result of [{ ok: true }, { ok: false, code: 'denied' }] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- reuse the same port across completed logins
+    const listener = await listenMcpCallback(port)
+    const waiting = listener.waitForCallback('right', 120_000)
+    const response = fetch(`http://127.0.0.1:${port}/callback?state=right`)
+    // oxlint-disable-next-line no-await-in-loop -- callback must arrive before kernel close
+    await waiting
+    // oxlint-disable-next-line no-await-in-loop -- a held response must not block close
+    await listener.close()
+    // oxlint-disable-next-line no-await-in-loop -- listener is gone even before the page is written
+    await expect(tcpConnect(port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+    listener.complete(result)
+    // oxlint-disable-next-line no-await-in-loop -- drain the page before rebinding
+    await (await response).text()
+  }
+  const listener = await listenMcpCallback(port)
+  cleanup.push(() => listener.close())
+  const waiting = listener.waitForCallback('right', 120_000)
+  // oxlint-disable-next-line vitest/valid-expect -- rejection attached before cancelling
+  const cancelled = expect(waiting).rejects.toMatchObject({ code: 'cancelled' })
+  await listener.close()
+  await cancelled
+  await expect(tcpConnect(port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+  const slow = await listenMcpCallback(port)
+  cleanup.push(() => slow.close())
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  const pending = slow.waitForCallback('right', 120_000)
+  // oxlint-disable-next-line vitest/valid-expect -- rejection attached before advancing time
+  const failure = expect(pending).rejects.toMatchObject({ code: 'timeout' })
+  await vi.advanceTimersByTimeAsync(120_000)
+  await failure
+  vi.useRealTimers()
+  await expect(tcpConnect(port)).rejects.toMatchObject({ code: 'ECONNREFUSED' })
+})
+
+it('03 验收 18 / 53: closing the listener drains idle keep-alive sockets while retaining the callback response', async () => {
+  const listener = await listenMcpCallback(0)
+  cleanup.push(() => listener.close())
+  const agent = new http.Agent({ keepAlive: true })
+  cleanup.push(async () => {
+    agent.destroy()
+  })
+  const waiting = listener.waitForCallback('right', 120_000)
+  const url = `http://127.0.0.1:${listener.port}/callback`
+  const idle = await new Promise<Socket>((resolve, reject) => {
+    const request = http.get(url + '?state=wrong', { agent }, (response) => {
+      const socket = response.socket
+      response.resume()
+      response.once('end', () => resolve(socket))
+    })
+    request.once('error', reject)
+  })
+  expect(idle.destroyed).toBe(false)
+  const pending = fetch(url + '?state=right')
+  await waiting
+  await listener.close()
+  await expect.poll(() => idle.destroyed).toBe(true)
+  listener.complete({ ok: true })
+  expect((await pending).status).toBe(200)
 })

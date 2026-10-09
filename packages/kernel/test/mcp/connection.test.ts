@@ -134,23 +134,41 @@ it('03 验收 30: progress resets the idle timer, but the total deadline cancels
   ).resolves.toHaveProperty('content')
   expect(progress).toBeGreaterThan(1)
   const caller = new AbortController()
-  const started = Date.now()
-  await expect(
-    c.callTool(
+  // Only the deadline is faked: the external stdio fixture keeps its own real progress clock.
+  const nativeTimeout = globalThis.setTimeout
+  let expire: (() => void) | undefined
+  const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn, ms, ...args) => {
+    if (ms === 1800) {
+      expire = () => fn(...args)
+      return nativeTimeout(() => {}, 0)
+    }
+    return nativeTimeout(fn, ms, ...args)
+  })
+  try {
+    let tick = 0
+    const pending = c.callTool(
       'slow',
       { ms: 3000 },
       {
         signal: caller.signal,
         timeoutMs: 180,
-        onprogress: () => {},
+        onprogress: () => {
+          tick++
+        },
         resetTimeoutOnProgress: true,
         maxTotalTimeoutMs: 1800,
       },
-    ),
-  ).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
-  expect(Date.now() - started).toBeLessThan(2400)
-  expect(caller.signal.aborted).toBe(false)
-  await vi.waitFor(() => expect(logs.some((line) => line.startsWith('cancelled '))).toBe(true))
+    )
+    const rejected = pending.catch((error: unknown) => error)
+    await vi.waitFor(() => expect(tick).toBeGreaterThan(0))
+    expect(expire).toBeTypeOf('function')
+    expire!()
+    expect(await rejected).toMatchObject({ code: 'REQUEST_TIMEOUT' })
+    expect(caller.signal.aborted).toBe(false)
+    await vi.waitFor(() => expect(logs.some((line) => line.startsWith('cancelled '))).toBe(true))
+  } finally {
+    timer.mockRestore()
+  }
 })
 
 it('03 验收 30: an ordinary stdio timeout sends notifications/cancelled', async () => {
@@ -228,4 +246,16 @@ it('minor modern-only: hand-written -32602 data.supported is recognized without 
 it('03 验收 42: a real legacy dual stdio connection exposes the exact fixture instructions', async () => {
   const { INSTRUCTIONS } = await import('../support/fixtures/modern-server.mjs')
   expect((await connect('dual')).instructions).toBe(INSTRUCTIONS)
+})
+
+it('03 验收 39: every explicit tool listing requests cacheMode refresh from the SDK', async () => {
+  const c = await connect()
+  const list = vi.spyOn(c.client, 'listTools')
+  await c.listTools()
+  await c.listTools()
+  expect(list).toHaveBeenCalledTimes(2)
+  expect(list.mock.calls).toEqual([
+    [undefined, { cacheMode: 'refresh' }],
+    [undefined, { cacheMode: 'refresh' }],
+  ])
 })
