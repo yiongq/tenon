@@ -48,6 +48,7 @@ This repository is developed alternately by Claude Code and Codex. Neither remem
 
 - Conventional Commits: `type(scope): subject`, subject <= 50 chars. Never add AI co-author trailers.
 - Routine PRs target `dev`; only release branches target `main`.
+- Auto-merge is on for this repository; `dev` and `main` require the `ci-ok` check, which passes only when `ci` and `e2e` both succeed. Only the reviewer enables it (`gh pr merge <PR> --auto --merge`) once the review is done, never the PR's author on its own PR. GitHub then merges when `ci-ok` is green. If more commits land after that, disable it (`gh pr merge <PR> --disable-auto`) until they are reviewed.
 - For UI changes include a concise BEFORE/AFTER description in the PR.
 
 ## Style
