@@ -78,8 +78,8 @@ async function tokenLeaks(
     async (_electron, { dir, keys }) => {
       const state = (globalThis as { liveMcpSecrets?: MainSecrets }).liveMcpSecrets
       if (!state) throw new Error('live keychain reader was not installed')
-      const { readdirSync, readFileSync: read, statSync } = await import('node:fs')
-      const { join, relative } = await import('node:path')
+      const { readdirSync, readFileSync: read, statSync } = process.getBuiltinModule('node:fs')
+      const { join, relative } = process.getBuiltinModule('node:path')
       const values = await Promise.all(
         keys.map(async (key) => [key, await state.secrets.get(key)] as const),
       )
@@ -165,7 +165,7 @@ test.describe('live mcp oauth · Notion', () => {
       )
       await app.evaluate(
         async ({ app: electronApp }, { source, account }) => {
-          const { createRequire } = await import('node:module')
+          const { createRequire } = process.getBuiltinModule('node:module')
           const module = { exports: {} as { KeychainSecrets: new () => HostSecrets } }
           new Function('require', 'module', 'exports', source)(
             createRequire(electronApp.getAppPath() + '/package.json'),
