@@ -463,6 +463,24 @@ it('03 验收 44: disabled or never-pinned instructions have no pending change',
   expect((await h.call('mcp.list', {})).servers[0]?.instructionsView?.review).toBe('ok')
 })
 
+it('03 验收 42: instructions that change after their pin show a pending review until released', async () => {
+  const h = await setup()
+  await save(h)
+  const status = h.mcp.pool.status()[0]!
+  let instructions = { text: 'fixture', hash: 'a'.repeat(64) }
+  h.mcp.pool.status = () => [{ ...status, instructions }]
+  const review = async () => (await h.call('mcp.list', {})).servers[0]?.instructionsView?.review
+  await h.call('mcp.setInstructions', { id: 'notes', enabled: true })
+  const release = (definitionHash: string) =>
+    h.call('mcp.release', { id: 'notes', target: { instructions: true }, definitionHash })
+  expect(await release('a'.repeat(64))).toEqual({ ok: true })
+  expect(await review()).toBe('ok')
+  instructions = { text: 'changed', hash: 'b'.repeat(64) }
+  expect(await review()).toBe('changed')
+  expect(await release('b'.repeat(64))).toEqual({ ok: true })
+  expect(await review()).toBe('ok')
+})
+
 it('03 读法 67: reserved header with a supplied value returns invalid-header through validated IPC', async () => {
   const h = await setup(),
     d = mcpDraft()
