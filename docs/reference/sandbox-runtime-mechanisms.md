@@ -5,6 +5,7 @@
 > 版本：**v0.0.76**（commit `c392e6c`，2026-09-10）。之前主参考写的 npm 0.0.75 已过时
 > 核对方式：本地 clone，路径相对仓库根。本环境无 bwrap，但用 bun 直接加载 `src/` 跑了纯生成函数验证 argv / profile 输出
 > 标注：**[码]** 读源码确认 · **[文]** README/注释 · **[未查到]** 没找到
+> Revisions：2026-10-09（随 [04-sandbox](../architecture/04-sandbox/spec.md) 的 T3 补记，正文不改，下面的行号是加这一行之前的；依据 npm 0.0.79 的发布包与仓库外核查过的事实表 srt-0、srt-1、srt-2、srt-3、srt-5、srt-10、srt-m2、security-4、security-m8）：① :141「Linux 只能挡已存在的文件」连 0.0.76 的代码都不准——cwd 一级不存在的危险文件也会造挂载点挡住，只有 cwd 以下靠 rg 扫描的子目录才只挡已存在的；这里的 cwd 是跑 srt 的进程自己的 `process.cwd()`，不是 wrap 传的 cwd（0.0.79 在 macOS / Linux 不用它），所以强制禁写名单护不到嵌入方的工作区，04 自己按每个工作区根补；② :294 engines 到 0.0.79 已是 `>=22.12.0`；③ :326「切换工作区要重新初始化沙箱」只对 Windows 成立，macOS / Linux 每次 wrap 传 `customConfig.filesystem` 就整段替换会话级配置，不用 reset；④ 补查三点（主参考 §13 阶段 4）：(a) `customConfig` 的文件规则在 macOS / Linux 可以按次放宽，网络不能——0.0.79 的代理只认会话级白名单，按次传的 `allowedDomains` 不改放行判定；(b) 模块级单例下多工作区：文件规则按次传即可，不必 `reset()`；`reset()` 只拆掉代理与桥，要再 `initialize()` 才会在新端口与新口令上重起，已经 spawn 的长驻进程的网络从此断开；(c) helper：seccomp 与 srt-win 各有 x64 / arm64、jar 一份，macOS 没有随包二进制，每版重新构建、字节不同，升级要重新随包；另 0.0.79 起文件规则条目可写 `{ path, literal: true }`（文件夹名带 `*?[]` 时用）。2026-10-15 补：上游仓库已从 `anthropic-experimental/sandbox-runtime` 迁到 `anthropics/sandbox-runtime`（npm 0.0.79 的 package.json 里 repository 写的是后者），上面第 4 行的仓库名照旧不改。
 
 ---
 
