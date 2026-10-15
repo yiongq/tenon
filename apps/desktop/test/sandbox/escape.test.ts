@@ -654,6 +654,89 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     CASE_MS,
   )
 
+  it(
+    '04 验收 11: a deny entry that is a dangling link (~/.aws to ~/dotfiles/aws, not made yet; the home the workspace): the command can make neither the target nor its missing parent, nor write a config there or through the link; nothing is left on the host',
+    async () => {
+      const lab = rig.lab()
+      const home = lab.home
+      lab.folders = [home]
+      symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
+      const config = shq('[default]\ncredential_process = /usr/bin/true\n')
+      const ran = await lab.run(
+        [
+          'mkdir -p "$HOME/dotfiles/aws"; echo made=$?',
+          `printf ${config} > "$HOME/dotfiles/aws/config"; echo real=$?`,
+          `printf ${config} > "$HOME/.aws/config"; echo link=$?`,
+        ].join('; '),
+        { workspace: [home], cwd: home },
+      )
+      for (const label of ['made', 'real', 'link']) {
+        expect(new RegExp(`^${label}=(\\d+)$`, 'm').exec(ran.stdout)?.[1]).toMatch(/^[1-9]\d*$/)
+      }
+      expect(hostKind(join(home, 'dotfiles'))).toBe('missing')
+      expect(readlinkSync(join(home, '.aws'))).toBe(join(home, 'dotfiles/aws'))
+    },
+    CASE_MS,
+  )
+
+  /**
+   * 验收 11, a link inside a deny entry's link target: the home is the workspace, `~/.aws` links to
+   * `~/dotfiles/aws` and `~/dotfiles` to a directory outside the home. The command removes
+   * `~/dotfiles`, makes its own and writes credentials there; the runs come back for the platform's
+   * own assertions.
+   */
+  async function replaceChainedDotfiles(): Promise<{
+    readonly home: string
+    readonly vault: string
+    readonly ran: Ran
+  }> {
+    const lab = rig.lab()
+    const home = lab.home
+    lab.folders = [home]
+    const vault = lab.dir('vol')
+    writeHostFile(join(vault, 'dotfiles/aws/credentials'), 'TENON_FAKE_AWS\n')
+    symlinkSync(join(vault, 'dotfiles'), join(home, 'dotfiles'))
+    symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
+    const ran = await lab.run(
+      `rm "$HOME/dotfiles" && mkdir -p "$HOME/dotfiles/aws" && echo ${WRITTEN} > "$HOME/dotfiles/aws/credentials"; echo rc=$?`,
+      { workspace: [home], cwd: home },
+    )
+    return { home, vault, ran }
+  }
+
+  it.skipIf(!DARWIN)(
+    '04 验收 11: (darwin) a link inside a deny entry’s link target (~/dotfiles under ~/.aws, the home the workspace) cannot be removed and replaced; link and target stay',
+    async () => {
+      const { home, vault, ran } = await replaceChainedDotfiles()
+      expect(/^rc=(\d+)$/m.exec(ran.stdout)?.[1]).toBe('1')
+      expect(readlinkSync(join(home, 'dotfiles'))).toBe(join(vault, 'dotfiles'))
+      expect(readFileSync(join(vault, 'dotfiles/aws/credentials'), 'utf8')).toBe('TENON_FAKE_AWS\n')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(DARWIN)(
+    '04 验收 11: (linux) a link inside a deny entry’s link target (~/dotfiles under ~/.aws, the home the workspace) removed and replaced leaves one protected violation targeting it; the old target stays',
+    async () => {
+      const { home, vault, ran } = await replaceChainedDotfiles()
+      expect(readFileSync(join(vault, 'dotfiles/aws/credentials'), 'utf8')).toBe('TENON_FAKE_AWS\n')
+      expect(
+        ran.violations
+          .map(shapeOf)
+          .filter((v) => v.target === join(real(home), 'dotfiles') && !v.observed),
+      ).toEqual([
+        {
+          kind: 'fs',
+          target: join(real(home), 'dotfiles'),
+          release: null,
+          protected: true,
+          observed: false,
+        },
+      ])
+    },
+    CASE_MS,
+  )
+
   /**
    * Where 验收 11's link cases on darwin run. A link on a deny entry's way is kept by srt's own rules
    * when the entry's spelling has no other link on it (a real home): the rule on the entry as written
@@ -1252,19 +1335,16 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       symlinkSync(join(q.lab.home, '.ssh'), join(q.ws, 'ssh-link'))
       return { command: 'cat ssh-link/id_ed25519', want: fsRefusal(real(key), null, false) }
     }),
-    // ~/.aws is itself a deny entry and a link: Seatbelt refuses the lookup through it at the link,
-    // `file-read-metadata <home>/.aws`, for a read and for a write alike. That is a read denial, so
-    // per §afterExit 的表 it carries no `protected` even when the command was writing (plan Open,
-    // step 6 review r3). (Under a linked parent the entry as written never matched and such a write
-    // was refused at the real place, with `protected`.)
+    // ~/.aws is itself a deny entry and a link: darwin's denyRead holds it only where it leads, so
+    // the lookup passes the link and Seatbelt refuses at the real place, a read there unprotected
+    // and a write protected (§afterExit 的表), as for a home without links; the link itself stays
+    // in denyWrite, so removing or moving it is a protected write denial (spec「链接」).
     ...(
       [
-        ['cat "$HOME/.aws/credentials"', '.aws'],
+        ['cat "$HOME/.aws/credentials"', 'dotfiles/aws/credentials'],
         ['cat "$HOME/dotfiles/aws/credentials"', 'dotfiles/aws/credentials'],
         ['cat "$HOME/.docker/config.json"', 'dotfiles/docker/config.json'],
         ['cat "$HOME/dotfiles/docker/config.json"', 'dotfiles/docker/config.json'],
-        [`echo ${WRITTEN} >> "$HOME/.aws/credentials"`, '.aws'],
-        [`echo ${WRITTEN} > "$HOME/.aws/new-by-link"`, '.aws'],
       ] as const
     ).map(([command, file]) =>
       inLinkedHome(`${command} (验收 11)`, command, (home) =>
@@ -1273,12 +1353,16 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     ),
     ...(
       [
+        [`echo ${WRITTEN} >> "$HOME/.aws/credentials"`, 'dotfiles/aws/credentials'],
+        [`echo ${WRITTEN} > "$HOME/.aws/new-by-link"`, 'dotfiles/aws/new-by-link'],
         [`echo ${WRITTEN} >> "$HOME/dotfiles/aws/credentials"`, 'dotfiles/aws/credentials'],
         [`echo ${WRITTEN} > "$HOME/dotfiles/aws/new-by-real"`, 'dotfiles/aws/new-by-real'],
         [`echo ${WRITTEN} >> "$HOME/.docker/config.json"`, 'dotfiles/docker/config.json'],
         [`echo ${WRITTEN} >> "$HOME/dotfiles/docker/config.json"`, 'dotfiles/docker/config.json'],
         ['rm "$HOME/.docker"', '.docker'],
         ['mv "$HOME/.docker" "$HOME/moved-docker"', '.docker'],
+        ['rm "$HOME/.aws"', '.aws'],
+        ['mv "$HOME/.aws" "$HOME/moved-aws"', '.aws'],
       ] as const
     ).map(([command, file]) =>
       inLinkedHome(`${command} (验收 11)`, command, (home) =>
@@ -1536,6 +1620,52 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         } finally {
           await unix.close()
         }
+      },
+      CASE_MS,
+    )
+
+    it(
+      '04 验收 16: (linux) a write through a workspace link to an outside directory is in violations(), observed, targeting where it landed (读法 11)',
+      async () => {
+        const { lab, ws, outside } = workspaceLab()
+        symlinkSync(outside, join(ws, 'out-link'))
+        const ran = await lab.run(`echo ${WRITTEN} > out-link/via-link; echo rc=$?`, {
+          workspace: [ws],
+        })
+        expect(ran.stdout).toMatch(/^rc=[1-9]/m)
+        expect(ran.violations.map(shapeOf)).toContainEqual({
+          kind: 'fs',
+          target: join(outside, 'via-link'),
+          release: null,
+          protected: false,
+          observed: true,
+        })
+      },
+      CASE_MS,
+    )
+
+    it(
+      '04 验收 16: (linux) with the workspace given by a link’s spelling, a write spelled that way lands in it and leaves no violation (读法 11)',
+      async () => {
+        const lab = rig.lab()
+        const ws = lab.dir('ws')
+        const spelled = join(dirname(ws), 'ws-link')
+        symlinkSync(ws, spelled)
+        lab.folders = [spelled]
+        const ran = await lab.run(`echo ok > ${shq(join(spelled, 'b.txt'))}; echo rc=$?`, {
+          workspace: [spelled],
+          cwd: spelled,
+        })
+        expect(ran.stdout).toMatch(/^rc=0$/m)
+        expect(readFileSync(join(ws, 'b.txt'), 'utf8')).toBe('ok\n')
+        expect(
+          ran.violations
+            .map(shapeOf)
+            .filter(
+              (v) =>
+                v.target !== null && (isWithinDir(v.target, ws) || isWithinDir(v.target, spelled)),
+            ),
+        ).toEqual([])
       },
       CASE_MS,
     )
