@@ -291,17 +291,21 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
   it("04 验收 5: read-only writes nothing but srt's defaults", () => {
     for (const platform of ['darwin', 'linux'] as const) {
       const home = platform === 'darwin' ? '/Users/u' : '/home/u'
-      const wrap = wrapFilesystem(
-        wrapInput(platform, { profile: 'read-only', chosen: 'read-only', packageManagers: true }),
-        PLAIN,
-      )
-      expect(wrap.filesystem.allowWrite).toEqual([])
-      expect(wrap.env).toEqual({})
-      expect(wrap.presetDirs).toEqual([])
-      // No per-root names either: those are the workspace-write column's.
-      expect(spelled(wrap.filesystem.denyWrite).some((e) => e.includes(`${home}/code/app`))).toBe(
-        false,
-      )
+      // A read-only request stays read-only whatever your profile is now: it was planned at the
+      // decision (读法 12), and you may have switched to workspace-write since (读法 20).
+      for (const chosen of ['read-only', 'workspace-write'] as const) {
+        const wrap = wrapFilesystem(
+          wrapInput(platform, { profile: 'read-only', chosen, packageManagers: true }),
+          PLAIN,
+        )
+        expect(wrap.filesystem.allowWrite).toEqual([])
+        expect(wrap.env).toEqual({})
+        expect(wrap.presetDirs).toEqual([])
+        // No per-root names either: those are the workspace-write column's.
+        expect(spelled(wrap.filesystem.denyWrite).some((e) => e.includes(`${home}/code/app`))).toBe(
+          false,
+        )
+      }
       // The session config is read-only's shape.
       expect(sessionConfig(sessionInput(platform), PLAIN).filesystem.allowWrite).toEqual([])
     }
@@ -387,6 +391,14 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
     // Without a spill folder there is nothing to read back.
     const none = wrapFilesystem(wrapInput('darwin', { toolOutputDir: null }), PLAIN).filesystem
     expect(none.allowRead).toEqual([])
+
+    // The session config's tables are read-only's (srt's Linux observer is built from them).
+    const darwinSession = sessionConfig(sessionInput('darwin'), PLAIN).filesystem
+    expect(spelled(darwinSession.denyRead)).toEqual(sorted(darwinRead))
+    expect(spelled(darwinSession.denyWrite)).toEqual(sorted(darwinWrite))
+    const linuxSession = sessionConfig(sessionInput('linux'), PLAIN).filesystem
+    expect(spelled(linuxSession.denyRead)).toEqual(sorted(linuxRead))
+    expect(spelled(linuxSession.denyWrite)).toEqual(sorted(linuxWrite))
   })
 
   it('04 验收 5: a folder named `[WIP] *` stays literal', () => {
@@ -408,6 +420,19 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       for (const list of [wrap.filesystem.denyRead, wrap.filesystem.allowRead ?? []]) {
         expect(list.every((e) => typeof e === 'object' && e.literal === true)).toBe(true)
       }
+    }
+  })
+
+  it('04 验收 5: on darwin a root holding any one of `*?[]` gets no glob; its names stay literal', () => {
+    for (const name of ['a*b', 'a?b', 'a[b', 'a]b']) {
+      const folder = `/Users/u/code/${name}`
+      const { allowWrite, denyWrite } = wrapFilesystem(
+        wrapInput('darwin', { workspace: [root(folder)] }),
+        PLAIN,
+      ).filesystem
+      expect(allowWrite).toEqual([literal(folder)])
+      expect(denyWrite.filter((e) => typeof e === 'string')).toEqual([])
+      expect(denyWrite).toContainEqual(literal(`${folder}/.envrc`))
     }
   })
 
@@ -526,7 +551,7 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
           'denyRead',
           'denyWrite',
         ])
-        const merged = wrapConfig(session, filesystem)
+        const merged = wrapConfig(platform, session, filesystem)
         expect(Object.keys(merged).toSorted()).toEqual(Object.keys(session).toSorted())
         expect(SandboxRuntimeConfigSchema.safeParse(merged).success).toBe(true)
       }
@@ -537,7 +562,31 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       sessionConfig({ ...sessionInput('darwin'), allowedDomains: ['*'] }, PLAIN),
     ).toThrow(SandboxConfigError)
     const inert: FilesystemConfig = { denyRead: [], allowWrite: [], denyWrite: ['/w/*/'] }
-    expect(() => wrapConfig(darwin, inert)).toThrow(SandboxConfigError)
+    expect(() => wrapConfig('darwin', darwin, inert)).toThrow(SandboxConfigError)
+
+    // srt's schema is not strict: an unlisted key it knows (or drops) is refused here all the same.
+    const fs = wrapFilesystem(wrapInput('darwin'), PLAIN).filesystem
+    const refused: [SandboxPlatform, unknown, unknown][] = [
+      ['darwin', darwin, { ...fs, disabled: true }],
+      ['darwin', darwin, { ...fs, allowGitConfig: true }],
+      ['darwin', { ...darwin, allowPty: true }, fs],
+      ['darwin', { ...darwin, mitmProxy: { socketPath: '/tmp/m.sock', domains: ['x.com'] } }, fs],
+      ['darwin', { ...darwin, network: { ...darwin.network, allowLocalBinding: true } }, fs],
+      ['darwin', { ...darwin, network: { ...darwin.network, allowAllUnixSockets: true } }, fs],
+      [
+        'darwin',
+        { ...darwin, network: { ...darwin.network, parentProxy: { http: 'http://p:1' } } },
+        fs,
+      ],
+      ['darwin', { ...darwin, bwrapPath: '/usr/bin/bwrap' }, fs],
+      ['linux', { ...linux, ignoreViolations: DARWIN_IGNORE }, fs],
+      ['linux', { ...linux, ripgrep: { command: '/usr/bin/rg', args: ['--follow'] } }, fs],
+    ]
+    for (const [platform, session, filesystem] of refused) {
+      expect(() => wrapConfig(platform, session as never, filesystem as never)).toThrow(
+        SandboxConfigError,
+      )
+    }
   })
 
   it('04 不变量 5: allowWrite holds only the workspace and, with the preset in effect, its dirs', () => {
@@ -562,13 +611,18 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
         `${L_CACHE}/cargo`,
       ]),
     )
-    // Only in workspace-write: read-only stays read-only even with the preset on.
+    // Only in workspace-write: a read-only request stays read-only even with the preset on, also
+    // when your profile has since become workspace-write.
     for (const platform of ['darwin', 'linux'] as const) {
-      const readOnly = wrapFilesystem(
-        wrapInput(platform, { profile: 'read-only', chosen: 'read-only', packageManagers: true }),
-        PLAIN,
-      )
-      expect(readOnly.filesystem.allowWrite).toEqual([])
+      for (const chosen of ['read-only', 'workspace-write'] as const) {
+        const readOnly = wrapFilesystem(
+          wrapInput(platform, { profile: 'read-only', chosen, packageManagers: true }),
+          PLAIN,
+        )
+        expect(readOnly.filesystem.allowWrite).toEqual([])
+        expect(readOnly.env).toEqual({})
+        expect(readOnly.presetDirs).toEqual([])
+      }
     }
     // Never your own caches.
     for (const own of ['/Users/u/.npm', '/Users/u/.cargo', '/Users/u/.cache/uv']) {
@@ -691,6 +745,8 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       const cases: Partial<WrapFilesystemInput>[] = [
         // read-only
         { profile: 'read-only', chosen: 'read-only', packageManagers: true },
+        // a read-only request after you switched to workspace-write
+        { profile: 'read-only', chosen: 'workspace-write', packageManagers: true },
         // read-only with a path release: the request is workspace-write, your profile is not
         {
           profile: 'workspace-write',
@@ -779,6 +835,47 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
           '/Volumes/work/proj/.envrc',
         ]),
       )
+    }
+  })
+
+  it('04 验收 11 (config): with userData behind a link, allowRead, the preset dirs in allowWrite and their variables are real paths only', () => {
+    const real = '/Volumes/data/Tenon'
+    const disk = fakeDisk(
+      [
+        '/Users/u/Library/Application Support',
+        '/Users/u/code/app/src',
+        `${real}/profiles/u1/t1/tool-output/s1`,
+        `${real}/sandbox-cache/npm`,
+      ],
+      { '/Users/u/Library/Application Support/Tenon': real },
+    )
+    const darwinCaches = ['npm', 'pnpm', 'uv', 'cargo'].map((m) => `${real}/sandbox-cache/${m}`)
+    const linuxCaches = ['npm', 'pnpm', 'pip', 'uv', 'cargo'].map(
+      (m) => `${real}/sandbox-cache/${m}`,
+    )
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem(
+        {
+          ...linkedInput(platform),
+          workspace: [root('/Users/u/code/app')],
+          packageManagers: true,
+        },
+        disk,
+      )
+      expect(wrap.filesystem.allowRead).toEqual([literal(`${real}/profiles/u1/t1/tool-output/s1`)])
+      const caches = platform === 'darwin' ? darwinCaches : linuxCaches
+      expect(wrap.presetDirs).toEqual(caches)
+      expect(wrap.filesystem.allowWrite).toEqual(['/Users/u/code/app', ...caches].map(literal))
+      expect(wrap.env).toEqual({
+        npm_config_cache: `${real}/sandbox-cache/npm`,
+        npm_config_store_dir: `${real}/sandbox-cache/pnpm/store`,
+        ...(platform === 'linux' ? { PIP_CACHE_DIR: `${real}/sandbox-cache/pip` } : {}),
+        UV_CACHE_DIR: `${real}/sandbox-cache/uv`,
+        CARGO_HOME: `${real}/sandbox-cache/cargo`,
+      })
+      // The profile dir, a deny entry, still goes both ways.
+      expect(spelled(wrap.filesystem.denyRead)).toContain(LINKED_PROFILE)
+      expect(spelled(wrap.filesystem.denyRead)).toContain(`${real}/profiles/u1/t1`)
     }
   })
 

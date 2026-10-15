@@ -18,7 +18,8 @@
  * `<root>/**\/<name>` globs, left out for a root whose spelling holds `*?[]`. allowWrite and allowRead
  * get real paths only; a deny entry gets both its written spelling and its real path, and on darwin
  * each link on its way joins denyWrite as itself — never denyRead, and never on Linux (spec「链接」).
- * Each config passes srt's `SandboxRuntimeConfigSchema` (srt itself validates only its CLI's).
+ * Each config carries only the listed keys and passes srt's `SandboxRuntimeConfigSchema` (srt itself
+ * validates only its CLI's, and its schema is not strict).
  */
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -88,8 +89,14 @@ export interface WrapFilesystemInput extends SandboxHostPaths {
   readonly packageManagers: boolean
 }
 
+/** srt's filesystem block cut to the four tables Tenon fills; no `disabled`, no `allowGitConfig` (读法 43). */
+export type FilesystemTables = Pick<
+  FilesystemConfig,
+  'denyRead' | 'allowRead' | 'allowWrite' | 'denyWrite'
+>
+
 export interface WrapFilesystem {
-  readonly filesystem: FilesystemConfig
+  readonly filesystem: FilesystemTables
   /** Variables the wrap sets in the command's environment (读法 47); empty unless the preset is in effect. */
   readonly env: Readonly<Record<string, string>>
   /** The preset dirs this wrap made writable, to be checked like `/tmp/claude` (读法 48). */
@@ -180,6 +187,30 @@ export const PACKAGE_MANAGER_PRESETS: readonly PackageManagerPreset[] = [
 /** The preset rows that apply on `platform`. */
 export function presetRows(platform: SandboxPlatform): PackageManagerPreset[] {
   return PACKAGE_MANAGER_PRESETS.filter((row) => row.platforms.includes(platform))
+}
+
+/**
+ * The only keys a config may carry (读法 43, 04 不变量 4), checked at run time: srt's schema is not
+ * strict, so it lets `allowPty`, `filesystem.disabled` and the like through and drops unknown keys.
+ */
+const TOP_LEVEL_KEYS: Readonly<Record<SandboxPlatform, readonly string[]>> = {
+  darwin: ['network', 'filesystem', 'ignoreViolations', 'seccomp', 'javaAgentJarPath'],
+  linux: [
+    'network',
+    'filesystem',
+    'seccomp',
+    'javaAgentJarPath',
+    'bwrapPath',
+    'socatPath',
+    'ripgrep',
+  ],
+}
+const NETWORK_KEYS = ['allowedDomains', 'deniedDomains', 'strictAllowlist', 'parentProxy'] as const
+const FILESYSTEM_KEYS = ['denyRead', 'allowRead', 'allowWrite', 'denyWrite'] as const
+const NESTED_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'network.parentProxy': ['noProxy'],
+  seccomp: ['applyPath'],
+  ripgrep: ['command'],
 }
 
 /** srt's noise lines (P2, 读法 53): darwin only — srt matches them as substrings of every source. */
@@ -324,7 +355,7 @@ export function sessionConfig(input: SessionConfigInput, ports: PathPorts): Sand
     javaAgentJarPath: input.javaAgentJarPath,
     ...(input.platform === 'linux' ? linuxBinaryKeys(input.linuxBinaries) : {}),
   }
-  return checked(config)
+  return checked(config, input.platform)
 }
 
 /** One wrap's filesystem block, preset variables, preset dirs and links on the deny entries' ways. */
@@ -334,22 +365,59 @@ export function wrapFilesystem(input: WrapFilesystemInput, ports: PathPorts): Wr
 
 /**
  * The session config with one wrap's filesystem in place, as srt merges it — checked against the
- * schema, which wants `network` and `filesystem` both there (spec §档位到 srt 配置).
+ * listed keys and the schema, which wants `network` and `filesystem` both there (spec §档位到 srt 配置).
  */
 export function wrapConfig(
+  platform: SandboxPlatform,
   session: SandboxRuntimeConfig,
-  filesystem: FilesystemConfig,
+  filesystem: FilesystemTables,
 ): SandboxRuntimeConfig {
-  return checked({ ...session, filesystem })
+  return checked({ ...session, filesystem }, platform)
 }
 
-function checked(config: SandboxRuntimeConfig): SandboxRuntimeConfig {
+function checked(config: SandboxRuntimeConfig, platform: SandboxPlatform): SandboxRuntimeConfig {
+  const extra = [
+    ...extraKeys('', config, TOP_LEVEL_KEYS[platform]),
+    ...extraKeys('network.', config.network, NETWORK_KEYS),
+    ...NETWORK_KEYS.filter((key) => !(key in config.network)).map(
+      (key) => `network.${key} missing`,
+    ),
+    ...extraKeys('filesystem.', config.filesystem, FILESYSTEM_KEYS),
+    ...Object.entries(NESTED_KEYS).flatMap(([where, keys]) =>
+      extraKeys(`${where}.`, nested(config, where), keys),
+    ),
+  ]
+  if (extra.length > 0) {
+    throw new SandboxConfigError(
+      `sandbox config keys differ from the listed ones: ${extra.join('; ')}`,
+    )
+  }
   const result = SandboxRuntimeConfigSchema.safeParse(config)
   if (!result.success) {
     const issues = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)
     throw new SandboxConfigError(`sandbox config refused by srt's schema: ${issues.join('; ')}`)
   }
   return config
+}
+
+/** The keys of `value` outside `allowed`, each prefixed with where it sits. */
+function extraKeys(where: string, value: unknown, allowed: readonly string[]): string[] {
+  if (typeof value !== 'object' || value === null) return []
+  return Object.keys(value)
+    .filter((key) => !allowed.includes(key))
+    .map((key) => `${where}${key}`)
+}
+
+/** `config` at a dotted path, or undefined. */
+function nested(config: SandboxRuntimeConfig, where: string): unknown {
+  let value: unknown = config
+  for (const key of where.split('.')) {
+    value =
+      typeof value === 'object' && value !== null
+        ? (value as Record<string, unknown>)[key]
+        : undefined
+  }
+  return value
 }
 
 function cloneIgnore(lines: Readonly<Record<string, readonly string[]>>): Record<string, string[]> {
