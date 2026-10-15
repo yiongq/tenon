@@ -1077,7 +1077,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     )
   })
 
-  it('04 不变量 3: the returned env equals request.env, except that with the preset in effect every case spelling of each preset variable is replaced by exactly one pointing at its dir, and on darwin exactly one TENON_SANDBOX_MARK is added; full-access never gets either', async () => {
+  it('04 不变量 3: the returned env equals request.env, except that with the preset in effect every case spelling of each preset variable is replaced by exactly one pointing at its dir, and on darwin every case spelling of OS_ACTIVITY_MODE by exactly one OS_ACTIVITY_MODE=disable and exactly one TENON_SANDBOX_MARK is added; full-access never gets any of them', async () => {
     const requestEnv = {
       PATH: '/usr/bin:/bin',
       HOME: '/home/u',
@@ -1088,6 +1088,8 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       uv_cache_dir: '/elsewhere/d',
       CARGO_HOME: '/elsewhere/e',
       PIP_CACHE_DIR: '/elsewhere/f',
+      OS_ACTIVITY_MODE: 'debug',
+      os_activity_mode: 'info',
     }
 
     const darwin = harness('darwin')
@@ -1103,6 +1105,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       npm_config_store_dir: `${cache}/pnpm/store`,
       UV_CACHE_DIR: `${cache}/uv`,
       CARGO_HOME: `${cache}/cargo`,
+      OS_ACTIVITY_MODE: 'disable',
       TENON_SANDBOX_MARK: darwin.calls[0]?.id,
     })
 
@@ -1119,9 +1122,24 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       PIP_CACHE_DIR: `${linuxCache}/pip`,
       UV_CACHE_DIR: `${linuxCache}/uv`,
       CARGO_HOME: `${linuxCache}/cargo`,
+      OS_ACTIVITY_MODE: 'debug',
+      os_activity_mode: 'info',
     })
 
-    // The preset off, a read-only request, your profile read-only: request.env (and the mark).
+    // The preset off, a read-only request, your profile read-only: request.env (on darwin with
+    // OS_ACTIVITY_MODE=disable and the mark).
+    const darwinEnv = {
+      PATH: '/usr/bin:/bin',
+      HOME: '/home/u',
+      LANG: 'C.UTF-8',
+      NPM_CONFIG_CACHE: '/elsewhere/a',
+      npm_config_cache: '/elsewhere/b',
+      Npm_Config_Store_Dir: '/elsewhere/c',
+      uv_cache_dir: '/elsewhere/d',
+      CARGO_HOME: '/elsewhere/e',
+      PIP_CACHE_DIR: '/elsewhere/f',
+      OS_ACTIVITY_MODE: 'disable',
+    }
     await onBoth(async (platform) => {
       const cases: (readonly [string, (h: Harness) => Partial<SandboxRequest>])[] = [
         ['the preset off', () => ({})],
@@ -1155,7 +1173,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       for (const [what, env, id] of seen) {
         expect([what, env]).toStrictEqual([
           what,
-          platform === 'darwin' ? { ...requestEnv, TENON_SANDBOX_MARK: id } : requestEnv,
+          platform === 'darwin' ? { ...darwinEnv, TENON_SANDBOX_MARK: id } : requestEnv,
         ])
       }
 

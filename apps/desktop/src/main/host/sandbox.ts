@@ -74,6 +74,16 @@ export const MAX_WRAP_VIOLATIONS = 200
 /** The variable that marks a wrap's processes on darwin (P6; 04 不变量 3). */
 export const SANDBOX_MARK_VARIABLE = 'TENON_SANDBOX_MARK'
 
+/**
+ * Set to `disable` on darwin's restricted commands (04 不变量 3; mac-lost-lines B, 2026-10-16). While
+ * srt's `log stream` runs, a process that writes its own os_log is refused `mach-lookup
+ * com.apple.diagnosticd`, and that line often leads the log block holding the process's real denial;
+ * srt reads one denial per block and drops the block when it leads with that noise
+ * (macos-sandbox-utils.js:1168-1204). Without its own log the process never asks: 60 of 60 single
+ * refused writes left their line, against 43 and 36 of 60 without (step 6 review, 2026-10-15).
+ */
+export const ACTIVITY_MODE_VARIABLE = 'OS_ACTIVITY_MODE'
+
 /** The `line` of the violation Linux adds when a link on a deny entry's way changed (spec「链接」). */
 export function linkChangedLine(path: string): string {
   return `link changed during the command: ${path}`
@@ -409,14 +419,17 @@ export class DesktopSandbox implements HostSandbox {
       throw error
     }
 
-    // T6: request.env, never srt's; the preset's variables replace every case spelling (读法 47).
+    // T6: request.env, never srt's; the preset's variables replace every case spelling (读法 47),
+    // and so does darwin's OS_ACTIVITY_MODE=disable (04 不变量 3; mac-lost-lines B, 2026-10-16).
+    const fixed: Record<string, string> = { ...plan.env }
+    if (this.platform === 'darwin') fixed[ACTIVITY_MODE_VARIABLE] = 'disable'
     const env: Record<string, string> = { ...request.env }
-    for (const name of Object.keys(plan.env)) {
+    for (const name of Object.keys(fixed)) {
       for (const key of Object.keys(env)) {
         if (key.toLowerCase() === name.toLowerCase()) delete env[key]
       }
     }
-    Object.assign(env, plan.env)
+    Object.assign(env, fixed)
     if (this.platform === 'darwin') env[SANDBOX_MARK_VARIABLE] = srtId
     return { argv: [...wrapped.argv], env }
   }

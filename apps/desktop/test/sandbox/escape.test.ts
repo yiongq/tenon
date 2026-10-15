@@ -51,12 +51,18 @@ if (!gate.run) console.warn(gate.reason)
 /** A case's own bound: srt's wrap and a sandbox-exec or bwrap start take a while on a loaded runner. */
 const CASE_MS = 60_000
 
-/** macOS's log monitor keeps only the first denial of a log block (P2): each such case runs ≤ 3 times. */
+/**
+ * macOS's log monitor keeps only the first denial of a log block (P2), and drops the block when that
+ * line matches ignoreViolations (a direct connection's configd line): each such case runs ≤ 3 times.
+ */
 const DARWIN_TRIES = 3
+/** 验收 16's single-denial regression: commands in a row, each refused one write, none retried. */
+const DARWIN_SINGLE_RUNS = 50
 /**
  * The pause before a darwin retry. Lost lines come in runs: on this suite's Mac (macOS 26.3,
- * 2026-10-15) 20 of 180 single refused writes left no line (none arrived later), two tries in a row
- * were lost now and then, and a pause between tries lost fewer.
+ * 2026-10-15), before Tenon set OS_ACTIVITY_MODE=disable, 20 of 180 single refused writes left no
+ * line (none arrived later), two tries in a row were lost now and then, and a pause between tries
+ * lost fewer.
  */
 const DARWIN_RETRY_PAUSE_MS = 1_000
 
@@ -373,10 +379,13 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   // 验收 6, 7
 
   it(
-    '04 验收 6: the command sees request.env plus srt’s own variables; main’s sentinel, TENON_*, GIT_CONFIG_* and ELECTRON_RUN_AS_NODE=1 never reach it; darwin adds exactly one TENON_SANDBOX_MARK',
+    '04 验收 6: the command sees request.env plus srt’s own variables; main’s sentinel, TENON_*, GIT_CONFIG_* and ELECTRON_RUN_AS_NODE=1 never reach it; darwin adds exactly one TENON_SANDBOX_MARK and exactly one OS_ACTIVITY_MODE=disable in place of request.env’s spelling',
     async () => {
       const { lab, ws } = workspaceLab()
-      const request = lab.requestEnv({ ESCAPE_REQUEST_MARK: 'from-request-env' })
+      const request = lab.requestEnv({
+        ESCAPE_REQUEST_MARK: 'from-request-env',
+        Os_Activity_Mode: 'info',
+      })
       const hostOnly: Readonly<Record<string, string>> = {
         ESCAPE_HOST_SENTINEL: 'host-only-sentinel',
         TENON_ESCAPE_HOST_ONLY: 'tenon-host-only',
@@ -400,8 +409,14 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       }
       expect(ran.code).toBe(0)
       const seen = envOf(ran.stdout)
-      // request.env, as it was handed over.
-      for (const [name, value] of Object.entries(request)) expect(seen.get(name)).toBe(value)
+      // request.env, as it was handed over; on darwin but its spelling of OS_ACTIVITY_MODE.
+      for (const [name, value] of Object.entries(request)) {
+        const want = DARWIN && name === 'Os_Activity_Mode' ? undefined : value
+        expect([name, seen.get(name)]).toEqual([name, want])
+      }
+      const activity = [...seen.keys()].filter((name) => name.toLowerCase() === 'os_activity_mode')
+      expect(activity).toEqual(DARWIN ? ['OS_ACTIVITY_MODE'] : ['Os_Activity_Mode'])
+      expect(seen.get('OS_ACTIVITY_MODE')).toBe(DARWIN ? 'disable' : undefined)
       expect(seen.get('SANDBOX_RUNTIME')).toBe('1')
       // Nothing of main's own environment.
       expect(seen.has('ESCAPE_HOST_SENTINEL')).toBe(false)
@@ -415,6 +430,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         (name) =>
           !(name in request) &&
           name !== 'TENON_SANDBOX_MARK' &&
+          name !== 'OS_ACTIVITY_MODE' &&
           !SRT_VARIABLES.has(name) &&
           !SHELL_VARIABLES.has(name),
       )
@@ -1475,30 +1491,49 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
 
   describe.skipIf(!DARWIN)('darwin: what Seatbelt reports', () => {
     it.each(DARWIN_REFUSALS)(
-      '04 验收 16: (darwin) $name is in violations() (test condition: OS_ACTIVITY_MODE=disable, which the product never sets)',
+      '04 验收 16: (darwin) $name is in violations()',
       async ({ arrange }) => {
         const { lab, command, options, want } = arrange()
-        // A test condition, not the product's: Bash's env carries no OS_ACTIVITY_MODE and Tenon adds
-        // none (04 不变量 3). While srt's `log stream` runs, each process in the sandbox is refused
-        // `mach-lookup com.apple.diagnosticd` at its start, and the kernel's "N duplicate reports"
-        // line for it comes in the same instant as the process's next denial. srt reads one line per
-        // log block, the first holding `Sandbox:` and `deny`, and drops the whole block when that
-        // line is noise it filters (diagnosticd, analyticsd, mDNSResponder) or matches
-        // ignoreViolations (macos-sandbox-utils.js:1168-1199), real denials after it included. On this
-        // suite's Mac (macOS 26.3, 2026-10-15), one refused write per command, 60 commands: without
-        // the variable 43 of 60 arrived, and 36 of 60 in a second warm run; with it 60 of 60
-        // (probes/results/step6/measure-diagnosticd-r1.txt); an earlier run lost 20 of 180 (see
-        // DARWIN_RETRY_PAUSE_MS). So in the product a single refusal leaves no line roughly one time
-        // in four and goes uncounted, which §已知限制 does not yet say (plan Open). This case is
-        // about the line's shape.
-        const env = lab.requestEnv({ OS_ACTIVITY_MODE: 'disable' })
+        // Under the product's own env: OS_ACTIVITY_MODE=disable comes from Tenon (04 不变量 3), not
+        // from this case. What it leaves srt's log monitor to drop (a block led by a line of
+        // ignoreViolations, a second denial in one block) is what DARWIN_TRIES is for.
         const ran = await upToThree(
-          () => lab.run(command, { ...options, env }),
+          () => lab.run(command, options),
           (one) => one.violations.map(shapeOf).some((v) => isDeepStrictEqual(v, want)),
         )
         expect(ran.violations.map(shapeOf)).toContainEqual(want)
       },
       CASE_MS,
+    )
+
+    /**
+     * mac-lost-lines B (2026-10-16): while srt's `log stream` runs, a process that writes its own
+     * os_log is refused `mach-lookup com.apple.diagnosticd` at its start, and the kernel's "N
+     * duplicate reports" line for it often comes in the same instant as the process's next denial.
+     * srt reads one line per log block, the first holding `Sandbox:` and `deny`, and drops the whole
+     * block when that line is noise it filters (macos-sandbox-utils.js:1168-1204). On this suite's
+     * Mac (macOS 26.3, 2026-10-15), one refused write per command back to back: 43 and 36 of 60
+     * arrived without OS_ACTIVITY_MODE=disable, 60 of 60 with it; an earlier run lost 20 of 180.
+     * So each of these runs is one try: at 11% lost, 50 runs all arrive by chance 0.3% of the time.
+     */
+    it(
+      `04 验收 16: (darwin) a command refused one write leaves its line every time, ${String(DARWIN_SINGLE_RUNS)} commands back to back with no retry (OS_ACTIVITY_MODE=disable, 04 不变量 3)`,
+      async () => {
+        const missing: number[] = []
+        for (let run = 0; run < DARWIN_SINGLE_RUNS; run += 1) {
+          const { lab, ws, outside } = workspaceLab()
+          // oxlint-disable-next-line no-await-in-loop -- one command after another, as the measurement
+          const ran = await lab.run(`echo ${WRITTEN} > ${shq(join(outside, 'f'))}`, {
+            workspace: [ws],
+          })
+          const want = fsRefusal(join(real(outside), 'f'), 'path', false)
+          if (!ran.violations.map(shapeOf).some((v) => isDeepStrictEqual(v, want))) {
+            missing.push(run)
+          }
+        }
+        expect(missing).toEqual([])
+      },
+      CASE_MS * 5,
     )
   })
 
