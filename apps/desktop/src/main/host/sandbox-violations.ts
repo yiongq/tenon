@@ -213,8 +213,11 @@ function writeDenial(line: string, target: string, context: ViolationContext): S
  * real paths only, so a link to a directory (`/tmp`, `~/bin`; srt's store drops `<>`, so
  * `touch '/tmp<'` names it) would give its target's whole subtree (plan Open 2026-10-15「已存在的
  * 链接不给仅此路径」).
+ *
+ * `DesktopSandbox.wrap` runs the same check on each workspace item outside the session's folders
+ * (读法 35: the kernel checks a release, the host checks again on its own).
  */
-function offersPathRelease(target: string, context: ViolationContext): boolean {
+export function offersPathRelease(target: string, context: ViolationContext): boolean {
   if (!target.startsWith('/') || target.endsWith('/') || posix.normalize(target) !== target) {
     return false
   }
