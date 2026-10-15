@@ -22,6 +22,12 @@
  *
  * Anything else is `kind: 'fs'` with no target and not `observed`: it still counts towards the
  * denial cap (读法 44, 53, spec open question 8).
+ *
+ * A Seatbelt line's path is compared with the lists as macOS's default APFS volume compares names,
+ * ignoring case and Unicode normalization: Seatbelt refuses `.ENVRC` under a `.envrc` rule and logs
+ * the name as the command spelled it (P1 F11, F12), so "on a denyWrite entry" there means the same
+ * file. Folding only adds matches, so it only adds `protected` and removes releases. The Linux
+ * observer's paths compare as bytes.
  */
 import { isIP } from 'node:net'
 import { posix } from 'node:path'
@@ -46,7 +52,12 @@ export interface ViolationContext {
   readonly allowWrite: readonly SandboxPathEntry[]
   readonly denyWrite: readonly SandboxPathEntry[]
   readonly denyRead: readonly SandboxPathEntry[]
-  readonly profileDir: string
+  /**
+   * The profile directory as written and as its real path, the two spellings every deny entry gets
+   * (spec §档位到 srt 配置「链接」): Seatbelt logs the real path (`/private/var/folders/…` for a
+   * profile under `/var/folders`), and a read there must stay `protected` (读法 36).
+   */
+  readonly profileDirs: readonly string[]
   readonly homeDir: string
   /**
    * `fs.lstatSync(path, { throwIfNoEntry: false })` in the app: undefined when nothing is there. It
@@ -72,6 +83,11 @@ const HOST_NAME = /^[A-Za-z0-9._-]+$/
  * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label.
  */
 const DOMAIN_NAME = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/
+
+/** How a path is compared: as bytes, or as a case-insensitive APFS volume does (header). */
+type Fold = (text: string) => string
+const AS_BYTES: Fold = (text) => text
+const APFS: Fold = (text) => text.normalize('NFC').toLowerCase()
 
 /** The proxy's only reason that leaves a domain button (读法 18). */
 const NOT_ON_ALLOW_LIST = 'host is not on the allow list'
@@ -129,9 +145,9 @@ function observerReport(
     if (kind !== 'unknown' && kind?.isDirectory() === true) return undefined
   }
   const spot = posix.normalize(path)
-  const denied = context.denyWrite.some((entry) => covers(entry, spot))
+  const denied = context.denyWrite.some((entry) => covers(entry, spot, AS_BYTES))
   // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11).
-  if (!denied && context.allowWrite.some((entry) => covers(entry, spot))) return undefined
+  if (!denied && context.allowWrite.some((entry) => covers(entry, spot, AS_BYTES))) return undefined
   return denied
     ? { kind: 'fs', line, target: path, protected: true, observed: true }
     : { kind: 'fs', line, target: path, observed: true }
@@ -151,7 +167,8 @@ function seatbeltDenial(
     if (FILE_WRITE.test(operation)) return writeDenial(line, rest, context)
     if (FILE_READ.test(operation)) {
       // Only the profile is protected on read; a credential read may still be rerun (读法 36).
-      return within(posix.normalize(rest), context.profileDir)
+      const spot = APFS(posix.normalize(rest))
+      return context.profileDirs.some((dir) => within(spot, APFS(posix.normalize(dir))))
         ? { kind: 'fs', line, target: rest, protected: true }
         : { kind: 'fs', line, target: rest }
     }
@@ -160,9 +177,10 @@ function seatbeltDenial(
   return { kind: 'fs', line }
 }
 
+/** A Seatbelt write denial, compared as APFS compares names (header). */
 function writeDenial(line: string, target: string, context: ViolationContext): SandboxViolation {
-  const spot = posix.normalize(target)
-  if (context.denyWrite.some((entry) => covers(entry, spot))) {
+  const spot = APFS(posix.normalize(target))
+  if (context.denyWrite.some((entry) => covers(entry, spot, APFS))) {
     return { kind: 'fs', line, target, protected: true }
   }
   return offersPathRelease(target, context)
@@ -191,11 +209,12 @@ function offersPathRelease(target: string, context: ViolationContext): boolean {
   const anchors = [
     '/',
     context.homeDir,
-    context.profileDir,
+    ...context.profileDirs,
     ...context.denyRead.map(anchorOf),
     ...context.denyWrite.map(anchorOf),
   ]
-  return !anchors.some((anchor) => within(posix.normalize(anchor), target))
+  const spot = APFS(target)
+  return !anchors.some((anchor) => within(APFS(posix.normalize(anchor)), spot))
 }
 
 /** Every directory from `/` down to `dir` exists and none of them is a link. */
@@ -228,11 +247,14 @@ function within(path: string, dir: string): boolean {
   return path === base || path.startsWith(`${base}/`)
 }
 
-/** The entry denies `path`: a literal entry covers its subtree, a glob each match's subtree. */
-function covers(entry: SandboxPathEntry, path: string): boolean {
-  if (typeof entry !== 'string') return within(path, posix.normalize(entry.path))
-  if (!hasWildcard(entry)) return within(path, posix.normalize(entry))
-  return globPattern(entry).test(path)
+/**
+ * The entry denies `spot`, a normalized path already folded by `fold`: a literal entry covers its
+ * subtree, a glob each match's subtree.
+ */
+function covers(entry: SandboxPathEntry, spot: string, fold: Fold): boolean {
+  if (typeof entry !== 'string') return within(spot, fold(posix.normalize(entry.path)))
+  if (!hasWildcard(entry)) return within(spot, fold(posix.normalize(entry)))
+  return globPattern(fold(entry)).test(spot)
 }
 
 /** The fixed directory an entry stands for: a glob's segments before its first wildcard. */

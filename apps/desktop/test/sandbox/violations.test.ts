@@ -187,7 +187,7 @@ function wrapOf(
   }
   const allowWrite =
     profile === 'workspace-write' ? [literal(ws), literal(`${home}/tenon-sandbox-cache/npm`)] : []
-  return { allowWrite, denyWrite, denyRead, profileDir, homeDir: home, lstat }
+  return { allowWrite, denyWrite, denyRead, profileDirs: [profileDir], homeDir: home, lstat }
 }
 
 const PROBE_DIRS = { P1: '/fx/p1', P2: '/fx/p2', P3: '/fx/p3' } as const
@@ -536,7 +536,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ).toStrictEqual(withLines(cases))
   })
 
-  it('an IP literal, a numeric host, localhost, *.localhost, a malformed host, a `resolved to …` denial or a name the srt schema refuses offers no domain release', () => {
+  it('an IP literal, a numeric host, localhost, *.localhost, a malformed host or a `resolved to …` denial offers no domain release', () => {
     const cases: [string, Expected][] = [
       [proxyLine('1.1.1.1:80'), { kind: 'network', target: '1.1.1.1' }],
       [proxyLine('169.254.169.254:80'), { kind: 'network', target: '169.254.169.254' }],
@@ -552,6 +552,8 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       [proxyLine('example.com:443', 'malformed host'), { kind: 'network', target: 'example.com' }],
       [proxyLine('evil.com\u0000.example.com:443', 'malformed host'), { kind: 'network' }],
       [proxyLine('a b(1) deny(1) file-write-create /x:443', 'malformed host'), { kind: 'network' }],
+      // outside srt's host charset: no target, though the URL parser would take this one
+      [proxyLine('exa$mple.com:443', 'malformed host'), { kind: 'network' }],
       [
         proxyLine('tenon-probe-loopback.test:50109', 'resolved to a loopback address'),
         { kind: 'network', target: 'tenon-probe-loopback.test' },
@@ -564,11 +566,6 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         proxyLine('example.com:443', 'host is on the deny list'),
         { kind: 'network', target: 'example.com' },
       ],
-      // srt's schema refuses these as allowedDomains entries (no dot, a leading dot, empty labels)
-      [proxyLine('db:5432'), { kind: 'network', target: 'db' }],
-      [proxyLine('com:80'), { kind: 'network', target: 'com' }],
-      [proxyLine('.example.com:80'), { kind: 'network', target: '.example.com' }],
-      [proxyLine('..:80'), { kind: 'network', target: '.' }],
       // the one that does: an off-list domain name, spelled as the URL parser spells it
       [
         proxyLine('Example.COM.:443'),
@@ -582,6 +579,43 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         wrap,
       ),
     ).toStrictEqual(withLines(cases))
+  })
+
+  it("an off-list name srt's allowedDomains schema refuses (no dot, a leading dot) or one with an empty label offers no domain release", () => {
+    const cases: [string, Expected][] = [
+      [proxyLine('db:5432'), { kind: 'network', target: 'db' }],
+      [proxyLine('com:80'), { kind: 'network', target: 'com' }],
+      [proxyLine('.example.com:80'), { kind: 'network', target: '.example.com' }],
+      // srt's schema takes this one; Tenon refuses the empty label itself
+      [proxyLine('a..example.com:80'), { kind: 'network', target: 'a..example.com' }],
+      [proxyLine('..:80'), { kind: 'network', target: '.' }],
+      // srt takes `.` as a host; without its trailing dot nothing is left to name
+      [proxyLine('.:80'), { kind: 'network' }],
+      [proxyLine('example.com:443'), { kind: 'network', target: 'example.com', release: 'domain' }],
+    ]
+    const wrap = wrapOf('darwin', 'workspace-write', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
+  it('a proxy-shaped line whose host srt would never pass as valid gets no target and no release', () => {
+    // srt says `host is not on the allow list` only for a host its isValidHost takes (srt79
+    // parent-proxy.js:369-381), so such a line is forged: on Linux through the observer, whose
+    // `deny <syscall> <path>` takes the syscall from the sandboxed process (header, shape 2). The
+    // URL parser would read these as `example.com`.
+    const lines = [
+      proxyLine('/example.com:443'),
+      proxyLine('user@example.com:443'),
+      proxyLine('example.com/x:443'),
+      proxyLine('example.com?x:443'),
+    ]
+    expect(classifyAll(lines, wrapOf('linux', 'workspace-write', P1))).toStrictEqual(
+      lines.map((line) => ({ kind: 'network', line })),
+    )
   })
 
   it('a Seatbelt line carries `<proc>(<pid>) `; a bare `deny(1) …` line or a process name with parentheses matches nothing', () => {
@@ -756,7 +790,9 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       [writeLine('/fx/p1/ws/out-link/f1'), { kind: 'fs', target: '/fx/p1/ws/out-link/f1' }],
       [writeLine('/fx/p1/linked/sub/f1'), { kind: 'fs', target: '/fx/p1/linked/sub/f1' }],
       [writeLine('/fx/p1/outside/a-file/f1'), { kind: 'fs', target: '/fx/p1/outside/a-file/f1' }],
-      // above the home directory, above a credential-list entry (~/.cache/huggingface/token)
+      // an existing directory above the home directory (refused as an existing directory; each
+      // anchor on its own is the next test), and a missing one above a credential-list entry
+      // (~/.cache/huggingface/token)
       [writeLine('/fx/p1'), { kind: 'fs', target: '/fx/p1' }],
       [writeLine('/fx/p1/home/.cache'), { kind: 'fs', target: '/fx/p1/home/.cache' }],
       // a sibling of a denied entry is not above it
@@ -771,6 +807,147 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       ],
     ]
     const wrap = wrapOf('darwin', 'read-only', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
+  it('each 读法 35 anchor refuses on its own: the home dir, the profile dir, a denyRead or a denyWrite entry, or an ancestor of one', () => {
+    // Nothing under /fx/q is on disk and the lists hold one entry each, so no other rule refuses:
+    // in the app the home and profile dirs exist and denyWrite carries denyRead (不变量 6), which
+    // hides each anchor behind the existing-directory rule or another anchor.
+    const bare: ViolationContext = {
+      allowWrite: [],
+      denyWrite: [],
+      denyRead: [],
+      profileDirs: ['/fx/elsewhere/profile'],
+      homeDir: '/fx/elsewhere/home',
+      lstat: (path) => (path === '/fx' || path === '/fx/q' ? is('dir') : undefined),
+    }
+    const anchored: [string, ViolationContext, string][] = [
+      ['home dir', { ...bare, homeDir: '/fx/q/home' }, '/fx/q/home'],
+      ['above the home dir', { ...bare, homeDir: '/fx/q/up/home' }, '/fx/q/up'],
+      ['profile dir', { ...bare, profileDirs: ['/fx/q/profile'] }, '/fx/q/profile'],
+      // its real path, the second spelling
+      [
+        'above the profile dir',
+        { ...bare, profileDirs: ['/fx/link/profile', '/fx/q/up/profile'] },
+        '/fx/q/up',
+      ],
+      ['denyRead entry', { ...bare, denyRead: [literal('/fx/q/token')] }, '/fx/q/token'],
+      ['above a denyRead entry', { ...bare, denyRead: [literal('/fx/q/up/token')] }, '/fx/q/up'],
+      ['above a denyWrite entry', { ...bare, denyWrite: [literal('/fx/q/up/hook')] }, '/fx/q/up'],
+      // a glob stands for the directories before its first wildcard
+      ['above a denyWrite glob', { ...bare, denyWrite: ['/fx/q/up/**/.envrc'] }, '/fx/q/up'],
+    ]
+    expect(
+      anchored.map(([anchor, wrap, target]) => [anchor, classify(writeLine(target), wrap)]),
+    ).toStrictEqual(
+      anchored.map(([anchor, , target]) => [
+        anchor,
+        { kind: 'fs', line: writeLine(target), target },
+      ]),
+    )
+    // and the same wraps offer the release for a path no anchor touches
+    expect(
+      anchored.map(([anchor, wrap]) => [anchor, classify(writeLine('/fx/q/free'), wrap)]),
+    ).toStrictEqual(
+      anchored.map(([anchor]) => [
+        anchor,
+        { kind: 'fs', line: writeLine('/fx/q/free'), target: '/fx/q/free', release: 'path' },
+      ]),
+    )
+  })
+
+  it('a Seatbelt write on a case variant of a protected name is protected and offers no release (case-insensitive APFS)', () => {
+    // P1 F11 and F12 on macOS 26.3: Seatbelt refused each one and logged the name as written
+    const cases: [string, Expected][] = [
+      [
+        'zsh(75476) deny(1) file-write-create /fx/p1/ws/.ENVRC',
+        { kind: 'fs', target: '/fx/p1/ws/.ENVRC', protected: true },
+      ],
+      [
+        'zsh(75516) deny(1) file-write-create /fx/p1/ws/.Envrc',
+        { kind: 'fs', target: '/fx/p1/ws/.Envrc', protected: true },
+      ],
+      [
+        'zsh(75720) deny(1) file-write-create /fx/p1/ws/.Mcp.json',
+        { kind: 'fs', target: '/fx/p1/ws/.Mcp.json', protected: true },
+      ],
+      [
+        'zsh(75744) deny(1) file-write-create /fx/p1/ws/.ZSHRC',
+        { kind: 'fs', target: '/fx/p1/ws/.ZSHRC', protected: true },
+      ],
+      [
+        'zsh(76463) deny(1) file-write-create /fx/p1/home/.ZSHRC',
+        { kind: 'fs', target: '/fx/p1/home/.ZSHRC', protected: true },
+      ],
+      // the parent of a protected name, as the lower-case .claude and .git are
+      [
+        'mkdir(75638) deny(1) file-write-create /fx/p1/ws/.Claude',
+        { kind: 'fs', target: '/fx/p1/ws/.Claude' },
+      ],
+      [
+        'mkdir(75697) deny(1) file-write-create /fx/p1/ws/.CLAUDE',
+        { kind: 'fs', target: '/fx/p1/ws/.CLAUDE' },
+      ],
+      [
+        'mkdir(75753) deny(1) file-write-create /fx/p1/ws/.Git',
+        { kind: 'fs', target: '/fx/p1/ws/.Git' },
+      ],
+      // a glob entry in a sub-directory, and above a credential-list entry
+      [
+        'zsh(1) deny(1) file-write-create /fx/p1/ws/sub/.ENVRC',
+        { kind: 'fs', target: '/fx/p1/ws/sub/.ENVRC', protected: true },
+      ],
+      [
+        'mkdir(1) deny(1) file-write-create /fx/p1/home/.CACHE',
+        { kind: 'fs', target: '/fx/p1/home/.CACHE' },
+      ],
+      // a read in the profile dir under another case
+      [
+        'cat(1) deny(1) file-read-data /fx/p1/home/Tenon-Profile/config.json',
+        { kind: 'fs', target: '/fx/p1/home/Tenon-Profile/config.json', protected: true },
+      ],
+    ]
+    const wrap = wrapOf('darwin', 'workspace-write', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
+  it('a Linux observer path compares case by case: a case variant is no denyWrite entry', () => {
+    const wrap = wrapOf('linux', 'workspace-write', P1)
+    // ext4 tells .ENVRC from .envrc: inside allowWrite and not protected, so dropped
+    expect(classify('deny openat /fx/p1/ws/.ENVRC', wrap)).toBeUndefined()
+  })
+
+  it('a Seatbelt read in the profile dir is protected under either spelling, the written one or the real path', () => {
+    // the profile is under /fx/var, a link to /fx/private/var; Seatbelt logs the real path
+    const wrap = {
+      ...wrapOf('darwin', 'workspace-write', P1),
+      profileDirs: ['/fx/var/folders/t/profile', '/fx/private/var/folders/t/profile'],
+    }
+    const cases: [string, Expected][] = [
+      [
+        'cat(1) deny(1) file-read-data /fx/private/var/folders/t/profile/config.json',
+        {
+          kind: 'fs',
+          target: '/fx/private/var/folders/t/profile/config.json',
+          protected: true,
+        },
+      ],
+      [
+        'cat(1) deny(1) file-read-data /fx/var/folders/t/profile/config.json',
+        { kind: 'fs', target: '/fx/var/folders/t/profile/config.json', protected: true },
+      ],
+    ]
     expect(
       classifyAll(
         cases.map(([line]) => line),
