@@ -1,6 +1,6 @@
 # Claude 5.5 两行与模型目录跟随最新 — 执行计划
 
-对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。「验收 N」指 spec §验收标准，「FN」指 §事实与出处，「开放问题 N」指 §开放问题（已定）。spec 是 `ready`（owner 2026-10-15 在对话里接受，spec `Revisions:` ㊳）。**先做第 1 步**（落地前核对，只读公开页面），然后按序。不带指令说「继续」时，AGENTS.md 的顺序先选 `04-sandbox`（architecture、`ready`、plan 有未勾步骤）；要做本 spec，请点名它。
+对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。「验收 N」指 spec §验收标准，「FN」指 §事实与出处，「开放问题 N」指 §开放问题（已定）。spec 还是 `draft`：第 0 步做完之前不动代码。
 
 ## 开工前读
 
@@ -30,7 +30,9 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 步骤
 
-- [x] 0. owner 定开放问题与接受 spec：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。同日 owner 在对话里答「可以 都按推荐来」：§点名 (g)（菜单写指针、只改档不写默认）按推荐确认，spec 改 `Status: ready`（`Revisions:` ㊳，`Owner` 行已写）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
+- [ ] 0. owner 定开放问题：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。剩下两件，按顺序：
+  - 请 owner 单独确认 spec §点名 (g)（`Revisions:` ㊱）。附白话例子：「在菜单里点 Sonnet 5.5，以后 Tenon 加了 Sonnet 6，新会话会自动用 Sonnet 6；想固定就在设置卡里选具体那一行。另外，在会话里只改思考档位（或在确认页点『切换』）不改新会话默认。」结果写进 spec 的 `Owner` 行；否决哪一半，照 §点名 (g) 最后一列改。这一条是改 `ready` 的前提。
+  - spec 改 `Status: ready`（收尾那一步做）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
 - [ ] 1. 落地前核对，只读公开页面：
   - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记 `Revisions:`，并按 01 spec:353「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进本文件。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 6 步的注释。
@@ -122,7 +124,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，把报错原文（不含 key）记进本文件。报错指向 effort、`between_tools` 或 `disabled` 时，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。指向别的原因时不按 (e) 处理：这两例的摘要请求第一次回放 tool_use / tool_result 又不带 tools，记成 02 §摘要请求「前缀（默认做法）」的问题请 owner 定。原因判不清时，问 owner 要不要在 record 模式下给 Opus 5.5 跑一次同样的「Read + 阈值压缩」做对照（约 7 个请求，同样先提醒钥匙串会弹窗）。
   - 记进本文件：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读。不记 key。
 - [ ] 13. 旧 spec 上要加的（与实现同一个 PR；旧文一字不改）。日期一律取写入这些行的那个提交的日期，合入晚了也不改（spec `Replaces:`）：
-  - 01、02、model-display-names 顶部各加一行 `Amended by:`（括注写增了什么，照 spec `Amends:`）；02 那一行点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 已由 owner 2026-10-15 按推荐确认，spec `Revisions:` ㊳；(e) 只在 live 失败、owner 确认时补）；01 那一行点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛）；
+  - 01、02、model-display-names 顶部各加一行 `Amended by:`（括注写增了什么，照 spec `Amends:`）；02 那一行点出 §点名 (a)(b)(f) 与 owner 的确认，(g) 只在第 0 步 owner 确认过之后点出（(e) 只在 live 失败、owner 确认时补）；01 那一行点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛）；
   - 02 §模型菜单与输入框「更多模型 ›」那一行行末接指针「（<日期> 起由 [claude-5-5-models](../../features/claude-5-5-models/spec.md) §替换 02 的表现层条款 取代：括注改为「每个家族里不是最新一代的行」）」，02 顶部加 `Clauses replaced by:`（spec-driven-dev 第三个例外）；spec `Replaces:` 里的「写入指针那天」在同一个提交里换成同一个日期。
 - [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑一次「命令」里的全量 e2e，结果记在本文件。
 - [ ] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；`git status` 干净。
@@ -142,7 +144,6 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 - 2026-10-15：owner 定开放问题（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 与本计划就地修订（spec `Revisions:` ⑯–⑳）：加第 5、8–11、13 步，原第 5–10 步顺延为第 6、7、12、14–16 步。代码没动。下一步：收尾一步把 spec 改 `ready`，然后从第 1 步开工。
 - 2026-10-15：按第三轮评审就地修订 spec 与本计划（spec `Revisions:` ㉑–㉗；owner 同日定「都按推荐来」，会话不换不论默认怎么变）：第 8、9、10、11、13 步随改。第 11 步不再要 presentation-r1 改它自己的文件；它的 `Related:` 说两份只交叉两处，现在是三处（多了本 spec 修补它的第 1 条），这句由 `docs/presentation-r1` 分支去改。代码没动。下一步：收尾一步把 spec 改 `ready`，然后从第 1 步开工。
 - 2026-10-15：按第四轮评审就地修订 spec 与本计划（spec `Revisions:` ㉘–㊲，对照兄弟分支 `docs/presentation-r1` 的 `c60760d` 核对）：「与 presentation-r1 的先后」、第 0、8、9、11、12、13、14 步与「命令」随改。上一条说的「本 spec 修补它的第 1 条」撤回：它的第 1 条已自己写了指针一支，本 spec 只在它先合入时实现那一支。第 0 步多了一件：改 `ready` 之前请 owner 单独确认 §点名 (g)。代码没动。下一步：第 0 步问 owner (g)，确认后改 `ready`，然后从第 1 步开工。
-- 2026-10-15：owner 在对话里答「可以 都按推荐来」，接受本 spec；§点名 (g) 按推荐确认；spec `Status` 改 `ready`（`Revisions:` ㊳），`Owner` 行与 §点名 里 (g) 的「未确认」写法同步改过。第 0 步勾掉。代码没动。下一步：第 1 步（F21 两页原文核对，只读）。第 12 步开跑前仍要先提醒 owner 钥匙串会弹窗。
 
 ## Open
 
