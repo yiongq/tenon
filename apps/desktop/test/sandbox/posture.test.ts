@@ -716,6 +716,24 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     ])
     expect(missingJar.srt.initialize).not.toHaveBeenCalled()
 
+    // A directory where the helper should be is no helper file either.
+    const dirSeccomp = harness('linux')
+    dirSeccomp.disk.removeTree(dirSeccomp.at.seccomp)
+    dirSeccomp.disk.dir(dirSeccomp.at.seccomp)
+    expect(await outcomeOf(dirSeccomp)).toEqual({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [
+        {
+          code: 'other',
+          detail: 'missing helper file: /opt/srt/vendor/seccomp/arm64/apply-seccomp',
+        },
+      ],
+      initialize: 'not-called',
+    })
+    expect(dirSeccomp.srt.initialize).not.toHaveBeenCalled()
+
     // An architecture srt ships no apply-seccomp for: srt's own warning decides (`no-seccomp`).
     const otherArch = harness('linux', { arch: 'ia32', warnings: [NO_SECCOMP] })
     otherArch.disk.removeTree(otherArch.at.seccomp)
@@ -1179,6 +1197,10 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
         JSON.stringify({ socat: [{ pid: 777, command: SOCAT_COMMAND('beef') }] }),
       )
       h.table.push({ pid: 777, ppid: 1, command: SOCAT_COMMAND('beef') })
+      // A restricting reading: the path most tempting to "fix" with sudo is the one taken.
+      if (platform === 'linux') {
+        h.disk.file('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '1\n')
+      }
       // oxlint-disable-next-line no-await-in-loop -- one scenario after the other
       const outcome = await outcomeOf(h)
       commands.push(...h.runs.map(({ argv }) => argv.join(' ')))
@@ -1334,6 +1356,8 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     h.disk.file(`${ws}/.vscode/settings.json`, '{}')
     h.disk.dir(`${other}/.claude`) // the same name, unrecorded: stays
     h.disk.file(`${ws}/.codex`, '') // recorded, a file now: stays
+    h.disk.dir('/home/u/empty-elsewhere') // recorded path is now a link to an empty dir: both stay
+    h.disk.link(`${ws}/.idea`, '/home/u/empty-elsewhere')
     h.disk.file('/tmp/claude-http-aa11.sock')
     h.disk.dir('/tmp/srt-obs-AbC123', { mode: 0o700 })
     h.disk.file('/tmp/srt-obs-AbC123/s1.sock')
@@ -1346,7 +1370,7 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
       JSON.stringify({
         mountPoints: {
           'toolu_01.0a0b': [`${ws}/.claude`, `${ws}/.vscode`],
-          'toolu_02.0c0d': [`${ws}/.codex`],
+          'toolu_02.0c0d': [`${ws}/.codex`, `${ws}/.idea`],
         },
         pid: 999,
         socat: [
@@ -1376,6 +1400,8 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     expect(h.disk.has(`${ws}/.vscode/settings.json`)).toBe(true)
     expect(h.disk.has(`${other}/.claude`)).toBe(true)
     expect(h.disk.has(`${ws}/.codex`)).toBe(true)
+    expect(h.disk.lstat(`${ws}/.idea`)?.isSymbolicLink()).toBe(true)
+    expect(h.disk.lstat('/home/u/empty-elsewhere')?.isDirectory()).toBe(true)
     for (const gone of [
       '/tmp/claude-http-aa11.sock',
       '/tmp/srt-obs-AbC123',
@@ -1427,7 +1453,7 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     }).toEqual({ outside: true, otherName: true, recorded: false })
   })
 
-  it("04 验收 9 (startup): another srt user's entries made in main's tmpdir meanwhile are not recorded, nor removed next time", async () => {
+  it("04 验收 9 (startup): another srt user's claude-http and srt-mux entries made in main's tmpdir while initialize runs, and any made after it, are not recorded, nor removed next time", async () => {
     let first = true
     const foreign = [
       '/tmp/claude-http-beef02.sock', // no bridge of ours listens on it

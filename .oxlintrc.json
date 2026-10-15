@@ -333,8 +333,9 @@
     {
       // Spec 04 读法 50: main chdirs to <userData>/sandbox-cwd before sandbox-runtime starts, so a
       // relative path in main would quietly resolve there. Only dev-env.ts reads the cwd, before
-      // that happens (the override below).
-      "files": ["apps/desktop/src/main/**/*.ts"],
+      // that happens (the override below). Every extension: a worker such as mcp/schema-thread.mjs
+      // shares main's cwd.
+      "files": ["apps/desktop/src/main/**"],
       "rules": {
         "no-restricted-properties": [
           "error",

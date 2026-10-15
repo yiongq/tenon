@@ -245,7 +245,12 @@ const propertyGaps = (path) => {
 
 // Spec 04 读法 50: main chdirs to <userData>/sandbox-cwd once the sandbox starts, so main may not
 // read its cwd, by `process.cwd` or by importing `cwd` (dev-env.ts aside, which runs before that).
-const MAIN_PATHS = ['apps/desktop/src/main/x.ts', 'apps/desktop/src/main/host/x.ts']
+// Not only .ts: a worker such as mcp/schema-thread.mjs shares main's cwd.
+const MAIN_PATHS = [
+  'apps/desktop/src/main/x.ts',
+  'apps/desktop/src/main/host/x.ts',
+  'apps/desktop/src/main/mcp/x.mjs',
+]
 const CWD_IMPORTS = ['node:process', 'process']
 
 const cwdBanGaps = (path) => {
@@ -480,6 +485,12 @@ describe("oxlint on a desktop main probe (spec 04 读法 50: main's cwd)", () =>
       source: `import { cwd } from 'node:process'\nexport const f = () => cwd()\n`,
       rule: 'no-restricted-imports',
     },
+    {
+      label: 'process.cwd() in a worker script',
+      path: 'apps/desktop/src/main/mcp/probe.mjs',
+      source,
+      rule: 'no-restricted-properties',
+    },
   ])('fails on $label and names the rule', ({ path, source: text, rule }) => {
     const { exitCode, output } = lintProbe(path, text)
     expect({ exitCode, named: output.includes(rule) }, `oxlint said:\n${output}`).toEqual({
@@ -489,7 +500,7 @@ describe("oxlint on a desktop main probe (spec 04 读法 50: main's cwd)", () =>
   })
 
   it('lets dev-env.ts read it', () => {
-    // The other half: the exemption is still there, so the two probes above fail for the ban.
+    // The other half: the exemption is still there, so the probes above fail for the ban.
     expect(lintProbe('apps/desktop/src/main/dev-env.ts', source)).toEqual({
       exitCode: 0,
       output: '',
