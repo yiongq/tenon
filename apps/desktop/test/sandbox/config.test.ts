@@ -623,6 +623,18 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
         expect(readOnly.env).toEqual({})
         expect(readOnly.presetDirs).toEqual([])
       }
+      // Your profile read-only with a path release: the request is workspace-write, the preset is
+      // not in effect, and allowWrite is the released path alone.
+      const release = platform === 'darwin' ? '/Users/u/notes/todo.md' : '/home/u/notes/todo.md'
+      const released = wrapFilesystem(
+        wrapInput(platform, {
+          chosen: 'read-only',
+          packageManagers: true,
+          workspace: [{ path: p(release), directory: false, gitDirectory: false }],
+        }),
+        PLAIN,
+      )
+      expect(released.filesystem.allowWrite).toEqual([literal(release)])
     }
     // Never your own caches.
     for (const own of ['/Users/u/.npm', '/Users/u/.cargo', '/Users/u/.cache/uv']) {
