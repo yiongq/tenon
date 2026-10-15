@@ -73,7 +73,11 @@ function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
   return { code, detail }
 }
 
-/** How `initialize` went: whoever registers `app.quit` for SIGTERM / SIGINT reads it (§退出). */
+/**
+ * How `initialize` went: whoever registers `app.quit` for SIGTERM / SIGINT reads it (§退出). Only
+ * `dependency-error` says srt's signal listeners are surely not there; `threw` may have come
+ * before or after them and counts as after (`SandboxStartupRun`).
+ */
 export type InitializeResult = 'not-called' | 'dependency-error' | 'threw' | 'returned'
 
 export interface SandboxPostureOutcome extends SandboxStartup {

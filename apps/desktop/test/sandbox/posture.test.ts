@@ -75,6 +75,8 @@ const OLD_BWRAP =
   'mask naming a path that is not a regular file (a fifo, socket or device node) cannot be ' +
   'applied on it, and a mount point an interrupted sandbox left behind is not recognised as one ' +
   'and stays on the host. Everything else is unaffected'
+/** macos-sandbox-utils.js:1109 (linux-sandbox-utils.js:2806 alike), for the `/bin/sh` the self-test passes */
+const SHELL_NOT_FOUND = "Shell '/bin/sh' not found in PATH"
 
 /** P1 (probes/results/macos/p1.nested.json:24), the run directory replaced */
 const NESTED_INIT_ERROR =
@@ -837,6 +839,63 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     expect(oldOutcome.state).toBe('degraded')
     expect(oldOutcome.noSeccomp).toBe(false)
     expect(oldOutcome.reasons).toEqual([{ code: 'old-bwrap', detail: OLD_BWRAP }])
+
+    // Warnings never stand in for the self-test (spec §启动 step 5, 读法 4): it still runs, and when
+    // it fails the posture is unavailable whatever the warnings said.
+    const wroteAnyway = harness('linux', {
+      warnings: [OLD_BWRAP],
+      selfTest: { code: 0, writes: true },
+    })
+    const wroteOutcome = await outcomeOf(wroteAnyway)
+    const target = targetOf(wroteAnyway.wraps[0]?.command ?? '')
+    expect(target).toMatch(/^\/tmp\/tenon-sandbox-self-test-[0-9a-f]{16}$/)
+    expect(wroteOutcome).toEqual({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [{ code: 'self-test-failed', detail: `wrote ${target} outside the sandbox` }],
+      initialize: 'returned',
+    })
+
+    const restricted = harness('linux', {
+      warnings: [NO_SECCOMP],
+      selfTest: { code: 1, stderr: BWRAP_LOOPBACK_STDERR },
+    })
+    restricted.disk.file('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '1\n')
+    expect(await outcomeOf(restricted)).toEqual({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [
+        {
+          code: 'userns-restricted',
+          detail:
+            'kernel.apparmor_restrict_unprivileged_userns=1\nkernel.unprivileged_userns_clone=1\n' +
+            `user.max_user_namespaces=15329\nexited 1\n${BWRAP_LOOPBACK_STDERR}`,
+        },
+      ],
+      initialize: 'returned',
+    })
+  })
+
+  it('04 验收 2: on linux a restricting sysctl reading with a passing self-test (the bwrap AppArmor profile, P5) is active', async () => {
+    // P5: with the profile from spec §启动 step 6 installed, 24.04 at 1 and 26.04 as shipped (1) are
+    // active. A reading only names why a self-test failed (step 5); it never fails one that passed.
+    for (const [path, value] of [
+      ['/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '1'],
+      ['/proc/sys/kernel/unprivileged_userns_clone', '0'],
+    ] as const) {
+      const h = harness('linux')
+      h.disk.file(path, `${value}\n`)
+      // oxlint-disable-next-line no-await-in-loop -- one reading after the other
+      const outcome = await outcomeOf(h)
+      expect({ path, state: outcome.state, reasons: outcome.reasons }).toEqual({
+        path,
+        state: 'active',
+        reasons: [],
+      })
+      expect(h.srt.cleanupAfterCommand).toHaveBeenCalledTimes(1)
+    }
   })
 
   it("04 验收 2: a failing self-test is unavailable; exit 71 is nested-sandbox; a restricting sysctl reading or apply-seccomp's `nested userns is capability-restricted` makes it userns-restricted", async () => {
@@ -927,9 +986,9 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     }
 
     // A wrap that throws: self-test-failed, and no cleanupAfterCommand for a wrap that never was.
-    const wrapThrows = harness('darwin', { wrapError: new Error("Shell 'sh' not found in PATH") })
+    const wrapThrows = harness('darwin', { wrapError: new Error(SHELL_NOT_FOUND) })
     expect(reasons(await outcomeOf(wrapThrows))).toEqual([
-      { code: 'self-test-failed', detail: "wrap: Shell 'sh' not found in PATH" },
+      { code: 'self-test-failed', detail: "wrap: Shell '/bin/sh' not found in PATH" },
     ])
     expect(wrapThrows.srt.cleanupAfterCommand).not.toHaveBeenCalled()
 
@@ -1250,6 +1309,10 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
         '        `else is unaffected`);',
     )
     expect(linux).toContain("export const OLDEST_FULLY_SUPPORTED_BWRAP_VERSION = '0.5.0';")
+    const macos = readFileSync(join(dir, 'dist/sandbox/macos-sandbox-utils.js'), 'utf8')
+    for (const source of [macos, linux]) {
+      expect(source).toContain("throw new Error(`Shell '${shellName}' not found in PATH`);")
+    }
     for (const arch of ['x64', 'arm64']) {
       const helper = readFileSync(join(dir, `vendor/seccomp/${arch}/apply-seccomp`)).toString(
         'latin1',

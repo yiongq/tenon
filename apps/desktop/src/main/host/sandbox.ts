@@ -136,11 +136,15 @@ export interface SandboxStartup {
  * implies `initialize` returned. A `dispose` while `initialize` runs waits for it, within its 2 s.
  *
  * A pending `initialized` does not mean srt left the signals alone: `initialize` installs its
- * once-listeners for SIGINT and SIGTERM after its dependency check and before it starts the
- * proxies (srt79 sandbox-manager.js:542, :97-110), so any throw but the dependency check's
- * 「Sandbox dependencies not available: …」 (:490) comes after they are in place and Node's default
- * exit on those signals is gone. Whoever registers `app.quit` for the signals (§退出) keys it to
- * `initialize` having been called and not having thrown at the dependency check, not to `initialized`.
+ * once-listeners for SIGINT and SIGTERM, which take Node's default exit on them away, at
+ * srt79 sandbox-manager.js:542 (:97-110). Only the dependency check's 「Sandbox dependencies not
+ * available: …」 (:490) is sure to come before that. Any other throw may come before it (:461
+ * resolveParentProxy, :466 createResolvedAddressGuard, :470 and :485 the TLS options, :488 the
+ * dependency check itself rejecting, :494 and :511 the log monitor and the Linux observer, whose
+ * mkdtemp throws when the tmpdir is not writable) or after it (the proxies), and counts as after:
+ * one `app.quit` listener too many is harmless. So whoever registers `app.quit` for the signals
+ * (§退出) keys it to `initialize` having been called and not having thrown at the dependency check,
+ * not to `initialized`.
  */
 export interface SandboxStartupRun {
   readonly initialized: Promise<void>
