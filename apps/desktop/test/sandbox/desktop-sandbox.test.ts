@@ -1013,6 +1013,42 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     expect(await darwin.sandbox.violations(TOOL_USE)).toEqual([])
   })
 
+  it("04 验收 11 (host): on linux the record reaches a link inside a deny entry's link target (~/.aws → ~/dotfiles/aws, ~/dotfiles a link to another dir) and one through a dangling link; replacing either yields one protected violation targeting it", async () => {
+    const arrange = (): Harness => {
+      const h = harness('linux')
+      h.disk.dir('/home/u/vol/dotfiles/aws', { mode: 0o700 })
+      h.disk.link('/home/u/dotfiles', '/home/u/vol/dotfiles')
+      h.disk.link('/home/u/.aws', '/home/u/dotfiles/aws')
+      // `~/.gnupg` dangles into `~/keys`, itself a link to a dir not made yet
+      h.disk.link('/home/u/.gnupg', 'keys/gnupg')
+      h.disk.link('/home/u/keys', '/home/u/vol/keys')
+      return h
+    }
+    const unchanged = arrange()
+    await unchanged.run()
+    await unchanged.sandbox.afterExit(TOOL_USE)
+    expect(await unchanged.sandbox.violations(TOOL_USE)).toEqual([])
+
+    for (const inner of ['/home/u/dotfiles', '/home/u/keys']) {
+      const replaced = arrange()
+      // oxlint-disable-next-line no-await-in-loop -- one harness after the other
+      await replaced.run()
+      replaced.disk.remove(inner)
+      replaced.disk.dir(inner)
+      // oxlint-disable-next-line no-await-in-loop -- one harness after the other
+      await replaced.sandbox.afterExit(TOOL_USE)
+      // oxlint-disable-next-line no-await-in-loop -- one harness after the other
+      expect(await replaced.sandbox.violations(TOOL_USE)).toEqual([
+        {
+          kind: 'fs',
+          line: `link changed during the command: ${inner}`,
+          target: inner,
+          protected: true,
+        },
+      ])
+    }
+  })
+
   it('04 验收 23 (host): a workspace item outside the session folders that fails 读法 35 (home or above it, an existing dir) is refused', async () => {
     const h = harness('darwin')
     h.disk.dir('/Users/u/code/other')

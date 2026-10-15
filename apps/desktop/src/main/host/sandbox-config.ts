@@ -5,19 +5,23 @@
  * to at startup (null on the eval host), srt's package dir, the session's spill folder, the request's
  * profile and workspace, your profile, the preset switch, the credential list, the `no-seccomp`
  * posture, the effective allowlist and the helper and binary paths — and the disk is read only
- * through the injected `realpath` and `lstat`. Nothing here comes from the model or a command.
+ * through the injected `realpath`, `lstat` and `readlink`. Nothing here comes from the model or a
+ * command.
  *
  * - `sessionConfig` is what `initialize` and `updateConfig` get: the network block, a filesystem block
  *   shaped like read-only's without `allowRead`, the helper paths, Linux's binaries, and on darwin
  *   the two noise lines of `ignoreViolations`.
  * - `wrapFilesystem` is one wrap's `customConfig.filesystem`, the environment variables the preset
- *   adds, the preset dirs to check, and the links on the deny entries' ways (Linux records their
- *   `lstat` before the call and compares after it, step 4).
+ *   adds, the preset dirs to check, and the links passed resolving the deny entries (Linux records
+ *   their `lstat` before the call and compares after it, step 4).
  *
  * Every path goes to srt as `{ path, literal: true }`; the only patterns are darwin's per-root
  * `<root>/**\/<name>` globs, left out for a root whose spelling holds `*?[]`. allowWrite and allowRead
- * get real paths only; a deny entry gets both its written spelling and its real path, and on darwin
- * each link on its way joins denyWrite as itself — never denyRead, and never on Linux (spec「链接」).
+ * get real paths only. A deny entry gets both its written spelling and where it leads, resolved as
+ * the kernel resolves it with every link followed, a dangling one too; on darwin each link passed on
+ * the way, those inside link targets included, joins denyWrite as itself — never denyRead, and never
+ * on Linux — and an entry that is itself a link joins darwin's denyRead by where it leads only
+ * (spec「链接」).
  * Each config carries only the listed keys and passes srt's `SandboxRuntimeConfigSchema` (srt itself
  * validates only its CLI's, and its schema is not strict).
  */
@@ -37,12 +41,85 @@ export type SandboxPlatform = 'darwin' | 'linux'
 
 export type RestrictedProfile = 'read-only' | 'workspace-write'
 
-/** The disk, read only through these (spec「链接」: `realpath` and `lstat` are injected). */
+/** The disk, read only through these (spec「链接」: `realpath`, `lstat` and `readlink` are injected). */
 export interface PathPorts {
   /** The real path; throws when the path or a link on its way does not resolve. */
   readonly realpath: (path: string) => string
   /** The entry itself, links not followed; undefined (or a throw) when nothing is there. */
   readonly lstat: (path: string) => { isSymbolicLink(): boolean } | undefined
+  /** What a link holds, as written; throws when the path is no link. */
+  readonly readlink: (path: string) => string
+}
+
+/** srt79's bound on following links (`MAX_SYMLINK_RESOLUTION_DEPTH`), the kernel's ELOOP. */
+export const MAX_LINK_HOPS = 40
+
+/** What walking a path the way the kernel resolves it found (`walkLinks`). */
+export interface LinkWalk {
+  /**
+   * Where the path leads; undefined after a loop or more than `MAX_LINK_HOPS` links, or when a
+   * level could not be looked at or a link not read.
+   */
+  readonly real: string | undefined
+  /** Each link passed, once, named where it itself is: its directory's real path and its name. */
+  readonly links: readonly string[]
+}
+
+/**
+ * `path` resolved level by level from `/` as the kernel resolves it (spec「链接」): each link is
+ * replaced by what it holds, a relative target read from the real path of the link's directory, a
+ * dangling link followed all the same (as srt79's `resolveSymlinkedDenyPath`); from the first level
+ * that is not there the rest is joined on as written. `followLast: false` leaves a link in the last
+ * place as it is, as unlink and rename do. When the walk cannot finish, `links` still holds every
+ * link passed so far.
+ */
+export function walkLinks(
+  path: string,
+  ports: Pick<PathPorts, 'lstat' | 'readlink'>,
+  followLast = true,
+): LinkWalk {
+  const links = new Set<string>()
+  const done = (real: string | undefined): LinkWalk => ({ real, links: [...links] })
+  let at = '/'
+  let rest = levels(path)
+  let hops = 0
+  while (rest.length > 0) {
+    const [name = '', ...after] = rest
+    rest = after
+    if (name === '..') {
+      at = posix.dirname(at)
+      continue
+    }
+    const node = posix.join(at, name)
+    let stat: { isSymbolicLink(): boolean } | undefined
+    try {
+      stat = ports.lstat(node)
+    } catch {
+      return done(undefined)
+    }
+    if (stat === undefined) return done(posix.join(node, ...rest))
+    if (!stat.isSymbolicLink() || (rest.length === 0 && !followLast)) {
+      at = node
+      continue
+    }
+    links.add(node)
+    hops += 1
+    if (hops > MAX_LINK_HOPS) return done(undefined)
+    let target: string
+    try {
+      target = ports.readlink(node)
+    } catch {
+      return done(undefined)
+    }
+    if (target.startsWith('/')) at = '/'
+    rest = [...levels(target), ...rest]
+  }
+  return done(at)
+}
+
+/** A path's levels, without empty ones and `.`. */
+function levels(path: string): string[] {
+  return path.split('/').filter((part) => part.length > 0 && part !== '.')
 }
 
 /** What every config is built from (spec §档位到 srt 配置). */
@@ -101,7 +178,10 @@ export interface WrapFilesystem {
   readonly env: Readonly<Record<string, string>>
   /** The preset dirs this wrap made writable, to be checked like `/tmp/claude` (读法 48). */
   readonly presetDirs: readonly AbsolutePath[]
-  /** The links on the deny entries' ways, each where it itself is (spec「链接」). */
+  /**
+   * The links passed resolving the deny entries, those inside link targets included, each where it
+   * itself is (spec「链接」).
+   */
   readonly links: readonly AbsolutePath[]
 }
 
@@ -494,9 +574,15 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
     [denyWrite, writeDenied],
   ] as const) {
     for (const written of entries) {
-      list.literal(written)
-      list.literal(realOf(written, ports))
-      for (const link of linksOn(written, ports)) {
+      const walk = walkLinks(written, ports)
+      // darwin: an entry that is itself a link stays out of denyRead as written — there it refuses
+      // every lookup through it, a write as a read — and joins it by where it leads; denyWrite still
+      // holds it, so it cannot be removed or replaced. A walk that does not finish keeps it.
+      if (!(darwin && list === denyRead && walk.real !== undefined && isLink(written, ports))) {
+        list.literal(written)
+      }
+      list.literal(walk.real ?? realOf(written, ports))
+      for (const link of walk.links) {
         links.add(link)
         if (darwin) denyWrite.literal(link)
       }
@@ -596,25 +682,11 @@ function realOf(path: string, ports: PathPorts): string {
   }
 }
 
-/**
- * Every level of `path`'s written spelling that is a link, named where the link itself is: its
- * parent's real path plus its name, which is the spelling the kernel checks.
- */
-function linksOn(path: string, ports: PathPorts): string[] {
-  const found: string[] = []
-  let prefix = ''
-  for (const segment of path.split('/').filter((part) => part.length > 0)) {
-    prefix = `${prefix}/${segment}`
-    let stat: { isSymbolicLink(): boolean } | undefined
-    try {
-      stat = ports.lstat(prefix)
-    } catch {
-      stat = undefined
-    }
-    if (stat === undefined) break
-    if (stat.isSymbolicLink()) {
-      found.push(posix.join(realOf(posix.dirname(prefix), ports), segment))
-    }
+/** The last level of `path` is a link; a path that cannot be looked at is not one. */
+function isLink(path: string, ports: PathPorts): boolean {
+  try {
+    return ports.lstat(path)?.isSymbolicLink() === true
+  } catch {
+    return false
   }
-  return found
 }

@@ -3,6 +3,7 @@
  * config halves — and 04 不变量 4, 5, 6). Every expected name, key set and preset row below is a
  * literal copied from the spec's tables and Revisions; none is computed by the code under test.
  */
+import { posix } from 'node:path'
 import { SandboxRuntimeConfigSchema } from '@anthropic-ai/sandbox-runtime'
 import type { FilesystemConfig, FilesystemPathEntry } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath } from '@tenon-app/kernel'
@@ -226,6 +227,9 @@ function sessionInput(platform: SandboxPlatform) {
 const PLAIN: PathPorts = {
   realpath: (path) => path,
   lstat: () => ({ isSymbolicLink: () => false }),
+  readlink: (path) => {
+    throw Object.assign(new Error(`EINVAL: ${path}`), { code: 'EINVAL' })
+  },
 }
 
 function missing(path: string): Error {
@@ -238,7 +242,8 @@ function joinName(dir: string, name: string): string {
 
 /**
  * A small disk: `entries` are real paths that exist (their ancestors exist too), `links` map a
- * link's own real location to its target. `realpath` and `lstat` behave like node's.
+ * link's own real location to its target, absolute or relative to the link's directory.
+ * `realpath`, `lstat` and `readlink` behave like node's.
  */
 function fakeDisk(entries: readonly string[], links: Readonly<Record<string, string>>): PathPorts {
   const exists = (real: string): boolean =>
@@ -249,25 +254,34 @@ function fakeDisk(entries: readonly string[], links: Readonly<Record<string, str
     for (const segment of path.split('/').filter(Boolean)) {
       const next = joinName(current, segment)
       const target = links[next]
-      if (target !== undefined) current = realpath(target, depth + 1)
+      if (target !== undefined) current = realpath(posix.resolve(current, target), depth + 1)
       else if (exists(next)) current = next
       else throw missing(path)
     }
     return current
   }
-  const lstat = (path: string): { isSymbolicLink(): boolean } | undefined => {
+  /** Where the entry `path` names itself is, its parent resolved; undefined when that fails. */
+  const nodeOf = (path: string): string | undefined => {
     const cut = path.lastIndexOf('/')
-    let parent: string
     try {
-      parent = realpath(cut === 0 ? '/' : path.slice(0, cut))
+      return joinName(realpath(cut === 0 ? '/' : path.slice(0, cut)), path.slice(cut + 1))
     } catch {
       return undefined
     }
-    const node = joinName(parent, path.slice(cut + 1))
+  }
+  const lstat = (path: string): { isSymbolicLink(): boolean } | undefined => {
+    const node = nodeOf(path)
+    if (node === undefined) return undefined
     if (links[node] !== undefined) return { isSymbolicLink: () => true }
     return exists(node) ? { isSymbolicLink: () => false } : undefined
   }
-  return { realpath: (path) => realpath(path), lstat }
+  const readlink = (path: string): string => {
+    const node = nodeOf(path)
+    const target = node === undefined ? undefined : links[node]
+    if (target === undefined) throw Object.assign(new Error(`EINVAL: ${path}`), { code: 'EINVAL' })
+    return target
+  }
+  return { realpath: (path) => realpath(path), lstat, readlink }
 }
 
 /** A list as comparable strings: a literal entry is its path, a pattern is `glob <pattern>`. */
@@ -693,12 +707,15 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       for (const path of [
         LINKED_PROFILE,
         '/Users/u/.ssh',
-        '/Users/u/.aws',
         '/Users/u/.gnupg',
         ...DARWIN_CREDENTIALS,
       ]) {
         expect(read).toContain(path)
       }
+      // `~/.aws` is itself a link: darwin's denyRead has it only where it leads (spec「链接」).
+      expect(read.includes('/Users/u/.aws')).toBe(platform === 'linux')
+      expect(read).toContain('/Users/u/dotfiles/aws')
+      expect(write).toContain('/Users/u/.aws')
       for (const entry of read) expect(write).toContain(entry)
       expect(write).toContain(LINKED_CWD)
       for (const name of [...ROOT_TENON, ...ROOT_SRT, ...ROOT_GIT]) {
@@ -838,7 +855,7 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
     expect('ignoreViolations' in sessionConfig(sessionInput('linux'), PLAIN)).toBe(false)
   })
 
-  it("04 验收 11 (config): a deny entry is passed as written and as its real path; on darwin each link on its way joins denyWrite only, never denyRead; on linux no link is passed; a missing tail hangs off the deepest existing ancestor's real path; allowWrite gets the real path only; the links on the way come back for the lstat record", () => {
+  it("04 验收 11 (config): a deny entry is passed as written and as its real path (on darwin one that is itself a link as written in denyWrite only); on darwin each link on its way joins denyWrite only, never denyRead; on linux no link is passed; a missing tail hangs off the deepest existing ancestor's real path; allowWrite gets the real path only; the links on the way come back for the lstat record", () => {
     const disk = linkedDisk()
     const linksOnTheWay = ['/Users/u/.config', '/Users/u/.cache', '/Users/u/proj']
     for (const platform of ['darwin', 'linux'] as const) {
@@ -846,9 +863,12 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       const read = spelled(wrap.filesystem.denyRead)
       const write = spelled(wrap.filesystem.denyWrite)
 
-      // The entry is a link itself (`~/.aws` → dotfiles): written and real.
-      expect(read).toContain('/Users/u/.aws')
+      // The entry is a link itself (`~/.aws` → dotfiles): real in both tables; written in denyWrite,
+      // and in denyRead on linux only (spec「链接」).
+      expect(read.includes('/Users/u/.aws')).toBe(platform === 'linux')
       expect(read).toContain('/Users/u/dotfiles/aws')
+      expect(write).toContain('/Users/u/.aws')
+      expect(write).toContain('/Users/u/dotfiles/aws')
       // An entry under a linked directory: written and real.
       expect(read).toContain('/Users/u/.config/gh')
       expect(read).toContain('/Users/u/dotfiles/config/gh')
@@ -929,6 +949,135 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       // The profile dir, a deny entry, still goes both ways.
       expect(spelled(wrap.filesystem.denyRead)).toContain(LINKED_PROFILE)
       expect(spelled(wrap.filesystem.denyRead)).toContain(`${real}/profiles/u1/t1`)
+    }
+  })
+
+  it("04 验收 11 (config): a dangling link on a deny entry's way is followed to its target — the entry itself, a parent dir, a relative target, a root's .git/hooks and .envrc pointing at places not made yet — and the target joins both tables; allowWrite follows no dangling link", () => {
+    const cache = '/Users/u/Library/Application Support/Tenon/sandbox-cache'
+    const disk = fakeDisk(['/Users/u/dotfiles/zsh', '/Users/u/proj/.git/HEAD', `${cache}/pnpm`], {
+      '/Users/u/.aws': '/Users/u/dotfiles/aws',
+      '/Users/u/.config': '/Users/u/dotfiles/config',
+      '/Users/u/.gnupg': 'dotfiles/gnupg',
+      '/Users/u/proj/.git/hooks': '../.githooks',
+      '/Users/u/proj/.envrc': 'envrc.d/envrc',
+      [`${cache}/npm`]: '/Users/u/elsewhere/npm',
+    })
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem({ ...linkedInput(platform), packageManagers: true }, disk)
+      const read = spelled(wrap.filesystem.denyRead)
+      const write = spelled(wrap.filesystem.denyWrite)
+      for (const target of [
+        '/Users/u/dotfiles/aws',
+        '/Users/u/dotfiles/config/gh',
+        '/Users/u/dotfiles/config/op',
+        '/Users/u/dotfiles/gnupg',
+      ]) {
+        expect(read).toContain(target)
+        expect(write).toContain(target)
+      }
+      for (const target of [
+        '/Users/u/dotfiles/config/git',
+        '/Users/u/proj/.githooks',
+        '/Users/u/proj/envrc.d/envrc',
+      ]) {
+        expect(write).toContain(target)
+      }
+      // An entry that is itself a link: written in denyWrite, and in denyRead on linux only.
+      for (const link of ['/Users/u/.aws', '/Users/u/.gnupg']) {
+        expect(read.includes(link)).toBe(platform === 'linux')
+        expect(write).toContain(link)
+      }
+      expect(sorted(wrap.links)).toEqual([
+        '/Users/u/.aws',
+        '/Users/u/.config',
+        '/Users/u/.gnupg',
+        '/Users/u/proj/.envrc',
+        '/Users/u/proj/.git/hooks',
+      ])
+      expect(write.includes('/Users/u/.config')).toBe(platform === 'darwin')
+      expect(read).not.toContain('/Users/u/.config')
+      // allowWrite keeps a dangling preset dir where it is: following it would widen what is writable.
+      expect(spelled(wrap.filesystem.allowWrite)).toContain(`${cache}/npm`)
+      expect(spelled(wrap.filesystem.allowWrite)).not.toContain('/Users/u/elsewhere/npm')
+    }
+  })
+
+  it('04 验收 11 (config): a link inside a link target (~/.zshrc → ~/dotfiles/zshrc, ~/dotfiles → another volume; ~/.config through ~/Dropbox, a relative link) is passed too: in darwin denyWrite, never denyRead, and in the links for the lstat record on both', () => {
+    const disk = fakeDisk(
+      [
+        '/Volumes/x/dotfiles/zshrc',
+        '/Users/u/Library/CloudStorage/Dropbox/dotfiles/config/gh/hosts.yml',
+        '/Users/u/Library/CloudStorage/Dropbox/dotfiles/config/git/config',
+      ],
+      {
+        '/Users/u/.zshrc': '/Users/u/dotfiles/zshrc',
+        '/Users/u/dotfiles': '/Volumes/x/dotfiles',
+        '/Users/u/.config': '/Users/u/Dropbox/dotfiles/config',
+        '/Users/u/Dropbox': 'Library/CloudStorage/Dropbox',
+      },
+    )
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem({ ...linkedInput(platform), workspace: [root('/Users/u')] }, disk)
+      const read = spelled(wrap.filesystem.denyRead)
+      const write = spelled(wrap.filesystem.denyWrite)
+      for (const entry of [
+        '/Users/u/.zshrc',
+        '/Volumes/x/dotfiles/zshrc',
+        '/Users/u/.config/git',
+        '/Users/u/Library/CloudStorage/Dropbox/dotfiles/config/git',
+        '/Users/u/.config/gh',
+        '/Users/u/Library/CloudStorage/Dropbox/dotfiles/config/gh',
+      ]) {
+        expect(write).toContain(entry)
+      }
+      expect(read).toContain('/Users/u/Library/CloudStorage/Dropbox/dotfiles/config/gh')
+      expect(sorted(wrap.links)).toEqual([
+        '/Users/u/.config',
+        '/Users/u/.zshrc',
+        '/Users/u/Dropbox',
+        '/Users/u/dotfiles',
+      ])
+      for (const link of ['/Users/u/dotfiles', '/Users/u/Dropbox']) {
+        expect(write.includes(link)).toBe(platform === 'darwin')
+        expect(read).not.toContain(link)
+      }
+    }
+  })
+
+  it('04 验收 11 (config): a link loop on a deny entry’s way leaves the entry as written in both tables, every link walked comes back and goes to darwin denyWrite, and the wrap is still built', () => {
+    const disk = fakeDisk(['/Users/u/proj/src'], {
+      '/Users/u/.aws': '.aws2',
+      '/Users/u/.aws2': '/Users/u/.aws',
+    })
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem(linkedInput(platform), disk)
+      expect(spelled(wrap.filesystem.denyRead)).toContain('/Users/u/.aws')
+      expect(spelled(wrap.filesystem.denyWrite)).toContain('/Users/u/.aws')
+      expect(sorted(wrap.links)).toEqual(['/Users/u/.aws', '/Users/u/.aws2'])
+      expect(spelled(wrap.filesystem.denyWrite).includes('/Users/u/.aws2')).toBe(
+        platform === 'darwin',
+      )
+    }
+  })
+
+  it('04 验收 11 (config): on darwin a deny entry that is itself a link (~/.aws to a dir, ~/.npmrc to a file) is in denyRead only where it leads and in denyWrite both ways; on linux both ways in both', () => {
+    const disk = fakeDisk(
+      ['/Users/u/dotfiles/aws/credentials', '/Users/u/dotfiles/npmrc', '/Users/u/proj/src'],
+      { '/Users/u/.aws': 'dotfiles/aws', '/Users/u/.npmrc': '/Users/u/dotfiles/npmrc' },
+    )
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem(linkedInput(platform), disk)
+      const read = spelled(wrap.filesystem.denyRead)
+      const write = spelled(wrap.filesystem.denyWrite)
+      for (const [link, target] of [
+        ['/Users/u/.aws', '/Users/u/dotfiles/aws'],
+        ['/Users/u/.npmrc', '/Users/u/dotfiles/npmrc'],
+      ] as const) {
+        expect(read.includes(link)).toBe(platform === 'linux')
+        expect(read).toContain(target)
+        expect(write).toContain(link)
+        expect(write).toContain(target)
+      }
     }
   })
 

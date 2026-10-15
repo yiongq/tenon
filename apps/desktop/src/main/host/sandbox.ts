@@ -20,7 +20,7 @@ import type {
   SandboxViolation,
 } from '@tenon-app/kernel'
 import { toolOutputDirFor } from '@tenon-app/kernel'
-import { presetRows, wrapConfig, wrapFilesystem } from './sandbox-config.js'
+import { MAX_LINK_HOPS, presetRows, wrapConfig, wrapFilesystem } from './sandbox-config.js'
 import type {
   FilesystemTables,
   RestrictedProfile,
@@ -355,6 +355,7 @@ export class DesktopSandbox implements HostSandbox {
       {
         realpath: (path) => this.deps.fs.realpath(path),
         lstat: (path) => this.deps.fs.lstat(path),
+        readlink: (path) => this.deps.fs.readlink(path),
       },
     )
     const context = this.contextOf(plan.filesystem)
@@ -847,9 +848,6 @@ export function stubsFile(profileDir: string): string {
 }
 
 const SHELLS: ReadonlySet<string> = new Set(['zsh', 'bash', 'sh'])
-
-/** srt79's bound on a dangling link chain (`MAX_SYMLINK_RESOLUTION_DEPTH`, the kernel's ELOOP). */
-const MAX_LINK_HOPS = 40
 
 /** How much of the tool-use id leads an srt id, in UTF-8 bytes (读法 6). */
 const SRT_ID_PREFIX_BYTES = 67

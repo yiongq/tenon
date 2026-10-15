@@ -154,6 +154,12 @@ class FakeDisk implements PostureFs {
     return real
   }
 
+  readlink(path: string): string {
+    const node = this.find(path, false)
+    if (node?.kind !== 'link' || node.target === undefined) throw errno('EINVAL', path)
+    return node.target
+  }
+
   mkdirPrivate(path: string): void {
     let at = ''
     for (const part of path.split('/').filter(Boolean)) {

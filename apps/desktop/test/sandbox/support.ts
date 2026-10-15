@@ -17,6 +17,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -44,6 +45,7 @@ import {
   credentialPaths,
   helperPaths,
   sessionConfig,
+  type PathPorts,
   type SandboxHostPaths,
   type SandboxPlatform,
 } from '../../src/main/host/sandbox-config.js'
@@ -324,13 +326,11 @@ function hostPaths(q: {
   }
 }
 
-function pathPorts(): {
-  realpath: (path: string) => string
-  lstat: (path: string) => { isSymbolicLink(): boolean } | undefined
-} {
+function pathPorts(): PathPorts {
   return {
     realpath: (path) => realpathSync(path),
     lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
+    readlink: (path) => readlinkSync(path),
   }
 }
 
