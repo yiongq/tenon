@@ -1,0 +1,542 @@
+/**
+ * The sandbox-runtime configuration Tenon hands srt (spec 04 §档位到 srt 配置; T5, T13, T14, T31,
+ * T33, Q12, Q20; open question 5 A; 读法 20–22, 33, 34, 42, 43, 46, 47, 50, 53). Pure: every input is
+ * explicit — platform, home, `ZDOTDIR`, profile dir, `<userData>/sandbox-cache`, the dir main chdirs
+ * to at startup (null on the eval host), srt's package dir, the session's spill folder, the request's
+ * profile and workspace, your profile, the preset switch, the credential list, the `no-seccomp`
+ * posture, the effective allowlist and the helper and binary paths — and the disk is read only
+ * through the injected `realpath` and `lstat`. Nothing here comes from the model or a command.
+ *
+ * - `sessionConfig` is what `initialize` and `updateConfig` get: the network block, a filesystem block
+ *   shaped like read-only's without `allowRead`, the helper paths, Linux's binaries, and on darwin
+ *   the two noise lines of `ignoreViolations`.
+ * - `wrapFilesystem` is one wrap's `customConfig.filesystem`, the environment variables the preset
+ *   adds, the preset dirs to check, and the links on the deny entries' ways (Linux records their
+ *   `lstat` before the call and compares after it, step 4).
+ *
+ * Every path goes to srt as `{ path, literal: true }`; the only patterns are darwin's per-root
+ * `<root>/**\/<name>` globs, left out for a root whose spelling holds `*?[]`. allowWrite and allowRead
+ * get real paths only; a deny entry gets both its written spelling and its real path, and on darwin
+ * each link on its way joins denyWrite as itself — never denyRead, and never on Linux (spec「链接」).
+ * Each config passes srt's `SandboxRuntimeConfigSchema` (srt itself validates only its CLI's).
+ */
+import { realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { posix } from 'node:path'
+import { SandboxRuntimeConfigSchema } from '@anthropic-ai/sandbox-runtime'
+import type {
+  FilesystemConfig,
+  FilesystemPathEntry,
+  SandboxRuntimeConfig,
+} from '@anthropic-ai/sandbox-runtime'
+import type { AbsolutePath } from '@tenon-app/kernel'
+import { PROTECTED_SHELL_FILES } from '../workspace.js'
+
+export type SandboxPlatform = 'darwin' | 'linux'
+
+export type RestrictedProfile = 'read-only' | 'workspace-write'
+
+/** The disk, read only through these (spec「链接」: `realpath` and `lstat` are injected). */
+export interface PathPorts {
+  /** The real path; throws when the path or a link on its way does not resolve. */
+  readonly realpath: (path: string) => string
+  /** The entry itself, links not followed; undefined (or a throw) when nothing is there. */
+  readonly lstat: (path: string) => { isSymbolicLink(): boolean } | undefined
+}
+
+/** What every config is built from (spec §档位到 srt 配置). */
+export interface SandboxHostPaths {
+  readonly platform: SandboxPlatform
+  readonly home: AbsolutePath
+  /** `ZDOTDIR` when it has a value. */
+  readonly zdotdir: AbsolutePath | null
+  readonly profileDir: AbsolutePath
+  /** `<userData>/sandbox-cache` (读法 46). */
+  readonly cacheDir: AbsolutePath
+  /** `<userData>/sandbox-cwd` when main chdirs there at startup; null on the eval host (读法 50). */
+  readonly chdirDir: AbsolutePath | null
+  /** srt's package dir, a real path (读法 34). */
+  readonly srtPackageDir: AbsolutePath
+  /** `credentialPaths(platform, home)`. */
+  readonly credentials: readonly AbsolutePath[]
+  /** The posture is `degraded`/`no-seccomp` (Linux only; 读法 42). */
+  readonly noSeccomp: boolean
+  /** For 读法 42: the user's uid and `XDG_RUNTIME_DIR` / `SSH_AUTH_SOCK` from main's environment. */
+  readonly uid: number
+  readonly xdgRuntimeDir: string | null
+  readonly sshAuthSock: string | null
+}
+
+/** One item of the request's `workspace`, with what the host saw on disk. */
+export interface WorkspaceRoot {
+  readonly path: AbsolutePath
+  /** A directory (a session folder); a path release is not one (读法 35). */
+  readonly directory: boolean
+  /** `<path>/.git` is a directory: on Linux the `.git` pair is denied only then. */
+  readonly gitDirectory: boolean
+}
+
+export interface WrapFilesystemInput extends SandboxHostPaths {
+  /** The request's profile. */
+  readonly profile: RestrictedProfile
+  /** Your profile in 「高级」. */
+  readonly chosen: RestrictedProfile
+  readonly workspace: readonly WorkspaceRoot[]
+  /** This session's `tool-output/<sessionId>/`, or null. */
+  readonly toolOutputDir: AbsolutePath | null
+  /** The 「包管理器」 preset is on. */
+  readonly packageManagers: boolean
+}
+
+export interface WrapFilesystem {
+  readonly filesystem: FilesystemConfig
+  /** Variables the wrap sets in the command's environment (读法 47); empty unless the preset is in effect. */
+  readonly env: Readonly<Record<string, string>>
+  /** The preset dirs this wrap made writable, to be checked like `/tmp/claude` (读法 48). */
+  readonly presetDirs: readonly AbsolutePath[]
+  /** The links on the deny entries' ways, each where it itself is (spec「链接」). */
+  readonly links: readonly AbsolutePath[]
+}
+
+export interface LinuxBinaries {
+  readonly bwrap: AbsolutePath
+  readonly socat: AbsolutePath
+  readonly rg: AbsolutePath
+}
+
+export interface SessionConfigInput extends SandboxHostPaths {
+  /** The effective allowlist (§网络白名单). */
+  readonly allowedDomains: readonly string[]
+  readonly applySeccompPath: AbsolutePath
+  readonly javaAgentJarPath: AbsolutePath
+  /** Required on Linux (§启动 step 2); unused on darwin. */
+  readonly linuxBinaries: LinuxBinaries | null
+}
+
+export interface HelperPaths {
+  readonly packageDir: AbsolutePath
+  readonly applySeccomp: AbsolutePath
+  readonly javaAgentJar: AbsolutePath
+}
+
+/** A config srt's schema refuses: the wrap is refused (spec §档位到 srt 配置). */
+export class SandboxConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SandboxConfigError'
+  }
+}
+
+/** One row of the 「包管理器」 preset (§网络白名单; P4). */
+export interface PackageManagerPreset {
+  /** Also its directory's name under `<userData>/sandbox-cache/`. */
+  readonly manager: 'npm' | 'pnpm' | 'pip' | 'uv' | 'cargo'
+  readonly platforms: readonly SandboxPlatform[]
+  readonly domains: readonly string[]
+  readonly variable: string
+  /** The variable points at the manager's dir, or at this sub-directory of it. */
+  readonly variableSubdir: string | null
+}
+
+/** The preset table; settings and the UI read this same constant (step 13a). */
+export const PACKAGE_MANAGER_PRESETS: readonly PackageManagerPreset[] = [
+  {
+    manager: 'npm',
+    platforms: ['darwin', 'linux'],
+    domains: ['registry.npmjs.org'],
+    variable: 'npm_config_cache',
+    variableSubdir: null,
+  },
+  {
+    manager: 'pnpm',
+    platforms: ['darwin', 'linux'],
+    domains: ['registry.npmjs.org'],
+    variable: 'npm_config_store_dir',
+    variableSubdir: 'store',
+  },
+  {
+    manager: 'pip',
+    platforms: ['linux'],
+    domains: ['pypi.org', 'files.pythonhosted.org'],
+    variable: 'PIP_CACHE_DIR',
+    variableSubdir: null,
+  },
+  {
+    manager: 'uv',
+    platforms: ['darwin', 'linux'],
+    domains: ['pypi.org', 'files.pythonhosted.org'],
+    variable: 'UV_CACHE_DIR',
+    variableSubdir: null,
+  },
+  {
+    manager: 'cargo',
+    platforms: ['darwin', 'linux'],
+    domains: ['index.crates.io', 'static.crates.io'],
+    variable: 'CARGO_HOME',
+    variableSubdir: null,
+  },
+]
+
+/** The preset rows that apply on `platform`. */
+export function presetRows(platform: SandboxPlatform): PackageManagerPreset[] {
+  return PACKAGE_MANAGER_PRESETS.filter((row) => row.platforms.includes(platform))
+}
+
+/** srt's noise lines (P2, 读法 53): darwin only — srt matches them as substrings of every source. */
+const DARWIN_IGNORE_VIOLATIONS: Readonly<Record<string, readonly string[]>> = {
+  '*': [
+    'mach-lookup com.apple.SystemConfiguration.configd',
+    'mach-lookup com.apple.SystemConfiguration.DNSConfiguration',
+  ],
+}
+
+/** Under home, in both tables (mech:267). */
+const HOME_SECRET_DIRS = ['.ssh', '.aws', '.gnupg'] as const
+
+/** Under home, run outside the sandbox without asking (读法 34, settled by P3 on both platforms). */
+const HOME_AUTO_RUN = [
+  'Library/LaunchAgents',
+  '.config/autostart',
+  '.config/systemd/user',
+  '.config/git',
+  '.gitconfig',
+  '.zlogin',
+  '.zlogout',
+  '.bash_login',
+  '.bash_aliases',
+] as const
+
+/** Tenon's names under each workspace directory (T13; security-m3, -13, -14, hosts-2). */
+const ROOT_PROTECTED = [
+  ...PROTECTED_SHELL_FILES,
+  '.claude/settings.json',
+  '.claude/settings.local.json',
+  '.envrc',
+  '.codex',
+  '.gemini',
+  '.cursor',
+  '.aws',
+] as const
+
+/** srt's mandatory write denies, anchored here at each root instead of main's cwd (srt79 sandbox-utils.js:10-37). */
+const ROOT_SRT_MANDATORY = [
+  '.gitconfig',
+  '.gitmodules',
+  '.ripgreprc',
+  '.mcp.json',
+  '.vscode',
+  '.idea',
+  '.claude/commands',
+  '.claude/agents',
+] as const
+
+/** Denied at each root on darwin; on Linux only where `.git` is a directory (linux-sandbox-utils.js:186-205). */
+const ROOT_GIT = ['.git/hooks', '.git/config'] as const
+
+/** P3's settled credential list, per platform, plus the 2026-10-15 additions (open question 6). */
+export function credentialPaths(platform: SandboxPlatform, home: AbsolutePath): AbsolutePath[] {
+  const both = [
+    '.config/gh',
+    '.npmrc',
+    '.docker/config.json',
+    '.kube',
+    '.git-credentials',
+    '.netrc',
+    '.pypirc',
+    '.cargo/credentials.toml',
+    '.config/op',
+    '.vault-token',
+    '.pgpass',
+    '.cache/huggingface/token',
+    '.cache/huggingface/stored_tokens',
+  ]
+  const own =
+    platform === 'darwin'
+      ? [
+          '.config/gcloud/credentials.db',
+          '.config/gcloud/access_tokens.db',
+          '.config/gcloud/application_default_credentials.json',
+          '.config/gcloud/legacy_credentials',
+          'Library/Application Support/Google/Chrome',
+          'Library/Application Support/Chromium',
+          'Library/Application Support/Microsoft Edge',
+          'Library/Application Support/BraveSoftware',
+          'Library/Application Support/Arc',
+          'Library/Application Support/Firefox',
+          'Library/Safari',
+          'Library/Cookies',
+        ]
+      : [
+          '.config/gcloud',
+          '.config/google-chrome',
+          '.config/chromium',
+          '.config/microsoft-edge',
+          '.config/BraveSoftware',
+          '.mozilla',
+          'snap/firefox',
+          'snap/chromium',
+        ]
+  return [...both, ...own].map((relative) => under(home, relative))
+}
+
+/**
+ * srt's package dir (a real path) and the two helpers in it, passed to srt explicitly rather than
+ * left to its `import.meta.url` lookup, which goes wrong once bundled (spec §依赖; T31, srt-m5).
+ */
+export function helperPaths(arch: string = process.arch): HelperPaths {
+  const manifest = createRequire(import.meta.url).resolve(
+    '@anthropic-ai/sandbox-runtime/package.json',
+  )
+  const packageDir = realpathSync(posix.dirname(manifest)) as AbsolutePath
+  return {
+    packageDir,
+    applySeccomp: under(packageDir, `vendor/seccomp/${arch}/apply-seccomp`),
+    javaAgentJar: under(packageDir, 'vendor/java-proxy-agent/srt-proxy-agent.jar'),
+  }
+}
+
+/** The config for `initialize` and `updateConfig`; throws `SandboxConfigError` when srt's schema refuses it. */
+export function sessionConfig(input: SessionConfigInput, ports: PathPorts): SandboxRuntimeConfig {
+  // Shaped like read-only's, without allowRead: every wrap replaces the whole block (srt-1, srt-m2).
+  const { denyRead, allowWrite, denyWrite } = buildFilesystem(
+    {
+      ...input,
+      profile: 'read-only',
+      chosen: 'read-only',
+      workspace: [],
+      toolOutputDir: null,
+      packageManagers: false,
+    },
+    ports,
+  ).filesystem
+  const config: SandboxRuntimeConfig = {
+    network: {
+      allowedDomains: [...input.allowedDomains],
+      deniedDomains: [],
+      strictAllowlist: true,
+      parentProxy: { noProxy: '*' },
+    },
+    filesystem: { denyRead, allowWrite, denyWrite },
+    ...(input.platform === 'darwin'
+      ? { ignoreViolations: cloneIgnore(DARWIN_IGNORE_VIOLATIONS) }
+      : {}),
+    seccomp: { applyPath: input.applySeccompPath },
+    javaAgentJarPath: input.javaAgentJarPath,
+    ...(input.platform === 'linux' ? linuxBinaryKeys(input.linuxBinaries) : {}),
+  }
+  return checked(config)
+}
+
+/** One wrap's filesystem block, preset variables, preset dirs and links on the deny entries' ways. */
+export function wrapFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFilesystem {
+  return buildFilesystem(input, ports)
+}
+
+/**
+ * The session config with one wrap's filesystem in place, as srt merges it — checked against the
+ * schema, which wants `network` and `filesystem` both there (spec §档位到 srt 配置).
+ */
+export function wrapConfig(
+  session: SandboxRuntimeConfig,
+  filesystem: FilesystemConfig,
+): SandboxRuntimeConfig {
+  return checked({ ...session, filesystem })
+}
+
+function checked(config: SandboxRuntimeConfig): SandboxRuntimeConfig {
+  const result = SandboxRuntimeConfigSchema.safeParse(config)
+  if (!result.success) {
+    const issues = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    throw new SandboxConfigError(`sandbox config refused by srt's schema: ${issues.join('; ')}`)
+  }
+  return config
+}
+
+function cloneIgnore(lines: Readonly<Record<string, readonly string[]>>): Record<string, string[]> {
+  return Object.fromEntries(Object.entries(lines).map(([key, list]) => [key, [...list]]))
+}
+
+function linuxBinaryKeys(
+  binaries: LinuxBinaries | null,
+): Pick<SandboxRuntimeConfig, 'bwrapPath' | 'socatPath' | 'ripgrep'> {
+  if (binaries === null) {
+    throw new TypeError('sessionConfig on linux needs the bwrap, socat and rg paths')
+  }
+  return { bwrapPath: binaries.bwrap, socatPath: binaries.socat, ripgrep: { command: binaries.rg } }
+}
+
+function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFilesystem {
+  const darwin = input.platform === 'darwin'
+  const writable = input.profile === 'workspace-write'
+  // 「预设生效」: the preset is on and your profile is workspace-write; a path release under a
+  // read-only profile does not count (读法 20, 47).
+  const presetInEffect = input.packageManagers && writable && input.chosen === 'workspace-write'
+
+  const readDenied: string[] = [
+    input.profileDir,
+    ...HOME_SECRET_DIRS.map((name) => under(input.home, name)),
+    ...input.credentials,
+    ...(input.platform === 'linux' && input.noSeccomp ? noSeccompSockets(input) : []),
+  ]
+  const writeDenied: string[] = [
+    input.profileDir,
+    ...PROTECTED_SHELL_FILES.map((name) => under(input.home, name)),
+    ...(input.zdotdir === null
+      ? []
+      : PROTECTED_SHELL_FILES.map((name) => under(input.zdotdir as AbsolutePath, name))),
+    ...readDenied,
+    ...HOME_AUTO_RUN.map((name) => under(input.home, name)),
+    input.srtPackageDir,
+    ...(input.chdirDir === null ? [] : [input.chdirDir]),
+  ]
+  const globs: string[] = []
+  if (writable) {
+    for (const root of input.workspace) {
+      if (!root.directory) continue
+      const names = [
+        ...ROOT_PROTECTED,
+        ...ROOT_SRT_MANDATORY,
+        ...(darwin || root.gitDirectory ? ROOT_GIT : []),
+      ]
+      writeDenied.push(...names.map((name) => under(root.path, name)))
+      // Names deeper in the tree: darwin takes a glob, Linux's write rules take none (已知限制).
+      if (darwin) {
+        for (const anchor of new Set([root.path, realOf(root.path, ports)])) {
+          if (hasGlobChars(anchor)) continue
+          globs.push(...names.map((name) => `${anchor}/**/${name}`))
+        }
+      }
+    }
+  }
+
+  const denyRead = new EntryList()
+  const denyWrite = new EntryList()
+  const links = new Set<string>()
+  for (const [list, entries] of [
+    [denyRead, readDenied],
+    [denyWrite, writeDenied],
+  ] as const) {
+    for (const written of entries) {
+      list.literal(written)
+      list.literal(realOf(written, ports))
+      for (const link of linksOn(written, ports)) {
+        links.add(link)
+        if (darwin) denyWrite.literal(link)
+      }
+    }
+  }
+  for (const glob of globs) denyWrite.glob(glob)
+
+  const presets = presetInEffect ? presetRows(input.platform) : []
+  const presetDirs = presets.map((row) => realOf(under(input.cacheDir, row.manager), ports))
+  const allowWrite = new EntryList()
+  if (writable) {
+    for (const root of input.workspace) allowWrite.literal(realOf(root.path, ports))
+    for (const dir of presetDirs) allowWrite.literal(dir)
+  }
+  const allowRead = new EntryList()
+  if (input.toolOutputDir !== null) allowRead.literal(realOf(input.toolOutputDir, ports))
+
+  const env: Record<string, string> = {}
+  presets.forEach((row, i) => {
+    const dir = presetDirs[i] as string
+    env[row.variable] = row.variableSubdir === null ? dir : `${dir}/${row.variableSubdir}`
+  })
+
+  return {
+    filesystem: {
+      denyRead: denyRead.entries(),
+      allowRead: allowRead.entries(),
+      allowWrite: allowWrite.entries(),
+      denyWrite: denyWrite.entries(),
+    },
+    env,
+    presetDirs: presetDirs as AbsolutePath[],
+    links: [...links] as AbsolutePath[],
+  }
+}
+
+/** 读法 42: what a Linux sandbox without seccomp could otherwise connect to. */
+function noSeccompSockets(input: SandboxHostPaths): string[] {
+  const runtimeDir =
+    input.xdgRuntimeDir !== null && posix.isAbsolute(input.xdgRuntimeDir)
+      ? input.xdgRuntimeDir
+      : `/run/user/${input.uid}`
+  return [
+    runtimeDir,
+    '/var/run/docker.sock',
+    '/run/docker.sock',
+    '/tmp/.X11-unix',
+    ...(input.sshAuthSock !== null && posix.isAbsolute(input.sshAuthSock)
+      ? [posix.dirname(input.sshAuthSock)]
+      : []),
+  ]
+}
+
+/** Entries in first-seen order, each once. */
+class EntryList {
+  private readonly seen = new Map<string, FilesystemPathEntry>()
+
+  literal(path: string): void {
+    if (!this.seen.has(path)) this.seen.set(path, { path, literal: true })
+  }
+
+  glob(pattern: string): void {
+    const key = `glob:${pattern}`
+    if (!this.seen.has(key)) this.seen.set(key, pattern)
+  }
+
+  entries(): FilesystemPathEntry[] {
+    return [...this.seen.values()]
+  }
+}
+
+function under(base: string, relative: string): AbsolutePath {
+  return posix.join(base, relative) as AbsolutePath
+}
+
+function hasGlobChars(path: string): boolean {
+  return /[*?[\]]/.test(path)
+}
+
+/**
+ * The real path; for a path that is not there, the real path of the deepest ancestor that is, with
+ * the rest appended (spec「链接」).
+ */
+function realOf(path: string, ports: PathPorts): string {
+  const tail: string[] = []
+  let head = path
+  for (;;) {
+    try {
+      const real = ports.realpath(head)
+      return tail.length === 0 ? real : posix.join(real, ...tail.toReversed())
+    } catch {
+      if (head === '/') return path
+      tail.push(posix.basename(head))
+      head = posix.dirname(head)
+    }
+  }
+}
+
+/**
+ * Every level of `path`'s written spelling that is a link, named where the link itself is: its
+ * parent's real path plus its name, which is the spelling the kernel checks.
+ */
+function linksOn(path: string, ports: PathPorts): string[] {
+  const found: string[] = []
+  let prefix = ''
+  for (const segment of path.split('/').filter((part) => part.length > 0)) {
+    prefix = `${prefix}/${segment}`
+    let stat: { isSymbolicLink(): boolean } | undefined
+    try {
+      stat = ports.lstat(prefix)
+    } catch {
+      stat = undefined
+    }
+    if (stat === undefined) break
+    if (stat.isSymbolicLink()) {
+      found.push(posix.join(realOf(posix.dirname(prefix), ports), segment))
+    }
+  }
+  return found
+}

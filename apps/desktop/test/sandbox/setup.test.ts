@@ -3,11 +3,12 @@
  * through the spec's Revisions), and only the desktop sandbox module imports it — kernel, contracts
  * and the renderer never do (04 不变量 12, the import half; §所有权与模块 names the four files).
  */
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { helperPaths } from '../../src/main/host/sandbox-config.js'
 
 const repo = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
 
@@ -49,6 +50,26 @@ describe('04 sandbox-runtime dependency', () => {
     ).resolve('@anthropic-ai/sandbox-runtime/package.json')
     const { version } = JSON.parse(readFileSync(installed, 'utf8')) as { version?: string }
     expect(version).toBe('0.0.79')
+  })
+
+  it('04 验收 1: the helper paths resolve to real files', () => {
+    const helpers = helperPaths()
+    // srt's package dir, as a real path (spec §依赖: the dir behind node_modules' link).
+    expect(realpathSync(helpers.packageDir)).toBe(helpers.packageDir)
+    const manifest = JSON.parse(readFileSync(join(helpers.packageDir, 'package.json'), 'utf8')) as {
+      name?: string
+      version?: string
+    }
+    expect(manifest).toMatchObject({ name: '@anthropic-ai/sandbox-runtime', version: '0.0.79' })
+    // The two helpers srt is handed explicitly (T31), in their places in the package.
+    expect(helpers.applySeccomp).toBe(
+      `${helpers.packageDir}/vendor/seccomp/${process.arch}/apply-seccomp`,
+    )
+    expect(helpers.javaAgentJar).toBe(
+      `${helpers.packageDir}/vendor/java-proxy-agent/srt-proxy-agent.jar`,
+    )
+    expect(statSync(helpers.applySeccomp).isFile()).toBe(true)
+    expect(statSync(helpers.javaAgentJar).isFile()).toBe(true)
   })
 
   it('04 不变量 12: only apps/desktop/src/main/host/sandbox*.ts import sandbox-runtime', () => {
