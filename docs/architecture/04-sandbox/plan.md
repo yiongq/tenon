@@ -173,7 +173,7 @@
 
 ### 第三段：IPC、界面与 e2e（`feat/04-seg3`）
 
-开工门（2026-10-15 加，[presentation-r1](../../features/presentation-r1/spec.md) 开放问题 13）：开工前确认 presentation-r1 已合入 `dev`，没合入就停下问 owner。
+开工门（2026-10-15 加，同日改成看实现，[presentation-r1](../../features/presentation-r1/spec.md) 开放问题 13）：开工前确认 presentation-r1 的实现已合入 `dev`（`docs/features/presentation-r1/spec.md` 顶部为 `Status: implemented`）；只有 spec 文档在 `dev` 上不算。不是就停下问 owner。
 
 - [ ] 16. IPC 路由（spec §IPC）
   - 文件：新 `apps/desktop/src/main/sandbox-routes.ts`（`sandbox.get`、`sandbox.setSettings`、`sandbox.release`、事件 `sandbox.changed`）；`shutdown.ts` 的 `REFUSED_WHILE_SHUTTING_DOWN` 只加 `sandbox.release`（它写事实；`setSettings` 只写 config，照那张表不拒）。
