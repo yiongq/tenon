@@ -343,6 +343,25 @@
             "property": "cwd",
             "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
           }
+        ],
+        // The same read through a named import. `globalThis.process.cwd()` and a default or namespace
+        // import under another name are not caught.
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:process",
+                "importNames": ["cwd"],
+                "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
+              },
+              {
+                "name": "process",
+                "importNames": ["cwd"],
+                "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
+              }
+            ]
+          }
         ]
       }
     },
@@ -350,7 +369,8 @@
       // loadDevEnv runs before app.whenReady(), so before the sandbox's chdir (spec 04 读法 50).
       "files": ["apps/desktop/src/main/dev-env.ts"],
       "rules": {
-        "no-restricted-properties": "off"
+        "no-restricted-properties": "off",
+        "no-restricted-imports": "off"
       }
     },
     {

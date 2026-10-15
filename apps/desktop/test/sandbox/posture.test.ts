@@ -17,6 +17,7 @@ import type { AbsolutePath } from '@tenon-app/kernel'
 import { describe, expect, it, vi } from 'vitest'
 import type { SandboxFileStat } from '../../src/main/host/sandbox.js'
 import {
+  SandboxConfigError,
   credentialPaths,
   sessionConfig,
   type SandboxHostPaths,
@@ -262,7 +263,7 @@ function statOf(node: Node): SandboxFileStat {
 // ---------------------------------------------------------------------------------------------
 // The harness
 
-function layout(platform: SandboxPlatform) {
+function layout(platform: SandboxPlatform, tmp?: string) {
   const home = platform === 'darwin' ? '/Users/u' : '/home/u'
   const userData =
     platform === 'darwin' ? `${home}/Library/Application Support/Tenon` : `${home}/.config/Tenon`
@@ -271,7 +272,7 @@ function layout(platform: SandboxPlatform) {
     userData,
     profile: `${userData}/profiles/u1/t1`,
     cwdDir: `${userData}/sandbox-cwd`,
-    tmp: platform === 'darwin' ? '/private/var/folders/zz/q1w2/T' : '/tmp',
+    tmp: tmp ?? (platform === 'darwin' ? '/private/var/folders/zz/q1w2/T' : '/tmp'),
     stubs: `${userData}/profiles/u1/t1/sandbox/stubs.json`,
     seccomp: '/opt/srt/vendor/seccomp/arm64/apply-seccomp',
     jar: '/opt/srt/vendor/java-proxy-agent/srt-proxy-agent.jar',
@@ -300,11 +301,18 @@ interface HarnessOptions {
   readonly sandboxExec?: Partial<RunResult>
   /** The wrap of the self-test throws this. */
   readonly wrapError?: Error
+  /** Main's `os.tmpdir()`, when not the platform's usual one. */
+  readonly tmpdir?: string
+  /** `sessionConfig` throws this (srt's schema refused the config). */
+  readonly sessionConfigError?: Error
+  /** Something else on the host acts while initialize runs, or while the self-test does. */
+  readonly duringInitialize?: (disk: FakeDisk) => void
+  readonly duringSelfTest?: (disk: FakeDisk) => void
 }
 
 function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
   const os: SandboxPlatform = platform === 'darwin' ? 'darwin' : 'linux'
-  const at = layout(os)
+  const at = layout(os, options.tmpdir)
   const uid = SELF[os]
   const disk = new FakeDisk(uid)
   disk.dir(at.home, { mode: 0o750 })
@@ -346,9 +354,20 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
   let initialized = false
 
   const srt = {
-    initialize: vi.fn<SrtStartup['initialize']>(async () => {
+    initialize: vi.fn<SrtStartup['initialize']>(async (config) => {
       order.push('initialize')
       if (options.initError !== undefined) throw options.initError
+      // srt's own lookup of a binary it was not given (sandbox-manager.js:813-816,
+      // linux-sandbox-utils.js:897-912): on this host it is nowhere else either.
+      if (os === 'linux') {
+        const errors = [
+          ...(config.ripgrep === undefined ? [RG_NOT_FOUND] : []),
+          ...(config.bwrapPath === undefined ? [BWRAP_NOT_INSTALLED] : []),
+          ...(config.socatPath === undefined ? [SOCAT_NOT_INSTALLED] : []),
+        ]
+        if (errors.length > 0) throw new Error(DEPS_PREFIX + errors.join(', '))
+      }
+      options.duringInitialize?.(disk)
       initialized = true
       // What srt leaves in main's tmpdir and process table (P7).
       disk.file(`${at.tmp}/srt-mux-${MAIN_PID}-0.sock`)
@@ -386,6 +405,7 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
       return { code: 0, signal: null, stderr: '', timedOut: false, ...options.sandboxExec }
     }
     order.push('self-test')
+    options.duringSelfTest?.(disk)
     const target = targetOf(wraps.at(-1)?.command ?? '')
     if (selfTest.writes) disk.file(target, 'x\n')
     return {
@@ -426,6 +446,7 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
     helpers: { packageDir: p('/opt/srt'), applySeccomp: p(at.seccomp), javaAgentJar: p(at.jar) },
     sessionConfig: (parts: SessionParts) => {
       sessions.push(parts)
+      if (options.sessionConfigError !== undefined) throw options.sessionConfigError
       return sessionConfig({ ...hostPaths, noSeccomp: false, allowedDomains: [], ...parts }, disk)
     },
     env,
@@ -642,17 +663,20 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
   })
 
   it('04 验收 2: on darwin, initialize throwing and the sandbox-exec check exiting 71 is nested-sandbox', async () => {
+    // Exit 71 decides on its own, with nothing on stderr.
     const h = harness('darwin', {
       initError: new Error(NESTED_INIT_ERROR),
-      sandboxExec: { code: 71, stderr: SANDBOX_APPLY_STDERR },
+      sandboxExec: { code: 71, stderr: '' },
     })
     const outcome = await outcomeOf(h)
     expect(outcome.state).toBe('unavailable')
     expect(outcome.reasons).toEqual([{ code: 'nested-sandbox', detail: NESTED_INIT_ERROR }])
-    // The check's argv is fixed, and it goes through the runner, not srt (spec §启动 step 3).
+    // The check's argv is fixed, and it goes through the runner, not srt (spec §启动 step 3), with
+    // the self-test's 10 s.
     expect(h.runs.map((one) => one.argv)).toEqual([
       ['/usr/bin/sandbox-exec', '-p', '(version 1)(allow default)', '/usr/bin/true'],
     ])
+    expect(h.run.mock.calls.map(([, options]) => options.timeoutMs)).toEqual([10_000])
     expect(h.srt.wrapWithSandboxArgv).not.toHaveBeenCalled()
     expect(h.order.filter((step) => !step.startsWith('chdir'))).toEqual([
       'initialize',
@@ -699,6 +723,104 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     expect(otherOutcome.reasons).toEqual([{ code: 'no-seccomp', detail: NO_SECCOMP }])
   })
 
+  it("04 验收 2: bwrap, socat or rg missing from main's PATH is left to srt, and initialize names it in srt's own words", async () => {
+    const cases: readonly {
+      readonly remove: string
+      readonly found: Record<'bwrap' | 'socat' | 'rg', string | null>
+      readonly reason: SandboxReason
+    }[] = [
+      // /usr/local/bin/bwrap is there but not executable: no bwrap on the PATH at all.
+      {
+        remove: '/usr/bin/bwrap',
+        found: { bwrap: null, socat: '/usr/bin/socat', rg: '/usr/bin/rg' },
+        reason: { code: 'missing-bwrap', detail: 'bubblewrap (bwrap) not installed' },
+      },
+      {
+        remove: '/usr/bin/socat',
+        found: { bwrap: '/usr/bin/bwrap', socat: null, rg: '/usr/bin/rg' },
+        reason: { code: 'missing-socat', detail: 'socat not installed' },
+      },
+      {
+        remove: '/usr/bin/rg',
+        found: { bwrap: '/usr/bin/bwrap', socat: '/usr/bin/socat', rg: null },
+        reason: { code: 'missing-rg', detail: 'ripgrep (rg) not found' },
+      },
+    ]
+    for (const { remove, found, reason } of cases) {
+      const h = harness('linux')
+      h.disk.removeTree(remove)
+      // Last run's empty mount point: startup still cleans up and chdirs first.
+      h.disk.dir('/home/u/code/app/.claude')
+      h.disk.file(
+        h.at.stubs,
+        JSON.stringify({ mountPoints: { 'toolu_01.0a0b': ['/home/u/code/app/.claude'] } }),
+      )
+      // oxlint-disable-next-line no-await-in-loop -- one case after the other
+      const outcome = await outcomeOf(h)
+      expect({ remove, outcome }).toEqual({
+        remove,
+        outcome: {
+          state: 'unavailable',
+          session: null,
+          noSeccomp: false,
+          reasons: [reason],
+          initialize: 'dependency-error',
+        },
+      })
+      expect(h.sessions.map((parts) => parts.linuxBinaries)).toEqual([found])
+      // srt was not handed the missing one, so it looked it up itself.
+      const handed = h.srt.initialize.mock.calls[0]?.[0]
+      expect({
+        bwrapPath: handed?.bwrapPath,
+        socatPath: handed?.socatPath,
+        ripgrep: handed?.ripgrep,
+      }).toEqual({
+        bwrapPath: found.bwrap ?? undefined,
+        socatPath: found.socat ?? undefined,
+        ripgrep: found.rg === null ? undefined : { command: found.rg },
+      })
+      expect(h.srt.initialize).toHaveBeenCalledTimes(1)
+      expect(h.chdir.mock.calls).toEqual([['/home/u/.config/Tenon/sandbox-cwd']])
+      expect(h.disk.has('/home/u/code/app/.claude')).toBe(false)
+    }
+  })
+
+  it('04 验收 2: a session config the schema refuses, or a dependency check that throws, is init-failed', async () => {
+    const refused = harness('linux', {
+      sessionConfigError: new SandboxConfigError(
+        "sandbox config refused by srt's schema: network.allowedDomains.0: Invalid domain pattern",
+      ),
+    })
+    expect(await outcomeOf(refused)).toEqual({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [
+        {
+          code: 'init-failed',
+          detail:
+            "sandbox config refused by srt's schema: network.allowedDomains.0: Invalid domain pattern",
+        },
+      ],
+      initialize: 'not-called',
+    })
+    expect(refused.srt.initialize).not.toHaveBeenCalled()
+
+    const throws = harness('darwin')
+    throws.srt.checkDependenciesAsync.mockRejectedValueOnce(new Error('spawnSync which ETIMEDOUT'))
+    const run = throws.start()
+    expect(await run.outcome).toEqual({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [{ code: 'init-failed', detail: 'spawnSync which ETIMEDOUT' }],
+      initialize: 'returned',
+    })
+    // srt is up all the same (DesktopSandbox resets it on quit); no self-test follows.
+    expect(await settled(run.initialized)).toBe(true)
+    expect(throws.srt.wrapWithSandboxArgv).not.toHaveBeenCalled()
+  })
+
   it('04 验收 2: warnings after initialize are degraded', async () => {
     const h = harness('linux', { warnings: [NO_SECCOMP, OLD_BWRAP] })
     const outcome = await outcomeOf(h)
@@ -731,10 +853,16 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
         selfTest: { code: 1, stderr: 'sh: something else\n' },
         reason: { code: 'self-test-failed', detail: 'exited 1\nsh: something else\n' },
       },
+      // darwin: exit 71 alone, and `sandbox_apply` on stderr alone, each say nesting.
       {
         platform: 'darwin',
-        selfTest: { code: 71, stderr: SANDBOX_APPLY_STDERR },
-        reason: { code: 'nested-sandbox', detail: `exited 71\n${SANDBOX_APPLY_STDERR}` },
+        selfTest: { code: 71, stderr: '' },
+        reason: { code: 'nested-sandbox', detail: 'exited 71' },
+      },
+      {
+        platform: 'darwin',
+        selfTest: { code: 1, stderr: SANDBOX_APPLY_STDERR },
+        reason: { code: 'nested-sandbox', detail: `exited 1\n${SANDBOX_APPLY_STDERR}` },
       },
       // P5, Ubuntu 24.04 with the sysctl at 1: bwrap's line, and the reading says it.
       {
@@ -860,6 +988,26 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
         env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/home/u' },
       },
     ])
+    // Killed at 10 s (spec §启动 step 5).
+    expect(h.run.mock.calls.map(([, options]) => options.timeoutMs)).toEqual([10_000])
+  })
+
+  it("04 验收 2: the self-test writes under none of srt's writable places, even with main's tmpdir there", async () => {
+    // Main started with TMPDIR=/tmp/claude: home instead, which read-only keeps unwritable too.
+    const linux = harness('linux', { tmpdir: '/tmp/claude' })
+    expect((await outcomeOf(linux)).state).toBe('active')
+    expect(targetOf(linux.wraps[0]?.command ?? '')).toMatch(
+      /^\/home\/u\/tenon-sandbox-self-test-[0-9a-f]{16}$/,
+    )
+
+    // A tmpdir that only by its real path is srt's (/private/tmp/claude on darwin).
+    const darwin = harness('darwin', { tmpdir: '/Users/u/tmp' })
+    darwin.disk.dir('/private/tmp/claude', { mode: 0o700 })
+    darwin.disk.link('/Users/u/tmp', '/private/tmp/claude')
+    expect((await outcomeOf(darwin)).state).toBe('active')
+    expect(targetOf(darwin.wraps[0]?.command ?? '')).toMatch(
+      /^\/Users\/u\/tenon-sandbox-self-test-[0-9a-f]{16}$/,
+    )
   })
 
   it('04 验收 2: the self-test script never uses `: >`', () => {
@@ -1188,6 +1336,76 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
         '/tmp/srt-obs-Q1w2e3',
       ],
     })
+  })
+
+  it("04 验收 9 (startup): a recorded entry outside main's tmpdir, or not of srt's four kinds, is left alone", async () => {
+    const h = harness('linux')
+    h.disk.dir('/home/u/x/claude-empty-AbC123', { mode: 0o700 })
+    h.disk.file('/home/u/x/claude-empty-AbC123/keep.md', 'notes')
+    h.disk.dir('/tmp/notes-AbC123', { mode: 0o700 })
+    h.disk.file('/tmp/notes-AbC123/keep.md', 'notes')
+    h.disk.file('/tmp/claude-http-aa11.sock')
+    h.disk.file(
+      h.at.stubs,
+      JSON.stringify({
+        pid: 999,
+        tmpEntries: [
+          '/home/u/x/claude-empty-AbC123',
+          '/tmp/notes-AbC123',
+          '/tmp/claude-http-aa11.sock',
+        ],
+      }),
+    )
+    await outcomeOf(h)
+    expect({
+      outside: h.disk.has('/home/u/x/claude-empty-AbC123/keep.md'),
+      otherName: h.disk.has('/tmp/notes-AbC123/keep.md'),
+      recorded: h.disk.has('/tmp/claude-http-aa11.sock'),
+    }).toEqual({ outside: true, otherName: true, recorded: false })
+  })
+
+  it("04 验收 9 (startup): another srt user's entries made in main's tmpdir meanwhile are not recorded, nor removed next time", async () => {
+    let first = true
+    const foreign = [
+      '/tmp/claude-http-beef02.sock', // no bridge of ours listens on it
+      '/tmp/srt-mux-888-1.sock', // another process's pid
+      '/tmp/srt-obs-Zz9Yy8', // during the self-test
+      '/tmp/claude-http-dead03.sock', // during the self-test
+    ]
+    const h = harness('linux', {
+      duringInitialize: (disk) => {
+        if (!first) return
+        disk.file('/tmp/claude-http-beef02.sock')
+        disk.file('/tmp/srt-mux-888-1.sock')
+      },
+      duringSelfTest: (disk) => {
+        if (!first) return
+        disk.dir('/tmp/srt-obs-Zz9Yy8', { mode: 0o700 })
+        disk.file('/tmp/claude-http-dead03.sock')
+      },
+    })
+    expect((await outcomeOf(h)).state).toBe('active')
+    expect(JSON.parse(h.disk.text(h.at.stubs) ?? '{}')).toEqual({
+      pid: MAIN_PID,
+      socat: [{ pid: 5555, command: SOCAT_COMMAND('cafe01') }],
+      tmpEntries: [
+        `/tmp/srt-mux-${MAIN_PID}-0.sock`,
+        '/tmp/claude-http-cafe01.sock',
+        '/tmp/srt-obs-Q1w2e3',
+      ],
+    })
+
+    // The next startup (the recorder's pid is its own, so that run is gone) removes ours only.
+    first = false
+    await outcomeOf(h)
+    expect(h.disk.removed).toEqual(
+      expect.arrayContaining([
+        `/tmp/srt-mux-${MAIN_PID}-0.sock`,
+        '/tmp/claude-http-cafe01.sock',
+        '/tmp/srt-obs-Q1w2e3',
+      ]),
+    )
+    expect(foreign.filter((path) => !h.disk.has(path))).toEqual([])
   })
 
   it('04 验收 9 (startup): tmpdir entries stay while the run that recorded them is alive; darwin records no socat', async () => {

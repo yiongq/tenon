@@ -261,7 +261,8 @@ describe('the effective .oxlintrc.json config', () => {
 
   it('leaves paths outside kernel and contracts ungated', () => {
     // The other half of the vacuity guard: a matcher that matched everything would pass the bans.
-    expect(effectiveConfig('apps/desktop/src/main/x.ts').rules['no-restricted-imports']).toBe(
+    // (Not main: it bans importing `cwd` from node:process, spec 04 读法 50.)
+    expect(effectiveConfig('apps/desktop/src/preload/x.ts').rules['no-restricted-imports']).toBe(
       undefined,
     )
   })

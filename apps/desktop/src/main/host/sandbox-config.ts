@@ -105,10 +105,15 @@ export interface WrapFilesystem {
   readonly links: readonly AbsolutePath[]
 }
 
+/**
+ * bwrap, socat and rg as found on main's PATH (§启动 step 2). One that is not there is null and
+ * left out of the config: srt then looks it up itself, and initialize's dependency check names it
+ * in srt's own words (§启动 step 3).
+ */
 export interface LinuxBinaries {
-  readonly bwrap: AbsolutePath
-  readonly socat: AbsolutePath
-  readonly rg: AbsolutePath
+  readonly bwrap: AbsolutePath | null
+  readonly socat: AbsolutePath | null
+  readonly rg: AbsolutePath | null
 }
 
 export interface SessionConfigInput extends SandboxHostPaths {
@@ -428,9 +433,13 @@ function linuxBinaryKeys(
   binaries: LinuxBinaries | null,
 ): Pick<SandboxRuntimeConfig, 'bwrapPath' | 'socatPath' | 'ripgrep'> {
   if (binaries === null) {
-    throw new TypeError('sessionConfig on linux needs the bwrap, socat and rg paths')
+    throw new TypeError('sessionConfig on linux needs the PATH lookup of bwrap, socat and rg')
   }
-  return { bwrapPath: binaries.bwrap, socatPath: binaries.socat, ripgrep: { command: binaries.rg } }
+  return {
+    ...(binaries.bwrap === null ? {} : { bwrapPath: binaries.bwrap }),
+    ...(binaries.socat === null ? {} : { socatPath: binaries.socat }),
+    ...(binaries.rg === null ? {} : { ripgrep: { command: binaries.rg } }),
+  }
 }
 
 function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFilesystem {

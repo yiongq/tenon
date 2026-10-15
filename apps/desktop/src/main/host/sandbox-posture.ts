@@ -5,14 +5,15 @@
  *
  *  1. win32, any platform but darwin and linux, and WSL1 never initialize.
  *  2. Preparing: srt's two helper files are there (§依赖); Linux finds bwrap, socat and rg on main's
- *     PATH and hands srt their absolute paths; `CLAUDE_CODE_TMPDIR` and `CLAUDE_TMPDIR` leave main's
+ *     PATH and hands srt the absolute paths it found (one it did not find srt looks up itself, and
+ *     names in its own words at step 3); `CLAUDE_CODE_TMPDIR` and `CLAUDE_TMPDIR` leave main's
  *     environment; what `stubs.json` recorded last time is cleaned up; main chdirs to
  *     `<userData>/sandbox-cwd` (读法 50), checked like `/tmp/claude` — only when given one, which the
  *     eval host never is (读法 45).
  *  3. `initialize(config, undefined, true)` on both platforms. A dependency error maps to its reason
  *     code by srt's own wording; any other throw is `init-failed`, or on darwin `nested-sandbox` when
  *     a fixed sandbox-exec run exits 71 or says `sandbox_apply` (P1). Once it returned, srt's socat
- *     bridges and tmpdir entries are recorded for the next startup (P7).
+ *     bridges and the tmpdir entries it made are recorded for the next startup (P7).
  *  4. `checkDependenciesAsync()` afterwards, for its warnings only: `degraded`.
  *  5. The self-test (读法 4): one read-only command wrapped by srt itself, not `HostSandbox.wrap`,
  *     that writes outside; it passes only when it exits 0 within 10 s and the host has no such file.
@@ -101,7 +102,7 @@ export interface SrtStartup {
 /** What startup asks of the disk on top of `DesktopSandbox`'s; every path is absolute. */
 export interface PostureFs extends Pick<
   SandboxFs,
-  'lstat' | 'stat' | 'mkdirPrivate' | 'readFile' | 'writeFile'
+  'lstat' | 'stat' | 'realpath' | 'mkdirPrivate' | 'readFile' | 'writeFile'
 > {
   /** The names in a directory; throws when it cannot be listed. */
   readdir(path: string): string[]
@@ -291,12 +292,7 @@ async function startup(
       reason('other', `missing helper file: ${missing.join(', ')}`),
     ])
   }
-  let binaries: LinuxBinaries | null = null
-  if (platform === 'linux') {
-    const found = findBinaries(deps)
-    if (!('bwrap' in found)) return unavailable('not-called', found)
-    binaries = found
-  }
+  const binaries = platform === 'linux' ? findBinaries(deps) : null
   // srt sets the sandbox's TMPDIR from these (sandbox-utils.js:650-652): `/tmp/claude` it is.
   delete deps.env['CLAUDE_CODE_TMPDIR']
   delete deps.env['CLAUDE_TMPDIR']
@@ -350,6 +346,7 @@ async function startup(
   }
   progress.initialize = 'returned'
   markInitialized()
+  // srt made its sockets, bridges and observer dir in initialize; nothing after it is recorded.
   await recordLeftovers(deps, tmpBefore, binaries)
 
   // 4. The warnings only: errors were initialize's to throw.
@@ -363,7 +360,6 @@ async function startup(
 
   // 5, 6.
   const failure = await selfTest(deps, session)
-  await recordLeftovers(deps, tmpBefore, binaries)
   if (failure !== undefined) return unavailable(progress.initialize, [failure])
   if (degraded.length > 0) {
     return {
@@ -416,7 +412,8 @@ function dependencyReasons(errors: string, binaries: LinuxBinaries | null): Sand
     }
     // `, ` before a known one closes the unknown text before it.
     flushUnknown(at - 2)
-    const rgFound = binaries !== null && known.text === `ripgrep (${binaries.rg}) not found`
+    const ours = binaries?.rg ?? null
+    const rgFound = ours !== null && known.text === `ripgrep (${ours}) not found`
     reasons.push(reason(rgFound ? 'other' : known.code, known.text))
     at += known.text.length
     if (errors.startsWith(', ', at)) at += 2
@@ -444,23 +441,18 @@ function warningReason(warning: string): SandboxReason {
   return reason('other', warning)
 }
 
-/** spec §启动 step 2: bwrap, socat and rg on main's PATH, or why not. */
-function findBinaries(deps: SandboxPostureDeps): LinuxBinaries | SandboxReason[] {
+/**
+ * spec §启动 step 2: bwrap, socat and rg on main's PATH. One not there is null: srt looks it up
+ * itself and, not finding it either, initialize throws its own words (`bubblewrap (bwrap) not
+ * installed`, linux-sandbox-utils.js:904), which step 3 maps.
+ */
+function findBinaries(deps: SandboxPostureDeps): LinuxBinaries {
   const dirs = (deps.env['PATH'] ?? '').split(':').filter((dir) => posix.isAbsolute(dir))
-  const find = (name: string): AbsolutePath | undefined =>
+  const find = (name: string): AbsolutePath | null =>
     dirs
       .map((dir) => posix.join(dir, name) as AbsolutePath)
-      .find((path) => deps.fs.isExecutable(path))
-  const bwrap = find('bwrap')
-  const socat = find('socat')
-  const rg = find('rg')
-  if (bwrap !== undefined && socat !== undefined && rg !== undefined) return { bwrap, socat, rg }
-  const missing: SandboxReason[] = []
-  const notOnPath = (name: string): string => `${name} is not on PATH (${deps.env['PATH'] ?? ''})`
-  if (bwrap === undefined) missing.push(reason('missing-bwrap', notOnPath('bwrap')))
-  if (socat === undefined) missing.push(reason('missing-socat', notOnPath('socat')))
-  if (rg === undefined) missing.push(reason('missing-rg', notOnPath('rg')))
-  return missing
+      .find((path) => deps.fs.isExecutable(path)) ?? null
+  return { bwrap: find('bwrap'), socat: find('socat'), rg: find('rg') }
 }
 
 /** darwin, after initialize threw: does sandbox-exec itself refuse to apply here (P1)? */
@@ -493,12 +485,14 @@ async function selfTest(
   deps: SandboxPostureDeps,
   session: SandboxRuntimeConfig,
 ): Promise<SandboxReason | undefined> {
-  // A new path, under none of srt's default writable places (`/tmp/claude`, `~/.npm/_logs`,
-  // `~/.claude/debug`).
-  const target = posix.join(
-    deps.tmpdir,
-    `tenon-sandbox-self-test-${randomBytes(8).toString('hex')}`,
-  )
+  const base = selfTestBase(deps)
+  if (base === undefined) {
+    return reason(
+      'self-test-failed',
+      `no place for the self-test outside srt's writable places: ${deps.tmpdir}, ${deps.home}`,
+    )
+  }
+  const target = posix.join(base, `tenon-sandbox-self-test-${randomBytes(8).toString('hex')}`)
   let argv: string[]
   try {
     const wrapped = await deps.srt.wrapWithSandboxArgv(
@@ -577,6 +571,32 @@ async function selfTest(
   return reason('self-test-failed', detail)
 }
 
+/**
+ * Where the self-test writes (spec §启动 step 5): a new path under none of srt's default writable
+ * places (srt79 sandbox-utils.js:486-504), checked as written and as its real path. Main's tmpdir
+ * first; when that is one of them (main started with `TMPDIR=/tmp/claude`), home, which read-only
+ * keeps unwritable too.
+ */
+function selfTestBase(deps: SandboxPostureDeps): string | undefined {
+  const places = [
+    '/tmp/claude',
+    '/private/tmp/claude',
+    posix.join(deps.home, '.npm/_logs'),
+    posix.join(deps.home, '.claude/debug'),
+  ]
+  const spellings = (path: string): string[] => {
+    try {
+      return [path, deps.fs.realpath(path)]
+    } catch {
+      return [path]
+    }
+  }
+  const writable = places.flatMap(spellings)
+  const under = (path: string): boolean =>
+    writable.some((place) => path === place || path.startsWith(`${place}/`))
+  return [deps.tmpdir, deps.home].find((dir) => !spellings(dir).some(under))
+}
+
 /** One sysctl's value, trimmed; null when the file is not there or cannot be read. */
 function reading(deps: SandboxPostureDeps, path: string): string | null {
   try {
@@ -648,8 +668,11 @@ function readStubs(deps: SandboxPostureDeps): StubsRecord | undefined {
       .flatMap((list) => (Array.isArray(list) ? list : []))
       .filter(isAbsolutePathString),
     socat: socatList(record['socat']),
+    // Only srt's four kinds right in main's tmpdir: the record is a file anyone running as you can
+    // rewrite, and what it names is removed whole.
     tmpEntries: readList(record['tmpEntries'])
       .filter(isAbsolutePathString)
+      .filter((path) => posix.dirname(path) === deps.tmpdir)
       .filter((path) => kinds.some((kind) => kind.test(posix.basename(path)))),
     pid: isPid(record['pid']) ? record['pid'] : null,
   }
@@ -709,19 +732,21 @@ async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
 }
 
 /**
- * After initialize returned: srt's socat bridges (Linux; children of main running the socat Tenon
+ * Once initialize returned: srt's socat bridges (Linux; children of main running the socat Tenon
  * found) and the tmpdir entries of srt's four kinds that were not there before, with main's pid.
- * The mount points `DesktopSandbox` records per wrap stay as they are.
+ * Only `srt-mux-` carries a pid in its name; a `claude-http-` socket counts only when one of those
+ * bridges listens on it, so another srt user's made meanwhile is not taken for ours. The mount
+ * points `DesktopSandbox` records per wrap stay as they are.
  */
 async function recordLeftovers(
   deps: SandboxPostureDeps,
   before: ReadonlySet<string>,
   binaries: LinuxBinaries | null,
 ): Promise<void> {
-  const fresh = leftoverEntries(deps).filter((path) => !before.has(path))
   let socat: RecordedSocat[] = []
-  if (binaries !== null) {
-    const prefix = `${binaries.socat} UNIX-LISTEN:${posix.join(deps.tmpdir, 'claude-')}`
+  const socatPath = binaries?.socat ?? null
+  if (socatPath !== null) {
+    const prefix = `${socatPath} UNIX-LISTEN:${posix.join(deps.tmpdir, 'claude-')}`
     try {
       socat = (await deps.processes.list())
         .filter((row) => row.ppid === deps.pid && row.command.startsWith(prefix))
@@ -730,6 +755,12 @@ async function recordLeftovers(
       deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
     }
   }
+  const fresh = leftoverEntries(deps).filter(
+    (path) =>
+      !before.has(path) &&
+      (!posix.basename(path).startsWith('claude-http-') ||
+        socat.some(({ command }) => command.includes(` UNIX-LISTEN:${path},`))),
+  )
   const file = stubsFile(deps.profileDir)
   let record: Record<string, unknown> = {}
   try {
