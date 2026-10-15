@@ -658,8 +658,9 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
    * Where 验收 11's link cases on darwin run. A link on a deny entry's way is kept by srt's own rules
    * when the entry's spelling has no other link on it (a real home): the rule on the entry as written
    * and on its ancestors matches the link (macos-sandbox-utils.js:539-560). Under a linked parent (a
-   * workspace under /tmp or /var) Seatbelt sees none of those spellings, and only the link node Tenon
-   * passes itself (§档位到 srt 配置「链接」) keeps it; so both layouts.
+   * workspace under /tmp or /var) Seatbelt sees none of those spellings: the link node Tenon passes
+   * itself (§档位到 srt 配置「链接」) keeps `~/.docker`, and keeps `.envrc` together with darwin's
+   * per-root glob, which also hangs off the root's real path. So both layouts.
    */
   const DARWIN_LINK_LAYOUTS = [
     { underLink: false, where: '' },
