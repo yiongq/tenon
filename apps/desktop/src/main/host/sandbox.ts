@@ -591,24 +591,7 @@ export class DesktopSandbox implements HostSandbox {
   }
 
   private privateDirProblem(path: string, create: boolean): string | undefined {
-    const { fs } = this.deps
-    try {
-      let own = fs.lstat(path)
-      if (own === undefined) {
-        if (!create) return 'is missing'
-        fs.mkdirPrivate(path)
-        own = fs.lstat(path)
-        if (own === undefined) return 'could not be made'
-      }
-      if (own.isSymbolicLink()) return 'is a link'
-      const target = fs.stat(path)
-      if (target === undefined || !target.isDirectory()) return 'is not a directory'
-      if (target.uid !== this.deps.paths.uid) return "is another user's"
-      if ((target.mode & 0o777) !== 0o700) return 'is not 0700'
-      return undefined
-    } catch (error) {
-      return `could not be checked: ${messageOf(error)}`
-    }
+    return privateDirProblem(this.deps.fs, this.deps.paths.uid, path, create)
   }
 
   private isDirectory(path: string): boolean {
@@ -713,7 +696,7 @@ export class DesktopSandbox implements HostSandbox {
 
   /** `<profile>/sandbox/stubs.json`'s `mountPoints`: srt id → the mount points that wrap recorded. */
   private editStubs(edit: (mounts: Record<string, string[]>) => void): void {
-    const file = posix.join(this.deps.paths.profileDir, 'sandbox', 'stubs.json')
+    const file = stubsFile(this.deps.paths.profileDir)
     let record: Record<string, unknown> = {}
     const text = this.deps.fs.readFile(file)
     if (text !== undefined) {
@@ -821,6 +804,42 @@ export class DesktopSandbox implements HostSandbox {
     this.deps.log(`sandbox: refused ${request.commandId}: ${why}`)
     return new SandboxUnavailableError(`the sandbox refused this command: ${why}`)
   }
+}
+
+/**
+ * 读法 41, 48, 50: why `path` is not a directory of this user's, mode 0700 and not a link, or
+ * undefined when it is — made (mode 0700) first when missing and `create` is set. The link test is
+ * on the path itself, the rest on what it leads to, so the link test alone stops a link to a
+ * private dir. Startup's chdir dir (`sandbox-posture.ts`) is checked the same way.
+ */
+export function privateDirProblem(
+  fs: Pick<SandboxFs, 'lstat' | 'stat' | 'mkdirPrivate'>,
+  uid: number,
+  path: string,
+  create: boolean,
+): string | undefined {
+  try {
+    let own = fs.lstat(path)
+    if (own === undefined) {
+      if (!create) return 'is missing'
+      fs.mkdirPrivate(path)
+      own = fs.lstat(path)
+      if (own === undefined) return 'could not be made'
+    }
+    if (own.isSymbolicLink()) return 'is a link'
+    const target = fs.stat(path)
+    if (target === undefined || !target.isDirectory()) return 'is not a directory'
+    if (target.uid !== uid) return "is another user's"
+    if ((target.mode & 0o777) !== 0o700) return 'is not 0700'
+    return undefined
+  } catch (error) {
+    return `could not be checked: ${messageOf(error)}`
+  }
+}
+
+/** The record of mount points and leftovers (§afterExit「挂载点与残留的记录」; P7). */
+export function stubsFile(profileDir: string): string {
+  return posix.join(profileDir, 'sandbox', 'stubs.json')
 }
 
 const SHELLS: ReadonlySet<string> = new Set(['zsh', 'bash', 'sh'])

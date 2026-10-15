@@ -331,6 +331,29 @@
       }
     },
     {
+      // Spec 04 读法 50: main chdirs to <userData>/sandbox-cwd before sandbox-runtime starts, so a
+      // relative path in main would quietly resolve there. Only dev-env.ts reads the cwd, before
+      // that happens (the override below).
+      "files": ["apps/desktop/src/main/**/*.ts"],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "cwd",
+            "message": "main's cwd is <userData>/sandbox-cwd once the sandbox starts (spec 04 读法 50); use absolute paths."
+          }
+        ]
+      }
+    },
+    {
+      // loadDevEnv runs before app.whenReady(), so before the sandbox's chdir (spec 04 读法 50).
+      "files": ["apps/desktop/src/main/dev-env.ts"],
+      "rules": {
+        "no-restricted-properties": "off"
+      }
+    },
+    {
       // Repo scripts are CLIs: stdout is their output.
       "files": ["scripts/**/*.mjs"],
       "rules": {
