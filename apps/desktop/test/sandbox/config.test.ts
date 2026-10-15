@@ -423,7 +423,7 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
     }
   })
 
-  it('04 验收 5: on darwin a root holding any one of `*?[]` gets no glob; its names stay literal', () => {
+  it('04 验收 5: on darwin no glob hangs off a root spelling, written or real, that holds any one of `*?[]`; its names stay literal', () => {
     for (const name of ['a*b', 'a?b', 'a[b', 'a]b']) {
       const folder = `/Users/u/code/${name}`
       const { allowWrite, denyWrite } = wrapFilesystem(
@@ -433,6 +433,32 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       expect(allowWrite).toEqual([literal(folder)])
       expect(denyWrite.filter((e) => typeof e === 'string')).toEqual([])
       expect(denyWrite).toContainEqual(literal(`${folder}/.envrc`))
+    }
+
+    // Each spelling is checked on its own: `~/proj` is a link into `/Volumes/[bk]/proj`, whose `[bk]`
+    // srt would read as a character class; `~/code/[WIP]` is a link to a plain real path.
+    const disk = fakeDisk(['/Users/u/code', '/Volumes/[bk]/proj/src', '/Volumes/plain/wip/src'], {
+      '/Users/u/proj': '/Volumes/[bk]/proj',
+      '/Users/u/code/[WIP]': '/Volumes/plain/wip',
+    })
+    const cases = [
+      { written: '/Users/u/proj', real: '/Volumes/[bk]/proj', anchor: '/Users/u/proj' },
+      { written: '/Users/u/code/[WIP]', real: '/Volumes/plain/wip', anchor: '/Volumes/plain/wip' },
+    ]
+    for (const { written, real, anchor } of cases) {
+      const { allowWrite, denyWrite } = wrapFilesystem(
+        wrapInput('darwin', { workspace: [root(written)] }),
+        disk,
+      ).filesystem
+      expect(allowWrite).toEqual([literal(real)])
+      const patterns = denyWrite.filter((e) => typeof e === 'string')
+      // One glob per name (23), all off the spelling without `*?[]`.
+      expect(patterns.length).toBe(23)
+      expect(patterns.every((e) => e.startsWith(`${anchor}/**/`))).toBe(true)
+      expect(patterns).toContain(`${anchor}/**/.envrc`)
+      // Both spellings' names stay as literal entries.
+      expect(denyWrite).toContainEqual(literal(`${written}/.envrc`))
+      expect(denyWrite).toContainEqual(literal(`${real}/.envrc`))
     }
   })
 
@@ -482,6 +508,21 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
     const own = linux({ noSeccomp: true, xdgRuntimeDir: '/run/user/4242' })
     expect(own.denyRead).toContainEqual(literal('/run/user/4242'))
     expect(own.denyRead).not.toContainEqual(literal('/run/user/1000'))
+    // A relative `XDG_RUNTIME_DIR` counts as unset; a relative `SSH_AUTH_SOCK` adds nothing.
+    const relative = linux({ noSeccomp: true, xdgRuntimeDir: 'run/rel', sshAuthSock: 'rel/agent' })
+    for (const path of [
+      '/run/user/1000',
+      '/var/run/docker.sock',
+      '/run/docker.sock',
+      '/tmp/.X11-unix',
+    ]) {
+      expect(relative.denyRead).toContainEqual(literal(path))
+    }
+    for (const list of [relative.denyRead, relative.denyWrite]) {
+      expect(spelled(list)).not.toContain('run/rel')
+      expect(spelled(list)).not.toContain('rel')
+      expect(spelled(list).filter((e) => !e.startsWith('/'))).toEqual([])
+    }
 
     const active = linux({ noSeccomp: false })
     for (const path of sockets) expect(active.denyRead).not.toContainEqual(literal(path))
