@@ -61,8 +61,12 @@ const DARWIN_TRIES = 3
 const DARWIN_RETRY_PAUSE_MS = 1_000
 
 /**
- * srt's own variables in a command's environment (srt79 dist/sandbox/sandbox-utils.js:642-781; the
- * last two only on Linux, linux-sandbox-utils.js:2744-2747).
+ * srt's own variables in a command's environment: the proxy, TMPDIR and gcloud ones of srt79
+ * dist/sandbox/sandbox-utils.js:642-781; JAVA_TOOL_OPTIONS, which each platform's wrapper composes
+ * with main's own JAVA_TOOL_OPTIONS value, carried over as it is (macos-sandbox-utils.js:1080-1088,
+ * linux-sandbox-utils.js:2733-2740; spec §argv、shell、env 与 id, so 验收 6's sentinel avoids that
+ * name and only names are compared here); the last two only on Linux (linux-sandbox-utils.js:
+ * 2743-2748).
  */
 const SRT_VARIABLES: ReadonlySet<string> = new Set([
   'SANDBOX_RUNTIME',
@@ -358,8 +362,8 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   }, CASE_MS)
 
   /** A lab whose one session folder is a fresh `ws`, plus a fresh `outside`. */
-  function workspaceLab(): { lab: SandboxLab; ws: string; outside: string } {
-    const lab = rig.lab()
+  function workspaceLab(underLink = false): { lab: SandboxLab; ws: string; outside: string } {
+    const lab = rig.lab({ underLink })
     const ws = lab.dir('ws')
     lab.folders = [ws]
     return { lab, ws, outside: lab.dir('outside') }
@@ -608,19 +612,31 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       expect(reads.stdout).not.toContain('TENON_FAKE_DOCKER')
       expect(reads.stdout.split('TENON_OTHER_READABLE').length - 1).toBe(2)
 
+      const refused = [
+        ['aws_link', `echo ${WRITTEN} >> "$HOME/.aws/credentials"`],
+        ['aws_new_link', `echo ${WRITTEN} > "$HOME/.aws/new-by-link"`],
+        ['aws_real', `echo ${WRITTEN} >> "$HOME/dotfiles/aws/credentials"`],
+        ['aws_new_real', `echo ${WRITTEN} > "$HOME/dotfiles/aws/new-by-real"`],
+        ['docker_link', `echo ${WRITTEN} >> "$HOME/.docker/config.json"`],
+        ['docker_real', `echo ${WRITTEN} >> "$HOME/dotfiles/docker/config.json"`],
+      ] as const
       const writes = await lab.run(
         [
-          `echo ${WRITTEN} >> "$HOME/.aws/credentials"`,
-          `echo ${WRITTEN} > "$HOME/.aws/new-by-link"`,
-          `echo ${WRITTEN} >> "$HOME/dotfiles/aws/credentials"`,
-          `echo ${WRITTEN} > "$HOME/dotfiles/aws/new-by-real"`,
-          `echo ${WRITTEN} >> "$HOME/.docker/config.json"`,
-          `echo ${WRITTEN} >> "$HOME/dotfiles/docker/config.json"`,
+          ...refused.map(([label, command]) => `${command}; echo ${label}=$?`),
           'echo fresh > "$HOME/.docker/fresh-by-link.json"; echo link_write=$?',
           'echo fresh > "$HOME/dotfiles/docker/fresh-by-real.json"; echo real_write=$?',
         ].join('; '),
         { workspace: [home], cwd: home },
       )
+      // On macOS Seatbelt refuses each write: a non-zero status. On Linux the existing ~/dotfiles/aws,
+      // a denyRead directory (reached through ~/.aws), is an empty tmpfs in the sandbox, so writes
+      // there land in it and are gone with the sandbox (srt79 linux-sandbox-utils.js:1408-1415): any
+      // status, and the host below.
+      for (const [label] of refused) {
+        expect(new RegExp(`^${label}=(\\d+)$`, 'm').exec(writes.stdout)?.[1]).toMatch(
+          DARWIN ? /^[1-9]\d*$/ : /^\d+$/,
+        )
+      }
       expect(readFileSync(join(home, 'dotfiles/aws/credentials'), 'utf8')).toBe('TENON_FAKE_AWS\n')
       expect(readFileSync(join(home, 'dotfiles/docker/config.json'), 'utf8')).toBe(
         'TENON_FAKE_DOCKER\n',
@@ -639,16 +655,31 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   )
 
   /**
+   * Where 验收 11's link cases on darwin run. A link on a deny entry's way is kept by srt's own rules
+   * when the entry's spelling has no other link on it (a real home): the rule on the entry as written
+   * and on its ancestors matches the link (macos-sandbox-utils.js:539-560). Under a linked parent (a
+   * workspace under /tmp or /var) Seatbelt sees none of those spellings, and only the link node Tenon
+   * passes itself (§档位到 srt 配置「链接」) keeps it; so both layouts.
+   */
+  const DARWIN_LINK_LAYOUTS = [
+    { underLink: false, where: '' },
+    {
+      underLink: true,
+      where: '; also under a linked parent, where only the link node Tenon passes matches',
+    },
+  ] as const
+
+  /**
    * 验收 11, the protected name that is itself a link: `.envrc` at the root links to an outside file;
    * the command removes or moves it and writes a plain file in its place. Each attempt starts from a
    * fresh link; the runs come back for the platform's own assertions.
    */
-  async function replaceLinkedEnvrc(): Promise<{
+  async function replaceLinkedEnvrc(underLink = false): Promise<{
     readonly ws: string
     readonly target: string
     readonly runs: readonly { readonly ran: Ran; readonly link: string; readonly moved: string }[]
   }> {
-    const { lab, ws, outside } = workspaceLab()
+    const { lab, ws, outside } = workspaceLab(underLink)
     const target = writeHostFile(join(outside, 'envrc-target'), 'ORIGINAL_ENVRC\n')
     const runs: { ran: Ran; link: string; moved: string }[] = []
     for (const command of [
@@ -670,24 +701,26 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     return { ws, target, runs }
   }
 
-  it.skipIf(!DARWIN)(
-    '04 验收 11: (darwin) a protected name that is itself a link (.envrc to an outside file) can be neither removed nor moved and rewritten; link and target stay',
-    async () => {
-      const { target, runs } = await replaceLinkedEnvrc()
-      expect(readFileSync(target, 'utf8')).toBe('ORIGINAL_ENVRC\n')
-      expect(
-        runs.map(({ ran, link, moved }) => ({
-          rc: /^rc=(\d+)$/m.exec(ran.stdout)?.[1],
-          link,
-          moved,
-        })),
-      ).toEqual([
-        { rc: '1', link: target, moved: 'missing' },
-        { rc: '1', link: target, moved: 'missing' },
-      ])
-    },
-    CASE_MS,
-  )
+  for (const { underLink, where } of DARWIN_LINK_LAYOUTS) {
+    it.skipIf(!DARWIN)(
+      `04 验收 11: (darwin) a protected name that is itself a link (.envrc to an outside file) can be neither removed nor moved and rewritten; link and target stay${where}`,
+      async () => {
+        const { target, runs } = await replaceLinkedEnvrc(underLink)
+        expect(readFileSync(target, 'utf8')).toBe('ORIGINAL_ENVRC\n')
+        expect(
+          runs.map(({ ran, link, moved }) => ({
+            rc: /^rc=(\d+)$/m.exec(ran.stdout)?.[1],
+            link,
+            moved,
+          })),
+        ).toEqual([
+          { rc: '1', link: target, moved: 'missing' },
+          { rc: '1', link: target, moved: 'missing' },
+        ])
+      },
+      CASE_MS,
+    )
+  }
 
   it.skipIf(DARWIN)(
     '04 验收 11: (linux) a protected name that is itself a link (.envrc to an outside file) removed or moved and rewritten leaves one protected violation targeting it; the target stays',
@@ -719,12 +752,12 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
    * No per-root name or glob covers it, so only the link itself in denyWrite (darwin) or the host's
    * lstat check (Linux) stands between the command and a `~/.docker` of its own.
    */
-  async function replaceLinkedDocker(): Promise<{
+  async function replaceLinkedDocker(underLink = false): Promise<{
     readonly home: string
     readonly target: string
     readonly runs: readonly { readonly ran: Ran; readonly link: string }[]
   }> {
-    const lab = rig.lab()
+    const lab = rig.lab({ underLink })
     const home = lab.home
     lab.folders = [home]
     const target = join(home, 'dotfiles/docker')
@@ -745,20 +778,22 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     return { home, target, runs }
   }
 
-  it.skipIf(!DARWIN)(
-    '04 验收 11: (darwin) a link on a deny entry’s way (~/.docker, the home being the workspace) can be neither removed nor moved and replaced; link and target stay',
-    async () => {
-      const { target, runs } = await replaceLinkedDocker()
-      expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
-      expect(
-        runs.map(({ ran, link }) => ({ rc: /^rc=(\d+)$/m.exec(ran.stdout)?.[1], link })),
-      ).toEqual([
-        { rc: '1', link: target },
-        { rc: '1', link: target },
-      ])
-    },
-    CASE_MS,
-  )
+  for (const { underLink, where } of DARWIN_LINK_LAYOUTS) {
+    it.skipIf(!DARWIN)(
+      `04 验收 11: (darwin) a link on a deny entry’s way (~/.docker, the home being the workspace) can be neither removed nor moved and replaced; link and target stay${where}`,
+      async () => {
+        const { target, runs } = await replaceLinkedDocker(underLink)
+        expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
+        expect(
+          runs.map(({ ran, link }) => ({ rc: /^rc=(\d+)$/m.exec(ran.stdout)?.[1], link })),
+        ).toEqual([
+          { rc: '1', link: target },
+          { rc: '1', link: target },
+        ])
+      },
+      CASE_MS,
+    )
+  }
 
   it.skipIf(DARWIN)(
     '04 验收 11: (linux) a link on a deny entry’s way (~/.docker, the home being the workspace) removed or moved and replaced leaves one protected violation targeting it; the target stays',
@@ -868,7 +903,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       const agent = join(lab.home, 'Library/LaunchAgents/x.plist')
       const ran = await lab.run(
         [
-          `echo ${WRITTEN} >> ${shq(keys)}`,
+          `echo ${WRITTEN} >> ${shq(keys)}; echo keys=$?`,
           `mkdir -p ${shq(join(agent, '..'))} 2>/dev/null; echo ${WRITTEN} > ${shq(agent)}; echo agent=$?`,
           `echo ok > ${shq(join(lab.home, 'normal.txt'))}; echo normal=$?`,
         ].join('; '),
@@ -876,9 +911,11 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       )
       expect(ran.stdout).toMatch(/^normal=0$/m)
       expect(ran.stdout).toMatch(/^agent=[1-9]/m)
-      // On the host, nothing: on Linux .ssh, a denyRead directory, is an empty tmpfs inside the
-      // sandbox (srt79 linux-sandbox-utils.js:1408-1415), so the append "succeeds" there and is gone
-      // with the sandbox; on macOS Seatbelt refuses it.
+      // On macOS Seatbelt refuses the append: a non-zero status. On Linux .ssh, a denyRead
+      // directory, is an empty tmpfs inside the sandbox (srt79 linux-sandbox-utils.js:1408-1415), so
+      // the append "succeeds" there and is gone with the sandbox: any status. On both, nothing
+      // reaches the host.
+      expect(/^keys=(\d+)$/m.exec(ran.stdout)?.[1]).toMatch(DARWIN ? /^[1-9]\d*$/ : /^\d+$/)
       expect(readFileSync(keys, 'utf8')).toBe('ORIGINAL_KEYS\n')
       expect(hostKind(agent)).toBe('missing')
     },
@@ -1214,12 +1251,19 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       symlinkSync(join(q.lab.home, '.ssh'), join(q.ws, 'ssh-link'))
       return { command: 'cat ssh-link/id_ed25519', want: fsRefusal(real(key), null, false) }
     }),
+    // ~/.aws is itself a deny entry and a link: Seatbelt refuses the lookup through it at the link,
+    // `file-read-metadata <home>/.aws`, for a read and for a write alike. That is a read denial, so
+    // per §afterExit 的表 it carries no `protected` even when the command was writing (plan Open,
+    // step 6 review r3). (Under a linked parent the entry as written never matched and such a write
+    // was refused at the real place, with `protected`.)
     ...(
       [
-        ['cat "$HOME/.aws/credentials"', 'dotfiles/aws/credentials'],
+        ['cat "$HOME/.aws/credentials"', '.aws'],
         ['cat "$HOME/dotfiles/aws/credentials"', 'dotfiles/aws/credentials'],
         ['cat "$HOME/.docker/config.json"', 'dotfiles/docker/config.json'],
         ['cat "$HOME/dotfiles/docker/config.json"', 'dotfiles/docker/config.json'],
+        [`echo ${WRITTEN} >> "$HOME/.aws/credentials"`, '.aws'],
+        [`echo ${WRITTEN} > "$HOME/.aws/new-by-link"`, '.aws'],
       ] as const
     ).map(([command, file]) =>
       inLinkedHome(`${command} (验收 11)`, command, (home) =>
@@ -1228,8 +1272,6 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     ),
     ...(
       [
-        [`echo ${WRITTEN} >> "$HOME/.aws/credentials"`, 'dotfiles/aws/credentials'],
-        [`echo ${WRITTEN} > "$HOME/.aws/new-by-link"`, 'dotfiles/aws/new-by-link'],
         [`echo ${WRITTEN} >> "$HOME/dotfiles/aws/credentials"`, 'dotfiles/aws/credentials'],
         [`echo ${WRITTEN} > "$HOME/dotfiles/aws/new-by-real"`, 'dotfiles/aws/new-by-real'],
         [`echo ${WRITTEN} >> "$HOME/.docker/config.json"`, 'dotfiles/docker/config.json'],
@@ -1354,8 +1396,10 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         // A test condition, not the product's: Bash's env carries no OS_ACTIVITY_MODE and Tenon adds
         // none (04 不变量 3). While srt's `log stream` runs, each process in the sandbox is refused
         // `mach-lookup com.apple.diagnosticd` at its start, and the kernel's "N duplicate reports"
-        // line for it comes in the same instant as the process's next denial. srt drops a whole
-        // log block whose first line is that noise (macos-sandbox-utils.js:1158-1200). On this
+        // line for it comes in the same instant as the process's next denial. srt reads one line per
+        // log block, the first holding `Sandbox:` and `deny`, and drops the whole block when that
+        // line is noise it filters (diagnosticd, analyticsd, mDNSResponder) or matches
+        // ignoreViolations (macos-sandbox-utils.js:1168-1199), real denials after it included. On this
         // suite's Mac (macOS 26.3, 2026-10-15), one refused write per command, 60 commands: without
         // the variable 43 of 60 arrived, and 36 of 60 in a second warm run; with it 60 of 60
         // (probes/results/step6/measure-diagnosticd-r1.txt); an earlier run lost 20 of 180 (see

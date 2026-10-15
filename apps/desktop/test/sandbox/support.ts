@@ -19,6 +19,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -149,11 +150,15 @@ export function isWithinDir(path: string, dir: string): boolean {
 // The rig: sandbox-runtime started once per test process
 
 export interface SandboxRig {
-  /** The temporary root every lab lives under, as written (macOS: under a system link). */
+  /** The temporary root every lab lives under: a real path, no link on its way (see below). */
   readonly root: string
   readonly outcome: SandboxPostureOutcome
-  /** A fresh home, profile, cache and `DesktopSandbox`, sharing this process's srt. */
-  lab(): SandboxLab
+  /**
+   * A fresh home, profile, cache and `DesktopSandbox`, sharing this process's srt. `underLink` puts
+   * the lab under `<root>/linked`, a link to `<root>/linked-real`, so every path it spells crosses
+   * a link, as a home or workspace under `/tmp` or `/var` does on macOS.
+   */
+  lab(options?: { readonly underLink?: boolean }): SandboxLab
   /** The effective allowlist, through srt's `updateConfig`; never a reset (§网络白名单). */
   setAllowlist(domains: readonly string[]): void
   /** The port srt's HTTP proxy listens on, on the host. */
@@ -180,7 +185,14 @@ export interface ViolationArrival {
  * which no lab is under. The outcome is returned as it is; the caller asserts it is `active`.
  */
 export async function startSandboxRig(): Promise<SandboxRig> {
-  const root = mkdtempSync(join(tmpdir(), 'tenon-escape-'))
+  // The labs lie on a real path, as a real home does (/Users/<u> has no link on its way). macOS's
+  // os.tmpdir() is /var/folders/…, under the system link /var: there a deny entry as written never
+  // matches Seatbelt, which compares resolved paths, nor do srt's rules on its ancestors, and /var
+  // itself joins darwin's denyWrite as a link on the way, which changes what a refusal reports
+  // (step 6 review r3). `lab({ underLink: true })` keeps that layout for the cases about it.
+  const root = mkdtempSync(join(realpathSync(tmpdir()), 'tenon-escape-'))
+  makeDir(join(root, 'linked-real'))
+  symlinkSync(join(root, 'linked-real'), join(root, 'linked'))
   const startupHome = makeDir(join(root, 'startup-home'))
   const startupProfile = makeDir(join(root, 'startup-profile'))
   const logs: string[] = []
@@ -247,8 +259,15 @@ export async function startSandboxRig(): Promise<SandboxRig> {
     outcome,
     arrivals,
     logs,
-    lab: () =>
-      newLab({ root: join(root, `lab-${String(++labs)}`), run, helpers, log, arrivals, calls }),
+    lab: (options = {}) =>
+      newLab({
+        root: join(root, options.underLink === true ? 'linked' : '', `lab-${String(++labs)}`),
+        run,
+        helpers,
+        log,
+        arrivals,
+        calls,
+      }),
     summary: () => {
       const arrived = calls.flatMap((call) => call.arrivalMs).toSorted((a, b) => a - b)
       const durations = calls.map((call) => call.ms).toSorted((a, b) => a - b)
