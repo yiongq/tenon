@@ -197,9 +197,18 @@ class FakeStore implements SrtViolationStore {
   private total = 0
   private readonly listeners = new Set<(events: SandboxViolationEvent[]) => void>()
 
-  /** An event as srt's producers record it: keyed by the first 100 characters of the id. */
+  /**
+   * An event as srt's producers record it: keyed by the first 100 characters of the id, and
+   * unattributed when that key base64s past the 251 bytes a carrier holds (the proxy's username
+   * and the Linux observer's socket, sandbox-utils.js:938-971, linux-violation-monitor.js:106-109).
+   */
   add(id: string, line: string): void {
-    this.events.push({ line, encodedCommand: encoded(id), timestamp: new Date(0) })
+    const key = encoded(id)
+    this.events.push(
+      Buffer.byteLength(key) <= 251
+        ? { line, encodedCommand: key, timestamp: new Date(0) }
+        : { line, timestamp: new Date(0) },
+    )
     this.total += 1
     if (this.events.length > 100) this.events = this.events.slice(-100)
     for (const listener of this.listeners) listener([...this.events])
@@ -445,6 +454,43 @@ function presetOn(h: Harness): void {
   h.settings.packageManagers = true
 }
 
+const STUBS_LINUX = '/home/u/.config/Tenon/profiles/u1/t1/sandbox/stubs.json'
+
+/** A promise that never settles. */
+function pending(): Promise<never> {
+  return new Promise(() => {})
+}
+
+/**
+ * srt79's mount point cleanup, on the fake disk (linux-sandbox-utils.js:755-760, :797-833): a wrap
+ * counts as running until its `cleanupAfterCommand`; the points go only when none is running, in
+ * the order they were made, a directory only if empty at that moment. Returns one wrap's bwrap
+ * starting: it makes the given points on the host.
+ */
+function srtMountPoints(h: Harness): (made: { dirs?: string[]; files?: string[] }) => void {
+  let running = 0
+  const points: string[] = []
+  h.srt.cleanupAfterCommand.mockImplementation(() => {
+    if (running > 0) running -= 1
+    if (running > 0) return
+    for (const point of points) {
+      if (![...h.disk.nodes.keys()].some((key) => key.startsWith(`${point}/`))) h.disk.remove(point)
+    }
+    points.length = 0
+  })
+  return (made) => {
+    running += 1
+    for (const dir of made.dirs ?? []) {
+      h.disk.dir(dir)
+      points.push(dir)
+    }
+    for (const file of made.files ?? []) {
+      h.disk.file(file)
+      points.push(file)
+    }
+  }
+}
+
 /** What `refusals` returns when every case is refused before srt. */
 function allRefused(cases: readonly Case[]): [string, string, number][] {
   return cases.map(([what]) => [what, 'refused', 0])
@@ -580,6 +626,32 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     )
   })
 
+  it("04 验收 8: a tool-use id of multibyte characters is cut on a code point to 67 bytes, fits srt's 251-byte carriers and keeps its denials", async () => {
+    const cases = [
+      // 3 bytes each: 22 of them (66 bytes).
+      ['调'.repeat(80), /^调{22}\.[0-9a-f]{32}$/u],
+      // 4 bytes and two UTF-16 units each: 16 of them (64 bytes), never half of one.
+      ['😀'.repeat(40), /^😀{16}\.[0-9a-f]{32}$/u],
+    ] as const
+    await inTurn(cases, async ([commandId, shape]) => {
+      const h = harness('linux')
+      await h.run({ commandId })
+      const id = h.calls[0]?.id ?? ''
+      expect(id).toMatch(shape)
+      expect(Buffer.from(id).toString('base64').length).toBeLessThanOrEqual(251)
+      h.store.add(id, 'deny network-outbound evil.example.com:443 (host is not on the allow list)')
+      await h.sandbox.afterExit(commandId)
+      expect(await h.sandbox.violations(commandId)).toEqual([
+        {
+          kind: 'network',
+          line: 'deny network-outbound evil.example.com:443 (host is not on the allow list)',
+          target: 'evil.example.com',
+          release: 'domain',
+        },
+      ])
+    })
+  })
+
   it('04 验收 8: a write-heavy command keeps its one real denial', async () => {
     const h = harness('linux')
     await h.run()
@@ -603,34 +675,125 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
 
   it('04 读法 9: afterExit settles VIOLATION_SETTLE_MS (50 ms) after it begins; a line that comes later goes to the log only', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    // Both platforms wait (§afterExit); macOS's log monitor is the one whose lines come late. One
+    // platform at a time: the fake clock is shared.
+    const lines: Record<SandboxPlatform, { inTime: string; tooLate: string; expected: unknown }> = {
+      darwin: {
+        inTime: 'node(123) deny(1) file-write-create /Users/u/outside/x',
+        tooLate: 'node(123) deny(1) file-write-create /Users/u/outside/y',
+        expected: {
+          kind: 'fs',
+          line: 'node(123) deny(1) file-write-create /Users/u/outside/x',
+          target: '/Users/u/outside/x',
+          release: 'path',
+        },
+      },
+      linux: {
+        inTime: 'deny network-outbound in-time.example.com:443 (host is not on the allow list)',
+        tooLate: 'deny network-outbound too-late.example.com:443 (host is not on the allow list)',
+        expected: {
+          kind: 'network',
+          line: 'deny network-outbound in-time.example.com:443 (host is not on the allow list)',
+          target: 'in-time.example.com',
+          release: 'domain',
+        },
+      },
+    }
+    await inTurn(PLATFORMS, async (platform) => {
+      const h = harness(platform)
+      // 读法 35 offers a path release only under an existing directory.
+      h.disk.dir(`${h.at.home}/outside`)
+      await h.run()
+      const id = h.calls[0]?.id ?? ''
+      let settled = false
+      void h.sandbox.afterExit(TOOL_USE).then(() => (settled = true))
+      // darwin reads the process table first; the wait starts once that is done.
+      await flush()
+      await vi.advanceTimersByTimeAsync(49)
+      await flush()
+      expect([platform, settled]).toEqual([platform, false])
+      // The process exited 49 ms ago and afterExit is still waiting: a line that lands now counts.
+      h.store.add(id, lines[platform].inTime)
+      await vi.advanceTimersByTimeAsync(1)
+      await flush()
+      expect([platform, settled]).toEqual([platform, true])
+      h.store.add(id, lines[platform].tooLate)
+      expect(await h.sandbox.violations(TOOL_USE)).toEqual([lines[platform].expected])
+      // With its key and its line, so a late one can still be looked into.
+      expect(h.logs).toEqual([
+        `sandbox: a violation for no open command (key "${id}"): ${lines[platform].tooLate}`,
+      ])
+    })
+  })
+
+  it('04 §afterExit: violations hands over only settled wraps, and across two wraps of one id every protected one comes first', async () => {
+    // Two wraps of one tool-use id before its afterExit: an ordinary denial in the first, one on a
+    // denyWrite entry in the second.
     const h = harness('linux')
     await h.run()
-    const id = h.calls[0]?.id ?? ''
-    let settled = false
-    void h.sandbox.afterExit(TOOL_USE).then(() => (settled = true))
-    await vi.advanceTimersByTimeAsync(49)
-    await flush()
-    expect(settled).toBe(false)
-    // The process exited 49 ms ago and afterExit is still waiting: a line that lands now counts.
-    h.store.add(id, 'deny network-outbound in-time.example.com:443 (host is not on the allow list)')
-    await vi.advanceTimersByTimeAsync(1)
-    await flush()
-    expect(settled).toBe(true)
-    h.store.add(
-      id,
-      'deny network-outbound too-late.example.com:443 (host is not on the allow list)',
-    )
+    await h.run()
+    const [first = '', second = ''] = h.calls.map((call) => call.id)
+    h.store.add(first, 'deny openat /home/u/outside/f')
+    h.store.add(second, 'deny openat /home/u/.bashrc')
+    await h.sandbox.afterExit(TOOL_USE)
     expect(await h.sandbox.violations(TOOL_USE)).toEqual([
       {
-        kind: 'network',
-        line: 'deny network-outbound in-time.example.com:443 (host is not on the allow list)',
-        target: 'in-time.example.com',
-        release: 'domain',
+        kind: 'fs',
+        line: 'deny openat /home/u/.bashrc',
+        target: '/home/u/.bashrc',
+        protected: true,
+        observed: true,
+      },
+      {
+        kind: 'fs',
+        line: 'deny openat /home/u/outside/f',
+        target: '/home/u/outside/f',
+        observed: true,
       },
     ])
-    // With its key and its line, so a late one can still be looked into.
-    expect(h.logs).toEqual([
-      `sandbox: a violation for no open command (key "${id}"): deny network-outbound too-late.example.com:443 (host is not on the allow list)`,
+    expect(await h.sandbox.violations(TOOL_USE)).toEqual([])
+
+    // Asked while afterExit still waits: nothing yet, and nothing taken away.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const early = harness('linux')
+    await early.run()
+    early.store.add(early.calls[0]?.id ?? '', 'deny openat /home/u/outside/g')
+    const exiting = early.sandbox.afterExit(TOOL_USE)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await early.sandbox.violations(TOOL_USE)).toEqual([])
+    await vi.advanceTimersByTimeAsync(40)
+    await exiting
+    expect(await early.sandbox.violations(TOOL_USE)).toEqual([
+      {
+        kind: 'fs',
+        line: 'deny openat /home/u/outside/g',
+        target: '/home/u/outside/g',
+        observed: true,
+      },
+    ])
+  })
+
+  it('04 §afterExit: with userData behind a link, a Seatbelt read denial reported at the profile dir’s real path is protected', async () => {
+    const h = harness('darwin')
+    // userData lives on another volume, reached through a link (step 3 r2: the classifier gets the
+    // profile dir as written and as its real path).
+    h.disk.remove('/Users/u/Library/Application Support/Tenon')
+    h.disk.dir('/Volumes/x/Tenon/profiles/u1/t1', { mode: 0o700 })
+    h.disk.dir('/Volumes/x/Tenon/sandbox-cwd', { mode: 0o700 })
+    h.disk.link('/Users/u/Library/Application Support/Tenon', '/Volumes/x/Tenon')
+    await h.run()
+    h.store.add(
+      h.calls[0]?.id ?? '',
+      'cat(1) deny(1) file-read-data /Volumes/x/Tenon/profiles/u1/t1/x',
+    )
+    await h.sandbox.afterExit(TOOL_USE)
+    expect(await h.sandbox.violations(TOOL_USE)).toEqual([
+      {
+        kind: 'fs',
+        line: 'cat(1) deny(1) file-read-data /Volumes/x/Tenon/profiles/u1/t1/x',
+        target: '/Volumes/x/Tenon/profiles/u1/t1/x',
+        protected: true,
+      },
     ])
   })
 
@@ -946,16 +1109,19 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
         cases.map(async ([what, arrange]) => {
           const h = harness(platform)
           const result = await h.run({ ...arrange(h), env: { ...requestEnv } })
-          return [what, result.env, h.calls[0]?.id]
+          // Wrapped through srt, once, under an id of the right shape — so the mark below is real.
+          expect([what, h.calls.length]).toEqual([what, 1])
+          const id = h.calls[0]?.id ?? ''
+          expect(id).toMatch(/^.{1,67}\.[0-9a-f]{32}$/)
+          return [what, result.env, id] as const
         }),
       )
-      expect(seen).toEqual(
-        seen.map(([what, , id]) => [
+      for (const [what, env, id] of seen) {
+        expect([what, env]).toStrictEqual([
           what,
           platform === 'darwin' ? { ...requestEnv, TENON_SANDBOX_MARK: id } : requestEnv,
-          id,
-        ]),
-      )
+        ])
+      }
 
       // full-access: request.env as it is, the preset on or not.
       const full = harness(platform)
@@ -972,7 +1138,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     h.disk.file(stubs, '{"socat":[{"pid":4242}]}\n')
     await h.run()
     const id = h.calls[0]?.id ?? ''
-    // `.claude/` is missing: srt binds an empty directory there (linux-sandbox-utils.js:2154-2160).
+    // `.claude/` is missing: srt binds an empty directory there (linux-sandbox-utils.js:2159-2181).
     // `.envrc` and the like are missing leaves (an empty file srt takes back itself), and the
     // home's `.config/autostart` is not under this wrap's allowWrite.
     expect(JSON.parse(h.disk.readFile(stubs) ?? '')).toEqual({
@@ -999,7 +1165,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     ).toBeUndefined()
 
     // `.claude` a dangling link: srt resolves it before it masks (linux-sandbox-utils.js:50-112,
-    // :2041), so the empty directory lands under the link's target, not on the link.
+    // :2042), so the empty directory lands under the link's target, not on the link.
     const dangling = harness('linux')
     dangling.disk.link('/home/u/code/app/.claude', 'claude-real')
     await dangling.run()
@@ -1012,6 +1178,60 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     refused.failures.push(new Error('srt refused'))
     expect(await outcomeOf(refused.run())).toBe('threw Error: srt refused')
     expect(JSON.parse(refused.disk.readFile(stubs) ?? '')).toEqual({ mountPoints: {} })
+  })
+
+  it('04 验收 9: on linux a mount point stays in stubs.json while another wrap keeps srt from removing it, and leaves once it is gone from the host', async () => {
+    const h = harness('linux')
+    const bwrap = srtMountPoints(h)
+    h.disk.dir('/home/u/code/two')
+    h.folders.set(SESSION, [p('/home/u/code/app'), p('/home/u/code/two')])
+    await h.run({ commandId: 'toolu_a' })
+    bwrap({ dirs: ['/home/u/code/app/.claude'] })
+    await h.run({
+      commandId: 'toolu_b',
+      cwd: p('/home/u/code/two'),
+      workspace: [p('/home/u/code/two')],
+    })
+    bwrap({ dirs: ['/home/u/code/two/.claude'] })
+    const [a = '', b = ''] = h.calls.map((call) => call.id)
+    const record = () => JSON.parse(h.disk.readFile(STUBS_LINUX) ?? '') as unknown
+
+    // A exits while B runs: srt keeps A's mount point, so the record keeps it too (a SIGKILL now
+    // leaves it for startup).
+    await h.sandbox.afterExit('toolu_a')
+    expect(h.disk.lstat('/home/u/code/app/.claude')).toBeDefined()
+    expect(record()).toEqual({
+      mountPoints: { [a]: ['/home/u/code/app/.claude'], [b]: ['/home/u/code/two/.claude'] },
+    })
+    // B exits: srt removes both, and both leave the record.
+    await h.sandbox.afterExit('toolu_b')
+    expect(h.disk.lstat('/home/u/code/app/.claude')).toBeUndefined()
+    expect(record()).toEqual({ mountPoints: {} })
+  })
+
+  it('04 验收 9: on linux a mount point srt leaves behind because a later wrap filled it stays in stubs.json for startup', async () => {
+    const h = harness('linux')
+    const bwrap = srtMountPoints(h)
+    await h.run({ commandId: 'toolu_a' })
+    bwrap({ dirs: ['/home/u/code/app/.claude'] })
+    // B begins while A runs: `.claude/` is there now, so B's denials under it are leaves (an empty
+    // file each, nothing to record); srt makes them inside A's directory.
+    await h.run({ commandId: 'toolu_b' })
+    bwrap({
+      files: [
+        '/home/u/code/app/.claude/settings.json',
+        '/home/u/code/app/.claude/settings.local.json',
+      ],
+    })
+    const [a = ''] = h.calls.map((call) => call.id)
+    await h.sandbox.afterExit('toolu_a')
+    await h.sandbox.afterExit('toolu_b')
+    // srt met `.claude/` before B's files, not empty then, and left it; it is empty now.
+    expect(h.disk.lstat('/home/u/code/app/.claude')?.isDirectory()).toBe(true)
+    expect(h.disk.lstat('/home/u/code/app/.claude/settings.json')).toBeUndefined()
+    expect(JSON.parse(h.disk.readFile(STUBS_LINUX) ?? '')).toEqual({
+      mountPoints: { [a]: ['/home/u/code/app/.claude'] },
+    })
   })
 
   it("04 验收 15 (host): on darwin afterExit SIGKILLs exactly the processes carrying this wrap's mark", async () => {
@@ -1068,13 +1288,18 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
           `'/bin/zsh' '-c' 'eval "$1"' '/bin/zsh' 'echo it'\\''s'`,
         ]),
       )
+      // srt gets the request's cwd, not the workspace's first root (spec §wrap 第 3 步).
+      h.disk.dir(`${h.at.ws}/src`)
+      await h.run({ cwd: p(`${h.at.ws}/src`) })
+      const src = platform === 'darwin' ? '/Users/u/code/app/src' : '/home/u/code/app/src'
       expect(h.calls.map((call) => [call.binShell, call.cwd])).toEqual([
         ['/bin/zsh', layout(platform).ws],
         ['/bin/zsh', layout(platform).ws],
+        ['/bin/zsh', src],
       ])
       const full = await h.run({ profile: 'full-access' })
       expect(full.argv).toEqual(['/bin/zsh', '-c', 'eval "$1"', '/bin/zsh', "echo it's"])
-      expect(h.srt.wrapWithSandboxArgv).toHaveBeenCalledTimes(2)
+      expect(h.srt.wrapWithSandboxArgv).toHaveBeenCalledTimes(3)
 
       // Unavailable: refused, never run as asked.
       const down = harness(platform, { startup: { state: 'unavailable' } })
@@ -1212,8 +1437,11 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     await flush()
     expect(h.signals).toHaveLength(1)
     expect(h.sandbox.posture()).toEqual({ state: 'active', profile: 'workspace-write' })
+    expect(h.sandbox.reasons()).toEqual([])
     h.signals[0]?.()
     expect(h.sandbox.posture()).toEqual({ state: 'unavailable', profile: 'workspace-write' })
+    // §退出: unavailable / init-failed.
+    expect(h.sandbox.reasons()).toEqual([{ code: 'init-failed', detail: 'reset by a signal' }])
     expect(await outcomeOf(h.run())).toBe('refused')
     expect(h.srt.wrapWithSandboxArgv).not.toHaveBeenCalled()
 
@@ -1259,5 +1487,60 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     expect(h.sandbox.posture()).toEqual({ state: 'unavailable', profile: 'workspace-write' })
     expect(await outcomeOf(h.run())).toBe('refused')
     expect(h.srt.wrapWithSandboxArgv).not.toHaveBeenCalled()
+  })
+
+  it('04 验收 3 (host): dispose while initialize still runs waits for it, within the same 2 s, and then resets once; an initialize that threw is not waited out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+
+    // initialize returns 1 s into dispose: reset once, right then.
+    const h = harness('linux', { startup: 'none' })
+    const initialized = Promise.withResolvers<void>()
+    h.sandbox.start({ initialized: initialized.promise, outcome: pending() })
+    let done = false
+    void h.sandbox.dispose().then(() => (done = true))
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect([done, h.srt.reset.mock.calls.length]).toEqual([false, 0])
+    initialized.resolve()
+    await flush()
+    expect([done, h.srt.reset.mock.calls.length]).toEqual([true, 1])
+    await h.sandbox.dispose()
+    expect(h.srt.reset).toHaveBeenCalledTimes(1)
+
+    // initialize threw: startup settles unavailable and dispose is done, without a reset.
+    const threw = harness('linux', { startup: 'none' })
+    const outcome = Promise.withResolvers<SandboxStartup>()
+    threw.sandbox.start({ initialized: pending(), outcome: outcome.promise })
+    let threwDone = false
+    void threw.sandbox.dispose().then(() => (threwDone = true))
+    await vi.advanceTimersByTimeAsync(500)
+    expect(threwDone).toBe(false)
+    outcome.resolve({ state: 'unavailable', session: null, noSeccomp: false })
+    await flush()
+    expect(threwDone).toBe(true)
+    expect(threw.srt.reset).not.toHaveBeenCalled()
+
+    // initialize returns at 1.5 s and reset hangs: 2 s in all, the wait and the reset together.
+    const late = harness('linux', { startup: 'none' })
+    const lateInitialized = Promise.withResolvers<void>()
+    late.sandbox.start({ initialized: lateInitialized.promise, outcome: pending() })
+    late.srt.reset.mockImplementation(pending)
+    let lateDone = false
+    void late.sandbox.dispose().then(() => (lateDone = true))
+    await vi.advanceTimersByTimeAsync(1_500)
+    lateInitialized.resolve()
+    await vi.advanceTimersByTimeAsync(499)
+    expect([lateDone, late.srt.reset.mock.calls.length]).toEqual([false, 1])
+    await vi.advanceTimersByTimeAsync(1)
+    expect(lateDone).toBe(true)
+
+    // initialize never returns: done at 2 s, no reset.
+    const stuck = harness('linux', { startup: 'none' })
+    stuck.sandbox.start({ initialized: pending(), outcome: pending() })
+    let stuckDone = false
+    void stuck.sandbox.dispose().then(() => (stuckDone = true))
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(stuckDone).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect([stuckDone, stuck.srt.reset.mock.calls.length]).toEqual([true, 0])
   })
 })

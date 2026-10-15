@@ -79,6 +79,18 @@ export function linkChangedLine(path: string): string {
   return `link changed during the command: ${path}`
 }
 
+/**
+ * A reason `DesktopSandbox` itself adds to startup's: a signal reset srt (§退出). Same shape as
+ * `SandboxView.reasons` (§IPC), which plan step 13c / 16 merges it into.
+ */
+export interface SandboxResetReason {
+  readonly code: 'init-failed'
+  readonly detail: string
+}
+
+/** The `detail` of the reason a signal leaves (§退出). */
+export const SIGNAL_RESET_DETAIL = 'reset by a signal'
+
 /** A restricted wrap that is refused rather than run unsandboxed (读法 3, 5, 35, 41, 48, 50). */
 export class SandboxUnavailableError extends Error {
   override name = 'SandboxUnavailableError'
@@ -121,7 +133,14 @@ export interface SandboxStartup {
  * the dependency check and the self-test (up to 10 s), and stays pending when `initialize` was
  * never called or threw: from then on the store is watched, a signal marks the sandbox reset and
  * `dispose` resets (§退出). `outcome` settles once startup is done; an active or degraded outcome
- * implies `initialize` returned.
+ * implies `initialize` returned. A `dispose` while `initialize` runs waits for it, within its 2 s.
+ *
+ * A pending `initialized` does not mean srt left the signals alone: `initialize` installs its
+ * once-listeners for SIGINT and SIGTERM after its dependency check and before it starts the
+ * proxies (srt79 sandbox-manager.js:542, :97-110), so any throw but the dependency check's
+ * 「Sandbox dependencies not available: …」 (:490) comes after they are in place and Node's default
+ * exit on those signals is gone. Whoever registers `app.quit` for the signals (§退出) keys it to
+ * `initialize` having been called and not having thrown at the dependency check, not to `initialized`.
  */
 export interface SandboxStartupRun {
   readonly initialized: Promise<void>
@@ -210,7 +229,7 @@ export class DesktopSandbox implements HostSandbox {
   private readonly ready: Promise<SandboxStartup>
   private resolveReady: (startup: SandboxStartup) => void = () => {}
   private startup: SandboxStartup | undefined
-  private started = false
+  private startupRun: SandboxStartupRun | undefined
   /** `initialize` returned: the store is watched and `dispose` resets (§退出). */
   private initialized = false
   private signalled = false
@@ -221,6 +240,11 @@ export class DesktopSandbox implements HostSandbox {
   private readonly wraps = new Map<string, WrapRecord[]>()
   /** The key srt's events carry → the wrap still collecting them. */
   private readonly open = new Map<string, WrapRecord>()
+  /**
+   * Linux: srt id → the mount points of a wrap that has exited but whose points srt may not have
+   * taken away yet; they leave `stubs.json` once they are gone from the host.
+   */
+  private readonly exitedStubs = new Map<string, readonly string[]>()
   private seenTotal = 0
 
   constructor(deps: DesktopSandboxDeps) {
@@ -238,10 +262,15 @@ export class DesktopSandbox implements HostSandbox {
     return { state: this.startup?.state ?? 'pending', profile }
   }
 
+  /** What this class adds to startup's reasons: `init-failed` once a signal reset srt (§退出). */
+  reasons(): readonly SandboxResetReason[] {
+    return this.signalled ? [{ code: 'init-failed', detail: SIGNAL_RESET_DETAIL }] : []
+  }
+
   /** Startup as it goes, once (spec §启动、自检与姿态). Until `outcome` settles the posture is `pending`. */
   start(run: SandboxStartupRun): void {
-    if (this.started) return
-    this.started = true
+    if (this.startupRun !== undefined) return
+    this.startupRun = run
     void run.initialized.then(
       () => this.initializeReturned(),
       // It threw: nothing to watch or reset; `outcome` says why.
@@ -412,8 +441,9 @@ export class DesktopSandbox implements HostSandbox {
           })
         }
       }
-      if (record.stubs.length > 0) this.dropStubs(record.srtId)
+      if (record.stubs.length > 0) this.exitedStubs.set(record.srtId, record.stubs)
     }
+    if (this.exitedStubs.size > 0) this.dropGoneStubs()
     await new Promise((resolve) => setTimeout(resolve, VIOLATION_SETTLE_MS))
     for (const record of records) {
       record.settled = true
@@ -442,16 +472,26 @@ export class DesktopSandbox implements HostSandbox {
   }
 
   private async resetOnce(): Promise<void> {
-    if (!this.initialized || this.signalled) return
     let timer: ReturnType<typeof setTimeout> | undefined
     const bound = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, SANDBOX_RESET_WAIT_MS)
     })
-    const reset = Promise.resolve()
-      .then(() => this.deps.srt.reset())
-      .catch((error: unknown) => this.deps.log(`sandbox: reset failed: ${messageOf(error)}`))
-    await Promise.race([reset, bound])
-    clearTimeout(timer)
+    try {
+      // `initialize` still running is not 「never initialized」: once it returns, srt has its
+      // proxies, `log stream` and socat bridges up, and only `reset` takes them down (§退出, srt-15).
+      // Wait for it, or for startup to settle without it (it threw), within the same 2 s.
+      const run = this.startupRun
+      if (run !== undefined && !this.initialized && this.startup === undefined) {
+        await Promise.race([run.initialized.then(noop, noop), this.ready.then(noop), bound])
+      }
+      if (!this.initialized || this.signalled) return
+      const reset = Promise.resolve()
+        .then(() => this.deps.srt.reset())
+        .catch((error: unknown) => this.deps.log(`sandbox: reset failed: ${messageOf(error)}`))
+      await Promise.race([reset, bound])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** Once `initialize` has returned, whether or not startup has settled yet (§退出). */
@@ -583,7 +623,7 @@ export class DesktopSandbox implements HostSandbox {
    * §afterExit「挂载点与残留的记录」: each denyWrite entry absent now whose first absent level is an
    * intermediate directory under this wrap's allowWrite — bwrap makes that level an empty directory
    * on the host, which srt cannot take away after a SIGKILL. The entry is first resolved the way
-   * srt resolves it before it masks (linux-sandbox-utils.js:2041), so a dangling link on the way
+   * srt resolves it before it masks (linux-sandbox-utils.js:2042), so a dangling link on the way
    * puts the level where srt puts it: under the link's target.
    */
   private mountPointsOf(filesystem: FilesystemTables): string[] {
@@ -703,6 +743,46 @@ export class DesktopSandbox implements HostSandbox {
     }
   }
 
+  /**
+   * §afterExit「挂载点与残留的记录」, after this afterExit's `cleanupAfterCommand` calls: an exited
+   * wrap's mount point leaves the record once it is gone from the host, and only then. srt removes
+   * mount points only when no other wrap of its is running (linux-sandbox-utils.js:755-760,
+   * :797-808), synchronously in that call; and then it skips a directory that is not empty at that
+   * moment (:810-833) — another wrap that began meanwhile may have put its own mount points in it,
+   * which srt removes right after — so a point still there is one only startup can clean up.
+   */
+  private dropGoneStubs(): void {
+    const changed = new Map<string, string[]>()
+    for (const [srtId, stubs] of this.exitedStubs) {
+      const left = stubs.filter((path) => this.isThere(path))
+      if (left.length < stubs.length) changed.set(srtId, left)
+    }
+    if (changed.size === 0) return
+    for (const [srtId, left] of changed) {
+      if (left.length === 0) this.exitedStubs.delete(srtId)
+      else this.exitedStubs.set(srtId, left)
+    }
+    try {
+      this.editStubs((mounts) => {
+        for (const [srtId, left] of changed) {
+          if (left.length === 0) delete mounts[srtId]
+          else mounts[srtId] = left
+        }
+      })
+    } catch (error) {
+      this.deps.log(`sandbox: stubs.json could not be updated: ${messageOf(error)}`)
+    }
+  }
+
+  /** Anything at `path`, a link not followed; a path that cannot be looked at counts as there. */
+  private isThere(path: string): boolean {
+    try {
+      return this.deps.fs.lstat(path) !== undefined
+    } catch {
+      return true
+    }
+  }
+
   /** P6: what this wrap left running outside its process group, found by its mark (darwin). */
   private async killMarked(records: readonly WrapRecord[]): Promise<void> {
     let table: string
@@ -748,9 +828,24 @@ const SHELLS: ReadonlySet<string> = new Set(['zsh', 'bash', 'sh'])
 /** srt79's bound on a dangling link chain (`MAX_SYMLINK_RESOLUTION_DEPTH`, the kernel's ELOOP). */
 const MAX_LINK_HOPS = 40
 
-/** 读法 6: the tool-use id cut to 67 characters, a dot and 128 random bits — at most 100 in all. */
+/** How much of the tool-use id leads an srt id, in UTF-8 bytes (读法 6). */
+const SRT_ID_PREFIX_BYTES = 67
+
+/**
+ * 读法 6: the tool-use id cut to 67 UTF-8 bytes on a code point, a dot and 128 random bits — at most
+ * 100 bytes, so at most 100 characters. srt carries the id base64-encoded and drops an attribution
+ * longer than 251 bytes (sandbox-utils.js:938-971, linux-violation-monitor.js:106-109): cut to 67
+ * characters, an id of 67 CJK characters would be 312, and its denials no one's.
+ */
 function srtIdFor(commandId: string): string {
-  return `${commandId.slice(0, 67)}.${randomBytes(16).toString('hex')}`
+  let prefix = ''
+  let bytes = 0
+  for (const char of commandId) {
+    bytes += Buffer.byteLength(char)
+    if (bytes > SRT_ID_PREFIX_BYTES) break
+    prefix += char
+  }
+  return `${prefix}.${randomBytes(16).toString('hex')}`
 }
 
 /** The key srt's events carry for an id: its first 100 characters, through UTF-8 and back. */
@@ -813,6 +908,8 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
+
+function noop(): void {}
 
 // ---------------------------------------------------------------------------------------------
 // The real ports
