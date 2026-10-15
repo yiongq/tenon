@@ -42,6 +42,7 @@ import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import {
   SANDBOX_TESTS_VARIABLE,
   assertSandboxActive,
+  holdTmpClaudeLock,
   killMarked,
   markedProcesses,
   newMark,
@@ -489,22 +490,30 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
     let rig: SandboxRig
     let lab: SandboxLab
     let folder: AbsolutePath
+    let releaseTmpClaude: (() => void) | undefined
     const marks: string[] = []
 
     beforeAll(async () => {
+      // escape.test.ts's mktemp case sets srt's shared /tmp/claude aside and every wrap here makes it
+      // again: under S the two take turns (support.ts holdTmpClaudeLock).
+      releaseTmpClaude = await holdTmpClaudeLock()
       rig = await startSandboxRig()
       assertSandboxActive(rig.outcome)
       lab = rig.lab()
       folder = absolutePath(lab.dir('ws'))
       lab.folders = [folder]
-    }, CASE_TIMEOUT_MS)
+    }, CASE_TIMEOUT_MS * 7)
 
     afterEach(async () => {
       await Promise.all(marks.splice(0).map(killMarked))
     })
 
     afterAll(async () => {
-      await rig?.dispose()
+      try {
+        await rig?.dispose()
+      } finally {
+        releaseTmpClaude?.()
+      }
     })
 
     /**
@@ -619,17 +628,23 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
       CASE_TIMEOUT_MS,
     )
 
-    // On darwin only the TENON_SANDBOX_MARK scan reaches a process that setsids and outlives a call
-    // that ended on its own, and `ps -E` shows no environment for an Apple platform binary (perl,
-    // sleep, the shells): a perl here stays up (step 6 review, 2026-10-15). So this case covers a
-    // binary that is not one, python3 as in P6; the platform-binary half is not covered.
+    // On darwin only afterExit's TENON_SANDBOX_MARK scan reaches a process that setsids and outlives
+    // a call that ended on its own, and `ps -E` shows no environment for an Apple platform binary
+    // (perl, sleep, the shells): a setsid perl here outlives the call (step 6 review, 2026-10-15).
+    // So this case covers a binary that is not one, python3 as in P6. The other half is NOT met on
+    // darwin and has no case: a setsid Apple platform binary (perl, sleep, a shell) outlives a call
+    // that ended on its own, so 验收 15 and 不变量 13 do not pass there until the owner decides
+    // between narrowing them on darwin and another way to kill it (plan Open). `: <mark>_decoy` puts
+    // the mark twice in the command text, so the shell and the sandbox-exec wrapper carrying it are
+    // never taken for the python process.
     it(
-      '04 验收 15: a command that setsids a process and exits leaves it running nowhere once the call ends (04 不变量 13; on darwin a non-platform binary, found by its TENON_SANDBOX_MARK)',
+      '04 验收 15: a command that setsids a non-platform binary (python3) and exits leaves it running nowhere once the call ends (04 不变量 13; on darwin found by its TENON_SANDBOX_MARK)',
       async () => {
         const mark = newMark('exit')
         marks.push(mark)
         const { call } = sandboxedCall(
           [
+            `: ${mark}_decoy`,
             `python3 -c 'import os, time; os.setsid(); time.sleep(605)' ${mark}_setsid >/dev/null 2>&1 &`,
             'sleep 1',
             'exit 0',

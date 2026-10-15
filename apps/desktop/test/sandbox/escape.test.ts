@@ -27,6 +27,7 @@ import {
   SANDBOX_TESTS_VARIABLE,
   SHELL,
   assertSandboxActive,
+  holdTmpClaudeLock,
   hostKind,
   isWithinDir,
   makeDir,
@@ -92,8 +93,12 @@ const SRT_VARIABLES: ReadonlySet<string> = new Set([
   'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
   'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
 ])
-/** srt's `safe.directory` set (sandbox-utils.js `GIT_CONFIG_COUNT` / `_KEY_<n>` / `_VALUE_<n>`). */
-const SRT_GIT_CONFIG = /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/
+/**
+ * git's env-level config. srt writes it only for `git.safeDirectories` (sandbox-manager.js:1225-1230,
+ * macos-sandbox-utils.js:1094, linux-sandbox-utils.js:2681), a key Tenon never passes (04 不变量 4),
+ * so none of it is srt's here: any the command sees came from request.env or leaked from main.
+ */
+const GIT_CONFIG_ENV = /^GIT_CONFIG_(?:COUNT|KEY_|VALUE_)/
 /** What the shells themselves export to the command they start (zsh also sets LOGNAME). */
 const SHELL_VARIABLES: ReadonlySet<string> = new Set(['PWD', 'OLDPWD', 'SHLVL', '_', 'LOGNAME'])
 
@@ -252,25 +257,35 @@ async function upToThree(attempt: () => Promise<Ran>, ok: (ran: Ran) => boolean)
 }
 
 /**
- * Puts the `/tmp/claude` set aside at `aside` back. The one made meanwhile goes only when nothing is
- * left in it once this case's own file (`made`, which the command removed already) is gone, and
- * never recursively: anything else in it is another srt user's. Otherwise both stay and the case
- * fails, naming them.
+ * Puts the `/tmp/claude` set aside at `aside` back, whatever the case did. The one made meanwhile
+ * goes only when nothing is left in it once this case's own file (`made`, which the command removed
+ * already) is gone, and never recursively: anything else in it (a failed command's file, another
+ * srt user's) is moved to `<tmpClaude>.tenon-escape-leftover-<pid>` instead, and that path is
+ * returned (and printed) for the case to fail on once the original is back.
  */
-function putTmpClaudeBack(tmpClaude: string, aside: string, made: string | undefined): void {
+function putTmpClaudeBack(
+  tmpClaude: string,
+  aside: string,
+  made: string | undefined,
+): string | undefined {
   if (made !== undefined) rmSync(made.replace(/^\/tmp\/claude\//, `${tmpClaude}/`), { force: true })
+  let leftover: string | undefined
   if (hostKind(tmpClaude) !== 'missing') {
     try {
       rmdirSync(tmpClaude)
-    } catch (error) {
-      throw new Error(
-        `${tmpClaude} holds what someone else wrote while the original was set aside; both are left ` +
-          `as they are: merge them and move the original back from ${aside}`,
-        { cause: error },
-      )
+    } catch {
+      leftover = `${tmpClaude}.tenon-escape-leftover-${String(process.pid)}`
+      renameSync(tmpClaude, leftover)
     }
   }
   renameSync(aside, tmpClaude)
+  if (leftover !== undefined) {
+    console.warn(
+      `${tmpClaude} held what was not this case's while the original was set aside; the original is ` +
+        `back and that is in ${leftover}: look through it and merge what belongs to someone else`,
+    )
+  }
+  return leftover
 }
 
 /** The env a command printed with `env -0`. */
@@ -354,27 +369,27 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   // 验收 6, 7
 
   it(
-    '04 验收 6: the command sees request.env plus srt’s own variables; main’s sentinel, TENON_* and ELECTRON_RUN_AS_NODE=1 never reach it; darwin adds exactly one TENON_SANDBOX_MARK',
+    '04 验收 6: the command sees request.env plus srt’s own variables; main’s sentinel, TENON_*, GIT_CONFIG_* and ELECTRON_RUN_AS_NODE=1 never reach it; darwin adds exactly one TENON_SANDBOX_MARK',
     async () => {
       const { lab, ws } = workspaceLab()
       const request = lab.requestEnv({ ESCAPE_REQUEST_MARK: 'from-request-env' })
-      const saved = {
-        sentinel: process.env['ESCAPE_HOST_SENTINEL'],
-        tenon: process.env['TENON_ESCAPE_HOST_ONLY'],
-        electron: process.env['ELECTRON_RUN_AS_NODE'],
+      const hostOnly: Readonly<Record<string, string>> = {
+        ESCAPE_HOST_SENTINEL: 'host-only-sentinel',
+        TENON_ESCAPE_HOST_ONLY: 'tenon-host-only',
+        ELECTRON_RUN_AS_NODE: '1',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'core.hooksPath',
+        GIT_CONFIG_VALUE_0: '/tenon-escape-host-only',
       }
-      process.env['ESCAPE_HOST_SENTINEL'] = 'host-only-sentinel'
-      process.env['TENON_ESCAPE_HOST_ONLY'] = 'tenon-host-only'
-      process.env['ELECTRON_RUN_AS_NODE'] = '1'
+      const saved = Object.fromEntries(
+        Object.keys(hostOnly).map((name) => [name, process.env[name]] as const),
+      )
+      Object.assign(process.env, hostOnly)
       let ran: Ran
       try {
         ran = await lab.run('/usr/bin/env -0', { workspace: [ws], env: request })
       } finally {
-        for (const [name, value] of [
-          ['ESCAPE_HOST_SENTINEL', saved.sentinel],
-          ['TENON_ESCAPE_HOST_ONLY', saved.tenon],
-          ['ELECTRON_RUN_AS_NODE', saved.electron],
-        ] as const) {
+        for (const [name, value] of Object.entries(saved)) {
           if (value === undefined) delete process.env[name]
           else process.env[name] = value
         }
@@ -387,6 +402,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       // Nothing of main's own environment.
       expect(seen.has('ESCAPE_HOST_SENTINEL')).toBe(false)
       expect(seen.has('ELECTRON_RUN_AS_NODE')).toBe(false)
+      expect([...seen.keys()].filter((name) => GIT_CONFIG_ENV.test(name))).toEqual([])
       const tenon = [...seen.keys()].filter((name) => name.startsWith('TENON_'))
       expect(tenon).toEqual(DARWIN ? ['TENON_SANDBOX_MARK'] : [])
       expect(seen.get('TENON_SANDBOX_MARK')).toBe(DARWIN ? ran.srtId : undefined)
@@ -396,7 +412,6 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
           !(name in request) &&
           name !== 'TENON_SANDBOX_MARK' &&
           !SRT_VARIABLES.has(name) &&
-          !SRT_GIT_CONFIG.test(name) &&
           !SHELL_VARIABLES.has(name),
       )
       expect(other).toEqual([])
@@ -507,20 +522,22 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     async () => {
       const { lab, ws } = workspaceLab()
       // srt's TMPDIR, shared with every srt user on the machine (Claude Code's sandbox among them):
-      // one already there is set aside for this one call and put back. The one this call made is
-      // removed only when it holds nothing but what this case wrote; anything else in it is someone
-      // else's, and then both stay for a person to merge. The case assumes no other srt user writes
-      // there meanwhile; under S, stop-tree.test.ts's wraps run in parallel and may make it again.
+      // one already there is set aside for this one call and always put back. The one this call
+      // made is removed only when it holds nothing but what this case wrote; anything else in it is
+      // moved to a leftover dir the case then fails on. stop-tree.test.ts's sandboxed group, which
+      // runs in parallel under S and makes it again at every wrap, waits for this case's turn.
+      const release = await holdTmpClaudeLock()
       const tmpClaude = DARWIN ? '/private/tmp/claude' : '/tmp/claude'
       const aside = `${tmpClaude}.tenon-escape-${String(process.pid)}`
-      const hadOne = hostKind(tmpClaude) !== 'missing'
-      if (hadOne) renameSync(tmpClaude, aside)
+      let hadOne = false
       let made: string | undefined
+      let leftover: string | undefined
       try {
+        hadOne = hostKind(tmpClaude) !== 'missing'
+        if (hadOne) renameSync(tmpClaude, aside)
         if (hostKind(tmpClaude) !== 'missing') {
           throw new Error(
-            `${tmpClaude} is there again right after it was set aside: another srt user or a wrap ` +
-              'in parallel (stop-tree.test.ts under S) made it',
+            `${tmpClaude} is there again right after it was set aside: another srt user made it`,
           )
         }
         const ran = await lab.run(
@@ -531,10 +548,15 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         expect(ran.stdout).toMatch(/^tmpdir=\/tmp\/claude$/m)
         expect(made).toBeDefined()
       } finally {
-        if (hadOne) putTmpClaudeBack(tmpClaude, aside, made)
+        try {
+          if (hadOne) leftover = putTmpClaudeBack(tmpClaude, aside, made)
+        } finally {
+          release()
+        }
       }
+      expect(leftover).toBeUndefined()
     },
-    CASE_MS,
+    CASE_MS * 3,
   )
 
   // -------------------------------------------------------------------------------------------
@@ -1162,8 +1184,11 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
 
   /**
    * 验收 16 on macOS: each read, write and connection 验收 10–14 refuse, one per command (a log
-   * block keeps only its first denial, P2), Unix sockets aside (no line, P1). The proxy's own
-   * refusals are asserted where 验收 14 makes them.
+   * block keeps only its first denial, P2), Unix sockets aside (no line, P1), plus a mach-lookup and
+   * an operation outside the closed list. The proxy's own refusals are asserted where 验收 14 makes
+   * them. A line srt passes on that matches no format (a process name with parentheses) has no
+   * black-box case: a copy of cat named `cat(x)` hung in the sandbox and left no line (2026-10-15);
+   * violations.test.ts covers its classification.
    */
   const DARWIN_REFUSALS: readonly Refusal[] = [
     // 验收 10
@@ -1308,20 +1333,35 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         want: { kind: 'network', target: null, release: null, protected: false, observed: true },
       }
     }),
+    // 验收 16's own two: a line of the closed list with no object, and an operation outside it
+    // (§afterExit 的表). Both offline: pbpaste is refused `mach-lookup com.apple.pasteboard.1`, nice
+    // `system-sched self` (macOS 26.3, 2026-10-15).
+    inWorkspace('a mach-lookup, pbpaste’s (验收 16)', () => ({
+      command: 'pbpaste',
+      want: { kind: 'fs', target: null, release: null, protected: false, observed: true },
+    })),
+    inWorkspace('an operation outside the closed list, nice’s system-sched (验收 16)', () => ({
+      command: '/usr/bin/nice -n 5 /usr/bin/true',
+      want: { kind: 'fs', target: null, release: null, protected: false, observed: false },
+    })),
   ]
 
   describe.skipIf(!DARWIN)('darwin: what Seatbelt reports', () => {
     it.each(DARWIN_REFUSALS)(
-      '04 验收 16: (darwin) $name is in violations()',
+      '04 验收 16: (darwin) $name is in violations() (test condition: OS_ACTIVITY_MODE=disable, which the product never sets)',
       async ({ arrange }) => {
         const { lab, command, options, want } = arrange()
-        // While srt's `log stream` runs, each process in the sandbox is refused
+        // A test condition, not the product's: Bash's env carries no OS_ACTIVITY_MODE and Tenon adds
+        // none (04 不变量 3). While srt's `log stream` runs, each process in the sandbox is refused
         // `mach-lookup com.apple.diagnosticd` at its start, and the kernel's "N duplicate reports"
         // line for it comes in the same instant as the process's next denial. srt drops a whole
-        // log block whose first line is that noise (macos-sandbox-utils.js:1158-1200), so the denial
-        // under test went with it in 17 of 60 runs on this suite's Mac (2026-10-15); with
-        // OS_ACTIVITY_MODE=disable the lookup is never made and 60 of 60 arrived. The case is about
-        // the line's shape; the loss itself is §已知限制's.
+        // log block whose first line is that noise (macos-sandbox-utils.js:1158-1200). On this
+        // suite's Mac (macOS 26.3, 2026-10-15), one refused write per command, 60 commands: without
+        // the variable 43 of 60 arrived, and 36 of 60 in a second warm run; with it 60 of 60
+        // (probes/results/step6/measure-diagnosticd-r1.txt); an earlier run lost 20 of 180 (see
+        // DARWIN_RETRY_PAUSE_MS). So in the product a single refusal leaves no line roughly one time
+        // in four and goes uncounted, which §已知限制 does not yet say (plan Open). This case is
+        // about the line's shape.
         const env = lab.requestEnv({ OS_ACTIVITY_MODE: 'disable' })
         const ran = await upToThree(
           () => lab.run(command, { ...options, env }),
@@ -1462,28 +1502,59 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         const deep = makeDir(join(outside, 'a', 'b'))
         const ran = await lab.run(`mkdir -p ${shq(deep)}; echo rc=$?`, { workspace: [ws] })
         expect(ran.stdout).toMatch(/^rc=0$/m)
-        expect(ran.violations.filter((v) => v.line.startsWith('deny mkdirat'))).toEqual([])
+        // The observer's line names the syscall. srt's arm64 apply-seccomp watches only the `*at`
+        // forms; its x64 one also watches the old `mkdir` (and creat, unlink, rename …), so an x64
+        // run may report `deny mkdir <path>`, which the spec does not drop (读法 53 names only
+        // `mkdirat`; plan Open). Every run so far was arm64.
+        expect(ran.violations.filter((v) => /^deny mkdir(?:at)? /.test(v.line))).toEqual([])
       },
       CASE_MS,
     )
 
     it(
-      '04 验收 9: (linux) the mount points a call made are gone from the host once afterExit ran, and stubs.json lists none',
+      '04 验收 9: (linux) while a call runs stubs.json lists the .claude it will mount; once afterExit ran no mount point is left on the host and stubs.json lists none',
       async () => {
         const { lab, ws } = workspaceLab()
-        const ran = await lab.run(
-          '[ -e .envrc ] && echo envrc-mounted; [ -d .claude ] && echo claude-mounted; true',
+        const stubsJson = join(lab.profileDir, 'sandbox', 'stubs.json')
+        const recorded = (): string[] => {
+          if (hostKind(stubsJson) === 'missing') return []
+          const stubs = JSON.parse(readFileSync(stubsJson, 'utf8')) as {
+            mountPoints?: Record<string, string[]>
+          }
+          return Object.values(stubs.mountPoints ?? {}).flat()
+        }
+        // The command holds until the host has read stubs.json mid-call (at most 10 s).
+        const go = join(ws, 'go')
+        const running = lab.run(
+          [
+            '[ -e .envrc ] && echo envrc-mounted; [ -d .claude ] && echo claude-mounted',
+            'i=0; while [ ! -e go ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done',
+            'true',
+          ].join('; '),
           { workspace: [ws] },
         )
-        // The call ran with srt's mount points in place …
+        const deadline = performance.now() + 10_000
+        let during = recorded()
+        while (during.length === 0 && performance.now() < deadline) {
+          // oxlint-disable-next-line no-await-in-loop -- the poll's pace
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          during = recorded()
+        }
+        writeHostFile(go, '')
+        const ran = await running
+        // The wrap recorded the one intermediate dir srt makes a mount point (§afterExit「挂载点与
+        // 残留的记录」): .claude, for .claude/settings.json and the rest under it …
+        expect(during).toEqual([join(real(ws), '.claude')])
+        // … the call ran with srt's mount points in place …
         expect(ran.stdout).toContain('envrc-mounted')
         expect(ran.stdout).toContain('claude-mounted')
-        // … and none of them is left on the host.
+        // … and none of them is left on the host, nor in the record.
         const left = ROOT_NAMES.filter((name) => hostKind(join(ws, name)) !== 'missing')
         expect(left).toEqual([])
-        const stubs = JSON.parse(
-          readFileSync(join(lab.profileDir, 'sandbox', 'stubs.json'), 'utf8'),
-        ) as { mountPoints?: Record<string, unknown> }
+        expect(recorded()).toEqual([])
+        const stubs = JSON.parse(readFileSync(stubsJson, 'utf8')) as {
+          mountPoints?: Record<string, unknown>
+        }
         expect(stubs.mountPoints).toEqual({})
       },
       CASE_MS,

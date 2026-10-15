@@ -107,7 +107,8 @@ export async function spawnChild(spec: SpawnSpec, signal?: AbortSignal): Promise
     const group = (): boolean => !hasExited || groupLeft
     if (!group() && collected.size === 0) return
     await killTree(pid, sig, { group, collected })
-    if (hasExited) groupLeft = groupAlive(pid)
+    // Once found empty it stays empty: a reused pid may start a group of the same id.
+    if (hasExited && groupLeft) groupLeft = groupAlive(pid)
   }
 
   if (signal) {
@@ -235,9 +236,11 @@ export type CollectedTree = Map<number, string>
  * then SIGKILL): by the second the shell may be gone and a setsid one that ignored SIGTERM adopted by
  * launchd, out of the group and off the tree, so `collected` keeps what each call reached and the
  * next call signals those again — and walks the tree from them too — when `ps` still shows the same
- * pid with the same start time (never a reused pid). `group` is asked once `ps` returned: false
- * (the group was found empty, so `-pid` may be someone else's) signals only those. Linux needs none of it (bwrap's
- * `--die-with-parent` and pid namespace take the tree down).
+ * pid with the same start time (never a reused pid). `group` false means the group was found empty
+ * (the leader reaped, so `pid` and `-pid` may be someone else's): the tree is walked from
+ * `pid` only when `group` holds both before and after `ps`, and `-pid` is signalled only when it
+ * holds after. Linux needs none of it (bwrap's `--die-with-parent` and pid namespace take the tree
+ * down).
  */
 export async function killTree(
   pid: number,
@@ -248,8 +251,12 @@ export async function killTree(
     await killTreeWindows(pid)
     return
   }
-  const tree = IS_DARWIN ? await collectTree(pid, q.collected ?? new Map()) : []
-  if (q.group?.() !== false) {
+  const ours = (): boolean => q.group?.() !== false
+  const rooted = ours()
+  const tree = IS_DARWIN
+    ? await collectTree(pid, q.collected ?? new Map(), () => rooted && ours())
+    : []
+  if (ours()) {
     try {
       process.kill(-pid, signal)
     } catch (err) {
@@ -274,12 +281,16 @@ export async function killTree(
 }
 
 /**
- * The descendants of `pid` and of every still-living member of `collected` in
- * `/bin/ps -A -o pid=,ppid=,lstart=` (P6), deepest last; `collected` is brought up to date (the dead
- * and the reused dropped, the new added). Empty when `ps` fails, which leaves the group signal alone
- * as before. A host-internal helper, like taskkill.
+ * The descendants of `pid` (only when `fromRoot()`, asked once `ps` returned) and of every
+ * still-living member of `collected` in `/bin/ps -A -o pid=,ppid=,lstart=` (P6), deepest last;
+ * `collected` is brought up to date (the dead and the reused dropped, the new added). Empty when
+ * `ps` fails, which leaves the group signal alone as before. A host-internal helper, like taskkill.
  */
-async function collectTree(pid: number, collected: CollectedTree): Promise<number[]> {
+async function collectTree(
+  pid: number,
+  collected: CollectedTree,
+  fromRoot: () => boolean,
+): Promise<number[]> {
   let table: string
   try {
     table = await new Promise<string>((resolve, reject) => {
@@ -307,7 +318,7 @@ async function collectTree(pid: number, collected: CollectedTree): Promise<numbe
     if (started.get(member) !== start) collected.delete(member)
   }
   const found: number[] = [...collected.keys()]
-  const queue = [pid, ...found]
+  const queue = fromRoot() ? [pid, ...found] : [...found]
   for (let at = 0; at < queue.length; at += 1) {
     for (const child of children.get(queue[at] ?? -1) ?? []) {
       if (child === pid || found.includes(child)) continue

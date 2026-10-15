@@ -12,7 +12,15 @@
  */
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:http'
 import type { Server } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
@@ -581,6 +589,59 @@ export async function markedProcesses(mark: string): Promise<{ pid: number; args
     found.push({ pid: Number(pid), args })
   }
   return found
+}
+
+/** How long `holdTmpClaudeLock` waits for the other file's turn. */
+const TMP_CLAUDE_LOCK_WAIT_MS = 120_000
+
+/**
+ * A turn at srt's shared `/tmp/claude`, between the black box's two files on this machine: 验收 10's
+ * `mktemp` case sets that directory aside for one call, and any wrap makes it again, so under S
+ * (escape.test.ts and stop-tree.test.ts in parallel) that case and stop-tree.test.ts's sandboxed
+ * group take turns. The lock is a directory under the OS temp dir naming its holder's pid; one whose
+ * holder is gone is taken over. Resolves to its release.
+ */
+export async function holdTmpClaudeLock(): Promise<() => void> {
+  const lock = join(tmpdir(), 'tenon-sandbox-tmp-claude.lock')
+  const owner = join(lock, 'pid')
+  const deadline = performance.now() + TMP_CLAUDE_LOCK_WAIT_MS
+  for (;;) {
+    try {
+      mkdirSync(lock, { mode: 0o700 })
+      writeFileSync(owner, String(process.pid))
+      return () => rmSync(lock, { recursive: true, force: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    let holder: number | undefined
+    try {
+      const text = readFileSync(owner, 'utf8').trim()
+      if (text !== '') holder = Number(text)
+    } catch {
+      // Made but not yet named: its holder is still writing the pid.
+    }
+    if (holder !== undefined && !isRunning(holder)) {
+      rmSync(lock, { recursive: true, force: true })
+      continue
+    }
+    if (performance.now() > deadline) {
+      throw new Error(
+        `${lock} is still held by pid ${String(holder)}: the other file's turn ran long`,
+      )
+    }
+    // oxlint-disable-next-line no-await-in-loop -- the wait's pace
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+}
+
+function isRunning(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 /** SIGKILL every process carrying `mark`: a failed case's leftovers. */
