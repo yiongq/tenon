@@ -106,16 +106,26 @@ export interface SrtViolationStore {
 }
 
 /**
- * What startup (`sandbox-posture.ts`, plan step 5) hands over once it has settled: the posture,
- * whether `initialize` returned (then the store is watched and `dispose` resets), and the session
- * config `initialize` got — each wrap's config is it with the wrap's filesystem in place.
+ * What startup (`sandbox-posture.ts`, plan step 5) hands over once it has settled: the posture and
+ * the session config `initialize` got — each wrap's config is it with the wrap's filesystem in place.
  */
 export interface SandboxStartup {
   readonly state: 'active' | 'degraded' | 'unavailable'
-  readonly initialized: boolean
   readonly session: SandboxRuntimeConfig | null
   /** The posture is `degraded`/`no-seccomp` (读法 42). */
   readonly noSeccomp: boolean
+}
+
+/**
+ * Startup as it goes (plan step 5). `initialized` resolves the moment `initialize` returns, before
+ * the dependency check and the self-test (up to 10 s), and stays pending when `initialize` was
+ * never called or threw: from then on the store is watched, a signal marks the sandbox reset and
+ * `dispose` resets (§退出). `outcome` settles once startup is done; an active or degraded outcome
+ * implies `initialize` returned.
+ */
+export interface SandboxStartupRun {
+  readonly initialized: Promise<void>
+  readonly outcome: Promise<SandboxStartup>
 }
 
 /** Your choices under 「权限与网络」, read at every wrap. */
@@ -165,7 +175,7 @@ export interface DesktopSandboxDeps {
   readonly sessionFolders: (sessionId: string) => Promise<readonly AbsolutePath[]>
   readonly fs: SandboxFs
   readonly processes: SandboxProcessTable
-  /** Calls `listener` once on SIGTERM or SIGINT; registered only after `initialize` (§退出). */
+  /** Calls `listener` once on SIGTERM or SIGINT; registered once `initialize` returned (§退出). */
   readonly onSignal: (listener: () => void) => void
   readonly log: SandboxLogger
 }
@@ -190,7 +200,7 @@ interface WrapRecord {
 /**
  * The host's sandbox on macOS and Linux (spec 04 §包装契约). `full-access` passes through untouched;
  * any other profile goes through sandbox-runtime or is refused, never run unwrapped (04 不变量 2).
- * Startup is not done here: `start` takes its outcome. The kernel's `beforeWrap` (through the host's
+ * Startup is not done here: `start` takes it as it goes. The kernel's `beforeWrap` (through the host's
  * `LoopPorts.sandbox`) names each command's session; `wrap` reads the session's folders, the spill
  * folder and your settings at the time it runs.
  */
@@ -201,6 +211,8 @@ export class DesktopSandbox implements HostSandbox {
   private resolveReady: (startup: SandboxStartup) => void = () => {}
   private startup: SandboxStartup | undefined
   private started = false
+  /** `initialize` returned: the store is watched and `dispose` resets (§退出). */
+  private initialized = false
   private signalled = false
   private disposing: Promise<void> | undefined
   /** commandId → the session `beforeWrap` named. */
@@ -226,15 +238,20 @@ export class DesktopSandbox implements HostSandbox {
     return { state: this.startup?.state ?? 'pending', profile }
   }
 
-  /** Startup's outcome, once (spec §启动、自检与姿态). Until it settles the posture is `pending`. */
-  start(startup: Promise<SandboxStartup>): void {
+  /** Startup as it goes, once (spec §启动、自检与姿态). Until `outcome` settles the posture is `pending`. */
+  start(run: SandboxStartupRun): void {
     if (this.started) return
     this.started = true
-    void startup.then(
+    void run.initialized.then(
+      () => this.initializeReturned(),
+      // It threw: nothing to watch or reset; `outcome` says why.
+      () => {},
+    )
+    void run.outcome.then(
       (result) => this.settle(result),
       (error: unknown) => {
         this.deps.log(`sandbox: startup failed: ${messageOf(error)}`)
-        this.settle({ state: 'unavailable', initialized: false, session: null, noSeccomp: false })
+        this.settle({ state: 'unavailable', session: null, noSeccomp: false })
       },
     )
   }
@@ -425,7 +442,7 @@ export class DesktopSandbox implements HostSandbox {
   }
 
   private async resetOnce(): Promise<void> {
-    if (this.startup?.initialized !== true || this.signalled) return
+    if (!this.initialized || this.signalled) return
     let timer: ReturnType<typeof setTimeout> | undefined
     const bound = new Promise<void>((resolve) => {
       timer = setTimeout(resolve, SANDBOX_RESET_WAIT_MS)
@@ -437,16 +454,21 @@ export class DesktopSandbox implements HostSandbox {
     clearTimeout(timer)
   }
 
+  /** Once `initialize` has returned, whether or not startup has settled yet (§退出). */
+  private initializeReturned(): void {
+    if (this.initialized) return
+    this.initialized = true
+    this.watchStore()
+    // srt's own once-listeners reset it on the first SIGTERM / SIGINT (§退出).
+    this.deps.onSignal(() => {
+      this.signalled = true
+      this.deps.log('sandbox: reset by a signal; restricted commands are refused from now on')
+    })
+  }
+
   private settle(startup: SandboxStartup): void {
+    if (startup.state !== 'unavailable') this.initializeReturned()
     this.startup = startup
-    if (startup.initialized) {
-      this.watchStore()
-      // srt's own once-listeners reset it on the first SIGTERM / SIGINT (§退出).
-      this.deps.onSignal(() => {
-        this.signalled = true
-        this.deps.log('sandbox: reset by a signal; restricted commands are refused from now on')
-      })
-    }
     this.resolveReady(startup)
   }
 
@@ -490,8 +512,11 @@ export class DesktopSandbox implements HostSandbox {
         : Buffer.from(event.encodedCommand, 'base64').toString('utf8')
     const record = key === undefined ? undefined : this.open.get(key)
     if (record === undefined) {
-      // Unattributed, or it came after its wrap settled: the log only (读法 9).
-      this.deps.log('sandbox: a violation for no open command')
+      // Unattributed, or it came after its wrap settled: the log only (读法 9). srt's store has
+      // made the line one tag-free line; the key came over a carrier the sandbox can write, so it
+      // is cut to an id's length and quoted.
+      const which = key === undefined ? 'none' : JSON.stringify(key.slice(0, 100))
+      this.deps.log(`sandbox: a violation for no open command (key ${which}): ${event.line}`)
       return
     }
     const violation = classify(event.line, record.context)
@@ -557,7 +582,9 @@ export class DesktopSandbox implements HostSandbox {
   /**
    * §afterExit「挂载点与残留的记录」: each denyWrite entry absent now whose first absent level is an
    * intermediate directory under this wrap's allowWrite — bwrap makes that level an empty directory
-   * on the host, which srt cannot take away after a SIGKILL.
+   * on the host, which srt cannot take away after a SIGKILL. The entry is first resolved the way
+   * srt resolves it before it masks (linux-sandbox-utils.js:2041), so a dangling link on the way
+   * puts the level where srt puts it: under the link's target.
    */
   private mountPointsOf(filesystem: FilesystemTables): string[] {
     const writable = entries(filesystem.allowWrite).flatMap((entry) =>
@@ -566,20 +593,52 @@ export class DesktopSandbox implements HostSandbox {
     const found = new Set<string>()
     for (const entry of entries(filesystem.denyWrite)) {
       if (typeof entry === 'string') continue
-      const first = this.firstAbsent(entry.path)
-      if (first === undefined || first === entry.path) continue
-      const parent = posix.dirname(first)
-      let realParent: string
-      try {
-        realParent = this.deps.fs.realpath(parent)
-      } catch {
-        continue
-      }
-      if (writable.some((dir) => within(realParent, dir))) {
-        found.add(posix.join(realParent, posix.basename(first)))
-      }
+      const resolved = this.resolveDenyPath(entry.path)
+      if (resolved === undefined) continue
+      const first = this.firstAbsent(resolved)
+      if (first === undefined || first === resolved) continue
+      if (writable.some((dir) => within(posix.dirname(first), dir))) found.add(first)
     }
     return [...found]
+  }
+
+  /**
+   * srt79's `resolveSymlinkedDenyPath` (linux-sandbox-utils.js:50-112): the real path, or the
+   * deepest ancestor's real path with the rest joined on, a dangling link at the first missing
+   * level followed; undefined where srt gives up (a cycle, too many hops, nothing resolves).
+   */
+  private resolveDenyPath(path: string): string | undefined {
+    const real = (at: string): string | undefined => {
+      try {
+        return this.deps.fs.realpath(at)
+      } catch {
+        return undefined
+      }
+    }
+    let current = path
+    for (let hop = 0; hop < MAX_LINK_HOPS; hop += 1) {
+      const whole = real(current)
+      if (whole !== undefined) return whole
+      let ancestor = current
+      const rest: string[] = []
+      let resolved: string | undefined
+      while (resolved === undefined) {
+        const parent = posix.dirname(ancestor)
+        if (parent === ancestor) return undefined
+        rest.unshift(posix.basename(ancestor))
+        ancestor = parent
+        resolved = real(ancestor)
+      }
+      const firstMissing = posix.join(resolved, rest[0] ?? '')
+      let target: string
+      try {
+        target = this.deps.fs.readlink(firstMissing)
+      } catch {
+        return posix.join(resolved, ...rest)
+      }
+      current = posix.join(posix.resolve(posix.dirname(firstMissing), target), ...rest.slice(1))
+    }
+    return undefined
   }
 
   /** The first level of `path` that is not there, or undefined (all there, a file on the way, an error). */
@@ -653,13 +712,15 @@ export class DesktopSandbox implements HostSandbox {
       this.deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
       return
     }
-    const marks = new Set(records.map((record) => `${SANDBOX_MARK_VARIABLE}=${record.srtId}`))
+    // `ps -E` prints the environment unquoted, and a provider's tool-call id may hold spaces: the
+    // mark is looked for whole, not as one white-space token.
+    const marks = records.map((record) => `${SANDBOX_MARK_VARIABLE}=${record.srtId}`)
     for (const row of table.split('\n')) {
       const match = /^\s*(\d+)\s+(.*)$/.exec(row)
       if (match === null) continue
       const pid = Number(match[1])
       if (pid <= 1 || pid === process.pid) continue
-      if (!(match[2] ?? '').split(/\s+/).some((token) => marks.has(token))) continue
+      if (!marks.some((mark) => holdsWord(match[2] ?? '', mark))) continue
       try {
         this.deps.processes.kill(pid)
       } catch {
@@ -683,6 +744,9 @@ export class DesktopSandbox implements HostSandbox {
 }
 
 const SHELLS: ReadonlySet<string> = new Set(['zsh', 'bash', 'sh'])
+
+/** srt79's bound on a dangling link chain (`MAX_SYMLINK_RESOLUTION_DEPTH`, the kernel's ELOOP). */
+const MAX_LINK_HOPS = 40
 
 /** 读法 6: the tool-use id cut to 67 characters, a dot and 128 random bits — at most 100 in all. */
 function srtIdFor(commandId: string): string {
@@ -726,6 +790,16 @@ function entries(list: FilesystemTables['allowWrite']): SandboxPathEntry[] {
   return (list ?? []).map((entry) =>
     typeof entry === 'string' ? entry : { path: entry.path, literal: true },
   )
+}
+
+/** `word` in `text` with white space or an end on each side. */
+function holdsWord(text: string, word: string): boolean {
+  for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + 1)) {
+    const before = at === 0 ? ' ' : (text[at - 1] ?? ' ')
+    const after = text[at + word.length] ?? ' '
+    if (/\s/.test(before) && /\s/.test(after)) return true
+  }
+  return false
 }
 
 function within(path: string, dir: string): boolean {
