@@ -6,6 +6,32 @@
 >
 > 每个功能按「是什么 / 何时用 / 复刻要点」三段组织。查不到官方说明的一律标注为未确认，不做推测式补齐。
 
+## 2026-10-15 修订：已被官方后续变更取代的几处
+
+下面各条取代正文里对应的说法，正文不改写。只收官方公开页面（support.claude.com、claude.com、code.claude.com）上写明的内容；两处官方口径互相冲突的，照实写成冲突。
+
+1. **Chat 与 Cowork 合一（取代标题「三个 tab」与 §00 的并列写法）。** 2026-09-16 起，Pro / Max 的 Chat 与 Cowork 合成一个 Claude：单一对话、不选模式，快问和长任务在同一个对话里提；按账号分批放量（官方写「over the next few weeks」），进入新体验后不能切回；已有的 Cowork 任务、项目、连接器、技能、artifact 和文件带过去。Code 仍是独立标签。Team / Enterprise 暂时保持 Chat 与 Cowork 分开，Team 与 Free 官方只写「soon」、没有日期；Enterprise 另有默认关闭的统一版公测（2026-10-08 的管理员文档）。Claude Code 桌面文档（2026-10-14 取回）仍写「三个标签」，属文档滞后。出处：https://claude.com/blog/cowork-is-now-claude 、https://support.claude.com/en/articles/16761823 、https://support.claude.com/en/articles/13455879 、https://support.claude.com/en/articles/17444462 、https://code.claude.com/docs/en/desktop
+
+2. **审批模式（取代 §05「Cowork 与三档审批」里的「三档」）。** 统一体验的消息框权限设置只有 Auto 与 Manual（默认 Manual），作用于整个对话、可随时改。三档（Manually approve / Automatically approve / Skip all approvals，旧名 Ask before acting / Act without asking）仍写在经典 Cowork 与 Get started 文章里。Skip 没有被官方写成「已移除」：Enterprise 统一版管理员文档仍列「Allow Skip all approvals」开关，并说明它作用于统一体验里的定时任务和内置浏览器，所以只能说「消息框里不再提供 Skip」。删除文件的措辞两处不同：安全文章写任何模式下永久删除前都先问，统一版文章写「默认」会问。出处：https://support.claude.com/en/articles/16761823 、https://support.claude.com/en/articles/13345190 、https://support.claude.com/en/articles/17444462 、https://support.claude.com/en/articles/13364135
+
+3. **新任务默认在云端（取代 §05「定时任务」的「需要本地文件就只能在本地跑」，并补 §05 各节默认是本地 VM 的前提）。** 2026-10-06 起 Pro / Max 的新 Cowork 任务一律在云端运行，设置里的「Only on your computer」已移除；10-06 之前已在本机开始的任务和本机定时任务留在本机；新建的定时任务在云端跑，电脑睡眠或 App 关闭照常运行；想纯本机运行，官方指向桌面端的 Claude Code。云会话读写本机文件夹的条件：桌面 App 在那台电脑上开着，且会话是在桌面端发起的或是定时任务。另一篇云会话文章写「云端创建的定时任务不能用本地文件夹或本地连接器」，与上一条的口径有冲突，未解。出处：https://support.claude.com/en/articles/15520349 、https://support.claude.com/en/articles/13854387 、https://support.claude.com/en/articles/15811196
+
+4. **沙箱在哪（取代 §05「连接本地文件夹」「沙箱与两道网络边界」里默认的本地 VM，并回答 §10「桌面 Cowork VM 与云端沙箱的关系」）。** 云会话里 agent 循环与代码执行都在 Anthropic 托管的临时隔离沙箱里，每个会话一个，结束即销毁；出站流量必经一个沙箱无法绕过的强制代理；连接器令牌不进沙箱。本地文件夹始终留在本机，任务需要某个文件时只取该文件的副本，删除会话时副本一并删除。专用 Linux VM 现在只用于本地会话（Pro / Max 仅限 10-06 之前开始的任务），两者并存、按计划与开始日期划分。「出站限制不适用于 web fetch、web search 和 MCP」仍成立；网络设置在新会话创建时生效，会话进行中修改对当前会话无效。出处：https://support.claude.com/en/articles/14479288 、https://support.claude.com/en/articles/13455879 、https://support.claude.com/en/articles/15520349
+
+5. **文件夹范围（补 §05「连接本地文件夹」）。** 2026-09-04 起可以附加主目录、Windows 的 Documents 与 AppData、macOS 的 Library 以及整个磁盘；Claude 自身的配置与会话数据、凭据和 shell 启动文件（SSH 密钥、AWS 与 Google Cloud 凭据、bash / zsh / PowerShell 配置）仍不可访问。出处：https://claude.com/docs/cowork/changelog （v1.46388.3）
+
+6. **live artifacts 成为旧形态（取代 §03 的「两套 artifact 并存」与「Live artifacts」）。** 2026-08-19 之前在 Cowork 里做的叫 live artifact：仍可打开、分享，但不能原地编辑，要经 Share 重新发布为新 artifact；8-19 及以后在 Cowork 里新建的与普通 artifact 相同。9-16 之前在 chat 里做的叫 legacy artifact，不能再新建。使用 CMEK、ZDR 或 HIPAA-ready 配置的组织仍用 live artifacts。出处：https://support.claude.com/en/articles/14729249 、https://support.claude.com/en/articles/17153992
+
+7. **Docs / Slides / Design（正文未单列，补记）。** 2026-09-16 起可在任何对话里要求设计、演示稿和文档，当时官方两处口径不一（博客称付费计划 beta，发布说明称含 Free 的各计划）；10-08 官方宣布三者出 beta、所有计划含 Free 可用；Dashboards 在付费计划 beta，Motion 在 Team / Enterprise beta；Enterprise 上 10-15 默认开启；独立站点 claude.ai/design 保留到 12-14。出处：https://claude.com/resources/articles/dashboards-and-motion 、https://support.claude.com/en/articles/17153992 、https://support.claude.com/en/articles/12138966-release-notes
+
+8. **记忆与项目（取代 §04「chat 和 Cowork 共用同一份」的笼统说法与 §02「Cowork Project」的独立地位）。** 记忆自 2026-08-25 起在 chat 与云端 Cowork 之间共用，在 Settings > Memory 的 Topics 里统一管理；只在本机跑过的 Cowork 任务，其记忆留在那些任务里，本机运行的会话不使用记忆。统一体验里项目在每个对话里可用，Cowork 项目与 claude.ai 项目工作方式相同、可从 chat 项目导入；从本地文件夹建的项目留在本机，只支持桌面端的 Cowork 会话；项目记忆按项目隔离。9-17 起 Claude Code 项目另行改版（beta，每个线程一个云端 Claude Code 会话）。出处：https://support.claude.com/en/articles/12138966-release-notes 、https://support.claude.com/en/articles/16761823 、https://support.claude.com/en/articles/14116274 、https://support.claude.com/en/articles/15520349 、https://claude.com/resources/articles/projects-redesigned
+
+9. **界面位置（取代 §01「Chats and tasks」页的说法）。** 统一体验里对话列表合并为 Recents，Cowork 任务与聊天放在一起；Global instructions 并入 Settings > General 的「Instructions for Claude」；没有联网搜索开关，Claude 觉得有用时自己搜；已授权的文件夹列在 Trusted folders；Research 从「+」按钮或 /deep-research 进入。出处：https://support.claude.com/en/articles/16761823
+
+10. **Dispatch（补 §05「Dispatch」）。** 不对新用户开放，现有用户暂时可继续用；仍在桌面上运行（电脑要醒着、App 开着）；Claude Code 文档写它不适用于 Team / Enterprise。出处：https://support.claude.com/en/articles/13947068 、https://code.claude.com/docs/en/desktop
+
+11. **Computer use 的 Team / Enterprise 可用性（解开 §10 同名一行）。** 官方两处文档都写 Team / Enterprise 暂无：Cowork 文章称 Pro / Max beta，Code 文档称 research preview，只是标签不一致。出处：https://support.claude.com/en/articles/14128542 、https://code.claude.com/docs/en/desktop
+
 ---
 ## 00 · 架构底座：一个内核，三套 profile
 
