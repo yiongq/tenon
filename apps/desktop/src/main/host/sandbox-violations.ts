@@ -121,7 +121,8 @@ const OBJECTLESS_OPERATIONS: ReadonlySet<string> = new Set([
 /**
  * Classify one line from srt's violation store for the wrap `context` describes. `undefined`
  * means the line is dropped on arrival: a Linux observer report of a write that lands where the
- * wrap may write, or of a `mkdirat` on a directory that is already there (读法 11, 53).
+ * wrap may write, or of a `mkdirat` (on x64 also the older `mkdir`) on a directory that is already
+ * there (读法 11, 53).
  */
 export function classify(line: string, context: ViolationContext): SandboxViolation | undefined {
   const proxy = PROXY_LINE.exec(line)
@@ -159,7 +160,8 @@ function observerReport(
   context: ViolationContext,
 ): SandboxViolation | undefined {
   // That call did nothing: GNU `mkdir -p` reports every ancestor that already exists (读法 53).
-  if (syscall === 'mkdirat') {
+  // x64's observer also watches the older `mkdir`, which glibc uses there for the same call.
+  if (syscall === 'mkdirat' || syscall === 'mkdir') {
     const kind = lookUp(context.lstat, path)
     if (kind !== 'unknown' && kind?.isDirectory() === true) return undefined
   }

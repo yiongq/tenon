@@ -932,6 +932,32 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     )
   })
 
+  it('on darwin a Seatbelt line whose process name starts with `deny ` reads as unrecognized: no target, no release, no `protected`; a name starting `deny` with no space is read as usual', () => {
+    // classify carries no platform and a line starting `deny ` may be the Linux observer's forgery
+    // (header, shape 3); the cost, accepted like a name with parentheses, is this macOS process's
+    // real denials (plan Open 2026-10-15「进程名以 deny 开头的 Seatbelt 行」)
+    const cases: [string, Expected][] = [
+      ['deny x(1) deny(1) file-write-create /fx/p1/outside/f1', { kind: 'fs' }],
+      ['deny x(1) deny(1) file-write-create /fx/p1/ws/.envrc', { kind: 'fs' }],
+      ['deny x(1) deny(1) file-read-data /fx/p1/home/tenon-profile/config.json', { kind: 'fs' }],
+      [
+        'denyhosts(5) deny(1) file-write-create /fx/p1/outside/f1',
+        { kind: 'fs', target: '/fx/p1/outside/f1', release: 'path' },
+      ],
+      [
+        'denyhosts(5) deny(1) file-write-create /fx/p1/ws/.envrc',
+        { kind: 'fs', target: '/fx/p1/ws/.envrc', protected: true },
+      ],
+    ]
+    const wrap = wrapOf('darwin', 'workspace-write', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
   it('a line that matches no format is fs with no target and not observed', () => {
     const lines = ['', 'deny', 'something went wrong', 'allow openat /fx/p1/outside/f1']
     expect(classifyAll(lines, wrapOf('linux', 'workspace-write', P1))).toStrictEqual(
@@ -939,7 +965,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     )
   })
 
-  it('a Linux observer mkdirat on a directory that exists when it arrives is dropped; on one that does not, it stays (observed)', () => {
+  it('a Linux observer mkdirat, or x64’s older mkdir, on a directory that exists when it arrives is dropped; on one that does not, it stays (observed)', () => {
     const lines = [
       'deny mkdirat /fx/p1/outside',
       'deny mkdirat /fx/p1/home/.ssh',
@@ -947,7 +973,12 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       // a file of that name, or a link, is no directory
       'deny mkdirat /fx/p1/outside/a-file',
       'deny mkdirat /fx/p1/ws/out-link',
-      // only mkdirat: another call on an existing directory stays
+      // x64's apply-seccomp also watches the older mkdir, glibc's call there: the same rule
+      'deny mkdir /fx/p1/outside',
+      'deny mkdir /fx/p1/outside/new',
+      'deny mkdir /fx/p1/outside/a-file',
+      'deny mkdir /fx/p1/ws/out-link',
+      // only mkdir/mkdirat: another call on an existing directory stays
       'deny fchmodat /fx/p1/outside',
     ]
     // read-only, so nothing is dropped for being writable
@@ -969,6 +1000,25 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       {
         kind: 'fs',
         line: 'deny mkdirat /fx/p1/ws/out-link',
+        target: '/fx/p1/ws/out-link',
+        observed: true,
+      },
+      undefined,
+      {
+        kind: 'fs',
+        line: 'deny mkdir /fx/p1/outside/new',
+        target: '/fx/p1/outside/new',
+        observed: true,
+      },
+      {
+        kind: 'fs',
+        line: 'deny mkdir /fx/p1/outside/a-file',
+        target: '/fx/p1/outside/a-file',
+        observed: true,
+      },
+      {
+        kind: 'fs',
+        line: 'deny mkdir /fx/p1/ws/out-link',
         target: '/fx/p1/ws/out-link',
         observed: true,
       },
@@ -1307,10 +1357,16 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         darwin,
       ),
     ).toStrictEqual(withLines(cases))
-    // a mkdirat whose lstat throws is not known to be a no-op, so it stays
+    // a mkdirat or mkdir whose lstat throws is not known to be a no-op, so it stays
     expect(classify('deny mkdirat /fx/p1/outside/a-file/x', linux)).toStrictEqual({
       kind: 'fs',
       line: 'deny mkdirat /fx/p1/outside/a-file/x',
+      target: '/fx/p1/outside/a-file/x',
+      observed: true,
+    })
+    expect(classify('deny mkdir /fx/p1/outside/a-file/x', linux)).toStrictEqual({
+      kind: 'fs',
+      line: 'deny mkdir /fx/p1/outside/a-file/x',
       target: '/fx/p1/outside/a-file/x',
       observed: true,
     })

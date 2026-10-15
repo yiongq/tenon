@@ -1706,16 +1706,12 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     )
 
     it(
-      '04 验收 16: (linux) mkdir -p of an absolute path that exists leaves no mkdirat',
+      '04 验收 16: (linux) mkdir -p of an absolute path that exists leaves no mkdir or mkdirat',
       async () => {
         const { lab, ws, outside } = workspaceLab()
         const deep = makeDir(join(outside, 'a', 'b'))
         const ran = await lab.run(`mkdir -p ${shq(deep)}; echo rc=$?`, { workspace: [ws] })
         expect(ran.stdout).toMatch(/^rc=0$/m)
-        // The observer's line names the syscall. srt's arm64 apply-seccomp watches only the `*at`
-        // forms; its x64 one also watches the old `mkdir` (and creat, unlink, rename …), so an x64
-        // run may report `deny mkdir <path>`, which the spec does not drop (读法 53 names only
-        // `mkdirat`; plan Open). Every run so far was arm64.
         expect(ran.violations.filter((v) => /^deny mkdir(?:at)? /.test(v.line))).toEqual([])
       },
       CASE_MS,
