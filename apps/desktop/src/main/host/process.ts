@@ -16,7 +16,7 @@
  * - `stream.Readable.toWeb()` is NOT used for stdout/stderr: it throws inside an
  *   event handler when a consumer cancels mid-flight and takes the main process down.
  */
-import { spawn as nodeSpawn } from 'node:child_process'
+import { execFile, spawn as nodeSpawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { isAbsolute } from 'node:path'
 import { Writable } from 'node:stream'
@@ -29,7 +29,10 @@ export class SpawnSpecError extends Error {
 }
 
 const IS_WINDOWS = process.platform === 'win32'
+const IS_DARWIN = process.platform === 'darwin'
 const READ_HIGH_WATER_MARK = 64 * 1024
+/** How long `killTree` waits for `ps` before it signals the group alone (darwin). */
+const PS_TIMEOUT_MS = 2_000
 
 export function createHostProcess(): HostProcess {
   return { spawn: spawnChild }
@@ -213,24 +216,78 @@ function groupAlive(pgid: number): boolean {
   }
 }
 
-/** Kill the process tree rooted at `pid`. ESRCH (already gone) is not an error. */
+/**
+ * Kill the process tree rooted at `pid`. ESRCH (already gone) is not an error.
+ *
+ * On darwin a descendant that called `setsid()` has left the group, and a sandboxed command's does
+ * not die with the shell (spec 04 §执行与收口, P6): the whole tree is collected from `/bin/ps` before
+ * the signal, which goes to the group and then to each descendant. Linux needs none of it (bwrap's
+ * `--die-with-parent` and pid namespace take the tree down).
+ */
 export async function killTree(pid: number, signal: 'SIGTERM' | 'SIGKILL'): Promise<void> {
   if (IS_WINDOWS) {
     await killTreeWindows(pid)
     return
   }
+  const tree = IS_DARWIN ? await descendantsOf(pid) : []
   try {
     process.kill(-pid, signal)
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code
-    if (code === 'ESRCH') return
     if (code === 'EPERM') throw err
-    try {
-      process.kill(pid, signal)
-    } catch {
-      /* ignore */
+    if (code !== 'ESRCH') {
+      try {
+        process.kill(pid, signal)
+      } catch {
+        /* ignore */
+      }
     }
   }
+  for (const member of tree) {
+    try {
+      process.kill(member, signal)
+    } catch {
+      /* gone already */
+    }
+  }
+}
+
+/**
+ * Every descendant of `pid` in `/bin/ps -A -o pid=,ppid=` (P6), deepest last; empty when `ps`
+ * fails, which leaves the group signal alone as before. A host-internal helper, like taskkill.
+ */
+async function descendantsOf(pid: number): Promise<number[]> {
+  let table: string
+  try {
+    table = await new Promise<string>((resolve, reject) => {
+      execFile(
+        '/bin/ps',
+        ['-A', '-o', 'pid=,ppid='],
+        { timeout: PS_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024 },
+        (error, stdout) => (error === null ? resolve(stdout) : reject(error)),
+      )
+    })
+  } catch {
+    return []
+  }
+  const children = new Map<number, number[]>()
+  for (const row of table.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row)
+    if (match === null) continue
+    const child = Number(match[1])
+    const parent = Number(match[2])
+    children.set(parent, [...(children.get(parent) ?? []), child])
+  }
+  const found: number[] = []
+  const queue = [pid]
+  for (let at = 0; at < queue.length; at += 1) {
+    for (const child of children.get(queue[at] ?? -1) ?? []) {
+      if (child === pid || found.includes(child)) continue
+      found.push(child)
+      queue.push(child)
+    }
+  }
+  return found
 }
 
 function killTreeWindows(pid: number): Promise<void> {
