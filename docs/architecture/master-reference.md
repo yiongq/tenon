@@ -141,7 +141,7 @@
 
 | 功能模块 | 推荐项目 | 代码位置 | 许可证 |
 |---|---|---|---|
-| **OS 级沙箱（直接用）** | sandbox-runtime | npm `@anthropic-ai/sandbox-runtime`（latest 0.0.76，2026-09-10）；`src/`；README 安全限制清单 | Apache-2.0 🟢 |
+| **OS 级沙箱（直接用）** | sandbox-runtime | npm `@anthropic-ai/sandbox-runtime`（latest 0.0.79，2026-10-07；2026-10-09 改，见 [04 §依赖](04-sandbox/spec.md)，原为「latest 0.0.76，2026-09-10」）；`src/`；README 安全限制清单 | Apache-2.0 🟢 |
 | **沙箱产品语义层** | Codex | https://learn.chatgpt.com/codex/agent-approvals-security（三档 mode + 审批策略） | 文档可读 |
 | workspace 抽象概念 | OpenHands | `software-agent-sdk` 的 `openhands-workspace` 包 | MIT 🟢（Docker 依赖不适合桌面） |
 
@@ -268,7 +268,7 @@ packages/            内部共享包
 
 - [modelcontextprotocol/ext-apps](https://github.com/modelcontextprotocol/ext-apps)（MIT 🟢），宿主示例 `examples/basic-host/src/implementation.ts` ✅
 - DeepChat 已依赖 `@modelcontextprotocol/ext-apps` 2.0.0 ✅
-- **MCP-UI**（Apache-2.0 🟢）：社区先驱，`@mcp-ui/client` 有现成 React 渲染组件
+- **MCP-UI**（Apache-2.0 🟢）：社区先驱，`@mcp-ui/client` 有现成 React 渲染组件（2026-10-15 改：不采用。`@mcp-ui/client` 7.1.1（2026-05-09，此后没再发版）依赖 `@modelcontextprotocol/sdk` ^1.27.1、`@modelcontextprotocol/ext-apps` ^1.2.0 与 `zod` ^3.23.8，仍绑在 SDK v1 和 zod 3 上，Tenon 在 SDK 2.x 与 zod 4。宿主侧的桥改用 `@modelcontextprotocol/ext-apps` 的 `/app-bridge` 子路径（最新 2.0.3，2026-09-25；peer 是 `@modelcontextprotocol/core` ^2.0.0、`@modelcontextprotocol/client` ^2.0.0 与 `zod` ^4.2.0（`server` 可选），core 要显式声明，线协议与 1.x 相同）。assistant-ui 自带的 `McpAppRenderer` 也不采：它的 `SafeContentFrame` 默认把 frame 放在第三方域名 `scf.auiusercontent.com`，Tenon 钉的 `@assistant-ui/react` 0.15.20 随带的 `safe-content-frame` 0.0.30 把这个域写死、没有覆盖选项，每渲染一个 widget 都要联网访问它；自托管选项 `unsafeShimDomain` 要到 `safe-content-frame` 0.0.34（随 `@assistant-ui/react` 0.15.28）才有，还要通配 DNS 与通配 TLS 证书。出处：npm registry、modelcontextprotocol/ext-apps 仓库、assistant-ui 文档）
 
 ⚠️ **对 Electron host 是硬活**：server 的 tool 声明 `ui://` 资源，host 在 sandboxed iframe 里渲染 + CSP + 主进程消息通道，**做错就是 RCE**。`specification/` 必读。放在阶段 5。
 
@@ -413,13 +413,13 @@ Tape 是 append-only fact store，修正/压缩/handoff 都是新事实，绝不
 
 | 项 | 值 |
 |---|---|
-| 仓库 | https://github.com/anthropic-experimental/sandbox-runtime |
+| 仓库 | https://github.com/anthropic-experimental/sandbox-runtime（2026-10-15 补：已迁到 https://github.com/anthropics/sandbox-runtime，npm 0.0.79 的 package.json 里 repository 写的是这个） |
 | star | 4.6k |
 | license | **Apache-2.0** |
 | 语言 | **TypeScript 98.5%** |
-| npm | `@anthropic-ai/sandbox-runtime`，**latest 0.0.76**（2026-09-10；发版走 npm 不走 GitHub release，以 npm 为准） |
+| npm | `@anthropic-ai/sandbox-runtime`，**latest 0.0.79**（2026-10-07；发版走 npm 不走 GitHub release，以 npm 为准；2026-10-09 改，见 [04 §依赖](04-sandbox/spec.md)，原为「latest 0.0.76（2026-09-10）」） |
 | 依赖 | **只有 4 个** |
-| engines | Node >= 20.11.0 |
+| engines | Node >= 22.12.0（0.0.79；2026-10-09 改，见 [04 §依赖](04-sandbox/spec.md)，原为「Node >= 20.11.0」，那是 0.0.76 的） |
 
 **为什么是最优解**：官方原话「enforcing filesystem and network restrictions on arbitrary processes **at the OS level, without requiring a container**」。OpenHands 那套 Docker 方案在消费级桌面上转化率会死得很难看。
 
@@ -578,7 +578,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 管理员托管设置（允许的 MCP、权限下限、能否连本地文件夹） | 权限作用域：**租户策略 → 用户默认 → 会话 → 单次**，这四级只标作用域，不代表查找顺序；决策顺序见 02 §权限决策顺序（2026-09-25 改，见 [02 §权限决策顺序](02-agent-loop/spec.md)）；策略层由服务端下发，本地缓存 | 租户 |
 | Cowork 云端会话：内核在 Anthropic 临时沙箱，会话跟随账号 | `apps/server` 为每个会话起一个租户隔离的沙箱，跑同一个 `packages/kernel` | 租户 + 会话 |
 | 桌面 App 是桥：云端会话读本地文件夹要开着桌面 App | **桥协议**：桌面 App 与服务端保持长连接，服务端通过它对本机文件做受限读写（Claude Desktop "云端会话经桌面 App 读本地文件夹"那条桥的自研版） | 用户 + 设备 |
-| 本地模式：Linux VM | `apps/desktop` 直接用 sandbox-runtime | 用户 |
+| 本地模式：Linux VM（2026-10-09 补，2026-10-15 照公开文档改准：Pro / Max 的新 Cowork 任务自 2026-10-06 起在云端运行（[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)），已进合并体验的账号任务只在云端（[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)）；Team / Enterprise 仍有本地 VM 会话（[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)、[14479288](https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview)）；Tenon 本机执行与隔离的对照改为 Claude Desktop 的 Code 会话与 Claude Code，见 [04](04-sandbox/spec.md) T37） | `apps/desktop` 直接用 sandbox-runtime | 用户 |
 
 **内核不变量**（写进 `AGENTS.md` 硬规则）：`packages/kernel` 禁止 import `electron`、禁止直接读写文件系统和 keychain、禁止直接 spawn——全部经 `HostAdapter`。用 lint 规则（`no-restricted-imports`）和包边界强制，不靠自觉。
 
@@ -638,7 +638,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 ### 6.2 技术难点
 
 1. **很多功能在服务端不在客户端。** Cowork 云端会话里 agent 循环和代码执行都在 Anthropic 沙箱（[架构概览](https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview) ✅）。记忆、项目知识库、连接器授权、定时任务同样依赖服务端。**客户端更像遥控器**——"算力在云端，文件在本地，桥是桌面 App"。
-2. ~~本地 Agent 的安全隔离非常难做~~ → **已有现成库**（§4.10）。官方本地模式用专用 Linux VM，今年仍有 VM 逃逸的安全研究（[Techzine](https://www.techzine.eu/news/security/143187/claude-cowork-escapes-from-virtual-machine/) ⚠️）。sandbox-runtime 是 OS 级不是 VM 级，隔离强度低一档，但对本地模式是正确的起点，云端隔离见 §4.13。
+2. ~~本地 Agent 的安全隔离非常难做~~ → **已有现成库**（§4.10）。官方本地模式用专用 Linux VM，今年仍有 VM 逃逸的安全研究（[Techzine](https://www.techzine.eu/news/security/143187/claude-cowork-escapes-from-virtual-machine/) ⚠️）。sandbox-runtime 是 OS 级不是 VM 级，隔离强度低一档，但对本地模式是正确的起点，云端隔离见 §4.13。（2026-10-09 补：本地 VM 模式已不是 Cowork 的默认——Pro / Max 自 2026-10-06 起新任务一律上云、「Only on your computer」已移除，已进合并体验的账号任务只在云端、没有本地选项（2026-10-15 补，[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)），Team / Enterprise 仍可保留本地（[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)、[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)）；Tenon 自阶段 4 起执行与隔离对照 Claude Desktop 的 Code 会话与 Claude Code 的 OS 级沙箱，见 [04](04-sandbox/spec.md) T37）
 3. **效果和模型深度绑定。** Claude 好用是模型、系统提示词、工具设计联合调优的结果。
 4. **协议还在快速变化。**
 5. **UX 打磨极其耗人。**
@@ -675,7 +675,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 **B 有一个 A 给不了的东西**：几周内有真的在用的产品，用它发现真实问题。所以更准确的做法：**A 是主线，但可以在阶段 2 用 OpenCode 当"对照组"**——你的循环和它跑同一个任务，看差在哪。这比闷头写强。
 
-**2026-09-17 改**：主对照组换成用户机器上的 Claude Desktop 本身（对话对 Chat、任务对 Cowork），同题两边跑、录屏对比；OpenCode 保留为第二对照。见 §13 阶段 2「提示层」。
+**2026-09-17 改**：主对照组换成用户机器上的 Claude Desktop 本身（对话对 Chat、任务对 Cowork），同题两边跑、录屏对比；OpenCode 保留为第二对照。见 §13 阶段 2「提示层」。 **2026-10-15 补**：这套口径已不能照原样复现。Pro / Max 自 2026-09-16 起按账号分批把 Chat 与 Cowork 合一（迁移后不能切回）、自 2026-10-06 起新 Cowork 任务一律在云端（[官方博客](https://claude.com/blog/cowork-is-now-claude)、[帮助文章 16761823](https://support.claude.com/en/articles/16761823)、[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)），「在本机 Cowork 会话里跑、Manual 档」这个协议对 Pro / Max 不再成立，owner 要求下一次评测运行之前另定新协议，2026-10-15 定它只挡主对比（与 Claude Desktop 的同题对比），基线列照常跑——基线列的跑法本身不涉及 Claude Desktop（见 [04 plan](04-sandbox/plan.md) 的 Open）。2026-10-01 同题对比里 Claude Desktop 一列（B）由 GPT 操作得出，03 读法 70 已把「Claude Desktop 一侧交给程序自动跑」判为违反消费者条款，owner 2026-10-15 改为只作参考、不作验收证据；同模型列（Claude Code + glm-5.3 对 Tenon + glm-5.3）不受影响。
 
 ## 8. UX 策略：交互参考 Claude，视觉做自己的
 
@@ -739,7 +739,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 | 层 | 做成什么样 | 规格来源 | 能不能进仓库 |
 |---|---|---|---|
-| 信息架构 | 与 Claude Desktop **一致**：左侧栏 264px（品牌行 + 双模式切换 → 主导航 → Scheduled → Projects 两级树 → Chats and tasks → 账号行）、顶栏、右侧面板（Artifacts / Cowork 两种）、Settings 模态、Customize / Projects / Artifacts / Scheduled 四个页面。**2026-09-17 注**：对话 / 任务切换在 Tenon 里放首页输入框内，不在侧栏品牌行，以 UX 画布 v18 为准（见 `docs/ux/parity-audit-2026-09-12.md`） | uxkit `interactions.md` §1、§4 | 规格可进，DOM 快照不进 |
+| 信息架构 | 与 Claude Desktop **一致**：左侧栏 264px（品牌行 + 双模式切换 → 主导航 → Scheduled → Projects 两级树 → Chats and tasks → 账号行）、顶栏、右侧面板（Artifacts / Cowork 两种）、Settings 模态、Customize / Projects / Artifacts / Scheduled 四个页面。**2026-09-17 注**：对话 / 任务切换在 Tenon 里放首页输入框内，不在侧栏品牌行，以 UX 画布 v18 为准（见 `docs/ux/parity-audit-2026-09-12.md`）。**2026-10-15 注**：Claude 自 2026-09-16 起把 Pro / Max 的 Chat 与 Cowork 合成一个入口、不再选模式（按账号分批放量，[官方博客](https://claude.com/blog/cowork-is-now-claude)、[帮助文章](https://support.claude.com/en/articles/16761823)），这一行写的「双模式切换」「Cowork 面板」是合一之前的界面；Tenon 不跟，仍保留对话与任务两种会话形态（02 的 H1），入口改成输入框里的「在文件夹里工作」开关，取代两颗胶囊的模式切换（owner 2026-10-15 定，随 4d 或展示层 spec 做）；侧栏、右面板等其余几项照旧 | uxkit `interactions.md` §1、§4 | 规格可进，DOM 快照不进 |
 | 交互行为 | **1:1**：Composer 状态机与 `+` 菜单（Chat / Cowork 差异）、6 种工具块、产物块、版本切换、审批 / 中断 / 引用 / 流式态、行菜单、快捷键表、空 / 加载 / 错误态、响应式断点、动效目录（含 reduced-motion 降级） | `interactions.md` §2、§3、§5–7 + `animations.json` | 规格可进 |
 | 设计令牌的**结构** | 同样的语义分层：surface / text / border / fill / alpha / radius / h-control / weight / ease / dur / z，亮暗两套，壳层背景独立一层 | `tokens.css` 的**键名**与分层 | 键名可进，**值不进** |
 | 设计令牌的**值** | 自己的：一个主色 + 中性色阶（避开暖橙系）、开源字体（测中英混排）、保留"界面无衬线 / 助手正文衬线"的区分 | §8.1 临时皮肤 → §8.3 定稿 | 自己的值进 |
@@ -819,9 +819,9 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 | 功能 | 现状 | 复刻 |
 |---|---|---|
-| **三个 tab** | Chat / Cowork / Code，同一 agent 内核三套 profile | Chat / Cowork 两套 profile 实现；kernel 的 profile 枚举为 Code 留位，壳不做（§8.5） |
+| **三个 tab** | Chat / Cowork / Code，同一 agent 内核三套 profile（2026-10-15 改：2026-09-16 起 Pro / Max 的 Chat 与 Cowork 合成一个 Claude，不再选模式，快问和长任务在同一个对话里提，按账号分批放量、迁移后不能切回；Code 仍是独立标签；Team / Enterprise 暂时保持 Chat 与 Cowork 分开（[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)），Enterprise 另有默认关闭的统一版公测（[17444462](https://support.claude.com/en/articles/17444462-set-up-and-manage-the-new-unified-claude-experience-for-your-enterprise-organization)）。出处：[官方博客](https://claude.com/blog/cowork-is-now-claude)、[帮助文章](https://support.claude.com/en/articles/16761823)） | Chat / Cowork 两套 profile 实现；kernel 的 profile 枚举为 Code 留位，壳不做（§8.5）（2026-10-15 owner 定：Tenon 不跟合并，两种会话形态照旧，入口改为输入框里的「在文件夹里工作」开关，见 §8.5） |
 | **Cowork 云端会话** | **默认云端**：agent 循环和代码执行在 Anthropic 临时沙箱，会话跟随账号 ✅ | 阶段 6b（§4.13） |
-| **Cowork 本地会话** | 专用 Linux VM（macOS Apple Virtualization.framework，Windows Hyper-V），自带网络出口过滤 ✅ | sandbox-runtime（OS 级，低一档） |
+| **Cowork 本地会话** | 专用 Linux VM（macOS Apple Virtualization.framework，Windows Hyper-V），自带网络出口过滤 ✅（2026-10-09 补：Pro / Max 自 2026-10-06 起新任务一律上云，本地模式只在 Team / Enterprise 可保留；2026-10-15 补：10-06 之前在本机开始的任务留在本机、可以做完，之前建的本机定时任务继续在本机跑；想纯本机运行，官方指向桌面端的 Claude Code；已进入合并体验的账号任务一律在云端、没有本地选项。出处：[帮助文章 15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)、[13854387](https://support.claude.com/en/articles/13854387)、[14479288](https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview)、[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)） | sandbox-runtime（OS 级，低一档；2026-10-09 起对照改为 Claude Desktop 的 Code 会话与 Claude Code，见 [04](04-sandbox/spec.md) T37） |
 | **本地连接器与本地 MCP** | 只在桌面端；云端会话读本地文件夹要开着桌面 App ✅ | §4.3、§4.4 |
 | **定时任务** | 云端运行 ✅ | 本地版先做，云端版阶段 6b |
 | **computer use** | Pro/Max beta ✅，三档应用权限按类别固定 | computer-use-demo |
@@ -891,7 +891,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - **停止即杀**（2026-09-17 补）：用户点停止，正在跑的命令经 `ChildHandle.kill`（2026-09-25 改，见 [02 §点停止时各状态怎么收](02-agent-loop/spec.md)）结束整棵进程树，不等它跑完（Claude 实测命令会继续跑完）；任务小结写「已停，后续写入未发生」
 - **提示层**（2026-09-17 补，明确交付物）：(1) 对话 / 任务两个 profile 各一份系统提示，从 Anthropic 公开发布的 claude.ai 系统提示与 Claude Code 文档学，不抄原文；(2) 工具集形状贴 Claude Code——读 / 写 / 编辑 / 命令 / 查找 / 子 agent，名字与参数语义一致（模型对这套形状有先验），其余能力走 MCP；WebFetch 例外：只收 url，返回整页 Markdown，不带 prompt，差异写进工具描述（2026-09-25 改，见 [02 §内置工具与工具来源](02-agent-loop/spec.md)）；(3) 扩展思考、提示缓存直接用 API 功能，不自造；网络搜索、网页抓取做成 Tenon 的客户端工具，后端调各家官方接口；服务端代码执行推后（2026-09-25 改，见 [02 §搜索与抓取](02-agent-loop/spec.md)）；(4) 对照组改为用户机器上的 Claude Desktop 本身：同一题两边跑、录屏对比、差在哪改哪（OpenCode 降为第二对照）；同模型列用 Claude Code + GLM；OpenCode 仍是第二对照，作为同模型列的备选（2026-09-25 改，见 [02 §同题对比](02-agent-loop/spec.md)）；(5) 固定 20–30 个任务的评测集，改系统提示或工具描述必跑，结果记 `docs/evals/`；提示层包括 kernel 写给模型的固定英文（收口说明、续写提示、落盘说明等）；评测基线建立之前版本号照常递增、不要求跑评测（2026-09-25 改，见 [02 §提示层与评测](02-agent-loop/spec.md)）
 - **读**：DeepChat `src/main/tool/`（`ToolPermissionBroker`）、`docs/architecture/tool-system.md`、Cline `auto-approve.mdx` + `sdk/`、OpenCode agent loop
-- **对照组**：主对照是 Claude Desktop；同模型列是 Claude Code + glm-5.3 对 Tenon + glm-5.3；OpenCode 作同模型列的备选（2026-09-25 改，见 [02 §同题对比](02-agent-loop/spec.md)）
+- **对照组**：主对照是 Claude Desktop；同模型列是 Claude Code + glm-5.3 对 Tenon + glm-5.3；OpenCode 作同模型列的备选（2026-09-25 改，见 [02 §同题对比](02-agent-loop/spec.md)；2026-10-15 补：主对照的 Claude Desktop 一列暂时不能按原协议复现，2026-10-01 的 B 列只作参考，见 §7「为什么选 A」末尾的「2026-10-15 补」与 [evals README](../evals/README.md)）
 - **开工前裁决**（2026-09-17 审阅结论；DeepChat broker 与 Goose 四层已有逐路径笔记，不需要新笔记，需要的是拍板）：
   - 严格度定位：工具级「以后都允许」第一版有没有、存哪、怎么撤销。§4.11 第 3 行说有（键 `tenantId / serverId / toolName`），UX 画布 v18 与 parity 审计 09-16 补记说审批只「本次会话内有效」、「以后都允许」只出现在文件夹与连接器授权弹窗——两者必须合成一份
   - 可逆性判定规则：输入是什么（内置工具白名单 / host 判定 / MCP 注解按硬规则不可信），未知 MCP 工具默认哪档；UX 四档刻度（可撤销 / 有快照 / 不可逆 / 未知）到 `ConfirmReason` 的映射，阶段 2 尚无快照时「有快照」档怎么显示
@@ -904,32 +904,32 @@ Claude Desktop 的概念 → Tenon 的实现：
   - 拒绝路径：回给模型的 tool result 形状、能否换参重试、连续拒绝是否计入 no-progress guard；判决 trace 的内部形状（验收要求每行一个测试，但界面不露层号）
   - 补读各半页并入上面的「读」：Cline `requires_approval` 实际怎么传；OpenCode 的审批路径（§15.1 #1 至今无核实路径）
   - **裁决结果**（2026-09-25）：逐条见 02 §开工前裁决（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）
-- **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试；每个 `ConfirmReason` 在 zh-CN 与 en 下各有一条文案且槽位齐全；点停止后 1 秒内无子进程存活；评测集每题有基线记录；与 Claude Desktop 同题对比至少 10 题有记录（差异与原因）
+- **验收**：cancel 后无 orphaned tool_use（下一轮请求不 400）；`ContextLengthExceeded` 压缩重试 ≤ 2；no-progress guard 在 4 次相同 batch 后终止；权限弹窗在应用重启后仍在且可回答；决策顺序表的每一行有一个测试；每个 `ConfirmReason` 在 zh-CN 与 en 下各有一条文案且槽位齐全；点停止后 1 秒内无子进程存活；评测集每题有基线记录；与 Claude Desktop 同题对比至少 10 题有记录（差异与原因）（2026-10-15 补：2026-10-01 那 10 题里 Claude Desktop 一列改为只作参考、不算验收证据，新协议另定，见 [evals README](../evals/README.md)；本节与 02 不因此改写）
 - **范围调整**：最小工具行、审批卡、任务形态、文件夹 chip 已挪进 02，阶段 3 / 4 的对应项改做完整版，工期不动（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）；阶段 2、3 只开手动档，见 [02 §可逆性判定与阶段 2 的默认权限姿态](02-agent-loop/spec.md)；工作区来源见 [02 §会话形态、工作区与模型选择](02-agent-loop/spec.md)
 
 ### 阶段 3：MCP host 完整版（2–3 周）
 
 - MCP 设置界面、OAuth（CIMD 优先、DCR 兜底、凭证按 issuer 分键进 keychain）、工具调用卡片、权限确认弹窗（完整版；最小版在阶段 2）（2026-09-25 改，见 [02 §界面范围](02-agent-loop/spec.md)）。阶段 3 只做 MCP 相关的部分：审批卡的可逆性刻度、连接器卡的 server 名与「定义已变」；带样式的改动预览挪阶段 4（2026-10-08 改，见 [03 §界面](03-mcp-host/spec.md)）
 - 扩展配置 schema：显式 `type`、`envs`/`env_keys` 分离、`available_tools` 白名单。不用白名单语义：三态逐个记在 server 条目下，`available_tools` 只在导入、导出配置时与「永不」互转，阶段 3 没有导入导出、不做（2026-10-08 改，见 [03 §配置与机密](03-mcp-host/spec.md)）
-- stdio 子进程管理：spawn → 握手超时 → 崩溃重连 → stderr 落日志 → 进程树清理 → **超时向 server 发 cancelled**
+- stdio 子进程管理：spawn → 握手超时 → 崩溃重连 → stderr 落日志 → 进程树清理 → **超时向 server 发 cancelled**（2026-10-15 补：03 §协议代际 定的「stdio 不探测」写着「与 Claude Code 的默认相同」，这半句已过期——Claude Code 的 MCP 文档现写它默认向 stdio server 询问 2026-07-28 版本，更新日志写明 2.1.292（2026-10-06）起所有安装的本地 stdio 连接默认协商，对不理会探测的 server 一次慢连接之后记 7 天、改走旧握手（[MCP 文档](https://code.claude.com/docs/en/mcp)、[changelog](https://code.claude.com/docs/en/changelog)）。Tenon 不探测的决定不变，依据只剩 03 写的技术原因（`ChildStdioTransport` 没有 `stderr`、`pid`，开 `auto` 会在正式进程上原地探测）；03 正文不改，Q2-B 的改判条件「主流 stdio server 只说新代时重评」照旧；下一份碰 MCP 的 spec 起草时引这一条）
 - **读**：[deepchat-mechanisms](../reference/deepchat-mechanisms.md) §四、LibreChat `packages/api/src/mcp/`（OAuth 落地）
 - **开工前裁决**：02 留下两条（2026-09-25 改，见 [02 §开工前裁决](02-agent-loop/spec.md)）。**裁决结果**（2026-10-08）：逐条见 [03 §裁决索引](03-mcp-host/spec.md)——中途工具维持 E2-C（Q15 A）；连接器卡先按 02 上线，同题对比超过 2 倍才加「本会话允许」（Q13 A）。原列的两条：
   - 中途连上的 MCP 工具是否即时生效：支持的 Anthropic 模型用 E2-D，其余用 E2-F，或仍到下个会话（裁决 E2）
   - 连接器卡要不要加「以后都允许」（D1-A2）或「本会话允许」，按同题对比的确认次数定（裁决 D1、D10）
 - **验收**：Everything server 的每类能力（tools / prompts / resources / listChanged）各一个 e2e，tools 的 listChanged 用自写夹具；sampling 已在 2026-07-28 弃用、elicitation 照 02 的 H6 在阶段 3 之后，都不做（2026-10-08 改，见 [03 §验收标准](03-mcp-host/spec.md)）；超时后 server 侧能观测到 `notifications/cancelled`；子进程崩溃后状态正确且 stderr 进错误对象；OAuth `iss` 不匹配时拒绝兑换 code；工具名按 02 的命名规则稳定（以 `{server}__{tool}` 为基础，非法字符替换，超长截断并加哈希后缀；替换过的名字也加后缀），映射表进 Tape（2026-09-25 改，见 [02 §工具来源、命名与权限键](02-agent-loop/spec.md)）
 
-### 阶段 4：沙箱 + 文件桥（1–2 周）
+### 阶段 4：沙箱 + 文件桥（拆为 4a–4d：4a 2–3 周、4b 约 2 周、4c 与 4d 各 1–2 周，是起草人的估计、没有出处，以 04 标 implemented 时的检查点为准；2026-10-09 改，原为「1–2 周」）
 
-- `sandbox-runtime` 包住所有子进程（`wrapWithSandboxArgv` + `spawn`，MCP stdio server 整体入沙箱）；UI 三档 = 两种 config + 一个 bypass；**网络默认关闭**
-- 三个预编译 helper（`apply-seccomp` / `srt-win.exe` / `srt-proxy-agent.jar`）放 asar 外，用 config 指绝对路径；启动 `checkDependenciesAsync()` 把缺依赖告诉用户（Linux 含 userns sysctl）
+- `sandbox-runtime` 包住 Bash 起的命令（`wrapWithSandboxArgv` + `spawn`）；MCP stdio server 暂不入沙箱，上游发布按命令网络白名单后另立，03 写的「按工作区拆进程」不做；档位 = 只读 / 工作区可写两种 config + 不包装，默认工作区可写、只读放在设置「高级」里，不设常驻「完全访问」，越出沙箱只由用户从拦截回执一次性放行；**网络默认关闭**（2026-10-09 改，见 [04 §包装契约](04-sandbox/spec.md)；原为「包住所有子进程（`wrapWithSandboxArgv` + `spawn`，MCP stdio server 整体入沙箱）；UI 三档 = 两种 config + 一个 bypass」）
+- 三个预编译 helper（`apply-seccomp` / `srt-win.exe` / `srt-proxy-agent.jar`）放 asar 外与签名归阶段 7 的打包，4a 只在开发构建里验收、用 config 指 node_modules 里的绝对路径（2026-10-09 改，见 [04 §依赖](04-sandbox/spec.md)；原为「放 asar 外，用 config 指绝对路径」）；启动 `checkDependenciesAsync()` 把缺依赖告诉用户（Linux 含 userns sysctl）
 - 违规回传：`SandboxViolationStore.subscribe()` 推 UI，`annotateStderrWithSandboxFailures` 把 `<sandbox_violations>` 喂给模型，`deniedDomainReasons` 写给模型看的替代方案
-- 文件桥：路径归属校验（symlink / `..` 归一化）、宿主↔沙箱双向映射、**mtime 守卫**
+- 文件桥：路径归属校验（symlink / `..` 归一化）、宿主↔沙箱双向映射、**mtime 守卫**（2026-10-09 补，见 [04](04-sandbox/spec.md) Q2 A：宿主↔沙箱双向映射挪阶段 6b，其余随 05）
 - 读/写/删/执行拆成独立可授予单位；删除运行期单独申请
-- **任务模式成型**（2026-09-17 补，对齐 Cowork 本地模式）：任务会话 = 工作文件夹 + 沙箱 `workspace-write` 档 + 内联审批卡；主栏折叠头 + 活动时间线，右面板 进度 / 产物 / 上下文；界面以 UX 画布 v18 与 `docs/ux/parity-audit-2026-09-12.md` 为准。定时任务与 Projects 页仍在阶段 6
+- **任务模式成型**（2026-09-17 补；2026-10-09 改，见 [04](04-sandbox/spec.md) T37、Q2：原写「对齐 Cowork 本地模式」；Pro / Max 的新 Cowork 任务自 2026-10-06 起在云端运行，已进合并体验的账号任务只在云端（[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)），Team / Enterprise 仍有本地 VM 会话（2026-10-15 照公开文档改准，[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)、[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)），执行与隔离改为对照 Claude Desktop 的 Code 会话与 Claude Code；原写的「右面板 进度 / 产物 / 上下文」挪阶段 5，与 §8.5 和 components.md 一致）：任务会话 = 工作文件夹 + 沙箱 `workspace-write` 档 + 内联审批卡；主栏折叠头 + 活动时间线；界面以 UX 画布 v18 与 `docs/ux/parity-audit-2026-09-12.md` 为准，随 4d（`docs/features/task-mode-ui`）。定时任务与 Projects 页仍在阶段 6
 - **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示
 - **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开
-- **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/file/`（✅ 存在：adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts` ✅
-- **开工前裁决**（2026-09-17 审阅结论；sandbox-runtime 笔记是全仓最扎实的一份，不需要新笔记）：
+- **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/tool/agentTools/agentFileSystemHandler.ts`（`validatePath` / `resolveValidatedCreatePath`）与 `src/main/agent/acp/runtime/acpPathGuard.ts`（2026-10-09 改，见 [04](04-sandbox/spec.md) T3；原为「`src/main/file/`（adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts`」，validation.ts 管的是文件类型、不是路径）
+- **开工前裁决**（2026-09-17 审阅结论；sandbox-runtime 笔记是全仓最扎实的一份，不需要新笔记）。**裁决结果**（2026-10-09）：4a 承担的逐条见 [04 §裁决索引](04-sandbox/spec.md)，下列各条与 02 的七条落在哪份见 04 §主参考与 02 留下的各条的去向。阶段 4 拆成 4a = [04-sandbox](04-sandbox/spec.md)（沙箱与出网）、4b = 05-file-bridge（文件桥、快照与小结）、4c = 06-approval-modes（审批档位）、4d = `docs/features/task-mode-ui`（任务模式界面），按 4a → 4b → 4c → 4d 写、各自验收，4b–4d 的裁决已定、在 04 标 implemented 之后起草；spec 编号从此与阶段号脱钩（阶段 5 的 spec 取 07）。预算合计不超过阶段 3 的 3 倍；检查点：04 标 implemented 时验收条数或改动行数超过阶段 3 的 1.5 倍，就在起草 05 之前按「4d 挪阶段 6 打磨 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档」的顺序砍。原列的：
   - 沙箱档位与网络是一个枚举还是两个轴：`SandboxRequest.profile` 只有三档没有网络字段，而 UX 要「档位 / 网络 / 跑完自动降回」三件事；若改 `SandboxRequest`：只增字段按 amend 规则修补 00-foundation，改既有字段须 supersede
   - 沙箱不可用时的降级阶梯（Linux 缺 bwrap / socat、userns 被关、Windows 未提权、平台不支持）：抛错、直通加告警、还是拒绝执行任何工具；fail-closed 的边界
   - 「跑完自动降回」的确切时机与对象；Tenon 自己的 profileDir（含 Tape 与密钥引用）必须进 denyRead
@@ -944,7 +944,7 @@ Claude Desktop 的概念 → Tenon 的实现：
     - ⑤ 工作区内写入免问之前先挡硬链接：`HostFs.stat` 只增 nlink、大于 1 按工作区外处理，或 host 改用「临时文件加改名」（裁决 D8）
     - ⑥ 出网收口到位后，WebFetch 的地址判定并入 host 的统一收口（裁决 H8、D7）
     - ⑦ 沙箱能判联网与越界后，命令的主原因是否仍固定为 `command`，多个原因按 D5 排（裁决 E1、E4）
-- **验收**：sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过；端到端：选文件夹 → 发一个会写文件的任务 → 审批一次写入 → 完成并看到小结 → 点还原后文件内容与 mtime 回到任务前，`git status` 干净
+- **验收**：Tenon 自己的沙箱黑盒用例（照上游测试的断言思路：工作区外写、符号链接逃逸、保护文件、直连 IP、白名单外域名、停止后无残留进程）在 macOS 与 Linux CI 上全过（2026-10-09 改，见 [04 §验收标准](04-sandbox/spec.md)；原为「sandbox-runtime 的 `test/sandbox/*.test.ts` 逃逸测试集在我们的集成层上全过」：npm 包不带测试，上游测试直接 import 源码内部模块，测不到 Tenon 的接法）；端到端：选文件夹 → 发一个会写文件的任务 → 审批一次写入 → 完成并看到小结 → 点还原后文件内容与 mtime 回到任务前，`git status` 干净（这一句归 4b，05）
 
 ### 阶段 5：扩展层 + MCP Apps + Artifacts（4–6 周）
 
@@ -1070,7 +1070,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 ## 1. TL;DR
 
-1. **巨头都在做"超级应用"**：ChatGPT 7 月把聊天、Work、Codex 合并进一个桌面应用并内置浏览器；Claude Desktop 是 Chat / Cowork / Code 三合一，Cowork 默认云端。**桌面客户端正从"聊天窗口"变成"Agent 工作台"。**
+1. **巨头都在做"超级应用"**：ChatGPT 7 月把聊天、Work、Codex 合并进一个桌面应用并内置浏览器；Claude Desktop 是 Chat / Cowork / Code 三合一，Cowork 默认云端（2026-10-15 补：9 月 16 日起 Pro / Max 的 Chat 与 Cowork 按账号分批合成一个入口，Code 仍独立；[官方博客](https://claude.com/blog/cowork-is-now-claude)、[帮助文章](https://support.claude.com/en/articles/16761823)）。**桌面客户端正从"聊天窗口"变成"Agent 工作台"。**
 2. **MCP 是事实标准，7 月大改版**（无状态）。开源里 DeepChat 已跟进 v2，多数还在 v1。
 3. **开源侧三个新品类**：Cowork 替代品（AionUi、OpenWork）、常驻个人 Agent（Hermes、OpenClaw）、"界面 + 外接 CLI Agent 引擎"架构。
 4. **企业场景看 web 平台**（LibreChat、Open WebUI、Dify），许可证各有限制。
@@ -1119,7 +1119,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 ### 4.1 巨头一方客户端
 
-**Claude Desktop**：Chat / Cowork / Code 三 tab；Cowork 默认云端，本地模式在专用 VM ✅；本地 MCP 只在桌面端；仍是 MCP host 体验标杆。
+**Claude Desktop**：Chat / Cowork / Code 三 tab（2026-10-15 补：9 月 16 日起 Pro / Max 的 Chat 与 Cowork 按账号分批合为一个入口，Code 仍独立；[官方博客](https://claude.com/blog/cowork-is-now-claude)、[帮助文章](https://support.claude.com/en/articles/16761823)）；Cowork 默认云端，本地模式在专用 VM ✅；本地 MCP 只在桌面端；仍是 MCP host 体验标杆。
 
 **ChatGPT 桌面版**（7 月 9 日改版 ✅）：聊天、Work、Codex 合并进新应用，内置多标签浏览器；旧应用改名 "ChatGPT Classic"；Atlas 独立浏览器 8 月 9 日停运。
 

@@ -767,9 +767,9 @@ handler：`sampling/createMessage`、`elicitation/create` 转主进程 UI；`roo
 | 默认 | 每次问 | 全自动 | 每次问 |
 | 持久化 | 无 | AlwaysAllow/NeverAllow | "Allow always"（按工具） |
 | 读 readOnlyHint | 不读，不信 | 读 | 未知 |
-| LLM 判官 | auto_approve 模式 | SmartApprove 模式 | 无 |
+| LLM 判官 | auto_approve 模式 | SmartApprove 模式 | ~~无~~ 有（2026-10-15 改：Cowork 的 Auto 模式在每个动作执行前由 Claude 做安全评估，判为不安全的就拦下，持续被拦时退回逐步询问；官方文档没写评估是同一个模型还是独立分类器。出处：[get-started-with-claude-cowork](https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork)、[安全说明](https://support.claude.com/en/articles/13364135)） |
 
-建议：默认每次问 + 按 `(server, tool)` 的 "Allow always" 持久化 + **不信 readOnlyHint**（DeepChat 的理由站得住：注解来自远端，不该削弱本地策略）。这比 DeepChat 松、比 Goose 严，和 Claude Desktop 一致。
+建议：默认每次问 + 按 `(server, tool)` 的 "Allow always" 持久化 + **不信 readOnlyHint**（DeepChat 的理由站得住：注解来自远端，不该削弱本地策略）。这比 DeepChat 松、比 Goose 严，和 Claude Desktop 一致。（2026-10-15 补：「和 Claude Desktop 一致」指默认每次问与按工具持久化；Claude 现在另有可选的 Auto 模式，上表「LLM 判官」一行已改。）
 
 ## 5. MCP Apps：抄结构，改一处
 

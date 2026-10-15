@@ -53,9 +53,13 @@
 | 列 | Tenon 一侧 | 对照一侧 |
 |---|---|---|
 | 基线（每题都跑） | 智谱的基线模型，走 `/paas/v4`，是验收基准；基线模型由小横评定 | — |
-| 主对比（至少 10 题） | Opus 5.5 或 Sonnet 5，走 `api.anthropic.com`，用官方 key | Claude Desktop，选同一个模型，用 Max 订阅。`profile: 'chat'` 的题在 Chat 里跑；`cowork` 的题在 Cowork 本机会话里跑，用 Manual 档，连接 fixture 的文件夹。录屏对比 |
+| 主对比（至少 10 题） | Opus 5.5 或 Sonnet 5，走 `api.anthropic.com`，用官方 key | Claude Desktop，选同一个模型，用 Max 订阅。`profile: 'chat'` 的题在 Chat 里跑；`cowork` 的题在 Cowork 本机会话里跑，用 Manual 档，连接 fixture 的文件夹。录屏对比（2026-10-15 补：这套协议对 Pro / Max 已不能照原样复现，这一列降为只作参考，见下） |
 | 同模型列（对比集） | glm-5.3。先走 `/paas/v4`；T8 通过、补上评测专用行之后，改走 `/api/anthropic` | Claude Code + glm-5.3：接 `open.bigmodel.cn/api/anthropic`，Haiku / Sonnet / Opus 三个槽位全部钉成 glm-5.3，用 default（Manual）模式，在交互模式下手动跑 |
 
+- **2026-10-15 owner 定：Claude Desktop 一列降为只作参考，不作验收证据。**
+  - 2026-10-01 的 B 列由 GPT 照步骤操作 Claude Desktop 得出；03 读法 70 已把「Claude Desktop 一侧交给程序自动跑」判为违反 Anthropic 消费者条款对自动化访问的限制。B 的 10 题记录留作参考，不据它判 Tenon 是否达标，也不据它补跑（[10-01 对比](compare/00-2026-10-01-summary.md)）。
+  - 「cowork 的题在 Cowork 本机会话里跑、用 Manual 档」这个协议已不能照原样复现：Pro / Max 自 2026-09-16 起按账号分批把 Chat 与 Cowork 合为一个入口（迁移后不能切回），自 2026-10-06 起新 Cowork 任务一律在云端，没有本机会话可选（[官方公告](https://claude.com/blog/cowork-is-now-claude)、[帮助文章 16761823](https://support.claude.com/en/articles/16761823)、[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)）。owner 要求下一次评测运行之前另定新协议，并于 2026-10-15 定它只挡主对比（与 Claude Desktop 的同题对比）：基线列与同模型列照常跑，它们的跑法本身不涉及 Claude Desktop（记在 [04 plan](../architecture/04-sandbox/plan.md) 的 Open）。协议本身由下一份要跑同题对比的 spec 写进它自己的 plan。
+  - 02 验收 55 里「与 Claude Desktop 用同一模型的同题对比」这一半，在新协议下重新取证之前带限定（02 plan 验收记录第 55 行）；02 的 Status 仍为 implemented（owner 2026-10-15 定，照 03 验收 48 的先例），02 本身没有改。同模型列（Claude Code + glm-5.3）不受影响。
 - 同模型列跑不通工具循环时改用 OpenCode（经 `@ai-sdk/openai-compatible` 接 `/paas/v4`）；只是 WebFetch 不通，就把 Claude Code 一侧的联网题记为 `excluded`。
 - 没有官方 key 时，主对比的 Tenon 一侧先用 GLM 跑，每条记录的 note 写「Tenon 侧模型为 GLM，差距可能来自模型」；有了 key 再补跑。
 
@@ -87,6 +91,8 @@ pnpm evals:gate  # = TENON_EVALS_GATE=1 vitest run --project evals；评测基�
 ## 已知差异清单
 
 照抄自 02 §已知差异清单。
+
+（2026-10-15 注：第 1、5、8、9、10 条里关于 Claude Desktop / Cowork 的观察，出自 2026-09-28 补录和 2026-10-01 的 B 列。前者是合并之前的界面，而且同样是 GPT 照步骤操作 Claude Desktop 录的（见 [02 plan](../architecture/02-agent-loop/plan.md) 的补录记录），与 B 列是同一种做法（03 读法 70）。两者 owner 都已改为只作参考，不作验收证据（前者 2026-10-15 定，记在 [04 plan](../architecture/04-sandbox/plan.md) 的 Open）；新体验的消息框只有 Auto / Manual 两档、默认 Manual（[帮助文章](https://support.claude.com/en/articles/16761823)），本表没有重测。）
 
 1. **手动档问的范围**：Tenon 的写入，每个文件本会话问一次；命令按原文本会话问一次，只读命令也问（E4）；撤不回的只放行这一次（D10）（D7）。Claude Code 的 default 模式对 ls、cat、grep、git 只读形式等只读命令免问；Bash 的「不再询问」按仓库永久保存；文件编辑的授权到会话结束（Claude 底表 §9）。2026-09-28 Cowork Manual 补录中，在已连接的专用文件夹、同一会话内依次运行 ls、覆盖已有文件、新建文件、追加、shell 重定向写入、python3 --version、原样重复 ls，七项均未出现审批卡，文件状态逐项经终端核验；删除另有文件夹级、本会话有效的权限卡。2026-10-01 同题对比的 8 道 Cowork 题（改源码、跑测试、写输出文件）也只在开始时各弹一张「允许更改该文件夹」与一张本会话访问卡，操作卡 0 张（[10-01 对比](compare/00-2026-10-01-summary.md)）。本结果限这些操作与授权条件，不能泛化为任意命令免问（D7、H3）。见 [补录事实与证据边界](../ux/parity-audit-2026-09-12.md#2026-09-28-补记cowork-审批行为补录)。
 2. **子 agent**：Tenon 前台串行（H5），Claude Code 默认后台并发。
