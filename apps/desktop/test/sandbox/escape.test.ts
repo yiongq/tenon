@@ -43,7 +43,10 @@ const CASE_MS = 60_000
 /** macOS's log monitor keeps only the first denial of a log block (P2): each such case runs ≤ 3 times. */
 const DARWIN_TRIES = 3
 
-/** srt's own variables in a command's environment (srt79 dist/sandbox/sandbox-utils.js:642-781). */
+/**
+ * srt's own variables in a command's environment (srt79 dist/sandbox/sandbox-utils.js:642-781; the
+ * last two only on Linux, linux-sandbox-utils.js:2744-2747).
+ */
 const SRT_VARIABLES: ReadonlySet<string> = new Set([
   'SANDBOX_RUNTIME',
   'TMPDIR',
@@ -70,6 +73,8 @@ const SRT_VARIABLES: ReadonlySet<string> = new Set([
   'CLOUDSDK_PROXY_USERNAME',
   'CLOUDSDK_PROXY_PASSWORD',
   'JAVA_TOOL_OPTIONS',
+  'CLAUDE_CODE_HOST_HTTP_PROXY_PORT',
+  'CLAUDE_CODE_HOST_SOCKS_PROXY_PORT',
 ])
 /** srt's `safe.directory` set (sandbox-utils.js `GIT_CONFIG_COUNT` / `_KEY_<n>` / `_VALUE_<n>`). */
 const SRT_GIT_CONFIG = /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/
@@ -681,22 +686,23 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     async () => {
       const lab = rig.lab()
       lab.folders = [lab.home]
-      makeDir(join(lab.home, '.ssh'))
-      const targets = ['.ssh/authorized_keys', 'Library/LaunchAgents/x.plist']
+      const keys = writeHostFile(join(lab.home, '.ssh/authorized_keys'), 'ORIGINAL_KEYS\n')
+      const agent = join(lab.home, 'Library/LaunchAgents/x.plist')
       const ran = await lab.run(
-        targets
-          .map(
-            (name) =>
-              `mkdir -p ${shq(join(lab.home, name, '..'))} 2>/dev/null; echo ${WRITTEN} >> ${shq(join(lab.home, name))}; echo "${name}=$?"`,
-          )
-          .join('; ') + `; echo ok > ${shq(join(lab.home, 'normal.txt'))}; echo normal=$?`,
+        [
+          `echo ${WRITTEN} >> ${shq(keys)}`,
+          `mkdir -p ${shq(join(agent, '..'))} 2>/dev/null; echo ${WRITTEN} > ${shq(agent)}; echo agent=$?`,
+          `echo ok > ${shq(join(lab.home, 'normal.txt'))}; echo normal=$?`,
+        ].join('; '),
         { workspace: [lab.home], cwd: lab.home },
       )
       expect(ran.stdout).toMatch(/^normal=0$/m)
-      for (const name of targets) {
-        expect(ran.stdout).toMatch(new RegExp(`^${name.replaceAll('.', '\\.')}=[1-9]`, 'm'))
-        expect(hostKind(join(lab.home, name))).toBe('missing')
-      }
+      expect(ran.stdout).toMatch(/^agent=[1-9]/m)
+      // On the host, nothing: on Linux .ssh, a denyRead directory, is an empty tmpfs inside the
+      // sandbox (srt79 linux-sandbox-utils.js:1408-1415), so the append "succeeds" there and is gone
+      // with the sandbox; on macOS Seatbelt refuses it.
+      expect(readFileSync(keys, 'utf8')).toBe('ORIGINAL_KEYS\n')
+      expect(hostKind(agent)).toBe('missing')
     },
     CASE_MS,
   )
