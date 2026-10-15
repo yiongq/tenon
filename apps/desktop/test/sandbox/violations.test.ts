@@ -58,6 +58,15 @@ const DIRECTORIES = new Set([
   '/fx/p3/ws/.git',
   '/fx/user-data',
   '/fx/p1/linked/sub',
+  // roots holding regex metacharacters (the glob test)
+  '/fx/c++ (copy)$',
+  '/fx/c++ (copy)$/home',
+  '/fx/c++ (copy)$/ws',
+  '/fx/c++ (copy)$/ws/sub',
+  '/fx/a$b (copy)',
+  '/fx/a$b (copy)/home',
+  '/fx/a$b (copy)/ws',
+  '/fx/a$b (copy)/ws/sub',
 ])
 /** `ws/out-link` points outside the workspace (P1's F8); `linked` to a directory elsewhere. */
 const LINKS = new Set(['/fx/p1/ws/out-link', '/fx/p1/linked'])
@@ -373,7 +382,9 @@ const EXPECTED: Record<string, Expected | typeof DROPPED> = {
   'linux P1 F6-read-only-ws': { kind: 'fs', target: '/fx/p1/ws/ro.txt', observed: true },
   'linux P1 F7-chmod-home': { kind: 'fs', target: '/fx/p1/home', observed: true },
   // the path as written lies inside allowWrite; bwrap refused it because the link leads out.
-  // Dropped per 读法 11's letter; how a link on the way should count is a spec gap (plan Open)
+  // Dropped per 读法 11's letter, which pins a known gap rather than a wanted result: the real
+  // denial leaves no violation. Change this once the spec decides (plan Open 2026-10-15「Linux
+  // 观测器经链接的写」)
   'linux P1 F8-symlinks': DROPPED,
   // Linux, P2
   'linux P2 denied write': { kind: 'fs', target: '/fx/p2/outside/w0', observed: true },
@@ -582,6 +593,8 @@ describe('04 验收 16 (classification): srt violation lines', () => {
   })
 
   it("an off-list name srt's allowedDomains schema refuses (no dot, a leading dot) or one with an empty label offers no domain release", () => {
+    // past the spec table's "a domain, not localhost" (plan Open 2026-10-15「域名按钮只给 srt schema
+    // 收的名字」): such a button would make every later restricted wrap fail srt's schema
     const cases: [string, Expected][] = [
       [proxyLine('db:5432'), { kind: 'network', target: 'db' }],
       [proxyLine('com:80'), { kind: 'network', target: 'com' }],
@@ -604,9 +617,13 @@ describe('04 验收 16 (classification): srt violation lines', () => {
 
   it('a proxy-shaped line whose host srt would never pass as valid gets no target and no release', () => {
     // srt says `host is not on the allow list` only for a host its isValidHost takes (srt79
-    // parent-proxy.js:369-381), so such a line is forged: on Linux through the observer, whose
-    // `deny <syscall> <path>` takes the syscall from the sandboxed process (header, shape 2). The
-    // URL parser would read these as `example.com`.
+    // parent-proxy.js:369-381), so such a line is forged. Only the first can come through srt: the
+    // Linux observer writes `deny <syscall> <path>` with the syscall from the sandboxed process
+    // (header, shape 2), so syscall `network-outbound` and a path `/example.com:443 (…)` make it;
+    // its path always starts with ` /`, so the other three reach classify from no srt source and
+    // are defensive cases. The URL parser would read all four as `example.com`. A host outside
+    // isValidHost's charset gets no target, past the spec table (plan Open 2026-10-15「HOST_NAME
+    // 外的主机名不给 target」).
     const lines = [
       proxyLine('/example.com:443'),
       proxyLine('user@example.com:443'),
@@ -922,6 +939,86 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ).toStrictEqual(withLines(cases))
   })
 
+  it('a Seatbelt path under a name APFS folds to a protected one (ſ → s, ﬁ → fi) is protected and offers no release', () => {
+    // APFS on macOS 26.3 opens .zshrc as `.zſhrc` (U+017F) and .gitconfig as `.gitconﬁg` (U+FB01);
+    // JavaScript's toLowerCase keeps both letters as they are
+    const cases: [string, Expected][] = [
+      [
+        writeLine('/fx/p1/ws/.mcp.jſon'),
+        { kind: 'fs', target: '/fx/p1/ws/.mcp.jſon', protected: true },
+      ],
+      [
+        writeLine('/fx/p1/ws/.gitconﬁg'),
+        { kind: 'fs', target: '/fx/p1/ws/.gitconﬁg', protected: true },
+      ],
+      [
+        writeLine('/fx/p1/home/.zſhrc'),
+        { kind: 'fs', target: '/fx/p1/home/.zſhrc', protected: true },
+      ],
+      [
+        writeLine('/fx/p1/home/.ſsh/authorized_keys'),
+        { kind: 'fs', target: '/fx/p1/home/.ſsh/authorized_keys', protected: true },
+      ],
+      [
+        writeLine('/fx/p1/home/tenon-proﬁle/config.json'),
+        { kind: 'fs', target: '/fx/p1/home/tenon-proﬁle/config.json', protected: true },
+      ],
+      [
+        'cat(1) deny(1) file-read-data /fx/p1/home/tenon-proﬁle/config.json',
+        { kind: 'fs', target: '/fx/p1/home/tenon-proﬁle/config.json', protected: true },
+      ],
+      // a glob entry in a sub-directory
+      [
+        writeLine('/fx/p1/ws/sub/.vſcode'),
+        { kind: 'fs', target: '/fx/p1/ws/sub/.vſcode', protected: true },
+      ],
+    ]
+    const wrap = wrapOf('darwin', 'workspace-write', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
+  it('a Seatbelt path in another Unicode normalization than its entry (NFD against NFC) is protected; the Linux observer compares bytes', () => {
+    const nfc = '/fx/Café'
+    const nfd = '/fx/Café'
+    const cases: [string, Expected][] = [
+      [writeLine(`${nfd}/ws/.envrc`), { kind: 'fs', target: `${nfd}/ws/.envrc`, protected: true }],
+      [
+        writeLine(`${nfd}/ws/sub/.envrc`),
+        { kind: 'fs', target: `${nfd}/ws/sub/.envrc`, protected: true },
+      ],
+      [
+        `cat(1) deny(1) file-read-data ${nfd}/home/tenon-profile/config.json`,
+        { kind: 'fs', target: `${nfd}/home/tenon-profile/config.json`, protected: true },
+      ],
+    ]
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrapOf('darwin', 'workspace-write', nfc),
+      ),
+    ).toStrictEqual(withLines(cases))
+    // ext4 keeps the two spellings apart: the NFD path is neither the denyWrite entry nor inside
+    // the NFC workspace, so it stays as a plain diagnostic; the NFC one is protected
+    const linux: [string, Expected][] = [
+      [`deny openat ${nfd}/ws/.envrc`, { kind: 'fs', target: `${nfd}/ws/.envrc`, observed: true }],
+      [
+        `deny openat ${nfc}/ws/.envrc`,
+        { kind: 'fs', target: `${nfc}/ws/.envrc`, protected: true, observed: true },
+      ],
+    ]
+    expect(
+      classifyAll(
+        linux.map(([line]) => line),
+        wrapOf('linux', 'workspace-write', nfc),
+      ),
+    ).toStrictEqual(withLines(linux))
+  })
+
   it('a Linux observer path compares case by case: a case variant is no denyWrite entry', () => {
     const wrap = wrapOf('linux', 'workspace-write', P1)
     // ext4 tells .ENVRC from .envrc: inside allowWrite and not protected, so dropped
@@ -957,7 +1054,8 @@ describe('04 验收 16 (classification): srt violation lines', () => {
   })
 
   it('a write denial on an existing link offers no path release', () => {
-    // allowWrite gets real paths only: a link to a directory would give that whole subtree
+    // allowWrite gets real paths only: a link to a directory would give that whole subtree. Past
+    // 读法 35's "not an existing directory" (plan Open 2026-10-15「已存在的链接不给仅此路径」)
     const cases: [string, Expected][] = [
       [writeLine('/fx/p1/linked'), { kind: 'fs', target: '/fx/p1/linked' }],
       [writeLine('/fx/p1/ws/out-link'), { kind: 'fs', target: '/fx/p1/ws/out-link' }],
@@ -1015,6 +1113,46 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ).toStrictEqual(
       paths.map((path) => ({ kind: 'fs', line: writeLine(path), target: path, protected: true })),
     )
+    // a root holding regex metacharacters is matched as written, and classify does not throw
+    // (step 4 calls it from srt's store listener with no try around it)
+    const roots = ['/fx/c++ (copy)$', '/fx/a$b (copy)']
+    expect(
+      roots.map((root) =>
+        classifyAll(
+          [writeLine(`${root}/ws/sub/.envrc`), writeLine(`${root}/ws/sub/.vscode`)],
+          wrapOf('darwin', 'workspace-write', root),
+        ),
+      ),
+    ).toStrictEqual([
+      [
+        {
+          kind: 'fs',
+          line: writeLine('/fx/c++ (copy)$/ws/sub/.envrc'),
+          target: '/fx/c++ (copy)$/ws/sub/.envrc',
+          protected: true,
+        },
+        {
+          kind: 'fs',
+          line: writeLine('/fx/c++ (copy)$/ws/sub/.vscode'),
+          target: '/fx/c++ (copy)$/ws/sub/.vscode',
+          protected: true,
+        },
+      ],
+      [
+        {
+          kind: 'fs',
+          line: writeLine('/fx/a$b (copy)/ws/sub/.envrc'),
+          target: '/fx/a$b (copy)/ws/sub/.envrc',
+          protected: true,
+        },
+        {
+          kind: 'fs',
+          line: writeLine('/fx/a$b (copy)/ws/sub/.vscode'),
+          target: '/fx/a$b (copy)/ws/sub/.vscode',
+          protected: true,
+        },
+      ],
+    ])
   })
 
   it('a read denial under .ssh or the credential list is not protected; under the profile dir it is', () => {

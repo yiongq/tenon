@@ -6,28 +6,35 @@
  *
  * The shapes are tried in a fixed order, each one anchored to the whole line:
  *
- * 1. srt's proxy, `deny network-outbound <host>:<port> (<reason>)`. A host that a SOCKS client
- *    chose can hold spaces and parentheses (srt records it raw as `malformed host`), so this
- *    shape goes first.
+ * 1. srt's proxy, `deny network-outbound <host>:<port> (<reason>)`. srt records the host raw:
+ *    an HTTP CONNECT host may hold parentheses (srt79 http-proxy.js:669-676 takes `[^:]+`; the
+ *    SOCKS proxy refuses a malformed host before its filter and records nothing, socks-proxy.js:
+ *    22-31), and any proxy-shaped text can be forged through the Linux observer, whose syscall
+ *    is unchecked (shape 2). So this shape goes first.
  * 2. The Linux seccomp observer, `deny <syscall> <absolute path>`. Both its syscall and its path
  *    are the sandboxed process's own bytes: the observer socket is writable inside the sandbox
  *    (srt79 linux-violation-monitor.js:21-24, :76-82, :102-105).
- * 3. Seatbelt on macOS, `<process>(<pid>) deny(1) <operation>[ <rest>]`. Only srt's macOS log
- *    monitor makes these, and it never starts one with `deny `: srt's proxy and observer start
- *    every line that way, so a `deny ` line that missed shapes 1 and 2 is not a Seatbelt line
- *    (on Linux, nothing earns a path release). Nor is one holding a control character (srt cuts
- *    the log at newlines and its store turns the rest into spaces), a `Sandbox:` anywhere (读法
- *    44), or a second `(<pid>) deny(1) `: the process name holds no parentheses, and a name that
- *    does must not make the line read as another operation.
+ * 3. Seatbelt on macOS, `<process>(<pid>) deny(1) <operation>[ <rest>]`, the whole text after
+ *    `Sandbox: ` in the log (macos-sandbox-utils.js:1158, :1176). A line starting with `deny ` is
+ *    not read as one: srt's proxy and observer start every line that way, the observer's with a
+ *    forgeable syscall, and the context carries no platform to tell them apart (on Linux nothing
+ *    may earn a path release). The cost: on macOS a process whose name starts with `deny ` (the
+ *    sandboxed program picks the basename) has its real denials read as unrecognized lines, as
+ *    the spec already accepts for a name with parentheses (plan Open 2026-10-15「进程名以 deny
+ *    开头的 Seatbelt 行」). Nor is one holding a control character (srt cuts the log at newlines
+ *    and its store turns the rest into spaces), a `Sandbox:` anywhere (读法 44), or a second
+ *    `(<pid>) deny(1) `: the process name holds no parentheses, and a name that does must not
+ *    make the line read as another operation.
  *
  * Anything else is `kind: 'fs'` with no target and not `observed`: it still counts towards the
  * denial cap (读法 44, 53, spec open question 8).
  *
  * A Seatbelt line's path is compared with the lists as macOS's default APFS volume compares names,
- * ignoring case and Unicode normalization: Seatbelt refuses `.ENVRC` under a `.envrc` rule and logs
- * the name as the command spelled it (P1 F11, F12), so "on a denyWrite entry" there means the same
- * file. Folding only adds matches, so it only adds `protected` and removes releases. The Linux
- * observer's paths compare as bytes.
+ * ignoring Unicode normalization and case under full case folding (`.zſhrc`, `.gitconﬁg` and
+ * `straße` name `.zshrc`, `.gitconfig` and `strasse`): Seatbelt refuses `.ENVRC` under a `.envrc`
+ * rule and logs the name as the command spelled it (P1 F11, F12), so "on a denyWrite entry" there
+ * means the same file. Folding only adds matches, so folding more than APFS does only adds
+ * `protected` and removes releases. The Linux observer's paths compare as bytes.
  */
 import { isIP } from 'node:net'
 import { posix } from 'node:path'
@@ -76,18 +83,24 @@ const CONTROL = /\p{Cc}/u
 const SEATBELT_DIRECT = /^remote:\*:\d+$/
 const FILE_WRITE = /^file-write-[a-z]+(?:-[a-z]+)*$/
 const FILE_READ = /^file-read-[a-z]+(?:-[a-z]+)*$/
-/** srt's isValidHost charset for a name; an IP literal is checked apart. */
+/**
+ * srt's isValidHost charset for a name (parent-proxy.js:369-381); an IP literal is checked apart.
+ * A host outside it gets no target, past the spec table's "the host name, normalized" (plan Open
+ * 2026-10-15「HOST_NAME 外的主机名不给 target」).
+ */
 const HOST_NAME = /^[A-Za-z0-9._-]+$/
 /**
  * A plain domain srt's config schema takes as an allowedDomains entry: at least one dot, neither
- * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label.
+ * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label. Past the spec
+ * table's "a domain, not localhost" (plan Open 2026-10-15「域名按钮只给 srt schema 收的名字」).
  */
 const DOMAIN_NAME = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/
 
 /** How a path is compared: as bytes, or as a case-insensitive APFS volume does (header). */
 type Fold = (text: string) => string
 const AS_BYTES: Fold = (text) => text
-const APFS: Fold = (text) => text.normalize('NFC').toLowerCase()
+/** Upper then lower case: `toLowerCase` alone keeps `ſ` and `ﬁ`, which APFS folds to s and fi. */
+const APFS: Fold = (text) => text.normalize('NFC').toUpperCase().toLowerCase()
 
 /** The proxy's only reason that leaves a domain button (读法 18). */
 const NOT_ON_ALLOW_LIST = 'host is not on the allow list'
@@ -146,7 +159,10 @@ function observerReport(
   }
   const spot = posix.normalize(path)
   const denied = context.denyWrite.some((entry) => covers(entry, spot, AS_BYTES))
-  // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11).
+  // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11). The
+  // path is as the process spelled it (links not resolved, linux-violation-monitor.js:62) and
+  // allowWrite holds real paths, so a write through a workspace link that leads out is dropped
+  // here though bwrap refused it: a spec gap (plan Open 2026-10-15「Linux 观测器经链接的写」).
   if (!denied && context.allowWrite.some((entry) => covers(entry, spot, AS_BYTES))) return undefined
   return denied
     ? { kind: 'fs', line, target: path, protected: true, observed: true }
@@ -193,9 +209,10 @@ function writeDenial(line: string, target: string, context: ViolationContext): S
  * path, that is not an existing directory and is neither `/`, the home or profile directory, any
  * denyRead or denyWrite entry, nor an ancestor of one. Seatbelt allows a whole subtree, so a
  * denial on an ancestor (`chmod 700 ~`, a name cut at a newline) must never become the release.
- * An existing link is refused too: allowWrite gets real paths only, so a link to a directory
- * (`/tmp`, `~/bin`; srt's store drops `<>`, so `touch '/tmp<'` names it) would give its target's
- * whole subtree (plan Open).
+ * An existing link is refused too, past 读法 35's "not an existing directory": allowWrite gets
+ * real paths only, so a link to a directory (`/tmp`, `~/bin`; srt's store drops `<>`, so
+ * `touch '/tmp<'` names it) would give its target's whole subtree (plan Open 2026-10-15「已存在的
+ * 链接不给仅此路径」).
  */
 function offersPathRelease(target: string, context: ViolationContext): boolean {
   if (!target.startsWith('/') || target.endsWith('/') || posix.normalize(target) !== target) {
