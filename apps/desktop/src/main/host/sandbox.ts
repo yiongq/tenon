@@ -193,9 +193,9 @@ export interface SandboxFileStat {
 
 /** The host's process table on darwin (§执行与收口; P6): host-internal helpers, like taskkill. */
 export interface SandboxProcessTable {
-  /** `/bin/ps -E -axww -o pid=,command=`'s output. */
+  /** `/bin/ps -E -axww -o pid=,pgid=,command=`'s output. */
   list(): Promise<string>
-  /** SIGKILL one process; a process already gone is no error. */
+  /** SIGKILL one process, or the process group `-pid` names (kill(2)); one already gone is no error. */
   kill(pid: number): void
 }
 
@@ -785,7 +785,13 @@ export class DesktopSandbox implements HostSandbox {
     }
   }
 
-  /** P6: what this wrap left running outside its process group, found by its mark (darwin). */
+  /**
+   * P6: what this wrap left running outside its process group, found by its mark (darwin), and the
+   * process group of each one found (setsid-mac A, 2026-10-16): a marked process that setsid may
+   * have started Apple platform binaries in its new group, whose mark `ps -E` cannot show. Never
+   * group 0, launchd's or Tenon's own, read from the same table (Node has no getpgid); with no row
+   * for Tenon there, no group at all.
+   */
   private async killMarked(records: readonly WrapRecord[]): Promise<void> {
     let table: string
     try {
@@ -794,20 +800,32 @@ export class DesktopSandbox implements HostSandbox {
       this.deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
       return
     }
-    // `ps -E` prints the environment unquoted, and a provider's tool-call id may hold spaces: the
-    // mark is looked for whole, not as one white-space token.
-    const marks = records.map((record) => `${SANDBOX_MARK_VARIABLE}=${record.srtId}`)
+    const rows: { pid: number; pgid: number; command: string }[] = []
     for (const row of table.split('\n')) {
-      const match = /^\s*(\d+)\s+(.*)$/.exec(row)
-      if (match === null) continue
-      const pid = Number(match[1])
-      if (pid <= 1 || pid === process.pid) continue
-      if (!marks.some((mark) => holdsWord(match[2] ?? '', mark))) continue
+      const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(row)
+      if (match !== null) {
+        rows.push({ pid: Number(match[1]), pgid: Number(match[2]), command: match[3] ?? '' })
+      }
+    }
+    const own = rows.find((row) => row.pid === process.pid)?.pgid
+    const kill = (pid: number): void => {
       try {
         this.deps.processes.kill(pid)
       } catch {
         // Gone already.
       }
+    }
+    // `ps -E` prints the environment unquoted, and a provider's tool-call id may hold spaces: the
+    // mark is looked for whole, not as one white-space token.
+    const marks = records.map((record) => `${SANDBOX_MARK_VARIABLE}=${record.srtId}`)
+    const groups = new Set<number>()
+    for (const { pid, pgid, command } of rows) {
+      if (pid <= 1 || pid === process.pid) continue
+      if (!marks.some((mark) => holdsWord(command, mark))) continue
+      kill(pid)
+      if (own === undefined || pgid <= 1 || pgid === own || groups.has(pgid)) continue
+      groups.add(pgid)
+      kill(-pgid)
     }
   }
 
@@ -980,7 +998,7 @@ export function desktopProcessTable(): SandboxProcessTable {
   return {
     list: () =>
       new Promise((resolve, reject) => {
-        const child = spawn('/bin/ps', ['-E', '-axww', '-o', 'pid=,command='], {
+        const child = spawn('/bin/ps', ['-E', '-axww', '-o', 'pid=,pgid=,command='], {
           stdio: ['ignore', 'pipe', 'ignore'],
         })
         const chunks: Buffer[] = []

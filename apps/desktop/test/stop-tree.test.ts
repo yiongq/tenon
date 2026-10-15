@@ -628,15 +628,14 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
       CASE_TIMEOUT_MS,
     )
 
-    // On darwin only afterExit's TENON_SANDBOX_MARK scan reaches a process that setsids and outlives
-    // a call that ended on its own, and `ps -E` shows no environment for an Apple platform binary
-    // (perl, sleep, the shells): a setsid perl here outlives the call (step 6 review, 2026-10-15).
-    // So this case covers a binary that is not one, python3 as in P6. The other half is NOT met on
-    // darwin and has no case: a setsid Apple platform binary (perl, sleep, a shell) outlives a call
-    // that ended on its own, so 验收 15 and 不变量 13 do not pass there until the owner decides
-    // between narrowing them on darwin and another way to kill it (plan Open). `: <mark>_decoy` puts
-    // the mark twice in the command text, so the shell and the sandbox-exec wrapper carrying it are
-    // never taken for the python process.
+    // On darwin only afterExit's TENON_SANDBOX_MARK scan (and the process group of each process it
+    // finds) reaches a process that left the command's group and outlives a call that ended on its
+    // own, and `ps -E` shows no environment for an Apple platform binary (perl, sleep, the shells).
+    // So these cases use python3 (as in P6), which is not one; the darwin case after them records
+    // what is left: a platform binary that left the group by itself outlives the call (setsid-mac A,
+    // 2026-10-16: 验收 15 and 不变量 13 narrowed on darwin, §已知限制). `: <mark>_decoy` puts the
+    // mark twice in the command text, so the shell and the sandbox-exec wrapper carrying it are never
+    // taken for one of the processes it starts.
     it(
       '04 验收 15: a command that setsids a non-platform binary (python3) and exits leaves it running nowhere once the call ends (04 不变量 13; on darwin found by its TENON_SANDBOX_MARK)',
       async () => {
@@ -658,6 +657,66 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
         const gone = await goneAt(mark, endedAt + PATIENCE_MS)
         expect(gone).not.toBeNull()
         expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    it(
+      '04 验收 15: a command whose setsid python3 starts perl in its new group and exits leaves neither running once the call ends (04 不变量 13; on darwin perl goes with the group of the python found by its TENON_SANDBOX_MARK)',
+      async () => {
+        const mark = newMark('group')
+        marks.push(mark)
+        // perl's marker is python's own with `_setsid` swapped for `_perl`, so neither argv holds
+        // the mark twice.
+        const python = [
+          'import os, subprocess, sys, time',
+          'os.setsid()',
+          'subprocess.Popen(["perl", "-e", "sleep 607", sys.argv[1].replace("_setsid", "_perl")])',
+          'time.sleep(606)',
+        ].join('; ')
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            `python3 -c '${python}' ${mark}_setsid >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['setsid', 'perl'])
+        const execution = await call
+        const endedAt = now()
+        expect(execution).toMatchObject({ isError: false, state: 'completed' })
+        const gone = await goneAt(mark, endedAt + PATIENCE_MS)
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    // What setsid-mac A (2026-10-16) leaves on darwin, as it is: a setsid Apple platform binary
+    // carries the mark where `ps -E` cannot show it and has left the command's group, so nothing
+    // finds it once the call ends on its own (§已知限制). This case goes red the day it is killed;
+    // then 验收 15 and 不变量 13 can drop their darwin narrowing. afterEach kills it.
+    it.skipIf(process.platform !== 'darwin')(
+      '04 验收 15 (darwin, as it is): a command that setsids an Apple platform binary (perl) and exits leaves it running 1 s after the call ends (§已知限制)',
+      async () => {
+        const mark = newMark('platform')
+        marks.push(mark)
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            `perl -MPOSIX -e 'POSIX::setsid(); sleep 608' ${mark}_setsid >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['setsid'])
+        const execution = await call
+        const endedAt = now()
+        expect(execution).toMatchObject({ isError: false, state: 'completed' })
+        expect(await goneAt(mark, endedAt + TREE_CLEAR_MS)).toBeNull()
       },
       CASE_TIMEOUT_MS,
     )

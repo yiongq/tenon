@@ -1288,35 +1288,53 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     })
   })
 
-  it("04 验收 15 (host): on darwin afterExit SIGKILLs exactly the processes carrying this wrap's mark", async () => {
+  it("04 验收 15 (host): on darwin afterExit SIGKILLs exactly the processes carrying this wrap's mark, and the process group of each, never group 0, launchd's or Tenon's own", async () => {
     const h = harness('darwin')
     await h.run({ commandId: 'toolu_a' })
     await h.run({ commandId: 'toolu_b' })
     const [a, b] = h.calls.map((call) => call.id)
+    // Tenon's own row gives its group (500); 4113 is a platform binary the setsid python started in
+    // its new group, its environment hidden from `ps -E`: only the group kill reaches it.
     h.processes.table = [
-      `  4101 /bin/sleep 600 PATH=/usr/bin TENON_SANDBOX_MARK=${a} HOME=/Users/u`,
-      `  4102 /usr/bin/python3 -c import os,time; os.setsid(); time.sleep(601) TENON_SANDBOX_MARK=${a}`,
-      `  4103 /bin/sleep 602 TENON_SANDBOX_MARK=${b}`,
-      `  4104 /bin/sleep 603 TENON_SANDBOX_MARK=${a}0`,
-      `  4105 /bin/sleep 604 OTHER=TENON_SANDBOX_MARK=${a}`,
-      '  4106 /bin/zsh -l',
+      `  ${String(process.pid)}   500 /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      `  4101  4100 /bin/sleep 600 PATH=/usr/bin TENON_SANDBOX_MARK=${a} HOME=/Users/u`,
+      `  4102  4102 /usr/bin/python3 -c import os,time; os.setsid(); time.sleep(601) TENON_SANDBOX_MARK=${a}`,
+      `  4103  4103 /bin/sleep 602 TENON_SANDBOX_MARK=${b}`,
+      `  4104  4104 /bin/sleep 603 TENON_SANDBOX_MARK=${a}0`,
+      `  4105  4105 /bin/sleep 604 OTHER=TENON_SANDBOX_MARK=${a}`,
+      '  4106  4106 /bin/zsh -l',
+      `  4109  4100 /bin/sleep 607 TENON_SANDBOX_MARK=${a}`,
+      `  4110   500 /bin/sleep 608 TENON_SANDBOX_MARK=${a}`,
+      `  4111     1 /bin/sleep 609 TENON_SANDBOX_MARK=${a}`,
+      `  4112     0 /bin/sleep 610 TENON_SANDBOX_MARK=${a}`,
+      '  4113  4102 /usr/bin/perl -e sleep 611',
       '',
     ].join('\n')
     await h.sandbox.afterExit('toolu_a')
-    expect(h.killed).toEqual([4101, 4102])
+    expect(h.killed).toEqual([4101, -4100, 4102, -4102, 4109, 4110, 4111, 4112])
     await h.sandbox.afterExit('toolu_b')
-    expect(h.killed).toEqual([4101, 4102, 4103])
+    expect(h.killed).toEqual([4101, -4100, 4102, -4102, 4109, 4110, 4111, 4112, 4103, -4103])
 
     // A provider's tool-call id may hold spaces, and `ps -E` prints the mark unquoted.
     await h.run({ commandId: 'call 7 x' })
     const spaced = h.calls[2]?.id ?? ''
     h.processes.table = [
-      `  4107 /bin/sleep 605 TENON_SANDBOX_MARK=${spaced} HOME=/Users/u`,
-      '  4108 /bin/sleep 606 TENON_SANDBOX_MARK=call',
+      `  ${String(process.pid)}   500 /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      `  4107  4107 /bin/sleep 605 TENON_SANDBOX_MARK=${spaced} HOME=/Users/u`,
+      '  4108  4108 /bin/sleep 606 TENON_SANDBOX_MARK=call',
       '',
     ].join('\n')
+    h.killed.length = 0
     await h.sandbox.afterExit('call 7 x')
-    expect(h.killed).toEqual([4101, 4102, 4103, 4107])
+    expect(h.killed).toEqual([4107, -4107])
+
+    // No row for Tenon: its own group is unknown, so no group is killed, only the marked process.
+    await h.run({ commandId: 'toolu_c' })
+    const c = h.calls[3]?.id ?? ''
+    h.processes.table = [`  4114  4114 /bin/sleep 612 TENON_SANDBOX_MARK=${c}`, ''].join('\n')
+    h.killed.length = 0
+    await h.sandbox.afterExit('toolu_c')
+    expect(h.killed).toEqual([4114])
 
     // Linux leaves its processes to bwrap's --die-with-parent and the process group (P6).
     const linux = harness('linux')
