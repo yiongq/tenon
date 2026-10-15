@@ -712,27 +712,68 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     CASE_MS,
   )
 
+  /**
+   * 验收 11, a deny entry that is a dangling link: the home is the workspace and `~/.aws` links to
+   * `~/dotfiles/aws`, not made yet. The command makes the target and writes a config there, by the
+   * target's spelling and through the link.
+   */
+  async function writeThroughDanglingAws(): Promise<{ readonly home: string; readonly ran: Ran }> {
+    const lab = rig.lab()
+    const home = lab.home
+    lab.folders = [home]
+    symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
+    const config = shq('[default]\ncredential_process = /usr/bin/true\n')
+    const ran = await lab.run(
+      [
+        'mkdir -p "$HOME/dotfiles/aws"; echo made=$?',
+        `printf ${config} > "$HOME/dotfiles/aws/config"; echo real=$?`,
+        `printf ${config} > "$HOME/.aws/config"; echo link=$?`,
+      ].join('; '),
+      { workspace: [home], cwd: home },
+    )
+    return { home, ran }
+  }
+
   it(
     '04 验收 11: a deny entry that is a dangling link (~/.aws to ~/dotfiles/aws, not made yet; the home the workspace): the command can make neither the target nor its missing parent, nor write a config there or through the link; nothing is left on the host',
     async () => {
-      const lab = rig.lab()
-      const home = lab.home
-      lab.folders = [home]
-      symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
-      const config = shq('[default]\ncredential_process = /usr/bin/true\n')
-      const ran = await lab.run(
-        [
-          'mkdir -p "$HOME/dotfiles/aws"; echo made=$?',
-          `printf ${config} > "$HOME/dotfiles/aws/config"; echo real=$?`,
-          `printf ${config} > "$HOME/.aws/config"; echo link=$?`,
-        ].join('; '),
-        { workspace: [home], cwd: home },
-      )
+      const { home, ran } = await writeThroughDanglingAws()
       for (const label of ['made', 'real', 'link']) {
         expect(new RegExp(`^${label}=(\\d+)$`, 'm').exec(ran.stdout)?.[1]).toMatch(/^[1-9]\d*$/)
       }
       expect(hostKind(join(home, 'dotfiles'))).toBe('missing')
       expect(readlinkSync(join(home, '.aws'))).toBe(join(home, 'dotfiles/aws'))
+    },
+    CASE_MS,
+  )
+
+  // srt masks the dangling link's target by itself before it mounts (linux-sandbox-utils.js:2042),
+  // so the refusals above hold whatever Tenon passes; Tenon's part on Linux is the record.
+  it.skipIf(DARWIN)(
+    '04 验收 11: (linux) with ~/.aws a dangling link to ~/dotfiles/aws (the home the workspace), the writes to the target, spelled either way, are recorded protected, not dropped as writes inside the workspace (读法 11)',
+    async () => {
+      const { home, ran } = await writeThroughDanglingAws()
+      const target = join(real(home), 'dotfiles/aws')
+      const shapes = ran.violations.map(shapeOf)
+      expect(shapes.filter((v) => v.target === target)).toEqual([
+        { kind: 'fs', target, release: null, protected: true, observed: true },
+      ])
+      expect(shapes.filter((v) => v.target === join(target, 'config'))).toEqual([
+        {
+          kind: 'fs',
+          target: join(target, 'config'),
+          release: null,
+          protected: true,
+          observed: true,
+        },
+        {
+          kind: 'fs',
+          target: join(target, 'config'),
+          release: null,
+          protected: true,
+          observed: true,
+        },
+      ])
     },
     CASE_MS,
   )
