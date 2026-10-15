@@ -1,0 +1,962 @@
+{
+  "srt": "0.0.79",
+  "captured": "2026-10-14, spec 04 probes P1-P3 (plan 实施记录)",
+  "source": "../tenon-notes/2026-10-09-phase4-sandbox/probes/results/{macos,linux-u2404,linux-u2604-apparmorfix}/{violation-lines.json,p2.json,p3.json}",
+  "placeholders": "Each platform's probe run directory is /fx: <run>/p1/home becomes /fx/p1/home and so on (home, ws, outside, the profile at home/tenon-profile). Pids and ports are as captured. Left out: the probe's own canary lines, Linux 24.04's mkdirat lines for the probe machine's directories above the run directory (the chain from /Users down; /fx and /fx/p1 stand for its tail), and lines that differ from one kept here only by a pid, port, timestamp or temp-file name (their platforms are listed on the kept one).",
+  "lines": [
+    {
+      "id": "macos P1 F1-write-outside",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F1-write-outside",
+      "profile": "workspace-write",
+      "line": "zsh(74865) deny(1) file-write-create /fx/p1/outside/f1",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F3-read-profile",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F3-read-profile",
+      "profile": "workspace-write",
+      "line": "cat(75125) deny(1) file-read-data /fx/p1/home/tenon-profile/config.json",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.envrc",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.envrc",
+      "profile": "workspace-write",
+      "line": "zsh(75157) deny(1) file-write-create /fx/p1/ws/.envrc",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.claude/settings.json",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.claude/settings.json",
+      "profile": "workspace-write",
+      "line": "mkdir(75182) deny(1) file-write-create /fx/p1/ws/.claude",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.mcp.json",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.mcp.json",
+      "profile": "workspace-write",
+      "line": "zsh(75205) deny(1) file-write-create /fx/p1/ws/.mcp.json",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.git/hooks/x",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.git/hooks/x",
+      "profile": "workspace-write",
+      "line": "mkdir(75230) deny(1) file-write-create /fx/p1/ws/.git",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.vscode/tasks.json",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.vscode/tasks.json",
+      "profile": "workspace-write",
+      "line": "mkdir(75256) deny(1) file-write-create /fx/p1/ws/.vscode",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F4-denyWrite:.zshrc",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.zshrc",
+      "profile": "workspace-write",
+      "line": "zsh(75279) deny(1) file-write-create /fx/p1/ws/.zshrc",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F6-read-only-ws",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F6-read-only-ws",
+      "profile": "read-only",
+      "line": "zsh(75331) deny(1) file-write-create /fx/p1/ws/ro.txt",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F7-chmod-home",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F7-chmod-home",
+      "profile": "workspace-write",
+      "line": "chmod(75355) deny(1) file-write-mode /fx/p1/home",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F8-symlinks #1",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F8-symlinks",
+      "profile": "workspace-write",
+      "line": "zsh(75392) deny(1) file-write-create /fx/p1/outside/via-link",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F8-symlinks #2",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F8-symlinks",
+      "profile": "workspace-write",
+      "line": "cat(75393) deny(1) file-read-data /fx/p1/home/.ssh/id_ed25519",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F10-mach-lookup #1",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F10-mach-lookup",
+      "profile": "workspace-write",
+      "line": "scutil(75443) deny(1) mach-lookup com.apple.SystemConfiguration.configd",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F10-mach-lookup #2",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F10-mach-lookup",
+      "profile": "workspace-write",
+      "line": "scutil(75443) deny(1) sysctl-read hw.model",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 F10-mach-lookup #3",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "F10-mach-lookup",
+      "profile": "workspace-write",
+      "line": "launchctl(75444) deny(1) sysctl-read kern.singleuser",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 N1-host-not-listed-http",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "N1-host-not-listed-http",
+      "profile": "workspace-write",
+      "line": "curl(76526) deny(1) mach-lookup com.apple.SystemConfiguration.configd",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N1-host-not-listed-http",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N1-host-not-listed-http",
+      "profile": "workspace-write",
+      "line": "deny network-outbound example.com:80 (host is not on the allow list)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N2-host-not-listed-connect",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N2-host-not-listed-connect",
+      "profile": "workspace-write",
+      "line": "deny network-outbound example.com:443 (host is not on the allow list)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N3-ip-literal",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N3-ip-literal",
+      "profile": "workspace-write",
+      "line": "deny network-outbound 1.1.1.1:80 (host is not on the allow list)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 N4-direct",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "N4-direct",
+      "profile": "workspace-write",
+      "line": "curl(76620) deny(1) network-outbound remote:*:80",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P1 N5b-localhost-listed-default-curl",
+      "platforms": ["macos"],
+      "probe": "P1",
+      "check": "N5b-localhost-listed-default-curl",
+      "profile": "workspace-write",
+      "line": "curl(76720) deny(1) network-outbound remote:*:50109",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N6b-other-port",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N6b-other-port",
+      "profile": "workspace-write",
+      "line": "deny network-outbound 127.0.0.1:50110 (host is not on the allow list)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N6c-localhost-not-listed",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N6c-localhost-not-listed",
+      "profile": "workspace-write",
+      "line": "deny network-outbound localhost:50109 (host is not on the allow list)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "all P1 N9-parentproxy",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "N9-parentproxy",
+      "profile": "workspace-write",
+      "line": "deny network-outbound tenon-probe-loopback.test:50109 (resolved to a loopback address)",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "macos P2 denied write",
+      "platforms": ["macos"],
+      "probe": "P2",
+      "check": "denied write",
+      "profile": "workspace-write",
+      "line": "zsh(77297) deny(1) file-write-create /fx/p2/outside/w0",
+      "from": "p2.json"
+    },
+    {
+      "id": "all P2 denied connect",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "denied connect",
+      "profile": "workspace-write",
+      "line": "deny network-outbound p2-denied-0.example.invalid:80 (host is not on the allow list)",
+      "from": "p2.json"
+    },
+    {
+      "id": "macos P2 git status",
+      "platforms": ["macos"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "read-only",
+      "line": "git(79946) deny(1) file-write-create /fx/p2/ws/.git/index.lock",
+      "from": "p2.json"
+    },
+    {
+      "id": "macos P2 npm install",
+      "platforms": ["macos"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "node(80280) deny(1) network-outbound",
+      "from": "p2.json"
+    },
+    {
+      "id": "macos P3 npm view #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "npm view",
+      "profile": "workspace-write",
+      "line": "node(80587) deny(1) mach-lookup com.apple.SystemConfiguration.DNSConfiguration",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 npm view #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "npm view",
+      "profile": "workspace-write",
+      "line": "node(80620) deny(1) file-read-data /fx/p3/home/.npmrc",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gh auth status #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gh auth status",
+      "profile": "workspace-write",
+      "line": "gh(81225) deny(1) network-outbound",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gh auth status #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gh auth status",
+      "profile": "workspace-write",
+      "line": "gh(81225) deny(1) network-bind local:*:0",
+      "from": "p3.json"
+    },
+    {
+      "id": "all P3 gh auth status",
+      "platforms": ["macos", "linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gh auth status",
+      "profile": "workspace-write",
+      "line": "deny network-outbound fake-ghe.invalid:443 (host is not on the allow list)",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gh auth status #3",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gh auth status",
+      "profile": "workspace-write",
+      "line": "gh(81347) deny(1) file-read-data /fx/p3/home/.config/gh/config.yml",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 docker version #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "docker version",
+      "profile": "workspace-write",
+      "line": "docker(81408) deny(1) sysctl-read sysctl.proc_translated",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 docker version #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "docker version",
+      "profile": "workspace-write",
+      "line": "docker(81448) deny(1) file-read-data /fx/p3/home/.docker/config.json",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gcloud --version #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "Python(81554) deny(1) file-write-create /fx/p3/home/.config/gcloud/logs/2026.10.14/21.41.20.251467.log",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gcloud --version #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "Python(81628) deny(1) network-bind local:*:0",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 gcloud --version #3",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "Python(81628) deny(1) file-read-data /fx/p3/home/.config/gcloud/active_config",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 git ls-remote #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "git ls-remote",
+      "profile": "workspace-write",
+      "line": "git-remote-http(82498) deny(1) mach-lookup com.apple.SystemConfiguration.configd",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 git ls-remote #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "git ls-remote",
+      "profile": "workspace-write",
+      "line": "git-credential-osxkeychain(82516) deny(1) mach-lookup com.apple.authd (xpc)",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 git ls-remote #3",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "git ls-remote",
+      "profile": "workspace-write",
+      "line": "git-remote-http(82542) deny(1) file-read-data /fx/p3/home/.netrc",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #1",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82616) deny(1) file-read-data /fx/p3/home/.ssh/id_ed25519",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #2",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82618) deny(1) file-read-data /fx/p3/home/.aws/credentials",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #3",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82620) deny(1) file-read-data /fx/p3/home/.gnupg/private-keys-v1.d/probe.key",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #4",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82622) deny(1) file-read-data /fx/p3/home/.config/gh/hosts.yml",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #5",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82624) deny(1) file-read-data /fx/p3/home/.npmrc",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #6",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82626) deny(1) file-read-data /fx/p3/home/.docker/config.json",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #7",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82628) deny(1) file-read-data /fx/p3/home/.kube/config",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #8",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82630) deny(1) file-read-data /fx/p3/home/.config/gcloud/application_default_credentials.json",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #9",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82632) deny(1) file-read-data /fx/p3/home/.git-credentials",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #10",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82634) deny(1) file-read-data /fx/p3/home/.netrc",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #11",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82636) deny(1) file-read-data /fx/p3/home/.pypirc",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #12",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82638) deny(1) file-read-data /fx/p3/home/.cargo/credentials.toml",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #13",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82640) deny(1) file-read-data /fx/p3/home/Library/Application Support/Google/Chrome/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #14",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82642) deny(1) file-read-data /fx/p3/home/Library/Application Support/Chromium/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #15",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82644) deny(1) file-read-data /fx/p3/home/Library/Application Support/Microsoft Edge/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #16",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82646) deny(1) file-read-data /fx/p3/home/Library/Application Support/BraveSoftware/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #17",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82648) deny(1) file-read-data /fx/p3/home/Library/Application Support/Arc/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #18",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82650) deny(1) file-read-data /fx/p3/home/Library/Application Support/Firefox/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #19",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82652) deny(1) file-read-data /fx/p3/home/Library/Safari/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "macos P3 credential read #20",
+      "platforms": ["macos"],
+      "probe": "P3",
+      "check": "credential read",
+      "profile": "workspace-write",
+      "line": "cat(82654) deny(1) file-read-data /fx/p3/home/Library/Cookies/Default/Cookies",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P1 F1-write-outside",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F1-write-outside",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/outside/f1",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "u2404 P1 F4-denyWrite:.envrc #1",
+      "platforms": ["linux-u2404"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.envrc",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "u2404 P1 F4-denyWrite:.envrc #2",
+      "platforms": ["linux-u2404"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.envrc",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.envrc #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.envrc",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1/ws",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.envrc #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.envrc",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.envrc",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.claude/settings.json #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.claude/settings.json",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1/ws/.claude",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.claude/settings.json #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.claude/settings.json",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.claude/settings.json",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.mcp.json",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.mcp.json",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.mcp.json",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.git/hooks/x #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.git/hooks/x",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1/ws/.git",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.git/hooks/x #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.git/hooks/x",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1/ws/.git/hooks",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.git/hooks/x #3",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.git/hooks/x",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.git/hooks/x",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.vscode/tasks.json #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.vscode/tasks.json",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p1/ws/.vscode",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.vscode/tasks.json #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.vscode/tasks.json",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.vscode/tasks.json",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F4-denyWrite:.zshrc",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F4-denyWrite:.zshrc",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/.zshrc",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F6-read-only-ws",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F6-read-only-ws",
+      "profile": "read-only",
+      "line": "deny openat /fx/p1/ws/ro.txt",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F7-chmod-home",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F7-chmod-home",
+      "profile": "workspace-write",
+      "line": "deny fchmodat /fx/p1/home",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P1 F8-symlinks",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P1",
+      "check": "F8-symlinks",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p1/ws/out-link/via-link",
+      "from": "violation-lines.json"
+    },
+    {
+      "id": "linux P2 denied write",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "denied write",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/outside/w0",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 git status #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/ws/.git/index.lock",
+      "from": "p2.json"
+    },
+    {
+      "id": "u2404 P2 git status #1",
+      "platforms": ["linux-u2404"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "workspace-write",
+      "line": "deny renameat /fx/p2/ws/.git/index.lock",
+      "from": "p2.json"
+    },
+    {
+      "id": "u2404 P2 git status #2",
+      "platforms": ["linux-u2404"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "workspace-write",
+      "line": "deny renameat /fx/p2/ws/.git/index",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 git status #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "workspace-write",
+      "line": "deny unlinkat /fx/p2/ws/.git/index.lock",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 git status #3",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "git status",
+      "profile": "read-only",
+      "line": "deny openat /fx/p2/ws/.git/index.lock",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 workspace writes #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "workspace writes",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/ws/f1",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 workspace writes #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "workspace writes",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/ws/d",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 workspace writes #3",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "workspace writes",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/ws/d/f2",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 workspace writes #4",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "workspace writes",
+      "profile": "workspace-write",
+      "line": "deny unlinkat /fx/p2/ws/f1",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/home/tenon-sandbox-cache/npm",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/home/tenon-sandbox-cache/npm/_logs",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #3",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/home/tenon-sandbox-cache/npm/_logs/2026-10-14T13_49_42_582Z-debug-0.log",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #4",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/home/tenon-sandbox-cache/npm/_update-notifier-last-checked",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #5",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/ws/npmproj",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #6",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/home/tenon-sandbox-cache/npm/_cacache/tmp",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #7",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p2/home/tenon-sandbox-cache/npm/_cacache/tmp/11c1cd55",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P2 npm install #8",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P2",
+      "check": "npm install",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p2/home/tenon-sandbox-cache/npm/_cacache/content-v2/sha512/fb/ca",
+      "from": "p2.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #1",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p3/home/.config/gcloud/logs/2026.10.14",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #2",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p3/home/.config/gcloud/logs/2026.10.14/21.49.53.203977.log",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #3",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p3/home/.config/gcloud/configurations",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #4",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p3/home/.config/gcloud/configurations/config_default",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #5",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p3/home/.config/gcloud",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #6",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p3/home/.config/gcloud/active_config",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #7",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny mkdirat /fx/p3/home/.config/gcloud/logs",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #8",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p3/home/.config/gcloud/gce",
+      "from": "p3.json"
+    },
+    {
+      "id": "linux P3 gcloud --version #9",
+      "platforms": ["linux-u2404", "linux-u2604-apparmorfix"],
+      "probe": "P3",
+      "check": "gcloud --version",
+      "profile": "workspace-write",
+      "line": "deny openat /fx/p3/home/.config/gcloud/.last_survey_prompt.yaml",
+      "from": "p3.json"
+    }
+  ]
+}

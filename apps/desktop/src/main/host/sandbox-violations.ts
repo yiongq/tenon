@@ -1,0 +1,247 @@
+/**
+ * Spec 04 §afterExit、清理与违规: one sandbox-runtime violation line becomes one `SandboxViolation`,
+ * or nothing when it is a Linux observer report the host drops (T10, T41; 读法 11, 18, 32, 35, 36,
+ * 44, 53). srt's events carry only the line text, so the host reads the text, and only a line that
+ * matches one of the table's shapes exactly earns a target, a release or `protected` (读法 44).
+ *
+ * The shapes are tried in a fixed order, each one anchored to the whole line:
+ *
+ * 1. srt's proxy, `deny network-outbound <host>:<port> (<reason>)`. A host that a SOCKS client
+ *    chose can hold spaces and parentheses (srt records it raw as `malformed host`), so this
+ *    shape goes first: such a line must never read as a Seatbelt line with a path in it.
+ * 2. The Linux seccomp observer, `deny <syscall> <absolute path>`. A Seatbelt line could only look
+ *    like this if its process name began with `deny <syscall> /`, and a process name is the
+ *    executable's file name, which holds no `/`.
+ * 3. Seatbelt on macOS, `<process>(<pid>) deny(1) <operation>[ <rest>]`. The process name holds no
+ *    parentheses and no `Sandbox:` (a line with a second `Sandbox:` is not srt's usual cut).
+ *
+ * Anything else is `kind: 'fs'` with no target and not `observed`: it still counts towards the
+ * denial cap (读法 44, 53, spec open question 8).
+ */
+import { isIP } from 'node:net'
+import { posix } from 'node:path'
+import type { SandboxViolation } from '@tenon-app/kernel'
+
+/**
+ * A filesystem list entry as it is handed to srt: a path marked literal, or a glob. Tenon's only
+ * globs are macOS's `<root>/**\/<name>` (spec §档位到 srt 配置), so `**`, `*` and `?` are the
+ * wildcards read here; the spec never passes a glob whose root holds `[`.
+ */
+export type SandboxPathEntry = string | { readonly path: string; readonly literal: true }
+
+/** What `lstat` says about the last component of a path; a link is never followed. */
+export interface PathKind {
+  isDirectory(): boolean
+  isSymbolicLink(): boolean
+}
+
+/** The wrap a line belongs to, as the line arrives. */
+export interface ViolationContext {
+  /** This wrap's `filesystem` lists as handed to srt. */
+  readonly allowWrite: readonly SandboxPathEntry[]
+  readonly denyWrite: readonly SandboxPathEntry[]
+  readonly denyRead: readonly SandboxPathEntry[]
+  readonly profileDir: string
+  readonly homeDir: string
+  /** `fs.lstatSync(path, { throwIfNoEntry: false })` in the app: undefined when nothing is there. */
+  readonly lstat: (path: string) => PathKind | undefined
+}
+
+const PROXY_LINE = /^deny network-outbound (.+):(\d+) \(([^()]+)\)$/
+const OBSERVER_LINE = /^deny ([a-z0-9_]+) (\/.*)$/
+const SEATBELT_LINE = /^([^\s()][^()]*)\((\d+)\) deny\(1\) (\S+)(?: (.+))?$/
+const SEATBELT_DIRECT = /^remote:\*:\d+$/
+const FILE_WRITE = /^file-write-[a-z]+(?:-[a-z]+)*$/
+const FILE_READ = /^file-read-[a-z]+(?:-[a-z]+)*$/
+/** srt's isValidHost charset for a name; an IP literal is checked apart. */
+const HOST_NAME = /^[A-Za-z0-9._-]+$/
+
+/** The proxy's only reason that leaves a domain button (读法 18). */
+const NOT_ON_ALLOW_LIST = 'host is not on the allow list'
+
+/** Seatbelt operations with no object that read as diagnostics only: a closed list (读法 53). */
+const OBJECTLESS_OPERATIONS: ReadonlySet<string> = new Set([
+  'mach-lookup',
+  'sysctl-read',
+  'network-bind',
+])
+
+/**
+ * Classify one line from srt's violation store for the wrap `context` describes. `undefined`
+ * means the line is dropped on arrival: a Linux observer report of a write the wrap may make, or
+ * of a `mkdirat` on a directory that is already there (读法 11, 53).
+ */
+export function classify(line: string, context: ViolationContext): SandboxViolation | undefined {
+  const proxy = PROXY_LINE.exec(line)
+  if (proxy !== null) return proxyDenial(line, proxy[1] ?? '', proxy[3] ?? '')
+
+  const observer = OBSERVER_LINE.exec(line)
+  if (observer !== null) return observerReport(line, observer[1] ?? '', observer[2] ?? '', context)
+
+  const seatbelt = SEATBELT_LINE.exec(line)
+  if (seatbelt !== null && !(seatbelt[1] ?? '').includes('Sandbox:')) {
+    return seatbeltDenial(line, seatbelt[3] ?? '', seatbelt[4], context)
+  }
+
+  return { kind: 'fs', line }
+}
+
+function proxyDenial(line: string, rawHost: string, reason: string): SandboxViolation {
+  const host = normalizeHost(rawHost)
+  if (host === undefined) return { kind: 'network', line }
+  if (reason === NOT_ON_ALLOW_LIST && isDomainName(host)) {
+    return { kind: 'network', line, target: host, release: 'domain' }
+  }
+  return { kind: 'network', line, target: host }
+}
+
+function observerReport(
+  line: string,
+  syscall: string,
+  path: string,
+  context: ViolationContext,
+): SandboxViolation | undefined {
+  // That call did nothing: GNU `mkdir -p` reports every ancestor that already exists (读法 53).
+  if (syscall === 'mkdirat' && context.lstat(path)?.isDirectory() === true) return undefined
+  const spot = posix.normalize(path)
+  const denied = context.denyWrite.some((entry) => covers(entry, spot))
+  // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11).
+  if (!denied && context.allowWrite.some((entry) => covers(entry, spot))) return undefined
+  return denied
+    ? { kind: 'fs', line, target: path, protected: true, observed: true }
+    : { kind: 'fs', line, target: path, observed: true }
+}
+
+function seatbeltDenial(
+  line: string,
+  operation: string,
+  rest: string | undefined,
+  context: ViolationContext,
+): SandboxViolation {
+  if (operation === 'network-outbound' && (rest === undefined || SEATBELT_DIRECT.test(rest))) {
+    // A direct connection that skipped the proxy; Seatbelt names no address (P1, P2).
+    return { kind: 'network', line, observed: true }
+  }
+  if (rest?.startsWith('/') === true) {
+    if (FILE_WRITE.test(operation)) return writeDenial(line, rest, context)
+    if (FILE_READ.test(operation)) {
+      // Only the profile is protected on read; a credential read may still be rerun (读法 36).
+      return within(posix.normalize(rest), context.profileDir)
+        ? { kind: 'fs', line, target: rest, protected: true }
+        : { kind: 'fs', line, target: rest }
+    }
+  }
+  if (OBJECTLESS_OPERATIONS.has(operation)) return { kind: 'fs', line, observed: true }
+  return { kind: 'fs', line }
+}
+
+function writeDenial(line: string, target: string, context: ViolationContext): SandboxViolation {
+  const spot = posix.normalize(target)
+  if (context.denyWrite.some((entry) => covers(entry, spot))) {
+    return { kind: 'fs', line, target, protected: true }
+  }
+  return offersPathRelease(target, context)
+    ? { kind: 'fs', line, target, release: 'path' }
+    : { kind: 'fs', line, target }
+}
+
+/**
+ * 读法 35: an absolute, normalized path not ending in `/`, whose parent exists and is its own real
+ * path, that is not an existing directory and is neither `/`, the home or profile directory, any
+ * denyRead or denyWrite entry, nor an ancestor of one. Seatbelt allows a whole subtree, so a
+ * denial on an ancestor (`chmod 700 ~`, a name cut at a newline) must never become the release.
+ */
+function offersPathRelease(target: string, context: ViolationContext): boolean {
+  if (!target.startsWith('/') || target.endsWith('/') || posix.normalize(target) !== target) {
+    return false
+  }
+  if (!isOwnRealDirectory(posix.dirname(target), context.lstat)) return false
+  if (context.lstat(target)?.isDirectory() === true) return false
+  const anchors = [
+    '/',
+    context.homeDir,
+    context.profileDir,
+    ...context.denyRead.map(anchorOf),
+    ...context.denyWrite.map(anchorOf),
+  ]
+  return !anchors.some((anchor) => within(posix.normalize(anchor), target))
+}
+
+/** Every directory from `/` down to `dir` exists and none of them is a link. */
+function isOwnRealDirectory(dir: string, lstat: ViolationContext['lstat']): boolean {
+  let at = ''
+  for (const part of dir.split('/')) {
+    if (part === '') continue
+    at += `/${part}`
+    const kind = lstat(at)
+    if (kind === undefined || kind.isSymbolicLink() || !kind.isDirectory()) return false
+  }
+  return true
+}
+
+/** `path` is `dir` or lies under it. */
+function within(path: string, dir: string): boolean {
+  const base = dir.length > 1 ? dir.replace(/\/+$/, '') : dir
+  if (base === '/') return path.startsWith('/')
+  return path === base || path.startsWith(`${base}/`)
+}
+
+/** The entry denies `path`: a literal entry covers its subtree, a glob each match's subtree. */
+function covers(entry: SandboxPathEntry, path: string): boolean {
+  if (typeof entry !== 'string') return within(path, posix.normalize(entry.path))
+  if (!hasWildcard(entry)) return within(path, posix.normalize(entry))
+  return globPattern(entry).test(path)
+}
+
+/** The fixed directory an entry stands for: a glob's segments before its first wildcard. */
+function anchorOf(entry: SandboxPathEntry): string {
+  const spelling = typeof entry === 'string' ? entry : entry.path
+  if (typeof entry !== 'string' || !hasWildcard(entry)) return spelling
+  const segments = spelling.split('/')
+  const fixed = segments.slice(0, segments.findIndex(hasWildcard)).join('/')
+  return fixed === '' ? '/' : fixed
+}
+
+function hasWildcard(text: string): boolean {
+  return /[*?[]/.test(text)
+}
+
+/** srt's glob reading for a deny rule: `**\/` any directories, `*` and `?` within a segment. */
+function globPattern(glob: string): RegExp {
+  let source = ''
+  for (let at = 0; at < glob.length; at += 1) {
+    const char = glob.charAt(at)
+    if (char === '*' && glob.charAt(at + 1) === '*') {
+      const slash = glob.charAt(at + 2) === '/'
+      source += slash ? '(?:.*/)?' : '.*'
+      at += slash ? 2 : 1
+    } else if (char === '*') source += '[^/]*'
+    else if (char === '?') source += '[^/]'
+    else source += char.replace(/[\\^$.|+()[\]{}]/g, '\\$&')
+  }
+  return new RegExp(`^${source}(?:/.*)?$`)
+}
+
+/**
+ * The host as the WHATWG URL parser spells it, without brackets or a trailing dot: lower case,
+ * numeric IPv4 forms written out (`2130706433`, `127.1` and `0x7f.1` are all `127.0.0.1`).
+ * `undefined` when it is no host at all.
+ */
+function normalizeHost(raw: string): string | undefined {
+  const bare = raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw
+  const ipv6 = isIP(bare) === 6
+  if (!ipv6 && !HOST_NAME.test(bare)) return undefined
+  let hostname: string
+  try {
+    hostname = new URL(`http://${ipv6 ? `[${bare}]` : bare}/`).hostname
+  } catch {
+    return undefined
+  }
+  const host = hostname.startsWith('[') ? hostname.slice(1, -1) : hostname.replace(/\.$/, '')
+  return host === '' ? undefined : host
+}
+
+/** A name that may get a domain button: no IP literal, no `localhost` or `*.localhost` (读法 18). */
+function isDomainName(host: string): boolean {
+  return isIP(host) === 0 && host !== 'localhost' && !host.endsWith('.localhost')
+}
