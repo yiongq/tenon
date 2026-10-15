@@ -57,9 +57,10 @@ const DIRECTORIES = new Set([
   '/fx/p3/ws',
   '/fx/p3/ws/.git',
   '/fx/user-data',
+  '/fx/p1/linked/sub',
 ])
-/** `ws/out-link` points outside the workspace (P1's F8). */
-const LINKS = new Set(['/fx/p1/ws/out-link'])
+/** `ws/out-link` points outside the workspace (P1's F8); `linked` to a directory elsewhere. */
+const LINKS = new Set(['/fx/p1/ws/out-link', '/fx/p1/linked'])
 const FILES = new Set(['/fx/p1/outside/a-file'])
 
 function is(kind: 'dir' | 'link' | 'file'): PathKind {
@@ -152,9 +153,9 @@ const ROOT_NAMES = [
   '.idea',
   '.claude/commands',
   '.claude/agents',
-  '.git/hooks',
-  '.git/config',
 ]
+/** srt's .git pair: on Linux only under a root whose .git is a directory. */
+const GIT_PAIR = ['.git/hooks', '.git/config']
 
 const literal = (path: string): SandboxPathEntry => ({ path, literal: true })
 
@@ -179,8 +180,10 @@ function wrapOf(
     literal('/fx/user-data/sandbox-cwd'),
   ]
   if (profile === 'workspace-write') {
-    denyWrite.push(...ROOT_NAMES.map((name) => literal(`${ws}/${name}`)))
-    if (platform === 'darwin') denyWrite.push(...ROOT_NAMES.map((name) => `${ws}/**/${name}`))
+    const gitPair = platform === 'darwin' || lstat(`${ws}/.git`)?.isDirectory() === true
+    const names = gitPair ? [...ROOT_NAMES, ...GIT_PAIR] : ROOT_NAMES
+    denyWrite.push(...names.map((name) => literal(`${ws}/${name}`)))
+    if (platform === 'darwin') denyWrite.push(...names.map((name) => `${ws}/**/${name}`))
   }
   const allowWrite =
     profile === 'workspace-write' ? [literal(ws), literal(`${home}/tenon-sandbox-cache/npm`)] : []
@@ -344,19 +347,11 @@ const EXPECTED: Record<string, Expected | typeof DROPPED> = {
     protected: true,
     observed: true,
   },
+  // P1's ws had no .git when wrapped, so the config carries no .git pair on Linux and the write
+  // went through (rc=0, the file on the host): inside allowWrite, dropped
   'linux P1 F4-denyWrite:.git/hooks/x #1': DROPPED,
-  'linux P1 F4-denyWrite:.git/hooks/x #2': {
-    kind: 'fs',
-    target: '/fx/p1/ws/.git/hooks',
-    protected: true,
-    observed: true,
-  },
-  'linux P1 F4-denyWrite:.git/hooks/x #3': {
-    kind: 'fs',
-    target: '/fx/p1/ws/.git/hooks/x',
-    protected: true,
-    observed: true,
-  },
+  'linux P1 F4-denyWrite:.git/hooks/x #2': DROPPED,
+  'linux P1 F4-denyWrite:.git/hooks/x #3': DROPPED,
   'linux P1 F4-denyWrite:.vscode/tasks.json #1': {
     kind: 'fs',
     target: '/fx/p1/ws/.vscode',
@@ -377,7 +372,8 @@ const EXPECTED: Record<string, Expected | typeof DROPPED> = {
   },
   'linux P1 F6-read-only-ws': { kind: 'fs', target: '/fx/p1/ws/ro.txt', observed: true },
   'linux P1 F7-chmod-home': { kind: 'fs', target: '/fx/p1/home', observed: true },
-  // the path as written lies inside allowWrite; bwrap refused it because the link leads out
+  // the path as written lies inside allowWrite; bwrap refused it because the link leads out.
+  // Dropped per 读法 11's letter; how a link on the way should count is a spec gap (plan Open)
   'linux P1 F8-symlinks': DROPPED,
   // Linux, P2
   'linux P2 denied write': { kind: 'fs', target: '/fx/p2/outside/w0', observed: true },
@@ -540,7 +536,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ).toStrictEqual(withLines(cases))
   })
 
-  it('an IP literal, a numeric host, localhost, *.localhost, a malformed host or a `resolved to …` denial offers no domain release', () => {
+  it('an IP literal, a numeric host, localhost, *.localhost, a malformed host, a `resolved to …` denial or a name the srt schema refuses offers no domain release', () => {
     const cases: [string, Expected][] = [
       [proxyLine('1.1.1.1:80'), { kind: 'network', target: '1.1.1.1' }],
       [proxyLine('169.254.169.254:80'), { kind: 'network', target: '169.254.169.254' }],
@@ -568,6 +564,11 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         proxyLine('example.com:443', 'host is on the deny list'),
         { kind: 'network', target: 'example.com' },
       ],
+      // srt's schema refuses these as allowedDomains entries (no dot, a leading dot, empty labels)
+      [proxyLine('db:5432'), { kind: 'network', target: 'db' }],
+      [proxyLine('com:80'), { kind: 'network', target: 'com' }],
+      [proxyLine('.example.com:80'), { kind: 'network', target: '.example.com' }],
+      [proxyLine('..:80'), { kind: 'network', target: '.' }],
       // the one that does: an off-list domain name, spelled as the URL parser spells it
       [
         proxyLine('Example.COM.:443'),
@@ -603,6 +604,15 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       ['Helper (GPU)(812) deny(1) file-write-create /fx/p1/outside/f1', { kind: 'fs' }],
       ['x)(1) deny(1) mach-lookup com.apple.authd', { kind: 'fs' }],
       ['curl(1)(2) deny(1) network-outbound', { kind: 'fs' }],
+      // a name ending in `(<pid>) deny(1) <listed operation> x` must not hide the real denial
+      [
+        'n(1) deny(1) mach-lookup x(999) deny(1) file-write-create /fx/p1/outside/f1',
+        { kind: 'fs' },
+      ],
+      [
+        'n(1) deny(1) sysctl-read x(999) deny(1) file-read-data /fx/p1/home/tenon-profile/config.json',
+        { kind: 'fs' },
+      ],
     ]
     const wrap = wrapOf('darwin', 'workspace-write', P1)
     expect(
@@ -642,6 +652,19 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       'ioreg(904) deny(1) iokit-open IOSurfaceRootUserClient',
     ]
     expect(classifyAll(lines, wrapOf('darwin', 'workspace-write', P1))).toStrictEqual(
+      lines.map((line) => ({ kind: 'fs', line })),
+    )
+  })
+
+  it('on linux a Seatbelt-shaped observer line (`deny x(1) deny(1) file-write-create /…`) offers nothing', () => {
+    // srt writes `deny ${syscall} ${path}` from what the sandboxed process sends to the observer
+    // socket, the syscall unchecked (srt79 linux-violation-monitor.js:76-82, :102-116)
+    const lines = [
+      'deny x(1) deny(1) file-write-create /fx/p1/outside/f1',
+      'deny x(1) deny(1) file-read-data /fx/p1/home/tenon-profile/config.json',
+      'deny x(1) deny(1) mach-lookup /fx/p1/outside/f1',
+    ]
+    expect(classifyAll(lines, wrapOf('linux', 'workspace-write', P1))).toStrictEqual(
       lines.map((line) => ({ kind: 'fs', line })),
     )
   })
@@ -731,6 +754,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       // the parent is missing, reached through a link, or a file
       [writeLine('/fx/p1/outside/missing/f1'), { kind: 'fs', target: '/fx/p1/outside/missing/f1' }],
       [writeLine('/fx/p1/ws/out-link/f1'), { kind: 'fs', target: '/fx/p1/ws/out-link/f1' }],
+      [writeLine('/fx/p1/linked/sub/f1'), { kind: 'fs', target: '/fx/p1/linked/sub/f1' }],
       [writeLine('/fx/p1/outside/a-file/f1'), { kind: 'fs', target: '/fx/p1/outside/a-file/f1' }],
       // above the home directory, above a credential-list entry (~/.cache/huggingface/token)
       [writeLine('/fx/p1'), { kind: 'fs', target: '/fx/p1' }],
@@ -753,6 +777,53 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         wrap,
       ),
     ).toStrictEqual(withLines(cases))
+  })
+
+  it('a write denial on an existing link offers no path release', () => {
+    // allowWrite gets real paths only: a link to a directory would give that whole subtree
+    const cases: [string, Expected][] = [
+      [writeLine('/fx/p1/linked'), { kind: 'fs', target: '/fx/p1/linked' }],
+      [writeLine('/fx/p1/ws/out-link'), { kind: 'fs', target: '/fx/p1/ws/out-link' }],
+    ]
+    const wrap = wrapOf('darwin', 'read-only', P1)
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        wrap,
+      ),
+    ).toStrictEqual(withLines(cases))
+  })
+
+  it('a throwing lstat (ENOTDIR, EACCES) never throws out of classify and offers no release', () => {
+    const throws = new Map([
+      ['/fx/p1/outside/f1', 'EACCES'],
+      ['/fx/p1/outside/locked', 'EACCES'],
+      ['/fx/p1/outside/a-file/x', 'ENOTDIR'],
+    ])
+    function throwing(path: string): PathKind | undefined {
+      const code = throws.get(path)
+      if (code !== undefined) throw Object.assign(new Error(`${code}: ${path}`), { code })
+      return lstat(path)
+    }
+    const darwin = { ...wrapOf('darwin', 'read-only', P1), lstat: throwing }
+    const linux = { ...wrapOf('linux', 'read-only', P1), lstat: throwing }
+    const cases: [string, Expected][] = [
+      [writeLine('/fx/p1/outside/f1'), { kind: 'fs', target: '/fx/p1/outside/f1' }],
+      [writeLine('/fx/p1/outside/locked/f1'), { kind: 'fs', target: '/fx/p1/outside/locked/f1' }],
+    ]
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        darwin,
+      ),
+    ).toStrictEqual(withLines(cases))
+    // a mkdirat whose lstat throws is not known to be a no-op, so it stays
+    expect(classify('deny mkdirat /fx/p1/outside/a-file/x', linux)).toStrictEqual({
+      kind: 'fs',
+      line: 'deny mkdirat /fx/p1/outside/a-file/x',
+      target: '/fx/p1/outside/a-file/x',
+      observed: true,
+    })
   })
 
   it('a Seatbelt write under a protected name in a sub-directory (a glob entry) is protected', () => {
@@ -831,6 +902,15 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       'deny OPENAT /fx/p1/outside/f1',
       'deny openat fx/p1/outside/f1',
       'deny openat /fx/p1/outside/f1\n',
+      // a `Sandbox:` anywhere, not only in the process name (读法 44)
+      'zsh(1) deny(1) file-write-create /fx/p1/outside/Sandbox: x',
+      // a control character: srt cuts the log at newlines and its store turns the rest into
+      // spaces, so neither a raw SOCKS host nor an observer path carries a Seatbelt line in
+      'deny network-outbound a\nb(1) deny(1) file-write-create /fx/p1/outside/x:443 (malformed host)',
+      'deny network-outbound a\nb(1) deny(1) mach-lookup com.apple.x:443 (malformed host)',
+      'deny openat /fx/p1/outside/a\nb(1) deny(1) file-write-create /fx/p1/outside/evil',
+      'a\nzsh(1) deny(1) file-write-create /fx/p1/outside/f1',
+      'zsh\u0007(1) deny(1) file-write-create /fx/p1/outside/f1',
     ]
     expect(classifyAll(lines, wrapOf('darwin', 'workspace-write', P1))).toStrictEqual(
       lines.map((line) => ({ kind: 'fs', line })),

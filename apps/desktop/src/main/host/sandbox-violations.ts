@@ -8,12 +8,17 @@
  *
  * 1. srt's proxy, `deny network-outbound <host>:<port> (<reason>)`. A host that a SOCKS client
  *    chose can hold spaces and parentheses (srt records it raw as `malformed host`), so this
- *    shape goes first: such a line must never read as a Seatbelt line with a path in it.
- * 2. The Linux seccomp observer, `deny <syscall> <absolute path>`. A Seatbelt line could only look
- *    like this if its process name began with `deny <syscall> /`, and a process name is the
- *    executable's file name, which holds no `/`.
- * 3. Seatbelt on macOS, `<process>(<pid>) deny(1) <operation>[ <rest>]`. The process name holds no
- *    parentheses and no `Sandbox:` (a line with a second `Sandbox:` is not srt's usual cut).
+ *    shape goes first.
+ * 2. The Linux seccomp observer, `deny <syscall> <absolute path>`. Both its syscall and its path
+ *    are the sandboxed process's own bytes: the observer socket is writable inside the sandbox
+ *    (srt79 linux-violation-monitor.js:21-24, :76-82, :102-105).
+ * 3. Seatbelt on macOS, `<process>(<pid>) deny(1) <operation>[ <rest>]`. Only srt's macOS log
+ *    monitor makes these, and it never starts one with `deny `: srt's proxy and observer start
+ *    every line that way, so a `deny ` line that missed shapes 1 and 2 is not a Seatbelt line
+ *    (on Linux, nothing earns a path release). Nor is one holding a control character (srt cuts
+ *    the log at newlines and its store turns the rest into spaces), a `Sandbox:` anywhere (读法
+ *    44), or a second `(<pid>) deny(1) `: the process name holds no parentheses, and a name that
+ *    does must not make the line read as another operation.
  *
  * Anything else is `kind: 'fs'` with no target and not `observed`: it still counts towards the
  * denial cap (读法 44, 53, spec open question 8).
@@ -43,18 +48,30 @@ export interface ViolationContext {
   readonly denyRead: readonly SandboxPathEntry[]
   readonly profileDir: string
   readonly homeDir: string
-  /** `fs.lstatSync(path, { throwIfNoEntry: false })` in the app: undefined when nothing is there. */
+  /**
+   * `fs.lstatSync(path, { throwIfNoEntry: false })` in the app: undefined when nothing is there. It
+   * may throw (ENOTDIR, EACCES, ENAMETOOLONG): classify reads a throw as "don't know", which drops
+   * nothing and offers no release, and never lets it out (step 4 calls classify from srt's store
+   * listener, which srt calls without a try).
+   */
   readonly lstat: (path: string) => PathKind | undefined
 }
 
 const PROXY_LINE = /^deny network-outbound (.+):(\d+) \(([^()]+)\)$/
 const OBSERVER_LINE = /^deny ([a-z0-9_]+) (\/.*)$/
 const SEATBELT_LINE = /^([^\s()][^()]*)\((\d+)\) deny\(1\) (\S+)(?: (.+))?$/
+const SEATBELT_HEAD = /\(\d+\) deny\(1\) /g
+const CONTROL = /\p{Cc}/u
 const SEATBELT_DIRECT = /^remote:\*:\d+$/
 const FILE_WRITE = /^file-write-[a-z]+(?:-[a-z]+)*$/
 const FILE_READ = /^file-read-[a-z]+(?:-[a-z]+)*$/
 /** srt's isValidHost charset for a name; an IP literal is checked apart. */
 const HOST_NAME = /^[A-Za-z0-9._-]+$/
+/**
+ * A plain domain srt's config schema takes as an allowedDomains entry: at least one dot, neither
+ * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label.
+ */
+const DOMAIN_NAME = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/
 
 /** The proxy's only reason that leaves a domain button (读法 18). */
 const NOT_ON_ALLOW_LIST = 'host is not on the allow list'
@@ -78,12 +95,17 @@ export function classify(line: string, context: ViolationContext): SandboxViolat
   const observer = OBSERVER_LINE.exec(line)
   if (observer !== null) return observerReport(line, observer[1] ?? '', observer[2] ?? '', context)
 
-  const seatbelt = SEATBELT_LINE.exec(line)
-  if (seatbelt !== null && !(seatbelt[1] ?? '').includes('Sandbox:')) {
-    return seatbeltDenial(line, seatbelt[3] ?? '', seatbelt[4], context)
-  }
+  const seatbelt = seatbeltShape(line)
+  if (seatbelt !== null) return seatbeltDenial(line, seatbelt[3] ?? '', seatbelt[4], context)
 
   return { kind: 'fs', line }
+}
+
+/** The Seatbelt shape, only for a line no other producer could have made (header, shape 3). */
+function seatbeltShape(line: string): RegExpExecArray | null {
+  if (line.startsWith('deny ') || CONTROL.test(line) || line.includes('Sandbox:')) return null
+  if (line.match(SEATBELT_HEAD)?.length !== 1) return null
+  return SEATBELT_LINE.exec(line)
 }
 
 function proxyDenial(line: string, rawHost: string, reason: string): SandboxViolation {
@@ -102,7 +124,10 @@ function observerReport(
   context: ViolationContext,
 ): SandboxViolation | undefined {
   // That call did nothing: GNU `mkdir -p` reports every ancestor that already exists (读法 53).
-  if (syscall === 'mkdirat' && context.lstat(path)?.isDirectory() === true) return undefined
+  if (syscall === 'mkdirat') {
+    const kind = lookUp(context.lstat, path)
+    if (kind !== 'unknown' && kind?.isDirectory() === true) return undefined
+  }
   const spot = posix.normalize(path)
   const denied = context.denyWrite.some((entry) => covers(entry, spot))
   // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11).
@@ -150,13 +175,19 @@ function writeDenial(line: string, target: string, context: ViolationContext): S
  * path, that is not an existing directory and is neither `/`, the home or profile directory, any
  * denyRead or denyWrite entry, nor an ancestor of one. Seatbelt allows a whole subtree, so a
  * denial on an ancestor (`chmod 700 ~`, a name cut at a newline) must never become the release.
+ * An existing link is refused too: allowWrite gets real paths only, so a link to a directory
+ * (`/tmp`, `~/bin`; srt's store drops `<>`, so `touch '/tmp<'` names it) would give its target's
+ * whole subtree (plan Open).
  */
 function offersPathRelease(target: string, context: ViolationContext): boolean {
   if (!target.startsWith('/') || target.endsWith('/') || posix.normalize(target) !== target) {
     return false
   }
   if (!isOwnRealDirectory(posix.dirname(target), context.lstat)) return false
-  if (context.lstat(target)?.isDirectory() === true) return false
+  const kind = lookUp(context.lstat, target)
+  if (kind === 'unknown' || kind?.isDirectory() === true || kind?.isSymbolicLink() === true) {
+    return false
+  }
   const anchors = [
     '/',
     context.homeDir,
@@ -173,10 +204,21 @@ function isOwnRealDirectory(dir: string, lstat: ViolationContext['lstat']): bool
   for (const part of dir.split('/')) {
     if (part === '') continue
     at += `/${part}`
-    const kind = lstat(at)
-    if (kind === undefined || kind.isSymbolicLink() || !kind.isDirectory()) return false
+    const kind = lookUp(lstat, at)
+    if (kind === 'unknown' || kind === undefined || kind.isSymbolicLink() || !kind.isDirectory()) {
+      return false
+    }
   }
   return true
+}
+
+/** The lstat port's answer, or `'unknown'` when it threw. */
+function lookUp(lstat: ViolationContext['lstat'], path: string): PathKind | undefined | 'unknown' {
+  try {
+    return lstat(path)
+  } catch {
+    return 'unknown'
+  }
 }
 
 /** `path` is `dir` or lies under it. */
@@ -241,7 +283,15 @@ function normalizeHost(raw: string): string | undefined {
   return host === '' ? undefined : host
 }
 
-/** A name that may get a domain button: no IP literal, no `localhost` or `*.localhost` (读法 18). */
+/**
+ * A name that may get a domain button: no IP literal, no `localhost` or `*.localhost` (读法 18),
+ * and one srt's schema takes, or every later restricted wrap of the session would be refused.
+ */
 function isDomainName(host: string): boolean {
-  return isIP(host) === 0 && host !== 'localhost' && !host.endsWith('.localhost')
+  return (
+    isIP(host) === 0 &&
+    host !== 'localhost' &&
+    !host.endsWith('.localhost') &&
+    DOMAIN_NAME.test(host)
+  )
 }
