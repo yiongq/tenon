@@ -586,6 +586,29 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     ])
   })
 
+  it('04 读法 9: afterExit settles after VIOLATION_SETTLE_MS; a line that comes later goes to the log only', async () => {
+    const h = harness('linux')
+    await h.run()
+    const id = h.calls[0]?.id ?? ''
+    const exiting = h.sandbox.afterExit(TOOL_USE)
+    // The process has exited and afterExit has begun: a line that lands now still counts.
+    h.store.add(id, 'deny network-outbound in-time.example.com:443 (host is not on the allow list)')
+    await exiting
+    h.store.add(
+      id,
+      'deny network-outbound too-late.example.com:443 (host is not on the allow list)',
+    )
+    expect(await h.sandbox.violations(TOOL_USE)).toEqual([
+      {
+        kind: 'network',
+        line: 'deny network-outbound in-time.example.com:443 (host is not on the allow list)',
+        target: 'in-time.example.com',
+        release: 'domain',
+      },
+    ])
+    expect(h.logs).toEqual(['sandbox: a violation for no open command'])
+  })
+
   it('04 读法 39: a wrap keeps at most 200 violations, every protected one first', async () => {
     const h = harness('linux')
     await h.run()
