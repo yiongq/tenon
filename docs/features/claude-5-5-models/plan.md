@@ -9,14 +9,19 @@
 - **机器约束**：vitest 一律 `--maxWorkers=2`；同一时刻最多一个 Electron（e2e、live 都算），起 Electron 用 `env -u ELECTRON_RUN_AS_NODE`。
 - **突变**：每步列的突变逐个做一次——把生产代码改坏，确认对应测试变红，再改回——结果记在该步。没变红的补测试。
 - **门禁**：每步结束跑下面「命令」的前两行（第二行是全量 vitest），仓库每步结束都是绿的。
-- **与 presentation-r1 的先后**：它的第一把 key 改写指针由本 spec 做（spec §跟随最新「谁写指针」，§点名 (h)），不论谁先实现；第 11 步等它写第一把 key 的代码合入后再做，在那之前本 spec 不标 `implemented`，两者之间不切 release 分支。
+- **与 presentation-r1 的先后**（核对基准：分支 `docs/presentation-r1` 的 `c60760d`，spec `Related:`）：谁也不等谁，后合入的一方衔接。第一把 key 归它的 §对 02 的修补 第 1 条，已按有没有 `latestOf` 分两支写；本 spec 不改它的文件。
+  - presentation-r1 先合入（`dev` 上写第一把 key 的代码只有钉住一支）：第 11 步实现它第 1 条已写的「有」一支，跑验收 19（就是它验收 12 的指针一例）。这种情形下两次合入之间不切 release 分支（spec §跟随最新「迁移」）。
+  - 本 spec 先合入：「有」一支由 presentation-r1 plan 第 9 步实现，跑它验收 12 的指针一例；第 11 步只记一句，不做事。
+  - 两边都改的文件照它 plan 的合并清单：`model-menu.spec.ts`、`text-fit-02.spec.ts`、`provider-settings.spec.ts`、`provider-routes.ts` 与其测试、两份 locale 与 `copy-coverage.test.ts`。
 
 ## 命令
 
 ```sh
 pnpm format:check && pnpm lint && pnpm typecheck
 pnpm vitest run --maxWorkers=2
-pnpm build && env -u ELECTRON_RUN_AS_NODE pnpm test:e2e model-menu.spec.ts text-fit-02.spec.ts provider-settings.spec.ts
+pnpm build && env -u ELECTRON_RUN_AS_NODE pnpm test:e2e model-menu.spec.ts text-fit-02.spec.ts provider-settings.spec.ts recovery.spec.ts
+# 第 9 步末与第 14 步：全量 e2e，找别的因会话不换变红的用例
+pnpm build && env -u ELECTRON_RUN_AS_NODE pnpm test:e2e
 # 第 12 步：官方组，每个模型一次，只跑官方组；key 只在这条命令的环境里从钥匙串读出（先提醒 owner）
 TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL=claude-sonnet-5-5 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-generic-password -s tenon-live-anthropic -w)" env -u ELECTRON_RUN_AS_NODE pnpm test:live --grep "live provider · anthropic official"
 # 第 12 步：只跑本 spec 新加的几例（标题都含「Sonnet 5.5」或「Haiku 5.5」，现有 live 用例的标题都不含）
@@ -25,7 +30,9 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 步骤
 
-- [ ] 0. owner 定开放问题：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。剩下：spec 改 `Status: ready`（收尾那一步做）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
+- [ ] 0. owner 定开放问题：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。剩下两件，按顺序：
+  - 请 owner 单独确认 spec §点名 (g)（`Revisions:` ㊱）。附白话例子：「在菜单里点 Sonnet 5.5，以后 Tenon 加了 Sonnet 6，新会话会自动用 Sonnet 6；想固定就在设置卡里选具体那一行。另外，在会话里只改思考档位（或在确认页点『切换』）不改新会话默认。」结果写进 spec 的 `Owner` 行；否决哪一半，照 §点名 (g) 最后一列改。这一条是改 `ready` 的前提。
+  - spec 改 `Status: ready`（收尾那一步做）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
 - [ ] 1. 落地前核对，只读公开页面：
   - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记 `Revisions:`，并按 01 spec:353「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进本文件。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 6 步的注释。
@@ -68,38 +75,44 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 突变：① `>` 改 `>=` → 恰为 100 000 的用例红；② 提示长度只算 `input` → 靠缓存读推过阈值的用例红；③ 只有输入按高档、输出仍按低档 → 红；④ 档内缺缓存价时退回基础档的缓存价 → 档内缺缓存价的用例红。
 - [ ] 8. 契约与端口：
   - packages/contracts/src/ipc/config.ts 的 `providerSelectionSchema`（:17）加 `latestOf`（`z.string().min(1).optional().catch(undefined)`，坏值只丢这个键）；provider.ts 的 `providerSelect` 请求（:204）加 `latestOf`，`providerModelSchema`（:84）加 `family`、`familyNameKey`；
-  - kernel：`RunConnector.resolveChoice` 的问询加可选的 `previousModel`（packages/kernel/src/loop/ports.ts:50；可选，缺省按 null 读，照文件头的冻结规则，已有的十处直接调用点不用改）；`SessionFacts.lastSelected` 加 `modelId`（session/facts.ts:44、:89）；mailbox.ts 的 `prebuild`（:541）与 `effectiveModelChoice`（:3256）都交它；testing/loop-ports.ts 的脚本连接器照旧把问询记进 `resolved`。
-  - 测试：packages/contracts/test/config-route.test.ts（验收 18 前半，含 `latestOf: ""`）；apps/desktop/test/profile.test.ts（验收 18 后半：写 `lastWorkspaceFolders` 后三个默认的 `latestOf` 还在）；packages/kernel/test/session/model-choice.test.ts（验收 15 末条：`previousModel` 是本代最后一个、第一个 Run 与清空后为 null、`effectiveModelChoice` 交的相同）。
-  - 突变：① 交本代第一个而不是最后一个 `model_selected` → 红；② 清空后仍交上一代的 → 红；③ `effectiveModelChoice` 交 null → 红；④ 去掉 `.catch(undefined)` → 验收 18 的 `latestOf: ""` 一例红。
+  - kernel：`RunConnector.resolveChoice` 的问询加可选的 `previousModel`（packages/kernel/src/loop/ports.ts:50；可选，缺省按 null 读，照文件头的冻结规则，已有的十处直接调用点不用改），带 `providerId`、`modelId` 与 `capabilitySource`；`SessionFacts.lastSelected` 加 `modelId` 与 `capabilitySource`（session/facts.ts:44、:89；载荷里缺 `capabilitySource` 时不写）；mailbox.ts 的 `prebuild`（:541）与 `effectiveModelChoice`（:3256）都交它，`effectiveModelChoice` 的 `previousOrigin` 照旧是 null（它拿到 `needsConfirm` 会抛，:3263）；testing/loop-ports.ts 的脚本连接器照旧把问询记进 `resolved`。
+  - 测试：packages/contracts/test/config-route.test.ts（验收 18 前半，含 `latestOf: ""`）；apps/desktop/test/profile.test.ts（验收 18 后半：写 `lastWorkspaceFolders` 后三个默认的 `latestOf` 还在）；packages/kernel/test/session/model-choice.test.ts（验收 15 末条：`previousModel` 是本代最后一个、带 `capabilitySource`、第一个 Run 与清空后为 null、`effectiveModelChoice` 交的 `previousModel` 相同而 `previousOrigin` 为 null）。
+  - 突变：① 交本代第一个而不是最后一个 `model_selected` → 红；② 清空后仍交上一代的 → 红；③ `effectiveModelChoice` 交 null → 红；④ 去掉 `.catch(undefined)` → 验收 18 的 `latestOf: ""` 一例红；⑤ `effectiveModelChoice` 也交 `previousOrigin` → 验收 15「地址改到公网后 `session.modelChoice` 不抛」一例红（第 9 步那例，第 9 步做完后回头做这一个突变）；⑥ `previousModel` 丢掉 `capabilitySource` → 验收 15 手填一例红（同上）。
 - [ ] 9. 解析与写指针（desktop 主进程）：
-  - apps/desktop/src/main/run-assembly.ts 的 `resolveChoice`（:150-182）按 spec §跟随最新「解析」「会话不换」取行：① 空着时先看 `previousModel`（那一行还在该厂商的表里就用它），再按答话的一层解析，指针的最新一代用 kernel 的 `newestOfFamily`，不自己扫家族；数据去向检查照旧在取行之后，会话不换留下的行也过这道检查。
+  - apps/desktop/src/main/run-assembly.ts 的 `resolveChoice`（:150-182）按 spec §跟随最新「解析」「会话不换」取行：① 空着时先看 `previousModel`（按 `capabilitySource`：`builtin`、`probed` 与没记的，行还在该厂商的表里就用它；实例上的 `user` 同样要行还在；内置厂商上的 `user` 照 02 保守合成、仍记 `user`；`synthesized` 不用），再按答话的一层解析，指针的最新一代用 kernel 的 `newestOfFamily`，不自己扫家族；数据去向检查照旧在取行之后，会话不换留下的行也过这道检查。
+  - model-routes.ts 的 `session.selectModel`（:44-87）：会话没有 ①、请求的 provider 与模型 id 就是写入前 `session.modelChoice` 答的那一行时（交给 kernel 之前读，`sessions.sessionFacts` 与 `sessions.effectiveModelChoice`），只交 kernel 写 ①，不写 `defaultModelByProfile[形态]` 与 `provider`（spec 不变量 12，§点名 (g) 后半）。
   - provider-routes.ts 的 `selectionOf`（:287）不改，`provider.select`（:247）照旧用它写钉住的值，只在请求带 `latestOf` 时按 spec §对 02 的修补 第 13 条另走一支（拒绝一律 `invalid-value`）。另加一个只给菜单用的 `menuSelectionOf(definition, modelId)`：行在主列表（没有 `listing: 'more'`）且带 `family` 时给 `{ id, modelId, latestOf: family }`，其余交给 `selectionOf`；model-routes.ts:55 改调它（第 11 步也用它）。`menuRow`（:422）转发 `family`、`familyNameKey`。
   - 测试：
     - model-selection.test.ts「the five layers and the data-flow check」（验收 14、15）。合成的 anthropic 定义把 `opus` [6, 0] 放在第一行；由表里的行展开时先去掉算好的 `listing` 再过 `arrangeFamilies`。不带 `previousModel` 的原有用例不改，照旧通过；
-    - 同文件「session.selectModel and session.modelChoice」（验收 16）。02 验收 33 那两例按 spec §点名 (g) 改期望：「records the choice and the profile’s default and provider」（:961）的 `cowork` 与 `provider` 改为 `{ id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash', latestOf: 'glm-flash' }`，已有的 `session.modelChoice` 断言不变（仍是具体的 `glm-5.3-flash`）；「writes each profile’s default in the profile’s lock」（:1047）的两个值分别带 `latestOf: 'opus'`、`'glm-flash'`；
+    - 同文件「session.selectModel and session.modelChoice」（验收 16）。02 验收 33 那两例按 spec §点名 (g) 改期望：「records the choice and the profile’s default and provider」（:961）的 `cowork` 与 `provider` 改为 `{ id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash', latestOf: 'glm-flash' }`，已有的 `session.modelChoice` 断言不变（仍是具体的 `glm-5.3-flash`）；「writes each profile’s default in the profile’s lock」（:1047）的两个值分别带 `latestOf: 'opus'`、`'glm-flash'`；加验收 16「只改档不写默认」两例（opus 指针、会话留在 `claude-sonnet-5` 上只改档；钉住的 `claude-opus-5-5`、会话在默认那一行上只改档或确认「切换」）；
     - 同文件「provider.list for the menu」（:138，`r.list()`）断言行带 `family`、`familyNameKey`，Ollama 行没有（验收 16）；provider-catalogue.test.ts 的键清单加上各定义 `familyNameKeys` 的值；
     - provider-routes.test.ts（验收 16 的 `provider.select`）：「accepts %s」（:542）不改，照旧期望钉住的值；加带 `latestOf` 的各例与 `invalid-value` 各例；
-    - 02「间接切公网」的 e2e：model-menu.spec.ts 里先在 Ollama `qwen3:8b` 上跑一轮、再改默认、期望下一条被 hold 的用例（:212，`heldRound` / `launchHeld` 带的 :301、:325、:341、:366，以及 :419），会话不换以后会留在 `qwen3:8b` 上、不再 hold。种子里的 Ollama 默认改成手填的 id（如 `{ id: 'ollama', modelId: 'my-local-model', source: 'user' }`，它不是表里的行，照 02 读默认），断言不变；改不动的停下记进 Open。别的 e2e 文件跑一遍，因同样原因变红的照此改，逐个记在本步。
+    - 02「间接切公网」的 e2e：model-menu.spec.ts 里先在 Ollama `qwen3:8b` 上跑一轮、再改默认、期望下一条被 hold 的用例（:212，`heldRound` / `launchHeld` 带的 :301、:325、:341、:366，以及 :419），会话不换以后会留在 `qwen3:8b` 上、不再 hold。手填的 Ollama id 现在也留着，不能用来触发。改为：种子里放一个回环上的自定义实例（不填 key，地址指向原来的 Ollama 假服务），默认是它的行；跑一轮之后经 `customVendor.delete` 删掉实例（上一个 Run 的行不在表里，照默认读；删除顺带清掉指向它的默认），再照原样在设置卡里把默认改到智谱，下一条被 hold。这样「经形态默认」的语义不变，:366（hold 之后默认又移到 anthropic）与 :419（菜单当前项是 GLM-5.3 Flash）的断言照旧成立。另一种触发是把 Ollama 的地址改到公网主机（确认前 0 次请求），只适合只断言「hold 并出确认」的用例：那样当前项仍是 `qwen3:8b`，:419 的断言不成立。改不动的停下记进 Open。
+    - 因会话不换变红的另外四例（spec §点名 (f)），逐个改：
+      - provider-settings.spec.ts「acceptance 6」（:40，01 验收 6）：设置卡改到智谱 glm-4.6 之后，先在原会话发一条，断言仍发往 anthropic（会话不换的正向 e2e）；再 `newChatFromSidebar`，在新对话里发「and now?」，断言发往智谱、流式渲染的断言照旧；
+      - recovery.spec.ts :287 那例（:325-328「The default did change: the next message of this session … follows it」）：改为断言下一条留在上一个 Run 的行（`modelOf(server, 2)` 是 `claude-sonnet-5`）；要验新默认生效，在新对话里发一条，断言是 `LATER_DEFAULT.modelId`；
+      - recovery.spec.ts :385 那例（:406-408，在 anthropic 上跑过的对话芯片显示新默认 `qwen3:8b`）：改为芯片显示上一个 Run 的行（Sonnet 5）；新默认在新对话里断言；
+      - apps/desktop/test/custom-vendor-runtime.test.ts「验收 20」（:1136，custom-vendors 验收 20）：第一轮之后先 `customVendor.update` 把 LOCAL 的 `TOOL_ROW` 删掉（上一个 Run 的行不在表里，照默认读），再 `provider.select` 公网实例 `ID`，断言 held，其余断言不变。实例没有手填 id，旧写法「种子改成手填 id」用不上。
+    - 跑「命令」里的 e2e 子集（含 recovery.spec.ts）与全量 e2e 各一遍，因同样原因变红的别的用例照此改，逐个记在本步。
   - 突变：
     - ① 会话不换只在上一个 Run 的行与指针同厂商同家族时做（旧规则）→ 验收 15「默认是钉住的 `glm-5.3-flash` 或改成 sonnet 指针后仍用 `claude-opus-5-5`」红；
     - ② 会话不换只在答话的一层是指针时做（⑤ 与钉住的值不看 `previousModel`）→ 验收 15 落到 ⑤ 与钉住的那几例红；
     - ③ 家族找不到时落到 ⑤ → 「读作 `modelId`」红；
     - ④ 上一个 Run 的行不在表里时仍用它 → 红；
-    - ⑤ 手填的 id 也留在原行 → 验收 15 手填一例红；
+    - ⑤ 手填的 id 不留在原行（`user` 按 `synthesized` 读）→ 验收 15 手填一例红；⑤′ `synthesized` 的 id 也留在原行 → 验收 15 `synthesized` 一例红；⑤″ 实例上的 `user` 行不在实例里了也留（按内置厂商的手填读）→ 验收 15 实例一例与 custom-vendor-runtime「验收 20」红；
     - ⑥ 会话不换留下的行绕过数据去向检查 → 验收 15「Ollama 地址改到公网主机」一例红；
     - ⑦ `menuSelectionOf` 给「更多模型」的行也写指针 → 验收 16 红；
     - ⑧ `provider.select` 不带 `latestOf` 也写指针（例如让 `selectionOf` 对主列表的行给指针）→ 验收 16「不带 `latestOf` 选 `glm-5.3-flash`」与 provider-routes.test.ts「accepts %s」红；
     - ⑨ 厂商没配置时跳到已配置的厂商 → 验收 14 末句红；
-    - ⑩ `latestOf` 与 `source` 同在时仍按指针读 → 红。
+    - ⑩ `latestOf` 与 `source` 同在时仍按指针读 → 红；
+    - ⑪ 只改档也写默认（去掉 `session.selectModel` 里那条判定）→ 验收 16「只改档不写默认」两例红。
     - 「指针取家族里排在前面的行」不在这里做：解析调 `newestOfFamily`，由第 5 步的突变 ④ 覆盖；合成表把 [6, 0] 放在第一行，这里测不出它。
 - [ ] 10. 设置卡（renderer）：apps/desktop/src/renderer/src/components/settings/ProviderSettings.tsx 的下拉（:370-392）先列指针项（`settings.providers.latest`，填家族显示名与那一行的显示名，悬停是 id），再列各行；`newDraft`（:500-520）按 spec §跟随最新「谁写指针」选中；保存（:229-236）时选的是指针项就给 `provider.select` 带 `latestOf`，选的是钉住的行就不带。指针项的选项值不能与行 id 重名，`selectOption('<行 id>')` 照旧选中钉住的那一行（model-menu.spec.ts:616 那例靠它）。
   - 测试：provider-settings.spec.ts（验收 17）；renderer-settings-sections.test.ts 若断言了下拉选项，一并改。
   - 突变：① 没存这一家的默认时选中第一行 → 验收 17 红；② 保存指针项时不带 `latestOf` → 红；③ 保存钉住的「Opus 5.5」时也带 `latestOf` → 验收 17 红；④ Ollama 卡也出指针项 → 红。
-- [ ] 11. 第一把 key 写指针（spec §跟随最新「谁写指针」「迁移」，§点名 (h)）。由本 spec 做，不论两份谁先实现；presentation-r1 那边不用改它的文件：
-  - 前提：presentation-r1 写第一把 key 的那一步已合入（它已 `implemented`，或与本步同一个 PR）。没合入时本步等着，其余各步照做，本 spec 不标 `implemented`。
-  - 做法：那次写入的值改成第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都不变。presentation-r1 验收 12 对应的测试里写具体 id 的期望改成指针（读法照 spec §点名 (h)）。
-  - presentation-r1 写具体 id 的版本合入之后、本步合入之前，不切 release 分支。
-  - 跑验收 19，结果记在本文件。
+- [ ] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan，按开工时 `dev` 上的情形二选一：
+  - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记在本文件。它合入之后、本步合入之前不切 release 分支。
+  - 还不在 `dev` 上：本步不做事，记一句「『有』一支由 presentation-r1 plan 第 9 步实现，验收 19 由它验收 12 的指针一例验」，勾掉。不因此等它，也不因此不标 `implemented`。
 - [ ] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
   - 官方组两次，`TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL` 分别取 `claude-sonnet-5-5`、`claude-haiku-5-5`（命令见上，带 `--grep`，不连带跑搜索探测、前缀探测和智谱各组）。
   - apps/desktop/e2e/live-official-agent.spec.ts 照「Opus 5.5 performs actual threshold compaction in the product loop」加两例。官方协议接缝都用 `record` 模式：`strict` 会把 `thinking` 改写成带 `block_binding` 的 adaptive（apps/desktop/src/main/host/official-protocol-test-seam.ts:52-58），盖掉 `between_tools`；`evidence()` 相应传 `strict: false`。两例都在压缩前先跑一轮工具调用：照「performs a real WebSearch round trip and workspace Read smoke」那例，`startTask` 进一个工作区，让模型 Read 一个文件一次并 `allow`，这样摘要请求会回放一对 tool_use / tool_result（生产里最常见的形态；原 Opus 例每轮都不用工具，没覆盖到）。判据分两处读（spec 验收 12）：
@@ -108,12 +121,12 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 同一文件加一例「Sonnet 5.5 and Haiku 5.5 record cache reads and thinking text」，record 模式，两个模型各发两次一道要推理、不用工具的题，例如「Determine how many positive integers below 500 have exactly six positive divisors, and how many of those are odd. Do not use tools. Reply with the two numbers, then DIVISORS_DONE.」，用 `completed(page, 'DIVISORS_DONE')` 等。不照搬 live-provider.spec.ts:1699 的原题：它要求调 `lookup`，那是裸协议测试自己定义的工具，产品循环里没有。从 `tapeFacts(userData)` 读：
     - 第一个请求先断言提示长度（input + cacheRead + cacheWrite）大于 512（F20）、`usage.cacheWriteTokens` 大于 0，再断言第二个请求 `provider/attempt_completed` 的 `usage.cacheReadTokens` 大于 0；
     - 消息里出现思考块时，文本非空。
-  - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。
+  - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，把报错原文（不含 key）记进本文件。报错指向 effort、`between_tools` 或 `disabled` 时，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。指向别的原因时不按 (e) 处理：这两例的摘要请求第一次回放 tool_use / tool_result 又不带 tools，记成 02 §摘要请求「前缀（默认做法）」的问题请 owner 定。原因判不清时，问 owner 要不要在 record 模式下给 Opus 5.5 跑一次同样的「Read + 阈值压缩」做对照（约 7 个请求，同样先提醒钥匙串会弹窗）。
   - 记进本文件：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读。不记 key。
-- [ ] 13. 旧 spec 上要加的（与实现同一个 PR，日期写合入当天；旧文一字不改）：
-  - 01、02、custom-vendors、model-display-names、presentation-r1 顶部各加一行 `Amended by:`（括注写增了什么，照 spec `Amends:`）；02 那一行点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(e) 只在 live 失败、owner 确认时补），presentation-r1 那一行点出 (h)；spec `Amends:` 里 presentation-r1 那一项补成链接 `../presentation-r1/spec.md`；
-  - 02 §模型菜单与输入框「更多模型 ›」那一行行末接指针「（<合入日期> 起由 [claude-5-5-models](../../features/claude-5-5-models/spec.md) §替换 02 的表现层条款 取代：括注改为「每个家族里不是最新一代的行」并照实列出）」，02 顶部加 `Clauses replaced by:`（spec-driven-dev 第三个例外）；spec `Replaces:` 里的「实现合入当天」在同一个提交里换成同一个日期。
-- [ ] 14. 对照验收 1–19 逐条核对，结果记在本文件。
+- [ ] 13. 旧 spec 上要加的（与实现同一个 PR；旧文一字不改）。日期一律取写入这些行的那个提交的日期，合入晚了也不改（spec `Replaces:`）：
+  - 01、02、model-display-names 顶部各加一行 `Amended by:`（括注写增了什么，照 spec `Amends:`）；02 那一行点出 §点名 (a)(b)(f) 与 owner 的确认，(g) 只在第 0 步 owner 确认过之后点出（(e) 只在 live 失败、owner 确认时补）；01 那一行点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛）；
+  - 02 §模型菜单与输入框「更多模型 ›」那一行行末接指针「（<日期> 起由 [claude-5-5-models](../../features/claude-5-5-models/spec.md) §替换 02 的表现层条款 取代：括注改为「每个家族里不是最新一代的行」）」，02 顶部加 `Clauses replaced by:`（spec-driven-dev 第三个例外）；spec `Replaces:` 里的「写入指针那天」在同一个提交里换成同一个日期。
+- [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑一次「命令」里的全量 e2e，结果记在本文件。
 - [ ] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；`git status` 干净。
 - [ ] 16. spec 的 `Status` 改为 `implemented`。
 
@@ -130,3 +143,8 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 - 2026-10-15：按第二轮评审就地修订 spec 与本计划（spec `Revisions:` ⑩–⑮）：第 1、3、4、5、7 步随改。代码没动。
 - 2026-10-15：owner 定开放问题（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 与本计划就地修订（spec `Revisions:` ⑯–⑳）：加第 5、8–11、13 步，原第 5–10 步顺延为第 6、7、12、14–16 步。代码没动。下一步：收尾一步把 spec 改 `ready`，然后从第 1 步开工。
 - 2026-10-15：按第三轮评审就地修订 spec 与本计划（spec `Revisions:` ㉑–㉗；owner 同日定「都按推荐来」，会话不换不论默认怎么变）：第 8、9、10、11、13 步随改。第 11 步不再要 presentation-r1 改它自己的文件；它的 `Related:` 说两份只交叉两处，现在是三处（多了本 spec 修补它的第 1 条），这句由 `docs/presentation-r1` 分支去改。代码没动。下一步：收尾一步把 spec 改 `ready`，然后从第 1 步开工。
+- 2026-10-15：按第四轮评审就地修订 spec 与本计划（spec `Revisions:` ㉘–㊲，对照兄弟分支 `docs/presentation-r1` 的 `c60760d` 核对）：「与 presentation-r1 的先后」、第 0、8、9、11、12、13、14 步与「命令」随改。上一条说的「本 spec 修补它的第 1 条」撤回：它的第 1 条已自己写了指针一支，本 spec 只在它先合入时实现那一支。第 0 步多了一件：改 `ready` 之前请 owner 单独确认 §点名 (g)。代码没动。下一步：第 0 步问 owner (g)，确认后改 `ready`，然后从第 1 步开工。
+
+## Open
+
+- 交给 `docs/presentation-r1` 分支（本分支不改它的文件）：① 它 `Related:` 与 plan「与 claude-5-5-models 的先后」的核对基准从 `cbde44f` 换成本分支的最新提交；② 它先合入时「两次合入之间不切 release 分支」这条约束，它的 plan 也写上（它现在只写那段时间写下的值留着钉住，没说发版）；③ 它 plan 里引的本 plan 第 11 步「已实现」一支，现在对应第 11 步的第一种情形（presentation-r1 先合入）。
