@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { Dialog as DialogPrimitive } from '@base-ui/react/dialog'
-import { cn } from 'cn'
+import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 import { XIcon } from 'lucide-react'
@@ -51,7 +51,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          'fixed top-1/2 left-1/2 z-[var(--t-z-modal)] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-border-subtle duration-[var(--t-dur-sheet)] ease-out data-closed:duration-[var(--t-dur-fast)] outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
+          'fixed top-1/2 left-1/2 z-[var(--t-z-modal)] grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-border-subtle duration-[var(--t-dur-sheet)] ease-out data-closed:duration-[var(--t-dur-fast)] outline-none sm:max-w-sm data-nested-dialog-open:pointer-events-none data-nested-dialog-open:opacity-0 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95',
           className,
         )}
         {...props}
@@ -122,7 +122,11 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
     <DialogPrimitive.Description
       data-slot="dialog-description"
       className={cn(
-        'text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground',
+        // Balanced: a short description never ends on a line of one or two characters (「…⏎文件。」).
+        // In Chinese, balancing alone breaks inside a word (「离⏎开」): every pair of CJK characters is a
+        // break opportunity. `keep-all` leaves only punctuation and spaces; `anywhere` is the last
+        // resort for a run with neither that is wider than the line.
+        'text-sm text-balance text-muted-foreground [&:lang(zh)]:break-keep [&:lang(zh)]:wrap-anywhere *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground',
         className,
       )}
       {...props}

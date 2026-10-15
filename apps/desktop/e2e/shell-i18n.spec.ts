@@ -16,8 +16,8 @@ import { expectSingleLineUnclipped } from './helpers/text-fit.js'
  * Enter) ride on the same launch shape.
  */
 
-/** Rows rendered today: newChat, projects, artifacts, scheduled, customize. */
-const NAV_ITEM_COUNT = 5
+/** Rows rendered today: newChat. The pages behind the other four do not exist yet, so they are not drawn. */
+const NAV_ITEM_COUNT = 1
 
 /** The renderer writes the full tag to `lang` and only the primary subtag to `data-lang`. */
 const PRIMARY_SUBTAG: Record<Locale, string> = { 'zh-CN': 'zh', en: 'en' }
@@ -38,7 +38,10 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       // Every sidebar row and every Composer string: one line, nothing clipped.
       await expectSingleLineUnclipped(page.getByTestId('nav-item'), NAV_ITEM_COUNT)
       await expectSingleLineUnclipped(page.getByTestId('composer-input'))
-      await expectSingleLineUnclipped(page.getByTestId('composer-send'))
+      // The send button is an icon: no text to fit, but its name is in the language.
+      await expect(page.getByTestId('composer-send')).toHaveAccessibleName(
+        locale === 'zh-CN' ? '发送' : 'Send',
+      )
       await expectSingleLineUnclipped(page.getByTestId('composer-disclaimer'))
       await expectSingleLineUnclipped(page.getByTestId('account-row'))
 

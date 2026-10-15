@@ -78,6 +78,7 @@ function fakeBridge(): FakeBridge {
   const bridge: TenonBridge = {
     initialLocale: 'en',
     startsNewChat: false,
+    platform: 'linux',
     invoke: (channel, ...args) => {
       if (!isRouteChannel(channel)) return Promise.reject(new Error(`not a route: ${channel}`))
       log.push(channel)

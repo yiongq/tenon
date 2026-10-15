@@ -27,7 +27,7 @@
   --t-font-sans:
     'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif;
   --t-font-serif: 'Source Serif 4', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', serif;
-  --t-font-mono: ui-monospace, monospace;
+  --t-font-mono: 'Source Code Pro', ui-monospace, monospace;
 
   /* ---- type：字号与行高 ---- */
   --t-size-micro: 12px;
@@ -42,6 +42,8 @@
   --t-leading-h3: 28px;
   --t-size-h2: 20px;
   --t-leading-h2: 28px;
+  --t-size-h1: 24px;
+  --t-leading-h1: 32px;
 
   /* ---- weight ---- */
   --t-weight-regular: 400;
@@ -78,157 +80,157 @@
   /* ================= 亮色 ================= */
 
   /* ---- shell ---- */
-  --t-shell-bg: #dfdcd0;
-  --t-shell-row-hover: #cfcbc1;
-  --t-shell-row-selected: #c6c3b9;
+  --t-shell-bg: #e2e3e2;
+  --t-shell-row-hover: #d0d2d0;
+  --t-shell-row-selected: #c7c9c8;
 
   /* ---- surface ---- */
-  --t-surface-0: #f0ece0;
-  --t-surface-1: #f6f4ec;
-  --t-surface-2: #e8e4d8;
-  --t-surface-3: #d7d3c9;
-  --t-surface-panel: #f3f0e6;
-  --t-surface-overlay: #fbf9f6;
-  --t-surface-inverse: #1f1e1d;
+  --t-surface-0: #f4f5f3;
+  --t-surface-1: #f8f9f8;
+  --t-surface-2: #ebecea;
+  --t-surface-3: #d9dbd9;
+  --t-surface-panel: #f6f7f5;
+  --t-surface-overlay: #fcfcfb;
+  --t-surface-inverse: #15191a;
 
   /* ---- text ---- */
-  --t-text-primary: #1f1e1d;
-  --t-text-secondary: #403f3c;
-  --t-text-muted: #62605b;
-  --t-text-disabled: #a5a29a;
-  --t-text-accent: #a05339;
-  --t-text-danger: #972b2e;
-  --t-text-success: #22774a;
-  --t-text-warning: #775b22;
+  --t-text-primary: #15191a;
+  --t-text-secondary: #393c3d;
+  --t-text-muted: #5c5f5f;
+  --t-text-disabled: #a4a6a5;
+  --t-text-accent: #1c4d3e;
+  --t-text-danger: #932f32;
+  --t-text-success: #25744a;
+  --t-text-warning: #745a25;
   --t-text-on-accent: #ffffff;
   --t-text-on-danger: #ffffff;
 
   /* ---- border ---- */
-  --t-border-subtle: #d7d3c9;
-  --t-border-default: #c6c3b9;
-  --t-border-strong: #83817b;
-  --t-border-focus: #c96442;
+  --t-border-subtle: #d9dbd9;
+  --t-border-default: #c7c9c8;
+  --t-border-strong: #808382;
+  --t-border-focus: #1e5e4a;
 
   /* ---- fill ---- */
-  --t-fill-brand: #c96442;
-  --t-fill-brand-quiet: #ead6c7;
-  --t-fill-accent: #b55c3e;
-  --t-fill-accent-hover: #a05339;
-  --t-fill-neutral: #d7d3c9;
-  --t-fill-neutral-hover: #cfcbc1;
-  --t-fill-danger: #af3136;
+  --t-fill-brand: #1e5e4a;
+  --t-fill-brand-quiet: #d2ddd8;
+  --t-fill-accent: #1d5644;
+  --t-fill-accent-hover: #1c4d3e;
+  --t-fill-neutral: #d9dbd9;
+  --t-fill-neutral-hover: #d0d2d0;
+  --t-fill-danger: #ab363a;
 
   /* ---- alpha ---- */
-  --t-alpha-1: rgb(31 30 29 / 0.04);
-  --t-alpha-2: rgb(31 30 29 / 0.08);
-  --t-alpha-3: rgb(31 30 29 / 0.16);
-  --t-scrim: rgb(31 30 29 / 0.48);
+  --t-alpha-1: rgb(21 25 26 / 0.04);
+  --t-alpha-2: rgb(21 25 26 / 0.08);
+  --t-alpha-3: rgb(21 25 26 / 0.16);
+  --t-scrim: rgb(21 25 26 / 0.48);
 
   /* ---- role（别名层） ---- */
   --t-role-user-bubble: var(--t-surface-2);
   --t-role-code-bg: var(--t-surface-3);
   --t-role-tooltip-bg: var(--t-surface-inverse);
-  --t-role-tooltip-fg: #f0ece0;
+  --t-role-tooltip-fg: #f4f5f3;
 }
 
 /* ================= 暗色：跟随系统 ================= */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --t-shell-bg: #131211;
-    --t-shell-row-hover: #1f1e1d;
-    --t-shell-row-selected: #302e2d;
+    --t-shell-bg: #0d0f10;
+    --t-shell-row-hover: #15191a;
+    --t-shell-row-selected: #272b2b;
 
-    --t-surface-0: #1f1e1d;
-    --t-surface-1: #302e2d;
-    --t-surface-2: #272625;
-    --t-surface-3: #383734;
-    --t-surface-panel: #191817;
-    --t-surface-overlay: #403f3c;
-    --t-surface-inverse: #f0ece0;
+    --t-surface-0: #15191a;
+    --t-surface-1: #272b2b;
+    --t-surface-2: #1e2223;
+    --t-surface-3: #303334;
+    --t-surface-panel: #111415;
+    --t-surface-overlay: #393c3d;
+    --t-surface-inverse: #f4f5f3;
 
-    --t-text-primary: #f0ece0;
-    --t-text-secondary: #cfcbc1;
-    --t-text-muted: #adaaa2;
-    --t-text-disabled: #6a6863;
-    --t-text-accent: #d28568;
-    --t-text-danger: #d77073;
-    --t-text-success: #58d090;
-    --t-text-warning: #d0a858;
-    --t-text-on-accent: #1f1e1d;
+    --t-text-primary: #f4f5f3;
+    --t-text-secondary: #d0d2d0;
+    --t-text-muted: #adafae;
+    --t-text-disabled: #656868;
+    --t-text-accent: #92b0a5;
+    --t-text-danger: #d37377;
+    --t-text-success: #5ccc90;
+    --t-text-warning: #cca65c;
+    --t-text-on-accent: #15191a;
     --t-text-on-danger: #ffffff;
 
-    --t-border-subtle: #383734;
-    --t-border-default: #494744;
-    --t-border-strong: #8c8982;
-    --t-border-focus: #d28568;
+    --t-border-subtle: #303334;
+    --t-border-default: #898b8b;
+    --t-border-strong: #adafae;
+    --t-border-focus: #7ca094;
 
-    --t-fill-brand: #c96442;
-    --t-fill-brand-quiet: #412c24;
-    --t-fill-accent: #ce7455;
-    --t-fill-accent-hover: #d28568;
-    --t-fill-neutral: #383734;
-    --t-fill-neutral-hover: #403f3c;
-    --t-fill-danger: #af3136;
+    --t-fill-brand: #518273;
+    --t-fill-brand-quiet: #19352d;
+    --t-fill-accent: #6b9487;
+    --t-fill-accent-hover: #7ca094;
+    --t-fill-neutral: #303334;
+    --t-fill-neutral-hover: #393c3d;
+    --t-fill-danger: #ab363a;
 
-    --t-alpha-1: rgb(240 236 224 / 0.06);
-    --t-alpha-2: rgb(240 236 224 / 0.1);
-    --t-alpha-3: rgb(240 236 224 / 0.18);
+    --t-alpha-1: rgb(244 245 243 / 0.06);
+    --t-alpha-2: rgb(244 245 243 / 0.1);
+    --t-alpha-3: rgb(244 245 243 / 0.18);
     --t-scrim: rgb(0 0 0 / 0.6);
 
     --t-role-user-bubble: var(--t-surface-2);
     --t-role-code-bg: var(--t-surface-3);
     --t-role-tooltip-bg: var(--t-surface-inverse);
-    --t-role-tooltip-fg: #1f1e1d;
+    --t-role-tooltip-fg: #15191a;
   }
 }
 
 /* ================= 暗色：显式切换 ================= */
 [data-theme='dark'] {
-  --t-shell-bg: #131211;
-  --t-shell-row-hover: #1f1e1d;
-  --t-shell-row-selected: #302e2d;
+  --t-shell-bg: #0d0f10;
+  --t-shell-row-hover: #15191a;
+  --t-shell-row-selected: #272b2b;
 
-  --t-surface-0: #1f1e1d;
-  --t-surface-1: #302e2d;
-  --t-surface-2: #272625;
-  --t-surface-3: #383734;
-  --t-surface-panel: #191817;
-  --t-surface-overlay: #403f3c;
-  --t-surface-inverse: #f0ece0;
+  --t-surface-0: #15191a;
+  --t-surface-1: #272b2b;
+  --t-surface-2: #1e2223;
+  --t-surface-3: #303334;
+  --t-surface-panel: #111415;
+  --t-surface-overlay: #393c3d;
+  --t-surface-inverse: #f4f5f3;
 
-  --t-text-primary: #f0ece0;
-  --t-text-secondary: #cfcbc1;
-  --t-text-muted: #adaaa2;
-  --t-text-disabled: #6a6863;
-  --t-text-accent: #d28568;
-  --t-text-danger: #d77073;
-  --t-text-success: #58d090;
-  --t-text-warning: #d0a858;
-  --t-text-on-accent: #1f1e1d;
+  --t-text-primary: #f4f5f3;
+  --t-text-secondary: #d0d2d0;
+  --t-text-muted: #adafae;
+  --t-text-disabled: #656868;
+  --t-text-accent: #92b0a5;
+  --t-text-danger: #d37377;
+  --t-text-success: #5ccc90;
+  --t-text-warning: #cca65c;
+  --t-text-on-accent: #15191a;
   --t-text-on-danger: #ffffff;
 
-  --t-border-subtle: #383734;
-  --t-border-default: #494744;
-  --t-border-strong: #8c8982;
-  --t-border-focus: #d28568;
+  --t-border-subtle: #303334;
+  --t-border-default: #898b8b;
+  --t-border-strong: #adafae;
+  --t-border-focus: #7ca094;
 
-  --t-fill-brand: #c96442;
-  --t-fill-brand-quiet: #412c24;
-  --t-fill-accent: #ce7455;
-  --t-fill-accent-hover: #d28568;
-  --t-fill-neutral: #383734;
-  --t-fill-neutral-hover: #403f3c;
-  --t-fill-danger: #af3136;
+  --t-fill-brand: #518273;
+  --t-fill-brand-quiet: #19352d;
+  --t-fill-accent: #6b9487;
+  --t-fill-accent-hover: #7ca094;
+  --t-fill-neutral: #303334;
+  --t-fill-neutral-hover: #393c3d;
+  --t-fill-danger: #ab363a;
 
-  --t-alpha-1: rgb(240 236 224 / 0.06);
-  --t-alpha-2: rgb(240 236 224 / 0.1);
-  --t-alpha-3: rgb(240 236 224 / 0.18);
+  --t-alpha-1: rgb(244 245 243 / 0.06);
+  --t-alpha-2: rgb(244 245 243 / 0.1);
+  --t-alpha-3: rgb(244 245 243 / 0.18);
   --t-scrim: rgb(0 0 0 / 0.6);
 
   --t-role-user-bubble: var(--t-surface-2);
   --t-role-code-bg: var(--t-surface-3);
   --t-role-tooltip-bg: var(--t-surface-inverse);
-  --t-role-tooltip-fg: #1f1e1d;
+  --t-role-tooltip-fg: #15191a;
 }
 
 /* ================= 减动效 ================= */

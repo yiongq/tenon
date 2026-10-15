@@ -3,6 +3,8 @@ import type { AppendMessage } from '@assistant-ui/react'
 import type { MessageRowContract } from '@tenon-app/contracts'
 import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { JSX, ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { sessionTitle } from '@/lib/session-title'
 import { ConversationContext } from './conversation'
 import { SessionStore } from './session-store'
 import type { SessionSnapshot } from './session-store'
@@ -20,6 +22,10 @@ export interface ChatProviderProps {
   resumeOnOpen?: boolean | undefined
   /** Moves the window to a new, empty session (「用新模型开新会话」). */
   onStartSession?: ((sessionId: string) => void) | undefined
+  /** Called once the session on screen holds a message (the shell notes that a chat exists). */
+  onHasMessages?: (() => void) | undefined
+  /** The session's title (lib/session-title.ts), whenever it changes; empty while it has no message. */
+  onTitle?: ((sessionId: string, title: string) => void) | undefined
   /** False while startup recovery's restore is in flight: nothing can be sent yet (B15). */
   canSend?: boolean | undefined
   children: ReactNode
@@ -54,9 +60,12 @@ export function ChatProvider({
   initialRows,
   resumeOnOpen,
   onStartSession,
+  onHasMessages,
+  onTitle,
   canSend,
   children,
 }: ChatProviderProps): JSX.Element {
+  const { i18n } = useTranslation()
   const store = useMemo(
     () => new SessionStore(sessionId, window.tenon, initialRows ?? [], canSend !== false),
     // The rows are the ones this session opened with: read once per session.
@@ -70,6 +79,12 @@ export function ChatProvider({
   }, [store, resumeOnOpen])
   useEffect(() => store.setCanSend(canSend !== false), [store, canSend])
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const hasMessages = snapshot.model.turns.length > 0
+  useEffect(() => {
+    if (hasMessages) onHasMessages?.()
+  }, [hasMessages, onHasMessages])
+  const title = sessionTitle(snapshot.model.turns, i18n.language)
+  useEffect(() => onTitle?.(sessionId, title), [onTitle, sessionId, title])
   const messages = useMemo(() => toThreadMessages(snapshot.model), [snapshot.model])
   const runtime = useExternalStoreRuntime({
     messages,

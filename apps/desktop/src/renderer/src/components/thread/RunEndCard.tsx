@@ -6,6 +6,7 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
+import { PathText } from '@/components/ui/path-text'
 import { customVendorGone, isInstanceId } from '@/lib/custom-vendor'
 import { cardOf, effectLineOf } from '@/lib/end-card'
 import type { EndVisual } from '@/lib/end-card'
@@ -114,7 +115,7 @@ function MessageError(props: {
       role="alert"
       data-testid="message-error"
       data-error-code={props.code}
-      className="mt-2 flex w-full items-center justify-between gap-3 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
+      className="flex w-full items-center justify-between gap-3 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
     >
       <span data-testid="message-error-text">{t(ERROR_KEY[props.code])}</span>
       {canRetry ? (
@@ -134,7 +135,7 @@ function MessageError(props: {
 function SummaryLine(props: { readonly summary: NonNullable<TurnCustom['summary']> }): JSX.Element {
   const { t } = useTranslation()
   return (
-    <p data-testid="turn-summary" className="mt-2 font-sans text-micro text-text-muted">
+    <p data-testid="turn-summary" className="font-sans text-micro text-text-muted">
       {tx(t, 'summary.line', { ...props.summary })}
     </p>
   )
@@ -237,7 +238,7 @@ function FailureCard(props: {
       data-testid="failure-card"
       data-code={props.reason.code}
       data-visual={shape.visual}
-      className={`mt-2 flex flex-col gap-1 rounded-sm border px-3 py-2 font-sans text-ui-sm ${VISUAL_CLASS[shape.visual]}`}
+      className={`flex flex-col gap-1 rounded-sm border px-3 py-2 font-sans text-ui-sm ${VISUAL_CLASS[shape.visual]}`}
     >
       <p data-testid="failure-what" data-custom-vendor-gone={gone}>
         {gone
@@ -251,7 +252,9 @@ function FailureCard(props: {
             <p>{t('failure.effects.doneHeading', { count: effects.done.length })}</p>
             <ul className="list-disc pl-5" data-testid="failure-effects-done">
               {effects.done.map((part) => (
-                <li key={part.callKey}>{toolSentence(t, part.name, part.input)}</li>
+                <li key={part.callKey}>
+                  <PathText text={toolSentence(t, part.name, part.input)} />
+                </li>
               ))}
             </ul>
           </>

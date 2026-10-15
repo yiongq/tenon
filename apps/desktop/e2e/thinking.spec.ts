@@ -23,12 +23,14 @@ const CASES = {
     chunks: ['首先读', '题。然后', '简短地', '回答。'],
     first: '首先读题。',
     took: '思考了 2 秒',
+    live: '思考中 · 2 秒',
     label: '思考',
   },
   en: {
     chunks: ['First, read ', 'the question. ', 'Then answer ', 'it briefly.'],
     first: 'First, read the question.',
     took: 'Thought for 2s',
+    live: 'Thinking · 2s',
     label: 'Thinking',
   },
 } as const
@@ -60,10 +62,11 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await send(page, 'a question')
       const block = page.getByTestId('thinking-block')
       const toggle = block.getByTestId('thinking-toggle')
-      // Still streaming (the reply is held after its thinking): collapsed, the time it took and the
-      // first sentence, as this locale splits sentences.
+      // Still streaming (the reply is held after its thinking, so the block is still the tail of it):
+      // collapsed, the time so far in the in-progress wording, and the first sentence, as this
+      // locale splits sentences.
       await expect(block.getByTestId('thinking-first')).toHaveText(copy.first)
-      await expect(toggle).toHaveText(`${copy.took}${copy.first}`)
+      await expect(toggle).toHaveText(`${copy.live}${copy.first}`)
       await expect(page.getByTestId('assistant-text')).toHaveCount(0)
       // Expanded: the whole text the vendor returned, in place of the first sentence.
       await toggle.click()

@@ -115,6 +115,7 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 const MODELS: readonly ModelInfo[] = frozenModels([
   {
     id: 'glm-5.3',
+    nameKey: 'model.name.glm53',
     purposeKey: 'model.purpose.glm53',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
@@ -140,6 +141,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   {
     // The daily model (02 §模型与密钥).
     id: 'glm-5.3-flash',
+    nameKey: 'model.name.glm53flash',
     purposeKey: 'model.purpose.glm53flash',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
@@ -165,6 +167,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   {
     // The speed tier the live suite runs on (02 §模型与密钥).
     id: 'glm-5.3-flashx',
+    nameKey: 'model.name.glm53flashx',
     purposeKey: 'model.purpose.glm53flashx',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 1_000_000,
@@ -189,6 +192,7 @@ const MODELS: readonly ModelInfo[] = frozenModels([
   },
   {
     id: 'glm-4.6',
+    nameKey: 'model.name.glm46',
     purposeKey: 'model.purpose.glm46',
     providerId: ZHIPU_PROVIDER_ID,
     contextLimit: 200_000,

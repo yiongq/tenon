@@ -65,8 +65,8 @@ export function ConnectorsPane() {
                   className="flex min-w-0 flex-1 flex-col items-start gap-1 text-left"
                   onClick={() => setSelected(s.id)}
                 >
-                  <span className="break-all font-medium">{s.displayName}</span>
-                  <span className="break-all text-micro text-text-muted">
+                  <span className="wrap-anywhere font-medium">{s.displayName}</span>
+                  <span className="wrap-anywhere text-micro text-text-muted">
                     {t('mcp.idType', {
                       id: s.id,
                       type: t(s.transport.type === 'stdio' ? 'mcp.local' : 'mcp.remote'),

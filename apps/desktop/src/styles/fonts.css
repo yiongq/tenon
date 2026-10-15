@@ -1,0 +1,100 @@
+/* 随包字体：Inter（界面）、Source Serif 4（助手正文）、Source Code Pro（等宽），均为 SIL OFL 1.1，
+   版权行（取自字体文件）记在仓库根的 NOTICE，打包时附 OFL 全文，不照搬包里的 LICENSE。来源是
+   @fontsource-variable/* 包里的 woff2。
+
+   只带拉丁子集、可变字重（wght）：中文字符不在这几个文件里，按 tokens.css 的字族栈
+   落到 PingFang SC / Microsoft YaHei / Noto Sans CJK SC；unicode-range 让纯中文界面
+   根本不会去读这些文件。
+
+   family 名与 tokens.css 的字族栈一致（'Inter'、'Source Serif 4'、'Source Code Pro'）：
+   @font-face 先于系统同名字体，所以不论本机装没装，渲染出来的是同一套字形。
+   font-display: block —— 字体就在包里，几毫秒就位，宁可短暂不画也不要先画回落字体再跳。
+
+   文末另有两个 zh 专用的别名字族（同一批文件），unicode-range 去掉了 U+2000-206F（通用标点）：
+   中文句子里的 “” ‘’ —— …… 是中文字符，spec「国际化」定的是 CJK 回落为系统无衬线，不能拿拉丁
+   衬线 / 无衬线的窄字形去画（省略号会贴在基线上）。tokens.css 在 :lang(zh) 下把字族栈的首项换成
+   这两个别名；en 不变。 */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: block;
+  src: url('@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2')
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* 助手正文里的 *强调* 在英文下要真斜体，否则浏览器会把正体拧成伪斜体。 */
+@font-face {
+  font-family: 'Source Serif 4';
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: block;
+  src: url('@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2')
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Source Code Pro';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: block;
+  src: url('@fontsource-variable/source-code-pro/files/source-code-pro-latin-wght-normal.woff2')
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* zh 专用别名：同上面的文件，只是不含 U+2000-206F，那一段落到 CJK 回落字体。 */
+@font-face {
+  font-family: 'Tenon Sans Latin';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Tenon Serif Latin';
+  font-style: normal;
+  font-weight: 200 900;
+  font-display: block;
+  src: url('@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2')
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Tenon Serif Latin';
+  font-style: italic;
+  font-weight: 200 900;
+  font-display: block;
+  src: url('@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-italic.woff2')
+    format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}

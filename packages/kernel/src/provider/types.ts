@@ -68,6 +68,13 @@ export interface ModelInfo {
    */
   purposeKey?: string
   /**
+   * The i18n key of the model's display name, the first line of its menu row and the composer's
+   * chip ("Opus 5.5" for `claude-opus-5-5`), given as data the way `purposeKey` is. Absent = the
+   * row shows its id, which is all a hand-typed, local or custom-vendor row has. Never read by
+   * encode(), so it is not in WIRE_MODEL_FIELDS.
+   */
+  nameKey?: string
+  /**
    * Spec 02, 01 修补 2 (open question 16, owner 2026-09-26): where the model menu lists the row —
    * `'more'` puts it under 更多模型 ›. Absent = `'main'`. Only the desktop reads it, so it is not in
    * WIRE_MODEL_FIELDS; a definition's first row (the new-user fallback) is never `'more'`.

@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { AlertDialog as AlertDialogPrimitive } from '@base-ui/react/alert-dialog'
-import { cn } from 'cn'
+import { cn } from '@/lib/utils'
 
 import { Button } from '@/components/ui/button'
 
@@ -115,7 +115,11 @@ function AlertDialogDescription({
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
       className={cn(
-        'text-sm text-balance text-muted-foreground md:text-pretty *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground',
+        // Balanced at every width: `pretty` leaves a CJK sentence's last one or two characters alone.
+        // In Chinese, balancing alone breaks inside a word (「离⏎开」): every pair of CJK characters is a
+        // break opportunity. `keep-all` leaves only punctuation and spaces; `anywhere` is the last
+        // resort for a run with neither that is wider than the line.
+        'text-sm text-balance text-muted-foreground [&:lang(zh)]:break-keep [&:lang(zh)]:wrap-anywhere *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground',
         className,
       )}
       {...props}

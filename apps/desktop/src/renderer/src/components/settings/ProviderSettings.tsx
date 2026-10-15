@@ -11,7 +11,7 @@ import type {
   ProviderSelection,
   ProviderWriteErrorCode,
 } from '@tenon-app/contracts'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { FormEvent, JSX, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { PROVIDER_WRITE_ERROR_KEY, REFUSAL_KEY } from '@/lib/provider-copy'
 import { CustomVendorSection } from './CustomVendorSection'
 import { Chooser, Field } from './fields'
+import { PaneFrame } from './PaneFrame'
 
 /**
  * Models and keys (spec 01 §desktop 接线, 验收 6): the provider to use, one field per declared
@@ -131,10 +132,6 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
   useEffect(() => {
     onBusyChange?.(saving || sectionBusy)
   }, [saving, sectionBusy, onBusyChange])
-  const chooser = useRef<HTMLSelectElement | null>(null)
-  /** One shot per opening: the fields do not exist yet when the dialog takes initial focus. */
-  const wantsFocus = useRef(false)
-
   /**
    * Every opening starts from what is stored: a card left half-filled and closed must not come
    * back with the text still in it. The whole reset happens in one update AFTER the reads resolve
@@ -142,7 +139,6 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
    */
   useEffect(() => {
     if (!open) return
-    wantsFocus.current = true
     void read().then((loaded) => {
       if (loaded === null) {
         setError({ code: 'unavailable', configKey: null })
@@ -175,18 +171,6 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
   }
 
   const entry = entries?.find((candidate) => candidate.id === draft?.providerId) ?? null
-
-  /**
-   * Initial focus belongs on the first field, but the card mounts while `provider.list` is still
-   * in flight, so at open time the only focusable things are the footer buttons. Once the fields
-   * exist, focus moves to the chooser — once per opening, so a later provider switch or a reload
-   * after a failed save never takes focus away from where the user put it.
-   */
-  useEffect(() => {
-    if (!open || entry === null || !wantsFocus.current) return
-    wantsFocus.current = false
-    chooser.current?.focus()
-  }, [open, entry])
 
   const chooseProvider = (next: ProviderEntryContract): void => {
     setError(null)
@@ -263,195 +247,190 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
     void save()
   }
 
-  const content = (
+  const header = (
+    <DialogHeader>
+      <DialogTitle>{t('settings.providers.title')}</DialogTitle>
+      <DialogDescription>{t('settings.providers.description')}</DialogDescription>
+    </DialogHeader>
+  )
+  const footer = (
     <>
-      <DialogHeader>
-        <DialogTitle>{t('settings.providers.title')}</DialogTitle>
-        <DialogDescription>{t('settings.providers.description')}</DialogDescription>
-      </DialogHeader>
-      {/* `min-w-0`: this is a grid item of the popup, and its automatic minimum would be the
-            instance cards' unwrapped one-line summaries (wire · address); the popup's column would
-            grow to fit them and push the cards and Save past its edge. At 0 the column keeps the
-            popup's width and those lines truncate. */}
-      <div className="flex min-w-0 flex-col gap-4">
-        {/* The fields scroll, the footer does not: a definition may declare more keys than fit
-              on a short screen, and a Save button below the fold is a Save button nobody finds.
-              The inset margin keeps the focus ring off the scroll container's edge. The instance
-              section scrolls with the form but is not in it: its buttons write on their own, and
-              Enter in one of its fields must not save the form above. */}
-        <div className="-mx-1 flex max-h-[60vh] flex-col gap-4 overflow-y-auto px-1">
-          {entries === null || entry === null || draft === null ? (
-            <p className="font-sans text-ui-sm text-text-muted" data-testid="provider-loading">
-              {t('settings.providers.loading')}
-            </p>
-          ) : (
-            <form
-              id={`${fieldId}-form`}
-              className="flex flex-col gap-4"
-              aria-busy={saving}
-              onSubmit={onSubmit}
-            >
-              <Field label={t('settings.providers.provider')} htmlFor={`${fieldId}-provider`}>
-                <Chooser
-                  id={`${fieldId}-provider`}
-                  testId="provider-select"
-                  inputRef={chooser}
-                  value={entry.id}
-                  options={entries.map((candidate) => ({
-                    value: candidate.id,
-                    label: fromData(candidate.nameKey),
-                  }))}
-                  onChange={(id) => {
-                    const next = entries.find((candidate) => candidate.id === id)
-                    if (next !== undefined) chooseProvider(next)
-                  }}
-                />
-              </Field>
+      {error === null ? null : (
+        <p
+          role="alert"
+          data-testid="provider-error"
+          data-error-code={error.code}
+          className="mx-4 mb-3 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
+        >
+          {t(ERROR_KEY[error.code])}
+        </p>
+      )}
 
-              {entry.refused === undefined ? null : (
-                <div
-                  data-testid="provider-refused"
-                  data-refusal-code={entry.refused.code}
-                  className="flex flex-col items-start gap-2 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
-                >
-                  <p>{t(REFUSAL_KEY[entry.refused.code])}</p>
-                  {entry.refused.code === 'official-host-only' ? (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      data-testid="provider-refused-new-custom"
-                      onClick={() => setCreating(true)}
-                    >
-                      {t('customVendor.create.open')}
-                    </Button>
-                  ) : null}
-                </div>
-              )}
-
-              {orderedKeys(entry.configKeys).map((key) => (
-                <Field
-                  key={key.name}
-                  label={fromData(key.labelKey)}
-                  htmlFor={`${fieldId}-${key.name}`}
-                >
-                  <Input
-                    id={`${fieldId}-${key.name}`}
-                    data-testid={`provider-config-${key.name}`}
-                    type={key.secret ? 'password' : 'text'}
-                    autoComplete="off"
-                    spellCheck={false}
-                    required={key.required && !key.secret}
-                    aria-invalid={error?.configKey === key.name}
-                    {...(key.secret ? { 'aria-describedby': `${fieldId}-${key.name}-status` } : {})}
-                    value={draft.values[key.name] ?? ''}
-                    onChange={(event) => edit(key.name, event.target.value)}
-                  />
-                  {key.secret ? (
-                    <span
-                      id={`${fieldId}-${key.name}-status`}
-                      data-testid={`provider-status-${key.name}`}
-                      className={
-                        clearing(key, draft)
-                          ? 'font-sans text-micro text-text-danger'
-                          : 'font-sans text-micro text-text-muted'
-                      }
-                    >
-                      {t(secretStatusKey(key, draft))}
-                    </span>
-                  ) : null}
-                </Field>
-              ))}
-
-              {entry.models.length === 0 ? null : (
-                <Field label={t('settings.providers.model')} htmlFor={`${fieldId}-model`}>
-                  <Chooser
-                    id={`${fieldId}-model`}
-                    testId="model-select"
-                    value={draft.modelId}
-                    options={entry.models.map((model) => ({ value: model.id, label: model.id }))}
-                    onChange={(modelId) =>
-                      setDraft((current) =>
-                        current === null
-                          ? current
-                          : { ...current, modelId, customModel: '', modelEdited: true },
-                      )
-                    }
-                  />
-                </Field>
-              )}
-              <Field
-                label={t('settings.providers.customModel')}
-                htmlFor={`${fieldId}-custom-model`}
-              >
-                <Input
-                  id={`${fieldId}-custom-model`}
-                  data-testid="model-custom"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-describedby={`${fieldId}-custom-model-hint`}
-                  value={draft.customModel}
-                  onChange={(event) => {
-                    const customModel = event.target.value
-                    setError(null)
-                    setDraft((current) =>
-                      current === null ? current : { ...current, customModel, modelEdited: true },
-                    )
-                  }}
-                />
-                <span
-                  id={`${fieldId}-custom-model-hint`}
-                  className="font-sans text-micro text-text-muted"
-                >
-                  {t('settings.providers.customModelHint')}
-                </span>
-              </Field>
-            </form>
-          )}
-          {entries === null ? null : (
-            <CustomVendorSection
-              open={open}
-              creating={creating}
-              onCreatingChange={setCreating}
-              onBusyChange={setSectionBusy}
+      <DialogFooter className="m-0 rounded-none">
+        <DialogClose
+          render={
+            <Button
+              variant="outline"
+              data-testid="provider-cancel"
+              disabled={saving || sectionBusy}
             />
-          )}
-        </div>
-
-        {error === null ? null : (
-          <p
-            role="alert"
-            data-testid="provider-error"
-            data-error-code={error.code}
-            className="rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
-          >
-            {t(ERROR_KEY[error.code])}
-          </p>
-        )}
-
-        <DialogFooter>
-          <DialogClose
-            render={
-              <Button
-                variant="outline"
-                data-testid="provider-cancel"
-                disabled={saving || sectionBusy}
-              />
-            }
-          >
-            {t('settings.providers.cancel')}
-          </DialogClose>
-          <Button
-            type="submit"
-            form={`${fieldId}-form`}
-            data-testid="provider-save"
-            disabled={saving || draft === null}
-          >
-            {t(saving ? 'settings.providers.saving' : 'settings.providers.save')}
-          </Button>
-        </DialogFooter>
-      </div>
+          }
+        >
+          {t('settings.providers.cancel')}
+        </DialogClose>
+        <Button
+          type="submit"
+          form={`${fieldId}-form`}
+          data-testid="provider-save"
+          disabled={saving || draft === null}
+        >
+          {t(saving ? 'settings.providers.saving' : 'settings.providers.save')}
+        </Button>
+      </DialogFooter>
     </>
+  )
+  const body = (
+    <>
+      {entries === null || entry === null || draft === null ? (
+        <p className="font-sans text-ui-sm text-text-muted" data-testid="provider-loading">
+          {t('settings.providers.loading')}
+        </p>
+      ) : (
+        <form
+          id={`${fieldId}-form`}
+          className="flex flex-col gap-4"
+          aria-busy={saving}
+          onSubmit={onSubmit}
+        >
+          <Field label={t('settings.providers.provider')} htmlFor={`${fieldId}-provider`}>
+            <Chooser
+              id={`${fieldId}-provider`}
+              testId="provider-select"
+              value={entry.id}
+              options={entries.map((candidate) => ({
+                value: candidate.id,
+                label: fromData(candidate.nameKey),
+              }))}
+              onChange={(id) => {
+                const next = entries.find((candidate) => candidate.id === id)
+                if (next !== undefined) chooseProvider(next)
+              }}
+            />
+          </Field>
+
+          {entry.refused === undefined ? null : (
+            <div
+              data-testid="provider-refused"
+              data-refusal-code={entry.refused.code}
+              className="flex flex-col items-start gap-2 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
+            >
+              <p>{t(REFUSAL_KEY[entry.refused.code])}</p>
+              {entry.refused.code === 'official-host-only' ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  data-testid="provider-refused-new-custom"
+                  onClick={() => setCreating(true)}
+                >
+                  {t('customVendor.create.open')}
+                </Button>
+              ) : null}
+            </div>
+          )}
+
+          {orderedKeys(entry.configKeys).map((key) => (
+            <Field key={key.name} label={fromData(key.labelKey)} htmlFor={`${fieldId}-${key.name}`}>
+              <Input
+                id={`${fieldId}-${key.name}`}
+                data-testid={`provider-config-${key.name}`}
+                type={key.secret ? 'password' : 'text'}
+                autoComplete="off"
+                spellCheck={false}
+                required={key.required && !key.secret}
+                aria-invalid={error?.configKey === key.name}
+                {...(key.secret ? { 'aria-describedby': `${fieldId}-${key.name}-status` } : {})}
+                value={draft.values[key.name] ?? ''}
+                onChange={(event) => edit(key.name, event.target.value)}
+              />
+              {key.secret ? (
+                <span
+                  id={`${fieldId}-${key.name}-status`}
+                  data-testid={`provider-status-${key.name}`}
+                  className={
+                    clearing(key, draft)
+                      ? 'font-sans text-micro text-text-danger'
+                      : 'font-sans text-micro text-text-muted'
+                  }
+                >
+                  {t(secretStatusKey(key, draft))}
+                </span>
+              ) : null}
+            </Field>
+          ))}
+
+          {entry.models.length === 0 ? null : (
+            <Field label={t('settings.providers.model')} htmlFor={`${fieldId}-model`}>
+              <Chooser
+                id={`${fieldId}-model`}
+                testId="model-select"
+                value={draft.modelId}
+                // The names the model menu and its chip use (「Opus 5.5」); the raw id, which the
+                // field below takes by hand, is the tooltip. A model without a name shows its id.
+                options={entry.models.map((model) =>
+                  model.nameKey === undefined
+                    ? { value: model.id, label: model.id }
+                    : { value: model.id, label: fromData(model.nameKey), title: model.id },
+                )}
+                onChange={(modelId) =>
+                  setDraft((current) =>
+                    current === null
+                      ? current
+                      : { ...current, modelId, customModel: '', modelEdited: true },
+                  )
+                }
+              />
+            </Field>
+          )}
+          <Field label={t('settings.providers.customModel')} htmlFor={`${fieldId}-custom-model`}>
+            <Input
+              id={`${fieldId}-custom-model`}
+              data-testid="model-custom"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={`${fieldId}-custom-model-hint`}
+              value={draft.customModel}
+              onChange={(event) => {
+                const customModel = event.target.value
+                setError(null)
+                setDraft((current) =>
+                  current === null ? current : { ...current, customModel, modelEdited: true },
+                )
+              }}
+            />
+            <span
+              id={`${fieldId}-custom-model-hint`}
+              className="font-sans text-micro text-text-muted"
+            >
+              {t('settings.providers.customModelHint')}
+            </span>
+          </Field>
+        </form>
+      )}
+      {entries === null ? null : (
+        <CustomVendorSection
+          open={open}
+          creating={creating}
+          onCreatingChange={setCreating}
+          onBusyChange={setSectionBusy}
+        />
+      )}
+    </>
+  )
+  const content = (
+    <PaneFrame header={header} footer={footer}>
+      {body}
+    </PaneFrame>
   )
   if (props.embedded) return content
   return (
@@ -468,9 +447,10 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
       <DialogContent
         data-testid="provider-settings"
         closeLabel={t('settings.providers.close')}
+        className="gap-0 overflow-hidden p-0"
         {...(finalFocus === undefined ? {} : { finalFocus })}
       >
-        {content}
+        <div className="flex max-h-[85vh] min-h-0 min-w-0 flex-col">{content}</div>
       </DialogContent>
     </Dialog>
   )

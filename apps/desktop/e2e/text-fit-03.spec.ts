@@ -1,6 +1,7 @@
 import { startHttpFixture } from '../../../packages/kernel/test/support/http-fixture.js'
 import { mcpServerSchema } from '@tenon-app/contracts'
 import { launchHash } from '../src/main/mcp/runtime.js'
+import { MIN_WINDOW_WIDTH } from '../src/main/window-theme.js'
 import type { Locator } from '@playwright/test'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -16,7 +17,7 @@ import {
   openConnectors,
   stdioConfig,
 } from './helpers/connectors.js'
-import { expectSingleLineUnclipped } from './helpers/text-fit.js'
+import { expectSingleLineUnclipped, expectWrappedUnclipped } from './helpers/text-fit.js'
 import { callsReply, providerEnv, send, textReply } from './helpers/tools.js'
 const evidence = process.env['TENON_SEG3_EVIDENCE_DIR']
 /** Forms scroll; measure each label once it is in view, as a user reaches it. */
@@ -137,7 +138,33 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await page.getByTestId('connector-save').click()
       await expect(page.getByTestId('grant-cancel')).toBeFocused()
       await expectSingleLineUnclipped(page.getByTestId('connector-grant').locator('button'), 3)
-      await expectSingleLineUnclipped(page.getByTestId('grant-warnings').locator('li'), 4)
+      // No variables, no list: every block from the title down to the warnings is one gap apart
+      // (an empty list once doubled the gap above the warnings).
+      await expect(page.getByTestId('grant-environment')).toHaveCount(0)
+      const spacing = await page.getByTestId('connector-grant').evaluate((grant) => {
+        // What a user sees as blocks: an empty element is still a grid item and still takes a gap.
+        const blocks = [...grant.children].filter(
+          (el) =>
+            getComputedStyle(el).position === 'static' && el.getBoundingClientRect().height > 0,
+        )
+        const last = blocks.findIndex((el) => el.getAttribute('data-testid') === 'grant-warnings')
+        const rects = blocks.slice(0, last + 1).map((el) => el.getBoundingClientRect())
+        return {
+          gap: Number.parseFloat(getComputedStyle(grant).rowGap),
+          gaps: rects.slice(1).map((rect, i) => rect.top - rects[i]!.bottom),
+        }
+      })
+      expect(spacing.gaps.length).toBeGreaterThanOrEqual(3)
+      for (const gap of spacing.gaps) expect(Math.abs(gap - spacing.gap)).toBeLessThanOrEqual(1)
+      // `sudo rm -rf ~/.ssh` warns of sudo, rm -rf, the home directory and the SSH one (and of the
+      // home directory again for the fixture's own path when the checkout is under home). Each
+      // sentence is interface copy and stays on one line in both languages (acceptance 46), the
+      // two that quote nothing included; what the others quote is the argv, content that may wrap
+      // (02 E4) but is never clipped.
+      const warnings = page.getByTestId('grant-warnings')
+      await expectSingleLineUnclipped(warnings.locator('[data-slot="warning-copy"]'), 4)
+      await expectWrappedUnclipped(warnings.locator('[data-slot="warning-content"]'), 2)
+      await expect(warnings.locator('li:not(:has([data-slot="warning-content"]))')).toHaveCount(2)
       if (evidence)
         await page.screenshot({
           animations: 'disabled',
@@ -207,6 +234,56 @@ for (const locale of ['zh-CN', 'en'] as const) {
     } finally {
       await app.close()
       await Promise.all([http.close(), fake.close()])
+    }
+  })
+}
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`03 验收 46: 「正在连接」 stays whole above the 「回到最新」 pill at the narrowest window in ${locale}`, async () => {
+    // A transcript taller than its viewport, scrolled up so the pill shows; then a connector starts
+    // its first connection, held at the gate.
+    const reply = Array.from({ length: 40 }, (_, i) => `Paragraph ${String(i + 1)}.`).join('\n\n')
+    const fake = await startFakeAnthropic({ replies: [textReply(reply)] })
+    const userData = makeUserDataDir('fit03-pill-' + locale)
+    const gate = join(userData, 'start-gate')
+    const server = { ...stdioConfig('notes', ['--start-gate-file', gate]), enabled: false }
+    seedConfig(userData, { locale, mcpServers: [server] })
+    const { app, page } = await launchTenon({
+      userData,
+      env: providerEnv(fake.baseURL),
+      contentSize: { width: MIN_WINDOW_WIDTH, height: 700 },
+    })
+    try {
+      await send(page, 'a long answer')
+      await expect(page.getByTestId('assistant-text')).toContainText('Paragraph 40.')
+      await page.evaluate(() => {
+        document.querySelector('[data-testid="thread-viewport"]')?.scrollTo({ top: 0 })
+      })
+      const pill = page.getByTestId('scroll-to-bottom')
+      await expect(pill).toBeEnabled()
+      expect(
+        await page.evaluate(() =>
+          window.tenon.invoke('mcp.setEnabled', { id: 'notes', enabled: true }),
+        ),
+      ).toMatchObject({ ok: true })
+      const notice = page.getByTestId('connector-status-notice')
+      await expect(notice).toHaveText(
+        locale === 'en' ? 'Connecting to Notes fixture…' : '正在连接 Notes fixture…',
+      )
+      await expect(page.getByTestId('sidebar')).toBeVisible()
+      await expectSingleLineUnclipped(notice)
+      // Above the pill, not beside it: the two never overlap, and the notice keeps off the box.
+      const noticeBox = (await notice.boundingBox())!
+      const pillBox = (await pill.boundingBox())!
+      const composerBox = (await page.getByTestId('composer').boundingBox())!
+      expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(pillBox.y)
+      expect(noticeBox.y + noticeBox.height).toBeLessThanOrEqual(composerBox.y)
+      writeFileSync(gate, 'ready')
+      await connected(page)
+      await expect(notice).toHaveCount(0)
+    } finally {
+      await app.close()
+      await fake.close()
     }
   })
 }

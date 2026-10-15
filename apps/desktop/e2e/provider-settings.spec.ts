@@ -66,9 +66,9 @@ test('acceptance 6: the settings card switches the provider the next message goe
     await page.getByTestId('account-providers').click()
     const card = page.getByTestId('provider-settings')
     await expect(card).toBeVisible()
-    // Focus starts on the first field, not on the footer: the card mounts before `provider.list`
-    // answers, so without the hand-off the dialog would park it on Cancel.
-    await expect(page.getByTestId('provider-select')).toBeFocused()
+    // Focus rests on the dialog itself: no field wears a focus ring before the user touches one.
+    await expect(card).toBeFocused()
+    await expect(page.getByTestId('provider-select')).not.toBeFocused()
 
     // Everything below is rendered from `provider.list`: the option, both fields and the model
     // list come from the zhipu DEFINITION, not from any renderer code naming it.
@@ -77,6 +77,10 @@ test('acceptance 6: the settings card switches the provider the next message goe
     // The endpoint stays zhipu's official one: the key is all there is to type.
     await page.getByTestId('provider-config-apiKey').fill(ZHIPU_KEY)
     await page.getByTestId('model-select').selectOption(ZHIPU_MODEL)
+    // Named as the model menu and its chip name it; the raw id is the tooltip.
+    const chosen = page.getByTestId('model-select').locator('option:checked')
+    await expect(chosen).toHaveText('GLM-4.6')
+    await expect(chosen).toHaveAttribute('title', ZHIPU_MODEL)
     await page.getByTestId('provider-save').click()
     await expect(card).toBeHidden()
 

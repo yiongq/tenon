@@ -13,7 +13,17 @@ import {
   createSessionService,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import { app, autoUpdater, BrowserWindow, Menu, dialog, ipcMain, session, shell } from 'electron'
+import {
+  app,
+  autoUpdater,
+  BrowserWindow,
+  Menu,
+  dialog,
+  ipcMain,
+  nativeTheme,
+  session,
+  shell,
+} from 'electron'
 import { createDesktopLoop, registerChatRoutes } from './chat.js'
 import { createProviderView } from './custom-vendors/registry.js'
 import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/routes.js'
@@ -37,6 +47,13 @@ import { e2eRouteSeam } from './e2e-routes.js'
 import { openSessionStore } from './tape/open.js'
 import { protectedShellFiles, registerWorkspaceRoutes } from './workspace.js'
 import { replayOnLoad } from './window-replay.js'
+import {
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  windowBackground,
+  windowFrame,
+} from './window-theme.js'
+import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
 import {
@@ -61,6 +78,11 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+/** The colour behind the page for the system's current theme, read from the token sheet. */
+function background(): string {
+  return windowBackground(nativeTheme.shouldUseDarkColors, tokensCss)
+}
+
 /** The one document a Tenon window may show: the dev server in development, the built file otherwise. */
 function appUrl(): string {
   const devUrl = process.env['ELECTRON_RENDERER_URL']
@@ -78,8 +100,12 @@ function createWindow(locale: string, title: string, fresh: boolean): BrowserWin
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+    backgroundColor: background(),
     show: false,
     title,
+    ...windowFrame(process.platform),
     webPreferences: {
       // .cjs: the preload is built as CommonJS because sandboxed preloads cannot be ESM.
       preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -90,6 +116,13 @@ function createWindow(locale: string, title: string, fresh: boolean): BrowserWin
       additionalArguments: [`--tenon-locale=${locale}`, ...(fresh ? [NEW_CHAT_ARG] : [])],
     },
   })
+
+  // The renderer follows the system theme; the native layer behind it has to follow too.
+  const paintBackground = (): void => {
+    if (!win.isDestroyed()) win.setBackgroundColor(background())
+  }
+  nativeTheme.on('updated', paintBackground)
+  win.once('closed', () => nativeTheme.off('updated', paintBackground))
 
   win.on('ready-to-show', () => win.show())
   win.webContents.on('preload-error', (_event, preloadPath, error) => {

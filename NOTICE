@@ -9,4 +9,15 @@ Files copied or adapted from the following projects keep their original copyrigh
 - sandbox-runtime (anthropic-experimental/sandbox-runtime) — Apache-2.0
 - knowledge-work-plugins (anthropics/knowledge-work-plugins) — Apache-2.0
 
+This product bundles the following fonts as the Latin-subset variable woff2 files of the
+@fontsource-variable packages (see apps/desktop/src/styles/fonts.css). They are licensed under the
+SIL Open Font License, Version 1.1 (https://openfontlicense.org). A packaged build must ship the full
+OFL 1.1 text with each font, under the copyright line listed below, which is taken from the font
+file itself (name table ID 0). Do not copy the packages' own LICENSE files: those of Source Serif 4
+and Source Code Pro name Google Inc. as the copyright holder, which the font files do not.
+
+- Inter — Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+- Source Serif 4 — © 2014 - 2021 Adobe Systems Incorporated (http://www.adobe.com/), with Reserved Font Name 'Source'
+- Source Code Pro — © 2023 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'
+
 No code from AGPL-licensed or proprietary sources is included.

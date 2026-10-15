@@ -16,6 +16,8 @@ const api = {
    * renderer then skips the startup restore instead of reopening the conversation just left.
    */
   startsNewChat: process.argv.includes('--tenon-new-chat'),
+  /** The OS this window runs on: the renderer keeps the macOS title bar's corner clear on `darwin`. */
+  platform: process.platform,
   invoke: (channel: string, ...args: unknown[]): Promise<unknown> => {
     if (!isRouteChannel(channel)) {
       return Promise.reject(new Error(`ipc: "${channel}" is not a declared route`))

@@ -21,6 +21,7 @@ import type { FormEvent, JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PathText } from '@/components/ui/path-text'
 import {
   FETCH_MODELS_KEY,
   KEY_REMINDER_KEY,
@@ -382,9 +383,9 @@ function CreateForm(props: {
           </span>
           <p
             data-testid="custom-vendor-new-address"
-            className="font-sans text-ui-sm break-all text-text-primary"
+            className="font-sans text-ui-sm text-text-primary"
           >
-            {address}
+            <PathText text={address} />
           </p>
           <span className="font-sans text-micro text-text-muted">
             {t('customVendor.create.presetAddress')}
@@ -763,9 +764,9 @@ function InstanceCard(props: {
             </span>
             <p
               data-testid={`custom-vendor-address-${vendor}`}
-              className="font-sans text-ui-sm break-all text-text-primary"
+              className="font-sans text-ui-sm text-text-primary"
             >
-              {instance.baseURL}
+              <PathText text={instance.baseURL} />
             </p>
             <span className="font-sans text-micro text-text-muted">
               {preset === undefined

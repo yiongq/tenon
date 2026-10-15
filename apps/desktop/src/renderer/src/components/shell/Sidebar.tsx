@@ -1,16 +1,10 @@
 import type { LocaleSetting } from '@tenon-app/contracts'
-import {
-  CalendarClockIcon,
-  FolderKanbanIcon,
-  MessageSquarePlusIcon,
-  PackageIcon,
-  PanelLeftCloseIcon,
-  PuzzleIcon,
-} from 'lucide-react'
+import { MessageSquarePlusIcon, PanelLeftCloseIcon } from 'lucide-react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { sidebarChats } from '@/lib/sidebar-chats'
 import { AccountMenu } from './AccountMenu'
 import { NavItem } from './NavItem'
 
@@ -19,27 +13,34 @@ export interface SidebarProps {
   onNewChat: () => void
   locale: LocaleSetting
   onLocaleChange: (next: LocaleSetting) => void
+  /** Whether any chat exists (lib/sidebar-chats.ts). */
+  hasChats: boolean
 }
 
 /**
- * 264px, the shell's own background layer. Order follows master-reference §8.5: brand row ·
- * new chat · main navigation · chats and tasks · account row. Pages behind the navigation
- * items arrive with their backends; phase 0 keeps them as inert rows so the bilingual fit
- * regression covers their labels from day one.
+ * 264px, the shell's own background layer, from the top of the window down. On macOS the title bar
+ * is hidden, so the traffic lights sit over the brand row's left end (`mac:pl-18` keeps them clear)
+ * and the row is the window's drag handle. Order follows master-reference §8.5: brand row ·
+ * new chat · chats and tasks · account row. The navigation rows for projects, artifacts, scheduled
+ * tasks and skills and connectors (`sidebar.projects` ... `sidebar.customize` in the catalogues) are
+ * not drawn: each was an inert button, and a row that does nothing reads as a bug. They come back,
+ * one by one, with the page each opens.
  */
 export function Sidebar({
   onCollapse,
   onNewChat,
   locale,
   onLocaleChange,
+  hasChats,
 }: SidebarProps): JSX.Element {
   const { t } = useTranslation()
+  const chats = sidebarChats(hasChats)
   return (
     <aside
       data-testid="sidebar"
-      className="flex h-full w-[264px] shrink-0 flex-col gap-1 bg-shell-bg px-2 py-2"
+      className="flex h-full w-[264px] shrink-0 flex-col gap-1 bg-shell-bg px-2 py-2 mac:pt-0"
     >
-      <div className="flex items-center justify-between px-2 pt-1 pb-2">
+      <div className="app-drag flex items-center justify-between px-2 pt-1 pb-2 mac:ctl-h-lg mac:py-0 mac:pl-18">
         <span data-testid="brand" className="font-sans text-ui font-semibold text-text-primary">
           {t('app.name')}
         </span>
@@ -67,23 +68,26 @@ export function Sidebar({
         onClick={onNewChat}
         testId="nav-item"
       />
-      <nav aria-label={t('sidebar.navigation')} className="flex flex-col gap-0.5">
-        <NavItem icon={<FolderKanbanIcon />} label={t('sidebar.projects')} />
-        <NavItem icon={<PackageIcon />} label={t('sidebar.artifacts')} />
-        <NavItem icon={<CalendarClockIcon />} label={t('sidebar.scheduled')} />
-        <NavItem icon={<PuzzleIcon />} label={t('sidebar.customize')} />
-      </nav>
 
       <div className="mt-3 flex min-h-0 flex-1 flex-col">
-        <h2
-          data-testid="sidebar-section"
-          className="px-2 py-1 font-sans text-micro font-medium text-text-muted"
-        >
-          {t('sidebar.chats')}
-        </h2>
-        <p className="px-2 py-1 font-sans text-ui-sm text-text-disabled">
-          {t('sidebar.chatsEmpty')}
-        </p>
+        {chats.heading ? (
+          <h2
+            data-testid="sidebar-section"
+            className="px-2 py-1 font-sans text-micro font-medium text-text-secondary"
+          >
+            {t('sidebar.chats')}
+          </h2>
+        ) : null}
+        {chats.emptyHint ? (
+          // Information, not a disabled control: muted (4.8:1 on the shell), not disabled (1.9:1).
+          // Under the heading, not level with it: the heading is darker, the hint no larger.
+          <p
+            data-testid="sidebar-chats-empty"
+            className="px-2 py-1 font-sans text-micro text-text-muted"
+          >
+            {t('sidebar.chatsEmpty')}
+          </p>
+        ) : null}
       </div>
 
       <AccountMenu locale={locale} onLocaleChange={onLocaleChange} />

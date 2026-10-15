@@ -312,6 +312,12 @@
         "no-restricted-imports": [
           "error",
           {
+            "paths": [
+              {
+                "name": "cn",
+                "message": "import cn from '@/lib/utils': the stock merger takes text-ui-sm for a colour and drops one of the two."
+              }
+            ],
             "patterns": [
               {
                 "group": ["electron", "electron/*", "node:*", "keytar", "@napi-rs/keyring"],

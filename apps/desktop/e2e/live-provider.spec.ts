@@ -282,6 +282,8 @@ test.describe('live provider · zhipu', () => {
  * than from a login-keychain read on each of their launches.
  */
 const FLASH = 'glm-5.3-flash'
+/** The model menu and the chip show this row by name, not by id. */
+const FLASH_NAME = 'GLM-5.3 Flash'
 const AGENT_MODELS = [...new Set([pick('TENON_LIVE_ZHIPU_MODEL') ?? 'glm-5.3-flashx', FLASH])]
 /** Room for the default thinking level (`max`) and a tool call; the plain-reply cap above is smaller. */
 const AGENT_MAX_TOKENS = '8192'
@@ -754,7 +756,7 @@ test.describe('live agent · zhipu', () => {
     await expect(page.getByTestId('model-effort-levels')).toBeVisible()
     await page.getByTestId(`model-effort-${level}`).click()
     const shown = { low: 'Low', high: 'High', max: 'Max' }[level]
-    await expect(page.getByTestId('model-menu-current')).toHaveText(`${FLASH} · ${shown}`)
+    await expect(page.getByTestId('model-menu-current')).toHaveText(`${FLASH_NAME} · ${shown}`)
     const before = (await requestsOf(app)).length
     await send(page, `Reply with the single word: ${level}`)
     await settles(page, new RegExp(level, 'i'))

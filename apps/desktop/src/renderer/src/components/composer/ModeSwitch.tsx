@@ -35,10 +35,13 @@ export function ModeSwitch(): JSX.Element | null {
           disabled={facts.established && facts.profile !== profile}
           data-testid={`mode-${profile}`}
           onClick={() => choose(profile)}
+          // The chosen one is outlined as well as filled: on the composer's raised face the neutral
+          // fill alone is a hair away from the face (1.1:1 in dark), and the colour of the words
+          // would be all that told them apart.
           className={
             facts.profile === profile
-              ? 'rounded-sm bg-fill-neutral px-2 py-0.5 text-text-primary'
-              : 'rounded-sm px-2 py-0.5 text-text-muted disabled:hidden'
+              ? 'rounded-sm border border-border-default bg-fill-neutral px-2 py-0.5 text-text-primary'
+              : 'rounded-sm border border-transparent px-2 py-0.5 text-text-muted disabled:hidden'
           }
         >
           {t(profile === 'chat' ? 'mode.chat' : 'mode.cowork')}

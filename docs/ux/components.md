@@ -56,7 +56,7 @@
 | 项目行菜单 | `ProjectRowMenu` | DropdownMenu | 随能力 | 取消置顶 / 编辑详情 / 分隔线 / 归档 / 删除；**不给快捷键角标**（会由项目菜单与全局快捷键表撞车），角标只有会话行菜单有 | parity-audit §2 |
 | 列表筛选菜单 | `ListFilterMenu` | DropdownMenu（含单选项与子菜单） | 随能力 | 五段（类型 / 状态 / 最近活动 / 分组 / 排序），每行右侧显当前值；补「显示空分组」与「恢复默认」；最近活动 1 / 3 / 7 / 30 天 | interactions.md §1.1；parity-audit 2026-09-16 |
 | 批量选择与操作条 | `ListSelectionBar` | Checkbox + 自建浮条 + Button | 随能力 | 行 hover 出多选框，选中后底部浮出操作条（计数 + 归档 / 删除 / 取消）；归档动作与单行菜单的项集必须一致，不能一边有一边没有 | parity-audit §2 |
-| 顶栏 | `TopBar` | 自建 + Separator | **0** | 无背景；左标题右操作；标题过长省略但保留完整无障碍名 | interactions.md §1.2 |
+| 顶栏 | `TopBar` | 自建 + Separator | **0** | 无背景；左标题右操作；标题过长省略但保留完整无障碍名（2026-10-15 起标题是当前会话第一条消息的首句，没有会话时为空；macOS 上整条是拖动区，见文末补记） | interactions.md §1.2 |
 | 会话标题菜单 | `ThreadTitleMenu` | DropdownMenu | 2 | 标题旁 `⌄` 打开；「查看本次记录」按需打开过程记录，不做标签页、不进侧栏 | interactions.md §1.2；parity-audit 2026-09-13 |
 | 顶栏操作区 | `TopBarActions` | Button + Button（icon）+ Tooltip | 5 | 右面板开关与产物入口（`aria-pressed` 与面板显隐同步）；生成中相关按钮置灰而不是消失 | interactions.md §1.2 |
 | 右面板容器 | `SidePanel` | 自建分栏 + ScrollArea | **0** | 阶段 0 只留空壳与宽度、折叠状态（spec「UI 最小集」明写的例外）；打开时主列压窄左移，不覆盖 | interactions.md §1.3；spec.md「UI 最小集」 |
@@ -78,13 +78,13 @@
 |---|---|---|---|---|---|
 | 输入框 | `Composer` | ComposerPrimitive.Root + Textarea（自增高） | **0** | 空态与会话内两种宽度；`Enter` 发送、`⇧Enter` 换行；输入法组合中的 `Enter` 不发送 | interactions.md §2.1、§2.2；spec.md「国际化」 |
 | 占位文案 | `ComposerPlaceholder` | 自建 | **0** | 随上下文切换（空态问候 / 会话内 / 有技能时 / 输入 `/` 后 / 提问 widget 在场时），全部走目录 | interactions.md §2.1 |
-| 发送钮 | `SendButton` | ComposerPrimitive.Send + Button（icon） | **0** | 有正文或有附件即激活；禁用态也要能聚焦并说明原因；阶段 2 起生成中与停止钮并存，发送 = 入队，`Cmd/Ctrl+Enter` = 立即发送 | interactions.md §2.2；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
-| 停止钮 | `StopButton` | ComposerPrimitive.Cancel + Button（icon） | **0** | 阶段 2 起与发送钮并存（阶段 0 生成中原地替换发送钮）；`Esc` 等效；阶段 2 起「停止」即杀，杀整棵进程树，结果写在失败卡的副作用行 | interactions.md §2.2；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 发送钮 | `SendButton` | ComposerPrimitive.Send + Button（icon） | **0** | 有正文或有附件即激活；禁用态也要能聚焦并说明原因；阶段 2 起生成中与停止钮并存，发送 = 入队，`Cmd/Ctrl+Enter` = 立即发送（2026-10-15 起是圆形图标钮，位置固定，见文末补记） | interactions.md §2.2；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 停止钮 | `StopButton` | ComposerPrimitive.Cancel + Button（icon） | **0** | 阶段 2 起与发送钮并存（阶段 0 生成中原地替换发送钮；2026-10-15 起是方形图标钮，出现在模型 chip 左侧，chip 与发送钮都不挪位，见文末补记）；`Esc` 等效；阶段 2 起「停止」即杀，杀整棵进程树，结果写在失败卡的副作用行 | interactions.md §2.2；parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 免责行 | `ComposerDisclaimer` | 自建（静态文案） | **0** | 输入框下方常驻一行 `t()` 文案，不是控件；窄屏缩短为短句（§7 的响应式在阶段 6 统一过） | interactions.md §2.1、§7 |
 | 输入框上方槽位 | `ComposerSlots` | 自建（槽位容器） | 2 | 输入框上方只有这一个宿主，优先级写死：审批席 > 提问 widget > 到量条；**最多同时显示一条**，其余折叠成一行「还有 N 条 ›」。槽位本身不渲染内容，只排序与折叠。阶段 2 只放提问 widget，审批卡内联在消息流里、不进槽位 | parity-audit 块词汇「到量提示条」；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
-| 工具行 | `ComposerToolbar` | 自建（Base UI Toolbar）+ Button | 2 | 阶段 0 没有工具行（spec 的 Composer 最小态只有文本 / 发送 / 停止）；它随第一个占位者（模型菜单）出现。左键组右键组，左右箭头在组内移动；有内容时只有语音那一组会被发送钮替换，模型标记常驻 | interactions.md §2.1；parity-audit §1 |
+| 工具行 | `ComposerToolbar` | 自建（Base UI Toolbar）+ Button | 2 | 阶段 0 没有工具行（spec 的 Composer 最小态只有文本 / 发送 / 停止）；它随第一个占位者（模型菜单）出现，**2026-10-15 做了**：框内第二行，左簇 `ComposerLead`（模式切换）、右簇（停止钮）、模型 chip 与发送钮（见文末补记）。左键组右键组，左右箭头在组内移动；有内容时只有语音那一组会被发送钮替换，模型标记常驻 | interactions.md §2.1；parity-audit §1 |
 | 模式切换 | `ModeSwitch` | Tabs（或 ToggleGroup） | 2 | 对话 / 任务两档，位置在首页输入框内而不是侧栏品牌行；新会话发出第一条消息之前可切，建立后只显示形态、不能改。（2026-10-15 补：owner 定由输入框里的「在文件夹里工作」开关取代这两档：Tenon 不跟 Claude 的合并入口，仍保留对话 / 任务两种会话形态（02 的 H1），只是入口从两颗胶囊换成一个开关；细节在 4d（`docs/features/task-mode-ui`）或展示层 spec 里定，那份 spec 照 [docs/spec-driven-dev.md](../spec-driven-dev.md) 的第三个例外替换 02 的 `ModeSwitch` 条款（契约 `session.selectProfile` 与 H1 不变），在那之前本行照旧。Claude 自 2026-09-16 起已把 Pro / Max 的 Chat 与 Cowork 合成一个入口，见 [parity-audit](parity-audit-2026-09-12.md) 的头注） | parity-audit 2026-09-16；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
-| 文件夹 chip | `FolderChip` | Button（chip 变体）+ 系统目录对话框 | 2 | 只在任务形态出现，位于输入框下方：列出本会话的文件夹，第一个标为 cwd，没选时显示「专用文件夹」；点开由主进程弹系统目录选择框，可多选，点确认才生效，每一项都能移除；行为照 02 §工作区（只在任务形态）。授权弹窗、「以后都允许」、撤销在阶段 4（2026-10-08 由阶段 3 挪来，见 03 §界面） | [02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md)；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
+| 文件夹 chip | `FolderChip` | Button（chip 变体）+ 系统目录对话框 | 2 | 只在任务形态出现，位于输入框下方（2026-10-15 曾挪进框内工具行，当天按 02 §界面范围 挪回框下，见文末补记）：列出本会话的文件夹，第一个标为 cwd，没选时显示「专用文件夹」；点开由主进程弹系统目录选择框，可多选，点确认才生效，每一项都能移除；行为照 02 §工作区（只在任务形态）。授权弹窗、「以后都允许」、撤销在阶段 4（2026-10-08 由阶段 3 挪来，见 03 §界面） | [02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md)；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
 | 无痕入口 | `IncognitoToggle` | Button（`aria-pressed`）+ Tooltip | 随能力 | 首页头部的常驻入口：本次对话不入记忆、不入过程记录；开启态在输入框上有可见标记，不是只改一个开关 | parity-audit §1、§2 |
 | 附加菜单 | `AttachMenu` | DropdownMenu（含子菜单与勾选项） | 4 | `+` 打开；对话与任务两套菜单项，不共用一套（任务模式去掉加入项目 / 从 GitHub 添加 / 网络搜索，能力组末尾多一项运行位置）；默认向上开，贴顶时向下开。按 03 Q12 A 不在阶段 3 做，挪到阶段 4（2026-10-08 改，见 03 §界面） | interactions.md §2.3；parity-audit §1；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
 | 菜单开关组 | `AttachToggles` | DropdownMenu（勾选项） | 随能力 | `+` 菜单末段的开关组：网络搜索 / 记忆（各自随后端能力出现），打勾即开；开启后在工具行留一枚对应 chip。网络搜索开关挪到阶段 4（2026-10-08 改，原随阶段 3 的 `AttachMenu` 做，见 03 §界面），关掉即「本会话不提供搜索」，按工具表冻结规则从新会话起生效 | interactions.md §2.3；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md)；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
@@ -116,14 +116,14 @@
 | 助手消息 | `AssistantMessage` | MessagePrimitive.Root + Parts | **0** | 左对齐；一轮内块序固定：屏读隐藏标题 → 状态行 → 工具回执行与回执卡 → 正文 → 产物块 → 来源脚注行 → 动作条。动作条永远收尾，后面不排任何块；一轮里「正文 → 又调工具 → 再正文」时工具行按时间插在两段正文之间，动作条仍只出现一次 | interactions.md §3.1；parity-audit 块词汇 |
 | 正文排版 | `Markdown` | Streamdown + 自建令牌样式 | **0** | 流式安全（未闭合的标记不闪烁）；阶段 0 直接用 Streamdown 的默认渲染，不挂自建钩子；标题、列表、表格、引用、公式各自的边距规则在阶段 6 统一过一遍 | interactions.md §3.2 |
 | 错误态 | `MessageError` | Alert + Button | **0** | 阶段 0 的基础错误态：失败原因用人话 + 重试；错误文案由界面按代码查目录，内核只给代码与事实。带副作用与恢复路径的失败走 `FailureCard`，不要把两者合成一个 | interactions.md §6；spec.md「国际化」 |
-| 代码块 | `CodeBlock` | 自建（Streamdown 渲染钩子）+ Button + ScrollArea | 2 | 自建的 markdown 特例渲染器，阶段 0 不做（spec 明写不做 markdown 特例分支）。顶栏语言标签 + 复制钮，复制结果向块内 `role="status"` 播报；块内自己横滚；命令执行类在主体之后再挂一段「输出」区 | interactions.md §3.3；parity-audit 块词汇 |
-| 用户消息动作条 | `UserActionBar` | ActionBarPrimitive + Button（icon） | 2 | hover 或键盘聚焦时在气泡正下方右对齐出现，收回成等高的隐藏触发钮、不留高度跳动。顺序固定：**从这里重来（以同一条用户消息重新发起一轮，会产生版本）→ 编辑（原地换成输入框）→ 复制 → 相对时间**；复制向同条内的 `role="status"` 播报 | interactions.md §3.1；parity-audit 块词汇 |
-| 助手消息动作条 | `AssistantActionBar` | ActionBarPrimitive + `BranchPicker` | 2 | 顺序固定：复制 → 朗读 → 有用 → 没用 → 重试 → [版本分页，仅多版本时] → 相对时间；复制钮后紧跟播报区。末尾消息与多版本消息常驻，其余历史折叠成等高触发钮；生成中不渲染，本轮结束整条淡入。**中断态隐藏「重试」**（那一轮没跑完），此时重跑入口只在用户消息的「从这里重来」。不做语音输出就省掉「朗读」，不留空钮 | interactions.md §3.1；parity-audit 块词汇、§8 |
+| 代码块 | `CodeBlock` | 自建（Streamdown 渲染钩子）+ Button + ScrollArea | 2 | 自建的 markdown 特例渲染器，阶段 0 不做（spec 明写不做 markdown 特例分支）。顶栏语言标签 + 复制钮，复制结果向块内 `role="status"` 播报；块内自己横滚。**2026-10-15 做了其余部分**：单框（外框一层描边，里层去掉描边、底与圆角）；头栏一行 = 语言名 + 复制钮，复制走 `navigator.clipboard`（同失败卡「复制诊断信息」的写入接缝），结果向块内 `<output>` 播报，生成中禁用；块内横滚，横向放不下时还有内容的一侧渐隐（右缘，滚到头换成左缘；由块自己的横向滚动驱动，放得下的块没有渐隐），macOS 不显示滚动条也看得出能横滚；行号关。样式在 theme.css，依赖 Streamdown 2.6.0 的 `data-streamdown` 钩子（e2e/message-craft.spec.ts 量单框）。**语法着色没做**：Streamdown 2.x 只经独立的 `@streamdown/code` 提供，它依赖 shiki 与整套语法文件，属重依赖，有明确需求再议；「输出」区随命令子行留在阶段 4。 | interactions.md §3.3；parity-audit 块词汇 |
+| 用户消息动作条 | `UserActionBar` | ActionBarPrimitive + Button（icon） | 2 | hover 或键盘聚焦时在气泡正下方右对齐出现，收回成等高的隐藏触发钮、不留高度跳动。顺序固定：**从这里重来（以同一条用户消息重新发起一轮，会产生版本）→ 编辑（原地换成输入框）→ 复制 → 相对时间**；复制向同条内的 `role="status"` 播报。**2026-10-15 做了复制与相对时间**（右对齐，hover 或聚焦出现，占位等高；相对时间过一周改日期，悬停给完整时间）；「从这里重来」「编辑」不做，02 §留到后续阶段把「编辑重发与分支」放在阶段 6 | interactions.md §3.1；parity-audit 块词汇 |
+| 助手消息动作条 | `AssistantActionBar` | ActionBarPrimitive + `BranchPicker` | 2 | 顺序固定：复制 → 朗读 → 有用 → 没用 → 重试 → [版本分页，仅多版本时] → 相对时间；复制钮后紧跟播报区。末尾消息与多版本消息常驻，其余历史折叠成等高触发钮；生成中不渲染，本轮结束整条淡入。**中断态隐藏「重试」**（那一轮没跑完），此时重跑入口只在用户消息的「从这里重来」。不做语音输出就省掉「朗读」，不留空钮。**2026-10-15 做了复制与相对时间**：一轮（用户消息之后的连续几条助手消息）只在最后一条出一次，复制整轮的文字；最新消息常驻，其余 hover 或聚焦；生成中与停在审批 / 提问上（`paused`）时不渲染。朗读、有用、没用、版本分页不做；**「重试」不做**：02 §失败卡与结束原因 规定除失败卡上那一种情况都不给「重试」，其余留阶段 6（裁决 B17） | interactions.md §3.1；parity-audit 块词汇、§8 |
 | 来源脚注行 | `SourceFootnote` | 自建 + `Chip` | 随能力 | 独占动作条**上面**一行、与正文左边界对齐：技能 · 项目知识 N 份 · 连接器 · 引用 N 处，各自可点跳到对应落点。与工具子行并存不冲突——子行说在第几步用的，这一行说这一轮一共用了什么 | parity-audit 块词汇 |
 | 对象锚点标记 | `ObjectChip` | Button（chip 变体）+ Tooltip | 5 | 回执行与正文里指向来源的 chip：支持两段式面包屑（`记忆 › 沟通偏好`），hover 出细下划线与绝对路径 tooltip，点击按来源类型路由（本地文件 / 项目知识 / 记忆 / 连接器 / 外呼对象）。来源不可用时置灰并在 tooltip 里说明原因，不静默失效。随用它的 `SkillReadSubRow` 挪到阶段 5（2026-10-08 改，见 03 §界面） | parity-audit 块词汇；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
 | 版本分页器 | `BranchPicker` | BranchPickerPrimitive + Button | 2 | 多版本时才出现，位置在重试之后、时间之前；左右箭头切换，首末版禁用态保留占位 | interactions.md §3.7 |
-| 思考块 | `ThinkingBlock` | Collapsible | 2 | 收起显用时 + 首句，点开展开厂商返回的思考文本（Anthropic 为摘要，智谱为 reasoning_content；拿不到原始思维链）；首句同时从状态行收起；展开状态按消息记住；重放的历史消息不显示用时 | interactions.md §3.4；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
-| 会话状态行 | `StatusLine` | 自建（`role="status"`） | 2 | 词汇固定：思考中 / 正在干活 / 正在你的电脑上操作 / 撰写中 / 正在问你 / 等你定夺 · 已等 N；本轮结束整行移除，不是改文案 | interactions.md §3.8；parity-audit 2026-09-16 |
+| 思考块 | `ThinkingBlock` | Collapsible | 2 | 收起显用时 + 首句，点开展开厂商返回的思考文本（Anthropic 为摘要，智谱为 reasoning_content；拿不到原始思维链）；首句同时从状态行收起；展开状态按消息记住；重放的历史消息不显示用时。**2026-10-15 补**：前面加 chevron（展开转 90°）；仍是回复末尾、回复还在写时标「思考中 · N 秒」，chevron 脉动、字不动，后面一有内容就变「思考了 N 秒」；展开后文本左侧带引线缩进 | interactions.md §3.4；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
+| 会话状态行 | `StatusLine` | 自建（`role="status"`） | 2 | 词汇固定：思考中 / 正在干活 / 正在你的电脑上操作 / 撰写中 / 正在问你 / 等你定夺 · 已等 N；本轮结束整行移除，不是改文案。**2026-10-15 做了三个状态**：思考中… / 撰写中… / 正在干活 · N 秒（N 从这一轮开始算）；位置改在最新一轮的下方（消息流末尾，不在助手消息内部），因为刚发出、还没有助手消息时也要有。只读 `run.state` 与线程，不新增内核事件；`running` 为 false 就没有状态行。点了停止、Run 还在收尾时也没有：02 §模型菜单与输入框「停止与发送」写明停止的结果在失败卡第 ② 行、「不另加文案」，同日做过的「正在停止…」因此撤回；停在审批 / 提问上的 Run 已结束，不出状态行（卡就是反馈）。思考块还是回复末尾时不出状态行，由思考块自己写「思考中 · N 秒」（两处都写「思考中」是重复）；命令在卡上批准后、新 Run 还没写出东西时，最新回复里有已发出、未结束、也不在等卡的调用，算「正在干活」。「正在你的电脑上操作」「正在问你」「等你定夺 · 已等 N」没做；重连 / 重试的措辞也没做：内核只有 `attempt-discarded`，它在不再重发时也发（§一轮回复怎么分流），不是「重试中」的信号 | interactions.md §3.8；parity-audit 2026-09-16 |
 | 流式光标 | `StreamCursor` | 自建 | 2 | 光标闪烁与逐段进入，减动效下只留最终态 | interactions.md §3.8、§5 |
 | 单工具回执行 | `ToolRow` | Collapsible + 自建行 | 2 | 一行一句人话，可展开看输入 / 输出 / 副作用；默认视图里不出现 JSON。阶段 2 展开只有输入和输出（纯文本），副作用段与写操作行的可逆性标记在阶段 3 加 | interactions.md §3.5；[02 §界面范围（2026-09-25）](../architecture/02-agent-loop/spec.md) |
 | 轮级折叠头 | `ToolGroupHeader` | Collapsible | 4 | 一轮多工具时折叠成一句「用了 N 个工具」，展开是子行列表；**写入 / 外呼 / 被拦 / 失败的回执行不进折叠头**，固定展示在头下方。2026-10-08 由阶段 3 挪到阶段 4「任务模式成型」（见 03 §界面） | interactions.md §3.5；parity-audit 2026-09-16；[03 §界面（2026-10-08）](../architecture/03-mcp-host/spec.md) |
@@ -195,3 +195,45 @@
 - **云端分享**：分享按钮、协作者头像、公开链接、共享版本这一族，本地版没有对应后端，未排期。
 - **2026-09-13 简化作废的界面**：内核机制的可视化（层号、判决顺序、效力矩阵、独立的记录标签页与侧栏入口）不做；过程记录只从会话标题菜单按需打开；沙箱档位不在输入框上暴露，收进设置的「高级」折叠区。
 - **深度检索**：按 2026-09-17 补记排在阶段 6，卡片、右面板时间线与来源下钻的组件等画板补齐后再进本表（`ResearchConfirmDialog` 先占位）。
+
+## 2026-10-15 版面工艺补记
+
+按 UX 诊断（D03–D06、P01、P02、P06、C01、N02）补的一轮版面，不改 02、03 spec 已写明的呈现条款（五格可逆性刻度、模型菜单逐行主机、审批卡措辞、对话 / 任务切换、失败卡三行都留给后续的呈现 spec）。
+
+- **路径与命令只在 `/` 和空格处折行**：`PathText`（`components/ui/path-text.tsx`，断点规则在 `lib/path-wrap.ts`）。每段名字是一个不可拆的盒子，连字符不再是断点，只有比整行还长的名字才在中间断（`overflow-wrap: anywhere` 兜底）。审批卡对象行仍然完整显示（02 E4），只是换了断法；全仓不再有 `break-all`。
+- **消息流的竖向节奏由容器给**：`Thread` 的内容列给 24px（同一轮的相邻助手消息 8px），消息内各块之间 8px；消息、工具行、卡片自己不写外边距。助手消息末尾的空占位（28px）去掉。
+- **设置弹窗**：固定 744px 宽、最高 640px，面板自带头、唯一的滚动区（`scrollbar-gutter: stable`）和脚；打开时焦点停在弹窗本身，不落到第一个控件上。分栏由 `lib/settings-sections.ts` 的清单驱动（栏、面板、账号菜单项、`#settings/<id>` 同源）。账号菜单每项都有图标。
+- **嵌套弹窗让位**：弹窗上再开弹窗时，下层淡出（`data-nested-dialog-open`），只剩上层压在一层遮罩上；连接器授权框因此不再把表单字段露在上下。
+- **侧栏**：项目、产物、定时任务、技能与连接器四行点了没反应，先不画（文案键保留），随各自的页面回来；「还没有对话」只在没有任何对话时出现（`lib/sidebar-chats.ts`）。
+- **输入框下的两行**：「为什么发不了 / 发送会取消待批操作 / 免责」共用一行，内容换、位置不动。模式切换与文件夹的位置见下一节。
+- **被截断的输出**：工具输入输出和卡片里的改动超过一屏高时，底部渐隐，下方一行「展开全部（N 行）」，再点收起（`ClampedPre`，对应 `CommandSubRow` 的「展开全部」）；审批卡的「展开改动」展开后变「收起改动」。滚动区的上下边缘渐隐（顶栏下、输入框上沿、设置面板）。
+- **应用菜单**：打包版没有「重新加载」「开发者工具」和灰着的「帮助」；开发版都保留（`src/main/menu-template.ts`）。
+- **弹窗说明的中文断行**：`DialogDescription` / `AlertDialogDescription` 在 `:lang(zh)` 下 `word-break: keep-all`（兜底 `overflow-wrap: anywhere`），只在标点和空格处换行，仍保持 `text-wrap: balance`；此前 balance 为了两行等长会从词中间拆开（「离⏎开」「使⏎用」）。
+- **工具输出里的绝对路径**：输出整体仍是 `wrap-anywhere`，但以 `/` 或 `~/` 开头的词（落盘提示写的那个文件）也走 `PathText`，名字不拆、只在 `/` 后断。
+- **侧栏「还没有对话」**用 `text-muted`（在壳层上约 4.8:1），不是禁用色——它是提示，不是不能点的控件；字号与上面的分组标题同为 `micro`、不比标题大，分组标题用 `text-secondary`（约 8.5:1）压住它，两行不再像两条平级的条目。
+- **授权框的警示**：句子是界面文案（一行、不截断，03 验收 46），它引用的参数、包名、变量名是内容（`PathText`，可折行），分成两个 span 各守各的规则。
+
+## 2026-10-15 输入框与原生外壳补记
+
+按 UX 诊断（M03、M07、N01、N02）改的一轮，仍不改 02、03 spec 已写明的呈现条款：对话 / 任务切换、文件夹 chip、模型菜单每行的主机、审批卡措辞、五格刻度、失败卡三行都原样保留，等后续的呈现 spec。
+
+- **输入框是两行框体**（`Composer`）：上面编辑区（整框宽），下面工具行（`composer-tools`，在框内，一行不折）。左簇是 `ComposerLead`（今天只放 `ModeSwitch`，一个可整体替换的槽位），右簇是（停止钮、）模型 chip 与发送钮。框体用高一层表面（`surface-1`）加 `shadow-sm`。模式切换的选中项除了底色再加一道 `border-default` 描边：框面是 `surface-1`，暗色下 `fill-neutral` 对它只有 1.1:1。
+- **文件夹在框下**（02 §界面范围 `FolderChip`「位于输入框下方」）：一度挪进框内工具行（切到任务时框不上移），但 02 写明了位置，按 owner 2026-10-15 的裁决挪回框下，框内放法留给呈现 spec。顺序是「框 → 淡字行 → 文件夹行」：淡字行在两种形态下都紧贴框下 8px；对话里也留着文件夹那一行的高度（空着，当作底边留白），切到「任务」时文件夹行填进这块占位，框和淡字行都不动；只在首页留会让第一条消息一发出框就往下掉一行，所以每个对话都留。这一行的每一项至少一个控件高（20px，描边在内），名字不长时有没有文件夹都一样高，加第一个文件夹也不挪框。文件夹名是内容，完整显示，不省略（02 §界面范围：路径完整显示、允许折行）：名字太长或文件夹多时这一行折成两行，框和淡字行随之上移一行；「专用文件夹」「命令在这里运行」是界面文案，各占一个不折行的 span。
+- **发送与停止并存**（02 §模型菜单与输入框「停止与发送」）：圆形图标「发送」一直在工具行最右；有 Run 在跑、卡或提问在等、会话可续跑时，方形图标「停止」（`composer-stop`，`chat.stop`）出现在模型 chip 左边，占的是左簇右侧的空位，chip 与发送钮都不挪；发送钮从不卸载，键盘焦点不会丢到 `body`。`Cmd/Ctrl+Enter` 立即发送、`Esc` 停止不变。两钮的无障碍名仍是「发送」「停止」，没有文字。「同一位置按有无输入切换」的单钮做法与 02 这条冲突，2026-10-15 撤回，留给呈现 spec。
+- **框的上下不再跳**：工具行取最高控件的高度；框下只有一行淡字（免责、发送会取消待批操作、发不了的原因共用，内容换、位置和居中对齐都不动，`min-h-4`）；`ComposerSlots` 里「正在连接」条不占位，浮在框上沿，落在「回到最新」胶囊那一行，整行宽（800px 宽、侧栏展开也放得下完整的「正在连接 <显示名>…」，03 验收 46）；胶囊出现（往上翻过）时它抬高一行、落在胶囊上方，仍是整行宽，两者不重叠。它从不省略：句子是界面文案、显示名是内容（02 §界面范围），名字长到一行放不下就向上折行；自带底色，压在消息区淡出的下沿上也读得清（提问 widget 仍在流内，框是贴底的，它出现只压缩消息区）。曾在胶囊出现时退到左半边、长名字省略，与 03 验收 46 冲突，2026-10-15 撤回。
+- **模型名**：内置行的第一行与 chip 都是显示名（「Opus 5.5 · 中」，`model.name.*`，行数据多一个 `nameKey`，与 `purposeKey` 同构、不进 `WIRE_MODEL_FIELDS`；这是 01、02 已实现的 `ModelInfo` 与 `provider.list` 行上的新成员，全文在 amending spec [model-display-names](../features/model-display-names/spec.md)，01 与 02 各加了 `Amended by:`）；设置里「新会话默认模型」的下拉用同一个显示名，id 是悬停提示；手填、本机和自定义厂商的行没有显示名，仍写 id。第二行照旧：用途句或行标记，后接目标主机。智谱两个轻量行的用途句改成真正的用途（原文只是再写一遍型号，新句子对得上 zhipu.ts 里「日常」「快档」的注释）；glm-5.3 的仍是「智谱 GLM-5.3」——「旗舰」这类说法没有出处，不写。
+- **macOS 外壳**：`titleBarStyle: 'hiddenInset'`，红绿灯固定在 (20, 15)，侧栏一直到窗口顶，品牌行与顶栏是拖动区（`app-drag`，里面的按钮 `no-drag`）；弹窗、遮罩、菜单、提示在 portal 里，排在拖动区之后，各自 `no-drag`（Electron 按文档顺序叠拖动区，不看谁在上面，矮窗口里设置弹窗的顶边落在这条带内）；品牌行左留 72px、侧栏折起时顶栏左留 80px 给红绿灯（`mac:` 变体，只在 `<html data-platform="darwin">` 下生效，平台由预加载给）。Windows 与 Linux 不变：原生边框、没有拖动区、没有留白。全屏时红绿灯收起，这一小块留白没去掉。
+- **顶栏标题**：当前会话第一条用户消息的首句（`lib/session-title.ts`，`Intl.Segmenter`），整句不截，一行放不下由顶栏 CSS 省略，悬停提示与无障碍名都是整句（代码里不拼省略号，00 §国际化「标点写在目录里」）；没有会话（还没发出第一条消息）时顶栏是空的；「Tenon」只在侧栏品牌行出现一次。提问的作答不算消息（`Turn.answering`）。恢复的会话只读到尾部 200 行，第一条消息不在其中时，标题取最早读到的那条。
+- **类名合并认识 Tenon 的字号**（`lib/utils.ts` 的 `cn`）：默认的合并器把 `text-ui-sm`、`text-micro` 当成颜色，和 `text-*` 颜色类相遇时丢掉其一——小号主按钮（审批卡「允许」等）丢了白字、工具输出丢了 12px。组件一律从 `@/lib/utils` 引 `cn`，renderer 里直接 `import 'cn'` 由 oxlint 拦下。
+- **Markdown 表格一个框**：Streamdown 给表格外面又套了一层描边加底色的框，压平，只留表格自己那层圆角描边（theme.css `table-wrapper`）。
+- **动效走令牌**：动作条淡入 `dur-snap ＋ ease-snap`，思考块的 chevron `dur-base ＋ ease-in-out`；「思考中」的 chevron 与状态行的点用 `animate-ebb`（`dur-slow ＋ ease-in-out`），只给图形用：标签文字放在它上面，低谷时 muted 字对底面不到 2:1，所以「思考中 · N 秒」几个字不动；减动效时整条关掉，组件里不再各写 `motion-reduce` 分支。theme.css 里自定义的工具类、关键帧和变体用 Tenon 自己的名字（`edge-mask-*`、`ebb`、`overflow-hint`、`ctl-h-*`、`mac`），每个都在 uxkit 里数过命中，见 tokens.md「自查」。
+
+## 待呈现 spec 替换的条款
+
+本分支保留了下面这些与已实现 spec 的呈现条款（或其验收证据）不一致的做法，等后续的呈现 spec 按 [spec-driven-dev](../spec-driven-dev.md) 的「替换表现层条款」（2026-10-15 owner 确认，那一段在 PR #45 的分支上，尚未进 dev）逐条写进 `Replaces:`。这一节是清单，不是 spec：在呈现 spec 合入之前，被列的条款照旧有效。
+
+| 条款 | 原文 | 本分支的做法 | 呈现 spec 要写的 |
+|---|---|---|---|
+| [00 §UI 最小集](../architecture/00-foundation/spec.md)「设计令牌」 | 「值用 §8.1 临时皮肤」 | 2026-10-15 换成中性临时种子，现行值在 [tokens.md](./tokens.md)「2026-10-15 临时换装记录」；只在主参考 §8.1 加了注记，00 没有指针 | `Replaces:` 00 §UI 最小集「值用 §8.1 临时皮肤」→「值见 docs/ux/tokens.md 2026-10-15 临时换装」；第三个例外进 dev 后，在 00 那一行行末接指针、顶部加 `Clauses replaced by:` |
+| [00 §国际化](../architecture/00-foundation/spec.md)「英文更长」（「阶段 0 覆盖侧栏导航项与 Composer」）与验收 12 的证据（[00 plan](../architecture/00-foundation/plan.md)「第 1–4、7、11、12 步完成交接」里「阶段 0 有意不放的入口」一条；「第 14 步：验收记录」第 12 行） | 00 的条款没要求画这四行，主参考 §8.5 写这些页面「跟随各自后端能力出现」；00 plan 记的决定是项目、产物、定时任务、技能与连接器四行留作无动作的占位行，让双语回归从第一天覆盖它们的文案，验收 12 的证据是「侧栏 5 个导航行」 | 四行不画，`shell-i18n.spec.ts` 的 `NAV_ITEM_COUNT` 由 5 改为 1，`sidebar.projects/artifacts/scheduled/customize` 四个键退出回归（键保留）；00 plan 已加 2026-10-15 注记 | 写明每一行随自己的页面回来时，重新计入 `NAV_ITEM_COUNT`、回到双语回归 |
+

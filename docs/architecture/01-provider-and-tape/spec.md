@@ -5,6 +5,7 @@ Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：ModelInfo �
 Amended by: [custom-vendors](../../features/custom-vendors/spec.md)（2026-10-02：ModelInfo 的 maxTokensField 与 checksThinkingPrefix，ProviderDefinition 的 maxToolsPerRequest，openai-chat 编码器按 maxTokensField 写 max_completion_tokens（编码器版本 2），provider.list 条目的 displayName 与 refused（被拒地址的码与源），provider.configure 的 official-host-only 与 subscription-endpoint 两个拒绝码，config.json 的 customVendors，主进程交给各处的注册表改为内置加自定义实例的组合视图。只增不改，全文在该 spec；内置 zhipu、anthropic 只认官方 https 源等不属纯粹只增的几处在该 spec「点名」）
 Amended by: [03-mcp-host](../03-mcp-host/spec.md)（2026-10-08：createSessionService 的构造参数只增可选的 userSetting（第 3 层产生方）与 schemaValidator（T23 ⑦ 的限时校验），config.json 只增 mcpServers。只增不改，全文在该 spec §对 01 的修补；Tape 新名字 message/server_instructions 落在本 spec 保留的前缀下，照 02 的读法不算修补）
 Amended by: [04-sandbox](../04-sandbox/spec.md)（2026-10-09：config.json 只增键 `sandbox`（命令档位、网络白名单、「包管理器」预设）。只增不改，全文在该 spec §对 01 的修补；Tape 新名字 `tool/receipt_override`、`message/sandbox_release` 落在本 spec 保留的前缀下，照 02 的读法不算修补）
+Amended by: [model-display-names](../../features/model-display-names/spec.md)（2026-10-15：ModelInfo 只增可选的 nameKey（模型显示名的目录键，不进 WIRE_MODEL_FIELDS）。只增不改，全文在该 spec §对 01 的修补）
 Phase: 1 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，按 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」的 amend 规则（2026-09-17 owner 确认），全文见「对 00-foundation 的修补」

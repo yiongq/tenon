@@ -21,7 +21,7 @@ import type { TenonBridge } from '../../../preload/index'
 import type { AskAnswers } from '../lib/ask'
 import { queueOf, queuedTextOf } from './queue-state'
 import type { QueuedItem } from './queue-state'
-import { runStateOf, subscribeRunState } from './run-state'
+import { runSinceOf, runStateOf, subscribeRunState } from './run-state'
 import {
   EMPTY_THREAD,
   applyEvent,
@@ -84,6 +84,8 @@ export interface SessionSnapshot {
   readonly facts: SessionFactsResponse | null
   readonly running: boolean
   readonly runId: string | null
+  /** When this window first heard of the Run now going (or closing), else null: the status line's clock. */
+  readonly runSince: number | null
   /** False while startup recovery's restore is in flight (B15): nothing can be sent. */
   readonly canSend: boolean
   /** A task whose model holds text conversations only: sending is disabled, with the reason (A15). */
@@ -157,6 +159,7 @@ export class SessionStore {
       facts: null,
       running: run.running,
       runId: run.runId,
+      runSince: runSinceOf(sessionId),
       canSend,
       textOnlyTask: false,
     }
@@ -220,7 +223,11 @@ export class SessionStore {
   #readRunState(): void {
     const run = runStateOf(this.sessionId)
     if (run.running !== this.#snapshot.running || run.runId !== this.#snapshot.runId) {
-      this.#set({ running: run.running, runId: run.runId })
+      this.#set({
+        running: run.running,
+        runId: run.runId,
+        runSince: runSinceOf(this.sessionId),
+      })
     }
   }
 

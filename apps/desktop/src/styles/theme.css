@@ -11,6 +11,7 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import './tokens.css';
+@import './fonts.css';
 
 /* Tailwind 只扫描源码树；Streamdown 的 class 在 node_modules 里，必须显式声明来源，
    否则它渲染出来的 markdown 没有任何样式（实测：删掉这行 CSS 少 60%）。 */
@@ -27,6 +28,14 @@
     &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
       @slot;
     }
+  }
+}
+
+/* macOS 隐藏了系统标题栏（main/window-theme.ts）：红绿灯压在侧栏顶部，界面自己留出它的位置。
+   mac: 只在 <html data-platform="darwin"> 下生效，Windows 与 Linux 保持原生边框、原有尺寸。 */
+@custom-variant mac {
+  &:where([data-platform='darwin'], [data-platform='darwin'] *) {
+    @slot;
   }
 }
 
@@ -60,6 +69,9 @@
   --color-input: var(--t-border-default);
   --color-ring: var(--t-border-focus);
   --color-scrim: var(--t-scrim);
+  /* Streamdown 的代码块外框写 bg-sidebar（shadcn 的侧栏色）。清空 --color-* 之后它不生成任何 CSS，
+     外框只剩描边，和里面那层描边叠成「框中框」；接到「沉一档」的面上，外框才有底。 */
+  --color-sidebar: var(--t-surface-2);
 
   /* ---------- Tenon 自己的键名（应用层用这些） ---------- */
   --color-shell-bg: var(--t-shell-bg);
@@ -118,11 +130,26 @@
   --radius-4xl: var(--t-radius-pill);
   --radius-pill: var(--t-radius-pill);
 
-  /* shadcn 的 max-w-xs / max-w-sm（dialog / alert-dialog / tooltip）走 --container-*。
-     以 4px 单位接管：xs = 80 单位、sm = 96 单位，与 §8.1「间距 4 的倍数」一致。 */
+  /* max-w-* / w-* / @container 的具名档位走 --container-*：shadcn 的 dialog / alert-dialog /
+     tooltip 写 max-w-xs / sm，设置与连接器弹窗写 max-w-xl / 2xl / 3xl，Streamdown 写 max-w-md。
+     以 4px 单位接管整条梯级（与 Tailwind 默认的 rem 值逐档同宽），与 §8.1「间距 4 的倍数」一致。
+     只补一部分是个陷阱：没有定义的档位不会报错，max-w-3xl 直接不生成任何 CSS，弹窗于是铺满
+     整个窗口（实测 1250px），tailwind-merge 还会把 DialogContent 自带的 sm:max-w-sm 当冲突类吃掉。
+     所以十三档一次补全，test/theme-css.test.ts 守着「源码里用到的具名档位都能编译出 CSS」。 */
   --container-*: initial;
+  --container-3xs: calc(var(--t-space-unit) * 64);
+  --container-2xs: calc(var(--t-space-unit) * 72);
   --container-xs: calc(var(--t-space-unit) * 80);
   --container-sm: calc(var(--t-space-unit) * 96);
+  --container-md: calc(var(--t-space-unit) * 112);
+  --container-lg: calc(var(--t-space-unit) * 128);
+  --container-xl: calc(var(--t-space-unit) * 144);
+  --container-2xl: calc(var(--t-space-unit) * 168);
+  --container-3xl: calc(var(--t-space-unit) * 192);
+  --container-4xl: calc(var(--t-space-unit) * 224);
+  --container-5xl: calc(var(--t-space-unit) * 256);
+  --container-6xl: calc(var(--t-space-unit) * 288);
+  --container-7xl: calc(var(--t-space-unit) * 320);
 
   /* ---------- 字体 ---------- */
   --font-sans: var(--t-font-sans);
@@ -148,6 +175,20 @@
   --text-h3--line-height: var(--t-leading-h3);
   --text-h2: var(--t-size-h2);
   --text-h2--line-height: var(--t-leading-h2);
+  --text-h1: var(--t-size-h1);
+  --text-h1--line-height: var(--t-leading-h1);
+
+  /* Streamdown 的 Markdown 标题写死 text-3xl / 2xl / xl / lg（h1 到 h4），这四档按标题级别落在
+     Tenon 的档位上：h1 24、h2 20、h3 18，h4 与正文同号（tokens.md：h4 靠字重区分，不靠字号）。
+     清空 --text-* 之后漏掉这四档，h1 到 h4 全部退回 16px，标题与正文分不开。 */
+  --text-3xl: var(--t-size-h1);
+  --text-3xl--line-height: var(--t-leading-h1);
+  --text-2xl: var(--t-size-h2);
+  --text-2xl--line-height: var(--t-leading-h2);
+  --text-xl: var(--t-size-h3);
+  --text-xl--line-height: var(--t-leading-h3);
+  --text-lg: var(--t-size-body);
+  --text-lg--line-height: var(--t-leading-body);
 
   /* shadcn 组件源码里的 text-xs / text-sm / text-base 落在 Tenon 的档位上 */
   --text-xs: var(--t-size-micro);
@@ -162,6 +203,16 @@
   --ease-out: var(--t-ease-out);
   --ease-in-out: var(--t-ease-in-out);
   --ease-overshoot: var(--t-ease-overshoot);
+
+  /* 循环类动效（tokens.md：dur-slow ＋ ease-in-out）：「思考中」的 chevron 与状态行的点，只给图形用——
+     文字放在它上面，低谷时只剩 40%（muted 字对底面不到 2:1），读不出来。Tailwind 自带的 animate-pulse
+     写死 2s，不走令牌，减动效也管不到它；这里只有一条，减动效在文件末尾整条关掉。 */
+  --animate-ebb: ebb var(--t-dur-slow) var(--t-ease-in-out) infinite alternate;
+  @keyframes ebb {
+    to {
+      opacity: 0.4;
+    }
+  }
 
   /* ---------- 阴影（Tailwind 默认阴影写死 rgb(0 0 0 /…)，换成 alpha 令牌） ---------- */
   --shadow-xs: 0 1px 2px 0 var(--t-alpha-1);
@@ -187,6 +238,29 @@
   height: var(--t-h-control-lg);
 }
 
+/* 滚动内容在滚动区的边缘渐隐，而不是被硬切成半行字（顶栏下、输入框上沿、设置弹窗、被截断的工具输出）。
+   mask 只读 alpha，所以用一个不透明的面令牌当遮罩色，不写任何颜色值；渐隐宽度是 4px 单位的 6 倍——
+   比一行界面字（20px）还宽，滚到边上的那一行整行淡掉，不会在标题下露出被切掉上半截的半行字（16px 时会）。
+   容器自己的内边距不小于渐隐宽度，静止时内容起止处不会被淡掉。 */
+@utility edge-mask-y {
+  --edge-mask: calc(var(--t-space-unit) * 6);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    var(--t-surface-0) var(--edge-mask),
+    var(--t-surface-0) calc(100% - var(--edge-mask)),
+    transparent
+  );
+}
+@utility edge-mask-end {
+  --edge-mask: calc(var(--t-space-unit) * 10);
+  mask-image: linear-gradient(
+    to bottom,
+    var(--t-surface-0) calc(100% - var(--edge-mask)),
+    transparent
+  );
+}
+
 /* spec「国际化」：<html lang> 跟界面语言走。CJK 字面在同一 font-weight 下比拉丁
    视觉更重，zh 下把三档非正文字重各降一档——值仍是 tokens.md weight 表里的那四档，
    只是整体下移一格；字族不换、不引入任何字体文件。
@@ -197,6 +271,11 @@ html[data-lang='zh'] {
   --t-weight-medium: 400;
   --t-weight-semibold: 500;
   --t-weight-bold: 600;
+  /* 同一批拉丁字形，只是不认 U+2000-206F：中文句子里的 “” ‘’ —— …… 落到 CJK 回落字体
+     （spec「国际化」），不被拉丁字体画窄。别名的声明与理由见 fonts.css 文末。 */
+  --t-font-sans:
+    'Tenon Sans Latin', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif;
+  --t-font-serif: 'Tenon Serif Latin', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', serif;
 }
 
 @layer base {
@@ -206,8 +285,164 @@ html[data-lang='zh'] {
   html {
     @apply font-sans;
     color-scheme: light dark;
+    /* macOS 默认用亚像素抗锯齿，浅字深底会发粗发糊（暗色下导航、正文、等宽输出都像加了半级粗）；
+       灰度抗锯齿让亮暗两套看起来是同一个字重。 */
+    -webkit-font-smoothing: antialiased;
+    /* 中英、中数之间由排版引擎补出 1/8 em 的间隙，不必在文案里手敲空格（「用于Anthropic。」）。
+       助手输出和 i18n 占位符替换进来的名字都吃得到。 */
+    text-autospace: normal;
   }
   body {
     @apply bg-background text-foreground text-ui;
   }
+  /* 段落和列表项收尾不留一两个字的孤行（「话。」「做完。」）；标题多行时各行等长。 */
+  p,
+  li,
+  blockquote {
+    text-wrap: pretty;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+}
+
+/* 中文没有斜体：浏览器对没有斜体字面的 CJK 字体会把正体硬拧成伪斜体（实测：Markdown 的
+   *强调* 和整段引用块都歪着）。zh 下强调改用字重，引用块只留竖线和弱化的颜色。
+   故意写在 @layer 之外：Streamdown 给引用块写的是 `italic` 工具类，utilities 层压得过
+   base 层，只有未分层的规则压得过 utilities。em 在英文下保持真斜体（Source Serif 4 Italic）。 */
+:lang(zh) em,
+:lang(zh) i,
+:lang(zh) cite,
+:lang(zh) blockquote {
+  font-style: normal;
+}
+:lang(zh) em {
+  font-weight: var(--t-weight-semibold);
+}
+
+/* 代码块：一个框，头栏一行。
+   Streamdown 默认给代码块「外框（描边 + 底 + 内边距）里面再套一层带描边的框」，语言标签漂在两层
+   之间；压成单框：外框描边与底不变，里层去掉描边、底和圆角，代码贴着外框的内边距起笔。
+   头栏（语言名）与复制钮同在一行：复制钮的容器本是浮在头栏右端的 sticky 浮层（-mt-10 是头栏高度
+   加间距），间距去掉之后同步改成头栏的 -8 个单位，并取消 sticky，让它固定在头栏里。
+   这些选择器依赖 Streamdown 2.6.0 的 data-streamdown 钩子（版本在 package.json 里锁死），
+   e2e/message-craft.spec.ts 量的就是这个单框，升级后结构变了会当场失败。
+   写在 @layer 之外：Streamdown 的工具类在 utilities 层，只有未分层的规则压得过它。 */
+[data-streamdown='code-block'] {
+  gap: 0;
+  padding: 0;
+  border-radius: var(--t-radius-md);
+}
+[data-streamdown='code-block-header'] {
+  height: calc(var(--t-space-unit) * 8);
+  padding-inline: calc(var(--t-space-unit) * 3);
+}
+[data-streamdown='code-block-header'] > span {
+  margin-left: 0;
+}
+[data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
+  position: static;
+  margin-top: calc(var(--t-space-unit) * -8);
+  padding-inline: calc(var(--t-space-unit) * 1.5);
+}
+[data-streamdown='code-block-actions'] {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+}
+[data-streamdown='code-block-copy-button'] {
+  padding: calc(var(--t-space-unit) * 1.5);
+  border-radius: var(--t-radius-sm);
+}
+[data-streamdown='code-block-copy-button']:hover:not(:disabled) {
+  background: var(--t-alpha-1);
+}
+[data-streamdown='code-block-copy-button']:focus-visible {
+  outline: 2px solid var(--t-border-focus);
+  outline-offset: -2px;
+}
+[data-streamdown='code-block-body'] {
+  padding: 0 calc(var(--t-space-unit) * 3) calc(var(--t-space-unit) * 3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* 横向放不下的代码块：还有内容的那一侧渐隐，看得出能横滚，而不是最后一个字被外框切掉一半（macOS 默认
+   不显示滚动条）。渐隐宽度由块自己的横向滚动驱动（scroll-driven animation）：在最左时只有右缘淡，滚到
+   最右时只有左缘淡；放得下的块没有可滚的距离，时间线不生效，两个宽度停在初值 0，整块不加遮罩。
+   遮罩只读 alpha，同样用不透明的面令牌，不写颜色值。 */
+@property --overflow-hint-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --overflow-hint-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes overflow-hint {
+  from {
+    --overflow-hint-start: 0px;
+    --overflow-hint-end: calc(var(--t-space-unit) * 8);
+  }
+  to {
+    --overflow-hint-start: calc(var(--t-space-unit) * 8);
+    --overflow-hint-end: 0px;
+  }
+}
+[data-streamdown='code-block-body'] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    var(--t-surface-0) var(--overflow-hint-start),
+    var(--t-surface-0) calc(100% - var(--overflow-hint-end)),
+    transparent
+  );
+  animation: overflow-hint linear both;
+  animation-timeline: scroll(self inline);
+}
+
+/* 表格：一个框。Streamdown 给表格外面套了一层「描边 ＋ 底（bg-sidebar）＋ 内边距」的框，里面的滚动容器
+   又有自己的圆角描边，成了框中框；表格的复制、下载钮已经关掉（StreamdownText.tsx），外框里没有别的东西，
+   所以外框整个压平，只留里面那一层圆角描边。e2e/message-craft.spec.ts 量的就是这一层。 */
+[data-streamdown='table-wrapper'] {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+/* macOS 无系统标题栏：侧栏顶部和顶栏是窗口的拖动区（双击也会缩放窗口），区内的控件各自不拖动。
+   只在 data-platform="darwin" 下生效；其他平台没有 -webkit-app-region，系统边框照旧。 */
+:root[data-platform='darwin'] .app-drag {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+:root[data-platform='darwin'] .app-drag :is(button, a, input, [role='button']) {
+  -webkit-app-region: no-drag;
+}
+/* 弹窗、遮罩、菜单和提示都渲染在 body 末尾的 portal 里，不在 .app-drag 下面。Electron 只按文档顺序把
+   drag 与 no-drag 叠起来，不看谁盖在谁上面：一层没写 no-drag 的弹层盖在这条 44px 的带子上，点它就成了
+   拖窗口（矮窗口里设置弹窗的顶边和关闭钮落在带内，点遮罩也关不掉弹窗）。portal 在文档里排在带子之后，
+   这里的 no-drag 把它们盖住的那一块从拖动区里扣掉。 */
+:root[data-platform='darwin'] :is([data-slot$='-overlay'], [data-slot$='-content']) {
+  -webkit-app-region: no-drag;
+}
+
+/* 减动效（tokens.md）：五档 --t-dur-* 已经在 tokens.css 里改成 1ms，过渡自然就停了；循环动画改成 1ms
+   反而会变成频闪，所以 animate-ebb 整条关掉。写在 @layer 之外，压得过 utilities 层的 animate-ebb。 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-ebb {
+    animation: none;
+  }
+}
+[data-reduce-motion] .animate-ebb {
+  animation: none;
 }

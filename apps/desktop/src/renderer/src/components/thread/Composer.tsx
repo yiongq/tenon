@@ -1,8 +1,10 @@
 import { ComposerPrimitive, useAui } from '@assistant-ui/react'
+import { ArrowUpIcon, SquareIcon } from 'lucide-react'
+import { useCallback, useRef } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ComposerLead } from '@/components/composer/ComposerLead'
 import { FolderChip } from '@/components/composer/FolderChip'
-import { ModeSwitch } from '@/components/composer/ModeSwitch'
 import { ModelMenu } from '@/components/composer/ModelMenu'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
@@ -29,11 +31,22 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
 }
 
 /**
- * The composer (spec 02 §模型菜单与输入框「输入框」; H13, B1, F11, H6, B15): send and stop side by
- * side while a Run is live — sending then queues; Cmd/Ctrl+Enter stops the Run the user sees and
- * sends this next. Stop is its own button calling `chat.stop`, shown while a Run is in progress, while
- * a card or a question waits and while the session can resume — never assistant-ui's cancel, which a
- * remount fires. While a question waits, 「发送」 is its typed answer (§插话与输入框状态表「等提问」).
+ * The composer (spec 02 §模型菜单与输入框「输入框」; H13, B1, F11, H6, B15): a two-row frame, the
+ * editor on top and a tool row under it. The tool row's left cluster is `ComposerLead` (the mode
+ * switch); its right cluster is the model chip and the round 「发送」 at the end, always there. While a
+ * Run is live (or a card or a question waits, or the session can resume) a square 「停止」 stands beside
+ * them — send and stop side by side (§「停止与发送」): sending then queues; Cmd/Ctrl+Enter stops the Run
+ * the user sees and sends this next. Stop takes the free room on the cluster's left, so neither the
+ * chip nor 「发送」 moves when it comes or goes, and 「发送」 never unmounts under a keyboard user's
+ * focus. Stop is its own button calling `chat.stop` — never assistant-ui's cancel, which a remount
+ * fires. While a question waits, 「发送」 is its typed answer (§插话与输入框状态表「等提问」).
+ *
+ * Under the box, 8px down, one muted line that keeps its place whatever it says: a hint replacing the
+ * disclaimer moves nothing. Under that, a task's folders (§界面范围 `FolderChip`「位于输入框下方」). A
+ * chat keeps the folder row's height too, empty, as the bottom margin: switching to 「任务」 on the home
+ * screen fills it and lifts neither the box nor the line, and neither the first message (which fixes
+ * the mode) nor opening another session moves them. Only a folder row that wraps to a second line (a
+ * long name, many folders) lifts them by that line.
  */
 export function Composer(): JSX.Element {
   const { t } = useTranslation()
@@ -43,6 +56,19 @@ export function Composer(): JSX.Element {
   const waiting = snapshot.pending !== null
   const stoppable = snapshot.running || waiting || snapshot.resumable
   const block = !snapshot.canSend ? 'restoring' : snapshot.textOnlyTask ? 'textOnlyTask' : null
+  // A keyboard user's focus never drops to the page: 「发送」 goes disabled once the draft is sent and
+  // 「停止」 goes away once the Run is over, and either would take the focus with it. It moves to the
+  // editor, where the next thing typed belongs.
+  const input = useRef<HTMLTextAreaElement | null>(null)
+  const focusInput = (): void => input.current?.focus()
+  const stopEl = useRef<HTMLButtonElement | null>(null)
+  const stopRef = useCallback((el: HTMLButtonElement | null) => {
+    // Detached while still in the document: if it held the focus, hand it on before it is removed.
+    if (el === null && stopEl.current !== null && document.activeElement === stopEl.current) {
+      input.current?.focus()
+    }
+    stopEl.current = el
+  }, [])
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (isImeEnter(event)) {
       event.preventDefault()
@@ -63,9 +89,10 @@ export function Composer(): JSX.Element {
     <div>
       <ComposerPrimitive.Root
         data-testid="composer"
-        className="flex w-full items-end gap-2 rounded-lg border border-border-default bg-surface-0 p-2"
+        className="flex w-full flex-col rounded-xl border border-border-default bg-surface-1 shadow-sm focus-within:border-border-strong"
       >
         <ComposerPrimitive.Input
+          ref={input}
           data-testid="composer-input"
           rows={1}
           // While a question waits, sending is the answer (§模型菜单与输入框「提示与禁发」; components.md:80).
@@ -75,57 +102,68 @@ export function Composer(): JSX.Element {
               : 'composer.placeholder',
           )}
           onKeyDown={onKeyDown}
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-2 font-sans text-ui text-text-primary outline-none placeholder:text-text-muted"
+          className="max-h-40 w-full resize-none bg-transparent px-4 pt-3 pb-1 font-sans text-ui text-text-primary outline-none placeholder:text-text-muted"
         />
-        <ModelMenu />
-        {stoppable ? (
-          <button
-            type="button"
-            data-testid="composer-stop"
-            aria-label={t('composer.stop')}
-            onClick={() => void store.stop()}
-            className="ctl-h shrink-0 rounded-sm border border-border-default px-3 font-sans text-ui font-medium text-text-primary"
-          >
-            {t('composer.stop')}
-          </button>
-        ) : null}
-        <ComposerPrimitive.Send
-          data-testid="composer-send"
-          aria-label={t('composer.send')}
-          aria-describedby={block === null ? undefined : 'composer-send-block'}
-          className="ctl-h shrink-0 rounded-sm bg-fill-accent px-3 font-sans text-ui font-medium text-text-on-accent disabled:opacity-40"
+        <div
+          data-testid="composer-tools"
+          className="flex min-h-12 items-center justify-between gap-2 px-2 pt-1 pb-2"
         >
-          {t('composer.send')}
-        </ComposerPrimitive.Send>
+          <div
+            data-testid="composer-lead"
+            className="flex min-h-8 min-w-0 flex-1 items-center gap-2"
+          >
+            <ComposerLead />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            {stoppable ? (
+              <button
+                type="button"
+                ref={stopRef}
+                data-testid="composer-stop"
+                aria-label={t('composer.stop')}
+                title={t('composer.stop')}
+                onClick={() => {
+                  focusInput()
+                  void store.stop()
+                }}
+                className="flex size-8 items-center justify-center rounded-md border border-border-default text-text-primary hover:bg-alpha-1"
+              >
+                <SquareIcon aria-hidden className="size-3 fill-current" />
+              </button>
+            ) : null}
+            <ModelMenu />
+            <ComposerPrimitive.Send
+              data-testid="composer-send"
+              // Runs before the send itself, while the button is still enabled and focused.
+              onClick={focusInput}
+              aria-label={t('composer.send')}
+              aria-describedby={block === null ? undefined : 'composer-send-block'}
+              className="flex size-8 items-center justify-center rounded-pill bg-fill-accent text-text-on-accent hover:bg-fill-accent-hover disabled:opacity-40"
+            >
+              <ArrowUpIcon aria-hidden className="size-4" />
+            </ComposerPrimitive.Send>
+          </div>
+        </div>
       </ComposerPrimitive.Root>
-      <div className="flex items-center justify-between gap-2">
-        <ModeSwitch />
+      {/* One muted line under the box, whose content changes but not its place or its alignment: why
+          「发送」 is off, else what sending now would do to the waiting card, else the disclaimer. */}
+      <div className="mt-2 min-h-4 text-center font-sans text-micro text-text-muted">
+        {block !== null ? (
+          <p id="composer-send-block" data-testid="composer-send-block" data-reason={block}>
+            {t(block === 'restoring' ? 'composer.restoring' : 'composer.textOnlyTask')}
+          </p>
+        ) : waiting && snapshot.pending?.waitKind === 'approval' ? (
+          <p data-testid="composer-pending-hint">{t('composer.pendingHint')}</p>
+        ) : (
+          <p data-testid="composer-disclaimer" className="truncate">
+            {t('composer.disclaimer')}
+          </p>
+        )}
+      </div>
+      {/* One row's height whether or not the chip is in it (FolderChip keeps its row to it). */}
+      <div data-testid="folder-slot" className="mt-2 min-h-5">
         <FolderChip />
       </div>
-      {block === null ? null : (
-        <p
-          id="composer-send-block"
-          data-testid="composer-send-block"
-          data-reason={block}
-          className="mt-2 font-sans text-micro text-text-muted"
-        >
-          {t(block === 'restoring' ? 'composer.restoring' : 'composer.textOnlyTask')}
-        </p>
-      )}
-      {waiting && snapshot.pending?.waitKind === 'approval' ? (
-        <p
-          data-testid="composer-pending-hint"
-          className="mt-2 font-sans text-micro text-text-muted"
-        >
-          {t('composer.pendingHint')}
-        </p>
-      ) : null}
-      <p
-        data-testid="composer-disclaimer"
-        className="mt-2 truncate text-center font-sans text-micro text-text-muted"
-      >
-        {t('composer.disclaimer')}
-      </p>
     </div>
   )
 }

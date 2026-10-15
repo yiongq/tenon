@@ -3,6 +3,8 @@ import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
 import { invokeRoute, mcpLogin } from '@tenon-app/contracts'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ClampedPre } from '@/components/ui/clamped-pre'
+import { PathText } from '@/components/ui/path-text'
 import { mcpAction } from '@/runtime/mcp-store'
 import { toolRowEffect } from '@/lib/tool-row-effect'
 import { useState } from 'react'
@@ -79,7 +81,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
       ? 'confirm.notRun'
       : `closure.${String(outcome?.source)}`
   return (
-    <div data-testid="tool-row" data-call-key={callKey} className="my-2 font-sans text-ui-sm">
+    <div
+      data-testid="tool-row"
+      data-call-key={callKey}
+      className="flex flex-col gap-2 font-sans text-ui-sm"
+    >
       <button
         type="button"
         data-testid="tool-row-line"
@@ -87,7 +93,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         onClick={() => setOpen((was) => !was)}
         className="flex w-full items-baseline gap-2 text-left text-text-secondary"
       >
-        <span className="min-w-0 break-words">{toolSentence(t, props.toolName, input)}</span>
+        {/* The sentence takes the free width, so the marker and 「运行中」 line up at the row's end
+            whether the sentence is short or wraps. */}
+        <span className="min-w-0 flex-1">
+          <PathText text={toolSentence(t, props.toolName, input)} />
+        </span>
         {effect?.marker ? (
           <span data-testid="tool-effect-marker" className="shrink-0">
             <AlertTriangle aria-hidden className="inline size-3" />
@@ -135,35 +145,42 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         />
       ) : null}
       {open ? (
-        <div className="mt-1 flex flex-col gap-1" data-testid="tool-row-details">
+        <div className="flex flex-col gap-1" data-testid="tool-row-details">
           <p className="text-micro text-text-muted">{t('tool.input')}</p>
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary">
-            {/* Each argument escaped on its own, so the newline between two of them is a plain
-                line break and only a newline inside one shows the mark (E4). */}
-            {Object.entries(input)
+          <ClampedPre
+            className="rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary"
+            paths
+            // Each argument escaped on its own, so the newline between two of them is a plain
+            // line break and only a newline inside one shows the mark (E4).
+            text={Object.entries(input)
               .map(
                 ([key, value]) =>
                   `${key}: ${visible(typeof value === 'string' ? value : JSON.stringify(value))}`,
               )
               .join('\n')}
-          </pre>
+          />
           {/* A call that never ran has no output: what its result holds is the kernel's note to the
               model, in English, which the closure line above already says in the interface's words. */}
           {outcome === null || outcome.state === 'not-run' ? null : (
             <>
               <p className="text-micro text-text-muted">{t('tool.output')}</p>
-              <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary">
-                {/* A handoff whose reply was cut (`preview`): the start of the sub-agent's reply the
-                    Tape kept, not the model's English note about the file (H9). One spilled only by
-                    its call lines kept the reply whole and shows its output like any tool's. */}
-                {props.toolName === 'Agent'
-                  ? visible(
-                      outcome.handoff?.preview === undefined
-                        ? outcome.output
-                        : outcome.handoff.finalReply,
-                    )
-                  : outcome.output}
-              </pre>
+              <ClampedPre
+                className="rounded-sm bg-surface-1 p-2 font-mono text-micro text-text-primary"
+                testId="tool-row-output"
+                paths="absolute"
+                // A handoff whose reply was cut (`preview`): the start of the sub-agent's reply the
+                // Tape kept, not the model's English note about the file (H9). One spilled only by
+                // its call lines kept the reply whole and shows its output like any tool's.
+                text={
+                  props.toolName === 'Agent'
+                    ? visible(
+                        outcome.handoff?.preview === undefined
+                          ? outcome.output
+                          : outcome.handoff.finalReply,
+                      )
+                    : outcome.output
+                }
+              />
               {outcome.handoff?.preview === undefined ? null : (
                 <p data-testid="tool-row-preview" className="text-micro text-text-muted">
                   {t(outcome.handoff.preview === 'spilled' ? 'preview.spilled' : 'preview.unsaved')}
@@ -172,9 +189,10 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
             </>
           )}
           {effect ? (
-            <div data-testid="tool-side-effects">
-              <p>{t('mcp.effect')}</p>
-              <p>
+            // A section like 「输入」 and 「输出」 above it: the same small muted label.
+            <div data-testid="tool-side-effects" className="flex flex-col gap-1">
+              <p className="text-micro text-text-muted">{t('mcp.effect')}</p>
+              <p className="text-micro text-text-secondary">
                 {t('mcp.marker', {
                   effect: t(effect.effectKey),
                   reversibility: t(effect.reversibilityKey),
@@ -263,9 +281,11 @@ function BlockedNotice(props: {
     <div
       data-testid="blocked-notice"
       data-source={props.outcome.source}
-      className="mt-1 rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
+      className="rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
     >
-      <p>{tx(t, key, visibleFacts({ toolName: props.toolName, ...facts }))}</p>
+      <p>
+        <PathText text={tx(t, key, visibleFacts({ toolName: props.toolName, ...facts }))} />
+      </p>
       <p className="text-text-muted">{t('blocked.told')}</p>
     </div>
   )
@@ -279,7 +299,7 @@ function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
     <div
       data-testid="approval-answered"
       data-outcome={answered.outcome}
-      className="mt-1 flex flex-col gap-0.5 rounded-sm bg-surface-1 px-2 py-1 text-micro text-text-secondary"
+      className="flex flex-col gap-0.5 rounded-sm bg-surface-1 px-2 py-1 text-micro text-text-secondary"
     >
       <span>
         {answered.outcome === 'allowed'
@@ -309,15 +329,15 @@ function QueuedRows(props: { readonly callKey: string }): JSX.Element | null {
   const waiting = after.filter((part) => part.outcome === null)
   if (waiting.length === 0) return null
   return (
-    <ul className="mt-1 flex flex-col gap-1" data-testid="approval-queued">
+    <ul className="flex flex-col gap-1" data-testid="approval-queued">
       {waiting.map((part) => (
         <li
           key={part.callKey}
           data-testid="approval-queued-row"
           className="flex items-baseline gap-2 rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-muted"
         >
-          <span className="min-w-0 break-all font-mono">
-            {visible(toolObject(part.name, part.input))}
+          <span className="min-w-0 font-mono">
+            <PathText text={visible(toolObject(part.name, part.input))} />
           </span>
           <span className="shrink-0">{t('queue.queued')}</span>
         </li>

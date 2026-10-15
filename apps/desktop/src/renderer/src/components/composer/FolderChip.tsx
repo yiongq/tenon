@@ -17,8 +17,11 @@ function folderName(path: string): string {
 
 /**
  * The task profile's folders (spec 02 §界面范围 `FolderChip`; D11, D8): below the composer, only in
- * a task. The first one is where commands run; with none chosen, the session's own folder. Folders
- * come from main's dialog or the prefill it reads itself — this side only asks and removes.
+ * a task (the Composer keeps the row's place in a chat too, empty). Each folder's name is content and
+ * shows whole (02 §界面范围: paths are shown in full and may wrap): a long name, or many folders, take
+ * the row to a second line rather than end in an ellipsis. The first one is where commands
+ * run; with none chosen, the session's own folder. Folders come from main's dialog or the prefill it
+ * reads itself — this side only asks and removes.
  */
 export function FolderChip(): JSX.Element | null {
   const { t } = useTranslation()
@@ -42,9 +45,11 @@ export function FolderChip(): JSX.Element | null {
   const picked = workspace.origin === 'picked'
   const unconfirmed = prefill.filter((folder) => !workspace.folders.includes(folder))
   return (
+    // Every item is at least one control height (20px) with its border inside it, so the row is as
+    // tall with a short-named folder in it as without: adding the first folder moves nothing.
     <div
       data-testid="folder-chip"
-      className="mt-2 flex flex-wrap items-center gap-1 font-sans text-micro"
+      className="flex flex-wrap items-center gap-1 font-sans text-micro"
     >
       <span className="text-text-muted">{t('folder.label')}</span>
       {workspace.folders.map((folder, index) => (
@@ -52,10 +57,16 @@ export function FolderChip(): JSX.Element | null {
           key={folder}
           data-testid="folder-item"
           title={folder}
-          className="flex items-center gap-1 rounded-pill border border-border-default px-2 py-0.5 text-text-secondary"
+          className="flex min-h-5 min-w-0 items-center gap-1 rounded-pill border border-border-default px-2 text-text-secondary"
         >
-          <span>{picked ? folderName(folder) : t('folder.dedicated')}</span>
-          {index === 0 ? <span className="text-text-muted">{t('folder.cwd')}</span> : null}
+          {/* Interface copy (「专用文件夹」) keeps to one line; a picked folder's name is content and
+              breaks only when it is longer than the row itself. */}
+          {picked ? (
+            <span className="min-w-0 wrap-break-word">{folderName(folder)}</span>
+          ) : (
+            <span className="shrink-0">{t('folder.dedicated')}</span>
+          )}
+          {index === 0 ? <span className="shrink-0 text-text-muted">{t('folder.cwd')}</span> : null}
           {picked ? (
             <button
               type="button"
@@ -76,7 +87,7 @@ export function FolderChip(): JSX.Element | null {
       <button
         type="button"
         data-testid="folder-add"
-        className="rounded-pill px-2 py-0.5 text-text-accent"
+        className="ctl-h-inline rounded-pill px-2 text-text-accent"
         onClick={() =>
           void invokeRoute(window.tenon, workspacePick, { sessionId: store.sessionId }).then(
             refresh,
@@ -90,7 +101,7 @@ export function FolderChip(): JSX.Element | null {
           type="button"
           data-testid="folder-prefill"
           title={unconfirmed.join('\n')}
-          className="rounded-pill px-2 py-0.5 text-text-muted underline"
+          className="ctl-h-inline rounded-pill px-2 text-text-muted underline"
           onClick={() =>
             void invokeRoute(window.tenon, workspaceUsePrefill, {
               sessionId: store.sessionId,

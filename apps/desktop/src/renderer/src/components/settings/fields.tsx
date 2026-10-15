@@ -4,7 +4,9 @@ import type { JSX, ReactNode, RefObject } from 'react'
 /** A labelled field of the settings card: the label above, the control and its notes below. */
 export function Field(props: { label: string; htmlFor: string; children: ReactNode }): JSX.Element {
   return (
-    <div className="flex flex-col gap-1.5">
+    // `text-balance` is inherited by the field's label and its hint lines: a two-line hint splits
+    // evenly instead of leaving one or two characters on the second line.
+    <div className="flex flex-col gap-1.5 text-balance">
       <label
         htmlFor={props.htmlFor}
         className="font-sans text-ui-sm font-medium text-text-secondary"
@@ -30,7 +32,8 @@ export function Chooser(props: {
   id: string
   testId: string
   value: string
-  options: ReadonlyArray<{ value: string; label: string }>
+  /** `title`: a second name the option carries, shown as the tooltip (a model's raw id). */
+  options: ReadonlyArray<{ value: string; label: string; title?: string }>
   onChange: (value: string) => void
   inputRef?: RefObject<HTMLSelectElement | null>
   ariaLabel?: string
@@ -44,12 +47,13 @@ export function Chooser(props: {
         data-testid={props.testId}
         {...(props.inputRef === undefined ? {} : { ref: props.inputRef })}
         value={props.value}
+        title={props.options.find((option) => option.value === props.value)?.title}
         disabled={props.disabled === true}
         onChange={(event) => props.onChange(event.target.value)}
         className="ctl-h w-full appearance-none rounded-lg border border-input bg-transparent pr-8 pl-2.5 font-sans text-ui text-text-primary transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
       >
         {props.options.map((option) => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} title={option.title}>
             {option.label}
           </option>
         ))}
