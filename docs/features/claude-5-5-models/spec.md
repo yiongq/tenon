@@ -2,10 +2,10 @@
 
 Status: draft
 Kind: features
-Owner: 起草在 Claude Code（2026-10-15），厂商事实当天按一手页面核过（§事实与出处）。owner 2026-10-15 定：开放问题 1A、2A、3A、5A、6A、7A、8A；开放问题 4（菜单位置）由 owner 的新规则「跟随最新」取代（§跟随最新）。定法见 §开放问题（已定），没选的项见 §被否决的方案；改 `ready` 由收尾一步做
-Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层（`ModelInfo` 的 `pricing.longPrompt`、`family`、`generation`；`ThinkingSpec.offType`，`ThinkingSpec` 由 02 的 01 修补 2 立；`ProviderDefinition.familyNameKeys`）、§desktop 接线（`config.json` 的 `provider` 与 `provider.select` 的请求都只增 `latestOf`）；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2 小节的 `ThinkingSpec`、`pricing` 与 `listing`；第 3 小节「Anthropic 线的 thinking 编码四分支」的 `{ enabled: false }` 一支、「`samplingDefaultsOnly` 的行……本地拒绝」一条；第 6 小节的 `defaultModelByProfile` 与 `providerSelectionSchema`、「五层解析」、「在模型菜单里选一次，同时写……」、`provider.list` 的行、`provider.select`）、§主进程与 kernel 的循环接口（`RunConnector.resolveChoice` 的问询只增 `previousModel`）、§模型选择（M5：「没选过模型的会话」）、§模型菜单与输入框「设置卡」、§记录格式与费用口径（「费用与用量」第一条）、§开工前裁决 A16 的「推迟到」一栏（「Haiku 4.5 有弃用公告后撤行」）；[custom-vendors](../custom-vendors/spec.md) §写入规则「删除」「改名与模型」（读法：指针只写在内置厂商上，清默认值碰不到它）；[model-display-names](../model-display-names/spec.md) §对 02 的修补「设置卡」（指针选项的标签）。全文见 §对 01 的修补、§对 02 的修补、§对 custom-vendors 与 model-display-names 的修补；不属纯粹只增的 (a)(b)(f)(g) 列在 §点名
-Replaces: 02 §模型菜单与输入框 里「更多模型 ›」那一条的括注「（Opus 5 Legacy）」，改为「每个家族里不是最新一代的行」并照实列出这一档现在的行（2026-10-15，owner「跟随最新」：`listing` 改由家族与代次算出，这一档不再只有 Opus 5）。条款本身「收 `listing === 'more'` 的行」不变，只涉及菜单文字（spec-driven-dev 第三个例外），新条款全文见 §替换 02 的表现层条款
-Revisions: 2026-10-15 首版。同日按评审就地修订（`draft`，没有代码依赖）：① 事实：加 F16（Sonnet 5、Haiku 4.5 已是 Legacy）、F17（Sonnet 5.5 的五类拒答与 beta fallback）、F18（Sonnet 5.5 收 `summarized`，两行有 vision）、F19（Sonnet 5.5 工具间的说明走 thinking 块）、F20（最小可缓存长度）；F4、F12、F13 补原文；「Sonnet 5.5 迁移页」写成路径。旧：开放问题 4 A 写「不写「旧版」，因为厂商没给这两行标 Legacy」，§没核到 列了拒答分类、`summarized` 与 vision，这三处都与一手页面不符；② 开放问题 4 A 的用途句改为「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」，理由改为 F16 与 A16 的先例（旧：不带「旧版」）；B、C 写明两行已是 Legacy；§Haiku 4.5 现状 写 Legacy；③ `Amends:` 补 A16 推迟项与 1B 的思考参数表。旧尾句说不属纯粹只增的改动只在选了非推荐项时出现，可推荐项 5A 就会触发 (b)。`Replaces:` 由「无」改为条件句，新条款全文放在新加的 §替换 02 的表现层条款；§点名 加 (d)(e)；④ 不变量 1、验收 11：开放问题 4 改了 `listing` 的行不要求 `modelInfoHash` 不变（旧：五行的 `modelInfoHash` 都不变、Haiku 4.5 除注释外逐字节相同，推荐项下不成立）；⑤ 编码器版本、不变量 6、验收 4 按开放问题 1 的选法写（旧：无条件为 4），加 §兼容；开放问题 1 C 补「旧记录仍可复核」；⑥ `between_tools` 只许写在带 `disableMaxEffort` 的 adaptive-gated 行上，关思考又带非空 `tools` 的请求本地拒绝（旧：budget、adaptive、adaptive-gated 三种模式都可写，不看 tools）；⑦「逐条 effort」一条写明改档的风险与退路；验收 12 加两例：Sonnet 5.5 选 low 后压缩、Haiku 5.5 按默认档压缩。判据写明从 Tape 读，也写明对提示长度与缓存的前提。验收 10 改用改了 id 的行，验收 7 加档内缺缓存价一例；⑧ §Haiku 4.5「公告之后」改引 02 §续跑，并补上撤行后复核得 `model-table-changed`（旧引 02 不变量 33）；开放问题 7 A 不再指向已勾掉的 02 plan 第 34 步；⑨ plan：第 1 步只留 `supportsStreamingToolCalls`；第 3、5 步补上会变红的测试；命令改为跑全量 vitest，加 text-fit-02，live 用 `--grep`；第 6、7 步补突变与用例。同日第二轮评审就地修订：⑩ 事实：F14 改引 `build-with-claude/thinking` §Sampling parameters，同一采样规则适用表里全部 `samplingDefaultsOnly` 的六行（旧：只引 Sonnet 5.5 概览页，写「没给默认值，也没提同发」，§没核到 列了 Sonnet 5.5、Opus 5.5、Fable 5.1 的采样规则）；F8 补 Haiku 5.5 提示页的四类拒答（旧：§没核到 写「Haiku 5.5 的分类没在一手页面核到」）；加 F21，两新行 `supportsStreamingToolCalls` 直接写 true（旧：按 plan 第 1 步核，核不到写 false，引「01 spec:706『能力不明就关』」，那是 02:1139 对 01:711 表外 id 保守合成的转述，不管内置行；相关规则是 01:353「确认不了的字段在 plan 记一笔」）；F12 加 `release-notes/overview` 出处，「更正」第二条改为 $0.20 是 2026-10-07 降价前的官方价（旧：说成非一手材料与定价页冲突）；§没核到 现在没有条目；`thinkingSpec` 注释一行加改 anthropic.ts:85-87 的 sampling 注释；⑪ 开放问题 3 重写：推荐项改为不加成员、所有 `samplingDefaultsOnly` 的行统一按厂商规则收紧（即旧 C，触发 §点名 (a)）；B 为六行都设 `samplingExact`（新）；C 为只设两新行（旧 A 只设 Haiku 5.5 并为推荐，旧 B 加 Sonnet 5.5 写作「推断」）。理由：F14 写明这六行规则相同，旧 A「只用在页面写明的行上」、旧 B「这是推断」、旧 C「默认值未知、不见得更保守」都不成立。§对 01 的修补 去掉 `samplingExact`（选 B、C 时再加），数据表的 Haiku 5.5 行去掉 `samplingExact: true`；§对 02 的修补 2、非目标、不变量 1 与 4、验收 1 与 5、§点名 (a) 随改；验收 5 加「有 `samplingDefaultsOnly`、没有 `samplingExact` 的行照旧收单独的 `top_p` 1」两例（旧：只说 Opus 5.5「The defaults are accepted」不改仍通过，选 A 或 B 时那个请求厂商会 400）；⑫ 开放问题 5 A 按弃用页原文写「仍可用，但可能不如 Active 可靠」（旧：「厂商照常服务」）；「逐条 effort」列出查过的页面和两处最接近的原文（旧：只写「页面没写」）；§对 02 的修补 1 的理由改为响应形状与快照不符，引 400 报错原文（旧：「模型实际却在思考」，与厂商说法不符）；⑬ `offType` 收窄为 `'between_tools'`，关思考写 `disabled` 只由缺省表达（旧：`'disabled' | 'between_tools'`，显式写 `'disabled'` 编码不变却改 `modelWireHash`）；编码器只在 adaptive-gated 一支读 `offType`，budget、adaptive 行写了它时关思考本地拒绝（旧：三支都写 `offType ?? 'disabled'`，表错误只靠 definitions 测试挡）；验收 1 去掉「`offType: 'disabled'` 只出现在……」那条（内置行没有一行写它，永不变红），验收 2 加合成行两例；⑭ 不变量 1 末句按开放问题 1 的选法写（旧：无条件「结果仍是 `verified`」，1A、1B 下旧记录一律 `other-encoder`）；§点名 加「为什么仍算 amend / 须 owner 确认」一列和「不认可就走 supersede」的读法，按推荐项走有 (a)(b)（旧：只有 (b)，表上没有依据一列）；A16 的落点改为「§开工前裁决 A16 的「推迟到」一栏」（旧：「§裁决表 A16 的推迟项」，02 没有这一节），`Amends:` 与 (b) 两处；4C 的替换条款括注写全 live 冒烟前后两个阶段（旧：只写冒烟前）；⑮ 验收 4 与 plan 第 3 步：原有金样行与两份金样请求不改，另加关思考的行、请求和表，查重改为跨表（旧：把 `ANTHROPIC_ROW` 与两份金样请求改成关思考、不带 tools，第 4 版起金样丢了 tools 与 display 的覆盖）；验收 12 逐条写明从哪里读，线上形态与状态码从 record 模式的线上记录读（旧：除第一条都从 Tape 读，Tape 不记线上 `thinking.type` 与状态码），两例压缩先跑一轮 Read，缓存一条先断言第一个请求写了缓存（旧：断言第二个请求长于 512）；plan 第 5 步补 model-selection.test.ts:153-157；第 7 步推理题不再要求调 `lookup`；开放问题 6 A 的请求数随之改为约 30。2026-10-15 owner 定开放问题，同日就地修订（仍 `draft`，没有代码依赖）：⑯ 定法：1A、2A、3A、5A、6A（live 冒烟在实现时用官方 key 跑，读钥匙串 `tenon-live-anthropic` 之前先提醒 owner，macOS 会弹窗）、7A、8A；开放问题 4 由 owner 的新规则「跟随最新」取代。标题旧为「Claude 5.5 两行：Sonnet 5.5、Haiku 5.5」。全文「按开放问题 N」的条件句改为所选项，没选的项移到新加的 §被否决的方案（旧：§开放问题 列全部选项；§对 01 的修补 有 3B、3C 的 `samplingExact`；§兼容 有 1C、3B 的情形；§点名 有 (c)(d)；§替换 02 的表现层条款 有 4A、4C 两条）；`Replaces:` 由条件句改为一条；⑰ 跟随最新·排位：新加 §跟随最新。anthropic 与智谱的内置行带 `family`、`generation`，`listing` 在构建表时由它们算出，每个家族最新一代在主列表，旧的进「更多模型 ›」（旧：逐行手写，4A 推荐手写 Sonnet 5、Haiku 4.5 为 `'more'`，GLM-4.6 留在主列表）。两家内置行的 `modelInfoHash` 都变（旧不变量 1：只有改了 `listing` 的行变）。anthropic 行序改为四个最新一代在前、三个旧的在后（旧：两新行插在 Opus 5.5 之后，旧行不动）；⑱ 跟随最新·默认：新会话默认可以是指针（`providerSelectionSchema` 只增 `latestOf`）；会话第一个 Run 把它解析成具体一行、记进 `session/model_selected`，之后同一家族不换（`resolveChoice` 的问询只增 `previousModel`，`SessionFacts.lastSelected` 只增 `modelId`，不加 Tape 事实）；菜单从主列表选带家族的行写指针，设置卡的下拉先列指针（`provider.select` 的请求只增 `latestOf`；`provider.list` 的行只增 `family`、`familyNameKey`；`ProviderDefinition` 只增 `familyNameKeys`）；现有 config.json 不改写；presentation-r1 的第一把 key 写指针。`Amends:` 加 01 §desktop 接线、02 第 6 小节与 §主进程与 kernel 的循环接口、§模型选择、§模型菜单与输入框「设置卡」、custom-vendors、model-display-names；§点名 加 (f)(g)；⑲ 非目标加「不自动用厂商新发布、Tenon 没适配的模型」与「Ollama、自定义厂商不分家族」；⑳ 不变量 1、4、5 随改，加 7–11；验收 1、5、8、9、11 随改，加 13–19；plan 加第 5 步（家族排位）与第 8–11 步（契约与端口、解析与写指针、设置卡、与 presentation-r1 的衔接），live 由第 7 步改为第 12 步；01、02 等旧 spec 上要加的几行由第 0 步挪到第 13 步，与实现同一个 PR、日期写合入当天（旧：第 0 步，owner 一定就加）
+Owner: 起草在 Claude Code（2026-10-15），厂商事实当天按一手页面核过（§事实与出处）。owner 2026-10-15 定：开放问题 1A、2A、3A、5A、6A、7A、8A；开放问题 4（菜单位置）由 owner 的新规则「跟随最新」取代（§跟随最新）。第三轮评审后 owner 同日定「都按推荐来」：运行中的会话也不随默认改动而换（§跟随最新「会话不换」，§点名 (f)）。定法见 §开放问题（已定），没选的项见 §被否决的方案；改 `ready` 由收尾一步做
+Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层（`ModelInfo` 的 `pricing.longPrompt`、`family`、`generation`；`ThinkingSpec.offType`，`ThinkingSpec` 由 02 的 01 修补 2 立；`ProviderDefinition.familyNameKeys`）、§desktop 接线（`config.json` 的 `provider` 与 `provider.select` 的请求都只增 `latestOf`）；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2 小节的 `ThinkingSpec`、`pricing` 与 `listing`；第 3 小节「Anthropic 线的 thinking 编码四分支」的 `{ enabled: false }` 一支、「`samplingDefaultsOnly` 的行……本地拒绝」一条；第 6 小节的 `defaultModelByProfile` 与 `providerSelectionSchema`、「五层解析」、「在模型菜单里选一次，同时写……」、`provider.list` 的行、`provider.select`）、§主进程与 kernel 的循环接口（`RunConnector.resolveChoice` 的问询只增 `previousModel`）、§模型选择（M5：「没选过模型的会话」）、§模型菜单与输入框「设置卡」、§记录格式与费用口径（「费用与用量」第一条）、§开工前裁决 A16 的「推迟到」一栏（「Haiku 4.5 有弃用公告后撤行」）；[custom-vendors](../custom-vendors/spec.md) §写入规则「删除」「改名与模型」（读法：指针只写在内置厂商上，清默认值碰不到它）；[model-display-names](../model-display-names/spec.md) §对 02 的修补「设置卡」（指针选项的标签）；presentation-r1（`docs/features/presentation-r1/spec.md`，还在分支 `docs/presentation-r1` 上，这里不写链接，plan 第 13 步在实现的 PR 里补成链接）§对 02 的修补（M5）第 1 条（第一把 key：内置厂商带家族的行写指针；它自己写明自动跟新由另一份 spec 修补它；两份同一个 PR 合入时也算）。全文见 §对 01 的修补、§对 02 的修补、§对 custom-vendors 与 model-display-names 的修补、§跟随最新「谁写指针」；不属纯粹只增的 (a)(b)(f)(g)(h) 列在 §点名
+Replaces: 02 §模型菜单与输入框 里「更多模型 ›」那一条的括注「（Opus 5 Legacy）」，改为「每个家族里不是最新一代的行」并照实列出这一档现在的行。日期为实现合入当天，plan 第 13 步在同一个提交里填，与 02 行末指针上的日期相同。理由：owner 2026-10-15 定「跟随最新」，`listing` 改由家族与代次算出，这一档不再只有 Opus 5。条款本身「收 `listing === 'more'` 的行」不变，只涉及菜单文字（spec-driven-dev 第三个例外），新条款全文见 §替换 02 的表现层条款
+Revisions: 2026-10-15 首版。同日按评审就地修订（`draft`，没有代码依赖）：① 事实：加 F16（Sonnet 5、Haiku 4.5 已是 Legacy）、F17（Sonnet 5.5 的五类拒答与 beta fallback）、F18（Sonnet 5.5 收 `summarized`，两行有 vision）、F19（Sonnet 5.5 工具间的说明走 thinking 块）、F20（最小可缓存长度）；F4、F12、F13 补原文；「Sonnet 5.5 迁移页」写成路径。旧：开放问题 4 A 写「不写「旧版」，因为厂商没给这两行标 Legacy」，§没核到 列了拒答分类、`summarized` 与 vision，这三处都与一手页面不符；② 开放问题 4 A 的用途句改为「上一代 Sonnet（旧版）」「上一代 Haiku（旧版）」，理由改为 F16 与 A16 的先例（旧：不带「旧版」）；B、C 写明两行已是 Legacy；§Haiku 4.5 现状 写 Legacy；③ `Amends:` 补 A16 推迟项与 1B 的思考参数表。旧尾句说不属纯粹只增的改动只在选了非推荐项时出现，可推荐项 5A 就会触发 (b)。`Replaces:` 由「无」改为条件句，新条款全文放在新加的 §替换 02 的表现层条款；§点名 加 (d)(e)；④ 不变量 1、验收 11：开放问题 4 改了 `listing` 的行不要求 `modelInfoHash` 不变（旧：五行的 `modelInfoHash` 都不变、Haiku 4.5 除注释外逐字节相同，推荐项下不成立）；⑤ 编码器版本、不变量 6、验收 4 按开放问题 1 的选法写（旧：无条件为 4），加 §兼容；开放问题 1 C 补「旧记录仍可复核」；⑥ `between_tools` 只许写在带 `disableMaxEffort` 的 adaptive-gated 行上，关思考又带非空 `tools` 的请求本地拒绝（旧：budget、adaptive、adaptive-gated 三种模式都可写，不看 tools）；⑦「逐条 effort」一条写明改档的风险与退路；验收 12 加两例：Sonnet 5.5 选 low 后压缩、Haiku 5.5 按默认档压缩。判据写明从 Tape 读，也写明对提示长度与缓存的前提。验收 10 改用改了 id 的行，验收 7 加档内缺缓存价一例；⑧ §Haiku 4.5「公告之后」改引 02 §续跑，并补上撤行后复核得 `model-table-changed`（旧引 02 不变量 33）；开放问题 7 A 不再指向已勾掉的 02 plan 第 34 步；⑨ plan：第 1 步只留 `supportsStreamingToolCalls`；第 3、5 步补上会变红的测试；命令改为跑全量 vitest，加 text-fit-02，live 用 `--grep`；第 6、7 步补突变与用例。同日第二轮评审就地修订：⑩ 事实：F14 改引 `build-with-claude/thinking` §Sampling parameters，同一采样规则适用表里全部 `samplingDefaultsOnly` 的六行（旧：只引 Sonnet 5.5 概览页，写「没给默认值，也没提同发」，§没核到 列了 Sonnet 5.5、Opus 5.5、Fable 5.1 的采样规则）；F8 补 Haiku 5.5 提示页的四类拒答（旧：§没核到 写「Haiku 5.5 的分类没在一手页面核到」）；加 F21，两新行 `supportsStreamingToolCalls` 直接写 true（旧：按 plan 第 1 步核，核不到写 false，引「01 spec:706『能力不明就关』」，那是 02:1139 对 01:711 表外 id 保守合成的转述，不管内置行；相关规则是 01:353「确认不了的字段在 plan 记一笔」）；F12 加 `release-notes/overview` 出处，「更正」第二条改为 $0.20 是 2026-10-07 降价前的官方价（旧：说成非一手材料与定价页冲突）；§没核到 现在没有条目；`thinkingSpec` 注释一行加改 anthropic.ts:85-87 的 sampling 注释；⑪ 开放问题 3 重写：推荐项改为不加成员、所有 `samplingDefaultsOnly` 的行统一按厂商规则收紧（即旧 C，触发 §点名 (a)）；B 为六行都设 `samplingExact`（新）；C 为只设两新行（旧 A 只设 Haiku 5.5 并为推荐，旧 B 加 Sonnet 5.5 写作「推断」）。理由：F14 写明这六行规则相同，旧 A「只用在页面写明的行上」、旧 B「这是推断」、旧 C「默认值未知、不见得更保守」都不成立。§对 01 的修补 去掉 `samplingExact`（选 B、C 时再加），数据表的 Haiku 5.5 行去掉 `samplingExact: true`；§对 02 的修补 2、非目标、不变量 1 与 4、验收 1 与 5、§点名 (a) 随改；验收 5 加「有 `samplingDefaultsOnly`、没有 `samplingExact` 的行照旧收单独的 `top_p` 1」两例（旧：只说 Opus 5.5「The defaults are accepted」不改仍通过，选 A 或 B 时那个请求厂商会 400）；⑫ 开放问题 5 A 按弃用页原文写「仍可用，但可能不如 Active 可靠」（旧：「厂商照常服务」）；「逐条 effort」列出查过的页面和两处最接近的原文（旧：只写「页面没写」）；§对 02 的修补 1 的理由改为响应形状与快照不符，引 400 报错原文（旧：「模型实际却在思考」，与厂商说法不符）；⑬ `offType` 收窄为 `'between_tools'`，关思考写 `disabled` 只由缺省表达（旧：`'disabled' | 'between_tools'`，显式写 `'disabled'` 编码不变却改 `modelWireHash`）；编码器只在 adaptive-gated 一支读 `offType`，budget、adaptive 行写了它时关思考本地拒绝（旧：三支都写 `offType ?? 'disabled'`，表错误只靠 definitions 测试挡）；验收 1 去掉「`offType: 'disabled'` 只出现在……」那条（内置行没有一行写它，永不变红），验收 2 加合成行两例；⑭ 不变量 1 末句按开放问题 1 的选法写（旧：无条件「结果仍是 `verified`」，1A、1B 下旧记录一律 `other-encoder`）；§点名 加「为什么仍算 amend / 须 owner 确认」一列和「不认可就走 supersede」的读法，按推荐项走有 (a)(b)（旧：只有 (b)，表上没有依据一列）；A16 的落点改为「§开工前裁决 A16 的「推迟到」一栏」（旧：「§裁决表 A16 的推迟项」，02 没有这一节），`Amends:` 与 (b) 两处；4C 的替换条款括注写全 live 冒烟前后两个阶段（旧：只写冒烟前）；⑮ 验收 4 与 plan 第 3 步：原有金样行与两份金样请求不改，另加关思考的行、请求和表，查重改为跨表（旧：把 `ANTHROPIC_ROW` 与两份金样请求改成关思考、不带 tools，第 4 版起金样丢了 tools 与 display 的覆盖）；验收 12 逐条写明从哪里读，线上形态与状态码从 record 模式的线上记录读（旧：除第一条都从 Tape 读，Tape 不记线上 `thinking.type` 与状态码），两例压缩先跑一轮 Read，缓存一条先断言第一个请求写了缓存（旧：断言第二个请求长于 512）；plan 第 5 步补 model-selection.test.ts:153-157；第 7 步推理题不再要求调 `lookup`；开放问题 6 A 的请求数随之改为约 30。2026-10-15 owner 定开放问题，同日就地修订（仍 `draft`，没有代码依赖）：⑯ 定法：1A、2A、3A、5A、6A（live 冒烟在实现时用官方 key 跑，读钥匙串 `tenon-live-anthropic` 之前先提醒 owner，macOS 会弹窗）、7A、8A；开放问题 4 由 owner 的新规则「跟随最新」取代。标题旧为「Claude 5.5 两行：Sonnet 5.5、Haiku 5.5」。全文「按开放问题 N」的条件句改为所选项，没选的项移到新加的 §被否决的方案（旧：§开放问题 列全部选项；§对 01 的修补 有 3B、3C 的 `samplingExact`；§兼容 有 1C、3B 的情形；§点名 有 (c)(d)；§替换 02 的表现层条款 有 4A、4C 两条）；`Replaces:` 由条件句改为一条；⑰ 跟随最新·排位：新加 §跟随最新。anthropic 与智谱的内置行带 `family`、`generation`，`listing` 在构建表时由它们算出，每个家族最新一代在主列表，旧的进「更多模型 ›」（旧：逐行手写，4A 推荐手写 Sonnet 5、Haiku 4.5 为 `'more'`，GLM-4.6 留在主列表）。两家内置行的 `modelInfoHash` 都变（旧不变量 1：只有改了 `listing` 的行变）。anthropic 行序改为四个最新一代在前、三个旧的在后（旧：两新行插在 Opus 5.5 之后，旧行不动）；⑱ 跟随最新·默认：新会话默认可以是指针（`providerSelectionSchema` 只增 `latestOf`）；会话第一个 Run 把它解析成具体一行、记进 `session/model_selected`，之后同一家族不换（`resolveChoice` 的问询只增 `previousModel`，`SessionFacts.lastSelected` 只增 `modelId`，不加 Tape 事实）；菜单从主列表选带家族的行写指针，设置卡的下拉先列指针（`provider.select` 的请求只增 `latestOf`；`provider.list` 的行只增 `family`、`familyNameKey`；`ProviderDefinition` 只增 `familyNameKeys`）；现有 config.json 不改写；presentation-r1 的第一把 key 写指针。`Amends:` 加 01 §desktop 接线、02 第 6 小节与 §主进程与 kernel 的循环接口、§模型选择、§模型菜单与输入框「设置卡」、custom-vendors、model-display-names；§点名 加 (f)(g)；⑲ 非目标加「不自动用厂商新发布、Tenon 没适配的模型」与「Ollama、自定义厂商不分家族」；⑳ 不变量 1、4、5 随改，加 7–11；验收 1、5、8、9、11 随改，加 13–19；plan 加第 5 步（家族排位）与第 8–11 步（契约与端口、解析与写指针、设置卡、与 presentation-r1 的衔接），live 由第 7 步改为第 12 步；01、02 等旧 spec 上要加的几行由第 0 步挪到第 13 步，与实现同一个 PR、日期写合入当天（旧：第 0 步，owner 一定就加）。2026-10-15 第三轮评审就地修订（仍 `draft`，没有代码依赖；owner 同日定「都按推荐来」）：㉑ 会话不换：「解析」第 1 条改为本代已有 Run、上一个 Run 的行还在那家厂商的表里就用它，不看答话的是哪一层、是不是指针，用户改默认也不换运行中的会话（旧第 3 条：只在答话的一层是指针、上一个 Run 的行同厂商同家族时留下，用户改成别的家族、厂商或钉住的一行照 02 跟着换；评审指出这是把 owner 原文「运行中的会话不换」收窄，owner 选了不收窄）；上一个 Run 的行不在表里时照 02 读默认（旧：取同家族最新一代；会话不换不再只管指针以后，连接器手里只有 provider 与 id，不知道撤掉的行属于哪个家族）；手填与开发变量合成的 id 不算表里的行，不适用；④ 只给 `TENON_PROVIDER` 与 ⑤ 不再读作指针（旧：读作指向第一行所在家族的指针；第一行本来就是本家族最新一代，会话不换又不看指针，它不再改任何结果）；「什么时候还会换」、§数据去向、§Haiku 4.5「公告之后」、不变量 9、验收 15、§点名 (f)、§本 spec 自己定的细节、§被否决的方案、§对 02 的修补 第 8、11、12 条随改；验收 15 加 Ollama 地址改到公网主机一例（数据去向检查在会话不换之后照做）与手填 id 一例。同一评审为旧规则提的两处补丁（同一家族里由钉住改成指针时比代次；表的第一行换了家族时按厂商比）随这一选择不再需要，没采用；㉒ 写指针：`provider.select` 不带 `latestOf` 时照旧写钉住的值，菜单另用只给 `session.selectModel` 的判定（旧：plan 第 9 步让两条路共用的 `selectionOf` 对主列表带家族的行给指针，设置卡选钉住的行也会存成指针，与第 13 条矛盾）；`latestOf` 不在表里、带 `latestOf` 选 Ollama 或实例回 `invalid-value`（旧：`unknown-model`，02 第 6 小节「表外模型手填」对内置厂商写定不再返回它）；验收 16、17 随改；㉓ 第一把 key：由本 spec 修补 presentation-r1 §对 02 的修补（M5）第 1 条，`Amends:` 加它，§点名 加 (h)（旧：说由 presentation-r1 在自己的 `Revisions:` 里就地改；它的 ea34e42 已写明一律写具体 id、要自动跟新另写 spec 修补它，两份都在等对方）；本 spec plan 第 11 步等 presentation-r1 写第一把 key 的代码合入后做，两者之间不切 release 分支（旧：「两者同一个 PR 或本 spec 在前合入就没有这段时间」，可本 spec 先合入时 presentation-r1 照样写具体 id）；验收 17「只改 key、不动下拉」改用已存着别家默认的 profile（旧：全新 profile，presentation-r1 实现后第一次存 key 就会写默认）；验收 19 写明依赖哪一边；㉔ `previousModel` 改为可选成员，缺省按 null 读（旧：必填；十处直接调用点会在 typecheck 报错，也不合 ports.ts「只加可选成员」的冻结规则）；㉕ `providerSelectionSchema` 的 `latestOf` 加 `.catch(undefined)`（旧：坏值让整个 `defaultModelByProfile` 或 `provider` 校验失败、被 `fieldwise` 丢掉，并不是读作钉住）；验收 18 加 `latestOf: ""` 一例，「主进程只写别的键」一句挪到 apps/desktop/test/profile.test.ts（旧：放在 contracts 的测试里，那里只能测 zod 解析）；验收 16 的 `provider.list` 一句挪到 model-selection.test.ts，provider-catalogue.test.ts 改为核对 `familyNameKeys` 的键（旧：provider-catalogue 不经过 `provider.list`）；㉖ `Replaces:` 的日期改为实现合入当天，与 02 行末指针同一个日期（旧：2026-10-15，与 plan 第 13 步的「合入日期」对不上）；㉗ §点名 (g) 写明它改了 02 验收 33 那两例写下的值；plan 第 9 步列出要改期望的这两例与 02「间接切公网」的 e2e，突变按新规则重列
 
 ## 背景
 
@@ -63,7 +63,7 @@ Anthropic 发布了 Sonnet 5.5、Haiku 5.5。内置表现在五行（`packages/k
 3. `ThinkingSpec` 能表达「关思考写 `between_tools`」，Sonnet 5.5 上的摘要请求合法。
 4. 采样守卫按 F6、F14 拒绝，用在所有 `samplingDefaultsOnly` 的行上。
 5. Haiku 4.5：写清现状和公告之后怎么做。
-6. 跟随最新：anthropic、智谱的内置行带家族与代次，菜单位置由它们算出；新会话默认可以指向某家族最新的一代；运行中的会话不因新一代上架而换模型。
+6. 跟随最新：anthropic、智谱的内置行带家族与代次，菜单位置由它们算出；新会话默认可以指向某家族最新的一代；运行中的会话不因新一代上架或默认改动而换模型。
 
 ### 非目标
 
@@ -131,40 +131,45 @@ Ollama
   - **指针**：`{ id, modelId, latestOf }`。`latestOf` 是家族名，读作「`id` 这家 `latestOf` 家族最新的一代」；`modelId` 是写下时它解析到的那一行。本构建解析时不看 `modelId`（下面「解析」第 4 条除外）；它留给不认识 `latestOf` 的旧构建：zod 默认剥掉未知键，旧构建把它读成钉住的 `modelId`。
 
   例：`"defaultModelByProfile": { "chat": { "id": "anthropic", "modelId": "claude-opus-5-5", "latestOf": "opus" } }`
-- 只有主进程写 `latestOf`，只写在内置的 anthropic、智谱上，从不与 `source` 同写。手改出来的同写，或 `latestOf` 写在 Ollama、实例上，都读作钉住，不看 `latestOf`。
+- 只有主进程写 `latestOf`，只写在内置的 anthropic、智谱上，从不与 `source` 同写。手改出来的同写，或 `latestOf` 写在 Ollama、实例上，都读作钉住，不看 `latestOf`。`latestOf` 不是非空字符串的（空串、数字等），解析时只丢这一个键（`.catch(undefined)`，§对 01 的修补），这个值照样读作钉住；不会因为它丢掉整个 `defaultModelByProfile` 或 `provider`（config.json 逐字段校验，一个字段坏了丢整个字段，apps/desktop/src/main/host/profile.ts 的 `fieldwise`）。
 
 ### 解析
 
 五层（02 第 6 小节「五层解析」）的顺序与各层不变。①（本会话的选择）不受影响，永远是具体的一行。①空着时：
 
-1. **哪些算指针**：答话的一层是 ② 或 ③ 且带 `latestOf`；或者落到某厂商表的第一行（④ 只给了 `TENON_PROVIDER`、⑤）而那一行带家族——按上一节，第一行一定是本家族最新一代，所以读作指向它所在家族的指针。⑤ 今天解析出的行不变（仍是 `claude-opus-5-5`），区别只在第 3 条。
-2. **最新一代**：在该厂商本构建的内置表里，取 `family === latestOf` 的行里代次最大的那行。带家族的行都是 `verified`，对话、任务两种形态都能用，不另挑。
-3. **会话不换**：本代（incarnation）上一个 Run 用的行属于同一厂商、同一家族，且还在表里，就用那一行，不用最新一代（下一节）。
+1. **会话不换**：本代（incarnation）已有 Run，且上一个 Run 用的行还在那家厂商的表里（内置表、Ollama 的行、实例的行；手填的 id 与开发变量合成的 id 不是表里的行），就用那一行，不看答话的是哪一层、是不是指针（下一节）。不然往下。
+2. **哪些算指针**：答话的一层是 ② 或 ③ 且带 `latestOf`。④ 与 ⑤ 照 02 给某厂商表的第一行，不读作指针：第一行一定是本家族最新的一代（上一节），读作指针也是同一行。
+3. **最新一代**：在该厂商本构建的内置表里，取 `family === latestOf` 的行里代次最大的那行（kernel 的 `newestOfFamily`）。带家族的行都是 `verified`，对话、任务两种形态都能用，不另挑。
 4. **找不到**：`latestOf` 在本构建的表里没有行（以后的构建删了整个家族，或文件被手改），这一层读作钉住的 `modelId`，与旧构建的读法相同；`modelId` 也不在表里，照 02 §表外模型与不发工具（保守合成、只能纯文字）。不跳到别的家族、别的厂商。
 5. **厂商没配置**：指针照样解析到那家最新的一代，发送照 02 按缺 key 拒绝（presentation-r1 落地后由输入框「发不了的原因」说明），不跳到别的已配置厂商：换厂商就是换数据去向，要由用户来选。
 
-`capabilitySource` 记 `builtin`。`session.modelChoice` 与 Run 开始时用同一套解析（kernel 的 `effectiveModelChoice` 交同样的问询），所以菜单触发器显示的就是下一个 Run 用的行。
+`capabilitySource`：指针解析出的行记 `builtin`；第 1 条留下的行照 02 按那一行算。`session.modelChoice` 与 Run 开始时用同一套解析（kernel 的 `effectiveModelChoice` 交同样的问询，含 `previousModel`），所以菜单触发器显示的就是下一个 Run 用的行。
 
 ### 会话不换
 
-- owner 的规则：新一代只给新会话，已经在跑的会话不跟着换。理由三条：思考块绑模型（02 守卫规则 2 丢掉别的模型产生的思考块，换了模型，历史里的思考就带不过去）；提示缓存按模型分，换模型等于整段重写缓存；新一代的行为不同，做到一半的事会变样。
-- 怎么记：不加 Tape 事实。每个发请求的 Run 本来就写 `session/model_selected`，记具体的 provider 与模型 id（02 §会话事实）；会话第一个 Run 把指针解析成具体一行，这一条就是它的记录。之后每个 `user-message`、`continue` 的 Run 照 02 重新解析，kernel 在问询里多交一个 `previousModel`（本代最后一个 `model_selected` 的 provider 与模型），连接器按「解析」第 3 条留在那一行。`resume` 与子会话照 02 沿用暂停前或父 Run 的模型，本来就不解析。
+- owner 的规则：新一代只给新会话，已经在跑的会话不跟着换。理由三条：思考块绑模型（02 守卫规则 2 丢掉别的模型产生的思考块，换了模型，历史里的思考就带不过去）；提示缓存按模型分，换模型等于整段重写缓存；新一代的行为不同，做到一半的事会变样。第三轮评审指出，只管新一代上架是收窄：用户在设置卡里改默认、或在别的会话的菜单里选模型（02 第 6 小节，菜单每选一次都改写 `defaultModelByProfile[形态]` 与 `provider`），没选过模型的会话下一条消息照样换掉，三条理由一样成立。owner 2026-10-15 定「都按推荐来」：不论默认怎么变，运行中的会话都不换；默认的改动只影响新会话、清空之后，以及下面「什么时候还会换」列的几种会话（§点名 (f)；没选的读法见 §被否决的方案）。
+- 怎么记：不加 Tape 事实。每个发请求的 Run 本来就写 `session/model_selected`，记具体的 provider 与模型 id（02 §会话事实）；会话第一个 Run 把默认解析成具体一行，这一条就是它的记录。之后每个 `user-message`、`continue` 的 Run 照 02 重新解析，kernel 在问询里多交一个 `previousModel`（本代最后一个 `model_selected` 的 provider 与模型），连接器按「解析」第 1 条留在那一行。`resume` 与子会话照 02 沿用暂停前或父 Run 的模型，本来就不解析。
+- 上一个 Run 的厂商后来没 key 了，也留在那一行，发送照 02 按缺 key 拒绝，不跳到别的厂商（同「解析」第 5 条）。
 - 什么时候还会换：
-  - 「清空」开了新一代：没有 `previousModel`，取最新一代，与新会话相同（02「清空会话后回落到默认」）；
-  - 上一个 Run 用的行已从表里撤掉（厂商已退役，见 §Haiku 4.5）：留着只会报错，取同家族最新一代；
-  - 用户把默认改成了别的家族、别的厂商或钉住的一行：照 02「没选过模型的会话读形态默认」跟着换，这是用户自己的动作，不是新一代上架；
+  - 「清空」开了新一代：没有 `previousModel`，照默认解析（指针取最新一代），与新会话相同（02「清空会话后回落到默认」）；
+  - 上一个 Run 用的行不在表里了（内置行撤掉，见 §Haiku 4.5；Ollama 或实例的行没了；实例被删）：照 02 读默认，默认是指针时取那一家最新的一代，数据去向照 02。连接器手里只有 provider 与模型 id，不知道撤掉的行原来属于哪个家族，所以不去找「同家族最新一代」；
+  - 上一个 Run 用的是手填的 id 或开发变量合成的 id：它们不是表里的行，照 02 每个 Run 读默认；
   - 用户在菜单里给这个会话选了模型：① 生效，照 02。
-- 本 spec 之前开始的会话同样适用：它们的 `model_selected` 已在 Tape 里，不用迁移。
+- 本 spec 之前开始的会话同样适用：它们的 `model_selected` 已在 Tape 里，不用迁移。升级之后，没选过模型的旧会话也留在上一个 Run 的行上，不再随默认改动。
 
 ### 数据去向
 
-指针解析出的行变了，确认照 02 §模型选择「数据去向」，不新增也不跳过：同一厂商、同一主机不新增确认（anthropic、智谱只认官方源，custom-vendors Q8，同一厂商就是同一主机）；其余情形照 02，从回环或私网切到公网时原地确认，确认之前对该主机 0 次请求。指针只出现在 ① 空着的时候，连接器本来就对这种选择做数据去向检查（02 §主进程与 kernel 的循环接口，`resolveChoice` 的注释「数据去向检查只在 sessionChoice 为 null（选择来自 ②–⑤）时做」），解析与检查走同一条路。新会话没有历史，没有要确认的。
+确认照 02 §模型选择「数据去向」，不新增也不跳过。连接器只在 ① 空着时做这个检查（02 §主进程与 kernel 的循环接口，`resolveChoice` 的注释「数据去向检查只在 sessionChoice 为 null（选择来自 ②–⑤）时做」），会话不换、指针解析与检查走同一条路，检查一直在取行之后：
+
+- 会话不换留在原行：那一行的地址没变，就没有新的去向；地址改过（例如 Ollama 改到公网主机），照 02 从回环或私网切到公网时原地确认，确认之前对该主机 0 次请求。
+- 指针解析出的行（新会话、清空之后、上一个 Run 的行不在表里）：同一厂商、同一主机不新增确认（anthropic、智谱只认官方源，custom-vendors Q8，同一厂商就是同一主机）；其余情形照 02。
+- 02 §主进程与 kernel 的循环接口「间接切公网」规则不变，只是出现得更少：只在「什么时候还会换」列的那几种会话里，或原行的地址改到公网时出现。新会话没有历史，没有要确认的。
 
 ### 谁写指针
 
 - **菜单**（02 第 6 小节「在模型菜单里选一次，同时写……」）：选主列表里带家族的行（即本家族最新一代），`defaultModelByProfile[形态]` 与 `provider` 写指针 `{ id, modelId: 那一行, latestOf: 它的家族 }`；选「更多模型 ›」里的行、手填的 id、Ollama 与实例的行，照 02 写钉住的值。本会话的选择（`session/model_choice_set`）永远记具体的一行。理由：主列表只放每个家族最新的一代，从那里选，读作「要这一家的当前一代」；菜单若一律写钉住的值，用户第一次在菜单里选模型就把指针换掉了，「跟随最新」形同虚设。这是推出的读法，§点名 (g)。
-- **设置卡**（02 §模型菜单与输入框「设置卡」）：anthropic、智谱卡的「新会话默认模型」下拉先列指针，每个家族一项，按主列表的顺序；再列表里的每一行（钉住），写显示名（model-display-names）。卡打开时，存着的默认属于这一家就选中它（指针选中指针项，钉住选中那一行）；不属于这一家，选中第一个指针项（旧：第一行）。保存照 02：只有改过下拉才写，写的仍是那三个键。Ollama 与实例的卡没有指针项。
-- **第一把 key**（presentation-r1 §对 02 的修补（M5）第 1 条，它的开放问题 1A）：它写的「`listing: 'main'` 的第一行」带家族时写成指针（anthropic 是 `opus`，智谱是 `glm`）；实例的行照旧钉住。触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都不变。presentation-r1 还是 `draft`，由它在自己的 `Revisions:` 里就地改；它若先于本 spec 实现，见 plan 第 11 步。
+- **设置卡**（02 §模型菜单与输入框「设置卡」）：anthropic、智谱卡的「新会话默认模型」下拉先列指针，每个家族一项，按主列表的顺序；再列表里的每一行（钉住），写显示名（model-display-names）。卡打开时，存着的默认属于这一家就选中它（指针选中指针项，钉住选中那一行）；不属于这一家，选中第一个指针项（旧：第一行）。保存照 02：只有改过下拉才写，写的仍是那三个键。选的是钉住的那一行，就存钉住的值，哪怕它在主列表、带家族；只有选指针项时请求才带 `latestOf`（§对 02 的修补 第 13 条）。Ollama 与实例的卡没有指针项。
+- **第一把 key**（presentation-r1 §对 02 的修补（M5）第 1 条，它的开放问题 1A）：presentation-r1 写的是该厂商 `listing: 'main'` 第一行的具体 id，并写明要自动跟新得「另写 spec 修补 02 M5 与本条」。本 spec 就是那一份修补（`Amends:`，§点名 (h)），不论两份谁先实现，都由本 spec 改：第一行带家族时写成指针（anthropic 是 `opus`，智谱是 `glm`），值与菜单写的相同；实例的行照旧钉住。触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都不变。presentation-r1 写第一把 key 的代码合入之后，本 spec 才能做这一步（plan 第 11 步）；在那之前本 spec 不标 `implemented`。
 
 ### 文案
 
@@ -174,14 +179,14 @@ Ollama
 
 ### 迁移
 
-- config.json 不改写，不加版本号。到 2026-10-15 为止，代码里写这三个键的只有菜单（apps/desktop/src/main/model-routes.ts:83）与设置卡的 `provider.select`（provider-routes.ts:271），都是用户自己的动作；custom-vendors 只会清掉它们（custom-vendors/store.ts:277）。所以现有的值都读作用户的选择，留着钉住。出厂兜底 ⑤ 本来就不存在文件里，按「解析」第 1 条读作指针。
+- config.json 不改写，不加版本号。到 2026-10-15 为止，代码里写这三个键的只有菜单（apps/desktop/src/main/model-routes.ts:83）与设置卡的 `provider.select`（provider-routes.ts:271），都是用户自己的动作；custom-vendors 只会清掉它们（custom-vendors/store.ts:277）。所以现有的值都读作用户的选择，留着钉住。出厂兜底 ⑤ 本来就不存在文件里，照 02 给表的第一行，也就是本家族最新的一代。
 - 设置卡把指针放在最前，用户随时可以改成「最新的 …」。
-- presentation-r1 的第一把 key 若先于本 spec 的 config 形状合入，它在那之间写下的值与用户的选择分不出来，同样留着钉住。这只影响那段时间里新装、存了第一把 key 的 profile；两者同一个 PR 或本 spec 在前合入就没有这段时间（plan 第 11 步）。
+- presentation-r1 写第一把 key 的代码先合入、本 spec 改它的那一步（plan 第 11 步）后合入时，这之间写下的值与用户的选择分不出来，同样留着钉住；不论本 spec 其余部分先不先合入都一样。所以两者之间不切 release 分支，这段时间只在开发构建里；两者同一个 PR 合入就没有这段时间。
 - 旧构建打开写了指针的文件：剥掉 `latestOf`，读作钉住的 `modelId`；它下一次写 config.json 时 `latestOf` 就丢了，之后读作钉住。与 M6 对 `customVendors` 的处理同类（configSchema 的注释，T8），不加 configVersion。
 
 ### 本 spec 自己定的细节
 
-owner 的规则没写到、由本 spec 定的，owner 可以否决：家族的分法（Flash、FlashX 各成一家）；代次写成 `[主, 次]`；anthropic 的行序；④ 只给 `TENON_PROVIDER` 与 ⑤ 读作指针；指针解析不出时退回 `modelId`；上一个 Run 的行撤掉后取同家族最新一代；厂商没配置时不跳；菜单写指针（§点名 (g)）；设置卡没存这一家的默认时选中第一个指针项。
+owner 的规则没写到、由本 spec 定的，owner 可以否决：家族的分法（Flash、FlashX 各成一家）；代次写成 `[主, 次]`；anthropic 的行序；指针解析不出时退回 `modelId`；上一个 Run 的行不在表里时照 02 读默认；手填的 id 与开发变量合成的 id 不算表里的行，不适用会话不换；厂商没配置时不跳（上一个 Run 的厂商没 key 了也留着）；菜单写指针（§点名 (g)）；设置卡没存这一家的默认时选中第一个指针项。运行中的会话也不随用户改默认而换，是 owner 2026-10-15 在第三轮评审后定的（§跟随最新「会话不换」），不在本节。
 
 ## 对 01 的修补
 
@@ -225,7 +230,8 @@ export interface ProviderDefinition {            // 已存在（types.ts:254）
 ```ts
 // 01 §desktop 接线：config.json 的 provider 与 provider.select（02 的 01 修补 6 把形状定为 providerSelectionSchema）
 providerSelectionSchema = z.object({ id, modelId, source: z.literal('user').optional(),   // 已存在（config.ts:17）
-  latestOf: z.string().min(1).optional() })     // 新增：指针（§跟随最新「新会话默认：指针」）
+  latestOf: z.string().min(1).optional().catch(undefined) })  // 新增：指针（§跟随最新「新会话默认：指针」）；
+                                                // 坏值只丢这一个键，其余照读（不连累整个字段）
 provider.select 的请求 = z.object({ providerId, modelId,                                     // 已存在（provider.ts:204）
   latestOf: z.string().min(1).optional() })     // 新增：存成指针，规则见 §对 02 的修补 第 13 条
 ```
@@ -247,12 +253,12 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 5. **§摘要请求的「思考参数」表**：不改。两新行都是 `adaptive-gated`，照表那一行传 `{ enabled: false }` 与 `effort: disableMaxEffort`（即 `high`）；Sonnet 5.5 由编码器写成 `between_tools`。摘要请求不带 tools，按 F13 只回正文，和 02 在 Sonnet 5 上发 `disabled` 的效果相同。
 6. **第 2 小节 `ModelInfo.listing`**（「模型菜单的归类，缺省 = 'main'」）：带 `family` 的行不手写，构建表时由家族与代次算出（§跟随最新「菜单自动排位」）；不带家族的行照旧手写。「定义的第一行不是 `'more'`」照旧。这是把原来没限定的「`listing` 怎么定」收紧成一条规则。
 7. **第 6 小节 config.json**：`providerSelectionSchema` 只增 `latestOf`（§对 01 的修补 同一个成员），所以 `defaultModelByProfile.chat`、`.cowork` 与 `provider` 都可以是指针。三个键仍只由主进程写，不进 `configSetRequestSchema`。
-8. **第 6 小节「五层解析」**：顺序与各层不变；① 空着时，答话的一层是指针的，按 §跟随最新「解析」取行。这一条改了没选过模型的会话在升级后的结果，见 §点名 (f)。
+8. **第 6 小节「五层解析」**：顺序与各层不变；① 空着时，先按 §跟随最新「解析」第 1 条留在上一个 Run 的行；不适用时，答话的一层是指针的，按同节第 2–5 条取行。这一条改了没选过模型的会话的结果，见 §点名 (f)。
 9. **第 6 小节「在模型菜单里选一次，同时写……`defaultModelByProfile[形态]` 和 `provider`」**：选的是主列表里带家族的行时，这两处写指针，其余照旧写钉住的值；会话的选择事实不变（§跟随最新「谁写指针」，§点名 (g)）。
 10. **第 6 小节 `provider.list`** 的行（`providerModelSchema`，contracts provider.ts:84）只增 `family: z.string().min(1).optional()` 与 `familyNameKey: z.string().min(1).optional()`，两者同有同无，取自 `ModelInfo.family` 与定义的 `familyNameKeys`；主进程照 `nameKey` 的方式转发（provider-routes.ts 的 `menuRow`）。Ollama 与实例的行没有。
-11. **§主进程与 kernel 的循环接口**：`RunConnector.resolveChoice` 的问询只增 `previousModel: { providerId: ProviderId; modelId: string } | null`，即本代最后一个 `session/model_selected` 的 provider 与模型，本代还没有 Run 时为 null。kernel 从 Tape 读（`SessionFacts.lastSelected` 只增 `modelId`，与读 `previousOrigin` 的是同一条），Run 开始（mailbox.ts:541）与 `effectiveModelChoice`（:3256）都交。连接器只在 ① 空着、答话的一层是指针时读它。
-12. **§模型选择「没选过模型的会话」**（「每个 Run 都读该形态的默认」）：默认是指针时，读出的是本会话已在用的同家族那一行（§跟随最新「会话不换」，§点名 (f)）；「何时解析」不变。
-13. **§模型菜单与输入框「设置卡」与 `provider.select`**：下拉先列指针、再列各行，没存这一家的默认时选中第一个指针项（§跟随最新「谁写指针」）；「只有改动过这个下拉，保存时才写」与写哪三个键不变。`provider.select` 带 `latestOf` 时：主进程按本构建的表算出该家族最新一行写进 `modelId`，三个键都写 `{ id, modelId, latestOf }`；请求里的 `modelId` 须是该家族的一行，不是回 `invalid-value`；`latestOf` 在该厂商的表里没有、或厂商是 Ollama 与实例，回 `unknown-model`；被拒时 config.json 不动。
+11. **§主进程与 kernel 的循环接口**：`RunConnector.resolveChoice` 的问询只增可选的 `previousModel?: { providerId: ProviderId; modelId: string } | null`，即本代最后一个 `session/model_selected` 的 provider 与模型，本代还没有 Run 时为 null，缺省按 null 读。可选是照 ports.ts 的冻结规则（「a host-implemented port only gains OPTIONAL members」，02 开放问题 26），已有的直接调用点不用改。kernel 从 Tape 读（`SessionFacts.lastSelected` 只增 `modelId`，与读 `previousOrigin` 的是同一条），Run 开始（mailbox.ts:541）与 `effectiveModelChoice`（:3256）都总是交它。连接器只在 ① 空着时读它（§跟随最新「解析」第 1 条）。
+12. **§模型选择「没选过模型的会话」**（「每个 Run 都读该形态的默认……这个默认会因为在别的会话里选模型而变」）：本代已有 Run、上一个 Run 的行还在那家厂商的表里时，用那一行，不读默认；默认的改动只影响新会话、清空之后与 §跟随最新「会话不换」列的几种会话（§点名 (f)）。「何时解析」不变。
+13. **§模型菜单与输入框「设置卡」与 `provider.select`**：下拉先列指针、再列各行，没存这一家的默认时选中第一个指针项（§跟随最新「谁写指针」）；「只有改动过这个下拉，保存时才写」与写哪三个键不变。`provider.select` 不带 `latestOf` 时照 02 写钉住的值，哪怕选的行在主列表、带家族（设置卡里列出的每一行都是钉住的选项）。带 `latestOf` 时：主进程按本构建的表算出该家族最新一行写进 `modelId`，三个键都写 `{ id, modelId, latestOf }`；`latestOf` 不在该厂商的表里、厂商是 Ollama 或实例、或请求里的 `modelId` 不是该家族的一行，都回 `invalid-value`（坏的是请求里的这个值；02 对内置厂商撤掉的 `unknown-model` 不重新启用，02 §对 01-provider-and-tape 的修补 第 6 小节「表外模型手填」）；被拒时 config.json 不动。
 14. **§模型选择「数据去向」**：不改，读法见 §跟随最新「数据去向」。
 
 ## 对 custom-vendors 与 model-display-names 的修补
@@ -306,7 +312,7 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 
 - **现状**（F15、F16，2026-10-15）：Legacy，状态 Active，没有弃用公告，「不早于 2026-10-15」只是下限。Legacy 不等于弃用，A16「推迟到」一栏的触发条件「有弃用公告」没满足。本 spec 不改这一行的能力与价格；加 `family: 'haiku'`、`generation: [4, 5]`，`listing` 由此算成 `'more'`；注释照 Opus 5 的写法补 Legacy 一句，anthropic.ts:183-188 里的核查日期改成 2026-10-15。
 - **用途句**：「最快、成本最低」在加入 Haiku 5.5 之后不成立（F11 的单价更低），改「上一代 Haiku（旧版）」。
-- **公告之后**（开放问题 5 定 A，§点名 (b)）：弃用页出现它的条目后的第一个版本，用途句写明退役日（它已经在「更多模型 ›」里）；退役日之后的第一个版本撤行。公告到退役至少 60 天（F15），这期间模型仍可用。撤行那一步：删行，删 `model.name.haiku45`、`model.purpose.haiku45` 两个键；在菜单里选过它的会话（①）与钉住它的「新会话默认模型」落成表外 id（02 §表外模型与不发工具：保守合成、只能纯文字、标「未验证 · 仅文字对话」）；经指针一直留在它上面的会话（§跟随最新「会话不换」），下一条消息起换到同家族最新一代，同一厂商同一主机，不出确认；续跑仍用 Tape 冻结的 `model_info`（02 §续跑）；撤行后，本构建编码器写下的这一行的 attempt 复核得 `model-table-changed`（`currentModelWireHash` 为 null），不报被篡改（02 不变量 33、裁决 A3）。撤行是表数据改动，不另写 spec，到时在本 spec 的 plan「以后」记一步。
+- **公告之后**（开放问题 5 定 A，§点名 (b)）：弃用页出现它的条目后的第一个版本，用途句写明退役日（它已经在「更多模型 ›」里）；退役日之后的第一个版本撤行。公告到退役至少 60 天（F15），这期间模型仍可用。撤行那一步：删行，删 `model.name.haiku45`、`model.purpose.haiku45` 两个键；在菜单里选过它的会话（①）与钉住它的「新会话默认模型」落成表外 id（02 §表外模型与不发工具：保守合成、只能纯文字、标「未验证 · 仅文字对话」）；没选过模型、一直留在它上面的会话（§跟随最新「会话不换」），下一条消息起照 02 读默认，默认是指针时取那一家最新的一代，数据去向照 02；续跑仍用 Tape 冻结的 `model_info`（02 §续跑）；撤行后，本构建编码器写下的这一行的 attempt 复核得 `model-table-changed`（`currentModelWireHash` 为 null），不报被篡改（02 不变量 33、裁决 A3）。撤行是表数据改动，不另写 spec，到时在本 spec 的 plan「以后」记一步。
 
 ## 替换 02 的表现层条款
 
@@ -316,15 +322,16 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 
 ## 点名：不属纯粹只增的改动
 
-读法照 02 §对 01-provider-and-tape 的修补 第 9 小节：只有 owner 确认过的点名项按 amend 处理，不认可的另写 supersede。(a)(b) 由 owner 2026-10-15 选 3A、5A 确认；(f) 是 owner 同日「跟随最新」规则原文（「运行中的会话不换」）；(g) 是本 spec 推出的，随本 spec 改 `ready` 一并确认，否决时照表里最后一列改回；(e) 只在 live 冒烟失败、spec 回 `draft` 之后由 owner 另行确认。确认都在 02 那行 `Amended by:` 里点出（plan 第 13 步；(e) 确认时补进那一行）。
+读法照 02 §对 01-provider-and-tape 的修补 第 9 小节：只有 owner 确认过的点名项按 amend 处理，不认可的另写 supersede。(a)(b) 由 owner 2026-10-15 选 3A、5A 确认；(f) 是 owner 同日「跟随最新」规则原文（「运行中的会话不换」），范围由 owner 在第三轮评审后同日定（「都按推荐来」）；(g) 是本 spec 推出的，随本 spec 改 `ready` 一并确认，否决时照表里最后一列改回；(h) 依据 owner 同日的原话（presentation-r1 的 `Owner:` 行已记）；(e) 只在 live 冒烟失败、spec 回 `draft` 之后由 owner 另行确认。确认都在被修补的那份 spec 的 `Amended by:` 里点出：(a)(b)(f)(g) 在 02 那行，(h) 在 presentation-r1 那行（plan 第 13 步；(e) 确认时补进 02 那行）。
 
 | 项 | 触发 | 改了什么 | 为什么仍算 amend / 确认 |
 |---|---|---|---|
 | (a) | 开放问题 3 定 A | 02 §对 01-provider-and-tape 的修补 第 2 小节（02:689 `samplingDefaultsOnly` 的注释）与 types.ts:117 写定的「`top_p` 只收 ≥ 0.99」改为只收 0.99；第 3 小节「非默认的采样值本地拒绝」之外另拒 `temperature` 与 `top_p` 同发；Opus 5.5、Sonnet 5、Opus 5、Fable 5.1 的拒绝变多；thinking-shapes.test.ts:331-337「The defaults are accepted」那条（`temperature` 1 与 `top_p` 0.99 同发）改为断言拒绝 | 改了已定的值。依据：02 的「≥ 0.99」放过的 `top_p` 1 与同发，厂商写明都是 400（F14），收紧只是把必然 400 的请求挡在本地；内置行都没有 `requestParams`、循环也不设 `temperature`，线上请求不变。owner 2026-10-15 已确认 |
 | (b) | 开放问题 5 定 A | 02 §开工前裁决 A16 的「推迟到」一栏（「Haiku 4.5 有弃用公告后撤行」）改为：公告后用途句写明退役日（它已在「更多模型 ›」），退役日之后撤行 | 改已定裁决。owner 2026-10-15 已确认 |
 | (e) | 开放问题 6 的 live 冒烟里摘要请求 400，owner 选了沿用会话档位的退路 | 02 §摘要请求「思考参数：一律不继承会话的思考档位」（裁决 H10）对 Sonnet 5.5、Haiku 5.5 改为沿用，不超过 `disableMaxEffort` | 把已定裁决反过来，须 owner 另行确认 |
-| (f) | 「跟随最新」 | 02 第 6 小节「五层解析」与 §模型选择「没选过模型的会话」（owner 2026-09-25 确认的读法「没选过模型的会话读形态默认」）：① 空着、答话的一层是指针（含 ⑤）时，本代上一个 Run 用过同家族的行，就留在那一行，不取这一层现在给的行 | 本 spec 之前没有指针，可 ⑤ 会随表的第一行变（A16 曾把第一行由 Sonnet 5 换成 Opus 5.5，没选过模型的会话下一条消息就换了），所以这是改结果，不是只增。owner 2026-10-15「跟随最新」原文「运行中的会话不换」即确认；只管新一代上架这一种换法，用户改默认照旧跟着换 |
-| (g) | 「跟随最新」推出 | 02 第 6 小节「在模型菜单里选一次，同时写……`defaultModelByProfile[形态]` 和 `provider`」：选主列表里带家族的行时写指针，新会话默认会随新一代移动，不再停在选的那一行 | 形状只增一个键，含义变了：默认由「这一行」变成「这一家的当前一代」。owner 的规则写到设置卡与迁移，没写菜单；理由见 §跟随最新「谁写指针」。否决的话：菜单照 02 写钉住的值，只有设置卡与第一把 key 写指针，删去 §对 02 的修补 第 9 条与验收 16 的第一例 |
+| (f) | 「跟随最新」，范围由 owner 在第三轮评审后定 | 02 第 6 小节「五层解析」与 §模型选择「没选过模型的会话」整条（owner 2026-09-25 确认的读法：每个 Run 都读该形态的默认，「这个默认会因为在别的会话里选模型而变」）：① 空着、本代已有 Run、上一个 Run 的行还在那家厂商的表里时，用那一行，不看答话的是哪一层、是不是指针。默认的改动（设置卡、别的会话的菜单、新一代上架、表的第一行换了）只影响新会话、清空之后，以及上一个 Run 的行不在表里、或用的是手填与开发变量合成的 id 的会话。随之，02 §主进程与 kernel 的循环接口「间接切公网」与验收 34「经形态默认的间接切换」只在这几种会话里、或原行的地址改到公网时出现，规则本身不变；02 那几条 e2e 用例要换成这几种会话来触发（plan 第 9 步） | 改结果，不是只增。owner 2026-10-15「跟随最新」原文「运行中的会话不换」。第三轮评审指出，只管新一代上架是收窄：在会话 B 里选模型，没选过模型的会话 A 下一条消息就换，思考块、缓存、做到一半的事三条理由同样成立；owner 同日定「都按推荐来」，即不论默认怎么变都不换运行中的会话（没选的读法见 §被否决的方案） |
+| (g) | 「跟随最新」推出 | 02 第 6 小节「在模型菜单里选一次，同时写……`defaultModelByProfile[形态]` 和 `provider`」：选主列表里带家族的行时写指针，新会话默认会随新一代移动，不再停在选的那一行。02 验收 33「默认按形态记住」那组用例写下的值随之带 `latestOf`（apps/desktop/test/model-selection.test.ts「records the choice and the profile’s default and provider」「writes each profile’s default in the profile’s lock」，plan 第 9 步） | 形状只增一个键，含义变了：默认由「这一行」变成「这一家的当前一代」。owner 的规则写到设置卡与迁移，没写菜单；理由见 §跟随最新「谁写指针」。否决的话：菜单照 02 写钉住的值，只有设置卡与第一把 key 写指针，删去 §对 02 的修补 第 9 条与验收 16 的第一例 |
+| (h) | 「跟随最新」 | presentation-r1 §对 02 的修补（M5）第 1 条：第一次存 key 时写下的默认，内置厂商带家族的行由具体 id 改为指针 `{ id, modelId, latestOf }`（anthropic 是 `opus`，智谱是 `glm`）；实例照旧钉住；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都不变 | 形状只增一个键，含义由「这一行」变成「这一家的当前一代」，同 (g)。presentation-r1 那一条自己写明「要自动跟新，得改契约、解析、设置卡下拉与菜单当前项，另写 spec 修补 02 M5 与本条」，本 spec 就是那一份。依据：owner 2026-10-15「内置厂商的默认模型要跟随家族的最新一行」（presentation-r1 `Owner:` 行已记）。否决的话：删去本 spec 的 `Amends:` 里 presentation-r1 那一项、§跟随最新「谁写指针」第一把 key 一条、plan 第 11 步与验收 19，第一把 key 照 presentation-r1 写钉住的 id |
 
 ## 不变量
 
@@ -336,9 +343,9 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 6. anthropic-messages 编码器版本为 4，openai-chat 仍为 2。
 7. 带家族的行，`listing` 为 `'more'` 当且仅当同一定义里有同家族、代次更大的行；同家族的代次互不相同；不带家族的行不受这条管。
 8. 指针只解析到同一厂商、同一家族的内置行；解析不出时退回它的 `modelId`，从不换家族、换厂商。
-9. ① 空着、答话的一层是指针时，只要本代上一个 Run 用的行还在表里、且属于同一厂商同一家族，这个 Run 就用它：表里加了新一代，运行中的会话不换模型。
+9. ① 空着、本代已有 Run 时，只要上一个 Run 用的行还在那家厂商的表里，这个 Run 就用它：表里加了新一代、表的第一行换了、用户改了默认，运行中的会话都不换模型；数据去向检查照旧在取行之后做。
 10. Tape 不加事实名；`session/model_selected` 与 `session/model_choice_set` 记的都是具体的模型 id，从不记指针。
-11. `latestOf` 只由主进程写，只写在内置 anthropic、智谱的选择上，从不与 `source` 同写；本 spec 不改写已有的 config.json。
+11. `latestOf` 只由主进程写，只写在内置 anthropic、智谱的选择上，从不与 `source` 同写；`provider.select` 只在请求带 `latestOf` 时写指针；本 spec 不改写已有的 config.json。
 
 ## 验收标准
 
@@ -363,17 +370,17 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
     - 两行各发两次：先断言第一个请求的提示长度（input + cacheRead + cacheWrite）大于 512（F20）、`cacheWriteTokens` 大于 0，再断言第二个请求的 `provider/attempt_completed.usage.cacheReadTokens` 大于 0。
 13. 排位（新文件 packages/kernel/test/provider/model-families.test.ts，合成的定义）：给一个家族加一行更新的代次，构建出的表里旧行变 `'more'`、新行没有 `listing`，别的家族与不带家族的行不变；代次先比主再比次（[5, 0] 旧于 [5, 5]，[4, 6] 旧于 [5, 3]）；带家族的行手写 `listing`、同家族两行代次相同、只有 `family` 没有 `generation`，构建时抛错；同家族里旧行排在新行前面时，`newestOfFamily` 仍给代次大的那行。
 14. 解析（apps/desktop/test/model-selection.test.ts「the five layers and the data-flow check」）：② 为 `{ id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'opus' }` 时解析为 `claude-opus-5-5`、`capabilitySource: 'builtin'`；③ 同样；`latestOf` 是表里没有的家族时读作 `modelId`；`latestOf` 与 `source` 同在时读作钉住；带 `latestOf` 的 Ollama 选择读作钉住；anthropic 没配置、智谱配置了时，opus 指针仍解析到 Opus 5.5，发送按缺 key 拒绝，0 次请求发往智谱。
-15. 会话不换（同文件，用合成的 anthropic 定义，表里多一行 `family: 'opus'`、`generation: [6, 0]`；kernel 部分在 packages/kernel/test/session/model-choice.test.ts）：
-    - 新会话第一个 Run 用 [6, 0] 那行，`model_selected` 记它的 id；
-    - 上一个 Run 用 `claude-opus-5-5` 的会话，默认是 opus 指针或落到 ⑤，下一条消息开的 Run 仍用 `claude-opus-5-5`，`session.modelChoice` 也答它；
-    - 清空之后用 [6, 0]；
-    - 上一个 Run 用的行不在表里时，用同家族最新一代，不出确认；
-    - 默认改成 sonnet 指针后，下一条消息开的 Run 用 Sonnet 最新一代；会话历史在回环、默认指向公网时照旧先确认（02 那几条数据去向用例不改仍通过）；
+15. 会话不换（同文件，用合成的 anthropic 定义：把 `family: 'opus'`、`generation: [6, 0]` 的一行放在第一行，守不变量 5；由表里的行展开时先去掉算好的 `listing`，再过 `arrangeFamilies`，不然会按「带家族的行手写了 `listing`」抛错；kernel 部分在 packages/kernel/test/session/model-choice.test.ts）：
+    - 新会话第一个 Run（默认是 opus 指针或落到 ⑤）用 [6, 0] 那行，`model_selected` 记它的 id；
+    - 上一个 Run 用 `claude-opus-5-5` 的会话：默认是 opus 指针、落到 ⑤、是钉住的 `glm-5.3-flash`、或改成了 sonnet 指针，下一条消息开的 Run 都仍用 `claude-opus-5-5`，`session.modelChoice` 也答它；同一份默认下，新会话用默认给的行（sonnet 指针给 Sonnet 最新一代）；
+    - 清空之后照默认解析（opus 指针给 [6, 0]）；
+    - 上一个 Run 用的行不在表里时照默认解析（opus 指针给 [6, 0]），不出确认；
+    - 上一个 Run 用 Ollama 的 `qwen3:8b`（回环）、默认改成 anthropic：仍用 `qwen3:8b`，不出确认；Ollama 存的地址再改到公网主机（`https://gpu.example.com/v1/`）：仍是这一行，`resolveChoice` 返回 `needsConfirm: { host: 'gpu.example.com' }`；上一个 Run 用的是手填的 Ollama id（`source: 'user'`）时照默认解析，回环到公网先确认；不带 `previousModel` 的问询照旧（02 那几条五层、数据去向用例不改仍通过）；
     - kernel 交给 `resolveChoice` 的 `previousModel` 是本代最后一个 `model_selected` 的 provider 与模型，第一个 Run 与清空后是 null，`effectiveModelChoice` 交的与 Run 开始时相同；Tape 的事实名表不变（packages/kernel/src/tape/names.ts 不加名字）。
-16. 写指针（model-selection.test.ts「session.selectModel and session.modelChoice」、apps/desktop/test/provider-routes.test.ts）：菜单选 Sonnet 5.5，`defaultModelByProfile[形态]` 与 `provider` 是 `{ id: 'anthropic', modelId: 'claude-sonnet-5-5', latestOf: 'sonnet' }`，本会话的 `session/model_choice_set` 记 `claude-sonnet-5-5`；选 Sonnet 5（更多模型）、手填 id、Ollama 行、实例行写钉住的值；`provider.select` 带 `latestOf: 'haiku'` 与 `modelId: 'claude-haiku-4-5-20251001'` 写 `{ id: 'anthropic', modelId: 'claude-haiku-5-5', latestOf: 'haiku' }`；`latestOf` 是表里没有的家族、或带 `latestOf` 选 Ollama 与实例，回 `unknown-model`；`modelId` 不属于该家族回 `invalid-value`；被拒时 config.json 不动。provider.list 的行带 `family` 与 `familyNameKey`，Ollama 行没有（apps/desktop/test/provider-catalogue.test.ts）。
-17. 设置卡（apps/desktop/e2e/provider-settings.spec.ts）：全新 profile 打开 anthropic 卡，「新会话默认模型」下拉依次是「最新的 Opus（现在是 Opus 5.5）」「最新的 Sonnet（现在是 Sonnet 5.5）」「最新的 Haiku（现在是 Haiku 5.5）」「最新的 Fable（现在是 Fable 5.1）」，再是七行的显示名，选中第一项；只改 key、不动下拉就保存，三个键都不写；选「最新的 Haiku」保存，三个键都是 haiku 指针，新会话用 Haiku 5.5；存着钉住的 Sonnet 5 时打开卡选中 Sonnet 5；en 下第一项是 "Latest Opus (now Opus 5.5)"；Ollama 卡没有指针项。
-18. config 兼容（packages/contracts/test/config-route.test.ts）：本 spec 之前的 config.json 原样解析，值里没有 `latestOf`；带 `latestOf` 的值解析出来带着它；主进程只写别的键（如 `lastWorkspaceFolders`）时，三个默认里的 `latestOf` 留着。
-19. 第一把 key（presentation-r1 与本 spec 都实现后，在后实现的那一份里验，plan 第 11 步）：全新 profile 第一次存 anthropic key，三个键都是 `{ id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' }`；第一次存智谱 key 是 `glm` 指针；新建带 key 的实例写钉住的 `.chat`。
+16. 写指针（model-selection.test.ts「session.selectModel and session.modelChoice」、apps/desktop/test/provider-routes.test.ts）：菜单选 Sonnet 5.5，`defaultModelByProfile[形态]` 与 `provider` 是 `{ id: 'anthropic', modelId: 'claude-sonnet-5-5', latestOf: 'sonnet' }`，本会话的 `session/model_choice_set` 记 `claude-sonnet-5-5`；选 Sonnet 5（更多模型）、手填 id、Ollama 行、实例行写钉住的值；02 验收 33 那两例（「records the choice and the profile’s default and provider」「writes each profile’s default in the profile’s lock」）按 §点名 (g) 改期望为带 `latestOf: 'glm-flash'` 或 `'opus'` 的指针，`session.modelChoice` 仍答具体的 `glm-5.3-flash`；`provider.select` 不带 `latestOf`、选 `claude-opus-5-5` 或 `glm-5.3-flash`，三个键写钉住的值、没有 `latestOf`（provider-routes.test.ts「accepts %s」照旧通过）；`provider.select` 带 `latestOf: 'haiku'` 与 `modelId: 'claude-haiku-4-5-20251001'` 写 `{ id: 'anthropic', modelId: 'claude-haiku-5-5', latestOf: 'haiku' }`；`latestOf` 是该厂商表里没有的家族、带 `latestOf` 选 Ollama 与实例、`modelId` 不属于该家族，都回 `invalid-value`；被拒时 config.json 不动。`provider.list` 的行带 `family` 与 `familyNameKey`，Ollama 行没有（model-selection.test.ts「provider.list for the menu」）；apps/desktop/test/provider-catalogue.test.ts 的键清单加上各定义 `familyNameKeys` 的值，两份 locale 都有。
+17. 设置卡（apps/desktop/e2e/provider-settings.spec.ts）：全新 profile 打开 anthropic 卡，「新会话默认模型」下拉依次是「最新的 Opus（现在是 Opus 5.5）」「最新的 Sonnet（现在是 Sonnet 5.5）」「最新的 Haiku（现在是 Haiku 5.5）」「最新的 Fable（现在是 Fable 5.1）」，再是七行的显示名，选中第一项；已存着别家默认（钉住的 `glm-5.3-flash`）的 profile 打开 anthropic 卡，只改 key、不动下拉就保存，三个键不变（全新 profile 第一次存 key 会照 presentation-r1 写默认，所以这一例不用全新 profile）；选「最新的 Haiku」保存，三个键都是 haiku 指针，新会话用 Haiku 5.5；选钉住的「Opus 5.5」那一行保存，三个键是 `{ id: 'anthropic', modelId: 'claude-opus-5-5' }`，没有 `latestOf`；存着钉住的 Sonnet 5 时打开卡选中 Sonnet 5；en 下第一项是 "Latest Opus (now Opus 5.5)"；Ollama 卡没有指针项。
+18. config 兼容：packages/contracts/test/config-route.test.ts 里，本 spec 之前的 config.json 原样解析，值里没有 `latestOf`；带 `latestOf` 的值解析出来带着它；`latestOf: ""`（或不是字符串）的值解析成钉住的 `{ id, modelId }`，同一字段里的另一个形态的默认与别的键都还在。apps/desktop/test/profile.test.ts 里，主进程只写别的键（写入 `lastWorkspaceFolders`）之后读回，三个默认里的 `latestOf` 都还在。
+19. 第一把 key（依赖 presentation-r1 写第一把 key 的代码已合入；在本 spec plan 第 11 步验）：全新 profile 第一次存 anthropic key，三个键都是 `{ id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' }`；第一次存智谱 key 是 `glm` 指针；新建带 key 的实例写钉住的 `.chat`。
 
 ## 开放问题（已定）
 
@@ -399,7 +406,8 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 - **7B**：`ModelInfo` 只增按行的压缩上限，Haiku 5.5 设 100 000。压缩更勤、细节丢得更早，还要改 02 写定的阈值公式。
 - **8B**：候选表最前加 `claude-haiku-5-5`。它对搜索请求的回应形状没实测过，还要改 02 的候选表。
 - **跟随最新的几种做法**：
-  - 会话建立时把指针写成第 0 条 `session/model_choice_set`：① 读作「菜单里确认过的选择」，连接器对它跳过数据去向检查，自动写的 ① 没人确认过；这类会话也会不再随用户改默认而变，改得比要的多。
+  - 会话不换只管新一代上架（第三轮评审给的另一个选项）：① 空着、答话的一层是指针时才留在同家族的上一行，用户改默认（含在别的会话里选模型）照 02 换掉运行中的会话。在会话 B 里选一次模型，没选过模型的会话 A 下一条消息就换，思考块、缓存、做到一半的事三条理由同样成立；同一家族里「钉住改成指针」还要另加代次条件才分得清是谁改的。owner 2026-10-15 定「都按推荐来」，取了不论默认怎么变都不换。
+  - 会话建立时把指针写成第 0 条 `session/model_choice_set`：① 读作「菜单里确认过的选择」，连接器对它跳过数据去向检查，自动写的 ① 没人确认过；还要多写一条 Tape 事实，而上一个 Run 的 `session/model_selected` 已经够用。
   - `listing` 在 `provider.list` 现算、不写进 `ModelInfo`：02 写定 `provider.list` 的 `listing` 取自 `ModelInfo.listing`，`ModelInfo` 里留着手写的旧值，两处就不一致了。
   - 另开一个键（如 `defaultFamilyByProfile`）记指针：一个默认分两处记，谁优先又要定一遍；在原值上加 `latestOf`，旧构建还能读成钉住的值。
   - 代次写成一个小数（5.5）：5.10 会读成 5.1。
