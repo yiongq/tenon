@@ -9,9 +9,10 @@ import type * as ChildProcess from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { absolutePath } from '@tenon-app/kernel'
 import { describe, expect, it, vi } from 'vitest'
-import { spawnChild } from '../src/main/host/process.js'
+import { killTree, spawnChild } from '../src/main/host/process.js'
 
-const fakePs = vi.hoisted(() => ({ tables: [] as string[] }))
+/** What each `/bin/ps` call answers, in turn: a table, or the error it fails with. */
+const fakePs = vi.hoisted(() => ({ tables: [] as (string | Error)[] }))
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof ChildProcess>()
@@ -20,8 +21,8 @@ vi.mock('node:child_process', async (importOriginal) => {
     const callback = args.at(-1) as (error: Error | null, stdout: string) => void
     const table = fakePs.tables.shift()
     setImmediate(() =>
-      table === undefined
-        ? callback(new Error('no fake ps table left'), '')
+      table === undefined || table instanceof Error
+        ? callback(table ?? new Error('no fake ps table left'), '')
         : callback(null, table),
     )
     return undefined
@@ -76,6 +77,41 @@ describe.skipIf(process.platform !== 'darwin')('killTree on darwin, ps faked', (
         [COLLECTED, 'SIGTERM'],
         [COLLECTED, 'SIGKILL'],
         [COLLECTED, 'SIGKILL'],
+      ])
+      expect(fakePs.tables).toEqual([])
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  it('when ps fails or takes over 200 ms, the signal goes to the group alone and the host log gets one line saying which', async () => {
+    const lines: string[] = []
+    const child = await spawnChild(
+      {
+        argv: ['/bin/sleep', '30'],
+        cwd: absolutePath(tmpdir()),
+        env: { PATH: '/usr/bin:/bin' },
+        stdio: 'ignore',
+      },
+      undefined,
+      (line) => lines.push(line),
+    )
+    // execFile's own error for a ps it killed at the timeout carries `killed`.
+    const timedOut = Object.assign(new Error('Command failed: /bin/ps'), { killed: true })
+    fakePs.tables.push(new Error('spawn /bin/ps EAGAIN'), timedOut)
+    const realKill = process.kill.bind(process)
+    const kill = vi.spyOn(process, 'kill').mockImplementation(realKill)
+    try {
+      await child.kill('SIGTERM')
+      expect(await child.exited).toEqual({ code: null, signal: 'SIGTERM' })
+      await killTree(STRANGER, 'SIGKILL', { log: (line) => lines.push(line) })
+      expect(kill.mock.calls.filter(([, signal]) => signal !== 0)).toEqual([
+        [-child.pid, 'SIGTERM'],
+        [-STRANGER, 'SIGKILL'],
+      ])
+      expect(lines).toEqual([
+        'killTree: /bin/ps failed: spawn /bin/ps EAGAIN; no process outside the group is signalled',
+        'killTree: /bin/ps took over 200 ms; no process outside the group is signalled',
       ])
       expect(fakePs.tables).toEqual([])
     } finally {

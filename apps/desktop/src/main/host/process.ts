@@ -38,11 +38,18 @@ const READ_HIGH_WATER_MARK = 64 * 1024
  */
 const PS_TIMEOUT_MS = 200
 
-export function createHostProcess(): HostProcess {
-  return { spawn: spawnChild }
+/** A line for the host's log: `killTree` reports a `ps` that failed or timed out (darwin). */
+export type ProcessLog = (line: string) => void
+
+export function createHostProcess(log?: ProcessLog): HostProcess {
+  return { spawn: (spec, signal) => spawnChild(spec, signal, log) }
 }
 
-export async function spawnChild(spec: SpawnSpec, signal?: AbortSignal): Promise<ChildHandle> {
+export async function spawnChild(
+  spec: SpawnSpec,
+  signal?: AbortSignal,
+  log?: ProcessLog,
+): Promise<ChildHandle> {
   const [exe, ...args] = spec.argv
   if (exe === undefined || exe.length === 0) {
     throw new SpawnSpecError('SpawnSpec.argv is empty; argv[0] must be the executable')
@@ -106,7 +113,7 @@ export async function spawnChild(spec: SpawnSpec, signal?: AbortSignal): Promise
     // is a live group's id); a group found empty may be someone else's by the next signal.
     const group = (): boolean => !hasExited || groupLeft
     if (!group() && collected.size === 0) return
-    await killTree(pid, sig, { group, collected })
+    await killTree(pid, sig, { group, collected, log })
     // Once found empty it stays empty: a reused pid may start a group of the same id.
     if (hasExited && groupLeft) groupLeft = groupAlive(pid)
   }
@@ -239,13 +246,18 @@ export type CollectedTree = Map<number, string>
  * pid with the same start time (never a reused pid). `group` false means the group was found empty
  * (the leader reaped, so `pid` and `-pid` may be someone else's): the tree is walked from
  * `pid` only when `group` holds both before and after `ps`, and `-pid` is signalled only when it
- * holds after. Linux needs none of it (bwrap's `--die-with-parent` and pid namespace take the tree
- * down).
+ * holds after. When `ps` fails or takes over 200 ms, the signal goes to the group alone and one
+ * line goes to `log`. Linux needs none of it (bwrap's `--die-with-parent` and pid namespace take the
+ * tree down).
  */
 export async function killTree(
   pid: number,
   signal: 'SIGTERM' | 'SIGKILL',
-  q: { readonly group?: () => boolean; readonly collected?: CollectedTree } = {},
+  q: {
+    readonly group?: () => boolean
+    readonly collected?: CollectedTree
+    readonly log?: ProcessLog | undefined
+  } = {},
 ): Promise<void> {
   if (IS_WINDOWS) {
     await killTreeWindows(pid)
@@ -254,7 +266,7 @@ export async function killTree(
   const ours = (): boolean => q.group?.() !== false
   const rooted = ours()
   const tree = IS_DARWIN
-    ? await collectTree(pid, q.collected ?? new Map(), () => rooted && ours())
+    ? await collectTree(pid, q.collected ?? new Map(), () => rooted && ours(), q.log)
     : []
   if (ours()) {
     try {
@@ -284,12 +296,14 @@ export async function killTree(
  * The descendants of `pid` (only when `fromRoot()`, asked once `ps` returned) and of every
  * still-living member of `collected` in `/bin/ps -A -o pid=,ppid=,lstart=` (P6), deepest last;
  * `collected` is brought up to date (the dead and the reused dropped, the new added). Empty when
- * `ps` fails, which leaves the group signal alone as before. A host-internal helper, like taskkill.
+ * `ps` fails or times out, which leaves the group signal alone and says so in `log`. A
+ * host-internal helper, like taskkill.
  */
 async function collectTree(
   pid: number,
   collected: CollectedTree,
   fromRoot: () => boolean,
+  log: ProcessLog | undefined,
 ): Promise<number[]> {
   let table: string
   try {
@@ -301,7 +315,12 @@ async function collectTree(
         (error, stdout) => (error === null ? resolve(stdout) : reject(error)),
       )
     })
-  } catch {
+  } catch (error) {
+    const timedOut = (error as { killed?: boolean }).killed === true
+    const why = timedOut
+      ? `took over ${String(PS_TIMEOUT_MS)} ms`
+      : `failed: ${error instanceof Error ? error.message : String(error)}`
+    log?.(`killTree: /bin/ps ${why}; no process outside the group is signalled`)
     return []
   }
   const children = new Map<number, number[]>()
