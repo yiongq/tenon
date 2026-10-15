@@ -39,6 +39,7 @@
 import { isIP } from 'node:net'
 import { posix } from 'node:path'
 import type { SandboxViolation } from '@tenon-app/kernel'
+import { walkLinks } from './sandbox-config.js'
 
 /**
  * A filesystem list entry as it is handed to srt: a path marked literal, or a glob. Tenon's only
@@ -73,6 +74,11 @@ export interface ViolationContext {
    * listener, which srt calls without a try).
    */
   readonly lstat: (path: string) => PathKind | undefined
+  /**
+   * `fs.readlinkSync` in the app: what a link holds; throws when the path is no link. With `lstat`
+   * it resolves a Linux observer path to where the write landed (读法 11); a throw is "don't know".
+   */
+  readonly readlink: (path: string) => string
 }
 
 const PROXY_LINE = /^deny network-outbound (.+):(\d+) \(([^()]+)\)$/
@@ -114,8 +120,8 @@ const OBJECTLESS_OPERATIONS: ReadonlySet<string> = new Set([
 
 /**
  * Classify one line from srt's violation store for the wrap `context` describes. `undefined`
- * means the line is dropped on arrival: a Linux observer report of a write the wrap may make, or
- * of a `mkdirat` on a directory that is already there (读法 11, 53).
+ * means the line is dropped on arrival: a Linux observer report of a write that lands where the
+ * wrap may write, or of a `mkdirat` on a directory that is already there (读法 11, 53).
  */
 export function classify(line: string, context: ViolationContext): SandboxViolation | undefined {
   const proxy = PROXY_LINE.exec(line)
@@ -157,16 +163,113 @@ function observerReport(
     const kind = lookUp(context.lstat, path)
     if (kind !== 'unknown' && kind?.isDirectory() === true) return undefined
   }
-  const spot = posix.normalize(path)
-  const denied = context.denyWrite.some((entry) => covers(entry, spot, AS_BYTES))
   // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11). The
-  // path is as the process spelled it (links not resolved, linux-violation-monitor.js:62) and
-  // allowWrite holds real paths, so a write through a workspace link that leads out is dropped
-  // here though bwrap refused it: a spec gap (plan Open 2026-10-15「Linux 观测器经链接的写」).
-  if (!denied && context.allowWrite.some((entry) => covers(entry, spot, AS_BYTES))) return undefined
+  // path is as the process spelled it (links not resolved, linux-violation-monitor.js:62) while
+  // allowWrite holds real paths and bwrap refuses by where a write lands, so the path is resolved
+  // first. denyWrite is matched by both the spelling and the landing: the sandbox may not see the
+  // host's links (an existing denyRead directory is an empty tmpfs there).
+  const spot = posix.normalize(path)
+  const landings = landingsOf(syscall, spot, context)
+  const denied = [spot, ...landings].some(
+    (place) =>
+      place !== undefined && context.denyWrite.some((entry) => covers(entry, place, AS_BYTES)),
+  )
+  const resolved = landings.filter((place) => place !== undefined)
+  if (
+    !denied &&
+    resolved.length === landings.length &&
+    resolved.every((place) => context.allowWrite.some((entry) => covers(entry, place, AS_BYTES)))
+  ) {
+    return undefined
+  }
+  // Where it landed when that is known; else as the process spelled it, never dropped.
+  const target = resolved.length === landings.length ? (resolved[0] ?? path) : path
   return denied
-    ? { kind: 'fs', line, target: path, protected: true, observed: true }
-    : { kind: 'fs', line, target: path, observed: true }
+    ? { kind: 'fs', line, target, protected: true, observed: true }
+    : { kind: 'fs', line, target, observed: true }
+}
+
+/**
+ * Observer calls that follow a link in the last place: open, truncate, chmod, chown, utimes.
+ * The observer carries no flags, so `touch -h`, `chown -h` or O_NOFOLLOW read as following too;
+ * that only touches a diagnostic.
+ */
+const FOLLOWS_LAST: ReadonlySet<string> = new Set([
+  'openat',
+  'openat2',
+  'creat',
+  'truncate',
+  'fchmodat',
+  'fchmodat2',
+  'fchownat',
+  'utimensat',
+])
+
+/** Observer calls that act on a link in the last place itself: unlink, rename, mkdir, mknod, link. */
+const KEEPS_LAST: ReadonlySet<string> = new Set([
+  'unlinkat',
+  'renameat',
+  'renameat2',
+  'mkdirat',
+  'mknodat',
+  'symlinkat',
+  'linkat',
+])
+
+/**
+ * Where an observed write landed on the host (读法 11): its directory resolved as the kernel does,
+ * then its last level, followed or not as the call does; a call in neither table (x64's older
+ * calls) gets both readings. `undefined` where it cannot be told. Paths under `/proc` and `/dev` are
+ * not resolved: on the host they lead into Tenon's own process and devices.
+ */
+function landingsOf(
+  syscall: string,
+  spot: string,
+  context: ViolationContext,
+): (string | undefined)[] {
+  if (within(spot, '/proc') || within(spot, '/dev')) return [spot]
+  if (FOLLOWS_LAST.has(syscall)) return [landing(spot, true, context)]
+  if (KEEPS_LAST.has(syscall)) return [landing(spot, false, context)]
+  return [landing(spot, false, context), landing(spot, true, context)]
+}
+
+function landing(spot: string, followLast: boolean, context: ViolationContext): string | undefined {
+  if (spot === '/') return spot
+  const dir = realDirOf(posix.dirname(spot), context)
+  if (dir === undefined) return undefined
+  const node = posix.join(dir, posix.basename(spot))
+  if (!followLast) return node
+  const kind = lookUp(context.lstat, node)
+  if (kind === 'unknown') return undefined
+  return kind?.isSymbolicLink() === true ? walkLinks(node, context).real : node
+}
+
+/**
+ * A wrap's directories as resolved so far: an install reports thousands of writes into a few
+ * hundred directories, and srt's listener runs them on main's thread, one by one.
+ */
+const RESOLVED_DIRS = new WeakMap<ViolationContext, Map<string, string | undefined>>()
+
+/** `dir` resolved as the kernel resolves it, one `lstat` per directory not seen before in this wrap. */
+function realDirOf(dir: string, context: ViolationContext): string | undefined {
+  if (dir === '/') return dir
+  let known = RESOLVED_DIRS.get(context)
+  if (known === undefined) {
+    known = new Map()
+    RESOLVED_DIRS.set(context, known)
+  }
+  if (known.has(dir)) return known.get(dir)
+  const parent = realDirOf(posix.dirname(dir), context)
+  let real: string | undefined
+  if (parent !== undefined) {
+    const node = posix.join(parent, posix.basename(dir))
+    const kind = lookUp(context.lstat, node)
+    if (kind === 'unknown') real = undefined
+    else if (kind?.isSymbolicLink() === true) real = walkLinks(node, context).real
+    else real = node
+  }
+  known.set(dir, real)
+  return real
 }
 
 function seatbeltDenial(

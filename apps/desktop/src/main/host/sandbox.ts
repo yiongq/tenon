@@ -583,6 +583,7 @@ export class DesktopSandbox implements HostSandbox {
       profileDirs: [...new Set([profileDir, realProfile])],
       homeDir: home,
       lstat: (path) => this.deps.fs.lstat(path),
+      readlink: (path) => this.deps.fs.readlink(path),
     }
   }
 

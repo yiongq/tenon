@@ -69,7 +69,10 @@ const DIRECTORIES = new Set([
   '/fx/a$b (copy)/ws/sub',
 ])
 /** `ws/out-link` points outside the workspace (P1's F8); `linked` to a directory elsewhere. */
-const LINKS = new Set(['/fx/p1/ws/out-link', '/fx/p1/linked'])
+const LINKS: ReadonlyMap<string, string> = new Map([
+  ['/fx/p1/ws/out-link', '/fx/p1/outside'],
+  ['/fx/p1/linked', '/fx/elsewhere'],
+])
 const FILES = new Set(['/fx/p1/outside/a-file'])
 
 function is(kind: 'dir' | 'link' | 'file'): PathKind {
@@ -81,6 +84,16 @@ function lstat(path: string): PathKind | undefined {
   if (LINKS.has(path)) return is('link')
   if (FILES.has(path)) return is('file')
   return undefined
+}
+
+function noLink(path: string): Error {
+  return Object.assign(new Error(`EINVAL: ${path}`), { code: 'EINVAL' })
+}
+
+function readlink(path: string): string {
+  const target = LINKS.get(path)
+  if (target === undefined) throw noLink(path)
+  return target
 }
 
 /** The credential list per platform (spec §档位到 srt 配置, P3 and 2026-10-15). */
@@ -196,10 +209,80 @@ function wrapOf(
   }
   const allowWrite =
     profile === 'workspace-write' ? [literal(ws), literal(`${home}/tenon-sandbox-cache/npm`)] : []
-  return { allowWrite, denyWrite, denyRead, profileDirs: [profileDir], homeDir: home, lstat }
+  return {
+    allowWrite,
+    denyWrite,
+    denyRead,
+    profileDirs: [profileDir],
+    homeDir: home,
+    lstat,
+    readlink,
+  }
 }
 
 const PROBE_DIRS = { P1: '/fx/p1', P2: '/fx/p2', P3: '/fx/p3' } as const
+
+/**
+ * A Linux disk for writes through links (读法 11): the workspace `/fx/p4/mnt/code/proj` was opened
+ * as `~/code/proj`, `~/code` being a link; in it `out-link` leads outside, `new-link` (relative) to
+ * a file not made yet and `rc-link` to the home's .bashrc; `~/.ssh/config` links into a dotfiles
+ * dir; `/proc/self/fd/3` and `/dev/stdout` lead into the workspace, as Tenon's own would.
+ */
+const P4_DIRS = new Set([
+  '/fx',
+  '/fx/p4',
+  '/fx/p4/home',
+  '/fx/p4/home/.ssh',
+  '/fx/p4/home/dotfiles',
+  '/fx/p4/home/dotfiles/ssh',
+  '/fx/p4/mnt',
+  '/fx/p4/mnt/code',
+  '/fx/p4/mnt/code/proj',
+  '/fx/p4/outside',
+  '/proc',
+  '/proc/4242',
+  '/proc/4242/fd',
+  '/dev',
+])
+const P4_LINKS: ReadonlyMap<string, string> = new Map([
+  ['/fx/p4/home/code', '/fx/p4/mnt/code'],
+  ['/fx/p4/mnt/code/proj/out-link', '/fx/p4/outside'],
+  ['/fx/p4/mnt/code/proj/new-link', '../../../outside/not-yet'],
+  ['/fx/p4/mnt/code/proj/rc-link', '/fx/p4/home/.bashrc'],
+  ['/fx/p4/outside/ws-link', '/fx/p4/mnt/code/proj/f'],
+  ['/fx/p4/home/.ssh/config', '/fx/p4/home/dotfiles/ssh/config'],
+  ['/proc/self', '4242'],
+  ['/proc/4242/fd/3', '/fx/p4/mnt/code/proj/log.txt'],
+  ['/proc/4242/fd/1', '/fx/p4/mnt/code/proj/out.txt'],
+  ['/dev/stdout', '/proc/self/fd/1'],
+])
+const P4_FILES = new Set(['/fx/p4/home/.bashrc', '/fx/p4/mnt/code/proj/f'])
+/** The workspace's real path, and the home, as allowWrite holds them. */
+const P4_WS = '/fx/p4/mnt/code/proj'
+const P4_HOME = '/fx/p4/home'
+
+/** A Linux workspace-write wrap on the /fx/p4 disk, `writable` its one allowWrite entry. */
+function linkedWrap(writable: string): ViolationContext {
+  const denyRead = ['/fx/p4/home/.ssh', '/fx/p4/home/.aws'].map(literal)
+  return {
+    allowWrite: [literal(writable)],
+    denyWrite: [...denyRead, literal('/fx/p4/home/.bashrc'), literal(`${writable}/.envrc`)],
+    denyRead,
+    profileDirs: ['/fx/p4/home/tenon-profile'],
+    homeDir: P4_HOME,
+    lstat: (path) => {
+      if (P4_DIRS.has(path)) return is('dir')
+      if (P4_LINKS.has(path)) return is('link')
+      if (P4_FILES.has(path)) return is('file')
+      return undefined
+    },
+    readlink: (path) => {
+      const target = P4_LINKS.get(path)
+      if (target === undefined) throw noLink(path)
+      return target
+    },
+  }
+}
 
 function wrapOfFixture(fixture: FixtureLine): ViolationContext {
   const platform = fixture.platforms[0] === 'macos' ? 'darwin' : 'linux'
@@ -381,11 +464,9 @@ const EXPECTED: Record<string, Expected | typeof DROPPED> = {
   },
   'linux P1 F6-read-only-ws': { kind: 'fs', target: '/fx/p1/ws/ro.txt', observed: true },
   'linux P1 F7-chmod-home': { kind: 'fs', target: '/fx/p1/home', observed: true },
-  // the path as written lies inside allowWrite; bwrap refused it because the link leads out.
-  // Dropped per 读法 11's letter, which pins a known gap rather than a wanted result: the real
-  // denial leaves no violation. Change this once the spec decides (plan Open 2026-10-15「Linux
-  // 观测器经链接的写」)
-  'linux P1 F8-symlinks': DROPPED,
+  // the path as written lies inside allowWrite, but out-link leads out and bwrap refused the write
+  // where it landed: 读法 11 judges that place, which is also the target (as on macOS)
+  'linux P1 F8-symlinks': { kind: 'fs', target: '/fx/p1/outside/via-link', observed: true },
   // Linux, P2
   'linux P2 denied write': { kind: 'fs', target: '/fx/p2/outside/w0', observed: true },
   'linux P2 git status #1': DROPPED,
@@ -464,6 +545,11 @@ function writeLine(path: string): string {
 /** Each line's result against one wrap, in order, so one assertion shows every line that differs. */
 function classifyAll(lines: readonly string[], wrap: ViolationContext) {
   return lines.map((line) => classify(line, wrap))
+}
+
+/** The expected result for one line: dropped, or the literal with its line. */
+function resultOf(line: string, want: Expected | typeof DROPPED): SandboxViolation | undefined {
+  return want === DROPPED ? undefined : { line, ...want }
 }
 
 /** The expected results for `[line, expected]` pairs: each literal with its line. */
@@ -545,6 +631,132 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         wrap,
       ),
     ).toStrictEqual(withLines(cases))
+  })
+
+  it('a Linux observer write is judged where it lands (读法 11): through a link spelling of the workspace it is dropped; through a workspace link that leads out it stays, targeting where it landed; onto a protected file, or a protected name reached by the link spelling, it is protected', () => {
+    const cases = [
+      ['deny openat /fx/p4/home/code/proj/b.txt', DROPPED],
+      [
+        'deny openat /fx/p4/mnt/code/proj/out-link/f',
+        { kind: 'fs', target: '/fx/p4/outside/f', observed: true },
+      ],
+      [
+        'deny openat /fx/p4/mnt/code/proj/rc-link',
+        { kind: 'fs', target: '/fx/p4/home/.bashrc', protected: true, observed: true },
+      ],
+      [
+        'deny openat /fx/p4/home/code/proj/.envrc',
+        { kind: 'fs', target: '/fx/p4/mnt/code/proj/.envrc', protected: true, observed: true },
+      ],
+    ] as const
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        linkedWrap(P4_WS),
+      ),
+    ).toStrictEqual(cases.map(([line, want]) => resultOf(line, want)))
+  })
+
+  it('a Linux observer call on a link itself (unlinkat, renameat, mkdirat …) is judged at the link; one through it (openat, fchmodat …) at its target, a dangling one included; another call (x64’s older ones) is dropped only when both readings land in allowWrite', () => {
+    const cases = [
+      ['deny unlinkat /fx/p4/mnt/code/proj/out-link', DROPPED],
+      ['deny renameat2 /fx/p4/mnt/code/proj/out-link', DROPPED],
+      [
+        'deny fchmodat /fx/p4/mnt/code/proj/out-link',
+        { kind: 'fs', target: '/fx/p4/outside', observed: true },
+      ],
+      [
+        'deny openat /fx/p4/mnt/code/proj/new-link',
+        { kind: 'fs', target: '/fx/p4/outside/not-yet', observed: true },
+      ],
+      // x64: unlink acts on the link (outside), chmod would follow it (into the workspace)
+      [
+        'deny unlink /fx/p4/outside/ws-link',
+        { kind: 'fs', target: '/fx/p4/outside/ws-link', observed: true },
+      ],
+      ['deny chmod /fx/p4/home/code/proj/f', DROPPED],
+    ] as const
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        linkedWrap(P4_WS),
+      ),
+    ).toStrictEqual(cases.map(([line, want]) => resultOf(line, want)))
+  })
+
+  it('a Linux observer write on a denyWrite entry as spelled is protected even where it lands inside allowWrite (~/.ssh/config a link into a dotfiles dir, the home the workspace)', () => {
+    expect(classify('deny openat /fx/p4/home/.ssh/config', linkedWrap(P4_HOME))).toStrictEqual({
+      kind: 'fs',
+      line: 'deny openat /fx/p4/home/.ssh/config',
+      target: '/fx/p4/home/dotfiles/ssh/config',
+      protected: true,
+      observed: true,
+    })
+  })
+
+  it('a Linux observer path under /proc or /dev is judged as spelled, never resolved into Tenon’s own process', () => {
+    // /proc/self/fd/3 and /dev/stdout lead, on the host, to files of the workspace
+    expect(
+      classifyAll(['deny openat /proc/self/fd/3', 'deny openat /dev/stdout'], linkedWrap(P4_WS)),
+    ).toStrictEqual([
+      {
+        kind: 'fs',
+        line: 'deny openat /proc/self/fd/3',
+        target: '/proc/self/fd/3',
+        observed: true,
+      },
+      { kind: 'fs', line: 'deny openat /dev/stdout', target: '/dev/stdout', observed: true },
+    ])
+  })
+
+  it('a Linux observer path that cannot be resolved (lstat or readlink throws) stays, as spelled', () => {
+    const wrap = linkedWrap(P4_WS)
+    const throwing: ViolationContext = {
+      ...wrap,
+      lstat: (path) => {
+        if (path === '/fx/p4/home/code')
+          throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+        return wrap.lstat(path)
+      },
+      readlink: (path) => {
+        if (path === '/fx/p4/mnt/code/proj/rc-link') throw noLink(path)
+        return wrap.readlink(path)
+      },
+    }
+    expect(
+      classifyAll(
+        ['deny openat /fx/p4/home/code/proj/b.txt', 'deny openat /fx/p4/mnt/code/proj/rc-link'],
+        throwing,
+      ),
+    ).toStrictEqual([
+      {
+        kind: 'fs',
+        line: 'deny openat /fx/p4/home/code/proj/b.txt',
+        target: '/fx/p4/home/code/proj/b.txt',
+        observed: true,
+      },
+      {
+        kind: 'fs',
+        line: 'deny openat /fx/p4/mnt/code/proj/rc-link',
+        target: '/fx/p4/mnt/code/proj/rc-link',
+        observed: true,
+      },
+    ])
+  })
+
+  it('a wrap looks each directory of the observer paths up once', () => {
+    const wrap = linkedWrap(P4_WS)
+    const looked = new Map<string, number>()
+    const counting: ViolationContext = {
+      ...wrap,
+      lstat: (path) => {
+        looked.set(path, (looked.get(path) ?? 0) + 1)
+        return wrap.lstat(path)
+      },
+    }
+    const lines = ['a', 'b', 'c'].map((name) => `deny openat /fx/p4/home/code/proj/${name}`)
+    expect(classifyAll(lines, counting)).toStrictEqual([undefined, undefined, undefined])
+    expect(looked.get('/fx/p4/mnt/code/proj')).toBe(1)
   })
 
   it('an IP literal, a numeric host, localhost, *.localhost, a malformed host or a `resolved to …` denial offers no domain release', () => {
@@ -843,6 +1055,9 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       profileDirs: ['/fx/elsewhere/profile'],
       homeDir: '/fx/elsewhere/home',
       lstat: (path) => (path === '/fx' || path === '/fx/q' ? is('dir') : undefined),
+      readlink: (path) => {
+        throw noLink(path)
+      },
     }
     const anchored: [string, ViolationContext, string][] = [
       ['home dir', { ...bare, homeDir: '/fx/q/home' }, '/fx/q/home'],
