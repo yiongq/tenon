@@ -145,6 +145,7 @@ describe('provider.list for the menu (01 修补 6)', () => {
     expect(sonnet).toMatchObject({
       mark: 'verified',
       listing: 'main',
+      nameKey: 'model.name.sonnet5',
       purposeKey: 'model.purpose.sonnet5',
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultEffort: 'high',

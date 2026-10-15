@@ -555,9 +555,14 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     expect(modelWireHash({ ...base, pricing: { inputPerMTok: 1, outputPerMTok: 2 } })).toBe(
       modelWireHash(base),
     )
-    expect(modelWireHash({ ...base, purposeKey: 'model.purpose.any', contextLimit: 1 })).toBe(
-      modelWireHash(base),
-    )
+    expect(
+      modelWireHash({
+        ...base,
+        nameKey: 'model.name.any',
+        purposeKey: 'model.purpose.any',
+        contextLimit: 1,
+      }),
+    ).toBe(modelWireHash(base))
     // A field encode() does read is "the model table changed" (旧 42): the hash moves with it.
     expect(modelWireHash({ ...base, maxOutputTokens: base.maxOutputTokens - 1 })).not.toBe(
       modelWireHash(base),

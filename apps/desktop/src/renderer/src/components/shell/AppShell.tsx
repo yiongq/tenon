@@ -1,6 +1,5 @@
 import type { LocaleSetting } from '@tenon-app/contracts'
 import type { JSX, ReactNode } from 'react'
-import { useTranslation } from 'react-i18next'
 import { Sidebar } from './Sidebar'
 import { TopBar } from './TopBar'
 
@@ -10,6 +9,10 @@ export interface AppShellProps {
   onNewChat: () => void
   locale: LocaleSetting
   onLocaleChange: (next: LocaleSetting) => void
+  /** Whether any chat exists: the sidebar's empty hint is for when none does. */
+  hasChats: boolean
+  /** The session on screen, by its first message (lib/session-title.ts); empty while it has none. */
+  title: string
   children: ReactNode
 }
 
@@ -21,8 +24,16 @@ export interface AppShellProps {
  * positioned descendant can extend the document past `overflow-hidden` and scroll the shell.
  */
 export function AppShell(props: AppShellProps): JSX.Element {
-  const { collapsed, onCollapsedChange, onNewChat, locale, onLocaleChange, children } = props
-  const { t } = useTranslation()
+  const {
+    collapsed,
+    onCollapsedChange,
+    onNewChat,
+    locale,
+    onLocaleChange,
+    hasChats,
+    title,
+    children,
+  } = props
   return (
     <div
       data-testid="app-root"
@@ -34,14 +45,11 @@ export function AppShell(props: AppShellProps): JSX.Element {
           onNewChat={onNewChat}
           locale={locale}
           onLocaleChange={onLocaleChange}
+          hasChats={hasChats}
         />
       )}
       <div className="flex min-w-0 flex-1 flex-col bg-surface-0">
-        <TopBar
-          collapsed={collapsed}
-          onExpand={() => onCollapsedChange(false)}
-          title={t('app.name')}
-        />
+        <TopBar collapsed={collapsed} onExpand={() => onCollapsedChange(false)} title={title} />
         <main data-testid="content" className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">{children}</div>
           <aside data-testid="side-panel" hidden className="w-[400px] shrink-0 bg-surface-panel" />

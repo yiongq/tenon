@@ -87,6 +87,9 @@ test('a conversation survives a restart, on screen and on the wire', async () =>
       const fresh = await opening
       await expect(fresh.getByTestId('thread-empty')).toBeVisible()
       await expect(fresh.getByTestId('user-message')).toHaveCount(0)
+      // It shows none of the stored chats, yet they exist: the sidebar does not say otherwise.
+      await expect(fresh.getByTestId('sidebar')).toBeVisible()
+      await expect(fresh.getByTestId('sidebar-chats-empty')).toHaveCount(0)
     }
   } finally {
     await second.app.close()

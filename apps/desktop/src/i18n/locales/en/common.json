@@ -139,6 +139,17 @@
     "time-limit": "The subtask reached its time limit ({limitMs} ms)."
   },
   "model": {
+    "name": {
+      "opus55": "Opus 5.5",
+      "sonnet5": "Sonnet 5",
+      "opus5": "Opus 5",
+      "haiku45": "Haiku 4.5",
+      "fable51": "Fable 5.1",
+      "glm53": "GLM-5.3",
+      "glm53flash": "GLM-5.3 Flash",
+      "glm53flashx": "GLM-5.3 FlashX",
+      "glm46": "GLM-4.6"
+    },
     "purpose": {
       "sonnet5": "Balanced speed and capability",
       "opus55": "For complex, long tasks",
@@ -146,8 +157,8 @@
       "haiku45": "Fastest, lowest cost",
       "fable51": "Needs 30-day data retention turned on for your organization or workspace",
       "glm53": "Zhipu GLM-5.3",
-      "glm53flash": "Lightweight GLM-5.3",
-      "glm53flashx": "Lightweight GLM-5.3 (FlashX)",
+      "glm53flash": "Lightweight, for everyday use",
+      "glm53flashx": "Lightweight and faster",
       "glm46": "Previous-generation GLM"
     },
     "mark": {
@@ -379,6 +390,10 @@
     "row": "Unfinished last time",
     "continue": "Continue"
   },
+  "clamp": {
+    "expandAll": "{lines, plural, one {Show all (# line)} other {Show all (# lines)}}",
+    "collapse": "Collapse"
+  },
   "tool": {
     "Read": "Read {path}",
     "Write": "Write {path}",
@@ -481,6 +496,7 @@
       "subtaskDomain": "This domain, this subtask"
     },
     "showChange": "Show the change",
+    "hideChange": "Hide the change",
     "change": {
       "old": "Replace",
       "new": "With",
@@ -514,7 +530,31 @@
   },
   "thinking": {
     "label": "Thinking",
+    "live": "Thinking · {seconds}s",
     "took": "Thought for {seconds}s"
+  },
+  "message": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "justNow": "Just now"
+  },
+  "code": {
+    "copy": "Copy code",
+    "copied": "Copied"
+  },
+  "markdown": {
+    "openExternalLink": "Open this link?",
+    "externalLinkWarning": "It opens in your browser, outside Tenon.",
+    "openLink": "Open link",
+    "copyLink": "Copy link",
+    "close": "Close",
+    "imageNotAvailable": "Image not available"
+  },
+  "status": {
+    "thinking": "Thinking…",
+    "writing": "Writing…",
+    "working": "Working",
+    "elapsed": " · {seconds}s"
   },
   "mode": {
     "label": "Mode",

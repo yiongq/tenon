@@ -82,9 +82,16 @@ export function ConnectorForm(props: {
   const field = (key: keyof typeof initial, multi = false, secret = false) => (
     <Field key={key} label={t(`mcp.form.${key}` as never)} htmlFor={`${prefix}-${key}`}>
       {multi ? (
+        // JSON of arguments, paths and names: one line stays one line and scrolls sideways, rather
+        // than the browser breaking a path at a hyphen (`ux-⏎craft`) or a flag after its dashes.
+        // A fixed size: sized to its content, an unwrapped line would widen the whole form past
+        // the dialog (measured: 1309px in a 576px dialog).
         <Textarea
           id={`${prefix}-${key}`}
           data-testid={`mcp-${key}`}
+          spellCheck={false}
+          wrap="off"
+          className="field-sizing-fixed font-mono text-ui-sm whitespace-pre"
           value={values[key]}
           onChange={(e) => edit(key, e.target.value)}
           rows={3}
@@ -95,6 +102,9 @@ export function ConnectorForm(props: {
           data-testid={`mcp-${key}`}
           type={secret ? 'password' : 'text'}
           autoComplete="off"
+          // Commands, paths, addresses, JSON and ids: nothing a dictionary knows, and the red
+          // squiggle under a file name reads as an error.
+          spellCheck={key === 'displayName'}
           disabled={key === 'id' && !!s}
           value={values[key]}
           onChange={(e) => edit(key, e.target.value)}
@@ -272,21 +282,24 @@ export function ConnectorForm(props: {
               </Button>
             </DialogFooter>
           </form>
+          {/* Inside the form's own dialog, so the form is the layer it opens over: Base UI then
+              marks the form as having a dialog open above it and it steps out of sight (ui/dialog.tsx)
+              instead of showing its fields around the consent card. */}
+          {grant ? (
+            <GrantDialog
+              open
+              onOpenChange={() => setGrant(null)}
+              {...grant}
+              busy={busy}
+              onChoose={(choice) => {
+                const consent = grantResult(choice)
+                if (consent === null) setGrant(null)
+                else void save(grant.draft, consent)
+              }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
-      {grant ? (
-        <GrantDialog
-          open
-          onOpenChange={() => setGrant(null)}
-          {...grant}
-          busy={busy}
-          onChoose={(choice) => {
-            const consent = grantResult(choice)
-            if (consent === null) setGrant(null)
-            else void save(grant.draft, consent)
-          }}
-        />
-      ) : null}
     </>
   )
 }

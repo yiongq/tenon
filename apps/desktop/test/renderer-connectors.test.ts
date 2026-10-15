@@ -30,6 +30,8 @@ import {
   grantArgv,
   grantResult,
   launchChanged,
+  splitAtMarker,
+  warningParts,
 } from '../src/renderer/src/lib/connector-consent.js'
 import { serverView } from './support/mcp-view.js'
 
@@ -247,4 +249,39 @@ it('03 验收 13: the error detail renders 改为只用旧代 only for HTTP era-
       }),
     ),
   ).not.toMatch(/<button[^>]*>改为只用旧代<\/button>/)
+})
+
+describe('grant warnings: the sentence and what it quotes', () => {
+  const MARKER = '\u{E000}'
+
+  it('quotes the argument, the package or the variable, escaped; sudo and rm -rf quote nothing', () => {
+    expect(warningParts({ kind: 'sudo' })).toEqual({
+      key: 'mcp.warning.sudo',
+      slot: null,
+      content: null,
+    })
+    expect(warningParts({ kind: 'rm-rf' }).content).toBeNull()
+    expect(warningParts({ kind: 'home-path', arg: '~/a\u202Eb' })).toEqual({
+      key: 'mcp.warning.home-path',
+      slot: 'arg',
+      content: '~/a\\u{202E}b',
+    })
+    expect(warningParts({ kind: 'unpinned-package', package: 'pkg' }).slot).toBe('package')
+    expect(warningParts({ kind: 'risky-env', name: 'NODE_PATH' }).slot).toBe('name')
+  })
+
+  it('cuts each language’s sentence at the placeholder, in its own word order', async () => {
+    for (const [locale, before] of [
+      ['zh-CN', '参数涉及主目录：'],
+      ['en', 'Argument accesses the home directory: '],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- separate locale instances
+      const i = await createI18n(locale, () => {})
+      const parts = warningParts({ kind: 'home-path', arg: '~/.ssh' })
+      expect(splitAtMarker(i.t(parts.key, { arg: MARKER }), MARKER)).toEqual({ before, after: '' })
+      // Nothing quoted: the whole sentence is copy.
+      const sudo = i.t(warningParts({ kind: 'sudo' }).key)
+      expect(splitAtMarker(sudo, MARKER)).toEqual({ before: sudo, after: '' })
+    }
+  })
 })

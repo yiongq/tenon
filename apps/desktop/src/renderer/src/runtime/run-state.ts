@@ -13,6 +13,12 @@ type Entry = Omit<RunState, 'sessionId'>
 
 const IDLE: Entry = { running: false, runId: null }
 const table = new Map<string, Entry>()
+/**
+ * When this window first heard of each Run now going or closing, kept across the pushes that follow
+ * within it (the abort, the runId arriving): the status line's seconds count from here. Separate
+ * from `table`, whose entries are exactly what main pushed.
+ */
+const since = new Map<string, number>()
 const listeners = new Set<() => void>()
 
 function notify(): void {
@@ -25,14 +31,24 @@ export function listenForRunState(bridge: Pick<TenonBridge, 'on'>): () => void {
     const parsed = runStateEvent.payload.safeParse(payload)
     if (!parsed.success) return
     const { sessionId, ...state } = parsed.data
-    if (!state.running && state.runId === null) table.delete(sessionId)
-    else table.set(sessionId, state)
+    if (!state.running && state.runId === null) {
+      table.delete(sessionId)
+      since.delete(sessionId)
+    } else {
+      table.set(sessionId, state)
+      if (!since.has(sessionId)) since.set(sessionId, Date.now())
+    }
     notify()
   })
 }
 
 export function runStateOf(sessionId: string): Entry {
   return table.get(sessionId) ?? IDLE
+}
+
+/** When this window first heard of the session's Run going now, or null when there is none. */
+export function runSinceOf(sessionId: string): number | null {
+  return since.get(sessionId) ?? null
 }
 
 export function subscribeRunState(listener: () => void): () => void {

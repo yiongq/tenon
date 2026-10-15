@@ -454,20 +454,33 @@ describe('the banner and the model menu copy', () => {
     ).toEqual([])
   })
 
-  it('has the purpose sentence of every builtin model row, with nothing to fill', () => {
+  it('has the display name and purpose sentence of every builtin model row, with nothing to fill', () => {
     const providers = createProviderRegistry()
     registerBuiltinProviders(providers)
     const expected = providers
       .list()
       .flatMap((definition) =>
         definition.builtinModels.flatMap((model) =>
-          model.purposeKey === undefined
-            ? []
-            : [{ key: model.purposeKey, args: [], what: `${definition.id} ${model.id}` }],
+          [model.nameKey, model.purposeKey].flatMap((key) =>
+            key === undefined ? [] : [{ key, args: [], what: `${definition.id} ${model.id}` }],
+          ),
         ),
       )
     expect(expected.length).toBeGreaterThan(0)
     expect(problems(expected)).toEqual([])
+  })
+
+  it('names every Anthropic and Zhipu row (the menu and the chip show a name, not an id)', () => {
+    // A row without a `nameKey` shows its raw id: right for a hand-typed or local model, a
+    // regression for a row we ship.
+    const providers = createProviderRegistry()
+    registerBuiltinProviders(providers)
+    const unnamed = ['anthropic', 'zhipu'].flatMap((id) =>
+      (providers.get(id)?.builtinModels ?? [])
+        .filter((model) => model.nameKey === undefined)
+        .map((model) => `${id} ${model.id}`),
+    )
+    expect(unnamed).toEqual([])
   })
 })
 

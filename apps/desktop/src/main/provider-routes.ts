@@ -429,6 +429,7 @@ function menuRow(
     // Ollama sends no tools (A14); zhipu's and anthropic's rows are verified, and send to their
     // official origin only (M6 §点名 (a), (b)).
     mark: TEXT_ONLY_PROVIDERS.has(definition.id) ? 'local-text-only' : 'verified',
+    ...(model.nameKey === undefined ? {} : { nameKey: model.nameKey }),
     ...(model.purposeKey === undefined ? {} : { purposeKey: model.purposeKey }),
     listing: model.listing ?? 'main',
     ...(spec?.effortLevels === undefined || spec.effortLevels.length === 0

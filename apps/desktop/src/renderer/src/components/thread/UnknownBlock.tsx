@@ -13,7 +13,7 @@ function Placeholder({ type }: { type: string }): JSX.Element {
       role="note"
       data-testid="unknown-block"
       data-block-type={type}
-      className="my-2 rounded-sm border border-dashed border-border-default px-3 py-2 font-sans text-ui-sm text-text-muted"
+      className="rounded-sm border border-dashed border-border-default px-3 py-2 font-sans text-ui-sm text-text-muted"
     >
       {t('thread.unknownBlock', { kind: type })}
     </div>
@@ -34,11 +34,12 @@ function unknownBlockFor(type: string): () => JSX.Element {
 
 /**
  * assistant-ui renders `Empty` whenever the LAST part of a message is not Text or Reasoning
- * (`unstable_showEmptyOnNonTextEnd` defaults to true), so this slot has to be filled too or
- * a seeded transcript ending in a tool-call leaves an unstyled gap.
+ * (`unstable_showEmptyOnNonTextEnd` defaults to true), so the slot has to be filled — and filled
+ * with nothing: it used to be a one-line-high box, which put 28px of air under every Run that ends
+ * in a tool call and, with the message margin, a 90px hole between two calls of one task.
  */
-function EmptyBlock(): JSX.Element {
-  return <div data-testid="empty-block" className="h-[var(--t-leading-body)]" />
+function EmptyBlock(): null {
+  return null
 }
 
 export const UnknownBlock = { Of: unknownBlockFor, Empty: EmptyBlock }

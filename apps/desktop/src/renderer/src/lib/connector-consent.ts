@@ -1,4 +1,4 @@
-import type { McpDraft, McpServerView } from '@tenon-app/contracts'
+import type { McpDraft, McpServerView, McpWarning } from '@tenon-app/contracts'
 import { visible } from './visible'
 export function grantArgv(argv: readonly string[]) {
   return argv.map(visible)
@@ -53,4 +53,33 @@ export function secretNames(json: string): string[] {
 }
 export function enteredSecrets(names: readonly string[], values: Readonly<Record<string, string>>) {
   return Object.fromEntries(names.flatMap((name) => (values[name] ? [[name, values[name]]] : [])))
+}
+
+/**
+ * A grant warning as two kinds of text (03 acceptance 46; 02 E4): the sentence, interface copy that
+ * must fit on its line, and what it quotes — an argument, a package, an environment variable — which
+ * is content and may wrap. `content` is null for a warning that quotes nothing (sudo, rm -rf).
+ */
+export function warningParts(warning: McpWarning): {
+  readonly key: `mcp.warning.${McpWarning['kind']}`
+  readonly slot: 'arg' | 'package' | 'name' | null
+  readonly content: string | null
+} {
+  const key = `mcp.warning.${warning.kind}` as const
+  if ('arg' in warning) return { key, slot: 'arg', content: visible(warning.arg) }
+  if ('package' in warning) return { key, slot: 'package', content: visible(warning.package) }
+  if ('name' in warning) return { key, slot: 'name', content: visible(warning.name) }
+  return { key, slot: null, content: null }
+}
+
+/**
+ * The catalogue's sentence around one placeholder, as the text before and after it: the message is
+ * formatted with `marker` in the placeholder's place and cut there, so the copy keeps its own word
+ * order in each language. A message without the marker is all `before`.
+ */
+export function splitAtMarker(message: string, marker: string): { before: string; after: string } {
+  const at = message.indexOf(marker)
+  return at < 0
+    ? { before: message, after: '' }
+    : { before: message.slice(0, at), after: message.slice(at + marker.length) }
 }

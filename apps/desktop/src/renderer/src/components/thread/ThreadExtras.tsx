@@ -39,7 +39,7 @@ export function PendingApprovalBanner(): JSX.Element | null {
   }, [store])
   if (rows.length === 0) return null
   return (
-    <ul data-testid="pending-banner" className="mb-4 flex flex-col gap-1">
+    <ul data-testid="pending-banner" className="flex flex-col gap-1">
       {rows.map((row) => (
         <li
           key={row.sessionId}
@@ -73,7 +73,7 @@ export function QueuedBubbles(): JSX.Element | null {
   const [editing, setEditing] = useState<{ queuedId: string; text: string } | null>(null)
   if (snapshot.queue.length === 0) return null
   return (
-    <ul data-testid="queued-bubbles" className="mb-6 flex flex-col items-end gap-2">
+    <ul data-testid="queued-bubbles" className="flex flex-col items-end gap-2">
       {snapshot.queue.map((item) => (
         <li
           key={item.queuedId}
@@ -158,7 +158,7 @@ export function ResumeRow(): JSX.Element | null {
   return (
     <div
       data-testid="resume-row"
-      className="mb-6 flex items-center justify-between gap-2 rounded-sm border border-border-default px-3 py-2 font-sans text-ui-sm text-text-secondary"
+      className="flex items-center justify-between gap-2 rounded-sm border border-border-default px-3 py-2 font-sans text-ui-sm text-text-secondary"
     >
       <span>{t('resume.row')}</span>
       <Button

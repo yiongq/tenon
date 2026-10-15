@@ -108,7 +108,7 @@ export function ConnectorDetail({
   }
   return (
     <div data-testid="connector-detail" className="flex min-w-0 flex-col gap-3">
-      <h3 className="break-all font-medium">
+      <h3 className="wrap-anywhere font-medium">
         {t('mcp.nameId', { name: s.displayName, id: s.id })}
       </h3>
       <p>
@@ -128,7 +128,7 @@ export function ConnectorDetail({
       {s.status.error ? (
         <>
           <p>{t(`mcp.error.${s.status.error.code}` as never)}</p>
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all">
+          <pre className="max-h-32 overflow-auto whitespace-pre-wrap wrap-anywhere">
             {s.status.error.stderrTail}
           </pre>
         </>
@@ -165,8 +165,10 @@ export function ConnectorDetail({
             data-testid={`connector-tool-${tool.originalName}`}
             className="flex min-w-0 flex-col gap-1 rounded-md border border-border-default p-2"
           >
-            <span className="break-all font-medium">{visible(tool.originalName)}</span>
-            <p className="whitespace-pre-wrap break-all text-ui-sm">{visible(tool.description)}</p>
+            <span className="wrap-anywhere font-medium">{visible(tool.originalName)}</span>
+            <p className="whitespace-pre-wrap wrap-anywhere text-ui-sm">
+              {visible(tool.description)}
+            </p>
             <Chooser
               id={`${s.id}-${tool.originalName}`}
               testId={`tool-setting-${tool.originalName}`}
@@ -236,7 +238,7 @@ export function ConnectorDetail({
           <span data-testid="instructions-next-session" className="text-micro">
             {t(MCP_EFFECTIVE_NEXT)}
           </span>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all">
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-anywhere">
             {visible(s.instructionsView.text)}
           </pre>
           {s.instructionsView.review === 'changed' ? (
@@ -376,16 +378,16 @@ export function ConnectorDetail({
           {review ? (
             <>
               <h4>{t('mcp.before')}</h4>
-              <pre className="overflow-auto whitespace-pre-wrap break-all">
+              <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere">
                 {review.before === null ? t('mcp.noBefore') : visible(review.before)}
               </pre>
               <h4>{t('mcp.after')}</h4>
-              <pre className="overflow-auto whitespace-pre-wrap break-all">
+              <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere">
                 {visible(review.after)}
               </pre>
             </>
           ) : (
-            <pre className="overflow-auto whitespace-pre-wrap break-all">{log}</pre>
+            <pre className="overflow-auto whitespace-pre-wrap wrap-anywhere">{log}</pre>
           )}
         </DialogContent>
       </Dialog>

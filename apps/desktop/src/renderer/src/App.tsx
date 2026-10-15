@@ -50,6 +50,19 @@ export function App(): JSX.Element {
   const [restoring, setRestoring] = useState(() => !window.tenon.startsNewChat)
   /** A move that waits on the leave dialog: taken on 「停止任务」, dropped on 「留在这里」. */
   const [leaving, setLeaving] = useState<(() => void) | null>(null)
+  /**
+   * Whether any chat exists: one restored from the tape, one gone back to, or one this window has
+   * a message in. Only ever turns true — a chat does not stop existing because the window moved on
+   * to a new one. The sidebar's 「还没有对话」 is for when it is false.
+   */
+  const [hasChats, setHasChats] = useState(false)
+  const noteChat = useCallback(() => setHasChats(true), [])
+  /** The session on screen names itself (lib/session-title.ts); another session's title is not shown. */
+  const [named, setNamed] = useState({ sessionId: '', title: '' })
+  const noteTitle = useCallback(
+    (sessionId: string, title: string) => setNamed({ sessionId, title }),
+    [],
+  )
 
   /**
    * A conversation the user chose supersedes the one being restored. The window is on screen
@@ -98,6 +111,7 @@ export function App(): JSX.Element {
           (result) => {
             if (move !== moves.current) return
             show({ sessionId, rows: result.ok ? result.data : [], resumeOnOpen: true })
+            setHasChats(true)
           },
         )
       }),
@@ -119,12 +133,21 @@ export function App(): JSX.Element {
       void invokeRoute(window.tenon, sessionLatest, { limit: RESTORE_LIMIT }).then((result) => {
         // Answered — whatever the answer: sending is possible from here (B15).
         setRestoring(false)
-        if (superseded.current || !result.ok || result.data === null) return
+        if (!result.ok || result.data === null) return
+        // A stored chat exists, whether or not this window shows it (a New Chat may have won).
+        setHasChats(true)
+        if (superseded.current) return
         setConversation({
           sessionId: result.data.sessionId,
           rows: result.data.messages,
           resumeOnOpen: false,
         })
+      })
+    } else {
+      // A window opened for a new chat shows none of the stored ones, but they exist, and the
+      // sidebar must not say otherwise: ask for one row, only to know whether there is any.
+      void invokeRoute(window.tenon, sessionLatest, { limit: 1 }).then((result) => {
+        if (result.ok && result.data !== null) setHasChats(true)
       })
     }
     const unsubscribe = window.tenon.on(chatNew.channel, startFresh)
@@ -150,6 +173,8 @@ export function App(): JSX.Element {
       onNewChat={startFresh}
       locale={config.locale}
       onLocaleChange={(locale: LocaleSetting) => patch({ locale })}
+      hasChats={hasChats}
+      title={named.sessionId === conversation.sessionId ? named.title : ''}
     >
       <NavigationContext.Provider value={navigation}>
         <ChatProvider
@@ -158,6 +183,8 @@ export function App(): JSX.Element {
           initialRows={conversation.rows}
           resumeOnOpen={conversation.resumeOnOpen}
           onStartSession={startSession}
+          onHasMessages={noteChat}
+          onTitle={noteTitle}
           canSend={!restoring}
         >
           <Thread />

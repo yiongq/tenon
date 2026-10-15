@@ -6,6 +6,7 @@ import { ComposerSlots } from '@/components/composer/ComposerSlots'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { Composer } from './Composer'
 import { AssistantMessage, UserMessage } from './Message'
+import { StatusLine } from './StatusLine'
 import { PendingApprovalBanner, QueuedBubbles, ResumeRow } from './ThreadExtras'
 
 /**
@@ -75,9 +76,13 @@ export function Thread(): JSX.Element {
           wheel scroll the whole shell — the same trap any future absolute content would hit. */}
       <ThreadPrimitive.Viewport
         data-testid="thread-viewport"
-        className="relative flex-1 overflow-y-auto overflow-x-hidden px-6 pt-8"
+        className="edge-mask-y relative flex-1 overflow-y-auto overflow-x-hidden px-6 pt-8 pb-6"
       >
-        <div className="mx-auto w-full max-w-[720px]">
+        {/* The rhythm of the transcript lives here and nowhere else: 24px between its items, 8px
+            between two assistant messages (the Runs of one round read as one stream). Items carry
+            no outer margin of their own, so nothing stacks (Message.tsx). The status line of a
+            running round hangs 8px under the message above it. */}
+        <div className="mx-auto w-full max-w-[720px] [&>*+*]:mt-6 [&>[data-role=assistant]+[data-role=assistant]]:mt-2 [&>[data-role]+[data-testid=status-line]]:mt-2">
           <PendingApprovalBanner />
           <ThreadPrimitive.Empty>
             <p
@@ -90,6 +95,7 @@ export function Thread(): JSX.Element {
           <ThreadPrimitive.Messages
             components={{ UserMessage, AssistantMessage, EditComposer: UserMessage }}
           />
+          <StatusLine />
           <QueuedBubbles />
           <ResumeRow />
         </div>

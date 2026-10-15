@@ -119,7 +119,10 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
         await expectSingleLineUnclipped(card.getByTestId(part))
       }
       await expectSingleLineUnclipped(page.getByTestId('composer-pending-hint'))
-      await expectSingleLineUnclipped(page.getByTestId('composer-stop'))
+      // An icon, not a word: nothing to wrap, but it has its name and no text of its own.
+      await expect(page.getByTestId('composer-stop')).toHaveAccessibleName(
+        locale === 'zh-CN' ? '停止' : 'Stop',
+      )
 
       // The model menu while a card waits: the next-message label, each group's label, each row's
       // model name (its second line is the next test's), the rest. Text spans, not whole rows: a

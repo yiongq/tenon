@@ -128,7 +128,7 @@ test('the model menu follows the mode switch: a task on its own verified default
 
     await page.getByTestId('mode-cowork').click()
     await expect(modes).toHaveAttribute('data-profile', 'cowork')
-    await expect(current).toHaveText('claude-opus-5-5 · Medium')
+    await expect(current).toHaveText('Opus 5.5 · Medium')
     await expect(block).toHaveCount(0)
     await expect(sendButton).toBeEnabled()
 

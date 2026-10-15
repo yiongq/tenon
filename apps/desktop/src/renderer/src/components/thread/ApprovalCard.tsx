@@ -2,6 +2,8 @@ import { useRef, useState } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { ClampedPre } from '@/components/ui/clamped-pre'
+import { PathText } from '@/components/ui/path-text'
 import {
   connectorCardName,
   definitionNotice,
@@ -44,7 +46,11 @@ export function ObjectLine(props: { readonly target: Card['target'] }): JSX.Elem
   const parts = objectParts(t, props.target)
   const [only] = parts
   if (parts.length === 1 && only !== undefined)
-    return <code className={PART_CLASS.value}>{only.text}</code>
+    return (
+      <code className={PART_CLASS.value}>
+        <PathText text={only.text} />
+      </code>
+    )
   return (
     <span className="flex flex-col gap-0.5">
       {parts.map((part, index) =>
@@ -56,7 +62,7 @@ export function ObjectLine(props: { readonly target: Card['target'] }): JSX.Elem
         ) : (
           // oxlint-disable-next-line react/no-array-index-key -- the parts are fixed per target type
           <code key={index} className={PART_CLASS[part.role]}>
-            {part.text}
+            <PathText text={part.text} />
           </code>
         ),
       )}
@@ -65,7 +71,7 @@ export function ObjectLine(props: { readonly target: Card['target'] }): JSX.Elem
 }
 
 const PART_CLASS = {
-  value: 'block whitespace-pre-wrap break-all font-mono text-ui-sm text-text-primary',
+  value: 'block whitespace-pre-wrap font-mono text-ui-sm text-text-primary',
   note: 'font-sans text-micro text-text-muted',
   host: 'font-mono text-micro text-text-muted',
 } as const
@@ -139,7 +145,7 @@ export function ApprovalCard(props: {
         if (preferred === null || into === preferred) return
         if (into.matches(':focus-visible')) preferred.focus()
       }}
-      className="mt-2 flex min-w-0 flex-col gap-2 rounded-md border border-border-default bg-surface-1 p-3 font-sans"
+      className="flex min-w-0 flex-col gap-2 rounded-md border border-border-default bg-surface-1 p-3 font-sans"
     >
       <p className="text-ui font-medium text-text-primary" data-testid="approval-title">
         {t(titleKey(card) as never)}
@@ -165,13 +171,13 @@ export function ApprovalCard(props: {
         <ObjectLine target={card.target} />
       </div>
       {serverName ? (
-        <p data-testid="approval-server" className="break-all">
+        <p data-testid="approval-server" className="wrap-anywhere">
           {visible(serverName)}
         </p>
       ) : null}
       {notice ? <p data-testid="approval-definition-changed">{t(notice)}</p> : null}
       <p className="text-ui-sm text-text-secondary" data-testid="approval-reason">
-        {tx(t, reasonKey(card), visibleFacts(card.facts))}
+        <PathText text={tx(t, reasonKey(card), visibleFacts(card.facts))} />
       </p>
       {card.reversibility === 'irreversible' ? (
         <p className="text-ui-sm font-medium text-text-danger" data-testid="approval-irreversible">
@@ -179,7 +185,7 @@ export function ApprovalCard(props: {
         </p>
       ) : null}
       {change === null ? null : (
-        <div>
+        <div className="flex flex-col gap-1">
           {change.kind === 'arguments' ? (
             <p className="text-micro text-text-muted">{t('confirm.arguments')}</p>
           ) : (
@@ -187,14 +193,14 @@ export function ApprovalCard(props: {
               type="button"
               data-testid="approval-change-toggle"
               aria-expanded={showChange}
-              className="text-micro text-text-muted underline"
+              className="self-start text-micro text-text-muted underline"
               onClick={() => setShowChange((open) => !open)}
             >
-              {t('confirm.showChange')}
+              {t(showChange ? 'confirm.hideChange' : 'confirm.showChange')}
             </button>
           )}
           {showChange ? (
-            <div data-testid="approval-input" className="mt-1 flex flex-col gap-1">
+            <div data-testid="approval-input" className="flex flex-col gap-1">
               {change.sections.map((section) => (
                 <div key={section.label ?? ''} data-testid="approval-change-section">
                   {section.label === null ? null : (
@@ -202,12 +208,11 @@ export function ApprovalCard(props: {
                       {t(section.label as never)}
                     </p>
                   )}
-                  <pre
-                    data-testid="approval-change-text"
-                    className="max-h-60 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface-0 p-2 font-mono text-micro text-text-primary"
-                  >
-                    {section.text}
-                  </pre>
+                  <ClampedPre
+                    testId="approval-change-text"
+                    className="rounded-sm bg-surface-0 p-2 font-mono text-micro text-text-primary"
+                    text={section.text}
+                  />
                 </div>
               ))}
               {change.note === null ? null : (

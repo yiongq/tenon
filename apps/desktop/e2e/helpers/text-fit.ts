@@ -184,15 +184,20 @@ export async function measureTextFit(locator: Locator): Promise<TextFitMetrics[]
 /** Text ink sits a fraction of a pixel outside its box from hinting; only real clipping fails. */
 const TOLERANCE_PX = 1
 
-/** Every way one measured element fails 「不换行不截断」, as human-readable lines. */
-export function textFitViolations(m: TextFitMetrics): string[] {
+/**
+ * Every way one measured element fails 「不换行不截断」, as human-readable lines. `allowWrap` drops
+ * the one-line requirement and keeps every clipping check: for running text that carries data
+ * (an absolute path, a command line) and is allowed to take as many lines as its box gives it.
+ */
+export function textFitViolations(m: TextFitMetrics, allowWrap = false): string[] {
   const where = `${m.label} ${JSON.stringify(m.text)}`
   if (!m.visible) return [`${where} is not rendered (no client rects)`]
   const out: string[] = []
   if (m.placeholderOverflowX > TOLERANCE_PX)
     out.push(`${where} placeholder is clipped horizontally by ${String(m.placeholderOverflowX)}px`)
   if (m.placeholderOnly) return out
-  if (m.lineCount !== 1) out.push(`${where} renders on ${String(m.lineCount)} lines, expected 1`)
+  if (!allowWrap && m.lineCount !== 1)
+    out.push(`${where} renders on ${String(m.lineCount)} lines, expected 1`)
   if (m.scrollOverflowX > 0)
     out.push(`${where} is clipped horizontally by ${String(m.scrollOverflowX)}px`)
   if (m.scrollOverflowY > 0)
@@ -219,5 +224,20 @@ export async function expectSingleLineUnclipped(locator: Locator, minimum = 1): 
     `locator matched ${String(metrics.length)} elements`,
   ).toBeGreaterThanOrEqual(minimum)
   const violations = metrics.flatMap((m) => textFitViolations(m))
+  expect(violations, violations.join('\n')).toEqual([])
+}
+
+/**
+ * Like `expectSingleLineUnclipped`, for text that embeds data and may wrap: it still must not be
+ * clipped, nor spill out of its box. A dialog is a bounded column, so a warning that quotes an
+ * absolute path takes two lines there; only a dialog as wide as the window keeps it on one.
+ */
+export async function expectWrappedUnclipped(locator: Locator, minimum = 1): Promise<void> {
+  const metrics = await measureTextFit(locator)
+  expect(
+    metrics.length,
+    `locator matched ${String(metrics.length)} elements`,
+  ).toBeGreaterThanOrEqual(minimum)
+  const violations = metrics.flatMap((m) => textFitViolations(m, true))
   expect(violations, violations.join('\n')).toEqual([])
 }

@@ -29,7 +29,9 @@ for (const [locale, systemTag] of [
       systemLanguages: ['fr-FR', systemTag],
     })
     try {
-      await expect(page.getByTestId('app-title')).toHaveText('Tenon')
+      // A fresh profile has no session yet, so the top bar is empty; the name is the sidebar's.
+      await expect(page.getByTestId('app-title')).toHaveCount(0)
+      await expect(page.getByTestId('brand')).toHaveText('Tenon')
       await expect(page.locator('html')).toHaveAttribute('lang', locale)
       expect(await applicationMenuLabels(app)).toContain(locale === 'zh-CN' ? '文件' : 'File')
     } finally {

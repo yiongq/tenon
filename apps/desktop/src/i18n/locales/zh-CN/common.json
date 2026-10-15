@@ -139,6 +139,17 @@
     "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。"
   },
   "model": {
+    "name": {
+      "opus55": "Opus 5.5",
+      "sonnet5": "Sonnet 5",
+      "opus5": "Opus 5",
+      "haiku45": "Haiku 4.5",
+      "fable51": "Fable 5.1",
+      "glm53": "GLM-5.3",
+      "glm53flash": "GLM-5.3 Flash",
+      "glm53flashx": "GLM-5.3 FlashX",
+      "glm46": "GLM-4.6"
+    },
     "purpose": {
       "sonnet5": "速度与能力兼顾",
       "opus55": "适合复杂的长任务",
@@ -146,8 +157,8 @@
       "haiku45": "最快、成本最低",
       "fable51": "需要组织或工作区开启 30 天数据保留",
       "glm53": "智谱 GLM-5.3",
-      "glm53flash": "轻量版 GLM-5.3",
-      "glm53flashx": "轻量版 GLM-5.3（FlashX）",
+      "glm53flash": "轻量，适合日常使用",
+      "glm53flashx": "轻量，响应更快",
       "glm46": "上一代 GLM"
     },
     "mark": {
@@ -379,6 +390,10 @@
     "row": "上次没做完",
     "continue": "继续"
   },
+  "clamp": {
+    "expandAll": "展开全部（{lines} 行）",
+    "collapse": "收起"
+  },
   "tool": {
     "Read": "读取 {path}",
     "Write": "写入 {path}",
@@ -481,6 +496,7 @@
       "subtaskDomain": "本次子任务里这个域名"
     },
     "showChange": "展开改动",
+    "hideChange": "收起改动",
     "change": {
       "old": "把这段",
       "new": "改成",
@@ -514,7 +530,31 @@
   },
   "thinking": {
     "label": "思考",
+    "live": "思考中 · {seconds} 秒",
     "took": "思考了 {seconds} 秒"
+  },
+  "message": {
+    "copy": "复制",
+    "copied": "已复制",
+    "justNow": "刚刚"
+  },
+  "code": {
+    "copy": "复制代码",
+    "copied": "已复制"
+  },
+  "markdown": {
+    "openExternalLink": "打开这个链接？",
+    "externalLinkWarning": "它会在浏览器里打开，离开 Tenon。",
+    "openLink": "打开链接",
+    "copyLink": "复制链接",
+    "close": "关闭",
+    "imageNotAvailable": "图片无法显示"
+  },
+  "status": {
+    "thinking": "思考中…",
+    "writing": "撰写中…",
+    "working": "正在干活",
+    "elapsed": " · {seconds} 秒"
   },
   "mode": {
     "label": "形态",

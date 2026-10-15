@@ -18,7 +18,7 @@ export function AskSummaryCard(props: { readonly summary: AskSummary }): JSX.Ele
   return (
     <div
       data-testid="ask-summary"
-      className="mt-1 flex flex-col gap-2 rounded-sm bg-surface-1 px-2 py-1 font-sans text-micro text-text-secondary"
+      className="flex flex-col gap-2 rounded-sm bg-surface-1 px-2 py-1 font-sans text-micro text-text-secondary"
     >
       <ul className="flex flex-col gap-1">
         {rows.map(({ question, answer }, index) => (

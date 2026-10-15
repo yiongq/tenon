@@ -54,7 +54,7 @@ test('lists configured providers by host, greys the rest, and names the thinking
   const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     // Nothing chosen: the first row, and its default level.
-    await expect(page.getByTestId('model-menu-current')).toHaveText('claude-opus-5-5 · Medium')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
@@ -63,6 +63,11 @@ test('lists configured providers by host, greys the rest, and names the thinking
     const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5')
     await expect(sonnet).toContainText('api.anthropic.com')
     await expect(sonnet).not.toContainText('This computer')
+    // A row's first line is the model's name, not its id; its second keeps the purpose and the host.
+    const sonnetLines = sonnet.locator(':scope > span:last-child > span')
+    await expect(sonnetLines.first()).toHaveText('Sonnet 5')
+    await expect(sonnetLines.last()).toContainText('api.anthropic.com')
+    await expect(sonnet).not.toContainText('claude-sonnet-5')
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toContainText(
       'This computer · text conversation only',
     )
@@ -75,7 +80,7 @@ test('lists configured providers by host, greys the rest, and names the thinking
     await expect(page.getByTestId('model-row-anthropic-claude-opus-5')).toHaveCount(0)
     // Haiku thinks on a budget: once chosen, no thinking submenu.
     await page.getByTestId('model-row-anthropic-claude-haiku-4-5-20251001').click()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('claude-haiku-4-5-20251001')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Haiku 4.5')
     await page.getByTestId('model-menu-trigger').click()
     await expect(page.getByTestId('model-effort')).toHaveCount(0)
     await page.getByTestId('model-unconfigured-zhipu').click()
@@ -138,7 +143,7 @@ test('asks before history on this computer goes to a public host, and can open a
     await page.getByTestId('model-confirm-new-chat').click()
     // A new, empty chat on the new model; the old one sent nothing more anywhere.
     await expect(page.getByTestId('thread-empty')).toBeVisible()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 Flash · Max')
     expect(ollama.requests).toHaveLength(1)
   } finally {
     await app.close()
@@ -168,13 +173,13 @@ test('asks by where the history went, not by the model in effect, and a typed mo
     await trigger.click()
     await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
     await page.getByTestId('model-confirm-switch').click()
-    await expect(current).toHaveText('glm-5.3-flash · Max')
+    await expect(current).toHaveText('GLM-5.3 Flash · Max')
     // A level of the session's own choice goes where the switch was just confirmed: asked nothing
     // more, though no Run has gone there yet (rrE-1).
     await trigger.click()
     await page.getByTestId('model-effort').hover()
     await page.getByTestId('model-effort-high').click()
-    await expect(current).toHaveText('glm-5.3-flash · High')
+    await expect(current).toHaveText('GLM-5.3 Flash · High')
     await expect(page.getByTestId('model-confirm')).toHaveCount(0)
     // Nothing has gone to zhipu yet, so another public host is asked about too, by its own name:
     // the menu compares with where the history went, not with the model in effect (a public host
@@ -185,7 +190,7 @@ test('asks by where the history went, not by the model in effect, and a typed mo
       'Earlier messages will be sent to api.anthropic.com',
     )
     await page.getByTestId('model-confirm-switch').click()
-    await expect(current).toHaveText('claude-sonnet-5 · High')
+    await expect(current).toHaveText('Sonnet 5 · High')
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
@@ -454,7 +459,7 @@ test('a session on this computer whose default moved to a public host asks on an
 
     // The default's own row, ticked as the model in effect (the menu reads it on opening).
     await trigger.click()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 Flash · Max')
     await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
     await expect(confirm).toContainText(asked)
     await page.keyboard.press('Escape')
@@ -477,7 +482,7 @@ test('a session on this computer whose default moved to a public host asks on an
     await page.keyboard.press('Escape')
 
     // Nothing was chosen and nothing sent: the session is where it was.
-    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 Flash · Max')
     expect(await routeCalls(app, 'session.selectModel')).toBe(0)
     expect(await routeCalls(app, 'chat.send')).toBe(1)
     expect(server.requests).toHaveLength(1)
@@ -517,7 +522,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     )
     // A greyed row does nothing.
     await ollamaRow.click({ force: true })
-    await expect(current).toHaveText('claude-opus-5-5 · Medium')
+    await expect(current).toHaveText('Opus 5.5 · Medium')
 
     // A typed id holds text conversations only: its row, once it is the session's, is greyed too.
     await page.getByTestId('model-more').click()
@@ -600,7 +605,7 @@ test('「用新模型开新会话」 during a Run asks to leave first: staying k
     // A new, empty chat on the new model, none of the old content.
     await expect(page.getByTestId('thread-empty')).toBeVisible()
     await expect(page.getByTestId('user-message')).toHaveCount(0)
-    await expect(page.getByTestId('model-menu-current')).toHaveText('glm-5.3-flash · Max')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 Flash · Max')
     expect(server.requests).toHaveLength(1)
   } finally {
     server.release()
@@ -651,7 +656,7 @@ test('keeps a default per profile: a new session in each starts on it (旧 37)',
     // The chat on screen chooses X in the menu.
     await page.getByTestId('model-menu-trigger').click()
     await page.getByTestId('model-row-anthropic-claude-opus-5-5').click()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('claude-opus-5-5 · Medium')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
     // A task session (the mode switch arrives with step 20: chosen over IPC here) chooses Y.
     const choice = await page.evaluate(async () => {
       const task = crypto.randomUUID()

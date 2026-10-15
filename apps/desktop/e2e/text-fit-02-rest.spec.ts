@@ -1,6 +1,6 @@
 import { symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
+import { deferred, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
@@ -25,7 +25,9 @@ import type { FolderTree } from './helpers/tools.js'
  * (spec 02 §界面范围: 新组件的界面文字纳入回归; acceptance 37), the ones text-fit-02.spec.ts does not
  * reach: ModeSwitch, FolderChip, AskWidget, AskSummaryCard, ThinkingBlock, the round's summary line,
  * a ToolRow's closure line, the model menu's confirmation, and the resume row with its banner row
- * (ask.spec.ts measures the question's banner row, where it already has one waiting).
+ * (ask.spec.ts measures the question's banner row, where it already has one waiting); and the
+ * interface words the 2026-10-15 craft pass added: StatusLine's states, the live thinking label,
+ * ClampedPre's 「展开全部（N 行）」 / 「收起」, a message's age, and the dialog before an external link.
  * What the model wrote — a question, an option, a thinking sentence, a tool's object — is content and
  * is not measured; every element measured here holds interface words, or a short folder name beside
  * them.
@@ -47,7 +49,7 @@ test.afterEach(async () => {
  * The session's default: anthropic, whose official host the origin map test seam sends to the fake
  * (M6 §点名「测试接缝」) — a public host, so the confirmation is measured from a chat on Ollama.
  */
-const PROVIDER = { id: 'anthropic', modelId: 'claude-sonnet-5' } as const
+const PROVIDER = { id: 'anthropic', modelId: 'claude-sonnet-5', modelName: 'Sonnet 5' } as const
 
 /** An `AskUserQuestion` call: one single choice, then one multiple choice. */
 function askCall(id: string, count: 1 | 2) {
@@ -117,7 +119,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     })
     try {
       await expect(page.locator('html')).toHaveAttribute('lang', locale)
-      await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelId)
+      await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelName)
 
       // ModeSwitch before the first message: both choices.
       await expectSingleLineUnclipped(page.getByTestId('mode-chat'))
@@ -259,6 +261,120 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       expect(server.requests).toHaveLength(1)
     } finally {
       await second.app.close()
+    }
+  })
+}
+
+/** The external-link dialog's words, from the catalogue (StreamdownText's `translations`). */
+const LINK_DIALOG: Record<Locale, { title: string; copy: string; open: string }> = {
+  'zh-CN': { title: '打开这个链接？', copy: '复制链接', open: '打开链接' },
+  en: { title: 'Open this link?', copy: 'Copy link', open: 'Open link' },
+}
+
+for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
+  test(`the status line, live thinking, 「展开全部」 and 「收起」, message ages and the link dialog fit at 1280x800 in ${locale} (验收 37)`, async () => {
+    const LINES = 150
+    const folders = makeFolderTree(`fit-02-craft-${locale}`, {
+      'ws/long.txt': Array.from({ length: LINES }, (_, i) => `line ${String(i + 1)}`).join('\n'),
+    })
+    tree = folders
+    const ws = join(folders.real, 'ws')
+    const beforeAnything = deferred(),
+      afterThinking = deferred(),
+      afterText = deferred(),
+      afterTool = deferred()
+    fake = await startFakeAnthropic({
+      replies: [
+        {
+          steps: [
+            { type: 'wait', until: beforeAnything.promise },
+            {
+              type: 'thinking',
+              thinking: ['Weighing it up. ', 'Then deciding.'],
+              signature: 'sig',
+            },
+            { type: 'wait', until: afterThinking.promise },
+            { type: 'text', text: ['See [the docs](https://example.com/docs).'] },
+            { type: 'wait', until: afterText.promise },
+            readCall('toolu_long', join(ws, 'long.txt')),
+          ],
+          delayMs: 30,
+        },
+        {
+          steps: [
+            { type: 'wait', until: afterTool.promise },
+            { type: 'text', text: ['Read it.'] },
+          ],
+        },
+      ],
+    })
+    const userData = makeUserDataDir(`fit-02-craft-${locale}`)
+    seedConfig(userData, { locale })
+    const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await expect(page.locator('html')).toHaveAttribute('lang', locale)
+      await startTask(app, page, ws)
+      await send(page, 'read the long file')
+      const line = page.getByTestId('status-line')
+      // 思考中…: sent, nothing back yet.
+      await expect(line).toHaveAttribute('data-state', 'thinking')
+      await expectSingleLineUnclipped(line)
+      // 思考中 · N 秒: the thinking block, still the reply's tail, says it with its time.
+      beforeAnything.resolve()
+      const block = page.getByTestId('thinking-block')
+      await expect(block).toHaveAttribute('data-live', 'true')
+      await expect(block.getByTestId('thinking-label')).toHaveText(
+        locale === 'en' ? /^Thinking · \d+s$/ : /^思考中 · \d+ 秒$/,
+      )
+      await expectSingleLineUnclipped(block.getByTestId('thinking-label'))
+      // 撰写中…
+      afterThinking.resolve()
+      await expect(line).toHaveAttribute('data-state', 'writing')
+      await expectSingleLineUnclipped(line)
+      // 正在干活 · N 秒: the Read ran, the next step has not come back.
+      afterText.resolve()
+      await expect(line).toHaveAttribute('data-state', 'working')
+      await expect(line.getByTestId('status-elapsed')).toBeVisible()
+      await expectSingleLineUnclipped(line)
+      afterTool.resolve()
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('Read it.')
+      await expect(line).toHaveCount(0)
+
+      // 「刚刚」 under the user's message and under the reply, each measured where a user sees it.
+      const times = page.getByTestId('message-time')
+      await expect(times).toHaveCount(2)
+      for (const time of await times.all()) {
+        // oxlint-disable-next-line no-await-in-loop -- one scroll position at a time
+        await time.scrollIntoViewIfNeeded()
+        // oxlint-disable-next-line no-await-in-loop -- measure after scrolling it into view
+        await expectSingleLineUnclipped(time)
+      }
+
+      // 「展开全部（N 行）」, then 「收起」.
+      const row = page.getByTestId('tool-row').first()
+      await row.getByTestId('tool-row-line').click()
+      const toggle = row.getByTestId('clamp-toggle')
+      await expect(toggle).toHaveCount(1)
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+      await expectSingleLineUnclipped(toggle)
+      await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+      await expectSingleLineUnclipped(toggle)
+
+      // The dialog before an external link: its title, its sentence and its two worded buttons.
+      // (Its close button is an icon; its name is a tooltip, not text on the dialog.)
+      await page.getByTestId('assistant-text').first().locator('[data-streamdown="link"]').click()
+      const dialog = page.locator('[data-streamdown="link-safety-modal"]')
+      await expect(dialog).toBeVisible()
+      const words = LINK_DIALOG[locale]
+      await expectSingleLineUnclipped(dialog.getByText(words.title, { exact: true }))
+      await expectSingleLineUnclipped(dialog.locator('p'))
+      await expectSingleLineUnclipped(dialog.getByRole('button', { name: words.copy }))
+      await expectSingleLineUnclipped(dialog.getByRole('button', { name: words.open }))
+      await page.keyboard.press('Escape')
+      await expect(dialog).toHaveCount(0)
+    } finally {
+      await app.close()
     }
   })
 }

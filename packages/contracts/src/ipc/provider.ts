@@ -76,13 +76,15 @@ export const providerConfigKeySchema = z
 export type ProviderConfigKeyContract = z.infer<typeof providerConfigKeySchema>
 
 /**
- * A builtin model as the menu lists it (spec 02 01 修补 6): its mark, its purpose sentence's
- * catalogue key, whether it sits under 「更多模型 ›」, and its thinking levels copied from
+ * A builtin model as the menu lists it (spec 02 01 修补 6): its mark, its display name's and its
+ * purpose sentence's catalogue keys (absent: the row shows its id), whether it sits under
+ * 「更多模型 ›」, and its thinking levels copied from
  * `thinkingSpec` — absent for a row with none, which shows no submenu.
  */
 export const providerModelSchema = z.object({
   id: modelIdSchema,
   mark: modelMarkSchema,
+  nameKey: z.string().min(1).optional(),
   purposeKey: z.string().min(1).optional(),
   listing: z.enum(['main', 'more']),
   effortLevels: z.array(effortSchema).optional(),

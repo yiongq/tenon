@@ -1,8 +1,9 @@
 import type { LocaleSetting } from '@tenon-app/contracts'
-import { CircleUserIcon, KeyRoundIcon, LanguagesIcon } from 'lucide-react'
+import { CircleUserIcon, LanguagesIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
+import { SECTIONS } from '@/components/settings/sections'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,6 +17,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import type { SettingsPane } from '@/lib/settings-sections'
 
 const LOCALE_OPTIONS: readonly LocaleSetting[] = ['auto', 'zh-CN', 'en']
 const LOCALE_LABEL_KEY = {
@@ -36,7 +38,7 @@ export interface AccountMenuProps {
 export function AccountMenu({ locale, onLocaleChange }: AccountMenuProps): JSX.Element {
   const { t } = useTranslation()
   const [providersOpen, setProvidersOpen] = useState(false)
-  const [pane, setPane] = useState<'providers' | 'connectors'>('providers')
+  const [pane, setPane] = useState<SettingsPane>('providers')
   // The menu is gone by the time the card opens, so the card returns focus here itself.
   const accountRow = useRef<HTMLButtonElement | null>(null)
   return (
@@ -58,25 +60,19 @@ export function AccountMenu({ locale, onLocaleChange }: AccountMenuProps): JSX.E
           <span className="truncate">{t('account.localUser')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" side="top" className="min-w-48">
-          <DropdownMenuItem
-            data-testid="account-providers"
-            onClick={() => {
-              setPane('providers')
-              setProvidersOpen(true)
-            }}
-          >
-            <KeyRoundIcon />
-            {t('account.providers')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid="account-connectors"
-            onClick={() => {
-              setPane('connectors')
-              setProvidersOpen(true)
-            }}
-          >
-            {t('mcp.title')}
-          </DropdownMenuItem>
+          {SECTIONS.map(({ id, Icon, menuKey }) => (
+            <DropdownMenuItem
+              key={id}
+              data-testid={`account-${id}`}
+              onClick={() => {
+                setPane(id)
+                setProvidersOpen(true)
+              }}
+            >
+              <Icon />
+              {t(menuKey)}
+            </DropdownMenuItem>
+          ))}
           <DropdownMenuSub>
             <DropdownMenuSubTrigger data-testid="account-language">
               <LanguagesIcon />

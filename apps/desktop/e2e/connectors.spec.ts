@@ -19,6 +19,10 @@ import {
 import { callsReply, providerEnv, send, textReply } from './helpers/tools.js'
 import { newChatFromSidebar, PAST_CLICK_GUARD_MS } from './helpers/navigation.js'
 
+/** Serialised into the page: what sets a small section label apart. */
+function labelStyle(el: Element): { size: string; color: string } {
+  return { size: getComputedStyle(el).fontSize, color: getComputedStyle(el).color }
+}
 test('03 验收 24/25: full argv, warnings, cancel focus, run and persistent consent across relaunch', async () => {
   const userData = makeUserDataDir('connectors-consent')
   seedConfig(userData, { locale: 'zh-CN' })
@@ -208,9 +212,31 @@ test('03 验收 29: a slow first connection appears above the composer', async (
     await expect(page.getByTestId('connector-status-notice')).toHaveText(
       'Connecting to Notes fixture…',
     )
+    // It takes no room: the thread above and the box below are where they will be without it.
+    const boxes = async () => ({
+      thread: await page.getByTestId('thread-viewport').boundingBox(),
+      composer: await page.getByTestId('composer').boundingBox(),
+    })
+    const connecting = await boxes()
+    // While the 「回到最新」 pill is hidden it lies on the pill's row (laid out even while hidden), on
+    // one line. With the pill shown it rises above it (text-fit-03.spec.ts measures that).
+    const strip = await page.evaluate(() => {
+      const notice = document.querySelector('[data-testid="connector-status-notice"]')!
+      const pill = document
+        .querySelector('[data-testid="scroll-to-bottom"]')!
+        .getBoundingClientRect()
+      const box = notice.getBoundingClientRect()
+      return {
+        lines: Math.round(box.height / Number.parseFloat(getComputedStyle(notice).lineHeight)),
+        overlapY: Math.min(box.bottom, pill.bottom) - Math.max(box.top, pill.top),
+      }
+    })
+    expect(strip.lines).toBe(1)
+    expect(strip.overlapY).toBeGreaterThan(0)
     writeFileSync(gate, 'ready')
     await connected(page)
     await expect(page.getByTestId('connector-status-notice')).toBeHidden()
+    expect(await boxes()).toEqual(connecting)
   } finally {
     await app.close()
   }
@@ -277,6 +303,15 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await expect(page.getByTestId('tool-side-effects')).toContainText('Side effects')
     await expect(page.getByTestId('tool-side-effects')).toContainText('Unknown')
     await expect(page.getByTestId('tool-effect-marker')).toBeVisible()
+    // The marker ends the row, in one column whatever the sentence's length; the side-effects label
+    // is set as 「输入」「输出」 are.
+    const line = await page.getByTestId('tool-row-line').last().boundingBox()
+    const marker = await page.getByTestId('tool-effect-marker').boundingBox()
+    expect(Math.abs(line!.x + line!.width - (marker!.x + marker!.width))).toBeLessThan(1)
+    const details = page.getByTestId('tool-row-details').last()
+    expect(
+      await details.getByTestId('tool-side-effects').locator('p').first().evaluate(labelStyle),
+    ).toEqual(await details.locator(':scope > p').first().evaluate(labelStyle))
     await newChatFromSidebar(page)
     await send(page, 'before restart')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('before restart')

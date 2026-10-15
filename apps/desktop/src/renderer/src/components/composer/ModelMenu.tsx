@@ -40,7 +40,9 @@ import { TypeModelDialog } from './TypeModelDialog'
  * thinking level — this session's next message goes to.
  *
  * Grouped by provider, listing only configured ones; an unconfigured provider keeps one greyed row
- * that opens the settings card. Each row names its target host (「本机」 for loopback only). A row
+ * that opens the settings card. A row's first line is the model's display name (its id when it has
+ * none: a hand-typed, local or custom row), its second the purpose and the target host (「本机」 for
+ * loopback only); the chip in the composer shows the same name. A row
  * that holds text conversations only is greyed in a task. A choice — a row, a hand-typed id, a
  * thinking level — that would send history which went to this machine or a private network to a
  * public host turns the menu into a confirmation first: compared with where the history last went
@@ -224,6 +226,10 @@ export function ModelMenu(): JSX.Element {
   const nameOf = (entry: ProviderEntryContract): string =>
     entry.displayName ?? fromData(entry.nameKey)
 
+  /** A builtin row by its display name (「Opus 5.5」); a hand-typed, local or custom row by its id. */
+  const modelNameOf = (candidate: Row): string =>
+    candidate.nameKey === undefined ? candidate.id : fromData(candidate.nameKey)
+
   const hostLabel = (entry: ProviderEntryContract): string =>
     entry.endpoint.reach === 'loopback' ? t('model.host.local') : entry.endpoint.host
 
@@ -264,10 +270,12 @@ export function ModelMenu(): JSX.Element {
         ? t('model.trigger.removed', { model: current.modelId })
         : row?.effortLevels !== undefined && effortShown !== undefined
           ? t('model.trigger.withEffort', {
-              model: current.modelId,
+              model: modelNameOf(row),
               effort: levelName(effortShown),
             })
-          : current.modelId
+          : row === undefined
+            ? current.modelId
+            : modelNameOf(row)
   const configured = entries.filter((entry) => entry.configured)
   // 「手填模型 ID」 is a builtin's only: an instance's rows come from the settings card (§列表与上限).
   const typable = configured.filter((entry) => entry.displayName === undefined)
@@ -311,7 +319,7 @@ export function ModelMenu(): JSX.Element {
               size="sm"
               data-testid="model-menu-trigger"
               aria-label={t('model.trigger.label')}
-              className="ctl-h shrink-0 gap-1 px-2 font-sans text-ui-sm text-text-secondary"
+              className="shrink-0 gap-1 px-2 font-sans text-ui-sm text-text-secondary"
             />
           }
         >
@@ -383,7 +391,9 @@ export function ModelMenu(): JSX.Element {
                             {checked ? <CheckIcon /> : null}
                           </span>
                           <span className="flex min-w-0 flex-col">
-                            <span className="text-ui text-text-primary">{candidate.id}</span>
+                            <span className="text-ui text-text-primary">
+                              {modelNameOf(candidate)}
+                            </span>
                             <span className="text-micro text-text-muted">
                               {blocked
                                 ? t('model.row.textOnlyInTask')
@@ -463,7 +473,9 @@ export function ModelMenu(): JSX.Element {
                         onClick={() => void pick(entry, candidate)}
                       >
                         <span className="flex min-w-0 flex-col">
-                          <span className="text-ui text-text-primary">{candidate.id}</span>
+                          <span className="text-ui text-text-primary">
+                            {modelNameOf(candidate)}
+                          </span>
                           <span className="text-micro text-text-muted">
                             {secondLine(entry, candidate)}
                           </span>

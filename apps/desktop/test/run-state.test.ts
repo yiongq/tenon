@@ -5,10 +5,11 @@
  * is not exercised here.
  */
 import { isEventChannel, runStateEvent } from '@tenon-app/contracts'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TenonBridge } from '../src/preload/index.js'
 import {
   listenForRunState,
+  runSinceOf,
   runStateOf,
   subscribeRunState,
 } from '../src/renderer/src/runtime/run-state.js'
@@ -44,6 +45,7 @@ function listening(): ReturnType<typeof fakeBridge> {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   // The table is the module's own: leave no Run behind for the next test.
   const fake = listening()
   for (const sessionId of [SESSION, OTHER]) fake.push({ sessionId, running: false, runId: null })
@@ -121,5 +123,37 @@ describe('the run.state table', () => {
     off()
     fake.push({ sessionId: SESSION, running: true, runId: 'run-2' })
     expect(runStateOf(SESSION)).toEqual({ running: true, runId: 'run-1' })
+  })
+})
+
+describe("when a Run was first heard of (the status line's clock)", () => {
+  it('starts at the first push of a Run and stays through the abort and the runId arriving', () => {
+    vi.useFakeTimers()
+    const fake = listening()
+    expect(runSinceOf(SESSION)).toBeNull()
+
+    vi.setSystemTime(10_000)
+    fake.push({ sessionId: SESSION, running: true, runId: null })
+    expect(runSinceOf(SESSION)).toBe(10_000)
+
+    vi.setSystemTime(12_000)
+    fake.push({ sessionId: SESSION, running: true, runId: 'run-1' })
+    vi.setSystemTime(15_000)
+    fake.push({ sessionId: SESSION, running: false, runId: 'run-1' })
+    expect(runSinceOf(SESSION)).toBe(10_000)
+    expect(runSinceOf(OTHER)).toBeNull()
+  })
+
+  it('is gone with the Run, and a later Run starts its own', () => {
+    vi.useFakeTimers()
+    const fake = listening()
+    vi.setSystemTime(20_000)
+    fake.push({ sessionId: SESSION, running: true, runId: 'run-1' })
+    fake.push({ sessionId: SESSION, running: false, runId: null })
+    expect(runSinceOf(SESSION)).toBeNull()
+
+    vi.setSystemTime(30_000)
+    fake.push({ sessionId: SESSION, running: true, runId: 'run-2' })
+    expect(runSinceOf(SESSION)).toBe(30_000)
   })
 })

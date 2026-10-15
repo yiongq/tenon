@@ -17,6 +17,17 @@ import { listenForRunState } from './runtime/run-state'
 listenForRunState(window.tenon)
 listenForQueue(window.tenon)
 
+// Before the first paint: the CSS keyed on it (the macOS title bar's drag region and clearance).
+document.documentElement.dataset['platform'] = window.tenon.platform
+
+// The interface face loads with the first frame; the prose and code faces would load only when the
+// first reply needs them, and that reply's Latin letters and digits could be laid out before they
+// arrive. Ask for them now (bundled files, a few milliseconds); in Chinese the prose face is the
+// alias that leaves CJK punctuation to the system font (fonts.css), the same file.
+for (const family of ['Source Serif 4', 'Tenon Serif Latin', 'Source Code Pro']) {
+  document.fonts.load(`1em "${family}"`).catch(() => undefined)
+}
+
 const container = document.getElementById('root')
 if (!container) throw new Error('root container missing')
 
