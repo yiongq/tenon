@@ -1,11 +1,12 @@
 # 呈现修订第一轮（presentation-r1）— 执行计划
 
-对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。「验收 N」指 spec §验收标准，「不变量 N」指 §不变量，「R N」指 §替换的条款，「开放问题 N」指 §开放问题。spec 现在是 `draft`：第 0b 步之前不写代码。
+对应 [spec.md](./spec.md)。只记步骤和状态，不复述设计。「验收 N」指 spec §验收标准，「不变量 N」指 §不变量，「R N」指 §替换的条款，「开放问题 N」指 §开放问题。spec 现在是 `ready`（2026-10-15 owner 验收，决定在对话里做出）：第 0b 步已完成，从第 1 步起可以写代码。
 
 ## 开工前读
 
 - **怎么开工**：本 spec 是 features spec。「开工」「继续」照 AGENTS.md 先选序号最小、`ready` 且 plan 还有没勾的步骤的 architecture spec（现在是 04），不会自动选中本计划；要明说「按 docs/features/presentation-r1/spec.md 实现」。
-- **前提**：spec 改 `ready`（第 0b 步）。开放问题 owner 2026-10-15 都定了：1、3–9、14–17 取 A，2、10–13 照推荐、未否决；下面各步只按选定的写，被否决的选项只留在 spec 的题面。
+- **现在先做什么**：spec 已 `ready`，第一个没勾的步骤是第 1 步（审批卡）。顺序：① 本文档 PR（spec、本计划、04 plan 的开工门）合入 `dev`；② 有人明说「按 docs/features/presentation-r1/spec.md 实现」后，从 `dev` 开 `feat/presentation-r1`，自第 1 步起按序做到第 14 步；③ 04 第一、二段可并行，04 第三段（第 16 步）等本计划的实现合入。没有 owner 那句话，「继续」「开工」选中的仍是 04。
+- **前提**：spec 已 `ready`（第 0b 步，2026-10-15）。开放问题 owner 2026-10-15 都定了：1、3–9、14–17 取 A，2、10–13 照推荐、未否决；下面各步只按选定的写，被否决的选项只留在 spec 的题面。
 - **先后**：照开放问题 13，本计划整份（实现，不只是 spec 文档）在 04 第三段（04 plan 第 16–20 步）开工之前合入 `dev`；可以与 04 第一、二段并行（它们不碰 renderer）。开工门写在 04 plan 第 16 步之前（2026-10-15 第 0b 步已加）：「开工前确认 presentation-r1 的实现已合入 `dev`（`docs/features/presentation-r1/spec.md` 顶部为 `Status: implemented`）；只有 spec 文档在 `dev` 上不算。不是就停下问 owner。」若 04 第三段已先开工，停下在「Open」写明冲突的文件，等 owner 定。
 - **与 claude-5-5-models 的先后**（核对基准：分支 `docs/claude-5-5-models` 的 `cbde44f`）：谁也不等谁，后合入的一方负责衔接；04 第三段的开工门只看本 spec，不因此等 claude-5-5-models。
   - 第一把 key：照 spec §对 02 的修补 第 1 条按条件写。claude-5-5-models 先合入（`dev` 上的 `providerSelectionSchema` 已有 `latestOf`）时，第 9 步（或 rebase 时）做写指针那一支，并跑与它验收 19 相同的用例（spec 验收 12 的指针一例）。本 spec 先合入时，第 9 步只做钉住那一支，指针一支由 claude-5-5-models 照它 plan 第 11 步「已实现」一支补上并跑它的验收 19：那是实现本条已写的规则，不改本 spec。两次合入之间新建、存了第一把 key 的 profile 留着钉住的值（它 §跟随最新「迁移」）。
@@ -24,7 +25,7 @@
 ## 步骤
 
 - [x] 0a. 起草 spec 与本计划（2026-10-15，Claude Code）。只动 `docs/features/presentation-r1/`；旧 spec 与 components.md 不动（指针与头行在第 11 步，和代码同一个 PR）。
-- [ ] 0b. owner 答开放问题 1、3–9、14–17，过一遍 §按推荐定、owner 可否决（2、10–13）→ 照选的改 spec（顶部 `Revisions:` 记日期、改了什么、旧的是什么）→ `Status: ready`。选了非推荐项的，先改 spec 的对应节与本计划的对应步，再开工。按开放问题 13，同一个提交在 04 plan 第 16 步之前加一行开工门：「开工前确认 presentation-r1 的实现已合入 `dev`（`docs/features/presentation-r1/spec.md` 顶部为 `Status: implemented`）；只有 spec 文档在 `dev` 上不算。不是就停下问 owner。」（2026-10-15：owner 已答、都取推荐项，spec 已照改并标已定，04 plan 的开工门已加，同日改成看实现、不看 spec 文档；剩 `Status: ready`，由定稿那一步改并勾本步。）
+- [x] 0b. owner 答开放问题 1、3–9、14–17，过一遍 §按推荐定、owner 可否决（2、10–13）→ 照选的改 spec（顶部 `Revisions:` 记日期、改了什么、旧的是什么）→ `Status: ready`。选了非推荐项的，先改 spec 的对应节与本计划的对应步，再开工。按开放问题 13，同一个提交在 04 plan 第 16 步之前加一行开工门：「开工前确认 presentation-r1 的实现已合入 `dev`（`docs/features/presentation-r1/spec.md` 顶部为 `Status: implemented`）；只有 spec 文档在 `dev` 上不算。不是就停下问 owner。」（2026-10-15：owner 已答、都取推荐项，spec 已照改并标已定，04 plan 的开工门已加，同日改成看实现、不看 spec 文档；2026-10-15 定稿：`Status: ready`，`Revisions:` 记了验收日期，本步完成。）
 
 - [ ] 1. 审批卡（R11、R12、R13、R23、R32；验收 1、2、3；开放问题 6、7、15、17）
   - 文件：`apps/desktop/src/renderer/src/components/thread/ApprovalCard.tsx`（去掉刻度那一组；③④ 两句；「允许（<期限>）」）；`lib/approval-card.ts`（新纯函数 `whyKey(card)`：按 reason、kind、target.type 选键，`default`、`command` 与 `irreversible` 返回 null（开放问题 15 A）（这三类的键 `confirm.reason.default`、`confirm.reason.command`、`confirm.reason.irreversible.<kind>`（file、command、tool、network）都留在目录里、不渲染，值改成 spec 表里 B 的句子：`default` 取「其余」那句「这一步要你同意。」/ "This step needs your OK."，`command`「运行命令前要你同意。」/ "Running a command needs your OK."，`irreversible.<kind>` 都是「做了就撤不回，所以先问你。」/ "This can't be undone, so Tenon asks first."；都没有槽位），`elevated` 照旧取 `confirm.reason.elevated`，`network` 的网址句槽位取 `facts.host`；`undoKey(card)`：照 spec ④ 的四条，入参要有 reason、flagged 的 category、kind、target.type 与 reversibility：撤不回取原有的 `confirm.irreversible`「撤不回。」，网络卡的 `network` 与 `flagged`/`exfiltration` 返回 null，其余网络卡取新键 `confirm.undo.network.search` / `confirm.undo.network.url`（不借 `confirm.reason.network.*`：原因键的槽位只取必填 `facts` 键；值与那两句相同，网址句的 `{host}` 由新纯函数 `lib/url-host.ts` 的 `hostOfUrl(url)` 从 `target.url` 算：WHATWG `URL.hostname`，去掉末尾的一个点，照 02 §审批、授权与费用），其余按 reversibility 取 `confirm.undo.<reversibility>`，`unknown` 再按 `target.type` 分 `confirm.undo.unknownFile` 与 `confirm.undo.unknown`）；`lib/approval-keys.ts`（`scopeKey` 不变，加 `allowLabelKey`）；删 `lib/reversibility-scale.ts` 与 `mcp.reversibilityScale`、`mcp.reversibility.*` 里只给刻度用的键（工具行在第 3 步换掉后再删，别处还在读的留到那一步）；两份 locale：改 `confirm.reason.*` 的值（键名不动，04 第 18 步改的是 `confirm.reason.elevated` 的值），按 kind 细分的加 `confirm.reason.network.search`、`confirm.reason.network.url`；加 `confirm.undo.<reversibility>`、`confirm.undo.unknownFile`（`revertible`、`snapshotted` 放暂定值，05 定稿）与 `confirm.undo.network.search`、`confirm.undo.network.url`、`confirm.allowScoped`（「允许（{scope}）」，`{scope}` 取原有的 `confirm.scope.*`，英文期限词不改）。
@@ -107,6 +108,8 @@
 - 2026-10-15 · 第 0b 步（做到一半）· owner 在对话里听过白话讲解与模拟界面后答「都按推荐来」：开放问题 1、3–9、14–17 取 A，2、10–13 照推荐、未否决；同日另定内置厂商的默认模型跟随家族的最新一行（claude-5-5-models，并行修订）。spec 各问就地标已定，按选项分写的句子改成已定的写法，§对 02 的修补 第 1 条、验收 12 接上 claude-5-5-models，加 `Related:`，`Owner`、`Revisions:` 记日期；验收 15 加 parity-audit 补记与开工门；本计划的前提、第 1、7、9、11 步去掉被否决的分支；04 plan 第 16 步之前加了开工门（13 A）。分支 `docs/presentation-r1`，本地提交、未推送。只改文档，没跑 G。spec 仍是 `draft`。下一步：定稿那一步改 `Status: ready`、在 `Revisions:` 记验收日期并勾第 0b 步。
 - 2026-10-15 · 第 0b 步（第三次评审修订）· 两批评审逐条核对后就地改 spec、本计划与 04 plan 的开工门，改了什么记在 spec 的 `Revisions:`。要点：上一条说的「对齐 claude-5-5-models、写跟最新家族指针」撤掉，兄弟分支 `3a85b7c` 里没有这项决定也没有指针，第 1 条与第 9 步一律写第一行的 id；开工门改成看 presentation-r1 的实现已合入 `dev`；加「与 claude-5-5-models 的先后」。兄弟 spec 那边该改的（验收 9 的主机、plan 第 5 步、头部 `Related`）不在本分支，交给它自己的分支。只改文档，没跑 G。spec 仍是 `draft`。下一步同上。
 - 2026-10-15 · 第 0b 步（第四次评审修订）· 三批评审逐条对照仓库与兄弟分支 `cbde44f` 核对后就地改 spec 与本计划，改了什么记在 spec 的 `Revisions:`。要点：第三次修订核的是兄弟分支的旧提交 `3a85b7c`，`cbde44f` 已定义 `latestOf` 指针并要本 spec 的第一把 key 写它，所以第 1 条改回按条件写（有 `latestOf` 写指针，没有写行 id），验收 12 与第 9 步分两例；「先后」改成谁也不等谁、后合入的一方衔接，合并清单加 `provider-settings.spec.ts`、`provider-routes.ts` 与 locale；④ 第 3 条改用非原因键；加 R35，R32 加一行；「改用」钮写厂商名；日期改为写入指针那个提交的日期。兄弟 spec 要改的（它的验收 17、§点名、plan 第 11、13 步、验收 9）不在本分支。只改文档，没跑 G。spec 仍是 `draft`。下一步同上。
+
+- 2026-10-15 · 第 0b 步（完成）· owner 验收，决定在对话里做出（「都按推荐来」）：spec `Status: draft` 改 `ready`，`Revisions:` 记了验收日期，正文不动。分支 `docs/presentation-r1`，本地提交、未推送。只改文档，没跑 G。spec 现在是 `ready`，第一个没勾的步骤是第 1 步（先后见「开工前读」的「现在先做什么」）。没有留给 owner 的待确认项。
 
 （停下之前追加一条：日期 · 步骤 · 状态；分支与基于的提交；G / E / EA 的结果；做过的突变与红绿；做到一半的与代码停在什么状态；下一步。）
 
