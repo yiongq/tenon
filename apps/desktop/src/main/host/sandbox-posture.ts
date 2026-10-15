@@ -27,13 +27,23 @@
  */
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { accessSync, constants, readdirSync, rmSync, rmdirSync, statSync } from 'node:fs'
+import {
+  accessSync,
+  constants,
+  lstatSync,
+  readdirSync,
+  rmSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs'
 import { posix } from 'node:path'
 import { SandboxManager, getWslVersion } from '@anthropic-ai/sandbox-runtime'
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath, HostProcess } from '@tenon-app/kernel'
 import { desktopSandboxFs, privateDirProblem, stubsFile } from './sandbox.js'
 import type {
+  SandboxFileStat,
   SandboxFs,
   SandboxLogger,
   SandboxStartup,
@@ -44,7 +54,11 @@ import type { HelperPaths, LinuxBinaries } from './sandbox-config.js'
 
 /**
  * Why the posture is not plain `active` (spec §启动、自检与姿态). The contracts' `SandboxReasonCode`
- * (§IPC, plan step 13) adds `test-seam`, which only the e2e seam gives.
+ * (§IPC, plan step 13) adds `test-seam`, which only the e2e seam gives. `no-seccomp` and `old-bwrap`
+ * come with `degraded`; the rest with `unavailable`, except `other`, which also comes with
+ * `degraded` for a warning of srt's it does not know (its detail srt's own words): the sandbox is up
+ * then, one layer perhaps weaker, and `unavailable` would send every command, once you allow it, to
+ * run outside the sandbox (2026-10-16).
  */
 export type SandboxReasonCode =
   | 'windows'
@@ -103,17 +117,28 @@ export interface SrtStartup {
   getWslVersion(): string | undefined
 }
 
+/** `lstat` with what srt's stale mount point test reads (linux-sandbox-utils.js:418-428). */
+export interface PostureFileStat extends SandboxFileStat {
+  isFile(): boolean
+  readonly size: number
+  readonly nlink: number
+}
+
 /** What startup asks of the disk on top of `DesktopSandbox`'s; every path is absolute. */
 export interface PostureFs extends Pick<
   SandboxFs,
-  'lstat' | 'stat' | 'realpath' | 'mkdirPrivate' | 'readFile' | 'writeFile'
+  'stat' | 'realpath' | 'readlink' | 'mkdirPrivate' | 'readFile' | 'writeFile'
 > {
+  /** The entry itself, links not followed; undefined when nothing is there. May throw. */
+  lstat(path: string): PostureFileStat | undefined
   /** The names in a directory; throws when it cannot be listed. */
   readdir(path: string): string[]
   /** A regular file this process may execute. Never throws. */
   isExecutable(path: string): boolean
   /** `rmdir`: an empty directory only; throws otherwise. */
   removeEmptyDir(path: string): void
+  /** `unlink`: never a directory; throws otherwise. */
+  removeFile(path: string): void
   /** `rm -rf` on the entry itself, a link not followed. */
   removeTree(path: string): void
 }
@@ -363,7 +388,7 @@ async function startup(
   const degraded = warnings.map(warningReason)
 
   // 5, 6.
-  const failure = await selfTest(deps, session)
+  const failure = await selfTest(deps, session, binaries)
   if (failure !== undefined) return unavailable(progress.initialize, [failure])
   if (degraded.length > 0) {
     return {
@@ -438,7 +463,10 @@ function knownErrorAt(
   return undefined
 }
 
-/** A warning from `checkDependenciesAsync()` (spec §启动 step 4): `degraded`, whichever it is. */
+/**
+ * A warning from `checkDependenciesAsync()` (spec §启动 step 4): `degraded`, whichever it is — one
+ * not known by its wording is `other` with srt's text (`SandboxReasonCode`).
+ */
 function warningReason(warning: string): SandboxReason {
   if (warning === NO_SECCOMP_WARNING) return reason('no-seccomp', warning)
   if (OLD_BWRAP_WARNING.test(warning)) return reason('old-bwrap', warning)
@@ -488,6 +516,7 @@ export function selfTestScript(target: string): string {
 async function selfTest(
   deps: SandboxPostureDeps,
   session: SandboxRuntimeConfig,
+  binaries: LinuxBinaries | null,
 ): Promise<SandboxReason | undefined> {
   const base = selfTestBase(deps)
   if (base === undefined) {
@@ -570,7 +599,9 @@ async function selfTest(
     stderr,
   )
   if (restricting || result.stderr.includes(NESTED_USERNS)) {
-    return reason('userns-restricted', detail)
+    // The fix names the bwrap step 2 found (spec §启动 step 6): the detail's last line says which.
+    const bwrap = `bwrap=${binaries?.bwrap ?? '(none)'}`
+    return reason('userns-restricted', detail.endsWith('\n') ? detail + bwrap : join(detail, bwrap))
   }
   return reason('self-test-failed', detail)
 }
@@ -613,7 +644,11 @@ function reading(deps: SandboxPostureDeps, path: string): string | null {
 // ---------------------------------------------------------------------------------------------
 // The record of mount points and leftovers (§afterExit「挂载点与残留的记录」; P7)
 
-/** srt's leftovers in main's tmpdir (linux-sandbox-utils.js:400, :1075; mux-proxy.js:22; linux-violation-monitor.js:34). */
+/**
+ * The leftovers initialize makes in main's tmpdir (linux-sandbox-utils.js:1075; mux-proxy.js:22;
+ * linux-violation-monitor.js:34). Not `claude-empty-*` (linux-sandbox-utils.js:400): srt makes that
+ * at a wrap, never in initialize, so one that shows up meanwhile is another srt user's (已知限制).
+ */
 function leftoverKinds(pid: number | null): RegExp[] {
   return [
     /^claude-http-[0-9a-f]+\.sock$/,
@@ -621,11 +656,10 @@ function leftoverKinds(pid: number | null): RegExp[] {
       ? /^srt-mux-\d+-[0-9a-z]+\.sock$/
       : new RegExp(`^srt-mux-${pid}-[0-9a-z]+\\.sock$`),
     /^srt-obs-./,
-    /^claude-empty-./,
   ]
 }
 
-/** The tmpdir entries of srt's four kinds there now. */
+/** The tmpdir entries of those three kinds there now. */
 function leftoverEntries(deps: SandboxPostureDeps): string[] {
   let names: string[]
   try {
@@ -647,6 +681,7 @@ interface RecordedSocat {
 
 interface StubsRecord {
   readonly mountPoints: string[]
+  readonly leafMountPoints: string[]
   readonly socat: RecordedSocat[]
   readonly tmpEntries: string[]
   readonly pid: number | null
@@ -662,17 +697,21 @@ function readStubs(deps: SandboxPostureDeps): StubsRecord | undefined {
     raw = JSON.parse(text)
   } catch (error) {
     deps.log(`sandbox: ${file} could not be read: ${messageOf(error)}`)
-    return { mountPoints: [], socat: [], tmpEntries: [], pid: null }
+    return { mountPoints: [], leafMountPoints: [], socat: [], tmpEntries: [], pid: null }
   }
   const record = isPlainObject(raw) ? raw : {}
-  const mounts = isPlainObject(record['mountPoints']) ? record['mountPoints'] : {}
+  const paths = (key: string): string[] => {
+    const map = isPlainObject(record[key]) ? record[key] : {}
+    return Object.values(map)
+      .flatMap((list) => (Array.isArray(list) ? list : []))
+      .filter(isAbsolutePathString)
+  }
   const kinds = leftoverKinds(null)
   return {
-    mountPoints: Object.values(mounts)
-      .flatMap((list) => (Array.isArray(list) ? list : []))
-      .filter(isAbsolutePathString),
+    mountPoints: paths('mountPoints'),
+    leafMountPoints: paths('leafMountPoints'),
     socat: socatList(record['socat']),
-    // Only srt's four kinds right in main's tmpdir: the record is a file anyone running as you can
+    // Only those three kinds right in main's tmpdir: the record is a file anyone running as you can
     // rewrite, and what it names is removed whole.
     tmpEntries: readList(record['tmpEntries'])
       .filter(isAbsolutePathString)
@@ -685,9 +724,11 @@ function readStubs(deps: SandboxPostureDeps): StubsRecord | undefined {
 /**
  * At startup, before initialize: what the last run recorded and left behind goes, and only that —
  * Linux's tmpdir is most likely the machine's shared `/tmp`, where another srt user's entries are
- * not ours. A mount point goes while it is an empty directory; a socat while it runs with the very
- * command line recorded and init (pid 1) as its parent; the tmpdir entries once the run that
- * recorded them is gone. Then the record is emptied.
+ * not ours. A mount point dir goes while it is an empty directory. The rest only once the run that
+ * recorded them is gone: a leaf mount point while it still is what bwrap made (`isStaleMountFile`);
+ * a socat while it runs with the very command line recorded (its socket name holds 16 random hex
+ * digits) and a parent other than that run — init, or the session's subreaper (`systemd --user`)
+ * that took the orphan in; the tmpdir entries. Then the record is emptied.
  */
 async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
   const record = readStubs(deps)
@@ -702,33 +743,44 @@ async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
       deps.log(`sandbox: mount point ${path} not removed: ${messageOf(error)}`)
     }
   }
-  if (record.socat.length > 0 || record.tmpEntries.length > 0) {
+  if (
+    record.socat.length > 0 ||
+    record.tmpEntries.length > 0 ||
+    record.leafMountPoints.length > 0
+  ) {
     let table: ProcessRow[] | undefined
     try {
       table = await deps.processes.list()
     } catch (error) {
       deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
     }
-    if (table !== undefined) {
-      for (const socat of record.socat) {
-        const row = table.find((candidate) => candidate.pid === socat.pid)
-        if (row === undefined || row.ppid !== 1 || row.command !== socat.command) continue
-        try {
-          deps.processes.kill(socat.pid)
-        } catch (error) {
-          deps.log(`sandbox: socat ${socat.pid} not killed: ${messageOf(error)}`)
-        }
+    // The recorder's pid held by this process, or by none: that run is gone.
+    const recorder = record.pid
+    const gone =
+      table !== undefined &&
+      recorder !== null &&
+      (recorder === deps.pid || !table.some((row) => row.pid === recorder))
+    for (const socat of gone ? record.socat : []) {
+      const row = table?.find((candidate) => candidate.pid === socat.pid)
+      if (row === undefined || row.ppid === recorder || row.command !== socat.command) continue
+      try {
+        deps.processes.kill(socat.pid)
+      } catch (error) {
+        deps.log(`sandbox: socat ${socat.pid} not killed: ${messageOf(error)}`)
       }
-      // The recorder's pid held by this process, or by none: that run is gone.
-      const gone =
-        record.pid !== null &&
-        (record.pid === deps.pid || !table.some((row) => row.pid === record.pid))
-      for (const entry of gone ? record.tmpEntries : []) {
-        try {
-          deps.fs.removeTree(entry)
-        } catch (error) {
-          deps.log(`sandbox: ${entry} not removed: ${messageOf(error)}`)
-        }
+    }
+    for (const path of gone ? record.leafMountPoints : []) {
+      try {
+        if (isStaleMountFile(deps.fs.lstat(path))) deps.fs.removeFile(path)
+      } catch (error) {
+        deps.log(`sandbox: mount point ${path} not removed: ${messageOf(error)}`)
+      }
+    }
+    for (const entry of gone ? record.tmpEntries : []) {
+      try {
+        deps.fs.removeTree(entry)
+      } catch (error) {
+        deps.log(`sandbox: ${entry} not removed: ${messageOf(error)}`)
       }
     }
   }
@@ -736,11 +788,27 @@ async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
 }
 
 /**
+ * srt's own test for a mount point an earlier sandbox left behind (linux-sandbox-utils.js:418-428):
+ * bwrap's `ensure_file(dest, 0444)` makes an empty regular file with no write bits and one link.
+ * A file you made since has write bits, content or a second link, and is never touched.
+ */
+function isStaleMountFile(stat: PostureFileStat | undefined): boolean {
+  return (
+    stat !== undefined &&
+    stat.isFile() &&
+    stat.size === 0 &&
+    (stat.mode & 0o222) === 0 &&
+    stat.nlink === 1
+  )
+}
+
+/**
  * Once initialize returned: srt's socat bridges (Linux; children of main running the socat Tenon
- * found) and the tmpdir entries of srt's four kinds that were not there before, with main's pid.
+ * found) and the tmpdir entries of those three kinds that were not there before, with main's pid.
  * Only `srt-mux-` carries a pid in its name; a `claude-http-` socket counts only when one of those
- * bridges listens on it, so another srt user's made meanwhile is not taken for ours. The mount
- * points `DesktopSandbox` records per wrap stay as they are.
+ * bridges listens on it, and an `srt-obs-` dir only when main itself listens on its socket
+ * (`ownObserverDirs`), so another srt user's made meanwhile is not taken for ours. The mount points
+ * `DesktopSandbox` records per wrap stay as they are.
  */
 async function recordLeftovers(
   deps: SandboxPostureDeps,
@@ -759,12 +827,17 @@ async function recordLeftovers(
       deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
     }
   }
-  const fresh = leftoverEntries(deps).filter(
-    (path) =>
-      !before.has(path) &&
-      (!posix.basename(path).startsWith('claude-http-') ||
-        socat.some(({ command }) => command.includes(` UNIX-LISTEN:${path},`))),
-  )
+  const made = leftoverEntries(deps).filter((path) => !before.has(path))
+  const observers = made.some((path) => posix.basename(path).startsWith('srt-obs-'))
+    ? ownObserverDirs(deps)
+    : new Set<string>()
+  const fresh = made.filter((path) => {
+    const name = posix.basename(path)
+    if (name.startsWith('claude-http-')) {
+      return socat.some(({ command }) => command.includes(` UNIX-LISTEN:${path},`))
+    }
+    return !name.startsWith('srt-obs-') || observers.has(path)
+  })
   const file = stubsFile(deps.profileDir)
   let record: Record<string, unknown> = {}
   try {
@@ -784,6 +857,47 @@ async function recordLeftovers(
       ...new Set([...readList(record['tmpEntries']).filter(isAbsolutePathString), ...fresh]),
     ],
   })
+}
+
+/**
+ * Linux: the `srt-obs-*` dirs in main's tmpdir whose socket main itself holds — srt's observer
+ * listens on `<dir>/s<hex>.sock` from main (linux-violation-monitor.js:34-35, :129). A path bound
+ * there is listed in /proc/net/unix with its inode, and main holds that inode when one of its fds
+ * (/proc/self/fd) reads `socket:[<inode>]`. Another srt user's dir has no inode of main's.
+ */
+function ownObserverDirs(deps: SandboxPostureDeps): Set<string> {
+  const own = new Set<string>()
+  const inodes = new Set<string>()
+  let table: string | undefined
+  try {
+    table = deps.fs.readFile('/proc/net/unix')
+    for (const fd of deps.fs.readdir('/proc/self/fd')) {
+      try {
+        const inode = /^socket:\[(\d+)\]$/.exec(deps.fs.readlink(`/proc/self/fd/${fd}`))?.[1]
+        if (inode !== undefined) inodes.add(inode)
+      } catch {
+        // Closed meanwhile.
+      }
+    }
+  } catch (error) {
+    deps.log(`sandbox: main's sockets could not be read: ${messageOf(error)}`)
+    return own
+  }
+  // `Num: RefCount Protocol Flags Type St Inode Path`, the path the rest of the line.
+  for (const line of (table ?? '').split('\n')) {
+    const row = /^\s*[0-9a-f]+:(?:\s+[0-9a-f]+){5}\s+(\d+) (.+)$/i.exec(line)
+    if (row === null || !inodes.has(row[1] ?? '')) continue
+    const socket = row[2] ?? ''
+    const dir = posix.dirname(socket)
+    if (
+      posix.dirname(dir) === deps.tmpdir &&
+      /^srt-obs-./.test(posix.basename(dir)) &&
+      /^s[0-9a-f]+\.sock$/.test(posix.basename(socket))
+    ) {
+      own.add(dir)
+    }
+  }
+  return own
 }
 
 /** The recorded socat bridges that have the shape of one. */
@@ -895,6 +1009,7 @@ export function desktopSrtStartup(): SrtStartup {
 export function desktopPostureFs(): PostureFs {
   return {
     ...desktopSandboxFs(),
+    lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
     readdir: (path) => readdirSync(path),
     isExecutable: (path) => {
       try {
@@ -906,6 +1021,7 @@ export function desktopPostureFs(): PostureFs {
       }
     },
     removeEmptyDir: (path) => rmdirSync(path),
+    removeFile: (path) => unlinkSync(path),
     removeTree: (path) => rmSync(path, { recursive: true, force: true }),
   }
 }

@@ -11,6 +11,7 @@
  * test; paths the host logs are compared with `realpath` of the test's own directories.
  */
 import {
+  lstatSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -198,6 +199,35 @@ const ROOT_NAMES: readonly string[] = [
   '.claude/agents',
   '.claude',
 ]
+
+/** The names in ROOT_NAMES that are leaves while absent at a Linux root: P7's 17 empty 0444 files. */
+const ROOT_LEAVES: readonly string[] = [
+  '.zshrc',
+  '.zshenv',
+  '.zprofile',
+  '.bashrc',
+  '.bash_profile',
+  '.profile',
+  '.envrc',
+  '.codex',
+  '.gemini',
+  '.cursor',
+  '.aws',
+  '.gitconfig',
+  '.gitmodules',
+  '.ripgreprc',
+  '.mcp.json',
+  '.vscode',
+  '.idea',
+]
+
+/** What srt's stale mount point test reads of a host path (linux-sandbox-utils.js:418-428). */
+function leafMode(path: string): string {
+  const stat = lstatSync(path, { throwIfNoEntry: false })
+  if (stat === undefined) return 'missing'
+  const stale = stat.isFile() && stat.size === 0 && (stat.mode & 0o222) === 0 && stat.nlink === 1
+  return stale ? 'file, empty, no write bit, one link' : `not bwrap's: ${stat.mode.toString(8)}`
+}
 
 /** A host off every allowlist: srt's proxy refuses it by name, before any lookup. */
 const UNLISTED = 'tenon-unlisted.test'
@@ -1718,39 +1748,49 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     )
 
     it(
-      '04 验收 9: (linux) while a call runs stubs.json lists the .claude it will mount; once afterExit ran no mount point is left on the host and stubs.json lists none',
+      '04 验收 9: (linux) while a call runs stubs.json lists the .claude and the leaf names it will mount; once afterExit ran no mount point is left on the host and stubs.json lists none',
       async () => {
         const { lab, ws } = workspaceLab()
         const stubsJson = join(lab.profileDir, 'sandbox', 'stubs.json')
-        const recorded = (): string[] => {
+        const recordedAt = (key: 'mountPoints' | 'leafMountPoints'): string[] => {
           if (hostKind(stubsJson) === 'missing') return []
-          const stubs = JSON.parse(readFileSync(stubsJson, 'utf8')) as {
-            mountPoints?: Record<string, string[]>
-          }
-          return Object.values(stubs.mountPoints ?? {}).flat()
+          const stubs = JSON.parse(readFileSync(stubsJson, 'utf8')) as Record<
+            string,
+            Record<string, string[]> | undefined
+          >
+          return Object.values(stubs[key] ?? {}).flat()
         }
-        // The command holds until the host has read stubs.json mid-call (at most 10 s).
+        const recorded = (): string[] => recordedAt('mountPoints')
+        // The command says it started, then holds until the host has looked mid-call (at most 10 s).
         const go = join(ws, 'go')
         const running = lab.run(
           [
             '[ -e .envrc ] && echo envrc-mounted; [ -d .claude ] && echo claude-mounted',
+            'touch started',
             'i=0; while [ ! -e go ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done',
             'true',
           ].join('; '),
           { workspace: [ws] },
         )
         const deadline = performance.now() + 10_000
-        let during = recorded()
-        while (during.length === 0 && performance.now() < deadline) {
+        while (hostKind(join(ws, 'started')) === 'missing' && performance.now() < deadline) {
           // oxlint-disable-next-line no-await-in-loop -- the poll's pace
           await new Promise((resolve) => setTimeout(resolve, 20))
-          during = recorded()
         }
+        const during = recorded()
+        const duringLeaves = recordedAt('leafMountPoints')
+        // While it runs, the leaves are what bwrap made them: empty files without write bits.
+        const leafModes = [...new Set(ROOT_LEAVES.map((name) => leafMode(join(ws, name))))]
         writeHostFile(go, '')
         const ran = await running
         // The wrap recorded the one intermediate dir srt makes a mount point (§afterExit「挂载点与
-        // 残留的记录」): .claude, for .claude/settings.json and the rest under it …
+        // 残留的记录」): .claude, for .claude/settings.json and the rest under it; and the root's
+        // names that are leaves, each an empty read-only file on the host meanwhile …
         expect(during).toEqual([join(real(ws), '.claude')])
+        expect(duringLeaves.toSorted()).toEqual(
+          ROOT_LEAVES.map((name) => join(real(ws), name)).toSorted(),
+        )
+        expect(leafModes).toEqual(['file, empty, no write bit, one link'])
         // … the call ran with srt's mount points in place …
         expect(ran.stdout).toContain('envrc-mounted')
         expect(ran.stdout).toContain('claude-mounted')
@@ -1760,8 +1800,10 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         expect(recorded()).toEqual([])
         const stubs = JSON.parse(readFileSync(stubsJson, 'utf8')) as {
           mountPoints?: Record<string, unknown>
+          leafMountPoints?: Record<string, unknown>
         }
         expect(stubs.mountPoints).toEqual({})
+        expect(stubs.leafMountPoints).toEqual({})
       },
       CASE_MS,
     )

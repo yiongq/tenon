@@ -456,6 +456,32 @@ function presetOn(h: Harness): void {
 
 const STUBS_LINUX = '/home/u/.config/Tenon/profiles/u1/t1/sandbox/stubs.json'
 
+/**
+ * The deny entries at a Linux root that are leaves while absent: bwrap binds /dev/null onto each,
+ * an empty 0444 file on the host (P7 counted these 17; linux-sandbox-utils.js:2115-2181).
+ */
+const ROOT_LEAVES: readonly string[] = [
+  '.zshrc',
+  '.zshenv',
+  '.zprofile',
+  '.bashrc',
+  '.bash_profile',
+  '.profile',
+  '.envrc',
+  '.codex',
+  '.gemini',
+  '.cursor',
+  '.aws',
+  '.gitconfig',
+  '.gitmodules',
+  '.ripgreprc',
+  '.mcp.json',
+  '.vscode',
+  '.idea',
+]
+
+const leavesAt = (root: string): string[] => ROOT_LEAVES.map((name) => `${root}/${name}`)
+
 /** A promise that never settles. */
 function pending(): Promise<never> {
   return new Promise(() => {})
@@ -1185,31 +1211,52 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     })
   })
 
-  it('04 验收 9: on linux a wrap records the absent intermediate dir that will become a mount point in stubs.json and afterExit removes the entry', async () => {
+  it('04 验收 9: on linux a wrap records in stubs.json the absent intermediate dir and the absent leaf deny entries under its allowWrite that will become mount points, and afterExit removes the entries', async () => {
     const h = harness('linux')
     const stubs = '/home/u/.config/Tenon/profiles/u1/t1/sandbox/stubs.json'
+    const app = '/home/u/code/app'
     h.disk.dir('/home/u/.config/Tenon/profiles/u1/t1/sandbox', { mode: 0o700 })
     h.disk.file(stubs, '{"socat":[{"pid":4242}]}\n')
     await h.run()
     const id = h.calls[0]?.id ?? ''
     // `.claude/` is missing: srt binds an empty directory there (linux-sandbox-utils.js:2159-2181).
-    // `.envrc` and the like are missing leaves (an empty file srt takes back itself), and the
+    // `.envrc` and the like are missing leaves: an empty read-only file each, which only the next
+    // wrap that denies the same path takes back (:2087-2106) — after a SIGKILL, startup does. The
     // home's `.config/autostart` is not under this wrap's allowWrite.
     expect(JSON.parse(h.disk.readFile(stubs) ?? '')).toEqual({
       socat: [{ pid: 4242 }],
       mountPoints: { [id]: ['/home/u/code/app/.claude'] },
+      leafMountPoints: { [id]: leavesAt(app) },
     })
     await h.sandbox.afterExit(TOOL_USE)
     expect(JSON.parse(h.disk.readFile(stubs) ?? '')).toEqual({
       socat: [{ pid: 4242 }],
       mountPoints: {},
+      leafMountPoints: {},
     })
 
-    // With `.claude/` there, nothing is recorded; macOS has no mount points at all.
+    // With `.claude/` there the names under it are leaves too, and `.envrc` there is no mount point;
+    // macOS has no mount points at all.
     const there = harness('linux')
     there.disk.dir('/home/u/code/app/.claude')
+    there.disk.file('/home/u/code/app/.envrc', 'export A=1')
     await there.run()
-    expect(there.disk.readFile(stubs)).toBeUndefined()
+    const thereRecord = JSON.parse(there.disk.readFile(stubs) ?? '') as {
+      mountPoints: Record<string, string[]>
+      leafMountPoints: Record<string, string[]>
+    }
+    const thereId = there.calls[0]?.id ?? ''
+    expect(thereRecord.mountPoints).toEqual({})
+    expect(Object.keys(thereRecord.leafMountPoints)).toEqual([thereId])
+    expect(thereRecord.leafMountPoints[thereId]?.toSorted()).toEqual(
+      [
+        ...leavesAt(app).filter((path) => path !== '/home/u/code/app/.envrc'),
+        '/home/u/code/app/.claude/settings.json',
+        '/home/u/code/app/.claude/settings.local.json',
+        '/home/u/code/app/.claude/commands',
+        '/home/u/code/app/.claude/agents',
+      ].toSorted(),
+    )
     const darwin = harness('darwin')
     await darwin.run()
     expect(
@@ -1223,68 +1270,90 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     const dangling = harness('linux')
     dangling.disk.link('/home/u/code/app/.claude', 'claude-real')
     await dangling.run()
+    const danglingId = dangling.calls[0]?.id ?? ''
     expect(JSON.parse(dangling.disk.readFile(stubs) ?? '')).toEqual({
-      mountPoints: { [dangling.calls[0]?.id ?? '']: ['/home/u/code/app/claude-real'] },
+      mountPoints: { [danglingId]: ['/home/u/code/app/claude-real'] },
+      leafMountPoints: { [danglingId]: leavesAt(app) },
     })
 
     // A wrap srt refuses leaves no entry behind.
     const refused = harness('linux')
     refused.failures.push(new Error('srt refused'))
     expect(await outcomeOf(refused.run())).toBe('threw Error: srt refused')
-    expect(JSON.parse(refused.disk.readFile(stubs) ?? '')).toEqual({ mountPoints: {} })
+    expect(JSON.parse(refused.disk.readFile(stubs) ?? '')).toEqual({
+      mountPoints: {},
+      leafMountPoints: {},
+    })
   })
 
   it('04 验收 9: on linux a mount point stays in stubs.json while another wrap keeps srt from removing it, and leaves once it is gone from the host', async () => {
     const h = harness('linux')
     const bwrap = srtMountPoints(h)
-    h.disk.dir('/home/u/code/two')
-    h.folders.set(SESSION, [p('/home/u/code/app'), p('/home/u/code/two')])
+    const app = '/home/u/code/app'
+    const two = '/home/u/code/two'
+    h.disk.dir(two)
+    h.folders.set(SESSION, [p(app), p(two)])
     await h.run({ commandId: 'toolu_a' })
-    bwrap({ dirs: ['/home/u/code/app/.claude'] })
-    await h.run({
-      commandId: 'toolu_b',
-      cwd: p('/home/u/code/two'),
-      workspace: [p('/home/u/code/two')],
-    })
-    bwrap({ dirs: ['/home/u/code/two/.claude'] })
+    bwrap({ dirs: [`${app}/.claude`], files: leavesAt(app) })
+    await h.run({ commandId: 'toolu_b', cwd: p(two), workspace: [p(two)] })
+    bwrap({ dirs: [`${two}/.claude`], files: leavesAt(two) })
     const [a = '', b = ''] = h.calls.map((call) => call.id)
     const record = () => JSON.parse(h.disk.readFile(STUBS_LINUX) ?? '') as unknown
 
-    // A exits while B runs: srt keeps A's mount point, so the record keeps it too (a SIGKILL now
-    // leaves it for startup).
+    // A exits while B runs: srt keeps A's mount points, so the record keeps them too (a SIGKILL now
+    // leaves them for startup).
     await h.sandbox.afterExit('toolu_a')
-    expect(h.disk.lstat('/home/u/code/app/.claude')).toBeDefined()
+    expect(h.disk.lstat(`${app}/.claude`)).toBeDefined()
+    expect(h.disk.lstat(`${app}/.envrc`)).toBeDefined()
     expect(record()).toEqual({
-      mountPoints: { [a]: ['/home/u/code/app/.claude'], [b]: ['/home/u/code/two/.claude'] },
+      mountPoints: { [a]: [`${app}/.claude`], [b]: [`${two}/.claude`] },
+      leafMountPoints: { [a]: leavesAt(app), [b]: leavesAt(two) },
     })
-    // B exits: srt removes both, and both leave the record.
+    // B exits: srt removes all of them, and all leave the record.
     await h.sandbox.afterExit('toolu_b')
-    expect(h.disk.lstat('/home/u/code/app/.claude')).toBeUndefined()
-    expect(record()).toEqual({ mountPoints: {} })
+    expect(h.disk.lstat(`${app}/.claude`)).toBeUndefined()
+    expect(h.disk.lstat(`${app}/.envrc`)).toBeUndefined()
+    expect(record()).toEqual({ mountPoints: {}, leafMountPoints: {} })
   })
 
   it('04 验收 9: on linux a mount point srt leaves behind because a later wrap filled it stays in stubs.json for startup', async () => {
     const h = harness('linux')
     const bwrap = srtMountPoints(h)
+    const app = '/home/u/code/app'
     await h.run({ commandId: 'toolu_a' })
-    bwrap({ dirs: ['/home/u/code/app/.claude'] })
-    // B begins while A runs: `.claude/` is there now, so B's denials under it are leaves (an empty
-    // file each, nothing to record); srt makes them inside A's directory.
+    bwrap({ dirs: [`${app}/.claude`], files: leavesAt(app) })
+    // B begins while A runs: `.claude/` and A's leaves are there now, so B's denials under `.claude/`
+    // are leaves of B's, which srt makes inside A's directory; A's leaves srt re-covers (:2087-2106).
     await h.run({ commandId: 'toolu_b' })
+    const [a = '', b = ''] = h.calls.map((call) => call.id)
+    expect(JSON.parse(h.disk.readFile(STUBS_LINUX) ?? '')).toEqual({
+      mountPoints: { [a]: [`${app}/.claude`] },
+      leafMountPoints: {
+        [a]: leavesAt(app),
+        [b]: [
+          `${app}/.claude/settings.json`,
+          `${app}/.claude/settings.local.json`,
+          `${app}/.claude/commands`,
+          `${app}/.claude/agents`,
+        ],
+      },
+    })
     bwrap({
       files: [
-        '/home/u/code/app/.claude/settings.json',
-        '/home/u/code/app/.claude/settings.local.json',
+        `${app}/.claude/settings.json`,
+        `${app}/.claude/settings.local.json`,
+        `${app}/.claude/commands`,
+        `${app}/.claude/agents`,
       ],
     })
-    const [a = ''] = h.calls.map((call) => call.id)
     await h.sandbox.afterExit('toolu_a')
     await h.sandbox.afterExit('toolu_b')
     // srt met `.claude/` before B's files, not empty then, and left it; it is empty now.
-    expect(h.disk.lstat('/home/u/code/app/.claude')?.isDirectory()).toBe(true)
-    expect(h.disk.lstat('/home/u/code/app/.claude/settings.json')).toBeUndefined()
+    expect(h.disk.lstat(`${app}/.claude`)?.isDirectory()).toBe(true)
+    expect(h.disk.lstat(`${app}/.claude/settings.json`)).toBeUndefined()
     expect(JSON.parse(h.disk.readFile(STUBS_LINUX) ?? '')).toEqual({
-      mountPoints: { [a]: ['/home/u/code/app/.claude'] },
+      mountPoints: { [a]: [`${app}/.claude`] },
+      leafMountPoints: {},
     })
   })
 

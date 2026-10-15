@@ -15,7 +15,6 @@ import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import { CAP_SETFCAP_MISSING_MESSAGE } from '@anthropic-ai/sandbox-runtime/dist/sandbox/linux-sandbox-utils.js'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import { describe, expect, it, vi } from 'vitest'
-import type { SandboxFileStat } from '../../src/main/host/sandbox.js'
 import {
   SandboxConfigError,
   credentialPaths,
@@ -26,6 +25,7 @@ import {
 import {
   selfTestScript,
   startSandboxPosture,
+  type PostureFileStat,
   type PostureFs,
   type PostureRunner,
   type ProcessRow,
@@ -94,11 +94,13 @@ const APPLY_SECCOMP_STDERR =
 // A fake disk
 
 interface Node {
-  readonly kind: 'dir' | 'file' | 'link'
+  readonly kind: 'dir' | 'file' | 'link' | 'fifo'
   readonly uid: number
   readonly mode: number
   readonly target?: string
   readonly text?: string
+  /** Hard links to a file (1 unless given). */
+  readonly nlink?: number
 }
 
 function errno(code: string, path: string): Error {
@@ -120,14 +122,20 @@ class FakeDisk implements PostureFs {
     this.nodes.set(path, { kind: 'dir', uid: own.uid ?? this.self, mode: own.mode ?? 0o755 })
   }
 
-  file(path: string, text = '', mode = 0o644): void {
+  file(path: string, text = '', mode = 0o644, nlink = 1): void {
     this.parents(path)
-    this.nodes.set(path, { kind: 'file', uid: this.self, mode, text })
+    this.nodes.set(path, { kind: 'file', uid: this.self, mode, text, nlink })
   }
 
   link(path: string, target: string): void {
     this.parents(path)
     this.nodes.set(path, { kind: 'link', uid: this.self, mode: 0o755, target })
+  }
+
+  /** A named pipe: no size, one link. */
+  fifo(path: string, mode: number): void {
+    this.parents(path)
+    this.nodes.set(path, { kind: 'fifo', uid: this.self, mode })
   }
 
   has(path: string): boolean {
@@ -138,12 +146,12 @@ class FakeDisk implements PostureFs {
     return this.nodes.get(path)?.text
   }
 
-  lstat(path: string): SandboxFileStat | undefined {
+  lstat(path: string): PostureFileStat | undefined {
     const node = this.find(path, false)
     return node === undefined ? undefined : statOf(node)
   }
 
-  stat(path: string): SandboxFileStat | undefined {
+  stat(path: string): PostureFileStat | undefined {
     const node = this.find(path, true)
     return node === undefined ? undefined : statOf(node)
   }
@@ -204,6 +212,14 @@ class FakeDisk implements PostureFs {
     this.removed.push(path)
   }
 
+  removeFile(path: string): void {
+    const node = this.nodes.get(path)
+    if (node === undefined) throw errno('ENOENT', path)
+    if (node.kind === 'dir') throw errno('EISDIR', path)
+    this.nodes.delete(path)
+    this.removed.push(path)
+  }
+
   removeTree(path: string): void {
     for (const key of this.nodes.keys()) {
       if (key === path || key.startsWith(`${path}/`)) this.nodes.delete(key)
@@ -259,12 +275,20 @@ class FakeDisk implements PostureFs {
   }
 }
 
-function statOf(node: Node): SandboxFileStat {
+function statOf(node: Node): PostureFileStat {
   return {
     isDirectory: () => node.kind === 'dir',
+    isFile: () => node.kind === 'file',
     isSymbolicLink: () => node.kind === 'link',
     uid: node.uid,
     mode: node.mode,
+    size: {
+      file: Buffer.byteLength(node.text ?? ''),
+      fifo: 0,
+      link: node.target?.length ?? 0,
+      dir: 4096,
+    }[node.kind],
+    nlink: node.nlink ?? 1,
   }
 }
 
@@ -335,6 +359,12 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
   disk.file('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '0\n')
   disk.file('/proc/sys/kernel/unprivileged_userns_clone', '1\n')
   disk.file('/proc/sys/user/max_user_namespaces', '15329\n')
+  // Main's own sockets before initialize: an unbound one and one bound elsewhere.
+  disk.file('/proc/net/unix', `${PROC_NET_UNIX_HEADER}\n${UNIX_UNBOUND_ROW}\n`)
+  unixRow(disk, '18812', '/run/user/1000/bus')
+  disk.link('/proc/self/fd/0', '/dev/null')
+  disk.link('/proc/self/fd/17', 'socket:[18812]')
+  disk.link('/proc/self/fd/18', 'socket:[19003]')
 
   const order: string[] = []
   const logs: string[] = []
@@ -381,7 +411,11 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
       disk.file(`${at.tmp}/srt-mux-${MAIN_PID}-0.sock`)
       if (os === 'linux') {
         disk.file(`${at.tmp}/claude-http-cafe01.sock`)
+        // The observer: main listens on its socket (linux-violation-monitor.js:34-35, :129).
         disk.dir(`${at.tmp}/srt-obs-Q1w2e3`, { mode: 0o700 })
+        disk.file(`${at.tmp}/srt-obs-Q1w2e3/s0a1b2c3d.sock`)
+        unixRow(disk, '23456', `${at.tmp}/srt-obs-Q1w2e3/s0a1b2c3d.sock`)
+        disk.link('/proc/self/fd/21', 'socket:[23456]')
         table.push({ pid: 5555, ppid: MAIN_PID, command: SOCAT_COMMAND('cafe01') })
       }
     }),
@@ -494,6 +528,16 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
     chdir,
     start,
   }
+}
+
+/** /proc/net/unix's header and an unbound socket's row (net/unix/af_unix.c, unix_seq_show). */
+const PROC_NET_UNIX_HEADER = 'Num       RefCount Protocol Flags    Type St Inode Path'
+const UNIX_UNBOUND_ROW = '0000000000000000: 00000003 00000000 00000000 0001 03 19003'
+
+/** Appends a listening socket bound at `path` to the fake /proc/net/unix. */
+function unixRow(disk: FakeDisk, inode: string, path: string): void {
+  const row = `0000000000000000: 00000002 00000000 00010000 0001 01 ${inode.padStart(5)} ${path}`
+  disk.file('/proc/net/unix', `${disk.text('/proc/net/unix') ?? ''}${row}\n`)
 }
 
 const SOCAT_COMMAND = (hex: string): string =>
@@ -895,11 +939,31 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
           code: 'userns-restricted',
           detail:
             'kernel.apparmor_restrict_unprivileged_userns=1\nkernel.unprivileged_userns_clone=1\n' +
-            `user.max_user_namespaces=15329\nexited 1\n${BWRAP_LOOPBACK_STDERR}`,
+            `user.max_user_namespaces=15329\nexited 1\n${BWRAP_LOOPBACK_STDERR}bwrap=/usr/bin/bwrap`,
         },
       ],
       initialize: 'returned',
     })
+  })
+
+  it("04 验收 2: a warning srt words in a way Tenon does not know is degraded with other and srt's own text, never unavailable", async () => {
+    // An srt upgrade that rewords linux-sandbox-utils.js:915: the sandbox is up, one layer perhaps
+    // weaker (spec §IPC: other also comes with degraded).
+    const reworded = 'seccomp not available - unix sockets are not restricted'
+    for (const platform of ['linux', 'darwin'] as const) {
+      const h = harness(platform, { warnings: [reworded] })
+      // oxlint-disable-next-line no-await-in-loop -- one platform after the other
+      const outcome = await outcomeOf(h)
+      expect({ platform, state: outcome.state, reasons: outcome.reasons }).toEqual({
+        platform,
+        state: 'degraded',
+        reasons: [
+          { code: 'other', detail: 'seccomp not available - unix sockets are not restricted' },
+        ],
+      })
+      expect(outcome.noSeccomp).toBe(false)
+      expect(outcome.session).not.toBeNull()
+    }
   })
 
   it('04 验收 2: on linux a restricting sysctl reading with a passing self-test (the bwrap AppArmor profile, P5) is active', async () => {
@@ -956,7 +1020,7 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
           code: 'userns-restricted',
           detail:
             'kernel.apparmor_restrict_unprivileged_userns=1\nkernel.unprivileged_userns_clone=1\n' +
-            `user.max_user_namespaces=15329\nexited 1\n${BWRAP_LOOPBACK_STDERR}`,
+            `user.max_user_namespaces=15329\nexited 1\n${BWRAP_LOOPBACK_STDERR}bwrap=/usr/bin/bwrap`,
         },
       },
       // P5, Ubuntu 26.04 as shipped with the sysctl at 0: only apply-seccomp's line says it.
@@ -965,7 +1029,7 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
         selfTest: { code: 1, stderr: APPLY_SECCOMP_STDERR },
         reason: {
           code: 'userns-restricted',
-          detail: `${READINGS_OPEN}\nexited 1\n${APPLY_SECCOMP_STDERR}`,
+          detail: `${READINGS_OPEN}\nexited 1\n${APPLY_SECCOMP_STDERR}bwrap=/usr/bin/bwrap`,
         },
       },
       {
@@ -1150,6 +1214,45 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     const wsl2 = harness('linux', { wsl: '2' })
     expect((await outcomeOf(wsl2)).state).toBe('active')
     expect(wsl2.srt.initialize).toHaveBeenCalledTimes(1)
+  })
+
+  it('04 验收 2: a userns-restricted detail ends with the bwrap step 2 found, for the fix (spec §启动 step 6)', async () => {
+    // /usr/local/bin/bwrap is first on PATH but not executable: the fix names /usr/bin/bwrap.
+    const h = harness('linux', { selfTest: { code: 1, stderr: APPLY_SECCOMP_STDERR } })
+    h.disk.file('/opt/bubblewrap/bin/bwrap', '', 0o755)
+    h.env['PATH'] = '/opt/bubblewrap/bin:/usr/local/bin:/usr/bin:/bin'
+    const outcome = await outcomeOf(h)
+    expect(h.sessions[0]?.linuxBinaries?.bwrap).toBe('/opt/bubblewrap/bin/bwrap')
+    expect(outcome.reasons).toEqual([
+      {
+        code: 'userns-restricted',
+        detail:
+          'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1\n' +
+          `user.max_user_namespaces=15329\nexited 1\n${APPLY_SECCOMP_STDERR}` +
+          'bwrap=/opt/bubblewrap/bin/bwrap',
+      },
+    ])
+    // A stderr that does not end its line still leaves the path a line of its own.
+    const bare = harness('linux', { selfTest: { code: 1, stderr: '' } })
+    bare.disk.file('/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '1\n')
+    expect(reasons(await outcomeOf(bare))).toEqual([
+      {
+        code: 'userns-restricted',
+        detail:
+          'kernel.apparmor_restrict_unprivileged_userns=1\nkernel.unprivileged_userns_clone=1\n' +
+          'user.max_user_namespaces=15329\nexited 1\nbwrap=/usr/bin/bwrap',
+      },
+    ])
+    // Only userns-restricted carries it: the fix is for that code alone.
+    const other = harness('linux', { selfTest: { code: 1, stderr: 'sh: 1: oops\n' } })
+    expect(reasons(await outcomeOf(other))).toEqual([
+      {
+        code: 'self-test-failed',
+        detail:
+          'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1\n' +
+          'user.max_user_namespaces=15329\nexited 1\nsh: 1: oops\n',
+      },
+    ])
   })
 
   it('04 验收 2: the three sysctl readings reach the detail', async () => {
@@ -1353,7 +1456,7 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
 })
 
 describe('04 验收 9 (startup): the record of mount points and leftovers', () => {
-  it('04 验收 9 (startup): recorded empty mount-point dirs, orphaned socat with the exact recorded command line and recorded tmpdir entries are removed; unrecorded ones with the same names are not', async () => {
+  it('04 验收 9 (startup): recorded empty mount-point dirs, recorded leaf mount points that are still empty read-only files, orphaned socat with the exact recorded command line and recorded tmpdir entries are removed; unrecorded ones with the same names are not', async () => {
     const h = harness('linux')
     const ws = '/home/u/code/app'
     const other = '/home/u/code/other'
@@ -1364,10 +1467,20 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     h.disk.file(`${ws}/.codex`, '') // recorded, a file now: stays
     h.disk.dir('/home/u/empty-elsewhere') // recorded path is now a link to an empty dir: both stay
     h.disk.link(`${ws}/.idea`, '/home/u/empty-elsewhere')
+    // Leaf mount points (srt's four conditions, linux-sandbox-utils.js:418-428): only what bwrap
+    // made — a regular file, empty, no write bit, one link — goes.
+    h.disk.file(`${ws}/.envrc`, '', 0o444) // bwrap's: goes
+    h.disk.file(`${ws}/.zshrc`, '', 0o400) // bwrap's under a umask: goes
+    h.disk.file(`${ws}/.mcp.json`, '{}', 0o444) // has content: stays
+    h.disk.file(`${ws}/.gitconfig`, '', 0o644) // writable: stays
+    h.disk.file(`${ws}/.ripgreprc`, '', 0o464) // group-writable: stays
+    h.disk.file(`${ws}/.profile`, '', 0o444, 2) // a second link: stays
+    h.disk.fifo(`${ws}/.cursor`, 0o444) // not a regular file: stays
+    h.disk.dir(`${ws}/.gemini`, { mode: 0o555 }) // a directory: stays
+    h.disk.file(`${other}/.envrc`, '', 0o444) // the same name, unrecorded: stays
     h.disk.file('/tmp/claude-http-aa11.sock')
     h.disk.dir('/tmp/srt-obs-AbC123', { mode: 0o700 })
     h.disk.file('/tmp/srt-obs-AbC123/s1.sock')
-    h.disk.dir('/tmp/claude-empty-XyZ789', { mode: 0o700 })
     h.disk.file('/tmp/srt-mux-999-0.sock')
     h.disk.file('/tmp/claude-http-bb22.sock') // unrecorded: another srt user's
     h.disk.file('/tmp/srt-mux-888-0.sock') // unrecorded
@@ -1378,6 +1491,16 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
           'toolu_01.0a0b': [`${ws}/.claude`, `${ws}/.vscode`],
           'toolu_02.0c0d': [`${ws}/.codex`, `${ws}/.idea`],
         },
+        leafMountPoints: {
+          'toolu_01.0a0b': [`${ws}/.envrc`, `${ws}/.zshrc`, `${ws}/.mcp.json`, `${ws}/.gitconfig`],
+          'toolu_02.0c0d': [
+            `${ws}/.ripgreprc`,
+            `${ws}/.profile`,
+            `${ws}/.cursor`,
+            `${ws}/.gemini`,
+            `${ws}/.aws`,
+          ],
+        },
         pid: 999,
         socat: [
           { pid: 4242, command: SOCAT_COMMAND('aa11') },
@@ -1387,31 +1510,51 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
         tmpEntries: [
           '/tmp/claude-http-aa11.sock',
           '/tmp/srt-obs-AbC123',
-          '/tmp/claude-empty-XyZ789',
           '/tmp/srt-mux-999-0.sock',
         ],
       }),
     )
     h.table.push(
+      { pid: 1234, ppid: 1, command: '/usr/lib/systemd/systemd --user' },
       { pid: 4242, ppid: 1, command: SOCAT_COMMAND('aa11') }, // the recorded orphan: killed
       { pid: 4343, ppid: 1, command: '/usr/bin/sleep 600' }, // its pid reused: left alone
-      { pid: 4444, ppid: 777, command: SOCAT_COMMAND('dd44') }, // not orphaned: left alone
+      // An orphan a desktop session's subreaper (`systemd --user`) took in: killed all the same.
+      { pid: 4444, ppid: 1234, command: SOCAT_COMMAND('dd44') },
       { pid: 4545, ppid: 1, command: SOCAT_COMMAND('ee55') }, // unrecorded: left alone
     )
 
     const outcome = await outcomeOf(h)
     expect(outcome.state).toBe('active')
-    expect(h.killed).toEqual([4242])
+    expect(h.killed).toEqual([4242, 4444])
     expect(h.disk.has(`${ws}/.claude`)).toBe(false)
     expect(h.disk.has(`${ws}/.vscode/settings.json`)).toBe(true)
     expect(h.disk.has(`${other}/.claude`)).toBe(true)
     expect(h.disk.has(`${ws}/.codex`)).toBe(true)
     expect(h.disk.lstat(`${ws}/.idea`)?.isSymbolicLink()).toBe(true)
     expect(h.disk.lstat('/home/u/empty-elsewhere')?.isDirectory()).toBe(true)
+    const leaves = [
+      '.envrc',
+      '.zshrc',
+      '.mcp.json',
+      '.gitconfig',
+      '.ripgreprc',
+      '.profile',
+      '.cursor',
+      '.gemini',
+    ]
+    expect(leaves.filter((name) => h.disk.has(`${ws}/${name}`))).toEqual([
+      '.mcp.json',
+      '.gitconfig',
+      '.ripgreprc',
+      '.profile',
+      '.cursor',
+      '.gemini',
+    ])
+    expect(h.disk.text(`${ws}/.mcp.json`)).toBe('{}')
+    expect(h.disk.has(`${other}/.envrc`)).toBe(true)
     for (const gone of [
       '/tmp/claude-http-aa11.sock',
       '/tmp/srt-obs-AbC123',
-      '/tmp/claude-empty-XyZ789',
       '/tmp/srt-mux-999-0.sock',
     ]) {
       expect(h.disk.has(gone)).toBe(false)
@@ -1433,37 +1576,45 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     })
   })
 
-  it("04 验收 9 (startup): a recorded entry outside main's tmpdir, or not of srt's four kinds, is left alone", async () => {
+  it("04 验收 9 (startup): a recorded entry outside main's tmpdir, or not of the three kinds initialize makes (claude-empty-* is a wrap's), is left alone", async () => {
     const h = harness('linux')
-    h.disk.dir('/home/u/x/claude-empty-AbC123', { mode: 0o700 })
-    h.disk.file('/home/u/x/claude-empty-AbC123/keep.md', 'notes')
+    h.disk.dir('/home/u/x/srt-obs-AbC123', { mode: 0o700 })
+    h.disk.file('/home/u/x/srt-obs-AbC123/keep.md', 'notes')
     h.disk.dir('/tmp/notes-AbC123', { mode: 0o700 })
     h.disk.file('/tmp/notes-AbC123/keep.md', 'notes')
+    // srt makes claude-empty-* at a wrap (linux-sandbox-utils.js:400, :2161), never in initialize:
+    // a record that names one names another srt user's.
+    h.disk.dir('/tmp/claude-empty-XyZ789', { mode: 0o700 })
     h.disk.file('/tmp/claude-http-aa11.sock')
     h.disk.file(
       h.at.stubs,
       JSON.stringify({
         pid: 999,
         tmpEntries: [
-          '/home/u/x/claude-empty-AbC123',
+          '/home/u/x/srt-obs-AbC123',
           '/tmp/notes-AbC123',
+          '/tmp/claude-empty-XyZ789',
           '/tmp/claude-http-aa11.sock',
         ],
       }),
     )
     await outcomeOf(h)
     expect({
-      outside: h.disk.has('/home/u/x/claude-empty-AbC123/keep.md'),
+      outside: h.disk.has('/home/u/x/srt-obs-AbC123/keep.md'),
       otherName: h.disk.has('/tmp/notes-AbC123/keep.md'),
+      claudeEmpty: h.disk.has('/tmp/claude-empty-XyZ789'),
       recorded: h.disk.has('/tmp/claude-http-aa11.sock'),
-    }).toEqual({ outside: true, otherName: true, recorded: false })
+    }).toEqual({ outside: true, otherName: true, claudeEmpty: true, recorded: false })
   })
 
-  it("04 验收 9 (startup): another srt user's claude-http and srt-mux entries made in main's tmpdir while initialize runs, and any made after it, are not recorded, nor removed next time", async () => {
+  it("04 验收 9 (startup): another srt user's claude-http, srt-mux, srt-obs and claude-empty entries made in main's tmpdir while initialize runs, and any made after it, are not recorded, nor removed next time", async () => {
     let first = true
     const foreign = [
       '/tmp/claude-http-beef02.sock', // no bridge of ours listens on it
       '/tmp/srt-mux-888-1.sock', // another process's pid
+      '/tmp/srt-obs-Fo7Re1', // its socket listens, under an inode none of main's fds holds
+      '/tmp/srt-obs-Gh3Jk4', // its socket not listed in /proc/net/unix at all
+      '/tmp/claude-empty-Ab12Cd', // srt makes ours at a wrap, never in initialize
       '/tmp/srt-obs-Zz9Yy8', // during the self-test
       '/tmp/claude-http-dead03.sock', // during the self-test
     ]
@@ -1472,6 +1623,12 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
         if (!first) return
         disk.file('/tmp/claude-http-beef02.sock')
         disk.file('/tmp/srt-mux-888-1.sock')
+        disk.dir('/tmp/srt-obs-Fo7Re1', { mode: 0o700 })
+        disk.file('/tmp/srt-obs-Fo7Re1/s99887766.sock')
+        unixRow(disk, '77777', '/tmp/srt-obs-Fo7Re1/s99887766.sock')
+        disk.dir('/tmp/srt-obs-Gh3Jk4', { mode: 0o700 })
+        disk.file('/tmp/srt-obs-Gh3Jk4/s55443322.sock')
+        disk.dir('/tmp/claude-empty-Ab12Cd', { mode: 0o700 })
       },
       duringSelfTest: (disk) => {
         if (!first) return
@@ -1503,26 +1660,63 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     expect(foreign.filter((path) => !h.disk.has(path))).toEqual([])
   })
 
-  it('04 验收 9 (startup): tmpdir entries stay while the run that recorded them is alive; darwin records no socat', async () => {
+  it('04 验收 9 (startup): socat, leaf mount points and tmpdir entries stay while the run that recorded them is alive; a socat whose parent is that run is never killed; darwin records no socat', async () => {
+    const ws = '/home/u/code/app'
+    const record = (pid: number) =>
+      JSON.stringify({
+        pid,
+        socat: [
+          { pid: 4242, command: SOCAT_COMMAND('aa11') },
+          { pid: 4343, command: SOCAT_COMMAND('bb22') },
+        ],
+        leafMountPoints: { 'toolu_01.0a0b': [`${ws}/.envrc`] },
+        tmpEntries: ['/tmp/claude-http-aa11.sock'],
+      })
     const alive = harness('linux')
     alive.disk.file('/tmp/claude-http-aa11.sock')
-    alive.disk.file(
-      alive.at.stubs,
-      JSON.stringify({ pid: 999, tmpEntries: ['/tmp/claude-http-aa11.sock'] }),
+    alive.disk.file(`${ws}/.envrc`, '', 0o444)
+    alive.disk.file(alive.at.stubs, record(999))
+    alive.table.push(
+      { pid: 999, ppid: 1, command: '/opt/Tenon/tenon' },
+      { pid: 4242, ppid: 1, command: SOCAT_COMMAND('aa11') },
+      { pid: 4343, ppid: 999, command: SOCAT_COMMAND('bb22') },
     )
-    alive.table.push({ pid: 999, ppid: 1, command: '/opt/Tenon/tenon' })
     await outcomeOf(alive)
-    expect(alive.disk.has('/tmp/claude-http-aa11.sock')).toBe(true)
+    expect({
+      killed: alive.killed,
+      leaf: alive.disk.has(`${ws}/.envrc`),
+      tmp: alive.disk.has('/tmp/claude-http-aa11.sock'),
+    }).toEqual({ killed: [], leaf: true, tmp: true })
 
-    // The recorder's pid is this process's own: that run is gone.
+    // The recorder's pid is this process's own: that run is gone. Its orphan goes; a socat whose
+    // parent has that pid is this process's child, never the old run's orphan.
     const reused = harness('linux')
     reused.disk.file('/tmp/claude-http-aa11.sock')
-    reused.disk.file(
-      reused.at.stubs,
-      JSON.stringify({ pid: MAIN_PID, tmpEntries: ['/tmp/claude-http-aa11.sock'] }),
+    reused.disk.file(`${ws}/.envrc`, '', 0o444)
+    reused.disk.file(reused.at.stubs, record(MAIN_PID))
+    reused.table.push(
+      { pid: 4242, ppid: 1, command: SOCAT_COMMAND('aa11') },
+      { pid: 4343, ppid: MAIN_PID, command: SOCAT_COMMAND('bb22') },
     )
     await outcomeOf(reused)
-    expect(reused.disk.has('/tmp/claude-http-aa11.sock')).toBe(false)
+    expect({
+      killed: reused.killed,
+      leaf: reused.disk.has(`${ws}/.envrc`),
+      tmp: reused.disk.has('/tmp/claude-http-aa11.sock'),
+    }).toEqual({ killed: [4242], leaf: false, tmp: false })
+
+    // No process table: nothing that waits on it goes.
+    const blind = harness('linux')
+    blind.disk.file(`${ws}/.envrc`, '', 0o444)
+    blind.disk.file(blind.at.stubs, record(999))
+    blind.deps.processes.list = async () => {
+      throw new Error('ps: not found')
+    }
+    await outcomeOf(blind)
+    expect({ killed: blind.killed, leaf: blind.disk.has(`${ws}/.envrc`) }).toEqual({
+      killed: [],
+      leaf: true,
+    })
 
     const darwin = harness('darwin')
     await outcomeOf(darwin)

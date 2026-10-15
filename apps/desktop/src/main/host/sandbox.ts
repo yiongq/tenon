@@ -213,6 +213,25 @@ export interface DesktopSandboxDeps {
   readonly log: SandboxLogger
 }
 
+/**
+ * Linux: the mount points bwrap makes on the host for one wrap (§afterExit「挂载点与残留的记录」).
+ * `dirs` are `stubs.json`'s `mountPoints`, `leaves` its `leafMountPoints`.
+ */
+interface Stubs {
+  /** The first absent level of a deny entry, an intermediate dir: an empty directory. */
+  readonly dirs: readonly string[]
+  /** An absent deny entry itself: an empty file with no write bits (bwrap's ensure_file, 0444). */
+  readonly leaves: readonly string[]
+}
+
+const NO_STUBS: Stubs = { dirs: [], leaves: [] }
+
+/** `stubs.json`'s two maps: srt id → the mount points that wrap recorded. */
+interface StubMaps {
+  readonly dirs: Record<string, string[]>
+  readonly leaves: Record<string, string[]>
+}
+
 /** One restricted wrap, from `wrapWithSandboxArgv` until `violations` hands its results over. */
 interface WrapRecord {
   readonly srtId: string
@@ -222,7 +241,7 @@ interface WrapRecord {
   /** Linux: the links on the deny entries' ways and what `lstat` said before the call. */
   readonly links: readonly { readonly path: string; readonly state: string }[]
   /** Linux: the mount points this wrap recorded in `stubs.json`. */
-  readonly stubs: readonly string[]
+  readonly stubs: Stubs
   readonly kept: SandboxViolation[]
   protectedCount: number
   dropped: number
@@ -258,7 +277,7 @@ export class DesktopSandbox implements HostSandbox {
    * Linux: srt id → the mount points of a wrap that has exited but whose points srt may not have
    * taken away yet; they leave `stubs.json` once they are gone from the host.
    */
-  private readonly exitedStubs = new Map<string, readonly string[]>()
+  private readonly exitedStubs = new Map<string, Stubs>()
   private seenTotal = 0
 
   constructor(deps: DesktopSandboxDeps) {
@@ -385,9 +404,9 @@ export class DesktopSandbox implements HostSandbox {
     // 4. Linux: what the call may leave behind or change on the host (spec「链接」, P7).
     const linux = this.platform === 'linux'
     const srtId = srtIdFor(request.commandId)
-    const stubs = linux ? this.mountPointsOf(plan.filesystem) : []
+    const stubs = linux ? this.mountPointsOf(plan.filesystem) : NO_STUBS
     const links = linux ? plan.links.map((path) => ({ path, state: this.linkState(path) })) : []
-    if (stubs.length > 0) this.editStubs((mounts) => (mounts[srtId] = [...stubs]))
+    if (hasStubs(stubs)) this.editStubs((maps) => setStubs(maps, srtId, stubs))
 
     const record: WrapRecord = {
       srtId,
@@ -459,7 +478,7 @@ export class DesktopSandbox implements HostSandbox {
           })
         }
       }
-      if (record.stubs.length > 0) this.exitedStubs.set(record.srtId, record.stubs)
+      if (hasStubs(record.stubs)) this.exitedStubs.set(record.srtId, record.stubs)
     }
     if (this.exitedStubs.size > 0) this.dropGoneStubs()
     await new Promise((resolve) => setTimeout(resolve, VIOLATION_SETTLE_MS))
@@ -622,26 +641,30 @@ export class DesktopSandbox implements HostSandbox {
   }
 
   /**
-   * §afterExit「挂载点与残留的记录」: each denyWrite entry absent now whose first absent level is an
-   * intermediate directory under this wrap's allowWrite — bwrap makes that level an empty directory
-   * on the host, which srt cannot take away after a SIGKILL. The entry is first resolved the way
-   * srt resolves it before it masks (linux-sandbox-utils.js:2042), so a dangling link on the way
-   * puts the level where srt puts it: under the link's target.
+   * §afterExit「挂载点与残留的记录」: each denyWrite entry absent now whose first absent level has
+   * its parent under this wrap's allowWrite — bwrap makes that level a mount point on the host,
+   * which srt cannot take away after a SIGKILL (linux-sandbox-utils.js:2115-2181): an empty
+   * directory when the level is an intermediate one, an empty read-only file when it is the entry
+   * itself (a leaf). The entry is first resolved the way srt resolves it before it masks (:2042), so
+   * a dangling link on the way puts the level where srt puts it: under the link's target.
    */
-  private mountPointsOf(filesystem: FilesystemTables): string[] {
+  private mountPointsOf(filesystem: FilesystemTables): Stubs {
     const writable = entries(filesystem.allowWrite).flatMap((entry) =>
       typeof entry === 'string' ? [] : [entry.path],
     )
-    const found = new Set<string>()
+    const dirs = new Set<string>()
+    const leaves = new Set<string>()
     for (const entry of entries(filesystem.denyWrite)) {
       if (typeof entry === 'string') continue
       const resolved = this.resolveDenyPath(entry.path)
       if (resolved === undefined) continue
       const first = this.firstAbsent(resolved)
-      if (first === undefined || first === resolved) continue
-      if (writable.some((dir) => within(posix.dirname(first), dir))) found.add(first)
+      if (first === undefined) continue
+      if (!writable.some((dir) => within(posix.dirname(first), dir))) continue
+      if (first === resolved) leaves.add(first)
+      else dirs.add(first)
     }
-    return [...found]
+    return { dirs: [...dirs], leaves: [...leaves] }
   }
 
   /**
@@ -713,8 +736,11 @@ export class DesktopSandbox implements HostSandbox {
     }
   }
 
-  /** `<profile>/sandbox/stubs.json`'s `mountPoints`: srt id → the mount points that wrap recorded. */
-  private editStubs(edit: (mounts: Record<string, string[]>) => void): void {
+  /**
+   * `<profile>/sandbox/stubs.json`'s `mountPoints` and `leafMountPoints`: srt id → the mount points
+   * that wrap recorded. Its other keys stay as they are.
+   */
+  private editStubs(edit: (maps: StubMaps) => void): void {
     const file = stubsFile(this.deps.paths.profileDir)
     let record: Record<string, unknown> = {}
     const text = this.deps.fs.readFile(file)
@@ -726,20 +752,19 @@ export class DesktopSandbox implements HostSandbox {
         this.deps.log(`sandbox: ${file} was not JSON; starting it over`)
       }
     }
-    const mounts = isPlainObject(record['mountPoints'])
-      ? (record['mountPoints'] as Record<string, string[]>)
-      : {}
-    edit(mounts)
-    record['mountPoints'] = mounts
+    const mapAt = (key: string): Record<string, string[]> =>
+      isPlainObject(record[key]) ? (record[key] as Record<string, string[]>) : {}
+    const maps: StubMaps = { dirs: mapAt('mountPoints'), leaves: mapAt('leafMountPoints') }
+    edit(maps)
+    record['mountPoints'] = maps.dirs
+    record['leafMountPoints'] = maps.leaves
     this.deps.fs.mkdirPrivate(posix.dirname(file))
     this.deps.fs.writeFile(file, `${JSON.stringify(record, null, 2)}\n`)
   }
 
   private dropStubs(srtId: string): void {
     try {
-      this.editStubs((mounts) => {
-        delete mounts[srtId]
-      })
+      this.editStubs((maps) => setStubs(maps, srtId, NO_STUBS))
     } catch (error) {
       this.deps.log(`sandbox: stubs.json could not be updated: ${messageOf(error)}`)
     }
@@ -754,22 +779,24 @@ export class DesktopSandbox implements HostSandbox {
    * which srt removes right after — so a point still there is one only startup can clean up.
    */
   private dropGoneStubs(): void {
-    const changed = new Map<string, string[]>()
+    const changed = new Map<string, Stubs>()
     for (const [srtId, stubs] of this.exitedStubs) {
-      const left = stubs.filter((path) => this.isThere(path))
-      if (left.length < stubs.length) changed.set(srtId, left)
+      const left: Stubs = {
+        dirs: stubs.dirs.filter((path) => this.isThere(path)),
+        leaves: stubs.leaves.filter((path) => this.isThere(path)),
+      }
+      if (left.dirs.length < stubs.dirs.length || left.leaves.length < stubs.leaves.length) {
+        changed.set(srtId, left)
+      }
     }
     if (changed.size === 0) return
     for (const [srtId, left] of changed) {
-      if (left.length === 0) this.exitedStubs.delete(srtId)
-      else this.exitedStubs.set(srtId, left)
+      if (hasStubs(left)) this.exitedStubs.set(srtId, left)
+      else this.exitedStubs.delete(srtId)
     }
     try {
-      this.editStubs((mounts) => {
-        for (const [srtId, left] of changed) {
-          if (left.length === 0) delete mounts[srtId]
-          else mounts[srtId] = left
-        }
+      this.editStubs((maps) => {
+        for (const [srtId, left] of changed) setStubs(maps, srtId, left)
       })
     } catch (error) {
       this.deps.log(`sandbox: stubs.json could not be updated: ${messageOf(error)}`)
@@ -834,7 +861,7 @@ export class DesktopSandbox implements HostSandbox {
     const rest = (this.wraps.get(record.commandId) ?? []).filter((other) => other !== record)
     if (rest.length > 0) this.wraps.set(record.commandId, rest)
     else this.wraps.delete(record.commandId)
-    if (record.stubs.length > 0) this.dropStubs(record.srtId)
+    if (hasStubs(record.stubs)) this.dropStubs(record.srtId)
   }
 
   private refuse(request: SandboxRequest, why: string): SandboxUnavailableError {
@@ -952,6 +979,21 @@ function holdsWord(text: string, word: string): boolean {
 
 function within(path: string, dir: string): boolean {
   return dir === '/' || path === dir || path.startsWith(`${dir}/`)
+}
+
+function hasStubs(stubs: Stubs): boolean {
+  return stubs.dirs.length > 0 || stubs.leaves.length > 0
+}
+
+/** One wrap's lists in `stubs.json`; an empty list leaves no key behind. */
+function setStubs(maps: StubMaps, srtId: string, stubs: Stubs): void {
+  for (const [map, list] of [
+    [maps.dirs, stubs.dirs],
+    [maps.leaves, stubs.leaves],
+  ] as const) {
+    if (list.length > 0) map[srtId] = [...list]
+    else delete map[srtId]
+  }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
