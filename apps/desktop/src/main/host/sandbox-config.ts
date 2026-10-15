@@ -432,8 +432,9 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
   const allowWrite = new EntryList()
   if (writable) {
     for (const root of input.workspace) allowWrite.literal(realOf(root.path, ports))
-    for (const dir of presetDirs) allowWrite.literal(dir)
   }
+  // Empty unless the preset is in effect, which already implies workspace-write.
+  for (const dir of presetDirs) allowWrite.literal(dir)
   const allowRead = new EntryList()
   if (input.toolOutputDir !== null) allowRead.literal(realOf(input.toolOutputDir, ports))
 
