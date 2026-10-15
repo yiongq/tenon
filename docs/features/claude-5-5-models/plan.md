@@ -24,16 +24,16 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 步骤
 
-- [ ] 0. owner 定开放问题 1–8。之后按选法同步改 spec 的 `Amends:`、`Replaces:`、§对 01 的修补、§对 02 的修补、§内置模型表的数据改动、§点名、不变量与验收，写 `Revisions:`（日期、各题选法），`Status: ready`。01、02 顶部各加一行 `Amended by:`，正文不动；§点名 里实际触发的各项（推荐项下也有 (b)）都在 02 的那行 `Amended by:` 里点出。开放问题 4 选 A 或 C 时，02 §模型菜单与输入框 里「更多模型 ›」那一行的行末接指针「（<owner 定的日期> 起由 [claude-5-5-models](../../features/claude-5-5-models/spec.md) §替换 02 的表现层条款 取代：括注改为照实列出这一档的行）」，02 顶部加 `Clauses replaced by:`（spec-driven-dev 第三个例外）。
+- [ ] 0. owner 定开放问题 1–8。之后按选法同步改 spec 的 `Amends:`、`Replaces:`、§对 01 的修补、§对 02 的修补、§内置模型表的数据改动、§点名、不变量与验收，写 `Revisions:`（日期、各题选法），`Status: ready`。01、02 顶部各加一行 `Amended by:`，正文不动；§点名 里实际触发的各项（推荐项下有 (a)(b)）连同 owner 的确认都在 02 的那行 `Amended by:` 里点出，owner 不认可的项改走 supersede（spec §点名 的读法）。开放问题 4 选 A 或 C 时，02 §模型菜单与输入框 里「更多模型 ›」那一行的行末接指针「（<owner 定的日期> 起由 [claude-5-5-models](../../features/claude-5-5-models/spec.md) §替换 02 的表现层条款 取代：括注改为照实列出这一档的行）」，02 顶部加 `Clauses replaced by:`（spec-driven-dev 第三个例外）。
 - [ ] 1. 落地前核对，只读公开页面：
-  - 两新行的 `supportsStreamingToolCalls`。核不到的按 01 spec:706「能力不明就关」写 false，spec 记 `Revisions:`。（`displays` 与 `supportsVision` 已由 F18 核过。）
+  - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记 `Revisions:`，并按 01 spec:353「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进本文件。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 5 步的注释。
-- [ ] 2. 类型：packages/kernel/src/provider/types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`、`ThinkingSpec.samplingExact`（按第 0 步的选法），注释引本 spec。
+- [ ] 2. 类型：packages/kernel/src/provider/types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`（`'between_tools'`）；开放问题 3 选 B 或 C 时另加 `ThinkingSpec.samplingExact`（都按第 0 步的选法），注释引本 spec。
   - 测试：由第 3、4、6 步覆盖，本步只跑 `pnpm typecheck`。
-- [ ] 3. Anthropic 编码器：packages/kernel/src/provider/wire/anthropic-messages.ts 的 `thinkingShape` 关思考一支写 `{ type: spec.offType ?? 'disabled' }`（:308-313）；`offType` 为 `between_tools`、关思考且 `tools` 非空时抛 `ProviderInvalidArgumentError`；`ANTHROPIC_MESSAGES_ENCODER.version` 3 → 4（:132；开放问题 1 选 C 时不升，本步只剩测试），上方注释补一句第 4 版改了什么。
+- [ ] 3. Anthropic 编码器：packages/kernel/src/provider/wire/anthropic-messages.ts 的 `thinkingShape` 关思考的 switch（:307-313）只在 `adaptive-gated` 一支写 `{ type: spec.offType ?? 'disabled' }`；`budget`、`adaptive` 两支遇到行上有 `offType` 时抛 `ProviderInvalidArgumentError`（照 :286-292 的表错误写法），否则照旧写 `disabled`；`offType` 为 `between_tools`、关思考且 `tools` 非空时抛 `ProviderInvalidArgumentError`；`ANTHROPIC_MESSAGES_ENCODER.version` 3 → 4（:132；开放问题 1 选 C 时不升，本步只剩测试），上方注释补一句第 4 版改了什么。
   - 测试：
-    - thinking-shapes.test.ts 加两行的关思考用例（验收 2，含带 tools 的拒绝；行先用测试里的本地 `ModelInfo`，第 5 步换成表里的行）；
-    - encoder-version.test.ts 照 M6 对 openai-chat 第 2 行的写法：`ANTHROPIC_ROW` 改成 `adaptive-gated`、`disableMaxEffort: 'high'`、`offType: 'between_tools'`，原来那行留作不带字段的行。第 4 行的金样请求与字段金样请求都改为关思考、不带 `tools`（带 tools 会被上面的检查拒掉），两张表各追加第 4 行。另断言原请求在不带字段的行上仍是第 3 行；`GOLDEN_WIRE_HASH` 仍断言不带字段的行，值不变（验收 4）；
+    - thinking-shapes.test.ts 加两行的关思考用例（验收 2，含带 tools 的拒绝；行先用测试里的本地 `ModelInfo`，第 5 步换成表里的行），另用合成的 budget 行、adaptive 行各带 `offType: 'between_tools'` 测关思考本地拒绝；
+    - encoder-version.test.ts：`ANTHROPIC_ROW`、`goldenRequest`、`fieldsGoldenRequest` 都不动。另加 `BETWEEN_TOOLS_ROW`（`adaptive-gated`、`disableMaxEffort: 'high'`、`offType: 'between_tools'`）和第三个固定请求 `offGoldenRequest`（同样的历史，`thinking: { enabled: false }`，effort `'high'`，不带 `tools`），它有自己的表 `GOLDEN_OFF = { 4: … }`。`GOLDEN['anthropic-messages']` 与 `GOLDEN_FIELDS` 各追加第 4 行，值等于第 3 行。原来按表查重（同表两行同哈希 = 空升版）改为跨表检查：每升一版（v > 1），至少有一张表在 v 的哈希与 v − 1 不同，或 v 是它的第一行；当前版本取所有表的最大版本号。`GOLDEN_WIRE_HASH` 仍断言 `ANTHROPIC_ROW`，值不变（验收 4）；
     - packages/kernel/test/provider/vendor-blocks.test.ts:538 的 `version: 3` 改为 4；
     - packages/kernel/test/provider/definitions.test.ts:851 的 `anthropic-messages' ? 3 : 2` 改为 4，注释补「4 加了 offType」。
     - 改完跑本步的门禁。
@@ -42,16 +42,17 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
     - ② `between_tools` 跳过 `assertMayDisable` → xhigh / max 用例红；
     - ③ 关思考时把 `display` 写进对象 → 红；
     - ④ 版本不加一 → 金样红；
-    - ⑤ 去掉「关思考且 tools 非空」的检查 → 验收 2 带 tools 的用例红。
-- [ ] 4. 采样守卫：packages/kernel/src/provider/wire/shared.ts:225-241 在 `samplingExact` 为 true 时另拒 `top_p !== 0.99` 与 `temperature`、`top_p` 同发。开放问题 3 选 C 时改为对所有 `samplingDefaultsOnly` 的行，同步改 types.ts:117 的注释与 thinking-shapes.test.ts:331-337（spec §点名 (a)）。
-  - 测试：thinking-shapes.test.ts（验收 5），另加一例：只有 `samplingExact`、没有 `samplingDefaultsOnly` 的行不拒。
-  - 突变：① 判定改回 `topP >= 0.99` → `top_p` 1 的用例红；② 去掉同发检查 → 同发用例红；③ 读 `samplingExact` 时不看 `samplingDefaultsOnly` → 上面另加的那例红。
+    - ⑤ 去掉「关思考且 tools 非空」的检查 → 验收 2 带 tools 的用例红；
+    - ⑥ budget / adaptive 两支也写 `offType ?? 'disabled'`、不拒 → 合成行的用例红。
+- [ ] 4. 采样守卫：packages/kernel/src/provider/wire/shared.ts:225-241 按开放问题 3。选 A：所有 `samplingDefaultsOnly` 的行，`top_p` 的判定由 `>= 0.99` 改为 `=== 0.99`，另拒 `temperature` 与 `top_p` 同发；同步改 shared.ts:219-224 与 types.ts:117 的注释、thinking-shapes.test.ts:331-337（spec §点名 (a)）。选 B 或 C：同样的规则只在 `samplingExact` 为 true 时用；选 B 时第 5 步给四行旧行加 `samplingExact`，thinking-shapes.test.ts:331-337 同样改。
+  - 测试：thinking-shapes.test.ts（验收 5）。选 B 或 C 时另加：只有 `samplingExact`、没有 `samplingDefaultsOnly` 的行不拒；有 `samplingDefaultsOnly`、没有 `samplingExact` 的行（C 下用 Opus 5.5，B 下用合成行）单独带 `top_p` 1、`top_p` 0.995 都不抛。
+  - 突变：① 判定改回 `topP >= 0.99` → `top_p` 1 的用例红；② 去掉同发检查 → 同发用例红；选 B 或 C 时另有 ③ 读 `samplingExact` 时不看 `samplingDefaultsOnly` → 「只有 `samplingExact`」那例红；④ 精确的 `top_p` 判定不看 `samplingExact`（同发检查仍看）→ 「没有 `samplingExact` 的行收 `top_p` 1」那例红。
 - [ ] 5. 数据与文案：packages/kernel/src/provider/definitions/anthropic.ts 加两行（取值见 spec §内置模型表的数据改动，加第 1 步的结果），行序与 `listing` 照开放问题 4。注释按 spec 数据表「注释」一行改：文件头记 2026-10-15 的来源；`thinkingSpec` 注释段；Sonnet 5、Haiku 4.5 的 Legacy 一句；Haiku 4.5 的核查日期，5 选 A 时还有 A16 那一句。apps/desktop/src/i18n/locales/zh-CN/common.json 与 en/common.json 的 `model.name`、`model.purpose` 加新键、按开放问题 4 改值。
   - 测试：
-    - definitions.test.ts（验收 1）：改「puts Opus 5.5 first」与「declares each Anthropic row’s thinking mode」两条的期望表；「M6 不变量 17」的 flagged 表与逐行判断补两新行；加两行的整行断言，以及 `offType`、`samplingExact`、`longPrompt` 的表规则；
+    - definitions.test.ts（验收 1）：改「puts Opus 5.5 first」与「declares each Anthropic row’s thinking mode」两条的期望表；「M6 不变量 17」的 flagged 表与逐行判断补两新行；加两行的整行断言，以及 `offType`、`longPrompt` 的表规则（开放问题 3 选 B 或 C 时还有 `samplingExact`）；
     - thinking-shapes.test.ts 把第 3、4 步的用例换成表里的行；
     - thinking-default.test.ts（验收 6）；compaction.test.ts（验收 3）；copy-coverage.test.ts（验收 8）；search-backends.test.ts（验收 10，用改了 id 的 Sonnet 5.5 行）；
-    - apps/desktop/test/model-selection.test.ts:144-152 的 `listing` 期望按开放问题 4 改（4A 下 Sonnet 5 是 `'more'`）；
+    - apps/desktop/test/model-selection.test.ts:144-152 的 `listing` 期望按开放问题 4 改（4A 下 Sonnet 5 是 `'more'`）；:153-157 用 `row.id.startsWith('claude-haiku')` 找 Haiku 4.5，新行排在它前面时会先找到有五档的 Haiku 5.5，改成 `row.id === 'claude-haiku-4-5-20251001'`，另加一条断言 Haiku 5.5 的 `effortLevels` 是 low…max、`defaultEffort` 是 `'medium'`；
     - model-menu.spec.ts（验收 9）。4A 下，:63-83、:188、:519 三处直接在主列表点或断言 Sonnet 5、Haiku 4.5 的行，改成先点 `model-more`，或者换成新行；:81「Haiku thinks on a budget」是 budget 模式在界面上唯一的覆盖，要留着；
     - 4B 下 text-fit-02.spec.ts:58 的行数 5 改为 7；
     - Haiku 4.5 行除注释与 `listing` 外不变、`modelWireHash` 不变（验收 11）。
@@ -61,11 +62,11 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 突变：① `>` 改 `>=` → 恰为 100 000 的用例红；② 提示长度只算 `input` → 靠缓存读推过阈值的用例红；③ 只有输入按高档、输出仍按低档 → 红；④ 档内缺缓存价时退回基础档的缓存价 → 档内缺缓存价的用例红。
 - [ ] 7. 〔开放问题 6 选 A〕官方 live 冒烟（验收 12）。先提醒 owner 钥匙串会弹窗。
   - 官方组两次，`TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL` 分别取 `claude-sonnet-5-5`、`claude-haiku-5-5`（命令见上，带 `--grep`，不连带跑搜索探测、前缀探测和智谱各组）。
-  - apps/desktop/e2e/live-official-agent.spec.ts 照「Opus 5.5 performs actual threshold compaction in the product loop」加两例。官方协议接缝都用 `record` 模式：`strict` 会把 `thinking` 改写成带 `block_binding` 的 adaptive（apps/desktop/src/main/host/official-protocol-test-seam.ts:52-58），盖掉 `between_tools`。
-    - 「Sonnet 5.5 performs actual threshold compaction after choosing low effort」：第一轮之后用 `session.selectModel` 把 effort 设成 `'low'`（文件里的 `choose()` 传的是 `effort: null`，这里另传 low），再跑两轮，然后照原例带 `TENON_E2E_COMPACTION_THRESHOLD=1` 重启触发压缩。断言：之后的主请求带 `low`；摘要请求的 `thinking` 是 `{ type: 'between_tools' }`、effort `high`、返回 200。
-    - 「Haiku 5.5 performs actual threshold compaction at its default effort」：不选档。断言摘要请求是 `{ type: 'disabled' }` 加 `high`、返回 200。
-  - 同一文件加一例「Sonnet 5.5 and Haiku 5.5 record cache reads and thinking text」，record 模式，两个模型各发两次 live-provider.spec.ts:1699 那道约数题（要推理）。从 `tapeFacts(userData)` 读：
-    - 第二个请求先断言提示长度（input + cacheRead + cacheWrite）大于 512（F20），再断言 `provider/attempt_completed` 的 `usage.cacheReadTokens` 大于 0；
+  - apps/desktop/e2e/live-official-agent.spec.ts 照「Opus 5.5 performs actual threshold compaction in the product loop」加两例。官方协议接缝都用 `record` 模式：`strict` 会把 `thinking` 改写成带 `block_binding` 的 adaptive（apps/desktop/src/main/host/official-protocol-test-seam.ts:52-58），盖掉 `between_tools`；`evidence()` 相应传 `strict: false`。两例都在压缩前先跑一轮工具调用：照「performs a real WebSearch round trip and workspace Read smoke」那例，`startTask` 进一个工作区，让模型 Read 一个文件一次并 `allow`，这样摘要请求会回放一对 tool_use / tool_result（生产里最常见的形态；原 Opus 例每轮都不用工具，没覆盖到）。判据分两处读（spec 验收 12）：
+    - 「Sonnet 5.5 performs actual threshold compaction after choosing low effort」：Read 那一轮之后用 `session.selectModel` 把 effort 设成 `'low'`（文件里的 `choose()` 传的是 `effort: null`，这里另传 low），再跑两轮，然后照原例带 `TENON_E2E_COMPACTION_THRESHOLD=1` 重启触发压缩。线上（重启后 `evidence(app, false, journal)` 的 `last.wire[0]` 是摘要请求）：`body.tools` 没有，`body.thinking` 是 `{ type: 'between_tools' }`，`body.output_config.effort === 'high'`，`status === 200`。Tape：摘要 attempt（`provider/attempt_completed` 带 `compaction` 的那条）的快照是 `{ thinking: { enabled: false }, effort: 'high' }`；压缩后主请求的快照带 `effort: 'low'`。
+    - 「Haiku 5.5 performs actual threshold compaction at its default effort」：同样先跑 Read 一轮，不选档。线上：摘要请求不带 `tools`，`body.thinking` 是 `{ type: 'disabled' }`，effort `high`，`status === 200`。Tape：摘要 attempt 的快照同上。
+  - 同一文件加一例「Sonnet 5.5 and Haiku 5.5 record cache reads and thinking text」，record 模式，两个模型各发两次一道要推理、不用工具的题，例如「Determine how many positive integers below 500 have exactly six positive divisors, and how many of those are odd. Do not use tools. Reply with the two numbers, then DIVISORS_DONE.」，用 `completed(page, 'DIVISORS_DONE')` 等。不照搬 live-provider.spec.ts:1699 的原题：它要求调 `lookup`，那是裸协议测试自己定义的工具，产品循环里没有。从 `tapeFacts(userData)` 读：
+    - 第一个请求先断言提示长度（input + cacheRead + cacheWrite）大于 512（F20）、`usage.cacheWriteTokens` 大于 0，再断言第二个请求 `provider/attempt_completed` 的 `usage.cacheReadTokens` 大于 0；
     - 消息里出现思考块时，文本非空。
   - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。
   - 记进本文件：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读。不记 key。
@@ -82,3 +83,4 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 - 2026-10-15：spec 与本计划起草完，等 owner 定开放问题 1–8。代码没动。
 - 2026-10-15：按评审就地修订 spec 与本计划（spec `Revisions:` ①–⑨）。代码没动。
+- 2026-10-15：按第二轮评审就地修订 spec 与本计划（spec `Revisions:` ⑩–⑮）：第 1、3、4、5、7 步随改。代码没动。
