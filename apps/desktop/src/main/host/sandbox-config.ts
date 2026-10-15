@@ -219,16 +219,35 @@ export class SandboxConfigError extends Error {
   }
 }
 
+/** One variable a preset row sets (读法 47). */
+export interface PresetVariable {
+  readonly name: string
+  /** The variable points at the manager's dir, or at this sub-directory of it. */
+  readonly subdir: string | null
+}
+
 /** One row of the 「包管理器」 preset (§网络白名单; P4). */
 export interface PackageManagerPreset {
   /** Also its directory's name under `<userData>/sandbox-cache/`. */
   readonly manager: 'npm' | 'pnpm' | 'pip' | 'uv' | 'cargo'
   readonly platforms: readonly SandboxPlatform[]
   readonly domains: readonly string[]
-  readonly variable: string
-  /** The variable points at the manager's dir, or at this sub-directory of it. */
-  readonly variableSubdir: string | null
+  /** All under the manager's dir (读法 49, 04 不变量 3). */
+  readonly variables: readonly PresetVariable[]
 }
+
+/**
+ * pnpm's store, cache and state, each in both spellings: pnpm 10 and older read `npm_config_*`,
+ * 11 and later only `pnpm_config_*` (P4: the three set together leave no denied write).
+ */
+const PNPM_VARIABLES: readonly PresetVariable[] = [
+  { name: 'npm_config_store_dir', subdir: 'store' },
+  { name: 'npm_config_cache_dir', subdir: 'cache' },
+  { name: 'npm_config_state_dir', subdir: 'state' },
+  { name: 'pnpm_config_store_dir', subdir: 'store' },
+  { name: 'pnpm_config_cache_dir', subdir: 'cache' },
+  { name: 'pnpm_config_state_dir', subdir: 'state' },
+]
 
 /** The preset table; settings and the UI read this same constant (step 13a). */
 export const PACKAGE_MANAGER_PRESETS: readonly PackageManagerPreset[] = [
@@ -236,36 +255,31 @@ export const PACKAGE_MANAGER_PRESETS: readonly PackageManagerPreset[] = [
     manager: 'npm',
     platforms: ['darwin', 'linux'],
     domains: ['registry.npmjs.org'],
-    variable: 'npm_config_cache',
-    variableSubdir: null,
+    variables: [{ name: 'npm_config_cache', subdir: null }],
   },
   {
     manager: 'pnpm',
     platforms: ['darwin', 'linux'],
     domains: ['registry.npmjs.org'],
-    variable: 'npm_config_store_dir',
-    variableSubdir: 'store',
+    variables: PNPM_VARIABLES,
   },
   {
     manager: 'pip',
     platforms: ['linux'],
     domains: ['pypi.org', 'files.pythonhosted.org'],
-    variable: 'PIP_CACHE_DIR',
-    variableSubdir: null,
+    variables: [{ name: 'PIP_CACHE_DIR', subdir: null }],
   },
   {
     manager: 'uv',
     platforms: ['darwin', 'linux'],
     domains: ['pypi.org', 'files.pythonhosted.org'],
-    variable: 'UV_CACHE_DIR',
-    variableSubdir: null,
+    variables: [{ name: 'UV_CACHE_DIR', subdir: null }],
   },
   {
     manager: 'cargo',
     platforms: ['darwin', 'linux'],
     domains: ['index.crates.io', 'static.crates.io'],
-    variable: 'CARGO_HOME',
-    variableSubdir: null,
+    variables: [{ name: 'CARGO_HOME', subdir: null }],
   },
 ]
 
@@ -604,7 +618,9 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
   const env: Record<string, string> = {}
   presets.forEach((row, i) => {
     const dir = presetDirs[i] as string
-    env[row.variable] = row.variableSubdir === null ? dir : `${dir}/${row.variableSubdir}`
+    for (const { name, subdir } of row.variables) {
+      env[name] = subdir === null ? dir : `${dir}/${subdir}`
+    }
   })
 
   return {

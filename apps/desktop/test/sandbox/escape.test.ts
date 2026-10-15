@@ -118,12 +118,22 @@ const PRESET_VARIABLES: Readonly<Record<'darwin' | 'linux', Readonly<Record<stri
   darwin: {
     npm_config_cache: 'npm',
     npm_config_store_dir: 'pnpm/store',
+    npm_config_cache_dir: 'pnpm/cache',
+    npm_config_state_dir: 'pnpm/state',
+    pnpm_config_store_dir: 'pnpm/store',
+    pnpm_config_cache_dir: 'pnpm/cache',
+    pnpm_config_state_dir: 'pnpm/state',
     UV_CACHE_DIR: 'uv',
     CARGO_HOME: 'cargo',
   },
   linux: {
     npm_config_cache: 'npm',
     npm_config_store_dir: 'pnpm/store',
+    npm_config_cache_dir: 'pnpm/cache',
+    npm_config_state_dir: 'pnpm/state',
+    pnpm_config_store_dir: 'pnpm/store',
+    pnpm_config_cache_dir: 'pnpm/cache',
+    pnpm_config_state_dir: 'pnpm/state',
     PIP_CACHE_DIR: 'pip',
     UV_CACHE_DIR: 'uv',
     CARGO_HOME: 'cargo',
@@ -476,6 +486,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       const request = lab.requestEnv({
         NPM_CONFIG_CACHE: '/elsewhere/npm',
         Uv_Cache_Dir: '/elsewhere/uv',
+        PNPM_CONFIG_STORE_DIR: '/elsewhere/pnpm',
       })
       const presets = PRESET_VARIABLES[DARWIN ? 'darwin' : 'linux']
 
@@ -498,6 +509,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       )
       expect(off.get('NPM_CONFIG_CACHE')).toBe('/elsewhere/npm')
       expect(off.get('Uv_Cache_Dir')).toBe('/elsewhere/uv')
+      expect(off.get('PNPM_CONFIG_STORE_DIR')).toBe('/elsewhere/pnpm')
       for (const name of Object.keys(presets)) expect(off.has(name)).toBe(false)
     },
     CASE_MS,
