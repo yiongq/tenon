@@ -1,10 +1,10 @@
 # 模型显示名
 
-Status: draft
+Status: implemented
 Kind: features
-Owner: 起草在 Claude Code（2026-10-15），为已落在 `38d4a1b`（feat/ux-craft）的 `ModelInfo.nameKey` / `provider.list` 行的 `nameKey` 补写 amendment；owner 尚未接受，在本 PR 评审中接受或驳回
+Owner: 起草在 Claude Code（2026-10-15），为已落在 `38d4a1b`（feat/ux-craft）的 `ModelInfo.nameKey` / `provider.list` 行的 `nameKey` 补写 amendment；owner 2026-10-15 在 PR #46 评审中接受
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层（`ModelInfo`）；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2 小节的 `ModelInfo`、第 6 小节的 `provider.list`）、§界面范围 §模型菜单与输入框 的「位置与触发器」「每一行」「设置卡」三条。只增不改，全文见 §对 01 的修补、§对 02 的修补
-Revisions: 2026-10-15 同日评审后改三处——① `Status` 由 `implemented` 改回 `draft`、`Owner` 行改写：原 Owner 行称 owner 当天对评审意见「都按推荐」、即接受了补写本 spec；据评审核实，那句话是对评审之前另一份清单说的，本 spec 未经 owner 接受；② 引用 02 的位置由行号（加 `Amended by:` 之前的编号，落地当天就错了一行）改为「节名 + 引文」；③ `Amends:` 补上本 spec 实际加了读法的「位置与触发器」「设置卡」两条，验收 3 改引实际断言这些的测试
+Revisions: 2026-10-15 同日评审后改三处——① `Status` 由 `implemented` 改回 `draft`、`Owner` 行改写：原 Owner 行称 owner 当天对评审意见「都按推荐」、即接受了补写本 spec；据评审核实，那句话是对评审之前另一份清单说的，本 spec 未经 owner 接受；② 引用 02 的位置由行号（加 `Amended by:` 之前的编号，落地当天就错了一行）改为「节名 + 引文」；③ `Amends:` 补上本 spec 实际加了读法的「位置与触发器」「设置卡」两条，验收 3 改引实际断言这些的测试；2026-10-15 owner 在 PR #46 评审中接受，`Status` 改为 `implemented`
 
 ## 背景
 
