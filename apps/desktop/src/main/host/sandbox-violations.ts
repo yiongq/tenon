@@ -20,8 +20,8 @@
  *    forgeable syscall, and the context carries no platform to tell them apart (on Linux nothing
  *    may earn a path release). The cost: on macOS a process whose name starts with `deny ` (the
  *    sandboxed program picks the basename) has its real denials read as unrecognized lines, as
- *    the spec already accepts for a name with parentheses (plan Open 2026-10-15「进程名以 deny
- *    开头的 Seatbelt 行」). Nor is one holding a control character (srt cuts the log at newlines
+ *    the spec already accepts for a name with parentheses (spec §afterExit, after the table).
+ *    Nor is one holding a control character (srt cuts the log at newlines
  *    and its store turns the rest into spaces), a `Sandbox:` anywhere (读法 44), or a second
  *    `(<pid>) deny(1) `: the process name holds no parentheses, and a name that does must not
  *    make the line read as another operation.
@@ -91,14 +91,14 @@ const FILE_WRITE = /^file-write-[a-z]+(?:-[a-z]+)*$/
 const FILE_READ = /^file-read-[a-z]+(?:-[a-z]+)*$/
 /**
  * srt's isValidHost charset for a name (parent-proxy.js:369-381); an IP literal is checked apart.
- * A host outside it gets no target, past the spec table's "the host name, normalized" (plan Open
- * 2026-10-15「HOST_NAME 外的主机名不给 target」).
+ * A host outside it gets no target, and the receipt counts it among the lines with no object
+ * (spec §afterExit, the table's first row).
  */
 const HOST_NAME = /^[A-Za-z0-9._-]+$/
 /**
  * A plain domain srt's config schema takes as an allowedDomains entry: at least one dot, neither
- * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label. Past the spec
- * table's "a domain, not localhost" (plan Open 2026-10-15「域名按钮只给 srt schema 收的名字」).
+ * first nor last (srt79 sandbox-config.js:20-56); Tenon also refuses an empty label (spec
+ * §afterExit, the table's first row).
  */
 const DOMAIN_NAME = /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)+$/
 
@@ -314,10 +314,9 @@ function writeDenial(line: string, target: string, context: ViolationContext): S
  * path, that is not an existing directory and is neither `/`, the home or profile directory, any
  * denyRead or denyWrite entry, nor an ancestor of one. Seatbelt allows a whole subtree, so a
  * denial on an ancestor (`chmod 700 ~`, a name cut at a newline) must never become the release.
- * An existing link is refused too, past 读法 35's "not an existing directory": allowWrite gets
- * real paths only, so a link to a directory (`/tmp`, `~/bin`; srt's store drops `<>`, so
- * `touch '/tmp<'` names it) would give its target's whole subtree (plan Open 2026-10-15「已存在的
- * 链接不给仅此路径」).
+ * An existing link is refused too (读法 35): allowWrite gets real paths only, so a link to a
+ * directory (`/tmp`, `~/bin`; srt's store drops `<>`, so `touch '/tmp<'` names it) would give
+ * its target's whole subtree.
  *
  * `DesktopSandbox.wrap` runs the same check on each workspace item outside the session's folders
  * (读法 35: the kernel checks a release, the host checks again on its own).

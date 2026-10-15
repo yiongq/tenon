@@ -6,7 +6,7 @@ Files copied or adapted from the following projects keep their original copyrigh
 
 - DeepChat (ThinkInAIXYZ/deepchat) — Apache-2.0
 - Goose (aaif-goose/goose, formerly block/goose) — Apache-2.0
-- sandbox-runtime (anthropic-experimental/sandbox-runtime) — Apache-2.0
+- sandbox-runtime (anthropics/sandbox-runtime, formerly anthropic-experimental/sandbox-runtime) — Apache-2.0
 - knowledge-work-plugins (anthropics/knowledge-work-plugins) — Apache-2.0
 
 This product bundles the following fonts as the Latin-subset variable woff2 files of the
