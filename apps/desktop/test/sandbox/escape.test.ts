@@ -10,8 +10,17 @@
  * lists and violation shapes below are literals from the spec, never computed by the code under
  * test; paths the host logs are compared with `realpath` of the test's own directories.
  */
-import { readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
-import { join } from 'node:path'
+import {
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  symlinkSync,
+} from 'node:fs'
+import { dirname, join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   DARWIN,
@@ -30,6 +39,7 @@ import {
   writeHostFile,
   type HttpFixture,
   type Ran,
+  type RunOptions,
   type SandboxLab,
   type SandboxRig,
 } from './support.js'
@@ -190,12 +200,43 @@ function curlViaProxy(url: string, extra = ''): string {
   )
 }
 
-/** The proxy port in the command's own HTTP_PROXY, never the URL itself (its token, 04 不变量 12). */
-const PRINT_PROXY_PORT = 'echo "proxy_port=${HTTP_PROXY##*:}"'
+/**
+ * The host port of srt's HTTP proxy as the command sees it, never the URL itself (its token, 04
+ * 不变量 12): on Linux HTTP_PROXY is socat's `localhost:3128` inside the sandbox and the host port is
+ * in CLAUDE_CODE_HOST_HTTP_PROXY_PORT (srt79 linux-sandbox-utils.js:2720, :2744); on macOS
+ * HTTP_PROXY names it.
+ */
+const PRINT_PROXY_PORT = 'echo "proxy_port=${CLAUDE_CODE_HOST_HTTP_PROXY_PORT:-${HTTP_PROXY##*:}}"'
 
 /** What `PRINT_PROXY_PORT` printed. */
 function proxyPortOf(ran: Ran): string | undefined {
   return /^proxy_port=(\d+)$/m.exec(ran.stdout)?.[1]
+}
+
+/** A violation as the receipt reads it (§afterExit 的表), every member spelled out. */
+type Shape = ReturnType<typeof shapeOf>
+
+/**
+ * A refused file operation's Seatbelt violation (§afterExit 的表): the real path, `path` only where
+ * 读法 35 allows it, `protected` for a write on a denyWrite entry or a read of the profile.
+ */
+function fsRefusal(target: string, release: 'path' | null, isProtected: boolean): Shape {
+  return { kind: 'fs', target, release, protected: isProtected, observed: false }
+}
+
+/** The Linux observer's line for a refused write on a denyWrite entry, as the command spelled it. */
+function observedProtected(target: string): Shape {
+  return { kind: 'fs', target, release: null, protected: true, observed: true }
+}
+
+/** One command appending to each of `names` under `root`, its directory made first if missing. */
+function writesTo(root: string, names: readonly string[]): string {
+  return names
+    .map(
+      (name) =>
+        `mkdir -p ${shq(join(root, dirname(name)))} 2>/dev/null; echo ${WRITTEN} >> ${shq(join(root, name))}`,
+    )
+    .join('; ')
 }
 
 /** Runs `attempt` up to three times on macOS (once on Linux) until `ok` holds; the last run. */
@@ -208,6 +249,28 @@ async function upToThree(attempt: () => Promise<Ran>, ok: (ran: Ran) => boolean)
     ran = await attempt()
   }
   return ran
+}
+
+/**
+ * Puts the `/tmp/claude` set aside at `aside` back. The one made meanwhile goes only when nothing is
+ * left in it once this case's own file (`made`, which the command removed already) is gone, and
+ * never recursively: anything else in it is another srt user's. Otherwise both stay and the case
+ * fails, naming them.
+ */
+function putTmpClaudeBack(tmpClaude: string, aside: string, made: string | undefined): void {
+  if (made !== undefined) rmSync(made.replace(/^\/tmp\/claude\//, `${tmpClaude}/`), { force: true })
+  if (hostKind(tmpClaude) !== 'missing') {
+    try {
+      rmdirSync(tmpClaude)
+    } catch (error) {
+      throw new Error(
+        `${tmpClaude} holds what someone else wrote while the original was set aside; both are left ` +
+          `as they are: merge them and move the original back from ${aside}`,
+        { cause: error },
+      )
+    }
+  }
+  renameSync(aside, tmpClaude)
 }
 
 /** The env a command printed with `env -0`. */
@@ -443,25 +506,32 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     '04 验收 10: with no /tmp/claude beforehand, mktemp "$TMPDIR/x.XXXXXX" succeeds',
     async () => {
       const { lab, ws } = workspaceLab()
-      // srt's TMPDIR, shared with every srt user on the machine: one already there is set aside and
-      // put back, never deleted.
+      // srt's TMPDIR, shared with every srt user on the machine (Claude Code's sandbox among them):
+      // one already there is set aside for this one call and put back. The one this call made is
+      // removed only when it holds nothing but what this case wrote; anything else in it is someone
+      // else's, and then both stay for a person to merge. The case assumes no other srt user writes
+      // there meanwhile; under S, stop-tree.test.ts's wraps run in parallel and may make it again.
       const tmpClaude = DARWIN ? '/private/tmp/claude' : '/tmp/claude'
       const aside = `${tmpClaude}.tenon-escape-${String(process.pid)}`
       const hadOne = hostKind(tmpClaude) !== 'missing'
       if (hadOne) renameSync(tmpClaude, aside)
+      let made: string | undefined
       try {
-        expect(hostKind(tmpClaude)).toBe('missing')
+        if (hostKind(tmpClaude) !== 'missing') {
+          throw new Error(
+            `${tmpClaude} is there again right after it was set aside: another srt user or a wrap ` +
+              'in parallel (stop-tree.test.ts under S) made it',
+          )
+        }
         const ran = await lab.run(
           'u=$(mktemp "$TMPDIR/x.XXXXXX") && echo "made $u" && rm -f "$u"; echo "tmpdir=$TMPDIR"',
           { workspace: [ws] },
         )
+        made = /^made (\/tmp\/claude\/x\.\S{6})$/m.exec(ran.stdout)?.[1]
         expect(ran.stdout).toMatch(/^tmpdir=\/tmp\/claude$/m)
-        expect(ran.stdout).toMatch(/^made \/tmp\/claude\/x\.\S{6}$/m)
+        expect(made).toBeDefined()
       } finally {
-        if (hadOne) {
-          rmSync(tmpClaude, { recursive: true, force: true })
-          renameSync(aside, tmpClaude)
-        }
+        if (hadOne) putTmpClaudeBack(tmpClaude, aside, made)
       }
     },
     CASE_MS,
@@ -579,7 +649,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   }
 
   it.skipIf(!DARWIN)(
-    '04 验收 11 (darwin): a protected name that is itself a link (.envrc to an outside file) can be neither removed nor moved and rewritten; link and target stay',
+    '04 验收 11: (darwin) a protected name that is itself a link (.envrc to an outside file) can be neither removed nor moved and rewritten; link and target stay',
     async () => {
       const { target, runs } = await replaceLinkedEnvrc()
       expect(readFileSync(target, 'utf8')).toBe('ORIGINAL_ENVRC\n')
@@ -598,7 +668,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   )
 
   it.skipIf(DARWIN)(
-    '04 验收 11 (linux): a protected name that is itself a link (.envrc to an outside file) removed or moved and rewritten leaves one protected violation targeting it; the target stays',
+    '04 验收 11: (linux) a protected name that is itself a link (.envrc to an outside file) removed or moved and rewritten leaves one protected violation targeting it; the target stays',
     async () => {
       const { ws, target, runs } = await replaceLinkedEnvrc()
       expect(readFileSync(target, 'utf8')).toBe('ORIGINAL_ENVRC\n')
@@ -654,7 +724,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   }
 
   it.skipIf(!DARWIN)(
-    '04 验收 11 (darwin): a link on a deny entry’s way (~/.docker, the home being the workspace) can be neither removed nor moved and replaced; link and target stay',
+    '04 验收 11: (darwin) a link on a deny entry’s way (~/.docker, the home being the workspace) can be neither removed nor moved and replaced; link and target stay',
     async () => {
       const { target, runs } = await replaceLinkedDocker()
       expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
@@ -669,7 +739,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   )
 
   it.skipIf(DARWIN)(
-    '04 验收 11 (linux): a link on a deny entry’s way (~/.docker, the home being the workspace) removed or moved and replaced leaves one protected violation targeting it; the target stays',
+    '04 验收 11: (linux) a link on a deny entry’s way (~/.docker, the home being the workspace) removed or moved and replaced leaves one protected violation targeting it; the target stays',
     async () => {
       const { home, target, runs } = await replaceLinkedDocker()
       expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
@@ -726,12 +796,16 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   )
 
   it(
-    '04 验收 12: writes to the workspace root’s .envrc, .claude/settings.json (absent before), .zshrc, .git/hooks/x, .mcp.json and .vscode/tasks.json are refused and leave nothing on the host',
+    '04 验收 12: writes to the workspace root’s .envrc, .claude/settings.json (absent before, .claude/ there), .zshrc, .git/hooks/x, .mcp.json and .vscode/tasks.json are refused and leave nothing on the host',
     async () => {
       const { lab, ws } = workspaceLab()
       writeHostFile(join(ws, '.zshrc'), 'ORIGINAL_ZSHRC\n')
       // Linux denies the .git pair only where .git is a directory (§档位到 srt 配置).
       makeDir(join(ws, '.git'))
+      // A project's .claude/ is usually there already. Without it the write would fail on .claude
+      // itself (srt's rule on the ancestors of .claude/commands and .claude/agents on macOS, their
+      // read-only mount point on Linux), and settings.json's own entry would go untested.
+      makeDir(join(ws, '.claude'))
       const targets = [
         '.envrc',
         '.claude/settings.json',
@@ -755,7 +829,6 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         expect(hostKind(join(ws, name))).toBe(name === '.zshrc' ? 'file' : 'missing')
       }
       expect(readFileSync(join(ws, '.zshrc'), 'utf8')).toBe('ORIGINAL_ZSHRC\n')
-      expect(hostKind(join(ws, '.claude'))).toBe('missing')
     },
     CASE_MS,
   )
@@ -766,6 +839,10 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       const lab = rig.lab()
       lab.folders = [lab.home]
       const keys = writeHostFile(join(lab.home, '.ssh/authorized_keys'), 'ORIGINAL_KEYS\n')
+      // A real home has ~/Library/LaunchAgents. Without Library/ the write would fail on Library
+      // itself (srt's rule on the ancestors of the credential list's Library entries, macOS), and
+      // the LaunchAgents entry would go untested.
+      makeDir(join(lab.home, 'Library/LaunchAgents'))
       const agent = join(lab.home, 'Library/LaunchAgents/x.plist')
       const ran = await lab.run(
         [
@@ -786,8 +863,56 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     CASE_MS,
   )
 
+  it(
+    '04 验收 12: with the test home as the workspace and no .ssh, .gnupg, .netrc or .git-credentials beforehand, making them is refused and leaves nothing on the host',
+    async () => {
+      // A denyRead entry that does not exist yet: Linux mounts nothing for it on the read side
+      // (only a directory that exists becomes a tmpfs), so only denyWrite, which takes in denyRead
+      // (§档位到 srt 配置), keeps the command from making it in a workspace that holds it.
+      const lab = rig.lab()
+      lab.folders = [lab.home]
+      const made = ['.ssh/authorized_keys', '.gnupg/gpg.conf', '.netrc', '.git-credentials']
+      const ran = await lab.run(
+        [
+          ...made.map(
+            (name) =>
+              `mkdir -p "$HOME/${dirname(name)}" 2>/dev/null; echo ${WRITTEN} >> "$HOME/${name}"; echo "${name}=$?"`,
+          ),
+          `echo ok > "$HOME/normal.txt"; echo normal=$?`,
+        ].join('; '),
+        { workspace: [lab.home], cwd: lab.home },
+      )
+      expect(ran.stdout).toMatch(/^normal=0$/m)
+      for (const name of made) {
+        expect(ran.stdout).toMatch(new RegExp(`^${name.replaceAll('.', '\\.')}=[1-9]`, 'm'))
+        expect(hostKind(join(lab.home, name))).toBe('missing')
+      }
+      expect(hostKind(join(lab.home, '.ssh'))).toBe('missing')
+      expect(hostKind(join(lab.home, '.gnupg'))).toBe('missing')
+    },
+    CASE_MS,
+  )
+
   it.skipIf(!DARWIN)(
-    '04 验收 12 (darwin): on the case-insensitive volume, .ENVRC and .Claude/settings.json, absent before, are refused',
+    '04 验收 12: (darwin) .envrc and .mcp.json in a subdirectory of the workspace are refused (the per-root glob)',
+    async () => {
+      const { lab, ws } = workspaceLab()
+      makeDir(join(ws, 'sub'))
+      const ran = await lab.run(
+        `echo ${WRITTEN} > sub/.envrc; echo envrc=$?; echo ${WRITTEN} > sub/.mcp.json; echo mcp=$?; echo ok > sub/normal.txt; echo normal=$?`,
+        { workspace: [ws] },
+      )
+      expect(ran.stdout).toMatch(/^envrc=[1-9]/m)
+      expect(ran.stdout).toMatch(/^mcp=[1-9]/m)
+      expect(ran.stdout).toMatch(/^normal=0$/m)
+      expect(hostKind(join(ws, 'sub/.envrc'))).toBe('missing')
+      expect(hostKind(join(ws, 'sub/.mcp.json'))).toBe('missing')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    '04 验收 12: (darwin) on the case-insensitive volume, .ENVRC and .Claude/settings.json, absent before, are refused',
     async () => {
       const { lab, ws } = workspaceLab()
       const ran = await lab.run(
@@ -875,6 +1000,8 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     async () => {
       const { lab, ws } = workspaceLab()
       rig.setAllowlist([`127.0.0.1:${String(httpA.port)}`])
+      const port = rig.proxyPort()
+      expect(port).toBeDefined()
       const byName = await lab.run(
         `${PRINT_PROXY_PORT}; ${curlViaProxy(`http://localhost:${String(httpA.port)}/`)}`,
         { workspace: [ws] },
@@ -895,8 +1022,8 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       )
       expect(added.stdout).toContain(`tenon-escape-ok ${String(httpB.port)}`)
       // The same proxy before and after: updateConfig, not a reset.
-      expect(proxyPortOf(added)).toBeDefined()
-      expect(proxyPortOf(added)).toBe(proxyPortOf(byName))
+      expect(rig.proxyPort()).toBe(port)
+      expect([proxyPortOf(byName), proxyPortOf(added)]).toEqual([String(port), String(port)])
     },
     CASE_MS,
   )
@@ -970,98 +1097,235 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   // -------------------------------------------------------------------------------------------
   // 验收 16 and 9 (Linux)
 
-  describe.skipIf(!DARWIN)('darwin: what Seatbelt reports', () => {
-    it(
-      '04 验收 16 (darwin): a refused write outside the workspace is in violations() with its real path and a path release',
-      async () => {
-        const { lab, ws, outside } = workspaceLab()
-        const file = join(outside, 'f1')
-        const want = {
-          kind: 'fs',
-          target: join(real(outside), 'f1'),
-          release: 'path',
-          protected: false,
-          observed: false,
-        }
-        const ran = await upToThree(
-          () => lab.run(`echo ${WRITTEN} > ${shq(file)}`, { workspace: [ws] }),
-          (one) =>
-            one.violations.map(shapeOf).some((v) => JSON.stringify(v) === JSON.stringify(want)),
-        )
-        expect(ran.violations.map(shapeOf)).toContainEqual(want)
-      },
-      CASE_MS,
-    )
+  /** A refused operation alone in its command, and the violation it must leave. */
+  interface Refusal {
+    readonly name: string
+    readonly arrange: () => {
+      readonly lab: SandboxLab
+      readonly command: string
+      readonly options: RunOptions
+      readonly want: Shape
+    }
+  }
 
-    it(
-      '04 验收 16 (darwin): a refused write to a protected name at the root is in violations(), protected',
-      async () => {
-        const { lab, ws } = workspaceLab()
-        const want = {
-          kind: 'fs',
-          target: join(real(ws), '.envrc'),
-          release: null,
-          protected: true,
-          observed: false,
+  /** A case in a fresh `ws`; `make` lays files down first. */
+  function inWorkspace(
+    name: string,
+    make: (q: { lab: SandboxLab; ws: string; outside: string }) => {
+      readonly command: string
+      readonly want: Shape
+      readonly readOnly?: true
+    },
+  ): Refusal {
+    return {
+      name,
+      arrange: () => {
+        const q = workspaceLab()
+        const { command, want, readOnly } = make(q)
+        if (readOnly) q.lab.settings = { profile: 'read-only', packageManagers: false }
+        return {
+          lab: q.lab,
+          command,
+          options: { workspace: [q.ws], ...(readOnly ? { profile: 'read-only' as const } : {}) },
+          want,
         }
-        const ran = await upToThree(
-          () => lab.run(`echo ${WRITTEN} > .envrc`, { workspace: [ws] }),
-          (one) =>
-            one.violations.map(shapeOf).some((v) => JSON.stringify(v) === JSON.stringify(want)),
-        )
-        expect(ran.violations.map(shapeOf)).toContainEqual(want)
       },
-      CASE_MS,
-    )
+    }
+  }
 
-    it(
-      '04 验收 16 (darwin): a refused read of .ssh is in violations() without protected; one of the profile is protected',
-      async () => {
-        const { lab, ws } = workspaceLab()
-        const key = writeHostFile(join(lab.home, '.ssh/id_ed25519'), 'TENON_FAKE_SSH\n')
-        const config = writeHostFile(join(lab.profileDir, 'config.json'), 'TENON_FAKE_PROFILE\n')
-        for (const [path, isProtected] of [
-          [key, false],
-          [config, true],
-        ] as const) {
-          const want = {
-            kind: 'fs',
-            target: real(path),
-            release: null,
-            protected: isProtected,
-            observed: false,
+  /** A case whose session folder (and cwd) is the test home. */
+  function inHome(
+    name: string,
+    make: (home: string) => { readonly command: string; readonly want: Shape },
+  ): Refusal {
+    return {
+      name,
+      arrange: () => {
+        const lab = rig.lab()
+        lab.folders = [lab.home]
+        const { command, want } = make(lab.home)
+        return { lab, command, options: { workspace: [lab.home], cwd: lab.home }, want }
+      },
+    }
+  }
+
+  /** The test home as the workspace, `~/.aws` and `~/.docker` links to a dotfiles dir (验收 11). */
+  function inLinkedHome(name: string, command: string, want: (home: string) => Shape): Refusal {
+    return inHome(name, (home) => {
+      writeHostFile(join(home, 'dotfiles/aws/credentials'), 'TENON_FAKE_AWS\n')
+      writeHostFile(join(home, 'dotfiles/docker/config.json'), 'TENON_FAKE_DOCKER\n')
+      symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
+      symlinkSync(join(home, 'dotfiles/docker'), join(home, '.docker'))
+      return { command, want: want(home) }
+    })
+  }
+
+  /**
+   * 验收 16 on macOS: each read, write and connection 验收 10–14 refuse, one per command (a log
+   * block keeps only its first denial, P2), Unix sockets aside (no line, P1). The proxy's own
+   * refusals are asserted where 验收 14 makes them.
+   */
+  const DARWIN_REFUSALS: readonly Refusal[] = [
+    // 验收 10
+    inWorkspace('a write outside the workspace (验收 10)', ({ outside }) => ({
+      command: `echo ${WRITTEN} > ${shq(join(outside, 'f1'))}`,
+      want: fsRefusal(join(real(outside), 'f1'), 'path', false),
+    })),
+    inWorkspace('a write in the workspace under read-only (验收 10)', ({ ws }) => ({
+      command: `echo ${WRITTEN} > ${shq(join(ws, 'ro.txt'))}`,
+      want: fsRefusal(join(real(ws), 'ro.txt'), 'path', false),
+      readOnly: true,
+    })),
+    // 验收 11
+    inWorkspace('a write through a workspace link to an outside directory (验收 11)', (q) => {
+      symlinkSync(q.outside, join(q.ws, 'out-link'))
+      return {
+        command: `echo ${WRITTEN} > out-link/via-link`,
+        want: fsRefusal(join(real(q.outside), 'via-link'), 'path', false),
+      }
+    }),
+    inWorkspace('a read through a workspace link to the test home’s .ssh (验收 11)', (q) => {
+      const key = writeHostFile(join(q.lab.home, '.ssh/id_ed25519'), 'TENON_FAKE_SSH\n')
+      symlinkSync(join(q.lab.home, '.ssh'), join(q.ws, 'ssh-link'))
+      return { command: 'cat ssh-link/id_ed25519', want: fsRefusal(real(key), null, false) }
+    }),
+    ...(
+      [
+        ['cat "$HOME/.aws/credentials"', 'dotfiles/aws/credentials'],
+        ['cat "$HOME/dotfiles/aws/credentials"', 'dotfiles/aws/credentials'],
+        ['cat "$HOME/.docker/config.json"', 'dotfiles/docker/config.json'],
+        ['cat "$HOME/dotfiles/docker/config.json"', 'dotfiles/docker/config.json'],
+      ] as const
+    ).map(([command, file]) =>
+      inLinkedHome(`${command} (验收 11)`, command, (home) =>
+        fsRefusal(join(real(home), file), null, false),
+      ),
+    ),
+    ...(
+      [
+        [`echo ${WRITTEN} >> "$HOME/.aws/credentials"`, 'dotfiles/aws/credentials'],
+        [`echo ${WRITTEN} > "$HOME/.aws/new-by-link"`, 'dotfiles/aws/new-by-link'],
+        [`echo ${WRITTEN} >> "$HOME/dotfiles/aws/credentials"`, 'dotfiles/aws/credentials'],
+        [`echo ${WRITTEN} > "$HOME/dotfiles/aws/new-by-real"`, 'dotfiles/aws/new-by-real'],
+        [`echo ${WRITTEN} >> "$HOME/.docker/config.json"`, 'dotfiles/docker/config.json'],
+        [`echo ${WRITTEN} >> "$HOME/dotfiles/docker/config.json"`, 'dotfiles/docker/config.json'],
+        ['rm "$HOME/.docker"', '.docker'],
+        ['mv "$HOME/.docker" "$HOME/moved-docker"', '.docker'],
+      ] as const
+    ).map(([command, file]) =>
+      inLinkedHome(`${command} (验收 11)`, command, (home) =>
+        fsRefusal(join(real(home), file), null, true),
+      ),
+    ),
+    ...['rm .envrc', 'mv .envrc moved-envrc'].map((command) =>
+      inWorkspace(`${command}, .envrc a link to an outside file (验收 11)`, (q) => {
+        symlinkSync(writeHostFile(join(q.outside, 'envrc-target'), 'X\n'), join(q.ws, '.envrc'))
+        return { command, want: fsRefusal(join(real(q.ws), '.envrc'), null, true) }
+      }),
+    ),
+    // 验收 12
+    ...(
+      [
+        ['.ssh/id_ed25519', false],
+        ['.aws/credentials', false],
+        ['.gnupg/private-keys-v1.d/k.key', false],
+      ] as const
+    ).map(([file, isProtected]) =>
+      inWorkspace(`a read of the test home’s ${file} (验收 12)`, ({ lab }) => {
+        const path = writeHostFile(join(lab.home, file), 'TENON_FAKE\n')
+        return { command: `cat ${shq(path)}`, want: fsRefusal(real(path), null, isProtected) }
+      }),
+    ),
+    inWorkspace('a read of the test profile (验收 12)', ({ lab }) => {
+      const path = writeHostFile(join(lab.profileDir, 'config.json'), 'TENON_FAKE\n')
+      return { command: `cat ${shq(path)}`, want: fsRefusal(real(path), null, true) }
+    }),
+    ...(
+      [
+        ['.envrc', null],
+        ['.claude/settings.json', '.claude'],
+        ['.zshrc', 'file'],
+        ['.git/hooks/x', '.git/hooks'],
+        ['.mcp.json', null],
+        ['.vscode/tasks.json', '.vscode'],
+        ['sub/.envrc', 'sub'],
+        ['sub/.mcp.json', 'sub'],
+        ['.ENVRC', null],
+      ] as const
+    ).map(([name, first]) =>
+      inWorkspace(`a write to ${name} in the workspace (验收 12)`, ({ ws }) => {
+        if (first === 'file') writeHostFile(join(ws, name), 'ORIGINAL\n')
+        else if (first !== null) makeDir(join(ws, first))
+        return {
+          command: `echo ${WRITTEN} >> ${shq(name)}`,
+          want: fsRefusal(join(real(ws), name), null, true),
+        }
+      }),
+    ),
+    // .Claude does not exist, so the refused write is its creation: an ancestor of the protected
+    // names (no release, 读法 35), not one of them (srt's own rule refuses it).
+    inWorkspace('the .Claude made for .Claude/settings.json (验收 12)', ({ ws }) => ({
+      command: 'mkdir .Claude',
+      want: fsRefusal(join(real(ws), '.Claude'), null, false),
+    })),
+    ...(
+      [
+        ['.ssh/authorized_keys', 'file', 'write'],
+        ['Library/LaunchAgents/x.plist', 'Library/LaunchAgents', 'write'],
+        ['.ssh', null, 'mkdir'],
+        ['.gnupg', null, 'mkdir'],
+        ['.netrc', null, 'write'],
+        ['.git-credentials', null, 'write'],
+      ] as const
+    ).map(([name, first, how]) =>
+      inHome(
+        `${how === 'mkdir' ? 'mkdir' : 'a write to'} ${name} with the test home as the workspace (验收 12)`,
+        (home) => {
+          if (first === 'file') writeHostFile(join(home, name), 'ORIGINAL\n')
+          else if (first !== null) makeDir(join(home, first))
+          return {
+            command: how === 'mkdir' ? `mkdir ${shq(name)}` : `echo ${WRITTEN} >> ${shq(name)}`,
+            want: fsRefusal(join(real(home), name), null, true),
           }
-          // oxlint-disable-next-line no-await-in-loop -- one read after the other
-          const ran = await upToThree(
-            () => lab.run(`cat ${shq(path)}`, { workspace: [ws] }),
-            (one) =>
-              one.violations.map(shapeOf).some((v) => JSON.stringify(v) === JSON.stringify(want)),
-          )
-          expect(ran.violations.map(shapeOf)).toContainEqual(want)
-        }
-      },
-      CASE_MS,
-    )
+        },
+      ),
+    ),
+    // 验收 13
+    ...[...CREDENTIALS_BOTH, ...CREDENTIALS_DARWIN].map((entry) =>
+      inWorkspace(`a read of ~/${entry} (验收 13)`, ({ lab }) => {
+        const file = writeHostFile(
+          join(lab.home, entry.endsWith('/') ? `${entry}secret` : entry),
+          'TENON_FAKE_CREDENTIAL\n',
+        )
+        return { command: `cat ${shq(file)}`, want: fsRefusal(real(file), null, false) }
+      }),
+    ),
+    // 验收 14
+    inWorkspace('a direct connection to the listed 127.0.0.1:<A> (验收 14)', () => {
+      rig.setAllowlist([`127.0.0.1:${String(httpA.port)}`])
+      return {
+        command: `curl -sS --max-time 5 http://127.0.0.1:${String(httpA.port)}/`,
+        want: { kind: 'network', target: null, release: null, protected: false, observed: true },
+      }
+    }),
+  ]
 
-    it(
-      '04 验收 16 (darwin): a direct connection’s Seatbelt line has no target and is observed',
-      async () => {
-        const { lab, ws } = workspaceLab()
-        rig.setAllowlist([`127.0.0.1:${String(httpA.port)}`])
-        const want = {
-          kind: 'network',
-          target: null,
-          release: null,
-          protected: false,
-          observed: true,
-        }
+  describe.skipIf(!DARWIN)('darwin: what Seatbelt reports', () => {
+    it.each(DARWIN_REFUSALS)(
+      '04 验收 16: (darwin) $name is in violations()',
+      async ({ arrange }) => {
+        const { lab, command, options, want } = arrange()
+        // While srt's `log stream` runs, each process in the sandbox is refused
+        // `mach-lookup com.apple.diagnosticd` at its start, and the kernel's "N duplicate reports"
+        // line for it comes in the same instant as the process's next denial. srt drops a whole
+        // log block whose first line is that noise (macos-sandbox-utils.js:1158-1200), so the denial
+        // under test went with it in 17 of 60 runs on this suite's Mac (2026-10-15); with
+        // OS_ACTIVITY_MODE=disable the lookup is never made and 60 of 60 arrived. The case is about
+        // the line's shape; the loss itself is §已知限制's.
+        const env = lab.requestEnv({ OS_ACTIVITY_MODE: 'disable' })
         const ran = await upToThree(
-          () =>
-            lab.run(`curl -sS --max-time 5 http://127.0.0.1:${String(httpA.port)}/`, {
-              workspace: [ws],
-            }),
-          (one) =>
-            one.violations.map(shapeOf).some((v) => JSON.stringify(v) === JSON.stringify(want)),
+          () => lab.run(command, { ...options, env }),
+          (one) => one.violations.map(shapeOf).some((v) => isDeepStrictEqual(v, want)),
         )
         expect(ran.violations.map(shapeOf)).toContainEqual(want)
       },
@@ -1071,7 +1335,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
 
   describe.skipIf(DARWIN)('linux: what the proxy and the seccomp observer report', () => {
     it(
-      '04 验收 16 (linux): refused writes outside the workspace and to a protected name are in violations(), observed (the protected one protected); a normal write in the workspace is not',
+      '04 验收 16: (linux) refused writes outside the workspace and to a protected name are in violations(), observed (the protected one protected); a normal write in the workspace is not',
       async () => {
         const { lab, ws, outside } = workspaceLab()
         const ran = await lab.run(
@@ -1098,17 +1362,101 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
           protected: true,
           observed: true,
         })
-        const inWorkspace = shapes.filter(
+        const others = shapes.filter(
           (v) => v.target !== null && isWithinDir(v.target, ws) && v.target !== join(ws, '.envrc'),
         )
-        expect(inWorkspace).toEqual([])
+        expect(others).toEqual([])
         expect(readFileSync(join(ws, 'd', 'f'), 'utf8')).toBe('ok\n')
       },
       CASE_MS,
     )
 
     it(
-      '04 验收 16 (linux): mkdir -p of an absolute path that exists leaves no mkdirat',
+      '04 验收 16: (linux) each refused write to a protected name at the workspace root is in violations(), observed and protected',
+      async () => {
+        const { lab, ws } = workspaceLab()
+        writeHostFile(join(ws, '.zshrc'), 'ORIGINAL_ZSHRC\n')
+        makeDir(join(ws, '.git'))
+        makeDir(join(ws, '.claude'))
+        const names = [
+          '.envrc',
+          '.claude/settings.json',
+          '.zshrc',
+          '.git/hooks/x',
+          '.mcp.json',
+          '.vscode/tasks.json',
+        ]
+        const ran = await lab.run(writesTo(ws, names), { workspace: [ws] })
+        const shapes = ran.violations.map(shapeOf)
+        for (const name of names) expect(shapes).toContainEqual(observedProtected(join(ws, name)))
+      },
+      CASE_MS,
+    )
+
+    it(
+      '04 验收 16: (linux) with the test home as the workspace, refused writes to .ssh/authorized_keys and Library/LaunchAgents/x.plist, and to .ssh, .gnupg, .netrc and .git-credentials made anew, are in violations(), observed and protected',
+      async () => {
+        // On Linux the existing .ssh is an empty tmpfs in the sandbox and the append lands there
+        // (验收 12's case); the observer reports the attempt all the same.
+        const present = rig.lab()
+        writeHostFile(join(present.home, '.ssh/authorized_keys'), 'ORIGINAL_KEYS\n')
+        makeDir(join(present.home, 'Library/LaunchAgents'))
+        const absent = rig.lab()
+        for (const [lab, names] of [
+          [present, ['.ssh/authorized_keys', 'Library/LaunchAgents/x.plist']],
+          [absent, ['.ssh/authorized_keys', '.gnupg/gpg.conf', '.netrc', '.git-credentials']],
+        ] as const) {
+          lab.folders = [lab.home]
+          // oxlint-disable-next-line no-await-in-loop -- one home after the other
+          const ran = await lab.run(writesTo(lab.home, names), {
+            workspace: [lab.home],
+            cwd: lab.home,
+          })
+          const shapes = ran.violations.map(shapeOf)
+          for (const name of names)
+            expect(shapes).toContainEqual(observedProtected(join(lab.home, name)))
+        }
+      },
+      CASE_MS,
+    )
+
+    it(
+      '04 验收 16: (linux) refused reads, a direct connection and a Unix socket connection leave no violation',
+      async () => {
+        const { lab, ws } = workspaceLab()
+        const files = [
+          writeHostFile(join(lab.home, '.ssh/id_ed25519'), 'TENON_FAKE_SSH\n'),
+          writeHostFile(join(lab.home, '.npmrc'), 'TENON_FAKE_NPMRC\n'),
+          writeHostFile(join(lab.profileDir, 'config.json'), 'TENON_FAKE_PROFILE\n'),
+        ]
+        rig.setAllowlist([`127.0.0.1:${String(httpA.port)}`])
+        const hits = httpA.hits.length
+        const path = join(lab.dir('sock'), 'u.sock')
+        const unix = await startUnixFixture(path)
+        try {
+          const ran = await lab.run(
+            [
+              ...files.map((file) => `cat ${shq(file)}`),
+              `curl -sS --max-time 5 http://127.0.0.1:${String(httpA.port)}/; echo curl_rc=$?`,
+              `perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 7' ${shq(path)}; echo unix_rc=$?`,
+            ].join('; '),
+            { workspace: [ws] },
+          )
+          expect(ran.stdout).not.toContain('TENON_FAKE')
+          expect(ran.stdout).toMatch(/^curl_rc=[1-9]/m)
+          expect(ran.stdout).toMatch(/^unix_rc=[1-9]/m)
+          expect(httpA.hits.length).toBe(hits)
+          expect(unix.connections()).toBe(0)
+          expect(ran.violations.map((v) => v.line)).toEqual([])
+        } finally {
+          await unix.close()
+        }
+      },
+      CASE_MS,
+    )
+
+    it(
+      '04 验收 16: (linux) mkdir -p of an absolute path that exists leaves no mkdirat',
       async () => {
         const { lab, ws, outside } = workspaceLab()
         const deep = makeDir(join(outside, 'a', 'b'))
@@ -1120,7 +1468,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     )
 
     it(
-      '04 验收 9 (linux): the mount points a call made are gone from the host once afterExit ran, and stubs.json lists none',
+      '04 验收 9: (linux) the mount points a call made are gone from the host once afterExit ran, and stubs.json lists none',
       async () => {
         const { lab, ws } = workspaceLab()
         const ran = await lab.run(

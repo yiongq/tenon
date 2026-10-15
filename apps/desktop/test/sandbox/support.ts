@@ -148,6 +148,8 @@ export interface SandboxRig {
   lab(): SandboxLab
   /** The effective allowlist, through srt's `updateConfig`; never a reset (§网络白名单). */
   setAllowlist(domains: readonly string[]): void
+  /** The port srt's HTTP proxy listens on, on the host. */
+  proxyPort(): number | undefined
   /** Every violation event srt stored since startup, timed as it arrived. */
   readonly arrivals: readonly ViolationArrival[]
   /** Every line `DesktopSandbox` and startup logged. */
@@ -249,6 +251,7 @@ export async function startSandboxRig(): Promise<SandboxRig> {
         `negative = before the exit)`
       )
     },
+    proxyPort: () => SandboxManager.getProxyPort(),
     setAllowlist: (domains) => {
       if (session === null) throw new Error('the sandbox did not start')
       session = { ...session, network: { ...session.network, allowedDomains: [...domains] } }
@@ -433,8 +436,14 @@ function newLab(q: {
         workspace: options.workspace.map(abs),
       })
       const srtId = lastIds.at(-1) ?? ''
-      const ran = await spawnToEnd(wrapped.argv, cwd, wrapped.env)
-      await sandbox.afterExit(commandId)
+      // afterExit even when the spawn throws, as the kernel does (读法 7): srt's Linux count of open
+      // commands would otherwise stay up and defer every later cleanup in this process.
+      let ran: Awaited<ReturnType<typeof spawnToEnd>>
+      try {
+        ran = await spawnToEnd(wrapped.argv, cwd, wrapped.env)
+      } finally {
+        await sandbox.afterExit(commandId)
+      }
       const violations = await sandbox.violations(commandId)
       const key = Buffer.from(srtId.slice(0, 100)).toString('utf8')
       const arrivalMs = q.arrivals

@@ -590,11 +590,41 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
       CASE_TIMEOUT_MS,
     )
 
-    // The setsid process is python, as in P6: darwin's `ps -E` shows no environment for an Apple
-    // platform binary (perl, sleep, the shells), so TENON_SANDBOX_MARK cannot find one of those
-    // (plan Open 2026-10-15「macOS 上标记找不到平台二进制」).
     it(
-      '04 验收 15: a command that setsids a process and exits leaves it running nowhere once the call ends (04 不变量 13; darwin by its TENON_SANDBOX_MARK)',
+      '04 验收 15: a stop leaves no setsid process that ignores SIGTERM and dropped its mark within 1 s (04 不变量 13)',
+      async () => {
+        const mark = newMark('stopterm')
+        marks.push(mark)
+        const stop = new AbortController()
+        // perl is an Apple platform binary and drops TENON_SANDBOX_MARK, so on darwin afterExit's
+        // mark scan cannot find it; it outlives the SIGTERM, and by the SIGKILL the shell is gone
+        // and launchd has it: only the tree killTree collected at the SIGTERM still names it.
+        const { call } = sandboxedCall(
+          [
+            `env -u TENON_SANDBOX_MARK perl -MPOSIX -e '$SIG{TERM} = "IGNORE"; POSIX::setsid(); sleep 603' ${mark}_setsidterm &`,
+            `perl -e 'sleep 604' ${mark}_fg`,
+          ].join('\n'),
+          stop.signal,
+        )
+        await allUp(mark, ['setsidterm', 'fg'])
+
+        const stoppedAt = now()
+        stop.abort()
+        const gone = await goneAt(mark, stoppedAt + PATIENCE_MS)
+        const execution = await call
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - stoppedAt).toBeLessThan(TREE_CLEAR_MS)
+        expect(execution).toMatchObject({ isError: true, state: 'aborted' })
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    // On darwin only the TENON_SANDBOX_MARK scan reaches a process that setsids and outlives a call
+    // that ended on its own, and `ps -E` shows no environment for an Apple platform binary (perl,
+    // sleep, the shells): a perl here stays up (step 6 review, 2026-10-15). So this case covers a
+    // binary that is not one, python3 as in P6; the platform-binary half is not covered.
+    it(
+      '04 验收 15: a command that setsids a process and exits leaves it running nowhere once the call ends (04 不变量 13; on darwin a non-platform binary, found by its TENON_SANDBOX_MARK)',
       async () => {
         const mark = newMark('exit')
         marks.push(mark)
