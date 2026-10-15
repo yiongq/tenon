@@ -42,6 +42,12 @@ const CASE_MS = 60_000
 
 /** macOS's log monitor keeps only the first denial of a log block (P2): each such case runs ≤ 3 times. */
 const DARWIN_TRIES = 3
+/**
+ * The pause before a darwin retry. Lost lines come in runs: on this suite's Mac (macOS 26.3,
+ * 2026-10-15) 20 of 180 single refused writes left no line (none arrived later), two tries in a row
+ * were lost now and then, and a pause between tries lost fewer.
+ */
+const DARWIN_RETRY_PAUSE_MS = 1_000
 
 /**
  * srt's own variables in a command's environment (srt79 dist/sandbox/sandbox-utils.js:642-781; the
@@ -196,6 +202,8 @@ function proxyPortOf(ran: Ran): string | undefined {
 async function upToThree(attempt: () => Promise<Ran>, ok: (ran: Ran) => boolean): Promise<Ran> {
   let ran = await attempt()
   for (let tries = 1; tries < (DARWIN ? DARWIN_TRIES : 1) && !ok(ran); tries += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- the pause before a retry
+    await new Promise((resolve) => setTimeout(resolve, DARWIN_RETRY_PAUSE_MS))
     // oxlint-disable-next-line no-await-in-loop -- one try after another, each a fresh command
     ran = await attempt()
   }
@@ -603,6 +611,77 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
           {
             kind: 'fs',
             target: join(real(ws), '.envrc'),
+            release: null,
+            protected: true,
+            observed: false,
+          },
+        ])
+      }
+    },
+    CASE_MS,
+  )
+
+  /**
+   * 验收 11, a link on a deny entry's way (§档位到 srt 配置「链接」): the home is the workspace and
+   * `~/.docker`, which holds `config.json` from the credential list, links to a dotfiles directory.
+   * No per-root name or glob covers it, so only the link itself in denyWrite (darwin) or the host's
+   * lstat check (Linux) stands between the command and a `~/.docker` of its own.
+   */
+  async function replaceLinkedDocker(): Promise<{
+    readonly home: string
+    readonly target: string
+    readonly runs: readonly { readonly ran: Ran; readonly link: string }[]
+  }> {
+    const lab = rig.lab()
+    const home = lab.home
+    lab.folders = [home]
+    const target = join(home, 'dotfiles/docker')
+    writeHostFile(join(target, 'config.json'), 'TENON_FAKE_DOCKER\n')
+    const link = join(home, '.docker')
+    const runs: { ran: Ran; link: string }[] = []
+    for (const command of [
+      `rm "$HOME/.docker" && mkdir "$HOME/.docker" && echo ${WRITTEN} > "$HOME/.docker/config.json"; echo rc=$?`,
+      `mv "$HOME/.docker" "$HOME/moved-docker" && mkdir "$HOME/.docker" && echo ${WRITTEN} > "$HOME/.docker/config.json"; echo rc=$?`,
+    ]) {
+      rmSync(link, { recursive: true, force: true })
+      rmSync(join(home, 'moved-docker'), { force: true })
+      symlinkSync(target, link)
+      // oxlint-disable-next-line no-await-in-loop -- one attempt after the other, each from a fresh link
+      const ran = await lab.run(command, { workspace: [home], cwd: home })
+      runs.push({ ran, link: hostKind(link) === 'link' ? readlinkSync(link) : hostKind(link) })
+    }
+    return { home, target, runs }
+  }
+
+  it.skipIf(!DARWIN)(
+    '04 验收 11 (darwin): a link on a deny entry’s way (~/.docker, the home being the workspace) can be neither removed nor moved and replaced; link and target stay',
+    async () => {
+      const { target, runs } = await replaceLinkedDocker()
+      expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
+      expect(
+        runs.map(({ ran, link }) => ({ rc: /^rc=(\d+)$/m.exec(ran.stdout)?.[1], link })),
+      ).toEqual([
+        { rc: '1', link: target },
+        { rc: '1', link: target },
+      ])
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(DARWIN)(
+    '04 验收 11 (linux): a link on a deny entry’s way (~/.docker, the home being the workspace) removed or moved and replaced leaves one protected violation targeting it; the target stays',
+    async () => {
+      const { home, target, runs } = await replaceLinkedDocker()
+      expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe('TENON_FAKE_DOCKER\n')
+      for (const { ran } of runs) {
+        expect(
+          ran.violations
+            .map(shapeOf)
+            .filter((v) => v.target === join(real(home), '.docker') && !v.observed),
+        ).toEqual([
+          {
+            kind: 'fs',
+            target: join(real(home), '.docker'),
             release: null,
             protected: true,
             observed: false,

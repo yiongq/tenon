@@ -507,13 +507,21 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
       await rig?.dispose()
     })
 
-    /** Polls the process table until every `<mark>_<kind>` is there; rejects past `PATIENCE_MS`. */
+    /**
+     * Polls the process table until a process of each `<mark>_<kind>` runs; rejects past
+     * `PATIENCE_MS`. A process whose argv holds the marker more than once is a shell or the
+     * sandbox-exec wrapper carrying the whole command text, not one of the processes it starts.
+     */
     async function allUp(mark: string, kinds: readonly string[]): Promise<void> {
       const deadline = now() + PATIENCE_MS
       for (;;) {
         // oxlint-disable-next-line no-await-in-loop -- one ps at a time
-        const args = (await markedProcesses(mark)).map((row) => row.args)
-        if (kinds.every((kind) => args.some((one) => one.includes(`${mark}_${kind}`)))) return
+        const args = (await markedProcesses(mark))
+          .map((row) => row.args)
+          .filter((one) => one.split(mark).length === 2)
+        const up = (kind: string): boolean =>
+          args.some((one) => new RegExp(`${mark}_${kind}(?:\\s|$)`).test(one))
+        if (kinds.every(up)) return
         if (now() > deadline) {
           throw new Error(`not all of ${kinds.join(', ')} came up: ${JSON.stringify(args)}`)
         }
