@@ -16,6 +16,7 @@ export type {
   HostSandbox,
   HostSecrets,
   Reversibility,
+  SandboxPosture,
   SandboxRequest,
   SandboxViolation,
   SpawnSpec,
