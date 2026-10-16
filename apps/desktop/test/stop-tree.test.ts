@@ -698,9 +698,10 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
         marks.push(mark)
         // perl's marker is python's own with `_setsid` swapped for `_perl`, so neither argv holds
         // the mark twice.
-        // python writes the ready file once perl runs: on a loaded runner python3 (Xcode's, through
-        // the xcrun shim) takes more than the old fixed `sleep 1` to get that far, and the call
-        // would end, and be killed, first (plan step 21, GitHub's macos-15).
+        // python writes the ready file once perl runs, and the call waits for it before its `sleep 1`:
+        // on a loaded runner python3 (Xcode's, through the xcrun shim) takes more than a fixed
+        // `sleep 1` to get that far, and the call would end, and be killed, first; and with no
+        // second of both running the poll below could miss them (plan step 21, GitHub's macos-15).
         const ready = join(folder, 'ready')
         const python = [
           'import os, subprocess, sys, time',
@@ -714,6 +715,7 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
             `: ${mark}_decoy`,
             `python3 -c '${python}' ${mark}_setsid '${ready}' >/dev/null 2>&1 &`,
             `i=0; while [ ! -e '${ready}' ] && [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done`,
+            'sleep 1',
             'exit 0',
           ].join('\n'),
           new AbortController().signal,
