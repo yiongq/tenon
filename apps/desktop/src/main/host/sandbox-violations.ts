@@ -159,10 +159,18 @@ function observerReport(
   path: string,
   context: ViolationContext,
 ): SandboxViolation | undefined {
+  // Longer than the kernel takes, so the process wrote it itself: kept as spelled, never looked up.
+  if (Buffer.byteLength(path) > MAX_OBSERVED_PATH_BYTES) {
+    const spelled = posix.normalize(path)
+    return context.denyWrite.some((entry) => covers(entry, spelled, AS_BYTES))
+      ? { kind: 'fs', line, target: path, protected: true, observed: true }
+      : { kind: 'fs', line, target: path, observed: true }
+  }
+  const ports = budgetedPorts(context)
   // That call did nothing: GNU `mkdir -p` reports every ancestor that already exists (读法 53).
   // x64's observer also watches the older `mkdir`, which glibc uses there for the same call.
   if (syscall === 'mkdirat' || syscall === 'mkdir') {
-    const kind = lookUp(context.lstat, path)
+    const kind = lookUp(ports.lstat, path)
     if (kind !== 'unknown' && kind?.isDirectory() === true) return undefined
   }
   // srt's observer list is the empty one from initialize; this wrap's lists decide (读法 11). The
@@ -173,7 +181,7 @@ function observerReport(
   const spot = posix.normalize(path)
   // What this level resolved to may be another thing from now on (rm and ln -s in its place).
   if (REPLACES_LEVEL.has(syscall)) forgetDir(spot, context)
-  const landings = landingsOf(syscall, spot, context)
+  const landings = landingsOf(syscall, spot, context, ports)
   const denied = [spot, ...landings].some(
     (place) =>
       place !== undefined && context.denyWrite.some((entry) => covers(entry, place, AS_BYTES)),
@@ -262,22 +270,28 @@ function landingsOf(
   syscall: string,
   spot: string,
   context: ViolationContext,
+  ports: LookupPorts,
 ): (string | undefined)[] {
   if (unresolved(spot)) return [spot]
-  if (FOLLOWS_LAST.has(syscall)) return [landing(spot, true, context)]
-  if (KEEPS_LAST.has(syscall)) return [landing(spot, false, context)]
-  return [landing(spot, false, context), landing(spot, true, context)]
+  if (FOLLOWS_LAST.has(syscall)) return [landing(spot, true, context, ports)]
+  if (KEEPS_LAST.has(syscall)) return [landing(spot, false, context, ports)]
+  return [landing(spot, false, context, ports), landing(spot, true, context, ports)]
 }
 
-function landing(spot: string, followLast: boolean, context: ViolationContext): string | undefined {
+function landing(
+  spot: string,
+  followLast: boolean,
+  context: ViolationContext,
+  ports: LookupPorts,
+): string | undefined {
   if (spot === '/') return spot
-  const dir = realDirOf(posix.dirname(spot), context)
+  const dir = realDirOf(posix.dirname(spot), context, ports)
   if (dir === undefined) return undefined
   const node = posix.join(dir, posix.basename(spot))
   if (!followLast || unresolved(node)) return node
-  const kind = lookUp(context.lstat, node)
+  const kind = lookUp(ports.lstat, node)
   if (kind === 'unknown') return undefined
-  return kind?.isSymbolicLink() === true ? walkLinks(node, context, true, unresolved).real : node
+  return kind?.isSymbolicLink() === true ? walkLinks(node, ports, true, unresolved).real : node
 }
 
 /** Under `/proc` or `/dev`: never looked at on the host (landingsOf). */
@@ -306,44 +320,100 @@ function mayWrite(place: string, context: ViolationContext): boolean {
 }
 
 /**
+ * Linux's PATH_MAX: the kernel refuses a longer path (ENAMETOOLONG), so an observer path longer
+ * than this the process wrote itself. It is kept as spelled and never looked up.
+ */
+export const MAX_OBSERVED_PATH_BYTES = 4096
+/** The directories one wrap keeps resolved; past it a line in a new one is kept, not resolved. */
+export const MAX_RESOLVED_DIRS = 4096
+/**
+ * The `lstat` and `readlink` calls one wrap spends resolving observer paths, all on main's thread;
+ * past it every line is kept as it is, observed. The observer socket is the process's to write
+ * (header, shape 2), so a flood of forged lines must not grow the cache or the work without end;
+ * keeping a line is the safe side (it is only a diagnostic), dropping one is not.
+ */
+export const MAX_PATH_LOOKUPS = 65_536
+
+type LookupPorts = Pick<ViolationContext, 'lstat' | 'readlink'>
+
+/**
  * A wrap's directories as resolved so far: an install reports thousands of writes into a few
  * hundred directories, and srt's listener runs them on main's thread, one by one. `children` lists
  * the cached directories right under each one, so a replaced level drops its subtree alone.
+ * `ports` are the context's, counted against `MAX_PATH_LOOKUPS`.
  */
 interface ResolvedDirs {
   readonly real: Map<string, string | undefined>
   readonly children: Map<string, Set<string>>
+  readonly ports: LookupPorts
 }
 
 const RESOLVED_DIRS = new WeakMap<ViolationContext, ResolvedDirs>()
 
+/** Thrown by a spent port: every caller reads a throwing port as "don't know", and keeps the line. */
+const SPENT = new Error(`more than ${MAX_PATH_LOOKUPS} lookups in one wrap`)
+
 function resolvedDirs(context: ViolationContext): ResolvedDirs {
   let known = RESOLVED_DIRS.get(context)
   if (known === undefined) {
-    known = { real: new Map(), children: new Map() }
+    let lookups = 0
+    const spend = (): void => {
+      lookups += 1
+      if (lookups > MAX_PATH_LOOKUPS) throw SPENT
+    }
+    known = {
+      real: new Map(),
+      children: new Map(),
+      ports: {
+        lstat: (path) => {
+          spend()
+          return context.lstat(path)
+        },
+        readlink: (path) => {
+          spend()
+          return context.readlink(path)
+        },
+      },
+    }
     RESOLVED_DIRS.set(context, known)
   }
   return known
 }
 
-/** `dir` resolved as the kernel resolves it, one `lstat` per directory not seen before in this wrap. */
-function realDirOf(dir: string, context: ViolationContext): string | undefined {
+function budgetedPorts(context: ViolationContext): LookupPorts {
+  return resolvedDirs(context).ports
+}
+
+/**
+ * `dir` resolved as the kernel resolves it, one `lstat` per directory not seen before in this wrap;
+ * undefined when it cannot be told, or when the cache is full and a level would have to be added.
+ * Walked from the nearest cached level down, without recursion: a path may hold 2048 levels.
+ */
+function realDirOf(dir: string, context: ViolationContext, ports: LookupPorts): string | undefined {
   if (dir === '/') return dir
   const known = resolvedDirs(context)
-  if (known.real.has(dir)) return known.real.get(dir)
-  const above = posix.dirname(dir)
-  const parent = realDirOf(above, context)
-  let real: string | undefined
-  if (parent !== undefined) {
-    const node = posix.join(parent, posix.basename(dir))
-    const kind = unresolved(node) ? undefined : lookUp(context.lstat, node)
-    if (kind === 'unknown') real = undefined
-    else if (kind?.isSymbolicLink() === true) real = walkLinks(node, context, true, unresolved).real
-    else real = node
+  const pending: string[] = []
+  let at = dir
+  while (at !== '/' && !known.real.has(at)) {
+    pending.push(at)
+    at = posix.dirname(at)
   }
-  known.real.set(dir, real)
-  const siblings = known.children.get(above) ?? new Set<string>()
-  known.children.set(above, siblings.add(dir))
+  let real = at === '/' ? at : known.real.get(at)
+  for (let index = pending.length - 1; index >= 0; index -= 1) {
+    if (known.real.size >= MAX_RESOLVED_DIRS) return undefined
+    const level = pending[index] ?? '/'
+    if (real !== undefined) {
+      const node = posix.join(real, posix.basename(level))
+      const kind = unresolved(node) ? undefined : lookUp(ports.lstat, node)
+      if (kind === 'unknown') real = undefined
+      else if (kind?.isSymbolicLink() === true) real = walkLinks(node, ports, true, unresolved).real
+      else real = node
+    }
+    known.real.set(level, real)
+    const above = posix.dirname(level)
+    const siblings = known.children.get(above) ?? new Set<string>()
+    known.children.set(above, siblings.add(level))
+  }
   return real
 }
 

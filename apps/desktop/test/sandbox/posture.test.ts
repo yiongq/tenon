@@ -1681,6 +1681,93 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     expect(foreign.filter((path) => !h.disk.has(path))).toEqual([])
   })
 
+  it("04 验收 9 (startup): when main's sockets cannot be read (/proc/net/unix or /proc/self/fd), no srt-obs dir is recorded, another srt user's included, and none is removed next time", async () => {
+    for (const unreadable of ['/proc/net/unix', '/proc/self/fd']) {
+      let first = true
+      const h = harness('linux', {
+        duringInitialize: (disk) => {
+          if (!first) return
+          // Another srt user's observer, its socket listed under an inode none of main's fds holds.
+          disk.dir('/tmp/srt-obs-Fo7Re1', { mode: 0o700 })
+          disk.file('/tmp/srt-obs-Fo7Re1/s99887766.sock')
+          unixRow(disk, '77777', '/tmp/srt-obs-Fo7Re1/s99887766.sock')
+        },
+      })
+      const readFile = h.disk.readFile.bind(h.disk)
+      const readdir = h.disk.readdir.bind(h.disk)
+      h.disk.readFile = (path) => {
+        if (path === unreadable) throw errno('EACCES', path)
+        return readFile(path)
+      }
+      h.disk.readdir = (path) => {
+        if (path === unreadable) throw errno('EACCES', path)
+        return readdir(path)
+      }
+      // oxlint-disable-next-line no-await-in-loop -- one case after the other
+      expect((await outcomeOf(h)).state).toBe('active')
+      expect({ unreadable, record: JSON.parse(h.disk.text(h.at.stubs) ?? '{}') }).toEqual({
+        unreadable,
+        record: {
+          pid: MAIN_PID,
+          socat: [{ pid: 5555, command: SOCAT_COMMAND('cafe01') }],
+          tmpEntries: [`/tmp/srt-mux-${MAIN_PID}-0.sock`, '/tmp/claude-http-cafe01.sock'],
+        },
+      })
+      expect(h.logs).toContain(`sandbox: main's sockets could not be read: EACCES: ${unreadable}`)
+      first = false
+      // oxlint-disable-next-line no-await-in-loop -- one case after the other
+      await outcomeOf(h)
+      expect({
+        unreadable,
+        foreign: h.disk.has('/tmp/srt-obs-Fo7Re1/s99887766.sock'),
+        ours: h.disk.has('/tmp/srt-obs-Q1w2e3'),
+      }).toEqual({ unreadable, foreign: true, ours: true })
+    }
+  })
+
+  it('04 验收 9 (startup): socat and tmpdir entries another run writes into the record while this one starts (two Tenons on one profile) are not taken as this run’s, so its end never makes the next start kill or remove them', async () => {
+    let first = true
+    const h = harness('linux', {
+      // Startup emptied the record; the other run, alive as pid 999, writes its own meanwhile.
+      duringInitialize: (disk) => {
+        if (!first) return
+        disk.file('/tmp/claude-http-aa11.sock')
+        disk.file(
+          layout('linux').stubs,
+          JSON.stringify({
+            pid: 999,
+            socat: [{ pid: 4242, command: SOCAT_COMMAND('aa11') }],
+            tmpEntries: ['/tmp/claude-http-aa11.sock'],
+          }),
+        )
+      },
+    })
+    h.table.push(
+      { pid: 999, ppid: 1, command: '/opt/Tenon/tenon' },
+      { pid: 4242, ppid: 999, command: SOCAT_COMMAND('aa11') },
+    )
+    expect((await outcomeOf(h)).state).toBe('active')
+    expect(JSON.parse(h.disk.text(h.at.stubs) ?? '{}')).toEqual({
+      pid: MAIN_PID,
+      socat: [{ pid: 5555, command: SOCAT_COMMAND('cafe01') }],
+      tmpEntries: [
+        `/tmp/srt-mux-${MAIN_PID}-0.sock`,
+        '/tmp/claude-http-cafe01.sock',
+        '/tmp/srt-obs-Q1w2e3',
+      ],
+    })
+    expect(h.logs).toContain(
+      `sandbox: ${h.at.stubs} held socat or tmpdir entries of another run (pid 999); not taken as this run's`,
+    )
+    // The next start: the recorded run (this pid) is gone, pid 999 still runs.
+    first = false
+    await outcomeOf(h)
+    expect({ killed: h.killed, tmp: h.disk.has('/tmp/claude-http-aa11.sock') }).toEqual({
+      killed: [],
+      tmp: true,
+    })
+  })
+
   it('04 验收 9 (startup): socat, mount points and tmpdir entries stay while the run that recorded them is alive, the mount points kept in the record; a socat whose parent is that run is never killed; darwin records no socat', async () => {
     const ws = '/home/u/code/app'
     const record = (pid: number) =>
@@ -1741,20 +1828,24 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
       tmp: reused.disk.has('/tmp/claude-http-aa11.sock'),
     }).toEqual({ killed: [4242], leaf: false, tmp: false })
 
-    // No process table: nothing that waits on it goes, the empty dir included.
+    // No process table: nothing that waits on it goes, the empty dir and the tmpdir entry included,
+    // and startup goes on.
     const blind = harness('linux')
     blind.disk.dir(`${ws}/.claude`)
     blind.disk.file(`${ws}/.envrc`, '', 0o444)
+    blind.disk.file('/tmp/claude-http-aa11.sock')
     blind.disk.file(blind.at.stubs, record(999))
     blind.deps.processes.list = async () => {
       throw new Error('ps: not found')
     }
-    await outcomeOf(blind)
+    const { state } = await outcomeOf(blind)
     expect({
+      state,
       killed: blind.killed,
       dir: blind.disk.has(`${ws}/.claude`),
       leaf: blind.disk.has(`${ws}/.envrc`),
-    }).toEqual({ killed: [], dir: true, leaf: true })
+      tmp: blind.disk.has('/tmp/claude-http-aa11.sock'),
+    }).toEqual({ state: 'active', killed: [], dir: true, leaf: true, tmp: true })
 
     const darwin = harness('darwin')
     await outcomeOf(darwin)

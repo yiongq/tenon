@@ -227,8 +227,9 @@ const PROBE_DIRS = { P1: '/fx/p1', P2: '/fx/p2', P3: '/fx/p3' } as const
  * as `~/code/proj`, `~/code` being a link; in it `out-link` leads outside, `new-link` (relative) to
  * a file not made yet and `rc-link` to the home's .bashrc; `~/.ssh/config` links into a dotfiles
  * dir; `/proc/self/fd/3`, `/dev/stdout` and `/dev/fd/1` lead into the workspace, as Tenon's own
- * would; `null-link`, `tmp-link`, `npm-logs`, `fd-link` and `fd-dir` lead from the workspace to
- * `/dev/null`, `/tmp/claude`, `~/.npm/_logs` and into `/proc`.
+ * would; `null-link`, `err-link`, `tmp-link`, `npm-logs`, `debug-link`, `fd-link` and `fd-dir`
+ * lead from the workspace to `/dev/null`, `/dev/stderr`, `/tmp/claude`, `~/.npm/_logs`,
+ * `~/.claude/debug` and into `/proc`.
  */
 const P4_DIRS = new Set([
   '/fx',
@@ -259,8 +260,10 @@ const P4_LINKS: ReadonlyMap<string, string> = new Map([
   ['/dev/stdout', '/proc/self/fd/1'],
   ['/dev/fd', '/proc/self/fd'],
   ['/fx/p4/mnt/code/proj/null-link', '/dev/null'],
+  ['/fx/p4/mnt/code/proj/err-link', '/dev/stderr'],
   ['/fx/p4/mnt/code/proj/tmp-link', '/tmp/claude'],
   ['/fx/p4/mnt/code/proj/npm-logs', '../../../home/.npm/_logs'],
+  ['/fx/p4/mnt/code/proj/debug-link', '/fx/p4/home/.claude/debug'],
   ['/fx/p4/mnt/code/proj/fd-link', '/proc/self/fd/3'],
   ['/fx/p4/mnt/code/proj/fd-dir', '/proc/self/fd'],
 ])
@@ -290,6 +293,32 @@ function linkedWrap(writable: string): ViolationContext {
       return target
     },
   }
+}
+
+/**
+ * `linkedWrap(P4_WS)` on a disk the test changes between lines: `out` and `out/sub` directories in
+ * the workspace and `/fx/p4/opt-x` outside it, links added or removed as the command would.
+ */
+function changingDisk(): {
+  readonly wrap: ViolationContext
+  readonly dirs: Set<string>
+  readonly links: Map<string, string>
+} {
+  const dirs = new Set([...P4_DIRS, `${P4_WS}/out`, `${P4_WS}/out/sub`, '/fx/p4/opt-x'])
+  const links = new Map<string, string>()
+  const wrap: ViolationContext = {
+    ...linkedWrap(P4_WS),
+    lstat: (path) => {
+      if (links.has(path)) return is('link')
+      return dirs.has(path) ? is('dir') : undefined
+    },
+    readlink: (path) => {
+      const target = links.get(path)
+      if (target === undefined) throw noLink(path)
+      return target
+    },
+  }
+  return { wrap, dirs, links }
 }
 
 function wrapOfFixture(fixture: FixtureLine): ViolationContext {
@@ -772,7 +801,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ])
   })
 
-  it('a Linux observer path that reaches /proc or /dev through a workspace link stops there, as the link spells it; one that lands where srt keeps the command writable itself (/dev/null, /dev/stdout, /tmp/claude, ~/.npm/_logs) is dropped as srt’s own observer drops it', () => {
+  it('a Linux observer path that reaches /proc or /dev through a workspace link stops there, as the link spells it; one that lands where srt keeps the command writable itself (/dev/null, /dev/stdout, /dev/stderr, /tmp/claude, ~/.npm/_logs, ~/.claude/debug), written there or through a link, is dropped as srt’s own observer drops it', () => {
     const cases = [
       // On the host /proc/self/fd/3 leads back into the workspace: never followed that far.
       [
@@ -786,8 +815,12 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       ['deny openat /fx/p4/mnt/code/proj/null-link', DROPPED],
       ['deny openat /fx/p4/mnt/code/proj/tmp-link/x', DROPPED],
       ['deny openat /fx/p4/mnt/code/proj/npm-logs/debug.log', DROPPED],
+      ['deny openat /fx/p4/mnt/code/proj/err-link', DROPPED],
+      ['deny openat /fx/p4/mnt/code/proj/debug-link/x', DROPPED],
       ['deny openat /dev/stdout', DROPPED],
+      ['deny openat /dev/stderr', DROPPED],
       ['deny openat /dev/tty', DROPPED],
+      ['deny openat /fx/p4/home/.claude/debug/x', DROPPED],
       // /dev/full is not one of srt's: kept, as spelled.
       ['deny openat /dev/full', { kind: 'fs', target: '/dev/full', observed: true }],
     ] as const
@@ -847,27 +880,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
 
   it('a directory the command removes, or moves away, and puts a link in its place is resolved afresh with what was under it: a write through the link that leads out stays, though the directory was seen inside the workspace before', () => {
     const ws = P4_WS
-    function disk(): {
-      readonly wrap: ViolationContext
-      readonly dirs: Set<string>
-      readonly links: Map<string, string>
-    } {
-      const dirs = new Set([...P4_DIRS, `${ws}/out`, `${ws}/out/sub`, '/fx/p4/opt-x'])
-      const links = new Map<string, string>()
-      const wrap: ViolationContext = {
-        ...linkedWrap(P4_WS),
-        lstat: (path) => {
-          if (links.has(path)) return is('link')
-          return dirs.has(path) ? is('dir') : undefined
-        },
-        readlink: (path) => {
-          const target = links.get(path)
-          if (target === undefined) throw noLink(path)
-          return target
-        },
-      }
-      return { wrap, dirs, links }
-    }
+    const disk = changingDisk
 
     // touch out/a; rm -rf out; ln -s /fx/p4/opt-x out; cp f out/ — the events in that order, the
     // disk as each one arrives.
@@ -899,6 +912,131 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       kind: 'fs',
       line: `deny openat ${ws}/out/sub/f`,
       target: '/fx/p4/opt-x/sub/f',
+      observed: true,
+    })
+  })
+
+  it('each call that may leave a link, or nothing, where a directory was (unlinkat, renameat, renameat2, symlinkat, linkat; x64’s unlink, rmdir, rename, symlink, link) is on its own enough to have that place resolved afresh; so is each of the three that delete, for a link replaced by a directory', () => {
+    const ws = P4_WS
+    // touch out/a; then out made a link to /fx/p4/opt-x and only <call> reported on out.
+    for (const call of [
+      'unlinkat',
+      'renameat',
+      'renameat2',
+      'symlinkat',
+      'linkat',
+      'unlink',
+      'rmdir',
+      'rename',
+      'symlink',
+      'link',
+    ]) {
+      const disk = changingDisk()
+      expect(classify(`deny openat ${ws}/out/a`, disk.wrap)).toBeUndefined()
+      disk.dirs.delete(`${ws}/out/sub`)
+      disk.dirs.delete(`${ws}/out`)
+      disk.links.set(`${ws}/out`, '/fx/p4/opt-x')
+      expect({ call, result: classify(`deny ${call} ${ws}/out`, disk.wrap) }).toStrictEqual({
+        call,
+        result: undefined,
+      })
+      const line = `deny openat ${ws}/out/f`
+      expect({ call, result: classify(line, disk.wrap) }).toStrictEqual({
+        call,
+        result: { kind: 'fs', line, target: '/fx/p4/opt-x/f', observed: true },
+      })
+    }
+    // out a link to /fx/p4/opt-x, written through; rm out (<call> alone); mkdir out; touch out/f.
+    for (const call of ['unlinkat', 'unlink', 'rmdir']) {
+      const disk = changingDisk()
+      disk.dirs.delete(`${ws}/out/sub`)
+      disk.dirs.delete(`${ws}/out`)
+      disk.links.set(`${ws}/out`, '/fx/p4/opt-x')
+      const first = `deny openat ${ws}/out/a`
+      expect(classify(first, disk.wrap)).toStrictEqual({
+        kind: 'fs',
+        line: first,
+        target: '/fx/p4/opt-x/a',
+        observed: true,
+      })
+      disk.links.delete(`${ws}/out`)
+      expect({ call, result: classify(`deny ${call} ${ws}/out`, disk.wrap) }).toStrictEqual({
+        call,
+        result: undefined,
+      })
+      disk.dirs.add(`${ws}/out`)
+      expect(classify(`deny mkdirat ${ws}/out`, disk.wrap)).toBeUndefined()
+      expect({ call, result: classify(`deny openat ${ws}/out/f`, disk.wrap) }).toStrictEqual({
+        call,
+        result: undefined,
+      })
+    }
+  })
+
+  it('a flood of observer lines (the process can write any line to the observer socket) leaves a wrap’s work bounded: a path longer than the kernel takes (4096 bytes) is never looked up; a wrap keeps at most 4096 directories resolved and makes at most 65536 lookups; past either, a line is kept as spelled and observed, never dropped', () => {
+    const counted = (): { wrap: ViolationContext; lookups: () => number } => {
+      const plain = linkedWrap(P4_WS)
+      let lookups = 0
+      return {
+        wrap: {
+          ...plain,
+          lstat: (path) => {
+            lookups += 1
+            return plain.lstat(path)
+          },
+          readlink: (path) => {
+            lookups += 1
+            return plain.readlink(path)
+          },
+        },
+        lookups: () => lookups,
+      }
+    }
+
+    // Over 4096 bytes: kept as spelled with no lookup; its spelling on a denyWrite entry still counts.
+    const long = counted()
+    const tooLong = `${P4_WS}/${'a/'.repeat(2040)}f`
+    const protectedLong = `${P4_WS}/.envrc/${'a/'.repeat(2040)}f`
+    expect(
+      classifyAll([`deny openat ${tooLong}`, `deny mkdirat ${protectedLong}`], long.wrap),
+    ).toStrictEqual([
+      { kind: 'fs', line: `deny openat ${tooLong}`, target: tooLong, observed: true },
+      {
+        kind: 'fs',
+        line: `deny mkdirat ${protectedLong}`,
+        target: protectedLong,
+        protected: true,
+        observed: true,
+      },
+    ])
+    expect(long.lookups()).toBe(0)
+    // 2000 levels, within 4096 bytes, resolve like any other path.
+    expect(classify(`deny openat ${P4_WS}/${'a/'.repeat(2000)}f`, long.wrap)).toBeUndefined()
+
+    // 10000 directories: /fx … proj and the first 4091 of them fill the cache, one lstat each; the
+    // rest are kept unresolved.
+    const dirs = counted()
+    const inDirs = Array.from({ length: 10_000 }, (_, at) => `deny mknodat ${P4_WS}/d${at}/f`)
+    const byDir = classifyAll(inDirs, dirs.wrap)
+    expect(dirs.lookups()).toBe(4096)
+    expect(byDir.filter((result) => result === undefined).length).toBe(4091)
+    expect(byDir.at(-1)).toStrictEqual({
+      kind: 'fs',
+      line: `deny mknodat ${P4_WS}/d9999/f`,
+      target: `${P4_WS}/d9999/f`,
+      observed: true,
+    })
+
+    // 70000 writes in one directory: one lstat each for the last level, until 65536 are spent.
+    const writes = counted()
+    const inOne = Array.from({ length: 70_000 }, (_, at) => `deny openat ${P4_WS}/f${at}`)
+    const byWrite = classifyAll(inOne, writes.wrap)
+    expect(writes.lookups()).toBe(65_536)
+    expect(byWrite.filter((result) => result === undefined).length).toBe(65_531)
+    expect(byWrite.at(-1)).toStrictEqual({
+      kind: 'fs',
+      line: `deny openat ${P4_WS}/f69999`,
+      target: `${P4_WS}/f69999`,
       observed: true,
     })
   })

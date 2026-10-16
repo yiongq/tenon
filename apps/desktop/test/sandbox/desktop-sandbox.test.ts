@@ -311,9 +311,17 @@ function harness(platform: SandboxPlatform, options: HarnessOptions = {}) {
   const folders = new Map<string, AbsolutePath[]>([[SESSION, [p(at.ws)]]])
   const logs: string[] = []
   const killed: number[] = []
-  const processes: { table: string; list: Mock<() => Promise<string>> } = {
+  // `table` is `ps -E`'s (command line, then environment), `argv` the same rows without `-E`.
+  const processes: {
+    table: string
+    argv: string
+    list: Mock<() => Promise<string>>
+    listArgv: Mock<() => Promise<string>>
+  } = {
     table: '',
+    argv: '',
     list: vi.fn<() => Promise<string>>(async () => processes.table),
+    listArgv: vi.fn<() => Promise<string>>(async () => processes.argv),
   }
   const signals: (() => void)[] = []
   const paths: Omit<SandboxHostPaths, 'noSeccomp'> = {
@@ -335,7 +343,11 @@ function harness(platform: SandboxPlatform, options: HarnessOptions = {}) {
     settings: () => settings,
     sessionFolders: async (sessionId) => folders.get(sessionId) ?? [],
     fs: disk,
-    processes: { list: processes.list, kill: (pid) => killed.push(pid) },
+    processes: {
+      list: processes.list,
+      listArgv: processes.listArgv,
+      kill: (pid) => killed.push(pid),
+    },
     onSignal: (listener) => signals.push(listener),
     log: (line) => logs.push(line),
   })
@@ -1402,6 +1414,21 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       '  4113  4102 /usr/bin/perl -e sleep 611',
       '',
     ].join('\n')
+    h.processes.argv = [
+      `  ${String(process.pid)} /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      '  4101 /bin/sleep 600',
+      '  4102 /usr/bin/python3 -c import os,time; os.setsid(); time.sleep(601)',
+      '  4103 /bin/sleep 602',
+      '  4104 /bin/sleep 603',
+      '  4105 /bin/sleep 604',
+      '  4106 /bin/zsh -l',
+      '  4109 /bin/sleep 607',
+      '  4110 /bin/sleep 608',
+      '  4111 /bin/sleep 609',
+      '  4112 /bin/sleep 610',
+      '  4113 /usr/bin/perl -e sleep 611',
+      '',
+    ].join('\n')
     await h.sandbox.afterExit('toolu_a')
     expect(h.killed).toEqual([4101, -4100, 4102, -4102, 4109, 4110, 4111, 4112])
     await h.sandbox.afterExit('toolu_b')
@@ -1416,6 +1443,12 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       '  4108  4108 /bin/sleep 606 TENON_SANDBOX_MARK=call',
       '',
     ].join('\n')
+    h.processes.argv = [
+      `  ${String(process.pid)} /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      '  4107 /bin/sleep 605',
+      '  4108 /bin/sleep 606',
+      '',
+    ].join('\n')
     h.killed.length = 0
     await h.sandbox.afterExit('call 7 x')
     expect(h.killed).toEqual([4107, -4107])
@@ -1424,6 +1457,7 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     await h.run({ commandId: 'toolu_c' })
     const c = h.calls[3]?.id ?? ''
     h.processes.table = [`  4114  4114 /bin/sleep 612 TENON_SANDBOX_MARK=${c}`, ''].join('\n')
+    h.processes.argv = ['  4114 /bin/sleep 612', ''].join('\n')
     h.killed.length = 0
     await h.sandbox.afterExit('toolu_c')
     expect(h.killed).toEqual([4114])
@@ -1433,6 +1467,42 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
     await linux.run()
     await linux.sandbox.afterExit(TOOL_USE)
     expect(linux.processes.list).not.toHaveBeenCalled()
+  })
+
+  it("04 验收 15 (host): on darwin a mark counts only in a process's environment: one whose command line names it (`ps` without -E shows it), or that the second table lacks, is never killed, nor its group; with either table unreadable nothing is", async () => {
+    const h = harness('darwin')
+    await h.run({ commandId: 'toolu_a' })
+    const a = h.calls[0]?.id ?? ''
+    h.processes.table = [
+      `  ${String(process.pid)}   500 /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      // Its environment holds the mark: it and its group go.
+      `  4201  4201 /bin/sleep 600 TENON_SANDBOX_MARK=${a}`,
+      // The mark in its command line only, its environment unread (a platform binary).
+      `  4202  4202 /usr/bin/grep TENON_SANDBOX_MARK=${a} /var/log/x`,
+      // The mark in its command line and in its environment: which is which cannot be told.
+      `  4203  4203 /bin/sh -c echo TENON_SANDBOX_MARK=${a} TENON_SANDBOX_MARK=${a}`,
+      // Not in the second table: gone, or started after it was read.
+      `  4204  4204 /bin/sleep 601 TENON_SANDBOX_MARK=${a}`,
+      '',
+    ].join('\n')
+    h.processes.argv = [
+      `  ${String(process.pid)} /Applications/Tenon.app/Contents/MacOS/Tenon`,
+      '  4201 /bin/sleep 600',
+      `  4202 /usr/bin/grep TENON_SANDBOX_MARK=${a} /var/log/x`,
+      `  4203 /bin/sh -c echo TENON_SANDBOX_MARK=${a}`,
+      '',
+    ].join('\n')
+    await h.sandbox.afterExit('toolu_a')
+    expect(h.killed).toEqual([4201, -4201])
+
+    await h.run({ commandId: 'toolu_b' })
+    const b = h.calls[1]?.id ?? ''
+    h.processes.table = `  4205  4205 /bin/sleep 602 TENON_SANDBOX_MARK=${b}\n`
+    h.processes.listArgv.mockRejectedValueOnce(new Error('ps: killed'))
+    h.killed.length = 0
+    await h.sandbox.afterExit('toolu_b')
+    expect(h.killed).toEqual([])
+    expect(h.logs).toContain('sandbox: the process table could not be read: ps: killed')
   })
 
   it('04 不变量 2: a command runs unwrapped only when it asked for full-access; DesktopSandbox never passes a restricted profile through', async () => {

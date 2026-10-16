@@ -829,7 +829,8 @@ function isStaleMountFile(stat: PostureFileStat | undefined): boolean {
  * Only `srt-mux-` carries a pid in its name; a `claude-http-` socket counts only when one of those
  * bridges listens on it, and an `srt-obs-` dir only when main itself listens on its socket
  * (`ownObserverDirs`), so another srt user's made meanwhile is not taken for ours. The mount points
- * `DesktopSandbox` records per wrap stay as they are.
+ * `DesktopSandbox` records per wrap stay as they are; socat and tmpdir entries another run recorded
+ * (another pid) are not adopted.
  */
 async function recordLeftovers(
   deps: SandboxPostureDeps,
@@ -868,15 +869,26 @@ async function recordLeftovers(
   } catch (error) {
     deps.log(`sandbox: ${file} could not be read: ${messageOf(error)}`)
   }
-  const hadSocat = socatList(record['socat'])
+  // Startup emptied these; any here now another run wrote meanwhile (two Tenons on one profile).
+  // Taken under this pid they would be judged by this run's end, and the next start would kill a
+  // live socat of that run and remove its sockets: they are left out, not adopted.
+  const ours = record['pid'] === deps.pid
+  const hadSocat = ours ? socatList(record['socat']) : []
+  const hadEntries = ours ? readList(record['tmpEntries']).filter(isAbsolutePathString) : []
+  if (
+    !ours &&
+    (readList(record['socat']).length > 0 || readList(record['tmpEntries']).length > 0)
+  ) {
+    deps.log(
+      `sandbox: ${file} held socat or tmpdir entries of another run (pid ${isPid(record['pid']) ? record['pid'] : 'none'}); not taken as this run's`,
+    )
+  }
   const known = new Set(hadSocat.map((item) => `${item.pid} ${item.command}`))
   writeStubs(deps, {
     ...record,
     pid: deps.pid,
     socat: [...hadSocat, ...socat.filter((item) => !known.has(`${item.pid} ${item.command}`))],
-    tmpEntries: [
-      ...new Set([...readList(record['tmpEntries']).filter(isAbsolutePathString), ...fresh]),
-    ],
+    tmpEntries: [...new Set([...hadEntries, ...fresh])],
   })
 }
 

@@ -193,8 +193,10 @@ export interface SandboxFileStat {
 
 /** The host's process table on darwin (§执行与收口; P6): host-internal helpers, like taskkill. */
 export interface SandboxProcessTable {
-  /** `/bin/ps -E -axww -o pid=,pgid=,command=`'s output. */
+  /** `/bin/ps -E -axww -o pid=,pgid=,command=`'s output: each command line, its environment after. */
   list(): Promise<string>
+  /** `/bin/ps -axww -o pid=,command=`'s output: each command line alone, no environment. */
+  listArgv(): Promise<string>
   /** SIGKILL one process, or the process group `-pid` names (kill(2)); one already gone is no error. */
   kill(pid: number): void
 }
@@ -817,15 +819,24 @@ export class DesktopSandbox implements HostSandbox {
    * process group of each one found (setsid-mac A, 2026-10-16): a marked process that setsid may
    * have started Apple platform binaries in its new group, whose mark `ps -E` cannot show. Never
    * group 0, launchd's or Tenon's own, read from the same table (Node has no getpgid); with no row
-   * for Tenon there, no group at all.
+   * for Tenon there, no group at all. Only a mark in the environment counts: `ps -E` prints the
+   * command line and the environment as one text, so a process whose own command line names the
+   * mark (`grep TENON_SANDBOX_MARK=…`) would read as marked; one whose command line without `-E`
+   * holds it, or that is not in that second table, is left alone, its group too.
    */
   private async killMarked(records: readonly WrapRecord[]): Promise<void> {
-    let table: string
+    let tables: [string, string]
     try {
-      table = await this.deps.processes.list()
+      tables = await Promise.all([this.deps.processes.list(), this.deps.processes.listArgv()])
     } catch (error) {
       this.deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
       return
+    }
+    const [table, argvTable] = tables
+    const argvOf = new Map<number, string>()
+    for (const row of argvTable.split('\n')) {
+      const match = /^\s*(\d+)\s+(.*)$/.exec(row)
+      if (match !== null) argvOf.set(Number(match[1]), match[2] ?? '')
     }
     const rows: { pid: number; pgid: number; command: string }[] = []
     for (const row of table.split('\n')) {
@@ -849,6 +860,8 @@ export class DesktopSandbox implements HostSandbox {
     for (const { pid, pgid, command } of rows) {
       if (pid <= 1 || pid === process.pid) continue
       if (!marks.some((mark) => holdsWord(command, mark))) continue
+      const argv = argvOf.get(pid)
+      if (argv === undefined || marks.some((mark) => argv.includes(mark))) continue
       kill(pid)
       if (own === undefined || pgid <= 1 || pgid === own || groups.has(pgid)) continue
       groups.add(pgid)
@@ -1038,16 +1051,8 @@ export function desktopSandboxFs(): SandboxFs {
 /** The process table through `/bin/ps` (§执行与收口; P6). */
 export function desktopProcessTable(): SandboxProcessTable {
   return {
-    list: () =>
-      new Promise((resolve, reject) => {
-        const child = spawn('/bin/ps', ['-E', '-axww', '-o', 'pid=,pgid=,command='], {
-          stdio: ['ignore', 'pipe', 'ignore'],
-        })
-        const chunks: Buffer[] = []
-        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
-        child.on('error', reject)
-        child.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')))
-      }),
+    list: () => psOutput(['-E', '-axww', '-o', 'pid=,pgid=,command=']),
+    listArgv: () => psOutput(['-axww', '-o', 'pid=,command=']),
     kill: (pid) => {
       try {
         process.kill(pid, 'SIGKILL')
@@ -1056,6 +1061,17 @@ export function desktopProcessTable(): SandboxProcessTable {
       }
     },
   }
+}
+
+/** What `/bin/ps <args>` prints. */
+function psOutput(args: readonly string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('/bin/ps', args, { stdio: ['ignore', 'pipe', 'ignore'] })
+    const chunks: Buffer[] = []
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    child.on('error', reject)
+    child.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')))
+  })
 }
 
 /** One call on the first SIGTERM or SIGINT, as srt's own once-listeners (§退出). */
