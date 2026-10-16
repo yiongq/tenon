@@ -322,7 +322,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
         identity,
         fs,
         secrets,
-        process: createHostProcess(),
+        process: createHostProcess(options.log),
         sandbox: new PassthroughSandbox(options.log),
         confirm,
         clock: new SystemClock(),

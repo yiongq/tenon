@@ -16,6 +16,7 @@
     "test:live": "TENON_LIVE=1 playwright test --config=playwright.live.config.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.79",
     "@assistant-ui/react": "0.15.20",
     "@base-ui/react": "1.8.0",
     "@cfworker/json-schema": "4.1.1",

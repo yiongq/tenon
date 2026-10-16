@@ -51,7 +51,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<Ho
     identity,
     fs,
     secrets: useMemorySecrets(options.isPackaged) ? new MemorySecrets() : new KeychainSecrets(),
-    process: createHostProcess(),
+    process: createHostProcess(options.log),
     sandbox: new PassthroughSandbox(options.log),
     confirm: new IpcConfirm(options.send),
     clock: new SystemClock(),
