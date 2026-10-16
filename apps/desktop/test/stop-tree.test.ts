@@ -481,7 +481,7 @@ describe.skipIf(process.platform === 'win32')("desktop's kill once the direct ch
  * command that exits leaves nothing in its process group" waits for plan step 10's kernel change.
  * Runs where `TENON_SANDBOX_TESTS=required` (plan 开工前读「沙箱外」); skipped otherwise.
  */
-const sandboxGate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE])
+const sandboxGate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE], process.env['CI'])
 if (!sandboxGate.run) console.warn(sandboxGate.reason)
 
 describe.skipIf(!sandboxGate.run || process.platform === 'win32')(

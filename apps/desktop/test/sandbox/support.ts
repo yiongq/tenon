@@ -73,12 +73,23 @@ export type SandboxTestsGate =
 
 /**
  * `required` runs the suite, and the suite then fails unless the sandbox starts `active`; unset or
- * `skip` skips it with the reason printed. Any other value is a typo that must not quietly skip
- * the suite, so it throws. (The CI half — `CI` set and neither value — is plan step 21.)
+ * `skip` skips it with the reason printed, except under CI (`ci` has a value): there an unset or
+ * empty variable fails the suite instead of skipping it, so a job that forgot it goes red (验收 34,
+ * 读法 24). Any other value is a typo that must not quietly skip the suite, so it throws. `ci` is
+ * `process.env.CI`, passed in so the gate stays a pure function.
  */
-export function sandboxTestsGate(value: string | undefined): SandboxTestsGate {
+export function sandboxTestsGate(
+  value: string | undefined,
+  ci: string | undefined,
+): SandboxTestsGate {
   if (value === 'required') return { run: true }
   if (value === undefined || value === '') {
+    if (ci !== undefined && ci !== '') {
+      throw new Error(
+        `CI is set but ${SANDBOX_TESTS_VARIABLE} is not: set it to "required" on a job that can ` +
+          `start the sandbox, or to "skip" on purpose; an unset variable would skip the suite quietly`,
+      )
+    }
     return {
       run: false,
       reason:

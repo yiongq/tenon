@@ -20,7 +20,9 @@ env:
 jobs:
   ci:
     name: ci
-    runs-on: ubuntu-latest
+    # Pinned: a new image can change what the sandbox black box needs (bwrap, AppArmor), so moving
+    # it is a PR of its own that reruns spec 04's probe P5.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -49,7 +51,22 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm typecheck
+      # The sandbox black box (spec 04, acceptance 34) runs here for real: bubblewrap and friends,
+      # and the AppArmor switch that lets an unprivileged user namespace start.
+      - name: Install the sandbox's Linux dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Show the sandbox's host readings
+        run: |
+          for key in kernel/apparmor_restrict_unprivileged_userns kernel/unprivileged_userns_clone user/max_user_namespaces; do
+            printf '%s = ' "$(echo "$key" | tr / .)"
+            cat "/proc/sys/$key" 2>/dev/null || echo '(absent)'
+          done
+          bwrap --version
       - run: pnpm test --maxWorkers=2
+        env:
+          TENON_SANDBOX_TESTS: required
       - run: pnpm evals:gate --maxWorkers=2
 
   e2e:
@@ -83,18 +100,39 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  # The sandbox black box on macOS (spec 04, acceptance 34): only the sandbox suite and the stop
+  # cases; every other unit test already runs in `ci`.
+  sandbox-macos:
+    name: sandbox-macos
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build
+      - run: pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts
+        env:
+          TENON_SANDBOX_TESTS: required
+
   # The single required status check. A skipped job counts as passing on GitHub,
   # so this job fails unless every needed job actually succeeded.
   ci-ok:
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [ci, e2e]
+    needs: [ci, e2e, sandbox-macos]
     if: ${{ always() }}
     steps:
       - env:
           CI_RESULT: ${{ needs.ci.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
+          SANDBOX_MACOS_RESULT: ${{ needs.sandbox-macos.result }}
         run: |
-          echo "ci=$CI_RESULT e2e=$E2E_RESULT"
+          echo "ci=$CI_RESULT e2e=$E2E_RESULT sandbox-macos=$SANDBOX_MACOS_RESULT"
           [ "$CI_RESULT" = "success" ] || exit 1
           [ "$E2E_RESULT" = "success" ] || exit 1
+          [ "$SANDBOX_MACOS_RESULT" = "success" ] || exit 1
