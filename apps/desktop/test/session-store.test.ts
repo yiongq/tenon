@@ -1520,6 +1520,48 @@ describe('a local 「已允许」 whose call never ran (§最小审批卡「答�
     detach()
   })
 
+  it('makes none when the closure named the answer before the response came back', async () => {
+    // The response and the `tool-outcome` are two IPC messages with no order between them: the
+    // closure can land first, find no line to drop, and the late response must not make one.
+    const fake = fakeBridge()
+    let current: PendingCard | null = card(R1)
+    let answer: (() => void) | undefined
+    fake.handle(approvalCurrent, () => current)
+    fake.handle(
+      approvalRespond,
+      () =>
+        new Promise<{ status: 'applied' }>((resolve) => {
+          answer = () => {
+            current = null
+            resolve({ status: 'applied' })
+          }
+        }),
+    )
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    const detach = store.attach()
+    await store.open({ resume: false })
+    fake.emit(chatEvent, {
+      type: 'tool-call',
+      sessionId: SESSION,
+      callKey: CALL,
+      providerToolCallId: 'toolu_1',
+      name: 'Read',
+      input: { file_path: '/outside/x.txt' },
+    })
+    const responding = store.respond('allow')
+    const closure = closed('not-run', 'policy')
+    if (closure.type !== 'tool-outcome') throw new Error('a tool-outcome')
+    fake.emit(chatEvent, {
+      ...closure,
+      approval: { outcome: 'denied-on-rejudge', scope: null, target: card(R1).card.target },
+    })
+    answer?.()
+    await responding
+    expect(store.getSnapshot().answered.has(CALL)).toBe(false)
+    expect(store.getSnapshot().pending).toBeNull()
+    detach()
+  })
+
   it('a local 「已拒绝」 is not dropped by a not-run closure without its answer', async () => {
     // A denial's closure is not-run by nature; only its own `approval` replaces the local line.
     const { fake, store, detach } = await allowed('deny')

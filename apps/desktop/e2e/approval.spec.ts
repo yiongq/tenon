@@ -39,6 +39,8 @@ test.afterEach(async () => {
 
 /** Clicks on a card that just appeared are ignored this long (ApprovalCard.tsx's APPROVAL_CLICK_GUARD_MS, 400). */
 const PAST_CLICK_GUARD_MS = 600
+/** Long enough for `approval.respond`'s response to follow the call's closure to the window. */
+const RESPONSE_LANDED_MS = 500
 
 const COPY = {
   'zh-CN': {
@@ -675,6 +677,10 @@ test('an allow the re-judgement tightens leaves no collapsed 「已允许」 lin
     await card.getByTestId('approval-allow').click()
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked then.')
     await expect(page.getByTestId('blocked-notice')).toHaveCount(1)
+    // The answer's response and the call's closure are two IPC messages with no order between them,
+    // so a line the response makes can land after the closure: an empty look right after the
+    // closure proves nothing. Look once the response has surely landed.
+    await page.waitForTimeout(RESPONSE_LANDED_MS)
     await expect(page.getByTestId('approval-answered')).toHaveCount(0)
   } finally {
     await app.close()
