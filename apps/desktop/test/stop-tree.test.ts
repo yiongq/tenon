@@ -16,7 +16,7 @@
  * the sequence uses about half (macOS 26.3, 2026-09-27: SIGKILL 500–503 ms after the stop, the group
  * empty 1–3 ms later, `ps` seeing it empty by 512–542 ms).
  */
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -484,6 +484,36 @@ describe.skipIf(process.platform === 'win32')("desktop's kill once the direct ch
 const sandboxGate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE], process.env['CI'])
 if (!sandboxGate.run) console.warn(sandboxGate.reason)
 
+/**
+ * Whether `ps -E` shows the environment of an Apple platform binary on this Mac. With SIP on it does
+ * not, which is why a setsid platform binary outlives its call (§已知限制); GitHub's macOS runners
+ * have SIP off (`csrutil status`: disabled, plan step 21), so there `afterExit`'s mark scan finds
+ * and kills it and the darwin case that records the limitation as it is cannot hold.
+ */
+function platformEnvironmentVisible(): boolean {
+  if (process.platform !== 'darwin') return false
+  try {
+    const shown = execFileSync(
+      '/bin/sh',
+      [
+        '-c',
+        'TENON_ENV_PROBE=visible /bin/sleep 5 & pid=$!; sleep 0.3; /bin/ps -E -ww -p "$pid" -o command=; kill "$pid"',
+      ],
+      { encoding: 'utf8' },
+    )
+    return shown.includes('TENON_ENV_PROBE=visible')
+  } catch {
+    return false
+  }
+}
+const platformEnvironmentShown = sandboxGate.run && platformEnvironmentVisible()
+if (platformEnvironmentShown) {
+  console.warn(
+    '`ps -E` shows the environment of Apple platform binaries here (SIP is off): the darwin case ' +
+      'that records a setsid platform binary outliving its call is skipped.',
+  )
+}
+
 describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
   'the stop on a real sandboxed process tree (04 验收 15)',
   () => {
@@ -668,17 +698,22 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
         marks.push(mark)
         // perl's marker is python's own with `_setsid` swapped for `_perl`, so neither argv holds
         // the mark twice.
+        // python writes the ready file once perl runs: on a loaded runner python3 (Xcode's, through
+        // the xcrun shim) takes more than the old fixed `sleep 1` to get that far, and the call
+        // would end, and be killed, first (plan step 21, GitHub's macos-15).
+        const ready = join(folder, 'ready')
         const python = [
           'import os, subprocess, sys, time',
           'os.setsid()',
           'subprocess.Popen(["perl", "-e", "sleep 607", sys.argv[1].replace("_setsid", "_perl")])',
+          'open(sys.argv[2], "w").close()',
           'time.sleep(606)',
         ].join('; ')
         const { call } = sandboxedCall(
           [
             `: ${mark}_decoy`,
-            `python3 -c '${python}' ${mark}_setsid >/dev/null 2>&1 &`,
-            'sleep 1',
+            `python3 -c '${python}' ${mark}_setsid '${ready}' >/dev/null 2>&1 &`,
+            `i=0; while [ ! -e '${ready}' ] && [ $i -lt 200 ]; do sleep 0.1; i=$((i + 1)); done`,
             'exit 0',
           ].join('\n'),
           new AbortController().signal,
@@ -698,7 +733,7 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
     // carries the mark where `ps -E` cannot show it and has left the command's group, so nothing
     // finds it once the call ends on its own (§已知限制). This case goes red the day it is killed;
     // then 验收 15 and 不变量 13 can drop their darwin narrowing. afterEach kills it.
-    it.skipIf(process.platform !== 'darwin')(
+    it.skipIf(process.platform !== 'darwin' || platformEnvironmentShown)(
       '04 验收 15 (darwin, as it is): a command that setsids an Apple platform binary (perl) and exits leaves it running 1 s after the call ends (§已知限制)',
       async () => {
         const mark = newMark('platform')
