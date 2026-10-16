@@ -163,6 +163,99 @@ describe.skipIf(!ON)('TEMPORARY CI probe', () => {
     )
   }, 1_800_000)
 
+  describe.skipIf(!DARWIN)('macOS stop diagnostics', () => {
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- temporary probe
+    const hostPs = (needle: string): string[] => {
+      try {
+        return execFileSync(
+          '/bin/ps',
+          ['-E', '-ww', '-A', '-o', 'pid=,ppid=,pgid=,stat=,command='],
+          {
+            encoding: 'utf8',
+            maxBuffer: 64 * 1024 * 1024,
+          },
+        )
+          .split('\n')
+          .filter((row) => row.includes(needle) && !row.includes('/bin/ps'))
+          .map((row) =>
+            row
+              .replace(/ [A-Za-z_][A-Za-z0-9_]*=\S*/g, (m) =>
+                m.includes('TENON_SANDBOX_MARK') ? ' <MARK-IN-ENV>' : '',
+              )
+              .slice(0, 400),
+          )
+      } catch (error) {
+        return [String(error)]
+      }
+    }
+
+    it('python3 and perl under the sandbox on this runner', async () => {
+      const out: Record<string, unknown> = { facts: facts() }
+      // oxlint-disable-next-line unicorn/consistent-function-scoping -- temporary probe
+      const sh = (script: string): string => {
+        try {
+          return execFileSync('/bin/sh', ['-c', script], { encoding: 'utf8' }).trim()
+        } catch (error) {
+          return `(${String(error).slice(0, 200)})`
+        }
+      }
+      out['system'] = {
+        csrutil: sh('csrutil status 2>&1 | head -2'),
+        python3: sh(
+          'ls -l /usr/bin/python3 /usr/bin/perl; /usr/bin/python3 -c "import sys; print(sys.executable, sys.version)"; /usr/bin/perl -e \'print "$^V $^X\\n"\'',
+        ),
+        pythonSigned: sh(
+          'codesign -dvv "$(/usr/bin/python3 -c \'import sys; print(sys.executable)\')" 2>&1 | grep -E "Identifier|Platform|flags|Authority" | head -6',
+        ),
+        whichAll: sh('which -a python3 perl'),
+      }
+      const { lab, ws } = labWithOutside()
+      // A: python3 (setsid) starts perl, stderr kept
+      const mark = `DIAGMARK${String(Date.now())}`
+      const a = await lab.run(
+        [
+          `python3 -c 'import os, subprocess, sys, time; os.setsid(); p = subprocess.Popen(["perl", "-e", "sleep 12", sys.argv[1].replace("_setsid", "_perl")]); sys.stderr.write("popen ok %d\\n" % p.pid); sys.stderr.flush(); time.sleep(12)' ${mark}_setsid 2>${shq(join(ws, 'a.err'))} &`,
+          'sleep 3',
+          `/bin/ps -A -ww -o pid=,ppid=,pgid=,stat=,command= | grep ${mark} | grep -v grep`,
+          `echo ---err; cat ${shq(join(ws, 'a.err'))}`,
+          'exit 0',
+        ].join('\n'),
+        { workspace: [ws] },
+      )
+      out['A_python_starts_perl'] = {
+        code: a.code,
+        stdout: a.stdout.slice(0, 1500),
+        stderr: a.stderr.slice(0, 500),
+      }
+      await sleep(500)
+      out['A_after'] = hostPs(mark)
+      // B: a platform perl that setsids; look at the host's ps -E while it runs, then after
+      const markB = `DIAGPLAT${String(Date.now())}`
+      const running = lab.run(
+        [
+          `perl -MPOSIX -e 'POSIX::setsid(); sleep 12' ${markB}_setsid >/dev/null 2>&1 &`,
+          'sleep 3',
+          'exit 0',
+        ].join('\n'),
+        { workspace: [ws] },
+      )
+      await sleep(1500)
+      out['B_during'] = hostPs(markB)
+      await running
+      const after: string[][] = []
+      for (let i = 0; i < 12; i += 1) {
+        after.push(hostPs(markB))
+        // oxlint-disable-next-line no-await-in-loop -- sampling over time
+        await sleep(250)
+      }
+      out['B_after_samples'] = after
+      const file = join(OUT, 'macos-diag.json')
+      writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`)
+      expect(Object.keys(out).length).toBeGreaterThan(0)
+      console.warn(`CI-PROBE macOS diag ${file}`)
+    }, 300_000)
+  })
+
   describe.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('x64 capture', () => {
     // x86-64 system call numbers (arch/x86/entry/syscalls/syscall_64.tbl), named as apply-seccomp
     // would name them; a raw syscall(2) makes exactly that call whatever glibc maps it to.
