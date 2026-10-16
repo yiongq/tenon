@@ -243,6 +243,41 @@ const propertyGaps = (path) => {
   )
 }
 
+// Spec 04 读法 50: main chdirs to <userData>/sandbox-cwd once the sandbox starts, so main may not
+// read its cwd, by `process.cwd` or by importing `cwd` (dev-env.ts aside, which runs before that).
+// Not only .ts: a worker such as mcp/schema-thread.mjs shares main's cwd.
+const MAIN_PATHS = [
+  'apps/desktop/src/main/x.ts',
+  'apps/desktop/src/main/host/x.ts',
+  'apps/desktop/src/main/mcp/x.mjs',
+]
+const CWD_IMPORTS = ['node:process', 'process']
+
+const cwdBanGaps = (path) => {
+  const { rules } = effectiveConfig(path)
+  const gaps = []
+  const properties = rules['no-restricted-properties']
+  if (!Array.isArray(properties) || properties[0] !== 'error') {
+    gaps.push(`${path}: no-restricted-properties is not set to "error"`)
+  } else if (
+    !entriesOf(properties).some((one) => one.object === 'process' && one.property === 'cwd')
+  ) {
+    gaps.push(`${path}: no-restricted-properties no longer bans "process.cwd"`)
+  }
+  const imports = rules['no-restricted-imports']
+  if (!Array.isArray(imports) || imports[0] !== 'error') {
+    gaps.push(`${path}: no-restricted-imports is not set to "error"`)
+    return gaps
+  }
+  for (const name of CWD_IMPORTS) {
+    const entry = (imports[1]?.paths ?? []).find((one) => one.name === name)
+    if (!entry?.importNames?.includes('cwd')) {
+      gaps.push(`${path}: no-restricted-imports no longer bans importing "cwd" from "${name}"`)
+    }
+  }
+  return gaps
+}
+
 const nodeModuleGaps = (path) => {
   const value = effectiveConfig(path).rules['import/no-nodejs-modules']
   return value === 'error' ? [] : [`${path}: import/no-nodejs-modules is ${value}, not "error"`]
@@ -261,7 +296,8 @@ describe('the effective .oxlintrc.json config', () => {
 
   it('leaves paths outside kernel and contracts ungated', () => {
     // The other half of the vacuity guard: a matcher that matched everything would pass the bans.
-    expect(effectiveConfig('apps/desktop/src/main/x.ts').rules['no-restricted-imports']).toBe(
+    // (Not main: it bans importing `cwd` from node:process, spec 04 读法 50.)
+    expect(effectiveConfig('apps/desktop/src/preload/x.ts').rules['no-restricted-imports']).toBe(
       undefined,
     )
   })
@@ -297,6 +333,17 @@ describe('the effective .oxlintrc.json config', () => {
   it('still bans Node built-ins outright', () => {
     // Catches: turning import/no-nodejs-modules off for kernel/src in a later override.
     expect(GATED_PATHS.flatMap((path) => nodeModuleGaps(path))).toEqual([])
+  })
+
+  it("still bans reading main's cwd outside dev-env.ts (spec 04 读法 50)", () => {
+    // Catches: dropping the apps/desktop/src/main override or either of its rules. No main file
+    // reads the cwd today, so `pnpm lint` itself stays green without it.
+    expect(MAIN_PATHS.flatMap((path) => cwdBanGaps(path))).toEqual([])
+    const devEnv = effectiveConfig('apps/desktop/src/main/dev-env.ts').rules
+    expect({
+      properties: devEnv['no-restricted-properties'],
+      imports: devEnv['no-restricted-imports'],
+    }).toEqual({ properties: 'off', imports: 'off' })
   })
 })
 
@@ -419,6 +466,45 @@ describe('oxlint on a kernel/src probe', () => {
       { exitCode, named: output.includes('no-restricted-globals') },
       `oxlint said:\n${output}`,
     ).toEqual({ exitCode: 1, named: true })
+  })
+})
+
+describe("oxlint on a desktop main probe (spec 04 读法 50: main's cwd)", () => {
+  const source = `export const f = () => process.cwd()\n`
+
+  it.each([
+    {
+      label: 'process.cwd()',
+      path: 'apps/desktop/src/main/probe.ts',
+      source,
+      rule: 'no-restricted-properties',
+    },
+    {
+      label: `import { cwd } from 'node:process'`,
+      path: 'apps/desktop/src/main/host/probe.ts',
+      source: `import { cwd } from 'node:process'\nexport const f = () => cwd()\n`,
+      rule: 'no-restricted-imports',
+    },
+    {
+      label: 'process.cwd() in a worker script',
+      path: 'apps/desktop/src/main/mcp/probe.mjs',
+      source,
+      rule: 'no-restricted-properties',
+    },
+  ])('fails on $label and names the rule', ({ path, source: text, rule }) => {
+    const { exitCode, output } = lintProbe(path, text)
+    expect({ exitCode, named: output.includes(rule) }, `oxlint said:\n${output}`).toEqual({
+      exitCode: 1,
+      named: true,
+    })
+  })
+
+  it('lets dev-env.ts read it', () => {
+    // The other half: the exemption is still there, so the probes above fail for the ban.
+    expect(lintProbe('apps/desktop/src/main/dev-env.ts', source)).toEqual({
+      exitCode: 0,
+      output: '',
+    })
   })
 })
 

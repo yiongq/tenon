@@ -12,6 +12,9 @@
  * `policy` is the ninth member, added by the amendment in
  * docs/architecture/02-agent-loop/spec.md (§对 00-foundation 的修补), which also adds
  * `HostFs.realpath`, four `ConfirmReason` values and `ConfirmRequest.reversibility` / `target`.
+ *
+ * docs/architecture/04-sandbox/spec.md (§对 00 的修补) adds only optional members:
+ * `HostSandbox.posture` and four on `SandboxViolation`. `SandboxRequest` is unchanged.
  */
 
 import type { PolicyState } from './policy.js'
@@ -121,6 +124,20 @@ export interface HostSandbox {
   wrap(request: SandboxRequest): Promise<{ argv: string[]; env: Record<string, string> }>
   afterExit(commandId: string): Promise<void>
   violations(commandId: string): Promise<SandboxViolation[]>
+  /**
+   * Added by spec 04 (§对 00 的修补 1). Synchronous and never throws. A host without it reads as
+   * `{ state: 'active', profile: 'workspace-write' }`; that default only picks card copy, and any
+   * rule that asks less because the sandbox is in effect reads a missing `posture` as unavailable.
+   */
+  posture?(): SandboxPosture
+}
+
+/** Added by spec 04 (§启动、自检与姿态): the sandbox's state and your command profile. */
+export interface SandboxPosture {
+  /** `degraded` = in effect, partly weakened. */
+  readonly state: 'pending' | 'active' | 'degraded' | 'unavailable'
+  /** The command profile you chose under Advanced. */
+  readonly profile: 'read-only' | 'workspace-write'
 }
 
 export interface SandboxRequest {
@@ -136,7 +153,17 @@ export interface SandboxRequest {
 
 export interface SandboxViolation {
   kind: 'fs' | 'network'
+  /** The raw line text. */
   line: string
+  // added by spec 04 (§对 00 的修补 2); the host judges all four, the kernel never parses `line`
+  /** A host name (no port) or an absolute path. */
+  target?: string
+  /** The receipt may offer a one-off release for this target. */
+  release?: 'domain' | 'path'
+  /** The target is on the protected list. */
+  protected?: true
+  /** Diagnostic only: a Linux seccomp observer line, or an object-less line on the closed list. */
+  observed?: true
 }
 
 export interface HostConfirm {

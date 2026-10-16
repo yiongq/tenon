@@ -23,7 +23,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { absolutePath } from '@tenon-app/kernel'
-import type { AbsolutePath, ChildHandle, HostProcess } from '@tenon-app/kernel'
+import type { AbsolutePath, ChildHandle, HostProcess, HostSandbox } from '@tenon-app/kernel'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { closureContent } from '../../../packages/kernel/src/loop/closure.js'
 import {
@@ -39,6 +39,18 @@ import { SystemClock } from '../src/main/host/clock.js'
 import { DesktopFs } from '../src/main/host/fs.js'
 import { createHostProcess, spawnChild } from '../src/main/host/process.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
+import {
+  SANDBOX_TESTS_VARIABLE,
+  assertSandboxActive,
+  holdTmpClaudeLock,
+  killMarked,
+  markedProcesses,
+  newMark,
+  sandboxTestsGate,
+  startSandboxRig,
+  type SandboxLab,
+  type SandboxRig,
+} from './sandbox/support.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -190,6 +202,28 @@ function bash(
   fixture: string,
   q: { readonly process: HostProcess; readonly signal: AbortSignal; readonly timeout?: number },
 ): Promise<ToolExecution> {
+  // `exec`: the fixture's shell is the direct child itself, whatever `sh -c` does with its last
+  // command (bash and dash exec it; the spec does not say either must).
+  return bashCommand(`exec /bin/sh '${fixture}'`, {
+    ...q,
+    sandbox: new PassthroughSandbox(() => {}),
+    commandId: 'toolu_stop_tree',
+    folder: cwd,
+  })
+}
+
+/** Runs `command` through the kernel's Bash executor, on desktop's host and the given sandbox. */
+function bashCommand(
+  command: string,
+  q: {
+    readonly process: HostProcess
+    readonly signal: AbortSignal
+    readonly timeout?: number
+    readonly sandbox: HostSandbox
+    readonly commandId: string
+    readonly folder: AbsolutePath
+  },
+): Promise<ToolExecution> {
   return bashExecutor({
     item: {
       source: 'builtin',
@@ -199,16 +233,14 @@ function bash(
       spec: BUILTIN_TOOLS.Bash.spec({ domainFilter: false }),
       requiresUserInteraction: false,
     },
-    // `exec`: the fixture's shell is the direct child itself, whatever `sh -c` does with its last
-    // command (bash and dash exec it; the spec does not say either must).
     input: {
-      command: `exec /bin/sh '${fixture}'`,
+      command,
       ...(q.timeout === undefined ? {} : { timeout: q.timeout }),
     },
     signal: q.signal,
     target: null,
     scope: {
-      roots: [cwd],
+      roots: [q.folder],
       profileDir: absolutePath('/tenon/prof'),
       ownSpillDir: absolutePath('/tenon/prof/tool-output/s1'),
       protectedFiles: [],
@@ -216,14 +248,14 @@ function bash(
     fs: new DesktopFs(),
     clock: new SystemClock(),
     command: {
-      commandId: 'toolu_stop_tree',
+      commandId: q.commandId,
       shell: SH,
       env: { PATH: '/usr/bin:/bin' },
-      folders: [cwd],
+      folders: [q.folder],
       dedicated: false,
       host: {
         process: q.process,
-        sandbox: new PassthroughSandbox(() => {}),
+        sandbox: q.sandbox,
         clock: new SystemClock(),
       },
     },
@@ -441,3 +473,252 @@ describe.skipIf(process.platform === 'win32')("desktop's kill once the direct ch
     CASE_TIMEOUT_MS,
   )
 })
+
+/**
+ * Spec 04 验收 15, the stop part, with 04 不变量 13 (plan step 6; T11, P6): the kernel's Bash executor
+ * on desktop's HostProcess and a real `DesktopSandbox` over sandbox-runtime. Every process a command
+ * leaves carries a marker in its argv, and the host's process table is read for it. The half "a
+ * command that exits leaves nothing in its process group" waits for plan step 10's kernel change.
+ * Runs where `TENON_SANDBOX_TESTS=required` (plan 开工前读「沙箱外」); skipped otherwise.
+ */
+const sandboxGate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE])
+if (!sandboxGate.run) console.warn(sandboxGate.reason)
+
+describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
+  'the stop on a real sandboxed process tree (04 验收 15)',
+  () => {
+    let rig: SandboxRig
+    let lab: SandboxLab
+    let folder: AbsolutePath
+    let releaseTmpClaude: (() => void) | undefined
+    const marks: string[] = []
+
+    beforeAll(async () => {
+      // escape.test.ts's mktemp case sets srt's shared /tmp/claude aside and every wrap here makes it
+      // again: under S the two take turns (support.ts holdTmpClaudeLock).
+      releaseTmpClaude = await holdTmpClaudeLock()
+      rig = await startSandboxRig()
+      assertSandboxActive(rig.outcome)
+      lab = rig.lab()
+      folder = absolutePath(lab.dir('ws'))
+      lab.folders = [folder]
+    }, CASE_TIMEOUT_MS * 7)
+
+    afterEach(async () => {
+      await Promise.all(marks.splice(0).map(killMarked))
+    })
+
+    afterAll(async () => {
+      try {
+        await rig?.dispose()
+      } finally {
+        releaseTmpClaude?.()
+      }
+    })
+
+    /**
+     * Polls the process table until a process of each `<mark>_<kind>` runs; rejects past
+     * `PATIENCE_MS`. A process whose argv holds the marker more than once is a shell or the
+     * sandbox-exec wrapper carrying the whole command text, not one of the processes it starts.
+     */
+    async function allUp(mark: string, kinds: readonly string[]): Promise<void> {
+      const deadline = now() + PATIENCE_MS
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- one ps at a time
+        const args = (await markedProcesses(mark))
+          .map((row) => row.args)
+          .filter((one) => one.split(mark).length === 2)
+        const up = (kind: string): boolean =>
+          args.some((one) => new RegExp(`${mark}_${kind}(?:\\s|$)`).test(one))
+        if (kinds.every(up)) return
+        if (now() > deadline) {
+          throw new Error(`not all of ${kinds.join(', ')} came up: ${JSON.stringify(args)}`)
+        }
+        // oxlint-disable-next-line no-await-in-loop -- the poll's pace
+        await delay(10)
+      }
+    }
+
+    /** When `ps` first found no process carrying `mark`; null when one still did past `deadline`. */
+    async function goneAt(mark: string, deadline: number): Promise<number | null> {
+      for (;;) {
+        // oxlint-disable-next-line no-await-in-loop -- one ps at a time
+        const left = await markedProcesses(mark)
+        const at = now()
+        if (left.length === 0) return at
+        if (at > deadline) return null
+        // oxlint-disable-next-line no-await-in-loop -- the poll's pace
+        await delay(10)
+      }
+    }
+
+    function sandboxedCall(
+      command: string,
+      signal: AbortSignal,
+    ): { readonly call: Promise<ToolExecution>; readonly commandId: string } {
+      const commandId = `toolu_stop_tree_sandboxed_${String(Math.floor(now()))}`
+      // The kernel's `beforeWrap` (LoopPorts.sandbox, plan step 13c): the session and its folder.
+      lab.sandbox.beforeWrap({ commandId, sessionId: lab.sessionId })
+      const call = bashCommand(command, {
+        process: createHostProcess(),
+        signal,
+        sandbox: lab.sandbox,
+        commandId,
+        folder,
+      })
+      return { call, commandId }
+    }
+
+    it(
+      '04 验收 15: a stop leaves none of the command’s processes — the & child, the grandchild & left behind, the setsid one, the foreground one — within 1 s (04 不变量 13)',
+      async () => {
+        const mark = newMark('stop')
+        marks.push(mark)
+        const stop = new AbortController()
+        // The grandchild and the setsid one drop TENON_SANDBOX_MARK, so on darwin only the process
+        // group and the tree collected before the signal can reach them, not afterExit's mark scan.
+        const { call } = sandboxedCall(
+          [
+            `perl -e 'sleep 600' ${mark}_bg &`,
+            `( env -u TENON_SANDBOX_MARK perl -e 'sleep 600' ${mark}_grandchild & )`,
+            `env -u TENON_SANDBOX_MARK perl -MPOSIX -e 'POSIX::setsid(); sleep 601' ${mark}_setsid &`,
+            `perl -e 'sleep 602' ${mark}_fg`,
+          ].join('\n'),
+          stop.signal,
+        )
+        await allUp(mark, ['bg', 'grandchild', 'setsid', 'fg'])
+
+        const stoppedAt = now()
+        stop.abort()
+        const gone = await goneAt(mark, stoppedAt + PATIENCE_MS)
+        const execution = await call
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - stoppedAt).toBeLessThan(TREE_CLEAR_MS)
+        expect(execution).toMatchObject({ isError: true, state: 'aborted' })
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    it(
+      '04 验收 15: a stop leaves no setsid process that ignores SIGTERM and dropped its mark within 1 s (04 不变量 13)',
+      async () => {
+        const mark = newMark('stopterm')
+        marks.push(mark)
+        const stop = new AbortController()
+        // perl is an Apple platform binary and drops TENON_SANDBOX_MARK, so on darwin afterExit's
+        // mark scan cannot find it; it outlives the SIGTERM, and by the SIGKILL the shell is gone
+        // and launchd has it: only the tree killTree collected at the SIGTERM still names it.
+        const { call } = sandboxedCall(
+          [
+            `env -u TENON_SANDBOX_MARK perl -MPOSIX -e '$SIG{TERM} = "IGNORE"; POSIX::setsid(); sleep 603' ${mark}_setsidterm &`,
+            `perl -e 'sleep 604' ${mark}_fg`,
+          ].join('\n'),
+          stop.signal,
+        )
+        await allUp(mark, ['setsidterm', 'fg'])
+
+        const stoppedAt = now()
+        stop.abort()
+        const gone = await goneAt(mark, stoppedAt + PATIENCE_MS)
+        const execution = await call
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - stoppedAt).toBeLessThan(TREE_CLEAR_MS)
+        expect(execution).toMatchObject({ isError: true, state: 'aborted' })
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    // On darwin only afterExit's TENON_SANDBOX_MARK scan (and the process group of each process it
+    // finds) reaches a process that left the command's group and outlives a call that ended on its
+    // own, and `ps -E` shows no environment for an Apple platform binary (perl, sleep, the shells).
+    // So these cases use python3 (as in P6), which is not one; the darwin case after them records
+    // what is left: a platform binary that left the group by itself outlives the call (setsid-mac A,
+    // 2026-10-16: 验收 15 and 不变量 13 narrowed on darwin, §已知限制). `: <mark>_decoy` puts the
+    // mark twice in the command text, so the shell and the sandbox-exec wrapper carrying it are never
+    // taken for one of the processes it starts.
+    it(
+      '04 验收 15: a command that setsids a non-platform binary (python3) and exits leaves it running nowhere once the call ends (04 不变量 13; on darwin found by its TENON_SANDBOX_MARK)',
+      async () => {
+        const mark = newMark('exit')
+        marks.push(mark)
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            `python3 -c 'import os, time; os.setsid(); time.sleep(605)' ${mark}_setsid >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['setsid'])
+        const execution = await call
+        const endedAt = now()
+        expect(execution).toMatchObject({ isError: false, state: 'completed' })
+        const gone = await goneAt(mark, endedAt + PATIENCE_MS)
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    it(
+      '04 验收 15: a command whose setsid python3 starts perl in its new group and exits leaves neither running once the call ends (04 不变量 13; on darwin perl goes with the group of the python found by its TENON_SANDBOX_MARK)',
+      async () => {
+        const mark = newMark('group')
+        marks.push(mark)
+        // perl's marker is python's own with `_setsid` swapped for `_perl`, so neither argv holds
+        // the mark twice.
+        const python = [
+          'import os, subprocess, sys, time',
+          'os.setsid()',
+          'subprocess.Popen(["perl", "-e", "sleep 607", sys.argv[1].replace("_setsid", "_perl")])',
+          'time.sleep(606)',
+        ].join('; ')
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            `python3 -c '${python}' ${mark}_setsid >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['setsid', 'perl'])
+        const execution = await call
+        const endedAt = now()
+        expect(execution).toMatchObject({ isError: false, state: 'completed' })
+        const gone = await goneAt(mark, endedAt + PATIENCE_MS)
+        expect(gone).not.toBeNull()
+        expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
+      },
+      CASE_TIMEOUT_MS,
+    )
+
+    // What setsid-mac A (2026-10-16) leaves on darwin, as it is: a setsid Apple platform binary
+    // carries the mark where `ps -E` cannot show it and has left the command's group, so nothing
+    // finds it once the call ends on its own (§已知限制). This case goes red the day it is killed;
+    // then 验收 15 and 不变量 13 can drop their darwin narrowing. afterEach kills it.
+    it.skipIf(process.platform !== 'darwin')(
+      '04 验收 15 (darwin, as it is): a command that setsids an Apple platform binary (perl) and exits leaves it running 1 s after the call ends (§已知限制)',
+      async () => {
+        const mark = newMark('platform')
+        marks.push(mark)
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            `perl -MPOSIX -e 'POSIX::setsid(); sleep 608' ${mark}_setsid >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['setsid'])
+        const execution = await call
+        const endedAt = now()
+        expect(execution).toMatchObject({ isError: false, state: 'completed' })
+        expect(await goneAt(mark, endedAt + TREE_CLEAR_MS)).toBeNull()
+      },
+      CASE_TIMEOUT_MS,
+    )
+  },
+)
