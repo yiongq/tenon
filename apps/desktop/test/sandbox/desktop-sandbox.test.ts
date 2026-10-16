@@ -1298,6 +1298,15 @@ describe('04 DesktopSandbox (spec 04 §包装契约)', () => {
       mountPoints: {},
       leafMountPoints: {},
     })
+    // The same with `.claude/` there: the wrap recorded leaves alone, and they go all the same.
+    const refusedLeaves = harness('linux')
+    refusedLeaves.disk.dir('/home/u/code/app/.claude')
+    refusedLeaves.failures.push(new Error('srt refused'))
+    expect(await outcomeOf(refusedLeaves.run())).toBe('threw Error: srt refused')
+    expect(JSON.parse(refusedLeaves.disk.readFile(stubs) ?? '')).toEqual({
+      mountPoints: {},
+      leafMountPoints: {},
+    })
   })
 
   it('04 验收 9: on linux a mount point stays in stubs.json while another wrap keeps srt from removing it, and leaves once it is gone from the host', async () => {

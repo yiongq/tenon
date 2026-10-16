@@ -171,6 +171,8 @@ function observerReport(
   // first. denyWrite is matched by both the spelling and the landing: the sandbox may not see the
   // host's links (an existing denyRead directory is an empty tmpfs there).
   const spot = posix.normalize(path)
+  // What this level resolved to may be another thing from now on (rm and ln -s in its place).
+  if (REPLACES_LEVEL.has(syscall)) forgetDir(spot, context)
   const landings = landingsOf(syscall, spot, context)
   const denied = [spot, ...landings].some(
     (place) =>
@@ -180,7 +182,7 @@ function observerReport(
   if (
     !denied &&
     resolved.length === landings.length &&
-    resolved.every((place) => context.allowWrite.some((entry) => covers(entry, place, AS_BYTES)))
+    resolved.every((place) => mayWrite(place, context))
   ) {
     return undefined
   }
@@ -192,9 +194,10 @@ function observerReport(
 }
 
 /**
- * Observer calls that follow a link in the last place: open, truncate, chmod, chown, utimes.
- * The observer carries no flags, so `touch -h`, `chown -h` or O_NOFOLLOW read as following too;
- * that only touches a diagnostic.
+ * Observer calls that follow a link in the last place: open, truncate, chmod, chown, utimes, with
+ * x64's older calls among them (its apply-seccomp watches `creat` … `utimes` too; arm64's only the
+ * `*at` ones). The observer carries no flags, so `touch -h`, `chown -h` or O_NOFOLLOW read as
+ * following too; that only touches a diagnostic.
  */
 const FOLLOWS_LAST: ReadonlySet<string> = new Set([
   'openat',
@@ -205,9 +208,17 @@ const FOLLOWS_LAST: ReadonlySet<string> = new Set([
   'fchmodat2',
   'fchownat',
   'utimensat',
+  'open',
+  'chmod',
+  'chown',
+  'utime',
+  'utimes',
 ])
 
-/** Observer calls that act on a link in the last place itself: unlink, rename, mkdir, mknod, link. */
+/**
+ * Observer calls that act on a link in the last place itself: unlink, rmdir, rename, mkdir, mknod,
+ * symlink, link, lchown, x64's older calls among them.
+ */
 const KEEPS_LAST: ReadonlySet<string> = new Set([
   'unlinkat',
   'renameat',
@@ -216,20 +227,43 @@ const KEEPS_LAST: ReadonlySet<string> = new Set([
   'mknodat',
   'symlinkat',
   'linkat',
+  'unlink',
+  'rmdir',
+  'rename',
+  'symlink',
+  'mkdir',
+  'mknod',
+  'link',
+  'lchown',
+])
+
+/** Calls that may leave a link, or nothing, where a directory was: its cached resolution goes. */
+const REPLACES_LEVEL: ReadonlySet<string> = new Set([
+  'unlinkat',
+  'renameat',
+  'renameat2',
+  'symlinkat',
+  'linkat',
+  'unlink',
+  'rmdir',
+  'rename',
+  'symlink',
+  'link',
 ])
 
 /**
  * Where an observed write landed on the host (读法 11): its directory resolved as the kernel does,
- * then its last level, followed or not as the call does; a call in neither table (x64's older
- * calls) gets both readings. `undefined` where it cannot be told. Paths under `/proc` and `/dev` are
- * not resolved: on the host they lead into Tenon's own process and devices.
+ * then its last level, followed or not as the call does; a call in neither table (a name the
+ * observer never sends; its line is the process's own bytes) gets both readings. `undefined` where
+ * it cannot be told. A path is not resolved past `/proc` or `/dev`, spelled there or reached through
+ * a link: on the host they lead into Tenon's own process and devices.
  */
 function landingsOf(
   syscall: string,
   spot: string,
   context: ViolationContext,
 ): (string | undefined)[] {
-  if (within(spot, '/proc') || within(spot, '/dev')) return [spot]
+  if (unresolved(spot)) return [spot]
   if (FOLLOWS_LAST.has(syscall)) return [landing(spot, true, context)]
   if (KEEPS_LAST.has(syscall)) return [landing(spot, false, context)]
   return [landing(spot, false, context), landing(spot, true, context)]
@@ -240,38 +274,90 @@ function landing(spot: string, followLast: boolean, context: ViolationContext): 
   const dir = realDirOf(posix.dirname(spot), context)
   if (dir === undefined) return undefined
   const node = posix.join(dir, posix.basename(spot))
-  if (!followLast) return node
+  if (!followLast || unresolved(node)) return node
   const kind = lookUp(context.lstat, node)
   if (kind === 'unknown') return undefined
-  return kind?.isSymbolicLink() === true ? walkLinks(node, context).real : node
+  return kind?.isSymbolicLink() === true ? walkLinks(node, context, true, unresolved).real : node
+}
+
+/** Under `/proc` or `/dev`: never looked at on the host (landingsOf). */
+function unresolved(path: string): boolean {
+  return within(path, '/proc') || within(path, '/dev')
+}
+
+/**
+ * Where bwrap lets the command write: this wrap's allowWrite, or a place srt keeps writable itself,
+ * which srt's own observer drops as spelled (sandbox-utils.js:486-504, sandbox-manager.js:518-523):
+ * the standard streams, `/dev/null`, `/dev/tty`, `/tmp/claude` and the two home directories.
+ */
+function mayWrite(place: string, context: ViolationContext): boolean {
+  if (context.allowWrite.some((entry) => covers(entry, place, AS_BYTES))) return true
+  const home = context.homeDir
+  return [
+    '/dev/stdout',
+    '/dev/stderr',
+    '/dev/null',
+    '/dev/tty',
+    '/tmp/claude',
+    '/private/tmp/claude',
+    posix.join(home, '.npm/_logs'),
+    posix.join(home, '.claude/debug'),
+  ].some((dir) => within(place, dir))
 }
 
 /**
  * A wrap's directories as resolved so far: an install reports thousands of writes into a few
- * hundred directories, and srt's listener runs them on main's thread, one by one.
+ * hundred directories, and srt's listener runs them on main's thread, one by one. `children` lists
+ * the cached directories right under each one, so a replaced level drops its subtree alone.
  */
-const RESOLVED_DIRS = new WeakMap<ViolationContext, Map<string, string | undefined>>()
+interface ResolvedDirs {
+  readonly real: Map<string, string | undefined>
+  readonly children: Map<string, Set<string>>
+}
+
+const RESOLVED_DIRS = new WeakMap<ViolationContext, ResolvedDirs>()
+
+function resolvedDirs(context: ViolationContext): ResolvedDirs {
+  let known = RESOLVED_DIRS.get(context)
+  if (known === undefined) {
+    known = { real: new Map(), children: new Map() }
+    RESOLVED_DIRS.set(context, known)
+  }
+  return known
+}
 
 /** `dir` resolved as the kernel resolves it, one `lstat` per directory not seen before in this wrap. */
 function realDirOf(dir: string, context: ViolationContext): string | undefined {
   if (dir === '/') return dir
-  let known = RESOLVED_DIRS.get(context)
-  if (known === undefined) {
-    known = new Map()
-    RESOLVED_DIRS.set(context, known)
-  }
-  if (known.has(dir)) return known.get(dir)
-  const parent = realDirOf(posix.dirname(dir), context)
+  const known = resolvedDirs(context)
+  if (known.real.has(dir)) return known.real.get(dir)
+  const above = posix.dirname(dir)
+  const parent = realDirOf(above, context)
   let real: string | undefined
   if (parent !== undefined) {
     const node = posix.join(parent, posix.basename(dir))
-    const kind = lookUp(context.lstat, node)
+    const kind = unresolved(node) ? undefined : lookUp(context.lstat, node)
     if (kind === 'unknown') real = undefined
-    else if (kind?.isSymbolicLink() === true) real = walkLinks(node, context).real
+    else if (kind?.isSymbolicLink() === true) real = walkLinks(node, context, true, unresolved).real
     else real = node
   }
-  known.set(dir, real)
+  known.real.set(dir, real)
+  const siblings = known.children.get(above) ?? new Set<string>()
+  known.children.set(above, siblings.add(dir))
   return real
+}
+
+/** `dir` and every directory cached under it are resolved afresh when next reached. */
+function forgetDir(dir: string, context: ViolationContext): void {
+  const known = RESOLVED_DIRS.get(context)
+  if (known === undefined || !known.real.has(dir)) return
+  known.children.get(posix.dirname(dir))?.delete(dir)
+  const stack = [dir]
+  for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
+    known.real.delete(next)
+    stack.push(...(known.children.get(next) ?? []))
+    known.children.delete(next)
+  }
 }
 
 function seatbeltDenial(

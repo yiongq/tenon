@@ -9,7 +9,7 @@ import type * as ChildProcess from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { absolutePath } from '@tenon-app/kernel'
 import { describe, expect, it, vi } from 'vitest'
-import { killTree, spawnChild } from '../src/main/host/process.js'
+import { createHostProcess, killTree, spawnChild } from '../src/main/host/process.js'
 
 /** What each `/bin/ps` call answers, in turn: a table, or the error it fails with. */
 const fakePs = vi.hoisted(() => ({ tables: [] as (string | Error)[] }))
@@ -86,16 +86,13 @@ describe.skipIf(process.platform !== 'darwin')('killTree on darwin, ps faked', (
 
   it('when ps fails or takes over 200 ms, the signal goes to the group alone and the host log gets one line saying which', async () => {
     const lines: string[] = []
-    const child = await spawnChild(
-      {
-        argv: ['/bin/sleep', '30'],
-        cwd: absolutePath(tmpdir()),
-        env: { PATH: '/usr/bin:/bin' },
-        stdio: 'ignore',
-      },
-      undefined,
-      (line) => lines.push(line),
-    )
+    // Through the host's process port, as desktop and the eval host spawn: it hands its log on.
+    const child = await createHostProcess((line) => lines.push(line)).spawn({
+      argv: ['/bin/sleep', '30'],
+      cwd: absolutePath(tmpdir()),
+      env: { PATH: '/usr/bin:/bin' },
+      stdio: 'ignore',
+    })
     // execFile's own error for a ps it killed at the timeout carries `killed`.
     const timedOut = Object.assign(new Error('Command failed: /bin/ps'), { killed: true })
     fakePs.tables.push(new Error('spawn /bin/ps EAGAIN'), timedOut)

@@ -1061,6 +1061,19 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
     }
   })
 
+  it('04 验收 11 (config): a dangling deny entry whose target passes another link (~/.aws → ~/dotfiles/aws, not made yet; ~/dotfiles → another volume) is followed through both: where it would be made joins both tables', () => {
+    const disk = fakeDisk(['/Volumes/x/dotfiles/zsh', '/Users/u/proj/src'], {
+      '/Users/u/.aws': '/Users/u/dotfiles/aws',
+      '/Users/u/dotfiles': '/Volumes/x/dotfiles',
+    })
+    for (const platform of ['darwin', 'linux'] as const) {
+      const wrap = wrapFilesystem(linkedInput(platform), disk)
+      expect(spelled(wrap.filesystem.denyRead)).toContain('/Volumes/x/dotfiles/aws')
+      expect(spelled(wrap.filesystem.denyWrite)).toContain('/Volumes/x/dotfiles/aws')
+      expect(sorted(wrap.links)).toEqual(['/Users/u/.aws', '/Users/u/dotfiles'])
+    }
+  })
+
   it('04 验收 11 (config): a link loop on a deny entry’s way leaves the entry as written in both tables, every link walked comes back and goes to darwin denyWrite, and the wrap is still built', () => {
     const disk = fakeDisk(['/Users/u/proj/src'], {
       '/Users/u/.aws': '.aws2',

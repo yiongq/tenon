@@ -71,12 +71,14 @@ export interface LinkWalk {
  * dangling link followed all the same (as srt79's `resolveSymlinkedDenyPath`); from the first level
  * that is not there the rest is joined on as written. `followLast: false` leaves a link in the last
  * place as it is, as unlink and rename do. When the walk cannot finish, `links` still holds every
- * link passed so far.
+ * link passed so far. `stop` names levels not to be looked at: from the first one reached, the
+ * rest is joined on as written.
  */
 export function walkLinks(
   path: string,
   ports: Pick<PathPorts, 'lstat' | 'readlink'>,
   followLast = true,
+  stop?: (node: string) => boolean,
 ): LinkWalk {
   const links = new Set<string>()
   const done = (real: string | undefined): LinkWalk => ({ real, links: [...links] })
@@ -91,6 +93,7 @@ export function walkLinks(
       continue
     }
     const node = posix.join(at, name)
+    if (stop?.(node) === true) return done(posix.join(node, ...rest))
     let stat: { isSymbolicLink(): boolean } | undefined
     try {
       stat = ports.lstat(node)

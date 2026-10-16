@@ -724,16 +724,55 @@ function readStubs(deps: SandboxPostureDeps): StubsRecord | undefined {
 /**
  * At startup, before initialize: what the last run recorded and left behind goes, and only that —
  * Linux's tmpdir is most likely the machine's shared `/tmp`, where another srt user's entries are
- * not ours. A mount point dir goes while it is an empty directory. The rest only once the run that
- * recorded them is gone: a leaf mount point while it still is what bwrap made (`isStaleMountFile`);
- * a socat while it runs with the very command line recorded (its socket name holds 16 random hex
- * digits) and a parent other than that run — init, or the session's subreaper (`systemd --user`)
- * that took the orphan in; the tmpdir entries. Then the record is emptied.
+ * not ours. All of it only once the run that recorded it is gone: a socat while it runs with the
+ * very command line recorded (its socket name holds 16 random hex digits) and a parent other than
+ * that run — init, or the session's subreaper (`systemd --user`) that took the orphan in; the
+ * tmpdir entries; a mount point dir while it is an empty directory, a leaf while it still is what
+ * bwrap made (`isStaleMountFile`). A mount point also waits while any bwrap runs (`BWRAP`): taking
+ * one away on the host detaches the bind of a sandbox still using it and its deny stops applying
+ * there (srt79 linux-sandbox-utils.js:755-760) — a run of ours still alive, or another srt user's
+ * (Claude Code re-covers an empty read-only file as its own mount point, :2087-2106). A mount point
+ * that waits stays in the record for the next startup; the rest of the record is emptied.
  */
 async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
   const record = readStubs(deps)
   if (record === undefined) return
-  for (const path of record.mountPoints) {
+  const mounts = record.mountPoints.length > 0 || record.leafMountPoints.length > 0
+  let table: ProcessRow[] | undefined
+  if (mounts || record.socat.length > 0 || record.tmpEntries.length > 0) {
+    try {
+      table = await deps.processes.list()
+    } catch (error) {
+      deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
+    }
+  }
+  // The recorder's pid held by this process, or by none: that run is gone.
+  const recorder = record.pid
+  const gone =
+    table !== undefined &&
+    recorder !== null &&
+    (recorder === deps.pid || !table.some((row) => row.pid === recorder))
+  for (const socat of gone ? record.socat : []) {
+    const row = table?.find((candidate) => candidate.pid === socat.pid)
+    if (row === undefined || row.ppid === recorder || row.command !== socat.command) continue
+    try {
+      deps.processes.kill(socat.pid)
+    } catch (error) {
+      deps.log(`sandbox: socat ${socat.pid} not killed: ${messageOf(error)}`)
+    }
+  }
+  for (const entry of gone ? record.tmpEntries : []) {
+    try {
+      deps.fs.removeTree(entry)
+    } catch (error) {
+      deps.log(`sandbox: ${entry} not removed: ${messageOf(error)}`)
+    }
+  }
+  const mountsGo = gone && table !== undefined && !table.some((row) => BWRAP.test(row.command))
+  if (mounts && !mountsGo) {
+    deps.log('sandbox: mount points left for the next start: their run or a bwrap is still there')
+  }
+  for (const path of mountsGo ? record.mountPoints : []) {
     try {
       const own = deps.fs.lstat(path)
       if (own === undefined || own.isSymbolicLink() || !own.isDirectory()) continue
@@ -743,48 +782,30 @@ async function cleanUpLastRun(deps: SandboxPostureDeps): Promise<void> {
       deps.log(`sandbox: mount point ${path} not removed: ${messageOf(error)}`)
     }
   }
-  if (
-    record.socat.length > 0 ||
-    record.tmpEntries.length > 0 ||
-    record.leafMountPoints.length > 0
-  ) {
-    let table: ProcessRow[] | undefined
+  for (const path of mountsGo ? record.leafMountPoints : []) {
     try {
-      table = await deps.processes.list()
+      if (isStaleMountFile(deps.fs.lstat(path))) deps.fs.removeFile(path)
     } catch (error) {
-      deps.log(`sandbox: the process table could not be read: ${messageOf(error)}`)
-    }
-    // The recorder's pid held by this process, or by none: that run is gone.
-    const recorder = record.pid
-    const gone =
-      table !== undefined &&
-      recorder !== null &&
-      (recorder === deps.pid || !table.some((row) => row.pid === recorder))
-    for (const socat of gone ? record.socat : []) {
-      const row = table?.find((candidate) => candidate.pid === socat.pid)
-      if (row === undefined || row.ppid === recorder || row.command !== socat.command) continue
-      try {
-        deps.processes.kill(socat.pid)
-      } catch (error) {
-        deps.log(`sandbox: socat ${socat.pid} not killed: ${messageOf(error)}`)
-      }
-    }
-    for (const path of gone ? record.leafMountPoints : []) {
-      try {
-        if (isStaleMountFile(deps.fs.lstat(path))) deps.fs.removeFile(path)
-      } catch (error) {
-        deps.log(`sandbox: mount point ${path} not removed: ${messageOf(error)}`)
-      }
-    }
-    for (const entry of gone ? record.tmpEntries : []) {
-      try {
-        deps.fs.removeTree(entry)
-      } catch (error) {
-        deps.log(`sandbox: ${entry} not removed: ${messageOf(error)}`)
-      }
+      deps.log(`sandbox: mount point ${path} not removed: ${messageOf(error)}`)
     }
   }
-  writeStubs(deps, {})
+  writeStubs(
+    deps,
+    mounts && !mountsGo
+      ? {
+          mountPoints: listed(record.mountPoints),
+          leafMountPoints: listed(record.leafMountPoints),
+        }
+      : {},
+  )
+}
+
+/** A bwrap process, by the program its command line starts with or names (`/usr/bin/bwrap …`). */
+const BWRAP = /(?:^|\/)bwrap(?:\s|$)/
+
+/** Mount points kept for the next start, under a key no srt id takes (srt ids hold a dot). */
+function listed(paths: readonly string[]): Record<string, string[]> {
+  return paths.length > 0 ? { 'earlier-runs': [...paths] } : {}
 }
 
 /**

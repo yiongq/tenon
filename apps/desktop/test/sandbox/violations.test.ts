@@ -226,7 +226,9 @@ const PROBE_DIRS = { P1: '/fx/p1', P2: '/fx/p2', P3: '/fx/p3' } as const
  * A Linux disk for writes through links (读法 11): the workspace `/fx/p4/mnt/code/proj` was opened
  * as `~/code/proj`, `~/code` being a link; in it `out-link` leads outside, `new-link` (relative) to
  * a file not made yet and `rc-link` to the home's .bashrc; `~/.ssh/config` links into a dotfiles
- * dir; `/proc/self/fd/3` and `/dev/stdout` lead into the workspace, as Tenon's own would.
+ * dir; `/proc/self/fd/3`, `/dev/stdout` and `/dev/fd/1` lead into the workspace, as Tenon's own
+ * would; `null-link`, `tmp-link`, `npm-logs`, `fd-link` and `fd-dir` lead from the workspace to
+ * `/dev/null`, `/tmp/claude`, `~/.npm/_logs` and into `/proc`.
  */
 const P4_DIRS = new Set([
   '/fx',
@@ -255,6 +257,12 @@ const P4_LINKS: ReadonlyMap<string, string> = new Map([
   ['/proc/4242/fd/3', '/fx/p4/mnt/code/proj/log.txt'],
   ['/proc/4242/fd/1', '/fx/p4/mnt/code/proj/out.txt'],
   ['/dev/stdout', '/proc/self/fd/1'],
+  ['/dev/fd', '/proc/self/fd'],
+  ['/fx/p4/mnt/code/proj/null-link', '/dev/null'],
+  ['/fx/p4/mnt/code/proj/tmp-link', '/tmp/claude'],
+  ['/fx/p4/mnt/code/proj/npm-logs', '../../../home/.npm/_logs'],
+  ['/fx/p4/mnt/code/proj/fd-link', '/proc/self/fd/3'],
+  ['/fx/p4/mnt/code/proj/fd-dir', '/proc/self/fd'],
 ])
 const P4_FILES = new Set(['/fx/p4/home/.bashrc', '/fx/p4/mnt/code/proj/f'])
 /** The workspace's real path, and the home, as allowWrite holds them. */
@@ -657,7 +665,7 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     ).toStrictEqual(cases.map(([line, want]) => resultOf(line, want)))
   })
 
-  it('a Linux observer call on a link itself (unlinkat, renameat, mkdirat …) is judged at the link; one through it (openat, fchmodat …) at its target, a dangling one included; another call (x64’s older ones) is dropped only when both readings land in allowWrite', () => {
+  it('a Linux observer call on a link itself (unlinkat, renameat, mkdirat …) is judged at the link; one through it (openat, fchmodat …) at its target, a dangling one included; a name in neither table is dropped only when both readings land in allowWrite, and kept at the link when they part', () => {
     const cases = [
       ['deny unlinkat /fx/p4/mnt/code/proj/out-link', DROPPED],
       ['deny renameat2 /fx/p4/mnt/code/proj/out-link', DROPPED],
@@ -669,12 +677,17 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         'deny openat /fx/p4/mnt/code/proj/new-link',
         { kind: 'fs', target: '/fx/p4/outside/not-yet', observed: true },
       ],
-      // x64: unlink acts on the link (outside), chmod would follow it (into the workspace)
+      // The observer never sends this name, but its line is the process's own bytes. At the link it
+      // lands in the workspace, through it outside; then the other way round; then both inside.
       [
-        'deny unlink /fx/p4/outside/ws-link',
+        'deny newcall /fx/p4/mnt/code/proj/out-link',
+        { kind: 'fs', target: '/fx/p4/mnt/code/proj/out-link', observed: true },
+      ],
+      [
+        'deny newcall /fx/p4/outside/ws-link',
         { kind: 'fs', target: '/fx/p4/outside/ws-link', observed: true },
       ],
-      ['deny chmod /fx/p4/home/code/proj/f', DROPPED],
+      ['deny newcall /fx/p4/home/code/proj/f', DROPPED],
     ] as const
     expect(
       classifyAll(
@@ -682,6 +695,56 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         linkedWrap(P4_WS),
       ),
     ).toStrictEqual(cases.map(([line, want]) => resultOf(line, want)))
+  })
+
+  it('each call the observer names (arm64’s *at calls and x64’s older ones) is read through a workspace link that leads out as the kernel runs it: the ones that follow the link land outside and stay; the ones that act on the link itself land in the workspace and are dropped', () => {
+    const link = '/fx/p4/mnt/code/proj/out-link'
+    const follows = [
+      'openat',
+      'openat2',
+      'creat',
+      'truncate',
+      'fchmodat',
+      'fchmodat2',
+      'fchownat',
+      'utimensat',
+      'open',
+      'chmod',
+      'chown',
+      'utime',
+      'utimes',
+    ]
+    const keeps = [
+      'unlinkat',
+      'renameat',
+      'renameat2',
+      'mkdirat',
+      'mknodat',
+      'symlinkat',
+      'linkat',
+      'unlink',
+      'rmdir',
+      'rename',
+      'symlink',
+      'mkdir',
+      'mknod',
+      'link',
+      'lchown',
+    ]
+    for (const call of follows) {
+      const line = `deny ${call} ${link}`
+      expect({ call, result: classify(line, linkedWrap(P4_WS)) }).toStrictEqual({
+        call,
+        result: { kind: 'fs', line, target: '/fx/p4/outside', observed: true },
+      })
+    }
+    for (const call of keeps) {
+      const line = `deny ${call} ${link}`
+      expect({ call, result: classify(line, linkedWrap(P4_WS)) }).toStrictEqual({
+        call,
+        result: undefined,
+      })
+    }
   })
 
   it('a Linux observer write on a denyWrite entry as spelled is protected even where it lands inside allowWrite (~/.ssh/config a link into a dotfiles dir, the home the workspace)', () => {
@@ -695,9 +758,9 @@ describe('04 验收 16 (classification): srt violation lines', () => {
   })
 
   it('a Linux observer path under /proc or /dev is judged as spelled, never resolved into Tenon’s own process', () => {
-    // /proc/self/fd/3 and /dev/stdout lead, on the host, to files of the workspace
+    // /proc/self/fd/3 and /dev/fd/1 lead, on the host, to files of the workspace
     expect(
-      classifyAll(['deny openat /proc/self/fd/3', 'deny openat /dev/stdout'], linkedWrap(P4_WS)),
+      classifyAll(['deny openat /proc/self/fd/3', 'deny openat /dev/fd/1'], linkedWrap(P4_WS)),
     ).toStrictEqual([
       {
         kind: 'fs',
@@ -705,8 +768,35 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         target: '/proc/self/fd/3',
         observed: true,
       },
-      { kind: 'fs', line: 'deny openat /dev/stdout', target: '/dev/stdout', observed: true },
+      { kind: 'fs', line: 'deny openat /dev/fd/1', target: '/dev/fd/1', observed: true },
     ])
+  })
+
+  it('a Linux observer path that reaches /proc or /dev through a workspace link stops there, as the link spells it; one that lands where srt keeps the command writable itself (/dev/null, /dev/stdout, /tmp/claude, ~/.npm/_logs) is dropped as srt’s own observer drops it', () => {
+    const cases = [
+      // On the host /proc/self/fd/3 leads back into the workspace: never followed that far.
+      [
+        'deny openat /fx/p4/mnt/code/proj/fd-link',
+        { kind: 'fs', target: '/proc/self/fd/3', observed: true },
+      ],
+      [
+        'deny openat /fx/p4/mnt/code/proj/fd-dir/3',
+        { kind: 'fs', target: '/proc/self/fd/3', observed: true },
+      ],
+      ['deny openat /fx/p4/mnt/code/proj/null-link', DROPPED],
+      ['deny openat /fx/p4/mnt/code/proj/tmp-link/x', DROPPED],
+      ['deny openat /fx/p4/mnt/code/proj/npm-logs/debug.log', DROPPED],
+      ['deny openat /dev/stdout', DROPPED],
+      ['deny openat /dev/tty', DROPPED],
+      // /dev/full is not one of srt's: kept, as spelled.
+      ['deny openat /dev/full', { kind: 'fs', target: '/dev/full', observed: true }],
+    ] as const
+    expect(
+      classifyAll(
+        cases.map(([line]) => line),
+        linkedWrap(P4_WS),
+      ),
+    ).toStrictEqual(cases.map(([line, want]) => resultOf(line, want)))
   })
 
   it('a Linux observer path that cannot be resolved (lstat or readlink throws) stays, as spelled', () => {
@@ -714,8 +804,13 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     const throwing: ViolationContext = {
       ...wrap,
       lstat: (path) => {
-        if (path === '/fx/p4/home/code')
+        if (
+          path === '/fx/p4/home/code' ||
+          path === '/fx/p4/mnt/code/proj/sub' ||
+          path === '/fx/p4/mnt/code/proj/x'
+        ) {
           throw Object.assign(new Error('EACCES'), { code: 'EACCES' })
+        }
         return wrap.lstat(path)
       },
       readlink: (path) => {
@@ -723,25 +818,16 @@ describe('04 验收 16 (classification): srt violation lines', () => {
         return wrap.readlink(path)
       },
     }
-    expect(
-      classifyAll(
-        ['deny openat /fx/p4/home/code/proj/b.txt', 'deny openat /fx/p4/mnt/code/proj/rc-link'],
-        throwing,
-      ),
-    ).toStrictEqual([
-      {
-        kind: 'fs',
-        line: 'deny openat /fx/p4/home/code/proj/b.txt',
-        target: '/fx/p4/home/code/proj/b.txt',
-        observed: true,
-      },
-      {
-        kind: 'fs',
-        line: 'deny openat /fx/p4/mnt/code/proj/rc-link',
-        target: '/fx/p4/mnt/code/proj/rc-link',
-        observed: true,
-      },
-    ])
+    // Inside the workspace too: a directory level, then the last level, that cannot be looked at.
+    const lines = [
+      'deny openat /fx/p4/home/code/proj/b.txt',
+      'deny openat /fx/p4/mnt/code/proj/rc-link',
+      'deny openat /fx/p4/mnt/code/proj/sub/y',
+      'deny openat /fx/p4/mnt/code/proj/x',
+    ]
+    expect(classifyAll(lines, throwing)).toStrictEqual(
+      lines.map((line) => ({ kind: 'fs', line, target: line.slice(12), observed: true })),
+    )
   })
 
   it('a wrap looks each directory of the observer paths up once', () => {
@@ -757,6 +843,64 @@ describe('04 验收 16 (classification): srt violation lines', () => {
     const lines = ['a', 'b', 'c'].map((name) => `deny openat /fx/p4/home/code/proj/${name}`)
     expect(classifyAll(lines, counting)).toStrictEqual([undefined, undefined, undefined])
     expect(looked.get('/fx/p4/mnt/code/proj')).toBe(1)
+  })
+
+  it('a directory the command removes, or moves away, and puts a link in its place is resolved afresh with what was under it: a write through the link that leads out stays, though the directory was seen inside the workspace before', () => {
+    const ws = P4_WS
+    function disk(): {
+      readonly wrap: ViolationContext
+      readonly dirs: Set<string>
+      readonly links: Map<string, string>
+    } {
+      const dirs = new Set([...P4_DIRS, `${ws}/out`, `${ws}/out/sub`, '/fx/p4/opt-x'])
+      const links = new Map<string, string>()
+      const wrap: ViolationContext = {
+        ...linkedWrap(P4_WS),
+        lstat: (path) => {
+          if (links.has(path)) return is('link')
+          return dirs.has(path) ? is('dir') : undefined
+        },
+        readlink: (path) => {
+          const target = links.get(path)
+          if (target === undefined) throw noLink(path)
+          return target
+        },
+      }
+      return { wrap, dirs, links }
+    }
+
+    // touch out/a; rm -rf out; ln -s /fx/p4/opt-x out; cp f out/ — the events in that order, the
+    // disk as each one arrives.
+    const removed = disk()
+    expect(classify(`deny openat ${ws}/out/a`, removed.wrap)).toBeUndefined()
+    expect(classify(`deny unlinkat ${ws}/out/a`, removed.wrap)).toBeUndefined()
+    removed.dirs.delete(`${ws}/out/sub`)
+    removed.dirs.delete(`${ws}/out`)
+    expect(classify(`deny unlinkat ${ws}/out`, removed.wrap)).toBeUndefined()
+    removed.links.set(`${ws}/out`, '/fx/p4/opt-x')
+    expect(classify(`deny symlinkat ${ws}/out`, removed.wrap)).toBeUndefined()
+    expect(classify(`deny openat ${ws}/out/f`, removed.wrap)).toStrictEqual({
+      kind: 'fs',
+      line: `deny openat ${ws}/out/f`,
+      target: '/fx/p4/opt-x/f',
+      observed: true,
+    })
+
+    // touch out/sub/a; mv out old; ln -s /fx/p4/opt-x out; cp f out/sub/ — the rename reported
+    // by its new name: the link put in its place drops out/sub along with out.
+    const moved = disk()
+    expect(classify(`deny openat ${ws}/out/sub/a`, moved.wrap)).toBeUndefined()
+    moved.dirs.delete(`${ws}/out/sub`)
+    moved.dirs.delete(`${ws}/out`)
+    expect(classify(`deny renameat2 ${ws}/old`, moved.wrap)).toBeUndefined()
+    moved.links.set(`${ws}/out`, '/fx/p4/opt-x')
+    expect(classify(`deny symlinkat ${ws}/out`, moved.wrap)).toBeUndefined()
+    expect(classify(`deny openat ${ws}/out/sub/f`, moved.wrap)).toStrictEqual({
+      kind: 'fs',
+      line: `deny openat ${ws}/out/sub/f`,
+      target: '/fx/p4/opt-x/sub/f',
+      observed: true,
+    })
   })
 
   it('an IP literal, a numeric host, localhost, *.localhost, a malformed host or a `resolved to …` denial offers no domain release', () => {

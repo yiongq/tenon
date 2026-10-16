@@ -819,11 +819,14 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
     for (const { remove, found, reason } of cases) {
       const h = harness('linux')
       h.disk.removeTree(remove)
-      // Last run's empty mount point: startup still cleans up and chdirs first.
+      // Last run's empty mount point, that run gone: startup still cleans up and chdirs first.
       h.disk.dir('/home/u/code/app/.claude')
       h.disk.file(
         h.at.stubs,
-        JSON.stringify({ mountPoints: { 'toolu_01.0a0b': ['/home/u/code/app/.claude'] } }),
+        JSON.stringify({
+          mountPoints: { 'toolu_01.0a0b': ['/home/u/code/app/.claude'] },
+          pid: 999,
+        }),
       )
       // oxlint-disable-next-line no-await-in-loop -- one case after the other
       const outcome = await outcomeOf(h)
@@ -1217,7 +1220,7 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
   })
 
   it('04 验收 2: a userns-restricted detail ends with the bwrap step 2 found, for the fix (spec §启动 step 6)', async () => {
-    // /usr/local/bin/bwrap is first on PATH but not executable: the fix names /usr/bin/bwrap.
+    // /opt/bubblewrap/bin/bwrap is first on PATH and executable: the fix names it, not /usr/bin's.
     const h = harness('linux', { selfTest: { code: 1, stderr: APPLY_SECCOMP_STDERR } })
     h.disk.file('/opt/bubblewrap/bin/bwrap', '', 0o755)
     h.env['PATH'] = '/opt/bubblewrap/bin:/usr/local/bin:/usr/bin:/bin'
@@ -1243,6 +1246,24 @@ describe('04 验收 2: sandbox startup, self-test and reason codes', () => {
           'user.max_user_namespaces=15329\nexited 1\nbwrap=/usr/bin/bwrap',
       },
     ])
+    // Step 2 found no executable bwrap on PATH and passed none; srt found one of its own
+    // (linux-sandbox-utils.js:897-912). The line says there is none to name.
+    const none = harness('linux', { selfTest: { code: 1, stderr: APPLY_SECCOMP_STDERR } })
+    none.disk.file('/usr/bin/bwrap', '', 0o644)
+    const srtInitialize = none.srt.initialize.getMockImplementation()
+    none.srt.initialize.mockImplementation(async (config, ...rest) =>
+      srtInitialize?.({ ...config, bwrapPath: '/snap/bin/bwrap' }, ...rest),
+    )
+    expect(reasons(await outcomeOf(none))).toEqual([
+      {
+        code: 'userns-restricted',
+        detail:
+          'kernel.apparmor_restrict_unprivileged_userns=0\nkernel.unprivileged_userns_clone=1\n' +
+          `user.max_user_namespaces=15329\nexited 1\n${APPLY_SECCOMP_STDERR}` +
+          'bwrap=(none)',
+      },
+    ])
+    expect(none.sessions[0]?.linuxBinaries?.bwrap).toBeNull()
     // Only userns-restricted carries it: the fix is for that code alone.
     const other = harness('linux', { selfTest: { code: 1, stderr: 'sh: 1: oops\n' } })
     expect(reasons(await outcomeOf(other))).toEqual([
@@ -1660,7 +1681,7 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     expect(foreign.filter((path) => !h.disk.has(path))).toEqual([])
   })
 
-  it('04 验收 9 (startup): socat, leaf mount points and tmpdir entries stay while the run that recorded them is alive; a socat whose parent is that run is never killed; darwin records no socat', async () => {
+  it('04 验收 9 (startup): socat, mount points and tmpdir entries stay while the run that recorded them is alive, the mount points kept in the record; a socat whose parent is that run is never killed; darwin records no socat', async () => {
     const ws = '/home/u/code/app'
     const record = (pid: number) =>
       JSON.stringify({
@@ -1669,11 +1690,13 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
           { pid: 4242, command: SOCAT_COMMAND('aa11') },
           { pid: 4343, command: SOCAT_COMMAND('bb22') },
         ],
+        mountPoints: { 'toolu_01.0a0b': [`${ws}/.claude`] },
         leafMountPoints: { 'toolu_01.0a0b': [`${ws}/.envrc`] },
         tmpEntries: ['/tmp/claude-http-aa11.sock'],
       })
     const alive = harness('linux')
     alive.disk.file('/tmp/claude-http-aa11.sock')
+    alive.disk.dir(`${ws}/.claude`)
     alive.disk.file(`${ws}/.envrc`, '', 0o444)
     alive.disk.file(alive.at.stubs, record(999))
     alive.table.push(
@@ -1684,9 +1707,22 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
     await outcomeOf(alive)
     expect({
       killed: alive.killed,
+      dir: alive.disk.has(`${ws}/.claude`),
       leaf: alive.disk.has(`${ws}/.envrc`),
       tmp: alive.disk.has('/tmp/claude-http-aa11.sock'),
-    }).toEqual({ killed: [], leaf: true, tmp: true })
+    }).toEqual({ killed: [], dir: true, leaf: true, tmp: true })
+    // That run's mount points wait in the record; the rest is this run's.
+    expect(JSON.parse(alive.disk.text(alive.at.stubs) ?? '{}')).toEqual({
+      mountPoints: { 'earlier-runs': [`${ws}/.claude`] },
+      leafMountPoints: { 'earlier-runs': [`${ws}/.envrc`] },
+      pid: MAIN_PID,
+      socat: [{ pid: 5555, command: SOCAT_COMMAND('cafe01') }],
+      tmpEntries: [
+        `/tmp/srt-mux-${MAIN_PID}-0.sock`,
+        '/tmp/claude-http-cafe01.sock',
+        '/tmp/srt-obs-Q1w2e3',
+      ],
+    })
 
     // The recorder's pid is this process's own: that run is gone. Its orphan goes; a socat whose
     // parent has that pid is this process's child, never the old run's orphan.
@@ -1705,18 +1741,20 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
       tmp: reused.disk.has('/tmp/claude-http-aa11.sock'),
     }).toEqual({ killed: [4242], leaf: false, tmp: false })
 
-    // No process table: nothing that waits on it goes.
+    // No process table: nothing that waits on it goes, the empty dir included.
     const blind = harness('linux')
+    blind.disk.dir(`${ws}/.claude`)
     blind.disk.file(`${ws}/.envrc`, '', 0o444)
     blind.disk.file(blind.at.stubs, record(999))
     blind.deps.processes.list = async () => {
       throw new Error('ps: not found')
     }
     await outcomeOf(blind)
-    expect({ killed: blind.killed, leaf: blind.disk.has(`${ws}/.envrc`) }).toEqual({
-      killed: [],
-      leaf: true,
-    })
+    expect({
+      killed: blind.killed,
+      dir: blind.disk.has(`${ws}/.claude`),
+      leaf: blind.disk.has(`${ws}/.envrc`),
+    }).toEqual({ killed: [], dir: true, leaf: true })
 
     const darwin = harness('darwin')
     await outcomeOf(darwin)
@@ -1725,5 +1763,76 @@ describe('04 验收 9 (startup): the record of mount points and leftovers', () =
       socat: [],
       tmpEntries: [`/private/var/folders/zz/q1w2/T/srt-mux-${MAIN_PID}-0.sock`],
     })
+  })
+
+  it('04 验收 9 (startup): while any bwrap runs (a run of ours, or another srt user’s on the same paths), a gone run’s mount points stay, an empty dir and a stale leaf alike, and wait in the record; its socat and tmpdir entries go; the next start without a bwrap removes them', async () => {
+    const ws = '/home/u/code/app'
+    const record = JSON.stringify({
+      pid: 999,
+      socat: [{ pid: 4242, command: SOCAT_COMMAND('aa11') }],
+      mountPoints: { 'toolu_01.0a0b': [`${ws}/.claude`] },
+      leafMountPoints: { 'toolu_01.0a0b': [`${ws}/.envrc`, `${ws}/.mcp.json`] },
+      tmpEntries: ['/tmp/claude-http-aa11.sock'],
+    })
+    for (const bwrap of [
+      '/usr/bin/bwrap --new-session --die-with-parent --args 3 -- /bin/bash -c sleep 30',
+      'bwrap --args 4 -- /bin/sh -c true',
+    ]) {
+      const busy = harness('linux')
+      busy.disk.file('/tmp/claude-http-aa11.sock')
+      busy.disk.dir(`${ws}/.claude`)
+      busy.disk.file(`${ws}/.envrc`, '', 0o444)
+      busy.disk.file(`${ws}/.mcp.json`, '', 0o444)
+      busy.disk.file(busy.at.stubs, record)
+      busy.table.push(
+        { pid: 4242, ppid: 1, command: SOCAT_COMMAND('aa11') },
+        { pid: 7777, ppid: 7700, command: bwrap },
+      )
+      // oxlint-disable-next-line no-await-in-loop -- one case after the other
+      await outcomeOf(busy)
+      expect({
+        bwrap,
+        killed: busy.killed,
+        tmp: busy.disk.has('/tmp/claude-http-aa11.sock'),
+        mounts: [`${ws}/.claude`, `${ws}/.envrc`, `${ws}/.mcp.json`].map((path) =>
+          busy.disk.has(path),
+        ),
+      }).toEqual({ bwrap, killed: [4242], tmp: false, mounts: [true, true, true] })
+      const kept = JSON.parse(busy.disk.text(busy.at.stubs) ?? '{}') as Record<string, unknown>
+      expect({
+        mountPoints: kept['mountPoints'],
+        leafMountPoints: kept['leafMountPoints'],
+      }).toEqual({
+        mountPoints: { 'earlier-runs': [`${ws}/.claude`] },
+        leafMountPoints: { 'earlier-runs': [`${ws}/.envrc`, `${ws}/.mcp.json`] },
+      })
+    }
+    // A program that only mentions bwrap is no bwrap.
+    const mention = harness('linux')
+    mention.disk.dir(`${ws}/.claude`)
+    mention.disk.file(mention.at.stubs, record)
+    mention.table.push({ pid: 7778, ppid: 1, command: '/usr/bin/vim /home/u/notes/bwrap.md' })
+    await outcomeOf(mention)
+    expect(mention.disk.has(`${ws}/.claude`)).toBe(false)
+
+    // The next start: the kept entries, their run gone and no bwrap left, go.
+    const next = harness('linux')
+    next.disk.dir(`${ws}/.claude`)
+    next.disk.file(`${ws}/.envrc`, '', 0o444)
+    next.disk.file(
+      next.at.stubs,
+      JSON.stringify({
+        pid: 888,
+        mountPoints: { 'earlier-runs': [`${ws}/.claude`] },
+        leafMountPoints: { 'earlier-runs': [`${ws}/.envrc`] },
+      }),
+    )
+    await outcomeOf(next)
+    expect([`${ws}/.claude`, `${ws}/.envrc`].map((path) => next.disk.has(path))).toEqual([
+      false,
+      false,
+    ])
+    const after = JSON.parse(next.disk.text(next.at.stubs) ?? '{}') as Record<string, unknown>
+    expect([after['mountPoints'], after['leafMountPoints']]).toEqual([undefined, undefined])
   })
 })
