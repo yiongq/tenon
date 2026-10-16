@@ -159,7 +159,7 @@ function observerReport(
   path: string,
   context: ViolationContext,
 ): SandboxViolation | undefined {
-  // Longer than the kernel takes, so the process wrote it itself: kept as spelled, never looked up.
+  // Longer than the kernel takes: that call did nothing, or the line is forged. Kept as spelled.
   if (Buffer.byteLength(path) > MAX_OBSERVED_PATH_BYTES) {
     const spelled = posix.normalize(path)
     return context.denyWrite.some((entry) => covers(entry, spelled, AS_BYTES))
@@ -320,8 +320,8 @@ function mayWrite(place: string, context: ViolationContext): boolean {
 }
 
 /**
- * Linux's PATH_MAX: the kernel refuses a longer path (ENAMETOOLONG), so an observer path longer
- * than this the process wrote itself. It is kept as spelled and never looked up.
+ * Linux's PATH_MAX: the kernel refuses a longer path (ENAMETOOLONG), so a call that names one did
+ * nothing, and a forged line may name any. It is kept as spelled and never looked up.
  */
 export const MAX_OBSERVED_PATH_BYTES = 4096
 /** The directories one wrap keeps resolved; past it a line in a new one is kept, not resolved. */
