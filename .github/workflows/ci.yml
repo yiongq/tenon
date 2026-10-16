@@ -126,9 +126,8 @@ jobs:
     name: tmp-probe-x64
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    env:
-      TENON_CI_PROBE_OUT: ${{ runner.temp }}/probe-out
     steps:
+      - run: echo "TENON_CI_PROBE_OUT=$RUNNER_TEMP/probe-out" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
@@ -175,9 +174,8 @@ jobs:
     name: tmp-probe-macos
     runs-on: macos-15
     timeout-minutes: 40
-    env:
-      TENON_CI_PROBE_OUT: ${{ runner.temp }}/probe-out
     steps:
+      - run: echo "TENON_CI_PROBE_OUT=$RUNNER_TEMP/probe-out" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
