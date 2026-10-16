@@ -500,6 +500,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
   try {
     const trigger = page.getByTestId('model-menu-trigger')
     const current = page.getByTestId('model-menu-current')
+    const menu = page.getByTestId('model-menu')
     const reason = 'A task needs a model that can use tools'
     // A chat lists them as any other row.
     await trigger.click()
@@ -508,10 +509,14 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
       'true',
     )
     await page.keyboard.press('Escape')
+    // A closing menu stays on screen until its exit has played out, and its rows still answer: wait
+    // for it to be gone, so the next open is a new menu and no row below is read off the old one.
+    await expect(menu).toBeHidden()
 
     await page.getByTestId('mode-cowork').click()
     await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'cowork')
     await trigger.click()
+    await expect(menu).toBeVisible()
     const ollamaRow = page.getByTestId('model-row-ollama-qwen3:8b')
     await expect(ollamaRow).toHaveAttribute('aria-disabled', 'true')
     await expect(ollamaRow).toContainText(reason)
@@ -520,7 +525,9 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
       'aria-disabled',
       'true',
     )
-    // A greyed row does nothing.
+    // A greyed row does nothing. The row takes no pointer events, so only a `force` click can be
+    // made; `force` does not wait for the row to be on screen, so that is asserted first.
+    await expect(ollamaRow).toBeVisible()
     await ollamaRow.click({ force: true })
     await expect(current).toHaveText('Opus 5.5 · Medium')
 
@@ -530,7 +537,9 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     await page.getByTestId('type-model-input').fill('claude-own-model')
     await page.getByTestId('type-model-use').click()
     await expect(current).toHaveText('claude-own-model')
+    await expect(menu).toBeHidden()
     await trigger.click()
+    await expect(menu).toBeVisible()
     const typedRow = page.getByTestId('model-row-anthropic-claude-own-model')
     await expect(typedRow).toHaveAttribute('aria-disabled', 'true')
     await expect(typedRow).toContainText(reason)

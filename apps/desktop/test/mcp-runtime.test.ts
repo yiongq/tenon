@@ -296,11 +296,20 @@ it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stoppe
     mcpServers: [s, { ...s, id: 'unconfirmed', consent: null }],
   }
   await writeConfig(host.fs, host.identity, config)
+  // The cache is replaced whole (`replaceFile`); a host without it would write in place.
   let cacheWrites = 0
+  const counted = (target: string): void => {
+    if (target.endsWith('/mcp/confirmed.json')) cacheWrites++
+  }
   const originalWrite = host.fs.writeFile.bind(host.fs)
   host.fs.writeFile = async (target, data) => {
     await originalWrite(target, data)
-    if (String(target).endsWith('/mcp/confirmed.json')) cacheWrites++
+    counted(String(target))
+  }
+  const originalReplace = host.fs.replaceFile.bind(host.fs)
+  host.fs.replaceFile = async (target, data) => {
+    await originalReplace(target, data)
+    counted(String(target))
   }
   let path = a
   const mcp = createDesktopMcp({
@@ -327,10 +336,13 @@ it('03 验收 8 / 24: seeded persistent consent starts, unconfirmed stays stoppe
     // Each completed handshake queues list and connected cache writes; drain both rounds.
     await vi.waitFor(() => expect(cacheWrites).toBeGreaterThanOrEqual(4))
     const apply = vi.spyOn(mcp.pool, 'apply'),
-      write = vi.spyOn(host.fs, 'writeFile')
+      write = vi.spyOn(host.fs, 'writeFile'),
+      replace = vi.spyOn(host.fs, 'replaceFile')
     await writeConfig(host.fs, host.identity, { locale: 'en' })
     expect(apply).not.toHaveBeenCalled()
-    expect(write.mock.calls.filter(([p]) => String(p).includes('/mcp/'))).toEqual([])
+    expect(
+      [...write.mock.calls, ...replace.mock.calls].filter(([p]) => String(p).includes('/mcp/')),
+    ).toEqual([])
     await mcp.store.revoke('confirmed')
     await vi.waitFor(() => expect(mcp.pool.status()[0]?.phase).toBe('stopped'))
     await mcp.store.connect('confirmed', 'run')

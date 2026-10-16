@@ -1,6 +1,6 @@
 import { synchronousSchemaVerdict } from '../tools/validate.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
-import type { AbsolutePath, ChildHandle, FetchLike, HostAdapter } from '../host/adapter.js'
+import type { AbsolutePath, ChildHandle, FetchLike, HostAdapter, HostFs } from '../host/adapter.js'
 import { absolutePath } from '../host/path.js'
 import { keyFor } from '../host/key.js'
 import type { McpAbsentSource, McpToolSource } from '../loop/ports.js'
@@ -168,6 +168,24 @@ const emptyCache = (): McpServerCache => ({
   pinnedInstructions: null,
   oauth: null,
 })
+/** A host fs that can replace a file whole (the desktop's `replaceFile`), as config.json is written. */
+interface ReplacingFs extends HostFs {
+  replaceFile(path: AbsolutePath, data: Uint8Array | string): Promise<void>
+}
+
+/**
+ * The cache is read outside any lock — by the settings card's 「查看变化」 and by the next launch — so
+ * a write must leave the old file or the new one, never a cut one. `writeFile` truncates first, and
+ * a read in that gap finds an empty file, which reads as 「没有缓存」 (T41): the review then shows no
+ * previous definition. A host that can replace a file whole does that; one that cannot (the memory
+ * host, whose write is one step) keeps `writeFile`.
+ */
+function writeCache(fs: HostFs, path: AbsolutePath, data: string): Promise<void> {
+  const replacing = fs as Partial<ReplacingFs>
+  return typeof replacing.replaceFile === 'function'
+    ? replacing.replaceFile(path, data)
+    : fs.writeFile(path, data)
+}
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 interface ServerState {
   runtime: McpServerRuntime
@@ -258,7 +276,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
     s.write = s.write
       .then(async () => {
         await host.fs.mkdirp(absolutePath(`${host.identity.profileDir}/mcp`))
-        await host.fs.writeFile(path(s), data)
+        await writeCache(host.fs, path(s), data)
       })
       .catch(() => {})
   }
