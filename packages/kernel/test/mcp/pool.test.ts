@@ -649,6 +649,46 @@ it('pin release updates review and persisted definitions without reconnecting', 
   })
 })
 
+it('the cache is replaced whole: a reader never finds it cut, however many saves run beside it', async () => {
+  vi.spyOn(connections, 'connectStdioServer').mockImplementation(async () => fakeConnection().c)
+  const { pool, host } = setup()
+  const file = absolutePath(`${host.identity.profileDir}/mcp/fixture.json`)
+  const write = host.fs.writeFile.bind(host.fs)
+  const read = host.fs.readFile.bind(host.fs)
+  // A host whose in-place write is cut in two — emptied, then filled, with a turn between — and
+  // which can also replace a file in one step, as the desktop's does.
+  type Write = (path: typeof file, data: Uint8Array | string) => Promise<void>
+  const inPlace = vi.fn<Write>(async (path, data) => {
+    await write(path, '')
+    await new Promise((resolve) => setTimeout(resolve, 2))
+    await write(path, data)
+  })
+  const whole = vi.fn<Write>((path, data) => write(path, data))
+  Object.assign(host.fs, { writeFile: inPlace, replaceFile: whole })
+  await connected(pool)
+  const reading = new AbortController()
+  const cut: string[] = []
+  const reader = (async () => {
+    while (!reading.signal.aborted) {
+      const text = await read(file, { encoding: 'utf8' }).catch(() => null)
+      if (text === '') cut.push('empty')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+  })()
+  for (let i = 0; i < 12; i += 1) await pool.refreshTools('fixture')
+  await vi.waitFor(() =>
+    expect(whole.mock.calls.length + inPlace.mock.calls.length).toBeGreaterThan(12),
+  )
+  reading.abort()
+  await reader
+  expect(cut).toEqual([])
+  expect(inPlace).not.toHaveBeenCalled()
+  expect(JSON.parse(String(await read(file, { encoding: 'utf8' })))).toMatchObject({
+    version: 1,
+    lastTools: [{ name: 'echo' }],
+  })
+})
+
 it('an unreadable keychain env value maps to missing-secret before connecting', async () => {
   const connect = vi.spyOn(connections, 'connectStdioServer')
   const initial = runtime({

@@ -188,18 +188,23 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       // The model menu's confirmation before history leaves this computer: a chat on Ollama, then
       // zhipu's public host — its two choices.
       await newChatFromSidebar(page)
+      const menu = page.getByTestId('model-menu')
       await page.getByTestId('model-menu-trigger').click()
       await page.getByTestId('model-row-ollama-qwen3:8b').click()
+      // A pick closes the menu once main has recorded it, and a closing menu is on screen until its
+      // exit is over: send, and open it again, only after it is gone.
+      await expect(menu).toBeHidden()
       await send(page, 'keep this local')
       await expect(page.getByTestId('assistant-text').last()).toHaveText('local answer')
       await page.getByTestId('model-menu-trigger').click()
+      await expect(menu).toBeVisible()
       await page.getByTestId('model-row-zhipu-glm-5.3-flash').click()
       const confirm = page.getByTestId('model-confirm')
       await expect(confirm).toBeVisible()
       await expectSingleLineUnclipped(page.getByTestId('model-confirm-switch'))
       await expectSingleLineUnclipped(page.getByTestId('model-confirm-new-chat'))
       await page.keyboard.press('Escape')
-      await expect(page.getByTestId('model-menu')).toBeHidden()
+      await expect(menu).toBeHidden()
       await expect(page.getByTestId('model-menu-current')).toContainText('qwen3:8b')
       expect(local.requests).toHaveLength(1)
 
