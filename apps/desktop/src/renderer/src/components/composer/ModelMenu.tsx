@@ -72,6 +72,10 @@ type View =
 
 const LIST: View = { kind: 'list' }
 
+function tl(line: string): void {
+  console.warn(`[tl] ${Math.round(performance.timeOrigin + performance.now()) % 1000000} ${line}`)
+}
+
 /** What the menu draws from, read in one round trip; a failed read leaves that part as it was. */
 async function loadMenu(sessionId: string): Promise<{
   entries: ProviderEntryContract[] | null
@@ -159,7 +163,9 @@ export function ModelMenu(): JSX.Element {
   }, [heldSeq, sessionId, store])
 
   const choose = async (choice: Choice): Promise<void> => {
+    tl(`choose begin`)
     const written = await invokeRoute(window.tenon, sessionSelectModel, { sessionId, ...choice })
+    tl(`choose setOpen(false)`)
     setOpen(false)
     setView(LIST)
     if (written.ok) await reload()
@@ -306,7 +312,8 @@ export function ModelMenu(): JSX.Element {
     <>
       <DropdownMenu
         open={open}
-        onOpenChange={(next) => {
+        onOpenChange={(next, details) => {
+          tl(`onOpenChange ${String(next)} ${details.reason}`)
           setOpen(next)
           if (next) void reload()
           else setView(LIST)

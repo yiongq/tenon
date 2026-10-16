@@ -106,6 +106,9 @@ export function seedConfig(userData: string, config: SeededConfig): void {
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
 }
 
+/** Probe only: renderer-side timeline of the current test, attached when it fails. */
+export const probeLog: string[] = []
+
 export interface LaunchOptions {
   /** Isolated profile root. Reuse the same one to prove a choice persisted. */
   readonly userData: string
@@ -160,6 +163,56 @@ export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> 
   })
   const page = await app.firstWindow()
   await page.getByTestId('app-root').waitFor()
+  page.on('console', (m) => {
+    if (m.text().startsWith('[tl]')) probeLog.push(m.text())
+  })
+  await page.evaluate(() => {
+    // oxlint-disable-next-line unicorn/consistent-function-scoping -- serialised into the page
+    const log = (s: string) =>
+      console.warn(`[tl] ${Math.round(performance.timeOrigin + performance.now()) % 1000000} ${s}`)
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'keydown', 'focusin']) {
+      document.addEventListener(
+        type,
+        (e) => {
+          const el = e.target as HTMLElement
+          const id = el?.closest?.('[data-testid]')?.getAttribute('data-testid') ?? el?.tagName
+          const m = e as MouseEvent
+          log(
+            `EV ${type} ${id} ${m.clientX ?? ''},${m.clientY ?? ''} ${(e as KeyboardEvent).key ?? ''}`,
+          )
+        },
+        true,
+      )
+    }
+    let last = ''
+    let lastFrame = performance.now()
+    const sample = () => {
+      const now = performance.now()
+      if (now - lastFrame > 40) log(`SLOWFRAME ${Math.round(now - lastFrame)}ms`)
+      lastFrame = now
+      const tr = document.querySelector('[data-testid="model-menu-trigger"]')
+      const popup = document.querySelector('[data-testid="model-menu"]')
+      const pos = popup?.parentElement
+      const r = tr?.getBoundingClientRect()
+      const pr = popup?.getBoundingClientRect()
+      const cur = [
+        r
+          ? `trig=${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}`
+          : 'trig=none',
+        `exp=${tr?.getAttribute('aria-expanded') ?? '-'}`,
+        popup
+          ? `popup=${popup.hasAttribute('data-open') ? 'open' : popup.hasAttribute('data-closed') ? 'closed' : '?'}${popup.hasAttribute('data-starting-style') ? '+start' : ''}${popup.hasAttribute('data-ending-style') ? '+end' : ''} pos(${pr ? Math.round(pr.x) + ',' + Math.round(pr.y) + ' ' + Math.round(pr.width) + 'x' + Math.round(pr.height) : ''}) hidden=${pos?.hasAttribute('hidden')} inert=${pos?.hasAttribute('inert')} op=${getComputedStyle(popup).opacity}`
+          : 'popup=none',
+        `focus=${document.activeElement?.closest?.('[data-testid]')?.getAttribute('data-testid') ?? document.activeElement?.tagName} hasFocus=${document.hasFocus()}`,
+      ].join(' | ')
+      if (cur !== last) {
+        last = cur
+        log(`ST ${cur}`)
+      }
+      requestAnimationFrame(sample)
+    }
+    sample()
+  })
 
   // page.setViewportSize() would NOT resize the window: it installs a CDP device-metrics
   // override that also forces devicePixelRatio from 2 to 1 and then ignores the real

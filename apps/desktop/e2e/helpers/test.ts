@@ -1,5 +1,5 @@
 import { test as base } from '@playwright/test'
-import { sweepUserDataDirs } from './launch.js'
+import { probeLog, sweepUserDataDirs } from './launch.js'
 
 /**
  * The `test` every spec in this directory imports, instead of `@playwright/test`'s.
@@ -15,7 +15,11 @@ export const test = base.extend<{ tempProfiles: void }>({
     // parameter to decide what to build and REFUSES anything but a destructuring pattern.
     // oxlint-disable-next-line no-empty-pattern
     async ({}, use, testInfo) => {
+      probeLog.length = 0
       await use()
+      if (testInfo.status !== testInfo.expectedStatus) {
+        await testInfo.attach('timeline', { body: probeLog.join('\n'), contentType: 'text/plain' })
+      }
       sweepUserDataDirs(testInfo.status === testInfo.expectedStatus)
     },
     { auto: true },

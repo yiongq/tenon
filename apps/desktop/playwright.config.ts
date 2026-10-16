@@ -3,6 +3,8 @@ import { LIVE_SPEC, shared } from './playwright.shared.js'
 
 export default defineConfig({
   ...shared,
+  repeatEach: 30,
+  grep: /text-only rows are greyed|mode switch, folder chip|release uses the viewed hash/,
   /**
    * The ordinary run never even COLLECTS the live suite. Its own `test.skip(!LIVE)` is a runtime
    * guard, so with `TENON_LIVE=1` exported in a shell — which is exactly the shell of whoever
