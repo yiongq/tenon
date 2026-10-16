@@ -1,7 +1,7 @@
 {
   "srt": "0.0.79",
   "captured": "2026-10-14, spec 04 probes P1-P3 (plan 实施记录)",
-  "source": "../tenon-notes/2026-10-09-phase4-sandbox/probes/results/{macos,linux-u2404,linux-u2604-apparmorfix}/{violation-lines.json,p2.json,p3.json}",
+  "source": "../tenon-notes/2026-10-09-phase4-sandbox/probes/results/{macos,linux-u2404,linux-u2604-apparmorfix}/{violation-lines.json,p2.json,p3.json}; the x64 CI lines: ../ci-probe x64-capture.json from CI run 38835121660 (ubuntu-24.04 x86_64, bubblewrap 0.9.0), plan step 21",
   "placeholders": "Each platform's probe run directory is /fx: <run>/p1/home becomes /fx/p1/home and so on (home, ws, outside, the profile at home/tenon-profile). Pids and ports are as captured. Left out: the probe's own canary lines, Linux 24.04's mkdirat lines for the probe machine's directories above the run directory (the chain from /Users down; /fx and /fx/p1 stand for its tail), and lines that differ from one kept here only by a pid, port, timestamp or temp-file name (their platforms are listed on the kept one).",
   "lines": [
     {
@@ -957,6 +957,195 @@
       "profile": "workspace-write",
       "line": "deny openat /fx/p3/home/.config/gcloud/.last_survey_prompt.yaml",
       "from": "p3.json"
+    },
+    {
+      "id": "x64 CI mkdir -p existing #1",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "mkdir -p <existing outside dir>",
+      "profile": "workspace-write",
+      "line": "deny mkdir /fx",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI mkdir -p existing #2",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "mkdir -p <existing outside dir>",
+      "profile": "workspace-write",
+      "line": "deny mkdir /fx/p1",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI mkdir -p existing #3",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "mkdir -p <existing outside dir>",
+      "profile": "workspace-write",
+      "line": "deny mkdir /fx/p1/outside",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI mkdir -p new",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "mkdir -p <outside>/n1/n2",
+      "profile": "workspace-write",
+      "line": "deny mkdir /fx/p1/outside/n1",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw open",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall open",
+      "profile": "workspace-write",
+      "line": "deny open /fx/p1/outside/open-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw truncate",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall truncate",
+      "profile": "workspace-write",
+      "line": "deny truncate /fx/p1/outside/truncate-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw rename #1",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall rename",
+      "profile": "workspace-write",
+      "line": "deny rename /fx/p1/outside/rename-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw rename #2",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall rename",
+      "profile": "workspace-write",
+      "line": "deny rename /fx/p1/outside/rename-q",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw mkdir",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall mkdir",
+      "profile": "workspace-write",
+      "line": "deny mkdir /fx/p1/outside/mkdir-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw rmdir",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall rmdir",
+      "profile": "workspace-write",
+      "line": "deny rmdir /fx/p1/outside/rmdir-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw creat",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall creat",
+      "profile": "workspace-write",
+      "line": "deny creat /fx/p1/outside/creat-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw link #1",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall link",
+      "profile": "workspace-write",
+      "line": "deny link /fx/p1/outside/link-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw link #2",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall link",
+      "profile": "workspace-write",
+      "line": "deny link /fx/p1/outside/link-q",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw unlink",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall unlink",
+      "profile": "workspace-write",
+      "line": "deny unlink /fx/p1/outside/unlink-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw symlink",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall symlink",
+      "profile": "workspace-write",
+      "line": "deny symlink /fx/p1/outside/symlink-q",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw chmod",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall chmod",
+      "profile": "workspace-write",
+      "line": "deny chmod /fx/p1/outside/chmod-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw chown",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall chown",
+      "profile": "workspace-write",
+      "line": "deny chown /fx/p1/outside/chown-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw lchown",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall lchown",
+      "profile": "workspace-write",
+      "line": "deny lchown /fx/p1/outside/lchown-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw utime",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall utime",
+      "profile": "workspace-write",
+      "line": "deny utime /fx/p1/outside/utime-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw mknod",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall mknod",
+      "profile": "workspace-write",
+      "line": "deny mknod /fx/p1/outside/mknod-p",
+      "from": "ci-probe x64-capture.json"
+    },
+    {
+      "id": "x64 CI raw utimes",
+      "platforms": ["linux-x64-ci"],
+      "probe": "P1",
+      "check": "raw syscall utimes",
+      "profile": "workspace-write",
+      "line": "deny utimes /fx/p1/outside/utimes-p",
+      "from": "ci-probe x64-capture.json"
     }
   ]
 }

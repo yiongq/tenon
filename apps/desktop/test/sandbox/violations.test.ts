@@ -563,6 +563,30 @@ const EXPECTED: Record<string, Expected | typeof DROPPED> = {
     protected: true,
     observed: true,
   },
+  // Linux x64, captured on the ubuntu-24.04 runner (plan step 21): glibc's mkdir -p calls the older
+  // `mkdir` for every ancestor, so each existing directory is reported and dropped as `mkdirat` is
+  'x64 CI mkdir -p existing #1': DROPPED,
+  'x64 CI mkdir -p existing #2': DROPPED,
+  'x64 CI mkdir -p existing #3': DROPPED,
+  'x64 CI mkdir -p new': { kind: 'fs', target: '/fx/p1/outside/n1', observed: true },
+  // each older x86-64 call the observer names, by its own name, from a raw syscall(2) on a path outside
+  'x64 CI raw open': { kind: 'fs', target: '/fx/p1/outside/open-p', observed: true },
+  'x64 CI raw truncate': { kind: 'fs', target: '/fx/p1/outside/truncate-p', observed: true },
+  'x64 CI raw rename #1': { kind: 'fs', target: '/fx/p1/outside/rename-p', observed: true },
+  'x64 CI raw rename #2': { kind: 'fs', target: '/fx/p1/outside/rename-q', observed: true },
+  'x64 CI raw mkdir': { kind: 'fs', target: '/fx/p1/outside/mkdir-p', observed: true },
+  'x64 CI raw rmdir': { kind: 'fs', target: '/fx/p1/outside/rmdir-p', observed: true },
+  'x64 CI raw creat': { kind: 'fs', target: '/fx/p1/outside/creat-p', observed: true },
+  'x64 CI raw link #1': { kind: 'fs', target: '/fx/p1/outside/link-p', observed: true },
+  'x64 CI raw link #2': { kind: 'fs', target: '/fx/p1/outside/link-q', observed: true },
+  'x64 CI raw unlink': { kind: 'fs', target: '/fx/p1/outside/unlink-p', observed: true },
+  'x64 CI raw symlink': { kind: 'fs', target: '/fx/p1/outside/symlink-q', observed: true },
+  'x64 CI raw chmod': { kind: 'fs', target: '/fx/p1/outside/chmod-p', observed: true },
+  'x64 CI raw chown': { kind: 'fs', target: '/fx/p1/outside/chown-p', observed: true },
+  'x64 CI raw lchown': { kind: 'fs', target: '/fx/p1/outside/lchown-p', observed: true },
+  'x64 CI raw utime': { kind: 'fs', target: '/fx/p1/outside/utime-p', observed: true },
+  'x64 CI raw mknod': { kind: 'fs', target: '/fx/p1/outside/mknod-p', observed: true },
+  'x64 CI raw utimes': { kind: 'fs', target: '/fx/p1/outside/utimes-p', observed: true },
 }
 
 // --- Tests -----------------------------------------------------------------------------------------
@@ -611,6 +635,31 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       )
     },
   )
+
+  it('the x64 fixture holds a captured line for each older x86-64 call the observer names (读法 11: open, chmod, chown, utime, utimes follow; unlink, rmdir, rename, symlink, mkdir, mknod, link, lchown do not; creat, truncate as listed)', () => {
+    const named = FIXTURE.lines
+      .filter((fixture) => fixture.id.startsWith('x64 CI raw '))
+      .map((fixture) => fixture.line.split(' ')[1])
+    expect([...new Set(named)].toSorted()).toEqual(
+      [
+        'chmod',
+        'chown',
+        'creat',
+        'lchown',
+        'link',
+        'mkdir',
+        'mknod',
+        'open',
+        'rename',
+        'rmdir',
+        'symlink',
+        'truncate',
+        'unlink',
+        'utime',
+        'utimes',
+      ].toSorted(),
+    )
+  })
 
   it('a Linux observer write inside allowWrite is dropped', () => {
     const write = wrapOf('linux', 'workspace-write', P2)
@@ -1255,7 +1304,8 @@ describe('04 验收 16 (classification): srt violation lines', () => {
       // a file of that name, or a link, is no directory
       'deny mkdirat /fx/p1/outside/a-file',
       'deny mkdirat /fx/p1/ws/out-link',
-      // x64's apply-seccomp also watches the older mkdir, glibc's call there: the same rule
+      // x64's apply-seccomp also watches the older mkdir, glibc's call there: the same rule (the
+      // line's shape is the one captured on the x64 runner, fixtures `x64 CI mkdir -p …`)
       'deny mkdir /fx/p1/outside',
       'deny mkdir /fx/p1/outside/new',
       'deny mkdir /fx/p1/outside/a-file',
