@@ -119,6 +119,94 @@ jobs:
         env:
           TENON_SANDBOX_TESTS: required
 
+  # TEMPORARY (plan step 21): measurements on the runners; this whole block goes in the PR's last
+  # commit. x64 S, the legacy x86-64 calls the observer reports, P2 on Linux, and a CI run of the
+  # suite with the variable unset (the gate must fail it).
+  tmp-probe-x64:
+    name: tmp-probe-x64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      TENON_CI_PROBE_OUT: ${{ runner.temp }}/probe-out
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: |
+          uname -m
+          bwrap --version
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns
+      - run: pnpm build
+      - name: S on x64
+        run: pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts
+        env:
+          TENON_SANDBOX_TESTS: required
+      - name: Gate, the suite without the variable under CI must fail
+        if: ${{ !cancelled() }}
+        run: |
+          if env -u TENON_SANDBOX_TESTS pnpm vitest run apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts; then
+            echo "the gate did not fail the suite"; exit 1
+          fi
+      - name: Probe
+        if: ${{ !cancelled() }}
+        run: pnpm vitest run --maxWorkers=1 apps/desktop/test/sandbox/ci-probe.test.ts
+        env:
+          TENON_SANDBOX_TESTS: required
+          TENON_CI_PROBE: '1'
+      - name: Captured data
+        if: ${{ !cancelled() }}
+        run: |
+          for f in "$TENON_CI_PROBE_OUT"/*.json; do echo "=== $f"; cat "$f"; done
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-x64
+          path: ${{ runner.temp }}/probe-out/
+          if-no-files-found: warn
+
+  tmp-probe-macos:
+    name: tmp-probe-macos
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      TENON_CI_PROBE_OUT: ${{ runner.temp }}/probe-out
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm build
+      - name: Gate, the suite without the variable under CI must fail
+        run: |
+          if env -u TENON_SANDBOX_TESTS pnpm vitest run apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts; then
+            echo "the gate did not fail the suite"; exit 1
+          fi
+      - name: Probe
+        run: pnpm vitest run --maxWorkers=1 apps/desktop/test/sandbox/ci-probe.test.ts
+        env:
+          TENON_SANDBOX_TESTS: required
+          TENON_CI_PROBE: '1'
+      - name: Captured data
+        if: ${{ !cancelled() }}
+        run: |
+          for f in "$TENON_CI_PROBE_OUT"/*.json; do echo "=== $f"; cat "$f"; done
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-macos
+          path: ${{ runner.temp }}/probe-out/
+          if-no-files-found: warn
+
   # The single required status check. A skipped job counts as passing on GitHub,
   # so this job fails unless every needed job actually succeeded.
   ci-ok:
