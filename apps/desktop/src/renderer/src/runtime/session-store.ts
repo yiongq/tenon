@@ -107,6 +107,19 @@ function hasOutcome(model: ThreadModel, callKey: string): boolean {
   )
 }
 
+/**
+ * Whether the call's outcome in the thread already names the answer that closed it (`approval`):
+ * the row then reads the answer from its own outcome, a local collapsed line is not needed.
+ */
+function hasNamedAnswer(model: ThreadModel, callKey: string): boolean {
+  return model.turns.some((turn) =>
+    turn.parts.some(
+      (part) =>
+        part.kind === 'tool' && part.callKey === callKey && part.outcome?.approval !== undefined,
+    ),
+  )
+}
+
 /** A send whose message the events will show: a `user-message`, or a queue push (§插话与输入框状态表). */
 const EVENTS_FOLLOW: ReadonlySet<string> = new Set(['started', 'queued', 'held'])
 
@@ -502,14 +515,20 @@ export class SessionStore {
     })
     if (answered.ok && answered.data.status === 'applied') {
       const collapsed = new Map(this.#snapshot.answered)
-      // Under the row the card hung under: a sub-agent's card collapses there, not under a call of
-      // the child session that this thread has no row for (§最小审批卡「位置」).
-      collapsed.set(pending.anchorCallKey, {
-        outcome: decision === 'allow' ? 'allowed' : 'denied',
-        scope: decision === 'allow' ? pending.allowScope : null,
-        target: pending.card.target,
-        subtask: pending.callKey !== pending.anchorCallKey,
-      })
+      // The response and the call's `tool-outcome` are two IPC messages with no order between
+      // them. An outcome that came first has named the answer already — a stricter re-judgement's
+      // included — and the `tool-outcome` handler had no line to drop, so one made now would stay
+      // for good (§最小审批卡「答完」).
+      if (!hasNamedAnswer(this.#snapshot.model, pending.anchorCallKey)) {
+        // Under the row the card hung under: a sub-agent's card collapses there, not under a call
+        // of the child session that this thread has no row for (§最小审批卡「位置」).
+        collapsed.set(pending.anchorCallKey, {
+          outcome: decision === 'allow' ? 'allowed' : 'denied',
+          scope: decision === 'allow' ? pending.allowScope : null,
+          target: pending.card.target,
+          subtask: pending.callKey !== pending.anchorCallKey,
+        })
+      }
       this.#set({ answered: collapsed, pending: null, pendingSince: 0 })
     }
     // `stale` shows the new card; anything else re-reads what waits.
