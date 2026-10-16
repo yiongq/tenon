@@ -46,7 +46,7 @@ import {
   type SandboxRig,
 } from './support.js'
 
-const gate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE])
+const gate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE], process.env['CI'])
 if (!gate.run) console.warn(gate.reason)
 
 /** A case's own bound: srt's wrap and a sandbox-exec or bwrap start take a while on a loaded runner. */
@@ -350,18 +350,18 @@ function envOf(stdout: string): Map<string, string> {
 
 describe('04 sandbox black box: the gate', () => {
   it('04 验收 34 (gate): unset or skip skips with a reason, required runs, any other value fails; under required only an active posture passes', () => {
-    expect(sandboxTestsGate(undefined)).toEqual({
+    expect(sandboxTestsGate(undefined, undefined)).toEqual({
       run: false,
       reason: expect.stringContaining('TENON_SANDBOX_TESTS is not set'),
     })
-    expect(sandboxTestsGate('')).toMatchObject({ run: false })
-    expect(sandboxTestsGate('skip')).toEqual({
+    expect(sandboxTestsGate('', undefined)).toMatchObject({ run: false })
+    expect(sandboxTestsGate('skip', undefined)).toEqual({
       run: false,
       reason: expect.stringContaining('TENON_SANDBOX_TESTS=skip'),
     })
-    expect(sandboxTestsGate('required')).toEqual({ run: true })
-    expect(() => sandboxTestsGate('require')).toThrow('must be "required" or "skip"')
-    expect(() => sandboxTestsGate('1')).toThrow('must be "required" or "skip"')
+    expect(sandboxTestsGate('required', undefined)).toEqual({ run: true })
+    expect(() => sandboxTestsGate('require', undefined)).toThrow('must be "required" or "skip"')
+    expect(() => sandboxTestsGate('1', undefined)).toThrow('must be "required" or "skip"')
 
     expect(() => assertSandboxActive({ state: 'active', reasons: [] })).not.toThrow()
     expect(() =>
@@ -376,6 +376,23 @@ describe('04 sandbox black box: the gate', () => {
         reasons: [{ code: 'nested-sandbox', detail: null }],
       }),
     ).toThrow('the sandbox is unavailable (nested-sandbox')
+  })
+
+  it('04 验收 34 (gate, CI): with CI set an unset or empty variable fails the suite instead of skipping it; required and skip still go through; an empty CI is no CI', () => {
+    for (const ci of ['true', '1', 'yes']) {
+      expect(() => sandboxTestsGate(undefined, ci)).toThrow(
+        'CI is set but TENON_SANDBOX_TESTS is not',
+      )
+      expect(() => sandboxTestsGate('', ci)).toThrow('CI is set but TENON_SANDBOX_TESTS is not')
+      expect(() => sandboxTestsGate('require', ci)).toThrow('must be "required" or "skip"')
+      expect(sandboxTestsGate('required', ci)).toEqual({ run: true })
+      expect(sandboxTestsGate('skip', ci)).toEqual({
+        run: false,
+        reason: expect.stringContaining('TENON_SANDBOX_TESTS=skip'),
+      })
+    }
+    expect(sandboxTestsGate(undefined, '')).toMatchObject({ run: false })
+    expect(sandboxTestsGate('', '')).toMatchObject({ run: false })
   })
 })
 
