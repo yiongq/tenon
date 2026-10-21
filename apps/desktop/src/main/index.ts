@@ -56,6 +56,7 @@ import {
 import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
+import { startSingleInstance } from './single-instance.js'
 import {
   createSessionRemoval,
   exposeSessionRemoval,
@@ -69,8 +70,7 @@ const LOCAL_TENANT_ID = 'personal'
 /** Read by the preload (the literal is repeated there, as `--tenon-locale=` already is). */
 const NEW_CHAT_ARG = '--tenon-new-chat'
 
-// Placeholders, not implemented in phase 0: app.requestSingleInstanceLock() and the
-// `tenon://` deep-link registration.
+// Placeholder, not implemented in phase 0: the `tenon://` deep-link registration.
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -398,7 +398,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-void main().catch((error: unknown) => {
+void startSingleInstance(
+  app,
+  () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0],
+  main,
+).catch((error: unknown) => {
   console.error('[main] failed to start', error)
   app.exit(1)
 })
