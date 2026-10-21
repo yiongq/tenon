@@ -195,14 +195,21 @@ export function registerSandboxSignals(deps: {
   readonly sandbox: { signalReset(): void }
   readonly run: SandboxPostureRun
 }): void {
-  void deps.run.outcome.then(({ initialize }) => {
-    if (initialize === 'not-called' || initialize === 'dependency-error') return
+  let registered = false
+  const register = (): void => {
+    if (registered) return
+    registered = true
     const quit = (): void => {
       deps.sandbox.signalReset()
       deps.app.quit()
     }
     deps.process.on('SIGTERM', quit)
     deps.process.on('SIGINT', quit)
+  }
+  void deps.run.initialized.then(register)
+  void deps.run.outcome.then(({ initialize }) => {
+    if (initialize === 'not-called' || initialize === 'dependency-error') return
+    register()
   })
 }
 

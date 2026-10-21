@@ -158,7 +158,7 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
     for (const command of this.commands.values()) {
       if (command.sessionId === q.sessionId) command.hosts = [...q.hosts]
     }
-    if (this.appliedSession === q.sessionId || this.active.size === 0) {
+    if (this.appliedSession === q.sessionId) {
       this.updateAllowlist(q.hosts)
     }
   }

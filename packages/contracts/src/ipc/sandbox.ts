@@ -51,7 +51,7 @@ function validDomainEntry(value: string): boolean {
   if (parts === null) return false
   const host = parts[1]!
   const port = parts[2]
-  if (port !== undefined && (Number(port) < 1 || Number(port) > 65535)) return false
+  if (port !== undefined && (port.startsWith('0') || Number(port) > 65535)) return false
   if (host.startsWith('[')) {
     const address = host.slice(1, -1)
     return z.ipv6().safeParse(address).success && (port !== undefined || !localIpv6(address))

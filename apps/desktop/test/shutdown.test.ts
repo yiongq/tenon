@@ -374,6 +374,62 @@ describe('04 sandbox shutdown', () => {
     await check('SIGINT')
   })
 
+  it('04 验收 3: a signal after initialize returns but before the self-test settles quits once', async () => {
+    const check = async (signal: 'SIGTERM' | 'SIGINT'): Promise<void> => {
+      const processPort = new EventEmitter()
+      const quit = vi.fn<() => void>()
+      const signalReset = vi.fn<() => void>()
+      const initialized = Promise.withResolvers<void>()
+      const outcome = Promise.withResolvers<Awaited<SandboxPostureRun['outcome']>>()
+      registerSandboxSignals({
+        process: processPort,
+        app: { quit },
+        sandbox: { signalReset },
+        run: { initialized: initialized.promise, outcome: outcome.promise },
+      })
+      expect(processPort.eventNames()).toEqual([])
+      initialized.resolve()
+      await initialized.promise
+      expect(processPort.eventNames()).toEqual(['SIGTERM', 'SIGINT'])
+      processPort.emit(signal)
+      expect(signalReset).toHaveBeenCalledTimes(1)
+      expect(quit).toHaveBeenCalledTimes(1)
+      outcome.resolve(await startupResult('returned').outcome)
+      await outcome.promise
+      expect(quit).toHaveBeenCalledTimes(1)
+    }
+    await check('SIGTERM')
+    await check('SIGINT')
+  })
+
+  it('04 验收 3: registers each handler once when initialized and the outcome both arrive', async () => {
+    const processPort = new EventEmitter()
+    const quit = vi.fn<() => void>()
+    const signalReset = vi.fn<() => void>()
+    const initialized = Promise.withResolvers<void>()
+    const outcome = Promise.withResolvers<Awaited<SandboxPostureRun['outcome']>>()
+    registerSandboxSignals({
+      process: processPort,
+      app: { quit },
+      sandbox: { signalReset },
+      run: { initialized: initialized.promise, outcome: outcome.promise },
+    })
+    initialized.resolve()
+    await initialized.promise
+    expect(processPort.listenerCount('SIGTERM')).toBe(1)
+    expect(processPort.listenerCount('SIGINT')).toBe(1)
+    outcome.resolve(await startupResult('returned').outcome)
+    await outcome.promise
+    expect(processPort.listenerCount('SIGTERM')).toBe(1)
+    expect(processPort.listenerCount('SIGINT')).toBe(1)
+    processPort.emit('SIGTERM')
+    expect(signalReset).toHaveBeenCalledTimes(1)
+    expect(quit).toHaveBeenCalledTimes(1)
+    processPort.emit('SIGINT')
+    expect(signalReset).toHaveBeenCalledTimes(2)
+    expect(quit).toHaveBeenCalledTimes(2)
+  })
+
   it('04 验收 3: after initialize threw for a reason other than a dependency error, SIGTERM still calls app.quit()', async () => {
     const processPort = new EventEmitter()
     const quit = vi.fn<() => void>()

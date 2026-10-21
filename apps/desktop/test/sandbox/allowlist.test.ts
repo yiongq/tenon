@@ -171,6 +171,61 @@ describe('04 desktop sandbox wiring', () => {
         }).success,
       ).toBe(true)
     }
+    for (const sample of ['example.com:0443', '127.0.0.1:00080', '[::1]:03000']) {
+      expect([sample, sandboxAllowedDomainsSchema.safeParse([sample]).success]).toEqual([
+        sample,
+        false,
+      ])
+      expect(
+        SandboxRuntimeConfigSchema.safeParse({
+          ...h.outcome.session,
+          network: { ...h.outcome.session!.network, allowedDomains: [sample] },
+        }).success,
+      ).toBe(false)
+    }
+  })
+
+  it('04 不变量 9: a grant from another session during a wrap never reaches the command being wrapped', async () => {
+    const h = wiringFixture()
+    const entered = Promise.withResolvers<void>()
+    const wrapped = Promise.withResolvers<{ argv: string[]; env: Record<string, string> }>()
+    vi.mocked(h.srt.wrapWithSandboxArgv).mockImplementationOnce(() => {
+      entered.resolve()
+      return wrapped.promise
+    })
+    h.runtime.start()
+    h.loop.ports.sandbox!.beforeWrap({
+      commandId: 'first',
+      sessionId: SESSION,
+      hosts: ['one.example.com'],
+    })
+    const pending = h.runtime.wrap(h.request('first'))
+    await entered.promise
+    h.loop.ports.sandbox!.beforeWrap({
+      commandId: 'second',
+      sessionId: CHILD,
+      hosts: ['two.example.com'],
+    })
+    h.loop.ports.sandbox!.grantsChanged({ sessionId: CHILD, hosts: ['new.example.com'] })
+    expect(h.srt.updateConfig).toHaveBeenCalledTimes(1)
+    expect(h.srt.updateConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        network: expect.objectContaining({ allowedDomains: ['one.example.com'] }),
+      }),
+    )
+    wrapped.resolve({ argv: ['/bin/sh', '-c', 'true'], env: {} })
+    await pending
+    expect(h.srt.updateConfig).toHaveBeenCalledTimes(1)
+    await h.runtime.afterExit('first')
+    await h.runtime.wrap(h.request('second'))
+    expect(h.srt.updateConfig).toHaveBeenCalledTimes(2)
+    expect(h.srt.updateConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        network: expect.objectContaining({ allowedDomains: ['new.example.com'] }),
+      }),
+    )
+    await h.runtime.afterExit('second')
+    expect(h.srt.reset).not.toHaveBeenCalled()
   })
 
   it('04 不变量 9: each command replaces session grants; grantsChanged updates only the most recent session without reset', async () => {
