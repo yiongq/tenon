@@ -158,7 +158,7 @@ const MODEL_B = 'vendor-model-b'
 const NOTE = 'VENDOR-NOTE-5521'
 const TASK_DONE = 'vendor-read-7f3a'
 
-test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 → 保存 key 变回仅文字 → 改名、改模型 → 删行、删实例 → 失败卡说已删除（M6 验收 3、4、9、12、14、19、21、25）', async () => {
+test('presentation-r1 验收 9: 建实例 → 获取列表 → 探测通过 → 任务一次工具往返 → 保存 key 变回仅文字 → 改名、改模型 → 删行、删实例 → 失败卡说已删除（M6 验收 3、4、9、12、14、19、21、25）', async () => {
   test.setTimeout(120_000)
   const folders = makeFolderTree('vendor-task', { 'ws/notes.txt': `${NOTE}\n` })
   tree = folders
@@ -256,7 +256,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await expect(probeA).toHaveAttribute('aria-describedby', (await cost.getAttribute('id')) ?? '')
     await probeA.click()
     await expect(statusA).toHaveAttribute('data-outcome', 'passed')
-    await expect(statusA).toHaveText('本机探测通过 · 不保证')
+    await expect(statusA).toHaveText('探测通过 · 不保证')
     const probes = completionRequests(server)
     expect(probes).toHaveLength(2)
     for (const request of probes) {
@@ -289,7 +289,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await expect(group.locator('[data-slot="dropdown-menu-label"]')).toHaveText(NAME)
     const rowA = page.getByTestId(`model-row-${id}-${MODEL_A}`)
     const rowB = page.getByTestId(`model-row-${id}-${MODEL_B}`)
-    await expect(rowA).toContainText(`本机探测 · 不保证 · ${VENDOR_HOST}`)
+    await expect(rowA).toContainText(`探测通过 · 不保证 · ${VENDOR_HOST}`)
     await expect(rowB).toContainText(`尚未通过探测 · 仅文字对话 · ${VENDOR_HOST}`)
     await page.getByTestId('model-more').click()
     await expect(page.getByTestId('model-type-anthropic')).toBeVisible()
@@ -304,7 +304,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await trigger.click()
     await expect(rowA).not.toHaveAttribute('aria-disabled', 'true')
     await expect(rowB).toHaveAttribute('aria-disabled', 'true')
-    await expect(rowB).toContainText('任务需要能用工具的模型')
+    await expect(rowB).toContainText('在文件夹里工作需要能用工具的模型')
     await rowA.click()
     await expect(menu).toBeHidden()
     await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
@@ -371,7 +371,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     )
     await trigger.click()
     await expect(rowA).toHaveAttribute('aria-disabled', 'true')
-    await expect(rowA).toContainText('任务需要能用工具的模型')
+    await expect(rowA).toContainText('在文件夹里工作需要能用工具的模型')
     await page.keyboard.press('Escape')
     await expect(menu).toBeHidden()
 
@@ -617,7 +617,7 @@ const PRIVATE_ID = 'custom-1c8f4d2e-6a3b-4f7c-8d9e-0a1b2c3d4e5f'
 const PRIVATE_HOST = '192.168.77.10'
 const PRIVATE_MODEL = 'qwen-lan'
 
-test('an instance on this computer or a local network has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
+test('presentation-r1 验收 9: an instance on this computer or a local network has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
   local = await startFakeOpenAI({ chunks: ['local ', 'reply'], delayMs: 5 })
   const server = local
   const userData = makeUserDataDir('vendor-local')
@@ -689,7 +689,7 @@ test('an instance on this computer or a local network has no 「探测」, holds
       // oxlint-disable-next-line no-await-in-loop -- one row at a time
       await expect(each).toHaveAttribute('aria-disabled', 'true')
       // oxlint-disable-next-line no-await-in-loop -- as above
-      await expect(each).toContainText('A task needs a model that can use tools')
+      await expect(each).toContainText('Working in a folder needs a model that can use tools')
     }
     await page.keyboard.press('Escape')
     await page.getByTestId('mode-chat').click()

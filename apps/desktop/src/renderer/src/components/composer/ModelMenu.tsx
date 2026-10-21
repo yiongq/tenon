@@ -12,8 +12,8 @@ import type {
 } from '@tenon-app/contracts'
 import { useAuiState } from '@assistant-ui/react'
 import { CheckIcon, ChevronDownIcon } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import type { JSX } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
+import type { ComponentProps, JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
@@ -29,8 +29,9 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { customVendorGone, holdsTools, markLineKey } from '@/lib/custom-vendor'
-import { confirmHostFor, heldConfirmHost } from '@/lib/data-flow'
+import { confirmHostFor, heldConfirmHost, rowHostInLine } from '@/lib/data-flow'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { useConversation } from '@/runtime/conversation'
 import { TypeModelDialog } from './TypeModelDialog'
@@ -41,8 +42,9 @@ import { TypeModelDialog } from './TypeModelDialog'
  *
  * Grouped by provider, listing only configured ones; an unconfigured provider keeps one greyed row
  * that opens the settings card. A row's first line is the model's display name (its id when it has
- * none: a hand-typed, local or custom row), its second the purpose and the target host (「本机」 for
- * loopback only); the chip in the composer shows the same name. A row
+ * none: a hand-typed, local or custom row), its second the purpose, with the host kept inline for
+ * instances and nondefault addresses (「本机」 for loopback only). Every row describes its destination
+ * on highlight and to assistive tech; the chip in the composer shows the same name. A row
  * that holds text conversations only is greyed in a task. A choice — a row, a hand-typed id, a
  * thinking level — that would send history which went to this machine or a private network to a
  * public host turns the menu into a confirmation first: compared with where the history last went
@@ -92,6 +94,36 @@ async function loadMenu(sessionId: string): Promise<{
 
 /** The session's hand-typed choice, shown as a row of its own provider (A15). */
 const HAND_TYPED = (id: string): Row => ({ id, mark: 'unverified-text-only', listing: 'main' })
+
+/** Keep the description mounted even while the highlight tooltip is closed. */
+function ModelRowItem({
+  description,
+  ...props
+}: ComponentProps<typeof DropdownMenuItem> & { readonly description: string }): JSX.Element {
+  const descriptionId = useId()
+  return (
+    <>
+      <DropdownMenuItem
+        {...props}
+        aria-describedby={descriptionId}
+        render={(itemProps, state) => (
+          <Tooltip open={state.highlighted}>
+            <TooltipTrigger render={<div {...itemProps} aria-describedby={descriptionId} />} />
+            <TooltipContent
+              data-testid="model-row-host-tooltip"
+              className="max-w-none whitespace-nowrap"
+            >
+              {description}
+            </TooltipContent>
+          </Tooltip>
+        )}
+      />
+      <span id={descriptionId} className="sr-only">
+        {description}
+      </span>
+    </>
+  )
+}
 
 export function ModelMenu(): JSX.Element {
   const { t } = useTranslation()
@@ -234,11 +266,17 @@ export function ModelMenu(): JSX.Element {
     entry.endpoint.reach === 'loopback' ? t('model.host.local') : entry.endpoint.host
 
   const secondLine = (entry: ProviderEntryContract, row: Row): string => {
-    const key = markLineKey(row.mark, entry.displayName !== undefined)
-    if (key !== 'model.row.line') return t(key, { host: hostLabel(entry) })
+    const key = markLineKey(row.mark, entry.displayName !== undefined, rowHostInLine(entry))
+    if (key !== 'model.row.line' && key !== 'model.row.purpose')
+      return t(key, { host: hostLabel(entry) })
     const purpose = row.purposeKey === undefined ? row.id : fromData(row.purposeKey)
     return t(key, { purpose, host: hostLabel(entry) })
   }
+
+  const rowDescription = (entry: ProviderEntryContract): string =>
+    entry.endpoint.reach === 'loopback'
+      ? t('model.row.staysLocal')
+      : t('model.row.sendsTo', { host: entry.endpoint.host })
 
   /** A level's name from the catalogue; a vendor level it has no entry for shows as the vendor's. */
   const levelName = (level: string): string => {
@@ -379,7 +417,8 @@ export function ModelMenu(): JSX.Element {
                       const checked =
                         current?.providerId === entry.id && current.modelId === candidate.id
                       return (
-                        <DropdownMenuItem
+                        <ModelRowItem
+                          description={rowDescription(entry)}
                           key={candidate.id}
                           data-testid={`model-row-${entry.id}-${candidate.id}`}
                           disabled={blocked}
@@ -400,7 +439,7 @@ export function ModelMenu(): JSX.Element {
                                 : secondLine(entry, candidate)}
                             </span>
                           </span>
-                        </DropdownMenuItem>
+                        </ModelRowItem>
                       )
                     })}
                   </DropdownMenuGroup>
@@ -411,7 +450,9 @@ export function ModelMenu(): JSX.Element {
                     className="text-text-muted"
                     onClick={() => setSettingsOpen(true)}
                   >
-                    {t('model.notConfigured', { provider: nameOf(entry) })}
+                    {t(entry.refused === undefined ? 'model.notConfigured' : 'model.refused', {
+                      provider: nameOf(entry),
+                    })}
                   </DropdownMenuItem>
                 ),
               )}
@@ -466,7 +507,8 @@ export function ModelMenu(): JSX.Element {
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
                     {moreRows.map(({ entry, candidate }) => (
-                      <DropdownMenuItem
+                      <ModelRowItem
+                        description={rowDescription(entry)}
                         key={`${entry.id}-${candidate.id}`}
                         data-testid={`model-row-${entry.id}-${candidate.id}`}
                         closeOnClick={false}
@@ -480,7 +522,7 @@ export function ModelMenu(): JSX.Element {
                             {secondLine(entry, candidate)}
                           </span>
                         </span>
-                      </DropdownMenuItem>
+                      </ModelRowItem>
                     ))}
                     {typable.map((entry) => (
                       <DropdownMenuItem

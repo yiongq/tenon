@@ -520,10 +520,8 @@ describe('the banner and the model menu copy', () => {
   })
 
   it('has the second line of each of the four row marks', () => {
-    // §模型菜单「行标记」: `verified` writes the purpose sentence and the target host;
-    // `local-text-only` 「<主机> · 仅文字对话」; `unverified-text-only` 「未验证 · 仅文字对话 · <主机>」 (each row ends with its host).
-    // M6 02 修补 1: `probed` 「本机探测 · 不保证 · <主机>」, and a custom instance's row without a
-    // passing probe keeps `unverified-text-only` with its own line 「尚未通过探测 · 仅文字对话 · <主机>」.
+    // presentation-r1: official rows omit the host; instances keep it. Local text-only
+    // rows always keep 「本机」 (or the host), and probed rows belong to instances.
     const marks = providerModelSchema.shape.mark.options
     expect(marks).toHaveLength(4)
     const line: Readonly<Record<(typeof marks)[number], Expectation>> = {
@@ -545,7 +543,20 @@ describe('the banner and the model menu copy', () => {
       args: ['host'],
       what: 'unverified-text-only, custom instance',
     }
-    expect(problems([...marks.map((mark) => line[mark]), unprobed])).toEqual([])
+    expect(
+      problems([
+        ...marks.map((mark) => line[mark]),
+        unprobed,
+        { key: 'model.row.purpose', args: ['purpose'], what: 'official verified' },
+        { key: 'model.mark.unverifiedNoHost', args: [], what: 'official unverified' },
+        { key: 'model.row.sendsTo', args: ['host'], what: 'destination description' },
+        { key: 'model.row.staysLocal', args: [], what: 'loopback description' },
+        { key: 'model.notConfigured', args: ['provider'], what: 'missing key header' },
+        { key: 'model.refused', args: ['provider'], what: 'refused address header' },
+        { key: 'model.row.textOnlyInTask', args: [], what: 'disabled task row' },
+        { key: 'customVendor.probe.passed', args: [], what: 'probe passed in settings' },
+      ]),
+    ).toEqual([])
   })
 
   it('has the thinking level’s marks, apart and together (s19-spec-5)', () => {

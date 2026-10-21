@@ -47,10 +47,11 @@ test.afterEach(async () => {
   zhipu = undefined
 })
 
-test('lists configured providers by host, greys the rest, and names the thinking level (旧 39, 旧 186)', async () => {
+test('presentation-r1 验收 9: no host in an official row; hover and keyboard highlight show 发往 <host>, the row’s description says the same; the confirmation still names the host and nothing is sent before it', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
+  ollama = await startFakeOpenAI({ chunks: ['local answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-menu')
-  seedConfig(userData, { locale: 'en' })
+  seedConfig(userData, { locale: 'en', providerConfig: { ollama: { baseURL: ollama.baseURL } } })
   const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     // Nothing chosen: the first row, and its default level.
@@ -58,22 +59,34 @@ test('lists configured providers by host, greys the rest, and names the thinking
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
-    // anthropic's row names its own host (the fake behind it is the seam's business); Ollama's
-    // default is on this computer.
+    // Official rows keep their destination in the tooltip and persistent description.
     const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5')
-    await expect(sonnet).toContainText('api.anthropic.com')
+    await expect(sonnet).not.toContainText('api.anthropic.com')
     await expect(sonnet).not.toContainText('This computer')
-    // A row's first line is the model's name, not its id; its second keeps the purpose and the host.
+    // The second line keeps only the purpose; the first keeps the model's display name.
     const sonnetLines = sonnet.locator(':scope > span:last-child > span')
     await expect(sonnetLines.first()).toHaveText('Sonnet 5')
-    await expect(sonnetLines.last()).toContainText('api.anthropic.com')
+    await expect(sonnetLines.last()).toHaveText('Balanced speed and capability')
+    await expect(sonnet).toHaveAttribute('aria-describedby', /.+/)
+    await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
+    const tooltip = page.getByTestId('model-row-host-tooltip')
+    await sonnet.hover()
+    await expect(tooltip).toHaveText('Sends to api.anthropic.com')
+    await page.mouse.move(0, 0)
+    await page.keyboard.press('End')
+    await expect(tooltip).toBeHidden()
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowDown')
+    await expect(sonnet).toHaveAttribute('data-highlighted', '')
+    await expect(tooltip).toHaveText('Sends to api.anthropic.com')
+    await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
     await expect(sonnet).not.toContainText('claude-sonnet-5')
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toContainText(
       'This computer · text conversation only',
     )
     // No key for zhipu: one greyed row that opens the settings card, no zhipu model to pick.
     await expect(page.getByTestId('model-unconfigured-zhipu')).toHaveText(
-      'Zhipu GLM · Add a key in Settings',
+      'Zhipu GLM · Add an API key in Settings',
     )
     await expect(page.locator('[data-testid^="model-row-zhipu-"]')).toHaveCount(0)
     // Opus 5 waits under 更多模型 ›, not in the main list.
@@ -84,6 +97,44 @@ test('lists configured providers by host, greys the rest, and names the thinking
     await page.getByTestId('model-menu-trigger').click()
     await expect(page.getByTestId('model-effort')).toHaveCount(0)
     await page.getByTestId('model-unconfigured-zhipu').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    // A local history still needs the unchanged confirmation before it goes to the official host.
+    await page.getByTestId('model-menu-trigger').click()
+    await page.getByTestId('model-row-ollama-qwen3:8b').hover()
+    await expect(tooltip).toHaveText('Stays on this computer')
+    await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toHaveAccessibleDescription(
+      'Stays on this computer',
+    )
+    await page.getByTestId('model-row-ollama-qwen3:8b').click()
+    await send(page, 'keep this local')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    await page.getByTestId('model-menu-trigger').click()
+    await sonnet.click()
+    await expect(page.getByTestId('model-confirm')).toContainText(
+      'Earlier messages will be sent to api.anthropic.com',
+    )
+    expect(anthropic.requests).toHaveLength(0)
+    expect(ollama.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 9: a refused provider’s header says its address can’t be used', async () => {
+  const userData = makeUserDataDir('model-menu-refused')
+  seedConfig(userData, {
+    locale: 'en',
+    providerConfig: { anthropic: { baseURL: 'https://gateway.example' } },
+  })
+  const { app, page } = await launchTenon({ userData, env: { ANTHROPIC_API_KEY: 'e2e-key' } })
+  try {
+    await page.getByTestId('model-menu-trigger').click()
+    const header = page.getByTestId('model-unconfigured-anthropic')
+    await expect(header).toHaveText("Anthropic · Its address can't be used; fix it in Settings")
+    await expect(page.locator('[data-testid^="model-row-anthropic-"]')).toHaveCount(0)
+    await header.click()
     await expect(page.getByTestId('provider-settings')).toBeVisible()
   } finally {
     await app.close()
@@ -501,7 +552,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     const trigger = page.getByTestId('model-menu-trigger')
     const current = page.getByTestId('model-menu-current')
     const menu = page.getByTestId('model-menu')
-    const reason = 'A task needs a model that can use tools'
+    const reason = 'Working in a folder needs a model that can use tools'
     // A chat lists them as any other row.
     await trigger.click()
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).not.toHaveAttribute(

@@ -176,22 +176,26 @@
     "mark": {
       "localTextOnly": "{host} · text conversation only",
       "unverified": "Unverified · text conversation only · {host}",
-      "probed": "Probed on this computer · not guaranteed · {host}",
-      "unprobed": "No passing probe · text conversation only · {host}"
+      "probed": "Probe passed · not guaranteed · {host}",
+      "unprobed": "No passing probe · text conversation only · {host}",
+      "unverifiedNoHost": "Unverified · text conversation only"
     },
     "host": {
       "local": "This computer"
     },
     "row": {
       "line": "{purpose} · {host}",
-      "textOnlyInTask": "A task needs a model that can use tools"
+      "textOnlyInTask": "Working in a folder needs a model that can use tools",
+      "purpose": "{purpose}",
+      "sendsTo": "Sends to {host}",
+      "staysLocal": "Stays on this computer"
     },
     "trigger": {
       "withEffort": "{model} · {effort}",
       "label": "Model",
       "removed": "{model} (removed)"
     },
-    "notConfigured": "{provider} · Add a key in Settings",
+    "notConfigured": "{provider} · Add an API key in Settings",
     "more": "More models",
     "typeModel": "Type a model ID…",
     "manage": "Manage models…",
@@ -224,7 +228,8 @@
       "close": "Close"
     },
     "typeModelFor": "{provider} · Type a model ID…",
-    "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over"
+    "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over",
+    "refused": "{provider} · Its address can't be used; fix it in Settings"
   },
   "customVendor": {
     "section": {
@@ -321,7 +326,7 @@
       "cost": "Probing uses your key for 2–3 requests; each may take a while on a thinking model.",
       "local": "An endpoint on this computer or a local network holds text conversations only and is not probed.",
       "none": "Not probed yet · text conversation only",
-      "passed": "Probed on this computer · not guaranteed",
+      "passed": "Probe passed · not guaranteed",
       "notSaved": "Not saved: this provider's settings changed during the probe. Probe again.",
       "reason": {
         "no-tool-call": "The model did not call a tool this time; try again",
