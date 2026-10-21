@@ -436,7 +436,7 @@ test('presentation-r1 验收 6: an Edit that came back with an error does not sa
     await expect(page.getByTestId('assistant-text').last()).toHaveText('written')
     const written = page.getByTestId('tool-row').first()
     await written.getByTestId('tool-row-line').click()
-    // Exercises the real effect and session.messages read, rather than injecting a local result.
+    // Exercises the real Write outcome, rather than injecting a local result.
     await expect(written.getByTestId('tool-side-effects')).toHaveText(
       "Changed this file · Tenon can't undo this change for you.",
     )
@@ -448,28 +448,27 @@ test('presentation-r1 验收 6: an Edit that came back with an error does not sa
     await expect(page.getByTestId('assistant-text').last()).toHaveText('edit failed')
     const failed = page.getByTestId('tool-row').last()
     await failed.getByTestId('tool-row-line').click()
-    // Check the persisted error too; the success case above exercises the asynchronous read.
+    const failedCallKey = await failed.getAttribute('data-call-key')
+    // The persisted flag lives on this call's outcome, as in the live view. session.latest has
+    // message rows, not the tool-response blocks assembled for provider replay.
     await expect
       .poll(async () =>
-        page.evaluate(async () => {
+        page.evaluate(async (callKey) => {
           const current = (await window.tenon.invoke('session.latest', { limit: 1000 })) as {
             ok: boolean
             data: {
-              messages: { content: { type: string; id?: string; isError?: boolean }[] }[]
+              messages: {
+                calls?: { callKey: string; outcome: { isError?: boolean } | null }[]
+              }[]
             } | null
           }
           return (
             current.ok &&
             current.data?.messages.some((row) =>
-              row.content.some(
-                (block) =>
-                  block.type === 'tool-response' &&
-                  block.id === 'toolu_bad_edit' &&
-                  block.isError === true,
-              ),
+              row.calls?.some((call) => call.callKey === callKey && call.outcome?.isError === true),
             )
           )
-        }),
+        }, failedCallKey),
       )
       .toBe(true)
     await expect(failed.getByTestId('tool-row-details')).toBeVisible()
