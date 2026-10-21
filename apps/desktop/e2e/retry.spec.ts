@@ -119,6 +119,9 @@ test('「重试」 on an earlier failure goes once a later message is sent; the 
     await expect(cards).toHaveCount(1)
     const earlier = cards.first()
     await expect(earlier).toHaveAttribute('data-code', 'provider-error')
+    await expect(earlier.getByTestId('failure-what')).toHaveText(
+      'Anthropic turned down this request.',
+    )
     await expect(earlier.getByTestId('failure-action')).toHaveAttribute('data-action', 'retry')
 
     await send(page, 'second question')

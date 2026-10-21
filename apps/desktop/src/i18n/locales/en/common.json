@@ -111,7 +111,7 @@
   },
   "error": {
     "network": "Could not reach the model service. Check your connection.",
-    "auth": "The API key was rejected. Check your provider settings.",
+    "auth": "The API key is missing or not valid.",
     "rate-limit": "The model service is rate-limiting requests. Try again in a moment.",
     "provider": "The model service returned an error.",
     "unknown": "Something went wrong.",
@@ -127,12 +127,24 @@
     "step-limit": "The task reached its limit of {limit} steps.",
     "no-progress": "The model made the same calls {repeats} times in a row without progress, so the task ended.",
     "usage-limit": "The task went over its limit of {tokenLimit} tokens.",
-    "refusal": "{modelId} on {providerId} declined to answer.",
-    "content-filter": "The content filter of {providerId} stopped the reply.",
+    "refusal": "{model} on {provider} declined to answer.",
+    "content-filter": "The content filter of {provider} stopped the reply.",
     "context-overflow": "The conversation no longer fits in the model’s context{compactions, plural, =0 {} one {, even after # compaction} other {, even after # compactions}}.",
-    "quota-exhausted": "The quota or spending limit on {providerId} is used up.{resetAt, select, unknown {} other { It resets at {resetAt}.}}",
-    "account-config": "Your {providerId} account or organization is not set up for this request.",
-    "provider-error": "The model service ({providerId}) returned an error{attempts, plural, =0 {} =1 {} other { after # attempts}}.",
+    "quota-exhausted": "The quota or spending limit on {provider} is used up.{resetAt, select, unknown {} other { It resets at {resetAt}.}}",
+    "account-config": "The account or organization on {provider} is not set up for this request.",
+    "provider-error": {
+      "auth": "The API key for {provider} is missing or not valid.",
+      "rate-limit": "{provider} is getting too many requests. Try again shortly.",
+      "overloaded": "{provider} is busy right now. Try again shortly.",
+      "network": "Can’t reach {provider}. Check your connection.",
+      "egress-denied": "This request isn’t allowed to go to {provider}.",
+      "invalid-request": "{provider} turned down this request.",
+      "server": "{provider} had a server error.",
+      "context-overflow": "The conversation is too long for {provider}.",
+      "quota-exhausted": "The quota or spending limit on {provider} is used up.",
+      "account-config": "The account or organization on {provider} is not set up for this request.",
+      "unknown": "{provider} ran into an error."
+    },
     "output-truncated": "The reply was cut off at the output limit of {maxTokens} tokens.",
     "shutdown-aborted": "{trigger, select, quit {The task stopped because Tenon quit.} other {The task stopped because the window closed.}}",
     "recovered": "Tenon closed unexpectedly while this task was running.",
@@ -547,13 +559,16 @@
       "uncertain": "{count, plural, one {# call may have run.} other {# calls may have run.}}",
       "doneHeading": "{count, plural, one {One call completed:} other {# calls completed:}}",
       "stopped": "{count, plural, one {One call was stopped partway; its later writes did not happen.} other {# calls were stopped partway; their later writes did not happen.}}",
-      "stoppedSent": "{count, plural, one {One request was stopped in flight and may have reached the other side.} other {# requests were stopped in flight and may have reached the other side.}}"
+      "stoppedSent": "{count, plural, one {One request was stopped in flight and may have reached the other side.} other {# requests were stopped in flight and may have reached the other side.}}",
+      "expandAll": "Show all ({count} items)"
     },
     "continue": "Continue",
     "retry": "Retry",
     "settings": "Open settings",
     "copy": "Copy diagnostics",
-    "copied": "Copied"
+    "copied": "Copied",
+    "providerFallback": "the model service",
+    "attempts": " Tried {count} times."
   },
   "summary": {
     "read": "Read {count, plural, one {# file} other {# files}}",

@@ -3,6 +3,7 @@
  * locales have a non-empty sentence for every code, each names exactly the slots its sentence reads
  * off the member — never a slot the member does not have — and every one renders.
  */
+import { providerErrorCodeSchema } from '@tenon-app/contracts'
 import type { RunEndReason } from '@tenon-app/kernel'
 import { describe, expect, it } from 'vitest'
 import { createI18n } from '../src/i18n/create-instance.js'
@@ -10,7 +11,10 @@ import enCommon from '../src/i18n/locales/en/common.json'
 import zhCommon from '../src/i18n/locales/zh-CN/common.json'
 
 type Code = RunEndReason['code']
-type SlotOf<C extends Code> = Exclude<keyof Extract<RunEndReason, { code: C }>, 'code'>
+type SlotOf<C extends Code> =
+  | Exclude<keyof Extract<RunEndReason, { code: C }>, 'code' | 'providerId' | 'modelId'>
+  | ('providerId' extends keyof Extract<RunEndReason, { code: C }> ? 'provider' : never)
+  | ('modelId' extends keyof Extract<RunEndReason, { code: C }> ? 'model' : never)
 
 /**
  * The slots each sentence reads, a subset of the member's own fields by type. `provider-error`'s
@@ -25,12 +29,12 @@ const SLOTS: { readonly [C in Code]: readonly SlotOf<C>[] } = {
   'step-limit': ['limit'],
   'no-progress': ['repeats'],
   'usage-limit': ['tokenLimit'],
-  refusal: ['modelId', 'providerId'],
-  'content-filter': ['providerId'],
+  refusal: ['model', 'provider'],
+  'content-filter': ['provider'],
   'context-overflow': ['compactions'],
-  'quota-exhausted': ['providerId', 'resetAt'],
-  'account-config': ['providerId'],
-  'provider-error': ['attempts', 'providerId'],
+  'quota-exhausted': ['provider', 'resetAt'],
+  'account-config': ['provider'],
+  'provider-error': ['provider'],
   'output-truncated': ['maxTokens'],
   'shutdown-aborted': ['trigger'],
   recovered: [],
@@ -53,8 +57,8 @@ const SAMPLE: Record<string, string | number> = {
   limit: 100,
   repeats: 4,
   tokenLimit: 200_000,
-  modelId: 'glm-5.3-flash',
-  providerId: 'zhipu',
+  model: 'GLM-5.3 Flash',
+  provider: '智谱',
   compactions: 2,
   resetAt: 'unknown',
   attempts: 3,
@@ -76,9 +80,11 @@ describe('the end-code copy', () => {
   it('names exactly the slots its sentence reads, in both locales', () => {
     for (const [locale, table] of Object.entries(locales)) {
       for (const code of CODES) {
-        const message = (table as Record<string, string>)[code] ?? ''
-        expect(message.trim().length, `${locale} ${code}`).toBeGreaterThan(0)
-        expect(argumentsOf(message), `${locale} ${code}`).toEqual([...SLOTS[code]].toSorted())
+        const messages = code === 'provider-error' ? Object.values(table[code]) : [table[code]]
+        for (const message of messages) {
+          expect(message.trim().length, `${locale} ${code}`).toBeGreaterThan(0)
+          expect(argumentsOf(message), `${locale} ${code}`).toEqual([...SLOTS[code]].toSorted())
+        }
       }
     }
   })
@@ -89,9 +95,16 @@ describe('the end-code copy', () => {
       // oxlint-disable-next-line no-await-in-loop -- one instance per locale
       const i18n = await createI18n(locale, (line) => errors.push(line))
       for (const code of CODES) {
-        const text = i18n.t(`runEnd.${code}`, SAMPLE)
-        expect(text, `${locale} ${code}`).not.toMatch(/i18n-error|\{/)
-        expect(text.length).toBeGreaterThan(0)
+        const keys =
+          code === 'provider-error'
+            ? providerErrorCodeSchema.options.map((error) => `runEnd.provider-error.${error}`)
+            : [`runEnd.${code}`]
+        for (const key of keys) {
+          const text = String(i18n.t(key as never, SAMPLE as never))
+          expect(text, `${locale} ${key}`).not.toMatch(/i18n-error|\{/)
+          expect(text.length).toBeGreaterThan(0)
+          expect(text).not.toMatch(/providerId|modelId/)
+        }
       }
     }
     expect(errors).toEqual([])

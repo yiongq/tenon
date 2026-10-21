@@ -111,7 +111,7 @@
   },
   "error": {
     "network": "连不上模型服务，请检查网络。",
-    "auth": "API 密钥被拒绝，请检查供应商设置。",
+    "auth": "API 密钥无效或没有填。",
     "rate-limit": "模型服务限流中，请稍后再试。",
     "provider": "模型服务返回了错误。",
     "unknown": "出了点问题。",
@@ -127,12 +127,24 @@
     "step-limit": "任务达到了 {limit} 步的上限。",
     "no-progress": "模型连续 {repeats} 次发出相同的调用、没有进展，任务已结束。",
     "usage-limit": "任务用量超过了 {tokenLimit} tokens 的上限。",
-    "refusal": "{providerId} 的 {modelId} 拒绝回答。",
-    "content-filter": "{providerId} 的内容安全过滤拦下了这次回复。",
+    "refusal": "{provider} 的 {model} 拒绝回答。",
+    "content-filter": "{provider} 的内容安全过滤拦下了这次回复。",
     "context-overflow": "对话太长，超出了模型的上下文{compactions, plural, =0 {} other {（已压缩 # 次）}}。",
-    "quota-exhausted": "{providerId} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
-    "account-config": "你的 {providerId} 账号或组织设置不满足这次请求。",
-    "provider-error": "模型服务（{providerId}）出错{attempts, plural, =0 {} =1 {} other {，已尝试 # 次}}。",
+    "quota-exhausted": "{provider} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
+    "account-config": "你的 {provider} 账号或组织设置不满足这次请求。",
+    "provider-error": {
+      "auth": "{provider} 的 API 密钥无效或没有填。",
+      "rate-limit": "{provider} 现在请求太多，稍后再试。",
+      "overloaded": "{provider} 的服务正忙，稍后再试。",
+      "network": "连不上 {provider}，请检查网络。",
+      "egress-denied": "这次请求不允许发往 {provider}。",
+      "invalid-request": "{provider} 拒绝了这次请求。",
+      "server": "{provider} 的服务出错了。",
+      "context-overflow": "对话太长，{provider} 接不下了。",
+      "quota-exhausted": "{provider} 的额度或花费上限已用尽。",
+      "account-config": "你的 {provider} 账号或组织设置不满足这次请求。",
+      "unknown": "{provider} 出错了。"
+    },
     "output-truncated": "回复在 {maxTokens} tokens 的输出上限处被截断。",
     "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
     "recovered": "任务运行时 Tenon 意外关闭。",
@@ -547,13 +559,16 @@
       "uncertain": "{count} 个调用可能已执行。",
       "doneHeading": "{count} 个调用已完成：",
       "stopped": "{count} 个调用中途停下，后续写入未发生。",
-      "stoppedSent": "{count} 个请求在途中被停下，可能已到对方。"
+      "stoppedSent": "{count} 个请求在途中被停下，可能已到对方。",
+      "expandAll": "展开全部（{count} 项）"
     },
     "continue": "继续",
     "retry": "重试",
     "settings": "去设置",
     "copy": "复制诊断信息",
-    "copied": "已复制"
+    "copied": "已复制",
+    "providerFallback": "模型服务",
+    "attempts": "已试 {count} 次。"
   },
   "summary": {
     "read": "读了 {count} 个文件",

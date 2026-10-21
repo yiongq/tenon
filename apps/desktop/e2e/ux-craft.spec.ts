@@ -176,7 +176,7 @@ test('a path breaks only after a slash: in the row, on the card and in the reaso
 test('a call’s input and the failure card’s list of what was done break paths only after a slash too', async () => {
   tree = makeFolderTree('ux-craft-failed-after-reads', {
     'a-long-named-project/another-long-folder-name/a.txt': 'alpha\n',
-    'a-long-named-project/another-long-folder-name/README.md': 'readme\n',
+    'a-long-named-project/another-long-folder-name/a-second-long-folder-name/a.txt': 'readme\n',
   })
   const ws = join(tree.real, 'a-long-named-project', 'another-long-folder-name')
   // Output that names a file by its absolute path, as the note on a spilled result does.
@@ -188,7 +188,7 @@ test('a call’s input and the failure card’s list of what was done break path
     replies: [
       callsReply(
         readCall('toolu_1', join(ws, 'a.txt')),
-        readCall('toolu_2', join(ws, 'README.md')),
+        readCall('toolu_2', join(ws, 'a-second-long-folder-name', 'a.txt')),
       ),
       { failWith: { status: 400, type: 'invalid_request_error', message: 'boom' } },
     ],
@@ -206,6 +206,11 @@ test('a call’s input and the failure card’s list of what was done break path
     await send(page, 'read both')
     const done = page.getByTestId('failure-effects-done').locator('li')
     await expect(done).toHaveCount(2)
+    // presentation-r1 shortens unique names; two different a.txt paths keep this wrap check meaningful.
+    await expect(done).toHaveText([
+      `Read ${join(ws, 'a.txt')}`,
+      `Read ${join(ws, 'a-second-long-folder-name', 'a.txt')}`,
+    ])
     const row = page.getByTestId('tool-row').first()
     await row.getByTestId('tool-row-line').click()
     const input = row.getByTestId('tool-row-details').locator('pre').first()

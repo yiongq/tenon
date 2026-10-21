@@ -104,9 +104,12 @@ test('the step limit ends the Run on 「继续」, which opens a new Run countin
     const effects = card.getByTestId('failure-effects')
     await expect(effects.locator('p').first()).toHaveText('100 个调用已完成：')
     const done = card.getByTestId('failure-effects-done').locator('li')
-    await expect(done).toHaveCount(STEP_LIMIT)
-    await expect(done.first()).toHaveText(`读取 ${file}`)
-    await expect(done.last()).toHaveText(`读取 ${file}`)
+    await expect(done).toHaveCount(1)
+    await expect(done.first()).toHaveText(`读取 a.txt ×100`)
+    await expect(done.first().locator('[aria-label]')).toHaveAttribute(
+      'aria-label',
+      `读取 ${file} ×100`,
+    )
     await expect(effects.locator('p').last()).toHaveText('1 个调用确定没发生。')
     await expect(page.getByTestId('turn-summary')).toHaveText('读了 1 个文件')
     const action = card.getByTestId('failure-action')
@@ -294,20 +297,16 @@ async function ranThenFailed(tag: string) {
 }
 
 test('a provider error after a call already ran offers diagnostics to copy, not 「重试」 (旧 221)', async () => {
-  const { app, server, file, drive } = await ranThenFailed('ran-then-failed')
+  const { app, server, drive } = await ranThenFailed('ran-then-failed')
   try {
     const card = await drive()
     await expect(card).toHaveAttribute('data-visual', 'danger')
-    await expect(card.getByTestId('failure-what')).toHaveText(
-      'The model service (anthropic) returned an error.',
-    )
+    await expect(card.getByTestId('failure-what')).toHaveText('Anthropic turned down this request.')
     // A failure interrupts: announced as an alert the moment it appears (components.md LiveRegion).
     await expect(card).toHaveAttribute('role', 'alert')
     // ② lists the call that completed, by what it did.
     await expect(card.getByTestId('failure-effects').locator('p')).toHaveText('One call completed:')
-    await expect(card.getByTestId('failure-effects-done').locator('li')).toHaveText([
-      `Read ${file}`,
-    ])
+    await expect(card.getByTestId('failure-effects-done').locator('li')).toHaveText(['Read a.txt'])
     // The Run dispatched a call: sending the message again would repeat it (B17).
     const action = card.getByTestId('failure-action')
     await expect(action).toHaveAttribute('data-action', 'copy')
@@ -374,8 +373,8 @@ test('「复制诊断信息」 copies the end reason, the runId and the provider
 
 /** The sentence a spent quota ends on, by interface language, around its reset time. */
 const QUOTA = {
-  en: (at: string) => `The quota or spending limit on anthropic is used up. It resets at ${at}.`,
-  'zh-CN': (at: string) => `anthropic 的额度或花费上限已用尽。将于 ${at} 重置。`,
+  en: (at: string) => `The quota or spending limit on Anthropic is used up. It resets at ${at}.`,
+  'zh-CN': (at: string) => `Anthropic 的额度或花费上限已用尽。将于 ${at} 重置。`,
 } as const
 
 test('a spent quota says when it resets, in the interface’s language, not the system’s (§失败卡与结束原因 quota-exhausted)', async () => {
@@ -419,6 +418,72 @@ test('a spent quota says when it resets, in the interface’s language, not the 
     expect(inUi).not.toBe(inSystem)
     await expect(card.getByTestId('failure-what')).toHaveText(QUOTA[locale](inUi))
     expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 8: the cards span the content column; the provider is named, not its id', async () => {
+  const { app, page, drive } = await ranThenFailed('presentation-r1-card-width')
+  try {
+    const card = await drive()
+    await expect(card.getByTestId('failure-what')).toHaveText('Anthropic turned down this request.')
+    const column = page.getByTestId('assistant-message').last()
+    const bounds = await column.boundingBox()
+    const cardBounds = await card.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(cardBounds).not.toBeNull()
+    expect(Math.abs(cardBounds!.width - bounds!.width)).toBeLessThan(1)
+    expect(Math.abs(cardBounds!.x - bounds!.x)).toBeLessThan(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 8: same-name files keep full paths and groups after five expand on demand', async () => {
+  tree = makeFolderTree('presentation-r1-fold', {
+    'ws/one/a.txt': 'one',
+    'ws/two/a.txt': 'two',
+    'ws/b.txt': 'b',
+    'ws/c.txt': 'c',
+    'ws/d.txt': 'd',
+    'ws/e.txt': 'e',
+    'ws/f.txt': 'f',
+  })
+  const ws = join(tree.real, 'ws')
+  const files = ['one/a.txt', 'two/a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt', 'f.txt']
+  fake = await startFakeAnthropic({
+    replies: [
+      callsReply(...files.map((file, n) => readCall(`toolu_fold_${n}`, join(ws, file)))),
+      { failWith: { status: 400, type: 'invalid_request_error', message: 'boom' } },
+    ],
+  })
+  const userData = makeUserDataDir('presentation-r1-fold')
+  seedConfig(userData, { locale: 'zh-CN' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await startTask(app, page, ws)
+    await send(page, 'read these files')
+    const card = page.getByTestId('failure-card')
+    await expect(card).toHaveAttribute('data-code', 'provider-error')
+    await expect(card.getByTestId('failure-what')).toHaveText('Anthropic 拒绝了这次请求。')
+    const first = card.getByTestId('failure-effects-done').locator('li')
+    await expect(first).toHaveText([
+      `读取 ${join(ws, 'one/a.txt')}`,
+      `读取 ${join(ws, 'two/a.txt')}`,
+      '读取 b.txt',
+      '读取 c.txt',
+      '读取 d.txt',
+    ])
+    const more = card.getByTestId('failure-effects-more')
+    await expect(more).not.toHaveAttribute('open', '')
+    await expect(more.locator('li').first()).not.toBeVisible()
+    await more.locator('summary').click()
+    await expect(more.locator('summary')).toHaveText('展开全部（7 项）')
+    await expect(more.locator('li')).toHaveText(['读取 e.txt', '读取 f.txt'])
+    await expect(more.locator('li').first()).toBeVisible()
+    await more.locator('summary').click()
+    await expect(more.locator('li').first()).not.toBeVisible()
   } finally {
     await app.close()
   }

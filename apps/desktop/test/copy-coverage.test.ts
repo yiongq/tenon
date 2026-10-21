@@ -24,7 +24,13 @@ import {
   createProviderRegistry,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { BlockReason, ClosureSource, ConfirmReason, PendingRoot } from '@tenon-app/kernel'
+import type {
+  BlockReason,
+  ClosureSource,
+  ConfirmReason,
+  PendingRoot,
+  ProviderErrorCode,
+} from '@tenon-app/kernel'
 import {
   mcpErrorCodeSchema,
   mcpWriteErrorCodeSchema,
@@ -39,6 +45,7 @@ import {
   pendingRootSchema,
   probeReasonSchema,
   providerModelSchema,
+  providerErrorCodeSchema,
   providerRefusalSchema,
   providerWriteErrorCodeSchema,
   requiredFactKeys,
@@ -397,27 +404,55 @@ describe('the tool row copy', () => {
 
 describe('the end-of-Run copy', () => {
   it('has a sentence for every end code chat.event can carry, naming only its own fields', () => {
+    const errors = covers<ProviderErrorCode>()(
+      [
+        'auth',
+        'rate-limit',
+        'overloaded',
+        'network',
+        'egress-denied',
+        'invalid-request',
+        'server',
+        'context-overflow',
+        'quota-exhausted',
+        'account-config',
+        'unknown',
+      ],
+      true,
+    )
+    expect([...errors].toSorted()).toEqual([...providerErrorCodeSchema.options].toSorted())
     const members = runEndReasonSchema.options
     expect(members).toHaveLength(18)
     const found: string[] = []
     for (const member of members) {
       const code: RunEndReasonContract['code'] = member.shape.code.value
       const fields = new Set(Object.keys(member.shape).filter((field) => field !== 'code'))
-      const named = new Set<string>()
-      for (const locale of SUPPORTED_LOCALES) {
-        const message = lookup(locale, `runEnd.${code}`)
-        if (typeof message !== 'string' || message.trim() === '') {
-          found.push(`${locale}: runEnd.${code} is missing or empty`)
-          continue
+      if (fields.has('providerId')) fields.add('provider')
+      if (fields.has('modelId')) fields.add('model')
+      const keys =
+        code === 'provider-error'
+          ? errors.map((error) => `runEnd.provider-error.${error}`)
+          : [`runEnd.${code}`]
+      for (const key of keys) {
+        const named = new Set<string>()
+        for (const locale of SUPPORTED_LOCALES) {
+          const message = lookup(locale, key)
+          if (typeof message !== 'string' || message.trim() === '') {
+            found.push(`${locale}: runEnd.${code} is missing or empty`)
+            continue
+          }
+          const args = argumentsOf(message)
+          if (args.includes('providerId') || args.includes('modelId'))
+            found.push(`${locale}: ${key} must use display names`)
+          named.add(args.join(','))
+          for (const arg of args) {
+            if (!fields.has(arg))
+              found.push(`${locale}: runEnd.${code} names {${arg}}, not a field`)
+          }
         }
-        const args = argumentsOf(message)
-        named.add(args.join(','))
-        for (const arg of args) {
-          if (!fields.has(arg)) found.push(`${locale}: runEnd.${code} names {${arg}}, not a field`)
-        }
+        // Both languages fill the same slots: a slot only one names is data the other drops.
+        if (named.size > 1) found.push(`runEnd.${code}: the locales name different arguments`)
       }
-      // Both languages fill the same slots: a slot only one names is data the other drops.
-      if (named.size > 1) found.push(`runEnd.${code}: the locales name different arguments`)
     }
     expect(found).toEqual([])
   })
@@ -428,6 +463,9 @@ describe('the end-of-Run copy', () => {
     // 「复制诊断信息」 (and its copied state).
     expect(
       problems([
+        { key: 'failure.providerFallback', args: [], what: 'provider list unavailable' },
+        { key: 'failure.attempts', args: ['count'], what: 'provider retry count' },
+        { key: 'failure.effects.expandAll', args: ['count'], what: 'folded groups' },
         { key: 'failure.effects.none', args: [], what: 'no calls' },
         { key: 'failure.effects.doneHeading', args: ['count'], what: 'completed calls, listed' },
         { key: 'failure.effects.stopped', args: ['count'], what: 'aborted calls' },
