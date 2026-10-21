@@ -61,7 +61,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     }
   })
 
-  test(`presentation-r1 验收 1: step 20’s components fit at 1280x800 in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 5: step 20’s components and one-line receipts fit at 1280x800 in ${locale} (旧 223)`, async () => {
     const folders = makeFolderTree(`fit-02-${locale}`, {
       'ws/a.txt': 'alpha\n',
       'outside/one.txt': 'one\n',
@@ -112,8 +112,9 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(card).toHaveCount(1)
       const notice = page.getByTestId('blocked-notice')
       await expect(notice).toHaveAttribute('data-source', 'protected')
-      // Its first line names the file (content); the second is interface words only.
-      await expectSingleLineUnclipped(notice.locator('p').last())
+      // The single receipt line contains only interface words.
+      await expect(notice.locator('p')).toHaveCount(1)
+      await expectSingleLineUnclipped(notice.locator('p'))
       for (const part of ['approval-title', 'approval-undo', 'approval-deny', 'approval-allow']) {
         // oxlint-disable-next-line no-await-in-loop -- one element at a time, so a failure names it
         await expectSingleLineUnclipped(card.getByTestId(part))

@@ -405,12 +405,20 @@
     "WebFetch": "Fetch {url}",
     "AskUserQuestion": "Ask you a question",
     "Agent": "Hand a subtask to an agent: {description}",
-    "generic": "Use {toolName}",
+    "generic": "Use {tool} from {server}",
     "running": "Running…",
     "details": "Details",
     "input": "Input",
     "output": "Output",
-    "error": "The tool reported an error."
+    "error": "The tool reported an error.",
+    "genericMapped": "Use {toolName}",
+    "did": {
+      "write": "Changed this file",
+      "command": "Ran this command",
+      "online": "Went online",
+      "connector": "Used a connector",
+      "irreversible": "Can't be undone"
+    }
   },
   "closure": {
     "user-rejected": "You declined this.",
@@ -439,14 +447,18 @@
     "connector-unauthorized": "Sign in to this connector again. The call did not run."
   },
   "blocked": {
-    "policy": "{toolName} is blocked by your organization’s policy.",
-    "user-disabled": "{toolName} is turned off.",
-    "protected": "{toolName} can’t reach {target}: Tenon protects it.",
-    "inspector": {
-      "exfiltration": "{toolName} was blocked by a permission check: it might send your data somewhere else.",
-      "inspector-failed": "{toolName} was blocked: a permission check on it did not finish."
+    "policy": "Your organization doesn't allow this step.",
+    "user-disabled": "You turned this off in Settings.",
+    "protected": {
+      "read": "This location is protected; Tenon doesn't read it.",
+      "write": "This location is protected; Tenon doesn't change it.",
+      "fetch": "Tenon only fetches public web pages; this isn't one."
     },
-    "chatReadScope": "In a chat, {toolName} can only open files Tenon saved for this chat; {target} is not one of them.",
+    "inspector": {
+      "exfiltration": "This step might take your data elsewhere, so it was stopped.",
+      "inspector-failed": "Tenon couldn't check that this step is safe, so it was stopped."
+    },
+    "chatReadScope": "In a chat, only files Tenon saved for this chat can be opened.",
     "told": "The model was told."
   },
   "confirm": {
@@ -645,8 +657,6 @@
     "noBefore": "No previously confirmed definition",
     "connecting": "Connecting to {name}…",
     "definitionNotice": "This tool’s definition changed during the session; always allow does not apply to this call.",
-    "effect": "Side effects",
-    "marker": "{effect} · {reversibility}",
     "status": {
       "connecting": "Connecting",
       "connected": "Connected · {version} · {n} tools",
@@ -691,19 +701,6 @@
     "unavailable": {
       "name-collision": "Name collision; unavailable",
       "invalid-definition": "Invalid definition; unavailable"
-    },
-    "reversibility": {
-      "read-only": "Read only",
-      "revertible": "Revertible",
-      "snapshotted": "Snapshotted",
-      "irreversible": "Irreversible",
-      "unknown": "Unknown"
-    },
-    "effects": {
-      "read": "Read",
-      "write": "Write",
-      "external": "External",
-      "blocked": "Not run"
     },
     "error": {
       "handshake-timeout": "Connection timed out",
@@ -754,7 +751,6 @@
     "up": "Move up",
     "down": "Move down",
     "secretField": "{name} (secret)",
-    "effectMarker": "Side effects: {effect} · {reversibility}",
     "era": {
       "legacy": "Legacy",
       "modern": "Modern"

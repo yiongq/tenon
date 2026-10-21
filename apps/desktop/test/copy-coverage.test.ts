@@ -345,30 +345,53 @@ describe('the tool row copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
-  it('has a block notice for each of the four block codes, naming BLOCKED_FACT_KEYS', () => {
-    // §界面范围 `BlockedNotice`: `blocked.<source>`, its slots the outcome's `facts`.
+  it('has a block notice for each of the four block codes, naming a subset of BLOCKED_FACT_KEYS', () => {
     expect(BLOCK_CODES.toSorted()).toEqual(['inspector', 'policy', 'protected', 'user-disabled'])
     for (const code of BLOCK_CODES) expect(CLOSURE_SOURCES).toContain(code)
-    // An inspector's block is said by category, as the card's `flagged` reason is: the category
-    // picks the sentence, so it is no slot of it.
-    const expected: Expectation[] = BLOCK_CODES.flatMap((code) =>
-      code === 'inspector'
-        ? CATEGORIES.map((category) => ({
-            key: `blocked.inspector.${category}`,
-            args: BLOCKED_FACT_KEYS.inspector.filter((key) => key !== 'category'),
-            what: `inspector block (${category})`,
-          }))
-        : [{ key: `blocked.${code}`, args: BLOCKED_FACT_KEYS[code], what: 'block notice' }],
-    )
-    // A chat's Read out of its own files is `protected` with a sentence of its own, same slots
-    // (open question 13), and every notice ends with 「已告诉模型」.
+    const expected: Expectation[] = BLOCK_CODES.flatMap((code) => {
+      const keys =
+        code === 'inspector'
+          ? CATEGORIES.map((category) => `blocked.inspector.${category}`)
+          : code === 'protected'
+            ? ['read', 'write', 'fetch'].map((kind) => `blocked.protected.${kind}`)
+            : [`blocked.${code}`]
+      return keys.map((key) => ({ key, args: BLOCKED_FACT_KEYS[code], subset: true, what: code }))
+    })
     expected.push({
       key: 'blocked.chatReadScope',
       args: BLOCKED_FACT_KEYS.protected,
+      subset: true,
       what: 'chat Read',
     })
-    expected.push({ key: 'blocked.told', args: [], what: 'the model was told' })
+    expect(expected).toHaveLength(8)
     expect(problems(expected)).toEqual([])
+    // Kept for 04, but no longer rendered by the four-code notice.
+    expect(problems([{ key: 'blocked.told', args: [], what: 'retained for 04' }])).toEqual([])
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const { key } of expected)
+        expect(lookup(locale, key)).not.toMatch(
+          /模型|可逆|判决|已告诉|model|reversib|verdict|Read|Write|Edit|Glob|Grep|WebFetch/u,
+        )
+    }
+  })
+
+  it('presentation-r1 验收 6: the did sentences, irreversible marker and connector slots are covered in both locales', () => {
+    const expected = ['write', 'command', 'online', 'connector', 'irreversible'].map((kind) => ({
+      key: `tool.did.${kind}`,
+      args: [],
+      what: kind,
+    }))
+    expect(
+      problems([
+        ...expected,
+        { key: 'tool.generic', args: ['server', 'tool'], what: 'connector sentence' },
+        { key: 'tool.genericMapped', args: ['toolName'], what: 'deleted connector' },
+      ]),
+    ).toEqual([])
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const { key } of expected)
+        expect(lookup(locale, key)).not.toMatch(/模型|可逆|判决|已告诉|model|reversib|verdict/iu)
+    }
   })
 })
 
@@ -688,11 +711,6 @@ it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-lon
       ...consents.map((code) => ({ key: `mcp.grant.${code}`, args: [], what: code })),
       ...toolSettingSchema.options.map((code) => ({
         key: TOOL_SETTING_KEY[code],
-        args: [],
-        what: code,
-      })),
-      ...reversibilitySchema.options.map((code) => ({
-        key: `mcp.reversibility.${code}`,
         args: [],
         what: code,
       })),

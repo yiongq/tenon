@@ -1,14 +1,16 @@
 import { beforeAll, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
+import type * as React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
 import type { i18n as I18n } from 'i18next'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
 import { createI18n } from '../src/i18n/create-instance.js'
 import type { Answered } from '../src/renderer/src/runtime/session-store.js'
-import { toolRowEffect } from '../src/renderer/src/lib/tool-row-effect.js'
+import { messageRowSchema } from '@tenon-app/contracts'
+import { toolRowEffect, writeResultError } from '../src/renderer/src/lib/tool-row-effect.js'
 import * as toolCopy from '../src/renderer/src/lib/tool-sentence.js'
-it('03 验收 45: side effects, write/external markers, and unauthorized-only relogin use mapped server ID', () => {
+it('03 验收 45: the expanded sentence uses tool names, only irreversible rows carry markers, and unauthorized-only relogin uses the mapped server ID (R25)', () => {
   for (const effect of ['read', 'write', 'external', 'blocked'] as const)
     for (const reversibility of [
       'read-only',
@@ -25,11 +27,12 @@ it('03 验收 45: side effects, write/external markers, and unauthorized-only re
         output: 'x',
       }
       expect(toolRowEffect(out, 'notes__echo')).toEqual({
-        effectKey: `mcp.effects.${effect}`,
-        reversibilityKey: `mcp.reversibility.${reversibility}`,
-        marker:
-          (effect === 'write' || effect === 'external') &&
-          (reversibility === 'irreversible' || reversibility === 'unknown'),
+        didKey: 'tool.did.connector',
+        undoKey:
+          reversibility === 'irreversible'
+            ? 'confirm.irreversible'
+            : `confirm.undo.${reversibility}`,
+        marker: reversibility === 'irreversible',
         loginServerId: null,
       })
     }
@@ -45,21 +48,41 @@ it('03 验收 45: side effects, write/external markers, and unauthorized-only re
   expect(toolRowEffect(null, 'notes__echo')).toBeNull()
 })
 
-it('write without reversibility defaults to unknown and carries a side-effect marker', () => {
+it('presentation-r1 验收 6: write without reversibility defaults to unknown without a marker', () => {
   expect(
     toolRowEffect(
       { effect: 'write', state: 'completed', source: null, output: 'ok' },
       'notes__echo',
     ),
-  ).toMatchObject({ reversibilityKey: 'mcp.reversibility.unknown', marker: true })
+  ).toMatchObject({ undoKey: 'confirm.undo.unknown', marker: false })
 })
 
-// Render the real rows and translations; only the session and connector external stores are mocked.
-const context = vi.hoisted(() => ({ answered: new Map<string, Answered>() }))
+// Render the real rows and translations; stores and the local expansion/result state are controlled.
+const context = vi.hoisted(() => ({
+  answered: new Map<string, Answered>(),
+  expanded: false,
+  profile: 'cowork',
+  writeError: undefined as boolean | undefined,
+}))
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof React>()
+  return {
+    ...actual,
+    useState: (initial: unknown) =>
+      actual.useState(
+        initial === false
+          ? context.expanded
+          : initial === undefined && context.writeError !== undefined
+            ? { sessionId: 'session-1', callKey: 'call-1', isError: context.writeError }
+            : initial,
+      ),
+  }
+})
 vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
   useSessionStore: () => ({ sessionId: 'session-1' }),
   useSessionSnapshot: () => ({
     pending: null,
+    facts: { profile: context.profile },
     answered: context.answered,
     asked: new Map(),
   }),
@@ -109,16 +132,22 @@ async function renderRow(
             : {}),
         })
   const { ToolRow } = await import(componentPath)
+  const tooltipPath = '../src/renderer/src/components/ui/tooltip.tsx'
+  const { TooltipProvider } = await import(tooltipPath)
   return renderToStaticMarkup(
     createElement(
       I18nextProvider,
       { i18n },
-      createElement(ToolRow, {
-        toolCallId: 'call-1',
-        toolName,
-        args: input,
-        result: outcome,
-      }),
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(ToolRow, {
+          toolCallId: 'call-1',
+          toolName,
+          args: input,
+          result: outcome,
+        }),
+      ),
     ),
   )
 }
@@ -333,4 +362,294 @@ it('presentation-r1 验收 4: a denied card is the only feedback: no closure lin
     expect(strip(later)).toContain(i18n === en ? 'Not run' : '未执行')
     expect(later).not.toContain('approval-answered')
   }
+})
+
+it('presentation-r1 验收 5: each of the four block codes is one line without 已告诉模型 or a tool name; protected reads, writes and fetches each have their own', async () => {
+  const cases: readonly (readonly [
+    NonNullable<ToolOutcomeViewContract['source']>,
+    string,
+    Record<string, unknown>,
+    string,
+    string,
+  ])[] = [
+    ['policy', 'Bash', {}, '你的组织不允许这一步。', "Your organization doesn't allow this step."],
+    [
+      'user-disabled',
+      'notes__echo',
+      {},
+      '你在设置里关掉了它。',
+      'You turned this off in Settings.',
+    ],
+    ...['Read', 'Glob', 'Grep'].map(
+      (name) =>
+        [
+          'protected',
+          name,
+          {},
+          '这个位置受保护，Tenon 不读它。',
+          "This location is protected; Tenon doesn't read it.",
+        ] as const,
+    ),
+    ...['Write', 'Edit'].map(
+      (name) =>
+        [
+          'protected',
+          name,
+          {},
+          '这个位置受保护，Tenon 不改它。',
+          "This location is protected; Tenon doesn't change it.",
+        ] as const,
+    ),
+    [
+      'protected',
+      'WebFetch',
+      {},
+      'Tenon 只抓取公网上的网页，这个地址不在其中。',
+      "Tenon only fetches public web pages; this isn't one.",
+    ],
+    [
+      'inspector',
+      'Bash',
+      { category: 'exfiltration' },
+      '这一步可能把你的数据带到别处，已拦下。',
+      'This step might take your data elsewhere, so it was stopped.',
+    ],
+    [
+      'inspector',
+      'Bash',
+      { category: 'inspector-failed' },
+      'Tenon 没能确认这一步是否安全，已拦下。',
+      "Tenon couldn't check that this step is safe, so it was stopped.",
+    ],
+  ]
+  for (const i18n of [zh, en]) {
+    for (const [source, name, facts, chinese, english] of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- each source and protected target in both locales
+      const html = await renderRow(null, name, {}, i18n, false, {
+        effect: 'blocked',
+        state: 'not-run',
+        source,
+        output: '',
+        facts: { toolName: name, target: '/private/object', ...facts },
+      })
+      const notice = /data-testid="blocked-notice"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? ''
+      expect(strip(notice)).toBe(i18n === zh ? chinese : english)
+      expect(notice.match(/<p[ >]/g)).toHaveLength(1)
+      expect(strip(notice)).not.toMatch(
+        /已告诉|model|Read|Write|Edit|Glob|Grep|Bash|WebFetch|notes__echo|\/private\/object/,
+      )
+    }
+    context.profile = 'chat'
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- both locales
+      const html = await renderRow(null, 'Read', {}, i18n, false, {
+        effect: 'blocked',
+        state: 'not-run',
+        source: 'protected',
+        output: '',
+        facts: { toolName: 'Read', target: '/private/object' },
+      })
+      const notice = /data-testid="blocked-notice"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? ''
+      expect(strip(notice)).toBe(
+        i18n === zh
+          ? '对话里只能打开 Tenon 为这个对话保存的文件。'
+          : 'In a chat, only files Tenon saved for this chat can be opened.',
+      )
+      expect(notice.match(/<p[ >]/g)).toHaveLength(1)
+    } finally {
+      context.profile = 'cowork'
+    }
+  }
+})
+
+function didText(html: string): string | null {
+  const content = /data-testid="tool-side-effects"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1]
+  return content === undefined ? null : strip(content)
+}
+
+it('presentation-r1 验收 6: the expanded line says what it did and whether it can be undone; none for a read, an Agent, an AskUserQuestion or a call that did not complete; online says only 联网', async () => {
+  context.expanded = true
+  try {
+    for (const i18n of [zh, en]) {
+      for (const name of [
+        'Write',
+        'Edit',
+        'Bash',
+        'WebSearch',
+        'WebFetch',
+        'notes__echo',
+        'Read',
+        'Glob',
+        'Grep',
+        'Agent',
+        'AskUserQuestion',
+      ]) {
+        for (const state of ['completed', 'not-run', 'aborted', 'uncertain'] as const) {
+          for (const reversibility of [
+            'read-only',
+            'revertible',
+            'snapshotted',
+            'irreversible',
+            'unknown',
+          ] as const) {
+            // Deliberately contradict the tool name: presentation must never classify by effect.
+            const outcome: ToolOutcomeViewContract = {
+              effect: 'read',
+              reversibility,
+              state,
+              source: state === 'completed' ? null : 'user-rejected',
+              output: 'ok',
+            }
+            context.writeError = false
+            // oxlint-disable-next-line no-await-in-loop -- table of rendered outcomes in both locales
+            const html = await renderRow(null, name, {}, i18n, false, outcome)
+            const did = ['Write', 'Edit'].includes(name)
+              ? 'write'
+              : name === 'Bash'
+                ? 'command'
+                : ['WebSearch', 'WebFetch'].includes(name)
+                  ? 'online'
+                  : name === 'notes__echo'
+                    ? 'connector'
+                    : null
+            let expected: string | null = null
+            if (state === 'completed' && did !== null) {
+              const base = i18n.t(`tool.did.${did}` as never)
+              const undo =
+                reversibility === 'irreversible'
+                  ? 'confirm.irreversible'
+                  : reversibility === 'unknown' && did === 'write'
+                    ? 'confirm.undo.unknownFile'
+                    : `confirm.undo.${reversibility}`
+              expected = did === 'online' ? base : `${base} · ${i18n.t(undo as never)}`
+            }
+            expect(didText(html), `${name}/${state}/${reversibility}`).toBe(expected)
+            expect(strip(html)).not.toMatch(/副作用|Side effects/)
+          }
+        }
+      }
+    }
+  } finally {
+    context.expanded = false
+    context.writeError = undefined
+  }
+})
+
+it('presentation-r1 验收 6: an Edit that came back with an error does not say 改了', async () => {
+  context.expanded = true
+  try {
+    for (const i18n of [zh, en]) {
+      for (const name of ['Edit', 'Write']) {
+        for (const isError of [true, undefined, false]) {
+          context.writeError = isError
+          // oxlint-disable-next-line no-await-in-loop -- success, failure and live result lacking isError
+          const html = await renderRow(null, name, {}, i18n, false, {
+            effect: 'write',
+            state: 'completed',
+            source: null,
+            output: 'result',
+          })
+          expect(didText(html)).toBe(
+            isError === false
+              ? i18n === zh
+                ? '改了这个文件 · Tenon 没法替你撤回这次改动。'
+                : "Changed this file · Tenon can't undo this change for you."
+              : null,
+          )
+        }
+      }
+    }
+  } finally {
+    context.expanded = false
+    context.writeError = undefined
+  }
+})
+
+it('presentation-r1 验收 6: only an irreversible row carries the marker, with its tooltip and screen-reader text', async () => {
+  for (const i18n of [zh, en]) {
+    for (const effect of ['read', 'write', 'external', 'blocked'] as const) {
+      for (const reversibility of [
+        'read-only',
+        'revertible',
+        'snapshotted',
+        'irreversible',
+        'unknown',
+      ] as const) {
+        // oxlint-disable-next-line no-await-in-loop -- marker table with actual Tooltip trigger and sr-only text
+        const html = await renderRow(null, 'notes__echo', {}, i18n, false, {
+          effect,
+          reversibility,
+          state: 'completed',
+          source: null,
+          output: '',
+        })
+        expect(html.includes('data-testid="tool-effect-marker"')).toBe(
+          reversibility === 'irreversible',
+        )
+        expect(html.includes('data-slot="tooltip-trigger"')).toBe(reversibility === 'irreversible')
+        const screenReader = /<span class="sr-only">(.*?)<\/span>/.exec(html)?.[1] ?? null
+        expect(screenReader).toBe(
+          reversibility === 'irreversible'
+            ? i18n === zh
+              ? '撤不回'
+              : 'Can&#x27;t be undone'
+            : null,
+        )
+        // The portalled popup is exercised by E/tools.spec.ts.
+      }
+    }
+  }
+})
+
+const request = (name: string) => ({ type: 'tool-request', id: 'reused-id', name, input: {} })
+const response = (isError: boolean) => ({
+  type: 'tool-response',
+  id: 'reused-id',
+  content: [],
+  isError,
+})
+it('presentation-r1 验收 6: an expanded write reads isError from session.messages, pages for old calls and never reuses a provider ID from another call', async () => {
+  const sessionId = '11111111-1111-4111-8111-111111111111'
+  const row = (orderSeq: number, content: unknown[], calls?: unknown[]) =>
+    messageRowSchema.parse({
+      sessionId,
+      messageId: `message-${orderSeq}`,
+      orderSeq,
+      role: calls ? 'assistant' : 'user',
+      status: 'complete',
+      entryId: orderSeq,
+      createdAt: 0,
+      updatedAt: 0,
+      content,
+      ...(calls ? { calls } : {}),
+    })
+  const rows = [
+    row(1, [request('Write')], [{ callKey: 'old-call', outcome: null }]),
+    row(2, [response(false)]),
+    row(3, [request('Edit')], [{ callKey: 'new-call', outcome: null }]),
+    row(4, [response(true)]),
+  ]
+  expect(writeResultError(rows, 'old-call')).toBe(false)
+  expect(writeResultError(rows, 'new-call')).toBe(true)
+  expect(writeResultError(rows, 'missing')).toBeUndefined()
+  expect(writeResultError(rows.slice(0, 1), 'old-call')).toBeUndefined()
+  const { readWriteError } = await import(componentPath)
+  const invoke = vi
+    .fn<(channel: string, payload: unknown) => Promise<unknown>>()
+    .mockResolvedValueOnce({ ok: true, data: rows.slice(2) })
+    .mockResolvedValueOnce({ ok: true, data: rows.slice(0, 2) })
+  const bridge = { invoke } as unknown as Parameters<typeof readWriteError>[0]
+  expect(await readWriteError(bridge, sessionId, 'old-call')).toBe(false)
+  expect(invoke.mock.calls).toEqual([
+    ['session.messages', { sessionId, limit: 1000 }],
+    ['session.messages', { sessionId, limit: 1000, beforeOrderSeq: 3 }],
+  ])
+  invoke.mockReset().mockResolvedValueOnce({ ok: true, data: rows })
+  expect(await readWriteError(bridge, sessionId, 'new-call')).toBe(true)
+  invoke.mockReset().mockResolvedValue({ ok: true, data: [] })
+  expect(await readWriteError(bridge, sessionId, 'missing')).toBeUndefined()
+  invoke
+    .mockReset()
+    .mockResolvedValue({ ok: false, error: { code: 'internal', message: 'unavailable' } })
+  expect(await readWriteError(bridge, sessionId, 'old-call')).toBeUndefined()
 })

@@ -4,6 +4,7 @@
  * with the argument that says what it touches, shown as it is; a tool the catalogue does not name — a
  * connector's — gets the generic sentence with its name. Real catalogues, both locales.
  */
+import type { McpServerView } from '@tenon-app/contracts'
 import type { TFunction } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createI18n } from '../src/i18n/create-instance.js'
@@ -85,6 +86,37 @@ describe('toolSentence', () => {
     for (const name of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
       expect(toolSentence(t.en, name, {})).toBe(`Use ${name}`)
     }
+  })
+
+  it('presentation-r1 验收 6: a connector call names the connector and the tool’s own name; a deleted connector falls back to the mapped name', () => {
+    const servers: Pick<McpServerView, 'displayName' | 'toolViews'>[] = [
+      {
+        displayName: 'Notes\u200B desk',
+        toolViews: [
+          {
+            originalName: 'look / up\u202E',
+            mappedName: 'notes__look_up__hash',
+          } as McpServerView['toolViews'][number],
+        ],
+      },
+    ]
+    for (const locale of ['en', 'zh-CN'] as const) {
+      expect(toolSentence(t[locale], 'notes__look_up__hash', {}, servers)).toBe(
+        locale === 'en'
+          ? 'Use look / up\\u{202E} from Notes\\u{200B} desk'
+          : '使用 Notes\\u{200B} desk 的 look / up\\u{202E}',
+      )
+      expect(toolSentence(t[locale], 'notes__look_up__hash', {}, [])).toBe(
+        locale === 'en' ? 'Use notes__look_up__hash' : '使用 notes__look_up__hash',
+      )
+      expect(toolSentence(t[locale], 'notes__truncated', {}, servers)).toBe(
+        locale === 'en' ? 'Use notes__truncated' : '使用 notes__truncated',
+      )
+      expect(toolSentence(t[locale], 'Read', { file_path: '/a' }, servers)).toBe(
+        locale === 'en' ? 'Read /a' : '读取 /a',
+      )
+    }
+    expect(errors).toEqual([])
   })
 
   it('never writes undefined or an object into the sentence when the argument is missing or odd', () => {

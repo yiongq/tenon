@@ -1,4 +1,5 @@
 import type { TFunction } from 'i18next'
+import type { McpServerView } from '@tenon-app/contracts'
 import { visible } from './visible'
 
 /**
@@ -31,8 +32,19 @@ export function toolSentence(
   t: TFunction,
   name: string,
   input: Readonly<Record<string, unknown>>,
+  servers: readonly Pick<McpServerView, 'displayName' | 'toolViews'>[] = [],
 ): string {
-  if (!Object.hasOwn(SLOT, name)) return t('tool.generic', { toolName: visible(name) })
+  if (!Object.hasOwn(SLOT, name)) {
+    for (const server of servers) {
+      const tool = server.toolViews.find((entry) => entry.mappedName === name)
+      if (tool)
+        return t('tool.generic', {
+          server: visible(server.displayName),
+          tool: visible(tool.originalName),
+        })
+    }
+    return t('tool.genericMapped', { toolName: visible(name) })
+  }
   const slot = SLOT[name]
   if (slot === null || slot === undefined) return t(`tool.${name}` as never)
   return String(t(`tool.${name}` as never, { [slot.key]: toolSlotValue(name, input) } as never))

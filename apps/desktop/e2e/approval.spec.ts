@@ -435,7 +435,7 @@ test('presentation-r1 验收 4: a denied card is the only feedback: no closure l
   }
 })
 
-test('an allow the re-judgement tightens closes the call with its BlockedNotice, slots filled, before any restart (§最小审批卡「答完」, F3)', async () => {
+test('presentation-r1 验收 5: a tightened re-judgement shows the same one-line receipt live and after restart (F3)', async () => {
   const folders = makeFolderTree('rejudge', { 'ws/a.txt': 'alpha\n', 'outside/x.txt': 'x-ray\n' })
   tree = folders
   const userData = makeUserDataDir('rejudge')
@@ -451,7 +451,7 @@ test('an allow the re-judgement tightens closes the call with its BlockedNotice,
     replies: [callsReply(readCall('toolu_x', join(hop, 'x.txt'))), textReply('Blocked ', 'then.')],
   })
   const server = fake
-  const notice = `Read can’t reach ${guarded}: Tenon protects it.The model was told.`
+  const notice = "This location is protected; Tenon doesn't read it."
 
   const first = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   let callKey: string

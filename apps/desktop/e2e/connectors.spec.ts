@@ -19,10 +19,6 @@ import {
 import { callsReply, providerEnv, send, textReply } from './helpers/tools.js'
 import { newChatFromSidebar, PAST_CLICK_GUARD_MS } from './helpers/navigation.js'
 
-/** Serialised into the page: what sets a small section label apart. */
-function labelStyle(el: Element): { size: string; color: string } {
-  return { size: getComputedStyle(el).fontSize, color: getComputedStyle(el).color }
-}
 test('03 验收 24/25: full argv, warnings, cancel focus, run and persistent consent across relaunch', async () => {
   const userData = makeUserDataDir('connectors-consent')
   seedConfig(userData, { locale: 'zh-CN' })
@@ -244,7 +240,7 @@ test('03 验收 29: a slow first connection appears above the composer', async (
   }
 })
 
-test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, logs, instructions, edit, revoke, move and delete secrets', async () => {
+test('presentation-r1 验收 6: connector rows use names and plain consequences; UI controls persist (03 验收 24/39/44)', async () => {
   const fake = await startFakeAnthropic({
     replies: [
       textReply('never session'),
@@ -302,18 +298,11 @@ test('03 验收 24/39/44: UI controls persist permissions, restart, refresh, log
     await expect(page.getByTestId('assistant-text').last()).toHaveText('allowed session')
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
     await page.getByTestId('tool-row-line').last().click()
-    await expect(page.getByTestId('tool-side-effects')).toContainText('Side effects')
-    await expect(page.getByTestId('tool-side-effects')).toContainText('Unknown')
-    await expect(page.getByTestId('tool-effect-marker')).toBeVisible()
-    // The marker ends the row, in one column whatever the sentence's length; the side-effects label
-    // is set as 「输入」「输出」 are.
-    const line = await page.getByTestId('tool-row-line').last().boundingBox()
-    const marker = await page.getByTestId('tool-effect-marker').boundingBox()
-    expect(Math.abs(line!.x + line!.width - (marker!.x + marker!.width))).toBeLessThan(1)
-    const details = page.getByTestId('tool-row-details').last()
-    expect(
-      await details.getByTestId('tool-side-effects').locator('p').first().evaluate(labelStyle),
-    ).toEqual(await details.locator(':scope > p').first().evaluate(labelStyle))
+    await expect(page.getByTestId('tool-row-line').last()).toHaveText('Use echo from Notes fixture')
+    await expect(page.getByTestId('tool-side-effects')).toHaveText(
+      "Used a connector · If this changes anything, Tenon can't undo it.",
+    )
+    await expect(page.getByTestId('tool-effect-marker')).toHaveCount(0)
     await newChatFromSidebar(page)
     await send(page, 'before restart')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('before restart')

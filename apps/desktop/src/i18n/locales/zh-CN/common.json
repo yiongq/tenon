@@ -405,12 +405,20 @@
     "WebFetch": "抓取 {url}",
     "AskUserQuestion": "向你提问",
     "Agent": "把子任务交给 agent：{description}",
-    "generic": "使用 {toolName}",
+    "generic": "使用 {server} 的 {tool}",
     "running": "进行中…",
     "details": "详情",
     "input": "输入",
     "output": "输出",
-    "error": "工具报告了错误。"
+    "error": "工具报告了错误。",
+    "genericMapped": "使用 {toolName}",
+    "did": {
+      "write": "改了这个文件",
+      "command": "运行了这条命令",
+      "online": "联网",
+      "connector": "用了连接器",
+      "irreversible": "撤不回"
+    }
   },
   "closure": {
     "user-rejected": "你拒绝了这个操作。",
@@ -439,14 +447,18 @@
     "connector-unauthorized": "需要重新登录此连接器；本次调用未执行。"
   },
   "blocked": {
-    "policy": "{toolName} 被组织策略拦下。",
-    "user-disabled": "{toolName} 已关闭。",
-    "protected": "{toolName} 不能访问 {target}：这是 Tenon 保护的位置。",
-    "inspector": {
-      "exfiltration": "{toolName} 被权限检查拦下：它可能把你的数据发往别处。",
-      "inspector-failed": "{toolName} 被拦下：对它的权限检查没有完成。"
+    "policy": "你的组织不允许这一步。",
+    "user-disabled": "你在设置里关掉了它。",
+    "protected": {
+      "read": "这个位置受保护，Tenon 不读它。",
+      "write": "这个位置受保护，Tenon 不改它。",
+      "fetch": "Tenon 只抓取公网上的网页，这个地址不在其中。"
     },
-    "chatReadScope": "对话里 {toolName} 只能打开 Tenon 为这个对话保存的文件；{target} 不在其中。",
+    "inspector": {
+      "exfiltration": "这一步可能把你的数据带到别处，已拦下。",
+      "inspector-failed": "Tenon 没能确认这一步是否安全，已拦下。"
+    },
+    "chatReadScope": "对话里只能打开 Tenon 为这个对话保存的文件。",
     "told": "已告诉模型。"
   },
   "confirm": {
@@ -645,8 +657,6 @@
     "noBefore": "没有已确认的旧定义",
     "connecting": "正在连接 {name}…",
     "definitionNotice": "这个工具的定义在会话中变了，总是允许这次不生效",
-    "effect": "副作用",
-    "marker": "{effect} · {reversibility}",
     "status": {
       "connecting": "正在连接",
       "connected": "已连接 · {version} · {n} 个工具",
@@ -691,19 +701,6 @@
     "unavailable": {
       "name-collision": "重名，未提供",
       "invalid-definition": "定义无效，未提供"
-    },
-    "reversibility": {
-      "read-only": "只读",
-      "revertible": "可撤销",
-      "snapshotted": "有快照",
-      "irreversible": "不可逆",
-      "unknown": "未知"
-    },
-    "effects": {
-      "read": "读",
-      "write": "写",
-      "external": "对外发送",
-      "blocked": "没执行"
     },
     "error": {
       "handshake-timeout": "连接超时",
@@ -754,7 +751,6 @@
     "up": "上移",
     "down": "下移",
     "secretField": "{name}（密钥）",
-    "effectMarker": "副作用：{effect} · {reversibility}",
     "era": {
       "legacy": "旧代",
       "modern": "新代"

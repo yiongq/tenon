@@ -1,13 +1,14 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
-import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
-import { invokeRoute, mcpLogin } from '@tenon-app/contracts'
+import type { MessageRowContract, ToolOutcomeViewContract } from '@tenon-app/contracts'
+import { invokeRoute, mcpLogin, sessionMessages } from '@tenon-app/contracts'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
 import { PathText } from '@/components/ui/path-text'
-import { mcpAction } from '@/runtime/mcp-store'
-import { toolRowEffect } from '@/lib/tool-row-effect'
-import { useState } from 'react'
+import { mcpAction, useMcp } from '@/runtime/mcp-store'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { toolCategory, toolRowEffect, writeResultError } from '@/lib/tool-row-effect'
+import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
@@ -42,6 +43,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const { t } = useTranslation()
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
+  const { servers } = useMcp()
   const [open, setOpen] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
@@ -50,7 +52,37 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
-  const effect = toolRowEffect(outcome, props.toolName)
+  const [writeResult, setWriteResult] = useState<
+    | {
+        readonly sessionId: string
+        readonly callKey: string
+        readonly isError: boolean | undefined
+      }
+    | undefined
+  >(undefined)
+  const isCompletedWrite =
+    toolCategory(props.toolName) === 'write' && outcome?.state === 'completed'
+  useEffect(() => {
+    if (!open || !isCompletedWrite) return
+    let active = true
+    void readWriteError(window.tenon, store.sessionId, callKey)
+      .then((error) => {
+        if (active) setWriteResult({ sessionId: store.sessionId, callKey, isError: error })
+      })
+      .catch(() => {
+        /* An unavailable result must never be described as a successful change. */
+      })
+    return () => {
+      active = false
+    }
+  }, [open, isCompletedWrite, store.sessionId, callKey, snapshot.running])
+  const effect = toolRowEffect(
+    outcome,
+    props.toolName,
+    writeResult?.sessionId === store.sessionId && writeResult.callKey === callKey
+      ? writeResult.isError
+      : undefined,
+  )
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending
@@ -99,18 +131,16 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         {/* The sentence takes the free width, so the marker and 「运行中」 line up at the row's end
             whether the sentence is short or wraps. */}
         <span className="min-w-0 flex-1">
-          <PathText text={toolSentence(t, props.toolName, input)} />
+          <PathText text={toolSentence(t, props.toolName, input, servers)} />
         </span>
         {effect?.marker ? (
-          <span data-testid="tool-effect-marker" className="shrink-0">
-            <AlertTriangle aria-hidden className="inline size-3" />
-            <span className="sr-only">
-              {t('mcp.effectMarker', {
-                effect: t(effect.effectKey),
-                reversibility: t(effect.reversibilityKey),
-              })}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span />} data-testid="tool-effect-marker" className="shrink-0">
+              <AlertTriangle aria-hidden className="inline size-3" />
+              <span className="sr-only">{t('tool.did.irreversible')}</span>
+            </TooltipTrigger>
+            <TooltipContent>{t('tool.did.irreversible')}</TooltipContent>
+          </Tooltip>
         ) : null}
         {outcome === null && pending === null && !asking && summary === null ? (
           <span className="shrink-0 text-micro text-text-muted">{t('tool.running')}</span>
@@ -195,17 +225,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
               )}
             </>
           )}
-          {effect ? (
-            // A section like 「输入」 and 「输出」 above it: the same small muted label.
-            <div data-testid="tool-side-effects" className="flex flex-col gap-1">
-              <p className="text-micro text-text-muted">{t('mcp.effect')}</p>
-              <p className="text-micro text-text-secondary">
-                {t('mcp.marker', {
-                  effect: t(effect.effectKey),
-                  reversibility: t(effect.reversibilityKey),
-                })}
-              </p>
-            </div>
+          {effect?.didKey ? (
+            <p data-testid="tool-side-effects" className="text-micro text-text-secondary">
+              {t(effect.didKey)}
+              {effect.undoKey === null ? null : ` · ${t(effect.undoKey)}`}
+            </p>
           ) : null}
         </div>
       ) : null}
@@ -251,14 +275,29 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   )
 }
 
-/** The call's facts with the card's escaping (②′): a path in the notice reads as it will run. */
-function visibleFacts(facts: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(facts).map(([key, value]) => [
-      key,
-      typeof value === 'string' ? visible(value) : value,
-    ]),
-  )
+/** Read only for an expanded, completed write; page back for a row outside the latest tail. */
+export async function readWriteError(
+  bridge: Window['tenon'],
+  sessionId: string,
+  callKey: string,
+): Promise<boolean | undefined> {
+  let rows: MessageRowContract[] = []
+  let beforeOrderSeq: number | undefined
+  while (true) {
+    // oxlint-disable-next-line no-await-in-loop -- each earlier page needs the previous cursor
+    const result = await invokeRoute(bridge, sessionMessages, {
+      sessionId,
+      limit: 1000,
+      ...(beforeOrderSeq === undefined ? {} : { beforeOrderSeq }),
+    })
+    if (!result.ok || result.data.length === 0) return undefined
+    rows.unshift(...result.data)
+    if (result.data.some((row) => row.calls?.some((call) => call.callKey === callKey)))
+      return writeResultError(rows, callKey)
+    const first = result.data[0]!.orderSeq
+    if (beforeOrderSeq !== undefined && first >= beforeOrderSeq) return undefined
+    beforeOrderSeq = first
+  }
 }
 
 /**
@@ -279,7 +318,7 @@ function queuedBehindCard(snapshot: SessionSnapshot, callKey: string): boolean {
   return anchor >= 0 && keys.indexOf(callKey) > anchor
 }
 
-/** What a blocked call shows (§界面范围 `BlockedNotice`): what, why, and that the model was told. */
+/** The four block codes each say why, without repeating the object or the tool name. */
 function BlockedNotice(props: {
   readonly outcome: ToolOutcomeViewContract
   readonly toolName: string
@@ -290,21 +329,24 @@ function BlockedNotice(props: {
   // In a chat, Read beyond this chat's saved files is `protected` with a sentence of its own; an
   // inspector's block says what it found, by category, as the card does.
   const key =
-    props.profile === 'chat' && props.outcome.source === 'protected' && facts['toolName'] === 'Read'
+    props.profile === 'chat' && props.outcome.source === 'protected' && props.toolName === 'Read'
       ? 'blocked.chatReadScope'
       : props.outcome.source === 'inspector'
         ? `blocked.inspector.${categoryOf(facts)}`
-        : `blocked.${String(props.outcome.source)}`
+        : props.outcome.source === 'protected'
+          ? props.toolName === 'WebFetch'
+            ? 'blocked.protected.fetch'
+            : props.toolName === 'Write' || props.toolName === 'Edit'
+              ? 'blocked.protected.write'
+              : 'blocked.protected.read'
+          : `blocked.${String(props.outcome.source)}`
   return (
     <div
       data-testid="blocked-notice"
       data-source={props.outcome.source}
       className="rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
     >
-      <p>
-        <PathText text={tx(t, key, visibleFacts({ toolName: props.toolName, ...facts }))} />
-      </p>
-      <p className="text-text-muted">{t('blocked.told')}</p>
+      <p>{tx(t, key)}</p>
     </div>
   )
 }
