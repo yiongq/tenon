@@ -38,7 +38,7 @@ export interface CommandShell {
 export interface CommandRun {
   /** The decision named by this dispatch; absent for pre-04 callers. */
   readonly plan?: SandboxPlan
-  readonly beforeWrap?: () => void
+  readonly beforeWrap?: () => void | Promise<void>
   /** `SandboxRequest.commandId`: the call's `providerToolCallId` (adapter.ts). */
   readonly commandId: string
   readonly shell: AbsolutePath
@@ -128,7 +128,7 @@ export const bashExecutor: ToolExecutor = async (q) => {
   const cleanup = () => sandbox.afterExit(run.commandId).catch(() => {})
   try {
     if (run.dedicated) await q.fs.mkdirp(cwd)
-    run.beforeWrap?.()
+    await run.beforeWrap?.()
     const plan = run.plan
     const path = plan?.override?.action === 'allow-path' ? plan.override.path : undefined
     const workspace =

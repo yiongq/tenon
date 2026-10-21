@@ -36,6 +36,7 @@ import type { SubagentHandoff } from './subagent.js'
  */
 import type { AbsolutePath, ConfirmTarget, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
+import { sandboxDomainHosts, unboundSandboxOverride } from '../permission/sandbox-release.js'
 import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
@@ -733,12 +734,15 @@ async function perform(
     command = {
       ...command,
       ...(plan === undefined ? {} : { plan }),
-      beforeWrap: () => {
-        // Step 11 derives the session's inherited domain grants; there is no source yet.
+      beforeWrap: async () => {
+        const hosts = await sandboxDomainHosts(
+          (id) => readSessionEntries(ctx.tape, id),
+          ctx.sessionId,
+        )
         ctx.sandbox?.beforeWrap({
           commandId: call.providerToolCallId,
           sessionId: ctx.sessionId,
-          hosts: [],
+          hosts,
         })
       },
     }
@@ -1179,7 +1183,13 @@ export async function judgeCall(
   const workspace = paths.roots[0] ?? null
   const sandbox =
     item.source === 'builtin' && item.originalName === 'Bash'
-      ? sandboxPlanOf(ctx.host, ctx.previousSandbox)
+      ? sandboxPlanOf(
+          ctx.host,
+          ctx.previousSandbox,
+          ctx.previousSandbox === undefined && workspace !== null
+            ? unboundSandboxOverride(entries, String(call.input['command'] ?? ''), workspace)
+            : undefined,
+        )
       : undefined
   const callReason = callReasonOf({
     tool: item,
@@ -1294,10 +1304,14 @@ export async function judgeCall(
 }
 
 /** One planning path for initial decisions, answers and startup recovery (04, readings 12/38). */
-function sandboxPlanOf(host: HostAdapter, previous?: SandboxPlan): SandboxPlan {
+function sandboxPlanOf(
+  host: HostAdapter,
+  previous?: SandboxPlan,
+  initialOverride?: SandboxPlan['override'],
+): SandboxPlan {
   const posture = host.sandbox.posture?.() ?? { state: 'active', profile: 'workspace-write' }
   const chosen = posture.profile
-  const override = previous?.override
+  const override = previous?.override ?? initialOverride
   if (override?.action === 'rerun-unsandboxed') {
     return { profile: 'full-access', chosen, override }
   }

@@ -248,7 +248,7 @@ export interface SessionService {
   send(q: SendQuery): Promise<SendResult>
   /** 「继续」 after a truncated or limited Run (plan step 13). */
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
-  /** A receipt release; declared in 04 step 8, implemented in step 11. */
+  /** A receipt release, serialized with commands of its root session. */
   release(q: ReleaseQuery): Promise<ReleaseResult>
   /** An answer to an approval card or a question (plan steps 15 and 26). */
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
@@ -459,8 +459,7 @@ export function constructSessionService(
     send: (q) => loop.send(q),
     continueRun: (q) => loop.continueRun(q),
     answer: (q) => loop.answer(q),
-    // Spec 04 step 8 declares the command only; the mailbox implementation follows in step 11.
-    release: () => Promise.resolve({ status: 'refused' }),
+    release: (q) => loop.release(q),
     currentPending: (q) => loop.currentPending(q),
     listPendingRoots: (q) => loop.listPendingRoots(q),
     stop: (q) => loop.stop(q),

@@ -1,3 +1,4 @@
+import { releaseReceipt, sandboxDomainHosts } from '../permission/sandbox-release.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { CallRef } from './closure.js'
 import type { SubagentHandoff } from './subagent.js'
@@ -67,6 +68,8 @@ import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import type {
   AnswerResult,
+  ReleaseQuery,
+  ReleaseResult,
   ContinueRunResult,
   RecoverResult,
   ResumeResult,
@@ -377,6 +380,7 @@ export interface Loop {
   send(q: SendQuery): Promise<SendResult>
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
+  release(q: ReleaseQuery): Promise<ReleaseResult>
   /** What `approval.current` shows for a root (it and its sub-agents): the one card, or null. */
   currentPending(q: { sessionId: string }): Promise<PendingCard | null>
   /** The roots that wait on an answer or can be resumed, one row each (`approval.list`). */
@@ -405,6 +409,7 @@ export function createLoop(deps: LoopDeps): Loop {
   /** The drafts of sessions not yet established (§会话形态「建立前暂存」): only mailboxes write them. */
   const drafts = createDraftStore()
   let bound: LoopPorts | null = null
+  let lastSandboxSession: string | null = null
 
   // ----- the executor --------------------------------------------------------------------------
 
@@ -2252,7 +2257,17 @@ export function createLoop(deps: LoopDeps): Loop {
           search: built.assembly.search,
           mcpSources: dispatchSources,
           commandShell: ports.commandShell,
-          ...(ports.sandbox === undefined ? {} : { sandbox: ports.sandbox }),
+          ...(ports.sandbox === undefined
+            ? {}
+            : {
+                sandbox: {
+                  beforeWrap: (q) => {
+                    lastSandboxSession = q.sessionId
+                    ports.sandbox!.beforeWrap(q)
+                  },
+                  grantsChanged: (q) => ports.sandbox!.grantsChanged(q),
+                },
+              }),
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
           ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),
@@ -3416,6 +3431,34 @@ export function createLoop(deps: LoopDeps): Loop {
         (lease, pre) => continueTurn(ports, box, q, lease, pre),
         () => ({ status: 'refused' }),
       )
+    },
+
+    release(q): Promise<ReleaseResult> {
+      const ports = bound
+      if (ports === null) return Promise.resolve({ status: 'refused' })
+      // As with answer, live child dispatch and recover register ancestry before commands arrive.
+      // Queue synchronously, before the first read, preserving command arrival order.
+      return post(mailboxOf(rootOf(q.sessionId)), 'command', null, async () => {
+        const result = await releaseReceipt(q, {
+          entries: await readSessionEntries(tape, q.sessionId),
+          tape,
+          host: deps.host,
+          now,
+          protectedFiles: deps.protectedFiles,
+          home: async () => (await ports.commandShell.env())['HOME'],
+        })
+        if (
+          result.status === 'released' &&
+          q.action === 'allow-domain' &&
+          lastSandboxSession === q.sessionId
+        ) {
+          const hosts = await sandboxDomainHosts((id) => readSessionEntries(tape, id), q.sessionId)
+          if (lastSandboxSession === q.sessionId) {
+            ports.sandbox?.grantsChanged({ sessionId: q.sessionId, hosts })
+          }
+        }
+        return result
+      })
     },
 
     answer(q): Promise<AnswerResult> {
