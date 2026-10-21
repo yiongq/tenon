@@ -1,4 +1,4 @@
-/** The address ranges in spec 02 §本机抓取器. Pure: DNS and sockets belong to the host. */
+/** Spec 02 §本机抓取器, amended by 04 §WebFetch 与 CGNAT. DNS and sockets belong to the host. */
 export function isBlockedFetchAddress(address: string): boolean {
   if (!/^[0-9a-fA-F:.[\]]+$/u.test(address)) return true
   let host: string
@@ -16,6 +16,7 @@ export function isBlockedFetchAddress(address: string): boolean {
     return (
       a === 127 ||
       a === 10 ||
+      (a === 100 && b >= 64 && b <= 127) ||
       (a === 0 && b === 0 && c === 0 && d === 0) ||
       (a === 172 && b >= 16 && b <= 31) ||
       (a === 192 && b === 168) ||

@@ -125,13 +125,25 @@ describe('fetchUntrusted checks DNS once, then pins that call’s connection', (
     expect(served.requests).toHaveLength(2)
   })
 
-  it('allows the explicitly deferred CGNAT range', async () => {
+  it('blocks the CGNAT range deferred by 02 and now covered by 04', async () => {
     const served = await server()
     const seam = seams()
     seam.lookup.mockResolvedValue([{ address: '100.64.0.1', family: 4 }])
-    expect(await (await createDesktopNetwork(seam).fetchUntrusted(served.publicUrl)).text()).toBe(
-      'public page',
-    )
+    await expect(
+      createDesktopNetwork(seam).fetchUntrusted(served.publicUrl),
+    ).rejects.toBeInstanceOf(HostNetworkDeniedError)
+  })
+
+  it('04 验收 26: a host resolving to 100.64.x is refused with no connection', async () => {
+    const served = await server()
+    const seam = seams()
+    seam.lookup.mockResolvedValue([PUBLIC, { address: '100.64.1.1', family: 4 }])
+    await expect(
+      createDesktopNetwork(seam).fetchUntrusted(served.publicUrl),
+    ).rejects.toBeInstanceOf(HostNetworkDeniedError)
+    expect(seam.lookup).toHaveBeenCalledExactlyOnceWith('fetch.example')
+    expect(seam.connectTarget).not.toHaveBeenCalled()
+    expect(served.requests).toHaveLength(0)
   })
 })
 
