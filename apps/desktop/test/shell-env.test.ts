@@ -127,6 +127,32 @@ function expectNoTenonVars(env: EnvRecord): void {
 }
 
 describe('the shell env (-i -l -c, env -0 between two markers)', () => {
+  it('04 验收 25: the probe asks for full-access and the base env has no SANDBOX_RUNTIME, HTTPS_PROXY or TMPDIR=/tmp/claude', async () => {
+    const shell = await fakeShell('zsh', `export TMPDIR='${dir}'\n/bin/sh -c "$4"`)
+    const { commandShell, sandbox, logged } = start(shell)
+    const env = await commandShell.env()
+
+    expect(sandbox.wrapped).toHaveLength(1)
+    expect(sandbox.wrapped[0]?.profile).toBe('full-access')
+    expect(sandbox.wrapped[0]?.workspace).toEqual([])
+    expect(env).not.toHaveProperty('SANDBOX_RUNTIME')
+    expect(env).not.toHaveProperty('HTTPS_PROXY')
+    expect(env['TMPDIR']).toBe(dir)
+    expect(env['TMPDIR']).not.toBe('/tmp/claude')
+    expect(logged).toEqual([])
+  })
+
+  it('04 验收 25: an ELECTRON_RUN_AS_NODE printed by the login shell does not reach the base env', async () => {
+    const shell = await fakeShell(
+      'zsh',
+      'export ELECTRON_RUN_AS_NODE=from-login-shell\n/bin/sh -c "$4"',
+    )
+    const { commandShell, logged } = start(shell)
+
+    expect(await commandShell.env()).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
+    expect(logged).toEqual([])
+  })
+
   it('takes the env printed between the markers, and none of what the rc files printed around it', async () => {
     const argvFile = join(dir, 'argv')
     const outFile = join(dir, 'out')

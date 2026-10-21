@@ -142,14 +142,14 @@ async function resolveEnv(options: CommandShellOptions): Promise<EnvRecord> {
   const script = `printf '%s' '${start}'; /usr/bin/env -0 && printf '%s' '${end}'`
   let child: ChildHandle
   try {
-    // AGENTS.md: every subprocess goes through the sandbox wrapper. The probe only reads, so it asks
-    // for `read-only`; phase 2's wrapper passes it through and logs that.
+    // Probe outside the sandbox so srt proxy variables and TMPDIR never enter the base env
+    // (spec 04 T6). Login shell configuration is protected from sandboxed writes.
     const wrapped = await host.sandbox.wrap({
       commandId: COMMAND_ID,
       argv: [shell, '-i', '-l', '-c', script],
       cwd: home,
       env: { ...startupEnv },
-      profile: 'read-only',
+      profile: 'full-access',
       workspace: [],
     })
     child = await host.process.spawn({
