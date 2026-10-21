@@ -39,6 +39,7 @@ import {
 } from 'node:fs'
 import { posix } from 'node:path'
 import { SandboxManager, getWslVersion } from '@anthropic-ai/sandbox-runtime'
+import type { SandboxReasonCode } from '@tenon-app/contracts'
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath, HostProcess } from '@tenon-app/kernel'
 import { desktopSandboxFs, privateDirProblem, stubsFile } from './sandbox.js'
@@ -53,28 +54,14 @@ import type {
 import type { HelperPaths, LinuxBinaries } from './sandbox-config.js'
 
 /**
- * Why the posture is not plain `active` (spec §启动、自检与姿态). The contracts' `SandboxReasonCode`
- * (§IPC, plan step 13) adds `test-seam`, which only the e2e seam gives. `no-seccomp` and `old-bwrap`
+ * Why the posture is not plain `active` (spec §启动、自检与姿态). The shared contracts also
+ * reserve `test-seam`, which only the e2e seam gives. `no-seccomp` and `old-bwrap`
  * come with `degraded`; the rest with `unavailable`, except `other`, which also comes with
  * `degraded` for a warning of srt's it does not know (its detail srt's own words): the sandbox is up
  * then, one layer perhaps weaker, and `unavailable` would send every command, once you allow it, to
  * run outside the sandbox (2026-10-16).
  */
-export type SandboxReasonCode =
-  | 'windows'
-  | 'unsupported-platform'
-  | 'wsl1'
-  | 'root-without-setfcap'
-  | 'missing-bwrap'
-  | 'missing-socat'
-  | 'missing-rg'
-  | 'userns-restricted'
-  | 'nested-sandbox'
-  | 'self-test-failed'
-  | 'init-failed'
-  | 'other'
-  | 'no-seccomp'
-  | 'old-bwrap'
+export type { SandboxReasonCode } from '@tenon-app/contracts'
 
 export interface SandboxReason {
   readonly code: SandboxReasonCode

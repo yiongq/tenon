@@ -110,6 +110,7 @@ export function estimateInput(
         e.entryId > latest.entryId &&
         (e.name === 'message/user' ||
           e.name === 'message/continuation' ||
+          e.name === 'message/sandbox_release' ||
           e.name === 'message/environment' ||
           e.name === 'message/server_instructions' ||
           e.name === 'tool/result'),

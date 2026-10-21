@@ -6,7 +6,7 @@
 import type { ConfirmTarget, Reversibility } from '../host/adapter.js'
 import type { DecisionSummary } from '../permission/record.js'
 import type { ProviderErrorCode, StopReason } from '../provider/types.js'
-import type { SideEffectClass } from '../tape/entry.js'
+import type { SandboxOutcome, SideEffectClass } from '../tape/entry.js'
 import type { ClosureSource, ExecutionState } from './closure.js'
 import type { SpillMark } from './spill.js'
 import type { SubagentHandoff } from './subagent.js'
@@ -42,6 +42,7 @@ export type SessionEvent = { readonly rootSessionId: string; readonly sessionId:
  * (01 修补 6), declared here because the kernel does not import contracts.
  */
 export interface ToolOutcomeView {
+  readonly sandbox?: SandboxOutcome
   readonly reversibility?: Reversibility
   readonly effect: SideEffectClass // 01 的四个值
   readonly state: ExecutionState

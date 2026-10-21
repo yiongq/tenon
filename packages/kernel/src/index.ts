@@ -557,3 +557,14 @@ export { mcpCandidates } from './tools/mcp-source.js'
 export { openToolTable } from './tools/table.js'
 
 export { validateClientMetadataUrl } from '@modelcontextprotocol/client'
+
+// Spec 04: additive sandbox contracts; behavior is wired in later steps.
+export type {
+  SandboxPlan,
+  SandboxOutcome,
+  ReceiptOverridePayload,
+  SandboxReleasePayload,
+} from './tape/entry.js'
+export type { SandboxPorts } from './loop/ports.js'
+export type { ReleaseQuery, ReleaseResult } from './session/service.js'
+export { receiptOverrideKey } from './tape/provenance.js'

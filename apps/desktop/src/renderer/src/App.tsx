@@ -37,6 +37,7 @@ function freshConversation(sessionId: string = crypto.randomUUID()): Conversatio
 export function App(): JSX.Element {
   const [conversation, setConversation] = useState<Conversation>(() => freshConversation())
   const [config, setConfig] = useState<Config>({
+    sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
     locale: 'auto',
     sidebarCollapsed: false,
     provider: null,

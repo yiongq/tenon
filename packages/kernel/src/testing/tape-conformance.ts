@@ -993,7 +993,8 @@ async function assertPinIsThisRunsOwnBatch(
   }
   const note = entries.findLast(
     (candidate) =>
-      (candidate.name === 'message/environment' ||
+      (candidate.name === 'message/sandbox_release' ||
+        candidate.name === 'message/environment' ||
         candidate.name === 'message/server_instructions') &&
       candidate.entryId > receipt.entryId &&
       candidate.entryId < entry.entryId,

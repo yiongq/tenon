@@ -17,6 +17,7 @@ import {
   parseProvenanceKey,
   permissionDecidedKey,
   profileSetKey,
+  receiptOverrideKey,
   runStartedKey,
   runTerminalKey,
   sessionStartKey,
@@ -259,4 +260,20 @@ describe('spec 02 key builders (§名字总表)', () => {
     expect(() => workspaceSetKey(INCARNATION, -1)).toThrow(/n must/)
     expect(() => toolTableKey(INCARNATION, -1, 'zhipu')).toThrow(/generation/)
   })
+})
+
+it('04: keys a receipt override by the call, action and violation ordinal', () => {
+  expect(receiptOverrideKey(RUN, 2, 3, 'allow-domain', 4)).toBe(
+    'tool:v1:override:33333333-3333-4333-8333-333333333333:2:3:allow-domain:4',
+  )
+  expect(receiptOverrideKey(RUN, 2, 3, 'allow-path', 4)).toBe(
+    'tool:v1:override:33333333-3333-4333-8333-333333333333:2:3:allow-path:4',
+  )
+  expect(receiptOverrideKey(RUN, 2, 3, 'rerun-unsandboxed', 0)).toBe(
+    'tool:v1:override:33333333-3333-4333-8333-333333333333:2:3:rerun-unsandboxed:0',
+  )
+  expect(() => receiptOverrideKey(RUN, 2, 3, 'allow-domain', -1)).toThrow(TapeProvenanceSyntaxError)
+  expect(() => receiptOverrideKey('not-a-run', 2, 3, 'allow-domain', 0)).toThrow(
+    TapeProvenanceSyntaxError,
+  )
 })

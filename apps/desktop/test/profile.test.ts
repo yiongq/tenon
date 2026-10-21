@@ -83,8 +83,84 @@ describe('desktop profiles', () => {
       ...before,
       customVendors: [],
       mcpServers: [],
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
     })
     expect(lines).toEqual([])
+  })
+
+  it('04 验收 27: a config.json from before 04 reads sandbox as the default and keeps the other keys', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    const before = {
+      locale: 'en',
+      sidebarCollapsed: true,
+      provider: { id: 'anthropic', modelId: 'chosen-model' },
+      providerConfig: { anthropic: { baseURL: 'https://api.example.com' } },
+      defaultModelByProfile: { chat: { id: 'anthropic', modelId: 'other-model' } },
+      lastWorkspaceFolders: ['/work/a'],
+      customVendors: [],
+      mcpServers: [],
+    }
+    await fs.writeFile(configPath(identity), JSON.stringify(before))
+    const lines: string[] = []
+    expect(await readConfig(fs, identity, (line) => lines.push(line))).toEqual({
+      ...before,
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+    })
+    expect(lines).toEqual([])
+  })
+
+  it('04 验收 27: a bad domain entry drops only itself', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({
+        locale: 'en',
+        sandbox: {
+          profile: 'read-only',
+          packageManagers: true,
+          allowedDomains: ['EXAMPLE.COM', '*.com', 'localhost:3000', 'example.com', 5],
+        },
+      }),
+    )
+    const lines: string[] = []
+    expect(await readConfig(fs, identity, (line) => lines.push(line))).toMatchObject({
+      locale: 'en',
+      sandbox: {
+        profile: 'read-only',
+        packageManagers: true,
+        allowedDomains: ['example.com', 'localhost:3000'],
+      },
+    })
+    expect(lines).toEqual([
+      '[config] sandbox.allowedDomains[1] dropped: invalid-domain',
+      '[config] sandbox.allowedDomains[4] dropped: invalid-domain',
+    ])
+  })
+
+  it('04 验收 27: an oversized allowlist keeps its first 256 entries and logs the truncation', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({
+        sandbox: {
+          profile: 'read-only',
+          packageManagers: true,
+          allowedDomains: Array.from({ length: 257 }, (_, i) => `d${i}.example.com`),
+        },
+      }),
+    )
+    const lines: string[] = []
+    const config = await readConfig(fs, identity, (line) => lines.push(line))
+    expect(config.sandbox.profile).toBe('read-only')
+    expect(config.sandbox.packageManagers).toBe(true)
+    expect(config.sandbox.allowedDomains).toHaveLength(256)
+    expect(config.sandbox.allowedDomains[0]).toBe('d0.example.com')
+    expect(config.sandbox.allowedDomains[255]).toBe('d255.example.com')
+    expect(config.sandbox.allowedDomains).not.toContain('d256.example.com')
+    expect(lines).toEqual(['[config] sandbox.allowedDomains truncated to 256 entries'])
   })
 
   it('lets one bad field cost that field and nothing else', async () => {
@@ -106,6 +182,7 @@ describe('desktop profiles', () => {
       lastWorkspaceFolders: [],
       customVendors: [],
       mcpServers: [],
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })

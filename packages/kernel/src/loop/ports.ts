@@ -95,7 +95,15 @@ export interface McpToolSource {
   readonly connection: McpConnection
 }
 
+export interface SandboxPorts {
+  /** Called synchronously before Bash wraps a command with this session's inherited domain grants. */
+  beforeWrap(q: { commandId: string; sessionId: string; hosts: readonly string[] }): void
+  /** A domain grant changed for the session most recently passed to beforeWrap. */
+  grantsChanged(q: { sessionId: string; hosts: readonly string[] }): void
+}
+
 export interface LoopPorts {
+  readonly sandbox?: SandboxPorts
   // 经 SessionService.bindLoop 交入
   readonly queue: {
     // desktop 的 queue.ts：主进程内存，退出即丢（H13、B4）

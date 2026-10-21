@@ -88,7 +88,7 @@ export type InspectorOutcome = {
 
 /** The default table's reason column (§内置工具的默认档位), computed before `decide()`. */
 export interface CallReason {
-  readonly reason: 'outside-workspace' | 'network' | 'command' | 'default' // 表里是「—」的行给 'default'，只作第 8 层兜底
+  readonly reason: 'outside-workspace' | 'network' | 'command' | 'elevated' | 'default' // 表里是「—」的行给 'default'，只作第 8 层兜底
   readonly facts: Readonly<Record<string, string>> // 该原因的必填键，另加 toolName；被拦时的 target 也从这里取
 }
 

@@ -49,6 +49,8 @@ import type {
   CompactionAnchorPayload,
   ContinuationPayload,
   EnvironmentPayload,
+  ReceiptOverridePayload,
+  SandboxReleasePayload,
   ServerInstructionsPayload,
   DispatchCommittedPayload,
   MessagePayload,
@@ -153,6 +155,8 @@ export interface TapePayloadByName {
   'view/assembled': ViewAssembledPayload
   'message/continuation': ContinuationPayload
   'message/environment': EnvironmentPayload
+  'message/sandbox_release': SandboxReleasePayload
+  'tool/receipt_override': ReceiptOverridePayload
   'message/server_instructions': ServerInstructionsPayload
   'tool/call': ToolCallPayload
   'tool/permission_decided': PermissionDecidedPayload

@@ -62,6 +62,8 @@ const PHASE_2_NAMES: ReadonlyArray<readonly [string, string, string]> = [
   ['view/assembled', 'view/event', 'runtime_event/required/ordinal'],
   ['message/continuation', 'message/message', 'message/required/0'],
   ['message/environment', 'message/message', 'message/required/0'],
+  ['message/sandbox_release', 'message/message', 'message/required/0'],
+  ['tool/receipt_override', 'tool/event', 'runtime_event/required/ordinal'],
   ['message/server_instructions', 'message/message', 'message/required/0'],
   ['tool/call', 'tool/tool_call', 'runtime_event/required/ordinal'],
   ['tool/permission_decided', 'tool/event', 'runtime_event/required/ordinal'],

@@ -39,18 +39,23 @@ describe('the desktop’s inspectors', () => {
     })
   })
 
-  it('02 不变量 17: keeps the answer source receipt-override as a literal nothing writes', () => {
-    // Overriding a block from its receipt ships with the first denying inspector (F9): until then
-    // the only mention is the member of `ApprovalResolvedPayload.via` on the Tape's type.
-    const mentions = [...sources('packages/kernel/src'), ...sources('apps/desktop/src')].flatMap(
-      (file) =>
+  it('02 不变量 17: keeps the receipt-override literals where nothing writes them', () => {
+    // Spec 04 §放行的记法 and 点名 (g): the `via` member of `ApprovalResolvedPayload` keeps no
+    // writer, and only `release` writes `tool/receipt_override`. Until plan step 11 lands that
+    // writer, both literals appear only in their type declarations and the name's registrations.
+    const mentions = (literal: string): string[] =>
+      [...sources('packages/kernel/src'), ...sources('apps/desktop/src')].flatMap((file) =>
         readFileSync(join(REPO, file), 'utf8')
           .split('\n')
-          .flatMap((line) =>
-            line.includes('receipt-override') ? [`${file}: ${line.trim()}`] : [],
-          ),
-    )
-    expect(mentions).toHaveLength(1)
-    expect(mentions[0]).toMatch(/^packages\/kernel\/src\/tape\/entry\.ts: via: 'card' \|/)
+          .flatMap((line) => (line.includes(literal) ? [`${file}: ${line.trim()}`] : [])),
+      )
+    expect(mentions("'receipt-override'")).toEqual([
+      "packages/kernel/src/tape/entry.ts: via: 'receipt-override'",
+      expect.stringMatching(/^packages\/kernel\/src\/tape\/entry\.ts: via: 'card' \|/),
+    ])
+    expect(mentions("'tool/receipt_override'")).toEqual([
+      "packages/kernel/src/tape/names.ts: name: 'tool/receipt_override',",
+      "packages/kernel/src/tape/projection.ts: 'tool/receipt_override': ReceiptOverridePayload",
+    ])
   })
 })

@@ -265,6 +265,20 @@ export function approvalResolvedKey(runId: string, requestSeq: number, ordinal: 
   return `tool:v1:approval:${callPart(runId, requestSeq, ordinal)}`
 }
 
+/** `tool:v1:override:<runId>:<requestSeq>:<i>:<action>:<violation>`. */
+export function receiptOverrideKey(
+  runId: string,
+  requestSeq: number,
+  ordinal: number,
+  action: 'allow-domain' | 'allow-path' | 'rerun-unsandboxed',
+  violation: number,
+): string {
+  if (!['allow-domain', 'allow-path', 'rerun-unsandboxed'].includes(action)) {
+    throw new TapeProvenanceSyntaxError(`unknown receipt action: ${String(action)}`)
+  }
+  return `tool:v1:override:${callPart(runId, requestSeq, ordinal)}:${action}:${ordinalPart('violation', violation)}`
+}
+
 /** `tool:v1:result:<runId>:<requestSeq>:<i>`. */
 export function toolResultKey(runId: string, requestSeq: number, ordinal: number): string {
   return `tool:v1:result:${callPart(runId, requestSeq, ordinal)}`
