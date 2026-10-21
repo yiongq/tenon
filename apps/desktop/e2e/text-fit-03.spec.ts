@@ -32,7 +32,7 @@ async function expectScrollableLabels(locator: Locator) {
   }
 }
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`03 验收 46: connector pane, form, grant and card fit in ${locale}`, async () => {
+  test(`presentation-r1 验收 1: connector pane, form, grant and card fit in ${locale}`, async () => {
     const fake = await startFakeAnthropic({
       replies: [callsReply(connectorCall('toolu_card', 'echo'))],
     })
@@ -176,7 +176,8 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await send(page, 'echo')
       const card = page.getByTestId('approval-card')
       await expect(card).toBeVisible()
-      await expectSingleLineUnclipped(card.getByTestId('reversibility-scale').locator('span'), 5)
+      await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
+      await expectSingleLineUnclipped(card.getByTestId('approval-undo'))
       await expectSingleLineUnclipped(card.getByTestId('approval-server'))
       await expectSingleLineUnclipped(card.locator('button'), 2)
       if (evidence)

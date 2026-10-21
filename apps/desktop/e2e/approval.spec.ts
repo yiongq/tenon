@@ -45,14 +45,18 @@ const RESPONSE_LANDED_MS = 500
 const COPY = {
   'zh-CN': {
     read: (path: string) => `读取 ${path}`,
-    reason: (path: string, workspace: string) => `${path} 在工作区（${workspace}）之外。`,
+    reason: '它不在这个任务的文件夹里。',
+    allow: '允许（只这一次）⏎',
+    undo: '只读，不会改动任何东西。',
     once: '只这一次',
     allowed: '已允许 · 只这一次',
     hint: '发送会取消上面待批的操作。',
   },
   en: {
     read: (path: string) => `Read ${path}`,
-    reason: (path: string, workspace: string) => `${path} is outside the workspace (${workspace}).`,
+    reason: "It is outside this task's folders.",
+    allow: 'Allow (Just this once)⏎',
+    undo: 'Read only: nothing changes.',
     once: 'Just this once',
     allowed: 'Allowed · Just this once',
     hint: 'Sending cancels the operation waiting above.',
@@ -60,7 +64,7 @@ const COPY = {
 } as const
 
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`a Read outside the workspace asks under its own row, collapses once allowed, and is redrawn after a restart (旧 214, ${locale})`, async () => {
+  test(`presentation-r1 验收 1: a Read outside the workspace asks under its own row, collapses once allowed, and is redrawn after a restart (旧 214, ${locale})`, async () => {
     const copy = COPY[locale]
     const folders = makeFolderTree('outside-read', {
       'ws/a.txt': 'alpha\n',
@@ -71,7 +75,6 @@ for (const locale of ['zh-CN', 'en'] as const) {
     const inside = join(folders.link, 'ws', 'a.txt')
     const outside = join(folders.link, 'outside', 'secret.txt')
     const realOutside = join(folders.real, 'outside', 'secret.txt')
-    const realWorkspace = join(folders.real, 'ws')
     fake = await startFakeAnthropic({
       replies: [
         callsReply(readCall('toolu_inside', inside), readCall('toolu_outside', outside)),
@@ -108,10 +111,11 @@ for (const locale of ['zh-CN', 'en'] as const) {
       // it ran without asking, and the card names the file by its real path.
       await expect(rows.first().getByTestId('tool-row-line')).toHaveText(copy.read(inside))
       await expect(anchored.getByTestId('approval-object')).toHaveText(realOutside)
-      await expect(anchored.getByTestId('approval-reason')).toHaveText(
-        copy.reason(realOutside, realWorkspace),
-      )
-      await expect(anchored.getByTestId('approval-scope')).toHaveText(copy.once)
+      await expect(anchored.getByTestId('approval-reason')).toHaveText(copy.reason)
+      await expect(anchored.getByTestId('approval-undo')).toHaveText(copy.undo)
+      await expect(anchored.getByTestId('approval-allow')).toHaveText(copy.allow)
+      await expect(anchored.getByTestId('approval-scope')).toHaveCount(0)
+      await expect(anchored.getByTestId('reversibility-scale')).toHaveCount(0)
       // Nothing of the outside file went out yet: one request so far.
       expect(server.requests).toHaveLength(1)
 
@@ -575,7 +579,7 @@ test('⏎ on 「允许」 allows; on 「拒绝」 it presses that button, which 
   }
 })
 
-test('the card writes what a path hides as visible escapes, in its object line and its reason (②′, E4)', async () => {
+test('presentation-r1 验收 2: the card escapes its object path without repeating it in the reason (②′, E4)', async () => {
   // A zero-width space and a right-to-left override: neither is drawn, and the second would turn
   // the rest of the name around. The card shows each as `\u{XXXX}`.
   const hidden = 'se​cret‮.txt'
@@ -597,9 +601,7 @@ test('the card writes what a path hides as visible escapes, in its object line a
     const card = page.getByTestId('approval-card')
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-object')).toHaveText(shown)
-    await expect(card.getByTestId('approval-reason')).toHaveText(
-      COPY.en.reason(shown, join(folders.real, 'ws')),
-    )
+    await expect(card.getByTestId('approval-reason')).toHaveText(COPY.en.reason)
     // The row above it reads the same (toolSentence escapes its slot).
     await expect(page.getByTestId('tool-row-line')).toHaveText(COPY.en.read(shown))
   } finally {

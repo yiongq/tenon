@@ -120,7 +120,7 @@ test('03 验收 28: two sessions share the same live process PID', async () => {
   }
 })
 
-test('03 验收 38/39/45: new-tool review affects next table; changed frozen definition shows card and scale', async () => {
+test('presentation-r1 验收 1: new-tool review affects next table; changed frozen definition shows card and consequence (03 验收 38/39/45)', async () => {
   const fake = await startFakeAnthropic({
     replies: [
       callsReply(connectorCall('toolu_add', 'add-tool')),
@@ -188,9 +188,11 @@ test('03 验收 38/39/45: new-tool review affects next table; changed frozen def
     await expect(card.getByTestId('approval-definition-changed')).toContainText(
       '总是允许这次不生效',
     )
-    await expect(card.locator('[aria-current="true"]')).toHaveText('未知')
-    await expect(card.getByTestId('reversibility-scale').locator('span')).toHaveCount(5)
-    await expect(card.getByTestId('reversibility-scale')).toHaveRole('group')
+    await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
+    await expect(card.getByTestId('approval-undo')).toHaveText(
+      '如果它改了东西，Tenon 没法替你撤回。',
+    )
+    await expect(card.getByTestId('approval-allow')).toHaveText('允许（只这一次）⏎')
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-deny').click()
     await expect(card).toBeHidden()

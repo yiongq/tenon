@@ -464,22 +464,25 @@
     },
     "reason": {
       "irreversible": {
-        "file": "{toolName} 对 {path} 的改动撤不回。",
-        "command": "{toolName} 运行的 {command} 撤不回。",
-        "tool": "{toolName} 的改动撤不回。",
-        "network": "{toolName} 的改动撤不回。"
+        "file": "做了就撤不回，所以先问你。",
+        "command": "做了就撤不回，所以先问你。",
+        "tool": "做了就撤不回，所以先问你。",
+        "network": "做了就撤不回，所以先问你。"
       },
-      "outside-workspace": "{path} 在工作区（{workspace}）之外。",
-      "network": "{toolName} 会把数据发往 {host}。",
+      "outside-workspace": "它不在这个任务的文件夹里。",
+      "network": {
+        "search": "搜索词会发到这台电脑之外。",
+        "url": "网址会发给 {host}。"
+      },
       "elevated": "这条命令要提升权限：{command}",
-      "default": "{toolName} 需要你批准。",
-      "policy": "组织要求 {toolName} 先经批准。",
+      "default": "这一步要你同意。",
+      "policy": "你的组织要求这一步先经你同意。",
       "flagged": {
-        "exfiltration": "{toolName} 可能把你的数据发往别处。",
-        "inspector-failed": "{toolName} 的权限检查没有完成，所以来问你。"
+        "exfiltration": "这次请求可能把你的数据带到别处。",
+        "inspector-failed": "Tenon 没能确认这一步是否安全。"
       },
-      "command": "每条命令都先问：在 {cwd} 运行 {command}。",
-      "interaction-required": "{toolName} 需要你参与。"
+      "command": "运行命令前要你同意。",
+      "interaction-required": "这个连接器要求你亲自确认。"
     },
     "irreversible": "撤不回。",
     "allow": "允许",
@@ -508,7 +511,19 @@
       "allowed": "已允许 · {scope}",
       "denied": "已拒绝"
     },
-    "notRun": "未执行"
+    "notRun": "未执行",
+    "undo": {
+      "read-only": "只读，不会改动任何东西。",
+      "revertible": "Tenon 可以替你撤回这次改动。",
+      "snapshotted": "Tenon 保存了改动前的副本。",
+      "unknown": "如果它改了东西，Tenon 没法替你撤回。",
+      "unknownFile": "Tenon 没法替你撤回这次改动。",
+      "network": {
+        "search": "搜索词会发到这台电脑之外。",
+        "url": "网址会发给 {host}。"
+      }
+    },
+    "allowScoped": "允许（{scope}）"
   },
   "failure": {
     "effects": {
@@ -736,7 +751,6 @@
     "up": "上移",
     "down": "下移",
     "secretField": "{name}（密钥）",
-    "reversibilityScale": "可逆性",
     "effectMarker": "副作用：{effect} · {reversibility}",
     "era": {
       "legacy": "旧代",

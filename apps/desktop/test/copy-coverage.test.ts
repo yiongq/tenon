@@ -140,13 +140,15 @@ interface Expectation {
   readonly args: readonly string[]
   /** What the entry is for, in a failure message. */
   readonly what: string
+  /** Reasons may use any subset of their required facts (presentation-r1). */
+  readonly subset?: boolean
 }
 
 /** One line per entry that is missing, empty or names other arguments; `[]` when all is well. */
 function problems(expected: readonly Expectation[]): string[] {
   const found: string[] = []
   for (const locale of SUPPORTED_LOCALES) {
-    for (const { key, args, what } of expected) {
+    for (const { key, args, what, subset } of expected) {
       const message = lookup(locale, key)
       if (typeof message !== 'string' || message.trim() === '') {
         found.push(`${locale}: ${key} is missing or empty (${what})`)
@@ -154,7 +156,9 @@ function problems(expected: readonly Expectation[]): string[] {
       }
       const named = argumentsOf(message)
       const wanted = [...new Set(args)].toSorted()
-      if (named.join(',') !== wanted.join(',')) {
+      if (
+        subset ? named.some((name) => !wanted.includes(name)) : named.join(',') !== wanted.join(',')
+      ) {
         found.push(
           `${locale}: ${key} names {${named.join(', ')}}, wants {${wanted.join(', ')}} (${what})`,
         )
@@ -206,10 +210,9 @@ describe('the approval card copy', () => {
     expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
   })
 
-  it('has the 「为什么停」 sentence of every reason under every kind, naming its required facts', () => {
-    // §最小审批卡 ③: `confirm.reason.<reason>`; `irreversible` by kind (it needs `path` under
-    // `file` and `command` under `command`); `flagged` by category, counted once for each — the
-    // category picks the sentence, so the sentence itself names the reason's other keys.
+  it('has the 「为什么停」 sentence of every reason under every kind, naming only a subset of its required facts', () => {
+    // Presentation-r1 keeps every reason in the catalogue, including unrendered ones.
+    // Network splits by target; only its URL sentence needs a slot (facts.host).
     const expected: Expectation[] = []
     for (const kind of KINDS) {
       for (const reason of REASONS) {
@@ -224,26 +227,55 @@ describe('the approval card copy', () => {
               what: `${kind}, category ${category}`,
             })
           }
+        } else if (reason === 'network') {
+          for (const target of ['search', 'url'])
+            expected.push({
+              key: `confirm.reason.network.${target}`,
+              args: required,
+              what: `${kind}, ${target}`,
+            })
         } else {
           expected.push({ key: `confirm.reason.${reason}`, args: required, what: kind })
         }
       }
     }
-    // 4 kinds × (7 plain reasons + irreversible + flagged × 2 categories).
-    expect(expected).toHaveLength(40)
-    expect(problems(expected)).toEqual([])
-  })
-
-  it('counts the extra keys of irreversible under file and command', () => {
-    // Plan step 20 旧 6: the required keys of `irreversible` differ by kind, so the sentence does.
-    expect(requiredFactKeys('irreversible', 'file').toSorted()).toEqual(['path', 'toolName'])
-    expect(requiredFactKeys('irreversible', 'command').toSorted()).toEqual(['command', 'toolName'])
+    // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 2).
+    expect(expected).toHaveLength(44)
+    expect(new Set(expected.map(({ key }) => key)).size).toBe(14)
     expect(
-      problems([{ key: 'confirm.reason.irreversible.file', args: ['path', 'toolName'], what: '' }]),
+      problems(expected.map(({ key, args, what }) => ({ key, args, what, subset: true }))),
     ).toEqual([])
     expect(
       problems([
-        { key: 'confirm.reason.irreversible.command', args: ['command', 'toolName'], what: '' },
+        { key: 'confirm.reason.network.search', args: [], what: 'search' },
+        { key: 'confirm.reason.network.url', args: ['host'], what: 'URL facts.host' },
+      ]),
+    ).toEqual([])
+  })
+
+  it('counts the extra keys of irreversible under file and command', () => {
+    // The required facts still differ by kind; presentation-r1 retains slot-free copy for both.
+    expect(requiredFactKeys('irreversible', 'file').toSorted()).toEqual(['path', 'toolName'])
+    expect(requiredFactKeys('irreversible', 'command').toSorted()).toEqual(['command', 'toolName'])
+    expect(problems([{ key: 'confirm.reason.irreversible.file', args: [], what: '' }])).toEqual([])
+    expect(problems([{ key: 'confirm.reason.irreversible.command', args: [], what: '' }])).toEqual(
+      [],
+    )
+  })
+
+  it('has an undo sentence for every reversibility', () => {
+    const expected = reversibilitySchema.options.map((value) => ({
+      key: value === 'irreversible' ? 'confirm.irreversible' : `confirm.undo.${value}`,
+      args: [],
+      what: value,
+    }))
+    expect(
+      problems([
+        ...expected,
+        { key: 'confirm.undo.unknownFile', args: [], what: 'a file change' },
+        { key: 'confirm.undo.network.search', args: [], what: 'online search' },
+        { key: 'confirm.undo.network.url', args: ['host'], what: 'online URL' },
+        { key: 'confirm.allowScoped', args: ['scope'], what: 'scope inside the allow button' },
       ]),
     ).toEqual([])
   })

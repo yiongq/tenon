@@ -464,22 +464,25 @@
     },
     "reason": {
       "irreversible": {
-        "file": "{toolName} makes a change to {path} that can’t be undone.",
-        "command": "{toolName} runs {command}, which can’t be undone.",
-        "tool": "{toolName} makes a change that can’t be undone.",
-        "network": "{toolName} makes a change that can’t be undone."
+        "file": "This can't be undone, so Tenon asks first.",
+        "command": "This can't be undone, so Tenon asks first.",
+        "tool": "This can't be undone, so Tenon asks first.",
+        "network": "This can't be undone, so Tenon asks first."
       },
-      "outside-workspace": "{path} is outside the workspace ({workspace}).",
-      "network": "{toolName} sends data to {host}.",
+      "outside-workspace": "It is outside this task's folders.",
+      "network": {
+        "search": "The search words leave this computer.",
+        "url": "The address is sent to {host}."
+      },
       "elevated": "This command asks for elevated rights: {command}",
-      "default": "{toolName} needs your approval.",
-      "policy": "Your organization asks for approval before {toolName}.",
+      "default": "This step needs your OK.",
+      "policy": "Your organization asks for your OK on this step.",
       "flagged": {
-        "exfiltration": "{toolName} might send your data somewhere else.",
-        "inspector-failed": "A permission check on {toolName} did not finish, so Tenon is asking you."
+        "exfiltration": "This request might take your data elsewhere.",
+        "inspector-failed": "Tenon couldn't check that this step is safe."
       },
-      "command": "Every command asks first: {command} in {cwd}.",
-      "interaction-required": "{toolName} needs you to take part."
+      "command": "Running a command needs your OK.",
+      "interaction-required": "This connector wants you to confirm it yourself."
     },
     "irreversible": "This can’t be undone.",
     "allow": "Allow",
@@ -508,7 +511,19 @@
       "allowed": "Allowed · {scope}",
       "denied": "Denied"
     },
-    "notRun": "Not run"
+    "notRun": "Not run",
+    "undo": {
+      "read-only": "Read only: nothing changes.",
+      "revertible": "Tenon can undo this change.",
+      "snapshotted": "Tenon saved a copy before this change.",
+      "unknown": "If this changes anything, Tenon can't undo it.",
+      "unknownFile": "Tenon can't undo this change for you.",
+      "network": {
+        "search": "The search words leave this computer.",
+        "url": "The address is sent to {host}."
+      }
+    },
+    "allowScoped": "Allow ({scope})"
   },
   "failure": {
     "effects": {
@@ -736,7 +751,6 @@
     "up": "Move up",
     "down": "Move down",
     "secretField": "{name} (secret)",
-    "reversibilityScale": "Reversibility",
     "effectMarker": "Side effects: {effect} · {reversibility}",
     "era": {
       "legacy": "Legacy",

@@ -120,13 +120,9 @@ describe('tx', () => {
   it('reads a key built from data, with and without slots', () => {
     expect(tx(t.en, 'confirm.scope.once')).toBe('Just this once')
     expect(tx(t['zh-CN'], 'confirm.scope.once')).toBe('只这一次')
-    const facts = { toolName: 'Write', path: '/w/a.txt' }
-    expect(tx(t.en, 'confirm.reason.irreversible.file', facts)).toBe(
-      'Write makes a change to /w/a.txt that can’t be undone.',
-    )
-    expect(tx(t['zh-CN'], 'confirm.reason.irreversible.file', facts)).toBe(
-      'Write 对 /w/a.txt 的改动撤不回。',
-    )
+    const facts = { cwd: '/w' }
+    expect(tx(t.en, 'confirm.cwd', facts)).toBe('in /w')
+    expect(tx(t['zh-CN'], 'confirm.cwd', facts)).toBe('位于 /w')
     expect(errors).toEqual([])
   })
 

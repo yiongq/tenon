@@ -61,7 +61,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     }
   })
 
-  test(`step 20’s components fit at 1280x800 in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 1: step 20’s components fit at 1280x800 in ${locale} (旧 223)`, async () => {
     const folders = makeFolderTree(`fit-02-${locale}`, {
       'ws/a.txt': 'alpha\n',
       'outside/one.txt': 'one\n',
@@ -114,7 +114,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(notice).toHaveAttribute('data-source', 'protected')
       // Its first line names the file (content); the second is interface words only.
       await expectSingleLineUnclipped(notice.locator('p').last())
-      for (const part of ['approval-title', 'approval-scope', 'approval-deny', 'approval-allow']) {
+      for (const part of ['approval-title', 'approval-undo', 'approval-deny', 'approval-allow']) {
         // oxlint-disable-next-line no-await-in-loop -- one element at a time, so a failure names it
         await expectSingleLineUnclipped(card.getByTestId(part))
       }
@@ -182,7 +182,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     }
   })
 
-  test(`step 22’s write and irreversible cards fit at 1280x800 in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 1: step 22’s write and irreversible cards fit at 1280x800 in ${locale} (旧 223)`, async () => {
     const folders = makeFolderTree(`fit-22-${locale}`, { 'ws/a.txt': 'alpha\n' })
     tree = folders
     const ws = join(folders.real, 'ws')
@@ -211,7 +211,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
         'approval-title',
         'approval-change-toggle',
         'approval-change-note',
-        'approval-scope',
+        'approval-undo',
         'approval-deny',
         'approval-allow',
       ]) {
@@ -222,14 +222,13 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await card.getByTestId('approval-deny').click()
       await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
 
-      // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and a bare 「允许」. Denied, nothing runs.
+      // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and 「允许（只这一次）」. Denied, nothing runs.
       await send(page, 'delete a')
       await expect(card).toHaveCount(1)
       await expect(card.getByTestId('approval-irreversible')).toHaveCount(1)
       for (const part of [
         'approval-title',
         'approval-irreversible',
-        'approval-scope',
         'approval-deny',
         'approval-allow',
       ]) {

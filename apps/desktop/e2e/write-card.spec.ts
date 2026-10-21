@@ -233,7 +233,7 @@ test('two writes in one reply: denying the first turns the stacked row 「未执
   }
 })
 
-test('a workspace Write card: the path, the change collapsed and then plain text, 「本会话」 by 「允许」; the same file’s next Write asks nothing, an Edit of it does (旧 215, acceptance 36)', async () => {
+test('presentation-r1 验收 3: a workspace Write card: the path, the change collapsed and then plain text, 「允许（本会话）」; the same file’s next Write asks nothing, an Edit of it does (旧 215, acceptance 36)', async () => {
   const folders = makeFolderTree('write-card', { 'ws/keep.txt': 'keep\n' })
   tree = folders
   const ws = join(folders.real, 'ws')
@@ -261,10 +261,12 @@ test('a workspace Write card: the path, the change collapsed and then plain text
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-title')).toHaveText('修改这个文件？')
     await expect(card.getByTestId('approval-object')).toHaveText(file)
-    await expect(card.getByTestId('approval-reason')).toHaveText('Write 需要你批准。')
+    await expect(card.getByTestId('approval-reason')).toHaveCount(0)
+    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 没法替你撤回这次改动。')
+    await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
     await expect(card.getByTestId('approval-irreversible')).toHaveCount(0)
-    // 「本会话」 beside 「允许」: this file, this session.
-    await expect(card.getByTestId('approval-scope')).toHaveText('本会话')
+    // The allow button says this file, this session.
+    await expect(card.getByTestId('approval-allow')).toHaveText('允许（本会话）⏎')
     expect((await waitingApproval(page)).allowScope).toBe('session')
     // The change starts collapsed.
     const toggle = card.getByTestId('approval-change-toggle')
@@ -295,7 +297,7 @@ test('a workspace Write card: the path, the change collapsed and then plain text
     await expect(rows.nth(1).getByTestId('tool-row-closure')).toHaveCount(0)
 
     // The Edit's change: old_string and new_string, each under its label.
-    await expect(edit.getByTestId('approval-scope')).toHaveText('本会话')
+    await expect(edit.getByTestId('approval-allow')).toHaveText('允许（本会话）⏎')
     await edit.getByTestId('approval-change-toggle').click()
     await expect(edit.getByTestId('approval-change-label')).toHaveText(['把这段', '改成'])
     await expect(edit.getByTestId('approval-change-text')).toHaveText(['v2', 'v3'])
@@ -310,7 +312,7 @@ test('a workspace Write card: the path, the change collapsed and then plain text
   }
 })
 
-test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
+test('presentation-r1 验收 3: a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
   test.setTimeout(120_000)
   const folders = makeFolderTree('irreversible', { 'ws/a.txt': 'alpha\n', 'ws/b.txt': 'beta\n' })
   tree = folders
@@ -344,15 +346,13 @@ test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in i
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-title')).toHaveText('运行这条命令？')
     await expect(card.getByTestId('approval-object')).toHaveText(`rm a.txt位于 ${ws}`)
-    await expect(card.getByTestId('approval-reason')).toHaveText(
-      `每条命令都先问：在 ${ws} 运行 rm a.txt。`,
-    )
+    await expect(card.getByTestId('approval-reason')).toHaveCount(0)
     // The sentence of its own, and the buttons 「拒绝 ⏎ Esc」「允许」, the second with no key hint.
     await expect(card.getByTestId('approval-irreversible')).toHaveText('撤不回。')
     await expect(card.getByTestId('approval-deny')).toHaveText('拒绝⏎ Esc')
-    await expect(card.getByTestId('approval-allow')).toHaveText('允许')
+    await expect(card.getByTestId('approval-allow')).toHaveText('允许（只这一次）')
     await expect(card.getByTestId('approval-allow-keys')).toHaveCount(0)
-    await expect(card.getByTestId('approval-scope')).toHaveText('只这一次')
+    await expect(card.getByTestId('approval-scope')).toHaveCount(0)
     // No change to show: the command on the object line is the whole of it.
     await expect(card.getByTestId('approval-change-toggle')).toHaveCount(0)
     const pending = await waitingApproval(page)
