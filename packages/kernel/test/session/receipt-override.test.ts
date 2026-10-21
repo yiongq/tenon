@@ -16,7 +16,9 @@ import {
   permissionDecidedKey,
   profileSetKey,
   messageRetractedKey,
+  compactionAnchorKey,
 } from '../../src/tape/provenance.js'
+import { project } from '../../src/tape/projection.js'
 import { sandboxDomainHosts } from '../../src/permission/sandbox-release.js'
 import { decisionEntry, judgeCall, readSessionEntries } from '../../src/loop/batch.js'
 import { frozenBatchOf, rejudgeWaiting, waitingOf } from '../../src/loop/answer.js'
@@ -172,19 +174,35 @@ async function harness(profile: 'read-only' | 'workspace-write' = 'workspace-wri
 }
 type Harness = Awaited<ReturnType<typeof harness>>
 
+async function checkpoint(h: Harness) {
+  done(h)
+  const sent = await h.service.send({ sessionId: SESSION, text: 'next checkpoint', origin: null })
+  if (sent.status !== 'started') throw new Error(sent.status)
+  expect((await h.loop.runEnded({ runId: sent.runId })).reason).toEqual({ code: 'completed' })
+}
+
+async function releaseNotes(h: Harness) {
+  return (await readSessionEntries(h.tape, SESSION)).filter(
+    (entry) => entry.name === 'message/sandbox_release',
+  )
+}
+
 /** A historical receipt with its original command/cwd, independent of the current workspace. */
 async function receipt(
   h: Harness,
   sandbox: SandboxOutcome | null = { violations: [domain, path], more: 0, anyProtected: false },
   sessionId = SESSION,
   name = 'Bash',
+  options: { command?: string; runId?: string } = {},
 ) {
   const head = await h.tape.head(sessionId)
   if (!head) throw new Error('missing session')
   const ref = { ordinal: 0, providerToolCallId: 'receipt-call' }
+  const commandText = options.command ?? COMMAND
+  const runId = options.runId ?? RECEIPT_RUN
   const fields = {
     sourceType: 'runtime_event' as const,
-    sourceId: RECEIPT_RUN,
+    sourceId: runId,
     sourceSeq: 0,
     createdAt: 1,
   }
@@ -194,32 +212,32 @@ async function receipt(
     entries: [
       h.tape.writer('tool').entry('tool/call', {
         ...fields,
-        provenanceKey: toolCallKey(RECEIPT_RUN, 0, 0),
+        provenanceKey: toolCallKey(runId, 0, 0),
         payload: {
           ...ref,
           messageId: MESSAGE,
           name,
-          input: { command: COMMAND },
+          input: { command: commandText },
           argsHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         },
       }),
       h.tape.writer('tool').entry('tool/permission_decided', {
         ...fields,
-        provenanceKey: permissionDecidedKey(RECEIPT_RUN, 0, 0),
+        provenanceKey: permissionDecidedKey(runId, 0, 0),
         payload: {
           ...ref,
           argsHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           reversibility: 'unknown',
           record: { verdict: 'allow', decidedBy: 'user-grant', steps: [] },
           summary: { verdict: 'allow', code: 'session-allowed', facts: { toolName: 'Bash' } },
-          target: { type: 'command', command: COMMAND, cwd: WORK },
+          target: { type: 'command', command: commandText, cwd: WORK },
           policyVersion: 'test',
           writer: { by: 'resolver' },
         },
       }),
       h.tape.writer('execution').entry('execution/tool_outcome', {
         ...fields,
-        provenanceKey: toolOutcomeKey(RECEIPT_RUN, 0, 0),
+        provenanceKey: toolOutcomeKey(runId, 0, 0),
         payload: {
           ...ref,
           state: 'completed',
@@ -238,7 +256,8 @@ const release = (
   action: 'allow-domain' | 'allow-path' | 'rerun-unsandboxed',
   target: string | null,
   sessionId = SESSION,
-) => service.release({ sessionId, callKey: CALL, action, target })
+  callKey = CALL,
+) => service.release({ sessionId, callKey, action, target })
 const done = (h: Harness) => h.provider.script(scriptedTurn({ deltas: ['Done.'] }))
 function scriptCommand(h: Harness, text = COMMAND) {
   h.provider.script([
@@ -1090,5 +1109,346 @@ describe('04 验收 23: one-off path releases', () => {
     await h.service.resetSession(SESSION)
     const j = await judged(h)
     expect(j.kind === 'judged' && j.sandbox?.override).toBeUndefined()
+  })
+})
+
+describe('04 验收 24: sandbox release notes', () => {
+  it('04 验收 24: a one-off release bound or expired before the next check point is not announced', async () => {
+    await Promise.all(
+      (
+        [
+          {
+            action: 'allow-path',
+            target: '/outside/file.txt',
+            binding: {
+              key: 'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:allow-path:1',
+              action: 'allow-path',
+              path: '/outside/file.txt',
+            },
+          },
+          {
+            action: 'rerun-unsandboxed',
+            target: null,
+            binding: {
+              key: 'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:rerun-unsandboxed:0',
+              action: 'rerun-unsandboxed',
+            },
+          },
+        ] as const
+      ).map(async (scenario) => {
+        const h = await harness()
+        await command(h)
+        await answer(h)
+        await receipt(h)
+        let clicked = false
+        h.during(async () => {
+          if (clicked) return
+          clicked = true
+          expect(await release(h.service, scenario.action, scenario.target)).toEqual({
+            status: 'released',
+          })
+        })
+        scriptCommand(h)
+        scriptCommand(h)
+        if (scenario.action === 'allow-path') done(h)
+        const sent = await h.service.send({ sessionId: SESSION, text: 'run twice', origin: null })
+        if (sent.status !== 'started') throw new Error(sent.status)
+        const ended = await h.loop.runEnded({ runId: sent.runId })
+        expect(ended.reason).toEqual(
+          scenario.action === 'allow-path'
+            ? { code: 'completed' }
+            : { code: 'paused', waitingFor: 'approval' },
+        )
+        // The second call binds the release in the very Run whose first call received the click.
+        const entries = await readSessionEntries(h.tape, SESSION)
+        expect(
+          entries
+            .filter(
+              (entry) => entry.name === 'tool/permission_decided' && entry.sourceId === sent.runId,
+            )
+            .flatMap(
+              (entry) => (entry.payload as PermissionDecidedPayload).sandbox?.override ?? [],
+            ),
+        ).toEqual([scenario.binding])
+        if (scenario.action === 'rerun-unsandboxed') await answer(h)
+        expect(await releaseNotes(h)).toEqual([])
+        await checkpoint(h)
+        expect(await releaseNotes(h)).toEqual([])
+      }),
+    )
+  })
+
+  it('04 验收 24: the next check point writes one sandbox_release listing the unannounced releases as JSON strings', async () => {
+    const h = await harness()
+    await receipt(
+      h,
+      {
+        violations: [domain, { ...path, target: '/outside/a"b\\{command}.txt' }],
+        more: 0,
+        anyProtected: false,
+      },
+      SESSION,
+      'Bash',
+      { command: 'echo "quoted"\\\n{path}' },
+    )
+    await release(h.service, 'allow-domain', 'registry.example.com')
+    await release(h.service, 'allow-path', '/outside/a"b\\{command}.txt')
+    await release(h.service, 'rerun-unsandboxed', null)
+    expect(await releaseNotes(h)).toEqual([])
+    await checkpoint(h)
+    const notes = await releaseNotes(h)
+    expect(notes).toHaveLength(1)
+    expect(notes[0]?.payload).toEqual({
+      messageId: expect.any(String),
+      revision: 0,
+      role: 'user',
+      status: 'complete',
+      content: [
+        {
+          type: 'text',
+          text: '<sandbox_release>\nThe user granted the following permissions:\nCommands may connect to "registry.example.com" for this session.\nThe next call with the same command and working directory may also write to "/outside/a\\"b\\\\{command}.txt", once, for command "echo \\"quoted\\"\\\\\\n{path}".\nThe next call with the same command and working directory may run outside the sandbox, once, after user confirmation, for command "echo \\"quoted\\"\\\\\\n{path}".\n</sandbox_release>',
+        },
+      ],
+      overrides: [
+        'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:allow-domain:0',
+        'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:allow-path:1',
+        'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:rerun-unsandboxed:0',
+      ],
+    })
+    expect(notes[0]?.sourceType).toBe('message')
+    expect(notes[0]?.sourceId).toBe(notes[0]?.payload['messageId'])
+    expect(notes[0]?.sourceSeq).toBe(0)
+    expect(notes[0]?.provenanceKey).toBe(`message:v1:${notes[0]?.sourceId}:0`)
+    await checkpoint(h)
+    Object.assign(h, h.serviceBound())
+    await checkpoint(h)
+    expect(await releaseNotes(h)).toHaveLength(1)
+
+    await receipt(
+      h,
+      { violations: [{ ...domain, target: 'late.example.com' }], more: 0, anyProtected: false },
+      SESSION,
+      'Bash',
+      { runId: MESSAGE },
+    )
+    await release(h.service, 'allow-domain', 'late.example.com', SESSION, `${MESSAGE}:0:0`)
+    await checkpoint(h)
+    const added = await releaseNotes(h)
+    expect(added).toHaveLength(2)
+    expect(added[1]?.payload['overrides']).toEqual([
+      'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2194:0:0:allow-domain:0',
+    ])
+    expect(added[1]?.payload['content']).toEqual([
+      {
+        type: 'text',
+        text: '<sandbox_release>\nThe user granted the following permissions:\nCommands may connect to "late.example.com" for this session.\n</sandbox_release>',
+      },
+    ])
+  })
+
+  it('04 验收 24: it is a user message in the next request and is not rendered', async () => {
+    const h = await harness()
+    await command(h)
+    await answer(h)
+    await receipt(h)
+    h.during(async () => {
+      await release(h.service, 'allow-domain', 'registry.example.com')
+    })
+    const before = h.provider.requests.length
+    await command(h, true)
+    expect(await releaseNotes(h)).toEqual([])
+    // With no queued user message, neither the tool batch nor its following request is a checkpoint.
+    expect(
+      JSON.stringify(
+        h.provider.requests
+          .slice(before)
+          .map((request) => (request.body as { messages: unknown }).messages),
+      ),
+    ).not.toContain('<sandbox_release>')
+    await checkpoint(h)
+    const body = h.provider.requests.at(-1)?.body as {
+      messages: Array<{ role: string; content: Array<{ type: string; text?: string }> }>
+    }
+    expect(
+      body.messages.filter((message) =>
+        message.content.some((block) => block.text?.includes('<sandbox_release>')),
+      ),
+    ).toEqual([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<sandbox_release>\nThe user granted the following permissions:\nCommands may connect to "registry.example.com" for this session.\n</sandbox_release>',
+          },
+        ],
+      },
+    ])
+    const note = (await releaseNotes(h))[0]!
+    expect(project(note)).toEqual([])
+    expect(
+      (await h.store.listMessages({ sessionId: SESSION, limit: 1000 })).some(
+        (row) => row.messageId === note.payload['messageId'],
+      ),
+    ).toBe(false)
+    expect(JSON.stringify(h.loop.recorded)).not.toContain('<sandbox_release>')
+    expect(
+      h.loop.recorded.some(
+        (event) => event.type === 'user-message' && event.messageId === note.payload['messageId'],
+      ),
+    ).toBe(false)
+
+    await receipt(
+      h,
+      { violations: [{ ...domain, target: 'late.example.com' }], more: 0, anyProtected: false },
+      SESSION,
+      'Bash',
+      { runId: MESSAGE },
+    )
+    h.during(async () => {
+      await release(h.service, 'allow-domain', 'late.example.com', SESSION, `${MESSAGE}:0:0`)
+      expect(
+        (await h.service.send({ sessionId: SESSION, text: 'queued checkpoint', origin: null }))
+          .status,
+      ).toBe('queued')
+    })
+    await command(h, true)
+    const facts = await readSessionEntries(h.tape, SESSION)
+    const queued = facts.findIndex(
+      (entry) =>
+        entry.name === 'message/user' &&
+        JSON.stringify(entry.payload['content']).includes('queued checkpoint'),
+    )
+    expect(queued).toBeGreaterThan(0)
+    expect(facts[queued + 1]?.name).toBe('message/sandbox_release')
+    expect(facts[queued + 1]?.payload['overrides']).toEqual([
+      'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2194:0:0:allow-domain:0',
+    ])
+    expect(JSON.stringify(h.provider.requests.at(-1)?.body)).toContain(
+      'Commands may connect to \\"late.example.com\\" for this session.',
+    )
+  })
+
+  it('04 验收 24: after compaction the still-valid ones are written again', async () => {
+    const h = await harness()
+    await command(h)
+    await answer(h)
+    await receipt(h)
+    await release(h.service, 'allow-path', '/outside/file.txt')
+    await checkpoint(h) // This unbound path expires at this Run's terminal.
+    await receipt(
+      h,
+      {
+        violations: [domain, { ...path, target: '/outside/valid.txt' }],
+        more: 0,
+        anyProtected: false,
+      },
+      SESSION,
+      'Bash',
+      { runId: MESSAGE },
+    )
+    h.during(async () => {
+      await release(h.service, 'allow-domain', 'registry.example.com', SESSION, `${MESSAGE}:0:0`)
+      await release(h.service, 'allow-path', '/outside/valid.txt', SESSION, `${MESSAGE}:0:0`)
+      await release(h.service, 'rerun-unsandboxed', null, SESSION, `${MESSAGE}:0:0`)
+      await h.service.send({ sessionId: SESSION, text: 'announce during this Run', origin: null })
+    })
+    await command(h, true)
+    expect(await releaseNotes(h)).toHaveLength(2)
+    expect((await bindJudgement(h)).sandbox?.override?.action).toBe('rerun-unsandboxed')
+    // Persist the compaction boundary directly: all old release messages leave the context.
+    const head = (await h.tape.head(SESSION))!
+    await h.tape.writer('tool').write({
+      sessionId: SESSION,
+      incarnationId: head.incarnationId,
+      fact: {
+        name: 'tool/approval_resolved',
+        fields: {
+          sourceType: 'runtime_event',
+          sourceId: RECEIPT_RUN,
+          sourceSeq: 1,
+          provenanceKey: approvalResolvedKey(RECEIPT_RUN, 1, 0),
+          createdAt: 2,
+          payload: {
+            ordinal: 0,
+            providerToolCallId: 'binding',
+            outcome: 'denied',
+            via: 'card',
+            decisionKey: permissionDecidedKey(RECEIPT_RUN, 1, 0),
+            grant: null,
+            writer: { by: 'resolver' },
+          },
+        },
+      },
+    })
+    const old = await readSessionEntries(h.tape, SESSION)
+    await h.tape.writer('compaction').write({
+      sessionId: SESSION,
+      incarnationId: head.incarnationId,
+      fact: {
+        name: 'compaction/anchor',
+        fields: {
+          sourceType: 'runtime_event',
+          sourceId: RECEIPT_RUN,
+          sourceSeq: 10,
+          provenanceKey: compactionAnchorKey(RECEIPT_RUN, 10),
+          createdAt: 2,
+          payload: {
+            keepFromEntryId: old.at(-1)!.entryId + 1,
+            coversThroughEntryId: old.at(-1)!.entryId,
+            summary: 'Earlier conversation summarized.',
+            summarizer: { providerId: 'anthropic', modelId: 'release-model' },
+            trigger: { code: 'threshold', estimatedInputTokens: 160000, thresholdTokens: 150000 },
+            generation: 1,
+          },
+        },
+      },
+    })
+    await checkpoint(h)
+    const notes = await releaseNotes(h)
+    expect(notes).toHaveLength(3)
+    expect(notes[2]?.payload['overrides']).toEqual([
+      'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2194:0:0:allow-domain:0',
+      'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2194:0:0:allow-path:1',
+    ])
+    expect(notes[2]?.payload['content']).toEqual([
+      {
+        type: 'text',
+        text: '<sandbox_release>\nThe user granted the following permissions:\nCommands may connect to "registry.example.com" for this session.\nThe next call with the same command and working directory may also write to "/outside/valid.txt", once, for command "echo hello".\n</sandbox_release>',
+      },
+    ])
+    const request = JSON.stringify(h.provider.requests.at(-1)?.body)
+    expect(request).toContain('Earlier conversation summarized.')
+    expect(request).toContain('/outside/valid.txt')
+    expect(request).not.toContain('/outside/file.txt')
+    expect(request).not.toContain('after user confirmation')
+    // A later compaction that retains the note must not announce the domain a second time.
+    await h.tape.writer('compaction').write({
+      sessionId: SESSION,
+      incarnationId: head.incarnationId,
+      fact: {
+        name: 'compaction/anchor',
+        fields: {
+          sourceType: 'runtime_event',
+          sourceId: RECEIPT_RUN,
+          sourceSeq: 11,
+          provenanceKey: compactionAnchorKey(RECEIPT_RUN, 11),
+          createdAt: 3,
+          payload: {
+            keepFromEntryId: notes[2]!.entryId,
+            coversThroughEntryId: notes[2]!.entryId - 1,
+            summary: 'Earlier conversation summarized again.',
+            summarizer: { providerId: 'anthropic', modelId: 'release-model' },
+            trigger: { code: 'threshold', estimatedInputTokens: 160000, thresholdTokens: 150000 },
+            generation: 2,
+          },
+        },
+      },
+    })
+    await checkpoint(h)
+    expect(await releaseNotes(h)).toHaveLength(3)
+    await h.service.resetSession(SESSION)
+    await checkpoint(h)
+    expect(await releaseNotes(h)).toEqual([])
   })
 })

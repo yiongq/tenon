@@ -14,7 +14,7 @@ import { receiptOverrideKey } from '../tape/provenance.js'
 import type { Tape } from '../tape/tape.js'
 
 const RECEIPT_OVERRIDE = 'tool/receipt_override'
-const isOverride = (entry: TapeEntry) => entry.name === RECEIPT_OVERRIDE
+export const isSandboxRelease = (entry: TapeEntry) => entry.name === RECEIPT_OVERRIDE
 
 /** Own grants plus the parent's current incarnation; a child's grants never flow upward. */
 export async function sandboxDomainHosts(
@@ -26,12 +26,31 @@ export async function sandboxDomainHosts(
   const entries = parent === null ? own : [...(await read(parent.sessionId)), ...own]
   return [
     ...new Set(
-      entries.filter(isOverride).flatMap((entry) => {
+      entries.filter(isSandboxRelease).flatMap((entry) => {
         const release = entry.payload as ReceiptOverridePayload
         return release.action === 'allow-domain' && release.target !== null ? [release.target] : []
       }),
     ),
   ]
+}
+
+/** Session domains persist; one-off releases expire on binding or the next started Run's end. */
+export function validSandboxReleases(entries: readonly TapeEntry[]): TapeEntry[] {
+  const used = new Set(
+    entries
+      .filter((e) => e.name === 'tool/permission_decided')
+      .map((e) => (e.payload['sandbox'] as SandboxPlan | undefined)?.override?.key),
+  )
+  return entries.filter((entry, at) => {
+    if (!isSandboxRelease(entry) || used.has(entry.provenanceKey ?? '')) return false
+    const release = entry.payload as ReceiptOverridePayload
+    if (release.action === 'allow-domain') return true
+    // The current Run may bind it too. The expiry boundary is the terminal of the first
+    // Run STARTED after the click, not the terminal of a Run that was already in progress.
+    const after = entries.slice(at + 1)
+    const next = after.find((e) => e.name === 'execution/run_started')
+    return !after.some((e) => e.name === 'execution/run_terminal' && e.sourceId === next?.sourceId)
+  })
 }
 
 /** Only an initial decision can acquire a release. Every decision binding consumes it permanently. */
@@ -40,21 +59,9 @@ export function unboundSandboxOverride(
   command: string,
   cwd: AbsolutePath,
 ): SandboxPlan['override'] {
-  const used = new Set(
-    entries
-      .filter((e) => e.name === 'tool/permission_decided')
-      .map((e) => (e.payload['sandbox'] as SandboxPlan | undefined)?.override?.key),
-  )
-  const candidates = entries.filter((entry, at) => {
-    if (!isOverride(entry) || used.has(entry.provenanceKey ?? '')) return false
+  const candidates = validSandboxReleases(entries).filter((entry) => {
     const release = entry.payload as ReceiptOverridePayload
-    if (release.action === 'allow-domain' || release.command !== command || release.cwd !== cwd)
-      return false
-    // The current Run may bind it too. The expiry boundary is the terminal of the first
-    // Run STARTED after the click, not the terminal of a Run that was already in progress.
-    const after = entries.slice(at + 1)
-    const next = after.find((e) => e.name === 'execution/run_started')
-    return !after.some((e) => e.name === 'execution/run_terminal' && e.sourceId === next?.sourceId)
+    return release.action !== 'allow-domain' && release.command === command && release.cwd === cwd
   })
   const entry = candidates.find((e) => e.payload['action'] === 'rerun-unsandboxed') ?? candidates[0]
   if (entry === undefined || entry.provenanceKey === null) return undefined
