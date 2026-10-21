@@ -35,6 +35,7 @@ import type {
   SandboxRuntimeConfig,
 } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath } from '@tenon-app/kernel'
+import type { SandboxView } from '@tenon-app/contracts'
 import { PROTECTED_SHELL_FILES } from '../workspace.js'
 
 export type SandboxPlatform = 'darwin' | 'linux'
@@ -289,6 +290,18 @@ export const PACKAGE_MANAGER_PRESETS: readonly PackageManagerPreset[] = [
 /** The preset rows that apply on `platform`. */
 export function presetRows(platform: SandboxPlatform): PackageManagerPreset[] {
   return PACKAGE_MANAGER_PRESETS.filter((row) => row.platforms.includes(platform))
+}
+
+/** What `sandbox.get` displays, even with the preset off; the same rows used by wrap (04 §IPC). */
+export function sandboxPreset(
+  platform: SandboxView['platform'],
+  cacheDir: AbsolutePath,
+): SandboxView['preset'] {
+  const rows = platform === 'darwin' || platform === 'linux' ? presetRows(platform) : []
+  return {
+    domains: [...new Set(rows.flatMap((row) => row.domains))],
+    writable: rows.map((row) => posix.join(cacheDir, row.manager)),
+  }
 }
 
 /**

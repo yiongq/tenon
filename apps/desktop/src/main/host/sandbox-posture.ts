@@ -52,6 +52,7 @@ import type {
   SrtSandbox,
 } from './sandbox.js'
 import type { HelperPaths, LinuxBinaries } from './sandbox-config.js'
+import type { StartupEnv } from './shell-env.js'
 
 /**
  * Why the posture is not plain `active` (spec §启动、自检与姿态). The shared contracts also
@@ -82,7 +83,7 @@ function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
 export type InitializeResult = 'not-called' | 'dependency-error' | 'threw' | 'returned'
 
 export interface SandboxPostureOutcome extends SandboxStartup {
-  /** Empty exactly when `active`; for `degraded` the warnings, for `unavailable` why. */
+  /** Empty for real `active`; the test seam's `active` carries `test-seam` (04 §IPC). */
   readonly reasons: readonly SandboxReason[]
   readonly initialize: InitializeResult
 }
@@ -261,6 +262,42 @@ const OLD_BWRAP_WARNING = /^bubblewrap \S+ at [\s\S]+ is older than 0\.5\.0: /
 
 /** apply-seccomp's own words when a userns profile refuses it (srt79 vendor/seccomp/<arch>/apply-seccomp; P5). */
 const NESTED_USERNS = 'nested userns is capability-restricted'
+
+/** Only an unpackaged app explicitly launched for tests may bypass real startup (04 §IPC). */
+export function sandboxTestMode(
+  isPackaged: boolean,
+  startupEnv: StartupEnv,
+): 'off' | 'fake' | null {
+  if (isPackaged || startupEnv['TENON_DEV_ENV'] !== 'off') return null
+  const mode = startupEnv['TENON_TEST_SANDBOX']
+  return mode === 'off' || mode === 'fake' ? mode : null
+}
+
+/**
+ * Desktop's startup selector (step 13c calls this after creating the window). The seam returns
+ * before real startup touches the disk, chdirs or initializes srt. `initialized` stays pending,
+ * as for any startup that never called initialize; fake commands use a separate test wrapper.
+ */
+export function startDesktopSandboxPosture(
+  deps: SandboxPostureDeps,
+  isPackaged: boolean,
+  startupEnv: StartupEnv,
+): SandboxPostureRun {
+  const mode = sandboxTestMode(isPackaged, startupEnv)
+  if (mode === null) return startSandboxPosture(deps)
+  const state = mode === 'fake' ? 'active' : 'unavailable'
+  deps.log(`sandbox: ${state} (test-seam: ${mode})`)
+  return {
+    initialized: new Promise<void>(() => {}),
+    outcome: Promise.resolve({
+      state,
+      session: null,
+      noSeccomp: false,
+      reasons: [reason('test-seam', mode)],
+      initialize: 'not-called',
+    }),
+  }
+}
 
 /**
  * Starts the sandbox (spec §启动、自检与姿态). `initialized` resolves the moment `initialize` returns
