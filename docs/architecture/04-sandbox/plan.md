@@ -107,7 +107,7 @@
 
 ### 第二段：kernel、契约与接线（`feat/04-seg2`）
 
-- [ ] 7. 提示层与拦截码（spec §对 02 的修补 1、9；T35；读法 30、52）。提示层的全部改动集中在这一步，版本只加一次（读法 52 的那一句也在这一次里，owner 2026-10-15）。
+- [x] 7. 提示层与拦截码（spec §对 02 的修补 1、9；T35；读法 30、52）。提示层的全部改动集中在这一步，版本只加一次（读法 52 的那一句也在这一次里，owner 2026-10-15）。
   - 文件：`packages/kernel/src/loop/closure.ts`（`BlockReason` 加 `sandbox`、`BLOCKED_FACT_KEYS.sandbox = ['toolName']`）；`packages/kernel/src/prompts/index.ts`（`MODEL_NOTES.closure.sandbox = {}`、`MODEL_NOTES.sandbox` 的五段英文、任务形态 system 一句、`PROMPT_LAYER_VERSION` 10 → 11、`PROMPT_LAYER_HASH`）；`packages/kernel/src/tools/builtin/bash.ts` 的描述加两句（第二句是读法 52 的：Linux 沙箱里工作区根下的空占位项不是用户的文件、别 stage，用 `git add <路径>`）；contracts `ipc/outcome.ts` 的 `closureSourceSchema` 加 `sandbox`。英文照 spec 写明的意思写定，值一律以 JSON 字符串进槽位。
   - 覆盖：验收 24 的版本部分。
   - 测试：`packages/kernel/test/prompts/version.test.ts`、`closure.test.ts` 照新键更新（`closure.sandbox` 没有格）；「04 验收 24 (version): PROMPT_LAYER_VERSION is 11 and the hash matches」；类型钉：`ClosureSource` 双向（照 packages/contracts/test/chat-event.test.ts 的写法）。
@@ -405,6 +405,7 @@ U、S、E 见「开工前读」。「任意」= 在 agent 沙箱里也能跑的�
 ## 验收记录
 
 （第 23 步填。）
+- 2026-10-22 · 第 7 步（Codex 实现，lead 审查与提交）：`BlockReason` 加 `sandbox`、`MODEL_NOTES.sandbox` 五段英文、Bash 描述两句（第二句是读法 52）、任务形态 system 一句；`PROMPT_LAYER_VERSION` 10 → 11，哈希 `077e477e149a2452302eecdad857192953a765b8b49eca56a5b37c5f6b247a95`。lead 审查时改了一处措辞：路径放行原写「may write only to {path}」，读成限制，改为「may also write to {path}」，哈希随之重算。为让 copy-coverage 过，两份 locale 先加了 `closure.sandbox`、`blocked.sandbox` 四条临时文案（中文「命令中的部分操作被拦下。」「{toolName} 中的部分操作被拦下。」），由第 18 步定稿。U 144 条过；format、lint、typecheck 过；全量测试只剩 stop-tree 在 agent 沙箱里的 `spawn EPERM`。突变：文案改一字不改哈希 → version.test 红；`closureSourceSchema` 删 `sandbox` → typecheck 红；恢复后都绿。从这一步起 CI 的 `evals:gate` 红，到第 15a 步为止。
 
 ## 交接
 

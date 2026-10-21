@@ -301,7 +301,7 @@ describe('the approval card copy', () => {
 describe('the tool row copy', () => {
   it('has a closure line for every ClosureSource, with nothing to fill', () => {
     // A closed call's `facts` exist only for a block code (§原因码表), so a closure line has no slots.
-    expect(CLOSURE_SOURCES).toHaveLength(24)
+    expect(CLOSURE_SOURCES).toHaveLength(25)
     const expected = CLOSURE_SOURCES.map((source) => ({
       key: `closure.${source}`,
       args: [],
@@ -310,9 +310,15 @@ describe('the tool row copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
-  it('has a block notice for each of the four block codes, naming BLOCKED_FACT_KEYS', () => {
+  it('has a block notice for each of the five block codes, naming BLOCKED_FACT_KEYS', () => {
     // §界面范围 `BlockedNotice`: `blocked.<source>`, its slots the outcome's `facts`.
-    expect(BLOCK_CODES.toSorted()).toEqual(['inspector', 'policy', 'protected', 'user-disabled'])
+    expect(BLOCK_CODES.toSorted()).toEqual([
+      'inspector',
+      'policy',
+      'protected',
+      'sandbox',
+      'user-disabled',
+    ])
     for (const code of BLOCK_CODES) expect(CLOSURE_SOURCES).toContain(code)
     // An inspector's block is said by category, as the card's `flagged` reason is: the category
     // picks the sentence, so it is no slot of it.

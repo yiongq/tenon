@@ -25,7 +25,7 @@ import type { SpillRecord } from './spill.js'
 
 export type ExecutionState = 'not-run' | 'aborted' | 'completed' | 'uncertain'
 
-export type BlockReason = 'policy' | 'user-disabled' | 'protected' | 'inspector' // 阶段 4 只增 'sandbox'
+export type BlockReason = 'policy' | 'user-disabled' | 'protected' | 'inspector' | 'sandbox'
 
 export type ClosureSource =
   | BlockReason
@@ -59,6 +59,7 @@ export const BLOCKED_FACT_KEYS: Readonly<Record<BlockReason, readonly string[]>>
   'user-disabled': ['toolName'],
   protected: ['toolName', 'target'], // target：被拦的路径或主机
   inspector: ['toolName', 'category'],
+  sandbox: ['toolName'],
 }
 
 /** A call's identity across its facts (§键与挂靠): the request it was made in, and its `<i>`. */

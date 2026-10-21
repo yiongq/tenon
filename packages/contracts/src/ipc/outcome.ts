@@ -64,6 +64,7 @@ export const closureSourceSchema = z.enum([
   'user-disabled',
   'protected',
   'inspector',
+  'sandbox',
   'user-rejected',
   'stopped',
   'timed-out',
