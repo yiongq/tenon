@@ -1588,7 +1588,11 @@ export function createLoop(deps: LoopDeps): Loop {
       const { judged } = rejudged
       if (item === undefined) throw new Error('allow: an unchanged judgement has its table item')
       const scope = answerScope({
-        decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+        decision: {
+          record: waiting.decision.record,
+          summary: waiting.decision.summary,
+          ...(waiting.decision.confirm === undefined ? {} : { confirm: waiting.decision.confirm }),
+        },
         reversibility: waiting.decision.reversibility,
         ...(judged.place === undefined ? {} : { place: judged.place }),
         source: item.source === 'mcp' ? 'mcp' : 'builtin',
@@ -3480,7 +3484,13 @@ export function createLoop(deps: LoopDeps): Loop {
                   : callKeyOf(child.link.runId, child.link.requestSeq, child.link.ordinal),
               ),
         allowScope: answerScope({
-          decision: { record: waiting.decision.record, summary: waiting.decision.summary },
+          decision: {
+            record: waiting.decision.record,
+            summary: waiting.decision.summary,
+            ...(waiting.decision.confirm === undefined
+              ? {}
+              : { confirm: waiting.decision.confirm }),
+          },
           reversibility: waiting.decision.reversibility,
           ...(place === undefined ? {} : { place }),
           source: item?.source === 'builtin' ? 'builtin' : 'mcp',

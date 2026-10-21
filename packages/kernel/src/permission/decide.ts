@@ -18,6 +18,7 @@
  * exclusions share (§开表与排除): a tool excluded when the table opened and one blocked after it froze
  * are one reading.
  */
+import type { SandboxPlan } from '../tape/entry.js'
 import type { ConfirmReason, Reversibility } from '../host/adapter.js'
 import { CONFIRM_FACT_KEYS } from '../host/adapter.js'
 import type { PolicyState, ToolPolicyRule } from '../host/policy.js'
@@ -66,7 +67,10 @@ export interface LayerInputs {
   readonly reversibility: { readonly value: Reversibility; readonly source: 'host' | 'policy' } // 02 的产品恒为 host；'policy' 6b 才有产生方
   readonly requiresUserInteraction: boolean // 取 ToolTableItem.requiresUserInteraction（D12）
   // 第 6 层
+  readonly sandbox?: SandboxPlan
   readonly sessionGrant: null | {
+    /** The plan of the card that granted this command; absent on pre-04 cards. */
+    readonly sandbox?: SandboxPlan
     // 由 grants.ts 按 grantKey 从 Tape 推出，含父会话继承（H5 ①）
     readonly kind: 'session' | 'session-search' | 'session-domain'
     readonly inherited?: true
@@ -144,6 +148,15 @@ export function decide(input: DecisionInput): Decision {
   const { call, callReason, layers, inspectors } = input
   const builtin = call.tool.source === 'builtin'
   const name = call.tool.originalName
+  const command = builtin && name === 'Bash'
+  const elevated = command && layers.sandbox?.override?.action === 'rerun-unsandboxed'
+  const sessionGrant =
+    elevated ||
+    (command &&
+      layers.sandbox?.profile === 'full-access' &&
+      layers.sessionGrant?.sandbox?.unavailable !== true)
+      ? null
+      : layers.sessionGrant
   const steps: DecisionStep[] = []
 
   // ----- layer 1: the tenant policy ---------------------------------------------------------------
@@ -207,18 +220,18 @@ export function decide(input: DecisionInput): Decision {
 
   // ----- layer 6: what the user granted -----------------------------------------------------------
   const grant: DecisionStep['basis'] | undefined =
-    layers.sessionGrant !== null
+    !elevated && sessionGrant !== null
       ? {
-          grant: layers.sessionGrant.kind,
-          grantFrom: layers.sessionGrant.grantFrom,
-          ...(layers.sessionGrant.inherited === true ? { inherited: true as const } : {}),
+          grant: sessionGrant.kind,
+          grantFrom: sessionGrant.grantFrom,
+          ...(sessionGrant.inherited === true ? { inherited: true as const } : {}),
         }
-      : alwaysAllow
+      : !elevated && alwaysAllow
         ? {
             grant: 'always-allow',
             ...(irreversible ? { releasedBy: 'always-allow' as const } : {}),
           }
-        : layers.taskGrant === true
+        : !elevated && layers.taskGrant === true
           ? { grant: 'task' }
           : builtin && FILE_TOOLS.has(name) && layers.place === 'workspace' && readOnly
             ? { grant: 'workspace-folder' }
@@ -275,6 +288,9 @@ export function decide(input: DecisionInput): Decision {
         : inspectorAsk
           ? 'inspector'
           : 'irreversible'
+  } else if (elevated) {
+    verdict = 'ask'
+    decidedBy = 'approval-mode'
   } else if (protectedSaid === 'allow' || grant !== undefined || modeSaid === 'allow') {
     verdict = 'allow'
     decidedBy =
@@ -303,11 +319,11 @@ export function decide(input: DecisionInput): Decision {
   }
   if (verdict === 'ask') {
     const reason = primaryReason({
-      command: builtin && name === 'Bash',
+      command,
       policy: policyAsk,
       interaction: layers.requiresUserInteraction,
       flagged: inspectorAsk,
-      callReason: callReason.reason,
+      callReason: elevated ? 'elevated' : callReason.reason,
       irreversible: mustAskIrreversible,
     })
     const pool: Record<string, string> = {
@@ -315,7 +331,11 @@ export function decide(input: DecisionInput): Decision {
       toolName,
       category: layerFiveCategory(inspectorSteps, 'ask'),
     }
-    return { record, summary, confirm: { reason, facts: pick(pool, CONFIRM_FACT_KEYS[reason]) } }
+    const facts = pick(pool, CONFIRM_FACT_KEYS[reason])
+    if (reason === 'command' && callReason.facts['sandbox'] === 'unavailable') {
+      facts['sandbox'] = 'unavailable'
+    }
+    return { record, summary, confirm: { reason, facts } }
   }
   return { record, summary }
 }
@@ -323,7 +343,7 @@ export function decide(input: DecisionInput): Decision {
 /**
  * The card's reason (D5, E1, E4): every reason that holds is collected — layer 1's ask, layer 4 ②,
  * layer 5's ask, the call's own reason, an unreleased irreversible — and the first in D5's order wins.
- * The exception: a command's reason is always `command`; its pattern table changes the reversibility,
+ * The exception: a command's reason is `command` (`elevated` for a bound sandbox rerun); its pattern table changes the reversibility,
  * never the reason (`curl -X POST`: reason `command`, reversibility `irreversible`).
  */
 export function primaryReason(q: {
@@ -334,7 +354,7 @@ export function primaryReason(q: {
   readonly callReason: CallReason['reason']
   readonly irreversible: boolean
 }): ConfirmReason {
-  if (q.command) return 'command'
+  if (q.command) return q.callReason === 'elevated' ? 'elevated' : 'command'
   const holding = new Set<ConfirmReason>([q.callReason])
   if (q.policy) holding.add('policy')
   if (q.interaction) holding.add('interaction-required')

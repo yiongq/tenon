@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  absolutePath,
   ProviderConfigMissingError,
   TapeProvenanceConflictError,
   createMemoryHost,
@@ -19,6 +20,7 @@ import type {
   MemoryHost,
   ModelInfo,
   NewEntry,
+  SandboxPosture,
   SessionEvent,
   SessionService,
   StreamEvent,
@@ -98,6 +100,7 @@ interface Service {
 }
 
 interface ServiceOptions {
+  readonly posture?: SandboxPosture
   readonly idsFrom?: number
   readonly tools?: TestToolRegistry
   readonly repair?: boolean
@@ -121,7 +124,15 @@ function service(store: TapeStore, o: ServiceOptions = {}): Service {
   })
   const built = createTestSessionService(
     {
-      host: memory,
+      host: {
+        ...memory,
+        sandbox: {
+          wrap: memory.sandbox.wrap.bind(memory.sandbox),
+          afterExit: memory.sandbox.afterExit.bind(memory.sandbox),
+          violations: memory.sandbox.violations.bind(memory.sandbox),
+          ...(o.posture === undefined ? {} : { posture: () => o.posture! }),
+        },
+      },
       tape: store,
       ids: createCounterIds({ start: o.idsFrom ?? 1 }),
       inspectors: [inspector.registration, ...(o.extraInspectors ?? [])],
@@ -432,6 +443,55 @@ describe('closing what a crash left open (§执行日志与恢复表)', () => {
 })
 
 describe('judging a waiting card again at startup (旧 168)', () => {
+  it('04 验收 18: startup recovery while pending keeps the unavailable card', async () => {
+    const store = createMemoryTapeStore({ identity: IDENTITY })
+    const before = service(store, {
+      posture: { state: 'unavailable', profile: 'workspace-write' },
+      inspector: createFakeInspector({ id: 'asker', ceiling: 'ask', answer: { kind: 'none' } }),
+    })
+    await before.service.selectProfile({
+      sessionId: SESSION,
+      profile: 'cowork',
+      dedicated: absolutePath('/work/recover'),
+    })
+    before.provider.script([
+      { type: 'tool-call-start', index: 1, id: 'recover-bash', name: 'Bash' },
+      {
+        type: 'tool-call-end',
+        index: 1,
+        id: 'recover-bash',
+        name: 'Bash',
+        input: { command: 'echo hello' },
+      },
+      stopEvent('tool-use', 'tool_use'),
+    ])
+    expect((await send(before)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const cardBefore = pendingCard(await before.service.currentPending({ sessionId: SESSION }))
+    expect(cardBefore?.card.reason).toBe('command')
+    expect(cardBefore?.card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/recover',
+      sandbox: 'unavailable',
+    })
+    const after = service(store, {
+      idsFrom: 1000,
+      posture: { state: 'pending', profile: 'workspace-write' },
+      inspector: createFakeInspector({ id: 'asker', ceiling: 'ask', answer: { kind: 'none' } }),
+    })
+    expect(await after.service.recover()).toEqual({ resumable: [], errors: [] })
+    expect(pendingCard(await after.service.currentPending({ sessionId: SESSION }))).toEqual(
+      cardBefore,
+    )
+    expect(after.memory.confirmRequests).toEqual([cardBefore?.card])
+    const decisions = (await all(store)).filter((e) => e.name === 'tool/permission_decided')
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]?.payload['sandbox']).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      unavailable: true,
+    })
+  })
+
   /** Pauses on a card for `ats`, then restarts with `change` applied to the new service. */
   async function restartedWith(
     change: 'policy' | 'withdrawn' | 'inspector',

@@ -60,6 +60,7 @@ import type {
   FactWriter,
   NewEntry,
   PermissionDecidedPayload,
+  SandboxPlan,
   TapeEntry,
   WorkspaceSetPayload,
 } from '../tape/entry.js'
@@ -1056,6 +1057,8 @@ export interface JudgeContext {
   /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
   readonly searchHost: string | null
   readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
+  /** A re-judgement retains a bound override, and unavailable while posture is pending. */
+  readonly previousSandbox?: SandboxPlan
   readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
 }
@@ -1066,6 +1069,7 @@ export type Judgement =
       readonly kind: 'judged'
       readonly definitionChanged?: true
       readonly decision: Decision
+      readonly sandbox?: SandboxPlan
       readonly reversibility: Reversibility
       readonly place?: PathPlace
       /** Where a file tool acts, when it runs: the real path the decision placed; null otherwise. */
@@ -1138,6 +1142,10 @@ export async function judgeCall(
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
   const workspace = paths.roots[0] ?? null
+  const sandbox =
+    item.source === 'builtin' && item.originalName === 'Bash'
+      ? sandboxPlanOf(ctx.host, ctx.previousSandbox)
+      : undefined
   const callReason = callReasonOf({
     tool: item,
     args: call.input,
@@ -1145,6 +1153,7 @@ export async function judgeCall(
     ...(located === undefined ? {} : { real: located.real }),
     workspace,
     searchHost: ctx.searchHost,
+    ...(sandbox === undefined ? {} : { sandbox }),
   })
   const setting =
     item.source === 'mcp'
@@ -1169,11 +1178,17 @@ export async function judgeCall(
           grantKey(item.serverId, item.originalName, object),
         )
   const grantFrom = ownGrant ?? inheritedGrant
+  const grantEntries = ownGrant === undefined ? (facts.parentEntries ?? []) : entries
+  const approval = grantEntries.find((entry) => entry.provenanceKey === grantFrom?.approvalKey)
+  const grantDecision = grantEntries.find(
+    (entry) => entry.provenanceKey === approval?.payload['decisionKey'],
+  )?.payload as PermissionDecidedPayload | undefined
   const decision = decide({
     call: inspected,
     callReason,
     layers: {
       policy,
+      ...(sandbox === undefined ? {} : { sandbox }),
       ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
@@ -1195,6 +1210,7 @@ export async function judgeCall(
           : {
               kind: sessionGrantKindOf(object),
               grantFrom,
+              ...(grantDecision?.sandbox === undefined ? {} : { sandbox: grantDecision.sandbox }),
               ...(ownGrant === undefined && inheritedGrant !== undefined
                 ? { inherited: true as const }
                 : {}),
@@ -1210,6 +1226,7 @@ export async function judgeCall(
       ? {}
       : { definitionChanged: true as const }),
     decision,
+    ...(sandbox === undefined ? {} : { sandbox }),
     reversibility,
     ...(place === undefined ? {} : { place }),
     target: located?.real ?? null,
@@ -1238,6 +1255,27 @@ export async function judgeCall(
       : {}),
     grantObject: object,
     ...(failed === undefined ? {} : { failed }),
+  }
+}
+
+/** One planning path for initial decisions, answers and startup recovery (04, readings 12/38). */
+function sandboxPlanOf(host: HostAdapter, previous?: SandboxPlan): SandboxPlan {
+  const posture = host.sandbox.posture?.() ?? { state: 'active', profile: 'workspace-write' }
+  const chosen = posture.profile
+  const override = previous?.override
+  if (override?.action === 'rerun-unsandboxed') {
+    return { profile: 'full-access', chosen, override }
+  }
+  if (
+    posture.state === 'unavailable' ||
+    (posture.state === 'pending' && previous?.unavailable === true)
+  ) {
+    return { profile: 'full-access', chosen, unavailable: true }
+  }
+  return {
+    profile: override?.action === 'allow-path' ? 'workspace-write' : chosen,
+    chosen,
+    ...(override === undefined ? {} : { override }),
   }
 }
 
@@ -1278,6 +1316,7 @@ export function decisionEntry(q: {
     providerToolCallId: q.ref.providerToolCallId,
     argsHash: q.argsHash,
     reversibility: q.judged.reversibility,
+    ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
     ...(q.judged.definitionChanged === undefined
       ? {}
       : { definitionChanged: q.judged.definitionChanged }),
