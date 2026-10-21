@@ -220,7 +220,7 @@
 
 ### 第四段：CI（`ci/04-sandbox-jobs`，owner 说了才合）
 
-- [ ] 21. workflow PR（Q5 A；验收 34；开放问题 2）
+- [x] 21. workflow PR（Q5 A；验收 34；开放问题 2）。2026-10-16 owner 说了合，PR #50 合入（877f25a），之后 dev 上 `ci`、`sandbox-macos` 都绿、黑盒是「执行」、姿态 `active`；结果写进 spec 见 Revisions 2026-10-22。
   - 第一段合并后立即开，owner 合并之后第二段才开工（分段）。
   - 文件：`.github/workflows/ci.yml`：`ci` job 的 `runs-on` 钉 `ubuntu-24.04`，在 `pnpm test` 之前逐字加 `sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep`、`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`，再加一步打印三个 sysctl 读数与 `bwrap --version`，`pnpm test` 那一步设 `TENON_SANDBOX_TESTS: required`；新 job `sandbox-macos`（钉 `macos-15`：checkout、pnpm、node、`pnpm install --frozen-lockfile --ignore-scripts`、`pnpm build`、S——只跑沙箱套件与停止用例，开放问题 2 已定）；`ci-ok` 的 `needs` 加上它并检查它的结果；e2e job 不动（启动器默认 `fake`），`ci` job 里 `pnpm test` 以外的步骤也不设这个变量。同一 PR 在 `apps/desktop/test/sandbox/support.ts` 的门上加「`CI` 有值而没设、也不是 `skip` 就失败」及它的单测（第 6 步留下的那一半）。换镜像从此是一个要审的 PR，并重跑 P5（换到 26.04 时 sysctl 那一步不够，改装 spec §启动 第 6 步的 AppArmor profile）。临时 job：x64 的 S（ubuntu runner 是 x64；读法 11 两张表里 x64 的老式调用名照真抓到的行核一次，`deny mkdir` 的夹具换成真抓的，了结之后才把套件设成 required）；P2 在 CI runner 上的测量，合并前删掉（Linux 探针已在改 `ready` 之前跑完，开放问题 1）；`VIOLATION_SETTLE_MS` = 本机暂定的 50 ms 与 runner 的 p99 向上取到 50 的倍数两者的较大者，大于 50 就改 spec 与常量、记 Revisions，超过 500 照 P2 停下写 Open。`AGENTS.md`:51 的 `ci-ok` 那句加上 `sandbox-macos`。
   - PR 描述写明：碰 `.github/workflows/**`，不开 auto-merge，等 owner 说了才合（AGENTS.md:51）；PR 自己的 CI 跑的就是新 workflow，绿了才请 owner 合。
