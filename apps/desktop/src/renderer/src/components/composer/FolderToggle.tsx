@@ -14,6 +14,8 @@ export function FolderToggle(): JSX.Element | null {
     <label className="flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap font-sans text-micro text-text-secondary">
       <Switch
         size="sm"
+        // The enclosing label already supplies the hit area; keep the pseudo-element inside it.
+        className="after:inset-x-0 after:inset-y-0"
         data-testid="folder-toggle"
         checked={facts.profile === 'cowork'}
         onCheckedChange={(checked) => {

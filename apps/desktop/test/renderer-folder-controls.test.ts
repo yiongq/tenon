@@ -1,4 +1,5 @@
 import { createElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
 import type { SessionFactsResponse } from '@tenon-app/contracts'
@@ -63,6 +64,42 @@ it.each([
 
 it('presentation-r1 验收 10: no folder controls before the facts arrive', async () => {
   expect(await render(null)).toBe('')
+})
+
+it('presentation-r1 验收 10: facts refreshes keep the toggle and open folder chip at the same React identity', async () => {
+  const { ComposerLead } = await import(leadPath)
+  const identities = (facts: SessionFactsResponse) => {
+    context.facts = facts
+    // React preserves mounted state for the same type + key at the same sibling position.
+    const children = (ComposerLead() as ReactElement<{ children: ReactNode[] }>).props.children
+    return children.map((child) => {
+      if (child === null) return null
+      const element = child as ReactElement
+      return { type: element.type, key: element.key }
+    })
+  }
+  const chat = identities({ established: false, profile: 'chat', workspace: null })
+  const task = identities({
+    established: false,
+    profile: 'cowork',
+    workspace: { origin: 'dedicated', folders: ['/dedicated/session-1'] },
+  })
+  const refreshed = identities({
+    established: false,
+    profile: 'cowork',
+    workspace: { origin: 'picked', folders: ['/work/project'] },
+  })
+  expect(task[0]).toEqual(chat[0])
+  expect(refreshed).toEqual(task)
+})
+
+it('presentation-r1 验收 10: the folder switch keeps its hit pseudo-element inside the clickable label', async () => {
+  const markup = await render({ established: false, profile: 'chat', workspace: null })
+  const toggle = /<[^>]*data-testid="folder-toggle"[^>]*>/.exec(markup)?.[0]
+  expect(toggle).toBeDefined()
+  expect(toggle).toContain('after:inset-x-0')
+  expect(toggle).toContain('after:inset-y-0')
+  expect(toggle).not.toContain('after:-inset-')
 })
 
 it('presentation-r1 验收 10: a folder chip names the complete first folder, counts the rest, and exposes every full path', async () => {

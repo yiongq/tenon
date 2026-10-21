@@ -6,6 +6,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { configGet, ipcResultSchema } from '@tenon-app/contracts'
 import type { ElectronApplication, Page } from '@playwright/test'
 import type { ScriptedReply, ScriptedStep } from '../../test/support/fake-anthropic.js'
 import { ORIGIN_MAP_ENV } from './app-env.js'
@@ -93,18 +94,33 @@ export async function startTask(
 ): Promise<void> {
   const toggle = page.getByTestId('folder-toggle')
   await expect(toggle).toBeVisible()
-  if ((await toggle.getAttribute('aria-checked')) !== 'true') await toggle.click()
+  let autoOffer = false
+  if ((await toggle.getAttribute('aria-checked')) !== 'true') {
+    const config = ipcResultSchema(configGet.response).parse(
+      await page.evaluate(() => window.tenon.invoke('config.get', {})),
+    )
+    expect(config.ok).toBe(true)
+    autoOffer = config.ok && config.data.lastWorkspaceFolders.length > 0
+    await toggle.click()
+  }
   await expect(toggle).toHaveAttribute('aria-checked', 'true')
   await expect(page.getByTestId('folder-chip')).toBeVisible()
-  if (!(await page.getByTestId('folder-popover').isVisible())) {
+  const popup = page.getByTestId('folder-popover')
+  // With saved folders, config.get opens the offer asynchronously. Clicking the chip before that
+  // expansion settles can instead close it as the click lands. Wait for the automatic offer.
+  if (autoOffer) await expect(popup).toHaveAttribute('data-open', '')
+  // Exit animations keep a closed popup visible. Let it unmount before reopening its trigger.
+  await expect(popup.and(page.locator('[data-closed]'))).toHaveCount(0)
+  if (!(await popup.and(page.locator('[data-open]')).isVisible())) {
     await page.getByTestId('folder-chip').click()
   }
+  await expect(popup).toHaveAttribute('data-open', '')
   await stubFolderDialog(app, [folder])
-  await page.getByTestId('folder-add').click()
+  await popup.getByTestId('folder-add').click()
   await expect(page.getByTestId('folder-item')).toHaveCount(1)
   await expect(page.getByTestId('folder-item')).toHaveAttribute('title', realpathSync(folder))
   await page.keyboard.press('Escape')
-  await expect(page.getByTestId('folder-popover')).toBeHidden()
+  await expect(popup).toHaveCount(0)
 }
 
 export async function send(page: Page, text: string): Promise<void> {

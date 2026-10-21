@@ -70,7 +70,7 @@ test('presentation-r1 验收 9: no host in an official row; hover and keyboard h
     await expect(sonnetLines.last()).toHaveText('Balanced speed and capability')
     await expect(sonnet).toHaveAttribute('aria-describedby', /.+/)
     await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
-    const tooltip = page.getByTestId('model-row-host-tooltip')
+    const tooltip = page.getByTestId('model-row-host-tooltip').and(page.locator('[data-open]'))
     await sonnet.hover()
     await expect(tooltip).toHaveText('Sends to api.anthropic.com')
     await page.mouse.move(0, 0)
@@ -246,7 +246,9 @@ test('asks by where the history went, not by the model in effect, and a typed mo
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
-    await page.getByTestId('model-more').click()
+    // Base UI opens submenus on hover; a mouse click itself is ignored (openOnHover).
+    await page.getByTestId('model-more').hover()
+    await expect(page.getByTestId('model-type-ollama')).toBeVisible()
     await page.getByTestId('model-type-ollama').click()
     await page.getByTestId('type-model-input').fill('my-local-model')
     await page.getByTestId('type-model-use').click()

@@ -141,9 +141,6 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expectSingleLineUnclipped(popup.getByTestId('folder-dedicated-note'))
       await expectSingleLineUnclipped(popup.getByTestId('folder-add'))
       await page.keyboard.press('Escape')
-      // A closing popup stays visible during its exit animation. Do not let startTask mistake
-      // that old popup for an open one and wait on the button that is about to unmount.
-      await expect(popup).toBeHidden()
       await startTask(app, page, ws)
       await expectSingleLineUnclipped(chip)
       await chip.click()

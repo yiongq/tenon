@@ -86,11 +86,8 @@ function ModelRowItem({
         render={(itemProps, state) => (
           <Tooltip open={state.highlighted}>
             <TooltipTrigger render={<div {...itemProps} aria-describedby={descriptionId} />} />
-            <TooltipContent
-              data-testid="model-row-host-tooltip"
-              className="max-w-none whitespace-nowrap"
-            >
-              {description}
+            <TooltipContent data-testid="model-row-host-tooltip" className="w-max max-w-none">
+              <span className="whitespace-nowrap">{description}</span>
             </TooltipContent>
           </Tooltip>
         )}

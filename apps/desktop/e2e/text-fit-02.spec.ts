@@ -60,7 +60,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       for (const row of await rows.all()) {
         // oxlint-disable-next-line no-await-in-loop -- measure each highlighted row's own tooltip
         await row.hover()
-        const tooltip = page.getByTestId('model-row-host-tooltip')
+        const tooltip = page.getByTestId('model-row-host-tooltip').and(page.locator('[data-open]'))
         // oxlint-disable-next-line no-await-in-loop -- each row names its own destination
         const rowId = await row.getAttribute('data-testid')
         // oxlint-disable-next-line no-await-in-loop -- wait for this row's description before measuring
