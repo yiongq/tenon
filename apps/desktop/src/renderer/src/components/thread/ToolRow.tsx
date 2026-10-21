@@ -1,14 +1,14 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
-import type { MessageRowContract, ToolOutcomeViewContract } from '@tenon-app/contracts'
-import { invokeRoute, mcpLogin, sessionMessages } from '@tenon-app/contracts'
+import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
+import { invokeRoute, mcpLogin } from '@tenon-app/contracts'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
 import { PathText } from '@/components/ui/path-text'
 import { mcpAction, useMcp } from '@/runtime/mcp-store'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { toolCategory, toolRowEffect, writeResultError } from '@/lib/tool-row-effect'
-import { useEffect, useState } from 'react'
+import { toolRowEffect } from '@/lib/tool-row-effect'
+import { useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
@@ -52,37 +52,7 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
-  const [writeResult, setWriteResult] = useState<
-    | {
-        readonly sessionId: string
-        readonly callKey: string
-        readonly isError: boolean | undefined
-      }
-    | undefined
-  >(undefined)
-  const isCompletedWrite =
-    toolCategory(props.toolName) === 'write' && outcome?.state === 'completed'
-  useEffect(() => {
-    if (!open || !isCompletedWrite) return
-    let active = true
-    void readWriteError(window.tenon, store.sessionId, callKey)
-      .then((error) => {
-        if (active) setWriteResult({ sessionId: store.sessionId, callKey, isError: error })
-      })
-      .catch(() => {
-        /* An unavailable result must never be described as a successful change. */
-      })
-    return () => {
-      active = false
-    }
-  }, [open, isCompletedWrite, store.sessionId, callKey, snapshot.running])
-  const effect = toolRowEffect(
-    outcome,
-    props.toolName,
-    writeResult?.sessionId === store.sessionId && writeResult.callKey === callKey
-      ? writeResult.isError
-      : undefined,
-  )
+  const effect = toolRowEffect(outcome, props.toolName)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending
@@ -273,31 +243,6 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
       )}
     </div>
   )
-}
-
-/** Read only for an expanded, completed write; page back for a row outside the latest tail. */
-export async function readWriteError(
-  bridge: Window['tenon'],
-  sessionId: string,
-  callKey: string,
-): Promise<boolean | undefined> {
-  let rows: MessageRowContract[] = []
-  let beforeOrderSeq: number | undefined
-  while (true) {
-    // oxlint-disable-next-line no-await-in-loop -- each earlier page needs the previous cursor
-    const result = await invokeRoute(bridge, sessionMessages, {
-      sessionId,
-      limit: 1000,
-      ...(beforeOrderSeq === undefined ? {} : { beforeOrderSeq }),
-    })
-    if (!result.ok || result.data.length === 0) return undefined
-    rows.unshift(...result.data)
-    if (result.data.some((row) => row.calls?.some((call) => call.callKey === callKey)))
-      return writeResultError(rows, callKey)
-    const first = result.data[0]!.orderSeq
-    if (beforeOrderSeq !== undefined && first >= beforeOrderSeq) return undefined
-    beforeOrderSeq = first
-  }
 }
 
 /**

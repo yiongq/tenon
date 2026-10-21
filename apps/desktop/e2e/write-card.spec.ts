@@ -291,7 +291,10 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
     const edit = rows.nth(2).getByTestId('approval-card')
     await expect(edit).toHaveCount(1)
     expect(contentOf(file)).toBe('v2\n')
-    await expect(rows.first().getByTestId('approval-answered')).toHaveText('已允许（本会话）')
+    // The tool sentence names the symlink; the receipt must retain the distinct real path (验收 4).
+    await expect(rows.first().getByTestId('approval-answered')).toHaveText(
+      `已允许（本会话） · ${file}`,
+    )
     await expect(rows.nth(1).getByTestId('approval-answered')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('approval-card')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('tool-row-closure')).toHaveCount(0)
@@ -566,29 +569,33 @@ test('a hard link in the workspace to a file outside it: today it asks as a work
 })
 
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`presentation-r1 验收 4: a Write with relative file_path keeps the real path live and after restart (${locale})`, async () => {
-    const folders = makeFolderTree('write-relative', { 'ws/notes/keep.txt': 'keep\n' })
+  test(`presentation-r1 验收 4: a Write through a linked workspace keeps the real path live and after restart (${locale})`, async () => {
+    const folders = makeFolderTree('write-linked', { 'ws/notes/keep.txt': 'keep\n' })
     tree = folders
     const ws = join(folders.real, 'ws')
     const path = join(ws, 'notes', 'today.md')
     fake = await startFakeAnthropic({
       replies: [
-        callsReply(writeCall('toolu_relative', 'notes/today.md', 'today\n')),
+        callsReply(
+          writeCall('toolu_linked', join(folders.link, 'ws', 'notes', 'today.md'), 'today\n'),
+        ),
         textReply('Written.'),
       ],
     })
-    const userData = makeUserDataDir('write-relative')
+    const userData = makeUserDataDir('write-linked')
     seedConfig(userData, { locale })
     const expected =
       locale === 'en' ? `Allowed (This session) · ${path}` : `已允许（本会话） · ${path}`
     const first = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
     try {
-      await startTask(first.app, first.page, ws)
+      await startTask(first.app, first.page, join(folders.link, 'ws'))
       await send(first.page, 'write today’s note')
       const card = first.page.getByTestId('approval-card')
       await expect(card.getByTestId('approval-object')).toHaveText(path)
       await expect(first.page.getByTestId('tool-row-line')).toHaveText(
-        locale === 'en' ? 'Write notes/today.md' : '写入 notes/today.md',
+        locale === 'en'
+          ? `Write ${join(folders.link, 'ws', 'notes', 'today.md')}`
+          : `写入 ${join(folders.link, 'ws', 'notes', 'today.md')}`,
       )
       await first.page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-allow').click()

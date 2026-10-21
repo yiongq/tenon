@@ -7,8 +7,7 @@ import type { i18n as I18n } from 'i18next'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
 import { createI18n } from '../src/i18n/create-instance.js'
 import type { Answered } from '../src/renderer/src/runtime/session-store.js'
-import { messageRowSchema } from '@tenon-app/contracts'
-import { toolRowEffect, writeResultError } from '../src/renderer/src/lib/tool-row-effect.js'
+import { toolRowEffect } from '../src/renderer/src/lib/tool-row-effect.js'
 import * as toolCopy from '../src/renderer/src/lib/tool-sentence.js'
 it('03 验收 45: the expanded sentence uses tool names, only irreversible rows carry markers, and unauthorized-only relogin uses the mapped server ID (R25)', () => {
   for (const effect of ['read', 'write', 'external', 'blocked'] as const)
@@ -57,25 +56,17 @@ it('presentation-r1 验收 6: write without reversibility defaults to unknown wi
   ).toMatchObject({ undoKey: 'confirm.undo.unknown', marker: false })
 })
 
-// Render the real rows and translations; stores and the local expansion/result state are controlled.
+// Render the real rows and translations; stores and the local expansion state are controlled.
 const context = vi.hoisted(() => ({
   answered: new Map<string, Answered>(),
   expanded: false,
   profile: 'cowork',
-  writeError: undefined as boolean | undefined,
 }))
 vi.mock('react', async (importOriginal) => {
   const actual = await importOriginal<typeof React>()
   return {
     ...actual,
-    useState: (initial: unknown) =>
-      actual.useState(
-        initial === false
-          ? context.expanded
-          : initial === undefined && context.writeError !== undefined
-            ? { sessionId: 'session-1', callKey: 'call-1', isError: context.writeError }
-            : initial,
-      ),
+    useState: (initial: unknown) => actual.useState(initial === false ? context.expanded : initial),
   }
 })
 vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
@@ -269,10 +260,10 @@ it('presentation-r1 验收 4: an allowed main-session card collapses to one line
   }
 })
 
-it('presentation-r1 验收 4: a Write with a relative file_path collapses with the real path; one with the same absolute path does not repeat it', async () => {
+it('presentation-r1 验收 4: a Write through a linked workspace keeps the real path live and on redraw; the same absolute path does not repeat it', async () => {
   for (const i18n of [en, zh]) {
-    for (const path of ['/real/notes.txt', '/real/se\u202Ecret.txt']) {
-      for (const filePath of ['notes.txt', '/link/notes.txt', path]) {
+    for (const path of ['/real/ws/notes/today.md', '/real/ws/notes/se\u202Ecret.txt']) {
+      for (const filePath of ['/link/ws/notes/today.md', path]) {
         const answered: Answered = {
           outcome: 'allowed',
           scope: 'session',
@@ -282,9 +273,19 @@ it('presentation-r1 验收 4: a Write with a relative file_path collapses with t
         for (const persisted of [false, true]) {
           // oxlint-disable-next-line no-await-in-loop -- real versus displayed paths, live and redraw
           const html = await renderRow(answered, 'Write', { file_path: filePath }, i18n, persisted)
-          const label = i18n === en ? 'Allowed (This session)' : '已允许（本会话）'
-          const shown = path.replace('\u202E', '\\u{202E}')
-          expect(collapsed(html)).toBe(label + (filePath === path ? '' : ` · ${shown}`))
+          expect(collapsed(html)).toBe(
+            filePath === path
+              ? i18n === en
+                ? 'Allowed (This session)'
+                : '已允许（本会话）'
+              : path === '/real/ws/notes/today.md'
+                ? i18n === en
+                  ? 'Allowed (This session) · /real/ws/notes/today.md'
+                  : '已允许（本会话） · /real/ws/notes/today.md'
+                : i18n === en
+                  ? 'Allowed (This session) · /real/ws/notes/se\\u{202E}cret.txt'
+                  : '已允许（本会话） · /real/ws/notes/se\\u{202E}cret.txt',
+          )
         }
       }
     }
@@ -499,8 +500,8 @@ it('presentation-r1 验收 6: the expanded line says what it did and whether it 
               state,
               source: state === 'completed' ? null : 'user-rejected',
               output: 'ok',
+              isError: false,
             }
-            context.writeError = false
             // oxlint-disable-next-line no-await-in-loop -- table of rendered outcomes in both locales
             const html = await renderRow(null, name, {}, i18n, false, outcome)
             const did = ['Write', 'Edit'].includes(name)
@@ -531,7 +532,6 @@ it('presentation-r1 验收 6: the expanded line says what it did and whether it 
     }
   } finally {
     context.expanded = false
-    context.writeError = undefined
   }
 })
 
@@ -541,13 +541,13 @@ it('presentation-r1 验收 6: an Edit that came back with an error does not say 
     for (const i18n of [zh, en]) {
       for (const name of ['Edit', 'Write']) {
         for (const isError of [true, undefined, false]) {
-          context.writeError = isError
           // oxlint-disable-next-line no-await-in-loop -- success, failure and live result lacking isError
           const html = await renderRow(null, name, {}, i18n, false, {
             effect: 'write',
             state: 'completed',
             source: null,
             output: 'result',
+            ...(isError === undefined ? {} : { isError }),
           })
           expect(didText(html)).toBe(
             isError === false
@@ -561,7 +561,6 @@ it('presentation-r1 验收 6: an Edit that came back with an error does not say 
     }
   } finally {
     context.expanded = false
-    context.writeError = undefined
   }
 })
 
@@ -599,57 +598,4 @@ it('presentation-r1 验收 6: only an irreversible row carries the marker, with 
       }
     }
   }
-})
-
-const request = (name: string) => ({ type: 'tool-request', id: 'reused-id', name, input: {} })
-const response = (isError: boolean) => ({
-  type: 'tool-response',
-  id: 'reused-id',
-  content: [],
-  isError,
-})
-it('presentation-r1 验收 6: an expanded write reads isError from session.messages, pages for old calls and never reuses a provider ID from another call', async () => {
-  const sessionId = '11111111-1111-4111-8111-111111111111'
-  const row = (orderSeq: number, content: unknown[], calls?: unknown[]) =>
-    messageRowSchema.parse({
-      sessionId,
-      messageId: `message-${orderSeq}`,
-      orderSeq,
-      role: calls ? 'assistant' : 'user',
-      status: 'complete',
-      entryId: orderSeq,
-      createdAt: 0,
-      updatedAt: 0,
-      content,
-      ...(calls ? { calls } : {}),
-    })
-  const rows = [
-    row(1, [request('Write')], [{ callKey: 'old-call', outcome: null }]),
-    row(2, [response(false)]),
-    row(3, [request('Edit')], [{ callKey: 'new-call', outcome: null }]),
-    row(4, [response(true)]),
-  ]
-  expect(writeResultError(rows, 'old-call')).toBe(false)
-  expect(writeResultError(rows, 'new-call')).toBe(true)
-  expect(writeResultError(rows, 'missing')).toBeUndefined()
-  expect(writeResultError(rows.slice(0, 1), 'old-call')).toBeUndefined()
-  const { readWriteError } = await import(componentPath)
-  const invoke = vi
-    .fn<(channel: string, payload: unknown) => Promise<unknown>>()
-    .mockResolvedValueOnce({ ok: true, data: rows.slice(2) })
-    .mockResolvedValueOnce({ ok: true, data: rows.slice(0, 2) })
-  const bridge = { invoke } as unknown as Parameters<typeof readWriteError>[0]
-  expect(await readWriteError(bridge, sessionId, 'old-call')).toBe(false)
-  expect(invoke.mock.calls).toEqual([
-    ['session.messages', { sessionId, limit: 1000 }],
-    ['session.messages', { sessionId, limit: 1000, beforeOrderSeq: 3 }],
-  ])
-  invoke.mockReset().mockResolvedValueOnce({ ok: true, data: rows })
-  expect(await readWriteError(bridge, sessionId, 'new-call')).toBe(true)
-  invoke.mockReset().mockResolvedValue({ ok: true, data: [] })
-  expect(await readWriteError(bridge, sessionId, 'missing')).toBeUndefined()
-  invoke
-    .mockReset()
-    .mockResolvedValue({ ok: false, error: { code: 'internal', message: 'unavailable' } })
-  expect(await readWriteError(bridge, sessionId, 'old-call')).toBeUndefined()
 })

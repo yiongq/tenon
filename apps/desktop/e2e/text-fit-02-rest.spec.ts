@@ -122,7 +122,14 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelName)
 
       // The toggle and chip share the tool row; paths in the popover are content and may wrap.
-      await expectSingleLineUnclipped(page.getByTestId('folder-toggle').locator('xpath=..'))
+      // Measure the visible label: Switch's ::after expands its hit area by 12px/8px and is
+      // intentionally larger than the control, so its scroll bounds do not measure text clipping.
+      await expectSingleLineUnclipped(
+        page
+          .getByTestId('folder-toggle')
+          .locator('xpath=..')
+          .getByText(locale === 'en' ? 'Work in a folder' : '在文件夹里工作', { exact: true }),
+      )
       await page.getByTestId('folder-toggle').click()
       const chip = page.getByTestId('folder-chip')
       await expectSingleLineUnclipped(chip)

@@ -15,7 +15,6 @@ import {
   EMPTY_THREAD,
   applyEvent,
   threadFromRows,
-  withMessageResults,
   withSentText,
 } from '../src/renderer/src/runtime/thread-model.js'
 import type { ThreadModel } from '../src/renderer/src/runtime/thread-model.js'
@@ -55,7 +54,13 @@ const failed = (
   })
 
 function view(effect: ToolOutcomeViewContract['effect']): ToolOutcomeViewContract {
-  return toolOutcomeViewSchema.parse({ effect, state: 'completed', source: null, output: 'ok' })
+  return toolOutcomeViewSchema.parse({
+    effect,
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    isError: false,
+  })
 }
 
 const PAUSED: RunEndReasonContract = { code: 'paused', waitingFor: 'approval' }
@@ -94,42 +99,6 @@ function thread(...events: readonly ChatEvent[]): ThreadModel {
     10_000,
     'a',
   )
-}
-
-/** The persisted request/results the store reads once a non-paused Run ends. */
-function withStoredResults(model: ThreadModel): ThreadModel {
-  const calls = model.turns.flatMap((turn) =>
-    turn.parts.filter((part) => part.kind === 'tool' && part.outcome !== null),
-  )
-  const rows = calls.flatMap((part, index) => {
-    if (part.kind !== 'tool') return []
-    const base = {
-      sessionId: SESSION,
-      status: 'complete',
-      createdAt: 1,
-      updatedAt: 1,
-    }
-    return [
-      messageRowSchema.parse({
-        ...base,
-        messageId: `request-${part.callKey}`,
-        orderSeq: index * 2 + 1,
-        entryId: index * 2 + 1,
-        role: 'assistant',
-        content: [{ type: 'tool-request', id: 'toolu_1', name: part.name, input: part.input }],
-        calls: [{ callKey: part.callKey, outcome: part.outcome }],
-      }),
-      messageRowSchema.parse({
-        ...base,
-        messageId: `result-${part.callKey}`,
-        orderSeq: index * 2 + 2,
-        entryId: index * 2 + 2,
-        role: 'user',
-        content: [{ type: 'tool-response', id: 'toolu_1', content: [], isError: false }],
-      }),
-    ]
-  })
-  return withMessageResults(model, rows)
 }
 
 const custom = (message: ThreadMessageLike | ThreadMessage): TurnCustom | undefined =>
@@ -227,13 +196,11 @@ describe('toThreadMessages: metadata.custom', () => {
 
   it('carries the end, the summary and the retry answer on the Run’s last turn', () => {
     const messages = toThreadMessages(
-      withStoredResults(
-        thread(
-          toolCall('r1:1:0', 'Read', { file_path: '/w/a' }),
-          toolOutcome('r1:1:0', view('read')),
-          text('Done.'),
-          done(COMPLETED),
-        ),
+      thread(
+        toolCall('r1:1:0', 'Read', { file_path: '/w/a' }),
+        toolOutcome('r1:1:0', view('read')),
+        text('Done.'),
+        done(COMPLETED),
       ),
     )
     // The call's turn, closed by its result, carries nothing: the end is the Run's last turn's.
@@ -279,20 +246,18 @@ describe('toThreadMessages: metadata.custom', () => {
       undefined,
     ])
 
-    const model = withStoredResults(
-      fold(
-        answering,
-        [
-          toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
-          toolOutcome('r2:1:0', view('read')),
-          toolCall('r2:2:0', 'Read', { file_path: '/w/c' }),
-          toolOutcome('r2:2:0', view('read')),
-          text('All done.'),
-          done(COMPLETED, 'end-turn', 'run-2'),
-        ],
-        60_000,
-        'c',
-      ),
+    const model = fold(
+      answering,
+      [
+        toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
+        toolOutcome('r2:1:0', view('read')),
+        toolCall('r2:2:0', 'Read', { file_path: '/w/c' }),
+        toolOutcome('r2:2:0', view('read')),
+        text('All done.'),
+        done(COMPLETED, 'end-turn', 'run-2'),
+      ],
+      60_000,
+      'c',
     )
     const messages = toThreadMessages(model)
     const summaries = messages.map((message) => custom(message)?.summary)
@@ -325,13 +290,11 @@ describe('toThreadMessages: metadata.custom', () => {
   })
 
   it('one line a round: after a step-limit and 「继续」, only the continued Run’s end carries it', () => {
-    const limited = withStoredResults(
-      thread(
-        toolCall('r1:1:0', 'Write', { file_path: '/w/a' }),
-        toolOutcome('r1:1:0', view('write')),
-        text('At the limit.'),
-        done(STEP_LIMIT),
-      ),
+    const limited = thread(
+      toolCall('r1:1:0', 'Write', { file_path: '/w/a' }),
+      toolOutcome('r1:1:0', view('write')),
+      text('At the limit.'),
+      done(STEP_LIMIT),
     )
     const before = toThreadMessages(limited)
     // Until 「继续」, the step-limit card carries the round's line.
@@ -343,18 +306,16 @@ describe('toThreadMessages: metadata.custom', () => {
       online: 0,
       connector: 0,
     })
-    const continued = withStoredResults(
-      fold(
-        limited,
-        [
-          toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
-          toolOutcome('r2:1:0', view('read')),
-          text('Rest.'),
-          done(COMPLETED, 'end-turn', 'run-2'),
-        ],
-        80_000,
-        'c',
-      ),
+    const continued = fold(
+      limited,
+      [
+        toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
+        toolOutcome('r2:1:0', view('read')),
+        text('Rest.'),
+        done(COMPLETED, 'end-turn', 'run-2'),
+      ],
+      80_000,
+      'c',
     )
     const summaries = toThreadMessages(continued).map((message) => custom(message)?.summary)
     expect(summaries.filter((summary) => summary !== undefined)).toEqual([

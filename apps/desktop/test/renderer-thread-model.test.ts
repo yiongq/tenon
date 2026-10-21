@@ -27,7 +27,6 @@ import {
   retryable,
   summaryBefore,
   threadFromRows,
-  withMessageResults,
   withSentText,
   withSettled,
   withoutTurn,
@@ -1098,7 +1097,7 @@ function successfulSummary(turns: readonly Turn[], index: number) {
           ? part
           : {
               ...part,
-              isError: false,
+              outcome: part.outcome === null ? null : { ...part.outcome, isError: false },
               input: { file_path: part.callKey, ...part.input },
             },
       ),
@@ -1318,7 +1317,6 @@ describe('retryable (§失败卡与结束原因 provider-error; 旧 221)', () =>
 interface SummaryCall {
   name: string
   path?: string
-  isError?: boolean
   outcome?: ToolOutcomeViewContract
 }
 
@@ -1334,19 +1332,7 @@ function summaryRows(calls: readonly SummaryCall[]): MessageRowContract[] {
       })),
       calls: calls.map((call, i) => ({
         callKey: `key-${i}`,
-        outcome: call.outcome ?? view('external'),
-      })),
-    }),
-    row({
-      messageId: 'responses',
-      role: 'user',
-      orderSeq: 2,
-      entryId: 2,
-      content: calls.map((call, i) => ({
-        type: 'tool-response',
-        id: `id-${i}`,
-        content: [{ type: 'text', text: 'result' }],
-        isError: call.isError ?? false,
+        outcome: { isError: false, ...(call.outcome ?? view('external')) },
       })),
     }),
   ]
@@ -1429,20 +1415,40 @@ it('presentation-r1 验收 7: no zero part; a blocked or unsent call is not coun
   )
 })
 
+it('presentation-r1 验收 7: live calls count only outcome.isError false without reading message rows', () => {
+  const d = new Driver()
+  d.apply(
+    toolCall('read-ok', 'Read', { file_path: '/w/a.txt' }),
+    toolOutcome('read-ok', view('read', 'completed', { isError: false })),
+    toolCall('write-error', 'Write', { file_path: '/w/b.txt' }),
+    toolOutcome('write-error', view('write', 'completed', { isError: true })),
+    toolCall('edit-unknown', 'Edit', { file_path: '/w/c.txt' }),
+    toolOutcome('edit-unknown', view('write')),
+    done(COMPLETED),
+  )
+  expect(summaryBefore(d.turns, d.lastEnded())).toEqual({
+    read: 1,
+    search: 0,
+    write: 0,
+    command: 0,
+    online: 0,
+    connector: 0,
+  })
+})
+
 it('presentation-r1 验收 7: an Edit whose old_string was not found does not count as changed', () => {
-  const rows = summaryRows([{ name: 'Edit', path: 'd.txt', isError: true, outcome: view('write') }])
+  const rows = summaryRows([
+    { name: 'Edit', path: 'd.txt', outcome: view('write', 'completed', { isError: true }) },
+  ])
   const stored = threadFromRows(rows)
   expect(summaryBefore(stored.turns, 0)).toBeNull()
   const d = new Driver()
   d.apply(
     toolCall('key-0', 'Edit', { file_path: 'd.txt' }),
-    toolOutcome('key-0', view('write')),
+    toolOutcome('key-0', view('write', 'completed', { isError: true })),
     done(COMPLETED),
   )
-  expect(summaryBefore(d.turns, d.lastEnded())).toBeNull() // live event has no isError
-  const merged = withMessageResults(d.model, rows)
-  expect(summaryBefore(merged.turns, d.lastEnded())).toBeNull()
-  expect(merged.turns.at(-1)?.end).toEqual(d.turns.at(-1)?.end)
+  expect(summaryBefore(d.turns, d.lastEnded())).toBeNull()
 })
 
 it('presentation-r1 验收 7: a round with only an AskUserQuestion shows no line', () => {

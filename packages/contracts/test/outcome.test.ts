@@ -63,6 +63,11 @@ export type SourcesBothWays = Assert<
 >
 // One way only, as for `tool-outcome`: the kernel brands ConfirmTarget's paths, the wire does not.
 export type KernelViewCrosses = Assert<Extends<ToolOutcomeView, ToolOutcomeViewContract>>
+export type ResultErrorBothWays = Assert<
+  Extends<Pick<ToolOutcomeView, 'isError'>, Pick<ToolOutcomeViewContract, 'isError'>> extends true
+    ? Extends<Pick<ToolOutcomeViewContract, 'isError'>, Pick<ToolOutcomeView, 'isError'>>
+    : false
+>
 export type KernelCallCrosses = Assert<Extends<RowCall, CallContract>>
 export type KernelRowCrosses = Assert<Extends<ProjectedSessionRow, MessageRowContract>>
 // A row with calls is still a row the kernel would recognise.
@@ -128,6 +133,27 @@ function propertyNames(schema: z.ZodType): Set<string> {
 }
 
 describe('ipc/outcome.ts', () => {
+  it('presentation-r1: isError survives live and redraw validation, absent stays absent', () => {
+    expect(toolOutcomeViewSchema.parse({ ...ASKED, isError: true }).isError).toBe(true)
+    expect(toolOutcomeViewSchema.parse({ ...ASKED, isError: false }).isError).toBe(false)
+    expect(toolOutcomeViewSchema.parse(ASKED)).not.toHaveProperty('isError')
+    expect(toolOutcomeViewSchema.safeParse({ ...ASKED, isError: undefined }).success).toBe(false)
+    expect(toolOutcomeViewSchema.safeParse({ ...ASKED, isError: 'false' }).success).toBe(false)
+    expect(
+      chatEventSchema.parse({
+        type: 'tool-outcome',
+        sessionId: SESSION,
+        callKey: KEY,
+        providerToolCallId: 'toolu_1',
+        ...ASKED,
+        isError: false,
+      }),
+    ).toHaveProperty('isError', false)
+    expect(
+      messageRowSchema.parse(row([{ callKey: KEY, outcome: { ...ASKED, isError: true } }])),
+    ).toHaveProperty('calls.0.outcome.isError', true)
+  })
+
   it('is the one definition the restated exports hand out', () => {
     expect(decisionSummarySchema).toBe(outcome.decisionSummarySchema)
     expect(decisionSummaryCodeSchema).toBe(outcome.decisionSummaryCodeSchema)
@@ -199,7 +225,7 @@ describe('ipc/outcome.ts', () => {
   })
 
   it('keeps optional members exact, and the answer’s scope to the two a card gives', () => {
-    for (const key of ['facts', 'permission', 'approval', 'question', 'handoff']) {
+    for (const key of ['isError', 'facts', 'permission', 'approval', 'question', 'handoff']) {
       expect(toolOutcomeViewSchema.safeParse({ ...ASKED, [key]: undefined }).success).toBe(false)
     }
     const scoped = (scope: unknown) => ({ ...ASKED, approval: { ...ASKED.approval, scope } })

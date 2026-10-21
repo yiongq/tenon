@@ -26,7 +26,6 @@ import {
   EMPTY_THREAD,
   applyEvent,
   threadFromRows,
-  withMessageResults,
   withSentText,
   withSettled,
   withoutTurn,
@@ -147,7 +146,6 @@ export class SessionStore {
   /** Each read is numbered; an answer older than the newest one asked for is dropped. */
   readonly #asked = { pending: 0, facts: 0, resumable: 0 }
   #opened = false
-  #resultRead = 0
   /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
   readonly #childReads = new Map<string, Promise<void>>()
   readonly #settledChildren = new Set<string>()
@@ -319,7 +317,7 @@ export class SessionStore {
       if (this.#snapshot.facts?.established === false) void this.refreshFacts()
     }
     if (event.type === 'done' || event.type === 'error') {
-      if (event.endReason?.code !== 'paused') void this.#refreshResults()
+      void this.#refreshChildren()
       // A Run that paused left a card to fetch (§答复与投递); any end may have cleared one.
       void this.refreshPending()
       void this.refreshResumable()
@@ -344,17 +342,6 @@ export class SessionStore {
     // Switched to by id: the kernel resumes what startup recovery listed (§离开会话 第 4 条). The
     // session a window restored on its own is not "opened": it offers 「继续」 instead.
     if (o.resume) await this.resume()
-  }
-
-  async #refreshResults(): Promise<void> {
-    const read = (this.#resultRead += 1)
-    const response = await invokeRoute(this.#bridge, sessionMessages, {
-      sessionId: this.sessionId,
-      limit: 1000,
-    })
-    if (read !== this.#resultRead || !response.ok) return
-    this.#set({ model: withMessageResults(this.#snapshot.model, response.data) })
-    await this.#refreshChildren()
   }
 
   async #refreshChildren(): Promise<void> {

@@ -1,5 +1,5 @@
 import { serverIdOfMappedName } from '@tenon-app/contracts'
-import type { MessageRowContract, ToolOutcomeViewContract } from '@tenon-app/contracts'
+import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
 
 /** One classification shared by the expanded sentence and the settlement counts. */
 const TOOL_CATEGORY = {
@@ -21,11 +21,7 @@ export function toolCategory(name: string) {
     : 'connector'
 }
 
-export function toolRowEffect(
-  outcome: ToolOutcomeViewContract | null,
-  toolName: string,
-  isError?: boolean,
-) {
+export function toolRowEffect(outcome: ToolOutcomeViewContract | null, toolName: string) {
   if (!outcome) return null
   const category = toolCategory(toolName)
   const reversibility = outcome.reversibility ?? 'unknown'
@@ -34,7 +30,7 @@ export function toolRowEffect(
     category === null ||
     category === 'read' ||
     category === 'search' ||
-    (category === 'write' && isError !== false)
+    (category === 'write' && outcome.isError !== false)
       ? null
       : category
   return {
@@ -51,25 +47,4 @@ export function toolRowEffect(
     loginServerId:
       outcome.source === 'connector-unauthorized' ? serverIdOfMappedName(toolName) : null,
   }
-}
-
-/** Match by callKey first: provider tool IDs can be reused in later replies. */
-export function writeResultError(
-  rows: readonly MessageRowContract[],
-  callKey: string,
-): boolean | undefined {
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex]!
-    const callIndex = row.calls?.findIndex((call) => call.callKey === callKey) ?? -1
-    if (callIndex < 0) continue
-    const request = row.content.filter((block) => block.type === 'tool-request')[callIndex]
-    if (!request) return undefined
-    for (const responseRow of rows.slice(rowIndex + 1)) {
-      for (const block of responseRow.content) {
-        if (block.type === 'tool-response' && block.id === request.id) return block.isError
-      }
-    }
-    return undefined
-  }
-  return undefined
 }

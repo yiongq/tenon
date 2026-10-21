@@ -4,7 +4,7 @@ import type {
   RunEndReasonContract,
   ToolOutcomeViewContract,
 } from '@tenon-app/contracts'
-import { toolCategory, writeResultError } from '../lib/tool-row-effect'
+import { toolCategory } from '../lib/tool-row-effect'
 
 /**
  * The conversation on screen, as the renderer keeps it (spec 02 plan step 20: the external-store
@@ -40,8 +40,6 @@ export interface ToolPart {
   readonly outcome: ToolOutcomeViewContract | null
   /** The live Run it arrived in (`RunTrack.seq`); null for a stored row. */
   readonly run: number | null
-  /** Present only after reading the persisted tool-response. */
-  readonly isError?: boolean
 }
 
 export type Part = TextPart | ThinkingPart | ToolPart
@@ -132,7 +130,6 @@ export function threadFromRows(rows: readonly MessageRowContract[]): ThreadModel
             input: block.input,
             outcome: known?.outcome ?? null,
             run: null,
-            ...resultError(rows, known?.callKey),
           })
         }
       }
@@ -146,40 +143,6 @@ export function threadFromRows(rows: readonly MessageRowContract[]): ThreadModel
         createdAt: row.createdAt,
       }
     }),
-  }
-}
-
-function resultError(rows: readonly MessageRowContract[], callKey?: string) {
-  const isError = callKey === undefined ? undefined : writeResultError(rows, callKey)
-  return isError === undefined ? {} : { isError }
-}
-
-/** Merge persisted results by callKey without replacing streamed turns, timings or Run ends. */
-export function withMessageResults(
-  model: ThreadModel,
-  rows: readonly MessageRowContract[],
-): ThreadModel {
-  const stored = new Map(
-    threadFromRows(rows).turns.flatMap((turn) =>
-      turn.parts.flatMap((part) => (part.kind === 'tool' ? [[part.callKey, part] as const] : [])),
-    ),
-  )
-  return {
-    ...model,
-    turns: model.turns.map((turn) => ({
-      ...turn,
-      parts: turn.parts.map((part) => {
-        if (part.kind !== 'tool') return part
-        const known = stored.get(part.callKey)
-        return known === undefined
-          ? part
-          : {
-              ...part,
-              outcome: known.outcome,
-              ...(known.isError === undefined ? {} : { isError: known.isError }),
-            }
-      }),
-    })),
   }
 }
 
@@ -559,7 +522,7 @@ export function summaryBefore(
         const category = toolCategory(part.name)
         if (category === null) continue
         if (category === 'read' || category === 'search' || category === 'write') {
-          if (outcome.state !== 'completed' || part.isError !== false) continue
+          if (outcome.state !== 'completed' || outcome.isError !== false) continue
           if (category !== 'write' && outcome.permission?.code === 'own-output-read') continue
           if (category === 'search') counts.search += 1
           else if (typeof part.input.file_path === 'string') {

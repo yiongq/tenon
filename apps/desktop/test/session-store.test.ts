@@ -1897,7 +1897,7 @@ describe('a question (plan step 26; §答复与投递, §插话与输入框状�
   })
 })
 
-/** Persisted request/result rows; repeated provider IDs in later replies still match by callKey. */
+/** Real message-row shape: result flags live on calls[i].outcome, with no tool-response rows. */
 function settlementRows(
   sessionId: string,
   calls: readonly {
@@ -1920,28 +1920,20 @@ function settlementRows(
       })),
       calls: calls.map((call) => ({
         callKey: call.key,
-        outcome: call.outcome ?? {
+        outcome: {
           state: 'completed',
           effect: 'write',
           source: null,
           output: 'result',
+          isError: call.error ?? false,
+          ...call.outcome,
         },
-      })),
-    },
-    {
-      ...row('results', 'user', '', 2),
-      sessionId,
-      content: calls.map((call, i) => ({
-        type: 'tool-response',
-        id: `tool-${i}`,
-        content: [{ type: 'text', text: 'result' }],
-        isError: call.error ?? false,
       })),
     },
   ]
 }
 
-it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the counts come from session.messages with isError', async () => {
+it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the counts come from outcome.isError without rereading the parent', async () => {
   const fake = fakeBridge()
   const handoff = {
     outcome: 'completed' as const,
@@ -1966,12 +1958,16 @@ it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the
     { key: 'child-bad-write', name: 'Write', path: 'bad.txt', error: true },
     { key: 'child-read', name: 'Read', path: 'a.txt' },
   ])
-  fake.handle(sessionMessages, ({ sessionId }) => (sessionId === OTHER ? childRows : parentRows))
+  fake.handle(sessionMessages, ({ sessionId }) => {
+    expect(sessionId).toBe(OTHER)
+    return childRows
+  })
   const store = new SessionStore(SESSION, fake.bridge, [])
   const detach = store.attach()
   for (const call of parentRows[0]!.content) {
     if (call.type !== 'tool-request') continue
-    const key = parentRows[0]!.calls![Number(call.id.slice(5))]!.callKey
+    const known = parentRows[0]!.calls![Number(call.id.slice(5))]!
+    const key = known.callKey
     fake.emit(chatEvent, {
       type: 'tool-call',
       sessionId: SESSION,
@@ -1985,14 +1981,7 @@ it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the
       sessionId: SESSION,
       callKey: key,
       providerToolCallId: call.id,
-      ...(key === CALL
-        ? agent
-        : {
-            state: 'aborted' as const,
-            effect: 'write' as const,
-            source: 'stopped' as const,
-            output: 'live before the persisted result was read',
-          }),
+      ...known.outcome!,
     })
   }
   fake.emit(chatEvent, {
@@ -2021,7 +2010,7 @@ it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the
     online: 0,
     connector: 0,
   })
-  expect(fake.calls(sessionMessages).filter((call) => call.sessionId === SESSION)).toHaveLength(1)
+  expect(fake.calls(sessionMessages).filter((call) => call.sessionId === SESSION)).toHaveLength(0)
   expect(fake.calls(sessionMessages).filter((call) => call.sessionId === OTHER)).toHaveLength(1)
   // Another parent outcome and end reuse the completed child's rows.
   fake.emit(chatEvent, {
@@ -2110,7 +2099,7 @@ it('presentation-r1 验收 7: a still-running child is reread on parent tool-out
   const model = store.getSnapshot().model
   expect(model.childSessions?.get(OTHER)?.[0]?.parts[0]).toMatchObject({
     name: 'Write',
-    isError: false,
+    outcome: { isError: false },
   })
   detach()
 })
