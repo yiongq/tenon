@@ -187,3 +187,87 @@ describe('04 sandbox e2e seam', () => {
     })
   })
 })
+
+// Exercise the wrapper selected by the host, in addition to the startup selector above.
+describe('04 fake command wrapper', () => {
+  it('04 验收 34 (seam): fake passes argv/env unchanged and reports only original-command markers once', async () => {
+    const { wiringFixture } = await import('./wiring-support.js')
+    const h = wiringFixture('fake')
+    const ports = deps()
+    vi.mocked(h.options.startPosture).mockImplementation(() =>
+      startDesktopSandboxPosture(ports, false, h.options.startupEnv),
+    )
+    h.runtime.start()
+    // Use the real selector too: neither initialize nor chdir is needed for fake wrapping.
+    await Promise.resolve()
+    const request = {
+      ...h.request(),
+      argv: [
+        '/bin/sh',
+        '-c',
+        'echo tenon-test-blocked:blocked.example.com tenon-test-write:/outside/new.txt',
+      ],
+      env: { PATH: '/bin', NOTE: 'tenon-test-blocked:ignored.example.com' },
+    }
+    expect(await h.runtime.wrap(request)).toEqual({ argv: request.argv, env: request.env })
+    await h.runtime.afterExit('cmd')
+    expect(await h.runtime.violations('cmd')).toEqual([
+      {
+        kind: 'network',
+        line: 'tenon-test-blocked:blocked.example.com',
+        target: 'blocked.example.com',
+        release: 'domain',
+      },
+      {
+        kind: 'fs',
+        line: 'tenon-test-write:/outside/new.txt',
+        target: '/outside/new.txt',
+        release: 'path',
+      },
+    ])
+    expect(await h.runtime.violations('cmd')).toEqual([])
+    expect(h.srt.wrapWithSandboxArgv).not.toHaveBeenCalled()
+    await h.runtime.dispose()
+    expect(h.srt.reset).not.toHaveBeenCalled()
+    expect(h.runtime.view().reasons).toEqual([{ code: 'test-seam', detail: 'fake' }])
+    expect(ports.srt.initialize).not.toHaveBeenCalled()
+    expect(ports.chdir).not.toHaveBeenCalled()
+    expect(
+      await h.runtime.wrap({ ...request, commandId: 'outside', profile: 'full-access' }),
+    ).toEqual({ argv: request.argv, env: request.env })
+    expect(await h.runtime.violations('outside')).toEqual([])
+  })
+
+  it.each([
+    { packaged: true, dev: 'off' },
+    { packaged: false, dev: 'missing' },
+    { packaged: false, dev: 'on' },
+  ])(
+    '04 验收 34 (seam): fake wrapper cannot be installed ($packaged, $dev)',
+    async ({ packaged, dev }) => {
+      const { wiringFixture } = await import('./wiring-support.js')
+      const h = wiringFixture('fake', packaged, dev)
+      h.runtime.start()
+      await h.command()
+      expect(h.srt.wrapWithSandboxArgv).toHaveBeenCalledTimes(1)
+      expect(h.runtime.view().reasons).toEqual([])
+    },
+  )
+
+  it('04 验收 34 (seam): off refuses a restricted wrap and permits full-access', async () => {
+    const { wiringFixture } = await import('./wiring-support.js')
+    const h = wiringFixture('off')
+    const ports = deps()
+    vi.mocked(h.options.startPosture).mockImplementation(() =>
+      startDesktopSandboxPosture(ports, false, h.options.startupEnv),
+    )
+    h.runtime.start()
+    await expect(h.runtime.wrap(h.request())).rejects.toThrow('the sandbox is unavailable')
+    expect(h.runtime.view().posture).toEqual({ state: 'unavailable', profile: 'workspace-write' })
+    expect(h.runtime.view().reasons).toEqual([{ code: 'test-seam', detail: 'off' }])
+    const request = h.request('full', 'full-access')
+    expect(await h.runtime.wrap(request)).toEqual({ argv: request.argv, env: request.env })
+    expect(ports.srt.initialize).not.toHaveBeenCalled()
+    expect(ports.chdir).not.toHaveBeenCalled()
+  })
+})

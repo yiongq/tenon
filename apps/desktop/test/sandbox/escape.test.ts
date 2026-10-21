@@ -23,6 +23,7 @@ import {
 import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { tokenRegression } from './token-case.js'
 import {
   DARWIN,
   SANDBOX_TESTS_VARIABLE,
@@ -423,6 +424,15 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       await rig.dispose()
     }
   }, CASE_MS)
+
+  it(
+    '04 验收 37 (token): real wrapping and a spawn failure never expose the proxy token in logs, Tape, tool results or errors',
+    async () => {
+      expect(rig.outcome.state).toBe('active')
+      await tokenRegression(rig)
+    },
+    CASE_MS,
+  )
 
   /** A lab whose one session folder is a fresh `ws`, plus a fresh `outside`. */
   function workspaceLab(underLink = false): { lab: SandboxLab; ws: string; outside: string } {

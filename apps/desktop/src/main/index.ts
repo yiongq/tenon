@@ -30,6 +30,7 @@ import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/ro
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
+import { startSandboxAfterWindow } from './host/sandbox-runtime.js'
 import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
 import { compactionTestOptions } from './compaction-test-seam.js'
@@ -257,10 +258,14 @@ async function main(): Promise<void> {
           send: broadcast,
           locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
           commandShell,
+          sandbox: host.sandbox,
           removing,
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  host.sandbox.bindSessionFolders(
+    async (sessionId) => (await sessions?.sessionFacts({ sessionId }))?.workspace?.folders ?? [],
+  )
   // Right after bindLoop: the routes below wait for it (spec 02 §启动恢复与发送防护).
   const recovery = startRecovery({
     sessions,
@@ -383,7 +388,7 @@ async function main(): Promise<void> {
   })
   registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
-  const win = openWindow()
+  const win = startSandboxAfterWindow(openWindow, host.sandbox)
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })
   })

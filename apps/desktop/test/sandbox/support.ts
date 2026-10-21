@@ -54,6 +54,7 @@ import {
   desktopPostureProcesses,
   desktopPostureRunner,
   desktopSrtStartup,
+  desktopSrtSandbox,
   startSandboxPosture,
   type SandboxPostureOutcome,
   type SandboxPostureRun,
@@ -345,24 +346,6 @@ function pathPorts(): PathPorts {
   }
 }
 
-/** sandbox-runtime itself, as `DesktopSandbox` asks for it. */
-function realSrt(): SrtSandbox {
-  return {
-    wrapWithSandboxArgv: (command, binShell, customConfig, abortSignal, cwd, options) =>
-      SandboxManager.wrapWithSandboxArgv(
-        command,
-        binShell,
-        customConfig,
-        abortSignal,
-        cwd,
-        options,
-      ),
-    cleanupAfterCommand: () => SandboxManager.cleanupAfterCommand(),
-    getSandboxViolationStore: () => SandboxManager.getSandboxViolationStore(),
-    reset: () => SandboxManager.reset(),
-  }
-}
-
 // ---------------------------------------------------------------------------------------------
 // A lab: one home, profile, cache and DesktopSandbox
 
@@ -424,7 +407,7 @@ function newLab(q: {
   const sessionId = sessionUuid()
   const toolOutputDir = makeDir(join(profileDir, 'tool-output', sessionId))
   const lastIds: string[] = []
-  const srt = realSrt()
+  const srt = desktopSrtSandbox()
   const recordingSrt: SrtSandbox = {
     ...srt,
     wrapWithSandboxArgv: (command, binShell, customConfig, abortSignal, cwd, options) => {

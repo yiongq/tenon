@@ -71,7 +71,7 @@ export interface SandboxReason {
 }
 
 /** One reason; `detail` is diagnostic text shown as it is, never copy (§IPC: 「不翻译」). */
-function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
+export function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
   return { code, detail }
 }
 
@@ -1041,6 +1041,19 @@ function messageOf(error: unknown): string {
 
 // ---------------------------------------------------------------------------------------------
 // The real ports
+
+/** Shared by desktop and the eval host (04 step 13c/13f); never logs the wrapped argv. */
+export function desktopSrtSandbox(): SrtSandbox & {
+  updateConfig(config: SandboxRuntimeConfig): void
+} {
+  return {
+    wrapWithSandboxArgv: (...args) => SandboxManager.wrapWithSandboxArgv(...args),
+    cleanupAfterCommand: () => SandboxManager.cleanupAfterCommand(),
+    getSandboxViolationStore: () => SandboxManager.getSandboxViolationStore(),
+    reset: () => SandboxManager.reset(),
+    updateConfig: (config) => SandboxManager.updateConfig(config),
+  }
+}
 
 /** sandbox-runtime itself. */
 export function desktopSrtStartup(): SrtStartup {
