@@ -191,3 +191,52 @@ test('a long handoff shows only its start when expanded, and says where the full
     folders.dispose()
   }
 })
+
+test('presentation-r1 验收 7: a subtask’s Write is counted with the parent’s reads in one settlement line', async () => {
+  const folders = makeFolderTree('subagent-summary', { 'ws/a.txt': 'context' })
+  const ws = join(folders.real, 'ws')
+  const file = join(ws, 'a.txt')
+  const output = join(ws, 'child.txt')
+  const fake = await startFakeAnthropic({
+    replies: [
+      callsReply(
+        {
+          type: 'tool_use',
+          id: 'toolu_agent',
+          name: 'Agent',
+          input: { description: 'Write a note', prompt: 'Write the note.' },
+        },
+        readCall('toolu_parent', file),
+      ),
+      callsReply(
+        writeCall('toolu_child_write', output, 'child note'),
+        readCall('toolu_child_read', file),
+      ),
+      textReply('Child finished.'),
+      textReply('Parent finished.'),
+    ],
+  })
+  const userData = makeUserDataDir('subagent-summary')
+  seedConfig(userData, { locale: 'zh-CN' })
+  try {
+    const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await startTask(app, page, ws)
+      await send(page, 'Delegate the note.')
+      const card = page.getByTestId('approval-card')
+      await expect(card).toBeVisible()
+      await waitingApproval(page)
+      await page.waitForTimeout(600)
+      await card.getByTestId('approval-allow').click()
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('Parent finished.')
+      await expect(page.getByTestId('turn-summary')).toHaveText('读了 1 个文件 · 改了 1 个文件')
+      expect(readFileSync(output, 'utf8')).toBe('child note')
+      expect(fake.unscripted).toBe(0)
+    } finally {
+      await app.close()
+    }
+  } finally {
+    await fake.close()
+    folders.dispose()
+  }
+})

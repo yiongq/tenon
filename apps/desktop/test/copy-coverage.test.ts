@@ -443,9 +443,21 @@ describe('the end-of-Run copy', () => {
     ).toEqual([])
   })
 
-  it('has the summary line with the three counts TurnSummary carries', () => {
-    const counts = covers<keyof TurnSummary>()(['read', 'write', 'external'], true)
-    expect(problems([{ key: 'summary.line', args: counts, what: 'turn summary' }])).toEqual([])
+  it('has the summary line with the six counts TurnSummary carries', () => {
+    const counts = covers<keyof TurnSummary>()(
+      ['read', 'search', 'write', 'command', 'online', 'connector'],
+      true,
+    )
+    expect(
+      problems([
+        ...counts.map((kind) => ({
+          key: `summary.${kind}`,
+          args: ['count'],
+          what: 'turn summary',
+        })),
+        { key: 'summary.separator', args: [], what: 'summary separator' },
+      ]),
+    ).toEqual([])
   })
 
   it('has a sentence for every error code an error event without an end reason carries', () => {

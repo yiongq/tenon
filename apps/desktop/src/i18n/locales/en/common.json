@@ -556,7 +556,13 @@
     "copied": "Copied"
   },
   "summary": {
-    "line": "Read {read} · changed {write}{external, plural, =0 {} other { · sent data out}}"
+    "read": "Read {count, plural, one {# file} other {# files}}",
+    "search": "Searched files {count, plural, one {# time} other {# times}}",
+    "write": "Changed {count, plural, one {# file} other {# files}}",
+    "command": "Ran {count, plural, one {# command} other {# commands}}",
+    "online": "Went online {count, plural, one {# time} other {# times}}",
+    "connector": "Used connectors {count, plural, one {# time} other {# times}}",
+    "separator": " · "
   },
   "thinking": {
     "label": "Thinking",

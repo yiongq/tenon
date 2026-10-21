@@ -4,6 +4,7 @@ import type {
   RunEndReasonContract,
   ToolOutcomeViewContract,
 } from '@tenon-app/contracts'
+import { toolCategory, writeResultError } from '../lib/tool-row-effect'
 
 /**
  * The conversation on screen, as the renderer keeps it (spec 02 plan step 20: the external-store
@@ -39,6 +40,8 @@ export interface ToolPart {
   readonly outcome: ToolOutcomeViewContract | null
   /** The live Run it arrived in (`RunTrack.seq`); null for a stored row. */
   readonly run: number | null
+  /** Present only after reading the persisted tool-response. */
+  readonly isError?: boolean
 }
 
 export type Part = TextPart | ThinkingPart | ToolPart
@@ -97,6 +100,8 @@ export interface ThreadModel {
   /** The assistant turn that takes the next delta, or null (a new one starts). */
   readonly draft: string | null
   readonly run: RunTrack
+  /** Child rows keyed by handoff.childSessionId; shared across rounds, counted per Agent call. */
+  readonly childSessions?: ReadonlyMap<string, readonly Turn[]>
 }
 
 const FIRST_RUN: RunTrack = { seq: 0 }
@@ -127,6 +132,7 @@ export function threadFromRows(rows: readonly MessageRowContract[]): ThreadModel
             input: block.input,
             outcome: known?.outcome ?? null,
             run: null,
+            ...resultError(rows, known?.callKey),
           })
         }
       }
@@ -140,6 +146,40 @@ export function threadFromRows(rows: readonly MessageRowContract[]): ThreadModel
         createdAt: row.createdAt,
       }
     }),
+  }
+}
+
+function resultError(rows: readonly MessageRowContract[], callKey?: string) {
+  const isError = callKey === undefined ? undefined : writeResultError(rows, callKey)
+  return isError === undefined ? {} : { isError }
+}
+
+/** Merge persisted results by callKey without replacing streamed turns, timings or Run ends. */
+export function withMessageResults(
+  model: ThreadModel,
+  rows: readonly MessageRowContract[],
+): ThreadModel {
+  const stored = new Map(
+    threadFromRows(rows).turns.flatMap((turn) =>
+      turn.parts.flatMap((part) => (part.kind === 'tool' ? [[part.callKey, part] as const] : [])),
+    ),
+  )
+  return {
+    ...model,
+    turns: model.turns.map((turn) => ({
+      ...turn,
+      parts: turn.parts.map((part) => {
+        if (part.kind !== 'tool') return part
+        const known = stored.get(part.callKey)
+        return known === undefined
+          ? part
+          : {
+              ...part,
+              outcome: known.outcome,
+              ...(known.isError === undefined ? {} : { isError: known.isError }),
+            }
+      }),
+    })),
   }
 }
 
@@ -443,7 +483,7 @@ function ended(
   }
   const turn = placed[index] as Turn
   placed[index] = { ...turn, runId: end.runId, end: closing }
-  return { turns: placed, draft: null, run: { seq: seq + 1 } }
+  return { ...model, turns: placed, draft: null, run: { seq: seq + 1 } }
 }
 
 /**
@@ -478,11 +518,18 @@ function lastWritten(turns: readonly Turn[], index: number): number {
 /** What one turn's calls did: `TurnSummaryLine` counts them from the last user message on. */
 export interface TurnSummary {
   readonly read: number
+  readonly search: number
   readonly write: number
-  readonly external: number
+  readonly command: number
+  readonly online: number
+  readonly connector: number
 }
 
-export function summaryBefore(turns: readonly Turn[], index: number): TurnSummary | null {
+export function summaryBefore(
+  turns: readonly Turn[],
+  index: number,
+  childSessions: ReadonlyMap<string, readonly Turn[]> = new Map(),
+): TurnSummary | null {
   const lastUser = lastWritten(turns, index)
   // One line a round: a later Run of the same round that ended (paused aside) carries it instead.
   const later = turns.slice(index + 1)
@@ -491,18 +538,42 @@ export function summaryBefore(turns: readonly Turn[], index: number): TurnSummar
   if (round.some((turn) => turn.end !== undefined && turn.end.endReason?.code !== 'paused')) {
     return null
   }
-  let read = 0
-  let write = 0
-  let external = 0
-  for (const turn of turns.slice(lastUser + 1, index + 1)) {
-    for (const part of turn.parts) {
-      if (part.kind !== 'tool' || part.outcome === null) continue
-      if (part.outcome.effect === 'read') read += 1
-      else if (part.outcome.effect === 'write') write += 1
-      else if (part.outcome.effect === 'external') external += 1
+  const counts = { read: 0, search: 0, write: 0, command: 0, online: 0, connector: 0 }
+  const readPaths = new Set<string>()
+  const writePaths = new Set<string>()
+  const visited = new Set<string>()
+  const count = (calls: readonly Turn[]): void => {
+    for (const turn of calls) {
+      for (const part of turn.parts) {
+        if (part.kind !== 'tool' || part.outcome === null) continue
+        const outcome = part.outcome
+        if (outcome.state === 'not-run') continue
+        if (part.name === 'Agent') {
+          const childId = outcome.handoff?.childSessionId
+          if (childId !== undefined && !visited.has(childId)) {
+            visited.add(childId)
+            count(childSessions.get(childId) ?? [])
+          }
+          continue
+        }
+        const category = toolCategory(part.name)
+        if (category === null) continue
+        if (category === 'read' || category === 'search' || category === 'write') {
+          if (outcome.state !== 'completed' || part.isError !== false) continue
+          if (category !== 'write' && outcome.permission?.code === 'own-output-read') continue
+          if (category === 'search') counts.search += 1
+          else if (typeof part.input.file_path === 'string') {
+            const paths = category === 'read' ? readPaths : writePaths
+            paths.add(part.input.file_path)
+          }
+        } else counts[category] += 1
+      }
     }
   }
-  return read + write + external === 0 ? null : { read, write, external }
+  count(turns.slice(lastUser + 1, index + 1))
+  counts.read = readPaths.size
+  counts.write = writePaths.size
+  return Object.values(counts).every((value) => value === 0) ? null : counts
 }
 
 /**

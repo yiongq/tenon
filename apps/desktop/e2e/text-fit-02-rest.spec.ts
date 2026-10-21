@@ -160,7 +160,9 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       // The summary's 「无偏好」 twice, and the round's one summary line (the Read ran).
       await expect(page.getByTestId('ask-summary-mark')).toHaveCount(2)
       await expectSingleLineUnclipped(page.getByTestId('ask-summary-mark'), 2)
-      await expect(page.getByTestId('turn-summary')).toHaveCount(1)
+      await expect(page.getByTestId('turn-summary')).toHaveText(
+        locale === 'zh-CN' ? '读了 1 个文件' : 'Read 1 file',
+      )
       await expectSingleLineUnclipped(page.getByTestId('turn-summary'))
 
       // Round 2: a typed reply, under 「你直接回复：」.

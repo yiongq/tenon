@@ -21,10 +21,15 @@ export interface TurnCustom {
 export function toThreadMessages(model: ThreadModel): ThreadMessageLike[] {
   // A reply typed while a question waits is drawn only once it turns out to be a message.
   const turns = model.turns.filter((turn) => turn.answering !== true)
-  return turns.map((turn, index) => toMessage(turns, turn, index))
+  return turns.map((turn, index) => toMessage(turns, turn, index, model.childSessions))
 }
 
-function toMessage(turns: readonly Turn[], turn: Turn, index: number): ThreadMessageLike {
+function toMessage(
+  turns: readonly Turn[],
+  turn: Turn,
+  index: number,
+  childSessions: ThreadModel['childSessions'],
+): ThreadMessageLike {
   // One timing per reasoning part assistant-ui keeps: it drops a blank one (fromThreadMessageLike),
   // and ThinkingBlock finds its timing by its place among the kept ones.
   const thinking = turn.parts
@@ -36,7 +41,7 @@ function toMessage(turns: readonly Turn[], turn: Turn, index: number): ThreadMes
     ...(turn.end === undefined || turn.end.endReason?.code === 'paused'
       ? {}
       : (() => {
-          const summary = summaryBefore(turns, index)
+          const summary = summaryBefore(turns, index, childSessions)
           return summary === null ? {} : { summary }
         })()),
     ...(turn.end === undefined ? {} : { retryable: retryable(turns, index) }),

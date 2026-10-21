@@ -556,7 +556,13 @@
     "copied": "已复制"
   },
   "summary": {
-    "line": "读了 {read} 个 · 改了 {write} 个{external, plural, =0 {} other { · 有对外发送}}"
+    "read": "读了 {count} 个文件",
+    "search": "查找 {count} 次",
+    "write": "改了 {count} 个文件",
+    "command": "运行了 {count} 条命令",
+    "online": "联网 {count} 次",
+    "connector": "用了连接器 {count} 次",
+    "separator": " · "
   },
   "thinking": {
     "label": "思考",

@@ -229,7 +229,7 @@ test('a round with one approval shows one summary line, only once its last Run e
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
     // Four reads over both Runs, nothing changed, nothing sent out — under the round's last reply.
-    await expect(summary).toHaveText('Read 4 · changed 0')
+    await expect(summary).toHaveText('Read 4 files')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)

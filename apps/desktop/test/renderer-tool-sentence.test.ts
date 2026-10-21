@@ -158,17 +158,21 @@ describe('tx', () => {
     expect(errors).toEqual([])
   })
 
-  it('renders the summary line from its three counts (TurnSummaryLine: read, changed, sent out)', () => {
-    expect(tx(t.en, 'summary.line', { read: 3, write: 1, external: 0 })).toBe('Read 3 · changed 1')
-    expect(tx(t.en, 'summary.line', { read: 0, write: 0, external: 2 })).toBe(
-      'Read 0 · changed 0 · sent data out',
-    )
-    expect(tx(t['zh-CN'], 'summary.line', { read: 3, write: 1, external: 0 })).toBe(
-      '读了 3 个 · 改了 1 个',
-    )
-    expect(tx(t['zh-CN'], 'summary.line', { read: 1, write: 0, external: 1 })).toBe(
-      '读了 1 个 · 改了 0 个 · 有对外发送',
-    )
+  it('renders each summary category and its separator in both locales', () => {
+    expect(tx(t.en, 'summary.read', { count: 3 })).toBe('Read 3 files')
+    expect(tx(t.en, 'summary.search', { count: 2 })).toBe('Searched files 2 times')
+    expect(tx(t.en, 'summary.write', { count: 1 })).toBe('Changed 1 file')
+    expect(tx(t.en, 'summary.command', { count: 2 })).toBe('Ran 2 commands')
+    expect(tx(t.en, 'summary.online', { count: 1 })).toBe('Went online 1 time')
+    expect(tx(t.en, 'summary.connector', { count: 2 })).toBe('Used connectors 2 times')
+    expect(tx(t.en, 'summary.separator')).toBe(' · ')
+    expect(tx(t['zh-CN'], 'summary.read', { count: 3 })).toBe('读了 3 个文件')
+    expect(tx(t['zh-CN'], 'summary.search', { count: 2 })).toBe('查找 2 次')
+    expect(tx(t['zh-CN'], 'summary.write', { count: 1 })).toBe('改了 1 个文件')
+    expect(tx(t['zh-CN'], 'summary.command', { count: 2 })).toBe('运行了 2 条命令')
+    expect(tx(t['zh-CN'], 'summary.online', { count: 1 })).toBe('联网 1 次')
+    expect(tx(t['zh-CN'], 'summary.connector', { count: 2 })).toBe('用了连接器 2 次')
+    expect(tx(t['zh-CN'], 'summary.separator')).toBe(' · ')
     expect(errors).toEqual([])
   })
 })

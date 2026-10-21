@@ -108,7 +108,7 @@ test('the step limit ends the Run on 「继续」, which opens a new Run countin
     await expect(done.first()).toHaveText(`读取 ${file}`)
     await expect(done.last()).toHaveText(`读取 ${file}`)
     await expect(effects.locator('p').last()).toHaveText('1 个调用确定没发生。')
-    await expect(page.getByTestId('turn-summary')).toHaveCount(1)
+    await expect(page.getByTestId('turn-summary')).toHaveText('读了 1 个文件')
     const action = card.getByTestId('failure-action')
     await expect(action).toHaveAttribute('data-action', 'continue')
     await expect(action).toHaveText('继续')
@@ -144,7 +144,7 @@ test('the step limit ends the Run on 「继续」, which opens a new Run countin
     // one summary line, now under its last Run.
     await expect(card).toHaveAttribute('data-code', 'step-limit')
     await expect(card.getByTestId('failure-action')).toHaveCount(0)
-    await expect(page.getByTestId('turn-summary')).toHaveCount(1)
+    await expect(page.getByTestId('turn-summary')).toHaveText('读了 1 个文件')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)

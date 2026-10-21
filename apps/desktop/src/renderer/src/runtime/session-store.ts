@@ -26,6 +26,7 @@ import {
   EMPTY_THREAD,
   applyEvent,
   threadFromRows,
+  withMessageResults,
   withSentText,
   withSettled,
   withoutTurn,
@@ -146,6 +147,10 @@ export class SessionStore {
   /** Each read is numbered; an answer older than the newest one asked for is dropped. */
   readonly #asked = { pending: 0, facts: 0, resumable: 0 }
   #opened = false
+  #resultRead = 0
+  /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
+  readonly #childReads = new Map<string, Promise<void>>()
+  readonly #settledChildren = new Set<string>()
 
   constructor(
     sessionId: string,
@@ -276,6 +281,7 @@ export class SessionStore {
     if (model !== this.#snapshot.model) this.#set({ model })
     const pending = this.#snapshot.pending
     if (event.type === 'tool-outcome') {
+      void this.#refreshChildren()
       const answered = this.#snapshot.answered
       // The row's own outcome is on it now — the kernel names the answer on every closure an answer
       // wrote, a stricter re-judgement's included — so the collapse this window made is not needed.
@@ -313,6 +319,7 @@ export class SessionStore {
       if (this.#snapshot.facts?.established === false) void this.refreshFacts()
     }
     if (event.type === 'done' || event.type === 'error') {
+      if (event.endReason?.code !== 'paused') void this.#refreshResults()
       // A Run that paused left a card to fetch (§答复与投递); any end may have cleared one.
       void this.refreshPending()
       void this.refreshResumable()
@@ -328,10 +335,65 @@ export class SessionStore {
   async open(o: { readonly resume: boolean }): Promise<void> {
     if (this.#opened) return
     this.#opened = true
-    await Promise.all([this.refreshPending(), this.refreshFacts(), this.refreshResumable()])
+    await Promise.all([
+      this.refreshPending(),
+      this.refreshFacts(),
+      this.refreshResumable(),
+      this.#refreshChildren(),
+    ])
     // Switched to by id: the kernel resumes what startup recovery listed (§离开会话 第 4 条). The
     // session a window restored on its own is not "opened": it offers 「继续」 instead.
     if (o.resume) await this.resume()
+  }
+
+  async #refreshResults(): Promise<void> {
+    const read = (this.#resultRead += 1)
+    const response = await invokeRoute(this.#bridge, sessionMessages, {
+      sessionId: this.sessionId,
+      limit: 1000,
+    })
+    if (read !== this.#resultRead || !response.ok) return
+    this.#set({ model: withMessageResults(this.#snapshot.model, response.data) })
+    await this.#refreshChildren()
+  }
+
+  async #refreshChildren(): Promise<void> {
+    const models = [
+      this.#snapshot.model.turns,
+      ...(this.#snapshot.model.childSessions?.values() ?? []),
+    ]
+    const children = new Map<string, boolean>()
+    for (const turns of models) {
+      for (const turn of turns) {
+        for (const part of turn.parts) {
+          if (part.kind !== 'tool' || part.name !== 'Agent') continue
+          const handoff = part.outcome?.handoff
+          if (handoff === undefined || handoff.childSessionId === this.sessionId) continue
+          children.set(
+            handoff.childSessionId,
+            handoff.childEndReason !== null && handoff.childEndReason !== 'paused',
+          )
+        }
+      }
+    }
+    await Promise.all(
+      [...children].map(([sessionId, settled]) => {
+        if (this.#settledChildren.has(sessionId)) return Promise.resolve()
+        const pending = this.#childReads.get(sessionId)
+        if (pending !== undefined) return pending
+        const reading = invokeRoute(this.#bridge, sessionMessages, { sessionId, limit: 1000 })
+          .then((response) => {
+            if (!response.ok) return
+            const childSessions = new Map(this.#snapshot.model.childSessions)
+            childSessions.set(sessionId, threadFromRows(response.data).turns)
+            if (settled) this.#settledChildren.add(sessionId)
+            this.#set({ model: { ...this.#snapshot.model, childSessions } })
+          })
+          .finally(() => this.#childReads.delete(sessionId))
+        this.#childReads.set(sessionId, reading)
+        return reading
+      }),
+    )
   }
 
   async refreshPending(): Promise<void> {

@@ -17,12 +17,17 @@ import type {
   ToolOutcomeViewContract,
 } from '@tenon-app/contracts'
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { I18nextProvider } from 'react-i18next'
+import { createI18n } from '../src/i18n/create-instance.js'
 import {
   EMPTY_THREAD,
   applyEvent,
   retryable,
   summaryBefore,
   threadFromRows,
+  withMessageResults,
   withSentText,
   withSettled,
   withoutTurn,
@@ -1083,15 +1088,48 @@ function endedTurn(id: string, call: Part, endReason: RunEndReasonContract): Tur
   }
 }
 
+/** Existing round fixtures: each successful file call has a distinct path and persisted result. */
+function successfulSummary(turns: readonly Turn[], index: number) {
+  return summaryBefore(
+    turns.map((turn) => ({
+      ...turn,
+      parts: turn.parts.map((part) =>
+        part.kind !== 'tool'
+          ? part
+          : {
+              ...part,
+              isError: false,
+              input: { file_path: part.callKey, ...part.input },
+            },
+      ),
+    })),
+    index,
+  )
+}
+
 describe('summaryBefore (TurnSummaryLine)', () => {
   it('旧 222: counts read, changed and sent out over every Run since the last user message', () => {
     const d = pausedRound()
     const last = d.turns.length - 1
     // The write of the paused Run counts; the previous round's read and the blocked read do not.
-    expect(summaryBefore(d.turns, last)).toEqual({ read: 2, write: 1, external: 1 })
+    expect(successfulSummary(d.turns, last)).toEqual({
+      read: 2,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 1,
+    })
     // The previous round keeps its own line: the later end is another round's.
     const previous = d.turns.findIndex((turn) => turn.end !== undefined)
-    expect(summaryBefore(d.turns, previous)).toEqual({ read: 1, write: 0, external: 0 })
+    expect(successfulSummary(d.turns, previous)).toEqual({
+      read: 1,
+      write: 0,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
   })
 
   it('旧 222: one line a round — the paused Run’s turn gives it up once a later Run of the round ends', () => {
@@ -1100,14 +1138,28 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     d.apply(userMessage('u1'), text('Writing.'), toolCall('r1:1:0', 'Write'), done(PAUSED))
     const paused = d.lastEnded()
     // The write waits on the card: nothing closed, nothing to count.
-    expect(summaryBefore(d.turns, paused)).toBeNull()
+    expect(successfulSummary(d.turns, paused)).toBeNull()
     d.apply(toolOutcome('r1:1:0', view('write')), toolCall('r2:1:0', 'Read'))
     // The answer's Run is still going: counted up to the turn asked about (the thread shows no line
     // for `paused`; to-thread-messages leaves it out).
-    expect(summaryBefore(d.turns, paused)).toEqual({ read: 0, write: 1, external: 0 })
+    expect(successfulSummary(d.turns, paused)).toEqual({
+      read: 0,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
     d.apply(toolOutcome('r2:1:0', view('read')), text('Done.'), done(COMPLETED))
-    expect(summaryBefore(d.turns, paused)).toBeNull()
-    expect(summaryBefore(d.turns, d.lastEnded())).toEqual({ read: 1, write: 1, external: 0 })
+    expect(successfulSummary(d.turns, paused)).toBeNull()
+    expect(successfulSummary(d.turns, d.lastEnded())).toEqual({
+      read: 1,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
   })
 
   it('a step-limit then 「继续」: the line moves to the continued Run’s end, over both', () => {
@@ -1117,11 +1169,25 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     d.apply(text('Stopped at the limit.'), done(STEP_LIMIT))
     const limited = d.lastEnded()
     // The step-limit end is not paused: until something else ends in this round, it carries the line.
-    expect(summaryBefore(d.turns, limited)).toEqual({ read: 0, write: 1, external: 0 })
+    expect(successfulSummary(d.turns, limited)).toEqual({
+      read: 0,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
     d.apply(toolCall('r2:1:0', 'Read'), toolOutcome('r2:1:0', view('read')), text('Rest.'))
     d.apply(done(COMPLETED))
-    expect(summaryBefore(d.turns, limited)).toBeNull()
-    expect(summaryBefore(d.turns, d.lastEnded())).toEqual({ read: 1, write: 1, external: 0 })
+    expect(successfulSummary(d.turns, limited)).toBeNull()
+    expect(successfulSummary(d.turns, d.lastEnded())).toEqual({
+      read: 1,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
   })
 
   it('a later paused end in the round does not take the line from an earlier end', () => {
@@ -1131,19 +1197,26 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     d.apply(text('Limit.'), done(STEP_LIMIT))
     const limited = d.lastEnded()
     d.apply(toolCall('r2:1:0', 'Write'), done(PAUSED))
-    expect(summaryBefore(d.turns, limited)).toEqual({ read: 1, write: 0, external: 0 })
+    expect(successfulSummary(d.turns, limited)).toEqual({
+      read: 1,
+      write: 0,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
   })
 
   it('is null for a round that made no call, or whose calls did nothing', () => {
     const d = new Driver()
     d.send('q')
     d.apply(userMessage('u1'), text('Just words.'), done(COMPLETED))
-    expect(summaryBefore(d.turns, 1)).toBeNull()
+    expect(successfulSummary(d.turns, 1)).toBeNull()
     d.send('again')
     d.apply(userMessage('u2'), toolCall('r2:1:0'))
     d.apply(toolOutcome('r2:1:0', view('blocked', 'not-run', { source: 'policy' })))
     d.apply(text('Blocked.'), done(COMPLETED))
-    expect(summaryBefore(d.turns, d.turns.length - 1)).toBeNull()
+    expect(successfulSummary(d.turns, d.turns.length - 1)).toBeNull()
   })
 
   it('a message still being sent bounds no round, before the end or after it', () => {
@@ -1166,9 +1239,16 @@ describe('summaryBefore (TurnSummaryLine)', () => {
       endedTurn('a2', write, COMPLETED),
     ]
     // The unsent message does not end the round at a1: a2's end, later in it, carries the line…
-    expect(summaryBefore(turns, 1)).toBeNull()
+    expect(successfulSummary(turns, 1)).toBeNull()
     // …and does not start one either: a2's line counts a1's read too.
-    expect(summaryBefore(turns, 3)).toEqual({ read: 1, write: 1, external: 0 })
+    expect(successfulSummary(turns, 3)).toEqual({
+      read: 1,
+      write: 1,
+      search: 0,
+      command: 0,
+      connector: 0,
+      online: 0,
+    })
   })
 })
 
@@ -1233,4 +1313,154 @@ describe('retryable (§失败卡与结束原因 provider-error; 旧 221)', () =>
     expect(retryable(d.turns, 0)).toBe(false)
     expect(retryable(d.turns, 9)).toBe(false)
   })
+})
+
+interface SummaryCall {
+  name: string
+  path?: string
+  isError?: boolean
+  outcome?: ToolOutcomeViewContract
+}
+
+function summaryRows(calls: readonly SummaryCall[]): MessageRowContract[] {
+  return [
+    row({
+      messageId: 'requests',
+      content: calls.map((call, i) => ({
+        type: 'tool-request',
+        id: `id-${i}`,
+        name: call.name,
+        input: call.path === undefined ? {} : { file_path: call.path },
+      })),
+      calls: calls.map((call, i) => ({
+        callKey: `key-${i}`,
+        outcome: call.outcome ?? view('external'),
+      })),
+    }),
+    row({
+      messageId: 'responses',
+      role: 'user',
+      orderSeq: 2,
+      entryId: 2,
+      content: calls.map((call, i) => ({
+        type: 'tool-response',
+        id: `id-${i}`,
+        content: [{ type: 'text', text: 'result' }],
+        isError: call.isError ?? false,
+      })),
+    }),
+  ]
+}
+
+const summaryComponent = '../src/renderer/src/components/thread/RunEndCard.tsx'
+async function summaryText(
+  summary: NonNullable<ReturnType<typeof summaryBefore>>,
+  locale: 'en' | 'zh-CN' = 'zh-CN',
+) {
+  const { SummaryLine } = await import(summaryComponent)
+  const i18n = await createI18n(locale, () => {})
+  return renderToStaticMarkup(
+    createElement(I18nextProvider, { i18n }, createElement(SummaryLine, { summary })),
+  ).replace(/<[^>]*>/g, '')
+}
+
+it('presentation-r1 验收 7: counts by kind — Read a.txt ×3, Edit b.txt ×2, Bash ×2, WebFetch ×1, a subtask’s Write — reads 读了 1 个文件 · 改了 2 个文件 · 运行了 2 条命令 · 联网 1 次', async () => {
+  const calls: SummaryCall[] = [
+    ...Array.from({ length: 3 }, () => ({ name: 'Read', path: 'a.txt' })),
+    ...Array.from({ length: 2 }, () => ({ name: 'Edit', path: 'b.txt' })),
+    { name: 'Bash' },
+    { name: 'Bash', outcome: view('external', 'aborted') },
+    { name: 'WebFetch' },
+    {
+      name: 'Agent',
+      outcome: view('read', 'completed', {
+        handoff: {
+          childSessionId: 'child',
+          outcome: 'completed',
+          childEndReason: 'completed',
+          finalReply: 'done',
+        },
+      }),
+    },
+  ]
+  const model = threadFromRows(summaryRows(calls))
+  const child = threadFromRows(
+    summaryRows([
+      { name: 'Write', path: 'c.txt' },
+      { name: 'Read', path: 'a.txt' },
+    ]),
+  )
+  const summary = summaryBefore(model.turns, 0, new Map([['child', child.turns]]))
+  expect(summary).toEqual({ read: 1, search: 0, write: 2, command: 2, online: 1, connector: 0 })
+  expect(await summaryText(summary!)).toBe(
+    '读了 1 个文件 · 改了 2 个文件 · 运行了 2 条命令 · 联网 1 次',
+  )
+  expect(await summaryText(summary!, 'en')).toBe(
+    'Read 1 file · Changed 2 files · Ran 2 commands · Went online 1 time',
+  )
+})
+
+it('presentation-r1 验收 7: no zero part; a blocked or unsent call is not counted; Bash is never 对外发送', async () => {
+  const model = threadFromRows(
+    summaryRows([
+      { name: 'Bash' },
+      ...['Read', 'Write', 'Bash', 'WebSearch', 'notes__send'].map((name) => ({
+        name,
+        path: 'blocked',
+        outcome: view('blocked', 'not-run', { source: 'policy' }),
+      })),
+      { name: 'Read', path: 'stopped', outcome: view('read', 'aborted') },
+      { name: 'Write', path: 'uncertain', outcome: view('write', 'uncertain') },
+    ]),
+  )
+  const summary = summaryBefore(model.turns, 0)!
+  expect(summary).toEqual({ read: 0, search: 0, write: 0, command: 1, online: 0, connector: 0 })
+  expect(await summaryText(summary)).toBe('运行了 1 条命令')
+  const other = threadFromRows(
+    summaryRows([
+      { name: 'Glob' },
+      { name: 'Grep' },
+      { name: 'notes__send', outcome: view('external', 'uncertain') },
+      { name: 'WebSearch', outcome: view('external', 'aborted') },
+    ]),
+  )
+  expect(await summaryText(summaryBefore(other.turns, 0)!)).toBe(
+    '查找 2 次 · 联网 1 次 · 用了连接器 1 次',
+  )
+})
+
+it('presentation-r1 验收 7: an Edit whose old_string was not found does not count as changed', () => {
+  const rows = summaryRows([{ name: 'Edit', path: 'd.txt', isError: true, outcome: view('write') }])
+  const stored = threadFromRows(rows)
+  expect(summaryBefore(stored.turns, 0)).toBeNull()
+  const d = new Driver()
+  d.apply(
+    toolCall('key-0', 'Edit', { file_path: 'd.txt' }),
+    toolOutcome('key-0', view('write')),
+    done(COMPLETED),
+  )
+  expect(summaryBefore(d.turns, d.lastEnded())).toBeNull() // live event has no isError
+  const merged = withMessageResults(d.model, rows)
+  expect(summaryBefore(merged.turns, d.lastEnded())).toBeNull()
+  expect(merged.turns.at(-1)?.end).toEqual(d.turns.at(-1)?.end)
+})
+
+it('presentation-r1 验收 7: a round with only an AskUserQuestion shows no line', () => {
+  const model = threadFromRows(summaryRows([{ name: 'AskUserQuestion' }]))
+  expect(summaryBefore(model.turns, 0)).toBeNull()
+})
+
+it('presentation-r1 验收 7: a chat round that only read back its own spilled output shows no line', () => {
+  const model = threadFromRows(
+    summaryRows(
+      ['Read', 'Glob', 'Grep'].map((name) => ({
+        name,
+        path: '/session/output.txt',
+        outcome: view('read', 'completed', {
+          permission: { verdict: 'allow', code: 'own-output-read', facts: { toolName: name } },
+        }),
+      })),
+    ),
+  )
+  expect(summaryBefore(model.turns, 0)).toBeNull()
 })

@@ -509,7 +509,7 @@ test('a round with a write allowed and reads after it shows one summary line, af
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
     // Three reads and the write, over both Runs, under the round's last reply.
-    await expect(summary).toHaveText('Read 3 · changed 1')
+    await expect(summary).toHaveText('Read 3 files · Changed 1 file')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)
