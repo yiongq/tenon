@@ -1,10 +1,4 @@
-import {
-  invokeRoute,
-  providerList,
-  sessionFacts,
-  sessionModelChoice,
-  sessionSelectModel,
-} from '@tenon-app/contracts'
+import { invokeRoute, sessionFacts, sessionSelectModel } from '@tenon-app/contracts'
 import type {
   ProviderEndpoint,
   ProviderEntryContract,
@@ -12,8 +6,8 @@ import type {
 } from '@tenon-app/contracts'
 import { useAuiState } from '@assistant-ui/react'
 import { CheckIcon, ChevronDownIcon } from 'lucide-react'
-import { useCallback, useEffect, useId, useState } from 'react'
-import type { ComponentProps, JSX } from 'react'
+import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react'
+import type { ComponentProps, JSX, Ref } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
@@ -32,6 +26,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { customVendorGone, holdsTools, markLineKey } from '@/lib/custom-vendor'
 import { confirmHostFor, heldConfirmHost, rowHostInLine } from '@/lib/data-flow'
+import type { SwitchTarget } from '@/lib/send-block'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import { useConversation } from '@/runtime/conversation'
 import { TypeModelDialog } from './TypeModelDialog'
@@ -74,24 +69,6 @@ type View =
 
 const LIST: View = { kind: 'list' }
 
-/** What the menu draws from, read in one round trip; a failed read leaves that part as it was. */
-async function loadMenu(sessionId: string): Promise<{
-  entries: ProviderEntryContract[] | null
-  choice: SessionModelChoice | null
-  profile: 'chat' | 'cowork' | null
-}> {
-  const [list, choice, facts] = await Promise.all([
-    invokeRoute(window.tenon, providerList, {}),
-    invokeRoute(window.tenon, sessionModelChoice, { sessionId }),
-    invokeRoute(window.tenon, sessionFacts, { sessionId }),
-  ])
-  return {
-    entries: list.ok ? list.data : null,
-    choice: choice.ok ? choice.data : null,
-    profile: facts.ok ? facts.data.profile : null,
-  }
-}
-
 /** The session's hand-typed choice, shown as a row of its own provider (A15). */
 const HAND_TYPED = (id: string): Row => ({ id, mark: 'unverified-text-only', listing: 'main' })
 
@@ -125,7 +102,11 @@ function ModelRowItem({
   )
 }
 
-export function ModelMenu(): JSX.Element {
+export interface ModelMenuHandle {
+  switchTo(target: SwitchTarget): Promise<void>
+}
+
+export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element {
   const { t } = useTranslation()
   /** A catalogue key that arrives as DATA (a `nameKey`, a `purposeKey`), as the settings card does. */
   const fromData = (key: string): string => t(key as never)
@@ -138,29 +119,17 @@ export function ModelMenu(): JSX.Element {
   const hasHistory = useAuiState((s) => s.thread.messages.length > 0)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<View>(LIST)
-  const [entries, setEntries] = useState<readonly ProviderEntryContract[]>([])
-  // Whether `entries` was ever read: before that, a session's instance is not 「已删除」, only unread.
-  const [listed, setListed] = useState(false)
-  const [current, setCurrent] = useState<SessionModelChoice | null>(null)
-  const [loadedProfile, setProfile] = useState<'chat' | 'cowork'>('chat')
-  // The session's own facts first: ModeSwitch changes the profile without going through this menu.
+  const entries = snapshot.providers ?? []
+  const listed = snapshot.providers !== null
+  const current = snapshot.modelChoice
   const factsProfile = snapshot.facts?.profile ?? null
-  const profile = factsProfile ?? loadedProfile
+  const profile = factsProfile ?? 'chat'
+  const highlight = useRef<HTMLDivElement | null>(null)
+  const [highlightChoice, setHighlightChoice] = useState<Choice | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [typing, setTyping] = useState<ProviderEntryContract | null>(null)
 
-  const reload = useCallback(
-    (): Promise<void> =>
-      loadMenu(sessionId).then((loaded) => {
-        if (loaded.entries !== null) {
-          setEntries(loaded.entries)
-          setListed(true)
-        }
-        if (loaded.choice !== null) setCurrent(loaded.choice)
-        if (loaded.profile !== null) setProfile(loaded.profile)
-      }),
-    [sessionId],
-  )
+  const reload = useCallback(() => store.refreshModel(), [store])
 
   // Again when the profile changes: the model in effect is that profile's default until one is chosen.
   useEffect(() => {
@@ -175,25 +144,21 @@ export function ModelMenu(): JSX.Element {
   useEffect(() => {
     const held = store.getSnapshot().held
     if (held === null || heldSeq === 0) return
-    void loadMenu(sessionId).then((loaded) => {
-      if (loaded.entries !== null) {
-        setEntries(loaded.entries)
-        setListed(true)
-      }
-      const choice = loaded.choice
+    void store.refreshModel().then(() => {
+      const loaded = store.getSnapshot()
+      const choice = loaded.modelChoice
       if (choice === null) return
-      setCurrent(choice)
-      // 「切换」 commits this choice: the page names where it sends now (lib/data-flow.ts).
-      const target = loaded.entries?.find((entry) => entry.id === choice.providerId)?.endpoint
+      const target = loaded.providers?.find((entry) => entry.id === choice.providerId)?.endpoint
       setView({ kind: 'confirm', host: heldConfirmHost(held.host, target), choice })
       setOpen(true)
     })
-  }, [heldSeq, sessionId, store])
+  }, [heldSeq, store])
 
   const choose = async (choice: Choice): Promise<void> => {
     const written = await invokeRoute(window.tenon, sessionSelectModel, { sessionId, ...choice })
     setOpen(false)
     setView(LIST)
+    setHighlightChoice(null)
     if (written.ok) await reload()
   }
 
@@ -206,6 +171,7 @@ export function ModelMenu(): JSX.Element {
     })
     setOpen(false)
     setView(LIST)
+    setHighlightChoice(null)
     if (written.ok && written.data.ok) startSession(next)
   }
 
@@ -323,14 +289,6 @@ export function ModelMenu(): JSX.Element {
       .map((candidate) => ({ entry, candidate })),
   )
   const currentEntry = current === null ? undefined : entryOf(current.providerId)
-  // A task whose model holds text conversations only cannot be sent (§表外模型与不发工具): the
-  // composer disables 「发送」 and says why. A probed instance row can (M6 Q6). A removed instance
-  // row is not held here: the send is refused as a missing key and its card says it was removed.
-  const mark = gone
-    ? undefined
-    : (row?.mark ?? (currentEntry !== undefined ? 'unverified-text-only' : undefined))
-  const textOnlyTask = profile === 'cowork' && mark !== undefined && !holdsTools(mark)
-  useEffect(() => store.setTextOnlyTask(textOnlyTask), [store, textOnlyTask])
   // An instance has no hand-typed row: a choice its list lacks is a removed row (§实例被删或改坏).
   const handTyped =
     current !== null &&
@@ -340,14 +298,34 @@ export function ModelMenu(): JSX.Element {
       ? current
       : null
 
+  // The box's shortcut follows the menu's exact confirmation and commit path.
+  useImperativeHandle(ref, () => ({
+    async switchTo({ entry, row: candidate }) {
+      const choice = { providerId: entry.id, modelId: candidate.id, effort: null }
+      if (rowHostInLine(entry)) {
+        setHighlightChoice(choice)
+        setView(LIST)
+        setOpen(true)
+      } else if (await commit(choice)) {
+        setOpen(true)
+      }
+    },
+  }))
+
   return (
     <>
       <DropdownMenu
         open={open}
+        onOpenChangeComplete={(shown) => {
+          if (shown && highlightChoice !== null) highlight.current?.focus()
+        }}
         onOpenChange={(next) => {
           setOpen(next)
           if (next) void reload()
-          else setView(LIST)
+          else {
+            setView(LIST)
+            setHighlightChoice(null)
+          }
         }}
       >
         <DropdownMenuTrigger
@@ -418,6 +396,12 @@ export function ModelMenu(): JSX.Element {
                         current?.providerId === entry.id && current.modelId === candidate.id
                       return (
                         <ModelRowItem
+                          ref={
+                            highlightChoice?.providerId === entry.id &&
+                            highlightChoice.modelId === candidate.id
+                              ? highlight
+                              : undefined
+                          }
                           description={rowDescription(entry)}
                           key={candidate.id}
                           data-testid={`model-row-${entry.id}-${candidate.id}`}
@@ -543,13 +527,7 @@ export function ModelMenu(): JSX.Element {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      <SettingsModal
-        open={settingsOpen}
-        onOpenChange={(next) => {
-          setSettingsOpen(next)
-          if (!next) void reload()
-        }}
-      />
+      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
       <TypeModelDialog
         key={typing?.id ?? 'closed'}
         entry={typing}

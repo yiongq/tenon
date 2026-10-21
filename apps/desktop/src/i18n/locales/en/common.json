@@ -99,7 +99,13 @@
     "disclaimer": "Tenon can make mistakes. Check important details.",
     "pendingHint": "Sending cancels the operation waiting above.",
     "restoring": "Restoring your last conversation…",
-    "textOnlyTask": "This model can’t use tools, so it can’t run a task. Choose another model."
+    "textOnlyTask": "This model can't use tools. Pick another, or turn off Work in a folder.",
+    "textOnlyTaskEstablished": "This model can't use tools. Pick another one.",
+    "noKey": "No API key for this model.",
+    "addressRefused": "This model's address can't be used.",
+    "modelRemoved": "This chat's custom provider or model was removed.",
+    "switchModel": "Switch to {provider} {model}",
+    "settings": "Open settings"
   },
   "thread": {
     "empty": "Start a conversation",

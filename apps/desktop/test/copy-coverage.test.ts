@@ -809,3 +809,19 @@ it('presentation-r1 验收 10: folder toggle, popover and prefill copy exist in 
     ]),
   ).toEqual([])
 })
+
+it('presentation-r1 验收 11: send blocks, both text-only hints and actions exist in both locales with only their own slots', () => {
+  expect(
+    problems([
+      ...[
+        'noKey',
+        'addressRefused',
+        'modelRemoved',
+        'textOnlyTask',
+        'textOnlyTaskEstablished',
+        'settings',
+      ].map((name) => ({ key: `composer.${name}`, args: [], what: name })),
+      { key: 'composer.switchModel', args: ['provider', 'model'], what: 'switch model' },
+    ]),
+  ).toEqual([])
+})

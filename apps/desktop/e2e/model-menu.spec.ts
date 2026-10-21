@@ -6,6 +6,7 @@ import type { Page } from '@playwright/test'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
+import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
   ANTHROPIC_ORIGIN,
@@ -738,6 +739,62 @@ test('keeps a default per profile: a new session in each starts on it (旧 37)',
     })
     expect(choice.task).toMatchObject({ ok: true, data: { modelId: 'claude-haiku-4-5-20251001' } })
     expect(choice.chat).toMatchObject({ ok: true, data: { modelId: 'claude-opus-5-5' } })
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: with history only on this computer, 改用 a public provider opens its confirmation and sends nothing to it before 切换', async () => {
+  ollama = await startFakeOpenAI({ chunks: ['local history'] })
+  zhipu = await startFakeOpenAI({ chunks: ['public reply'] })
+  const userData = makeUserDataDir('blocked-local-to-public')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: ollama.baseURL } },
+  })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ZHIPU_API_KEY: 'e2e-public-key',
+      ...originMap({ [ZHIPU_ORIGIN]: zhipu.baseURL }),
+    },
+  })
+  try {
+    await send(page, 'stays local')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local history')
+    // A different window/settings card moves the default to a provider without a key.
+    expect(
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', {
+          providerId: 'anthropic',
+          modelId: 'claude-opus-5-5',
+        }),
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute(
+      'data-reason',
+      'modelUnusable',
+    )
+    await expect(page.getByTestId('composer-switch-model')).toHaveText(
+      'Switch to Zhipu GLM GLM-5.3 Flash',
+    )
+    await page.getByTestId('composer-switch-model').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    expect(named(tapeFacts(userData), 'session/model_selected')).toHaveLength(0)
+    expect(zhipu.requests).toHaveLength(0)
+    expect(ollama.requests).toHaveLength(1)
+    await page.getByTestId('model-confirm-switch').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(1)
+    await send(page, 'now public')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('public reply')
+    expect(zhipu.requests).toHaveLength(1)
   } finally {
     await app.close()
   }

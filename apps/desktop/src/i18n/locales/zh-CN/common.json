@@ -99,7 +99,13 @@
     "disclaimer": "Tenon 可能会出错，重要信息请核实。",
     "pendingHint": "发送会取消上面待批的操作。",
     "restoring": "正在恢复上次的对话…",
-    "textOnlyTask": "这个模型不能用工具，不能执行任务。请换一个模型。"
+    "textOnlyTask": "这个模型不能用工具。换一个模型，或关掉「在文件夹里工作」。",
+    "textOnlyTaskEstablished": "这个模型不能用工具，请换一个。",
+    "noKey": "这个模型没有可用的 API 密钥。",
+    "addressRefused": "这个模型的地址用不了。",
+    "modelRemoved": "这个会话用的自定义厂商或模型已删除。",
+    "switchModel": "改用 {provider} {model}",
+    "settings": "去设置"
   },
   "thread": {
     "empty": "开始对话",

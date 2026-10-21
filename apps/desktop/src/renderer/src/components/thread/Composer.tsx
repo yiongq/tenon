@@ -1,9 +1,13 @@
 import { ComposerPrimitive, useAui } from '@assistant-ui/react'
 import { ArrowUpIcon, SquareIcon } from 'lucide-react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ComposerLead } from '@/components/composer/ComposerLead'
+import { SettingsModal } from '@/components/settings/SettingsModal'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { ModelMenuHandle } from '@/components/composer/ModelMenu'
+import { MODEL_BLOCK_KEY, switchTarget } from '@/lib/send-block'
 import { ModelMenu } from '@/components/composer/ModelMenu'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
@@ -51,7 +55,37 @@ export function Composer(): JSX.Element {
   const snapshot = useSessionSnapshot()
   const waiting = snapshot.pending !== null
   const stoppable = snapshot.running || waiting || snapshot.resumable
-  const block = !snapshot.canSend ? 'restoring' : snapshot.textOnlyTask ? 'textOnlyTask' : null
+  const block = store.sendBlock()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const menu = useRef<ModelMenuHandle | null>(null)
+  const descriptionId = useId()
+  const unavailable = block !== null && block !== 'restoring' && block !== 'textOnlyTask'
+  const target = unavailable
+    ? switchTarget(snapshot.providers ?? [], snapshot.facts?.profile ?? 'chat')
+    : null
+  const description =
+    target === null
+      ? ''
+      : target.entry.endpoint.reach === 'loopback'
+        ? t('model.row.staysLocal')
+        : t('model.row.sendsTo', { host: target.entry.endpoint.host })
+  const targetLabel =
+    target === null
+      ? ''
+      : t('composer.switchModel', {
+          provider: target.entry.displayName ?? t(target.entry.nameKey as never),
+          model: target.row.nameKey === undefined ? target.row.id : t(target.row.nameKey as never),
+        })
+  const blockKey =
+    block === 'restoring'
+      ? 'composer.restoring'
+      : block === 'textOnlyTask'
+        ? snapshot.facts?.established
+          ? 'composer.textOnlyTaskEstablished'
+          : 'composer.textOnlyTask'
+        : block === null
+          ? null
+          : MODEL_BLOCK_KEY[block]
   // A keyboard user's focus never drops to the page: 「发送」 goes disabled once the draft is sent and
   // 「停止」 goes away once the Run is over, and either would take the focus with it. It moves to the
   // editor, where the next thing typed belongs.
@@ -74,7 +108,7 @@ export function Composer(): JSX.Element {
       event.preventDefault()
       const raw = aui.composer().getState().text
       const text = snapshot.pending?.waitKind === 'question' ? raw : raw.trim()
-      // The same two reasons that disable 「发送」 hold here (B15: 按回车也不发送).
+      // The same reasons that disable 「发送」 hold here (B15: 按回车也不发送).
       if (text.trim() === '' || store.sendBlock() !== null) return
       aui.composer().setText('')
       // While a card or a question waits, Cmd/Ctrl+Enter is a plain send (§插话与输入框状态表).
@@ -127,7 +161,7 @@ export function Composer(): JSX.Element {
                 <SquareIcon aria-hidden className="size-3 fill-current" />
               </button>
             ) : null}
-            <ModelMenu />
+            <ModelMenu ref={menu} />
             <ComposerPrimitive.Send
               data-testid="composer-send"
               // Runs before the send itself, while the button is still enabled and focused.
@@ -146,7 +180,45 @@ export function Composer(): JSX.Element {
       <div className="mt-2 min-h-4 text-center font-sans text-micro text-text-muted">
         {block !== null ? (
           <p id="composer-send-block" data-testid="composer-send-block" data-reason={block}>
-            {t(block === 'restoring' ? 'composer.restoring' : 'composer.textOnlyTask')}
+            <span data-testid="composer-block-reason">{t(blockKey!)}</span>
+            {target !== null ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="composer-switch-model"
+                        aria-label={targetLabel}
+                        aria-describedby={descriptionId}
+                        className="ml-1 text-text-secondary underline underline-offset-2"
+                        onClick={() => void menu.current?.switchTo(target)}
+                      />
+                    }
+                  >
+                    {targetLabel}
+                  </TooltipTrigger>
+                  <TooltipContent data-testid="composer-switch-tooltip">
+                    {description}
+                  </TooltipContent>
+                </Tooltip>
+                <span id={descriptionId} className="sr-only">
+                  {description}
+                </span>
+              </>
+            ) : null}
+            {unavailable && block !== 'modelRemoved' ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="composer-settings"
+                  className="ml-1 text-text-secondary underline underline-offset-2"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  {t('composer.settings')}
+                </button>
+              </>
+            ) : null}
           </p>
         ) : waiting && snapshot.pending?.waitKind === 'approval' ? (
           <p data-testid="composer-pending-hint">{t('composer.pendingHint')}</p>
@@ -156,6 +228,7 @@ export function Composer(): JSX.Element {
           </p>
         )}
       </div>
+      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

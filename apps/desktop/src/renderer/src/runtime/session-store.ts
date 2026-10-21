@@ -14,10 +14,21 @@ import {
   confirmRequestEvent,
   invokeRoute,
   sessionFacts,
+  providerList,
+  sessionModelChoice,
   sessionMessages,
 } from '@tenon-app/contracts'
-import type { ChatEvent, MessageRowContract, SessionFactsResponse } from '@tenon-app/contracts'
+import type {
+  ChatEvent,
+  MessageRowContract,
+  SessionFactsResponse,
+  ProviderEntryContract,
+  SessionModelChoice,
+} from '@tenon-app/contracts'
 import type { TenonBridge } from '../../../preload/index'
+import { customVendorGone, holdsTools } from '../lib/custom-vendor'
+import { modelBlock } from '../lib/send-block'
+import type { SendBlock } from '../lib/send-block'
 import type { AskAnswers } from '../lib/ask'
 import { queueOf, queuedTextOf } from './queue-state'
 import type { QueuedItem } from './queue-state'
@@ -60,6 +71,8 @@ export interface Answered {
 }
 
 export interface SessionSnapshot {
+  readonly providers: readonly ProviderEntryContract[] | null
+  readonly modelChoice: SessionModelChoice | null
   readonly model: ThreadModel
   readonly queue: readonly QueuedItem[]
   readonly held: { readonly host: string } | null
@@ -123,6 +136,13 @@ function hasNamedAnswer(model: ThreadModel, callKey: string): boolean {
 /** A send whose message the events will show: a `user-message`, or a queue push (§插话与输入框状态表). */
 const EVENTS_FOLLOW: ReadonlySet<string> = new Set(['started', 'queued', 'held'])
 
+const attachedStores = new Set<SessionStore>()
+
+/** Every settings entry point refreshes the visible session from the same two routes. */
+export function settingsClosed(): void {
+  for (const store of attachedStores) void store.refreshModel()
+}
+
 let localIds = 0
 const nextLocalId = (): string => `local-${String((localIds += 1))}`
 
@@ -144,7 +164,7 @@ export class SessionStore {
   /** The text of each queued item seen, for the `user-message` that inserts it. */
   readonly #queuedTexts = new Map<string, string>()
   /** Each read is numbered; an answer older than the newest one asked for is dropped. */
-  readonly #asked = { pending: 0, facts: 0, resumable: 0 }
+  readonly #asked = { pending: 0, facts: 0, resumable: 0, model: 0 }
   #opened = false
   /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
   readonly #childReads = new Map<string, Promise<void>>()
@@ -162,6 +182,8 @@ export class SessionStore {
     const queued = queueOf(sessionId)
     for (const item of queued.items) this.#queuedTexts.set(item.queuedId, item.text)
     this.#snapshot = {
+      providers: null,
+      modelChoice: null,
       model: rows.length === 0 ? EMPTY_THREAD : threadFromRows(rows),
       queue: queued.items,
       held: queued.held,
@@ -190,14 +212,46 @@ export class SessionStore {
 
   #set(next: Partial<SessionSnapshot>): void {
     this.#snapshot = { ...this.#snapshot, ...next }
+    if ('providers' in next || 'modelChoice' in next || 'facts' in next) {
+      const { providers, modelChoice, facts } = this.#snapshot
+      if (providers !== null && modelChoice !== null) {
+        const entry = providers.find((item) => item.id === modelChoice.providerId)
+        const gone = customVendorGone(modelChoice.providerId, modelChoice, providers)
+        const row = entry?.models.find((item) => item.id === modelChoice.modelId)
+        const textOnlyTask =
+          facts?.profile === 'cowork' &&
+          entry !== undefined &&
+          !gone &&
+          !holdsTools(row?.mark ?? 'unverified-text-only')
+        this.#snapshot = { ...this.#snapshot, textOnlyTask }
+      }
+    }
     if (this.#snapshot.pending === null) this.#snapshot = { ...this.#snapshot, pendingCall: null }
     for (const listener of this.#listeners) listener()
   }
 
-  /** Why sending is disabled now, or null (§模型菜单与输入框「提示与禁发」: only these two). */
-  sendBlock(): 'restoring' | 'textOnlyTask' | null {
+  /** Both send paths and the composer use this one decision. */
+  sendBlock(): SendBlock | null {
     if (!this.#snapshot.canSend) return 'restoring'
+    const unavailable = modelBlock(this.#snapshot.providers, this.#snapshot.modelChoice)
+    if (unavailable !== null) return unavailable
     return this.#snapshot.textOnlyTask ? 'textOnlyTask' : null
+  }
+
+  async refreshModel(): Promise<void> {
+    const asked = (this.#asked.model += 1)
+    const [list, choice] = await Promise.all([
+      invokeRoute(this.#bridge, providerList, {}).catch(() => ({ ok: false as const })),
+      invokeRoute(this.#bridge, sessionModelChoice, { sessionId: this.sessionId }).catch(() => ({
+        ok: false as const,
+      })),
+    ])
+    if (asked !== this.#asked.model) return
+    this.#set({
+      providers: list.ok ? list.data : null,
+      modelChoice: choice.ok ? choice.data : null,
+      ...(!list.ok || !choice.ok ? { textOnlyTask: false } : {}),
+    })
   }
 
   setCanSend(canSend: boolean): void {
@@ -210,6 +264,7 @@ export class SessionStore {
 
   /** Subscribes to the pushes of this session; returns the undo. */
   attach(): () => void {
+    attachedStores.add(this)
     const offs = [
       this.#bridge.on(chatEvent.channel, (payload) => {
         const parsed = chatEventSchema.safeParse(payload)
@@ -232,6 +287,7 @@ export class SessionStore {
       this.#onQueue(queued.items, queued.held)
     }
     return () => {
+      attachedStores.delete(this)
       for (const off of offs) off()
     }
   }
@@ -336,6 +392,7 @@ export class SessionStore {
     await Promise.all([
       this.refreshPending(),
       this.refreshFacts(),
+      this.refreshModel(),
       this.refreshResumable(),
       this.#refreshChildren(),
     ])

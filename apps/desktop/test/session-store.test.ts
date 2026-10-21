@@ -23,6 +23,8 @@ import {
   registerRoute,
   runStateEvent,
   sessionFacts,
+  providerList,
+  sessionModelChoice,
   sessionMessages,
 } from '@tenon-app/contracts'
 import type {
@@ -32,6 +34,8 @@ import type {
   RouteDef,
   RouteRequest,
   RouteResponse,
+  ProviderEntryContract,
+  SessionModelChoice,
 } from '@tenon-app/contracts'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,7 +43,12 @@ import type { z } from 'zod'
 import type { TenonBridge } from '../src/preload/index.js'
 import { listenForQueue } from '../src/renderer/src/runtime/queue-state.js'
 import { listenForRunState } from '../src/renderer/src/runtime/run-state.js'
-import { APPROVAL_LIST_LIMIT, SessionStore } from '../src/renderer/src/runtime/session-store.js'
+import { MODEL_BLOCK_KEY, switchTarget } from '../src/renderer/src/lib/send-block.js'
+import {
+  APPROVAL_LIST_LIMIT,
+  SessionStore,
+  settingsClosed,
+} from '../src/renderer/src/runtime/session-store.js'
 import { retryable } from '../src/renderer/src/runtime/thread-model.js'
 import type { PendingCard, PendingQuestion } from '../src/renderer/src/runtime/session-store.js'
 import { toThreadMessages } from '../src/renderer/src/runtime/to-thread-messages.js'
@@ -113,6 +122,13 @@ function fakeBridge(): FakeBridge {
     },
   }
   // What an idle main answers: nothing waits, nothing resumes, every command accepted.
+  fake.handle(providerList, () => [])
+  fake.handle(sessionModelChoice, () => ({
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5-5',
+    effort: null,
+    capabilitySource: 'builtin' as const,
+  }))
   fake.handle(sessionMessages, () => [])
   fake.handle(approvalCurrent, () => null)
   fake.handle(approvalList, () => [])
@@ -2102,4 +2118,253 @@ it('presentation-r1 验收 7: a still-running child is reread on parent tool-out
     outcome: { isError: false },
   })
   detach()
+})
+
+const INSTANCE = 'custom-9e8d7c6b-5a49-4382-9716-05f4e3d2c1b0'
+const CHOICE: SessionModelChoice = {
+  providerId: 'anthropic',
+  modelId: 'claude-opus-5-5',
+  effort: null,
+  capabilitySource: 'builtin',
+}
+function provider(over: Partial<ProviderEntryContract> = {}): ProviderEntryContract {
+  return {
+    id: 'anthropic',
+    nameKey: 'provider.anthropic.name',
+    configured: false,
+    configKeys: [
+      {
+        name: 'apiKey',
+        required: true,
+        primary: true,
+        secret: true,
+        configured: false,
+        labelKey: 'provider.anthropic.apiKey',
+      },
+    ],
+    endpoint: { host: 'api.anthropic.com', reach: 'public' },
+    models: [{ id: 'claude-opus-5-5', mark: 'verified', listing: 'main' }],
+    ...over,
+  }
+}
+const KEYED = provider({
+  configured: true,
+  configKeys: [
+    {
+      name: 'apiKey',
+      required: true,
+      primary: true,
+      secret: true,
+      configured: true,
+      labelKey: 'provider.anthropic.apiKey',
+    },
+  ],
+})
+const OLLAMA = provider({
+  id: 'ollama',
+  configured: true,
+  configKeys: [],
+  models: [{ id: 'local', mark: 'local-text-only', listing: 'main' }],
+  endpoint: { host: 'localhost', reach: 'loopback' },
+})
+
+describe('presentation-r1 sending availability', () => {
+  it('presentation-r1 验收 11: a block for no keyed provider, a refused address, an unusable choice and a removed instance; send and sendNow are called 0 times', async () => {
+    const fake = fakeBridge()
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    const cases = [
+      { entries: [provider(), OLLAMA], choice: CHOICE, block: 'noKey', key: 'composer.noKey' },
+      {
+        entries: [provider({ refused: { code: 'official-host-only' } })],
+        choice: CHOICE,
+        block: 'addressRefused',
+        key: 'composer.addressRefused',
+      },
+      {
+        entries: [provider(), { ...KEYED, id: 'zhipu' }],
+        choice: CHOICE,
+        block: 'modelUnusable',
+        key: 'composer.noKey',
+      },
+      {
+        entries: [KEYED],
+        choice: { ...CHOICE, providerId: INSTANCE },
+        block: 'modelRemoved',
+        key: 'composer.modelRemoved',
+      },
+      {
+        entries: [provider({ id: INSTANCE, displayName: 'Gateway', models: [] })],
+        choice: { ...CHOICE, providerId: INSTANCE },
+        block: 'modelRemoved',
+        key: 'composer.modelRemoved',
+      },
+    ] as const
+    for (const item of cases) {
+      fake.handle(providerList, () => [...item.entries])
+      fake.handle(sessionModelChoice, () => item.choice)
+      // oxlint-disable-next-line no-await-in-loop -- exercise each independent availability state
+      await store.refreshModel()
+      expect(store.sendBlock()).toBe(item.block)
+      expect(MODEL_BLOCK_KEY[item.block]).toBe(item.key)
+      // oxlint-disable-next-line no-await-in-loop -- both entry points must respect each state
+      await store.send('Enter')
+      // oxlint-disable-next-line no-await-in-loop -- Cmd/Ctrl+Enter must respect each state
+      await store.sendNow('Cmd/Ctrl+Enter')
+      expect(thread(store)).toEqual([])
+    }
+    expect(fake.calls(chatSend)).toHaveLength(0)
+    expect(fake.calls(chatSendNow)).toHaveLength(0)
+  })
+
+  it('presentation-r1 验收 11: Ollama alone is no keyed provider and is never offered as 改用', () => {
+    expect(switchTarget([OLLAMA], 'chat')).toBeNull()
+    expect(switchTarget([OLLAMA, KEYED], 'chat')?.entry.id).toBe('anthropic')
+    expect(switchTarget([provider(), OLLAMA], 'cowork')).toBeNull()
+  })
+
+  it('presentation-r1 验收 11: a refused instance and a public instance without a key are never offered as 改用', () => {
+    const refused = provider({
+      id: INSTANCE,
+      displayName: 'Refused',
+      refused: { code: 'https-required' },
+    })
+    const noKey = provider({ id: INSTANCE, displayName: 'No key' })
+    expect(switchTarget([refused, noKey], 'chat')).toBeNull()
+    expect(switchTarget([refused, noKey, KEYED], 'chat')?.entry.id).toBe('anthropic')
+  })
+
+  it('presentation-r1 验收 11: 改用 in a task skips text-only rows and more rows, in catalogue order', () => {
+    const instance = provider({
+      id: INSTANCE,
+      displayName: 'Gateway',
+      configured: true,
+      models: [
+        { id: 'text', listing: 'main', mark: 'unverified-text-only' },
+        { id: 'hidden', listing: 'more', mark: 'probed' },
+        { id: 'tools', listing: 'main', mark: 'probed' },
+      ],
+    })
+    expect(switchTarget([instance, KEYED], 'chat')?.row.id).toBe('text')
+    expect(switchTarget([instance, KEYED], 'cowork')?.row.id).toBe('tools')
+    expect(
+      switchTarget([{ ...instance, models: instance.models.slice(0, 2) }, KEYED], 'cowork')?.entry
+        .id,
+    ).toBe('anthropic')
+  })
+
+  it('presentation-r1 验收 11: settings closing re-reads both the list and the choice', async () => {
+    const fake = fakeBridge()
+    fake.handle(providerList, () => [provider(), OLLAMA])
+    fake.handle(sessionModelChoice, () => CHOICE)
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    const detach = store.attach()
+    try {
+      await store.refreshModel()
+      expect(store.sendBlock()).toBe('noKey')
+      const next = { ...CHOICE, modelId: 'claude-sonnet-5' }
+      fake.handle(providerList, () => [KEYED, OLLAMA])
+      fake.handle(sessionModelChoice, () => next)
+      settingsClosed()
+      await settle()
+      expect(fake.calls(providerList)).toHaveLength(2)
+      expect(fake.calls(sessionModelChoice)).toEqual([
+        { sessionId: SESSION },
+        { sessionId: SESSION },
+      ])
+      expect(store.getSnapshot().modelChoice).toEqual(next)
+      expect(store.sendBlock()).toBeNull()
+      await store.send('after settings')
+      expect(fake.calls(chatSend)).toHaveLength(1)
+    } finally {
+      detach()
+    }
+  })
+
+  it('presentation-r1 验收 11: an unread list or choice does not disable sending (读不到不禁用)', async () => {
+    const fake = fakeBridge()
+    const store = new SessionStore(SESSION, fake.bridge, [])
+    fake.handle(providerList, () => [provider()])
+    fake.handle(sessionModelChoice, () => CHOICE)
+    await store.refreshModel()
+    expect(store.sendBlock()).toBe('noKey')
+    fake.handle(providerList, () => {
+      throw new Error('unavailable')
+    })
+    await store.refreshModel()
+    expect(store.sendBlock()).toBeNull()
+    await store.send('list unavailable')
+    fake.handle(providerList, () => [provider()])
+    fake.handle(sessionModelChoice, () => {
+      throw new Error('unavailable')
+    })
+    await store.refreshModel()
+    expect(store.sendBlock()).toBeNull()
+    await store.sendNow('choice unavailable')
+    expect(fake.calls(chatSend)).toHaveLength(1)
+    expect(fake.calls(chatSendNow)).toHaveLength(1)
+  })
+})
+
+it('presentation-r1 验收 11: refreshed choices and profiles share the task tool-capability block', async () => {
+  const fake = fakeBridge()
+  fake.handle(providerList, () => [OLLAMA, KEYED])
+  fake.handle(sessionModelChoice, () => ({ ...CHOICE, providerId: 'ollama', modelId: 'local' }))
+  fake.handle(sessionFacts, () => ({
+    established: false,
+    profile: 'cowork' as const,
+    workspace: null,
+  }))
+  const store = new SessionStore(SESSION, fake.bridge, [])
+  await store.refreshFacts()
+  await store.refreshModel()
+  expect(store.sendBlock()).toBe('textOnlyTask')
+  await store.send('blocked task')
+  await store.sendNow('blocked task now')
+  expect(fake.calls(chatSend)).toHaveLength(0)
+  expect(fake.calls(chatSendNow)).toHaveLength(0)
+  fake.handle(sessionModelChoice, () => CHOICE)
+  await store.refreshModel()
+  expect(store.sendBlock()).toBeNull()
+  fake.handle(sessionModelChoice, () => ({ ...CHOICE, providerId: 'ollama', modelId: 'local' }))
+  await store.refreshModel()
+  expect(store.sendBlock()).toBe('textOnlyTask')
+  fake.handle(sessionFacts, () => ({
+    established: false,
+    profile: 'chat' as const,
+    workspace: null,
+  }))
+  await store.refreshFacts()
+  expect(store.sendBlock()).toBeNull()
+})
+
+it('presentation-r1 验收 11: an older model refresh cannot overwrite the latest list and choice', async () => {
+  const fake = fakeBridge()
+  let releaseList!: (entries: ProviderEntryContract[]) => void
+  let releaseChoice!: (choice: SessionModelChoice) => void
+  fake.handle(
+    providerList,
+    () =>
+      new Promise((resolve) => {
+        releaseList = resolve
+      }),
+  )
+  fake.handle(
+    sessionModelChoice,
+    () =>
+      new Promise((resolve) => {
+        releaseChoice = resolve
+      }),
+  )
+  const store = new SessionStore(SESSION, fake.bridge, [])
+  const older = store.refreshModel()
+  fake.handle(providerList, () => [KEYED])
+  const next = { ...CHOICE, modelId: 'claude-sonnet-5' }
+  fake.handle(sessionModelChoice, () => next)
+  await store.refreshModel()
+  releaseList([provider()])
+  releaseChoice(CHOICE)
+  await older
+  expect(store.getSnapshot().providers).toEqual([KEYED])
+  expect(store.getSnapshot().modelChoice).toEqual(next)
+  expect(store.sendBlock()).toBeNull()
 })

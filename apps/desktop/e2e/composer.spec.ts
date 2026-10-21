@@ -66,7 +66,7 @@ test('a new session whose only model is text-only: 任务 disables 「发送」 
     await page.getByTestId('folder-toggle').click()
     await expect(modes).toHaveAttribute('aria-checked', 'true')
     await expect(block).toHaveAttribute('data-reason', 'textOnlyTask')
-    await expect(block).toHaveText('这个模型不能用工具，不能执行任务。请换一个模型。')
+    await expect(block).toHaveText('这个模型不能用工具。换一个模型，或关掉「在文件夹里工作」。')
     await expect(sendButton).toBeDisabled()
     // The reason is the button's description, not just text nearby.
     await expect(sendButton).toHaveAttribute('aria-describedby', 'composer-send-block')
