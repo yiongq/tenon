@@ -22,7 +22,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseEnv } from 'node:util'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { disposeEvalSandbox } from './sandbox.js'
 import { evalRecordSchema } from './record.js'
 import { REPO_ROOT } from './format.js'
 import {
@@ -54,6 +55,7 @@ const date = today()
 const rawDir = process.env['TENON_EVAL_RAW_DIR']
 
 describe.skipIf(!process.env['TENON_EVAL'])('live eval', () => {
+  afterAll(() => disposeEvalSandbox())
   beforeAll(() => {
     // Straight to stderr: vitest does not show the console output of a test that passes.
     if (plan !== null) process.stderr.write(`${planLine(plan)}\n`)

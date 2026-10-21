@@ -141,6 +141,8 @@ export interface RunTaskOptions {
    * `TENON_TEST_ORIGIN_MAP`'s format (evals/host.ts; M6 §点名「测试接缝」). A live run never sets it.
    */
   readonly originMap?: string
+  /** Offline tests only; real model commands use DesktopSandbox. */
+  readonly sandbox?: 'passthrough'
 }
 
 /** A finished run as `inspect` sees it: the check context, plus the run's directory. */
@@ -470,13 +472,14 @@ export async function runTask(o: RunTaskOptions): Promise<EvalRecord> {
     log,
     ...(o.runnerEnv === undefined ? {} : { runnerEnv: o.runnerEnv }),
     ...(o.originMap === undefined ? {} : { originMap: o.originMap }),
+    ...(o.sandbox === undefined ? {} : { sandbox: o.sandbox }),
   })
   try {
     return await runOn(evalHost, sessionId, o, log)
   } finally {
     // A folder the run left that will not go (one a command made read-only) costs no record.
     try {
-      evalHost.dispose()
+      await evalHost.dispose()
     } catch (error) {
       log(`[eval] the run's directory ${evalHost.dir} was not removed: ${messageOf(error)}`)
     }
@@ -551,11 +554,13 @@ async function runOn(
   })
   sessions.bindLoop({
     ...loop.ports,
+    ...(evalHost.sandbox === null ? {} : { sandbox: evalHost.sandbox.ports }),
     events: (e) => {
       watch.event(e)
       loop.ports.events(e)
     },
   })
+  evalHost.sandbox?.bindSessions(sessions)
   if (task.profile === 'cowork') {
     await sessions.selectProfile({ sessionId, profile: 'cowork', dedicated: evalHost.dedicated })
     if (evalHost.picked !== null) {
@@ -652,6 +657,7 @@ async function runOn(
     usage: costs.usage,
     cost: costs.cost,
     durationMs,
+    sandbox: host.sandbox.posture?.() ?? { state: 'unavailable', profile: 'workspace-write' },
     ...(timing === undefined ? {} : { timing }),
     calib,
     ...(raw === undefined ? {} : { raw }),

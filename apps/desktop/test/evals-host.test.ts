@@ -18,9 +18,9 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import type { TapeEntry } from '@tenon-app/kernel'
+import type { SessionService, TapeEntry } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readAll } from '../evals/cost.js'
 import {
@@ -35,6 +35,12 @@ import {
 } from '../evals/host.js'
 import { runTask } from '../evals/runner.js'
 import type { RunInspection } from '../evals/runner.js'
+import type { EvalRecord } from '../evals/record.js'
+import { evalRecordSchema } from '../evals/record.js'
+import { disposeEvalSandbox } from '../evals/sandbox.js'
+import * as posture from '../src/main/host/sandbox-posture.js'
+import { DesktopSandbox } from '../src/main/host/sandbox.js'
+import * as sandboxHost from '../src/main/host/sandbox.js'
 import { evalTaskSchema } from '../evals/task.js'
 import type { EvalTask } from '../evals/task.js'
 import { INSTANCE_COLUMN, originMapTo, startInstanceFake } from './support/eval-column.js'
@@ -75,9 +81,16 @@ const tool = (name: string, input: Record<string, unknown>): ScriptedReply => ({
 async function run(
   task: EvalTask,
   server: InstanceFake,
-): Promise<{ entries: TapeEntry[]; inspected: RunInspection; endReason: string | null }> {
+  sandbox: 'desktop' | 'passthrough' = 'passthrough',
+): Promise<{
+  entries: TapeEntry[]
+  inspected: RunInspection
+  endReason: string | null
+  record: EvalRecord
+}> {
   let seen: { entries: TapeEntry[]; inspected: RunInspection } | null = null
   const record = await runTask({
+    ...(sandbox === 'passthrough' ? { sandbox } : {}),
     task,
     run: 1,
     column: INSTANCE_COLUMN,
@@ -96,6 +109,7 @@ async function run(
   return {
     ...(seen as { entries: TapeEntry[]; inspected: RunInspection }),
     endReason: record.endReason,
+    record,
   }
 }
 
@@ -113,6 +127,159 @@ const COWORK: Omit<EvalTask, 'id' | 'turns'> = {
   checks: [{ kind: 'script', id: 'always-pass' }],
   from: ['D7'],
 }
+
+it('04 读法 26: each record carries the posture', async () => {
+  const initialize = vi.spyOn(posture, 'startSandboxPosture').mockImplementation((deps) => {
+    expect(deps.home).toBe(homedir())
+    expect(deps.chdirDir).toBeNull()
+    const session = deps.sessionConfig({
+      applySeccompPath: deps.helpers.applySeccomp,
+      javaAgentJarPath: deps.helpers.javaAgentJar,
+      linuxBinaries: null,
+    })
+    expect(session.filesystem?.denyRead).toContainEqual({
+      path: join(homedir(), '.ssh'),
+      literal: true,
+    })
+    expect(session.filesystem?.denyRead).toContainEqual({
+      path: join(homedir(), '.aws'),
+      literal: true,
+    })
+    return {
+      initialized: Promise.resolve(),
+      outcome: Promise.resolve({
+        state: 'degraded',
+        session,
+        noSeccomp: false,
+        reasons: [{ code: 'other', detail: null }],
+        initialize: 'returned',
+      }),
+    }
+  })
+  const unsubscribe = vi.fn<() => void>()
+  vi.spyOn(sandboxHost, 'desktopProcessTable').mockReturnValue({
+    list: async () => '',
+    listArgv: async () => '',
+    kill: () => {},
+  })
+  const reset = vi.fn<() => Promise<void>>(async () => {})
+  const update = vi.fn<ReturnType<typeof posture.desktopSrtSandbox>['updateConfig']>()
+  const wrap = vi
+    .fn<ReturnType<typeof posture.desktopSrtSandbox>['wrapWithSandboxArgv']>()
+    .mockResolvedValue({ argv: ['/bin/sh', '-c', 'true'], env: {} })
+  const cleanup = vi.fn<() => void>()
+  vi.spyOn(posture, 'desktopSrtSandbox').mockReturnValue({
+    getSandboxViolationStore: () => ({ getTotalCount: () => 0, subscribe: () => unsubscribe }),
+    reset,
+    updateConfig: update,
+    wrapWithSandboxArgv: wrap,
+    cleanupAfterCommand: cleanup,
+  })
+  const task: EvalTask = {
+    ...COWORK,
+    id: '01-work',
+    turns: ['Run true.'],
+    host: { answers: { command: 'allow' } },
+  }
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // oxlint-disable-next-line no-await-in-loop -- two tasks share one eval process
+      const server = await fake([
+        tool('Bash', { command: 'true' }),
+        { steps: [{ type: 'text', text: 'Done.' }] },
+      ])
+      // oxlint-disable-next-line no-await-in-loop -- one task at a time
+      const { record, entries, inspected } = await run(task, server, 'desktop')
+      expect(outcomes(entries)).toEqual([null])
+      expect(record.endReason).toBe('completed')
+      expect(wrap.mock.calls.at(-1)?.[2]?.filesystem?.allowWrite).toContainEqual({
+        path: inspected.workspaceDir,
+        literal: true,
+      })
+      expect(record.sandbox).toEqual({ state: 'degraded', profile: 'workspace-write' })
+      expect(evalRecordSchema.parse(JSON.parse(JSON.stringify(record))).sandbox).toEqual({
+        state: 'degraded',
+        profile: 'workspace-write',
+      })
+      expect(reset).not.toHaveBeenCalled()
+    }
+    expect(initialize).toHaveBeenCalledTimes(1)
+
+    const host = await createEvalHost({
+      task,
+      sessionId: '00000000-0000-4000-8000-000000000001',
+      fixturesDir: fixtures(),
+      column: INSTANCE_COLUMN,
+      log: () => {},
+    })
+    try {
+      expect(host.adapter.sandbox).toBeInstanceOf(DesktopSandbox)
+      const sessionFacts = vi.fn<SessionService['sessionFacts']>().mockResolvedValue({
+        established: true,
+        drafted: false,
+        profile: 'cowork',
+        workspace: { folders: [host.workspaceDir], origin: 'picked' },
+        lastEndpointOrigin: null,
+        chosen: null,
+      })
+      host.sandbox?.bindSessions({ sessionFacts } as never)
+      host.sandbox?.ports.beforeWrap({
+        commandId: 'eval-command',
+        sessionId: '00000000-0000-4000-8000-000000000001',
+        hosts: ['a.example'],
+      })
+      expect(update.mock.calls.at(-1)?.[0].network.allowedDomains).toEqual(['a.example'])
+      host.sandbox?.ports.grantsChanged({ sessionId: 'other-session', hosts: ['wrong.example'] })
+      expect(update).toHaveBeenCalledTimes(1)
+      host.sandbox?.ports.grantsChanged({
+        sessionId: '00000000-0000-4000-8000-000000000001',
+        hosts: ['b.example', 'a.example'],
+      })
+      expect(update.mock.calls.at(-1)?.[0].network.allowedDomains).toEqual([
+        'a.example',
+        'b.example',
+      ])
+      await host.adapter.sandbox.wrap({
+        commandId: 'eval-command',
+        argv: ['/bin/sh', '-c', 'true'],
+        cwd: host.workspaceDir,
+        env: {},
+        profile: 'workspace-write',
+        workspace: [host.workspaceDir],
+      })
+      expect(sessionFacts).toHaveBeenCalledWith({
+        sessionId: '00000000-0000-4000-8000-000000000001',
+      })
+      expect(wrap).toHaveBeenCalledTimes(3)
+      expect(wrap.mock.calls.at(-1)?.[2]?.filesystem?.allowWrite).toContainEqual({
+        path: host.workspaceDir,
+        literal: true,
+      })
+      expect(wrap.mock.calls.at(-1)?.[2]?.filesystem?.denyRead).toContainEqual({
+        path: join(homedir(), '.ssh'),
+        literal: true,
+      })
+      await host.adapter.sandbox.afterExit('eval-command')
+      expect(cleanup).toHaveBeenCalledTimes(3)
+      host.sandbox?.ports.beforeWrap({
+        commandId: 'next-command',
+        sessionId: '00000000-0000-4000-8000-000000000002',
+        hosts: [],
+      })
+      expect(update.mock.calls.at(-1)?.[0].network.allowedDomains).toEqual([])
+    } finally {
+      await host.dispose()
+    }
+    expect(reset).not.toHaveBeenCalled()
+    expect(unsubscribe).toHaveBeenCalledTimes(3)
+    await disposeEvalSandbox()
+    await disposeEvalSandbox()
+    expect(reset).toHaveBeenCalledTimes(1)
+  } finally {
+    await disposeEvalSandbox()
+    vi.restoreAllMocks()
+  }
+})
 
 describe('the test host answers cards by reason (旧 227)', () => {
   it('denies an outside-workspace card, even when the task object says allow', async () => {
