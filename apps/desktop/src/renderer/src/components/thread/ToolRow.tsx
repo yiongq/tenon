@@ -12,8 +12,9 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
 import { questionsOf, summaryOf } from '@/lib/ask'
-import { toolObject, toolSentence } from '@/lib/tool-sentence'
+import { toolObject, toolSentence, toolSlotValue } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
+import { hostOfUrl } from '@/lib/url-host'
 import { visible } from '@/lib/visible'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import type { Answered, SessionSnapshot } from '@/runtime/session-store'
@@ -44,6 +45,8 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const [open, setOpen] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
+  // Keep the live card's host when answering; persisted answers derive it from the URL.
+  const [answeredHost, setAnsweredHost] = useState<string | undefined>(undefined)
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
@@ -113,7 +116,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
           <span className="shrink-0 text-micro text-text-muted">{t('tool.running')}</span>
         ) : null}
       </button>
-      {outcome !== null && outcome.state !== 'completed' && outcome.source !== null && !blocked ? (
+      {outcome !== null &&
+      outcome.state !== 'completed' &&
+      outcome.source !== null &&
+      !blocked &&
+      !(outcome.source === 'user-rejected' && answered?.outcome === 'denied') ? (
         <p data-testid="tool-row-closure" className="text-micro text-text-muted">
           {t(closureKey as never)}
         </p>
@@ -202,7 +209,14 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
           ) : null}
         </div>
       ) : null}
-      {answered === null ? null : <AnsweredRow answered={answered} />}
+      {answered === null ? null : (
+        <AnsweredRow
+          answered={answered}
+          input={input}
+          toolName={props.toolName}
+          host={answeredHost}
+        />
+      )}
       {summary === null ? null : <AskSummaryCard summary={summary} />}
       {asking ? <QueuedRows callKey={callKey} /> : null}
       {pending === null ||
@@ -224,7 +238,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
                 ? input
                 : (snapshot.pendingCall?.input ?? {})
             }
-            onRespond={(decision) => void store.respond(decision)}
+            onRespond={(decision) => {
+              const host = pending.card.facts['host']
+              setAnsweredHost(typeof host === 'string' ? host : undefined)
+              void store.respond(decision)
+            }}
           />
           <QueuedRows callKey={pending.anchorCallKey} />
         </>
@@ -291,10 +309,40 @@ function BlockedNotice(props: {
   )
 }
 
-/** An answered card, collapsed to one line: result, scope, object (§最小审批卡「答完」). */
-function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
+/** Keep only the authorization facts absent from the main session's tool sentence. */
+export function AnsweredRow(props: {
+  readonly answered: Answered
+  readonly toolName: string
+  readonly input: Readonly<Record<string, unknown>>
+  readonly host?: string | undefined
+}): JSX.Element {
   const { t } = useTranslation()
   const { answered } = props
+  const target = answered.target
+  let extra = ''
+  if (!answered.subtask && answered.outcome === 'allowed') {
+    switch (target.type) {
+      case 'command':
+        extra = t('confirm.cwd', { cwd: visible(target.cwd) })
+        break
+      case 'search':
+        extra = t('confirm.answered.searchHost', { host: visible(target.host) })
+        break
+      case 'url':
+        extra = t('confirm.answered.searchHost', {
+          host: visible(props.host ?? hostOfUrl(target.url)),
+        })
+        break
+      case 'path':
+        // Compare the displayed slot, including its escaping, rather than the whole sentence.
+        if (toolSlotValue(props.toolName, props.input) !== visible(target.path)) {
+          extra = t('confirm.answered.realPath', { path: visible(target.path) })
+        }
+        break
+      case 'tool':
+        break
+    }
+  }
   return (
     <div
       data-testid="approval-answered"
@@ -307,8 +355,13 @@ function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
               scope: t(scopeKey(answered.scope, answered.target.type, answered.subtask) as never),
             })
           : t('confirm.answered.denied')}
+        {answered.outcome === 'denied' && !answered.subtask ? (
+          ` · ${t('confirm.answered.roundEnds')}`
+        ) : extra === '' ? null : (
+          <PathText text={` · ${extra}`} />
+        )}
       </span>
-      <ObjectLine target={answered.target} />
+      {answered.subtask ? <ObjectLine target={answered.target} /> : null}
     </div>
   )
 }

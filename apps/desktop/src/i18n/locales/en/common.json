@@ -122,7 +122,7 @@
     "completed": "Done.",
     "user-stopped": "You stopped this task.",
     "paused": "{waitingFor, select, approval {Waiting for your approval.} question {Waiting for your answer.} other {Waiting for a subtask to finish.}}",
-    "user-rejected": "You declined {toolName}, so the task ended.",
+    "user-rejected": "You declined, so this round stops here.",
     "blocked-repeatedly": "Calls were blocked {count} times in a row, so the task ended.",
     "step-limit": "The task reached its limit of {limit} steps.",
     "no-progress": "The model made the same calls {repeats} times in a row without progress, so the task ended.",
@@ -508,8 +508,11 @@
     "arguments": "Arguments",
     "cwd": "in {cwd}",
     "answered": {
-      "allowed": "Allowed · {scope}",
-      "denied": "Denied"
+      "allowed": "Allowed ({scope})",
+      "denied": "Denied",
+      "roundEnds": "this round stops here",
+      "searchHost": "sent to {host}",
+      "realPath": "{path}"
     },
     "notRun": "Not run",
     "undo": {

@@ -146,17 +146,16 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await page.waitForTimeout(300)
       await expect(card).toHaveCount(1)
 
-      // Declined: the collapsed line's result, and the failure card.
+      // Declined: the single collapsed feedback line.
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
       const answered = page.getByTestId('approval-answered')
       await expect(answered).toHaveAttribute('data-outcome', 'denied')
       await expectSingleLineUnclipped(answered.locator('span').first())
-      const failure = page.getByTestId('failure-card')
-      await expect(failure).toHaveAttribute('data-code', 'user-rejected')
-      await expectSingleLineUnclipped(failure.getByTestId('failure-what'))
-      await expectSingleLineUnclipped(failure.getByTestId('failure-effects').locator('p'))
-      await expectSingleLineUnclipped(failure.getByTestId('failure-action'))
+      await expect(answered).toHaveText(
+        locale === 'en' ? 'Denied · this round stops here' : '已拒绝 · 这一轮到此为止',
+      )
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
 
       // A Run in progress: a queued bubble's row of actions, and the leave dialog.
       await send(page, 'long one')
@@ -220,7 +219,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       }
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
-      await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
+      await expectSingleLineUnclipped(page.getByTestId('approval-answered').last())
 
       // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and 「允许（只这一次）」. Denied, nothing runs.
       await send(page, 'delete a')
@@ -237,10 +237,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       }
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
-      await expect(page.getByTestId('failure-card').last()).toHaveAttribute(
-        'data-code',
-        'user-rejected',
-      )
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
+      await expectSingleLineUnclipped(page.getByTestId('approval-answered').last())
     } finally {
       await app.close()
     }

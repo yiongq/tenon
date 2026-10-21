@@ -49,7 +49,7 @@ const COPY = {
     allow: '允许（只这一次）⏎',
     undo: '只读，不会改动任何东西。',
     once: '只这一次',
-    allowed: '已允许 · 只这一次',
+    allowed: '已允许（只这一次）',
     hint: '发送会取消上面待批的操作。',
   },
   en: {
@@ -58,7 +58,7 @@ const COPY = {
     allow: 'Allow (Just this once)⏎',
     undo: 'Read only: nothing changes.',
     once: 'Just this once',
-    allowed: 'Allowed · Just this once',
+    allowed: 'Allowed (Just this once)',
     hint: 'Sending cancels the operation waiting above.',
   },
 } as const
@@ -124,7 +124,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       // One line: the result and the scope, then the path.
       const answered = anchored.getByTestId('approval-answered')
       await expect(answered).toHaveAttribute('data-outcome', 'allowed')
-      await expect(answered).toHaveText(`${copy.allowed}${realOutside}`)
+      await expect(answered).toHaveText(`${copy.allowed} · ${realOutside}`)
       await expect(page.getByTestId('approval-card')).toHaveCount(0)
       // The resumed Run read the file and sent it on.
       await expect(page.getByTestId('assistant-text').last()).toHaveText('Both read.')
@@ -141,7 +141,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       const anchored = page.locator(`[data-testid="tool-row"][data-call-key="${anchor}"]`)
       const answered = anchored.getByTestId('approval-answered')
       await expect(answered).toHaveAttribute('data-outcome', 'allowed')
-      await expect(answered).toHaveText(`${copy.allowed}${realOutside}`)
+      await expect(answered).toHaveText(`${copy.allowed} · ${realOutside}`)
       await expect(page.getByTestId('approval-card')).toHaveCount(0)
       await expect(page.getByTestId('approval-answered')).toHaveCount(1)
     } finally {
@@ -202,7 +202,7 @@ test('one card per requestId: a redelivery neither doubles it nor re-arms it, an
     await card.getByTestId('approval-allow').click()
     const answered = page.getByTestId('approval-answered')
     await expect(answered).toHaveAttribute('data-outcome', 'allowed')
-    await expect(answered).toHaveText(`Allowed · Just this once${outside}`)
+    await expect(answered).toHaveText('Allowed (Just this once)')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Done reading.')
     // The resumed Run went to the same provider and model as the paused one.
     const bodies = server.requests.map((request) => request.body as { model: string })
@@ -214,7 +214,7 @@ test('one card per requestId: a redelivery neither doubles it nor re-arms it, an
     await page.waitForTimeout(300)
     await expect(card).toHaveCount(0)
     await expect(answered).toHaveCount(1)
-    await expect(answered).toHaveText(`Allowed · Just this once${outside}`)
+    await expect(answered).toHaveText('Allowed (Just this once)')
     expect(server.requests).toHaveLength(2)
   } finally {
     await second.app.close()
@@ -337,7 +337,7 @@ test('the batch’s later call waits as a queued row under the card, and a click
   }
 })
 
-test('Esc in the card denies: the Run ends as user-rejected, and the queued call closes with it (F2, H3)', async () => {
+test('presentation-r1 验收 4: deny leaves one line; later calls of the batch read 未执行; restart redraws the same line for a main-session card', async () => {
   const folders = makeFolderTree('deny', { 'ws/y.txt': 'yankee\n', 'outside/x.txt': 'x-ray\n' })
   tree = folders
   const outside = join(folders.real, 'outside', 'x.txt')
@@ -371,7 +371,7 @@ test('Esc in the card denies: the Run ends as user-rejected, and the queued call
 
     const answered = page.getByTestId('approval-answered')
     await expect(answered).toHaveAttribute('data-outcome', 'denied')
-    await expect(answered).toHaveText(`Denied${outside}`)
+    await expect(answered).toHaveText('Denied · this round stops here')
     await expect(card).toHaveCount(0)
     // The one queued behind it closes with it and did not run (§最小审批卡「排队行」).
     await expect(rows).toHaveCount(2)
@@ -382,14 +382,8 @@ test('Esc in the card denies: the Run ends as user-rejected, and the queued call
     const details = rows.nth(1).getByTestId('tool-row-details')
     await expect(details).toContainText(`Inputfile_path: ${later}`)
     await expect(details).not.toContainText('Output')
-    const end = page.getByTestId('failure-card')
-    await expect(end).toHaveAttribute('data-code', 'user-rejected')
-    await expect(end).toHaveAttribute('data-visual', 'neutral')
-    await expect(end.getByTestId('failure-what')).toHaveText(
-      'You declined Read, so the task ended.',
-    )
-    await expect(end.getByTestId('failure-effects')).toHaveText('2 calls did not happen.')
-    await expect(end.getByTestId('failure-action')).toHaveAttribute('data-action', 'copy')
+    await expect(rows.first().getByTestId('tool-row-closure')).toHaveCount(0)
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     // The rejection opens no request (§结束原因词表).
     expect(server.requests).toHaveLength(1)
     // Esc was the card's alone (拒绝): the thread's Esc-to-stop never saw it — main got no stop.
@@ -398,27 +392,23 @@ test('Esc in the card denies: the Run ends as user-rejected, and the queued call
     await first.app.close()
   }
 
-  // Redrawn from the Tape: the answered call says you declined it, the other did not run, and the
-  // collapsed answer is back.
+  // Redrawn from the Tape: the same single rejection line; the later call did not run.
   const second = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
     const { page } = second
     const rows = page.getByTestId('tool-row')
     await expect(rows).toHaveCount(2)
-    await expect(rows.first().getByTestId('tool-row-closure')).toHaveText('You declined this.')
+    await expect(rows.first().getByTestId('tool-row-closure')).toHaveCount(0)
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('tool-row-closure')).toHaveText('Not run')
-    await expect(page.getByTestId('approval-answered')).toHaveText(`Denied${outside}`)
+    await expect(page.getByTestId('approval-answered')).toHaveText('Denied · this round stops here')
   } finally {
     await second.app.close()
   }
 })
 
-/**
- * §界面范围 ToolRow: a row that did not complete says its closure by its source code — for the call
- * you denied, closure.user-rejected, live as on the redraw (the live `tool-outcome` carries the
- * answer's `approval`, mailbox.ts emitClosures); only the calls queued behind it read 「未执行」.
- */
-test('live, the denied call’s own row says you declined it, as its redraw does (§界面范围 ToolRow, §最小审批卡)', async () => {
+// A main-session rejection has one feedback line, immediately, before any restart.
+test('presentation-r1 验收 4: a denied card is the only feedback: no closure line (live)', async () => {
   const folders = makeFolderTree('deny-live', {
     'ws/y.txt': 'yankee\n',
     'outside/x.txt': 'x-ray\n',
@@ -437,10 +427,9 @@ test('live, the denied call’s own row says you declined it, as its redraw does
     await expect(card).toHaveCount(1)
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-deny').click()
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
-    await expect(page.getByTestId('tool-row').getByTestId('tool-row-closure')).toHaveText(
-      'You declined this.',
-    )
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
+    await expect(page.getByTestId('tool-row').getByTestId('tool-row-closure')).toHaveCount(0)
+    await expect(page.getByTestId('approval-answered')).toHaveText('Denied · this round stops here')
   } finally {
     await app.close()
   }
@@ -571,7 +560,7 @@ test('⏎ on 「允许」 allows; on 「拒绝」 it presses that button, which 
       'data-outcome',
       'denied',
     )
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     // y never went out: the one request was the batch's own.
     expect(server.requests).toHaveLength(1)
   } finally {

@@ -325,6 +325,9 @@ describe('the approval card copy', () => {
       problems([
         { key: 'confirm.answered.allowed', args: ['scope'], what: 'collapsed allow' },
         { key: 'confirm.answered.denied', args: [], what: 'collapsed deny' },
+        { key: 'confirm.answered.roundEnds', args: [], what: 'denied round ends' },
+        { key: 'confirm.answered.searchHost', args: ['host'], what: 'collapsed network host' },
+        { key: 'confirm.answered.realPath', args: ['path'], what: 'collapsed real path' },
       ]),
     ).toEqual([])
   })

@@ -17,13 +17,13 @@ export function cardOf(
   switch (code) {
     case 'completed':
     case 'paused':
+    case 'user-rejected':
       return null
     case 'step-limit':
     case 'output-truncated':
       return { visual: 'neutral', action: 'continue' }
     case 'user-stopped':
     case 'shutdown-aborted':
-    case 'user-rejected':
     case 'usage-limit':
     case 'recovered':
     case 'time-limit':

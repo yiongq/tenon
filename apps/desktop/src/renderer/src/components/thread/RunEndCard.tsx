@@ -46,7 +46,8 @@ const VISUAL_CLASS: Readonly<Record<EndVisual, string>> = {
 /**
  * Under a Run's last assistant turn: the summary line (what the round's calls did — read, changed,
  * sent out, from the last user message on, over every Run of the round) and, when the end calls for
- * it, the failure card's three lines: what happened, what it already did, one action.
+ * it, the failure card's three lines: what happened, what it already did, one action. A rejection
+ * is reported by the answered approval row alone; any summary of completed calls stays here.
  */
 export function RunEndCard(): JSX.Element | null {
   const custom = useAuiState((s) => s.message.metadata.custom) as unknown as TurnCustom | undefined

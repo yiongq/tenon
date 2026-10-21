@@ -699,7 +699,7 @@ test.describe('live agent · zhipu', () => {
         // The thread: both turns, a row per call, the one answered card, no failure.
         await expect(page.getByTestId('user-text')).toHaveText([first, second])
         expect(await page.getByTestId('tool-row').count()).toBeGreaterThanOrEqual(2)
-        await expect(page.getByTestId('approval-answered')).toHaveCount(1)
+        await expect(page.getByTestId('approval-answered')).toHaveText('Allowed (Just this once)')
         await expect(page.getByTestId('failure-card')).toHaveCount(0)
         await expect(page.getByTestId('message-error')).toHaveCount(0)
       } finally {

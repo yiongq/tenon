@@ -20,6 +20,13 @@ const SLOT: Readonly<Record<string, { readonly key: string; readonly arg: string
   AskUserQuestion: null,
 }
 
+/** The value actually displayed in a named tool's slot, shared with answered-card comparisons. */
+export function toolSlotValue(name: string, input: Readonly<Record<string, unknown>>): string {
+  const slot = SLOT[name]
+  const value = slot === undefined || slot === null ? undefined : input[slot.arg]
+  return typeof value === 'string' ? visible(value) : ''
+}
+
 export function toolSentence(
   t: TFunction,
   name: string,
@@ -28,13 +35,7 @@ export function toolSentence(
   if (!Object.hasOwn(SLOT, name)) return t('tool.generic', { toolName: visible(name) })
   const slot = SLOT[name]
   if (slot === null || slot === undefined) return t(`tool.${name}` as never)
-  const value = input[slot.arg]
-  return String(
-    t(
-      `tool.${name}` as never,
-      { [slot.key]: typeof value === 'string' ? visible(value) : '' } as never,
-    ),
-  )
+  return String(t(`tool.${name}` as never, { [slot.key]: toolSlotValue(name, input) } as never))
 }
 
 /** The argument a queued row names (§最小审批卡「排队行」): the path or the command. */

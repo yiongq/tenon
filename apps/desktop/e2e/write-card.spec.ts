@@ -104,7 +104,7 @@ test('a Write card outlives a restart as one card, and 「允许」 then writes 
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Written.')
     expect(contentOf(file)).toBe('hello\n')
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
-    await expect(row.getByTestId('approval-answered')).toHaveText(`Allowed · This session${file}`)
+    await expect(row.getByTestId('approval-answered')).toHaveText('Allowed (This session)')
     // The resumed request went to the paused Run's provider (this fake endpoint) and model, with the
     // Write's result in it.
     const bodies = server.requests.map((request) => request.body as { model: string })
@@ -215,7 +215,7 @@ test('two writes in one reply: denying the first turns the stacked row 「未执
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-deny').click()
 
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     await expect(card).toHaveCount(0)
     const rows = page.getByTestId('tool-row')
     await expect(rows).toHaveCount(2)
@@ -291,7 +291,7 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
     const edit = rows.nth(2).getByTestId('approval-card')
     await expect(edit).toHaveCount(1)
     expect(contentOf(file)).toBe('v2\n')
-    await expect(rows.first().getByTestId('approval-answered')).toHaveText(`已允许 · 本会话${file}`)
+    await expect(rows.first().getByTestId('approval-answered')).toHaveText('已允许（本会话）')
     await expect(rows.nth(1).getByTestId('approval-answered')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('approval-card')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('tool-row-closure')).toHaveCount(0)
@@ -378,7 +378,7 @@ test('presentation-r1 验收 3: a Bash that deletes a file asks on an irreversib
     await expect(card.getByTestId('approval-allow')).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(row.getByTestId('approval-answered')).toHaveAttribute('data-outcome', 'denied')
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     expect(contentOf(a)).toBe('alpha\n')
 
     // ② ⏎ on the card itself denies.
@@ -400,7 +400,7 @@ test('presentation-r1 验收 3: a Bash that deletes a file asks on an irreversib
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
     await expect(third.getByTestId('approval-answered')).toHaveText(
-      `已允许 · 只这一次rm a.txt位于 ${ws}`,
+      `已允许（只这一次） · 位于 ${ws}`,
     )
     await expect.poll(() => contentOf(a)).toBeNull()
 
@@ -418,7 +418,7 @@ test('presentation-r1 验收 3: a Bash that deletes a file asks on an irreversib
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Removed.')
     expect(contentOf(b)).toBeNull()
     await expect(page.getByTestId('approval-answered').last()).toHaveText(
-      `已允许 · 只这一次rm b.txt位于 ${ws}`,
+      `已允许（只这一次） · 位于 ${ws}`,
     )
     expect(server.requests).toHaveLength(5)
   } finally {
@@ -564,3 +564,46 @@ test('a hard link in the workspace to a file outside it: today it asks as a work
     await app.close()
   }
 })
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`presentation-r1 验收 4: a Write with relative file_path keeps the real path live and after restart (${locale})`, async () => {
+    const folders = makeFolderTree('write-relative', { 'ws/notes/keep.txt': 'keep\n' })
+    tree = folders
+    const ws = join(folders.real, 'ws')
+    const path = join(ws, 'notes', 'today.md')
+    fake = await startFakeAnthropic({
+      replies: [
+        callsReply(writeCall('toolu_relative', 'notes/today.md', 'today\n')),
+        textReply('Written.'),
+      ],
+    })
+    const userData = makeUserDataDir('write-relative')
+    seedConfig(userData, { locale })
+    const expected =
+      locale === 'en' ? `Allowed (This session) · ${path}` : `已允许（本会话） · ${path}`
+    const first = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await startTask(first.app, first.page, ws)
+      await send(first.page, 'write today’s note')
+      const card = first.page.getByTestId('approval-card')
+      await expect(card.getByTestId('approval-object')).toHaveText(path)
+      await expect(first.page.getByTestId('tool-row-line')).toHaveText(
+        locale === 'en' ? 'Write notes/today.md' : '写入 notes/today.md',
+      )
+      await first.page.waitForTimeout(PAST_CLICK_GUARD_MS)
+      await card.getByTestId('approval-allow').click()
+      await expect(first.page.getByTestId('assistant-text').last()).toHaveText('Written.')
+      await expect(first.page.getByTestId('approval-answered')).toHaveText(expected)
+      expect(contentOf(path)).toBe('today\n')
+    } finally {
+      await first.app.close()
+    }
+    const second = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await expect(second.page.getByTestId('approval-answered')).toHaveText(expected)
+      await expect(second.page.getByTestId('approval-card')).toHaveCount(0)
+    } finally {
+      await second.app.close()
+    }
+  })
+}

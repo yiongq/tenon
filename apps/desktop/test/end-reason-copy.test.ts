@@ -20,7 +20,7 @@ const SLOTS: { readonly [C in Code]: readonly SlotOf<C>[] } = {
   completed: [],
   'user-stopped': [],
   paused: ['waitingFor'],
-  'user-rejected': ['toolName'],
+  'user-rejected': [],
   'blocked-repeatedly': ['count'],
   'step-limit': ['limit'],
   'no-progress': ['repeats'],

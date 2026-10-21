@@ -122,7 +122,7 @@
     "completed": "已完成。",
     "user-stopped": "你停下了这个任务。",
     "paused": "{waitingFor, select, approval {等你批准。} question {等你回答。} other {等子任务完成。}}",
-    "user-rejected": "你拒绝了 {toolName}，任务已结束。",
+    "user-rejected": "你拒绝了，这一轮到此为止。",
     "blocked-repeatedly": "调用连续 {count} 次被拦截，任务已结束。",
     "step-limit": "任务达到了 {limit} 步的上限。",
     "no-progress": "模型连续 {repeats} 次发出相同的调用、没有进展，任务已结束。",
@@ -508,8 +508,11 @@
     "arguments": "参数",
     "cwd": "位于 {cwd}",
     "answered": {
-      "allowed": "已允许 · {scope}",
-      "denied": "已拒绝"
+      "allowed": "已允许（{scope}）",
+      "denied": "已拒绝",
+      "roundEnds": "这一轮到此为止",
+      "searchHost": "发往 {host}",
+      "realPath": "{path}"
     },
     "notRun": "未执行",
     "undo": {

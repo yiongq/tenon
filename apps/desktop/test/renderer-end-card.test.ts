@@ -50,18 +50,9 @@ const TABLE: ReadonlyArray<readonly [codes: readonly Exclude<Code, 'provider-err
     // `completed`: only the summary line; `paused`: no card, the card or the question is in view.
     [['completed'], null],
     [['paused'], null],
+    [['user-rejected'], null],
     [['step-limit', 'output-truncated'], NEUTRAL_CONTINUE],
-    [
-      [
-        'user-stopped',
-        'shutdown-aborted',
-        'user-rejected',
-        'usage-limit',
-        'recovered',
-        'time-limit',
-      ],
-      NEUTRAL_COPY,
-    ],
+    [['user-stopped', 'shutdown-aborted', 'usage-limit', 'recovered', 'time-limit'], NEUTRAL_COPY],
     [['blocked-repeatedly'], { visual: 'warning', action: 'copy' }],
     [
       [
@@ -133,4 +124,9 @@ describe('② of the card: where each call of the round goes (§失败卡与结�
     expect(effectLineOf('Bash', { state: 'completed', effect: 'external' })).toBe('done')
     expect(effectLineOf('Bash', { state: 'not-run', effect: 'blocked' })).toBe('not-run')
   })
+})
+
+it('presentation-r1 验收 4: user-rejected shows no failure card', () => {
+  expect(cardOf(SAMPLE['user-rejected'], false)).toBeNull()
+  expect(cardOf(SAMPLE['user-rejected'], true)).toBeNull()
 })

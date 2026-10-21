@@ -18,7 +18,7 @@ import {
 } from './helpers/tools.js'
 
 /** Parent Agent row -> forwarded child approval -> restart/deny -> next child approval -> handoff. */
-test('a child’s cards stay under its parent row and its handoff survives restart', async () => {
+test('presentation-r1 验收 4: a subtask card keeps its object when collapsed (live); its handoff survives restart', async () => {
   test.setTimeout(90_000)
   const folders = makeFolderTree('subagent', { 'ws/context.txt': 'parent context' })
   const deniedPath = join(folders.real, 'ws', 'denied.txt')
@@ -87,12 +87,19 @@ test('a child’s cards stay under its parent row and its handoff survives resta
       await expect(card.getByTestId('approval-change-text')).toHaveText('approved child content')
       expect(existsSync(deniedPath)).toBe(false)
       expect(fake.requests).toHaveLength(3)
+      await expect(parent.getByTestId('approval-answered')).toHaveText(`Denied${deniedPath}`)
+      await expect(parent.getByTestId('approval-answered')).not.toContainText(
+        'this round stops here',
+      )
       await page.waitForTimeout(600)
       await card.getByTestId('approval-allow').click()
       await expect(page.getByTestId('assistant-text').last()).toHaveText(
         'Parent received the handoff.',
       )
       expect(readFileSync(allowedPath, 'utf8')).toBe('approved child content')
+      await expect(parent.getByTestId('approval-answered')).toHaveText(
+        `Allowed (This subtask)${allowedPath}`,
+      )
       await parent.getByTestId('tool-row-line').click()
       await expect(parent.getByTestId('tool-row-details')).toContainText(prompt)
       await expect(parent.getByTestId('tool-row-details')).toContainText(
