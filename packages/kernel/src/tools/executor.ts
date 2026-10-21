@@ -29,18 +29,29 @@ import { writeExecutor } from './builtin/write.js'
 import { webFetchExecutor } from './builtin/web-fetch.js'
 import type { SearchBackend } from './search/types.js'
 import { webSearchExecutor } from './builtin/web-search.js'
+import type { SandboxOutcome } from '../tape/entry.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
+  readonly sandbox?: SandboxOutcome
+  /** Appended after the spill check, so the model always sees these diagnostics. */
+  readonly sandboxBlock?: Extract<ResultContent[number], { type: 'text' }>
   readonly searchHitUrls?: readonly string[]
   readonly content: ResultContent
   readonly isError: boolean
   readonly state: ExecutionState
   /**
    * Why a call that did not complete ended, when the stop is not why: Bash's timeout or a host
-   * refusal before WebFetch could connect (§原因码表 `timed-out`, `protected`). The batch writes that code's note, `content` as its second block.
+   * refusal before WebFetch could connect (§原因码表 `timed-out`, `protected`). The batch writes
+   * that code's note, `content` as its second block. A completed Bash call may instead name
+   * `sandbox`: its own output stays intact, with diagnostics appended after the spill check.
    */
-  readonly source?: 'timed-out' | 'protected' | 'tool-unavailable' | 'connector-unauthorized'
+  readonly source?:
+    | 'sandbox'
+    | 'timed-out'
+    | 'protected'
+    | 'tool-unavailable'
+    | 'connector-unauthorized'
   readonly kernelAuthored?: boolean
   /** Host refusal after dispatch: the network boundary's blocked target. */
   readonly facts?: Readonly<Record<string, string>>

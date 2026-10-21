@@ -82,7 +82,7 @@ import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
-import type { McpToolSource, RunAbortCause } from './ports.js'
+import type { McpToolSource, RunAbortCause, SandboxPorts } from './ports.js'
 import { handoffView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
@@ -117,6 +117,7 @@ export type AgentDispatchResult =
     }
 
 export interface BatchContext {
+  readonly sandbox?: SandboxPorts
   readonly budgetExceeded?: () => number | null
   readonly agent?: (q: AgentDispatch) => Promise<AgentDispatchResult>
   readonly tape: Tape
@@ -696,7 +697,9 @@ async function execute(
   const facts = await perform(ctx, call, item, executor, q)
   await close(ctx, call, facts, q.summary)
   return facts.some(
-    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['source'] === 'protected',
+    (entry) =>
+      entry.name === 'execution/tool_outcome' &&
+      (entry.payload['source'] === 'protected' || entry.payload['source'] === 'sandbox'),
   )
 }
 
@@ -719,6 +722,27 @@ async function perform(
   executor: ToolExecutor,
   q: Performed,
 ): Promise<NewEntry[]> {
+  let command = q.command
+  if (command !== undefined) {
+    const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+    const dispatch = entries.find(
+      (e) => e.provenanceKey === dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
+    )
+    const decision = entries.find((e) => e.provenanceKey === dispatch?.payload['decisionKey'])
+    const plan = decision?.payload['sandbox'] as SandboxPlan | undefined
+    command = {
+      ...command,
+      ...(plan === undefined ? {} : { plan }),
+      beforeWrap: () => {
+        // Step 11 derives the session's inherited domain grants; there is no source yet.
+        ctx.sandbox?.beforeWrap({
+          commandId: call.providerToolCallId,
+          sessionId: ctx.sessionId,
+          hosts: [],
+        })
+      },
+    }
+  }
   const running = executor({
     item,
     input: call.input,
@@ -743,13 +767,17 @@ async function perform(
           },
         }
       : {}),
-    ...(q.command === undefined ? {} : { command: q.command }),
+    ...(command === undefined ? {} : { command }),
   })
   const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
   const stopped = execution.state !== 'completed'
   // A Bash timeout is its own code; every other call that did not complete was aborted, by a stop or
   // by the shutdown.
-  const source = stopped ? (execution.source ?? abortSourceOf(ctx.cause())) : null
+  const source = stopped
+    ? (execution.source ?? abortSourceOf(ctx.cause()))
+    : execution.source === 'sandbox'
+      ? 'sandbox'
+      : null
   const output = textOf(execution.content)
   const ref = refOf(ctx, call)
   // The one spill check, on what is about to be written (§大响应落盘): a command's output after its
@@ -761,7 +789,7 @@ async function perform(
     call: ref,
     result: {
       content:
-        source === null
+        source === null || source === 'sandbox'
           ? execution.content
           : closureContent({
               source,
@@ -778,7 +806,11 @@ async function perform(
     tape: ctx.tape,
     now: ctx.now,
     call: ref,
-    content: checked.content,
+    content: [
+      ...checked.content,
+      ...(execution.sandboxBlock === undefined ? [] : [execution.sandboxBlock]),
+    ],
+    ...(execution.sandbox === undefined ? {} : { sandbox: execution.sandbox }),
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
@@ -969,6 +1001,9 @@ export function closedView(
       : {
           reversibility: outcome['reversibility'] as NonNullable<ToolOutcomeView['reversibility']>,
         }),
+    ...(outcome['sandbox'] === undefined
+      ? {}
+      : { sandbox: outcome['sandbox'] as NonNullable<ToolOutcomeView['sandbox']> }),
     source: (outcome['source'] ?? null) as ToolOutcomeView['source'],
     ...(outcome['facts'] === undefined
       ? {}

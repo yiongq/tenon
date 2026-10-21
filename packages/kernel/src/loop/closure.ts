@@ -16,6 +16,7 @@ import type {
   FactWriter,
   NewEntry,
   SideEffectClass,
+  SandboxOutcome,
   ToolOutcomePayload,
   ToolResultPayload,
 } from '../tape/entry.js'
@@ -74,6 +75,7 @@ export interface CallRef {
 export type ResultContent = Array<Extract<ContentBlock, { type: 'text' | 'image' }>>
 
 export interface ResultFacts {
+  readonly sandbox?: SandboxOutcome
   readonly tape: Tape
   readonly now: () => number
   readonly call: CallRef
@@ -117,6 +119,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
   const outcome: ToolOutcomePayload = {
     ordinal: call.ordinal,
     providerToolCallId: call.providerToolCallId,
+    ...(q.sandbox === undefined ? {} : { sandbox: q.sandbox }),
     effect: q.effect,
     state: q.state,
     source: q.source,

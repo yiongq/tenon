@@ -2252,6 +2252,7 @@ export function createLoop(deps: LoopDeps): Loop {
           search: built.assembly.search,
           mcpSources: dispatchSources,
           commandShell: ports.commandShell,
+          ...(ports.sandbox === undefined ? {} : { sandbox: ports.sandbox }),
           inspectors: deps.inspectors,
           protectedFiles: deps.protectedFiles,
           ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),

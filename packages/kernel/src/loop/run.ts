@@ -129,6 +129,7 @@ import type { Profile } from '../session/facts.js'
 export const FIRST_REVISION = 0
 
 export interface RunDriverContext {
+  readonly sandbox?: BatchContext['sandbox']
   readonly schemaValidator?: SchemaValidatorPort
   readonly agent?: BatchContext['agent']
   readonly stepLimit?: number
@@ -365,6 +366,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       testTools: ctx.testTools,
       search: ctx.search,
       commandShell: ctx.commandShell,
+      ...(ctx.sandbox === undefined ? {} : { sandbox: ctx.sandbox }),
       denials,
       budgetExceeded: () =>
         ctx.tokenLimit !== null && counted > ctx.tokenLimit ? ctx.tokenLimit : null,
