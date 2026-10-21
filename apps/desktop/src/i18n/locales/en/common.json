@@ -612,18 +612,16 @@
     "working": "Working",
     "elapsed": " · {seconds}s"
   },
-  "mode": {
-    "label": "Mode",
-    "chat": "Chat",
-    "cowork": "Task"
-  },
   "folder": {
     "label": "Folders",
     "dedicated": "Session folder",
     "cwd": "commands run here",
     "add": "Add folder…",
-    "prefill": "{count, plural, one {Use the last folder} other {Use the last # folders}}",
-    "remove": "Remove {name}"
+    "remove": "Remove {name}",
+    "toggle": "Work in a folder",
+    "dedicatedNote": "With no folder picked, commands run in a folder Tenon creates just for this task.",
+    "prefillPending": "Used before, not yet added",
+    "prefillUse": "{count, plural, one {Use this folder} other {Use these # folders}}"
   },
   "mcp": {
     "settings": "Settings",

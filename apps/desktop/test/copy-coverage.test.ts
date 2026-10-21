@@ -793,3 +793,19 @@ it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-lon
     ]),
   ).toEqual([])
 })
+
+it('presentation-r1 验收 10: folder toggle, popover and prefill copy exist in both languages with only their own slots', () => {
+  expect(
+    problems([
+      { key: 'folder.toggle', args: [], what: 'folder toggle' },
+      { key: 'folder.label', args: [], what: 'folder popover' },
+      { key: 'folder.dedicated', args: [], what: 'dedicated folder chip' },
+      { key: 'folder.dedicatedNote', args: [], what: 'dedicated folder consequence' },
+      { key: 'folder.cwd', args: [], what: 'command working directory' },
+      { key: 'folder.add', args: [], what: 'system directory dialog' },
+      { key: 'folder.remove', args: ['name'], what: 'remove a picked folder' },
+      { key: 'folder.prefillPending', args: [], what: 'unconfirmed prefilled paths' },
+      { key: 'folder.prefillUse', args: ['count'], what: 'explicit prefill confirmation' },
+    ]),
+  ).toEqual([])
+})

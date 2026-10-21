@@ -4,6 +4,7 @@ import { deferred, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { routeCalls } from './helpers/navigation.js'
 import {
   bashCall,
   callsReply,
@@ -91,7 +92,7 @@ test('presentation-r1 验收 5: a chat Read has its own one-line receipt (旧 22
   seedConfig(userData, { locale: 'zh-CN' })
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'chat')
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await send(page, 'read my notes')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked.')
     const notice = page.getByTestId('tool-row').getByTestId('blocked-notice')
@@ -119,8 +120,7 @@ test('presentation-r1 验收 5: the row escapes its path, the receipt does not r
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
     // Before the first message either mode can be chosen.
-    await expect(page.getByTestId('mode-chat')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('mode-cowork')).toBeVisible()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await send(page, 'read my notes')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked.')
     // The row retains the escaped object; the receipt explains why without repeating it.
@@ -128,15 +128,14 @@ test('presentation-r1 验收 5: the row escapes its path, the receipt does not r
     await expect(page.getByTestId('blocked-notice')).toHaveText(
       'In a chat, only files Tenon saved for this chat can be opened.',
     )
-    // That message established the chat: the mode shows, and the other one is gone.
-    await expect(page.getByTestId('mode-chat')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('mode-cowork')).toBeHidden()
+    // That message established the chat: the toggle is gone.
+    await expect(page.getByTestId('folder-toggle')).toHaveCount(0)
   } finally {
     await app.close()
   }
 })
 
-test('a task’s folders: commands run in the first, and the ones last picked are offered to the next task (§界面范围 FolderChip; D11, D8)', async () => {
+test('presentation-r1 验收 10: a task’s folders are picked and removed in the popover, commands run in the first, and prefill joins only when clicked', async () => {
   const folders = makeFolderTree('folders', { 'one/a.txt': 'a\n', 'two/b.txt': 'b\n' })
   tree = folders
   const one = join(folders.real, 'one')
@@ -145,30 +144,98 @@ test('a task’s folders: commands run in the first, and the ones last picked ar
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({ userData })
   try {
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
+    const chip = page.getByTestId('folder-chip')
+    await expect(chip).toHaveText('Session folder')
+    await chip.click()
     const items = page.getByTestId('folder-item')
-    // None picked: the session's own folder, where commands run.
     await expect(items).toHaveCount(1)
-    await expect(items.first()).toHaveText('Session foldercommands run here')
+    await expect(items.first().getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(page.getByTestId('folder-dedicated-note')).toHaveText(
+      'With no folder picked, commands run in a folder Tenon creates just for this task.',
+    )
+    await expect(page.getByTestId('folder-remove')).toHaveCount(0)
     await stubFolderDialog(app, [one, two])
     await page.getByTestId('folder-add').click()
     await expect(items).toHaveCount(2)
-    await expect(items.nth(0)).toHaveText('onecommands run here')
-    await expect(items.nth(1)).toHaveText('two')
-    // Last time's folders are these very ones now: nothing to offer.
+    await expect(chip).toHaveText('one+1')
+    await expect(chip).toHaveAttribute('title', `${one}\n${two}`)
+    await expect(chip).toHaveAccessibleName(`${one} ${two}`)
+    await expect(items.nth(0).getByTestId('folder-path')).toHaveText(one)
+    await expect(items.nth(0).getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(items.nth(1).getByTestId('folder-path')).toHaveText(two)
+    await expect(items.nth(1).getByTestId('folder-cwd')).toHaveCount(0)
     const prefill = page.getByTestId('folder-prefill')
     await expect(prefill).toHaveCount(0)
 
-    // The next task starts on its own folder, with those two offered.
+    await page.keyboard.press('Escape')
     await page.getByTestId('nav-item').first().click()
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-popover')).toBeVisible()
     await expect(items).toHaveCount(1)
-    await expect(prefill).toHaveText('Use the last 2 folders')
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText([one, two])
+    await expect(prefill).toHaveText('Use these 2 folders')
+    await expect(chip).toHaveText('Session folder')
     await prefill.click()
     await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toHaveAttribute('title', one)
     await expect(items.nth(1)).toHaveAttribute('title', two)
     await expect(prefill).toHaveCount(0)
+    await items.nth(0).getByTestId('folder-remove').click()
+    await expect(items).toHaveCount(1)
+    await expect(items.first().getByTestId('folder-path')).toHaveText(two)
+    await expect(items.first().getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(chip).toHaveText('two')
+    await items.first().getByTestId('folder-remove').click()
+    await expect(chip).toHaveText('Session folder')
+    await expect(page.getByTestId('folder-dedicated-note')).toBeVisible()
+    await expect(page.getByTestId('folder-remove')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 10: turning the toggle on opens the popover with each prefilled path in full before 用这 N 个文件夹; focus stays on the toggle; nothing joins the list until it is clicked', async () => {
+  const folders = makeFolderTree('prefill-paths', { 'first/a.txt': 'a\n', 'second/b.txt': 'b\n' })
+  tree = folders
+  const paths = [join(folders.real, 'first'), join(folders.real, 'second')]
+  const userData = makeUserDataDir('prefill-paths')
+  seedConfig(userData, { locale: 'zh-CN' })
+  writeFileSync(
+    configPathIn(userData),
+    JSON.stringify({ locale: 'zh-CN', lastWorkspaceFolders: paths }),
+  )
+  const { app, page } = await launchTenon({ userData, env: { TENON_E2E_ROUTE_COUNTS: '1' } })
+  try {
+    const toggle = page.getByTestId('folder-toggle')
+    await toggle.focus()
+    await toggle.press('Space')
+    const popup = page.getByTestId('folder-popover')
+    await expect(popup).toBeVisible()
+    await expect(toggle).toBeFocused()
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText(paths)
+    await expect(page.getByText('上次用过，尚未加入', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('folder-prefill')).toHaveText('用这 2 个文件夹')
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await expect(page.getByTestId('folder-chip')).toHaveText('专用文件夹')
+    const pathBottoms = await page
+      .getByTestId('folder-prefill-path')
+      .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().bottom))
+    const confirm = await page.getByTestId('folder-prefill').boundingBox()
+    for (const bottom of pathBottoms) expect(bottom).toBeLessThanOrEqual(confirm!.y)
+    // Merely closing and reopening the offer never confirms it.
+    await expect.poll(() => routeCalls(app, 'workspace.usePrefill')).toBe(0)
+    await expect(toggle).toBeFocused()
+    await page.keyboard.press('Escape')
+    await page.getByTestId('folder-chip').click()
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText(paths)
+    expect(await routeCalls(app, 'workspace.usePrefill')).toBe(0)
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await page.getByTestId('folder-prefill').click()
+    await expect(page.getByTestId('folder-item')).toHaveCount(2)
+    await expect(page.getByTestId('folder-path')).toHaveText(paths)
+    await expect(page.getByTestId('folder-prefill')).toHaveCount(0)
+    expect(await routeCalls(app, 'workspace.usePrefill')).toBe(1)
   } finally {
     await app.close()
   }

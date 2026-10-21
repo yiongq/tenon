@@ -564,8 +564,8 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     // for it to be gone, so the next open is a new menu and no row below is read off the old one.
     await expect(menu).toBeHidden()
 
-    await page.getByTestId('mode-cowork').click()
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'cowork')
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'true')
     await trigger.click()
     await expect(menu).toBeVisible()
     const ollamaRow = page.getByTestId('model-row-ollama-qwen3:8b')

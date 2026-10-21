@@ -683,7 +683,7 @@ test('presentation-r1 验收 9: an instance on this computer or a local network 
     const trigger = page.getByTestId('model-menu-trigger')
     const row = page.getByTestId(`model-row-${LOCAL_ID}-${LOCAL_MODEL}`)
     const lan = page.getByTestId(`model-row-${PRIVATE_ID}-${PRIVATE_MODEL}`)
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
     await trigger.click()
     for (const each of [row, lan]) {
       // oxlint-disable-next-line no-await-in-loop -- one row at a time
@@ -692,8 +692,8 @@ test('presentation-r1 验收 9: an instance on this computer or a local network 
       await expect(each).toContainText('Working in a folder needs a model that can use tools')
     }
     await page.keyboard.press('Escape')
-    await page.getByTestId('mode-chat').click()
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'chat')
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await trigger.click()
     await expect(lan).not.toHaveAttribute('aria-disabled', 'true')
     await expect(lan).toContainText(`${PRIVATE_HOST} · text conversation only`)

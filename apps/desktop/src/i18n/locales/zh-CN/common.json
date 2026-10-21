@@ -612,18 +612,16 @@
     "working": "正在干活",
     "elapsed": " · {seconds} 秒"
   },
-  "mode": {
-    "label": "形态",
-    "chat": "对话",
-    "cowork": "任务"
-  },
   "folder": {
     "label": "文件夹",
     "dedicated": "专用文件夹",
     "cwd": "命令在这里运行",
     "add": "添加文件夹…",
-    "prefill": "用上次的 {count} 个文件夹",
-    "remove": "移除 {name}"
+    "remove": "移除 {name}",
+    "toggle": "在文件夹里工作",
+    "dedicatedNote": "没选文件夹时，命令在 Tenon 为这个任务单独建的文件夹里运行。",
+    "prefillPending": "上次用过，尚未加入",
+    "prefillUse": "用这 {count} 个文件夹"
   },
   "mcp": {
     "settings": "设置",

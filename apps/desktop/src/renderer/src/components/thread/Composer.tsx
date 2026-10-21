@@ -4,7 +4,6 @@ import { useCallback, useRef } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ComposerLead } from '@/components/composer/ComposerLead'
-import { FolderChip } from '@/components/composer/FolderChip'
 import { ModelMenu } from '@/components/composer/ModelMenu'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
@@ -33,7 +32,7 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
 /**
  * The composer (spec 02 §模型菜单与输入框「输入框」; H13, B1, F11, H6, B15): a two-row frame, the
  * editor on top and a tool row under it. The tool row's left cluster is `ComposerLead` (the mode
- * switch); its right cluster is the model chip and the round 「发送」 at the end, always there. While a
+ * toggle and folder chip); its right cluster is the model chip and the round 「发送」 at the end, always there. While a
  * Run is live (or a card or a question waits, or the session can resume) a square 「停止」 stands beside
  * them — send and stop side by side (§「停止与发送」): sending then queues; Cmd/Ctrl+Enter stops the Run
  * the user sees and sends this next. Stop takes the free room on the cluster's left, so neither the
@@ -42,11 +41,8 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
  * fires. While a question waits, 「发送」 is its typed answer (§插话与输入框状态表「等提问」).
  *
  * Under the box, 8px down, one muted line that keeps its place whatever it says: a hint replacing the
- * disclaimer moves nothing. Under that, a task's folders (§界面范围 `FolderChip`「位于输入框下方」). A
- * chat keeps the folder row's height too, empty, as the bottom margin: switching to 「任务」 on the home
- * screen fills it and lifts neither the box nor the line, and neither the first message (which fixes
- * the mode) nor opening another session moves them. Only a folder row that wraps to a second line (a
- * long name, many folders) lifts them by that line.
+ * disclaimer moves nothing. Folders are in the tool row (presentation-r1 R3/R8); toggling on adds
+ * the chip without moving the box or this line. Only a long folder name makes the tool row taller.
  */
 export function Composer(): JSX.Element {
   const { t } = useTranslation()
@@ -159,10 +155,6 @@ export function Composer(): JSX.Element {
             {t('composer.disclaimer')}
           </p>
         )}
-      </div>
-      {/* One row's height whether or not the chip is in it (FolderChip keeps its row to it). */}
-      <div data-testid="folder-slot" className="mt-2 min-h-5">
-        <FolderChip />
       </div>
     </div>
   )

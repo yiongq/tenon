@@ -8,7 +8,7 @@ import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helper
 import type { Locale } from './helpers/launch.js'
 import { newChatFromSidebar, repoint } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
-import { expectSingleLineUnclipped } from './helpers/text-fit.js'
+import { expectSingleLineUnclipped, expectWrappedUnclipped } from './helpers/text-fit.js'
 import {
   callsReply,
   makeFolderTree,
@@ -77,7 +77,7 @@ function askCall(id: string, count: 1 | 2) {
 }
 
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
-  test(`the mode switch, folder chip and its prefill, question widget, its summaries, thinking, the round’s line, a closure line and the confirmation fit at 1280x800 in ${locale} (验收 37)`, async () => {
+  test(`presentation-r1 验收 10: the folder toggle, chip and its popover prefill, question widget, its summaries, thinking, the round’s line, a closure line and the confirmation fit at 1280x800 in ${locale} (验收 37)`, async () => {
     const folders = makeFolderTree(`fit-02-rest-${locale}`, { 'ws/a.txt': 'alpha\n' })
     tree = folders
     const ws = join(folders.real, 'ws')
@@ -121,20 +121,25 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(page.locator('html')).toHaveAttribute('lang', locale)
       await expect(page.getByTestId('model-menu-current')).toContainText(PROVIDER.modelName)
 
-      // ModeSwitch before the first message: both choices.
-      await expectSingleLineUnclipped(page.getByTestId('mode-chat'))
-      await expectSingleLineUnclipped(page.getByTestId('mode-cowork'))
-      // FolderChip with nothing picked: its label, the session's own folder, 「添加文件夹…」.
-      await page.getByTestId('mode-cowork').click()
+      // The toggle and chip share the tool row; paths in the popover are content and may wrap.
+      await expectSingleLineUnclipped(page.getByTestId('folder-toggle').locator('xpath=..'))
+      await page.getByTestId('folder-toggle').click()
       const chip = page.getByTestId('folder-chip')
-      await expect(chip.getByTestId('folder-item')).toHaveCount(1)
-      await expectSingleLineUnclipped(chip.locator(':scope > span').first())
-      await expectSingleLineUnclipped(chip.getByTestId('folder-item'))
-      await expectSingleLineUnclipped(chip.getByTestId('folder-add'))
-      // A picked folder: its short name and 「命令在这里运行」. Its prefill offer is measured last,
-      // from the next task.
+      await expectSingleLineUnclipped(chip)
+      await chip.click()
+      const popup = page.getByTestId('folder-popover')
+      await expect(popup.getByTestId('folder-item')).toHaveCount(1)
+      await expectWrappedUnclipped(popup.getByTestId('folder-path'))
+      await expectSingleLineUnclipped(popup.getByTestId('folder-cwd'))
+      await expectSingleLineUnclipped(popup.getByTestId('folder-dedicated-note'))
+      await expectSingleLineUnclipped(popup.getByTestId('folder-add'))
+      await page.keyboard.press('Escape')
       await startTask(app, page, ws)
-      await expectSingleLineUnclipped(chip.getByTestId('folder-item'))
+      await expectSingleLineUnclipped(chip)
+      await chip.click()
+      await expectWrappedUnclipped(popup.getByTestId('folder-path'))
+      await expectSingleLineUnclipped(popup.getByTestId('folder-cwd'))
+      await page.keyboard.press('Escape')
 
       // Round 1: the widget on its first page, the thinking block's label, the composer's placeholder.
       await send(page, 'ask me first')
@@ -210,12 +215,17 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(page.getByTestId('model-menu-current')).toContainText('qwen3:8b')
       expect(local.requests).toHaveLength(1)
 
-      // The next task: FolderChip offers the folder this one picked (「用上次的 1 个文件夹」).
+      // The next task automatically shows the unconfirmed full path and its confirmation.
       await newChatFromSidebar(page)
-      await page.getByTestId('mode-cowork').click()
-      await expect(chip.getByTestId('folder-item')).toHaveCount(1)
-      await expect(chip.getByTestId('folder-prefill')).toHaveAttribute('title', ws)
-      await expectSingleLineUnclipped(chip.getByTestId('folder-prefill'))
+      await page.getByTestId('folder-toggle').click()
+      await expect(popup).toBeVisible()
+      await expect(popup.getByTestId('folder-item')).toHaveCount(1)
+      await expect(popup.getByTestId('folder-prefill-path')).toHaveText(ws)
+      await expectWrappedUnclipped(popup.getByTestId('folder-prefill-path'))
+      await expectSingleLineUnclipped(
+        popup.getByTestId('folder-prefill-offer').locator('p').first(),
+      )
+      await expectSingleLineUnclipped(popup.getByTestId('folder-prefill'))
       expect(server.requests).toHaveLength(5)
     } finally {
       await app.close()

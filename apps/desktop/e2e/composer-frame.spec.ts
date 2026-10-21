@@ -75,13 +75,13 @@ test('the composer is two rows: the editor on top, the tool row under it with th
     expect(editor.width).toBeGreaterThan(frame.width - 40)
     expect(editor.y + editor.height).toBeLessThanOrEqual(tools.y + 1)
     expect(tools.y + tools.height).toBeLessThanOrEqual(frame.y + frame.height + 0.5)
-    // Left: the mode switch, in a slot of its own. Right: the chip, then the button, in that order.
-    await expect(page.getByTestId('composer-lead').getByTestId('mode-switch')).toBeVisible()
+    // Left: the folder toggle, in a slot of its own. Right: the chip, then the button, in that order.
+    await expect(page.getByTestId('composer-lead').getByTestId('folder-toggle')).toBeVisible()
     expect(lead.x + lead.width).toBeLessThanOrEqual(chip.x + 0.5)
     expect(chip.x + chip.width).toBeLessThanOrEqual(button.x + 0.5)
     expect(button.x + button.width).toBeLessThanOrEqual(frame.x + frame.width)
-    // Nothing hangs outside the frame any more: the mode switch is inside it, not in a row below.
-    const mode = await rectOf(page.getByTestId('mode-switch'))
+    // Nothing hangs outside the frame any more: the folder toggle is inside it, not in a row below.
+    const mode = await rectOf(page.getByTestId('folder-toggle'))
     expect(mode.y + mode.height).toBeLessThanOrEqual(frame.y + frame.height)
     // The one button is a round, text-free icon with its name for assistive technology.
     const sendButton = page.getByTestId('composer-send')
@@ -149,7 +149,7 @@ test('send keeps its place; while a Run is live a square Stop stands beside it, 
   }
 })
 
-test('a task keeps the composer’s size, the line under the box holds its place, and the folders sit under both', async () => {
+test('presentation-r1 验收 10: toggling 在文件夹里工作 moves neither the box nor the line under it (0 px)', async () => {
   const userData = makeUserDataDir('frame-stable')
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({ userData })
@@ -160,18 +160,22 @@ test('a task keeps the composer’s size, the line under the box holds its place
     const lineY = await line()
     // The muted line is 8px under the box in a chat, as in a task: no empty band between them.
     expect(Math.abs(lineY - (chat.y + chat.height) - 8)).toBeLessThan(0.5)
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
     await expect(page.getByTestId('folder-chip')).toBeVisible()
-    // 02 §界面范围 `FolderChip`「位于输入框下方」: under the frame, not inside it; under the line too,
-    // in the room a chat keeps empty.
+    // The chip is beside the toggle, inside the tool row. Neither frame nor line moves, exactly.
     const task = await rectOf(page.getByTestId('composer'))
     const chip = await rectOf(page.getByTestId('folder-chip'))
-    expect(chip.y).toBeGreaterThanOrEqual(task.y + task.height)
-    expect(chip.y).toBeGreaterThan(await line())
-    expect(Math.abs(task.height - chat.height)).toBeLessThan(0.5)
-    expect(Math.abs(task.width - chat.width)).toBeLessThan(0.5)
-    expect(Math.abs(task.y - chat.y)).toBeLessThan(0.5)
-    expect(Math.abs((await line()) - lineY)).toBeLessThan(0.5)
+    const toggle = await rectOf(page.getByTestId('folder-toggle'))
+    expect(chip.y).toBeGreaterThanOrEqual(task.y)
+    expect(chip.y + chip.height).toBeLessThanOrEqual(task.y + task.height)
+    expect(chip.x).toBeGreaterThan(toggle.x + toggle.width)
+    expect(task).toEqual(chat)
+    expect(await line()).toBe(lineY)
+    await expect(page.getByTestId('folder-slot')).toHaveCount(0)
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-chip')).toHaveCount(0)
+    expect(await rectOf(page.getByTestId('composer'))).toEqual(chat)
+    expect(await line()).toBe(lineY)
   } finally {
     await app.close()
   }

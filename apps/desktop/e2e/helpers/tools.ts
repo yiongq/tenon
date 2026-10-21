@@ -83,7 +83,7 @@ export async function stubFolderDialog(
 }
 
 /**
- * The session on screen becomes a task (ModeSwitch) whose one folder is `folder`, picked through the
+ * The session on screen becomes a task (FolderToggle) whose one folder is `folder`, picked through the
  * FolderChip — main's dialog, stubbed. Before the first message, as the switch requires.
  */
 export async function startTask(
@@ -91,13 +91,20 @@ export async function startTask(
   page: Page,
   folder: string,
 ): Promise<void> {
-  await page.getByTestId('mode-cowork').click()
-  await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'cowork')
+  const toggle = page.getByTestId('folder-toggle')
+  await expect(toggle).toBeVisible()
+  if ((await toggle.getAttribute('aria-checked')) !== 'true') await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
   await expect(page.getByTestId('folder-chip')).toBeVisible()
+  if (!(await page.getByTestId('folder-popover').isVisible())) {
+    await page.getByTestId('folder-chip').click()
+  }
   await stubFolderDialog(app, [folder])
   await page.getByTestId('folder-add').click()
   await expect(page.getByTestId('folder-item')).toHaveCount(1)
   await expect(page.getByTestId('folder-item')).toHaveAttribute('title', realpathSync(folder))
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('folder-popover')).toBeHidden()
 }
 
 export async function send(page: Page, text: string): Promise<void> {
