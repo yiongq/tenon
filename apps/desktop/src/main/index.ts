@@ -56,7 +56,7 @@ import {
 } from './window-theme.js'
 import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
-import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
+import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
 import { startSingleInstance } from './single-instance.js'
 import {
   createSessionRemoval,
@@ -278,6 +278,7 @@ async function main(): Promise<void> {
   const shutdown = createShutdown<BrowserWindow>({
     app,
     dialog,
+    sandbox: host.sandbox,
     registry: loop?.registry ?? null,
     mcp,
     tape,
@@ -389,6 +390,8 @@ async function main(): Promise<void> {
   registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
   const win = startSandboxAfterWindow(openWindow, host.sandbox)
+  // start() returns the same run: signal handling observes startup without awaiting it here.
+  registerSandboxSignals({ process, app, sandbox: host.sandbox, run: host.sandbox.start() })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })
   })

@@ -109,9 +109,9 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
     this.inner = this.real ?? new FakeSandbox()
   }
 
-  /** Main calls this once after creating its first window; it never awaits startup. */
-  start(): void {
-    if (this.run !== undefined) return
+  /** Starts after the first window; subsequent calls return the same run without restarting. */
+  start(): SandboxPostureRun {
+    if (this.run !== undefined) return this.run
     const run = this.options.startPosture()
     this.run = run
     this.real?.start(run)
@@ -119,6 +119,7 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
       this.outcome = outcome
       this.session = outcome.session
     })
+    return run
   }
 
   posture(): SandboxPosture {

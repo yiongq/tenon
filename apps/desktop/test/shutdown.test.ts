@@ -7,6 +7,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import {
   STOP_TERM_GRACE_MS,
   STOP_WRITE_WAIT_MS,
@@ -45,8 +46,11 @@ import {
   SHUTDOWN_SETTLE_MS,
   createShutdown,
   refuseWhileShuttingDown,
+  registerSandboxSignals,
 } from '../src/main/shutdown.js'
 import type { ExitConfirmOptions, ExitCopyKey, ExitDialog, Shutdown } from '../src/main/shutdown.js'
+import type { InitializeResult, SandboxPostureRun } from '../src/main/host/sandbox-posture.js'
+import { wiringFixture } from './sandbox/wiring-support.js'
 import { registerWorkspaceRoutes } from '../src/main/workspace.js'
 
 const ROOT = '4f1c9a2e-6b3d-4a71-9f52-0c8de7a11b34'
@@ -234,6 +238,7 @@ function rig(
   options: {
     registry?: RunRegistry
     mcp?: { close(q: { deadlineMs: number }): Promise<void> }
+    sandbox?: { dispose(): Promise<void> }
   } = {},
 ): Rig {
   const app = fakeApp()
@@ -248,12 +253,179 @@ function rig(
     dialog: dialog.dialog,
     registry,
     ...(options.mcp ? { mcp: options.mcp } : {}),
+    ...(options.sandbox ? { sandbox: options.sandbox } : {}),
     tape: tape.tape,
     t,
     parent: () => win,
     log: (line) => log.push(line),
   })
   return { app, dialog, tape, clock, registry, shutdown, win, log }
+}
+
+describe('04 sandbox shutdown', () => {
+  it('04 验收 3: reset runs once after step 4, bounded by 2 s, and a throw only logs', async () => {
+    vi.useFakeTimers()
+    try {
+      const check = async (mode: 'returns' | 'pending' | 'throws'): Promise<void> => {
+        const h = wiringFixture()
+        h.runtime.start()
+        await Promise.resolve()
+        vi.mocked(h.srt.reset).mockImplementation(() => {
+          if (mode === 'throws') throw new Error('reset failed')
+          return mode === 'pending' ? new Promise<void>(() => {}) : Promise.resolve()
+        })
+        const dispose = vi.spyOn(h.runtime, 'dispose')
+        const pool = Promise.withResolvers<void>()
+        const r = rig({ sandbox: h.runtime, mcp: { close: () => pool.promise } })
+        const running = lease(r.registry.begin({ rootSessionId: ROOT, origin: null }))
+        r.app.userQuits()
+        r.dialog.answer(0, EXIT_CONFIRM_STOP)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(dispose).not.toHaveBeenCalled()
+        running.finish()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(dispose).not.toHaveBeenCalled()
+        pool.resolve()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(dispose).toHaveBeenCalledTimes(1)
+        expect(h.srt.reset).toHaveBeenCalledTimes(1)
+        // A repeated quit shares the same shutdown, including while reset is pending.
+        r.app.userQuits()
+        await vi.advanceTimersByTimeAsync(1999)
+        expect(r.tape.closes()).toBe(mode === 'pending' ? 0 : 1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(r.tape.closes()).toBe(1)
+        expect(r.app.quits()).toBe(0)
+        expect(dispose).toHaveBeenCalledTimes(1)
+        expect(h.srt.reset).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(h.options.log).mock.calls).toEqual(
+          mode === 'throws' ? [['sandbox: reset failed: reset failed']] : [],
+        )
+        r.tape.resolve()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(r.app.quits()).toBe(1)
+      }
+      await check('returns')
+      await check('pending')
+      await check('throws')
+
+      const r = rig({
+        sandbox: {
+          dispose: async () => {
+            throw new Error('dispose failed')
+          },
+        },
+      })
+      r.tape.resolve()
+      r.app.userQuits()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(r.log).toEqual(['[shutdown] the sandbox did not close cleanly: dispose failed'])
+      expect(r.app.quits()).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('04 验收 3: never initialized, never reset', async () => {
+    const h = wiringFixture()
+    const r = rig({ sandbox: h.runtime })
+    r.tape.resolve()
+    r.app.userQuits()
+    await flush()
+    expect(h.srt.reset).not.toHaveBeenCalled()
+    expect(r.app.quits()).toBe(1)
+  })
+
+  it('04 验收 3: after initialize, SIGTERM and SIGINT each call app.quit() once', async () => {
+    const check = async (signal: 'SIGTERM' | 'SIGINT'): Promise<void> => {
+      const h = wiringFixture()
+      const run = h.runtime.start()
+      expect(h.runtime.start()).toBe(run)
+      expect(h.options.startPosture).toHaveBeenCalledTimes(1)
+      const r = rig({ sandbox: h.runtime })
+      const processPort = new EventEmitter()
+      const signalReset = vi.fn<() => void>(() => {
+        for (const listener of h.signals) listener()
+      })
+      registerSandboxSignals({
+        process: processPort,
+        app: r.app.app,
+        sandbox: { signalReset },
+        run,
+      })
+      await Promise.resolve()
+      expect(processPort.eventNames()).toEqual(['SIGTERM', 'SIGINT'])
+      processPort.emit(signal)
+      expect(signalReset).toHaveBeenCalledTimes(1)
+      expect(r.app.quits()).toBe(1)
+      expect(h.runtime.posture()).toEqual({ state: 'unavailable', profile: 'workspace-write' })
+      expect(h.runtime.view().reasons).toEqual([
+        { code: 'init-failed', detail: 'reset by a signal' },
+      ])
+      await flush()
+      expect(r.shutdown.started).toBe(true)
+      expect(r.tape.closes()).toBe(1)
+      expect(h.srt.reset).not.toHaveBeenCalled()
+      r.tape.resolve()
+      await flush()
+      expect(r.app.exited()).toBe(true)
+    }
+    await check('SIGTERM')
+    await check('SIGINT')
+  })
+
+  it('04 验收 3: after initialize threw for a reason other than a dependency error, SIGTERM still calls app.quit()', async () => {
+    const processPort = new EventEmitter()
+    const quit = vi.fn<() => void>()
+    const signalReset = vi.fn<() => void>()
+    registerSandboxSignals({
+      process: processPort,
+      app: { quit },
+      sandbox: { signalReset },
+      run: startupResult('threw'),
+    })
+    await Promise.resolve()
+    processPort.emit('SIGTERM')
+    expect(signalReset).toHaveBeenCalledTimes(1)
+    expect(quit).toHaveBeenCalledTimes(1)
+  })
+
+  it('04 验收 3: with initialize not called or failing its dependency check, no signal handler is registered', async () => {
+    const processPort = new EventEmitter()
+    const quit = vi.fn<() => void>()
+    const signalReset = vi.fn<() => void>()
+    registerSandboxSignals({
+      process: processPort,
+      app: { quit },
+      sandbox: { signalReset },
+      run: startupResult('not-called'),
+    })
+    registerSandboxSignals({
+      process: processPort,
+      app: { quit },
+      sandbox: { signalReset },
+      run: startupResult('dependency-error'),
+    })
+    await Promise.resolve()
+    expect(processPort.eventNames()).toEqual([])
+    processPort.emit('SIGTERM')
+    processPort.emit('SIGINT')
+    expect(quit).not.toHaveBeenCalled()
+    expect(signalReset).not.toHaveBeenCalled()
+  })
+})
+
+function startupResult(initialize: InitializeResult): SandboxPostureRun {
+  return {
+    initialized: new Promise<void>(() => {}),
+    outcome: Promise.resolve({
+      state: 'unavailable',
+      session: null,
+      noSeccomp: false,
+      reasons: [],
+      initialize,
+    }),
+  }
 }
 
 describe('before-quit: the six steps (§停止与退出「退出」)', () => {
