@@ -246,14 +246,18 @@ test('asks by where the history went, not by the model in effect, and a typed mo
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
-    // Base UI's default hover waits 100ms and requires allowMouseEnter. Open with its nested
-    // list-navigation key instead, then wait for the popup before choosing the hand-typed row.
+    // Wait for the owning popup and the trigger's pointer actionability before opening its
+    // delayed hover submenu. Window activation must not be a prerequisite for this pointer path.
+    const menu = page.getByTestId('model-menu')
+    await expect(menu).toBeVisible()
+    await expect(menu).toHaveAttribute('data-open', '')
     const more = page.getByTestId('model-more')
     await expect(more).toBeVisible()
-    await more.focus()
-    await expect(more).toBeFocused()
-    await more.press('ArrowRight')
-    await expect(page.getByTestId('model-more-menu')).toBeVisible()
+    await expect(more).toBeEnabled()
+    await more.hover()
+    const submenu = page.getByTestId('model-more-menu')
+    await expect.poll(() => submenu.isVisible()).toBe(true)
+    await expect(submenu).toBeVisible()
     await expect(page.getByTestId('model-type-ollama')).toBeVisible()
     await page.getByTestId('model-type-ollama').click()
     await page.getByTestId('type-model-input').fill('my-local-model')

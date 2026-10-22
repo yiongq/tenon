@@ -353,7 +353,7 @@ test('presentation-r1 验收 12: fresh profile → save a key → the chip shows
     // No model dropdown change: main, rather than provider.select, supplies the first row.
     await page.getByTestId('provider-save').click()
     await expect(page.getByTestId('provider-settings')).toBeHidden()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 · Max')
     await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
     const config = await page.evaluate(() => window.tenon.invoke('config.get', {}))
     expect(config).toMatchObject({
@@ -369,7 +369,7 @@ test('presentation-r1 验收 12: fresh profile → save a key → the chip shows
     expect(await routeCalls(app, 'provider.select')).toBe(0)
     await newChatFromSidebar(page)
     await expect(page.getByTestId('thread-empty')).toBeVisible()
-    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 · Max')
     await page.getByTestId('composer-input').fill('first saved key')
     await expect(page.getByTestId('composer-send')).toBeEnabled()
     await page.keyboard.press('Enter')
