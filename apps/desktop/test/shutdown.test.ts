@@ -39,6 +39,7 @@ import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src
 import type { RunRegistry } from '../src/main/chat.js'
 import { registerModelRoutes } from '../src/main/model-routes.js'
 import { registerSessionRoutes } from '../src/main/session.js'
+import { registerSandboxRoutes } from '../src/main/sandbox-routes.js'
 import {
   EXIT_CONFIRM_CANCEL,
   EXIT_CONFIRM_STOP,
@@ -976,6 +977,10 @@ function refusedRequests(sessionId: string): Array<[string, unknown]> {
     ['workspace.pick', { sessionId }],
     ['workspace.usePrefill', { sessionId }],
     ['workspace.remove', { sessionId, folder: '/tmp/x' }],
+    [
+      'sandbox.release',
+      { sessionId, callKey: 'opaque-call', action: 'rerun-unsandboxed', target: null },
+    ],
   ]
 }
 
@@ -1040,6 +1045,13 @@ describe('once the shutdown began, a route that opens a Run or writes a fact ans
     const providers = createProviderRegistry()
     registerBuiltinProviders(providers)
     registerModelRoutes({ ipcMain: routes, sessions, providers, host })
+    registerSandboxRoutes({
+      ipcMain: routes,
+      sessions,
+      host,
+      sandbox: wiringFixture().runtime,
+      send: () => {},
+    })
 
     // Before: a send opens a Run and writes it.
     const sessionId = randomUUID()

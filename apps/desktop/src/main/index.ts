@@ -58,6 +58,7 @@ import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
 import { startSingleInstance } from './single-instance.js'
+import { registerSandboxRoutes } from './sandbox-routes.js'
 import {
   createSessionRemoval,
   exposeSessionRemoval,
@@ -343,6 +344,14 @@ async function main(): Promise<void> {
     openExternal: (url) => shell.openExternal(url),
   })
   registerConfigRoutes(routes, host, (next) => void locale.apply(next))
+  const sandboxRoutes = registerSandboxRoutes({
+    ipcMain: routes,
+    host,
+    sandbox: host.sandbox,
+    sessions,
+    send: broadcast,
+    gate: recovery.ready,
+  })
   registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
   registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
@@ -392,6 +401,7 @@ async function main(): Promise<void> {
   const win = startSandboxAfterWindow(openWindow, host.sandbox)
   // start() returns the same run: signal handling observes startup without awaiting it here.
   registerSandboxSignals({ process, app, sandbox: host.sandbox, run: host.sandbox.start() })
+  void host.sandbox.start().outcome.then(() => sandboxRoutes.changed())
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })
   })
