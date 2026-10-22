@@ -46,6 +46,15 @@ function localIpv6(host: string): boolean {
   return localIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`)
 }
 
+/** WHATWG URL must read the name back unchanged: `example.123` throws, `0x7f.1` becomes 127.0.0.1. */
+function parsesAsItself(domain: string): boolean {
+  try {
+    return new URL(`http://${domain}`).hostname === domain
+  } catch {
+    return false
+  }
+}
+
 function validDomainEntry(value: string): boolean {
   const parts = /^(\[[^\]]+\]|[^:]+)(?::([0-9]+))?$/.exec(value)
   if (parts === null) return false
@@ -60,6 +69,7 @@ function validDomainEntry(value: string): boolean {
   const domain = host.startsWith('*.') ? host.slice(2) : host
   if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(domain)) return false
   if (host.startsWith('*.') && domain.split('.').length < 2) return false
+  if (!parsesAsItself(domain)) return false
   if (domain === 'localhost' || domain.endsWith('.localhost')) return port !== undefined
   return domain.includes('.')
 }

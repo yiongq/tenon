@@ -65,7 +65,13 @@ export async function writeSandboxSettings(
 
 /** Entries have already passed the contract schema. This warning is about proxy reach only. */
 export function needsProxyWarning(entry: string): boolean {
-  const host = new URL(`http://${entry.replace(/^\*\./, '')}`).hostname
+  let host: string
+  try {
+    host = new URL(`http://${entry.replace(/^\*\./, '')}`).hostname
+  } catch {
+    // A stored name URL cannot read must not take the whole pane down; it gets no warning.
+    return false
+  }
   if (host === 'localhost' || host.endsWith('.localhost')) return true
   if (host.startsWith('[')) {
     const address = host.slice(1, -1)

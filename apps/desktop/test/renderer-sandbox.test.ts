@@ -267,6 +267,9 @@ describe('04 sandbox settings', () => {
       '8.8.8.8',
       '172.32.0.1',
       '[2001:4860:4860::8888]',
+      // Older configs may hold names URL cannot read; the pane must still render.
+      '192.168.1.256',
+      'example.123',
     ])
       expect(needsProxyWarning(entry)).toBe(false)
     const local = html(
