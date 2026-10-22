@@ -808,5 +808,81 @@
       "keychain": "登录失败：无法将凭据存入钥匙串",
       "network": "登录失败：网络请求出错"
     }
+  },
+  "sandbox": {
+    "title": "权限与网络",
+    "description": "管理命令能连接的网站与文件访问范围。",
+    "loading": "正在读取设置…",
+    "allowlist": "网络白名单",
+    "siteScope": "按网站放行，不按操作：列在这里的网站，命令可以连接，也可以向它上传内容。",
+    "commandScope": "这份白名单只管命令，不管网页抓取（WebFetch）与连接器（MCP）；三者的授权互不相通。",
+    "nextCommand": "改动从下一条命令起生效；命令档位从下一次判定起生效。",
+    "proxyWarning": "本机与内网地址只对走代理的客户端有效；允许这个端口也会开放对本机或内网服务的访问。",
+    "remove": "移除 {domain}",
+    "removeButton": "移除",
+    "domainLabel": "添加网站或地址",
+    "add": "添加",
+    "domainHint": "例如 example.com、*.example.com 或 localhost:3000；不要带协议或路径。本机与内网地址必须带端口，最多 256 条。",
+    "packageManagers": "包管理器",
+    "presetDetails": "查看预设放开的范围",
+    "presetDomains": "允许连接这些包仓库：",
+    "publishing": "registry.npmjs.org 同时接受 npm 发布；允许连接它，也允许向它上传包。",
+    "presetWritable": "预设开启且选择“工作区可写”时，以下 Tenon 缓存目录变为可写；只读档不会开放它们，也不会开放你自己的缓存目录。",
+    "advanced": "高级",
+    "profile": "命令的文件访问范围",
+    "profileLabel": {
+      "workspace-write": "工作区可写（默认）",
+      "read-only": "只读"
+    },
+    "profileHint": {
+      "workspace-write": "命令可以读取文件，并在你选的文件夹里写入；保护名单里的位置仍不可写。",
+      "read-only": "命令可以读取文件，不能修改工作区；系统保留的临时位置仍可写。"
+    },
+    "error": {
+      "invalid-domain": "第 {n} 条地址无效，请检查写法。",
+      "too-many": "最多允许 256 条地址，请先移除一些。",
+      "write-failed": "设置未能保存，请重试。",
+      "load-failed": "设置未能读取，请重新打开这一栏。"
+    },
+    "state": {
+      "active": "沙箱已生效",
+      "pending": "正在检查沙箱",
+      "degraded": "沙箱部分生效",
+      "unavailable": "沙箱不可用"
+    },
+    "reason": {
+      "windows": "Windows 暂不支持沙箱。",
+      "unsupported-platform": "这个系统暂不支持沙箱。",
+      "wsl1": "WSL 1 无法提供所需的隔离。",
+      "root-without-setfcap": "当前 root 环境缺少 CAP_SETFCAP。",
+      "missing-bwrap": "没有找到 bubblewrap。",
+      "missing-socat": "没有找到 socat。",
+      "missing-rg": "没有找到 ripgrep。",
+      "userns-restricted": "系统限制了用户命名空间。",
+      "nested-sandbox": "当前运行环境里不能再启动一层沙箱。",
+      "self-test-failed": "沙箱自检没有通过。",
+      "init-failed": "沙箱没能启动。",
+      "other": "沙箱报告了未识别的诊断信息。",
+      "no-seccomp": "命令可以连接 Unix socket，被拦的写入不再回报。",
+      "old-bwrap": "bubblewrap 版本过旧，部分保护未生效。",
+      "test-seam": "这是测试接缝，命令直接运行，不提供真实隔离。"
+    },
+    "fix": {
+      "windows": "请在 macOS 或支持的 Linux 上运行 Tenon。",
+      "unsupported-platform": "请改用 macOS 或支持的 Linux。",
+      "wsl1": "请将发行版升级到 WSL 2 后重新启动 Tenon。",
+      "root-without-setfcap": "请以普通用户运行 Tenon，或让管理员为运行环境提供 CAP_SETFCAP。",
+      "missing-bwrap": "在终端安装 bubblewrap，例如 sudo apt-get install bubblewrap，然后重新启动 Tenon。",
+      "missing-socat": "在终端安装 socat，例如 sudo apt-get install socat，然后重新启动 Tenon。",
+      "missing-rg": "在终端安装 ripgrep，例如 sudo apt-get install ripgrep，然后重新启动 Tenon。",
+      "userns-restricted": "请让管理员核对下面的 sysctl 读数和 bwrap 路径，在 /etc/apparmor.d/bwrap 配置只赋予 bwrap 本身 userns 权限的 AppArmor profile，再重新加载 AppArmor。下面的命令仅供你检查后在终端执行，Tenon 不代执行。缺少 bwrap 路径时先安装 bubblewrap；只改 sysctl 在部分系统上仍然无效。",
+      "nested-sandbox": "请从系统终端直接启动 Tenon，避开外层受限运行环境。",
+      "self-test-failed": "请核对下面的自检详情，修复系统的沙箱配置后重新启动 Tenon。",
+      "init-failed": "请核对下面的启动详情，修复依赖、目录权限或运行环境后重新启动 Tenon。",
+      "other": "请核对下面的原始诊断信息，修复对应的系统配置后重新启动 Tenon。",
+      "no-seccomp": "请使用带有可用 apply-seccomp helper 的受支持 Linux 架构与完整 Tenon 安装，然后重新启动。",
+      "old-bwrap": "请将 bubblewrap 升级到 0.5.0 或更新版本，然后重新启动 Tenon。",
+      "test-seam": "请在测试之外启动 Tenon，并移除 TENON_TEST_SANDBOX；这里的状态不代表真实保护。"
+    }
   }
 }

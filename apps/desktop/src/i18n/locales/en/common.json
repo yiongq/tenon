@@ -808,5 +808,81 @@
       "keychain": "Sign-in failed because credentials could not be stored in the keychain.",
       "network": "Sign-in failed because of a network error."
     }
+  },
+  "sandbox": {
+    "title": "Permissions & network",
+    "description": "Choose which sites commands can reach and which files they can change.",
+    "loading": "Loading settings…",
+    "allowlist": "Network allowlist",
+    "siteScope": "Access is per site, not per action: commands can connect to listed sites and upload content to them.",
+    "commandScope": "This list covers commands only, not WebFetch or connectors (MCP); each has separate authorization.",
+    "nextCommand": "Changes apply to the next command; the file access choice applies to the next permission decision.",
+    "proxyWarning": "Local and private addresses work only for clients using the proxy; allowing this port also grants access to local or private services.",
+    "remove": "Remove {domain}",
+    "removeButton": "Remove",
+    "domainLabel": "Add a site or address",
+    "add": "Add",
+    "domainHint": "For example, example.com, *.example.com or localhost:3000. No scheme or path. Local and private addresses need a port. Up to 256 entries.",
+    "packageManagers": "Package managers",
+    "presetDetails": "View preset access",
+    "presetDomains": "Allow connections to these package registries:",
+    "publishing": "registry.npmjs.org also accepts npm publishing; allowing it also allows uploading packages.",
+    "presetWritable": "With the preset enabled and workspace write selected, these Tenon cache directories become writable. Read only does not grant this access; your own caches stay protected.",
+    "advanced": "Advanced",
+    "profile": "File access for commands",
+    "profileLabel": {
+      "workspace-write": "Workspace write (default)",
+      "read-only": "Read only"
+    },
+    "profileHint": {
+      "workspace-write": "Commands can read files and write within your selected folder; protected locations remain unwritable.",
+      "read-only": "Commands can read files but cannot change the workspace; reserved system temporary locations remain writable."
+    },
+    "error": {
+      "invalid-domain": "Address {n} is invalid. Check its format.",
+      "too-many": "Up to 256 addresses are allowed. Remove some first.",
+      "write-failed": "Settings could not be saved. Try again.",
+      "load-failed": "Settings could not be loaded. Reopen this pane."
+    },
+    "state": {
+      "active": "Sandbox active",
+      "pending": "Checking the sandbox",
+      "degraded": "Sandbox partly active",
+      "unavailable": "Sandbox unavailable"
+    },
+    "reason": {
+      "windows": "Sandbox is not supported on Windows yet.",
+      "unsupported-platform": "Sandbox is not supported on this system.",
+      "wsl1": "WSL 1 cannot provide the required isolation.",
+      "root-without-setfcap": "This root environment lacks CAP_SETFCAP.",
+      "missing-bwrap": "bubblewrap was not found.",
+      "missing-socat": "socat was not found.",
+      "missing-rg": "ripgrep was not found.",
+      "userns-restricted": "The system restricts user namespaces.",
+      "nested-sandbox": "This environment cannot start another sandbox.",
+      "self-test-failed": "The sandbox self-test failed.",
+      "init-failed": "The sandbox could not start.",
+      "other": "The sandbox reported an unrecognized diagnostic.",
+      "no-seccomp": "Commands can connect to Unix sockets, and blocked writes are no longer reported.",
+      "old-bwrap": "bubblewrap is too old; some protections are missing.",
+      "test-seam": "This is a test seam. Commands run directly without real isolation."
+    },
+    "fix": {
+      "windows": "Run Tenon on macOS or a supported Linux system.",
+      "unsupported-platform": "Use macOS or a supported Linux system.",
+      "wsl1": "Upgrade the distribution to WSL 2, then restart Tenon.",
+      "root-without-setfcap": "Run Tenon as a regular user, or ask an administrator to provide CAP_SETFCAP to this environment.",
+      "missing-bwrap": "Install bubblewrap in a terminal, for example sudo apt-get install bubblewrap, then restart Tenon.",
+      "missing-socat": "Install socat in a terminal, for example sudo apt-get install socat, then restart Tenon.",
+      "missing-rg": "Install ripgrep in a terminal, for example sudo apt-get install ripgrep, then restart Tenon.",
+      "userns-restricted": "Ask an administrator to check the sysctl readings and bwrap path below, configure /etc/apparmor.d/bwrap with an AppArmor profile granting userns only to bwrap itself, then reload AppArmor. Review these commands before running them in a terminal; Tenon does not run them. If the bwrap path is missing, install bubblewrap first. Changing sysctl alone is insufficient on some systems.",
+      "nested-sandbox": "Start Tenon directly from a system terminal outside the enclosing restricted environment.",
+      "self-test-failed": "Check the self-test details below, repair the system sandbox configuration, then restart Tenon.",
+      "init-failed": "Check the startup details below, repair dependencies, directory permissions or the environment, then restart Tenon.",
+      "other": "Check the original diagnostic below, repair the relevant system configuration, then restart Tenon.",
+      "no-seccomp": "Use a supported Linux architecture and a complete Tenon installation with a working apply-seccomp helper, then restart.",
+      "old-bwrap": "Upgrade bubblewrap to 0.5.0 or later, then restart Tenon.",
+      "test-seam": "Start Tenon outside tests with TENON_TEST_SANDBOX removed; this status does not indicate real protection."
+    }
   }
 }

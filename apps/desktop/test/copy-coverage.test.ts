@@ -32,6 +32,7 @@ import type {
   ProviderErrorCode,
 } from '@tenon-app/kernel'
 import {
+  sandboxReasonCodeSchema,
   mcpErrorCodeSchema,
   mcpWriteErrorCodeSchema,
   mcpLoginErrorSchema,
@@ -917,4 +918,57 @@ it('presentation-r1 验收 14: no mechanism words on the card, its collapsed lin
       )
     }
   }
+})
+
+describe('04 settings copy', () => {
+  it('04 验收 33: permissions and network copy exists in both locales with exact slots', () => {
+    const plain = [
+      'title',
+      'description',
+      'loading',
+      'allowlist',
+      'siteScope',
+      'commandScope',
+      'nextCommand',
+      'proxyWarning',
+      'removeButton',
+      'domainLabel',
+      'add',
+      'domainHint',
+      'packageManagers',
+      'presetDetails',
+      'presetDomains',
+      'publishing',
+      'presetWritable',
+      'advanced',
+      'profile',
+      'profileLabel.workspace-write',
+      'profileLabel.read-only',
+      'profileHint.workspace-write',
+      'profileHint.read-only',
+      'error.too-many',
+      'error.write-failed',
+      'error.load-failed',
+      'state.active',
+      'state.pending',
+      'state.degraded',
+      'state.unavailable',
+    ]
+    const expected: Expectation[] = plain.map((key) => ({
+      key: `sandbox.${key}`,
+      args: [],
+      what: '04 settings',
+    }))
+    expected.push(
+      { key: 'sandbox.remove', args: ['domain'], what: 'remove entry' },
+      { key: 'sandbox.error.invalid-domain', args: ['n'], what: 'invalid entry index' },
+    )
+    for (const code of sandboxReasonCodeSchema.options) {
+      expected.push(
+        { key: `sandbox.reason.${code}`, args: [], what: code },
+        { key: `sandbox.fix.${code}`, args: [], what: code },
+      )
+    }
+    expect(problems(expected)).toEqual([])
+  })
 })

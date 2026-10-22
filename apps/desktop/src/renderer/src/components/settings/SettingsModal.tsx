@@ -82,9 +82,7 @@ function SettingsBody(
 ) {
   const { t } = useTranslation(),
     [pane, setPane] = useState<SettingsPane>(
-      paneOfHash(window.location.hash) === 'connectors'
-        ? 'connectors'
-        : (props.pane ?? 'providers'),
+      paneOfHash(window.location.hash) ?? props.pane ?? 'providers',
     )
   const onHash = useEffectEvent(() => {
     const next = paneOfHash(window.location.hash)
@@ -126,7 +124,7 @@ function SettingsBody(
       onValueChange={(value) => {
         if (!props.busy && isSettingsPane(value)) setPane(value)
       }}
-      className="grid h-full min-h-0 min-w-0 grid-cols-[11rem_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]"
+      className="grid h-full min-h-0 min-w-0 grid-cols-[13rem_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]"
     >
       <Tabs.List
         aria-label={t('mcp.settings')}
