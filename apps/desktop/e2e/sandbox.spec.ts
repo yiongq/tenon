@@ -373,7 +373,8 @@ test('04 验收 32: 允许这条命令下次不受限制地运行一次 runs not
     await expect(page.getByTestId('approval-allow')).toContainText('Allow (Just this once)')
     expect(readFileSync(runs, 'utf8')).toBe('run\n')
     await allowCommand(page)
-    // Reusing the binding would pause on another elevated card instead of finishing.
+    // The binding is spent twice over: its decision uses it up, and the card's pause ends the first
+    // Run after the click. A binding that outlived both would pause on another elevated card here.
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Finished.')
     expect(readFileSync(runs, 'utf8')).toBe('run\nrun\nrun\n')
     const rows = page.getByTestId('tool-row')
