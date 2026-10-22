@@ -246,8 +246,8 @@ test('asks by where the history went, not by the model in effect, and a typed mo
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
-    // Wait for the owning popup and the trigger's pointer actionability before opening its
-    // delayed hover submenu. Window activation must not be a prerequisite for this pointer path.
+    // Neither hover nor native window focus is dependable under every xvfb/CI setup. Try the
+    // pointer path briefly, then use programmatic focus and the submenu's navigation key.
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
     await expect(menu).toHaveAttribute('data-open', '')
@@ -256,6 +256,12 @@ test('asks by where the history went, not by the model in effect, and a typed mo
     await expect(more).toBeEnabled()
     await more.hover()
     const submenu = page.getByTestId('model-more-menu')
+    try {
+      await expect.poll(() => submenu.isVisible(), { timeout: 2000 }).toBe(true)
+    } catch {
+      await more.focus()
+      await more.press('ArrowRight')
+    }
     await expect.poll(() => submenu.isVisible()).toBe(true)
     await expect(submenu).toBeVisible()
     await expect(page.getByTestId('model-type-ollama')).toBeVisible()

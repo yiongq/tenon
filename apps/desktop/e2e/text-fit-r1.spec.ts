@@ -664,7 +664,13 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await menu.getByTestId('model-manage').click()
       await expect(page.getByTestId('provider-settings')).toBeVisible()
       await expect(menu).toHaveCount(0)
-      await page.getByTestId(`custom-vendor-toggle-${instance}`).click()
+      await expect(page.getByTestId('custom-vendors')).toBeVisible()
+      // The sole instance opens expanded on the settings read. Do not fold it before measuring
+      // its already-passed probe; with several instances, expand only when it is actually closed.
+      const toggle = page.getByTestId(`custom-vendor-toggle-${instance}`)
+      await expect(toggle).toBeVisible()
+      if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true')
       const status = page.getByTestId(`custom-vendor-probe-status-${instance}-probed-row`)
       await expect(status).toHaveAttribute('data-outcome', 'passed')
       await fitEach(status)
