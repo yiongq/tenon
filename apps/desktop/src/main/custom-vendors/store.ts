@@ -29,7 +29,7 @@ import type {
   customVendorUpdate,
 } from '@tenon-app/contracts'
 import { CUSTOM_PROVIDER_ID_PATTERN } from '@tenon-app/kernel'
-import type { HostAdapter } from '@tenon-app/kernel'
+import type { HostAdapter, ProviderDefinition } from '@tenon-app/kernel'
 import { endpointOf } from '../endpoint.js'
 import {
   countProviderSettingsWrite,
@@ -37,10 +37,74 @@ import {
   withConfigLock,
   writeConfigHeld,
 } from '../host/profile.js'
-import { providerSecretKey } from '../provider.js'
+import {
+  BASE_URL_KEY,
+  DEV_ENV_FALLBACK,
+  MODEL_ENV,
+  PROVIDER_ENV,
+  builtinRefusal,
+  providerSecretKey,
+  unboundSecrets,
+} from '../provider.js'
+import type { EnvLike, ProviderInputs } from '../provider.js'
 import { checkAddress } from './address.js'
 import { presetEndpoint } from './presets.js'
-import { instanceDefinition } from './registry.js'
+import { instanceDefinition, isInstanceId, instanceRefusal } from './registry.js'
+
+/** presentation-r1 §对 02 的修补: a first saved credential may set empty defaults, never a choice. */
+export function firstKeyDefaults(
+  config: Config,
+  definition: ProviderDefinition,
+  values: Readonly<Record<string, string>>,
+  env: EnvLike,
+  storedSecrets: Readonly<Record<string, string>> = {},
+): ConfigPatch {
+  if (
+    config.provider !== null ||
+    config.defaultModelByProfile.chat !== undefined ||
+    config.defaultModelByProfile.cowork !== undefined ||
+    env[PROVIDER_ENV]?.trim() ||
+    env[MODEL_ENV]?.trim()
+  )
+    return {}
+  if (!definition.configKeys.some((key) => key.secret && values[key.name]?.trim())) return {}
+
+  // Resolve from the successful save and the locked config, without another keychain read.
+  const settings = config.providerConfig[definition.id]
+  const fallback = DEV_ENV_FALLBACK[definition.id] ?? {}
+  const inputs: ProviderInputs = { config: {}, secrets: {}, sources: {} }
+  const sources: Record<string, 'keychain' | 'env'> = {}
+  for (const key of definition.configKeys) {
+    const typed = values[key.name]
+    const stored = typed === undefined ? storedSecrets[key.name] : typed.trim()
+    const variable = env[fallback[key.name] ?? '']?.trim()
+    if (key.secret) {
+      const value = stored || variable
+      if (value) {
+        inputs.secrets[key.name] = value
+        sources[key.name] = stored ? 'keychain' : 'env'
+      }
+    } else {
+      const value = settings?.[key.name]?.trim() || variable || key.default?.trim()
+      if (value) inputs.config[key.name] = value
+    }
+  }
+  const keys = definition.configKeys
+  if (keys.some((key) => key.required && !(key.secret ? inputs.secrets : inputs.config)[key.name]))
+    return {}
+  if (unboundSecrets(definition, settings, env, { ...inputs, sources }).length > 0) return {}
+  if (isInstanceId(definition.id)) {
+    const entry = config.customVendors.find((candidate) => candidate.id === definition.id)
+    if (entry === undefined || instanceRefusal(entry) !== null) return {}
+  } else if (builtinRefusal(definition.id, inputs.config[BASE_URL_KEY]) !== null) return {}
+
+  const row = definition.builtinModels.find((model) => (model.listing ?? 'main') === 'main')
+  if (row === undefined) return {}
+  const selection = { id: definition.id, modelId: row.id }
+  return row.supportsToolCalling
+    ? { defaultModelByProfile: { chat: selection, cowork: selection }, provider: selection }
+    : { defaultModelByProfile: { chat: selection } }
+}
 
 export interface CustomVendorStoreDeps {
   readonly host: HostAdapter

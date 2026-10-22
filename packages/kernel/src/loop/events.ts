@@ -43,6 +43,7 @@ export type SessionEvent = { readonly rootSessionId: string; readonly sessionId:
  */
 export interface ToolOutcomeView {
   readonly sandbox?: SandboxOutcome
+  readonly isError?: boolean // 来自这次调用的 tool/result；没有结果时不带
   readonly reversibility?: Reversibility
   readonly effect: SideEffectClass // 01 的四个值
   readonly state: ExecutionState
@@ -73,6 +74,11 @@ export interface ToolOutcomeView {
     readonly finalReply: string // 交接存下的子任务回复；结果落盘时只有开头（H9）
     readonly preview?: SpillMark // finalReply 只存了开头时才有（Revisions 31）
   } // 只在 Agent 调用上有（开放问题 18）
+}
+
+/** One exact optional result flag for both live closures and redrawn calls. */
+export function resultErrorView(isError: unknown): Pick<ToolOutcomeView, 'isError'> {
+  return typeof isError === 'boolean' ? { isError } : {}
 }
 
 /** The handoff as a view shows it: its Tape fact without the rows the interface does not read. */

@@ -4,6 +4,7 @@
  * with the argument that says what it touches, shown as it is; a tool the catalogue does not name — a
  * connector's — gets the generic sentence with its name. Real catalogues, both locales.
  */
+import type { McpServerView } from '@tenon-app/contracts'
 import type { TFunction } from 'i18next'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createI18n } from '../src/i18n/create-instance.js'
@@ -87,6 +88,37 @@ describe('toolSentence', () => {
     }
   })
 
+  it('presentation-r1 验收 6: a connector call names the connector and the tool’s own name; a deleted connector falls back to the mapped name', () => {
+    const servers: Pick<McpServerView, 'displayName' | 'toolViews'>[] = [
+      {
+        displayName: 'Notes\u200B desk',
+        toolViews: [
+          {
+            originalName: 'look / up\u202E',
+            mappedName: 'notes__look_up__hash',
+          } as McpServerView['toolViews'][number],
+        ],
+      },
+    ]
+    for (const locale of ['en', 'zh-CN'] as const) {
+      expect(toolSentence(t[locale], 'notes__look_up__hash', {}, servers)).toBe(
+        locale === 'en'
+          ? 'Use look / up\\u{202E} from Notes\\u{200B} desk'
+          : '使用 Notes\\u{200B} desk 的 look / up\\u{202E}',
+      )
+      expect(toolSentence(t[locale], 'notes__look_up__hash', {}, [])).toBe(
+        locale === 'en' ? 'Use notes__look_up__hash' : '使用 notes__look_up__hash',
+      )
+      expect(toolSentence(t[locale], 'notes__truncated', {}, servers)).toBe(
+        locale === 'en' ? 'Use notes__truncated' : '使用 notes__truncated',
+      )
+      expect(toolSentence(t[locale], 'Read', { file_path: '/a' }, servers)).toBe(
+        locale === 'en' ? 'Read /a' : '读取 /a',
+      )
+    }
+    expect(errors).toEqual([])
+  })
+
   it('never writes undefined or an object into the sentence when the argument is missing or odd', () => {
     for (const input of [
       {},
@@ -120,27 +152,27 @@ describe('tx', () => {
   it('reads a key built from data, with and without slots', () => {
     expect(tx(t.en, 'confirm.scope.once')).toBe('Just this once')
     expect(tx(t['zh-CN'], 'confirm.scope.once')).toBe('只这一次')
-    const facts = { toolName: 'Write', path: '/w/a.txt' }
-    expect(tx(t.en, 'confirm.reason.irreversible.file', facts)).toBe(
-      'Write makes a change to /w/a.txt that can’t be undone.',
-    )
-    expect(tx(t['zh-CN'], 'confirm.reason.irreversible.file', facts)).toBe(
-      'Write 对 /w/a.txt 的改动撤不回。',
-    )
+    const facts = { cwd: '/w' }
+    expect(tx(t.en, 'confirm.cwd', facts)).toBe('in /w')
+    expect(tx(t['zh-CN'], 'confirm.cwd', facts)).toBe('位于 /w')
     expect(errors).toEqual([])
   })
 
-  it('renders the summary line from its three counts (TurnSummaryLine: read, changed, sent out)', () => {
-    expect(tx(t.en, 'summary.line', { read: 3, write: 1, external: 0 })).toBe('Read 3 · changed 1')
-    expect(tx(t.en, 'summary.line', { read: 0, write: 0, external: 2 })).toBe(
-      'Read 0 · changed 0 · sent data out',
-    )
-    expect(tx(t['zh-CN'], 'summary.line', { read: 3, write: 1, external: 0 })).toBe(
-      '读了 3 个 · 改了 1 个',
-    )
-    expect(tx(t['zh-CN'], 'summary.line', { read: 1, write: 0, external: 1 })).toBe(
-      '读了 1 个 · 改了 0 个 · 有对外发送',
-    )
+  it('renders each summary category and its separator in both locales', () => {
+    expect(tx(t.en, 'summary.read', { count: 3 })).toBe('Read 3 files')
+    expect(tx(t.en, 'summary.search', { count: 2 })).toBe('Searched files 2 times')
+    expect(tx(t.en, 'summary.write', { count: 1 })).toBe('Changed 1 file')
+    expect(tx(t.en, 'summary.command', { count: 2 })).toBe('Ran 2 commands')
+    expect(tx(t.en, 'summary.online', { count: 1 })).toBe('Went online 1 time')
+    expect(tx(t.en, 'summary.connector', { count: 2 })).toBe('Used connectors 2 times')
+    expect(tx(t.en, 'summary.separator')).toBe(' · ')
+    expect(tx(t['zh-CN'], 'summary.read', { count: 3 })).toBe('读了 3 个文件')
+    expect(tx(t['zh-CN'], 'summary.search', { count: 2 })).toBe('查找 2 次')
+    expect(tx(t['zh-CN'], 'summary.write', { count: 1 })).toBe('改了 1 个文件')
+    expect(tx(t['zh-CN'], 'summary.command', { count: 2 })).toBe('运行了 2 条命令')
+    expect(tx(t['zh-CN'], 'summary.online', { count: 1 })).toBe('联网 1 次')
+    expect(tx(t['zh-CN'], 'summary.connector', { count: 2 })).toBe('用了连接器 2 次')
+    expect(tx(t['zh-CN'], 'summary.separator')).toBe(' · ')
     expect(errors).toEqual([])
   })
 })

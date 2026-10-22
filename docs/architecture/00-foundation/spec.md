@@ -1,6 +1,7 @@
 # 00 · 地基（Foundation）
 
 Status: implemented
+Clauses replaced by: [presentation-r1](../../features/presentation-r1/spec.md)（2026-10-22：§UI 最小集「设计令牌」的值、§国际化「英文更长」的覆盖范围）
 Amended by: [01-provider-and-tape](../01-provider-and-tape/spec.md)（2026-09-17：`HostAdapter` 增加 `network` 成员；技术选型的 better-sqlite3 限定为 13.x。只增不改，全文与理由在该 spec）
 Amended by: [02-agent-loop](../02-agent-loop/spec.md)（2026-09-25：`HostAdapter` 增加 `policy` 成员；`HostFs` 增加 `realpath` 及其带类型的抛错 `UnresolvableAliasError`（2026-09-27 补）；`ConfirmReason` 增加 `policy` / `flagged` / `command` / `interaction-required` 及其必填键；`ConfirmRequest` 增加必填成员 `reversibility`、`target`；`HostConfirm` 补一条不变量「同一 requestId 可以重复投递，界面去重」；本地持久化布局增加 `tool-output/<sessionId>/`，host 删会话、清空会话时连它一起删；§国际化 的语言提示取会话开始时的语言。并回答本 spec 的开放问题「`HostConfirm` 与写进 transcript 的等待模型怎么衔接」。只增不改，全文与理由在该 spec）
 Amended by: [04-sandbox](../04-sandbox/spec.md)（2026-10-09：`HostSandbox` 增加可选成员 `posture`（沙箱状态与命令档位）；`SandboxViolation` 增加可选成员 `target`、`release`、`protected`、`observed`；desktop 换上真实沙箱后，受限档在沙箱不可用时 `wrap` 拒绝而不直通（本 spec「阶段 4 替换实现时接口不变」那句交给阶段 4 的，列在该 spec §点名 (a)）。`SandboxRequest` 不动。2026-10-16 补：desktop 落地按 userData 的单实例锁，第二次启动恢复并提到前面已开的窗口、自己退出（§对 00 的修补 4）。只增不改，全文与理由在该 spec）
@@ -194,7 +195,7 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 
 ## UI 最小集
 
-- 设计令牌：按 [master-reference §8.5](../master-reference.md) 的键名分层（surface / text / border / fill / alpha / radius / h-control / weight / ease / dur / z），亮暗两套，壳层背景独立一层；值用 §8.1 临时皮肤。
+- 设计令牌：按 [master-reference §8.5](../master-reference.md) 的键名分层（surface / text / border / fill / alpha / radius / h-control / weight / ease / dur / z），亮暗两套，壳层背景独立一层；值用 §8.1 临时皮肤。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §00 的两条 取代：值见 docs/ux/tokens.md 的临时种子）
 - 基础组件：Button / IconButton / Popover / Menu / Modal / Tooltip / Switch / Chip。
 - 壳层：Sidebar（264px，可折叠）+ TopBar + 内容列；右侧面板先留空。
 - Composer 最小态：文本、发送、生成中停止。
@@ -211,7 +212,7 @@ export type AbsolutePath = string & { readonly __brand: 'AbsolutePath' }
 - **格式一律走 Intl**：相对时间、日期、数字用 `Intl.RelativeTimeFormat` / `DateTimeFormat` / `NumberFormat`，列表排序用 `Intl.Collator`，locale 取上面解析出的那个；不手写格式化。引号、顿号等标点写在目录里（中文「」，英文 ""），不在代码里拼。
 - **输入法**：Composer 收到 Enter 时若 `KeyboardEvent.isComposing === true` 或 `keyCode === 229`，视为输入法选字，不发送。
 - **模型语言与界面语言分开**：system prompt 与工具描述保持英文；阶段 2 在 system prompt 里附一句用户的界面语言作为提示，让模型按用户书写的语言回复，不强制。
-- **英文更长**：界面文字在两种语言下都不换行不截断。阶段 0 覆盖侧栏导航项与 Composer（同验收 12）；右面板、设置项等按 §8.5 的阶段映射出现时纳入同一回归。用 Playwright 双语言截图 + DOM 断言做回归，不靠肉眼。
+- **英文更长**：界面文字在两种语言下都不换行不截断。阶段 0 覆盖侧栏导航项与 Composer（同验收 12）；右面板、设置项等按 §8.5 的阶段映射出现时纳入同一回归。用 Playwright 双语言截图 + DOM 断言做回归，不靠肉眼。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §00 的两条 取代：侧栏只画已有页面的行，每行随页面回来时重新计入回归）
 
 不变量：
 

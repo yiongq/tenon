@@ -3,8 +3,9 @@ import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { COUNT_ROUTES, newChatFromSidebar, routeCalls } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
-import { ZHIPU_ORIGIN, providerEnv } from './helpers/tools.js'
+import { ANTHROPIC_ORIGIN, ZHIPU_ORIGIN, originMap, providerEnv } from './helpers/tools.js'
 
 /**
  * Acceptance 6 in the real shell: switch the provider in the settings card, type a key, save —
@@ -220,6 +221,162 @@ test('M6 regression: saving keeps settings open on Escape and disables pane swit
     await expect(page.getByRole('tablist')).toHaveAttribute('aria-orientation', 'vertical')
     await page.keyboard.press('Escape')
     await expect.poll(() => page.evaluate(() => window.location.hash)).toBe('#context')
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: on a fresh profile the send button is off, says to add a key and offers only 去设置', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['unused'] })
+  const userData = makeUserDataDir('send-block-fresh')
+  seedConfig(userData, { locale: 'zh-CN' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [ANTHROPIC_ORIGIN]: anthropic.baseURL }),
+    },
+  })
+  try {
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute('data-reason', 'noKey')
+    await expect(page.getByTestId('composer-block-reason')).toHaveText(
+      '这个模型没有可用的 API 密钥。',
+    )
+    await expect(page.getByTestId('composer-settings')).toHaveText('去设置')
+    await expect(page.getByTestId('composer-switch-model')).toHaveCount(0)
+    await page.getByTestId('composer-input').fill('not sent')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Control+Enter')
+    await page.keyboard.press('Meta+Enter')
+    await expect(page.getByTestId('composer-input')).toHaveValue('not sent')
+    await expect(page.getByTestId('user-message')).toHaveCount(0)
+    expect(await routeCalls(app, 'chat.send')).toBe(0)
+    expect(await routeCalls(app, 'chat.sendNow')).toBe(0)
+    expect(anthropic.requests).toHaveLength(0)
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: a default on a provider without a key offers 改用 <X> naming the provider and the model, with 发往 <host> as its tooltip and description, and in a new chat after it the message goes', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['switched and sent'] })
+  const server = anthropic
+  const userData = makeUserDataDir('send-block-switch')
+  seedConfig(userData, { locale: 'en', provider: { id: 'zhipu', modelId: 'glm-5.3-flash' } })
+  const { app, page } = await launchTenon({
+    userData,
+    env: { ...providerEnv(server.baseURL), ...COUNT_ROUTES },
+  })
+  try {
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute(
+      'data-reason',
+      'modelUnusable',
+    )
+    const change = page.getByTestId('composer-switch-model')
+    await expect(change).toHaveText('Switch to Anthropic Opus 5.5')
+    await expect(change).toHaveAttribute('aria-describedby', /.+/)
+    await expect(change).toHaveAccessibleDescription('Sends to api.anthropic.com')
+    await change.hover()
+    await expect(page.getByTestId('composer-switch-tooltip')).toHaveText(
+      'Sends to api.anthropic.com',
+    )
+    await change.click()
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
+    expect(await routeCalls(app, 'session.selectModel')).toBe(1)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await page.getByTestId('composer-input').fill('after switching')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('switched and sent')
+    expect(server.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: a key saved from 去设置 under the box updates the chip and the line when settings close', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['key saved'] })
+  const userData = makeUserDataDir('send-block-save')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...originMap({ [ANTHROPIC_ORIGIN]: anthropic.baseURL }),
+    },
+  })
+  try {
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute('data-reason', 'noKey')
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.getByTestId('provider-config-apiKey').fill('e2e-saved-key')
+    // Step 9 owns first-key defaults; here the dropdown is deliberately changed.
+    await page.getByTestId('model-select').selectOption('claude-haiku-4-5-20251001')
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Haiku 4.5')
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    await page.getByTestId('composer-input').fill('with the saved key')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('key saved')
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 12: fresh profile → save a key → the chip shows that provider’s first row → send goes', async () => {
+  zhipu = await startFakeOpenAI({ chunks: ['first key reply'] })
+  const server = zhipu
+  const userData = makeUserDataDir('first-key-default')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [ZHIPU_ORIGIN]: server.baseURL }),
+      TENON_PROVIDER: '',
+      TENON_MODEL: '',
+    },
+  })
+  try {
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute('data-reason', 'noKey')
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.getByTestId('provider-select').selectOption('zhipu')
+    await page.getByTestId('provider-config-apiKey').fill(ZHIPU_KEY)
+    // No model dropdown change: main, rather than provider.select, supplies the first row.
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 · Max')
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    const config = await page.evaluate(() => window.tenon.invoke('config.get', {}))
+    expect(config).toMatchObject({
+      ok: true,
+      data: {
+        provider: { id: 'zhipu', modelId: 'glm-5.3' },
+        defaultModelByProfile: {
+          chat: { id: 'zhipu', modelId: 'glm-5.3' },
+          cowork: { id: 'zhipu', modelId: 'glm-5.3' },
+        },
+      },
+    })
+    expect(await routeCalls(app, 'provider.select')).toBe(0)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3 · Max')
+    await page.getByTestId('composer-input').fill('first saved key')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('first key reply')
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0]?.body).toMatchObject({ model: 'glm-5.3' })
+    expect(server.requests[0]?.headers['authorization']).toBe(`Bearer ${ZHIPU_KEY}`)
   } finally {
     await app.close()
   }

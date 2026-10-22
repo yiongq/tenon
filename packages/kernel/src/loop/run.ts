@@ -113,6 +113,7 @@ import {
 import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
+import { resultErrorView } from './events.js'
 import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
 import type { McpToolSource, RunAbortCause, RunAssembly, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
@@ -1372,6 +1373,7 @@ export function notRunView(source: ClosureSource, entries: readonly NewEntry[]):
           ] as NonNullable<ToolOutcomeView['reversibility']>,
         }),
     output: content.map((block) => block.text ?? '').join('\n'),
+    ...resultErrorView(result?.payload['isError']),
   }
 }
 

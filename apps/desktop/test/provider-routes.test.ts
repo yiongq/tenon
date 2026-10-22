@@ -18,8 +18,9 @@ import {
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
 import type { AbsolutePath, FetchLike, HostAdapter, ProviderDefinition } from '@tenon-app/kernel'
-import type { IpcMainLike, ProviderEntryContract } from '@tenon-app/contracts'
-import { describe, expect, it } from 'vitest'
+import type { ConfigPatch, IpcMainLike, ProviderEntryContract } from '@tenon-app/contracts'
+import { describe, expect, it, vi } from 'vitest'
+import { createProviderView } from '../src/main/custom-vendors/registry.js'
 import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { registerProviderRoutes } from '../src/main/provider-routes.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
@@ -28,6 +29,7 @@ type Handler = (event: unknown, ...args: unknown[]) => unknown
 
 interface Harness {
   readonly host: HostAdapter
+  readonly lines: string[]
   call(channel: string, payload: unknown): Promise<unknown>
   list(): Promise<ProviderEntryContract[]>
   entry(id: string): Promise<ProviderEntryContract>
@@ -39,7 +41,12 @@ interface Harness {
  */
 async function harness(
   extra: readonly ProviderDefinition[] = [],
-  options: { env?: Record<string, string>; fetch?: FetchLike } = {},
+  options: {
+    env?: Record<string, string>
+    fetch?: FetchLike
+    config?: ConfigPatch
+    isPackaged?: boolean
+  } = {},
 ): Promise<Harness> {
   const handlers = new Map<string, Handler>()
   const ipcMain: IpcMainLike = {
@@ -56,7 +63,21 @@ async function harness(
   const providers = createProviderRegistry()
   registerBuiltinProviders(providers)
   for (const definition of extra) providers.register(definition)
-  registerProviderRoutes({ ipcMain, host, providers, env: options.env ?? {}, log: () => {} })
+  if (options.config !== undefined) await writeConfig(host.fs, host.identity, options.config)
+  const view = createProviderView({
+    builtin: providers,
+    identity: host.identity,
+    config: await readConfig(host.fs, host.identity),
+  })
+  const lines: string[] = []
+  registerProviderRoutes({
+    ipcMain,
+    host,
+    providers: view,
+    env: options.env ?? {},
+    isPackaged: options.isPackaged === true,
+    log: (line) => void lines.push(line),
+  })
 
   const call = async (channel: string, payload: unknown): Promise<unknown> => {
     const handler = handlers.get(channel)
@@ -73,6 +94,7 @@ async function harness(
   }
   return {
     host,
+    lines,
     call,
     list,
     async entry(id) {
@@ -318,6 +340,213 @@ describe('provider.configure', () => {
     })
     const config = await readConfig(h.host.fs, h.host.identity)
     expect(config.providerConfig[ZHIPU_PROVIDER_ID]).toBeUndefined()
+  })
+})
+
+describe('presentation-r1 first-key defaults', () => {
+  it('presentation-r1 验收 12: the first key with all three defaults empty writes them to the provider’s first main row', async () => {
+    for (const [id, modelId] of [
+      ['anthropic', 'claude-opus-5-5'],
+      ['zhipu', 'glm-5.3'],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- an independent empty profile for each provider
+      const h = await harness()
+      const reads = vi.spyOn(h.host.secrets, 'get')
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      expect(await h.call('provider.configure', { id, values: { apiKey: `  ${KEY}  ` } })).toEqual({
+        ok: true,
+        data: { ok: true },
+      })
+      // Only the validation read, never another read to decide defaults.
+      expect(reads).toHaveBeenCalledTimes(id === 'anthropic' ? 2 : 1)
+      reads.mockRestore()
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const config = await readConfig(h.host.fs, h.host.identity)
+      const selection = { id, modelId }
+      expect(config.provider).toEqual(selection)
+      expect(config.defaultModelByProfile).toEqual({ chat: selection, cowork: selection })
+      expect(config.provider).not.toHaveProperty('latestOf')
+      expect(config.provider).not.toHaveProperty('source')
+    }
+    const token = await harness()
+    await token.call('provider.configure', { id: 'anthropic', values: { authToken: KEY } })
+    expect((await readConfig(token.host.fs, token.host.identity)).provider).toEqual({
+      id: 'anthropic',
+      modelId: 'claude-opus-5-5',
+    })
+  })
+
+  it('presentation-r1 验收 12: cowork and provider are written only for a row that holds tools; a text-only first row writes chat alone', async () => {
+    const base = createProviderRegistry()
+    registerBuiltinProviders(base)
+    const definition = base.get('anthropic') as ProviderDefinition
+    const row = definition.builtinModels[0]!
+    const h = await harness([
+      {
+        ...definition,
+        id: 'text-first',
+        builtinModels: [
+          { ...row, id: 'hidden-tool-row', listing: 'more' },
+          { ...row, id: 'first-text-row', supportsToolCalling: false },
+          { ...row, id: 'later-tool-row' },
+        ],
+      },
+    ])
+    await h.call('provider.configure', { id: 'text-first', values: { apiKey: KEY } })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    expect(config.provider).toBeNull()
+    expect(config.defaultModelByProfile).toEqual({
+      chat: { id: 'text-first', modelId: 'first-text-row' },
+    })
+  })
+
+  it('presentation-r1 验收 12: a key saved to an instance through configureInstance with all three empty writes chat', async () => {
+    const id = 'custom-11111111-1111-4111-8111-111111111111'
+    const h = await harness([], {
+      config: {
+        customVendors: [
+          {
+            id,
+            displayName: 'First instance',
+            wire: 'openai-chat',
+            baseURL: 'https://vendor.test/v1',
+            models: [
+              {
+                id: 'instance-first',
+                contextLimit: 32000,
+                maxOutputTokens: 4096,
+                probe: {
+                  outcome: 'passed',
+                  reason: null,
+                  probedAt: 1,
+                  reasoningField: null,
+                  maxTokensField: 'max_tokens',
+                  usageSeen: true,
+                  responseModelId: 'instance-first',
+                  unknownFields: [],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    })
+    expect(await h.call('provider.configure', { id, values: { apiKey: KEY } })).toEqual({
+      ok: true,
+      data: { ok: true },
+    })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    expect(config.defaultModelByProfile).toEqual({ chat: { id, modelId: 'instance-first' } })
+    expect(config.provider).toBeNull()
+    expect(config.customVendors[0]?.models[0]).not.toHaveProperty('probe')
+    // Any existing default, even chat alone, prevents the next saved key from changing it.
+    await h.call('provider.configure', { id: 'zhipu', values: { apiKey: KEY } })
+    expect((await readConfig(h.host.fs, h.host.identity)).defaultModelByProfile).toEqual({
+      chat: { id, modelId: 'instance-first' },
+    })
+  })
+
+  it('presentation-r1 验收 12: an existing default is left alone', async () => {
+    const selection = { id: 'zhipu', modelId: 'glm-4.6' }
+    for (const config of [
+      { provider: selection },
+      { defaultModelByProfile: { chat: selection } },
+      { defaultModelByProfile: { cowork: selection } },
+      { provider: selection, defaultModelByProfile: { chat: selection, cowork: selection } },
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- every partial default must block the write
+      const h = await harness([], { config })
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const before = await readConfig(h.host.fs, h.host.identity)
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await h.call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } })
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const after = await readConfig(h.host.fs, h.host.identity)
+      expect(after.provider).toEqual(before.provider)
+      expect(after.defaultModelByProfile).toEqual(before.defaultModelByProfile)
+    }
+  })
+
+  it('presentation-r1 验收 12: TENON_PROVIDER or TENON_MODEL set → nothing written', async () => {
+    for (const env of [{ TENON_PROVIDER: 'zhipu' }, { TENON_MODEL: 'typed-model' }]) {
+      // oxlint-disable-next-line no-await-in-loop -- one environment per profile
+      const h = await harness([], { env })
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      await h.call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } })
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const config = await readConfig(h.host.fs, h.host.identity)
+      expect(config.provider).toBeNull()
+      expect(config.defaultModelByProfile).toEqual({})
+    }
+    const packaged = await harness([], {
+      isPackaged: true,
+      env: { TENON_PROVIDER: 'zhipu', TENON_MODEL: 'typed-model' },
+    })
+    await packaged.call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } })
+    expect((await readConfig(packaged.host.fs, packaged.host.identity)).provider).toEqual({
+      id: 'anthropic',
+      modelId: 'claude-opus-5-5',
+    })
+  })
+
+  it('presentation-r1 验收 12: saving only Ollama’s address writes nothing', async () => {
+    const h = await harness()
+    expect(
+      await h.call('provider.configure', {
+        id: 'ollama',
+        values: { baseURL: 'http://127.0.0.1:11435' },
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    expect(config.provider).toBeNull()
+    expect(config.defaultModelByProfile).toEqual({})
+    // Saving only a non-secret field with an existing key is not a first-key save either.
+    await h.host.secrets.set(keyFor(h.host.identity, 'provider', 'anthropic', 'apiKey'), KEY)
+    await h.call('provider.configure', {
+      id: 'anthropic',
+      values: { baseURL: 'https://api.anthropic.com' },
+    })
+    await h.call('provider.configure', { id: 'anthropic', values: { apiKey: '  ' } })
+    expect((await readConfig(h.host.fs, h.host.identity)).defaultModelByProfile).toEqual({})
+  })
+
+  it('presentation-r1 验收 12: a failed default write still answers ok and keeps the key', async () => {
+    const h = await harness()
+    const original = h.host.fs.writeFile.bind(h.host.fs)
+    const write = vi.spyOn(h.host.fs, 'writeFile')
+    write.mockImplementationOnce(original).mockRejectedValueOnce(new Error(KEY))
+    expect(
+      await h.call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    write.mockRestore()
+    expect(
+      await h.host.secrets.get(keyFor(h.host.identity, 'provider', 'anthropic', 'apiKey')),
+    ).toBe(KEY)
+    expect(h.lines).toEqual(['[provider] anthropic: the first-key default could not be saved'])
+    expect((await readConfig(h.host.fs, h.host.identity)).defaultModelByProfile).toEqual({})
+  })
+
+  it('presentation-r1 验收 12: an incomplete or refused provider does not become a default', async () => {
+    const base = createProviderRegistry()
+    registerBuiltinProviders(base)
+    const definition = base.get('anthropic') as ProviderDefinition
+    const h = await harness([
+      {
+        ...definition,
+        id: 'incomplete',
+        configKeys: [
+          ...definition.configKeys,
+          { name: 'account', secret: false, required: true, labelKey: 'account' },
+        ],
+      },
+    ])
+    await h.call('provider.configure', { id: 'incomplete', values: { apiKey: KEY } })
+    expect((await readConfig(h.host.fs, h.host.identity)).defaultModelByProfile).toEqual({})
+    const refused = await harness([], { env: { ANTHROPIC_BASE_URL: 'https://gateway.test' } })
+    await refused.call('provider.configure', { id: 'anthropic', values: { apiKey: KEY } })
+    expect(
+      (await readConfig(refused.host.fs, refused.host.identity)).defaultModelByProfile,
+    ).toEqual({})
   })
 })
 

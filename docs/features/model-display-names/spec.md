@@ -1,6 +1,7 @@
 # 模型显示名
 
 Status: implemented
+Clauses replaced by: [presentation-r1](../presentation-r1/spec.md)（2026-10-22：§对 02 的修补 末段、验收 3 的主机一句）
 Kind: features
 Owner: 起草在 Claude Code（2026-10-15），为已落在 `38d4a1b`（feat/ux-craft）的 `ModelInfo.nameKey` / `provider.list` 行的 `nameKey` 补写 amendment；owner 2026-10-15 在 PR #46 评审中接受
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层（`ModelInfo`）；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2 小节的 `ModelInfo`、第 6 小节的 `provider.list`）、§界面范围 §模型菜单与输入框 的「位置与触发器」「每一行」「设置卡」三条。只增不改，全文见 §对 01 的修补、§对 02 的修补
@@ -44,10 +45,10 @@ providerModelSchema = z.object({
 - 「位置与触发器」（「触发器显示『模型名 + 档名』」）：触发器里的模型名同上一条，有显示名写显示名。
 - 「设置卡」（「新会话默认模型」的下拉）：选项写同一个显示名，原始 id 作悬停提示；没有显示名的行写 id。
 
-第二行（用途句或行标记，后接目标主机）不变。界面的 i18n 规则不变：目录键由 kernel 作为数据给出，renderer 解析。
+第二行（用途句或行标记，后接目标主机）不变。界面的 i18n 规则不变：目录键由 kernel 作为数据给出，renderer 解析。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §模型菜单 取代：地址是厂商声明默认值的内置行第二行不再带主机）
 
 ## 验收标准
 
 1. 两个内置定义的每一行都有 `nameKey`，键在两份 locale 里都有、没有要填的占位符（`apps/desktop/test/copy-coverage.test.ts`「names every Anthropic and Zhipu row」与「has the display name and purpose sentence of every builtin model row」；`apps/desktop/test/provider-catalogue.test.ts`）。
 2. `nameKey` 不影响 `modelWireHash`（`packages/kernel/test/provider/vendor-blocks.test.ts`「the attempt says which encoder and which model fields」）。
-3. 菜单行的第一行与 chip 写显示名，不写 id；第二行仍有主机（`apps/desktop/e2e/model-menu.spec.ts`「lists configured providers by host, greys the rest, and names the thinking level」）；手填的 Ollama 行仍写 id（同文件「asks by where the history went, not by the model in effect, and a typed model’s row names its host as the others do」）；设置卡的下拉写显示名、id 是悬停提示（`apps/desktop/e2e/provider-settings.spec.ts`「acceptance 6: the settings card switches the provider the next message goes to」）。
+3. 菜单行的第一行与 chip 写显示名，不写 id；第二行仍有主机（`apps/desktop/e2e/model-menu.spec.ts`「lists configured providers by host, greys the rest, and names the thinking level」）；手填的 Ollama 行仍写 id（同文件「asks by where the history went, not by the model in effect, and a typed model’s row names its host as the others do」）；设置卡的下拉写显示名、id 是悬停提示（`apps/desktop/e2e/provider-settings.spec.ts`「acceptance 6: the settings card switches the provider the next message goes to」）。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) 验收 9 取代：官方地址的行主机在悬停里）

@@ -99,7 +99,13 @@
     "disclaimer": "Tenon 可能会出错，重要信息请核实。",
     "pendingHint": "发送会取消上面待批的操作。",
     "restoring": "正在恢复上次的对话…",
-    "textOnlyTask": "这个模型不能用工具，不能执行任务。请换一个模型。"
+    "textOnlyTask": "这个模型不能用工具。换一个模型，或关掉「在文件夹里工作」。",
+    "textOnlyTaskEstablished": "这个模型不能用工具，请换一个。",
+    "noKey": "这个模型没有可用的 API 密钥。",
+    "addressRefused": "这个模型的地址用不了。",
+    "modelRemoved": "这个会话用的自定义厂商或模型已删除。",
+    "switchModel": "改用 {provider} {model}",
+    "settings": "去设置"
   },
   "thread": {
     "empty": "开始对话",
@@ -111,7 +117,7 @@
   },
   "error": {
     "network": "连不上模型服务，请检查网络。",
-    "auth": "API 密钥被拒绝，请检查供应商设置。",
+    "auth": "API 密钥无效或没有填。",
     "rate-limit": "模型服务限流中，请稍后再试。",
     "provider": "模型服务返回了错误。",
     "unknown": "出了点问题。",
@@ -122,17 +128,29 @@
     "completed": "已完成。",
     "user-stopped": "你停下了这个任务。",
     "paused": "{waitingFor, select, approval {等你批准。} question {等你回答。} other {等子任务完成。}}",
-    "user-rejected": "你拒绝了 {toolName}，任务已结束。",
+    "user-rejected": "你拒绝了，这一轮到此为止。",
     "blocked-repeatedly": "调用连续 {count} 次被拦截，任务已结束。",
     "step-limit": "任务达到了 {limit} 步的上限。",
     "no-progress": "模型连续 {repeats} 次发出相同的调用、没有进展，任务已结束。",
     "usage-limit": "任务用量超过了 {tokenLimit} tokens 的上限。",
-    "refusal": "{providerId} 的 {modelId} 拒绝回答。",
-    "content-filter": "{providerId} 的内容安全过滤拦下了这次回复。",
+    "refusal": "{provider} 的 {model} 拒绝回答。",
+    "content-filter": "{provider} 的内容安全过滤拦下了这次回复。",
     "context-overflow": "对话太长，超出了模型的上下文{compactions, plural, =0 {} other {（已压缩 # 次）}}。",
-    "quota-exhausted": "{providerId} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
-    "account-config": "你的 {providerId} 账号或组织设置不满足这次请求。",
-    "provider-error": "模型服务（{providerId}）出错{attempts, plural, =0 {} =1 {} other {，已尝试 # 次}}。",
+    "quota-exhausted": "{provider} 的额度或花费上限已用尽。{resetAt, select, unknown {} other {将于 {resetAt} 重置。}}",
+    "account-config": "你的 {provider} 账号或组织设置不满足这次请求。",
+    "provider-error": {
+      "auth": "{provider} 的 API 密钥无效或没有填。",
+      "rate-limit": "{provider} 现在请求太多，稍后再试。",
+      "overloaded": "{provider} 的服务正忙，稍后再试。",
+      "network": "连不上 {provider}，请检查网络。",
+      "egress-denied": "这次请求不允许发往 {provider}。",
+      "invalid-request": "{provider} 拒绝了这次请求。",
+      "server": "{provider} 的服务出错了。",
+      "context-overflow": "对话太长，{provider} 接不下了。",
+      "quota-exhausted": "{provider} 的额度或花费上限已用尽。",
+      "account-config": "你的 {provider} 账号或组织设置不满足这次请求。",
+      "unknown": "{provider} 出错了。"
+    },
     "output-truncated": "回复在 {maxTokens} tokens 的输出上限处被截断。",
     "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
     "recovered": "任务运行时 Tenon 意外关闭。",
@@ -164,22 +182,26 @@
     "mark": {
       "localTextOnly": "{host} · 仅文字对话",
       "unverified": "未验证 · 仅文字对话 · {host}",
-      "probed": "本机探测 · 不保证 · {host}",
-      "unprobed": "尚未通过探测 · 仅文字对话 · {host}"
+      "probed": "探测通过 · 不保证 · {host}",
+      "unprobed": "尚未通过探测 · 仅文字对话 · {host}",
+      "unverifiedNoHost": "未验证 · 仅文字对话"
     },
     "host": {
       "local": "本机"
     },
     "row": {
       "line": "{purpose} · {host}",
-      "textOnlyInTask": "任务需要能用工具的模型"
+      "textOnlyInTask": "在文件夹里工作需要能用工具的模型",
+      "purpose": "{purpose}",
+      "sendsTo": "发往 {host}",
+      "staysLocal": "留在这台电脑上"
     },
     "trigger": {
       "withEffort": "{model} · {effort}",
       "label": "模型",
       "removed": "{model}（已删除）"
     },
-    "notConfigured": "{provider} · 去设置填 key",
+    "notConfigured": "{provider} · 去设置填 API 密钥",
     "more": "更多模型",
     "typeModel": "手填模型 ID…",
     "manage": "管理模型…",
@@ -212,7 +234,8 @@
       "close": "关闭"
     },
     "typeModelFor": "{provider} · 手填模型 ID…",
-    "nextMessageCache": "下一条消息起生效 · 改档会让缓存失效"
+    "nextMessageCache": "下一条消息起生效 · 改档会让缓存失效",
+    "refused": "{provider} · 地址用不了，去设置改"
   },
   "customVendor": {
     "section": {
@@ -309,7 +332,7 @@
       "cost": "会用你的 key 发 2–3 次请求，思考模型每次可能较长",
       "local": "本机或局域网的端点只能文字对话，不探测。",
       "none": "尚未探测 · 仅文字对话",
-      "passed": "本机探测通过 · 不保证",
+      "passed": "探测通过 · 不保证",
       "notSaved": "没有保存：探测期间这个厂商的设置变了，请重新探测。",
       "reason": {
         "no-tool-call": "模型这次没有调用工具，可以再试一次",
@@ -405,12 +428,20 @@
     "WebFetch": "抓取 {url}",
     "AskUserQuestion": "向你提问",
     "Agent": "把子任务交给 agent：{description}",
-    "generic": "使用 {toolName}",
+    "generic": "使用 {server} 的 {tool}",
     "running": "进行中…",
     "details": "详情",
     "input": "输入",
     "output": "输出",
-    "error": "工具报告了错误。"
+    "error": "工具报告了错误。",
+    "genericMapped": "使用 {toolName}",
+    "did": {
+      "write": "改了这个文件",
+      "command": "运行了这条命令",
+      "online": "联网",
+      "connector": "用了连接器",
+      "irreversible": "撤不回"
+    }
   },
   "closure": {
     "user-rejected": "你拒绝了这个操作。",
@@ -441,14 +472,18 @@
   },
   "blocked": {
     "sandbox": "{toolName} 中的部分操作被拦下。",
-    "policy": "{toolName} 被组织策略拦下。",
-    "user-disabled": "{toolName} 已关闭。",
-    "protected": "{toolName} 不能访问 {target}：这是 Tenon 保护的位置。",
-    "inspector": {
-      "exfiltration": "{toolName} 被权限检查拦下：它可能把你的数据发往别处。",
-      "inspector-failed": "{toolName} 被拦下：对它的权限检查没有完成。"
+    "policy": "你的组织不允许这一步。",
+    "user-disabled": "你在设置里关掉了它。",
+    "protected": {
+      "read": "这个位置受保护，Tenon 不读它。",
+      "write": "这个位置受保护，Tenon 不改它。",
+      "fetch": "Tenon 只抓取公网上的网页，这个地址不在其中。"
     },
-    "chatReadScope": "对话里 {toolName} 只能打开 Tenon 为这个对话保存的文件；{target} 不在其中。",
+    "inspector": {
+      "exfiltration": "这一步可能把你的数据带到别处，已拦下。",
+      "inspector-failed": "Tenon 没能确认这一步是否安全，已拦下。"
+    },
+    "chatReadScope": "对话里只能打开 Tenon 为这个对话保存的文件。",
     "told": "已告诉模型。"
   },
   "confirm": {
@@ -466,22 +501,25 @@
     },
     "reason": {
       "irreversible": {
-        "file": "{toolName} 对 {path} 的改动撤不回。",
-        "command": "{toolName} 运行的 {command} 撤不回。",
-        "tool": "{toolName} 的改动撤不回。",
-        "network": "{toolName} 的改动撤不回。"
+        "file": "做了就撤不回，所以先问你。",
+        "command": "做了就撤不回，所以先问你。",
+        "tool": "做了就撤不回，所以先问你。",
+        "network": "做了就撤不回，所以先问你。"
       },
-      "outside-workspace": "{path} 在工作区（{workspace}）之外。",
-      "network": "{toolName} 会把数据发往 {host}。",
+      "outside-workspace": "它不在这个任务的文件夹里。",
+      "network": {
+        "search": "搜索词会发到这台电脑之外。",
+        "url": "网址会发给 {host}。"
+      },
       "elevated": "这条命令要提升权限：{command}",
-      "default": "{toolName} 需要你批准。",
-      "policy": "组织要求 {toolName} 先经批准。",
+      "default": "这一步要你同意。",
+      "policy": "你的组织要求这一步先经你同意。",
       "flagged": {
-        "exfiltration": "{toolName} 可能把你的数据发往别处。",
-        "inspector-failed": "{toolName} 的权限检查没有完成，所以来问你。"
+        "exfiltration": "这次请求可能把你的数据带到别处。",
+        "inspector-failed": "Tenon 没能确认这一步是否安全。"
       },
-      "command": "每条命令都先问：在 {cwd} 运行 {command}。",
-      "interaction-required": "{toolName} 需要你参与。"
+      "command": "运行命令前要你同意。",
+      "interaction-required": "这个连接器要求你亲自确认。"
     },
     "irreversible": "撤不回。",
     "allow": "允许",
@@ -507,10 +545,25 @@
     "arguments": "参数",
     "cwd": "位于 {cwd}",
     "answered": {
-      "allowed": "已允许 · {scope}",
-      "denied": "已拒绝"
+      "allowed": "已允许（{scope}）",
+      "denied": "已拒绝",
+      "roundEnds": "这一轮到此为止",
+      "searchHost": "发往 {host}",
+      "realPath": "{path}"
     },
-    "notRun": "未执行"
+    "notRun": "未执行",
+    "undo": {
+      "read-only": "只读，不会改动任何东西。",
+      "revertible": "Tenon 可以替你撤回这次改动。",
+      "snapshotted": "Tenon 保存了改动前的副本。",
+      "unknown": "如果它改了东西，Tenon 没法替你撤回。",
+      "unknownFile": "Tenon 没法替你撤回这次改动。",
+      "network": {
+        "search": "搜索词会发到这台电脑之外。",
+        "url": "网址会发给 {host}。"
+      }
+    },
+    "allowScoped": "允许（{scope}）"
   },
   "failure": {
     "effects": {
@@ -519,16 +572,25 @@
       "uncertain": "{count} 个调用可能已执行。",
       "doneHeading": "{count} 个调用已完成：",
       "stopped": "{count} 个调用中途停下，后续写入未发生。",
-      "stoppedSent": "{count} 个请求在途中被停下，可能已到对方。"
+      "stoppedSent": "{count} 个请求在途中被停下，可能已到对方。",
+      "expandAll": "展开全部（{count} 项）"
     },
     "continue": "继续",
     "retry": "重试",
     "settings": "去设置",
     "copy": "复制诊断信息",
-    "copied": "已复制"
+    "copied": "已复制",
+    "providerFallback": "模型服务",
+    "attempts": "已试 {count} 次。"
   },
   "summary": {
-    "line": "读了 {read} 个 · 改了 {write} 个{external, plural, =0 {} other { · 有对外发送}}"
+    "read": "读了 {count} 个文件",
+    "search": "查找 {count} 次",
+    "write": "改了 {count} 个文件",
+    "command": "运行了 {count} 条命令",
+    "online": "联网 {count} 次",
+    "connector": "用了连接器 {count} 次",
+    "separator": " · "
   },
   "thinking": {
     "label": "思考",
@@ -558,18 +620,16 @@
     "working": "正在干活",
     "elapsed": " · {seconds} 秒"
   },
-  "mode": {
-    "label": "形态",
-    "chat": "对话",
-    "cowork": "任务"
-  },
   "folder": {
     "label": "文件夹",
     "dedicated": "专用文件夹",
     "cwd": "命令在这里运行",
     "add": "添加文件夹…",
-    "prefill": "用上次的 {count} 个文件夹",
-    "remove": "移除 {name}"
+    "remove": "移除 {name}",
+    "toggle": "在文件夹里工作",
+    "dedicatedNote": "没选文件夹时，命令在 Tenon 为这个任务单独建的文件夹里运行。",
+    "prefillPending": "上次用过，尚未加入",
+    "prefillUse": "用这 {count} 个文件夹"
   },
   "mcp": {
     "settings": "设置",
@@ -629,8 +689,6 @@
     "noBefore": "没有已确认的旧定义",
     "connecting": "正在连接 {name}…",
     "definitionNotice": "这个工具的定义在会话中变了，总是允许这次不生效",
-    "effect": "副作用",
-    "marker": "{effect} · {reversibility}",
     "status": {
       "connecting": "正在连接",
       "connected": "已连接 · {version} · {n} 个工具",
@@ -675,19 +733,6 @@
     "unavailable": {
       "name-collision": "重名，未提供",
       "invalid-definition": "定义无效，未提供"
-    },
-    "reversibility": {
-      "read-only": "只读",
-      "revertible": "可撤销",
-      "snapshotted": "有快照",
-      "irreversible": "不可逆",
-      "unknown": "未知"
-    },
-    "effects": {
-      "read": "读",
-      "write": "写",
-      "external": "对外发送",
-      "blocked": "没执行"
     },
     "error": {
       "handshake-timeout": "连接超时",
@@ -738,8 +783,6 @@
     "up": "上移",
     "down": "下移",
     "secretField": "{name}（密钥）",
-    "reversibilityScale": "可逆性",
-    "effectMarker": "副作用：{effect} · {reversibility}",
     "era": {
       "legacy": "旧代",
       "modern": "新代"

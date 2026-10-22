@@ -4,9 +4,15 @@ import { deferred, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { completionRequests, startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI, OpenAIReply } from '../test/support/fake-openai.js'
-import { createInstance, createInstanceInCard, saveInstanceKeyInCard } from './helpers/instances.js'
+import {
+  createInstance,
+  createInstanceInCard,
+  saveInstanceKey,
+  saveInstanceKeyInCard,
+} from './helpers/instances.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { SeededInstance } from './helpers/launch.js'
+import { COUNT_ROUTES, newChatFromSidebar, routeCalls } from './helpers/navigation.js'
 import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
@@ -92,6 +98,7 @@ async function instances(page: Page): Promise<ListedInstance[]> {
 /** The settings card, opened from the account row. */
 async function openCard(page: Page): Promise<void> {
   await page.getByTestId('account-row').click()
+  await expect(page.getByTestId('account-providers')).toBeVisible()
   await page.getByTestId('account-providers').click()
   await expect(page.getByTestId('provider-settings')).toBeVisible()
   await expect(page.getByTestId('custom-vendors')).toBeVisible()
@@ -103,6 +110,7 @@ async function openCard(page: Page): Promise<void> {
  */
 async function openCardFromMenu(page: Page): Promise<void> {
   await page.getByTestId('model-menu-trigger').click()
+  await expect(page.getByTestId('model-menu')).toBeVisible()
   await page.getByTestId('model-manage').click()
   await expect(page.getByTestId('provider-settings')).toBeVisible()
   await expect(page.getByTestId('custom-vendors')).toBeVisible()
@@ -158,7 +166,7 @@ const MODEL_B = 'vendor-model-b'
 const NOTE = 'VENDOR-NOTE-5521'
 const TASK_DONE = 'vendor-read-7f3a'
 
-test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 → 保存 key 变回仅文字 → 改名、改模型 → 删行、删实例 → 失败卡说已删除（M6 验收 3、4、9、12、14、19、21、25）', async () => {
+test('presentation-r1 验收 9: 建实例 → 获取列表 → 探测通过 → 任务一次工具往返 → 保存 key 变回仅文字 → 改名、改模型 → 删行、删实例 → 输入框说已删除（M6 验收 3、4、9、12、14、19、21、25）', async () => {
   test.setTimeout(120_000)
   const folders = makeFolderTree('vendor-task', { 'ws/notes.txt': `${NOTE}\n` })
   tree = folders
@@ -256,7 +264,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await expect(probeA).toHaveAttribute('aria-describedby', (await cost.getAttribute('id')) ?? '')
     await probeA.click()
     await expect(statusA).toHaveAttribute('data-outcome', 'passed')
-    await expect(statusA).toHaveText('本机探测通过 · 不保证')
+    await expect(statusA).toHaveText('探测通过 · 不保证')
     const probes = completionRequests(server)
     expect(probes).toHaveLength(2)
     for (const request of probes) {
@@ -289,7 +297,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await expect(group.locator('[data-slot="dropdown-menu-label"]')).toHaveText(NAME)
     const rowA = page.getByTestId(`model-row-${id}-${MODEL_A}`)
     const rowB = page.getByTestId(`model-row-${id}-${MODEL_B}`)
-    await expect(rowA).toContainText(`本机探测 · 不保证 · ${VENDOR_HOST}`)
+    await expect(rowA).toContainText(`探测通过 · 不保证 · ${VENDOR_HOST}`)
     await expect(rowB).toContainText(`尚未通过探测 · 仅文字对话 · ${VENDOR_HOST}`)
     await page.getByTestId('model-more').click()
     await expect(page.getByTestId('model-type-anthropic')).toBeVisible()
@@ -304,7 +312,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await trigger.click()
     await expect(rowA).not.toHaveAttribute('aria-disabled', 'true')
     await expect(rowB).toHaveAttribute('aria-disabled', 'true')
-    await expect(rowB).toContainText('任务需要能用工具的模型')
+    await expect(rowB).toContainText('在文件夹里工作需要能用工具的模型')
     await rowA.click()
     await expect(menu).toBeHidden()
     await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
@@ -371,7 +379,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     )
     await trigger.click()
     await expect(rowA).toHaveAttribute('aria-disabled', 'true')
-    await expect(rowA).toContainText('任务需要能用工具的模型')
+    await expect(rowA).toContainText('在文件夹里工作需要能用工具的模型')
     await page.keyboard.press('Escape')
     await expect(menu).toBeHidden()
 
@@ -397,8 +405,7 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await page.keyboard.press('Escape')
     await expect(menu).toBeHidden()
 
-    // 删行: the session's row taken off the list; the trigger names it removed (§实例被删或改坏),
-    // and the send is not held as text-only.
+    // Removed rows block new messages at the composer; no failure card or new Tape fact.
     await openCardFromMenu(page)
     await page.getByTestId(`custom-vendor-row-remove-${id}-${MODEL_A}`).click()
     await expect(page.getByTestId(`custom-vendor-row-${id}-${MODEL_A}`)).toHaveCount(0)
@@ -406,19 +413,18 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     await closeCard(page)
     const current = page.getByTestId('model-menu-current')
     await expect(current).toHaveText(`${MODEL_A}（已删除）`)
-    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
-
-    // 会话失败卡: refused as a missing key, nothing sent; the card says what was removed (验收 25).
+    const blocked = page.getByTestId('composer-send-block')
+    await expect(blocked).toHaveAttribute('data-reason', 'modelRemoved')
+    await expect(blocked).toContainText('这个会话用的自定义厂商或模型已删除。')
     const cards = page.getByTestId('failure-card')
-    const gone = '这个会话用的自定义厂商或模型已删除。在模型菜单里换一个模型再发送。'
-    await send(page, '还在吗？')
-    await expect(cards).toHaveCount(1)
-    await expect(cards.last()).toHaveAttribute('data-code', 'provider-error')
-    await expect(cards.last().getByTestId('failure-what')).toHaveAttribute(
-      'data-custom-vendor-gone',
-      'true',
-    )
-    await expect(cards.last().getByTestId('failure-what')).toHaveText(gone)
+    const factsBefore = tapeFacts(userData)
+    await page.getByTestId('composer-input').fill('还在吗？')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Control+Enter')
+    await page.keyboard.press('Meta+Enter')
+    await expect(cards).toHaveCount(0)
+    expect(tapeFacts(userData)).toEqual(factsBefore)
     expect(completionRequests(server)).toHaveLength(4)
 
     // 删实例: two steps on the card; the instance and its rows are gone at once (验收 3), the
@@ -430,21 +436,19 @@ test('建实例 → 获取列表 → 探测通过 → 任务一次工具往返 �
     expect(await instances(page)).toEqual([])
     await closeCard(page)
     await expect(current).toHaveText(`${MODEL_A}（已删除）`)
-    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    await expect(blocked).toHaveAttribute('data-reason', 'modelRemoved')
     await trigger.click()
+    await expect(menu).toBeVisible()
     await expect(group).toHaveCount(0)
     await expect(page.getByTestId('model-group-anthropic')).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(menu).toBeHidden()
 
-    await send(page, '还在吗？')
-    await expect(cards).toHaveCount(2)
-    await expect(cards.last()).toHaveAttribute('data-code', 'provider-error')
-    await expect(cards.last().getByTestId('failure-what')).toHaveAttribute(
-      'data-custom-vendor-gone',
-      'true',
-    )
-    await expect(cards.last().getByTestId('failure-what')).toHaveText(gone)
+    await page.getByTestId('composer-input').fill('还在吗？')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('Enter')
+    await expect(cards).toHaveCount(0)
+    expect(tapeFacts(userData)).toEqual(factsBefore)
     expect(completionRequests(server)).toHaveLength(4)
     expect(server.unscripted).toBe(0)
     expect(anthropic.requests).toHaveLength(0)
@@ -617,7 +621,7 @@ const PRIVATE_ID = 'custom-1c8f4d2e-6a3b-4f7c-8d9e-0a1b2c3d4e5f'
 const PRIVATE_HOST = '192.168.77.10'
 const PRIVATE_MODEL = 'qwen-lan'
 
-test('an instance on this computer or a local network has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
+test('presentation-r1 验收 9: an instance on this computer or a local network has no 「探测」, holds text conversations only, and sends no tools (M6 验收 18, Q7)', async () => {
   local = await startFakeOpenAI({ chunks: ['local ', 'reply'], delayMs: 5 })
   const server = local
   const userData = makeUserDataDir('vendor-local')
@@ -683,17 +687,17 @@ test('an instance on this computer or a local network has no 「探测」, holds
     const trigger = page.getByTestId('model-menu-trigger')
     const row = page.getByTestId(`model-row-${LOCAL_ID}-${LOCAL_MODEL}`)
     const lan = page.getByTestId(`model-row-${PRIVATE_ID}-${PRIVATE_MODEL}`)
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
     await trigger.click()
     for (const each of [row, lan]) {
       // oxlint-disable-next-line no-await-in-loop -- one row at a time
       await expect(each).toHaveAttribute('aria-disabled', 'true')
       // oxlint-disable-next-line no-await-in-loop -- as above
-      await expect(each).toContainText('A task needs a model that can use tools')
+      await expect(each).toContainText('Working in a folder needs a model that can use tools')
     }
     await page.keyboard.press('Escape')
-    await page.getByTestId('mode-chat').click()
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'chat')
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await trigger.click()
     await expect(lan).not.toHaveAttribute('aria-disabled', 'true')
     await expect(lan).toContainText(`${PRIVATE_HOST} · text conversation only`)
@@ -833,6 +837,7 @@ test('a builtin whose saved address is off its official one reads as not configu
   const { app, page } = await launchTenon({
     userData,
     env: {
+      ...COUNT_ROUTES,
       ANTHROPIC_API_KEY: 'e2e-test-key',
       ZHIPU_API_KEY: 'e2e-zhipu-key',
       ...originMap({ [GATEWAY_ORIGIN]: gateway.baseURL, [ZHIPU_ORIGIN]: zhipu.baseURL }),
@@ -863,8 +868,25 @@ test('a builtin whose saved address is off its official one reads as not configu
     await expect(page.getByTestId('model-unconfigured-anthropic')).toBeVisible()
     await expect(page.getByTestId('model-unconfigured-zhipu')).toBeVisible()
     await page.keyboard.press('Escape')
+    // presentation-r1 acceptance 11 / R20 / R28: refuse before sending, rather than failing a Run.
+    const block = page.getByTestId('composer-send-block')
+    await expect(block).toHaveAttribute('data-reason', 'addressRefused')
+    await expect(page.getByTestId('composer-block-reason')).toHaveText(
+      "This model's address can't be used.",
+    )
+    await expect(page.getByTestId('composer-settings')).toHaveText('Open settings')
+    await expect(page.getByTestId('composer-switch-model')).toHaveCount(0)
     await send(page, 'hello')
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'provider-error')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('ControlOrMeta+Enter')
+    await expect(page.getByTestId('composer-input')).toHaveValue('hello')
+    await expect(page.getByTestId('user-message')).toHaveCount(0)
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
+    expect(await routeCalls(app, 'chat.send')).toBe(0)
+    expect(await routeCalls(app, 'chat.sendNow')).toBe(0)
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await expect(refused).toHaveAttribute('data-refusal-code', 'official-host-only')
     expect(gateway.requests).toHaveLength(0)
     expect(zhipu.requests).toHaveLength(0)
   } finally {
@@ -994,3 +1016,220 @@ for (const locale of ['zh-CN', 'en'] as const) {
     }
   })
 }
+
+test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history on public host A, 改用 an instance on public host B opens the menu on its row with B in the line, and nothing is selected or sent to B until it is picked', async () => {
+  vendor = await startFakeOpenAI({ chunks: ['history on A'] })
+  local = await startFakeOpenAI({ chunks: ['reply from B'] })
+  const source = vendor,
+    destination = local
+  const sourceId = 'custom-11111111-1111-4111-8111-111111111111'
+  const targetId = 'custom-22222222-2222-4222-8222-222222222222'
+  const targetOrigin = 'https://second-vendor.e2e.test'
+  const userData = makeUserDataDir('blocked-instance-switch')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: sourceId, modelId: MODEL_A },
+    customVendors: [
+      {
+        id: sourceId,
+        displayName: 'Source A',
+        wire: 'openai-chat',
+        baseURL: VENDOR_URL,
+        models: [{ id: MODEL_A, contextLimit: 32_000, maxOutputTokens: 4_096 }],
+      },
+      {
+        id: targetId,
+        displayName: 'Destination B',
+        wire: 'openai-chat',
+        baseURL: `${targetOrigin}/v1`,
+        models: [{ id: MODEL_B, contextLimit: 32_000, maxOutputTokens: 4_096 }],
+      },
+    ],
+  })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [VENDOR_ORIGIN]: source.baseURL, [targetOrigin]: destination.baseURL }),
+    },
+  })
+  try {
+    await saveInstanceKey(page, sourceId, 'e2e-source-key')
+    await saveInstanceKey(page, targetId, 'e2e-target-key')
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    await send(page, 'go to A')
+    await expect(page.getByTestId('assistant-text')).toHaveText('history on A')
+    expect(
+      await page.evaluate(
+        (id) =>
+          window.tenon.invoke('provider.configure', {
+            id,
+            values: { apiKey: '' },
+          }),
+        sourceId,
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByTestId('composer-switch-model')).toHaveText(
+      `Switch to Destination B ${MODEL_B}`,
+    )
+    const before = tapeFacts(userData)
+    await page.getByTestId('composer-switch-model').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    const row = page.getByTestId(`model-row-${targetId}-${MODEL_B}`)
+    await expect(row).toBeVisible()
+    await expect(row).toHaveAttribute('data-highlighted', '')
+    await expect(row).toBeFocused()
+    await expect(row).toContainText('second-vendor.e2e.test')
+    await expect(row).toHaveAccessibleDescription('Sends to second-vendor.e2e.test')
+    await expect(page.getByTestId('model-row-host-tooltip')).toHaveText(
+      'Sends to second-vendor.e2e.test',
+    )
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    expect(tapeFacts(userData)).toEqual(before)
+    expect(destination.requests).toHaveLength(0)
+    await row.click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_B)
+    await send(page, 'now go to B')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('reply from B')
+    expect(destination.requests).toHaveLength(1)
+    expect(source.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: a removed instance blocks a new message while Continue still shows error.customVendorGone (M6 验收 25)', async () => {
+  vendor = await startFakeOpenAI({
+    replies: [{ steps: [{ type: 'text', text: 'unfinished answer' }], finishReason: 'length' }],
+  })
+  const userData = makeUserDataDir('removed-instance-continue')
+  const id = 'custom-33333333-3333-4333-8333-333333333333'
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id, modelId: MODEL_A },
+    customVendors: [
+      {
+        id,
+        displayName: 'Removed vendor',
+        wire: 'openai-chat',
+        baseURL: VENDOR_URL,
+        models: [{ id: MODEL_A, contextLimit: 32_000, maxOutputTokens: 4_096 }],
+      },
+    ],
+  })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [VENDOR_ORIGIN]: vendor.baseURL }),
+    },
+  })
+  try {
+    await saveInstanceKey(page, id, FIRST_KEY)
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    // Keep an explicit session choice so deleting its default cannot move this chat elsewhere.
+    await page.getByTestId('model-menu-trigger').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    await page.getByTestId(`model-row-${id}-${MODEL_A}`).click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await send(page, 'write the answer')
+    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'output-truncated')
+    const action = page.getByTestId('failure-action')
+    await expect(action).toHaveAttribute('data-action', 'continue')
+    await openCard(page)
+    await page.getByTestId(`custom-vendor-delete-${id}`).click()
+    await page.getByTestId(`custom-vendor-delete-confirm-${id}`).click()
+    await expect(page.getByTestId(`custom-vendor-${id}`)).toHaveCount(0)
+    await closeCard(page)
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute(
+      'data-reason',
+      'modelRemoved',
+    )
+    await page.getByTestId('composer-input').fill('new message must stay')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('Enter')
+    expect(await routeCalls(app, 'chat.send')).toBe(1)
+    await expect(page.getByTestId('failure-card')).toHaveCount(1)
+    await action.click()
+    await expect(page.getByTestId('failure-card')).toHaveCount(2)
+    const failed = page.getByTestId('failure-card').last()
+    await expect(failed).toHaveAttribute('data-code', 'provider-error')
+    await expect(failed.getByTestId('failure-what')).toHaveAttribute(
+      'data-custom-vendor-gone',
+      'true',
+    )
+    await expect(failed.getByTestId('failure-what')).toHaveText(
+      "This conversation's custom provider or model was removed. Pick another model in the model menu and send again.",
+    )
+    expect(vendor.requests).toHaveLength(1)
+    expect(await routeCalls(app, 'chat.continue')).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 12: configureInstance after adding the preset’s first row → a new chat’s chip is its first row and the message goes', async () => {
+  vendor = await startFakeOpenAI({ chunks: ['instance first key reply'] })
+  const server = vendor
+  const userData = makeUserDataDir('instance-first-key-default')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ 'https://api.deepseek.com': server.baseURL }),
+      TENON_PROVIDER: '',
+      TENON_MODEL: '',
+    },
+  })
+  try {
+    await openCardFromMenu(page)
+    const id = await createInstanceInCard(page, {
+      preset: 'deepseek',
+      region: 'default',
+      displayName: NAME,
+      wire: 'openai-chat',
+      baseURL: 'https://api.deepseek.com',
+      apiKey: FIRST_KEY,
+    })
+    // Creation has no model rows in M6. This case covers the subsequent configureInstance path.
+    await expect(page.getByTestId(`custom-vendor-row-id-${id}`)).toBeVisible()
+    await page.getByTestId(`custom-vendor-row-id-${id}`).fill(MODEL_A)
+    await page.getByTestId(`custom-vendor-row-context-${id}`).fill('32000')
+    await page.getByTestId(`custom-vendor-row-output-${id}`).fill('4096')
+    await page.getByTestId(`custom-vendor-row-save-${id}`).click()
+    await expect(page.getByTestId(`custom-vendor-row-${id}-${MODEL_A}`)).toBeVisible()
+    await saveInstanceKeyInCard(page, id, SECOND_KEY)
+    const config = await page.evaluate(() => window.tenon.invoke('config.get', {}))
+    expect(config).toMatchObject({
+      ok: true,
+      data: {
+        provider: null,
+        defaultModelByProfile: { chat: { id, modelId: MODEL_A } },
+      },
+    })
+    await closeCard(page)
+    await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    expect(await routeCalls(app, 'provider.select')).toBe(0)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
+    await page.getByTestId('composer-input').fill('instance default sends')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('instance first key reply')
+    const requests = completionRequests(server)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.body).toMatchObject({ model: MODEL_A })
+    expect(requests[0]?.headers['authorization']).toBe(`Bearer ${SECOND_KEY}`)
+    expect(toolNames(requests[0]?.body)).toEqual([])
+  } finally {
+    await app.close()
+  }
+})

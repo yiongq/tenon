@@ -1,6 +1,7 @@
 # 03 · MCP host 完整版
 
 Status: implemented
+Clauses replaced by: [presentation-r1](../../features/presentation-r1/spec.md)（2026-10-22：§卡片与工具行 的可逆性刻度与 ToolRow 副作用段、验收 45 两处）
 Amended by: [04-sandbox](../04-sandbox/spec.md)（2026-10-09：§地址与出网 的 DNS 判定所用的地址表加 100.64.0.0/10，公网 server 的跨源发现地址解析到 CGNAT 时同样拒绝（点名 (ii)）。MCP stdio server 的档位、确认框与验收 9 不变（04 的 Q11 A）。只增不改，全文在该 spec）
 Phase: 3 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: 裁决由 owner 拍板（2026-10-08 四轮，Q1–Q16 都选推荐项，T1–T49 全收，T17、T24 已并入 Q11-2、Q4-2；裁决卡 `cards-v1.md`、选择记录 `picks.md` 与调研原文在仓库外 `../tenon-notes/2026-10-03-phase3-mcp/`）；起草在 Claude Code（2026-10-08）；实现由 Codex 做，lead（Claude Code）在每段 PR 合并前审查（owner 2026-10-08 定）
@@ -760,8 +761,8 @@ export interface SchemaValidatorPort {
 
 ### 卡片与工具行（Q12）
 
-- **可逆性刻度上卡**（02:2266）：审批卡在问题标题下加一行五格刻度「只读 / 可撤销 / 有快照 / 不可逆 / 未知」，当前值高亮并带 `aria-current`，读 `card.reversibility`；阶段 3 只出现只读、不可逆、未知三种（02:2262）。「撤不回」那句照旧。
-- **ToolRow 副作用段与可逆性标记**（comp:128）：展开后在「输入」「输出」之后加「副作用」一段，写这次调用的 effect（读 / 写 / 对外发送 / 没执行）与可逆性；收起时，effect 为写或对外发送、可逆性为不可逆或未知的行，名字旁出一个标记（图标加屏幕阅读器文字）。数据取工具结果视图只增的 `reversibility`。
+- **可逆性刻度上卡**（02:2266）：审批卡在问题标题下加一行五格刻度「只读 / 可撤销 / 有快照 / 不可逆 / 未知」，当前值高亮并带 `aria-current`，读 `card.reversibility`；阶段 3 只出现只读、不可逆、未知三种（02:2262）。「撤不回」那句照旧。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 取代：去掉五格刻度，改为一句后果）
+- **ToolRow 副作用段与可逆性标记**（comp:128）：展开后在「输入」「输出」之后加「副作用」一段，写这次调用的 effect（读 / 写 / 对外发送 / 没执行）与可逆性；收起时，effect 为写或对外发送、可逆性为不可逆或未知的行，名字旁出一个标记（图标加屏幕阅读器文字）。数据取工具结果视图只增的 `reversibility`。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §工具行 取代：展开后一行说做了什么、能不能撤；标记只给撤不回的行）
 - **连接器卡**：对象行下加一行 server 的显示名（取 `mcp.list`，server 已删时写 serverId）；判决事实带 `definitionChanged` 时加一句「这个工具的定义在会话中变了，总是允许这次不生效」（Q14）。
 - **重新登录**：工具行的收口来源为 `connector-unauthorized` 时，行下出「重新登录」，按 `serverIdOfMappedName` 找到 server，调 `mcp.login`。
 - **正在连接**：任何启用 server 处于首次连接时，输入框上方槽位（`ComposerSlots`，comp:84、:184）以最低优先级显示「正在连接 <显示名>…」（Q5）。
@@ -1024,7 +1025,7 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
 ### 界面
 
 44. 连接器栏：每个状态与错误码有中英文案；三态菜单、启用开关与三态菜单旁和「放行」旁的「新会话生效」、「永不」说明句、拖动排序、查看日志、重启、刷新、登录、撤销授权、超上限那句都在（Q11、T20）。〔D/renderer-connectors.test.ts、E/connectors.spec.ts〕
-45. 审批卡的可逆性刻度按 `reversibility` 高亮；连接器卡显示 server 显示名与「定义已变」；工具行展开有副作用段、写和对外发送的行有可逆性标记；`connector-unauthorized` 的行下有「重新登录」（Q12、Q10）。〔D/renderer-approval-card.test.ts、D/renderer-tool-row.test.ts、E/connectors.spec.ts〕
+45. 审批卡的可逆性刻度按 `reversibility` 高亮；连接器卡显示 server 显示名与「定义已变」；工具行展开有副作用段、写和对外发送的行有可逆性标记；`connector-unauthorized` 的行下有「重新登录」（Q12、Q10）。〔D/renderer-approval-card.test.ts、D/renderer-tool-row.test.ts、E/connectors.spec.ts〕（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) 验收 1、6 取代：审批卡没有刻度；工具行展开后一行写做了哪类事与能不能撤，标记只给撤不回的行）
 46. 新增的每个枚举值（排除码、收口来源、错误码、登录结果、写入错误码、警示）在 zh-CN、en 都有非空文案；新组件纳入 00 验收 12 的双语「不换行不截断」回归（02:2818）。〔D/copy-coverage.test.ts、E/text-fit-03.spec.ts〕
 
 ### 验证与收尾

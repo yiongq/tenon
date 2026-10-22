@@ -119,6 +119,9 @@ test('「重试」 on an earlier failure goes once a later message is sent; the 
     await expect(cards).toHaveCount(1)
     const earlier = cards.first()
     await expect(earlier).toHaveAttribute('data-code', 'provider-error')
+    await expect(earlier.getByTestId('failure-what')).toHaveText(
+      'Anthropic turned down this request.',
+    )
     await expect(earlier.getByTestId('failure-action')).toHaveAttribute('data-action', 'retry')
 
     await send(page, 'second question')
@@ -187,7 +190,7 @@ test('「重试」 on an earlier failure goes once a later message is sent; the 
   ])
 })
 
-test('with no key the message stays, the 「去设置」 card comes below it, and once a key is set the next reply comes below its own message (§失败卡与结束原因, 缺 key)', async () => {
+test('presentation-r1 验收 11: with no key sending is blocked with only 去设置; after saving a key the next reply comes below its own message', async () => {
   fake = await startFakeAnthropic({ replies: [textReply('Now ', 'it works.')] })
   const server = fake
   const userData = makeUserDataDir('retry-no-key')
@@ -196,30 +199,23 @@ test('with no key the message stays, the 「去设置」 card comes below it, an
   // the fake (the origin map test seam), once there is a key to send.
   const { app, page } = await launchTenon({
     userData,
-    env: originMap({ [ANTHROPIC_ORIGIN]: server.baseURL }),
+    env: { ...originMap({ [ANTHROPIC_ORIGIN]: server.baseURL }), ...COUNT_ROUTES },
   })
   try {
-    await send(page, 'hello there')
-    const card = page.getByTestId('failure-card')
-    await expect(card).toHaveAttribute('data-code', 'provider-error')
-    const action = card.getByTestId('failure-action')
-    await expect(action).toHaveAttribute('data-action', 'settings')
-    await expect(action).toHaveText('Open settings')
-    expect(await threadOrder(page)).toEqual(['user: hello there', 'assistant: [provider-error]'])
+    await page.getByTestId('composer-input').fill('hello there')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await expect(page.getByTestId('composer-block-reason')).toHaveText('No API key for this model.')
+    await expect(page.getByTestId('composer-settings')).toHaveText('Open settings')
+    await expect(page.getByTestId('composer-switch-model')).toHaveCount(0)
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Control+Enter')
+    await page.keyboard.press('Meta+Enter')
+    expect(await threadOrder(page)).toEqual([])
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     expect(server.requests).toHaveLength(0)
-
-    // A second one nothing is written for: its card comes under it, not under the first, whichever
-    // of the end and the route's answer the window handles first (step 20 round 4).
-    await send(page, 'still nothing?')
-    await expect(page.getByTestId('failure-card')).toHaveCount(2)
-    expect(await threadOrder(page)).toEqual([
-      'user: hello there',
-      'assistant: [provider-error]',
-      'user: still nothing?',
-      'assistant: [provider-error]',
-    ])
-
-    await page.getByTestId('failure-action').last().click()
+    expect(await routeCalls(app, 'chat.send')).toBe(0)
+    expect(await routeCalls(app, 'chat.sendNow')).toBe(0)
+    await page.getByTestId('composer-settings').click()
     await expect(page.getByTestId('provider-settings')).toBeVisible()
     await page.getByTestId('provider-select').selectOption('anthropic')
     await page.getByTestId('provider-config-apiKey').fill('e2e-typed-key')
@@ -228,14 +224,7 @@ test('with no key the message stays, the 「去设置」 card comes below it, an
 
     await send(page, 'and now?')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Now it works.')
-    expect(await threadOrder(page)).toEqual([
-      'user: hello there',
-      'assistant: [provider-error]',
-      'user: still nothing?',
-      'assistant: [provider-error]',
-      'user: and now?',
-      'assistant: Now it works.',
-    ])
+    expect(await threadOrder(page)).toEqual(['user: and now?', 'assistant: Now it works.'])
     // Nothing of the unsent message was written, so none of it went out with the next one.
     expect(server.requests).toHaveLength(1)
     const wire = JSON.stringify(messageBodies(server)[0]?.messages)

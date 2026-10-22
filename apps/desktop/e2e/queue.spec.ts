@@ -12,6 +12,8 @@ import {
 } from './helpers/navigation.js'
 import { expect, test } from './helpers/test.js'
 import {
+  ANTHROPIC_ORIGIN,
+  originMap,
   callsReply,
   makeFolderTree,
   providerEnv,
@@ -396,6 +398,55 @@ test('a queued bubble outlives the Run pausing, leaving the session and coming b
     await expect(page.getByTestId('user-text')).toHaveText(['read one', 'later please'])
     expect(server.requests).toHaveLength(2)
   } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11: an automatically sent queued item with no key still shows the missing-key failure card (02 验收 22)', async () => {
+  const hold = deferred()
+  fake = await startFakeAnthropic({ replies: [heldReply('Working', hold.promise)] })
+  const server = fake
+  const userData = makeUserDataDir('queue-missing-key')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [ANTHROPIC_ORIGIN]: server.baseURL }),
+    },
+  })
+  try {
+    await expect(page.getByTestId('composer-settings')).toBeVisible()
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.getByTestId('provider-config-apiKey').fill('e2e-queue-key')
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    await send(page, 'first')
+    await expect(page.getByTestId('assistant-text')).toHaveText('Working')
+    await send(page, 'queued before the key was removed')
+    await expect(page.getByTestId('queued-bubble')).toHaveCount(1)
+    expect(
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.configure', {
+          id: 'anthropic',
+          values: { apiKey: '' },
+        }),
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
+    hold.resolve()
+    await expect(page.getByTestId('queued-bubble')).toHaveCount(0)
+    const failed = page.getByTestId('failure-card')
+    await expect(failed).toHaveAttribute('data-code', 'provider-error')
+    await expect(failed.getByTestId('failure-action')).toHaveAttribute('data-action', 'settings')
+    await expect(failed.getByTestId('failure-what')).toHaveText(
+      'The API key for Anthropic is missing or not valid.',
+    )
+    expect(server.requests).toHaveLength(1)
+    expect(await routeCalls(app, 'chat.send')).toBe(2)
+  } finally {
+    hold.resolve()
     await app.close()
   }
 })

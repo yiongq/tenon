@@ -116,6 +116,7 @@ export const sandboxOutcomeSchema = z.object({
 
 export const toolOutcomeViewShape = {
   sandbox: sandboxOutcomeSchema.exactOptional(),
+  isError: z.boolean().exactOptional(),
   reversibility: reversibilitySchema.exactOptional(),
   effect: z.enum(['read', 'write', 'external', 'blocked']),
   state: executionStateSchema,

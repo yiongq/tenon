@@ -1,15 +1,17 @@
 import { useAuiState } from '@assistant-ui/react'
 import { invokeRoute, providerList, sessionModelChoice } from '@tenon-app/contracts'
-import type { RunEndReasonContract } from '@tenon-app/contracts'
+import type { ProviderEntryContract, RunEndReasonContract } from '@tenon-app/contracts'
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { SettingsModal } from '@/components/settings/SettingsModal'
 import { Button } from '@/components/ui/button'
 import { PathText } from '@/components/ui/path-text'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { customVendorGone, isInstanceId } from '@/lib/custom-vendor'
-import { cardOf, effectLineOf } from '@/lib/end-card'
-import type { EndVisual } from '@/lib/end-card'
+import { aggregateDone, cardOf, effectLineOf, providerErrorKey } from '@/lib/end-card'
+import type { DoneGroup, EndVisual } from '@/lib/end-card'
 import { toolSentence } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
@@ -22,19 +24,39 @@ import type { TurnCustom } from '@/runtime/to-thread-messages'
 export { cardOf }
 
 /**
- * The slots of an end reason's sentence: its own fields, nothing more (§结束原因词表); a reset time in
- * the interface's language, not the system's.
+ * Slots come from this end reason's own fields, with provider/model display names resolved from
+ * those fields (presentation-r1 §失败卡), and reset times in the interface's language.
  */
-function slotsOf(reason: RunEndReasonContract, locale: string): Record<string, unknown> {
+export function slotsOf(
+  reason: RunEndReasonContract,
+  locale: string,
+  t: TFunction,
+  providers: readonly ProviderEntryContract[],
+): Record<string, unknown> {
   const { code: _code, ...fields } = reason as RunEndReasonContract & Record<string, unknown>
+  const entry =
+    'providerId' in reason
+      ? providers.find((provider) => provider.id === reason.providerId)
+      : undefined
+  const names: Record<string, string> = {}
+  if ('providerId' in reason)
+    names.provider =
+      entry === undefined
+        ? t('failure.providerFallback')
+        : (entry.displayName ?? tx(t, entry.nameKey))
+  if ('modelId' in reason) {
+    const model = entry?.models.find((row) => row.id === reason.modelId)
+    names.model = model?.nameKey === undefined ? reason.modelId : tx(t, model.nameKey)
+  }
   if (reason.code === 'quota-exhausted') {
     const resetAt = (fields as { resetAt?: number | null }).resetAt
     return {
       ...fields,
+      ...names,
       resetAt: resetAt == null ? 'unknown' : new Date(resetAt).toLocaleString(locale),
     }
   }
-  return fields
+  return { ...fields, ...names }
 }
 
 const VISUAL_CLASS: Readonly<Record<EndVisual, string>> = {
@@ -45,8 +67,9 @@ const VISUAL_CLASS: Readonly<Record<EndVisual, string>> = {
 
 /**
  * Under a Run's last assistant turn: the summary line (what the round's calls did — read, changed,
- * sent out, from the last user message on, over every Run of the round) and, when the end calls for
- * it, the failure card's three lines: what happened, what it already did, one action.
+ * ran, went online, used connectors, from the last user message on, over every Run of the round)
+ * and, when the end calls for it, the failure card's three lines: what happened, what it already
+ * did, one action. A rejection is reported by the answered approval row alone; any summary of completed calls stays here.
  */
 export function RunEndCard(): JSX.Element | null {
   const custom = useAuiState((s) => s.message.metadata.custom) as unknown as TurnCustom | undefined
@@ -94,9 +117,8 @@ function queueWaits(snapshot: Pick<SessionSnapshot, 'queue' | 'held'>): boolean 
 }
 
 /**
- * An error that is not a Run's end — the send itself failed, so there is no `endReason` — shows as
- * in phase 1, by its code (§失败卡与结束原因 ①): the sentence, and 「重试」 sending that message again
- * while nothing came after it.
+ * An error that is not a Run's end uses its phase 1 code (§失败卡与结束原因 ①). Auth offers Settings;
+ * other errors offer Retry while nothing came after the message that failed to send.
  */
 function MessageError(props: {
   readonly code: ChatErrorCode
@@ -105,6 +127,7 @@ function MessageError(props: {
   const { t } = useTranslation()
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
+  const [settings, setSettings] = useState(false)
   const index = snapshot.model.turns.findIndex((turn) => turn.id === props.turnId)
   // The message it failed to send: the one just above this end.
   const sent = snapshot.model.turns.slice(0, index).findLast((turn) => turn.role === 'user')
@@ -118,7 +141,16 @@ function MessageError(props: {
       className="flex w-full items-center justify-between gap-3 rounded-sm border border-text-danger px-3 py-2 font-sans text-ui-sm text-text-danger"
     >
       <span data-testid="message-error-text">{t(ERROR_KEY[props.code])}</span>
-      {canRetry ? (
+      {props.code === 'auth' ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          data-testid="message-settings"
+          onClick={() => setSettings(true)}
+        >
+          {t('failure.settings')}
+        </Button>
+      ) : canRetry ? (
         <Button
           variant="secondary"
           size="sm"
@@ -128,15 +160,21 @@ function MessageError(props: {
           {t('error.retry')}
         </Button>
       ) : null}
+      {props.code === 'auth' ? <SettingsModal open={settings} onOpenChange={setSettings} /> : null}
     </div>
   )
 }
 
-function SummaryLine(props: { readonly summary: NonNullable<TurnCustom['summary']> }): JSX.Element {
+export function SummaryLine(props: {
+  readonly summary: NonNullable<TurnCustom['summary']>
+}): JSX.Element {
   const { t } = useTranslation()
   return (
     <p data-testid="turn-summary" className="font-sans text-micro text-text-muted">
-      {tx(t, 'summary.line', { ...props.summary })}
+      {Object.entries(props.summary)
+        .filter(([, count]) => count > 0)
+        .map(([kind, count]) => tx(t, `summary.${kind}`, { count }))
+        .join(t('summary.separator'))}
     </p>
   )
 }
@@ -145,33 +183,47 @@ function SummaryLine(props: { readonly summary: NonNullable<TurnCustom['summary'
  * M6 §实例被删或改坏「文案单列」: a provider error refusing a custom vendor instance — a new round finds
  * no definition or row and refuses as a missing key would, `errorCode: 'auth'`; a continuation that
  * cannot build its frozen provider ends the same way — while `provider.list` no longer lists that
- * instance or the row the session chose on it. False until both reads answer: the card keeps 02's
- * sentence rather than guess. A cleared key keeps the instance listed, and with it 02's copy.
+ * instance or the row the session chose on it. The list also supplies display names for every
+ * provider-bearing reason; until it answers the card uses the generic service name. A cleared key
+ * keeps the instance listed, and with it the normal auth sentence.
  */
-function useCustomVendorGone(reason: RunEndReasonContract): boolean {
+function useProviderDetails(reason: RunEndReasonContract): {
+  readonly providers: readonly ProviderEntryContract[]
+  readonly gone: boolean
+} {
   const { sessionId } = useConversation()
-  const providerId =
+  const providerId = 'providerId' in reason ? reason.providerId : null
+  const checkGone =
     reason.code === 'provider-error' &&
     reason.errorCode === 'auth' &&
-    isInstanceId(reason.providerId)
-      ? reason.providerId
-      : null
-  const [gone, setGone] = useState(false)
+    providerId !== null &&
+    isInstanceId(providerId)
+  const [details, setDetails] = useState<{
+    providerId: string
+    providers: readonly ProviderEntryContract[]
+    gone: boolean
+  } | null>(null)
   useEffect(() => {
     if (providerId === null) return
     let current = true
     void Promise.all([
       invokeRoute(window.tenon, providerList, {}),
-      invokeRoute(window.tenon, sessionModelChoice, { sessionId }),
+      checkGone ? invokeRoute(window.tenon, sessionModelChoice, { sessionId }) : null,
     ]).then(([list, choice]) => {
       if (!current || !list.ok) return
-      setGone(customVendorGone(providerId, choice.ok ? choice.data : null, list.data))
+      setDetails({
+        providerId,
+        providers: list.data,
+        gone: checkGone && customVendorGone(providerId, choice?.ok ? choice.data : null, list.data),
+      })
     })
     return () => {
       current = false
     }
-  }, [providerId, sessionId])
-  return gone
+  }, [providerId, checkGone, sessionId])
+  return details?.providerId === providerId && details !== null
+    ? details
+    : { providers: [], gone: false }
 }
 
 function FailureCard(props: {
@@ -185,12 +237,13 @@ function FailureCard(props: {
   const snapshot = useSessionSnapshot()
   const [copied, setCopied] = useState(false)
   const [settings, setSettings] = useState(false)
-  const gone = useCustomVendorGone(props.reason)
+  const { gone, providers } = useProviderDetails(props.reason)
   const shape = cardOf(props.reason, props.retryOf !== null)
   if (shape === null) return null
   const turns = snapshot.model.turns
   const index = turns.findIndex((turn) => turn.id === props.turnId)
   const effects = effectsOf(turns, index)
+  const done = aggregateDone(effects.done)
   const later = superseded(snapshot, index) || (shape.action === 'retry' && queueWaits(snapshot))
   const act = (): void => {
     switch (shape.action) {
@@ -238,12 +291,21 @@ function FailureCard(props: {
       data-testid="failure-card"
       data-code={props.reason.code}
       data-visual={shape.visual}
-      className={`flex flex-col gap-1 rounded-sm border px-3 py-2 font-sans text-ui-sm ${VISUAL_CLASS[shape.visual]}`}
+      className={`flex w-full flex-col gap-1 rounded-sm border px-3 py-2 font-sans text-ui-sm ${VISUAL_CLASS[shape.visual]}`}
     >
       <p data-testid="failure-what" data-custom-vendor-gone={gone}>
         {gone
           ? t('error.customVendorGone')
-          : tx(t, `runEnd.${props.reason.code}`, slotsOf(props.reason, i18n.language))}
+          : tx(
+              t,
+              props.reason.code === 'provider-error'
+                ? providerErrorKey(props.reason.errorCode)
+                : `runEnd.${props.reason.code}`,
+              slotsOf(props.reason, i18n.language, t, providers),
+            )}
+        {!gone && props.reason.code === 'provider-error' && props.reason.attempts > 1
+          ? t('failure.attempts', { count: props.reason.attempts })
+          : null}
       </p>
       <div data-testid="failure-effects" className="text-text-secondary">
         {effects.none ? <p>{t('failure.effects.none')}</p> : null}
@@ -251,12 +313,24 @@ function FailureCard(props: {
           <>
             <p>{t('failure.effects.doneHeading', { count: effects.done.length })}</p>
             <ul className="list-disc pl-5" data-testid="failure-effects-done">
-              {effects.done.map((part) => (
-                <li key={part.callKey}>
-                  <PathText text={toolSentence(t, part.name, part.input)} />
-                </li>
+              {done.visible.map((group) => (
+                <DoneItem key={group.part.callKey} group={group} />
               ))}
             </ul>
+            {done.folded.length === 0 ? null : (
+              <details data-testid="failure-effects-more">
+                <summary className="cursor-pointer">
+                  {t('failure.effects.expandAll', {
+                    count: done.visible.length + done.folded.length,
+                  })}
+                </summary>
+                <ul className="list-disc pl-5">
+                  {done.folded.map((group) => (
+                    <DoneItem key={group.part.callKey} group={group} />
+                  ))}
+                </ul>
+              </details>
+            )}
           </>
         )}
         {counted.length === 0 ? null : <p>{counted.join(' ')}</p>}
@@ -281,9 +355,32 @@ function FailureCard(props: {
   )
 }
 
+function DoneItem({ group }: { readonly group: DoneGroup }): JSX.Element {
+  const { t } = useTranslation()
+  const { part, count, object, fullObject } = group
+  const suffix = count > 1 ? ` ×${count}` : ''
+  const full = toolSentence(t, part.name, part.input) + suffix
+  const short =
+    object === fullObject
+      ? full
+      : toolSentence(t, part.name, { ...part.input, file_path: object }) + suffix
+  return (
+    <li>
+      <Tooltip>
+        <TooltipTrigger render={<span />} tabIndex={0} aria-label={full}>
+          <PathText text={short} />
+        </TooltipTrigger>
+        <TooltipContent>
+          <PathText text={full} />
+        </TooltipContent>
+      </Tooltip>
+    </li>
+  )
+}
+
 /**
  * ② of the card: this round's calls by state (§失败卡与结束原因, §点停止时各状态怎么收) — the completed
- * ones by name; a stopped one says its later writes did not happen, except a request already sent
+ * ones grouped by tool and object; a stopped one says its later writes did not happen, except a request already sent
  * out, which may have reached the other side (lib/end-card.ts `effectLineOf`).
  */
 function effectsOf(

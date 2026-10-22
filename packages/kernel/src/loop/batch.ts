@@ -84,7 +84,7 @@ import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause, SandboxPorts } from './ports.js'
-import { handoffView } from './events.js'
+import { handoffView, resultErrorView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
 /** One complete client call of a reply, as `tool/call` records it. */
@@ -1013,6 +1013,7 @@ export function closedView(
       ? {}
       : { facts: outcome['facts'] as Record<string, string> }),
     output: textOf(result['content']),
+    ...resultErrorView(result['isError']),
     ...(permission === undefined ? {} : { permission }),
     ...(result['handoff'] === undefined
       ? {}

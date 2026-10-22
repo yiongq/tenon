@@ -207,6 +207,7 @@
   - 命令：U 上列文件；G。
   - 平台：任意。
   - 突变：① 有保护名单违规也给重跑 → 红；② observed 的路径给按钮 → 红；③ 不显示那一句 → 红；④ 去掉按钮下面那行 → 「what it allows」那条红；⑤ 沙箱回执照旧渲染 `blocked.told` → 「neither」那条红；⑥ 公网 IP 用「指向本机或内网」那句 → 「why line」那条红；⑦ 没有 `release` 的文件违规写成「没能写入」→ 「写入 only」那条红；⑧ 按目标路径猜「凭据」另出一句 → 「classed by release and protected」那条红；⑨ 违规全带 `observed`、退出码为 0 的调用也给重跑按钮 → 「hint only」那条红；⑩ 违规全带 `observed` 就不给、不看退出码 → 同一条红。
+  - 2026-10-22 presentation-r1 第 11 步交接：卡面位置照 presentation-r1 §审批卡（③ 放 `elevated` 句，「沙箱不可用」在 ③ 与 ④ 之间），按键与焦点仍照 02；`elevated` 句照 04 §界面 原文并带完整命令，③ 规则与验收 2 对它豁免，第 18 步若把命令与「只允许这一次，不会记住」交给对象行与「允许（只这一次）」钮，须在 04 的 `Revisions:` 记下；旧四码回执已照 presentation-r1 §拦截回执 改为一行（04 spec 已改指该节）；copy-coverage 以 presentation-r1 合入后的实际断言为准，不按旧的 :304、:315 行号与计数。
 
 - [ ] 19. e2e 与文案（spec §验收标准 30–33）
   - 文件：新 `apps/desktop/e2e/sandbox.spec.ts`（`fake` 接缝）、`apps/desktop/e2e/text-fit-04.spec.ts`；`apps/desktop/test/copy-coverage.test.ts` 加新键，并加「04 验收 33: receipt and elevated-card copy names no mechanism」（这些键连同 `blocked.sandbox`、`closure.sandbox` 的值，zh-CN 不含「沙箱」「模型」、en 不分大小写不含 sandbox、model；键集合在测试里逐项写成字面量）。

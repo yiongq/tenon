@@ -52,21 +52,21 @@ test('a new session whose only model is text-only: 任务 disables 「发送」 
   })
   const { app, page } = await launchTenon({ userData, env: COUNT_ROUTES })
   try {
-    const modes = page.getByTestId('mode-switch')
+    const modes = page.getByTestId('folder-toggle')
     const block = page.getByTestId('composer-send-block')
     const sendButton = page.getByTestId('composer-send')
     const input = page.getByTestId('composer-input')
-    await expect(modes).toHaveAttribute('data-profile', 'chat')
+    await expect(modes).toHaveAttribute('aria-checked', 'false')
     await expect(page.getByTestId('model-menu-current')).toHaveText('qwen3:8b')
     await input.fill('what can you do?')
     // A text conversation on it is fine.
     await expect(sendButton).toBeEnabled()
     await expect(block).toHaveCount(0)
 
-    await page.getByTestId('mode-cowork').click()
-    await expect(modes).toHaveAttribute('data-profile', 'cowork')
+    await page.getByTestId('folder-toggle').click()
+    await expect(modes).toHaveAttribute('aria-checked', 'true')
     await expect(block).toHaveAttribute('data-reason', 'textOnlyTask')
-    await expect(block).toHaveText('这个模型不能用工具，不能执行任务。请换一个模型。')
+    await expect(block).toHaveText('这个模型不能用工具。换一个模型，或关掉「在文件夹里工作」。')
     await expect(sendButton).toBeDisabled()
     // The reason is the button's description, not just text nearby.
     await expect(sendButton).toHaveAttribute('aria-describedby', 'composer-send-block')
@@ -80,8 +80,8 @@ test('a new session whose only model is text-only: 任务 disables 「发送」 
     await expect(page.getByTestId('user-message')).toHaveCount(0)
     expect(server.requests).toHaveLength(0)
 
-    await page.getByTestId('mode-chat').click()
-    await expect(modes).toHaveAttribute('data-profile', 'chat')
+    await page.getByTestId('folder-toggle').click()
+    await expect(modes).toHaveAttribute('aria-checked', 'false')
     await expect(block).toHaveCount(0)
     await input.fill('what can you do?')
     await expect(sendButton).toBeEnabled()
@@ -118,7 +118,7 @@ test('the model menu follows the mode switch: a task on its own verified default
   writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
   const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
-    const modes = page.getByTestId('mode-switch')
+    const modes = page.getByTestId('folder-toggle')
     const current = page.getByTestId('model-menu-current')
     const block = page.getByTestId('composer-send-block')
     const sendButton = page.getByTestId('composer-send')
@@ -126,16 +126,49 @@ test('the model menu follows the mode switch: a task on its own verified default
     await expect(current).toHaveText('qwen3:8b')
     await expect(sendButton).toBeEnabled()
 
-    await page.getByTestId('mode-cowork').click()
-    await expect(modes).toHaveAttribute('data-profile', 'cowork')
+    await page.getByTestId('folder-toggle').click()
+    await expect(modes).toHaveAttribute('aria-checked', 'true')
     await expect(current).toHaveText('Opus 5.5 · Medium')
     await expect(block).toHaveCount(0)
     await expect(sendButton).toBeEnabled()
 
-    await page.getByTestId('mode-chat').click()
-    await expect(modes).toHaveAttribute('data-profile', 'chat')
+    await page.getByTestId('folder-toggle').click()
+    await expect(modes).toHaveAttribute('aria-checked', 'false')
     await expect(current).toHaveText('qwen3:8b')
     await expect(block).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 10: no toggle after the first message; a task keeps its chip; selectProfile answers established', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
+  const userData = makeUserDataDir('composer-established')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
+  try {
+    await expect(page.getByTestId('folder-toggle')).toHaveAccessibleName('Work in a folder')
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-chip')).toHaveText('Session folder')
+    await send(page, 'hello')
+    await expect(page.getByTestId('assistant-text')).toHaveText('ok')
+    await expect(page.getByTestId('folder-toggle')).toHaveCount(0)
+    await expect(page.getByTestId('composer-lead').getByTestId('folder-chip')).toBeVisible()
+    const result = await page.evaluate(async () => {
+      const latest = (await window.tenon.invoke('session.latest', { limit: 1 })) as {
+        data: { sessionId: string } | null
+      }
+      if (latest.data === null) throw new Error('no established session')
+      return await window.tenon.invoke('session.selectProfile', {
+        sessionId: latest.data.sessionId,
+        profile: 'chat',
+      })
+    })
+    expect(result).toEqual({ ok: true, data: { ok: false, code: 'established' } })
+    await page.reload()
+    await expect(page.getByTestId('assistant-text')).toHaveText('ok')
+    await expect(page.getByTestId('folder-toggle')).toHaveCount(0)
+    await expect(page.getByTestId('composer-lead').getByTestId('folder-chip')).toBeVisible()
   } finally {
     await app.close()
   }

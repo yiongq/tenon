@@ -1,10 +1,13 @@
 import { ComposerPrimitive, useAui } from '@assistant-ui/react'
 import { ArrowUpIcon, SquareIcon } from 'lucide-react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import type { JSX, KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ComposerLead } from '@/components/composer/ComposerLead'
-import { FolderChip } from '@/components/composer/FolderChip'
+import { SettingsModal } from '@/components/settings/SettingsModal'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { ModelMenuHandle } from '@/components/composer/ModelMenu'
+import { MODEL_BLOCK_KEY, switchTarget } from '@/lib/send-block'
 import { ModelMenu } from '@/components/composer/ModelMenu'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
@@ -33,7 +36,7 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
 /**
  * The composer (spec 02 §模型菜单与输入框「输入框」; H13, B1, F11, H6, B15): a two-row frame, the
  * editor on top and a tool row under it. The tool row's left cluster is `ComposerLead` (the mode
- * switch); its right cluster is the model chip and the round 「发送」 at the end, always there. While a
+ * toggle and folder chip); its right cluster is the model chip and the round 「发送」 at the end, always there. While a
  * Run is live (or a card or a question waits, or the session can resume) a square 「停止」 stands beside
  * them — send and stop side by side (§「停止与发送」): sending then queues; Cmd/Ctrl+Enter stops the Run
  * the user sees and sends this next. Stop takes the free room on the cluster's left, so neither the
@@ -42,11 +45,8 @@ function isImeEnter(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
  * fires. While a question waits, 「发送」 is its typed answer (§插话与输入框状态表「等提问」).
  *
  * Under the box, 8px down, one muted line that keeps its place whatever it says: a hint replacing the
- * disclaimer moves nothing. Under that, a task's folders (§界面范围 `FolderChip`「位于输入框下方」). A
- * chat keeps the folder row's height too, empty, as the bottom margin: switching to 「任务」 on the home
- * screen fills it and lifts neither the box nor the line, and neither the first message (which fixes
- * the mode) nor opening another session moves them. Only a folder row that wraps to a second line (a
- * long name, many folders) lifts them by that line.
+ * disclaimer moves nothing. Folders are in the tool row (presentation-r1 R3/R8); toggling on adds
+ * the chip without moving the box or this line. Only a long folder name makes the tool row taller.
  */
 export function Composer(): JSX.Element {
   const { t } = useTranslation()
@@ -55,7 +55,37 @@ export function Composer(): JSX.Element {
   const snapshot = useSessionSnapshot()
   const waiting = snapshot.pending !== null
   const stoppable = snapshot.running || waiting || snapshot.resumable
-  const block = !snapshot.canSend ? 'restoring' : snapshot.textOnlyTask ? 'textOnlyTask' : null
+  const block = store.sendBlock()
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const menu = useRef<ModelMenuHandle | null>(null)
+  const descriptionId = useId()
+  const unavailable = block !== null && block !== 'restoring' && block !== 'textOnlyTask'
+  const target = unavailable
+    ? switchTarget(snapshot.providers ?? [], snapshot.facts?.profile ?? 'chat')
+    : null
+  const description =
+    target === null
+      ? ''
+      : target.entry.endpoint.reach === 'loopback'
+        ? t('model.row.staysLocal')
+        : t('model.row.sendsTo', { host: target.entry.endpoint.host })
+  const targetLabel =
+    target === null
+      ? ''
+      : t('composer.switchModel', {
+          provider: target.entry.displayName ?? t(target.entry.nameKey as never),
+          model: target.row.nameKey === undefined ? target.row.id : t(target.row.nameKey as never),
+        })
+  const blockKey =
+    block === 'restoring'
+      ? 'composer.restoring'
+      : block === 'textOnlyTask'
+        ? snapshot.facts?.established
+          ? 'composer.textOnlyTaskEstablished'
+          : 'composer.textOnlyTask'
+        : block === null
+          ? null
+          : MODEL_BLOCK_KEY[block]
   // A keyboard user's focus never drops to the page: 「发送」 goes disabled once the draft is sent and
   // 「停止」 goes away once the Run is over, and either would take the focus with it. It moves to the
   // editor, where the next thing typed belongs.
@@ -78,7 +108,7 @@ export function Composer(): JSX.Element {
       event.preventDefault()
       const raw = aui.composer().getState().text
       const text = snapshot.pending?.waitKind === 'question' ? raw : raw.trim()
-      // The same two reasons that disable 「发送」 hold here (B15: 按回车也不发送).
+      // The same reasons that disable 「发送」 hold here (B15: 按回车也不发送).
       if (text.trim() === '' || store.sendBlock() !== null) return
       aui.composer().setText('')
       // While a card or a question waits, Cmd/Ctrl+Enter is a plain send (§插话与输入框状态表).
@@ -131,7 +161,7 @@ export function Composer(): JSX.Element {
                 <SquareIcon aria-hidden className="size-3 fill-current" />
               </button>
             ) : null}
-            <ModelMenu />
+            <ModelMenu ref={menu} />
             <ComposerPrimitive.Send
               data-testid="composer-send"
               // Runs before the send itself, while the button is still enabled and focused.
@@ -149,8 +179,50 @@ export function Composer(): JSX.Element {
           「发送」 is off, else what sending now would do to the waiting card, else the disclaimer. */}
       <div className="mt-2 min-h-4 text-center font-sans text-micro text-text-muted">
         {block !== null ? (
-          <p id="composer-send-block" data-testid="composer-send-block" data-reason={block}>
-            {t(block === 'restoring' ? 'composer.restoring' : 'composer.textOnlyTask')}
+          <p
+            id="composer-send-block"
+            data-testid="composer-send-block"
+            data-reason={block}
+            className="flex flex-wrap items-baseline justify-center gap-x-1 gap-y-1"
+          >
+            <span data-testid="composer-block-reason" className="shrink-0 whitespace-nowrap">
+              {t(blockKey!)}
+            </span>
+            {target !== null ? (
+              <>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        data-testid="composer-switch-model"
+                        aria-label={targetLabel}
+                        aria-describedby={descriptionId}
+                        className="min-w-0 max-w-full shrink-0 wrap-anywhere whitespace-normal text-text-secondary underline underline-offset-2"
+                        onClick={() => void menu.current?.switchTo(target)}
+                      />
+                    }
+                  >
+                    {targetLabel}
+                  </TooltipTrigger>
+                  <TooltipContent data-testid="composer-switch-tooltip">
+                    {description}
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            ) : null}
+            {unavailable && block !== 'modelRemoved' ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="composer-settings"
+                  className="shrink-0 whitespace-nowrap text-text-secondary underline underline-offset-2"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  {t('composer.settings')}
+                </button>
+              </>
+            ) : null}
           </p>
         ) : waiting && snapshot.pending?.waitKind === 'approval' ? (
           <p data-testid="composer-pending-hint">{t('composer.pendingHint')}</p>
@@ -159,11 +231,13 @@ export function Composer(): JSX.Element {
             {t('composer.disclaimer')}
           </p>
         )}
+        {target === null ? null : (
+          <span id={descriptionId} className="sr-only">
+            {description}
+          </span>
+        )}
       </div>
-      {/* One row's height whether or not the chip is in it (FolderChip keeps its row to it). */}
-      <div data-testid="folder-slot" className="mt-2 min-h-5">
-        <FolderChip />
-      </div>
+      <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   )
 }

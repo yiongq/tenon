@@ -5,9 +5,13 @@
  * (s19-safety-3); a host the session's own choice already confirmed is not asked again (rrE-1). The
  * e2e half is model-menu.spec.ts.
  */
-import type { ProviderEndpoint } from '@tenon-app/contracts'
+import type { ProviderEndpoint, ProviderEntryContract } from '@tenon-app/contracts'
 import { describe, expect, it } from 'vitest'
-import { confirmHostFor, heldConfirmHost } from '../src/renderer/src/lib/data-flow.js'
+import {
+  confirmHostFor,
+  heldConfirmHost,
+  rowHostInLine,
+} from '../src/renderer/src/lib/data-flow.js'
 
 const LOCAL: ProviderEndpoint = { host: '127.0.0.1', reach: 'loopback' }
 const LAN: ProviderEndpoint = { host: '192.168.1.20', reach: 'private' }
@@ -60,4 +64,45 @@ describe('heldConfirmHost', () => {
     expect(heldConfirmHost('api.anthropic.com', ZHIPU)).toBe('open.bigmodel.cn')
     expect(heldConfirmHost('api.anthropic.com', undefined)).toBe('api.anthropic.com')
   })
+})
+
+const baseURL = (value: string): ProviderEntryContract['configKeys'] => [
+  {
+    name: 'baseURL',
+    required: true,
+    secret: false,
+    primary: false,
+    labelKey: 'provider.ollama.baseURL',
+    default: value,
+    configured: true,
+  },
+]
+
+it('presentation-r1 验收 9: the host stays in the line for an instance and for a built-in off its declared default', () => {
+  expect(
+    rowHostInLine({ configKeys: baseURL('https://api.anthropic.com'), endpoint: ANTHROPIC }),
+  ).toBe(false)
+  expect(rowHostInLine({ configKeys: baseURL('https://open.bigmodel.cn'), endpoint: ZHIPU })).toBe(
+    false,
+  )
+  expect(rowHostInLine({ configKeys: baseURL('http://127.0.0.1:11434'), endpoint: LOCAL })).toBe(
+    false,
+  )
+  expect(rowHostInLine({ configKeys: baseURL('http://127.0.0.1:11434'), endpoint: LAN })).toBe(true)
+  // An instance declares its OWN address as the default; equality must never hide its destination.
+  expect(
+    rowHostInLine({
+      displayName: 'My gateway',
+      configKeys: baseURL('https://api.anthropic.com'),
+      endpoint: ANTHROPIC,
+    }),
+  ).toBe(true)
+  expect(
+    rowHostInLine({
+      displayName: 'Local instance',
+      configKeys: baseURL('http://127.0.0.1:11434'),
+      endpoint: LOCAL,
+    }),
+  ).toBe(true)
+  expect(rowHostInLine({ configKeys: [], endpoint: LAN })).toBe(true)
 })

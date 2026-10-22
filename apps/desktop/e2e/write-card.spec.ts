@@ -104,7 +104,7 @@ test('a Write card outlives a restart as one card, and 「允许」 then writes 
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Written.')
     expect(contentOf(file)).toBe('hello\n')
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
-    await expect(row.getByTestId('approval-answered')).toHaveText(`Allowed · This session${file}`)
+    await expect(row.getByTestId('approval-answered')).toHaveText('Allowed (This session)')
     // The resumed request went to the paused Run's provider (this fake endpoint) and model, with the
     // Write's result in it.
     const bodies = server.requests.map((request) => request.body as { model: string })
@@ -215,7 +215,7 @@ test('two writes in one reply: denying the first turns the stacked row 「未执
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-deny').click()
 
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     await expect(card).toHaveCount(0)
     const rows = page.getByTestId('tool-row')
     await expect(rows).toHaveCount(2)
@@ -233,7 +233,7 @@ test('two writes in one reply: denying the first turns the stacked row 「未执
   }
 })
 
-test('a workspace Write card: the path, the change collapsed and then plain text, 「本会话」 by 「允许」; the same file’s next Write asks nothing, an Edit of it does (旧 215, acceptance 36)', async () => {
+test('presentation-r1 验收 3: a workspace Write card: the path, the change collapsed and then plain text, 「允许（本会话）」; the same file’s next Write asks nothing, an Edit of it does (旧 215, acceptance 36)', async () => {
   const folders = makeFolderTree('write-card', { 'ws/keep.txt': 'keep\n' })
   tree = folders
   const ws = join(folders.real, 'ws')
@@ -261,10 +261,12 @@ test('a workspace Write card: the path, the change collapsed and then plain text
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-title')).toHaveText('修改这个文件？')
     await expect(card.getByTestId('approval-object')).toHaveText(file)
-    await expect(card.getByTestId('approval-reason')).toHaveText('Write 需要你批准。')
+    await expect(card.getByTestId('approval-reason')).toHaveCount(0)
+    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 没法替你撤回这次改动。')
+    await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
     await expect(card.getByTestId('approval-irreversible')).toHaveCount(0)
-    // 「本会话」 beside 「允许」: this file, this session.
-    await expect(card.getByTestId('approval-scope')).toHaveText('本会话')
+    // The allow button says this file, this session.
+    await expect(card.getByTestId('approval-allow')).toHaveText('允许（本会话）⏎')
     expect((await waitingApproval(page)).allowScope).toBe('session')
     // The change starts collapsed.
     const toggle = card.getByTestId('approval-change-toggle')
@@ -289,13 +291,16 @@ test('a workspace Write card: the path, the change collapsed and then plain text
     const edit = rows.nth(2).getByTestId('approval-card')
     await expect(edit).toHaveCount(1)
     expect(contentOf(file)).toBe('v2\n')
-    await expect(rows.first().getByTestId('approval-answered')).toHaveText(`已允许 · 本会话${file}`)
+    // The tool sentence names the symlink; the receipt must retain the distinct real path (验收 4).
+    await expect(rows.first().getByTestId('approval-answered')).toHaveText(
+      `已允许（本会话） · ${file}`,
+    )
     await expect(rows.nth(1).getByTestId('approval-answered')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('approval-card')).toHaveCount(0)
     await expect(rows.nth(1).getByTestId('tool-row-closure')).toHaveCount(0)
 
     // The Edit's change: old_string and new_string, each under its label.
-    await expect(edit.getByTestId('approval-scope')).toHaveText('本会话')
+    await expect(edit.getByTestId('approval-allow')).toHaveText('允许（本会话）⏎')
     await edit.getByTestId('approval-change-toggle').click()
     await expect(edit.getByTestId('approval-change-label')).toHaveText(['把这段', '改成'])
     await expect(edit.getByTestId('approval-change-text')).toHaveText(['v2', 'v3'])
@@ -310,7 +315,7 @@ test('a workspace Write card: the path, the change collapsed and then plain text
   }
 })
 
-test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
+test('presentation-r1 验收 3 / presentation-r1 不变量 1: a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
   test.setTimeout(120_000)
   const folders = makeFolderTree('irreversible', { 'ws/a.txt': 'alpha\n', 'ws/b.txt': 'beta\n' })
   tree = folders
@@ -344,15 +349,13 @@ test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in i
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-title')).toHaveText('运行这条命令？')
     await expect(card.getByTestId('approval-object')).toHaveText(`rm a.txt位于 ${ws}`)
-    await expect(card.getByTestId('approval-reason')).toHaveText(
-      `每条命令都先问：在 ${ws} 运行 rm a.txt。`,
-    )
+    await expect(card.getByTestId('approval-reason')).toHaveCount(0)
     // The sentence of its own, and the buttons 「拒绝 ⏎ Esc」「允许」, the second with no key hint.
     await expect(card.getByTestId('approval-irreversible')).toHaveText('撤不回。')
     await expect(card.getByTestId('approval-deny')).toHaveText('拒绝⏎ Esc')
-    await expect(card.getByTestId('approval-allow')).toHaveText('允许')
+    await expect(card.getByTestId('approval-allow')).toHaveText('允许（只这一次）')
     await expect(card.getByTestId('approval-allow-keys')).toHaveCount(0)
-    await expect(card.getByTestId('approval-scope')).toHaveText('只这一次')
+    await expect(card.getByTestId('approval-scope')).toHaveCount(0)
     // No change to show: the command on the object line is the whole of it.
     await expect(card.getByTestId('approval-change-toggle')).toHaveCount(0)
     const pending = await waitingApproval(page)
@@ -378,7 +381,7 @@ test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in i
     await expect(card.getByTestId('approval-allow')).toBeFocused()
     await page.keyboard.press('Enter')
     await expect(row.getByTestId('approval-answered')).toHaveAttribute('data-outcome', 'denied')
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
     expect(contentOf(a)).toBe('alpha\n')
 
     // ② ⏎ on the card itself denies.
@@ -400,7 +403,7 @@ test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in i
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
     await expect(third.getByTestId('approval-answered')).toHaveText(
-      `已允许 · 只这一次rm a.txt位于 ${ws}`,
+      `已允许（只这一次） · 位于 ${ws}`,
     )
     await expect.poll(() => contentOf(a)).toBeNull()
 
@@ -418,7 +421,7 @@ test('a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in i
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Removed.')
     expect(contentOf(b)).toBeNull()
     await expect(page.getByTestId('approval-answered').last()).toHaveText(
-      `已允许 · 只这一次rm b.txt位于 ${ws}`,
+      `已允许（只这一次） · 位于 ${ws}`,
     )
     expect(server.requests).toHaveLength(5)
   } finally {
@@ -509,7 +512,7 @@ test('a round with a write allowed and reads after it shows one summary line, af
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
     // Three reads and the write, over both Runs, under the round's last reply.
-    await expect(summary).toHaveText('Read 3 · changed 1')
+    await expect(summary).toHaveText('Read 3 files · Changed 1 file')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)
@@ -564,3 +567,50 @@ test('a hard link in the workspace to a file outside it: today it asks as a work
     await app.close()
   }
 })
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`presentation-r1 验收 4: a Write through a linked workspace keeps the real path live and after restart (${locale})`, async () => {
+    const folders = makeFolderTree('write-linked', { 'ws/notes/keep.txt': 'keep\n' })
+    tree = folders
+    const ws = join(folders.real, 'ws')
+    const path = join(ws, 'notes', 'today.md')
+    fake = await startFakeAnthropic({
+      replies: [
+        callsReply(
+          writeCall('toolu_linked', join(folders.link, 'ws', 'notes', 'today.md'), 'today\n'),
+        ),
+        textReply('Written.'),
+      ],
+    })
+    const userData = makeUserDataDir('write-linked')
+    seedConfig(userData, { locale })
+    const expected =
+      locale === 'en' ? `Allowed (This session) · ${path}` : `已允许（本会话） · ${path}`
+    const first = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await startTask(first.app, first.page, join(folders.link, 'ws'))
+      await send(first.page, 'write today’s note')
+      const card = first.page.getByTestId('approval-card')
+      await expect(card.getByTestId('approval-object')).toHaveText(path)
+      await expect(first.page.getByTestId('tool-row-line')).toHaveText(
+        locale === 'en'
+          ? `Write ${join(folders.link, 'ws', 'notes', 'today.md')}`
+          : `写入 ${join(folders.link, 'ws', 'notes', 'today.md')}`,
+      )
+      await first.page.waitForTimeout(PAST_CLICK_GUARD_MS)
+      await card.getByTestId('approval-allow').click()
+      await expect(first.page.getByTestId('assistant-text').last()).toHaveText('Written.')
+      await expect(first.page.getByTestId('approval-answered')).toHaveText(expected)
+      expect(contentOf(path)).toBe('today\n')
+    } finally {
+      await first.app.close()
+    }
+    const second = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+    try {
+      await expect(second.page.getByTestId('approval-answered')).toHaveText(expected)
+      await expect(second.page.getByTestId('approval-card')).toHaveCount(0)
+    } finally {
+      await second.app.close()
+    }
+  })
+}

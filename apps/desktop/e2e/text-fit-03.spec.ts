@@ -32,7 +32,7 @@ async function expectScrollableLabels(locator: Locator) {
   }
 }
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`03 验收 46: connector pane, form, grant and card fit in ${locale}`, async () => {
+  test(`presentation-r1 验收 1: connector pane, form, grant and card fit in ${locale}`, async () => {
     const fake = await startFakeAnthropic({
       replies: [callsReply(connectorCall('toolu_card', 'echo'))],
     })
@@ -176,7 +176,8 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await send(page, 'echo')
       const card = page.getByTestId('approval-card')
       await expect(card).toBeVisible()
-      await expectSingleLineUnclipped(card.getByTestId('reversibility-scale').locator('span'), 5)
+      await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
+      await expectSingleLineUnclipped(card.getByTestId('approval-undo'))
       await expectSingleLineUnclipped(card.getByTestId('approval-server'))
       await expectSingleLineUnclipped(card.locator('button'), 2)
       if (evidence)
@@ -193,10 +194,15 @@ for (const locale of ['zh-CN', 'en'] as const) {
 }
 
 for (const locale of ['zh-CN', 'en'] as const) {
-  test(`03 验收 46: relogin and side-effect text fit in ${locale}`, async () => {
+  test(`presentation-r1 验收 6: relogin and side-effect text fit in ${locale} (03 验收 46)`, async () => {
     const http = await startHttpFixture({ era: 'legacy' }),
       fake = await startFakeAnthropic({
-        replies: [callsReply(connectorCall('toolu_unauth', 'echo')), textReply('unauthorized')],
+        replies: [
+          callsReply(connectorCall('toolu_ok', 'echo')),
+          textReply('done'),
+          callsReply(connectorCall('toolu_unauth', 'echo')),
+          textReply('unauthorized'),
+        ],
       })
     const userData = makeUserDataDir('fit03-row-' + locale),
       config = mcpServerSchema.parse({
@@ -221,16 +227,24 @@ for (const locale of ['zh-CN', 'en'] as const) {
         .click()
       await page.getByTestId('tool-setting-echo').selectOption('always-allow')
       await closeSettings(page)
-      http.set({ failNext: '401' })
       await send(page, 'echo')
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('done')
+      await page.getByTestId('tool-row-line').click()
+      const did = page.getByTestId('tool-side-effects')
+      await expect(did).toHaveText(
+        locale === 'en'
+          ? "Used a connector · If this changes anything, Tenon can't undo it."
+          : '用了连接器 · 如果它改了东西，Tenon 没法替你撤回。',
+      )
+      await expectSingleLineUnclipped(did)
+      http.set({ failNext: '401' })
+      await send(page, 'echo again')
       await expect(page.getByTestId('tool-relogin')).toBeVisible()
       await expectSingleLineUnclipped(page.getByTestId('tool-relogin'))
-      await page.getByTestId('tool-row-line').click()
-      await expect(page.getByTestId('tool-side-effects')).toBeVisible()
-      await expectSingleLineUnclipped(page.getByTestId('tool-side-effects').locator('p'), 2)
-      await expect(page.getByTestId('tool-side-effects')).toContainText(
-        locale === 'en' ? 'Not run' : '没执行',
-      )
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('unauthorized')
+      const failed = page.getByTestId('tool-row').last()
+      await failed.getByTestId('tool-row-line').click()
+      await expect(failed.getByTestId('tool-side-effects')).toHaveCount(0)
     } finally {
       await app.close()
       await Promise.all([http.close(), fake.close()])

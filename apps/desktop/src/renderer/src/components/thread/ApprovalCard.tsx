@@ -12,16 +12,18 @@ import {
   keyAnswer,
   keyHints,
   objectParts,
+  whyKey,
+  undoKey,
 } from '@/lib/approval-card'
-import { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey } from '@/lib/approval-keys'
-import { reversibilityScale } from '@/lib/reversibility-scale'
+import { APPROVAL_CLICK_GUARD_MS, allowLabelKey, scopeKey } from '@/lib/approval-keys'
+import { hostOfUrl } from '@/lib/url-host'
 import { useMcp } from '@/runtime/mcp-store'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import type { PendingCard } from '@/runtime/session-store'
 
 // The guard and the two key tables live in lib/approval-keys.ts, where a node test can reach them.
-export { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey }
+export { APPROVAL_CLICK_GUARD_MS, reasonKey, scopeKey } from '@/lib/approval-keys'
 
 type Card = PendingCard['card']
 
@@ -106,6 +108,8 @@ export function ApprovalCard(props: {
   const change = changeView(card, props.toolName, props.input)
   const [showChange, setShowChange] = useState(change?.expanded === true)
   const hints = keyHints(card)
+  const why = whyKey(card)
+  const undo = undoKey(card)
   const subtask = props.pending.callKey !== props.pending.anchorCallKey
   const guarded = (): boolean => Date.now() - props.since < APPROVAL_CLICK_GUARD_MS
   const answer = (decision: 'allow' | 'deny'): void => {
@@ -150,23 +154,6 @@ export function ApprovalCard(props: {
       <p className="text-ui font-medium text-text-primary" data-testid="approval-title">
         {t(titleKey(card) as never)}
       </p>
-      <div
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- readonly scale is an ARIA group, not form controls
-        role="group"
-        aria-label={t('mcp.reversibilityScale')}
-        data-testid="reversibility-scale"
-        className="flex flex-wrap gap-2 text-micro"
-      >
-        {reversibilityScale(card.reversibility).map((cell) => (
-          <span
-            key={cell.value}
-            aria-current={cell.current ? 'true' : undefined}
-            className={cell.current ? 'font-semibold text-text-primary' : 'text-text-muted'}
-          >
-            {t(cell.key)}
-          </span>
-        ))}
-      </div>
       <div data-testid="approval-object">
         <ObjectLine target={card.target} />
       </div>
@@ -176,14 +163,38 @@ export function ApprovalCard(props: {
         </p>
       ) : null}
       {notice ? <p data-testid="approval-definition-changed">{t(notice)}</p> : null}
-      <p className="text-ui-sm text-text-secondary" data-testid="approval-reason">
-        <PathText text={tx(t, reasonKey(card), visibleFacts(card.facts))} />
-      </p>
-      {card.reversibility === 'irreversible' ? (
-        <p className="text-ui-sm font-medium text-text-danger" data-testid="approval-irreversible">
-          {t('confirm.irreversible')}
+      {why === null ? null : (
+        <p
+          className="text-ui-sm text-text-secondary"
+          data-testid="approval-reason"
+          data-copy-key={why}
+        >
+          <PathText text={tx(t, why, visibleFacts(card.facts))} />
         </p>
-      ) : null}
+      )}
+      {undo === null ? null : (
+        <p
+          className={
+            card.reversibility === 'irreversible'
+              ? 'text-ui-sm font-medium text-text-danger'
+              : 'text-ui-sm text-text-secondary'
+          }
+          data-testid={
+            card.reversibility === 'irreversible' ? 'approval-irreversible' : 'approval-undo'
+          }
+          data-copy-key={undo}
+        >
+          <PathText
+            text={tx(
+              t,
+              undo,
+              undo === 'confirm.undo.network.url' && card.target.type === 'url'
+                ? { host: hostOfUrl(card.target.url) }
+                : undefined,
+            )}
+          />
+        </p>
+      )}
       {change === null ? null : (
         <div className="flex flex-col gap-1">
           {change.kind === 'arguments' ? (
@@ -225,9 +236,6 @@ export function ApprovalCard(props: {
         </div>
       )}
       <div className="flex items-center justify-end gap-2">
-        <span className="mr-auto text-micro text-text-muted" data-testid="approval-scope">
-          {t(scopeKey(props.pending.allowScope, card.target.type, subtask) as never)}
-        </span>
         <Button
           ref={denyRef}
           variant="outline"
@@ -246,7 +254,9 @@ export function ApprovalCard(props: {
           data-testid="approval-allow"
           onClick={() => answer('allow')}
         >
-          {t('confirm.allow')}
+          {t(allowLabelKey, {
+            scope: t(scopeKey(props.pending.allowScope, card.target.type, subtask) as never),
+          })}
           {hints.allow.length === 0 ? null : (
             <kbd className="ml-1 text-micro text-text-on-accent" data-testid="approval-allow-keys">
               {hints.allow.map((key) => t(key as never)).join(' ')}

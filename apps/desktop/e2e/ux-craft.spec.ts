@@ -176,7 +176,7 @@ test('a path breaks only after a slash: in the row, on the card and in the reaso
 test('a call’s input and the failure card’s list of what was done break paths only after a slash too', async () => {
   tree = makeFolderTree('ux-craft-failed-after-reads', {
     'a-long-named-project/another-long-folder-name/a.txt': 'alpha\n',
-    'a-long-named-project/another-long-folder-name/README.md': 'readme\n',
+    'a-long-named-project/another-long-folder-name/a-second-long-folder-name/a.txt': 'readme\n',
   })
   const ws = join(tree.real, 'a-long-named-project', 'another-long-folder-name')
   // Output that names a file by its absolute path, as the note on a spilled result does.
@@ -188,7 +188,7 @@ test('a call’s input and the failure card’s list of what was done break path
     replies: [
       callsReply(
         readCall('toolu_1', join(ws, 'a.txt')),
-        readCall('toolu_2', join(ws, 'README.md')),
+        readCall('toolu_2', join(ws, 'a-second-long-folder-name', 'a.txt')),
       ),
       { failWith: { status: 400, type: 'invalid_request_error', message: 'boom' } },
     ],
@@ -206,6 +206,11 @@ test('a call’s input and the failure card’s list of what was done break path
     await send(page, 'read both')
     const done = page.getByTestId('failure-effects-done').locator('li')
     await expect(done).toHaveCount(2)
+    // presentation-r1 shortens unique names; two different a.txt paths keep this wrap check meaningful.
+    await expect(done).toHaveText([
+      `Read ${join(ws, 'a.txt')}`,
+      `Read ${join(ws, 'a-second-long-folder-name', 'a.txt')}`,
+    ])
     const row = page.getByTestId('tool-row').first()
     await row.getByTestId('tool-row-line').click()
     const input = row.getByTestId('tool-row-details').locator('pre').first()
@@ -253,7 +258,7 @@ test('a call’s input and the failure card’s list of what was done break path
 test('the composer’s box holds its place: the stop button and the hint under it do not move or resize it', async () => {
   const { app, page } = await taskWaitingOnAWrite('en')
   try {
-    // Already a task with a folder: the folder row sits under the box.
+    // Already a task with a folder: its chip sits in the tool row.
     const withFolder = await composerBox(page)
     await expect(page.getByTestId('composer-disclaimer')).toBeVisible()
     const centreOf = async (testId: string): Promise<number> =>
@@ -284,7 +289,7 @@ test('the composer’s box holds its place: the stop button and the hint under i
   }
 })
 
-test('at the narrowest window a task with a folder keeps the tool row on one line, and the folder row under the box on one line too', async () => {
+test('presentation-r1 验收 10: at the narrowest window a task with a folder keeps its toggle and folder chip in one tool row', async () => {
   const userData = makeUserDataDir('ux-craft-mode-row')
   seedConfig(userData, { locale: 'zh-CN' })
   tree = makeFolderTree('ux-craft-mode-row', { 'my-project/a.txt': 'alpha\n' })
@@ -293,50 +298,47 @@ test('at the narrowest window a task with a folder keeps the tool row on one lin
     contentSize: { width: MIN_WINDOW_WIDTH, height: 700 },
   })
   try {
-    await expect(page.getByTestId('mode-switch')).toBeVisible()
+    const toggle = page.getByTestId('folder-toggle')
+    await expect(toggle).toBeVisible()
     const rowHeight = async () => (await page.getByTestId('composer-tools').boundingBox())!.height
     const chat = { tools: await rowHeight(), box: await composerBox(page) }
-    await page.getByTestId('mode-cowork').click()
+    await toggle.click()
     await expect(page.getByTestId('folder-chip')).toBeVisible()
-    // Switching to 「任务」 brings the folder row, whose place the chat already kept: the box stays.
-    expect(Math.abs((await composerBox(page)).y - chat.box.y)).toBeLessThan(0.5)
+    expect((await composerBox(page)).y).toBe(chat.box.y)
+    await page.getByTestId('folder-chip').click()
     await stubFolderDialog(app, [join(tree.real, 'my-project')])
     await page.getByTestId('folder-add').click()
     await expect(page.getByTestId('folder-item')).toHaveCount(1)
-    // The tool row is the one line it is in a chat: 「任务」, the chip and send never wrap.
-    expect(Math.abs((await rowHeight()) - chat.tools)).toBeLessThan(0.5)
+    await expect(page.getByTestId('folder-chip')).toHaveText('my-project')
+    await page.keyboard.press('Escape')
+    expect(await rowHeight()).toBe(chat.tools)
     const box = await composerBox(page)
-    expect(Math.abs(box.height - chat.box.height)).toBeLessThan(0.5)
-    // Nor does the first folder: a row with a chip in it is as tall as the row without.
-    expect(Math.abs(box.y - chat.box.y)).toBeLessThan(0.5)
-    // The folders sit under the box (02 §界面范围 `FolderChip`), on one line.
+    expect(box).toEqual(chat.box)
     const chip = await page.getByTestId('folder-chip').boundingBox()
-    const item = await page.getByTestId('folder-item').boundingBox()
-    expect(chip!.y).toBeGreaterThanOrEqual(box.y + box.height)
-    expect(chip!.height).toBeLessThan(item!.height * 1.5)
+    const tools = await page.getByTestId('composer-tools').boundingBox()
+    expect(chip!.y).toBeGreaterThanOrEqual(tools!.y)
+    expect(chip!.y + chip!.height).toBeLessThanOrEqual(tools!.y + tools!.height)
+    await expectSingleLineUnclipped(toggle.locator('xpath=..'))
+    await expectSingleLineUnclipped(page.getByTestId('folder-chip'))
 
-    // The chosen mode is outlined, so it shows on the composer's face in either theme, not only by
-    // the colour of its words (dark: the fill alone was 1.1:1 against the face).
-    const outlined = async (scheme: 'light' | 'dark'): Promise<void> => {
+    // A checked switch shows its state through its thumb's position in both themes.
+    const switchState = async (scheme: 'light' | 'dark'): Promise<void> => {
       await page.emulateMedia({ colorScheme: scheme })
       await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
-      const mode = await page.getByTestId('mode-cowork').evaluate((el) => ({
-        outline: getComputedStyle(el).borderTopColor,
-        width: getComputedStyle(el).borderTopWidth,
-        face: getComputedStyle(el.closest('[data-testid="composer"]')!).backgroundColor,
-      }))
-      expect(mode.width).toBe('1px')
-      expect(contrastOf(mode.outline, mode.face), scheme).toBeGreaterThanOrEqual(1.5)
+      await expect(toggle).toHaveAttribute('aria-checked', 'true')
+      const track = await toggle.boundingBox()
+      const thumb = await toggle.locator('[data-slot="switch-thumb"]').boundingBox()
+      expect(thumb!.x).toBeGreaterThan(track!.x + track!.width / 4)
     }
-    await outlined('light')
-    await outlined('dark')
+    await switchState('light')
+    await switchState('dark')
   } finally {
     await app.close()
   }
 })
 
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
-  test(`a long folder name shows whole and wraps instead of ending in an ellipsis (${locale})`, async () => {
+  test(`presentation-r1 验收 10: a long folder name shows whole and wraps instead of ending in an ellipsis (${locale})`, async () => {
     // A folder's name is content (02 §界面范围: paths shown whole, may wrap); 「命令在这里运行」 beside
     // it is interface copy and keeps to one line.
     const name = 'quarterly-planning-workspace-for-the-platform-team-2026'
@@ -348,14 +350,30 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       contentSize: { width: MIN_WINDOW_WIDTH, height: 700 },
     })
     try {
-      await page.getByTestId('mode-cowork').click()
+      await page.getByTestId('folder-toggle').click()
+      await page.getByTestId('folder-chip').click()
       await stubFolderDialog(app, [join(tree.real, name)])
       await page.getByTestId('folder-add').click()
       const item = page.getByTestId('folder-item')
+      const path = join(tree.real, name)
       await expect(item).toHaveCount(1)
-      await expect(item).toContainText(name)
-      await expectWrappedUnclipped(item.locator(':scope > span').first())
-      await expectSingleLineUnclipped(item.locator(':scope > span').nth(1))
+      await expect(item.getByTestId('folder-path')).toHaveText(path)
+      await expectWrappedUnclipped(item.getByTestId('folder-path'))
+      await expectSingleLineUnclipped(item.getByTestId('folder-cwd'))
+      await page.keyboard.press('Escape')
+      const chip = page.getByTestId('composer-tools').getByTestId('folder-chip')
+      await expect(chip).toHaveText(name)
+      await expect(chip).toHaveAttribute('title', path)
+      await expect(chip).toHaveAccessibleName(path)
+      const label = chip.getByTestId('folder-chip-name')
+      await expectWrappedUnclipped(label)
+      expect(await label.evaluate((el) => getComputedStyle(el).textOverflow)).not.toBe('ellipsis')
+      const lines = await label.evaluate((el) => {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        return range.getClientRects().length
+      })
+      expect(lines).toBeGreaterThan(1)
     } finally {
       await app.close()
     }

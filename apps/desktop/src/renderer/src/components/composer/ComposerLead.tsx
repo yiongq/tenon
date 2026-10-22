@@ -1,12 +1,18 @@
 import type { JSX } from 'react'
-import { ModeSwitch } from './ModeSwitch'
+import { useSessionSnapshot } from '@/runtime/ChatProvider'
+import { FolderChip } from './FolderChip'
+import { FolderToggle } from './FolderToggle'
 
 /**
  * The left cluster of the composer's tool row — one slot, so what sits there can change without the
- * frame around it changing. Today it holds 「对话 / 任务」 (`ModeSwitch`, spec 02 §界面范围); the task's
- * folders are not here but under the box, where 02 puts `FolderChip`. A later presentation spec
- * may replace both with a single 「在文件夹里工作」 toggle; that swap is this file's and the Composer's.
+ * frame around it changing. The folder toggle and the task's chip share this row (presentation-r1).
  */
 export function ComposerLead(): JSX.Element {
-  return <ModeSwitch />
+  const { facts } = useSessionSnapshot()
+  return (
+    <>
+      <FolderToggle />
+      {facts?.profile === 'cowork' ? <FolderChip autoOpenPrefill={!facts.established} /> : null}
+    </>
+  )
 }

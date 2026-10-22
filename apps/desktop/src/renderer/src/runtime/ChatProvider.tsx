@@ -74,8 +74,15 @@ export function ChatProvider({
   )
   useEffect(() => {
     const detach = store.attach()
+    const focus = (): void => {
+      void store.refreshModel()
+    }
+    window.addEventListener('focus', focus)
     void store.open({ resume: resumeOnOpen === true })
-    return detach
+    return () => {
+      window.removeEventListener('focus', focus)
+      detach()
+    }
   }, [store, resumeOnOpen])
   useEffect(() => store.setCanSend(canSend !== false), [store, canSend])
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
@@ -92,8 +99,8 @@ export function ChatProvider({
     // Sending stays possible while a Run is live: that is a queued message (H13). The stop button
     // and the leave dialog read `run.state`, not this.
     isRunning: false,
-    // The two reasons sending is disabled (§模型菜单与输入框「提示与禁发」); the composer says which.
-    isSendDisabled: !snapshot.canSend || snapshot.textOnlyTask,
+    // The store shares every send block with the composer, which says why.
+    isSendDisabled: store.sendBlock() !== null,
     onNew: async (message) => {
       const raw = textOf(message)
       const text = store.getSnapshot().pending?.waitKind === 'question' ? raw : raw.trim()

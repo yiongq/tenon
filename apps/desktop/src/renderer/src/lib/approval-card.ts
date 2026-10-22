@@ -1,6 +1,7 @@
 import type { ConfirmRequestInput } from '@tenon-app/contracts'
 import type { TFunction } from 'i18next'
 import { visible } from './visible'
+import { categoryOf, reasonKey } from './approval-keys'
 
 /**
  * What the minimal approval card shows and how its keys answer (spec 02 §最小审批卡; H3, D10, E4),
@@ -8,6 +9,41 @@ import { visible } from './visible'
  */
 type Card = Pick<ConfirmRequestInput, 'kind' | 'reversibility' | 'target'>
 type Target = Card['target']
+
+type SentenceCard = Pick<
+  ConfirmRequestInput,
+  'reason' | 'kind' | 'facts' | 'target' | 'reversibility'
+>
+
+/** ③ Routine questions and irreversible reasons need no second explanation (presentation-r1). */
+export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null {
+  if (['default', 'command', 'irreversible'].includes(card.reason)) return null
+  if (card.reason === 'network') {
+    return card.kind === 'network' && card.target.type === 'search'
+      ? 'confirm.reason.network.search'
+      : 'confirm.reason.network.url'
+  }
+  return reasonKey(card)
+}
+
+/** ④ First matching consequence: irreversible, online, then the remaining reversibilities. */
+export function undoKey(card: SentenceCard): string | null {
+  if (card.reversibility === 'irreversible') return 'confirm.irreversible'
+  if (card.kind === 'network') {
+    if (
+      card.reason === 'network' ||
+      (card.reason === 'flagged' && categoryOf(card.facts) === 'exfiltration')
+    )
+      return null
+    return card.target.type === 'search'
+      ? 'confirm.undo.network.search'
+      : 'confirm.undo.network.url'
+  }
+  if (card.reversibility === 'unknown' && card.target.type === 'path') {
+    return 'confirm.undo.unknownFile'
+  }
+  return `confirm.undo.${card.reversibility}`
+}
 
 /**
  * ② One part of the object line, each on its own line and never joined into one string: `value` in

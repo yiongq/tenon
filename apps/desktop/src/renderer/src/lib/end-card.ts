@@ -1,4 +1,6 @@
 import type { RunEndReasonContract, ToolOutcomeViewContract } from '@tenon-app/contracts'
+import type { ToolPart } from '../runtime/thread-model'
+import { toolObject } from './tool-sentence'
 
 type Code = RunEndReasonContract['code']
 export type EndVisual = 'neutral' | 'danger' | 'warning'
@@ -17,13 +19,13 @@ export function cardOf(
   switch (code) {
     case 'completed':
     case 'paused':
+    case 'user-rejected':
       return null
     case 'step-limit':
     case 'output-truncated':
       return { visual: 'neutral', action: 'continue' }
     case 'user-stopped':
     case 'shutdown-aborted':
-    case 'user-rejected':
     case 'usage-limit':
     case 'recovered':
     case 'time-limit':
@@ -74,4 +76,52 @@ export function effectLineOf(
     default:
       return 'uncertain'
   }
+}
+
+/** Provider failures use the existing error vocabulary; null is the unknown case. */
+export function providerErrorKey(
+  errorCode: Extract<RunEndReasonContract, { code: 'provider-error' }>['errorCode'],
+): string {
+  return `runEnd.provider-error.${errorCode ?? 'unknown'}`
+}
+
+export interface DoneGroup {
+  readonly part: ToolPart
+  readonly object: string
+  readonly fullObject: string
+  count: number
+}
+
+/** Group by tool and complete object before shortening file names, in first-seen order. */
+export function aggregateDone(parts: readonly ToolPart[]): {
+  readonly visible: readonly DoneGroup[]
+  readonly folded: readonly DoneGroup[]
+} {
+  const groups = new Map<string, DoneGroup>()
+  const paths = new Map<string, Set<string>>()
+  for (const part of parts) {
+    const fullObject = toolObject(part.name, part.input)
+    const file = ['Read', 'Write', 'Edit'].includes(part.name)
+    const object = file ? (fullObject.split('/').at(-1) ?? fullObject) : fullObject
+    if (file) {
+      const matches = paths.get(object) ?? new Set<string>()
+      matches.add(fullObject)
+      paths.set(object, matches)
+    }
+    const key = JSON.stringify([part.name, fullObject])
+    const group = groups.get(key)
+    if (group) group.count += 1
+    else groups.set(key, { part, object, fullObject, count: 1 })
+  }
+  const all = [...groups.values()].map((group) =>
+    ['Read', 'Write', 'Edit'].includes(group.part.name) && (paths.get(group.object)?.size ?? 0) > 1
+      ? {
+          part: group.part,
+          object: group.fullObject,
+          fullObject: group.fullObject,
+          count: group.count,
+        }
+      : group,
+  )
+  return { visible: all.slice(0, 5), folded: all.slice(5) }
 }

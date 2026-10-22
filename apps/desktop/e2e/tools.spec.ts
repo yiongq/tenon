@@ -4,8 +4,11 @@ import { deferred, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
+import { routeCalls } from './helpers/navigation.js'
 import {
+  bashCall,
   callsReply,
+  editCall,
   makeFolderTree,
   providerEnv,
   readCall,
@@ -14,6 +17,7 @@ import {
   stubFolderDialog,
   textReply,
   waitingApproval,
+  writeCall,
 } from './helpers/tools.js'
 import type { FolderTree } from './helpers/tools.js'
 
@@ -37,7 +41,7 @@ test.afterEach(async () => {
 /** Clicks on a card that just appeared are ignored this long (ApprovalCard.tsx's APPROVAL_CLICK_GUARD_MS, 400). */
 const PAST_CLICK_GUARD_MS = 600
 
-test('a task Read of a file in the Tenon profile is blocked under its row, with no way to allow it (旧 222)', async () => {
+test('presentation-r1 验收 5: a protected task Read has one line and no way to allow it (旧 222)', async () => {
   const folders = makeFolderTree('protected', { 'ws/a.txt': 'alpha\n' })
   tree = folders
   const userData = makeUserDataDir('protected')
@@ -59,10 +63,8 @@ test('a task Read of a file in the Tenon profile is blocked under its row, with 
     await expect(row).toHaveCount(1)
     const notice = row.getByTestId('blocked-notice')
     await expect(notice).toHaveAttribute('data-source', 'protected')
-    // What, why (blocked.protected with its target slot filled), and that the model was told.
-    await expect(notice).toHaveText(
-      `Read can’t reach ${note}: Tenon protects it.The model was told.`,
-    )
+    // The receipt only explains why; the object is already on the row.
+    await expect(notice).toHaveText("This location is protected; Tenon doesn't read it.")
     // A block is not a closure line and never a card: nothing here lets it through.
     await expect(row.getByTestId('tool-row-closure')).toHaveCount(0)
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
@@ -78,7 +80,7 @@ test('a task Read of a file in the Tenon profile is blocked under its row, with 
   }
 })
 
-test('in a chat, a Read of anything but this chat’s saved files is blocked with the chat’s own sentence (旧 222, open question 13)', async () => {
+test('presentation-r1 验收 5: a chat Read has its own one-line receipt (旧 222, open question 13)', async () => {
   const folders = makeFolderTree('chat-read', { 'notes.txt': 'CHAT-NOTE-7731\n' })
   tree = folders
   const notes = join(folders.real, 'notes.txt')
@@ -90,14 +92,12 @@ test('in a chat, a Read of anything but this chat’s saved files is blocked wit
   seedConfig(userData, { locale: 'zh-CN' })
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'chat')
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await send(page, 'read my notes')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked.')
     const notice = page.getByTestId('tool-row').getByTestId('blocked-notice')
     await expect(notice).toHaveAttribute('data-source', 'protected')
-    await expect(notice).toHaveText(
-      `对话里 Read 只能打开 Tenon 为这个对话保存的文件；${notes} 不在其中。已告诉模型。`,
-    )
+    await expect(notice).toHaveText('对话里只能打开 Tenon 为这个对话保存的文件。')
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
     expect(JSON.stringify(server.requests[1]?.body)).not.toContain('CHAT-NOTE-7731')
   } finally {
@@ -105,7 +105,7 @@ test('in a chat, a Read of anything but this chat’s saved files is blocked wit
   }
 })
 
-test('in a chat, the notice writes what the path hides as escapes, and the first message fixes the mode (②′; §界面范围 BlockedNotice, ModeSwitch)', async () => {
+test('presentation-r1 验收 5: the row escapes its path, the receipt does not repeat it, and the first message fixes the mode', async () => {
   const hidden = 'no​tes.txt'
   const folders = makeFolderTree('chat-hidden', { [hidden]: 'CHAT-NOTE-8842\n' })
   tree = folders
@@ -120,23 +120,22 @@ test('in a chat, the notice writes what the path hides as escapes, and the first
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
     // Before the first message either mode can be chosen.
-    await expect(page.getByTestId('mode-chat')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('mode-cowork')).toBeVisible()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'false')
     await send(page, 'read my notes')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked.')
-    // The notice's slots escaped as the card's are: its path reads as the call will run.
+    // The row retains the escaped object; the receipt explains why without repeating it.
+    await expect(page.getByTestId('tool-row-line')).toHaveText(`Read ${shown}`)
     await expect(page.getByTestId('blocked-notice')).toHaveText(
-      `In a chat, Read can only open files Tenon saved for this chat; ${shown} is not one of them.The model was told.`,
+      'In a chat, only files Tenon saved for this chat can be opened.',
     )
-    // That message established the chat: the mode shows, and the other one is gone.
-    await expect(page.getByTestId('mode-chat')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('mode-cowork')).toBeHidden()
+    // That message established the chat: the toggle is gone.
+    await expect(page.getByTestId('folder-toggle')).toHaveCount(0)
   } finally {
     await app.close()
   }
 })
 
-test('a task’s folders: commands run in the first, and the ones last picked are offered to the next task (§界面范围 FolderChip; D11, D8)', async () => {
+test('presentation-r1 验收 10: a task’s folders are picked and removed in the popover, commands run in the first, and prefill joins only when clicked', async () => {
   const folders = makeFolderTree('folders', { 'one/a.txt': 'a\n', 'two/b.txt': 'b\n' })
   tree = folders
   const one = join(folders.real, 'one')
@@ -145,30 +144,98 @@ test('a task’s folders: commands run in the first, and the ones last picked ar
   seedConfig(userData, { locale: 'en' })
   const { app, page } = await launchTenon({ userData })
   try {
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
+    const chip = page.getByTestId('folder-chip')
+    await expect(chip).toHaveText('Session folder')
+    await chip.click()
     const items = page.getByTestId('folder-item')
-    // None picked: the session's own folder, where commands run.
     await expect(items).toHaveCount(1)
-    await expect(items.first()).toHaveText('Session foldercommands run here')
+    await expect(items.first().getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(page.getByTestId('folder-dedicated-note')).toHaveText(
+      'With no folder picked, commands run in a folder Tenon creates just for this task.',
+    )
+    await expect(page.getByTestId('folder-remove')).toHaveCount(0)
     await stubFolderDialog(app, [one, two])
     await page.getByTestId('folder-add').click()
     await expect(items).toHaveCount(2)
-    await expect(items.nth(0)).toHaveText('onecommands run here')
-    await expect(items.nth(1)).toHaveText('two')
-    // Last time's folders are these very ones now: nothing to offer.
+    await expect(chip).toHaveText('one+1')
+    await expect(chip).toHaveAttribute('title', `${one}\n${two}`)
+    await expect(chip).toHaveAccessibleName(`${one} ${two}`)
+    await expect(items.nth(0).getByTestId('folder-path')).toHaveText(one)
+    await expect(items.nth(0).getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(items.nth(1).getByTestId('folder-path')).toHaveText(two)
+    await expect(items.nth(1).getByTestId('folder-cwd')).toHaveCount(0)
     const prefill = page.getByTestId('folder-prefill')
     await expect(prefill).toHaveCount(0)
 
-    // The next task starts on its own folder, with those two offered.
+    await page.keyboard.press('Escape')
     await page.getByTestId('nav-item').first().click()
-    await page.getByTestId('mode-cowork').click()
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-popover')).toBeVisible()
     await expect(items).toHaveCount(1)
-    await expect(prefill).toHaveText('Use the last 2 folders')
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText([one, two])
+    await expect(prefill).toHaveText('Use these 2 folders')
+    await expect(chip).toHaveText('Session folder')
     await prefill.click()
     await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toHaveAttribute('title', one)
     await expect(items.nth(1)).toHaveAttribute('title', two)
     await expect(prefill).toHaveCount(0)
+    await items.nth(0).getByTestId('folder-remove').click()
+    await expect(items).toHaveCount(1)
+    await expect(items.first().getByTestId('folder-path')).toHaveText(two)
+    await expect(items.first().getByTestId('folder-cwd')).toHaveText('commands run here')
+    await expect(chip).toHaveText('two')
+    await items.first().getByTestId('folder-remove').click()
+    await expect(chip).toHaveText('Session folder')
+    await expect(page.getByTestId('folder-dedicated-note')).toBeVisible()
+    await expect(page.getByTestId('folder-remove')).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 10: turning the toggle on opens the popover with each prefilled path in full before 用这 N 个文件夹; focus stays on the toggle; nothing joins the list until it is clicked', async () => {
+  const folders = makeFolderTree('prefill-paths', { 'first/a.txt': 'a\n', 'second/b.txt': 'b\n' })
+  tree = folders
+  const paths = [join(folders.real, 'first'), join(folders.real, 'second')]
+  const userData = makeUserDataDir('prefill-paths')
+  seedConfig(userData, { locale: 'zh-CN' })
+  writeFileSync(
+    configPathIn(userData),
+    JSON.stringify({ locale: 'zh-CN', lastWorkspaceFolders: paths }),
+  )
+  const { app, page } = await launchTenon({ userData, env: { TENON_E2E_ROUTE_COUNTS: '1' } })
+  try {
+    const toggle = page.getByTestId('folder-toggle')
+    await toggle.focus()
+    await toggle.press('Space')
+    const popup = page.getByTestId('folder-popover')
+    await expect(popup).toBeVisible()
+    await expect(toggle).toBeFocused()
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText(paths)
+    await expect(page.getByText('上次用过，尚未加入', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('folder-prefill')).toHaveText('用这 2 个文件夹')
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await expect(page.getByTestId('folder-chip')).toHaveText('专用文件夹')
+    const pathBottoms = await page
+      .getByTestId('folder-prefill-path')
+      .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().bottom))
+    const confirm = await page.getByTestId('folder-prefill').boundingBox()
+    for (const bottom of pathBottoms) expect(bottom).toBeLessThanOrEqual(confirm!.y)
+    // Merely closing and reopening the offer never confirms it.
+    await expect.poll(() => routeCalls(app, 'workspace.usePrefill')).toBe(0)
+    await expect(toggle).toBeFocused()
+    await page.keyboard.press('Escape')
+    await page.getByTestId('folder-chip').click()
+    await expect(page.getByTestId('folder-prefill-path')).toHaveText(paths)
+    expect(await routeCalls(app, 'workspace.usePrefill')).toBe(0)
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await page.getByTestId('folder-prefill').click()
+    await expect(page.getByTestId('folder-item')).toHaveCount(2)
+    await expect(page.getByTestId('folder-path')).toHaveText(paths)
+    await expect(page.getByTestId('folder-prefill')).toHaveCount(0)
+    expect(await routeCalls(app, 'workspace.usePrefill')).toBe(1)
   } finally {
     await app.close()
   }
@@ -229,7 +296,7 @@ test('a round with one approval shows one summary line, only once its last Run e
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
     // Four reads over both Runs, nothing changed, nothing sent out — under the round's last reply.
-    await expect(summary).toHaveText('Read 4 · changed 0')
+    await expect(summary).toHaveText('Read 4 files')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)
@@ -302,6 +369,111 @@ test('the expanded input marks a newline only where an argument holds one (§界
     await expect(input).toBeVisible()
     // textContent, not toHaveText, which folds every run of whitespace into one space.
     expect(await input.textContent()).toBe(`file_path: ${shown}\nlimit: 5`)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 6: only an irreversible row carries the marker, with its tooltip and screen-reader text', async () => {
+  const folders = makeFolderTree('irreversible-marker', { 'ws/victim.txt': 'temporary fixture' })
+  tree = folders
+  const ws = join(folders.real, 'ws')
+  fake = await startFakeAnthropic({
+    replies: [
+      callsReply(bashCall('toolu_rm', `rm ${join(ws, 'victim.txt')}`)),
+      textReply('removed'),
+    ],
+  })
+  const userData = makeUserDataDir('irreversible-marker')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await startTask(app, page, ws)
+    await send(page, 'remove the temporary fixture')
+    await expect(page.getByTestId('approval-card')).toBeVisible()
+    await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    await page.getByTestId('approval-allow').click()
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('removed')
+    const marker = page.getByTestId('tool-effect-marker')
+    await expect(marker).toBeVisible()
+    await expect(marker.locator('.sr-only')).toHaveText("Can't be undone")
+    const line = await page.getByTestId('tool-row-line').boundingBox()
+    const box = await marker.boundingBox()
+    expect(Math.abs(line!.x + line!.width - (box!.x + box!.width))).toBeLessThan(1)
+    await marker.hover()
+    await expect(page.getByRole('tooltip')).toHaveText("Can't be undone")
+    await page.getByTestId('tool-row-line').click()
+    await expect(page.getByTestId('tool-side-effects')).toHaveText(
+      'Ran this command · This can’t be undone.',
+    )
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 6: an Edit that came back with an error does not say 改了', async () => {
+  const folders = makeFolderTree('write-effect', { 'ws/a.txt': 'before' })
+  tree = folders
+  const ws = join(folders.real, 'ws')
+  const file = join(ws, 'a.txt')
+  fake = await startFakeAnthropic({
+    replies: [
+      callsReply(writeCall('toolu_write', file, 'after')),
+      textReply('written'),
+      callsReply(editCall('toolu_bad_edit', file, 'missing old string', 'replacement')),
+      textReply('edit failed'),
+    ],
+  })
+  const userData = makeUserDataDir('write-effect')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await startTask(app, page, ws)
+    await send(page, 'write the file')
+    await expect(page.getByTestId('approval-card')).toBeVisible()
+    await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    await page.getByTestId('approval-allow').click()
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('written')
+    const written = page.getByTestId('tool-row').first()
+    await written.getByTestId('tool-row-line').click()
+    // Exercises the real Write outcome, rather than injecting a local result.
+    await expect(written.getByTestId('tool-side-effects')).toHaveText(
+      "Changed this file · Tenon can't undo this change for you.",
+    )
+    await send(page, 'try the edit')
+    // Edit has its own session grant, separate from Write's.
+    await expect(page.getByTestId('approval-card')).toBeVisible()
+    await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    await page.getByTestId('approval-allow').click()
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('edit failed')
+    const failed = page.getByTestId('tool-row').last()
+    await failed.getByTestId('tool-row-line').click()
+    const failedCallKey = await failed.getAttribute('data-call-key')
+    // The persisted flag lives on this call's outcome, as in the live view. session.latest has
+    // message rows, not the tool-response blocks assembled for provider replay.
+    await expect
+      .poll(async () =>
+        page.evaluate(async (callKey) => {
+          const current = (await window.tenon.invoke('session.latest', { limit: 1000 })) as {
+            ok: boolean
+            data: {
+              messages: {
+                calls?: { callKey: string; outcome: { isError?: boolean } | null }[]
+              }[]
+            } | null
+          }
+          return (
+            current.ok &&
+            current.data?.messages.some((row) =>
+              row.calls?.some((call) => call.callKey === callKey && call.outcome?.isError === true),
+            )
+          )
+        }, failedCallKey),
+      )
+      .toBe(true)
+    await expect(failed.getByTestId('tool-row-details')).toBeVisible()
+    await expect(failed.getByTestId('tool-side-effects')).toHaveCount(0)
+    await expect(written.getByTestId('tool-side-effects')).toBeVisible()
   } finally {
     await app.close()
   }
