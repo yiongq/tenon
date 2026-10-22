@@ -329,3 +329,55 @@ test('presentation-r1 验收 11: a key saved from 去设置 under the box update
     await app.close()
   }
 })
+
+test('presentation-r1 验收 12: fresh profile → save a key → the chip shows that provider’s first row → send goes', async () => {
+  zhipu = await startFakeOpenAI({ chunks: ['first key reply'] })
+  const server = zhipu
+  const userData = makeUserDataDir('first-key-default')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ [ZHIPU_ORIGIN]: server.baseURL }),
+      TENON_PROVIDER: '',
+      TENON_MODEL: '',
+    },
+  })
+  try {
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute('data-reason', 'noKey')
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.getByTestId('provider-select').selectOption('zhipu')
+    await page.getByTestId('provider-config-apiKey').fill(ZHIPU_KEY)
+    // No model dropdown change: main, rather than provider.select, supplies the first row.
+    await page.getByTestId('provider-save').click()
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3')
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    const config = await page.evaluate(() => window.tenon.invoke('config.get', {}))
+    expect(config).toMatchObject({
+      ok: true,
+      data: {
+        provider: { id: 'zhipu', modelId: 'glm-5.3' },
+        defaultModelByProfile: {
+          chat: { id: 'zhipu', modelId: 'glm-5.3' },
+          cowork: { id: 'zhipu', modelId: 'glm-5.3' },
+        },
+      },
+    })
+    expect(await routeCalls(app, 'provider.select')).toBe(0)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('GLM-5.3')
+    await page.getByTestId('composer-input').fill('first saved key')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('first key reply')
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0]?.body).toMatchObject({ model: 'glm-5.3' })
+    expect(server.requests[0]?.headers['authorization']).toBe(`Bearer ${ZHIPU_KEY}`)
+  } finally {
+    await app.close()
+  }
+})

@@ -12,7 +12,7 @@ import {
 } from './helpers/instances.js'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { SeededInstance } from './helpers/launch.js'
-import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
+import { COUNT_ROUTES, newChatFromSidebar, routeCalls } from './helpers/navigation.js'
 import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
@@ -1167,6 +1167,68 @@ test('presentation-r1 验收 11: a removed instance blocks a new message while C
     )
     expect(vendor.requests).toHaveLength(1)
     expect(await routeCalls(app, 'chat.continue')).toBe(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 12: configureInstance after adding the preset’s first row → a new chat’s chip is its first row and the message goes', async () => {
+  vendor = await startFakeOpenAI({ chunks: ['instance first key reply'] })
+  const server = vendor
+  const userData = makeUserDataDir('instance-first-key-default')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ...originMap({ 'https://api.deepseek.com': server.baseURL }),
+      TENON_PROVIDER: '',
+      TENON_MODEL: '',
+    },
+  })
+  try {
+    await openCardFromMenu(page)
+    const id = await createInstanceInCard(page, {
+      preset: 'deepseek',
+      region: 'default',
+      displayName: NAME,
+      wire: 'openai-chat',
+      baseURL: 'https://api.deepseek.com',
+      apiKey: FIRST_KEY,
+    })
+    // Creation has no model rows in M6. This case covers the subsequent configureInstance path.
+    await expect(page.getByTestId(`custom-vendor-row-id-${id}`)).toBeVisible()
+    await page.getByTestId(`custom-vendor-row-id-${id}`).fill(MODEL_A)
+    await page.getByTestId(`custom-vendor-row-context-${id}`).fill('32000')
+    await page.getByTestId(`custom-vendor-row-output-${id}`).fill('4096')
+    await page.getByTestId(`custom-vendor-row-save-${id}`).click()
+    await expect(page.getByTestId(`custom-vendor-row-${id}-${MODEL_A}`)).toBeVisible()
+    await saveInstanceKeyInCard(page, id, SECOND_KEY)
+    const config = await page.evaluate(() => window.tenon.invoke('config.get', {}))
+    expect(config).toMatchObject({
+      ok: true,
+      data: {
+        provider: null,
+        defaultModelByProfile: { chat: { id, modelId: MODEL_A } },
+      },
+    })
+    await closeCard(page)
+    await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    expect(await routeCalls(app, 'provider.select')).toBe(0)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('thread-empty')).toBeVisible()
+    await expect(page.getByTestId('model-menu-current')).toHaveText(MODEL_A)
+    await page.getByTestId('composer-input').fill('instance default sends')
+    await expect(page.getByTestId('composer-send')).toBeEnabled()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text')).toHaveText('instance first key reply')
+    const requests = completionRequests(server)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.body).toMatchObject({ model: MODEL_A })
+    expect(requests[0]?.headers['authorization']).toBe(`Bearer ${SECOND_KEY}`)
+    expect(toolNames(requests[0]?.body)).toEqual([])
   } finally {
     await app.close()
   }

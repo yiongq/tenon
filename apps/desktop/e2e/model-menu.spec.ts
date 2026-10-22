@@ -687,6 +687,15 @@ test('writes the default model only when the card’s model field changed (旧 1
   seedConfig(userData, { locale: 'en', provider: { id: 'anthropic', modelId: 'claude-opus-5-5' } })
   const { app, page } = await launchTenon({ userData })
   try {
+    // presentation-r1 §点名 (b): acceptance 33's premise is that all three defaults exist.
+    expect(
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', {
+          providerId: 'anthropic',
+          modelId: 'claude-opus-5-5',
+        }),
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
     await page.getByTestId('account-row').click()
     await page.getByTestId('account-providers').click()
     await page.getByTestId('provider-select').selectOption('zhipu')
@@ -697,7 +706,10 @@ test('writes the default model only when the card’s model field changed (旧 1
       data: { provider: unknown; defaultModelByProfile: unknown }
     }
     expect(untouched.data.provider).toEqual({ id: 'anthropic', modelId: 'claude-opus-5-5' })
-    expect(untouched.data.defaultModelByProfile).toEqual({})
+    expect(untouched.data.defaultModelByProfile).toEqual({
+      chat: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+      cowork: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+    })
     // Changing the field writes both profiles' defaults and `provider`.
     await page.getByTestId('account-row').click()
     await page.getByTestId('account-providers').click()
