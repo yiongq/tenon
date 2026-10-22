@@ -17,6 +17,7 @@
  * empty 1–3 ms later, `ps` seeing it empty by 512–542 ms).
  */
 import { execFile, execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -742,6 +743,11 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
           ].join('\n'),
           new AbortController().signal,
         )
+        // python writes the file only once perl runs; on a loaded runner that takes longer than
+        // allUp's patience (CI red twice on 2026-10-22), so wait for it as the command itself does.
+        const readyBy = now() + 15_000
+        // oxlint-disable-next-line no-await-in-loop -- the poll's pace
+        while (!existsSync(ready) && now() < readyBy) await delay(50)
         await allUp(mark, ['setsid', 'perl'])
         const execution = await call
         const endedAt = now()
@@ -750,7 +756,7 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
         expect(gone).not.toBeNull()
         expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
       },
-      CASE_TIMEOUT_MS,
+      CASE_TIMEOUT_MS * 2,
     )
 
     // What setsid-mac A (2026-10-16) leaves on darwin, as it is: a setsid Apple platform binary
