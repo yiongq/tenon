@@ -71,6 +71,8 @@
     "packages/contracts/src/**",
     "packages/kernel/src/host/**",
     "packages/kernel/src/index.ts",
+    "packages/kernel/src/loop/ports.ts",
+    "packages/kernel/src/tape/store.ts",
     "apps/desktop/src/preload/**",
     "pnpm-workspace.yaml",
     ".nvmrc"
