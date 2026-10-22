@@ -147,7 +147,7 @@ function collapsed(html: string): string {
   return strip(/data-testid="approval-answered"[^>]*>([\s\S]*?)<\/div>/.exec(html)?.[1] ?? '')
 }
 
-it('presentation-r1 验收 4: an allowed main-session card collapses to one line without what the row already says; a command keeps its cwd, a search its backend host, a URL its punycode host; a subtask card keeps the object', async () => {
+it('presentation-r1 验收 4 / presentation-r1 不变量 3: an allowed main-session card collapses to one line without what the row already says; a command keeps its cwd, a search its backend host, a URL its punycode host; a subtask card keeps the object', async () => {
   const rows: {
     name: string
     input: Record<string, unknown>

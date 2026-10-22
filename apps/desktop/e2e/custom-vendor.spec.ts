@@ -1017,7 +1017,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
   })
 }
 
-test('presentation-r1 验收 11: with history on public host A, 改用 an instance on public host B opens the menu on its row with B in the line, and nothing is selected or sent to B until it is picked', async () => {
+test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history on public host A, 改用 an instance on public host B opens the menu on its row with B in the line, and nothing is selected or sent to B until it is picked', async () => {
   vendor = await startFakeOpenAI({ chunks: ['history on A'] })
   local = await startFakeOpenAI({ chunks: ['reply from B'] })
   const source = vendor,

@@ -199,7 +199,7 @@ describe('an irreversible card: a Bash that deletes a file (旧 216; D10, H3)', 
     }
   })
 
-  it('focus coming in lands on 「拒绝」, which carries ⏎ and Esc; 「允许」 carries no hint', () => {
+  it('presentation-r1 不变量 1: focus coming in lands on 「拒绝」, which carries ⏎ and Esc; 「允许」 carries no hint', () => {
     expect(defaultButton(RM)).toBe('deny')
     const hints = keyHints(RM)
     expect(hints.deny.map((key) => both(key))).toEqual([
@@ -315,7 +315,7 @@ it('03 验收 45: connector shows server name and changed-definition notice (sca
   expect(zh.t(definitionNotice(true)!)).toBe('这个工具的定义在会话中变了，总是允许这次不生效')
 })
 
-it('presentation-r1 验收 1: no scale; why and undo follow the tables for every reason, kind and reversibility', async () => {
+it('presentation-r1 验收 1 / presentation-r1 不变量 3: no scale; why and undo follow the tables for every reason, kind and reversibility', async () => {
   for (const reason of confirmReasonSchema.options) {
     for (const kind of confirmKindSchema.options) {
       const targets =
@@ -554,7 +554,7 @@ it('presentation-r1 验收 2: the why line repeats no part of the object line', 
   }
 })
 
-it('presentation-r1 验收 3: allow carries its scope, five scopes, the words as 02 maps them, each equal to the grant scope', async () => {
+it('presentation-r1 验收 3 / presentation-r1 不变量 2: allow carries its scope, five scopes, the words as 02 maps them, each equal to the grant scope', async () => {
   const model: ModelInfo = {
     id: 'approval-model',
     providerId: 'anthropic',

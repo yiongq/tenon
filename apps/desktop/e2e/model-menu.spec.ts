@@ -774,7 +774,7 @@ test('keeps a default per profile: a new session in each starts on it (旧 37)',
   }
 })
 
-test('presentation-r1 验收 11: with history only on this computer, 改用 a public provider opens its confirmation and sends nothing to it before 切换', async () => {
+test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history only on this computer, 改用 a public provider opens its confirmation and sends nothing to it before 切换', async () => {
   ollama = await startFakeOpenAI({ chunks: ['local history'] })
   zhipu = await startFakeOpenAI({ chunks: ['public reply'] })
   const userData = makeUserDataDir('blocked-local-to-public')

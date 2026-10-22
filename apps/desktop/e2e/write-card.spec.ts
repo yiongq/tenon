@@ -315,7 +315,7 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
   }
 })
 
-test('presentation-r1 验收 3: a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
+test('presentation-r1 验收 3 / presentation-r1 不变量 1: a Bash that deletes a file asks on an irreversible card: ⏎ anywhere in it denies, only a click or Space on 「允许」 runs it, just this once (旧 216, acceptance 36)', async () => {
   test.setTimeout(120_000)
   const folders = makeFolderTree('irreversible', { 'ws/a.txt': 'alpha\n', 'ws/b.txt': 'beta\n' })
   tree = folders

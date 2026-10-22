@@ -1949,7 +1949,7 @@ function settlementRows(
   ]
 }
 
-it('presentation-r1 验收 7: a subtask’s calls are read once and counted; the counts come from outcome.isError without rereading the parent', async () => {
+it('presentation-r1 验收 7 / presentation-r1 不变量 5: a subtask’s calls are read once and counted; the counts come from outcome.isError without rereading the parent', async () => {
   const fake = fakeBridge()
   const handoff = {
     outcome: 'completed' as const,
@@ -2169,7 +2169,7 @@ const OLLAMA = provider({
 })
 
 describe('presentation-r1 sending availability', () => {
-  it('presentation-r1 验收 11: a block for no keyed provider, a refused address, an unusable choice and a removed instance; send and sendNow are called 0 times', async () => {
+  it('presentation-r1 验收 11 / presentation-r1 不变量 6: a block for no keyed provider, a refused address, an unusable choice and a removed instance; send and sendNow are called 0 times', async () => {
     const fake = fakeBridge()
     const store = new SessionStore(SESSION, fake.bridge, [])
     const cases = [

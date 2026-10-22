@@ -133,7 +133,7 @@ function propertyNames(schema: z.ZodType): Set<string> {
 }
 
 describe('ipc/outcome.ts', () => {
-  it('presentation-r1: isError survives live and redraw validation, absent stays absent', () => {
+  it('presentation-r1 不变量 4: isError survives live and redraw validation, absent stays absent', () => {
     expect(toolOutcomeViewSchema.parse({ ...ASKED, isError: true }).isError).toBe(true)
     expect(toolOutcomeViewSchema.parse({ ...ASKED, isError: false }).isError).toBe(false)
     expect(toolOutcomeViewSchema.parse(ASKED)).not.toHaveProperty('isError')

@@ -372,6 +372,22 @@ function probe(h: Harness, modelId = MODEL, id = ID): Promise<ProbeAnswer> {
 const builtinIds = [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID, OLLAMA_PROVIDER_ID]
 
 describe('presentation-r1 creation defaults', () => {
+  it('presentation-r1 验收 12: creating a preset with a key but no model rows keeps all three defaults empty', async () => {
+    const h = await harness()
+    const created = await h.ok<{ ok: true; id: string }>('customVendor.create', {
+      displayName: 'First vendor',
+      wire: 'openai-chat',
+      apiKey: KEY,
+      source: { kind: 'preset', presetId: 'deepseek', regionId: 'default' },
+    })
+    expect(created.ok).toBe(true)
+    expect(h.keychain.values.get(h.keyOf(created.id))).toBe(KEY)
+    expect(await h.entry(created.id)).toMatchObject({ configured: true, models: [] })
+    const config = await h.config()
+    expect(config.provider).toBeNull()
+    expect(config.defaultModelByProfile).toEqual({})
+  })
+
   it('presentation-r1 验收 12: creating one without a key, or with a default already set, writes nothing more', async () => {
     const selection = { id: 'anthropic', modelId: 'claude-opus-5-5' }
     const cases = [
