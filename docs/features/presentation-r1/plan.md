@@ -96,7 +96,7 @@
   - 核对：`git diff dev -- docs/architecture/00-foundation docs/architecture/01-provider-and-tape docs/architecture/02-agent-loop docs/architecture/03-mcp-host docs/features/custom-vendors docs/features/model-display-names` 只有行末追加与顶部新行。
 
 - [x] 12. 对照 spec 全部验收标准逐条验证，结果、命令与证据位置记在本文件；不变量 1–7 各有一条名字带「presentation-r1 不变量 N」的测试（多半是上面某条用例改名或加注）。
-- [ ] 13. 清理：删临时探针、截图草稿与调试输出；`git status` 只有本计划的改动；仓库里没有 key 的值。
+- [x] 13. 清理：删临时探针、截图草稿与调试输出；`git status` 只有本计划的改动；仓库里没有 key 的值。
 - [ ] 14. spec 顶部改 `Status: implemented`，写交接。
 
 ## 实施记录
@@ -132,6 +132,7 @@
 - 2026-10-22 · 第 10 步的 E（虚拟机，`21a9310`，装了 CJK 字体后 ux-craft 与 shell-i18n 全过）：`text-fit-r1.spec.ts` 40 条 30 过、10 红——「撤不回」标记折两行、框下那行在 800×520 横向溢出 128px（第 8 步布局）、菜单关闭的等待、以及「改用 智谱 …」的提示写「发往 api.anthropic.com」待核实；交第 10 步的会话续修。
 - 2026-10-22 · 第 2–9 步勾上：草稿 PR #55 上 `38269d6` 的 CI 全绿（run `39704055073`：`ci`、`e2e` 253 条全过、`sandbox-macos`、`ci-ok`；`ci` 第一次红在 `mcp-runtime.test.ts`「03 验收 28 / 6 / 27 (desktop)」的 `mcp/.one.json.<uuid>.tmp` ENOENT，是 `dev` 上 #53 之后就有的偶发、与本分支无关，重跑那个 job 过了，另作后续修复），E 由它满足。第 10 步的 E 也在这一轮里过了（`text-fit-r1.spec.ts`），没勾是因为 darwin 截图基线还没刷。
 - 2026-10-22 · 第 12 步勾上（Codex 起草对照表、给不变量 1–7 的用例加名、补一条「新建预设实例带 key、没有模型行时三键不写」的单测、做 11 份 e2e 突变补丁；lead 在虚拟机里跑那 11 个突变全红，填 E 与突变结果，写进下面「验收记录」）。验收 5 的 `sandbox` 一句留到与 04 第二段合并时补（Open）；验收 13 的框下那行照 spec Revisions ④ 改读法。
+- 2026-10-22 · 第 13 步（lead）：`git diff origin/dev...HEAD` 只有本计划的改动——新增 9 个文件（`text-fit-r1.spec.ts`、`FolderToggle.tsx`、`send-block.ts`、`url-host.ts` 与 5 个单测文件）、删 2 个（`ModeSwitch.tsx`、`reversibility-scale.ts`），其余是改动；没有探针、截图草稿、调试输出或 `.only`，没有 key 的值，截图基线没动（第 10 步的 darwin 刷新另做）。仓库外的产物（突变补丁、虚拟机日志、对照表草稿）在 `.claude/runs/pr1/` 与 tenon-notes 的 probes 下，不进仓库；给虚拟机打包用的临时分支 `tmp/pr1-vm` 已删。
 （停下之前追加一条：日期 · 步骤 · 状态；分支与基于的提交；G / E / EA 的结果；做过的突变与红绿；做到一半的与代码停在什么状态；下一步。）
 
 ## 验收记录
