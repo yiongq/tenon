@@ -36,7 +36,11 @@ export async function openConnectors(page: Page) {
   await expect(page.getByTestId('connectors-pane')).toBeVisible()
 }
 export async function closeSettings(page: Page) {
-  await page.getByTestId('provider-settings').locator('[data-slot="dialog-close"]').click()
+  // The title bar's ✕: a provider pane adds its own 「取消」, which is also a dialog-close button.
+  await page
+    .getByTestId('provider-settings')
+    .locator('[data-slot="dialog-close"]:not([data-testid])')
+    .click()
   await expect(page.getByTestId('provider-settings')).toBeHidden()
 }
 export async function addStdio(page: Page, id: string, args: string[] = []) {
