@@ -7,7 +7,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 - Substantial work — a new module, a cross-module change, a data migration, a public contract — starts from `docs/architecture/<goal>/spec.md` (a user-visible feature: `docs/features/<goal>/spec.md`). Read it before writing code. Do not invent architecture the spec does not describe; if the spec is insufficient, stop and say exactly what is missing.
 - `plan.md` next to the spec is the only progress tracker. Update it as you go. Never create `tasks.md` or any other todo file.
 - Starting without instructions ("继续", "开工", or nothing at all): the active work is the lowest-numbered `docs/architecture/NN-*/spec.md` whose `Status` is `ready` and whose `plan.md` still has unchecked steps; when no architecture spec qualifies, it is the `docs/features/*/spec.md` that does (if two do, ask). Continue from its first unchecked step, or from the half-done state its handoff notes describe. Say which spec and step you picked before touching anything; ask only if two spec folders share the same number or the handoff notes contradict the code.
-- Acceptance criteria in the spec define "done". When they all pass, set `Status: implemented` at the top of the spec.
+- Acceptance criteria in the spec define "done". When they all pass and the owner has confirmed it (see "Approvals and revisions" at the end), set `Status: implemented` at the top of the spec.
 - Changing a decision once the spec is `implemented` (or once code depends on the contract) means writing a new spec that supersedes the old one; mark the old one `Status: superseded by <link>`. One lighter path is an **amendment**: a later spec may add to an `implemented` spec — a new interface member, a new enum value, a tightened choice — without changing or removing anything; the amending spec carries the full text and an `Amends:` line, the amended spec gains an `Amended by:` line and is otherwise untouched. Before `implemented`, a `draft`/`ready` spec may be revised in place only if the change is recorded in its top `Revisions:` line — see `docs/spec-driven-dev.md`. A second lighter path covers presentation only: clauses of an `implemented` spec that concern only on-screen copy, layout or component form (never prompt-layer text, contracts, Tape, IPC or permission semantics; key bindings, default focus and which control grants count as permission semantics, and copy stating what an approval grants, its scope, duration and consequence may be reworded only if it still states all of them) may be replaced clause by clause by a later spec, which appends a pointer to the end of each replaced clause's line and adds a header line to the old spec — see `docs/spec-driven-dev.md`.
 - Trivial changes (style, copy, localized logic with one obvious owner) need no spec.
 - The architecture reference is `docs/architecture/master-reference.md`. Mechanism-level notes on the projects we learn from are in `docs/reference/`. Process details: `docs/spec-driven-dev.md`.
@@ -36,7 +36,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 
 ## Working with more than one agent
 
-This repository is developed alternately by Claude Code and Codex. Neither remembers the other's session, so everything that matters lives in files:
+Claude Code is the primary developer of this repository; Codex is optional and, when used, gets self-contained tasks from Claude Code. No agent remembers another's session, so everything that matters lives in files:
 
 - Before you stop — for any reason — update `plan.md`: mark what is done, what is half-done (and in what state the code was left), and what the next step is. A session that ends without updating `plan.md` is a failed session.
 - Leave the worktree either committed or with a clean, described diff. Never leave failing builds, temporary probes or debug prints for the next agent to discover.
@@ -56,3 +56,11 @@ This repository is developed alternately by Claude Code and Codex. Neither remem
 - TypeScript strict. ESM only. Single quotes, no semicolons, 100 columns (oxfmt).
 - User-facing copy goes through i18n; default locales `zh-CN` and `en`.
 - Interface text uses the sans font token, assistant prose uses the serif token — keep that distinction.
+
+## Approvals and revisions
+
+- Only the owner moves a spec to `ready` or to `implemented`. Ask for a sentence that names the spec, such as 「05 改 ready」, and record it at the top of the spec as `Approved: ready · <date> · 「<the owner's exact words>」· <where: chat, or PR #n>`.
+- Not an approval: words that, without punctuation and whitespace, are just 继续, 开工, 好, 好的, 可以, 行, ok, 都按推荐, 按推荐 or 全部按推荐; or words that do not name the spec (its two-digit number, folder name or title). 「继续」 and 「开工」 still start the active work (see "How we work"); they never change a status. Adopting all recommended options counts only with a scope, such as 「05 D1–D12 按推荐」; a card that is hard to undo gets its own line, such as 「D7=A」.
+- `implemented` never goes back. `ready` goes back to `draft` only when the owner says so, with a revision line.
+- From `ready` on, record every change to the spec as one revision line: date · section · why · a related commit or `PR #n`. Tightening or clarifying during implementation may be done directly, in the same PR as the code. Loosening a requirement, or changing an interface that is already merged, needs the owner's approval that names it first.
+- These rules apply from spec 05 on; 00–04 keep the records they have. The owner confirms 04's `implemented` in the PR that adds this section.
