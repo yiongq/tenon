@@ -135,7 +135,8 @@ it('04 读法 26: each record carries the posture', async () => {
     const session = deps.sessionConfig({
       applySeccompPath: deps.helpers.applySeccomp,
       javaAgentJarPath: deps.helpers.javaAgentJar,
-      linuxBinaries: null,
+      // Real startup hands Linux its PATH lookup; a fake one must too (sandbox-config.ts:543).
+      linuxBinaries: process.platform === 'linux' ? { bwrap: null, socat: null, rg: null } : null,
     })
     expect(session.filesystem?.denyRead).toContainEqual({
       path: join(homedir(), '.ssh'),
