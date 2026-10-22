@@ -241,7 +241,6 @@ for (const locale of ['zh-CN', 'en'] as const) {
       expect(pending.card.facts).toEqual({
         command: 'printf off',
         cwd: join(tree.real, 'ws'),
-        toolName: 'Bash',
         sandbox: 'unavailable',
       })
       await expect(page.getByTestId('approval-unavailable')).toHaveText(

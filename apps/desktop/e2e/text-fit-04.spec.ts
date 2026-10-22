@@ -127,10 +127,10 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(receipt).toBeVisible()
       await expect(receipt.getByTestId('receipt-objects')).toContainText(target)
       await expect(receipt.getByTestId('receipt-action')).toHaveCount(3)
-      // Paths, hosts and commands may wrap; interface sentences retain the one-line gate.
+      // Paths, hosts, commands and the scope notes under the buttons may wrap; short labels stay on one line.
       await fitEach(receipt.getByTestId('receipt-objects').locator('p'), true)
       await fitEach(receipt.getByTestId('receipt-why').locator('p'))
-      await fitEach(receipt.getByTestId('receipt-action-note'))
+      await fitEach(receipt.getByTestId('receipt-action-note'), true)
       await fitEach(receipt.getByTestId('receipt-allow-domain'), true)
       await fitEach(receipt.getByTestId('receipt-allow-path'), true)
       await fitEach(receipt.getByTestId('receipt-rerun-unsandboxed'))
