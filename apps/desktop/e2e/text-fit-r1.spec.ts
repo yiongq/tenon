@@ -17,6 +17,7 @@ import {
   callsReply,
   editCall,
   makeFolderTree,
+  originMap,
   providerEnv,
   pushesOf,
   readCall,
@@ -24,6 +25,7 @@ import {
   send,
   startTask,
   textReply,
+  ZHIPU_ORIGIN,
 } from './helpers/tools.js'
 
 /** Scroll before measuring: a long thread is reachable, not clipped by its viewport. */
@@ -132,18 +134,9 @@ async function resizeWindow(app: ElectronApplication, page: Page, width: number,
 
 async function fitBlockLine(page: Page): Promise<void> {
   const block = page.getByTestId('composer-send-block')
-  await expectSingleLineUnclipped(block)
-  // Each label could stay whole while the whole action moves to the next line. Compare their text
-  // rectangles as well: text-fit's per-text-host line count deliberately cannot detect that case.
-  const tops = await block.locator(':scope > [data-testid]').evaluateAll((labels) =>
-    labels.flatMap((label) => {
-      const range = document.createRange()
-      range.selectNodeContents(label)
-      return [...range.getClientRects()].filter((r) => r.height > 2).map((r) => r.top)
-    }),
-  )
-  expect(tops.length).toBeGreaterThan(0)
-  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1)
+  // lead: the reason and actions may occupy separate rows at 800px. Each interface label is
+  // still measured as a single line below; the complete group must remain wholly unclipped.
+  await expectWrappedUnclipped(block)
 }
 
 for (const locale of ['zh-CN', 'en'] as const) {
@@ -599,7 +592,9 @@ for (const locale of ['zh-CN', 'en'] as const) {
         locale === 'en' ? 'Sends to api.anthropic.com' : '发往 api.anthropic.com',
       )
       await fitEach(tooltip, true)
-      await page.keyboard.press('Escape')
+      // Hovering a tooltip does not focus its row; Escape may only dismiss that tooltip.
+      // Toggle the owning menu, then wait for its exit animation to finish before reopening it.
+      await page.getByTestId('model-menu-trigger').click()
       await expect(menu).toHaveCount(0)
       expect(
         await page.evaluate(() =>
@@ -616,7 +611,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
         locale === 'en' ? 'Add an API key in Settings' : '去设置填 API 密钥',
       )
       await fitEach(menu.getByTestId('model-unconfigured-zhipu'))
-      await page.keyboard.press('Escape')
+      await page.getByTestId('model-menu-trigger').click()
       await expect(menu).toHaveCount(0)
 
       const instance = await createInstance(page, {
@@ -762,11 +757,9 @@ for (const locale of ['zh-CN', 'en'] as const) {
         provider:
           reason === 'modelRemoved' || reason === 'textOnlyTask'
             ? { id: INSTANCE, modelId: LONG_MODEL }
-            : reason === 'textOnlyTaskEstablished'
-              ? { id: 'anthropic', modelId: 'claude-opus-5-5' }
-              : { id: 'zhipu', modelId: 'glm-5.3' },
+            : { id: 'anthropic', modelId: 'claude-opus-5-5' },
         providerConfig:
-          reason === 'addressRefused' ? { zhipu: { baseURL: 'https://wrong.e2e.test' } } : {},
+          reason === 'addressRefused' ? { anthropic: { baseURL: 'https://wrong.e2e.test' } } : {},
         customVendors: [
           {
             id: INSTANCE,
@@ -785,12 +778,31 @@ for (const locale of ['zh-CN', 'en'] as const) {
       })
       const { app, page } = await launchTenon({
         userData,
-        env: providerEnv(fake.baseURL),
+        env: textOnly
+          ? providerEnv(fake.baseURL)
+          : {
+              ZHIPU_API_KEY: 'e2e-layout-zhipu-key',
+              ...originMap({ [ZHIPU_ORIGIN]: local.baseURL }),
+            },
         contentSize: { width: 800, height: 520 },
       })
       try {
         if (reason === 'modelRemoved') {
-          await fixtureSession(app, page)
+          const sessionId = await fixtureSession(app, page)
+          // A removed default falls back normally. Pin the session's own choice first, as in
+          // custom-vendor.spec.ts, so deletion leaves an actual removed selection to measure.
+          expect(
+            await page.evaluate(
+              ({ sessionId: id, providerId, modelId }) =>
+                window.tenon.invoke('session.selectModel', {
+                  sessionId: id,
+                  providerId,
+                  modelId,
+                  effort: null,
+                }),
+              { sessionId, providerId: INSTANCE, modelId: LONG_MODEL },
+            ),
+          ).toMatchObject({ ok: true, data: { ok: true } })
           expect(
             await page.evaluate(
               (id) => window.tenon.invoke('customVendor.delete', { id }),
@@ -837,6 +849,12 @@ for (const locale of ['zh-CN', 'en'] as const) {
         const change = page.getByTestId('composer-switch-model')
         if (!textOnly) {
           await expect(change).toBeVisible()
+          await expect(change).toHaveText(
+            locale === 'en' ? 'Switch to Zhipu GLM GLM-5.3' : '改用 智谱 GLM GLM-5.3',
+          )
+          await expect(change).toHaveAccessibleDescription(
+            locale === 'en' ? 'Sends to open.bigmodel.cn' : '发往 open.bigmodel.cn',
+          )
           const common = COPY[locale]
           const pairs = [
             ...['opus55', 'sonnet5', 'opus5', 'haiku45', 'fable51'].map((key) => ({
@@ -849,20 +867,33 @@ for (const locale of ['zh-CN', 'en'] as const) {
             })),
             { provider: common.provider.ollama.name, model: 'qwen3:8b' },
           ]
-          await change.evaluate(
+          const widest = await change.evaluate(
             (element, { candidates, template }) => {
               const ctx = document.createElement('canvas').getContext('2d')!
               ctx.font = getComputedStyle(element).font
-              const labels = candidates.map(({ provider, model }) =>
-                template.replace('{provider}', provider).replace('{model}', model),
-              )
-              element.textContent = labels.toSorted(
-                (a, b) => ctx.measureText(b).width - ctx.measureText(a).width,
+              const best = candidates.toSorted(
+                (a, b) =>
+                  ctx.measureText(`${b.provider} ${b.model}`).width -
+                  ctx.measureText(`${a.provider} ${a.model}`).width,
               )[0]!
+              element.textContent = template
+                .replace('{provider}', best.provider)
+                .replace('{model}', best.model)
+              return best
             },
             { candidates: pairs, template: common.composer.switchModel },
           )
+          // The stress label must stay on the real target provider, keeping its destination true.
+          expect(widest.provider).toBe(common.provider.zhipu.name)
           await fitEach(change)
+          await change.hover()
+          const tooltip = page.getByTestId('composer-switch-tooltip')
+          await expect(tooltip).toHaveText(
+            locale === 'en' ? 'Sends to open.bigmodel.cn' : '发往 open.bigmodel.cn',
+          )
+          await fitEach(tooltip, true)
+          await page.getByTestId('composer-input').hover()
+          await expect(tooltip).toBeHidden()
         }
         for (const size of [
           { width: 1280, height: 800 },
@@ -876,7 +907,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
           }
           // oxlint-disable-next-line no-await-in-loop -- none of the three reasons may wrap
           await fitEach(page.getByTestId('composer-block-reason'))
-          // oxlint-disable-next-line no-await-in-loop -- reason and actions must share one line
+          // oxlint-disable-next-line no-await-in-loop -- rows may wrap, but no text may be clipped
           await fitBlockLine(page)
           // oxlint-disable-next-line no-await-in-loop -- also check the chips and icon bounds
           await fitTools(page)

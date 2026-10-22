@@ -179,8 +179,15 @@ export function Composer(): JSX.Element {
           「发送」 is off, else what sending now would do to the waiting card, else the disclaimer. */}
       <div className="mt-2 min-h-4 text-center font-sans text-micro text-text-muted">
         {block !== null ? (
-          <p id="composer-send-block" data-testid="composer-send-block" data-reason={block}>
-            <span data-testid="composer-block-reason">{t(blockKey!)}</span>
+          <p
+            id="composer-send-block"
+            data-testid="composer-send-block"
+            data-reason={block}
+            className="flex flex-wrap items-baseline justify-center gap-x-1 gap-y-1"
+          >
+            <span data-testid="composer-block-reason" className="shrink-0 whitespace-nowrap">
+              {t(blockKey!)}
+            </span>
             {target !== null ? (
               <>
                 <Tooltip>
@@ -191,7 +198,7 @@ export function Composer(): JSX.Element {
                         data-testid="composer-switch-model"
                         aria-label={targetLabel}
                         aria-describedby={descriptionId}
-                        className="ml-1 text-text-secondary underline underline-offset-2"
+                        className="min-w-0 max-w-full shrink-0 wrap-anywhere whitespace-normal text-text-secondary underline underline-offset-2"
                         onClick={() => void menu.current?.switchTo(target)}
                       />
                     }
@@ -202,9 +209,6 @@ export function Composer(): JSX.Element {
                     {description}
                   </TooltipContent>
                 </Tooltip>
-                <span id={descriptionId} className="sr-only">
-                  {description}
-                </span>
               </>
             ) : null}
             {unavailable && block !== 'modelRemoved' ? (
@@ -212,7 +216,7 @@ export function Composer(): JSX.Element {
                 <button
                   type="button"
                   data-testid="composer-settings"
-                  className="ml-1 text-text-secondary underline underline-offset-2"
+                  className="shrink-0 whitespace-nowrap text-text-secondary underline underline-offset-2"
                   onClick={() => setSettingsOpen(true)}
                 >
                   {t('composer.settings')}
@@ -226,6 +230,11 @@ export function Composer(): JSX.Element {
           <p data-testid="composer-disclaimer" className="truncate">
             {t('composer.disclaimer')}
           </p>
+        )}
+        {target === null ? null : (
+          <span id={descriptionId} className="sr-only">
+            {description}
+          </span>
         )}
       </div>
       <SettingsModal open={settingsOpen} onOpenChange={setSettingsOpen} />

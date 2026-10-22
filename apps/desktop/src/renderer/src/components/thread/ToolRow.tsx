@@ -109,7 +109,9 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
               <AlertTriangle aria-hidden className="inline size-3" />
               <span className="sr-only">{t('tool.did.irreversible')}</span>
             </TooltipTrigger>
-            <TooltipContent>{t('tool.did.irreversible')}</TooltipContent>
+            <TooltipContent className="w-max max-w-none whitespace-nowrap [&>[data-slot=tooltip-arrow]]:hidden">
+              {t('tool.did.irreversible')}
+            </TooltipContent>
           </Tooltip>
         ) : null}
         {outcome === null && pending === null && !asking && summary === null ? (
