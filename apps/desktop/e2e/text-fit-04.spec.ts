@@ -47,14 +47,15 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await page.getByTestId('account-permissions').click()
       const pane = page.getByTestId('sandbox-pane')
       await expect(pane).toBeVisible()
+      // Labels, headings, buttons and short summaries stay on one line; sentences may wrap but not clip.
       await fitEach(page.getByTestId('settings-permissions'))
       await fitEach(pane.locator('h3, label[for="sandbox-domain"]'))
       await fitEach(pane.getByTestId('sandbox-preset').locator('summary'))
       await fitEach(pane.getByTestId('sandbox-advanced').locator('summary'))
-      await fitEach(pane.getByTestId('sandbox-status').locator('summary'))
+      await fitEach(pane.getByTestId('sandbox-status').locator('summary'), true)
       await pane.getByTestId('sandbox-status').locator('summary').click()
       await expect(pane.getByTestId('sandbox-reason-test-seam')).toBeVisible()
-      await fitEach(pane.getByTestId('sandbox-reason-test-seam').locator('p'))
+      await fitEach(pane.getByTestId('sandbox-reason-test-seam').locator('p'), true)
       await fitEach(pane.getByTestId('sandbox-reason-test-seam').locator('pre'), true)
       const input = pane.getByTestId('sandbox-domain-input')
       await input.fill('*.com')
@@ -88,7 +89,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await fitEach(
         pane.locator('label').filter({ has: pane.getByTestId('sandbox-package-managers') }),
       )
-      await fitEach(pane.locator('p:visible:not(.font-mono)'))
+      await fitEach(pane.locator('p:visible:not(.font-mono)'), true)
       await fitEach(pane.getByTestId('sandbox-preset').locator('li'), true)
       await fitEach(pane.locator('form button'))
       await closeSettings(page)
@@ -185,9 +186,9 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await page.getByTestId('account-row').click()
       await page.getByTestId('account-permissions').click()
       await expect(page.getByTestId('sandbox-pane')).toBeVisible()
-      await fitEach(page.getByTestId('sandbox-status').locator('summary'))
+      await fitEach(page.getByTestId('sandbox-status').locator('summary'), true)
       await page.getByTestId('sandbox-status').locator('summary').click()
-      await fitEach(page.getByTestId('sandbox-reason-test-seam').locator('p'))
+      await fitEach(page.getByTestId('sandbox-reason-test-seam').locator('p'), true)
       await closeSettings(page)
     } finally {
       await app.close()

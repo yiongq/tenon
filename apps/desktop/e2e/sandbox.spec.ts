@@ -147,12 +147,13 @@ for (const locale of ['zh-CN', 'en'] as const) {
         locale === 'zh-CN' ? '同时接受 npm 发布' : 'also accepts npm publishing',
       )
       await expect(preset).toContainText('sandbox-cache')
-      await page.getByTestId('sandbox-package-managers').check()
+      // Controlled inputs follow the saved view, so a click shows once the save round-trips.
+      await page.getByTestId('sandbox-package-managers').click()
       await expect(page.getByTestId('sandbox-package-managers')).toBeChecked()
       const advanced = page.getByTestId('sandbox-advanced')
       await expect(advanced).not.toHaveAttribute('open', '')
       await advanced.locator('summary').click()
-      await advanced.locator('input[value="read-only"]').check()
+      await advanced.locator('input[value="read-only"]').click()
       await expect(advanced.locator('input[value="read-only"]')).toBeChecked()
       await expect
         .poll(() => savedSettings(userData))
@@ -167,7 +168,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       )
       expect(changed).toEqual({ ok: true, data: { ok: true } })
       await expect(advanced.locator('input[value="workspace-write"]')).toBeChecked()
-      await advanced.locator('input[value="read-only"]').check()
+      await advanced.locator('input[value="read-only"]').click()
       await expect(advanced.locator('input[value="read-only"]')).toBeChecked()
       await closeSettings(page)
       // The location hash must open the new pane directly, as it does the existing sections.
@@ -225,7 +226,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
   test(`04 验收 18 (e2e): with \`off\`, a command card shows the unavailable line (${locale})`, async () => {
     const tree = makeFolderTree('sandbox-off-card', { 'ws/keep.txt': 'keep' })
     const fake = await startFakeAnthropic({
-      replies: [callsReply(bashCall('off_command', 'printf off')), textReply('Declined.')],
+      replies: [callsReply(bashCall('off_command', 'printf off'))],
     })
     const userData = makeUserDataDir('sandbox-off-card')
     seedConfig(userData, { locale })
@@ -251,8 +252,9 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(page.getByTestId('approval-reason')).toHaveCount(0)
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await page.getByTestId('approval-deny').click()
-      await expect(page.getByTestId('approval-card')).toHaveCount(0)
-      await expect(page.getByTestId('assistant-text').last()).toHaveText('Declined.')
+      // A denied card ends the round; nothing runs and the model is not asked again.
+      await expect(page.getByTestId('approval-answered')).toHaveAttribute('data-outcome', 'denied')
+      expect(fake.requests).toHaveLength(1)
     } finally {
       await app.close()
       await fake.close()
@@ -302,6 +304,7 @@ test('04 验收 32: a blocked command, 在这个任务里允许连接, the next 
     await expect(page.getByTestId('sandbox-domain')).toHaveCount(0)
     await closeSettings(page)
     await send(page, 'continue with another command')
+    await allowCommand(page)
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Finished.')
     expect(fake.requests).toHaveLength(4)
     const nextMessages = messageBodies(fake)[2]!.messages
