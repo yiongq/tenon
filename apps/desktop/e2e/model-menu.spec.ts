@@ -794,7 +794,12 @@ test('presentation-r1 验收 11: with history only on this computer, 改用 a pu
     await expect(page.getByTestId('model-menu')).toBeVisible()
     await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
     expect(await routeCalls(app, 'session.selectModel')).toBe(0)
-    expect(named(tapeFacts(userData), 'session/model_selected')).toHaveLength(0)
+    // The local history already recorded Ollama; the public target must remain unselected.
+    expect(
+      named(tapeFacts(userData), 'session/model_selected').filter(
+        (fact) => fact.payload['providerId'] === 'zhipu',
+      ),
+    ).toHaveLength(0)
     expect(zhipu.requests).toHaveLength(0)
     expect(ollama.requests).toHaveLength(1)
     await page.getByTestId('model-confirm-switch').click()

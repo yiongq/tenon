@@ -132,6 +132,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       )
       await page.getByTestId('folder-toggle').click()
       const chip = page.getByTestId('folder-chip')
+      // Profile selection and the facts refresh are asynchronous; measurement does not auto-wait.
+      await expect(chip).toBeVisible()
       await expectSingleLineUnclipped(chip)
       await chip.click()
       const popup = page.getByTestId('folder-popover')
