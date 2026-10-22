@@ -1,6 +1,8 @@
 # 02 · Agent loop
 
 Status: implemented
+Clauses replaced by: [presentation-r1](../../features/presentation-r1/spec.md)（2026-10-22：§会话形态 任务行的文件夹 chip、§阶段 2 做的组件 的 ToolRow 通用句与被拒收口句、TurnSummaryLine、BlockedNotice、ModeSwitch、FolderChip 四行、§失败卡与结束原因 ①② 与阶段 1 错误态的 auth、① 的槽位、user-rejected、§结束原因词表 的「槽位齐全」、§最小审批卡 ③④⑥ 与答完、§模型菜单与输入框 的组头文案、每一行与提示与禁发、§模型选择 数据去向第一条与「已配置」的组头、§可逆性「记录和展示」与 §目标与非目标「完整版界面」的刻度排期、验收 34 与 37 各两处）
+Amended by: [presentation-r1](../../features/presentation-r1/spec.md)（2026-10-22：第一次存 key、新会话默认还空着时把默认落到这个厂商；「只有改过下拉才写」两句与验收 33 读作三键都空时除外；§最小审批卡「按键」的钮上文字读作带期限的允许钮，键、默认焦点与放行的钮不变；见该 spec「点名」(a)、(b)、(d)；§工具调用的收口 的工具结果视图（kernel 的 ToolOutcomeView 与 contracts 的 toolOutcomeViewShape）只增 isError，见该 spec §对 02 的修补 第 3 条）
 Amended by: [custom-vendors](../../features/custom-vendors/spec.md)（2026-10-02：modelMarkSchema 与 capabilitySource 只增 probed，ToolsWithheldPayload.reason 与 RunAssembly.toolsWithheld 只增 not-probed，RunConnector 只增可选的 toolsPerRequest（工具数上限改成定义上的数据），checksThinkingPrefix 改读 ModelInfo 字段，WIRE_MODEL_FIELDS 加 maxTokensField，不带工具的范围规则扩到回环与私网实例；自定义实例 id 以 custom-<uuid> 为准。只增不改，全文在该 spec；内置行只认官方 https 源、删掉 anthropic 指向 /api/anthropic 时的智谱搜索分支、撤掉 TOOLS_PER_REQUEST 常量等不属纯粹只增的几处在该 spec「点名」）
 Amended by: [03-mcp-host](../03-mcp-host/spec.md)（2026-10-08：RunAssembly 只增可选的 mcpTable（只在开表时等连接），McpToolSource 只增 rank、review、instructions，SessionServiceOptions 只增 userSetting 与 schemaValidator，ToolKey 只增 definitionHash，ToolTablePayload.tools[] 与 ToolTableItem 只增 definitionHash，UserToolSetting 只增 definitionChanged，McpConnection.callTool 只增 options，McpConnection 只增 era、instructions、listPrompts、getPrompt、listResources、readResource；ToolExclusionCode 只增 connector-unavailable、name-collision、invalid-definition、definition-changed，ClosureSource 只增 connector-unauthorized，tool/permission_decided 只增 definitionChanged，新 Tape 名字 message/server_instructions 与两个提示层键；ToolOutcomeView 与工具结果视图只增 reversibility，approval.current 只增 definitionChanged；退出第 4 步与等 Run 并行关连接池、上限不变。只增不改，全文在该 spec；超上限按连接器顺序裁、同台撞名改为排除、serverId 语法、总是允许随定义作废、启动期先等连接、派发后连接不可用记未执行、非 MCP 界面挪到阶段 4（SkillReadSubRow 随阶段 5）等碰到旧文字的几处在该 spec「点名」）
 Amended by: [04-sandbox](../04-sandbox/spec.md)（2026-10-09：BlockReason 只增 sandbox；ToolOutcomePayload 与工具结果视图只增 sandbox（违规列表）；PermissionDecidedPayload 只增 sandbox（档位计划）；新 Tape 名字 tool/receipt_override 与 message/sandbox_release；LoopPorts 只增可选的 sandbox（beforeWrap、grantsChanged），SessionService 只增 release；命令卡只增可选事实键 sandbox；提示层三处新文本，PROMPT_LAYER_VERSION 加一；WebFetch 的地址表加 100.64.0.0/10。只增不改，全文在该 spec；Bash 的档位按判决生效、调用结束时杀进程组、有违规的命令照执行过收口并计入连拦上限、沙箱回执成为回执放行的第二个产生方并先于 inspector 上线、第 6 层的网络白名单与域名的会话授权由沙箱回执产生、会话命令授权不免 full-access 计划的卡、绑定重跑的命令主原因取 elevated、保护名单由沙箱补到命令上、CGNAT 等碰到旧文字的几处在该 spec「点名」）
@@ -101,7 +103,7 @@ Provider 层选型与厂商分档见 [ADR-003](../../adr/adr-003-provider-layer.
 - **用户可配置的 MCP。** 02 的 MCP 只以 Everything 夹具接入端到端测试，夹具发起的 elicitation 一律拒绝（裁决 H4、H6）。去向：阶段 3（设置界面、OAuth、重连）。
 - **会话列表、首页、冷启动进首页。** 02 不动「最近一个会话」的算法，只加一条：启动恢复不落在子会话上，映射回根会话，这是对 01 `spec.md:701` 的收紧，见 01 修补 6（裁决 B3）。去向：阶段 6；到时改成冷启动进首页，按 supersede 处理 01 验收 5。
 - **编辑重发、重新生成、分支的界面。** 沿用 01 的 R6（01 `spec.md:53`）；改的不是最后一条时撤回后文还是保留后文并丢思考块，阶段 6 定（裁决 B17）。
-- **完整版界面。** 带样式的改动预览、可逆性刻度、「能否还原」、折叠头、命令子行、只读折叠行、子任务行、任务时间线与右面板都不在 02，02 只做最小正式版（见 §界面范围）。去向：阶段 3、4，完整审批卡随快照（裁决 H3、H1）。
+- **完整版界面。** 带样式的改动预览、可逆性刻度、「能否还原」、折叠头、命令子行、只读折叠行、子任务行、任务时间线与右面板都不在 02，02 只做最小正式版（见 §界面范围）。去向：阶段 3、4，完整审批卡随快照（裁决 H3、H1）。（2026-10-22 起刻度已由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 去掉）
 - **`code` 形态。** 阶段 6 前按 00 的开放问题重估（裁决 H1）。
 
 ### Anthropic 保证档的退路
@@ -1042,7 +1044,7 @@ endpointOrigin?: string                                // URL.origin：只留协
 | 形态 | 发给模型的候选工具（名字见 §内置工具与工具来源） | 限制 |
 |---|---|---|
 | 对话 | AskUserQuestion、WebSearch、WebFetch、Read | Read 只接受本会话落盘目录（H9）下的路径，其余路径在调用时直接拦下、不出卡：对话形态没有工作区，填不出 `outside-workspace` 的必填槽位。拦截码 `protected`，回执用对话形态专用的一句（开放问题 13 已定）。当前 provider 没有搜索后端时不含 WebSearch。不能执行代码（裁决 H1） |
-| 任务 | 对话的四个，再加 Write、Edit、Bash、Glob、Grep、Agent | Read 不受上面的目录限制，按 §权限决策顺序 判定。输入框下方有文件夹 chip（裁决 H1、D11） |
+| 任务 | 对话的四个，再加 Write、Edit、Bash、Glob、Grep、Agent | Read 不受上面的目录限制，按 §权限决策顺序 判定。输入框下方有文件夹 chip（裁决 H1、D11） （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §输入框 取代：文件夹 chip 在输入框工具行里） |
 
 形态只决定候选工具集；开表、排序、冻结和排除按 §工具目录与冻结（裁决 E2）。工具表只放审批和收口都已做完的工具，按砍法砍掉的不在集合里（裁决 M1）。本会话不发工具时，两种形态都是零工具，见 §表外模型与不发工具。
 
@@ -1106,10 +1108,10 @@ endpointOrigin?: string                                // URL.origin：只留协
 - **换模型时的历史**（裁决 M5）：不清空，原样重放。工具表按 E2：别的 provider 在本会话第一次被用时才开表，切回来沿用原表。思考块按守卫规则 1（跨 provider）、规则 2（跨模型）丢弃，记进 `thinkingDecisions`（packages/kernel/src/provider/thinking.ts:47-52）；A7 的读法见 01 修补 3。
 - **换到上下文更小的模型**（裁决 H10）：下一次发送前，先按新模型的 `contextLimit` 过一遍压缩阈值，超过就先压缩再发（§撞墙兜底与换模型）。压缩还没做或已被砍时，照发，溢出以 `context-overflow`、`compactions: 0` 结束（暂定，见 §开放问题）。
 - **数据去向**（裁决 M5、A9）：
-  - 菜单每行显示目标主机，按该 provider 当前 baseURL 的主机算。只有回环地址显示「本机」，其余地址（包括私网地址）都显示主机名；Ollama 的行也按实际 baseURL 算，不写死。
+  - 菜单每行显示目标主机，按该 provider 当前 baseURL 的主机算。只有回环地址显示「本机」，其余地址（包括私网地址）都显示主机名；Ollama 的行也按实际 baseURL 算，不写死。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §模型菜单 取代：地址是厂商声明默认值的内置行，主机只在悬停与确认里）
   - 已有历史的会话，目标从回环或私网主机变成公网主机时，在菜单里原地二次确认「此前的内容会发往 <主机>」，确认之前对该主机 0 次请求；同时给出「用新模型开新会话」，新会话不带旧内容，有进行中的 Run 时先走 §离开会话 的确认。不用系统原生弹框（A9-B 已否）。私网算「本机」一侧、从回环切到私网不确认，是暂定读法（见 §开放问题）。菜单比的是本会话历史最后实际发往的主机（`session.facts` 的 `lastEndpoint`，与 kernel 数据去向检查比的同一个点），不是当前生效的选择；表里的行、手填的 ID、思考档位都按它比（补查评审 s19-spec-1）。本会话已有自己的选择 ①、且 ① 的 provider 现在发往的主机就是目标主机时不再确认：选 ① 时已在菜单里确认过这个主机，kernel 发 ① 也不再检查，所以 ① 的思考档位、再点一次 ① 那一行、为同一主机手填的 ID 都不问（补查复评 rrE-1）。生效的是没人确认过的形态默认，或目标是另一个公网主机时，照上面的规则确认。
   - A9 的 key 绑定主机在切厂商时照样生效（01 修补 6）。
-- **已配置**（裁决 B14）：只有「已配置」的厂商可以选；未配置的厂商在菜单里只留一行置灰的组头「去设置填 key」。算法见 01 修补 6。
+- **已配置**（裁决 B14）：只有「已配置」的厂商可以选；未配置的厂商在菜单里只留一行置灰的组头「去设置填 key」。算法见 01 修补 6。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §模型菜单 取代：组头文案，地址被拒的另一句）
 
 ### 表外模型与不发工具
 
@@ -1515,7 +1517,7 @@ export type RunEndReason =
   | { code: 'time-limit'; limitMs: number }                             // 子 agent 到期（F7）；只出现在子会话（开放问题 18）
 ```
 
-- 槽位只放事实。两份 locale（apps/desktop/src/i18n/locales/{zh-CN,en}/common.json）各有 18 条文案、槽位齐全，kernel 不产生句子。`done.stopReason` 原来的三个值和 01 spec.md:699 的映射一字不动（`tool-use` 仍归 `end-turn`）（裁决 H12）。
+- 槽位只放事实。两份 locale（apps/desktop/src/i18n/locales/{zh-CN,en}/common.json）各有 18 条文案、槽位齐全，kernel 不产生句子。`done.stopReason` 原来的三个值和 01 spec.md:699 的映射一字不动（`tool-use` 仍归 `end-turn`）（裁决 H12）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §失败卡 取代：provider-error 再按 errorCode 各一句；参数取自成员字段，厂商名、模型名由 id 换算，user-rejected 不带 toolName）
 - `resetAt` 取 error 事件上只增的 `resetAt`（见 01 修补 2），算不出就是 null：Anthropic 用量层级的月度上限由适配器算成下月 1 日 00:00 UTC；智谱 1308、1310 从报文解析，格式抓到之前记 null（裁决 H12）。
 - 本词表答「整次 Run 为什么结束」，§原因码表 答「单个调用怎么收口」；七个码两边同名：`output-truncated`、`step-limit`、`no-progress`、`usage-limit`、`blocked-repeatedly`、`content-filter`、`provider-error`（裁决 B1、H12）。
 - 你在主会话点拒绝后，这次答复开的新 Run 不发请求，只写收口事实，以 `user-rejected` 结束（本 spec 的读法，owner 2026-09-25 已确认；裁决 F2、F3）。子 agent 转上来的审批被你拒绝，只拒这一次，任何 Run 都不结束（裁决 F2）。
@@ -2266,7 +2268,7 @@ export function grantKey(serverId: string, toolName: string, object: GrantObject
 - **只看工具和参数**，与保护名单、工作区判定无关；被拦下的调用照常判，写进判决事实的必填字段 `reversibility`；没有判决事实就被收口的调用，`tool_outcome` 记 `unknown`。
 - **命令的保守模式表**（裁决 E1、E4）：不是 shell 解析器。对命令原文做子串或正则匹配，位置不限，不拆段，不 `stat` 操作数；命中判 `irreversible`，其余一律 `unknown`，命令永远不判 `read-only`。至少认出：`rm`；`curl` 带 `-X POST`、`-d`、`-F` 或 `--upload-file`；`git push`；`scp`。`curl` GET、`ls` 判 `unknown`。`rm` 出现就判（`echo "rm x"` 同样命中）；只许加往 `irreversible` 判的模式。任何档位都生效，只改可逆性，不改原因码。
 - **与原因码的关系**只有一条单向约束：原因码 `irreversible` ⇒ 可逆性 `irreversible`。阶段 2 的命令主原因固定为 `command`（`curl -X POST …`：原因码 `command`，可逆性 `irreversible`，「撤不回」那句取自可逆性；裁决 E1、E4、D5）。
-- **记录和展示**：`ConfirmRequest.reversibility`、`tool/permission_decided`、`tool_outcome` 的载荷都带这个值（§载荷），不需要修补 01。阶段 2 的最小审批卡只用「撤不回」那一句，刻度图标在阶段 3 上卡（裁决 E1、H3）。
+- **记录和展示**：`ConfirmRequest.reversibility`、`tool/permission_decided`、`tool_outcome` 的载荷都带这个值（§载荷），不需要修补 01。阶段 2 的最小审批卡只用「撤不回」那一句，刻度图标在阶段 3 上卡（裁决 E1、H3）。（2026-10-22 起刻度已由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 去掉）
 
 ### 内置工具的默认档位
 
@@ -2826,15 +2828,15 @@ callKey: z.string().min(1),
 
 | 组件 | 阶段 2 的形态与状态 | 读什么 | 裁决 |
 |---|---|---|---|
-| `ToolRow` | 一个调用一行人话，按工具名查目录；查不到的（MCP 工具）用通用句，带工具名。展开看输入和输出，都按纯文本显示（工具结果是不可信内容），默认视图不出现 JSON。挂在 `block-registry.tsx:29` 的 `tools.Fallback`，取代 `UnknownBlock`。Agent 调用也只占一行，展开看交接结果（读视图的 `handoff`：结局、子任务结束原因、子会话 id、子任务的回复；开放问题 18）；交接的回复被截成开头（`handoff.preview` 在）时，输出处显示存下的回复开头，下面一行说全文在 Tenon 为这个会话保存的文件里、模型可以读取（写盘失败时说全文没能保存），不显示给模型的英文落盘说明（Revisions 31）；交接过了落盘阈值而回复没被截（超限的是调用行，没有 `preview`）时，输出处和别的落盘工具一样显示 content 里的落盘说明。子会话转上来的卡挂在这一行下。执行状态不是 completed 的行，按收口来源码查目录写一句。不带可逆性标记 | `tool-call`、`tool-outcome`；重画读 `calls` | H3、H5、B1 |
+| `ToolRow` | 一个调用一行人话，按工具名查目录；查不到的（MCP 工具）用通用句，带工具名。展开看输入和输出，都按纯文本显示（工具结果是不可信内容），默认视图不出现 JSON。挂在 `block-registry.tsx:29` 的 `tools.Fallback`，取代 `UnknownBlock`。Agent 调用也只占一行，展开看交接结果（读视图的 `handoff`：结局、子任务结束原因、子会话 id、子任务的回复；开放问题 18）；交接的回复被截成开头（`handoff.preview` 在）时，输出处显示存下的回复开头，下面一行说全文在 Tenon 为这个会话保存的文件里、模型可以读取（写盘失败时说全文没能保存），不显示给模型的英文落盘说明（Revisions 31）；交接过了落盘阈值而回复没被截（超限的是调用行，没有 `preview`）时，输出处和别的落盘工具一样显示 content 里的落盘说明。子会话转上来的卡挂在这一行下。执行状态不是 completed 的行，按收口来源码查目录写一句。不带可逆性标记 | `tool-call`、`tool-outcome`；重画读 `calls` | H3、H5、B1 （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §工具行、§答完与拒绝 取代：连接器调用写显示名与工具原名；主会话卡被拒的那次调用不出收口句，塌行就是它的收口） |
 | `ThinkingBlock` | 取代 `block-registry.tsx:24` 的占位，见 §思考的默认与显示 | `thinking-delta` | A11 |
-| `TurnSummaryLine` | 一轮结束时一行：读了 N 个、改了 M 个、有没有对外发送，按各调用的 `effect`（read / write / external）计数，不写「能不能还原」。「一轮」= 上一条用户消息以来的所有 Run，含批准、答题、子任务之后续跑的。某个 Run 以 `paused` 以外的码结束时才出；没有工具调用的轮不出 | `tool-outcome` 或 `calls`、`done.endReason` | H3、E1 |
+| `TurnSummaryLine` | 一轮结束时一行：读了 N 个、改了 M 个、有没有对外发送，按各调用的 `effect`（read / write / external）计数，不写「能不能还原」。「一轮」= 上一条用户消息以来的所有 Run，含批准、答题、子任务之后续跑的。某个 Run 以 `paused` 以外的码结束时才出；没有工具调用的轮不出 | `tool-outcome` 或 `calls`、`done.endReason` | H3、E1 （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §结算行 取代：按类别计数并计入子任务，计数全零的轮不出） |
 | `FailureCard` | 见 §失败卡与结束原因 | 终态事件（done 或 error）的 `endReason`、`tool-outcome` | H3、H11、H12、B1 |
-| `BlockedNotice` | `tool-outcome.source` 是拦截码（`policy` / `user-disabled` / `protected` / `inspector`）时接在那一行下，写三样：拦了什么（有 `facts.target` 写它，否则写工具名）；为什么（查 `blocked.<source>`，槽位取 `facts`，即 `BLOCKED_FACT_KEYS`，§原因码表；会话形态为对话且 `facts.toolName` 为 Read 时改查 `blocked.chatReadScope`，按字面键取，槽位同 `blocked.protected`：`{toolName}`、`{target}`，开放问题 13；`inspector` 按 `facts.category` 查 `blocked.inspector.<category>`，与卡上 `confirm.reason.flagged.<category>` 同法，`category` 只取 `FlaggedCategory` 的值、其余按 `exfiltration`，它选句子、不作槽位）；「已告诉模型」。02 不给放行入口 | `tool-outcome.source`、`tool-outcome.facts` | H3、D5、E2、F9 |
+| `BlockedNotice` | `tool-outcome.source` 是拦截码（`policy` / `user-disabled` / `protected` / `inspector`）时接在那一行下，写三样：拦了什么（有 `facts.target` 写它，否则写工具名）；为什么（查 `blocked.<source>`，槽位取 `facts`，即 `BLOCKED_FACT_KEYS`，§原因码表；会话形态为对话且 `facts.toolName` 为 Read 时改查 `blocked.chatReadScope`，按字面键取，槽位同 `blocked.protected`：`{toolName}`、`{target}`，开放问题 13；`inspector` 按 `facts.category` 查 `blocked.inspector.<category>`，与卡上 `confirm.reason.flagged.<category>` 同法，`category` 只取 `FlaggedCategory` 的值、其余按 `exfiltration`，它选句子、不作槽位）；「已告诉模型」。02 不给放行入口 | `tool-outcome.source`、`tool-outcome.facts` | H3、D5、E2、F9 （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §拦截回执 取代：一行说为什么，不写工具名与「已告诉模型」，protected 按读、写、抓取分句） |
 | `ApprovalCard` | 见 §最小审批卡 | `approval.current`；答复用 `approval.respond` | H3、F6、D10 |
 | `ComposerSlots`、`AskWidget`、`AskSummaryCard` | 槽位在阶段 2 只放提问 widget；审批卡内联在消息流里，不进槽位。widget 有 1/N 分页、选项（`multiSelect` 时可多选）和跳过，也可以直接在输入框回复；停止后每题显示「未作答」。答完留一张汇总卡，跳过的题标「无偏好」：live 读 `tool-outcome` 的 `question`，重画读 `calls[i].outcome.question`，题面取该调用的 `input.questions`，`null` 显示「无偏好」，直接打字回复的显示 `response` 原文，来源为 `unanswered` 时每题「未作答」（开放问题 18，owner 2026-09-26）；记录带 `preview` 的（长回答只存了开头），卡上显示存下的开头，另起一行说全文在哪（Revisions 31）。不做最小化。等提问时，同批后面的调用以排队行叠在那次 AskUserQuestion 的行下，不进槽位 | `approval.current` 的 question 变体、提问调用的 `input` | H6、F6 |
-| `ModeSwitch` | 新会话发出第一条消息之前可在「对话 / 任务」之间切；建立后只显示形态，不能改 | 读 `session.facts`，写 `session.selectProfile` | H1 |
-| `FolderChip` | 只在任务形态出现，位于输入框下方。列出本会话的文件夹，第一个标为 cwd；没选时显示「专用文件夹」。点开由主进程弹系统目录选择框，可多选；可以预填上次所选，点确认才生效；每一项都能移除 | `workspace.*`、`session.facts`、`config.get` 的 `lastWorkspaceFolders` | D11、D8 |
+| `ModeSwitch` | 新会话发出第一条消息之前可在「对话 / 任务」之间切；建立后只显示形态，不能改 | 读 `session.facts`，写 `session.selectProfile` | H1 （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §输入框 取代：「在文件夹里工作」开关） |
+| `FolderChip` | 只在任务形态出现，位于输入框下方。列出本会话的文件夹，第一个标为 cwd；没选时显示「专用文件夹」。点开由主进程弹系统目录选择框，可多选；可以预填上次所选，点确认才生效；每一项都能移除 | `workspace.*`、`session.facts`、`config.get` 的 `lastWorkspaceFolders` | D11、D8 （2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §输入框 取代：chip 在工具行开关旁，点开是列出全部文件夹的浮层） |
 | `ModelMenu`、`EffortSubmenu` | 见 §模型菜单与输入框 | `provider.list`、`session.modelChoice` | M5、A11 |
 | `PendingApprovalBanner` | 会话顶部，列当前会话以外正在等你的会话，一个会话一行：`waitKind` 为 `approval` 写「另一个会话在等你批准 · 回去」，为 `question` 写「另一个会话在等你回答 · 回去」，为 `resume` 写「另一个会话有没做完的操作 · 回去」，各一个文案键。点「回去」之后见 §离开会话 | `approval.list` | B18、H6 |
 | `LeaveRunDialog` | 当前会话有进行中的 Run 时，离开前弹确认「停止任务 / 留在这里」。入口四个：侧栏的新建、菜单的 New Chat、横幅的「回去」、模型菜单的「用新模型开新会话」。关窗、退出时主进程的原生确认框也用这组文案键 | `run.state` 的 `running`（§进行中、暂停与 RunRegistry） | B18、B4、M5 |
@@ -2843,7 +2845,7 @@ callKey: z.string().min(1),
 
 ### 失败卡与结束原因
 
-- 三行都不能空（components.md:140）。① 发生了什么：按终态事件（done 或 error）的 `endReason.code` 查目录，不看是哪种事件；没有 `endReason` 的 error（不是 Run 的失败）照阶段 1 的 ThreadError 按 `code` 出；槽位取这个成员的字段（§结束原因词表）。② 已造成的副作用：本轮调用按 `state` 分开写，已完成的列出来，not-run 写「确定没发生」，uncertain 写「可能已执行」；命令被停下时，只有 `exited` 在确认窗口内到达才写「后续写入未发生」（§点停止时各状态怎么收）；本轮没有调用写「没有执行任何操作」。③ 一个动作，见下表。
+- 三行都不能空（components.md:140）。① 发生了什么：按终态事件（done 或 error）的 `endReason.code` 查目录，不看是哪种事件；没有 `endReason` 的 error（不是 Run 的失败）照阶段 1 的 ThreadError 按 `code` 出；槽位取这个成员的字段（§结束原因词表）。② 已造成的副作用：本轮调用按 `state` 分开写，已完成的列出来，not-run 写「确定没发生」，uncertain 写「可能已执行」；命令被停下时，只有 `exited` 在确认窗口内到达才写「后续写入未发生」（§点停止时各状态怎么收）；本轮没有调用写「没有执行任何操作」。③ 一个动作，见下表。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §失败卡 取代：provider-error 按 errorCode 分句、已完成的按对象聚合；厂商、模型写名字（由 providerId、modelId 换算）；user-rejected 不带 toolName；阶段 1 错误态的 auth 换句并给「去设置」）
 - 视觉类沿用 components.md:140 的四类：你停下的为中性，模型失败、工具失败为红，被拦截为琥珀。components.md 没点名的码按下表归类（owner 2026-09-25 已确认）。
 
 | 结束码 | 出什么 | 视觉类 | ③ 动作 |
@@ -2851,7 +2853,7 @@ callKey: z.string().min(1),
 | `completed` | 只出结算行 | — | — |
 | `paused` | 不出卡，也不出结算行；审批卡或提问 widget 在场 | — | — |
 | `step-limit`、`output-truncated` | 失败卡 | 中性 | 「继续」：调 `chat.continue`。能点的条件见 §重试与「继续」；之后来了新的用户消息，按钮不再显示 |
-| `user-stopped`、`shutdown-aborted`、`user-rejected`、`usage-limit`、`recovered`、`time-limit` | 失败卡 | 中性 | 复制诊断信息 |
+| `user-stopped`、`shutdown-aborted`、`user-rejected`、`usage-limit`、`recovered`、`time-limit` | 失败卡 | 中性 | 复制诊断信息 （2026-10-22 起 user-rejected 由 [presentation-r1](../../features/presentation-r1/spec.md) §答完与拒绝 取代：不出卡，拒绝那一行说本轮结束） |
 | `blocked-repeatedly` | 失败卡 | 琥珀 | 复制诊断信息 |
 | `provider-error`，且 `errorCode` 为 `auth` | 失败卡 | 红 | 「去设置」（components.md:140「去重新授权」的读法） |
 | 其余 `provider-error` | 失败卡 | 红 | 两个条件都满足时给「重试」：这个 Run 由用户消息触发，而且还没有任何 `dispatch_committed`；语义同阶段 1，按 01 spec.md:395 用同一条用户消息重发，所以那条消息在 Run 结束时须仍是 Tape 上最后一条（Run 已写下回复或插入了排队消息时重发就成了第二份，不给）。kernel 判定，经 `run-ended.retryOf` 交给渲染端；之后有了新消息、新的 Run 或排队项时按钮不再显示。其余情况给复制诊断信息 |
@@ -2868,24 +2870,24 @@ callKey: z.string().min(1),
   - ① 问题式标题：按 `kind` 和 `target.type` 查目录；`file` 类再按 `reversibility` 是不是 `read-only` 分成读和写。不用模型给的文字。
   - ② 对象一行：只读 `card.target`，五种之一：真实路径（D8）、命令原文加 cwd、搜索词加后端域名、完整 URL、连接器 ID 加工具原名（两段分开渲染、不拼成一个串，原名可以含空格和「·」）。等宽字体完整显示，过长折行，不省略（裁决 E4）。
   - ②′ 转义（依 E4 与 AGENTS.md「工具结果是不可信内容」）：双向控制符（U+061C、U+200E–U+200F、U+202A–U+202E、U+2066–U+2069）、零宽字符（U+200B–U+200D、U+2060、U+FEFF）以及其余 C0 / C1 控制字符，另加其余格式字符（`\p{Cf}`，含 U+E0000 起的标签字符与软连字符 U+00AD）和其余默认可忽略码位（`\p{Default_Ignorable_Code_Point}`，含变体选择符 U+FE00–U+FE0F、U+E0100–U+E01EF），一律显示成可见的 `\u{XXXX}`；换行显示成可见的换行标记再折行。卡上看到的串与将要执行的逐字符对应。
-  - ③「为什么停」一句：查 `confirm.reason.<reason>`；`flagged` 查 `confirm.reason.flagged.<category>`（`exfiltration`、`inspector-failed`，§外带检查、§Inspector 接口与合议）。槽位只用该原因的必填 `facts` 键（00 spec.md:162）。
-  - ④ `reversibility === 'irreversible'` 时单独一句「撤不回」（裁决 E1、D10）。
+  - ③「为什么停」一句：查 `confirm.reason.<reason>`；`flagged` 查 `confirm.reason.flagged.<category>`（`exfiltration`、`inspector-failed`，§外带检查、§Inspector 接口与合议）。槽位只用该原因的必填 `facts` 键（00 spec.md:162）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 取代：句子不写工具名、不重复对象（网址卡照旧写主机），例行的询问与撤不回的卡不出这一句）
+  - ④ `reversibility === 'irreversible'` 时单独一句「撤不回」（裁决 E1、D10）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 取代：每张卡一句后果）
   - ⑤ 写入和编辑的改动：默认收起，展开后按纯文本显示本次调用的 `input`。连接器调用的参数：默认展开，按纯文本显示本次调用的 `input`，照 ②′ 转义（MCP 规范要求客户端 SHOULD 在调用前把参数给用户看；开放问题 15，owner 2026-09-26）。
-  - ⑥ 两个按钮，期限写在「允许」旁。
+  - ⑥ 两个按钮，期限写在「允许」旁。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §审批卡 取代：期限写进「允许」钮；按键、默认焦点与放行的钮照本节「按键」条不变）
 - **期限**只由 `allowScope` 和 `target.type` 决定，渲染端不自己推：`once` →「只这一次 / Just this once」；`session` 且 `target.type === 'url'` →「本会话里这个域名 / This domain, this session」；其余 `session` →「本会话 / This session」。转自子会话的卡（`callKey !== anchorCallKey`）：`session` →「本次子任务 / This subtask」，`session` 且 `target.type === 'url'` →「本次子任务里这个域名 / This domain, this subtask」；`once` 不变。这种卡答完塌成的一行在 02 里只在当场显示，重启后不重画（开放问题 18，owner 2026-09-26）。`allowScope` 由 kernel 用 §作用域与授权键 的答复作用域函数作用于当前那条 ask 判决算出；写 `approval_resolved.grant.scope` 用同一个函数、同一条判决。所以 `flagged`、策略要求问、撤不回、工作区外、连接器工具都落在 `once`（裁决 D10、D1、D7、D12、H8、F5）。
 - **按键**（H3 ownerNote）：只在焦点位于卡内时生效，焦点在输入框时按 §插话与输入框状态表；新卡出现时不抢焦点；「默认焦点」指焦点进卡时落在哪个按钮上。
   - 一般的卡：「拒绝 Esc」「允许 ⏎」，默认焦点在「允许」，⏎ = 允许，Esc = 拒绝。连接器卡（可逆性未知、只认这一次）也按这一条。
   - `reversibility === 'irreversible'` 的卡：按钮是「拒绝 ⏎ Esc」「允许」，「允许」不带按键提示，默认焦点在「拒绝」。卡内任何位置按 ⏎ 都是拒绝，焦点在「允许」上也一样（卡拦下按钮原生的 Enter 激活）。放行只有两种：点「允许」；焦点在「允许」上按 Space（Space 一条 owner 2026-09-25 已确认）。
 - **排队行**（裁决 F6）：同批后面还没收口的调用，每个在卡下占一行，写工具和对象（取 `input` 里的路径或命令），标「排队中」，不能作答。数据取 `callKey` 所在助手行的 `calls` 中排在它后面、`outcome` 为 null 的项；子会话转上来的卡按 `card.sessionId` 读子会话的 `session.messages`。允许后下一行升上来；主会话里拒绝后，这些行随各自的 `tool-outcome` 变成「未执行」；子会话转上来的卡被拒，这些行保持「排队中」。新卡（新的 `requestId`）出现后 `APPROVAL_CLICK_GUARD_MS` 之内，卡上的点击一律忽略。
-- **答完**：你答的（`allowed`、`denied`）塌成一行：结果、期限、对象；live 时 `approval.respond` 返回 `applied` 就用卡上已有的数据塌，重画时读 `calls[i].outcome.approval`。`cancelled-by-stop`、`superseded`、`tool-unavailable`、`denied-on-rejudge` 不留塌行：卡直接消失，那一行按收口显示，`denied-on-rejudge` 另出拦截回执（裁决 B1、F11、F3）。同一个 `requestId` 再到达时直接忽略（§`HostConfirm` 可重复投递）。
+- **答完**：你答的（`allowed`、`denied`）塌成一行：结果、期限、对象；live 时 `approval.respond` 返回 `applied` 就用卡上已有的数据塌，重画时读 `calls[i].outcome.approval`。`cancelled-by-stop`、`superseded`、`tool-unavailable`、`denied-on-rejudge` 不留塌行：卡直接消失，那一行按收口显示，`denied-on-rejudge` 另出拦截回执（裁决 B1、F11、F3）。同一个 `requestId` 再到达时直接忽略（§`HostConfirm` 可重复投递）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §答完与拒绝 取代：主会话的卡塌行不再重复工具行已有的对象，授权范围里工具行没写的照写）
 
 ### 模型菜单与输入框
 
 **模型菜单**（裁决 M5、M6、A11、A14、A15、A16、B14）：
 
 - **位置与触发器**：输入框工具行里、发送钮旁边（`ComposerToolbar`，components.md:85）。触发器显示「模型名 + 档名」：本会话 `effort` 为 null 时显示该行 `defaultEffort` 的档名；该行没有 `effortLevels` 时只显示模型名。
-- **分组**：按厂商分组，只列已配置厂商的模型行（「已配置」的算法见 01 修补 6）；未配置的厂商只留一行置灰的组头「去设置填 key」，点击打开设置（同时满足 M5「只列已配置」与 B14「置灰并提示」；owner 2026-09-25 已确认）。
-- **每一行**两行字，当前项打勾：第一行模型名；第二行是用途句（`purposeKey`）或行标记，后接目标主机，`endpoint.reach` 为 `loopback` 写「本机」，`private`、`public` 写主机名或 IP。
+- **分组**：按厂商分组，只列已配置厂商的模型行（「已配置」的算法见 01 修补 6）；未配置的厂商只留一行置灰的组头「去设置填 key」，点击打开设置（同时满足 M5「只列已配置」与 B14「置灰并提示」；owner 2026-09-25 已确认）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §模型菜单 取代：组头文案，地址被拒的另一句）
+- **每一行**两行字，当前项打勾：第一行模型名；第二行是用途句（`purposeKey`）或行标记，后接目标主机，`endpoint.reach` 为 `loopback` 写「本机」，`private`、`public` 写主机名或 IP。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §模型菜单 取代：地址是厂商声明默认值的内置行，主机只在悬停与确认里）
 - **行标记**，02 产出三个值：`verified`（zhipu、anthropic 定义的内置行，第二行写用途句；baseURL 改指其他主机的也标它，照常发工具、不保证，去向看行上的目标主机，开放问题 23 已定；Fable 5.1 写「需要组织开启 30 天数据保留」）；`local-text-only`（Ollama 行，写「<主机> · 仅文字对话」，回环即「本机 · 仅文字对话」）；`unverified-text-only`（手填的表外 id，写「未验证 · 仅文字对话」）。后两类在任务形态置灰并写明原因，对话形态可选（裁决 A15）。「本机探测」（`probed`）归 02 之后的自定义厂商 spec，届时只增。
 - **「思考强度 ›」**（裁决 A11、A1）：只看这一行的 `effortLevels`，非空才显示；列出各档，`defaultEffort` 标「默认」，最高档注明用量代价。手填与表外模型、glm-4.6、qwen3:8b，以及 Haiku 4.5 这类 budget 模式的行不显示子菜单。components.md:95 的「不支持分档时退化为一行开关」02 不做。
 - **「更多模型 ›」**：收 `listing === 'more'` 的行（Opus 5 Legacy），每个已配置厂商另带一个「手填模型 ID」输入框。菜单末尾是「管理模型…」，打开设置。
@@ -2897,7 +2899,7 @@ callKey: z.string().min(1),
 
 - **停止与发送**：生成中停止钮和发送钮并存。有正文时按发送 = `chat.send` 入队；Cmd/Ctrl+Enter = `chat.sendNow`，先停当前 Run，再把这条发出。停止钮在生成中、三种暂停（等审批、等提问、等子任务）与可续跑状态（暂定）时都显示，显不显示读 `run.state`（§进行中、暂停与 RunRegistry；可续跑读 `approval.list` 的 `resume` 行，§离开会话 第 3 条）；点了调 `chat.stop`，收口见 §点停止时各状态怎么收，结果写在失败卡第 ② 行，不另加文案。Esc：焦点在卡内 = 拒绝，其余 = 停止（components.md:82）。
 - **排队项**：队列归主进程（排队消息到插入时才写进 Tape，§插话与输入框状态表）。渲染端按 `chat.queue` 事件在消息流末尾画用户气泡（输入框上方只有 `ComposerSlots` 一个宿主，components.md:84），标「排队中」，带撤回、修改、立即发送三个动作（`chat.queue.act`）。
-- **提示与禁发**：有待批时显示「发送会取消上面待批的操作」；等提问时占位文案切到提问态，按发送就是回答（components.md:80）。禁发并说明原因（components.md:81）只有两种：启动恢复还没完成（裁决 B15，§启动恢复与发送防护）；任务形态下所选模型不能发工具（§表外模型与不发工具）。「新会话生效」提示（裁决 E2）02 只加文案键，挂载位置到阶段 3 有工具开关时再定。
+- **提示与禁发**：有待批时显示「发送会取消上面待批的操作」；等提问时占位文案切到提问态，按发送就是回答（components.md:80）。禁发并说明原因（components.md:81）只有两种：启动恢复还没完成（裁决 B15，§启动恢复与发送防护）；任务形态下所选模型不能发工具（§表外模型与不发工具）。「新会话生效」提示（裁决 E2）02 只加文案键，挂载位置到阶段 3 有工具开关时再定。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) §输入框 取代：加第三种：所选模型用不了）
 
 ## 提示层与评测
 
@@ -3321,10 +3323,10 @@ ClosureSource 的 'blocked-repeatedly'               // §原因码表 —— �
 31. Inspector 与判决记录：给 decide() 的输入多加一条 inspector 结果，判决不会变宽（性质测试）；ask 型超时时出 flagged/inspector-failed 卡；deny 型出错时拒绝，计入连续上限，回给模型对应的那句英文；判定中点停止，不写判决事实，收口为 not-run/stopped；注册时带 afterResult 的，构造服务就抛错；desktop 注册的 inspector 全部是 ceiling:'ask'；每个轮到判定的调用都有一条判决事实，summary 存在载荷里，summarize 对每个可达组合都给出码；contracts 的路由 schema 里没有 steps、decidedBy、basis（裁决 F1、F8、F9、F10）。
 32. 会话形态与工作区：建会话前选的形态、文件夹和模型，与 session/start 同批写入；没选文件夹就用专用文件夹，它在第一次写入之前不存在，是命令的 cwd；移除文件夹之后，其下的写授权永久作废，加回来、重启都不复活；cwd 变了，命令授权作废；工作区变化只以追加消息告诉模型（`message/environment`，下一次边界请求或插话之后；跨过本地零点同样），system 和 tools 不变；预填不算授权；workspace.* 的请求带多余字段时解析失败，三个拒绝码按规则返回（裁决 D11、D8、H1、M5、A13、A9、D2）。
 33. 会话级选模型：两个会话各选不同的模型、交替发送，各自发往自己的模型，互不串；五层读取顺序各有一例；默认按形态记住，清空会话后回到默认；生成中改模型或改档，从下一条用户消息起生效；默认请求里不带 effort，选了档后，下一个 Run 的请求快照带这一档，换模型后回到空；设置卡只在改过下拉时才写键，保存后，新的对话会话和任务会话都用它（裁决 M5、A11、A16）。
-34. 数据去向：菜单每行显示目标主机，回环地址显示「本机」，私网地址显示主机名；有历史的会话从本机或私网切到公网（包括经形态默认的间接切换），先在菜单里原地确认，确认之前对该主机 0 次请求；「用新模型开新会话」不带旧内容；未配置的厂商只留一行置灰的组头「去设置填 key」（裁决 M5、A9、B14、B18）。
+34. 数据去向：菜单每行显示目标主机，回环地址显示「本机」，私网地址显示主机名；有历史的会话从本机或私网切到公网（包括经形态默认的间接切换），先在菜单里原地确认，确认之前对该主机 0 次请求；「用新模型开新会话」不带旧内容；未配置的厂商只留一行置灰的组头「去设置填 key」（裁决 M5、A9、B14、B18）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) 验收 9 取代：地址是厂商声明默认值的内置行主机在悬停里；组头文案）
 35. 跨厂商与不发工具：历史里有工具块时，换到表外模型或 Ollama，请求里没有 tools 键，仍通过配对断言；智谱和 Anthropic 的 tool call id 互相回放，都通过配对断言；手填的表外 id 被 provider.select 和 session.selectModel 接受，能力等于 01:706 的保守合成，capabilitySource 为 user，菜单行标「未验证 · 仅文字对话」，在任务形态置灰；Ollama 在两种形态下的请求都没有 tools；只在触发 M5-B 时改验降级后的行为（裁决 M5、M6、A15、A14、E2、M1）。
 36. 最小审批卡：卡挂在 anchorCallKey 那一行下面；对象行显示真实路径、命令原文加 cwd、搜索词加后端域名、完整 URL，或连接器 ID 加工具原名（连接器卡参数默认展开），双向控制符和零宽字符以可见转义显示；期限只由 allowScope 和 target.type 决定，并等于写进答复的 grant.scope；不可逆卡的默认焦点在「拒绝」，卡内按 ⏎ 永远是拒绝，只有点「允许」或焦点在允许上按 Space 才放行；连接器卡仍是 ⏎ = 允许；答完塌成一行，重启后从 calls 重画出同一行（裁决 H3、D10、D1、E4、D8、F6）。
-37. 其余界面：每个 ConfirmReason（flagged 按 category 分）、18 个结束码、拦截码、ClosureSource、行标记、期限、横幅，在两份 locale 里都有文案，参数名等于必填键；失败卡三行都不空，step-limit 和 output-truncated 给「继续」，只在用户消息触发且没有任何派发时给「重试」，auth 给「去设置」，穷举 switch 漏一个码就编译失败；拦截回执没有放行入口；一轮只出一行结算行，暂停时不出；模型菜单、排队气泡和停止钮按 §界面范围；新组件纳入双语「不换行不截断」回归（裁决 H3、H12、D5、F9、M5、H13、B1）。
+37. 其余界面：每个 ConfirmReason（flagged 按 category 分）、18 个结束码、拦截码、ClosureSource、行标记、期限、横幅，在两份 locale 里都有文案，参数名等于必填键；失败卡三行都不空，step-limit 和 output-truncated 给「继续」，只在用户消息触发且没有任何派发时给「重试」，auth 给「去设置」，穷举 switch 漏一个码就编译失败；拦截回执没有放行入口；一轮只出一行结算行，暂停时不出；模型菜单、排队气泡和停止钮按 §界面范围；新组件纳入双语「不换行不截断」回归（裁决 H3、H12、D5、F9、M5、H13、B1）。（2026-10-22 起由 [presentation-r1](../../features/presentation-r1/spec.md) 验收 14 取代：参数名取自必填键，厂商名、模型名与非原因键里的规范化主机三个换算槽位除外；失败卡（user-rejected 不出卡）三行都不空）
 38. 提示层与思考默认：改了系统提示、MODEL_NOTES、任一 ToolSpec 变体、模板或错误文本，却没同时改版本号和哈希，pnpm test 失败；收口表的每一格都有英文；kernelAuthored 的结果、续写提示、anchor 的 summary 重放时取存下的原文，升版之后旧记录复算的 promptHash 不变；Anthropic 线思考开着时带 display:summarized，关着时不带；智谱线默认不带 reasoning_effort；ThinkingBlock 收起时显示首句，流式时显示用时（裁决 H15、A13、A11、F2、B1）。
 39. 〔智谱 live〕在 flashx 和 flash 上跑通带工具的多轮对话，其中一次经审批卡批准；flash 上 low、high、max 三档都返回 200，请求里的值与所选一致；映射后的长名字被接受；flash 上待批重启后批准，带着回传的思考续跑成功；超过 200K 的流式输入记下返回形式，映射为 context-overflow；01 验收 21 继续通过（WebSearch 往返在 ③ 补跑）（裁决 M2、A12、A1、H4、F3、H10）。
 

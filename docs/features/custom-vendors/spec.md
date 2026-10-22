@@ -1,6 +1,8 @@
 # 自定义厂商（M6）
 
 Status: implemented
+Clauses replaced by: [presentation-r1](../presentation-r1/spec.md)（2026-10-22：§对 02 的修补 第 1 条 probed 的文案、§目标 第 2 条与验收 19 的标记、§探测「结果与原因码」表的通过一行、验收 25 的新消息一半）
+Amended by: [presentation-r1](../presentation-r1/spec.md)（2026-10-22：三键都空时，新建带 key 的实例与保存实例 key 另写新会话默认，见该 spec「点名」(e)）
 Kind: features
 Owner: 裁决由 owner 拍板（2026-10-01 第一轮，2026-10-02 第二到四轮；13 题都选推荐项，T1–T13 照写，裁决卡、选择记录与厂商调研原文在仓库外 `../tenon-notes/2026-10-02-m6-custom-vendors/`）；起草在 Claude Code（2026-10-02）
 Amends: [01-provider-and-tape](../../architecture/01-provider-and-tape/spec.md) §Provider 层、§desktop 接线；[02-agent-loop](../../architecture/02-agent-loop/spec.md) §对 01-provider-and-tape 的修补（第 2、6、7 小节立的成员）、§主进程与 kernel 的循环接口、§02 的 Tape 事实、§会话形态、工作区与模型选择（表外模型与不发工具）、§内置工具与工具来源（工具来源、命名与权限键）、§工具目录与冻结、§上下文管理、§搜索与抓取、§界面范围。只增不改，全文见 §对 01 的修补、§对 02 的修补；不属纯粹只增的在 §点名
@@ -23,7 +25,7 @@ Revisions: 2026-10-02 首版；同日按六视角评审修订（实例地址只�
 ### 目标
 
 1. 设置卡里新建「自定义厂商」实例：选预设或填地址、选线协议、填 key。实例是通用工厂加一份纯数据，不逐家写定义文件（裁决 Q3；ADR-003 决策 3）。
-2. 每个（实例，模型）点按钮做两步往返探测；通过的行在对话、任务两种形态都带工具，标「本机探测 · 不保证」（裁决 Q5、Q6）。
+2. 每个（实例，模型）点按钮做两步往返探测；通过的行在对话、任务两种形态都带工具，标「本机探测 · 不保证」（裁决 Q5、Q6）。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §模型菜单 取代：标记改「探测通过 · 不保证」）
 3. 内置 `zhipu`、`anthropic` 只认官方主机；原来靠改内置 `baseURL` 接的端点改走实例（裁决 Q8）。
 4. 验收：智谱当自定义厂商测两条线，DeepSeek 一家真实探测与往返（裁决 Q11）。
 
@@ -336,7 +338,7 @@ export function probeModel(q: ProbeQuery): Promise<ProbeSnapshot>
 
 | 情形 | 态 | 码 | zh-CN | en |
 |---|---|---|---|---|
-| ② 以 `end-turn` 或 `tool-use` 正常结束，没有错误，没有不认识的字段 | 通过 | — | 本机探测通过 · 不保证 | Probed on this computer · not guaranteed |
+| ② 以 `end-turn` 或 `tool-use` 正常结束，没有错误，没有不认识的字段 | 通过 | — | 本机探测通过 · 不保证 | Probed on this computer · not guaranteed （2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §模型菜单 取代：改「探测通过 · 不保证」） |
 | ① 只回文字、拒答或内容过滤，没有工具调用 | 没测出来 | `no-tool-call` | 模型这次没有调用工具，可以再试一次 | The model did not call a tool this time; try again |
 | ① 或 ② 停在 `max-tokens` | 没测出来 | `output-limit` | 输出上限内没答完，可以再试或调大输出上限 | It ran out of output tokens; try again or raise the output limit |
 | ② 以其他原因结束，没有错误 | 没测出来 | `no-finish` | 带上工具结果后没有正常收尾 | It did not finish normally after the tool result |
@@ -519,7 +521,7 @@ export interface ModelInfo {                              // 已存在（package
 
 02 已 `implemented`。下面全部只增或收紧 02 标「暂定」的选型，02 正文不改，02 顶部加一行 `Amended by`（§文档同步）。
 
-1. **`modelMarkSchema` 只增 `'probed'`**（packages/contracts/src/ipc/provider.ts:38；02 spec:901）。两份 locale 加 `model.mark.probed`「本机探测 · 不保证 · {host}」/ "Probed on this computer · not guaranteed · {host}" 与 `model.mark.unprobed`「尚未通过探测 · 仅文字对话 · {host}」/ "No passing probe · text conversation only · {host}"。
+1. **`modelMarkSchema` 只增 `'probed'`**（packages/contracts/src/ipc/provider.ts:38；02 spec:901）。两份 locale 加 `model.mark.probed`「本机探测 · 不保证 · {host}」/ "Probed on this computer · not guaranteed · {host}" 与 `model.mark.unprobed`「尚未通过探测 · 仅文字对话 · {host}」/ "No passing probe · text conversation only · {host}"。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §模型菜单 取代：probed 的文案改「探测通过 · 不保证 · {host}」）
 2. **`capabilitySource` 只增 `'probed'`**：kernel `CapabilitySource`（packages/kernel/src/loop/ports.ts:20）、`ModelSelectedPayload.capabilitySource`（packages/kernel/src/tape/entry.ts:208；02 spec:974）、`session.modelChoice` 的应答（packages/contracts/src/ipc/session.ts:232；02 spec:880）同步。
 3. **`ToolsWithheldPayload.reason` 只增 `'not-probed'`**（entry.ts:333；02 spec:1230-1233），`RunAssembly.toolsWithheld` 的联合同步只增这个值（ports.ts:65；02 spec:366，「值与 ToolsWithheldPayload.reason 同名」）。这是给已有成员的联合加枚举值，不是加成员，按 spec-driven-dev.md:54 的「新增枚举值」处理。
 4. **`RunConnector` 只增可选成员 `toolsPerRequest?(providerId: ProviderId): number | null`**：同步、不读密钥，desktop 返回该定义的 `maxToolsPerRequest ?? null`；kernel 开表（含摘要压缩时给每个用过的 provider 重开）按它裁，没有这个成员或返回 null 就不按个数裁（撤掉常量见 §点名 (g)）。收紧 02 spec:2005 的「上限写成 kernel 里按 `ProviderId` 查的常量（暂定）」；端口只增可选成员，合 02 开放问题 26。
@@ -619,13 +621,13 @@ export interface ModelInfo {                              // 已存在（package
 
 ### 运行时
 
-19. 通过的行标「本机探测 · 不保证」，`session/model_selected` 的 `capabilitySource` 为 `probed`，任务形态可选、可发，审批照常；没通过的行标「尚未通过探测 · 仅文字对话」、任务形态置灰、请求不带 tools、有一条 `tools_withheld`（`not-probed`）；实例行没有思考档位子菜单，`provider.list` 的实例行没有 `effortLevels`（Q6、T9、T5）。
+19. 通过的行标「本机探测 · 不保证」，`session/model_selected` 的 `capabilitySource` 为 `probed`，任务形态可选、可发，审批照常；没通过的行标「尚未通过探测 · 仅文字对话」、任务形态置灰、请求不带 tools、有一条 `tools_withheld`（`not-probed`）；实例行没有思考档位子菜单，`provider.list` 的实例行没有 `effortLevels`（Q6、T9、T5）。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §模型菜单 取代：标记改「探测通过 · 不保证」）
 20. 实例行显示目标主机；会话从本机切到公网实例时照 02 原地确认，确认前对该主机 0 次请求。
 21. 实例的工具表里没有 WebSearch（`excluded` 记 `no-search-backend`），有 WebFetch；设置卡写明没有搜索（Q10）。
 22. anthropic-messages 实例：非空签名的思考块同模型原样回传，空签名的记 `drop / missing-signature`；两个指向同一厂商的实例互相丢掉对方的思考块（`foreign-provider`）；自定义行做回合中途压缩，Opus 5.5、Fable 5.1 内置行（含冻结的旧行）不做（Q2）。
 23. 实例的请求最多 128 个工具，智谱仍是 128，Anthropic、Ollama 不按个数裁；超出照 02 记 `over-limit`（T13）。
 24. 实例返回智谱数字码时按共用词表归类，百炼按文档写的 429 `insufficient_quota` 夹具在运行时读作 `invalid-request`，Kimi 按文档写的余额 429 `exceeded_current_quota_error` 夹具在运行时读作 `rate-limit`、重发到 3 次，这三个现状有测试钉住（T11 已知局限）；百炼与 Kimi 的夹具在探测里记 `rate-limit`。DeepSeek 实录的错 key 401（`code: invalid_request_error`）两条线运行时与探测都读作 `auth`，/models 回 `auth`；没有已知码的 403 两条线仍读作 `auth`（点名 (h)）。
-25. 删掉会话正在用的实例或从列表删掉那个模型后：新消息不发出、不写事实，续跑以 provider 错误结束，都不换模型；失败卡与菜单显示 §实例被删或改坏 的文案（T12）。删掉作为新会话默认的实例或模型后，新会话照常可发。
+25. 删掉会话正在用的实例或从列表删掉那个模型后：新消息不发出、不写事实，续跑以 provider 错误结束，都不换模型；失败卡与菜单显示 §实例被删或改坏 的文案（T12）。删掉作为新会话默认的实例或模型后，新会话照常可发。（2026-10-22 起由 [presentation-r1](../presentation-r1/spec.md) §输入框 取代：新消息在输入框说明已删除、不出失败卡）
 
 ### 内置厂商（点名）
 
