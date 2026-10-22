@@ -1246,3 +1246,40 @@ LM Studio（闭源免费，支持 MCP ⚠️）、Ollama（几乎所有客户端
 
 *第四版 rev2，2026-09-11：并入 DeepChat 与 sandbox-runtime 源码拆解结论。*
 *第四版 rev3，2026-09-12：项目定名 Tenon；整体审查后修 40 余处（矛盾、过时事实、悬空引用、个人语境）；补齐各阶段验收标准；定权限决策顺序表、等待模型、锚点压缩、HostAdapter.process；§15 移至上篇末；已定决策新增质量目标 / 仓库 / 分工 / 开发流程 / 多租户 / 内核壳分离；新增 §4.12 扩展层、§4.13 多租户与云端 host（含参考表）、§8.5 UX 最终形态、§13 仓库与发布规范、阶段 6b；railguard 边界（§4.11 ⑥、§4.12）；路线 A 依据改写为以质量目标为准。*
+
+
+# 总参考（sdd）
+
+## 目标和不做
+
+给谁用：待 owner 给一句能公开的话（2026-10-22 adopt A9）
+解决什么：桌面 agent 工作台；指向一个文件夹，agent 在其中读取、编辑文件和运行命令，变更先请用户批准，以八层权限判定决定是否执行，每步追加到可在崩溃、重启后恢复的会话 Tape。
+永远不做：
+- 不改成 AGPL 或 source-available（ADR-002 决策 1）。
+- 不用 AGPL 或专有来源的代码（AGENTS.md 硬规矩）。
+- 逆向得来的标识符不进仓库（源码门禁）。
+- 不做桌面端订阅、广告、模型 token 转售（ADR-002 决策 5）。
+- 沙箱和联网搜索不自研（本文件「6.3 直接用现成」）。
+
+## 阶段表
+
+本表摘自 [§13 分阶段路线](#13-分阶段路线按路线-a)；4b 以后尚无 spec 的行保留规划状态，起草时再登记目录及 Status。
+
+| 阶段 | 目录 | 一句话 | 状态 | 关键决策 |
+|---|---|---|---|---|
+| 0 | [00-foundation](00-foundation/spec.md) | 仓库地基、窗口和宿主边界 | implemented | Electron + TypeScript，kernel 不依赖宿主 |
+| 1 | [01-provider-and-tape](01-provider-and-tape/spec.md) | Provider 抽象和会话存储 | implemented | HostAdapter 端口与 append-only Tape |
+| 2 | [02-agent-loop](02-agent-loop/spec.md) | Agent 循环、权限和提示层 | implemented | 八层权限与每次调用收口 |
+| 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
+| 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
+| 4b | `05-file-bridge`（待起草） | 文件桥、快照和任务小结 | 规划中 | 路径校验、mtime 守卫和冲突逐文件处理 |
+| 4c | `06-approval-modes`（待起草） | 审批档位 | 规划中 | 随快照与规则 inspector 开放，另行验收 |
+| 4d | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 按 4a → 4b → 4c → 4d 顺序交付 |
+| 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
+| 6 | 待起草 | 聊天体验、记忆、知识库和 Research | 规划中 | Research 有单次预算上限 |
+| 6b | 待起草（host 在 `apps/server`） | 云端 host 和多租户 | 规划中 | 复用 kernel，跨租户隔离为硬门禁 |
+| 7 | 待起草 | 产品化与发布 | 规划中 | 视觉替换、许可证扫描和平台签名公证 |
+
+## 以后再说
+
+（暂无）

@@ -1,0 +1,3041 @@
+{
+  "target_branch": "dev",
+  "gates": {
+    "install": "pnpm install --frozen-lockfile --ignore-scripts",
+    "test": "pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest.json"
+  },
+  "commit_gates": ["format:check", "lint", "typecheck"],
+  "commit_time_limit_s": 30,
+  "measured": {
+    "date": "2026-10-22",
+    "seconds": {
+      "format:check": 0.4,
+      "lint": 1.2,
+      "typecheck": 0.3,
+      "test": 34.5
+    },
+    "agent_env_pass": {
+      "format:check": true,
+      "lint": true,
+      "typecheck": true,
+      "test": false
+    }
+  },
+  "test_reports": {
+    "test": "reports/vitest.json",
+    "test:e2e": "apps/desktop/reports/e2e.json",
+    "test:macos": "reports/vitest-macos.json"
+  },
+  "header_aliases": {
+    "Clauses replaced by": "Changed by"
+  },
+  "line_ref_aliases": [
+    "主参考",
+    "总参考",
+    "M6",
+    "comp",
+    "parity",
+    "02plan",
+    "mech",
+    "spec",
+    "plan",
+    "parity-audit",
+    "sdk-tools",
+    "SDK变更",
+    "ccmcp",
+    "cdext",
+    "midconv",
+    "同文件",
+    "NOTICE",
+    "ADR-003"
+  ],
+  "plan_extra_headings": ["开工前读", "分段", "命令", "上线后跟进"],
+  "seam_vars": [
+    "TENON_DEV_ENV",
+    "TENON_SECRETS",
+    "TENON_TEST_SANDBOX",
+    "TENON_TEST_ORIGIN_MAP",
+    "TENON_TEST_OFFICIAL_PROTOCOL",
+    "TENON_TEST_MCP_OPEN_URL",
+    "TENON_TEST_MCP_CALLBACK_PORT",
+    "TENON_E2E_ROUTE_COUNTS",
+    "TENON_E2E_SESSION_REMOVAL",
+    "TENON_E2E_RECOVERY_DELAY_MS",
+    "TENON_E2E_FAIL_ROUTES",
+    "TENON_E2E_COMPACTION_THRESHOLD",
+    "TENON_SANDBOX_TESTS"
+  ],
+  "helper_globs": ["apps/desktop/evals/**", "packages/kernel/src/testing/**"],
+  "tamper_files": ["docs/evals/tasks/**", "docs/evals/results/**", "apps/desktop/evals/checks/**"],
+  "architecture_paths": [
+    "packages/contracts/src/**",
+    "packages/kernel/src/host/**",
+    "packages/kernel/src/index.ts",
+    "apps/desktop/src/preload/**",
+    "pnpm-workspace.yaml",
+    ".nvmrc"
+  ],
+  "limits": {
+    "master_lines": 1200
+  },
+  "modules": {
+    "replace": true,
+    "notes": {
+      "path": "../tenon-notes",
+      "sensitive": ["定价", "营收", "变现"]
+    }
+  },
+  "known": [
+    {
+      "check": "status",
+      "file": "docs/architecture/00-foundation/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/architecture/01-provider-and-tape/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/features/model-display-names/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "status",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "新写的 spec 缺 Tier: 行（写成 Tier: lite|standard|heavy — 一句理由）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/architecture/00-foundation/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/architecture/01-provider-and-tape/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "Status 改成 ready，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/features/model-display-names/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "approval",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "Status 改成 implemented，但没有同时新增 Approved: 行（日期、逐字原话、出处）"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/architecture/00-foundation/spec.md",
+      "message": "Changed by: presentation-r# 没有对应：presentation-r# 的页头缺 Changes: #"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/architecture/01-provider-and-tape/spec.md",
+      "message": "Changed by: # 没有对应：# 的页头缺 Changes: #"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "Changed by: presentation-r# 没有对应：presentation-r# 的页头缺 Changes: #"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "Changes: # 没有对应：# 的页头缺 Changed by: claude-#-#-models（§Provider 层）"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "Changes: # 没有对应：# 的页头缺 Changed by: claude-#-#-models（§对 #-provider-and-tape 的修补）"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "Changes: model-display-names 没有对应：model-display-names 的页头缺 Changed by: claude-#-#-models（§对 # 的修补「设置卡」）"
+    },
+    {
+      "check": "pairs",
+      "file": "docs/features/model-display-names/spec.md",
+      "message": "Changed by: presentation-r# 没有对应：presentation-r# 的页头缺 Changes: model-display-names"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「goose-mechanisms.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/live-provider.spec.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/host.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「encode.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「wire/shared.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「names.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「memory-store.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「tape-conformance.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「packages/contracts/test/session-types.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「server-everything/dist/tools/index.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「connection.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「service.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「tape/entry.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「spec.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「confirm.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「.github/workflows/ci.yml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/session-restore.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/testing/scripted-provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「plan.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「package.json:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「sqlite-store.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「desktop/test/host.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「navigation.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「process.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「唯一model-menu.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「definitions.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/model-copy.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「thinking-shapes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「K/host/memory.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「vendor-blocks.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「network-seams.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/model-selection.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/tape/sqlite-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「host-independence.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「pairing.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「run.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「recovery.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「answer.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「queue.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「E/navigation.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/session-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「builtin.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「tool-table.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「tools/table.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「decide.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「protected-paths.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「permission/workspace.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「inspector.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「session/workspace.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「model-choice.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「cross-provider.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-approval-card.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/end-reason-copy.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「prompts/version.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「openai-stream.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「commands.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「stop.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/shutdown.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「subagent-run.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「parallel.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/evals-host.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「fetch-address.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/search-assembly.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「web-search.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「permission/exfiltration.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「compaction.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「ci.yml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「anthropic-messages.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「model-freeze.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「D/inspectors.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「loop/exfiltration.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「C/approval.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「grants.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「subagent-handoff.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「src/testing/tape-conformance.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「attempt-recheck.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「spill.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「K/provider/definitions.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「plan:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「projection.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「session.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/loop/answer.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「e#e/navigation.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「e#e/recovery.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「tools/builtin.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「loop/tool-table.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「permission/grants.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「permission/inspector.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/model-selection.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「model-selection.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「e#e/approval.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「spec:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「inspector.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「decide.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「approval.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「workspace.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「confirm.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「stop.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "第 # 行有行号引用「answer.test:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/session/service.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/provider.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「spec.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「zhipu.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「plan.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/live-provider.spec.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「master-reference.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「sqlite-store.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「spec:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/names.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/index.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/confirm.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「confirm.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/session/service.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「adapter.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「spec.md:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「tape/entry.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「openai-chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「types.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「shared.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「wire/transport.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/network.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「types.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider/base.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「contracts/src/ipc/chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「config.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「session.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「contracts/src/ipc/session.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider-routes.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider-routes.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「contracts/src/ipc/provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「replay.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「store.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「sqlite-store.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「projection.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「config.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「memory-store.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「service.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/testing/tape-conformance.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/renderer/src/App.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/renderer/src/components/settings/ProviderSettings.tsx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/thinking.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/provider-routes.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「.env.example:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「names.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/tape/names.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「base.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「host/adapter.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/entry.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider/types.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「provider/types.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「replay.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/process.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「process.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「openai-chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「components.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「confirm.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「App.tsx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/session.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「index.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「index.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/confirm.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/index.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「session-restore.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/host/adapter.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「sdk-tools:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/mcp/connection.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/mcp/stdio-transport.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「stdio-transport.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「docs/ux/components.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「connection.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「connection.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「adapter.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/hash.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「dist/src-D_zzAWoS.mjs:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/wire/anthropic-messages.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「service.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「src/rules/taint.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「src/core/types.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「errors.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「ollama.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「network.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「host/adapter.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「create-instance.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「block-registry.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「ThreadError.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「ProviderSettings.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「goose-mechanisms.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/testing/fake-network.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「.github/workflows/ci.yml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/app-env.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「主参考:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「packages/contracts/test/chat-event.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「chat-event.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/provider/wire/network-seams.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「mailbox.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/app-env.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「shutdown.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「comp:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「docs/spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「live-env.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/sdk-upgrade.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/connection.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/pool.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/mcp-host.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/env.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/mcp-routes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/oauth.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/profile.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「C/mcp.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/mcp-runtime.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/mcp-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/tools/executor.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/loop/tool-table.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/definition.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/tools/validate.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/loop/mcp-run.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/everything.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/http-connection.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-tool-row.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「D/copy-coverage.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「E/live-mcp-oauth.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/plan.md",
+      "message": "第 # 行有行号引用「K/mcp/token-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/mcp/connection.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/run-assembly.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/registry.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「主参考:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「connection.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「docs/registry/about.mdx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/package.json:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/config.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「M#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/profile.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/host/key.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/index.mjs:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/secrets.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/authorization/security-considerations.mdx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「secrets.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/process.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「process.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/shell-env.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「crates/goose/src/agents/extension.rs:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「extension.rs:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「stdio-transport.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/transports/stdio.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/changelog.mdx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/index.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/executor.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「run-assembly.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「mailbox.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「sdk/packages/core/src/extensions/mcp/client.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/index.d.mts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/src-WCy#ifGf.mjs:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/index.d.mts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「ccmcp:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/answer.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「executor.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/src-WCy#ifGf.mjs:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/patterns/cancellation.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「executor.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「connection.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「SDK变更:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/replay.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/endpoint.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/network.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/permission/fetch-address.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「dist/index.mjs:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「client-registration.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「security-considerations.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「cdext:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「安全指南/security_best_practices.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/authorization/index.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/basic/authorization/index.mdx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/app-env.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/client/src/client/auth.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「registry.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「规范/server/tools.mdx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/api/src/mcp/mcpConfig.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「service.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「table.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/types.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/definitions/anthropic.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/renderer/src/components/shell/AccountMenu.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「comp:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「以上四条照安全指南/security_best_practices.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「安全指南/local-server-security.mdx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「batch.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/ports.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「ports.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/session/service.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/outcome.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/outcome.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/shutdown.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「README.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「docs/spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「gzip-file-as-resource.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「picks.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/builtin/grep.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「midconv:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/fetch-untrusted.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/03-mcp-host/spec.md",
+      "message": "第 # 行有行号引用「answer.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「.github/workflows/ci.yml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「dist/sandbox/linux-violation-monitor.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「README.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「generate-seccomp-filter.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「linux-sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「linux-sandbox-utils.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「loop/recovery.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「bash.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「batch.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/inspectors.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/fetch-untrusted.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-manager.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/evals-host.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/copy-coverage.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「parity:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「主参考:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「pnpm-workspace.yaml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-types.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「NOTICE:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「evals-runner.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「live-env.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/setup.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/allowlist.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/shutdown.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/desktop-sandbox.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/config.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/escape.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「K/loop/sandbox-bash.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/kill-tree.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/sandbox/violations.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「K/session/receipt-override.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/shell-env.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「K/permission/fetch-address.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/profile.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「C/sandbox.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-sandbox.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「E/sandbox.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/copy-coverage.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/evals/gate.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「D/stop-tree.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「#plan:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「linux-violation-monitor.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-config.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「parent-proxy.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「macos-sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「spec.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-manager.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-posture.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「linux-violation-monitor.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「sandbox-violations.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/index.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「bash.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「parity:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/sandbox.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/builtin/bash.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「bash.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/closure.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/permission/fetch-address.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「.github/workflows/ci.yml:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「pool.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「主参考:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「comp:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/generate-seccomp-filter.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-manager.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/utils/which.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「sandbox-manager.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「linux-sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「recovery.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-manager.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/evals-host.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「README.md:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「README.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「mech:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/workspace.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「macos-sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「utils/config-loader.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-manager.d.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「lib/index.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「sandbox-utils.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-violation-store.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/macos-sandbox-utils.d.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「macos-sandbox-utils.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/confirm.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/batch.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/process.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「ToolRow.tsx:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/copy-coverage.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「ToolRow.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/provenance.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/sandbox-config.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「resolved-address-guard.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/permission/fetch-address.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「shutdown.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「closure.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/events.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/ports.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/tools/bash.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/inspectors.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「fetch-address.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/secrets.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「docs/spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「linux-sandbox-utils.js:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「dist/sandbox/http-proxy.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/host/profile.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/architecture/04-sandbox/spec.md",
+      "message": "第 # 行有行号引用「sandbox-violation-store.js:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「master-reference.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「spec:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/provider/vendor-blocks.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/provider/definitions.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/wire/shared.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/model-selection.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「text-fit-#.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/ports.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「model-routes.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「model-menu.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/official-protocol-test-seam.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/plan.md",
+      "message": "第 # 行有行号引用「live-provider.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「anthropic.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/definitions/anthropic.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「types.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「wire/shared.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「provider-routes.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/model-routes.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「shared.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「mailbox.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「attempt-recheck.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「backends.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「run.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「types.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "第 # 行有行号引用「compaction.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/live-env.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/test/copy-coverage.test.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「openai-chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/index.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「evals/host.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「docs/ux/components.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「spec:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「provider-routes.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「definitions/custom.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/custom-vendor-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「K/provider/definitions.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/custom-vendor-routes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/custom-vendor-address.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-custom-vendor.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/profile.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「K/provider/custom-vendor.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「K/provider/probe.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/custom-vendor-runtime.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/provider-routes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「E/live-provider.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「K/provider/wire/encoder-version.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/plan.md",
+      "message": "第 # 行有行号引用「D/origin-map-test-seam.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「ADR-#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「spec:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tape/provenance.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/registry.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/wire/openai-chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/run-assembly.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/contracts/src/ipc/provider.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/search/backends.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「run-assembly.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「run-assembly.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/profile.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「transport.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/endpoint.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「transport.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/host/secrets.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「ollama.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/provider-routes.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「config.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「profile.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「provider.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「anthropic-messages.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/provider.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/registry.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「openai-chat.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/test/provider/fixtures/openai-sse.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「endpoint.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/renderer/src/components/composer/ModelMenu.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/mailbox.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「mailbox.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/compaction.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「openai-chat.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「AGENTS.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「ProviderSettings.tsx:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/src/main/index.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/loop/ports.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「entry.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/provider/wire/shared.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「packages/kernel/src/tools/registry.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/app-env.ts:#-#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「apps/desktop/e#e/helpers/app-env.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「docs/spec-driven-dev.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/custom-vendors/spec.md",
+      "message": "第 # 行有行号引用「docs/ux/components.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「renderer-tool-sentence.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「ux-craft.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-approval-card.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/write-card.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/approval.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-tool-row.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-end-card.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-tool-sentence.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-thread-model.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/session-store.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/run-end.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/model-menu.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-data-flow.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/custom-vendor.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/composer-frame.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/renderer-folder-controls.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/composer.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/tools.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/provider-settings.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/provider-routes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/custom-vendor-routes.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「E/text-fit-r#.spec.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/plan.md",
+      "message": "第 # 行有行号引用「D/copy-coverage.test.ts:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "第 # 行有行号引用「parity-audit:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "第 # 行有行号引用「comp:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "第 # 行有行号引用「components.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "第 # 行有行号引用「#:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "line-refs",
+      "file": "docs/features/presentation-r1/spec.md",
+      "message": "第 # 行有行号引用「parity-audit-#-#-#.md:#」；引用文档写节名，引用代码写路径 + 函数名"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/01-provider-and-tape/spec.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/01-provider-and-tape/plan.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/02-agent-loop/spec.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/02-agent-loop/plan.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/features/claude-5-5-models/spec.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/reference/goose-mechanisms.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/adr/adr-002-license-and-business-model.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/master-reference.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/spec-driven-dev.md",
+      "message": "公开文档里出现了敏感词「定价」；商业内容放私有笔记仓库"
+    },
+    {
+      "check": "notes",
+      "file": "docs/architecture/00-foundation/plan.md",
+      "message": "公开文档里出现了敏感词「变现」；商业内容放私有笔记仓库"
+    }
+  ],
+  "baseline_commit": "7782b75e76c3d9bcfb9d8b912eef062832d71f9e"
+}

@@ -17,7 +17,7 @@ Electron + TypeScript · macOS and Linux · Apache-2.0
 - **Session tape**: an append-only SQLite log of every fact. Conversations come back after a restart, and interrupted runs recover at launch.
 - **Model endpoints**: built-in providers, plus custom vendors on either supported wire protocol, set up in Settings.
 
-**Sandbox (phase 4a, in final acceptance).** Shell commands run inside the OS sandbox (Seatbelt on macOS, bubblewrap on Linux): they can write to your working folders and reach no network until you add a site under Settings → Permissions & network. When something is blocked, a receipt shows what was stopped and lets you allow that site for the task, allow one write location, or allow one unrestricted rerun, which asks again before it runs.
+**Sandbox.** Shell commands run inside the OS sandbox (Seatbelt on macOS, bubblewrap on Linux): they can write to your working folders and reach no network until you add a site under Settings → Permissions & network. When something is blocked, a receipt shows what was stopped and lets you allow that site for the task, allow one write location, or allow one unrestricted rerun, which asks again before it runs.
 
 ## How it is tested
 
@@ -37,13 +37,7 @@ pnpm check     # format, lint, typecheck, unit and integration tests
 
 End-to-end: `pnpm build && pnpm test:e2e`. Tenon runs from source; details are under [Working on it](#working-on-it).
 
-## Roadmap
-
-- Rest of phase 4: a file bridge with snapshots and one-click restore (4b), approval modes (4c), and a task-mode UI (4d).
-- Phase 5: the extension layer (skills, plugins, MCP Apps, Artifacts).
-- Phase 6b: a multi-tenant cloud host.
-
-Full reference: [`docs/architecture/master-reference.md`](docs/architecture/master-reference.md).
+Roadmap and progress: [documentation index](docs/README.md) · [stage table](docs/architecture/master-reference.md#阶段表).
 
 ## Layout
 

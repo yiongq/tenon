@@ -20,3 +20,7 @@ uxkit/
 playwright-report/
 test-results/
 .playwright-mcp/
+# SDD local state and JSON test reports
+.sdd/local/
+reports/
+apps/desktop/reports/
