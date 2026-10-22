@@ -14,6 +14,8 @@ import {
 import type { SandboxPostureOutcome } from '../../src/main/host/sandbox-posture.js'
 import { wiringFixture } from './wiring-support.js'
 import { snapshotEnv } from '../../src/main/host/shell-env.js'
+import * as sandboxPorts from '../../src/main/host/sandbox.js'
+import * as posturePorts from '../../src/main/host/sandbox-posture.js'
 
 const SESSION = '6f1c2a4e-3b5d-4c7e-9f80-1a2b3c4d5e6f'
 const CHILD = '11111111-1111-4111-8111-111111111111'
@@ -21,6 +23,284 @@ const CHILD = '11111111-1111-4111-8111-111111111111'
 afterEach(() => vi.useRealTimers())
 
 describe('04 desktop sandbox wiring', () => {
+  it('04 不变量 19: the installed host never adds provider, gateway, MCP or telemetry endpoints', async () => {
+    const h = wiringFixture()
+    const host = createMemoryHost()
+    await host.fs.mkdirp(absolutePath(host.identity.profileDir))
+    await writeConfig(host.fs, host.identity, {
+      provider: { id: 'anthropic', modelId: 'test-model' },
+      providerConfig: {
+        anthropic: { baseURL: 'https://api.anthropic.com' },
+        openai: { baseURL: 'https://gateway.example.net/v1' },
+      },
+      customVendors: [
+        {
+          id: 'custom-11111111-1111-4111-8111-111111111111',
+          displayName: 'Test vendor',
+          wire: 'openai-chat',
+          baseURL: 'https://vendor.example.net/v1',
+          models: [],
+        },
+      ],
+      mcpServers: [
+        {
+          id: 'test-mcp',
+          displayName: 'Test MCP',
+          source: 'manual',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://mcp.example.net/mcp',
+            header_keys: [],
+            protocol: 'auto',
+            oauth: { ownClient: null, issuers: [] },
+          },
+          handshakeTimeoutSec: null,
+          callTimeoutSec: null,
+          instructions: { enabled: true, pinHash: null },
+          consent: null,
+          toolsPinned: false,
+          tools: {},
+        },
+      ],
+      sandbox: {
+        profile: 'workspace-write',
+        allowedDomains: ['user.example.org'],
+        packageManagers: true,
+      },
+    })
+    const fs = {
+      ...h.fs,
+      lstat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+      stat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+    }
+    const startupSrt = {
+      initialize: vi.fn<posturePorts.SrtStartup['initialize']>(async () => {}),
+      checkDependenciesAsync: async () => ({ errors: [], warnings: [] }),
+      wrapWithSandboxArgv: async () => ({ argv: ['/bin/sh', '-c', 'true'], env: {} }),
+      cleanupAfterCommand: () => {},
+      getWslVersion: () => undefined,
+    }
+    const mocks = [
+      vi.spyOn(sandboxPorts, 'desktopSandboxFs').mockReturnValue(fs),
+      vi.spyOn(sandboxPorts, 'desktopProcessTable').mockReturnValue(h.options.processes),
+      vi.spyOn(posturePorts, 'desktopSrtSandbox').mockReturnValue(h.srt),
+      vi.spyOn(posturePorts, 'desktopSrtStartup').mockReturnValue(startupSrt),
+      vi.spyOn(posturePorts, 'desktopPostureFs').mockReturnValue({
+        ...fs,
+        lstat: (path) =>
+          path.includes('tenon-sandbox-self-test-')
+            ? undefined
+            : {
+                ...fs.lstat(),
+                isFile: () => false,
+                size: 0,
+                nlink: 1,
+              },
+        stat: (path) => ({
+          ...fs.stat(),
+          isDirectory: () => !path.endsWith('.jar') && !path.endsWith('/apply-seccomp'),
+        }),
+        readdir: () => [],
+        isExecutable: () => true,
+        removeEmptyDir: () => {},
+        removeFile: () => {},
+        removeTree: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureProcesses').mockReturnValue({
+        list: async () => [],
+        kill: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureRunner').mockReturnValue(async () => ({
+        code: 0,
+        signal: null,
+        stderr: '',
+        timedOut: false,
+      })),
+      vi.spyOn(process, 'chdir').mockImplementation(() => {}),
+    ]
+    try {
+      const runtime = await createDesktopSandboxRuntime({
+        host,
+        userDataDir: absolutePath('/data'),
+        isPackaged: false,
+        startupEnv: snapshotEnv({}),
+        log: () => {},
+      })
+      runtime.bindSessionFolders(async () => [absolutePath('/work/project')])
+      expect((await runtime.start().outcome).state).toBe('active')
+      runtime.beforeWrap({
+        commandId: 'installed',
+        sessionId: SESSION,
+        hosts: ['grant.example.org'],
+      })
+      await runtime.wrap(h.request('installed'))
+      expect(h.srt.wrapWithSandboxArgv).toHaveBeenCalledTimes(1)
+      const domains = vi.mocked(h.srt.updateConfig).mock.calls.at(-1)?.[0].network.allowedDomains
+      expect(domains).toEqual([
+        'user.example.org',
+        'registry.npmjs.org',
+        'pypi.org',
+        'files.pythonhosted.org',
+        'index.crates.io',
+        'static.crates.io',
+        'grant.example.org',
+      ])
+      for (const endpoint of [
+        'api.anthropic.com',
+        'api.openai.com',
+        'gateway.example.net',
+        'vendor.example.net',
+        'mcp.example.net',
+        'telemetry.example.net',
+      ])
+        expect(domains).not.toContain(endpoint)
+      await runtime.afterExit('installed')
+    } finally {
+      mocks.forEach((mock) => mock.mockRestore())
+    }
+  })
+
+  it('04 不变量 19: startup initialization never adds provider, gateway, MCP or telemetry endpoints', async () => {
+    const h = wiringFixture()
+    const host = createMemoryHost()
+    await host.fs.mkdirp(absolutePath(host.identity.profileDir))
+    await writeConfig(host.fs, host.identity, {
+      provider: { id: 'anthropic', modelId: 'test-model' },
+      providerConfig: {
+        anthropic: { baseURL: 'https://api.anthropic.com' },
+        openai: { baseURL: 'https://gateway.example.net/v1' },
+      },
+      customVendors: [
+        {
+          id: 'custom-11111111-1111-4111-8111-111111111111',
+          displayName: 'Test vendor',
+          wire: 'openai-chat',
+          baseURL: 'https://vendor.example.net/v1',
+          models: [],
+        },
+      ],
+      mcpServers: [
+        {
+          id: 'test-mcp',
+          displayName: 'Test MCP',
+          source: 'manual',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://mcp.example.net/mcp',
+            header_keys: [],
+            protocol: 'auto',
+            oauth: { ownClient: null, issuers: [] },
+          },
+          handshakeTimeoutSec: null,
+          callTimeoutSec: null,
+          instructions: { enabled: true, pinHash: null },
+          consent: null,
+          toolsPinned: false,
+          tools: {},
+        },
+      ],
+      sandbox: {
+        profile: 'workspace-write',
+        allowedDomains: ['user.example.org'],
+        packageManagers: true,
+      },
+    })
+    const fs = {
+      ...h.fs,
+      lstat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+      stat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+    }
+    const startupSrt = {
+      initialize: vi.fn<posturePorts.SrtStartup['initialize']>(async () => {}),
+      checkDependenciesAsync: async () => ({ errors: [], warnings: [] }),
+      wrapWithSandboxArgv: async () => ({ argv: ['/bin/sh', '-c', 'true'], env: {} }),
+      cleanupAfterCommand: () => {},
+      getWslVersion: () => undefined,
+    }
+    const mocks = [
+      vi.spyOn(sandboxPorts, 'desktopSandboxFs').mockReturnValue(fs),
+      vi.spyOn(sandboxPorts, 'desktopProcessTable').mockReturnValue(h.options.processes),
+      vi.spyOn(posturePorts, 'desktopSrtSandbox').mockReturnValue(h.srt),
+      vi.spyOn(posturePorts, 'desktopSrtStartup').mockReturnValue(startupSrt),
+      vi.spyOn(posturePorts, 'desktopPostureFs').mockReturnValue({
+        ...fs,
+        lstat: (path) =>
+          path.includes('tenon-sandbox-self-test-')
+            ? undefined
+            : {
+                ...fs.lstat(),
+                isFile: () => false,
+                size: 0,
+                nlink: 1,
+              },
+        stat: (path) => ({
+          ...fs.stat(),
+          isDirectory: () => !path.endsWith('.jar') && !path.endsWith('/apply-seccomp'),
+        }),
+        readdir: () => [],
+        isExecutable: () => true,
+        removeEmptyDir: () => {},
+        removeFile: () => {},
+        removeTree: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureProcesses').mockReturnValue({
+        list: async () => [],
+        kill: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureRunner').mockReturnValue(async () => ({
+        code: 0,
+        signal: null,
+        stderr: '',
+        timedOut: false,
+      })),
+      vi.spyOn(process, 'chdir').mockImplementation(() => {}),
+    ]
+    try {
+      const runtime = await createDesktopSandboxRuntime({
+        host,
+        userDataDir: absolutePath('/data'),
+        isPackaged: false,
+        startupEnv: snapshotEnv({}),
+        log: () => {},
+      })
+      runtime.bindSessionFolders(async () => [absolutePath('/work/project')])
+      expect((await runtime.start().outcome).state).toBe('active')
+      expect(startupSrt.initialize).toHaveBeenCalledTimes(1)
+      expect(startupSrt.initialize.mock.calls[0]?.[0].network.allowedDomains).toEqual([
+        'user.example.org',
+        'registry.npmjs.org',
+        'pypi.org',
+        'files.pythonhosted.org',
+        'index.crates.io',
+        'static.crates.io',
+      ])
+    } finally {
+      mocks.forEach((mock) => mock.mockRestore())
+    }
+  })
+
   it('04 验收 29: an edit or the preset takes effect on the next command through updateConfig, never reset', async () => {
     const h = wiringFixture()
     h.runtime.start()
@@ -226,6 +506,24 @@ describe('04 desktop sandbox wiring', () => {
     )
     await h.runtime.afterExit('second')
     expect(h.srt.reset).not.toHaveBeenCalled()
+  })
+
+  it('04 不变量 9: another session grant cannot rewrite a prepared command before its first wrap', async () => {
+    const h = wiringFixture()
+    h.runtime.start()
+    h.loop.ports.sandbox!.beforeWrap({
+      commandId: 'a',
+      sessionId: SESSION,
+      hosts: ['a.example.com'],
+    })
+    h.loop.ports.sandbox!.grantsChanged({ sessionId: CHILD, hosts: ['b.example.com'] })
+    await h.runtime.wrap(h.request('a'))
+    expect(h.srt.updateConfig).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        network: expect.objectContaining({ allowedDomains: ['a.example.com'] }),
+      }),
+    )
+    await h.runtime.afterExit('a')
   })
 
   it('04 不变量 9: each command replaces session grants; grantsChanged updates only the most recent session without reset', async () => {
@@ -439,7 +737,7 @@ describe('04 desktop sandbox wiring', () => {
     ]
     expect(
       files
-        .filter((file) => /\bsandbox\.wrap\s*\(/.test(readFileSync(file, 'utf8')))
+        .filter((file) => usesSandboxWrap(readFileSync(file, 'utf8')))
         .map((file) => relative(root, file))
         .toSorted(),
     ).toEqual([
@@ -454,3 +752,73 @@ const sources = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory() ? sources(join(dir, entry.name)) : [join(dir, entry.name)],
   )
+
+/** Tokenize before scanning so comments and string contents cannot impersonate call sites. */
+function usesSandboxWrap(source: string): boolean {
+  const tokens = (
+    source.match(
+      /\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\?\.|[\w$]+|[^\s]/g,
+    ) ?? []
+  ).filter((token) => !token.startsWith('//') && !token.startsWith('/*'))
+  return tokens.some((token, at) => {
+    if (token !== 'sandbox') return false
+    let next = at + 1
+    if (tokens[next] === '?.') next += 1
+    if (tokens[next] === '.' || tokens[next] === '!') next += 1
+    if (tokens[next] === '.') next += 1
+    if (
+      tokens[next] === '[' &&
+      (tokens[next + 1] === "'wrap'" || tokens[next + 1] === '"wrap"') &&
+      tokens[next + 2] === ']'
+    )
+      next += 3
+    else if (tokens[next] === 'wrap') next += 1
+    else next = -1
+    if (
+      next !== -1 &&
+      (tokens[next] === '(' || (tokens[next] === '?.' && tokens[next + 1] === '('))
+    )
+      return true
+    // { wrap } / { wrap: alias } = sandbox, including property chains such as host.sandbox.
+    let equals = at - 1
+    while (equals >= 1 && (tokens[equals] === '.' || tokens[equals] === '?.')) equals -= 2
+    if (tokens[equals] !== '=' || tokens[equals - 1] !== '}') return false
+    const open = tokens.lastIndexOf('{', equals - 2)
+    if (open === -1) return false
+    return tokens
+      .slice(open + 1, equals - 1)
+      .some(
+        (part, index, binding) =>
+          (part === 'wrap' || part === "'wrap'" || part === '"wrap"') &&
+          (index === 0 || binding[index - 1] === ',') &&
+          (binding[index + 1] === undefined ||
+            binding[index + 1] === ':' ||
+            binding[index + 1] === ',' ||
+            binding[index + 1] === '='),
+      )
+  })
+}
+
+it.each([
+  'sandbox.wrap({})',
+  'sandbox?.wrap({})',
+  "sandbox['wrap']({})",
+  'sandbox["wrap"]({})',
+  'sandbox\n  .wrap({})',
+  'const { wrap } = sandbox',
+  'const { wrap: invoke } = host.sandbox',
+  '({ wrap: invoke } = sandbox)',
+])('04 不变量 1: the wrap scan detects %s', (source) => {
+  expect(usesSandboxWrap(source)).toBe(true)
+})
+
+it.each([
+  '// sandbox.wrap({})',
+  'const text = "sandbox.wrap({})"',
+  'type Sandbox = { wrap(r: unknown): unknown }',
+  'other.wrap({})',
+  "other['wrap']({})",
+  'const { wrap } = other',
+])('04 不变量 1: the wrap scan excludes %s', (source) => {
+  expect(usesSandboxWrap(source)).toBe(false)
+})

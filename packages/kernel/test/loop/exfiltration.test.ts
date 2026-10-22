@@ -148,6 +148,29 @@ async function readThenFetch(
 }
 
 describe('the registered exfiltration rule in the loop', () => {
+  it('04 验收 26: a literal CGNAT URL is stopped at layer 2 without dispatch', async () => {
+    const h = harness([page()])
+    h.provider.script(calls('http://100.64.0.1/'))
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'Fetch the CGNAT URL' })
+    expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+    const entries = await all(h)
+    expect(entries.findLast((e) => e.name === 'tool/permission_decided')?.payload).toMatchObject({
+      record: { verdict: 'deny', decidedBy: 'protected' },
+      summary: { verdict: 'deny', code: 'protected', facts: { toolName: 'WebFetch' } },
+    })
+    expect(entries.findLast((e) => e.name === 'execution/tool_outcome')?.payload).toMatchObject({
+      state: 'not-run',
+      effect: 'blocked',
+      source: 'protected',
+    })
+    expect(entries.filter((e) => e.name === 'execution/dispatch_committed')).toEqual([])
+    expect(h.net.untrustedRequests).toEqual([])
+    expect(h.net.requests).toEqual([])
+    expect(h.memory.confirmRequests).toEqual([])
+    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+  })
+
   it('blocks the scripted .env attack on an already granted host, survives recovery, and permits only one call', async () => {
     const h = harness([page(), page(), page()])
     await task(h)

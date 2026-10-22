@@ -196,6 +196,62 @@ async function rejudge(h: Harness) {
 }
 
 describe('Bash sandbox plans (04 step 9)', () => {
+  it('04 验收 18: pending at decision and unavailable at wrap closes notStarted, then replans full-access', async () => {
+    const spawn = vi.fn<HostProcess['spawn']>(async () => completedChild('unexpected'))
+    const h = await harness(
+      { state: 'pending', profile: 'workspace-write' },
+      { violations: [], process: { spawn } },
+    )
+    await command(h)
+    expect((await decisions(h)).at(-1)?.sandbox).toEqual({
+      profile: 'workspace-write',
+      chosen: 'workspace-write',
+    })
+    h.host.sandbox.wrap.mockImplementationOnce(async () => {
+      h.setPosture({ state: 'unavailable', profile: 'workspace-write' })
+      throw Object.assign(new Error('sandbox became unavailable'), {
+        name: 'SandboxUnavailableError',
+      })
+    })
+    await allow(h)
+    const { result } = await executionFacts(h)
+    expect(result?.['content']).toEqual([
+      { type: 'text', text: 'The command could not be started: sandbox became unavailable' },
+    ])
+    expect(result?.['isError']).toBe(true)
+    expect(spawn).not.toHaveBeenCalled()
+    expect(h.afterExit).not.toHaveBeenCalled()
+    expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect((await decisions(h)).at(-1)?.sandbox).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      unavailable: true,
+    })
+    expect((await card(h)).card.reason).toBe('command')
+    expect((await card(h)).card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/project',
+      sandbox: 'unavailable',
+    })
+  })
+
+  it('04 验收 18: allowing an unavailable command passes its full-access plan and session folders to the real executor', async () => {
+    const h = await harness(
+      { state: 'unavailable', profile: 'workspace-write' },
+      { violations: [] },
+    )
+    expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect((await card(h)).card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/project',
+      sandbox: 'unavailable',
+    })
+    await allow(h)
+    expect(h.wrapped).toHaveLength(1)
+    expect(h.wrapped[0]?.profile).toBe('full-access')
+    expect(h.wrapped[0]?.workspace).toEqual(['/work/project', '/work/other'])
+  })
+
   it('04 验收 17: an active workspace-write posture plans workspace-write with the session folders', async () => {
     const h = await harness()
     expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })

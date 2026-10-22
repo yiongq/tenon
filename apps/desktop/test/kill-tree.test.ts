@@ -36,7 +36,7 @@ const COLLECTED = 999_991
 const STRANGER = 999_992
 
 describe.skipIf(process.platform !== 'darwin')('killTree on darwin, ps faked', () => {
-  it('once the group is found empty, later signals reach what the SIGTERM collected, walk nothing from the reaped leader’s pid and never signal -pid, even when that pid leads a group again', async () => {
+  it('04 验收 15: once the group is found empty, later signals reach what the SIGTERM collected, walk nothing from the reaped leader’s pid and never signal -pid, even when that pid leads a group again', async () => {
     const child = await spawnChild({
       // The leader alone in its group: nothing else keeps the group alive past its exit.
       argv: ['/bin/sleep', '30'],
@@ -84,7 +84,39 @@ describe.skipIf(process.platform !== 'darwin')('killTree on darwin, ps faked', (
     }
   })
 
-  it('when ps fails or takes over 200 ms, the signal goes to the group alone and the host log gets one line saying which', async () => {
+  it('04 验收 15: a collected pid reused before SIGKILL is dropped and neither it nor unrelated processes receive a signal', async () => {
+    const leader = 999_990
+    const collected = new Map<number, string>()
+    fakePs.tables.push(
+      [
+        `${String(leader)} 1 Thu Oct 15 10:00:00 2026`,
+        `${String(COLLECTED)} ${String(leader)} Thu Oct 15 10:00:01 2026`,
+        `${String(STRANGER)} 1 Thu Oct 15 10:00:02 2026`,
+      ].join('\n'),
+      [
+        `${String(COLLECTED)} 1 Thu Oct 15 10:05:00 2026`,
+        `${String(STRANGER)} ${String(COLLECTED)} Thu Oct 15 10:05:01 2026`,
+      ].join('\n'),
+    )
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    try {
+      await killTree(leader, 'SIGTERM', { collected })
+      expect([...collected]).toEqual([[999_991, 'Thu Oct 15 10:00:01 2026']])
+      expect(kill.mock.calls).toEqual([
+        [-999_990, 'SIGTERM'],
+        [999_991, 'SIGTERM'],
+      ])
+      kill.mockClear()
+      await killTree(leader, 'SIGKILL', { group: () => false, collected })
+      expect(kill.mock.calls).toEqual([])
+      expect([...collected]).toEqual([])
+      expect(fakePs.tables).toEqual([])
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  it('04 验收 15: when ps fails or takes over 200 ms, the signal goes to the group alone and the host log gets one line saying which', async () => {
     const lines: string[] = []
     // Through the host's process port, as desktop and the eval host spawn: it hands its log on.
     const child = await createHostProcess((line) => lines.push(line)).spawn({

@@ -351,6 +351,38 @@ describe('Bash against a fake child', () => {
     expect(fake.kills).toEqual(['SIGKILL'])
   })
 
+  it.each([0, 2])(
+    '04 验收 15 (kernel): a command that exits on its own is followed by exactly one SIGKILL, before afterExit (code %i)',
+    async (code) => {
+      const host = createMemoryHost()
+      const fake = fakeChild()
+      const order: string[] = []
+      const sandbox = recordingSandbox()
+      const done = bash({
+        input: { command: `exit ${String(code)}` },
+        clock: host.clock,
+        process: returning({
+          ...fake.child,
+          kill: async (signal = 'SIGTERM') => {
+            fake.kills.push(signal)
+            order.push(signal)
+          },
+        }),
+        sandbox: {
+          ...sandbox,
+          afterExit: async () => {
+            order.push('afterExit')
+          },
+        },
+      })
+      await settle()
+      fake.exit(code)
+      expect((await done).state).toBe('completed')
+      expect(fake.kills).toEqual(['SIGKILL'])
+      expect(order).toEqual(['SIGKILL', 'afterExit'])
+    },
+  )
+
   it('keeps draining past the longest string it can hold, so the command ends as it ends', async () => {
     // A pipe under backpressure: the command writes its next chunk only once the last was read, and
     // exits once all of them were. The second chunk's append is past V8's longest string.

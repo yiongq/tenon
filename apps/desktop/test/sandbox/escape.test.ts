@@ -1196,6 +1196,43 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     CASE_MS,
   )
 
+  it.skipIf(!DARWIN)(
+    '04 验收 12: (darwin) with .claude/ there, .Claude/settings.json (absent before) is refused on the case-insensitive volume',
+    async () => {
+      const { lab, ws } = workspaceLab()
+      makeDir(join(ws, '.claude'))
+      expect(hostKind(join(ws, '.claude/settings.json'))).toBe('missing')
+      const ran = await lab.run('echo W > .Claude/settings.json; echo claude=$?', {
+        workspace: [ws],
+      })
+      expect(ran.stdout).toMatch(/^claude=[1-9]\d*$/m)
+      expect(hostKind(join(ws, '.claude/settings.json'))).toBe('missing')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    '04 验收 11: (darwin) the credential link ~/.aws itself cannot be removed or moved',
+    async () => {
+      const lab = rig.lab()
+      const home = lab.home
+      lab.folders = [home]
+      writeHostFile(join(home, 'dotfiles/aws/credentials'), 'TENON_FAKE_AWS\n')
+      symlinkSync(join(home, 'dotfiles/aws'), join(home, '.aws'))
+      expect(readlinkSync(join(home, '.aws'))).toBe(join(home, 'dotfiles/aws'))
+      const ran = await lab.run(
+        'rm "$HOME/.aws"; echo rm_aws=$?; mv "$HOME/.aws" "$HOME/moved-aws"; echo mv_aws=$?',
+        { workspace: [home], cwd: home },
+      )
+      expect(ran.stdout).toMatch(/^rm_aws=[1-9]\d*$/m)
+      expect(ran.stdout).toMatch(/^mv_aws=[1-9]\d*$/m)
+      expect(hostKind(join(home, '.aws'))).toBe('link')
+      expect(readlinkSync(join(home, '.aws'))).toBe(join(home, 'dotfiles/aws'))
+      expect(hostKind(join(home, 'moved-aws'))).toBe('missing')
+    },
+    CASE_MS,
+  )
+
   // -------------------------------------------------------------------------------------------
   // 验收 13
 

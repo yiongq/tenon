@@ -517,17 +517,100 @@ describe('04 验收 21: domain receipt releases', () => {
   it('04 验收 21: a release during the session command immediately calls grantsChanged', async () => {
     const h = await harness()
     await receipt(h)
-    h.during(async () => {
-      expect(await release(h.service, 'allow-domain', 'registry.example.com')).toEqual({
-        status: 'released',
-      })
+    const exited = Promise.withResolvers<{ code: number; signal: null }>()
+    const running = Promise.withResolvers<void>()
+    const order: string[] = []
+    let released: unknown
+    h.grantsChanged.mockImplementation(() => {
+      order.push('grantsChanged')
+    })
+    h.host.process.spawn = async () => {
+      order.push('spawn')
+      released = await release(h.service, 'allow-domain', 'registry.example.com')
+      order.push('released')
+      running.resolve()
+      return {
+        pid: 42,
+        stdin: new WritableStream<Uint8Array>(),
+        stdout: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        stderr: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        exited: exited.promise,
+        kill: async () => {},
+      }
+    }
+    await command(h)
+    const completion = answer(h)
+    try {
+      await running.promise
+      expect(released).toEqual({ status: 'released' })
       expect(h.grantsChanged).toHaveBeenCalledExactlyOnceWith({
         sessionId: SESSION,
         hosts: ['registry.example.com'],
       })
+      expect(order).toEqual(['spawn', 'grantsChanged', 'released'])
+      expect(
+        (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/result'),
+      ).toEqual([])
+    } finally {
+      exited.resolve({ code: 0, signal: null })
+      await completion
+    }
+    const result = (await readSessionEntries(h.tape, SESSION)).findLast(
+      (e) => e.name === 'tool/result',
+    )
+    expect(result?.payload['isError']).toBe(false)
+    expect(result?.payload['content']).toEqual([{ type: 'text', text: '(no output)' }])
+  })
+
+  it('04 不变量 18: an unavailable-card session grant cannot bypass a bound rerun', async () => {
+    const h = await harness()
+    Object.assign(h.host.sandbox, {
+      posture: () => ({ state: 'unavailable', profile: 'workspace-write' }),
     })
-    await command(h)
+    expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const before = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+    expect(before.card.reason).toBe('command')
+    expect(before.card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/project',
+      sandbox: 'unavailable',
+    })
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/permission_decided',
+      )?.payload['sandbox'],
+    ).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      unavailable: true,
+    })
     await answer(h)
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/approval_resolved',
+      )?.payload['grant'],
+    ).toEqual({
+      scope: 'session',
+      key: '["builtin","Bash","command","echo hello","/work/project"]',
+    })
+    await receipt(h)
+    expect(await release(h.service, 'rerun-unsandboxed', null)).toEqual({ status: 'released' })
+    // If the card is bypassed, let the Run complete so the pause assertion catches the bypass.
+    expect((await command(h, true)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const current = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+    expect(current.card.reason).toBe('elevated')
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/permission_decided',
+      )?.payload['sandbox'],
+    ).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      override: {
+        key: 'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:rerun-unsandboxed:0',
+        action: 'rerun-unsandboxed',
+      },
+    })
   })
   it('never treats a WebFetch approval as a command domain release', async () => {
     const h = await harness()
@@ -1490,4 +1573,95 @@ describe('04 验收 24: sandbox release notes', () => {
     await checkpoint(h)
     expect(await releaseNotes(h)).toEqual([])
   })
+})
+
+it.each([
+  { action: 'allow-domain', target: '/outside/file.txt' },
+  { action: 'allow-path', target: 'registry.example.com' },
+] as const)(
+  '04 验收 21 / 不变量 10: $action rejects a target of the other release type without an override fact',
+  async ({ action, target }) => {
+    const h = await harness()
+    await receipt(h)
+    expect(await release(h.service, action, target)).toEqual({ status: 'stale' })
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+    ).toEqual([])
+  },
+)
+
+it.each(['allow-path', 'rerun-unsandboxed'] as const)(
+  '04 验收 22: an unbound %s expires when the next reply ends with provider-error',
+  async (action) => {
+    const h = await harness()
+    await receipt(h)
+    expect(
+      await release(h.service, action, action === 'allow-path' ? '/outside/file.txt' : null),
+    ).toEqual({ status: 'released' })
+    const before = await judged(h)
+    expect(before.kind).toBe('judged')
+    expect(before.kind === 'judged' && before.sandbox?.override).toBeDefined()
+    h.provider.script(
+      scriptedTurn({
+        terminal: {
+          type: 'error',
+          code: 'unknown',
+          retryable: false,
+          providerCode: null,
+          detail: 'test failure',
+        },
+      }),
+    )
+    const sent = await h.service.send({
+      sessionId: SESSION,
+      text: 'next reply fails',
+      origin: null,
+    })
+    if (sent.status !== 'started') throw new Error(sent.status)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('provider-error')
+    const after = await judged(h)
+    expect(after.kind).toBe('judged')
+    expect(after.kind === 'judged' && after.sandbox?.override).toBeUndefined()
+  },
+)
+
+it('04 验收 23: the kernel refuses a protected file even when the receipt marks it unprotected', async () => {
+  const h = await harness()
+  await receipt(h, {
+    violations: [{ ...path, target: '/home/user/.zshrc', protected: false }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/home/user/.zshrc')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
+})
+
+it('04 验收 23: the kernel refuses a link to an existing regular file', async () => {
+  const h = await harness()
+  await h.memory.fs.writeFile(absolutePath('/outside/file.txt'), 'original')
+  h.memory.symlink(absolutePath('/outside/alias'), '/outside/file.txt')
+  await receipt(h, {
+    violations: [{ ...path, target: '/outside/alias' }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/outside/alias')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
+})
+
+it('04 验收 21 / 不变量 10: allow-path rejects a file violation with no path release', async () => {
+  const h = await harness()
+  await receipt(h, {
+    violations: [{ ...path, release: null }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/outside/file.txt')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
 })

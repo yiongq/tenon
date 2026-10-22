@@ -173,7 +173,7 @@ export function gateProblems(o: {
     return problems
   }
   for (const task of tasks) {
-    const runs = o.records.filter(
+    const baselineRecords = o.records.filter(
       ({ record }) =>
         record.taskId === task.id &&
         record.column.client === 'tenon' &&
@@ -182,7 +182,18 @@ export function gateProblems(o: {
           baseURL: `https://${record.column.endpoint}`,
         }) === o.baseline &&
         record.prompt?.version === o.promptVersion,
-    ).length
+    )
+    // The sandbox exists from prompt version 11 on; a baseline is only valid where it was active.
+    if (o.promptVersion >= 11) {
+      for (const { file, record } of baselineRecords) {
+        if (record.sandbox?.state !== 'active') {
+          problems.push(
+            `${file}: ${task.id} run ${String(record.run)}: baseline at prompt version ${String(o.promptVersion)} requires active sandbox`,
+          )
+        }
+      }
+    }
+    const runs = baselineRecords.length
     if (runs < 3) {
       problems.push(
         `${task.id}: ${String(runs)} baseline record(s) at prompt version ${String(o.promptVersion)}, 3 required`,
