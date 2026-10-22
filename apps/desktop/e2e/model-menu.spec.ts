@@ -246,8 +246,14 @@ test('asks by where the history went, not by the model in effect, and a typed mo
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
-    // Base UI opens submenus on hover; a mouse click itself is ignored (openOnHover).
-    await page.getByTestId('model-more').hover()
+    // Base UI's default hover waits 100ms and requires allowMouseEnter. Open with its nested
+    // list-navigation key instead, then wait for the popup before choosing the hand-typed row.
+    const more = page.getByTestId('model-more')
+    await expect(more).toBeVisible()
+    await more.focus()
+    await expect(more).toBeFocused()
+    await more.press('ArrowRight')
+    await expect(page.getByTestId('model-more-menu')).toBeVisible()
     await expect(page.getByTestId('model-type-ollama')).toBeVisible()
     await page.getByTestId('model-type-ollama').click()
     await page.getByTestId('type-model-input').fill('my-local-model')
@@ -781,7 +787,8 @@ test('presentation-r1 验收 11: with history only on this computer, 改用 a pu
       'modelUnusable',
     )
     await expect(page.getByTestId('composer-switch-model')).toHaveText(
-      'Switch to Zhipu GLM GLM-5.3 Flash',
+      // §输入框: the first listing: 'main' row in catalogue order, not the provider's default.
+      'Switch to Zhipu GLM GLM-5.3',
     )
     await page.getByTestId('composer-switch-model').click()
     await expect(page.getByTestId('model-menu')).toBeVisible()

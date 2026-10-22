@@ -86,7 +86,12 @@ function ModelRowItem({
         render={(itemProps, state) => (
           <Tooltip open={state.highlighted}>
             <TooltipTrigger render={<div {...itemProps} aria-describedby={descriptionId} />} />
-            <TooltipContent data-testid="model-row-host-tooltip" className="w-max max-w-none">
+            {/* The highlighted row already anchors this hint. Its decorative arrow otherwise
+                extends 5px below the popup's scroll box, despite the text fitting on one line. */}
+            <TooltipContent
+              data-testid="model-row-host-tooltip"
+              className="w-max max-w-none [&>[data-slot=tooltip-arrow]]:hidden"
+            >
               <span className="whitespace-nowrap">{description}</span>
             </TooltipContent>
           </Tooltip>
@@ -486,7 +491,7 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
                   <DropdownMenuSubTrigger data-testid="model-more">
                     {t('model.more')}
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
+                  <DropdownMenuSubContent data-testid="model-more-menu">
                     {moreRows.map(({ entry, candidate }) => (
                       <ModelRowItem
                         description={rowDescription(entry)}

@@ -150,10 +150,13 @@ test('send keeps its place; while a Run is live a square Stop stands beside it, 
 })
 
 test('presentation-r1 验收 10: toggling 在文件夹里工作 moves neither the box nor the line under it (0 px)', async () => {
+  fake = await startFakeAnthropic({ chunks: ['ok'] })
   const userData = makeUserDataDir('frame-stable')
   seedConfig(userData, { locale: 'en' })
-  const { app, page } = await launchTenon({ userData })
+  // Both profiles need a usable, tool-capable model so the measured line stays the disclaimer.
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
   try {
+    await expect(page.getByTestId('composer-disclaimer')).toBeVisible()
     const chat = await rectOf(page.getByTestId('composer'))
     const line = async (): Promise<number> =>
       (await rectOf(page.getByTestId('composer-disclaimer'))).y
@@ -162,6 +165,7 @@ test('presentation-r1 验收 10: toggling 在文件夹里工作 moves neither th
     expect(Math.abs(lineY - (chat.y + chat.height) - 8)).toBeLessThan(0.5)
     await page.getByTestId('folder-toggle').click()
     await expect(page.getByTestId('folder-chip')).toBeVisible()
+    await expect(page.getByTestId('composer-disclaimer')).toBeVisible()
     // The chip is beside the toggle, inside the tool row. Neither frame nor line moves, exactly.
     const task = await rectOf(page.getByTestId('composer'))
     const chip = await rectOf(page.getByTestId('folder-chip'))

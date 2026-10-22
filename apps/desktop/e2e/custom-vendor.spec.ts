@@ -837,6 +837,7 @@ test('a builtin whose saved address is off its official one reads as not configu
   const { app, page } = await launchTenon({
     userData,
     env: {
+      ...COUNT_ROUTES,
       ANTHROPIC_API_KEY: 'e2e-test-key',
       ZHIPU_API_KEY: 'e2e-zhipu-key',
       ...originMap({ [GATEWAY_ORIGIN]: gateway.baseURL, [ZHIPU_ORIGIN]: zhipu.baseURL }),
@@ -867,8 +868,25 @@ test('a builtin whose saved address is off its official one reads as not configu
     await expect(page.getByTestId('model-unconfigured-anthropic')).toBeVisible()
     await expect(page.getByTestId('model-unconfigured-zhipu')).toBeVisible()
     await page.keyboard.press('Escape')
+    // presentation-r1 acceptance 11 / R20 / R28: refuse before sending, rather than failing a Run.
+    const block = page.getByTestId('composer-send-block')
+    await expect(block).toHaveAttribute('data-reason', 'addressRefused')
+    await expect(page.getByTestId('composer-block-reason')).toHaveText(
+      "This model's address can't be used.",
+    )
+    await expect(page.getByTestId('composer-settings')).toHaveText('Open settings')
+    await expect(page.getByTestId('composer-switch-model')).toHaveCount(0)
     await send(page, 'hello')
-    await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'provider-error')
+    await expect(page.getByTestId('composer-send')).toBeDisabled()
+    await page.keyboard.press('ControlOrMeta+Enter')
+    await expect(page.getByTestId('composer-input')).toHaveValue('hello')
+    await expect(page.getByTestId('user-message')).toHaveCount(0)
+    await expect(page.getByTestId('failure-card')).toHaveCount(0)
+    expect(await routeCalls(app, 'chat.send')).toBe(0)
+    expect(await routeCalls(app, 'chat.sendNow')).toBe(0)
+    await page.getByTestId('composer-settings').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await expect(refused).toHaveAttribute('data-refusal-code', 'official-host-only')
     expect(gateway.requests).toHaveLength(0)
     expect(zhipu.requests).toHaveLength(0)
   } finally {

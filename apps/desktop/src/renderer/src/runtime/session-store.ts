@@ -165,6 +165,7 @@ export class SessionStore {
   readonly #queuedTexts = new Map<string, string>()
   /** Each read is numbered; an answer older than the newest one asked for is dropped. */
   readonly #asked = { pending: 0, facts: 0, resumable: 0, model: 0 }
+  #modelRefresh: Promise<void> = Promise.resolve()
   #opened = false
   /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
   readonly #childReads = new Map<string, Promise<void>>()
@@ -238,20 +239,28 @@ export class SessionStore {
     return this.#snapshot.textOnlyTask ? 'textOnlyTask' : null
   }
 
-  async refreshModel(): Promise<void> {
+  refreshModel(): Promise<void> {
     const asked = (this.#asked.model += 1)
-    const [list, choice] = await Promise.all([
+    const refreshing = Promise.all([
       invokeRoute(this.#bridge, providerList, {}).catch(() => ({ ok: false as const })),
       invokeRoute(this.#bridge, sessionModelChoice, { sessionId: this.sessionId }).catch(() => ({
         ok: false as const,
       })),
-    ])
-    if (asked !== this.#asked.model) return
-    this.#set({
-      providers: list.ok ? list.data : null,
-      modelChoice: choice.ok ? choice.data : null,
-      ...(!list.ok || !choice.ok ? { textOnlyTask: false } : {}),
+    ]).then(async ([list, choice]) => {
+      // A caller restoring a held confirmation reads the snapshot after awaiting this refresh.
+      // If another read superseded it, wait for that one to populate the shared state first.
+      if (asked !== this.#asked.model) {
+        await this.#modelRefresh
+        return
+      }
+      this.#set({
+        providers: list.ok ? list.data : null,
+        modelChoice: choice.ok ? choice.data : null,
+        ...(!list.ok || !choice.ok ? { textOnlyTask: false } : {}),
+      })
     })
+    this.#modelRefresh = refreshing
+    return refreshing
   }
 
   setCanSend(canSend: boolean): void {

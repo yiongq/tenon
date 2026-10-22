@@ -2368,3 +2368,58 @@ it('presentation-r1 验收 11: an older model refresh cannot overwrite the lates
   expect(store.getSnapshot().modelChoice).toEqual(next)
   expect(store.sendBlock()).toBeNull()
 })
+
+it('presentation-r1 验收 11: restoring a held round awaits the latest model refresh before reading its confirmation target', async () => {
+  const fake = fakeBridge()
+  const stopQueue = listenForQueue(fake.bridge)
+  const storeId = randomUUID()
+  fake.emit(chatQueueEvent, {
+    sessionId: storeId,
+    items: [{ queuedId: randomUUID(), text: 'and this?' }],
+    held: { host: 'open.bigmodel.cn' },
+  })
+  const store = new SessionStore(storeId, fake.bridge, [])
+  const earlier = Promise.withResolvers<void>()
+  const latest = Promise.withResolvers<void>()
+  const next = { ...CHOICE, modelId: 'claude-sonnet-5' }
+  fake.handle(providerList, async () => {
+    await earlier.promise
+    return [provider()]
+  })
+  fake.handle(sessionModelChoice, async () => {
+    await earlier.promise
+    return CHOICE
+  })
+  let confirmationRead = false
+  // The menu awaits a refresh, then reads the shared snapshot to open the restored confirmation.
+  const confirmation = store.refreshModel().then(() => {
+    confirmationRead = true
+    return store.getSnapshot()
+  })
+  fake.handle(providerList, async () => {
+    await latest.promise
+    return [KEYED]
+  })
+  fake.handle(sessionModelChoice, async () => {
+    await latest.promise
+    return next
+  })
+  const refreshing = store.refreshModel()
+  try {
+    earlier.resolve()
+    await settle()
+    const readBeforeReady = confirmationRead
+    latest.resolve()
+    const [loaded] = await Promise.all([confirmation, refreshing])
+    expect(readBeforeReady).toBe(false)
+    expect(confirmationRead).toBe(true)
+    expect(loaded.heldSeq).toBe(1)
+    expect(loaded.modelChoice).toEqual(next)
+    expect(loaded.providers).toEqual([KEYED])
+    expect(store.sendBlock()).toBeNull()
+  } finally {
+    earlier.resolve()
+    latest.resolve()
+    stopQueue()
+  }
+})

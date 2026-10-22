@@ -40,7 +40,12 @@ vi.mock('@base-ui/react/tooltip', () => {
       Trigger: ({ render }: { render: ReactNode }) => render,
       Popup: ({ children, ...props }: { children?: ReactNode }) =>
         createElement('div', props, children),
-      Arrow: () => createElement('span', { 'data-test-arrow': '' }),
+      Arrow: (props: { 'data-slot'?: string }) =>
+        createElement('span', {
+          'aria-hidden': true,
+          'data-slot': props['data-slot'],
+          'data-test-arrow': '',
+        }),
     },
   }
 })
@@ -77,7 +82,7 @@ vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
 
 const componentPath = '../src/renderer/src/components/composer/ModelMenu.tsx'
 it.each(['zh-CN', 'en'] as const)(
-  'presentation-r1 验收 13: the destination tooltip sizes to its unwrapped text independently of its arrow (%s)',
+  'presentation-r1 验收 13: the destination tooltip fits its unwrapped text with no decorative arrow overflowing its box (%s)',
   async (locale) => {
     const i18n = await createI18n(locale, (message) => {
       throw new Error(message)
@@ -90,8 +95,9 @@ it.each(['zh-CN', 'en'] as const)(
     expect(tooltip).not.toBeNull()
     expect(tooltip?.[0]).toContain('w-max')
     expect(tooltip?.[0]).toContain('max-w-none')
+    expect(tooltip?.[0]).toContain('[&amp;&gt;[data-slot=tooltip-arrow]]:hidden')
     expect(tooltip?.[1]).toBe(
-      `<span class="whitespace-nowrap">${locale === 'en' ? 'Sends to' : '发往'} api.anthropic.com</span><span data-test-arrow=""></span>`,
+      `<span class="whitespace-nowrap">${locale === 'en' ? 'Sends to' : '发往'} api.anthropic.com</span><span aria-hidden="true" data-slot="tooltip-arrow" data-test-arrow=""></span>`,
     )
   },
 )
