@@ -33,7 +33,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 
 - Substantial work — a new module, a cross-module change, a data migration, a public contract — starts from `docs/architecture/<goal>/spec.md` (a user-visible feature: `docs/features/<goal>/spec.md`). Read it before writing code. Do not invent architecture the spec does not describe; if the spec is insufficient, stop and say exactly what is missing.
 - Changes after `implemented` follow core rule 4; the scope of presentation-only clause replacement is defined in the project additions in `docs/spec-driven-dev.md`.
-- Documentation starts at `docs/README.md`; the roadmap is [the sdd stage table](docs/architecture/master-reference.md#阶段表). The architecture reference is `docs/architecture/master-reference.md`; the current architecture overview will be `docs/architecture/overview.md` once written in the follow-up PR. Project decisions live in `docs/adr/`; mechanism-level reference notes in `docs/reference/`; process details in `docs/spec-driven-dev.md`.
+- Documentation starts at `docs/README.md`; the roadmap is [the sdd stage table](docs/architecture/master-reference.md#阶段表). The architecture reference is `docs/architecture/master-reference.md`; the current architecture overview is `docs/architecture/overview.md`. Project decisions live in `docs/adr/`; mechanism-level reference notes in `docs/reference/`; process details in `docs/spec-driven-dev.md`.
 - UX specs live in `docs/ux/`. They are derived from a private teardown kit at `../tenon-uxkit/` (outside this repo). You may read `../tenon-uxkit/interactions.md` for behavior; never copy its files, class names, token values or font names into this repository.
 
 ## Hard rules (non-negotiable)
@@ -50,7 +50,7 @@ Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independe
 
 ## Development
 
-- Package manager: pnpm 10. Node >= 22.12 (the floor of vitest 5, Electron 44, commitlint 21 and sandbox-runtime 0.0.79; corrected 2026-10-09, spec 04). `.nvmrc` pins the version CI uses.
+- Package manager: pnpm 10. Node >= 22.12 (why: the tech stack table in `docs/architecture/overview.md`). `.nvmrc` pins the version CI uses.
 - Layout: `packages/kernel` (agent loop, provider, tape, permission broker, MCP host), `packages/contracts` (zod schemas for IPC/bridge), `apps/desktop` (Electron host), `apps/server` (multi-tenant cloud host, later phases), `examples/plugins`.
 - Before handoff run format, lint, typecheck and the smallest relevant test suite, plus `python3 .sdd/spec-check.py` before saying the work is done. The shared gate is lefthook plus CI: pre-commit first runs `python3 .sdd/spec-check.py --staged`, then format, lint and typecheck through `spec-check.py --run`; commit-msg runs commitlint. These apply to every agent and human. Claude Code's `.claude/settings.json` hooks are an extra layer. Never bypass hooks (`--no-verify`).
 - Tests are regression protection, not scaffolding. Commit only durable tests for user-visible behavior, documented contracts, persistence/migration, concurrency, recovery and security boundaries.
