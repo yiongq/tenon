@@ -75,7 +75,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(pane.getByTestId('sandbox-advanced')).toHaveAttribute('open', '')
       await fitEach(pane.locator('legend'))
       await fitEach(pane.locator('fieldset label > span'), true)
-      await fitEach(pane.locator('fieldset label > span > span'))
+      await fitEach(pane.locator('fieldset label > span > span'), true)
       // The radio name is a direct text node above its separate hint, not a two-line label.
       expect(
         await pane.locator('fieldset label > span').evaluateAll((labels) =>
@@ -87,7 +87,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
         ),
       ).toEqual([1, 1])
       await fitEach(
-        pane.locator('label').filter({ has: pane.getByTestId('sandbox-package-managers') }),
+        pane.locator('label').filter({ has: page.getByTestId('sandbox-package-managers') }),
       )
       await fitEach(pane.locator('p:visible:not(.font-mono)'), true)
       await fitEach(pane.getByTestId('sandbox-preset').locator('li'), true)
