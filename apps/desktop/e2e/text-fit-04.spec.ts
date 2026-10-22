@@ -68,7 +68,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(pane.getByTestId('sandbox-domain')).toBeVisible()
       await fitEach(pane.getByTestId('sandbox-domain').locator('button'))
       await fitEach(pane.getByTestId('sandbox-domain').locator('p').first(), true)
-      await fitEach(pane.getByTestId('sandbox-domain').locator('p').nth(1))
+      await fitEach(pane.getByTestId('sandbox-domain').locator('p').nth(1), true)
       await pane.getByTestId('sandbox-preset').locator('summary').click()
       await expect(pane.getByTestId('sandbox-preset')).toHaveAttribute('open', '')
       await pane.getByTestId('sandbox-advanced').locator('summary').click()
