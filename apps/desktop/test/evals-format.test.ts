@@ -469,3 +469,40 @@ describe('the gate (skipped until plan step 34)', () => {
     )
   })
 })
+
+it.each(['unavailable', 'degraded', 'pending', undefined] as const)(
+  '04 验收 35: a prompt 11 baseline record with sandbox state %s keeps the gate closed',
+  (state) => {
+    const set = passingSet()
+    const records = set.records.map(({ file, record }) => ({
+      file,
+      record: {
+        ...record,
+        prompt: { ...record.prompt!, version: 11 },
+        sandbox: { state: 'active' as const, profile: 'workspace-write' as const },
+      },
+    }))
+    expect(
+      gateProblems({ tasks: set.tasks, records, baseline: BASELINE, promptVersion: 11 }),
+    ).toEqual([])
+    const first = records[0]!
+    const { sandbox: _sandbox, ...withoutSandbox } = first.record
+    const changed: { file: string; record: EvalRecord } = {
+      file: first.file,
+      record: {
+        ...withoutSandbox,
+        ...(state === undefined ? {} : { sandbox: { state, profile: 'workspace-write' } }),
+      },
+    }
+    expect(
+      gateProblems({
+        tasks: set.tasks,
+        records: [changed, ...records.slice(1)],
+        baseline: BASELINE,
+        promptVersion: 11,
+      }),
+    ).toEqual([
+      'results.jsonl: 01-task run 1: baseline at prompt version 11 requires active sandbox',
+    ])
+  },
+)
