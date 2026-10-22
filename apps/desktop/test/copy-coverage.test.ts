@@ -1008,6 +1008,20 @@ it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
     problems([{ key: 'confirm.sandboxUnavailable', args: [], what: 'unavailable warning' }]),
   ).toEqual([])
   for (const locale of SUPPORTED_LOCALES) {
+    // The reviewed literal list above must cover every receipt leaf too: adding a new
+    // sentence cannot silently escape the mechanism-word and exact-slot checks.
+    const receipt = lookup(locale, 'receipt') as Record<string, string | Record<string, string>>
+    const receiptKeys = Object.entries(receipt).flatMap(([key, value]) =>
+      typeof value === 'string'
+        ? [`receipt.${key}`]
+        : Object.keys(value).map((child) => `receipt.${key}.${child}`),
+    )
+    expect(receiptKeys.toSorted()).toEqual(
+      expected
+        .map(({ key }) => key)
+        .filter((key) => key.startsWith('receipt.'))
+        .toSorted(),
+    )
     for (const { key } of expected) {
       expect(lookup(locale, key), `${locale}: ${key}`).not.toMatch(/沙箱|模型|sandbox|model/iu)
     }

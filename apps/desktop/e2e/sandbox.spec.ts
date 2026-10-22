@@ -1,8 +1,83 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import Database from 'better-sqlite3'
+import type { TapeEntry } from '@tenon-app/kernel'
 import type { Page } from '@playwright/test'
+import { sandboxDomainHosts } from '../../../packages/kernel/src/permission/sandbox-release.js'
+import { messageBodies, startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import { test, expect } from './helpers/test.js'
 import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { closeSettings } from './helpers/connectors.js'
+import { PAST_CLICK_GUARD_MS } from './helpers/navigation.js'
+import {
+  bashCall,
+  callsReply,
+  makeFolderTree,
+  providerEnv,
+  send,
+  startTask,
+  textReply,
+  waitingApproval,
+} from './helpers/tools.js'
+
+/** Read only this test's personal Tape, independently of the renderer's projection. */
+function sandboxFacts(userData: string, name: string): Record<string, unknown>[] {
+  const db = new Database(join(dirname(configPathIn(userData)), 'sessions.db'), {
+    readonly: true,
+    fileMustExist: true,
+  })
+  try {
+    const rows = db
+      .prepare(
+        'SELECT payload_json FROM tape_entry WHERE tenant_id = ? AND name = ? ORDER BY entry_id',
+      )
+      .all('personal', name) as Array<{ payload_json: string }>
+    return rows.map((row) => JSON.parse(row.payload_json) as Record<string, unknown>)
+  } finally {
+    db.close()
+  }
+}
+
+/** The same persisted session entries the kernel reads when supplying beforeWrap's hosts. */
+function sessionEntries(userData: string, sessionId: string): TapeEntry[] {
+  const db = new Database(join(dirname(configPathIn(userData)), 'sessions.db'), {
+    readonly: true,
+    fileMustExist: true,
+  })
+  try {
+    const rows = db
+      .prepare(
+        `SELECT tenant_id AS tenantId, session_id AS sessionId, entry_id AS entryId,
+          incarnation_id AS incarnationId, kind, name, source_type AS sourceType,
+          source_id AS sourceId, source_seq AS sourceSeq, provenance_key AS provenanceKey,
+          payload_json AS payload, meta_json AS meta, created_at AS createdAt,
+          content_hash AS contentHash, prev_hash AS prevHash, entry_hash AS entryHash,
+          hash_ver AS hashVer
+        FROM tape_entry WHERE tenant_id = ? AND session_id = ? ORDER BY entry_id`,
+      )
+      .all('personal', sessionId) as Array<
+      Omit<TapeEntry, 'payload' | 'meta'> & {
+        payload: string
+        meta: string
+      }
+    >
+    return rows.map((row) =>
+      Object.assign(row, {
+        payload: JSON.parse(row.payload) as Record<string, unknown>,
+        meta: JSON.parse(row.meta) as Record<string, unknown>,
+      }),
+    )
+  } finally {
+    db.close()
+  }
+}
+
+async function allowCommand(page: Page) {
+  await expect(page.getByTestId('approval-card')).toBeVisible()
+  await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+  await page.getByTestId('approval-allow').click()
+  await expect(page.getByTestId('approval-card')).toHaveCount(0)
+}
 
 async function openPermissions(page: Page) {
   await page.getByTestId('account-row').click()
@@ -143,5 +218,181 @@ test('04 验收 30: off seam shows an unavailable reason and keeps the fix behin
     await expect(page.getByTestId('sandbox-reason-test-seam')).toContainText('off')
   } finally {
     await app.close()
+  }
+})
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`04 验收 18 (e2e): with \`off\`, a command card shows the unavailable line (${locale})`, async () => {
+    const tree = makeFolderTree('sandbox-off-card', { 'ws/keep.txt': 'keep' })
+    const fake = await startFakeAnthropic({
+      replies: [callsReply(bashCall('off_command', 'printf off')), textReply('Declined.')],
+    })
+    const userData = makeUserDataDir('sandbox-off-card')
+    seedConfig(userData, { locale })
+    const { app, page } = await launchTenon({
+      userData,
+      env: { ...providerEnv(fake.baseURL), TENON_TEST_SANDBOX: 'off' },
+    })
+    try {
+      await startTask(app, page, join(tree.real, 'ws'))
+      await send(page, 'run the command')
+      const pending = await waitingApproval(page)
+      expect(pending.card.reason).toBe('command')
+      expect(pending.card.facts).toEqual({
+        command: 'printf off',
+        cwd: join(tree.real, 'ws'),
+        toolName: 'Bash',
+        sandbox: 'unavailable',
+      })
+      await expect(page.getByTestId('approval-unavailable')).toHaveText(
+        locale === 'zh-CN'
+          ? '沙箱不可用，将以你的权限运行'
+          : 'Sandbox unavailable; this command will run with your permissions',
+      )
+      await expect(page.getByTestId('approval-reason')).toHaveCount(0)
+      await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+      await page.getByTestId('approval-deny').click()
+      await expect(page.getByTestId('approval-card')).toHaveCount(0)
+      await expect(page.getByTestId('assistant-text').last()).toHaveText('Declined.')
+    } finally {
+      await app.close()
+      await fake.close()
+      tree.dispose()
+    }
+  })
+}
+
+test('04 验收 32: a blocked command, 在这个任务里允许连接, the next request carries the release note and the allowlist has the host', async () => {
+  const tree = makeFolderTree('sandbox-domain', { 'ws/keep.txt': 'keep' })
+  const fake = await startFakeAnthropic({
+    replies: [
+      callsReply(bashCall('blocked_domain', ': tenon-test-blocked:registry.example.test')),
+      textReply('Connection blocked.'),
+      callsReply(bashCall('next_command', 'printf next')),
+      textReply('Finished.'),
+    ],
+  })
+  const userData = makeUserDataDir('sandbox-domain')
+  seedConfig(userData, { locale: 'zh-CN' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await startTask(app, page, join(tree.real, 'ws'))
+    await send(page, 'connect')
+    const sessionId = (await waitingApproval(page)).card.sessionId
+    await allowCommand(page)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Connection blocked.')
+    const receipt = page.getByTestId('sandbox-notice')
+    await expect(receipt.getByTestId('receipt-objects')).toHaveText(
+      '没能连接 registry.example.test',
+    )
+    await expect(receipt.getByTestId('receipt-why')).toHaveText('这个网站不在允许连接的列表里')
+    const release = receipt.getByTestId('receipt-allow-domain')
+    await expect(release).toHaveText('在这个任务里允许连接 registry.example.test')
+    await release.click()
+    await expect(release).toHaveText('已放行')
+    await expect(release).toBeDisabled()
+    expect(fake.requests).toHaveLength(2)
+    // Session grants feed beforeWrap's hosts; the permanent settings list stays empty.
+    expect(sandboxFacts(userData, 'tool/receipt_override')).toMatchObject([
+      { action: 'allow-domain', target: 'registry.example.test', via: 'receipt-override' },
+    ])
+    expect(await sandboxDomainHosts(async (id) => sessionEntries(userData, id), sessionId)).toEqual(
+      ['registry.example.test'],
+    )
+    await openPermissions(page)
+    await expect(page.getByTestId('sandbox-domain')).toHaveCount(0)
+    await closeSettings(page)
+    await send(page, 'continue with another command')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Finished.')
+    expect(fake.requests).toHaveLength(4)
+    const nextMessages = messageBodies(fake)[2]!.messages
+    expect(nextMessages).toContainEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: '<sandbox_release>\nThe user granted the following permissions:\nCommands may connect to "registry.example.test" for this session.\n</sandbox_release>',
+        },
+      ],
+    })
+    await expect(page.getByTestId('user-text')).toHaveCount(2)
+    await expect(
+      page.getByTestId('user-text').filter({ hasText: '<sandbox_release>' }),
+    ).toHaveCount(0)
+    expect(fake.unscripted).toBe(0)
+  } finally {
+    await app.close()
+    await fake.close()
+    tree.dispose()
+  }
+})
+
+test('04 验收 32: 允许这条命令下次不受限制地运行一次 runs nothing by itself; the resent command shows the elevated card, runs full-access once, then the next is back in the sandbox', async () => {
+  const tree = makeFolderTree('sandbox-rerun', { 'ws/keep.txt': 'keep' })
+  const runs = join(tree.real, 'ws/runs.txt')
+  const command =
+    "printf 'run\\n' >> runs.txt; printf ran; : tenon-test-blocked:registry.example.test"
+  const fake = await startFakeAnthropic({
+    replies: [
+      callsReply(bashCall('blocked_once', command)),
+      textReply('Blocked.'),
+      callsReply(bashCall('elevated_once', command)),
+      callsReply(bashCall('restricted_again', command)),
+      textReply('Finished.'),
+    ],
+  })
+  const userData = makeUserDataDir('sandbox-rerun')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    await startTask(app, page, join(tree.real, 'ws'))
+    await send(page, 'run once')
+    expect(existsSync(runs)).toBe(false)
+    await allowCommand(page)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Blocked.')
+    expect(readFileSync(runs, 'utf8')).toBe('run\n')
+    const release = page.getByTestId('receipt-rerun-unsandboxed')
+    await release.click()
+    await expect(release).toHaveText('Allowed')
+    await expect(release).toBeDisabled()
+    // Wait beyond a new card's guard: neither a provider call nor a process may start on click.
+    await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    expect(fake.requests).toHaveLength(2)
+    expect(readFileSync(runs, 'utf8')).toBe('run\n')
+    await expect(page.getByTestId('approval-card')).toHaveCount(0)
+    await send(page, 'retry the identical command twice')
+    const pending = await waitingApproval(page)
+    expect(pending.card.reason).toBe('elevated')
+    expect(pending.allowScope).toBe('once')
+    await expect(page.getByTestId('approval-reason')).toHaveText(
+      'This command will run without restrictions this once, just as if you ran it in a terminal: it can read and write every file you can access and connect to any site. This allows it once only and will not be remembered.\n' +
+        command,
+    )
+    await expect(page.getByTestId('approval-allow')).toContainText('Allow (Just this once)')
+    expect(readFileSync(runs, 'utf8')).toBe('run\n')
+    await allowCommand(page)
+    // Reusing the binding would pause on another elevated card instead of finishing.
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Finished.')
+    expect(readFileSync(runs, 'utf8')).toBe('run\nrun\nrun\n')
+    const rows = page.getByTestId('tool-row')
+    await expect(rows).toHaveCount(3)
+    await expect(rows.nth(0).getByTestId('sandbox-notice')).toBeVisible()
+    await expect(rows.nth(1).getByTestId('sandbox-notice')).toHaveCount(0)
+    await expect(rows.nth(2).getByTestId('sandbox-notice')).toBeVisible()
+    expect(
+      sandboxFacts(userData, 'tool/permission_decided')
+        .filter((p) => p['rejudge'] === undefined)
+        .map((p) => p['sandbox']),
+    ).toMatchObject([
+      { profile: 'workspace-write' },
+      { profile: 'full-access', override: { action: 'rerun-unsandboxed' } },
+      { profile: 'workspace-write' },
+    ])
+    expect(fake.requests).toHaveLength(5)
+    expect(fake.unscripted).toBe(0)
+  } finally {
+    await app.close()
+    await fake.close()
+    tree.dispose()
   }
 })
