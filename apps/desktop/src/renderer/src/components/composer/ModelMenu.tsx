@@ -337,11 +337,14 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
               size="sm"
               data-testid="model-menu-trigger"
               aria-label={t('model.trigger.label')}
-              className="shrink-0 gap-1 px-2 font-sans text-ui-sm text-text-secondary"
+              className="h-auto min-h-(--t-h-control-compact) shrink-0 gap-1 px-2 py-0.5 font-sans text-ui-sm text-text-secondary"
             />
           }
         >
-          <span className="max-w-48 truncate" data-testid="model-menu-current">
+          <span
+            className="min-w-0 max-w-48 wrap-anywhere whitespace-normal"
+            data-testid="model-menu-current"
+          >
             {triggerText}
           </span>
           <ChevronDownIcon className="size-4 text-text-muted" />

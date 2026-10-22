@@ -825,3 +825,90 @@ it('presentation-r1 验收 11: send blocks, both text-only hints and actions exi
     ]),
   ).toEqual([])
 })
+
+it('presentation-r1 验收 14: no mechanism words on the card, its collapsed line, the block notices, the row’s line and the summary', () => {
+  // A reviewed list, not a catalogue walk: removing a key must fail too. The elevated sentence
+  // belongs to 04; blocked.told is retained for compatibility but is never rendered (R6).
+  const keys = [
+    'confirm.title.file.read',
+    'confirm.title.file.write',
+    'confirm.title.command',
+    'confirm.title.network.search',
+    'confirm.title.network.url',
+    'confirm.title.tool',
+    'confirm.reason.default',
+    'confirm.reason.command',
+    'confirm.reason.irreversible.file',
+    'confirm.reason.irreversible.command',
+    'confirm.reason.irreversible.tool',
+    'confirm.reason.irreversible.network',
+    'confirm.reason.outside-workspace',
+    'confirm.reason.network.search',
+    'confirm.reason.network.url',
+    'confirm.reason.policy',
+    'confirm.reason.flagged.exfiltration',
+    'confirm.reason.flagged.inspector-failed',
+    'confirm.reason.interaction-required',
+    'confirm.irreversible',
+    'confirm.undo.read-only',
+    'confirm.undo.revertible',
+    'confirm.undo.snapshotted',
+    'confirm.undo.unknown',
+    'confirm.undo.unknownFile',
+    'confirm.undo.network.search',
+    'confirm.undo.network.url',
+    'confirm.allow',
+    'confirm.allowScoped',
+    'confirm.deny',
+    'confirm.scope.once',
+    'confirm.scope.session',
+    'confirm.scope.sessionDomain',
+    'confirm.scope.subtask',
+    'confirm.scope.subtaskDomain',
+    'confirm.showChange',
+    'confirm.hideChange',
+    'confirm.change.old',
+    'confirm.change.new',
+    'confirm.change.replaceAll',
+    'confirm.arguments',
+    'confirm.cwd',
+    'confirm.answered.allowed',
+    'confirm.answered.denied',
+    'confirm.answered.roundEnds',
+    'confirm.answered.searchHost',
+    'confirm.answered.realPath',
+    'confirm.notRun',
+    'blocked.policy',
+    'blocked.user-disabled',
+    'blocked.protected.read',
+    'blocked.protected.write',
+    'blocked.protected.fetch',
+    'blocked.inspector.exfiltration',
+    'blocked.inspector.inspector-failed',
+    'blocked.chatReadScope',
+    'tool.generic',
+    'tool.genericMapped',
+    'tool.did.write',
+    'tool.did.command',
+    'tool.did.online',
+    'tool.did.connector',
+    'tool.did.irreversible',
+    'summary.read',
+    'summary.search',
+    'summary.write',
+    'summary.command',
+    'summary.online',
+    'summary.connector',
+    'summary.separator',
+  ] as const
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const key of keys) {
+      const message = lookup(locale, key)
+      expect(message, `${locale}: ${key}`).toBeTypeOf('string')
+      expect(String(message).trim(), `${locale}: ${key}`).not.toBe('')
+      expect(message, `${locale}: ${key}`).not.toMatch(
+        /模型|可逆|判决|已告诉|model|reversib|verdict/iu,
+      )
+    }
+  }
+})
