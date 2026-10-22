@@ -8,7 +8,8 @@ updates:
       day: monday
       time: '04:00'
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    # Paused by the owner (2026-10-22): 0 stops version-update PRs. Set it back to resume.
+    open-pull-requests-limit: 0
     commit-message:
       prefix: chore
       prefix-development: chore
@@ -39,7 +40,8 @@ updates:
       day: monday
       time: '04:00'
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    # Paused by the owner (2026-10-22): 0 stops version-update PRs. Set it back to resume.
+    open-pull-requests-limit: 0
     commit-message:
       prefix: ci
       include: scope
