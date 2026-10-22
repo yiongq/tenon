@@ -97,7 +97,7 @@
 
 - [x] 12. 对照 spec 全部验收标准逐条验证，结果、命令与证据位置记在本文件；不变量 1–7 各有一条名字带「presentation-r1 不变量 N」的测试（多半是上面某条用例改名或加注）。
 - [x] 13. 清理：删临时探针、截图草稿与调试输出；`git status` 只有本计划的改动；仓库里没有 key 的值。
-- [ ] 14. spec 顶部改 `Status: implemented`，写交接。
+- [x] 14. spec 顶部改 `Status: implemented`，写交接。
 
 ## 实施记录
 
@@ -134,6 +134,7 @@
 - 2026-10-22 · 第 12 步勾上（Codex 起草对照表、给不变量 1–7 的用例加名、补一条「新建预设实例带 key、没有模型行时三键不写」的单测、做 11 份 e2e 突变补丁；lead 在虚拟机里跑那 11 个突变全红，填 E 与突变结果，写进下面「验收记录」）。验收 5 的 `sandbox` 一句留到与 04 第二段合并时补（Open）；验收 13 的框下那行照 spec Revisions ④ 改读法。
 - 2026-10-22 · 第 13 步（lead）：`git diff origin/dev...HEAD` 只有本计划的改动——新增 9 个文件（`text-fit-r1.spec.ts`、`FolderToggle.tsx`、`send-block.ts`、`url-host.ts` 与 5 个单测文件）、删 2 个（`ModeSwitch.tsx`、`reversibility-scale.ts`），其余是改动；没有探针、截图草稿、调试输出或 `.only`，没有 key 的值，截图基线没动（第 10 步的 darwin 刷新另做）。仓库外的产物（突变补丁、虚拟机日志、对照表草稿）在 `.claude/runs/pr1/` 与 tenon-notes 的 probes 下，不进仓库；给虚拟机打包用的临时分支 `tmp/pr1-vm` 已删。
 - 2026-10-22 · 第 10 步勾上 + 合并前的真进程抽查（lead，macOS 26.3 本机、agent 沙箱外，owner 同日说「现在就做」真窗口那一批）：darwin 截图基线只有 `shell-i18n.spec.ts` 的两张（`shell-en.png`、`shell-zh-CN.png`）；照旧基线先跑，4 条过（差异在阈值内）；`--update-snapshots=all` 强制刷新两张，新图里输入框是「在文件夹里工作」开关加模型 chip。同一轮里「IME 回车」那条在本机红过一次（`toHaveText`），重跑过，记为本机偶发。抽查（临时 Playwright 脚本、不进仓库，截图在仓库外 scratchpad）：工作区 Write 的卡——标题「修改这个文件？」、对象行是路径、④「Tenon 没法替你撤回这次改动。」、没有刻度、钮为「拒绝 Esc」「允许（本会话）⏎」，建立后输入框只留文件夹 chip、开关不在；允许后塌成「已允许（本会话）」（工具行已写路径，塌行不重复）、结算行「改了 1 个文件」；模型菜单官方行不带主机、智谱组头「去设置填 API 密钥」、Ollama 仅文字行置灰并写原因。与 spec 一致。
+- 2026-10-22 · 第 14 步 · 交接：spec 改 `Status: implemented`。分支 `feat/presentation-r1`（从 `dev` 的 `874e0fa` 开），草稿 PR #55，第 1–14 步都已勾。G：format、lint、typecheck、build 过，全量单测在 agent 沙箱外过（沙箱里只有 stop-tree 的 `spawn EPERM`）；E / EA：CI `38269d6` 上 e2e 253 条全过，之后只有文档、测试改名与截图基线的提交；e2e 突变 11 个在 Lima 虚拟机里全红；真窗口抽查与 darwin 基线在 macOS 本机做了。留给后面的：① 验收 5 的 `sandbox` 一句等与 04 第二段合并时补测（Open）；② 与 04 第二段（PR #54）合并到 `dev` 时，`ToolOutcomeView` / `toolOutcomeViewShape`（两边各只增一个成员：本分支 `isError`、04 `sandbox`）、两份 locale、04 spec 与 plan 有冲突，后合入的一方合并、两边断言都留；③ `dev` 上 #53 之后的 `mcp-runtime.test.ts` ENOENT 偶发另修。04 第三段的开工门（04 plan 第 16 步前）在本 PR 合入 `dev` 后满足。
 （停下之前追加一条：日期 · 步骤 · 状态；分支与基于的提交；G / E / EA 的结果；做过的突变与红绿；做到一半的与代码停在什么状态；下一步。）
 
 ## 验收记录
