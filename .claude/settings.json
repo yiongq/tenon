@@ -8,6 +8,11 @@
             "type": "command",
             "command": "sh \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-gate.sh",
             "timeout": 300
+          },
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && python3 .sdd/spec-check.py --handoff",
+            "timeout": 60
           }
         ]
       }

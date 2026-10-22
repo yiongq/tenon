@@ -19,7 +19,9 @@ export const shared = {
   workers: 1,
   forbidOnly: Boolean(process.env['CI']),
   retries: 0,
-  reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  reporter: process.env['CI']
+    ? [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'reports/e2e.json' }]]
+    : [['list']],
 
   // Font rendering differs per OS, so a baseline is only ever valid on the platform that
   // produced it. `{platform}` is process.platform: darwin / linux / win32.

@@ -10,14 +10,16 @@ pre-commit:
     - merge
     - rebase
   jobs:
+    - name: sdd
+      run: python3 .sdd/spec-check.py --staged
     - name: format
-      run: pnpm format:check
+      run: python3 .sdd/spec-check.py --run format:check
       fail_text: 'Unformatted files. Run `pnpm format`, then stage the result.'
     - name: lint
-      run: pnpm lint
+      run: python3 .sdd/spec-check.py --run lint
       fail_text: 'oxlint or i18n:check reported problems.'
     - name: typecheck
-      run: pnpm typecheck
+      run: python3 .sdd/spec-check.py --run typecheck
       fail_text: 'tsc reported type errors.'
 
 commit-msg:
