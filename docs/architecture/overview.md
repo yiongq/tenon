@@ -2,7 +2,7 @@
 
 ## 给你看的一页
 
-**Tenon 是什么。** 一个装在你电脑上的 AI 助手桌面应用（macOS、Linux）。你可以跟它聊天；也可以交给它一个文件夹和一件事，让它自己读文件、改文件、跑命令，把事做完。它能接几家模型：Anthropic 的 Claude、智谱、在本机跑的 Ollama，以及你在设置里填了地址的兼容厂商；还能接「连接器」，也就是别人写好的外部工具服务，比如查日历、读网盘。
+**Tenon 是什么。** 一个装在你电脑上的 AI 助手桌面应用（macOS、Linux）。你可以跟它聊天；也可以交给它一个文件夹和一件事，让它自己读文件、改文件、跑命令，把事做完。它能接几家模型：Anthropic 的 Claude、智谱、在本机跑的 Ollama，以及你在设置里填了地址、兼容 OpenAI 或 Anthropic 接口的厂商；还能接「连接器」，也就是别人写好的外部工具服务，比如查日历、读网盘。
 
 **它由五块组成。**
 
@@ -12,18 +12,20 @@
 4. **记录本**：一次对话里的每件事（你说的话、模型的回答、每次审批、每个工具的结果）按先后写进你电脑上的一个数据库文件，只往后加，从不改旧的。应用崩了或被关掉，重开后从记录本接上。
 5. **沙箱**：模型要跑的命令，放进操作系统强制的隔离环境里跑：只能写你选的文件夹（外加几个临时目录），默认连不了网，碰不到存密码和登录凭据的地方。
 
-会话分两种：「对话」只能搜网页、读网页、向你提问，不能改文件也不能跑命令；「任务」才带文件夹，能改文件、跑命令。
+会话分两种：「对话」只能搜网页、读网页、向你提问，外加你启用的连接器工具，不能改文件也不能跑命令；「任务」才带文件夹，能改文件、跑命令。
 
 **一次典型的使用，从头到尾。**
 
 1. 你新建一个任务，点文件夹按钮，在系统的选文件夹对话框里选中项目目录（窗口自己塞不进路径，只能经这个对话框），写下「跑一遍测试，修掉失败的」，点发送。
-2. 窗口把这句话交给后台，后台检查格式后交给核心。核心先把你的话写进记录本，再通过后台从钥匙串取出模型的密钥，把对话发给你选的模型。
+2. 窗口把这句话交给后台，后台检查格式后交给核心。核心先通过后台从钥匙串取出模型的密钥、备好你选的模型（密钥没配好就直接告诉你，什么都不记），再把你的话写进记录本，然后把对话发给模型。
 3. 回答一边生成一边显示。模型说「我要读 package.json」：这是你选的文件夹里的文件，只读不改，核心直接放行。
 4. 模型说「我要运行 npm test」。跑命令可能改东西，核心判定要先问你：这一轮停下，记录本记下「在等你答复」，窗口弹出审批卡，写清要跑的命令和在哪个文件夹跑。
 5. 你点「允许」。答复写进记录本；这个任务里同一条命令在同一个文件夹再跑，就不再问。核心接着往下走。
 6. 后台把命令放进沙箱里跑。它要是想连网或往文件夹外写，会被系统拦下；拦下的事显示在那一行下面，叫「拦截回执」，附几个范围很小的放行按钮，比如「只在这个任务里允许连这个网站」。
 7. 命令的输出交回核心、写进记录本、再发给模型。模型看了结果决定下一步：改文件（同样先问你，同一个文件允许过一次就不再问）、再跑测试……直到给出最后的回答。结束时记录本写下「结束」和原因。
 8. 下次打开应用，这段对话从记录本里原样读出来；上次停在等你审批的，审批卡还在。
+
+正文里的叫法：窗口 = renderer，后台 = main（主进程），核心 = kernel，记录本 = Tape，沙箱 = srt；连接器 = MCP server，模型厂商 = provider。
 
 ## 模块和边界
 
@@ -38,7 +40,7 @@
 | kernel · permission | 纯函数 `decide()` 的八层决策表、判决记录与摘要、会话授权、Inspector 接口与外带检查、WebFetch 地址黑名单、工作区内外判定 | 卡片投递（经 `HostAdapter.confirm`）；租户策略从哪来（经 `HostAdapter.policy` 只读） | `packages/kernel/src/permission` |
 | kernel · mcp | 连接池与状态机、stdio 与 Streamable HTTP 两种传输、OAuth 登录、令牌经 `HostAdapter.secrets` 存取 | 连接器配置读写与启动确认（main · MCP 管） | `packages/kernel/src/mcp` |
 | kernel · tape | Tape 条目模型、规范 JSON 与哈希链、命名空间与写入授权、`TapeStore` 端口、内存实现、投影与重放 | 落盘与 SQL（main · Tape 存储管）；`apps/*` 不直接调 `TapeStore.append`，只经 kernel 门面 | `packages/kernel/src/tape` |
-| kernel · prompts | 系统提示、语言提示、模型备注、工具描述等发给模型的全部固定文本，及覆盖它们的版本哈希 | 界面文案（走 i18n） | `packages/kernel/src/prompts` |
+| kernel · prompts | 系统提示、语言提示、模型备注等发给模型的固定文本，和它们的版本哈希（哈希另覆盖各内置工具的描述，描述本身在 tools） | 界面文案（走 i18n） | `packages/kernel/src/prompts` |
 | contracts | IPC 全部通道：zod 定义的请求、响应、事件，`registerRoute` / `invokeRoute` 两端校验，通道登记表；桌面与服务端之间的桥帧骨架（纯函数，还没有使用方） | 业务逻辑；不 import electron | `packages/contracts/src` |
 | main · 装配与路由 | 启动、单实例、窗口与导航加固、注册全部 IPC 路由、RunConnector（选 provider 与模型、读密钥、构造 provider）、RunRegistry、发送队列、工作区文件夹、自定义厂商、启动恢复、退出 | 判定与循环（都在 kernel） | `apps/desktop/src/main` 顶层文件与 `custom-vendors/` |
 | main · 宿主实现 | `HostAdapter` 的桌面实现：文件、钥匙串、进程树、srt 沙箱与姿态自检、出网与不可信抓取、审批投递、命令 shell 的环境 | 判定（只执行 kernel 判过的调用） | `apps/desktop/src/main/host` |
@@ -53,8 +55,8 @@
 ### 一次 Run
 
 1. renderer 用 `invokeRoute` 发 `chat.send`；preload 只放行登记的通道；main 的 `registerRoute` 先用 zod 校验，再交给 kernel 的 `SessionService.send`。
-2. 根会话的 mailbox 判定后开 Run：用户消息、`execution/run_started`、`session/model_selected` 在同一事务里写进 Tape，然后才发请求。
-3. RunConnector 选定 provider 与模型，经 `HostAdapter.secrets` 读 key、构造 provider；provider 经 `HostAdapter.network.fetch` 流式请求。每个流事件在它对应的事实提交后，经 `chat.event` 广播给窗口。
+2. 根会话的 mailbox 判定后，先在 mailbox 外备好这次 Run：RunConnector 选定 provider 与模型、经 `HostAdapter.secrets` 读 key、构造 provider；缺 key 就以「未配置」结束，一条事实都不写。
+3. 回到 mailbox，用户消息、`execution/run_started`、`session/model_selected` 在同一事务里写进 Tape，之后才发请求；provider 经 `HostAdapter.network.fetch` 流式请求。文字与思考的增量边收边经 `chat.event` 推给窗口，这次尝试作废时发 `attempt-discarded` 撤回；工具调用、工具结果、用户消息与结束事件，在对应事实提交之后才发。
 4. 回复以 `message/assistant` 加 `provider/attempt_completed` 落 Tape。带工具调用就进入一批：查冻结的工具表 → 校验参数 → 跑 inspectors → `decide()` → 写 `tool/permission_decided`。
 5. 拒绝：kernel 自己写收口。要问：Run 以暂停结束，`HostConfirm.request` 经 `confirm.request` 事件把卡送到窗口；`approval.respond` 写 `tool/approval_resolved`，Run 接着跑。允许：先写 `execution/dispatch_committed`，落盘后才执行。
 6. 执行：文件工具经 `HostAdapter.fs`，判定用解过链接的真实路径；Bash 经 `HostSandbox.wrap`（srt 按档位包好 argv）→ `HostProcess.spawn` → `afterExit` → `violations`，违规变成拦截回执；WebFetch 经 `network.fetchUntrusted`；连接器工具经连接池调 `tools/call`。
@@ -90,7 +92,7 @@
                                                 |                 +--允许--> [kernel · tools] 执行
                                                 +--每条事实--> [kernel · tape] 门面 --> TapeStore 端口
                                                 +--连接器工具--> [kernel · mcp] 连接池
-- - - - - - HostAdapter（接口在 kernel · host）：kernel 通往外部的唯一出口 - - - - - -
+- - - HostAdapter（接口在 kernel · host）：kernel 碰文件、钥匙串、网络、进程的唯一出口 - - -
 [main · 宿主实现]  fs | secrets -> 钥匙串 | process | sandbox -> srt | network -> undici | confirm
 [main · Tape 存储] --> sessions.db              [main · MCP] 配置、启动确认、schema worker
           |                                                 |
@@ -117,7 +119,7 @@
 | `@modelcontextprotocol/client` | 2.3.1 | MCP 官方 SDK v2 的客户端 | 03 §SDK 升级 |
 | `@anthropic-ai/sandbox-runtime`（srt） | 0.0.79 | macOS（Seatbelt）与 Linux（bubblewrap）上的命令沙箱和出网白名单代理；精确钉住，之后的版本改了 askCallback 的语义，升级要重跑 04 的沙箱验收 | 04 §依赖 |
 | better-sqlite3 | 13.0.3（SQLite 3.53.4） | 包里带预编译件，一次安装同时服务 vitest 的 Node 22 与 Electron 44，两边是同一个 SQLite 引擎；版本号连引擎一起钉，改它按改 schema 对待 | 01 §SQLite 实现约束 |
-| `@napi-rs/keyring` | 2.1.0 | OS 钥匙串；只用异步接口，同步的在 macOS 弹授权框时会卡住主进程几秒 | 00 §本地持久化布局 |
+| `@napi-rs/keyring` | 2.1.0 | OS 钥匙串；只用异步接口，同步的在 macOS 弹授权框时会卡住主进程几秒 | 00 §本地持久化布局；版本与「只用异步」见 00 plan「交接」 |
 | undici | 7.29.1 | 桌面出网；关掉它自带的两个 300 秒超时，只留 kernel 的首字节超时和空闲看门狗；版本与 Electron 44 内置的一致 | 02 §对 01-provider-and-tape 的修补「4 出网接缝」 |
 | `@noble/hashes` | 2.4.0 | Tape 哈希链的 SHA-256，同步、纯 JS；kernel 里禁用 `node:crypto` | 01 §哈希链 |
 | Vitest | 5.0.1 | kernel、contracts、desktop 的单元与集成测试；一律 `--maxWorkers=2` | 00 §技术选型 |
@@ -149,18 +151,19 @@
 | mailbox | 每个根会话一个的串行点：发送、停止、答复等命令按到达顺序在这里判定，Run 的事实也经它写入 |
 | 批 | 模型一次回复里的全部工具调用，按顺序判定和执行；工作区内连续的只读调用可以并行 |
 | 收口 | 每次工具调用恰好有一个结果；被拒、停止、崩溃时由 kernel 补写 |
-| HostAdapter | kernel 通往外部的唯一接口，九个成员；桌面由主进程实现，测试用内存实现 |
+| HostAdapter | kernel 碰文件、钥匙串、网络和进程的唯一接口，九个成员（另有 RunConnector、TapeStore 等端口，以及构造时传入的 id 来源）；桌面由主进程实现，测试用内存实现 |
 | RunConnector | 宿主交给 kernel 的端口：决定 Run 用哪个 provider 和模型，并构造它 |
-| 会话形态 | 「对话」（`chat`）只有搜索、抓取、提问和读本会话落盘的输出；「任务」（`cowork`）有工作区，能改文件、跑命令 |
+| 会话形态 | 「对话」（`chat`）只有搜索、抓取、提问、读本会话落盘的输出，外加启用的连接器工具；「任务」（`cowork`）有工作区，能改文件、跑命令 |
 | 工作区 | 任务会话的文件夹列表；只经系统对话框或预填加入，没选时用专用文件夹 |
 | Inspector（检查器） | 判定前对每次调用发表意见的规则，只能说「无意见 / 要问 / 拒绝」，不能放行；现在只注册了外带检查 |
-| 会话授权 | 你在审批卡上点「允许」得到的授权：只对本会话、只对卡上那一个对象（这个文件、这条命令加目录、这个网站） |
+| 会话授权 | 你在审批卡上点「允许」的效果：工作区里普通的写文件、跑命令，以及搜索、抓取，对本任务里同一个对象（这个文件、这条命令加目录、这个网站）不再问，子 agent 也沿用；不可逆的、工作区外的、被策略或检查器要求确认的、连接器工具和「不受限制地重跑」，只管这一次 |
 | srt | Anthropic 开源的 `@anthropic-ai/sandbox-runtime`；Tenon 用它把 Bash 起的命令包进系统沙箱并代理出网 |
 | 档位 / 姿态 | 档位是命令能写多大范围：只读或工作区可写；姿态是沙箱此刻的状态：启动中、生效、降级、不可用 |
 | 回执（拦截回执） | 沙箱拦下操作后显示在工具行下的说明，带三种小范围放行：本任务内允许一个域名、允许写一个位置一次、不受限制地重跑一次（重跑前再问） |
+| MCP | Model Context Protocol：外部工具服务与 Tenon 之间的开放协议，Tenon 在其中是 host |
 | 连接器 | 界面上对 MCP server 的叫法 |
 | tenantId | 租户 id，每个存储键都带它；本机固定是 `personal` |
 
 ## 修订
 
-- 2026-10-22 · 建立 · sdd 接入 A11
+- 2026-10-23 · 建立 · sdd 接入（ADR-004 A11）· bfde94e
