@@ -414,7 +414,14 @@ describe('the live thread against the redraw', () => {
       errorCode: null,
       retryOf: null,
     })
-    expect(summaryBefore(w.model.turns, index)).toEqual({ read: 0, write: 0, external: 1 })
+    expect(summaryBefore(w.model.turns, index)).toEqual({
+      read: 0,
+      search: 0,
+      write: 0,
+      command: 0,
+      online: 0,
+      connector: 1,
+    })
     expect(retryable(w.model.turns, index)).toBe(false)
   })
 
@@ -499,7 +506,14 @@ describe('the round, the end card and 「重试」 on the real kernel', () => {
     const last = lastEnded(w.model.turns)
     expect(w.model.turns[last]?.end?.endReason).toEqual({ code: 'completed' })
     // Two Runs, one round: the count covers both, and the paused Run's turn keeps its own end.
-    expect(summaryBefore(w.model.turns, last)).toEqual({ read: 0, write: 0, external: 2 })
+    expect(summaryBefore(w.model.turns, last)).toEqual({
+      read: 0,
+      search: 0,
+      write: 0,
+      command: 0,
+      online: 0,
+      connector: 2,
+    })
     expect(summaryBefore(w.model.turns, paused)).toBeNull()
     expect(w.model.turns[paused]?.end?.endReason?.code).toBe('paused')
     expect(new Set(w.model.turns.flatMap((turn) => turn.end?.runId ?? [])).size).toBe(2)

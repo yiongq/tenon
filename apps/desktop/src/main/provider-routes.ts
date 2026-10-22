@@ -6,6 +6,7 @@ import {
 } from '@tenon-app/contracts'
 import type {
   CustomVendorContract,
+  Config,
   IpcMainLike,
   ProviderConfigKeyContract,
   ProviderEntryContract,
@@ -27,7 +28,7 @@ import {
   isInstanceId,
 } from './custom-vendors/registry.js'
 import type { ProbeRuns } from './custom-vendors/routes.js'
-import { saveCustomVendorKeyHeld } from './custom-vendors/store.js'
+import { firstKeyDefaults, saveCustomVendorKeyHeld } from './custom-vendors/store.js'
 import { endpointOf, hostOf } from './endpoint.js'
 import { readConfig, withConfigLock, writeConfigHeld } from './host/profile.js'
 import {
@@ -109,7 +110,7 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     for (const name of Object.keys(values)) {
       if (!declared.has(name)) return refused('unknown-key', name)
     }
-    if (isInstanceId(id)) return configureInstance(id, values)
+    if (isInstanceId(id)) return configureInstance(definition, values)
     // M6 §点名 (a), (e): zhipu and anthropic take their official https origin only, and zhipu no
     // subscription path; a blank value goes back to the declared default. Refused before anything
     // is read or written — another endpoint is a custom vendor instance (Q8, Q13). Only a web URL
@@ -138,7 +139,11 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     if (TEXT_ONLY_PROVIDERS.has(id) && after !== null && isOllamaCloud(after)) {
       return refused('key-host-binding', BASE_URL_KEY)
     }
-    if (before !== after) return moveHost(definition, config.providerConfig, settings, values)
+    if (before !== after) {
+      const saved = await moveHost(definition, config.providerConfig, settings, values)
+      if (saved.ok) await saveFirstDefaults(definition, values)
+      return saved
+    }
 
     // Secrets first: a `config.json` write that failed afterwards leaves a credential the user
     // can still use, while the reverse would leave a provider pointing somewhere with no key.
@@ -158,10 +163,29 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
             : host.secrets.set(secretName, value)
         }),
     )
-    await writeConfigHeld(host.fs, host.identity, {
+    const savedConfig = await writeConfigHeld(host.fs, host.identity, {
       providerConfig: { ...config.providerConfig, [id]: settings },
     })
+    await saveFirstDefaults(definition, values, savedConfig, next.secrets)
     return SAVED
+  }
+
+  async function saveFirstDefaults(
+    definition: ProviderDefinition,
+    values: Readonly<Record<string, string>>,
+    config?: Config,
+    storedSecrets?: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    try {
+      const locked = config ?? (await readConfig(host.fs, host.identity))
+      // A key save invalidates every probe; only the rows left in the locked config count.
+      const entry = locked.customVendors.find((candidate) => candidate.id === definition.id)
+      const current = entry === undefined ? definition : instanceDefinition(entry)
+      const patch = firstKeyDefaults(locked, current, values, env(), storedSecrets)
+      if (Object.keys(patch).length > 0) await writeConfigHeld(host.fs, host.identity, patch)
+    } catch {
+      log(`[provider] ${definition.id}: the first-key default could not be saved`)
+    }
   }
 
   /**
@@ -172,15 +196,18 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
    * row's snapshot, then stores the key (T3).
    */
   async function configureInstance(
-    id: string,
+    definition: ProviderDefinition,
     values: Readonly<Record<string, string>>,
   ): Promise<ProviderWriteResult> {
+    const id = definition.id
     if (Object.hasOwn(values, BASE_URL_KEY)) return refused('invalid-value', BASE_URL_KEY)
     const apiKey = values[INSTANCE_KEY]
     if (apiKey === undefined) return SAVED
     deps.probes?.abort(id, 'key')
     const saved = await saveCustomVendorKeyHeld({ host }, id, apiKey)
-    return saved.ok ? SAVED : refused('unknown-provider', null)
+    if (!saved.ok) return refused('unknown-provider', null)
+    await saveFirstDefaults(definition, values)
+    return SAVED
   }
 
   /**

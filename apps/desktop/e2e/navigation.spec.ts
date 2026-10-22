@@ -176,6 +176,7 @@ test('paused on a card, New leaves at once; the banner’s 「回去」 makes th
     await expect(page.getByTestId('pending-banner')).toHaveCount(0)
     await allowCard(page)
     await expect(page.getByTestId('approval-answered')).toHaveAttribute('data-outcome', 'allowed')
+    await expect(page.getByTestId('approval-answered')).toHaveText('Allowed (Just this once)')
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Resumed')
 
     // The resumed Run is not the thread's own (no adapter opened it); main says it runs, so New asks.

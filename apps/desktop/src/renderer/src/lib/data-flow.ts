@@ -1,4 +1,6 @@
-import type { ProviderEndpoint } from '@tenon-app/contracts'
+import type { ProviderEndpoint, ProviderEntryContract } from '@tenon-app/contracts'
+
+import { hostOfUrl } from './url-host'
 
 /**
  * The model menu's two data-flow decisions (spec 02 §模型选择「数据去向」; A9, 验收 34), pure so they
@@ -39,4 +41,14 @@ export function confirmHostFor(
  */
 export function heldConfirmHost(heldHost: string, target: ProviderEndpoint | undefined): string {
   return target?.host ?? heldHost
+}
+
+/** Instances name their own destination; only a builtin at its declared default hides the host. */
+export function rowHostInLine(
+  entry: Pick<ProviderEntryContract, 'displayName' | 'configKeys' | 'endpoint'>,
+): boolean {
+  if (entry.displayName !== undefined) return true
+  const declared = entry.configKeys.find((key) => key.name === 'baseURL')?.default
+  if (declared === undefined) return true
+  return hostOfUrl(declared) !== entry.endpoint.host
 }

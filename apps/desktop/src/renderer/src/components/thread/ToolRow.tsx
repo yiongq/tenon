@@ -5,15 +5,17 @@ import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
 import { PathText } from '@/components/ui/path-text'
-import { mcpAction } from '@/runtime/mcp-store'
+import { mcpAction, useMcp } from '@/runtime/mcp-store'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toolRowEffect } from '@/lib/tool-row-effect'
 import { useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { categoryOf } from '@/lib/approval-keys'
 import { questionsOf, summaryOf } from '@/lib/ask'
-import { toolObject, toolSentence } from '@/lib/tool-sentence'
+import { toolObject, toolSentence, toolSlotValue } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
+import { hostOfUrl } from '@/lib/url-host'
 import { visible } from '@/lib/visible'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 import type { Answered, SessionSnapshot } from '@/runtime/session-store'
@@ -41,9 +43,12 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const { t } = useTranslation()
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
+  const { servers } = useMcp()
   const [open, setOpen] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
+  // Keep the live card's host when answering; persisted answers derive it from the URL.
+  const [answeredHost, setAnsweredHost] = useState<string | undefined>(undefined)
   const callKey = props.toolCallId
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
@@ -96,24 +101,28 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         {/* The sentence takes the free width, so the marker and 「运行中」 line up at the row's end
             whether the sentence is short or wraps. */}
         <span className="min-w-0 flex-1">
-          <PathText text={toolSentence(t, props.toolName, input)} />
+          <PathText text={toolSentence(t, props.toolName, input, servers)} />
         </span>
         {effect?.marker ? (
-          <span data-testid="tool-effect-marker" className="shrink-0">
-            <AlertTriangle aria-hidden className="inline size-3" />
-            <span className="sr-only">
-              {t('mcp.effectMarker', {
-                effect: t(effect.effectKey),
-                reversibility: t(effect.reversibilityKey),
-              })}
-            </span>
-          </span>
+          <Tooltip>
+            <TooltipTrigger render={<span />} data-testid="tool-effect-marker" className="shrink-0">
+              <AlertTriangle aria-hidden className="inline size-3" />
+              <span className="sr-only">{t('tool.did.irreversible')}</span>
+            </TooltipTrigger>
+            <TooltipContent className="w-max max-w-none whitespace-nowrap [&>[data-slot=tooltip-arrow]]:hidden">
+              {t('tool.did.irreversible')}
+            </TooltipContent>
+          </Tooltip>
         ) : null}
         {outcome === null && pending === null && !asking && summary === null ? (
           <span className="shrink-0 text-micro text-text-muted">{t('tool.running')}</span>
         ) : null}
       </button>
-      {outcome !== null && outcome.state !== 'completed' && outcome.source !== null && !blocked ? (
+      {outcome !== null &&
+      outcome.state !== 'completed' &&
+      outcome.source !== null &&
+      !blocked &&
+      !(outcome.source === 'user-rejected' && answered?.outcome === 'denied') ? (
         <p data-testid="tool-row-closure" className="text-micro text-text-muted">
           {t(closureKey as never)}
         </p>
@@ -188,21 +197,22 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
               )}
             </>
           )}
-          {effect ? (
-            // A section like 「输入」 and 「输出」 above it: the same small muted label.
-            <div data-testid="tool-side-effects" className="flex flex-col gap-1">
-              <p className="text-micro text-text-muted">{t('mcp.effect')}</p>
-              <p className="text-micro text-text-secondary">
-                {t('mcp.marker', {
-                  effect: t(effect.effectKey),
-                  reversibility: t(effect.reversibilityKey),
-                })}
-              </p>
-            </div>
+          {effect?.didKey ? (
+            <p data-testid="tool-side-effects" className="text-micro text-text-secondary">
+              {t(effect.didKey)}
+              {effect.undoKey === null ? null : ` · ${t(effect.undoKey)}`}
+            </p>
           ) : null}
         </div>
       ) : null}
-      {answered === null ? null : <AnsweredRow answered={answered} />}
+      {answered === null ? null : (
+        <AnsweredRow
+          answered={answered}
+          input={input}
+          toolName={props.toolName}
+          host={answeredHost}
+        />
+      )}
       {summary === null ? null : <AskSummaryCard summary={summary} />}
       {asking ? <QueuedRows callKey={callKey} /> : null}
       {pending === null ||
@@ -224,22 +234,16 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
                 ? input
                 : (snapshot.pendingCall?.input ?? {})
             }
-            onRespond={(decision) => void store.respond(decision)}
+            onRespond={(decision) => {
+              const host = pending.card.facts['host']
+              setAnsweredHost(typeof host === 'string' ? host : undefined)
+              void store.respond(decision)
+            }}
           />
           <QueuedRows callKey={pending.anchorCallKey} />
         </>
       )}
     </div>
-  )
-}
-
-/** The call's facts with the card's escaping (②′): a path in the notice reads as it will run. */
-function visibleFacts(facts: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(facts).map(([key, value]) => [
-      key,
-      typeof value === 'string' ? visible(value) : value,
-    ]),
   )
 }
 
@@ -261,7 +265,7 @@ function queuedBehindCard(snapshot: SessionSnapshot, callKey: string): boolean {
   return anchor >= 0 && keys.indexOf(callKey) > anchor
 }
 
-/** What a blocked call shows (§界面范围 `BlockedNotice`): what, why, and that the model was told. */
+/** The four block codes each say why, without repeating the object or the tool name. */
 function BlockedNotice(props: {
   readonly outcome: ToolOutcomeViewContract
   readonly toolName: string
@@ -272,29 +276,62 @@ function BlockedNotice(props: {
   // In a chat, Read beyond this chat's saved files is `protected` with a sentence of its own; an
   // inspector's block says what it found, by category, as the card does.
   const key =
-    props.profile === 'chat' && props.outcome.source === 'protected' && facts['toolName'] === 'Read'
+    props.profile === 'chat' && props.outcome.source === 'protected' && props.toolName === 'Read'
       ? 'blocked.chatReadScope'
       : props.outcome.source === 'inspector'
         ? `blocked.inspector.${categoryOf(facts)}`
-        : `blocked.${String(props.outcome.source)}`
+        : props.outcome.source === 'protected'
+          ? props.toolName === 'WebFetch'
+            ? 'blocked.protected.fetch'
+            : props.toolName === 'Write' || props.toolName === 'Edit'
+              ? 'blocked.protected.write'
+              : 'blocked.protected.read'
+          : `blocked.${String(props.outcome.source)}`
   return (
     <div
       data-testid="blocked-notice"
       data-source={props.outcome.source}
       className="rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
     >
-      <p>
-        <PathText text={tx(t, key, visibleFacts({ toolName: props.toolName, ...facts }))} />
-      </p>
-      <p className="text-text-muted">{t('blocked.told')}</p>
+      <p>{tx(t, key)}</p>
     </div>
   )
 }
 
-/** An answered card, collapsed to one line: result, scope, object (§最小审批卡「答完」). */
-function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
+/** Keep only the authorization facts absent from the main session's tool sentence. */
+export function AnsweredRow(props: {
+  readonly answered: Answered
+  readonly toolName: string
+  readonly input: Readonly<Record<string, unknown>>
+  readonly host?: string | undefined
+}): JSX.Element {
   const { t } = useTranslation()
   const { answered } = props
+  const target = answered.target
+  let extra = ''
+  if (!answered.subtask && answered.outcome === 'allowed') {
+    switch (target.type) {
+      case 'command':
+        extra = t('confirm.cwd', { cwd: visible(target.cwd) })
+        break
+      case 'search':
+        extra = t('confirm.answered.searchHost', { host: visible(target.host) })
+        break
+      case 'url':
+        extra = t('confirm.answered.searchHost', {
+          host: visible(props.host ?? hostOfUrl(target.url)),
+        })
+        break
+      case 'path':
+        // Compare the displayed slot, including its escaping, rather than the whole sentence.
+        if (toolSlotValue(props.toolName, props.input) !== visible(target.path)) {
+          extra = t('confirm.answered.realPath', { path: visible(target.path) })
+        }
+        break
+      case 'tool':
+        break
+    }
+  }
   return (
     <div
       data-testid="approval-answered"
@@ -307,8 +344,13 @@ function AnsweredRow(props: { readonly answered: Answered }): JSX.Element {
               scope: t(scopeKey(answered.scope, answered.target.type, answered.subtask) as never),
             })
           : t('confirm.answered.denied')}
+        {answered.outcome === 'denied' && !answered.subtask ? (
+          ` · ${t('confirm.answered.roundEnds')}`
+        ) : extra === '' ? null : (
+          <PathText text={` · ${extra}`} />
+        )}
       </span>
-      <ObjectLine target={answered.target} />
+      {answered.subtask ? <ObjectLine target={answered.target} /> : null}
     </div>
   )
 }

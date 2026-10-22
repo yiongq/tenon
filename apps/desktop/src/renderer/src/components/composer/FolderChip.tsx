@@ -6,111 +6,160 @@ import {
   workspaceUsePrefill,
 } from '@tenon-app/contracts'
 import { XIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSessionSnapshot, useSessionStore } from '@/runtime/ChatProvider'
 
 function folderName(path: string): string {
   return path.split(/[\\/]/).findLast((part) => part !== '') ?? path
 }
 
-/**
- * The task profile's folders (spec 02 §界面范围 `FolderChip`; D11, D8): below the composer, only in
- * a task (the Composer keeps the row's place in a chat too, empty). Each folder's name is content and
- * shows whole (02 §界面范围: paths are shown in full and may wrap): a long name, or many folders, take
- * the row to a second line rather than end in an ellipsis. The first one is where commands
- * run; with none chosen, the session's own folder. Folders come from main's dialog or the prefill it
- * reads itself — this side only asks and removes.
- */
-export function FolderChip(): JSX.Element | null {
+/** Folders enter the workspace only through main's dialog or an explicit prefill confirmation. */
+export function FolderChip({
+  autoOpenPrefill = false,
+}: {
+  autoOpenPrefill?: boolean
+}): JSX.Element | null {
   const { t } = useTranslation()
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
   const [prefill, setPrefill] = useState<readonly string[]>([])
+  const [open, setOpen] = useState(false)
+  const [preserveFocus, setPreserveFocus] = useState(false)
+  const offerOnMount = useRef(autoOpenPrefill)
   const workspace = snapshot.facts?.workspace ?? null
-  // Read again every time the chip is shown, as the spec asks (「chip 每次展开都重读」).
+  // Re-read on every expansion and after workspace changes. Only the initial offer after turning
+  // the toggle on opens automatically; closing the offer never confirms or immediately reopens it.
   useEffect(() => {
     if (workspace === null) return
     let live = true
     void invokeRoute(window.tenon, configGet, {}).then((result) => {
-      if (live && result.ok) setPrefill(result.data.lastWorkspaceFolders)
+      if (!live || !result.ok) return
+      setPrefill(result.data.lastWorkspaceFolders)
+      if (offerOnMount.current) {
+        offerOnMount.current = false
+        if (
+          result.data.lastWorkspaceFolders.some((folder) => !workspace.folders.includes(folder))
+        ) {
+          setPreserveFocus(true)
+          setOpen(true)
+        }
+      }
     })
     return () => {
       live = false
     }
-  }, [workspace])
+  }, [workspace, open])
   if (snapshot.facts?.profile !== 'cowork' || workspace === null) return null
   const refresh = (): Promise<void> => store.refreshFacts()
   const picked = workspace.origin === 'picked'
   const unconfirmed = prefill.filter((folder) => !workspace.folders.includes(folder))
+  const paths = workspace.folders.join('\n')
+  const additional = `+${workspace.folders.length - 1}`
   return (
-    // Every item is at least one control height (20px) with its border inside it, so the row is as
-    // tall with a short-named folder in it as without: adding the first folder moves nothing.
-    <div
-      data-testid="folder-chip"
-      className="flex flex-wrap items-center gap-1 font-sans text-micro"
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setPreserveFocus(false)
+        setOpen(next)
+      }}
     >
-      <span className="text-text-muted">{t('folder.label')}</span>
-      {workspace.folders.map((folder, index) => (
-        <span
-          key={folder}
-          data-testid="folder-item"
-          title={folder}
-          className="flex min-h-5 min-w-0 items-center gap-1 rounded-pill border border-border-default px-2 text-text-secondary"
+      <PopoverTrigger
+        data-testid="folder-chip"
+        title={paths}
+        aria-label={paths}
+        className="flex min-h-5 min-w-0 items-center gap-1 rounded-pill border border-border-default px-2 font-sans text-micro text-text-secondary"
+      >
+        <span data-testid="folder-chip-name" className="min-w-0 wrap-anywhere whitespace-normal">
+          {picked ? folderName(workspace.folders[0] ?? '') : t('folder.dedicated')}
+        </span>
+        {workspace.folders.length > 1 ? <span className="shrink-0">{additional}</span> : null}
+      </PopoverTrigger>
+      <PopoverContent
+        data-testid="folder-popover"
+        aria-label={t('folder.label')}
+        align="start"
+        side="top"
+        initialFocus={preserveFocus ? false : undefined}
+        className="w-[36rem] max-h-[min(24rem,var(--available-height))] max-w-[calc(100vw-2rem)] overflow-y-auto font-sans"
+      >
+        {workspace.folders.map((folder, index) => (
+          <div
+            key={folder}
+            data-testid="folder-item"
+            title={folder}
+            className="flex min-w-0 items-start gap-2"
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <span data-testid="folder-path" className="wrap-anywhere">
+                {folder}
+              </span>
+              {index === 0 ? (
+                <span data-testid="folder-cwd" className="text-micro text-text-muted">
+                  {t('folder.cwd')}
+                </span>
+              ) : null}
+            </div>
+            {picked ? (
+              <button
+                type="button"
+                aria-label={t('folder.remove', { name: folderName(folder) })}
+                data-testid="folder-remove"
+                className="flex size-6 shrink-0 items-center justify-center rounded-sm hover:bg-alpha-1"
+                onClick={() =>
+                  void invokeRoute(window.tenon, workspaceRemove, {
+                    sessionId: store.sessionId,
+                    folder,
+                  }).then(refresh)
+                }
+              >
+                <XIcon aria-hidden className="size-3" />
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {picked ? null : (
+          <p data-testid="folder-dedicated-note" className="text-micro text-text-muted">
+            {t('folder.dedicatedNote')}
+          </p>
+        )}
+        <button
+          type="button"
+          data-testid="folder-add"
+          className="min-h-6 self-start rounded-sm px-1 text-text-accent"
+          onClick={() =>
+            void invokeRoute(window.tenon, workspacePick, { sessionId: store.sessionId }).then(
+              refresh,
+            )
+          }
         >
-          {/* Interface copy (「专用文件夹」) keeps to one line; a picked folder's name is content and
-              breaks only when it is longer than the row itself. */}
-          {picked ? (
-            <span className="min-w-0 wrap-break-word">{folderName(folder)}</span>
-          ) : (
-            <span className="shrink-0">{t('folder.dedicated')}</span>
-          )}
-          {index === 0 ? <span className="shrink-0 text-text-muted">{t('folder.cwd')}</span> : null}
-          {picked ? (
+          {t('folder.add')}
+        </button>
+        {unconfirmed.length === 0 ? null : (
+          <div data-testid="folder-prefill-offer" className="flex min-w-0 flex-col gap-2">
+            <p className="text-micro text-text-muted">{t('folder.prefillPending')}</p>
+            {unconfirmed.map((folder) => (
+              <p key={folder} data-testid="folder-prefill-path" className="wrap-anywhere">
+                {folder}
+              </p>
+            ))}
             <button
               type="button"
-              aria-label={t('folder.remove', { name: folderName(folder) })}
-              data-testid="folder-remove"
+              data-testid="folder-prefill"
+              className="min-h-6 self-start rounded-sm px-1 text-text-accent"
               onClick={() =>
-                void invokeRoute(window.tenon, workspaceRemove, {
+                void invokeRoute(window.tenon, workspaceUsePrefill, {
                   sessionId: store.sessionId,
-                  folder,
                 }).then(refresh)
               }
             >
-              <XIcon className="size-3" />
+              {t('folder.prefillUse', { count: unconfirmed.length })}
             </button>
-          ) : null}
-        </span>
-      ))}
-      <button
-        type="button"
-        data-testid="folder-add"
-        className="ctl-h-inline rounded-pill px-2 text-text-accent"
-        onClick={() =>
-          void invokeRoute(window.tenon, workspacePick, { sessionId: store.sessionId }).then(
-            refresh,
-          )
-        }
-      >
-        {t('folder.add')}
-      </button>
-      {unconfirmed.length === 0 ? null : (
-        <button
-          type="button"
-          data-testid="folder-prefill"
-          title={unconfirmed.join('\n')}
-          className="ctl-h-inline rounded-pill px-2 text-text-muted underline"
-          onClick={() =>
-            void invokeRoute(window.tenon, workspaceUsePrefill, {
-              sessionId: store.sessionId,
-            }).then(refresh)
-          }
-        >
-          {t('folder.prefill', { count: unconfirmed.length })}
-        </button>
-      )}
-    </div>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }

@@ -371,6 +371,68 @@ function probe(h: Harness, modelId = MODEL, id = ID): Promise<ProbeAnswer> {
 
 const builtinIds = [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID, OLLAMA_PROVIDER_ID]
 
+describe('presentation-r1 creation defaults', () => {
+  it('presentation-r1 验收 12: creating a preset with a key but no model rows keeps all three defaults empty', async () => {
+    const h = await harness()
+    const created = await h.ok<{ ok: true; id: string }>('customVendor.create', {
+      displayName: 'First vendor',
+      wire: 'openai-chat',
+      apiKey: KEY,
+      source: { kind: 'preset', presetId: 'deepseek', regionId: 'default' },
+    })
+    expect(created.ok).toBe(true)
+    expect(h.keychain.values.get(h.keyOf(created.id))).toBe(KEY)
+    expect(await h.entry(created.id)).toMatchObject({ configured: true, models: [] })
+    const config = await h.config()
+    expect(config.provider).toBeNull()
+    expect(config.defaultModelByProfile).toEqual({})
+  })
+
+  it('presentation-r1 验收 12: creating one without a key, or with a default already set, writes nothing more', async () => {
+    const selection = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+    const cases = [
+      { file: {}, apiKey: '  ', source: { kind: 'custom', baseURL: 'http://127.0.0.1:4000/v1' } },
+      {
+        file: { provider: selection },
+        apiKey: KEY,
+        source: { kind: 'preset', presetId: 'deepseek', regionId: 'default' },
+      },
+      {
+        file: { defaultModelByProfile: { chat: selection } },
+        apiKey: KEY,
+        source: { kind: 'preset', presetId: 'deepseek', regionId: 'default' },
+      },
+      {
+        file: { defaultModelByProfile: { cowork: selection } },
+        apiKey: KEY,
+        source: { kind: 'preset', presetId: 'deepseek', regionId: 'default' },
+      },
+    ]
+    for (const testCase of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- a fresh profile for each guard
+      const h = await harness({ file: testCase.file })
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const before = await h.config()
+      const write = vi.spyOn(h.host.fs, 'writeFile')
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const created = await h.ok('customVendor.create', {
+        displayName: 'First vendor',
+        wire: 'openai-chat',
+        apiKey: testCase.apiKey,
+        source: testCase.source,
+      })
+      expect(created).toMatchObject({ ok: true })
+      expect(write).toHaveBeenCalledTimes(1)
+      write.mockRestore()
+      // oxlint-disable-next-line no-await-in-loop -- as above
+      const after = await h.config()
+      expect(after.customVendors).toHaveLength(1)
+      expect(after.defaultModelByProfile).toEqual(before.defaultModelByProfile)
+      expect(after.provider).toEqual(before.provider)
+    }
+  })
+})
+
 // ----- the tests ---------------------------------------------------------------------------------
 
 describe('customVendor.list, create, update and delete (M6 §IPC)', () => {

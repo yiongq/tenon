@@ -433,6 +433,28 @@ describe('an inspector changes only whether to ask, never the reversibility (旧
 })
 
 describe('Write in the workspace (旧 215, the kernel half)', () => {
+  it('presentation-r1 验收 6: a missing old_string Edit carries isError live and in the latest session’s call outcome', async () => {
+    const h = await harness({})
+    const path = absolutePath('/work/project/a.txt')
+    await h.memory.fs.writeFile(path, 'after')
+    const pending = await pausedOn(h, 'Edit', {
+      file_path: path,
+      old_string: 'missing old string',
+      new_string: 'replacement',
+    })
+    await allow(h, pending)
+    const live = h.loop.recorded.find(
+      (event) => event.type === 'tool-outcome' && event.callKey === pending.callKey,
+    )
+    expect(live).toMatchObject({ outcome: { state: 'completed', isError: true } })
+    const latest = await h.service.latestSession({ limit: 1000 })
+    const stored = latest?.messages
+      .flatMap((row) => row.calls ?? [])
+      .find((call) => call.callKey === pending.callKey)
+    expect(stored?.outcome).toMatchObject({ state: 'completed', isError: true })
+    expect(await h.memory.fs.readFile(path, { encoding: 'utf8' })).toBe('after')
+  })
+
   it('asks with reason default and the real path, allows for the session, and the same file runs free', async () => {
     const h = await harness({})
     const path = `${WORK}/notes.md`

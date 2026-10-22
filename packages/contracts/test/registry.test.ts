@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { EVENT_CHANNELS, ROUTE_CHANNELS, isEventChannel, isRouteChannel } from '../src/registry.js'
 
 describe('ipc registry', () => {
-  it('lists every declared route and event exactly once', () => {
+  it('presentation-r1 不变量 4: lists every declared route and event exactly once', () => {
     expect([...ROUTE_CHANNELS].toSorted()).toEqual([
       'approval.current',
       'approval.list',

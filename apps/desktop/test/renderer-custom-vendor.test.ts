@@ -137,13 +137,23 @@ describe('the model menu rows (§运行时「行标记、菜单与任务形态�
     })
   })
 
-  it('reads 「尚未通过探测」 for an instance row without a passing probe, 02’s line for a builtin', () => {
+  it('presentation-r1 验收 9: reads 「尚未通过探测」 for an instance row without a passing probe, 02’s line for a builtin', () => {
     expect(markLineKey('unverified-text-only', true)).toBe('model.mark.unprobed')
     expect(markLineKey('unverified-text-only', false)).toBe('model.mark.unverified')
     expect(markLineKey('probed', true)).toBe('model.mark.probed')
     expect(markLineKey('local-text-only', true)).toBe('model.mark.localTextOnly')
-    expect(markLineKey('verified', false)).toBe('model.row.line')
-    expect(text('zh-CN', 'model.mark.probed')).toBe('本机探测 · 不保证 · {host}')
+    expect(markLineKey('verified', false, true)).toBe('model.row.line')
+    expect(markLineKey('verified', false, false)).toBe('model.row.purpose')
+    expect(markLineKey('unverified-text-only', false, false)).toBe('model.mark.unverifiedNoHost')
+    expect(markLineKey('unverified-text-only', true, true)).toBe('model.mark.unprobed')
+    expect(markLineKey('local-text-only', false, false)).toBe('model.mark.localTextOnly')
+    expect(text('zh-CN', 'model.row.purpose')).toBe('{purpose}')
+    expect(text('en', 'model.row.purpose')).toBe('{purpose}')
+    expect(text('zh-CN', 'model.row.line')).toBe('{purpose} · {host}')
+    expect(text('en', 'model.row.line')).toBe('{purpose} · {host}')
+    expect(text('zh-CN', 'model.mark.unverifiedNoHost')).toBe('未验证 · 仅文字对话')
+    expect(text('en', 'model.mark.unverifiedNoHost')).toBe('Unverified · text conversation only')
+    expect(text('zh-CN', 'model.mark.probed')).toBe('探测通过 · 不保证 · {host}')
     expect(text('zh-CN', 'model.mark.unprobed')).toBe('尚未通过探测 · 仅文字对话 · {host}')
   })
 })
@@ -220,7 +230,7 @@ describe('a stored probe as one line (§结果与原因码)', () => {
       }
       expect([reason, probeLineOf(snapshot)]).toEqual([reason, { key }])
     }
-    expect(text('zh-CN', 'customVendor.probe.passed')).toBe('本机探测通过 · 不保证')
+    expect(text('zh-CN', 'customVendor.probe.passed')).toBe('探测通过 · 不保证')
   })
 
   it('reads a row that was not detected by its reason, never as passed (Q14 three states)', () => {
@@ -276,7 +286,7 @@ describe('a stored probe as one line (§结果与原因码)', () => {
         ...table[code],
       ])
     }
-    expect(text('en', 'customVendor.probe.passed')).toBe('Probed on this computer · not guaranteed')
+    expect(text('en', 'customVendor.probe.passed')).toBe('Probe passed · not guaranteed')
   })
 
   it('gives every refusal and failure code the sentence named after it', () => {

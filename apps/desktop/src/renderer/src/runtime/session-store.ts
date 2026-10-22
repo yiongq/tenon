@@ -14,10 +14,21 @@ import {
   confirmRequestEvent,
   invokeRoute,
   sessionFacts,
+  providerList,
+  sessionModelChoice,
   sessionMessages,
 } from '@tenon-app/contracts'
-import type { ChatEvent, MessageRowContract, SessionFactsResponse } from '@tenon-app/contracts'
+import type {
+  ChatEvent,
+  MessageRowContract,
+  SessionFactsResponse,
+  ProviderEntryContract,
+  SessionModelChoice,
+} from '@tenon-app/contracts'
 import type { TenonBridge } from '../../../preload/index'
+import { customVendorGone, holdsTools } from '../lib/custom-vendor'
+import { modelBlock } from '../lib/send-block'
+import type { SendBlock } from '../lib/send-block'
 import type { AskAnswers } from '../lib/ask'
 import { queueOf, queuedTextOf } from './queue-state'
 import type { QueuedItem } from './queue-state'
@@ -60,6 +71,8 @@ export interface Answered {
 }
 
 export interface SessionSnapshot {
+  readonly providers: readonly ProviderEntryContract[] | null
+  readonly modelChoice: SessionModelChoice | null
   readonly model: ThreadModel
   readonly queue: readonly QueuedItem[]
   readonly held: { readonly host: string } | null
@@ -123,6 +136,13 @@ function hasNamedAnswer(model: ThreadModel, callKey: string): boolean {
 /** A send whose message the events will show: a `user-message`, or a queue push (§插话与输入框状态表). */
 const EVENTS_FOLLOW: ReadonlySet<string> = new Set(['started', 'queued', 'held'])
 
+const attachedStores = new Set<SessionStore>()
+
+/** Every settings entry point refreshes the visible session from the same two routes. */
+export function settingsClosed(): void {
+  for (const store of attachedStores) void store.refreshModel()
+}
+
 let localIds = 0
 const nextLocalId = (): string => `local-${String((localIds += 1))}`
 
@@ -144,8 +164,12 @@ export class SessionStore {
   /** The text of each queued item seen, for the `user-message` that inserts it. */
   readonly #queuedTexts = new Map<string, string>()
   /** Each read is numbered; an answer older than the newest one asked for is dropped. */
-  readonly #asked = { pending: 0, facts: 0, resumable: 0 }
+  readonly #asked = { pending: 0, facts: 0, resumable: 0, model: 0 }
+  #modelRefresh: Promise<void> = Promise.resolve()
   #opened = false
+  /** Final child rows are immutable for this handoff; overlapping reads share a promise. */
+  readonly #childReads = new Map<string, Promise<void>>()
+  readonly #settledChildren = new Set<string>()
 
   constructor(
     sessionId: string,
@@ -159,6 +183,8 @@ export class SessionStore {
     const queued = queueOf(sessionId)
     for (const item of queued.items) this.#queuedTexts.set(item.queuedId, item.text)
     this.#snapshot = {
+      providers: null,
+      modelChoice: null,
       model: rows.length === 0 ? EMPTY_THREAD : threadFromRows(rows),
       queue: queued.items,
       held: queued.held,
@@ -187,14 +213,54 @@ export class SessionStore {
 
   #set(next: Partial<SessionSnapshot>): void {
     this.#snapshot = { ...this.#snapshot, ...next }
+    if ('providers' in next || 'modelChoice' in next || 'facts' in next) {
+      const { providers, modelChoice, facts } = this.#snapshot
+      if (providers !== null && modelChoice !== null) {
+        const entry = providers.find((item) => item.id === modelChoice.providerId)
+        const gone = customVendorGone(modelChoice.providerId, modelChoice, providers)
+        const row = entry?.models.find((item) => item.id === modelChoice.modelId)
+        const textOnlyTask =
+          facts?.profile === 'cowork' &&
+          entry !== undefined &&
+          !gone &&
+          !holdsTools(row?.mark ?? 'unverified-text-only')
+        this.#snapshot = { ...this.#snapshot, textOnlyTask }
+      }
+    }
     if (this.#snapshot.pending === null) this.#snapshot = { ...this.#snapshot, pendingCall: null }
     for (const listener of this.#listeners) listener()
   }
 
-  /** Why sending is disabled now, or null (§模型菜单与输入框「提示与禁发」: only these two). */
-  sendBlock(): 'restoring' | 'textOnlyTask' | null {
+  /** Both send paths and the composer use this one decision. */
+  sendBlock(): SendBlock | null {
     if (!this.#snapshot.canSend) return 'restoring'
+    const unavailable = modelBlock(this.#snapshot.providers, this.#snapshot.modelChoice)
+    if (unavailable !== null) return unavailable
     return this.#snapshot.textOnlyTask ? 'textOnlyTask' : null
+  }
+
+  refreshModel(): Promise<void> {
+    const asked = (this.#asked.model += 1)
+    const refreshing = Promise.all([
+      invokeRoute(this.#bridge, providerList, {}).catch(() => ({ ok: false as const })),
+      invokeRoute(this.#bridge, sessionModelChoice, { sessionId: this.sessionId }).catch(() => ({
+        ok: false as const,
+      })),
+    ]).then(async ([list, choice]) => {
+      // A caller restoring a held confirmation reads the snapshot after awaiting this refresh.
+      // If another read superseded it, wait for that one to populate the shared state first.
+      if (asked !== this.#asked.model) {
+        await this.#modelRefresh
+        return
+      }
+      this.#set({
+        providers: list.ok ? list.data : null,
+        modelChoice: choice.ok ? choice.data : null,
+        ...(!list.ok || !choice.ok ? { textOnlyTask: false } : {}),
+      })
+    })
+    this.#modelRefresh = refreshing
+    return refreshing
   }
 
   setCanSend(canSend: boolean): void {
@@ -207,6 +273,7 @@ export class SessionStore {
 
   /** Subscribes to the pushes of this session; returns the undo. */
   attach(): () => void {
+    attachedStores.add(this)
     const offs = [
       this.#bridge.on(chatEvent.channel, (payload) => {
         const parsed = chatEventSchema.safeParse(payload)
@@ -229,6 +296,7 @@ export class SessionStore {
       this.#onQueue(queued.items, queued.held)
     }
     return () => {
+      attachedStores.delete(this)
       for (const off of offs) off()
     }
   }
@@ -276,6 +344,7 @@ export class SessionStore {
     if (model !== this.#snapshot.model) this.#set({ model })
     const pending = this.#snapshot.pending
     if (event.type === 'tool-outcome') {
+      void this.#refreshChildren()
       const answered = this.#snapshot.answered
       // The row's own outcome is on it now — the kernel names the answer on every closure an answer
       // wrote, a stricter re-judgement's included — so the collapse this window made is not needed.
@@ -313,6 +382,7 @@ export class SessionStore {
       if (this.#snapshot.facts?.established === false) void this.refreshFacts()
     }
     if (event.type === 'done' || event.type === 'error') {
+      void this.#refreshChildren()
       // A Run that paused left a card to fetch (§答复与投递); any end may have cleared one.
       void this.refreshPending()
       void this.refreshResumable()
@@ -328,10 +398,55 @@ export class SessionStore {
   async open(o: { readonly resume: boolean }): Promise<void> {
     if (this.#opened) return
     this.#opened = true
-    await Promise.all([this.refreshPending(), this.refreshFacts(), this.refreshResumable()])
+    await Promise.all([
+      this.refreshPending(),
+      this.refreshFacts(),
+      this.refreshModel(),
+      this.refreshResumable(),
+      this.#refreshChildren(),
+    ])
     // Switched to by id: the kernel resumes what startup recovery listed (§离开会话 第 4 条). The
     // session a window restored on its own is not "opened": it offers 「继续」 instead.
     if (o.resume) await this.resume()
+  }
+
+  async #refreshChildren(): Promise<void> {
+    const models = [
+      this.#snapshot.model.turns,
+      ...(this.#snapshot.model.childSessions?.values() ?? []),
+    ]
+    const children = new Map<string, boolean>()
+    for (const turns of models) {
+      for (const turn of turns) {
+        for (const part of turn.parts) {
+          if (part.kind !== 'tool' || part.name !== 'Agent') continue
+          const handoff = part.outcome?.handoff
+          if (handoff === undefined || handoff.childSessionId === this.sessionId) continue
+          children.set(
+            handoff.childSessionId,
+            handoff.childEndReason !== null && handoff.childEndReason !== 'paused',
+          )
+        }
+      }
+    }
+    await Promise.all(
+      [...children].map(([sessionId, settled]) => {
+        if (this.#settledChildren.has(sessionId)) return Promise.resolve()
+        const pending = this.#childReads.get(sessionId)
+        if (pending !== undefined) return pending
+        const reading = invokeRoute(this.#bridge, sessionMessages, { sessionId, limit: 1000 })
+          .then((response) => {
+            if (!response.ok) return
+            const childSessions = new Map(this.#snapshot.model.childSessions)
+            childSessions.set(sessionId, threadFromRows(response.data).turns)
+            if (settled) this.#settledChildren.add(sessionId)
+            this.#set({ model: { ...this.#snapshot.model, childSessions } })
+          })
+          .finally(() => this.#childReads.delete(sessionId))
+        this.#childReads.set(sessionId, reading)
+        return reading
+      }),
+    )
   }
 
   async refreshPending(): Promise<void> {

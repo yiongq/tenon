@@ -45,7 +45,10 @@ export function holdsTools(mark: Mark): boolean {
 export function markLineKey(
   mark: Mark,
   instance: boolean,
+  hostInLine = true,
 ):
+  | 'model.row.purpose'
+  | 'model.mark.unverifiedNoHost'
   | 'model.row.line'
   | 'model.mark.probed'
   | 'model.mark.localTextOnly'
@@ -53,13 +56,14 @@ export function markLineKey(
   | 'model.mark.unprobed' {
   switch (mark) {
     case 'verified':
-      return 'model.row.line'
+      return hostInLine ? 'model.row.line' : 'model.row.purpose'
     case 'probed':
       return 'model.mark.probed'
     case 'local-text-only':
       return 'model.mark.localTextOnly'
     case 'unverified-text-only':
-      return instance ? 'model.mark.unprobed' : 'model.mark.unverified'
+      if (instance) return 'model.mark.unprobed'
+      return hostInLine ? 'model.mark.unverified' : 'model.mark.unverifiedNoHost'
   }
 }
 

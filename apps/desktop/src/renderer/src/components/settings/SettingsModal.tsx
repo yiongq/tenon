@@ -6,6 +6,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { isSettingsPane, paneOfHash, settingsHash } from '@/lib/settings-sections'
 import type { SettingsPane } from '@/lib/settings-sections'
 import type { ProviderSettingsProps } from './ProviderSettings'
+import { settingsClosed } from '@/runtime/session-store'
 import { SECTIONS } from './sections'
 
 export type { SettingsPane }
@@ -19,6 +20,11 @@ export type { SettingsPane }
  */
 export function SettingsModal(props: ProviderSettingsProps & { pane?: SettingsPane }): JSX.Element {
   const { t } = useTranslation()
+  const wasOpen = useRef(props.open)
+  useEffect(() => {
+    if (wasOpen.current && !props.open) settingsClosed()
+    wasOpen.current = props.open
+  }, [props.open])
   const [busy, setBusy] = useState(false),
     busyRef = useRef(false)
   const reportBusy = useCallback((value: boolean) => {

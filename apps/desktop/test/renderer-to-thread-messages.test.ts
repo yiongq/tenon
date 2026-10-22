@@ -54,7 +54,13 @@ const failed = (
   })
 
 function view(effect: ToolOutcomeViewContract['effect']): ToolOutcomeViewContract {
-  return toolOutcomeViewSchema.parse({ effect, state: 'completed', source: null, output: 'ok' })
+  return toolOutcomeViewSchema.parse({
+    effect,
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    isError: false,
+  })
 }
 
 const PAUSED: RunEndReasonContract = { code: 'paused', waitingFor: 'approval' }
@@ -191,7 +197,7 @@ describe('toThreadMessages: metadata.custom', () => {
   it('carries the end, the summary and the retry answer on the Run’s last turn', () => {
     const messages = toThreadMessages(
       thread(
-        toolCall('r1:1:0', 'Read', {}),
+        toolCall('r1:1:0', 'Read', { file_path: '/w/a' }),
         toolOutcome('r1:1:0', view('read')),
         text('Done.'),
         done(COMPLETED),
@@ -203,7 +209,7 @@ describe('toThreadMessages: metadata.custom', () => {
       turnId: 'a2',
       // The Run dispatched its Read: the kernel names no message to resend.
       end: { runId: 'run-1', endReason: COMPLETED, errorCode: null, retryOf: null },
-      summary: { read: 1, write: 0, external: 0 },
+      summary: { read: 1, write: 0, search: 0, command: 0, online: 0, connector: 0 },
       retryable: false,
     }
     expect(custom(messages[2] as ThreadMessageLike)).toEqual(expected)
@@ -243,9 +249,9 @@ describe('toThreadMessages: metadata.custom', () => {
     const model = fold(
       answering,
       [
-        toolCall('r2:1:0', 'Read', {}),
+        toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
         toolOutcome('r2:1:0', view('read')),
-        toolCall('r2:2:0', 'Read', {}),
+        toolCall('r2:2:0', 'Read', { file_path: '/w/c' }),
         toolOutcome('r2:2:0', view('read')),
         text('All done.'),
         done(COMPLETED, 'end-turn', 'run-2'),
@@ -256,9 +262,16 @@ describe('toThreadMessages: metadata.custom', () => {
     const messages = toThreadMessages(model)
     const summaries = messages.map((message) => custom(message)?.summary)
     expect(summaries.filter((summary) => summary !== undefined)).toEqual([
-      { read: 2, write: 1, external: 0 },
+      { read: 2, write: 1, search: 0, command: 0, online: 0, connector: 0 },
     ])
-    expect(summaries.at(-1)).toEqual({ read: 2, write: 1, external: 0 })
+    expect(summaries.at(-1)).toEqual({
+      read: 2,
+      write: 1,
+      search: 0,
+      command: 0,
+      online: 0,
+      connector: 0,
+    })
     // Each end is its own Run's; neither terminal named a message, so neither is resendable.
     expect(messages.map((message) => custom(message)?.end?.runId)).toEqual([
       undefined,
@@ -288,12 +301,15 @@ describe('toThreadMessages: metadata.custom', () => {
     expect(custom(before.at(-1) as ThreadMessageLike)?.summary).toEqual({
       read: 0,
       write: 1,
-      external: 0,
+      search: 0,
+      command: 0,
+      online: 0,
+      connector: 0,
     })
     const continued = fold(
       limited,
       [
-        toolCall('r2:1:0', 'Read', {}),
+        toolCall('r2:1:0', 'Read', { file_path: '/w/b' }),
         toolOutcome('r2:1:0', view('read')),
         text('Rest.'),
         done(COMPLETED, 'end-turn', 'run-2'),
@@ -303,9 +319,16 @@ describe('toThreadMessages: metadata.custom', () => {
     )
     const summaries = toThreadMessages(continued).map((message) => custom(message)?.summary)
     expect(summaries.filter((summary) => summary !== undefined)).toEqual([
-      { read: 1, write: 1, external: 0 },
+      { read: 1, write: 1, search: 0, command: 0, online: 0, connector: 0 },
     ])
-    expect(summaries.at(-1)).toEqual({ read: 1, write: 1, external: 0 })
+    expect(summaries.at(-1)).toEqual({
+      read: 1,
+      write: 1,
+      search: 0,
+      command: 0,
+      online: 0,
+      connector: 0,
+    })
   })
 
   it('carries each thinking block’s timing in order, and null timings for a replayed one', () => {

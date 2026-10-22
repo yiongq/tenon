@@ -102,7 +102,7 @@ test('a rejected key ends the Run on a failure card that sends the user to setti
     const card = page.getByTestId('failure-card')
     await expect(card).toHaveAttribute('data-code', 'provider-error')
     await expect(card).toHaveAttribute('data-visual', 'danger')
-    await expect(card.getByTestId('failure-what')).toHaveText('模型服务（anthropic）出错。')
+    await expect(card.getByTestId('failure-what')).toHaveText('Anthropic 的 API 密钥无效或没有填。')
     // A failure interrupts: an alert, as phase 1's error was (components.md LiveRegion).
     await expect(card).toHaveAttribute('role', 'alert')
     await expect(card.getByTestId('failure-effects')).toHaveText('没有执行任何操作。')

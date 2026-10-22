@@ -284,7 +284,7 @@ function expectResumedRequest(server: FakeAnthropic, index: number): string {
   return body
 }
 
-test('the auto-restored resumable session does not resume by itself; leaving and coming back resumes it once, on the paused Run’s model (打开时续跑)', async () => {
+test('presentation-r1 验收 5: a restored receipt stays one line; the paused Run resumes once on return (打开时续跑)', async () => {
   const { userData, server } = await resumableTask('resume-latest', {}, [
     textReply('Carried ', 'on.'),
     textReply('New ', 'default.'),
@@ -302,6 +302,10 @@ test('the auto-restored resumable session does not resume by itself; leaving and
     await expect(page.getByTestId('composer-stop')).toBeVisible()
     await expect(page.getByTestId('approval-card')).toHaveCount(0)
     await expect(page.getByTestId('blocked-notice')).toHaveAttribute('data-source', 'protected')
+    await expect(page.getByTestId('blocked-notice')).toHaveText(
+      "This location is protected; Tenon doesn't read it.",
+    )
+    await expect(page.getByTestId('blocked-notice').locator('p')).toHaveCount(1)
     expect((await waitingSessions(page)).map((waiting) => waiting.waitKind)).toEqual(['resume'])
     await page.waitForTimeout(1_000)
     expect(await routeCalls(app, 'approval.resume')).toBe(0)

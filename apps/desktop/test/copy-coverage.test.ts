@@ -24,7 +24,13 @@ import {
   createProviderRegistry,
   registerBuiltinProviders,
 } from '@tenon-app/kernel'
-import type { BlockReason, ClosureSource, ConfirmReason, PendingRoot } from '@tenon-app/kernel'
+import type {
+  BlockReason,
+  ClosureSource,
+  ConfirmReason,
+  PendingRoot,
+  ProviderErrorCode,
+} from '@tenon-app/kernel'
 import {
   mcpErrorCodeSchema,
   mcpWriteErrorCodeSchema,
@@ -39,6 +45,7 @@ import {
   pendingRootSchema,
   probeReasonSchema,
   providerModelSchema,
+  providerErrorCodeSchema,
   providerRefusalSchema,
   providerWriteErrorCodeSchema,
   requiredFactKeys,
@@ -140,13 +147,15 @@ interface Expectation {
   readonly args: readonly string[]
   /** What the entry is for, in a failure message. */
   readonly what: string
+  /** Reasons may use any subset of their required facts (presentation-r1). */
+  readonly subset?: boolean
 }
 
 /** One line per entry that is missing, empty or names other arguments; `[]` when all is well. */
 function problems(expected: readonly Expectation[]): string[] {
   const found: string[] = []
   for (const locale of SUPPORTED_LOCALES) {
-    for (const { key, args, what } of expected) {
+    for (const { key, args, what, subset } of expected) {
       const message = lookup(locale, key)
       if (typeof message !== 'string' || message.trim() === '') {
         found.push(`${locale}: ${key} is missing or empty (${what})`)
@@ -154,7 +163,9 @@ function problems(expected: readonly Expectation[]): string[] {
       }
       const named = argumentsOf(message)
       const wanted = [...new Set(args)].toSorted()
-      if (named.join(',') !== wanted.join(',')) {
+      if (
+        subset ? named.some((name) => !wanted.includes(name)) : named.join(',') !== wanted.join(',')
+      ) {
         found.push(
           `${locale}: ${key} names {${named.join(', ')}}, wants {${wanted.join(', ')}} (${what})`,
         )
@@ -206,10 +217,9 @@ describe('the approval card copy', () => {
     expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
   })
 
-  it('has the 「为什么停」 sentence of every reason under every kind, naming its required facts', () => {
-    // §最小审批卡 ③: `confirm.reason.<reason>`; `irreversible` by kind (it needs `path` under
-    // `file` and `command` under `command`); `flagged` by category, counted once for each — the
-    // category picks the sentence, so the sentence itself names the reason's other keys.
+  it('has the 「为什么停」 sentence of every reason under every kind, naming only a subset of its required facts', () => {
+    // Presentation-r1 keeps every reason in the catalogue, including unrendered ones.
+    // Network splits by target; only its URL sentence needs a slot (facts.host).
     const expected: Expectation[] = []
     for (const kind of KINDS) {
       for (const reason of REASONS) {
@@ -224,26 +234,55 @@ describe('the approval card copy', () => {
               what: `${kind}, category ${category}`,
             })
           }
+        } else if (reason === 'network') {
+          for (const target of ['search', 'url'])
+            expected.push({
+              key: `confirm.reason.network.${target}`,
+              args: required,
+              what: `${kind}, ${target}`,
+            })
         } else {
           expected.push({ key: `confirm.reason.${reason}`, args: required, what: kind })
         }
       }
     }
-    // 4 kinds × (7 plain reasons + irreversible + flagged × 2 categories).
-    expect(expected).toHaveLength(40)
-    expect(problems(expected)).toEqual([])
-  })
-
-  it('counts the extra keys of irreversible under file and command', () => {
-    // Plan step 20 旧 6: the required keys of `irreversible` differ by kind, so the sentence does.
-    expect(requiredFactKeys('irreversible', 'file').toSorted()).toEqual(['path', 'toolName'])
-    expect(requiredFactKeys('irreversible', 'command').toSorted()).toEqual(['command', 'toolName'])
+    // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 2).
+    expect(expected).toHaveLength(44)
+    expect(new Set(expected.map(({ key }) => key)).size).toBe(14)
     expect(
-      problems([{ key: 'confirm.reason.irreversible.file', args: ['path', 'toolName'], what: '' }]),
+      problems(expected.map(({ key, args, what }) => ({ key, args, what, subset: true }))),
     ).toEqual([])
     expect(
       problems([
-        { key: 'confirm.reason.irreversible.command', args: ['command', 'toolName'], what: '' },
+        { key: 'confirm.reason.network.search', args: [], what: 'search' },
+        { key: 'confirm.reason.network.url', args: ['host'], what: 'URL facts.host' },
+      ]),
+    ).toEqual([])
+  })
+
+  it('counts the extra keys of irreversible under file and command', () => {
+    // The required facts still differ by kind; presentation-r1 retains slot-free copy for both.
+    expect(requiredFactKeys('irreversible', 'file').toSorted()).toEqual(['path', 'toolName'])
+    expect(requiredFactKeys('irreversible', 'command').toSorted()).toEqual(['command', 'toolName'])
+    expect(problems([{ key: 'confirm.reason.irreversible.file', args: [], what: '' }])).toEqual([])
+    expect(problems([{ key: 'confirm.reason.irreversible.command', args: [], what: '' }])).toEqual(
+      [],
+    )
+  })
+
+  it('has an undo sentence for every reversibility', () => {
+    const expected = reversibilitySchema.options.map((value) => ({
+      key: value === 'irreversible' ? 'confirm.irreversible' : `confirm.undo.${value}`,
+      args: [],
+      what: value,
+    }))
+    expect(
+      problems([
+        ...expected,
+        { key: 'confirm.undo.unknownFile', args: [], what: 'a file change' },
+        { key: 'confirm.undo.network.search', args: [], what: 'online search' },
+        { key: 'confirm.undo.network.url', args: ['host'], what: 'online URL' },
+        { key: 'confirm.allowScoped', args: ['scope'], what: 'scope inside the allow button' },
       ]),
     ).toEqual([])
   })
@@ -293,6 +332,9 @@ describe('the approval card copy', () => {
       problems([
         { key: 'confirm.answered.allowed', args: ['scope'], what: 'collapsed allow' },
         { key: 'confirm.answered.denied', args: [], what: 'collapsed deny' },
+        { key: 'confirm.answered.roundEnds', args: [], what: 'denied round ends' },
+        { key: 'confirm.answered.searchHost', args: ['host'], what: 'collapsed network host' },
+        { key: 'confirm.answered.realPath', args: ['path'], what: 'collapsed real path' },
       ]),
     ).toEqual([])
   })
@@ -310,56 +352,107 @@ describe('the tool row copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
-  it('has a block notice for each of the four block codes, naming BLOCKED_FACT_KEYS', () => {
-    // §界面范围 `BlockedNotice`: `blocked.<source>`, its slots the outcome's `facts`.
+  it('has a block notice for each of the four block codes, naming a subset of BLOCKED_FACT_KEYS', () => {
     expect(BLOCK_CODES.toSorted()).toEqual(['inspector', 'policy', 'protected', 'user-disabled'])
     for (const code of BLOCK_CODES) expect(CLOSURE_SOURCES).toContain(code)
-    // An inspector's block is said by category, as the card's `flagged` reason is: the category
-    // picks the sentence, so it is no slot of it.
-    const expected: Expectation[] = BLOCK_CODES.flatMap((code) =>
-      code === 'inspector'
-        ? CATEGORIES.map((category) => ({
-            key: `blocked.inspector.${category}`,
-            args: BLOCKED_FACT_KEYS.inspector.filter((key) => key !== 'category'),
-            what: `inspector block (${category})`,
-          }))
-        : [{ key: `blocked.${code}`, args: BLOCKED_FACT_KEYS[code], what: 'block notice' }],
-    )
-    // A chat's Read out of its own files is `protected` with a sentence of its own, same slots
-    // (open question 13), and every notice ends with 「已告诉模型」.
+    const expected: Expectation[] = BLOCK_CODES.flatMap((code) => {
+      const keys =
+        code === 'inspector'
+          ? CATEGORIES.map((category) => `blocked.inspector.${category}`)
+          : code === 'protected'
+            ? ['read', 'write', 'fetch'].map((kind) => `blocked.protected.${kind}`)
+            : [`blocked.${code}`]
+      return keys.map((key) => ({ key, args: BLOCKED_FACT_KEYS[code], subset: true, what: code }))
+    })
     expected.push({
       key: 'blocked.chatReadScope',
       args: BLOCKED_FACT_KEYS.protected,
+      subset: true,
       what: 'chat Read',
     })
-    expected.push({ key: 'blocked.told', args: [], what: 'the model was told' })
+    expect(expected).toHaveLength(8)
     expect(problems(expected)).toEqual([])
+    // Kept for 04, but no longer rendered by the four-code notice.
+    expect(problems([{ key: 'blocked.told', args: [], what: 'retained for 04' }])).toEqual([])
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const { key } of expected)
+        expect(lookup(locale, key)).not.toMatch(
+          /模型|可逆|判决|已告诉|model|reversib|verdict|Read|Write|Edit|Glob|Grep|WebFetch/u,
+        )
+    }
+  })
+
+  it('presentation-r1 验收 6: the did sentences, irreversible marker and connector slots are covered in both locales', () => {
+    const expected = ['write', 'command', 'online', 'connector', 'irreversible'].map((kind) => ({
+      key: `tool.did.${kind}`,
+      args: [],
+      what: kind,
+    }))
+    expect(
+      problems([
+        ...expected,
+        { key: 'tool.generic', args: ['server', 'tool'], what: 'connector sentence' },
+        { key: 'tool.genericMapped', args: ['toolName'], what: 'deleted connector' },
+      ]),
+    ).toEqual([])
+    for (const locale of SUPPORTED_LOCALES) {
+      for (const { key } of expected)
+        expect(lookup(locale, key)).not.toMatch(/模型|可逆|判决|已告诉|model|reversib|verdict/iu)
+    }
   })
 })
 
 describe('the end-of-Run copy', () => {
   it('has a sentence for every end code chat.event can carry, naming only its own fields', () => {
+    const errors = covers<ProviderErrorCode>()(
+      [
+        'auth',
+        'rate-limit',
+        'overloaded',
+        'network',
+        'egress-denied',
+        'invalid-request',
+        'server',
+        'context-overflow',
+        'quota-exhausted',
+        'account-config',
+        'unknown',
+      ],
+      true,
+    )
+    expect([...errors].toSorted()).toEqual([...providerErrorCodeSchema.options].toSorted())
     const members = runEndReasonSchema.options
     expect(members).toHaveLength(18)
     const found: string[] = []
     for (const member of members) {
       const code: RunEndReasonContract['code'] = member.shape.code.value
       const fields = new Set(Object.keys(member.shape).filter((field) => field !== 'code'))
-      const named = new Set<string>()
-      for (const locale of SUPPORTED_LOCALES) {
-        const message = lookup(locale, `runEnd.${code}`)
-        if (typeof message !== 'string' || message.trim() === '') {
-          found.push(`${locale}: runEnd.${code} is missing or empty`)
-          continue
+      if (fields.has('providerId')) fields.add('provider')
+      if (fields.has('modelId')) fields.add('model')
+      const keys =
+        code === 'provider-error'
+          ? errors.map((error) => `runEnd.provider-error.${error}`)
+          : [`runEnd.${code}`]
+      for (const key of keys) {
+        const named = new Set<string>()
+        for (const locale of SUPPORTED_LOCALES) {
+          const message = lookup(locale, key)
+          if (typeof message !== 'string' || message.trim() === '') {
+            found.push(`${locale}: runEnd.${code} is missing or empty`)
+            continue
+          }
+          const args = argumentsOf(message)
+          if (args.includes('providerId') || args.includes('modelId'))
+            found.push(`${locale}: ${key} must use display names`)
+          named.add(args.join(','))
+          for (const arg of args) {
+            if (!fields.has(arg))
+              found.push(`${locale}: runEnd.${code} names {${arg}}, not a field`)
+          }
         }
-        const args = argumentsOf(message)
-        named.add(args.join(','))
-        for (const arg of args) {
-          if (!fields.has(arg)) found.push(`${locale}: runEnd.${code} names {${arg}}, not a field`)
-        }
+        // Both languages fill the same slots: a slot only one names is data the other drops.
+        if (named.size > 1) found.push(`runEnd.${code}: the locales name different arguments`)
       }
-      // Both languages fill the same slots: a slot only one names is data the other drops.
-      if (named.size > 1) found.push(`runEnd.${code}: the locales name different arguments`)
     }
     expect(found).toEqual([])
   })
@@ -370,6 +463,9 @@ describe('the end-of-Run copy', () => {
     // 「复制诊断信息」 (and its copied state).
     expect(
       problems([
+        { key: 'failure.providerFallback', args: [], what: 'provider list unavailable' },
+        { key: 'failure.attempts', args: ['count'], what: 'provider retry count' },
+        { key: 'failure.effects.expandAll', args: ['count'], what: 'folded groups' },
         { key: 'failure.effects.none', args: [], what: 'no calls' },
         { key: 'failure.effects.doneHeading', args: ['count'], what: 'completed calls, listed' },
         { key: 'failure.effects.stopped', args: ['count'], what: 'aborted calls' },
@@ -385,9 +481,21 @@ describe('the end-of-Run copy', () => {
     ).toEqual([])
   })
 
-  it('has the summary line with the three counts TurnSummary carries', () => {
-    const counts = covers<keyof TurnSummary>()(['read', 'write', 'external'], true)
-    expect(problems([{ key: 'summary.line', args: counts, what: 'turn summary' }])).toEqual([])
+  it('has the summary line with the six counts TurnSummary carries', () => {
+    const counts = covers<keyof TurnSummary>()(
+      ['read', 'search', 'write', 'command', 'online', 'connector'],
+      true,
+    )
+    expect(
+      problems([
+        ...counts.map((kind) => ({
+          key: `summary.${kind}`,
+          args: ['count'],
+          what: 'turn summary',
+        })),
+        { key: 'summary.separator', args: [], what: 'summary separator' },
+      ]),
+    ).toEqual([])
   })
 
   it('has a sentence for every error code an error event without an end reason carries', () => {
@@ -412,10 +520,8 @@ describe('the banner and the model menu copy', () => {
   })
 
   it('has the second line of each of the four row marks', () => {
-    // §模型菜单「行标记」: `verified` writes the purpose sentence and the target host;
-    // `local-text-only` 「<主机> · 仅文字对话」; `unverified-text-only` 「未验证 · 仅文字对话 · <主机>」 (each row ends with its host).
-    // M6 02 修补 1: `probed` 「本机探测 · 不保证 · <主机>」, and a custom instance's row without a
-    // passing probe keeps `unverified-text-only` with its own line 「尚未通过探测 · 仅文字对话 · <主机>」.
+    // presentation-r1: official rows omit the host; instances keep it. Local text-only
+    // rows always keep 「本机」 (or the host), and probed rows belong to instances.
     const marks = providerModelSchema.shape.mark.options
     expect(marks).toHaveLength(4)
     const line: Readonly<Record<(typeof marks)[number], Expectation>> = {
@@ -437,7 +543,20 @@ describe('the banner and the model menu copy', () => {
       args: ['host'],
       what: 'unverified-text-only, custom instance',
     }
-    expect(problems([...marks.map((mark) => line[mark]), unprobed])).toEqual([])
+    expect(
+      problems([
+        ...marks.map((mark) => line[mark]),
+        unprobed,
+        { key: 'model.row.purpose', args: ['purpose'], what: 'official verified' },
+        { key: 'model.mark.unverifiedNoHost', args: [], what: 'official unverified' },
+        { key: 'model.row.sendsTo', args: ['host'], what: 'destination description' },
+        { key: 'model.row.staysLocal', args: [], what: 'loopback description' },
+        { key: 'model.notConfigured', args: ['provider'], what: 'missing key header' },
+        { key: 'model.refused', args: ['provider'], what: 'refused address header' },
+        { key: 'model.row.textOnlyInTask', args: [], what: 'disabled task row' },
+        { key: 'customVendor.probe.passed', args: [], what: 'probe passed in settings' },
+      ]),
+    ).toEqual([])
   })
 
   it('has the thinking level’s marks, apart and together (s19-spec-5)', () => {
@@ -656,11 +775,6 @@ it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-lon
         args: [],
         what: code,
       })),
-      ...reversibilitySchema.options.map((code) => ({
-        key: `mcp.reversibility.${code}`,
-        args: [],
-        what: code,
-      })),
       ...covers<McpWarning['kind']>()(
         ['sudo', 'rm-rf', 'home-path', 'ssh-path', 'unpinned-package', 'risky-env'],
         true,
@@ -678,4 +792,123 @@ it('03 验收 46: every MCP enum has zh-CN and en copy, including secret-too-lon
       })),
     ]),
   ).toEqual([])
+})
+
+it('presentation-r1 验收 10: folder toggle, popover and prefill copy exist in both languages with only their own slots', () => {
+  expect(
+    problems([
+      { key: 'folder.toggle', args: [], what: 'folder toggle' },
+      { key: 'folder.label', args: [], what: 'folder popover' },
+      { key: 'folder.dedicated', args: [], what: 'dedicated folder chip' },
+      { key: 'folder.dedicatedNote', args: [], what: 'dedicated folder consequence' },
+      { key: 'folder.cwd', args: [], what: 'command working directory' },
+      { key: 'folder.add', args: [], what: 'system directory dialog' },
+      { key: 'folder.remove', args: ['name'], what: 'remove a picked folder' },
+      { key: 'folder.prefillPending', args: [], what: 'unconfirmed prefilled paths' },
+      { key: 'folder.prefillUse', args: ['count'], what: 'explicit prefill confirmation' },
+    ]),
+  ).toEqual([])
+})
+
+it('presentation-r1 验收 11: send blocks, both text-only hints and actions exist in both locales with only their own slots', () => {
+  expect(
+    problems([
+      ...[
+        'noKey',
+        'addressRefused',
+        'modelRemoved',
+        'textOnlyTask',
+        'textOnlyTaskEstablished',
+        'settings',
+      ].map((name) => ({ key: `composer.${name}`, args: [], what: name })),
+      { key: 'composer.switchModel', args: ['provider', 'model'], what: 'switch model' },
+    ]),
+  ).toEqual([])
+})
+
+it('presentation-r1 验收 14: no mechanism words on the card, its collapsed line, the block notices, the row’s line and the summary', () => {
+  // A reviewed list, not a catalogue walk: removing a key must fail too. The elevated sentence
+  // belongs to 04; blocked.told is retained for compatibility but is never rendered (R6).
+  const keys = [
+    'confirm.title.file.read',
+    'confirm.title.file.write',
+    'confirm.title.command',
+    'confirm.title.network.search',
+    'confirm.title.network.url',
+    'confirm.title.tool',
+    'confirm.reason.default',
+    'confirm.reason.command',
+    'confirm.reason.irreversible.file',
+    'confirm.reason.irreversible.command',
+    'confirm.reason.irreversible.tool',
+    'confirm.reason.irreversible.network',
+    'confirm.reason.outside-workspace',
+    'confirm.reason.network.search',
+    'confirm.reason.network.url',
+    'confirm.reason.policy',
+    'confirm.reason.flagged.exfiltration',
+    'confirm.reason.flagged.inspector-failed',
+    'confirm.reason.interaction-required',
+    'confirm.irreversible',
+    'confirm.undo.read-only',
+    'confirm.undo.revertible',
+    'confirm.undo.snapshotted',
+    'confirm.undo.unknown',
+    'confirm.undo.unknownFile',
+    'confirm.undo.network.search',
+    'confirm.undo.network.url',
+    'confirm.allow',
+    'confirm.allowScoped',
+    'confirm.deny',
+    'confirm.scope.once',
+    'confirm.scope.session',
+    'confirm.scope.sessionDomain',
+    'confirm.scope.subtask',
+    'confirm.scope.subtaskDomain',
+    'confirm.showChange',
+    'confirm.hideChange',
+    'confirm.change.old',
+    'confirm.change.new',
+    'confirm.change.replaceAll',
+    'confirm.arguments',
+    'confirm.cwd',
+    'confirm.answered.allowed',
+    'confirm.answered.denied',
+    'confirm.answered.roundEnds',
+    'confirm.answered.searchHost',
+    'confirm.answered.realPath',
+    'confirm.notRun',
+    'blocked.policy',
+    'blocked.user-disabled',
+    'blocked.protected.read',
+    'blocked.protected.write',
+    'blocked.protected.fetch',
+    'blocked.inspector.exfiltration',
+    'blocked.inspector.inspector-failed',
+    'blocked.chatReadScope',
+    'tool.generic',
+    'tool.genericMapped',
+    'tool.did.write',
+    'tool.did.command',
+    'tool.did.online',
+    'tool.did.connector',
+    'tool.did.irreversible',
+    'summary.read',
+    'summary.search',
+    'summary.write',
+    'summary.command',
+    'summary.online',
+    'summary.connector',
+    'summary.separator',
+  ] as const
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const key of keys) {
+      const message = lookup(locale, key)
+      expect(message, `${locale}: ${key}`).toBeTypeOf('string')
+      expect(String(message).trim(), `${locale}: ${key}`).not.toBe('')
+      expect(message, `${locale}: ${key}`).not.toMatch(
+        /模型|可逆|判决|已告诉|model|reversib|verdict/iu,
+      )
+    }
+  }
 })

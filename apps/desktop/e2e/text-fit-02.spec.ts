@@ -36,7 +36,7 @@ test.afterEach(async () => {
   tree = undefined
 })
 
-/** A model row's two lines: the model's name, then its purpose and host (ModelMenu.tsx `secondLine`). */
+/** A model row's two lines: the name, then its purpose or mark (with a host where required). */
 const ROW_NAME = '[data-testid^="model-row-"] > span:last-child > span:first-child'
 const ROW_LINE = '[data-testid^="model-row-"] > span:last-child > span:last-child'
 
@@ -45,7 +45,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
   // 「Needs 30-day data retention turned on for your organization or workspace · This computer」
   // (claude-fable-5-1) — are the ones that wrapped while the popup kept its trigger's width; it
   // grows to its rows now.
-  test(`every model row’s purpose and host line fits in the model menu in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 9: every model row’s second line and destination tooltip fit in the model menu in ${locale} (旧 223)`, async () => {
     const userData = makeUserDataDir(`fit-02-menu-${locale}`)
     seedConfig(userData, { locale })
     fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
@@ -56,12 +56,32 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(menu).toBeVisible()
       // Anthropic's four main rows and Ollama's one.
       await expectSingleLineUnclipped(menu.locator(ROW_LINE), 5)
+      const rows = menu.locator('[data-testid^="model-row-"]')
+      for (const row of await rows.all()) {
+        // oxlint-disable-next-line no-await-in-loop -- measure each highlighted row's own tooltip
+        await row.hover()
+        const tooltip = page.getByTestId('model-row-host-tooltip').and(page.locator('[data-open]'))
+        // oxlint-disable-next-line no-await-in-loop -- each row names its own destination
+        const rowId = await row.getAttribute('data-testid')
+        // oxlint-disable-next-line no-await-in-loop -- wait for this row's description before measuring
+        await expect(tooltip).toHaveText(
+          rowId?.includes('ollama')
+            ? locale === 'en'
+              ? 'Stays on this computer'
+              : '留在这台电脑上'
+            : locale === 'en'
+              ? 'Sends to api.anthropic.com'
+              : '发往 api.anthropic.com',
+        )
+        // oxlint-disable-next-line no-await-in-loop -- one visible tooltip at a time
+        await expectSingleLineUnclipped(tooltip)
+      }
     } finally {
       await app.close()
     }
   })
 
-  test(`step 20’s components fit at 1280x800 in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 5: step 20’s components and one-line receipts fit at 1280x800 in ${locale} (旧 223)`, async () => {
     const folders = makeFolderTree(`fit-02-${locale}`, {
       'ws/a.txt': 'alpha\n',
       'outside/one.txt': 'one\n',
@@ -112,9 +132,10 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(card).toHaveCount(1)
       const notice = page.getByTestId('blocked-notice')
       await expect(notice).toHaveAttribute('data-source', 'protected')
-      // Its first line names the file (content); the second is interface words only.
-      await expectSingleLineUnclipped(notice.locator('p').last())
-      for (const part of ['approval-title', 'approval-scope', 'approval-deny', 'approval-allow']) {
+      // The single receipt line contains only interface words.
+      await expect(notice.locator('p')).toHaveCount(1)
+      await expectSingleLineUnclipped(notice.locator('p'))
+      for (const part of ['approval-title', 'approval-undo', 'approval-deny', 'approval-allow']) {
         // oxlint-disable-next-line no-await-in-loop -- one element at a time, so a failure names it
         await expectSingleLineUnclipped(card.getByTestId(part))
       }
@@ -146,17 +167,16 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await page.waitForTimeout(300)
       await expect(card).toHaveCount(1)
 
-      // Declined: the collapsed line's result, and the failure card.
+      // Declined: the single collapsed feedback line.
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
       const answered = page.getByTestId('approval-answered')
       await expect(answered).toHaveAttribute('data-outcome', 'denied')
       await expectSingleLineUnclipped(answered.locator('span').first())
-      const failure = page.getByTestId('failure-card')
-      await expect(failure).toHaveAttribute('data-code', 'user-rejected')
-      await expectSingleLineUnclipped(failure.getByTestId('failure-what'))
-      await expectSingleLineUnclipped(failure.getByTestId('failure-effects').locator('p'))
-      await expectSingleLineUnclipped(failure.getByTestId('failure-action'))
+      await expect(answered).toHaveText(
+        locale === 'en' ? 'Denied · this round stops here' : '已拒绝 · 这一轮到此为止',
+      )
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
 
       // A Run in progress: a queued bubble's row of actions, and the leave dialog.
       await send(page, 'long one')
@@ -182,7 +202,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
     }
   })
 
-  test(`step 22’s write and irreversible cards fit at 1280x800 in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 1: step 22’s write and irreversible cards fit at 1280x800 in ${locale} (旧 223)`, async () => {
     const folders = makeFolderTree(`fit-22-${locale}`, { 'ws/a.txt': 'alpha\n' })
     tree = folders
     const ws = join(folders.real, 'ws')
@@ -211,7 +231,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
         'approval-title',
         'approval-change-toggle',
         'approval-change-note',
-        'approval-scope',
+        'approval-undo',
         'approval-deny',
         'approval-allow',
       ]) {
@@ -220,16 +240,16 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       }
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
-      await expect(page.getByTestId('failure-card')).toHaveAttribute('data-code', 'user-rejected')
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
+      await expectSingleLineUnclipped(page.getByTestId('approval-answered').last())
 
-      // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and a bare 「允许」. Denied, nothing runs.
+      // An irreversible card: its own sentence, 「拒绝 ⏎ Esc」 and 「允许（只这一次）」. Denied, nothing runs.
       await send(page, 'delete a')
       await expect(card).toHaveCount(1)
       await expect(card.getByTestId('approval-irreversible')).toHaveCount(1)
       for (const part of [
         'approval-title',
         'approval-irreversible',
-        'approval-scope',
         'approval-deny',
         'approval-allow',
       ]) {
@@ -238,10 +258,8 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       }
       await page.waitForTimeout(PAST_CLICK_GUARD_MS)
       await card.getByTestId('approval-deny').click()
-      await expect(page.getByTestId('failure-card').last()).toHaveAttribute(
-        'data-code',
-        'user-rejected',
-      )
+      await expect(page.getByTestId('failure-card')).toHaveCount(0)
+      await expectSingleLineUnclipped(page.getByTestId('approval-answered').last())
     } finally {
       await app.close()
     }

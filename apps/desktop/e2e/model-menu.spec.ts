@@ -6,6 +6,7 @@ import type { Page } from '@playwright/test'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
+import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
   ANTHROPIC_ORIGIN,
@@ -47,10 +48,11 @@ test.afterEach(async () => {
   zhipu = undefined
 })
 
-test('lists configured providers by host, greys the rest, and names the thinking level (旧 39, 旧 186)', async () => {
+test('presentation-r1 验收 9: no host in an official row; hover and keyboard highlight show 发往 <host>, the row’s description says the same; the confirmation still names the host and nothing is sent before it', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
+  ollama = await startFakeOpenAI({ chunks: ['local answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-menu')
-  seedConfig(userData, { locale: 'en' })
+  seedConfig(userData, { locale: 'en', providerConfig: { ollama: { baseURL: ollama.baseURL } } })
   const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
   try {
     // Nothing chosen: the first row, and its default level.
@@ -58,22 +60,34 @@ test('lists configured providers by host, greys the rest, and names the thinking
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
-    // anthropic's row names its own host (the fake behind it is the seam's business); Ollama's
-    // default is on this computer.
+    // Official rows keep their destination in the tooltip and persistent description.
     const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5')
-    await expect(sonnet).toContainText('api.anthropic.com')
+    await expect(sonnet).not.toContainText('api.anthropic.com')
     await expect(sonnet).not.toContainText('This computer')
-    // A row's first line is the model's name, not its id; its second keeps the purpose and the host.
+    // The second line keeps only the purpose; the first keeps the model's display name.
     const sonnetLines = sonnet.locator(':scope > span:last-child > span')
     await expect(sonnetLines.first()).toHaveText('Sonnet 5')
-    await expect(sonnetLines.last()).toContainText('api.anthropic.com')
+    await expect(sonnetLines.last()).toHaveText('Balanced speed and capability')
+    await expect(sonnet).toHaveAttribute('aria-describedby', /.+/)
+    await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
+    const tooltip = page.getByTestId('model-row-host-tooltip').and(page.locator('[data-open]'))
+    await sonnet.hover()
+    await expect(tooltip).toHaveText('Sends to api.anthropic.com')
+    await page.mouse.move(0, 0)
+    await page.keyboard.press('End')
+    await expect(tooltip).toBeHidden()
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowDown')
+    await expect(sonnet).toHaveAttribute('data-highlighted', '')
+    await expect(tooltip).toHaveText('Sends to api.anthropic.com')
+    await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
     await expect(sonnet).not.toContainText('claude-sonnet-5')
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toContainText(
       'This computer · text conversation only',
     )
     // No key for zhipu: one greyed row that opens the settings card, no zhipu model to pick.
     await expect(page.getByTestId('model-unconfigured-zhipu')).toHaveText(
-      'Zhipu GLM · Add a key in Settings',
+      'Zhipu GLM · Add an API key in Settings',
     )
     await expect(page.locator('[data-testid^="model-row-zhipu-"]')).toHaveCount(0)
     // Opus 5 waits under 更多模型 ›, not in the main list.
@@ -84,6 +98,44 @@ test('lists configured providers by host, greys the rest, and names the thinking
     await page.getByTestId('model-menu-trigger').click()
     await expect(page.getByTestId('model-effort')).toHaveCount(0)
     await page.getByTestId('model-unconfigured-zhipu').click()
+    await expect(page.getByTestId('provider-settings')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('provider-settings')).toBeHidden()
+    // A local history still needs the unchanged confirmation before it goes to the official host.
+    await page.getByTestId('model-menu-trigger').click()
+    await page.getByTestId('model-row-ollama-qwen3:8b').hover()
+    await expect(tooltip).toHaveText('Stays on this computer')
+    await expect(page.getByTestId('model-row-ollama-qwen3:8b')).toHaveAccessibleDescription(
+      'Stays on this computer',
+    )
+    await page.getByTestId('model-row-ollama-qwen3:8b').click()
+    await send(page, 'keep this local')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    await page.getByTestId('model-menu-trigger').click()
+    await sonnet.click()
+    await expect(page.getByTestId('model-confirm')).toContainText(
+      'Earlier messages will be sent to api.anthropic.com',
+    )
+    expect(anthropic.requests).toHaveLength(0)
+    expect(ollama.requests).toHaveLength(1)
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 9: a refused provider’s header says its address can’t be used', async () => {
+  const userData = makeUserDataDir('model-menu-refused')
+  seedConfig(userData, {
+    locale: 'en',
+    providerConfig: { anthropic: { baseURL: 'https://gateway.example' } },
+  })
+  const { app, page } = await launchTenon({ userData, env: { ANTHROPIC_API_KEY: 'e2e-key' } })
+  try {
+    await page.getByTestId('model-menu-trigger').click()
+    const header = page.getByTestId('model-unconfigured-anthropic')
+    await expect(header).toHaveText("Anthropic · Its address can't be used; fix it in Settings")
+    await expect(page.locator('[data-testid^="model-row-anthropic-"]')).toHaveCount(0)
+    await header.click()
     await expect(page.getByTestId('provider-settings')).toBeVisible()
   } finally {
     await app.close()
@@ -194,7 +246,25 @@ test('asks by where the history went, not by the model in effect, and a typed mo
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
-    await page.getByTestId('model-more').click()
+    // Neither hover nor native window focus is dependable under every xvfb/CI setup. Try the
+    // pointer path briefly, then use programmatic focus and the submenu's navigation key.
+    const menu = page.getByTestId('model-menu')
+    await expect(menu).toBeVisible()
+    await expect(menu).toHaveAttribute('data-open', '')
+    const more = page.getByTestId('model-more')
+    await expect(more).toBeVisible()
+    await expect(more).toBeEnabled()
+    await more.hover()
+    const submenu = page.getByTestId('model-more-menu')
+    try {
+      await expect.poll(() => submenu.isVisible(), { timeout: 2000 }).toBe(true)
+    } catch {
+      await more.focus()
+      await more.press('ArrowRight')
+    }
+    await expect.poll(() => submenu.isVisible()).toBe(true)
+    await expect(submenu).toBeVisible()
+    await expect(page.getByTestId('model-type-ollama')).toBeVisible()
     await page.getByTestId('model-type-ollama').click()
     await page.getByTestId('type-model-input').fill('my-local-model')
     await page.getByTestId('type-model-use').click()
@@ -501,7 +571,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     const trigger = page.getByTestId('model-menu-trigger')
     const current = page.getByTestId('model-menu-current')
     const menu = page.getByTestId('model-menu')
-    const reason = 'A task needs a model that can use tools'
+    const reason = 'Working in a folder needs a model that can use tools'
     // A chat lists them as any other row.
     await trigger.click()
     await expect(page.getByTestId('model-row-ollama-qwen3:8b')).not.toHaveAttribute(
@@ -513,8 +583,8 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     // for it to be gone, so the next open is a new menu and no row below is read off the old one.
     await expect(menu).toBeHidden()
 
-    await page.getByTestId('mode-cowork').click()
-    await expect(page.getByTestId('mode-switch')).toHaveAttribute('data-profile', 'cowork')
+    await page.getByTestId('folder-toggle').click()
+    await expect(page.getByTestId('folder-toggle')).toHaveAttribute('aria-checked', 'true')
     await trigger.click()
     await expect(menu).toBeVisible()
     const ollamaRow = page.getByTestId('model-row-ollama-qwen3:8b')
@@ -627,6 +697,15 @@ test('writes the default model only when the card’s model field changed (旧 1
   seedConfig(userData, { locale: 'en', provider: { id: 'anthropic', modelId: 'claude-opus-5-5' } })
   const { app, page } = await launchTenon({ userData })
   try {
+    // presentation-r1 §点名 (b): acceptance 33's premise is that all three defaults exist.
+    expect(
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', {
+          providerId: 'anthropic',
+          modelId: 'claude-opus-5-5',
+        }),
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
     await page.getByTestId('account-row').click()
     await page.getByTestId('account-providers').click()
     await page.getByTestId('provider-select').selectOption('zhipu')
@@ -637,7 +716,10 @@ test('writes the default model only when the card’s model field changed (旧 1
       data: { provider: unknown; defaultModelByProfile: unknown }
     }
     expect(untouched.data.provider).toEqual({ id: 'anthropic', modelId: 'claude-opus-5-5' })
-    expect(untouched.data.defaultModelByProfile).toEqual({})
+    expect(untouched.data.defaultModelByProfile).toEqual({
+      chat: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+      cowork: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+    })
     // Changing the field writes both profiles' defaults and `provider`.
     await page.getByTestId('account-row').click()
     await page.getByTestId('account-providers').click()
@@ -687,6 +769,68 @@ test('keeps a default per profile: a new session in each starts on it (旧 37)',
     })
     expect(choice.task).toMatchObject({ ok: true, data: { modelId: 'claude-haiku-4-5-20251001' } })
     expect(choice.chat).toMatchObject({ ok: true, data: { modelId: 'claude-opus-5-5' } })
+  } finally {
+    await app.close()
+  }
+})
+
+test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history only on this computer, 改用 a public provider opens its confirmation and sends nothing to it before 切换', async () => {
+  ollama = await startFakeOpenAI({ chunks: ['local history'] })
+  zhipu = await startFakeOpenAI({ chunks: ['public reply'] })
+  const userData = makeUserDataDir('blocked-local-to-public')
+  seedConfig(userData, {
+    locale: 'en',
+    provider: { id: 'ollama', modelId: 'qwen3:8b' },
+    providerConfig: { ollama: { baseURL: ollama.baseURL } },
+  })
+  const { app, page } = await launchTenon({
+    userData,
+    env: {
+      ...COUNT_ROUTES,
+      ZHIPU_API_KEY: 'e2e-public-key',
+      ...originMap({ [ZHIPU_ORIGIN]: zhipu.baseURL }),
+    },
+  })
+  try {
+    await send(page, 'stays local')
+    await expect(page.getByTestId('assistant-text')).toHaveText('local history')
+    // A different window/settings card moves the default to a provider without a key.
+    expect(
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', {
+          providerId: 'anthropic',
+          modelId: 'claude-opus-5-5',
+        }),
+      ),
+    ).toEqual({ ok: true, data: { ok: true } })
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByTestId('composer-send-block')).toHaveAttribute(
+      'data-reason',
+      'modelUnusable',
+    )
+    await expect(page.getByTestId('composer-switch-model')).toHaveText(
+      // §输入框: the first listing: 'main' row in catalogue order, not the provider's default.
+      'Switch to Zhipu GLM GLM-5.3',
+    )
+    await page.getByTestId('composer-switch-model').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(0)
+    // The local history already recorded Ollama; the public target must remain unselected.
+    expect(
+      named(tapeFacts(userData), 'session/model_selected').filter(
+        (fact) => fact.payload['providerId'] === 'zhipu',
+      ),
+    ).toHaveLength(0)
+    expect(zhipu.requests).toHaveLength(0)
+    expect(ollama.requests).toHaveLength(1)
+    await page.getByTestId('model-confirm-switch').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('composer-send-block')).toHaveCount(0)
+    expect(await routeCalls(app, 'session.selectModel')).toBe(1)
+    await send(page, 'now public')
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('public reply')
+    expect(zhipu.requests).toHaveLength(1)
   } finally {
     await app.close()
   }

@@ -98,6 +98,7 @@ export const spillMarkSchema = z.enum(['spilled', 'unsaved']) satisfies z.ZodTyp
  * exact, like the kernel type's: absent, never `undefined`.
  */
 export const toolOutcomeViewShape = {
+  isError: z.boolean().exactOptional(),
   reversibility: reversibilitySchema.exactOptional(),
   effect: z.enum(['read', 'write', 'external', 'blocked']),
   state: executionStateSchema,

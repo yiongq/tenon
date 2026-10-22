@@ -14,7 +14,7 @@ import type {
   ToolOutcomePayload,
   ToolResultPayload,
 } from '../tape/entry.js'
-import { handoffView } from './events.js'
+import { handoffView, resultErrorView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
 export interface RowCall {
@@ -102,6 +102,7 @@ function viewOf(
     ...(outcome.reversibility === undefined ? {} : { reversibility: outcome.reversibility }),
     ...(outcome.facts === undefined ? {} : { facts: { ...outcome.facts } }),
     output: textOf(result.content),
+    ...resultErrorView(result.isError),
     ...(decision === undefined ? {} : { permission: decision.summary }),
     ...(resolution === undefined || target === undefined
       ? {}

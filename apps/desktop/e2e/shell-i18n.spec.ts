@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
+import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import {
   applicationMenuLabels,
   configPathIn,
@@ -9,6 +11,7 @@ import {
 import type { Locale } from './helpers/launch.js'
 import { expect, test } from './helpers/test.js'
 import { expectSingleLineUnclipped } from './helpers/text-fit.js'
+import { providerEnv } from './helpers/tools.js'
 
 /**
  * Acceptance 12 - the bilingual shell regression. A 1280x800 screenshot per language is the
@@ -22,12 +25,20 @@ const NAV_ITEM_COUNT = 1
 /** The renderer writes the full tag to `lang` and only the primary subtag to `data-lang`. */
 const PRIMARY_SUBTAG: Record<Locale, string> = { 'zh-CN': 'zh', en: 'en' }
 
+let fake: FakeAnthropic | undefined
+test.afterEach(async () => {
+  await fake?.close()
+  fake = undefined
+})
+
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
   test(`shell fits at 1280x800 in ${locale}`, async () => {
+    fake = await startFakeAnthropic({ chunks: ['ok'] })
     const testInfo = test.info()
     const userData = makeUserDataDir(`fit-${locale}`)
     seedConfig(userData, { locale })
-    const { app, page } = await launchTenon({ userData })
+    // Measure the normal shell: acceptance 11 now replaces the disclaimer when no key is usable.
+    const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
 
     try {
       await expect(page.locator('html')).toHaveAttribute('lang', locale)
@@ -42,6 +53,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       await expect(page.getByTestId('composer-send')).toHaveAccessibleName(
         locale === 'zh-CN' ? '发送' : 'Send',
       )
+      await expect(page.getByTestId('composer-disclaimer')).toBeVisible()
       await expectSingleLineUnclipped(page.getByTestId('composer-disclaimer'))
       await expectSingleLineUnclipped(page.getByTestId('account-row'))
 
@@ -102,13 +114,15 @@ test('acceptance 9: the account menu switches language and it survives a relaunc
 })
 
 test('acceptance 11: Enter during IME composition does not send; after the commit it does', async () => {
+  fake = await startFakeAnthropic({ chunks: ['ok'] })
   const userData = makeUserDataDir('ime')
   seedConfig(userData, { locale: 'zh-CN' })
-  const { app, page } = await launchTenon({ userData })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
 
   try {
     const composer = page.getByTestId('composer-input')
     const messages = page.getByTestId('user-message')
+    await expect(page.getByTestId('composer-disclaimer')).toBeVisible()
     await composer.click()
 
     // Drive Chromium's real input-method controller. keyboard.press cannot set isComposing;
@@ -134,6 +148,8 @@ test('acceptance 11: Enter during IME composition does not send; after the commi
     await page.keyboard.press('Enter')
     await expect(messages).toHaveCount(1)
     await expect(messages.first().getByTestId('user-text')).toHaveText('你好')
+    await expect(page.getByTestId('assistant-text')).toHaveText('ok')
+    expect(fake.requests).toHaveLength(1)
   } finally {
     await app.close()
   }

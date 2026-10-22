@@ -42,6 +42,7 @@ import type { FakeInspector, ScriptedProvider, TestLoopPorts } from '../../src/t
 import { MODEL_NOTES } from '../../src/prompts/index.js'
 import { EDIT_SAME_STRINGS } from '../../src/tools/builtin/edit.js'
 import { LOOK, lookSource, pendingCard } from './support.js'
+import { notRunView } from '../../src/loop/run.js'
 
 const IDENTITY = { userId: 'calls-user', tenantId: 'calls-tenant', profileDir: '/tenon/calls' }
 const SESSION = '5b2e9a2e-6b3d-4a71-9f52-0c8de7a11c01'
@@ -74,6 +75,7 @@ const ASK = { kind: 'ask', category: 'exfiltration', findings: [{ code: 'test' }
 
 /** The members `ToolOutcomeView` declares; a view carrying anything else leaks a Tape field. */
 const VIEW_KEYS = new Set([
+  'isError',
   'effect',
   'reversibility',
   'state',
@@ -224,6 +226,9 @@ function outcomeOf(calls: readonly RowCall[], i: number): ToolOutcomeView {
   return outcome
 }
 
+const resultFlags = (views: readonly (ToolOutcomeView | undefined | null)[]) =>
+  views.map((view) => ({ state: view?.state, source: view?.source, isError: view?.isError }))
+
 /**
  * A view without its `approval`, for the one closure whose live event does not carry it: an allowed
  * call runs in the answer's Run, whose `tool-outcome` is the execution's, not the answer's — live, the
@@ -241,6 +246,43 @@ function runStarted(recorded: readonly SessionEvent[]): string[] {
 }
 
 describe('calls on a redrawn row (01 修补 6)', () => {
+  it('presentation-r1 验收 7 (kernel): the outcome view carries the result’s isError live and on redraw', async () => {
+    const connection = {
+      listTools: async () => [
+        { name: 'ok', inputSchema: { type: 'object' } },
+        { name: 'fail', inputSchema: { type: 'object' } },
+      ],
+      callTool: async (name: string) => ({
+        content: [{ type: 'text', text: 'result' }],
+        isError: name === 'fail',
+      }),
+    } as unknown as McpConnection
+    const h = harness({ sources: [{ serverId: 'results', connection }] })
+    h.provider.script(
+      reply(
+        { name: 'results__ok', input: {} },
+        { name: 'results__fail', input: {} },
+        { name: 'Read', input: { file_path: 'relative.txt' } },
+      ),
+    )
+    h.provider.script(done())
+    expect((await send(h, 'check results')).code).toBe('completed')
+    const calls = await onlyCalls(h.service)
+    const streamed = live(h)
+    // The undispatched invalid call still has a kernel-authored error result after closure.
+    expect(resultFlags(calls.map((call) => streamed.get(call.callKey)))).toEqual([
+      { state: 'completed', source: null, isError: false },
+      { state: 'completed', source: null, isError: true },
+      { state: 'not-run', source: 'invalid-input', isError: true },
+    ])
+    expect(resultFlags(calls.map((call) => call.outcome))).toEqual([
+      { state: 'completed', source: null, isError: false },
+      { state: 'completed', source: null, isError: true },
+      { state: 'not-run', source: 'invalid-input', isError: true },
+    ])
+    expect(notRunView('stopped', [])).not.toHaveProperty('isError')
+  })
+
   it('gives each tool-request block its key and its outcome, and null until it has one', async () => {
     const h = harness()
     // look runs; the chat profile's Read of a file that is not its own spill is protected; WebFetch
@@ -394,6 +436,7 @@ describe('calls on a redrawn row (01 修补 6)', () => {
     expect(denied).toEqual(live(h).get(pending.callKey))
     // Never judged, never shown: no decision to summarise, no card to redraw.
     expect(outcomeOf(calls, 1)).toEqual({
+      isError: true,
       effect: 'blocked',
       state: 'not-run',
       source: 'user-rejected',

@@ -14,6 +14,9 @@ type Card = Pick<ConfirmRequestInput, 'reason' | 'kind' | 'facts' | 'target'>
 
 const CATEGORIES: readonly string[] = flaggedCategorySchema.options
 
+/** The allow button embeds the unchanged scope words (presentation-r1 ⑥). */
+export const allowLabelKey = 'confirm.allowScoped' as const
+
 /**
  * A flagged category as a catalogue key segment: one of the known ones, never a fact's text as such
  * (a key is not built from what a fact happens to hold).
