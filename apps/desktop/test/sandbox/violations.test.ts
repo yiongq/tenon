@@ -7,7 +7,7 @@
  */
 import { readFileSync } from 'node:fs'
 import type { SandboxViolation } from '@tenon-app/kernel'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   classify,
   type PathKind,
@@ -271,6 +271,34 @@ const P4_FILES = new Set(['/fx/p4/home/.bashrc', '/fx/p4/mnt/code/proj/f'])
 /** The workspace's real path, and the home, as allowWrite holds them. */
 const P4_WS = '/fx/p4/mnt/code/proj'
 const P4_HOME = '/fx/p4/home'
+
+it('04 验收 16: resolving a workspace alias into /proc or /dev never lstats the host path below that boundary', () => {
+  const context = linkedWrap(P4_WS)
+  const stat = vi.fn<typeof context.lstat>(context.lstat)
+  const wrap = {
+    ...context,
+    lstat: stat,
+    readlink: (path: string) =>
+      path === '/fx/p4/mnt/code/proj/dev-dir' ? '/dev/fd' : context.readlink(path),
+  }
+  stat.mockImplementation((path) =>
+    path === '/fx/p4/mnt/code/proj/dev-dir' ? is('link') : context.lstat(path),
+  )
+  expect(classify('deny openat /fx/p4/mnt/code/proj/fd-dir/3/child', wrap)).toEqual({
+    kind: 'fs',
+    line: 'deny openat /fx/p4/mnt/code/proj/fd-dir/3/child',
+    target: '/proc/self/fd/3/child',
+    observed: true,
+  })
+  expect(classify('deny openat /fx/p4/mnt/code/proj/dev-dir/1/child', wrap)).toEqual({
+    kind: 'fs',
+    line: 'deny openat /fx/p4/mnt/code/proj/dev-dir/1/child',
+    target: '/dev/fd/1/child',
+    observed: true,
+  })
+  expect(stat).not.toHaveBeenCalledWith('/proc/self/fd/3')
+  expect(stat).not.toHaveBeenCalledWith('/dev/fd/1')
+})
 
 /** A Linux workspace-write wrap on the /fx/p4 disk, `writable` its one allowWrite entry. */
 function linkedWrap(writable: string): ViolationContext {

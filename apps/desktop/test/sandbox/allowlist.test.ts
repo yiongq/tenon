@@ -14,6 +14,8 @@ import {
 import type { SandboxPostureOutcome } from '../../src/main/host/sandbox-posture.js'
 import { wiringFixture } from './wiring-support.js'
 import { snapshotEnv } from '../../src/main/host/shell-env.js'
+import * as sandboxPorts from '../../src/main/host/sandbox.js'
+import * as posturePorts from '../../src/main/host/sandbox-posture.js'
 
 const SESSION = '6f1c2a4e-3b5d-4c7e-9f80-1a2b3c4d5e6f'
 const CHILD = '11111111-1111-4111-8111-111111111111'
@@ -21,6 +23,154 @@ const CHILD = '11111111-1111-4111-8111-111111111111'
 afterEach(() => vi.useRealTimers())
 
 describe('04 desktop sandbox wiring', () => {
+  it('04 不变量 19: the installed host never adds provider, gateway, MCP or telemetry endpoints', async () => {
+    const h = wiringFixture()
+    const host = createMemoryHost()
+    await host.fs.mkdirp(absolutePath(host.identity.profileDir))
+    await writeConfig(host.fs, host.identity, {
+      provider: { id: 'anthropic', modelId: 'test-model' },
+      providerConfig: {
+        anthropic: { baseURL: 'https://api.anthropic.com' },
+        openai: { baseURL: 'https://gateway.example.net/v1' },
+      },
+      customVendors: [
+        {
+          id: 'custom-11111111-1111-4111-8111-111111111111',
+          displayName: 'Test vendor',
+          wire: 'openai-chat',
+          baseURL: 'https://vendor.example.net/v1',
+          models: [],
+        },
+      ],
+      mcpServers: [
+        {
+          id: 'test-mcp',
+          displayName: 'Test MCP',
+          source: 'manual',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://mcp.example.net/mcp',
+            header_keys: [],
+            protocol: 'auto',
+            oauth: { ownClient: null, issuers: [] },
+          },
+          handshakeTimeoutSec: null,
+          callTimeoutSec: null,
+          instructions: { enabled: true, pinHash: null },
+          consent: null,
+          toolsPinned: false,
+          tools: {},
+        },
+      ],
+      sandbox: {
+        profile: 'workspace-write',
+        allowedDomains: ['user.example.org'],
+        packageManagers: true,
+      },
+    })
+    const fs = {
+      ...h.fs,
+      lstat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+      stat: () => ({
+        isDirectory: () => true,
+        isSymbolicLink: () => false,
+        uid: process.getuid?.() ?? 0,
+        mode: 0o700,
+      }),
+    }
+    const startupSrt = {
+      initialize: vi.fn<posturePorts.SrtStartup['initialize']>(async () => {}),
+      checkDependenciesAsync: async () => ({ errors: [], warnings: [] }),
+      wrapWithSandboxArgv: async () => ({ argv: ['/bin/sh', '-c', 'true'], env: {} }),
+      cleanupAfterCommand: () => {},
+      getWslVersion: () => undefined,
+    }
+    const mocks = [
+      vi.spyOn(sandboxPorts, 'desktopSandboxFs').mockReturnValue(fs),
+      vi.spyOn(sandboxPorts, 'desktopProcessTable').mockReturnValue(h.options.processes),
+      vi.spyOn(posturePorts, 'desktopSrtSandbox').mockReturnValue(h.srt),
+      vi.spyOn(posturePorts, 'desktopSrtStartup').mockReturnValue(startupSrt),
+      vi.spyOn(posturePorts, 'desktopPostureFs').mockReturnValue({
+        ...fs,
+        lstat: (path) =>
+          path.includes('tenon-sandbox-self-test-')
+            ? undefined
+            : {
+                ...fs.lstat(),
+                isFile: () => false,
+                size: 0,
+                nlink: 1,
+              },
+        stat: (path) => ({
+          ...fs.stat(),
+          isDirectory: () => !path.endsWith('.jar') && !path.endsWith('/apply-seccomp'),
+        }),
+        readdir: () => [],
+        isExecutable: () => true,
+        removeEmptyDir: () => {},
+        removeFile: () => {},
+        removeTree: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureProcesses').mockReturnValue({
+        list: async () => [],
+        kill: () => {},
+      }),
+      vi.spyOn(posturePorts, 'desktopPostureRunner').mockReturnValue(async () => ({
+        code: 0,
+        signal: null,
+        stderr: '',
+        timedOut: false,
+      })),
+      vi.spyOn(process, 'chdir').mockImplementation(() => {}),
+    ]
+    try {
+      const runtime = await createDesktopSandboxRuntime({
+        host,
+        userDataDir: absolutePath('/data'),
+        isPackaged: false,
+        startupEnv: snapshotEnv({}),
+        log: () => {},
+      })
+      runtime.bindSessionFolders(async () => [absolutePath('/work/project')])
+      expect((await runtime.start().outcome).state).toBe('active')
+      runtime.beforeWrap({
+        commandId: 'installed',
+        sessionId: SESSION,
+        hosts: ['grant.example.org'],
+      })
+      await runtime.wrap(h.request('installed'))
+      expect(h.srt.wrapWithSandboxArgv).toHaveBeenCalledTimes(1)
+      const domains = vi.mocked(h.srt.updateConfig).mock.calls.at(-1)?.[0].network.allowedDomains
+      expect(domains).toEqual([
+        'user.example.org',
+        'registry.npmjs.org',
+        'pypi.org',
+        'files.pythonhosted.org',
+        'index.crates.io',
+        'static.crates.io',
+        'grant.example.org',
+      ])
+      for (const endpoint of [
+        'api.anthropic.com',
+        'api.openai.com',
+        'gateway.example.net',
+        'vendor.example.net',
+        'mcp.example.net',
+        'telemetry.example.net',
+      ])
+        expect(domains).not.toContain(endpoint)
+      await runtime.afterExit('installed')
+    } finally {
+      mocks.forEach((mock) => mock.mockRestore())
+    }
+  })
+
   it('04 验收 29: an edit or the preset takes effect on the next command through updateConfig, never reset', async () => {
     const h = wiringFixture()
     h.runtime.start()

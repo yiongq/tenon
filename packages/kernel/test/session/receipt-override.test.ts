@@ -517,17 +517,100 @@ describe('04 验收 21: domain receipt releases', () => {
   it('04 验收 21: a release during the session command immediately calls grantsChanged', async () => {
     const h = await harness()
     await receipt(h)
-    h.during(async () => {
-      expect(await release(h.service, 'allow-domain', 'registry.example.com')).toEqual({
-        status: 'released',
-      })
+    const exited = Promise.withResolvers<{ code: number; signal: null }>()
+    const running = Promise.withResolvers<void>()
+    const order: string[] = []
+    let released: unknown
+    h.grantsChanged.mockImplementation(() => {
+      order.push('grantsChanged')
+    })
+    h.host.process.spawn = async () => {
+      order.push('spawn')
+      released = await release(h.service, 'allow-domain', 'registry.example.com')
+      order.push('released')
+      running.resolve()
+      return {
+        pid: 42,
+        stdin: new WritableStream<Uint8Array>(),
+        stdout: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        stderr: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        exited: exited.promise,
+        kill: async () => {},
+      }
+    }
+    await command(h)
+    const completion = answer(h)
+    try {
+      await running.promise
+      expect(released).toEqual({ status: 'released' })
       expect(h.grantsChanged).toHaveBeenCalledExactlyOnceWith({
         sessionId: SESSION,
         hosts: ['registry.example.com'],
       })
+      expect(order).toEqual(['spawn', 'grantsChanged', 'released'])
+      expect(
+        (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/result'),
+      ).toEqual([])
+    } finally {
+      exited.resolve({ code: 0, signal: null })
+      await completion
+    }
+    const result = (await readSessionEntries(h.tape, SESSION)).findLast(
+      (e) => e.name === 'tool/result',
+    )
+    expect(result?.payload['isError']).toBe(false)
+    expect(result?.payload['content']).toEqual([{ type: 'text', text: '(no output)' }])
+  })
+
+  it('04 不变量 18: an unavailable-card session grant cannot bypass a bound rerun', async () => {
+    const h = await harness()
+    Object.assign(h.host.sandbox, {
+      posture: () => ({ state: 'unavailable', profile: 'workspace-write' }),
     })
-    await command(h)
+    expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const before = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+    expect(before.card.reason).toBe('command')
+    expect(before.card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/project',
+      sandbox: 'unavailable',
+    })
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/permission_decided',
+      )?.payload['sandbox'],
+    ).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      unavailable: true,
+    })
     await answer(h)
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/approval_resolved',
+      )?.payload['grant'],
+    ).toEqual({
+      scope: 'session',
+      key: '["builtin","Bash","command","echo hello","/work/project"]',
+    })
+    await receipt(h)
+    expect(await release(h.service, 'rerun-unsandboxed', null)).toEqual({ status: 'released' })
+    // If the card is bypassed, let the Run complete so the pause assertion catches the bypass.
+    expect((await command(h, true)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    const current = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+    expect(current.card.reason).toBe('elevated')
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).findLast(
+        (e) => e.name === 'tool/permission_decided',
+      )?.payload['sandbox'],
+    ).toEqual({
+      profile: 'full-access',
+      chosen: 'workspace-write',
+      override: {
+        key: 'tool:v1:override:b6e30bed-0e02-4f29-8e20-0010e83e2193:0:0:rerun-unsandboxed:0',
+        action: 'rerun-unsandboxed',
+      },
+    })
   })
   it('never treats a WebFetch approval as a command domain release', async () => {
     const h = await harness()
