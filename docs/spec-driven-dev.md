@@ -2,7 +2,7 @@
 
 规格是主产物，代码服务于规格。对实质性的工作，先写一份 RFC 式的 `spec.md` 说清问题、行为、设计决定、不变量和验收标准，再动手。小改动不走这套。
 
-这套做法参考了 DeepChat 的 `docs/spec-driven-dev.md`（Apache-2.0）并按 Tenon 的分工简化：**架构由 owner 拍板、写成 spec，在哪个会话里讨论都行；实现在 Claude Code / Codex 里做**，`spec.md` 就是两边的交接物。
+这套做法参考了 DeepChat 的 `docs/spec-driven-dev.md`（Apache-2.0）并按 Tenon 的分工简化：**架构由 owner 拍板、写成 spec，在哪个会话里讨论都行；实现以 Claude Code 为主，Codex 可选**，`spec.md` 就是各方的交接物。
 
 ## 什么时候走 SDD
 
@@ -63,8 +63,16 @@
 - agent 读 `AGENTS.md`（硬规则）→ 读 spec → 维护 plan → 跑门禁 → 标 status。
 - spec 不够用时 agent 应停下来说缺什么，而不是自己补架构。缺的部分由 owner 拍板后补进 spec。
 - 门禁（format / lint / typecheck / test）由 git hooks（lefthook）和 CI 强制，对 Claude Code、Codex 和人一视同仁，不依赖 agent 自觉。
-- **Claude Code 与 Codex 交叉开发**：两边互不记得对方的会话，`plan.md` 是唯一的交接面。每次停下之前必须把"做完的 / 做到一半的（代码停在什么状态）/ 下一步"写进 `plan.md`；同一个 worktree 同一时间只让一个 agent 干活，并行用 `git worktree`。
+- **以 Claude Code 为主，Codex 可选**：用到 Codex 时由 Claude Code 派给它边界清楚的任务。各 agent 互不记得对方的会话，`plan.md` 是唯一的交接面。每次停下之前必须把"做完的 / 做到一半的（代码停在什么状态）/ 下一步"写进 `plan.md`；同一个 worktree 同一时间只让一个 agent 干活，并行用 `git worktree`。
 
 ## 主参考与 spec 的关系
 
 `docs/architecture/master-reference.md` 是"从哪来"：所有决策、参考项目、取舍都在那里。各阶段的 `spec.md` 是"做什么"：从主参考里裁出当前阶段需要的部分，补上接口和验收标准。主参考不直接指导编码；spec 才是。主参考的 §13 是各阶段 spec 的目录。
+
+## 批准与修订（2026-10-22 起）
+
+- spec 改成 `ready`、改成 `implemented`，只由 owner 定。请 owner 回一句点名这份 spec 的话，比如「05 改 ready」，在 spec 页头记一行 `Approved: ready · <日期> · 「<owner 原话>」· <出处：对话，或 PR #n>`。
+- 不算批准：去掉标点和空白后只是「继续」「开工」「好」「好的」「可以」「行」「ok」「都按推荐」「按推荐」「全部按推荐」；或者没点名这份 spec（两位编号、目录名或标题）。「继续」「开工」照旧用来开工（见「和代码 agent 的交接」），但从不改状态。整批采纳推荐项要写明范围，比如「05 D1–D12 按推荐」；选错难退的卡，每张另写一行，比如「D7=A」。
+- `implemented` 之后不往回退。`ready` 退回 `draft`，只在 owner 说的时候，并记一行修订。
+- 从 `ready` 起，spec 的每次改动在修订记录里记一行：日期 · 哪一节 · 为什么 · 相关的提交号或 `PR #n`。实现中只收紧或澄清的，可以直接改，和代码放在同一个 PR 里；放宽要求，或改已合入的接口，先要 owner 点名批准。
+- 从 05 起按这些规矩；00–04 保留现有的记录。04 的 `implemented` 由 owner 在加这一节的 PR 里确认。
