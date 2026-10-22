@@ -6,6 +6,8 @@ import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import type { ReleaseQuery, ReleaseResult } from '../session/service.js'
 import type {
   ReceiptOverridePayload,
+  RunStartedPayload,
+  RunTerminalPayload,
   SandboxOutcome,
   SandboxPlan,
   TapeEntry,
@@ -34,7 +36,7 @@ export async function sandboxDomainHosts(
   ]
 }
 
-/** Session domains persist; one-off releases expire on binding or the next started Run's end. */
+/** Session domains persist; one-off releases expire on binding or when the next reply ends. */
 export function validSandboxReleases(entries: readonly TapeEntry[]): TapeEntry[] {
   const used = new Set(
     entries
@@ -45,11 +47,27 @@ export function validSandboxReleases(entries: readonly TapeEntry[]): TapeEntry[]
     if (!isSandboxRelease(entry) || used.has(entry.provenanceKey ?? '')) return false
     const release = entry.payload as ReceiptOverridePayload
     if (release.action === 'allow-domain') return true
-    // The current Run may bind it too. The expiry boundary is the terminal of the first
-    // Run STARTED after the click, not the terminal of a Run that was already in progress.
+    // The current reply may bind it too. It expires when the next reply started after the click
+    // ends: a card's pause ends a Run but not the reply, whose answer resumes it in a new Run
+    // (owner 2026-10-22: the receipt says 「到下一轮回复结束」).
     const after = entries.slice(at + 1)
-    const next = after.find((e) => e.name === 'execution/run_started')
-    return !after.some((e) => e.name === 'execution/run_terminal' && e.sourceId === next?.sourceId)
+    const reply = new Set<string>()
+    for (const e of after) {
+      if (e.name !== 'execution/run_started' || e.sourceId === null) continue
+      const cause = (e.payload as RunStartedPayload).cause
+      if (
+        reply.size === 0
+          ? cause.kind !== 'resume'
+          : cause.kind === 'resume' && reply.has(cause.pausedRunId)
+      )
+        reply.add(e.sourceId)
+    }
+    return !after.some(
+      (e) =>
+        e.name === 'execution/run_terminal' &&
+        reply.has(e.sourceId ?? '') &&
+        (e.payload as RunTerminalPayload).reason.code !== 'paused',
+    )
   })
 }
 

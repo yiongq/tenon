@@ -30,7 +30,7 @@ describe('settings sections', () => {
   it('lists each pane once, in the order the rail shows them', () => {
     expect(SETTINGS_SECTIONS.map((section) => section.id)).toEqual([...SETTINGS_PANES])
     expect(new Set(SETTINGS_PANES).size).toBe(SETTINGS_PANES.length)
-    expect(SETTINGS_PANES).toEqual(['providers', 'connectors'])
+    expect(SETTINGS_PANES).toEqual(['providers', 'connectors', 'permissions'])
   })
 
   it('names every section in both catalogues, for the rail and for the account menu', () => {

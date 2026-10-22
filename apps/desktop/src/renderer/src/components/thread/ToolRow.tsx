@@ -1,12 +1,13 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
-import { invokeRoute, mcpLogin } from '@tenon-app/contracts'
+import { invokeRoute, mcpLogin, sandboxRelease } from '@tenon-app/contracts'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
 import { PathText } from '@/components/ui/path-text'
 import { mcpAction, useMcp } from '@/runtime/mcp-store'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { needsProxyWarning } from '@/lib/sandbox-settings'
 import { toolRowEffect } from '@/lib/tool-row-effect'
 import { useState } from 'react'
 import type { JSX } from 'react'
@@ -74,7 +75,9 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
     props.toolName === 'AskUserQuestion'
       ? summaryOf(questionsOf(input), outcome, snapshot.asked.get(callKey) ?? null)
       : null
-  const blocked = outcome !== null && outcome.source !== null && BLOCK_CODES.has(outcome.source)
+  const blocked =
+    outcome !== null &&
+    (outcome.sandbox !== undefined || (outcome.source !== null && BLOCK_CODES.has(outcome.source)))
   // A later call of the batch while a card waits: it is the queued row under that card, not a row
   // of its own saying it runs (§最小审批卡「排队行」).
   if (outcome === null && queuedBehindCard(snapshot, callKey)) return null
@@ -146,7 +149,14 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
           {loginError ? <p role="alert">{t(`mcp.error.${loginError}` as never)}</p> : null}
         </div>
       ) : null}
-      {blocked && outcome !== null ? (
+      {outcome?.sandbox !== undefined ? (
+        <SandboxNotice
+          key={callKey}
+          callKey={callKey}
+          outcome={outcome}
+          sandbox={outcome.sandbox}
+        />
+      ) : blocked && outcome !== null ? (
         <BlockedNotice
           outcome={outcome}
           toolName={props.toolName}
@@ -263,6 +273,152 @@ function queuedBehindCard(snapshot: SessionSnapshot, callKey: string): boolean {
     pending.waitKind === 'approval' ? pending.anchorCallKey : pending.callKey,
   )
   return anchor >= 0 && keys.indexOf(callKey) > anchor
+}
+
+type SandboxOutcome = NonNullable<ToolOutcomeViewContract['sandbox']>
+type Violation = SandboxOutcome['violations'][number]
+type ReleaseAction = 'allow-domain' | 'allow-path' | 'rerun-unsandboxed'
+type ReleaseState = 'busy' | 'released' | 'stale' | 'not-found' | 'refused' | 'failed'
+
+/** Only recorded classifications decide the copy; a path never implies read, write or credentials. */
+function violationWhy(violation: Violation): string {
+  if (violation.kind === 'fs') {
+    if (violation.release === 'path') return 'receipt.why.path'
+    return violation.protected ? 'receipt.why.protected' : 'receipt.why.file'
+  }
+  if (violation.release === 'domain') return 'receipt.why.domain'
+  const target = violation.target!
+  try {
+    const host = new URL(`http://${target.includes(':') ? `[${target}]` : target}`).hostname
+    if (needsProxyWarning(`${host}:1`)) return 'receipt.why.local'
+    if (host.startsWith('[') || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return 'receipt.why.ip'
+  } catch {
+    // A name that cannot be recognized belongs to the same non-releasable name class.
+  }
+  return 'receipt.why.host'
+}
+
+/** The three-part receipt also appears on successful calls carrying diagnostics only. */
+export function SandboxNotice(props: {
+  readonly callKey: string
+  readonly outcome: ToolOutcomeViewContract
+  readonly sandbox: SandboxOutcome
+}): JSX.Element {
+  const { t } = useTranslation()
+  const store = useSessionStore()
+  const [states, setStates] = useState(new Map<string, ReleaseState>())
+  const { violations, more, anyProtected } = props.sandbox
+  const objects = violations.filter((violation) => violation.target !== null)
+  const unknown = violations.length - objects.length
+  const why = [...new Set(objects.map(violationWhy))]
+  const domains = [
+    ...new Set(violations.filter((v) => v.release === 'domain').map((v) => v.target!)),
+  ].slice(0, 3)
+  const paths = [
+    ...new Set(violations.filter((v) => v.release === 'path' && !v.observed).map((v) => v.target!)),
+  ].slice(0, 3)
+  // Bash prefixes non-zero exits and signals on the first line; stop/timeout remain explicit sources.
+  const exitedZero =
+    props.outcome.state === 'completed' &&
+    props.outcome.source !== 'stopped' &&
+    props.outcome.source !== 'timed-out' &&
+    !/^(?:Exit code: [^0]|Killed by signal:)/.test(props.outcome.output.split('\n', 1)[0] ?? '')
+  const hintOnly = violations.every((v) => v.observed) && exitedZero
+
+  async function release(action: ReleaseAction, target: string | null, key: string) {
+    setStates((was) => new Map(was).set(key, 'busy'))
+    let state: ReleaseState
+    try {
+      const result = await invokeRoute(window.tenon, sandboxRelease, {
+        sessionId: store.sessionId,
+        callKey: props.callKey,
+        action,
+        target,
+      })
+      state = !result.ok
+        ? 'failed'
+        : result.data.status === 'already-released'
+          ? 'released'
+          : result.data.status
+    } catch {
+      state = 'failed'
+    }
+    setStates((was) => new Map(was).set(key, state))
+  }
+
+  function actionButton(action: ReleaseAction, target: string | null): JSX.Element {
+    const key = JSON.stringify([action, target])
+    const state = states.get(key)
+    return (
+      <div
+        key={key}
+        className="flex min-w-0 flex-col items-start gap-1"
+        data-testid="receipt-action"
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid={`receipt-${action}`}
+          disabled={state === 'busy' || state === 'released'}
+          className="max-w-full h-auto min-h-(--t-h-control-compact) whitespace-normal text-left"
+          onClick={() => release(action, target, key)}
+        >
+          <PathText
+            text={
+              state === 'released'
+                ? t('receipt.released')
+                : tx(t, `receipt.action.${action}`, { target: visible(target ?? '') })
+            }
+          />
+        </Button>
+        <p data-testid="receipt-action-note">{tx(t, `receipt.note.${action}`)}</p>
+        {state !== undefined && state !== 'busy' && state !== 'released' ? (
+          <p role="alert">{tx(t, `receipt.error.${state}`)}</p>
+        ) : null}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      data-testid="sandbox-notice"
+      className="flex min-w-0 flex-col gap-2 rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
+    >
+      <div data-testid="receipt-objects">
+        {objects.slice(0, 3).map((violation, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- the recorded order is immutable
+          <p key={index}>
+            <PathText
+              text={tx(
+                t,
+                violation.kind === 'network'
+                  ? 'receipt.connection'
+                  : violation.release === 'path'
+                    ? 'receipt.write'
+                    : 'receipt.access',
+                { target: visible(violation.target!) },
+              )}
+            />
+          </p>
+        ))}
+        {objects.length > 3 || more > 0 ? (
+          <p>{t('receipt.more', { count: Math.max(0, objects.length - 3) + more })}</p>
+        ) : null}
+        {unknown > 0 ? <p>{t('receipt.unknown', { count: unknown })}</p> : null}
+      </div>
+      <div data-testid="receipt-why">
+        {why.map((key) => (
+          <p key={key}>{tx(t, key)}</p>
+        ))}
+      </div>
+      <div className="flex min-w-0 flex-col gap-2" data-testid="receipt-actions">
+        {domains.map((target) => actionButton('allow-domain', target))}
+        {paths.map((target) => actionButton('allow-path', target))}
+        {!anyProtected && !hintOnly ? actionButton('rerun-unsandboxed', null) : null}
+        {anyProtected ? <p data-testid="receipt-protected">{t('receipt.protected')}</p> : null}
+      </div>
+    </div>
+  )
 }
 
 /** The four block codes each say why, without repeating the object or the tool name. */

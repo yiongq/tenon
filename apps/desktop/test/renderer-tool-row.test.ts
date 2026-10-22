@@ -599,3 +599,23 @@ it('presentation-r1 验收 6: only an irreversible row carries the marker, with 
     }
   }
 })
+
+it('presentation-r1 验收 5 (sandbox): a call with a sandbox member never renders the four-code notice', async () => {
+  const markup = await renderRow(null, 'Bash', { command: 'echo test' }, en, false, {
+    effect: 'blocked',
+    state: 'completed',
+    source: 'policy',
+    output: 'ok',
+    sandbox: {
+      violations: [
+        { kind: 'network', target: 'example.com', release: null, observed: true, protected: false },
+      ],
+      more: 0,
+      anyProtected: false,
+    },
+  })
+  expect(markup).toContain('data-testid="sandbox-notice"')
+  expect(markup).not.toContain('data-testid="blocked-notice"')
+  expect(strip(markup)).not.toContain("Your organization doesn't allow this step.")
+  expect(strip(markup)).toContain('Could not connect to example.com')
+})

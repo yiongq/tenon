@@ -32,6 +32,7 @@ import type {
   ProviderErrorCode,
 } from '@tenon-app/kernel'
 import {
+  sandboxReasonCodeSchema,
   mcpErrorCodeSchema,
   mcpWriteErrorCodeSchema,
   mcpLoginErrorSchema,
@@ -915,6 +916,114 @@ it('presentation-r1 验收 14: no mechanism words on the card, its collapsed lin
       expect(message, `${locale}: ${key}`).not.toMatch(
         /模型|可逆|判决|已告诉|model|reversib|verdict/iu,
       )
+    }
+  }
+})
+
+describe('04 settings copy', () => {
+  it('04 验收 33: permissions and network copy exists in both locales with exact slots', () => {
+    const plain = [
+      'title',
+      'description',
+      'loading',
+      'allowlist',
+      'siteScope',
+      'commandScope',
+      'nextCommand',
+      'proxyWarning',
+      'removeButton',
+      'domainLabel',
+      'add',
+      'domainHint',
+      'packageManagers',
+      'presetDetails',
+      'presetDomains',
+      'publishing',
+      'presetWritable',
+      'advanced',
+      'profile',
+      'profileLabel.workspace-write',
+      'profileLabel.read-only',
+      'profileHint.workspace-write',
+      'profileHint.read-only',
+      'error.too-many',
+      'error.write-failed',
+      'error.load-failed',
+      'state.active',
+      'state.pending',
+      'state.degraded',
+      'state.unavailable',
+    ]
+    const expected: Expectation[] = plain.map((key) => ({
+      key: `sandbox.${key}`,
+      args: [],
+      what: '04 settings',
+    }))
+    expected.push(
+      { key: 'sandbox.remove', args: ['domain'], what: 'remove entry' },
+      { key: 'sandbox.error.invalid-domain', args: ['n'], what: 'invalid entry index' },
+    )
+    for (const code of sandboxReasonCodeSchema.options) {
+      expected.push(
+        { key: `sandbox.reason.${code}`, args: [], what: code },
+        { key: `sandbox.fix.${code}`, args: [], what: code },
+      )
+    }
+    expect(problems(expected)).toEqual([])
+  })
+})
+
+it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
+  const expected: Expectation[] = [
+    { key: 'receipt.connection', args: ['target'], what: 'connection' },
+    { key: 'receipt.write', args: ['target'], what: 'write' },
+    { key: 'receipt.access', args: ['target'], what: 'access' },
+    { key: 'receipt.more', args: ['count'], what: 'more' },
+    { key: 'receipt.unknown', args: ['count'], what: 'unknown targets' },
+    { key: 'receipt.why.domain', args: [], what: 'domain' },
+    { key: 'receipt.why.ip', args: [], what: 'public IP' },
+    { key: 'receipt.why.local', args: [], what: 'local address' },
+    { key: 'receipt.why.host', args: [], what: 'other host' },
+    { key: 'receipt.why.path', args: [], what: 'path release' },
+    { key: 'receipt.why.protected', args: [], what: 'protected location' },
+    { key: 'receipt.why.file', args: [], what: 'other file' },
+    { key: 'receipt.action.allow-domain', args: ['target'], what: 'domain action' },
+    { key: 'receipt.action.allow-path', args: ['target'], what: 'path action' },
+    { key: 'receipt.action.rerun-unsandboxed', args: [], what: 'rerun action' },
+    { key: 'receipt.note.allow-domain', args: [], what: 'domain scope' },
+    { key: 'receipt.note.allow-path', args: [], what: 'path scope' },
+    { key: 'receipt.note.rerun-unsandboxed', args: [], what: 'rerun scope' },
+    { key: 'receipt.released', args: [], what: 'released' },
+    { key: 'receipt.protected', args: [], what: 'protected' },
+    { key: 'receipt.error.stale', args: [], what: 'stale release' },
+    { key: 'receipt.error.not-found', args: [], what: 'missing call' },
+    { key: 'receipt.error.refused', args: [], what: 'refused release' },
+    { key: 'receipt.error.failed', args: [], what: 'bridge error' },
+    { key: 'blocked.sandbox', args: ['toolName'], what: 'block code' },
+    { key: 'closure.sandbox', args: [], what: 'closure code' },
+    { key: 'confirm.reason.elevated', args: ['command'], what: 'elevated card' },
+  ]
+  expect(problems(expected)).toEqual([])
+  expect(
+    problems([{ key: 'confirm.sandboxUnavailable', args: [], what: 'unavailable warning' }]),
+  ).toEqual([])
+  for (const locale of SUPPORTED_LOCALES) {
+    // The reviewed literal list above must cover every receipt leaf too: adding a new
+    // sentence cannot silently escape the mechanism-word and exact-slot checks.
+    const receipt = lookup(locale, 'receipt') as Record<string, string | Record<string, string>>
+    const receiptKeys = Object.entries(receipt).flatMap(([key, value]) =>
+      typeof value === 'string'
+        ? [`receipt.${key}`]
+        : Object.keys(value).map((child) => `receipt.${key}.${child}`),
+    )
+    expect(receiptKeys.toSorted()).toEqual(
+      expected
+        .map(({ key }) => key)
+        .filter((key) => key.startsWith('receipt.'))
+        .toSorted(),
+    )
+    for (const { key } of expected) {
+      expect(lookup(locale, key), `${locale}: ${key}`).not.toMatch(/沙箱|模型|sandbox|model/iu)
     }
   }
 })

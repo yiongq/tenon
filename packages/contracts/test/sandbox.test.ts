@@ -102,6 +102,12 @@ describe('sandbox contracts', () => {
       'example.com:65536',
       'example.com:abc',
       '[invalid]:443',
+      // WHATWG URL rejects a last label that is a number but not IPv4, and reads hex as IPv4.
+      '192.168.1.256',
+      '999.1.1.1',
+      'example.123',
+      '*.example.123',
+      '0x7f.1',
     ])
       expect([entry, sandboxDomainSchema.safeParse(entry).success]).toEqual([entry, false])
     for (const entry of [

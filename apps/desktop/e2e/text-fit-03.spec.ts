@@ -67,7 +67,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await openConnectors(page)
       await expectSingleLineUnclipped(
         page.getByTestId('provider-settings').locator('[role="tab"]'),
-        2,
+        3,
       )
       await expectSingleLineUnclipped(page.getByTestId('connector-add'))
       await expectSingleLineUnclipped(

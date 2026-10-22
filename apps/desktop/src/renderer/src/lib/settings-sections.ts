@@ -14,6 +14,7 @@ export const SETTINGS_SECTIONS = [
     menuKey: 'account.providers',
   },
   { id: 'connectors', labelKey: 'mcp.title', menuKey: 'mcp.title' },
+  { id: 'permissions', labelKey: 'sandbox.title', menuKey: 'sandbox.title' },
 ] as const
 
 export type SettingsPane = (typeof SETTINGS_SECTIONS)[number]['id']

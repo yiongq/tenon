@@ -1,4 +1,4 @@
-import { KeyRoundIcon, PlugIcon } from 'lucide-react'
+import { KeyRoundIcon, PlugIcon, ShieldCheckIcon } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -6,6 +6,7 @@ import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/di
 import { SETTINGS_SECTIONS } from '@/lib/settings-sections'
 import type { SettingsPane } from '@/lib/settings-sections'
 import { ConnectorsPane } from './ConnectorsPane'
+import { SandboxPane } from './SandboxPane'
 import { PaneFrame } from './PaneFrame'
 import { ProviderSettings } from './ProviderSettings'
 import type { ProviderSettingsProps } from './ProviderSettings'
@@ -18,6 +19,7 @@ interface SectionView {
 
 /** A `Record` over the ids: a section added to the list without its view does not compile. */
 const VIEWS: Record<SettingsPane, SectionView> = {
+  permissions: { Icon: ShieldCheckIcon, render: () => <SandboxPane /> },
   providers: {
     Icon: KeyRoundIcon,
     render: (props) => <ProviderSettings {...props} embedded />,

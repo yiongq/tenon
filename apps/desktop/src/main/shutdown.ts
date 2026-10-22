@@ -6,6 +6,7 @@ import {
   chatSend,
   chatSendNow,
   chatStop,
+  sandboxRelease,
   sessionSelectModel,
   sessionSelectProfile,
   workspacePick,
@@ -83,6 +84,7 @@ export const REFUSED_WHILE_SHUTTING_DOWN: ReadonlySet<string> = new Set([
   workspacePick.channel,
   workspaceUsePrefill.channel,
   workspaceRemove.channel,
+  sandboxRelease.channel,
 ])
 
 /** A diagnostic, never shown: the renderer maps `code` to copy (contracts' IpcError). */

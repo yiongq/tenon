@@ -42,6 +42,7 @@ import {
 } from './ipc/custom-vendor.js'
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
 import { runStateEvent } from './ipc/run.js'
+import { sandboxChanged, sandboxGet, sandboxRelease, sandboxSetSettings } from './ipc/sandbox.js'
 import {
   sessionFacts,
   sessionLatest,
@@ -97,6 +98,9 @@ export const ipcRoutes = {
   providerConfigure,
   providerList,
   providerSelect,
+  sandboxGet,
+  sandboxRelease,
+  sandboxSetSettings,
   sessionFacts,
   sessionLatest,
   sessionMessages,
@@ -115,6 +119,7 @@ export const ipcEvents = {
   configLocale,
   confirmRequestEvent,
   runStateEvent,
+  sandboxChanged,
 } as const
 
 export const ROUTE_CHANNELS: readonly string[] = Object.values(ipcRoutes).map((r) => r.channel)

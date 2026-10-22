@@ -949,7 +949,7 @@ describe('04 验收 22: one-off unsandboxed reruns', () => {
       status: 'stale',
     })
   })
-  it('04 验收 22: an unbound rerun expires at the end of the first Run started after the click', async () => {
+  it('04 验收 22: an unbound rerun expires when the next reply after the click ends', async () => {
     expect(await overrideAfterUnrelatedRun('rerun-unsandboxed')).toBeUndefined()
   })
   it('04 验收 22: a release during a Run can bind in that Run or the next, then expires', async () => {
@@ -975,6 +975,45 @@ describe('04 验收 22: one-off unsandboxed reruns', () => {
     const expired = await judged(h)
     expect(expired.kind === 'judged' && expired.sandbox?.override).toBeUndefined()
   })
+  it.each([
+    ['allow-path', '/outside/file.txt'],
+    ['rerun-unsandboxed', null],
+  ] as const)(
+    '04 验收 22: an unbound %s release outlives an approval pause in the next reply and expires when that reply ends',
+    async (action, target) => {
+      const h = await harness()
+      await receipt(h)
+      expect(await release(h.service, action, target)).toEqual({ status: 'released' })
+      // The next reply pauses on another command's card before the released command comes back.
+      expect((await command(h, false, 'echo other')).reason).toEqual({
+        code: 'paused',
+        waitingFor: 'approval',
+      })
+      const paused = await judged(h)
+      expect(paused.kind === 'judged' && paused.sandbox?.override?.action).toBe(action)
+      await answer(h)
+      const ended = await judged(h)
+      expect(ended.kind === 'judged' && ended.sandbox?.override).toBeUndefined()
+    },
+  )
+  it('04 验收 22: a release clicked while the reply waits on a card lasts through that reply and the next', async () => {
+    const h = await harness()
+    await receipt(h)
+    expect((await command(h, false, 'echo other')).reason.code).toBe('paused')
+    expect(await release(h.service, 'allow-path', '/outside/file.txt')).toEqual({
+      status: 'released',
+    })
+    // The answer resumes the reply that was waiting; it is not the next reply.
+    await answer(h)
+    const current = await judged(h)
+    expect(current.kind === 'judged' && current.sandbox?.override?.action).toBe('allow-path')
+    done(h)
+    const sent = await h.service.send({ sessionId: SESSION, text: 'next reply', origin: null })
+    if (sent.status !== 'started') throw new Error(sent.status)
+    await h.loop.runEnded({ runId: sent.runId })
+    const expired = await judged(h)
+    expect(expired.kind === 'judged' && expired.sandbox?.override).toBeUndefined()
+  })
   it('one decision binds only one release, preferring rerun over path', async () => {
     const h = await harness()
     await receipt(h)
@@ -992,7 +1031,7 @@ describe('04 验收 22: one-off unsandboxed reruns', () => {
 })
 
 describe('04 验收 23: one-off path releases', () => {
-  it('04 验收 23: an unbound path release expires at the end of the first Run started after the click', async () => {
+  it('04 验收 23: an unbound path release expires when the next reply after the click ends', async () => {
     expect(await overrideAfterUnrelatedRun('allow-path')).toBeUndefined()
   })
   it.each(['workspace-write', 'read-only'] as const)(

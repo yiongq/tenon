@@ -661,3 +661,52 @@ it('presentation-r1 验收 3 / presentation-r1 不变量 2: allow carries its sc
     expect(answer?.payload['grant']).toMatchObject({ scope: current.allowScope })
   }
 })
+
+it('04 验收 18: the unavailable line shows in zh-CN and en', async () => {
+  const card: SentenceCard = {
+    ...BASE,
+    kind: 'command',
+    reason: 'elevated',
+    target: TARGET_BY_KIND.command,
+    facts: { command: 'unique-command --arg', sandbox: 'unavailable' },
+  }
+  for (const [language, sentence] of [
+    [zh, '沙箱不可用，将以你的权限运行'],
+    [en, 'Sandbox unavailable; this command will run with your permissions'],
+  ] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- independently render each locale
+    const markup = await render(card, language)
+    expect(content(markup, 'approval-unavailable')?.text).toBe(sentence)
+    expect(content(markup, 'approval-unavailable')?.attributes).toContain('text-text-warning')
+    expect(markup.indexOf('data-testid="approval-reason"')).toBeLessThan(
+      markup.indexOf('data-testid="approval-unavailable"'),
+    )
+    expect(markup.indexOf('data-testid="approval-unavailable"')).toBeLessThan(
+      markup.indexOf('data-testid="approval-undo"'),
+    )
+    expect(
+      // oxlint-disable-next-line no-await-in-loop -- independently render each locale
+      await render({ ...card, facts: { command: 'unique-command --arg' } }, language),
+    ).not.toContain('data-testid="approval-unavailable"')
+    // oxlint-disable-next-line no-await-in-loop -- independently render each locale
+    expect(await render({ ...BASE, facts: { sandbox: 'unavailable' } }, language)).not.toContain(
+      'data-testid="approval-unavailable"',
+    )
+  }
+})
+
+it('04 验收 18: the elevated reason keeps the full command and the once-only consequence', async () => {
+  const card: SentenceCard = {
+    ...BASE,
+    kind: 'command',
+    reason: 'elevated',
+    target: TARGET_BY_KIND.command,
+    facts: { command: 'unique-command --arg' },
+  }
+  expect(content(await render(card, zh), 'approval-reason')?.text).toBe(
+    '这条命令这一次不受限制地运行，和你在终端里自己运行一样：能读写你能访问的所有文件、能连任何网站。只允许这一次，不会记住。\nunique-command --arg',
+  )
+  expect(content(await render(card, en), 'approval-reason')?.text).toBe(
+    'This command will run without restrictions this once, just as if you ran it in a terminal: it can read and write every file you can access and connect to any site. This allows it once only and will not be remembered.\nunique-command --arg',
+  )
+})
