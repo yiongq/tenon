@@ -1574,3 +1574,94 @@ describe('04 验收 24: sandbox release notes', () => {
     expect(await releaseNotes(h)).toEqual([])
   })
 })
+
+it.each([
+  { action: 'allow-domain', target: '/outside/file.txt' },
+  { action: 'allow-path', target: 'registry.example.com' },
+] as const)(
+  '04 验收 21 / 不变量 10: $action rejects a target of the other release type without an override fact',
+  async ({ action, target }) => {
+    const h = await harness()
+    await receipt(h)
+    expect(await release(h.service, action, target)).toEqual({ status: 'stale' })
+    expect(
+      (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+    ).toEqual([])
+  },
+)
+
+it.each(['allow-path', 'rerun-unsandboxed'] as const)(
+  '04 验收 22: an unbound %s expires when the next reply ends with provider-error',
+  async (action) => {
+    const h = await harness()
+    await receipt(h)
+    expect(
+      await release(h.service, action, action === 'allow-path' ? '/outside/file.txt' : null),
+    ).toEqual({ status: 'released' })
+    const before = await judged(h)
+    expect(before.kind).toBe('judged')
+    expect(before.kind === 'judged' && before.sandbox?.override).toBeDefined()
+    h.provider.script(
+      scriptedTurn({
+        terminal: {
+          type: 'error',
+          code: 'unknown',
+          retryable: false,
+          providerCode: null,
+          detail: 'test failure',
+        },
+      }),
+    )
+    const sent = await h.service.send({
+      sessionId: SESSION,
+      text: 'next reply fails',
+      origin: null,
+    })
+    if (sent.status !== 'started') throw new Error(sent.status)
+    expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('provider-error')
+    const after = await judged(h)
+    expect(after.kind).toBe('judged')
+    expect(after.kind === 'judged' && after.sandbox?.override).toBeUndefined()
+  },
+)
+
+it('04 验收 23: the kernel refuses a protected file even when the receipt marks it unprotected', async () => {
+  const h = await harness()
+  await receipt(h, {
+    violations: [{ ...path, target: '/home/user/.zshrc', protected: false }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/home/user/.zshrc')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
+})
+
+it('04 验收 23: the kernel refuses a link to an existing regular file', async () => {
+  const h = await harness()
+  await h.memory.fs.writeFile(absolutePath('/outside/file.txt'), 'original')
+  h.memory.symlink(absolutePath('/outside/alias'), '/outside/file.txt')
+  await receipt(h, {
+    violations: [{ ...path, target: '/outside/alias' }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/outside/alias')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
+})
+
+it('04 验收 21 / 不变量 10: allow-path rejects a file violation with no path release', async () => {
+  const h = await harness()
+  await receipt(h, {
+    violations: [{ ...path, release: null }],
+    more: 0,
+    anyProtected: false,
+  })
+  expect(await release(h.service, 'allow-path', '/outside/file.txt')).toEqual({ status: 'stale' })
+  expect(
+    (await readSessionEntries(h.tape, SESSION)).filter((e) => e.name === 'tool/receipt_override'),
+  ).toEqual([])
+})

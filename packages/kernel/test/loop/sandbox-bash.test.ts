@@ -235,6 +235,23 @@ describe('Bash sandbox plans (04 step 9)', () => {
     })
   })
 
+  it('04 验收 18: allowing an unavailable command passes its full-access plan and session folders to the real executor', async () => {
+    const h = await harness(
+      { state: 'unavailable', profile: 'workspace-write' },
+      { violations: [] },
+    )
+    expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect((await card(h)).card.facts).toEqual({
+      command: 'echo hello',
+      cwd: '/work/project',
+      sandbox: 'unavailable',
+    })
+    await allow(h)
+    expect(h.wrapped).toHaveLength(1)
+    expect(h.wrapped[0]?.profile).toBe('full-access')
+    expect(h.wrapped[0]?.workspace).toEqual(['/work/project', '/work/other'])
+  })
+
   it('04 验收 17: an active workspace-write posture plans workspace-write with the session folders', async () => {
     const h = await harness()
     expect((await command(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
