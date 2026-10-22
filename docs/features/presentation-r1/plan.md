@@ -82,7 +82,7 @@
   - 命令：U `apps/desktop/test/provider-routes.test.ts apps/desktop/test/custom-vendor-routes.test.ts apps/desktop/test/model-selection.test.ts`；E `provider-settings.spec.ts custom-vendor.spec.ts`；G。
   - 突变：① 不看三键是否为空 → 「existing default is left alone」红；② cowork 也写仅文字的行 → 红；②′ 仅文字时仍写 `provider` → 「a text-only first row writes chat alone」红；②″ 新建实例不写默认 → 「creating a preset instance with a key」红；③ 忽略 ④ → 红；④ 非机密键也触发 → 「only Ollama’s address」红；⑤ 写失败时回错 → 红；⑥（只在做了指针一支时）指针写在实例上，或 `latestOf` 写成别的家族 → 指针一例红。
 
-- [ ] 10. 双语、机制词与基线截图（验收 13、14）
+- [x] 10. 双语、机制词与基线截图（验收 13、14）
   - 文件：新 `apps/desktop/e2e/text-fit-r1.spec.ts`（1280×800 两种语言量第 1–8 步的每个新元素，含仅文字模型的禁发句与置灰原因；800×520、侧栏展开量工具行与框下那行；内容元素用 `expectWrappedUnclipped`）；`copy-coverage.test.ts` 加「presentation-r1 验收 14: no mechanism words on the card, its collapsed line, the block notices, the row’s line and the summary」（键集合逐项写成字面量）；刷新 darwin 截图基线（`shell-i18n.spec.ts` 等）一次。
   - 命令：E `text-fit-r1.spec.ts shell-i18n.spec.ts`；U `apps/desktop/test/copy-coverage.test.ts`；EA；G。
   - 突变：① en 的「允许」钮期限写长到折行 → text-fit 红；② 某个卡句写回「模型」→ 验收 14 红；③ 删 en 的一个新键 → `pnpm lint`（i18n:check）红。
@@ -133,6 +133,7 @@
 - 2026-10-22 · 第 2–9 步勾上：草稿 PR #55 上 `38269d6` 的 CI 全绿（run `39704055073`：`ci`、`e2e` 253 条全过、`sandbox-macos`、`ci-ok`；`ci` 第一次红在 `mcp-runtime.test.ts`「03 验收 28 / 6 / 27 (desktop)」的 `mcp/.one.json.<uuid>.tmp` ENOENT，是 `dev` 上 #53 之后就有的偶发、与本分支无关，重跑那个 job 过了，另作后续修复），E 由它满足。第 10 步的 E 也在这一轮里过了（`text-fit-r1.spec.ts`），没勾是因为 darwin 截图基线还没刷。
 - 2026-10-22 · 第 12 步勾上（Codex 起草对照表、给不变量 1–7 的用例加名、补一条「新建预设实例带 key、没有模型行时三键不写」的单测、做 11 份 e2e 突变补丁；lead 在虚拟机里跑那 11 个突变全红，填 E 与突变结果，写进下面「验收记录」）。验收 5 的 `sandbox` 一句留到与 04 第二段合并时补（Open）；验收 13 的框下那行照 spec Revisions ④ 改读法。
 - 2026-10-22 · 第 13 步（lead）：`git diff origin/dev...HEAD` 只有本计划的改动——新增 9 个文件（`text-fit-r1.spec.ts`、`FolderToggle.tsx`、`send-block.ts`、`url-host.ts` 与 5 个单测文件）、删 2 个（`ModeSwitch.tsx`、`reversibility-scale.ts`），其余是改动；没有探针、截图草稿、调试输出或 `.only`，没有 key 的值，截图基线没动（第 10 步的 darwin 刷新另做）。仓库外的产物（突变补丁、虚拟机日志、对照表草稿）在 `.claude/runs/pr1/` 与 tenon-notes 的 probes 下，不进仓库；给虚拟机打包用的临时分支 `tmp/pr1-vm` 已删。
+- 2026-10-22 · 第 10 步勾上 + 合并前的真进程抽查（lead，macOS 26.3 本机、agent 沙箱外，owner 同日说「现在就做」真窗口那一批）：darwin 截图基线只有 `shell-i18n.spec.ts` 的两张（`shell-en.png`、`shell-zh-CN.png`）；照旧基线先跑，4 条过（差异在阈值内）；`--update-snapshots=all` 强制刷新两张，新图里输入框是「在文件夹里工作」开关加模型 chip。同一轮里「IME 回车」那条在本机红过一次（`toHaveText`），重跑过，记为本机偶发。抽查（临时 Playwright 脚本、不进仓库，截图在仓库外 scratchpad）：工作区 Write 的卡——标题「修改这个文件？」、对象行是路径、④「Tenon 没法替你撤回这次改动。」、没有刻度、钮为「拒绝 Esc」「允许（本会话）⏎」，建立后输入框只留文件夹 chip、开关不在；允许后塌成「已允许（本会话）」（工具行已写路径，塌行不重复）、结算行「改了 1 个文件」；模型菜单官方行不带主机、智谱组头「去设置填 API 密钥」、Ollama 仅文字行置灰并写原因。与 spec 一致。
 （停下之前追加一条：日期 · 步骤 · 状态；分支与基于的提交；G / E / EA 的结果；做过的突变与红绿；做到一半的与代码停在什么状态；下一步。）
 
 ## 验收记录
