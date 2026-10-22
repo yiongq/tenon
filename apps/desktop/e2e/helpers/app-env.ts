@@ -53,9 +53,10 @@ export interface AppEnvOptions {
 }
 
 /**
- * The runner's environment minus NEVER_INHERITED, the two test switches, then `options.env` on top.
+ * The runner's environment minus NEVER_INHERITED, the test switches, then `options.env` on top.
  * TENON_DEV_ENV=off: the app must not pick up a developer's `.env.local` during tests. TENON_SECRETS:
  * `memory` unless the caller asks for the real keychain (spec 01 §desktop 接线, 「e2e 的机密接缝」).
+ * TENON_TEST_SANDBOX=fake: tests keep their command cards independent of the machine's sandbox.
  * Throws instead of returning an environment that would send an official key to another host.
  */
 export function appEnvironment(
@@ -69,6 +70,7 @@ export function appEnvironment(
   }
   env['TENON_DEV_ENV'] = 'off'
   env['TENON_SECRETS'] = options.secrets ?? 'memory'
+  env['TENON_TEST_SANDBOX'] = 'fake'
   Object.assign(env, options.env)
   if (options.systemLanguages !== undefined && options.systemLanguages.length > 0) {
     env['TENON_LOCALE'] = options.systemLanguages.join(',')

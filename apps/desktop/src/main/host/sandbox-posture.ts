@@ -39,6 +39,7 @@ import {
 } from 'node:fs'
 import { posix } from 'node:path'
 import { SandboxManager, getWslVersion } from '@anthropic-ai/sandbox-runtime'
+import type { SandboxReasonCode } from '@tenon-app/contracts'
 import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath, HostProcess } from '@tenon-app/kernel'
 import { desktopSandboxFs, privateDirProblem, stubsFile } from './sandbox.js'
@@ -51,30 +52,17 @@ import type {
   SrtSandbox,
 } from './sandbox.js'
 import type { HelperPaths, LinuxBinaries } from './sandbox-config.js'
+import type { StartupEnv } from './shell-env.js'
 
 /**
- * Why the posture is not plain `active` (spec §启动、自检与姿态). The contracts' `SandboxReasonCode`
- * (§IPC, plan step 13) adds `test-seam`, which only the e2e seam gives. `no-seccomp` and `old-bwrap`
+ * Why the posture is not plain `active` (spec §启动、自检与姿态). The shared contracts also
+ * reserve `test-seam`, which only the e2e seam gives. `no-seccomp` and `old-bwrap`
  * come with `degraded`; the rest with `unavailable`, except `other`, which also comes with
  * `degraded` for a warning of srt's it does not know (its detail srt's own words): the sandbox is up
  * then, one layer perhaps weaker, and `unavailable` would send every command, once you allow it, to
  * run outside the sandbox (2026-10-16).
  */
-export type SandboxReasonCode =
-  | 'windows'
-  | 'unsupported-platform'
-  | 'wsl1'
-  | 'root-without-setfcap'
-  | 'missing-bwrap'
-  | 'missing-socat'
-  | 'missing-rg'
-  | 'userns-restricted'
-  | 'nested-sandbox'
-  | 'self-test-failed'
-  | 'init-failed'
-  | 'other'
-  | 'no-seccomp'
-  | 'old-bwrap'
+export type { SandboxReasonCode } from '@tenon-app/contracts'
 
 export interface SandboxReason {
   readonly code: SandboxReasonCode
@@ -83,7 +71,7 @@ export interface SandboxReason {
 }
 
 /** One reason; `detail` is diagnostic text shown as it is, never copy (§IPC: 「不翻译」). */
-function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
+export function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
   return { code, detail }
 }
 
@@ -95,7 +83,7 @@ function reason(code: SandboxReasonCode, detail: string | null): SandboxReason {
 export type InitializeResult = 'not-called' | 'dependency-error' | 'threw' | 'returned'
 
 export interface SandboxPostureOutcome extends SandboxStartup {
-  /** Empty exactly when `active`; for `degraded` the warnings, for `unavailable` why. */
+  /** Empty for real `active`; the test seam's `active` carries `test-seam` (04 §IPC). */
   readonly reasons: readonly SandboxReason[]
   readonly initialize: InitializeResult
 }
@@ -274,6 +262,42 @@ const OLD_BWRAP_WARNING = /^bubblewrap \S+ at [\s\S]+ is older than 0\.5\.0: /
 
 /** apply-seccomp's own words when a userns profile refuses it (srt79 vendor/seccomp/<arch>/apply-seccomp; P5). */
 const NESTED_USERNS = 'nested userns is capability-restricted'
+
+/** Only an unpackaged app explicitly launched for tests may bypass real startup (04 §IPC). */
+export function sandboxTestMode(
+  isPackaged: boolean,
+  startupEnv: StartupEnv,
+): 'off' | 'fake' | null {
+  if (isPackaged || startupEnv['TENON_DEV_ENV'] !== 'off') return null
+  const mode = startupEnv['TENON_TEST_SANDBOX']
+  return mode === 'off' || mode === 'fake' ? mode : null
+}
+
+/**
+ * Desktop's startup selector (step 13c calls this after creating the window). The seam returns
+ * before real startup touches the disk, chdirs or initializes srt. `initialized` stays pending,
+ * as for any startup that never called initialize; fake commands use a separate test wrapper.
+ */
+export function startDesktopSandboxPosture(
+  deps: SandboxPostureDeps,
+  isPackaged: boolean,
+  startupEnv: StartupEnv,
+): SandboxPostureRun {
+  const mode = sandboxTestMode(isPackaged, startupEnv)
+  if (mode === null) return startSandboxPosture(deps)
+  const state = mode === 'fake' ? 'active' : 'unavailable'
+  deps.log(`sandbox: ${state} (test-seam: ${mode})`)
+  return {
+    initialized: new Promise<void>(() => {}),
+    outcome: Promise.resolve({
+      state,
+      session: null,
+      noSeccomp: false,
+      reasons: [reason('test-seam', mode)],
+      initialize: 'not-called',
+    }),
+  }
+}
 
 /**
  * Starts the sandbox (spec §启动、自检与姿态). `initialized` resolves the moment `initialize` returns
@@ -1017,6 +1041,19 @@ function messageOf(error: unknown): string {
 
 // ---------------------------------------------------------------------------------------------
 // The real ports
+
+/** Shared by desktop and the eval host (04 step 13c/13f); never logs the wrapped argv. */
+export function desktopSrtSandbox(): SrtSandbox & {
+  updateConfig(config: SandboxRuntimeConfig): void
+} {
+  return {
+    wrapWithSandboxArgv: (...args) => SandboxManager.wrapWithSandboxArgv(...args),
+    cleanupAfterCommand: () => SandboxManager.cleanupAfterCommand(),
+    getSandboxViolationStore: () => SandboxManager.getSandboxViolationStore(),
+    reset: () => SandboxManager.reset(),
+    updateConfig: (config) => SandboxManager.updateConfig(config),
+  }
+}
 
 /** sandbox-runtime itself. */
 export function desktopSrtStartup(): SrtStartup {

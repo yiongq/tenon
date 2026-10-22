@@ -17,6 +17,7 @@ const CELLS = {
   'user-disabled': ['not-run'],
   protected: ['not-run'],
   inspector: ['not-run'],
+  sandbox: [],
   'tool-unavailable': ['not-run'],
   'connector-unauthorized': ['not-run'],
   'invalid-input': ['not-run'],
@@ -42,6 +43,12 @@ function slotsOf(text: string): string[] {
 }
 
 describe('MODEL_NOTES.closure', () => {
+  it('recognises sandbox as a blocking code with only the toolName fact (04 修补 1)', () => {
+    expect(isBlockReason('sandbox')).toBe(true)
+    expect(BLOCKED_FACT_KEYS.sandbox).toEqual(['toolName'])
+    expect(MODEL_NOTES.closure.sandbox).toEqual({})
+  })
+
   it('has exactly the cells the reason table needs', () => {
     expect(Object.keys(MODEL_NOTES.closure).toSorted()).toEqual([...SOURCES].toSorted())
     for (const source of SOURCES) {

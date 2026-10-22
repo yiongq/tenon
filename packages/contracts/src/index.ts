@@ -198,3 +198,5 @@ export { runStateEvent } from './ipc/run.js'
 export type { RunState } from './ipc/run.js'
 
 export * from './ipc/mcp.js'
+
+export * from './ipc/sandbox.js'

@@ -17,6 +17,7 @@
  * empty 1–3 ms later, `ps` seeing it empty by 512–542 ms).
  */
 import { execFile, execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -478,7 +479,7 @@ describe.skipIf(process.platform === 'win32')("desktop's kill once the direct ch
  * Spec 04 验收 15, the stop part, with 04 不变量 13 (plan step 6; T11, P6): the kernel's Bash executor
  * on desktop's HostProcess and a real `DesktopSandbox` over sandbox-runtime. Every process a command
  * leaves carries a marker in its argv, and the host's process table is read for it. The half "a
- * command that exits leaves nothing in its process group" waits for plan step 10's kernel change.
+ * command that exits leaves nothing in its process group" is covered below (plan step 10).
  * Runs where `TENON_SANDBOX_TESTS=required` (plan 开工前读「沙箱外」); skipped otherwise.
  */
 const sandboxGate = sandboxTestsGate(process.env[SANDBOX_TESTS_VARIABLE], process.env['CI'])
@@ -658,6 +659,28 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
       CASE_TIMEOUT_MS,
     )
 
+    it(
+      '04 验收 15: a command that exits leaves no background process once the call ends',
+      async () => {
+        const mark = newMark('background')
+        marks.push(mark)
+        const { call } = sandboxedCall(
+          [
+            `: ${mark}_decoy`,
+            // Drop the mark: afterExit's environment scan must not hide a missing group kill.
+            `env -u TENON_SANDBOX_MARK perl -e 'sleep 600' ${mark}_bg >/dev/null 2>&1 &`,
+            'sleep 1',
+            'exit 0',
+          ].join('\n'),
+          new AbortController().signal,
+        )
+        await allUp(mark, ['bg'])
+        expect(await call).toMatchObject({ isError: false, state: 'completed' })
+        expect(await markedProcesses(mark)).toEqual([])
+      },
+      CASE_TIMEOUT_MS,
+    )
+
     // On darwin only afterExit's TENON_SANDBOX_MARK scan (and the process group of each process it
     // finds) reaches a process that left the command's group and outlives a call that ended on its
     // own, and `ps -E` shows no environment for an Apple platform binary (perl, sleep, the shells).
@@ -720,6 +743,11 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
           ].join('\n'),
           new AbortController().signal,
         )
+        // python writes the file only once perl runs; on a loaded runner that takes longer than
+        // allUp's patience (CI red twice on 2026-10-22), so wait for it as the command itself does.
+        const readyBy = now() + 15_000
+        // oxlint-disable-next-line no-await-in-loop -- the poll's pace
+        while (!existsSync(ready) && now() < readyBy) await delay(50)
         await allUp(mark, ['setsid', 'perl'])
         const execution = await call
         const endedAt = now()
@@ -728,7 +756,7 @@ describe.skipIf(!sandboxGate.run || process.platform === 'win32')(
         expect(gone).not.toBeNull()
         expect((gone ?? Infinity) - endedAt).toBeLessThan(TREE_CLEAR_MS)
       },
-      CASE_TIMEOUT_MS,
+      CASE_TIMEOUT_MS * 2,
     )
 
     // What setsid-mac A (2026-10-16) leaves on darwin, as it is: a setsid Apple platform binary

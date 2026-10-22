@@ -450,6 +450,7 @@
     "user-disabled": "Blocked: this tool is turned off.",
     "protected": "Blocked: Tenon protects this location.",
     "inspector": "Blocked by a permission check.",
+    "sandbox": "Some command operations were blocked.",
     "tool-unavailable": "Not run: this tool is unavailable.",
     "invalid-input": "Not run: the arguments were invalid.",
     "stopped": "Stopped.",
@@ -470,6 +471,7 @@
     "connector-unauthorized": "Sign in to this connector again. The call did not run."
   },
   "blocked": {
+    "sandbox": "Some operations in {toolName} were blocked.",
     "policy": "Your organization doesn't allow this step.",
     "user-disabled": "You turned this off in Settings.",
     "protected": {

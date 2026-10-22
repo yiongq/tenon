@@ -119,6 +119,7 @@ async function run(
 ): Promise<{ record: EvalRecord; entries: TapeEntry[]; run: RunInspection }> {
   let seen: { run: RunInspection; entries: TapeEntry[] } | null = null
   const record = await runTask({
+    sandbox: 'passthrough',
     task,
     run: 1,
     ...onColumn(server),
@@ -204,6 +205,7 @@ describe('a task run end to end, offline', () => {
       // none, so this is the runner's, never model_info's.
       cost: { amount: (3 * 8 + 3 * 28) / 1_000_000, currency: 'CNY' },
       durationMs: record.durationMs,
+      sandbox: { state: 'unavailable', profile: 'workspace-write' },
       calib: {
         machineDenials: 0,
         perRequest: [0, 1, 2].map(() => ({ input: 1, cost: (8 + 28) / 1_000_000 })),
@@ -260,6 +262,7 @@ describe('a task run end to end, offline', () => {
     cleanups.push(() => server.close())
     await expect(
       runTask({
+        sandbox: 'passthrough',
         task: {
           ...BASE,
           id: '01-notes',
@@ -293,6 +296,7 @@ describe('a task run end to end, offline', () => {
     cleanups.push(() => held.resolve())
     const cancel = new AbortController()
     const ran = runTask({
+      sandbox: 'passthrough',
       task: {
         ...BASE,
         id: '01-notes',
@@ -322,6 +326,7 @@ describe('a task run end to end, offline', () => {
     ])
     let dir = ''
     const record = await runTask({
+      sandbox: 'passthrough',
       task: {
         ...BASE,
         id: '01-notes',
@@ -680,6 +685,7 @@ describe('what keeps a paid run’s record', () => {
     const lines: string[] = []
     let dir = ''
     const record = await runTask({
+      sandbox: 'passthrough',
       task: {
         ...BASE,
         id: '01-notes',
@@ -850,6 +856,7 @@ it('removes the temporary host even if raw evidence cannot be written', async ()
   let hostDir: string | undefined
   await expect(
     runTask({
+      sandbox: 'passthrough',
       task: {
         ...BASE,
         id: '01-notes',

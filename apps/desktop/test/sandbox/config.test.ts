@@ -12,6 +12,7 @@ import {
   PACKAGE_MANAGER_PRESETS,
   SandboxConfigError,
   credentialPaths,
+  sandboxPreset,
   sessionConfig,
   wrapConfig,
   wrapFilesystem,
@@ -25,6 +26,42 @@ import type {
 } from '../../src/main/host/sandbox-config.js'
 
 const p = (path: string): AbsolutePath => path as AbsolutePath
+
+it('04 验收 29 (config): the displayed preset uses the platform table and Tenon cache directories', () => {
+  expect(sandboxPreset('darwin', p('/data/sandbox-cache'))).toEqual({
+    domains: [
+      'registry.npmjs.org',
+      'pypi.org',
+      'files.pythonhosted.org',
+      'index.crates.io',
+      'static.crates.io',
+    ],
+    writable: [
+      '/data/sandbox-cache/npm',
+      '/data/sandbox-cache/pnpm',
+      '/data/sandbox-cache/uv',
+      '/data/sandbox-cache/cargo',
+    ],
+  })
+  expect(sandboxPreset('linux', p('/data/sandbox-cache'))).toEqual({
+    domains: [
+      'registry.npmjs.org',
+      'pypi.org',
+      'files.pythonhosted.org',
+      'index.crates.io',
+      'static.crates.io',
+    ],
+    writable: [
+      '/data/sandbox-cache/npm',
+      '/data/sandbox-cache/pnpm',
+      '/data/sandbox-cache/pip',
+      '/data/sandbox-cache/uv',
+      '/data/sandbox-cache/cargo',
+    ],
+  })
+  expect(sandboxPreset('win32', p('/data/sandbox-cache'))).toEqual({ domains: [], writable: [] })
+  expect(sandboxPreset('other', p('/data/sandbox-cache'))).toEqual({ domains: [], writable: [] })
+})
 
 // ---------------------------------------------------------------------------------------------
 // Literals from the spec

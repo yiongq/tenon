@@ -37,6 +37,7 @@ export type StatesMatch = Assert<Extends<z.infer<typeof executionStateSchema>, E
 export type KernelStatesMatch = Assert<
   Extends<ExecutionState, z.infer<typeof executionStateSchema>>
 >
+// Spec 04 step 7: both directions include sandbox; removing it from the schema must fail tsc.
 export type SourcesMatch = Assert<Extends<z.infer<typeof closureSourceSchema>, ClosureSource>>
 export type KernelSourcesMatch = Assert<Extends<ClosureSource, z.infer<typeof closureSourceSchema>>>
 // One way only: the kernel brands ConfirmTarget's paths, which the wire carries as plain strings.
@@ -153,6 +154,14 @@ describe('tool-outcome (旧 106)', () => {
   it('carries a closed call as the kernel views it, by callKey', () => {
     const events = [
       { ...base, effect: 'external', state: 'completed', source: null, output: 'ok' },
+      {
+        ...base,
+        effect: 'external',
+        state: 'completed',
+        source: 'sandbox',
+        facts: { toolName: 'Bash' },
+        output: 'command output',
+      },
       {
         ...base,
         effect: 'blocked',

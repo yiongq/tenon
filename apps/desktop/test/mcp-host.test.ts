@@ -13,7 +13,12 @@ import { readFileSync } from 'node:fs'
 import tls from 'node:tls'
 import http from 'node:http'
 import { afterEach, expect, it, vi } from 'vitest'
-import { absolutePath, createMemoryHost, connectStdioServer } from '@tenon-app/kernel'
+import {
+  absolutePath,
+  createMemoryHost,
+  connectStdioServer,
+  HostNetworkDeniedError,
+} from '@tenon-app/kernel'
 import { createHostProcess } from '../src/main/host/process.js'
 import { createMcpLogSink } from '../src/main/mcp/log-sink.js'
 import { resolveMcpCommand } from '../src/main/mcp/resolve-command.js'
@@ -166,6 +171,48 @@ it('03 验收 10 (fetch, DNS): checks every answer before a socket; pins the che
   expect(requests).toBe(1)
   expect(target).toHaveBeenCalledExactlyOnceWith(publicAddress)
 })
+it('04 验收 26: a cross-origin discovery address resolving to 100.64.x gets 0 requests', async () => {
+  let requests = 0
+  const cert = readFileSync(new URL('./support/fixtures/fetch-test-cert.pem', import.meta.url))
+  const server = createServer(
+    {
+      cert,
+      key: readFileSync(new URL('./support/fixtures/fetch-test-key.pem', import.meta.url)),
+    },
+    (_req, res) => {
+      requests++
+      res.end('discovery')
+    },
+  )
+  const port = await listen(server)
+  cleanup.push(() => closeServer(server))
+  const realConnect = tls.connect
+  vi.spyOn(tls, 'connect').mockImplementation((...args) =>
+    realConnect({ ...(args[0] as tls.ConnectionOptions), ca: cert }),
+  )
+  const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('same origin'))
+  const lookup = vi.fn<() => Promise<{ address: string; family: 4 }[]>>(async () => [
+    { address: '93.184.216.34', family: 4 as const },
+    { address: '100.64.1.1', family: 4 as const },
+  ])
+  const connectTarget = vi.fn<() => { address: string; family: 4 }>(() => ({
+    address: '127.0.0.1',
+    family: 4,
+  }))
+  const fetchDiscovery = createMcpFetch(
+    'https://mcp.example',
+    { ...createMemoryHost().network, fetch },
+    { lookup, connectTarget },
+  )
+  await expect(
+    fetchDiscovery(`https://fetch.example:${port}/.well-known/oauth-protected-resource`),
+  ).rejects.toBeInstanceOf(HostNetworkDeniedError)
+  expect(lookup).toHaveBeenCalledExactlyOnceWith('fetch.example')
+  expect(connectTarget).not.toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalled()
+  expect(requests).toBe(0)
+})
+
 it('03 验收 18: wrong state keeps waiting, correct state closes; busy port, timeout and cancellation close listeners', async () => {
   const binding = vi.spyOn(http.Server.prototype, 'listen')
   const listener = await listenMcpCallback(0)

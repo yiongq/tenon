@@ -368,7 +368,44 @@ export type ServerInstructionsPayload = UserMessagePayload<ContentBlock> & {
   truncated: boolean
 }
 
+export type SandboxReleasePayload = UserMessagePayload<ContentBlock> & {
+  overrides: string[]
+}
+
+export interface SandboxPlan {
+  readonly profile: 'read-only' | 'workspace-write' | 'full-access'
+  readonly chosen: 'read-only' | 'workspace-write'
+  readonly unavailable?: true
+  readonly override?: {
+    readonly key: string
+    readonly action: 'allow-path' | 'rerun-unsandboxed'
+    readonly path?: AbsolutePath
+  }
+}
+
+export interface SandboxOutcome {
+  readonly violations: readonly {
+    readonly kind: 'fs' | 'network'
+    readonly target: string | null
+    readonly release: 'domain' | 'path' | null
+    readonly protected: boolean
+    readonly observed: boolean
+  }[]
+  readonly more: number
+  readonly anyProtected: boolean
+}
+
 // tool/
+export type ReceiptOverridePayload = CallRef & {
+  action: 'allow-domain' | 'allow-path' | 'rerun-unsandboxed'
+  target: string | null
+  violation: number
+  command: string
+  cwd: AbsolutePath
+  via: 'receipt-override'
+  writer: FactWriter
+}
+
 export type ToolCallPayload = CallRef & {
   messageId: string // 这个调用所属的 message/assistant，撤回时据此连带隐藏（B2）
   name: string
@@ -376,6 +413,7 @@ export type ToolCallPayload = CallRef & {
   argsHash: string // name 是发给模型的名字；argsHash = canonicalHash(input)
 }
 export type PermissionDecidedPayload = CallRef & {
+  sandbox?: SandboxPlan
   definitionChanged?: true
   target?: ConfirmTarget // 判决当时的卡片对象；旧事实没有时交接使用纯fallback
   argsHash: string
@@ -446,6 +484,7 @@ export type DispatchCommittedPayload = CallRef & {
   writer: FactWriter
 }
 export type ToolOutcomePayload = CallRef & {
+  sandbox?: SandboxOutcome
   effect: SideEffectClass // 01 固定的路径和四个值（01 spec:398）；取法见 §工具调用的收口
   state: ExecutionState
   source: ClosureSource | null // null 表示正常执行完，没有收口

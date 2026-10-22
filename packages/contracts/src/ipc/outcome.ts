@@ -64,6 +64,7 @@ export const closureSourceSchema = z.enum([
   'user-disabled',
   'protected',
   'inspector',
+  'sandbox',
   'user-rejected',
   'stopped',
   'timed-out',
@@ -97,7 +98,24 @@ export const spillMarkSchema = z.enum(['spilled', 'unsaved']) satisfies z.ZodTyp
  * model read is `output`; the decision crosses as its summary only (F8). The optional members are
  * exact, like the kernel type's: absent, never `undefined`.
  */
+export const sandboxOutcomeSchema = z.object({
+  violations: z
+    .array(
+      z.object({
+        kind: z.enum(['fs', 'network']),
+        target: z.string().nullable(),
+        release: z.enum(['domain', 'path']).nullable(),
+        protected: z.boolean(),
+        observed: z.boolean(),
+      }),
+    )
+    .readonly(),
+  more: z.number().int().nonnegative(),
+  anyProtected: z.boolean(),
+})
+
 export const toolOutcomeViewShape = {
+  sandbox: sandboxOutcomeSchema.exactOptional(),
   isError: z.boolean().exactOptional(),
   reversibility: reversibilitySchema.exactOptional(),
   effect: z.enum(['read', 'write', 'external', 'blocked']),

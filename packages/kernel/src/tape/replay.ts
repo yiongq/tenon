@@ -61,6 +61,7 @@ function isFoldedMessage(entry: TapeEntry): boolean {
     entry.name === 'message/user' ||
     entry.name === 'message/assistant' ||
     entry.name === 'message/continuation' ||
+    entry.name === 'message/sandbox_release' ||
     entry.name === 'message/environment' ||
     entry.name === 'message/server_instructions'
   )

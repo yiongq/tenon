@@ -11,7 +11,7 @@
  * command is `irreversible` when the table matches it and `unknown` otherwise — never `read-only`.
  */
 import type { AbsolutePath, Reversibility } from '../host/adapter.js'
-import type { ToolOrigin } from '../tape/entry.js'
+import type { SandboxPlan, ToolOrigin } from '../tape/entry.js'
 import type { CallReason } from './decide.js'
 import type { PathPlace } from './workspace.js'
 
@@ -131,6 +131,7 @@ export interface CallReasonQuery {
   readonly workspace: AbsolutePath | null
   /** WebSearch's backend host (H8). */
   readonly searchHost: string | null
+  readonly sandbox?: SandboxPlan
 }
 
 /**
@@ -152,7 +153,15 @@ export function callReasonOf(q: CallReasonQuery): CallReason {
     }
     if (toolName === 'Bash') {
       const command = typeof q.args['command'] === 'string' ? q.args['command'] : ''
-      return { reason: 'command', facts: { command, cwd: q.workspace ?? '', toolName } }
+      return {
+        reason: q.sandbox?.override?.action === 'rerun-unsandboxed' ? 'elevated' : 'command',
+        facts: {
+          command,
+          cwd: q.workspace ?? '',
+          toolName,
+          ...(q.sandbox?.unavailable === true ? { sandbox: 'unavailable' } : {}),
+        },
+      }
     }
     if (toolName === 'WebSearch') {
       return { reason: 'network', facts: { host: q.searchHost ?? '', toolName } }

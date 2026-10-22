@@ -16,6 +16,7 @@ import type { IpcMainLike } from '@tenon-app/contracts'
 import { STOP_TERM_GRACE_MS, STOP_WRITE_WAIT_MS } from '@tenon-app/kernel'
 import type { RunOrigin } from '@tenon-app/kernel'
 import type { RunRegistry } from './chat.js'
+import type { SandboxPostureRun } from './host/sandbox-posture.js'
 
 /**
  * Closing a window and quitting (spec 02 §停止与退出; B4, B1, B18). Neither is a stop: a paused Run, a
@@ -43,6 +44,7 @@ import type { RunRegistry } from './chat.js'
  *   4. `registry.settled(STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS)`: SIGTERM, SIGKILL after the grace,
  *      and an in-process write's wait, Runs a closed window aborted still closing included. Both
  *      constants are the kernel's (loop/limits.ts): the desktop writes no number of its own.
+ *      Then `sandbox.dispose()` resets srt, bounded by 2 s (spec 04 §退出), before the store closes.
  *   5. `tape.close()`, skipped without a store. A write later than this meets `TapeClosedError`; the
  *      kernel logs it, and the next start's recovery closes what was left open.
  *   6. Shutdown is done; `app.quit()`, one macrotask later. With nothing to wait for, steps 1–5 are
@@ -156,6 +158,7 @@ export interface ShutdownApp {
 
 export interface ShutdownDeps<W extends ClosingWindow> {
   readonly mcp?: { close(q: { deadlineMs: number }): Promise<void> }
+  readonly sandbox?: { dispose(): Promise<void> }
   readonly app: ShutdownApp
   readonly dialog: ExitDialog<W>
   /** null exactly when the store could not be opened: no Run can be in progress. */
@@ -181,6 +184,33 @@ export interface Shutdown<W extends ClosingWindow> {
   onClose(win: W, event: { preventDefault(): void }): void
   /** `autoUpdater`'s `before-quit-for-update`: step 3, with `quit`. */
   beforeQuitForUpdate(): void
+}
+
+/** P8: srt's once-listeners reset without quitting, including after a non-dependency init error. */
+export function registerSandboxSignals(deps: {
+  readonly process: {
+    on(signal: 'SIGTERM' | 'SIGINT', listener: () => void): unknown
+  }
+  readonly app: Pick<ShutdownApp, 'quit'>
+  readonly sandbox: { signalReset(): void }
+  readonly run: SandboxPostureRun
+}): void {
+  let registered = false
+  const register = (): void => {
+    if (registered) return
+    registered = true
+    const quit = (): void => {
+      deps.sandbox.signalReset()
+      deps.app.quit()
+    }
+    deps.process.on('SIGTERM', quit)
+    deps.process.on('SIGINT', quit)
+  }
+  void deps.run.initialized.then(register)
+  void deps.run.outcome.then(({ initialize }) => {
+    if (initialize === 'not-called' || initialize === 'dependency-error') return
+    register()
+  })
 }
 
 export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): Shutdown<W> {
@@ -257,6 +287,12 @@ export function createShutdown<W extends ClosingWindow>(deps: ShutdownDeps<W>): 
       registry?.settled(SHUTDOWN_SETTLE_MS),
       deps.mcp?.close({ deadlineMs: SHUTDOWN_SETTLE_MS }),
     ])
+    // Spec 04 §退出: dispose itself bounds reset to 2 s, and skips an already signalled reset.
+    try {
+      await deps.sandbox?.dispose()
+    } catch (error) {
+      deps.log(`[shutdown] the sandbox did not close cleanly: ${messageOf(error)}`)
+    }
     // Step 5.
     if (deps.tape !== null) {
       try {

@@ -4,9 +4,20 @@
  * this machine read as public would let a later switch to a real public host go unconfirmed.
  */
 import { describe, expect, it } from 'vitest'
-import { endpointOf, hostOf } from '../src/main/endpoint.js'
+import { endpointOf, hostOf, reachOf } from '../src/main/endpoint.js'
 
 describe('endpointOf', () => {
+  it('04 验收 26: reachOf is unchanged', () => {
+    expect(reachOf('100.64.0.0')).toBe('private')
+    expect(reachOf('100.64.0.1')).toBe('private')
+    expect(reachOf('100.127.255.255')).toBe('private')
+    expect(reachOf('::ffff:6440:1')).toBe('private')
+    expect(endpointOf('http://[::ffff:100.64.0.1]/')?.reach).toBe('private')
+    expect(reachOf('100.63.255.255')).toBe('public')
+    expect(reachOf('100.128.0.0')).toBe('public')
+    expect(reachOf('100.128.0.1')).toBe('public')
+  })
+
   it('reads the usual loopback, private and public hosts by their spelling', () => {
     expect(endpointOf('http://localhost:11434/v1/')).toEqual({
       host: 'localhost',

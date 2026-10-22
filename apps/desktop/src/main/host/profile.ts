@@ -8,7 +8,12 @@ import {
   profileDirFor,
 } from '@tenon-app/kernel'
 import type { Config, ConfigPatch, CustomVendorContract } from '@tenon-app/contracts'
-import { configSchema, customVendorSchema, mcpServerSchema } from '@tenon-app/contracts'
+import {
+  configSchema,
+  customVendorSchema,
+  mcpServerSchema,
+  sandboxDomainSchema,
+} from '@tenon-app/contracts'
 
 /**
  * Creates `<root>/profiles/<userId>/<tenantId>/` with its phase-0 sub-directories
@@ -50,14 +55,44 @@ export async function readConfig(
     return configSchema.parse({})
   }
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return configSchema.parse({})
-  const { customVendors, mcpServers, ...rest } = raw as Record<string, unknown>
+  const { customVendors, mcpServers, sandbox, ...rest } = raw as Record<string, unknown>
   const parsed = configSchema.safeParse(rest)
   const config = parsed.success ? parsed.data : fieldwise(rest)
   return {
     ...config,
+    sandbox: readSandbox(sandbox, log),
     providerConfig: withoutInstanceSettings(config.providerConfig),
     customVendors: readCustomVendors(customVendors, log),
     mcpServers: readMcpServers(mcpServers, log),
+  }
+}
+
+/** A malformed allowlist row costs itself, preserving the chosen profile and preset (04 §配置). */
+function readSandbox(value: unknown, log: (line: string) => void): Config['sandbox'] {
+  const defaults = configSchema.parse({}).sandbox
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return defaults
+  const source = value as Record<string, unknown>
+  const domains: string[] = []
+  if (Array.isArray(source['allowedDomains'])) {
+    const seen = new Set<string>()
+    source['allowedDomains'].forEach((entry: unknown, index: number) => {
+      const parsed = sandboxDomainSchema.safeParse(entry)
+      if (!parsed.success) {
+        log(`[config] sandbox.allowedDomains[${index}] dropped: invalid-domain`)
+      } else if (!seen.has(parsed.data)) {
+        seen.add(parsed.data)
+        domains.push(parsed.data)
+      }
+    })
+  }
+  if (domains.length > 256) log('[config] sandbox.allowedDomains truncated to 256 entries')
+  return {
+    profile: source['profile'] === 'read-only' ? 'read-only' : defaults.profile,
+    allowedDomains: domains.slice(0, 256),
+    packageManagers:
+      typeof source['packageManagers'] === 'boolean'
+        ? source['packageManagers']
+        : defaults.packageManagers,
   }
 }
 

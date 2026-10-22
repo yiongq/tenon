@@ -145,6 +145,17 @@ export interface AnswerResult {
   readonly status: 'applied' | 'already-resolved' | 'stale' | 'not-found' | 'invalid' | 'refused'
 }
 
+export interface ReleaseQuery {
+  readonly sessionId: string
+  readonly callKey: string
+  readonly action: 'allow-domain' | 'allow-path' | 'rerun-unsandboxed'
+  readonly target: string | null
+}
+
+export interface ReleaseResult {
+  readonly status: 'released' | 'already-released' | 'stale' | 'not-found' | 'refused'
+}
+
 export interface ResumeResult {
   readonly status: 'started' | 'none' | 'refused'
 }
@@ -237,6 +248,8 @@ export interface SessionService {
   send(q: SendQuery): Promise<SendResult>
   /** 「继续」 after a truncated or limited Run (plan step 13). */
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
+  /** A receipt release, serialized with commands of its root session. */
+  release(q: ReleaseQuery): Promise<ReleaseResult>
   /** An answer to an approval card or a question (plan steps 15 and 26). */
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
   /** The card a root waits on, for `approval.current` (§答复与投递); null when nothing waits. */
@@ -446,6 +459,7 @@ export function constructSessionService(
     send: (q) => loop.send(q),
     continueRun: (q) => loop.continueRun(q),
     answer: (q) => loop.answer(q),
+    release: (q) => loop.release(q),
     currentPending: (q) => loop.currentPending(q),
     listPendingRoots: (q) => loop.listPendingRoots(q),
     stop: (q) => loop.stop(q),

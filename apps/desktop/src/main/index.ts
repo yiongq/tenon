@@ -30,6 +30,7 @@ import { createProbeRuns, registerCustomVendorRoutes } from './custom-vendors/ro
 import { registerConfigRoutes } from './config.js'
 import { loadDevEnv } from './dev-env.js'
 import { createDesktopHost } from './host/index.js'
+import { startSandboxAfterWindow } from './host/sandbox-runtime.js'
 import { pickShell, snapshotEnv, startCommandShell } from './host/shell-env.js'
 import { readConfig } from './host/profile.js'
 import { compactionTestOptions } from './compaction-test-seam.js'
@@ -55,7 +56,8 @@ import {
 } from './window-theme.js'
 import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
-import { createShutdown, refuseWhileShuttingDown } from './shutdown.js'
+import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
+import { startSingleInstance } from './single-instance.js'
 import {
   createSessionRemoval,
   exposeSessionRemoval,
@@ -69,8 +71,7 @@ const LOCAL_TENANT_ID = 'personal'
 /** Read by the preload (the literal is repeated there, as `--tenon-locale=` already is). */
 const NEW_CHAT_ARG = '--tenon-new-chat'
 
-// Placeholders, not implemented in phase 0: app.requestSingleInstanceLock() and the
-// `tenon://` deep-link registration.
+// Placeholder, not implemented in phase 0: the `tenon://` deep-link registration.
 
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -257,10 +258,14 @@ async function main(): Promise<void> {
           send: broadcast,
           locale: () => (locale.current === 'zh-CN' ? 'zh-CN' : 'en'),
           commandShell,
+          sandbox: host.sandbox,
           removing,
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  host.sandbox.bindSessionFolders(
+    async (sessionId) => (await sessions?.sessionFacts({ sessionId }))?.workspace?.folders ?? [],
+  )
   // Right after bindLoop: the routes below wait for it (spec 02 §启动恢复与发送防护).
   const recovery = startRecovery({
     sessions,
@@ -273,6 +278,7 @@ async function main(): Promise<void> {
   const shutdown = createShutdown<BrowserWindow>({
     app,
     dialog,
+    sandbox: host.sandbox,
     registry: loop?.registry ?? null,
     mcp,
     tape,
@@ -383,7 +389,9 @@ async function main(): Promise<void> {
   })
   registerModelRoutes({ ipcMain: routes, sessions, providers, host, gate: recovery.ready })
 
-  const win = openWindow()
+  const win = startSandboxAfterWindow(openWindow, host.sandbox)
+  // start() returns the same run: signal handling observes startup without awaiting it here.
+  registerSandboxSignals({ process, app, sandbox: host.sandbox, run: host.sandbox.start() })
   win.webContents.on('did-finish-load', () => {
     win.webContents.send(configLocale.channel, { locale: locale.current })
   })
@@ -398,7 +406,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-void main().catch((error: unknown) => {
+void startSingleInstance(
+  app,
+  () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0],
+  main,
+).catch((error: unknown) => {
   console.error('[main] failed to start', error)
   app.exit(1)
 })

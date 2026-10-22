@@ -39,18 +39,24 @@ describe('the desktop’s inspectors', () => {
     })
   })
 
-  it('02 不变量 17: keeps the answer source receipt-override as a literal nothing writes', () => {
-    // Overriding a block from its receipt ships with the first denying inspector (F9): until then
-    // the only mention is the member of `ApprovalResolvedPayload.via` on the Tape's type.
-    const mentions = [...sources('packages/kernel/src'), ...sources('apps/desktop/src')].flatMap(
-      (file) =>
+  it('02 不变量 17: only release writes receipt overrides, never approval answers', () => {
+    // Spec 04 §放行的记法 and 点名 (g): the `via` member of `ApprovalResolvedPayload` keeps no
+    // writer, and only the receipt release implementation may write the new fact.
+    const mentions = (literal: string): string[] =>
+      [...sources('packages/kernel/src'), ...sources('apps/desktop/src')].flatMap((file) =>
         readFileSync(join(REPO, file), 'utf8')
           .split('\n')
-          .flatMap((line) =>
-            line.includes('receipt-override') ? [`${file}: ${line.trim()}`] : [],
-          ),
-    )
-    expect(mentions).toHaveLength(1)
-    expect(mentions[0]).toMatch(/^packages\/kernel\/src\/tape\/entry\.ts: via: 'card' \|/)
+          .flatMap((line) => (line.includes(literal) ? [`${file}: ${line.trim()}`] : [])),
+      )
+    expect(mentions("'receipt-override'")).toEqual([
+      "packages/kernel/src/permission/sandbox-release.ts: via: 'receipt-override',",
+      "packages/kernel/src/tape/entry.ts: via: 'receipt-override'",
+      "packages/kernel/src/tape/entry.ts: via: 'card' | 'stop' | 'new-message' | 'rejudge' | 'receipt-override' // 'receipt-override' 在 02 没有写入方（F9、F1）",
+    ])
+    expect(mentions("'tool/receipt_override'")).toEqual([
+      "packages/kernel/src/permission/sandbox-release.ts: const RECEIPT_OVERRIDE = 'tool/receipt_override'",
+      "packages/kernel/src/tape/names.ts: name: 'tool/receipt_override',",
+      "packages/kernel/src/tape/projection.ts: 'tool/receipt_override': ReceiptOverridePayload",
+    ])
   })
 })

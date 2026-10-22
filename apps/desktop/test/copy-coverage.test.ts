@@ -343,7 +343,7 @@ describe('the approval card copy', () => {
 describe('the tool row copy', () => {
   it('has a closure line for every ClosureSource, with nothing to fill', () => {
     // A closed call's `facts` exist only for a block code (§原因码表), so a closure line has no slots.
-    expect(CLOSURE_SOURCES).toHaveLength(24)
+    expect(CLOSURE_SOURCES).toHaveLength(25)
     const expected = CLOSURE_SOURCES.map((source) => ({
       key: `closure.${source}`,
       args: [],
@@ -352,8 +352,14 @@ describe('the tool row copy', () => {
     expect(problems(expected)).toEqual([])
   })
 
-  it('has a block notice for each of the four block codes, naming a subset of BLOCKED_FACT_KEYS', () => {
-    expect(BLOCK_CODES.toSorted()).toEqual(['inspector', 'policy', 'protected', 'user-disabled'])
+  it('has a block notice for each of the five block codes, naming a subset of BLOCKED_FACT_KEYS', () => {
+    expect(BLOCK_CODES.toSorted()).toEqual([
+      'inspector',
+      'policy',
+      'protected',
+      'sandbox',
+      'user-disabled',
+    ])
     for (const code of BLOCK_CODES) expect(CLOSURE_SOURCES).toContain(code)
     const expected: Expectation[] = BLOCK_CODES.flatMap((code) => {
       const keys =
@@ -370,7 +376,7 @@ describe('the tool row copy', () => {
       subset: true,
       what: 'chat Read',
     })
-    expect(expected).toHaveLength(8)
+    expect(expected).toHaveLength(9)
     expect(problems(expected)).toEqual([])
     // Kept for 04, but no longer rendered by the four-code notice.
     expect(problems([{ key: 'blocked.told', args: [], what: 'retained for 04' }])).toEqual([])

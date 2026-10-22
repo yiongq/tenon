@@ -4,6 +4,7 @@
  * before it is appended and the other clients' lines the owner writes by hand.
  */
 import { z } from 'zod'
+import type { SandboxPosture } from '@tenon-app/kernel'
 
 // apps/desktop/evals/record.ts —— 新增（02）；results/*.jsonl 每行一条
 export interface EvalRecord {
@@ -34,6 +35,7 @@ export interface EvalRecord {
   } | null // input = 未命中缓存的输入
   cost: { amount: number; currency: 'CNY' | 'USD'; usdCny?: number; fxDate?: string } | null
   durationMs: number | null
+  sandbox?: SandboxPosture // 04:26; absent on historical records and other clients
   timing?: { ttftMs: number; outputTokensPerSec: number } // timing：测速用，如 flashx
   raw?: string // 仓库外原始记录或录屏的文件名
   calib?: {
@@ -92,6 +94,12 @@ export const evalRecordSchema = z.strictObject({
     })
     .nullable(),
   durationMs: count.nullable(),
+  sandbox: z
+    .strictObject({
+      state: z.enum(['pending', 'active', 'degraded', 'unavailable']),
+      profile: z.enum(['read-only', 'workspace-write']),
+    })
+    .exactOptional(),
   timing: z.strictObject({ ttftMs: amount, outputTokensPerSec: amount }).exactOptional(),
   raw: z.string().min(1).exactOptional(),
   calib: z

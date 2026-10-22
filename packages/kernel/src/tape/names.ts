@@ -249,6 +249,14 @@ const declarations = [
     sourceSeq: 0,
   },
   {
+    name: 'message/sandbox_release',
+    kind: 'message',
+    slice: 'message',
+    sourceType: 'message',
+    sourceId: 'required',
+    sourceSeq: 0,
+  },
+  {
     name: 'message/server_instructions',
     kind: 'message',
     slice: 'message',
@@ -274,6 +282,14 @@ const declarations = [
   },
   {
     name: 'tool/approval_resolved',
+    kind: 'event',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'tool/receipt_override',
     kind: 'event',
     slice: 'tool',
     sourceType: 'runtime_event',

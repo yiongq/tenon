@@ -348,7 +348,7 @@ describe('Bash against a fake child', () => {
       isError: true,
       state: 'completed',
     })
-    expect(fake.kills).toEqual([])
+    expect(fake.kills).toEqual(['SIGKILL'])
   })
 
   it('keeps draining past the longest string it can hold, so the command ends as it ends', async () => {

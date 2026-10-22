@@ -18,6 +18,7 @@ import type {
   RunLease,
   RunOrigin,
   SessionService,
+  SandboxPorts,
 } from '@tenon-app/kernel'
 import type { EventSender } from './host/index.js'
 import { localDateOf } from './locale.js'
@@ -294,6 +295,7 @@ export interface DesktopLoopOptions {
   readonly locale: () => 'zh-CN' | 'en'
   /** Bash's shell and the user's terminal environment: host/shell-env.ts's `startCommandShell`. */
   readonly commandShell: CommandShell
+  readonly sandbox?: SandboxPorts
   /** The RunRegistry's `removing`: a root being cleared or deleted (session-removal.ts). */
   readonly removing?: (rootSessionId: string) => boolean
   readonly log?: (line: string) => void
@@ -342,6 +344,14 @@ export function createDesktopLoop(options: DesktopLoopOptions): DesktopLoop {
       // Open question 16 (owner 2026-09-26): the user's local date, in this machine's time zone.
       localDate: () => localDateOf(options.clock.now()),
       commandShell: options.commandShell,
+      ...(options.sandbox === undefined
+        ? {}
+        : {
+            sandbox: {
+              beforeWrap: (q) => options.sandbox!.beforeWrap(q),
+              grantsChanged: (q) => options.sandbox!.grantsChanged(q),
+            },
+          }),
     },
   }
 }

@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { setImmediate } from 'node:timers/promises'
 import { absolutePath } from '@tenon-app/kernel'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopFs } from '../src/main/host/fs.js'
@@ -10,7 +11,9 @@ import {
   openProfile,
   providerSettingsGeneration,
   readConfig,
+  withConfigLock,
   writeConfig,
+  writeConfigHeld,
 } from '../src/main/host/profile.js'
 
 /** Acceptance 5: two tenants write config.json to different, mutually invisible paths. */
@@ -83,8 +86,203 @@ describe('desktop profiles', () => {
       ...before,
       customVendors: [],
       mcpServers: [],
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
     })
     expect(lines).toEqual([])
+  })
+
+  it('04 验收 27: a config.json from before 04 reads sandbox as the default and keeps the other keys', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    const before = {
+      locale: 'en',
+      sidebarCollapsed: true,
+      provider: { id: 'anthropic', modelId: 'chosen-model' },
+      providerConfig: { anthropic: { baseURL: 'https://api.example.com' } },
+      defaultModelByProfile: { chat: { id: 'anthropic', modelId: 'other-model' } },
+      lastWorkspaceFolders: ['/work/a'],
+      customVendors: [],
+      mcpServers: [],
+    }
+    await fs.writeFile(configPath(identity), JSON.stringify(before))
+    const lines: string[] = []
+    expect(await readConfig(fs, identity, (line) => lines.push(line))).toEqual({
+      ...before,
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+    })
+    expect(lines).toEqual([])
+  })
+
+  it('04 验收 27: a bad domain entry drops only itself', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({
+        locale: 'en',
+        sandbox: {
+          profile: 'read-only',
+          packageManagers: true,
+          allowedDomains: ['EXAMPLE.COM', '*.com', 'localhost:3000', 'example.com', 5],
+        },
+      }),
+    )
+    const lines: string[] = []
+    expect(await readConfig(fs, identity, (line) => lines.push(line))).toMatchObject({
+      locale: 'en',
+      sandbox: {
+        profile: 'read-only',
+        packageManagers: true,
+        allowedDomains: ['example.com', 'localhost:3000'],
+      },
+    })
+    expect(lines).toEqual([
+      '[config] sandbox.allowedDomains[1] dropped: invalid-domain',
+      '[config] sandbox.allowedDomains[4] dropped: invalid-domain',
+    ])
+  })
+
+  it('04 验收 27: an oversized allowlist keeps its first 256 entries and logs the truncation', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await fs.writeFile(
+      configPath(identity),
+      JSON.stringify({
+        sandbox: {
+          profile: 'read-only',
+          packageManagers: true,
+          allowedDomains: Array.from({ length: 257 }, (_, i) => `d${i}.example.com`),
+        },
+      }),
+    )
+    const lines: string[] = []
+    const config = await readConfig(fs, identity, (line) => lines.push(line))
+    expect(config.sandbox.profile).toBe('read-only')
+    expect(config.sandbox.packageManagers).toBe(true)
+    expect(config.sandbox.allowedDomains).toHaveLength(256)
+    expect(config.sandbox.allowedDomains[0]).toBe('d0.example.com')
+    expect(config.sandbox.allowedDomains[255]).toBe('d255.example.com')
+    expect(config.sandbox.allowedDomains).not.toContain('d256.example.com')
+    expect(lines).toEqual(['[config] sandbox.allowedDomains truncated to 256 entries'])
+  })
+
+  it('04 验收 27: sandbox writes normalize domains, preserve other keys and survive unrelated saves', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await writeConfig(fs, identity, { locale: 'en', lastWorkspaceFolders: ['/work/a'] })
+    const replace = vi.spyOn(fs, 'replaceFile')
+    const direct = vi.spyOn(fs, 'writeFile')
+    const next = await writeConfig(fs, identity, {
+      sandbox: {
+        profile: 'read-only',
+        allowedDomains: ['EXAMPLE.COM', 'example.com', 'localhost:3000'],
+        packageManagers: true,
+      },
+    })
+    expect(next.sandbox).toEqual({
+      profile: 'read-only',
+      allowedDomains: ['example.com', 'localhost:3000'],
+      packageManagers: true,
+    })
+    expect(replace).toHaveBeenCalledOnce()
+    expect(replace).toHaveBeenCalledWith(configPath(identity), `${JSON.stringify(next, null, 2)}\n`)
+    expect(direct).not.toHaveBeenCalled()
+    const saved = JSON.parse(
+      (await fs.readFile(configPath(identity), { encoding: 'utf8' })) as string,
+    )
+    expect(saved).toMatchObject({
+      locale: 'en',
+      lastWorkspaceFolders: ['/work/a'],
+      sandbox: {
+        profile: 'read-only',
+        allowedDomains: ['example.com', 'localhost:3000'],
+        packageManagers: true,
+      },
+    })
+    await writeConfig(fs, identity, { sidebarCollapsed: true, sandbox: undefined })
+    expect((await readConfig(fs, identity)).sandbox).toEqual({
+      profile: 'read-only',
+      allowedDomains: ['example.com', 'localhost:3000'],
+      packageManagers: true,
+    })
+    expect(await readdir(identity.profileDir)).toEqual([
+      'config.json',
+      'logs',
+      'mcp',
+      'plugins',
+      'skills',
+    ])
+  })
+
+  it.each(
+    [['example.com', '*.com'], Array.from({ length: 257 }, (_, i) => `d${i}.example.com`)].map(
+      (allowedDomains) => ({ allowedDomains }),
+    ),
+  )(
+    '04 验收 27: an invalid sandbox write leaves the file intact ($allowedDomains.length entries)',
+    async ({ allowedDomains }) => {
+      const fs = new DesktopFs()
+      const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+      await writeConfig(fs, identity, { locale: 'en' })
+      const before = await fs.readFile(configPath(identity), { encoding: 'utf8' })
+      await expect(
+        writeConfig(fs, identity, {
+          sandbox: { profile: 'read-only', allowedDomains, packageManagers: true },
+        }),
+      ).rejects.toThrow(/allowedDomains/)
+      expect(await fs.readFile(configPath(identity), { encoding: 'utf8' })).toBe(before)
+    },
+  )
+
+  it('04 验收 27: sandbox writes wait for the profile lock and preserve a concurrent save', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await writeConfig(fs, identity, { locale: 'en' })
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const other = withConfigLock(identity, async () => {
+      entered.resolve()
+      await release.promise
+      await writeConfigHeld(fs, identity, { locale: 'zh-CN', sidebarCollapsed: true })
+    })
+    await entered.promise
+    const read = vi.spyOn(fs, 'stat')
+    const saving = writeConfig(fs, identity, {
+      sandbox: { profile: 'read-only', allowedDomains: ['example.com'], packageManagers: true },
+    })
+    try {
+      await setImmediate()
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      release.resolve()
+      await Promise.allSettled([other, saving])
+    }
+    await Promise.all([other, saving])
+    expect(await readConfig(fs, identity)).toMatchObject({
+      locale: 'zh-CN',
+      sidebarCollapsed: true,
+      sandbox: { profile: 'read-only', allowedDomains: ['example.com'], packageManagers: true },
+    })
+  })
+
+  it('04 验收 27: a failed sandbox replacement keeps the old file and releases the lock', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'personal')
+    await writeConfig(fs, identity, { locale: 'en' })
+    const before = await fs.readFile(configPath(identity), { encoding: 'utf8' })
+    vi.spyOn(fs, 'replaceFile').mockRejectedValueOnce(new Error('ENOSPC'))
+    await expect(
+      writeConfig(fs, identity, {
+        sandbox: { profile: 'read-only', allowedDomains: ['example.com'], packageManagers: true },
+      }),
+    ).rejects.toThrow('ENOSPC')
+    expect(await fs.readFile(configPath(identity), { encoding: 'utf8' })).toBe(before)
+    await writeConfig(fs, identity, { sidebarCollapsed: true })
+    expect(await readConfig(fs, identity)).toMatchObject({
+      locale: 'en',
+      sidebarCollapsed: true,
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+    })
   })
 
   it('lets one bad field cost that field and nothing else', async () => {
@@ -106,6 +304,7 @@ describe('desktop profiles', () => {
       lastWorkspaceFolders: [],
       customVendors: [],
       mcpServers: [],
+      sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })

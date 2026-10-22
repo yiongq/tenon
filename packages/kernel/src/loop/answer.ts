@@ -631,6 +631,9 @@ export async function rejudgeWaiting(q: {
       searchHost: current?.host ?? null,
       ...(current == null ? {} : { prepareSearch: () => current }),
       ignoreSearchGrant: changed,
+      ...(waiting.decision.sandbox === undefined
+        ? {}
+        : { previousSandbox: waiting.decision.sandbox }),
     },
     item,
     waiting.call,

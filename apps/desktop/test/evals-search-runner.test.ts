@@ -102,6 +102,7 @@ it.each([true, false])(
     let facts: TapeEntry[] = []
     let cards: unknown[] = []
     const record = await runTask({
+      sandbox: 'passthrough',
       task: {
         id: '08-search-binding',
         profile: 'cowork',

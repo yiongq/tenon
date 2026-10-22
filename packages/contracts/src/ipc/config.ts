@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sandboxSettingsSchema } from './sandbox.js'
 import { defineEvent, defineRoute } from '../route.js'
 import { mcpServerSchema } from './mcp.js'
 import { customVendorSchema } from './custom-vendor.js'
@@ -33,6 +34,11 @@ export type ProviderSelection = z.infer<typeof providerSelectionSchema>
  * key — parses into a valid Config rather than being discarded as corrupt.
  */
 export const configSchema = z.object({
+  sandbox: sandboxSettingsSchema.default({
+    profile: 'workspace-write',
+    allowedDomains: [],
+    packageManagers: false,
+  }),
   mcpServers: z.array(mcpServerSchema).default([]),
   locale: localeSettingSchema.default('auto'),
   sidebarCollapsed: z.boolean().default(false),

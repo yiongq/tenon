@@ -450,6 +450,7 @@
     "user-disabled": "被拦下：这个工具已关闭。",
     "protected": "被拦下：Tenon 保护这个位置。",
     "inspector": "被权限检查拦下。",
+    "sandbox": "命令中的部分操作被拦下。",
     "tool-unavailable": "没有执行：这个工具不可用。",
     "invalid-input": "没有执行：参数不合法。",
     "stopped": "已停止。",
@@ -470,6 +471,7 @@
     "connector-unauthorized": "需要重新登录此连接器；本次调用未执行。"
   },
   "blocked": {
+    "sandbox": "{toolName} 中的部分操作被拦下。",
     "policy": "你的组织不允许这一步。",
     "user-disabled": "你在设置里关掉了它。",
     "protected": {

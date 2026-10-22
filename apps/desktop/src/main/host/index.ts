@@ -9,7 +9,7 @@ import { originMapTestNetwork } from './origin-map-test-seam.js'
 import { createHostProcess } from './process.js'
 import { EmptyPolicy } from './policy.js'
 import { openProfile } from './profile.js'
-import { PassthroughSandbox } from './sandbox.js'
+import { createDesktopSandboxRuntime } from './sandbox-runtime.js'
 import { KeychainSecrets, MemorySecrets } from './secrets.js'
 import type { StartupEnv } from './shell-env.js'
 
@@ -44,15 +44,27 @@ export function useMemorySecrets(
 }
 
 /** Builds the desktop HostAdapter and creates the profile directory on the way. */
-export async function createDesktopHost(options: DesktopHostOptions): Promise<HostAdapter> {
+export async function createDesktopHost(options: DesktopHostOptions): Promise<
+  HostAdapter & {
+    sandbox: Awaited<ReturnType<typeof createDesktopSandboxRuntime>>
+  }
+> {
   const fs = new DesktopFs()
   const identity = await openProfile(fs, options.userDataDir, options.userId, options.tenantId)
+  const hostProcess = createHostProcess(options.log)
+  const sandbox = await createDesktopSandboxRuntime({
+    host: { fs, identity, process: hostProcess },
+    userDataDir: options.userDataDir,
+    isPackaged: options.isPackaged,
+    startupEnv: options.startupEnv,
+    log: options.log,
+  })
   return {
     identity,
     fs,
     secrets: useMemorySecrets(options.isPackaged) ? new MemorySecrets() : new KeychainSecrets(),
-    process: createHostProcess(options.log),
-    sandbox: new PassthroughSandbox(options.log),
+    process: hostProcess,
+    sandbox,
     confirm: new IpcConfirm(options.send),
     clock: new SystemClock(),
     // The origin map innermost: the official protocol seam sees the URL as configured (M6 不变量 19).

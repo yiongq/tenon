@@ -597,3 +597,29 @@ it('a message/server_instructions entry folds into the context as a user turn', 
     { role: 'user', content: [{ type: 'text', text: 'connector information' }] },
   ])
 })
+
+it('a message/sandbox_release folds into the context like message/environment', () => {
+  const environment = messageEntry(1, 'environment', 0, 'user', [
+    { type: 'text', text: 'environment information' },
+  ])
+  environment.name = 'message/environment'
+  const release = messageEntry(2, 'release', 0, 'user', [
+    { type: 'text', text: 'release information' },
+  ])
+  release.name = 'message/sandbox_release'
+  release.payload['overrides'] = [
+    'tool:v1:override:33333333-3333-4333-8333-333333333333:1:0:allow-domain:0',
+  ]
+  expect(effectiveMessages([environment, release])).toMatchObject([
+    {
+      messageId: 'environment',
+      role: 'user',
+      content: [{ type: 'text', text: 'environment information' }],
+    },
+    {
+      messageId: 'release',
+      role: 'user',
+      content: [{ type: 'text', text: 'release information' }],
+    },
+  ])
+})

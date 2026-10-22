@@ -17,7 +17,8 @@
  */
 import type { AbsolutePath, ChildHandle, HostAdapter, HostClock } from '../../host/adapter.js'
 import { STOP_EXIT_CONFIRM_MS, STOP_TERM_GRACE_MS } from '../../loop/limits.js'
-import { fill } from '../../prompts/index.js'
+import type { SandboxPlan } from '../../tape/entry.js'
+import { MODEL_NOTES, fill } from '../../prompts/index.js'
 import type { ToolExecution, ToolExecutor } from '../executor.js'
 import { failed } from './files.js'
 import type { BuiltinTool } from './tool.js'
@@ -35,6 +36,9 @@ export interface CommandShell {
 
 /** What one Bash call runs with, gathered by the batch before its dispatch. */
 export interface CommandRun {
+  /** The decision named by this dispatch; absent for pre-04 callers. */
+  readonly plan?: SandboxPlan
+  readonly beforeWrap?: () => void | Promise<void>
   /** `SandboxRequest.commandId`: the call's `providerToolCallId` (adapter.ts). */
   readonly commandId: string
   readonly shell: AbsolutePath
@@ -58,6 +62,8 @@ const DESCRIPTION = [
   'A command that exits with a non-zero code is reported as an error whose first line is `Exit code: N`.',
   `It is stopped after ${String(BASH_DEFAULT_TIMEOUT_MS)} ms unless timeout says otherwise (at most ${String(BASH_MAX_TIMEOUT_MS)} ms).`,
   'There is no background mode.',
+  'When the sandbox is active, commands can write only to workspace folders and connect only to domains the user has allowed; blocked operations are listed in <sandbox_violations> after the output.',
+  'In the Linux sandbox, empty placeholders such as `.envrc`, `.bashrc` and `.vscode` may appear at workspace roots; they are not user files, so do not stage or commit them, and use `git add <path>` rather than `git add -A`.',
   'Use Read, Glob and Grep rather than cat, find or grep, and Edit or Write rather than editing files from the shell.',
 ].join(' ')
 
@@ -118,18 +124,30 @@ export const bashExecutor: ToolExecutor = async (q) => {
   const timeout =
     typeof q.input['timeout'] === 'number' ? q.input['timeout'] : BASH_DEFAULT_TIMEOUT_MS
   let child: ChildHandle
+  let wrappedSuccessfully = false
+  const cleanup = () => sandbox.afterExit(run.commandId).catch(() => {})
   try {
     if (run.dedicated) await q.fs.mkdirp(cwd)
+    await run.beforeWrap?.()
+    const plan = run.plan
+    const path = plan?.override?.action === 'allow-path' ? plan.override.path : undefined
+    const workspace =
+      plan?.chosen === 'read-only' && plan.profile === 'workspace-write' ? [] : [...run.folders]
+    if (path !== undefined) workspace.push(path)
     const wrapped = await sandbox.wrap({
       commandId: run.commandId,
       argv: [run.shell, '-c', COMMAND_SCRIPT, run.shell, command],
       cwd,
       env: { ...run.env },
-      profile: 'workspace-write', // phase 2's wrap passes through: the intent only
-      workspace: [...run.folders],
+      profile: plan?.profile ?? 'workspace-write',
+      workspace,
     })
+    wrappedSuccessfully = true
     // A stop that landed while the folder was made or the command wrapped: nothing is started.
-    if (q.signal.aborted) return { content: [], isError: true, state: 'aborted' }
+    if (q.signal.aborted) {
+      await cleanup()
+      return { content: [], isError: true, state: 'aborted' }
+    }
     child = await run.host.process.spawn({
       argv: wrapped.argv,
       cwd,
@@ -137,9 +155,9 @@ export const bashExecutor: ToolExecutor = async (q) => {
       stdio: 'pipe',
     })
   } catch (error) {
+    if (wrappedSuccessfully) await cleanup()
     return failed(fill(BASH_TEXTS.notStarted, { message: messageOf(error) }))
   }
-  const afterExit = child.exited.then(() => sandbox.afterExit(run.commandId)).catch(() => {})
   void child.stdin.close().catch(() => {})
   const output = readOutput(child.stdout)
 
@@ -158,9 +176,14 @@ export const bashExecutor: ToolExecutor = async (q) => {
     const exit = await child.exited
     // A process left in the background may hold the pipe for good (stdio-transport.ts:96).
     await drainWithin(output, clock, STOP_EXIT_CONFIRM_MS)
-    await afterExit
+    try {
+      await child.kill('SIGKILL')
+    } catch {
+      // The process group may already be gone (ESRCH).
+    }
+    await cleanup()
     void child.stderr.cancel().catch(() => {})
-    return commandResult(exit, output.text())
+    return withViolations(commandResult(exit, output.text()), run)
   }
   // One sequence for the stop and the timeout; a stop during a timeout's kill stays `timed-out`.
   await child.kill('SIGTERM').catch(() => {})
@@ -174,14 +197,51 @@ export const bashExecutor: ToolExecutor = async (q) => {
   if (confirmed) await Promise.race([output.done, window.elapsed])
   window.cancel()
   await output.cancel()
-  if (confirmed) await afterExit
+  if (confirmed) await cleanup()
+  else void child.exited.then(cleanup).catch(() => {})
   void child.stderr.cancel().catch(() => {})
   const text = output.text()
-  return {
+  const result: ToolExecution = {
     content: text === '' ? [] : [{ type: 'text', text }],
     isError: true,
     state: confirmed ? 'aborted' : 'uncertain',
     ...(how === 'timed-out' ? { source: 'timed-out' as const } : {}),
+  }
+  return confirmed ? withViolations(result, run) : result
+}
+
+/** Host-classified diagnostics: raw lines reach the model only as JSON strings. */
+async function withViolations(result: ToolExecution, run: CommandRun): Promise<ToolExecution> {
+  const all = await run.host.sandbox.violations(run.commandId)
+  if (all.length === 0) return result
+  const kept = all.slice(0, 20)
+  const more = all.length - kept.length
+  return {
+    ...result,
+    ...(result.state === 'completed' && all.some((v) => v.observed !== true)
+      ? { source: 'sandbox' as const, facts: { toolName: 'Bash' } }
+      : {}),
+    sandbox: {
+      violations: kept.map((v) => ({
+        kind: v.kind,
+        target: v.target ?? null,
+        release: v.release ?? null,
+        protected: v.protected === true,
+        observed: v.observed === true,
+      })),
+      more,
+      anyProtected: all.some((v) => v.protected === true),
+    },
+    sandboxBlock: {
+      type: 'text',
+      text: [
+        MODEL_NOTES.sandbox.violations,
+        '<sandbox_violations>',
+        ...kept.map((v) => JSON.stringify(v.line)),
+        ...(more === 0 ? [] : [String(more)]),
+        '</sandbox_violations>',
+      ].join('\n'),
+    },
   }
 }
 

@@ -1,7 +1,7 @@
 /**
  * The eval test host (spec 02 §评测集与测试宿主; D7). Answering cards by itself is this host's
- * behaviour, never a setting a user gets. 02 has no sandbox: files and commands go through the
- * desktop's real fs and process, and the host holds these lines instead:
+ * behaviour, never a setting a user gets. Files and commands go through the desktop's real fs and
+ * process; model commands use DesktopSandbox (04:26), and the host also holds these lines:
  *
  *   - One `mkdtemp` directory per run holds the profile, the workspace (copied from the fixture,
  *     `dotenv.txt` renamed to `.env`), and the HOME and TMPDIR a command sees; a command's cwd is the
@@ -70,6 +70,8 @@ import { dedicatedFolderFor } from '../src/main/workspace.js'
 import type { EvalColumn } from './models.js'
 import type { EvalTask } from './task.js'
 import { fixtureFile, fixtureSymlink, searchHitsSchema } from './task.js'
+import { createEvalSandbox } from './sandbox.js'
+import type { EvalSandbox } from './sandbox.js'
 
 export const EVAL_USER_ID = 'eval'
 export const EVAL_TENANT_ID = 'eval'
@@ -237,7 +239,8 @@ export interface EvalHost {
   readonly search: SearchBackend | null
   /** Every URL the fake `fetchUntrusted` was asked for. */
   readonly fetched: readonly string[]
-  dispose(): void
+  readonly sandbox: EvalSandbox | null
+  dispose(): Promise<void>
 }
 
 export interface EvalHostOptions {
@@ -256,6 +259,8 @@ export interface EvalHostOptions {
    * sets it.
    */
   readonly originMap?: string
+  /** Offline tests only: preserve the environment-only test's unwrapped command (04 T40). */
+  readonly sandbox?: 'passthrough'
 }
 
 export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost> {
@@ -263,6 +268,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
   // Resolved: on macOS the temp folder is behind /var → /private/var, and the workspace judgement
   // compares real paths.
   const dir = absolutePath(realpathSync(mkdtempSync(join(tmpdir(), 'tenon-eval-'))))
+  let sandbox: EvalSandbox | null = null
   try {
     const home = absolutePath(join(dir, 'home'))
     const tmp = absolutePath(join(dir, 'tmp'))
@@ -310,6 +316,11 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
     const policy = new SwappablePolicy()
     const confirm = new RecordingConfirm()
     const env = childEnv(home, tmp, options.runnerEnv)
+    sandbox =
+      options.sandbox === 'passthrough'
+        ? null
+        : await createEvalSandbox(absolutePath(identity.profileDir), options.log)
+    const taskSandbox = sandbox
     return {
       dir,
       home,
@@ -323,7 +334,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
         fs,
         secrets,
         process: createHostProcess(options.log),
-        sandbox: new PassthroughSandbox(options.log),
+        sandbox: taskSandbox?.sandbox ?? new PassthroughSandbox(options.log),
         confirm,
         clock: new SystemClock(),
         network,
@@ -336,9 +347,17 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
       commandShell: { path: pickShell(), env: () => Promise.resolve({ ...env }) },
       search,
       fetched,
-      dispose: () => rmSync(dir, { recursive: true, force: true }),
+      sandbox: taskSandbox,
+      dispose: async () => {
+        try {
+          await taskSandbox?.dispose()
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      },
     }
   } catch (error) {
+    await sandbox?.dispose()
     rmSync(dir, { recursive: true, force: true })
     throw error
   }

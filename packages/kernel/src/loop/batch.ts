@@ -36,6 +36,7 @@ import type { SubagentHandoff } from './subagent.js'
  */
 import type { AbsolutePath, ConfirmTarget, HostAdapter, Reversibility } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
+import { sandboxDomainHosts, unboundSandboxOverride } from '../permission/sandbox-release.js'
 import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
@@ -60,6 +61,7 @@ import type {
   FactWriter,
   NewEntry,
   PermissionDecidedPayload,
+  SandboxPlan,
   TapeEntry,
   WorkspaceSetPayload,
 } from '../tape/entry.js'
@@ -81,7 +83,7 @@ import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
-import type { McpToolSource, RunAbortCause } from './ports.js'
+import type { McpToolSource, RunAbortCause, SandboxPorts } from './ports.js'
 import { handoffView, resultErrorView } from './events.js'
 import type { ToolOutcomeView } from './events.js'
 
@@ -116,6 +118,7 @@ export type AgentDispatchResult =
     }
 
 export interface BatchContext {
+  readonly sandbox?: SandboxPorts
   readonly budgetExceeded?: () => number | null
   readonly agent?: (q: AgentDispatch) => Promise<AgentDispatchResult>
   readonly tape: Tape
@@ -695,7 +698,9 @@ async function execute(
   const facts = await perform(ctx, call, item, executor, q)
   await close(ctx, call, facts, q.summary)
   return facts.some(
-    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['source'] === 'protected',
+    (entry) =>
+      entry.name === 'execution/tool_outcome' &&
+      (entry.payload['source'] === 'protected' || entry.payload['source'] === 'sandbox'),
   )
 }
 
@@ -718,6 +723,30 @@ async function perform(
   executor: ToolExecutor,
   q: Performed,
 ): Promise<NewEntry[]> {
+  let command = q.command
+  if (command !== undefined) {
+    const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+    const dispatch = entries.find(
+      (e) => e.provenanceKey === dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
+    )
+    const decision = entries.find((e) => e.provenanceKey === dispatch?.payload['decisionKey'])
+    const plan = decision?.payload['sandbox'] as SandboxPlan | undefined
+    command = {
+      ...command,
+      ...(plan === undefined ? {} : { plan }),
+      beforeWrap: async () => {
+        const hosts = await sandboxDomainHosts(
+          (id) => readSessionEntries(ctx.tape, id),
+          ctx.sessionId,
+        )
+        ctx.sandbox?.beforeWrap({
+          commandId: call.providerToolCallId,
+          sessionId: ctx.sessionId,
+          hosts,
+        })
+      },
+    }
+  }
   const running = executor({
     item,
     input: call.input,
@@ -742,13 +771,17 @@ async function perform(
           },
         }
       : {}),
-    ...(q.command === undefined ? {} : { command: q.command }),
+    ...(command === undefined ? {} : { command }),
   })
   const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
   const stopped = execution.state !== 'completed'
   // A Bash timeout is its own code; every other call that did not complete was aborted, by a stop or
   // by the shutdown.
-  const source = stopped ? (execution.source ?? abortSourceOf(ctx.cause())) : null
+  const source = stopped
+    ? (execution.source ?? abortSourceOf(ctx.cause()))
+    : execution.source === 'sandbox'
+      ? 'sandbox'
+      : null
   const output = textOf(execution.content)
   const ref = refOf(ctx, call)
   // The one spill check, on what is about to be written (§大响应落盘): a command's output after its
@@ -760,7 +793,7 @@ async function perform(
     call: ref,
     result: {
       content:
-        source === null
+        source === null || source === 'sandbox'
           ? execution.content
           : closureContent({
               source,
@@ -777,7 +810,11 @@ async function perform(
     tape: ctx.tape,
     now: ctx.now,
     call: ref,
-    content: checked.content,
+    content: [
+      ...checked.content,
+      ...(execution.sandboxBlock === undefined ? [] : [execution.sandboxBlock]),
+    ],
+    ...(execution.sandbox === undefined ? {} : { sandbox: execution.sandbox }),
     isError: checked.isError,
     kernelAuthored: checked.kernelAuthored,
     ...(checked.spill === undefined ? {} : { spill: checked.spill }),
@@ -968,6 +1005,9 @@ export function closedView(
       : {
           reversibility: outcome['reversibility'] as NonNullable<ToolOutcomeView['reversibility']>,
         }),
+    ...(outcome['sandbox'] === undefined
+      ? {}
+      : { sandbox: outcome['sandbox'] as NonNullable<ToolOutcomeView['sandbox']> }),
     source: (outcome['source'] ?? null) as ToolOutcomeView['source'],
     ...(outcome['facts'] === undefined
       ? {}
@@ -1057,6 +1097,8 @@ export interface JudgeContext {
   /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
   readonly searchHost: string | null
   readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
+  /** A re-judgement retains a bound override, and unavailable while posture is pending. */
+  readonly previousSandbox?: SandboxPlan
   readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
 }
@@ -1067,6 +1109,7 @@ export type Judgement =
       readonly kind: 'judged'
       readonly definitionChanged?: true
       readonly decision: Decision
+      readonly sandbox?: SandboxPlan
       readonly reversibility: Reversibility
       readonly place?: PathPlace
       /** Where a file tool acts, when it runs: the real path the decision placed; null otherwise. */
@@ -1139,6 +1182,16 @@ export async function judgeCall(
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
   const workspace = paths.roots[0] ?? null
+  const sandbox =
+    item.source === 'builtin' && item.originalName === 'Bash'
+      ? sandboxPlanOf(
+          ctx.host,
+          ctx.previousSandbox,
+          ctx.previousSandbox === undefined && workspace !== null
+            ? unboundSandboxOverride(entries, String(call.input['command'] ?? ''), workspace)
+            : undefined,
+        )
+      : undefined
   const callReason = callReasonOf({
     tool: item,
     args: call.input,
@@ -1146,6 +1199,7 @@ export async function judgeCall(
     ...(located === undefined ? {} : { real: located.real }),
     workspace,
     searchHost: ctx.searchHost,
+    ...(sandbox === undefined ? {} : { sandbox }),
   })
   const setting =
     item.source === 'mcp'
@@ -1170,11 +1224,17 @@ export async function judgeCall(
           grantKey(item.serverId, item.originalName, object),
         )
   const grantFrom = ownGrant ?? inheritedGrant
+  const grantEntries = ownGrant === undefined ? (facts.parentEntries ?? []) : entries
+  const approval = grantEntries.find((entry) => entry.provenanceKey === grantFrom?.approvalKey)
+  const grantDecision = grantEntries.find(
+    (entry) => entry.provenanceKey === approval?.payload['decisionKey'],
+  )?.payload as PermissionDecidedPayload | undefined
   const decision = decide({
     call: inspected,
     callReason,
     layers: {
       policy,
+      ...(sandbox === undefined ? {} : { sandbox }),
       ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
@@ -1196,6 +1256,7 @@ export async function judgeCall(
           : {
               kind: sessionGrantKindOf(object),
               grantFrom,
+              ...(grantDecision?.sandbox === undefined ? {} : { sandbox: grantDecision.sandbox }),
               ...(ownGrant === undefined && inheritedGrant !== undefined
                 ? { inherited: true as const }
                 : {}),
@@ -1211,6 +1272,7 @@ export async function judgeCall(
       ? {}
       : { definitionChanged: true as const }),
     decision,
+    ...(sandbox === undefined ? {} : { sandbox }),
     reversibility,
     ...(place === undefined ? {} : { place }),
     target: located?.real ?? null,
@@ -1239,6 +1301,31 @@ export async function judgeCall(
       : {}),
     grantObject: object,
     ...(failed === undefined ? {} : { failed }),
+  }
+}
+
+/** One planning path for initial decisions, answers and startup recovery (04, readings 12/38). */
+function sandboxPlanOf(
+  host: HostAdapter,
+  previous?: SandboxPlan,
+  initialOverride?: SandboxPlan['override'],
+): SandboxPlan {
+  const posture = host.sandbox.posture?.() ?? { state: 'active', profile: 'workspace-write' }
+  const chosen = posture.profile
+  const override = previous?.override ?? initialOverride
+  if (override?.action === 'rerun-unsandboxed') {
+    return { profile: 'full-access', chosen, override }
+  }
+  if (
+    posture.state === 'unavailable' ||
+    (posture.state === 'pending' && previous?.unavailable === true)
+  ) {
+    return { profile: 'full-access', chosen, unavailable: true }
+  }
+  return {
+    profile: override?.action === 'allow-path' ? 'workspace-write' : chosen,
+    chosen,
+    ...(override === undefined ? {} : { override }),
   }
 }
 
@@ -1279,6 +1366,7 @@ export function decisionEntry(q: {
     providerToolCallId: q.ref.providerToolCallId,
     argsHash: q.argsHash,
     reversibility: q.judged.reversibility,
+    ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
     ...(q.judged.definitionChanged === undefined
       ? {}
       : { definitionChanged: q.judged.definitionChanged }),

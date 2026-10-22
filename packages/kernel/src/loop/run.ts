@@ -123,6 +123,7 @@ import {
   latestEnvironment,
   sameEnvironment,
 } from './environment.js'
+import { sandboxReleaseEntry } from './sandbox-release.js'
 import { readSessionFacts } from '../session/facts.js'
 import type { Profile } from '../session/facts.js'
 
@@ -130,6 +131,7 @@ import type { Profile } from '../session/facts.js'
 export const FIRST_REVISION = 0
 
 export interface RunDriverContext {
+  readonly sandbox?: BatchContext['sandbox']
   readonly schemaValidator?: SchemaValidatorPort
   readonly agent?: BatchContext['agent']
   readonly stepLimit?: number
@@ -366,6 +368,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       testTools: ctx.testTools,
       search: ctx.search,
       commandShell: ctx.commandShell,
+      ...(ctx.sandbox === undefined ? {} : { sandbox: ctx.sandbox }),
       denials,
       budgetExceeded: () =>
         ctx.tokenLimit !== null && counted > ctx.tokenLimit ? ctx.tokenLimit : null,
@@ -700,6 +703,15 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     if (inserted || (mainRequests === 0 && ctx.resume === undefined)) {
       // oxlint-disable-next-line no-await-in-loop -- the note joins before this request's context
       await environment()
+      const release = sandboxReleaseEntry({
+        // oxlint-disable-next-line no-await-in-loop -- release facts are read at this checkpoint only
+        entries: await readSessionEntries(tape, ctx.sessionId),
+        tape,
+        now: ctx.now,
+        messageId: () => ctx.ids.uuid(),
+      })
+      // oxlint-disable-next-line no-await-in-loop -- the note precedes the checkpoint's context
+      if (release !== null) await write([release])
     }
     // oxlint-disable-next-line no-await-in-loop -- each request is assembled from what the last one left on the Tape
     const assembled = await assembleRequest({
