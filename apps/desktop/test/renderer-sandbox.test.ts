@@ -3,7 +3,8 @@ import type { ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { i18n as I18n } from 'i18next'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import type { SandboxView } from '@tenon-app/contracts'
+import type * as React from 'react'
+import type { SandboxView, ToolOutcomeViewContract } from '@tenon-app/contracts'
 import { sandboxReasonCodeSchema } from '@tenon-app/contracts'
 import { createI18n } from '../src/i18n/create-instance.js'
 import { SETTINGS_PANES, SETTINGS_SECTIONS } from '../src/renderer/src/lib/settings-sections.js'
@@ -374,5 +375,427 @@ describe('04 sandbox settings', () => {
     await bad.refresh()
     expect(failed).toHaveBeenCalledTimes(1)
     bad.dispose()
+  })
+})
+
+// Exercise the real receipt and its handlers. Only the bridge, session and hook state are controlled.
+type Outcome = ToolOutcomeViewContract
+type Sandbox = NonNullable<Outcome['sandbox']>
+type Violation = Sandbox['violations'][number]
+let receiptStates = new Map<string, string>()
+vi.mock('react', async (original) => {
+  const actual = await original<typeof React>()
+  return {
+    ...actual,
+    useState: (initial: unknown) =>
+      initial instanceof Map
+        ? [
+            receiptStates,
+            (update: (was: Map<string, string>) => Map<string, string>) => {
+              receiptStates = update(receiptStates)
+            },
+          ]
+        : actual.useState(initial),
+  }
+})
+vi.mock('../src/renderer/src/runtime/ChatProvider', () => ({
+  useSessionStore: () => ({ sessionId: 'session-1' }),
+  useSessionSnapshot: () => ({
+    pending: null,
+    facts: { profile: 'cowork' },
+    answered: new Map(),
+    asked: new Map(),
+  }),
+}))
+vi.mock('../src/renderer/src/runtime/mcp-store', () => ({ useMcp: () => ({ servers: [] }) }))
+const rowPath = '../src/renderer/src/components/thread/ToolRow.tsx'
+let SandboxNotice: (props: { callKey: string; outcome: Outcome; sandbox: Sandbox }) => ReactElement
+beforeAll(async () => {
+  ;({ SandboxNotice } = await import(rowPath))
+})
+const domainViolation: Violation = {
+  kind: 'network',
+  target: 'registry.example.com',
+  release: 'domain',
+  protected: false,
+  observed: false,
+}
+const pathViolation: Violation = {
+  kind: 'fs',
+  target: '/outside/full/path.txt',
+  release: 'path',
+  protected: false,
+  observed: false,
+}
+function receipt(
+  violations: Violation[],
+  patch: Partial<Outcome> = {},
+  more = 0,
+  anyProtected = violations.some((v) => v.protected),
+) {
+  const sandbox = { violations, more, anyProtected }
+  const outcome: Outcome = {
+    effect: 'blocked',
+    state: 'completed',
+    source: 'sandbox',
+    output: 'Exit code: 1\nfailed',
+    sandbox,
+    ...patch,
+  }
+  return SandboxNotice({ callKey: 'run:1:0', outcome, sandbox })
+}
+function buttons(tree: ReactElement) {
+  return nodes(
+    tree,
+    (props) =>
+      String(props['data-testid']).startsWith('receipt-') && typeof props.onClick === 'function',
+  )
+}
+function texts(tree: ReactElement) {
+  return html(tree)
+    .replace(/<[^>]*>/g, '')
+    .replaceAll('&#x27;', "'")
+    .replaceAll('&amp;', '&')
+}
+
+describe('04 receipts', () => {
+  it('04 验收 31: buttons follow the rules: domain, path (not observed), rerun only without protected', () => {
+    receiptStates = new Map()
+    expect(
+      buttons(receipt([domainViolation, pathViolation])).map((b) => b.props['data-testid']),
+    ).toEqual(['receipt-allow-domain', 'receipt-allow-path', 'receipt-rerun-unsandboxed'])
+    expect(
+      buttons(receipt([{ ...pathViolation, observed: true }])).map((b) => b.props['data-testid']),
+    ).toEqual(['receipt-rerun-unsandboxed'])
+    for (const target of [
+      'localhost',
+      'service.localhost',
+      '1.1.1.1',
+      '127.0.0.1',
+      '::1',
+      'bad_host',
+      'resolved.example.com',
+    ]) {
+      expect(
+        buttons(receipt([{ ...domainViolation, target, release: null }])).map(
+          (b) => b.props['data-testid'],
+        ),
+      ).toEqual(['receipt-rerun-unsandboxed'])
+    }
+    const protectedTree = receipt([{ ...pathViolation, release: null, protected: true }])
+    expect(buttons(protectedTree)).toEqual([])
+    expect(texts(protectedTree)).toContain('Access to these files cannot be allowed here.')
+    // The summary includes violations beyond the retained list.
+    expect(
+      buttons(receipt([domainViolation], {}, 1, true)).map((b) => b.props['data-testid']),
+    ).toEqual(['receipt-allow-domain'])
+  })
+
+  it('04 验收 31: a clicked button reads 已放行, already-released too', async () => {
+    const releaseInvoke = vi.fn<(channel: string, input: unknown) => Promise<unknown>>()
+    vi.stubGlobal('window', { tenon: { invoke: releaseInvoke } })
+    try {
+      for (const status of ['released', 'already-released']) {
+        receiptStates = new Map()
+        releaseInvoke.mockResolvedValue({ ok: true, data: { status } })
+        const tree = receipt([domainViolation, pathViolation])
+        for (const button of buttons(tree)) {
+          // oxlint-disable-next-line no-await-in-loop -- each handler uses the current controlled bridge response
+          await (button.props.onClick as () => Promise<void>)()
+        }
+        expect(
+          buttons(receipt([domainViolation, pathViolation])).map((b) => b.props.disabled),
+        ).toEqual([true, true, true])
+        expect(texts(receipt([domainViolation, pathViolation])).match(/Allowed/g)).toHaveLength(3)
+      }
+      expect(releaseInvoke.mock.calls.slice(0, 3)).toEqual([
+        [
+          'sandbox.release',
+          {
+            sessionId: 'session-1',
+            callKey: 'run:1:0',
+            action: 'allow-domain',
+            target: 'registry.example.com',
+          },
+        ],
+        [
+          'sandbox.release',
+          {
+            sessionId: 'session-1',
+            callKey: 'run:1:0',
+            action: 'allow-path',
+            target: '/outside/full/path.txt',
+          },
+        ],
+        [
+          'sandbox.release',
+          { sessionId: 'session-1', callKey: 'run:1:0', action: 'rerun-unsandboxed', target: null },
+        ],
+      ])
+      await language.changeLanguage('zh-CN')
+      expect(texts(receipt([domainViolation, pathViolation])).match(/已放行/g)).toHaveLength(3)
+    } finally {
+      await language.changeLanguage('en')
+      vi.unstubAllGlobals()
+      receiptStates = new Map()
+    }
+  })
+
+  it('04 验收 31: release errors show inline and leave the button retryable', async () => {
+    const releaseInvoke = vi.fn<(channel: string, input: unknown) => Promise<unknown>>()
+    vi.stubGlobal('window', { tenon: { invoke: releaseInvoke } })
+    try {
+      for (const [status, expected] of [
+        ['stale', 'This call can no longer be allowed. Request the command again.'],
+        ['not-found', 'This call was not found. Request the command again.'],
+        ['refused', 'Permission cannot be granted now. Try again later.'],
+      ]) {
+        receiptStates = new Map()
+        releaseInvoke.mockResolvedValue({ ok: true, data: { status } })
+        // oxlint-disable-next-line no-await-in-loop -- each handler uses the current controlled bridge response
+        await (buttons(receipt([domainViolation]))[0]!.props.onClick as () => Promise<void>)()
+        const after = receipt([domainViolation])
+        expect(texts(node(after, 'role', 'alert'))).toBe(expected)
+        expect(buttons(after)[0]!.props.disabled).toBe(false)
+      }
+      for (const response of [
+        Promise.resolve({ ok: false, error: { code: 'handler-failed' } }),
+        () => Promise.reject(new Error('disconnected')),
+      ]) {
+        receiptStates = new Map()
+        releaseInvoke.mockImplementation(() =>
+          typeof response === 'function' ? response() : response,
+        )
+        // oxlint-disable-next-line no-await-in-loop -- each handler uses the current controlled bridge response
+        await (buttons(receipt([domainViolation]))[0]!.props.onClick as () => Promise<void>)()
+        expect(texts(node(receipt([domainViolation]), 'role', 'alert'))).toBe(
+          'Permission could not be granted. Try again.',
+        )
+      }
+    } finally {
+      vi.unstubAllGlobals()
+      receiptStates = new Map()
+    }
+  })
+
+  it('04 验收 31: an observed-only call still shows the receipt', () => {
+    const tree = receipt([{ ...domainViolation, release: null, observed: true }], {
+      source: null,
+      output: 'ok',
+    })
+    expect(texts(tree)).toContain('Could not connect to registry.example.com')
+    expect(html(tree)).toContain('data-testid="sandbox-notice"')
+  })
+
+  it('04 验收 31: an all-observed call that exited 0 is a hint only, with no rerun button; a non-zero exit, or one violation without observed, brings the button back', () => {
+    const diagnostic = { ...domainViolation, target: null, release: null, observed: true }
+    expect(
+      buttons(receipt([diagnostic], { source: null, output: 'installed\nExit code: 1' })),
+    ).toEqual([])
+    for (const output of [
+      'Exit code: 1\nfailed',
+      'Exit code: 10\nfailed',
+      'Killed by signal: SIGKILL\nkilled',
+    ]) {
+      expect(
+        buttons(receipt([diagnostic], { source: null, output })).map((b) => b.props['data-testid']),
+      ).toEqual(['receipt-rerun-unsandboxed'])
+    }
+    expect(
+      buttons(receipt([diagnostic, domainViolation], { output: 'ok' })).map(
+        (b) => b.props['data-testid'],
+      ),
+    ).toEqual(['receipt-allow-domain', 'receipt-rerun-unsandboxed'])
+    for (const source of ['stopped', 'timed-out'] as const) {
+      expect(
+        buttons(receipt([diagnostic], { source, output: 'partial' })).map(
+          (b) => b.props['data-testid'],
+        ),
+      ).toEqual(['receipt-rerun-unsandboxed'])
+    }
+  })
+
+  it('04 验收 31: each button carries the line saying when it takes effect, what it adds and when it lapses', () => {
+    const notes = nodes(
+      receipt([domainViolation, pathViolation]),
+      (props) => props['data-testid'] === 'receipt-action-note',
+    ).map(texts)
+    expect(notes).toEqual([
+      'From now on, commands in this task can connect and upload to it. This lasts for this task only; it is not saved to the list in Settings.',
+      'Applies once when this exact command runs again in this task, adding only this location. Unused permission expires at the end of the next reply; it is not remembered.',
+      'Applies when this exact command runs again in this task: it can read and write every file you can access and connect to any site. You will be asked again before it runs. Unused permission expires at the end of the next reply; it is not remembered.',
+    ])
+    expect(texts(receipt([pathViolation]))).toContain(
+      'Allow writing to this location only: /outside/full/path.txt',
+    )
+  })
+
+  it('04 验收 31: a receipt with a sandbox member renders neither blocked.<source> nor blocked.told; an observed-only call never looks up blocked.null', async () => {
+    const { ToolRow } = await import(rowPath)
+    const { createElement } = await import('react')
+    for (const source of ['policy', 'sandbox', null] as const) {
+      const markup = html(
+        createElement(ToolRow, {
+          toolCallId: 'run:1:0',
+          toolName: 'Bash',
+          args: {},
+          result: {
+            effect: 'blocked',
+            state: 'completed',
+            source,
+            output: 'ok',
+            sandbox: {
+              violations: [{ ...domainViolation, observed: true }],
+              more: 0,
+              anyProtected: false,
+            },
+          },
+        }),
+      )
+      expect(markup).toContain('data-testid="sandbox-notice"')
+      expect(markup).not.toContain('data-testid="blocked-notice"')
+      expect(markup).not.toContain('data-testid="tool-row-closure"')
+      expect(markup).not.toContain('Your organization doesn&#x27;t allow this step.')
+      expect(markup).not.toContain('The model was told.')
+      expect(markup).not.toContain('blocked.null')
+    }
+  })
+
+  it('04 验收 31: the why line follows the class: a public IP literal and a loopback or private one get different sentences', () => {
+    for (const target of ['1.1.1.1', '2001:4860:4860::8888']) {
+      expect(
+        texts(
+          node(
+            receipt([{ ...domainViolation, target, release: null }]),
+            'data-testid',
+            'receipt-why',
+          ),
+        ),
+      ).toBe(
+        'This address is not on the allowed list. To allow an IP address, add it in Settings → Permissions & network.',
+      )
+    }
+    for (const target of [
+      '127.0.0.1',
+      '10.1.2.3',
+      '172.16.0.1',
+      '192.168.1.1',
+      '169.254.0.1',
+      '::1',
+      'fc00::1',
+      'fe80::1',
+      '::ffff:192.168.1.1',
+      'localhost',
+      'service.localhost',
+    ]) {
+      expect(
+        texts(
+          node(
+            receipt([{ ...domainViolation, target, release: null }]),
+            'data-testid',
+            'receipt-why',
+          ),
+        ),
+      ).toBe(
+        'This address points to this computer or a private network and cannot be allowed here.',
+      )
+    }
+    expect(texts(node(receipt([domainViolation]), 'data-testid', 'receipt-why'))).toBe(
+      'This site is not on the list of allowed connections.',
+    )
+    expect(
+      texts(
+        node(
+          receipt([{ ...domainViolation, target: 'resolved.example.com', release: null }]),
+          'data-testid',
+          'receipt-why',
+        ),
+      ),
+    ).toBe(
+      'This name points to this computer or a private network, or is not recognized. It cannot be allowed here.',
+    )
+  })
+
+  it('04 验收 31: file violations are classed by release and protected only: a path release, a protected one and the rest (a credential read and a write on the home dir share a sentence)', () => {
+    expect(texts(node(receipt([pathViolation]), 'data-testid', 'receipt-why'))).toBe(
+      'This location cannot be changed: it is outside this task’s folders, or file access is set to read only.',
+    )
+    expect(
+      texts(
+        node(
+          receipt([{ ...pathViolation, release: null, protected: true }]),
+          'data-testid',
+          'receipt-why',
+        ),
+      ),
+    ).toBe(
+      'This location is protected: it holds sign-in credentials or Tenon’s data, or changing it affects what runs automatically on your computer.',
+    )
+    for (const target of [
+      '/home/me/.ssh/id_ed25519',
+      '/home/me/.aws/credentials',
+      '/home/me',
+      '/some/directory',
+    ]) {
+      expect(
+        texts(
+          node(
+            receipt([{ ...pathViolation, target, release: null }]),
+            'data-testid',
+            'receipt-why',
+          ),
+        ),
+      ).toBe(
+        'This location is outside the files accessible this time (such as sign-in credentials). Access to it alone cannot be allowed here.',
+      )
+    }
+  })
+
+  it('04 验收 31: 写入 only with a path release; any other file violation reads 访问', async () => {
+    await language.changeLanguage('zh-CN')
+    try {
+      expect(texts(node(receipt([pathViolation]), 'data-testid', 'receipt-objects'))).toBe(
+        '没能写入 /outside/full/path.txt',
+      )
+      expect(
+        texts(
+          node(receipt([{ ...pathViolation, release: null }]), 'data-testid', 'receipt-objects'),
+        ),
+      ).toBe('没能访问 /outside/full/path.txt')
+    } finally {
+      await language.changeLanguage('en')
+    }
+  })
+
+  it('04 验收 31: three objects and three deduplicated targets per button kind, counts for the rest and unknown objects', () => {
+    const tree = receipt(
+      [
+        domainViolation,
+        domainViolation,
+        ...['two.example.com', 'three.example.com', 'four.example.com'].map((target) =>
+          Object.assign({}, domainViolation, { target }),
+        ),
+        ...['/one', '/two', '/three', '/four'].map((target) =>
+          Object.assign({}, pathViolation, { target }),
+        ),
+        { ...domainViolation, target: null, release: null },
+      ],
+      {},
+      4,
+    )
+    expect(texts(node(tree, 'data-testid', 'receipt-objects'))).toBe(
+      'Could not connect to registry.example.comCould not connect to registry.example.comCould not connect to two.example.com10 more operations could not complete1 other operations could not complete; their targets were not recorded',
+    )
+    expect(buttons(tree).map((b) => b.props['data-testid'])).toEqual([
+      'receipt-allow-domain',
+      'receipt-allow-domain',
+      'receipt-allow-domain',
+      'receipt-allow-path',
+      'receipt-allow-path',
+      'receipt-allow-path',
+      'receipt-rerun-unsandboxed',
+    ])
+    const unknown = receipt([{ ...domainViolation, target: null, release: null }])
+    expect(texts(node(unknown, 'data-testid', 'receipt-why'))).toBe('')
   })
 })

@@ -450,7 +450,7 @@
     "user-disabled": "Blocked: this tool is turned off.",
     "protected": "Blocked: Tenon protects this location.",
     "inspector": "Blocked by a permission check.",
-    "sandbox": "Some command operations were blocked.",
+    "sandbox": "Some command operations could not complete.",
     "tool-unavailable": "Not run: this tool is unavailable.",
     "invalid-input": "Not run: the arguments were invalid.",
     "stopped": "Stopped.",
@@ -471,7 +471,7 @@
     "connector-unauthorized": "Sign in to this connector again. The call did not run."
   },
   "blocked": {
-    "sandbox": "Some operations in {toolName} were blocked.",
+    "sandbox": "Some operations in {toolName} could not complete.",
     "policy": "Your organization doesn't allow this step.",
     "user-disabled": "You turned this off in Settings.",
     "protected": {
@@ -511,7 +511,7 @@
         "search": "The search words leave this computer.",
         "url": "The address is sent to {host}."
       },
-      "elevated": "This command asks for elevated rights: {command}",
+      "elevated": "This command will run without restrictions this once, just as if you ran it in a terminal: it can read and write every file you can access and connect to any site. This allows it once only and will not be remembered.\n{command}",
       "default": "This step needs your OK.",
       "policy": "Your organization asks for your OK on this step.",
       "flagged": {
@@ -563,7 +563,8 @@
         "url": "The address is sent to {host}."
       }
     },
-    "allowScoped": "Allow ({scope})"
+    "allowScoped": "Allow ({scope})",
+    "sandboxUnavailable": "Sandbox unavailable; this command will run with your permissions"
   },
   "failure": {
     "effects": {
@@ -883,6 +884,40 @@
       "no-seccomp": "Use a supported Linux architecture and a complete Tenon installation with a working apply-seccomp helper, then restart.",
       "old-bwrap": "Upgrade bubblewrap to 0.5.0 or later, then restart Tenon.",
       "test-seam": "Start Tenon outside tests with TENON_TEST_SANDBOX removed; this status does not indicate real protection."
+    }
+  },
+  "receipt": {
+    "connection": "Could not connect to {target}",
+    "write": "Could not write to {target}",
+    "access": "Could not access {target}",
+    "more": "{count} more operations could not complete",
+    "unknown": "{count} other operations could not complete; their targets were not recorded",
+    "why": {
+      "domain": "This site is not on the list of allowed connections.",
+      "ip": "This address is not on the allowed list. To allow an IP address, add it in Settings → Permissions & network.",
+      "local": "This address points to this computer or a private network and cannot be allowed here.",
+      "host": "This name points to this computer or a private network, or is not recognized. It cannot be allowed here.",
+      "path": "This location cannot be changed: it is outside this task’s folders, or file access is set to read only.",
+      "protected": "This location is protected: it holds sign-in credentials or Tenon’s data, or changing it affects what runs automatically on your computer.",
+      "file": "This location is outside the files accessible this time (such as sign-in credentials). Access to it alone cannot be allowed here."
+    },
+    "action": {
+      "allow-domain": "Allow connections to {target} in this task",
+      "allow-path": "Allow writing to this location only: {target}",
+      "rerun-unsandboxed": "Allow this command to run without restrictions once next time"
+    },
+    "note": {
+      "allow-domain": "From now on, commands in this task can connect and upload to it. This lasts for this task only; it is not saved to the list in Settings.",
+      "allow-path": "Applies once when this exact command runs again in this task, adding only this location. Unused permission expires at the end of the next reply; it is not remembered.",
+      "rerun-unsandboxed": "Applies when this exact command runs again in this task: it can read and write every file you can access and connect to any site. You will be asked again before it runs. Unused permission expires at the end of the next reply; it is not remembered."
+    },
+    "released": "Allowed",
+    "protected": "Access to these files cannot be allowed here.",
+    "error": {
+      "stale": "This call can no longer be allowed. Request the command again.",
+      "not-found": "This call was not found. Request the command again.",
+      "refused": "Permission cannot be granted now. Try again later.",
+      "failed": "Permission could not be granted. Try again."
     }
   }
 }

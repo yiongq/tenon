@@ -972,3 +972,44 @@ describe('04 settings copy', () => {
     expect(problems(expected)).toEqual([])
   })
 })
+
+it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
+  const expected: Expectation[] = [
+    { key: 'receipt.connection', args: ['target'], what: 'connection' },
+    { key: 'receipt.write', args: ['target'], what: 'write' },
+    { key: 'receipt.access', args: ['target'], what: 'access' },
+    { key: 'receipt.more', args: ['count'], what: 'more' },
+    { key: 'receipt.unknown', args: ['count'], what: 'unknown targets' },
+    { key: 'receipt.why.domain', args: [], what: 'domain' },
+    { key: 'receipt.why.ip', args: [], what: 'public IP' },
+    { key: 'receipt.why.local', args: [], what: 'local address' },
+    { key: 'receipt.why.host', args: [], what: 'other host' },
+    { key: 'receipt.why.path', args: [], what: 'path release' },
+    { key: 'receipt.why.protected', args: [], what: 'protected location' },
+    { key: 'receipt.why.file', args: [], what: 'other file' },
+    { key: 'receipt.action.allow-domain', args: ['target'], what: 'domain action' },
+    { key: 'receipt.action.allow-path', args: ['target'], what: 'path action' },
+    { key: 'receipt.action.rerun-unsandboxed', args: [], what: 'rerun action' },
+    { key: 'receipt.note.allow-domain', args: [], what: 'domain scope' },
+    { key: 'receipt.note.allow-path', args: [], what: 'path scope' },
+    { key: 'receipt.note.rerun-unsandboxed', args: [], what: 'rerun scope' },
+    { key: 'receipt.released', args: [], what: 'released' },
+    { key: 'receipt.protected', args: [], what: 'protected' },
+    { key: 'receipt.error.stale', args: [], what: 'stale release' },
+    { key: 'receipt.error.not-found', args: [], what: 'missing call' },
+    { key: 'receipt.error.refused', args: [], what: 'refused release' },
+    { key: 'receipt.error.failed', args: [], what: 'bridge error' },
+    { key: 'blocked.sandbox', args: ['toolName'], what: 'block code' },
+    { key: 'closure.sandbox', args: [], what: 'closure code' },
+    { key: 'confirm.reason.elevated', args: ['command'], what: 'elevated card' },
+  ]
+  expect(problems(expected)).toEqual([])
+  expect(
+    problems([{ key: 'confirm.sandboxUnavailable', args: [], what: 'unavailable warning' }]),
+  ).toEqual([])
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const { key } of expected) {
+      expect(lookup(locale, key), `${locale}: ${key}`).not.toMatch(/沙箱|模型|sandbox|model/iu)
+    }
+  }
+})

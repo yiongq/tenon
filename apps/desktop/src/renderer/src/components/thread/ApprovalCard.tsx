@@ -14,6 +14,7 @@ import {
   objectParts,
   whyKey,
   undoKey,
+  unavailableKey,
 } from '@/lib/approval-card'
 import { APPROVAL_CLICK_GUARD_MS, allowLabelKey, scopeKey } from '@/lib/approval-keys'
 import { hostOfUrl } from '@/lib/url-host'
@@ -165,11 +166,16 @@ export function ApprovalCard(props: {
       {notice ? <p data-testid="approval-definition-changed">{t(notice)}</p> : null}
       {why === null ? null : (
         <p
-          className="text-ui-sm text-text-secondary"
+          className="whitespace-pre-wrap text-ui-sm text-text-secondary"
           data-testid="approval-reason"
           data-copy-key={why}
         >
           <PathText text={tx(t, why, visibleFacts(card.facts))} />
+        </p>
+      )}
+      {unavailableKey(card) === null ? null : (
+        <p data-testid="approval-unavailable" className="text-ui-sm text-text-warning">
+          {t('confirm.sandboxUnavailable')}
         </p>
       )}
       {undo === null ? null : (

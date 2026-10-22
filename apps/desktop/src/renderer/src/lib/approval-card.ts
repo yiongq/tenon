@@ -184,3 +184,10 @@ export function connectorCardName(
 export function definitionNotice(changed: boolean | undefined) {
   return changed ? ('mcp.definitionNotice' as const) : null
 }
+
+/** 04: this warning sits between the reason and consequence on command cards only. */
+export function unavailableKey(card: Pick<SentenceCard, 'kind' | 'facts'>): string | null {
+  return card.kind === 'command' && card.facts['sandbox'] === 'unavailable'
+    ? 'confirm.sandboxUnavailable'
+    : null
+}

@@ -450,7 +450,7 @@
     "user-disabled": "被拦下：这个工具已关闭。",
     "protected": "被拦下：Tenon 保护这个位置。",
     "inspector": "被权限检查拦下。",
-    "sandbox": "命令中的部分操作被拦下。",
+    "sandbox": "命令的部分操作没有成功。",
     "tool-unavailable": "没有执行：这个工具不可用。",
     "invalid-input": "没有执行：参数不合法。",
     "stopped": "已停止。",
@@ -471,7 +471,7 @@
     "connector-unauthorized": "需要重新登录此连接器；本次调用未执行。"
   },
   "blocked": {
-    "sandbox": "{toolName} 中的部分操作被拦下。",
+    "sandbox": "{toolName} 的部分操作没有成功。",
     "policy": "你的组织不允许这一步。",
     "user-disabled": "你在设置里关掉了它。",
     "protected": {
@@ -511,7 +511,7 @@
         "search": "搜索词会发到这台电脑之外。",
         "url": "网址会发给 {host}。"
       },
-      "elevated": "这条命令要提升权限：{command}",
+      "elevated": "这条命令这一次不受限制地运行，和你在终端里自己运行一样：能读写你能访问的所有文件、能连任何网站。只允许这一次，不会记住。\n{command}",
       "default": "这一步要你同意。",
       "policy": "你的组织要求这一步先经你同意。",
       "flagged": {
@@ -563,7 +563,8 @@
         "url": "网址会发给 {host}。"
       }
     },
-    "allowScoped": "允许（{scope}）"
+    "allowScoped": "允许（{scope}）",
+    "sandboxUnavailable": "沙箱不可用，将以你的权限运行"
   },
   "failure": {
     "effects": {
@@ -883,6 +884,40 @@
       "no-seccomp": "请使用带有可用 apply-seccomp helper 的受支持 Linux 架构与完整 Tenon 安装，然后重新启动。",
       "old-bwrap": "请将 bubblewrap 升级到 0.5.0 或更新版本，然后重新启动 Tenon。",
       "test-seam": "请在测试之外启动 Tenon，并移除 TENON_TEST_SANDBOX；这里的状态不代表真实保护。"
+    }
+  },
+  "receipt": {
+    "connection": "没能连接 {target}",
+    "write": "没能写入 {target}",
+    "access": "没能访问 {target}",
+    "more": "另有 {count} 次操作没有成功",
+    "unknown": "另有 {count} 次操作没有成功，没有记下对象",
+    "why": {
+      "domain": "这个网站不在允许连接的列表里",
+      "ip": "这个地址不在允许连接的列表里；按地址连接的不能从这里允许，要在设置「权限与网络」里加",
+      "local": "这个地址指向本机或内网，不能从这里允许",
+      "host": "这个名字指向本机或内网，或者写法认不出，不能从这里允许",
+      "path": "这次不能改动这个位置：它不在这个任务的文件夹里，或者设置里选了只读",
+      "protected": "这个位置受保护：里面是登录凭据或 Tenon 自己的数据，或者改了会影响之后在你电脑上自动运行的东西",
+      "file": "这个位置不在这次能读写的范围里（比如存着登录凭据的地方），也不能从这里单独允许"
+    },
+    "action": {
+      "allow-domain": "在这个任务里允许连接 {target}",
+      "allow-path": "允许写入这一个位置 {target}",
+      "rerun-unsandboxed": "允许这条命令下次不受限制地运行一次"
+    },
+    "note": {
+      "allow-domain": "现在起这个任务里的命令可以连它，也能往上面传东西；只在这个任务里有效，不会加进设置里的列表",
+      "allow-path": "在这个任务里再运行完全相同的这条命令时生效一次，只多给这一个位置；到下一轮回复结束还没用上就作废，不会记住",
+      "rerun-unsandboxed": "在这个任务里再运行完全相同的这条命令时生效：那一次它能读写你能访问的所有文件、连任何网站；运行前还会再问你一次；到下一轮回复结束还没用上就作废，不会记住"
+    },
+    "released": "已放行",
+    "protected": "这类文件不能从这里允许",
+    "error": {
+      "stale": "这次调用已不能放行，请重新发起命令。",
+      "not-found": "找不到这次调用，请重新发起命令。",
+      "refused": "当前不能放行，请稍后重试。",
+      "failed": "没有放行成功，请重试。"
     }
   }
 }
