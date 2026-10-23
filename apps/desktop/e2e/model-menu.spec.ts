@@ -562,7 +562,9 @@ test('a session on this computer whose default moved to a public host asks on an
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('model-menu')).toBeHidden()
     // Only the newest GLM generation and the two separate Flash families are in the main list.
+    // evaluateAll does not wait for the menu to render, so wait on the count first.
     await trigger.click()
+    await expect(page.locator('[data-testid^="model-row-zhipu-"]')).toHaveCount(3)
     expect(
       await page
         .locator('[data-testid^="model-row-zhipu-"]')
