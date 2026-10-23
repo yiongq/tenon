@@ -1,9 +1,42 @@
 import type { TextMessagePartComponent } from '@assistant-ui/react'
+import { cjk } from '@streamdown/cjk'
 import { useMemo } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Streamdown } from 'streamdown'
-import type { ControlsConfig } from 'streamdown'
+import { defaultRehypePlugins, Streamdown } from 'streamdown'
+import type { ControlsConfig, StreamdownProps, UrlTransform } from 'streamdown'
+
+const PLUGINS = { cjk }
+const DISALLOWED_ELEMENTS = ['img']
+// Match main/navigation.ts EXTERNAL_SCHEMES without importing privileged main code.
+const LINK_PROTOCOLS = ['https:', 'http:', 'mailto:']
+const REHYPE_PLUGINS: StreamdownProps['rehypePlugins'] = Object.entries(defaultRehypePlugins).map(
+  ([name, plugin]) =>
+    name === 'harden' && Array.isArray(plugin)
+      ? [
+          plugin[0],
+          {
+            allowedImagePrefixes: [],
+            allowDataImages: false,
+            allowedLinkPrefixes: ['*'],
+            allowedProtocols: LINK_PROTOCOLS,
+            imageBlockPolicy: 'remove',
+            linkBlockPolicy: 'text-only',
+          },
+        ]
+      : plugin,
+)
+
+// Harden adds protocols to a built-in list; this public transform enforces our exact list.
+// Relative hrefs, including GFM footnote anchors, are intentionally dropped too.
+const transformUrl: UrlTransform = (url, key) => {
+  if (key !== 'href') return undefined
+  try {
+    return LINK_PROTOCOLS.includes(new URL(url).protocol) ? url : undefined
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * Only the code block's copy button; everything else Streamdown can put on a block (a table's
@@ -26,6 +59,8 @@ const CONTROLS: ControlsConfig = {
  *   of a character-by-character stream — no unmount/remount flicker.
  * - `parseIncompleteMarkdown` repairs half-written syntax so an unclosed fence or emphasis
  *   does not flash raw punctuation.
+ * - CJK parsing recognises emphasis next to Chinese punctuation and numbers. Images never render
+ *   (including raw HTML and blob URLs); only three link schemes survive. CSP is a second defence.
  * - `controls` leaves one control on: the code block's copy button (header row, next to the
  *   language name). It copies through `navigator.clipboard`, the same write seam as the failure
  *   card's 「复制诊断信息」, which main allows to the app's own document only. Streamdown disables the
@@ -45,8 +80,8 @@ const CONTROLS: ControlsConfig = {
 export const StreamdownText: TextMessagePartComponent = ({ text, status }): JSX.Element => {
   const { t } = useTranslation()
   // Every string Streamdown can show with the controls left on: the code block's copy button, and
-  // the dialog its link safety (on by default) puts before an external link, plus an image that
-  // failed to load. Anything else it carries belongs to a control switched off above.
+  // the dialog its link safety (on by default) puts before an external link. Blocked images are
+  // removed and blocked links keep only their text, avoiding harden's untranslated indicators.
   const translations = useMemo(
     () => ({
       copyCode: t('code.copy'),
@@ -68,6 +103,10 @@ export const StreamdownText: TextMessagePartComponent = ({ text, status }): JSX.
         parseIncompleteMarkdown
         isAnimating={status.type === 'running'}
         controls={CONTROLS}
+        plugins={PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        disallowedElements={DISALLOWED_ELEMENTS}
+        urlTransform={transformUrl}
         lineNumbers={false}
         translations={translations}
       >

@@ -114,7 +114,7 @@
 | 块渲染器注册表 | `BlockRegistry` | MessagePrimitive.Parts 的 components 映射 | **0** | 按块类型查表渲染，阶段 0 只注册 `text`；未知类型渲染成可见的占位而不是静默丢弃；不写 markdown 特例分支 | spec.md「UI 最小集」 |
 | 用户消息 | `UserMessage` | MessagePrimitive.Root + Parts | **0** | 右对齐气泡、限宽；气泡前有仅供屏读的标题，气泡后留空的 `role="status"` 发送状态区 | interactions.md §3.1；parity-audit 块词汇 |
 | 助手消息 | `AssistantMessage` | MessagePrimitive.Root + Parts | **0** | 左对齐；一轮内块序固定：屏读隐藏标题 → 状态行 → 工具回执行与回执卡 → 正文 → 产物块 → 来源脚注行 → 动作条。动作条永远收尾，后面不排任何块；一轮里「正文 → 又调工具 → 再正文」时工具行按时间插在两段正文之间，动作条仍只出现一次 | interactions.md §3.1；parity-audit 块词汇 |
-| 正文排版 | `Markdown` | Streamdown + 自建令牌样式 | **0** | 流式安全（未闭合的标记不闪烁）；阶段 0 直接用 Streamdown 的默认渲染，不挂自建钩子；标题、列表、表格、引用、公式各自的边距规则在阶段 6 统一过一遍 | interactions.md §3.2 |
+| 正文排版 | `Markdown` | Streamdown + 自建令牌样式 | **0** | 流式安全（未闭合的标记不闪烁）；图片不渲染，链接只放行 https:、http:、mailto:，挂 CJK 插件处理中文加粗；标题、列表、表格、引用、公式各自的边距规则在阶段 6 统一过一遍 | interactions.md §3.2 |
 | 错误态 | `MessageError` | Alert + Button | **0** | 阶段 0 的基础错误态：失败原因用人话 + 重试；错误文案由界面按代码查目录，内核只给代码与事实。带副作用与恢复路径的失败走 `FailureCard`，不要把两者合成一个（2026-10-22 补：[presentation-r1 R9](../features/presentation-r1/spec.md) 已把 auth 改为「API 密钥无效或没有填。」并给「去设置」；错误态与内容列同宽。） | interactions.md §6；spec.md「国际化」 |
 | 代码块 | `CodeBlock` | 自建（Streamdown 渲染钩子）+ Button + ScrollArea | 2 | 自建的 markdown 特例渲染器，阶段 0 不做（spec 明写不做 markdown 特例分支）。顶栏语言标签 + 复制钮，复制结果向块内 `role="status"` 播报；块内自己横滚。**2026-10-15 做了其余部分**：单框（外框一层描边，里层去掉描边、底与圆角）；头栏一行 = 语言名 + 复制钮，复制走 `navigator.clipboard`（同失败卡「复制诊断信息」的写入接缝），结果向块内 `<output>` 播报，生成中禁用；块内横滚，横向放不下时还有内容的一侧渐隐（右缘，滚到头换成左缘；由块自己的横向滚动驱动，放得下的块没有渐隐），macOS 不显示滚动条也看得出能横滚；行号关。样式在 theme.css，依赖 Streamdown 2.6.0 的 `data-streamdown` 钩子（e2e/message-craft.spec.ts 量单框）。**语法着色没做**：Streamdown 2.x 只经独立的 `@streamdown/code` 提供，它依赖 shiki 与整套语法文件，属重依赖，有明确需求再议；「输出」区随命令子行留在阶段 4。 | interactions.md §3.3；parity-audit 块词汇 |
 | 用户消息动作条 | `UserActionBar` | ActionBarPrimitive + Button（icon） | 2 | hover 或键盘聚焦时在气泡正下方右对齐出现，收回成等高的隐藏触发钮、不留高度跳动。顺序固定：**从这里重来（以同一条用户消息重新发起一轮，会产生版本）→ 编辑（原地换成输入框）→ 复制 → 相对时间**；复制向同条内的 `role="status"` 播报。**2026-10-15 做了复制与相对时间**（右对齐，hover 或聚焦出现，占位等高；相对时间过一周改日期，悬停给完整时间）；「从这里重来」「编辑」不做，02 §留到后续阶段把「编辑重发与分支」放在阶段 6 | interactions.md §3.1；parity-audit 块词汇 |
@@ -237,3 +237,6 @@
 | [00 §UI 最小集](../architecture/00-foundation/spec.md)「设计令牌」 | 「值用 §8.1 临时皮肤」 | 2026-10-15 换成中性临时种子，现行值在 [tokens.md](./tokens.md)「2026-10-15 临时换装记录」；只在主参考 §8.1 加了注记，00 没有指针 | 2026-10-22 已由 presentation-r1 R1 替换为「值见 docs/ux/tokens.md 的临时种子」；00 行末指针与顶部 `Clauses replaced by:` 已加 |
 | [00 §国际化](../architecture/00-foundation/spec.md)「英文更长」（「阶段 0 覆盖侧栏导航项与 Composer」）与验收 12 的证据（[00 plan](../architecture/00-foundation/plan.md)「第 1–4、7、11、12 步完成交接」里「阶段 0 有意不放的入口」一条；「第 14 步：验收记录」第 12 行） | 00 的条款没要求画这四行，主参考 §8.5 写这些页面「跟随各自后端能力出现」；00 plan 记的决定是项目、产物、定时任务、技能与连接器四行留作无动作的占位行，让双语回归从第一天覆盖它们的文案，验收 12 的证据是「侧栏 5 个导航行」 | 四行不画，`shell-i18n.spec.ts` 的 `NAV_ITEM_COUNT` 由 5 改为 1，`sidebar.projects/artifacts/scheduled/customize` 四个键退出回归（键保留）；00 plan 已加 2026-10-15 注记 | 2026-10-22 已由 presentation-r1 R2 替换：每一行随自己的页面回来时，重新计入 `NAV_ITEM_COUNT`、回到双语回归；00 行末指针与顶部 `Clauses replaced by:` 已加 |
 
+## 修订
+
+- 2026-10-23 · 正文排版 Markdown 一行：图片不渲染、链接只放三种协议、挂 CJK 插件 · 回答渲染收紧与中文加粗修复（ux-01、ux-02），按普通修复处理 · 本 PR
