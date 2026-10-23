@@ -4,7 +4,7 @@
 
 ## 实施 · 2026-10-23
 
-- 按 sdd v2 接入（plan 第 0.1 步，ADR-004 A5）：spec 页头补 `Tier: standard`，`Replaces:`、`Related:`、验收 12 的标记与 live 记录位置按 v2 澄清，记进 spec「修订记录」；plan 改成 v2 的形状（当前 / 需要你、只留最新一条交接、最后一步「owner 验收 → 改 Status」，第 13 步只写旧 spec 页头）；本文件新建。不改任何要求，代码没动。
+- 按 sdd v2 接入（plan 第 0.1 步，ADR-004 A5）：spec 页头补 `Tier: standard`，`Replaces:`、`Related:`、验收 12 的标记与 live 记录位置按 v2 澄清，记进 spec「修订记录」；plan 改成 v2 的形状（当前 / 需要你、只留最新一条交接、最后一步「owner 验收 → 改 Status」，第 13 步只写旧 spec 页头）；本文件新建。只收紧或澄清，代码没动。
 - plan 第 2–5 步（Codex 按任务说明实现；lead 审查 diff、在沙箱外补跑全量 vitest 并提交）：types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`、`ModelInfo.family` / `generation`、`ProviderDefinition.familyNameKeys`；anthropic-messages 编码器在 adaptive-gated 行关思考时写 `offType ?? 'disabled'`，budget、adaptive 行带 `offType` 与「`between_tools` 关思考又带 tools」都本地拒绝，编码器 3 → 4；采样守卫只收 `top_p` 0.99、拒 `temperature` 与 `top_p` 同发；definitions/models.ts 加 `arrangeFamilies`、`newestOfFamily` 并从 kernel 导出（还没接到内置表上，那是第 6 步）。新用例标题带「claude-5-5-models 验收 2 / 4 / 5 / 13」；新文件 packages/kernel/test/provider/model-families.test.ts。
 - 门禁：format、lint、typecheck 通过；全量 vitest 241 个文件、4516 passed、110 skipped（沙箱外跑；Codex 的沙箱里进程树用例报 `spawn EPERM`，与本改动无关）。
 - 位置漂移：plan 写的 thinking-shapes.test.ts 实际在 packages/kernel/test/provider/wire/ 下；其余按函数名与用例标题定位，没有对不上的。
@@ -29,3 +29,16 @@
 测试改动：packages/kernel/test/provider/wire/thinking-shapes.test.ts · writes the shapes Opus 5.5 does take · 默认采样由「同发也收」改为单发收、同发拒（spec §点名 (a)，F14）
 测试改动：packages/kernel/test/provider/wire/encoder-version.test.ts · the current version is the newest row, and its row is these bytes · 查重由「同表两行同哈希 = 空升版」改为跨表检查，照 plan 第 3 步；原有金样行一字未改
 测试改动：packages/kernel/test/provider/wire/encoder-version.test.ts · same-model text and tool_use fields have their own table · 追加与第 3 行相同的第 4 行，版本取各表最大值，查重交给跨表检查
+
+## 评审 · 2026-10-23 · 审过 8ea52df
+
+- 新上下文的评审 agent（Opus），只审第 0.1 步的文档改动，结论「要改」：1 blocker、2 major、7 minor。处置：
+  - B1 plan「当前」的授权行比问卷宽（范围写成「本 spec 的实现 PR」、例外漏了安全取舍、花费收窄到第 12 步）：照问卷原文收窄成「本 spec 由 Codex 实现的 PR」，例外写全。
+  - M1 第 13 步的页头写法会被 pairs 拦（评审在克隆里实测：只给旧 spec 加行时拦，本 spec 补上 `Changes` 后拦 0），而且每个目标只认第一个 §：第 13 步改成本 spec 页头改写为每条一个 § 的 `Changes`、旧 spec 逐条成对；`Replaces:` 里的日期约定去掉。
+  - M2 测试点名只管新写的用例：改成每条验收都要有点名它的用例，靠改已有用例验的在原标题上补；第 14 步加 trace 检查。
+  - m1 lead 自定的「上限 2 美元」撤回，改成第 12 步开跑前由 owner 定；m2 重新生成 docs/README.md；m3「需要你」只写「无」；m4 第 11 步的记录位置改成 log.md；m5 第 1 步的行号引用改成节名；m6「合入前不切 release 分支」写进总参考「以后再说」，标挡上线；m7 第 12 步加回写厂商表。
+  - 建议项都采纳：Tier 理由补出处，e2e 位置写进「机器约束」，措辞改成「只收紧或澄清」。
+
+## 评审 · 2026-10-23 · 审过 b72988a
+
+- lead 审 Codex 实现的第 2–5 步（与作者不是同一上下文）：对照 spec §对 01 的修补、§对 02 的修补 第 1–4 条与 plan 第 2–5 步逐条看 diff，金样表的跨表查重按 plan 第 3 步；沙箱外跑全量 vitest 4516 passed；12 个突变全部变红。无发现。

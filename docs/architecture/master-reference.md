@@ -1141,3 +1141,4 @@ Claude Desktop 的概念 → Tenon 的实现：
 - README 的截图：一次对话、审批卡打开，存为 docs/assets/approval-card.png，模型选择器不显示厂商模型名 · lead · 待定 · README.md
 - spec-check job 装 e2e 工具链，让 e2e 层与 macOS 专属的突变也能每个 PR 机器重跑 · lead · 待定 · ADR-004 A18
 - Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
+- claude-5-5-models 合入之前不切 release 分支：presentation-r1 先合入，第一把 key 现在只写钉住的行 id，指针一支要等它补上，其间写下的值分不出是不是用户选的 · owner · 挡上线 · [claude-5-5-models](../features/claude-5-5-models/spec.md) §跟随最新「迁移」

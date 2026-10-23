@@ -4,17 +4,17 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1 步与第 2–5 步做完（分支 `feat/claude-5-5-seg1`）。下一步第 1 步（只读核对 F21、建厂商现状表），再从第 6 步按序往下。
-需要你：无。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
-授权：本 spec 的实现 PR 由 lead 评审、CI 绿后开自动合并；第 12 步的钥匙串与花费、第 16 步改 Status、碰门禁文件的 PR 仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
+当前：第 0.1 步与第 2–5 步做完（分支 `feat/claude-5-5-seg1`）。下一步第 1 步（只读核对 F21、建厂商现状表），再从第 6 步按序往下。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
+需要你：无
+授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
 ## 开工前读
 
 - **来源**：只读公开页面（`platform.claude.com/docs`）和仓库；不读逆向得来的材料（master-reference.md:614）。新核到的事实写进代码注释：URL 加读的日期，照 anthropic.ts:67-94。
 - **key**：只有第 12 步要官方 key（开放问题 6 定 A）。从登录钥匙串 `tenon-live-anthropic` 读，只进那一次命令的环境。**读之前先提醒 owner：macOS 会弹窗**，等 owner 回话再跑。不进 `.env.local`、shell profile、命令字面量、Tape、日志和本文件。
-- **机器约束**：vitest 一律 `--maxWorkers=2`；同一时刻最多一个 Electron（e2e、live 都算），起 Electron 用 `env -u ELECTRON_RUN_AS_NODE`。
+- **机器约束**：vitest 一律 `--maxWorkers=2`；同一时刻最多一个 Electron（e2e、live 都算），起 Electron 用 `env -u ELECTRON_RUN_AS_NODE`；e2e 走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口。
 - **突变**：每步列的突变逐个做一次——把生产代码改坏，确认对应测试变红，再改回——结果记进 log.md（编号写成「第 N 步 ①」）。没变红的补测试。
-- **测试点名**：新写的、对应某条验收的用例，标题带「claude-5-5-models 验收 N」；改弱已有测试的每一处在 log.md 记一行 `测试改动：文件 · 用例 · 为什么`。
+- **测试点名**：每条验收至少有一个用例标题带「claude-5-5-models 验收 N」（（live）的验收 12 也要有点名它的 live 用例）；靠改已有用例来验的，在原标题上补，例如「presentation-r1 验收 12、claude-5-5-models 验收 19」；改弱已有测试的每一处在 log.md 记一行 `测试改动：文件 · 用例 · 为什么`。
 - **行号**：本文件与 spec 写于 2026-10-15，此后 04 与 presentation-r1 合入，文中的 `文件:行号` 多半已偏，按函数名、类型名、用例标题定位。新写的行不再写行号。
 - **门禁**：每步结束跑下面「命令」的前两行（第二行是全量 vitest），仓库每步结束都是绿的。
 - **与 presentation-r1 的先后**：已定。presentation-r1 于 2026-10-22 先合入（PR #55，`implemented`），`dev` 上写第一把 key 的代码只有钉住一支，所以第 11 步实现它 §对 02 的修补 第 1 条已写的「有」一支，跑验收 19（就是它验收 12 的指针一例）。本 spec 合入之前不切 release 分支（spec §跟随最新「迁移」）。
@@ -38,7 +38,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 - [x] 0. owner 定开放问题与接受 spec：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。同日 owner 经问卷单独确认 §点名 (g) 取 A，spec 改 `Status: ready`（`Revisions:` ㊴，`Owner` 行已写）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
 - [x] 0.1 按 sdd v2 接入（ADR-004 A5）：spec 页头补 `Tier`，`Replaces:`、`Related:`、验收 12 的标记按 v2 澄清并记修订记录；本文件改成 v2 的形状；新建 log.md。
 - [ ] 1. 落地前核对，只读公开页面：
-  - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记修订记录，并按 01 spec:353「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进 log.md。（`displays` 与 `supportsVision` 已由 F18 核过。）
+  - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记修订记录，并按 01 §内置 provider「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进 log.md。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 6 步的注释。
   - 建厂商现状表 `docs/reference/vendors.md`，先只收 Anthropic：本 spec 用到的每条能力（F1–F21）各一行，写能力、实测结果、核实日期、一手来源、依赖它的 spec、重核时间（ADR-004 A12；docs/spec-driven-dev.md「厂商现状」），并把总参考「以后再说」里那一行换成指向它的链接。
 - [x] 2. 类型：packages/kernel/src/provider/types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`（`'between_tools'`）、`ModelInfo.family`、`ModelInfo.generation`、`ProviderDefinition.familyNameKeys`，注释引本 spec。
@@ -116,7 +116,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 测试：provider-settings.spec.ts（验收 17）；renderer-settings-sections.test.ts 若断言了下拉选项，一并改。
   - 突变：① 没存这一家的默认时选中第一行 → 验收 17 红；② 保存指针项时不带 `latestOf` → 红；③ 保存钉住的「Opus 5.5」时也带 `latestOf` → 验收 17 红；④ Ollama 卡也出指针项 → 红。
 - [ ] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan。2026-10-23 核过：presentation-r1 已在 `dev` 上，按第一种情形做（写第一把 key 的代码在 apps/desktop/src/main/custom-vendors/store.ts 的 `firstKeyDefaults`）。两种情形原文：
-  - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记在本文件。它合入之后、本步合入之前不切 release 分支。
+  - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记进 log.md。它合入之后、本步合入之前不切 release 分支。
   - 还不在 `dev` 上：本步不做事，记一句「『有』一支由 presentation-r1 plan 第 9 步实现，验收 19 由它验收 12 的指针一例验」，勾掉。不因此等它，也不因此不标 `implemented`。
 - [ ] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
   - 官方组两次，`TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL` 分别取 `claude-sonnet-5-5`、`claude-haiku-5-5`（命令见上，带 `--grep`，不连带跑搜索探测、前缀探测和智谱各组）。
@@ -127,11 +127,13 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
     - 第一个请求先断言提示长度（input + cacheRead + cacheWrite）大于 512（F20）、`usage.cacheWriteTokens` 大于 0，再断言第二个请求 `provider/attempt_completed` 的 `usage.cacheReadTokens` 大于 0；
     - 消息里出现思考块时，文本非空。
   - 任一摘要请求 400：停下，不改代码，spec 回 `draft`，把报错原文（不含 key）记进 log.md。报错指向 effort、`between_tools` 或 `disabled` 时，按 spec §已有规则「逐条 effort」的退路请 owner 定（§点名 (e)）。指向别的原因时不按 (e) 处理：这两例的摘要请求第一次回放 tool_use / tool_result 又不带 tools，记成 02 §摘要请求「前缀（默认做法）」的问题请 owner 定。原因判不清时，问 owner 要不要在 record 模式下给 Opus 5.5 跑一次同样的「Read + 阈值压缩」做对照（约 7 个请求，同样先提醒钥匙串会弹窗）。
-  - 记进 log.md：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读，另记一行「花费：」（上限 2 美元，spec 开放问题 6）。不记 key。
-- [ ] 13. 旧 spec 页头要加的（与实现同一个 PR；旧 spec 正文一字不改，也不加行末指针，ADR-004 A5）。日期取写入这些行的那个提交的日期，合入晚了也不改（spec `Replaces:`）：
-  - 01、02、model-display-names 页头各加一行 `Changed by: claude-5-5-models（§<节名>）`，节名照 `python3 .sdd/spec-check.py` 的 pairs 提示写（spec `Amends:` 指到的那几节）；02 那一行的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那一行点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）；
-  - 02 页头另加 `Clauses replaced by: claude-5-5-models（§模型菜单与输入框）`，指 spec §替换 02 的表现层条款。
-- [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
+  - 记进 log.md：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读，另记一行「花费：」。不记 key。实测结果回写 docs/reference/vendors.md 对应行的「实测结果」与核实日期。
+  - 开跑前请 owner 确认花费上限（建议 2 美元，约为估计的两倍）并写进 spec 修订记录；累计到上限就停，问 owner。
+- [ ] 13. 页头成对（与实现同一个 PR；旧 spec 正文一字不改，也不加行末指针，ADR-004 A5）：
+  - 本 spec 页头：`Amends:` 改写成 v2 的 `Changes:`，每条只带一个 §（spec-check 每个目标只取第一个 §），多条用「；」隔开，例如 `[02-agent-loop](../../architecture/02-agent-loop/spec.md) §模型选择（增补）`；`Replaces:` 改写成 `Changes: 02 §模型菜单与输入框（替换：「更多模型 ›」的括注）`。改写只换格式，指到的节与内容不变，记一行修订。
+  - 01、02、model-display-names 页头为本 spec 的每条 `Changes` 各写一条 `Changed by: claude-5-5-models（§<节名>）`，逐条成对；02 那几条的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那条点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）。
+  - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
+- [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
 - [ ] 15. 清理：临时探针、调试输出、live 记录里不该留的内容；把「上线后跟进」与 Open 挪进总参考「以后再说」或写明已定（要在派评审之前做）；`git status` 干净。
 - [ ] 16. owner 验收 → 改 Status
 
