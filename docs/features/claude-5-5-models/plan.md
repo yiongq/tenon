@@ -116,7 +116,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 测试：provider-settings.spec.ts（验收 17）；renderer-settings-sections.test.ts 若断言了下拉选项，一并改。
   - 突变：① 没存这一家的默认时选中第一行 → 验收 17 红；② 保存指针项时不带 `latestOf` → 红；③ 保存钉住的「Opus 5.5」时也带 `latestOf` → 验收 17 红；④ Ollama 卡也出指针项 → 红。
 - [ ] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan。2026-10-23 核过：presentation-r1 已在 `dev` 上，按第一种情形做（写第一把 key 的代码在 apps/desktop/src/main/custom-vendors/store.ts 的 `firstKeyDefaults`）。两种情形原文：
-  - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记进 log.md。它合入之后、本步合入之前不切 release 分支。
+  - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记进 log.md。它合入之后、本步合入之前不切 release 分支；本步合入的那个 PR 里一并删掉总参考「以后再说」里「claude-5-5-models 合入之前不切 release 分支」那一行。
   - 还不在 `dev` 上：本步不做事，记一句「『有』一支由 presentation-r1 plan 第 9 步实现，验收 19 由它验收 12 的指针一例验」，勾掉。不因此等它，也不因此不标 `implemented`。
 - [ ] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
   - 官方组两次，`TENON_LIVE_ANTHROPIC_OFFICIAL_MODEL` 分别取 `claude-sonnet-5-5`、`claude-haiku-5-5`（命令见上，带 `--grep`，不连带跑搜索探测、前缀探测和智谱各组）。
@@ -130,7 +130,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - 记进 log.md：模型、日期、各请求的状态码与用量、摘要请求的 `thinking` 与 effort、思考文本是否非空、第二个请求的缓存读，另记一行「花费：」。不记 key。实测结果回写 docs/reference/vendors.md 对应行的「实测结果」与核实日期。
   - 开跑前请 owner 确认花费上限（建议 2 美元，约为估计的两倍）并写进 spec 修订记录；累计到上限就停，问 owner。
 - [ ] 13. 页头成对（与实现同一个 PR；旧 spec 正文一字不改，也不加行末指针，ADR-004 A5）：
-  - 本 spec 页头：`Amends:` 改写成 v2 的 `Changes:`，每条只带一个 §（spec-check 每个目标只取第一个 §），多条用「；」隔开，例如 `[02-agent-loop](../../architecture/02-agent-loop/spec.md) §模型选择（增补）`；`Replaces:` 改写成 `Changes: 02 §模型菜单与输入框（替换：「更多模型 ›」的括注）`。改写只换格式，指到的节与内容不变，记一行修订。
+  - 本 spec 页头：`Amends:` 改写成 v2 的 `Changes:`，每条只带一个 §（spec-check 每个目标只取第一个 §），多条用「；」隔开，例如 `[02-agent-loop](../../architecture/02-agent-loop/spec.md) §主进程与 kernel 的循环接口（增补：`resolveChoice` 的问询只增 `previousModel`）`；带 §点名 项的条目（(a)(b)(f)(g) 落到的节）不标「增补」，括注写点名与 owner 的确认；`Replaces:` 改写成 `Changes: 02 §模型菜单与输入框（替换：「更多模型 ›」的括注）`。改写只换格式，指到的节与内容不变，记一行修订。
   - 01、02、model-display-names 页头为本 spec 的每条 `Changes` 各写一条 `Changed by: claude-5-5-models（§<节名>）`，逐条成对；02 那几条的括注点出 §点名 (a)(b)(f)(g) 与 owner 的确认（(g) 是 owner 2026-10-15 经问卷确认，spec `Revisions:` ㊴；(e) 只在 live 失败、owner 确认时补）；01 那条点出 (f)（验收 6 的读法）。custom-vendors 与 presentation-r1 不加（spec `Revisions:` ㉘、㉛，`Related:`）。
   - 跑 `python3 .sdd/spec-check.py`：pairs 拦 0 条。若报 config 里这份 spec 的已知项失效，删它们要改 `.sdd/config.json`（门禁文件），那一处交 owner 合。
 - [ ] 14. 对照验收 1–19 逐条核对（验收 19 按它写的条件），跑 `python3 .sdd/spec-check.py` 确认 trace 不再报本 spec 的验收没有用例点名，跑一次「命令」里的全量 e2e（走 CI 草稿 PR 或 Lima VM，不在 owner 的 Mac 上起窗口），结果记进 log.md。
