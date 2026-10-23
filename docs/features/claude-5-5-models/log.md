@@ -87,3 +87,5 @@
 测试改动：apps/desktop/e2e/model-menu.spec.ts · presentation-r1 验收 9… · 主列表断言改用 Sonnet 5.5；预算模式的 Haiku 4.5 改从「更多模型」进入（plan 第 6 步）
 测试改动：apps/desktop/e2e/model-menu.spec.ts · asks by where the history went… · 改选主列表的 Sonnet 5.5，显示名期望随之改
 测试改动：apps/desktop/e2e/model-menu.spec.ts · in a task, the text-only rows are greyed… · 可选的官方行改为主列表的 Sonnet 5.5
+测试改动：packages/kernel/test/provider/wire/thinking-shapes.test.ts · 本地的 HAIKU_5_5、SONNET_5_5 夹具 · 换成内置表里的行（plan 第 6 步要求）；两行的整行期望由 definitions.test.ts 验收 1 用独立字面量守着
+- overview 不用改：这一段只给 ModelInfo、config 的默认与 `resolveChoice` 的问询增可选键，模块边界、数据流与技术栈不变；overview §术语 是否加「家族、代次、指针」，等第 9–11 步把指针接进解析与界面时再定。
