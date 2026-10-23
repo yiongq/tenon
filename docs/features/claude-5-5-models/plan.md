@@ -4,7 +4,7 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1 步（按 sdd v2 接入）在 `docs/c55-sdd-v2`；第 2–5 步由 Codex 在 `feat/c55-seg1` 上实现，lead 评审。接着做第 1 步，再从第 6 步按序往下。
+当前：第 0.1 步与第 2–5 步做完（分支 `feat/claude-5-5-seg1`）。下一步第 1 步（只读核对 F21、建厂商现状表），再从第 6 步按序往下。
 需要你：无。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
 授权：本 spec 的实现 PR 由 lead 评审、CI 绿后开自动合并；第 12 步的钥匙串与花费、第 16 步改 Status、碰门禁文件的 PR 仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
@@ -41,9 +41,9 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记修订记录，并按 01 spec:353「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进 log.md。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 6 步的注释。
   - 建厂商现状表 `docs/reference/vendors.md`，先只收 Anthropic：本 spec 用到的每条能力（F1–F21）各一行，写能力、实测结果、核实日期、一手来源、依赖它的 spec、重核时间（ADR-004 A12；docs/spec-driven-dev.md「厂商现状」），并把总参考「以后再说」里那一行换成指向它的链接。
-- [ ] 2. 类型：packages/kernel/src/provider/types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`（`'between_tools'`）、`ModelInfo.family`、`ModelInfo.generation`、`ProviderDefinition.familyNameKeys`，注释引本 spec。
+- [x] 2. 类型：packages/kernel/src/provider/types.ts 加 `pricing.longPrompt`、`ThinkingSpec.offType`（`'between_tools'`）、`ModelInfo.family`、`ModelInfo.generation`、`ProviderDefinition.familyNameKeys`，注释引本 spec。
   - 测试：由第 3–9 步覆盖，本步只跑 `pnpm typecheck`。
-- [ ] 3. Anthropic 编码器：packages/kernel/src/provider/wire/anthropic-messages.ts 的 `thinkingShape` 关思考的 switch（:307-313）只在 `adaptive-gated` 一支写 `{ type: spec.offType ?? 'disabled' }`；`budget`、`adaptive` 两支遇到行上有 `offType` 时抛 `ProviderInvalidArgumentError`（照 :286-292 的表错误写法），否则照旧写 `disabled`；`offType` 为 `between_tools`、关思考且 `tools` 非空时抛 `ProviderInvalidArgumentError`；`ANTHROPIC_MESSAGES_ENCODER.version` 3 → 4（:132），上方注释补一句第 4 版改了什么。
+- [x] 3. Anthropic 编码器：packages/kernel/src/provider/wire/anthropic-messages.ts 的 `thinkingShape` 关思考的 switch（:307-313）只在 `adaptive-gated` 一支写 `{ type: spec.offType ?? 'disabled' }`；`budget`、`adaptive` 两支遇到行上有 `offType` 时抛 `ProviderInvalidArgumentError`（照 :286-292 的表错误写法），否则照旧写 `disabled`；`offType` 为 `between_tools`、关思考且 `tools` 非空时抛 `ProviderInvalidArgumentError`；`ANTHROPIC_MESSAGES_ENCODER.version` 3 → 4（:132），上方注释补一句第 4 版改了什么。
   - 测试：
     - thinking-shapes.test.ts 加两行的关思考用例（验收 2，含带 tools 的拒绝；行先用测试里的本地 `ModelInfo`，第 6 步换成表里的行），另用合成的 budget 行、adaptive 行各带 `offType: 'between_tools'` 测关思考本地拒绝；
     - encoder-version.test.ts：`ANTHROPIC_ROW`、`goldenRequest`、`fieldsGoldenRequest` 都不动。另加 `BETWEEN_TOOLS_ROW`（`adaptive-gated`、`disableMaxEffort: 'high'`、`offType: 'between_tools'`）和第三个固定请求 `offGoldenRequest`（同样的历史，`thinking: { enabled: false }`，effort `'high'`，不带 `tools`），它有自己的表 `GOLDEN_OFF = { 4: … }`。`GOLDEN['anthropic-messages']` 与 `GOLDEN_FIELDS` 各追加第 4 行，值等于第 3 行。原来按表查重（同表两行同哈希 = 空升版）改为跨表检查：每升一版（v > 1），至少有一张表在 v 的哈希与 v − 1 不同，或 v 是它的第一行；当前版本取所有表的最大版本号。`GOLDEN_WIRE_HASH` 仍断言 `ANTHROPIC_ROW`，值不变（验收 4）；
@@ -57,10 +57,10 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
     - ④ 版本不加一 → 金样红；
     - ⑤ 去掉「关思考且 tools 非空」的检查 → 验收 2 带 tools 的用例红；
     - ⑥ budget / adaptive 两支也写 `offType ?? 'disabled'`、不拒 → 合成行的用例红。
-- [ ] 4. 采样守卫：packages/kernel/src/provider/wire/shared.ts:225-241，所有 `samplingDefaultsOnly` 的行，`top_p` 的判定由 `>= 0.99` 改为 `=== 0.99`，另拒 `temperature` 与 `top_p` 同发；同步改 shared.ts:219-224 与 types.ts:117 的注释、thinking-shapes.test.ts:331-337（spec §点名 (a)）。
+- [x] 4. 采样守卫：packages/kernel/src/provider/wire/shared.ts:225-241，所有 `samplingDefaultsOnly` 的行，`top_p` 的判定由 `>= 0.99` 改为 `=== 0.99`，另拒 `temperature` 与 `top_p` 同发；同步改 shared.ts:219-224 与 types.ts:117 的注释、thinking-shapes.test.ts:331-337（spec §点名 (a)）。
   - 测试：thinking-shapes.test.ts（验收 5）。
   - 突变：① 判定改回 `topP >= 0.99` → `top_p` 1 的用例红；② 去掉同发检查 → 同发用例红。
-- [ ] 5. 家族排位：packages/kernel/src/provider/definitions/models.ts 加两个纯函数，从 kernel 包导出：
+- [x] 5. 家族排位：packages/kernel/src/provider/definitions/models.ts 加两个纯函数，从 kernel 包导出：
   - `arrangeFamilies(rows)`，在 `frozenModels` 之前调：带家族的行，本家族代次最大的不写 `listing`，其余写 `'more'`；带家族的行手写了 `listing`、同家族两行代次相同、`family` 与 `generation` 只有一个，抛错；
   - `newestOfFamily(definition, family)`：该定义里这一家族代次最大的行，没有给 null（第 9 步的解析与写指针用）。
   - 测试：新文件 packages/kernel/test/provider/model-families.test.ts（验收 13），合成的定义。
@@ -143,7 +143,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-10-23：按 sdd v2 接入（第 0.1 步，ADR-004 A5）；此前的交接记录见 git 历史（a59f1cc 及更早）。presentation-r1 已先合入，第 11 步按第一种情形做。第 2–5 步在 `feat/c55-seg1` 上，lead 评审后合入；下一步是第 1 步（只读核对 F21 与建厂商现状表），然后第 6 步。
+- 2026-10-23：第 0.1 步按 sdd v2 接入（ADR-004 A5）；第 2–5 步由 Codex 按任务说明实现，lead 审查、补跑全量 vitest（4516 passed）并提交，突变与测试改动记在 log.md。此前的交接记录见 git 历史（a59f1cc 及更早）。下一步第 1 步，然后第 6 步（数据与文案，表经 `arrangeFamilies`）。第 12 步开跑前先问 owner。
 
 ## Open
 
