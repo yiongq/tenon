@@ -113,3 +113,51 @@
 - [建议] 同一例新加的「更多模型」一段在 CI 上还没跑到过（上一行先挂了），重跑若在那里挂，先查点击打开子菜单是否稳定 · 不修：现写法与第一例相同且第一例已通过，等 CI 重跑验证
 结论：通过
 突变：0 个（只改测试的等待）
+
+## 实施 · 2026-10-24（第 9–11 步）
+
+- Codex 按任务说明实现，lead 审查 diff、沙箱外补跑全量 vitest 并提交（369ecd2）：
+  - run-assembly.ts 的 `resolveChoice` 在 ① 空着时先看 `previousModel`：`builtin`、`probed` 与没记来源的行还在那家的表里就留；内置厂商上的 `user` 留在原 id 并照旧保守合成；`synthesized` 不留。再按答话的一层解析，指针经 `newestOfFamily`，家族找不到读作钉住的 `modelId`。数据去向检查仍在取行之后。
+  - 新文件 apps/desktop/src/main/model-selection.ts 放 `selectionOf` 与 `menuSelectionOf`（避开 import 环）；`session.selectModel` 写指针，会话没有 ① 且选的就是 `session.modelChoice` 答的那一行时只写 ①、不动默认。
+  - `provider.select` 带 `latestOf` 的一支（不在表里、Ollama 或实例、`modelId` 不是该家族的行都回 `invalid-value`）；`menuRow` 转发 `family`、`familyNameKey`；设置卡先列「最新的 …」、再列各行；`firstKeyDefaults` 改用 `menuSelectionOf`。
+  - Codex 的自查另找到一处：手填过的 id 后来进了内置表，上一个 Run 记的 `user` 会被读成内置行；已先写失败的回归用例，再让 `selectModel` 对历史 `user` 照旧保守合成（spec §跟随最新「解析」第 1 条）。
+- 门禁：format、lint、typecheck 通过；全量 vitest 4593 passed、1 failed、110 skipped（沙箱外）。失败的是 packages/kernel/test/mcp/http-connection.test.ts「03 验收 30 (HTTP): modern total deadline at ten times…」，单独连跑 5 次都过，Codex 那边也见过一次，与本段改动无关，是全量并行下偶发的慢；记一笔，不在本 spec 修。
+- e2e：model-menu.spec.ts、provider-settings.spec.ts、recovery.spec.ts 只过了 typecheck，由本段 PR 的 CI 首跑。
+- 总参考「以后再说」删掉「claude-5-5-models 合入之前不切 release 分支」一行：第一把 key 自本段起写指针（plan 第 11 步）。
+
+突变：
+
+- 第 9 步 ① 会话不换只在同厂商同家族时做 → 红：验收 15 默认是钉住行或改成 sonnet 指针的几例
+- 第 9 步 ② 只有答话的一层是指针才看 `previousModel` → 红：验收 15 落到 ⑤ 与钉住的几例
+- 第 9 步 ③ 家族找不到时落到 ⑤ → 红：验收 14 读作 `modelId` 的两例
+- 第 9 步 ④ 上一个 Run 的行不在表里仍用它 → 红：验收 15 撤行一例
+- 第 9 步 ⑤ 手填 id 不留（按 `synthesized` 读）→ 红：验收 15 手填 Ollama 一例
+- 第 9 步 ⑤′ `synthesized` 也留 → 红：验收 15 `synthesized` 一例
+- 第 9 步 ⑤″ 实例上的 `user` 行不在实例里了也留 → 红：验收 15 实例一例与 custom-vendor-runtime「验收 20」
+- 第 9 步 ⑥ 会话不换留下的行跳过数据去向检查 → 红：验收 15「Ollama 地址改到公网主机」、确认前 0 次请求
+- 第 9 步 ⑦ 「更多模型」的行也写指针 → 红：验收 16 选 Sonnet 5 一例
+- 第 9 步 ⑧ 不带 `latestOf` 也写指针 → 红：provider-routes.test.ts「accepts glm-5.3-flash / flashx」
+- 第 9 步 ⑨ 厂商没配置时跳到已配置的厂商 → 红：验收 14 缺 key 一例
+- 第 9 步 ⑩ `latestOf` 与 `source` 同在仍按指针读 → 红：验收 14 一例
+- 第 9 步 ⑪ 只改档也写默认 → 红：验收 16「只改档不写默认」两例与 hold 确认一例
+- 第 8 步 ⑤ `effectiveModelChoice` 也交 `previousOrigin` → 红：验收 15 地址改到公网后 `session.modelChoice` 不抛一例
+- 第 8 步 ⑥ `previousModel` 丢掉 `capabilitySource` → 红：验收 15 手填 Ollama 一例
+- 第 10 步 ①–④（没存默认时选第一行、指针不带 `latestOf`、钉住行也带、Ollama 卡出指针项）→ 只有 e2e（provider-settings.spec.ts 验收 17）能抓，等 CI 首跑
+
+测试改动：apps/desktop/test/model-selection.test.ts · records the choice and the profile’s default and provider · 默认改为家族指针（spec §点名 (g)），会话仍断言具体行
+测试改动：apps/desktop/test/model-selection.test.ts · writes each profile’s default in the profile’s lock · 两个默认带家族指针，另先种不同的 cowork 默认以继续验锁内合并
+测试改动：apps/desktop/test/model-selection.test.ts · answers neither route until startup recovery is done · 保存前多一次有效模型读取（只改档不写默认的判定要读它）
+测试改动：apps/desktop/test/provider-routes.test.ts · first key with all three defaults empty · 钉住期望换成指针（presentation-r1 验收 12 的指针一例），去掉「没有 latestOf」断言
+测试改动：apps/desktop/test/provider-routes.test.ts · TENON_PROVIDER or TENON_MODEL set · 打包分支第一把 key 的期望加 `latestOf: 'opus'`
+测试改动：apps/desktop/test/custom-vendor-runtime.test.ts · 验收 20 · 第一轮之后删掉本地行再改默认（会话不换以后旧触发方式不再 hold），hold 与 0 次公网请求的断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · acceptance 6 · 原会话仍发 anthropic（会话不换），新对话发智谱；新对话的历史随之变短，流式与凭据断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · first-key defaults · 三个默认期望加 `latestOf: 'glm'`
+测试改动：apps/desktop/e2e/recovery.spec.ts · restored receipt · 下一条留在 Sonnet 5（会话不换），另开新对话验新默认
+测试改动：apps/desktop/e2e/recovery.spec.ts · resumable session the window does not open · 已有 Run 的会话芯片保持 Sonnet 5，新对话验 Ollama
+测试改动：apps/desktop/e2e/model-menu.spec.ts · a round held for a public host · 种子改为可删除的回环实例，删后改默认触发 hold（plan 第 9 步）
+测试改动：apps/desktop/e2e/model-menu.spec.ts · editing the held message · 同上
+测试改动：apps/desktop/e2e/model-menu.spec.ts · 「立即发送」on the held message · 同上，再次确认的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · withdrawing the held message · 同上，重新 hold 的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · held for one public host, confirmed after the default moved · 同上，实际目标主机的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · asks on any row or level · 删除旧实例后改默认，当前行与档位都要确认的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · 改用 a public provider · 删除旧实例后改到缺 key 的默认，确认前 0 次请求的断言保留
