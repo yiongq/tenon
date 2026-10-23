@@ -24,6 +24,7 @@
     "@fontsource-variable/source-code-pro": "5.3.1",
     "@fontsource-variable/source-serif-4": "5.3.1",
     "@napi-rs/keyring": "2.1.0",
+    "@streamdown/cjk": "1.0.4",
     "@tenon-app/contracts": "workspace:*",
     "@tenon-app/kernel": "workspace:*",
     "better-sqlite3": "13.0.3",

