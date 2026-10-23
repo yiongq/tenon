@@ -64,3 +64,9 @@ describe('the thinking defaults', () => {
     expect(body['thinking']).toBeUndefined()
   })
 })
+
+it('claude-5-5-models 验收 6: Haiku 5.5 first request asks for adaptive summarized thinking without effort', async () => {
+  const body = await firstBody(row('claude-haiku-5-5'))
+  expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' })
+  expect(body).not.toHaveProperty('output_config')
+})

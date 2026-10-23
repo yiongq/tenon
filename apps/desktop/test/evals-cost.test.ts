@@ -259,3 +259,93 @@ describe('the eval cost function, by wire (旧 229)', () => {
     })
   })
 })
+
+describe('claude-5-5-models long prompt pricing', () => {
+  it.each([
+    [97_000, 100_000, [0.1, 0.01, 0.125, 0.5]],
+    [97_001, 100_001, [0.5, 0.05, 0.625, 2.5]],
+  ] as const)(
+    'claude-5-5-models 验收 7: %i uncached tokens, %i total price all four parts at one tier',
+    async (inputTokens, total, rates) => {
+      const haiku = row(anthropicDefinition, 'claude-haiku-5-5')
+      const provider = createScriptedProvider({ models: [haiku] })
+      provider.script(
+        scriptedTurn({
+          deltas: ['hello'],
+          usage: {
+            inputTokens,
+            cacheReadTokens: 2_000,
+            cacheWriteTokens: 1_000,
+            outputTokens: 500,
+            reasoningTokens: 200,
+            final: true,
+          },
+        }),
+      )
+      const result = await tapeCost(await tapeOf(provider, haiku), SESSION)
+      const hand =
+        (inputTokens * rates[0] + 2_000 * rates[1] + 1_000 * rates[2] + 500 * rates[3]) / 1_000_000
+      expect(result.cost?.amount).toBeCloseTo(hand, 12)
+      expect(result.cost?.currency).toBe('USD')
+      expect(result.perRequest).toEqual([{ input: total, cost: result.cost?.amount }])
+    },
+  )
+
+  it('claude-5-5-models 验收 7: cache reads alone can cross the prompt threshold', () => {
+    const pricing = row(anthropicDefinition, 'claude-haiku-5-5').pricing
+    expect(
+      costOf({ input: 1, cacheRead: 100_000, cacheWrite: 0, output: 100, reasoning: 0 }, pricing)
+        ?.amount,
+    ).toBeCloseTo((0.5 + 100_000 * 0.05 + 100 * 2.5) / 1_000_000, 12)
+  })
+
+  it('claude-5-5-models 验收 7: cache writes also count toward prompt length', () => {
+    const pricing = row(anthropicDefinition, 'claude-haiku-5-5').pricing
+    expect(
+      costOf({ input: 1, cacheRead: 0, cacheWrite: 100_000, output: 100, reasoning: 0 }, pricing)
+        ?.amount,
+    ).toBeCloseTo((0.5 + 100_000 * 0.625 + 100 * 2.5) / 1_000_000, 12)
+  })
+
+  it('claude-5-5-models 验收 7: missing tier cache rates use the tier input rate and keep base currency', () => {
+    const pricing = {
+      inputPerMTok: 0.1,
+      outputPerMTok: 0.5,
+      cacheReadPerMTok: 0.01,
+      cacheWritePerMTok: 0.125,
+      currency: 'CNY' as const,
+      longPrompt: { overTokens: 100_000, inputPerMTok: 0.5, outputPerMTok: 2.5 },
+    }
+    expect(
+      costOf(
+        { input: 97_001, cacheRead: 2_000, cacheWrite: 1_000, output: 500, reasoning: 200 },
+        pricing,
+      ),
+    ).toEqual({ amount: (100_001 * 0.5 + 500 * 2.5) / 1_000_000, currency: 'CNY' })
+  })
+
+  it('claude-5-5-models 验收 7: tiers are selected per attempt on either wire, never on the summed prompt', () => {
+    const pricing = row(anthropicDefinition, 'claude-haiku-5-5').pricing
+    const usage = {
+      inputTokens: 60_000,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputTokens: 1_000,
+      reasoningTokens: 0,
+      final: true,
+    }
+    const result = sumAttempts([
+      { usage, pricing, wire: 'anthropic-messages' },
+      { usage, pricing, wire: 'openai-chat' },
+    ])
+    expect(result.cost?.amount).toBeCloseTo((2 * (60_000 * 0.1 + 1_000 * 0.5)) / 1_000_000, 12)
+    const cached = sumAttempts([
+      {
+        usage: { ...usage, inputTokens: 100_001, cacheReadTokens: 100_000 },
+        pricing,
+        wire: 'openai-chat',
+      },
+    ])
+    expect(cached.cost?.amount).toBeCloseTo((0.5 + 100_000 * 0.05 + 1_000 * 2.5) / 1_000_000, 12)
+  })
+})

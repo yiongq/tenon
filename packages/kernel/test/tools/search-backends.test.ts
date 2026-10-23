@@ -68,8 +68,12 @@ describe('official search transports', () => {
     expect(network.requests).toHaveLength(1)
     expect(network.requests[0]?.headers['authorization']).toBe('Bearer gateway')
   })
-  it('selects the first eligible fixed model, never a session model', () => {
+  it('selects the first eligible fixed model, never a session model — claude-5-5-models 验收 10', () => {
     expect(selectAnthropicSearchModel()?.id).toBe('claude-sonnet-5')
+    const sonnet55 = anthropicDefinition.builtinModels.find(
+      (row) => row.id === 'claude-sonnet-5-5',
+    )!
+    expect(selectAnthropicSearchModel([{ ...sonnet55, id: 'claude-sonnet-5' }])).toBeNull()
     const models = anthropicDefinition.builtinModels.filter((m) => m.id !== 'claude-sonnet-5')
     expect(selectAnthropicSearchModel(models)?.id).toBe('claude-opus-5')
     expect(createAnthropicSearchDefinition({ maxTokens: 4096, models: [] })).toBeNull()

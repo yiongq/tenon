@@ -1312,7 +1312,7 @@ describe('the model rows spec 02 changes', () => {
     })
   })
 
-  it('declares each Anthropic row’s thinking mode as the vendor pages give it (2026-09-26)', () => {
+  it('declares each Anthropic row’s thinking mode as the vendor pages give it — claude-5-5-models 验收 1', () => {
     expect(
       anthropicDefinition.builtinModels.map((model) => [
         model.id,
@@ -1324,10 +1324,12 @@ describe('the model rows spec 02 changes', () => {
       ]),
     ).toEqual([
       ['claude-opus-5-5', 'always-on', true, 'medium', undefined, false],
-      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
-      ['claude-opus-5', 'adaptive-gated', true, 'high', 'high', undefined],
-      ['claude-haiku-4-5-20251001', 'budget', false, undefined, undefined, undefined],
+      ['claude-sonnet-5-5', 'adaptive-gated', true, 'high', 'high', false],
+      ['claude-haiku-5-5', 'adaptive-gated', true, 'medium', 'high', undefined],
       ['claude-fable-5-1', 'always-on', true, 'high', undefined, false],
+      ['claude-opus-5', 'adaptive-gated', true, 'high', 'high', undefined],
+      ['claude-sonnet-5', 'adaptive', true, 'high', undefined, undefined],
+      ['claude-haiku-4-5-20251001', 'budget', false, undefined, undefined, undefined],
     ])
   })
 
@@ -1345,14 +1347,16 @@ describe('the model rows spec 02 changes', () => {
     }
   })
 
-  it('puts Opus 5.5 first after the official prefix acceptance passes', () => {
+  it('puts Opus 5.5 first after the official prefix acceptance passes — claude-5-5-models 验收 1', () => {
     // 02 decision A16: official strict-prefix acceptance passed on 2026-09-28 (plan step 33).
     expect(anthropicDefinition.builtinModels.map((model) => model.id)).toEqual([
       'claude-opus-5-5',
-      'claude-sonnet-5',
-      'claude-opus-5',
-      'claude-haiku-4-5-20251001',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
       'claude-fable-5-1',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001',
     ])
     const opus = anthropicDefinition.builtinModels[0]
     expect(opus).toMatchObject({
@@ -1381,6 +1385,8 @@ describe('the model rows spec 02 changes', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
     ])
   })
 })
@@ -1404,7 +1410,7 @@ describe('the definition data M6 adds (§对 01 的修补 1、2)', () => {
     }
   })
 
-  it('M6 不变量 17 (builtin and frozen rows): Opus 5.5 and Fable 5.1 check the prefix, by data and by id', () => {
+  it('M6 不变量 17 (builtin and frozen rows): new adaptive rows check the prefix, by data and by id — claude-5-5-models 验收 1', () => {
     const flagged = BUILTIN_PROVIDERS.flatMap((definition) =>
       definition.builtinModels
         .filter((model) => Object.hasOwn(model, 'checksThinkingPrefix'))
@@ -1412,13 +1418,17 @@ describe('the definition data M6 adds (§对 01 的修补 1、2)', () => {
     )
     expect(flagged).toEqual([
       ['anthropic', 'claude-opus-5-5', true],
+      ['anthropic', 'claude-sonnet-5-5', true],
+      ['anthropic', 'claude-haiku-5-5', true],
       ['anthropic', 'claude-fable-5-1', true],
     ])
     for (const definition of BUILTIN_PROVIDERS) {
       for (const model of definition.builtinModels) {
         expect([model.id, checksThinkingPrefix(model)]).toEqual([
           model.id,
-          model.id === 'claude-opus-5-5' || model.id === 'claude-fable-5-1',
+          ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-fable-5-1'].includes(
+            model.id,
+          ),
         ])
       }
     }
@@ -1481,3 +1491,160 @@ function describeKeys(definition: ProviderDefinition): unknown[] {
     default: key.default,
   }))
 }
+
+describe('claude-5-5-models builtin catalogue', () => {
+  it.each([
+    [
+      'sonnet',
+      'high',
+      { offType: 'between_tools', forcedToolChoice: false },
+      { inputPerMTok: 2, outputPerMTok: 10, cacheReadPerMTok: 0.1, cacheWritePerMTok: 2.5 },
+    ],
+    [
+      'haiku',
+      'medium',
+      {},
+      {
+        inputPerMTok: 0.1,
+        outputPerMTok: 0.5,
+        cacheReadPerMTok: 0.01,
+        cacheWritePerMTok: 0.125,
+        longPrompt: {
+          overTokens: 100_000,
+          inputPerMTok: 0.5,
+          outputPerMTok: 2.5,
+          cacheReadPerMTok: 0.05,
+          cacheWritePerMTok: 0.625,
+        },
+      },
+    ],
+  ] as const)(
+    'claude-5-5-models 验收 1: %s 5.5 matches every documented field',
+    (family, defaultEffort, extra, pricing) => {
+      expect(
+        anthropicDefinition.builtinModels.find((row) => row.id === `claude-${family}-5-5`),
+      ).toEqual({
+        id: `claude-${family}-5-5`,
+        providerId: 'anthropic',
+        family,
+        generation: [5, 5],
+        nameKey: `model.name.${family}55`,
+        purposeKey: `model.purpose.${family}55`,
+        contextLimit: 1_000_000,
+        maxOutputTokens: 128_000,
+        reasoning: true,
+        supportsToolCalling: true,
+        supportsStreamingToolCalls: true,
+        supportsVision: true,
+        supportsCacheControl: true,
+        thinkingPreservationFormat: 'signed-blocks',
+        usageNeedsOptIn: false,
+        thinkingSpec: {
+          mode: 'adaptive-gated',
+          defaultOn: true,
+          effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+          defaultEffort,
+          disableMaxEffort: 'high',
+          displays: ['summarized', 'omitted'],
+          defaultDisplay: 'omitted',
+          samplingDefaultsOnly: true,
+          ...extra,
+        },
+        checksThinkingPrefix: true,
+        pricing,
+      })
+    },
+  )
+
+  it('claude-5-5-models 验收 1、13: builtin families, generations and derived listings match the catalogue', () => {
+    expect(table(anthropicDefinition)).toEqual([
+      ['claude-opus-5-5', 'opus', [5, 5], undefined, false],
+      ['claude-sonnet-5-5', 'sonnet', [5, 5], undefined, false],
+      ['claude-haiku-5-5', 'haiku', [5, 5], undefined, false],
+      ['claude-fable-5-1', 'fable', [5, 1], undefined, false],
+      ['claude-opus-5', 'opus', [5, 0], 'more', true],
+      ['claude-sonnet-5', 'sonnet', [5, 0], 'more', true],
+      ['claude-haiku-4-5-20251001', 'haiku', [4, 5], 'more', true],
+    ])
+    expect(table(zhipuDefinition)).toEqual([
+      ['glm-5.3', 'glm', [5, 3], undefined, false],
+      ['glm-5.3-flash', 'glm-flash', [5, 3], undefined, false],
+      ['glm-5.3-flashx', 'glm-flashx', [5, 3], undefined, false],
+      ['glm-4.6', 'glm', [4, 6], 'more', true],
+    ])
+    for (const row of ollamaDefinition.builtinModels) {
+      expect(row).not.toHaveProperty('family')
+      expect(row).not.toHaveProperty('generation')
+    }
+    expect(anthropicDefinition.familyNameKeys).toEqual({
+      opus: 'model.family.opus',
+      sonnet: 'model.family.sonnet',
+      haiku: 'model.family.haiku',
+      fable: 'model.family.fable',
+    })
+    expect(zhipuDefinition.familyNameKeys).toEqual({
+      glm: 'model.family.glm',
+      'glm-flash': 'model.family.glmflash',
+      'glm-flashx': 'model.family.glmflashx',
+    })
+    for (const definition of BUILTIN_PROVIDERS) {
+      for (const row of definition.builtinModels.filter((model) => model.family !== undefined)) {
+        expect(definition.familyNameKeys?.[row.family!]).toBeTruthy()
+      }
+      for (const row of definition.builtinModels.filter(
+        (model) => model.thinkingSpec?.offType !== undefined,
+      )) {
+        expect(definition.wire).toBe('anthropic-messages')
+        expect(row.thinkingSpec?.mode).toBe('adaptive-gated')
+        expect(row.thinkingSpec?.disableMaxEffort).toBeDefined()
+      }
+      for (const row of definition.builtinModels.filter(
+        (model) => model.pricing?.longPrompt !== undefined,
+      )) {
+        expect(Number.isInteger(row.pricing?.longPrompt?.overTokens)).toBe(true)
+        expect(row.pricing?.longPrompt?.overTokens).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('claude-5-5-models 验收 11: Haiku 4.5 keeps its complete pre-change row and wire hash', () => {
+    const row = anthropicDefinition.builtinModels.find(
+      (candidate) => candidate.id === 'claude-haiku-4-5-20251001',
+    )!
+    const { family, generation, listing, ...before } = row
+    const original: ModelInfo = {
+      id: 'claude-haiku-4-5-20251001',
+      nameKey: 'model.name.haiku45',
+      purposeKey: 'model.purpose.haiku45',
+      providerId: 'anthropic',
+      contextLimit: 200_000,
+      maxOutputTokens: 64_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: true,
+      supportsCacheControl: true,
+      thinkingPreservationFormat: 'signed-blocks',
+      usageNeedsOptIn: false,
+      thinkingSpec: {
+        mode: 'budget',
+        defaultOn: false,
+        displays: ['summarized', 'omitted'],
+        defaultDisplay: 'summarized',
+      },
+      pricing: { inputPerMTok: 1, outputPerMTok: 5, cacheReadPerMTok: 0.1 },
+    }
+    expect(before).toEqual(original)
+    expect([family, generation, listing]).toEqual(['haiku', [4, 5], 'more'])
+    expect(modelWireHash(row)).toBe(modelWireHash(original))
+  })
+})
+
+const table = (definition: ProviderDefinition) =>
+  definition.builtinModels.map((row) => [
+    row.id,
+    row.family,
+    row.generation,
+    row.listing,
+    Object.hasOwn(row, 'listing'),
+  ])

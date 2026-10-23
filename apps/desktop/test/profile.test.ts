@@ -26,6 +26,28 @@ describe('desktop profiles', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('claude-5-5-models 验收 18: writing workspace folders preserves every latestOf pointer on disk', async () => {
+    const fs = new DesktopFs()
+    const identity = await openProfile(fs, absolutePath(root), 'local', 'pointer-tenant')
+    const opus = { id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'opus' }
+    const haiku = { id: 'anthropic', modelId: 'claude-haiku-4-5-20251001', latestOf: 'haiku' }
+    const flash = { id: 'zhipu', modelId: 'glm-5.3-flash', latestOf: 'glm-flash' }
+    await writeConfig(fs, identity, {
+      provider: opus,
+      defaultModelByProfile: { chat: haiku, cowork: flash },
+    })
+    await writeConfig(fs, identity, { lastWorkspaceFolders: ['/work/latest'] })
+    const config = await readConfig(fs, identity)
+    expect(config.provider).toEqual(opus)
+    expect(config.defaultModelByProfile).toEqual({ chat: haiku, cowork: flash })
+    expect(config.lastWorkspaceFolders).toEqual(['/work/latest'])
+    const persisted = JSON.parse(
+      (await fs.readFile(configPath(identity), { encoding: 'utf8' })) as string,
+    )
+    expect(persisted.provider).toEqual(opus)
+    expect(persisted.defaultModelByProfile).toEqual({ chat: haiku, cowork: flash })
+  })
+
   it('keeps two tenants of the same user apart on disk', async () => {
     const fs = new DesktopFs()
     const userData = absolutePath(root)

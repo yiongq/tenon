@@ -550,6 +550,7 @@ export function createLoop(deps: LoopDeps): Loop {
           facts.established ? facts.modelChoice : (draft?.modelChoice ?? null),
         ),
         previousOrigin: previousOriginOf(facts),
+        previousModel: previousModelOf(facts),
       })
       if ('needsConfirm' in resolved) return { kind: 'confirm', host: resolved.needsConfirm.host }
       providerId = resolved.providerId
@@ -3278,6 +3279,7 @@ export function createLoop(deps: LoopDeps): Loop {
         profile: facts.established ? facts.profile : (draft?.profile ?? 'chat'),
         sessionChoice: null,
         previousOrigin: null,
+        previousModel: previousModelOf(facts),
       })
       if ('needsConfirm' in resolved) {
         throw new Error('effectiveModelChoice: a read with no previous origin asked to confirm')
@@ -3828,4 +3830,14 @@ function whenAborted(signal: AbortSignal): Promise<Prebuild> {
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** claude-5-5-models: the last selected row, without the origin used only for data-flow checks. */
+function previousModelOf(
+  facts: SessionFacts,
+): Exclude<Parameters<RunConnector['resolveChoice']>[0]['previousModel'], undefined> {
+  const last = facts.lastSelected
+  if (last === null) return null
+  const { endpointOrigin: _origin, ...model } = last
+  return model
 }

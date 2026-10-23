@@ -52,6 +52,12 @@ export interface RunConnector {
     profile: 'chat' | 'cowork'
     sessionChoice: ModelChoice | null
     previousOrigin: string | null
+    /** claude-5-5-models: this incarnation's last selected row; absent reads as null. */
+    previousModel?: {
+      providerId: ProviderId
+      modelId: string
+      capabilitySource?: ModelChoice['capabilitySource']
+    } | null
   }): Promise<ModelChoice | { needsConfirm: { host: string } }>
   /** 只在 mailbox 之外调；配置问题不 reject：provider 留到 provider() 再抛，搜索后端给 null。
    *  signal 是本 Run 租约的；中止之后 Run 不等它 resolve（钥匙串弹框可能一直不答） */

@@ -49,6 +49,8 @@ Anthropic 发布了 Sonnet 5.5、Haiku 5.5。内置表现在五行（`packages/k
 | F20 | 两行的最小可缓存提示长度是 512 token | `models/sonnet-5-5/whats-new-sonnet-5-5`；`models/haiku-5-5/overview` | "prompt caching with a 512-token minimum cacheable prompt" / "The minimum cacheable prompt length is 512 tokens." |
 | F21 | 工具调用的输入流式返回，不分型号：`tool_use` 的输入以 `input_json_delta` 的片段逐段到达；细粒度工具流式所有模型都支持 | `build-with-claude/streaming` §Input JSON delta；`agents-and-tools/tool-use/fine-grained-tool-streaming` | "The deltas for `tool_use` content blocks correspond to updates for the `input` field of the block. To support maximum granularity, the deltas are *partial JSON strings*, whereas the final `tool_use.input` is always an *object*." / "All models support fine-grained tool streaming on the Claude API, …" |
 
+**2026-10-23 复核**（plan 第 1 步）：21 条逐条对一手页面重核，19 条不变（F4、F5、F8、F16、F17 只改了措辞）。F6、F14 变了：Anthropic 2026-10-21 发布 API 版本 `2026-10-21`，在那个版本下任何模型带 `temperature`、`top_p` 或 `top_k` 都是 400；F14 引的规则现在写明只适用于 2026-10-21 之前的版本，F6 那段从 Haiku 5.5 迁移页删了，改为「省略这三个参数」。Tenon 的请求头钉在 `anthropic-version: 2023-06-01`，旧规则仍适用，本 spec 的数据与采样守卫都不改；升 API 版本前要先改守卫（总参考「以后再说」）。每条的现状、URL 与核实日期见 [厂商现状表](../../reference/vendors.md)。
+
 **更正，不采信**：
 
 - 周报建议把 Haiku 5.5 的 `defaultDisplay` 写作 `'summarized'`，与 F5 矛盾，本 spec 取 `'omitted'`（与 Opus 5.5、Sonnet 5 等行一致，只有 Haiku 4.5 是 `'summarized'`）。
@@ -430,3 +432,4 @@ provider.select 的请求 = z.object({ providerId, modelId,                     
 从 2026-10-23 起记在这里，此前的修订见页头 `Revisions:`。
 
 - 2026-10-23 · 页头 `Tier:`、`Replaces:`、`Related:`；§验收标准 第 12 条与开头一句；§已有规则已覆盖、不用改的「逐条 effort」退路；§开放问题（已定）第 6 条 · 按 sdd v2 接入（ADR-004 A5）的澄清，只收紧或澄清、不放宽：补 `Tier: standard`；02 已冻结，不写 02 正文的行末指针，只在 02 页头加 `Changed by`；presentation-r1 已合入并 `implemented`，第一把 key 的「有」一支由本 spec 实现；验收 12 的标记改成 spec-check 认的（live）；live 结果与花费改记 log.md，花费上限改由 owner 在第 12 步开跑前定；`Replaces:` 原写的「写入指针那天」的日期约定随行末指针一起去掉（v2 的 `Changed by` 不带日期，日期看提交） · PR #61、PR #55
+- 2026-10-23 · §事实与出处（加「2026-10-23 复核」一段） · plan 第 1 步重核：F6、F14 因 API 版本 2026-10-21 变了，Tenon 钉 2023-06-01，数据与守卫不改，只记现状 · b1b1577

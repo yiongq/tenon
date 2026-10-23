@@ -9,6 +9,8 @@
  *   - `usage.input` is the input that missed the cache, per wire: `anthropic-messages`' `inputTokens`
  *     leave the cache out already; `openai-chat`'s include it, so `cacheReadTokens` and
  *     `cacheWriteTokens` come off first (the kernel's token limit counts it the same way, loop/run.ts).
+ *   - claude-5-5-models §对 02 的修补「费用与用量」: prompt length includes cache reads and
+ *     writes; strictly above longPrompt.overTokens, all four usage parts use that tier's rates.
  *   - `reasoningTokens` are part of `outputTokens` already and are not priced again.
  *   - Currency is `pricing.currency`, USD when absent (01 修补 2). A missing cache price is the input
  *     price. An attempt with usage and no `pricing` makes the whole cost null, as do two currencies.
@@ -45,12 +47,17 @@ export function recordUsageOf(usage: Usage, wire: Wire | null): RecordUsage {
 /** What one attempt's usage costs at `pricing`; null without one. */
 export function costOf(usage: RecordUsage, pricing: Pricing | undefined): RecordCost | null {
   if (pricing === undefined) return null
-  const input = pricing.inputPerMTok
+  const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite
+  const rates =
+    pricing.longPrompt !== undefined && promptTokens > pricing.longPrompt.overTokens
+      ? pricing.longPrompt
+      : pricing
+  const input = rates.inputPerMTok
   const amount =
     (usage.input * input +
-      usage.cacheRead * (pricing.cacheReadPerMTok ?? input) +
-      usage.cacheWrite * (pricing.cacheWritePerMTok ?? input) +
-      usage.output * pricing.outputPerMTok) /
+      usage.cacheRead * (rates.cacheReadPerMTok ?? input) +
+      usage.cacheWrite * (rates.cacheWritePerMTok ?? input) +
+      usage.output * rates.outputPerMTok) /
     PER_MILLION
   return { amount, currency: pricing.currency ?? 'USD' }
 }

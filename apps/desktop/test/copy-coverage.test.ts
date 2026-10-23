@@ -580,10 +580,10 @@ describe('the banner and the model menu copy', () => {
     ).toEqual([])
   })
 
-  it('has the display name and purpose sentence of every builtin model row, with nothing to fill', () => {
+  it('has the display name and purpose sentence of every builtin model row, with nothing to fill — claude-5-5-models 验收 8', () => {
     const providers = createProviderRegistry()
     registerBuiltinProviders(providers)
-    const expected = providers
+    const expected: Expectation[] = providers
       .list()
       .flatMap((definition) =>
         definition.builtinModels.flatMap((model) =>
@@ -593,10 +593,25 @@ describe('the banner and the model menu copy', () => {
         ),
       )
     expect(expected.length).toBeGreaterThan(0)
+    expected.push(
+      ...providers.list().flatMap((definition) =>
+        Object.values(definition.familyNameKeys ?? {}).map((key) => ({
+          key,
+          args: [],
+          what: 'model family',
+        })),
+      ),
+    )
+    expect(expected.filter((entry) => entry.what === 'model family')).toHaveLength(7)
+    expected.push({
+      key: 'settings.providers.latest',
+      args: ['family', 'model'],
+      what: 'latest family option',
+    })
     expect(problems(expected)).toEqual([])
   })
 
-  it('names every Anthropic and Zhipu row (the menu and the chip show a name, not an id)', () => {
+  it('names every Anthropic and Zhipu row (the menu and the chip show a name, not an id) — claude-5-5-models 验收 8', () => {
     // A row without a `nameKey` shows its raw id: right for a hand-typed or local model, a
     // regression for a row we ship.
     const providers = createProviderRegistry()

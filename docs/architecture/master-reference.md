@@ -1135,7 +1135,8 @@ Claude Desktop 的概念 → Tenon 的实现：
 - MCP Apps 的 iframe 安全模型（Electron 没有官方指南；参照 DeepChat 的自定义协议、CSP 与双层 iframe，Tenon 要开 sandbox） · lead · 阶段 5 起草前 · 本文件 §15.2
 - LLM 判官单独立题，要答：缓存规则、退回人工的阈值、判官自己怎么防注入、手动档下跑不跑（只拦截，还是只给卡加一句提醒） · lead · 06 之后 · 02 §留到后续阶段；04 §非目标
 - 连接器卡加「本会话允许」（撤不回与要求用户交互的卡不出），另起只增修补 02 与 03 的 feature spec · owner 给使用反馈，lead 起草 · 你觉得确认弹得太多时 · 03 开放问题 14
-- 厂商现状表（docs/reference/ 下，每行写能力、实测结果、核实日期、一手来源、依赖它的 spec、重核时间），先收 Anthropic · lead · 随 claude-5-5-models 第 1 步起 · ADR-004 A12
+- [厂商现状表](../reference/vendors.md) 补上 Anthropic 以外的厂商（智谱、DeepSeek 等），每行按同样的列写 · lead · 随下一次对那家厂商的核实 · ADR-004 A12
+- Anthropic API 版本 `2026-10-21` 起，任何模型带 `temperature`、`top_p` 或 `top_k` 都是 400，assistant 里直接放 `document` 块、user 的 text 块带非空 `citations` 也是 400；Tenon 现在在 anthropic-messages 线与网络搜索两处钉 `2023-06-01`。升 `@anthropic-ai/sdk` 到 1.x 或换 API 版本之前，先改采样守卫、各行的 `requestParams`，并核对这两种块 · lead · 升 Anthropic SDK 或 API 版本之前 · [厂商现状表](../reference/vendors.md)
 - README 的截图：一次对话、审批卡打开，存为 docs/assets/approval-card.png，模型选择器不显示厂商模型名 · lead · 待定 · README.md
 - spec-check job 装 e2e 工具链，让 e2e 层与 macOS 专属的突变也能每个 PR 机器重跑 · lead · 待定 · ADR-004 A18
 - Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标

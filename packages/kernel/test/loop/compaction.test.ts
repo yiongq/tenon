@@ -1,6 +1,11 @@
 import type * as RunModule from '../../src/loop/run.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createMemoryHost, createMemoryTapeStore, compactionThreshold } from '../../src/index.js'
+import {
+  anthropicDefinition,
+  createMemoryHost,
+  createMemoryTapeStore,
+  compactionThreshold,
+} from '../../src/index.js'
 import type { EncodedRequest, ModelInfo, StreamEvent } from '../../src/index.js'
 import { encodeOpenAIChat } from '../../src/provider/wire/openai-chat.js'
 import { LOCALE_HINT, MODEL_NOTES, fill } from '../../src/prompts/index.js'
@@ -1106,3 +1111,37 @@ it('02 不变量 29: sends an overflow summary past the deadline but not the nex
   expect(attempts[1]!.sourceSeq).toBeGreaterThan(attempts[0]!.sourceSeq!)
   expect(JSON.stringify(h.provider.requests.at(-1)!.body)).toContain('old question 0')
 })
+
+it.each([
+  ['claude-sonnet-5-5', 'between_tools'],
+  ['claude-haiku-5-5', 'disabled'],
+])(
+  'claude-5-5-models 验收 3: %s compacts with high effort and %s, without tools or display',
+  async (id, type) => {
+    const model = anthropicDefinition.builtinModels.find((row) => row.id === id)!
+    const h = harness(model)
+    await h.service.selectModel({
+      sessionId: SESSION,
+      origin: null,
+      choice: { providerId: model.providerId, modelId: id, effort: 'low' },
+    })
+    await seed(h)
+    h.provider.script(reply('summary'))
+    h.provider.script(reply('done'))
+    expect((await send(h)).reason.code).toBe('completed')
+    const attempts = (await entries(h)).filter((e) => e.name === 'provider/attempt_completed')
+    const at = attempts.findIndex((e) => e.payload['compaction'] !== undefined)
+    expect(at).toBe(3)
+    expect(attempts[at]?.payload['request']).toMatchObject({
+      thinking: { enabled: false },
+      effort: 'high',
+    })
+    expect(attempts[at]?.payload['request']).not.toHaveProperty('display')
+    const body = h.provider.requests[at]!.body as Record<string, unknown>
+    expect(body['thinking']).toEqual({ type })
+    expect(body['output_config']).toEqual({ effort: 'high' })
+    expect(body).not.toHaveProperty('tools')
+    expect(body).not.toHaveProperty('display')
+    expect(attempts[at + 1]?.payload['request']).toMatchObject({ effort: 'low' })
+  },
+)
