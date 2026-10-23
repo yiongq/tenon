@@ -75,7 +75,8 @@ const GIT = word('git')
 
 /**
  * The rows (E1: deleting an existing file, sending content out). `curl`'s short options may be
- * bundled (`-sSd`); a flag after the command word counts wherever it stands.
+ * bundled (`-sSd`); a flag after the command word counts wherever it stands. Command words are
+ * case-insensitive, but options keep their case (`git branch -D` is not `git branch -d`).
  */
 const COMMAND_PATTERNS: ReadonlyArray<{
   readonly row: string
@@ -109,6 +110,35 @@ const COMMAND_PATTERNS: ReadonlyArray<{
     // A remote `[user@]host:path` or `rsync://` operand; which side it stands on is not parsed.
     row: 'rsync to a remote host',
     test: inOrder(word('rsync'), option('rsync://|(?:[\\w.+-]+@)?[A-Za-z0-9][\\w.-]*:')),
+  },
+  { row: 'npm publish', test: inOrder(word('npm'), word('publish')) },
+  { row: 'pnpm publish', test: inOrder(word('pnpm'), word('publish')) },
+  // Includes `yarn npm publish`; this table does not parse intervening arguments.
+  { row: 'yarn publish', test: inOrder(word('yarn'), word('publish')) },
+  { row: 'docker push', test: inOrder(word('docker'), word('push')) },
+  { row: 'podman push', test: inOrder(word('podman'), word('push')) },
+  { row: 'gh release create', test: inOrder(word('gh'), word('release'), word('create')) },
+  { row: 'twine upload', test: inOrder(word('twine'), word('upload')) },
+  {
+    row: 'git branch force delete',
+    test: (command) =>
+      inOrder(GIT, word('branch'), option('-[A-Za-z]*D'))(command) ||
+      (inOrder(GIT, word('branch'), option('--delete(?![\\w-])'))(command) &&
+        inOrder(GIT, word('branch'), option('--force(?![\\w-])'))(command)),
+  },
+  { row: 'git stash drop', test: inOrder(GIT, word('stash'), word('drop')) },
+  { row: 'git stash clear', test: inOrder(GIT, word('stash'), word('clear')) },
+  { row: 'kubectl delete', test: inOrder(word('kubectl'), word('delete')) },
+  {
+    row: 'shred removing a file',
+    test: inOrder(word('shred'), option('-[A-Za-z]*u|--remove(?![\\w-])')),
+  },
+  {
+    row: 'curl DELETE',
+    test: inOrder(
+      word('curl'),
+      option('-[A-Za-z]*X\\s*[\'"]?DELETE(?![\\w-])|--request(?:\\s+|=)[\'"]?DELETE(?![\\w-])'),
+    ),
   },
 ]
 
