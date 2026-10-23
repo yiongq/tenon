@@ -54,3 +54,36 @@
 - [建议] spec-check 提示改了 packages/kernel/src/index.ts 却没动 overview.md · 不修：本段只新增两个导出函数，模块边界与 overview 的术语不变；第 6 步把家族接进内置表时再看 overview §术语 要不要加「家族、代次、指针」
 结论：通过
 突变：文档部分 0 个；代码部分 12 个，全部变红，0 个存活（见「实施 · 2026-10-23」）
+
+## 实施 · 2026-10-23（第 1、6–8 步）
+
+- 第 1 步（lead，只读）：F1–F21 逐条对一手页面重核，19 条不变（F4、F5、F8、F16、F17 只改了措辞），F6、F14 变了：API 版本 `2026-10-21` 起任何模型带采样参数都 400，旧规则只适用于之前的版本。Tenon 钉 `anthropic-version: 2023-06-01`（anthropic-messages.ts 的 `ALLOWED_HEADERS`），数据与第 4 步的守卫都不改；spec §事实与出处 加「2026-10-23 复核」一段，新建 docs/reference/vendors.md（先收 Anthropic），总参考「以后再说」加「升 API 版本前先改采样守卫」一行。重核原文另记。
+- 第 6–8 步（Codex 按任务说明实现；lead 审查 diff、沙箱外补跑全量 vitest 并提交）：两新行逐字段照 spec §内置模型表的数据改动，lead 逐字段核过；anthropic、智谱的行加 `family` / `generation`、表经 `arrangeFamilies`，Opus 5 去掉手写的 `listing`；`familyNameKeys` 与两份 locale 的新键；`costOf` 按提示长度换档；contracts 的 `latestOf`、`family` / `familyNameKey`；`resolveChoice` 的问询加 `previousModel`，`SessionFacts.lastSelected` 加 `modelId` 与 `capabilitySource`。
+- 门禁：format、lint、typecheck 通过；全量 vitest 241 个文件、4545 passed、110 skipped（沙箱外）。model-menu.spec.ts、text-fit-02.spec.ts 只过了 typecheck，由本段 PR 的 CI e2e 首跑。
+- 位置漂移：plan 写的 `provider/models.ts` 实际是 `provider/definitions/models.ts`；model-menu.spec.ts 与 mailbox.ts 的行号都偏了，按用例标题与函数名定位，没有对不上的。
+
+突变（第 8 步 ⑤⑥ 要等第 9 步，留到那时做）：
+
+- 第 6 步 ① Haiku 5.5 的 `defaultDisplay` 写成 `'summarized'` → 红：验收 1「haiku 5.5 matches every documented field」
+- 第 6 步 ② Sonnet 5.5 去掉 `offType` → 红：验收 3 Sonnet 5.5 摘要请求的编码用例
+- 第 6 步 ③ Sonnet 5.5 去掉 `forcedToolChoice: false` → 红：验收 1 整行用例与验收 10 的 search-backends 用例
+- 第 6 步 ④ Sonnet 5.5 去掉 `checksThinkingPrefix` → 红：验收 1 整行用例与 M6 前缀标记用例
+- 第 6 步 ⑤ 把 Sonnet 5.5 排到第一行 → 红：验收 1「puts Opus 5.5 first…」
+- 第 6 步 ⑥ GLM-4.6 的家族写成 `'glm-4'` → 红：验收 1、13 的家族与排位表
+- 第 6 步 ⑦ Flash 并进 `glm` 家族 → 红：定义加载即抛 `family glm: duplicate generation 5,3`
+- 第 7 步 ① `>` 改 `>=` → 红：验收 7 恰为 100 000 的用例
+- 第 7 步 ② 提示长度只算 `input` → 红：验收 7 靠缓存读写跨阈值的用例
+- 第 7 步 ③ 输出仍按低档 → 红：验收 7 的 100 001 用例
+- 第 7 步 ④ 档内缺缓存价退回基础档 → 红：验收 7「missing tier cache rates…」
+- 第 8 步 ① 交本代第一个 `model_selected` → 红：验收 15「passes the last selected model…」
+- 第 8 步 ② 清空后仍交上一代的 → 红：同一用例清空后为 null 的断言
+- 第 8 步 ③ `effectiveModelChoice` 交 null → 红：验收 15 的最后选择、`capabilitySource` 与旧记录用例
+- 第 8 步 ④ 去掉 `.catch(undefined)` → 红：验收 18 的空串与非字符串坏值用例
+
+测试改动：packages/kernel/test/provider/definitions.test.ts · declares each Anthropic row’s thinking mode… · 加两新行，按 spec 数据表的行序更新期望
+测试改动：packages/kernel/test/provider/definitions.test.ts · puts Opus 5.5 first… · 七行的顺序与币种期望按 spec 数据表更新
+测试改动：packages/kernel/test/provider/definitions.test.ts · M6 不变量 17… · 前缀标记的期望表加两新行
+测试改动：apps/desktop/test/model-selection.test.ts · marks, lists and names each row… · Sonnet 5、Haiku 4.5、GLM-4.6 的 `listing` 改为算出的 `'more'`；Haiku 4.5 改按完整 id 找，另验 Haiku 5.5 的档位
+测试改动：apps/desktop/e2e/model-menu.spec.ts · presentation-r1 验收 9… · 主列表断言改用 Sonnet 5.5；预算模式的 Haiku 4.5 改从「更多模型」进入（plan 第 6 步）
+测试改动：apps/desktop/e2e/model-menu.spec.ts · asks by where the history went… · 改选主列表的 Sonnet 5.5，显示名期望随之改
+测试改动：apps/desktop/e2e/model-menu.spec.ts · in a task, the text-only rows are greyed… · 可选的官方行改为主列表的 Sonnet 5.5

@@ -4,7 +4,7 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1 步与第 2–5 步做完（分支 `feat/claude-5-5-seg1`）。下一步第 1 步（只读核对 F21、建厂商现状表），再从第 6 步按序往下。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
+当前：第 0.1、1–8 步做完（第 2–5 步 PR #67 已合入；第 1、6–8 步在分支 `feat/claude-5-5-seg2`）。下一步第 9 步（desktop 主进程的解析与写指针，含会话不换模型与一批 e2e 改写），然后第 10、11 步。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
 需要你：无
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
@@ -37,7 +37,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 - [x] 0. owner 定开放问题与接受 spec：2026-10-15 已定（1A、2A、3A、5A、6A、7A、8A；4 由「跟随最新」取代），spec 已按定法同步（`Revisions:` ⑯–⑳）。同日 owner 经问卷单独确认 §点名 (g) 取 A，spec 改 `Status: ready`（`Revisions:` ㊴，`Owner` 行已写）。旧 spec 顶部要加的几行不在这一步，在第 13 步。
 - [x] 0.1 按 sdd v2 接入（ADR-004 A5）：spec 页头补 `Tier`，`Replaces:`、`Related:`、验收 12 的标记按 v2 澄清并记修订记录；本文件改成 v2 的形状；新建 log.md。
-- [ ] 1. 落地前核对，只读公开页面：
+- [x] 1. 落地前核对，只读公开页面：
   - F21 两页的原文还在（两新行 `supportsStreamingToolCalls: true` 靠它）。对不上时停下，spec 记修订记录，并按 01 §内置 provider「凡未能从文档或一次本地探测确认的字段，在 `plan.md` 记一笔」记进 log.md。（`displays` 与 `supportsVision` 已由 F18 核过。）
   - 核到的 URL 与日期留给第 6 步的注释。
   - 建厂商现状表 `docs/reference/vendors.md`，先只收 Anthropic：本 spec 用到的每条能力（F1–F21）各一行，写能力、实测结果、核实日期、一手来源、依赖它的 spec、重核时间（ADR-004 A12；docs/spec-driven-dev.md「厂商现状」），并把总参考「以后再说」里那一行换成指向它的链接。
@@ -65,7 +65,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - `newestOfFamily(definition, family)`：该定义里这一家族代次最大的行，没有给 null（第 9 步的解析与写指针用）。
   - 测试：新文件 packages/kernel/test/provider/model-families.test.ts（验收 13），合成的定义。
   - 突变：① 代次只比主版本 → [5, 0] 对 [5, 5] 的用例红；② 带家族的行手写 `listing` 不抛 → 红；③ 最新一代也写 `listing: 'main'` → 「最新一代没有 `listing` 键」红；④ `newestOfFamily` 取家族里排在前面的行 → 旧行排前面的用例红。
-- [ ] 6. 数据与文案：packages/kernel/src/provider/definitions/anthropic.ts 加两行（取值见 spec §内置模型表的数据改动，加第 1 步的结果），现有五行加 `family`、`generation`，Opus 5 去掉手写的 `listing`，行序照数据表，表经 `arrangeFamilies`；zhipu.ts 四行加 `family`、`generation`，表经 `arrangeFamilies`；两个定义加 `familyNameKeys`。注释按 spec 数据表「注释」一行改。apps/desktop/src/i18n/locales/zh-CN/common.json 与 en/common.json：`model.name`、`model.purpose` 加新键、改 `sonnet5`、`haiku45` 的值，加 `model.family.*` 七个键与 `settings.providers.latest`。
+- [x] 6. 数据与文案：packages/kernel/src/provider/definitions/anthropic.ts 加两行（取值见 spec §内置模型表的数据改动，加第 1 步的结果），现有五行加 `family`、`generation`，Opus 5 去掉手写的 `listing`，行序照数据表，表经 `arrangeFamilies`；zhipu.ts 四行加 `family`、`generation`，表经 `arrangeFamilies`；两个定义加 `familyNameKeys`。注释按 spec 数据表「注释」一行改。apps/desktop/src/i18n/locales/zh-CN/common.json 与 en/common.json：`model.name`、`model.purpose` 加新键、改 `sonnet5`、`haiku45` 的值，加 `model.family.*` 七个键与 `settings.providers.latest`。
   - 测试：
     - definitions.test.ts（验收 1）：改「puts Opus 5.5 first」与「declares each Anthropic row’s thinking mode」两条的期望表；「M6 不变量 17」的 flagged 表与逐行判断补两新行；加两行的整行断言、各行的 `family` / `generation` / `listing`，以及 `offType`、`longPrompt`、`familyNameKeys` 的表规则；
     - thinking-shapes.test.ts 把第 3、4 步的用例换成表里的行；
@@ -75,10 +75,10 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
     - text-fit-02.spec.ts:58 的行数仍是 5（anthropic 主列表仍是四行），只确认新行不换行不截断；
     - Haiku 4.5 行除注释、`family`、`generation` 与 `listing` 外不变、`modelWireHash` 不变（验收 11）。
   - 突变：① Haiku 5.5 的 `defaultDisplay` 写成 `'summarized'`（周报的错）→ 验收 1 红；② Sonnet 5.5 去掉 `offType` → 验收 3 红；③ Sonnet 5.5 去掉 `forcedToolChoice: false` → 验收 1、10 红；④ 任一新行去掉 `checksThinkingPrefix` → 验收 1 红；⑤ 把 Sonnet 5.5 排到第一行 → 验收 1、9 红；⑥ GLM-4.6 的家族写成 `'glm-4'` → 验收 1（它不再是 `'more'`）红；⑦ Flash 并进 `glm` 家族 → 验收 1 红。
-- [ ] 7. 费用：apps/desktop/evals/cost.ts 的 `costOf`（:46-56）先算提示长度 `usage.input + usage.cacheRead + usage.cacheWrite`（与 `inputTotalOf` 同口径），大于 `pricing.longPrompt.overTokens` 时四项都换成本档单价，档内缺缓存价按本档输入价；文件头注释补一条引本 spec。
+- [x] 7. 费用：apps/desktop/evals/cost.ts 的 `costOf`（:46-56）先算提示长度 `usage.input + usage.cacheRead + usage.cacheWrite`（与 `inputTotalOf` 同口径），大于 `pricing.longPrompt.overTokens` 时四项都换成本档单价，档内缺缓存价按本档输入价；文件头注释补一条引本 spec。
   - 测试：evals-cost.test.ts（验收 7，含档内缺缓存价的构造用例），现有用例不改。
   - 突变：① `>` 改 `>=` → 恰为 100 000 的用例红；② 提示长度只算 `input` → 靠缓存读推过阈值的用例红；③ 只有输入按高档、输出仍按低档 → 红；④ 档内缺缓存价时退回基础档的缓存价 → 档内缺缓存价的用例红。
-- [ ] 8. 契约与端口：
+- [x] 8. 契约与端口：
   - packages/contracts/src/ipc/config.ts 的 `providerSelectionSchema`（:17）加 `latestOf`（`z.string().min(1).optional().catch(undefined)`，坏值只丢这个键）；provider.ts 的 `providerSelect` 请求（:204）加 `latestOf`，`providerModelSchema`（:84）加 `family`、`familyNameKey`；
   - kernel：`RunConnector.resolveChoice` 的问询加可选的 `previousModel`（packages/kernel/src/loop/ports.ts:50；可选，缺省按 null 读，照文件头的冻结规则，已有的十处直接调用点不用改），带 `providerId`、`modelId` 与 `capabilitySource`；`SessionFacts.lastSelected` 加 `modelId` 与 `capabilitySource`（session/facts.ts:44、:89；载荷里缺 `capabilitySource` 时不写）；mailbox.ts 的 `prebuild`（:541）与 `effectiveModelChoice`（:3256）都交它，`effectiveModelChoice` 的 `previousOrigin` 照旧是 null（它拿到 `needsConfirm` 会抛，:3263）；testing/loop-ports.ts 的脚本连接器照旧把问询记进 `resolved`。
   - 测试：packages/contracts/test/config-route.test.ts（验收 18 前半，含 `latestOf: ""`）；apps/desktop/test/profile.test.ts（验收 18 后半：写 `lastWorkspaceFolders` 后三个默认的 `latestOf` 还在）；packages/kernel/test/session/model-choice.test.ts（验收 15 末条：`previousModel` 是本代最后一个、带 `capabilitySource`、第一个 Run 与清空后为 null、`effectiveModelChoice` 交的 `previousModel` 相同而 `previousOrigin` 为 null）。
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-10-23：第 0.1 步按 sdd v2 接入（ADR-004 A5）；第 2–5 步由 Codex 按任务说明实现，lead 审查、补跑全量 vitest（4516 passed）并提交，突变与测试改动记在 log.md。此前的交接记录见 git 历史（a59f1cc 及更早）。下一步第 1 步，然后第 6 步（数据与文案，表经 `arrangeFamilies`）。第 12 步开跑前先问 owner。
+- 2026-10-23：第 1 步由 lead 做：F1–F21 对一手页面重核，F6、F14 因 API 版本 2026-10-21 变了（Tenon 钉 2023-06-01，数据与守卫不改），建了 docs/reference/vendors.md。第 6–8 步由 Codex 按任务说明实现，lead 审查、沙箱外补跑全量 vitest（4545 passed）并提交；e2e（model-menu、text-fit-02）只过了 typecheck，由本段 PR 的 CI 首跑。第 8 步的突变 ⑤⑥ 留到第 9 步做完后回头做。下一步第 9 步。
 
 ## Open
 
