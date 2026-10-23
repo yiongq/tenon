@@ -31,6 +31,7 @@ import type {
 import { CUSTOM_PROVIDER_ID_PATTERN } from '@tenon-app/kernel'
 import type { HostAdapter, ProviderDefinition } from '@tenon-app/kernel'
 import { endpointOf } from '../endpoint.js'
+import { menuSelectionOf } from '../model-selection.js'
 import {
   countProviderSettingsWrite,
   readConfig,
@@ -100,7 +101,7 @@ export function firstKeyDefaults(
 
   const row = definition.builtinModels.find((model) => (model.listing ?? 'main') === 'main')
   if (row === undefined) return {}
-  const selection = { id: definition.id, modelId: row.id }
+  const selection = menuSelectionOf(definition, row.id)
   return row.supportsToolCalling
     ? { defaultModelByProfile: { chat: selection, cowork: selection }, provider: selection }
     : { defaultModelByProfile: { chat: selection } }

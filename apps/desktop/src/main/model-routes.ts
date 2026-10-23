@@ -9,7 +9,7 @@ import {
   isProbedRow,
 } from './custom-vendors/registry.js'
 import { readConfig, withConfigLock, writeConfigHeld } from './host/profile.js'
-import { selectionOf } from './provider-routes.js'
+import { menuSelectionOf } from './provider-routes.js'
 
 /**
  * The session's model choice (spec 02 §模型选择; 01 修补 6「给会话选模型」): `session.selectModel`
@@ -52,7 +52,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
     // A level the row does not list is refused; a hand-typed id lists none (A11, M6).
     const levels = row?.thinkingSpec?.effortLevels ?? []
     if (q.effort !== null && !levels.includes(q.effort)) return refused('invalid-value')
-    const selection = selectionOf(definition, q.modelId)
+    const selection = menuSelectionOf(definition, q.modelId)
     // An instance's row as the lock leaves it: a delete that held the lock first refuses the choice
     // before the session records it (M6 §写入规则「删除」; 验收 25).
     if (isInstanceId(q.providerId)) {
@@ -61,6 +61,10 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       )
       if (gone !== null) return refused(gone)
     }
+    const facts = await sessions.sessionFacts({ sessionId: q.sessionId })
+    const effective =
+      facts.chosen === null ? await sessions.effectiveModelChoice({ sessionId: q.sessionId }) : null
+    const keepDefaults = effective?.providerId === q.providerId && effective.modelId === q.modelId
     // Outside the lock: the command waits behind a send still prebuilding, whose keychain read may
     // be a prompt on an unsigned build, and that must not hold every save (provider.ts).
     const { profile } = await sessions.selectModel({
@@ -73,6 +77,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       },
       origin: originOf(event),
     })
+    if (keepDefaults) return SAVED
     await withConfigLock(host.identity, async () => {
       const config = await readConfig(host.fs, host.identity)
       // A delete since the check above came after this choice: it cleared the defaults, and they

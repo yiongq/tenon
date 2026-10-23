@@ -1134,13 +1134,19 @@ describe('an instance’s address or wire edited by hand in config.json (§存�
 })
 
 describe('验收 20: an instance’s host and 02’s data-flow check', () => {
-  it('a session that sent to a loopback instance holds its next round for a public instance until the menu confirms it, sending nothing meanwhile', async () => {
+  it('claude-5-5-models 验收 15、claude-5-5-models 验收 16: a session that sent to a loopback instance holds its next round for a public instance until the menu confirms it, sending nothing meanwhile', async () => {
     const local = { id: LOCAL_ID, modelId: TOOL_ROW.id }
-    const h = await harness([LOCAL, instance({ id: ID })], [answer(), answer()], {
-      provider: local,
-      defaultModelByProfile: { chat: local },
-    })
+    const { probe: _probe, ...localRow } = TOOL_ROW
+    const h = await harness(
+      [{ ...LOCAL, models: [localRow] }, instance({ id: ID })],
+      [answer(), answer()],
+      {
+        provider: local,
+        defaultModelByProfile: { chat: local },
+      },
+    )
     expect((await send(h, 'hello')).reason.code).toBe('completed')
+    await h.ok('customVendor.update', { id: LOCAL_ID, models: [TEXT_ROW] })
     expect(await h.ok('provider.select', { providerId: ID, modelId: TOOL_ROW.id })).toEqual({
       ok: true,
     })
@@ -1153,6 +1159,10 @@ describe('验收 20: an instance’s host and 02’s data-flow check', () => {
 
     // The menu's choice confirms it: the held message goes to the instance's host.
     await choose(h, TOOL_ROW.id)
+    expect((await readConfig(h.host.fs, h.host.identity)).provider).toEqual({
+      id: ID,
+      modelId: TOOL_ROW.id,
+    })
     expect((await h.loop.runEnded()).reason.code).toBe('completed')
     expect(h.network.requests.map((request) => request.url)).toEqual([
       'http://127.0.0.1:11434/v1/chat/completions',

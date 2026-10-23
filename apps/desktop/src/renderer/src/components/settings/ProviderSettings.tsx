@@ -192,7 +192,12 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
 
   const save = async (): Promise<void> => {
     if (draft === null) return
-    const modelId = draft.customModel.trim() === '' ? draft.modelId : draft.customModel.trim()
+    const pointer =
+      draft.customModel.trim() === '' && entry !== null
+        ? pointerRows(entry).find((model) => pointerValue(entry, model.family!) === draft.modelId)
+        : undefined
+    const modelId =
+      draft.customModel.trim() === '' ? (pointer?.id ?? draft.modelId) : draft.customModel.trim()
     // A definition that ships no model cannot be selected without a typed id (`provider.select`
     // requires one), so a save that would write nothing says why instead of closing as if it took.
     if (draft.modelEdited && modelId === '') {
@@ -231,6 +236,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
         const chosen = await invokeRoute(window.tenon, providerSelect, {
           providerId: draft.providerId,
           modelId,
+          ...(pointer === undefined ? {} : { latestOf: pointer.family }),
         })
         if (!chosen.ok) return await fail({ code: 'unavailable', configKey: null }, wrote)
         if (!chosen.data.ok) return await fail(chosen.data, wrote)
@@ -377,11 +383,21 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
                 value={draft.modelId}
                 // The names the model menu and its chip use (「Opus 5.5」); the raw id, which the
                 // field below takes by hand, is the tooltip. A model without a name shows its id.
-                options={entry.models.map((model) =>
-                  model.nameKey === undefined
-                    ? { value: model.id, label: model.id }
-                    : { value: model.id, label: fromData(model.nameKey), title: model.id },
-                )}
+                options={[
+                  ...pointerRows(entry).map((model) => ({
+                    value: pointerValue(entry, model.family!),
+                    label: t('settings.providers.latest', {
+                      family: fromData(model.familyNameKey!),
+                      model: model.nameKey === undefined ? model.id : fromData(model.nameKey),
+                    }),
+                    title: model.id,
+                  })),
+                  ...entry.models.map((model) =>
+                    model.nameKey === undefined
+                      ? { value: model.id, label: model.id }
+                      : { value: model.id, label: fromData(model.nameKey), title: model.id },
+                  ),
+                ]}
                 onChange={(modelId) =>
                   setDraft((current) =>
                     current === null
@@ -508,7 +524,21 @@ function newDraft(
   }
   const named = saved?.id === entry.id ? saved.modelId : null
   const builtin = named !== null && entry.models.some((model) => model.id === named)
-  const modelId = builtin ? named : (entry.models[0]?.id ?? '')
+  const pointers = pointerRows(entry)
+  const pointer =
+    saved?.id === entry.id && saved.source === undefined
+      ? pointers.find((model) => model.family === saved.latestOf)
+      : undefined
+  const modelId =
+    pointer !== undefined
+      ? pointerValue(entry, pointer.family!)
+      : named !== null
+        ? builtin
+          ? named
+          : (entry.models[0]?.id ?? '')
+        : pointers[0] !== undefined
+          ? pointerValue(entry, pointers[0].family!)
+          : (entry.models[0]?.id ?? '')
   return {
     providerId: entry.id,
     modelId,
@@ -519,6 +549,24 @@ function newDraft(
     edited: [],
     secretKeys: entry.configKeys.filter((key) => key.secret).map((key) => key.name),
   }
+}
+
+function pointerRows(entry: ProviderEntryContract): ProviderEntryContract['models'] {
+  return entry.id === 'anthropic' || entry.id === 'zhipu'
+    ? entry.models.filter(
+        (model) =>
+          model.listing === 'main' &&
+          model.family !== undefined &&
+          model.familyNameKey !== undefined,
+      )
+    : []
+}
+
+/** Keep every raw row id usable by selectOption, even if a future row resembles a pointer value. */
+function pointerValue(entry: ProviderEntryContract, family: string): string {
+  let value = `latest:${family}`
+  while (entry.models.some((model) => model.id === value)) value = `:${value}`
+  return value
 }
 
 function withoutSecrets(draft: Draft): Draft {

@@ -344,10 +344,10 @@ describe('provider.configure', () => {
 })
 
 describe('presentation-r1 first-key defaults', () => {
-  it('presentation-r1 验收 12: the first key with all three defaults empty writes them to the provider’s first main row', async () => {
-    for (const [id, modelId] of [
-      ['anthropic', 'claude-opus-5-5'],
-      ['zhipu', 'glm-5.3'],
+  it('claude-5-5-models 验收 19、presentation-r1 验收 12: the first key with all three defaults empty writes them to the provider’s first main row', async () => {
+    for (const [id, modelId, latestOf] of [
+      ['anthropic', 'claude-opus-5-5', 'opus'],
+      ['zhipu', 'glm-5.3', 'glm'],
     ] as const) {
       // oxlint-disable-next-line no-await-in-loop -- an independent empty profile for each provider
       const h = await harness()
@@ -362,10 +362,9 @@ describe('presentation-r1 first-key defaults', () => {
       reads.mockRestore()
       // oxlint-disable-next-line no-await-in-loop -- as above
       const config = await readConfig(h.host.fs, h.host.identity)
-      const selection = { id, modelId }
+      const selection = { id, modelId, latestOf }
       expect(config.provider).toEqual(selection)
       expect(config.defaultModelByProfile).toEqual({ chat: selection, cowork: selection })
-      expect(config.provider).not.toHaveProperty('latestOf')
       expect(config.provider).not.toHaveProperty('source')
     }
     const token = await harness()
@@ -373,6 +372,7 @@ describe('presentation-r1 first-key defaults', () => {
     expect((await readConfig(token.host.fs, token.host.identity)).provider).toEqual({
       id: 'anthropic',
       modelId: 'claude-opus-5-5',
+      latestOf: 'opus',
     })
   })
 
@@ -486,6 +486,7 @@ describe('presentation-r1 first-key defaults', () => {
     expect((await readConfig(packaged.host.fs, packaged.host.identity)).provider).toEqual({
       id: 'anthropic',
       modelId: 'claude-opus-5-5',
+      latestOf: 'opus',
     })
   })
 
@@ -755,6 +756,61 @@ describe('the builtins’ official origins (M6 §点名 (a), (b), (c), (e); 验�
 })
 
 describe('provider.select', () => {
+  it('claude-5-5-models 验收 16: an explicit pointer resolves an older family member to the newest row', async () => {
+    const h = await harness()
+    expect(
+      await h.call('provider.select', {
+        providerId: 'anthropic',
+        modelId: 'claude-haiku-4-5-20251001',
+        latestOf: 'haiku',
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    const selection = { id: 'anthropic', modelId: 'claude-haiku-5-5', latestOf: 'haiku' }
+    expect(config.provider).toEqual(selection)
+    expect(config.defaultModelByProfile).toEqual({ chat: selection, cowork: selection })
+  })
+
+  it.each([
+    ['anthropic', 'claude-opus-5-5', 'missing'],
+    ['anthropic', 'claude-opus-5-5', 'haiku'],
+    ['anthropic', 'unlisted', 'opus'],
+    ['ollama', 'qwen3:8b', 'opus'],
+    ['custom-11111111-1111-4111-8111-111111111111', 'local', 'opus'],
+  ])(
+    'claude-5-5-models 验收 16: invalid pointer %s / %s / %s changes nothing',
+    async (providerId, modelId, latestOf) => {
+      const h = await harness([], {
+        config: {
+          customVendors: [
+            {
+              id: 'custom-11111111-1111-4111-8111-111111111111',
+              displayName: 'local',
+              wire: 'openai-chat',
+              baseURL: 'http://localhost:11434/v1',
+              models: [{ id: 'local', contextLimit: 32000, maxOutputTokens: 4096 }],
+            },
+          ],
+        },
+      })
+      const before = await readConfig(h.host.fs, h.host.identity)
+      expect(await h.call('provider.select', { providerId, modelId, latestOf })).toEqual({
+        ok: true,
+        data: { ok: false, code: 'invalid-value', configKey: null },
+      })
+      expect(await readConfig(h.host.fs, h.host.identity)).toEqual(before)
+    },
+  )
+
+  it('claude-5-5-models 验收 16: choosing Opus without latestOf pins all three defaults', async () => {
+    const h = await harness()
+    await h.call('provider.select', { providerId: 'anthropic', modelId: 'claude-opus-5-5' })
+    const config = await readConfig(h.host.fs, h.host.identity)
+    const selection = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+    expect(config.provider).toEqual(selection)
+    expect(config.defaultModelByProfile).toEqual({ chat: selection, cowork: selection })
+  })
+
   it('writes the choice to config.json', async () => {
     const h = await harness()
     const model = (await h.entry(ZHIPU_PROVIDER_ID)).models[0]?.id

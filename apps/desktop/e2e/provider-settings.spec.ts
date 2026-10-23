@@ -1,3 +1,4 @@
+import type { Config, IpcResult } from '@tenon-app/contracts'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
@@ -9,7 +10,7 @@ import { ANTHROPIC_ORIGIN, ZHIPU_ORIGIN, originMap, providerEnv } from './helper
 
 /**
  * Acceptance 6 in the real shell: switch the provider in the settings card, type a key, save —
- * and the NEXT message goes to the other wire, with what was typed in its Authorization header.
+ * and a NEW chat goes to the other wire, with what was typed in its Authorization header.
  *
  * Two endpoints stand side by side for the whole run, so "it went to the new one" is not an
  * absence of evidence: the Anthropic fake is still listening and still counts its requests. Both
@@ -38,7 +39,7 @@ test.afterEach(async () => {
   zhipu = undefined
 })
 
-test('acceptance 6: the settings card switches the provider the next message goes to', async () => {
+test('claude-5-5-models 验收 15、acceptance 6: settings change new chats while the running session keeps its provider', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['from ', 'anthropic'], delayMs: 10 })
   zhipu = await startFakeOpenAI({
     chunks: [`${ZHIPU_HEAD} `, ZHIPU_TAIL],
@@ -85,9 +86,15 @@ test('acceptance 6: the settings card switches the provider the next message goe
     await page.getByTestId('provider-save').click()
     await expect(card).toBeHidden()
 
+    await page.getByTestId('composer-input').fill('still here?')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('assistant-text').nth(1)).toHaveText('from anthropic')
+    expect(first.requests).toHaveLength(2)
+    expect(second.requests).toHaveLength(0)
+    await newChatFromSidebar(page)
     await page.getByTestId('composer-input').fill('and now?')
     await page.keyboard.press('Enter')
-    const reply = page.getByTestId('assistant-message').nth(1).getByTestId('assistant-text')
+    const reply = page.getByTestId('assistant-message').getByTestId('assistant-text')
     // 并流式渲染 on THIS wire, not just "the right text arrived": the fake is holding the tail on
     // its side of the socket, so the head is on screen at a moment when the rest of the reply
     // does not exist anywhere. Catches a main process that buffered `text-delta` events until the
@@ -105,15 +112,9 @@ test('acceptance 6: the settings card switches the provider the next message goe
     expect(request?.body).toMatchObject({ model: ZHIPU_MODEL, stream: true })
     const body = request?.body as { messages: Array<{ role: string }> }
     // The system text leads on this wire; the first turn's environment note follows it (spec 02).
-    expect(body.messages.map((message) => message.role)).toEqual([
-      'system',
-      'user',
-      'user',
-      'assistant',
-      'user',
-    ])
-    // ...and the endpoint it used to go to saw nothing more.
-    expect(first.requests).toHaveLength(1)
+    expect(body.messages.map((message) => message.role)).toEqual(['system', 'user', 'user'])
+    // The established session stayed on Anthropic; only the fresh chat used Zhipu.
+    expect(first.requests).toHaveLength(2)
 
     // The key is stored, and `provider.list` says so without carrying it: the raw IPC result,
     // searched for what was typed.
@@ -330,7 +331,7 @@ test('presentation-r1 验收 11: a key saved from 去设置 under the box update
   }
 })
 
-test('presentation-r1 验收 12: fresh profile → save a key → the chip shows that provider’s first row → send goes', async () => {
+test('claude-5-5-models 验收 19、presentation-r1 验收 12: fresh profile → save a key → the chip shows that provider’s first row → send goes', async () => {
   zhipu = await startFakeOpenAI({ chunks: ['first key reply'] })
   const server = zhipu
   const userData = makeUserDataDir('first-key-default')
@@ -359,10 +360,10 @@ test('presentation-r1 验收 12: fresh profile → save a key → the chip shows
     expect(config).toMatchObject({
       ok: true,
       data: {
-        provider: { id: 'zhipu', modelId: 'glm-5.3' },
+        provider: { id: 'zhipu', modelId: 'glm-5.3', latestOf: 'glm' },
         defaultModelByProfile: {
-          chat: { id: 'zhipu', modelId: 'glm-5.3' },
-          cowork: { id: 'zhipu', modelId: 'glm-5.3' },
+          chat: { id: 'zhipu', modelId: 'glm-5.3', latestOf: 'glm' },
+          cowork: { id: 'zhipu', modelId: 'glm-5.3', latestOf: 'glm' },
         },
       },
     })
@@ -381,3 +382,116 @@ test('presentation-r1 验收 12: fresh profile → save a key → the chip shows
     await app.close()
   }
 })
+
+for (const locale of ['zh-CN', 'en'] as const) {
+  test(`claude-5-5-models 验收 17: ${locale} settings list pointers first, preserve untouched defaults, save pointers and pinned rows`, async () => {
+    anthropic = await startFakeAnthropic({ chunks: ['new default reply'] })
+    const userData = makeUserDataDir(`provider-pointers-${locale}`)
+    seedConfig(userData, { locale })
+    const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
+    const open = async () => {
+      await page.getByTestId('account-row').click()
+      await page.getByTestId('account-providers').click()
+      await expect(page.getByTestId('provider-settings')).toBeVisible()
+    }
+    const config = async () =>
+      (await page.evaluate(() => window.tenon.invoke('config.get', {}))) as IpcResult<Config>
+    try {
+      await open()
+      const select = page.getByTestId('model-select')
+      const options = select.locator('option')
+      await expect(options).toHaveCount(11)
+      expect(await options.allTextContents()).toEqual(
+        locale === 'en'
+          ? [
+              'Latest Opus (now Opus 5.5)',
+              'Latest Sonnet (now Sonnet 5.5)',
+              'Latest Haiku (now Haiku 5.5)',
+              'Latest Fable (now Fable 5.1)',
+              'Opus 5.5',
+              'Sonnet 5.5',
+              'Haiku 5.5',
+              'Fable 5.1',
+              'Opus 5',
+              'Sonnet 5',
+              'Haiku 4.5',
+            ]
+          : [
+              '最新的 Opus（现在是 Opus 5.5）',
+              '最新的 Sonnet（现在是 Sonnet 5.5）',
+              '最新的 Haiku（现在是 Haiku 5.5）',
+              '最新的 Fable（现在是 Fable 5.1）',
+              'Opus 5.5',
+              'Sonnet 5.5',
+              'Haiku 5.5',
+              'Fable 5.1',
+              'Opus 5',
+              'Sonnet 5',
+              'Haiku 4.5',
+            ],
+      )
+      const opusValue = await options.nth(0).getAttribute('value')
+      const haikuValue = await options.nth(2).getAttribute('value')
+      expect(opusValue).not.toBe('claude-opus-5-5')
+      await expect(select).toHaveValue(opusValue!)
+      await expect(options.nth(0)).toHaveAttribute('title', 'claude-opus-5-5')
+      await page.getByTestId('provider-cancel').click()
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', { providerId: 'zhipu', modelId: 'glm-5.3-flash' }),
+      )
+      const before = await config()
+      await open()
+      await page.getByTestId('provider-select').selectOption('anthropic')
+      await expect(select).toHaveValue(opusValue!)
+      await page.getByTestId('provider-config-apiKey').fill('e2e-pointer-key')
+      await page.getByTestId('provider-save').click()
+      await expect(page.getByTestId('provider-settings')).toBeHidden()
+      const after = await config()
+      if (!before.ok || !after.ok) throw new Error('config unavailable')
+      expect(after.data.provider).toEqual(before.data.provider)
+      expect(after.data.defaultModelByProfile).toEqual(before.data.defaultModelByProfile)
+      await open()
+      await page.getByTestId('provider-select').selectOption('anthropic')
+      await select.selectOption(haikuValue!)
+      await page.getByTestId('provider-save').click()
+      await expect(page.getByTestId('provider-settings')).toBeHidden()
+      const haiku = { id: 'anthropic', modelId: 'claude-haiku-5-5', latestOf: 'haiku' }
+      expect(await config()).toMatchObject({
+        ok: true,
+        data: { provider: haiku, defaultModelByProfile: { chat: haiku, cowork: haiku } },
+      })
+      await newChatFromSidebar(page)
+      await expect(page.getByTestId('model-menu-current')).toContainText('Haiku 5.5')
+      await page.getByTestId('composer-input').fill('new default')
+      await page.keyboard.press('Enter')
+      await expect(page.getByTestId('assistant-text')).toHaveText('new default reply')
+      expect(anthropic.requests[0]?.body).toMatchObject({ model: 'claude-haiku-5-5' })
+      await open()
+      await expect(select).toHaveValue(haikuValue!)
+      await select.selectOption('claude-opus-5-5')
+      await page.getByTestId('provider-save').click()
+      await expect(page.getByTestId('provider-settings')).toBeHidden()
+      const pinned = await config()
+      if (!pinned.ok) throw new Error('config unavailable')
+      const opus = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+      expect(pinned.data.provider).toEqual(opus)
+      expect(pinned.data.defaultModelByProfile).toEqual({ chat: opus, cowork: opus })
+      await open()
+      await expect(select).toHaveValue('claude-opus-5-5')
+      await page.getByTestId('provider-select').selectOption('ollama')
+      await expect(options).toHaveCount(1)
+      await expect(select).toHaveValue('qwen3:8b')
+      await page.getByTestId('provider-cancel').click()
+      await page.evaluate(() =>
+        window.tenon.invoke('provider.select', {
+          providerId: 'anthropic',
+          modelId: 'claude-sonnet-5',
+        }),
+      )
+      await open()
+      await expect(select).toHaveValue('claude-sonnet-5')
+    } finally {
+      await app.close()
+    }
+  })
+}

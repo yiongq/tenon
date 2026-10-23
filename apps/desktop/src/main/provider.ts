@@ -320,6 +320,8 @@ export function selectModel(
   definition: ProviderDefinition,
   requested: string | null,
   log: (line: string) => void,
+  /** A historical user selection remains conservative even after its id enters the builtin table. */
+  conservative = false,
 ): ModelInfo {
   const builtin = definition.builtinModels
   if (requested === null) {
@@ -330,11 +332,13 @@ export function selectModel(
     return first
   }
   const known = builtin.find((model) => model.id === requested)
-  if (known !== undefined) return known
-  log(
-    `[provider] ${definition.id}: "${requested}" is not a builtin model; ` +
-      'assuming a conservative capability set (no tools, no vision, no thinking)',
-  )
+  if (known !== undefined && !conservative) return known
+  if (known === undefined) {
+    log(
+      `[provider] ${definition.id}: "${requested}" is not a builtin model; ` +
+        'assuming a conservative capability set (no tools, no vision, no thinking)',
+    )
+  }
   return {
     id: requested,
     providerId: definition.id,

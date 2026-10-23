@@ -27,6 +27,7 @@ import {
   ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
   createAnthropicSearchDefinition,
+  newestOfFamily,
   prepareZhipuSearchQuery,
   zhipuSearchDefinition,
 } from '@tenon-app/kernel'
@@ -154,20 +155,43 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       const vars = env()
       // ② the profile's default, then ③ what the settings card saved (「新会话默认」, 01 修补 9 (b)).
       const saved = config.defaultModelByProfile[q.profile] ?? config.provider
-      const providerId = selectProviderId(saved?.id, vars)
+      const previous = q.previousModel
+      const previousDefinition = previous == null ? null : providers.get(previous.providerId)
+      const keepPrevious =
+        previous != null &&
+        previousDefinition !== null &&
+        previous.capabilitySource !== 'synthesized' &&
+        (isBuiltin(previousDefinition, previous.modelId) ||
+          (previous.capabilitySource === 'user' &&
+            !isInstanceId(previous.providerId) &&
+            [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID, 'ollama'].includes(previous.providerId)))
+      const providerId = keepPrevious ? previous.providerId : selectProviderId(saved?.id, vars)
       const definition = definitionOf(providers, providerId)
       // The saved model first; `TENON_MODEL` fills only what it left empty.
-      const requested = trimmed(saved?.modelId) ?? trimmed(vars[MODEL_ENV])
-      const model = selectModel(definition, requested, log)
+      const pointer =
+        saved?.latestOf !== undefined &&
+        saved.source === undefined &&
+        [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID].includes(providerId)
+          ? newestOfFamily(definition, saved.latestOf)
+          : null
+      const requested = keepPrevious
+        ? previous.modelId
+        : (pointer?.id ?? trimmed(saved?.modelId) ?? trimmed(vars[MODEL_ENV]))
+      const keepUser =
+        keepPrevious && previous.capabilitySource === 'user' && !isInstanceId(providerId)
+      const model = selectModel(definition, requested, log, keepUser)
       const choice: ModelChoice = {
         providerId,
         modelId: model.id,
         effort: null,
-        capabilitySource: isBuiltin(definition, model.id)
-          ? 'builtin'
-          : saved?.source === 'user' && saved.modelId === model.id
-            ? 'user'
-            : 'synthesized',
+        capabilitySource: keepUser
+          ? 'user'
+          : isBuiltin(definition, model.id)
+            ? 'builtin'
+            : (keepPrevious && previous.capabilitySource === 'user') ||
+                (saved?.source === 'user' && saved.modelId === model.id)
+              ? 'user'
+              : 'synthesized',
       }
       // 「数据去向」: a session with history that sent to this machine or a private network is not
       // switched to a public host without the menu's confirmation (A9, B18).
@@ -192,7 +216,9 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
       // Chosen a moment ago, so the table has it; a quiet log, because the choice already said so.
       // An instance's row is only ever looked up (M6 §实例被删或改坏): no conservative synthesis.
       let model =
-        viewed === null || instance ? null : selectModel(viewed, q.choice.modelId, () => {})
+        viewed === null || instance
+          ? null
+          : selectModel(viewed, q.choice.modelId, () => {}, q.choice.capabilitySource === 'user')
       // An instance gone from the view answers as one whose row is gone (plan step 7 读法 (1)).
       let range: Pick<RunAssembly, 'capabilitySource' | 'toolsWithheld'> = instance
         ? instanceRange(viewed, null, q.choice)

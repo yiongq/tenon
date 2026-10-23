@@ -9,6 +9,7 @@ import {
   ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
   anthropicDefinition,
+  arrangeFamilies,
   createMemoryHost,
   createMemoryTapeStore,
   createProviderRegistry,
@@ -24,15 +25,19 @@ import type {
   ModelChoice,
   ProviderDefinition,
   ProviderRegistry,
+  RunConnector,
   SessionService,
 } from '@tenon-app/kernel'
 import type { IpcMainLike, ProviderEntryContract } from '@tenon-app/contracts'
-import { createCounterIds, createTestLoopPorts } from '@tenon-app/kernel/testing'
+import { createCounterIds, createTestLoopPorts, fakeNetwork } from '@tenon-app/kernel/testing'
 import { describe, expect, it } from 'vitest'
 import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { registerModelRoutes } from '../src/main/model-routes.js'
 import { registerProviderRoutes } from '../src/main/provider-routes.js'
+import { createProviderView } from '../src/main/custom-vendors/registry.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
+import { PLAIN_TEXT_FRAMES as ANTHROPIC_TEXT } from '../../../packages/kernel/test/provider/fixtures/anthropic-sse.js'
+import { PLAIN_TEXT_FRAMES as OPENAI_TEXT } from '../../../packages/kernel/test/provider/fixtures/openai-sse.js'
 import { startFakeAnthropic } from './support/fake-anthropic.js'
 import { ANTHROPIC_ORIGIN, seamNetwork } from './support/seam-network.js'
 
@@ -136,7 +141,7 @@ const entryOf = (entries: readonly ProviderEntryContract[], id: string): Provide
 }
 
 describe('provider.list for the menu (01 修补 6)', () => {
-  it('marks, lists and names each row, with its levels and where the provider sends', async () => {
+  it('claude-5-5-models 验收 16: marks, lists and names each row, with its levels and where the provider sends', async () => {
     const r = await routes()
     const entries = await r.list()
     const anthropic = entryOf(entries, ANTHROPIC_PROVIDER_ID)
@@ -144,6 +149,8 @@ describe('provider.list for the menu (01 修补 6)', () => {
     const sonnet = anthropic.models.find((row) => row.id === 'claude-sonnet-5')
     expect(sonnet).toMatchObject({
       mark: 'verified',
+      family: 'sonnet',
+      familyNameKey: 'model.family.sonnet',
       listing: 'more',
       nameKey: 'model.name.sonnet5',
       purposeKey: 'model.purpose.sonnet5',
@@ -174,6 +181,9 @@ describe('provider.list for the menu (01 修补 6)', () => {
     expect(ollama.endpoint).toEqual({ host: 'localhost', reach: 'loopback' })
     expect(ollama.models.every((row) => row.mark === 'local-text-only')).toBe(true)
     expect(ollama.models.find((row) => row.id === 'qwen3:8b')?.effortLevels).toBeUndefined()
+    expect(
+      ollama.models.every((row) => row.family === undefined && row.familyNameKey === undefined),
+    ).toBe(true)
     // The new user's fallback, a definition's first row, is never under 更多模型 ›.
     expect(entries.every((entry) => entry.models[0]?.listing !== 'more')).toBe(true)
   })
@@ -763,20 +773,217 @@ describe('the five layers and the data-flow check (旧 107, 旧 184)', () => {
       profile?: 'chat' | 'cowork'
       sessionChoice?: ModelChoice | null
       previousOrigin?: string | null
+      previousModel?: Parameters<RunConnector['resolveChoice']>[0]['previousModel']
+      providers?: ProviderRegistry
     } = {},
   ): Promise<unknown> {
     const host = await freshHost()
     if (o.config !== undefined) await writeConfig(host.fs, host.identity, o.config)
-    const connector = createRunConnector({ host, providers: registry(), env: o.env ?? {} })
+    const connector = createRunConnector({
+      host,
+      providers: createProviderView({
+        builtin: o.providers ?? registry(),
+        identity: host.identity,
+        config: await readConfig(host.fs, host.identity),
+      }),
+      env: o.env ?? {},
+    })
     return connector.resolveChoice({
       sessionId: SESSION,
       profile: o.profile ?? 'chat',
       sessionChoice: o.sessionChoice ?? null,
       previousOrigin: o.previousOrigin ?? null,
+      previousModel: o.previousModel ?? null,
     })
   }
   const flash = { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash' }
   const opus = { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-opus-5-5' }
+
+  it.each(['profile', 'provider'] as const)(
+    'claude-5-5-models 验收 14: resolves a %s pointer and falls back to its pinned id without changing provider',
+    async (layer) => {
+      const resolveSaved = (selection: {
+        id: string
+        modelId: string
+        latestOf: string
+        source?: 'user'
+      }) =>
+        resolve({
+          config:
+            layer === 'profile'
+              ? { defaultModelByProfile: { chat: selection } }
+              : { provider: selection },
+        })
+      expect(
+        await resolveSaved({ id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'opus' }),
+      ).toMatchObject({ modelId: 'claude-opus-5-5', capabilitySource: 'builtin' })
+      expect(
+        await resolveSaved({ id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'missing' }),
+      ).toMatchObject({ modelId: 'claude-opus-5' })
+      expect(
+        await resolveSaved({ id: 'anthropic', modelId: 'removed', latestOf: 'missing' }),
+      ).toMatchObject({ modelId: 'removed', capabilitySource: 'synthesized' })
+      expect(
+        await resolveSaved({
+          id: 'anthropic',
+          modelId: 'claude-opus-5',
+          latestOf: 'opus',
+          source: 'user',
+        }),
+      ).toMatchObject({ modelId: 'claude-opus-5' })
+      expect(
+        await resolveSaved({ id: 'ollama', modelId: 'my-local-model', latestOf: 'opus' }),
+      ).toMatchObject({ providerId: 'ollama', modelId: 'my-local-model' })
+    },
+  )
+
+  it('claude-5-5-models 验收 14: a missing Anthropic key refuses the send instead of using configured Zhipu', async () => {
+    const network = fakeNetwork([])
+    const host = createMemoryHost({ network })
+    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+    await writeConfig(host.fs, host.identity, {
+      provider: { id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'opus' },
+    })
+    const connector = createRunConnector({
+      host,
+      providers: registry(),
+      env: { ZHIPU_API_KEY: KEY },
+    })
+    const choice = await connector.resolveChoice({
+      sessionId: SESSION,
+      profile: 'chat',
+      sessionChoice: null,
+      previousOrigin: null,
+    })
+    expect(choice).toMatchObject({ providerId: 'anthropic', modelId: 'claude-opus-5-5' })
+    if ('needsConfirm' in choice) throw new Error('unexpected confirmation')
+    const assembly = await connector.assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice,
+      signal: new AbortController().signal,
+    })
+    expect(() => assembly.provider()).toThrow(ProviderConfigMissingError)
+    expect(network.callCount).toBe(0)
+  })
+
+  it.each(['pointer', 'fifth', 'pinned', 'sonnet'] as const)(
+    'claude-5-5-models 验收 15: keeps the previous builtin under %s defaults; fresh and cleared sessions follow the new table',
+    async (kind) => {
+      const providers = createProviderRegistry()
+      const raw = anthropicDefinition.builtinModels.map(({ listing: _listing, ...row }) => row)
+      providers.register({
+        ...anthropicDefinition,
+        builtinModels: arrangeFamilies([
+          { ...raw[0]!, id: 'claude-opus-6', family: 'opus', generation: [6, 0] },
+          ...raw,
+        ]),
+      })
+      providers.register(zhipuDefinition)
+      const selected =
+        kind === 'fifth'
+          ? undefined
+          : kind === 'pinned'
+            ? flash
+            : kind === 'sonnet'
+              ? { ...opus, latestOf: 'sonnet' }
+              : { ...opus, latestOf: 'opus' }
+      const config = selected === undefined ? {} : { provider: selected }
+      const previousModel = {
+        providerId: 'anthropic',
+        modelId: opus.modelId,
+        capabilitySource: 'builtin' as const,
+      }
+      const expectedNew =
+        kind === 'pinned'
+          ? flash.modelId
+          : kind === 'sonnet'
+            ? 'claude-sonnet-5-5'
+            : 'claude-opus-6'
+      expect(await resolve({ providers, config, previousModel })).toMatchObject({
+        modelId: opus.modelId,
+      })
+      expect(await resolve({ providers, config })).toMatchObject({ modelId: expectedNew })
+      expect(await resolve({ providers, config, previousModel: null })).toMatchObject({
+        modelId: expectedNew,
+      })
+      expect(
+        await resolve({
+          providers,
+          config,
+          previousModel: { ...previousModel, modelId: 'removed' },
+        }),
+      ).toMatchObject({ modelId: expectedNew })
+    },
+  )
+
+  it('claude-5-5-models 验收 15: keeps builtin and user Ollama rows, rejects synthesized and removed instance rows, and checks the retained destination', async () => {
+    const previousModel = {
+      providerId: 'ollama',
+      modelId: 'qwen3:8b',
+      capabilitySource: 'builtin' as const,
+    }
+    expect(
+      await resolve({ previousModel, previousOrigin: 'http://localhost:11434' }),
+    ).toMatchObject({ modelId: 'qwen3:8b' })
+    expect(
+      await resolve({
+        previousModel: { providerId: previousModel.providerId, modelId: previousModel.modelId },
+        previousOrigin: 'http://localhost:11434',
+      }),
+    ).toMatchObject({ modelId: 'qwen3:8b' })
+    expect(
+      await resolve({
+        previousModel: { ...previousModel, modelId: 'my-local-model', capabilitySource: 'user' },
+        previousOrigin: 'http://localhost:11434',
+      }),
+    ).toMatchObject({ modelId: 'my-local-model', capabilitySource: 'user' })
+    expect(
+      await resolve({
+        previousModel: {
+          ...previousModel,
+          modelId: 'my-local-model',
+          capabilitySource: 'synthesized',
+        },
+        previousOrigin: 'http://localhost:11434',
+      }),
+    ).toEqual({ needsConfirm: { host: 'api.anthropic.com' } })
+    expect(
+      await resolve({
+        previousModel,
+        previousOrigin: 'http://localhost:11434',
+        config: { providerConfig: { ollama: { baseURL: 'https://gpu.example.com/v1/' } } },
+      }),
+    ).toEqual({ needsConfirm: { host: 'gpu.example.com' } })
+    const id = 'custom-11111111-1111-4111-8111-111111111111'
+    const config = {
+      customVendors: [
+        {
+          id,
+          displayName: 'local',
+          wire: 'openai-chat' as const,
+          baseURL: 'http://localhost:11434/v1',
+          models: [{ id: 'still-listed', contextLimit: 32000, maxOutputTokens: 4096 }],
+        },
+      ],
+    }
+    for (const capabilitySource of ['user', 'probed', 'builtin'] as const) {
+      expect(
+        // oxlint-disable-next-line no-await-in-loop -- independent prior capability sources
+        await resolve({
+          config,
+          previousModel: { providerId: id, modelId: 'still-listed', capabilitySource },
+        }),
+      ).toMatchObject({ providerId: id, modelId: 'still-listed' })
+      expect(
+        // oxlint-disable-next-line no-await-in-loop -- independent prior capability sources
+        await resolve({
+          config,
+          previousModel: { providerId: id, modelId: 'removed', capabilitySource },
+        }),
+      ).toMatchObject({ providerId: 'anthropic', modelId: opus.modelId })
+    }
+  })
 
   it('takes ① the session, ② the profile default, ③ provider, ④ the dev variables, ⑤ the first row', async () => {
     const own: ModelChoice = {
@@ -966,7 +1173,7 @@ describe('session.selectModel and session.modelChoice', () => {
     }
   }
 
-  it('records the choice and the profile’s default and provider — never the level as a default', async () => {
+  it('claude-5-5-models 验收 16: records the choice and the profile’s default and provider — never the level as a default', async () => {
     const { r, sessions } = await withSessions()
     await sessions.selectProfile({
       sessionId: SESSION,
@@ -983,9 +1190,13 @@ describe('session.selectModel and session.modelChoice', () => {
     ).toEqual({ ok: true, data: { ok: true } })
     const config = await readConfig(r.host.fs, r.host.identity)
     expect(config.defaultModelByProfile).toEqual({
-      cowork: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash' },
+      cowork: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash', latestOf: 'glm-flash' },
     })
-    expect(config.provider).toEqual({ id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash' })
+    expect(config.provider).toEqual({
+      id: ZHIPU_PROVIDER_ID,
+      modelId: 'glm-5.3-flash',
+      latestOf: 'glm-flash',
+    })
     expect(await r.call('session.modelChoice', { sessionId: SESSION })).toEqual({
       ok: true,
       data: {
@@ -1049,10 +1260,14 @@ describe('session.selectModel and session.modelChoice', () => {
     gate.resolve()
     expect(await choosing).toEqual({ ok: true, data: { ok: true } })
     expect(await reading).toMatchObject({ ok: true })
-    expect(asked.toSorted()).toEqual(['effectiveModelChoice', 'selectModel'])
+    expect(asked.toSorted()).toEqual([
+      'effectiveModelChoice',
+      'effectiveModelChoice',
+      'selectModel',
+    ])
   })
 
-  it('writes each profile’s default in the profile’s lock: two choices at once keep both (每个 profile 一把主进程锁)', async () => {
+  it('claude-5-5-models 验收 16: writes each profile’s default in the profile’s lock: two choices at once keep both (每个 profile 一把主进程锁)', async () => {
     // The first choice's config read is held (a slow disk) while a second choice, in the other
     // profile, arrives: outside the lock the second would be overwritten by a patch built on the
     // first's stale read.
@@ -1088,7 +1303,10 @@ describe('session.selectModel and session.modelChoice', () => {
       dedicated: '/home/u/Tenon/workspaces/x' as AbsolutePath,
     })
     // Something read config.json before: the file exists, so each read goes through readFile.
-    await writeConfig(host.fs, host.identity, { locale: 'en' })
+    await writeConfig(host.fs, host.identity, {
+      locale: 'en',
+      defaultModelByProfile: { cowork: { id: 'anthropic', modelId: 'claude-sonnet-5' } },
+    })
     const reached = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     hold = { reached: reached.resolve, release: release.promise }
@@ -1110,8 +1328,8 @@ describe('session.selectModel and session.modelChoice', () => {
     expect(await first).toEqual({ ok: true, data: { ok: true } })
     expect(await second).toEqual({ ok: true, data: { ok: true } })
     expect((await readConfig(host.fs, host.identity)).defaultModelByProfile).toEqual({
-      cowork: { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-opus-5-5' },
-      chat: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash' },
+      cowork: { id: ANTHROPIC_PROVIDER_ID, modelId: 'claude-opus-5-5', latestOf: 'opus' },
+      chat: { id: ZHIPU_PROVIDER_ID, modelId: 'glm-5.3-flash', latestOf: 'glm-flash' },
     })
   })
 
@@ -1171,4 +1389,344 @@ describe('session.selectModel and session.modelChoice', () => {
       await fake.close()
     }
   })
+})
+
+/** Drive the real desktop resolver through kernel facts, without sockets or stored credentials. */
+async function runningModels(
+  options: { local?: 'builtin' | 'user' | 'synthesized'; providers?: ProviderRegistry } = {},
+) {
+  const reply = {
+    kind: 'sse' as const,
+    frames: options.local === undefined ? ANTHROPIC_TEXT : OPENAI_TEXT,
+  }
+  const network = fakeNetwork([reply, reply, reply, reply])
+  const host = createMemoryHost({ network })
+  await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+  const tape = createMemoryTapeStore({ identity: host.identity })
+  const loop = createTestLoopPorts({})
+  const env: Record<string, string> = options.local === undefined ? { ANTHROPIC_API_KEY: KEY } : {}
+  if (options.local === 'synthesized')
+    Object.assign(env, { TENON_PROVIDER: 'ollama', TENON_MODEL: 'my-local-model' })
+  const providers = options.providers ?? registry()
+  const connector = createRunConnector({ host, providers, env })
+  const sessions = createSessionService({
+    host,
+    tape,
+    ids: createCounterIds(),
+    inspectors: [],
+    connector,
+    protectedFiles: [],
+  })
+  sessions.bindLoop(loop)
+  if (options.local === 'builtin' || options.local === 'user') {
+    await writeConfig(host.fs, host.identity, {
+      provider: {
+        id: 'ollama',
+        modelId: options.local === 'user' ? 'my-local-model' : 'qwen3:8b',
+        ...(options.local === 'user' ? { source: 'user' as const } : {}),
+      },
+    })
+  }
+  const r = await routes({ host, sessions, env })
+  const sendModel = async (sessionId = SESSION) => {
+    const sent = await sessions.send({ sessionId, origin: null, text: 'hello' })
+    if (sent.status === 'started') {
+      const ended = await loop.runEnded({ runId: sent.runId })
+      if (ended.reason.code !== 'completed') throw new Error(`Run ended: ${JSON.stringify(ended)}`)
+    }
+    return sent
+  }
+  const selected = async () =>
+    (await tape.readRange({ sessionId: SESSION, limit: 1000 })).entries.filter(
+      (entry) => entry.name === 'session/model_selected',
+    )
+  return { host, tape, loop, network, sessions, r, sendModel, selected }
+}
+
+describe('claude-5-5-models persisted session choices', () => {
+  it.each(['builtin', 'user'] as const)(
+    'claude-5-5-models 验收 15: %s Ollama remains after defaults move; a public address holds with zero public requests and session.modelChoice does not throw',
+    async (local) => {
+      const h = await runningModels({ local })
+      await h.sendModel()
+      await writeConfig(h.host.fs, h.host.identity, {
+        provider: { id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' },
+      })
+      const modelId = local === 'user' ? 'my-local-model' : 'qwen3:8b'
+      expect(await h.r.call('session.modelChoice', { sessionId: SESSION })).toMatchObject({
+        ok: true,
+        data: { providerId: 'ollama', modelId, capabilitySource: local },
+      })
+      await h.sendModel()
+      expect((await h.selected()).map((entry) => entry.payload['modelId'])).toEqual([
+        modelId,
+        modelId,
+      ])
+      await writeConfig(h.host.fs, h.host.identity, {
+        providerConfig: { ollama: { baseURL: 'https://gpu.example.com/v1/' } },
+      })
+      expect(await h.r.call('session.modelChoice', { sessionId: SESSION })).toMatchObject({
+        ok: true,
+        data: { modelId },
+      })
+      expect(await h.sendModel()).toMatchObject({ status: 'held' })
+      expect(h.network.callCount).toBe(2)
+      expect(
+        h.network.requests.every((request) => request.url.startsWith('http://localhost:11434/')),
+      ).toBe(true)
+      expect(await h.selected()).toHaveLength(2)
+    },
+  )
+
+  it('claude-5-5-models 验收 15: a synthesized Ollama id follows changed defaults and holds before public requests', async () => {
+    const h = await runningModels({ local: 'synthesized' })
+    await h.sendModel()
+    await writeConfig(h.host.fs, h.host.identity, {
+      provider: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+    })
+    expect(await h.sendModel()).toMatchObject({ status: 'held' })
+    expect(h.network.callCount).toBe(1)
+  })
+
+  it('claude-5-5-models 验收 16: confirming a held switch to the effective pinned Opus records ① without rewriting defaults', async () => {
+    const network = fakeNetwork([
+      { kind: 'sse', frames: OPENAI_TEXT },
+      { kind: 'sse', frames: ANTHROPIC_TEXT },
+    ])
+    const host = createMemoryHost({ network })
+    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+    const tape = createMemoryTapeStore({ identity: host.identity })
+    const loop = createTestLoopPorts({})
+    const env = { TENON_PROVIDER: 'ollama', TENON_MODEL: 'dev-local', ANTHROPIC_API_KEY: KEY }
+    const sessions = createSessionService({
+      host,
+      tape,
+      ids: createCounterIds(),
+      inspectors: [],
+      connector: createRunConnector({ host, providers: registry(), env }),
+      protectedFiles: [],
+    })
+    sessions.bindLoop(loop)
+    const first = await sessions.send({ sessionId: SESSION, origin: null, text: 'local' })
+    if (first.status !== 'started') throw new Error('local Run did not start')
+    expect((await loop.runEnded({ runId: first.runId })).reason.code).toBe('completed')
+    const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+    await writeConfig(host.fs, host.identity, {
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    expect(await sessions.send({ sessionId: SESSION, origin: null, text: 'held' })).toMatchObject({
+      status: 'held',
+    })
+    expect(network.callCount).toBe(1)
+    const before = await readConfig(host.fs, host.identity)
+    const r = await routes({ host, sessions, env })
+    expect(
+      await r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: 'anthropic',
+        modelId: pinned.modelId,
+        effort: null,
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    expect((await loop.runEnded()).reason.code).toBe('completed')
+    expect(await readConfig(host.fs, host.identity)).toEqual(before)
+    expect(network.callCount).toBe(2)
+    const entries = (await tape.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    expect(entries.find((entry) => entry.name === 'session/model_choice_set')?.payload).toEqual({
+      providerId: 'anthropic',
+      modelId: pinned.modelId,
+      effort: null,
+    })
+  })
+
+  it('claude-5-5-models 验收 15: a historical user id newly listed in this build remains user and text-only through assembly and the wire', async () => {
+    const network = fakeNetwork([{ kind: 'sse', frames: ANTHROPIC_TEXT }])
+    const host = createMemoryHost({ network })
+    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+    const connector = createRunConnector({
+      host,
+      providers: registry(),
+      env: { ANTHROPIC_API_KEY: KEY },
+    })
+    const choice = await connector.resolveChoice({
+      sessionId: SESSION,
+      profile: 'chat',
+      sessionChoice: null,
+      previousOrigin: 'https://api.anthropic.com',
+      previousModel: {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-5-5',
+        capabilitySource: 'user',
+      },
+    })
+    expect(choice).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-sonnet-5-5',
+      effort: null,
+      capabilitySource: 'user',
+    })
+    if ('needsConfirm' in choice) throw new Error('unexpected confirmation')
+    const assembly = await connector.assemble({
+      sessionId: SESSION,
+      rootSessionId: SESSION,
+      choice,
+      signal: new AbortController().signal,
+    })
+    expect(assembly.capabilitySource).toBe('user')
+    expect(assembly.model).toMatchObject({
+      id: choice.modelId,
+      supportsToolCalling: false,
+      supportsStreamingToolCalls: false,
+      supportsVision: false,
+      reasoning: false,
+      thinkingPreservationFormat: 'drop',
+    })
+    // Feed the resolved choice through the real loop: the recognized id must still send no tools.
+    const loop = createTestLoopPorts({})
+    const tape = createMemoryTapeStore({ identity: host.identity })
+    const sessions = createSessionService({
+      host,
+      tape,
+      ids: createCounterIds(),
+      inspectors: [],
+      connector: { ...connector, resolveChoice: async () => choice },
+      protectedFiles: [],
+    })
+    sessions.bindLoop(loop)
+    const sent = await sessions.send({ sessionId: SESSION, origin: null, text: 'hello' })
+    if (sent.status !== 'started') throw new Error('Run did not start')
+    expect((await loop.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
+    expect(network.requests[0]?.body).not.toHaveProperty('tools')
+    const entries = (await tape.readRange({ sessionId: SESSION, limit: 1000 })).entries
+    expect(entries.find((entry) => entry.name === 'session/model_selected')?.payload).toMatchObject(
+      { modelId: choice.modelId, capabilitySource: 'user' },
+    )
+  })
+
+  it.each([false, true])(
+    'claude-5-5-models 验收 15: new and cleared sessions record Opus 6 with pointer=%s; an old row stays until clear',
+    async (pointer) => {
+      const providers = createProviderRegistry()
+      const raw = anthropicDefinition.builtinModels.map(({ listing: _listing, ...row }) => row)
+      providers.register({
+        ...anthropicDefinition,
+        builtinModels: arrangeFamilies([
+          { ...raw[0]!, id: 'claude-opus-6', generation: [6, 0] },
+          ...raw,
+        ]),
+      })
+      const h = await runningModels({ providers })
+      await writeConfig(h.host.fs, h.host.identity, {
+        provider: { id: 'anthropic', modelId: 'claude-opus-5-5' },
+      })
+      await h.sendModel()
+      await writeConfig(h.host.fs, h.host.identity, {
+        provider: pointer ? { id: 'anthropic', modelId: 'claude-opus-5', latestOf: 'opus' } : null,
+      })
+      expect(await h.sessions.effectiveModelChoice({ sessionId: SESSION })).toMatchObject({
+        modelId: 'claude-opus-5-5',
+      })
+      await h.sendModel()
+      expect((await h.selected()).map((entry) => entry.payload['modelId'])).toEqual([
+        'claude-opus-5-5',
+        'claude-opus-5-5',
+      ])
+      await h.sendModel('7e2f0b1c-3d4a-4b5c-8d6e-9f0a1b2c3d4e')
+      expect(h.network.requests[2]?.body).toMatchObject({ model: 'claude-opus-6' })
+      await h.sessions.resetSession(SESSION)
+      await h.sendModel()
+      expect((await h.selected()).map((entry) => entry.payload['modelId'])).toEqual([
+        'claude-opus-6',
+      ])
+    },
+  )
+
+  it.each(['old-sonnet', 'pinned-opus'] as const)(
+    'claude-5-5-models 验收 16: only changing effort preserves all defaults for %s',
+    async (kind) => {
+      const h = await runningModels()
+      const first = {
+        id: 'anthropic',
+        modelId: kind === 'old-sonnet' ? 'claude-sonnet-5' : 'claude-opus-5-5',
+      }
+      await writeConfig(h.host.fs, h.host.identity, { provider: first })
+      await h.sendModel()
+      const saved =
+        kind === 'old-sonnet'
+          ? { id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' }
+          : first
+      await writeConfig(h.host.fs, h.host.identity, {
+        provider: saved,
+        defaultModelByProfile: { chat: saved, cowork: saved },
+      })
+      const before = await readConfig(h.host.fs, h.host.identity)
+      expect((await h.sessions.sessionFacts({ sessionId: SESSION })).chosen).toBeNull()
+      expect(
+        await h.r.call('session.selectModel', {
+          sessionId: SESSION,
+          providerId: 'anthropic',
+          modelId: first.modelId,
+          effort: 'low',
+        }),
+      ).toEqual({ ok: true, data: { ok: true } })
+      expect(await readConfig(h.host.fs, h.host.identity)).toEqual(before)
+      expect(await h.sessions.effectiveModelChoice({ sessionId: SESSION })).toMatchObject({
+        modelId: first.modelId,
+        effort: 'low',
+      })
+      const facts = (await h.tape.readRange({ sessionId: SESSION, limit: 1000 })).entries.filter(
+        (entry) => entry.name === 'session/model_choice_set',
+      )
+      expect(facts.map((entry) => entry.payload)).toEqual([
+        { providerId: 'anthropic', modelId: first.modelId, effort: 'low' },
+      ])
+      // Once ① exists, reselecting the same row uses the ordinary menu write rule.
+      await h.r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: 'anthropic',
+        modelId: first.modelId,
+        effort: 'high',
+      })
+      expect((await readConfig(h.host.fs, h.host.identity)).provider).toEqual(
+        kind === 'old-sonnet' ? first : { ...first, latestOf: 'opus' },
+      )
+    },
+  )
+
+  it.each([
+    ['claude-sonnet-5-5', 'sonnet'],
+    ['claude-sonnet-5', undefined],
+    ['my-model', undefined],
+    ['qwen3:8b', undefined],
+  ] as const)(
+    'claude-5-5-models 验收 16: the menu stores %s as a concrete choice and family=%s as default',
+    async (modelId, latestOf) => {
+      const h = await runningModels()
+      const providerId = modelId === 'qwen3:8b' ? 'ollama' : 'anthropic'
+      await h.sessions.createSession({ sessionId: SESSION })
+      await h.r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId,
+        modelId,
+        effort: null,
+      })
+      const selection = {
+        id: providerId,
+        modelId,
+        ...(latestOf === undefined ? {} : { latestOf }),
+        ...(modelId === 'my-model' ? { source: 'user' } : {}),
+      }
+      const config = await readConfig(h.host.fs, h.host.identity)
+      expect(config.provider).toEqual(selection)
+      expect(config.defaultModelByProfile.chat).toEqual(selection)
+      const facts = (await h.tape.readRange({ sessionId: SESSION, limit: 1000 })).entries
+      expect(facts.find((entry) => entry.name === 'session/model_choice_set')?.payload).toEqual({
+        providerId,
+        modelId,
+        effort: null,
+        ...(modelId === 'my-model' ? { source: 'user' } : {}),
+      })
+    },
+  )
 })
