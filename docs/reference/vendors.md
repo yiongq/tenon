@@ -10,9 +10,9 @@
 
 | 能力 | 实测结果 | 核实日期 | 一手来源 | 依赖它的 spec | 重核 |
 |---|---|---|---|---|---|
-| Sonnet 5.5：id `claude-sonnet-5-5`，上下文 1M、同步 Messages API 输出上限 128K，输入 $2、输出 $10、5 分钟缓存写 $2.50、缓存读 $0.10（每百万 token） | 未实测（claude-5-5-models 第 12 步） | 2026-10-23 | `models/sonnet-5-5/overview`；`about-claude/pricing`；`release-notes/overview`（2026-10-07 缓存读降价） | claude-5-5-models F12 | 定价页或发布记录改价时 |
+| Sonnet 5.5：id `claude-sonnet-5-5`，上下文 1M、同步 Messages API 输出上限 128K，输入 $2、输出 $10、5 分钟缓存写 $2.50、缓存读 $0.10（每百万 token） | 未实测（claude-5-5-models 第 12 步） | 2026-10-23 | `models/sonnet-5-5/overview`；`about-claude/pricing`；`release-notes/overview`（2026-10-07 缓存读降价） | claude-5-5-models F12 | 价格页或发布记录改价时 |
 | Haiku 5.5：id `claude-haiku-5-5`，固定 id、无日期后缀、无别名；上下文 1M、同步 Messages API 输出上限 128K | 未实测（同上） | 2026-10-23 | `models/haiku-5-5/migration-guide`；`models/haiku-5-5/overview` | claude-5-5-models F1、F2 | 厂商发新一代时 |
-| Haiku 5.5 按单次请求的提示长度分两档计价：不超过 100 000 token 时输入 0.10、输出 0.50、缓存读 0.01、5 分钟缓存写 0.125；超过时 0.50、2.50、0.05、0.625。提示长度含缓存读写 | 未实测 | 2026-10-23 | `about-claude/pricing`（分档规则只在这一页）；`models/haiku-5-5/overview`（价格表） | claude-5-5-models F11 | 定价页改价时 |
+| Haiku 5.5 按单次请求的提示长度分两档计价：不超过 100 000 token 时输入 0.10、输出 0.50、缓存读 0.01、5 分钟缓存写 0.125；超过时 0.50、2.50、0.05、0.625。提示长度含缓存读写 | 未实测 | 2026-10-23 | `about-claude/pricing`（分档规则只在这一页）；`models/haiku-5-5/overview`（价格表） | claude-5-5-models F11 | 价格页改价时 |
 | 两行都有 low 到 max 五档 effort；Haiku 5.5 默认 medium；Sonnet 5.5 在 Claude API 上默认 high | 未实测 | 2026-10-23 | `build-with-claude/effort` | claude-5-5-models F3 | 厂商发新一代、或 effort 页改档位时 |
 | Haiku 5.5 默认开思考；`disabled` 只在 high 及以下可发，发了就不能逐条改 effort；预算式 `budget_tokens` 是 400 | 未实测 | 2026-10-23 | `build-with-claude/effort`；`models/haiku-5-5/migration-guide` | claude-5-5-models F4 | 同上 |
 | Sonnet 5.5 关思考要发 `between_tools`（发 `disabled` 是 400），只在 high 及以下、不能带别的键；不带 tools 时只回正文；用它时不能逐条改 effort；预算式 `budget_tokens` 是 400 | 未实测（第 12 步验摘要请求） | 2026-10-23 | `models/sonnet-5-5/whats-new-sonnet-5-5` | claude-5-5-models F13 | 同上 |
