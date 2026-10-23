@@ -8,6 +8,7 @@
  * latest instead, at every judgement (§授权、工作区与外带检查的继承). `<n>` of the next workspace or
  * model-choice fact is how many the incarnation already has, counted inside the root's mailbox (F3).
  */
+import type { ModelChoice } from '../loop/ports.js'
 import type {
   ModelChoiceSetPayload,
   NewEntry,
@@ -37,12 +38,15 @@ export interface SessionFacts {
   readonly modelChoice: ModelChoiceSetPayload | null
   readonly modelChoiceFacts: number
   /**
-   * The latest Run's `session/model_selected`: its provider, and where it sent (`endpointOrigin`,
+   * The latest Run's `session/model_selected`: its provider, model, capability source and destination
+   * (`endpointOrigin`,
    * null on the rows phase 1 and plan steps 9–18 wrote without it). What the data-flow check compares
    * a new target with (§模型选择「数据去向」); null before the first Run.
    */
   readonly lastSelected: {
     readonly providerId: string
+    readonly modelId: string
+    readonly capabilitySource?: ModelChoice['capabilitySource']
     readonly endpointOrigin: string | null
   } | null
 }
@@ -86,8 +90,13 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
       modelChoiceFacts += 1
     } else if (entry.name === 'session/model_selected') {
       const origin = entry.payload['endpointOrigin']
+      const capabilitySource = entry.payload['capabilitySource'] as
+        | ModelChoice['capabilitySource']
+        | undefined
       lastSelected = {
         providerId: String(entry.payload['providerId']),
+        modelId: String(entry.payload['modelId']),
+        ...(capabilitySource === undefined ? {} : { capabilitySource }),
         endpointOrigin: typeof origin === 'string' ? origin : null,
       }
     }

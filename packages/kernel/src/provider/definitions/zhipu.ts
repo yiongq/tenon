@@ -29,7 +29,7 @@ import type { HostClock, HostNetwork } from '../../host/adapter.js'
 import type { ConfigKey, ModelInfo, Provider, ProviderDefinition } from '../types.js'
 import { OpenAIChatProvider } from '../wire/openai-chat.js'
 import { configuredValue } from '../wire/transport.js'
-import { frozenModels } from './models.js'
+import { arrangeFamilies, frozenModels } from './models.js'
 
 export const ZHIPU_PROVIDER_ID = 'zhipu'
 
@@ -58,6 +58,7 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
 ]
 
 /**
+ * listing is computed from family / generation; a new generation only declares those two keys.
  * The fields that need saying out loud:
  *
  * - `thinkingPreservationFormat: 'reasoning-content'` under `reasoning_content` on every row,
@@ -112,102 +113,112 @@ const CONFIG_KEYS: readonly ConfigKey[] = [
  *   glm-5.3-flash (0.4 / 1.4, cache hit 0.115) with no dates, and no price card shows it; the bill
  *   decides, and until then the row keeps the standard price.
  */
-const MODELS: readonly ModelInfo[] = frozenModels([
-  {
-    id: 'glm-5.3',
-    nameKey: 'model.name.glm53',
-    purposeKey: 'model.purpose.glm53',
-    providerId: ZHIPU_PROVIDER_ID,
-    contextLimit: 1_000_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: false,
-    supportsCacheControl: false,
-    thinkingPreservationFormat: 'reasoning-content',
-    reasoningEchoField: 'reasoning_content',
-    usageNeedsOptIn: false,
-    pricing: { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
-    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: {
-      mode: 'effort-only',
-      defaultOn: true,
-      effortLevels: ['low', 'high', 'max'],
-      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
-      defaultEffort: 'max',
+const MODELS: readonly ModelInfo[] = frozenModels(
+  arrangeFamilies([
+    {
+      id: 'glm-5.3',
+      family: 'glm',
+      generation: [5, 3],
+      nameKey: 'model.name.glm53',
+      purposeKey: 'model.purpose.glm53',
+      providerId: ZHIPU_PROVIDER_ID,
+      contextLimit: 1_000_000,
+      maxOutputTokens: 128_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: false,
+      supportsCacheControl: false,
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+      usageNeedsOptIn: false,
+      pricing: { inputPerMTok: 8, outputPerMTok: 28, cacheReadPerMTok: 2, currency: 'CNY' },
+      requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+      thinkingSpec: {
+        mode: 'effort-only',
+        defaultOn: true,
+        effortLevels: ['low', 'high', 'max'],
+        // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+        defaultEffort: 'max',
+      },
     },
-  },
-  {
-    // The daily model (02 §模型与密钥).
-    id: 'glm-5.3-flash',
-    nameKey: 'model.name.glm53flash',
-    purposeKey: 'model.purpose.glm53flash',
-    providerId: ZHIPU_PROVIDER_ID,
-    contextLimit: 1_000_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: true,
-    supportsCacheControl: false,
-    thinkingPreservationFormat: 'reasoning-content',
-    reasoningEchoField: 'reasoning_content',
-    usageNeedsOptIn: false,
-    pricing: { inputPerMTok: 0.8, outputPerMTok: 2.8, cacheReadPerMTok: 0.23, currency: 'CNY' },
-    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: {
-      mode: 'effort-only',
-      defaultOn: true,
-      effortLevels: ['low', 'high', 'max'],
-      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
-      defaultEffort: 'max',
+    {
+      // The daily model (02 §模型与密钥).
+      id: 'glm-5.3-flash',
+      family: 'glm-flash',
+      generation: [5, 3],
+      nameKey: 'model.name.glm53flash',
+      purposeKey: 'model.purpose.glm53flash',
+      providerId: ZHIPU_PROVIDER_ID,
+      contextLimit: 1_000_000,
+      maxOutputTokens: 128_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: true,
+      supportsCacheControl: false,
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+      usageNeedsOptIn: false,
+      pricing: { inputPerMTok: 0.8, outputPerMTok: 2.8, cacheReadPerMTok: 0.23, currency: 'CNY' },
+      requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+      thinkingSpec: {
+        mode: 'effort-only',
+        defaultOn: true,
+        effortLevels: ['low', 'high', 'max'],
+        // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+        defaultEffort: 'max',
+      },
     },
-  },
-  {
-    // The speed tier the live suite runs on (02 §模型与密钥).
-    id: 'glm-5.3-flashx',
-    nameKey: 'model.name.glm53flashx',
-    purposeKey: 'model.purpose.glm53flashx',
-    providerId: ZHIPU_PROVIDER_ID,
-    contextLimit: 1_000_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: true,
-    supportsCacheControl: false,
-    thinkingPreservationFormat: 'reasoning-content',
-    reasoningEchoField: 'reasoning_content',
-    usageNeedsOptIn: false,
-    pricing: { inputPerMTok: 2, outputPerMTok: 7, cacheReadPerMTok: 0.57, currency: 'CNY' },
-    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-    thinkingSpec: {
-      mode: 'effort-only',
-      defaultOn: true,
-      effortLevels: ['low', 'high', 'max'],
-      // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
-      defaultEffort: 'max',
+    {
+      // The speed tier the live suite runs on (02 §模型与密钥).
+      id: 'glm-5.3-flashx',
+      family: 'glm-flashx',
+      generation: [5, 3],
+      nameKey: 'model.name.glm53flashx',
+      purposeKey: 'model.purpose.glm53flashx',
+      providerId: ZHIPU_PROVIDER_ID,
+      contextLimit: 1_000_000,
+      maxOutputTokens: 128_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: true,
+      supportsCacheControl: false,
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+      usageNeedsOptIn: false,
+      pricing: { inputPerMTok: 2, outputPerMTok: 7, cacheReadPerMTok: 0.57, currency: 'CNY' },
+      requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+      thinkingSpec: {
+        mode: 'effort-only',
+        defaultOn: true,
+        effortLevels: ['low', 'high', 'max'],
+        // The vendor's own default when no reasoning_effort is sent (spec 02 §思考档位; A1's A′).
+        defaultEffort: 'max',
+      },
     },
-  },
-  {
-    id: 'glm-4.6',
-    nameKey: 'model.name.glm46',
-    purposeKey: 'model.purpose.glm46',
-    providerId: ZHIPU_PROVIDER_ID,
-    contextLimit: 200_000,
-    maxOutputTokens: 128_000,
-    reasoning: true,
-    supportsToolCalling: true,
-    supportsStreamingToolCalls: true,
-    supportsVision: false,
-    supportsCacheControl: false,
-    thinkingPreservationFormat: 'reasoning-content',
-    reasoningEchoField: 'reasoning_content',
-    usageNeedsOptIn: false,
-    requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
-  },
-])
+    {
+      id: 'glm-4.6',
+      family: 'glm',
+      generation: [4, 6],
+      nameKey: 'model.name.glm46',
+      purposeKey: 'model.purpose.glm46',
+      providerId: ZHIPU_PROVIDER_ID,
+      contextLimit: 200_000,
+      maxOutputTokens: 128_000,
+      reasoning: true,
+      supportsToolCalling: true,
+      supportsStreamingToolCalls: true,
+      supportsVision: false,
+      supportsCacheControl: false,
+      thinkingPreservationFormat: 'reasoning-content',
+      reasoningEchoField: 'reasoning_content',
+      usageNeedsOptIn: false,
+      requestParams: { thinking: { type: 'enabled' }, tool_stream: true },
+    },
+  ]),
+)
 
 const FINISH_REASONS = Object.freeze({
   sensitive: 'content-filter',
@@ -220,6 +231,11 @@ export const zhipuDefinition: ProviderDefinition = {
   wire: 'openai-chat',
   configKeys: [...CONFIG_KEYS],
   builtinModels: [...MODELS],
+  familyNameKeys: {
+    glm: 'model.family.glm',
+    'glm-flash': 'model.family.glmflash',
+    'glm-flashx': 'model.family.glmflashx',
+  },
   // Spec 02, 01 修补 5 (A12, H10): the two finish_reason values this vendor adds. `network_error` is
   // not declared: it stays `unknown` with its raw value in providerReason, and the loop resends.
   finishReasons: FINISH_REASONS,

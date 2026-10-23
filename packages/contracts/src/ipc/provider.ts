@@ -86,6 +86,8 @@ export const providerModelSchema = z.object({
   mark: modelMarkSchema,
   nameKey: z.string().min(1).optional(),
   purposeKey: z.string().min(1).optional(),
+  family: z.string().min(1).optional(),
+  familyNameKey: z.string().min(1).optional(),
   listing: z.enum(['main', 'more']),
   effortLevels: z.array(effortSchema).optional(),
   defaultEffort: effortSchema.optional(),
@@ -202,6 +204,10 @@ export const providerConfigure = defineRoute('provider.configure', {
  * (`session/model_selected`), which is the only reading that stays true when this changes.
  */
 export const providerSelect = defineRoute('provider.select', {
-  request: z.object({ providerId: providerIdSchema, modelId: modelIdSchema }),
+  request: z.object({
+    providerId: providerIdSchema,
+    modelId: modelIdSchema,
+    latestOf: z.string().min(1).optional(),
+  }),
   response: providerWriteResultSchema,
 })

@@ -20,6 +20,8 @@ export const providerSelectionSchema = z.object({
   modelId: z.string().min(1),
   /** A hand-typed id no builtin table has (spec 02 01 修补 6; M6, A15). */
   source: z.literal('user').optional(),
+  /** claude-5-5-models: an invalid pointer drops only this key, preserving the pinned model. */
+  latestOf: z.string().min(1).optional().catch(undefined),
 })
 export type ProviderSelection = z.infer<typeof providerSelectionSchema>
 

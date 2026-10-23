@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { createMemoryHost, createMemoryTapeStore } from '../../src/index.js'
+import { readSessionFacts } from '../../src/session/facts.js'
 import type {
   ModelChoiceSetPayload,
   ModelInfo,
@@ -65,10 +66,10 @@ interface Harness {
  * `legacy()` true: `session/model_selected` is written the way phase 1 and plan steps 9–18 wrote it,
  * with no `endpointOrigin`.
  */
-function harness(o: { legacy?: () => boolean } = {}): Harness {
+function harness(o: { legacy?: () => boolean; omitCapabilitySource?: boolean } = {}): Harness {
   const memory = createMemoryTapeStore({ identity: IDENTITY })
   const store: TapeStore =
-    o.legacy === undefined
+    o.legacy === undefined && !o.omitCapabilitySource
       ? memory
       : {
           ...memory,
@@ -76,8 +77,10 @@ function harness(o: { legacy?: () => boolean } = {}): Harness {
             memory.append({
               ...batch,
               entries: batch.entries.map((entry) => {
-                if (o.legacy?.() !== true || entry.name !== 'session/model_selected') return entry
-                const { endpointOrigin: _dropped, ...payload } = entry.payload
+                if (entry.name !== 'session/model_selected') return entry
+                const payload = { ...entry.payload }
+                if (o.legacy?.() === true) delete payload['endpointOrigin']
+                if (o.omitCapabilitySource) delete payload['capabilitySource']
                 return { ...entry, payload }
               }),
             }),
@@ -390,5 +393,83 @@ describe('the model choice (§模型选择)', () => {
       sessionChoice: null,
       previousOrigin: 'http://localhost:11434',
     })
+  })
+})
+
+describe('claude-5-5-models previous model port', () => {
+  it('claude-5-5-models 验收 15: passes the last selected model to prebuild and effectiveModelChoice, clearing it with the incarnation', async () => {
+    const h = harness()
+    await h.service.effectiveModelChoice({ sessionId: A })
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      previousModel: null,
+      previousOrigin: null,
+    })
+    await send(h, A, 'first model')
+    expect(h.loop.connector.resolved.at(-1)?.previousModel).toBeNull()
+    const one = { providerId: 'anthropic', modelId: ONE.id, capabilitySource: 'builtin' }
+    h.loop.connector.use({
+      provider: h.provider,
+      model: TWO,
+      models: [ONE, TWO],
+      capabilitySource: 'probed',
+    })
+    await send(h, A, 'second model')
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      previousModel: one,
+      previousOrigin: 'https://connector.test',
+    })
+    const two = { providerId: 'anthropic', modelId: TWO.id, capabilitySource: 'probed' }
+    expect((await readSessionFacts(h.store, A)).lastSelected).toEqual({
+      ...two,
+      endpointOrigin: 'https://connector.test',
+    })
+    await h.service.effectiveModelChoice({ sessionId: A })
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      previousModel: two,
+      previousOrigin: null,
+    })
+    expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(two)
+    await send(h, A, 'third model')
+    expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(two)
+    await h.service.resetSession(A)
+    await h.service.effectiveModelChoice({ sessionId: A })
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      previousModel: null,
+      previousOrigin: null,
+    })
+    await send(h, A, 'new incarnation')
+    expect(h.loop.connector.resolved.at(-1)).toMatchObject({
+      previousModel: null,
+      previousOrigin: null,
+    })
+  })
+
+  it.each(['builtin', 'probed', 'user', 'synthesized'] as const)(
+    'claude-5-5-models 验收 15: preserves capabilitySource %s in both connector questions',
+    async (capabilitySource) => {
+      const h = harness()
+      h.loop.connector.use({ provider: h.provider, model: ONE, capabilitySource })
+      await send(h, A, 'first')
+      const expected = { providerId: 'anthropic', modelId: ONE.id, capabilitySource }
+      await h.service.effectiveModelChoice({ sessionId: A })
+      expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(expected)
+      await send(h, A, 'next')
+      expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(expected)
+    },
+  )
+
+  it('claude-5-5-models 验收 15: legacy model_selected without capabilitySource does not invent the key', async () => {
+    const h = harness({ legacy: () => true, omitCapabilitySource: true })
+    await send(h, A, 'legacy')
+    const expected = { providerId: 'anthropic', modelId: ONE.id }
+    expect((await readSessionFacts(h.store, A)).lastSelected).toEqual({
+      ...expected,
+      endpointOrigin: null,
+    })
+    await h.service.effectiveModelChoice({ sessionId: A })
+    expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(expected)
+    expect(h.loop.connector.resolved.at(-1)?.previousOrigin).toBeNull()
+    await send(h, A, 'next')
+    expect(h.loop.connector.resolved.at(-1)?.previousModel).toEqual(expected)
   })
 })

@@ -48,7 +48,7 @@ test.afterEach(async () => {
   zhipu = undefined
 })
 
-test('presentation-r1 验收 9: no host in an official row; hover and keyboard highlight show 发往 <host>, the row’s description says the same; the confirmation still names the host and nothing is sent before it', async () => {
+test('presentation-r1 验收 9、claude-5-5-models 验收 9: no host in an official row; hover and keyboard highlight show 发往 <host>, the row’s description says the same; the confirmation still names the host and nothing is sent before it', async () => {
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   ollama = await startFakeOpenAI({ chunks: ['local answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-menu')
@@ -60,13 +60,29 @@ test('presentation-r1 验收 9: no host in an official row; hover and keyboard h
     await page.getByTestId('model-menu-trigger').click()
     const menu = page.getByTestId('model-menu')
     await expect(menu).toBeVisible()
+    await expect(menu.locator('[data-testid^="model-row-anthropic-"]')).toHaveCount(4)
+    expect(
+      await menu
+        .locator('[data-testid^="model-row-anthropic-"]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid'))),
+    ).toEqual([
+      'model-row-anthropic-claude-opus-5-5',
+      'model-row-anthropic-claude-sonnet-5-5',
+      'model-row-anthropic-claude-haiku-5-5',
+      'model-row-anthropic-claude-fable-5-1',
+    ])
+    const haiku55Lines = page
+      .getByTestId('model-row-anthropic-claude-haiku-5-5')
+      .locator(':scope > span:last-child > span')
+    await expect(haiku55Lines.first()).toHaveText('Haiku 5.5')
+    await expect(haiku55Lines.last()).toHaveText('Lowest cost')
     // Official rows keep their destination in the tooltip and persistent description.
-    const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5')
+    const sonnet = page.getByTestId('model-row-anthropic-claude-sonnet-5-5')
     await expect(sonnet).not.toContainText('api.anthropic.com')
     await expect(sonnet).not.toContainText('This computer')
     // The second line keeps only the purpose; the first keeps the model's display name.
     const sonnetLines = sonnet.locator(':scope > span:last-child > span')
-    await expect(sonnetLines.first()).toHaveText('Sonnet 5')
+    await expect(sonnetLines.first()).toHaveText('Sonnet 5.5')
     await expect(sonnetLines.last()).toHaveText('Balanced speed and capability')
     await expect(sonnet).toHaveAttribute('aria-describedby', /.+/)
     await expect(sonnet).toHaveAccessibleDescription('Sends to api.anthropic.com')
@@ -92,6 +108,9 @@ test('presentation-r1 验收 9: no host in an official row; hover and keyboard h
     await expect(page.locator('[data-testid^="model-row-zhipu-"]')).toHaveCount(0)
     // Opus 5 waits under 更多模型 ›, not in the main list.
     await expect(page.getByTestId('model-row-anthropic-claude-opus-5')).toHaveCount(0)
+    await page.getByTestId('model-more').click()
+    await expect(page.getByTestId('model-row-anthropic-claude-opus-5')).toBeVisible()
+    await expect(page.getByTestId('model-row-anthropic-claude-sonnet-5')).toBeVisible()
     // Haiku thinks on a budget: once chosen, no thinking submenu.
     await page.getByTestId('model-row-anthropic-claude-haiku-4-5-20251001').click()
     await expect(page.getByTestId('model-menu-current')).toHaveText('Haiku 4.5')
@@ -237,12 +256,12 @@ test('asks by where the history went, not by the model in effect, and a typed mo
     // the menu compares with where the history went, not with the model in effect (a public host
     // to another after the history did go out asks nothing: renderer-data-flow.test.ts).
     await trigger.click()
-    await page.getByTestId('model-row-anthropic-claude-sonnet-5').click()
+    await page.getByTestId('model-row-anthropic-claude-sonnet-5-5').click()
     await expect(page.getByTestId('model-confirm')).toContainText(
       'Earlier messages will be sent to api.anthropic.com',
     )
     await page.getByTestId('model-confirm-switch').click()
-    await expect(current).toHaveText('Sonnet 5 · High')
+    await expect(current).toHaveText('Sonnet 5.5 · High')
 
     // A model typed for Ollama: its row is unverified, on 「This computer」 like Ollama's own.
     await trigger.click()
@@ -542,6 +561,22 @@ test('a session on this computer whose default moved to a public host asks on an
     await expect(confirm).toContainText(asked)
     await page.keyboard.press('Escape')
     await expect(page.getByTestId('model-menu')).toBeHidden()
+    // Only the newest GLM generation and the two separate Flash families are in the main list.
+    await trigger.click()
+    expect(
+      await page
+        .locator('[data-testid^="model-row-zhipu-"]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-testid'))),
+    ).toEqual([
+      'model-row-zhipu-glm-5.3',
+      'model-row-zhipu-glm-5.3-flash',
+      'model-row-zhipu-glm-5.3-flashx',
+    ])
+    await page.getByTestId('model-more').click()
+    await expect(page.getByTestId('model-row-zhipu-glm-4.6')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('model-menu')).toBeHidden()
     // A model typed for it.
     await trigger.click()
     await page.getByTestId('model-more').click()
@@ -591,7 +626,7 @@ test('in a task, the text-only rows are greyed and say why: Ollama’s and a typ
     await expect(ollamaRow).toHaveAttribute('aria-disabled', 'true')
     await expect(ollamaRow).toContainText(reason)
     // A verified row stays selectable.
-    await expect(page.getByTestId('model-row-anthropic-claude-sonnet-5')).not.toHaveAttribute(
+    await expect(page.getByTestId('model-row-anthropic-claude-sonnet-5-5')).not.toHaveAttribute(
       'aria-disabled',
       'true',
     )

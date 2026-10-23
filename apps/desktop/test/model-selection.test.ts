@@ -144,7 +144,7 @@ describe('provider.list for the menu (01 修补 6)', () => {
     const sonnet = anthropic.models.find((row) => row.id === 'claude-sonnet-5')
     expect(sonnet).toMatchObject({
       mark: 'verified',
-      listing: 'main',
+      listing: 'more',
       nameKey: 'model.name.sonnet5',
       purposeKey: 'model.purpose.sonnet5',
       effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -153,14 +153,22 @@ describe('provider.list for the menu (01 修补 6)', () => {
     // Opus 5 is legacy, under 更多模型 ›; Haiku 4.5 thinks on a budget and has no submenu (旧 186).
     expect(anthropic.models.find((row) => row.id === 'claude-opus-5')?.listing).toBe('more')
     expect(
-      anthropic.models.find((row) => row.id.startsWith('claude-haiku'))?.effortLevels,
+      anthropic.models.find((row) => row.id === 'claude-haiku-4-5-20251001')?.effortLevels,
     ).toBeUndefined()
+    expect(anthropic.models.find((row) => row.id === 'claude-haiku-4-5-20251001')?.listing).toBe(
+      'more',
+    )
+    expect(anthropic.models.find((row) => row.id === 'claude-haiku-5-5')).toMatchObject({
+      effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'medium',
+    })
     const zhipu = entryOf(entries, ZHIPU_PROVIDER_ID)
     expect(zhipu.models.find((row) => row.id === 'glm-5.3-flash')?.effortLevels).toEqual([
       'low',
       'high',
       'max',
     ])
+    expect(zhipu.models.find((row) => row.id === 'glm-4.6')?.listing).toBe('more')
     expect(zhipu.models.find((row) => row.id === 'glm-4.6')?.effortLevels).toBeUndefined()
     const ollama = entryOf(entries, OLLAMA_PROVIDER_ID)
     expect(ollama.endpoint).toEqual({ host: 'localhost', reach: 'loopback' })

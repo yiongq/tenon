@@ -41,11 +41,11 @@ const ROW_NAME = '[data-testid^="model-row-"] > span:last-child > span:first-chi
 const ROW_LINE = '[data-testid^="model-row-"] > span:last-child > span:last-child'
 
 for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
-  // The longest en lines — 「Balanced speed and capability · This computer」 (claude-sonnet-5) and
+  // The longest en lines — 「Balanced speed and capability · This computer」 (claude-sonnet-5-5) and
   // 「Needs 30-day data retention turned on for your organization or workspace · This computer」
   // (claude-fable-5-1) — are the ones that wrapped while the popup kept its trigger's width; it
   // grows to its rows now.
-  test(`presentation-r1 验收 9: every model row’s second line and destination tooltip fit in the model menu in ${locale} (旧 223)`, async () => {
+  test(`presentation-r1 验收 9、claude-5-5-models 验收 9: every model row’s second line and destination tooltip fit in the model menu in ${locale} (旧 223)`, async () => {
     const userData = makeUserDataDir(`fit-02-menu-${locale}`)
     seedConfig(userData, { locale })
     fake = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
@@ -55,6 +55,7 @@ for (const locale of ['zh-CN', 'en'] as const satisfies readonly Locale[]) {
       const menu = page.getByTestId('model-menu')
       await expect(menu).toBeVisible()
       // Anthropic's four main rows and Ollama's one.
+      await expectSingleLineUnclipped(menu.locator(ROW_NAME), 5)
       await expectSingleLineUnclipped(menu.locator(ROW_LINE), 5)
       const rows = menu.locator('[data-testid^="model-row-"]')
       for (const row of await rows.all()) {

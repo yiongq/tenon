@@ -55,29 +55,8 @@ const FLASH = row(zhipuDefinition, 'glm-5.3-flash')
 const GLM_4_6 = row(zhipuDefinition, 'glm-4.6')
 const QWEN = row(ollamaDefinition, 'qwen3:8b')
 
-// Local rows until plan step 6 adds the builtin data; no provider-table change in steps 2–5.
-const HAIKU_5_5 = anthropicModel({
-  id: 'claude-haiku-5-5',
-  thinkingSpec: {
-    mode: 'adaptive-gated',
-    defaultOn: true,
-    effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
-    defaultEffort: 'medium',
-    disableMaxEffort: 'high',
-    displays: ['summarized', 'omitted'],
-    defaultDisplay: 'omitted',
-    samplingDefaultsOnly: true,
-  },
-})
-const SONNET_5_5 = anthropicModel({
-  id: 'claude-sonnet-5-5',
-  thinkingSpec: {
-    ...HAIKU_5_5.thinkingSpec!,
-    defaultEffort: 'high',
-    offType: 'between_tools',
-    forcedToolChoice: false,
-  },
-})
+const HAIKU_5_5 = row(anthropicDefinition, 'claude-haiku-5-5')
+const SONNET_5_5 = row(anthropicDefinition, 'claude-sonnet-5-5')
 
 /** Configured so the adapter constructs; nothing may ever be sent, so it is no credential. */
 const KEY = 'test-key-not-a-real-credential'

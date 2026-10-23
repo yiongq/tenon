@@ -72,7 +72,7 @@ export interface TestConnector extends RunConnector {
     readonly assemble: number
     readonly provider: number
   }
-  /** What each `resolveChoice` was asked, in order: ① and the previous origin included. */
+  /** What each `resolveChoice` was asked, in order: ①, previous origin and previous model included. */
   readonly resolved: ReadonlyArray<Parameters<RunConnector['resolveChoice']>[0]>
 }
 

@@ -57,7 +57,8 @@
         "https-required": "A public address must use https, so the provider reads as not configured. Create the custom provider again with an https address."
       },
       "customModel": "Or type a model ID",
-      "customModelHint": "A model that is not in the list is unverified and holds text conversations only."
+      "customModelHint": "A model that is not in the list is unverified and holds text conversations only.",
+      "latest": "Latest {family} (now {model})"
     }
   },
   "provider": {
@@ -166,18 +167,22 @@
       "glm53": "GLM-5.3",
       "glm53flash": "GLM-5.3 Flash",
       "glm53flashx": "GLM-5.3 FlashX",
-      "glm46": "GLM-4.6"
+      "glm46": "GLM-4.6",
+      "sonnet55": "Sonnet 5.5",
+      "haiku55": "Haiku 5.5"
     },
     "purpose": {
-      "sonnet5": "Balanced speed and capability",
+      "sonnet5": "Previous Sonnet (legacy)",
       "opus55": "For complex, long tasks",
       "opus5": "Previous Opus (legacy)",
-      "haiku45": "Fastest, lowest cost",
+      "haiku45": "Previous Haiku (legacy)",
       "fable51": "Needs 30-day data retention turned on for your organization or workspace",
       "glm53": "Zhipu GLM-5.3",
       "glm53flash": "Lightweight, for everyday use",
       "glm53flashx": "Lightweight and faster",
-      "glm46": "Previous-generation GLM"
+      "glm46": "Previous-generation GLM",
+      "sonnet55": "Balanced speed and capability",
+      "haiku55": "Lowest cost"
     },
     "mark": {
       "localTextOnly": "{host} · text conversation only",
@@ -235,7 +240,16 @@
     },
     "typeModelFor": "{provider} · Type a model ID…",
     "nextMessageCache": "Takes effect from the next message · Changing it makes the cache start over",
-    "refused": "{provider} · Its address can't be used; fix it in Settings"
+    "refused": "{provider} · Its address can't be used; fix it in Settings",
+    "family": {
+      "opus": "Opus",
+      "sonnet": "Sonnet",
+      "haiku": "Haiku",
+      "fable": "Fable",
+      "glm": "GLM",
+      "glmflash": "GLM Flash",
+      "glmflashx": "GLM FlashX"
+    }
   },
   "customVendor": {
     "section": {
