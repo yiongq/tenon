@@ -218,7 +218,8 @@ export function assertThinkingRequest(req: ProviderRequest, wire: string): void 
 
 /**
  * `samplingDefaultsOnly` (spec 02, 01 修补 3; decisions M3, A1): a non-default sampling value is
- * refused rather than quietly dropped — `temperature` only 1.0, `top_p` only >= 0.99, `top_k` never.
+ * refused rather than quietly dropped — `temperature` only 1.0, `top_p` only 0.99, `top_k` never;
+ * temperature and top_p together are refused even at defaults (claude-5-5-models §对 02 的修补).
  * `temperature` is reserved on both wires, so it can only come from the request; the other two have
  * no request field and can only come from `requestParams`.
  */
@@ -235,7 +236,8 @@ export function assertSamplingDefaults(req: ProviderRequest, wire: string): void
   const params = req.model.requestParams ?? {}
   if (Object.hasOwn(params, 'top_p')) {
     const topP = params['top_p']
-    if (typeof topP !== 'number' || !(topP >= 0.99)) refuse(`top_p ${String(topP)} is below 0.99`)
+    if (topP !== 0.99) refuse(`top_p ${String(topP)} is not 0.99`)
+    if (req.temperature !== undefined) refuse('temperature and top_p cannot be sent together')
   }
   if (Object.hasOwn(params, 'top_k')) refuse('top_k is not accepted at all')
 }

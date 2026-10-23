@@ -55,6 +55,30 @@ const FLASH = row(zhipuDefinition, 'glm-5.3-flash')
 const GLM_4_6 = row(zhipuDefinition, 'glm-4.6')
 const QWEN = row(ollamaDefinition, 'qwen3:8b')
 
+// Local rows until plan step 6 adds the builtin data; no provider-table change in steps 2–5.
+const HAIKU_5_5 = anthropicModel({
+  id: 'claude-haiku-5-5',
+  thinkingSpec: {
+    mode: 'adaptive-gated',
+    defaultOn: true,
+    effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+    defaultEffort: 'medium',
+    disableMaxEffort: 'high',
+    displays: ['summarized', 'omitted'],
+    defaultDisplay: 'omitted',
+    samplingDefaultsOnly: true,
+  },
+})
+const SONNET_5_5 = anthropicModel({
+  id: 'claude-sonnet-5-5',
+  thinkingSpec: {
+    ...HAIKU_5_5.thinkingSpec!,
+    defaultEffort: 'high',
+    offType: 'between_tools',
+    forcedToolChoice: false,
+  },
+})
+
 /** Configured so the adapter constructs; nothing may ever be sent, so it is no credential. */
 const KEY = 'test-key-not-a-real-credential'
 
@@ -328,13 +352,19 @@ describe('the Anthropic wire’s four thinking branches (01 修补 3; 旧 45, �
     )
     expect(on.thinking).toEqual({ type: 'adaptive' })
     expect(on.output_config).toEqual({ effort: 'max' })
-    // The defaults are accepted: temperature 1.0 and top_p at or above 0.99.
+    // claude-5-5-models §对 02 的修补: each default is accepted alone, never together.
+    expect(() =>
+      encodeAnthropicMessages(ask(OPUS_5_5, { temperature: 1 }), 'anthropic'),
+    ).not.toThrow()
+    expect(() =>
+      encodeAnthropicMessages(ask({ ...OPUS_5_5, requestParams: { top_p: 0.99 } }), 'anthropic'),
+    ).not.toThrow()
     expect(() =>
       encodeAnthropicMessages(
         ask({ ...OPUS_5_5, requestParams: { top_p: 0.99 } }, { temperature: 1 }),
         'anthropic',
       ),
-    ).not.toThrow()
+    ).toThrow(ProviderInvalidArgumentError)
   })
 
   it('turns Opus 5 off only at an effort no higher than its disableMaxEffort', async () => {
@@ -414,6 +444,135 @@ describe('the Anthropic wire’s four thinking branches (01 修补 3; 旧 45, �
     expect(() => encodeAnthropicMessages(ask(effortOnly), 'anthropic')).toThrow(
       ProviderInvalidArgumentError,
     )
+  })
+})
+
+describe('claude-5-5-models thinking and sampling', () => {
+  for (const [model, offType] of [
+    [SONNET_5_5, 'between_tools'],
+    [HAIKU_5_5, 'disabled'],
+  ] as const) {
+    it(`claude-5-5-models 验收 2: ${model.id} off writes only ${offType} at low / medium / high / default`, () => {
+      for (const effort of ['low', 'medium', 'high', undefined]) {
+        const req = ask(model, {
+          thinking: { enabled: false },
+          display: 'summarized',
+          ...(effort === undefined ? {} : { effort }),
+        })
+        expect(bodyOf(encodeAnthropicMessages(req, 'anthropic')).thinking).toEqual({
+          type: offType,
+        })
+        expect(requestSnapshot(req).thinking).toEqual({ enabled: false })
+        expect(requestSnapshot(req)).not.toHaveProperty('display')
+      }
+    })
+
+    // oxlint-disable-next-line vitest/expect-expect -- assertions are in expectRefusedLocally
+    it(`claude-5-5-models 验收 2: ${model.id} refuses off at xhigh / max and on with a budget before sending`, async () => {
+      for (const effort of ['xhigh', 'max']) {
+        // oxlint-disable-next-line no-await-in-loop -- fresh fake network for each refusal
+        await expectRefusedLocally(
+          anthropicDefinition,
+          ask(model, { thinking: { enabled: false }, effort }),
+        )
+      }
+      await expectRefusedLocally(
+        anthropicDefinition,
+        ask(model, { thinking: { enabled: true, budgetTokens: 2048 } }),
+      )
+    })
+  }
+
+  // oxlint-disable-next-line vitest/expect-expect -- assertions are in expectRefusedLocally
+  it('claude-5-5-models 验收 2: between_tools refuses nonempty tools before sending', async () => {
+    await expectRefusedLocally(
+      anthropicDefinition,
+      ask(SONNET_5_5, { thinking: { enabled: false }, effort: 'high', tools: [TOOL] }),
+    )
+  })
+
+  it('claude-5-5-models 验收 2: empty tools permit between_tools; Haiku disabled still permits tools', () => {
+    expect(
+      bodyOf(
+        encodeAnthropicMessages(
+          ask(SONNET_5_5, { thinking: { enabled: false }, tools: [] }),
+          'anthropic',
+        ),
+      ).thinking,
+    ).toEqual({ type: 'between_tools' })
+    const body = bodyOf(
+      encodeAnthropicMessages(
+        ask(HAIKU_5_5, { thinking: { enabled: false }, tools: [TOOL] }),
+        'anthropic',
+      ),
+    )
+    expect(body.thinking).toEqual({ type: 'disabled' })
+    expect(body.tools).toHaveLength(1)
+  })
+
+  for (const mode of ['budget', 'adaptive'] as const) {
+    // oxlint-disable-next-line vitest/expect-expect -- assertions are in expectRefusedLocally
+    it(`claude-5-5-models 验收 2: ${mode} with offType is a local table error`, async () => {
+      const model = anthropicModel({
+        thinkingSpec: {
+          mode,
+          defaultOn: true,
+          effortLevels: ['low'],
+          offType: 'between_tools',
+        },
+      })
+      await expectRefusedLocally(
+        anthropicDefinition,
+        ask(model, { thinking: { enabled: false }, effort: 'low' }),
+      )
+    })
+  }
+
+  for (const model of [HAIKU_5_5, SONNET_5_5, OPUS_5_5]) {
+    // oxlint-disable-next-line vitest/expect-expect -- assertions are in expectRefusedLocally
+    it(`claude-5-5-models 验收 5: ${model.id} refuses non-default sampling and simultaneous defaults locally`, async () => {
+      const refused = [
+        ask({ ...model, requestParams: { top_p: 1 } }),
+        ask({ ...model, requestParams: { top_p: 0.9 } }),
+        ask({ ...model, requestParams: { top_k: 40 } }),
+        ask(model, { temperature: 0.5 }),
+        ask({ ...model, requestParams: { top_p: 0.99 } }, { temperature: 1 }),
+      ]
+      for (const req of refused) {
+        // oxlint-disable-next-line no-await-in-loop -- fresh fake network for each refusal
+        await expectRefusedLocally(anthropicDefinition, req)
+      }
+    })
+
+    it(`claude-5-5-models 验收 5: ${model.id} accepts each sampling default alone`, () => {
+      expect(
+        bodyOf(encodeAnthropicMessages(ask(model, { temperature: 1 }), 'anthropic')),
+      ).toHaveProperty('temperature', 1)
+      expect(
+        bodyOf(
+          encodeAnthropicMessages(ask({ ...model, requestParams: { top_p: 0.99 } }), 'anthropic'),
+        ),
+      ).toHaveProperty('top_p', 0.99)
+    })
+  }
+
+  it('claude-5-5-models 验收 5: the shared guard also applies to openai-chat; unflagged rows keep their sampling', () => {
+    const flagged = {
+      ...FLASH,
+      thinkingSpec: { ...FLASH.thinkingSpec!, samplingDefaultsOnly: true },
+    }
+    expect(() =>
+      encodeOpenAIChat(ask({ ...flagged, requestParams: { top_p: 1 } }), 'zhipu'),
+    ).toThrow(ProviderInvalidArgumentError)
+    expect(() =>
+      encodeOpenAIChat(
+        ask({ ...flagged, requestParams: { top_p: 0.99 } }, { temperature: 1 }),
+        'zhipu',
+      ),
+    ).toThrow(ProviderInvalidArgumentError)
+    expect(
+      bodyOf(encodeOpenAIChat(ask({ ...GLM_4_6, requestParams: { top_p: 1 } }), 'zhipu')),
+    ).toHaveProperty('top_p', 1)
   })
 })
 

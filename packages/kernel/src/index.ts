@@ -315,6 +315,7 @@ export {
   ollamaDefinition,
 } from './provider/definitions/ollama.js'
 export { BUILTIN_PROVIDERS, registerBuiltinProviders } from './provider/definitions/builtin.js'
+export { arrangeFamilies, newestOfFamily } from './provider/definitions/models.js'
 // M6: custom vendors — the instance id, the generic factory, the probe and the model list
 // (§实例 id, §实例描述与通用工厂, §探测, §列表与上限).
 export {

@@ -847,8 +847,9 @@ describe('acceptance 1 — one call path, four providers', () => {
       expect(attempt?.payload['encoder']).toEqual({
         wire: testCase.definition.wire,
         // anthropic-messages 2 added the top-level cache_control, 3 the vendor-fields guard
-        // (s6-spec-2); openai-chat 2 the row's maxTokensField (M6; encoder-version.test.ts).
-        version: testCase.definition.wire === 'anthropic-messages' ? 3 : 2,
+        // (s6-spec-2), 4 offType (claude-5-5-models); openai-chat 2 the row's maxTokensField
+        // (M6; encoder-version.test.ts).
+        version: testCase.definition.wire === 'anthropic-messages' ? 4 : 2,
         sdk: expect.stringMatching(
           testCase.definition.wire === 'anthropic-messages'
             ? /^@anthropic-ai\/sdk@\d/

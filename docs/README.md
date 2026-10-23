@@ -9,7 +9,7 @@
 - [02](architecture/02-agent-loop/spec.md) · implemented · 02 · Agent loop · 需要你：—
 - [03](architecture/03-mcp-host/spec.md) · implemented · 03 · MCP host 完整版 · 需要你：—
 - [04](architecture/04-sandbox/spec.md) · implemented · 04 · 沙箱与出网（阶段 4a） · 需要你：—
-- [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：—
+- [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
 - [presentation-r1](features/presentation-r1/spec.md) · implemented · 呈现修订第一轮（presentation-r1） · 需要你：—
