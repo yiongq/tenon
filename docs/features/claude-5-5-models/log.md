@@ -105,3 +105,11 @@
 - [建议] anthropic.ts 注释里「Haiku 4.5 is restricted only while thinking is on」比 vendors.md 的说法强 · 不修：不影响行为，下次动 Haiku 4.5 那一行时一并核
 结论：通过
 突变：代码部分 15 个，全部变红，0 个存活（见「实施 · 2026-10-23（第 1、6–8 步）」）；第 8 步 ⑤⑥ 留到第 9 步之后
+
+## 评审 · 2026-10-23 · 审过 004ee99
+
+范围：PR #69 的 CI e2e（运行 39925804832）挂了一例，model-menu.spec.ts「a session on this computer whose default moved to a public host asks on any row or level of it」：Codex 新加的一段在打开菜单后立刻 `evaluateAll`，读到空数组。lead 在 004ee99 改成先等行数再读；同一个评审 agent（新上下文，Sonnet）复核。
+- [建议] `evaluateAll` 不自动等待，菜单内容打开后才挂载 · 证据：CI 报 Expected 三行、Received []；同文件开头 anthropic 那段已先 `toHaveCount(4)` · 已修 004ee99
+- [建议] 同一例新加的「更多模型」一段在 CI 上还没跑到过（上一行先挂了），重跑若在那里挂，先查点击打开子菜单是否稳定 · 不修：现写法与第一例相同且第一例已通过，等 CI 重跑验证
+结论：通过
+突变：0 个（只改测试的等待）
