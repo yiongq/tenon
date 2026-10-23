@@ -53,6 +53,15 @@ export interface ModelInfo {
     currency?: 'USD' | 'CNY'
     /** Spec 02, 01 修补 2: the price of writing the cache. */
     cacheWritePerMTok?: number
+    /** claude-5-5-models §对 01 的修补: one price tier for a long prompt; absent = no tiers. */
+    longPrompt?: {
+      /** All usage takes this tier only when the request's total prompt exceeds this limit. */
+      overTokens: number
+      inputPerMTok: number
+      outputPerMTok: number
+      cacheReadPerMTok?: number
+      cacheWritePerMTok?: number
+    }
   }
   /** Merged into the request body verbatim — the insurance against one vendor breaking
    * the abstraction. */
@@ -80,6 +89,16 @@ export interface ModelInfo {
    * WIRE_MODEL_FIELDS; a definition's first row (the new-user fallback) is never `'more'`.
    */
   listing?: 'main' | 'more'
+  /**
+   * claude-5-5-models §跟随最新: family of an anthropic or zhipu builtin row. encode() never reads
+   * it, so it is not in WIRE_MODEL_FIELDS.
+   */
+  family?: string
+  /**
+   * claude-5-5-models §跟随最新: [major, minor], compared in that order, larger is newer. Present
+   * exactly when family is; not in WIRE_MODEL_FIELDS.
+   */
+  generation?: readonly [number, number]
   /**
    * M6, 01 修补 1 (T10): which key carries the output limit. Absent = `'max_tokens'`, 01's
    * behaviour; only the openai-chat wire reads it, and an anthropic-messages row never writes it.
@@ -112,9 +131,18 @@ export interface ThinkingSpec {
   effortLevels?: readonly string[]
   defaultEffort?: string
   disableMaxEffort?: string
+  /**
+   * claude-5-5-models §对 01 的修补: Anthropic's off shape; absent = 'disabled'. Only an
+   * adaptive-gated row with disableMaxEffort may declare it. Explicit 'disabled' is excluded:
+   * it would change modelWireHash without changing any encoded byte.
+   */
+  offType?: 'between_tools'
   displays?: readonly ('summarized' | 'omitted')[]
   defaultDisplay?: 'summarized' | 'omitted'
-  /** true: `temperature` only 1.0, `top_p` only >= 0.99, `top_k` always refused. */
+  /**
+   * claude-5-5-models §对 02 的修补: temperature only 1.0, top_p only 0.99, never together;
+   * top_k always refused.
+   */
   samplingDefaultsOnly?: boolean
   /** false: `tool_choice` of `any` / `tool` is a 400. The main conversation never reads it. */
   forcedToolChoice?: boolean
@@ -257,6 +285,11 @@ export interface ProviderDefinition {
   wire: 'anthropic-messages' | 'openai-chat'
   configKeys: ConfigKey[]
   builtinModels: ModelInfo[]
+  /**
+   * claude-5-5-models §对 01 的修补: family → display-name i18n key, covering every family in
+   * the table. As with nameKey, the kernel never produces sentences.
+   */
+  familyNameKeys?: Readonly<Record<string, string>>
   /**
    * Spec 02, 01 修补 2 (decisions A12, M2, M6): finish_reason values the openai-chat wire's own table
    * does not know, as data. A definition may only ADD values: one the table already maps is refused

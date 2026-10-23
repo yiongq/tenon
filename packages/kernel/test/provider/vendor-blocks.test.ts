@@ -535,7 +535,7 @@ describe('the attempt says which encoder and which model fields (旧 112, 旧 42
     const attempt = await s.send('hi')
     expect(attempt.payload['encoder']).toEqual({
       wire: 'anthropic-messages',
-      version: 3,
+      version: 4,
       sdk: expect.stringMatching(/^@anthropic-ai\/sdk@\d+\.\d+\.\d+$/),
     })
     // canonicalHash(pick(model, WIRE_MODEL_FIELDS)), computed here from the definition.

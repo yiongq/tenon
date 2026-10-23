@@ -123,13 +123,14 @@ export const ALLOWED_HEADERS: HeaderAllowList = Object.freeze({
  * 1 is spec 02's encoder — the thinking shapes, the vendor blocks and the trailing-user rule; 2 adds
  * the top-level `cache_control` (01 修补 3); 3 puts the vendor fields of text and tool_use blocks
  * through rules 1 and 2 (01 修补 2; s6-spec-2, owner 2026-09-27), so fields another model produced,
- * or stored with no source, no longer go out. Add one with every change to what it encodes, and a
+ * or stored with no source, no longer go out. 4 adds offType for adaptive-gated rows when thinking
+ * is off (claude-5-5-models §对 02 的修补). Add one with every change to what it encodes, and a
  * row to test/provider/wire/encoder-version.test.ts. Exported for the attempt re-check (02 不变量
  * 33), which covers only the records this build's encoder wrote.
  */
 export const ANTHROPIC_MESSAGES_ENCODER: EncoderInfo = Object.freeze({
   wire: WIRE,
-  version: 3,
+  version: 4,
   sdk: `@anthropic-ai/sdk@${SDK_VERSION}`,
 })
 
@@ -271,11 +272,11 @@ export function encodeAnthropicMessages(
  * - on: the budget mode as 01 (a budget is mandatory); the three adaptive modes as
  *   `{ type: 'adaptive' }`, where a budget is refused;
  * - off: `disabled` for budget and adaptive; adaptive-gated only while this request's level (its
- *   `effort`, else the row's `defaultEffort`) is no higher than `disableMaxEffort`; never on
- *   always-on.
+ *   `effort`, else the row's `defaultEffort`) is no higher than `disableMaxEffort`, writing
+ *   `offType ?? 'disabled'` (claude-5-5-models §对 02 的修补); never on always-on.
  *
- * `display` goes inside the object only while thinking is on: with `disabled` it is a 400, so it is
- * left out, and the snapshot does not record it (thinkingIsOn in shared.ts reads the same way).
+ * `display` goes inside the object only while thinking is on: neither off shape accepts it, so it
+ * is left out, and the snapshot does not record it (thinkingIsOn in shared.ts reads the same way).
  */
 function thinkingShape(
   req: ProviderRequest,
@@ -307,10 +308,20 @@ function thinkingShape(
   switch (spec.mode) {
     case 'budget':
     case 'adaptive':
+      if (spec.offType !== undefined) {
+        throw new ProviderInvalidArgumentError(
+          `model ${model.id}: offType requires adaptive-gated thinking with disableMaxEffort`,
+        )
+      }
       return { type: 'disabled' }
     case 'adaptive-gated':
       assertMayDisable(req, spec)
-      return { type: 'disabled' }
+      if (spec.offType === 'between_tools' && (req.tools?.length ?? 0) > 0) {
+        throw new ProviderInvalidArgumentError(
+          `model ${model.id}: thinking off with between_tools cannot be combined with tools`,
+        )
+      }
+      return { type: spec.offType ?? 'disabled' }
     case 'always-on':
       throw new ProviderInvalidArgumentError(
         `model ${model.id}: thinking is always on for this model and cannot be turned off`,
