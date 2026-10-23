@@ -89,3 +89,19 @@
 测试改动：apps/desktop/e2e/model-menu.spec.ts · in a task, the text-only rows are greyed… · 可选的官方行改为主列表的 Sonnet 5.5
 测试改动：packages/kernel/test/provider/wire/thinking-shapes.test.ts · 本地的 HAIKU_5_5、SONNET_5_5 夹具 · 换成内置表里的行（plan 第 6 步要求）；两行的整行期望由 definitions.test.ts 验收 1 用独立字面量守着
 - overview 不用改：这一段只给 ModelInfo、config 的默认与 `resolveChoice` 的问询增可选键，模块边界、数据流与技术栈不变；overview §术语 是否加「家族、代次、指针」，等第 9–11 步把指针接进解析与界面时再定。
+
+## 评审 · 2026-10-23 · 审过 4550a17
+
+范围：b1b1577（Codex 的第 6–8 步代码，lead 逐字段核过两新行与 diff）与 93af16b、af2b10a、4550a17（lead 的文档）。新上下文的评审 agent（Sonnet）审了两轮，另跑了 12 个相关测试文件，全绿。
+- [major] vendors.md 缺「重核」一列，前言却指着它；plan 第 1 步与 docs/spec-driven-dev.md「厂商现状」都要求这一列 · 证据：表头只有 5 列 · 已修 af2b10a
+- [建议] vendors.md 的行查不回 F 编号 · 已修 af2b10a
+- [建议] 几行写得过窄：display 只提 Sonnet 5.5、Sonnet 行漏 `budget_tokens` 400、effort 漏「在 Claude API 上」、工具流式漏平台与停顿 · 已修 af2b10a
+- [建议] 采样行的模型名单像穷举，Haiku 4.5 一句没有出处 · 已修 af2b10a（评审对一手页面复核：页面点名十二个模型，没有 Haiku 4.5，写成「未核实」如实）
+- [建议] API 版本 2026-10-21 另有两条不兼容改动没记；钉版本的地方有两处 · 已修 af2b10a
+- [建议] log 少一行 thinking-shapes 的测试改动 · 已修 af2b10a
+- [建议] 第 8 步突变 ⑤⑥ 要写进第 9 步；overview 是否要改没记结论 · 已修 af2b10a
+- [建议] vendors.md 里「定价页」触发 notes 的敏感词警告（指厂商价格页，误报） · 已修 4550a17
+- [建议] docs/spec-driven-dev.md「本项目补充」第 9 条仍写「厂商现状表……本次不创建」，已过时；改这一节要 owner 点名批准 · 交 owner
+- [建议] anthropic.ts 注释里「Haiku 4.5 is restricted only while thinking is on」比 vendors.md 的说法强 · 不修：不影响行为，下次动 Haiku 4.5 那一行时一并核
+结论：通过
+突变：代码部分 15 个，全部变红，0 个存活（见「实施 · 2026-10-23（第 1、6–8 步）」）；第 8 步 ⑤⑥ 留到第 9 步之后
