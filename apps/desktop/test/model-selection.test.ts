@@ -425,6 +425,9 @@ describe('02 不变量 4 / 02 不变量 5: the key is bound to its host (A9; 旧
         readdir: (path) => memory.fs.readdir(path),
         mkdirp: (path) => memory.fs.mkdirp(path),
         realpath: (path) => memory.fs.realpath(path),
+        identity: (path) => memory.fs.identity(path),
+        remove: (path) => memory.fs.remove(path),
+        guarded: memory.fs.guarded,
         writeFile: (path, data) =>
           failWrite
             ? Promise.reject(new Error('the disk is full'))
@@ -1435,6 +1438,9 @@ describe('session.selectModel and session.modelChoice', () => {
         readdir: (path) => memory.fs.readdir(path),
         mkdirp: (path) => memory.fs.mkdirp(path),
         realpath: (path) => memory.fs.realpath(path),
+        identity: (path) => memory.fs.identity(path),
+        remove: (path) => memory.fs.remove(path),
+        guarded: memory.fs.guarded,
         writeFile: (path, data) => memory.fs.writeFile(path, data),
       },
     }

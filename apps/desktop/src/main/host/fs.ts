@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import type { Stats } from 'node:fs'
-import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import type { BigIntStats, Stats } from 'node:fs'
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, unlink } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, parse, sep } from 'node:path'
-import type { AbsolutePath, HostFs } from '@tenon-app/kernel'
+import type { AbsolutePath, FileIdentity, HostFs } from '@tenon-app/kernel'
 import { UnresolvableAliasError, absolutePath } from '@tenon-app/kernel'
 
 /** Real filesystem access for the desktop host. Every path is re-checked to be absolute. */
@@ -48,7 +48,10 @@ export class DesktopFs implements HostFs {
     await regularPathOnly(path)
     let handle: FileHandle
     try {
-      handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK)
+      handle = await open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+      )
     } catch (err) {
       // open(2) answers ENXIO only for a FIFO without a reader, a device with nothing behind it and,
       // on Linux, a socket: never for a regular file.
@@ -63,6 +66,66 @@ export class DesktopFs implements HostFs {
     } finally {
       await handle.close()
     }
+  }
+
+  /**
+   * Spec 05 §mtime 守卫: content and stamp come from one open handle, even when the name is
+   * replaced meanwhile. A file changed during the read gets no stamp. Like readFile, this follows
+   * read links and refuses special files before opening, then checks the opened handle too.
+   */
+  readonly guarded: HostFs['guarded'] = {
+    read: async (path, opts) => {
+      absolutePath(path)
+      await regularPathOnly(path)
+      const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
+      try {
+        await regularFileOnly(handle, path)
+        const before = await handle.stat({ bigint: true })
+        const data =
+          opts?.encoding === 'utf8'
+            ? await handle.readFile('utf8')
+            : new Uint8Array(await handle.readFile())
+        const after = await handle.stat({ bigint: true })
+        return { data, stamp: sameReadStamp(before, after) ? fileIdentity(after) : null }
+      } finally {
+        await handle.close()
+      }
+    },
+    // O_EXCL refuses every existing entry (including a dangling link) without opening its target.
+    create: async (path, data) => {
+      absolutePath(path)
+      const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
+      try {
+        await handle.writeFile(data)
+      } finally {
+        await handle.close()
+      }
+    },
+  }
+
+  /** Spec 05 §接口: bigint lstat retains nanoseconds and the device number, without following links. */
+  async identity(path: AbsolutePath): Promise<FileIdentity | null> {
+    absolutePath(path)
+    try {
+      return fileIdentity(await lstat(entryOf(path), { bigint: true }))
+    } catch (err) {
+      if (isErrno(err, 'ENOENT') || isErrno(err, 'ENOTDIR')) return null
+      throw err
+    }
+  }
+
+  /** Spec 05 §Delete 工具: unlink never follows the leaf or recursively removes a directory. */
+  async remove(path: AbsolutePath): Promise<void> {
+    absolutePath(path)
+    const entry = entryOf(path)
+    const stats = await lstat(entry)
+    if (stats.isDirectory()) {
+      throw Object.assign(new Error(`EISDIR: cannot remove directory '${path}'`), {
+        code: 'EISDIR',
+      })
+    }
+    if (!stats.isFile() && !stats.isSymbolicLink()) throw notRegularFile(path, kindOf(stats))
+    await unlink(entry)
   }
 
   /**
@@ -264,4 +327,34 @@ function kindOf(stats: Stats): string {
 
 function isErrno(err: unknown, code: string): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === code
+}
+
+/** Spec 05 §接口: shared conversion for lstat and the read handle's fstat. */
+function fileIdentity(stats: BigIntStats): FileIdentity {
+  return {
+    kind: stats.isFile()
+      ? 'file'
+      : stats.isDirectory()
+        ? 'dir'
+        : stats.isSymbolicLink()
+          ? 'link'
+          : 'other',
+    size: Number(stats.size),
+    nlink: Number(stats.nlink),
+    mtimeNs: stats.mtimeNs,
+    mode: Number(stats.mode & 0o7777n),
+    dev: stats.dev,
+  }
+}
+
+function sameReadStamp(a: BigIntStats, b: BigIntStats): boolean {
+  return (
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.size === b.size &&
+    a.mtimeNs === b.mtimeNs &&
+    a.ctimeNs === b.ctimeNs &&
+    a.mode === b.mode &&
+    a.nlink === b.nlink
+  )
 }

@@ -99,7 +99,7 @@ describe('reasonKey (§最小审批卡 ③)', () => {
     const plain = confirmReasonSchema.options.filter(
       (reason) => reason !== 'irreversible' && reason !== 'flagged',
     )
-    expect(plain).toHaveLength(7)
+    expect(plain).toHaveLength(8)
     for (const reason of plain) {
       for (const kind of kinds) {
         expect(reasonKey({ reason, kind, facts: { toolName: 'x' } })).toBe(
@@ -109,9 +109,12 @@ describe('reasonKey (§最小审批卡 ③)', () => {
     }
   })
 
-  it('names a sentence both catalogues have, for every reason, kind and category', () => {
+  it('names a sentence both catalogues have for the nine reasons produced before 05 step 5', () => {
     const keys = new Set<string>()
-    for (const reason of confirmReasonSchema.options) {
+    // Spec 05 step 2 registers sensitive-path; its producer and three locale lines land in step 5.
+    for (const reason of confirmReasonSchema.options.filter(
+      (candidate) => candidate !== 'sensitive-path',
+    )) {
       for (const kind of kinds) {
         for (const category of ['exfiltration', 'inspector-failed']) {
           keys.add(reasonKey({ reason, kind, facts: { category } }))

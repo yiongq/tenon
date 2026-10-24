@@ -11,6 +11,7 @@ import { EmptyPolicy } from './policy.js'
 import { openProfile } from './profile.js'
 import { createDesktopSandboxRuntime } from './sandbox-runtime.js'
 import { KeychainSecrets, MemorySecrets } from './secrets.js'
+import { unavailableSnapshots } from './snapshots.js'
 import type { StartupEnv } from './shell-env.js'
 
 export interface DesktopHostOptions {
@@ -74,6 +75,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
       process.env,
     ),
     policy: new EmptyPolicy(),
+    snapshots: unavailableSnapshots,
   }
 }
 

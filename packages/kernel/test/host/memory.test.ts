@@ -250,13 +250,10 @@ describe('MemoryHost symbolic links', () => {
     await expect(host.fs.realpath(evil)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await host.fs.stat(evil)).toBeNull()
     expect(await host.fs.readdir(absolutePath('/ws'))).toEqual(['evil'])
-    // ...and writing through it creates a file outside the workspace.
-    await host.fs.writeFile(evil, 'escaped')
-    expect([...host.files.keys()].toSorted()).toEqual(['/outside/f.txt', '/outside/new.txt'])
-    expect(await host.fs.readFile(absolutePath('/outside/new.txt'), { encoding: 'utf8' })).toBe(
-      'escaped',
-    )
-    expect(await host.fs.realpath(evil)).toBe('/outside/new.txt')
+    // Spec 05 §接口 tightens writeFile to O_NOFOLLOW: no new file at the link's target.
+    await expect(host.fs.writeFile(evil, 'escaped')).rejects.toMatchObject({ code: 'ELOOP' })
+    expect([...host.files.keys()]).toEqual(['/outside/f.txt'])
+    expect(await host.fs.identity(absolutePath('/outside/new.txt'))).toBeNull()
   })
 
   it('realpath throws for a link whose target directory is missing too', async () => {
@@ -266,7 +263,7 @@ describe('MemoryHost symbolic links', () => {
       code: 'ENOENT',
     })
     await expect(host.fs.writeFile(absolutePath('/ws/evil'), 'x')).rejects.toMatchObject({
-      code: 'ENOENT',
+      code: 'ELOOP',
     })
   })
 

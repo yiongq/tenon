@@ -136,10 +136,10 @@ describe('confirmRequestSchema', () => {
 
 /** Spec 02 §`ConfirmReason` 只增四个值: the reasons, their slots and the flagged category. */
 describe('the reasons spec 02 adds', () => {
-  it('has exactly the reasons CONFIRM_FACT_KEYS has slots for, nine of them', () => {
+  it('has exactly the reasons CONFIRM_FACT_KEYS has slots for, ten of them', () => {
     const reasons = [...confirmReasonSchema.options].toSorted()
     expect(reasons).toEqual(Object.keys(CONFIRM_FACT_KEYS).toSorted())
-    expect(reasons).toHaveLength(9)
+    expect(reasons).toHaveLength(10)
   })
 
   it('names each missing slot of the four new reasons', () => {
@@ -329,5 +329,29 @@ describe('reversibility and target', () => {
     expect(
       payloadIssues({ ...flagged, facts: { toolName: 'WebFetch', category: 'exfil' } }),
     ).toEqual(['facts.category'])
+  })
+})
+
+describe('05 sensitive-path contract', () => {
+  it('05 验收 26、27、25: sensitive-path requires path and a registered category on both schemas', () => {
+    const req = {
+      ...base,
+      kind: 'file',
+      reason: 'sensitive-path',
+      facts: { path: '/w/private', category: 'credential' },
+    }
+    for (const schema of [confirmRequestSchema, confirmRequestEventPayloadSchema]) {
+      for (const category of ['credential', 'auto-run', 'hardlink']) {
+        expect(schema.safeParse({ ...req, facts: { ...req.facts, category } }).success).toBe(true)
+      }
+      for (const facts of [
+        { category: 'credential' },
+        { path: '/w/private' },
+        { path: '', category: 'credential' },
+        { path: '/w/private', category: 'other' },
+      ]) {
+        expect(schema.safeParse({ ...req, facts }).success).toBe(false)
+      }
+    }
   })
 })

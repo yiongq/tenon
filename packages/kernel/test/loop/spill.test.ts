@@ -213,6 +213,9 @@ function refusingSpills(fs: HostFs): HostFs {
     readdir: (path) => fs.readdir(path),
     mkdirp: (path) => fs.mkdirp(path),
     realpath: (path) => fs.realpath(path),
+    identity: (path) => fs.identity(path),
+    remove: (path) => fs.remove(path),
+    guarded: fs.guarded,
   }
 }
 

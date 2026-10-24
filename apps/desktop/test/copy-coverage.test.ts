@@ -211,19 +211,21 @@ function scopeKey(scope: string, target: TargetType, subtask: boolean): string {
 }
 
 describe('the approval card copy', () => {
-  it('reads the nine reasons from the kernel table the contract enumerates', () => {
-    expect(REASONS).toHaveLength(9)
+  it('reads the ten reasons from the kernel table the contract enumerates', () => {
+    expect(REASONS).toHaveLength(10)
     expect(REASONS.toSorted()).toEqual([...confirmReasonSchema.options].toSorted())
     expect(KINDS).toHaveLength(4)
     expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
   })
 
-  it('has the 「为什么停」 sentence of every reason under every kind, naming only a subset of its required facts', () => {
+  it('has the 「为什么停」 sentence of the nine reasons produced before 05 step 5 under every kind', () => {
     // Presentation-r1 keeps every reason in the catalogue, including unrendered ones.
     // Network splits by target; only its URL sentence needs a slot (facts.host).
     const expected: Expectation[] = []
     for (const kind of KINDS) {
-      for (const reason of REASONS) {
+      // Spec 05 step 2 adds the contract only; step 5 adds sensitive-path's three locale lines.
+      // Keep the existing nine-reason copy audit until that producer and UI are wired together.
+      for (const reason of REASONS.filter((candidate) => candidate !== 'sensitive-path')) {
         const required = requiredFactKeys(reason, kind)
         if (reason === 'irreversible') {
           expected.push({ key: `confirm.reason.irreversible.${kind}`, args: required, what: kind })

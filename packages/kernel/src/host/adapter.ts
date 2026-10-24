@@ -15,6 +15,9 @@
  *
  * docs/architecture/04-sandbox/spec.md (§对 00 的修补) adds only optional members:
  * `HostSandbox.posture` and four on `SandboxViolation`. `SandboxRequest` is unchanged.
+ *
+ * docs/architecture/05-file-bridge/spec.md (§接口) adds `snapshots`, `HostFs.remove`,
+ * `HostFs.identity`, `HostFs.guarded` and the `sensitive-path` confirmation reason.
  */
 
 import type { PolicyState } from './policy.js'
@@ -32,6 +35,7 @@ export interface HostAdapter {
   readonly clock: HostClock
   readonly network: HostNetwork
   readonly policy: HostPolicy
+  readonly snapshots: HostSnapshots
 }
 
 /** The read-only entry to the tenant policy. The host fetches and caches it; the kernel only reads. */
@@ -66,8 +70,92 @@ export interface HostFs {
    * throws `UnresolvableAliasError`.
    */
   realpath(path: AbsolutePath): Promise<AbsolutePath | null>
-  // Removal is a separately grantable capability and is not part of the base
-  // interface; phase 4 adds HostFs.remove together with runtime authorisation.
+  /** Spec 05 §mtime 守卫: read and stamp one open file, or create exclusively. */
+  readonly guarded: {
+    read(
+      path: AbsolutePath,
+      opts?: { encoding?: 'utf8' },
+    ): Promise<{ data: Uint8Array | string; stamp: FileIdentity | null }>
+    create(path: AbsolutePath, data: Uint8Array | string): Promise<void>
+  }
+  /** Spec 05 §Delete 工具: unlink one file or leaf link; directories and missing entries throw. */
+  remove(path: AbsolutePath): Promise<void>
+  /** Spec 05 §接口: lstat semantics, never follows the leaf; absent entries return null. */
+  identity(path: AbsolutePath): Promise<FileIdentity | null>
+}
+
+/** Added by spec 05 §接口; the existing HostFs signatures are unchanged. */
+export interface FileIdentity {
+  readonly kind: 'file' | 'dir' | 'link' | 'other'
+  readonly size: number
+  readonly nlink: number
+  readonly mtimeNs: bigint
+  readonly mode: number // & 0o7777
+  readonly dev: bigint // 所在设备号，认卷根用（D55）
+}
+export type SnapshotCoverage = 'tree' | 'file' | 'none'
+export type SnapshotStatus = 'tree' | 'warming' | 'file-only' | 'unavailable'
+
+export interface HostSnapshots {
+  coverage(q: { sessionId: string; path: AbsolutePath }): Promise<SnapshotCoverage> // 只读、不抛；1 秒内答不出按 none（D1、D53）
+  status(sessionId: string): SnapshotStatus // 同步、不抛（D23）
+  take(q: SnapshotRequest, signal: AbortSignal): Promise<SnapshotTaken> // 拍不成、超时、中止、超预算都 resolve 成 ok: false
+  preview(q: RestoreQuery): Promise<RestorePreview> // 只读
+  prepare(q: RestoreQuery & { previewKey: string }): Promise<RestorePrepared> // 拿租约、拍还原前那张、重算清单；不动工作区
+  apply(q: {
+    sessionId: string
+    undoSnapshotId: string
+    overwrite: readonly AbsolutePath[]
+  }): Promise<RestoreDone> // fs/restore_started 写成之后才调
+  cancel(q: { sessionId: string; undoSnapshotId: string }): Promise<void> // 写事实失败时放掉租约
+  alive(sessionId: string, ids: readonly string[]): Promise<ReadonlySet<string>>
+}
+export interface SnapshotRequest {
+  sessionId: string // 根会话（D39）
+  call: {
+    sessionId: string
+    roundRunId: string
+    runId: string
+    requestSeq: number
+    ordinal: number
+  } // kernel 从 Tape 算好传入
+  folders: readonly AbsolutePath[]
+  moment: 'before-call' | 'after-call' | 'before-restore'
+  path?: AbsolutePath // 只给文件工具：判定用的对象路径
+}
+export type SnapshotTaken =
+  | {
+      ok: true
+      snapshotId: string
+      scope: 'tree' | 'file'
+      target?: FileIdentity | null
+      skipped: number
+    }
+  | { ok: false; reason: 'over-budget' | 'not-covered' | 'no-git' | 'disk' | 'aborted' | 'error' }
+export interface RestoreQuery {
+  sessionId: string
+  roundRunId: string
+  calls: readonly { callKey: string; before?: string; after?: string; path?: AbsolutePath }[] // kernel 从根与子会话的 fs/snapshot_created 收齐，按调用顺序
+}
+export interface RestorePreview {
+  previewKey: string
+  restore: readonly AbsolutePath[] // 内容或权限位放回，含恢复被删的
+  remove: readonly AbsolutePath[] // 这一轮新建的
+  conflicts: readonly AbsolutePath[]
+  skipped: readonly {
+    path: AbsolutePath
+    reason: 'excluded' | 'not-covered' | 'hardlink' | 'outside-folders'
+    promised?: true
+  }[] // promised：卡上标过有快照
+}
+export type RestorePrepared =
+  | { ok: true; undoSnapshotId: string }
+  | { ok: false; reason: 'stale' | 'busy' | 'undo-unavailable' | 'over-budget' | 'gone' }
+export interface RestoreDone {
+  restored: number
+  removed: number
+  kept: number
+  failed: readonly AbsolutePath[]
 }
 
 /**
@@ -224,6 +312,8 @@ export type ConfirmReason =
   | 'flagged'
   | 'command'
   | 'interaction-required'
+  // added by spec 05 (§接口)
+  | 'sensitive-path'
 
 /**
  * Required `facts` keys per reason. `irreversible` additionally requires
@@ -241,6 +331,8 @@ export const CONFIRM_FACT_KEYS: Readonly<Record<ConfirmReason, readonly string[]
   flagged: ['toolName', 'category'],
   command: ['command', 'cwd'],
   'interaction-required': ['toolName'],
+  // added by spec 05 (§接口)
+  'sensitive-path': ['path', 'category'],
 }
 
 export interface HostClock {
