@@ -24,6 +24,7 @@
 import type { Config } from '@tenon-app/contracts'
 import {
   ANTHROPIC_PROVIDER_ID,
+  OLLAMA_PROVIDER_ID,
   ProviderConfigMissingError,
   ZHIPU_PROVIDER_ID,
   createAnthropicSearchDefinition,
@@ -164,7 +165,9 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
         (isBuiltin(previousDefinition, previous.modelId) ||
           (previous.capabilitySource === 'user' &&
             !isInstanceId(previous.providerId) &&
-            [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID, 'ollama'].includes(previous.providerId)))
+            [ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID, OLLAMA_PROVIDER_ID].includes(
+              previous.providerId,
+            )))
       const providerId = keepPrevious ? previous.providerId : selectProviderId(saved?.id, vars)
       const definition = definitionOf(providers, providerId)
       // The saved model first; `TENON_MODEL` fills only what it left empty.
@@ -188,8 +191,7 @@ export function createRunConnector(options: RunConnectorOptions): RunConnector {
           ? 'user'
           : isBuiltin(definition, model.id)
             ? 'builtin'
-            : (keepPrevious && previous.capabilitySource === 'user') ||
-                (saved?.source === 'user' && saved.modelId === model.id)
+            : saved?.source === 'user' && saved.modelId === model.id
               ? 'user'
               : 'synthesized',
       }

@@ -401,7 +401,7 @@ for (const locale of ['zh-CN', 'en'] as const) {
       const select = page.getByTestId('model-select')
       const options = select.locator('option')
       await expect(options).toHaveCount(11)
-      expect(await options.allTextContents()).toEqual(
+      await expect(options).toHaveText(
         locale === 'en'
           ? [
               'Latest Opus (now Opus 5.5)',
@@ -436,9 +436,11 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(select).toHaveValue(opusValue!)
       await expect(options.nth(0)).toHaveAttribute('title', 'claude-opus-5-5')
       await page.getByTestId('provider-cancel').click()
-      await page.evaluate(() =>
-        window.tenon.invoke('provider.select', { providerId: 'zhipu', modelId: 'glm-5.3-flash' }),
-      )
+      expect(
+        await page.evaluate(() =>
+          window.tenon.invoke('provider.select', { providerId: 'zhipu', modelId: 'glm-5.3-flash' }),
+        ),
+      ).toEqual({ ok: true, data: { ok: true } })
       const before = await config()
       await open()
       await page.getByTestId('provider-select').selectOption('anthropic')
@@ -482,12 +484,14 @@ for (const locale of ['zh-CN', 'en'] as const) {
       await expect(options).toHaveCount(1)
       await expect(select).toHaveValue('qwen3:8b')
       await page.getByTestId('provider-cancel').click()
-      await page.evaluate(() =>
-        window.tenon.invoke('provider.select', {
-          providerId: 'anthropic',
-          modelId: 'claude-sonnet-5',
-        }),
-      )
+      expect(
+        await page.evaluate(() =>
+          window.tenon.invoke('provider.select', {
+            providerId: 'anthropic',
+            modelId: 'claude-sonnet-5',
+          }),
+        ),
+      ).toEqual({ ok: true, data: { ok: true } })
       await open()
       await expect(select).toHaveValue('claude-sonnet-5')
     } finally {

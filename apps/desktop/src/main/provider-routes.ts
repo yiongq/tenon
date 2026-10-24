@@ -464,6 +464,8 @@ function menuRow(
   model: ModelInfo,
 ): ProviderEntryContract['models'][number] {
   const spec = model.thinkingSpec
+  const familyNameKey =
+    model.family === undefined ? undefined : definition.familyNameKeys?.[model.family]
   return {
     id: model.id,
     // Ollama sends no tools (A14); zhipu's and anthropic's rows are verified, and send to their
@@ -471,10 +473,9 @@ function menuRow(
     mark: TEXT_ONLY_PROVIDERS.has(definition.id) ? 'local-text-only' : 'verified',
     ...(model.nameKey === undefined ? {} : { nameKey: model.nameKey }),
     ...(model.purposeKey === undefined ? {} : { purposeKey: model.purposeKey }),
-    ...(model.family === undefined ? {} : { family: model.family }),
-    ...(model.family === undefined || definition.familyNameKeys?.[model.family] === undefined
+    ...(model.family === undefined || familyNameKey === undefined
       ? {}
-      : { familyNameKey: definition.familyNameKeys[model.family] }),
+      : { family: model.family, familyNameKey }),
     listing: model.listing ?? 'main',
     ...(spec?.effortLevels === undefined || spec.effortLevels.length === 0
       ? {}

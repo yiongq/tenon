@@ -1173,6 +1173,58 @@ describe('session.selectModel and session.modelChoice', () => {
     }
   }
 
+  it.each([
+    ['provider', 'custom-gone'],
+    ['provider', 'unregistered-provider'],
+    ['chat', 'custom-gone'],
+    ['chat', 'unregistered-provider'],
+    ['cowork', 'custom-gone'],
+    ['cowork', 'unregistered-provider'],
+  ] as const)(
+    '复现 claude-5-5-models 验收 16: the menu repairs a dangling %s default for %s',
+    async (layer, id) => {
+      const { r, sessions } = await withSessions()
+      const profile = layer === 'cowork' ? 'cowork' : 'chat'
+      if (profile === 'cowork') {
+        await sessions.selectProfile({
+          sessionId: SESSION,
+          profile,
+          dedicated: '/home/u/Tenon/workspaces/x' as AbsolutePath,
+        })
+      }
+      const dangling = { id, modelId: 'x' }
+      await writeConfig(
+        r.host.fs,
+        r.host.identity,
+        layer === 'provider'
+          ? { provider: dangling }
+          : { defaultModelByProfile: { [layer]: dangling } },
+      )
+      expect((await sessions.sessionFacts({ sessionId: SESSION })).chosen).toBeNull()
+      expect(
+        await r.call('session.selectModel', {
+          sessionId: SESSION,
+          providerId: 'anthropic',
+          modelId: 'claude-opus-5-5',
+          effort: null,
+        }),
+      ).toEqual({ ok: true, data: { ok: true } })
+      const saved = { id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' }
+      const config = await readConfig(r.host.fs, r.host.identity)
+      expect(config.provider).toEqual(saved)
+      expect(config.defaultModelByProfile[profile]).toEqual(saved)
+      expect((await sessions.sessionFacts({ sessionId: SESSION })).chosen).toEqual({
+        providerId: 'anthropic',
+      })
+      expect(await sessions.effectiveModelChoice({ sessionId: SESSION })).toEqual({
+        providerId: 'anthropic',
+        modelId: saved.modelId,
+        effort: null,
+        capabilitySource: 'builtin',
+      })
+    },
+  )
+
   it('claude-5-5-models 验收 16: records the choice and the profile’s default and provider — never the level as a default', async () => {
     const { r, sessions } = await withSessions()
     await sessions.selectProfile({

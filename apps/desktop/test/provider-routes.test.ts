@@ -108,6 +108,24 @@ async function harness(
 const KEY = 'sk-secret-value-9f3a'
 
 describe('provider.list', () => {
+  it('复现 claude-5-5-models 验收 16: incomplete family names omit both family fields', async () => {
+    const providers = createProviderRegistry()
+    registerBuiltinProviders(providers)
+    const definition = providers.get(ANTHROPIC_PROVIDER_ID)
+    if (definition === null) throw new Error('missing Anthropic definition')
+    const id = 'incomplete-family-names'
+    const h = await harness([{ ...definition, id, familyNameKeys: { opus: 'model.family.opus' } }])
+    const models = (await h.entry(id)).models
+    const sonnet = models.find((model) => model.id === 'claude-sonnet-5-5')
+    expect(sonnet).toBeDefined()
+    expect(sonnet).not.toHaveProperty('family')
+    expect(sonnet).not.toHaveProperty('familyNameKey')
+    expect(models.find((model) => model.id === 'claude-opus-5-5')).toMatchObject({
+      family: 'opus',
+      familyNameKey: 'model.family.opus',
+    })
+  })
+
   it('describes every registered definition without ever carrying a secret', async () => {
     const h = await harness()
     await h.host.secrets.set(keyFor(h.host.identity, 'provider', ZHIPU_PROVIDER_ID, 'apiKey'), KEY)
