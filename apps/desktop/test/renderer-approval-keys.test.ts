@@ -97,7 +97,7 @@ describe('reasonKey (§最小审批卡 ③)', () => {
 
   it('every other reason → confirm.reason.<reason>, whatever the kind', () => {
     const plain = confirmReasonSchema.options.filter(
-      (reason) => reason !== 'irreversible' && reason !== 'flagged',
+      (reason) => reason !== 'irreversible' && reason !== 'flagged' && reason !== 'sensitive-path',
     )
     expect(plain).toHaveLength(7)
     for (const reason of plain) {
@@ -109,17 +109,23 @@ describe('reasonKey (§最小审批卡 ③)', () => {
     }
   })
 
-  it('names a sentence both catalogues have, for every reason, kind and category', () => {
+  it('names a sentence both catalogues have for all ten reasons', () => {
     const keys = new Set<string>()
     for (const reason of confirmReasonSchema.options) {
       for (const kind of kinds) {
-        for (const category of ['exfiltration', 'inspector-failed']) {
+        for (const category of [
+          'exfiltration',
+          'inspector-failed',
+          'credential',
+          'auto-run',
+          'hardlink',
+        ]) {
           keys.add(reasonKey({ reason, kind, facts: { category } }))
         }
       }
     }
     // 7 plain reasons, 4 irreversible kinds, 2 flagged categories.
-    expect(keys.size).toBe(13)
+    expect(keys.size).toBe(16)
     for (const key of keys) {
       expect([key, en.exists(key, { lng: 'en', fallbackLng: false })]).toEqual([key, true])
       expect([key, zh.exists(key, { lng: 'zh-CN', fallbackLng: false })]).toEqual([key, true])

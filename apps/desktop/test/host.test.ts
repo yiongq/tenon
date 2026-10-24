@@ -265,10 +265,10 @@ describe('DesktopFs.realpath', () => {
     // so the host must throw rather than report "not there yet".
     await expect(fs.realpath(at('ws/evil'))).rejects.toMatchObject({ code: 'ENOENT' })
     expect(await fs.stat(at('ws/evil'))).toBeNull()
-    // What reading it as "not there yet" would let through: writing creates a file outside.
-    await fs.writeFile(at('ws/evil'), 'escaped')
-    expect(await readdir(join(root, 'outside'))).toEqual(['new.txt'])
-    expect(await fs.realpath(at('ws/evil'))).toBe(join(root, 'outside/new.txt'))
+    // Spec 05 §接口: even a dangling leaf is refused by writeFile's O_NOFOLLOW.
+    await expect(fs.writeFile(at('ws/evil'), 'escaped')).rejects.toMatchObject({ code: 'ELOOP' })
+    expect(await readdir(join(root, 'outside'))).toEqual([])
+    expect(await fs.identity(at('outside/new.txt'))).toBeNull()
   })
 
   it('is null only when the entry itself is absent', async () => {
@@ -356,9 +356,9 @@ describe('DesktopFs.realpath', () => {
       'stat ws/evil': null,
       'realpath ws/a': 'throws ELOOP',
       'realpath ws/missing': null,
-      'writeFile ws/evil': undefined,
-      'readdir ws/out': ['d1', 'f.txt', 'new.txt', 'via.txt'],
-      'realpath ws/evil after the write': '<root>/outside/new.txt',
+      'writeFile ws/evil': 'throws ELOOP',
+      'readdir ws/out': ['d1', 'f.txt', 'via.txt'],
+      'realpath ws/evil after the write': 'throws ENOENT',
     })
   })
 })

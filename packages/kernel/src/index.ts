@@ -9,6 +9,16 @@ export type {
   HostClock,
   HostConfirm,
   HostFs,
+  FileIdentity,
+  HostSnapshots,
+  SnapshotCoverage,
+  SnapshotStatus,
+  SnapshotRequest,
+  SnapshotTaken,
+  RestoreQuery,
+  RestorePreview,
+  RestorePrepared,
+  RestoreDone,
   HostIdentity,
   HostNetwork,
   HostPolicy,
@@ -489,7 +499,7 @@ export type { CommandShell } from './tools/builtin/bash.js'
 
 // Spec 02 plan step 11 — 工作区判定与决策表. Where a path falls, resolved the one way both the kernel
 // and the desktop (which resolves the protected shell files) use.
-export { locatePath, placeOf, resolvePath } from './permission/workspace.js'
+export { locatePath, placeOf, resolvePath, foldCase } from './permission/workspace.js'
 export type { PathPlace, PathScope, PathVerdict, ResolvedPath } from './permission/workspace.js'
 
 // Spec 02 plan step 23 — 停止与退出. The quit waits the stop sequence's grace plus the in-process

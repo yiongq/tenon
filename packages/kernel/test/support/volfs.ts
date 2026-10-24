@@ -21,6 +21,12 @@ export function withVolfs(fs: HostFs, numbered: Readonly<Record<string, string>>
     readFile: (path, opts) => fs.readFile(reached(path), opts),
     writeFile: (path, data) => fs.writeFile(reached(path), data),
     stat: (path) => fs.stat(reached(path)),
+    identity: (path) => fs.identity(reached(path)),
+    remove: (path) => fs.remove(reached(path)),
+    guarded: {
+      read: (path, opts) => fs.guarded.read(reached(path), opts),
+      create: (path, data) => fs.guarded.create(reached(path), data),
+    },
     readdir: (path) => fs.readdir(reached(path)),
     mkdirp: (path) => fs.mkdirp(reached(path)),
     async realpath(path) {

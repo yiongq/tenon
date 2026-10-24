@@ -19,6 +19,8 @@ export const confirmReasonSchema = z.enum([
   'flagged',
   'command',
   'interaction-required',
+  // added by spec 05 (§接口)
+  'sensitive-path',
 ]) satisfies z.ZodType<ConfirmReason>
 
 /**
@@ -133,6 +135,17 @@ function checkReversibility(req: CheckedRequest, ctx: z.RefinementCtx): void {
 function checkRequest(req: CheckedRequest, ctx: z.RefinementCtx): void {
   checkRequiredFacts(req, ctx)
   checkFlaggedCategory(req, ctx)
+  // Spec 05 §接口: required slots above, and only the three documented sensitive categories.
+  if (req.reason === 'sensitive-path') {
+    const category = req.facts['category']
+    if (category && !['credential', 'auto-run', 'hardlink'].includes(category)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['facts', 'category'],
+        message: 'unregistered sensitive-path category',
+      })
+    }
+  }
   checkReversibility(req, ctx)
 }
 

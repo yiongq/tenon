@@ -276,9 +276,10 @@ describe.runIf(process.platform !== 'win32')(
         'is a device, not a regular file',
       )
       await swapTo('device')
-      await expect(promptly('writeFile', fs.writeFile(file, 'x'))).rejects.toThrow(
-        'is a device, not a regular file',
-      )
+      // Spec 05 §接口: the swapped device is a leaf link, refused before opening its target.
+      await expect(promptly('writeFile', fs.writeFile(file, 'x'))).rejects.toMatchObject({
+        code: 'ELOOP',
+      })
       await swapTo('pipe')
       await expect(promptly('readFile', fs.readFile(file))).rejects.toThrow(
         'is a named pipe, not a regular file',

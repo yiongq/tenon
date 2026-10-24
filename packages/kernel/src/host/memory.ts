@@ -2,6 +2,7 @@ import type {
   AbsolutePath,
   ChildHandle,
   ConfirmRequest,
+  FileIdentity,
   HostAdapter,
   HostClock,
   HostConfirm,
@@ -16,6 +17,7 @@ import type {
   SandboxViolation,
   SpawnSpec,
 } from './adapter.js'
+import { MemorySnapshots } from './memory-snapshots.js'
 import { absolutePath } from './path.js'
 import { EMPTY_POLICY } from './policy.js'
 import type { PolicyState } from './policy.js'
@@ -37,6 +39,7 @@ export interface MemoryHostOptions {
 }
 
 export interface MemoryHost extends HostAdapter {
+  readonly snapshots: MemorySnapshots
   readonly files: ReadonlyMap<string, Uint8Array>
   readonly confirmRequests: readonly ConfirmRequest[]
   /** One line per non-full-access sandbox wrap, mirroring the desktop passthrough log. */
@@ -47,6 +50,8 @@ export interface MemoryHost extends HostAdapter {
   setPolicy(state: PolicyState): void
   /** Creates a symbolic link. `target` may be relative, and may point at nothing (a dangling link). */
   symlink(link: AbsolutePath, target: string): void
+  /** Adds a second name for a regular file, for spec 05 hardlink boundary tests. */
+  hardlink(existing: AbsolutePath, link: AbsolutePath): void
 }
 
 const DEFAULT_IDENTITY: HostIdentity = {
@@ -61,7 +66,7 @@ const decoder = new TextDecoder()
 /**
  * Symbolic links are followed the way node's `fs.promises` follows them on a real disk: every link
  * before the last segment always, the last one by readFile / writeFile / stat / readdir / mkdirp /
- * realpath. So writeFile through a dangling link creates the file where the link points, stat of a
+ * realpath. Spec 05 §接口 makes writeFile refuse leaf links (O_NOFOLLOW), while stat of a
  * dangling link is null, and realpath of a dangling link or a loop throws (spec 02 §内存宿主).
  * `.` and `..` apply to the directory actually reached, as they do in a kernel's path lookup.
  */
@@ -71,6 +76,8 @@ class MemoryFs implements HostFs {
   readonly dirs = new Set<string>(['/'])
   /** Link path (its parent resolved) → the target exactly as given. */
   readonly links = new Map<string, string>()
+  /** Every name for a hardlinked file shares a group, data and mtime. */
+  private readonly hardlinks = new Map<string, Set<string>>()
   private readonly clock: HostClock
 
   constructor(clock: HostClock) {
@@ -87,10 +94,92 @@ class MemoryFs implements HostFs {
 
   async writeFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
     // lookup() has already required every directory on the way, so the parent exists.
-    const key = this.lookup(normalize(path), true)
+    const key = this.lookup(normalize(path), false)
+    if (this.links.has(key)) throw fsError('ELOOP', 'leaf is a symbolic link', path)
     if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
-    this.files.set(key, typeof data === 'string' ? encoder.encode(data) : data.slice())
-    this.mtimes.set(key, this.clock.now())
+    const bytes = typeof data === 'string' ? encoder.encode(data) : data.slice()
+    for (const name of this.hardlinks.get(key) ?? [key]) {
+      this.files.set(name, bytes)
+      this.mtimes.set(name, this.clock.now())
+    }
+  }
+
+  /** Spec 05 §mtime 守卫: no await between reading content and its stamp. */
+  readonly guarded: HostFs['guarded'] = {
+    read: async (path, opts) => {
+      const key = this.lookup(normalize(path), true)
+      if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
+      const data = this.files.get(key)
+      if (data === undefined) throw notFound(path)
+      return {
+        data: opts?.encoding === 'utf8' ? decoder.decode(data) : data.slice(),
+        stamp: this.identityOf(key),
+      }
+    },
+    create: async (path, data) => {
+      const key = this.lookup(normalize(path), false)
+      if (this.identityOf(key) !== null) throw fsError('EEXIST', 'file exists', path)
+      await this.writeFile(absolutePath(key), data)
+    },
+  }
+
+  async identity(path: AbsolutePath): Promise<FileIdentity | null> {
+    try {
+      return this.identityOf(this.lookup(normalize(path), false))
+    } catch (err) {
+      if (hasCode(err, 'ENOENT') || hasCode(err, 'ENOTDIR')) return null
+      throw err
+    }
+  }
+
+  /** Spec 05 §Delete 工具: the leaf itself, never a directory or the link's target. */
+  async remove(path: AbsolutePath): Promise<void> {
+    const key = this.lookup(normalize(path), false)
+    if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
+    if (this.identityOf(key) === null) throw notFound(path)
+    const names = this.hardlinks.get(key)
+    names?.delete(key)
+    this.hardlinks.delete(key)
+    this.files.delete(key)
+    this.links.delete(key)
+    this.mtimes.delete(key)
+  }
+
+  private identityOf(key: string): FileIdentity | null {
+    const data = this.files.get(key)
+    const link = this.links.get(key)
+    const kind = this.dirs.has(key)
+      ? 'dir'
+      : link !== undefined
+        ? 'link'
+        : data !== undefined
+          ? 'file'
+          : null
+    if (kind === null) return null
+    return {
+      kind,
+      size: data?.byteLength ?? (link === undefined ? 0 : encoder.encode(link).byteLength),
+      nlink: kind === 'file' ? (this.hardlinks.get(key)?.size ?? 1) : kind === 'dir' ? 2 : 1,
+      mtimeNs: BigInt(Math.trunc((this.mtimes.get(key) ?? 0) * 1_000_000)),
+      mode: kind === 'file' ? 0o644 : kind === 'dir' ? 0o755 : 0o777,
+      dev: 1n,
+    }
+  }
+
+  hardlink(existing: AbsolutePath, link: AbsolutePath): void {
+    const source = this.lookup(normalize(existing), true)
+    const dest = this.lookup(normalize(link), false)
+    const data = this.files.get(source)
+    if (data === undefined)
+      throw this.dirs.has(source)
+        ? fsError('EPERM', 'is a directory', existing)
+        : notFound(existing)
+    if (this.identityOf(dest) !== null) throw fsError('EEXIST', 'file exists', link)
+    const names = this.hardlinks.get(source) ?? new Set([source])
+    names.add(dest)
+    for (const name of names) this.hardlinks.set(name, names)
+    this.files.set(dest, data)
+    this.mtimes.set(dest, this.mtimes.get(source) ?? 0)
   }
 
   async stat(
@@ -192,6 +281,7 @@ class MemoryFs implements HostFs {
     }
     if (target.length === 0) throw notFound(link)
     this.links.set(key, target)
+    this.mtimes.set(key, this.clock.now())
   }
 
   /**
@@ -416,11 +506,13 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
     clock,
     network: options.network ?? noNetwork,
     policy,
+    snapshots: new MemorySnapshots(fs, clock),
     files: fs.files,
     confirmRequests: confirm.requests,
     sandboxLog: sandbox.log,
     advance: (ms) => clock.advance(ms),
     setPolicy: (state) => policy.set(state),
     symlink: (link, target) => fs.symlink(link, target),
+    hardlink: (existing, link) => fs.hardlink(existing, link),
   }
 }

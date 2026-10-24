@@ -14,6 +14,7 @@ import {
 import type { MemoryHost, SessionService } from '@tenon-app/kernel'
 import { createCounterIds, createTestLoopPorts } from '@tenon-app/kernel/testing'
 import { describe, expect, it } from 'vitest'
+import type { WorkspaceRoutesDeps } from '../src/main/workspace.js'
 import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import {
   dedicatedFolderFor,
@@ -34,11 +35,15 @@ interface Harness {
   call(channel: string, payload: unknown): Promise<unknown>
 }
 
-async function harness(): Promise<Harness> {
+async function harness(
+  options: Pick<WorkspaceRoutesDeps, 'onWorkspaceChanged' | 'log'> = {},
+): Promise<Harness> {
   const host = createMemoryHost({ identity: IDENTITY })
   await host.fs.mkdirp(absolutePath(IDENTITY.profileDir))
   await Promise.all(['/work/a', '/work/b'].map((folder) => host.fs.mkdirp(absolutePath(folder))))
-  const loop = createTestLoopPorts({})
+  const loop = createTestLoopPorts({
+    commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME }) },
+  })
   const sessions = createSessionService({
     host,
     tape: createMemoryTapeStore({ identity: IDENTITY }),
@@ -61,6 +66,7 @@ async function harness(): Promise<Harness> {
     host,
     home: HOME,
     pickFolders: () => Promise.resolve(picks.shift() ?? null),
+    ...options,
   })
   return {
     host,
@@ -212,4 +218,127 @@ describe('workspace routes (旧 182)', () => {
       data: { ok: true, folders: ['/work/a'], origin: 'picked' },
     })
   })
+})
+
+it('05 验收 10: failed snapshot notifications cannot change accepted profile or workspace results', async () => {
+  const logs: string[] = []
+  const h = await harness({
+    onWorkspaceChanged: async () => {
+      throw new Error('snapshot recovery failed')
+    },
+    log: (line) => logs.push(line),
+  })
+  expect(
+    await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' }),
+  ).toMatchObject({ data: { ok: true } })
+  h.picks.push(['/work/a'])
+  expect(await h.call('workspace.pick', { sessionId: SESSION })).toMatchObject({
+    data: { ok: true, folders: ['/work/a'] },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(logs).toHaveLength(2)
+  expect(logs.every((line) => line.includes('snapshot recovery failed'))).toBe(true)
+})
+
+it('05 验收 10: accepted workspace selection does not wait for a pending snapshot notification', async () => {
+  const release = Promise.withResolvers<void>()
+  let hold = false
+  const h = await harness({
+    onWorkspaceChanged: async () => {
+      if (hold) await release.promise
+    },
+  })
+  await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+  hold = true
+  h.picks.push(['/work/a'])
+  const change = h.call('workspace.pick', { sessionId: SESSION })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([
+      change,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve('blocked'), 100)
+      }),
+    ])
+    expect(result).toMatchObject({ data: { ok: true, folders: ['/work/a'] } })
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    release.resolve()
+    await change
+  }
+})
+
+it('05 验收 13: pick and prefill share root refusal and preserve the accepted list', async () => {
+  const h = await harness()
+  await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+  h.picks.push(['/'])
+  expect(await h.call('workspace.pick', { sessionId: SESSION })).toEqual({
+    ok: true,
+    data: { ok: false, code: 'root-folder' },
+  })
+  await writeConfig(h.host.fs, IDENTITY, { lastWorkspaceFolders: ['/'] })
+  expect(await h.call('workspace.usePrefill', { sessionId: SESSION })).toEqual({
+    ok: true,
+    data: { ok: false, code: 'root-folder' },
+  })
+  expect((await h.sessions.sessionFacts({ sessionId: SESSION })).workspace?.folders).toEqual([
+    DEDICATED,
+  ])
+})
+
+it('05 验收 13: the route contract carries the home warning without a renderer change', async () => {
+  const h = await harness()
+  await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+  h.picks.push([HOME])
+  expect(await h.call('workspace.pick', { sessionId: SESSION })).toMatchObject({
+    data: { ok: true, warning: 'home', folders: [HOME] },
+  })
+})
+
+it.each(['root', 'volume'] as const)(
+  '05 验收 13: the profile route returns handler-failed for a dedicated %s alias and keeps the workspace',
+  async (kind) => {
+    const h = await harness()
+    await h.call('session.selectProfile', { sessionId: SESSION, profile: 'chat' })
+    const before = await h.sessions.sessionFacts({ sessionId: SESSION })
+    await h.host.fs.mkdirp(absolutePath(DEDICATED.slice(0, DEDICATED.lastIndexOf('/'))))
+    await h.host.fs.mkdirp(absolutePath('/mounted'))
+    const identity = h.host.fs.identity.bind(h.host.fs)
+    h.host.fs.identity = async (path) => {
+      const stamp = await identity(path)
+      return path === '/mounted' && stamp !== null ? { ...stamp, dev: stamp.dev + 1n } : stamp
+    }
+    h.host.symlink(DEDICATED, kind === 'root' ? '/' : '/mounted')
+    expect(
+      await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' }),
+    ).toMatchObject({ ok: false, error: { code: 'handler-failed' } })
+    expect(await h.sessions.sessionFacts({ sessionId: SESSION })).toEqual(before)
+  },
+)
+
+it('05 验收 13: removing the final picked folder returns handler-failed for a root alias without changing the workspace', async () => {
+  const h = await harness()
+  await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+  h.picks.push(['/work/a'])
+  await h.call('workspace.pick', { sessionId: SESSION })
+  const before = await h.sessions.sessionFacts({ sessionId: SESSION })
+  const dedicated = dedicatedFolderFor(HOME, IDENTITY, SESSION)
+  await h.host.fs.mkdirp(absolutePath(dedicated.slice(0, dedicated.lastIndexOf('/'))))
+  h.host.symlink(dedicated, '/')
+  expect(await h.call('workspace.remove', { sessionId: SESSION, folder: '/work/a' })).toMatchObject(
+    { ok: false, error: { code: 'handler-failed' } },
+  )
+  expect(await h.sessions.sessionFacts({ sessionId: SESSION })).toEqual(before)
+})
+
+it('05 验收 13: remove keeps its original response shape while pick/prefill accept the new outcomes', async () => {
+  const { workspaceRemove, workspacePick, workspaceUsePrefill } =
+    await import('@tenon-app/contracts')
+  expect(workspaceRemove.response.safeParse({ ok: false, code: 'root-folder' }).success).toBe(false)
+  const success = { ok: true, folders: [HOME], origin: 'picked', warning: 'home' }
+  expect(workspaceRemove.response.parse(success)).not.toHaveProperty('warning')
+  for (const route of [workspacePick, workspaceUsePrefill]) {
+    expect(route.response.parse(success)).toHaveProperty('warning', 'home')
+    expect(route.response.safeParse({ ok: false, code: 'root-folder' }).success).toBe(true)
+  }
 })
