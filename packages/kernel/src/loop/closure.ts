@@ -75,6 +75,7 @@ export interface CallRef {
 export type ResultContent = Array<Extract<ContentBlock, { type: 'text' | 'image' }>>
 
 export interface ResultFacts {
+  readonly snapshotId?: string
   readonly sandbox?: SandboxOutcome
   readonly tape: Tape
   readonly now: () => number
@@ -117,6 +118,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     writer: q.writer,
   }
   const outcome: ToolOutcomePayload = {
+    ...(q.snapshotId === undefined ? {} : { snapshotId: q.snapshotId }),
     ordinal: call.ordinal,
     providerToolCallId: call.providerToolCallId,
     ...(q.sandbox === undefined ? {} : { sandbox: q.sandbox }),

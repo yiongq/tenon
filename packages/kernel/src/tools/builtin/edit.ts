@@ -12,8 +12,10 @@
  */
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
+import { snapshotGuard } from '../snapshot-guard.js'
 import {
   BINARY_SNIFF_BYTES,
+  ABORTED,
   FILE_READ_MAX_BYTES,
   FILE_TEXTS,
   checkSignal,
@@ -105,6 +107,9 @@ export const editExecutor: ToolExecutor = async (q) => {
       const slots = { path, bytes: String(stat.size), max: String(FILE_READ_MAX_BYTES) }
       return failed(fill(EDIT_TEXTS.tooLarge, slots))
     }
+    const snapshot = await snapshotGuard(q)
+    if (snapshot !== null) return snapshot
+    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
     const data = await q.fs.readFile(path)
     checkSignal(q.signal)
     const decoded = decodeForEdit(data)
@@ -120,17 +125,28 @@ export const editExecutor: ToolExecutor = async (q) => {
   if (count > 1 && !replaceAll) {
     return failed(fill(EDIT_TEXTS.notUnique, { path, count: String(count) }))
   }
+  let fileMutationAttempted = false
   try {
     // Joined, not `replace`: new_string goes in as written, `$&` and the rest included.
+    const snapshot = await snapshotGuard(q)
+    if (snapshot !== null) return snapshot
+    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    fileMutationAttempted = q.snapshotTarget !== undefined
     await q.fs.writeFile(path, pieces.join(newString))
   } catch (error) {
-    return failed(fill(EDIT_TEXTS.writeError, { path, message: messageOf(error) }))
+    return {
+      ...failed(fill(EDIT_TEXTS.writeError, { path, message: messageOf(error) })),
+      ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
+    }
   }
-  return succeeded(
-    count === 1
-      ? fill(EDIT_TEXTS.edited, { path })
-      : fill(EDIT_TEXTS.editedAll, { path, count: String(count) }),
-  )
+  return {
+    ...succeeded(
+      count === 1
+        ? fill(EDIT_TEXTS.edited, { path })
+        : fill(EDIT_TEXTS.editedAll, { path, count: String(count) }),
+    ),
+    ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
+  }
 }
 
 /** A file's text as Edit may rewrite it: strict UTF-8 with the byte order mark kept; else why not. */

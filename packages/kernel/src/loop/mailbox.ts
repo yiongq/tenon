@@ -3789,6 +3789,7 @@ function takeRuleOf(reason: RunEndReason): 'all' | 'urgent' | 'none' {
 function isRefusedAfterStop(entry: NewEntry): boolean {
   if (
     entry.name === 'compaction/anchor' ||
+    entry.name === 'fs/snapshot_created' ||
     entry.name === 'tool/permission_decided' ||
     entry.name === 'execution/dispatch_committed'
   ) {

@@ -10,7 +10,7 @@
  * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
-import type { AbsolutePath, FetchLike, HostClock, HostFs } from '../host/adapter.js'
+import type { AbsolutePath, FetchLike, FileIdentity, HostClock, HostFs } from '../host/adapter.js'
 import { McpServerUnavailableError, McpUnauthorizedError } from '../mcp/connection.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
@@ -33,6 +33,8 @@ import type { SandboxOutcome } from '../tape/entry.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
+  /** A snapshotted file write was attempted, including an error after partial mutation (spec 05). */
+  readonly fileMutationAttempted?: true
   readonly sandbox?: SandboxOutcome
   /** Appended after the spill check, so the model always sees these diagnostics. */
   readonly sandboxBlock?: Extract<ResultContent[number], { type: 'text' }>
@@ -58,6 +60,8 @@ export interface ToolExecution {
 }
 
 export interface ExecuteQuery {
+  /** Spec 05: the target identity returned by the promised before-call snapshot; null = absent. */
+  readonly snapshotTarget?: FileIdentity | null
   readonly search?: SearchBackend
   readonly item: ToolTableItem
   readonly input: Record<string, unknown>

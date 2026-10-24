@@ -40,6 +40,7 @@ import type {
   HostAdapter,
   Reversibility,
   SnapshotCoverage,
+  SnapshotTaken,
 } from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
 import { sandboxDomainHosts, unboundSandboxOverride } from '../permission/sandbox-release.js'
@@ -84,6 +85,10 @@ import type { SearchBackend } from '../tools/search/types.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import type { AsyncArgumentValidator, ValidationVerdict } from '../tools/validate.js'
 import type { CommandRun, CommandShell } from '../tools/builtin/bash.js'
+import { ABORTED, failed as executionFailure } from '../tools/builtin/files.js'
+import { SNAPSHOT_FAILED } from '../tools/snapshot-guard.js'
+import { snapshotEntry, snapshotRequest, snapshotSessionId } from './snapshots.js'
+import type { CallSnapshot } from './snapshots.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
@@ -334,10 +339,20 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           return { kind: 'stopped' }
         }
         const dispatch = dispatchEntryFor(ctx, call, ctx.approved.decisionKey)
+        // oxlint-disable-next-line no-await-in-loop -- capture before this call's dispatch commits
+        const snapshot = await beforeCallSnapshot(
+          ctx,
+          call,
+          item,
+          facts,
+          ctx.approved.reversibility,
+          ctx.approved.target,
+        )
+        const dispatchFacts = [...beforeSnapshotEntries(ctx, snapshot), dispatch]
         // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
         const repair =
           // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
-          executor === 'agent' ? null : await dispatchOnce(ctx, call, item, [dispatch], dispatch)
+          executor === 'agent' ? null : await dispatchOnce(ctx, call, item, dispatchFacts, dispatch)
         if (repair !== null) {
           // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
           await close(ctx, call, repair)
@@ -380,6 +395,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           target: ctx.approved.target,
           scope: facts.scope,
           command,
+          ...(snapshot === undefined ? {} : { snapshot }),
         })
         denials = blocked ? denials + 1 : 0
         if (denials >= MACHINE_DENIAL_CAP) {
@@ -442,12 +458,22 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         return { kind: 'stopped' }
       }
       const dispatch = dispatchEntryFor(ctx, call, decisionKey)
+      // oxlint-disable-next-line no-await-in-loop -- capture before this call's dispatch commits
+      const snapshot = await beforeCallSnapshot(
+        ctx,
+        call,
+        item,
+        facts,
+        judged.reversibility,
+        judged.target,
+      )
+      const dispatchFacts = [decided, ...beforeSnapshotEntries(ctx, snapshot), dispatch]
       // oxlint-disable-next-line no-await-in-loop -- T1: the side effect waits for its dispatch to commit
       const repair =
         executor === 'agent'
           ? null
           : // oxlint-disable-next-line no-await-in-loop -- serial dispatch commits before execution
-            await dispatchOnce(ctx, call, item, [decided, dispatch], dispatch)
+            await dispatchOnce(ctx, call, item, dispatchFacts, dispatch)
       if (repair !== null) {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await close(ctx, call, repair)
@@ -490,6 +516,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         target: judged.target,
         scope: facts.scope,
         command,
+        ...(snapshot === undefined ? {} : { snapshot }),
       })
       denials = blocked ? denials + 1 : 0
       if (denials >= MACHINE_DENIAL_CAP) {
@@ -601,7 +628,7 @@ async function runGroup(ctx: BatchContext, judge: JudgeContext): Promise<GroupEn
       target: judged.target,
       scope: facts.scope,
       command: undefined,
-    })
+    }).then((performed) => performed.facts)
     // Awaited below, in <i> order; handled now, so one that rejects while an earlier one is awaited is
     // not reported unhandled — the first rejection awaited ends the batch.
     closure.catch(noRejection)
@@ -690,8 +717,60 @@ function dispatchEntryFor(ctx: BatchContext, call: CompleteCall, decisionKey: st
   })
 }
 
+async function takeSnapshot(
+  ctx: BatchContext,
+  request: Parameters<HostAdapter['snapshots']['take']>[0],
+): Promise<SnapshotTaken> {
+  try {
+    return await ctx.host.snapshots.take(request, ctx.signal)
+  } catch {
+    return { ok: false, reason: 'error' }
+  }
+}
+
+/** Approved file promises survive mode degradation; Bash captures only a currently available tree. */
+async function beforeCallSnapshot(
+  ctx: BatchContext,
+  call: CompleteCall,
+  item: ToolTableItem,
+  facts: CallFacts,
+  reversibility: Reversibility,
+  target: AbsolutePath | null,
+): Promise<CallSnapshot | undefined> {
+  if (item.source !== 'builtin') return undefined
+  const file =
+    ['Write', 'Edit', 'Delete'].includes(item.originalName) && reversibility === 'snapshotted'
+  const bash = item.originalName === 'Bash'
+  if (!file && !bash) return undefined
+  if (file && target === null) throw new Error('snapshot promise requires a file target')
+  const request = snapshotRequest({
+    sessionId: ctx.sessionId,
+    call: refOf(ctx, call),
+    entries: facts.entries,
+    parentEntries: facts.parentEntries ?? [],
+    folders: facts.scope.roots,
+    ...(file ? { path: target! } : {}),
+  })
+  if (ctx.signal.aborted) throw new RunWriteRefusedError()
+  if (bash && ctx.host.snapshots.status(request.sessionId) !== 'tree') {
+    return { request, before: { ok: false, reason: 'not-covered' } }
+  }
+  let before = await takeSnapshot(ctx, request)
+  // First stop check: a host may have resolved just as its signal was aborted.
+  if (ctx.signal.aborted) throw new RunWriteRefusedError()
+  if (file && before.ok && before.target === undefined) before = { ok: false, reason: 'error' }
+  return { request, before }
+}
+
+function beforeSnapshotEntries(ctx: BatchContext, snapshot: CallSnapshot | undefined): NewEntry[] {
+  if (snapshot === undefined) return []
+  if (ctx.signal.aborted) throw new RunWriteRefusedError()
+  return snapshot.before.ok ? [snapshotEntry(ctx, snapshot.request, snapshot.before)] : []
+}
+
 /** What running an allowed call needs beside the call: its decision's reading of it. */
 interface Performed {
+  readonly snapshot?: CallSnapshot
   readonly reversibility: Reversibility
   readonly summary: DecisionSummary
   readonly target: AbsolutePath | null
@@ -707,7 +786,31 @@ async function execute(
   executor: ToolExecutor,
   q: Performed,
 ): Promise<boolean> {
-  const facts = await perform(ctx, call, item, executor, q)
+  const { facts, fileMutationAttempted } = await perform(ctx, call, item, executor, q)
+  const completed = facts.some(
+    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['state'] === 'completed',
+  )
+  if (
+    q.snapshot !== undefined &&
+    (q.snapshot.request.path === undefined
+      ? ctx.host.snapshots.status(q.snapshot.request.sessionId) === 'tree'
+      : fileMutationAttempted) &&
+    completed &&
+    !ctx.signal.aborted &&
+    (q.snapshot.before.ok || q.snapshot.request.path === undefined)
+  ) {
+    const request = { ...q.snapshot.request, moment: 'after-call' as const }
+    const after = await takeSnapshot(ctx, request)
+    if (after.ok && !ctx.signal.aborted) {
+      try {
+        const entry = snapshotEntry(ctx, request, after)
+        if (!ctx.signal.aborted) await ctx.write([entry])
+      } catch (error) {
+        // A stop winning the after-call write drops that evidence, never the actual call outcome.
+        if (!(error instanceof RunWriteRefusedError)) throw error
+      }
+    }
+  }
   await close(ctx, call, facts, q.summary)
   return facts.some(
     (entry) =>
@@ -734,7 +837,7 @@ async function perform(
   item: ToolTableItem,
   executor: ToolExecutor,
   q: Performed,
-): Promise<NewEntry[]> {
+): Promise<{ facts: NewEntry[]; fileMutationAttempted: boolean }> {
   let command = q.command
   if (command !== undefined) {
     const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
@@ -759,32 +862,40 @@ async function perform(
       },
     }
   }
-  const running = executor({
-    item,
-    input: call.input,
-    signal: ctx.signal,
-    target: q.target,
-    scope: q.scope,
-    fs: ctx.host.fs,
-    clock: ctx.host.clock,
-    ...(ctx.search === null ? {} : { search: ctx.search }),
-    ...(item.source === 'builtin' && item.originalName === 'WebFetch'
-      ? {
-          webFetch: {
-            fetch: ctx.host.network.fetchUntrusted,
-            canFollow: async (url: string) => {
-              const judged = await judgeCall(
-                { ...ctx, searchHost: ctx.search?.host ?? null },
-                item,
-                { input: { url } },
-              )
-              return judged.kind === 'judged' && judged.decision.record.verdict === 'allow'
-            },
-          },
-        }
-      : {}),
-    ...(command === undefined ? {} : { command }),
-  })
+  const running =
+    q.snapshot !== undefined && ctx.signal.aborted
+      ? Promise.resolve(ABORTED)
+      : q.snapshot?.request.path !== undefined && !q.snapshot.before.ok
+        ? Promise.resolve(executionFailure(SNAPSHOT_FAILED))
+        : executor({
+            item,
+            input: call.input,
+            signal: ctx.signal,
+            target: q.target,
+            scope: q.scope,
+            fs: ctx.host.fs,
+            clock: ctx.host.clock,
+            ...(q.snapshot?.request.path !== undefined && q.snapshot.before.ok
+              ? { snapshotTarget: q.snapshot.before.target! }
+              : {}),
+            ...(ctx.search === null ? {} : { search: ctx.search }),
+            ...(item.source === 'builtin' && item.originalName === 'WebFetch'
+              ? {
+                  webFetch: {
+                    fetch: ctx.host.network.fetchUntrusted,
+                    canFollow: async (url: string) => {
+                      const judged = await judgeCall(
+                        { ...ctx, searchHost: ctx.search?.host ?? null },
+                        item,
+                        { input: { url } },
+                      )
+                      return judged.kind === 'judged' && judged.decision.record.verdict === 'allow'
+                    },
+                  },
+                }
+              : {}),
+            ...(command === undefined ? {} : { command }),
+          })
   const execution = inProcess(item) ? await withinWriteWait(ctx, call, running) : await running
   const stopped = execution.state !== 'completed'
   // A Bash timeout is its own code; every other call that did not complete was aborted, by a stop or
@@ -818,7 +929,8 @@ async function perform(
     },
     log: ctx.log,
   })
-  return resultFacts({
+  const facts = resultFacts({
+    ...(q.snapshot?.before.ok ? { snapshotId: q.snapshot.before.snapshotId } : {}),
     tape: ctx.tape,
     now: ctx.now,
     call: ref,
@@ -838,6 +950,7 @@ async function perform(
     reversibility: q.reversibility,
     writer: ctx.writer,
   })
+  return { facts, fileMutationAttempted: execution.fileMutationAttempted === true }
 }
 
 /** A dispatched call's source when the abort ended it: its cause's (§原因码表 `stopped`, `app-exit`). */
@@ -1179,7 +1292,10 @@ export async function judgeCall(
     item.source === 'builtin' &&
     ['Write', 'Edit', 'Delete'].includes(item.originalName) &&
     located !== undefined
-      ? await coverageOf(ctx, located.real)
+      ? await coverageOf(
+          { ...ctx, sessionId: snapshotSessionId(ctx.sessionId, entries) },
+          located.real,
+        )
       : undefined
   const reversibility = reversibilityOf(item, call.input, coverage)
   const place = located === undefined ? undefined : placeFor(profile, located)

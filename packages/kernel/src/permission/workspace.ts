@@ -17,7 +17,8 @@
  *
  * Two known limits (D8): a link swapped after Write and Edit resolve their path once more, just
  * before they touch it (`stillNamesItself`, step 5), and before the write (a race phase 2 does not
- * handle); and a hard link in the workspace to a file outside it. Both are phase 4's to decide.
+ * handle). Spec 05 classifies ordinary files with multiple names as `sensitive: 'hardlink'` for
+ * Write, Edit and Delete: outside-workspace, asked every time, with no snapshot coverage.
  */
 import { UnresolvableAliasError } from '../host/adapter.js'
 import type { AbsolutePath, HostFs } from '../host/adapter.js'

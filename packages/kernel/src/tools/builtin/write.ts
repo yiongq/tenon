@@ -15,7 +15,8 @@ import { fromParts, pathParts } from '../../host/path.js'
 import type { AbsolutePath } from '../../host/adapter.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { FILE_TEXTS, failed, stillNamesItself, succeeded } from './files.js'
+import { snapshotGuard } from '../snapshot-guard.js'
+import { ABORTED, FILE_TEXTS, failed, stillNamesItself, succeeded } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 
@@ -63,7 +64,11 @@ export const writeExecutor: ToolExecutor = async (q) => {
   const path = q.target
   if (path === null) throw new Error('Write: a call reached its executor with no target path')
   const content = typeof q.input['content'] === 'string' ? q.input['content'] : ''
+  let fileMutationAttempted = false
   try {
+    const snapshot = await snapshotGuard(q)
+    if (snapshot !== null) return snapshot
+    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
     if (!(await stillNamesItself(q.fs, path))) {
       return failed(fill(WRITE_TEXTS.resolvesElsewhere, { path }))
     }
@@ -72,13 +77,24 @@ export const writeExecutor: ToolExecutor = async (q) => {
     const parent = parentOf(path)
     if (parent !== null) {
       const folder = await q.fs.stat(parent)
+      if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
       if (folder === null) await q.fs.mkdirp(parent)
       else if (!folder.isDir) return failed(fill(WRITE_TEXTS.notDirectory, { path: parent }))
     }
+    const beforeWrite = await snapshotGuard(q)
+    if (beforeWrite !== null) return beforeWrite
+    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    fileMutationAttempted = q.snapshotTarget !== undefined
     await q.fs.writeFile(path, content)
-    return succeeded(fill(existing === null ? WRITE_TEXTS.created : WRITE_TEXTS.replaced, { path }))
+    return {
+      ...succeeded(fill(existing === null ? WRITE_TEXTS.created : WRITE_TEXTS.replaced, { path })),
+      ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
+    }
   } catch (error) {
-    return failed(fill(WRITE_TEXTS.hostError, { path, message: messageOf(error) }))
+    return {
+      ...failed(fill(WRITE_TEXTS.hostError, { path, message: messageOf(error) })),
+      ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
+    }
   }
 }
 
