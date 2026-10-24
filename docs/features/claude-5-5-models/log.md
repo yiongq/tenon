@@ -161,3 +161,21 @@
 测试改动：apps/desktop/e2e/model-menu.spec.ts · held for one public host, confirmed after the default moved · 同上，实际目标主机的断言保留
 测试改动：apps/desktop/e2e/model-menu.spec.ts · asks on any row or level · 删除旧实例后改默认，当前行与档位都要确认的断言保留
 测试改动：apps/desktop/e2e/model-menu.spec.ts · 改用 a public provider · 删除旧实例后改到缺 key 的默认，确认前 0 次请求的断言保留
+测试改动：apps/desktop/test/custom-vendor-runtime.test.ts · 验收 20 · 021f4a8 恢复带 probe 的原 LOCAL 种子（369ecd2 曾去掉 probe，评审指出没必要且变弱），删行触发与 0 次公网请求的断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · 验收 17（双语） · 文案改用自动重试的 `toHaveText`，两处 `provider.select` 补成功断言（只收紧）
+- 021f4a8 另把设置卡的指针逻辑抽成 apps/desktop/src/renderer/src/lib/provider-model-selection.ts 的纯函数，新文件 apps/desktop/test/renderer-provider-model-selection.test.ts（13 条）；第 10 步突变 ①–④ 在这里重做，全部变红（①3 条、②3 条、③4 条、④2 条）。
+- 保守合成的范围（现行做法）：`capabilitySource` 为 `user` 的选择一律保守合成，含菜单里的 ① 与上一个 Run 留下的行；同一个手填过、后来进了内置表的 id，老会话保持纯文字，新会话按默认解析取到完整的内置行。spec §跟随最新「解析」第 1 条只写了上一个 Run 那条路径，这里照同一读法处理菜单 ①，不放宽。
+
+## 评审 · 2026-10-24 · 审过 021f4a8
+
+范围：369ecd2（Codex 的第 9–11 步代码与测试）、3ee88fa（lead 的文档）与 021f4a8（按评审修的代码）。lead 审了代码；新上下文的评审 agent（Sonnet）审了两轮，另跑了相关测试文件并在副本里重做了突变。
+- [major] `session.selectModel` 在默认指向不存在的 provider 时整条路由失败，菜单没法修悬空的默认 · 证据：副本里种 `provider: { id: 'custom-gone' }` 后选模型得到 `handler-failed` · 已修 021f4a8（新增 6 个复现用例，去掉 try/catch 时全红）
+- [建议] runtime 验收 20 的种子去掉了 probe，测得比原来弱 · 已修 021f4a8
+- [建议] 验收 17 的 e2e 用 `allTextContents()` 比文案、两处 `provider.select` 没断言成功 · 已修 021f4a8
+- [建议] 第 10 步的 4 个突变只有 e2e 能抓 · 已修 021f4a8（指针逻辑抽成纯函数，突变在 vitest 里变红）
+- [建议] `resolveChoice` 有一支走不到、`'ollama'` 字面量、`menuRow` 的 `family` 与 `familyNameKey` 不同有同无 · 已修 021f4a8
+- [建议] 保守合成对菜单 ① 也生效，spec 只写了上一个 Run 的路径 · 不修：照同一读法、不放宽，现行做法记在上面
+- [建议] http-connection.test.ts「03 验收 30 (HTTP)」偶发红只有单独跑过的证据 · 不修：与本 spec 无关，全量负载下偶发，单独连跑 5 次都过；再红时先在 dev 上复现
+- [建议] e2e（model-menu、provider-settings、recovery）还没跑过 · 交 owner：不需要 owner 动手，CI 的 e2e 绿之前自动合并不会合入；记在这里备查
+结论：通过
+突变：第 9 步 13 个、第 8 步 ⑤⑥、第 10 步 4 个，共 19 个，全部变红，0 个存活
