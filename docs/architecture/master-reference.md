@@ -1142,4 +1142,3 @@ Claude Desktop 的概念 → Tenon 的实现：
 - Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问；05 的快照在 Windows 上一律只留单文件副本、叶子不防换链接、主目录与卷根的认法未测） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
 - Delete 先移进系统回收站，不只靠快照 · lead · 待定，不挡；两平台实测后加 · 05 D7
 - 「撤销还原」的入口（05 已在还原前拍一张，编号在 fs/restored） · lead · 待定，不挡 · 05 D3、D34
-- claude-5-5-models 合入之前不切 release 分支：presentation-r1 先合入，第一把 key 现在只写钉住的行 id，指针一支要等它补上，其间写下的值分不出是不是用户选的 · owner · 挡上线 · [claude-5-5-models](../features/claude-5-5-models/spec.md) §跟随最新「迁移」

@@ -39,7 +39,7 @@ function registry(): ReturnType<typeof createProviderRegistry> {
 }
 
 describe('provider catalogue keys', () => {
-  it('has a non-empty name and label in every locale for every registered provider', () => {
+  it('claude-5-5-models 验收 16: has a non-empty name and label in every locale for every registered provider', () => {
     const definitions = registry().list()
     expect(definitions.length).toBeGreaterThan(0)
 
@@ -48,6 +48,7 @@ describe('provider catalogue keys', () => {
       // Spec 02: the menu's display name and purpose sentence of each row are catalogue keys too.
       const keys = [
         definition.nameKey,
+        ...Object.values(definition.familyNameKeys ?? {}),
         ...definition.configKeys.map((key) => key.labelKey),
         ...definition.builtinModels.flatMap((model) => [
           ...(model.nameKey === undefined ? [] : [model.nameKey]),

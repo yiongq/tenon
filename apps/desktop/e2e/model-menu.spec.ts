@@ -3,6 +3,7 @@ import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import type { Page } from '@playwright/test'
+import type { Config, IpcResult } from '@tenon-app/contracts'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
@@ -26,14 +27,51 @@ interface QueuePush {
 
 /** zhipu's default endpoint, which nothing here sends to. */
 const ZHIPU_HOST = 'open.bigmodel.cn'
+const LOCAL_INSTANCE = 'custom-11111111-1111-4111-8111-111111111111'
+const LOCAL_MODEL = 'qwen3:8b'
+
+function localSeed(baseURL: string) {
+  return {
+    locale: 'en' as const,
+    provider: { id: LOCAL_INSTANCE, modelId: LOCAL_MODEL },
+    customVendors: [
+      {
+        id: LOCAL_INSTANCE,
+        displayName: 'Local fixture',
+        wire: 'openai-chat' as const,
+        baseURL,
+        models: [{ id: LOCAL_MODEL, contextLimit: 32000, maxOutputTokens: 4096 }],
+      },
+    ],
+  }
+}
+
+async function removeLocal(page: Page): Promise<void> {
+  expect(
+    await page.evaluate((id) => window.tenon.invoke('customVendor.delete', { id }), LOCAL_INSTANCE),
+  ).toEqual({ ok: true, data: { ok: true } })
+}
+
 const HELD_FOR_ZHIPU = `Earlier messages will be sent to ${ZHIPU_HOST}`
+
+async function defaultsOf(page: Page): Promise<Pick<Config, 'provider' | 'defaultModelByProfile'>> {
+  const result = (await page.evaluate(() =>
+    window.tenon.invoke('config.get', {}),
+  )) as IpcResult<Config>
+  expect(result.ok).toBe(true)
+  if (!result.ok) throw new Error('config.get failed')
+  return {
+    provider: result.data.provider,
+    defaultModelByProfile: result.data.defaultModelByProfile,
+  }
+}
 
 /**
  * The model menu in the real shell (spec 02 §模型菜单与输入框; plan step 19: 旧 38, 旧 39, the menu
  * half of 旧 186 and 旧 37). A fake endpoint stands in for each provider that is sent to. zhipu and
  * anthropic keep their official public hosts — the origin map test seam sends their requests to the
  * fakes (M6 §点名「测试接缝」) — so the confirmation before history leaves this computer can be seen;
- * the history on this computer is Ollama's, on a loopback fake.
+ * the history on this computer uses a loopback fake.
  */
 let anthropic: FakeAnthropic | undefined
 let ollama: FakeOpenAI | undefined
@@ -298,19 +336,16 @@ test('asks by where the history went, not by the model in effect, and a typed mo
   }
 })
 
-test('a round held for a public host opens the menu on the same confirmation (间接切公网, §模型菜单与输入框)', async () => {
+test('claude-5-5-models 验收 15: a round held for a public host opens the menu on the same confirmation (间接切公网, §模型菜单与输入框)', async () => {
   ollama = await startFakeOpenAI({ chunks: ['local ', 'answer'], delayMs: 5 })
   const userData = makeUserDataDir('model-held')
-  seedConfig(userData, {
-    locale: 'en',
-    provider: { id: 'ollama', modelId: 'qwen3:8b' },
-    providerConfig: { ollama: { baseURL: ollama.baseURL } },
-  })
+  seedConfig(userData, localSeed(ollama.baseURL))
   const { app, page } = await launchTenon({ userData, env: { ZHIPU_API_KEY: 'e2e-zhipu-key' } })
   try {
     await page.getByTestId('composer-input').fill('keep this local')
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    await removeLocal(page)
     // The default moves to a public host in the settings card — not through this session's menu.
     await page.getByTestId('account-row').click()
     await page.getByTestId('account-providers').click()
@@ -335,7 +370,7 @@ test('a round held for a public host opens the menu on the same confirmation (�
 })
 
 /**
- * The session of the held-round tests below: a conversation on Ollama (this computer), then the
+ * The session of the held-round tests below: a conversation on a loopback instance, removed before the
  * default moved to zhipu's public host in the settings card, then a message the kernel holds for it —
  * the menu open on its confirmation, closed again with Esc, the message queued and held.
  */
@@ -343,6 +378,7 @@ async function heldRound(page: Page, server: FakeOpenAI): Promise<void> {
   await page.getByTestId('composer-input').fill('keep this local')
   await page.keyboard.press('Enter')
   await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+  await removeLocal(page)
   await page.getByTestId('account-row').click()
   await page.getByTestId('account-providers').click()
   await page.getByTestId('provider-select').selectOption('zhipu')
@@ -370,11 +406,7 @@ async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpen
   anthropic = await startFakeAnthropic({ chunks: ['ok'], delayMs: 5 })
   const server = ollama
   const userData = makeUserDataDir(tag)
-  seedConfig(userData, {
-    locale: 'en',
-    provider: { id: 'ollama', modelId: 'qwen3:8b' },
-    providerConfig: { ollama: { baseURL: server.baseURL } },
-  })
+  seedConfig(userData, localSeed(server.baseURL))
   const launched = await launchTenon({
     userData,
     env: {
@@ -384,6 +416,62 @@ async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpen
   })
   return { ...launched, server }
 }
+
+test('claude-5-5-models 验收 16: the effort submenu preserves all three pinned defaults in a new session', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['unused'] })
+  const userData = makeUserDataDir('model-effort-defaults')
+  const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+  seedConfig(userData, {
+    locale: 'en',
+    provider: pinned,
+    defaultModelByProfile: { chat: pinned, cowork: pinned },
+  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
+  try {
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
+    const before = await defaultsOf(page)
+    expect(before).toEqual({
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    await page.getByTestId('model-menu-trigger').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    await page.getByTestId('model-effort').hover()
+    await expect(page.getByTestId('model-effort-levels')).toBeVisible()
+    await page.getByTestId('model-effort-high').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · High')
+    expect(await defaultsOf(page)).toEqual(before)
+  } finally {
+    await app.close()
+  }
+})
+
+test('claude-5-5-models 验收 16: switching on the held-round confirmation preserves all three defaults', async () => {
+  const { app, page, server } = await launchHeld('model-held-defaults')
+  try {
+    await heldRound(page, server)
+    const pinned = { id: 'zhipu', modelId: 'glm-5.3-flash' }
+    const before = await defaultsOf(page)
+    expect(before).toEqual({
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    // Re-open the held confirmation through the same send-now path as the existing hold tests.
+    await page.getByTestId('queued-send-now').click()
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    expect(zhipu?.requests).toHaveLength(0)
+    await page.getByTestId('model-confirm-switch').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('queued-bubble')).toHaveCount(0)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('zhipu')
+    expect(zhipu?.requests).toHaveLength(1)
+    expect(server.requests).toHaveLength(1)
+    expect(await defaultsOf(page)).toEqual(before)
+  } finally {
+    await app.close()
+  }
+})
 
 // A queue push while the round is held carries `held` again; the confirmation the user closed stays
 // closed (§模型菜单与输入框: it opens once per hold).
@@ -452,7 +540,7 @@ test('withdrawing the held message clears the hold, and the next message held an
   }
 })
 
-test('a round held for one public host, confirmed after the default moved to another, names the host 「切换」 sends to (s19-safety-3)', async () => {
+test('claude-5-5-models 验收 15: a round held for one public host, confirmed after the default moved to another, names the host 「切换」 sends to (s19-safety-3)', async () => {
   // Held for zhipu, closed with Esc; then the default moves again, to a second public host, while
   // the round stays held. Back in the session the confirmation opens again and must name where the
   // choice 「切换」 commits sends now, not the host the kernel held for.
@@ -505,7 +593,7 @@ test('a round held for one public host, confirmed after the default moved to ano
   }
 })
 
-test('a session on this computer whose default moved to a public host asks on any row or level of it (s19-spec-1, 验收 34)', async () => {
+test('claude-5-5-models 验收 15: a session on this computer whose default moved to a public host asks on any row or level of it (s19-spec-1, 验收 34)', async () => {
   // The session never chose: it runs on the profile's default, which the settings card then moves
   // to zhipu. The model in effect is public, the history is not — every choice in its menu, the
   // ticked default's own row and a thinking level included, asks first, and nothing is sent.
@@ -514,11 +602,7 @@ test('a session on this computer whose default moved to a public host asks on an
   zhipu = await startFakeOpenAI({ chunks: ['zhipu'], delayMs: 5 })
   const server = ollama
   const userData = makeUserDataDir('model-indirect')
-  seedConfig(userData, {
-    locale: 'en',
-    provider: { id: 'ollama', modelId: 'qwen3:8b' },
-    providerConfig: { ollama: { baseURL: server.baseURL } },
-  })
+  seedConfig(userData, localSeed(server.baseURL))
   const { app, page } = await launchTenon({
     userData,
     env: { ...COUNT_ROUTES, ...originMap({ [ZHIPU_ORIGIN]: zhipu.baseURL }) },
@@ -527,6 +611,7 @@ test('a session on this computer whose default moved to a public host asks on an
     await page.getByTestId('composer-input').fill('keep this local')
     await page.keyboard.press('Enter')
     await expect(page.getByTestId('assistant-text')).toHaveText('local answer')
+    await removeLocal(page)
     const saved = await page.evaluate(async () => {
       const configured = await window.tenon.invoke('provider.configure', {
         id: 'zhipu',
@@ -815,11 +900,7 @@ test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history only
   ollama = await startFakeOpenAI({ chunks: ['local history'] })
   zhipu = await startFakeOpenAI({ chunks: ['public reply'] })
   const userData = makeUserDataDir('blocked-local-to-public')
-  seedConfig(userData, {
-    locale: 'en',
-    provider: { id: 'ollama', modelId: 'qwen3:8b' },
-    providerConfig: { ollama: { baseURL: ollama.baseURL } },
-  })
+  seedConfig(userData, localSeed(ollama.baseURL))
   const { app, page } = await launchTenon({
     userData,
     env: {
@@ -831,6 +912,7 @@ test('presentation-r1 验收 11 / presentation-r1 不变量 7: with history only
   try {
     await send(page, 'stays local')
     await expect(page.getByTestId('assistant-text')).toHaveText('local history')
+    await removeLocal(page)
     // A different window/settings card moves the default to a provider without a key.
     expect(
       await page.evaluate(() =>

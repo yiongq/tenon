@@ -9,14 +9,15 @@ import {
   isProbedRow,
 } from './custom-vendors/registry.js'
 import { readConfig, withConfigLock, writeConfigHeld } from './host/profile.js'
-import { selectionOf } from './provider-routes.js'
+import { menuSelectionOf } from './provider-routes.js'
 
 /**
  * The session's model choice (spec 02 §模型选择; 01 修补 6「给会话选模型」): `session.selectModel`
  * records the choice — the session's `session/model_choice_set`, or the draft's before the session
- * exists — then the new-session default of the profile it was made in and `provider` (the level is
- * never a default); `session.modelChoice` reads what the next Run takes. Both wait for startup
- * recovery; a choice also releases what a switch to a public host held, begun with the chooser's
+ * exists. A row selection also writes the profile's new-session default and `provider`; an effort
+ * edit or a held-round confirmation leaves both alone. `session.modelChoice` reads what the next
+ * Run takes. Both wait for startup recovery; a choice also releases what a switch to a public host
+ * held, begun with the chooser's
  * document as its origin.
  *
  * A custom vendor instance offers the rows it lists and no hand-typed id (M6 §列表与上限). Its
@@ -52,7 +53,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
     // A level the row does not list is refused; a hand-typed id lists none (A11, M6).
     const levels = row?.thinkingSpec?.effortLevels ?? []
     if (q.effort !== null && !levels.includes(q.effort)) return refused('invalid-value')
-    const selection = selectionOf(definition, q.modelId)
+    const selection = menuSelectionOf(definition, q.modelId)
     // An instance's row as the lock leaves it: a delete that held the lock first refuses the choice
     // before the session records it (M6 §写入规则「删除」; 验收 25).
     if (isInstanceId(q.providerId)) {
@@ -61,6 +62,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       )
       if (gone !== null) return refused(gone)
     }
+    const keepDefaults = q.intent === 'effort' || q.intent === 'confirm'
     // Outside the lock: the command waits behind a send still prebuilding, whose keychain read may
     // be a prompt on an unsigned build, and that must not hold every save (provider.ts).
     const { profile } = await sessions.selectModel({
@@ -73,6 +75,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       },
       origin: originOf(event),
     })
+    if (keepDefaults) return SAVED
     await withConfigLock(host.identity, async () => {
       const config = await readConfig(host.fs, host.identity)
       // A delete since the check above came after this choice: it cleared the defaults, and they

@@ -113,3 +113,95 @@
 - [建议] 同一例新加的「更多模型」一段在 CI 上还没跑到过（上一行先挂了），重跑若在那里挂，先查点击打开子菜单是否稳定 · 不修：现写法与第一例相同且第一例已通过，等 CI 重跑验证
 结论：通过
 突变：0 个（只改测试的等待）
+
+## 实施 · 2026-10-24（第 9–11 步）
+
+- Codex 按任务说明实现，lead 审查 diff、沙箱外补跑全量 vitest 并提交（369ecd2）：
+  - run-assembly.ts 的 `resolveChoice` 在 ① 空着时先看 `previousModel`：`builtin`、`probed` 与没记来源的行还在那家的表里就留；内置厂商上的 `user` 留在原 id 并照旧保守合成；`synthesized` 不留。再按答话的一层解析，指针经 `newestOfFamily`，家族找不到读作钉住的 `modelId`。数据去向检查仍在取行之后。
+  - 新文件 apps/desktop/src/main/model-selection.ts 放 `selectionOf` 与 `menuSelectionOf`（避开 import 环）；`session.selectModel` 写指针，会话没有 ① 且选的就是 `session.modelChoice` 答的那一行时只写 ①、不动默认。
+  - `provider.select` 带 `latestOf` 的一支（不在表里、Ollama 或实例、`modelId` 不是该家族的行都回 `invalid-value`）；`menuRow` 转发 `family`、`familyNameKey`；设置卡先列「最新的 …」、再列各行；`firstKeyDefaults` 改用 `menuSelectionOf`。
+  - Codex 的自查另找到一处：手填过的 id 后来进了内置表，上一个 Run 记的 `user` 会被读成内置行；已先写失败的回归用例，再让 `selectModel` 对历史 `user` 照旧保守合成（spec §跟随最新「解析」第 1 条）。
+- 门禁：format、lint、typecheck 通过；全量 vitest 4593 passed、1 failed、110 skipped（沙箱外）。失败的是 packages/kernel/test/mcp/http-connection.test.ts「03 验收 30 (HTTP): modern total deadline at ten times…」，单独连跑 5 次都过，Codex 那边也见过一次，与本段改动无关，是全量并行下偶发的慢；记一笔，不在本 spec 修。
+- e2e：model-menu.spec.ts、provider-settings.spec.ts、recovery.spec.ts 只过了 typecheck，由本段 PR 的 CI 首跑。
+- 总参考「以后再说」删掉「claude-5-5-models 合入之前不切 release 分支」一行：第一把 key 自本段起写指针（plan 第 11 步）。
+
+突变：
+
+- 第 9 步 ① 会话不换只在同厂商同家族时做 → 红：验收 15 默认是钉住行或改成 sonnet 指针的几例
+- 第 9 步 ② 只有答话的一层是指针才看 `previousModel` → 红：验收 15 落到 ⑤ 与钉住的几例
+- 第 9 步 ③ 家族找不到时落到 ⑤ → 红：验收 14 读作 `modelId` 的两例
+- 第 9 步 ④ 上一个 Run 的行不在表里仍用它 → 红：验收 15 撤行一例
+- 第 9 步 ⑤ 手填 id 不留（按 `synthesized` 读）→ 红：验收 15 手填 Ollama 一例
+- 第 9 步 ⑤′ `synthesized` 也留 → 红：验收 15 `synthesized` 一例
+- 第 9 步 ⑤″ 实例上的 `user` 行不在实例里了也留 → 红：验收 15 实例一例与 custom-vendor-runtime「验收 20」
+- 第 9 步 ⑥ 会话不换留下的行跳过数据去向检查 → 红：验收 15「Ollama 地址改到公网主机」、确认前 0 次请求
+- 第 9 步 ⑦ 「更多模型」的行也写指针 → 红：验收 16 选 Sonnet 5 一例
+- 第 9 步 ⑧ 不带 `latestOf` 也写指针 → 红：provider-routes.test.ts「accepts glm-5.3-flash / flashx」
+- 第 9 步 ⑨ 厂商没配置时跳到已配置的厂商 → 红：验收 14 缺 key 一例
+- 第 9 步 ⑩ `latestOf` 与 `source` 同在仍按指针读 → 红：验收 14 一例
+- 第 9 步 ⑪ 只改档也写默认 → 红：验收 16「只改档不写默认」两例与 hold 确认一例
+- 第 8 步 ⑤ `effectiveModelChoice` 也交 `previousOrigin` → 红：验收 15 地址改到公网后 `session.modelChoice` 不抛一例
+- 第 8 步 ⑥ `previousModel` 丢掉 `capabilitySource` → 红：验收 15 手填 Ollama 一例
+- 第 10 步 ①–④（没存默认时选第一行、指针不带 `latestOf`、钉住行也带、Ollama 卡出指针项）→ 只有 e2e（provider-settings.spec.ts 验收 17）能抓，等 CI 首跑
+
+测试改动：apps/desktop/test/model-selection.test.ts · records the choice and the profile’s default and provider · 默认改为家族指针（spec §点名 (g)），会话仍断言具体行
+测试改动：apps/desktop/test/model-selection.test.ts · writes each profile’s default in the profile’s lock · 两个默认带家族指针，另先种不同的 cowork 默认以继续验锁内合并
+测试改动：apps/desktop/test/model-selection.test.ts · answers neither route until startup recovery is done · 保存前多一次有效模型读取（只改档不写默认的判定要读它）
+测试改动：apps/desktop/test/provider-routes.test.ts · first key with all three defaults empty · 钉住期望换成指针（presentation-r1 验收 12 的指针一例），去掉「没有 latestOf」断言
+测试改动：apps/desktop/test/provider-routes.test.ts · TENON_PROVIDER or TENON_MODEL set · 打包分支第一把 key 的期望加 `latestOf: 'opus'`
+测试改动：apps/desktop/test/custom-vendor-runtime.test.ts · 验收 20 · 第一轮之后删掉本地行再改默认（会话不换以后旧触发方式不再 hold），hold 与 0 次公网请求的断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · acceptance 6 · 原会话仍发 anthropic（会话不换），新对话发智谱；新对话的历史随之变短，流式与凭据断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · first-key defaults · 三个默认期望加 `latestOf: 'glm'`
+测试改动：apps/desktop/e2e/recovery.spec.ts · restored receipt · 下一条留在 Sonnet 5（会话不换），另开新对话验新默认
+测试改动：apps/desktop/e2e/recovery.spec.ts · resumable session the window does not open · 已有 Run 的会话芯片保持 Sonnet 5，新对话验 Ollama
+测试改动：apps/desktop/e2e/model-menu.spec.ts · a round held for a public host · 种子改为可删除的回环实例，删后改默认触发 hold（plan 第 9 步）
+测试改动：apps/desktop/e2e/model-menu.spec.ts · editing the held message · 同上
+测试改动：apps/desktop/e2e/model-menu.spec.ts · 「立即发送」on the held message · 同上，再次确认的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · withdrawing the held message · 同上，重新 hold 的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · held for one public host, confirmed after the default moved · 同上，实际目标主机的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · asks on any row or level · 删除旧实例后改默认，当前行与档位都要确认的断言保留
+测试改动：apps/desktop/e2e/model-menu.spec.ts · 改用 a public provider · 删除旧实例后改到缺 key 的默认，确认前 0 次请求的断言保留
+测试改动：apps/desktop/test/custom-vendor-runtime.test.ts · 验收 20 · 021f4a8 恢复带 probe 的原 LOCAL 种子（369ecd2 曾去掉 probe，评审指出没必要且变弱），删行触发与 0 次公网请求的断言保留
+测试改动：apps/desktop/e2e/provider-settings.spec.ts · 验收 17（双语） · 文案改用自动重试的 `toHaveText`，两处 `provider.select` 补成功断言（只收紧）
+- 021f4a8 另把设置卡的指针逻辑抽成 apps/desktop/src/renderer/src/lib/provider-model-selection.ts 的纯函数，新文件 apps/desktop/test/renderer-provider-model-selection.test.ts（13 条）；第 10 步突变 ①–④ 在这里重做，全部变红（①3 条、②3 条、③4 条、④2 条）。
+- 保守合成的范围（现行做法）：`capabilitySource` 为 `user` 的选择一律保守合成，含菜单里的 ① 与上一个 Run 留下的行；同一个手填过、后来进了内置表的 id，老会话保持纯文字，新会话按默认解析取到完整的内置行。spec §跟随最新「解析」第 1 条只写了上一个 Run 那条路径，这里照同一读法处理菜单 ①，不放宽。
+
+## 评审 · 2026-10-24 · 审过 021f4a8
+
+范围：369ecd2（Codex 的第 9–11 步代码与测试）、3ee88fa（lead 的文档）与 021f4a8（按评审修的代码）。lead 审了代码；新上下文的评审 agent（Sonnet）审了两轮，另跑了相关测试文件并在副本里重做了突变。
+- [major] `session.selectModel` 在默认指向不存在的 provider 时整条路由失败，菜单没法修悬空的默认 · 证据：副本里种 `provider: { id: 'custom-gone' }` 后选模型得到 `handler-failed` · 已修 021f4a8（新增 6 个复现用例，去掉 try/catch 时全红）
+- [建议] runtime 验收 20 的种子去掉了 probe，测得比原来弱 · 已修 021f4a8
+- [建议] 验收 17 的 e2e 用 `allTextContents()` 比文案、两处 `provider.select` 没断言成功 · 已修 021f4a8
+- [建议] 第 10 步的 4 个突变只有 e2e 能抓 · 已修 021f4a8（指针逻辑抽成纯函数，突变在 vitest 里变红）
+- [建议] `resolveChoice` 有一支走不到、`'ollama'` 字面量、`menuRow` 的 `family` 与 `familyNameKey` 不同有同无 · 已修 021f4a8
+- [建议] 保守合成对菜单 ① 也生效，spec 只写了上一个 Run 的路径 · 不修：照同一读法、不放宽，现行做法记在上面
+- [建议] http-connection.test.ts「03 验收 30 (HTTP)」偶发红只有单独跑过的证据 · 不修：与本 spec 无关，全量负载下偶发，单独连跑 5 次都过；再红时先在 dev 上复现
+- [建议] e2e（model-menu、provider-settings、recovery）还没跑过 · 不修：由本段 PR 的 CI e2e 首跑，e2e 绿之前自动合并不会合入
+结论：通过
+突变：第 9 步 13 个、第 8 步 ⑤⑥、第 10 步 4 个，共 19 个，全部变红，0 个存活
+
+## 实施 · 2026-10-24（只改档不写默认，收窄）
+
+- PR #70 的 CI e2e 挂了 02 的「keeps a default per profile: a new session in each starts on it (旧 37)」：聊天会话点了当前那一行 Opus 5.5，按原写法不写默认；任务会话再在「更多模型」里选 Haiku 4.5，写了 cowork 默认与共用的 `provider`；新开的聊天自己没有默认，读到 `provider`，成了 Haiku 4.5。根子是 spec 把「再点一次当前行」也算进不写默认，比 owner 2026-10-15 确认的「只改思考档位不动默认」宽。
+- owner 2026-10-24 在对话里看过图解后选「A 点了就记，只有改档不记 (Recommended)」（题目「claude-5-5-models：在模型菜单里点「当前那一行」，要不要记成这种会话的默认？」）。spec 四处随之收窄，记进修订记录。
+- Codex 按说明实现，lead 审查、沙箱外补跑全量 vitest（4620 passed）并提交（650091c）：`session.selectModel` 的请求只增可选 `intent`（`row` / `effort` / `confirm`，缺省 `row`）；ModelMenu 点行发 `row`、档位子菜单发 `effort`、kernel hold 的确认页发 `confirm`（点行触发的外发确认仍是 `row`）；model-routes.ts 只对符合条件的 `effort` 与 `confirm` 不写默认。`intent` 不进 kernel 的选择与 Tape。
+- 新加复现用例（省略 `intent` 与显式 `row` 两例）改前红、改后绿；突变：判定改回「再点当前行也不写」，两例重新变红，已复原。02 的「旧 37」e2e 期望未改，由 CI 重跑。
+
+测试改动：apps/desktop/test/model-selection.test.ts · only changing effort（两例） · 请求显式带 `intent: 'effort'`，原来不写默认的断言保留
+测试改动：apps/desktop/test/model-selection.test.ts · confirming a held switch · 请求显式带 `intent: 'confirm'`，另加默认已移到另一行的情形
+测试改动：apps/desktop/test/model-selection.test.ts · startup recovery gate · 点行不再先读有效默认，等待的调用次数少一次
+测试改动：packages/contracts/test/model-choice-types.test.ts · SelectCarriesTheChoice · 新增的 `intent` 单独查可选性，模型字段的双向一致检查保留
+- 583cef0：改档一律不写默认，不论会话有没有 ①（spec 修订记录 2026-10-24 第二条；lead 照 owner 原话「只改思考档位不动默认」的字面定，已告知 owner）。model-routes.ts 的判定简化为「`intent` 是 `effort` 或 `confirm` 就不写」，去掉预读有效默认与它的 try/catch（点行本来就不读，悬空默认的 6 个复现用例照旧通过）。model-menu.spec.ts 加两例 e2e：钉住默认的会话里经档位子菜单改档、hold 确认页点「切换」之后，三个默认都不变；renderer 两处 `intent` 改成 `row` 的突变只有这两例能抓，由 CI 首跑。
+测试改动：apps/desktop/test/model-selection.test.ts · changing effort（old-sonnet / pinned-opus） · 会话已有 ① 后改档也不写默认（原期望是照常写）
+测试改动：apps/desktop/test/model-selection.test.ts · effort request for a different row · 按「改档一律不写默认」改期望，会话选择照常生效的断言保留
+
+## 评审 · 2026-10-24 · 审过 c811034
+
+范围：021f4a8 之后的 650091c（`intent` 与点行照常写）、11a9aab（spec 收窄）、0119390、583cef0（改档一律不写默认、两例 e2e）、67ffe62（log）与 c811034（§点名 (g) 一句）。同一个新上下文的评审 agent（Sonnet）复核两轮，跑了 apps/desktop/test 与 packages/contracts 全部用例，并在副本里重做突变（点行一律不写、去掉 effort 一支、去掉 confirm 一支、加回不带保护的预读，全部变红）。
+- [major] spec §点名 (g) 仍写「再点当前行」不写默认，后来又留着「会话没有 ①」的前提，与新的不变量 12、第 9 条相悖 · 证据：(g) 一行原文 · 已修 c811034
+- [major] plan 第 9 步第二条仍是旧写法 · 已修 0119390
+- [建议] renderer 一侧的 `intent` 取值没有测试读到 · 已修 583cef0（两例 e2e，CI 首跑）
+- [建议] 会话已有 ① 时改档仍写默认，与 owner 原话「只改思考档位不动默认」字面不符 · 已修 583cef0（lead 照字面定，已告知 owner）
+- [建议] 「档位子菜单触发外发确认再点切换」时 `intent` 是否保持 `effort` 没有断言 · 不修：e2e 已覆盖档位子菜单与 hold 确认两条路径，这条组合路径等第 14 步全量核对时补
+结论：通过
+突变：model-routes.ts 的三个 `intent` 分支与预读各一个，共 4 个，全部变红；renderer 两处 `intent` 改成 `row` 只有新 e2e 能抓，由 CI 首跑

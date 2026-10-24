@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { _electron as electron } from '@playwright/test'
-import type { McpServer } from '@tenon-app/contracts'
+import type { Config, McpServer } from '@tenon-app/contracts'
 import type { ElectronApplication, Page } from '@playwright/test'
 import { appEnvironment } from './app-env.js'
 import { exitConfirmsIn, stubExitConfirm } from './exit.js'
@@ -61,6 +61,8 @@ export interface SeededConfig {
   readonly locale: LocaleSetting
   /** The provider and model a run uses, as `provider.select` writes it. */
   readonly provider?: { readonly id: string; readonly modelId: string }
+  /** Per-profile defaults, including pinned rows and family pointers. */
+  readonly defaultModelByProfile?: Config['defaultModelByProfile']
   /** Non-secret provider settings, as `provider.configure` writes them. Never a credential. */
   readonly providerConfig?: Readonly<Record<string, Readonly<Record<string, string>>>>
   /**
