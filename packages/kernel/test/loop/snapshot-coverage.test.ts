@@ -11,9 +11,9 @@ import type { SnapshotCoverage } from '../../src/index.js'
 import { decisionEntry, judgeCall } from '../../src/loop/batch.js'
 import type { CallFacts, Judgement } from '../../src/loop/batch.js'
 import type { InspectorRegistration } from '../../src/permission/inspector.js'
-import { answerScope } from '../../src/permission/grants.js'
+import { grantKey, answerScope } from '../../src/permission/grants.js'
 import { reversibilityOf } from '../../src/permission/reversibility.js'
-import { permissionDecidedKey } from '../../src/tape/provenance.js'
+import { approvalResolvedKey, permissionDecidedKey } from '../../src/tape/provenance.js'
 import type { ToolTableItem } from '../../src/tools/registry.js'
 
 const SESSION = '11111111-1111-4111-8111-111111111111'
@@ -182,6 +182,24 @@ describe('05 coverage before permission', () => {
     await Promise.resolve()
   })
 
+  it('05 验收 4: coverage is still pending at 999 ms and resolves none at 1000 ms', async () => {
+    const h = await harness()
+    h.coverage.mockReturnValue(new Promise(() => {}))
+    let settled = false
+    const result = h.judge('Write').then((value) => {
+      settled = true
+      return value
+    })
+    await vi.waitFor(() => expect(h.coverage).toHaveBeenCalledOnce())
+    h.host.advance(999)
+    // A real event-loop turn drains the whole judgeCall chain, rather than one microtask.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    h.host.advance(1)
+    expect(judged(await result)).toMatchObject({ coverage: 'none', reversibility: 'unknown' })
+    expect(settled).toBe(true)
+  })
+
   it('05 验收 4: successful coverage cancels its deadline and inspectors see the computed label', async () => {
     const h = await harness()
     h.host.snapshots.setStatus(SESSION, 'tree')
@@ -316,6 +334,129 @@ describe('05 coverage before permission', () => {
       }
       expect(reversibilityOf(tool('Bash'), { command: 'rm a' }, coverage)).toBe('irreversible')
       expect(reversibilityOf(tool('Bash'), { command: 'ls' }, coverage)).toBe('unknown')
+    },
+  )
+})
+
+async function withGrant(
+  h: Awaited<ReturnType<typeof harness>>,
+  name: string,
+  previous: string | undefined,
+  input = { file_path: PATH, command: 'echo stable', url: 'https://example.com' },
+) {
+  const value = judged(await judgeCall(h.ctx, tool(name), { input }, facts))
+  if (value.grantObject === null) throw new Error('fixture requires a grant object')
+  if (previous !== undefined)
+    await record(h, { ...value, reversibility: previous as typeof value.reversibility })
+  await h.tape.appendEntries({
+    sessionId: SESSION,
+    incarnationId: INCARNATION,
+    entries: [
+      h.tape.writer('tool').entry('tool/approval_resolved', {
+        sourceType: 'runtime_event',
+        sourceId: RUN,
+        sourceSeq: 2,
+        provenanceKey: approvalResolvedKey(RUN, 2, 3),
+        createdAt: 2,
+        payload: {
+          ordinal: 3,
+          providerToolCallId: 'call',
+          decisionKey: permissionDecidedKey(RUN, 2, 3),
+          outcome: 'allowed',
+          via: 'card',
+          grant: { scope: 'session', key: grantKey('builtin', name, value.grantObject) },
+          writer: { by: 'run', runId: RUN },
+        },
+      }),
+    ],
+  })
+  return (await h.tape.readRange({ sessionId: SESSION, limit: 100 })).entries
+}
+
+describe('05 file grant strength (D61)', () => {
+  it.each(
+    ['Write', 'Edit', 'Delete'].flatMap((name) =>
+      ['own', 'parent'].flatMap((source) => [
+        { name, source, previous: 'snapshotted', coverage: 'none' as const, allowed: false },
+        { name, source, previous: 'snapshotted', coverage: 'file' as const, allowed: true },
+        { name, source, previous: 'unknown', coverage: 'tree' as const, allowed: true },
+        { name, source, previous: 'irreversible', coverage: 'tree' as const, allowed: true },
+        {
+          name,
+          source,
+          previous: 'unknown',
+          coverage: 'none' as const,
+          allowed: name !== 'Delete',
+        },
+        { name, source, previous: 'irreversible', coverage: 'none' as const, allowed: true },
+        { name, source, previous: undefined, coverage: 'tree' as const, allowed: false },
+      ]),
+    ),
+  )(
+    '05 验收 4: $source $name grant from $previous with $coverage coverage allows=$allowed',
+    async (row) => {
+      const h = await harness()
+      const entries = await withGrant(h, row.name, row.previous)
+      h.coverage.mockResolvedValue(row.coverage)
+      // Release layer 4 so Delete's always-ask irreversibility cannot mask a broken grant guard.
+      if (row.name === 'Delete')
+        h.host.setPolicy({
+          status: 'current',
+          version: 'release',
+          snapshot: {
+            tools: [
+              {
+                policyId: 'release',
+                serverId: 'builtin',
+                toolName: 'Delete',
+                effect: 'release-irreversible',
+              },
+            ],
+          },
+        })
+      const value = judged(
+        await h.judge(row.name, row.source === 'own' ? { entries } : { parentEntries: entries }),
+      )
+      expect(value.decision.record.verdict).toBe(row.allowed ? 'allow' : 'ask')
+      expect(value.decision.record.decidedBy === 'user-grant').toBe(row.allowed)
+      expect(value.reversibility).toBe(
+        row.coverage === 'none'
+          ? row.name === 'Delete'
+            ? 'irreversible'
+            : 'unknown'
+          : 'snapshotted',
+      )
+    },
+  )
+
+  it('05 验收 4: an unusable own grant cannot hide an eligible inherited grant', async () => {
+    const h = await harness()
+    const parent = await harness()
+    const entries = await withGrant(h, 'Write', undefined)
+    const parentEntries = await withGrant(parent, 'Write', 'unknown')
+    h.coverage.mockResolvedValue('file')
+    const value = judged(await h.judge('Write', { entries, parentEntries }))
+    expect(value.decision.record).toMatchObject({ verdict: 'allow', decidedBy: 'user-grant' })
+    expect(value.decision.summary).toMatchObject({
+      code: 'session-allowed',
+      facts: { inherited: 'parent' },
+    })
+  })
+
+  it.each(['Bash', 'WebFetch'])(
+    '05 验收 4: %s grants still work without a file reversibility baseline',
+    async (name) => {
+      const h = await harness()
+      const entries = await withGrant(h, name, undefined)
+      const value = judged(
+        await judgeCall(
+          h.ctx,
+          tool(name),
+          { input: { command: 'echo stable', url: 'https://example.com' } },
+          { ...facts, entries },
+        ),
+      )
+      expect(value.decision.record).toMatchObject({ verdict: 'allow', decidedBy: 'user-grant' })
     },
   )
 })

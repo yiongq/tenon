@@ -75,14 +75,13 @@ export const writeExecutor: ToolExecutor = async (q) => {
     const existing = await q.fs.stat(path)
     if (existing?.isDir === true) return failed(fill(WRITE_TEXTS.isDirectory, { path }))
     const parent = parentOf(path)
-    if (parent !== null) {
-      const folder = await q.fs.stat(parent)
-      if (q.signal.aborted) return ABORTED
-      if (folder === null) await q.fs.mkdirp(parent)
-      else if (!folder.isDir) return failed(fill(WRITE_TEXTS.notDirectory, { path: parent }))
-    }
+    const folder = parent === null ? null : await q.fs.stat(parent)
+    if (parent !== null && folder !== null && !folder.isDir)
+      return failed(fill(WRITE_TEXTS.notDirectory, { path: parent }))
     const beforeWrite = await snapshotGuard(q)
     if ('failure' in beforeWrite) return beforeWrite.failure
+    if (q.signal.aborted) return ABORTED
+    if (parent !== null && folder === null) await q.fs.mkdirp(parent)
     if (q.signal.aborted) return ABORTED
     fileMutationAttempted = q.snapshotTarget !== undefined
     if (beforeWrite.identity === null) await q.fs.guarded.create(path, content)

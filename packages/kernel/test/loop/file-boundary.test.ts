@@ -558,13 +558,76 @@ describe('05 Delete execution', () => {
     },
   )
 
+  it.each(['tree', 'unavailable'] as const)(
+    '05 验收 30、32: Delete in %s refuses a link replaced by a regular file after judgment',
+    async (status) => {
+      const h = await harness(status)
+      await h.memory.fs.remove(FILE)
+      h.memory.symlink(FILE, '/protected/keep')
+      const pending = await start(h, 'Delete')
+      if (pending === null) throw new Error('approval missing')
+      expect(pending.card.target).toEqual({ type: 'path', path: FILE })
+      await h.memory.fs.remove(FILE)
+      await h.memory.fs.writeFile(FILE, 'replacement file')
+      h.provider.script(done())
+      await finish(h, pending)
+      await refused(h, DELETE_TEXTS.targetChanged)
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('replacement file')
+    },
+  )
+
+  it('05 验收 4: losing coverage after an allowed Write asks again without writing (PoC-B)', async () => {
+    const h = await harness('tree')
+    await invoke(h, 'Write')
+    h.memory.snapshots.setStatus(SESSION, 'unavailable')
+    const before = await h.memory.fs.identity(FILE)
+    const write = vi.spyOn(h.memory.fs, 'writeFile')
+    const pending = await start(h, 'Write', { file_path: FILE, content: 'must ask again' })
+    expect(pending?.card.reversibility).toBe('unknown')
+    expect(write).not.toHaveBeenCalled()
+    expect(await h.memory.fs.identity(FILE)).toEqual(before)
+    expect((await h.entries()).filter((e) => e.name === 'fs/snapshot_created')).toHaveLength(2)
+  })
+
+  it.each(['same', 'degraded'] as const)(
+    '05 验收 4: a child applies the parent file grant only with %s reversibility',
+    async (change) => {
+      const h = await harness('tree')
+      await invoke(h, 'Write')
+      if (change === 'degraded') h.memory.snapshots.setStatus(SESSION, 'unavailable')
+      h.provider.script(call('Agent', { description: 'write task', prompt: 'change file' }))
+      h.provider.script(call('Write', { file_path: FILE, content: 'child data' }))
+      h.provider.script(done())
+      h.provider.script(done())
+      await h.service.send({ sessionId: SESSION, origin: null, text: 'parent task' })
+      const rootEnd = async () => {
+        for (;;) {
+          // oxlint-disable-next-line no-await-in-loop -- child and root finish in causal order
+          const ended = await h.loop.runEnded()
+          if (ended.sessionId === SESSION) return ended
+        }
+      }
+      const ended = await rootEnd()
+      expect(ended.reason.code).toBe(change === 'same' ? 'completed' : 'paused')
+      const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+      expect(pending?.card.reversibility ?? null).toBe(change === 'same' ? null : 'unknown')
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe(
+        change === 'same' ? 'child data' : 'after',
+      )
+    },
+  )
+
   it('05 验收 30: Delete removes a leaf link without following it into the protected target', async () => {
     const h = await harness('tree')
     await h.memory.fs.mkdirp(absolutePath('/protected'))
     await h.memory.fs.writeFile(absolutePath('/protected/keep'), 'protected')
     await h.memory.fs.remove(FILE)
     h.memory.symlink(FILE, '/protected/keep')
-    await invoke(h, 'Delete')
+    const pending = await start(h, 'Delete')
+    expect(pending?.card.target).toEqual({ type: 'path', path: FILE })
+    if (pending === null) throw new Error('approval missing')
+    h.provider.script(done())
+    await finish(h, pending)
     expect(await h.memory.fs.identity(FILE)).toBeNull()
     expect(await h.memory.fs.readFile(absolutePath('/protected/keep'), { encoding: 'utf8' })).toBe(
       'protected',
@@ -575,6 +638,74 @@ describe('05 Delete execution', () => {
         .filter((e) => e.name === 'fs/snapshot_created')
         .map((e) => e.payload['path']),
     ).toEqual([FILE, FILE])
+  })
+
+  it.each(['file', 'link'] as const)(
+    '05 验收 29、30: Delete uses the disk spelling of a case-insensitive %s in its card, snapshots and Tape',
+    async (kind) => {
+      const h = await harness('tree')
+      const actual = absolutePath('/work/Abc.TXT')
+      const written = absolutePath('/work/ABC.txt')
+      if (kind === 'file') await h.memory.fs.writeFile(actual, 'disk spelling')
+      else h.memory.symlink(actual, '/protected/keep')
+      // Model lstat on a case-insensitive volume; the memory host keeps directory entry spelling.
+      const identity = h.memory.fs.identity.bind(h.memory.fs)
+      vi.spyOn(h.memory.fs, 'identity').mockImplementation((path) =>
+        identity(path === written ? actual : path),
+      )
+      const pending = await start(h, 'Delete', { file_path: written })
+      expect(pending?.card.target).toEqual({ type: 'path', path: actual })
+      if (pending === null) throw new Error('approval missing')
+      h.provider.script(done())
+      await finish(h, pending)
+      expect(await identity(actual)).toBeNull()
+      const entries = await h.entries()
+      expect(
+        entries.findLast((e) => e.name === 'tool/permission_decided')?.payload['target'],
+      ).toEqual({ type: 'path', path: actual })
+      expect(
+        entries.filter((e) => e.name === 'fs/snapshot_created').map((e) => e.payload['path']),
+      ).toEqual([actual, actual])
+    },
+  )
+
+  it('05 验收 30: Delete prefers an exact leaf spelling when several entries fold alike', async () => {
+    const h = await harness()
+    await h.memory.fs.writeFile(absolutePath('/work/Abc.txt'), 'keep')
+    await h.memory.fs.writeFile(absolutePath('/work/ABC.TXT'), 'delete')
+    await invoke(h, 'Delete', { file_path: '/work/ABC.TXT' })
+    expect(await h.memory.fs.identity(absolutePath('/work/ABC.TXT'))).toBeNull()
+    expect(await h.memory.fs.readFile(absolutePath('/work/Abc.txt'), { encoding: 'utf8' })).toBe(
+      'keep',
+    )
+  })
+
+  it('05 验收 30: Delete does not fold a missing name on a case-sensitive volume', async () => {
+    const h = await harness()
+    await h.memory.fs.writeFile(absolutePath('/work/Abc.txt'), 'keep')
+    await invoke(h, 'Delete', { file_path: '/work/ABC.TXT' })
+    expect(await result(h)).toMatchObject({ isError: true })
+    expect(await h.memory.fs.readFile(absolutePath('/work/Abc.txt'), { encoding: 'utf8' })).toBe(
+      'keep',
+    )
+  })
+
+  it('05 验收 30: Delete refuses an ambiguous folded spelling on a case-insensitive volume', async () => {
+    const h = await harness('tree')
+    const first = absolutePath('/work/Abc.txt')
+    const second = absolutePath('/work/ABC.TXT')
+    const written = absolutePath('/work/abc.txt')
+    await h.memory.fs.writeFile(first, 'first')
+    await h.memory.fs.writeFile(second, 'second')
+    const identity = h.memory.fs.identity.bind(h.memory.fs)
+    vi.spyOn(h.memory.fs, 'identity').mockImplementation((path) =>
+      identity(path === written ? first : path),
+    )
+    await invoke(h, 'Delete', { file_path: written })
+    expect(await outcome(h)).toMatchObject({ state: 'not-run' })
+    expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
+    expect(await h.memory.fs.readFile(first, { encoding: 'utf8' })).toBe('first')
+    expect(await h.memory.fs.readFile(second, { encoding: 'utf8' })).toBe('second')
   })
 
   it.each(['Write', 'Edit', 'Delete'])(

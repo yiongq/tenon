@@ -48,7 +48,7 @@ import { isBlockedFetchUrl } from '../permission/fetch-address.js'
 import { PARALLEL_TOOL_NAMES, canRunInParallel, decide } from '../permission/decide.js'
 import type { Decision, UserToolSetting } from '../permission/decide.js'
 import { grantKey, sessionGrantKindOf, sessionGrants } from '../permission/grants.js'
-import type { GrantFact, GrantObject } from '../permission/grants.js'
+import type { GrantFact, GrantObject, GrantSource } from '../permission/grants.js'
 import type { InspectorRegistration } from '../permission/inspector.js'
 import { runInspectors } from '../permission/inspector.js'
 import {
@@ -729,7 +729,7 @@ async function takeSnapshot(
   }
 }
 
-/** Approved file promises survive mode degradation; Bash captures only a currently available tree. */
+/** Files capture when available; approved snapshot promises survive degradation. Bash needs a tree. */
 async function beforeCallSnapshot(
   ctx: BatchContext,
   call: CompleteCall,
@@ -739,11 +739,13 @@ async function beforeCallSnapshot(
   target: AbsolutePath | null,
 ): Promise<CallSnapshot | undefined> {
   if (item.source !== 'builtin') return undefined
-  const file =
-    ['Write', 'Edit', 'Delete'].includes(item.originalName) && reversibility === 'snapshotted'
+  const file = ['Write', 'Edit', 'Delete'].includes(item.originalName)
   const bash = item.originalName === 'Bash'
   if (!file && !bash) return undefined
   if (file && target === null) throw new Error('snapshot promise requires a file target')
+  const status = ctx.host.snapshots.status(snapshotSessionId(ctx.sessionId, facts.entries))
+  if (file && reversibility !== 'snapshotted' && status !== 'tree' && status !== 'file-only')
+    return undefined
   const request = snapshotRequest({
     sessionId: ctx.sessionId,
     call: refOf(ctx, call),
@@ -884,7 +886,9 @@ async function perform(
   const running =
     q.snapshot !== undefined && ctx.signal.aborted
       ? Promise.resolve(ABORTED)
-      : q.snapshot?.request.path !== undefined && !q.snapshot.before.ok
+      : q.reversibility === 'snapshotted' &&
+          q.snapshot?.request.path !== undefined &&
+          !q.snapshot.before.ok
         ? Promise.resolve(executionFailure(SNAPSHOT_FAILED))
         : executor({
             item,
@@ -1433,12 +1437,10 @@ export async function judgeCall(
       : sessionGrants(grantFactsOf(facts.parentEntries ?? [])).get(
           grantKey(item.serverId, item.originalName, object),
         )
-  const grantFrom = ownGrant ?? inheritedGrant
-  const grantEntries = ownGrant === undefined ? (facts.parentEntries ?? []) : entries
-  const approval = grantEntries.find((entry) => entry.provenanceKey === grantFrom?.approvalKey)
-  const grantDecision = grantEntries.find(
-    (entry) => entry.provenanceKey === approval?.payload['decisionKey'],
-  )?.payload as PermissionDecidedPayload | undefined
+  const own = usableGrant(ownGrant, entries, item, reversibility)
+  const inherited = usableGrant(inheritedGrant, facts.parentEntries ?? [], item, reversibility)
+  const grantFrom = own?.source ?? inherited?.source
+  const grantDecision = own === undefined ? inherited?.decision : own.decision
   const decision = decide({
     call: inspected,
     callReason,
@@ -1468,9 +1470,7 @@ export async function judgeCall(
               kind: sessionGrantKindOf(object),
               grantFrom,
               ...(grantDecision?.sandbox === undefined ? {} : { sandbox: grantDecision.sandbox }),
-              ...(ownGrant === undefined && inheritedGrant !== undefined
-                ? { inherited: true as const }
-                : {}),
+              ...(own === undefined && inherited !== undefined ? { inherited: true as const } : {}),
             },
       approvalMode: 'manual',
     },
@@ -1822,6 +1822,36 @@ function failedStatusOf(decision: Decision): 'timeout' | 'error' | undefined {
   if (deciding.some((step) => step.status === 'ok')) return undefined
   const failed = deciding.find((step) => step.status !== 'ok')?.status
   return failed === 'timeout' || failed === 'error' ? failed : undefined
+}
+
+/** D61: an approval's file guarantee cannot silently weaken, for own and inherited grants alike. */
+function usableGrant(
+  source: GrantSource | undefined,
+  entries: readonly TapeEntry[],
+  item: ToolTableItem,
+  reversibility: Reversibility,
+) {
+  if (source === undefined) return undefined
+  const approval = entries.find(
+    (entry) =>
+      entry.name === 'tool/approval_resolved' && entry.provenanceKey === source.approvalKey,
+  )
+  const decision = entries.find(
+    (entry) =>
+      entry.name === 'tool/permission_decided' &&
+      entry.provenanceKey === approval?.payload['decisionKey'],
+  )?.payload as PermissionDecidedPayload | undefined
+  if (item.source === 'builtin' && ['Write', 'Edit', 'Delete'].includes(item.originalName)) {
+    const strength: Partial<Record<Reversibility, number>> = {
+      snapshotted: 2,
+      unknown: 1,
+      irreversible: 0,
+    }
+    const current = strength[reversibility]
+    const granted = decision === undefined ? undefined : strength[decision.reversibility]
+    if (current === undefined || granted === undefined || current < granted) return undefined
+  }
+  return { source, decision }
 }
 
 /** A child's workspace-sensitive grants carry a causal parent fact, never a wall-clock guess. */

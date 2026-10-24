@@ -52,7 +52,9 @@ const inputFor = (name: string) =>
     ? { command: 'echo snapshot' }
     : name === 'Edit'
       ? { file_path: FILE, old_string: 'before', new_string: 'after' }
-      : { file_path: FILE, content: 'after' }
+      : name === 'Delete'
+        ? { file_path: FILE }
+        : { file_path: FILE, content: 'after' }
 
 async function harness(
   o: { status?: SnapshotStatus; missing?: boolean; store?: (store: TapeStore) => TapeStore } = {},
@@ -81,7 +83,7 @@ async function harness(
       connector: loop.connector,
       log: (line) => logs.push(line),
     },
-    { tools: { Write: 'real', Edit: 'real', Bash: 'real', Agent: 'real' } },
+    { tools: { Write: 'real', Edit: 'real', Delete: 'real', Bash: 'real', Agent: 'real' } },
   )
   service.bindLoop(loop)
   await service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: WORK })
@@ -247,15 +249,118 @@ describe('05 execution snapshots', () => {
     },
   )
 
-  it('05 验收 9: a file call approved without coverage does not start promising snapshots later', async () => {
-    const h = await harness({ status: 'unavailable' })
-    const { pending } = await pause(h, 'Write')
-    expect(pending.card.reversibility).toBe('unknown')
-    h.memory.snapshots.setStatus(SESSION, 'tree')
+  it.each(
+    ['Write', 'Edit', 'Delete'].flatMap((name) =>
+      ['success', 'failure'].map((capture) => ({ name, capture })),
+    ),
+  )(
+    '05 验收 9: unpromised $name attempts a snapshot on recovery but still runs after $capture',
+    async ({ name, capture }) => {
+      const h = await harness({ status: 'unavailable' })
+      vi.spyOn(h.memory.snapshots, 'coverage').mockResolvedValue('none')
+      const { pending } = await pause(h, name)
+      const promised = pending.card.reversibility
+      expect(promised).toBe(name === 'Delete' ? 'irreversible' : 'unknown')
+      h.memory.snapshots.setStatus(SESSION, 'tree')
+      if (capture === 'failure') h.memory.snapshots.failNextTake('error')
+      await finish(h, pending)
+      expect(h.take).toHaveBeenCalled()
+      expect(await result(h)).toMatchObject({ isError: false })
+      const content =
+        name === 'Delete'
+          ? await h.memory.fs.identity(FILE)
+          : await h.memory.fs.readFile(FILE, { encoding: 'utf8' })
+      expect(content).toBe(name === 'Delete' ? null : 'after')
+      const snapshots = (await h.entries()).filter((e) => e.name === 'fs/snapshot_created')
+      expect(snapshots.map((e) => e.payload['moment'])).toEqual(
+        capture === 'success' ? ['before-call', 'after-call'] : [],
+      )
+      expect(await outcome(h)).toMatchObject({ reversibility: promised, state: 'completed' })
+      expect((await outcome(h))?.['snapshotId']).toBe(snapshots[0]?.payload['snapshotId'])
+    },
+  )
+
+  it.each(['Edit', 'Delete'])(
+    '05 验收 2: %s leaves every byte untouched if its promised snapshot fails',
+    async (name) => {
+      const h = await harness()
+      const { pending } = await pause(h, name)
+      expect(pending.card.reversibility).toBe('snapshotted')
+      const before = await h.memory.fs.identity(FILE)
+      const write = vi.spyOn(h.memory.fs, 'writeFile')
+      const remove = vi.spyOn(h.memory.fs, 'remove')
+      h.memory.snapshots.failNextTake('error')
+      await finish(h, pending)
+      expect(write).not.toHaveBeenCalled()
+      expect(remove).not.toHaveBeenCalled()
+      expect(await h.memory.fs.identity(FILE)).toEqual(before)
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before')
+      expect(await result(h)).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: SNAPSHOT_FAILED }],
+      })
+      expect(await outcome(h)).toMatchObject({ state: 'completed' })
+    },
+  )
+
+  it.each(['Write', 'Edit', 'Delete'])(
+    '05 验收 1、9: %s approved without coverage captures in file-only state',
+    async (name) => {
+      const h = await harness({ status: 'unavailable' })
+      vi.spyOn(h.memory.snapshots, 'coverage').mockResolvedValue('none')
+      const { pending } = await pause(h, name)
+      const promised = pending.card.reversibility
+      h.memory.snapshots.setStatus(SESSION, 'file-only')
+      await finish(h, pending)
+      expect(await result(h)).toMatchObject({ isError: false })
+      const content =
+        name === 'Delete'
+          ? await h.memory.fs.identity(FILE)
+          : await h.memory.fs.readFile(FILE, { encoding: 'utf8' })
+      expect(content).toBe(name === 'Delete' ? null : 'after')
+      const entries = await h.entries()
+      const snapshots = entries.filter((e) => e.name === 'fs/snapshot_created')
+      expect(snapshots.map((e) => [e.payload['moment'], e.payload['scope']])).toEqual([
+        ['before-call', 'file'],
+        ['after-call', 'file'],
+      ])
+      expect(snapshots[0]!.entryId).toBeLessThan(
+        entries.find((e) => e.name === 'tool/result')!.entryId,
+      )
+      expect(await outcome(h)).toMatchObject({
+        reversibility: promised,
+        snapshotId: snapshots[0]!.payload['snapshotId'],
+      })
+    },
+  )
+
+  it('05 验收 3: Bash takes a tree snapshot immediately before and after dispatch', async () => {
+    const h = await harness()
+    const { pending } = await pause(h, 'Bash')
     await finish(h, pending)
-    expect(h.take).not.toHaveBeenCalled()
-    expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('after')
-    expect(await outcome(h)).not.toHaveProperty('snapshotId')
+    expect(h.spawn).toHaveBeenCalledOnce()
+    expect(h.take.mock.calls.map(([q]) => [q.moment, q.path])).toEqual([
+      ['before-call', undefined],
+      ['after-call', undefined],
+    ])
+    expect(
+      (await h.entries())
+        .filter((e) => e.name === 'fs/snapshot_created')
+        .map((e) => e.payload['scope']),
+    ).toEqual(['tree', 'tree'])
+  })
+
+  it('05 验收 30: rm is irreversible and each allow applies to that command call only', async () => {
+    const h = await harness()
+    const input = { command: 'rm /work/a.txt' }
+    const { pending } = await pause(h, 'Bash', input)
+    expect(pending.card.reversibility).toBe('irreversible')
+    await finish(h, pending)
+    const grant = (await h.entries()).find((e) => e.name === 'tool/approval_resolved')
+    expect(grant?.payload['grant']).toMatchObject({ scope: 'once' })
+    const again = await pause(h, 'Bash', input)
+    expect(again.pending.card.reversibility).toBe('irreversible')
+    expect(h.spawn).toHaveBeenCalledOnce()
   })
 
   it.each(['Write', 'Edit'])(

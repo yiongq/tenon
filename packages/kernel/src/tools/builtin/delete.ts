@@ -14,7 +14,7 @@ export const DELETE_TEXTS = {
   notFound: FILE_TEXTS.notFound,
   isDirectory: FILE_TEXTS.isDirectory,
   parentChanged: 'The parent folder changed after approval. Nothing was deleted.',
-  targetChanged: 'The file became a symbolic link after approval. Nothing was deleted.',
+  targetChanged: 'The file or link changed after approval. Nothing was deleted.',
   deleted: 'Deleted {path}.',
   hostError: 'Deleting {path} failed: {message}',
 } as const
@@ -56,11 +56,7 @@ export const deleteExecutor: ToolExecutor = async (q) => {
     const guarded = await snapshotGuard(q)
     if ('failure' in guarded) return guarded.failure
     if (guarded.identity === null) return failed(fill(DELETE_TEXTS.notFound, { path }))
-    if (
-      guarded.identity.kind === 'link' &&
-      q.fileTarget !== undefined &&
-      q.fileTarget?.kind !== 'link'
-    )
+    if (q.fileTarget !== undefined && guarded.identity.kind !== q.fileTarget?.kind)
       return failed(DELETE_TEXTS.targetChanged)
     if (guarded.identity.kind === 'dir') return failed(fill(DELETE_TEXTS.isDirectory, { path }))
     if (q.signal.aborted) return ABORTED

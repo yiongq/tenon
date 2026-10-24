@@ -112,9 +112,14 @@ export async function locatePath(
     tool === 'Delete' && leaf !== undefined
       ? await resolvePath(fs, fromParts({ ...parts, segments: parts.segments.slice(0, -1) }))
       : await resolvePath(fs, written)
-  const real =
+  let real =
     tool === 'Delete' && leaf !== undefined ? joinPath(resolution.path, leaf) : resolution.path
   if (resolution.alias === true) return { real, place: 'protected' }
+  if (tool === 'Delete' && leaf !== undefined && resolution.resolved) {
+    const actual = await deleteLeafPath(fs, resolution.path, leaf)
+    if (actual === null) return { real, place: 'protected' }
+    real = actual
+  }
   const place = resolution.resolved ? placeOf(real, scope) : 'outside'
   if (place === 'protected' || isProtectedFile(written, scope.protectedFiles))
     return { real, place: 'protected' }
@@ -137,6 +142,29 @@ export async function locatePath(
     }
   }
   return { real, place }
+}
+
+/** Preserve a Delete leaf's directory-entry spelling without resolving the leaf link. */
+async function deleteLeafPath(
+  fs: HostFs,
+  parent: AbsolutePath,
+  leaf: string,
+): Promise<AbsolutePath | null> {
+  const path = joinPath(parent, leaf)
+  try {
+    // A missing parent remains an execution-time missing target, rather than a failed listing.
+    if ((await fs.identity(parent)) === null) return path
+    const names = await fs.readdir(parent)
+    if (names.includes(leaf)) return path
+    const folded = names.filter((name) => foldCase(name) === foldCase(leaf))
+    if (folded.length === 0) return path
+    // lstat can find an unlisted spelling only when the volume accepts that alias. On a
+    // case-sensitive volume an absent spelling must stay absent, never select a similar name.
+    if ((await fs.identity(path)) === null) return path
+    return folded.length === 1 ? joinPath(parent, folded[0]!) : null
+  } catch {
+    return null
+  }
 }
 
 /** Spec 05: shared names compare by folded path segments, never string prefixes. */

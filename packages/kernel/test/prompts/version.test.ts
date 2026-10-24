@@ -58,7 +58,7 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   // Spec 04: sandbox notes, release provenance, restrictions and Linux placeholders.
   11: '077e477e149a2452302eecdad857192953a765b8b49eca56a5b37c5f6b247a95',
   // Spec 05: file guard notes and Delete's spec, result templates and errors.
-  12: '430552aca456d3be6058c5f8473b0ef3256a8c7d48ecc14fcde514b9e89582b1',
+  12: 'a37b8c0d7be352c28ea5c2b3d4e7f1fadd36a6dea85c42c0524b40eadeb91589',
 }
 
 describe('the version gate', () => {
@@ -257,6 +257,12 @@ describe('the file prompt layer', () => {
         hardlinkChanged: HARDLINK_CHANGED,
       },
     })
+  })
+
+  it('05 验收 36: Delete explains a leaf type change in either direction', () => {
+    expect(DELETE_TEXTS.targetChanged).toBe(
+      'The file or link changed after approval. Nothing was deleted.',
+    )
   })
 
   it('05 验收 36: hashes every file guard note, Delete description, parameter description and result template', () => {
