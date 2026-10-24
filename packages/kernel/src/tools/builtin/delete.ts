@@ -1,5 +1,6 @@
 /** Spec 05 §Delete 工具: remove one leaf, with the parent resolved and the leaf left literal. */
-import { resolvePath } from '../../permission/workspace.js'
+import { pathParts } from '../../host/path.js'
+import { deleteLeafPath, resolvePath } from '../../permission/workspace.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
 import { snapshotGuard } from '../snapshot-guard.js'
@@ -53,6 +54,9 @@ export const deleteExecutor: ToolExecutor = async (q) => {
     const resolved = await resolvePath(q.fs, parent)
     if (q.signal.aborted) return ABORTED
     if (!resolved.resolved || resolved.path !== parent) return failed(DELETE_TEXTS.parentChanged)
+    const leaf = pathParts(path).segments.at(-1)!
+    if ((await deleteLeafPath(q.fs, parent, leaf)) !== path)
+      return failed(DELETE_TEXTS.targetChanged)
     const guarded = await snapshotGuard(q)
     if ('failure' in guarded) return guarded.failure
     if (guarded.identity === null) return failed(fill(DELETE_TEXTS.notFound, { path }))

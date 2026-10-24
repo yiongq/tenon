@@ -363,7 +363,7 @@ describe('05 execution snapshots', () => {
     expect(h.spawn).toHaveBeenCalledOnce()
   })
 
-  it.each(['Write', 'Edit'])(
+  it.each(['Write', 'Edit', 'Delete'])(
     '05 验收 42: %s refuses a target modified after capture',
     async (name) => {
       const h = await harness()
@@ -400,8 +400,55 @@ describe('05 execution snapshots', () => {
     })
     await finish(h, pending)
     expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('external new file')
-    expect(await result(h)).toMatchObject({ isError: true })
+    expect(await result(h)).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: SNAPSHOT_CHANGED }],
+    })
   })
+
+  it('05 验收 42: a target disappearing after capture returns SNAPSHOT_CHANGED and is not recreated', async () => {
+    const h = await harness()
+    const { pending } = await pause(h, 'Write')
+    h.take.mockImplementation(async (request, signal) => {
+      const taken = await h.takeReal(request, signal)
+      if (request.moment === 'before-call') await h.memory.fs.remove(FILE)
+      return taken
+    })
+    await finish(h, pending)
+    expect(await result(h)).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: SNAPSHOT_CHANGED }],
+    })
+    expect(await outcome(h)).toMatchObject({ state: 'completed' })
+    expect(await h.memory.fs.identity(FILE)).toBeNull()
+  })
+
+  it.each(['Write', 'Edit', 'Delete'])(
+    '05 验收 42: %s refuses a same-size rewrite changing only nanosecond mtime after capture',
+    async (name) => {
+      const h = await harness()
+      const { pending } = await pause(h, name)
+      const before = await h.memory.fs.identity(FILE)
+      let after = before
+      h.take.mockImplementation(async (request, signal) => {
+        const taken = await h.takeReal(request, signal)
+        if (request.moment === 'before-call') {
+          h.memory.advance(1)
+          await h.memory.fs.writeFile(FILE, 'extern')
+          after = await h.memory.fs.identity(FILE)
+        }
+        return taken
+      })
+      await finish(h, pending)
+      expect(after).toEqual({ ...before!, mtimeNs: before!.mtimeNs + 1_000_000n })
+      expect(await result(h)).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: SNAPSHOT_CHANGED }],
+      })
+      expect(await outcome(h)).toMatchObject({ state: 'completed' })
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('extern')
+    },
+  )
 
   it.each(['Write', 'Bash'])(
     '05 验收 43: stopping during %s capture writes neither snapshot facts nor the target or command',

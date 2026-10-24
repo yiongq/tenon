@@ -117,8 +117,8 @@ export async function locatePath(
   if (resolution.alias === true) return { real, place: 'protected' }
   if (tool === 'Delete' && leaf !== undefined && resolution.resolved) {
     const actual = await deleteLeafPath(fs, resolution.path, leaf)
-    if (actual === null) return { real, place: 'protected' }
-    real = actual
+    // An ambiguous leaf is refused by Delete at execution, not classified as a protected place.
+    real = actual ?? real
   }
   const place = resolution.resolved ? placeOf(real, scope) : 'outside'
   if (place === 'protected' || isProtectedFile(written, scope.protectedFiles))
@@ -145,7 +145,7 @@ export async function locatePath(
 }
 
 /** Preserve a Delete leaf's directory-entry spelling without resolving the leaf link. */
-async function deleteLeafPath(
+export async function deleteLeafPath(
   fs: HostFs,
   parent: AbsolutePath,
   leaf: string,
@@ -154,7 +154,15 @@ async function deleteLeafPath(
   try {
     // A missing parent remains an execution-time missing target, rather than a failed listing.
     if ((await fs.identity(parent)) === null) return path
-    const names = await fs.readdir(parent)
+    let names: readonly string[]
+    try {
+      names = await fs.readdir(parent)
+    } catch {
+      // Traversal may be allowed without listing. Keep the spelling and let lstat below (and
+      // the executor) distinguish an existing leaf, a missing leaf and a host access error.
+      await fs.identity(path)
+      return path
+    }
     if (names.includes(leaf)) return path
     const folded = names.filter((name) => foldCase(name) === foldCase(leaf))
     if (folded.length === 0) return path

@@ -16,7 +16,7 @@ import {
   scriptedTurn,
   stopEvent,
 } from '../../src/testing/index.js'
-import { FILE_CHANGED, HARDLINK_CHANGED } from '../../src/tools/snapshot-guard.js'
+import { FILE_CHANGED, HARDLINK_CHANGED, SNAPSHOT_FAILED } from '../../src/tools/snapshot-guard.js'
 import { DELETE_TEXTS } from '../../src/tools/builtin/delete.js'
 import { pendingCard } from './support.js'
 
@@ -160,6 +160,93 @@ async function refused(h: Harness, text: string) {
 }
 
 describe('05 persisted file stamps', () => {
+  it.each([
+    { changed: FILE, restart: false },
+    { changed: absolutePath('/work/b.txt'), restart: false },
+    { changed: FILE, restart: true },
+    { changed: absolutePath('/work/b.txt'), restart: true },
+  ])(
+    '05 验收 23、24: parallel Reads keep separate stamps for $changed after restart=$restart',
+    async ({ changed, restart }) => {
+      const h = await harness()
+      const second = absolutePath('/work/b.txt')
+      await h.memory.fs.writeFile(second, 'different size')
+      h.memory.symlink(absolutePath('/work/alias'), FILE)
+      h.provider.script([
+        ...['/work/alias', second].flatMap((path, index): StreamEvent[] => [
+          { type: 'tool-call-start', index, id: `read-${index}`, name: 'Read' },
+          {
+            type: 'tool-call-end',
+            index,
+            id: `read-${index}`,
+            name: 'Read',
+            input: { file_path: path },
+          },
+        ]),
+        { type: 'usage', usage },
+        stopEvent('tool-use', 'tool_use'),
+      ])
+      h.provider.script(done())
+      const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'read both' })
+      if (sent.status !== 'started') throw new Error('run did not start')
+      expect((await h.loop.runEnded()).reason).toEqual({ code: 'completed' })
+      expect(
+        (await h.entries())
+          .filter((e) => e.name === 'execution/tool_outcome')
+          .map((e) => e.payload['file']),
+      ).toEqual([
+        { mtimeNs: '0', size: 6 },
+        { mtimeNs: '0', size: 14 },
+      ])
+      const current = restart ? runtime(h.memory, h.store, 1000) : h
+      if (restart) await current.service.recover()
+      await h.memory.fs.writeFile(changed, 'outside edit')
+      await invoke(current, 'Write', { file_path: changed, content: 'overwrite' })
+      await refused(current, FILE_CHANGED)
+      expect(await h.memory.fs.readFile(changed, { encoding: 'utf8' })).toBe('outside edit')
+    },
+  )
+
+  it.each(['Write', 'Edit'])(
+    '05 验收 23: a refused %s keeps the Read stamp and refuses a blind retry',
+    async (name) => {
+      const h = await harness()
+      await invoke(h, 'Read')
+      await h.memory.fs.writeFile(FILE, 'before outside edit')
+      await invoke(h, name)
+      await refused(h, FILE_CHANGED)
+      await invoke(h, name)
+      await refused(h, FILE_CHANGED)
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before outside edit')
+      await invoke(h, 'Read')
+      await invoke(h, name)
+      expect(await result(h)).toMatchObject({ isError: false })
+    },
+  )
+
+  it('05 验收 23: Read past the end completes with is_error and no Tape stamp', async () => {
+    const h = await harness()
+    await invoke(h, 'Read', { file_path: FILE, offset: 99 })
+    await refused(h, 'The file has 1 lines, so there is nothing to read from line 99.')
+    expect(await outcome(h)).not.toHaveProperty('file')
+  })
+
+  it.each(['snapshot failure', 'host write failure'] as const)(
+    '05 验收 23: a %s cannot clear the Read stamp before a blind retry',
+    async (failure) => {
+      const h = await harness(failure === 'snapshot failure' ? 'tree' : 'unavailable')
+      await invoke(h, 'Read')
+      if (failure === 'snapshot failure') h.memory.snapshots.failNextTake('error')
+      else vi.spyOn(h.memory.fs, 'writeFile').mockRejectedValueOnce(new Error('disk full'))
+      await invoke(h, 'Write')
+      if (failure === 'snapshot failure') await refused(h, SNAPSHOT_FAILED)
+      else await refused(h, `Writing ${FILE} failed: disk full`)
+      await h.memory.fs.writeFile(FILE, 'before outside edit')
+      await invoke(h, 'Write')
+      await refused(h, FILE_CHANGED)
+      expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before outside edit')
+    },
+  )
   it('05 验收 23: Read, Write and Edit persist the stamp of their successful file result', async () => {
     const h = await harness()
     const read = vi.spyOn(h.memory.fs.guarded, 'read')
@@ -328,7 +415,25 @@ describe('05 persisted file stamps', () => {
     expect(await read(FILE, { encoding: 'utf8' })).toBe('after')
   })
 
-  it.each(['Write', 'Edit'])(
+  it('05 验收 1、50: Edit catches EEXIST at exclusive create without touching the new file', async () => {
+    const h = await harness()
+    const read = h.memory.fs.readFile.bind(h.memory.fs)
+    vi.spyOn(h.memory.fs, 'readFile').mockImplementationOnce(async (path, opts) => {
+      const data = await read(path, opts)
+      await h.memory.fs.remove(path)
+      return data
+    })
+    const create = h.memory.fs.guarded.create
+    vi.spyOn(h.memory.fs.guarded, 'create').mockImplementation(async (path, data) => {
+      await h.memory.fs.writeFile(path, 'external new file')
+      await create(path, data)
+    })
+    await invoke(h, 'Edit')
+    await refused(h, FILE_CHANGED)
+    expect(await read(FILE, { encoding: 'utf8' })).toBe('external new file')
+  })
+
+  it.each(['Write', 'Edit', 'Delete'])(
     '05 验收 25: %s refuses a second name added after approval during capture',
     async (name) => {
       const h = await harness('tree')
@@ -514,6 +619,10 @@ describe('05 Delete execution', () => {
       const remove = vi.spyOn(h.memory.fs, 'remove')
       await invoke(h, 'Delete')
       expect(await result(h)).toMatchObject({ isError: true })
+      await refused(
+        h,
+        kind === 'missing' ? `Nothing exists at ${FILE}.` : `${FILE} is a folder, not a file.`,
+      )
       expect(await outcome(h)).toMatchObject({ state: 'completed' })
       expect(remove).not.toHaveBeenCalled()
       expect((await h.memory.fs.identity(FILE))?.kind ?? null).toBe(
@@ -702,11 +811,33 @@ describe('05 Delete execution', () => {
       identity(path === written ? first : path),
     )
     await invoke(h, 'Delete', { file_path: written })
-    expect(await outcome(h)).toMatchObject({ state: 'not-run' })
+    await refused(h, DELETE_TEXTS.targetChanged)
     expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))).toBeNull()
     expect(await h.memory.fs.readFile(first, { encoding: 'utf8' })).toBe('first')
     expect(await h.memory.fs.readFile(second, { encoding: 'utf8' })).toBe('second')
   })
+
+  it.each(['existing', 'missing'] as const)(
+    '05 验收 30: Delete with an unreadable parent listing treats an %s leaf normally',
+    async (kind) => {
+      const h = await harness()
+      if (kind === 'missing') await h.memory.fs.remove(FILE)
+      vi.spyOn(h.memory.fs, 'readdir').mockRejectedValue(
+        Object.assign(new Error('cannot list'), { code: 'EACCES' }),
+      )
+      const pending = await start(h, 'Delete')
+      expect(pending?.card).toMatchObject({
+        target: { type: 'path', path: FILE },
+        reason: 'irreversible',
+      })
+      if (pending === null) throw new Error('approval missing')
+      h.provider.script(done())
+      await finish(h, pending)
+      expect(await outcome(h)).toMatchObject({ state: 'completed' })
+      expect(await result(h)).toMatchObject({ isError: kind === 'missing' })
+      expect(await h.memory.fs.identity(FILE)).toBeNull()
+    },
+  )
 
   it.each(['Write', 'Edit', 'Delete'])(
     '05 验收 25、30: a hardlink inside the own spill remains blocked for %s',

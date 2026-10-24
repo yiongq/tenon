@@ -554,6 +554,18 @@ describe('the spec’s two worked examples (旧 152)', () => {
 })
 
 describe('F9 and the auto mode', () => {
+  it.each(['Edit', 'Delete'])(
+    '05 验收 29: auto mode allows covered workspace %s through the approval-mode layer',
+    (name) => {
+      const decision = run(builtin(name), {
+        place: 'workspace',
+        approvalMode: 'auto',
+        reversibility: { value: 'snapshotted', source: 'host' },
+      })
+      expect(verdictOf(decision)).toEqual(['allow', 'approval-mode'])
+      expect(decision.summary.code).toBe('auto-mode')
+    },
+  )
   it('02 不变量 18: asks or denies on an inspector even under a session, domain or search grant, or always-allow', () => {
     // 不变量 18: 本会话授权、域名授权或总是允许在场时，inspector 说问就出卡、说拒就拒.
     for (const [tool, over] of [
