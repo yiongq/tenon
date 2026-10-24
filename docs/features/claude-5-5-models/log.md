@@ -176,6 +176,6 @@
 - [建议] `resolveChoice` 有一支走不到、`'ollama'` 字面量、`menuRow` 的 `family` 与 `familyNameKey` 不同有同无 · 已修 021f4a8
 - [建议] 保守合成对菜单 ① 也生效，spec 只写了上一个 Run 的路径 · 不修：照同一读法、不放宽，现行做法记在上面
 - [建议] http-connection.test.ts「03 验收 30 (HTTP)」偶发红只有单独跑过的证据 · 不修：与本 spec 无关，全量负载下偶发，单独连跑 5 次都过；再红时先在 dev 上复现
-- [建议] e2e（model-menu、provider-settings、recovery）还没跑过 · 交 owner：不需要 owner 动手，CI 的 e2e 绿之前自动合并不会合入；记在这里备查
+- [建议] e2e（model-menu、provider-settings、recovery）还没跑过 · 不修：由本段 PR 的 CI e2e 首跑，e2e 绿之前自动合并不会合入
 结论：通过
 突变：第 9 步 13 个、第 8 步 ⑤⑥、第 10 步 4 个，共 19 个，全部变红，0 个存活
