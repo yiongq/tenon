@@ -16,6 +16,13 @@ import {
 import { currentPromptLayer, promptLayerHash, promptLayerHashOf } from '../../src/prompts/layer.js'
 import type { PromptLayer } from '../../src/prompts/layer.js'
 import { BASH_TOOL } from '../../src/tools/builtin/bash.js'
+import { DELETE_TEXTS, DELETE_TOOL } from '../../src/tools/builtin/delete.js'
+import {
+  FILE_CHANGED,
+  HARDLINK_CHANGED,
+  SNAPSHOT_CHANGED,
+  SNAPSHOT_FAILED,
+} from '../../src/tools/snapshot-guard.js'
 
 /**
  * Every released prompt layer, by version: append a row, never edit one. Eval records and the
@@ -50,11 +57,13 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   10: '05155e927439d95459172208e8ca100a31515a464a6fdf7a2d39d6bbf2a7130c',
   // Spec 04: sandbox notes, release provenance, restrictions and Linux placeholders.
   11: '077e477e149a2452302eecdad857192953a765b8b49eca56a5b37c5f6b247a95',
+  // Spec 05: file guard notes and Delete's spec, result templates and errors.
+  12: '430552aca456d3be6058c5f8473b0ef3256a8c7d48ecc14fcde514b9e89582b1',
 }
 
 describe('the version gate', () => {
-  it('04 验收 24 (version): PROMPT_LAYER_VERSION is 11 and the hash matches', () => {
-    expect(PROMPT_LAYER_VERSION).toBe(11)
+  it('04 验收 24 (version): PROMPT_LAYER_VERSION is 12 and the hash matches', () => {
+    expect(PROMPT_LAYER_VERSION).toBe(12)
     expect(promptLayerHash()).toBe(PROMPT_LAYER_HASH)
   })
 
@@ -228,5 +237,71 @@ describe('the sandbox prompt layer (04 修补 9; 读法 30、52)', () => {
       expect(text).toMatch(/^[ -~\n]+$/u)
     }
     expect(Object.keys(release).toSorted()).toEqual(['domain', 'path', 'rerun', 'wrap'])
+  })
+})
+
+describe('the file prompt layer', () => {
+  it('05 验收 36: registers Delete specs, result templates and all four file guard notes', () => {
+    const layer = currentPromptLayer()
+    const deletion = layer.tools.find((tool) => tool.name === 'Delete')
+    expect(deletion).toEqual({
+      name: 'Delete',
+      variants: [{ variant: 'default', spec: DELETE_TOOL.spec({ domainFilter: false }) }],
+      texts: DELETE_TEXTS,
+    })
+    expect(layer.MODEL_NOTES).toMatchObject({
+      file: {
+        changed: FILE_CHANGED,
+        snapshotChanged: SNAPSHOT_CHANGED,
+        snapshotFailed: SNAPSHOT_FAILED,
+        hardlinkChanged: HARDLINK_CHANGED,
+      },
+    })
+  })
+
+  it('05 验收 36: hashes every file guard note, Delete description, parameter description and result template', () => {
+    const layer = currentPromptLayer()
+    const base = promptLayerHashOf(layer)
+    const notes = MODEL_NOTES.file
+    const variants: PromptLayer[] = []
+    for (const [key, value] of Object.entries(notes)) {
+      variants.push({
+        ...layer,
+        MODEL_NOTES: { ...MODEL_NOTES, file: { ...notes, [key]: `${value}!` } },
+      })
+    }
+    const deletion = layer.tools.find((tool) => tool.name === 'Delete')!
+    const spec = DELETE_TOOL.spec({ domainFilter: false })
+    const properties = spec.inputSchema['properties'] as Record<string, Record<string, unknown>>
+    const filePath = properties['file_path']!
+    const specs = [
+      { ...spec, description: `${spec.description}!` },
+      {
+        ...spec,
+        inputSchema: {
+          ...spec.inputSchema,
+          properties: {
+            ...properties,
+            file_path: { ...filePath, description: `${String(filePath['description'])}!` },
+          },
+        },
+      },
+    ]
+    const withDelete = (changed: PromptLayer['tools'][number]): PromptLayer => ({
+      ...layer,
+      tools: layer.tools.map((tool) => (tool.name === 'Delete' ? changed : tool)),
+    })
+    for (const changed of specs) {
+      variants.push(
+        withDelete({
+          ...deletion,
+          variants: [{ variant: 'default', spec: changed }],
+        }),
+      )
+    }
+    for (const [key, value] of Object.entries(DELETE_TEXTS)) {
+      variants.push(withDelete({ ...deletion, texts: { ...DELETE_TEXTS, [key]: `${value}!` } }))
+    }
+    for (const variant of variants) expect(promptLayerHashOf(variant)).not.toBe(base)
   })
 })

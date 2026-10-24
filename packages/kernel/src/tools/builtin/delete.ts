@@ -8,6 +8,7 @@ import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
 import { messageOf, parentOf } from './write.js'
 
+/** Delete's result templates and errors (§提示层: they are part of the layer). */
 export const DELETE_TEXTS = {
   notAbsolute: NOT_ABSOLUTE,
   notFound: FILE_TEXTS.notFound,

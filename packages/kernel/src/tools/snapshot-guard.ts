@@ -1,13 +1,15 @@
 /** Spec 05 §一直要成立的规矩: compare the captured identity immediately before file access. */
 import type { AbsolutePath, FileIdentity, HostFs } from '../host/adapter.js'
 import type { ToolOutcomePayload } from '../tape/entry.js'
+import { MODEL_NOTES } from '../prompts/index.js'
 import type { ExecuteQuery, ToolExecution } from './executor.js'
 import { ABORTED, failed } from './builtin/files.js'
 
-// Registered prompt-layer templates are updated together in 05 step 11.
-export const SNAPSHOT_FAILED = 'Tenon could not take the promised snapshot. Nothing was written.'
-export const SNAPSHOT_CHANGED =
-  'The file changed after its snapshot was taken. Nothing was written. Read the file again before retrying.'
+/** Fixed English from the prompt layer (spec 05 §提示层与评测). */
+export const SNAPSHOT_FAILED = MODEL_NOTES.file.snapshotFailed
+export const SNAPSHOT_CHANGED = MODEL_NOTES.file.snapshotChanged
+export const FILE_CHANGED = MODEL_NOTES.file.changed
+export const HARDLINK_CHANGED = MODEL_NOTES.file.hardlinkChanged
 
 function sameIdentity(a: FileIdentity | null, b: FileIdentity | null): boolean {
   if (a === null || b === null) return a === b
@@ -20,12 +22,6 @@ function sameIdentity(a: FileIdentity | null, b: FileIdentity | null): boolean {
     a.dev === b.dev
   )
 }
-
-// 05 step 11 registers these runtime notes with the prompt layer.
-export const FILE_CHANGED =
-  'The file changed since it was last read or written. Nothing was written. Read the file again with Read before retrying.'
-export const HARDLINK_CHANGED =
-  'The file now has multiple names. Nothing was written or deleted. Ask for approval again before retrying.'
 
 export async function snapshotGuard(
   q: ExecuteQuery,
