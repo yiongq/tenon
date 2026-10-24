@@ -192,3 +192,19 @@
 - [建议] 恢复时比较的程序名取自记录自己的 `executable`，没有绑定到配置的 git · 不修：旧代码就如此，`process.json` 在 profile 目录里、受限命令写不进，没有提权路径；第二段碰 `snapshot-git.ts` 时加上，记在 plan 的 Open
 - 只比程序名之后，误杀需要另一个以 `git` 为名的进程组组长在记录时刻前后 3 秒内复用同一个 PID，评审判断不现实；Linux 一侧的真进程用例 lead 在两台 Lima 上跑过、通过。
 - 分支在 acd2155 上 G 全过，T 4901 过、113 跳过。
+
+## 实施 · 2026-10-24（PR #72 的 CI）
+
+- e2e 红在 `write-card.spec.ts` 的硬链接基线（旧 51）：它记的是 05 之前的行为（按普通工作区写入问、本会话允许），注释写明行为一改就更新它。照验收 25 改成 `sensitive-path`、类别 `hardlink`、只放行这一次，批准后写入照旧落到外面那个文件（97354f7）。
+- spec-check 的 `--red-on-base` 在目标分支的旧代码上跑测试就红了，日志不给是哪条；lead 照它的做法（临时 worktree、`install --ignore-scripts`、不 build）在 macOS 与 Ubuntu 24.04 上重放 dev，都全绿，按偶发处理，推送后看重跑。
+
+测试改动：apps/desktop/e2e/write-card.spec.ts · 硬链接写入（旧 51） · 05 验收 25 把基线从 `default`、本会话允许改成 `sensitive-path`、只放行这一次
+
+## 评审 · 2026-10-24 · 审过 97354f7
+
+结论：通过    评审：新上下文的子 agent（Opus），只审 e2e 基线这一处；对照 kernel 的 `locatePath`、`decide`、`answerScope` 与 renderer 的 `reasonKey` 读代码，相关单测 160 条全过
+突变：无（只改 e2e；对应的生产路径由 `sensitive.test.ts`、`renderer-approval-card.test.ts` 守）
+发现：
+- [建议] 标题写「每次问」，用例只问了一次 · 不修：「不认已有授权」由 kernel `sensitive.test.ts` 守，这条 e2e 断言了只放行这一次
+- [建议] 没断言卡上不写「有快照」 · 不修：第 15 步接上「有快照」那句时在这条用例里补
+- [建议] `packages/kernel/src/permission/workspace.ts` 文件头仍说硬链接「留给阶段 4 定」 · 不修：不在本提交，第二段第 7 步改这个文件时一起改
