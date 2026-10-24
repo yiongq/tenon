@@ -2033,7 +2033,7 @@ const EXPECTED_DEFAULT_EXCLUDES = [
   '.DS_Store',
   'Thumbs.db',
 ] as const
-it('05 验收 7、8: default excludes exactly match the documented eleven names', () => {
+it('05 验收 7、8: default excludes exactly match the eleven names this test pins', () => {
   expect(DEFAULT_EXCLUDES).toEqual(EXPECTED_DEFAULT_EXCLUDES)
 })
 it.each(EXPECTED_DEFAULT_EXCLUDES)(

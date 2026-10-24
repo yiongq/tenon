@@ -2,6 +2,7 @@
 import type { ChildHandle, HostProcess } from '@tenon-app/kernel'
 import { describe, expect, it, vi } from 'vitest'
 import { SnapshotGit } from '../src/main/host/snapshot-git.js'
+import { createHostProcess } from '../src/main/host/process.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 
 function stream(text: string): ReadableStream<Uint8Array> {
@@ -58,7 +59,7 @@ describe('05 git stdin', () => {
   )
 })
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 it.each(['exact', 'prefix', 'truncated', 'group-changed'])(
@@ -153,6 +154,7 @@ it.each([
   'reused-pid',
   'group-changed',
   'other-executable',
+  'xcrun-shim',
   'truncated',
   'within-tolerance',
 ] as const)(
@@ -191,12 +193,12 @@ it.each([
       if (actual[0] === '/bin/kill') return ''
       return kind === 'truncated'
         ? '12345 12345 00:10\n'
-        : ` 12345 ${kind === 'group-changed' ? 67890 : 12345} 00:10 ${kind === 'other-executable' ? '/bin/sleep' : executable}\n`
+        : ` 12345 ${kind === 'group-changed' ? 67890 : 12345} 00:10 ${kind === 'other-executable' ? '/bin/sleep' : kind === 'xcrun-shim' ? '/Library/Developer/CommandLineTools/usr/bin/git' : executable}\n`
     })
     try {
       await git.recoverProcess(repo, new AbortController().signal)
       expect(command.mock.calls.filter(([args]) => args[0] === '/bin/kill')).toHaveLength(
-        kind === 'exact' || kind === 'within-tolerance' ? 1 : 0,
+        kind === 'exact' || kind === 'within-tolerance' || kind === 'xcrun-shim' ? 1 : 0,
       )
       await expect(readFile(join(repo, 'process.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
@@ -249,3 +251,60 @@ it('05 验收 45: a tracked process records its absolute executable and start ti
     await rm(repo, { recursive: true, force: true })
   }
 })
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// macOS's /usr/bin/git is the xcrun shim, so ps reports another git path for the same PID;
+// Linux checks /proc/<pid>/cmdline. Windows has no snapshot git.
+it.skipIf(process.platform === 'win32')(
+  '05 验收 45: startup recovery ends a real leftover git launched through /usr/bin/git',
+  async () => {
+    const parent = await realpath(await mkdtemp(join(tmpdir(), 'tenon-process-')))
+    const repo = join(parent, 'Application Support', 'repo')
+    await mkdir(repo, { recursive: true })
+    const ports = { process: createHostProcess(), sandbox: new PassthroughSandbox(() => {}) }
+    const record = join(repo, 'process.json')
+    const work = new SnapshotGit(ports)
+      .command(
+        ['/usr/bin/git', `--git-dir=${repo}`, '-c', 'alias.zz=!sleep 30', 'zz'],
+        repo,
+        repo,
+        new AbortController().signal,
+        undefined,
+        record,
+      )
+      .then(
+        () => 'finished',
+        () => 'ended',
+      )
+    let pid: number | undefined
+    try {
+      const leader = (
+        await vi.waitFor(
+          async () => JSON.parse(await readFile(record, 'utf8')) as { pid: number },
+          { timeout: 5000 },
+        )
+      ).pid
+      pid = leader
+      expect(alive(leader)).toBe(true)
+      // A fresh instance plays the next startup.
+      await new SnapshotGit(ports).recoverProcess(repo, new AbortController().signal)
+      await vi.waitFor(() => expect(alive(leader)).toBe(false), { timeout: 5000 })
+      expect(await work).toBe('ended')
+      await expect(readFile(record)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      // A failing run must not leave its sleeping process group behind.
+      if (pid !== undefined && alive(pid)) process.kill(-pid, 'SIGKILL')
+      await work
+      await rm(parent, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)

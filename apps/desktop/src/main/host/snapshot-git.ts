@@ -373,7 +373,9 @@ export class SnapshotGit {
           Number(match[2]) !== pgid ||
           typeof executable !== 'string' ||
           !executable.startsWith('/') ||
-          match[4]!.trim() !== executable ||
+          // /usr/bin/git is an xcrun shim: after exec the same PID reports the Command Line Tools
+          // (or Xcode) git, so only the program name is compared; pid, pgid and start time pin it.
+          basename(match[4]!.trim()) !== basename(executable) ||
           typeof startedAt !== 'number' ||
           !Number.isFinite(startedAt)
         )
