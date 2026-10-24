@@ -179,3 +179,15 @@
 - [建议] e2e（model-menu、provider-settings、recovery）还没跑过 · 不修：由本段 PR 的 CI e2e 首跑，e2e 绿之前自动合并不会合入
 结论：通过
 突变：第 9 步 13 个、第 8 步 ⑤⑥、第 10 步 4 个，共 19 个，全部变红，0 个存活
+
+## 实施 · 2026-10-24（只改档不写默认，收窄）
+
+- PR #70 的 CI e2e 挂了 02 的「keeps a default per profile: a new session in each starts on it (旧 37)」：聊天会话点了当前那一行 Opus 5.5，按原写法不写默认；任务会话再在「更多模型」里选 Haiku 4.5，写了 cowork 默认与共用的 `provider`；新开的聊天自己没有默认，读到 `provider`，成了 Haiku 4.5。根子是 spec 把「再点一次当前行」也算进不写默认，比 owner 2026-10-15 确认的「只改思考档位不动默认」宽。
+- owner 2026-10-24 在对话里看过图解后选「A 点了就记，只有改档不记 (Recommended)」（题目「claude-5-5-models：在模型菜单里点「当前那一行」，要不要记成这种会话的默认？」）。spec 四处随之收窄，记进修订记录。
+- Codex 按说明实现，lead 审查、沙箱外补跑全量 vitest（4620 passed）并提交（650091c）：`session.selectModel` 的请求只增可选 `intent`（`row` / `effort` / `confirm`，缺省 `row`）；ModelMenu 点行发 `row`、档位子菜单发 `effort`、kernel hold 的确认页发 `confirm`（点行触发的外发确认仍是 `row`）；model-routes.ts 只对符合条件的 `effort` 与 `confirm` 不写默认。`intent` 不进 kernel 的选择与 Tape。
+- 新加复现用例（省略 `intent` 与显式 `row` 两例）改前红、改后绿；突变：判定改回「再点当前行也不写」，两例重新变红，已复原。02 的「旧 37」e2e 期望未改，由 CI 重跑。
+
+测试改动：apps/desktop/test/model-selection.test.ts · only changing effort（两例） · 请求显式带 `intent: 'effort'`，原来不写默认的断言保留
+测试改动：apps/desktop/test/model-selection.test.ts · confirming a held switch · 请求显式带 `intent: 'confirm'`，另加默认已移到另一行的情形
+测试改动：apps/desktop/test/model-selection.test.ts · startup recovery gate · 点行不再先读有效默认，等待的调用次数少一次
+测试改动：packages/contracts/test/model-choice-types.test.ts · SelectCarriesTheChoice · 新增的 `intent` 单独查可选性，模型字段的双向一致检查保留
