@@ -8,6 +8,7 @@ Amended by: [04-sandbox](../04-sandbox/spec.md)（2026-10-09：`HostSandbox` 增
 Phase: 0 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Revisions: 2026-09-17 验收 3 的措辞由「完成 MCP v2 协议协商」改为「用 MCP v2 SDK 的客户端与它完成协议协商」——参考服务器 server-everything 2026.8.31 基于 sdk ^1.30（v1 协议），v2 客户端走默认的 legacy 握手，能观察到的只有这一点（owner 确认）；同日新增「国际化」一节与验收标准 9–12；同日把 `ConfirmRequest.display`（原 `{ title: string; detail: string; redacted?: unknown }`，自由文案）改为 `reason + facts`，原因见「国际化」一节
+Changed by: 05（§HostAdapter）；05（§本地持久化布局）
 
 ## 背景与问题
 

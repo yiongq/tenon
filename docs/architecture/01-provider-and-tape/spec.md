@@ -11,6 +11,7 @@ Phase: 1 of the roadmap in [master-reference §13](../master-reference.md)
 Owner: architecture decided in the Claude Desktop project; implementation in Claude Code / Codex
 Amends: [00-foundation](../00-foundation/spec.md) §HostAdapter 与 §技术选型——只增不改，按 [spec-driven-dev](../../spec-driven-dev.md)「改变决定」的 amend 规则（2026-09-17 owner 确认），全文见「对 00-foundation 的修补」
 Revisions: 2026-09-17 首版草稿经一轮五角度对抗审查与一轮执行复核后就地修订（尚无代码依赖）。主要改动：`incarnationId` 由 kernel 铸造并随批传入（原为 store 自铸）；`session_projection` 去掉 `message_count`（逐条标量 reducer 算不出累计值）；`tape_entry_by_source` 末列由 `source_seq` 改为 `entry_id`（原列序下恢复读取要临时排序）；补齐 `Usage` / `ToolSpec` / `MessageStatus`；凭据规则按线协议分开；重放增加 `atEntryId`；失败轮次不写 assistant 消息；amend 机制由提议改为记录
+Changed by: 05（§保留命名空间）
 
 ## 背景与问题
 
