@@ -191,3 +191,6 @@
 测试改动：apps/desktop/test/model-selection.test.ts · confirming a held switch · 请求显式带 `intent: 'confirm'`，另加默认已移到另一行的情形
 测试改动：apps/desktop/test/model-selection.test.ts · startup recovery gate · 点行不再先读有效默认，等待的调用次数少一次
 测试改动：packages/contracts/test/model-choice-types.test.ts · SelectCarriesTheChoice · 新增的 `intent` 单独查可选性，模型字段的双向一致检查保留
+- 583cef0：改档一律不写默认，不论会话有没有 ①（spec 修订记录 2026-10-24 第二条；lead 照 owner 原话「只改思考档位不动默认」的字面定，已告知 owner）。model-routes.ts 的判定简化为「`intent` 是 `effort` 或 `confirm` 就不写」，去掉预读有效默认与它的 try/catch（点行本来就不读，悬空默认的 6 个复现用例照旧通过）。model-menu.spec.ts 加两例 e2e：钉住默认的会话里经档位子菜单改档、hold 确认页点「切换」之后，三个默认都不变；renderer 两处 `intent` 改成 `row` 的突变只有这两例能抓，由 CI 首跑。
+测试改动：apps/desktop/test/model-selection.test.ts · changing effort（old-sonnet / pinned-opus） · 会话已有 ① 后改档也不写默认（原期望是照常写）
+测试改动：apps/desktop/test/model-selection.test.ts · effort request for a different row · 按「改档一律不写默认」改期望，会话选择照常生效的断言保留
