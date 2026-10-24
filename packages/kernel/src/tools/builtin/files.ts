@@ -12,7 +12,7 @@
  */
 import type { AbsolutePath, HostFs } from '../../host/adapter.js'
 import { isWithin, joinPath } from '../../host/path.js'
-import { placeOf, resolvePath } from '../../permission/workspace.js'
+import { placeOf, resolvePath, sensitiveName } from '../../permission/workspace.js'
 import type { PathScope } from '../../permission/workspace.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecution } from '../executor.js'
@@ -178,6 +178,7 @@ export async function walkFiles(
       }
       checkSignal(signal)
       if (resolved === null) continue
+      if (sensitiveName(path, resolved, scope, false) === 'credential') continue
       const linked = resolved !== joinPath(real, name)
       if (linked && !roots.some((folder) => isWithin(resolved, folder))) continue
       // oxlint-disable-next-line no-await-in-loop -- one entry at a time, the stop checked between
@@ -199,6 +200,7 @@ export async function walkFiles(
   }
   const real = (await fs.realpath(root)) ?? root
   checkSignal(signal)
+  if (sensitiveName(root, real, scope, false) === 'credential') return []
   await walk(root, real, '', new Set())
   return files.toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }

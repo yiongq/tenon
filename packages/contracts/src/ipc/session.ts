@@ -139,10 +139,11 @@ export const workspaceResultSchema = z.discriminatedUnion('ok', [
     ok: z.literal(true),
     folders: z.array(z.string().min(1)),
     origin: z.enum(['picked', 'dedicated']),
+    warning: z.literal('home').optional(),
   }),
   z.object({
     ok: z.literal(false),
-    code: z.enum(['not-cowork', 'unknown-session', 'not-in-list']),
+    code: z.enum(['not-cowork', 'unknown-session', 'not-in-list', 'root-folder']),
   }),
 ])
 export type WorkspaceResult = z.infer<typeof workspaceResultSchema>

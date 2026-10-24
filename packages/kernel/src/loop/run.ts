@@ -1,3 +1,4 @@
+import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { SubagentHandoff } from './subagent.js'
 /**
@@ -158,6 +159,9 @@ export interface RunDriverContext {
   /** Bash's shell and base environment (`LoopPorts.commandShell`). */
   readonly commandShell: CommandShell
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitivePaths?:
+    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
@@ -362,6 +366,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
           }),
       inspectors: ctx.inspectors,
       validator,
+      sensitivePaths: ctx.sensitivePaths,
       protectedFiles: ctx.protectedFiles,
       userSetting: ctx.userSetting,
       mcpSources: ctx.mcpSources,

@@ -262,3 +262,11 @@ export async function loadManifests(
   }
   return manifests
 }
+
+export class SnapshotBudgetError extends Error {
+  readonly kind: 'space' | 'files'
+  constructor(message: string, kind: 'space' | 'files' = 'space') {
+    super(message)
+    this.kind = kind
+  }
+}

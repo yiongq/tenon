@@ -21,16 +21,22 @@
  */
 import { UnresolvableAliasError } from '../host/adapter.js'
 import type { AbsolutePath, HostFs } from '../host/adapter.js'
-import { fromParts, isWithin, normalizePath, pathParts } from '../host/path.js'
+import { fromParts, isWithin, normalizePath, pathParts, joinPath } from '../host/path.js'
 
 export type PathPlace = 'workspace' | 'outside' | 'own-spill' | 'protected'
 
 export interface PathVerdict {
   readonly real: AbsolutePath
   readonly place: PathPlace
+  readonly sensitive?: 'credential' | 'auto-run' | 'hardlink'
 }
 
 export interface PathScope {
+  readonly sensitive?: {
+    readonly credential: readonly AbsolutePath[]
+    readonly autoRunNames: readonly string[]
+    readonly linkTargets: readonly { real: AbsolutePath; category: 'credential' | 'auto-run' }[]
+  }
   readonly roots: readonly AbsolutePath[] // 工作区根，选定时已解析；对话形态传 []
   readonly profileDir: AbsolutePath // 启动时解析一次
   readonly ownSpillDir: AbsolutePath // 解析过的 profileDir 下的 tool-output/<sessionId>，本身不解析
@@ -96,11 +102,90 @@ export async function locatePath(
   fs: HostFs,
   path: AbsolutePath,
   scope: PathScope,
+  tool: 'Read' | 'Write' | 'Edit' | 'Delete' | 'Glob' | 'Grep' = 'Read',
 ): Promise<PathVerdict> {
-  const { path: real, resolved, alias } = await resolvePath(fs, path)
-  if (alias === true) return { real, place: 'protected' }
-  if (!resolved) return { real, place: 'outside' }
-  return { real, place: placeOf(real, scope) }
+  const written = normalizePath(path)
+  const parts = pathParts(written)
+  const leaf = parts.segments.at(-1)
+  const resolution =
+    tool === 'Delete' && leaf !== undefined
+      ? await resolvePath(fs, fromParts({ ...parts, segments: parts.segments.slice(0, -1) }))
+      : await resolvePath(fs, written)
+  const real =
+    tool === 'Delete' && leaf !== undefined ? joinPath(resolution.path, leaf) : resolution.path
+  if (resolution.alias === true) return { real, place: 'protected' }
+  const place = resolution.resolved ? placeOf(real, scope) : 'outside'
+  if (place === 'protected' || isProtectedFile(written, scope.protectedFiles))
+    return { real, place: 'protected' }
+  if (place === 'own-spill' && (tool === 'Write' || tool === 'Edit' || tool === 'Delete'))
+    return { real, place }
+  const sensitive = sensitiveName(
+    written,
+    real,
+    scope,
+    tool !== 'Read' && tool !== 'Glob' && tool !== 'Grep',
+  )
+  if (sensitive !== undefined) return { real, place: 'outside', sensitive }
+  if (tool === 'Write' || tool === 'Edit' || tool === 'Delete') {
+    try {
+      const stamp = await fs.identity(real)
+      if (stamp?.kind === 'file' && stamp.nlink > 1)
+        return { real, place: 'outside', sensitive: 'hardlink' }
+    } catch {
+      return { real, place: 'protected' }
+    }
+  }
+  return { real, place }
+}
+
+/** Spec 05: shared names compare by folded path segments, never string prefixes. */
+export function sensitiveName(
+  written: AbsolutePath,
+  real: AbsolutePath,
+  scope: PathScope,
+  writing: boolean,
+): 'credential' | 'auto-run' | undefined {
+  const list = scope.sensitive
+  if (list === undefined) return undefined
+  const paths = [written, real]
+  const within = (path: string, root: string): boolean => {
+    const a = foldCase(path).replaceAll('\\', '/')
+    const b = foldCase(root).replaceAll('\\', '/').replace(/\/$/, '')
+    return a === b || a.startsWith(b + '/')
+  }
+  if (
+    paths.some(
+      (path) =>
+        list.credential.some((entry) => within(path, entry)) ||
+        list.linkTargets.some(
+          (entry) => entry.category === 'credential' && within(path, entry.real),
+        ),
+    )
+  )
+    return 'credential'
+  if (!writing) return undefined
+  if (
+    paths.some((path) =>
+      list.linkTargets.some((entry) => entry.category === 'auto-run' && within(path, entry.real)),
+    )
+  )
+    return 'auto-run'
+  for (const path of paths) {
+    for (const root of scope.roots) {
+      if (!within(path, root)) continue
+      const segments = pathParts(path).segments.slice(pathParts(root).segments.length).map(foldCase)
+      if (
+        list.autoRunNames.some((name) => {
+          const wanted = name.split('/').filter(Boolean).map(foldCase)
+          return segments.some((_, start) =>
+            wanted.every((part, offset) => segments[start + offset] === part),
+          )
+        })
+      )
+        return 'auto-run'
+    }
+  }
+  return undefined
 }
 
 /**
@@ -138,6 +223,6 @@ const foldedLists = new WeakMap<readonly AbsolutePath[], ReadonlySet<string>>()
  * nine that APFS matched fold the same here). Where it is wider than APFS (`ı` onto `i`), it only
  * blocks one more spelling.
  */
-function foldCase(path: string): string {
+export function foldCase(path: string): string {
   return path.normalize('NFD').toLowerCase().toUpperCase().toLowerCase()
 }

@@ -1,3 +1,5 @@
+import { fromParts, pathParts, isAbsolutePath } from '../host/path.js'
+import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import { releaseReceipt, sandboxDomainHosts } from '../permission/sandbox-release.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { CallRef } from './closure.js'
@@ -281,6 +283,9 @@ export interface LoopDeps {
   readonly connector: RunConnector
   readonly log: (line: string) => void
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitivePaths?:
+    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   /** Which builtin tools the registry offers: the product's, or every one under a test registry. */
   readonly builtinAvailable: (name: BuiltinToolName) => boolean
@@ -335,8 +340,12 @@ export type WorkspaceResult =
       readonly ok: true
       readonly folders: readonly AbsolutePath[]
       readonly origin: 'picked' | 'dedicated'
+      readonly warning?: 'home'
     }
-  | { readonly ok: false; readonly code: 'not-cowork' | 'unknown-session' | 'not-in-list' }
+  | {
+      readonly ok: false
+      readonly code: 'not-cowork' | 'unknown-session' | 'not-in-list' | 'root-folder'
+    }
 
 /** A choice in the model menu (§模型选择): what `session/model_choice_set` records. */
 export interface SelectModelQuery {
@@ -1551,6 +1560,7 @@ export function createLoop(deps: LoopDeps): Loop {
         tape,
         host: deps.host,
         inspectors: deps.inspectors,
+        sensitivePaths: deps.sensitivePaths,
         protectedFiles: deps.protectedFiles,
         userSetting: deps.userSetting,
         signal: lease.signal,
@@ -2270,6 +2280,7 @@ export function createLoop(deps: LoopDeps): Loop {
                 },
               }),
           inspectors: deps.inspectors,
+          sensitivePaths: deps.sensitivePaths,
           protectedFiles: deps.protectedFiles,
           ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),
           userSetting: deps.userSetting,
@@ -3153,7 +3164,10 @@ export function createLoop(deps: LoopDeps): Loop {
 
   /** The dedicated folder as the workspace: resolved like any root, though it may not exist yet (D8). */
   async function dedicatedWorkspace(dedicated: AbsolutePath): Promise<WorkspaceSetPayload> {
-    return { folders: [(await resolvePath(deps.host.fs, dedicated)).path], origin: 'dedicated' }
+    const real = await acceptedFolder(dedicated, true)
+    // selectProfile's contract has no root-folder: throw so its route returns handler-failed.
+    if (real === null) throw new Error('A dedicated workspace cannot be a root or volume root')
+    return { folders: [real], origin: 'dedicated' }
   }
 
   async function selectProfileTurn(q: SelectProfileQuery): Promise<SelectProfileResult> {
@@ -3173,6 +3187,27 @@ export function createLoop(deps: LoopDeps): Loop {
     return { ok: true, ...(await factsView(q.sessionId)) }
   }
 
+  /** Selected folders must exist; a trusted dedicated folder may still be waiting for its first write. */
+  async function acceptedFolder(
+    folder: AbsolutePath,
+    allowMissing = false,
+  ): Promise<AbsolutePath | null> {
+    const resolved = await resolvePath(deps.host.fs, folder)
+    const real = resolved.path
+    const parts = pathParts(real)
+    if (!resolved.resolved || parts.segments.length === 0) return null
+    try {
+      const self = await deps.host.fs.identity(real)
+      if (self === null && allowMissing) return real
+      const parent = await deps.host.fs.identity(
+        fromParts({ ...parts, segments: parts.segments.slice(0, -1) }),
+      )
+      return self?.kind === 'dir' && parent?.kind === 'dir' && self.dev === parent.dev ? real : null
+    } catch {
+      return null
+    }
+  }
+
   /**
    * The next list (§工作区「来源」「中途增删」): new folders after the ones picked before — the dedicated
    * folder gives way to them — or the list without the one removed, back to the dedicated folder once
@@ -3182,17 +3217,20 @@ export function createLoop(deps: LoopDeps): Loop {
     current: WorkspaceSetPayload,
     change: WorkspaceChange,
     dedicated: AbsolutePath,
-  ): Promise<WorkspaceSetPayload | 'not-in-list' | null> {
+  ): Promise<WorkspaceSetPayload | 'not-in-list' | 'root-folder' | null> {
     const picked = current.origin === 'picked' ? current.folders : []
     if (change.kind === 'remove') {
       if (!picked.includes(change.folder as AbsolutePath)) return 'not-in-list'
       const rest = picked.filter((folder) => folder !== change.folder)
-      return rest.length === 0 ? dedicatedWorkspace(dedicated) : { folders: rest, origin: 'picked' }
+      if (rest.length > 0) return { folders: rest, origin: 'picked' }
+      const real = await acceptedFolder(dedicated, true)
+      return real === null ? 'root-folder' : { folders: [real], origin: 'dedicated' }
     }
     const added: AbsolutePath[] = []
     for (const folder of change.folders) {
       // oxlint-disable-next-line no-await-in-loop -- a handful of folders, each resolved once
-      const real = (await resolvePath(deps.host.fs, folder)).path
+      const real = await acceptedFolder(folder)
+      if (real === null) return 'root-folder'
       if (!picked.includes(real) && !added.includes(real)) added.push(real)
     }
     if (added.length === 0) return null
@@ -3218,7 +3256,7 @@ export function createLoop(deps: LoopDeps): Loop {
         : null
     if (!cowork || current === null) return { ok: false, code: 'not-cowork' }
     const next = await nextWorkspace(current, q.change, q.dedicated)
-    if (next === 'not-in-list') return { ok: false, code: 'not-in-list' }
+    if (next === 'not-in-list' || next === 'root-folder') return { ok: false, code: next }
     if (next === null) return { ok: true, folders: current.folders, origin: current.origin }
     if (draft?.profile === 'cowork') drafts.set(q.sessionId, { ...draft, workspace: next })
     else {
@@ -3236,7 +3274,25 @@ export function createLoop(deps: LoopDeps): Loop {
         ],
       })
     }
-    return { ok: true, folders: next.folders, origin: next.origin }
+    let warning: 'home' | undefined
+    try {
+      const home = (await bound?.commandShell.env())?.['HOME']
+      if (home !== undefined && isAbsolutePath(home)) {
+        const realHome = (await resolvePath(deps.host.fs, home)).path
+        const parts = pathParts(realHome)
+        const parent = fromParts({ ...parts, segments: parts.segments.slice(0, -1) })
+        if (next.folders.some((folder) => folder === realHome || folder === parent))
+          warning = 'home'
+      }
+    } catch {
+      /* Failure to read a display hint never loosens root validation. */
+    }
+    return {
+      ok: true,
+      folders: next.folders,
+      origin: next.origin,
+      ...(warning === undefined ? {} : { warning }),
+    }
   }
 
   return {
@@ -3335,6 +3391,7 @@ export function createLoop(deps: LoopDeps): Loop {
         log,
         host: deps.host,
         inspectors: deps.inspectors,
+        sensitivePaths: deps.sensitivePaths,
         protectedFiles: deps.protectedFiles,
         userSetting: deps.userSetting,
         testTools: deps.testTools,
@@ -3508,6 +3565,7 @@ export function createLoop(deps: LoopDeps): Loop {
                 tape,
                 host: deps.host,
                 sessionId: waiting.sessionId,
+                sensitivePaths: deps.sensitivePaths,
                 protectedFiles: deps.protectedFiles,
               },
               item,

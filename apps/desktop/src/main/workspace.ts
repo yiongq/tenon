@@ -30,19 +30,19 @@ import { readConfig, writeConfig } from './host/profile.js'
  * to the dedicated folder. Every route here waits for startup recovery.
  */
 
-/** The shell files the protected list names (§「在不在工作区里」; D2): in the user's home. */
-export const PROTECTED_SHELL_FILES: readonly string[] = [
-  '.zshrc',
-  '.zshenv',
-  '.zprofile',
-  '.bashrc',
-  '.bash_profile',
-  '.profile',
-]
+export { PROTECTED_SHELL_FILES } from './host/sandbox-config.js'
+import { protectionList, credentialPaths } from './host/sandbox-config.js'
 
 /** The protected shell files, for `SessionServiceOptions.protectedFiles`; the kernel resolves them. */
-export function protectedShellFiles(home: AbsolutePath): AbsolutePath[] {
-  return PROTECTED_SHELL_FILES.map((name) => joinPath(home, name))
+export function protectedShellFiles(
+  home: AbsolutePath,
+  zdotdir: AbsolutePath | null = null,
+): AbsolutePath[] {
+  return protectionList({
+    home,
+    zdotdir,
+    credentials: credentialPaths(process.platform === 'darwin' ? 'darwin' : 'linux', home),
+  }).protectedFiles
 }
 
 /**
@@ -72,6 +72,7 @@ export interface WorkspaceRoutesDeps {
   /** Main's directory dialog, several folders at once; null or empty when the user cancelled. */
   readonly pickFolders: (event: unknown) => Promise<readonly string[] | null>
   readonly gate?: Promise<void>
+  readonly log?: (line: string) => void
   /** Spec 05 §快照怎么拍: accepted folders start a background snapshot, without changing selection. */
   readonly onWorkspaceChanged?: (
     sessionId: string,
@@ -84,6 +85,22 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
   const dedicated = (sessionId: string): AbsolutePath =>
     dedicatedFolderFor(deps.home, deps.host.identity, sessionId)
 
+  const notifications = new Map<string, Promise<void>>()
+  const notify = (sessionId: string, folders: readonly AbsolutePath[]): void => {
+    const pending = (notifications.get(sessionId) ?? Promise.resolve())
+      .then(() => deps.onWorkspaceChanged?.(sessionId, folders))
+      .catch((error: unknown) => {
+        ;(deps.log ?? console.warn)(
+          `[workspace] ${sessionId}: snapshot notification failed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        )
+      })
+    notifications.set(sessionId, pending)
+    void pending.finally(() => {
+      if (notifications.get(sessionId) === pending) notifications.delete(sessionId)
+    })
+  }
+
   /** The change applied by the kernel, then the prefill when a picked list changed. */
   const change = async (sessionId: string, next: WorkspaceChange): Promise<WorkspaceResult> => {
     if (sessions === null) return UNKNOWN_SESSION
@@ -93,13 +110,18 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
       dedicated: dedicated(sessionId),
     })
     if (!result.ok) return { ok: false, code: result.code }
-    await deps.onWorkspaceChanged?.(sessionId, result.folders)
+    notify(sessionId, result.folders)
     if (result.origin === 'picked') {
       await writeConfig(deps.host.fs, deps.host.identity, {
         lastWorkspaceFolders: [...result.folders],
       })
     }
-    return { ok: true, folders: [...result.folders], origin: result.origin }
+    return {
+      ok: true,
+      folders: [...result.folders],
+      origin: result.origin,
+      ...(result.warning === undefined ? {} : { warning: result.warning }),
+    }
   }
 
   registerRoute(ipcMain, workspacePick, async ({ sessionId }, event) => {
@@ -142,7 +164,7 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
         ? { sessionId, profile }
         : { sessionId, profile, dedicated: dedicated(sessionId) },
     )
-    if (result.ok) await deps.onWorkspaceChanged?.(sessionId, result.workspace?.folders ?? [])
+    if (result.ok) notify(sessionId, result.workspace?.folders ?? [])
     return result.ok
       ? { ok: true as const, ...factsOf(result) }
       : { ok: false as const, code: result.code }

@@ -1,3 +1,5 @@
+import type { AbsolutePath } from '@tenon-app/kernel'
+import { createSensitivePathProvider } from './host/sensitive-paths.js'
 // oxlint-disable-next-line import/default -- electron-vite emits this worker factory from the query
 import SchemaThread from './mcp/schema-thread.mjs?nodeWorker'
 import { createSchemaWorker } from './mcp/schema-worker.js'
@@ -210,6 +212,21 @@ async function main(): Promise<void> {
     schemaValidator,
     changed: () => broadcast(mcpChanged.channel, mcpChanged.payload.parse({})),
   })
+  const pathProtection = createSensitivePathProvider(
+    home,
+    startupEnv['ZDOTDIR']?.startsWith('/') ? absolutePath(startupEnv['ZDOTDIR']) : null,
+  )
+  const refreshSensitive = (folders: readonly AbsolutePath[]): void => {
+    void pathProtection
+      .refresh(folders)
+      .catch((error: unknown) =>
+        console.warn(
+          '[workspace] sensitive targets refresh failed: ' +
+            (error instanceof Error ? error.message : String(error)),
+        ),
+      )
+  }
+  host.snapshots.bindSensitiveRefresh(refreshSensitive)
   const sessions =
     tape === null
       ? null
@@ -230,7 +247,11 @@ async function main(): Promise<void> {
             // Before bindLoop and recover(): a resume's endpointOrigin is the configured host.
             config: startupConfig,
           }),
-          protectedFiles: protectedShellFiles(home),
+          sensitivePaths: pathProtection.get,
+          protectedFiles: protectedShellFiles(
+            home,
+            startupEnv['ZDOTDIR']?.startsWith('/') ? absolutePath(startupEnv['ZDOTDIR']) : null,
+          ),
           // A call reaching a request with no result: a thrown bug in development, a repair closure
           // and a log line in the packaged build (spec 02 §崩溃、服务端调用块与兜底).
           onUnansweredCall: app.isPackaged ? 'repair' : 'throw',
@@ -364,7 +385,10 @@ async function main(): Promise<void> {
     home,
     gate: recovery.ready,
     // Main's own dialog, over the window that asked: the only way a folder is added (A9).
-    onWorkspaceChanged: (sessionId, folders) => host.snapshots.setWorkspace(sessionId, folders),
+    onWorkspaceChanged: (sessionId, folders) => {
+      refreshSensitive(folders)
+      return host.snapshots.setWorkspace(sessionId, folders)
+    },
     pickFolders: async (event) => {
       const sender = (event as { sender?: Electron.WebContents } | undefined)?.sender
       const owner = sender === undefined ? null : BrowserWindow.fromWebContents(sender)

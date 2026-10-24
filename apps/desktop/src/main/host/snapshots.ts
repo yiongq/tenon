@@ -37,6 +37,7 @@ import {
   MAX_FILE_BYTES,
   parentModes,
   statOrNull,
+  SnapshotBudgetError,
   targetPath,
 } from './snapshot-storage.js'
 import type { SnapshotManifest } from './snapshot-storage.js'
@@ -83,11 +84,11 @@ interface Session {
   generation: number
   notified: Set<string>
   repos: Set<string>
+  dirtyRepos: Set<string>
   lastDegradeReason: string | null
   treeDisabled: boolean
   diskFailed: boolean
 }
-class SnapshotBudgetError extends Error {}
 
 export class DesktopSnapshots implements HostSnapshots {
   readonly ready: Promise<void>
@@ -98,10 +99,12 @@ export class DesktopSnapshots implements HostSnapshots {
   private root: string
   private queue: Promise<unknown> = Promise.resolve()
   private reserved = 0
+  private initialized = false
   private startupFailure: string | null = null
   private readonly active = new Map<string, number>()
   private readonly idleWaiters = new Map<string, Set<() => void>>()
   private readonly treeQueues = new Map<string, Promise<unknown>>()
+  private sensitiveRefresh: ((folders: readonly AbsolutePath[]) => void) | undefined
   private activeRounds: () => readonly { rootSessionId: string; runId: string | null }[] = () => []
 
   constructor(options: DesktopSnapshotsOptions) {
@@ -109,11 +112,18 @@ export class DesktopSnapshots implements HostSnapshots {
     this.limits = { ...SNAPSHOT_LIMITS, ...options.limits }
     this.root = join(options.identity.profileDir, 'snapshots')
     this.git = new SnapshotGit(options, options.platform, options.gitPath)
-    this.ready = this.initialize().catch((error: unknown) => {
-      this.startupFailure = error instanceof Error ? error.message : String(error)
-    })
+    this.ready = this.initialize()
+      .catch((error: unknown) => {
+        this.startupFailure = error instanceof Error ? error.message : String(error)
+      })
+      .finally(() => {
+        this.initialized = true
+      })
   }
 
+  bindSensitiveRefresh(refresh: (folders: readonly AbsolutePath[]) => void): void {
+    this.sensitiveRefresh = refresh
+  }
   bindActiveRounds(read: () => readonly { rootSessionId: string; runId: string | null }[]): void {
     this.activeRounds = read
   }
@@ -146,6 +156,7 @@ export class DesktopSnapshots implements HostSnapshots {
         generation: 0,
         notified: new Set(),
         repos: new Set(),
+        dirtyRepos: new Set(),
         lastDegradeReason: null,
         treeDisabled: false,
         diskFailed: false,
@@ -158,12 +169,17 @@ export class DesktopSnapshots implements HostSnapshots {
   lastDegradeReason(sessionId: string): string | null {
     return this.sessions.get(sessionId)?.lastDegradeReason ?? this.startupFailure
   }
-  private degrade(session: Session, state: 'file-only' | 'unavailable', reason: unknown): void {
+  private degrade(
+    session: Session,
+    state: 'file-only' | 'unavailable',
+    reason: unknown,
+    disableTree = reason instanceof SnapshotBudgetError,
+  ): void {
     if (session.diskFailed && state !== 'unavailable') return
     const detail = reason instanceof Error ? reason.message : String(reason)
     session.lastDegradeReason = detail
     if (state === 'unavailable') session.diskFailed = true
-    if (/budget|timeout|timed out/i.test(detail)) session.treeDisabled = true
+    if (disableTree) session.treeDisabled = true
     session.state = state
     if (!session.notified.has(state)) {
       session.notified.add(state)
@@ -218,6 +234,9 @@ export class DesktopSnapshots implements HostSnapshots {
           await Promise.all(
             ['index.lock', 'index'].map((name) => rm(join(repo, name), { force: true })),
           )
+          // A crash before publication leaves this marker until the objects are collected.
+          // oxlint-disable-next-line no-await-in-loop -- recover pending object ownership per repo
+          if (await statOrNull(join(repo, 'capture.pending'))) session.dirtyRepos.add(repo)
           const latest = session.manifests
             .toReversed()
             .toSorted((a, b) => b.createdAt - a.createdAt)
@@ -246,7 +265,7 @@ export class DesktopSnapshots implements HostSnapshots {
   }
 
   status(sessionId: string): SnapshotStatus {
-    return this.sessions.get(sessionId)?.state ?? 'unavailable'
+    return this.initialized ? (this.sessions.get(sessionId)?.state ?? 'unavailable') : 'unavailable'
   }
 
   /** Called only with folders accepted by the desktop/kernel workspace setter; never changes policy. */
@@ -322,6 +341,8 @@ export class DesktopSnapshots implements HostSnapshots {
           signal.aborted && !session.controller.signal.aborted
             ? 'First snapshot timeout budget exceeded'
             : error,
+          (signal.aborted && !session.controller.signal.aborted) ||
+            error instanceof SnapshotBudgetError,
         )
       }
     })
@@ -353,6 +374,7 @@ export class DesktopSnapshots implements HostSnapshots {
   }
 
   async coverage(q: { sessionId: string; path: AbsolutePath }): Promise<SnapshotCoverage> {
+    if (!this.initialized) return 'none'
     const controller = new AbortController()
     let cancel: (() => void) | undefined
     const timeout = new Promise<SnapshotCoverage>((resolve) => {
@@ -458,17 +480,15 @@ export class DesktopSnapshots implements HostSnapshots {
           if (signal.aborted || session.controller.signal.aborted)
             return { ok: false, reason: 'aborted' }
           if (deadline.aborted)
-            this.degrade(session, 'file-only', 'Snapshot timeout budget exceeded')
+            this.degrade(session, 'file-only', 'Snapshot timeout budget exceeded', true)
           if (error instanceof SnapshotBudgetError) {
             this.degrade(session, 'file-only', error)
-            return { ok: false, reason: 'over-budget' }
+            return { ok: false, reason: error.kind === 'space' ? 'over-budget' : 'error' }
           }
           if (this.profileFailure(error)) {
             this.degrade(session, 'unavailable', error)
             return { ok: false, reason: 'disk' }
           }
-          if (/file-count budget/.test(error instanceof Error ? error.message : String(error)))
-            this.degrade(session, 'file-only', error)
           return { ok: false, reason: 'error' }
         }
       }
@@ -492,6 +512,9 @@ export class DesktopSnapshots implements HostSnapshots {
     })
     let reservation = 0
     const id = randomUUID()
+    const touchedRepos = new Set<string>()
+    const previouslyDirty = new Set<string>()
+    let published = false
     try {
       signal.throwIfAborted()
       const manifest: SnapshotManifest = {
@@ -533,9 +556,10 @@ export class DesktopSnapshots implements HostSnapshots {
           if (
             scans.reduce((count, item) => count + item.scan.entries.length, 0) > this.limits.files
           )
-            throw new Error('Snapshot file-count budget exceeded')
+            throw new SnapshotBudgetError('Snapshot file-count budget exceeded', 'files')
         }
       }
+      if (scans.length > 0) this.sensitiveRefresh?.(session.folders)
       let target: FileIdentity | null | undefined
       if (q.path !== undefined)
         estimate += Number((await statOrNull(await targetPath(q.path)))?.size ?? 0n) + 8192
@@ -546,6 +570,12 @@ export class DesktopSnapshots implements HostSnapshots {
         signal.throwIfAborted()
         for (const { repo, folder, scan } of scans) {
           // oxlint-disable-next-line no-await-in-loop -- parentless commit and ref for each accepted folder
+          if (session.dirtyRepos.has(repo)) previouslyDirty.add(repo)
+          session.dirtyRepos.add(repo)
+          touchedRepos.add(repo)
+          // oxlint-disable-next-line no-await-in-loop -- persist crash recovery intent before writing objects
+          await writeFile(join(repo, 'capture.pending'), '')
+          // oxlint-disable-next-line no-await-in-loop -- staging may leave unpublished objects on failure
           manifest.trees.push(await captureTree(this.git, repo, folder, scan, id, signal))
           manifest.skipped += scan.skipped
         }
@@ -575,6 +605,7 @@ export class DesktopSnapshots implements HostSnapshots {
           await this.keepRounds(session, signal)
         })
         signal.throwIfAborted()
+        published = true
         return {
           ok: true,
           snapshotId: id,
@@ -591,6 +622,18 @@ export class DesktopSnapshots implements HostSnapshots {
       }
     } finally {
       await this.serial(async () => {
+        if (published) {
+          for (const repo of touchedRepos) {
+            if (previouslyDirty.has(repo)) continue
+            // oxlint-disable-next-line no-await-in-loop -- published refs now own these objects
+            await rm(join(repo, 'capture.pending'), { force: true }).then(
+              () => {
+                session.dirtyRepos.delete(repo)
+              },
+              () => {},
+            )
+          }
+        }
         this.reserved -= reservation
         const left = (this.active.get(session.id) ?? 1) - 1
         if (left === 0) {
@@ -750,14 +793,35 @@ export class DesktopSnapshots implements HostSnapshots {
         if (!keep.has(ref)) {
           // oxlint-disable-next-line no-await-in-loop -- validate no caller-provided revision is used
           // oxlint-disable-next-line no-await-in-loop -- prune one obsolete reference at a time
+          session.dirtyRepos.add(repo)
+          // oxlint-disable-next-line no-await-in-loop -- keep retry intent if collection fails after ref deletion
+          await writeFile(join(repo, 'capture.pending'), '')
+          // oxlint-disable-next-line no-await-in-loop -- prune one obsolete reference at a time
           await this.git.run(repo, folder, ['update-ref', '-d', ref], signal)
         }
+      if (!session.dirtyRepos.has(repo)) continue
       // The index is a GC root. Failed captures must not pin unpublished or expired blobs.
       // oxlint-disable-next-line no-await-in-loop -- rebuild only the profile-owned index, never use -u
       await this.git.run(repo, folder, ['read-tree', tree?.commit ?? '--empty'], signal)
       // No parent chains or reflogs retain old snapshots. Reclaim now, never at an unspecified GC.
       // oxlint-disable-next-line no-await-in-loop -- each repository is collected before measuring blocks
-      await this.git.run(repo, folder, ['gc', '--prune=now'], signal)
+      // An old commit-graph can still name objects that prune removes when no refs remain.
+      // oxlint-disable-next-line no-await-in-loop -- remove only disposable profile-owned acceleration data
+      await Promise.all(
+        ['commit-graph', 'commit-graphs'].map((name) =>
+          rm(join(repo, 'objects', 'info', name), { force: true, recursive: true }),
+        ),
+      )
+      // oxlint-disable-next-line no-await-in-loop -- collect only deleted refs or unpublished objects
+      await this.git.run(
+        repo,
+        folder,
+        ['-c', 'gc.writeCommitGraph=false', 'gc', '--prune=now'],
+        signal,
+      )
+      // oxlint-disable-next-line no-await-in-loop -- clear recovery intent only after collection succeeds
+      await rm(join(repo, 'capture.pending'), { force: true })
+      session.dirtyRepos.delete(repo)
     }
   }
 

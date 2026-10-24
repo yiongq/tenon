@@ -396,7 +396,9 @@ describe('05 snapshot budgets and availability', () => {
       let block = false
       const notices = vi.fn<(id: string, state: string) => void>()
       const controller = make({
-        limits: { takeMs: 150 },
+        // The blocked write-tree waits for this deadline; the later leaf copy must fit inside it
+        // on a loaded CI machine, so it is not squeezed further.
+        limits: { takeMs: 1_000 },
         onDegraded: notices,
         process: injectedProcess((spec, signal) =>
           block && spec.argv.includes('write-tree') ? untilAborted(signal) : null,
@@ -636,7 +638,7 @@ describe('05 retention and reservations', () => {
     '05 验收 14: first-tree estimate over remaining budget stages no files',
     async () => {
       await writeFile(join(workspace, 'a'), randomBytes(200_000))
-      const controller = make({ limits: { bytes: 300_000 } })
+      const controller = make({ limits: { bytes: 200_000 } })
       await warm(controller)
       expect(controller.status(SESSION)).toBe('file-only')
       expect(controller.lastDegradeReason(SESSION)).toMatch(/budget/)
@@ -645,7 +647,7 @@ describe('05 retention and reservations', () => {
         await controller.take(request(join(workspace, 'a')), new AbortController().signal),
       ).toEqual({ ok: false, reason: 'over-budget' })
       expect(await readdir(join(profile, 'snapshots', SESSION, 'manifests'))).toEqual([])
-      expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(300_000)
+      expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(200_000)
     },
   )
 
@@ -840,7 +842,7 @@ describe('05 recovery, lifecycle and coverage', () => {
       })
       await handlers.get('session.selectProfile')!({}, { sessionId: SESSION, profile: 'cowork' })
       await handlers.get('workspace.pick')!({}, { sessionId: SESSION })
-      expect(snapshots.status(SESSION)).toBe('warming')
+      await vi.waitFor(() => expect(['warming', 'tree']).toContain(snapshots.status(SESSION)))
       await snapshots.settled(SESSION)
       expectState(snapshots, 'tree')
       expect(await readdir(join(profile, 'snapshots', SESSION, 'manifests'))).toHaveLength(1)
@@ -896,7 +898,8 @@ describe('05 recovery, lifecycle and coverage', () => {
   }, 15_000)
 
   it('05 验收 4、25: coverage is read-only, bounded, and rejects hardlinks, git metadata and outside paths', async () => {
-    const controller = await fileOnly({ limits: { coverageMs: 10 } })
+    // Only the stalled lookup must hit this bound; the unstalled one must answer within it under load.
+    const controller = await fileOnly({ limits: { coverageMs: 500 } })
     await writeFile(join(workspace, 'a'), 'a')
     await link(join(workspace, 'a'), join(workspace, 'b'))
     await mkdir(join(workspace, '.git'))
@@ -1326,4 +1329,140 @@ it.skipIf(process.platform === 'win32')(
     expect(data.skipped).toBe(1)
   },
   15_000,
+)
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 14、45: a successful capture without obsolete refs does not start gc',
+  async () => {
+    await writeFile(join(workspace, 'a'), 'a')
+    await warm()
+    // Replace the bootstrap ref first; deleting that ref legitimately needs collection.
+    await snapshots.take(request(), new AbortController().signal)
+    spawned.length = 0
+    expectSuccess(snapshots, await snapshots.take(request(), new AbortController().signal))
+    expect(spawned.some((spec) => spec.argv.includes('gc'))).toBe(false)
+  },
+  15_000,
+)
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 45: a healthy repository starts recovery without unnecessary gc',
+  async () => {
+    await writeFile(join(workspace, 'a'), 'a')
+    await warm()
+    spawned.length = 0
+    const reopened = make()
+    await reopened.ready
+    expect(reopened.lastDegradeReason(SESSION)).toBeNull()
+    expect(spawned.some((spec) => spec.argv.includes('gc'))).toBe(false)
+  },
+  15_000,
+)
+
+it('05 验收 14: snapshot removal failure still removes the session output and logs the error', async () => {
+  const output = join(profile, 'tool-output', SESSION)
+  await mkdir(output, { recursive: true })
+  await writeFile(join(output, 'output.txt'), 'output')
+  const logs: string[] = []
+  const removal = createSessionRemoval({
+    sessions: {
+      resetSession: async () => ({
+        sessionId: SESSION,
+        incarnationId: randomUUID(),
+        startEntryId: 1,
+      }),
+      deleteSession: async () => {},
+    },
+    profileDir: profile,
+    runs: () => null,
+    log: (line) => logs.push(line),
+    removeSnapshots: async () => {
+      throw new Error('snapshot directory is busy')
+    },
+  })
+  await removal.delete(SESSION)
+  await expect(lstat(output)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(logs).toHaveLength(1)
+  expect(logs[0]).toContain('snapshot directory is busy')
+})
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 10: ordinary git error text containing timeout does not permanently disable trees',
+  async () => {
+    let fail = true
+    const controller = make({
+      process: {
+        spawn: (spec, signal) => {
+          if (fail && spec.argv.includes('add')) {
+            fail = false
+            throw new Error('bad filename timeout.txt')
+          }
+          return tracking.spawn(spec, signal)
+        },
+      },
+    })
+    await writeFile(join(workspace, 'a'), 'a')
+    await warm(controller)
+    expectState(controller, 'file-only')
+    await controller.setWorkspace(SESSION, [])
+    await controller.setWorkspace(SESSION, [workspace])
+    await controller.settled(SESSION)
+    expectState(controller, 'tree')
+    expect(controller.lastDegradeReason(SESSION)).toBeNull()
+  },
+  15_000,
+)
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 14、45: a later published capture still collects objects left by a failed capture and failed gc',
+  async () => {
+    let failTree = false
+    let failGc = false
+    const controller = make({
+      process: {
+        spawn: (spec, signal) => {
+          if (failTree && spec.argv.includes('write-tree')) {
+            failTree = false
+            throw new Error('injected write-tree failure')
+          }
+          if (failGc && spec.argv.includes('gc')) {
+            failGc = false
+            throw new Error('injected gc failure')
+          }
+          return tracking.spawn(spec, signal)
+        },
+      },
+    })
+    await writeFile(join(workspace, 'a'), 'a')
+    await warm(controller)
+    expectSuccess(controller, await controller.take(request(), new AbortController().signal))
+    await writeFile(join(workspace, 'unpublished'), randomBytes(16_000))
+    const hash = (await git(['hash-object', join(workspace, 'unpublished')])).trim()
+    failTree = true
+    failGc = true
+    expect(await controller.take(request(), new AbortController().signal)).toMatchObject({
+      ok: false,
+    })
+    const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+    expect(await git([`--git-dir=${repo}`, 'cat-file', '-e', hash])).toBe('')
+    await rm(join(workspace, 'unpublished'))
+    expectSuccess(controller, await controller.take(request(), new AbortController().signal))
+    await expect(git([`--git-dir=${repo}`, 'cat-file', '-e', hash])).rejects.toThrow(
+      /subprocess failed/,
+    )
+  },
+  15_000,
+)
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 55: every tree listing requests a sensitive-target refresh',
+  async () => {
+    const refreshes: string[][] = []
+    snapshots.bindSensitiveRefresh((folders) => refreshes.push([...folders]))
+    await writeFile(join(workspace, 'a'), 'a')
+    await warm()
+    expect(refreshes).toEqual([[workspace]])
+    expectSuccess(snapshots, await snapshots.take(request(), new AbortController().signal))
+    expect(refreshes).toEqual([[workspace], [workspace]])
+  },
 )

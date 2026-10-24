@@ -180,9 +180,18 @@ async function harness(o: {
   const store = createMemoryTapeStore({ identity: IDENTITY })
   const provider = createScriptedProvider({ models: [MODEL] })
   const inspector = createFakeInspector({ id: 'asker', ceiling: 'ask' })
+  let workspaceReady = false
   const loop = createTestLoopPorts({
     connector: { provider, model: MODEL, mcpSources: [annotated()] },
-    ...(o.commandShell === undefined ? {} : { commandShell: o.commandShell }),
+    ...(o.commandShell === undefined
+      ? {}
+      : {
+          commandShell: {
+            ...o.commandShell,
+            // Workspace selection reads HOME for its warning; defer Bash's controlled environment until setup ends.
+            env: () => (workspaceReady ? o.commandShell!.env() : Promise.resolve({})),
+          },
+        }),
   })
   const { onNow } = o
   const clock =
@@ -216,6 +225,7 @@ async function harness(o: {
       dedicated: DEDICATED,
     })
   }
+  workspaceReady = true
   return { memory: host, store, service, loop, provider, inspector, wrapped, afterExit }
 }
 

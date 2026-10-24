@@ -63,7 +63,6 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
   })
   const clock = new SystemClock()
   const snapshots = new DesktopSnapshots({ identity, clock, process: hostProcess, sandbox })
-  await snapshots.ready
   return {
     identity,
     fs,

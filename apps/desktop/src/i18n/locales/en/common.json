@@ -520,6 +520,11 @@
         "tool": "This can't be undone, so Tenon asks first.",
         "network": "This can't be undone, so Tenon asks first."
       },
+      "sensitive-path": {
+        "credential": "This is a sign-in credential. Its contents will be sent to the model.",
+        "auto-run": "Files at this location are executed automatically.",
+        "hardlink": "This file has other names. Changing it also changes it elsewhere."
+      },
       "outside-workspace": "It is outside this task's folders.",
       "network": {
         "search": "The search words leave this computer.",

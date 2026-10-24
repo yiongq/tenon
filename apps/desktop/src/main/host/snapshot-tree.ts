@@ -5,7 +5,14 @@ import { join, relative } from 'node:path'
 import { absolutePath } from '@tenon-app/kernel'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { SnapshotGit } from './snapshot-git.js'
-import { contains, DEFAULT_EXCLUDES, identity, MAX_FILE_BYTES, saved } from './snapshot-storage.js'
+import {
+  contains,
+  DEFAULT_EXCLUDES,
+  identity,
+  MAX_FILE_BYTES,
+  saved,
+  SnapshotBudgetError,
+} from './snapshot-storage.js'
 import type { SavedFile, TreeRecord } from './snapshot-storage.js'
 
 export interface TreeScan {
@@ -99,7 +106,8 @@ export async function scanTree(
       excluded.push(name)
       skipped++
     }
-    if (entries.length > maxFiles) throw new Error('Snapshot file-count budget exceeded')
+    if (entries.length > maxFiles)
+      throw new SnapshotBudgetError('Snapshot file-count budget exceeded', 'files')
   }
   await writeFile(
     join(repo, 'info', 'exclude'),

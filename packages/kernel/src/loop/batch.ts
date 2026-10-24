@@ -137,6 +137,9 @@ export interface BatchContext {
   readonly approved?: ApprovedCall
   readonly inspectors: readonly InspectorRegistration[]
   readonly validator: AsyncArgumentValidator
+  readonly sensitivePaths?:
+    | ((roots: readonly AbsolutePath[]) => Promise<PathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   readonly mcpSources: readonly McpToolSource[]
@@ -1092,6 +1095,9 @@ export interface JudgeContext {
   readonly host: HostAdapter
   readonly sessionId: string
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitivePaths?:
+    | ((roots: readonly AbsolutePath[]) => Promise<PathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   /** The search backend's host, for WebSearch's card, grant and reason; null without one. */
@@ -1196,7 +1202,13 @@ export async function judgeCall(
     tool: item,
     args: call.input,
     ...(place === undefined ? {} : { place }),
-    ...(located === undefined ? {} : { real: located.real }),
+    ...(located?.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+    ...(located === undefined
+      ? {}
+      : {
+          real: located.real,
+          ...(located.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+        }),
     workspace,
     searchHost: ctx.searchHost,
     ...(sandbox === undefined ? {} : { sandbox }),
@@ -1237,6 +1249,7 @@ export async function judgeCall(
       ...(sandbox === undefined ? {} : { sandbox }),
       ...(urlBlocked ? { urlBlocked: true as const } : {}),
       ...(place === undefined ? {} : { place }),
+      ...(located?.sensitive === undefined ? {} : { sensitive: located.sensitive }),
       ...(setting?.connectorOff === undefined ? {} : { connectorOff: setting.connectorOff }),
       ...(setting?.userSetting === undefined
         ? {}
@@ -1407,7 +1420,7 @@ export interface CallFacts {
 }
 
 export async function callFactsOf(
-  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles'>,
+  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
 ): Promise<CallFacts> {
   const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
   const facts = sessionFactsOf(entries)
@@ -1446,7 +1459,7 @@ export async function callFactsOf(
  * roots are empty.
  */
 export async function pathScopeOf(
-  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles'>,
+  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
   workspace: WorkspaceSetPayload | null,
 ): Promise<PathScope> {
   const fs = ctx.host.fs
@@ -1455,12 +1468,20 @@ export async function pathScopeOf(
   const protectedFiles = await Promise.all(
     ctx.protectedFiles.map(async (file) => (await resolvePath(fs, file)).path),
   )
-  return { roots: workspace?.folders ?? [], profileDir, ownSpillDir, protectedFiles }
+  const roots = workspace?.folders ?? []
+  const sensitive = await ctx.sensitivePaths?.(roots)
+  return {
+    roots,
+    profileDir,
+    ownSpillDir,
+    protectedFiles: [...new Set([...ctx.protectedFiles, ...protectedFiles])],
+    ...(sensitive === undefined ? {} : { sensitive }),
+  }
 }
 
 /** Where a file tool's path falls, as a decision places it; undefined for any other tool. */
 export async function placeOf(
-  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles'>,
+  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
   item: ToolTableItem,
   input: Record<string, unknown>,
 ): Promise<PathPlace | undefined> {
@@ -1481,7 +1502,12 @@ async function locate(
     input[item.originalName === 'Glob' || item.originalName === 'Grep' ? 'path' : 'file_path']
   const path = typeof raw === 'string' ? raw : scope.roots[0]
   if (path === undefined) return { real: scope.ownSpillDir, place: 'outside' }
-  return locatePath(host.fs, path as AbsolutePath, scope)
+  return locatePath(
+    host.fs,
+    path as AbsolutePath,
+    scope,
+    item.originalName as 'Read' | 'Write' | 'Edit' | 'Delete' | 'Glob' | 'Grep',
+  )
 }
 
 /** In the chat profile, Read reaches only the session's own spill: anything else is protected (H1). */

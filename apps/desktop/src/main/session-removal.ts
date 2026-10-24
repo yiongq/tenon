@@ -104,7 +104,14 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
       await runs?.settledRoot(sessionId)
       const children = await childOutputFolders(deps.tape, deps.profileDir, sessionId)
       const committed = await commit()
-      await deps.removeSnapshots?.(sessionId)
+      try {
+        await deps.removeSnapshots?.(sessionId)
+      } catch (error) {
+        deps.log(
+          `[session] ${sessionId}: snapshots were not removed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        )
+      }
       for (const outputFolder of new Set([folder, ...children])) {
         try {
           // oxlint-disable-next-line no-await-in-loop -- every directory is removed after the store commits

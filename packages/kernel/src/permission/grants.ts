@@ -75,7 +75,8 @@ export function answerScope(q: {
   readonly toolName: string
 }): Extract<GrantScope, 'once' | 'session'> {
   const { record } = q.decision
-  if (q.decision.confirm?.reason === 'elevated') return 'once'
+  if (q.decision.confirm?.reason === 'elevated' || q.decision.confirm?.reason === 'sensitive-path')
+    return 'once'
   if (record.verdict === 'ask' && MUST_ASK.has(record.decidedBy)) return 'once'
   if (q.reversibility === 'irreversible') return 'once'
   if (q.place === 'outside') return 'once'

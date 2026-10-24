@@ -1044,3 +1044,15 @@ it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
     }
   }
 })
+
+it('05 验收 26、27、25: both locales carry the three sensitive-path explanations', () => {
+  expect(
+    problems(
+      ['credential', 'auto-run', 'hardlink'].map((category) => ({
+        key: `confirm.reason.sensitive-path.${category}`,
+        args: [],
+        what: category,
+      })),
+    ),
+  ).toEqual([])
+})
