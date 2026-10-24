@@ -4,7 +4,7 @@ Status: ready
 Approved: ready · 2026-10-24 · 「05 改 ready」 · 对话
 Tier: heavy — 碰 Tape、权限判定（可逆性、保护名单、会话授权）、提示层，并且会删、会还原用户的文件
 Phase: 4（4b）
-Changes: 00 §HostAdapter（增补）；00 §本地持久化布局（增补）；01 §保留命名空间（增补：只声明 fs slice 的写入方与身份）；02 §可逆性（增补：点名，见 §点名）；02 §内置工具的默认档位（增补：点名，见 §点名）；02 §「在不在工作区里」（增补：点名，见 §点名）；02 §内置工具与参数（增补：点名，见 §点名）；02 §决策表与各层输入（增补：点名，见 §点名）；02 §载荷（增补）；02 §作用域与授权键（增补）；02 §工作区（增补：点名，见 §点名）；presentation-r1 §审批卡（增补）；presentation-r1 §结算行（增补）；presentation-r1 §工具行（增补）；presentation-r1 §工具行（替换：收起时的标记）
+Changes: 00 §HostAdapter（增补）；00 §本地持久化布局（增补）；01 §保留命名空间（增补：只声明 fs slice 的写入方与身份）；02 §可逆性（增补：点名，见 §点名）；02 §内置工具的默认档位（增补：点名，见 §点名）；02 §「在不在工作区里」（增补：点名，见 §点名）；02 §内置工具与参数（增补：点名，见 §点名）；02 §决策表与各层输入（增补：点名，见 §点名）；02 §载荷（增补）；02 §作用域与授权键（增补）；02 §工作区（增补：点名，见 §点名）；02 §点停止时各状态怎么收（增补：点名，见 §点名）；presentation-r1 §审批卡（增补）；presentation-r1 §结算行（增补）；presentation-r1 §工具行（增补）；presentation-r1 §工具行（替换：收起时的标记）
 
 ## 给你看的一页
 
@@ -141,7 +141,7 @@ export type SnapshotCreatedPayload = {
 export type RestoreStartedPayload = { roundRunId: string; undoSnapshotId: string; previewKey: string }
 export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; restored: number; removed: number; kept: number; skipped: number; failed: number }
 // ToolOutcomePayload 只增：snapshotId?: string；file?: { mtimeNs: string; size: number }
-// PermissionDecidedPayload 只增：coverage?: SnapshotCoverage
+// PermissionDecidedPayload 只增：coverage?: SnapshotCoverage；fileTarget?: { kind; nlink } | null
 ```
 
 - Tape 名字（`fs/` 前缀 01 已整个保留，现行 `names.ts` 也已声明 `fs/snapshot_created`、只是没有身份列；05 只补写入方与身份）：`fs/snapshot_created`，event，slice `fs`，身份 `runtime_event`、runId、requestSeq，键 `fs:v1:snapshot:<runId>:<requestSeq>:<i>:<moment>`，一次调用的每个时刻只出一个 `snapshotId`；`fs/restore_started` 与 `fs/restored` 是新名，event，slice `fs`，身份 `session`、sessionId、`<n>`，键 `fs:v1:restore_started:<incarnationId>:<n>` 与 `fs:v1:restored:<incarnationId>:<n>`。都登记进 `DECLARED_TAPE_NAMES`、投影、重放与 SQLite、Postgres 一致性测试（D13、D48）。
@@ -177,11 +177,12 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 | (b) | §可逆性「只看工具和参数，与保护名单、工作区判定无关」 | 文件工具的可逆性另看 `coverage`，而 `coverage` 看在不在工作区、在不在排除里 | (i) | 同上；D1 |
 | (c) | §可逆性 表「删除已有文件 = 不可逆」与「阶段 2 只产出三个值」 | 拍得了的 Delete 判 `snapshotted` | (i) | 主参考 §13 阶段 4 ④ 交给阶段 4；D11 |
 | (d) | §内置工具与参数「没有删除工具，删除只能经 Bash」 | 删单个文件用 Delete，删目录仍经 Bash；工具表十一个 | (i) | 同上；D11 |
-| (e) | §内置工具与参数「执行期失败」清单 | 加四种：读过之后被改、留底之后被改、拍不成、写前名字数变成大于 1 | (ii) | D9、D10、D50 |
+| (e) | §内置工具与参数「执行期失败」清单 | 加四种：读过之后被改、留底之后被改、拍不成、写前名字数变成大于 1；Delete 另有父目录或目标被换 | (ii) | D9、D10、D50 |
 | (f) | §「在不在工作区里」第 3 步「取第一个成立的」与「文件工具」所指 | 凭据、会被自动执行的名字、名字数大于 1 的文件判 `outside` 带 `sensitive`；Delete 进文件工具 | (i)+(ii) | 02 第 2 层保护名单「阶段 4 由沙箱补齐」；新名字是收紧；D20、D10、D51 |
 | (g) | §内置工具的默认档位「Glob、Grep 的遍历跳过判为 `protected` 的子树和文件」 | 另跳过凭据的子树 | (ii) | D20、D46 |
 | (h) | §决策表与各层输入 第 6 层「用户授权……放行」 | 带 `sensitive` 时第 6 层的会话授权与继承授权不认，写法同提权命令清空会话授权 | (ii) | D52 |
 | (i) | §工作区「文件夹进列表只有两条路」 | 两条路都拒根目录与卷根，主目录提醒 | (ii) | D2、D55 |
+| (j) | §点停止时各状态怎么收「进程内写操作……等它做完」 | 写类文件工具动文件前查中止，已停不写、记 `aborted` | (ii) | 规矩 1 |
 
 ## 快照怎么拍
 
@@ -255,7 +256,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 
 ## 提示层与评测
 
-- Delete 的工具描述，与四句固定英文（读过之后被改、留底之后被改、拍不成、名字数变了）进提示层；`PROMPT_LAYER_VERSION` 从 11 升到 12，更新哈希（D22）。
+- Delete 的工具描述与结果模板，与四句固定英文（读过之后被改、留底之后被改、拍不成、名字数变了）进提示层；`PROMPT_LAYER_VERSION` 从 11 升到 12，更新哈希（D22）。
 - 合并前在基线列上跑全集、每题 3 次，记录与改动同一 PR；lead 逐题对照第 11 版基线，有题从过变不过就停下交 owner（D41）。
 
 ## 文档同步
@@ -277,7 +278,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 - 还原过的文件修改时间是还原那一刻，不是任务前的时间；按修改时间排序时排在前面（D45）。
 - 没装命令行工具的 macOS（P8）、git 2.43 以下（P18）、Windows（P20）上的行为都没测；Windows 上一律只留单文件副本、叶子不防换链接。
 - 每次会改动的调用前后多一次快照：5 万文件约 0.1 秒，加一次列文件（P1、P17）。
-- 基线评测一次约 45 元，看门狗上限 75 元（04 plan 第 15a 步的记录）。
+- 基线评测用 glm-5.3-flash，一次约 4 元（ADR-005）。
 
 ## 验收标准
 
@@ -343,4 +344,5 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 
 ## 修订记录
 
+- 2026-10-25 · §接口、§已知限制与代价、§点名 (e)(j)、§提示层与评测 · D60；ADR-005；两处收紧 · PR #74
 - 2026-10-24 · §已知限制与代价 加链接目标扫描一条 · 第一段评审发现扫描走遍工作区、超时后工具全部失败；owner 定扫不完时照名字查（D59），是放宽，经 owner 点名批准 · 5bf0cae
