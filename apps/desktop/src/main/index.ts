@@ -247,6 +247,7 @@ async function main(): Promise<void> {
           // Bound late: the loop below takes this removal's `removing`.
           runs: () => loop?.registry ?? null,
           profileDir: absolutePath(host.identity.profileDir),
+          removeSnapshots: (sessionId) => host.snapshots.removeSession(sessionId),
           log: (line) => console.warn(line),
         })
   const removing = (sessionId: string): boolean => removal?.removing(sessionId) ?? false
@@ -264,6 +265,7 @@ async function main(): Promise<void> {
           log: (line) => console.warn(line),
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
+  host.snapshots.bindActiveRounds(() => loop?.registry.snapshot() ?? [])
   host.sandbox.bindSessionFolders(
     async (sessionId) => (await sessions?.sessionFacts({ sessionId }))?.workspace?.folders ?? [],
   )
@@ -362,6 +364,7 @@ async function main(): Promise<void> {
     home,
     gate: recovery.ready,
     // Main's own dialog, over the window that asked: the only way a folder is added (A9).
+    onWorkspaceChanged: (sessionId, folders) => host.snapshots.setWorkspace(sessionId, folders),
     pickFolders: async (event) => {
       const sender = (event as { sender?: Electron.WebContents } | undefined)?.sender
       const owner = sender === undefined ? null : BrowserWindow.fromWebContents(sender)

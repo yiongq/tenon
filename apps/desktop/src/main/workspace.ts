@@ -72,6 +72,11 @@ export interface WorkspaceRoutesDeps {
   /** Main's directory dialog, several folders at once; null or empty when the user cancelled. */
   readonly pickFolders: (event: unknown) => Promise<readonly string[] | null>
   readonly gate?: Promise<void>
+  /** Spec 05 §快照怎么拍: accepted folders start a background snapshot, without changing selection. */
+  readonly onWorkspaceChanged?: (
+    sessionId: string,
+    folders: readonly AbsolutePath[],
+  ) => Promise<void>
 }
 
 export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
@@ -88,6 +93,7 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
       dedicated: dedicated(sessionId),
     })
     if (!result.ok) return { ok: false, code: result.code }
+    await deps.onWorkspaceChanged?.(sessionId, result.folders)
     if (result.origin === 'picked') {
       await writeConfig(deps.host.fs, deps.host.identity, {
         lastWorkspaceFolders: [...result.folders],
@@ -136,6 +142,7 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
         ? { sessionId, profile }
         : { sessionId, profile, dedicated: dedicated(sessionId) },
     )
+    if (result.ok) await deps.onWorkspaceChanged?.(sessionId, result.workspace?.folders ?? [])
     return result.ok
       ? { ok: true as const, ...factsOf(result) }
       : { ok: false as const, code: result.code }

@@ -205,7 +205,13 @@ describe('05 DesktopFs', () => {
       ok: false,
       reason: 'undo-unavailable',
     })
-    await expect(snapshots.preview(query)).rejects.toThrow(/unavailable/)
+    expect(await snapshots.preview(query)).toEqual({
+      previewKey: '',
+      restore: [],
+      remove: [],
+      conflicts: [],
+      skipped: [],
+    })
     await expect(
       snapshots.apply({ sessionId: 's', undoSnapshotId: 'id', overwrite: [] }),
     ).rejects.toThrow(/unavailable/)

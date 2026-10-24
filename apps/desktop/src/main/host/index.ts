@@ -11,7 +11,7 @@ import { EmptyPolicy } from './policy.js'
 import { openProfile } from './profile.js'
 import { createDesktopSandboxRuntime } from './sandbox-runtime.js'
 import { KeychainSecrets, MemorySecrets } from './secrets.js'
-import { unavailableSnapshots } from './snapshots.js'
+import { DesktopSnapshots } from './snapshots.js'
 import type { StartupEnv } from './shell-env.js'
 
 export interface DesktopHostOptions {
@@ -48,6 +48,7 @@ export function useMemorySecrets(
 export async function createDesktopHost(options: DesktopHostOptions): Promise<
   HostAdapter & {
     sandbox: Awaited<ReturnType<typeof createDesktopSandboxRuntime>>
+    snapshots: DesktopSnapshots
   }
 > {
   const fs = new DesktopFs()
@@ -60,6 +61,9 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
     startupEnv: options.startupEnv,
     log: options.log,
   })
+  const clock = new SystemClock()
+  const snapshots = new DesktopSnapshots({ identity, clock, process: hostProcess, sandbox })
+  await snapshots.ready
   return {
     identity,
     fs,
@@ -67,7 +71,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
     process: hostProcess,
     sandbox,
     confirm: new IpcConfirm(options.send),
-    clock: new SystemClock(),
+    clock,
     // The origin map innermost: the official protocol seam sees the URL as configured (M6 不变量 19).
     network: officialProtocolTestNetwork(
       originMapTestNetwork(createDesktopNetwork(), options.isPackaged, options.startupEnv),
@@ -75,7 +79,7 @@ export async function createDesktopHost(options: DesktopHostOptions): Promise<
       process.env,
     ),
     policy: new EmptyPolicy(),
-    snapshots: unavailableSnapshots,
+    snapshots,
   }
 }
 

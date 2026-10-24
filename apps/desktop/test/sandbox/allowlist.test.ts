@@ -727,7 +727,7 @@ describe('04 desktop sandbox wiring', () => {
     expect(h.runtime.view().reasons).toEqual([{ code: 'init-failed', detail: 'reset by a signal' }])
   })
 
-  it('04 不变量 1: only Bash, MCP stdio and the shell environment call sandbox.wrap', () => {
+  it('04 不变量 1、05 验收 11: only approved subprocess launchers call sandbox.wrap', () => {
     const root = fileURLToPath(new URL('../../../../', import.meta.url))
     const files = [
       ...readdirSync(join(root, 'packages')).flatMap((name) =>
@@ -742,6 +742,8 @@ describe('04 desktop sandbox wiring', () => {
         .toSorted(),
     ).toEqual([
       'apps/desktop/src/main/host/shell-env.ts',
+      // Spec 05 D57: snapshot git and xcode-select use the full-access wrapper too.
+      'apps/desktop/src/main/host/snapshot-git.ts',
       'packages/kernel/src/mcp/connection.ts',
       'packages/kernel/src/tools/builtin/bash.ts',
     ])
