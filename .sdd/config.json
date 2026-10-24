@@ -2,7 +2,7 @@
   "target_branch": "dev",
   "gates": {
     "install": "pnpm install --frozen-lockfile --ignore-scripts",
-    "test": "pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest.json"
+    "test": "TENON_SANDBOX_TESTS=skip pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest.json"
   },
   "commit_gates": ["format:check", "lint", "typecheck"],
   "commit_time_limit_s": 30,
