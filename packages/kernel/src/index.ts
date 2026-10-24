@@ -354,6 +354,17 @@ export type {
 // owns the agent loop (spec 02 §主进程与 kernel 的循环接口). It takes the store as an INSTANCE and
 // wraps it in the Tape facade itself, so no caller above it holds `TapeStore.append`. Spec 02 removed
 // phase 1's `runRequest`, `RunRequestQuery` and `RunResult`: a request is what a Run sends.
+export type {
+  SnapshotRefusalCode,
+  SnapshotRefusal,
+  SnapshotRoundQuery,
+  SnapshotRestoreQuery,
+  SnapshotRound,
+  IncompleteRestore,
+  SnapshotRoundsResult,
+  SnapshotPreviewResult,
+  SnapshotRestoreResult,
+} from './loop/restore.js'
 export { createSessionService } from './session/service.js'
 export type {
   AnswerResult,

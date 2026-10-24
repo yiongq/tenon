@@ -18,7 +18,7 @@ export interface CallSnapshot {
 }
 
 /** A resumed Run belongs to the round it paused; a new message or continue begins a new round. */
-function roundRunOf(entries: readonly TapeEntry[], runId: string): string {
+export function roundRunOf(entries: readonly TapeEntry[], runId: string): string {
   const seen = new Set<string>()
   let current = runId
   while (!seen.has(current)) {
