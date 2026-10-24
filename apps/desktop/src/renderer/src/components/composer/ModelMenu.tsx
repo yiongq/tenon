@@ -2,6 +2,7 @@ import { invokeRoute, sessionFacts, sessionSelectModel } from '@tenon-app/contra
 import type {
   ProviderEndpoint,
   ProviderEntryContract,
+  RouteRequest,
   SessionModelChoice,
 } from '@tenon-app/contracts'
 import { useAuiState } from '@assistant-ui/react'
@@ -63,9 +64,16 @@ interface Choice {
   readonly effort: string | null
 }
 
+type SelectionIntent = NonNullable<RouteRequest<typeof sessionSelectModel>['intent']>
+
 type View =
   | { readonly kind: 'list' }
-  | { readonly kind: 'confirm'; readonly host: string; readonly choice: Choice }
+  | {
+      readonly kind: 'confirm'
+      readonly host: string
+      readonly choice: Choice
+      readonly intent: SelectionIntent
+    }
 
 const LIST: View = { kind: 'list' }
 
@@ -151,13 +159,22 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
       const choice = loaded.modelChoice
       if (choice === null) return
       const target = loaded.providers?.find((entry) => entry.id === choice.providerId)?.endpoint
-      setView({ kind: 'confirm', host: heldConfirmHost(held.host, target), choice })
+      setView({
+        kind: 'confirm',
+        host: heldConfirmHost(held.host, target),
+        choice,
+        intent: 'confirm',
+      })
       setOpen(true)
     })
   }, [heldSeq, store])
 
-  const choose = async (choice: Choice): Promise<void> => {
-    const written = await invokeRoute(window.tenon, sessionSelectModel, { sessionId, ...choice })
+  const choose = async (choice: Choice, intent: SelectionIntent): Promise<void> => {
+    const written = await invokeRoute(window.tenon, sessionSelectModel, {
+      sessionId,
+      ...choice,
+      intent,
+    })
     setOpen(false)
     setView(LIST)
     setHighlightChoice(null)
@@ -170,6 +187,7 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
     const written = await invokeRoute(window.tenon, sessionSelectModel, {
       sessionId: next,
       ...choice,
+      intent: 'row',
     })
     setOpen(false)
     setView(LIST)
@@ -207,15 +225,18 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
    * history that went to this machine or a private network to a public host (A9, 验收 34) the
    * session's own choice has not already confirmed (rrE-1); true when that is what it did.
    */
-  const commit = async (choice: Choice): Promise<boolean> => {
+  const commit = async (
+    choice: Choice,
+    intent: Exclude<SelectionIntent, 'confirm'> = 'row',
+  ): Promise<boolean> => {
     const target = entryOf(choice.providerId)?.endpoint
     const { last, confirmed } = await sentAndConfirmed()
     const host = confirmHostFor(last, target, hasHistory, confirmed)
     if (host !== null) {
-      setView({ kind: 'confirm', host, choice })
+      setView({ kind: 'confirm', host, choice, intent })
       return true
     }
-    await choose(choice)
+    await choose(choice, intent)
     return false
   }
 
@@ -363,7 +384,7 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
               </DropdownMenuLabel>
               <DropdownMenuItem
                 data-testid="model-confirm-switch"
-                onClick={() => void choose(view.choice)}
+                onClick={() => void choose(view.choice, view.intent)}
               >
                 {t('model.confirm.switch')}
               </DropdownMenuItem>
@@ -471,11 +492,14 @@ export function ModelMenu({ ref }: { ref?: Ref<ModelMenuHandle> }): JSX.Element 
                           // Open until `commit` decides: it may turn the menu into the confirmation.
                           closeOnClick={false}
                           onClick={() =>
-                            void commit({
-                              providerId: current.providerId,
-                              modelId: current.modelId,
-                              effort: level,
-                            })
+                            void commit(
+                              {
+                                providerId: current.providerId,
+                                modelId: current.modelId,
+                                effort: level,
+                              },
+                              'effort',
+                            )
                           }
                         >
                           <span className="flex size-4 shrink-0 items-center justify-center">

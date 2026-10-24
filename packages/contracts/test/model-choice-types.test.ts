@@ -1,7 +1,7 @@
 /**
  * The session's model choice across IPC (spec 02 验收 13; plan step 19): `session.modelChoice`'s
- * response restates the kernel's `ModelChoice`, and `session.selectModel`'s request its fields; both
- * directions are checked, so a field added on either side is a compile error here.
+ * response restates the kernel's `ModelChoice`, and `session.selectModel`'s request its fields plus
+ * optional UI intent; both choice directions are checked, so a drift is a compile error here.
  */
 import type { ModelChoice } from '@tenon-app/kernel'
 import type { z } from 'zod'
@@ -17,12 +17,38 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 export type ChoiceIsKernelChoice = Assert<Equal<SessionModelChoice, Mutable<ModelChoice>>>
 export type SelectCarriesTheChoice = Assert<
   Equal<
-    Omit<z.infer<typeof sessionSelectModel.request>, 'sessionId'>,
+    Omit<z.infer<typeof sessionSelectModel.request>, 'sessionId' | 'intent'>,
     Omit<Mutable<ModelChoice>, 'capabilitySource'>
+  >
+>
+export type IntentIsOptional = Assert<
+  Equal<
+    Pick<z.infer<typeof sessionSelectModel.request>, 'intent'>,
+    { intent?: 'row' | 'effort' | 'confirm' | undefined }
   >
 >
 
 describe('the session model choice', () => {
+  it('claude-5-5-models 验收 16: selection intent is optional, validated, and separate from the kernel choice', () => {
+    const request = {
+      sessionId: '0f1d9a2e-6b3d-4a71-9f52-0c8de7a11b71',
+      providerId: 'anthropic',
+      modelId: 'claude-opus-5-5',
+      effort: null,
+    }
+    expect(sessionSelectModel.request.parse(request)).toEqual(request)
+    for (const intent of ['row', 'effort', 'confirm'] as const) {
+      expect(sessionSelectModel.request.parse({ ...request, intent })).toEqual({
+        ...request,
+        intent,
+      })
+    }
+    expect(sessionSelectModel.request.safeParse({ ...request, intent: 'automatic' }).success).toBe(
+      false,
+    )
+    expect(sessionSelectModel.request.safeParse({ ...request, intent: null }).success).toBe(false)
+  })
+
   it('takes a hand-typed id and a null effort, and names where the capabilities came from', () => {
     expect(
       sessionSelectModel.request.safeParse({

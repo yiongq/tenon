@@ -4,7 +4,7 @@
 
 ## 当前 / 需要你
 
-当前：第 0.1、1–8 步做完（第 2–5 步 PR #67 已合入；第 1、6–8 步在分支 `feat/claude-5-5-seg2`）。下一步第 9 步（desktop 主进程的解析与写指针，含会话不换模型与一批 e2e 改写），然后第 10、11 步。第 12 步开跑前会先问你（读钥匙串会弹窗，要花钱）。
+当前：第 0.1、1–11 步做完（第 9–11 步在分支 `feat/claude-5-5-seg3`）。下一步第 12 步：官方 key 的 live 冒烟，开跑前先问你（读钥匙串会弹窗，要花钱，花费上限由你定）。
 需要你：无
 授权：本 spec 由 Codex 实现的 PR，lead 评审、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进 (Recommended)」（2026-10-23 问卷，题目「Codex 的 PR 经我评审、CI 绿了之后，我自己开自动合并，还是每个都先问你？」）
 
@@ -83,9 +83,9 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
   - kernel：`RunConnector.resolveChoice` 的问询加可选的 `previousModel`（packages/kernel/src/loop/ports.ts:50；可选，缺省按 null 读，照文件头的冻结规则，已有的十处直接调用点不用改），带 `providerId`、`modelId` 与 `capabilitySource`；`SessionFacts.lastSelected` 加 `modelId` 与 `capabilitySource`（session/facts.ts:44、:89；载荷里缺 `capabilitySource` 时不写）；mailbox.ts 的 `prebuild`（:541）与 `effectiveModelChoice`（:3256）都交它，`effectiveModelChoice` 的 `previousOrigin` 照旧是 null（它拿到 `needsConfirm` 会抛，:3263）；testing/loop-ports.ts 的脚本连接器照旧把问询记进 `resolved`。
   - 测试：packages/contracts/test/config-route.test.ts（验收 18 前半，含 `latestOf: ""`）；apps/desktop/test/profile.test.ts（验收 18 后半：写 `lastWorkspaceFolders` 后三个默认的 `latestOf` 还在）；packages/kernel/test/session/model-choice.test.ts（验收 15 末条：`previousModel` 是本代最后一个、带 `capabilitySource`、第一个 Run 与清空后为 null、`effectiveModelChoice` 交的 `previousModel` 相同而 `previousOrigin` 为 null）。
   - 突变：① 交本代第一个而不是最后一个 `model_selected` → 红；② 清空后仍交上一代的 → 红；③ `effectiveModelChoice` 交 null → 红；④ 去掉 `.catch(undefined)` → 验收 18 的 `latestOf: ""` 一例红；⑤ `effectiveModelChoice` 也交 `previousOrigin` → 验收 15「地址改到公网后 `session.modelChoice` 不抛」一例红（第 9 步那例，第 9 步做完后回头做这一个突变）；⑥ `previousModel` 丢掉 `capabilitySource` → 验收 15 手填一例红（同上）。
-- [ ] 9. 解析与写指针（desktop 主进程）。本步做完后回头做第 8 步的突变 ⑤⑥（记进 log.md）：
+- [x] 9. 解析与写指针（desktop 主进程）。本步做完后回头做第 8 步的突变 ⑤⑥（记进 log.md）：
   - apps/desktop/src/main/run-assembly.ts 的 `resolveChoice`（:150-182）按 spec §跟随最新「解析」「会话不换」取行：① 空着时先看 `previousModel`（按 `capabilitySource`：`builtin`、`probed` 与没记的，行还在该厂商的表里就用它；实例上的 `user` 同样要行还在；内置厂商上的 `user` 照 02 保守合成、仍记 `user`；`synthesized` 不用），再按答话的一层解析，指针的最新一代用 kernel 的 `newestOfFamily`，不自己扫家族；数据去向检查照旧在取行之后，会话不换留下的行也过这道检查。
-  - model-routes.ts 的 `session.selectModel`（:44-87）：会话没有 ①、请求的 provider 与模型 id 就是写入前 `session.modelChoice` 答的那一行时（交给 kernel 之前读，`sessions.sessionFacts` 与 `sessions.effectiveModelChoice`），只交 kernel 写 ①，不写 `defaultModelByProfile[形态]` 与 `provider`（spec 不变量 12，§点名 (g) 后半）。
+  - model-routes.ts 的 `session.selectModel`（:44-87）：请求的 `intent` 为 `effort`（只改档，不论有没有 ①）或 `confirm`（hold 确认页的「切换」）时，只交 kernel 写 ①，不写 `defaultModelByProfile[形态]` 与 `provider`；`row` 或缺省照常写（spec 不变量 12，§点名 (g) 后半；2026-10-24 修订）。
   - provider-routes.ts 的 `selectionOf`（:287）不改，`provider.select`（:247）照旧用它写钉住的值，只在请求带 `latestOf` 时按 spec §对 02 的修补 第 13 条另走一支（拒绝一律 `invalid-value`）。另加一个只给菜单用的 `menuSelectionOf(definition, modelId)`：行在主列表（没有 `listing: 'more'`）且带 `family` 时给 `{ id, modelId, latestOf: family }`，其余交给 `selectionOf`；model-routes.ts:55 改调它（第 11 步也用它）。`menuRow`（:422）转发 `family`、`familyNameKey`。
   - 测试：
     - model-selection.test.ts「the five layers and the data-flow check」（验收 14、15）。合成的 anthropic 定义把 `opus` [6, 0] 放在第一行；由表里的行展开时先去掉算好的 `listing` 再过 `arrangeFamilies`。不带 `previousModel` 的原有用例不改，照旧通过；
@@ -112,10 +112,10 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
     - ⑩ `latestOf` 与 `source` 同在时仍按指针读 → 红；
     - ⑪ 只改档也写默认（去掉 `session.selectModel` 里那条判定）→ 验收 16「只改档不写默认」两例红。
     - 「指针取家族里排在前面的行」不在这里做：解析调 `newestOfFamily`，由第 5 步的突变 ④ 覆盖；合成表把 [6, 0] 放在第一行，这里测不出它。
-- [ ] 10. 设置卡（renderer）：apps/desktop/src/renderer/src/components/settings/ProviderSettings.tsx 的下拉（:370-392）先列指针项（`settings.providers.latest`，填家族显示名与那一行的显示名，悬停是 id），再列各行；`newDraft`（:500-520）按 spec §跟随最新「谁写指针」选中；保存（:229-236）时选的是指针项就给 `provider.select` 带 `latestOf`，选的是钉住的行就不带。指针项的选项值不能与行 id 重名，`selectOption('<行 id>')` 照旧选中钉住的那一行（model-menu.spec.ts:616 那例靠它）。
+- [x] 10. 设置卡（renderer）：apps/desktop/src/renderer/src/components/settings/ProviderSettings.tsx 的下拉（:370-392）先列指针项（`settings.providers.latest`，填家族显示名与那一行的显示名，悬停是 id），再列各行；`newDraft`（:500-520）按 spec §跟随最新「谁写指针」选中；保存（:229-236）时选的是指针项就给 `provider.select` 带 `latestOf`，选的是钉住的行就不带。指针项的选项值不能与行 id 重名，`selectOption('<行 id>')` 照旧选中钉住的那一行（model-menu.spec.ts:616 那例靠它）。
   - 测试：provider-settings.spec.ts（验收 17）；renderer-settings-sections.test.ts 若断言了下拉选项，一并改。
   - 突变：① 没存这一家的默认时选中第一行 → 验收 17 红；② 保存指针项时不带 `latestOf` → 红；③ 保存钉住的「Opus 5.5」时也带 `latestOf` → 验收 17 红；④ Ollama 卡也出指针项 → 红。
-- [ ] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan。2026-10-23 核过：presentation-r1 已在 `dev` 上，按第一种情形做（写第一把 key 的代码在 apps/desktop/src/main/custom-vendors/store.ts 的 `firstKeyDefaults`）。两种情形原文：
+- [x] 11. 第一把 key 的「有」一支（spec §跟随最新「谁写指针」「迁移」，`Related:`）。不改 presentation-r1 的 spec 与 plan。2026-10-23 核过：presentation-r1 已在 `dev` 上，按第一种情形做（写第一把 key 的代码在 apps/desktop/src/main/custom-vendors/store.ts 的 `firstKeyDefaults`）。两种情形原文：
   - presentation-r1 写第一把 key 的代码已在 `dev` 上（只有钉住一支）：实现它 §对 02 的修补 第 1 条已写的「有」一支，那次写入的值取第 9 步 `menuSelectionOf` 对那一行给出的值（内置带家族的行给指针，实例给钉住）；触发条件、写哪几个键、写在哪一次 config 写入里、失败行为都照它那一条。它验收 12 钉住一例的测试按它验收 12 的写法换成指针一例（`dev` 上已有 `latestOf`）。跑验收 19（就是它验收 12 的指针一例），结果记进 log.md。它合入之后、本步合入之前不切 release 分支；本步合入的那个 PR 里一并删掉总参考「以后再说」里「claude-5-5-models 合入之前不切 release 分支」那一行。
   - 还不在 `dev` 上：本步不做事，记一句「『有』一支由 presentation-r1 plan 第 9 步实现，验收 19 由它验收 12 的指针一例验」，勾掉。不因此等它，也不因此不标 `implemented`。
 - [ ] 12. 〔开放问题 6 定 A〕官方 live 冒烟（验收 12）。**先提醒 owner 钥匙串会弹窗**，等回话再跑。
@@ -145,7 +145,7 @@ TENON_LIVE_OFFICIAL_AGENT=1 TENON_LIVE_ANTHROPIC_OFFICIAL_KEY="$(security find-g
 
 ## 交接
 
-- 2026-10-23：第 1 步由 lead 做：F1–F21 对一手页面重核，F6、F14 因 API 版本 2026-10-21 变了（Tenon 钉 2023-06-01，数据与守卫不改），建了 docs/reference/vendors.md。第 6–8 步由 Codex 按任务说明实现，lead 审查、沙箱外补跑全量 vitest（4545 passed）并提交；e2e（model-menu、text-fit-02）只过了 typecheck，由本段 PR 的 CI 首跑。第 8 步的突变 ⑤⑥ 留到第 9 步做完后回头做。下一步第 9 步。
+- 2026-10-24：第 9–11 步由 Codex 按任务说明实现，lead 审查（主进程的解析、数据去向检查在会话不换之后照做、菜单写指针与只改档不写默认、`provider.select` 的 `latestOf`、设置卡、第一把 key 的「有」一支）并在沙箱外补跑全量 vitest；第 8 步突变 ⑤⑥ 已回头做完。改了的 e2e（model-menu、provider-settings、recovery）只过了 typecheck，由本段 PR 的 CI 首跑；第 10 步的 4 个突变只有 e2e 能抓。总参考「以后再说」里「合入前不切 release 分支」一行随本段删除。下一步第 12 步（要 owner 回话）。
 
 ## Open
 

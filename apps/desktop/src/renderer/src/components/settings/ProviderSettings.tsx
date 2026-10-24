@@ -25,6 +25,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  modelDraftOf,
+  modelSelectionRequest,
+  pointerRows,
+  pointerValue,
+} from '@/lib/provider-model-selection'
+import type { ProviderModelDraft } from '@/lib/provider-model-selection'
 import { PROVIDER_WRITE_ERROR_KEY, REFUSAL_KEY } from '@/lib/provider-copy'
 import { CustomVendorSection } from './CustomVendorSection'
 import { Chooser, Field } from './fields'
@@ -68,11 +75,8 @@ interface CardError {
   readonly configKey: string | null
 }
 
-interface Draft {
+interface Draft extends ProviderModelDraft {
   readonly providerId: string
-  readonly modelId: string
-  /** A hand-typed model id; used instead of `modelId` when not blank (M6). */
-  readonly customModel: string
   /**
    * Whether the user touched the model: only then does a save write the default model (spec 02
    * §模型选择「设置卡」) — a save that only changed a key must not move the default of new chats.
@@ -191,11 +195,11 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
   }
 
   const save = async (): Promise<void> => {
-    if (draft === null) return
-    const modelId = draft.customModel.trim() === '' ? draft.modelId : draft.customModel.trim()
+    if (draft === null || entry === null) return
+    const selection = modelSelectionRequest(entry, draft)
     // A definition that ships no model cannot be selected without a typed id (`provider.select`
     // requires one), so a save that would write nothing says why instead of closing as if it took.
-    if (draft.modelEdited && modelId === '') {
+    if (draft.modelEdited && selection.modelId === '') {
       setError({ code: 'no-model', configKey: null })
       return
     }
@@ -228,10 +232,7 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
         if (!written.data.ok) return await fail(written.data, false)
       }
       if (draft.modelEdited) {
-        const chosen = await invokeRoute(window.tenon, providerSelect, {
-          providerId: draft.providerId,
-          modelId,
-        })
+        const chosen = await invokeRoute(window.tenon, providerSelect, selection)
         if (!chosen.ok) return await fail({ code: 'unavailable', configKey: null }, wrote)
         if (!chosen.data.ok) return await fail(chosen.data, wrote)
       }
@@ -377,11 +378,21 @@ export function ProviderSettings(props: ProviderSettingsProps): JSX.Element {
                 value={draft.modelId}
                 // The names the model menu and its chip use (「Opus 5.5」); the raw id, which the
                 // field below takes by hand, is the tooltip. A model without a name shows its id.
-                options={entry.models.map((model) =>
-                  model.nameKey === undefined
-                    ? { value: model.id, label: model.id }
-                    : { value: model.id, label: fromData(model.nameKey), title: model.id },
-                )}
+                options={[
+                  ...pointerRows(entry).map((model) => ({
+                    value: pointerValue(entry, model.family),
+                    label: t('settings.providers.latest', {
+                      family: fromData(model.familyNameKey),
+                      model: model.nameKey === undefined ? model.id : fromData(model.nameKey),
+                    }),
+                    title: model.id,
+                  })),
+                  ...entry.models.map((model) =>
+                    model.nameKey === undefined
+                      ? { value: model.id, label: model.id }
+                      : { value: model.id, label: fromData(model.nameKey), title: model.id },
+                  ),
+                ]}
                 onChange={(modelId) =>
                   setDraft((current) =>
                     current === null
@@ -506,14 +517,9 @@ function newDraft(
   for (const key of entry.configKeys) {
     values[key.name] = key.secret ? '' : (stored[key.name] ?? key.default ?? '')
   }
-  const named = saved?.id === entry.id ? saved.modelId : null
-  const builtin = named !== null && entry.models.some((model) => model.id === named)
-  const modelId = builtin ? named : (entry.models[0]?.id ?? '')
   return {
     providerId: entry.id,
-    modelId,
-    // A saved hand-typed id shows where it was typed.
-    customModel: saved?.id === entry.id && saved.source === 'user' ? saved.modelId : '',
+    ...modelDraftOf(entry, saved),
     modelEdited: false,
     values,
     edited: [],

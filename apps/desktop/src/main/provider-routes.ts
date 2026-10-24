@@ -10,9 +10,16 @@ import type {
   IpcMainLike,
   ProviderConfigKeyContract,
   ProviderEntryContract,
+  ProviderSelection,
   ProviderWriteResult,
 } from '@tenon-app/contracts'
-import { ProviderConfigMissingError, ProviderInvalidArgumentError } from '@tenon-app/kernel'
+import {
+  ANTHROPIC_PROVIDER_ID,
+  ZHIPU_PROVIDER_ID,
+  newestOfFamily,
+  ProviderConfigMissingError,
+  ProviderInvalidArgumentError,
+} from '@tenon-app/kernel'
 import type {
   ConfigKey,
   HostAdapter,
@@ -42,6 +49,8 @@ import {
   unboundSecrets,
 } from './provider.js'
 import type { EnvLike } from './provider.js'
+import { selectionOf } from './model-selection.js'
+export { menuSelectionOf, selectionOf } from './model-selection.js'
 import { TEXT_ONLY_PROVIDERS } from './run-assembly.js'
 
 /**
@@ -271,16 +280,29 @@ export function registerProviderRoutes(deps: ProviderRoutesDeps): void {
     return SAVED
   }
 
-  registerRoute(ipcMain, providerSelect, async ({ providerId, modelId }) => {
+  registerRoute(ipcMain, providerSelect, async ({ providerId, modelId, latestOf }) => {
     const definition = providers.get(providerId)
     if (definition === null) return refused('unknown-provider', null)
-    // A hand-typed id is accepted and marked (M6, A15; 01 修补 9 (c)): its capabilities are the
-    // conservative synthesis, so it only ever holds a text conversation. Not on an instance: its
-    // rows carry the limits the user set (M6 §列表与上限; T6).
-    if (isInstanceId(providerId) && !listsModel(definition, modelId)) {
-      return refused('unknown-model', null)
+    let selection: ProviderSelection
+    if (latestOf !== undefined) {
+      const row = definition.builtinModels.find((model) => model.id === modelId)
+      const newest = newestOfFamily(definition, latestOf)
+      if (
+        ![ANTHROPIC_PROVIDER_ID, ZHIPU_PROVIDER_ID].includes(providerId) ||
+        row?.family !== latestOf ||
+        newest === null
+      )
+        return refused('invalid-value', null)
+      selection = { id: providerId, modelId: newest.id, latestOf }
+    } else {
+      // A hand-typed id is accepted and marked (M6, A15; 01 修补 9 (c)): its capabilities are the
+      // conservative synthesis, so it only ever holds a text conversation. Not on an instance: its
+      // rows carry the limits the user set (M6 §列表与上限; T6).
+      if (isInstanceId(providerId) && !listsModel(definition, modelId)) {
+        return refused('unknown-model', null)
+      }
+      selection = selectionOf(definition, modelId)
     }
-    const selection = selectionOf(definition, modelId)
     return withConfigLock(host.identity, async () => {
       // The instance and its row again, as the lock leaves them: a delete that held it first must
       // not have its cleared default written back (M6 §写入规则「删除」; 验收 25).
@@ -308,15 +330,6 @@ const INSTANCE_KEY = 'apiKey'
 /** Whether the definition's table has this id. */
 function listsModel(definition: ProviderDefinition, modelId: string): boolean {
   return definition.builtinModels.some((model) => model.id === modelId)
-}
-
-/** What `config.json` records for a choice: the id, marked when no builtin table has it. */
-export function selectionOf(
-  definition: ProviderDefinition,
-  modelId: string,
-): { id: string; modelId: string; source?: 'user' } {
-  const builtin = definition.builtinModels.some((model) => model.id === modelId)
-  return builtin ? { id: definition.id, modelId } : { id: definition.id, modelId, source: 'user' }
 }
 
 function isOllamaCloud(host: string): boolean {
@@ -451,6 +464,8 @@ function menuRow(
   model: ModelInfo,
 ): ProviderEntryContract['models'][number] {
   const spec = model.thinkingSpec
+  const familyNameKey =
+    model.family === undefined ? undefined : definition.familyNameKeys?.[model.family]
   return {
     id: model.id,
     // Ollama sends no tools (A14); zhipu's and anthropic's rows are verified, and send to their
@@ -458,6 +473,9 @@ function menuRow(
     mark: TEXT_ONLY_PROVIDERS.has(definition.id) ? 'local-text-only' : 'verified',
     ...(model.nameKey === undefined ? {} : { nameKey: model.nameKey }),
     ...(model.purposeKey === undefined ? {} : { purposeKey: model.purposeKey }),
+    ...(model.family === undefined || familyNameKey === undefined
+      ? {}
+      : { family: model.family, familyNameKey }),
     listing: model.listing ?? 'main',
     ...(spec?.effortLevels === undefined || spec.effortLevels.length === 0
       ? {}

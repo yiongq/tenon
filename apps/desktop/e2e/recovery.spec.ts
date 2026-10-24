@@ -284,9 +284,10 @@ function expectResumedRequest(server: FakeAnthropic, index: number): string {
   return body
 }
 
-test('presentation-r1 验收 5: a restored receipt stays one line; the paused Run resumes once on return (打开时续跑)', async () => {
+test('claude-5-5-models 验收 15、presentation-r1 验收 5: a restored receipt stays one line; the paused Run resumes once on return (打开时续跑)', async () => {
   const { userData, server } = await resumableTask('resume-latest', {}, [
     textReply('Carried ', 'on.'),
+    textReply('Same ', 'model.'),
     textReply('New ', 'default.'),
   ])
   const second = await launchTenon({
@@ -326,10 +327,14 @@ test('presentation-r1 验收 5: a restored receipt stays one line; the paused Ru
     await expect(row).toHaveCount(0)
     expect(await waitingSessions(page)).toEqual([])
 
-    // The default did change: the next message of this session, a user-opened Run, follows it.
+    // Existing sessions retain their last row; fresh chats follow the changed default.
     await send(page, 'and now?')
-    await expect(page.getByTestId('assistant-text').last()).toHaveText('New default.')
-    expect(modelOf(server, 2)).toBe(LATER_DEFAULT.modelId)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('Same model.')
+    expect(modelOf(server, 2)).toBe('claude-sonnet-5')
+    await newChatFromSidebar(page)
+    await send(page, 'new default?')
+    await expect(page.getByTestId('assistant-text')).toHaveText('New default.')
+    expect(modelOf(server, 3)).toBe(LATER_DEFAULT.modelId)
     expect(await routeCalls(app, 'approval.resume')).toBe(1)
   } finally {
     await second.app.close()
@@ -386,7 +391,7 @@ test('the stop button of a resumable session stops it: no request, no resume row
   }
 })
 
-test('a resumable session the window does not open is the banner’s resume row; 「回去」 resumes it once, on the paused Run’s provider and model (打开时续跑)', async () => {
+test('claude-5-5-models 验收 15: a resumable session the window does not open is the banner’s resume row; 「回去」 resumes it once, on the paused Run’s provider and model (打开时续跑)', async () => {
   // The default is another provider by the second launch: a resume that followed it would go there.
   const other = await startFakeOpenAI({ chunks: ['wrong ', 'provider'], delayMs: 5 })
   ollama = other
@@ -408,8 +413,8 @@ test('a resumable session the window does not open is the banner’s resume row;
   try {
     const { app, page } = second
     await expect(page.getByTestId('user-text')).toHaveText('hello')
-    // The new default is in force for a session that never chose one.
-    await expect(page.getByTestId('model-menu-current')).toHaveText('qwen3:8b')
+    // This established chat stays on its last row even without an explicit menu choice.
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Sonnet 5 · High')
     await expect(page.getByTestId('resume-row')).toHaveCount(0)
     await expect(page.getByTestId('composer-stop')).toHaveCount(0)
     const banner = page.getByTestId('pending-banner-row')
@@ -426,6 +431,11 @@ test('a resumable session the window does not open is the banner’s resume row;
     expect(server.requests).toHaveLength(3)
     expectResumedRequest(server, 2)
     expect(other.requests).toHaveLength(0)
+    await newChatFromSidebar(page)
+    await expect(page.getByTestId('model-menu-current')).toHaveText('qwen3:8b')
+    await send(page, 'new default?')
+    await expect(page.getByTestId('assistant-text')).toHaveText('wrong provider')
+    expect(other.requests[0]?.body).toMatchObject({ model: 'qwen3:8b' })
   } finally {
     await second.app.close()
   }
