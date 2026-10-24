@@ -194,3 +194,14 @@
 - 583cef0：改档一律不写默认，不论会话有没有 ①（spec 修订记录 2026-10-24 第二条；lead 照 owner 原话「只改思考档位不动默认」的字面定，已告知 owner）。model-routes.ts 的判定简化为「`intent` 是 `effort` 或 `confirm` 就不写」，去掉预读有效默认与它的 try/catch（点行本来就不读，悬空默认的 6 个复现用例照旧通过）。model-menu.spec.ts 加两例 e2e：钉住默认的会话里经档位子菜单改档、hold 确认页点「切换」之后，三个默认都不变；renderer 两处 `intent` 改成 `row` 的突变只有这两例能抓，由 CI 首跑。
 测试改动：apps/desktop/test/model-selection.test.ts · changing effort（old-sonnet / pinned-opus） · 会话已有 ① 后改档也不写默认（原期望是照常写）
 测试改动：apps/desktop/test/model-selection.test.ts · effort request for a different row · 按「改档一律不写默认」改期望，会话选择照常生效的断言保留
+
+## 评审 · 2026-10-24 · 审过 c811034
+
+范围：021f4a8 之后的 650091c（`intent` 与点行照常写）、11a9aab（spec 收窄）、0119390、583cef0（改档一律不写默认、两例 e2e）、67ffe62（log）与 c811034（§点名 (g) 一句）。同一个新上下文的评审 agent（Sonnet）复核两轮，跑了 apps/desktop/test 与 packages/contracts 全部用例，并在副本里重做突变（点行一律不写、去掉 effort 一支、去掉 confirm 一支、加回不带保护的预读，全部变红）。
+- [major] spec §点名 (g) 仍写「再点当前行」不写默认，后来又留着「会话没有 ①」的前提，与新的不变量 12、第 9 条相悖 · 证据：(g) 一行原文 · 已修 c811034
+- [major] plan 第 9 步第二条仍是旧写法 · 已修 0119390
+- [建议] renderer 一侧的 `intent` 取值没有测试读到 · 已修 583cef0（两例 e2e，CI 首跑）
+- [建议] 会话已有 ① 时改档仍写默认，与 owner 原话「只改思考档位不动默认」字面不符 · 已修 583cef0（lead 照字面定，已告知 owner）
+- [建议] 「档位子菜单触发外发确认再点切换」时 `intent` 是否保持 `effort` 没有断言 · 不修：e2e 已覆盖档位子菜单与 hold 确认两条路径，这条组合路径等第 14 步全量核对时补
+结论：通过
+突变：model-routes.ts 的三个 `intent` 分支与预读各一个，共 4 个，全部变红；renderer 两处 `intent` 改成 `row` 只有新 e2e 能抓，由 CI 首跑
