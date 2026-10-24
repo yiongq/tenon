@@ -61,14 +61,17 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       )
       if (gone !== null) return refused(gone)
     }
-    const facts = await sessions.sessionFacts({ sessionId: q.sessionId })
-    let keepDefaults = false
-    if (facts.chosen === null) {
-      try {
-        const effective = await sessions.effectiveModelChoice({ sessionId: q.sessionId })
-        keepDefaults = effective.providerId === q.providerId && effective.modelId === q.modelId
-      } catch {
-        // A dangling default must not prevent the menu from replacing it with a valid choice.
+    const intent = q.intent ?? 'row'
+    let keepDefaults = intent === 'confirm'
+    if (intent === 'effort') {
+      const facts = await sessions.sessionFacts({ sessionId: q.sessionId })
+      if (facts.chosen === null) {
+        try {
+          const effective = await sessions.effectiveModelChoice({ sessionId: q.sessionId })
+          keepDefaults = effective.providerId === q.providerId && effective.modelId === q.modelId
+        } catch {
+          // A dangling default must not prevent the menu from replacing it with a valid choice.
+        }
       }
     }
     // Outside the lock: the command waits behind a send still prebuilding, whose keychain read may

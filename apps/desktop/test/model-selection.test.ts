@@ -1225,6 +1225,98 @@ describe('session.selectModel and session.modelChoice', () => {
     },
   )
 
+  it.each([undefined, 'row'] as const)(
+    '复现 claude-5-5-models 验收 16: clicking the current Opus row with intent %s preserves the chat default after a task chooses Haiku',
+    async (intent) => {
+      const { r, sessions } = await withSessions()
+      const task = '7e2f0b1c-3d4a-4b5c-8d6e-9f0a1b2c3d4e'
+      const nextChat = '7e2f0b1c-3d4a-4b5c-8d6e-9f0a1b2c3d4f'
+      const nextTask = '7e2f0b1c-3d4a-4b5c-8d6e-9f0a1b2c3d50'
+      const opus = { id: 'anthropic', modelId: 'claude-opus-5-5', latestOf: 'opus' }
+      const haiku = { id: 'anthropic', modelId: 'claude-haiku-4-5-20251001' }
+      expect((await sessions.sessionFacts({ sessionId: SESSION })).chosen).toBeNull()
+      expect(await sessions.effectiveModelChoice({ sessionId: SESSION })).toMatchObject({
+        modelId: opus.modelId,
+      })
+      expect(
+        await r.call('session.selectModel', {
+          sessionId: SESSION,
+          providerId: opus.id,
+          modelId: opus.modelId,
+          effort: null,
+          ...(intent === undefined ? {} : { intent }),
+        }),
+      ).toEqual({ ok: true, data: { ok: true } })
+      await sessions.selectProfile({
+        sessionId: task,
+        profile: 'cowork',
+        dedicated: '/home/u/Tenon/workspaces/x' as AbsolutePath,
+      })
+      expect(
+        await r.call('session.selectModel', {
+          sessionId: task,
+          providerId: haiku.id,
+          modelId: haiku.modelId,
+          effort: null,
+        }),
+      ).toEqual({ ok: true, data: { ok: true } })
+      const config = await readConfig(r.host.fs, r.host.identity)
+      expect(config.defaultModelByProfile).toEqual({ chat: opus, cowork: haiku })
+      expect(config.provider).toEqual(haiku)
+      expect(await sessions.effectiveModelChoice({ sessionId: nextChat })).toMatchObject({
+        providerId: opus.id,
+        modelId: opus.modelId,
+      })
+      await sessions.selectProfile({
+        sessionId: nextTask,
+        profile: 'cowork',
+        dedicated: '/home/u/Tenon/workspaces/y' as AbsolutePath,
+      })
+      expect(await sessions.effectiveModelChoice({ sessionId: nextTask })).toMatchObject({
+        modelId: haiku.modelId,
+      })
+    },
+  )
+
+  it('claude-5-5-models 验收 16: clicking the current pinned row writes a family pointer', async () => {
+    const { r } = await withSessions()
+    const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+    await writeConfig(r.host.fs, r.host.identity, {
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    expect(
+      await r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: pinned.id,
+        modelId: pinned.modelId,
+        effort: null,
+        intent: 'row',
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    const pointer = { ...pinned, latestOf: 'opus' }
+    const config = await readConfig(r.host.fs, r.host.identity)
+    expect(config.provider).toEqual(pointer)
+    expect(config.defaultModelByProfile).toEqual({ chat: pointer, cowork: pinned })
+  })
+
+  it('claude-5-5-models 验收 16: an effort request for a different row writes defaults', async () => {
+    const { r } = await withSessions()
+    expect(
+      await r.call('session.selectModel', {
+        sessionId: SESSION,
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-5-5',
+        effort: 'low',
+        intent: 'effort',
+      }),
+    ).toEqual({ ok: true, data: { ok: true } })
+    const pointer = { id: 'anthropic', modelId: 'claude-sonnet-5-5', latestOf: 'sonnet' }
+    const config = await readConfig(r.host.fs, r.host.identity)
+    expect(config.provider).toEqual(pointer)
+    expect(config.defaultModelByProfile.chat).toEqual(pointer)
+  })
+
   it('claude-5-5-models 验收 16: records the choice and the profile’s default and provider — never the level as a default', async () => {
     const { r, sessions } = await withSessions()
     await sessions.selectProfile({
@@ -1312,11 +1404,7 @@ describe('session.selectModel and session.modelChoice', () => {
     gate.resolve()
     expect(await choosing).toEqual({ ok: true, data: { ok: true } })
     expect(await reading).toMatchObject({ ok: true })
-    expect(asked.toSorted()).toEqual([
-      'effectiveModelChoice',
-      'effectiveModelChoice',
-      'selectModel',
-    ])
+    expect(asked.toSorted()).toEqual(['effectiveModelChoice', 'selectModel'])
   })
 
   it('claude-5-5-models 验收 16: writes each profile’s default in the profile’s lock: two choices at once keep both (每个 profile 一把主进程锁)', async () => {
@@ -1540,57 +1628,70 @@ describe('claude-5-5-models persisted session choices', () => {
     expect(h.network.callCount).toBe(1)
   })
 
-  it('claude-5-5-models 验收 16: confirming a held switch to the effective pinned Opus records ① without rewriting defaults', async () => {
-    const network = fakeNetwork([
-      { kind: 'sse', frames: OPENAI_TEXT },
-      { kind: 'sse', frames: ANTHROPIC_TEXT },
-    ])
-    const host = createMemoryHost({ network })
-    await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
-    const tape = createMemoryTapeStore({ identity: host.identity })
-    const loop = createTestLoopPorts({})
-    const env = { TENON_PROVIDER: 'ollama', TENON_MODEL: 'dev-local', ANTHROPIC_API_KEY: KEY }
-    const sessions = createSessionService({
-      host,
-      tape,
-      ids: createCounterIds(),
-      inspectors: [],
-      connector: createRunConnector({ host, providers: registry(), env }),
-      protectedFiles: [],
-    })
-    sessions.bindLoop(loop)
-    const first = await sessions.send({ sessionId: SESSION, origin: null, text: 'local' })
-    if (first.status !== 'started') throw new Error('local Run did not start')
-    expect((await loop.runEnded({ runId: first.runId })).reason.code).toBe('completed')
-    const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
-    await writeConfig(host.fs, host.identity, {
-      provider: pinned,
-      defaultModelByProfile: { chat: pinned, cowork: pinned },
-    })
-    expect(await sessions.send({ sessionId: SESSION, origin: null, text: 'held' })).toMatchObject({
-      status: 'held',
-    })
-    expect(network.callCount).toBe(1)
-    const before = await readConfig(host.fs, host.identity)
-    const r = await routes({ host, sessions, env })
-    expect(
-      await r.call('session.selectModel', {
-        sessionId: SESSION,
+  it.each([false, true])(
+    'claude-5-5-models 验收 16: confirming a held switch preserves defaults even when they changed to a different row=%s',
+    async (moved) => {
+      const network = fakeNetwork([
+        { kind: 'sse', frames: OPENAI_TEXT },
+        { kind: 'sse', frames: ANTHROPIC_TEXT },
+      ])
+      const host = createMemoryHost({ network })
+      await host.fs.mkdirp(host.identity.profileDir as AbsolutePath)
+      const tape = createMemoryTapeStore({ identity: host.identity })
+      const loop = createTestLoopPorts({})
+      const env = { TENON_PROVIDER: 'ollama', TENON_MODEL: 'dev-local', ANTHROPIC_API_KEY: KEY }
+      const sessions = createSessionService({
+        host,
+        tape,
+        ids: createCounterIds(),
+        inspectors: [],
+        connector: createRunConnector({ host, providers: registry(), env }),
+        protectedFiles: [],
+      })
+      sessions.bindLoop(loop)
+      const first = await sessions.send({ sessionId: SESSION, origin: null, text: 'local' })
+      if (first.status !== 'started') throw new Error('local Run did not start')
+      expect((await loop.runEnded({ runId: first.runId })).reason.code).toBe('completed')
+      const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+      await writeConfig(host.fs, host.identity, {
+        provider: pinned,
+        defaultModelByProfile: { chat: pinned, cowork: pinned },
+      })
+      expect(await sessions.send({ sessionId: SESSION, origin: null, text: 'held' })).toMatchObject(
+        {
+          status: 'held',
+        },
+      )
+      expect(network.callCount).toBe(1)
+      if (moved) {
+        const later = { id: 'anthropic', modelId: 'claude-haiku-5-5' }
+        await writeConfig(host.fs, host.identity, {
+          provider: later,
+          defaultModelByProfile: { chat: later, cowork: later },
+        })
+      }
+      const before = await readConfig(host.fs, host.identity)
+      const r = await routes({ host, sessions, env })
+      expect(
+        await r.call('session.selectModel', {
+          sessionId: SESSION,
+          providerId: 'anthropic',
+          modelId: pinned.modelId,
+          effort: null,
+          intent: 'confirm',
+        }),
+      ).toEqual({ ok: true, data: { ok: true } })
+      expect((await loop.runEnded()).reason.code).toBe('completed')
+      expect(await readConfig(host.fs, host.identity)).toEqual(before)
+      expect(network.callCount).toBe(2)
+      const entries = (await tape.readRange({ sessionId: SESSION, limit: 1000 })).entries
+      expect(entries.find((entry) => entry.name === 'session/model_choice_set')?.payload).toEqual({
         providerId: 'anthropic',
         modelId: pinned.modelId,
         effort: null,
-      }),
-    ).toEqual({ ok: true, data: { ok: true } })
-    expect((await loop.runEnded()).reason.code).toBe('completed')
-    expect(await readConfig(host.fs, host.identity)).toEqual(before)
-    expect(network.callCount).toBe(2)
-    const entries = (await tape.readRange({ sessionId: SESSION, limit: 1000 })).entries
-    expect(entries.find((entry) => entry.name === 'session/model_choice_set')?.payload).toEqual({
-      providerId: 'anthropic',
-      modelId: pinned.modelId,
-      effort: null,
-    })
-  })
+      })
+    },
+  )
 
   it('claude-5-5-models 验收 15: a historical user id newly listed in this build remains user and text-only through assembly and the wire', async () => {
     const network = fakeNetwork([{ kind: 'sse', frames: ANTHROPIC_TEXT }])
@@ -1720,6 +1821,7 @@ describe('claude-5-5-models persisted session choices', () => {
           providerId: 'anthropic',
           modelId: first.modelId,
           effort: 'low',
+          intent: 'effort',
         }),
       ).toEqual({ ok: true, data: { ok: true } })
       expect(await readConfig(h.host.fs, h.host.identity)).toEqual(before)
@@ -1733,12 +1835,13 @@ describe('claude-5-5-models persisted session choices', () => {
       expect(facts.map((entry) => entry.payload)).toEqual([
         { providerId: 'anthropic', modelId: first.modelId, effort: 'low' },
       ])
-      // Once ① exists, reselecting the same row uses the ordinary menu write rule.
+      // Once ① exists, effort changes use the ordinary menu write rule.
       await h.r.call('session.selectModel', {
         sessionId: SESSION,
         providerId: 'anthropic',
         modelId: first.modelId,
         effort: 'high',
+        intent: 'effort',
       })
       expect((await readConfig(h.host.fs, h.host.identity)).provider).toEqual(
         kind === 'old-sonnet' ? first : { ...first, latestOf: 'opus' },

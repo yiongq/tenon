@@ -220,6 +220,11 @@ export const sessionSelectModel = defineRoute('session.selectModel', {
     providerId: providerIdSchema,
     modelId: modelIdSchema,
     effort: effortSchema.nullable(),
+    /**
+     * Absent means row. confirm is for a kernel-held round; a row's own external-send
+     * confirmation keeps row intent. This affects defaults only, never the kernel choice.
+     */
+    intent: z.enum(['row', 'effort', 'confirm']).optional(),
   }),
   response: providerWriteResultSchema,
 })
