@@ -1300,8 +1300,9 @@ describe('session.selectModel and session.modelChoice', () => {
     expect(config.defaultModelByProfile).toEqual({ chat: pointer, cowork: pinned })
   })
 
-  it('claude-5-5-models 验收 16: an effort request for a different row writes defaults', async () => {
-    const { r } = await withSessions()
+  it('claude-5-5-models 验收 16: an effort request for a different row also preserves defaults', async () => {
+    const { r, sessions } = await withSessions()
+    const before = await readConfig(r.host.fs, r.host.identity)
     expect(
       await r.call('session.selectModel', {
         sessionId: SESSION,
@@ -1311,10 +1312,12 @@ describe('session.selectModel and session.modelChoice', () => {
         intent: 'effort',
       }),
     ).toEqual({ ok: true, data: { ok: true } })
-    const pointer = { id: 'anthropic', modelId: 'claude-sonnet-5-5', latestOf: 'sonnet' }
-    const config = await readConfig(r.host.fs, r.host.identity)
-    expect(config.provider).toEqual(pointer)
-    expect(config.defaultModelByProfile.chat).toEqual(pointer)
+    expect(await readConfig(r.host.fs, r.host.identity)).toEqual(before)
+    expect(await sessions.effectiveModelChoice({ sessionId: SESSION })).toMatchObject({
+      providerId: 'anthropic',
+      modelId: 'claude-sonnet-5-5',
+      effort: 'low',
+    })
   })
 
   it('claude-5-5-models 验收 16: records the choice and the profile’s default and provider — never the level as a default', async () => {
@@ -1796,7 +1799,7 @@ describe('claude-5-5-models persisted session choices', () => {
   )
 
   it.each(['old-sonnet', 'pinned-opus'] as const)(
-    'claude-5-5-models 验收 16: only changing effort preserves all defaults for %s',
+    'claude-5-5-models 验收 16: changing effort preserves all defaults before and after ① for %s',
     async (kind) => {
       const h = await runningModels()
       const first = {
@@ -1835,7 +1838,7 @@ describe('claude-5-5-models persisted session choices', () => {
       expect(facts.map((entry) => entry.payload)).toEqual([
         { providerId: 'anthropic', modelId: first.modelId, effort: 'low' },
       ])
-      // Once ① exists, effort changes use the ordinary menu write rule.
+      // Once ① exists, changing effort still leaves every new-session default untouched.
       await h.r.call('session.selectModel', {
         sessionId: SESSION,
         providerId: 'anthropic',
@@ -1843,9 +1846,11 @@ describe('claude-5-5-models persisted session choices', () => {
         effort: 'high',
         intent: 'effort',
       })
-      expect((await readConfig(h.host.fs, h.host.identity)).provider).toEqual(
-        kind === 'old-sonnet' ? first : { ...first, latestOf: 'opus' },
-      )
+      expect(await readConfig(h.host.fs, h.host.identity)).toEqual(before)
+      expect(await h.sessions.effectiveModelChoice({ sessionId: SESSION })).toMatchObject({
+        modelId: first.modelId,
+        effort: 'high',
+      })
     },
   )
 

@@ -3,6 +3,7 @@ import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
 import { startFakeOpenAI } from '../test/support/fake-openai.js'
 import type { FakeOpenAI } from '../test/support/fake-openai.js'
 import type { Page } from '@playwright/test'
+import type { Config, IpcResult } from '@tenon-app/contracts'
 import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import type { LaunchedApp } from './helpers/launch.js'
 import { COUNT_ROUTES, routeCalls } from './helpers/navigation.js'
@@ -52,6 +53,18 @@ async function removeLocal(page: Page): Promise<void> {
 }
 
 const HELD_FOR_ZHIPU = `Earlier messages will be sent to ${ZHIPU_HOST}`
+
+async function defaultsOf(page: Page): Promise<Pick<Config, 'provider' | 'defaultModelByProfile'>> {
+  const result = (await page.evaluate(() =>
+    window.tenon.invoke('config.get', {}),
+  )) as IpcResult<Config>
+  expect(result.ok).toBe(true)
+  if (!result.ok) throw new Error('config.get failed')
+  return {
+    provider: result.data.provider,
+    defaultModelByProfile: result.data.defaultModelByProfile,
+  }
+}
 
 /**
  * The model menu in the real shell (spec 02 §模型菜单与输入框; plan step 19: 旧 38, 旧 39, the menu
@@ -403,6 +416,62 @@ async function launchHeld(tag: string): Promise<LaunchedApp & { server: FakeOpen
   })
   return { ...launched, server }
 }
+
+test('claude-5-5-models 验收 16: the effort submenu preserves all three pinned defaults in a new session', async () => {
+  anthropic = await startFakeAnthropic({ chunks: ['unused'] })
+  const userData = makeUserDataDir('model-effort-defaults')
+  const pinned = { id: 'anthropic', modelId: 'claude-opus-5-5' }
+  seedConfig(userData, {
+    locale: 'en',
+    provider: pinned,
+    defaultModelByProfile: { chat: pinned, cowork: pinned },
+  })
+  const { app, page } = await launchTenon({ userData, env: providerEnv(anthropic.baseURL) })
+  try {
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · Medium')
+    const before = await defaultsOf(page)
+    expect(before).toEqual({
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    await page.getByTestId('model-menu-trigger').click()
+    await expect(page.getByTestId('model-menu')).toBeVisible()
+    await page.getByTestId('model-effort').hover()
+    await expect(page.getByTestId('model-effort-levels')).toBeVisible()
+    await page.getByTestId('model-effort-high').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('model-menu-current')).toHaveText('Opus 5.5 · High')
+    expect(await defaultsOf(page)).toEqual(before)
+  } finally {
+    await app.close()
+  }
+})
+
+test('claude-5-5-models 验收 16: switching on the held-round confirmation preserves all three defaults', async () => {
+  const { app, page, server } = await launchHeld('model-held-defaults')
+  try {
+    await heldRound(page, server)
+    const pinned = { id: 'zhipu', modelId: 'glm-5.3-flash' }
+    const before = await defaultsOf(page)
+    expect(before).toEqual({
+      provider: pinned,
+      defaultModelByProfile: { chat: pinned, cowork: pinned },
+    })
+    // Re-open the held confirmation through the same send-now path as the existing hold tests.
+    await page.getByTestId('queued-send-now').click()
+    await expect(page.getByTestId('model-confirm')).toContainText(HELD_FOR_ZHIPU)
+    expect(zhipu?.requests).toHaveLength(0)
+    await page.getByTestId('model-confirm-switch').click()
+    await expect(page.getByTestId('model-menu')).toBeHidden()
+    await expect(page.getByTestId('queued-bubble')).toHaveCount(0)
+    await expect(page.getByTestId('assistant-text').last()).toHaveText('zhipu')
+    expect(zhipu?.requests).toHaveLength(1)
+    expect(server.requests).toHaveLength(1)
+    expect(await defaultsOf(page)).toEqual(before)
+  } finally {
+    await app.close()
+  }
+})
 
 // A queue push while the round is held carries `held` again; the confirmation the user closed stays
 // closed (§模型菜单与输入框: it opens once per hold).

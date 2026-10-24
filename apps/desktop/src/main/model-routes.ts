@@ -14,9 +14,10 @@ import { menuSelectionOf } from './provider-routes.js'
 /**
  * The session's model choice (spec 02 §模型选择; 01 修补 6「给会话选模型」): `session.selectModel`
  * records the choice — the session's `session/model_choice_set`, or the draft's before the session
- * exists — then the new-session default of the profile it was made in and `provider` (the level is
- * never a default); `session.modelChoice` reads what the next Run takes. Both wait for startup
- * recovery; a choice also releases what a switch to a public host held, begun with the chooser's
+ * exists. A row selection also writes the profile's new-session default and `provider`; an effort
+ * edit or a held-round confirmation leaves both alone. `session.modelChoice` reads what the next
+ * Run takes. Both wait for startup recovery; a choice also releases what a switch to a public host
+ * held, begun with the chooser's
  * document as its origin.
  *
  * A custom vendor instance offers the rows it lists and no hand-typed id (M6 §列表与上限). Its
@@ -61,19 +62,7 @@ export function registerModelRoutes(deps: ModelRoutesDeps): void {
       )
       if (gone !== null) return refused(gone)
     }
-    const intent = q.intent ?? 'row'
-    let keepDefaults = intent === 'confirm'
-    if (intent === 'effort') {
-      const facts = await sessions.sessionFacts({ sessionId: q.sessionId })
-      if (facts.chosen === null) {
-        try {
-          const effective = await sessions.effectiveModelChoice({ sessionId: q.sessionId })
-          keepDefaults = effective.providerId === q.providerId && effective.modelId === q.modelId
-        } catch {
-          // A dangling default must not prevent the menu from replacing it with a valid choice.
-        }
-      }
-    }
+    const keepDefaults = q.intent === 'effort' || q.intent === 'confirm'
     // Outside the lock: the command waits behind a send still prebuilding, whose keychain read may
     // be a prompt on an unsigned build, and that must not hold every save (provider.ts).
     const { profile } = await sessions.selectModel({
