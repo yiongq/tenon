@@ -297,3 +297,20 @@
 - [建议] 等审批时重启、再批准一张 Delete 卡，统一拒绝并回 `targetChanged`，文件其实没变 · 证据：本提交的用例「a recovered Delete without its in-memory judgment marker refuses conservatively」断言的就是这一点 · 不修：只会更严；这一轮不改给模型的文字、不加 Tape 字段，记进 plan 的 Open，下次改提示层时换成准确的一句
 - [建议] 被拒、没批或派发前被停止的 Delete，内存里的歧义标记不清，进程生命期内只增 · 不修：每条约百来字节；第三段碰 `batch.ts` 时顺手在判决收口处清掉
 - 分支在 4e9366c 上 G 全过，T 5169 过、114 跳过；`evals:gate` 30 过、1 跳过。
+
+## 实施 · 2026-10-25（PR #75 的 e2e）
+
+- e2e 红在两条 presentation-r1 的旧期望：`write-card.spec.ts`（验收 3）的审批卡与 `tools.spec.ts`（验收 6）的工具行还写着「没法替你撤回」。第二段接上 `coverage` 之后，真宿主上工作区里的写入判成 `snapshotted`，卡与工具行显示 presentation-r1 给 `snapshotted` 的暂定句「Tenon 保存了改动前的副本。」。两条期望改成这一句（7fd3113）。
+
+测试改动：apps/desktop/e2e/write-card.spec.ts · presentation-r1 验收 3 · 工作区里的新文件真宿主答 `file`，卡上第 ④ 句从「没法替你撤回」变成 `snapshotted` 的暂定句
+测试改动：apps/desktop/e2e/tools.spec.ts · presentation-r1 验收 6 · 成功的 Write 那一行同理改成 `snapshotted` 的暂定句；出错的 Edit 不出这一行，照旧断言
+
+## 评审 · 2026-10-25 · 审过 7fd3113
+
+结论：通过    评审：新上下文的子 agent（Opus），只审这两处 e2e 期望；读代码核对 `readCoverage`、`reversibilityOf`、`undoKey` 与 locale，不跑 Electron
+突变：无（只改 e2e 期望）
+发现：
+- [建议] 两条断言钉的是 presentation-r1 的暂定句，第 15 步换成 05 的终稿后会再红 · 不修：记进 plan 第 15 步，到时同改这两条断言与注释
+- [建议] write-card 那条写的是新文件，注释引的验收 1 说的是已有文件 · 不修：行为不受影响，第 15 步改注释时改引验收 52
+- [建议] 硬链接那条 e2e 现在就能断言「没法替你撤回」那句 · 不修：第 15 步补，与交接里已记的那条合并
+- [建议] write-card 用例后半段在 `snapshotted` 下还没在 CI 跑过 · 不修：本次推送后由 CI 的 e2e 验证
