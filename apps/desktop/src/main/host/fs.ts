@@ -347,7 +347,7 @@ function fileIdentity(stats: BigIntStats): FileIdentity {
   }
 }
 
-function sameReadStamp(a: BigIntStats, b: BigIntStats): boolean {
+export function sameReadStamp(a: BigIntStats, b: BigIntStats): boolean {
   return (
     a.dev === b.dev &&
     a.ino === b.ino &&

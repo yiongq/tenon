@@ -58,15 +58,24 @@ describe('05 git stdin', () => {
   )
 })
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 it.each(['exact', 'prefix', 'truncated', 'group-changed'])(
-  '05 验收 45: recovery checks recorded argv and process group (%s)',
+  '05 验收 45: recovery ignores mismatched process fields without degrading (%s)',
   async (kind) => {
     const repo = await mkdtemp(join(tmpdir(), 'tenon-process-'))
     const argv = ['/usr/bin/git', `--git-dir=${repo}`, 'write-tree']
-    await writeFile(join(repo, 'process.json'), JSON.stringify({ pid: 12345, pgid: 12345, argv }))
+    await writeFile(
+      join(repo, 'process.json'),
+      JSON.stringify({
+        pid: 12345,
+        pgid: 12345,
+        argv,
+        executable: argv[0],
+        startedAt: Date.now() - 10_000,
+      }),
+    )
     const git = new SnapshotGit(
       {
         process: {
@@ -80,25 +89,22 @@ it.each(['exact', 'prefix', 'truncated', 'group-changed'])(
     )
     const command = vi.spyOn(git, 'command').mockImplementation(async (actual) => {
       if (actual[0] === '/bin/kill') return ''
-      const tokens =
-        kind === 'prefix'
-          ? [argv[0], `--git-dir=${repo}-neighbor`, 'write-tree']
-          : kind === 'truncated'
-            ? argv.slice(0, 2)
-            : argv
-      return `${kind === 'group-changed' ? 888 : 12345} ${tokens.join(' ')}\n`
+      const executable = kind === 'prefix' ? '/usr/bin/git-neighbor' : argv[0]
+      return kind === 'truncated'
+        ? '12345 12345 00:10\n'
+        : `12345 ${kind === 'group-changed' ? 888 : 12345} 00:10 ${executable}\n`
     })
     try {
       const observed = await git.recoverProcess(repo, new AbortController().signal).then(
         () => 'ok',
         (error: unknown) => String(error),
       )
-      expect(observed).toMatch(kind === 'exact' ? /^ok$/ : /verify/)
+      expect(observed).toBe('ok')
       expect(command.mock.calls.filter(([args]) => args[0] === '/bin/kill')).toHaveLength(
         kind === 'exact' ? 1 : 0,
       )
       const remains = await readFile(join(repo, 'process.json'), 'utf8').catch(() => null)
-      expect(remains === null).toBe(kind === 'exact')
+      expect(remains).toBeNull()
     } finally {
       await rm(repo, { recursive: true, force: true })
     }
@@ -108,7 +114,16 @@ it.each(['exact', 'prefix', 'truncated', 'group-changed'])(
 it('05 验收 45: recovery forgets an exited PID without sending any kill', async () => {
   const repo = await mkdtemp(join(tmpdir(), 'tenon-process-'))
   const argv = ['/usr/bin/git', `--git-dir=${repo}`, 'write-tree']
-  await writeFile(join(repo, 'process.json'), JSON.stringify({ pid: 12345, pgid: 12345, argv }))
+  await writeFile(
+    join(repo, 'process.json'),
+    JSON.stringify({
+      pid: 12345,
+      pgid: 12345,
+      argv,
+      executable: argv[0],
+      startedAt: Date.now() - 10_000,
+    }),
+  )
   const git = new SnapshotGit(
     {
       process: {
@@ -129,6 +144,108 @@ it('05 验收 45: recovery forgets an exited PID without sending any kill', asyn
     expect(command.mock.calls[0]![0][0]).toBe('/bin/ps')
     await expect(readFile(join(repo, 'process.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
+    await rm(repo, { recursive: true, force: true })
+  }
+})
+
+it.each([
+  'exact',
+  'reused-pid',
+  'group-changed',
+  'other-executable',
+  'truncated',
+  'within-tolerance',
+] as const)(
+  '05 验收 45: mac recovery identifies a spaced executable by pid, pgid and start time (%s)',
+  async (kind) => {
+    const parent = await mkdtemp(join(tmpdir(), 'tenon-process-'))
+    const repo = join(parent, 'Application Support', 'repo')
+    await mkdir(repo, { recursive: true })
+    const executable = '/Applications/Developer Tools/usr/bin/git'
+    const argv = [executable, `--git-dir=${repo}`, 'write-tree']
+    const now = Date.now()
+    await writeFile(
+      join(repo, 'process.json'),
+      JSON.stringify({
+        pid: 12345,
+        pgid: 12345,
+        argv,
+        executable,
+        startedAt:
+          now - (kind === 'reused-pid' ? 90_000 : kind === 'within-tolerance' ? 12_000 : 10_000),
+      }),
+    )
+    const git = new SnapshotGit(
+      {
+        process: {
+          spawn: async () => {
+            throw new Error('not used')
+          },
+        },
+        sandbox: new PassthroughSandbox(() => {}),
+      },
+      'darwin',
+    )
+    const time = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const command = vi.spyOn(git, 'command').mockImplementation(async (actual) => {
+      if (actual[0] === '/bin/kill') return ''
+      return kind === 'truncated'
+        ? '12345 12345 00:10\n'
+        : ` 12345 ${kind === 'group-changed' ? 67890 : 12345} 00:10 ${kind === 'other-executable' ? '/bin/sleep' : executable}\n`
+    })
+    try {
+      await git.recoverProcess(repo, new AbortController().signal)
+      expect(command.mock.calls.filter(([args]) => args[0] === '/bin/kill')).toHaveLength(
+        kind === 'exact' || kind === 'within-tolerance' ? 1 : 0,
+      )
+      await expect(readFile(join(repo, 'process.json'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      time.mockRestore()
+      await rm(parent, { recursive: true, force: true })
+    }
+  },
+)
+
+it('05 验收 45: a tracked process records its absolute executable and start time before exit', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'tenon-process-'))
+  const exit = Promise.withResolvers<{ code: number; signal: null }>()
+  const child: ChildHandle = {
+    pid: 12345,
+    stdin: new WritableStream(),
+    stdout: stream('ok'),
+    stderr: stream(''),
+    exited: exit.promise,
+    kill: async () => {},
+  }
+  const git = new SnapshotGit({
+    process: { spawn: async () => child },
+    sandbox: new PassthroughSandbox(() => {}),
+  })
+  const before = Date.now()
+  const path = join(repo, 'process.json')
+  const work = git.command(
+    ['/usr/bin/git', '--version'],
+    repo,
+    repo,
+    new AbortController().signal,
+    undefined,
+    path,
+  )
+  try {
+    await vi.waitFor(async () => {
+      const record = JSON.parse(await readFile(path, 'utf8')) as { startedAt: number }
+      expect(record).toMatchObject({
+        pid: 12345,
+        pgid: 12345,
+        executable: '/usr/bin/git',
+        argv: ['/usr/bin/git', '--version'],
+      })
+      expect(record.startedAt).toBeGreaterThanOrEqual(before)
+      expect(record.startedAt).toBeLessThanOrEqual(Date.now())
+    })
+  } finally {
+    exit.resolve({ code: 0, signal: null })
+    await work
     await rm(repo, { recursive: true, force: true })
   }
 })

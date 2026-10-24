@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { absolutePath } from '@tenon-app/kernel'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DesktopFs } from '../src/main/host/fs.js'
+import { DesktopFs, sameReadStamp } from '../src/main/host/fs.js'
 import { unavailableSnapshots } from '../src/main/host/snapshots.js'
 
 // Wrap only open to schedule real disk changes at the async boundary. No file data is faked.
@@ -290,3 +290,20 @@ describe('05 DesktopFs', () => {
     },
   )
 })
+
+it.each(['mode', 'nlink', 'ino', 'dev'] as const)(
+  '05 验收 23: read stamps differ when only %s changes',
+  async (field) => {
+    const root = await nativeFs.mkdtemp(join(tmpdir(), 'tenon-05-stamp-'))
+    try {
+      const path = join(root, 'file')
+      await nativeFs.writeFile(path, 'fixture')
+      const stamp = await nativeFs.lstat(path, { bigint: true })
+      expect(sameReadStamp(stamp, stamp)).toBe(true)
+      const other = { ...stamp, [field]: stamp[field] + 1n }
+      expect(sameReadStamp(stamp, other)).toBe(false)
+    } finally {
+      await nativeFs.rm(root, { recursive: true, force: true })
+    }
+  },
+)

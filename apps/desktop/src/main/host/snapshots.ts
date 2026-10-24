@@ -105,6 +105,8 @@ export class DesktopSnapshots implements HostSnapshots {
   private queue: Promise<unknown> = Promise.resolve()
   private usage: number | null = null
   private readonly diskUsage = new SnapshotDiskUsage()
+  /** Only loose objects proved unreachable after a rejected capture; reclaimed under the repo lock. */
+  private readonly pendingGarbage = new Map<string, number>()
   private reserved = 0
   private initialized = false
   private startupFailure: string | null = null
@@ -563,7 +565,7 @@ export class DesktopSnapshots implements HostSnapshots {
               !signal.aborted &&
               !session.controller.signal.aborted &&
               q.path !== undefined &&
-              (!(error instanceof SnapshotBudgetError) || (withTree && error.kind === 'space')) &&
+              (!(error instanceof SnapshotBudgetError) || withTree) &&
               !this.profileFailure(error) &&
               !errno(error, 'EACCES')
             ) {
@@ -573,7 +575,7 @@ export class DesktopSnapshots implements HostSnapshots {
                 deadline.aborted
                   ? `Snapshot timeout budget exceeded (${session.captureStage ?? 'setup'})`
                   : error,
-                deadline.aborted,
+                deadline.aborted || error instanceof SnapshotBudgetError,
               )
               const copySignal = AbortSignal.any([
                 signal,
@@ -765,10 +767,8 @@ export class DesktopSnapshots implements HostSnapshots {
           await rm(join(repo, 'index.lock'), { force: true })
         }
         this.usage = null
-        if (error instanceof SnapshotBudgetError)
-          await this.serial(() =>
-            this.reclaim(session, AbortSignal.timeout(this.limits.takeMs), true),
-          )
+        if (error instanceof SnapshotBudgetError && error.kind === 'space')
+          await this.accountGarbage(session, manifest, signal)
         throw error
       }
     } finally {
@@ -813,6 +813,67 @@ export class DesktopSnapshots implements HostSnapshots {
     })
   }
 
+  private async accountGarbage(
+    session: Session,
+    rejected: SnapshotManifest,
+    signal: AbortSignal,
+  ): Promise<void> {
+    for (const tree of rejected.trees) {
+      const repo = repoPath(session.dir, tree.folder)
+      const durable = [
+        ...new Set(
+          session.manifests
+            .flatMap((manifest) => manifest.trees)
+            .filter((prior) => prior.folder === tree.folder)
+            .map((prior) => prior.commit),
+        ),
+      ]
+      // Explicit commits, not --all: the rejected snapshot's temporary ref is still present.
+      // oxlint-disable-next-line no-await-in-loop -- only inspect objects unique to the rejected tree
+      const output = await this.git.run(
+        repo,
+        tree.folder,
+        ['rev-list', '--objects', '--no-object-names', tree.commit, '--not', ...durable],
+        signal,
+      )
+      const hashes = [
+        ...new Set(
+          output
+            .trim()
+            .split('\n')
+            .filter((hash) => /^[0-9a-f]{40,64}$/.test(hash)),
+        ),
+      ]
+      let bytes = 0
+      for (let start = 0; start < hashes.length; start += 32) {
+        signal.throwIfAborted()
+        // Packed/unknown storage earns no credit. Each counted loose object is immutable and
+        // unreachable from every durable manifest; repair+prune can remove it without losing data.
+        // oxlint-disable-next-line no-await-in-loop -- bounded metadata work, not a whole object-store traversal
+        const sizes = await Promise.all(
+          hashes.slice(start, start + 32).map(async (hash) => {
+            const stat = await statOrNull(join(repo, 'objects', hash.slice(0, 2), hash.slice(2)))
+            return stat?.isFile() ? Number(stat.blocks) * 512 : 0
+          }),
+        )
+        bytes += sizes.reduce((sum, size) => sum + size, 0)
+      }
+      signal.throwIfAborted()
+      // oxlint-disable-next-line no-await-in-loop -- reservations and garbage credits share the profile transaction
+      await this.serial(async () => {
+        this.pendingGarbage.set(repo, bytes)
+        this.usage = null
+      })
+    }
+  }
+
+  private accountedBytes(bytes: number): number {
+    return Math.max(
+      0,
+      bytes - [...this.pendingGarbage.values()].reduce((sum, size) => sum + size, 0),
+    )
+  }
+
   private async reserve(
     bytes: number,
     current: Session,
@@ -824,9 +885,12 @@ export class DesktopSnapshots implements HostSnapshots {
       // oxlint-disable-next-line no-await-in-loop -- age retention overrides every protection
       await this.expire(session)
     }
-    if (this.usage === null || this.usage + this.reserved + bytes > this.limits.bytes)
+    if (
+      this.usage === null ||
+      this.accountedBytes(this.usage) + this.reserved + bytes > this.limits.bytes
+    )
       this.usage = await this.diskUsage.measure(this.root)
-    let used = this.usage
+    let used = this.accountedBytes(this.usage)
     const candidates = [...this.sessions.values()]
       .flatMap((session) => {
         if ((this.active.get(session.id) ?? 0) > (session === current ? 1 : 0)) return []
@@ -868,7 +932,8 @@ export class DesktopSnapshots implements HostSnapshots {
         true,
       )
       // oxlint-disable-next-line no-await-in-loop -- disk blocks after git GC, not estimated content sizes
-      used = this.usage = await this.diskUsage.measure(this.root)
+      this.usage = await this.diskUsage.measure(this.root)
+      used = this.accountedBytes(this.usage)
     }
     if (used + this.reserved + bytes > this.limits.bytes)
       throw new SnapshotBudgetError('Snapshot budget is reserved or protected')
@@ -945,6 +1010,9 @@ export class DesktopSnapshots implements HostSnapshots {
       }
     }
     for (const repo of session.repos) {
+      // Retire credits before any recovery operation can fail, so the next reservation sees
+      // every byte left by a failed GC rather than spending the same expected recovery again.
+      this.pendingGarbage.delete(repo)
       const tree = session.manifests
         .toReversed()
         .toSorted((a, b) => b.createdAt - a.createdAt)
@@ -1039,6 +1107,7 @@ export class DesktopSnapshots implements HostSnapshots {
       })
     await this.serial(async () => {
       await rm(session.dir, { recursive: true, force: true })
+      for (const repo of session.repos) this.pendingGarbage.delete(repo)
       this.usage = null
       this.sessions.delete(sessionId)
     })

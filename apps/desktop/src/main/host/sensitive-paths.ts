@@ -108,7 +108,10 @@ function baseTable(
       ...roots.map((root) => absolutePath(posix.join(root, '.aws'))),
     ],
     autoRunNames: list.autoRunNames,
-    linkTargets: [],
+    linkTargets: [
+      ...list.credential.map((real) => ({ real, category: 'credential' as const })),
+      ...list.homeAutoRun.map((real) => ({ real, category: 'auto-run' as const })),
+    ],
     incomplete: true,
     diagnostic: 'Sensitive link targets have not been scanned',
   }
@@ -123,7 +126,10 @@ export async function desktopSensitivePaths(
 ): Promise<SensitiveTable> {
   const base = baseTable(home, roots, zdotdir, platform)
   const list = protectionList({ home, zdotdir, credentials: credentialPaths(platform, home) })
-  const credentials = new Map<string, Category>()
+  // Literal fixed locations remain protected even if all filesystem lookups hang or abort.
+  const credentials = new Map<string, Category>(
+    base.linkTargets.map(({ real, category }) => [real, category]),
+  )
   const workspaceTargets = new Map<string, Category>()
   let failure: string | null = null
   let count = 0
@@ -249,16 +255,32 @@ export async function desktopSensitivePaths(
   })
   try {
     check()
-    await Promise.race([scan(), stopped])
+    await Promise.race([
+      Promise.allSettled([
+        scan(),
+        // Resolve the fixed names independently, so a stuck spelling lookup cannot prevent the
+        // other fixed locations' available realpaths from being retained within the same deadline.
+        Promise.all(
+          base.linkTargets.map(async ({ real, category }) => {
+            const target = await canonical(real)
+            check()
+            if (target !== undefined && (category === 'credential' || !credentials.has(target)))
+              credentials.set(target, category)
+          }),
+        ),
+      ]).then((results) => {
+        const failed = results.find((result) => result.status === 'rejected')
+        if (failed?.status === 'rejected') throw failed.reason
+      }),
+      stopped,
+    ])
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error)
   } finally {
     clearTimeout(timer)
     if (abort !== undefined) options.signal?.removeEventListener('abort', abort)
   }
-  const targets = new Map(
-    [...credentials].filter(([, category]) => failure === null || category === 'credential'),
-  )
+  const targets = new Map(credentials)
   if (failure === null)
     for (const [real, category] of workspaceTargets)
       if (category === 'credential' || !targets.has(real)) targets.set(real, category)

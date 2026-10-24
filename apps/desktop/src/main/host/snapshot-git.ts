@@ -88,6 +88,7 @@ export class SnapshotGit {
       profile: 'full-access',
       workspace: [],
     })
+    const startedAt = Date.now()
     const child = await this.ports.process.spawn(
       { ...wrapped, cwd: absolutePath(cwd), stdio: 'pipe' },
       signal,
@@ -97,7 +98,7 @@ export class SnapshotGit {
     }
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) abort()
-    const work = this.finish(child, home, tracked, input, wrapped.argv)
+    const work = this.finish(child, home, tracked, input, wrapped.argv, startedAt)
     this.pending.add(work)
     try {
       const result = await work
@@ -116,10 +117,17 @@ export class SnapshotGit {
     tracked?: string,
     input?: string,
     argv?: readonly string[],
+    startedAt?: number,
   ): Promise<string> {
     try {
       if (tracked !== undefined)
-        await atomicJson(tracked, { pid: child.pid, pgid: child.pid, argv })
+        await atomicJson(tracked, {
+          pid: child.pid,
+          pgid: child.pid,
+          argv,
+          startedAt,
+          executable: argv?.[0],
+        })
       const stdout = drain(child.stdout)
       const stderr = drain(child.stderr)
       const writer = child.stdin.getWriter()
@@ -310,67 +318,105 @@ export class SnapshotGit {
 
   async recoverProcess(repo: string, signal: AbortSignal): Promise<void> {
     const recordPath = join(repo, 'process.json')
-    let record: { pid: number; pgid: number; argv: string[] }
+    let record: {
+      pid?: number
+      pgid?: number
+      argv?: string[]
+      startedAt?: number
+      executable?: string
+    }
     try {
       record = JSON.parse(await readFile(recordPath, 'utf8')) as typeof record
     } catch (error) {
       if (errno(error, 'ENOENT')) return
-      throw error
+      if (!(error instanceof SyntaxError)) throw error
+      await rm(recordPath, { force: true })
+      return
     }
-    const { pid, pgid, argv } = record
-    if (
-      !Number.isSafeInteger(pid) ||
-      pid < 2 ||
-      pgid !== pid ||
-      !Array.isArray(argv) ||
-      !argv.every((arg) => typeof arg === 'string') ||
-      !argv.includes(`--git-dir=${repo}`)
-    )
-      throw new Error('Cannot verify the previous snapshot process record')
-    let output: string
     try {
-      output = await this.command(
-        ['/bin/ps', '-ww', '-p', String(pid), '-o', 'pgid=', '-o', 'command='],
-        repo,
-        repo,
-        signal,
-      )
-    } catch (error) {
+      if (record === null || typeof record !== 'object') return
+      const { pid, pgid, argv, executable, startedAt } = record
       if (
-        typeof error === 'object' &&
-        error !== null &&
-        (error as { exitCode?: number }).exitCode === 1
-      ) {
-        await rm(recordPath, { force: true })
+        !Number.isSafeInteger(pid) ||
+        pid === undefined ||
+        pid < 2 ||
+        pgid !== pid ||
+        !Array.isArray(argv) ||
+        !argv.every((arg) => typeof arg === 'string') ||
+        !argv.includes(`--git-dir=${repo}`)
+      )
         return
-      }
-      throw new Error('Cannot verify the previous snapshot process', { cause: error })
-    }
-    const match = /^\s*(\d+)\s+([^\n]+)\n?$/.exec(output)
-    if (match === null || Number(match[1]) !== pgid)
-      throw new Error('Cannot verify previous snapshot process group')
-    let actual: string[]
-    if (this.platform === 'linux') {
+      let output: string
       try {
-        actual = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean)
+        output = await this.command(
+          [
+            '/bin/ps',
+            '-ww',
+            '-p',
+            String(pid),
+            '-o',
+            this.platform === 'darwin' ? 'pid=,pgid=,etime=,comm=' : 'pid=,pgid=',
+          ],
+          repo,
+          repo,
+          signal,
+        )
       } catch (error) {
-        if (errno(error, 'ENOENT')) {
-          await rm(recordPath, { force: true })
+        if (signal.aborted) throw error
+        return // Gone, reused, or unreadable: never guess which process owns the record.
+      }
+      if (this.platform === 'darwin') {
+        const match = /^\s*(\d+)\s+(\d+)\s+([\d:-]+)\s+([^\n]+)\n?$/.exec(output)
+        if (
+          match === null ||
+          Number(match[1]) !== pid ||
+          Number(match[2]) !== pgid ||
+          typeof executable !== 'string' ||
+          !executable.startsWith('/') ||
+          match[4]!.trim() !== executable ||
+          typeof startedAt !== 'number' ||
+          !Number.isFinite(startedAt)
+        )
+          return
+        const age = elapsedMs(match[3]!)
+        // etime is rounded to seconds; allow scheduling and timestamp resolution, not PID reuse.
+        if (age === null || Math.abs(Date.now() - age - startedAt) > 3000) return
+      } else {
+        const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(output)
+        if (match === null || Number(match[1]) !== pid || Number(match[2]) !== pgid) return
+        let actual: string[]
+        try {
+          actual = (await readFile(`/proc/${pid}/cmdline`, 'utf8')).split('\0').filter(Boolean)
+        } catch (error) {
+          if (signal.aborted) throw error
           return
         }
-        throw error
+        if (actual.length !== argv.length || actual.some((arg, i) => arg !== argv[i])) return
       }
-    } else {
-      // ps has no argv delimiter on macOS. Ambiguous whitespace/escaping is never grounds to kill.
-      if (argv.some((arg) => /[\s"'\\]/.test(arg)))
-        throw new Error('Cannot verify ambiguous snapshot argv')
-      actual = match[2]!.trim().split(/\s+/)
+      await this.command(['/bin/kill', '-KILL', '--', `-${pgid}`], repo, repo, signal)
+    } finally {
+      await rm(recordPath, { force: true })
     }
-    if (actual.length !== argv.length || actual.some((arg, i) => arg !== argv[i]))
-      throw new Error('Cannot verify complete previous snapshot argv')
-    await this.command(['/bin/kill', '-KILL', '--', `-${pgid}`], repo, repo, signal)
-    await rm(recordPath, { force: true })
   }
+}
+
+/** ps etime: [[days-]hours:]minutes:seconds, never a command or an argv string. */
+function elapsedMs(value: string): number | null {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d{1,2}):(\d{2})$/.exec(value)
+  if (match === null) return null
+  const days = Number(match[1] ?? 0)
+  const hours = Number(match[2] ?? 0)
+  const minutes = Number(match[3])
+  const seconds = Number(match[4])
+  if (
+    (match[1] !== undefined && match[2] === undefined) ||
+    hours > 23 ||
+    minutes > 59 ||
+    seconds > 59
+  )
+    return null
+  const result = (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000
+  return Number.isSafeInteger(result) ? result : null
 }
 
 /** Read-only volume traits: compare existing identities, never plant a probe in the workspace. */

@@ -1489,7 +1489,8 @@ export async function pathScopeOf(
   let sensitive: PathScope['sensitive']
   try {
     sensitive = await ctx.sensitivePaths?.(roots, sessionKey)
-  } catch {
+  } catch (error) {
+    if (ctx.sensitiveFallback === undefined) throw error
     sensitive = ctx.sensitiveFallback?.(roots)
   }
   return {

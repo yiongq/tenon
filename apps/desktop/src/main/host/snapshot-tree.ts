@@ -8,6 +8,7 @@ import type { SnapshotGit } from './snapshot-git.js'
 import {
   contains,
   DEFAULT_EXCLUDES,
+  errno,
   identity,
   MAX_FILE_BYTES,
   saved,
@@ -112,14 +113,15 @@ export async function scanTree(
             entry: { path, identity: saved(identity(stats)) },
             bytes: Number(stats.size),
           }
-        } catch {
-          return { name }
+        } catch (error) {
+          return { name, absent: errno(error, 'ENOENT') || errno(error, 'ENOTDIR') }
         }
       }),
     )
     signal.throwIfAborted()
     for (const result of batch) {
       if (result.entry === undefined) {
+        if (result.absent === true) continue
         excluded.push(result.name)
         skipped++
         continue

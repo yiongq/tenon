@@ -126,7 +126,7 @@ export function FolderChip({
                     void invokeRoute(window.tenon, workspaceRemove, {
                       sessionId: store.sessionId,
                       folder,
-                    }).then(selected)
+                    }).then(refresh)
                   }
                 >
                   <XIcon aria-hidden className="size-3" />

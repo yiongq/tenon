@@ -89,3 +89,22 @@ it.each(['zh-CN', 'en'] as const)(
     }
   },
 )
+
+it.each(['handler-failed', 'not-in-list'] as const)(
+  '05 验收 13: a failed removal still refreshes current folders (%s)',
+  async (code) => {
+    vi.stubGlobal('window', { tenon: {} })
+    try {
+      state.invoke.mockResolvedValue(
+        code === 'handler-failed'
+          ? { ok: false, error: { code } }
+          : { ok: true, data: { ok: false, code } },
+      )
+      const remove = find(await render(), 'folder-remove')
+      await (remove!.props['onClick'] as () => Promise<void>)()
+      await vi.waitFor(() => expect(state.refresh).toHaveBeenCalledTimes(1))
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  },
+)

@@ -2020,18 +2020,39 @@ it('05 验收 45: recovery discards malformed, wrong-version and missing-commit 
   )
 })
 
-it.each(DEFAULT_EXCLUDES)('05 验收 7、8: default exclude %s never enters a tree', async (name) => {
-  const path = join(workspace, name)
-  if (name === '.DS_Store' || name === 'Thumbs.db') await writeFile(path, 'excluded')
-  else {
-    await mkdir(path)
-    await writeFile(join(path, 'hidden'), 'excluded')
-  }
-  await writeFile(join(workspace, 'ordinary'), 'included')
-  await warm()
-  const saved = await manifest(await snapshots.take(request(), new AbortController().signal))
-  expect(saved.trees[0]!.entries.map((entry) => entry.path)).toEqual([join(workspace, 'ordinary')])
+const EXPECTED_DEFAULT_EXCLUDES = [
+  '.git',
+  'node_modules',
+  'vendor',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  '.next',
+  '.cache',
+  '.DS_Store',
+  'Thumbs.db',
+] as const
+it('05 验收 7、8: default excludes exactly match the documented eleven names', () => {
+  expect(DEFAULT_EXCLUDES).toEqual(EXPECTED_DEFAULT_EXCLUDES)
 })
+it.each(EXPECTED_DEFAULT_EXCLUDES)(
+  '05 验收 7、8: default exclude %s never enters a tree',
+  async (name) => {
+    const path = join(workspace, name)
+    if (name === '.DS_Store' || name === 'Thumbs.db') await writeFile(path, 'excluded')
+    else {
+      await mkdir(path)
+      await writeFile(join(path, 'hidden'), 'excluded')
+    }
+    await writeFile(join(workspace, 'ordinary'), 'included')
+    await warm()
+    const saved = await manifest(await snapshots.take(request(), new AbortController().signal))
+    expect(saved.trees[0]!.entries.map((entry) => entry.path)).toEqual([
+      join(workspace, 'ordinary'),
+    ])
+  },
+)
 
 it.each([
   ['2.42.9', 'file-only'],
@@ -2197,4 +2218,116 @@ it('05 验收 14: actual accounting skips unchanged immutable objects and recoun
   expect(checked).toContain(join(dir, 'objects', '00', 'b'.repeat(38)))
   expect(checked).not.toContain(join(dir, 'objects', '01', hash))
   expect(measured).toBe(await diskBytes(dir))
+})
+
+it('05 验收 8、19: deleted indexed files are absent rather than excluded or skipped', async () => {
+  await writeFile(join(workspace, 'gone'), 'old')
+  await writeFile(join(workspace, 'kept'), 'kept')
+  await warm()
+  await rm(join(workspace, 'gone'))
+  const saved = await manifest(await snapshots.take(request(), new AbortController().signal))
+  expect(saved.skipped).toBe(0)
+  expect(saved.trees[0]!.excluded).toEqual([])
+  expect(saved.trees[0]!.entries.map((entry) => entry.path)).toEqual([join(workspace, 'kept')])
+  const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+  expect(await git([`--git-dir=${repo}`, 'ls-files'])).toBe('kept\n')
+})
+
+it('05 验收 10: a later file-count limit still fulfils a promised file snapshot', async () => {
+  const path = join(workspace, 'target')
+  await writeFile(path, 'promised')
+  const controller = make({ limits: { files: 2 } })
+  await warm(controller)
+  await Promise.all(['a', 'b', 'c'].map((name) => writeFile(join(workspace, name), 'added')))
+  const result = await controller.take(request(path), new AbortController().signal)
+  expect(result).toMatchObject({ ok: true, scope: 'file' })
+  expect(controller.status(SESSION)).toBe('file-only')
+  expect(await copy((await manifest(result)).files[0]!)).toEqual(Buffer.from('promised'))
+})
+
+it('05 验收 10、14、45: an over-budget tree returns its promised copy before background gc completes', async () => {
+  const path = join(workspace, 'target')
+  const other = join(workspace, 'other')
+  await writeFile(path, 'promised')
+  await writeFile(other, 'small')
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let fail = false
+  let completed = false
+  const controller = make({
+    limits: { bytes: 350_000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (fail && spec.argv.includes('update-index') && spec.argv.includes('--add')) {
+          await actualFs.writeFile(other, randomBytes(500_000))
+        }
+        if (fail && spec.argv.includes('gc')) {
+          entered.resolve()
+          await release.promise
+        }
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await warm(controller)
+  fail = true
+  const work = controller.take(request(path), new AbortController().signal).then((result) => {
+    completed = true
+    return result
+  })
+  try {
+    await entered.promise
+    expect(completed).toBe(true)
+    const result = await work
+    expect(result).toMatchObject({ ok: true, scope: 'file' })
+    expect(await copy((await manifest(result)).files[0]!)).toEqual(Buffer.from('promised'))
+  } finally {
+    release.resolve()
+    await work
+    await controller.settled(SESSION)
+  }
+  expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(350_000)
+})
+
+it('05 验收 14、45: failed background gc revokes rejected-object credit before another reservation', async () => {
+  const path = join(workspace, 'target')
+  const other = join(workspace, 'other')
+  await writeFile(path, 'promised')
+  await writeFile(other, 'small')
+  let fail = false
+  const controller = make({
+    limits: { bytes: 350_000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (fail && spec.argv.includes('update-index') && spec.argv.includes('--add'))
+          await actualFs.writeFile(other, randomBytes(500_000))
+        if (fail && spec.argv.includes('gc')) throw new Error('background gc failed')
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await warm(controller)
+  fail = true
+  const result = await controller.take(request(path), new AbortController().signal)
+  expect(result).toMatchObject({ ok: true, scope: 'file' })
+  const saved = await manifest(result)
+  await controller.settled(SESSION)
+  expect(await controller.take(request(path), new AbortController().signal)).toEqual({
+    ok: false,
+    reason: 'over-budget',
+  })
+  expect(await copy(saved.files[0]!)).toEqual(Buffer.from('promised'))
+  fail = false
+})
+
+it('05 验收 8、19: cached children below a directory replaced by a file are absent, not excluded', async () => {
+  await mkdir(join(workspace, 'dir'))
+  await writeFile(join(workspace, 'dir/child'), 'old')
+  await warm()
+  await rm(join(workspace, 'dir'), { recursive: true })
+  await writeFile(join(workspace, 'dir'), 'replacement')
+  const saved = await manifest(await snapshots.take(request(), new AbortController().signal))
+  expect(saved.skipped).toBe(0)
+  expect(saved.trees[0]!.excluded).toEqual([])
+  expect(saved.trees[0]!.entries.map((entry) => entry.path)).toEqual([join(workspace, 'dir')])
 })

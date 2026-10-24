@@ -3,7 +3,8 @@ import * as nativeFs from 'node:fs/promises'
 import { mkdir, mkdtemp, realpath, rm, writeFile, symlink, link } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { absolutePath, locatePath } from '@tenon-app/kernel'
+import { absolutePath, locatePath, EMPTY_POLICY } from '@tenon-app/kernel'
+import { decide } from '../../../packages/kernel/src/permission/decide.js'
 import type { AbsolutePath, PathScope } from '@tenon-app/kernel'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopFs } from '../src/main/host/fs.js'
@@ -289,7 +290,11 @@ it.skipIf(process.platform === 'win32')(
     await symlink('other', join(workspace, '.vscode'))
     const table = await desktopSensitivePaths(home, [workspace], null, undefined, { maxEntries: 0 })
     expect(table).toMatchObject({ incomplete: true, diagnostic: expect.any(String) })
-    expect(table.linkTargets.filter((target) => target.category === 'auto-run')).toEqual([])
+    expect(
+      table.linkTargets.filter(
+        (target) => target.category === 'auto-run' && target.real.startsWith(workspace + '/'),
+      ),
+    ).toEqual([])
     const controller = new AbortController()
     controller.abort()
     expect(
@@ -667,4 +672,175 @@ it('05 验收 26、55: all workspace credential aliases resolve before scanning 
   expect(table).toMatchObject({ incomplete: false, diagnostic: null })
   expect(table.linkTargets).toContainEqual({ real: keys, category: 'credential' })
   expect(vi.mocked(nativeFs.readdir).mock.calls.map(([path]) => String(path))).not.toContain(keys)
+})
+
+const FIXED_HOME_STARTUP = [
+  'Library/LaunchAgents',
+  '.config/git',
+  '.config/autostart',
+  '.config/systemd/user',
+  '.zlogin',
+  '.bash_login',
+  '.bash_aliases',
+  '.gitconfig',
+] as const
+it.each(
+  FIXED_HOME_STARTUP.flatMap((name) =>
+    [true, false].flatMap((homeWorkspace) =>
+      [true, false].map((always) => ({ name, homeWorkspace, always })),
+    ),
+  ),
+)(
+  '05 验收 27、55: incomplete scan still asks for $name homeWorkspace=$homeWorkspace always=$always',
+  async ({ name, homeWorkspace, always }) => {
+    await writeFile(join(workspace, 'ordinary'), 'fixture')
+    const roots = homeWorkspace ? [home] : [workspace]
+    const table = await desktopSensitivePaths(home, roots, null, undefined, { maxEntries: 0 })
+    expect(table.incomplete).toBe(true)
+    const current: PathScope = {
+      roots,
+      profileDir: p(join(root, 'profile')),
+      ownSpillDir: p(join(root, 'profile/output')),
+      protectedFiles: [],
+      sensitive: table,
+    }
+    const path = p(join(home, name, name.includes('/') ? 'task' : ''))
+    const located = await locatePath(fs, path, current, 'Write')
+    const result = decide({
+      call: {
+        tool: { name: 'Write', originalName: 'Write', serverId: 'builtin', source: 'builtin' },
+        args: {},
+        reversibility: 'unknown',
+      },
+      callReason: { reason: 'sensitive-path', facts: { path, category: 'auto-run' } },
+      inspectors: [],
+      layers: {
+        policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+        place: located.place,
+        ...(located.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+        reversibility: { value: 'unknown', source: 'host' },
+        requiresUserInteraction: false,
+        sessionGrant: null,
+        approvalMode: 'auto',
+        ...(always ? { userSetting: 'always-allow' as const } : {}),
+      },
+    })
+    expect(located.sensitive).toBe('auto-run')
+    expect(result.record.verdict).toBe('ask')
+    expect(result.confirm).toMatchObject({
+      reason: 'sensitive-path',
+      facts: { category: 'auto-run' },
+    })
+  },
+)
+
+it('05 验收 26、27: even an aborted fixed-list lookup preserves every literal protection entry', async () => {
+  const stop = new AbortController()
+  stop.abort()
+  const table = await desktopSensitivePaths(home, [workspace], null, undefined, {
+    signal: stop.signal,
+  })
+  const platform = process.platform === 'darwin' ? 'darwin' : 'linux'
+  const list = protectionList({ home, zdotdir: null, credentials: credentialPaths(platform, home) })
+  for (const path of list.homeAutoRun)
+    expect(table.linkTargets).toContainEqual({ real: path, category: 'auto-run' })
+  for (const path of list.credential)
+    expect(table.linkTargets).toContainEqual({ real: path, category: 'credential' })
+})
+
+it('05 验收 26、27: hung fixed-list realpath resolution times out with every literal startup location intact', async () => {
+  const gate = Promise.withResolvers<AbsolutePath | null>()
+  const real = vi.spyOn(DesktopFs.prototype, 'realpath').mockReturnValue(gate.promise)
+  try {
+    const table = await desktopSensitivePaths(home, [workspace], null, undefined, { timeoutMs: 30 })
+    expect(table).toMatchObject({
+      incomplete: true,
+      diagnostic: expect.stringMatching(/timed out/),
+    })
+    for (const name of FIXED_HOME_STARTUP)
+      expect(table.linkTargets).toContainEqual({ real: join(home, name), category: 'auto-run' })
+  } finally {
+    gate.resolve(home)
+    real.mockRestore()
+  }
+})
+
+it('05 验收 27、55: fixed startup realpaths survive another fixed spelling lookup being cancelled', async () => {
+  const config = join(workspace, 'config')
+  await mkdir(join(config, 'git'), { recursive: true })
+  await symlink(config, join(home, '.config'))
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const stop = new AbortController()
+  const original = DesktopFs.prototype.realpath
+  const real = vi.spyOn(DesktopFs.prototype, 'realpath').mockImplementation(async function (
+    this: DesktopFs,
+    path,
+  ) {
+    const value = await original.call(this, path)
+    if (path === join(home, '.config/git')) entered.resolve()
+    return value
+  })
+  vi.mocked(nativeFs.readdir).mockImplementation(async (...args) => {
+    if (String(args[0]) === home) await release.promise
+    return actualFs.readdir(...args)
+  })
+  const work = desktopSensitivePaths(home, [workspace], null, undefined, { signal: stop.signal })
+  try {
+    await entered.promise
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    stop.abort()
+    const table = await work
+    expect(table.incomplete).toBe(true)
+    expect(table.linkTargets).toContainEqual({ real: join(config, 'git'), category: 'auto-run' })
+    expect(table.linkTargets).toContainEqual({
+      real: join(home, '.config/git'),
+      category: 'auto-run',
+    })
+  } finally {
+    release.resolve()
+    real.mockRestore()
+  }
+})
+
+it('05 验收 27、55: workspace lookup failure still waits for an available fixed startup realpath', async () => {
+  const config = join(workspace, 'config')
+  await mkdir(join(config, 'git'), { recursive: true })
+  await symlink(config, join(home, '.config'))
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  vi.mocked(nativeFs.readdir).mockImplementation(async (...args) => {
+    if (String(args[0]) === home)
+      throw Object.assign(new Error('home listing denied'), { code: 'EACCES' })
+    return actualFs.readdir(...args)
+  })
+  const original = DesktopFs.prototype.realpath
+  const real = vi.spyOn(DesktopFs.prototype, 'realpath').mockImplementation(async function (
+    this: DesktopFs,
+    path,
+  ) {
+    if (path === join(home, '.config/git')) {
+      entered.resolve()
+      await release.promise
+    }
+    return original.call(this, path)
+  })
+  let completed = false
+  const work = desktopSensitivePaths(home, [workspace]).then((table) => {
+    completed = true
+    return table
+  })
+  try {
+    await entered.promise
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(completed).toBe(false)
+    release.resolve()
+    const table = await work
+    expect(table.incomplete).toBe(true)
+    expect(table.linkTargets).toContainEqual({ real: join(config, 'git'), category: 'auto-run' })
+  } finally {
+    release.resolve()
+    await work
+    real.mockRestore()
+  }
 })

@@ -388,3 +388,20 @@ it('05 验收 25、26、27: answerScope accepts a decision without a confirmatio
     }),
   ).toBe('once')
 })
+
+it('05 验收 26、27: a failing sensitive provider without fallback fails closed', async () => {
+  const { pathScopeOf } = await import('../../src/loop/batch.js')
+  await expect(
+    pathScopeOf(
+      {
+        host: createMemoryHost(),
+        sessionId: '3a1d9a2e-6b3d-4a71-9f52-0c8de7a11b61',
+        protectedFiles: [],
+        sensitivePaths: async () => {
+          throw new Error('provider failure')
+        },
+      },
+      { folders: [p('/home')], origin: 'picked' },
+    ),
+  ).rejects.toThrow('provider failure')
+})
