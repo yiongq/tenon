@@ -197,6 +197,9 @@ export interface ApprovedCall {
   readonly target: AbsolutePath | null
 }
 
+/** Delete's volatile decision restrictions never enter Tape. A lost marker fails closed. */
+const deleteJudgements = new WeakMap<Tape, Map<string, boolean>>()
+
 /**
  * What a write committed: the entries, in the order given, with their receipts. A result for a call
  * that already has one is left out (先写者算数, §写入：谁写、写几次), and so is its outcome.
@@ -867,7 +870,10 @@ async function perform(
   }
   const fileTool =
     item.source === 'builtin' && ['Write', 'Edit', 'Delete'].includes(item.originalName)
-  let fileInputs: Pick<Parameters<ToolExecutor>[0], 'fileStamp' | 'fileTarget'> = {}
+  let fileInputs: Pick<
+    Parameters<ToolExecutor>[0],
+    'fileStamp' | 'fileTarget' | 'deleteAmbiguous'
+  > = {}
   if (fileTool && q.target !== null) {
     const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
     const dispatch = entries.find(
@@ -882,11 +888,18 @@ async function perform(
       ...(stamp === undefined ? {} : { fileStamp: stamp }),
       ...(decision?.fileTarget === undefined ? {} : { fileTarget: decision.fileTarget }),
     }
+    if (item.originalName === 'Delete') {
+      const key = String(dispatch?.payload['decisionKey'])
+      const markers = deleteJudgements.get(ctx.tape)
+      fileInputs = { ...fileInputs, deleteAmbiguous: markers?.get(key) !== false }
+      markers?.delete(key)
+    }
   }
   const running =
     q.snapshot !== undefined && ctx.signal.aborted
       ? Promise.resolve(ABORTED)
-      : q.reversibility === 'snapshotted' &&
+      : fileInputs.deleteAmbiguous !== true &&
+          q.reversibility === 'snapshotted' &&
           q.snapshot?.request.path !== undefined &&
           !q.snapshot.before.ok
         ? Promise.resolve(executionFailure(SNAPSHOT_FAILED))
@@ -1266,6 +1279,7 @@ export type Judgement =
   | {
       readonly kind: 'judged'
       readonly coverage?: SnapshotCoverage
+      readonly deleteAmbiguous?: boolean
       readonly fileTarget?: PermissionDecidedPayload['fileTarget']
       readonly definitionChanged?: true
       readonly decision: Decision
@@ -1484,6 +1498,9 @@ export async function judgeCall(
       : { definitionChanged: true as const }),
     decision,
     ...(coverage === undefined ? {} : { coverage }),
+    ...(item.source === 'builtin' && item.originalName === 'Delete'
+      ? { deleteAmbiguous: located?.deleteAmbiguous === true }
+      : {}),
     ...(fileTarget === undefined ? {} : { fileTarget }),
     ...(sandbox === undefined ? {} : { sandbox }),
     reversibility,
@@ -1574,6 +1591,14 @@ export function decisionEntry(q: {
   readonly writer: FactWriter
 }): NewEntry {
   const { decision } = q.judged
+  if (q.judged.deleteAmbiguous !== undefined) {
+    let markers = deleteJudgements.get(q.tape)
+    if (markers === undefined) {
+      markers = new Map()
+      deleteJudgements.set(q.tape, markers)
+    }
+    markers.set(q.key, q.judged.deleteAmbiguous)
+  }
   const payload: PermissionDecidedPayload = {
     ordinal: q.ref.ordinal,
     providerToolCallId: q.ref.providerToolCallId,

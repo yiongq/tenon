@@ -62,6 +62,8 @@ export interface ToolExecution {
 }
 
 export interface ExecuteQuery {
+  /** The approved Delete was ambiguous, or its volatile judgment marker was lost on restart. */
+  readonly deleteAmbiguous?: boolean
   readonly fileStamp?: NonNullable<ToolOutcomePayload['file']>
   /** Spec 05: the leaf kind and name count at the decision named by this dispatch. */
   readonly fileTarget?: PermissionDecidedPayload['fileTarget']

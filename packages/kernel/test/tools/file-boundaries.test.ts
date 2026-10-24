@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { FileIdentity, MemoryHost } from '../../src/index.js'
 import { fill } from '../../src/prompts/index.js'
+import { locatePath } from '../../src/permission/workspace.js'
 import { DELETE_TEXTS, DELETE_TOOL, deleteExecutor } from '../../src/tools/builtin/delete.js'
 import { EDIT_TEXTS, editExecutor } from '../../src/tools/builtin/edit.js'
 import { ABORTED, failed } from '../../src/tools/builtin/files.js'
@@ -62,6 +63,38 @@ function query(
 }
 
 describe('05 file boundary failures', () => {
+  it.each(['parent', 'leaf'] as const)(
+    '05 验收 30: Delete reports an execution-time %s lstat error as hostError without removing anything',
+    async (where) => {
+      const h = await host()
+      const identity = h.fs.identity.bind(h.fs)
+      const error = Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })
+      vi.spyOn(h.fs, 'identity').mockImplementation((path) =>
+        path === (where === 'parent' ? absolutePath('/ws') : FILE)
+          ? Promise.reject(error)
+          : identity(path),
+      )
+      if (where === 'leaf') vi.spyOn(h.fs, 'readdir').mockRejectedValue(new Error('cannot list'))
+      const remove = vi.spyOn(h.fs, 'remove')
+      expect(await deleteExecutor(query(h, 'Delete'))).toEqual(
+        failed('Deleting /ws/a.txt failed: EIO: i/o error'),
+      )
+      expect(remove).not.toHaveBeenCalled()
+      expect(await identity(FILE)).not.toBeNull()
+    },
+  )
+
+  it('05 验收 30: Delete judgment fails closed if parent metadata cannot be read', async () => {
+    const h = await host()
+    const identity = h.fs.identity.bind(h.fs)
+    vi.spyOn(h.fs, 'identity').mockImplementation((path) =>
+      path === absolutePath('/ws') ? Promise.reject(new Error('EIO')) : identity(path),
+    )
+    expect(await locatePath(h.fs, FILE, query(h).scope, 'Delete')).toEqual({
+      real: FILE,
+      place: 'protected',
+    })
+  })
   it.each(['Write', 'Edit', 'Delete'] as const)(
     '05 验收 1: %s failing before mutation never claims fileMutationAttempted',
     async (name) => {

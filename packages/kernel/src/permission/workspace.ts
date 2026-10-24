@@ -30,6 +30,8 @@ export interface PathVerdict {
   readonly real: AbsolutePath
   readonly place: PathPlace
   readonly sensitive?: 'credential' | 'auto-run' | 'hardlink'
+  /** Internal Delete execution restriction; never a Tape payload field. */
+  readonly deleteAmbiguous?: true
 }
 
 export interface PathScope {
@@ -115,10 +117,12 @@ export async function locatePath(
   let real =
     tool === 'Delete' && leaf !== undefined ? joinPath(resolution.path, leaf) : resolution.path
   if (resolution.alias === true) return { real, place: 'protected' }
+  let deleteRestriction: Pick<PathVerdict, 'deleteAmbiguous'> = {}
   if (tool === 'Delete' && leaf !== undefined && resolution.resolved) {
     const actual = await deleteLeafPath(fs, resolution.path, leaf)
-    // An ambiguous leaf is refused by Delete at execution, not classified as a protected place.
-    real = actual ?? real
+    if (actual.kind === 'error') return { real, place: 'protected' }
+    if (actual.kind === 'found') real = actual.path
+    if (actual.kind === 'ambiguous') deleteRestriction = { deleteAmbiguous: true }
   }
   const place = resolution.resolved ? placeOf(real, scope) : 'outside'
   if (place === 'protected' || isProtectedFile(written, scope.protectedFiles))
@@ -131,47 +135,54 @@ export async function locatePath(
     scope,
     tool !== 'Read' && tool !== 'Glob' && tool !== 'Grep',
   )
-  if (sensitive !== undefined) return { real, place: 'outside', sensitive }
+  if (sensitive !== undefined) return { real, place: 'outside', sensitive, ...deleteRestriction }
   if (tool === 'Write' || tool === 'Edit' || tool === 'Delete') {
     try {
       const stamp = await fs.identity(real)
       if (stamp?.kind === 'file' && stamp.nlink > 1)
-        return { real, place: 'outside', sensitive: 'hardlink' }
+        return { real, place: 'outside', sensitive: 'hardlink', ...deleteRestriction }
     } catch {
       return { real, place: 'protected' }
     }
   }
-  return { real, place }
+  return { real, place, ...deleteRestriction }
 }
+
+type DeleteLeaf =
+  | { readonly kind: 'found'; readonly path: AbsolutePath }
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'ambiguous' }
+  | { readonly kind: 'error'; readonly error: unknown }
 
 /** Preserve a Delete leaf's directory-entry spelling without resolving the leaf link. */
 export async function deleteLeafPath(
   fs: HostFs,
   parent: AbsolutePath,
   leaf: string,
-): Promise<AbsolutePath | null> {
+): Promise<DeleteLeaf> {
   const path = joinPath(parent, leaf)
   try {
     // A missing parent remains an execution-time missing target, rather than a failed listing.
-    if ((await fs.identity(parent)) === null) return path
+    if ((await fs.identity(parent)) === null) return { kind: 'missing' }
     let names: readonly string[]
     try {
       names = await fs.readdir(parent)
     } catch {
-      // Traversal may be allowed without listing. Keep the spelling and let lstat below (and
-      // the executor) distinguish an existing leaf, a missing leaf and a host access error.
-      await fs.identity(path)
-      return path
+      // Traversal may be allowed without listing. lstat still distinguishes missing leaves
+      // from host errors; the executor must report those errors rather than claim a change.
+      return (await fs.identity(path)) === null ? { kind: 'missing' } : { kind: 'found', path }
     }
-    if (names.includes(leaf)) return path
+    if (names.includes(leaf)) return { kind: 'found', path }
     const folded = names.filter((name) => foldCase(name) === foldCase(leaf))
-    if (folded.length === 0) return path
+    if (folded.length === 0) return { kind: 'missing' }
     // lstat can find an unlisted spelling only when the volume accepts that alias. On a
     // case-sensitive volume an absent spelling must stay absent, never select a similar name.
-    if ((await fs.identity(path)) === null) return path
-    return folded.length === 1 ? joinPath(parent, folded[0]!) : null
-  } catch {
-    return null
+    if ((await fs.identity(path)) === null) return { kind: 'missing' }
+    return folded.length === 1
+      ? { kind: 'found', path: joinPath(parent, folded[0]!) }
+      : { kind: 'ambiguous' }
+  } catch (error) {
+    return { kind: 'error', error }
   }
 }
 

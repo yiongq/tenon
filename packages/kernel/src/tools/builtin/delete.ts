@@ -49,14 +49,19 @@ export const deleteExecutor: ToolExecutor = async (q) => {
   if (path === null) throw new Error('Delete requires its approved target')
   let fileMutationAttempted = false
   try {
+    if (q.deleteAmbiguous === true) return failed(DELETE_TEXTS.targetChanged)
     const parent = parentOf(path)
     if (parent === null) return failed(fill(DELETE_TEXTS.isDirectory, { path }))
     const resolved = await resolvePath(q.fs, parent)
     if (q.signal.aborted) return ABORTED
     if (!resolved.resolved || resolved.path !== parent) return failed(DELETE_TEXTS.parentChanged)
     const leaf = pathParts(path).segments.at(-1)!
-    if ((await deleteLeafPath(q.fs, parent, leaf)) !== path)
+    const actual = await deleteLeafPath(q.fs, parent, leaf)
+    if (q.signal.aborted) return ABORTED
+    if (actual.kind === 'error') throw actual.error
+    if (actual.kind === 'ambiguous' || (actual.kind === 'found' && actual.path !== path))
       return failed(DELETE_TEXTS.targetChanged)
+    if (actual.kind === 'missing') return failed(fill(DELETE_TEXTS.notFound, { path }))
     const guarded = await snapshotGuard(q)
     if ('failure' in guarded) return guarded.failure
     if (guarded.identity === null) return failed(fill(DELETE_TEXTS.notFound, { path }))

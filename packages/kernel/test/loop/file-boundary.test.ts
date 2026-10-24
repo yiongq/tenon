@@ -817,9 +817,12 @@ describe('05 Delete execution', () => {
     expect(await h.memory.fs.readFile(second, { encoding: 'utf8' })).toBe('second')
   })
 
-  it.each(['existing', 'missing'] as const)(
-    '05 验收 30: Delete with an unreadable parent listing treats an %s leaf normally',
-    async (kind) => {
+  it.each([
+    { kind: 'existing', article: 'an' },
+    { kind: 'missing', article: 'a' },
+  ] as const)(
+    '05 验收 30: Delete with an unreadable parent listing treats $article $kind leaf normally',
+    async ({ kind }) => {
       const h = await harness()
       if (kind === 'missing') await h.memory.fs.remove(FILE)
       vi.spyOn(h.memory.fs, 'readdir').mockRejectedValue(
@@ -835,9 +838,59 @@ describe('05 Delete execution', () => {
       await finish(h, pending)
       expect(await outcome(h)).toMatchObject({ state: 'completed' })
       expect(await result(h)).toMatchObject({ isError: kind === 'missing' })
+      if (kind === 'missing') await refused(h, `Nothing exists at ${FILE}.`)
       expect(await h.memory.fs.identity(FILE)).toBeNull()
     },
   )
+
+  it.each(['unreadable', 'unique'] as const)(
+    '05 验收 30: Delete retains judgment ambiguity when the execution listing becomes %s',
+    async (change) => {
+      const h = await harness()
+      const first = absolutePath('/work/Abc.txt')
+      const second = absolutePath('/work/ABC.TXT')
+      const written = absolutePath('/work/abc.txt')
+      await h.memory.fs.writeFile(first, 'first')
+      await h.memory.fs.writeFile(second, 'second')
+      const identity = h.memory.fs.identity.bind(h.memory.fs)
+      vi.spyOn(h.memory.fs, 'identity').mockImplementation((path) =>
+        identity(path === written ? first : path),
+      )
+      const pending = await start(h, 'Delete', { file_path: written })
+      if (pending === null) throw new Error('approval missing')
+      const remove = h.memory.fs.remove.bind(h.memory.fs)
+      const unlink = vi
+        .spyOn(h.memory.fs, 'remove')
+        .mockImplementation((path) => remove(path === written ? first : path))
+      if (change === 'unreadable')
+        vi.spyOn(h.memory.fs, 'readdir').mockRejectedValue(new Error('cannot list'))
+      else vi.spyOn(h.memory.fs, 'readdir').mockResolvedValue(['abc.txt'])
+      h.provider.script(done())
+      await finish(h, pending)
+      await refused(h, DELETE_TEXTS.targetChanged)
+      expect(unlink).not.toHaveBeenCalled()
+      expect(
+        (await h.entries()).find((e) => e.name === 'tool/permission_decided')?.payload,
+      ).not.toHaveProperty('deleteAmbiguous')
+      expect(await h.memory.fs.readFile(first, { encoding: 'utf8' })).toBe('first')
+      expect(await h.memory.fs.readFile(second, { encoding: 'utf8' })).toBe('second')
+    },
+  )
+
+  it('05 验收 30: a recovered Delete without its in-memory judgment marker refuses conservatively', async () => {
+    const h = await harness()
+    const pending = await start(h, 'Delete')
+    if (pending === null) throw new Error('approval missing')
+    const restarted = runtime(h.memory, h.store, 1000)
+    await restarted.service.recover()
+    restarted.provider.script(done())
+    await finish(restarted, pending)
+    await refused(restarted, DELETE_TEXTS.targetChanged)
+    expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before')
+    await invoke(restarted, 'Delete')
+    expect(await result(restarted)).toMatchObject({ isError: false })
+    expect(await h.memory.fs.identity(FILE)).toBeNull()
+  })
 
   it.each(['Write', 'Edit', 'Delete'])(
     '05 验收 25、30: a hardlink inside the own spill remains blocked for %s',
