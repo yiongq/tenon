@@ -89,6 +89,7 @@ import { ABORTED, failed as executionFailure } from '../tools/builtin/files.js'
 import { SNAPSHOT_FAILED } from '../tools/snapshot-guard.js'
 import { snapshotEntry, snapshotRequest, snapshotSessionId } from './snapshots.js'
 import type { CallSnapshot } from './snapshots.js'
+import { latestFileStamp } from './file-stamps.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
 import { sessionFactsOf, workspaceOf } from '../session/facts.js'
@@ -862,6 +863,24 @@ async function perform(
       },
     }
   }
+  const fileTool =
+    item.source === 'builtin' && ['Write', 'Edit', 'Delete'].includes(item.originalName)
+  let fileInputs: Pick<Parameters<ToolExecutor>[0], 'fileStamp' | 'fileTarget'> = {}
+  if (fileTool && q.target !== null) {
+    const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
+    const dispatch = entries.find(
+      (entry) =>
+        entry.provenanceKey === dispatchCommittedKey(ctx.runId, ctx.requestSeq, call.ordinal),
+    )
+    const decision = entries.find(
+      (entry) => entry.provenanceKey === dispatch?.payload['decisionKey'],
+    )?.payload as PermissionDecidedPayload | undefined
+    const stamp = item.originalName === 'Delete' ? undefined : latestFileStamp(entries, q.target)
+    fileInputs = {
+      ...(stamp === undefined ? {} : { fileStamp: stamp }),
+      ...(decision?.fileTarget === undefined ? {} : { fileTarget: decision.fileTarget }),
+    }
+  }
   const running =
     q.snapshot !== undefined && ctx.signal.aborted
       ? Promise.resolve(ABORTED)
@@ -875,6 +894,7 @@ async function perform(
             scope: q.scope,
             fs: ctx.host.fs,
             clock: ctx.host.clock,
+            ...fileInputs,
             ...(q.snapshot?.request.path !== undefined && q.snapshot.before.ok
               ? { snapshotTarget: q.snapshot.before.target! }
               : {}),
@@ -930,6 +950,9 @@ async function perform(
     log: ctx.log,
   })
   const facts = resultFacts({
+    ...(execution.state === 'completed' && !execution.isError && execution.file !== undefined
+      ? { file: execution.file }
+      : {}),
     ...(q.snapshot?.before.ok ? { snapshotId: q.snapshot.before.snapshotId } : {}),
     tape: ctx.tape,
     now: ctx.now,
@@ -1239,6 +1262,7 @@ export type Judgement =
   | {
       readonly kind: 'judged'
       readonly coverage?: SnapshotCoverage
+      readonly fileTarget?: PermissionDecidedPayload['fileTarget']
       readonly definitionChanged?: true
       readonly decision: Decision
       readonly sandbox?: SandboxPlan
@@ -1286,7 +1310,27 @@ export async function judgeCall(
 ): Promise<Judgement> {
   const facts = given ?? (await callFactsOf(ctx))
   const { entries, profile, scope: paths } = facts
-  const located = await locate(ctx.host, item, call.input, paths)
+  let located = await locate(ctx.host, item, call.input, paths)
+  let fileTarget: PermissionDecidedPayload['fileTarget']
+  if (
+    item.source === 'builtin' &&
+    ['Write', 'Edit', 'Delete'].includes(item.originalName) &&
+    located !== undefined &&
+    located.place !== 'protected' &&
+    located.place !== 'own-spill'
+  ) {
+    try {
+      const identity = await ctx.host.fs.identity(located.real)
+      fileTarget = identity === null ? null : { kind: identity.kind, nlink: identity.nlink }
+      // Classification and the execution baseline must agree even if a second name appeared
+      // after locatePath read the identity. Otherwise an existing session grant could authorize it.
+      if (identity?.kind === 'file' && identity.nlink > 1 && located.sensitive === undefined) {
+        located = { ...located, place: 'outside', sensitive: 'hardlink' }
+      }
+    } catch {
+      // No baseline means the execution boundary cannot authorize a multiple-name file.
+    }
+  }
   const coverage =
     profile === 'cowork' &&
     item.source === 'builtin' &&
@@ -1440,6 +1484,7 @@ export async function judgeCall(
       : { definitionChanged: true as const }),
     decision,
     ...(coverage === undefined ? {} : { coverage }),
+    ...(fileTarget === undefined ? {} : { fileTarget }),
     ...(sandbox === undefined ? {} : { sandbox }),
     reversibility,
     ...(place === undefined ? {} : { place }),
@@ -1535,6 +1580,7 @@ export function decisionEntry(q: {
     argsHash: q.argsHash,
     reversibility: q.judged.reversibility,
     ...(q.judged.coverage === undefined ? {} : { coverage: q.judged.coverage }),
+    ...(q.judged.fileTarget === undefined ? {} : { fileTarget: q.judged.fileTarget }),
     ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
     ...(q.judged.definitionChanged === undefined
       ? {}

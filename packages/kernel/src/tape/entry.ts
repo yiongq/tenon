@@ -14,6 +14,7 @@ import type {
   AbsolutePath,
   ConfirmRequest,
   ConfirmTarget,
+  FileIdentity,
   Reversibility,
   SnapshotCoverage,
 } from '../host/adapter.js'
@@ -419,6 +420,8 @@ export type ToolCallPayload = CallRef & {
   argsHash: string // name 是发给模型的名字；argsHash = canonicalHash(input)
 }
 export type PermissionDecidedPayload = CallRef & {
+  /** Spec 05: the judged leaf kind and name count, independent of the card's primary reason. */
+  fileTarget?: Pick<FileIdentity, 'kind' | 'nlink'> | null
   coverage?: SnapshotCoverage
   sandbox?: SandboxPlan
   definitionChanged?: true

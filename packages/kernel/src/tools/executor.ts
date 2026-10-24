@@ -22,6 +22,7 @@ import { isBuiltinToolName } from './builtin/index.js'
 import { bashExecutor } from './builtin/bash.js'
 import type { CommandRun } from './builtin/bash.js'
 import { editExecutor } from './builtin/edit.js'
+import { deleteExecutor } from './builtin/delete.js'
 import { globExecutor } from './builtin/glob.js'
 import { grepExecutor } from './builtin/grep.js'
 import { readExecutor } from './builtin/read.js'
@@ -29,10 +30,11 @@ import { writeExecutor } from './builtin/write.js'
 import { webFetchExecutor } from './builtin/web-fetch.js'
 import type { SearchBackend } from './search/types.js'
 import { webSearchExecutor } from './builtin/web-search.js'
-import type { SandboxOutcome } from '../tape/entry.js'
+import type { PermissionDecidedPayload, SandboxOutcome, ToolOutcomePayload } from '../tape/entry.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
+  readonly file?: NonNullable<ToolOutcomePayload['file']>
   /** A snapshotted file write was attempted, including an error after partial mutation (spec 05). */
   readonly fileMutationAttempted?: true
   readonly sandbox?: SandboxOutcome
@@ -60,6 +62,9 @@ export interface ToolExecution {
 }
 
 export interface ExecuteQuery {
+  readonly fileStamp?: NonNullable<ToolOutcomePayload['file']>
+  /** Spec 05: the leaf kind and name count at the decision named by this dispatch. */
+  readonly fileTarget?: PermissionDecidedPayload['fileTarget']
   /** Spec 05: the target identity returned by the promised before-call snapshot; null = absent. */
   readonly snapshotTarget?: FileIdentity | null
   readonly search?: SearchBackend
@@ -101,6 +106,7 @@ export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExe
   Read: readExecutor,
   Write: writeExecutor,
   Edit: editExecutor,
+  Delete: deleteExecutor,
   Bash: bashExecutor,
   Glob: globExecutor,
   Grep: grepExecutor,

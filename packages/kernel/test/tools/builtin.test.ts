@@ -1,5 +1,5 @@
 /**
- * The ten builtin tools (spec 02 §内置工具与参数; plan step 10, 旧 140 and 旧 147): what each schema
+ * The eleven builtin tools (spec 02 §内置工具与参数; plan step 10, 旧 140 and 旧 147): what each schema
  * takes, what none of them takes, which profile offers which, and what each records once dispatched.
  */
 import { describe, expect, it } from 'vitest'
@@ -13,6 +13,7 @@ const PARAMETERS: Record<string, readonly string[]> = {
   Read: ['file_path', 'offset', 'limit'],
   Write: ['file_path', 'content'],
   Edit: ['file_path', 'old_string', 'new_string', 'replace_all'],
+  Delete: ['file_path'],
   Bash: ['command', 'timeout', 'description'],
   Glob: ['pattern', 'path'],
   Grep: [
@@ -110,7 +111,7 @@ describe('the builtin schemas', () => {
     ])
   })
 
-  it('record read for Read, Glob and Grep, write for Write and Edit, the rest as the table says', () => {
+  it('record read for Read, Glob and Grep, write for Write, Edit and Delete, the rest as the table says', () => {
     const effects = Object.fromEntries(
       BUILTIN_TOOL_NAMES.map((name) => [name, BUILTIN_TOOLS[name].effect]),
     )
@@ -120,6 +121,7 @@ describe('the builtin schemas', () => {
       Grep: 'read',
       Write: 'write',
       Edit: 'write',
+      Delete: 'write',
       // 暂定, owner 2026-09-25
       Bash: 'external',
       Agent: 'external',
@@ -142,7 +144,7 @@ describe('the builtin candidates of a profile (H1)', () => {
       .map((candidate) => candidate.name)
       .toSorted()
 
-  it('are four tools in chat and all ten in cowork', () => {
+  it('are four tools in chat and all eleven in cowork', () => {
     expect(names('chat')).toEqual(['AskUserQuestion', 'Read', 'WebFetch', 'WebSearch'])
     expect(names('cowork')).toEqual(BUILTIN_TOOL_NAMES.toSorted())
   })

@@ -129,7 +129,7 @@ export function userDisablesTool(setting: UserToolSetting | null): boolean {
 }
 
 /** The tools whose calls are file operations: the ones layer 2's protected list and the auto mode read. */
-const FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep'])
+const FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Delete', 'Glob', 'Grep'])
 /** Launching these is never gated by the approval mode (E4, H6); what an Agent does is judged per call. */
 const NOT_GATED: ReadonlySet<string> = new Set(['AskUserQuestion', 'Agent'])
 

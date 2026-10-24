@@ -75,6 +75,7 @@ export interface CallRef {
 export type ResultContent = Array<Extract<ContentBlock, { type: 'text' | 'image' }>>
 
 export interface ResultFacts {
+  readonly file?: NonNullable<ToolOutcomePayload['file']>
   readonly snapshotId?: string
   readonly sandbox?: SandboxOutcome
   readonly tape: Tape
@@ -118,6 +119,7 @@ export function resultFacts(q: ResultFacts): NewEntry[] {
     writer: q.writer,
   }
   const outcome: ToolOutcomePayload = {
+    ...(q.file === undefined ? {} : { file: q.file }),
     ...(q.snapshotId === undefined ? {} : { snapshotId: q.snapshotId }),
     ordinal: call.ordinal,
     providerToolCallId: call.providerToolCallId,

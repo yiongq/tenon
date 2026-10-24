@@ -10,6 +10,7 @@
 import { fill } from '../../prompts/index.js'
 import { SPILL_THRESHOLD_CHARS } from '../../loop/spill.js'
 import type { ToolExecutor } from '../executor.js'
+import { fileStampOf } from '../snapshot-guard.js'
 import { FILE_TEXTS, failed, linesOf, readText, succeeded, whenThrown } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { BOTH_PROFILES, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
@@ -67,10 +68,12 @@ export const readExecutor: ToolExecutor = async (q) => {
   const offset = typeof q.input['offset'] === 'number' ? q.input['offset'] : 1
   const limit = typeof q.input['limit'] === 'number' ? q.input['limit'] : null
   try {
-    const read = await readText(q.fs, q.target, q.signal)
+    const read = await readText(q.fs, q.target, q.signal, true)
     if ('failure' in read) return read.failure
     const result = readResult(read.text, offset, limit)
-    return result.isError ? failed(result.text) : succeeded(result.text)
+    if (result.isError) return failed(result.text)
+    const file = fileStampOf(read.stamp ?? null)
+    return { ...succeeded(result.text), ...(file === undefined ? {} : { file }) }
   } catch (error) {
     return whenThrown(error, q.target)
   }

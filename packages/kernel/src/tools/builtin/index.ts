@@ -1,11 +1,12 @@
 /**
- * The ten builtin tools (spec 02 §内置工具与参数), one name set for every provider. Keyed by name, in
+ * The eleven builtin tools (spec 05 §Delete 工具), one name set for every provider. Keyed by name, in
  * the table's order; the tool table sorts by name anyway (E2).
  */
 import { AGENT_TOOL } from './agent.js'
 import { ASK_USER_QUESTION_TOOL } from './ask-user-question.js'
 import { BASH_TOOL } from './bash.js'
 import { EDIT_TOOL } from './edit.js'
+import { DELETE_TOOL } from './delete.js'
 import { GLOB_TOOL } from './glob.js'
 import { GREP_TOOL } from './grep.js'
 import { READ_TOOL } from './read.js'
@@ -18,6 +19,7 @@ export const BUILTIN_TOOLS: Readonly<Record<BuiltinToolName, BuiltinTool>> = {
   Read: READ_TOOL,
   Write: WRITE_TOOL,
   Edit: EDIT_TOOL,
+  Delete: DELETE_TOOL,
   Bash: BASH_TOOL,
   Glob: GLOB_TOOL,
   Grep: GREP_TOOL,

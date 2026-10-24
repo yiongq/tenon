@@ -1299,9 +1299,9 @@ it('recovers a child that crashed with a call in flight: child first, both sides
   await setup(h)
   await h.host.fs.mkdirp(absolutePath('/work'))
   await h.host.fs.writeFile(absolutePath('/work/a'), 'child evidence')
-  const readFile = h.host.fs.readFile.bind(h.host.fs)
+  const readFile = h.host.fs.guarded.read
   let reads = 0
-  h.host.fs.readFile = (path, opts) => {
+  h.host.fs.guarded.read = (path, opts) => {
     if (path === '/work/a') reads += 1
     return readFile(path, opts)
   }

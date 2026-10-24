@@ -15,7 +15,7 @@ import { fromParts, pathParts } from '../../host/path.js'
 import type { AbsolutePath } from '../../host/adapter.js'
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { snapshotGuard } from '../snapshot-guard.js'
+import { alreadyExists, FILE_CHANGED, snapshotGuard, writtenFileStamp } from '../snapshot-guard.js'
 import { ABORTED, FILE_TEXTS, failed, stillNamesItself, succeeded } from './files.js'
 import type { BuiltinTool } from './tool.js'
 import { COWORK_ONLY, NOT_ABSOLUTE, absolutePathCheck } from './tool.js'
@@ -67,8 +67,8 @@ export const writeExecutor: ToolExecutor = async (q) => {
   let fileMutationAttempted = false
   try {
     const snapshot = await snapshotGuard(q)
-    if (snapshot !== null) return snapshot
-    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    if ('failure' in snapshot) return snapshot.failure
+    if (q.signal.aborted) return ABORTED
     if (!(await stillNamesItself(q.fs, path))) {
       return failed(fill(WRITE_TEXTS.resolvesElsewhere, { path }))
     }
@@ -77,20 +77,24 @@ export const writeExecutor: ToolExecutor = async (q) => {
     const parent = parentOf(path)
     if (parent !== null) {
       const folder = await q.fs.stat(parent)
-      if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+      if (q.signal.aborted) return ABORTED
       if (folder === null) await q.fs.mkdirp(parent)
       else if (!folder.isDir) return failed(fill(WRITE_TEXTS.notDirectory, { path: parent }))
     }
     const beforeWrite = await snapshotGuard(q)
-    if (beforeWrite !== null) return beforeWrite
-    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    if ('failure' in beforeWrite) return beforeWrite.failure
+    if (q.signal.aborted) return ABORTED
     fileMutationAttempted = q.snapshotTarget !== undefined
-    await q.fs.writeFile(path, content)
+    if (beforeWrite.identity === null) await q.fs.guarded.create(path, content)
+    else await q.fs.writeFile(path, content)
+    const file = await writtenFileStamp(q.fs, path)
     return {
       ...succeeded(fill(existing === null ? WRITE_TEXTS.created : WRITE_TEXTS.replaced, { path })),
+      ...(file === undefined ? {} : { file }),
       ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
     }
   } catch (error) {
+    if (alreadyExists(error)) return failed(FILE_CHANGED)
     return {
       ...failed(fill(WRITE_TEXTS.hostError, { path, message: messageOf(error) })),
       ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),

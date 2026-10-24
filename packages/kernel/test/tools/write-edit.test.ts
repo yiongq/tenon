@@ -84,6 +84,7 @@ describe('Write', () => {
       content: [{ type: 'text', text: fill(WRITE_TEXTS.created, { path }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 8 },
     })
     expect(await host.fs.stat(absolutePath('/ws/deep/er'))).toMatchObject({ isDir: true })
     expect(await textAt(host, path)).toBe('# Notes\n')
@@ -96,6 +97,7 @@ describe('Write', () => {
       content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: '/ws/a.txt' }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 1 },
     })
     expect(await textAt(host, '/ws/a.txt')).toBe('b')
   })
@@ -128,6 +130,7 @@ describe('Edit', () => {
       content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: FILE }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 42 },
     })
     // new_string goes in as written: `$&` is not a replacement pattern.
     expect(await textAt(host, FILE)).toBe('const a = 1\nconst b = $&2\nexport { a, b }\n')
@@ -147,6 +150,7 @@ describe('Edit', () => {
       content: [{ type: 'text', text: fill(EDIT_TEXTS.editedAll, { path: FILE, count: '2' }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 40 },
     })
     expect(await textAt(host, FILE)).toBe('const a = 2\nconst b = 2\nexport { a, b }\n')
   })
@@ -203,6 +207,7 @@ describe('the path Write and Edit act on (§「在不在工作区里」第 5 步
       content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: real }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 12 },
     })
     expect(await textAt(host, real)).toBe('const a = 2\n')
     expect(
@@ -211,6 +216,7 @@ describe('the path Write and Edit act on (§「在不在工作区里」第 5 步
       content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: real }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 1 },
     })
     expect(await textAt(host, real)).toBe('b')
     expect(await host.fs.stat(given)).toBeNull()

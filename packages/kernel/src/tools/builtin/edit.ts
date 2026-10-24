@@ -12,7 +12,7 @@
  */
 import { fill } from '../../prompts/index.js'
 import type { ToolExecutor } from '../executor.js'
-import { snapshotGuard } from '../snapshot-guard.js'
+import { alreadyExists, FILE_CHANGED, snapshotGuard, writtenFileStamp } from '../snapshot-guard.js'
 import {
   BINARY_SNIFF_BYTES,
   ABORTED,
@@ -108,8 +108,8 @@ export const editExecutor: ToolExecutor = async (q) => {
       return failed(fill(EDIT_TEXTS.tooLarge, slots))
     }
     const snapshot = await snapshotGuard(q)
-    if (snapshot !== null) return snapshot
-    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    if ('failure' in snapshot) return snapshot.failure
+    if (q.signal.aborted) return ABORTED
     const data = await q.fs.readFile(path)
     checkSignal(q.signal)
     const decoded = decodeForEdit(data)
@@ -129,17 +129,24 @@ export const editExecutor: ToolExecutor = async (q) => {
   try {
     // Joined, not `replace`: new_string goes in as written, `$&` and the rest included.
     const snapshot = await snapshotGuard(q)
-    if (snapshot !== null) return snapshot
-    if (q.snapshotTarget !== undefined && q.signal.aborted) return ABORTED
+    if ('failure' in snapshot) return snapshot.failure
+    if (q.signal.aborted) return ABORTED
     fileMutationAttempted = q.snapshotTarget !== undefined
-    await q.fs.writeFile(path, pieces.join(newString))
+    if (snapshot.identity === null) await q.fs.guarded.create(path, pieces.join(newString))
+    else await q.fs.writeFile(path, pieces.join(newString))
   } catch (error) {
     return {
-      ...failed(fill(EDIT_TEXTS.writeError, { path, message: messageOf(error) })),
+      ...failed(
+        alreadyExists(error)
+          ? FILE_CHANGED
+          : fill(EDIT_TEXTS.writeError, { path, message: messageOf(error) }),
+      ),
       ...(fileMutationAttempted ? { fileMutationAttempted: true as const } : {}),
     }
   }
+  const file = await writtenFileStamp(q.fs, path)
   return {
+    ...(file === undefined ? {} : { file }),
     ...succeeded(
       count === 1
         ? fill(EDIT_TEXTS.edited, { path })

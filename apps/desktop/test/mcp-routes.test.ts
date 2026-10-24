@@ -236,7 +236,7 @@ it('03 验收 35: overLimit counts only configured capped providers using the co
     },
   ]
   expect((await h.call('mcp.list', {})).overLimit).toEqual([
-    { providerId: 'fixture-configured', omitted: 1 },
+    { providerId: 'fixture-configured', omitted: 2 },
   ])
 })
 
