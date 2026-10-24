@@ -1,4 +1,5 @@
 /** Desktop assembly for spec 04 step 13c. The wrapper owns srt's process-wide allowlist. */
+import { commandCleaned, leaseCommand } from './workspace-leases.js'
 import { homedir, tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import type { SandboxSettings, SandboxView } from '@tenon-app/contracts'
@@ -164,6 +165,17 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
   }
 
   async wrap(q: SandboxRequest): Promise<{ argv: string[]; env: Record<string, string> }> {
+    return leaseCommand(
+      q,
+      () => this.wrapLeased(q),
+      (folder) => this.options.fs.realpath(folder),
+      () => this.afterExit(q.commandId),
+    )
+  }
+
+  private async wrapLeased(
+    q: SandboxRequest,
+  ): Promise<{ argv: string[]; env: Record<string, string> }> {
     const previous = this.preparing
     const prepared = Promise.withResolvers<void>()
     this.preparing = prepared.promise
@@ -213,6 +225,7 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
     try {
       await this.inner.afterExit(commandId)
     } finally {
+      commandCleaned(commandId)
       this.active.get(commandId)?.done.resolve()
       this.active.delete(commandId)
       this.commands.delete(commandId)

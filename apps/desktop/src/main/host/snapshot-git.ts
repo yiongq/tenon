@@ -4,7 +4,8 @@ import { lstat, readFile, rm, statfs, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { AbsolutePath, ChildHandle, HostProcess, HostSandbox } from '@tenon-app/kernel'
 import { absolutePath } from '@tenon-app/kernel'
-import { atomicJson, directory, errno, pathKey } from './snapshot-storage.js'
+import { atomicJson, directory, errno, MAX_FILE_BYTES, pathKey } from './snapshot-storage.js'
+import { markSnapshotCommand } from './workspace-leases.js'
 
 export const SNAPSHOT_PATH = '/usr/bin:/bin'
 export interface GitPorts {
@@ -17,7 +18,7 @@ export interface VolumeTraits {
   filemode: boolean
 }
 
-async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
+async function drain(stream: ReadableStream<Uint8Array>, limit = 64_000_000): Promise<Uint8Array> {
   const chunks: Uint8Array[] = []
   let size = 0
   const reader = stream.getReader()
@@ -27,7 +28,7 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
       const { value, done } = await reader.read()
       if (done) break
       size += value.byteLength
-      if (size > 64_000_000) throw new Error('Snapshot subprocess output exceeded its limit')
+      if (size > limit) throw new Error('Snapshot subprocess output exceeded its limit')
       chunks.push(value)
     }
   } finally {
@@ -64,6 +65,19 @@ export class SnapshotGit {
     input?: string,
     tracked?: string,
   ): Promise<string> {
+    return new TextDecoder().decode(
+      await this.commandBytes(argv, cwd, home, signal, input, tracked),
+    )
+  }
+
+  private async commandBytes(
+    argv: string[],
+    cwd: string,
+    home: string,
+    signal: AbortSignal,
+    input?: string,
+    tracked?: string,
+  ): Promise<Uint8Array> {
     signal.throwIfAborted()
     const env = {
       PATH: SNAPSHOT_PATH,
@@ -72,7 +86,7 @@ export class SnapshotGit {
       GIT_CONFIG_GLOBAL: join(home, 'empty'),
       GIT_ATTR_NOSYSTEM: '1',
       GIT_TERMINAL_PROMPT: '0',
-      GIT_LITERAL_PATHSPECS: '1',
+      GIT_LITERAL_PATHSPECS: argv.includes('check-ignore') ? '0' : '1',
       LC_ALL: 'C',
       GIT_AUTHOR_NAME: 'Tenon',
       GIT_AUTHOR_EMAIL: 'snapshot@localhost',
@@ -80,6 +94,7 @@ export class SnapshotGit {
       GIT_COMMITTER_EMAIL: 'snapshot@localhost',
     }
     const commandId = `snapshot-${randomUUID()}`
+    markSnapshotCommand(argv)
     const wrapped = await this.ports.sandbox.wrap({
       commandId,
       argv,
@@ -89,16 +104,30 @@ export class SnapshotGit {
       workspace: [],
     })
     const startedAt = Date.now()
-    const child = await this.ports.process.spawn(
-      { ...wrapped, cwd: absolutePath(cwd), stdio: 'pipe' },
-      signal,
-    )
+    let child: ChildHandle
+    try {
+      child = await this.ports.process.spawn(
+        { ...wrapped, cwd: absolutePath(cwd), stdio: 'pipe' },
+        signal,
+      )
+    } catch (error) {
+      await this.ports.sandbox.afterExit(commandId)
+      throw error
+    }
     const abort = () => {
       void child.kill('SIGKILL').catch(() => {})
     }
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) abort()
-    const work = this.finish(child, home, tracked, input, wrapped.argv, startedAt)
+    const work = this.finish(
+      child,
+      home,
+      tracked,
+      input,
+      wrapped.argv,
+      startedAt,
+      argv.includes('cat-file') && argv.includes('blob') ? MAX_FILE_BYTES : 64_000_000,
+    )
     this.pending.add(work)
     try {
       const result = await work
@@ -118,7 +147,8 @@ export class SnapshotGit {
     input?: string,
     argv?: readonly string[],
     startedAt?: number,
-  ): Promise<string> {
+    outputLimit = 64_000_000,
+  ): Promise<Uint8Array> {
     try {
       if (tracked !== undefined)
         await atomicJson(tracked, {
@@ -128,7 +158,7 @@ export class SnapshotGit {
           startedAt,
           executable: argv?.[0],
         })
-      const stdout = drain(child.stdout)
+      const stdout = drain(child.stdout, outputLimit)
       const stderr = drain(child.stderr)
       const writer = child.stdin.getWriter()
       void writer.closed.catch(() => {})
@@ -167,7 +197,7 @@ export class SnapshotGit {
               : {}),
           },
         )
-      return new TextDecoder().decode(out)
+      return out
     } catch (error) {
       await child.kill('SIGKILL').catch(() => {})
       await child.exited
@@ -249,6 +279,28 @@ export class SnapshotGit {
       repo,
       signal,
       input,
+      join(repo, 'process.json'),
+    )
+  }
+
+  async blob(repo: string, folder: string, hash: string, signal: AbortSignal): Promise<Uint8Array> {
+    if (this.git === null || !/^[0-9a-f]{40,64}$/.test(hash))
+      throw new Error('Invalid snapshot blob')
+    return this.commandBytes(
+      [
+        this.git,
+        '-c',
+        `safe.directory=${folder}`,
+        `--git-dir=${repo}`,
+        `--work-tree=${folder}`,
+        'cat-file',
+        'blob',
+        hash,
+      ],
+      repo,
+      repo,
+      signal,
+      undefined,
       join(repo, 'process.json'),
     )
   }

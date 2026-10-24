@@ -2,7 +2,7 @@
  * Spec 05 §快照怎么拍 and §判定时怎么知道拍不拍得了: desktop snapshots under one tenant profile.
  * Each repository's writes are serial; a profile transaction lock also covers reservations,
  * publication and reclaim, so concurrent callers cannot spend the same free bytes.
- * Restore methods remain conservative until plan step 13.
+ * Restore planning is read-only; prepare pins a guarded undo snapshot until apply/cancel.
  */
 import { randomUUID } from 'node:crypto'
 import { lstat, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -41,6 +41,9 @@ import {
 } from './snapshot-storage.js'
 import type { SnapshotManifest } from './snapshot-storage.js'
 import { captureTree, scanTree } from './snapshot-tree.js'
+import { applyRestore, exactEntry, parents, planRestore } from './snapshot-restore.js'
+import type { RestorePlan } from './snapshot-restore.js'
+import { workspaceLeases } from './workspace-leases.js'
 
 export interface SnapshotLimits {
   bytes: number
@@ -96,6 +99,10 @@ interface Session {
 }
 
 export class DesktopSnapshots implements HostSnapshots {
+  private readonly prepared = new Map<
+    string,
+    { id: string; plan: RestorePlan; release: () => void }
+  >()
   readonly ready: Promise<void>
   private readonly options: DesktopSnapshotsOptions
   private readonly limits: SnapshotLimits
@@ -276,6 +283,7 @@ export class DesktopSnapshots implements HostSnapshots {
             session.repos.add(repo)
           }
         }
+        workspaceLeases.setFolders(session, session.folders)
         session.state = 'file-only'
         // oxlint-disable-next-line no-await-in-loop -- expiration covers even the sole/latest round
         await this.expire(session)
@@ -374,10 +382,12 @@ export class DesktopSnapshots implements HostSnapshots {
       session.folders.every((folder, i) => folder === resolved[i])
     )
       return
+    this.dropPrepared(session.id)
     session.configured = true
     session.controller.abort()
     session.controller = new AbortController()
     session.folders = resolved
+    workspaceLeases.setFolders(session, resolved)
     this.sensitiveRefresh?.(resolved)
     session.generation++
     const generation = session.generation
@@ -620,6 +630,7 @@ export class DesktopSnapshots implements HostSnapshots {
     signal: AbortSignal,
     bootstrap: boolean,
     withTree = bootstrap,
+    extraPaths: readonly AbsolutePath[] = [],
   ): Promise<SnapshotTaken> {
     // Register under the same lock as GC, before any repository/index operation.
     await this.serial(async () => {
@@ -692,7 +703,19 @@ export class DesktopSnapshots implements HostSnapshots {
       let target: FileIdentity | null | undefined
       if (q.path !== undefined)
         estimate += Number((await statOrNull(await targetPath(q.path)))?.size ?? 0n) + 8192
-      if (scans.length === 0 && q.path === undefined) return { ok: false, reason: 'not-covered' }
+      for (const path of extraPaths) {
+        const folder = session.folders
+          .filter((root) => contains(root, path))
+          .toSorted((a, b) => b.length - a.length)[0]
+        if (folder === undefined) throw new Error('Undo path outside workspace')
+        // oxlint-disable-next-line no-await-in-loop -- never estimate through an intermediate link
+        if (await parents(folder, path, false)) {
+          // oxlint-disable-next-line no-await-in-loop -- include every explicit undo copy in the reservation
+          estimate += Number((await statOrNull(path))?.size ?? 0n) + 8192
+        }
+      }
+      if (scans.length === 0 && q.path === undefined && extraPaths.length === 0)
+        return { ok: false, reason: 'not-covered' }
       session.captureStage = 'reserve'
       await this.serial(() => this.reserve(estimate, session, q.call.roundRunId, signal))
       reservation = estimate
@@ -719,6 +742,26 @@ export class DesktopSnapshots implements HostSnapshots {
             .filter((root) => contains(root, path))
             .toSorted((a, b) => b.length - a.length)[0]!
           manifest.directories = await parentModes(path, folder)
+        }
+        for (const path of extraPaths) {
+          const folder = session.folders
+            .filter((root) => contains(root, path))
+            .toSorted((a, b) => b.length - a.length)[0]!
+          // oxlint-disable-next-line no-await-in-loop -- do not copy bytes through a replaced parent
+          const reachable = await parents(folder, path, false)
+          // oxlint-disable-next-line no-await-in-loop -- directories use their mode table, not a byte copy
+          const exists = reachable && (await exactEntry(path))
+          // oxlint-disable-next-line no-await-in-loop -- exact spelling avoids capturing a case-fold alias
+          const stats = exists ? await statOrNull(path) : null
+          if (stats?.isDirectory()) continue
+          // oxlint-disable-next-line no-await-in-loop -- each undo path is explicitly covered, including absence
+          let extra = { path, identity: null } as SnapshotManifest['files'][number]
+          // oxlint-disable-next-line no-await-in-loop -- every selected undo leaf must finish before publication
+          if (exists) extra = (await captureFile(path, join(session.dir, 'files'), signal)).file
+          manifest.files.push(extra)
+
+          // oxlint-disable-next-line no-await-in-loop -- remember the permissions of every reachable ancestor
+          if (reachable) Object.assign(manifest.directories, await parentModes(path, folder))
         }
         signal.throwIfAborted()
         session.captureStage = 'publish'
@@ -1094,6 +1137,7 @@ export class DesktopSnapshots implements HostSnapshots {
   async removeSession(sessionId: string): Promise<void> {
     await this.ready
     const session = this.session(sessionId)
+    this.dropPrepared(session.id)
     session.generation++
     session.controller.abort()
     await session.warming
@@ -1109,21 +1153,156 @@ export class DesktopSnapshots implements HostSnapshots {
       await rm(session.dir, { recursive: true, force: true })
       for (const repo of session.repos) this.pendingGarbage.delete(repo)
       this.usage = null
+      workspaceLeases.forget(session)
       this.sessions.delete(sessionId)
     })
   }
 
-  /** Plan step 13 replaces the restore half; preview makes no promise and changes nothing. */
-  async preview(_q: RestoreQuery): Promise<RestorePreview> {
-    return { previewKey: '', restore: [], remove: [], conflicts: [], skipped: [] }
+  private unpinRestore(sessionId: string): void {
+    const left = (this.active.get(sessionId) ?? 1) - 1
+    if (left > 0) this.active.set(sessionId, left)
+    else {
+      this.active.delete(sessionId)
+      for (const wake of this.idleWaiters.get(sessionId) ?? []) wake()
+      this.idleWaiters.delete(sessionId)
+    }
   }
-  async prepare(_q: RestoreQuery & { previewKey: string }): Promise<RestorePrepared> {
-    return { ok: false, reason: 'undo-unavailable' }
+  private dropPrepared(sessionId: string): void {
+    const prepared = this.prepared.get(sessionId)
+    if (prepared === undefined) return
+    this.prepared.delete(sessionId)
+    this.unpinRestore(sessionId)
+    prepared.release()
   }
-  async apply(_q: Parameters<HostSnapshots['apply']>[0]): Promise<RestoreDone> {
-    throw new Error('Snapshot restore is unavailable until spec 05 step 13')
+
+  async preview(q: RestoreQuery): Promise<RestorePreview> {
+    await this.ready
+    const session = this.session(q.sessionId)
+    await this.configure(session)
+    return this.treeSerial(
+      session,
+      async () =>
+        (await planRestore(q, session.manifests, session.folders, session.dir, this.git)).preview,
+    )
   }
-  async cancel(_q: Parameters<HostSnapshots['cancel']>[0]): Promise<void> {}
+
+  async prepare(q: RestoreQuery & { previewKey: string }): Promise<RestorePrepared> {
+    await this.ready
+    const session = this.session(q.sessionId)
+    await this.configure(session)
+    if (this.prepared.has(session.id)) return { ok: false, reason: 'busy' }
+    const release = workspaceLeases.exclusive(session.folders)
+    if (release === null) return { ok: false, reason: 'busy' }
+    let retained = false
+    try {
+      return await this.treeSerial(session, async (): Promise<RestorePrepared> => {
+        if (
+          q.calls.some(
+            (call) =>
+              call.before !== undefined &&
+              !session.manifests.some((manifest) => manifest.id === call.before),
+          )
+        )
+          return { ok: false, reason: 'gone' }
+        const query: RestoreQuery = {
+          sessionId: q.sessionId,
+          roundRunId: q.roundRunId,
+          calls: q.calls,
+        }
+        const initial = await planRestore(
+          query,
+          session.manifests,
+          session.folders,
+          session.dir,
+          this.git,
+        )
+        const paths = initial.items.map((item) => item.path)
+        if (session.state === 'unavailable') return { ok: false, reason: 'undo-unavailable' }
+        const signal = AbortSignal.any([
+          session.controller.signal,
+          AbortSignal.timeout(this.limits.takeMs),
+        ])
+        // Pin the source round during reservation/GC as well as during the prepared handoff.
+        this.active.set(session.id, (this.active.get(session.id) ?? 0) + 1)
+        try {
+          const undo = await this.capture(
+            session,
+            {
+              sessionId: session.id,
+              call: {
+                sessionId: session.id,
+                roundRunId: q.roundRunId,
+                runId: q.roundRunId,
+                requestSeq: 0,
+                ordinal: 0,
+              },
+              folders: session.folders,
+              moment: 'before-restore',
+            },
+            signal,
+            false,
+            session.state === 'tree',
+            paths,
+          )
+          if (!undo.ok) return { ok: false, reason: 'undo-unavailable' }
+          const manifest = session.manifests.find((candidate) => candidate.id === undo.snapshotId)!
+          const captured = await planRestore(
+            query,
+            session.manifests,
+            session.folders,
+            session.dir,
+            this.git,
+            manifest,
+          )
+          if (paths.some((path) => captured.preview.skipped.some((skip) => skip.path === path)))
+            return { ok: false, reason: 'undo-unavailable' }
+          const latest = await planRestore(
+            query,
+            session.manifests,
+            session.folders,
+            session.dir,
+            this.git,
+          )
+          if (
+            latest.preview.previewKey !== q.previewKey ||
+            captured.preview.previewKey !== q.previewKey
+          )
+            return { ok: false, reason: 'stale' }
+          this.prepared.set(session.id, { id: undo.snapshotId, plan: latest, release })
+          retained = true
+          return { ok: true, undoSnapshotId: undo.snapshotId }
+        } finally {
+          if (!retained) this.unpinRestore(session.id)
+        }
+      })
+    } catch {
+      return { ok: false, reason: 'undo-unavailable' }
+    } finally {
+      if (!retained) release()
+    }
+  }
+
+  async apply(q: Parameters<HostSnapshots['apply']>[0]): Promise<RestoreDone> {
+    const prepared = this.prepared.get(q.sessionId)
+    if (prepared === undefined || prepared.id !== q.undoSnapshotId)
+      throw new Error('Restore was not prepared')
+    this.prepared.delete(q.sessionId)
+    try {
+      const session = this.session(q.sessionId)
+      return await this.treeSerial(session, () =>
+        applyRestore(prepared.plan, session.dir, this.git, q.overwrite),
+      )
+    } finally {
+      this.unpinRestore(q.sessionId)
+      prepared.release()
+    }
+  }
+
+  async cancel(q: Parameters<HostSnapshots['cancel']>[0]): Promise<void> {
+    const prepared = this.prepared.get(q.sessionId)
+    if (prepared?.id !== q.undoSnapshotId) return
+    this.dropPrepared(q.sessionId)
+  }
 }
 
 /** Eval hosts without lifecycle wiring still conservatively refuse snapshots (plan step 13). */

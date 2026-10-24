@@ -24,6 +24,8 @@ import { Writable } from 'node:stream'
 import type { Readable } from 'node:stream'
 import type { ChildHandle, HostProcess, SpawnSpec } from '@tenon-app/kernel'
 
+import { leaseSpawn } from './workspace-leases.js'
+
 /** Thrown before anything is spawned when the spec is malformed. */
 export class SpawnSpecError extends Error {
   override name = 'SpawnSpecError'
@@ -42,7 +44,7 @@ const PS_TIMEOUT_MS = 200
 export type ProcessLog = (line: string) => void
 
 export function createHostProcess(log?: ProcessLog): HostProcess {
-  return { spawn: (spec, signal) => spawnChild(spec, signal, log) }
+  return { spawn: (spec, signal) => leaseSpawn(spec.argv, () => spawnChild(spec, signal, log)) }
 }
 
 export async function spawnChild(
