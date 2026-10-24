@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：第一段（第 2–5 步）在分支 `feat/05-file-bridge-seg1`。第 2、3 步做完；第 4、5 步的代码在，5.1 的三路评审（对照 spec、安全、突变）查出的问题正由 Codex 修（见 log）。修完、复核、开 PR。
+当前：第一段（第 2–5 步）做完，在分支 `feat/05-file-bridge-seg1` 等 PR 合入。下一步第二段（第 6–12 步，分支 `feat/05-seg2`）。
 需要你：无
 
 ## 开工前读
@@ -44,9 +44,9 @@
   - [x] 1.9 owner 读「给你看的一页」，回一句带编号的话，比如「05 改 ready」；页头加 `Approved:` 行，Status 改 ready，阶段表 4b 一行同改。
 - [x] 2. 对 00 的修补：`packages/kernel/src/host/adapter.ts` 加 `remove`、`identity`、`guarded`、`FileIdentity`、`SnapshotCoverage`、`HostSnapshots` 与相关类型，`ConfirmReason` 只增 `sensitive-path` 与必填键；`packages/contracts` 的 `ConfirmRequest` schema 同改；内存宿主同步（`snapshots` 的内存实现能模拟拍不成、超时、中止、四种状态，文件头写一句它复现了真宿主的哪几条行为）。
 - [x] 3. `apps/desktop/src/main/host/fs.ts`：`writeFile` 叶子加 `O_NOFOLLOW`；`guarded.read`、`guarded.create`（D58 A，owner 已定）；`identity` 带设备号；`identity` 用 bigint lstat；`remove` 只删文件或链接本身。测试点名验收 30、32 的宿主一半。
-- [ ] 4. 快照子系统（desktop 宿主，新模块）：可用 git 的判定与 `xcode-select`（都经 `process` 加 `sandbox.wrap`）、影子仓库的建立、隔离配置与按工作区卷探测的三项、按忽略规则列文件、排除表（`.gitignore`、默认排除、嵌套根、超过 100 MB、读不了的）与每张收了哪些路径、不带父提交的快照与引用、单文件副本与清单、每张所收文件与目录的权限位、首张后台与预算、四种状态、每个仓库一把锁、保留（20 轮、30 天覆盖一切、3 GB 实占、空间清理才保护的轮、预留与 `over-budget`）与立即回收、启动时清残留与重建索引、删会话与清空会话时删目录、文件属主不同时的 `safe.directory`。测试点名验收 5–8、10–12、14、31、44、45、46、49 的宿主一半；git 的行为在真 git 上测，两平台。
-- [ ] 5. 保护名单的文件工具一半与硬链接、选文件夹：`apps/desktop/src/main/host/sandbox-config.ts` 导出一个名单函数，沙箱配置与 `PathScope.sensitive` 都从它取；`locatePath` 按任意深度与大小写折叠认 `sensitive`：凭据对所有文件工具，会被自动执行的名字与名字数大于 1 的普通文件只对 Write、Edit、Delete；`decide` 的 `LayerInputs` 只增 `sensitive`，第 6 层不认会话授权与继承授权；Glob、Grep 的遍历只跳过凭据；`callReasonOf` 出 `sensitive-path`；两份 locale 的三句；kernel 设工作区的唯一入口拒根目录与卷根、主目录与其上级提醒。名单比写法与真实路径两种、照 `walkLinks` 逐级解开的目标表。选文件夹被拒的说明与主目录提醒的 chip 一句也在本步（第一段评审发现第 15 步没认领验收 13 的界面一半）。测试点名验收 13、25（判定一半）、26、27、28、55。
-  - [ ] 5.1 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent）；StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。
+- [x] 4. 快照子系统（desktop 宿主，新模块）：可用 git 的判定与 `xcode-select`（都经 `process` 加 `sandbox.wrap`）、影子仓库的建立、隔离配置与按工作区卷探测的三项、按忽略规则列文件、排除表（`.gitignore`、默认排除、嵌套根、超过 100 MB、读不了的）与每张收了哪些路径、不带父提交的快照与引用、单文件副本与清单、每张所收文件与目录的权限位、首张后台与预算、四种状态、每个仓库一把锁、保留（20 轮、30 天覆盖一切、3 GB 实占、空间清理才保护的轮、预留与 `over-budget`）与立即回收、启动时清残留与重建索引、删会话与清空会话时删目录、文件属主不同时的 `safe.directory`。测试点名验收 5–8、10–12、14、31、44、45、46、49 的宿主一半；git 的行为在真 git 上测，两平台。
+- [x] 5. 保护名单的文件工具一半与硬链接、选文件夹：`apps/desktop/src/main/host/sandbox-config.ts` 导出一个名单函数，沙箱配置与 `PathScope.sensitive` 都从它取；`locatePath` 按任意深度与大小写折叠认 `sensitive`：凭据对所有文件工具，会被自动执行的名字与名字数大于 1 的普通文件只对 Write、Edit、Delete；`decide` 的 `LayerInputs` 只增 `sensitive`，第 6 层不认会话授权与继承授权；Glob、Grep 的遍历只跳过凭据；`callReasonOf` 出 `sensitive-path`；两份 locale 的三句；kernel 设工作区的唯一入口拒根目录与卷根、主目录与其上级提醒。名单比写法与真实路径两种、照 `walkLinks` 逐级解开的目标表。选文件夹被拒的说明与主目录提醒的 chip 一句也在本步（第一段评审发现第 15 步没认领验收 13 的界面一半）。测试点名验收 13、25（判定一半）、26、27、28、55。
+  - [x] 5.1 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent）；StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。
 - [ ] 6. Tape：`fs/snapshot_created` 补身份列，`fs/restore_started`、`fs/restored` 新登记；`DECLARED_TAPE_NAMES`、`TapePayloadByName`、投影与重放；`ToolOutcomePayload` 只增 `snapshotId` 与 `file`，`PermissionDecidedPayload` 只增 `coverage`；SQLite 与 Postgres 的一致性测试。测试点名验收 1、21 的 Tape 一半。
 - [ ] 7. 判定：Write、Edit、Delete 判定前问 `coverage`（不抛、1 秒、出错按 `none`），`reversibilityOf` 收第三个入参并记进判决；答复作用域表加 Delete 一行。测试点名验收 3、4。
 - [ ] 8. 执行：批准之后、动文件之前拍，拍成先写一批 `before-call`，打开文件前再比一次 `identity`；做完记 `after-call`；拍不成不写；`take` 收中止信号，三处查中止；Bash 在 `tree` 时派发前后各拍一张，派发与停止竞速；子会话的快照进根会话的影子仓库，带 `roundRunId`。测试点名验收 1、2、9、37、42、43。
@@ -69,10 +69,11 @@
 
 ## 交接
 
-2026-10-24：第一段由 Codex 在它自己的 worktree 实现（检查点三个提交，摘到 `feat/05-file-bridge-seg1` 为 72ecb7d、60a03f0、5bf0cae）。lead 在 Codex 的结果上修了两处：影子仓库建 `info/` 目录、Linux 上子进程先关 stdin 的竞态（Codex 跑不了 Lima）。G、T 在基于 dev 的分支上全绿（4762 条）；Lima 两台跑过快照与权限相关测试。5.1 两路评审（对照 spec、安全）合计 blocker 1、major 13（两路都报了扫描那条，算一条），突变报告还在跑：链接目标表扫描会让会话里所有工具失败（owner 定 D59：扫不完时照名字查）、firmlink 拼写绕过名单、每张快照整树重哈希、预留估算过大、重启不恢复状态、`sensitive-path` 卡第 ③ 句渲染出错、验收 13 的界面一半没人认领、`workspace.remove` 契约被放宽、几条测试是空的或点错号。全部交 Codex 修（说明见私有笔记，另记），修完 lead 复核、补评审记录与 `测试改动：` 行，再开 PR。第 9 步升提示层版本后的基线评测要先问 owner 批 key 与花费。
+2026-10-24：第一段做完。Codex 在它自己的 worktree 实现，lead 审、沙箱外跑全量、两台 Lima 跑快照与权限测试，摘到 `feat/05-file-bridge-seg1`。5.1 三路评审（对照 spec、安全、突变）之后又做了三轮修复与三次新上下文复核，记录见 log；owner 定了 D59（链接目标表扫不完时照名字查）。lead 定的两条：专属文件夹解开是根或卷根时抛错、路由回 `handler-failed`，不给 `selectProfile`、`workspace.remove` 加码；主目录提醒不为跟随列表而改 `session.facts` 契约。下一步第二段：Tape 三个名字、判定前问 `coverage`、执行器接快照与守卫、Delete、提示层 12 与基线评测；升提示层版本后的基线评测要先问 owner 批 key 与花费。
 
 ## Open
 
+- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段碰 `snapshot-git.ts` 时加，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。

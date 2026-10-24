@@ -92,3 +92,103 @@
 ## 实施 · 2026-10-24（改 ready）
 
 - owner 在对话里读过「给你看的一页」后回「05 改 ready」。页头加 `Approved: ready · 2026-10-24 · 「05 改 ready」 · 对话`，Status 改 ready；总参考阶段表 4b 的状态一格同改；plan 第 1 步勾掉。
+
+## 实施 · 2026-10-24（第一段：第 2–5 步）
+
+- 分工：Codex 在自己的 worktree 实现，lead 每一步审 diff、在沙箱外跑全量、在两台 Lima（Ubuntu 24.04 + git 2.43.0、26.04 + git 2.53.0）跑快照与权限相关测试，再把检查点摘到 `feat/05-file-bridge-seg1`（72ecb7d 第 2–3 步、60a03f0 第 4 步、5bf0cae 第 5 步、c140301 评审修复）。
+- lead 自己改的：影子仓库用空模板 `init` 后没有 `info/`，写 `info/attributes` 抛错、首张静默降级，补建目录（60a03f0）；Linux 上 git 先退出、再关它的 stdin 抛 `WritableStream is closed`，19 条快照用例在 Linux 上红、macOS 上绿，改成没有输入时关 stdin 失败不算错（60a03f0）；`git add --pathspec-from-file` 对 3 万条路径是平方级匹配，没改动的第二张也要 5.13 秒，实测 `update-index --add -z --stdin` 0.07 秒，交给 Codex 换掉（c140301）；跨卷大小写用例里 `hdiutil` 的文件系统名写成 `APFSX` 一直被跳过，改成 `Case-sensitive APFS` 后在 macOS 上真跑（c140301）。
+- lead 审第 4 步时退回的：每次调用后都跑 `git gc`、宿主启动等快照恢复、工作区通知出错让路由失败、删会话时快照目录删不掉会跳过后续清理、降级原因靠匹配错误文本、stdin 那处缺确定性测试；都在 5bf0cae 前修掉。
+- 选专属文件夹时它解开后是根或卷根：不给 `selectProfile` 加 `root-folder`（spec §接口 只给 pick、usePrefill 加），抛错、路由回 `handler-failed`、工作区不变；`workspace.remove` 回退到这种专属文件夹同样处理（c140301）。lead 定，理由是不改已合入的契约。
+- 平台：macOS 区分大小写卷（测试自建稀疏映像）、两台 Lima 以 root 跑「不同属主」那条，都过；`safe.directory` 那条要 root，CI 里跳过。
+- 门禁：基于 dev 的分支上 G 全过，T 4843 过、113 跳过。全量在负载下两次见到 `03 验收 30 (HTTP): modern total deadline at ten times uses fake setTimeout and cancels on the server` 失败，单跑 3 次都过；它要等测试服务器经真实本机连接发 17 帧进度，本段没碰 MCP，先记在这里，CI 上红了再处理。Lima 上 `evals-format` 的「fixture .gitignore would swallow」失败，是拷进虚拟机的副本里没有 `.git`，与本段无关。
+- owner 2026-10-24 定 D59（链接目标表扫不完时照名字查）：spec §已知限制与代价 加一条、修订记录记一行（6e91032）。
+
+测试改动：apps/desktop/test/fifo.test.ts · 换成设备的叶子 · `writeFile` 叶子加了 `O_NOFOLLOW`，期望从「是设备」改成 `ELOOP`
+测试改动：apps/desktop/test/host.test.ts · 悬空链接写出工作区 · 同上，原来断言能写到外面，现在断言拒写、外面没有新文件
+测试改动：packages/kernel/test/host/memory.test.ts · 内存宿主的悬空链接 · 内存宿主同样 `O_NOFOLLOW`，期望改成 `ELOOP`、不新建
+测试改动：apps/desktop/test/session-removal.test.ts · HostFs 成员 · 原断言「HostFs 没有删除成员」，05 加了 `remove`、`identity`、`guarded`，改成断言恰好多这三个
+测试改动：apps/desktop/test/sandbox/allowlist.test.ts · 04 不变量 1 · 允许调 `sandbox.wrap` 的文件多了 `snapshot-git.ts`（D57）
+测试改动：apps/desktop/test/copy-coverage.test.ts · 审批卡文案 · 原因从 9 个变 10 个，`sensitive-path` 按三种 category 各一句，计数随之改
+测试改动：apps/desktop/test/renderer-approval-keys.test.ts · 原因到文案键 · 同上，`sensitive-path` 按 category 取键，从「其余原因」里拿出来单独断言
+测试改动：apps/desktop/test/renderer-approval-card.test.ts · 全原因矩阵 · 同上
+测试改动：packages/contracts/test/confirm.test.ts · 02 增加的原因 · 原因从 9 个变 10 个，`sensitive-path` 的必填键是 `path`、`category`
+
+## 评审 · 2026-10-24 · 审过 5bf0cae（对照 spec）
+
+结论：不通过    评审：新上下文的子 agent（Opus），对照 spec 05 与 plan 第 2–5 步；复现脚本另记
+突变：无（只读代码、跑复现）
+发现：
+- [blocker] 链接目标表扫描超过 5 秒或 10 万条就抛，失败被永久缓存，会话里所有工具调用以 `provider-error` 结束 · 证据：以本仓库 checkout 为工作区实跑 5000 ms 失败；注入抛错后 Read 与 Bash 的 Run 都失败 · 已修 c140301
+- [major] 每张整树先清空索引再全部 `add`，3 万文件第二张超 5 秒、会话降级 · 证据：实测 1 万文件每张 1.2–3 秒、3 万文件第二张 5024 ms 失败 · 已修 c140301
+- [major] 带 path 的拍摄撞上期限时不退单文件副本，承诺过的写入被拒 · 证据：3 万文件 before-call 拍摄 10014 ms 后 `ok:false` · 已修 c140301
+- [major] 每张按「整树字节 ×2」预留，空间够也 `over-budget` 并先删旧轮 · 证据：等比缩小预算的复现 · 已修 c140301
+- [major] 重启或清空会话后快照状态不恢复 · 证据：重启前后四种情形的答案对不上 · 已修 c140301
+- [major] `sensitive-path` 卡第 ③ 句渲染成 i18n 错误串 · 证据：两份 locale 都渲染出 `<<i18n-error:…>>` · 已修 c140301
+- [major] 验收 13 的界面一半没做、plan 后续步骤也没认领 · 证据：`FolderChip` 忽略 `code` 与 `warning` · 已修 c140301
+- [major] `workspace.remove` 的响应契约被放宽 · 证据：三个路由共用 `workspaceResultSchema` · 已修 c140301
+- [major] 验收 6 的全局 git 配置一半是空测试 · 证据：删掉 `GIT_CONFIG_GLOBAL` 照样过 · 已修 c140301
+- [major] 验收 44 在 CI 里永远不跑 · 证据：workflow 里没有设那个环境变量 · 已修 c140301
+- [major] 改了 17 个已有测试文件没有 `测试改动：` · 证据：spec-check 的 `tamper` 警告 · 不修：lead 在上面的实施记录里逐行补记
+- [major] 名字带「05 验收 52」的用例断言的不是 52 · 证据：用例只测授权边界与 own-spill · 已修 c140301
+- [建议] Glob、Grep 直接指向凭据时出卡、批了却返回空 · 已修 c140301
+- [建议] `probeVolume` 在工作区里建临时目录 · 已修 c140301
+- [建议] `safe.directory` 用例要 root 才跑 · 不修：2026-10-24 两台 Lima 以 root 跑过，plan 的 Open 已照实写
+- [建议] 空间清理按 `runId === roundRunId` 认进行中的轮 · 已修 c140301
+
+## 评审 · 2026-10-24 · 审过 5bf0cae（安全）
+
+结论：不通过    评审：新上下文的子 agent（Opus），绕过保护与毁文件两个方向；PoC 另记
+突变：无（只读代码、跑 PoC）
+发现：
+- [major] firmlink 拼写不一致：desktop 存 `/System/Volumes/Data/…`，kernel 比 `/Users/…`，直接写链接目标没卡 · 证据：PoC 复现 · 已修 c140301
+- [major] 链接目标表扫描超时后会话里所有工具失败 · 证据：PoC 复现，同对照 spec 那条 blocker · 已修 c140301
+- [major] 工作区里 `git~1`、`d/.git.` 让整树 `add` 失败、会话降级 · 证据：PoC 复现 · 已修 c140301
+- [建议] 中途停止留下 `index.lock`，整树拍摄一直出错、`coverage` 仍答 `tree` · 已修 c140301
+- [建议] 预留按 2 倍估算、会过早清别的会话的轮 · 已修 c140301
+- [建议] `probeVolume` 在工作区里建临时目录 · 已修 c140301
+- [建议] `/System/Volumes/Data` 与上级同 `dev`，能被选成工作区 · 已修 c140301
+- [建议] `info/exclude` 不转义反斜杠 · 不修：原实现的转义集已含反斜杠，c140301 补了真 git 回归
+- [建议] 残留进程靠 `ps` 输出子串认归属 · 已修 c140301
+- 影子仓库的隔离用真 git 打过：恶意 config、钩子、fsmonitor、filter、include、`.gitmodules`、嵌套仓库的 gitfile 与怪文件名都没让钩子运行、没改工作区或用户仓库的 `git status`。
+
+## 评审 · 2026-10-24 · 审过 5bf0cae（突变）
+
+结论：不通过（测试缺口要补）    评审：新上下文的子 agent（Sonnet）跑 StrykerJS，只变异本段改过的生产代码行；报告与原始结果另记
+突变：第 1 组（权限、保护名单、文件接口、选文件夹）676 个，杀死 567、存活 106、无覆盖 3，得分 83.8%；存活与无覆盖逐个判过，测试缺口 43 个（合并 17 条，c140301 补测试）、等价 37、无意义 29；第 2、3 组（快照）1631 个，得分 52–69%，缺口按函数列出，同在 c140301 补测试；第 4 组（其余改动）360 个，68.9%，只出报告
+发现：
+- [major] 保护名单扫描、判决记录的 `steps`、`identity` 的错误码边界、`guarded.read` 单变量改动、残留进程三种情形、坏清单、默认排除表、git 版本边界、拍到一半停止，这些行为改坏了测试也不红 · 证据：对应突变存活 · 已修 c140301
+
+## 评审 · 2026-10-24 · 审过 c140301（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），逐条核第一轮的修复：在副本里把修复撤回或改坏，看点名的用例是否变红；复现另记
+突变：手工撤回或改坏 30 余处修复，点名用例都变红；另抽查突变清单 15 处，都变红；`sameReadStamp` 的 `mode`、`nlink` 比较与默认排除表的用例杀不掉（见下）
+发现：
+- [blocker] 工作区扫描不完整时，主目录下固定的自动执行位置（`~/Library/LaunchAgents`、`~/.gitconfig`、`~/.zlogin` 等）一起丢掉，auto 档位与 always-allow 下直接写它们没卡；这几处不经链接，不在 D59 之内 · 证据：真盘、真 `locatePath` 与 `decide`、小条数上限复现 · 已修 7d76e36
+- [major] 保留索引后，被删的文件被记成「排除」并计入跳过，第 13 步会把它放进「跳过」而不是「放回」 · 证据：删掉 `gone` 后 take 得到 `skipped 1 excluded ["gone"]`，旧实现是 0 · 已修 7d76e36
+- [major] 整树超过文件数预算时带 path 的调用不退单文件副本，已批准的写被拒 · 证据：`limits.files=2` 复现 `ok:false` · 已修 7d76e36
+- [major] macOS 上启动恢复遇到带空格的 argv 一律抛错，正式环境的 `Application Support` 路径必中，会话降成 `unavailable`、残留 git 不被结束（复核报为建议，lead 升为 major） · 证据：照现有用例 mock `ps` 复现 · 已修 7d76e36
+- [建议] kernel 没有 fallback 时提供方抛错会让保护全部消失 · 已修 7d76e36
+- [建议] 发布时预算被拒，回收仍压在调用方路径上 · 已修 7d76e36
+- [建议] 文件夹 chip：移除失败不刷新；任何移除都清掉主目录提醒 · 不修：移除失败照常刷新已修 7d76e36；提醒要精确跟随列表得给 `session.facts.workspace` 加字段，spec 只要求选主目录时提醒一句，lead 定不为此改契约
+- [建议] `guarded.read` 的单变量用例在真文件系统上改不出「只变一个量」，杀不掉 `mode`、`nlink` 比较 · 已修 7d76e36
+- [建议] 默认排除表的参数化用例遍历的是生产常量本身 · 已修 7d76e36
+- [建议] 由 git 配置决定的钩子目录（如 `.husky/`）不在自动执行名单里 · 不修：spec 层的缺口，记进总参考「以后再说」
+
+## 评审 · 2026-10-24 · 审过 7d76e36（第二次复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），逐条核第二轮修复并跑全量与慢测；复现另记
+突变：撤回或改坏第二轮各条修复，点名用例都变红；自写 80 例覆盖主目录固定位置在扫描不完整时出卡，换回旧版 `sensitive-paths.ts` 后大面积变红
+发现：
+- [major] macOS 上 `/usr/bin/git` 是 xcrun 垫片，exec 之后同一 PID 的 `ps comm` 是命令行工具里的 git，和记录的 `/usr/bin/git` 永远对不上，启动恢复只删记录、不结束残留的 git，随后照常删 `index.lock` 并重建索引；单元测试的假 `ps` 原样回显记录里的路径，测不出来 · 证据：真进程复现，残留的 git 3 秒后仍活着 · 已修 acd2155
+- [建议] 默认排除表的用例标题写「documented」，spec 里并没有列出这 11 个名字 · 已修 acd2155
+- 全量 4896 过，3 条失败都是副本不是 git 仓库造成的，`git init` 后单独重跑全过；慢测 97 过。
+
+## 评审 · 2026-10-24 · 审过 acd2155
+
+结论：通过    评审：新上下文的子 agent（Opus），只审 macOS 恢复那一处修复（lead 自己改的代码）；第 2–5 步其余部分见上面三条记录
+突变：在副本里把程序名比较改回整路径比较，`xcrun-shim` 与真进程两条用例都变红，恢复后转绿；真进程用例连跑 5 次、压满 10 核时又跑 3 次，都绿
+发现：
+- [建议] 真进程用例的 `finally` 只在组长还活着时才杀进程组、`process.kill` 没包 `try`，用例本身失败时可能多等到 `sleep` 自己结束 · 不修：只影响失败时的收尾，不会留下长期残留，第二段碰这个文件时一起改
+- [建议] 恢复时比较的程序名取自记录自己的 `executable`，没有绑定到配置的 git · 不修：旧代码就如此，`process.json` 在 profile 目录里、受限命令写不进，没有提权路径；第二段碰 `snapshot-git.ts` 时加上，记在 plan 的 Open
+- 只比程序名之后，误杀需要另一个以 `git` 为名的进程组组长在记录时刻前后 3 秒内复用同一个 PID，评审判断不现实；Linux 一侧的真进程用例 lead 在两台 Lima 上跑过、通过。
+- 分支在 acd2155 上 G 全过，T 4901 过、113 跳过。
