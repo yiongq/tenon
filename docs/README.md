@@ -9,7 +9,7 @@
 - [02](architecture/02-agent-loop/spec.md) · implemented · 02 · Agent loop · 需要你：—
 - [03](architecture/03-mcp-host/spec.md) · implemented · 03 · MCP host 完整版 · 需要你：—
 - [04](architecture/04-sandbox/spec.md) · implemented · 04 · 沙箱与出网（阶段 4a） · 需要你：—
-- [05](architecture/05-file-bridge/spec.md) · draft · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：读「给你看的一页」，回一句「05 改 ready」。
+- [05](architecture/05-file-bridge/spec.md) · ready · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：无
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
@@ -17,7 +17,7 @@
 
 ## 被改过的节
 
-- 00 §HostAdapter ← 04 ← 01 ← 02 ← 05
+- 00 §HostAdapter ← 04 ← 05 ← 01 ← 02
 - 00 §本地持久化布局 ← 05
 - 01 §所有权与依赖方向 ← 02
 - 01（整份） ← 04

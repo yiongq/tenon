@@ -88,3 +88,7 @@
 - [建议] overview.md 没改（docs-sync 警告） · 不修：05 实现之前不改，照 spec「## 文档同步」
 结论：通过
 突变：0 个（只有文档）
+
+## 实施 · 2026-10-24（改 ready）
+
+- owner 在对话里读过「给你看的一页」后回「05 改 ready」。页头加 `Approved: ready · 2026-10-24 · 「05 改 ready」 · 对话`，Status 改 ready；总参考阶段表 4b 的状态一格同改；plan 第 1 步勾掉。

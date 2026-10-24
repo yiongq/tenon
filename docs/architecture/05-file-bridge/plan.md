@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：第八版已放进仓库（466bd0a，第 1.2 步）；owner 七轮问卷都已答，D58 已定 A。等 owner 批 ready，然后从第 2 步开始实现。
-需要你：读「给你看的一页」，回一句「05 改 ready」。
+当前：owner 2026-10-24 回「05 改 ready」，Status 已改 ready（第 1 步做完）。下一步从第 2 步开始实现，按「分段」一段一个 PR。
+需要你：无
 
 ## 开工前读
 
@@ -32,7 +32,7 @@
 
 ## 步骤
 
-- [ ] 1. 改 ready 之前
+- [x] 1. 改 ready 之前
   - [x] 1.1 挑刺评审 r1（规则与证据面、机制与安全两份，2026-10-23）：结论与逐条处置记进 log.md；第二版已按处置改。
   - [x] 1.2 lead 审第八版；把 spec、plan、log、decisions、evidence 放进 `docs/architecture/05-file-bridge/`（headers、notes、处置表、问卷稿只留私有笔记），同一个 PR 带上 spec「## 文档同步」列的「起草时」改动；跑 S，`pairs`、`codes`、`shape` 不拦。
   - [x] 1.3 补探针（2026-10-24）：P11、P17 在 macOS 与两台 Lima 上实测，P19 在 macOS 上实测，三条都走「照现稿写」那一支，结果已写进 evidence；P18（git 2.43 以下）仍未核实，留在 Open。
@@ -41,7 +41,7 @@
   - [x] 1.6 owner 回 D48 一行、答 D56（2026-10-24）：D48=A；D56 先不加，接口已删去 `utimes`。
   - [x] 1.7 owner 第六轮（2026-10-24）：D52 A、D55 A、D57 A；D54 已告知 owner、没有异议。
   - [x] 1.8 owner 第七轮（2026-10-24）：D58 按更正后的说法重问，选 A；spec 照 A 写。
-  - [ ] 1.9 owner 读「给你看的一页」，回一句带编号的话，比如「05 改 ready」；页头加 `Approved:` 行，Status 改 ready，阶段表 4b 一行同改。
+  - [x] 1.9 owner 读「给你看的一页」，回一句带编号的话，比如「05 改 ready」；页头加 `Approved:` 行，Status 改 ready，阶段表 4b 一行同改。
 - [ ] 2. 对 00 的修补：`packages/kernel/src/host/adapter.ts` 加 `remove`、`identity`、`guarded`、`FileIdentity`、`SnapshotCoverage`、`HostSnapshots` 与相关类型，`ConfirmReason` 只增 `sensitive-path` 与必填键；`packages/contracts` 的 `ConfirmRequest` schema 同改；内存宿主同步（`snapshots` 的内存实现能模拟拍不成、超时、中止、四种状态，文件头写一句它复现了真宿主的哪几条行为）。
 - [ ] 3. `apps/desktop/src/main/host/fs.ts`：`writeFile` 叶子加 `O_NOFOLLOW`；`guarded.read`、`guarded.create`（D58 A，owner 已定）；`identity` 带设备号；`identity` 用 bigint lstat；`remove` 只删文件或链接本身。测试点名验收 30、32 的宿主一半。
 - [ ] 4. 快照子系统（desktop 宿主，新模块）：可用 git 的判定与 `xcode-select`（都经 `process` 加 `sandbox.wrap`）、影子仓库的建立、隔离配置与按工作区卷探测的三项、按忽略规则列文件、排除表（`.gitignore`、默认排除、嵌套根、超过 100 MB、读不了的）与每张收了哪些路径、不带父提交的快照与引用、单文件副本与清单、每张所收文件与目录的权限位、首张后台与预算、四种状态、每个仓库一把锁、保留（20 轮、30 天覆盖一切、3 GB 实占、空间清理才保护的轮、预留与 `over-budget`）与立即回收、启动时清残留与重建索引、删会话与清空会话时删目录、文件属主不同时的 `safe.directory`。测试点名验收 5–8、10–12、14、31、44、45、46、49 的宿主一半；git 的行为在真 git 上测，两平台。
@@ -69,7 +69,7 @@
 
 ## 交接
 
-2026-10-24 第八版放进仓库（466bd0a），旧 spec 页头与总参考的「起草时」改动同一个 PR；各版草稿与评审原文另记。r1、r2 两轮挑刺评审、第五版复核、Codex 交叉评审与三次复核都已处置；owner 七轮问卷都已答，D58 已定 A。下一步：owner 回「05 改 ready」后，在同一个 PR 里加 `Approved:` 行、改 `Status` 与阶段表的状态一格，然后从第 2 步开始实现。
+2026-10-24 owner 在对话里回「05 改 ready」，页头加了 `Approved:`、Status 改 ready、阶段表 4b 同改。下一步：第 2 步（对 00 的修补，`HostFs` 只增 `remove`、`identity`、`guarded` 与相关类型），照「分段」由 Codex 实现、lead 评审；第 9 步升提示层版本后的基线评测要先问 owner 批 key 与花费。
 
 ## Open
 

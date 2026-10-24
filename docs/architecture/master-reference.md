@@ -1100,7 +1100,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 2 | [02-agent-loop](02-agent-loop/spec.md) | Agent 循环、权限和提示层 | implemented | 八层权限与每次调用收口 |
 | 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
 | 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
-| 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | draft | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
+| 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | ready | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
 | 4c | `06-approval-modes`（待起草） | 审批档位 | 规划中 | 随快照与规则 inspector 开放，另行验收 |
 | 4d | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 按 4a → 4b → 4c → 4d 顺序交付 |
 | 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
