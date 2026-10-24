@@ -208,3 +208,92 @@
 - [建议] 标题写「每次问」，用例只问了一次 · 不修：「不认已有授权」由 kernel `sensitive.test.ts` 守，这条 e2e 断言了只放行这一次
 - [建议] 没断言卡上不写「有快照」 · 不修：第 15 步接上「有快照」那句时在这条用例里补
 - [建议] `packages/kernel/src/permission/workspace.ts` 文件头仍说硬链接「留给阶段 4 定」 · 不修：不在本提交，第二段第 7 步改这个文件时一起改
+
+## 实施 · 2026-10-25（第二段：第 6–12 步）
+
+- 分工：Codex 在自己的 worktree（`feat/05-seg2`，新会话）实现，lead 每一步审 diff、在沙箱外跑全量，再摘到 `feat/05-file-bridge-seg2`：0616b4c 第 6–7 步、b5a9a38 第 8 步、fe6a205 第 9–10 步、f7cffce 第 11 步、b38e24a 与 e83eb09、4e9366c 三轮评审修复。
+- lead 自己改的：`apps/desktop/test/tape/fs-dialects.test.ts` 把 Postgres 连接串放在 `PGDATABASE` 里，libpq 不把它当连接串解析，注释写的用法跑不通，改成 `--dbname=<url>`（0616b4c）。这条 Postgres 用例要 `TENON_TEST_POSTGRES_URL` 才跑，CI 里跳过（人工）：2026-10-25 在 Ubuntu 26.04 + PostgreSQL 18 的临时库上跑过，两条都过，事务回滚后不留 schema。
+- owner 这一段定的：D60（判决记下判定时的叶子 `fileTarget`）、D61（快照能力变差后会话授权与继承授权不算、重新出卡）、ADR-005（评测基线列换成 glm-5.3-flash，PR #74），并接受 11 题在第 12 版上 1/3（原话见 decisions.md 末尾）。
+- 第 11.1 步：基线列换成 flash（ADR-005）。flash 上第 11 版参考 57/60（PR #74）；第 12 版第一次跑 57/60，之后 Delete 的 `targetChanged` 一句改成两个方向都对，哈希从 `430552…` 变为 `a37b8c0d…`，在终版哈希上重跑 58/60，旧哈希那 60 条移出仓库、另存私有笔记（另记）。逐题对照第 11 版：02 1/3 → 3/3，20 2/3 → 3/3，11 3/3 → 1/3；11 的两次失败，一次是模型用新的 Delete 删自己建的临时脚本、评测宿主拒卡（owner 已接受），另一次是模型读输出文件时把长临时路径抄成了工作区外的路径、出了工作区外的卡（04 plan 第 15a 步记过 16 题的同类失败），与第 12 版的改动无关；其余 17 题都是 3/3。60 条都是 `sandbox: active`。
+- 门禁：基于 dev 的分支上 G 全过，T 5169 过、114 跳过；`evals:gate` 30 过、1 跳过。全量在负载下偶见 `03 验收 30 (HTTP)` 时序用例失败，单跑稳定。
+
+花费：2026-10-25 · flash 第 11 版参考全集（ADR-005，PR #74） · ¥3.79 · ¥3.79 / ¥20
+花费：2026-10-25 · flash 第 12 版全集（旧哈希，已作废） · ¥3.70 · ¥7.49 / ¥20
+花费：2026-10-25 · flash 第 12 版全集（终版哈希） · ¥4.18 · ¥11.67 / ¥20
+花费：2026-10-25 · 免费模型 GLM-4.7-Flash、GLM-4-Flash-250414 各一题实测（ADR-005 调研） · ¥0 · ¥11.67 / ¥20
+
+测试改动：packages/kernel/test/tape/names.test.ts · 身份三元组与名字总表 · `fs/snapshot_created` 从保留名变成已声明身份，加入两个还原名字
+测试改动：apps/desktop/test/tape/conformance.test.ts · 共享用例数量 · 新增 fs 一致性用例，44 → 45
+测试改动：packages/kernel/test/tape/provenance.test.ts · 键格式 · 加三种 fs 键
+测试改动：packages/kernel/test/tools/builtin.test.ts · 参数表、effect 表、工具数量 · 加入 Delete，任务形态工具表 11 个
+测试改动：packages/kernel/test/tools/write-edit.test.ts · 成功的 Write、Edit · 期望里加上新记的文件印记
+测试改动：packages/kernel/test/loop/stop.test.ts · 停止落在派发提交时的写 · 原期望等写完、超时记 `uncertain`，05 让写类文件工具动文件前查中止，改成写前中止、内容不变（spec §点名 (j)）
+测试改动：packages/kernel/test/loop/subagent-run.test.ts · 子任务崩溃后恢复 · Read 改走 `guarded.read`，读取计数的拦截随之改接，不重跑的断言不变
+测试改动：packages/kernel/test/loop/tool-table.test.ts · 内置工具表 · 加入 Delete
+测试改动：packages/kernel/test/provider/probe.test.ts · 智谱探测与冻结的任务表 · 加入 Delete，策略过滤的断言不变
+测试改动：packages/kernel/test/tools/table.test.ts · 请求的容量上限 · 多一个内置工具，截断边界随之改
+测试改动：apps/desktop/test/evals-runner.test.ts · 精确工具表 · 加入 Delete
+测试改动：apps/desktop/test/custom-vendor-runtime.test.ts · 任务形态工具表 · 加入 Delete
+测试改动：apps/desktop/test/mcp-routes.test.ts · 03 验收 35 · 多一个内置工具后，超限省略数改为 2
+测试改动：packages/kernel/test/prompts/version.test.ts · 04 验收 24 (version) 与版本历史 · 提示层 11 → 12，第 12 版哈希为 `a37b8c0d…`
+测试改动：apps/desktop/test/workspace-locate.test.ts · 05 验收 30 大小写不敏感的文件与链接 · 新用例要大小写不敏感的临时卷，只在 macOS 上跑；Linux 的临时目录区分大小写，`skipIf` 跳过，同一行为由 kernel 的内存宿主用例覆盖
+
+## 评审 · 2026-10-25 · 审过 f7cffce（对照 spec）
+
+结论：通过    评审：新上下文的子 agent（Opus），对照 spec 05 与 plan 第 6–11 步
+突变：无（只读代码、跑复现）
+发现：
+- [建议] 「1 秒」只测了上界，把超时改成 10 毫秒测试仍全绿 · 证据：副本里实改复现 · 已修 b38e24a
+- [建议] 卡上没标「有快照」的文件调用一律不拍，比 §快照怎么拍 字面窄 · 证据：用例专门断言不调 `take` · 已修 b38e24a
+- [建议] 改了 02 的一条停止测试，没写测试改动、也没在 §点名 登记 · 证据：`stop.test.ts` 期望从 `uncertain` 改成 `aborted` · 已修 7f79c32
+- [建议] Postgres 那一半在 CI 里永远跳过 · 不修：lead 2026-10-25 在 PostgreSQL 18 上手动跑过，记在上面的实施记录，标（人工）
+- [建议] 验收 2 只测了 Write · 已修 b38e24a
+- [建议] 验收 30、3 有几处没有直接断言 · 已修 b38e24a
+- [建议] 提示层的新增不止 Delete 描述加四句（还有 Delete 的结果模板） · 已修 7f79c32
+- [建议] `SnapshotCreatedPayload.commits`、`files` 永远不会被填 · 不修：记进 plan 的 Open，第 13 步再定
+- [建议] plan 与 log 没跟上 · 不修：本记录与上面的实施记录即是
+
+## 评审 · 2026-10-25 · 审过 f7cffce（安全）
+
+结论：通过    评审：新上下文的子 agent（Opus），绕过保护、丢数据、没留底就写三个方向；PoC 另记
+突变：无（只读代码、跑 PoC）
+发现：
+- [建议] 会话授权在快照能力变差之后照样放行、不出卡也不留底 · 证据：PoC-B 复现 · 已修 b38e24a（owner 定 D61）
+- [建议] Delete 只拦「文件变成链接」、不拦反方向 · 证据：PoC-D 复现 · 已修 b38e24a
+- [建议] 一个文件同时属于几类保护时卡上只说第一类 · 证据：PoC-A 复现 · 不修：要改审批卡的格式，记进总参考「以后再说」
+- [建议] Write 被第二次检查拒绝时已建的父目录留下 · 证据：PoC-C 复现 · 已修 b38e24a
+- [建议] Delete 记下的叶子大小写可能和盘上不同 · 已修 b38e24a
+
+## 评审 · 2026-10-25 · 审过 f7cffce（突变）
+
+结论：不通过（测试缺口要补）    评审：新上下文的子 agent（Sonnet）跑 StrykerJS，只变异本段改过的生产代码行；报告与原始结果另记
+突变：839 个；第 1 组（守卫、Delete、Write、Edit、Read、印记、快照请求、可逆性、授权、判定）438 个，得分 78.3%，存活与无覆盖 95 个逐个判过：测试缺口 54、等价 15、无意义 26，另写 46 条探针，测试缺口全被探针杀死、等价与无意义一个没被杀；第 2 组（batch、closure、mailbox）358 个 70.7%，第 3 组（Tape 键、提示层）27 个 81.5%，第 4 组 16 个 87.5%，只出报告
+发现：
+- [major] 并行 Read 两个文件时印记按调用身份区分、守卫拒写后不清旧印记，这两条行为改坏了测试也不红 · 证据：对应突变存活，探针在未变异代码上通过 · 已修 e83eb09
+- [建议] 其余 19 条测试缺口（Delete 的拒绝文案、Edit 写入出错、拍后出现或消失、同尺寸改写、自动档的 Edit 与 Delete、旧事实、恢复链成环等） · 已修 e83eb09
+
+## 评审 · 2026-10-25 · 审过 b38e24a（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），逐条核第一轮修复：撤回或改坏修复看点名用例是否变红
+突变：手工撤回或改坏 20 余处，点名用例都变红；D61 的强弱比较去掉 → 17 条红，只让继承授权跳过 → 8 条红，方向反过来 → 25 条红
+发现：
+- [建议] Delete 的父目录列不出时，工作区里的普通文件被判成 `protected`、回给模型的理由也不对 · 证据：内存宿主让 `readdir` 抛 EACCES 复现 · 已修 e83eb09
+
+## 评审 · 2026-10-25 · 审过 e83eb09（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），只看 Delete 父目录回退与补的测试
+突变：撤回回退、去掉执行期复查、去掉 `actual ?? real`，点名用例都变红（`missing` 那组除外，见下）
+发现：
+- [建议] 宿主错误被说成「文件变了」 · 证据：探针 P1b 复现 · 已修 4e9366c
+- [建议] 判定时有歧义、执行时父目录变得列不出，复查会放行 · 证据：探针 P2 复现 · 已修 4e9366c
+- [建议] 「missing」那组用例断言太弱，挡不住回退被拿掉 · 证据：只去掉 readdir 内层 try/catch 时仍绿 · 已修 4e9366c
+- [建议] 两处已有测试改了期望，需要写测试改动 · 不修：写在上面的实施记录里
+
+## 评审 · 2026-10-25 · 审过 4e9366c
+
+结论：通过    评审：新上下文的子 agent（Opus），只审 Delete 宿主错误与歧义这一处修复；第 6–12 步其余部分见上面各条
+突变：执行侧宿主错误改回 `targetChanged`、外层 catch 改成按歧义、去掉执行器开头的歧义拒绝、`!== false` 改成 `=== true`、missing 映射成 `targetChanged` 等，点名的「05 验收 30」用例都变红
+发现：
+- [建议] 等审批时重启、再批准一张 Delete 卡，统一拒绝并回 `targetChanged`，文件其实没变 · 证据：本提交的用例「a recovered Delete without its in-memory judgment marker refuses conservatively」断言的就是这一点 · 不修：只会更严；这一轮不改给模型的文字、不加 Tape 字段，记进 plan 的 Open，下次改提示层时换成准确的一句
+- [建议] 被拒、没批或派发前被停止的 Delete，内存里的歧义标记不清，进程生命期内只增 · 不修：每条约百来字节；第三段碰 `batch.ts` 时顺手在判决收口处清掉
+- 分支在 4e9366c 上 G 全过，T 5169 过、114 跳过；`evals:gate` 30 过、1 跳过。

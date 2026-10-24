@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：第一段（第 2–5 步）做完，在分支 `feat/05-file-bridge-seg1` 等 PR 合入。下一步第二段（第 6–12 步，分支 `feat/05-seg2`）。
+当前：第一段已合入（PR #72）；第二段（第 6–12 步）做完，在分支 `feat/05-file-bridge-seg2` 等 PR。下一步第三段（第 13–17 步）。
 需要你：无
 
 ## 开工前读
@@ -47,14 +47,14 @@
 - [x] 4. 快照子系统（desktop 宿主，新模块）：可用 git 的判定与 `xcode-select`（都经 `process` 加 `sandbox.wrap`）、影子仓库的建立、隔离配置与按工作区卷探测的三项、按忽略规则列文件、排除表（`.gitignore`、默认排除、嵌套根、超过 100 MB、读不了的）与每张收了哪些路径、不带父提交的快照与引用、单文件副本与清单、每张所收文件与目录的权限位、首张后台与预算、四种状态、每个仓库一把锁、保留（20 轮、30 天覆盖一切、3 GB 实占、空间清理才保护的轮、预留与 `over-budget`）与立即回收、启动时清残留与重建索引、删会话与清空会话时删目录、文件属主不同时的 `safe.directory`。测试点名验收 5–8、10–12、14、31、44、45、46、49 的宿主一半；git 的行为在真 git 上测，两平台。
 - [x] 5. 保护名单的文件工具一半与硬链接、选文件夹：`apps/desktop/src/main/host/sandbox-config.ts` 导出一个名单函数，沙箱配置与 `PathScope.sensitive` 都从它取；`locatePath` 按任意深度与大小写折叠认 `sensitive`：凭据对所有文件工具，会被自动执行的名字与名字数大于 1 的普通文件只对 Write、Edit、Delete；`decide` 的 `LayerInputs` 只增 `sensitive`，第 6 层不认会话授权与继承授权；Glob、Grep 的遍历只跳过凭据；`callReasonOf` 出 `sensitive-path`；两份 locale 的三句；kernel 设工作区的唯一入口拒根目录与卷根、主目录与其上级提醒。名单比写法与真实路径两种、照 `walkLinks` 逐级解开的目标表。选文件夹被拒的说明与主目录提醒的 chip 一句也在本步（第一段评审发现第 15 步没认领验收 13 的界面一半）。测试点名验收 13、25（判定一半）、26、27、28、55。
   - [x] 5.1 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent）；StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。
-- [ ] 6. Tape：`fs/snapshot_created` 补身份列，`fs/restore_started`、`fs/restored` 新登记；`DECLARED_TAPE_NAMES`、`TapePayloadByName`、投影与重放；`ToolOutcomePayload` 只增 `snapshotId` 与 `file`，`PermissionDecidedPayload` 只增 `coverage`；SQLite 与 Postgres 的一致性测试。测试点名验收 1、21 的 Tape 一半。
-- [ ] 7. 判定：Write、Edit、Delete 判定前问 `coverage`（不抛、1 秒、出错按 `none`），`reversibilityOf` 收第三个入参并记进判决；答复作用域表加 Delete 一行。测试点名验收 3、4。
-- [ ] 8. 执行：批准之后、动文件之前拍，拍成先写一批 `before-call`，打开文件前再比一次 `identity`；做完记 `after-call`；拍不成不写；`take` 收中止信号，三处查中止；Bash 在 `tree` 时派发前后各拍一张，派发与停止竞速；子会话的快照进根会话的影子仓库，带 `roundRunId`。测试点名验收 1、2、9、37、42、43。
-- [ ] 9. mtime 守卫与写入边界的名字数复查：`tool_outcome` 记印记（Read 用 `guarded.read` 的同次打开印记）；目标不在时用 `guarded.create`；Write、Edit 执行前比对；固定英文。目标已不存在时不挡。测试点名验收 23、24、25（写入一半）、50。
-- [ ] 10. Delete 工具：spec、执行器、父目录真实加叶子照写的路径认法、进两个文件工具集合、固定英文、effect；工具表变十一个。测试点名验收 29（kernel 一半）、30。
-- [ ] 11. 提示层：`PROMPT_LAYER_VERSION` 从 11 升到 12、更新哈希；从这一步起 CI 的 `evals:gate` 红，到 11.1 为止。之后到 11.1 之前若要再改提示层文本，回到这一步改并更新哈希，不再加版本。
-  - [ ] 11.1 基线评测（live）：先请 owner 批 key 与花费（04 那次 45.07 元，看门狗上限 75 元）；在沙箱生效的 macOS 上、agent 沙箱外跑基线列全集每题 3 次；记录与改动同一 PR；lead 逐题对照第 11 版基线，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 36。
-- [ ] 12. 第二段核对：P；E 走 CI 草稿 PR；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
+- [x] 6. Tape：`fs/snapshot_created` 补身份列，`fs/restore_started`、`fs/restored` 新登记；`DECLARED_TAPE_NAMES`、`TapePayloadByName`、投影与重放；`ToolOutcomePayload` 只增 `snapshotId` 与 `file`，`PermissionDecidedPayload` 只增 `coverage`；SQLite 与 Postgres 的一致性测试。测试点名验收 1、21 的 Tape 一半。
+- [x] 7. 判定：Write、Edit、Delete 判定前问 `coverage`（不抛、1 秒、出错按 `none`），`reversibilityOf` 收第三个入参并记进判决；答复作用域表加 Delete 一行。测试点名验收 3、4。
+- [x] 8. 执行：批准之后、动文件之前拍，拍成先写一批 `before-call`，打开文件前再比一次 `identity`；做完记 `after-call`；拍不成不写；`take` 收中止信号，三处查中止；Bash 在 `tree` 时派发前后各拍一张，派发与停止竞速；子会话的快照进根会话的影子仓库，带 `roundRunId`。测试点名验收 1、2、9、37、42、43。
+- [x] 9. mtime 守卫与写入边界的名字数复查：`tool_outcome` 记印记（Read 用 `guarded.read` 的同次打开印记）；目标不在时用 `guarded.create`；Write、Edit 执行前比对；固定英文。目标已不存在时不挡。测试点名验收 23、24、25（写入一半）、50。
+- [x] 10. Delete 工具：spec、执行器、父目录真实加叶子照写的路径认法、进两个文件工具集合、固定英文、effect；工具表变十一个。测试点名验收 29（kernel 一半）、30。
+- [x] 11. 提示层：`PROMPT_LAYER_VERSION` 从 11 升到 12、更新哈希；从这一步起 CI 的 `evals:gate` 红，到 11.1 为止。之后到 11.1 之前若要再改提示层文本，回到这一步改并更新哈希，不再加版本。
+  - [x] 11.1 基线评测（live）：先请 owner 批 key 与花费（基线列为 glm-5.3-flash，ADR-005；一次约 4 元，owner 批的上限是第 11、12 版合计 20 元）；在沙箱生效的 macOS 上、agent 沙箱外跑基线列全集每题 3 次；记录与改动同一 PR；lead 逐题对照第 11 版基线，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 36。
+- [x] 12. 第二段核对：P；E 走 CI 草稿 PR；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
 - [ ] 13. 还原（宿主与 kernel）：清单（agent 改过的路径、命令改的单独标出、已是起点的不动、三张都收了才动、跳过原因、冲突）、`previewKey` 与 `stale`、还原前那张必须收全、先写 `fs/restore_started`、先删后放、逐路径的 `identity` 与父目录检查、叶子不跟随、新建排他加权限位、临时文件加改名（修改时间即还原那一刻）、大小写配对、`fs/restored`；同一真实文件夹上有进行中 Run 时拒绝；启动时提示没做完的还原。逐级重建父目录（每级照规矩 8 查、以属主可写排他新建，内容放回后从深往浅设回起点权限）；相邻调用前后比对；租约与 `prepare`、`apply`、`cancel` 两段交接；只改了权限位的路径只改回权限位。测试点名验收 16–22、39、40、41、49、51、52、53、54 的宿主与 kernel 一半（52 原列在第 5 步，它说的是还原，第一段评审后挪到这里）。
 - [ ] 14. 路由：`snapshot.rounds`、`snapshot.preview`、`snapshot.restore` 经 contracts 登记，两端校验；宿主核对 `sessionId` 与目录；`overwrite` 只收冲突的子集。测试点名验收 18、22 的路由一半。
 - [ ] 15. 界面：审批卡 ④ 的 `snapshotted` 一句；工具行收起的失败标记与 Delete 展开那一行；结算行的 Delete 一类、「可还原」与两种附注；还原清单（逐个路径、跳过原因、冲突逐个问、取消、`stale` 重出）；`ThreadTitleMenu` 与「查看本次记录」。测试点名验收 16、18、33、34、35、47、48 的渲染一半。
@@ -69,11 +69,13 @@
 
 ## 交接
 
-2026-10-24：第一段做完。Codex 在它自己的 worktree 实现，lead 审、沙箱外跑全量、两台 Lima 跑快照与权限测试，摘到 `feat/05-file-bridge-seg1`。5.1 三路评审（对照 spec、安全、突变）之后又做了三轮修复与三次新上下文复核，记录见 log；owner 定了 D59（链接目标表扫不完时照名字查）。lead 定的两条：专属文件夹解开是根或卷根时抛错、路由回 `handler-failed`，不给 `selectProfile`、`workspace.remove` 加码；主目录提醒不为跟随列表而改 `session.facts` 契约。下一步第二段：Tape 三个名字、判定前问 `coverage`、执行器接快照与守卫、Delete、提示层 12 与基线评测；升提示层版本后的基线评测要先问 owner 批 key 与花费。
+2026-10-25：第二段做完。Codex 在它自己的 worktree（分支 `feat/05-seg2`）实现，lead 审、沙箱外跑全量，摘到 `feat/05-file-bridge-seg2`。第 12 步三路评审（对照 spec、安全、突变）都是 0 blocker、0 major；之后修了三轮、复核三次，记录见 log。owner 这一段定了 D60（判决记下判定时的叶子）、D61（快照能力变差后会话授权不算）、ADR-005（评测基线列换成 glm-5.3-flash），并接受了 11 题在第 12 版上 1/3。下一步第三段：还原（第 13 步）先看 `SnapshotCreatedPayload.commits`、`files` 要不要用，要用就扩 `SnapshotTaken`，属接口改动、先问 owner；第 15 步的「有快照」那句接上后，在 `write-card.spec.ts` 的硬链接用例里补断言。
 
 ## Open
 
-- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段碰 `snapshot-git.ts` 时加，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
+- 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
+- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步还原若要用，先问 owner 扩 `SnapshotTaken`；不用就在第 18 步文档同步时从 §接口 拿掉。
+- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段没碰这个文件，第三段碰 `snapshot-git.ts` 时加，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。

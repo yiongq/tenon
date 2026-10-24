@@ -1143,3 +1143,5 @@ Claude Desktop 的概念 → Tenon 的实现：
 - Delete 先移进系统回收站，不只靠快照 · lead · 待定，不挡；两平台实测后加 · 05 D7
 - 「撤销还原」的入口（05 已在还原前拍一张，编号在 fs/restored） · lead · 待定，不挡 · 05 D3、D34
 - 由 git 配置决定的钩子目录（如 `core.hooksPath` 指向的 `.husky/`）不在会被自动执行的名单里：auto 档位下写这里不出卡，用户下次在沙箱外 `git commit` 时会执行 · lead · 06 定自动档范围之前 · 05 第一段复核（log.md 2026-10-24）
+- 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
+- spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
