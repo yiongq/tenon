@@ -926,8 +926,8 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 文件桥：路径归属校验（symlink / `..` 归一化）、宿主↔沙箱双向映射、**mtime 守卫**（2026-10-09 补，见 [04](04-sandbox/spec.md) Q2 A：宿主↔沙箱双向映射挪阶段 6b，其余随 05）
 - 读/写/删/执行拆成独立可授予单位；删除运行期单独申请
 - **任务模式成型**（2026-09-17 补；2026-10-09 改，见 [04](04-sandbox/spec.md) T37、Q2：原写「对齐 Cowork 本地模式」；Pro / Max 的新 Cowork 任务自 2026-10-06 起在云端运行，已进合并体验的账号任务只在云端（[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)），Team / Enterprise 仍有本地 VM 会话（2026-10-15 照公开文档改准，[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)、[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)），执行与隔离改为对照 Claude Desktop 的 Code 会话与 Claude Code；原写的「右面板 进度 / 产物 / 上下文」挪阶段 5，与 §8.5 和 components.md 一致）：任务会话 = 工作文件夹 + 沙箱 `workspace-write` 档 + 内联审批卡；主栏折叠头 + 活动时间线；界面以 UX 画布 v18 与 `docs/ux/parity-audit-2026-09-12.md` 为准，随 4d（`docs/features/task-mode-ui`）。定时任务与 Projects 页仍在阶段 6
-- **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示
-- **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开
+- **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示（2026-10-23 补，见 05：命令前后也拍整树、拍不了时留单文件副本；还原以一轮为单位，只动 agent 改过的路径）
+- **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开（2026-10-23 补：一轮一行、六类计数已由 presentation-r1 取代「读了 n · 写了 n · 发出 n」；05 加 Delete 一类与「可还原」）
 - **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/tool/agentTools/agentFileSystemHandler.ts`（`validatePath` / `resolveValidatedCreatePath`）与 `src/main/agent/acp/runtime/acpPathGuard.ts`（2026-10-09 改，见 [04](04-sandbox/spec.md) T3；原为「`src/main/file/`（adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts`」，validation.ts 管的是文件类型、不是路径）
 - **开工前裁决**（2026-09-17 审阅结论；sandbox-runtime 笔记是全仓最扎实的一份，不需要新笔记）。**裁决结果**（2026-10-09）：4a 承担的逐条见 [04 §裁决索引](04-sandbox/spec.md)，下列各条与 02 的七条落在哪份见 04 §主参考与 02 留下的各条的去向。阶段 4 拆成 4a = [04-sandbox](04-sandbox/spec.md)（沙箱与出网）、4b = 05-file-bridge（文件桥、快照与小结）、4c = 06-approval-modes（审批档位）、4d = `docs/features/task-mode-ui`（任务模式界面），按 4a → 4b → 4c → 4d 写、各自验收，4b–4d 的裁决已定、在 04 标 implemented 之后起草；spec 编号从此与阶段号脱钩（阶段 5 的 spec 取 07）。预算合计不超过阶段 3 的 3 倍；检查点：04 标 implemented 时验收条数或改动行数超过阶段 3 的 1.5 倍，就在起草 05 之前按「4d 挪阶段 6 打磨 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档」的顺序砍。原列的：
   - 沙箱档位与网络是一个枚举还是两个轴：`SandboxRequest.profile` 只有三档没有网络字段，而 UX 要「档位 / 网络 / 跑完自动降回」三件事；若改 `SandboxRequest`：只增字段按 amend 规则修补 00-foundation，改既有字段须 supersede
@@ -1100,7 +1100,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 2 | [02-agent-loop](02-agent-loop/spec.md) | Agent 循环、权限和提示层 | implemented | 八层权限与每次调用收口 |
 | 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
 | 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
-| 4b | `05-file-bridge`（待起草） | 文件桥、快照和任务小结 | 规划中 | 路径校验、mtime 守卫和冲突逐文件处理 |
+| 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | ready | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
 | 4c | `06-approval-modes`（待起草） | 审批档位 | 规划中 | 随快照与规则 inspector 开放，另行验收 |
 | 4d | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 按 4a → 4b → 4c → 4d 顺序交付 |
 | 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
@@ -1114,10 +1114,10 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 - 沙箱对仓库元数据只护了 `.git/hooks` 与 `.git/config`，其余能让之后在沙箱外运行的 git 执行代码的位置没挡 · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
 - 命令的「撤不回」模式表不认覆盖写类：`git reset --hard`、`git checkout --`、`truncate`、`>` 重定向、`dd of=` 仍判「未知」；按 02 §可逆性 的定义它们本来就是「未知」，收进来要改定义，随 06 另写 spec（发布类与删除类已由 PR #65 补上） · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
-- 文件工具不认沙箱的凭据清单：家目录当工作区时读私钥不出卡，写 `.git/hooks` 只当普通写入 · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）；04 §留给 05、06 与 task-mode-ui 的
+- [05-file-bridge](05-file-bridge/spec.md)：文件工具认沙箱的凭据清单与会被自动执行的位置（原「文件工具不认沙箱的凭据清单」一行）
 - 外带检查认不出连接器：连接器的结果不算不可信来源、读取不算私密数据、非只读调用不算外发出口 · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
 - 渲染层没有错误边界，一处异常整窗白屏，打包版里没法恢复，冷启动又回到同一个会话 · lead · 待定 · 2026-10-22 外部调研（另记）
-- 执行失败的工具调用收起后和成功的长得一样 · lead · 待定 · 2026-10-22 外部调研（另记）
+- [05-file-bridge](05-file-bridge/spec.md)：收起的工具行给完成但出错的调用加失败标记（原「执行失败的工具调用收起后和成功的长得一样」一行，05 D38）
 - 重试与长时间等待对用户不可见，半截回复消失后只剩「思考中…」，没有原因也没有计时 · lead · 待定 · 2026-10-22 外部调研（另记）
 - 没有会话列表，点「新对话」后旧会话在界面上回不去 · lead · 待定 · 2026-10-22 外部调研（另记）；02 §留到后续阶段；01 plan Open
 - 单个长回合撑满上下文后，之后的消息接连溢出，最坏会话一直卡住（要修补 02） · lead · 待定 · 2026-10-22 外部调研（另记）
@@ -1139,4 +1139,6 @@ Claude Desktop 的概念 → Tenon 的实现：
 - Anthropic API 版本 `2026-10-21` 起，任何模型带 `temperature`、`top_p` 或 `top_k` 都是 400，assistant 里直接放 `document` 块、user 的 text 块带非空 `citations` 也是 400；Tenon 现在在 anthropic-messages 线与网络搜索两处钉 `2023-06-01`。升 `@anthropic-ai/sdk` 到 1.x 或换 API 版本之前，先改采样守卫、各行的 `requestParams`，并核对这两种块 · lead · 升 Anthropic SDK 或 API 版本之前 · [厂商现状表](../reference/vendors.md)
 - README 的截图：一次对话、审批卡打开，存为 docs/assets/approval-card.png，模型选择器不显示厂商模型名 · lead · 待定 · README.md
 - spec-check job 装 e2e 工具链，让 e2e 层与 macOS 专属的突变也能每个 PR 机器重跑 · lead · 待定 · ADR-004 A18
-- Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
+- Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问；05 的快照在 Windows 上一律只留单文件副本、叶子不防换链接、主目录与卷根的认法未测） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
+- Delete 先移进系统回收站，不只靠快照 · lead · 待定，不挡；两平台实测后加 · 05 D7
+- 「撤销还原」的入口（05 已在还原前拍一张，编号在 fs/restored） · lead · 待定，不挡 · 05 D3、D34
