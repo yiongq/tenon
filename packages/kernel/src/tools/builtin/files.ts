@@ -148,6 +148,9 @@ export async function walkFiles(
   signal: AbortSignal,
 ): Promise<WalkedFile[]> {
   const { roots } = scope
+  const approvedRoot = (await fs.realpath(root)) ?? root
+  checkSignal(signal)
+  const credentialRoot = sensitiveName(root, approvedRoot, scope, false) === 'credential'
   const files: WalkedFile[] = []
   const walk = async (
     dir: AbsolutePath,
@@ -178,9 +181,18 @@ export async function walkFiles(
       }
       checkSignal(signal)
       if (resolved === null) continue
-      if (sensitiveName(path, resolved, scope, false) === 'credential') continue
+      if (
+        sensitiveName(path, resolved, scope, false) === 'credential' &&
+        !(credentialRoot && isWithin(resolved, approvedRoot))
+      )
+        continue
       const linked = resolved !== joinPath(real, name)
-      if (linked && !roots.some((folder) => isWithin(resolved, folder))) continue
+      if (
+        linked &&
+        !roots.some((folder) => isWithin(resolved, folder)) &&
+        !(credentialRoot && isWithin(resolved, approvedRoot))
+      )
+        continue
       // oxlint-disable-next-line no-await-in-loop -- one entry at a time, the stop checked between
       const stat = await fs.stat(path)
       checkSignal(signal)
@@ -198,10 +210,7 @@ export async function walkFiles(
       } else files.push({ path, relative })
     }
   }
-  const real = (await fs.realpath(root)) ?? root
-  checkSignal(signal)
-  if (sensitiveName(root, real, scope, false) === 'credential') return []
-  await walk(root, real, '', new Set())
+  await walk(root, approvedRoot, '', new Set())
   return files.toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
 }
 

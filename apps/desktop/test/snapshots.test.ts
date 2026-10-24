@@ -41,7 +41,12 @@ import { SystemClock } from '../src/main/host/clock.js'
 import { createHostProcess } from '../src/main/host/process.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import { SnapshotGit, probeVolume, repoPath } from '../src/main/host/snapshot-git.js'
-import { diskBytes, MAX_FILE_BYTES } from '../src/main/host/snapshot-storage.js'
+import {
+  diskBytes,
+  MAX_FILE_BYTES,
+  DEFAULT_EXCLUDES,
+  SnapshotDiskUsage,
+} from '../src/main/host/snapshot-storage.js'
 import type { SnapshotManifest } from '../src/main/host/snapshot-storage.js'
 import { DesktopSnapshots } from '../src/main/host/snapshots.js'
 import type { DesktopSnapshotsOptions } from '../src/main/host/snapshots.js'
@@ -196,6 +201,16 @@ describe.skipIf(process.platform === 'win32')(
           join(home, 'ran') +
           '\n',
       )
+      const hostile = await readFile(join(home, '.gitconfig'), 'utf8')
+      snapshots = make({
+        process: {
+          spawn: async (spec, signal) => {
+            expect(spec.env['HOME']?.startsWith(join(profile, 'snapshots') + '/')).toBe(true)
+            await writeFile(join(spec.env['HOME']!, '.gitconfig'), hostile)
+            return tracking.spawn(spec, signal)
+          },
+        },
+      })
       await writeFile(join(home, 'ignored'), 'secret.txt\n')
       await mkdir(join(home, 'hooks'))
       for (const path of [join(home, 'hooks', 'pre-commit'), join(home, 'monitor')]) {
@@ -339,13 +354,17 @@ describe('05 snapshot budgets and availability', () => {
       expectState(controller, 'file-only')
       expect(controller.lastDegradeReason(SESSION)).toMatch(/file-count budget/)
       expect(notices).toHaveBeenCalledTimes(1)
-      const treeCalls = spawned.filter((spec) => spec.argv.includes('add')).length
+      const treeCalls = spawned.filter(
+        (spec) => spec.argv.includes('update-index') && spec.argv.includes('--add'),
+      ).length
       const result = await controller.take(
         request(join(workspace, 'a')),
         new AbortController().signal,
       )
       expect(result).toMatchObject({ ok: true, scope: 'file' })
-      expect(spawned.filter((spec) => spec.argv.includes('add'))).toHaveLength(treeCalls)
+      expect(
+        spawned.filter((spec) => spec.argv.includes('update-index') && spec.argv.includes('--add')),
+      ).toHaveLength(treeCalls)
       const other = absolutePath(join(root, 'other'))
       await mkdir(other)
       await controller.setWorkspace(SESSION, [other])
@@ -413,11 +432,15 @@ describe('05 snapshot budgets and availability', () => {
       })
       expect(controller.status(SESSION)).toBe('file-only')
       expect(controller.lastDegradeReason(SESSION)).toMatch(/timeout budget/)
-      const adds = spawned.filter((spec) => spec.argv.includes('add')).length
+      const adds = spawned.filter(
+        (spec) => spec.argv.includes('update-index') && spec.argv.includes('--add'),
+      ).length
       expect(
         await controller.take(request(join(workspace, 'a')), new AbortController().signal),
       ).toMatchObject({ ok: true, scope: 'file' })
-      expect(spawned.filter((spec) => spec.argv.includes('add'))).toHaveLength(adds)
+      expect(
+        spawned.filter((spec) => spec.argv.includes('update-index') && spec.argv.includes('--add')),
+      ).toHaveLength(adds)
       expect(notices).toHaveBeenCalledTimes(1)
     },
     10_000,
@@ -593,12 +616,11 @@ describe('05 retention and reservations', () => {
     const budget = 220_000
     const controller = await fileOnly({ clock: time.clock, limits: { bytes: budget } })
     const ids: string[] = []
-    let origin = ''
+    const resumedRun = randomUUID()
     for (let i = 0; i < 6; i++) {
       const round = randomUUID()
       if (i === 0) {
-        origin = round
-        controller.bindActiveRounds(() => [{ rootSessionId: SESSION, runId: origin }])
+        controller.bindActiveRounds(() => [{ rootSessionId: SESSION, runId: resumedRun }])
       }
       time.advance(1)
       // oxlint-disable-next-line no-await-in-loop -- incompressible copies make real allocated blocks observable
@@ -606,7 +628,17 @@ describe('05 retention and reservations', () => {
       // oxlint-disable-next-line no-await-in-loop -- fill the injected budget with successive user rounds
       const data = await manifest(
         // oxlint-disable-next-line no-await-in-loop -- snapshot one retained round before continuing
-        await controller.take(request(join(workspace, 'a'), round), new AbortController().signal),
+        await controller.take(
+          {
+            ...request(join(workspace, 'a'), round),
+            call: {
+              ...request().call,
+              roundRunId: round,
+              runId: i === 0 ? resumedRun : randomUUID(),
+            },
+          },
+          new AbortController().signal,
+        ),
       )
       ids.push(data.id)
     }
@@ -642,7 +674,9 @@ describe('05 retention and reservations', () => {
       await warm(controller)
       expect(controller.status(SESSION)).toBe('file-only')
       expect(controller.lastDegradeReason(SESSION)).toMatch(/budget/)
-      expect(spawned.some((spec) => spec.argv.includes('add'))).toBe(false)
+      expect(
+        spawned.some((spec) => spec.argv.includes('update-index') && spec.argv.includes('--add')),
+      ).toBe(false)
       expect(
         await controller.take(request(join(workspace, 'a')), new AbortController().signal),
       ).toEqual({ ok: false, reason: 'over-budget' })
@@ -698,6 +732,7 @@ describe('05 recovery, lifecycle and coverage', () => {
       await writeFile(join(workspace, 'a'), 'before')
       await warm()
       const data = await manifest(await snapshots.take(request(), new AbortController().signal))
+      await snapshots.settled(SESSION)
       const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
       await writeFile(join(repo, 'index.lock'), 'left by a crash')
       await writeFile(join(repo, 'index'), 'partial index')
@@ -981,15 +1016,42 @@ it.skipIf(process.platform === 'win32' || process.getuid?.() !== 0)(
   15_000,
 )
 
-// The optional path must be a disposable, writable case-sensitive volume on macOS.
-// The usual fixture stays on the profile volume; no disk images are mounted by this suite.
-it.skipIf(process.platform !== 'darwin' || !process.env['TENON_SNAPSHOT_CASE_SENSITIVE_VOLUME'])(
-  '05 验收 44: Makefile and makefile remain distinct across profile and workspace volumes',
-  async () => {
-    const other = absolutePath(
-      await mkdtemp(join(process.env['TENON_SNAPSHOT_CASE_SENSITIVE_VOLUME']!, 'tenon-case-')),
-    )
+// Linux has no hdiutil/APFS; macOS builds and mounts its own disposable case-sensitive volume.
+it.skipIf(process.platform !== 'darwin')(
+  '05 验收 44: Makefile and makefile remain distinct across automatically mounted APFS volumes (macOS hdiutil required)',
+  async (context) => {
+    const runner = new SnapshotGit({ process: tracking, sandbox })
+    const image = join(root, 'case.sparseimage')
+    const mount = join(root, 'mounted-case')
+    await mkdir(mount)
+    let mounted = false
+    const diskCommand = (args: string[]) =>
+      runner.command(['/usr/bin/hdiutil', ...args], root, home, AbortSignal.timeout(30000))
     try {
+      try {
+        await diskCommand([
+          'create',
+          '-size',
+          '128m',
+          '-fs',
+          'Case-sensitive APFS',
+          '-type',
+          'SPARSE',
+          '-volname',
+          'TenonCase',
+          '-o',
+          image,
+        ])
+        await diskCommand(['attach', '-nobrowse', '-mountpoint', mount, image])
+        mounted = true
+      } catch (error) {
+        context.skip(
+          'hdiutil cannot create/mount APFS in this environment: ' +
+            (error instanceof Error ? error.message : String(error)),
+        )
+      }
+      const other = absolutePath(join(mount, 'workspace'))
+      await mkdir(other)
       const workspaceTraits = await probeVolume(other, new AbortController().signal)
       const profileTraits = await probeVolume(profile, new AbortController().signal)
       expect(workspaceTraits.ignorecase).toBe(false)
@@ -1007,11 +1069,12 @@ it.skipIf(process.platform !== 'darwin' || !process.env['TENON_SNAPSHOT_CASE_SEN
       expect(await git([`--git-dir=${repo}`, 'show', `${data.trees[0]!.commit}:makefile`])).toBe(
         'lower',
       )
+      await snapshots.settled(SESSION)
     } finally {
-      await rm(other, { recursive: true, force: true })
+      if (mounted) await diskCommand(['detach', mount])
     }
   },
-  15_000,
+  90000,
 )
 
 describe.skipIf(process.platform === 'win32' || process.env['TENON_SNAPSHOT_SLOW'] !== '1')(
@@ -1152,6 +1215,7 @@ describe('05 publication and recovery regressions', () => {
       expect(await controller.take(request(), new AbortController().signal)).toMatchObject({
         ok: false,
       })
+      await controller.settled(SESSION)
       await expect(git([`--git-dir=${repo}`, 'cat-file', '-e', hash])).rejects.toThrow(
         /subprocess failed/,
       )
@@ -1189,7 +1253,7 @@ describe('05 publication and recovery regressions', () => {
         process: {
           spawn: (spec, signal) =>
             tracking.spawn(
-              fail && spec.argv.includes('add')
+              fail && spec.argv.includes('update-index') && spec.argv.includes('--add')
                 ? {
                     ...spec,
                     argv: [
@@ -1393,7 +1457,7 @@ it.skipIf(process.platform === 'win32')(
     const controller = make({
       process: {
         spawn: (spec, signal) => {
-          if (fail && spec.argv.includes('add')) {
+          if (fail && spec.argv.includes('update-index') && spec.argv.includes('--add')) {
             fail = false
             throw new Error('bad filename timeout.txt')
           }
@@ -1461,8 +1525,676 @@ it.skipIf(process.platform === 'win32')(
     snapshots.bindSensitiveRefresh((folders) => refreshes.push([...folders]))
     await writeFile(join(workspace, 'a'), 'a')
     await warm()
-    expect(refreshes).toEqual([[workspace]])
-    expectSuccess(snapshots, await snapshots.take(request(), new AbortController().signal))
     expect(refreshes).toEqual([[workspace], [workspace]])
+    expectSuccess(snapshots, await snapshots.take(request(), new AbortController().signal))
+    expect(refreshes).toEqual([[workspace], [workspace], [workspace]])
   },
 )
+
+it('05 验收 8: git-invalid names are skipped while ordinary files remain in the tree', async () => {
+  await mkdir(join(workspace, 'd'))
+  await writeFile(join(workspace, 'git~1'), 'invalid')
+  await writeFile(join(workspace, 'd/.git.'), 'invalid')
+  await writeFile(join(workspace, 'ordinary'), 'keep')
+  await warm()
+  expectState(snapshots, 'tree')
+  const result = await snapshots.take(request(), new AbortController().signal)
+  expectSuccess(snapshots, result)
+  const saved = await manifest(result)
+  expect(saved.trees[0]?.entries.map((file) => file.path)).toEqual([join(workspace, 'ordinary')])
+  expect(saved.skipped).toBe(2)
+  expect(spawned.some((spec) => spec.argv.includes('--pathspec-from-file=-'))).toBe(false)
+  expect(
+    spawned.some((spec) => spec.argv.includes('update-index') && spec.argv.includes('--add')),
+  ).toBe(true)
+})
+
+it('05 验收 5、14: unchanged snapshots retain the stat index and reserve only changed content', async () => {
+  await writeFile(join(workspace, 'large'), randomBytes(350_000))
+  snapshots = make({ limits: { bytes: 1_000_000 } })
+  await warm()
+  const signal = new AbortController().signal
+  const first = await snapshots.take(request(), signal)
+  expectSuccess(snapshots, first)
+  await snapshots.settled(SESSION)
+  spawned.length = 0
+  const second = await snapshots.take(request(), signal)
+  expectSuccess(snapshots, second)
+  expect(spawned.some((spec) => spec.argv.includes('read-tree'))).toBe(false)
+  await snapshots.settled(SESSION)
+  expectSuccess(snapshots, await snapshots.take(request(), signal))
+  expect((await snapshots.alive(SESSION, first.ok ? [first.snapshotId] : [])).size).toBe(1)
+})
+
+it('05 验收 5、44、49: volume probing never creates or changes workspace entries', async () => {
+  await writeFile(join(workspace, 'keep'), 'fixture')
+  const before = await lstat(workspace, { bigint: true })
+  const traits = await probeVolume(workspace, new AbortController().signal)
+  const after = await lstat(workspace, { bigint: true })
+  expect(after.mtimeNs).toBe(before.mtimeNs)
+  expect(await readdir(workspace)).toEqual(['keep'])
+  expect(traits).toMatchObject({ symlinks: true, filemode: true })
+})
+
+it('05 验收 10: a tree timeout still fulfils a file promise with a fresh copy deadline', async () => {
+  const path = join(workspace, 'a')
+  await writeFile(path, 'promised bytes')
+  let blocked = false
+  const controller = make({
+    limits: { takeMs: 1000 },
+    process: injectedProcess((spec, signal) =>
+      blocked && spec.argv.includes('write-tree') ? untilAborted(signal) : null,
+    ),
+  })
+  await warm(controller)
+  blocked = true
+  const data = await manifest(await controller.take(request(path), new AbortController().signal))
+  expect(controller.status(SESSION)).toBe('file-only')
+  expect(data.trees).toEqual([])
+  expect(await copy(data.files[0]!)).toEqual(Buffer.from('promised bytes'))
+}, 10000)
+
+it.each(['tree', 'home', 'legacy', 'cleared'] as const)(
+  '05 验收 12、31: session workspace lookup restores %s coverage after reopening or clearing',
+  async (kind) => {
+    const folder = kind === 'home' ? home : workspace
+    const path = absolutePath(join(folder, 'a'))
+    await writeFile(path, 'fixture')
+    if (kind !== 'legacy') {
+      await warm(snapshots, folder)
+      await snapshots.take({ ...request(path), folders: [folder] }, new AbortController().signal)
+      await snapshots.settled(SESSION)
+    }
+    const controller = kind === 'cleared' ? snapshots : make()
+    if (kind === 'cleared') await controller.removeSession(SESSION)
+    await controller.ready
+    controller.bindSessionFolders(async () => [folder])
+    expect(controller.status(SESSION)).toBe('warming')
+    expect(await controller.coverage({ sessionId: SESSION, path })).not.toBe('none')
+    await controller.settled(SESSION)
+    expect(controller.status(SESSION)).toBe(kind === 'home' ? 'file-only' : 'tree')
+    expect(await controller.coverage({ sessionId: SESSION, path })).toBe(
+      kind === 'home' ? 'file' : 'tree',
+    )
+  },
+  15000,
+)
+
+it('05 验收 45: stopping a capture clears its index lock before another tree capture', async () => {
+  const entered = Promise.withResolvers<void>()
+  let blocked = false
+  const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+  const controller = make({
+    process: injectedProcess((spec, signal) => {
+      if (!blocked || !spec.argv.includes('write-tree')) return null
+      return writeFile(join(repo, 'index.lock'), 'injected interrupted git').then(() => {
+        entered.resolve()
+        return untilAborted(signal)
+      })
+    }),
+  })
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm(controller)
+  blocked = true
+  const stop = new AbortController()
+  const work = controller.take(request(), stop.signal)
+  await entered.promise
+  stop.abort()
+  expect(await work).toEqual({ ok: false, reason: 'aborted' })
+  await expect(lstat(join(repo, 'index.lock'))).rejects.toMatchObject({ code: 'ENOENT' })
+  blocked = false
+  await controller.settled(SESSION)
+  expect(await controller.take(request(), new AbortController().signal)).toMatchObject({
+    ok: true,
+    scope: 'tree',
+  })
+})
+
+it('05 验收 6: every snapshot child isolates the actual HOME and receives exactly the fixed environment', async () => {
+  const marker = join(root, 'hostile-ran')
+  const hook = join(root, 'hostile-monitor')
+  await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o700 })
+  const children: SpawnSpec[] = []
+  const controller = make({
+    process: {
+      spawn: async (spec, signal) => {
+        children.push(spec)
+        expect(spec.env['HOME']?.startsWith(join(profile, 'snapshots') + '/')).toBe(true)
+        await writeFile(
+          join(spec.env['HOME']!, '.gitconfig'),
+          `[core]\n hooksPath = ${root}\n fsmonitor = ${hook}\n[init]\n templateDir = ${root}\n`,
+        )
+        expect(spec.env).toEqual({
+          PATH: '/usr/bin:/bin',
+          HOME: spec.env['HOME'],
+          GIT_CONFIG_NOSYSTEM: '1',
+          GIT_CONFIG_GLOBAL: join(spec.env['HOME']!, 'empty'),
+          GIT_ATTR_NOSYSTEM: '1',
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_LITERAL_PATHSPECS: '1',
+          LC_ALL: 'C',
+          GIT_AUTHOR_NAME: 'Tenon',
+          GIT_AUTHOR_EMAIL: 'snapshot@localhost',
+          GIT_COMMITTER_NAME: 'Tenon',
+          GIT_COMMITTER_EMAIL: 'snapshot@localhost',
+        })
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm(controller)
+  expectSuccess(controller, await controller.take(request(), new AbortController().signal))
+  await controller.settled(SESSION)
+  expect(children.length).toBeGreaterThan(0)
+  await expect(lstat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('05 验收 7: nested repository names containing a backslash are excluded literally', async () => {
+  const nested = join(workspace, 'nested\\repo')
+  await mkdir(join(nested, '.git'), { recursive: true })
+  await writeFile(join(nested, 'secret'), 'nested')
+  await writeFile(join(workspace, 'nestedrepo'), 'ordinary')
+  await warm()
+  const data = await manifest(await snapshots.take(request(), new AbortController().signal))
+  expect(data.trees[0]?.entries.map((entry) => entry.path)).toEqual([join(workspace, 'nestedrepo')])
+})
+
+describe.skipIf(process.platform === 'win32' || process.env['TENON_SNAPSHOT_SLOW'] !== '1')(
+  '05 opt-in stat cache scale',
+  () => {
+    it('05 验收 10: an unchanged thirty-thousand-file second snapshot stays within the normal tree budget', async () => {
+      for (let start = 0; start < 30000; start += 500) {
+        // oxlint-disable-next-line no-await-in-loop -- bounded writes avoid exhausting file descriptors
+        await Promise.all(
+          Array.from({ length: 500 }, (_, i) =>
+            writeFile(join(workspace, `file-${start + i}`), `content-${start + i}`),
+          ),
+        )
+      }
+      await warm()
+      expectState(snapshots, 'tree')
+      const result = await snapshots.take(request(), new AbortController().signal)
+      expect({
+        result,
+        diagnostic: snapshots.lastDegradeReason(SESSION),
+        stage: snapshots.lastCaptureStage(SESSION),
+      }).toEqual({
+        result: expect.objectContaining({ ok: true, scope: 'tree' }),
+        diagnostic: null,
+        stage: 'done',
+      })
+      expectState(snapshots, 'tree')
+    }, 120000)
+  },
+)
+
+it('05 验收 10、45: timed-out tree cleanup does not hold the returned file copy behind gc', async () => {
+  const gcStarted = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let blocked = false
+  let completed = false
+  const path = join(workspace, 'a')
+  await writeFile(path, 'fixture')
+  const controller = make({
+    limits: { takeMs: 1000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (blocked && spec.argv.includes('write-tree')) return untilAborted(signal)
+        if (blocked && spec.argv.includes('gc')) {
+          gcStarted.resolve()
+          await release.promise
+        }
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await warm(controller)
+  blocked = true
+  const work = controller.take(request(path), new AbortController().signal).then((result) => {
+    completed = true
+    return result
+  })
+  try {
+    await gcStarted.promise
+    expect(completed).toBe(true)
+    expect(await work).toMatchObject({ ok: true, scope: 'file' })
+  } finally {
+    release.resolve()
+    await work
+    await controller.settled(SESSION)
+  }
+}, 10000)
+
+it('05 验收 7、8: a retained index removes deleted and newly ignored files before staging additions', async () => {
+  await writeFile(join(workspace, 'deleted'), 'old')
+  await writeFile(join(workspace, 'ignored'), 'old')
+  await warm()
+  await writeFile(join(workspace, '.gitignore'), 'ignored\n')
+  await rm(join(workspace, 'deleted'))
+  await writeFile(join(workspace, 'added'), 'new')
+  spawned.length = 0
+  const data = await manifest(await snapshots.take(request(), new AbortController().signal))
+  const paths = data.trees[0]!.entries.map((entry) => entry.path)
+  expect(paths).toContain(join(workspace, 'added'))
+  expect(paths).not.toContain(join(workspace, 'deleted'))
+  expect(paths).not.toContain(join(workspace, 'ignored'))
+  expect(
+    spawned.some(
+      (spec) => spec.argv.includes('update-index') && spec.argv.includes('--force-remove'),
+    ),
+  ).toBe(true)
+})
+
+it('05 验收 10、45: waiting for background gc does not spend the next capture deadline', async () => {
+  const started = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let firstGc = true
+  const controller = make({
+    limits: { takeMs: 1000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (firstGc && spec.argv.includes('gc')) {
+          firstGc = false
+          started.resolve()
+          await release.promise
+        }
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm(controller)
+  expectSuccess(controller, await controller.take(request(), new AbortController().signal))
+  await started.promise
+  const next = controller.take(request(), new AbortController().signal)
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1100))
+  } finally {
+    release.resolve()
+  }
+  expect(await next).toMatchObject({ ok: true, scope: 'tree' })
+  expectState(controller, 'tree')
+}, 10000)
+
+it.each(['tree', 'file'] as const)(
+  '05 验收 14: a %s file growing after reservation cannot publish beyond the actual byte budget',
+  async (kind) => {
+    const path = join(workspace, 'a')
+    await writeFile(path, 'small')
+    let grow = false
+    const controller = make({
+      platform: kind === 'file' ? 'win32' : process.platform,
+      limits: { bytes: 350_000 },
+      process: {
+        spawn: async (spec, signal) => {
+          if (grow && spec.argv.includes('update-index') && spec.argv.includes('--add')) {
+            grow = false
+            await actualFs.writeFile(path, randomBytes(500_000))
+          }
+          return tracking.spawn(spec, signal)
+        },
+      },
+    })
+    await warm(controller)
+    const origin = await manifest(
+      await controller.take(request(path), new AbortController().signal),
+    )
+    await controller.settled(SESSION)
+    if (kind === 'tree') grow = true
+    else {
+      // readCoverage and the reservation inspect the small file; grow immediately after that stat.
+      let targetStats = 0
+      vi.mocked(nativeFs.lstat).mockImplementation(async (...args) => {
+        const value = await actualFs.lstat(...args)
+        if (String(args[0]) === path && ++targetStats === 2)
+          await actualFs.writeFile(path, randomBytes(500_000))
+        return value
+      })
+    }
+    const result = await controller.take(
+      request(path, origin.call.roundRunId),
+      new AbortController().signal,
+    )
+    expect(result).toEqual({ ok: false, reason: 'over-budget' })
+    await controller.settled(SESSION)
+    expect(await controller.alive(SESSION, [origin.id])).toEqual(new Set([origin.id]))
+    expect(await readdir(join(profile, 'snapshots', SESSION, 'manifests'))).toEqual([
+      `${origin.id}.json`,
+    ])
+    expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(350_000)
+  },
+  15000,
+)
+
+it('05 验收 14、45: gc that writes garbage before failing invalidates the usage cache', async () => {
+  let fail = false
+  const controller = make({
+    limits: { bytes: 450_000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (fail && spec.argv.includes('gc')) {
+          const repo = spec.argv.find((arg) => arg.startsWith('--git-dir='))!.slice(10)
+          await actualFs.writeFile(
+            join(repo, 'objects', 'pack', 'tmp_failed_gc'),
+            randomBytes(500_000),
+          )
+          throw new Error('gc failed after writing a temporary pack')
+        }
+        return tracking.spawn(spec, signal)
+      },
+    },
+  })
+  await writeFile(join(workspace, 'a'), 'small')
+  await warm(controller)
+  fail = true
+  const origin = await controller.take(request(), new AbortController().signal)
+  expectSuccess(controller, origin)
+  await controller.settled(SESSION)
+  spawned.length = 0
+  expect(await controller.take(request(), new AbortController().signal)).toEqual({
+    ok: false,
+    reason: 'over-budget',
+  })
+  expect(
+    spawned.some((spec) => spec.argv.includes('update-index') && spec.argv.includes('--add')),
+  ).toBe(false)
+  fail = false
+})
+
+it('05 验收 14、45: rejecting actual usage preserves another in-flight single-file copy', async () => {
+  const controller = make({ platform: 'win32', limits: { bytes: 2_200_000 } })
+  await warm(controller)
+  const a = join(workspace, 'a')
+  const b = join(workspace, 'b')
+  const bytes = randomBytes(1_000_000)
+  await writeFile(a, randomBytes(1_000_000))
+  await writeFile(b, bytes)
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let held = false
+  vi.mocked(nativeFs.lstat).mockImplementation(async (...args) => {
+    if (!held && String(args[0]) === workspace && args[1]?.bigint) {
+      held = true
+      entered.resolve()
+      await release.promise
+    }
+    return actualFs.lstat(...args)
+  })
+  const pending = controller.take(request(b), new AbortController().signal)
+  try {
+    await entered.promise
+    expect(await controller.take(request(a), new AbortController().signal)).toEqual({
+      ok: false,
+      reason: 'over-budget',
+    })
+  } finally {
+    release.resolve()
+  }
+  const saved = await manifest(await pending)
+  expect(await copy(saved.files[0]!)).toEqual(bytes)
+  await controller.settled(SESSION)
+  expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(2_200_000)
+})
+
+it('05 验收 14、45: budget rejection cannot reclaim a concurrent warmup reference', async () => {
+  const a = join(workspace, 'a')
+  const b = join(workspace, 'b')
+  await writeFile(a, randomBytes(200_000))
+  await writeFile(b, 'small')
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let commit = ''
+  let grown = false
+  const controller = make({
+    limits: { bytes: 2_300_000 },
+    process: {
+      spawn: async (spec, signal) => {
+        if (!grown && spec.argv.includes('update-index') && spec.argv.includes('--add')) {
+          grown = true
+          await actualFs.writeFile(a, randomBytes(1_000_000))
+        }
+        const child = await tracking.spawn(spec, signal)
+        if (spec.argv.includes('update-ref') && !spec.argv.includes('-d')) {
+          commit = spec.argv.at(-1)!
+          await child.exited
+          entered.resolve()
+          await release.promise
+        }
+        return child
+      },
+    },
+  })
+  await controller.setWorkspace(SESSION, [workspace])
+  try {
+    await entered.promise
+    let targetStats = 0
+    vi.mocked(nativeFs.lstat).mockImplementation(async (...args) => {
+      const value = await actualFs.lstat(...args)
+      if (String(args[0]) === b && ++targetStats === 2)
+        await actualFs.writeFile(b, randomBytes(1_000_000))
+      return value
+    })
+    expect(await controller.take(request(b), new AbortController().signal)).toEqual({
+      ok: false,
+      reason: 'over-budget',
+    })
+    const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+    expect(await git([`--git-dir=${repo}`, 'cat-file', '-e', commit])).toBe('')
+  } finally {
+    release.resolve()
+    await controller.settled(SESSION)
+  }
+  expectState(controller, 'file-only')
+})
+
+it('05 验收 45: recovery discards malformed, wrong-version and missing-commit manifests but keeps a good one', async () => {
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm()
+  const good = await manifest(await snapshots.take(request(), new AbortController().signal))
+  await snapshots.settled(SESSION)
+  const dir = join(profile, 'snapshots', SESSION, 'manifests')
+  const broken = randomUUID()
+  const version = randomUUID()
+  const missing = randomUUID()
+  await writeFile(join(dir, `${broken}.json`), '{broken')
+  await writeFile(
+    join(dir, `${version}.json`),
+    JSON.stringify({ ...good, id: version, version: 2 }),
+  )
+  await writeFile(
+    join(dir, `${missing}.json`),
+    JSON.stringify({
+      ...good,
+      id: missing,
+      createdAt: good.createdAt + 1,
+      trees: good.trees.map((tree) => ({ ...tree, commit: '1'.repeat(40) })),
+    }),
+  )
+  const reopened = make()
+  await reopened.ready
+  expect(reopened.lastDegradeReason(SESSION)).toBeNull()
+  expect(await readdir(dir)).toEqual([`${good.id}.json`])
+  expect(await reopened.alive(SESSION, [good.id, broken, version, missing])).toEqual(
+    new Set([good.id]),
+  )
+})
+
+it.each(DEFAULT_EXCLUDES)('05 验收 7、8: default exclude %s never enters a tree', async (name) => {
+  const path = join(workspace, name)
+  if (name === '.DS_Store' || name === 'Thumbs.db') await writeFile(path, 'excluded')
+  else {
+    await mkdir(path)
+    await writeFile(join(path, 'hidden'), 'excluded')
+  }
+  await writeFile(join(workspace, 'ordinary'), 'included')
+  await warm()
+  const saved = await manifest(await snapshots.take(request(), new AbortController().signal))
+  expect(saved.trees[0]!.entries.map((entry) => entry.path)).toEqual([join(workspace, 'ordinary')])
+})
+
+it.each([
+  ['2.42.9', 'file-only'],
+  ['2.43.0', 'tree'],
+] as const)('05 验收 11: git version boundary %s produces %s coverage', async (version, state) => {
+  const exe = join(root, 'versioned-git')
+  await writeFile(
+    exe,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "git version ' +
+      version +
+      '"; else exec /usr/bin/git "$@"; fi\n',
+    { mode: 0o700 },
+  )
+  const controller = make({ platform: 'linux', gitPath: exe })
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm(controller)
+  expectState(controller, state)
+  expect(
+    await controller.coverage({ sessionId: SESSION, path: absolutePath(join(workspace, 'a')) }),
+  ).toBe(state === 'tree' ? 'tree' : 'file')
+})
+
+it('05 验收 43、45: stopping after a new ref exists publishes nothing and restores the prior index', async () => {
+  const entered = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let hold = false
+  const controller = make({
+    process: {
+      spawn: async (spec, signal) => {
+        const child = await tracking.spawn(spec, signal)
+        if (hold && spec.argv.includes('update-ref') && !spec.argv.includes('-d')) {
+          hold = false
+          await child.exited
+          entered.resolve()
+          await release.promise
+        }
+        return child
+      },
+    },
+  })
+  await writeFile(join(workspace, 'a'), 'original')
+  await warm(controller)
+  const original = await manifest(await controller.take(request(), new AbortController().signal))
+  await controller.settled(SESSION)
+  await writeFile(join(workspace, 'b'), 'unpublished')
+  hold = true
+  const stop = new AbortController()
+  const pending = controller.take(request(), stop.signal)
+  await entered.promise
+  stop.abort()
+  release.resolve()
+  expect(await pending).toEqual({ ok: false, reason: 'aborted' })
+  await controller.settled(SESSION)
+  const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+  expect(await readdir(join(profile, 'snapshots', SESSION, 'manifests'))).toEqual([
+    `${original.id}.json`,
+  ])
+  expect(
+    (await git([`--git-dir=${repo}`, 'for-each-ref', '--format=%(refname)', 'refs/tenon/'])).trim(),
+  ).toBe(`refs/tenon/${original.id}`)
+  expect(await git([`--git-dir=${repo}`, 'ls-files'])).toBe('a\n')
+  expect(await readFile(join(workspace, 'b'), 'utf8')).toBe('unpublished')
+})
+
+it.each(['command', 'space'] as const)(
+  '05 验收 10、11、14: a tree %s failure fulfils the target promise with a single-file copy',
+  async (failure) => {
+    const path = join(workspace, 'target')
+    const other = join(workspace, 'other')
+    await writeFile(path, 'promised')
+    await writeFile(other, 'small')
+    let fail = false
+    const controller = make({
+      limits: { bytes: 350_000 },
+      process: {
+        spawn: async (spec, signal) => {
+          if (fail && failure === 'command' && spec.argv.includes('write-tree')) {
+            fail = false
+            throw new Error('injected staging failure')
+          }
+          if (
+            fail &&
+            failure === 'space' &&
+            spec.argv.includes('update-index') &&
+            spec.argv.includes('--add')
+          ) {
+            fail = false
+            await actualFs.writeFile(other, randomBytes(500_000))
+          }
+          return tracking.spawn(spec, signal)
+        },
+      },
+    })
+    await warm(controller)
+    fail = true
+    const result = await controller.take(request(path), new AbortController().signal)
+    expect(result).toMatchObject({ ok: true, scope: 'file' })
+    const saved = await manifest(result)
+    expect(saved.trees).toEqual([])
+    expect(await copy(saved.files[0]!)).toEqual(Buffer.from('promised'))
+    await controller.settled(SESSION)
+    expect(await diskBytes(join(profile, 'snapshots'))).toBeLessThanOrEqual(350_000)
+  },
+)
+
+it('05 验收 10: one eligible-file budget is shared across every workspace root', async () => {
+  const second = absolutePath(join(root, 'second'))
+  await mkdir(second)
+  await writeFile(join(workspace, 'a'), 'first')
+  await writeFile(join(second, 'b'), 'second')
+  const controller = make({ limits: { files: 1 } })
+  await controller.setWorkspace(SESSION, [workspace, second])
+  await controller.settled(SESSION)
+  expectState(controller, 'file-only')
+  expect(controller.lastDegradeReason(SESSION)).toMatch(/file-count budget/)
+})
+
+it('05 验收 45: startup verifies stale process records before validating any repository commit', async () => {
+  await writeFile(join(workspace, 'a'), 'fixture')
+  await warm()
+  await snapshots.settled(SESSION)
+  const repo = repoPath(join(profile, 'snapshots', SESSION), workspace)
+  const run = SnapshotGit.prototype.run
+  const recovered = vi.spyOn(SnapshotGit.prototype, 'recoverProcess')
+  const checked = vi.spyOn(SnapshotGit.prototype, 'run').mockImplementation(function (
+    this: SnapshotGit,
+    ...args
+  ) {
+    if (args[0] === repo) expect(recovered.mock.calls.some(([path]) => path === repo)).toBe(true)
+    return run.apply(this, args)
+  })
+  try {
+    const reopened = make()
+    await reopened.ready
+    expect(reopened.lastDegradeReason(SESSION)).toBeNull()
+    expect(checked).toHaveBeenCalled()
+  } finally {
+    checked.mockRestore()
+    recovered.mockRestore()
+  }
+})
+
+it('05 验收 14: actual accounting skips unchanged immutable objects and recounts only changed buckets', async () => {
+  const dir = join(root, 'accounting')
+  const hash = 'a'.repeat(38)
+  for (const bucket of ['00', '01', '02']) {
+    // oxlint-disable-next-line no-await-in-loop -- distinct immutable object buckets exercise cache isolation
+    await mkdir(join(dir, 'objects', bucket), { recursive: true })
+    // oxlint-disable-next-line no-await-in-loop -- disk allocation, never synthetic byte counts
+    await writeFile(join(dir, 'objects', bucket, hash), 'immutable')
+  }
+  const counter = new SnapshotDiskUsage()
+  expect(await counter.measure(dir)).toBe(await diskBytes(dir))
+  vi.mocked(nativeFs.lstat).mockClear()
+  await counter.measure(dir)
+  expect(vi.mocked(nativeFs.lstat).mock.calls.map(([path]) => String(path))).not.toContain(
+    join(dir, 'objects', '01', hash),
+  )
+  await writeFile(join(dir, 'objects', '00', 'b'.repeat(38)), randomBytes(5000))
+  vi.mocked(nativeFs.lstat).mockClear()
+  const measured = await counter.measure(dir)
+  const checked = vi.mocked(nativeFs.lstat).mock.calls.map(([path]) => String(path))
+  expect(checked).toContain(join(dir, 'objects', '00', 'b'.repeat(38)))
+  expect(checked).not.toContain(join(dir, 'objects', '01', hash))
+  expect(measured).toBe(await diskBytes(dir))
+})

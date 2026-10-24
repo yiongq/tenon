@@ -137,8 +137,11 @@ export interface BatchContext {
   readonly approved?: ApprovedCall
   readonly inspectors: readonly InspectorRegistration[]
   readonly validator: AsyncArgumentValidator
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => PathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<PathScope['sensitive']>)
+    | ((roots: readonly AbsolutePath[], sessionKey?: string) => Promise<PathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -1095,8 +1098,11 @@ export interface JudgeContext {
   readonly host: HostAdapter
   readonly sessionId: string
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => PathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<PathScope['sensitive']>)
+    | ((roots: readonly AbsolutePath[], sessionKey?: string) => Promise<PathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -1420,7 +1426,10 @@ export interface CallFacts {
 }
 
 export async function callFactsOf(
-  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
+  ctx: Pick<
+    JudgeContext,
+    'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths' | 'sensitiveFallback'
+  >,
 ): Promise<CallFacts> {
   const entries = await readSessionEntries(ctx.tape, ctx.sessionId)
   const facts = sessionFactsOf(entries)
@@ -1444,7 +1453,11 @@ export async function callFactsOf(
     parentEntries,
     relatedEntries,
     profile: facts.profile,
-    scope: await pathScopeOf(ctx, workspace),
+    scope: await pathScopeOf(
+      ctx,
+      workspace,
+      `${ctx.sessionId}:${entries[0]?.incarnationId ?? 'draft'}`,
+    ),
     workspace,
   }
 }
@@ -1459,8 +1472,12 @@ export async function callFactsOf(
  * roots are empty.
  */
 export async function pathScopeOf(
-  ctx: Pick<JudgeContext, 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
+  ctx: Pick<
+    JudgeContext,
+    'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths' | 'sensitiveFallback'
+  >,
   workspace: WorkspaceSetPayload | null,
+  sessionKey?: string,
 ): Promise<PathScope> {
   const fs = ctx.host.fs
   const profileDir = (await resolvePath(fs, ctx.host.identity.profileDir as AbsolutePath)).path
@@ -1469,7 +1486,12 @@ export async function pathScopeOf(
     ctx.protectedFiles.map(async (file) => (await resolvePath(fs, file)).path),
   )
   const roots = workspace?.folders ?? []
-  const sensitive = await ctx.sensitivePaths?.(roots)
+  let sensitive: PathScope['sensitive']
+  try {
+    sensitive = await ctx.sensitivePaths?.(roots, sessionKey)
+  } catch {
+    sensitive = ctx.sensitiveFallback?.(roots)
+  }
   return {
     roots,
     profileDir,
@@ -1481,7 +1503,10 @@ export async function pathScopeOf(
 
 /** Where a file tool's path falls, as a decision places it; undefined for any other tool. */
 export async function placeOf(
-  ctx: Pick<JudgeContext, 'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths'>,
+  ctx: Pick<
+    JudgeContext,
+    'tape' | 'host' | 'sessionId' | 'protectedFiles' | 'sensitivePaths' | 'sensitiveFallback'
+  >,
   item: ToolTableItem,
   input: Record<string, unknown>,
 ): Promise<PathPlace | undefined> {

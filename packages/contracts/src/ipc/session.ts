@@ -139,6 +139,18 @@ export const workspaceResultSchema = z.discriminatedUnion('ok', [
     ok: z.literal(true),
     folders: z.array(z.string().min(1)),
     origin: z.enum(['picked', 'dedicated']),
+  }),
+  z.object({
+    ok: z.literal(false),
+    code: z.enum(['not-cowork', 'unknown-session', 'not-in-list']),
+  }),
+])
+
+const workspaceSelectionResultSchema = z.discriminatedUnion('ok', [
+  z.object({
+    ok: z.literal(true),
+    folders: z.array(z.string().min(1)),
+    origin: z.enum(['picked', 'dedicated']),
     warning: z.literal('home').optional(),
   }),
   z.object({
@@ -146,7 +158,7 @@ export const workspaceResultSchema = z.discriminatedUnion('ok', [
     code: z.enum(['not-cowork', 'unknown-session', 'not-in-list', 'root-folder']),
   }),
 ])
-export type WorkspaceResult = z.infer<typeof workspaceResultSchema>
+export type WorkspaceResult = z.infer<typeof workspaceSelectionResultSchema>
 
 /** Only the session: a folder never comes from the renderer, only from main's dialog or prefill. */
 const workspaceTarget = z.object({ sessionId: canonicalSessionIdSchema }).strict()
@@ -154,12 +166,12 @@ const workspaceTarget = z.object({ sessionId: canonicalSessionIdSchema }).strict
 /** Opens main's directory dialog (multiple folders); a cancel answers the list as it was. */
 export const workspacePick = defineRoute('workspace.pick', {
   request: workspaceTarget,
-  response: workspaceResultSchema,
+  response: workspaceSelectionResultSchema,
 })
 /** Takes the prefill `config.json` holds (`lastWorkspaceFolders`) into the session's list. */
 export const workspaceUsePrefill = defineRoute('workspace.usePrefill', {
   request: workspaceTarget,
-  response: workspaceResultSchema,
+  response: workspaceSelectionResultSchema,
 })
 /** Removes one folder already in the list; the list falls back to the dedicated folder when empty. */
 export const workspaceRemove = defineRoute('workspace.remove', {

@@ -649,7 +649,9 @@
     "toggle": "在文件夹里工作",
     "dedicatedNote": "没选文件夹时，命令在 Tenon 为这个任务单独建的文件夹里运行。",
     "prefillPending": "上次用过，尚未加入",
-    "prefillUse": "用这 {count} 个文件夹"
+    "prefillUse": "用这 {count} 个文件夹",
+    "rootRefused": "不能选择磁盘根目录，请选择其中的文件夹。",
+    "homeWarning": "你选择了主目录或它的上级，请留意其中的私人文件。"
   },
   "mcp": {
     "settings": "设置",

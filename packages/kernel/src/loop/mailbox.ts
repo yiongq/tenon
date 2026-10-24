@@ -283,8 +283,14 @@ export interface LoopDeps {
   readonly connector: RunConnector
   readonly log: (line: string) => void
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   /** Which builtin tools the registry offers: the product's, or every one under a test registry. */
@@ -1560,6 +1566,7 @@ export function createLoop(deps: LoopDeps): Loop {
         tape,
         host: deps.host,
         inspectors: deps.inspectors,
+        sensitiveFallback: deps.sensitiveFallback,
         sensitivePaths: deps.sensitivePaths,
         protectedFiles: deps.protectedFiles,
         userSetting: deps.userSetting,
@@ -2280,6 +2287,7 @@ export function createLoop(deps: LoopDeps): Loop {
                 },
               }),
           inspectors: deps.inspectors,
+          sensitiveFallback: deps.sensitiveFallback,
           sensitivePaths: deps.sensitivePaths,
           protectedFiles: deps.protectedFiles,
           ...(deps.schemaValidator ? { schemaValidator: deps.schemaValidator } : {}),
@@ -3195,7 +3203,9 @@ export function createLoop(deps: LoopDeps): Loop {
     const resolved = await resolvePath(deps.host.fs, folder)
     const real = resolved.path
     const parts = pathParts(real)
-    if (!resolved.resolved || parts.segments.length === 0) return null
+    // This firmlink mount shares its parent's device on macOS; reserve its root spelling on every host.
+    if (!resolved.resolved || parts.segments.length === 0 || real === '/System/Volumes/Data')
+      return null
     try {
       const self = await deps.host.fs.identity(real)
       if (self === null && allowMissing) return real
@@ -3223,8 +3233,8 @@ export function createLoop(deps: LoopDeps): Loop {
       if (!picked.includes(change.folder as AbsolutePath)) return 'not-in-list'
       const rest = picked.filter((folder) => folder !== change.folder)
       if (rest.length > 0) return { folders: rest, origin: 'picked' }
-      const real = await acceptedFolder(dedicated, true)
-      return real === null ? 'root-folder' : { folders: [real], origin: 'dedicated' }
+      // workspace.remove has the original contract: invalid dedicated roots fail through handler-failed.
+      return dedicatedWorkspace(dedicated)
     }
     const added: AbsolutePath[] = []
     for (const folder of change.folders) {
@@ -3276,7 +3286,7 @@ export function createLoop(deps: LoopDeps): Loop {
     }
     let warning: 'home' | undefined
     try {
-      const home = (await bound?.commandShell.env())?.['HOME']
+      const home = q.change.kind === 'add' ? (await bound?.commandShell.env())?.['HOME'] : undefined
       if (home !== undefined && isAbsolutePath(home)) {
         const realHome = (await resolvePath(deps.host.fs, home)).path
         const parts = pathParts(realHome)
@@ -3391,6 +3401,7 @@ export function createLoop(deps: LoopDeps): Loop {
         log,
         host: deps.host,
         inspectors: deps.inspectors,
+        sensitiveFallback: deps.sensitiveFallback,
         sensitivePaths: deps.sensitivePaths,
         protectedFiles: deps.protectedFiles,
         userSetting: deps.userSetting,
@@ -3565,6 +3576,7 @@ export function createLoop(deps: LoopDeps): Loop {
                 tape,
                 host: deps.host,
                 sessionId: waiting.sessionId,
+                sensitiveFallback: deps.sensitiveFallback,
                 sensitivePaths: deps.sensitivePaths,
                 protectedFiles: deps.protectedFiles,
               },

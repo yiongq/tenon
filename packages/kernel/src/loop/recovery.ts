@@ -65,8 +65,14 @@ export interface RecoveryDeps {
   readonly log: (line: string) => void
   readonly host: HostAdapter
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -538,6 +544,7 @@ async function rejudgeAtStartup(
       tape: deps.tape,
       host: deps.host,
       inspectors: deps.inspectors,
+      sensitiveFallback: deps.sensitiveFallback,
       sensitivePaths: deps.sensitivePaths,
       protectedFiles: deps.protectedFiles,
       userSetting: deps.userSetting,

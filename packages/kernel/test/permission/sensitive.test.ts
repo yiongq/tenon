@@ -19,7 +19,7 @@ const scope: PathScope = {
 
 describe('05 sensitive permission boundaries', () => {
   it.each(['credential', 'auto-run', 'hardlink'] as const)(
-    '05 验收 25、26、27、52: %s ignores own, inherited, task and auto grants and keeps the category',
+    '05 验收 25、26、27: %s ignores own, inherited, task and auto grants and keeps the category',
     (category) => {
       for (const inherited of [false, true]) {
         const tool = {
@@ -54,10 +54,13 @@ describe('05 sensitive permission boundaries', () => {
             },
             taskGrant: true,
             approvalMode: 'auto',
+            userSetting: 'always-allow',
           },
         })
         expect(result.record.verdict).toBe('ask')
-        expect(result.record.steps.find((step) => step.by === 'user-grant')?.said).toBe('none')
+        expect(result.record.steps.filter((step) => step.by === 'user-grant')).toEqual([
+          { by: 'user-grant', said: 'none', status: 'ok' },
+        ])
         expect(result.confirm).toEqual({
           reason: 'sensitive-path',
           facts: { path: '/home/a', category },
@@ -75,7 +78,7 @@ describe('05 sensitive permission boundaries', () => {
     },
   )
 
-  it('05 验收 26、52: traversal skips credentials without opening them and keeps automatic names and multiple names', async () => {
+  it('05 验收 26: traversal skips credentials without opening them and keeps automatic names and multiple names', async () => {
     const host = createMemoryHost()
     await host.fs.mkdirp(p('/home/.ssh'))
     await host.fs.writeFile(p('/home/.ssh/id_test'), 'credential')
@@ -99,12 +102,16 @@ describe('05 sensitive permission boundaries', () => {
       ),
     ).toEqual(['.envrc', 'ordinary'])
     expect(visited).not.toContain('/home/.ssh')
-    expect(await walkFiles(fs, p('/home/.ssh'), scope, new AbortController().signal)).toEqual([])
-    expect(visited).not.toContain('/home/.ssh')
+    expect(
+      (await walkFiles(fs, p('/home/.ssh'), scope, new AbortController().signal)).map(
+        (file) => file.relative,
+      ),
+    ).toEqual(['id_test'])
+    expect(visited).toContain('/home/.ssh')
   })
 })
 
-it('05 验收 28、52: a home shell deny wins over shared auto-run names in the same workspace', async () => {
+it('05 验收 28: a home shell deny wins over shared auto-run names in the same workspace', async () => {
   const host = createMemoryHost()
   await host.fs.mkdirp(p('/home'))
   await host.fs.writeFile(p('/home/.zshrc'), 'fixture')
@@ -259,7 +266,7 @@ it('05 验收 26、28: credential reads in own-spill still ask, while writes ret
 })
 
 it.each(['ordinary-file', 'legacy-command', 'rerun-command'] as const)(
-  '05 验收 52: shared grant processing preserves the %s authorization boundary',
+  'shared grant processing preserves the %s authorization boundary',
   (kind) => {
     const command = kind !== 'ordinary-file'
     const tool = {
@@ -319,3 +326,65 @@ it.each(['ordinary-file', 'legacy-command', 'rerun-command'] as const)(
     expect(decision.confirm?.reason).toBe(command ? (rerun ? 'elevated' : 'command') : undefined)
   },
 )
+
+it('05 验收 55: a failing sensitive provider preserves name checks without failing call facts', async () => {
+  const { pathScopeOf } = await import('../../src/loop/batch.js')
+  const host = createMemoryHost()
+  const current = await pathScopeOf(
+    {
+      host,
+      sessionId: '3a1d9a2e-6b3d-4a71-9f52-0c8de7a11b61',
+      protectedFiles: [],
+      sensitivePaths: async () => {
+        throw new Error('metadata failed')
+      },
+      sensitiveFallback: () => scope.sensitive,
+    },
+    { folders: [p('/home')], origin: 'picked' },
+  )
+  expect(sensitiveName(p('/home/.envrc'), p('/home/.envrc'), current, true)).toBe('auto-run')
+})
+
+it('05 验收 26: an explicitly approved credential root is searched, but traversal from its parent skips it', async () => {
+  const host = createMemoryHost()
+  await host.fs.mkdirp(p('/home/.ssh'))
+  await host.fs.writeFile(p('/home/.ssh/key'), 'needle')
+  await host.fs.writeFile(p('/home/ordinary'), 'ordinary')
+  const signal = new AbortController().signal
+  expect(
+    (await walkFiles(host.fs, p('/home/.ssh'), scope, signal)).map((file) => file.relative),
+  ).toEqual(['key'])
+  expect(
+    (await walkFiles(host.fs, p('/home'), scope, signal)).map((file) => file.relative),
+  ).toEqual(['ordinary'])
+})
+
+it('05 验收 25、26、27: answerScope accepts a decision without a confirmation card', () => {
+  const result = decide({
+    call: {
+      tool: { name: 'Read', originalName: 'Read', source: 'builtin', serverId: 'builtin' },
+      args: {},
+      reversibility: 'read-only',
+    },
+    callReason: { reason: 'default', facts: { toolName: 'Read' } },
+    inspectors: [],
+    layers: {
+      policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+      place: 'workspace',
+      reversibility: { value: 'read-only', source: 'host' },
+      requiresUserInteraction: false,
+      sessionGrant: null,
+      approvalMode: 'manual',
+    },
+  })
+  expect(result.confirm).toBeUndefined()
+  expect(
+    answerScope({
+      decision: result,
+      reversibility: 'read-only',
+      source: 'builtin',
+      toolName: 'Read',
+      place: 'workspace',
+    }),
+  ).toBe('once')
+})

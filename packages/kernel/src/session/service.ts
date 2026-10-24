@@ -95,8 +95,14 @@ export interface SessionServiceOptions {
   /** The loop's one constructor member (§主进程与 kernel 的循环接口). */
   readonly connector: RunConnector
   /** The shell configuration files of the protected list, computed and resolved by the host. */
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   /** A result missing before a request: throw (the default), or repair and log (§工具调用的收口). */
@@ -312,6 +318,7 @@ export function constructSessionService(
     connector: options.connector,
     log,
     inspectors: options.inspectors,
+    sensitiveFallback: options.sensitiveFallback,
     sensitivePaths: options.sensitivePaths,
     protectedFiles: options.protectedFiles,
     builtinAvailable:

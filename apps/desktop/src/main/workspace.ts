@@ -153,7 +153,12 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
 
   registerRoute(ipcMain, workspaceRemove, async ({ sessionId, folder }) => {
     await gate
-    return change(sessionId, { kind: 'remove', folder })
+    const result = await change(sessionId, { kind: 'remove', folder })
+    if (!result.ok) {
+      if (result.code === 'root-folder') throw new Error('Invalid dedicated workspace')
+      return { ok: false as const, code: result.code }
+    }
+    return { ok: true as const, folders: result.folders, origin: result.origin }
   })
 
   registerRoute(ipcMain, sessionSelectProfile, async ({ sessionId, profile }) => {

@@ -218,14 +218,12 @@ describe('the approval card copy', () => {
     expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
   })
 
-  it('has the 「为什么停」 sentence of the nine reasons produced before 05 step 5 under every kind', () => {
+  it('has the 「为什么停」 sentence of the all ten reasons under every kind', () => {
     // Presentation-r1 keeps every reason in the catalogue, including unrendered ones.
     // Network splits by target; only its URL sentence needs a slot (facts.host).
     const expected: Expectation[] = []
     for (const kind of KINDS) {
-      // Spec 05 step 2 adds the contract only; step 5 adds sensitive-path's three locale lines.
-      // Keep the existing nine-reason copy audit until that producer and UI are wired together.
-      for (const reason of REASONS.filter((candidate) => candidate !== 'sensitive-path')) {
+      for (const reason of REASONS) {
         const required = requiredFactKeys(reason, kind)
         if (reason === 'irreversible') {
           expected.push({ key: `confirm.reason.irreversible.${kind}`, args: required, what: kind })
@@ -237,6 +235,13 @@ describe('the approval card copy', () => {
               what: `${kind}, category ${category}`,
             })
           }
+        } else if (reason === 'sensitive-path') {
+          for (const category of ['credential', 'auto-run', 'hardlink'])
+            expected.push({
+              key: `confirm.reason.sensitive-path.${category}`,
+              args: [],
+              what: category,
+            })
         } else if (reason === 'network') {
           for (const target of ['search', 'url'])
             expected.push({
@@ -250,8 +255,8 @@ describe('the approval card copy', () => {
       }
     }
     // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 2).
-    expect(expected).toHaveLength(44)
-    expect(new Set(expected.map(({ key }) => key)).size).toBe(14)
+    expect(expected).toHaveLength(56)
+    expect(new Set(expected.map(({ key }) => key)).size).toBe(17)
     expect(
       problems(expected.map(({ key, args, what }) => ({ key, args, what, subset: true }))),
     ).toEqual([])
@@ -1053,6 +1058,14 @@ it('05 验收 26、27、25: both locales carry the three sensitive-path explanat
         args: [],
         what: category,
       })),
+    ),
+  ).toEqual([])
+})
+
+it('05 验收 13: both catalogues contain the folder refusal and home warning', () => {
+  expect(
+    problems(
+      ['folder.rootRefused', 'folder.homeWarning'].map((key) => ({ key, args: [], what: key })),
     ),
   ).toEqual([])
 })

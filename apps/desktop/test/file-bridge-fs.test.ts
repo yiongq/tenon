@@ -219,4 +219,74 @@ describe('05 DesktopFs', () => {
     expect(await snapshots.alive('s', ['id'])).toEqual(new Set())
     expect(await fs.identity(at('file'))).toBeNull()
   })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    '05 验收 13、30: identity throws EACCES beneath an unreadable parent (root bypasses POSIX permissions)',
+    async () => {
+      await nativeFs.mkdir(at('private'))
+      await nativeFs.writeFile(at('private/file'), 'fixture')
+      await nativeFs.chmod(at('private'), 0o000)
+      try {
+        await expect(fs.identity(at('private/file'))).rejects.toMatchObject({ code: 'EACCES' })
+      } finally {
+        await nativeFs.chmod(at('private'), 0o700)
+      }
+    },
+  )
+
+  it.each(['same-size rewrite', 'chmod', 'hardlink'] as const)(
+    '05 验收 23: guarded.read discards its stamp after only a %s during the read',
+    async (change) => {
+      await nativeFs.writeFile(at('file'), 'original', { mode: 0o644 })
+      vi.mocked(nativeFs.open).mockImplementationOnce(async (...args) => {
+        const handle = await actualFs.open(...args)
+        const read = handle.readFile.bind(handle)
+        Object.defineProperty(handle, 'readFile', {
+          value: async () => {
+            const data = await read('utf8')
+            if (change === 'same-size rewrite') await nativeFs.writeFile(at('file'), 'modified')
+            if (change === 'chmod') await nativeFs.chmod(at('file'), 0o600)
+            if (change === 'hardlink') await nativeFs.link(at('file'), at('alias'))
+            return data
+          },
+        })
+        return handle
+      })
+      const read = await fs.guarded.read(at('file'), { encoding: 'utf8' })
+      expect(read).toEqual({ data: 'original', stamp: null })
+    },
+  )
+
+  it.each(['read', 'create'] as const)(
+    '05 验收 23、30: guarded.%s closes its opened handle after IO failure',
+    async (operation) => {
+      if (operation === 'read') await nativeFs.writeFile(at('file'), 'fixture')
+      let opened: nativeFs.FileHandle | undefined
+      const closed = vi.fn<() => void>()
+      vi.mocked(nativeFs.open).mockImplementationOnce(async (...args) => {
+        const handle = await actualFs.open(...args)
+        opened = handle
+        const close = handle.close.bind(handle)
+        Object.defineProperty(handle, 'close', {
+          value: async () => {
+            closed()
+            await close()
+          },
+        })
+        Object.defineProperty(handle, operation === 'read' ? 'readFile' : 'writeFile', {
+          value: async () => {
+            throw new Error('injected IO failure')
+          },
+        })
+        return handle
+      })
+      const work =
+        operation === 'read' ? fs.guarded.read(at('file')) : fs.guarded.create(at('file'), 'bytes')
+      await expect(work).rejects.toThrow('injected IO failure')
+      expect(closed).toHaveBeenCalledTimes(1)
+      await expect(opened!.stat()).rejects.toMatchObject({ code: 'EBADF' })
+      await nativeFs.rename(at('file'), at('renamed'))
+      await nativeFs.rm(at('renamed'))
+    },
+  )
 })

@@ -70,44 +70,65 @@ export async function scanTree(
   await discover(folder)
   const base = [...defaults, ...excluded.map(pattern)]
   await writeFile(join(repo, 'info', 'exclude'), `${base.join('\n')}\n`)
-  // Reset first: info/exclude does not remove paths that are already tracked in the shadow index.
-  await git.run(repo, folder, ['read-tree', '--empty'], signal)
   const names = (
-    await git.run(repo, folder, ['ls-files', '--others', '--exclude-standard', '-z'], signal)
+    await git.run(
+      repo,
+      folder,
+      ['ls-files', '--cached', '--others', '--exclude-standard', '--deduplicate', '-z'],
+      signal,
+    )
   )
     .split('\0')
     .filter(Boolean)
+  const ignored = new Set(
+    (
+      await git.run(
+        repo,
+        folder,
+        ['ls-files', '--cached', '--ignored', '--exclude-standard', '-z'],
+        signal,
+      )
+    ).split('\0'),
+  )
   const entries: SavedFile[] = []
   let bytes = 0
   let skipped = 0
-  for (const name of names) {
+  const candidates = names.filter((name) => !ignored.has(name))
+  // Bounded metadata concurrency keeps large unchanged trees inside the capture deadline.
+  for (let start = 0; start < candidates.length; start += 32) {
     signal.throwIfAborted()
-    const path = absolutePath(join(folder, name))
-    if (!contains(folder, path)) throw new Error('Git listed a path outside the workspace')
-    try {
-      // oxlint-disable-next-line no-await-in-loop -- metadata and permission belong to this scan
-      const stats = await lstat(path, { bigint: true })
-      if (!stats.isFile() && !stats.isSymbolicLink()) {
-        excluded.push(name)
+    // oxlint-disable-next-line no-await-in-loop -- at most 32 independent metadata requests, never a full-tree fan-out
+    const batch = await Promise.all(
+      candidates.slice(start, start + 32).map(async (name) => {
+        const path = absolutePath(join(folder, name))
+        if (!contains(folder, path)) throw new Error('Git listed a path outside the workspace')
+        try {
+          const stats = await lstat(path, { bigint: true })
+          if ((!stats.isFile() && !stats.isSymbolicLink()) || stats.size > BigInt(MAX_FILE_BYTES))
+            return { name }
+          if (stats.isFile()) await access(path, constants.R_OK)
+          return {
+            name,
+            entry: { path, identity: saved(identity(stats)) },
+            bytes: Number(stats.size),
+          }
+        } catch {
+          return { name }
+        }
+      }),
+    )
+    signal.throwIfAborted()
+    for (const result of batch) {
+      if (result.entry === undefined) {
+        excluded.push(result.name)
         skipped++
         continue
       }
-      if (Number(stats.size) > MAX_FILE_BYTES) {
-        excluded.push(name)
-        skipped++
-        continue
-      }
-      // Check permission without opening devices or following a symbolic link.
-      // oxlint-disable-next-line no-await-in-loop -- a file unreadable by the desktop is excluded
-      if (stats.isFile()) await access(path, constants.R_OK)
-      entries.push({ path, identity: saved(identity(stats)) })
-      bytes += Number(stats.size)
-    } catch {
-      excluded.push(name)
-      skipped++
+      entries.push(result.entry)
+      bytes += result.bytes
+      if (entries.length > maxFiles)
+        throw new SnapshotBudgetError('Snapshot file-count budget exceeded', 'files')
     }
-    if (entries.length > maxFiles)
-      throw new SnapshotBudgetError('Snapshot file-count budget exceeded', 'files')
   }
   await writeFile(
     join(repo, 'info', 'exclude'),
@@ -124,18 +145,27 @@ export async function captureTree(
   id: string,
   signal: AbortSignal,
 ): Promise<TreeRecord> {
-  // Reservation may have reclaimed old refs and rebuilt this index since listing.
-  await git.run(repo, folder, ['read-tree', '--empty'], signal)
-  if (scan.entries.length > 0) {
-    const names = scan.entries.map((entry) => relative(folder, entry.path)).join('\0') + '\0'
+  const wanted = new Set(scan.entries.map((entry) => relative(folder, entry.path)))
+  const indexed = (await git.run(repo, folder, ['ls-files', '-z'], signal))
+    .split('\0')
+    .filter(Boolean)
+  const removed = indexed.filter((name) => !wanted.has(name))
+  if (removed.length > 0)
     await git.run(
       repo,
       folder,
-      ['add', '--pathspec-from-file=-', '--pathspec-file-nul'],
+      ['update-index', '--force-remove', '-z', '--stdin'],
       signal,
-      names,
+      removed.join('\0') + '\0',
     )
-  }
+  if (scan.entries.length > 0)
+    await git.run(
+      repo,
+      folder,
+      ['update-index', '--add', '-z', '--stdin'],
+      signal,
+      scan.entries.map((entry) => relative(folder, entry.path)).join('\0') + '\0',
+    )
   const index = await git.run(repo, folder, ['ls-files', '--stage', '-z'], signal)
   const hashes = new Map(
     index
@@ -149,7 +179,12 @@ export async function captureTree(
   const entries: SavedFile[] = []
   for (const entry of scan.entries) {
     const hash = hashes.get(relative(folder, entry.path))
-    if (hash === undefined) throw new Error('Snapshot index missed a listed file')
+    // update-index can reject unsafe names with exit code zero. The index is authoritative.
+    if (hash === undefined) {
+      scan.excluded.push(relative(folder, entry.path))
+      scan.skipped++
+      continue
+    }
     if (entry.identity?.kind === 'link') {
       // Link text, never bytes at its target. Git stores the same text as a 120000 blob.
       // oxlint-disable-next-line no-await-in-loop -- metadata saved per captured link

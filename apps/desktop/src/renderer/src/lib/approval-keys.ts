@@ -32,6 +32,10 @@ export function categoryOf(facts: Readonly<Record<string, unknown>>): FlaggedCat
 export function reasonKey(card: Pick<Card, 'reason' | 'kind' | 'facts'>): string {
   if (card.reason === 'irreversible') return `confirm.reason.irreversible.${card.kind}`
   if (card.reason === 'flagged') return `confirm.reason.flagged.${categoryOf(card.facts)}`
+  if (card.reason === 'sensitive-path') {
+    const category = card.facts['category']
+    return `confirm.reason.sensitive-path.${category === 'auto-run' || category === 'hardlink' ? category : 'credential'}`
+  }
   return `confirm.reason.${card.reason}`
 }
 

@@ -137,6 +137,36 @@ export async function diskBytes(path: string): Promise<number> {
   }
   return bytes
 }
+
+/** Loose git objects and CAS copies are immutable. Recount only directories whose entries changed.
+ * Mutable files (index, manifests, packs, pending markers) are always statted. Invalidate before GC.
+ */
+export class SnapshotDiskUsage {
+  private readonly immutable = new Map<string, { stamp: string; bytes: number }>()
+
+  invalidate(): void {
+    this.immutable.clear()
+  }
+
+  async measure(path: string): Promise<number> {
+    const stats = await statOrNull(path)
+    if (stats === null) return 0
+    if (!stats.isDirectory()) return Number(stats.blocks) * 512
+    const cacheable = /(?:\/objects\/[0-9a-f]{2}|\/files)$/.test(path)
+    const stamp = `${stats.dev}:${stats.ino}:${stats.mtimeNs}:${stats.ctimeNs}`
+    const cached = cacheable ? this.immutable.get(path) : undefined
+    if (cached?.stamp === stamp) return cached.bytes
+    let bytes = Number(stats.blocks) * 512
+    const names = await readdir(path)
+    const complete = names.every((name) => /^[0-9a-f]{38,64}$/.test(name))
+    for (const name of names) {
+      // oxlint-disable-next-line no-await-in-loop -- immutable object subtrees are skipped on subsequent captures
+      bytes += await this.measure(join(path, name))
+    }
+    if (cacheable && complete) this.immutable.set(path, { stamp, bytes })
+    return bytes
+  }
+}
 export async function statOrNull(path: string): Promise<BigIntStats | null> {
   try {
     return await lstat(path, { bigint: true })

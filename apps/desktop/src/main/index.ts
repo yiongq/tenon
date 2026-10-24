@@ -248,6 +248,7 @@ async function main(): Promise<void> {
             config: startupConfig,
           }),
           sensitivePaths: pathProtection.get,
+          sensitiveFallback: pathProtection.fallback,
           protectedFiles: protectedShellFiles(
             home,
             startupEnv['ZDOTDIR']?.startsWith('/') ? absolutePath(startupEnv['ZDOTDIR']) : null,
@@ -287,6 +288,9 @@ async function main(): Promise<void> {
         })
   if (sessions !== null && loop !== null) sessions.bindLoop(loop.ports)
   host.snapshots.bindActiveRounds(() => loop?.registry.snapshot() ?? [])
+  host.snapshots.bindSessionFolders(
+    async (sessionId) => (await sessions?.sessionFacts({ sessionId }))?.workspace?.folders ?? [],
+  )
   host.sandbox.bindSessionFolders(
     async (sessionId) => (await sessions?.sessionFacts({ sessionId }))?.workspace?.folders ?? [],
   )

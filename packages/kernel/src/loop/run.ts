@@ -159,8 +159,14 @@ export interface RunDriverContext {
   /** Bash's shell and base environment (`LoopPorts.commandShell`). */
   readonly commandShell: CommandShell
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
   readonly sensitivePaths?:
-    | ((roots: readonly AbsolutePath[]) => Promise<SensitivePathScope['sensitive']>)
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
     | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
@@ -366,6 +372,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
           }),
       inspectors: ctx.inspectors,
       validator,
+      sensitiveFallback: ctx.sensitiveFallback,
       sensitivePaths: ctx.sensitivePaths,
       protectedFiles: ctx.protectedFiles,
       userSetting: ctx.userSetting,

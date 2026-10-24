@@ -315,3 +315,30 @@ it.each(['root', 'volume'] as const)(
     expect(await h.sessions.sessionFacts({ sessionId: SESSION })).toEqual(before)
   },
 )
+
+it('05 验收 13: removing the final picked folder returns handler-failed for a root alias without changing the workspace', async () => {
+  const h = await harness()
+  await h.call('session.selectProfile', { sessionId: SESSION, profile: 'cowork' })
+  h.picks.push(['/work/a'])
+  await h.call('workspace.pick', { sessionId: SESSION })
+  const before = await h.sessions.sessionFacts({ sessionId: SESSION })
+  const dedicated = dedicatedFolderFor(HOME, IDENTITY, SESSION)
+  await h.host.fs.mkdirp(absolutePath(dedicated.slice(0, dedicated.lastIndexOf('/'))))
+  h.host.symlink(dedicated, '/')
+  expect(await h.call('workspace.remove', { sessionId: SESSION, folder: '/work/a' })).toMatchObject(
+    { ok: false, error: { code: 'handler-failed' } },
+  )
+  expect(await h.sessions.sessionFacts({ sessionId: SESSION })).toEqual(before)
+})
+
+it('05 验收 13: remove keeps its original response shape while pick/prefill accept the new outcomes', async () => {
+  const { workspaceRemove, workspacePick, workspaceUsePrefill } =
+    await import('@tenon-app/contracts')
+  expect(workspaceRemove.response.safeParse({ ok: false, code: 'root-folder' }).success).toBe(false)
+  const success = { ok: true, folders: [HOME], origin: 'picked', warning: 'home' }
+  expect(workspaceRemove.response.parse(success)).not.toHaveProperty('warning')
+  for (const route of [workspacePick, workspaceUsePrefill]) {
+    expect(route.response.parse(success)).toHaveProperty('warning', 'home')
+    expect(route.response.safeParse({ ok: false, code: 'root-folder' }).success).toBe(true)
+  }
+})
