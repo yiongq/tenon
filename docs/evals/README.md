@@ -52,7 +52,7 @@
 
 | 列 | Tenon 一侧 | 对照一侧 |
 |---|---|---|
-| 基线（每题都跑） | 智谱的基线模型，走 `/paas/v4`，是验收基准；基线模型由小横评定 | — |
+| 基线（每题都跑） | 智谱的基线模型，走 `/paas/v4`，是验收基准；基线模型由小横评定（2026-10-25 起是 glm-5.3-flash，见 [ADR-005](../adr/adr-005-eval-baseline-flash.md)） | — |
 | 主对比（至少 10 题） | Opus 5.5 或 Sonnet 5，走 `api.anthropic.com`，用官方 key | Claude Desktop，选同一个模型，用 Max 订阅。`profile: 'chat'` 的题在 Chat 里跑；`cowork` 的题在 Cowork 本机会话里跑，用 Manual 档，连接 fixture 的文件夹。录屏对比（2026-10-15 补：这套协议对 Pro / Max 已不能照原样复现，这一列降为只作参考，见下） |
 | 同模型列（对比集） | glm-5.3。先走 `/paas/v4`；T8 通过、补上评测专用行之后，改走 `/api/anthropic` | Claude Code + glm-5.3：接 `open.bigmodel.cn/api/anthropic`，Haiku / Sonnet / Opus 三个槽位全部钉成 glm-5.3，用 default（Manual）模式，在交互模式下手动跑 |
 

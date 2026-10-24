@@ -103,11 +103,13 @@ export interface EvalColumn {
 }
 
 /**
- * The baseline column (§同题对比「基线」), which the gate reads: glm-5.3 on /paas/v4, chosen by the
- * small comparison of 2026-09-28 (plan step 25 record: 15/15 against glm-5.3-flash's 13/15, whose two
- * misses were both a disabled tool hit three times in a row). The gate fails on null.
+ * The baseline column (§同题对比「基线」), which the gate reads: glm-5.3-flash on /paas/v4 since
+ * ADR-005 (2026-10-25), for cost (about ¥5 a full run against glm-5.3's ¥45). The small comparison of
+ * 2026-09-28 had chosen glm-5.3 (plan step 25 record: 15/15 against glm-5.3-flash's 13/15, whose two
+ * misses were both a disabled tool hit three times in a row); compare only adjacent prompt versions
+ * within this column. The gate fails on null.
  */
-export const BASELINE_COLUMN: string | null = 'tenon-glm-5.3-open.bigmodel.cn-api-paas-v4'
+export const BASELINE_COLUMN: string | null = 'tenon-glm-5.3-flash-open.bigmodel.cn-api-paas-v4'
 
 /** `EvalRecord.column.endpoint`: host and path, no scheme, no trailing slash. */
 export function endpointOf(baseURL: string): string {
