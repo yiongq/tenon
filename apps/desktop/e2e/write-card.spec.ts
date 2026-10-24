@@ -524,13 +524,13 @@ test('a round with a write allowed and reads after it shows one summary line, af
 })
 
 /**
- * The hard-link baseline plan step 11 left for the Write executor (旧 51: 「硬链接写入只记回归基线、
- * 不断言拦下」; D8's known limitation, listed in the step 35 audit): a hard link inside the workspace
- * to a file outside it is a file inside — `realpath` cannot tell the two names apart — so it asks as
- * any workspace write does, and the write lands in the outside file. This records today's behaviour;
- * it is not the behaviour wanted, and a change that blocks or asks differently should update it.
+ * The hard-link baseline plan step 11 left for the Write executor (旧 51), updated by spec 05
+ * (§硬链接、保护名单与选文件夹): `realpath` still cannot tell the two names apart, but a regular file
+ * with more than one name is `sensitive: 'hardlink'` for Write, Edit and Delete, so it asks every
+ * time, for this once only, and says why. One file under two names: an approved write still lands
+ * in the outside file.
  */
-test('a hard link in the workspace to a file outside it: today it asks as a workspace write, and the write reaches the outside file (regression baseline, 旧 51)', async () => {
+test('05 验收 25: a hard link in the workspace to a file outside it asks every time as a file with another name; an approved write reaches the outside file (旧 51)', async () => {
   const folders = makeFolderTree('hard-link', {
     'ws/keep.txt': 'keep\n',
     'outside/secret.txt': 'outside-original\n',
@@ -553,14 +553,18 @@ test('a hard link in the workspace to a file outside it: today it asks as a work
     const card = page.getByTestId('approval-card')
     await expect(card).toHaveCount(1)
     const pending = await waitingApproval(page)
-    // Baseline: judged inside (reason default, this session), named by the link's own path.
-    expect(pending.card.reason).toBe('default')
+    // Asked as a file with another name, for this once only, named by the link's own path.
+    expect(pending.card.reason).toBe('sensitive-path')
+    expect(pending.card.facts).toEqual({ path: linked, category: 'hardlink' })
     expect(pending.card.target).toEqual({ type: 'path', path: linked })
-    expect(pending.allowScope).toBe('session')
+    expect(pending.allowScope).toBe('once')
+    await expect(card.getByTestId('approval-reason')).toHaveText(
+      'This file has other names. Changing it also changes it elsewhere.',
+    )
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Written.')
-    // Baseline: one file under two names, written in place.
+    // One file under two names, written in place.
     expect(contentOf(outside)).toBe('written-through\n')
     expect(contentOf(linked)).toBe('written-through\n')
   } finally {
