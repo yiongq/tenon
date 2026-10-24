@@ -452,6 +452,9 @@ function heldReads(held: (path: string) => boolean): {
       readdir: (path) => disk.readdir(path),
       mkdirp: (path) => disk.mkdirp(path),
       realpath: (path) => disk.realpath(path),
+      identity: (path) => disk.identity(path),
+      remove: (path) => disk.remove(path),
+      guarded: disk.guarded,
     }),
     reached: reached.promise,
     release: () => released.resolve(),
@@ -986,9 +989,17 @@ describe('the kernel deletes no folder (旧 189; §大响应落盘「kernel 不�
     ])
   })
 
-  it('gives HostFs no delete member (adapter.ts; §本地持久化布局「HostFs 不因此加删除成员」)', () => {
+  it('05 验收 30: HostFs gains only the three file bridge members (§接口)', () => {
     expectTypeOf<keyof HostFs>().toEqualTypeOf<
-      'readFile' | 'writeFile' | 'stat' | 'readdir' | 'mkdirp' | 'realpath'
+      | 'readFile'
+      | 'writeFile'
+      | 'stat'
+      | 'readdir'
+      | 'mkdirp'
+      | 'realpath'
+      | 'guarded'
+      | 'identity'
+      | 'remove'
     >()
   })
 })

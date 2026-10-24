@@ -326,7 +326,9 @@ it('presentation-r1 验收 1 / presentation-r1 不变量 3: no scale; why and un
             ]
           : [TARGET_BY_KIND[kind]]
       for (const target of targets) {
-        for (const category of ['exfiltration', 'inspector-failed']) {
+        for (const category of reason === 'sensitive-path'
+          ? ['credential', 'auto-run', 'hardlink']
+          : ['exfiltration', 'inspector-failed']) {
           for (const reversibility of reversibilitySchema.options) {
             const card = {
               reason,
@@ -341,7 +343,9 @@ it('presentation-r1 验收 1 / presentation-r1 不变量 3: no scale; why and un
                 ? `confirm.reason.network.${target.type === 'search' ? 'search' : 'url'}`
                 : reason === 'flagged'
                   ? `confirm.reason.flagged.${category}`
-                  : `confirm.reason.${reason}`
+                  : reason === 'sensitive-path'
+                    ? `confirm.reason.sensitive-path.${category}`
+                    : `confirm.reason.${reason}`
             const expectedUndo =
               reversibility === 'irreversible'
                 ? 'confirm.irreversible'
@@ -710,3 +714,24 @@ it('04 验收 18: the elevated reason keeps the full command and the once-only c
     'This command will run without restrictions this once, just as if you ran it in a terminal: it can read and write every file you can access and connect to any site. This allows it once only and will not be remembered.\nunique-command --arg',
   )
 })
+
+it.each(['credential', 'auto-run', 'hardlink'] as const)(
+  '05 验收 25、26、27: sensitive %s cards render the actual sentence in both locales',
+  async (category) => {
+    for (const i18n of [zh, en]) {
+      // oxlint-disable-next-line no-await-in-loop -- real markup in both catalogues
+      const markup = await render(
+        {
+          kind: 'file',
+          reason: 'sensitive-path',
+          facts: { path: '/work/file', category },
+          target: { type: 'path', path: '/work/file' },
+          reversibility: 'unknown',
+        },
+        i18n,
+      )
+      expect(markup).toContain(i18n.t(`confirm.reason.sensitive-path.${category}`))
+      expect(markup).not.toContain('i18n-error')
+    }
+  },
+)

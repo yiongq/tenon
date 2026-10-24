@@ -75,6 +75,8 @@ export interface SessionRemovalDeps {
   readonly log: (line: string) => void
   /** Step 2; `removeFolder` unless a test holds it. */
   readonly removeFolder?: (folder: AbsolutePath) => Promise<void>
+  /** Spec 05 §快照怎么拍: remove profile-owned snapshots only after the store commits. */
+  readonly removeSnapshots?: (sessionId: string) => Promise<void>
 }
 
 /** Step 2: the folder and everything in it; one that is not there is not an error. */
@@ -102,6 +104,14 @@ export function createSessionRemoval(deps: SessionRemovalDeps): SessionRemoval {
       await runs?.settledRoot(sessionId)
       const children = await childOutputFolders(deps.tape, deps.profileDir, sessionId)
       const committed = await commit()
+      try {
+        await deps.removeSnapshots?.(sessionId)
+      } catch (error) {
+        deps.log(
+          `[session] ${sessionId}: snapshots were not removed: ` +
+            (error instanceof Error ? error.message : String(error)),
+        )
+      }
       for (const outputFolder of new Set([folder, ...children])) {
         try {
           // oxlint-disable-next-line no-await-in-loop -- every directory is removed after the store commits

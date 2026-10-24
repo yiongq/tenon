@@ -16,6 +16,7 @@ import type {
   ModelInfo,
   SessionEvent,
   SessionService,
+  SessionServiceOptions,
   TapeEntry,
   TapeStore,
   Usage,
@@ -79,6 +80,9 @@ async function harness(
   o: {
     locale?: 'zh-CN' | 'en'
     failing?: boolean
+    home?: string
+    realGrep?: boolean
+    sensitivePaths?: SessionServiceOptions['sensitivePaths']
     onEvent?: (event: SessionEvent, loop: TestLoopPorts) => void
     /** The store the service is given, in place of the memory one (a case that holds a call back). */
     store?: (store: TapeStore) => TapeStore
@@ -92,6 +96,9 @@ async function harness(
   const provider = createScriptedProvider({ models: [MODEL] })
   const loop: TestLoopPorts = createTestLoopPorts({
     connector: { provider, model: MODEL },
+    ...(o.home === undefined
+      ? {}
+      : { commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME: o.home! }) } }),
     ...(o.locale === undefined ? {} : { locale: o.locale }),
     onEvent: (event) => o.onEvent?.(event, loop),
   })
@@ -105,9 +112,10 @@ async function harness(
       ids: createCounterIds(),
       inspectors: [],
       connector: loop.connector,
+      sensitivePaths: o.sensitivePaths,
       protectedFiles: [],
     },
-    { tools: {} },
+    { tools: o.realGrep ? { Grep: 'real' } : {} },
   )
   service.bindLoop(loop)
   return { host, store, service, loop, provider }
@@ -793,4 +801,289 @@ describe('the system text (§提示层「组装」; 旧 225, 旧 151)', () => {
       `${SYSTEM_PROMPTS.cowork}\n\n${fill(LOCALE_HINT, { locale: 'en' })}`,
     )
   })
+})
+
+it.each(['root', 'volume', 'missing', 'throw', 'file', 'parent-missing', 'parent-throw'] as const)(
+  '05 验收 13: the kernel refuses %s folders before changing the workspace',
+  async (failure) => {
+    const h = await harness()
+    await cowork(h)
+    const original = h.host.fs.identity.bind(h.host.fs)
+    h.host.fs.identity = async (path) => {
+      if (path === X && failure === 'missing') return null
+      if (path === X && failure === 'throw') throw new Error('unreadable device')
+      if (path === '/work' && failure === 'parent-missing') return null
+      if (path === '/work' && failure === 'parent-throw') throw new Error('unreadable parent')
+      const stamp = await original(path)
+      if (path === X && failure === 'file' && stamp !== null) return { ...stamp, kind: 'file' }
+      return path === X && failure === 'volume' && stamp !== null
+        ? { ...stamp, dev: stamp.dev + 1n }
+        : stamp
+    }
+    expect(
+      await h.service.setWorkspace({
+        sessionId: SESSION,
+        change: { kind: 'add', folders: [failure === 'root' ? absolutePath('/') : X] },
+        dedicated: DEDICATED,
+      }),
+    ).toEqual({ ok: false, code: 'root-folder' })
+    expect((await h.service.sessionFacts({ sessionId: SESSION })).workspace?.folders).toEqual([
+      DEDICATED,
+    ])
+    expect(await entries(h.store)).toEqual([])
+  },
+)
+
+it('05 验收 13: a link to the root is refused, while home and its parent carry the home warning', async () => {
+  const h = await harness({ home: '/home/u' })
+  await h.host.fs.mkdirp(absolutePath('/home/u'))
+  await cowork(h)
+  h.host.symlink(absolutePath('/work/root-link'), '/')
+  expect(
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath('/work/root-link')] },
+      dedicated: DEDICATED,
+    }),
+  ).toEqual({ ok: false, code: 'root-folder' })
+  expect(
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath('/home/u')] },
+      dedicated: DEDICATED,
+    }),
+  ).toMatchObject({ ok: true, warning: 'home' })
+  expect(
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath('/home')] },
+      dedicated: DEDICATED,
+    }),
+  ).toMatchObject({ ok: true, warning: 'home' })
+})
+
+it('05 验收 26: the desktop-supplied sensitivity reaches a live Read decision', async () => {
+  const scopes: readonly string[][] = []
+  const seen = scopes as string[][]
+  const h = await harness({
+    sensitivePaths: async (roots) => {
+      seen.push([...roots])
+      return { credential: [absolutePath('/work/x/secret')], autoRunNames: [], linkTargets: [] }
+    },
+  })
+  await cowork(h)
+  await h.service.setWorkspace({
+    sessionId: SESSION,
+    change: { kind: 'add', folders: [X] },
+    dedicated: DEDICATED,
+  })
+  h.provider.script([
+    { type: 'tool-call-start', index: 1, id: 'read-credential', name: 'Read' },
+    {
+      type: 'tool-call-end',
+      index: 1,
+      id: 'read-credential',
+      name: 'Read',
+      input: { file_path: '/work/x/secret' },
+    },
+    { type: 'usage', usage: USAGE },
+    stopEvent('tool-use', 'tool_use'),
+  ])
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'read' })
+  if (sent.status !== 'started') throw new Error(JSON.stringify(sent))
+  expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
+  expect(pendingCard(await h.service.currentPending({ sessionId: SESSION }))?.card).toMatchObject({
+    reason: 'sensitive-path',
+    facts: { path: '/work/x/secret', category: 'credential' },
+  })
+  expect(scopes).toContainEqual([X])
+})
+
+it('05 验收 13: removing the final picked folder refuses a dedicated directory replaced by a root link', async () => {
+  const h = await harness()
+  await cowork(h)
+  await h.service.setWorkspace({
+    sessionId: SESSION,
+    change: { kind: 'add', folders: [X] },
+    dedicated: DEDICATED,
+  })
+  await h.host.fs.mkdirp(absolutePath(DEDICATED.slice(0, DEDICATED.lastIndexOf('/'))))
+  h.host.symlink(DEDICATED, '/')
+  await expect(
+    h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'remove', folder: X },
+      dedicated: DEDICATED,
+    }),
+  ).rejects.toThrow(/dedicated workspace/)
+  expect((await h.service.sessionFacts({ sessionId: SESSION })).workspace?.folders).toEqual([X])
+})
+
+it.each(['root', 'volume'] as const)(
+  '05 验收 13: selecting cowork rejects a dedicated %s alias without changing the draft',
+  async (kind) => {
+    const h = await harness()
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'chat' })
+    const before = await h.service.sessionFacts({ sessionId: SESSION })
+    await h.host.fs.mkdirp(absolutePath(DEDICATED.slice(0, DEDICATED.lastIndexOf('/'))))
+    await h.host.fs.mkdirp(absolutePath('/mounted'))
+    const identity = h.host.fs.identity.bind(h.host.fs)
+    h.host.fs.identity = async (path) => {
+      const stamp = await identity(path)
+      return path === '/mounted' && stamp !== null ? { ...stamp, dev: stamp.dev + 1n } : stamp
+    }
+    h.host.symlink(DEDICATED, kind === 'root' ? '/' : '/mounted')
+    await expect(cowork(h)).rejects.toThrow(/dedicated workspace/)
+    expect(await h.service.sessionFacts({ sessionId: SESSION })).toEqual(before)
+    expect(await entries(h.store)).toEqual([])
+  },
+)
+
+it.each([false, true])(
+  '05 验收 13: selecting only the home parent warns even with an ordinary folder mixed in (%s)',
+  async (mixed) => {
+    const h = await harness({ home: '/home/u' })
+    await h.host.fs.mkdirp(absolutePath('/home/u'))
+    await cowork(h)
+    expect(
+      await h.service.setWorkspace({
+        sessionId: SESSION,
+        change: { kind: 'add', folders: [...(mixed ? [X] : []), absolutePath('/home')] },
+        dedicated: DEDICATED,
+      }),
+    ).toMatchObject({ ok: true, warning: 'home' })
+  },
+)
+
+it.each(['credential', 'auto-run'] as const)(
+  '05 验收 26、27: a live %s Write asks again after an ordinary file earned a session grant',
+  async (category) => {
+    const file = absolutePath(`${X}/ordinary`)
+    let sensitive = false
+    const h = await harness({
+      sensitivePaths: async () => ({
+        credential: sensitive && category === 'credential' ? [file] : [],
+        autoRunNames: [],
+        linkTargets: sensitive && category === 'auto-run' ? [{ real: file, category }] : [],
+      }),
+    })
+    await cowork(h)
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [X] },
+      dedicated: DEDICATED,
+    })
+    const write = async (id: string, runs = false) => {
+      h.provider.script([
+        { type: 'tool-call-start', index: 1, id, name: 'Write' },
+        {
+          type: 'tool-call-end',
+          index: 1,
+          id,
+          name: 'Write',
+          input: { file_path: file, content: id },
+        },
+        { type: 'usage', usage: USAGE },
+        stopEvent('tool-use', 'tool_use'),
+      ])
+      if (runs) h.provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+      const sent = await h.service.send({ sessionId: SESSION, origin: null, text: id })
+      if (sent.status !== 'started') throw new Error(JSON.stringify(sent))
+      return (await h.loop.runEnded({ runId: sent.runId })).reason.code
+    }
+    expect(await write('first')).toBe('paused')
+    const first = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    expect(first?.allowScope).toBe('session')
+    h.provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: first?.card.requestId ?? '',
+      decision: 'allow',
+      origin: null,
+    })
+    expect((await h.loop.runEnded()).reason.code).toBe('completed')
+    expect(await write('granted', true)).toBe('completed')
+    sensitive = true
+    expect(await write('sensitive')).toBe('paused')
+    const again = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    expect(again?.allowScope).toBe('once')
+    expect(again?.card).toMatchObject({ reason: 'sensitive-path', facts: { path: file, category } })
+    const decisions = named(await entries(h.store), 'tool/permission_decided')
+    expect(decisions.at(-1)?.payload['record']).toMatchObject({
+      steps: expect.arrayContaining([expect.objectContaining({ by: 'user-grant', said: 'none' })]),
+    })
+  },
+)
+
+it('05 验收 13: the data-volume mount root is rejected even when its device equals its parent', async () => {
+  const h = await harness()
+  await cowork(h)
+  const root = absolutePath('/System/Volumes/Data')
+  await h.host.fs.mkdirp(root)
+  expect(
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [root] },
+      dedicated: DEDICATED,
+    }),
+  ).toEqual({ ok: false, code: 'root-folder' })
+})
+
+it('05 验收 26: Grep aimed at a credential root asks, then returns matching content after approval', async () => {
+  const credential = absolutePath(`${X}/.ssh`)
+  const h = await harness({
+    realGrep: true,
+    sensitivePaths: async () => ({ credential: [credential], autoRunNames: [], linkTargets: [] }),
+  })
+  await h.host.fs.mkdirp(credential)
+  await h.host.fs.writeFile(absolutePath(`${credential}/fixture`), 'needle-fixture')
+  await cowork(h)
+  await h.service.setWorkspace({
+    sessionId: SESSION,
+    change: { kind: 'add', folders: [X] },
+    dedicated: DEDICATED,
+  })
+  h.provider.script([
+    { type: 'tool-call-start', index: 1, id: 'grep-credential', name: 'Grep' },
+    {
+      type: 'tool-call-end',
+      index: 1,
+      id: 'grep-credential',
+      name: 'Grep',
+      input: { path: credential, pattern: 'needle', output_mode: 'content' },
+    },
+    { type: 'usage', usage: USAGE },
+    stopEvent('tool-use', 'tool_use'),
+  ])
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'search' })
+  if (sent.status !== 'started') throw new Error(JSON.stringify(sent))
+  expect((await h.loop.runEnded({ runId: sent.runId })).reason.code).toBe('paused')
+  const card = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+  expect(card?.card.reason).toBe('sensitive-path')
+  h.provider.script(scriptedTurn({ deltas: ['done'], usage: USAGE }))
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: SESSION,
+    requestId: card?.card.requestId ?? '',
+    decision: 'allow',
+    origin: null,
+  })
+  expect((await h.loop.runEnded()).reason.code).toBe('completed')
+  expect(JSON.stringify(h.provider.requests.map((request) => request.body))).toContain(
+    'needle-fixture',
+  )
+})
+
+it('05 验收 13: the parent of a deeply nested HOME receives the home warning', async () => {
+  const h = await harness({ home: '/a/b/c/home' })
+  await h.host.fs.mkdirp(absolutePath('/a/b/c/home'))
+  await cowork(h)
+  expect(
+    await h.service.setWorkspace({
+      sessionId: SESSION,
+      change: { kind: 'add', folders: [absolutePath('/a/b/c')] },
+      dedicated: DEDICATED,
+    }),
+  ).toMatchObject({ ok: true, warning: 'home' })
 })

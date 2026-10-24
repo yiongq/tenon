@@ -1,3 +1,4 @@
+import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 /**
  * Startup recovery (spec 02 §启动恢复与发送防护, §执行日志与恢复表; plan step 16). Everything here runs
  * before the next request of any session, sends no request, calls no `assemble` and reads no key:
@@ -64,6 +65,15 @@ export interface RecoveryDeps {
   readonly log: (line: string) => void
   readonly host: HostAdapter
   readonly inspectors: readonly InspectorRegistration[]
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
+  readonly sensitivePaths?:
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   readonly userSetting: (key: ToolKey) => UserToolSetting | null
   readonly testTools: Readonly<Partial<Record<BuiltinToolName, 'fake' | 'real' | null>>> | null
@@ -534,6 +544,8 @@ async function rejudgeAtStartup(
       tape: deps.tape,
       host: deps.host,
       inspectors: deps.inspectors,
+      sensitiveFallback: deps.sensitiveFallback,
+      sensitivePaths: deps.sensitivePaths,
       protectedFiles: deps.protectedFiles,
       userSetting: deps.userSetting,
       signal: new AbortController().signal,

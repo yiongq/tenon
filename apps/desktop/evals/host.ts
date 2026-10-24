@@ -65,6 +65,7 @@ import { createHostProcess } from '../src/main/host/process.js'
 import { openProfile } from '../src/main/host/profile.js'
 import { PassthroughSandbox } from '../src/main/host/sandbox.js'
 import { MemorySecrets } from '../src/main/host/secrets.js'
+import { unavailableSnapshots } from '../src/main/host/snapshots.js'
 import { pickShell } from '../src/main/host/shell-env.js'
 import { dedicatedFolderFor } from '../src/main/workspace.js'
 import type { EvalColumn } from './models.js'
@@ -339,6 +340,7 @@ export async function createEvalHost(options: EvalHostOptions): Promise<EvalHost
         clock: new SystemClock(),
         network,
         policy,
+        snapshots: unavailableSnapshots,
       },
       secrets,
       policy,

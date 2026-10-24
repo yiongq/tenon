@@ -255,6 +255,9 @@ async function harness(o: HarnessOptions = {}): Promise<Harness> {
     readdir: (path) => memory.fs.readdir(path),
     mkdirp: (path) => memory.fs.mkdirp(path),
     realpath: (path) => memory.fs.realpath(path),
+    identity: (path) => memory.fs.identity(path),
+    remove: (path) => memory.fs.remove(path),
+    guarded: memory.fs.guarded,
   }
   const keychain = new Keychain()
   const host: HostAdapter = { ...memory, fs, secrets: keychain }

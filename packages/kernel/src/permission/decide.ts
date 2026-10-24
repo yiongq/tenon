@@ -56,6 +56,7 @@ export interface UserToolSetting {
 /** Every layer's state for one call, computed by the kernel before `decide()`; fields only grow. */
 export interface LayerInputs {
   // 第 1 层：本次判决唯一一次 policy.current() 的结果（D4）。命中哪些规则，由 decide 按 call.tool 的 (serverId, originalName) 自己匹配
+  readonly sensitive?: 'credential' | 'auto-run' | 'hardlink'
   readonly policy: PolicyState
   // 第 2 层
   readonly place?: PathPlace // 只在文件工具有，locatePath 的结果（D8）；对话形态里 own-spill 以外的改记 'protected'（开放问题 13）
@@ -92,7 +93,13 @@ export type InspectorOutcome = {
 
 /** The default table's reason column (§内置工具的默认档位), computed before `decide()`. */
 export interface CallReason {
-  readonly reason: 'outside-workspace' | 'network' | 'command' | 'elevated' | 'default' // 表里是「—」的行给 'default'，只作第 8 层兜底
+  readonly reason:
+    | 'outside-workspace'
+    | 'sensitive-path'
+    | 'network'
+    | 'command'
+    | 'elevated'
+    | 'default' // 表里是「—」的行给 'default'，只作第 8 层兜底
   readonly facts: Readonly<Record<string, string>> // 该原因的必填键，另加 toolName；被拦时的 target 也从这里取
 }
 
@@ -134,6 +141,7 @@ const REASON_ORDER: readonly ConfirmReason[] = [
   'policy',
   'interaction-required',
   'flagged',
+  'sensitive-path',
   'outside-workspace',
   'network',
   'elevated',
@@ -152,6 +160,7 @@ export function decide(input: DecisionInput): Decision {
   const elevated = command && layers.sandbox?.override?.action === 'rerun-unsandboxed'
   const sessionGrant =
     elevated ||
+    layers.sensitive !== undefined ||
     (command &&
       layers.sandbox?.profile === 'full-access' &&
       layers.sessionGrant?.sandbox?.unavailable !== true)
@@ -220,18 +229,18 @@ export function decide(input: DecisionInput): Decision {
 
   // ----- layer 6: what the user granted -----------------------------------------------------------
   const grant: DecisionStep['basis'] | undefined =
-    !elevated && sessionGrant !== null
+    !elevated && layers.sensitive === undefined && sessionGrant !== null
       ? {
           grant: sessionGrant.kind,
           grantFrom: sessionGrant.grantFrom,
           ...(sessionGrant.inherited === true ? { inherited: true as const } : {}),
         }
-      : !elevated && alwaysAllow
+      : !elevated && layers.sensitive === undefined && alwaysAllow
         ? {
             grant: 'always-allow',
             ...(irreversible ? { releasedBy: 'always-allow' as const } : {}),
           }
-        : !elevated && layers.taskGrant === true
+        : !elevated && layers.sensitive === undefined && layers.taskGrant === true
           ? { grant: 'task' }
           : builtin && FILE_TOOLS.has(name) && layers.place === 'workspace' && readOnly
             ? { grant: 'workspace-folder' }
@@ -288,7 +297,7 @@ export function decide(input: DecisionInput): Decision {
         : inspectorAsk
           ? 'inspector'
           : 'irreversible'
-  } else if (elevated) {
+  } else if (elevated || layers.sensitive !== undefined) {
     verdict = 'ask'
     decidedBy = 'approval-mode'
   } else if (protectedSaid === 'allow' || grant !== undefined || modeSaid === 'allow') {
@@ -329,7 +338,10 @@ export function decide(input: DecisionInput): Decision {
     const pool: Record<string, string> = {
       ...callReason.facts,
       toolName,
-      category: layerFiveCategory(inspectorSteps, 'ask'),
+      category:
+        reason === 'sensitive-path'
+          ? (callReason.facts['category'] ?? '')
+          : layerFiveCategory(inspectorSteps, 'ask'),
     }
     const facts = pick(pool, CONFIRM_FACT_KEYS[reason])
     if (reason === 'command' && callReason.facts['sandbox'] === 'unavailable') {

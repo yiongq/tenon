@@ -36,7 +36,14 @@ import type {
 } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { SandboxView } from '@tenon-app/contracts'
-import { PROTECTED_SHELL_FILES } from '../workspace.js'
+export const PROTECTED_SHELL_FILES: readonly string[] = [
+  '.zshrc',
+  '.zshenv',
+  '.zprofile',
+  '.bashrc',
+  '.bash_profile',
+  '.profile',
+]
 
 export type SandboxPlatform = 'darwin' | 'linux'
 
@@ -425,6 +432,21 @@ export function credentialPaths(platform: SandboxPlatform, home: AbsolutePath): 
   return [...both, ...own].map((relative) => under(home, relative))
 }
 
+/** Spec 05 §硬链接、保护名单与选文件夹: the single source used by sandbox and file tools. */
+export function protectionList(input: Pick<SandboxHostPaths, 'home' | 'zdotdir' | 'credentials'>) {
+  return {
+    credential: [...HOME_SECRET_DIRS.map((name) => under(input.home, name)), ...input.credentials],
+    protectedFiles: [input.home, ...(input.zdotdir === null ? [] : [input.zdotdir])].flatMap(
+      (root) => PROTECTED_SHELL_FILES.map((name) => under(root, name)),
+    ),
+    homeAutoRun: HOME_AUTO_RUN.map((name) => under(input.home, name)),
+    autoRunNames: [...ROOT_PROTECTED, ...ROOT_SRT_MANDATORY, '.git'],
+    workspaceProtected: ROOT_PROTECTED,
+    workspaceMandatory: ROOT_SRT_MANDATORY,
+    workspaceGit: ROOT_GIT,
+  }
+}
+
 /**
  * srt's package dir (a real path) and the two helpers in it, passed to srt explicitly rather than
  * left to its `import.meta.url` lookup, which goes wrong once bundled (spec §依赖; T31, srt-m5).
@@ -559,20 +581,17 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
   // read-only profile does not count (读法 20, 47).
   const presetInEffect = input.packageManagers && writable && input.chosen === 'workspace-write'
 
+  const protection = protectionList(input)
   const readDenied: string[] = [
     input.profileDir,
-    ...HOME_SECRET_DIRS.map((name) => under(input.home, name)),
-    ...input.credentials,
+    ...protection.credential,
     ...(input.platform === 'linux' && input.noSeccomp ? noSeccompSockets(input) : []),
   ]
   const writeDenied: string[] = [
     input.profileDir,
-    ...PROTECTED_SHELL_FILES.map((name) => under(input.home, name)),
-    ...(input.zdotdir === null
-      ? []
-      : PROTECTED_SHELL_FILES.map((name) => under(input.zdotdir as AbsolutePath, name))),
+    ...protection.protectedFiles,
     ...readDenied,
-    ...HOME_AUTO_RUN.map((name) => under(input.home, name)),
+    ...protection.homeAutoRun,
     input.srtPackageDir,
     ...(input.chdirDir === null ? [] : [input.chdirDir]),
   ]
@@ -581,9 +600,9 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
     for (const root of input.workspace) {
       if (!root.directory) continue
       const names = [
-        ...ROOT_PROTECTED,
-        ...ROOT_SRT_MANDATORY,
-        ...(darwin || root.gitDirectory ? ROOT_GIT : []),
+        ...protection.workspaceProtected,
+        ...protection.workspaceMandatory,
+        ...(darwin || root.gitDirectory ? protection.workspaceGit : []),
       ]
       writeDenied.push(...names.map((name) => under(root.path, name)))
       // Names deeper in the tree: darwin takes a glob, Linux's write rules take none (已知限制).

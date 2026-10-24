@@ -1,3 +1,4 @@
+import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 /**
  * The kernel session service (spec 01 §所有权与依赖方向, §entry 模型, §投影与重放; spec 02
@@ -94,6 +95,15 @@ export interface SessionServiceOptions {
   /** The loop's one constructor member (§主进程与 kernel 的循环接口). */
   readonly connector: RunConnector
   /** The shell configuration files of the protected list, computed and resolved by the host. */
+  readonly sensitiveFallback?:
+    | ((roots: readonly AbsolutePath[]) => SensitivePathScope['sensitive'])
+    | undefined
+  readonly sensitivePaths?:
+    | ((
+        roots: readonly AbsolutePath[],
+        sessionKey?: string,
+      ) => Promise<SensitivePathScope['sensitive']>)
+    | undefined
   readonly protectedFiles: readonly AbsolutePath[]
   /** A result missing before a request: throw (the default), or repair and log (§工具调用的收口). */
   readonly onUnansweredCall?: 'throw' | 'repair'
@@ -308,6 +318,8 @@ export function constructSessionService(
     connector: options.connector,
     log,
     inspectors: options.inspectors,
+    sensitiveFallback: options.sensitiveFallback,
+    sensitivePaths: options.sensitivePaths,
     protectedFiles: options.protectedFiles,
     builtinAvailable:
       extras.tools === undefined ? (name) => PRODUCT_BUILTINS.has(name) : () => true,

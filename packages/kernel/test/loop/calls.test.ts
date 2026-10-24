@@ -137,6 +137,7 @@ function harness(
 
 /** The session in the task profile, with one picked folder. */
 async function cowork(h: Harness, folder: AbsolutePath): Promise<void> {
+  await h.memory.fs.mkdirp(folder)
   await h.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: DEDICATED })
   const set = await h.service.setWorkspace({
     sessionId: SESSION,

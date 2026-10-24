@@ -211,14 +211,14 @@ function scopeKey(scope: string, target: TargetType, subtask: boolean): string {
 }
 
 describe('the approval card copy', () => {
-  it('reads the nine reasons from the kernel table the contract enumerates', () => {
-    expect(REASONS).toHaveLength(9)
+  it('reads the ten reasons from the kernel table the contract enumerates', () => {
+    expect(REASONS).toHaveLength(10)
     expect(REASONS.toSorted()).toEqual([...confirmReasonSchema.options].toSorted())
     expect(KINDS).toHaveLength(4)
     expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
   })
 
-  it('has the 「为什么停」 sentence of every reason under every kind, naming only a subset of its required facts', () => {
+  it('has the 「为什么停」 sentence of the all ten reasons under every kind', () => {
     // Presentation-r1 keeps every reason in the catalogue, including unrendered ones.
     // Network splits by target; only its URL sentence needs a slot (facts.host).
     const expected: Expectation[] = []
@@ -235,6 +235,13 @@ describe('the approval card copy', () => {
               what: `${kind}, category ${category}`,
             })
           }
+        } else if (reason === 'sensitive-path') {
+          for (const category of ['credential', 'auto-run', 'hardlink'])
+            expected.push({
+              key: `confirm.reason.sensitive-path.${category}`,
+              args: [],
+              what: category,
+            })
         } else if (reason === 'network') {
           for (const target of ['search', 'url'])
             expected.push({
@@ -248,8 +255,8 @@ describe('the approval card copy', () => {
       }
     }
     // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 2).
-    expect(expected).toHaveLength(44)
-    expect(new Set(expected.map(({ key }) => key)).size).toBe(14)
+    expect(expected).toHaveLength(56)
+    expect(new Set(expected.map(({ key }) => key)).size).toBe(17)
     expect(
       problems(expected.map(({ key, args, what }) => ({ key, args, what, subset: true }))),
     ).toEqual([])
@@ -1041,4 +1048,24 @@ it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
       expect(lookup(locale, key), `${locale}: ${key}`).not.toMatch(/沙箱|模型|sandbox|model/iu)
     }
   }
+})
+
+it('05 验收 26、27、25: both locales carry the three sensitive-path explanations', () => {
+  expect(
+    problems(
+      ['credential', 'auto-run', 'hardlink'].map((category) => ({
+        key: `confirm.reason.sensitive-path.${category}`,
+        args: [],
+        what: category,
+      })),
+    ),
+  ).toEqual([])
+})
+
+it('05 验收 13: both catalogues contain the folder refusal and home warning', () => {
+  expect(
+    problems(
+      ['folder.rootRefused', 'folder.homeWarning'].map((key) => ({ key, args: [], what: key })),
+    ),
+  ).toEqual([])
 })

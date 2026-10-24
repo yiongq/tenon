@@ -145,6 +145,7 @@ const COMMAND_PATTERNS: ReadonlyArray<{
 /** The file tools: the ones a path decides for (§「在不在工作区里」). */
 export const FILE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'Read',
+  'Delete',
   'Write',
   'Edit',
   'Glob',
@@ -156,6 +157,7 @@ export interface CallReasonQuery {
   readonly args: Readonly<Record<string, unknown>>
   /** A file tool's path as `locatePath` placed it. */
   readonly place?: PathPlace
+  readonly sensitive?: 'credential' | 'auto-run' | 'hardlink'
   readonly real?: AbsolutePath
   /** The workspace's first folder: the `outside-workspace` card's `workspace` slot and the cwd (暂定). */
   readonly workspace: AbsolutePath | null
@@ -173,6 +175,11 @@ export function callReasonOf(q: CallReasonQuery): CallReason {
   if (q.tool.source === 'builtin') {
     if (FILE_TOOL_NAMES.has(toolName)) {
       const path = q.real ?? ''
+      if (q.sensitive !== undefined)
+        return {
+          reason: 'sensitive-path',
+          facts: { path, category: q.sensitive, toolName, target: path },
+        }
       if (q.place === 'outside') {
         return {
           reason: 'outside-workspace',

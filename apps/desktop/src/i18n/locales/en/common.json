@@ -520,6 +520,11 @@
         "tool": "This can't be undone, so Tenon asks first.",
         "network": "This can't be undone, so Tenon asks first."
       },
+      "sensitive-path": {
+        "credential": "This is a sign-in credential. Its contents will be sent to the model.",
+        "auto-run": "Files at this location are executed automatically.",
+        "hardlink": "This file has other names. Changing it also changes it elsewhere."
+      },
       "outside-workspace": "It is outside this task's folders.",
       "network": {
         "search": "The search words leave this computer.",
@@ -644,7 +649,9 @@
     "toggle": "Work in a folder",
     "dedicatedNote": "With no folder picked, commands run in a folder Tenon creates just for this task.",
     "prefillPending": "Used before, not yet added",
-    "prefillUse": "{count, plural, one {Use this folder} other {Use these # folders}}"
+    "prefillUse": "{count, plural, one {Use this folder} other {Use these # folders}}",
+    "rootRefused": "Choose a folder inside the disk instead of its root.",
+    "homeWarning": "This is your home folder or its parent. It may contain private files."
   },
   "mcp": {
     "settings": "Settings",
