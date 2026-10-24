@@ -78,6 +78,9 @@ export type {
   SessionStartPayload,
   SideEffectClass,
   SnapshotCoordinate,
+  SnapshotCreatedPayload,
+  RestoreStartedPayload,
+  RestoredPayload,
   TapeEntry,
   TapeKind,
   TapeSourceType,
@@ -137,6 +140,9 @@ export {
   modelSelectedKey,
   parseProvenanceKey,
   sessionStartKey,
+  snapshotCreatedKey,
+  restoreStartedKey,
+  restoredKey,
 } from './tape/provenance.js'
 export type { ParsedProvenanceKey } from './tape/provenance.js'
 export type {

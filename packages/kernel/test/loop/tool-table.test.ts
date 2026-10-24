@@ -340,6 +340,7 @@ describe('which tools a request carries', () => {
       'Agent',
       'AskUserQuestion',
       'Bash',
+      'Delete',
       'Edit',
       'Glob',
       'Grep',

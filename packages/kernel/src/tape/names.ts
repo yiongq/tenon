@@ -349,7 +349,30 @@ const declarations = [
   // `tool/result_marked` is phase 2's (F10): the name is held, and the first phase that writes it
   // declares its identity by the tool/ key rule. Nothing in phase 2 writes it.
   { name: 'tool/result_marked', kind: 'event', slice: 'tool' },
-  { name: 'fs/snapshot_created', kind: 'event', slice: 'fs' },
+  {
+    name: 'fs/snapshot_created',
+    kind: 'event',
+    slice: 'fs',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'fs/restore_started',
+    kind: 'event',
+    slice: 'fs',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
+    name: 'fs/restored',
+    kind: 'event',
+    slice: 'fs',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
 ] as const satisfies readonly DeclaredTapeName[]
 
 /** Every first-party name as a literal type, so a reader cannot compare against a typo. */

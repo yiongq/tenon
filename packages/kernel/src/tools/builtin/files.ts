@@ -10,7 +10,7 @@
  * Every walk checks the stop signal between two `HostFs` calls: once it is set nothing more is read,
  * and the call records `aborted`.
  */
-import type { AbsolutePath, HostFs } from '../../host/adapter.js'
+import type { AbsolutePath, FileIdentity, HostFs } from '../../host/adapter.js'
 import { isWithin, joinPath } from '../../host/path.js'
 import { placeOf, resolvePath, sensitiveName } from '../../permission/workspace.js'
 import type { PathScope } from '../../permission/workspace.js'
@@ -86,7 +86,8 @@ export async function readText(
   fs: HostFs,
   path: AbsolutePath,
   signal: AbortSignal,
-): Promise<{ text: string } | { failure: ToolExecution }> {
+  guarded = false,
+): Promise<{ text: string; stamp?: FileIdentity } | { failure: ToolExecution }> {
   const stat = await fs.stat(path)
   checkSignal(signal)
   if (stat === null) return { failure: failed(fill(FILE_TEXTS.notFound, { path })) }
@@ -102,10 +103,13 @@ export async function readText(
       ),
     }
   }
-  const text = decodeText(await fs.readFile(path))
+  const read = guarded
+    ? await fs.guarded.read(path)
+    : { data: await fs.readFile(path), stamp: null }
+  const text = decodeText(read.data)
   checkSignal(signal)
   if (text === null) return { failure: failed(fill(FILE_TEXTS.notText, { path })) }
-  return { text }
+  return { text, ...(read.stamp === null ? {} : { stamp: read.stamp }) }
 }
 
 /** UTF-8, bad bytes as U+FFFD; null when the start of the file holds a NUL (not text). */

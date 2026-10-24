@@ -87,7 +87,8 @@ export class MemorySnapshots implements HostSnapshots {
       return {
         ok: true,
         snapshotId,
-        scope: state === 'tree' ? 'tree' : 'file',
+        scope:
+          state === 'tree' && (q.moment !== 'after-call' || q.path === undefined) ? 'tree' : 'file',
         ...(target === undefined ? {} : { target }),
         skipped: 0,
       }

@@ -262,7 +262,8 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
     await expect(card.getByTestId('approval-title')).toHaveText('修改这个文件？')
     await expect(card.getByTestId('approval-object')).toHaveText(file)
     await expect(card.getByTestId('approval-reason')).toHaveCount(0)
-    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 没法替你撤回这次改动。')
+    // Spec 05 acceptance 1: a workspace file the host can snapshot is promised a copy.
+    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 保存了改动前的副本。')
     await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
     await expect(card.getByTestId('approval-irreversible')).toHaveCount(0)
     // The allow button says this file, this session.

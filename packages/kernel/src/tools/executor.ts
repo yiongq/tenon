@@ -10,7 +10,7 @@
  * with no executor in this build — a server gone, an implementation removed — closes as
  * `tool-unavailable`, with its definition still in the table (E2).
  */
-import type { AbsolutePath, FetchLike, HostClock, HostFs } from '../host/adapter.js'
+import type { AbsolutePath, FetchLike, FileIdentity, HostClock, HostFs } from '../host/adapter.js'
 import { McpServerUnavailableError, McpUnauthorizedError } from '../mcp/connection.js'
 import type { McpToolSource } from '../loop/ports.js'
 import type { ExecutionState, ResultContent } from '../loop/closure.js'
@@ -22,6 +22,7 @@ import { isBuiltinToolName } from './builtin/index.js'
 import { bashExecutor } from './builtin/bash.js'
 import type { CommandRun } from './builtin/bash.js'
 import { editExecutor } from './builtin/edit.js'
+import { deleteExecutor } from './builtin/delete.js'
 import { globExecutor } from './builtin/glob.js'
 import { grepExecutor } from './builtin/grep.js'
 import { readExecutor } from './builtin/read.js'
@@ -29,10 +30,13 @@ import { writeExecutor } from './builtin/write.js'
 import { webFetchExecutor } from './builtin/web-fetch.js'
 import type { SearchBackend } from './search/types.js'
 import { webSearchExecutor } from './builtin/web-search.js'
-import type { SandboxOutcome } from '../tape/entry.js'
+import type { PermissionDecidedPayload, SandboxOutcome, ToolOutcomePayload } from '../tape/entry.js'
 import type { ToolTableItem } from './registry.js'
 
 export interface ToolExecution {
+  readonly file?: NonNullable<ToolOutcomePayload['file']>
+  /** A snapshotted file write was attempted, including an error after partial mutation (spec 05). */
+  readonly fileMutationAttempted?: true
   readonly sandbox?: SandboxOutcome
   /** Appended after the spill check, so the model always sees these diagnostics. */
   readonly sandboxBlock?: Extract<ResultContent[number], { type: 'text' }>
@@ -58,6 +62,13 @@ export interface ToolExecution {
 }
 
 export interface ExecuteQuery {
+  /** The approved Delete was ambiguous, or its volatile judgment marker was lost on restart. */
+  readonly deleteAmbiguous?: boolean
+  readonly fileStamp?: NonNullable<ToolOutcomePayload['file']>
+  /** Spec 05: the leaf kind and name count at the decision named by this dispatch. */
+  readonly fileTarget?: PermissionDecidedPayload['fileTarget']
+  /** Spec 05: the target identity returned by the promised before-call snapshot; null = absent. */
+  readonly snapshotTarget?: FileIdentity | null
   readonly search?: SearchBackend
   readonly item: ToolTableItem
   readonly input: Record<string, unknown>
@@ -97,6 +108,7 @@ export const BUILTIN_EXECUTORS: Readonly<Partial<Record<BuiltinToolName, ToolExe
   Read: readExecutor,
   Write: writeExecutor,
   Edit: editExecutor,
+  Delete: deleteExecutor,
   Bash: bashExecutor,
   Glob: globExecutor,
   Grep: grepExecutor,

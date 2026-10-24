@@ -174,8 +174,8 @@ describe('the reserved namespace table', () => {
     expect(triple.get('message/assistant')).toBe('message/required/ordinal')
     expect(triple.get('message/retracted')).toBe('message/required/null')
     expect(triple.get('provider/attempt_completed')).toBe('runtime_event/required/ordinal')
-    // Reserved-only names fix nothing: the phase that writes them declares their triple with them.
-    expect(triple.get('fs/snapshot_created')).toBe('undefined/undefined/undefined')
+    // Spec 05 now declares the snapshot writer's identity.
+    expect(triple.get('fs/snapshot_created')).toBe('runtime_event/required/ordinal')
   })
 
   it('declares every name of spec 02’s name table with its slice, kind and identity triple', () => {
@@ -191,7 +191,7 @@ describe('the reserved namespace table', () => {
     for (const [name, sliceKind, triple] of PHASE_2_NAMES) {
       expect([name, table.get(name)]).toEqual([name, [sliceKind, triple]])
     }
-    // Nothing else: 6 phase-1 names, the 19 of spec 02 and the one still reserved for phase 4.
+    // Spec 05 also declares the three fs/ evidence names.
     expect(DECLARED_TAPE_NAMES.map((d) => d.name).toSorted()).toEqual(
       [
         'session/start',
@@ -202,6 +202,8 @@ describe('the reserved namespace table', () => {
         'provider/attempt_completed',
         ...PHASE_2_NAMES.map(([name]) => name),
         'fs/snapshot_created',
+        'fs/restore_started',
+        'fs/restored',
       ].toSorted(),
     )
   })
@@ -698,3 +700,40 @@ it('03: declares server instructions with the environment identity', () => {
     sourceSeq: 0,
   })
 })
+
+it.each([
+  ['fs/snapshot_created', 'runtime_event'],
+  ['fs/restore_started', 'session'],
+  ['fs/restored', 'session'],
+] as const)(
+  '05 验收 1、21: %s requires its fs writer, event kind and identity triple',
+  (name, sourceType) => {
+    expect(declaredTapeName(name)).toEqual({
+      name,
+      kind: 'event',
+      slice: 'fs',
+      sourceType,
+      sourceId: 'required',
+      sourceSeq: 'ordinal',
+    })
+    const good = fieldsFor(declarationOf(name))
+    expect(() => createEntryWriter('fs')(name, good)).not.toThrow()
+    expect(() => createEntryWriter(null)(name, { ...good, kind: 'event' })).toThrow(
+      TapeAppendAuthorizationError,
+    )
+    expect(() => createEntryWriter('tool')(name, good)).toThrow(TapeAppendAuthorizationError)
+    expect(() => createEntryWriter('fs')(name, { ...good, kind: 'message' })).toThrow(
+      TapeAppendAuthorizationError,
+    )
+    expect(() =>
+      createEntryWriter('fs')(name, {
+        ...good,
+        sourceType: sourceType === 'session' ? 'runtime_event' : 'session',
+      }),
+    ).toThrow(TapeAppendAuthorizationError)
+    const { sourceId: _id, ...noId } = good
+    const { sourceSeq: _seq, ...noSeq } = good
+    expect(() => createEntryWriter('fs')(name, noId)).toThrow(TapeAppendAuthorizationError)
+    expect(() => createEntryWriter('fs')(name, noSeq)).toThrow(TapeAppendAuthorizationError)
+  },
+)

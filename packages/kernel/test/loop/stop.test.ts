@@ -527,12 +527,10 @@ describe('a stop in each state (旧 177; §点停止时各状态怎么收)', () 
     ])
   })
 
-  it('waits STOP_WRITE_WAIT_MS for a write whose stop landed while its dispatch was committing', async () => {
+  it('aborts before writing when stop landed while dispatch was committing', async () => {
     const write = gatedWrite()
     const h = await harness({
       fs: write.fs,
-      // The stop lands after the dispatch commits, before the batch hears back: the write begins
-      // with its signal already aborted, and nothing will fire `abort` again.
       store: (inner, harnessOf) =>
         afterAppend(inner, (batch) => {
           if (batch.entries.some((entry) => entry.name === 'execution/dispatch_committed')) {
@@ -541,16 +539,10 @@ describe('a stop in each state (旧 177; §点停止时各状态怎么收)', () 
         }),
     })
     const runId = await allowed(h, [['Write', { file_path: FILE, content: 'after\n' }]])
-    await write.reached
-    await settle()
-    h.memory.advance(STOP_WRITE_WAIT_MS - 1)
-    await settle()
-    expect(await named(h, 'tool/result')).toEqual([])
-    h.memory.advance(1)
     expect((await h.loop.runEnded({ runId })).reason).toEqual({ code: 'user-stopped' })
-    expect(await outcomes(h)).toEqual(['0 uncertain stopped write'])
-    write.release()
-    await settle()
+    expect(await outcomes(h)).toEqual(['0 aborted stopped write'])
+    expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before\n')
+    expect(await named(h, 'tool/result')).toHaveLength(1)
   })
 
   it('leaves exactly one result when the stop and the normal end arrive together', async () => {

@@ -494,6 +494,7 @@ const COWORK_TOOLS = [
   'Agent',
   'AskUserQuestion',
   'Bash',
+  'Delete',
   'Edit',
   'Glob',
   'Grep',

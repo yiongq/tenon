@@ -6,7 +6,7 @@
  * Both act on the real path the decision placed, never `file_path` as the model wrote it, and refuse
  * that path when a link now leads from it elsewhere or nowhere (§「在不在工作区里」第 5 步).
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { absolutePath, createMemoryHost } from '../../src/index.js'
 import type { MemoryHost } from '../../src/index.js'
 import { locatePath } from '../../src/permission/workspace.js'
@@ -84,9 +84,27 @@ describe('Write', () => {
       content: [{ type: 'text', text: fill(WRITE_TEXTS.created, { path }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 8 },
     })
     expect(await host.fs.stat(absolutePath('/ws/deep/er'))).toMatchObject({ isDir: true })
     expect(await textAt(host, path)).toBe('# Notes\n')
+  })
+
+  it('05 验收 42: a failed final identity check leaves every missing parent uncreated (PoC-C)', async () => {
+    const host = await hostWith({})
+    const identity = host.fs.identity.bind(host.fs)
+    vi.spyOn(host.fs, 'identity')
+      .mockImplementationOnce(identity)
+      .mockRejectedValueOnce(new Error('identity unavailable'))
+    const mkdir = vi.spyOn(host.fs, 'mkdirp')
+    const path = '/ws/new/deep/a.txt'
+    expect(
+      await run(writeExecutor, host, 'Write', { file_path: path, content: 'after' }),
+    ).toMatchObject({ isError: true, state: 'completed' })
+    expect(mkdir).not.toHaveBeenCalled()
+    expect(await host.fs.stat(absolutePath('/ws/new'))).toBeNull()
+    expect(await host.fs.stat(absolutePath('/ws/new/deep'))).toBeNull()
+    expect(await host.fs.stat(absolutePath(path))).toBeNull()
   })
 
   it('replaces the whole content of a file that is there', async () => {
@@ -96,6 +114,7 @@ describe('Write', () => {
       content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: '/ws/a.txt' }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 1 },
     })
     expect(await textAt(host, '/ws/a.txt')).toBe('b')
   })
@@ -128,6 +147,7 @@ describe('Edit', () => {
       content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: FILE }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 42 },
     })
     // new_string goes in as written: `$&` is not a replacement pattern.
     expect(await textAt(host, FILE)).toBe('const a = 1\nconst b = $&2\nexport { a, b }\n')
@@ -147,6 +167,7 @@ describe('Edit', () => {
       content: [{ type: 'text', text: fill(EDIT_TEXTS.editedAll, { path: FILE, count: '2' }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 40 },
     })
     expect(await textAt(host, FILE)).toBe('const a = 2\nconst b = 2\nexport { a, b }\n')
   })
@@ -203,6 +224,7 @@ describe('the path Write and Edit act on (§「在不在工作区里」第 5 步
       content: [{ type: 'text', text: fill(EDIT_TEXTS.edited, { path: real }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 12 },
     })
     expect(await textAt(host, real)).toBe('const a = 2\n')
     expect(
@@ -211,6 +233,7 @@ describe('the path Write and Edit act on (§「在不在工作区里」第 5 步
       content: [{ type: 'text', text: fill(WRITE_TEXTS.replaced, { path: real }) }],
       isError: false,
       state: 'completed',
+      file: { mtimeNs: '0', size: 1 },
     })
     expect(await textAt(host, real)).toBe('b')
     expect(await host.fs.stat(given)).toBeNull()

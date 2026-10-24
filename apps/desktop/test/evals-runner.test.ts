@@ -226,13 +226,14 @@ describe('a task run end to end, offline', () => {
     expect(server.requests.some((request) => request.headers.authorization !== undefined)).toBe(
       false,
     )
-    // The product's table, not the test registry's ten: createEvalSessionService adds a limit only.
+    // The product's table, not the test registry's eleven: createEvalSessionService adds a limit only.
     // AskUserQuestion joins at step 26; WebFetch joins with its inspector at step 29.
     const bodies = server.requests.map((r) => r.body as { tools?: { name: string }[] })
     expect(bodies[0]?.tools?.map((t) => t.name)).toEqual([
       'Agent',
       'AskUserQuestion',
       'Bash',
+      'Delete',
       'Edit',
       'Glob',
       'Grep',

@@ -436,9 +436,10 @@ test('presentation-r1 验收 6: an Edit that came back with an error does not sa
     await expect(page.getByTestId('assistant-text').last()).toHaveText('written')
     const written = page.getByTestId('tool-row').first()
     await written.getByTestId('tool-row-line').click()
-    // Exercises the real Write outcome, rather than injecting a local result.
+    // Exercises the real Write outcome, rather than injecting a local result. Spec 05: the host
+    // snapshotted the workspace file before the write.
     await expect(written.getByTestId('tool-side-effects')).toHaveText(
-      "Changed this file · Tenon can't undo this change for you.",
+      'Changed this file · Tenon saved a copy before this change.',
     )
     await send(page, 'try the edit')
     // Edit has its own session grant, separate from Write's.

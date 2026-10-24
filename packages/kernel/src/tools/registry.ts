@@ -43,6 +43,7 @@ export const PRODUCT_BUILTINS: ReadonlySet<BuiltinToolName> = new Set<BuiltinToo
   'Read',
   'Write',
   'Edit',
+  'Delete',
   'Bash',
   'Glob',
   'Grep',

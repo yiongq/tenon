@@ -178,11 +178,11 @@ describe('opening a table (§开表与排除)', () => {
       expect(zhipu.items.map((item) => item.name)).toContain(name)
     }
     const over = zhipu.excluded.filter((entry) => entry.code === 'over-limit')
-    // Ten builtins, but WebSearch counts too (a backend is there): 128 − 10 = 118 connector tools.
-    expect(over).toHaveLength(130 - 118)
-    expect(over.at(0)?.originalName).toBe('tool_118')
+    // Eleven builtins including WebSearch (a backend is there): 128 − 11 = 117 connector tools.
+    expect(over).toHaveLength(130 - 117)
+    expect(over.at(0)?.originalName).toBe('tool_117')
     const anthropic = open({ candidates: [...connectors, ...builtins] })
-    expect(anthropic.items).toHaveLength(140)
+    expect(anthropic.items).toHaveLength(141)
   })
 
   it('is rebuilt from its payload and specs exactly, requiresUserInteraction included', () => {

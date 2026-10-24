@@ -1,16 +1,14 @@
 /**
- * Two readings of §内置工具的默认档位 that the kernel makes before `decide()`, both pure functions of
- * the tool and its arguments: whether the change can be undone, and the call's own card reason.
+ * Two readings made before `decide()`: reversibility and the call's own card reason.
  *
- * Reversibility (spec 02 §可逆性; E1, E4, D10): it does not look at the protected list or the workspace, and nothing a model
- * or an inspector says can change it. Phase 2 produces three values — reads `read-only`, every write
- * `unknown`, deleting a file or sending content out `irreversible`; connector tools are `unknown`
- * unless a policy says otherwise (6b).
+ * Reversibility is pure over the tool, arguments and host coverage (spec 05 §点名): only Write,
+ * Edit and Delete can be `snapshotted`. A model or inspector cannot supply coverage. Connector
+ * tools stay `unknown` unless a policy says otherwise (6b).
  *
  * Plan step 11 wrote everything but Bash's conservative pattern table, which is plan step 22's: a
  * command is `irreversible` when the table matches it and `unknown` otherwise — never `read-only`.
  */
-import type { AbsolutePath, Reversibility } from '../host/adapter.js'
+import type { AbsolutePath, Reversibility, SnapshotCoverage } from '../host/adapter.js'
 import type { SandboxPlan, ToolOrigin } from '../tape/entry.js'
 import type { CallReason } from './decide.js'
 import type { PathPlace } from './workspace.js'
@@ -18,6 +16,7 @@ import type { PathPlace } from './workspace.js'
 export function reversibilityOf(
   tool: Pick<ToolOrigin, 'source' | 'originalName'>,
   args: Readonly<Record<string, unknown>>,
+  coverage?: SnapshotCoverage,
 ): Reversibility {
   if (tool.source !== 'builtin') return 'unknown'
   switch (tool.originalName) {
@@ -28,8 +27,13 @@ export function reversibilityOf(
       return 'read-only'
     case 'Bash':
       return commandReversibility(typeof args['command'] === 'string' ? args['command'] : '')
+    case 'Write':
+    case 'Edit':
+      return coverage === 'tree' || coverage === 'file' ? 'snapshotted' : 'unknown'
+    case 'Delete':
+      return coverage === 'tree' || coverage === 'file' ? 'snapshotted' : 'irreversible'
     default:
-      // Write, Edit (every write), Agent, WebSearch, WebFetch.
+      // Agent, WebSearch, WebFetch.
       return 'unknown'
   }
 }

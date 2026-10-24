@@ -16,6 +16,7 @@ export type BuiltinToolName =
   | 'Read'
   | 'Write'
   | 'Edit'
+  | 'Delete'
   | 'Bash'
   | 'Glob'
   | 'Grep'

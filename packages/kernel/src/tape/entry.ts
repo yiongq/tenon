@@ -10,7 +10,14 @@
  * `NewEntry.payload`. They are also all JSON — every value in them survives `canonicalJson`, so a
  * hash inside a payload is lowercase hex, not bytes.
  */
-import type { AbsolutePath, ConfirmRequest, ConfirmTarget, Reversibility } from '../host/adapter.js'
+import type {
+  AbsolutePath,
+  ConfirmRequest,
+  ConfirmTarget,
+  FileIdentity,
+  Reversibility,
+  SnapshotCoverage,
+} from '../host/adapter.js'
 import type { ClosureSource, ExecutionState } from '../loop/closure.js'
 import type { SpillMark, SpillRecord } from '../loop/spill.js'
 import type { SubagentHandoff } from '../loop/subagent.js'
@@ -413,6 +420,9 @@ export type ToolCallPayload = CallRef & {
   argsHash: string // name 是发给模型的名字；argsHash = canonicalHash(input)
 }
 export type PermissionDecidedPayload = CallRef & {
+  /** Spec 05: the judged leaf kind and name count, independent of the card's primary reason. */
+  fileTarget?: Pick<FileIdentity, 'kind' | 'nlink'> | null
+  coverage?: SnapshotCoverage
   sandbox?: SandboxPlan
   definitionChanged?: true
   target?: ConfirmTarget // 判决当时的卡片对象；旧事实没有时交接使用纯fallback
@@ -484,6 +494,8 @@ export type DispatchCommittedPayload = CallRef & {
   writer: FactWriter
 }
 export type ToolOutcomePayload = CallRef & {
+  snapshotId?: string
+  file?: { mtimeNs: string; size: number }
   sandbox?: SandboxOutcome
   effect: SideEffectClass // 01 固定的路径和四个值（01 spec:398）；取法见 §工具调用的收口
   state: ExecutionState
@@ -503,6 +515,36 @@ export type RunTerminalPayload = {
   steps: number // 本 Run 的工具轮数
   usage: RunUsageLine[] // 累计用量，含子 agent（H11）
   writer: FactWriter
+}
+
+// fs/ — spec 05 §接口. These are evidence, never provider context or message projections.
+export type SnapshotCreatedPayload = {
+  snapshotId: string
+  runId: string
+  requestSeq: number
+  ordinal: number
+  moment: 'before-call' | 'after-call'
+  scope: 'tree' | 'file'
+  path?: AbsolutePath
+  commits?: Record<string, string>
+  files?: Record<string, string>
+  roundRunId: string
+  skipped: number
+  writer: FactWriter
+}
+export type RestoreStartedPayload = {
+  roundRunId: string
+  undoSnapshotId: string
+  previewKey: string
+}
+export type RestoredPayload = {
+  roundRunId: string
+  undoSnapshotId: string
+  restored: number
+  removed: number
+  kept: number
+  skipped: number
+  failed: number
 }
 
 // compaction/

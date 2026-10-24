@@ -211,18 +211,20 @@ it('05 验收 25: failed identity metadata blocks writes, while reads do not req
     },
   })
   for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+    const before = requested
     // oxlint-disable-next-line no-await-in-loop -- each writing tool fails closed independently
     expect(await locatePath(fs, p('/home/ordinary'), scope, tool)).toEqual({
       real: '/home/ordinary',
       place: 'protected',
     })
+    expect(requested).toBeGreaterThan(before)
   }
-  expect(requested).toBe(3)
+  const afterWrites = requested
   expect(await locatePath(fs, p('/home/ordinary'), scope, 'Read')).toEqual({
     real: '/home/ordinary',
     place: 'workspace',
   })
-  expect(requested).toBe(3)
+  expect(requested).toBe(afterWrites)
 })
 
 it('05 验收 27: automatic names only match segments below a workspace root', () => {

@@ -308,3 +308,24 @@ export function runTerminalKey(runId: string): string {
 export function compactionAnchorKey(runId: string, requestSeq: number): string {
   return `compaction:v1:anchor:${uuidPart('runId', runId)}:${ordinalPart('requestSeq', requestSeq)}`
 }
+
+/** Spec 05: one snapshot per call and moment, independent of its snapshotId or retrying writer. */
+export function snapshotCreatedKey(
+  runId: string,
+  requestSeq: number,
+  ordinal: number,
+  moment: 'before-call' | 'after-call',
+): string {
+  if (moment !== 'before-call' && moment !== 'after-call') {
+    throw new TapeProvenanceSyntaxError('snapshot moment must be before-call or after-call')
+  }
+  return `fs:v1:snapshot:${callPart(runId, requestSeq, ordinal)}:${moment}`
+}
+
+export function restoreStartedKey(incarnationId: string, n: number): string {
+  return `fs:v1:restore_started:${uuidPart('incarnationId', incarnationId)}:${ordinalPart('n', n)}`
+}
+
+export function restoredKey(incarnationId: string, n: number): string {
+  return `fs:v1:restored:${uuidPart('incarnationId', incarnationId)}:${ordinalPart('n', n)}`
+}

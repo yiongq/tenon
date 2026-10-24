@@ -95,6 +95,13 @@ export interface ModelNotes {
     readonly folders: string
     readonly dedicated: string
   }
+  /** File mutation guards: a refusal leaves the target unchanged (spec 05). */
+  readonly file: {
+    readonly changed: string
+    readonly snapshotChanged: string
+    readonly snapshotFailed: string
+    readonly hardlinkChanged: string
+  }
   /** Sandbox facts use JSON strings for hosts, paths, commands and each violation line (spec 04). */
   readonly sandbox: {
     readonly violations: string
@@ -217,6 +224,15 @@ export const MODEL_NOTES: ModelNotes = {
       'Your previous reply was cut off at the output limit. Continue from exactly where it stopped, without repeating what you already wrote.',
     'step-limit':
       'The task reached its step limit and the user asked you to continue. Carry on with the task from where you stopped.',
+  },
+  file: {
+    changed:
+      'The file changed since it was last read or written. Nothing was written. Read the file again with Read before retrying.',
+    snapshotChanged:
+      'The file changed after its snapshot was taken. Nothing was written or deleted. Read the file again before retrying.',
+    snapshotFailed: 'Tenon could not take the promised snapshot. Nothing was written or deleted.',
+    hardlinkChanged:
+      'The file now has multiple names. Nothing was written or deleted. Ask for approval again before retrying.',
   },
   sandbox: {
     violations:
@@ -350,7 +366,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 11
+export const PROMPT_LAYER_VERSION = 12
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = '077e477e149a2452302eecdad857192953a765b8b49eca56a5b37c5f6b247a95'
+export const PROMPT_LAYER_HASH = 'a37b8c0d7be352c28ea5c2b3d4e7f1fadd36a6dea85c42c0524b40eadeb91589'

@@ -81,6 +81,8 @@ export function answerScope(q: {
   if (q.reversibility === 'irreversible') return 'once'
   if (q.place === 'outside') return 'once'
   if (q.source === 'mcp') return 'once'
+  // Spec 05 §Delete 工具: even a snapshotted deletion's answer holds only once.
+  if (q.toolName === 'Delete') return 'once'
   return SESSION_SCOPED.has(q.toolName) ? 'session' : 'once'
 }
 

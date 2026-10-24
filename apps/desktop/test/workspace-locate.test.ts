@@ -81,6 +81,27 @@ describe('locatePath on the desktop disk', () => {
     })
   })
 
+  // Linux's temporary volume may be case-sensitive; memory tests separately cover that branch.
+  for (const kind of ['file', 'link'] as const) {
+    it.skipIf(process.platform !== 'darwin')(
+      `05 验收 30: Delete preserves the actual leaf spelling of a case-insensitive ${kind} without following it`,
+      async (context) => {
+        const leaf = kind === 'file' ? 'Main.ts' : 'Abc.Link'
+        if (kind === 'link')
+          await symlink(join(raw, 'outside', 'secret'), join(raw, 'ws', 'src', leaf))
+        const written = at(`ws/src/${leaf.toUpperCase()}`)
+        if ((await fs.identity(written)) === null)
+          context.skip('The temporary volume is case-sensitive.')
+        const actual = absolutePath(join(scope.roots[0]!, 'src', leaf))
+        const verdict = await locatePath(fs, written, scope, 'Delete')
+        expect(verdict).toEqual({ real: actual, place: 'workspace' })
+        await fs.remove(verdict.real)
+        expect(await fs.identity(actual)).toBeNull()
+        expect(await fs.readFile(at('outside/secret'), { encoding: 'utf8' })).toBe('s')
+      },
+    )
+  }
+
   // macOS mounts the data volume a second time; realpath(3) keeps that spelling (s11-safety-2).
   it.runIf(existsSync('/System/Volumes/Data/private'))(
     'places the data volume’s spelling of the profile directory and a shell file as protected',
