@@ -21,6 +21,9 @@ import {
   runStartedKey,
   runTerminalKey,
   sessionStartKey,
+  snapshotCreatedKey,
+  restoreStartedKey,
+  restoredKey,
   toolCallKey,
   toolOutcomeKey,
   toolResultKey,
@@ -276,4 +279,43 @@ it('04: keys a receipt override by the call, action and violation ordinal', () =
   expect(() => receiptOverrideKey('not-a-run', 2, 3, 'allow-domain', 0)).toThrow(
     TapeProvenanceSyntaxError,
   )
+})
+
+describe('05 fs provenance keys', () => {
+  it('05 验收 1、21: keys identify each call moment and session restore ordinal', () => {
+    expect(snapshotCreatedKey(RUN, 2, 3, 'before-call')).toBe(
+      `fs:v1:snapshot:${RUN}:2:3:before-call`,
+    )
+    expect(snapshotCreatedKey(RUN, 2, 3, 'after-call')).toBe(`fs:v1:snapshot:${RUN}:2:3:after-call`)
+    expect(restoreStartedKey(INCARNATION, 4)).toBe(`fs:v1:restore_started:${INCARNATION}:4`)
+    expect(restoredKey(INCARNATION, 4)).toBe(`fs:v1:restored:${INCARNATION}:4`)
+    const keys = [
+      snapshotCreatedKey(RUN, 2, 3, 'before-call'),
+      snapshotCreatedKey(RUN, 2, 3, 'after-call'),
+      snapshotCreatedKey(RUN, 3, 3, 'before-call'),
+      snapshotCreatedKey(RUN, 2, 4, 'before-call'),
+      restoreStartedKey(INCARNATION, 4),
+      restoredKey(INCARNATION, 4),
+      restoredKey(INCARNATION, 5),
+      restoredKey(MESSAGE, 4),
+    ]
+    expect(new Set(keys).size).toBe(keys.length)
+    for (const key of keys) expect(isValidProvenanceKey(key)).toBe(true)
+  })
+
+  it('05 验收 1、21: fs key builders reject malformed identities and moments', () => {
+    expect(() => snapshotCreatedKey('invalid', 0, 0, 'before-call')).toThrow(
+      TapeProvenanceSyntaxError,
+    )
+    expect(() => snapshotCreatedKey(RUN, -1, 0, 'before-call')).toThrow(TapeProvenanceSyntaxError)
+    expect(() => snapshotCreatedKey(RUN, 0, 1.5, 'before-call')).toThrow(TapeProvenanceSyntaxError)
+    expect(() => snapshotCreatedKey(RUN, 0, 0, 'before-restore' as 'before-call')).toThrow(
+      TapeProvenanceSyntaxError,
+    )
+    expect(() => restoreStartedKey('invalid', 0)).toThrow(TapeProvenanceSyntaxError)
+    expect(() => restoredKey(INCARNATION, -1)).toThrow(TapeProvenanceSyntaxError)
+    expect(() => restoreStartedKey(INCARNATION, Number.MAX_SAFE_INTEGER + 1)).toThrow(
+      TapeProvenanceSyntaxError,
+    )
+  })
 })

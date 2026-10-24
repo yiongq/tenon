@@ -34,7 +34,13 @@ import type { SubagentHandoff } from './subagent.js'
  * member as §点停止时各状态怎么收 says — each with its own write wait, counted from the stop — and then
  * the calls not dispatched, not-run / stopped, after the members' results.
  */
-import type { AbsolutePath, ConfirmTarget, HostAdapter, Reversibility } from '../host/adapter.js'
+import type {
+  AbsolutePath,
+  ConfirmTarget,
+  HostAdapter,
+  Reversibility,
+  SnapshotCoverage,
+} from '../host/adapter.js'
 import { toolOutputDirFor } from '../host/profile.js'
 import { sandboxDomainHosts, unboundSandboxOverride } from '../permission/sandbox-release.js'
 import { isBlockedFetchUrl } from '../permission/fetch-address.js'
@@ -1119,6 +1125,7 @@ export type Judgement =
   | { readonly kind: 'stopped' }
   | {
       readonly kind: 'judged'
+      readonly coverage?: SnapshotCoverage
       readonly definitionChanged?: true
       readonly decision: Decision
       readonly sandbox?: SandboxPlan
@@ -1136,6 +1143,24 @@ export type Judgement =
       readonly failed?: 'timeout' | 'error'
     }
 
+/** Spec 05: a failed or slow coverage query must never promise a snapshot. */
+async function coverageOf(ctx: JudgeContext, path: AbsolutePath): Promise<SnapshotCoverage> {
+  let cancel: (() => void) | undefined
+  const timeout = new Promise<SnapshotCoverage>((resolve) => {
+    cancel = ctx.host.clock.setTimeout(() => resolve('none'), 1_000)
+  })
+  try {
+    return await Promise.race([
+      timeout,
+      ctx.host.snapshots.coverage({ sessionId: ctx.sessionId, path }),
+    ])
+  } catch {
+    return 'none'
+  } finally {
+    cancel?.()
+  }
+}
+
 /**
  * One call's decision (§权限决策顺序): every layer's state computed from the Tape and the host, the
  * inspectors first — a stop while they run gives no decision at all — then `decide()`.
@@ -1148,8 +1173,15 @@ export async function judgeCall(
 ): Promise<Judgement> {
   const facts = given ?? (await callFactsOf(ctx))
   const { entries, profile, scope: paths } = facts
-  const reversibility = reversibilityOf(item, call.input)
   const located = await locate(ctx.host, item, call.input, paths)
+  const coverage =
+    profile === 'cowork' &&
+    item.source === 'builtin' &&
+    ['Write', 'Edit', 'Delete'].includes(item.originalName) &&
+    located !== undefined
+      ? await coverageOf(ctx, located.real)
+      : undefined
+  const reversibility = reversibilityOf(item, call.input, coverage)
   const place = located === undefined ? undefined : placeFor(profile, located)
   const inspected = inspectedOf(item, call.input, reversibility)
   const ownView = buildSessionView(entries, {
@@ -1291,6 +1323,7 @@ export async function judgeCall(
       ? {}
       : { definitionChanged: true as const }),
     decision,
+    ...(coverage === undefined ? {} : { coverage }),
     ...(sandbox === undefined ? {} : { sandbox }),
     reversibility,
     ...(place === undefined ? {} : { place }),
@@ -1385,6 +1418,7 @@ export function decisionEntry(q: {
     providerToolCallId: q.ref.providerToolCallId,
     argsHash: q.argsHash,
     reversibility: q.judged.reversibility,
+    ...(q.judged.coverage === undefined ? {} : { coverage: q.judged.coverage }),
     ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
     ...(q.judged.definitionChanged === undefined
       ? {}
@@ -1553,6 +1587,7 @@ function grantObjectOf(
   switch (item.originalName) {
     case 'Write':
     case 'Edit':
+    case 'Delete':
       return located === undefined ? null : { kind: 'file', path: located.real }
     case 'Bash':
       return workspace === null

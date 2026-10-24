@@ -50,6 +50,9 @@ import type {
   ContinuationPayload,
   EnvironmentPayload,
   ReceiptOverridePayload,
+  RestoredPayload,
+  RestoreStartedPayload,
+  SnapshotCreatedPayload,
   SandboxReleasePayload,
   ServerInstructionsPayload,
   DispatchCommittedPayload,
@@ -168,7 +171,9 @@ export interface TapePayloadByName {
   'execution/run_terminal': RunTerminalPayload
   'compaction/anchor': CompactionAnchorPayload
   'tool/result_marked': Record<string, unknown>
-  'fs/snapshot_created': Record<string, unknown>
+  'fs/snapshot_created': SnapshotCreatedPayload
+  'fs/restore_started': RestoreStartedPayload
+  'fs/restored': RestoredPayload
 }
 
 type Exactly<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
@@ -522,6 +527,7 @@ export function project(entry: TapeEntry): ProjectionOp[] {
     return entry.name === 'session/start' ? projectSessionStart(entry) : []
   }
   if (entry.kind === 'event') {
+    // Spec 05's fs/ facts are evidence only: keep the existing message/session/pending rows.
     if (entry.name === 'message/retracted') {
       return [
         {

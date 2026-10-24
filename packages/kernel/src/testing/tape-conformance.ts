@@ -51,6 +51,9 @@ import type {
   ProfileSetPayload,
   RunStartedPayload,
   RunTerminalPayload,
+  SnapshotCreatedPayload,
+  RestoreStartedPayload,
+  RestoredPayload,
   TapeEntry,
   TapeKind,
   ToolCallPayload,
@@ -91,6 +94,9 @@ import {
   runStartedKey,
   runTerminalKey,
   sessionStartKey,
+  snapshotCreatedKey,
+  restoreStartedKey,
+  restoredKey,
   toolCallKey,
   toolOutcomeKey,
   toolResultKey,
@@ -3539,6 +3545,191 @@ export function tapeConformanceCases(
         again.map((result) => result.created),
         facts.map(() => false),
         'the same table again is idempotent',
+      )
+    },
+  )
+
+  add(
+    '05 验收 1、21: fs facts round-trip, deduplicate and replay without changing projections',
+    async (open) => {
+      const fixture = await open()
+      const runId = fixture.ids.uuid()
+      const call = { runId, requestSeq: 2, ordinal: 3 }
+      const path = absolutePath('/work/a.txt')
+      const before: SnapshotCreatedPayload = {
+        snapshotId: 'snapshot-before',
+        ...call,
+        moment: 'before-call',
+        scope: 'file',
+        path,
+        files: { [path]: 'a'.repeat(64) },
+        roundRunId: runId,
+        skipped: 0,
+        writer: { by: 'run', runId },
+      }
+      const started: RestoreStartedPayload = {
+        roundRunId: runId,
+        undoSnapshotId: 'undo-snapshot',
+        previewKey: 'preview',
+      }
+      const restored: RestoredPayload = {
+        roundRunId: runId,
+        undoSnapshotId: 'undo-snapshot',
+        restored: 1,
+        removed: 2,
+        kept: 3,
+        skipped: 4,
+        failed: 5,
+      }
+      const fs = [
+        write('fs', 'fs/snapshot_created', {
+          ...callSource(call),
+          provenanceKey: snapshotCreatedKey(runId, 2, 3, 'before-call'),
+          payload: before,
+          createdAt: fixture.at(),
+        }),
+        write('fs', 'fs/snapshot_created', {
+          ...callSource(call),
+          provenanceKey: snapshotCreatedKey(runId, 2, 3, 'after-call'),
+          payload: {
+            ...before,
+            snapshotId: 'snapshot-after',
+            moment: 'after-call',
+            scope: 'tree',
+            commits: { '/work': 'b'.repeat(40) },
+          },
+          createdAt: fixture.at(),
+        }),
+        write('fs', 'fs/restore_started', {
+          sourceType: 'session',
+          sourceId: fixture.sessionId,
+          sourceSeq: 0,
+          provenanceKey: restoreStartedKey(fixture.incarnationId, 0),
+          payload: started,
+          createdAt: fixture.at(),
+        }),
+        write('fs', 'fs/restored', {
+          sourceType: 'session',
+          sourceId: fixture.sessionId,
+          sourceSeq: 0,
+          provenanceKey: restoredKey(fixture.incarnationId, 0),
+          payload: restored,
+          createdAt: fixture.at(),
+        }),
+      ]
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        userMessage(fixture, fixture.ids.uuid(), 0, 'hello'),
+      ])
+      const messages = await fixture.store.listMessages({ sessionId: fixture.sessionId, limit: 10 })
+      const sessions = await fixture.store.listSessions({ limit: 10 })
+      const context = await rebuildProviderContext(fixture.store, {
+        sessionId: fixture.sessionId,
+        target: SCRIPT_MODEL,
+      })
+      assertEqual(
+        (await appendAll(fixture, fs)).map((r) => r.created),
+        [true, true, true, true],
+        'all fs facts append',
+      )
+      assertEqual(
+        (await appendAll(fixture, fs)).map((r) => r.created),
+        [false, false, false, false],
+        'same keys are idempotent',
+      )
+      await assertRejects(
+        () => appendAll(fixture, [{ ...fs[0]!, payload: { ...before, snapshotId: 'different' } }]),
+        TapeProvenanceConflictError,
+        'one call and moment cannot get a second snapshotId',
+      )
+      const outcome = outcomeFact(fixture, call, before.writer)
+      const decision = decisionFact(fixture, call)
+      const outcomePayload: ToolOutcomePayload = {
+        ...(outcome.payload as ToolOutcomePayload),
+        reversibility: 'snapshotted',
+        snapshotId: before.snapshotId,
+        file: { mtimeNs: '1792839837683000001', size: 42 },
+      }
+      await appendAll(fixture, [
+        {
+          ...decision,
+          payload: { ...decision.payload, coverage: 'file', reversibility: 'snapshotted' },
+        },
+        { ...outcome, payload: outcomePayload },
+      ])
+      const all = await readAll(fixture.store, fixture.sessionId)
+      assertEqual(
+        all.find((entry) => entry.name === 'execution/tool_outcome')?.payload,
+        outcomePayload,
+        'snapshot pointer and nanosecond string round-trip',
+      )
+      assertEqual(
+        all.find((entry) => entry.name === 'tool/permission_decided')?.payload['coverage'],
+        'file',
+        'coverage round-trips',
+      )
+      const stored = (await readAll(fixture.store, fixture.sessionId)).filter((entry) =>
+        entry.name.startsWith('fs/'),
+      )
+      assertEqual(
+        stored.map((entry) => entry.payload),
+        fs.map((entry) => entry.payload),
+        'payloads survive storage',
+      )
+      assertEqual(
+        stored.map((entry) => entry.provenanceKey),
+        fs.map((entry) => entry.provenanceKey),
+        'keys survive storage',
+      )
+      for (const entry of stored)
+        assertEqual(project(entry), [], 'fs evidence has no projection operations')
+      const byRun = await fixture.store.readBySource({
+        sessionId: fixture.sessionId,
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        limit: 10,
+      })
+      assertEqual(
+        byRun.filter((entry) => entry.name.startsWith('fs/')),
+        stored.slice(0, 2),
+        'snapshots are discoverable by run identity',
+      )
+      const bySession = await fixture.store.readBySource({
+        sessionId: fixture.sessionId,
+        sourceType: 'session',
+        sourceId: fixture.sessionId,
+        limit: 10,
+      })
+      assertEqual(
+        bySession.filter((entry) => entry.name.startsWith('fs/')),
+        stored.slice(2),
+        'restores are discoverable by session identity',
+      )
+      await fixture.store.rebuildProjections(fixture.sessionId)
+      assertEqual(
+        await fixture.store.listMessages({ sessionId: fixture.sessionId, limit: 10 }),
+        messages,
+        'message projection unchanged',
+      )
+      assertEqual(
+        await fixture.store.listSessions({ limit: 10 }),
+        sessions,
+        'session projection unchanged',
+      )
+      assertEqual(await pendingOf(fixture), [], 'fs evidence never raises an approval')
+      assertEqual(
+        await rebuildProviderContext(fixture.store, {
+          sessionId: fixture.sessionId,
+          target: SCRIPT_MODEL,
+        }),
+        context,
+        'fs evidence never reaches the model',
+      )
+      assertEqual(
+        (await fixture.store.verifyChain({ sessionId: fixture.sessionId, limit: 10 }))
+          .firstBadEntryId,
+        null,
+        'chain remains valid',
       )
     },
   )
