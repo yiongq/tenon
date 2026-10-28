@@ -1,6 +1,8 @@
 // Fixture permutations run sequentially to keep counters and close assertions isolated.
 // Cancellation observations differ by the negotiated protocol era.
 // oxlint-disable no-await-in-loop, no-conditional-expect
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
 import { connectHttpServer, McpResourceNotFoundError } from '../../src/index.js'
 import type { McpConnection } from '../../src/index.js'
@@ -173,6 +175,8 @@ it.each(['legacy', 'modern'] as const)(
 async function until(ready: () => boolean) {
   while (!ready()) await new Promise((resolve) => setImmediate(resolve))
 }
+setFlagsFromString('--expose-gc')
+const gc = runInNewContext('gc') as () => void
 it.each(['legacy', 'modern'] as const)(
   '03 验收 30 (HTTP): %s total deadline at ten times uses fake setTimeout and cancels on the server',
   async (era) => {
@@ -213,6 +217,8 @@ it.each(['legacy', 'modern'] as const)(
           await until(() => progress === i && fixture.slowSleeps === i + 1)
         }
       }
+      // Request signals follow their source only weakly, so the abort must survive a collection.
+      gc()
       await vi.advanceTimersByTimeAsync(deadlineAt - Date.now() - 1)
       expect(settled).toBe(false)
       await vi.advanceTimersByTimeAsync(1)
