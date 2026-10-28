@@ -1,5 +1,9 @@
 // Test permutations are sequential to isolate authorization-server request counters.
 // oxlint-disable no-await-in-loop
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createMemoryHost } from '../../src/index.js'
 import { createMcpOAuthProvider } from '../../src/mcp/oauth.js'
@@ -16,6 +20,9 @@ afterEach(async () => {
   await Promise.all(cleanup.splice(0).map((fn) => fn()))
   vi.restoreAllMocks()
 })
+// Request signals follow their source only weakly, so cancellation cases force a full collection.
+setFlagsFromString('--expose-gc')
+const gc = runInNewContext('gc') as () => void
 async function setup(
   authOptions: FakeAuthOptions = {},
   over: Partial<McpOAuthRuntime> = {},
@@ -400,6 +407,30 @@ it('cancelLogin aborts discovery before opening or listening, and a concurrent l
   expect(await login).toEqual({ ok: false, code: 'cancelled' })
   expect(h.open).not.toHaveBeenCalled()
   expect(h.ports).toEqual([])
+})
+it('cancelLogin after a GC still closes a stalled discovery response on the server', async () => {
+  let closed = 0
+  const hung = createServer((_req, res) => {
+    res.on('close', () => closed++)
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.write('{')
+  })
+  await new Promise<void>((resolve) => hung.listen(0, '127.0.0.1', resolve))
+  cleanup.push(async () => {
+    hung.closeAllConnections()
+    await new Promise<void>((resolve) => hung.close(() => resolve()))
+  })
+  // The real wrapMcpFetch over the platform fetch; discovery's body never finishes.
+  const h = await setup({}, {}, `http://127.0.0.1:${(hung.address() as AddressInfo).port}/mcp`)
+  const login = h.provider.login(h.ui)
+  await vi.waitFor(() => expect(h.handed.mock.settledResults[0]?.type).toBe('fulfilled'))
+  // Every wrapper has returned and dropped its own Request (the spy's record would keep one
+  // alive); signals follow their source only weakly, so the cancellation must survive a GC.
+  h.handed.mockClear()
+  gc()
+  h.provider.cancelLogin()
+  await expect.poll(() => closed, { timeout: 3000 }).toBe(1)
+  expect(await login).toEqual({ ok: false, code: 'cancelled' })
 })
 
 it('03 验收 17: first own-client tokens write carries raw issuer and binds it, without DCR; later issuer mismatch sends no secret', async () => {
