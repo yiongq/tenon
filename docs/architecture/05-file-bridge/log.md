@@ -320,3 +320,25 @@
 - Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量后提交检查点：第 13 步宿主一半 12d7b87、kernel 一半 21d4ee2，第 14 步路由 3c62085。沙箱外全量 5273 通过、114 跳过；提示层哈希没变。
 - 第 14 步之后发现 spec 正文与验收 16 要清单单独标出命令改的路径，§接口 的 `RestorePreview` 没有路径来源。owner 定不标、放宽 spec（D62），问卷原话：「不标，改 spec 放宽」。
 - 验收 15 要 macOS、Linux 两个平台，CI 原来只在 Linux 跑 e2e。owner 问卷原话：「ci.yml 加 macOS e2e 任务 (Recommended)」。lead 在 `sandbox-macos` 任务里补装 Electron，只跑 `restore.spec.ts` 与 `write-card.spec.ts`，报告另传 `e2e-macos-report`。改了门禁文件，第三段 PR 不开自动合并，由 owner 合。
+
+## 实施 · 2026-10-28（第三段第 15 步）
+
+- 检查点 0923a6b（摘为 1f47ce4）：审批卡 ④ 换成终稿句；工具行的失败标记、Delete 展开那一行与快照号；结算行的 Delete 一类、「可还原」与两种附注；还原清单（冲突逐个问、默认保留、取消不发请求、`stale` 重出并把覆盖选择重置为保留）；`ThreadTitleMenu` 的只读记录；「上次还原没做完」提示。
+- 第一次派出时 Codex 停下报告：界面拿不到每次调用的快照号、也对不上结算行属于哪一轮。lead 没动已合入的 `session.messages`，只在新路由 `snapshot.rounds` 里补每轮的 Run 与每次调用的快照号（spec 澄清，见修订记录）。第二次又停：历史消息不画结算行、重启后没有还原入口；owner 定 D63，`snapshot.rounds` 再补每轮结束的那条消息。
+- lead 审出 `rounds()` 每次都给每个能还原的轮重算宿主预览、界面每次工具调用结束都刷新：改成按「轮 + 这一轮各 Tape 的末条事实 + 存活」记住预览结论（只在内存），界面同一时刻只发一个请求、500 ms 内的工具事件合并。代价：两次 Tape 变化之间，结算行附注不随工作区实时变；点「可还原」时清单照旧现算。
+- 沙箱外全量：5304 通过、114 跳过；提示层哈希没变。
+- 文案：界面新增约 70 句中英文，Codex 起草、lead 审，只改了冲突那句。
+
+测试改动：apps/desktop/e2e/write-card.spec.ts · presentation-r1 验收 3 · 卡上 ④ 从暂定句换成 05 终稿句，注释改引验收 52
+测试改动：apps/desktop/e2e/write-card.spec.ts · 05 验收 25 硬链接写入 · 改用中文界面断言，补「没法替你撤回」与卡上没有「有快照」两条（加强）
+测试改动：apps/desktop/e2e/tools.spec.ts · presentation-r1 验收 6 · 展开那一行的 ④ 换成 05 终稿句
+测试改动：apps/desktop/test/copy-coverage.test.ts · 结算计数覆盖 · 类别由六类加到七类（Delete），并新增验收 35 的穷举
+测试改动：apps/desktop/test/renderer-approval-card.test.ts · 原因、类别、可逆性全表 · `revertible` 期望不出 ④（spec §审批卡 ④：`revertible` 不出现）
+测试改动：apps/desktop/test/renderer-tool-row.test.ts · 03 验收 45、presentation-r1 验收 6 · `revertible` 期望不出撤回说明，理由同上
+测试改动：apps/desktop/test/renderer-live-thread.test.ts · 结算的两条用例 · 计数对象多一项 `delete: 0`
+测试改动：apps/desktop/test/renderer-thread-model.test.ts · 结算计数的七条用例 · 计数对象多一项 `delete: 0`
+测试改动：apps/desktop/test/renderer-to-thread-messages.test.ts · 结算的三条用例 · 计数对象多一项 `delete: 0`
+测试改动：apps/desktop/test/session-store.test.ts · 子任务调用只读一次 · 计数对象多一项 `delete: 0`
+测试改动：apps/desktop/test/shutdown.test.ts · 退出时拒绝的路由 · 清单加 `snapshot.restore`，保留不进 kernel、不写事实的断言（第 14 步）
+测试改动：apps/desktop/test/session-removal.test.ts · 清空、删除期间拒绝的路由 · 清单加 `snapshot.restore`（第 14 步）
+测试改动：packages/contracts/test/registry.test.ts · 完整通道清单 · 加三条 snapshot 通道（第 14 步）
