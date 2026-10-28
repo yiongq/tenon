@@ -541,8 +541,11 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
               /* not an RPC request */
             }
           }
+          // As in wrapMcpFetch: this Request is dropped once the response is back, and its signal
+          // follows the caller's only weakly, so the caller's own signal goes down too.
+          const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
           try {
-            const response = await privilegedFetch(request)
+            const response = await privilegedFetch(request, signal ? { signal } : undefined)
             if (
               !listens ||
               !response.ok ||

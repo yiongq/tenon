@@ -16,6 +16,9 @@ export function createMcpFetch(
   const server = new URL(serverUrl)
   return async (input, init) => {
     const request = new Request(input, init)
+    // `request.signal` follows the caller's only weakly; once this Request is dropped a GC would
+    // stop the abort here, so every downstream step takes the caller's own signal.
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : request.signal)
     const target = new URL(request.url)
     if (!mcpAddress(target.href).ok) throw new HostNetworkDeniedError('Unsafe MCP URL')
     const originReach = endpointOf(server.href)?.reach
@@ -26,29 +29,29 @@ export function createMcpFetch(
     )
       throw new HostNetworkDeniedError('Protected MCP discovery address')
     if (target.origin === server.origin || originReach !== 'public')
-      return network.fetch(request, { redirect: 'manual' })
+      return network.fetch(request, { redirect: 'manual', signal })
     const hostname = target.hostname.replace(/^\[|\]$/g, '')
     const addresses: readonly FetchAddress[] = await abortable(
       seams.lookup?.(hostname) ??
         dnsLookup(hostname, { all: true, verbatim: true }).then((rows) =>
           rows.map((r) => ({ address: r.address, family: r.family as 4 | 6 })),
         ),
-      request.signal,
+      signal,
     )
-    request.signal.throwIfAborted()
+    signal.throwIfAborted()
     if (
       !addresses.length ||
       addresses.some((a) => isIP(a.address) !== a.family || isBlockedFetchAddress(a.address))
     )
       throw new HostNetworkDeniedError('Protected MCP discovery DNS')
     const checked = seams.connectTarget?.(addresses[0]!) ?? addresses[0]!
-    const dispatcher = createPinnedDispatcher(hostname, checked, request.signal)
+    const dispatcher = createPinnedDispatcher(hostname, checked, signal)
     try {
       const response = await undiciFetch(target, {
         method: request.method,
         headers: request.headers,
         body: request.body,
-        signal: request.signal,
+        signal,
         redirect: 'manual',
         ...(request.body ? { duplex: 'half' } : {}),
         dispatcher,

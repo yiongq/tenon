@@ -345,10 +345,10 @@ export function createMcpOAuthProvider(q: {
   }
   async function performLogin(ui: McpLoginUi, abort: AbortController): Promise<McpLoginResult> {
     const loginFetch: FetchLike = (input, init) => {
-      const request = new Request(input, init)
-      return q.fetch(
-        new Request(request, { signal: AbortSignal.any([request.signal, abort.signal]) }),
-      )
+      // Built from the caller's own signal, not an intermediate Request's (see wrapMcpFetch).
+      const caller = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+      const signal = caller ? AbortSignal.any([caller, abort.signal]) : abort.signal
+      return q.fetch(input, { ...init, signal })
     }
     const scope = q.requiredScope?.()
     let info: OAuthDiscoveryState

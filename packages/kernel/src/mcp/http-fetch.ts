@@ -34,7 +34,10 @@ export function wrapMcpFetch(
         /* a notification or a non-RPC auth request */
       }
     }
-    const response = await fetch(request)
+    // `request.signal` follows the caller's signal only weakly; after a GC the abort would stop
+    // here and never close the server request, so the caller's own signal goes down too.
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+    const response = await fetch(request, signal ? { signal } : undefined)
     if (!rpc || !response.ok || !response.body || !q.onStreamBreak) return response
     const reader = response.body.getReader()
     const decoder = new TextDecoder()

@@ -12,13 +12,19 @@ import type { Socket, AddressInfo } from 'node:net'
 import { readFileSync } from 'node:fs'
 import tls from 'node:tls'
 import http from 'node:http'
+import { setFlagsFromString } from 'node:v8'
+import { runInNewContext } from 'node:vm'
 import { afterEach, expect, it, vi } from 'vitest'
 import {
   absolutePath,
+  createMcpPool,
   createMemoryHost,
   connectStdioServer,
   HostNetworkDeniedError,
 } from '@tenon-app/kernel'
+import type { McpServerRuntime } from '@tenon-app/kernel'
+import { startHttpFixture } from '../../../packages/kernel/test/support/http-fixture.js'
+import { createDesktopNetwork } from '../src/main/host/network.js'
 import { createHostProcess } from '../src/main/host/process.js'
 import { createMcpLogSink } from '../src/main/mcp/log-sink.js'
 import { resolveMcpCommand } from '../src/main/mcp/resolve-command.js'
@@ -33,6 +39,9 @@ afterEach(async () => {
   vi.restoreAllMocks()
   await Promise.all(cleanup.splice(0).map((f) => f()))
 })
+// Request signals follow their source only weakly, so cancellation cases force a full collection.
+setFlagsFromString('--expose-gc')
+const gc = runInNewContext('gc') as () => void
 async function directory() {
   const dir = await mkdtemp(join(tmpdir(), 'tenon-mcp-'))
   cleanup.push(() => rm(dir, { recursive: true, force: true }))
@@ -387,6 +396,116 @@ it('03 验收 10 (fetch cancellation): aborting a stalled TLS handshake closes t
   expect((await settled)[0]).toMatchObject({ status: 'rejected', reason: { name: 'AbortError' } })
   await expect.poll(() => peer.destroyed).toBe(true)
 })
+
+it('03 验收 10 (fetch cancellation): aborting a pinned response body after a GC closes it on the server', async () => {
+  let closed = false
+  const server = createServer(
+    {
+      key: readFileSync(new URL('./support/fixtures/fetch-test-key.pem', import.meta.url)),
+      cert: readFileSync(new URL('./support/fixtures/fetch-test-cert.pem', import.meta.url)),
+    },
+    (_req, res) => {
+      res.on('close', () => {
+        closed = true
+      })
+      res.writeHead(200)
+      res.write('partial')
+    },
+  )
+  const port = await listen(server)
+  cleanup.push(() => closeServer(server))
+  const realConnect = tls.connect
+  vi.spyOn(tls, 'connect').mockImplementation((...args) =>
+    realConnect({
+      ...(args[0] as tls.ConnectionOptions),
+      ca: readFileSync(new URL('./support/fixtures/fetch-test-cert.pem', import.meta.url)),
+    }),
+  )
+  const abort = new AbortController()
+  const response = await createMcpFetch('https://mcp.example', createMemoryHost().network, {
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+    connectTarget: () => ({ address: '127.0.0.1', family: 4 }),
+  })(`https://fetch.example:${port}/metadata`, { signal: abort.signal })
+  const reader = response.body!.getReader()
+  expect((await reader.read()).done).toBe(false)
+  // createMcpFetch has returned and dropped its Request; only the body is still open.
+  gc()
+  abort.abort()
+  await expect.poll(() => closed, { timeout: 3000 }).toBe(true)
+  await expect(reader.read()).rejects.toMatchObject({ name: 'AbortError' })
+})
+
+it('03 验收 30 (desktop HTTP): stopping a modern call after a GC still closes its request on the server', async () => {
+  const fixture = await startHttpFixture()
+  cleanup.push(() => fixture.close())
+  // The production chain: SDK → the connection's wrapMcpFetch → pool's handed fetch → the
+  // privileged wrapMcpFetch → createMcpFetch → the desktop network. The tap only reports when the
+  // tools/call response headers are back.
+  const network = createDesktopNetwork(),
+    streaming = Promise.withResolvers<void>()
+  const runtime: McpServerRuntime = {
+    serverId: 'fixture',
+    launchHash: 'launch',
+    consented: true,
+    transport: {
+      type: 'http',
+      url: fixture.url,
+      headerKeys: [],
+      protocol: 'auto',
+      fetch: createMcpFetch(fixture.url, {
+        ...network,
+        fetch: async (input, init) => {
+          const call =
+            input instanceof Request && (await input.clone().text()).includes('"tools/call"')
+          const response = await network.fetch(input, init)
+          if (call) streaming.resolve()
+          return response
+        },
+      }),
+      oauth: { issuers: [], ownClient: null, clientMetadataUrl: null, dcrRedirectPort: 53280 },
+    },
+    handshakeTimeoutMs: 30_000,
+    callTimeoutMs: 60_000,
+    rank: 0,
+    toolsPinned: false,
+    pins: {},
+    instructions: { enabled: false, pinHash: null },
+  }
+  const host = createMemoryHost()
+  const pool = createMcpPool({
+    host,
+    ids: { uuid: () => crypto.randomUUID() },
+    baseEnv: async () => ({}),
+    homeDir: absolutePath('/'),
+    resolveCommand: async (command) => ({ ok: true, path: absolutePath(command) }),
+    runtimeOf: () => runtime,
+    log: () => {},
+    onPin: async () => {},
+    onIssuer: async () => {},
+    onChange: () => {},
+  })
+  cleanup.push(() => {
+    const closing = pool.close({ deadlineMs: 0 })
+    host.advance(0)
+    return closing
+  })
+  pool.apply([runtime])
+  await vi.waitFor(() => expect(pool.status()[0]?.phase).toBe('connected'))
+  expect(pool.routes()[0]!.connection.era).toBe('modern')
+  const stop = new AbortController()
+  const settled = Promise.allSettled([
+    pool.routes()[0]!.connection.callTool('slow', { ms: 10_000 }, { signal: stop.signal }),
+  ])
+  await streaming.promise
+  // Every wrapper below the connection's has returned and dropped its own Request; only the body
+  // is still streaming.
+  await new Promise((resolve) => setImmediate(resolve))
+  gc()
+  stop.abort()
+  expect((await settled)[0]?.status).toBe('rejected')
+  const id = fixture.requests.find((r) => r.method === 'tools/call')?.body['id']
+  await expect.poll(() => fixture.cancelledRequests, { timeout: 3000 }).toContain(id)
+}, 20_000)
 
 it('03 验收 8: Windows PATH respects PATHEXT, refuses cmd/bat and directories, and never searches relative paths', async () => {
   const access = vi.spyOn(files, 'access').mockResolvedValue(undefined)

@@ -32,7 +32,14 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
   const cancelledRequests: unknown[] = []
   const sharedTools = createFixtureTools()
   if (opts.inputSchema) sharedTools[0]!.inputSchema = opts.inputSchema
-  const modern = createMcpHandler(() => createFixtureServer(sharedTools), { legacy: 'reject' })
+  let slowSleeps = 0
+  const modern = createMcpHandler(
+    () =>
+      createFixtureServer(sharedTools, undefined, () => {
+        slowSleeps += 1
+      }),
+    { legacy: 'reject' },
+  )
   const pending = new Map<unknown, { timer: ReturnType<typeof setTimeout>; res: ServerResponse }>()
   const legacyTools = [
     'echo',
@@ -115,7 +122,11 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
       }
       if (opts.era === undefined || opts.era === 'modern') {
         const response = await modern.fetch(
-          new Request(url, { method: 'POST', headers: req.headers as HeadersInit, body: raw }),
+          new Request(url, {
+            method: 'POST',
+            headers: req.headers as Record<string, string>,
+            body: raw,
+          }),
         )
         res.writeHead(response.status, Object.fromEntries(response.headers))
         if (response.body) {
@@ -215,6 +226,10 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
     url,
     requests,
     cancelledRequests,
+    /** How many times the modern `slow` tool has armed its sleep timer; fake-timer tests step on it. */
+    get slowSleeps() {
+      return slowSleeps
+    },
     set(next: HttpFixtureOptions) {
       opts = { ...opts, ...next }
     },
