@@ -169,6 +169,10 @@ it.each(['legacy', 'modern'] as const)(
   },
 )
 
+/** Waits for loopback I/O without moving fake time; only the test timeout bounds it. */
+async function until(ready: () => boolean) {
+  while (!ready()) await new Promise((resolve) => setImmediate(resolve))
+}
 it.each(['legacy', 'modern'] as const)(
   '03 验收 30 (HTTP): %s total deadline at ten times uses fake setTimeout and cancels on the server',
   async (era) => {
@@ -197,14 +201,16 @@ it.each(['legacy', 'modern'] as const)(
           settled = true
           return error
         })
-      await vi.waitFor(() =>
-        expect(fixture.requests.some((r) => r.method === 'tools/call')).toBe(true),
-      )
+      // Fake time moves only in advanceTimersByTimeAsync; vi.waitFor would also advance it per poll.
+      await until(() => fixture.requests.some((r) => r.method === 'tools/call'))
       const requestId = fixture.requests.find((r) => r.method === 'tools/call')!.body['id']
-      // Deliver each progress frame over the real loopback socket before advancing the next tick.
       if (era === 'modern') {
-        for (let i = 0; i < 17; i++) {
-          await vi.waitFor(() => expect(progress).toBeGreaterThan(i), { interval: 1 })
+        // The server sleeps 100 ms per frame; each frame must reset the 180 ms idle timer.
+        await until(() => fixture.slowSleeps === 1)
+        for (let i = 1; i <= 17; i++) {
+          await vi.advanceTimersByTimeAsync(100)
+          expect(settled).toBe(false)
+          await until(() => progress === i && fixture.slowSleeps === i + 1)
         }
       }
       await vi.advanceTimersByTimeAsync(deadlineAt - Date.now() - 1)
@@ -213,19 +219,19 @@ it.each(['legacy', 'modern'] as const)(
       expect(settled).toBe(true)
       expect(await pending).toMatchObject({ code: 'REQUEST_TIMEOUT' })
       expect(caller.signal.aborted).toBe(false)
+      // With fake time frozen the slow call cannot finish on its own; only cancellation ends it.
       if (era === 'legacy')
-        await vi.waitFor(() =>
-          expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(true),
-        )
+        await until(() => fixture.requests.some((r) => r.method === 'notifications/cancelled'))
       else {
         expect(progress).toBeGreaterThan(1)
-        await vi.waitFor(() => expect(fixture.cancelledRequests).toContain(requestId))
+        await until(() => fixture.cancelledRequests.includes(requestId))
         expect(fixture.requests.some((r) => r.method === 'notifications/cancelled')).toBe(false)
       }
     } finally {
       vi.useRealTimers()
     }
   },
+  30_000,
 )
 
 it('03 验收 2: HTTP handshake timeout is passed to Client.connect', async () => {
