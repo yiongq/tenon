@@ -393,8 +393,10 @@ export class SnapshotGit {
         pid === undefined ||
         pid < 2 ||
         pgid !== pid ||
+        executable !== this.candidate ||
         !Array.isArray(argv) ||
         !argv.every((arg) => typeof arg === 'string') ||
+        (this.platform !== 'darwin' && argv[0] !== this.candidate) ||
         !argv.includes(`--git-dir=${repo}`)
       )
         return

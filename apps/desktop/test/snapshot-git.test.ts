@@ -62,6 +62,60 @@ describe('05 git stdin', () => {
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+it.each([
+  { platform: 'darwin', executable: '/bin/sleep', argv0: '/bin/sleep' },
+  { platform: 'linux', executable: '/bin/sleep', argv0: '/bin/sleep' },
+  { platform: 'linux', executable: '/usr/bin/git', argv0: '/bin/sleep' },
+] as const)(
+  '05 验收 45: recovery discards another executable without killing a matching process ($platform, $executable, $argv0)',
+  async ({ platform, executable, argv0 }) => {
+    const repo = await mkdtemp(join(tmpdir(), 'tenon-process-'))
+    const record = join(repo, 'process.json')
+    const now = Date.now()
+    const spawn = vi.fn<HostProcess['spawn']>(async (options) => ({
+      pid: 54321,
+      stdin: new WritableStream(),
+      stdout: stream(
+        options.argv[0] === '/bin/ps'
+          ? platform === 'darwin'
+            ? '12345 12345 00:10 /bin/sleep\n'
+            : '12345 12345\n'
+          : '',
+      ),
+      stderr: stream(''),
+      exited: Promise.resolve({ code: 0, signal: null }),
+      kill: async () => {},
+    }))
+    const git = new SnapshotGit(
+      { process: { spawn }, sandbox: new PassthroughSandbox(() => {}) },
+      platform,
+    )
+    const time = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      await writeFile(
+        record,
+        JSON.stringify({
+          pid: 12345,
+          pgid: 12345,
+          startedAt: now - 10_000,
+          executable,
+          argv: [argv0, `--git-dir=${repo}`, 'write-tree'],
+        }),
+      )
+      await git.recoverProcess(repo, new AbortController().signal)
+      expect(spawn.mock.calls.filter(([options]) => options.argv[0] === '/bin/kill')).toHaveLength(
+        0,
+      )
+      expect(spawn).not.toHaveBeenCalled()
+      await expect(readFile(record)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      time.mockRestore()
+      await rm(repo, { recursive: true, force: true })
+    }
+  },
+)
+
 it.each(['exact', 'prefix', 'truncated', 'group-changed'])(
   '05 验收 45: recovery ignores mismatched process fields without degrading (%s)',
   async (kind) => {
@@ -163,7 +217,8 @@ it.each([
     const parent = await mkdtemp(join(tmpdir(), 'tenon-process-'))
     const repo = join(parent, 'Application Support', 'repo')
     await mkdir(repo, { recursive: true })
-    const executable = '/Applications/Developer Tools/usr/bin/git'
+    const executable =
+      kind === 'xcrun-shim' ? '/usr/bin/git' : '/Applications/Developer Tools/usr/bin/git'
     const argv = [executable, `--git-dir=${repo}`, 'write-tree']
     const now = Date.now()
     await writeFile(
@@ -187,6 +242,7 @@ it.each([
         sandbox: new PassthroughSandbox(() => {}),
       },
       'darwin',
+      executable,
     )
     const time = vi.spyOn(Date, 'now').mockReturnValue(now)
     const command = vi.spyOn(git, 'command').mockImplementation(async (actual) => {
@@ -301,7 +357,13 @@ it.skipIf(process.platform === 'win32')(
       await expect(readFile(record)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       // A failing run must not leave its sleeping process group behind.
-      if (pid !== undefined && alive(pid)) process.kill(-pid, 'SIGKILL')
+      if (pid !== undefined) {
+        try {
+          process.kill(-pid, 'SIGKILL')
+        } catch {
+          // The process group may already have exited; never use a leader liveness check here.
+        }
+      }
       await work
       await rm(parent, { recursive: true, force: true })
     }
