@@ -256,3 +256,35 @@ it('05 验收 18: overwrite accepts at most 50000 conflict choices', () => {
       .success,
   ).toBe(false)
 })
+
+it('05 验收 18: C1 — overwrite entries must be absolute POSIX, drive or UNC paths', () => {
+  for (const ok of ['/a/b', 'C:\\a', 'c:/a', '\\\\server\\share\\f'])
+    expect(
+      snapshotRestore.request.safeParse({
+        sessionId: SESSION,
+        roundRunId: ROUND,
+        previewKey: 'key',
+        overwrite: [ok],
+      }).success,
+    ).toBe(true)
+  for (const bad of [
+    'relative/path',
+    'a/b/c',
+    './x',
+    'C:foo',
+    '1:/x',
+    'ab:/x',
+    ':/x',
+    '/a\0b',
+    'x\\\\y',
+    '',
+  ])
+    expect(
+      snapshotRestore.request.safeParse({
+        sessionId: SESSION,
+        roundRunId: ROUND,
+        previewKey: 'key',
+        overwrite: [bad],
+      }).success,
+    ).toBe(false)
+})

@@ -91,3 +91,47 @@ it('05 验收 33: refresh cancels a pending tool debounce; disposal drops timers
   expect(publish).not.toHaveBeenCalled()
   expect(invoke).toHaveBeenCalledTimes(1)
 })
+
+it('05 验收 33: refresh ignores invalid, other-session and unrelated events, and never starts after disposal', async () => {
+  vi.useFakeTimers()
+  const invoke = vi.fn<() => Promise<unknown>>(async () => ({ ok: true, data: result(true) }))
+  const publish = vi.fn<(data: Rounds | null) => void>()
+  const refresh = new SnapshotRefresh({ invoke }, SESSION, publish)
+  for (const event of [
+    null,
+    {},
+    { ...outcome(0), sessionId: roundRunId },
+    { type: 'text-delta', sessionId: SESSION, delta: 'hi' },
+  ])
+    refresh.event(event)
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(invoke).not.toHaveBeenCalled()
+  refresh.event(outcome(1))
+  refresh.dispose()
+  refresh.event(outcome(2))
+  refresh.event({ type: 'error', sessionId: SESSION, code: 'network' })
+  expect(await refresh.refresh()).toBeNull()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(invoke).not.toHaveBeenCalled()
+  expect(publish).not.toHaveBeenCalled()
+})
+
+it('05 验收 33: disposal before the scheduled drain cancels it; failures publish null and permit a fresh request', async () => {
+  const invoke = vi.fn<(channel: string, request: unknown) => Promise<unknown>>()
+  const publish = vi.fn<(data: Rounds | null) => void>()
+  const stopped = new SnapshotRefresh({ invoke }, SESSION, publish)
+  const pending = stopped.refresh()
+  stopped.dispose()
+  await pending
+  expect(invoke).not.toHaveBeenCalled()
+  const refresh = new SnapshotRefresh({ invoke }, SESSION, publish)
+  invoke.mockRejectedValueOnce(new Error('offline'))
+  expect(await refresh.refresh()).toBeNull()
+  expect(publish).toHaveBeenLastCalledWith(null)
+  invoke.mockResolvedValueOnce({ ok: true, data: { ok: false, code: 'gone' } })
+  expect(await refresh.refresh()).toBeNull()
+  invoke.mockResolvedValueOnce({ ok: true, data: result(true) })
+  expect(await refresh.refresh()).toEqual(result(true))
+  expect(publish).toHaveBeenLastCalledWith(result(true))
+  refresh.dispose()
+})

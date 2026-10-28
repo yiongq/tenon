@@ -370,3 +370,89 @@ it('05 验收 48: Delete expands only on success and counts distinct successful 
     connector: 0,
   })
 })
+
+it.each(
+  ['open', 'confirm'].flatMap((stage) =>
+    ['reject', 'invalid', 'busy'].map((kind) => ({
+      stage,
+      kind,
+      error: kind === 'busy' ? 'busy' : 'failed',
+    })),
+  ),
+)('05 验收 18、22: restore $stage reports $kind failures', async (reply) => {
+  const { stage } = reply
+  const h = host()
+  const listener = vi.fn<() => void>()
+  const unsubscribe = h.flow.subscribe(listener)
+  if (stage === 'confirm') await h.flow.open(RUN)
+  if (reply.kind === 'reject') h.invoke.mockRejectedValueOnce(new Error('offline'))
+  else
+    h.invoke.mockResolvedValueOnce(
+      reply.kind === 'invalid' ? {} : { ok: true, data: { ok: false, code: 'busy' } },
+    )
+  if (stage === 'open') await h.flow.open(RUN)
+  else await h.flow.confirm()
+  expect(h.flow.getSnapshot()).toMatchObject({
+    phase: 'error',
+    error: reply.error,
+    preview: null,
+  })
+  expect(listener).toHaveBeenCalled()
+  unsubscribe()
+  listener.mockClear()
+  h.flow.cancel()
+  expect(listener).not.toHaveBeenCalled()
+})
+
+it.each(['resolve', 'reject'] as const)(
+  '05 验收 18: an older preview that later %ss cannot replace the current round or reopen a cancelled dialog',
+  async (completion) => {
+    const h = host()
+    const pending = Promise.withResolvers<unknown>()
+    h.invoke.mockReturnValueOnce(pending.promise)
+    const old = h.flow.open(RUN)
+    await h.flow.open(RESUME)
+    const current = h.flow.getSnapshot()
+    if (completion === 'resolve') pending.resolve({ ok: true, data: { ok: false, code: 'gone' } })
+    else pending.reject(new Error('late error'))
+    await old
+    expect(h.flow.getSnapshot()).toBe(current)
+    expect(h.changed).not.toHaveBeenCalled()
+    const cancelled = Promise.withResolvers<unknown>()
+    h.invoke.mockReturnValueOnce(cancelled.promise)
+    const loading = h.flow.open(RUN)
+    h.flow.cancel()
+    cancelled.resolve({ ok: true, data: { ok: true, preview } })
+    await loading
+    expect(h.flow.getSnapshot().phase).toBe('closed')
+  },
+)
+
+it.each(['resolve', 'reject'] as const)(
+  '05 验收 18、22: a superseded apply %s cannot replace a newer preview; duplicate confirms and cancellation while applying do nothing',
+  async (completion) => {
+    const h = host()
+    await h.flow.confirm()
+    expect(h.invoke).not.toHaveBeenCalled()
+    await h.flow.open(RUN)
+    h.flow.select('/a', true)
+    h.flow.select('/a', false)
+    h.flow.select('/forged', true)
+    expect([...h.flow.getSnapshot().selected]).toEqual([])
+    const pending = Promise.withResolvers<unknown>()
+    h.invoke.mockReturnValueOnce(pending.promise)
+    const applying = h.flow.confirm()
+    const state = h.flow.getSnapshot()
+    h.flow.cancel()
+    h.flow.select('/a', true)
+    await h.flow.confirm()
+    expect(h.flow.getSnapshot()).toBe(state)
+    expect(h.invoke).toHaveBeenCalledTimes(2)
+    await h.flow.open(RESUME)
+    const current = h.flow.getSnapshot()
+    if (completion === 'resolve') pending.resolve({ ok: true, data: done })
+    else pending.reject(new Error('late apply error'))
+    await applying
+    expect(h.flow.getSnapshot()).toBe(current)
+  },
+)

@@ -478,3 +478,12 @@ it('05 验收 18、22 (routes): malformed requests never reach the handler and i
     error: { code: 'invalid-response' },
   })
 })
+
+it('05 验收 22: W1 — a non-object event never grants access and never throws', () => {
+  const frame = { url: 'file:///opt/tenon/out/renderer/index.html' }
+  const sender = { mainFrame: frame, isDestroyed: () => false }
+  const window = { webContents: sender, isDestroyed: () => false }
+  for (const event of [undefined, null, 'event', 42, true])
+    expect(snapshotWindowCanAccess(event, [window], frame.url)).toBe(false)
+  expect(snapshotWindowCanAccess({ sender, senderFrame: frame }, [window], frame.url)).toBe(true)
+})

@@ -12,6 +12,8 @@ import type {
   SnapshotStatus,
   StreamEvent,
   TapeStore,
+  TapeEntry,
+  NewEntry,
 } from '../../src/index.js'
 import { STOP_EXIT_CONFIRM_MS, STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import {
@@ -1202,3 +1204,578 @@ it('05 验收 33: a guard-refused Write needs no after snapshot and adds no cove
   if (!rounds.ok) throw new Error(rounds.code)
   expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
 })
+
+const boundaryRounds = async (h: Harness) => {
+  const r = await h.service.snapshotRounds({ sessionId: SESSION })
+  if (!r.ok) throw new Error(r.code)
+  return r.rounds
+}
+async function agentRound(h: Harness) {
+  h.provider.script(call('Agent', { description: 'child', prompt: 'write b' }, 'agent'))
+  h.provider.script(call('Write', { file_path: '/work/project/child.txt', content: 'c' }, 'cw'))
+  const sent = await h.service.send({ sessionId: SESSION, text: 'go', origin: null })
+  if (sent.status !== 'started') throw new Error('no start')
+  expect((await rootEnded(h)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const child = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+  h.provider.script(done())
+  h.provider.script(done())
+  await answerCard(h, child)
+  expect((await rootEnded(h)).reason).toEqual({ code: 'completed' })
+  return { roundRunId: sent.runId, child }
+}
+const appendRaw = async (h: Harness, sessionId: string, entry: NewEntry) => {
+  const head = (await h.store.head(sessionId))!
+  return h.store.append({ sessionId, incarnationId: head.incarnationId, entries: [entry] })
+}
+const note = (over: Partial<NewEntry>): NewEntry => ({
+  kind: 'event',
+  name: 'ext/perf/note',
+  sourceType: 'runtime_event',
+  sourceId: SESSION,
+  provenanceKey: `ext:v1:perf:${Math.random()}`,
+  payload: {},
+  createdAt: 0,
+  ...over,
+})
+
+it('05 验收 33: K1 — a guard-refused Write with failed before capture is unrestorable without a coverage warning', async () => {
+  const h = await harness()
+  const q = await pause(h)
+  h.host.snapshots.failNextTake('error')
+  await approve(h, q.pending)
+  expect(await boundaryRounds(h)).toMatchObject([
+    { roundRunId: q.roundRunId, canRestore: false, incompleteCoverage: false },
+  ])
+})
+
+it('05 验收 33: K2 — a call whose after-call capture is missing keeps its path+before in the host query and marks the round incomplete', async () => {
+  const h = await harness()
+  const take = h.host.snapshots.take.bind(h.host.snapshots)
+  vi.spyOn(h.host.snapshots, 'take').mockImplementation(async (q, signal) =>
+    q.moment === 'after-call' ? { ok: false, reason: 'error' } : take(q, signal),
+  )
+  const roundRunId = await changed(h)
+  const spy = vi.spyOn(h.host.snapshots, 'preview')
+  const r = await boundaryRounds(h)
+  expect(r).toMatchObject([{ roundRunId, canRestore: true, incompleteCoverage: true }])
+  const asked = spy.mock.calls.at(-1)![0]
+  expect(asked.calls).toHaveLength(1)
+  expect(asked.calls[0]).toMatchObject({ path: FILE })
+  expect(asked.calls[0]!.before).toEqual(expect.any(String))
+  expect(asked.calls[0]!.after).toBeUndefined()
+})
+
+it('05 验收 33: K3 — a round that is still waiting for approval is not incomplete and runs no command', async () => {
+  const h = await harness()
+  const q = await pause(h)
+  expect(await boundaryRounds(h)).toMatchObject([
+    { roundRunId: q.roundRunId, incompleteCoverage: false, commandsWithoutSnapshot: false },
+  ])
+})
+
+it('05 验收 33: K4 — a round with a delegated child (dispatched but never snapshotted parent call) is complete', async () => {
+  const h = await harness()
+  const { roundRunId } = await agentRound(h)
+  expect(await boundaryRounds(h)).toMatchObject([
+    { roundRunId, canRestore: true, incompleteCoverage: false, commandsWithoutSnapshot: false },
+  ])
+})
+
+it('05 验收 33: K5 — facts that name the round only through payload.runId or payload.roundRunId invalidate its cached preview', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  const spy = vi.spyOn(h.host.snapshots, 'preview')
+  const count = () => spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId).length
+  await boundaryRounds(h)
+  await boundaryRounds(h)
+  expect(count()).toBe(1)
+  await appendRaw(
+    h,
+    SESSION,
+    note({ sourceId: '99999999-9999-4999-8999-999999999999', payload: { runId: roundRunId } }),
+  )
+  await boundaryRounds(h)
+  expect(count()).toBe(2)
+  await appendRaw(
+    h,
+    SESSION,
+    note({ sourceId: '88888888-8888-4888-8888-888888888888', payload: { roundRunId } }),
+  )
+  await boundaryRounds(h)
+  expect(count()).toBe(3)
+  await appendRaw(
+    h,
+    SESSION,
+    note({ sourceId: '77777777-7777-4777-8777-777777777777', payload: { roundRunId: 42 } }),
+  )
+  await boundaryRounds(h)
+  expect(count()).toBe(3)
+})
+
+it('05 验收 21、22: K6 — a forged cyclic resume chain, and a resume pointing at an unknown run, are handled explicitly', async () => {
+  const h = await harness()
+  const first = await changed(h)
+  const a = '0000000a-0000-4000-8000-00000000000a'
+  const b = '0000000b-0000-4000-8000-00000000000b'
+  const unknownPaused = '0000000c-0000-4000-8000-00000000000c'
+  const run = (id: string, paused: string) =>
+    note({
+      name: 'execution/run_started',
+      sourceType: 'runtime_event',
+      sourceId: id,
+      provenanceKey: `execution:v1:run_started:${id}`,
+      payload: {
+        cause: { kind: 'resume', pausedRunId: paused, batch: { runId: paused, requestSeq: 0 } },
+      },
+    })
+  await appendRaw(h, SESSION, run(a, unknownPaused))
+  // the paused run has no run_started: the chain simply ends there
+  const ok = await boundaryRounds(h)
+  expect(ok.map((round) => round.roundRunId)).toEqual([first, unknownPaused])
+  await appendRaw(h, SESSION, run(b, a))
+  await appendRaw(h, SESSION, run(unknownPaused, b))
+  await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+    'cyclic resume chain',
+  )
+})
+
+const clone = (e: TapeEntry, over: Partial<NewEntry> = {}): NewEntry => ({
+  kind: e.kind,
+  name: e.name,
+  sourceType: e.sourceType,
+  sourceId: e.sourceId!,
+  sourceSeq: e.sourceSeq!,
+  provenanceKey: e.provenanceKey,
+  payload: { ...e.payload },
+  createdAt: 0,
+  ...over,
+})
+
+it.each([
+  [
+    'runId',
+    (p: Readonly<Record<string, unknown>>) => ({
+      ...p,
+      runId: '0000000d-0000-4000-8000-00000000000d',
+    }),
+  ],
+  [
+    'requestSeq',
+    (p: Readonly<Record<string, unknown>>) => ({ ...p, requestSeq: Number(p['requestSeq']) + 7 }),
+  ],
+  [
+    'roundRunId',
+    (p: Readonly<Record<string, unknown>>) => ({
+      ...p,
+      roundRunId: '0000000e-0000-4000-8000-00000000000e',
+    }),
+  ],
+] as const)(
+  '05 验收 21、22: K8a — a snapshot fact whose %s disagrees with its call is rejected explicitly',
+  async (_label, mutate) => {
+    const h = await harness()
+    await changed(h)
+    const snap = (await h.entries()).find(
+      (e) => e.name === 'fs/snapshot_created' && e.payload['moment'] === 'before-call',
+    )!
+    await appendRaw(
+      h,
+      SESSION,
+      clone(snap, {
+        sourceSeq: snap.sourceSeq!,
+        provenanceKey: `fs:v1:snapshot:${snap.sourceId}:${snap.sourceSeq}:7:before-call`,
+        payload: { ...mutate(snap.payload), ordinal: 7 },
+      }),
+    )
+    await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+      'Snapshot identity disagrees with its call or root round',
+    )
+  },
+)
+
+it('05 验收 21、22: K8b — before and after records of one call must name the same target', async () => {
+  const h = await harness()
+  await changed(h)
+  const snaps = (await h.entries()).filter((e) => e.name === 'fs/snapshot_created')
+  const before = snaps.find((e) => e.payload['moment'] === 'before-call')!
+  await appendRaw(
+    h,
+    SESSION,
+    clone(before, {
+      provenanceKey: `fs:v1:snapshot:${before.sourceId}:${before.sourceSeq}:${before.payload['ordinal']}:after-call:x`,
+      payload: { ...before.payload, moment: 'after-call', path: '/work/project/other.txt' },
+    }),
+  )
+  await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+    'Snapshot target changed between call records',
+  )
+})
+
+it('05 验收 21、22: K9 — a repeated or self-referencing child link is rejected explicitly', async () => {
+  const h = await harness()
+  const { child } = await agentRound(h)
+  const link = (await h.entries()).find((e) => e.name === 'session/parent_link')!
+  const forged = (n: number, sessionId: string) =>
+    appendRaw(
+      h,
+      SESSION,
+      clone(link, {
+        provenanceKey: `session:v1:parent_link:${link.sourceId}:${link.sourceSeq}:${n}`,
+        payload: {
+          ...link.payload,
+          ordinal: n,
+          child: { ...(link.payload['child'] as Record<string, unknown>), sessionId },
+        },
+      }),
+    )
+  await forged(7, SESSION) // the root linking itself
+  await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+    'cyclic or repeated',
+  )
+  const h2 = await harness()
+  await agentRound(h2)
+  const link2 = (await h2.entries()).find((e) => e.name === 'session/parent_link')!
+  await appendRaw(
+    h2,
+    SESSION,
+    clone(link2, {
+      provenanceKey: `session:v1:parent_link:${link2.sourceId}:${link2.sourceSeq}:8`,
+      payload: { ...link2.payload, ordinal: 8 },
+    }),
+  )
+  await expect(h2.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+    'cyclic or repeated',
+  )
+  expect(child.card.sessionId).not.toBe(SESSION)
+})
+
+it("05 验收 21、22: K10 — a child link whose child is not that parent call's subagent makes the round incomplete and still tracks the child tape", async () => {
+  const h = await harness()
+  const { roundRunId } = await agentRound(h)
+  const link = (await h.entries()).find((e) => e.name === 'session/parent_link')!
+  await h.service.createSession({ sessionId: OTHER })
+  const otherStart = (await h.entries(OTHER)).find((e) => e.name === 'session/start')!
+  await appendRaw(
+    h,
+    SESSION,
+    clone(link, {
+      provenanceKey: `session:v1:parent_link:${link.sourceId}:${link.sourceSeq}:9`,
+      payload: {
+        ...link.payload,
+        ordinal: 9,
+        child: { sessionId: OTHER, incarnationId: otherStart.payload['incarnationId'] },
+      },
+    }),
+  )
+  const spy = vi.spyOn(h.host.snapshots, 'preview')
+  const count = () => spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId).length
+  expect(await boundaryRounds(h)).toMatchObject([{ roundRunId, incompleteCoverage: true }])
+  const first = count()
+  await boundaryRounds(h)
+  expect(count()).toBe(first) // unchanged tape: cached
+  await appendRaw(h, OTHER, note({ sourceId: OTHER, sourceType: 'session' }))
+  await boundaryRounds(h)
+  expect(count()).toBe(first + 1) // a fact on the unreadable child still moves the round revision
+  // a link to a session with no tape at all is unreadable too, without throwing
+  await appendRaw(
+    h,
+    SESSION,
+    clone(link, {
+      provenanceKey: `session:v1:parent_link:${link.sourceId}:${link.sourceSeq}:10`,
+      payload: {
+        ...link.payload,
+        ordinal: 10,
+        child: {
+          sessionId: '5555aaaa-5555-4555-8555-5555aaaa5555',
+          incarnationId: (link.payload['child'] as Record<string, unknown>)['incarnationId'],
+        },
+      },
+    }),
+  )
+  expect(await boundaryRounds(h)).toMatchObject([{ roundRunId, incompleteCoverage: true }])
+})
+
+it('05 验收 21、22: K11 — restore() refuses unknown rounds, stale keys, forged overwrites and live workspaces before preparing anything', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  const p = await preview(h, roundRunId)
+  const prepare = vi.spyOn(h.host.snapshots, 'prepare')
+  const restoreAs = (over: Record<string, unknown>) =>
+    h.service.snapshotRestore({
+      sessionId: SESSION,
+      roundRunId,
+      previewKey: p.previewKey,
+      overwrite: [],
+      ...over,
+    })
+  // unknown round
+  expect(await restoreAs({ roundRunId: '4444dddd-4444-4444-8444-4444dddd4444' })).toEqual({
+    ok: false,
+    code: 'gone',
+  })
+  // stale key: never reaches prepare (which would spend an undo snapshot)
+  expect(await restoreAs({ previewKey: 'stale-key' })).toEqual({ ok: false, code: 'stale' })
+  expect(prepare).not.toHaveBeenCalled()
+  // forged overwrite: TypeError before any prepare / restore_started
+  await expect(restoreAs({ overwrite: [absolutePath('/forged')] })).rejects.toThrow('subset')
+  expect(prepare).not.toHaveBeenCalled()
+  expect((await h.entries()).filter((e) => e.name.startsWith('fs/restore'))).toEqual([])
+  // a live Run in the same workspace: busy at the first check, before preview or prepare
+  const previewSpy = vi.spyOn(h.host.snapshots, 'preview')
+  const live = await liveRun(h, OTHER)
+  try {
+    previewSpy.mockClear()
+    expect(await restoreAs({})).toEqual({ ok: false, code: 'busy' })
+    expect(previewSpy).not.toHaveBeenCalled()
+    expect(prepare).not.toHaveBeenCalled()
+    // the same answer when the host cannot resolve real paths (aliases fall back to the folder itself)
+    vi.spyOn(h.host.fs, 'realpath').mockResolvedValue(null as never)
+    expect(await restoreAs({})).toEqual({ ok: false, code: 'busy' })
+  } finally {
+    vi.restoreAllMocks()
+    await live.release()
+  }
+})
+
+it('05 验收 21、22: K12 — a completion fact alone also retires its undo id (never applied twice)', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  const p = await preview(h, roundRunId)
+  const first = await h.service.snapshotRestore({
+    sessionId: SESSION,
+    roundRunId,
+    previewKey: p.previewKey,
+    overwrite: [],
+  })
+  if (!first.ok) throw new Error(first.code)
+  const restored = (await h.entries()).find((e) => e.name === 'fs/restored')!
+  await appendRaw(
+    h,
+    SESSION,
+    clone(restored, {
+      sourceSeq: 5,
+      provenanceKey: restored.provenanceKey.replace(/:0$/, ':5'),
+      payload: { ...restored.payload, undoSnapshotId: 'forged-undo-id' },
+    }),
+  )
+  const again = await preview(h, roundRunId)
+  vi.spyOn(h.host.snapshots, 'prepare').mockResolvedValueOnce({
+    ok: true,
+    undoSnapshotId: 'forged-undo-id',
+  })
+  const apply = vi.spyOn(h.host.snapshots, 'apply')
+  const cancel = vi.spyOn(h.host.snapshots, 'cancel')
+  expect(
+    await h.service.snapshotRestore({
+      sessionId: SESSION,
+      roundRunId,
+      previewKey: again.previewKey,
+      overwrite: [],
+    }),
+  ).toEqual({ ok: false, code: 'stale' })
+  expect(apply).not.toHaveBeenCalled()
+  expect(cancel).toHaveBeenCalledOnce()
+})
+
+it('05 验收 21、22: K13 — losing the restore_started write race (duplicate fact) cancels and answers stale', async () => {
+  let dup = false
+  const h = await harness({
+    store: (inner) =>
+      proxyStore(inner, {
+        append: async (batch) => {
+          if (dup && batch.entries.some((entry) => entry.name === 'fs/restore_started')) {
+            await inner.append(batch) // a concurrent writer got there first
+            return inner.append(batch)
+          }
+          return inner.append(batch)
+        },
+      }),
+  })
+  const roundRunId = await changed(h)
+  const p = await preview(h, roundRunId)
+  const apply = vi.spyOn(h.host.snapshots, 'apply')
+  const cancel = vi.spyOn(h.host.snapshots, 'cancel')
+  dup = true
+  expect(
+    await h.service.snapshotRestore({
+      sessionId: SESSION,
+      roundRunId,
+      previewKey: p.previewKey,
+      overwrite: [],
+    }),
+  ).toEqual({ ok: false, code: 'stale' })
+  expect(apply).not.toHaveBeenCalled()
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(await h.host.fs.readFile(FILE, { encoding: 'utf8' })).toBe('B')
+})
+
+it('05 验收 33: K14 — a round killed before any assistant message has no end message (and does not throw); a live round hides its end', async () => {
+  const h = await harness()
+  const live = await liveRun(h, SESSION)
+  await h.service.stop({ rootSessionId: SESSION })
+  await live.release().catch(() => {})
+  const r = await boundaryRounds(h)
+  expect(r).toHaveLength(1)
+  expect(r[0]!.endMessageId).toBeNull()
+})
+
+it.each(['not-a-uuid', '11111111-1111-4111-8111-11111111111G'])(
+  '05 验收 21、22: K15 — snapshot commands refuse a non-canonical session id (%s) before touching any mailbox',
+  async (sessionId) => {
+    const h = await harness()
+    const roundRunId = await changed(h)
+    await expect(h.service.snapshotRounds({ sessionId })).rejects.toThrow(TypeError)
+    await expect(h.service.snapshotPreview({ sessionId, roundRunId })).rejects.toThrow(
+      'canonical UUID',
+    )
+    await expect(
+      h.service.snapshotRestore({ sessionId, roundRunId, previewKey: 'x', overwrite: [] }),
+    ).rejects.toThrow('canonical UUID')
+  },
+)
+
+it('05 验收 33: K16 — each round lists only its own root calls', async () => {
+  const h = await harness()
+  const first = await changed(h)
+  h.provider.script(call('Write', { file_path: FILE, content: 'C' }, 'second'))
+  h.provider.script(done())
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'again' })
+  if (sent.status !== 'started') throw new Error('no start')
+  await h.ports.runEnded({ runId: sent.runId })
+  const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+  if (pending !== null) {
+    await answerCard(h, pending)
+    await h.ports.runEnded()
+  }
+  const r = await boundaryRounds(h)
+  expect(r.map((round) => round.roundRunId)).toEqual([first, sent.runId])
+  expect(r[0]!.calls).toHaveLength(1)
+  expect(r[1]!.calls).toHaveLength(1)
+  expect(r[0]!.calls[0]!.callKey.startsWith(first)).toBe(true)
+  expect(r[1]!.calls[0]!.callKey.startsWith(sent.runId)).toBe(true)
+})
+
+it.each([
+  ['after', 0, 1],
+  ['before', 1, 0],
+] as const)(
+  '05 验收 33: K17 — a %s record that skipped files marks the round incomplete even when other calls are whole',
+  async (_which, skipBefore, skipAfter) => {
+    const h = await harness()
+    const roundRunId = await changed(h)
+    const snaps = (await h.entries()).filter((e) => e.name === 'fs/snapshot_created')
+    const b = snaps.find((e) => e.payload['moment'] === 'before-call')!
+    const a = snaps.find((e) => e.payload['moment'] === 'after-call')!
+    // reuse the live snapshot ids so the round stays restorable (canRestore must not explain the result)
+    for (const [moment, skipped, src] of [
+      ['before-call', skipBefore, b],
+      ['after-call', skipAfter, a],
+    ] as const)
+      // oxlint-disable-next-line no-await-in-loop -- Tape before/after facts are appended in causal order
+      await appendRaw(
+        h,
+        SESSION,
+        clone(src, {
+          provenanceKey: `fs:v1:snapshot:${src.sourceId}:${src.sourceSeq}:8:${moment}`,
+          payload: { ...src.payload, ordinal: 8, moment, skipped },
+        }),
+      )
+    const r0 = await boundaryRounds(h)
+    expect(r0[0]!.canRestore).toBe(true)
+    expect(await boundaryRounds(h)).toMatchObject([{ roundRunId, incompleteCoverage: true }])
+  },
+)
+
+it('05 验收 33: K18 — a round is restorable only while ALL its snapshots are alive', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  vi.spyOn(h.host.snapshots, 'alive').mockImplementation(
+    async (_s, ids) => new Set(ids.slice(0, 1)),
+  )
+  expect(await boundaryRounds(h)).toMatchObject([
+    { roundRunId, canRestore: false, incompleteCoverage: true },
+  ])
+  expect(await h.service.snapshotPreview({ sessionId: SESSION, roundRunId })).toEqual({
+    ok: false,
+    code: 'gone',
+  })
+})
+
+it('05 验收 21、22: K20 — snapshotRounds refuses unknown and non-cowork sessions with a code, not a crash', async () => {
+  const h = await harness()
+  await changed(h)
+  await h.service.createSession({ sessionId: OTHER })
+  expect(await h.service.snapshotRounds({ sessionId: OTHER })).toEqual({
+    ok: false,
+    code: 'not-cowork',
+  })
+  expect(
+    await h.service.snapshotRounds({ sessionId: '33333333-3333-4333-8333-333333333333' }),
+  ).toEqual({ ok: false, code: 'gone' })
+})
+
+it('05 验收 33: K21 — a round mixing a file edit and a command is incomplete / unprotected as soon as ONE call is a command', async () => {
+  const h = await harness({ status: 'file-only' })
+  vi.spyOn(h.host.process, 'spawn').mockImplementation(async () => {
+    const child = fakeChild(() => h.host.clock.now(), 'dies')
+    child.exit(0)
+    return child.child
+  })
+  h.provider.script([
+    { type: 'tool-call-start', index: 0, id: 'w', name: 'Write' },
+    {
+      type: 'tool-call-end',
+      index: 0,
+      id: 'w',
+      name: 'Write',
+      input: { file_path: FILE, content: 'B' },
+    },
+    { type: 'tool-call-start', index: 1, id: 'b', name: 'Bash' },
+    { type: 'tool-call-end', index: 1, id: 'b', name: 'Bash', input: { command: 'echo hi' } },
+    { type: 'usage', usage },
+    stopEvent('tool-use', 'tool_use'),
+  ])
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'both' })
+  if (sent.status !== 'started') throw new Error('Run did not start')
+  await h.ports.runEnded({ runId: sent.runId })
+  for (let n = 0; n < 4; n++) {
+    // oxlint-disable-next-line no-await-in-loop -- each approval reveals the next pending call
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    if (pending === null) break
+    h.provider.script(done())
+    // oxlint-disable-next-line no-await-in-loop -- answer before waiting for this resumed Run
+    await answerCard(h, pending)
+    // oxlint-disable-next-line no-await-in-loop -- wait for the resumed Run before reading the next approval
+    await h.ports.runEnded()
+  }
+  const r = await boundaryRounds(h)
+  expect(r).toMatchObject([
+    { roundRunId: sent.runId, incompleteCoverage: true, commandsWithoutSnapshot: true },
+  ])
+})
+
+it.each(['no ordinal', 'null sourceSeq', 'null sourceId'] as const)(
+  '05 验收 21、22: K7 — a malformed tool/call read from the Tape port (%s) is rejected explicitly',
+  async (missing) => {
+    const h = await harness()
+    await changed(h)
+    const read = h.store.readRange.bind(h.store)
+    vi.spyOn(h.store, 'readRange').mockImplementation(async (q) => {
+      const result = await read(q)
+      return {
+        ...result,
+        entries: result.entries.map((entry) => {
+          if (entry.name !== 'tool/call') return entry
+          if (missing === 'no ordinal')
+            return Object.assign({}, entry, { payload: { name: 'Write' } })
+          return Object.assign({}, entry, {
+            [missing === 'null sourceSeq' ? 'sourceSeq' : 'sourceId']: null,
+          })
+        }),
+      }
+    })
+    await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
+      'Snapshot call has no runtime identity',
+    )
+  },
+)
