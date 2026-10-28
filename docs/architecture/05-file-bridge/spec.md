@@ -145,7 +145,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 ```
 
 - Tape 名字（`fs/` 前缀 01 已整个保留，现行 `names.ts` 也已声明 `fs/snapshot_created`、只是没有身份列；05 只补写入方与身份）：`fs/snapshot_created`，event，slice `fs`，身份 `runtime_event`、runId、requestSeq，键 `fs:v1:snapshot:<runId>:<requestSeq>:<i>:<moment>`，一次调用的每个时刻只出一个 `snapshotId`；`fs/restore_started` 与 `fs/restored` 是新名，event，slice `fs`，身份 `session`、sessionId、`<n>`，键 `fs:v1:restore_started:<incarnationId>:<n>` 与 `fs:v1:restored:<incarnationId>:<n>`。都登记进 `DECLARED_TAPE_NAMES`、投影、重放与 SQLite、Postgres 一致性测试（D13、D48）。
-- contracts 只增三条路由：`snapshot.rounds`（只读：每轮能不能还原、是否覆盖不全、有没有命令没保底，加本会话 `status`）；`snapshot.preview` 与 `snapshot.restore` 经根会话的 mailbox 串行，拒绝码 `busy`、`gone`、`stale`、`undo-unavailable`、`over-budget`、`not-cowork`。还原的交接分两段：kernel 调 `prepare`，拿到 `undoSnapshotId` 后先写 `fs/restore_started` 并等它落盘，再调 `apply`，做完写 `fs/restored`；写不成就调 `cancel`，工作区一个字节都不动。轮与调用的身份、`sessionId` 是不是已有的根会话，都由 kernel 一侧按 Tape 算好、验证过再传；`HostSnapshots` 不读 Tape，只确认拼出的目录在 `snapshots/` 之下（D48、D49）。`workspace.pick` 与 `workspace.usePrefill` 的拒绝码只增 `root-folder`，成功响应只增可选的 `warning: 'home'`。
+- contracts 只增三条路由：`snapshot.rounds`（只读：每轮能不能还原、是否覆盖不全、有没有命令没保底、这一轮在根会话里的各个 Run，以及根会话每次改动调用的 `callKey` 与快照号，加本会话 `status`；界面按 `runId` 与 `callKey` 对上结算行与工具行）；`snapshot.preview` 与 `snapshot.restore` 经根会话的 mailbox 串行，拒绝码 `busy`、`gone`、`stale`、`undo-unavailable`、`over-budget`、`not-cowork`。还原的交接分两段：kernel 调 `prepare`，拿到 `undoSnapshotId` 后先写 `fs/restore_started` 并等它落盘，再调 `apply`，做完写 `fs/restored`；写不成就调 `cancel`，工作区一个字节都不动。轮与调用的身份、`sessionId` 是不是已有的根会话，都由 kernel 一侧按 Tape 算好、验证过再传；`HostSnapshots` 不读 Tape，只确认拼出的目录在 `snapshots/` 之下（D48、D49）。`workspace.pick` 与 `workspace.usePrefill` 的拒绝码只增 `root-folder`，成功响应只增可选的 `warning: 'home'`。
 - 本地持久化布局只加一行：`<profileDir>/snapshots/<sessionId>/`，宿主删会话、清空会话时连它一起删（D30）。
 - 迁移与回退：只增，不改表结构；05 之前的版本能照常打开写过新事实与新键的会话（P19）；快照目录留在原处，不影响旧版本。
 
@@ -344,6 +344,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 
 ## 修订记录
 
+- 2026-10-28 · §接口 `snapshot.rounds` 一句：补上每轮的 Run 与每次调用的快照号 · 第三段第 15 步发现 §审批卡、工具行、结算行与「查看本次记录」要的快照号与轮的归属，`session.messages` 与原列的几项都给不出；只在这一段新增、未合入的路由里补，是澄清
 - 2026-10-28 · §一键还原、§验收标准 第 16 条：清单不再把命令改的路径单独标出 · 第三段第 15 步发现 `RestorePreview` 没有路径来源；owner 定不标（D62），是放宽，经 owner 点名批准
 - 2026-10-25 · §给你看的一页、§接口、§已知限制与代价、§点名 (e)(h)(j)、§提示层与评测 · D60、D61；ADR-005；收紧 · PR #74
 - 2026-10-24 · §已知限制与代价 加链接目标扫描一条 · 第一段评审发现扫描走遍工作区、超时后工具全部失败；owner 定扫不完时照名字查（D59），是放宽，经 owner 点名批准 · 5bf0cae

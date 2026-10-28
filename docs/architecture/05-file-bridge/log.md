@@ -314,3 +314,9 @@
 - [建议] write-card 那条写的是新文件，注释引的验收 1 说的是已有文件 · 不修：行为不受影响，第 15 步改注释时改引验收 52
 - [建议] 硬链接那条 e2e 现在就能断言「没法替你撤回」那句 · 不修：第 15 步补，与交接里已记的那条合并
 - [建议] write-card 用例后半段在 `snapshotted` 下还没在 CI 跑过 · 不修：本次推送后由 CI 的 e2e 验证
+
+## 实施 · 2026-10-28（第三段第 13、14 步）
+
+- Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量后提交检查点：第 13 步宿主一半 12d7b87、kernel 一半 21d4ee2，第 14 步路由 3c62085。沙箱外全量 5273 通过、114 跳过；提示层哈希没变。
+- 第 14 步之后发现 spec 正文与验收 16 要清单单独标出命令改的路径，§接口 的 `RestorePreview` 没有路径来源。owner 定不标、放宽 spec（D62），问卷原话：「不标，改 spec 放宽」。
+- 验收 15 要 macOS、Linux 两个平台，CI 原来只在 Linux 跑 e2e。owner 问卷原话：「ci.yml 加 macOS e2e 任务 (Recommended)」。lead 在 `sandbox-macos` 任务里补装 Electron，只跑 `restore.spec.ts` 与 `write-card.spec.ts`，报告另传 `e2e-macos-report`。改了门禁文件，第三段 PR 不开自动合并，由 owner 合。
