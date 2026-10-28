@@ -89,7 +89,12 @@ const snapshotCommands = new WeakSet<readonly string[]>()
 export function markSnapshotCommand(argv: readonly string[]): void {
   snapshotCommands.add(argv)
 }
-const commandLeases = new Map<string, CommandLease>()
+// D64: only the desktop connector adapter may mark a connector's argument array.
+const connectorCommands = new WeakSet<readonly string[]>()
+export function markConnectorCommand(argv: readonly string[]): void {
+  connectorCommands.add(argv)
+}
+const commandLeases = new Map<string, CommandLease[]>()
 const argvLeases = new WeakMap<readonly string[], CommandLease>()
 function finish(lease: CommandLease): void {
   if (lease.exited && lease.cleaned) lease.release()
@@ -102,7 +107,7 @@ export async function leaseCommand<T extends { argv: string[] }>(
   resolve: (folder: string) => string | Promise<string> = realpath,
   cleanup?: () => Promise<void>,
 ): Promise<T> {
-  const internal = snapshotCommands.has(q.argv)
+  const internal = snapshotCommands.has(q.argv) || connectorCommands.has(q.argv)
   const resolved = internal ? [] : [q.cwd, ...q.workspace].map((folder) => resolve(folder))
   const roots = resolved.every((root): root is string => typeof root === 'string')
     ? resolved
@@ -114,13 +119,19 @@ export async function leaseCommand<T extends { argv: string[] }>(
     cleaned: false,
     ...(cleanup === undefined ? {} : { cleanup }),
   }
-  commandLeases.set(q.commandId, lease)
+  const leases = commandLeases.get(q.commandId) ?? []
+  leases.push(lease)
+  commandLeases.set(q.commandId, leases)
   try {
     const result = await wrap()
     argvLeases.set(result.argv, lease)
     return result
   } catch (error) {
-    commandLeases.delete(q.commandId)
+    const remaining = (commandLeases.get(q.commandId) ?? []).filter(
+      (candidate) => candidate !== lease,
+    )
+    if (remaining.length === 0) commandLeases.delete(q.commandId)
+    else commandLeases.set(q.commandId, remaining)
     lease.release()
     throw error
   }
@@ -154,9 +165,10 @@ export async function leaseSpawn(
 }
 
 export function commandCleaned(commandId: string): void {
-  const lease = commandLeases.get(commandId)
+  const leases = commandLeases.get(commandId)
+  const lease = leases?.shift()
   if (lease === undefined) return
-  commandLeases.delete(commandId)
+  if (leases!.length === 0) commandLeases.delete(commandId)
   lease.cleaned = true
   if (!lease.started) lease.exited = true
   finish(lease)

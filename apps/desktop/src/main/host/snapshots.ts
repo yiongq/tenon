@@ -1244,7 +1244,11 @@ export class DesktopSnapshots implements HostSnapshots {
             session.state === 'tree',
             paths,
           )
-          if (!undo.ok) return { ok: false, reason: 'undo-unavailable' }
+          if (!undo.ok)
+            return {
+              ok: false,
+              reason: undo.reason === 'over-budget' ? 'over-budget' : 'undo-unavailable',
+            }
           const manifest = session.manifests.find((candidate) => candidate.id === undo.snapshotId)!
           const captured = await planRestore(
             query,
@@ -1253,6 +1257,7 @@ export class DesktopSnapshots implements HostSnapshots {
             session.dir,
             this.git,
             manifest,
+            new Set(paths),
           )
           if (paths.some((path) => captured.preview.skipped.some((skip) => skip.path === path)))
             return { ok: false, reason: 'undo-unavailable' }
@@ -1275,8 +1280,11 @@ export class DesktopSnapshots implements HostSnapshots {
           if (!retained) this.unpinRestore(session.id)
         }
       })
-    } catch {
-      return { ok: false, reason: 'undo-unavailable' }
+    } catch (error) {
+      return {
+        ok: false,
+        reason: error instanceof SnapshotBudgetError ? 'over-budget' : 'undo-unavailable',
+      }
     } finally {
       if (!retained) release()
     }

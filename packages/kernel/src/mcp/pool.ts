@@ -76,6 +76,8 @@ export interface McpServerRuntime {
   readonly instructions: { readonly enabled: boolean; readonly pinHash: string | null } // Q4-2
 }
 export interface McpPoolOptions {
+  /** Host-only classification of connector argv before the existing sandbox boundary (05 D64). */
+  readonly beforeStdioWrap?: (argv: readonly string[]) => void
   readonly schemaValidator?: SchemaValidatorPort
   readonly host: Pick<HostAdapter, 'identity' | 'fs' | 'secrets' | 'process' | 'sandbox' | 'clock'>
   readonly ids: { uuid(): string }
@@ -482,6 +484,8 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
         if (!resolved.ok) throw new PoolError(resolved.code)
         const values = await readSecrets(s, 'env', runtime.transport.envKeys)
         if (!active()) return
+        const argv = [resolved.path, ...runtime.transport.args]
+        options.beforeStdioWrap?.(argv)
         connection = await connectStdioServer(
           {
             ...host,
@@ -498,7 +502,7 @@ export function createMcpPool(options: McpPoolOptions): McpPool {
           {
             name: runtime.serverId,
             spawn: {
-              argv: [resolved.path, ...runtime.transport.args],
+              argv,
               cwd: options.homeDir,
               env: buildStdioEnv({ base, envs: runtime.transport.envs, envKeyValues: values }),
               stdio: 'pipe',

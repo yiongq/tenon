@@ -1129,3 +1129,22 @@ it('05 验收 35: both locales pin snapshot, sensitive-path, failure and Delete 
     )?.undoKey,
   ).toBeNull()
 })
+
+it('05 验收 52: every promised skip explains the earlier snapshot promise in both locales', () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    const copy = resources[locale].common as unknown as Record<string, Record<string, unknown>>
+    for (const reason of ['excluded', 'not-covered', 'hardlink', 'outside-folders']) {
+      const line = (copy['snapshot']?.['promisedSkip'] as Record<string, string> | undefined)?.[
+        reason
+      ]
+      expect(line).toContain(
+        locale === 'zh-CN' ? '卡上标过有快照' : 'The card said a snapshot was taken',
+      )
+    }
+    expect(copy['snapshot']?.['conflict']).toBe(
+      locale === 'zh-CN'
+        ? '这个文件的现状和这一轮最后记下的不一样，还原会盖掉现在的内容。要覆盖还是保留？'
+        : 'This file no longer matches what this round last recorded. Restoring would overwrite its current content. Overwrite or keep?',
+    )
+  }
+})

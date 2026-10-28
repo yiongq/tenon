@@ -203,3 +203,16 @@ it('05 验收 53: memory commands stay busy through abort until exit and cleanup
   const id = await prepare()
   await host.snapshots.cancel({ sessionId: 's', undoSnapshotId: id })
 })
+
+it('05 验收 14、22: memory undo budget refusal retains its reason and releases the lease', async () => {
+  const { host, query, prepare } = await setup()
+  const preview = await host.snapshots.preview(query)
+  host.snapshots.failNextTake('over-budget')
+  expect(await host.snapshots.prepare({ ...query, previewKey: preview.previewKey })).toEqual({
+    ok: false,
+    reason: 'over-budget',
+  })
+  expect(await host.fs.readFile(path, { encoding: 'utf8' })).toBe('B')
+  const undoSnapshotId = await prepare()
+  await host.snapshots.cancel({ sessionId: 's', undoSnapshotId })
+})

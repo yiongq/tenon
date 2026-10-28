@@ -1107,3 +1107,98 @@ it('05 验收 33: rounds cache preview skips until that round gains a fact or it
   await preview(h, roundRunId)
   expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(5)
 })
+
+const FILE2 = absolutePath('/work/project/big.bin')
+it('05 验收 33: a round with one snapshotted Write and one unsnapshotted Write shows incomplete coverage', async () => {
+  const h = await harness()
+  const first = await pause(h) // Write FILE (snapshotted)
+  // The resumed Run makes a second Write whose coverage is none (e.g. a >100 MB file).
+  const cov = h.host.snapshots.coverage.bind(h.host.snapshots)
+  vi.spyOn(h.host.snapshots, 'coverage').mockImplementation(async (q) =>
+    q.path === FILE2 ? 'none' : cov(q),
+  )
+  h.provider.script(call('Write', { file_path: FILE2, content: 'X' }, 'second'))
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: first.pending.card.sessionId,
+    requestId: first.pending.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  await h.ports.runEnded()
+  const second = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+  if (second === null) throw new Error('second approval missing')
+  h.host.snapshots.failNextTake('not-covered')
+  await approve(h, second)
+  expect(await h.host.fs.readFile(FILE2, { encoding: 'utf8' })).toBe('X')
+  const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
+  if (!rounds.ok) throw new Error(rounds.code)
+  const round = rounds.rounds.find((r) => r.roundRunId === first.roundRunId)!
+  expect(round.canRestore).toBe(true)
+  // spec §结算行: 「有改动没进快照，写成「可还原（不含被排除的文件）」」
+  expect(round.incompleteCoverage).toBe(true)
+})
+
+it('05 验收 22、51: a later completed restore clears earlier unfinished attempts of the same round', async () => {
+  let fail = false
+  const h = await harness({
+    store: (inner) =>
+      proxyStore(inner, {
+        append: async (batch) => {
+          if (fail && batch.entries.some((entry) => entry.name === 'fs/restored'))
+            throw new Error('completion not recorded')
+          return inner.append(batch)
+        },
+      }),
+  })
+  const roundRunId = await changed(h)
+  const p = await preview(h, roundRunId)
+  fail = true
+  await expect(
+    h.service.snapshotRestore({
+      sessionId: SESSION,
+      roundRunId,
+      previewKey: p.previewKey,
+      overwrite: [],
+    }),
+  ).rejects.toThrow('completion not recorded')
+  fail = false
+  await h.host.fs.writeFile(FILE, 'B') // the round's change again, e.g. the user redid it
+  const p2 = await preview(h, roundRunId)
+  expect(
+    await h.service.snapshotRestore({
+      sessionId: SESSION,
+      roundRunId,
+      previewKey: p2.previewKey,
+      overwrite: [],
+    }),
+  ).toMatchObject({ ok: true })
+  const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
+  expect(rounds.ok && rounds.incompleteRestores).toEqual([])
+})
+
+it('05 验收 33: a guard-refused Write needs no after snapshot and adds no coverage warning', async () => {
+  const h = await harness()
+  const first = await pause(h)
+  const take = h.host.snapshots.take.bind(h.host.snapshots)
+  let beforeCalls = 0
+  vi.spyOn(h.host.snapshots, 'take').mockImplementation(async (q, signal) => {
+    if (q.moment === 'before-call' && ++beforeCalls === 2)
+      await h.host.fs.writeFile(FILE, 'user changed this')
+    return take(q, signal)
+  })
+  h.provider.script(call('Write', { file_path: FILE, content: 'C' }, 'second'))
+  h.provider.script(done())
+  await h.service.answer({
+    kind: 'approval',
+    sessionId: SESSION,
+    requestId: first.pending.card.requestId,
+    decision: 'allow',
+    origin: null,
+  })
+  await h.ports.runEnded()
+  expect(await h.host.fs.readFile(FILE, { encoding: 'utf8' })).toBe('user changed this')
+  const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
+  if (!rounds.ok) throw new Error(rounds.code)
+  expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
+})

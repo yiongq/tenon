@@ -958,7 +958,7 @@
     "cancel": "取消",
     "close": "关闭",
     "confirm": "确认还原",
-    "conflict": "这一轮之后这个文件又被改过，还原会盖掉那些改动。要覆盖还是保留？",
+    "conflict": "这个文件的现状和这一轮最后记下的不一样，还原会盖掉现在的内容。要覆盖还是保留？",
     "keep": "保留",
     "overwrite": "覆盖",
     "result": "已还原 {restored} 个、删除 {removed} 个、保留 {kept} 个、跳过 {skipped} 个；{failed} 个未完成。",
@@ -1026,6 +1026,12 @@
       "no-approval-needed": "这项操作无需确认",
       "auto-mode": "按自动模式的设置允许",
       "task-grant": "你已允许这个任务执行"
+    },
+    "promisedSkip": {
+      "excluded": "卡上标过有快照，因为这个路径已被排除，这次跳过。",
+      "not-covered": "卡上标过有快照，因为还原需要的记录不全，这次跳过。",
+      "hardlink": "卡上标过有快照，因为这个文件还有别的名字，这次跳过。",
+      "outside-folders": "卡上标过有快照，因为这个路径已不在当前文件夹里，这次跳过。"
     }
   }
 }

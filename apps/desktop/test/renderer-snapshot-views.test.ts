@@ -272,3 +272,28 @@ it('05 验收 33: a live settlement is not duplicated when snapshot rounds later
       .map((item) => item.id),
   ).toEqual(['text-end'])
 })
+
+it.each(['zh-CN', 'en'] as const)(
+  '05 验收 52: promised skips render the earlier card promise and reason (%s)',
+  async (locale) => {
+    const module = '../src/renderer/src/components/thread/RestoreDialog.tsx'
+    const { RestoreSkipReason } = await import(module)
+    const i18n = await createI18n(locale, () => {})
+    for (const reason of ['excluded', 'not-covered', 'hardlink', 'outside-folders'] as const) {
+      const render = (promised: boolean) =>
+        renderToStaticMarkup(
+          createElement(
+            I18nextProvider,
+            { i18n },
+            createElement(RestoreSkipReason, {
+              item: { path: '/f', reason, ...(promised ? { promised: true } : {}) },
+            }),
+          ),
+        )
+      const phrase = locale === 'zh-CN' ? '卡上标过有快照' : 'The card said a snapshot was taken'
+      expect(render(true)).toContain(phrase)
+      expect(render(false)).not.toContain(phrase)
+      expect(render(true)).toContain(locale === 'zh-CN' ? '跳过' : 'skipped')
+    }
+  },
+)

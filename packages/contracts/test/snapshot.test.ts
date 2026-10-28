@@ -243,3 +243,16 @@ it('05 验收 33 (contracts): the end message is required, nullable or a nonempt
   ])
     expect(parseRound(invalid)).toBe(false)
 })
+
+it('05 验收 18: overwrite accepts at most 50000 conflict choices', () => {
+  const request = {
+    ...target,
+    previewKey: 'key',
+    overwrite: Array.from({ length: 50_000 }, (_, i) => `/work/${i}`),
+  }
+  expect(snapshotRestore.request.safeParse(request).success).toBe(true)
+  expect(
+    snapshotRestore.request.safeParse({ ...request, overwrite: [...request.overwrite, '/extra'] })
+      .success,
+  ).toBe(false)
+})

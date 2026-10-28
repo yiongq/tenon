@@ -56,6 +56,7 @@ function setup(
   real = false,
   start = true,
   schemaValidator?: McpPoolOptions['schemaValidator'],
+  beforeStdioWrap?: (argv: readonly string[]) => void,
 ) {
   const host = createMemoryHost(real ? { process: createNodeProcess() } : {})
   const current = new Map([[initial.serverId, initial]])
@@ -65,6 +66,7 @@ function setup(
   const pool = createMcpPool({
     host,
     ...(schemaValidator ? { schemaValidator } : {}),
+    ...(beforeStdioWrap === undefined ? {} : { beforeStdioWrap }),
     ids: { uuid: () => crypto.randomUUID() },
     baseEnv: async () => ({ HOME: '/', PATH: '/bin', GITHUB_TOKEN: 'never-inherit' }),
     homeDir: absolutePath('/'),
@@ -1589,4 +1591,23 @@ it('03 验收 35: applying reordered config changes ranks and the next capped ta
   ])
   expect(frozen.items.map((t) => t.name)).toEqual(['a__echo'])
   expect(connect).toHaveBeenCalledTimes(2)
+})
+
+it('05 验收 53: the host marks exactly the stdio argv before the existing connector launcher', async () => {
+  const marked = new WeakSet<readonly string[]>()
+  let markedAtConnect = false
+  const fake = fakeConnection()
+  const connect = vi
+    .spyOn(connections, 'connectStdioServer')
+    .mockImplementation(async (_host, spec) => {
+      markedAtConnect = marked.has(spec.spawn.argv)
+      return fake.c
+    })
+  const mark = vi.fn<(argv: readonly string[]) => void>((argv) => {
+    marked.add(argv)
+  })
+  const { pool } = setup(runtime(), false, true, undefined, mark)
+  await connected(pool)
+  expect(markedAtConnect).toBe(true)
+  expect(mark).toHaveBeenCalledExactlyOnceWith(connect.mock.calls[0]![1].spawn.argv)
 })

@@ -333,7 +333,7 @@ it('05 验收 51: paths already at origin disappear from the plan and keep their
   expect(await readFile(path('b'), 'utf8')).toBe('A')
 })
 
-it('05 验收 52: an ignored file-tool target remains promised, but a later tree exclusion invalidates it', async () => {
+it('05 验收 52: an ignored file-tool copy remains valid across later tree exclusions', async () => {
   await writeFile(path('.gitignore'), 'ignored\n')
   await writeFile(path('ignored'), 'A')
   const before = await take('ignored')
@@ -347,11 +347,8 @@ it('05 验收 52: an ignored file-tool target remains promised, but a later tree
   const skipped = await snapshots.preview(
     query([...q.calls, { callKey: 'bash', before: tree, after: tree }]),
   )
-  expect(skipped.skipped).toContainEqual({
-    path: path('ignored'),
-    reason: 'excluded',
-    promised: true,
-  })
+  expect(skipped.skipped).toEqual([])
+  expect(skipped.restore).toEqual([]) // already restored to the original bytes
 })
 
 it('05 验收 53: shared folder/ancestor work is busy; writes and commands wait for cancel and cleanup', async () => {

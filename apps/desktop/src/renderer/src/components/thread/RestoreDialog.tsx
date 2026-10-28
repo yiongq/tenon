@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { PathText } from '@/components/ui/path-text'
+import type { Preview } from '@/lib/snapshots'
 import { previewGroups, RestoreFlow } from '@/lib/snapshots'
 import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
@@ -68,7 +69,7 @@ export function RestoreLink({ roundRunId, label }: { roundRunId: string; label: 
                         {item.reason === null ? null : (
                           <>
                             {t('summary.separator')}
-                            {tx(t, `snapshot.skip.${item.reason}`)}
+                            <RestoreSkipReason item={item} />
                           </>
                         )}
                       </li>
@@ -131,4 +132,9 @@ export function RestoreLink({ roundRunId, label }: { roundRunId: string; label: 
       </Dialog>
     </>
   )
+}
+
+export function RestoreSkipReason({ item }: { item: Preview['skipped'][number] }) {
+  const { t } = useTranslation()
+  return <>{tx(t, `snapshot.${item.promised ? 'promisedSkip' : 'skip'}.${item.reason}`)}</>
 }

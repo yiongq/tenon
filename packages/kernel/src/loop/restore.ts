@@ -8,6 +8,12 @@ import type {
   SnapshotStatus,
 } from '../host/adapter.js'
 import { isWithin } from '../host/path.js'
+import {
+  FILE_CHANGED,
+  HARDLINK_CHANGED,
+  SNAPSHOT_CHANGED,
+  SNAPSHOT_FAILED,
+} from '../tools/snapshot-guard.js'
 import { effectiveMessages } from '../tape/replay.js'
 import { sessionFactsOf } from '../session/facts.js'
 import type {
@@ -81,6 +87,8 @@ interface CallNode {
   dispatched: boolean
   promised: boolean
   command: boolean
+  fileWrite: boolean
+  guardRefused: boolean
 }
 interface CollectedRound {
   readonly roundRunId: string
@@ -108,22 +116,19 @@ interface RestoreDeps {
 
 /** Fold restore facts by undo id and round, regardless of whether this process wrote them. */
 export function incompleteRestoresOf(entries: readonly TapeEntry[]): IncompleteRestore[] {
-  const completed = new Set(
-    entries
-      .filter((entry) => entry.name === 'fs/restored')
-      .map((entry) => {
-        const payload = entry.payload as RestoredPayload
-        return `${payload.roundRunId}:${payload.undoSnapshotId}`
-      }),
-  )
-  return entries
-    .filter((entry) => entry.name === 'fs/restore_started')
-    .flatMap((entry) => {
+  const pending = new Map<string, IncompleteRestore[]>()
+  for (const entry of entries) {
+    if (entry.name === 'fs/restore_started') {
       const payload = entry.payload as RestoreStartedPayload
-      return completed.has(`${payload.roundRunId}:${payload.undoSnapshotId}`)
-        ? []
-        : [{ ...payload, entryId: entry.entryId }]
-    })
+      const prior = pending.get(payload.roundRunId) ?? []
+      prior.push({ ...payload, entryId: entry.entryId })
+      pending.set(payload.roundRunId, prior)
+    } else if (entry.name === 'fs/restored') {
+      // A later completed retry resolves earlier interrupted attempts of this round only.
+      pending.delete((entry.payload as RestoredPayload).roundRunId)
+    }
+  }
+  return [...pending.values()].flat()
 }
 
 function flatten(nodes: readonly CallNode[]): CallNode[] {
@@ -218,6 +223,8 @@ async function collectHistory(
           dispatched: false,
           promised: false,
           command: false,
+          fileWrite: false,
+          guardRefused: false,
         }
         calls.set(callKey, node)
       }
@@ -233,6 +240,20 @@ async function collectHistory(
         const node = nodeOf(entry)
         node.dispatched = true
         node.command = entry.payload['name'] === 'Bash'
+        node.fileWrite = ['Write', 'Edit', 'Delete'].includes(String(entry.payload['name']))
+      } else if (entry.name === 'tool/result') {
+        const node = nodeOf(entry)
+        const content = entry.payload['content'] as { type: string; text?: string }[]
+        // These exact builtin guard results precede file access. Unknown execution errors stay
+        // conservative: they may follow partial writes. No new Tape field or model text is needed.
+        node.guardRefused =
+          node.fileWrite &&
+          entry.payload['isError'] === true &&
+          content.length === 1 &&
+          content[0]?.type === 'text' &&
+          [FILE_CHANGED, HARDLINK_CHANGED, SNAPSHOT_CHANGED, SNAPSHOT_FAILED].some(
+            (text) => text === content[0]?.text,
+          )
       } else if (entry.name === 'execution/tool_outcome') {
         const snapshotId = entry.payload['snapshotId']
         if (typeof snapshotId === 'string') nodeOf(entry).snapshotId = snapshotId
@@ -300,8 +321,11 @@ async function collectHistory(
           (node) =>
             (node.before?.skipped ?? 0) > 0 ||
             (node.after?.skipped ?? 0) > 0 ||
-            (node.dispatched && node.promised && node.before === undefined) ||
-            (node.before !== undefined && node.after === undefined),
+            (node.dispatched &&
+              (node.promised || node.fileWrite) &&
+              !node.guardRefused &&
+              node.before === undefined) ||
+            (node.before !== undefined && node.after === undefined && !node.guardRefused),
         ),
     }
   })

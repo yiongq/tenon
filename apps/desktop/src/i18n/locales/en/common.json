@@ -958,7 +958,7 @@
     "cancel": "Cancel",
     "close": "Close",
     "confirm": "Restore files",
-    "conflict": "This file changed after this round, and restoring would overwrite those changes. Overwrite or keep?",
+    "conflict": "This file no longer matches what this round last recorded. Restoring would overwrite its current content. Overwrite or keep?",
     "keep": "Keep",
     "overwrite": "Overwrite",
     "result": "Restored: {restored}. Removed: {removed}. Kept: {kept}. Skipped: {skipped}. Not completed: {failed}.",
@@ -1026,6 +1026,12 @@
       "no-approval-needed": "This action does not need confirmation",
       "auto-mode": "Allowed by the automatic mode settings",
       "task-grant": "You allowed this for the task"
+    },
+    "promisedSkip": {
+      "excluded": "The card said a snapshot was taken; this path is skipped because it is now excluded.",
+      "not-covered": "The card said a snapshot was taken; this path is skipped because some records needed to restore it are missing.",
+      "hardlink": "The card said a snapshot was taken; this file is skipped because it has other names.",
+      "outside-folders": "The card said a snapshot was taken; this path is skipped because it is no longer in the current folders."
     }
   }
 }

@@ -318,7 +318,11 @@ export class MemorySnapshots implements HostSnapshots {
         },
         new AbortController().signal,
       )
-      if (!taken.ok) return { ok: false, reason: 'undo-unavailable' }
+      if (!taken.ok)
+        return {
+          ok: false,
+          reason: taken.reason === 'over-budget' ? 'over-budget' : 'undo-unavailable',
+        }
       // One combined undo image covers every selected file even when ordinary takes are file-only.
       this.images.set(taken.snapshotId, {
         sessionId: q.sessionId,

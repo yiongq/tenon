@@ -94,7 +94,12 @@ export const snapshotPreview = defineRoute('snapshot.preview', {
 
 /** Only conflict choices cross this boundary; no folder, snapshot identity or call list is input. */
 export const snapshotRestore = defineRoute('snapshot.restore', {
-  request: roundTarget.extend({ previewKey: opaqueId, overwrite: paths }),
+  // Bound IPC work to 50,000 choices (one default tree's file budget); larger rounds
+  // can still restore with the remaining conflicts kept. This is a request limit, not a tree limit.
+  request: roundTarget.extend({
+    previewKey: opaqueId,
+    overwrite: z.array(path).max(50_000).readonly(),
+  }),
   response: z.discriminatedUnion('ok', [
     z
       .object({

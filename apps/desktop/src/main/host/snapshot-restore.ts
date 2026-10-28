@@ -86,13 +86,30 @@ function excluded(tree: TreeRecord, path: string): boolean {
     tree.excluded.some((name) => contains(join(tree.folder, name), path))
   )
 }
+interface IndexedTree extends TreeRecord {
+  entriesByPath: ReadonlyMap<AbsolutePath, SavedFile>
+}
+interface IndexedManifest extends SnapshotManifest {
+  filesByPath: ReadonlyMap<AbsolutePath, SavedFile>
+  trees: IndexedTree[]
+}
+function indexManifest(manifest: SnapshotManifest): IndexedManifest {
+  return {
+    ...manifest,
+    filesByPath: new Map(manifest.files.map((file) => [file.path, file])),
+    trees: manifest.trees.map((tree) => ({
+      ...tree,
+      entriesByPath: new Map(tree.entries.map((entry) => [entry.path, entry])),
+    })),
+  }
+}
 async function point(
-  manifest: SnapshotManifest | undefined,
+  manifest: IndexedManifest | undefined,
   path: AbsolutePath,
   dir: string,
 ): Promise<Point> {
   if (manifest === undefined) return missing(path, false, 'not-covered')
-  const explicit = manifest.files.find((file) => file.path === path)
+  const explicit = manifest.filesByPath.get(path)
   if (explicit !== undefined) {
     let content = explicit.link
     if (explicit.identity?.kind === 'file') {
@@ -109,7 +126,7 @@ async function point(
     .toSorted((a, b) => b.folder.length - a.folder.length)[0]
   if (tree === undefined) return missing(path, false, 'not-covered')
   if (excluded(tree, path)) return missing(path, false, 'excluded')
-  const entry = tree.entries.find((candidate) => candidate.path === path)
+  const entry = tree.entriesByPath.get(path)
   if (entry !== undefined)
     return { file: entry, content: entry.link ?? entry.hash, covered: true, manifest, tree }
   const mode = tree.directories[path]
@@ -180,7 +197,17 @@ async function live(root: AbsolutePath, path: AbsolutePath): Promise<Point> {
   try {
     const start = await handle.stat({ bigint: true })
     if (!same(stats, start)) throw new Error('File changed during preview')
-    const bytes = await handle.readFile()
+    // Bound the read to the lstat size plus one sentinel byte even if an outside writer grows it.
+    const size = Number(stats.size)
+    const buffer = Buffer.alloc(size + 1)
+    let offset = 0
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    if (offset !== size) throw new Error('File changed during preview')
+    const bytes = buffer.subarray(0, size)
     if (!same(start, await handle.stat({ bigint: true })))
       throw new Error('File changed during preview')
     return { file: { path, identity: stamp }, content: gitHash(bytes), covered: true }
@@ -202,6 +229,11 @@ function names(manifest: SnapshotManifest | undefined): AbsolutePath[] {
       ]
 }
 
+const treeCovers = (manifest: IndexedManifest | undefined, path: AbsolutePath) =>
+  manifest?.trees.some(
+    (tree) => tree.entriesByPath.has(path) || tree.directories[path] !== undefined,
+  ) === true
+
 export async function planRestore(
   q: RestoreQuery,
   manifests: readonly SnapshotManifest[],
@@ -209,8 +241,15 @@ export async function planRestore(
   dir: string,
   git: SnapshotGit,
   current?: SnapshotManifest,
+  capturedPaths?: ReadonlySet<AbsolutePath>,
 ): Promise<RestorePlan> {
-  const byId = new Map(manifests.map((manifest) => [manifest.id, manifest]))
+  const wanted = new Set(q.calls.flatMap((call) => [call.before, call.after]))
+  const byId = new Map(
+    manifests
+      .filter((manifest) => wanted.has(manifest.id))
+      .map((manifest) => [manifest.id, indexManifest(manifest)]),
+  )
+  const currentIndex = current === undefined ? undefined : indexManifest(current)
   const changes = new Map<
     AbsolutePath,
     {
@@ -219,58 +258,74 @@ export async function planRestore(
       gap: boolean
       promised: boolean
       excluded: boolean
+      treeCovered: boolean
       modes: Record<string, number>
     }
   >()
+  // Index changed tree paths by ancestor once, so later exclusion lists visit only affected paths.
+  const changesBelow = new Map<string, Set<AbsolutePath>>()
+  const indexChange = (path: AbsolutePath) => {
+    let ancestor: string = path
+    for (;;) {
+      const paths = changesBelow.get(ancestor) ?? new Set<AbsolutePath>()
+      paths.add(path)
+      changesBelow.set(ancestor, paths)
+      const parent = dirname(ancestor)
+      if (parent === ancestor) break
+      ancestor = parent
+    }
+  }
   for (const call of q.calls) {
     const before = call.before === undefined ? undefined : byId.get(call.before)
     const after = call.after === undefined ? undefined : byId.get(call.after)
     const candidates =
       call.path === undefined ? new Set([...names(before), ...names(after)]) : new Set([call.path])
+    const modes = {
+      ...Object.assign({}, ...(before?.trees.map((tree) => tree.directories) ?? [])),
+      ...before?.directories,
+    }
     for (const path of candidates) {
       // oxlint-disable-next-line no-await-in-loop -- call order determines each path's origin and gaps
       const start = await point(before, path, dir)
       // oxlint-disable-next-line no-await-in-loop -- compare the two snapshots for this call
       const end = after === undefined ? undefined : await point(after, path, dir)
       const previous = changes.get(path)
-      // A later tree exclusion invalidates an earlier file-tool promise, even if this call did not edit it.
-      if (previous !== undefined && (!start.covered || (end !== undefined && !end.covered)))
+      // Only paths previously held by a tree can lose that coverage to a later exclusion.
+      if (previous?.treeCovered && (!start.covered || (end !== undefined && !end.covered)))
         previous.excluded = true
       if (call.path === undefined && end !== undefined && equal(start, end)) continue
-      const modes = {
-        ...Object.assign({}, ...(before?.trees.map((tree) => tree.directories) ?? [])),
-        ...before?.directories,
-      }
-      if (previous === undefined)
+      if (previous === undefined) {
+        indexChange(path)
         changes.set(path, {
           start,
           last: end,
           gap: false,
           promised: call.path !== undefined && start.covered,
           excluded: false,
+          treeCovered: treeCovers(before, path) || treeCovers(after, path),
           modes,
         })
-      else {
+      } else {
+        previous.treeCovered ||= treeCovers(before, path) || treeCovers(after, path)
         previous.gap ||= !equal(previous.last, start)
         previous.last = end
         previous.promised ||= call.path !== undefined && start.covered
       }
     }
-    // Files omitted by a newly excluded subtree will not appear in the next tree's candidate list.
-    for (const [path, change] of changes) {
-      if (
-        [before, after].some((manifest) =>
-          manifest?.trees.some(
-            (tree) =>
-              contains(tree.folder, path) &&
-              excluded(tree, path) &&
-              !manifest.files.some((file) => file.path === path),
-          ),
-        )
-      )
-        change.excluded = true
+    // Omitted paths are absent from candidates; look them up by excluded subtree instead.
+    for (const manifest of [before, after]) {
+      if (manifest === undefined) continue
+      for (const tree of manifest.trees) {
+        for (const name of tree.excluded) {
+          for (const path of changesBelow.get(join(tree.folder, name)) ?? []) {
+            const change = changes.get(path)!
+            if (change.treeCovered && !manifest.filesByPath.has(path)) change.excluded = true
+          }
+        }
+      }
     }
   }
+
   const preview: {
     previewKey: string
     restore: AbsolutePath[]
@@ -280,6 +335,7 @@ export async function planRestore(
   } = { previewKey: '', restore: [], remove: [], conflicts: [], skipped: [] }
   const items: RestoreItem[] = []
   const stamps: unknown[] = []
+  const aliases = new Set<string>()
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -289,11 +345,18 @@ export async function planRestore(
     if (root !== undefined) {
       try {
         // oxlint-disable-next-line no-await-in-loop -- live inspection is read-only and leaf guarded
-        now = current === undefined ? await live(root, path) : await point(current, path, dir)
+        // Even captured entries must pass live parent spelling checks (case-only directory aliases).
+        await parents(root, path, false)
+        now =
+          current === undefined || !capturedPaths?.has(path)
+            ? await live(root, path)
+            : await point(currentIndex, path, dir)
         // A stored undo tree must not make a changed/symlinked workspace root safe.
         // oxlint-disable-next-line no-await-in-loop -- validate every selected real folder
         if ((await realpath(root)) !== root) reason = 'outside-folders'
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Restore parent alias')
+          aliases.add(path.toLowerCase())
         reason = 'not-covered'
       }
     } else reason = 'outside-folders'
@@ -315,7 +378,7 @@ export async function planRestore(
       reason === undefined &&
       !change.promised &&
       root !== undefined &&
-      current === undefined &&
+      (current === undefined || !capturedPaths?.has(path)) &&
       (await parents(root, path, false))
     ) {
       try {
@@ -364,6 +427,26 @@ export async function planRestore(
       modes: change.modes,
     })
   }
+  // A skipped alias and its folded removal/ancestors refer to the same physical subtree.
+  // Keep the whole affected pair: deleting the other spelling could delete its only copy.
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!
+    const folded = item.path.toLowerCase()
+    if (![...aliases].some((alias) => contains(folded, alias) || contains(alias, folded))) continue
+    items.splice(index, 1)
+    preview.restore = preview.restore.filter((path) => path !== item.path)
+    preview.remove = preview.remove.filter((path) => path !== item.path)
+    preview.conflicts = preview.conflicts.filter((path) => path !== item.path)
+    preview.skipped.push({
+      path: item.path,
+      reason: 'not-covered',
+      ...(changes.get(item.path)?.promised ? { promised: true as const } : {}),
+    })
+  }
+  preview.skipped.sort((a, b) => a.path.localeCompare(b.path))
+  // Covers the displayed plan and every live candidate's identity/content, including kept conflicts
+  // and skipped/already-restored paths. Only actionable paths use captured undo state in prepare;
+  // the others stay live because an undo snapshot need not (and sometimes cannot) capture them.
   preview.previewKey = pathKey(JSON.stringify([q, roots, preview, stamps]))
   return { preview, items }
 }
@@ -565,8 +648,11 @@ export async function applyRestore(
             constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
             stamp.mode,
           )
+          let completed = false
+          let created: { dev: bigint; ino: bigint } | undefined
           try {
             try {
+              created = await handle.stat({ bigint: true })
               await handle.writeFile(data)
               await handle.chmod(stamp.mode)
             } finally {
@@ -578,8 +664,19 @@ export async function applyRestore(
                 throw new Error('Restore parent changed')
               await rename(temp, item.path)
             }
+            completed = true
           } finally {
             if (!creating) await unlink(temp).catch(() => {})
+            else if (
+              !completed &&
+              created !== undefined &&
+              (await parents(item.root, item.path, false))
+            ) {
+              const current = await statOrNull(item.path)
+              // Failed exclusive creates may leave partial bytes; never remove a replacement inode.
+              if (current?.dev === created.dev && current.ino === created.ino)
+                await unlink(item.path)
+            }
           }
         }
       } else throw new Error('Unsupported restore type')
@@ -593,14 +690,22 @@ export async function applyRestore(
     try {
       const root = selected.find((item) => contains(item.root, path))!.root
       // oxlint-disable-next-line no-await-in-loop -- finalize from deepest directory to root
-      await parents(root, path, false)
+      if (!(await parents(root, path, false))) throw new Error('Restore parent changed')
       // oxlint-disable-next-line no-await-in-loop -- no-follow handle prevents chmod through a substituted link
       const handle = await open(
         path,
         constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_DIRECTORY,
       )
       try {
-        if ((await realpath(path)) !== path) throw new Error('Directory alias')
+        const opened = await handle.stat({ bigint: true })
+        const current = await statOrNull(path)
+        if (
+          !current?.isDirectory() ||
+          current.dev !== opened.dev ||
+          current.ino !== opened.ino ||
+          (await realpath(path)) !== path
+        )
+          throw new Error('Directory alias or replacement')
         await handle.chmod(modes[path]!)
       } finally {
         await handle.close()
