@@ -28,7 +28,7 @@ Changes: 00 §HostAdapter（增补）；00 §本地持久化布局（增补）�
 
 代价和已知限制：命令的改动只在整个文件夹的快照可用时才能还原；被 `.gitignore` 排除的、你自己的 `.git` 里的、发到网上的都还原不了；选定文件夹后就在后台把它复制一份进 Tenon 的目录，只读的任务也复制，最多占 3 GB；第一张要拍几秒到半分钟以上；快照清掉之后，删掉的文件就找不回了；还原过的文件修改时间是还原那一刻，按时间排序会排在前面；命令运行的那段时间里你在同一文件夹改的文件，分不出是谁改的，会随命令的改动一起还原；文件夹里早就有的、连到外面的硬链接，读它不出卡；跑一次基线评测约 45 元，上限 75 元（照 04 那次的记录）。
 
-要你定的：62 张卡都标了推荐。D1–D28、D32、D33、D37–D46、D48、D52、D55–D62 是你定的或已告知你；D54 由 lead 定、已告知你；其余是实现取舍、lead 定，没有待定的。难退 4 张（D8、D12、D13、D48），你已逐张回了一行；中等 6 张。
+要你定的：63 张卡都标了推荐。D1–D28、D32、D33、D37–D46、D48、D52、D55–D63 是你定的或已告知你；D54 由 lead 定、已告知你；其余是实现取舍、lead 定，没有待定的。难退 4 张（D8、D12、D13、D48），你已逐张回了一行；中等 6 张。
 
 怎么算做完：
 - 改文件前留底，拍不成就不写，卡上照实说（验收 1、2、4）。
@@ -145,7 +145,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 ```
 
 - Tape 名字（`fs/` 前缀 01 已整个保留，现行 `names.ts` 也已声明 `fs/snapshot_created`、只是没有身份列；05 只补写入方与身份）：`fs/snapshot_created`，event，slice `fs`，身份 `runtime_event`、runId、requestSeq，键 `fs:v1:snapshot:<runId>:<requestSeq>:<i>:<moment>`，一次调用的每个时刻只出一个 `snapshotId`；`fs/restore_started` 与 `fs/restored` 是新名，event，slice `fs`，身份 `session`、sessionId、`<n>`，键 `fs:v1:restore_started:<incarnationId>:<n>` 与 `fs:v1:restored:<incarnationId>:<n>`。都登记进 `DECLARED_TAPE_NAMES`、投影、重放与 SQLite、Postgres 一致性测试（D13、D48）。
-- contracts 只增三条路由：`snapshot.rounds`（只读：每轮能不能还原、是否覆盖不全、有没有命令没保底、这一轮在根会话里的各个 Run，以及根会话每次改动调用的 `callKey` 与快照号，加本会话 `status`；界面按 `runId` 与 `callKey` 对上结算行与工具行）；`snapshot.preview` 与 `snapshot.restore` 经根会话的 mailbox 串行，拒绝码 `busy`、`gone`、`stale`、`undo-unavailable`、`over-budget`、`not-cowork`。还原的交接分两段：kernel 调 `prepare`，拿到 `undoSnapshotId` 后先写 `fs/restore_started` 并等它落盘，再调 `apply`，做完写 `fs/restored`；写不成就调 `cancel`，工作区一个字节都不动。轮与调用的身份、`sessionId` 是不是已有的根会话，都由 kernel 一侧按 Tape 算好、验证过再传；`HostSnapshots` 不读 Tape，只确认拼出的目录在 `snapshots/` 之下（D48、D49）。`workspace.pick` 与 `workspace.usePrefill` 的拒绝码只增 `root-folder`，成功响应只增可选的 `warning: 'home'`。
+- contracts 只增三条路由：`snapshot.rounds`（只读：每轮能不能还原、是否覆盖不全、有没有命令没保底、这一轮在根会话里的各个 Run、这一轮已结束时结束在哪条消息，以及根会话每次改动调用的 `callKey` 与快照号，加本会话 `status`；界面按 `runId` 与 `callKey` 对上结算行与工具行，按结束的那条消息在历史里画结算行）；`snapshot.preview` 与 `snapshot.restore` 经根会话的 mailbox 串行，拒绝码 `busy`、`gone`、`stale`、`undo-unavailable`、`over-budget`、`not-cowork`。还原的交接分两段：kernel 调 `prepare`，拿到 `undoSnapshotId` 后先写 `fs/restore_started` 并等它落盘，再调 `apply`，做完写 `fs/restored`；写不成就调 `cancel`，工作区一个字节都不动。轮与调用的身份、`sessionId` 是不是已有的根会话，都由 kernel 一侧按 Tape 算好、验证过再传；`HostSnapshots` 不读 Tape，只确认拼出的目录在 `snapshots/` 之下（D48、D49）。`workspace.pick` 与 `workspace.usePrefill` 的拒绝码只增 `root-folder`，成功响应只增可选的 `warning: 'home'`。
 - 本地持久化布局只加一行：`<profileDir>/snapshots/<sessionId>/`，宿主删会话、清空会话时连它一起删（D30）。
 - 迁移与回退：只增，不改表结构；05 之前的版本能照常打开写过新事实与新键的会话（P19）；快照目录留在原处，不影响旧版本。
 
@@ -242,7 +242,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 
 - 审批卡 ④（对 presentation-r1 §审批卡 的增补）：`snapshotted` 中文「有快照，这一轮可以一键还原。」，英文「Snapshot taken first; you can undo this round.」；`revertible` 仍不出现。快照号显示在工具行展开处与「查看本次记录」，不在卡上（D32）。
 - 工具行（对 presentation-r1 §工具行 的增补）：Delete 展开后一行「删了这个文件 · ④」/「Deleted this file · ④」，只在成功完成时出。
-- 结算行（对 presentation-r1 §结算行 的增补）：加一类「删了 N 个文件」/「Deleted N files」（Delete，成功完成的，按不同路径数）。这一轮有还在的快照时，末尾加「 · 可还原」，点它打开清单；跑过命令或有改动没进快照，写成「可还原（不含被排除的文件）」；有 Bash 调用在派发前没有成功的整树快照（从 Tape 投影），再加「 · 命令的改动可能无法还原」（D5、D17、D19、D47）。
+- 结算行（对 presentation-r1 §结算行 的增补）：加一类「删了 N 个文件」/「Deleted N files」（Delete，成功完成的，按不同路径数）。这一轮有还在的快照时，末尾加「 · 可还原」，点它打开清单；跑过命令或有改动没进快照，写成「可还原（不含被排除的文件）」；有 Bash 调用在派发前没有成功的整树快照（从 Tape 投影），再加「 · 命令的改动可能无法还原」（D5、D17、D19、D47）。任务会话里，重启或切换会话后的历史也画结算行（连同「可还原」与附注），画在 `snapshot.rounds` 报的这一轮结束的那条消息下面；对话会话照旧（D63）。
 - `ThreadTitleMenu` 里只有「查看本次记录」：只读列表，本轮每次调用的工具、对象、判决摘要、可逆性、快照号、还能不能还原，从 `session.messages` 与 `snapshot.rounds` 现算（D17、D27）。
 
 ## 对 presentation-r1 §工具行「收起时的标记」的替换
@@ -344,6 +344,7 @@ export type RestoredPayload = { roundRunId: string; undoSnapshotId: string; rest
 
 ## 修订记录
 
+- 2026-10-28 · §审批卡、工具行、结算行与「查看本次记录」、§接口 `snapshot.rounds` 一句：任务会话的历史也画结算行 · 第三段第 15 步发现历史消息不画结算行、重启后没有还原入口；owner 定历史也画（D63），是收紧，经 owner 点名批准
 - 2026-10-28 · §接口 `snapshot.rounds` 一句：补上每轮的 Run 与每次调用的快照号 · 第三段第 15 步发现 §审批卡、工具行、结算行与「查看本次记录」要的快照号与轮的归属，`session.messages` 与原列的几项都给不出；只在这一段新增、未合入的路由里补，是澄清
 - 2026-10-28 · §一键还原、§验收标准 第 16 条：清单不再把命令改的路径单独标出 · 第三段第 15 步发现 `RestorePreview` 没有路径来源；owner 定不标（D62），是放宽，经 owner 点名批准
 - 2026-10-25 · §给你看的一页、§接口、§已知限制与代价、§点名 (e)(h)(j)、§提示层与评测 · D60、D61；ADR-005；收紧 · PR #74
