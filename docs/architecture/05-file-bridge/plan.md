@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：第一段已合入（PR #72）；第二段（第 6–12 步）做完，在分支 `feat/05-file-bridge-seg2` 等 PR。下一步第三段（第 13–17 步）。
+当前：第一、二段已合入（PR #72、#75）。第三段第 13–15 步做完，摘在 `feat/05-file-bridge-seg3`；第 16 步 e2e 在写，之后推草稿 PR 跑 CI，再做第 17 步。
 需要你：无
 
 ## 开工前读
@@ -55,9 +55,9 @@
 - [x] 11. 提示层：`PROMPT_LAYER_VERSION` 从 11 升到 12、更新哈希；从这一步起 CI 的 `evals:gate` 红，到 11.1 为止。之后到 11.1 之前若要再改提示层文本，回到这一步改并更新哈希，不再加版本。
   - [x] 11.1 基线评测（live）：先请 owner 批 key 与花费（基线列为 glm-5.3-flash，ADR-005；一次约 4 元，owner 批的上限是第 11、12 版合计 20 元）；在沙箱生效的 macOS 上、agent 沙箱外跑基线列全集每题 3 次；记录与改动同一 PR；lead 逐题对照第 11 版基线，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 36。
 - [x] 12. 第二段核对：P；E 走 CI 草稿 PR；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
-- [ ] 13. 还原（宿主与 kernel）：清单（agent 改过的路径、命令改的单独标出、已是起点的不动、三张都收了才动、跳过原因、冲突）、`previewKey` 与 `stale`、还原前那张必须收全、先写 `fs/restore_started`、先删后放、逐路径的 `identity` 与父目录检查、叶子不跟随、新建排他加权限位、临时文件加改名（修改时间即还原那一刻）、大小写配对、`fs/restored`；同一真实文件夹上有进行中 Run 时拒绝；启动时提示没做完的还原。逐级重建父目录（每级照规矩 8 查、以属主可写排他新建，内容放回后从深往浅设回起点权限）；相邻调用前后比对；租约与 `prepare`、`apply`、`cancel` 两段交接；只改了权限位的路径只改回权限位。测试点名验收 16–22、39、40、41、49、51、52、53、54 的宿主与 kernel 一半（52 原列在第 5 步，它说的是还原，第一段评审后挪到这里）。
-- [ ] 14. 路由：`snapshot.rounds`、`snapshot.preview`、`snapshot.restore` 经 contracts 登记，两端校验；宿主核对 `sessionId` 与目录；`overwrite` 只收冲突的子集。测试点名验收 18、22 的路由一半。
-- [ ] 15. 界面（`confirm.undo.snapshotted` 换成终稿时同改 `write-card.spec.ts` 的 presentation-r1 验收 3 与 `tools.spec.ts` 的验收 6 两条断言，注释改引验收 52；硬链接那条补断言「没法替你撤回」）：审批卡 ④ 的 `snapshotted` 一句；工具行收起的失败标记与 Delete 展开那一行；结算行的 Delete 一类、「可还原」与两种附注；还原清单（逐个路径、跳过原因、冲突逐个问、取消、`stale` 重出）；`ThreadTitleMenu` 与「查看本次记录」。测试点名验收 16、18、33、34、35、47、48 的渲染一半。
+- [x] 13. 还原（宿主与 kernel）：清单（agent 改过的路径、已是起点的不动（命令改的不单独标，D62）、三张都收了才动、跳过原因、冲突）、`previewKey` 与 `stale`、还原前那张必须收全、先写 `fs/restore_started`、先删后放、逐路径的 `identity` 与父目录检查、叶子不跟随、新建排他加权限位、临时文件加改名（修改时间即还原那一刻）、大小写配对、`fs/restored`；同一真实文件夹上有进行中 Run 时拒绝；启动时提示没做完的还原。逐级重建父目录（每级照规矩 8 查、以属主可写排他新建，内容放回后从深往浅设回起点权限）；相邻调用前后比对；租约与 `prepare`、`apply`、`cancel` 两段交接；只改了权限位的路径只改回权限位。测试点名验收 16–22、39、40、41、49、51、52、53、54 的宿主与 kernel 一半（52 原列在第 5 步，它说的是还原，第一段评审后挪到这里）。
+- [x] 14. 路由：`snapshot.rounds`、`snapshot.preview`、`snapshot.restore` 经 contracts 登记，两端校验；宿主核对 `sessionId` 与目录；`overwrite` 只收冲突的子集。测试点名验收 18、22 的路由一半。
+- [x] 15. 界面（`confirm.undo.snapshotted` 换成终稿时同改 `write-card.spec.ts` 的 presentation-r1 验收 3 与 `tools.spec.ts` 的验收 6 两条断言，注释改引验收 52；硬链接那条补断言「没法替你撤回」）：审批卡 ④ 的 `snapshotted` 一句；工具行收起的失败标记与 Delete 展开那一行；结算行的 Delete 一类、「可还原」与两种附注；还原清单（逐个路径、跳过原因、冲突逐个问、取消、`stale` 重出）；`ThreadTitleMenu` 与「查看本次记录」；任务会话的历史也画结算行（D63）。测试点名验收 16、18、33、34、35、47、48 的渲染一半。
 - [ ] 16. e2e：验收 15 的端到端句，macOS 与 Linux 两个 CI runner；验收 29 的还原回来。走 CI 草稿 PR，一次推送攒齐（每推一次取消上一轮 e2e）。
 - [ ] 17. 第三段核对：P；E；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
 - [ ] 18. 文档同步：spec「## 文档同步」列的「实现时」各处。点名验收 38。
@@ -69,13 +69,15 @@
 
 ## 交接
 
+2026-10-28：第三段第 13–15 步做完。Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5304 通过、114 跳过）后提交检查点，摘到 `feat/05-file-bridge-seg3`。owner 这一段定了 D62（清单不标命令改的路径）、D63（任务会话的历史也画结算行）、macOS 也跑还原的 e2e（`ci.yml` 已改，这个 PR 不开自动合并）。`snapshot.rounds` 补了每轮的 Run、结束消息与每次调用的快照号（spec 澄清）；`rounds()` 按轮缓存预览结论、界面合并刷新。下一步：第 16 步 e2e（`restore.spec.ts`：验收 15、29 与 D63 的重启），推草稿 PR 跑 Linux 与 macOS；第 17 步评审时一并加 Open 里「快照子进程恢复时核对 `executable`」那条（第三段改了 `snapshot-git.ts`）。
+
 2026-10-25：第二段做完。Codex 在它自己的 worktree（分支 `feat/05-seg2`）实现，lead 审、沙箱外跑全量，摘到 `feat/05-file-bridge-seg2`。第 12 步三路评审（对照 spec、安全、突变）都是 0 blocker、0 major；之后修了三轮、复核三次，记录见 log。owner 这一段定了 D60（判决记下判定时的叶子）、D61（快照能力变差后会话授权不算）、ADR-005（评测基线列换成 glm-5.3-flash），并接受了 11 题在第 12 版上 1/3。下一步第三段：还原（第 13 步）先看 `SnapshotCreatedPayload.commits`、`files` 要不要用，要用就扩 `SnapshotTaken`，属接口改动、先问 owner；第 15 步的「有快照」那句接上后，在 `write-card.spec.ts` 的硬链接用例里补断言。
 
 ## Open
 
 - 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
-- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步还原若要用，先问 owner 扩 `SnapshotTaken`；不用就在第 18 步文档同步时从 §接口 拿掉。
-- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段没碰这个文件，第三段碰 `snapshot-git.ts` 时加，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
+- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步的还原没用上，第 18 步文档同步时从 §接口 拿掉。
+- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段没碰这个文件；第三段第 13 步改了 `snapshot-git.ts` 但没加，第 17 步补上，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。
