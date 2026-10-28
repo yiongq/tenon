@@ -116,11 +116,13 @@ jobs:
           if-no-files-found: ignore
 
   # The sandbox black box on macOS (spec 04, acceptance 34): only the sandbox suite and the stop
-  # cases; every other unit test already runs in `ci`.
+  # cases; every other unit test already runs in `ci`. Spec 05 adds the restore unit suite (its
+  # case-insensitive rename case, acceptance 40, runs only here) and the restore end-to-end
+  # (acceptance 15); the rest of e2e runs on Linux only.
   sandbox-macos:
     name: sandbox-macos
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -130,15 +132,33 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm build
-      - run: pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest-macos.json apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts
+      - run: pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest-macos.json apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts apps/desktop/test/snapshot-restore.test.ts
         env:
           TENON_SANDBOX_TESTS: required
+      - name: Cache Electron binary
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
+      # The install above skips scripts, so fetch Electron's binary here.
+      - run: pnpm --filter @tenon-app/desktop exec install-electron
+      - run: pnpm --filter @tenon-app/desktop exec playwright test e2e/restore.spec.ts e2e/write-card.spec.ts
 
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: vitest-macos-report
           path: reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-macos-report
+          path: apps/desktop/reports/
           retention-days: 7
           if-no-files-found: ignore
 
