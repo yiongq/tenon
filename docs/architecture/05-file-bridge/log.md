@@ -342,3 +342,13 @@
 测试改动：apps/desktop/test/shutdown.test.ts · 退出时拒绝的路由 · 清单加 `snapshot.restore`，保留不进 kernel、不写事实的断言（第 14 步）
 测试改动：apps/desktop/test/session-removal.test.ts · 清空、删除期间拒绝的路由 · 清单加 `snapshot.restore`（第 14 步）
 测试改动：packages/contracts/test/registry.test.ts · 完整通道清单 · 加三条 snapshot 通道（第 14 步）
+
+## 实施 · 2026-10-29（第三段第 16 步）
+
+- e2e `restore.spec.ts`（验收 15、29 与 D63 的重启）在 PR #77 的 Linux CI 上三条都过；macOS 那一半要等 `ci.yml` 的提交推上去（本机 gh 令牌缺 `workflow` 权限，提交暂存在本地分支 `feat/05-seg3-ci-commit`，等 owner）。
+- 同一次 CI 里两条旧 e2e 红：结算行期望没有「 · 可还原」。05 验收 33 让留了快照的轮加这一段，是期望过期，改期望。
+- 恢复快照子进程时核对 `executable`（plan Open 那条）在第三段补上：1bbce1f。
+
+测试改动：apps/desktop/e2e/subagent.spec.ts · presentation-r1 验收 7 · 子会话的 Write 留了快照，结算行末尾加「 · 可还原」（05 验收 33）
+测试改动：apps/desktop/e2e/write-card.spec.ts · 旧 222 写入一半 · 获批的写入留了快照，结算行末尾加「 · Can be restored」（05 验收 33）
+测试改动：apps/desktop/test/snapshot-git.test.ts · 起真进程的恢复用例 · 收尾改成不判断存活、直接结束进程组（plan Open）；带空格路径与 xcrun 用例显式配置对应的 git 路径

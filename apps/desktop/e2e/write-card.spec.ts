@@ -513,8 +513,9 @@ test('a round with a write allowed and reads after it shows one summary line, af
     await expect(page.getByTestId('assistant-text').last()).toHaveText('All done.')
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
-    // Three reads and the write, over both Runs, under the round's last reply.
-    await expect(summary).toHaveText('Read 3 files · Changed 1 file')
+    // Three reads and the write, over both Runs, under the round's last reply; 05 验收 33: the
+    // snapshotted write makes the round restorable.
+    await expect(summary).toHaveText('Read 3 files · Changed 1 file · Can be restored')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)

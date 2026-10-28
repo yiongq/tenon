@@ -103,7 +103,7 @@
 | 13 | 集成 | 05 验收 13: / or a volume root is refused through pick and prefill, home is warned | test | — | 任意 |
 | 14 | 集成 | 05 验收 14: retention keeps 20 rounds, 30 days and 3 GB after reclaim, protects live rounds | test | — | 任意 |
 | 15 | e2e | 05 验收 15: write task, approve, summary, restore, content back and git status clean | test:e2e | — | macOS、Linux |
-| 16 | 集成 | 05 验收 16: preview lists every path with skip reasons, marks command paths, and cancel touches nothing | test | — | 任意 |
+| 16 | 集成 | 05 验收 16: preview and cancel never change workspace bytes or stamps | test | — | 任意 |
 | 17 | 集成 | 05 验收 17: restore removes new files, brings back deleted ones, links and 600 modes (also chmod-only), and stamps restore time | test | — | 任意 |
 | 18 | 集成 | 05 验收 18: conflicts are asked one by one and only listed overwrites happen | test | — | 任意 |
 | 19 | 集成 | 05 验收 19: restore touches only the agent's paths, not ignored files or your in-round edits | test | — | 任意 |
