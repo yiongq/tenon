@@ -8,10 +8,13 @@ import type {
   SnapshotStatus,
 } from '../host/adapter.js'
 import { isWithin } from '../host/path.js'
+import { effectiveMessages } from '../tape/replay.js'
 import { sessionFactsOf } from '../session/facts.js'
 import type {
   ParentLinkPayload,
   RestoredPayload,
+  RunStartedPayload,
+  RunTerminalPayload,
   RestoreStartedPayload,
   SnapshotCreatedPayload,
   TapeEntry,
@@ -20,7 +23,6 @@ import { restoredKey, restoreStartedKey } from '../tape/provenance.js'
 import type { Tape } from '../tape/tape.js'
 import { readSessionEntries } from './batch.js'
 import { callKeyOf } from './run.js'
-import { roundRunOf } from './snapshots.js'
 
 export type SnapshotRefusalCode =
   | 'busy'
@@ -43,6 +45,9 @@ export interface SnapshotRestoreQuery extends SnapshotRoundQuery {
 }
 export interface SnapshotRound {
   readonly roundRunId: string
+  readonly endMessageId: string | null
+  readonly runIds: readonly string[]
+  readonly calls: readonly { readonly callKey: string; readonly snapshotId: string }[]
   readonly canRestore: boolean
   readonly incompleteCoverage: boolean
   readonly commandsWithoutSnapshot: boolean
@@ -70,6 +75,7 @@ interface CallNode {
   readonly callKey: string
   readonly roundRunId: string
   readonly children: CallNode[]
+  snapshotId?: string
   before?: SnapshotCreatedPayload
   after?: SnapshotCreatedPayload
   dispatched: boolean
@@ -78,7 +84,10 @@ interface CallNode {
 }
 interface CollectedRound {
   readonly roundRunId: string
+  readonly runIds: readonly string[]
+  readonly revision: string
   readonly nodes: CallNode[]
+  readonly rootNodes: CallNode[]
   readonly query: RestoreQuery
   incomplete: boolean
 }
@@ -94,6 +103,7 @@ interface RestoreDeps {
   readonly now: () => number
   /** Read afresh for every busy check; an aborted lease stays active until its real finish. */
   readonly activeRoots: () => readonly string[]
+  readonly activeRuns: () => readonly string[]
 }
 
 /** Fold restore facts by undo id and round, regardless of whether this process wrote them. */
@@ -129,6 +139,38 @@ function queryCall(node: CallNode): RestoreQuery['calls'][number] {
   }
 }
 
+/** Resolve resume chains once, then group Runs in Tape order (including text-only resumes). */
+function indexRounds(entries: readonly TapeEntry[]) {
+  const started = new Map<string, RunStartedPayload>()
+  for (const entry of entries) {
+    if (
+      entry.name === 'execution/run_started' &&
+      entry.sourceId !== null &&
+      !started.has(entry.sourceId)
+    )
+      started.set(entry.sourceId, entry.payload as RunStartedPayload)
+  }
+  const byRun = new Map<string, string>()
+  const byRound = new Map<string, string[]>()
+  for (const runId of started.keys()) {
+    const path = new Set<string>()
+    let current = runId
+    while (!byRun.has(current)) {
+      if (path.has(current)) throw new Error('snapshot round has a cyclic resume chain')
+      path.add(current)
+      const cause = started.get(current)?.cause
+      if (cause?.kind !== 'resume') break
+      current = cause.pausedRunId
+    }
+    const roundRunId = byRun.get(current) ?? current
+    for (const member of path) byRun.set(member, roundRunId)
+    const runs = byRound.get(roundRunId) ?? []
+    runs.push(runId)
+    byRound.set(roundRunId, runs)
+  }
+  return { byRun, byRound }
+}
+
 async function collectHistory(
   deps: RestoreDeps,
   sessionId: string,
@@ -138,13 +180,20 @@ async function collectHistory(
   if (!facts.established || facts.subagentOf !== null) return { ok: false, code: 'gone' }
   if (facts.profile !== 'cowork') return { ok: false, code: 'not-cowork' }
   const start = entries.find((entry) => entry.name === 'session/start')!
-  const roundIds = [
-    ...new Set(
-      entries
-        .filter((entry) => entry.name === 'execution/run_started' && entry.sourceId !== null)
-        .map((entry) => roundRunOf(entries, entry.sourceId!)),
-    ),
-  ]
+  const { byRun, byRound } = indexRounds(entries)
+  // Entry ids are session-local: keep each participating Tape's last fact, not a shared max.
+  const revisions = new Map<string, Map<string, readonly [string, number]>>()
+  const noteFact = (entry: TapeEntry, inheritedRound?: string) => {
+    const round =
+      inheritedRound ??
+      byRun.get(entry.sourceId ?? '') ??
+      byRun.get(String(entry.payload['runId'])) ??
+      (typeof entry.payload['roundRunId'] === 'string' ? entry.payload['roundRunId'] : undefined)
+    if (round === undefined) return
+    const tapes = revisions.get(round) ?? new Map<string, readonly [string, number]>()
+    tapes.set(entry.sessionId, [entry.incarnationId, entry.entryId])
+    revisions.set(round, tapes)
+  }
   const unreadable = new Set<string>()
   const seen = new Set([sessionId])
   const readCalls = async (
@@ -164,7 +213,7 @@ async function collectHistory(
       if (node === undefined) {
         node = {
           callKey,
-          roundRunId: inheritedRound ?? roundRunOf(own, entry.sourceId),
+          roundRunId: inheritedRound ?? byRun.get(entry.sourceId) ?? entry.sourceId,
           children: [],
           dispatched: false,
           promised: false,
@@ -175,6 +224,7 @@ async function collectHistory(
       return node
     }
     for (const entry of own) {
+      noteFact(entry, inheritedRound)
       if (entry.name === 'tool/call') {
         nodeOf(entry)
         continue
@@ -183,6 +233,9 @@ async function collectHistory(
         const node = nodeOf(entry)
         node.dispatched = true
         node.command = entry.payload['name'] === 'Bash'
+      } else if (entry.name === 'execution/tool_outcome') {
+        const snapshotId = entry.payload['snapshotId']
+        if (typeof snapshotId === 'string') nodeOf(entry).snapshotId = snapshotId
       } else if (entry.name === 'tool/permission_decided') {
         nodeOf(entry).promised ||= entry.payload['reversibility'] === 'snapshotted'
       } else if (entry.name === 'fs/snapshot_created') {
@@ -210,6 +263,7 @@ async function collectHistory(
         seen.add(link.child.sessionId)
         // oxlint-disable-next-line no-await-in-loop -- insert each child at its parent call, not by coarse wall-clock time
         const child = await readSessionEntries(deps.tape, link.child.sessionId)
+        if (child.length > 0) noteFact(child.at(-1)!, node.roundRunId)
         const childFacts = sessionFactsOf(child)
         const childStart = child.find((candidate) => candidate.name === 'session/start')
         if (
@@ -226,15 +280,19 @@ async function collectHistory(
     }
     return [...calls.values()]
   }
-  const all = flatten(await readCalls(entries))
-  const rounds = roundIds.map((roundRunId): CollectedRound => {
+  const rootNodes = await readCalls(entries)
+  const all = flatten(rootNodes)
+  const rounds = [...byRound].map(([roundRunId, runIds]): CollectedRound => {
     const nodes = all.filter((node) => node.roundRunId === roundRunId)
     const calls = nodes
       .filter((node) => node.before !== undefined || node.after !== undefined)
       .map(queryCall)
     return {
       roundRunId,
+      runIds,
+      revision: JSON.stringify([...(revisions.get(roundRunId) ?? [])]),
       nodes,
+      rootNodes: rootNodes.filter((node) => node.roundRunId === roundRunId),
       query: { sessionId, roundRunId, calls },
       incomplete:
         unreadable.has(roundRunId) ||
@@ -296,8 +354,36 @@ async function busy(deps: RestoreDeps, folders: readonly AbsolutePath[]): Promis
   }
 }
 
+/** D63: use the visible message fold, never a child's message or a retracted revision. */
+function endMessageOf(
+  entries: readonly TapeEntry[],
+  runIds: readonly string[],
+  activeRuns: readonly string[],
+): string | null {
+  const lastRunId = runIds.at(-1)
+  const terminal = entries.findLast(
+    (entry) => entry.name === 'execution/run_terminal' && entry.sourceId === lastRunId,
+  )
+  if (
+    terminal === undefined ||
+    (terminal.payload as RunTerminalPayload).reason.code === 'paused' ||
+    activeRuns.some((runId) => runIds.includes(runId))
+  )
+    return null
+  const byId = new Map(entries.map((entry) => [entry.entryId, entry]))
+  return (
+    effectiveMessages(entries).findLast(
+      (message) =>
+        message.role === 'assistant' &&
+        runIds.includes(String(byId.get(message.entryId)?.payload['runId'])),
+    )?.messageId ?? null
+  )
+}
+
 export function createSnapshotRestorer(deps: RestoreDeps) {
+  const previewSkips = new Map<string, { revision: string; alive: boolean; skipped: boolean }>()
   return {
+    // Settlement coverage may lag workspace-only changes between Tape revisions; explicit preview always recomputes the authoritative list.
     async rounds(sessionId: string): Promise<SnapshotRoundsResult> {
       const history = await collectHistory(deps, sessionId)
       if ('ok' in history) return history
@@ -310,13 +396,36 @@ export function createSnapshotRestorer(deps: RestoreDeps) {
           round.incomplete ||
           round.nodes.some((node) => node.dispatched && node.command) ||
           (!canRestore && snapshotIds(round).length > 0)
-        if (canRestore) {
-          // oxlint-disable-next-line no-await-in-loop -- current safety skips invalidate promises without changing Tape
-          const preview = await deps.host.snapshots.preview(round.query)
-          incompleteCoverage ||= preview.skipped.length > 0
+        const cacheKey = JSON.stringify([
+          history.entries[0]!.tenantId,
+          sessionId,
+          history.incarnationId,
+          round.roundRunId,
+        ])
+        let cached = previewSkips.get(cacheKey)
+        if (cached?.revision !== round.revision || cached.alive !== canRestore) {
+          let skipped = false
+          if (canRestore) {
+            // oxlint-disable-next-line no-await-in-loop -- only changed rounds need the host's expensive preview
+            skipped = (await deps.host.snapshots.preview(round.query)).skipped.length > 0
+          }
+          cached = { revision: round.revision, alive: canRestore, skipped }
+          previewSkips.set(cacheKey, cached)
         }
+        incompleteCoverage ||= cached.skipped
+        const runIds = round.runIds
         rounds.push({
           roundRunId: round.roundRunId,
+          runIds,
+          endMessageId: endMessageOf(history.entries, runIds, deps.activeRuns()),
+          calls: round.rootNodes.flatMap((node) => {
+            const snapshotId = node.command
+              ? node.before?.scope === 'tree'
+                ? node.before.snapshotId
+                : undefined
+              : node.snapshotId
+            return snapshotId === undefined ? [] : [{ callKey: node.callKey, snapshotId }]
+          }),
           canRestore,
           incompleteCoverage,
           commandsWithoutSnapshot: round.nodes.some(

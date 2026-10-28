@@ -495,9 +495,9 @@ describe('the end-of-Run copy', () => {
     ).toEqual([])
   })
 
-  it('has the summary line with the six counts TurnSummary carries', () => {
+  it('has the summary line with the seven counts TurnSummary carries', () => {
     const counts = covers<keyof TurnSummary>()(
-      ['read', 'search', 'write', 'command', 'online', 'connector'],
+      ['read', 'search', 'write', 'delete', 'command', 'online', 'connector'],
       true,
     )
     expect(
@@ -1068,4 +1068,64 @@ it('05 验收 13: both catalogues contain the folder refusal and home warning', 
       ['folder.rootRefused', 'folder.homeWarning'].map((key) => ({ key, args: [], what: key })),
     ),
   ).toEqual([])
+})
+
+it('05 验收 35: both locales pin snapshot, sensitive-path, failure and Delete copy; revertible is never rendered', async () => {
+  const { undoKey } = await import('../src/renderer/src/lib/approval-card.js')
+  const { toolRowEffect } = await import('../src/renderer/src/lib/tool-row-effect.js')
+  const sentences = [
+    [
+      'confirm.undo.snapshotted',
+      '有快照，这一轮可以一键还原。',
+      'Snapshot taken first; you can undo this round.',
+    ],
+    [
+      'confirm.reason.sensitive-path.credential',
+      '这是登录凭据，读到的内容会发给模型。',
+      'This is a sign-in credential. Its contents will be sent to the model.',
+    ],
+    [
+      'confirm.reason.sensitive-path.auto-run',
+      '这个位置的文件会被自动执行。',
+      'Files at this location are executed automatically.',
+    ],
+    [
+      'confirm.reason.sensitive-path.hardlink',
+      '这个文件还有别的名字，改它会连带改到别处。',
+      'This file has other names. Changing it also changes it elsewhere.',
+    ],
+    ['tool.did.failed', '没做成', "Didn't go through"],
+    ['tool.did.delete', '删了这个文件', 'Deleted this file'],
+    [
+      'summary.delete',
+      '删了 {count} 个文件',
+      'Deleted {count, plural, one {# file} other {# files}}',
+    ],
+  ] as const
+  for (const [key, zh, en] of sentences) {
+    expect(lookup('zh-CN', key)).toBe(zh)
+    expect(lookup('en', key)).toBe(en)
+  }
+  expect(
+    undoKey({
+      kind: 'file',
+      reason: 'default',
+      facts: {},
+      target: { type: 'path', path: '/a' },
+      reversibility: 'revertible',
+    }),
+  ).toBeNull()
+  expect(
+    toolRowEffect(
+      {
+        effect: 'write',
+        state: 'completed',
+        isError: false,
+        source: null,
+        output: '',
+        reversibility: 'revertible',
+      },
+      'Write',
+    )?.undoKey,
+  ).toBeNull()
 })

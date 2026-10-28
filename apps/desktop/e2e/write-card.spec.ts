@@ -263,7 +263,8 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
     await expect(card.getByTestId('approval-object')).toHaveText(file)
     await expect(card.getByTestId('approval-reason')).toHaveCount(0)
     // Spec 05 acceptance 1: a workspace file the host can snapshot is promised a copy.
-    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 保存了改动前的副本。')
+    // 05 验收 52: the approved snapshot promises restore for this round.
+    await expect(card.getByTestId('approval-undo')).toHaveText('有快照，这一轮可以一键还原。')
     await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
     await expect(card.getByTestId('approval-irreversible')).toHaveCount(0)
     // The allow button says this file, this session.
@@ -546,7 +547,7 @@ test('05 验收 25: a hard link in the workspace to a file outside it asks every
   })
   const server = fake
   const userData = makeUserDataDir('hard-link')
-  seedConfig(userData, { locale: 'en' })
+  seedConfig(userData, { locale: 'zh-CN' })
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
     await startTask(app, page, ws)
@@ -560,8 +561,11 @@ test('05 验收 25: a hard link in the workspace to a file outside it asks every
     expect(pending.card.target).toEqual({ type: 'path', path: linked })
     expect(pending.allowScope).toBe('once')
     await expect(card.getByTestId('approval-reason')).toHaveText(
-      'This file has other names. Changing it also changes it elsewhere.',
+      '这个文件还有别的名字，改它会连带改到别处。',
     )
+    // 05 验收 4、25: hard links never promise a snapshot.
+    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 没法替你撤回这次改动。')
+    await expect(card).not.toContainText('有快照，这一轮可以一键还原。')
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Written.')

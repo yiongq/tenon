@@ -1113,6 +1113,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     // The write of the paused Run counts; the previous round's read and the blocked read do not.
     expect(successfulSummary(d.turns, last)).toEqual({
       read: 2,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1123,6 +1124,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     const previous = d.turns.findIndex((turn) => turn.end !== undefined)
     expect(successfulSummary(d.turns, previous)).toEqual({
       read: 1,
+      delete: 0,
       write: 0,
       search: 0,
       command: 0,
@@ -1143,6 +1145,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     // for `paused`; to-thread-messages leaves it out).
     expect(successfulSummary(d.turns, paused)).toEqual({
       read: 0,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1153,6 +1156,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     expect(successfulSummary(d.turns, paused)).toBeNull()
     expect(successfulSummary(d.turns, d.lastEnded())).toEqual({
       read: 1,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1170,6 +1174,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     // The step-limit end is not paused: until something else ends in this round, it carries the line.
     expect(successfulSummary(d.turns, limited)).toEqual({
       read: 0,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1181,6 +1186,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     expect(successfulSummary(d.turns, limited)).toBeNull()
     expect(successfulSummary(d.turns, d.lastEnded())).toEqual({
       read: 1,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1198,6 +1204,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     d.apply(toolCall('r2:1:0', 'Write'), done(PAUSED))
     expect(successfulSummary(d.turns, limited)).toEqual({
       read: 1,
+      delete: 0,
       write: 0,
       search: 0,
       command: 0,
@@ -1242,6 +1249,7 @@ describe('summaryBefore (TurnSummaryLine)', () => {
     // …and does not start one either: a2's line counts a1's read too.
     expect(successfulSummary(turns, 3)).toEqual({
       read: 1,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -1377,7 +1385,15 @@ it('presentation-r1 验收 7: counts by kind — Read a.txt ×3, Edit b.txt ×2,
     ]),
   )
   const summary = summaryBefore(model.turns, 0, new Map([['child', child.turns]]))
-  expect(summary).toEqual({ read: 1, search: 0, write: 2, command: 2, online: 1, connector: 0 })
+  expect(summary).toEqual({
+    delete: 0,
+    read: 1,
+    search: 0,
+    write: 2,
+    command: 2,
+    online: 1,
+    connector: 0,
+  })
   expect(await summaryText(summary!)).toBe(
     '读了 1 个文件 · 改了 2 个文件 · 运行了 2 条命令 · 联网 1 次',
   )
@@ -1400,7 +1416,15 @@ it('presentation-r1 验收 7: no zero part; a blocked or unsent call is not coun
     ]),
   )
   const summary = summaryBefore(model.turns, 0)!
-  expect(summary).toEqual({ read: 0, search: 0, write: 0, command: 1, online: 0, connector: 0 })
+  expect(summary).toEqual({
+    delete: 0,
+    read: 0,
+    search: 0,
+    write: 0,
+    command: 1,
+    online: 0,
+    connector: 0,
+  })
   expect(await summaryText(summary)).toBe('运行了 1 条命令')
   const other = threadFromRows(
     summaryRows([
@@ -1429,6 +1453,7 @@ it('presentation-r1 验收 7: live calls count only outcome.isError false withou
   expect(summaryBefore(d.turns, d.lastEnded())).toEqual({
     read: 1,
     search: 0,
+    delete: 0,
     write: 0,
     command: 0,
     online: 0,

@@ -30,6 +30,11 @@ export const snapshotRounds = defineRoute('snapshot.rounds', {
             z
               .object({
                 roundRunId: canonicalSessionIdSchema,
+                runIds: z.array(canonicalSessionIdSchema).readonly(),
+                endMessageId: opaqueId.nullable(),
+                calls: z
+                  .array(z.object({ callKey: opaqueId, snapshotId: opaqueId }).strict())
+                  .readonly(),
                 canRestore: z.boolean(),
                 incompleteCoverage: z.boolean(),
                 commandsWithoutSnapshot: z.boolean(),

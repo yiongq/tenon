@@ -417,6 +417,7 @@ describe('the live thread against the redraw', () => {
     expect(summaryBefore(w.model.turns, index)).toEqual({
       read: 0,
       search: 0,
+      delete: 0,
       write: 0,
       command: 0,
       online: 0,
@@ -509,6 +510,7 @@ describe('the round, the end card and 「重试」 on the real kernel', () => {
     expect(summaryBefore(w.model.turns, last)).toEqual({
       read: 0,
       search: 0,
+      delete: 0,
       write: 0,
       command: 0,
       online: 0,

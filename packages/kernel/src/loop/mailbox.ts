@@ -441,6 +441,10 @@ export function createLoop(deps: LoopDeps): Loop {
     tape,
     host: deps.host,
     now,
+    activeRuns: () =>
+      [...boxes.values()].flatMap((box) =>
+        box.lease !== null && box.runId !== null ? [box.runId] : [],
+      ),
     activeRoots: () =>
       [...boxes.values()].filter((box) => box.lease !== null).map((box) => box.rootSessionId),
   })

@@ -529,7 +529,7 @@ it('05 验收 16、22: preview and restore commands serialize through the root m
 })
 
 it.each(['tree', 'warming', 'file-only'] as const)(
-  '05 验收 52: %s promised calls are listed and safely restore; invalidated promises mark incomplete coverage',
+  '05 验收 52: %s promised calls safely restore; explicit previews detect workspace changes between cached rounds queries',
   async (status) => {
     const h = await harness({ status })
     const roundRunId = await changed(h)
@@ -542,9 +542,10 @@ it.each(['tree', 'warming', 'file-only'] as const)(
       incompleteRestores: [],
     })
     h.host.hardlink(FILE, absolutePath('/work/project/second-name'))
+    // Coverage annotations now stay cached until this round's Tape or liveness changes.
     expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
       ok: true,
-      rounds: [{ roundRunId, incompleteCoverage: true }],
+      rounds: [{ roundRunId, incompleteCoverage: false }],
     })
     expect((await preview(h, roundRunId)).skipped).toEqual([
       { path: FILE, reason: 'hardlink', promised: true },
@@ -897,4 +898,212 @@ it('05 验收 21、22、51: an interrupted partial restore keeps the undo eviden
       .map((entry) => entry.sourceSeq),
   ).toEqual([0, 1])
   expect((await h.entries()).findLast((entry) => entry.name === 'fs/restored')?.sourceSeq).toBe(1)
+})
+
+it('05 验收 33、34: rounds expose resumed root Runs and their before snapshots, never child calls or child ending messages', async () => {
+  const h = await harness()
+  const { pending, roundRunId } = await pause(h)
+  h.provider.script(call('Agent', { description: 'child', prompt: 'write b' }, 'agent'))
+  h.provider.script(
+    call('Write', { file_path: '/work/project/child.txt', content: 'child' }, 'child-write'),
+  )
+  await answerCard(h, pending)
+  expect((await rootEnded(h)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  const child = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+  expect(child.card.sessionId).not.toBe(SESSION)
+  h.provider.script(done())
+  h.provider.script(done())
+  await answerCard(h, child)
+  expect((await rootEnded(h)).reason).toEqual({ code: 'completed' })
+  const entries = await h.entries()
+  const runs = entries
+    .filter((entry) => entry.name === 'execution/run_started')
+    .map((entry) => entry.sourceId)
+  expect(runs.length).toBeGreaterThan(1)
+  expect(runs[0]).toBe(roundRunId)
+  const before = entries.find(
+    (entry) => entry.name === 'fs/snapshot_created' && entry.payload['moment'] === 'before-call',
+  )!
+  const outcome = entries.find(
+    (entry) => entry.name === 'execution/tool_outcome' && entry.payload['snapshotId'] !== undefined,
+  )!
+  expect(outcome.payload['snapshotId']).toBe(before.payload['snapshotId'])
+  const result = await h.service.snapshotRounds({ sessionId: SESSION })
+  expect(result).toMatchObject({
+    ok: true,
+    rounds: [
+      {
+        roundRunId,
+        runIds: runs,
+        calls: [
+          {
+            callKey: `${outcome.sourceId}:${outcome.sourceSeq}:${outcome.payload['ordinal']}`,
+            snapshotId: before.payload['snapshotId'],
+          },
+        ],
+      },
+    ],
+  })
+  if (!result.ok) throw new Error(result.code)
+  expect(result.rounds).toHaveLength(1)
+  expect(result.rounds[0]!.calls).toHaveLength(1)
+  const rootEnd = entries.findLast((entry) => entry.name === 'message/assistant')!
+  const childEnd = (await h.entries(child.card.sessionId)).findLast(
+    (entry) => entry.name === 'message/assistant',
+  )!
+  expect(result.rounds[0]!.endMessageId).toBe(rootEnd.payload['messageId'])
+  expect(result.rounds[0]!.endMessageId).not.toBe(childEnd.payload['messageId'])
+  expect(
+    (await h.entries(child.card.sessionId)).some((entry) => entry.name === 'fs/snapshot_created'),
+  ).toBe(true)
+  const previews = vi.spyOn(h.host.snapshots, 'preview')
+  await h.service.snapshotRounds({ sessionId: SESSION })
+  expect(previews).not.toHaveBeenCalled()
+  const childHead = (await h.store.head(child.card.sessionId))!
+  await h.store.append({
+    sessionId: child.card.sessionId,
+    incarnationId: childHead.incarnationId,
+    entries: [
+      {
+        kind: 'event',
+        name: 'ext/perf/note',
+        sourceType: 'session',
+        sourceId: child.card.sessionId,
+        provenanceKey: 'ext:v1:perf:child',
+        payload: {},
+        createdAt: 0,
+      },
+    ],
+  })
+  await h.service.snapshotRounds({ sessionId: SESSION })
+  expect(previews).toHaveBeenCalledOnce()
+  await h.service.snapshotRounds({ sessionId: SESSION })
+  expect(previews).toHaveBeenCalledOnce()
+})
+
+it('05 验收 34: a root Bash call exposes its before-dispatch tree, not the after-call snapshot', async () => {
+  const h = await harness()
+  vi.spyOn(h.host.process, 'spawn').mockImplementation(async () => {
+    const child = fakeChild(() => h.host.clock.now(), 'dies')
+    child.exit(0)
+    return child.child
+  })
+  const { pending, roundRunId } = await pause(h, 'Bash', { command: 'echo change' })
+  await approve(h, pending)
+  const entries = await h.entries()
+  const before = entries.find(
+    (entry) => entry.name === 'fs/snapshot_created' && entry.payload['moment'] === 'before-call',
+  )!
+  const after = entries.find(
+    (entry) => entry.name === 'fs/snapshot_created' && entry.payload['moment'] === 'after-call',
+  )!
+  expect(before.payload['scope']).toBe('tree')
+  expect(before.payload['snapshotId']).not.toBe(after.payload['snapshotId'])
+  expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+    ok: true,
+    rounds: [
+      {
+        roundRunId,
+        calls: [
+          {
+            callKey: `${before.sourceId}:${before.sourceSeq}:${before.payload['ordinal']}`,
+            snapshotId: before.payload['snapshotId'],
+          },
+        ],
+      },
+    ],
+  })
+})
+
+it('05 验收 33: a paused round has no end message; a text-only resumed ending survives restart', async () => {
+  const h = await harness()
+  const { pending, roundRunId } = await pause(h)
+  expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+    ok: true,
+    rounds: [{ roundRunId, endMessageId: null }],
+  })
+  await approve(h, pending)
+  const entries = await h.entries()
+  const last = entries.findLast((entry) => entry.name === 'message/assistant')!
+  expect(last.payload['runId']).not.toBe(roundRunId)
+  expect(last.payload['content']).toEqual([{ type: 'text', text: 'done' }])
+  const messages = await readEffectiveMessages(h.store, { sessionId: SESSION })
+  expect(messages.at(-1)?.messageId).toBe(last.payload['messageId'])
+  const restarted = h.makeService()
+  expect(await restarted.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+    ok: true,
+    rounds: [{ roundRunId, endMessageId: last.payload['messageId'] }],
+  })
+})
+
+it('05 验收 33: an active round has no end message and does not hide an older completed round', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  const last = (await h.entries()).findLast((entry) => entry.name === 'message/assistant')!
+  const live = await liveRun(h, SESSION)
+  try {
+    expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+      ok: true,
+      rounds: [
+        { roundRunId, endMessageId: last.payload['messageId'] },
+        { roundRunId: live.runId, endMessageId: null },
+      ],
+    })
+  } finally {
+    await live.release()
+  }
+})
+
+it('05 验收 33: rounds cache preview skips until that round gains a fact or its liveness changes; explicit preview stays fresh', async () => {
+  const h = await harness()
+  const roundRunId = await changed(h)
+  const realPreview = h.host.snapshots.preview.bind(h.host.snapshots)
+  const spy = vi.spyOn(h.host.snapshots, 'preview')
+  const rounds = () => h.service.snapshotRounds({ sessionId: SESSION })
+  await rounds()
+  await rounds()
+  expect(spy).toHaveBeenCalledTimes(1)
+  // Another round's facts must not invalidate the completed round.
+  h.provider.script(done())
+  const sent = await h.service.send({ sessionId: SESSION, origin: null, text: 'just answer' })
+  if (sent.status !== 'started') throw new Error('Run did not start')
+  await h.ports.runEnded({ runId: sent.runId })
+  await rounds()
+  expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(1)
+  const head = (await h.store.head(SESSION))!
+  await h.store.append({
+    sessionId: SESSION,
+    incarnationId: head.incarnationId,
+    entries: [
+      {
+        kind: 'event',
+        name: 'ext/perf/note',
+        sourceType: 'runtime_event',
+        sourceId: roundRunId,
+        provenanceKey: 'ext:v1:perf:note',
+        payload: {},
+        createdAt: 0,
+      },
+    ],
+  })
+  spy.mockImplementation(async (q) => ({
+    ...(await realPreview(q)),
+    skipped: [{ path: FILE, reason: 'hardlink', promised: true }],
+  }))
+  expect(await rounds()).toMatchObject({ ok: true, rounds: [{ incompleteCoverage: true }, {}] })
+  expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(2)
+  await rounds()
+  expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(2)
+  const realAlive = h.host.snapshots.alive.bind(h.host.snapshots)
+  const live = vi.spyOn(h.host.snapshots, 'alive').mockResolvedValue(new Set())
+  expect(await rounds()).toMatchObject({
+    ok: true,
+    rounds: [{ canRestore: false }, { canRestore: false }],
+  })
+  live.mockImplementation(realAlive)
+  await rounds()
+  expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(3)
+  await preview(h, roundRunId)
+  await preview(h, roundRunId)
+  expect(spy.mock.calls.filter(([q]) => q.roundRunId === roundRunId)).toHaveLength(5)
 })

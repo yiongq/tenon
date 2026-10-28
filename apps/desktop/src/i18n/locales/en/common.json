@@ -454,8 +454,11 @@
       "command": "Ran this command",
       "online": "Went online",
       "connector": "Used a connector",
-      "irreversible": "Can't be undone"
-    }
+      "irreversible": "Can't be undone",
+      "failed": "Didn't go through",
+      "delete": "Deleted this file"
+    },
+    "Delete": "Delete {path}"
   },
   "closure": {
     "user-rejected": "You declined this.",
@@ -574,7 +577,7 @@
     "undo": {
       "read-only": "Read only: nothing changes.",
       "revertible": "Tenon can undo this change.",
-      "snapshotted": "Tenon saved a copy before this change.",
+      "snapshotted": "Snapshot taken first; you can undo this round.",
       "unknown": "If this changes anything, Tenon can't undo it.",
       "unknownFile": "Tenon can't undo this change for you.",
       "network": {
@@ -610,7 +613,8 @@
     "command": "Ran {count, plural, one {# command} other {# commands}}",
     "online": "Went online {count, plural, one {# time} other {# times}}",
     "connector": "Used connectors {count, plural, one {# time} other {# times}}",
-    "separator": " · "
+    "separator": " · ",
+    "delete": "Deleted {count, plural, one {# file} other {# files}}"
   },
   "thinking": {
     "label": "Thinking",
@@ -939,6 +943,89 @@
       "not-found": "This call was not found. Request the command again.",
       "refused": "Permission cannot be granted now. Try again later.",
       "failed": "Permission could not be granted. Try again."
+    }
+  },
+  "snapshot": {
+    "available": "Can be restored",
+    "partial": "Can be restored (excluding omitted files)",
+    "command": "Changes made by commands may not be restorable",
+    "number": "Snapshot: {id}",
+    "unfinished": "The last restore did not finish. Review the list again to decide whether to restore the remaining files.",
+    "title": "Restore this round’s file changes",
+    "limits": "Command side effects, network requests and excluded files cannot be undone.",
+    "loading": "Reading the records…",
+    "applying": "Restoring files…",
+    "cancel": "Cancel",
+    "close": "Close",
+    "confirm": "Restore files",
+    "conflict": "This file changed after this round, and restoring would overwrite those changes. Overwrite or keep?",
+    "keep": "Keep",
+    "overwrite": "Overwrite",
+    "result": "Restored: {restored}. Removed: {removed}. Kept: {kept}. Skipped: {skipped}. Not completed: {failed}.",
+    "count": {
+      "restore": "To restore: {count}",
+      "remove": "New files to remove: {count}",
+      "skipped": "To skip: {count}"
+    },
+    "skip": {
+      "excluded": "This path is excluded from snapshots.",
+      "not-covered": "Snapshots for this path are incomplete.",
+      "hardlink": "This file has other names and cannot be safely restored.",
+      "outside-folders": "This path is no longer in the current task folders."
+    },
+    "error": {
+      "busy": "A task is still running in these folders. Try again when it finishes.",
+      "gone": "This round’s snapshots are no longer available.",
+      "stale": "Files have changed. Review the updated list. All overwrite choices have been reset to Keep.",
+      "undo-unavailable": "The current files could not be fully saved, so the restore did not start.",
+      "over-budget": "There is not enough snapshot space. The restore did not start.",
+      "not-cowork": "File restore is available only in task sessions.",
+      "failed": "This action could not be completed. Please check the records again."
+    },
+    "record": {
+      "menu": "Session menu",
+      "title": "View this round’s record",
+      "empty": "There are no tool calls recorded for this round yet.",
+      "tool": "Tool",
+      "object": "Object",
+      "decision": "Decision summary",
+      "reversibility": "Can it be undone?",
+      "snapshot": "Snapshot",
+      "restorable": "Can it be restored now?",
+      "none": "Not recorded",
+      "yes": "Yes",
+      "no": "No"
+    },
+    "reversibility": {
+      "read-only": "Read only; no changes",
+      "snapshotted": "A snapshot was taken before the change",
+      "irreversible": "Cannot be undone",
+      "unknown": "Undo is not guaranteed"
+    },
+    "verdict": {
+      "allow": "Allowed",
+      "ask": "Confirmation required",
+      "deny": "Denied"
+    },
+    "decision": {
+      "session-allowed": "You allowed this for the session",
+      "session-allowed-search": "You allowed search for this session",
+      "session-allowed-domain": "You allowed this website for the session",
+      "user-rule": "Based on your settings",
+      "org-policy": "Based on your organization’s settings",
+      "user-disabled": "You disabled this capability",
+      "irreversible-once": "Cannot be undone; confirmation is needed each time",
+      "exfiltration-recheck": "Content may be sent elsewhere; confirmation is needed again",
+      "default-ask": "This action needs confirmation",
+      "workspace-read": "Reading files in the task folders",
+      "protected": "This location is protected",
+      "connector-requires-confirm": "This connector action needs confirmation",
+      "check-incomplete": "Checks could not finish; confirmation is needed",
+      "inspector-blocked": "Checks found a risk and blocked the action",
+      "own-output-read": "Reading content produced in this session",
+      "no-approval-needed": "This action does not need confirmation",
+      "auto-mode": "Allowed by the automatic mode settings",
+      "task-grant": "You allowed this for the task"
     }
   }
 }

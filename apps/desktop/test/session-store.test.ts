@@ -2020,6 +2020,7 @@ it('presentation-r1 验收 7 / presentation-r1 不变量 5: a subtask’s calls 
   await settle()
   expect(toThreadMessages(store.getSnapshot().model).at(-1)?.metadata?.custom?.summary).toEqual({
     read: 1,
+    delete: 0,
     search: 0,
     write: 1,
     command: 0,

@@ -347,15 +347,17 @@ it('presentation-r1 验收 1 / presentation-r1 不变量 3: no scale; why and un
                     ? `confirm.reason.sensitive-path.${category}`
                     : `confirm.reason.${reason}`
             const expectedUndo =
-              reversibility === 'irreversible'
-                ? 'confirm.irreversible'
-                : kind === 'network'
-                  ? reason === 'network' || (reason === 'flagged' && category === 'exfiltration')
-                    ? null
-                    : `confirm.undo.network.${target.type === 'search' ? 'search' : 'url'}`
-                  : reversibility === 'unknown' && target.type === 'path'
-                    ? 'confirm.undo.unknownFile'
-                    : `confirm.undo.${reversibility}`
+              reversibility === 'revertible'
+                ? null
+                : reversibility === 'irreversible'
+                  ? 'confirm.irreversible'
+                  : kind === 'network'
+                    ? reason === 'network' || (reason === 'flagged' && category === 'exfiltration')
+                      ? null
+                      : `confirm.undo.network.${target.type === 'search' ? 'search' : 'url'}`
+                    : reversibility === 'unknown' && target.type === 'path'
+                      ? 'confirm.undo.unknownFile'
+                      : `confirm.undo.${reversibility}`
             expect(whyKey(card)).toBe(expectedWhy)
             expect(undoKey(card)).toBe(expectedUndo)
             // oxlint-disable-next-line no-await-in-loop -- independently verify each table row's rendered card

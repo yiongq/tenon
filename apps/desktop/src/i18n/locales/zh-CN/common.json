@@ -454,8 +454,11 @@
       "command": "运行了这条命令",
       "online": "联网",
       "connector": "用了连接器",
-      "irreversible": "撤不回"
-    }
+      "irreversible": "撤不回",
+      "failed": "没做成",
+      "delete": "删了这个文件"
+    },
+    "Delete": "删除 {path}"
   },
   "closure": {
     "user-rejected": "你拒绝了这个操作。",
@@ -574,7 +577,7 @@
     "undo": {
       "read-only": "只读，不会改动任何东西。",
       "revertible": "Tenon 可以替你撤回这次改动。",
-      "snapshotted": "Tenon 保存了改动前的副本。",
+      "snapshotted": "有快照，这一轮可以一键还原。",
       "unknown": "如果它改了东西，Tenon 没法替你撤回。",
       "unknownFile": "Tenon 没法替你撤回这次改动。",
       "network": {
@@ -610,7 +613,8 @@
     "command": "运行了 {count} 条命令",
     "online": "联网 {count} 次",
     "connector": "用了连接器 {count} 次",
-    "separator": " · "
+    "separator": " · ",
+    "delete": "删了 {count} 个文件"
   },
   "thinking": {
     "label": "思考",
@@ -939,6 +943,89 @@
       "not-found": "找不到这次调用，请重新发起命令。",
       "refused": "当前不能放行，请稍后重试。",
       "failed": "没有放行成功，请重试。"
+    }
+  },
+  "snapshot": {
+    "available": "可还原",
+    "partial": "可还原（不含被排除的文件）",
+    "command": "命令的改动可能无法还原",
+    "number": "快照号：{id}",
+    "unfinished": "上次还原没做完。你可以重新查看清单，再决定是否还原剩下的文件。",
+    "title": "还原这一轮的文件改动",
+    "limits": "命令的副作用、联网请求和被排除的文件无法还原。",
+    "loading": "正在读取记录…",
+    "applying": "正在还原文件…",
+    "cancel": "取消",
+    "close": "关闭",
+    "confirm": "确认还原",
+    "conflict": "这一轮之后这个文件又被改过，还原会盖掉那些改动。要覆盖还是保留？",
+    "keep": "保留",
+    "overwrite": "覆盖",
+    "result": "已还原 {restored} 个、删除 {removed} 个、保留 {kept} 个、跳过 {skipped} 个；{failed} 个未完成。",
+    "count": {
+      "restore": "将还原 {count} 个",
+      "remove": "将删除 {count} 个新建文件",
+      "skipped": "将跳过 {count} 个"
+    },
+    "skip": {
+      "excluded": "这个路径不在快照范围内。",
+      "not-covered": "这个路径的快照不完整。",
+      "hardlink": "这个文件还有别的名字，不能安全还原。",
+      "outside-folders": "这个路径已不在当前任务文件夹里。"
+    },
+    "error": {
+      "busy": "这些文件夹里还有任务在运行，请等它结束后再试。",
+      "gone": "这一轮的快照已经不在了，无法还原。",
+      "stale": "文件有了新变化，请重新核对清单。覆盖选择已重置为保留。",
+      "undo-unavailable": "没能完整保存还原前的文件，这次没有还原。",
+      "over-budget": "快照空间不够，这次没有还原。",
+      "not-cowork": "只有任务会话支持文件还原。",
+      "failed": "没能完成这次操作，请重新查看记录。"
+    },
+    "record": {
+      "menu": "会话菜单",
+      "title": "查看本次记录",
+      "empty": "这一轮还没有工具调用记录。",
+      "tool": "工具",
+      "object": "对象",
+      "decision": "判决摘要",
+      "reversibility": "能否撤回",
+      "snapshot": "快照号",
+      "restorable": "现在能否还原",
+      "none": "未记录",
+      "yes": "可以",
+      "no": "不可以"
+    },
+    "reversibility": {
+      "read-only": "只读，没有改动",
+      "snapshotted": "改动前留了快照",
+      "irreversible": "无法撤回",
+      "unknown": "不保证能撤回"
+    },
+    "verdict": {
+      "allow": "允许",
+      "ask": "需要你确认",
+      "deny": "不允许"
+    },
+    "decision": {
+      "session-allowed": "你已允许本会话使用",
+      "session-allowed-search": "你已允许本会话搜索",
+      "session-allowed-domain": "你已允许本会话访问这个网站",
+      "user-rule": "按你的设置处理",
+      "org-policy": "按组织的设置处理",
+      "user-disabled": "你已关闭这项能力",
+      "irreversible-once": "无法撤回，需要逐次确认",
+      "exfiltration-recheck": "内容可能发往别处，需要重新确认",
+      "default-ask": "这项操作需要确认",
+      "workspace-read": "读取任务文件夹里的文件",
+      "protected": "这个位置受保护",
+      "connector-requires-confirm": "连接器操作需要确认",
+      "check-incomplete": "检查没能完成，需要确认",
+      "inspector-blocked": "检查发现风险，已拦下",
+      "own-output-read": "读取本会话生成的内容",
+      "no-approval-needed": "这项操作无需确认",
+      "auto-mode": "按自动模式的设置允许",
+      "task-grant": "你已允许这个任务执行"
     }
   }
 }

@@ -12,6 +12,7 @@ const SLOT: Readonly<Record<string, { readonly key: string; readonly arg: string
   Read: { key: 'path', arg: 'file_path' },
   Write: { key: 'path', arg: 'file_path' },
   Edit: { key: 'path', arg: 'file_path' },
+  Delete: { key: 'path', arg: 'file_path' },
   Bash: { key: 'command', arg: 'command' },
   Glob: { key: 'pattern', arg: 'pattern' },
   Grep: { key: 'pattern', arg: 'pattern' },

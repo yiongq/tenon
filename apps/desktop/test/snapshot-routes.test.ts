@@ -148,7 +148,28 @@ it('05 验收 18、22 (routes): rounds, preview and restore succeed through both
       ok: true,
       status: 'tree',
       rounds: [
-        { roundRunId, canRestore: true, incompleteCoverage: false, commandsWithoutSnapshot: false },
+        {
+          roundRunId,
+          endMessageId: before.findLast((entry) => entry.name === 'message/assistant')?.payload[
+            'messageId'
+          ],
+          runIds: before
+            .filter((entry) => entry.name === 'execution/run_started')
+            .map((entry) => entry.sourceId),
+          calls: before
+            .filter(
+              (entry) =>
+                entry.name === 'execution/tool_outcome' &&
+                entry.payload['snapshotId'] !== undefined,
+            )
+            .map((entry) => ({
+              callKey: `${entry.sourceId}:${entry.sourceSeq}:${entry.payload['ordinal']}`,
+              snapshotId: entry.payload['snapshotId'],
+            })),
+          canRestore: true,
+          incompleteCoverage: false,
+          commandsWithoutSnapshot: false,
+        },
       ],
       incompleteRestores: [],
     },

@@ -92,6 +92,9 @@ it('05 验收 22 (contracts): success responses retain all kernel round, recover
     rounds: [
       {
         roundRunId: ROUND,
+        runIds: [ROUND],
+        endMessageId: null,
+        calls: [{ callKey: `${ROUND}:0:0`, snapshotId: 'before' }],
         canRestore: true,
         incompleteCoverage: true,
         commandsWithoutSnapshot: false,
@@ -181,4 +184,62 @@ it('05 验收 18、22 (contracts): malformed responses cannot cross either IPC b
       overwrite: [],
     }),
   ).toMatchObject({ ok: false, error: { code: 'invalid-response' } })
+})
+
+it('05 验收 34 (contracts): run and call identities are required and strictly checked', () => {
+  const round = {
+    roundRunId: ROUND,
+    runIds: [ROUND],
+    endMessageId: null,
+    calls: [{ callKey: `${ROUND}:0:0`, snapshotId: 'before' }],
+    canRestore: true,
+    incompleteCoverage: false,
+    commandsWithoutSnapshot: false,
+  }
+  expect(parseRound(round)).toBe(true)
+  const { runIds: _runs, ...noRuns } = round
+  const { calls: _calls, ...noCalls } = round
+  for (const item of [
+    noRuns,
+    noCalls,
+    { ...round, extra: true },
+    { ...round, runIds: ['bad'] },
+    { ...round, runIds: ROUND },
+    { ...round, calls: [{}] },
+    { ...round, calls: [{ callKey: 1, snapshotId: 'before' }] },
+    { ...round, calls: [{ callKey: 'key', snapshotId: 1 }] },
+    { ...round, calls: [{ callKey: 'key', snapshotId: 'before', extra: true }] },
+  ])
+    expect(parseRound(item)).toBe(false)
+})
+
+const parseRound = (item: unknown) =>
+  snapshotRounds.response.safeParse({
+    ok: true,
+    status: 'tree',
+    rounds: [item],
+    incompleteRestores: [],
+  }).success
+
+it('05 验收 33 (contracts): the end message is required, nullable or a nonempty message identity', () => {
+  const round = {
+    roundRunId: ROUND,
+    runIds: [ROUND],
+    calls: [],
+    endMessageId: null,
+    canRestore: false,
+    incompleteCoverage: false,
+    commandsWithoutSnapshot: false,
+  }
+  expect(parseRound(round)).toBe(true)
+  expect(parseRound({ ...round, endMessageId: 'assistant-ending' })).toBe(true)
+  const { endMessageId: _end, ...missing } = round
+  for (const invalid of [
+    missing,
+    { ...round, endMessageId: '' },
+    { ...round, endMessageId: 1 },
+    { ...round, endMessageId: { messageId: 'end' } },
+    { ...round, endMessageId: 'end', extra: true },
+  ])
+    expect(parseRound(invalid)).toBe(false)
 })
