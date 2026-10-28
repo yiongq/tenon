@@ -132,6 +132,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm build
+      # Spec 05 snapshots need git 2.43 or later; the image's default Xcode 16.4 ships 2.39.5 as
+      # /usr/bin/git, so select a newer Xcode for the snapshot and restore tests.
+      - run: sudo xcode-select -s /Applications/Xcode_26.3.app && /usr/bin/git --version
       - run: pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest-macos.json apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts apps/desktop/test/snapshot-restore.test.ts
         env:
           TENON_SANDBOX_TESTS: required
