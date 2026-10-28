@@ -9,6 +9,7 @@ import {
   sandboxRelease,
   sessionSelectModel,
   sessionSelectProfile,
+  snapshotRestore,
   workspacePick,
   workspaceRemove,
   workspaceUsePrefill,
@@ -67,7 +68,7 @@ export const SHUTDOWN_SETTLE_MS = STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS
 /**
  * The routes that open a Run or write a fact (step 3): the sends, the queued item's actions, the stop
  * (it writes `cancelled-by-stop` in a paused session, and a quit cancels no card, B4), 「继续」, the
- * answers, the resume, the model and profile choices and the workspace writers. The reads —
+ * answers, the resume, the model and profile choices, workspace writers and snapshot restore. The reads —
  * `session.latest`, `session.messages`, `session.facts`, `session.modelChoice`, `approval.current`,
  * `approval.list` — still answer; the config and provider writers write no fact.
  */
@@ -85,6 +86,7 @@ export const REFUSED_WHILE_SHUTTING_DOWN: ReadonlySet<string> = new Set([
   workspaceUsePrefill.channel,
   workspaceRemove.channel,
   sandboxRelease.channel,
+  snapshotRestore.channel,
 ])
 
 /** A diagnostic, never shown: the renderer maps `code` to copy (contracts' IpcError). */

@@ -43,6 +43,7 @@ import {
 import { providerConfigure, providerList, providerSelect } from './ipc/provider.js'
 import { runStateEvent } from './ipc/run.js'
 import { sandboxChanged, sandboxGet, sandboxRelease, sandboxSetSettings } from './ipc/sandbox.js'
+import { snapshotRounds, snapshotPreview, snapshotRestore } from './ipc/snapshot.js'
 import {
   sessionFacts,
   sessionLatest,
@@ -101,6 +102,9 @@ export const ipcRoutes = {
   sandboxGet,
   sandboxRelease,
   sandboxSetSettings,
+  snapshotRounds,
+  snapshotPreview,
+  snapshotRestore,
   sessionFacts,
   sessionLatest,
   sessionMessages,

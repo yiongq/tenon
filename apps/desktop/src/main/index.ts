@@ -61,6 +61,7 @@ import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
 import { startSingleInstance } from './single-instance.js'
 import { registerSandboxRoutes } from './sandbox-routes.js'
+import { registerSnapshotRoutes, snapshotWindowCanAccess } from './snapshot-routes.js'
 import {
   createSessionRemoval,
   exposeSessionRemoval,
@@ -381,6 +382,13 @@ async function main(): Promise<void> {
   })
   registerChatRoutes({ send: broadcast, ipcMain: routes, sessions, loop, gate: recovery.ready })
   registerSessionRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
+  registerSnapshotRoutes({
+    ipcMain: routes,
+    sessions,
+    gate: recovery.ready,
+    canAccessSession: (event) =>
+      snapshotWindowCanAccess(event, BrowserWindow.getAllWindows(), appUrl()),
+  })
   registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerWorkspaceRoutes({
     ipcMain: routes,
