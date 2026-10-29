@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：第一、二段已合入（PR #72、#75）。第三段第 13–15 步做完，摘在 `feat/05-file-bridge-seg3`；第 16 步 e2e 在写，之后推草稿 PR 跑 CI，再做第 17 步。
+当前：第一、二段已合入（PR #72、#75）。第三段第 13–15 步做完，第 16 步 e2e 已写、等 CI 全绿，第 17 步在等第四轮复核（审 `b44e659`）。都过了就勾 16、17，PR #77 交 owner 合。
 需要你：无
 
 ## 开工前读
@@ -69,15 +69,12 @@
 
 ## 交接
 
-2026-10-28：第三段第 13–15 步做完。Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5304 通过、114 跳过）后提交检查点，摘到 `feat/05-file-bridge-seg3`。owner 这一段定了 D62（清单不标命令改的路径）、D63（任务会话的历史也画结算行）、macOS 也跑还原的 e2e（`ci.yml` 已改，这个 PR 不开自动合并）。`snapshot.rounds` 补了每轮的 Run、结束消息与每次调用的快照号（spec 澄清）；`rounds()` 按轮缓存预览结论、界面合并刷新。下一步：第 16 步 e2e（`restore.spec.ts`：验收 15、29 与 D63 的重启），推草稿 PR 跑 Linux 与 macOS；第 17 步评审时一并加 Open 里「快照子进程恢复时核对 `executable`」那条（第三段改了 `snapshot-git.ts`）。
-
-2026-10-25：第二段做完。Codex 在它自己的 worktree（分支 `feat/05-seg2`）实现，lead 审、沙箱外跑全量，摘到 `feat/05-file-bridge-seg2`。第 12 步三路评审（对照 spec、安全、突变）都是 0 blocker、0 major；之后修了三轮、复核三次，记录见 log。owner 这一段定了 D60（判决记下判定时的叶子）、D61（快照能力变差后会话授权不算）、ADR-005（评测基线列换成 glm-5.3-flash），并接受了 11 题在第 12 版上 1/3。下一步第三段：还原（第 13 步）先看 `SnapshotCreatedPayload.commits`、`files` 要不要用，要用就扩 `SnapshotTaken`，属接口改动、先问 owner；第 15 步的「有快照」那句接上后，在 `write-card.spec.ts` 的硬链接用例里补断言。
+2026-10-29：第三段第 13–15 步做完，第 16、17 步在收尾。lead 分支 `feat/05-file-bridge-seg3`，PR #77（改了 `ci.yml`，不开自动合并，owner 合）；Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5486 通过、117 跳过）后提交、摘过来。第 17 步：对照 spec、安全、突变三路评审之后，又复核了三轮，最后一轮的 T1（目录换写法又换回来，里面的文件还原不了）已修（9a8972b）。第四轮复核只看 `4259127..b44e659`，报告写到私有笔记 `reviews/recheck4-seg3.md`：通过就在 log 记一条「审过 b44e659（复核）· 结论：通过」，spec-check 的拦截就清掉了；不通过就让 Codex 接着修。CI：Linux 的 ci、e2e 在 4259127 上是绿的；macOS 上 restore 的三条 e2e 全过，write-card 旧 20 卡在 400 ms 点击保护期上，已改成卡一出现就点（28e8da2），等这次推送的结果。owner 这一段定了 D62–D65。合入后做第 18–23 步；spec 已超 heavy 上限（警告，dev 上就超了），第 18 步一并看要不要拆。
 
 ## Open
 
 - 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
 - `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步的还原没用上，第 18 步文档同步时从 §接口 拿掉。
-- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段没碰这个文件；第三段第 13 步改了 `snapshot-git.ts` 但没加，第 17 步补上，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。
