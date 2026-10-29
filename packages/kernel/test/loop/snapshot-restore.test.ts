@@ -1819,3 +1819,68 @@ it.each([
     expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
   },
 )
+
+it.each([
+  ['notFound', 'Nothing exists at'],
+  ['isDirectory', 'is a folder, not a file'],
+  ['notText', 'is not a text file'],
+  ['notUtf8', 'is not valid UTF-8 text'],
+  ['resolvesElsewhere', 'now resolves elsewhere'],
+] as const)(
+  '05 验收 33: RC-K2 — Edit %s before writing preserves complete coverage',
+  async (failure, message) => {
+    const h = await harness()
+    const target = absolutePath('/work/project/edit-target')
+    if (failure === 'isDirectory') await h.host.fs.mkdirp(target)
+    if (failure === 'notText') await h.host.fs.writeFile(target, new Uint8Array([65, 0, 66]))
+    if (failure === 'notUtf8') await h.host.fs.writeFile(target, new Uint8Array([65, 128, 66]))
+    if (failure === 'resolvesElsewhere') {
+      await h.host.fs.writeFile(target, 'A')
+      const take = h.host.snapshots.take.bind(h.host.snapshots)
+      vi.spyOn(h.host.snapshots, 'take').mockImplementation(async (request, signal) => {
+        const result = await take(request, signal)
+        if (request.path === target && request.moment === 'before-call' && result.ok) {
+          // The path is replaced after judging/capture, before Edit's execution-time check.
+          await h.host.fs.remove(target)
+          h.host.symlink(target, FILE)
+        }
+        return result
+      })
+    }
+    const writes = vi.spyOn(h.host.fs, 'writeFile')
+    const first = await pause(h, 'Write', { file_path: FILE, content: 'B' })
+    h.provider.script(
+      call('Edit', { file_path: target, old_string: 'A', new_string: 'Y' }, 'second'),
+    )
+    h.provider.script(done())
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: first.pending.card.requestId,
+      decision: 'allow',
+      origin: null,
+    })
+    await h.ports.runEnded()
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    if (pending !== null) await approve(h, pending)
+    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(writes.mock.calls.map(([path]) => path)).toEqual([FILE])
+    expect(await h.host.fs.readFile(FILE, { encoding: 'utf8' })).toBe('B')
+    const entries = await h.entries()
+    expect(entries.findLast((entry) => entry.name === 'tool/result')?.payload).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: expect.stringContaining(message) }],
+    })
+    expect(
+      entries.some(
+        (entry) =>
+          entry.name === 'fs/snapshot_created' &&
+          entry.payload['moment'] === 'before-call' &&
+          entry.payload['path'] === target,
+      ),
+    ).toBe(true)
+    const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
+    if (!rounds.ok) throw new Error(rounds.code)
+    expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
+  },
+)

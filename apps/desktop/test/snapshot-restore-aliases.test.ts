@@ -1,3 +1,7 @@
+vi.mock('node:fs/promises', async (original) => ({ ...(await original<typeof fsPromises>()) }))
+import * as fsPromises from 'node:fs/promises'
+import { constants } from 'node:fs'
+import type { RestoreQuery } from '@tenon-app/kernel'
 /** RC-1: normalization aliases must never delete the only physical copy. */
 import {
   chmod,
@@ -41,7 +45,7 @@ it.skipIf(process.platform !== 'darwin')(
   },
 )
 
-it('05 验收 40: alias fallback folds NFC/NFD and mixed case on every platform', async () => {
+it('05 验收 40: proven parent alias propagation folds NFC/NFD and mixed case on every platform', async () => {
   const { foldRestorePath } = await import('../src/main/host/snapshot-restore.js')
   expect(foldRestorePath('/work/Cafe\u0301/F')).toBe(foldRestorePath('/work/CAFÉ/f'))
   expect(foldRestorePath('/work/Café/f')).not.toBe(foldRestorePath('/work/Cafe/f'))
@@ -154,5 +158,78 @@ it.skipIf(process.platform !== 'darwin').each([
     expect(restored).toBe(startKind === 'link' ? 'target' : 'origin')
     expect((await lstat(path('A.txt'))).mode & 0o7777).toBe(mode)
     expect(await readFile(path('target'), 'utf8')).toBe('untouched target')
+  },
+)
+
+async function restoreOrigin(q: RestoreQuery) {
+  expect(await snapshots.preview(q)).toMatchObject({
+    restore: [path('A.txt')],
+    remove: [],
+    skipped: [],
+  })
+  const { done } = await restore(q)
+  expect(await readdir(folder)).toEqual(['A.txt'])
+  expect(await readFile(path('A.txt'), 'utf8')).toBe('origin')
+  return done
+}
+
+// APFS resolves both case spellings to one object; Linux tests the distinct-name cases separately.
+it.skipIf(process.platform !== 'darwin').each(['P1', 'P6', 'P12'] as const)(
+  '05 验收 51、52: %s restores the origin after a historical alias leaves the plan',
+  async (scenario) => {
+    await writeFile(path('A.txt'), 'origin')
+    const calls: RestoreQuery['calls'][number][] = []
+    if (scenario === 'P12') {
+      const before = await take('A.txt')
+      await writeFile(path('A.txt'), 'written')
+      calls.push({
+        callKey: 'write',
+        before,
+        after: await take('A.txt', 'after-call'),
+        path: path('A.txt'),
+      })
+    }
+    const before = await take()
+    await rename(path('A.txt'), path('a.txt'))
+    calls.push({ callKey: 'rename', before, after: await take(undefined, 'after-call') })
+    const next = await take()
+    if (scenario === 'P1') {
+      await rename(path('a.txt'), path('A.txt'))
+      await writeFile(path('A.txt'), 'edited')
+    } else await rm(path('a.txt'))
+    calls.push({ callKey: 'last', before: next, after: await take(undefined, 'after-call') })
+    expect(await restoreOrigin(query(calls))).toMatchObject({ restored: 1, removed: 0, failed: [] })
+  },
+)
+
+it.skipIf(process.platform !== 'darwin')(
+  '05 验收 51: P11 retries a leaf rename interrupted after unlink and restores the original bytes',
+  async () => {
+    await writeFile(path('A.txt'), 'origin')
+    const before = await take()
+    await rename(path('A.txt'), path('a.txt'))
+    await writeFile(path('a.txt'), 'agent edit')
+    const after = await take(undefined, 'after-call')
+    const q = query([{ callKey: 'bash', before, after }])
+    const open = fsPromises.open
+    const spy = vi.spyOn(fsPromises, 'open').mockImplementation(async (...args) => {
+      if (
+        args[0] === path('A.txt') &&
+        typeof args[1] === 'number' &&
+        (args[1] & constants.O_CREAT) !== 0
+      ) {
+        spy.mockRestore()
+        throw Object.assign(new Error('Interrupted after unlink'), { code: 'EIO' })
+      }
+      return open(...args)
+    })
+    expect((await restore(q)).done).toMatchObject({
+      restored: 0,
+      removed: 0,
+      failed: [path('A.txt')],
+    })
+    expect(await readdir(folder)).toEqual([])
+    spy.mockRestore()
+    expect(await restoreOrigin(q)).toMatchObject({ restored: 1, removed: 0, failed: [] })
   },
 )

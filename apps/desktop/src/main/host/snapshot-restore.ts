@@ -54,7 +54,7 @@ export interface RestorePlan {
   preview: RestorePreview
   items: RestoreItem[]
 }
-/** Only a fallback for absent entries; existing names are grouped by filesystem object. */
+/** Propagate a proven parent alias to its differently spelled subtree, never infer leaf identity. */
 export const foldRestorePath = (path: string): string => path.normalize('NFC').toLowerCase()
 async function objectKey(path: string): Promise<string | undefined> {
   const stats = await statOrNull(path)
@@ -62,22 +62,10 @@ async function objectKey(path: string): Promise<string | undefined> {
 }
 async function aliasKeys(paths: readonly string[]): Promise<Map<string, string>> {
   const keys = new Map<string, string>()
-  const present = new Map<string, Set<string>>()
   for (const path of paths) {
-    // Unreadable paths are still handled as per-path skips by the planner below.
+    // Missing/unreadable names have no proven shared object and must not form an alias group.
     const key = await objectKey(path).catch(() => undefined)
-    if (key === undefined) continue
-    keys.set(path, key)
-    const folded = foldRestorePath(path)
-    const group = present.get(folded) ?? new Set<string>()
-    group.add(key)
-    present.set(folded, group)
-  }
-  for (const path of paths) {
-    if (keys.has(path)) continue
-    const folded = foldRestorePath(path)
-    const matches = present.get(folded)
-    keys.set(path, matches?.size === 1 ? [...matches][0]! : `absent:${folded}`)
+    if (key !== undefined) keys.set(path, key)
   }
   return keys
 }
@@ -409,15 +397,6 @@ export async function planRestore(
   const items: RestoreItem[] = []
   const stamps: unknown[] = []
   const aliases = new Set<string>()
-  const identities = await aliasKeys(
-    [...changes.keys()].filter((path) => roots.some((root) => contains(root, path))),
-  )
-  const groups = new Map<string, string[]>()
-  for (const [path, key] of identities) {
-    const group = groups.get(key) ?? []
-    group.push(path)
-    groups.set(key, group)
-  }
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -509,20 +488,37 @@ export async function planRestore(
       modes: change.modes,
     })
   }
+  // Already-at-origin paths are not restore candidates, even if a historical spelling aliases them.
+  const identities = await aliasKeys(
+    [...items.map((item) => item.path), ...preview.skipped.map((item) => item.path)].filter(
+      (path) => roots.some((root) => contains(root, path)),
+    ),
+  )
+  const groups = new Map<string, string[]>()
+  for (const [path, key] of identities) {
+    const group = groups.get(key) ?? []
+    group.push(path)
+    groups.set(key, group)
+  }
+  const objectAliases = new Set<string>()
   const byPath = new Map(items.map((item) => [item.path, item]))
   for (const group of groups.values()) {
     if (group.length < 2) continue
     const candidates = group.flatMap((path) => byPath.get(absolutePath(path)) ?? [])
     if (candidates.length === group.length && (await leafRenamePair(candidates)) !== undefined)
       continue
-    for (const path of group) aliases.add(foldRestorePath(path))
+    for (const path of group) objectAliases.add(path)
   }
   // A skipped alias and its folded removal/ancestors refer to the same physical subtree.
   // Keep the whole affected pair: deleting the other spelling could delete its only copy.
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index]!
     const folded = foldRestorePath(item.path)
-    if (![...aliases].some((alias) => contains(folded, alias) || contains(alias, folded))) continue
+    if (
+      !objectAliases.has(item.path) &&
+      ![...aliases].some((alias) => contains(folded, alias) || contains(alias, folded))
+    )
+      continue
     items.splice(index, 1)
     preview.restore = preview.restore.filter((path) => path !== item.path)
     preview.remove = preview.remove.filter((path) => path !== item.path)

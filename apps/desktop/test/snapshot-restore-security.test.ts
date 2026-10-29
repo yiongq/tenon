@@ -550,4 +550,6 @@ it('05 验收 19、40: apply indexes retained identities once instead of rescann
   expect(done).toMatchObject({ restored: count, removed: count, failed: [] })
   expect(stats.mock.calls.length).toBeLessThan(count * 30)
   expect(await readFile(path('old-0'), 'utf8')).toBe('A')
-})
+  // The bound is on lstat calls, not time: two real git snapshots of 80 files take ~6 s on the
+  // macOS CI runner, past the 5 s default.
+}, 30_000)
