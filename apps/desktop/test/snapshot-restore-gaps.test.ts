@@ -1,5 +1,14 @@
 import type { RestoreQuery } from '@tenon-app/kernel'
-import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { expect, it } from 'vitest'
 import { folder, path, snapshots, query, take, restore } from './support/snapshot-boundaries.js'
 
@@ -234,4 +243,72 @@ it('05 验收 19: D67 F1 a missing after-call snapshot neither throws nor propag
   })
   expect((await restore(q)).done).toMatchObject({ restored: 0, removed: 0, failed: [] })
   expect(await readFile(path('h'))).toEqual(outside)
+})
+
+it('05 验收 19: a propagated gap protects a later copy until overwrite is selected', async () => {
+  const first = await recordedCall('c1', () => writeFile(path('g'), 'agent'))
+  await writeFile(path('g'), outside)
+  const second = await recordedCall('c2', () => rename(path('g'), path('h')))
+  const third = await recordedCall('c3', () => copyFile(path('h'), path('k')))
+  const fourth = await recordedCall('c4', () => rm(path('h')))
+  const q = query([first, second, third, fourth])
+  expect((await snapshots.preview(q)).conflicts).toEqual([path('k')])
+  expect((await restore(q)).done).toMatchObject({ removed: 0, kept: 1, failed: [] })
+  expect(await readdir(folder)).toEqual(['k'])
+  expect(await readFile(path('k'))).toEqual(outside)
+  expect((await restore(q, [path('k')])).done).toMatchObject({ removed: 1, failed: [] })
+  expect(await readdir(folder)).toEqual([])
+})
+
+it('05 验收 19: multiple gap sources protect the oldest copy until overwrite is selected', async () => {
+  const first = await recordedCall('c1', () => writeFile(path('g1'), 'agent1'))
+  await writeFile(path('g1'), outside)
+  const second = await recordedCall('c2', async () => {
+    await copyFile(path('g1'), path('k'))
+    await writeFile(path('g2'), 'agent2')
+  })
+  await writeFile(path('g2'), 'outside-2')
+  const third = await recordedCall('c3', async () => {
+    await rm(path('g1'))
+    await rm(path('g2'))
+  })
+  const q = query([first, second, third])
+  expect((await snapshots.preview(q)).conflicts).toEqual([path('k')])
+  expect((await restore(q)).done).toMatchObject({ removed: 0, kept: 1, failed: [] })
+  expect(await readdir(folder)).toEqual(['k'])
+  expect(await readFile(path('k'))).toEqual(outside)
+  expect((await restore(q, [path('k')])).done).toMatchObject({ removed: 1, failed: [] })
+  expect(await readdir(folder)).toEqual([])
+})
+
+it('05 验收 19: a stopped call does not turn an earlier deletion into a conflict', async () => {
+  await writeFile(path('p'), 'origin')
+  const first = await recordedCall('c1', () => writeFile(path('g'), 'agent'))
+  await writeFile(path('g'), outside)
+  const second = await recordedCall('c2', () => appendFile(path('p'), '+agent'))
+  const third = await recordedCall('c3', () => rm(path('p')))
+  const before = await take()
+  await appendFile(path('g'), '+stopped')
+  const q = query([first, second, third, { callKey: 'c4', before }])
+  expect(await snapshots.preview(q)).toMatchObject({
+    restore: [path('p')],
+    conflicts: [path('g')],
+  })
+  expect((await restore(q)).done).toMatchObject({ restored: 1, kept: 1, failed: [] })
+  expect(await readFile(path('p'), 'utf8')).toBe('origin')
+  expect(await readFile(path('g'))).toEqual(Buffer.concat([outside, Buffer.from('+stopped')]))
+})
+
+it('05 验收 19: recreating an externally deleted source does not make a new sibling conflict', async () => {
+  const first = await recordedCall('c1', () => writeFile(path('g'), 'agent'))
+  await rm(path('g'))
+  const second = await recordedCall('c2', async () => {
+    await writeFile(path('g'), 'agent again')
+    await writeFile(path('n'), 'new')
+  })
+  const q = query([first, second])
+  expect((await snapshots.preview(q)).conflicts).toEqual([path('g')])
+  expect((await restore(q)).done).toMatchObject({ removed: 1, kept: 1, failed: [] })
+  expect(await readdir(folder)).toEqual(['g'])
+  expect(await readFile(path('g'), 'utf8')).toBe('agent again')
 })
