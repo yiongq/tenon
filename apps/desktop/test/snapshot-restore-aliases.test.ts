@@ -28,6 +28,69 @@ import {
   restore,
 } from './support/snapshot-boundaries.js'
 
+async function recordedTreeCall(
+  callKey: string,
+  act: () => Promise<void>,
+): Promise<RestoreQuery['calls'][number]> {
+  const before = await take()
+  await act()
+  return { callKey, before, after: await take(undefined, 'after-call') }
+}
+
+// APFS parent spellings alias; on Linux these names normally refer to separate directories.
+it.skipIf(process.platform !== 'darwin').each(['G1', 'G2', 'G2-dir-c3'] as const)(
+  '05 验收 19: %s keeps outside edits on a historical directory spelling',
+  async (scenario) => {
+    await mkdir(path('Dir'))
+    await writeFile(path('Dir/f'), 'origin')
+    const calls = [
+      await recordedTreeCall('c1', async () => {
+        await rename(path('Dir'), path('dir'))
+        if (scenario === 'G2') await writeFile(path('dir/new'), 'agent')
+      }),
+    ]
+    if (scenario === 'G2-dir-c3')
+      calls.push(await recordedTreeCall('c2', () => writeFile(path('dir/f'), 'agent')))
+    const name = scenario === 'G2' ? 'new' : 'f'
+    const outside = Buffer.from('outside\0bytes\n')
+    await writeFile(path(`dir/${name}`), outside)
+    calls.push(await recordedTreeCall('rename-back', () => rename(path('dir'), path('Dir'))))
+    const q = query(calls)
+    const preview = await snapshots.preview(q)
+    expect(preview.skipped).toEqual(
+      expect.arrayContaining([
+        { path: path(`dir/${name}`), reason: 'not-covered' },
+        { path: path(`Dir/${name}`), reason: 'not-covered' },
+      ]),
+    )
+    expect(preview.restore).toEqual([])
+    expect(preview.remove).toEqual([])
+    expect((await restore(q)).done).toMatchObject({ restored: 0, removed: 0, failed: [] })
+    expect(await readFile(path(`Dir/${name}`))).toEqual(outside)
+    expect(await readFile(path('Dir/f'))).toEqual(
+      scenario === 'G2' ? Buffer.from('origin') : outside,
+    )
+  },
+)
+
+it.skipIf(process.platform !== 'darwin')(
+  '05 验收 40、52: G9 lists a created file as skipped after an outside parent rename',
+  async () => {
+    const call = await recordedTreeCall('c1', async () => {
+      await mkdir(path('dir'))
+      await writeFile(path('dir/f'), 'agent')
+    })
+    await rename(path('dir'), path('Dir'))
+    const q = query([call])
+    const preview = await snapshots.preview(q)
+    expect(preview.skipped).toContainEqual({ path: path('dir/f'), reason: 'not-covered' })
+    expect(preview.restore).toEqual([])
+    expect(preview.remove).toEqual([])
+    expect((await restore(q)).done).toMatchObject({ restored: 0, removed: 0, failed: [] })
+    expect(await readFile(path('Dir/f'), 'utf8')).toBe('agent')
+  },
+)
+
 // APFS commonly aliases Unicode normalization forms; Linux normally treats them as distinct.
 it.skipIf(process.platform !== 'darwin')(
   '05 验收 40: RC-1 — NFC/NFD directory aliases keep the only file',

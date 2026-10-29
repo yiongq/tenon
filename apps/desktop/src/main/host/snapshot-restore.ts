@@ -347,6 +347,7 @@ export async function planRestore(
       ...Object.assign({}, ...(before?.trees.map((tree) => tree.directories) ?? [])),
       ...before?.directories,
     }
+    const transitions: { path: AbsolutePath; start: Point; end: Point | undefined }[] = []
     for (const path of candidates) {
       // oxlint-disable-next-line no-await-in-loop -- call order determines each path's origin and gaps
       const start = await point(before, path, dir)
@@ -357,6 +358,7 @@ export async function planRestore(
       if (previous?.treeCovered && (!start.covered || (end !== undefined && !end.covered)))
         previous.excluded = true
       if (call.path === undefined && end !== undefined && equal(start, end)) continue
+      transitions.push({ path, start, end })
       if (previous === undefined) {
         indexChange(path)
         changes.set(path, {
@@ -373,6 +375,23 @@ export async function planRestore(
         previous.gap ||= !equal(previous.last, start)
         previous.last = end
         previous.promised ||= call.path !== undefined && start.covered
+      }
+    }
+    // D66: a disappearing gap may have moved to any path changed by this call. Carry it
+    // forward without matching content, including gaps inherited from an earlier rename.
+    // Without an after-call snapshot we cannot prove disappearance, so do not propagate.
+    if (
+      transitions.some(
+        ({ path, start, end }) =>
+          changes.get(path)!.gap &&
+          start.file.identity !== null &&
+          end !== undefined &&
+          end.file.identity === null,
+      )
+    ) {
+      for (const { path, start, end } of transitions) {
+        if (end !== undefined && end.file.identity !== null && !equal(start, end))
+          changes.get(path)!.gap = true
       }
     }
     // Omitted paths are absent from candidates; look them up by excluded subtree instead.
@@ -422,6 +441,7 @@ export async function planRestore(
         if (
           error instanceof Error &&
           error.message === 'Restore parent alias' &&
+          !change.gap &&
           change.start.covered &&
           change.start.file.identity === null &&
           change.last !== undefined &&
@@ -430,6 +450,7 @@ export async function planRestore(
         ) {
           // Covered absence at both ends proves this is only a historical spelling; a missing
           // after-call record cannot prove that and must retain the normal alias protections.
+          // A gap carries outside edits that must keep the entire alias group protected.
           historical = true
           now = missing(path)
         } else {
