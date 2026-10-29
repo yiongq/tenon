@@ -589,3 +589,31 @@
 - 全量（沙箱外，`--maxWorkers=2`）：5545 过、117 跳过、0 红。
 
 测试改动：packages/kernel/test/loop/snapshot-restore.test.ts · 05 验收 9: %s command safety is derived from dispatch and before-call tree facts · 第 18 步复核 N3：清单为空时不出「可还原」（D69 的原则）；这条守的是命令的保护状态与附注，保留不改文件的假命令，`canRestore` 期望改成 false，其余断言不变
+
+## 评审 · 2026-10-30 · 审过 6549a1f（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），审 `df34222..6549a1f`：重跑上一轮探针与三组扫描（2981 条），加 `.gitignore` 变体的扫描（主 600、密集 300 个种子，并与去掉跳过入队的副本对照）、对抗探针 F1–F12 与 S1–S4、渲染端 SSR 探针、不动点与整次预览的耗时；导出副本里 24 个突变（D0–D9、K0–K12）；报告、探针与扫描另记
+突变：撤 051fe84、628ad48 或逐项撤各自的修改，对应用例都红，log 的说法复现；D4（只收 `excluded` 一种跳过）与 K7（清单把跳过也算上）仓库分不出；D6a、D6b、K6 等价；扫描新反例 0 个，去掉跳过入队时 150 个对照里 5 个把起点内容删光，6549a1f 一个不丢
+发现：
+- [major] R1 · 还原全部成功后刷新回来的 `canRestore` 为 false，结算行收掉「可还原」，装着「已还原 n 个…」的对话框跟着卸掉；e2e 验收 15、29、33 都断言这句（628ad48 引入） · 证据：`RestoreFlow.confirm` 先设 done 再刷新；SSR 探针 · 已修 ac2a3c3（还原或报错之后等对话框关闭才刷新；对话框不随链接卸载）
+- [建议] R2 · D70 记成冲突、默认保留的「放回」路径不再放回它自己的起点；那份是你的改动又没有副本时，默认还原找不回 · 证据：F10、F11、F12 · 已修 92a56d6（写进 §已知限制与代价、SECURITY.md；decisions D70 再更正为「冲突只增」）
+- [建议] R3 · 跳过的路径起点内容还在原处时也进比对表，没人改过也多问，默认不放回被问路径的起点 · 证据：F5、F6b、F8，扫描 S30、S148 · 已修 f36f456（只在跳过路径现在的内容不是起点内容时入队）
+- [建议] R4 · 结算行的「可还原」按 Tape 版本缓存，工作区变了不跟着变，spec 没写 · 证据：S1、S2、S3 · 已修 92a56d6（spec 结算行与 components 写明清单按这一轮最近一次记下条目时算；空清单的对话框不另加文案，清单为空的轮本来不出入口）
+- [建议] R5 · 只有跳过的轮代码不出「可还原」，spec 字面「清单不为空」包含跳过 · 证据：S4 · 已修 92a56d6（spec 与验收 33 写成清单里有要放回或删除的路径）、e2643e7（用例守住）
+- [建议] R6 · §已知限制与 SECURITY.md 的 D70 条写窄两处；decisions 与修订记录对「收紧」「写准」的定性过头，修订记录引了 D69 卡上没有的原话；一条用例名是 D69 之前的口径 · 证据：问题 4 的句子对照 · 已修 92a56d6（文档）、e2643e7（用例改名）
+- [建议] R6b · D69 的实现口径比卡上问的多管了只跑了不改文件的命令、已经还原过、只有跳过的三种轮，改了写明的界面规则 · 证据：decisions D69 卡与补记 · 交 owner（第 23 步验收时点名问）
+- [建议] R7 · 上一条记录里 N5 的处置格式不对；plan 的「交接」没重写；D4、K7 仓库分不出 · 证据：spec-check 输出；plan；突变 D4、K7 · 已修 92a56d6（plan 交接重写）、f36f456（D4 用例）、e2643e7（K7 用例）；N5 那行之后照 `已修 <提交号>` 写，log 只往后追加、不回改
+- [建议] Y1（第三段既有）· 父路径被默认保留的文件占着时，下面的路径放回失败，它们被搬走的那份照删 · 证据：F3、F3c、F12 · 不修：本步只写进 §已知限制与代价与 SECURITY.md（92a56d6），按 D70 原则的修法记进 plan Open，第 20 步挪进总参考「以后再说」
+- [建议] Y2（第三段既有）· 被排除的文件被 agent 搬进不被排除的名字，默认还原删掉唯一一份 · 证据：F7，扫描 S93、S542、S175、S264、S293 · 不修：被排除的文件本来就不进快照，要保护得改快照记什么；写进 §已知限制与代价与 SECURITY.md（92a56d6）
+- [建议] Y3（第三段既有）· `.gitignore` 新加的裸名字匹配到下层路径时，第一次确认必回 `stale`，第二次按缩水的清单还原 · 证据：S375、S446，四个版本相同 · 不修：不丢数据，原因还没查清；记进 plan Open（92a56d6），第 20 步挪进总参考「以后再说」
+- [建议] Y4（第三段既有）· 预览逐个路径起一次 `git check-ignore`，2000 个路径预览约 20 秒，1 万个路径时 `prepare` 没成 · 证据：耗时表，三个版本相同 · 不修：性能与大改动的上限另做；记进 plan Open（92a56d6），第 20 步挪进总参考「以后再说」
+
+## 实施 · 2026-10-30（第 18.4 步）
+
+- R1（ac2a3c3，Codex 实现、lead 审）：`RestoreFlow` 在还原或报错之后只记「待刷新」，`cancel` 时刷新一次；`SummaryLine` 总是挂着 `RestoreLink`，链接没了对话框照留。回归「05 验收 15: $result stays visible until closing refreshes away the restore link (background refresh: $background)」六种组合；撤掉延迟刷新、撤掉常挂时各自变红。e2e 的 `restoreFile` 不依赖关闭前刷新，没改、没跑。
+- R3（f36f456）：`planRestore` 记下每个路径现在的内容键，跳过路径只在它与起点内容键不同（含读不到）时入队。回归「05 验收 19: an ignored original still in place does not protect its example copy」「ignored originals still in place let all backup copies and their directory be removed」修前红、修后绿，撤掉条件时变红；H3、H3c 两条照绿。D4 用例「a hardlink skip protects its original bytes moved to a new file」，只收 `excluded` 时变红。
+- R5（e2643e7）：「05 验收 33: a command with only hardlink skips does not offer restore」，把跳过算进清单时变红；生产代码不改。
+- 文档（92a56d6）：spec D70 一句、结算行、验收 33、§已知限制与代价两条、修订记录；SECURITY.md 两条；components 结算行；decisions D69 补记、D70 再更正；plan 第 18.4 步、交接、Open 三条、第 23 步的 owner 问题。
+- 全量（沙箱外，`--maxWorkers=2`）：5555 过、117 跳过、0 红。
+
+测试改动：apps/desktop/test/renderer-snapshot-views.test.ts · 05 验收 33: a settled round with snapshots offers restore even when every file call failed; retention removes it → 05 验收 33: a settled round follows kernel restore availability and coverage flags; paused rounds hide the link · 第 18 步复核 R6：名字仍是 D69 之前的口径，只改名不改断言
