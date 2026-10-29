@@ -1,6 +1,16 @@
 /** Spec 05: skipped/already-restored paths must not make a mixed undo perpetually stale. */
 import { randomUUID } from 'node:crypto'
-import { link, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -286,12 +296,12 @@ it('05 验收 52、54: a prior single-file copy survives a later missing before 
 /** Real file executors and restore host, with scripted model turns and an in-memory Tape. */
 async function kernelRound(
   calls: readonly { name: string; input: Record<string, unknown> }[],
-  options: { commandStarted?: () => void } = {},
+  options: { commandStarted?: () => void; fs?: DesktopFs } = {},
 ) {
   const process = createHostProcess()
   const host = {
     ...createMemoryHost(),
-    fs: new DesktopFs(),
+    fs: options.fs ?? new DesktopFs(),
     snapshots,
     clock: new SystemClock(),
     process: {
@@ -328,7 +338,7 @@ async function kernelRound(
       protectedFiles: [],
       log: (line) => logs.push(line),
     },
-    { tools: { Write: 'real', Edit: 'real', Bash: 'real' } },
+    { tools: { Write: 'real', Edit: 'real', Delete: 'real', Bash: 'real' } },
   )
   service.bindLoop(ports)
   await service.selectProfile({ sessionId, profile: 'cowork', dedicated: folder })
@@ -515,4 +525,140 @@ it.each(['no match', 'no match before later writes', 'outside edit'] as const)(
     )
     await expect(readFile(path('x'))).rejects.toMatchObject({ code: 'ENOENT' })
   },
+)
+
+it.each([
+  ['Delete notFound', 'Delete'],
+  ['Delete parentChanged', 'Delete'],
+  ['Delete targetChanged', 'Delete'],
+  ['Write resolvesElsewhere', 'Write'],
+  ['Edit tooLarge', 'Edit'],
+] as const)(
+  '05 验收 19: %s before mutation leaves later writes conflict-free and new files removable',
+  async (failure, tool) => {
+    await setup('home')
+    await writeFile(path('g'), 'origin')
+    await mkdir(path('dir'))
+    const target = path('dir/h')
+    const original =
+      failure === 'Edit tooLarge'
+        ? Buffer.alloc(64 * 1024 * 1024 + 1, 65)
+        : Buffer.from('original h')
+    if (failure !== 'Delete notFound') await writeFile(target, original)
+    await writeFile(path('anchor'), 'untouched anchor')
+    const fs = new DesktopFs()
+    const mutations = [
+      vi.spyOn(fs, 'mkdirp'),
+      vi.spyOn(fs, 'remove'),
+      vi.spyOn(fs, 'writeFile'),
+      vi.spyOn(fs.guarded, 'create'),
+    ]
+    const counts = () => mutations.map((spy) => spy.mock.calls.length)
+    let beforeRefusal: number[] = []
+    let afterRefusal: number[] = []
+    let resolveRace = false
+    const realResolve = fs.realpath.bind(fs)
+    vi.spyOn(fs, 'realpath').mockImplementation(async (file) => {
+      if (resolveRace && file === target) {
+        resolveRace = false
+        // Write has passed snapshotGuard; replace the leaf before stillNamesItself resolves it.
+        await rm(target)
+        await symlink(path('anchor'), target)
+      }
+      return realResolve(file)
+    })
+    const takeReal = snapshots.take.bind(snapshots)
+    let captures = 0
+    vi.spyOn(snapshots, 'take').mockImplementation(async (request, signal) => {
+      if (request.moment === 'before-call') {
+        captures++
+        if (captures === 2) {
+          beforeRefusal = counts()
+          if (failure === 'Delete targetChanged') {
+            // Approval saw a regular file; capture sees a link, so the kind check refuses Delete.
+            await rm(target)
+            await symlink(path('anchor'), target)
+          }
+        }
+        if (captures === 3) {
+          afterRefusal = counts()
+          // End the transient race before subsequent calls: no outside content change remains.
+          if (failure === 'Delete parentChanged') {
+            await rm(path('dir'))
+            await rename(path('saved-dir'), path('dir'))
+          }
+          if (failure === 'Delete targetChanged' || failure === 'Write resolvesElsewhere') {
+            await rm(target)
+            await writeFile(target, original)
+          }
+        }
+      }
+      const result = await takeReal(request, signal)
+      if (request.moment === 'before-call' && captures === 2) {
+        if (failure === 'Delete parentChanged') {
+          await rename(path('dir'), path('saved-dir'))
+          await symlink(path('saved-dir'), path('dir'))
+        }
+        resolveRace = failure === 'Write resolvesElsewhere'
+      }
+      return result
+    })
+    const input =
+      tool === 'Edit'
+        ? { file_path: target, old_string: 'A', new_string: 'B' }
+        : tool === 'Write'
+          ? { file_path: target, content: 'must not be written' }
+          : { file_path: target }
+    const h = await kernelRound(
+      [
+        writeCall('g', 'agent'),
+        { name: tool, input },
+        writeCall('x', 'new x'),
+        writeCall('dir/h', 'new h'),
+      ],
+      { fs },
+    )
+    const texts = {
+      'Delete notFound': `Nothing exists at ${target}.`,
+      'Delete parentChanged': 'The parent folder changed after approval. Nothing was deleted.',
+      'Delete targetChanged': 'The file or link changed after approval. Nothing was deleted.',
+      'Write resolvesElsewhere': `${target} now resolves elsewhere, through a link that leads to another path or to none, so nothing was written.`,
+      'Edit tooLarge': `${target} is ${original.length} bytes, larger than the 67108864 bytes a file tool opens.`,
+    }
+    const entries = await h.entries()
+    const refusal = entries.filter((e) => e.name === 'tool/result')[1]!
+    expect(refusal.payload).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: texts[failure] }],
+    })
+    expect(beforeRefusal).toHaveLength(4)
+    expect(afterRefusal).toEqual(beforeRefusal)
+    expect(
+      entries
+        .filter(
+          (e) =>
+            e.name === 'fs/snapshot_created' &&
+            e.sourceId === refusal.sourceId &&
+            e.sourceSeq === refusal.sourceSeq,
+        )
+        .map((e) => e.payload['moment']),
+    ).toEqual(['before-call'])
+    const p = await h.preview()
+    expect(p.conflicts).toEqual([])
+    expect(p.skipped).toEqual([])
+    expect(p.remove).toContain(path('x'))
+    expect(failure === 'Delete notFound' ? p.remove : p.restore).toContain(target)
+    expect(await h.restore()).toMatchObject({ ok: true, kept: 0, failed: [] })
+    expect(await readFile(path('g'), 'utf8')).toBe('origin')
+    expect(await readFile(path('anchor'), 'utf8')).toBe('untouched anchor')
+    await expect(readFile(path('x'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const restoredTarget = await readFile(target).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    expect(restoredTarget === null ? null : restoredTarget.equals(original)).toBe(
+      failure === 'Delete notFound' ? null : true,
+    )
+  },
+  20_000,
 )
