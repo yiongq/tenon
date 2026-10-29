@@ -9,7 +9,7 @@
 - [02](architecture/02-agent-loop/spec.md) · implemented · 02 · Agent loop · 需要你：—
 - [03](architecture/03-mcp-host/spec.md) · implemented · 03 · MCP host 完整版 · 需要你：—
 - [04](architecture/04-sandbox/spec.md) · implemented · 04 · 沙箱与出网（阶段 4a） · 需要你：—
-- [05](architecture/05-file-bridge/spec.md) · ready · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：无
+- [05](architecture/05-file-bridge/spec.md) · ready · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：合 PR #77（改了门禁文件 `ci.yml`，不开自动合并，只能你合）
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
@@ -34,6 +34,7 @@
 - 02 §载荷 ← 05
 - 02 §作用域与授权键 ← 05
 - 02 §工作区 ← 05
+- 02 §点停止时各状态怎么收 ← 05
 - 02 §对 01-provider-and-tape 的修补 ← claude-5-5-models ← custom-vendors ← model-display-names
 - 02 §会话形态 ← presentation-r1
 - 02 §工具调用的收口 的工具结果视图 ← presentation-r1
