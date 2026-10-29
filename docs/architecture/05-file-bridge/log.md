@@ -523,3 +523,26 @@
 - [建议] Z4 · overview 与总参考说过头：信任边界没带命令运行期间的例外、Delete 没快照时不比身份、命令不在 `tree` 时不拍、模块表 kernel 一侧没写还原 · 证据：`snapshot-guard.ts` 的 `snapshotGuard`、`delete.ts` 的 `deleteExecutor`、spec §快照怎么拍 · 已修 1ac5c78
 - [建议] Z5 · 「多个来源」用例分不出「只取第一个来源」 · 证据：Q12c 下仓库全绿、探针 O1 红 · 已修 8e73e39（两种名字顺序都跑）
 - [建议] Z6 · SECURITY.md 漏写选定文件夹后在后台整个复制进 profile 与保留多久，「Excluded files」「refreshes」与 Known limitations 开头的措辞外人读不懂；§文档同步 没写明成本两条不加 · 已修 1ac5c78（顺带把 spec「给你看的一页」的基线评测花费改成 ADR-005 的约 4 元）
+
+## 评审 · 2026-10-29 · 审过 a6952df（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `f335d6a..a6952df`：对照报告与代码逐条核对 Z1–Z6 的修法，重跑上一轮探针并补 W3b、N1–N3 等，导出副本里撤掉多来源用例守的条件；结论只算这三笔，另记两条第三段既有问题；报告与探针另记
+突变：多来源用例改成两种名字顺序后，「只取第一个来源」（`sources[0]`、`find` 两种写法）只红 z1/a2，「只取最后一个」只红 g1/g2，「取最大」两条都红，其余 26 条始终绿
+发现：
+- [建议] F1 · 新加的已知限制与 SECURITY.md 只说命令缺调用后那张会多问，被停止的文件工具同样会 · 证据：探针 N2 · 已修 3d5daa2（写成命令或文件工具；动文件前就被拒的已由 E2 的修法排除）
+- [建议] F2 · §一键还原 那句「或调用后那张没记成」没写宾语，开窗条件漏了「这次调用前那张没收它」 · 证据：探针 N3、N1c · 已修 3d5daa2
+- [建议] F3 · overview 信任边界缩成「两次调用之间被别处改过的」，漏了这一轮之后的改动 · 证据：`planRestore` 判冲突的 `!equal(last, now)`、验收 18 · 已修 3d5daa2
+- [建议] F4 · overview 术语与总参考说文件工具前后都拍整树、「能用 git」等于能拍整树 · 证据：`snapshots.ts` 的 `capture`、spec §快照怎么拍 · 已修 3d5daa2
+- [建议] F5 · SECURITY.md 写「at most 30 days」不对（会话最近一张满 30 天才全清），选文件夹即整份复制漏了例外，被排除的不能还原没限定是命令改的 · 证据：`snapshots.ts` 的 `expire` · 已修 3d5daa2
+- [major] E1（第三段既有）· 没有调用前快照的命令也拍了调用后那张，还原把整个工作区列进跳过、之前文件工具改的变冲突、标了有快照的 Write 被说成被排除（违反规矩 15） · 证据：探针 N1、N1b、N1c、N1d；kernel `batch.ts` 的 `execute` · 已修 6db3713（调用前那张拍成才拍调用后那张；拼还原请求时丢掉没有调用前快照的调用）
+- [major] E2（第三段既有）· 动文件前就被拒的 Write、Edit、Delete 被宿主当成调用后那张没记成，目标与其间新建的文件成冲突 · 证据：探针 N2、N2b；kernel `restore.ts` 的 `queryCall` 照传 `guardRefused` 调用 · 已修 6db3713（拼还原请求时跳过 `guardRefused` 的调用）
+
+## 实施 · 2026-10-29（第 18.1 步）
+
+- E1、E2 先写复现用例、在原代码上确认红，再改 kernel（Codex 实现，lead 审）：`batch.ts` 的 `execute` 只在调用前那张拍成时拍调用后那张，Bash 也一样；`restore.ts` 拼 `RestoreQuery` 时只收有调用前快照、且不是 `guardRefused` 的调用（旧 Tape 里已有的只有调用后那张的命令同样不进比对）。宿主不改。
+- 回归（`apps/desktop/test/snapshot-restore-mixed.test.ts`，kernel 加真宿主）：「05 验收 52: %s keeps a promised Write restorable and untouched files out of skips」（当前执行、旧 Tape 两种）；「05 验收 19: refused Edit after Write does not open a restore gap — %s」（没对上、没对上之后又写、外面改过三种，外面改过的仍保留你的内容）。撤掉 `batch.ts` 的修改：两条验收 9 与验收 52 当前执行一条红；撤掉 `restore.ts` 的修改：验收 52 旧 Tape、验收 19 两条没对上的红。
+- spec 同步写准（3d5daa2，澄清）：§快照怎么拍「调用前那张没拍成的，调用后也不拍」；§一键还原「动文件前就被拒的文件工具调用不算」。
+- 全量（沙箱外，`--maxWorkers=2`）：5523 过、117 跳过、0 红。提交 6db3713。
+
+测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash records an after-call tree when warming finishes during the command（改名为 Bash dispatched while warming takes no after-call snapshot when the tree becomes ready）· 调用前那张没拍成时调用后也不拍（第 18 步复核 E1，spec §快照怎么拍 同步写明）；验收 9 本身只要求命令照跑、小结带附注，那张调用后快照是第二段的实现选择
+测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash still runs if its before-call tree snapshot fails · 同上：期望改成没有快照事实，命令照跑、outcome 没有 snapshotId 不变
