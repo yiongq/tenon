@@ -734,3 +734,20 @@ it('05 验收 19: a Write that changes bytes before throwing remains in the rest
   expect(await h.restore()).toMatchObject({ ok: true, restored: 1, failed: [] })
   expect(await readFile(path('g'), 'utf8')).toBe('origin')
 })
+
+it('05 验收 33: a command with only hardlink skips does not offer restore', async () => {
+  await setup('tree')
+  await writeFile(path('h'), 'origin')
+  await link(path('h'), path('second-name'))
+  const h = await kernelRound([{ name: 'Bash', input: { command: 'printf agent > h' } }])
+  const preview = await h.preview()
+  expect(preview).toMatchObject({ restore: [], remove: [], conflicts: [] })
+  expect(preview.skipped).toEqual([
+    { path: path('h'), reason: 'hardlink' },
+    { path: path('second-name'), reason: 'hardlink' },
+  ])
+  expect(await h.service.snapshotRounds({ sessionId })).toMatchObject({
+    ok: true,
+    rounds: [{ canRestore: false, incompleteCoverage: true }],
+  })
+})
