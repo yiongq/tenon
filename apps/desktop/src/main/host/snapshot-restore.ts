@@ -319,6 +319,8 @@ export async function planRestore(
       start: Point
       last: Point | undefined
       gap: boolean
+      gapSince?: number
+      lastAt: number
       promised: boolean
       excluded: boolean
       treeCovered: boolean
@@ -338,7 +340,8 @@ export async function planRestore(
       ancestor = parent
     }
   }
-  for (const call of q.calls) {
+  const perCall: { path: AbsolutePath; start: Point; end: Point | undefined }[][] = []
+  for (const [callIndex, call] of q.calls.entries()) {
     const before = call.before === undefined ? undefined : byId.get(call.before)
     const after = call.after === undefined ? undefined : byId.get(call.after)
     const candidates =
@@ -365,6 +368,7 @@ export async function planRestore(
           start,
           last: end,
           gap: false,
+          lastAt: callIndex,
           promised: call.path !== undefined && start.covered,
           excluded: false,
           treeCovered: treeCovers(before, path) || treeCovers(after, path),
@@ -372,26 +376,38 @@ export async function planRestore(
         })
       } else {
         previous.treeCovered ||= treeCovers(before, path) || treeCovers(after, path)
-        previous.gap ||= !equal(previous.last, start)
+        const opened = !equal(previous.last, start)
+        if (opened && !previous.gap) previous.gapSince = previous.lastAt
+        previous.gap ||= opened
+        previous.lastAt = callIndex
         previous.last = end
         previous.promised ||= call.path !== undefined && start.covered
       }
     }
-    // D66: a disappearing gap may have moved to any path changed by this call. Carry it
-    // forward without matching content, including gaps inherited from an earlier rename.
-    // Without an after-call snapshot we cannot prove disappearance, so do not propagate.
-    if (
-      transitions.some(
-        ({ path, start, end }) =>
-          changes.get(path)!.gap &&
-          start.file.identity !== null &&
-          end !== undefined &&
-          end.file.identity === null,
+    perCall.push(transitions)
+    // D67: when a gap's source changes, protect surviving changes from the call after its
+    // last record through this call. Propagated gaps open at the call that marks them.
+    // Without an after-call snapshot we cannot prove a change, so do not trigger propagation.
+    const sources = transitions.filter(
+      ({ path, start, end }) =>
+        changes.get(path)!.gap &&
+        start.file.identity !== null &&
+        end !== undefined &&
+        !equal(start, end),
+    )
+    if (sources.length > 0) {
+      const from = Math.min(
+        ...sources.map(({ path }) => changes.get(path)!.gapSince ?? callIndex - 1),
       )
-    ) {
-      for (const { path, start, end } of transitions) {
-        if (end !== undefined && end.file.identity !== null && !equal(start, end))
-          changes.get(path)!.gap = true
+      for (let k = from + 1; k <= callIndex; k++) {
+        for (const { path, start, end } of perCall[k] ?? []) {
+          if (end === undefined || end.file.identity === null || equal(start, end)) continue
+          const change = changes.get(path)!
+          if (!change.gap) {
+            change.gap = true
+            change.gapSince = callIndex
+          }
+        }
       }
     }
     // Omitted paths are absent from candidates; look them up by excluded subtree instead.
