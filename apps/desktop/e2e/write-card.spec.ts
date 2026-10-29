@@ -167,17 +167,17 @@ test('two writes in one reply: the second waits as a 「排队中」 row, then b
 
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
-    // a is written; b's card comes up under its own row, a new requestId.
+    // a is written; b's card comes up under its own row, a new requestId. Click it the moment it
+    // appears, inside APPROVAL_CLICK_GUARD_MS: ignored. Every other check waits until after the
+    // click, because a slow runner spends the whole guard on a few assertions (sandbox-macos did).
     const rows = page.getByTestId('tool-row')
     const next = rows.nth(1).getByTestId('approval-card')
+    await next.getByTestId('approval-allow').click()
+    await page.waitForTimeout(150)
     await expect(next).toHaveCount(1)
     await expect(next).not.toHaveAttribute('data-request-id', first.card.requestId)
     expect(contentOf(a)).toBe('A\n')
     await expect(page.getByTestId('approval-queued-row')).toHaveCount(0)
-    // At once, inside APPROVAL_CLICK_GUARD_MS of it appearing: ignored.
-    await next.getByTestId('approval-allow').click()
-    await page.waitForTimeout(150)
-    await expect(next).toHaveCount(1)
     await expect(rows.nth(1).getByTestId('approval-answered')).toHaveCount(0)
     expect(contentOf(b)).toBeNull()
     expect(server.requests).toHaveLength(1)

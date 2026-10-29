@@ -437,3 +437,9 @@
 
 测试改动：apps/desktop/test/snapshot-restore-aliases.test.ts · 折叠函数用例 · 标题改成「父目录别名传播」，断言不变
 测试改动：apps/desktop/test/snapshot-restore-security.test.ts · 05 验收 19、40 删除时只建一次身份索引 · 加 30 秒超时；断言的是 lstat 次数不是耗时，macOS CI 机器上两张真快照约 6 秒
+
+## 实施 · 2026-10-29（第三段 macOS e2e）
+
+- `sandbox-macos` 第一次真跑 macOS e2e（4259127）：restore 三条（验收 15、33、29）都过；`write-card.spec.ts` 的旧 20 红。原因是第二张卡出现后先跑了四个断言才点，慢的 CI 机器上这几步就用完了 400 ms 的点击保护期，点击被当成有效。改成卡一出现就点，其余断言挪到点击之后，断言一条没少。
+
+测试改动：apps/desktop/e2e/write-card.spec.ts · 两个写入排队（旧 20） · 第二张卡一出现就点、其余断言挪到点击之后；慢机器上先跑的断言用完了 400 ms 保护期，断言没少
