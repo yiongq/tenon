@@ -169,10 +169,11 @@ test('two writes in one reply: the second waits as a 「排队中」 row, then b
     await card.getByTestId('approval-allow').click()
     // a is written; b's card comes up under its own row, a new requestId. Click it the moment it
     // appears, inside APPROVAL_CLICK_GUARD_MS: ignored. Every other check waits until after the
-    // click, because a slow runner spends the whole guard on a few assertions (sandbox-macos did).
+    // click, and the click is a dispatched event: on sandbox-macos even an immediate click()
+    // landed after the guard, since click() first waits for the button to hold still over frames.
     const rows = page.getByTestId('tool-row')
     const next = rows.nth(1).getByTestId('approval-card')
-    await next.getByTestId('approval-allow').click()
+    await next.getByTestId('approval-allow').dispatchEvent('click')
     await page.waitForTimeout(150)
     await expect(next).toHaveCount(1)
     await expect(next).not.toHaveAttribute('data-request-id', first.card.requestId)

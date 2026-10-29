@@ -170,6 +170,15 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # Traces of failed cases: this window behaves unlike Linux's xvfb one, and there is no screen.
+      - if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-macos-traces
+          path: apps/desktop/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   spec-check:
     name: spec-check
     needs: [ci, e2e, sandbox-macos]
