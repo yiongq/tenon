@@ -6,6 +6,7 @@ import type { RestoreQuery } from '@tenon-app/kernel'
 import {
   chmod,
   lstat,
+  link,
   mkdir,
   readdir,
   readFile,
@@ -15,8 +16,17 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { folder, path, snapshots, query, take, restore } from './support/snapshot-boundaries.js'
+import {
+  folder,
+  temp,
+  path,
+  snapshots,
+  query,
+  take,
+  restore,
+} from './support/snapshot-boundaries.js'
 
 // APFS commonly aliases Unicode normalization forms; Linux normally treats them as distinct.
 it.skipIf(process.platform !== 'darwin')(
@@ -231,5 +241,101 @@ it.skipIf(process.platform !== 'darwin')(
     expect(await readdir(folder)).toEqual([])
     spy.mockRestore()
     expect(await restoreOrigin(q)).toMatchObject({ restored: 1, removed: 0, failed: [] })
+  },
+)
+
+async function directoryHistory(
+  from: string,
+  to: string,
+  child: string,
+  promised: boolean,
+  recordAfter = true,
+): Promise<RestoreQuery> {
+  const target = path(`${from}/${child}`)
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, 'origin')
+  const calls: RestoreQuery['calls'][number][] = []
+  if (promised) {
+    const before = await take(`${from}/${child}`)
+    await writeFile(target, 'written')
+    calls.push({
+      callKey: 'write',
+      before,
+      after: await take(`${from}/${child}`, 'after-call'),
+      path: target,
+    })
+  }
+  const before = await take()
+  await rename(path(from), path(to))
+  calls.push({ callKey: 'rename', before, after: await take(undefined, 'after-call') })
+  const next = await take()
+  await rename(path(to), path(from))
+  if (!promised) await writeFile(target, 'edit')
+  calls.push({
+    callKey: 'rename-back',
+    before: next,
+    ...(recordAfter ? { after: await take(undefined, 'after-call') } : {}),
+  })
+  return query(calls)
+}
+
+// These historical parent spellings alias on macOS APFS; Linux treats them as separate names.
+it.skipIf(process.platform !== 'darwin').each([
+  ['Q33', 'Dir', 'dir', 'f', false],
+  ['Q34 promised Write', 'Dir', 'dir', 'f', true],
+  ['Q35 NFC/NFD', 'Café', 'Cafe\u0301', 'f', false],
+  ['Q38 nested', 'a/Dir', 'a/dir', 's/f', false],
+] as const)(
+  '05 验收 51、52: %s restores contents after a directory spelling changes back',
+  async (_, from, to, child, promised) => {
+    const q = await directoryHistory(from, to, child, promised)
+    const target = path(`${from}/${child}`)
+    expect(await snapshots.preview(q)).toMatchObject({
+      restore: [target],
+      remove: [],
+      skipped: [],
+      conflicts: [],
+    })
+    expect((await restore(q)).done).toMatchObject({ restored: 1, removed: 0, failed: [] })
+    expect(await readFile(target, 'utf8')).toBe('origin')
+    const parts = `${from}/${child}`.split('/')
+    const expectedNames = parts.map((_part, index) => parts.slice(0, index + 1).join('/'))
+    expect((await readdir(folder, { recursive: true })).toSorted()).toEqual(
+      expectedNames.toSorted(),
+    )
+  },
+)
+
+it.skipIf(process.platform !== 'darwin')(
+  '05 验收 40、52: a historical parent alias without the final after-call record remains skipped',
+  async () => {
+    const q = await directoryHistory('Dir', 'dir', 'f', false, false)
+    expect(q.calls.at(-1)?.after).toBeUndefined()
+    const preview = await snapshots.preview(q)
+    expect(preview.skipped).toContainEqual({ path: path('dir/f'), reason: 'not-covered' })
+    expect(preview.restore).toEqual([])
+    expect(preview.remove).toEqual([])
+    expect(await readFile(path('Dir/f'), 'utf8')).toBe('edit')
+  },
+)
+
+it.skipIf(process.platform !== 'darwin').each(['Q12', 'Q13', 'Q14'] as const)(
+  '05 验收 40、52: B1 %s hardlinks and their case aliases all stay in the preview skipped list',
+  async (scenario) => {
+    await writeFile(path('A.txt'), 'origin')
+    if (scenario === 'Q13') await link(path('A.txt'), path('H'))
+    const before = await take()
+    if (scenario === 'Q13') await rm(path('H'))
+    await rename(path('A.txt'), path('a.txt'))
+    await writeFile(path('a.txt'), 'agent edit')
+    if (scenario === 'Q12') await link(path('a.txt'), path('H'))
+    if (scenario === 'Q14') await link(path('a.txt'), join(temp, 'outside-link'))
+    const after = await take(undefined, 'after-call')
+    const preview = await snapshots.preview(query([{ callKey: 'bash', before, after }]))
+    expect(preview.skipped.map((entry) => entry.path)).toEqual(
+      expect.arrayContaining([path('A.txt'), path('a.txt')]),
+    )
+    expect(preview.restore).toEqual([])
+    expect(preview.remove).toEqual([])
   },
 )

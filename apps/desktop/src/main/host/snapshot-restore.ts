@@ -54,7 +54,9 @@ export interface RestorePlan {
   preview: RestorePreview
   items: RestoreItem[]
 }
-/** Propagate a proven parent alias to its differently spelled subtree, never infer leaf identity. */
+/** Propagate proven parent aliases with NFC + simple lowercase, narrower than APFS equivalence
+ * (e.g. final σ/ς or the ﬁ ligature). A missed alias may appear in preview.remove; apply's
+ * filesystem-identity guard is what prevents deleting its retained object. */
 export const foldRestorePath = (path: string): string => path.normalize('NFC').toLowerCase()
 async function objectKey(path: string): Promise<string | undefined> {
   const stats = await statOrNull(path)
@@ -403,6 +405,7 @@ export async function planRestore(
       .toSorted((a, b) => b.length - a.length)[0]
     let now: Point = missing(path, false, 'outside-folders')
     let reason: Reason | undefined
+    let historical = false
     if (root !== undefined) {
       try {
         // oxlint-disable-next-line no-await-in-loop -- live inspection is read-only and leaf guarded
@@ -416,9 +419,24 @@ export async function planRestore(
         // oxlint-disable-next-line no-await-in-loop -- validate every selected real folder
         if ((await realpath(root)) !== root) reason = 'outside-folders'
       } catch (error) {
-        if (error instanceof Error && error.message === 'Restore parent alias')
-          aliases.add(foldRestorePath(path))
-        reason = 'not-covered'
+        if (
+          error instanceof Error &&
+          error.message === 'Restore parent alias' &&
+          change.start.covered &&
+          change.start.file.identity === null &&
+          change.last !== undefined &&
+          change.last.covered &&
+          change.last.file.identity === null
+        ) {
+          // Covered absence at both ends proves this is only a historical spelling; a missing
+          // after-call record cannot prove that and must retain the normal alias protections.
+          historical = true
+          now = missing(path)
+        } else {
+          if (error instanceof Error && error.message === 'Restore parent alias')
+            aliases.add(foldRestorePath(path))
+          reason = 'not-covered'
+        }
       }
     } else reason = 'outside-folders'
     if (
@@ -437,6 +455,7 @@ export async function planRestore(
     // Current gitignore/default/nested exclusions apply to Bash paths. Explicit file copies override them.
     if (
       reason === undefined &&
+      !historical &&
       !change.promised &&
       root !== undefined &&
       (current === undefined || !capturedPaths?.has(path)) &&
@@ -488,7 +507,7 @@ export async function planRestore(
       modes: change.modes,
     })
   }
-  // Already-at-origin paths are not restore candidates, even if a historical spelling aliases them.
+  // Group only actionable/skipped paths; proven historical directory spellings were discarded above.
   const identities = await aliasKeys(
     [...items.map((item) => item.path), ...preview.skipped.map((item) => item.path)].filter(
       (path) => roots.some((root) => contains(root, path)),
