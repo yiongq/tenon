@@ -424,3 +424,16 @@
 测试改动：apps/desktop/test/snapshot-restore.test.ts · 05 验收 52 被忽略目标 · 0c1f2d5 里从「后面的整树排除就进跳过」改成「单文件副本照常还原」，照规矩 15 的澄清（M1），没有变弱
 测试改动：apps/desktop/test/copy-coverage.test.ts · 05 验收 52 冲突文案 · 跟着 N6 换成新句
 测试改动：packages/kernel/test/loop/snapshot-restore.test.ts · 覆盖不全的用例 · 夹具改用真实的 Edit，断言实际错误内容（N5）
+
+## 评审 · 2026-10-29 · 审过 d60a9ba（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），逐条核对 recheck-seg3 的 N1–N9，在导出副本里跑 16 条别名探针与 36 处定点突变；报告与探针另记
+突变：36 处；N1–N9 每处撤回都有用例变红，另有别名归组两处（groups 循环的 `aliases.add`、不在的名字按折叠凑组）撤回后现有用例全绿
+发现：
+- [major] R1 · 别名归组太宽：不在的名字按 NFC 加小写凑组、非叶子改名的组整组跳过，让改名还原中途失败后的重试（验收 51）、大小写敏感卷上两个真不同的文件、承诺过的目标（规矩 15、验收 52）都进了「跳过」 · 证据：P1、P6、P11、P12 在真实 APFS 上、CS1–CS4 用替身都被跳过，同样的情形在 4100fae 上能还原 · 已修 c512f1c（只按清单项、跳过项现在真在的同一对象归组；不在的名字不凑组；CS1–CS3 改成真文件用例、在大小写敏感卷上跑）
+- [建议] R2 · 别名防线里身份守卫与删除前复核缺单独的用例 · 已修 c512f1c
+- [建议] R3 · N5 名单里另外 5 句 Edit 失败文案没有用例 · 已修 c512f1c
+- [建议] R4 · spec 没写规范化形式也当改名、目录别名整组跳过 · 已修 aa0cf06
+
+测试改动：apps/desktop/test/snapshot-restore-aliases.test.ts · 折叠函数用例 · 标题改成「父目录别名传播」，断言不变
+测试改动：apps/desktop/test/snapshot-restore-security.test.ts · 05 验收 19、40 删除时只建一次身份索引 · 加 30 秒超时；断言的是 lstat 次数不是耗时，macOS CI 机器上两张真快照约 6 秒
