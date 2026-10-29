@@ -567,3 +567,25 @@
 - G（c924b6b，D70）：宿主 `planRestore` 在冲突算完后加一趟，还原要放回或删除的路径里，现在是非空普通文件、大小与内容（git blob 哈希）与某个冲突路径起点相同的，也记为冲突；只加不减，复用计划里已读的内容，预览与 `prepare` 一致。回归五条「05 验收 19」（搬成新文件、搬去盖掉已有文件，及没人改过、同大小不同内容、空文件三条对照）；撤掉这一趟时前两条红，对照照绿。
 - 文档（43968b7）：spec 记 D69、D70 与 A、E 的澄清，验收 33 改写；overview、SECURITY.md 按 C、E 改；decisions 记 D69、D70。
 - 全量（沙箱外，`--maxWorkers=2`）：5533 过、117 跳过、0 红。
+
+## 评审 · 2026-10-30 · 审过 df34222（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），审 `d7e15c0..df34222`：读执行器核对五种被拒结果，对抗探针 H1–H6、K1–K6，导出副本里 18 个突变（A0–A6、G0–G9）加候选修法 GF；把随机扫描扩展成两次改动（主 1000、密集 300、停止模式 200 个种子，每组都在 D70 关掉的副本上对照）；报告、探针与扫描另记
+突变：撤 A 时验收 19 五条全红、逐条去掉各自红；撤 G 时两条搬走的红、对照照绿；G6（只认 `last ≠ now`）与 A6（任何报错都认作被拒）仓库分不出；G5 等价；扫描新反例 0 个，对照 1429 个全部无冲突、回到起点，D70 多出的 29 个冲突全部装着某个冲突路径的起点内容
+发现：
+- [major] N1 · D70 只扫一遍：把「放回」路径 x 记成冲突、默认保留后，x 起点里你的改动若已被搬到新文件 y，y 不再被比对、照删，修前不丢（c924b6b 引入） · 证据：探针 H1；G0、G1 下转绿 · 已修 051fe84（做到不动点：新记成冲突的起点内容也进比对表）；decisions D70 记了更正
+- [建议] N2 · Write 父路径是文件、Write 与 Delete 目标是目录这几种动手前就没做成的结果仍不认 · 证据：K1b、K1c · 已修 628ad48；spec 举例 14aeb7f
+- [建议] N3 · 「有动过文件的调用」比代码窄：只跑了只读命令的一轮照出「可还原」、点开是空清单 · 证据：K2 · 已修 628ad48（按 D69 的原则改成清单为空就不出，复用已算的预览）、14aeb7f（spec、验收 33、decisions D69 写明实现口径）
+- [建议] N4 · D70 的代价没进 §已知限制与 SECURITY.md；components 结算行仍是旧口径；两处括注不全 · 证据：H2、H6、句子对照 · 已修 14aeb7f
+- [建议] N5 · 上一条评审记录里 D 的处置「已修（下方更正行）」没带提交号 · 已修：那行更正随 df34222 提交，处置应读作「已修 df34222」
+- [建议] N6 · 仓库分不出 G6、A6 两种写法 · 已修 051fe84（收 H4：只因缺口成冲突的起点）、628ad48（写到一半抛错的 Write 仍进比对）
+- [建议] X1（第三段既有）· 原名在还原时被跳过（`.gitignore` 新加了它）时搬走的那份照删 · 证据：H3、H3c · 已修 051fe84（跳过路径的起点内容也进比对表）；放回时才因别名失败的 H5 预览看不出，写进 §已知限制（14aeb7f）
+
+## 实施 · 2026-10-30（第 18.3 步）
+
+- N1、X1（051fe84，Codex 实现、lead 审）：宿主 `planRestore` 的 D70 一趟改成工作表做到不动点：冲突与「跳过」的非空普通文件起点进比对表，按「大小 + git blob 哈希」查要放回或删除的候选，新记成冲突的起点再入队；每个路径最多记一次、每个内容键最多入队一次，所以会停。回归：「content conflicts follow the whole move chain (outside edits: %s)」「a skipped origin protects its moved content (outside edit: %s)」「a gap-only conflict protects a copy of the edit made before the first touch」；撤掉不动点、撤掉跳过进比对表、只认 `last ≠ now` 时各自变红，对照照绿。
+- N2、N3、N6（628ad48）：kernel 再认 Write `notDirectory`（按父目录填模板）、Write 与 Delete `isDirectory`；`rounds` 的 `canRestore` 改成快照还在且清单（放回、删除、冲突）不为空，复用已算的预览；回归「notDirectory refusal %s adds no restorable change or conflict」「replay excludes %s isDirectory refusal from restore queries」「05 验收 33: %s is restorable only while its preview has changes, without extra previews」「a Write that changes bytes before throwing remains in the restore comparison」，撤掉各自的修改时变红。
+- 文档（14aeb7f）：spec D70 一句、被拒举例、结算行与验收 33、§已知限制 两处；components 结算行；SECURITY.md 三处；decisions D69 的实现口径与 D70 的更正。
+- 全量（沙箱外，`--maxWorkers=2`）：5545 过、117 跳过、0 红。
+
+测试改动：packages/kernel/test/loop/snapshot-restore.test.ts · 05 验收 9: %s command safety is derived from dispatch and before-call tree facts · 第 18 步复核 N3：清单为空时不出「可还原」（D69 的原则）；这条守的是命令的保护状态与附注，保留不改文件的假命令，`canRestore` 期望改成 false，其余断言不变
