@@ -511,3 +511,15 @@
 
 测试改动：packages/kernel/src/testing/tape-conformance.ts · 05 验收 1、21: fs facts round-trip, deduplicate and replay without changing projections · 夹具去掉已删除的 `commits`、`files`（D68），断言不变
 测试改动：apps/desktop/test/tape/fs-dialects.test.ts · SQLite 精确载荷、Postgres 与 SQLite 一致性两条 · 共用夹具去掉已删除的两项（D68），断言不变
+
+## 评审 · 2026-10-29 · 审过 f335d6a
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `ac553b0..f335d6a`：导出副本里对取最小值的改写做 20 万组随机比对，逐个撤掉四条新用例守的条件，查删掉两个字段后的引用与重放，对照代码与 spec 逐句核对 overview、components、总参考 §13、SECURITY.md；报告与探针另记
+突变：Q2、Q3、Q6、Q12 各自只让对应的新用例变红（其余 26 条绿）；Q12c（只取第一个来源）仓库全绿，名字顺序反过来的探针 O1 红（Z5）；12 万个来源时旧写法抛 RangeError、新写法正常
+发现：
+- [建议] Z1 · spec 窗口起点的新写法仍比代码窄（中间调用的快照里它没变时，代码的起点不往后挪），修订记录说「与实现一致」不成立 · 证据：探针 W1、W1b、W2 · 已修 1ac5c78
+- [建议] Z2 · 新加的已知限制与 SECURITY.md 对应条只写「停止或超时」，实际只要命令缺调用后快照（退出、崩溃、拍不成）都会多问 · 证据：kernel `batch.ts` 的 `execute` 拍调用后快照的四个条件 · 已修 1ac5c78
+- [建议] Z3 · components 与总参考漏写结算行「不含被排除的文件」的「跑过命令」条件；审批卡那行对 Bash 说过头 · 证据：kernel `restore.ts` 的 `rounds`、spec 规矩 3 与验收 3 · 已修 1ac5c78
+- [建议] Z4 · overview 与总参考说过头：信任边界没带命令运行期间的例外、Delete 没快照时不比身份、命令不在 `tree` 时不拍、模块表 kernel 一侧没写还原 · 证据：`snapshot-guard.ts` 的 `snapshotGuard`、`delete.ts` 的 `deleteExecutor`、spec §快照怎么拍 · 已修 1ac5c78
+- [建议] Z5 · 「多个来源」用例分不出「只取第一个来源」 · 证据：Q12c 下仓库全绿、探针 O1 红 · 已修 8e73e39（两种名字顺序都跑）
+- [建议] Z6 · SECURITY.md 漏写选定文件夹后在后台整个复制进 profile 与保留多久，「Excluded files」「refreshes」与 Known limitations 开头的措辞外人读不懂；§文档同步 没写明成本两条不加 · 已修 1ac5c78（顺带把 spec「给你看的一页」的基线评测花费改成 ADR-005 的约 4 元）
