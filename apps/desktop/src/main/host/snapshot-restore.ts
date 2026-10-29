@@ -585,6 +585,33 @@ export async function planRestore(
       ...(changes.get(item.path)?.promised ? { promised: true as const } : {}),
     })
   }
+  // D70 only adds conflicts: protect current nonempty file content matching an existing
+  // conflict's origin. Compare size first, then the shared Git-blob hash (point normalizes
+  // file copies too). Reuse guarded live reads / captured undo content already in the plan;
+  // no extra workspace reads are needed, and unreadable paths are not actionable items.
+  const conflictOrigins = new Map<number, Set<string>>()
+  for (const item of items) {
+    const origin = item.start.file.identity
+    if (
+      !item.conflict ||
+      origin?.kind !== 'file' ||
+      origin.size === 0 ||
+      item.start.content === undefined
+    )
+      continue
+    const hashes = conflictOrigins.get(origin.size) ?? new Set<string>()
+    hashes.add(item.start.content)
+    conflictOrigins.set(origin.size, hashes)
+  }
+  if (conflictOrigins.size > 0) {
+    for (const item of items) {
+      const now = item.now.file.identity
+      if (item.conflict || now?.kind !== 'file' || now.size === 0 || item.now.content === undefined)
+        continue
+      if (conflictOrigins.get(now.size)?.has(item.now.content)) item.conflict = true
+    }
+    preview.conflicts = items.filter((item) => item.conflict).map((item) => item.path)
+  }
   preview.skipped.sort((a, b) => a.path.localeCompare(b.path))
   // Covers the displayed plan and every live candidate's identity/content, including kept conflicts
   // and skipped/already-restored paths. Only actionable paths use captured undo state in prepare;

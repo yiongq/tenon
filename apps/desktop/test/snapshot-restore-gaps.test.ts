@@ -318,3 +318,69 @@ it('05 验收 19: recreating an externally deleted source does not make a new si
   expect(await readdir(folder)).toEqual(['g'])
   expect(await readFile(path('g'), 'utf8')).toBe('agent again')
 })
+
+it.each(['new file', 'existing file'] as const)(
+  '05 验收 19: moved first edit (%s) stays a conflict after a second edit of the original name',
+  async (destination) => {
+    await writeFile(path('a'), 'origin a')
+    await writeFile(path('d'), 'origin d')
+    if (destination === 'existing file') await writeFile(path('c'), 'origin c')
+    const first = await recordedCall('c1', () => appendFile(path('a'), ' agent'))
+    await writeFile(path('d'), outside)
+    const second = await recordedCall('c2', async () => {
+      await rename(path('d'), path('c'))
+      await copyFile(path('a'), path('d'))
+    })
+    await writeFile(path('d'), 'your second edit')
+    const q = query([first, second])
+    const preview = await snapshots.preview(q)
+    expect(preview.conflicts.toSorted()).toEqual([path('c'), path('d')])
+    expect(destination === 'new file' ? preview.remove : preview.restore).toContain(path('c'))
+    // prepare must preserve the same conflict decision as preview, and apply must keep both.
+    expect((await restore(q)).done).toMatchObject({ kept: 2, failed: [] })
+    expect(await readFile(path('c'))).toEqual(outside)
+    expect(await readFile(path('d'), 'utf8')).toBe('your second edit')
+    expect((await snapshots.preview(q)).conflicts.toSorted()).toEqual([path('c'), path('d')])
+    expect((await restore(q, [path('c'), path('d')])).done).toMatchObject({ kept: 0, failed: [] })
+    expect(await readFile(path('d'))).toEqual(outside)
+    const remaining = await readFile(path('c'), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null
+      throw error
+    })
+    expect(remaining).toBe(destination === 'new file' ? null : 'origin c')
+  },
+)
+
+it('05 验收 19: a move and replacement without outside edits restores without content conflicts', async () => {
+  await writeFile(path('a'), 'origin a')
+  await writeFile(path('d'), 'origin d')
+  const first = await recordedCall('c1', () => appendFile(path('a'), ' agent'))
+  const second = await recordedCall('c2', async () => {
+    await rename(path('d'), path('c'))
+    await copyFile(path('a'), path('d'))
+  })
+  const q = query([first, second])
+  expect((await snapshots.preview(q)).conflicts).toEqual([])
+  expect((await restore(q)).done).toMatchObject({ removed: 1, kept: 0, failed: [] })
+  expect(await readdir(folder)).toEqual(['a', 'd'])
+  expect(await readFile(path('d'), 'utf8')).toBe('origin d')
+})
+
+it.each(['different bytes of the same size', 'empty bytes'] as const)(
+  '05 验收 19: a new file with %s does not inherit a content conflict',
+  async (content) => {
+    const origin = content === 'empty bytes' ? '' : 'first'
+    const created = content === 'empty bytes' ? '' : 'other'
+    await writeFile(path('d'), origin)
+    const call = await recordedCall('c1', async () => {
+      await writeFile(path('c'), created)
+      await writeFile(path('d'), 'agent')
+    })
+    await writeFile(path('d'), 'your second edit')
+    const q = query([call])
+    expect((await snapshots.preview(q)).conflicts).toEqual([path('d')])
+    expect((await restore(q)).done).toMatchObject({ removed: 1, kept: 1, failed: [] })
+    expect(await readdir(folder)).toEqual(['d'])
+    expect(await readFile(path('d'), 'utf8')).toBe('your second edit')
+  },
+)
