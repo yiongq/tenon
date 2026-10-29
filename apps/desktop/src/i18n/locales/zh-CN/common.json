@@ -958,7 +958,7 @@
     "cancel": "取消",
     "close": "关闭",
     "confirm": "确认还原",
-    "conflict": "这个文件的现状和这一轮最后记下的不一样，还原会盖掉现在的内容。要覆盖还是保留？",
+    "conflict": "这个文件在这一轮里或之后可能被别处改过，还原会盖掉那些改动。要覆盖还是保留？",
     "keep": "保留",
     "overwrite": "覆盖",
     "result": "已还原 {restored} 个、删除 {removed} 个、保留 {kept} 个、跳过 {skipped} 个；{failed} 个未完成。",

@@ -1143,8 +1143,8 @@ it('05 验收 52: every promised skip explains the earlier snapshot promise in b
     }
     expect(copy['snapshot']?.['conflict']).toBe(
       locale === 'zh-CN'
-        ? '这个文件的现状和这一轮最后记下的不一样，还原会盖掉现在的内容。要覆盖还是保留？'
-        : 'This file no longer matches what this round last recorded. Restoring would overwrite its current content. Overwrite or keep?',
+        ? '这个文件在这一轮里或之后可能被别处改过，还原会盖掉那些改动。要覆盖还是保留？'
+        : 'This file may have been changed elsewhere during or after this round. Restoring would overwrite those changes. Overwrite or keep?',
     )
   }
 })

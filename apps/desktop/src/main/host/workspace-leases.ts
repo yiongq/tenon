@@ -82,6 +82,8 @@ interface CommandLease {
   exited: boolean
   started: boolean
   cleaned: boolean
+  // Creation order while unstarted, replaced by the observed exit order after a spawn.
+  readyOrder: number
   cleanup?: () => Promise<void>
 }
 // Only the host-owned git runner can mark these argument arrays. Never infer this from command text.
@@ -94,6 +96,7 @@ const connectorCommands = new WeakSet<readonly string[]>()
 export function markConnectorCommand(argv: readonly string[]): void {
   connectorCommands.add(argv)
 }
+let nextReadyOrder = 0
 const commandLeases = new Map<string, CommandLease[]>()
 const argvLeases = new WeakMap<readonly string[], CommandLease>()
 function finish(lease: CommandLease): void {
@@ -117,6 +120,7 @@ export async function leaseCommand<T extends { argv: string[] }>(
     exited: false,
     started: false,
     cleaned: false,
+    readyOrder: nextReadyOrder++,
     ...(cleanup === undefined ? {} : { cleanup }),
   }
   const leases = commandLeases.get(q.commandId) ?? []
@@ -150,12 +154,14 @@ export async function leaseSpawn(
     if (lease !== undefined)
       void child.exited.then(() => {
         lease.exited = true
+        lease.readyOrder = nextReadyOrder++
         finish(lease)
       })
     return child
   } catch (error) {
     if (lease !== undefined) {
       lease.exited = true
+      lease.readyOrder = nextReadyOrder++
       // A few existing callers only arrange afterExit after a successful spawn. Clean here too.
       await lease.cleanup?.().catch(() => {})
       finish(lease)
@@ -166,9 +172,23 @@ export async function leaseSpawn(
 
 export function commandCleaned(commandId: string): void {
   const leases = commandLeases.get(commandId)
-  const lease = leases?.shift()
-  if (lease === undefined) return
-  if (leases!.length === 0) commandLeases.delete(commandId)
+  if (leases === undefined || leases.length === 0) return
+  // Cleanup follows exit (or no spawn). Prefer eligible leases; with a reused id and multiple
+  // exits we can only pair by observed exit order, not identify the caller. Otherwise keep FIFO.
+  let index = 0
+  let earliest = Infinity
+  for (const [at, candidate] of leases.entries()) {
+    if (
+      !candidate.cleaned &&
+      (candidate.exited || !candidate.started) &&
+      candidate.readyOrder < earliest
+    ) {
+      index = at
+      earliest = candidate.readyOrder
+    }
+  }
+  const lease = leases.splice(index, 1)[0]!
+  if (leases.length === 0) commandLeases.delete(commandId)
   lease.cleaned = true
   if (!lease.started) lease.exited = true
   finish(lease)

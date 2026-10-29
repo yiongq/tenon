@@ -222,3 +222,53 @@ it('05 验收 46、52: an ignored file-tool target and a later Write both restor
   expect(await readFile(path('.env'), 'utf8')).toBe('A')
   expect(await readFile(path('f'), 'utf8')).toBe('A')
 })
+
+it('05 验收 18、41: RC-8 — a path gitignored by the user after the round (check-ignore skip) does not make prepare stale', async () => {
+  await setup('tree')
+  await writeFile(path('f'), 'A')
+  await writeFile(path('g'), 'A')
+  const before = await take()
+  await writeFile(path('f'), 'B')
+  await writeFile(path('g'), 'B')
+  const after = await take(undefined, 'after-call')
+  await writeFile(path('.gitignore'), 'f\n')
+  const q = { sessionId, roundRunId, calls: [{ callKey: 'bash', before, after }] }
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toContainEqual({ path: path('f'), reason: 'excluded' })
+  expect(preview.restore).toEqual([path('g')])
+  const prepared = await snapshots.prepare({ ...q, previewKey: preview.previewKey })
+  expect(prepared).toMatchObject({ ok: true })
+  if (prepared.ok) await snapshots.cancel({ sessionId, undoSnapshotId: prepared.undoSnapshotId })
+})
+
+it('05 验收 52、54: a prior single-file copy survives a later missing before record as a kept conflict', async () => {
+  await setup('home')
+  await writeFile(path('f'), 'A')
+  const before = await take('f')
+  await writeFile(path('f'), 'B')
+  const after = await take('f', 'after-call')
+  await writeFile(path('f'), 'C')
+  const laterAfter = await take('f', 'after-call')
+  // A sparse call history cannot prove continuity, but does not invalidate a known file copy.
+  const q = {
+    sessionId,
+    roundRunId,
+    calls: [
+      { callKey: 'first', path: path('f'), before, after },
+      { callKey: 'later', path: path('f'), after: laterAfter },
+    ],
+  }
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toEqual([])
+  expect(preview.restore).toEqual([path('f')])
+  expect(preview.conflicts).toEqual([path('f')])
+  const prepared = await snapshots.prepare({ ...q, previewKey: preview.previewKey })
+  if (!prepared.ok) throw new Error(prepared.reason)
+  const done = await snapshots.apply({
+    sessionId,
+    undoSnapshotId: prepared.undoSnapshotId,
+    overwrite: [],
+  })
+  expect(done).toMatchObject({ kept: 1, restored: 0, failed: [] })
+  expect(await readFile(path('f'), 'utf8')).toBe('C')
+})

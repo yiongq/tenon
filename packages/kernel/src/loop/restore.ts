@@ -7,6 +7,8 @@ import type {
   RestoreQuery,
   SnapshotStatus,
 } from '../host/adapter.js'
+import { EDIT_TEXTS } from '../tools/builtin/edit.js'
+import { fill } from '../prompts/index.js'
 import { isWithin } from '../host/path.js'
 import {
   FILE_CHANGED,
@@ -77,6 +79,32 @@ export type SnapshotRestoreResult =
   | SnapshotRefusal
   | ({ readonly ok: true; readonly undoSnapshotId: string; readonly skipped: number } & RestoreDone)
 
+/** These Edit results return before guarded writes. Do not record outside edits as after-call
+ * evidence merely because a refused invocation finished (§一键还原: only the agent's changes).
+ * Unknown failures can follow partial writes and must retain the coverage warning. */
+function editRefusedBeforeWrite(text: string | undefined, path: AbsolutePath | undefined): boolean {
+  if (text === undefined || path === undefined) return false
+  if (
+    [
+      EDIT_TEXTS.noMatch,
+      EDIT_TEXTS.notFound,
+      EDIT_TEXTS.isDirectory,
+      EDIT_TEXTS.notText,
+      EDIT_TEXTS.notUtf8,
+      EDIT_TEXTS.resolvesElsewhere,
+    ].some((template) => fill(template, { path }) === text)
+  )
+    return true
+  const [prefix, suffix] = fill(EDIT_TEXTS.notUnique, { path, count: '\0' }).split('\0')
+  return (
+    prefix !== undefined &&
+    suffix !== undefined &&
+    text.startsWith(prefix) &&
+    text.endsWith(suffix) &&
+    /^[0-9]+$/.test(text.slice(prefix.length, text.length - suffix.length))
+  )
+}
+
 interface CallNode {
   readonly callKey: string
   readonly roundRunId: string
@@ -88,6 +116,7 @@ interface CallNode {
   promised: boolean
   command: boolean
   fileWrite: boolean
+  edit: boolean
   guardRefused: boolean
 }
 interface CollectedRound {
@@ -224,6 +253,7 @@ async function collectHistory(
           promised: false,
           command: false,
           fileWrite: false,
+          edit: false,
           guardRefused: false,
         }
         calls.set(callKey, node)
@@ -240,6 +270,7 @@ async function collectHistory(
         const node = nodeOf(entry)
         node.dispatched = true
         node.command = entry.payload['name'] === 'Bash'
+        node.edit = entry.payload['name'] === 'Edit'
         node.fileWrite = ['Write', 'Edit', 'Delete'].includes(String(entry.payload['name']))
       } else if (entry.name === 'tool/result') {
         const node = nodeOf(entry)
@@ -251,9 +282,10 @@ async function collectHistory(
           entry.payload['isError'] === true &&
           content.length === 1 &&
           content[0]?.type === 'text' &&
-          [FILE_CHANGED, HARDLINK_CHANGED, SNAPSHOT_CHANGED, SNAPSHOT_FAILED].some(
+          ([FILE_CHANGED, HARDLINK_CHANGED, SNAPSHOT_CHANGED, SNAPSHOT_FAILED].some(
             (text) => text === content[0]?.text,
-          )
+          ) ||
+            (node.edit && editRefusedBeforeWrite(content[0]?.text, node.before?.path)))
       } else if (entry.name === 'execution/tool_outcome') {
         const snapshotId = entry.payload['snapshotId']
         if (typeof snapshotId === 'string') nodeOf(entry).snapshotId = snapshotId

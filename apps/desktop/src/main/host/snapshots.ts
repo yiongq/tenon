@@ -1250,17 +1250,6 @@ export class DesktopSnapshots implements HostSnapshots {
               reason: undo.reason === 'over-budget' ? 'over-budget' : 'undo-unavailable',
             }
           const manifest = session.manifests.find((candidate) => candidate.id === undo.snapshotId)!
-          const captured = await planRestore(
-            query,
-            session.manifests,
-            session.folders,
-            session.dir,
-            this.git,
-            manifest,
-            new Set(paths),
-          )
-          if (paths.some((path) => captured.preview.skipped.some((skip) => skip.path === path)))
-            return { ok: false, reason: 'undo-unavailable' }
           const latest = await planRestore(
             query,
             session.manifests,
@@ -1268,6 +1257,22 @@ export class DesktopSnapshots implements HostSnapshots {
             session.dir,
             this.git,
           )
+          // Apply uses the latest plan. Every path it may touch must be in the undo capture,
+          // including paths absent from the initial plan during an outside writer's race.
+          const latestPaths = latest.items.map((item) => item.path)
+          const captured = await planRestore(
+            query,
+            session.manifests,
+            session.folders,
+            session.dir,
+            this.git,
+            manifest,
+            new Set(latestPaths),
+          )
+          if (
+            latestPaths.some((path) => captured.preview.skipped.some((skip) => skip.path === path))
+          )
+            return { ok: false, reason: 'undo-unavailable' }
           if (
             latest.preview.previewKey !== q.previewKey ||
             captured.preview.previewKey !== q.previewKey

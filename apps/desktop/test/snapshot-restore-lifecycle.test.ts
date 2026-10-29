@@ -1,3 +1,7 @@
+vi.mock('../src/main/host/snapshot-restore.js', async (original) => ({
+  ...(await original<typeof restoreModule>()),
+}))
+import * as restoreModule from '../src/main/host/snapshot-restore.js'
 import { chmod, mkdir, readFile, writeFile, utimes } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -147,4 +151,31 @@ it('05 验收 18: S6 — a timestamp-only change of a planned file between previ
   await utimes(path('f'), new Date(500_000), new Date(500_000))
   expect(await snapshots.prepare({ ...q, previewKey: key })).toEqual({ ok: false, reason: 'stale' })
   expect(snapshots['active'].size).toBe(0)
+})
+
+it('05 验收 21、22: N9 — every latest item must be captured even if the initial plan omitted it', async () => {
+  const first = await changedFile()
+  await writeFile(path('g'), 'G')
+  const before = await take('g')
+  await writeFile(path('g'), 'changed')
+  const after = await take('g', 'after-call')
+  const q = {
+    ...first.q,
+    calls: [...first.q.calls, { callKey: 'g', before, after, path: path('g') }],
+  }
+  const key = (await snapshots.preview(q)).previewKey
+  // Model a path that was temporarily at its origin during the first plan, then changed back.
+  // File-only capture cannot incidentally save it through the tree.
+  snapshots['sessions'].get(sessionId)!.state = 'file-only'
+  const plan = restoreModule.planRestore
+  vi.spyOn(restoreModule, 'planRestore').mockImplementationOnce(async (...args) => {
+    const initial = await plan(...args)
+    return { ...initial, items: initial.items.filter((item) => item.path !== path('f')) }
+  })
+  expect(await snapshots.prepare({ ...q, previewKey: key })).toEqual({
+    ok: false,
+    reason: 'undo-unavailable',
+  })
+  expect(await readFile(path('f'), 'utf8')).toBe('B')
+  expect(activeOf().size).toBe(0)
 })

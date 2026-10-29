@@ -182,3 +182,62 @@ it('05 验收 53: leaseSpawn failure cleans and releases; cleaning before spawn 
   ).rejects.toThrow('already cleaned')
   expect(launched).toBe(false)
 })
+
+function isFree(path: typeof folder): boolean {
+  const release = workspaceLeases.exclusive([path])
+  release?.()
+  return release !== null
+}
+
+it.each([false, true])(
+  '05 验收 53: RC-L1 — reused id cleans the earliest exited lease (both exited before cleanup: %s)',
+  async (bothExited) => {
+    const id = randomUUID()
+    const a = absolutePath(join(temp, 'a'))
+    const b = absolutePath(join(temp, 'b'))
+    const exitA = Promise.withResolvers<number>()
+    const exitB = Promise.withResolvers<number>()
+    const wrap = (cwd: typeof a) =>
+      leaseCommand(
+        {
+          commandId: id,
+          argv: ['/bin/cat'],
+          cwd,
+          env: {},
+          profile: 'workspace-write',
+          workspace: [cwd],
+        },
+        async () => ({ argv: ['/bin/cat'] }),
+        (f) => f,
+      )
+    const first = await wrap(a)
+    await leaseSpawn(first.argv, async () => ({ exited: exitA.promise }) as never)
+    const second = await wrap(b)
+    await leaseSpawn(second.argv, async () => ({ exited: exitB.promise }) as never)
+    try {
+      exitB.resolve(0)
+      await exitB.promise
+      if (bothExited) {
+        exitA.resolve(0)
+        await exitA.promise
+      }
+      expect(isFree(a)).toBe(false)
+      expect(isFree(b)).toBe(false)
+      commandCleaned(id)
+      expect(isFree(b)).toBe(true)
+      expect(isFree(a)).toBe(false)
+      exitA.resolve(0)
+      await exitA.promise
+      expect(isFree(a)).toBe(false)
+      commandCleaned(id)
+      expect(isFree(a)).toBe(true)
+      expect(isFree(b)).toBe(true)
+    } finally {
+      exitA.resolve(0)
+      exitB.resolve(0)
+      await Promise.resolve()
+      commandCleaned(id)
+      commandCleaned(id)
+    }
+  },
+)

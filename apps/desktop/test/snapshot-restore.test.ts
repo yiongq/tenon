@@ -259,7 +259,7 @@ it.skipIf(process.platform === 'win32')(
 
 // Linux CI uses a case-sensitive volume; this acceptance requires macOS's insensitive volume.
 it.skipIf(process.platform !== 'darwin')(
-  '05 验收 40: case-only rename is one restore and leaves only the origin spelling',
+  '05 验收 40: case-only aliases are skipped together and retain the only copy',
   async () => {
     await writeFile(path('A.txt'), 'A')
     const before = await take()
@@ -267,10 +267,15 @@ it.skipIf(process.platform !== 'darwin')(
     await rename(path('A.txt'), path('a.txt'))
     await writeFile(path('a.txt'), 'B')
     const after = await take(undefined, 'after-call')
-    const { done } = await restore(query([{ callKey: 'bash', before, after }]))
-    expect(done).toMatchObject({ restored: 1, removed: 0, failed: [] })
-    expect(await readdir(folder)).toEqual(['A.txt'])
-    expect(await readFile(path('A.txt'), 'utf8')).toBe('A')
+    const q = query([{ callKey: 'bash', before, after }])
+    const preview = await snapshots.preview(q)
+    expect(preview.skipped.map((item) => item.path).toSorted()).toEqual(
+      [path('A.txt'), path('a.txt')].toSorted(),
+    )
+    const { done } = await restore(q)
+    expect(done).toMatchObject({ restored: 0, removed: 0, failed: [] })
+    expect(await readdir(folder)).toEqual(['a.txt'])
+    expect(await readFile(path('a.txt'), 'utf8')).toBe('B')
   },
 )
 

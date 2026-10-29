@@ -18,7 +18,7 @@ import {
 import { basename, dirname, join, relative, sep } from 'node:path'
 import type { AbsolutePath, RestoreDone, RestorePreview, RestoreQuery } from '@tenon-app/kernel'
 import { absolutePath } from '@tenon-app/kernel'
-import { probeVolume, repoPath } from './snapshot-git.js'
+import { repoPath } from './snapshot-git.js'
 import type { SnapshotGit } from './snapshot-git.js'
 import {
   contains,
@@ -53,6 +53,33 @@ export interface RestoreItem {
 export interface RestorePlan {
   preview: RestorePreview
   items: RestoreItem[]
+}
+/** Only a fallback for absent entries; existing names are grouped by filesystem object. */
+export const foldRestorePath = (path: string): string => path.normalize('NFC').toLowerCase()
+async function objectKey(path: string): Promise<string | undefined> {
+  const stats = await statOrNull(path)
+  return stats === null ? undefined : `${stats.dev}:${stats.ino}`
+}
+async function aliasKeys(paths: readonly string[]): Promise<Map<string, string>> {
+  const keys = new Map<string, string>()
+  const present = new Map<string, Set<string>>()
+  for (const path of paths) {
+    // Unreadable paths are still handled as per-path skips by the planner below.
+    const key = await objectKey(path).catch(() => undefined)
+    if (key === undefined) continue
+    keys.set(path, key)
+    const folded = foldRestorePath(path)
+    const group = present.get(folded) ?? new Set<string>()
+    group.add(key)
+    present.set(folded, group)
+  }
+  for (const path of paths) {
+    if (keys.has(path)) continue
+    const folded = foldRestorePath(path)
+    const matches = present.get(folded)
+    keys.set(path, matches?.size === 1 ? [...matches][0]! : `absent:${folded}`)
+  }
+  return keys
 }
 const depth = (path: string): number => path.split(sep).length
 const gitHash = (data: Uint8Array): string =>
@@ -336,6 +363,18 @@ export async function planRestore(
   const items: RestoreItem[] = []
   const stamps: unknown[] = []
   const aliases = new Set<string>()
+  const identities = await aliasKeys(
+    [...changes.keys()].filter((path) => roots.some((root) => contains(root, path))),
+  )
+  const groups = new Map<string, string[]>()
+  for (const [path, key] of identities) {
+    const group = groups.get(key) ?? []
+    group.push(path)
+    groups.set(key, group)
+  }
+  for (const group of groups.values()) {
+    if (group.length > 1) for (const path of group) aliases.add(foldRestorePath(path))
+  }
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -356,7 +395,7 @@ export async function planRestore(
         if ((await realpath(root)) !== root) reason = 'outside-folders'
       } catch (error) {
         if (error instanceof Error && error.message === 'Restore parent alias')
-          aliases.add(path.toLowerCase())
+          aliases.add(foldRestorePath(path))
         reason = 'not-covered'
       }
     } else reason = 'outside-folders'
@@ -431,7 +470,7 @@ export async function planRestore(
   // Keep the whole affected pair: deleting the other spelling could delete its only copy.
   for (let index = items.length - 1; index >= 0; index--) {
     const item = items[index]!
-    const folded = item.path.toLowerCase()
+    const folded = foldRestorePath(item.path)
     if (![...aliases].some((alias) => contains(folded, alias) || contains(alias, folded))) continue
     items.splice(index, 1)
     preview.restore = preview.restore.filter((path) => path !== item.path)
@@ -515,21 +554,25 @@ export async function applyRestore(
       if (stats?.isDirectory()) directoryChecks.set(ancestor, saved(identity(stats)))
     }
   }
-  // Case-fold pairs share an inode on insensitive volumes, but represent one rename operation.
+  // Use the same physical-object grouping as planning, including normalized absent spellings.
+  const identities = await aliasKeys(selected.map((item) => item.path))
   const paired = new Map<AbsolutePath, AbsolutePath>()
+  const removalByIdentity = new Map(
+    selected
+      .filter((item) => item.start.file.identity === null)
+      .map((item) => [identities.get(item.path), item.path]),
+  )
   for (const item of selected.filter((candidate) => candidate.start.file.identity !== null)) {
-    const removal = selected.find(
-      (other) =>
-        other.start.file.identity === null &&
-        other.path !== item.path &&
-        other.path.toLowerCase() === item.path.toLowerCase(),
-    )
-    if (removal !== undefined) {
-      // oxlint-disable-next-line no-await-in-loop -- probe only actual rename pairs
-      if ((await probeVolume(item.root, new AbortController().signal)).ignorecase)
-        paired.set(item.path, removal.path)
-    }
+    const removal = removalByIdentity.get(identities.get(item.path))
+    if (removal !== undefined && removal !== item.path) paired.set(item.path, removal)
   }
+  const selectedPaths = new Set(selected.map((item) => item.path))
+  const protectedPaths = new Set([
+    ...plan.preview.skipped.map((skip) => skip.path),
+    ...plan.items
+      .filter((item) => !selectedPaths.has(item.path) || item.start.file.identity !== null)
+      .map((item) => item.path),
+  ])
   // Validate all byte sources before deleting a path whose type has changed.
   const contents = new Map<AbsolutePath, Uint8Array>()
   for (const item of selected.filter((candidate) => candidate.now.file.identity?.kind === 'dir')) {
@@ -548,6 +591,21 @@ export async function applyRestore(
       } catch {
         failed.add(item.path)
       }
+    }
+  }
+  // Re-read retained identities once at the destructive phase boundary, not from the preview.
+  // Each deletion then checks its current inode against this index; keep colliding objects intact.
+  const protectedObjects = new Map<string, Set<AbsolutePath>>()
+  let unreadableProtected = false
+  for (const path of protectedPaths) {
+    try {
+      const key = await objectKey(path)
+      if (key === undefined) continue
+      const paths = protectedObjects.get(key) ?? new Set<AbsolutePath>()
+      paths.add(path)
+      protectedObjects.set(key, paths)
+    } catch {
+      unreadableProtected = true
     }
   }
   for (const item of selected.toSorted((a, b) => depth(b.path) - depth(a.path))) {
@@ -572,6 +630,13 @@ export async function applyRestore(
         await checkSelected(ancestorItem)
       // oxlint-disable-next-line no-await-in-loop -- deletions precede every placement
       await parents(item.root, item.path, true, item.modes, createdDirs)
+      const deleting = await objectKey(item.path)
+      const retained = deleting === undefined ? undefined : protectedObjects.get(deleting)
+      if (
+        unreadableProtected ||
+        (retained !== undefined && (retained.size > 1 || !retained.has(item.path)))
+      )
+        throw new Error('Restore removal aliases a retained path')
       // Never recursive: an unlisted child must survive and make rmdir fail.
       // oxlint-disable-next-line no-await-in-loop -- deepest entries first
       if (now.kind === 'dir') await rmdir(item.path)

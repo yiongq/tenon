@@ -533,3 +533,21 @@ it.each(['read-only', 'workspace-write', 'full-access'] as const)(
     release?.()
   },
 )
+
+it('05 验收 19、40: apply indexes retained identities once instead of rescanning them for every deletion', async () => {
+  const count = 40
+  await Promise.all(Array.from({ length: count }, (_, i) => writeFile(path(`old-${i}`), 'A')))
+  const before = await take()
+  await Promise.all(
+    Array.from({ length: count }, (_, i) =>
+      Promise.all([writeFile(path(`old-${i}`), 'B'), writeFile(path(`new-${i}`), 'C')]),
+    ),
+  )
+  const after = await take(undefined, 'after-call')
+  const undo = await prepare(query([{ callKey: 'bash', before, after }]))
+  const stats = vi.spyOn(fsPromises, 'lstat')
+  const done = await apply(undo)
+  expect(done).toMatchObject({ restored: count, removed: count, failed: [] })
+  expect(stats.mock.calls.length).toBeLessThan(count * 30)
+  expect(await readFile(path('old-0'), 'utf8')).toBe('A')
+})

@@ -87,7 +87,7 @@ async function harness(
         protectedFiles: [],
         log: (line) => logs.push(line),
       },
-      { tools: { Write: 'real', Delete: 'real', Bash: 'real', Agent: 'real' } },
+      { tools: { Write: 'real', Edit: 'real', Delete: 'real', Bash: 'real', Agent: 'real' } },
     )
     service.bindLoop(ports)
     return service
@@ -1777,5 +1777,45 @@ it.each(['no ordinal', 'null sourceSeq', 'null sourceId'] as const)(
     await expect(h.service.snapshotRounds({ sessionId: SESSION })).rejects.toThrow(
       'Snapshot call has no runtime identity',
     )
+  },
+)
+
+it.each([
+  ['no match', 'B', { old_string: 'ZZZ', new_string: 'Y' }],
+  ['not unique', 'BB', { old_string: 'B', new_string: 'Y' }],
+] as const)(
+  '05 验收 33: RC-K1 — an Edit that fails before writing (%s) adds no coverage warning',
+  async (label, content, edit) => {
+    const h = await harness()
+    const first = await pause(h, 'Write', { file_path: FILE, content })
+    h.provider.script(call('Edit', { file_path: FILE, ...edit }, 'second'))
+    h.provider.script(done())
+    await h.service.answer({
+      kind: 'approval',
+      sessionId: SESSION,
+      requestId: first.pending.card.requestId,
+      decision: 'allow',
+      origin: null,
+    })
+    await h.ports.runEnded()
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    if (pending !== null) await approve(h, pending)
+    expect(await h.service.currentPending({ sessionId: SESSION })).toBeNull()
+    expect(await h.host.fs.readFile(FILE, { encoding: 'utf8' })).toBe(content)
+    const results = (await h.entries()).filter((entry) => entry.name === 'tool/result')
+    expect(results.at(-1)?.payload).toMatchObject({
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: expect.stringContaining(
+            label === 'no match' ? 'old_string was not found' : 'old_string occurs 2 times',
+          ),
+        },
+      ],
+    })
+    const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
+    if (!rounds.ok) throw new Error(rounds.code)
+    expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
   },
 )
