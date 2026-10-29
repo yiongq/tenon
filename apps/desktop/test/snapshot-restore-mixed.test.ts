@@ -662,3 +662,75 @@ it.each([
   },
   20_000,
 )
+
+it.each(['alone', 'before the agent creates the path'] as const)(
+  '05 验收 19: notDirectory refusal %s adds no restorable change or conflict',
+  async (scenario) => {
+    await setup('tree')
+    await writeFile(path('f'), 'origin')
+    const calls: { name: string; input: Record<string, unknown> }[] = [writeCall('f/x', 'never')]
+    if (scenario !== 'alone')
+      calls.push({
+        name: 'Bash',
+        input: { command: 'rm f && mkdir f && printf new > f/x && printf y > y' },
+      })
+    const preview = vi.spyOn(snapshots, 'preview')
+    const h = await kernelRound(calls)
+    expect((await h.entries()).find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+      isError: true,
+      content: [{ type: 'text', text: `${path('f')} is a file, not a folder.` }],
+    })
+    expect(await h.service.snapshotRounds({ sessionId })).toMatchObject({
+      ok: true,
+      rounds: [{ canRestore: scenario !== 'alone' }],
+    })
+    const p = await h.service.snapshotPreview({ sessionId, roundRunId })
+    expect(p.ok ? p.preview.conflicts : p.code).toEqual(scenario === 'alone' ? 'gone' : [])
+    expect(
+      preview.mock.calls.flatMap(([q]) => q.calls).every((call) => call.path !== path('f/x')),
+    ).toBe(true)
+  },
+)
+
+it.each(['read-only command', 'Write'] as const)(
+  '05 验收 33: %s is restorable only while its preview has changes, without extra previews',
+  async (tool) => {
+    await setup('tree')
+    await writeFile(path('g'), 'origin')
+    const h = await kernelRound([
+      tool === 'Write' ? writeCall('g', 'agent') : { name: 'Bash', input: { command: 'true' } },
+    ])
+    const spy = vi.spyOn(snapshots, 'preview')
+    const rounds = () => h.service.snapshotRounds({ sessionId })
+    expect(await rounds()).toMatchObject({
+      ok: true,
+      rounds: [{ canRestore: tool === 'Write', commandsWithoutSnapshot: false }],
+    })
+    await rounds()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(await h.restore()).toMatchObject({ ok: true, failed: [] })
+    spy.mockClear()
+    expect(await rounds()).toMatchObject({ ok: true, rounds: [{ canRestore: false }] })
+    await rounds()
+    expect(spy).toHaveBeenCalledTimes(1)
+  },
+)
+
+it('05 验收 19: a Write that changes bytes before throwing remains in the restore comparison', async () => {
+  await setup('tree')
+  await writeFile(path('g'), 'origin')
+  const fs = new DesktopFs()
+  const write = fs.writeFile.bind(fs)
+  vi.spyOn(fs, 'writeFile').mockImplementationOnce(async (file) => {
+    await write(file, 'partial bytes')
+    throw new Error('injected failure after writing')
+  })
+  const h = await kernelRound([writeCall('g', 'requested bytes')], { fs })
+  expect((await h.entries()).find((e) => e.name === 'tool/result')?.payload).toMatchObject({
+    isError: true,
+  })
+  expect(await readFile(path('g'), 'utf8')).toBe('partial bytes')
+  expect(await h.preview()).toMatchObject({ restore: [path('g')], conflicts: [], skipped: [] })
+  expect(await h.restore()).toMatchObject({ ok: true, restored: 1, failed: [] })
+  expect(await readFile(path('g'), 'utf8')).toBe('origin')
+})
