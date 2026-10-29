@@ -260,26 +260,32 @@ it('05 验收 19: a propagated gap protects a later copy until overwrite is sele
   expect(await readdir(folder)).toEqual([])
 })
 
-it('05 验收 19: multiple gap sources protect the oldest copy until overwrite is selected', async () => {
-  const first = await recordedCall('c1', () => writeFile(path('g1'), 'agent1'))
-  await writeFile(path('g1'), outside)
-  const second = await recordedCall('c2', async () => {
-    await copyFile(path('g1'), path('k'))
-    await writeFile(path('g2'), 'agent2')
-  })
-  await writeFile(path('g2'), 'outside-2')
-  const third = await recordedCall('c3', async () => {
-    await rm(path('g1'))
-    await rm(path('g2'))
-  })
-  const q = query([first, second, third])
-  expect((await snapshots.preview(q)).conflicts).toEqual([path('k')])
-  expect((await restore(q)).done).toMatchObject({ removed: 0, kept: 1, failed: [] })
-  expect(await readdir(folder)).toEqual(['k'])
-  expect(await readFile(path('k'))).toEqual(outside)
-  expect((await restore(q, [path('k')])).done).toMatchObject({ removed: 1, failed: [] })
-  expect(await readdir(folder)).toEqual([])
-})
+it.each([
+  ['older source first (g1/g2)', 'g1', 'g2'],
+  ['older source last (z1/a2)', 'z1', 'a2'],
+] as const)(
+  '05 验收 19: multiple gap sources protect the oldest copy until overwrite is selected — %s',
+  async (_order, older, newer) => {
+    const first = await recordedCall('c1', () => writeFile(path(older), 'agent1'))
+    await writeFile(path(older), outside)
+    const second = await recordedCall('c2', async () => {
+      await copyFile(path(older), path('k'))
+      await writeFile(path(newer), 'agent2')
+    })
+    await writeFile(path(newer), 'outside-2')
+    const third = await recordedCall('c3', async () => {
+      await rm(path(older))
+      await rm(path(newer))
+    })
+    const q = query([first, second, third])
+    expect((await snapshots.preview(q)).conflicts).toEqual([path('k')])
+    expect((await restore(q)).done).toMatchObject({ removed: 0, kept: 1, failed: [] })
+    expect(await readdir(folder)).toEqual(['k'])
+    expect(await readFile(path('k'))).toEqual(outside)
+    expect((await restore(q, [path('k')])).done).toMatchObject({ removed: 1, failed: [] })
+    expect(await readdir(folder)).toEqual([])
+  },
+)
 
 it('05 验收 19: a stopped call does not turn an earlier deletion into a conflict', async () => {
   await writeFile(path('p'), 'origin')
