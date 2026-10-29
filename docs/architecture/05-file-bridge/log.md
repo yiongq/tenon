@@ -405,3 +405,22 @@
 - Linux `ci` 里 03 的 `mcp-runtime.test.ts` 偶发 `ENOENT`：秘密扫描列目录时读到一个正在原子写入、随后被改名的临时文件。改成读不到就整体重扫（0508454）。
 
 测试改动：apps/desktop/test/mcp-runtime.test.ts · 03 验收 28 / 6 / 27 (desktop) · 列目录与读文件之间状态文件被原子改名会 ENOENT，改成读不到就重扫，断言不变
+
+## 评审 · 2026-10-29 · 审过 4100fae（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），对照三份评审报告逐条核对 1bbce1f..4100fae 的修复，在导出副本里跑复现与定点突变；报告与复现另记
+突变：定点撤回修复若干处，B1 的 check-ignore 分支、M1 的 `treeCovered` 分支、D64 的接线、租约释放顺序四处撤回后现有用例全绿
+发现：
+- [blocker] N1 · macOS 上目录只改 Unicode 规范化形式（NFC 改 NFD）时，还原删掉唯一一份；别名只按 `toLowerCase()` 折叠，B1 修好后原先碰巧挡住它的 `stale` 也没了 · 证据：RC-1 在 4100fae 上删除 2 项、工作区为空，在 1bbce1f 上回 `stale` · 已修 f354899（按文件系统对象归组，不在的路径按 NFC 再折叠大小写；删除前按身份再核对）；dd86371 把这次误伤的验收 40（单个文件只改写法时当一项改名还原）改回，目录别名照旧跳过
+- [major] N2 · D64 的接线没有测试守着：撤掉 `controller.ts` 的标记或在 kernel 里复制一次 argv，B2 就回来、现有用例全绿 · 已修 f354899（连接池到租约的集成用例，加 argv 同一对象的 kernel 用例）
+- [建议] N3 · 改过期望的「05 验收 52」被忽略目标用例没写 `测试改动：` · 已修（见下面的测试改动行）
+- [建议] N4 · B1 的 check-ignore 分支与 M1 的 `treeCovered` 分支没有测试守着 · 已修 f354899
+- [建议] N5 · Edit 在写之前就失败时结算行仍多出「（不含被排除的文件）」 · 已修 f354899（执行前失败列进名单；没采用「总补拍调用后快照」，那样会把守卫拒写时别人的修改算成 agent 的，与验收 42 冲突）
+- [建议] N6 · 冲突那句不适用于两次调用之间被改过的冲突 · 已修 f354899
+- [建议] N7 · 只在 darwin 跑的回归（SEC-9 等）CI 里不跑 · 已修 cdd2eb3（macOS 任务跑全部 `snapshot-restore*` 与 `snapshot-preview*`）
+- [建议] N8 · 同一 `commandId` 的租约收尾按最早一份取，与进程对不上 · 已修 f354899（收尾优先认已退出或从未启动的那份；不改接口、不拒绝重复 id）
+- [建议] N9 · 崩溃留下临时文件与规矩 5 字面冲突、修订记录没标放宽；`prepare` 用初始路径查还原前那张 · 前半交 owner：owner 定 D65（8198149）；后半已修 f354899
+
+测试改动：apps/desktop/test/snapshot-restore.test.ts · 05 验收 52 被忽略目标 · 0c1f2d5 里从「后面的整树排除就进跳过」改成「单文件副本照常还原」，照规矩 15 的澄清（M1），没有变弱
+测试改动：apps/desktop/test/copy-coverage.test.ts · 05 验收 52 冲突文案 · 跟着 N6 换成新句
+测试改动：packages/kernel/test/loop/snapshot-restore.test.ts · 覆盖不全的用例 · 夹具改用真实的 Edit，断言实际错误内容（N5）
