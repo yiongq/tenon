@@ -166,14 +166,35 @@ test('two writes in one reply: the second waits as a 「排队中」 row, then b
     await expect(page.getByTestId('tool-row')).toHaveCount(1)
 
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    // b's card must be clicked inside APPROVAL_CLICK_GUARD_MS of appearing. Playwright notices a
+    // new element by polling over animation frames, which sandbox-macos throttles past the whole
+    // guard, so the page clicks it itself, from a MutationObserver, the moment it is inserted.
+    await page.evaluate(() => {
+      const state = globalThis as unknown as { guardedClick: boolean }
+      state.guardedClick = false
+      new MutationObserver((_records, observer) => {
+        const allow = document
+          .querySelectorAll('[data-testid="tool-row"]')[1]
+          ?.querySelector<HTMLElement>(
+            '[data-testid="approval-card"] [data-testid="approval-allow"]',
+          )
+        if (allow === null || allow === undefined) return
+        observer.disconnect()
+        allow.click()
+        state.guardedClick = true
+      }).observe(document.body, { childList: true, subtree: true })
+    })
     await card.getByTestId('approval-allow').click()
-    // a is written; b's card comes up under its own row, a new requestId. Click it the moment it
-    // appears, inside APPROVAL_CLICK_GUARD_MS: ignored. Every other check waits until after the
-    // click, and the click is a dispatched event: on sandbox-macos even an immediate click()
-    // landed after the guard, since click() first waits for the button to hold still over frames.
+    // a is written; b's card comes up under its own row, a new requestId, and the click it got on
+    // arrival is ignored.
     const rows = page.getByTestId('tool-row')
     const next = rows.nth(1).getByTestId('approval-card')
-    await next.getByTestId('approval-allow').dispatchEvent('click')
+    await expect(next).toHaveCount(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() => (globalThis as unknown as { guardedClick: boolean }).guardedClick),
+      )
+      .toBe(true)
     await page.waitForTimeout(150)
     await expect(next).toHaveCount(1)
     await expect(next).not.toHaveAttribute('data-request-id', first.card.requestId)
