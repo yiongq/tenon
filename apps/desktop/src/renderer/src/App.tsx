@@ -1,3 +1,4 @@
+import { SnapshotProvider } from './runtime/SnapshotProvider'
 import {
   chatNew,
   chatStop,
@@ -168,40 +169,42 @@ export function App(): JSX.Element {
   }, [])
 
   return (
-    <AppShell
-      collapsed={config.sidebarCollapsed}
-      onCollapsedChange={(sidebarCollapsed) => patch({ sidebarCollapsed })}
-      onNewChat={startFresh}
-      locale={config.locale}
-      onLocaleChange={(locale: LocaleSetting) => patch({ locale })}
-      hasChats={hasChats}
-      title={named.sessionId === conversation.sessionId ? named.title : ''}
-    >
-      <NavigationContext.Provider value={navigation}>
-        <ChatProvider
-          key={conversation.sessionId}
-          sessionId={conversation.sessionId}
-          initialRows={conversation.rows}
-          resumeOnOpen={conversation.resumeOnOpen}
-          onStartSession={startSession}
-          onHasMessages={noteChat}
-          onTitle={noteTitle}
-          canSend={!restoring}
-        >
-          <Thread />
-        </ChatProvider>
-      </NavigationContext.Provider>
-      <LeaveRunDialog
-        open={leaving !== null}
-        onStay={() => setLeaving(null)}
-        onStop={() => {
-          const move = leaving
-          setLeaving(null)
-          void invokeRoute(window.tenon, chatStop, { sessionId: current.current }).then(() =>
-            move?.(),
-          )
-        }}
-      />
-    </AppShell>
+    <SnapshotProvider key={conversation.sessionId} sessionId={conversation.sessionId}>
+      <AppShell
+        collapsed={config.sidebarCollapsed}
+        onCollapsedChange={(sidebarCollapsed) => patch({ sidebarCollapsed })}
+        onNewChat={startFresh}
+        locale={config.locale}
+        onLocaleChange={(locale: LocaleSetting) => patch({ locale })}
+        hasChats={hasChats}
+        title={named.sessionId === conversation.sessionId ? named.title : ''}
+      >
+        <NavigationContext.Provider value={navigation}>
+          <ChatProvider
+            key={conversation.sessionId}
+            sessionId={conversation.sessionId}
+            initialRows={conversation.rows}
+            resumeOnOpen={conversation.resumeOnOpen}
+            onStartSession={startSession}
+            onHasMessages={noteChat}
+            onTitle={noteTitle}
+            canSend={!restoring}
+          >
+            <Thread />
+          </ChatProvider>
+        </NavigationContext.Provider>
+        <LeaveRunDialog
+          open={leaving !== null}
+          onStay={() => setLeaving(null)}
+          onStop={() => {
+            const move = leaving
+            setLeaving(null)
+            void invokeRoute(window.tenon, chatStop, { sessionId: current.current }).then(() =>
+              move?.(),
+            )
+          }}
+        />
+      </AppShell>
+    </SnapshotProvider>
   )
 }

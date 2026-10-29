@@ -209,7 +209,7 @@ describe('toThreadMessages: metadata.custom', () => {
       turnId: 'a2',
       // The Run dispatched its Read: the kernel names no message to resend.
       end: { runId: 'run-1', endReason: COMPLETED, errorCode: null, retryOf: null },
-      summary: { read: 1, write: 0, search: 0, command: 0, online: 0, connector: 0 },
+      summary: { delete: 0, read: 1, write: 0, search: 0, command: 0, online: 0, connector: 0 },
       retryable: false,
     }
     expect(custom(messages[2] as ThreadMessageLike)).toEqual(expected)
@@ -262,10 +262,11 @@ describe('toThreadMessages: metadata.custom', () => {
     const messages = toThreadMessages(model)
     const summaries = messages.map((message) => custom(message)?.summary)
     expect(summaries.filter((summary) => summary !== undefined)).toEqual([
-      { read: 2, write: 1, search: 0, command: 0, online: 0, connector: 0 },
+      { delete: 0, read: 2, write: 1, search: 0, command: 0, online: 0, connector: 0 },
     ])
     expect(summaries.at(-1)).toEqual({
       read: 2,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -300,6 +301,7 @@ describe('toThreadMessages: metadata.custom', () => {
     // Until 「继续」, the step-limit card carries the round's line.
     expect(custom(before.at(-1) as ThreadMessageLike)?.summary).toEqual({
       read: 0,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,
@@ -319,10 +321,11 @@ describe('toThreadMessages: metadata.custom', () => {
     )
     const summaries = toThreadMessages(continued).map((message) => custom(message)?.summary)
     expect(summaries.filter((summary) => summary !== undefined)).toEqual([
-      { read: 1, write: 1, search: 0, command: 0, online: 0, connector: 0 },
+      { delete: 0, read: 1, write: 1, search: 0, command: 0, online: 0, connector: 0 },
     ])
     expect(summaries.at(-1)).toEqual({
       read: 1,
+      delete: 0,
       write: 1,
       search: 0,
       command: 0,

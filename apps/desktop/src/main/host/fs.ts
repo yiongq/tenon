@@ -6,6 +6,7 @@ import type { FileHandle } from 'node:fs/promises'
 import { basename, dirname, join, parse, sep } from 'node:path'
 import type { AbsolutePath, FileIdentity, HostFs } from '@tenon-app/kernel'
 import { UnresolvableAliasError, absolutePath } from '@tenon-app/kernel'
+import { workspaceLeases } from './workspace-leases.js'
 
 /** Real filesystem access for the desktop host. Every path is re-checked to be absolute. */
 export class DesktopFs implements HostFs {
@@ -44,28 +45,30 @@ export class DesktopFs implements HostFs {
    * truncated and written through the handle.
    */
   async writeFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
-    absolutePath(path)
-    await regularPathOnly(path)
-    let handle: FileHandle
-    try {
-      handle = await open(
-        path,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-      )
-    } catch (err) {
-      // open(2) answers ENXIO only for a FIFO without a reader, a device with nothing behind it and,
-      // on Linux, a socket: never for a regular file.
-      if (isErrno(err, 'ENXIO'))
-        throw notRegularFile(path, 'a named pipe or another special file', err)
-      throw err
-    }
-    try {
-      await regularFileOnly(handle, path)
-      await handle.truncate(0)
-      await handle.writeFile(data)
-    } finally {
-      await handle.close()
-    }
+    return workspaceLeases.write(path, async () => {
+      absolutePath(path)
+      await regularPathOnly(path)
+      let handle: FileHandle
+      try {
+        handle = await open(
+          path,
+          constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
+        )
+      } catch (err) {
+        // open(2) answers ENXIO only for a FIFO without a reader, a device with nothing behind it and,
+        // on Linux, a socket: never for a regular file.
+        if (isErrno(err, 'ENXIO'))
+          throw notRegularFile(path, 'a named pipe or another special file', err)
+        throw err
+      }
+      try {
+        await regularFileOnly(handle, path)
+        await handle.truncate(0)
+        await handle.writeFile(data)
+      } finally {
+        await handle.close()
+      }
+    })
   }
 
   /**
@@ -93,13 +96,15 @@ export class DesktopFs implements HostFs {
     },
     // O_EXCL refuses every existing entry (including a dangling link) without opening its target.
     create: async (path, data) => {
-      absolutePath(path)
-      const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
-      try {
-        await handle.writeFile(data)
-      } finally {
-        await handle.close()
-      }
+      return workspaceLeases.write(path, async () => {
+        absolutePath(path)
+        const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
+        try {
+          await handle.writeFile(data)
+        } finally {
+          await handle.close()
+        }
+      })
     },
   }
 
@@ -116,16 +121,18 @@ export class DesktopFs implements HostFs {
 
   /** Spec 05 §Delete 工具: unlink never follows the leaf or recursively removes a directory. */
   async remove(path: AbsolutePath): Promise<void> {
-    absolutePath(path)
-    const entry = entryOf(path)
-    const stats = await lstat(entry)
-    if (stats.isDirectory()) {
-      throw Object.assign(new Error(`EISDIR: cannot remove directory '${path}'`), {
-        code: 'EISDIR',
-      })
-    }
-    if (!stats.isFile() && !stats.isSymbolicLink()) throw notRegularFile(path, kindOf(stats))
-    await unlink(entry)
+    return workspaceLeases.write(path, async () => {
+      absolutePath(path)
+      const entry = entryOf(path)
+      const stats = await lstat(entry)
+      if (stats.isDirectory()) {
+        throw Object.assign(new Error(`EISDIR: cannot remove directory '${path}'`), {
+          code: 'EISDIR',
+        })
+      }
+      if (!stats.isFile() && !stats.isSymbolicLink()) throw notRegularFile(path, kindOf(stats))
+      await unlink(entry)
+    })
   }
 
   /**
@@ -137,22 +144,24 @@ export class DesktopFs implements HostFs {
    * writer uses this (host/profile.ts); `writeFile`, which the agent's Write tool reaches, is unchanged.
    */
   async replaceFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
-    absolutePath(path)
-    const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
-    try {
-      const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
+    return workspaceLeases.write(path, async () => {
+      absolutePath(path)
+      const temp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`)
       try {
-        await handle.writeFile(data)
-        await handle.sync()
-      } finally {
-        await handle.close()
+        const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL)
+        try {
+          await handle.writeFile(data)
+          await handle.sync()
+        } finally {
+          await handle.close()
+        }
+        await rename(temp, path)
+      } catch (err) {
+        // The failure is what the caller hears; a temporary file that cannot be removed is left.
+        await rm(temp, { force: true }).catch(() => undefined)
+        throw err
       }
-      await rename(temp, path)
-    } catch (err) {
-      // The failure is what the caller hears; a temporary file that cannot be removed is left.
-      await rm(temp, { force: true }).catch(() => undefined)
-      throw err
-    }
+    })
   }
 
   async stat(
@@ -174,8 +183,10 @@ export class DesktopFs implements HostFs {
   }
 
   async mkdirp(path: AbsolutePath): Promise<void> {
-    absolutePath(path)
-    await mkdir(path, { recursive: true })
+    return workspaceLeases.write(path, async () => {
+      absolutePath(path)
+      await mkdir(path, { recursive: true })
+    })
   }
 
   /**

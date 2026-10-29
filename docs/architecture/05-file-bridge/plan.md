@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：第一段已合入（PR #72）；第二段（第 6–12 步）做完，在分支 `feat/05-file-bridge-seg2` 等 PR。下一步第三段（第 13–17 步）。
-需要你：无
+当前：第一、二段已合入（PR #72、#75）。第三段第 13–17 步做完（第六轮复核审过 `cfc4dc1`、通过），PR #77 等 owner 合；合入后从第 18 步接着做。
+需要你：合 PR #77（改了门禁文件 `ci.yml`，不开自动合并，只能你合）
 
 ## 开工前读
 
@@ -55,12 +55,12 @@
 - [x] 11. 提示层：`PROMPT_LAYER_VERSION` 从 11 升到 12、更新哈希；从这一步起 CI 的 `evals:gate` 红，到 11.1 为止。之后到 11.1 之前若要再改提示层文本，回到这一步改并更新哈希，不再加版本。
   - [x] 11.1 基线评测（live）：先请 owner 批 key 与花费（基线列为 glm-5.3-flash，ADR-005；一次约 4 元，owner 批的上限是第 11、12 版合计 20 元）；在沙箱生效的 macOS 上、agent 沙箱外跑基线列全集每题 3 次；记录与改动同一 PR；lead 逐题对照第 11 版基线，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 36。
 - [x] 12. 第二段核对：P；E 走 CI 草稿 PR；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
-- [ ] 13. 还原（宿主与 kernel）：清单（agent 改过的路径、命令改的单独标出、已是起点的不动、三张都收了才动、跳过原因、冲突）、`previewKey` 与 `stale`、还原前那张必须收全、先写 `fs/restore_started`、先删后放、逐路径的 `identity` 与父目录检查、叶子不跟随、新建排他加权限位、临时文件加改名（修改时间即还原那一刻）、大小写配对、`fs/restored`；同一真实文件夹上有进行中 Run 时拒绝；启动时提示没做完的还原。逐级重建父目录（每级照规矩 8 查、以属主可写排他新建，内容放回后从深往浅设回起点权限）；相邻调用前后比对；租约与 `prepare`、`apply`、`cancel` 两段交接；只改了权限位的路径只改回权限位。测试点名验收 16–22、39、40、41、49、51、52、53、54 的宿主与 kernel 一半（52 原列在第 5 步，它说的是还原，第一段评审后挪到这里）。
-- [ ] 14. 路由：`snapshot.rounds`、`snapshot.preview`、`snapshot.restore` 经 contracts 登记，两端校验；宿主核对 `sessionId` 与目录；`overwrite` 只收冲突的子集。测试点名验收 18、22 的路由一半。
-- [ ] 15. 界面（`confirm.undo.snapshotted` 换成终稿时同改 `write-card.spec.ts` 的 presentation-r1 验收 3 与 `tools.spec.ts` 的验收 6 两条断言，注释改引验收 52；硬链接那条补断言「没法替你撤回」）：审批卡 ④ 的 `snapshotted` 一句；工具行收起的失败标记与 Delete 展开那一行；结算行的 Delete 一类、「可还原」与两种附注；还原清单（逐个路径、跳过原因、冲突逐个问、取消、`stale` 重出）；`ThreadTitleMenu` 与「查看本次记录」。测试点名验收 16、18、33、34、35、47、48 的渲染一半。
-- [ ] 16. e2e：验收 15 的端到端句，macOS 与 Linux 两个 CI runner；验收 29 的还原回来。走 CI 草稿 PR，一次推送攒齐（每推一次取消上一轮 e2e）。
-- [ ] 17. 第三段核对：P；E；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
-- [ ] 18. 文档同步：spec「## 文档同步」列的「实现时」各处。点名验收 38。
+- [x] 13. 还原（宿主与 kernel）：清单（agent 改过的路径、已是起点的不动（命令改的不单独标，D62）、三张都收了才动、跳过原因、冲突）、`previewKey` 与 `stale`、还原前那张必须收全、先写 `fs/restore_started`、先删后放、逐路径的 `identity` 与父目录检查、叶子不跟随、新建排他加权限位、临时文件加改名（修改时间即还原那一刻）、大小写配对、`fs/restored`；同一真实文件夹上有进行中 Run 时拒绝；启动时提示没做完的还原。逐级重建父目录（每级照规矩 8 查、以属主可写排他新建，内容放回后从深往浅设回起点权限）；相邻调用前后比对；租约与 `prepare`、`apply`、`cancel` 两段交接；只改了权限位的路径只改回权限位。测试点名验收 16–22、39、40、41、49、51、52、53、54 的宿主与 kernel 一半（52 原列在第 5 步，它说的是还原，第一段评审后挪到这里）。
+- [x] 14. 路由：`snapshot.rounds`、`snapshot.preview`、`snapshot.restore` 经 contracts 登记，两端校验；宿主核对 `sessionId` 与目录；`overwrite` 只收冲突的子集。测试点名验收 18、22 的路由一半。
+- [x] 15. 界面（`confirm.undo.snapshotted` 换成终稿时同改 `write-card.spec.ts` 的 presentation-r1 验收 3 与 `tools.spec.ts` 的验收 6 两条断言，注释改引验收 52；硬链接那条补断言「没法替你撤回」）：审批卡 ④ 的 `snapshotted` 一句；工具行收起的失败标记与 Delete 展开那一行；结算行的 Delete 一类、「可还原」与两种附注；还原清单（逐个路径、跳过原因、冲突逐个问、取消、`stale` 重出）；`ThreadTitleMenu` 与「查看本次记录」；任务会话的历史也画结算行（D63）。测试点名验收 16、18、33、34、35、47、48 的渲染一半。
+- [x] 16. e2e：验收 15 的端到端句，macOS 与 Linux 两个 CI runner；验收 29 的还原回来。走 CI 草稿 PR，一次推送攒齐（每推一次取消上一轮 e2e）。
+- [x] 17. 第三段核对：P；E；多视角评审与 StrykerJS 同 5.1；汇总评审写 log。
+- [ ] 18. 文档同步：spec「## 文档同步」列的「实现时」各处。点名验收 38。另收第三段第六轮复核的 Y1–Y5：N8b、N11、N9、N10 收进 `snapshot-restore-gaps.test.ts`（探针在私有笔记 `reviews/repro-recheck6-seg3/rv6-conditions.test.ts`）；`planRestore` 的 `Math.min(...)` 改成循环取最小；spec §一键还原 的窗口起点改成「它上一次被记录之后」（澄清）；§已知限制与代价 补「停止或超时的命令之后再改到它碰过的文件时，中间的新建与改动也要逐个问」。这些动代码与 spec，做完要在新上下文里复核。
 - [ ] 19. 预算检查点（本项目补充第 6 条；阶段 4 的每一份都对照阶段 3）：数验收条数与 05 三个 PR 合计的 `git diff --shortstat`，对照阶段 3 的 1.5 倍（约 79 条、约 27 720 行）；再核阶段 4 合计不超过阶段 3 的 3 倍（约 55 440 行；04 已用约 25 600 行，05 之后留给 06 与 task-mode-ui 的余量一并写出）。任一超线先告诉 owner，再按总参考 §13 阶段 4 的砍法顺序（4d 挪阶段 6 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档）决定砍不砍；结果写 log。
 - [ ] 20. 未解决的开放问题、Open 与跟进挪进总参考「以后再说」，或写明已定；在派最后一次评审之前做完。
 - [ ] 21. 对照验收逐条核对：每条验收有点名它的测试或标了（人工）（live）；矩阵的「突变」列补齐；S 的 `trace` 不拦。
@@ -69,18 +69,19 @@
 
 ## 交接
 
-2026-10-25：第二段做完。Codex 在它自己的 worktree（分支 `feat/05-seg2`）实现，lead 审、沙箱外跑全量，摘到 `feat/05-file-bridge-seg2`。第 12 步三路评审（对照 spec、安全、突变）都是 0 blocker、0 major；之后修了三轮、复核三次，记录见 log。owner 这一段定了 D60（判决记下判定时的叶子）、D61（快照能力变差后会话授权不算）、ADR-005（评测基线列换成 glm-5.3-flash），并接受了 11 题在第 12 版上 1/3。下一步第三段：还原（第 13 步）先看 `SnapshotCreatedPayload.commits`、`files` 要不要用，要用就扩 `SnapshotTaken`，属接口改动、先问 owner；第 15 步的「有快照」那句接上后，在 `write-card.spec.ts` 的硬链接用例里补断言。
+2026-10-29：第三段第 13–17 步做完。lead 分支 `feat/05-file-bridge-seg3`，PR #77（改了 `ci.yml`，不开自动合并，owner 合）；Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5513 通过、117 跳过）后提交、摘过来。第 17 步：对照 spec、安全、突变三路评审之后复核了六轮，owner 这一段定了 D62–D67；第六轮审过 `cfc4dc1`、结论通过（报告在私有笔记 `reviews/recheck6-seg3.md`；随机序列扫描 2509 条，默认还原一次没丢你的字节），剩下的 Y1–Y5 五条建议并进第 18 步。CI 在 cfc4dc1 上 ci、e2e、sandbox-macos 全绿，spec-check 等这条通过记录推上去后重跑。合入后从 dev 开新分支做第 18–23 步；spec 已超 heavy 上限（警告，dev 上就超了），第 18 步一并看要不要拆。
 
 ## Open
 
 - 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
-- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步还原若要用，先问 owner 扩 `SnapshotTaken`；不用就在第 18 步文档同步时从 §接口 拿掉。
-- 快照子进程恢复时，记录里的 `executable` 要与配置的 git 一致才认（第一段最后一次评审的建议）：第二段没碰这个文件，第三段碰 `snapshot-git.ts` 时加，同时把真进程用例的收尾改成不判断存活、直接结束进程组。
+- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步的还原没用上，第 18 步文档同步时从 §接口 拿掉。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。
 - 矩阵门禁列用了 `test:e2e`、`test:macos`，它们只在 `.sdd/config.json` 的 `test_reports` 里、不在 `gates` 里（04 的矩阵同样这么写）：要不要登记进 `gates` 由 owner 定，那是门禁文件的改动、只在 owner 说了才合。
 - 收起行的状态词（运行中、待批、出错、被拒、被拦）要不要统一一套：06 碰同一行时定。
+- 还原清单里，D66、D67 传播出来的冲突目录与它下面的文件分开问：只覆盖目录、保留文件时目录记进 `failed`（不丢数据，第三段第五轮复核 X5）。下次碰还原清单时让目录的选项跟随子项，或在 `failed` 原因里写明「里面还有保留的文件」。
+- 第三段第六轮复核在两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出：CI 上见到就先从 G1-leaf（大小写改名）和 S4 查。
 
 ## 验收矩阵
 
@@ -101,7 +102,7 @@
 | 13 | 集成 | 05 验收 13: / or a volume root is refused through pick and prefill, home is warned | test | — | 任意 |
 | 14 | 集成 | 05 验收 14: retention keeps 20 rounds, 30 days and 3 GB after reclaim, protects live rounds | test | — | 任意 |
 | 15 | e2e | 05 验收 15: write task, approve, summary, restore, content back and git status clean | test:e2e | — | macOS、Linux |
-| 16 | 集成 | 05 验收 16: preview lists every path with skip reasons, marks command paths, and cancel touches nothing | test | — | 任意 |
+| 16 | 集成 | 05 验收 16: preview and cancel never change workspace bytes or stamps | test | — | 任意 |
 | 17 | 集成 | 05 验收 17: restore removes new files, brings back deleted ones, links and 600 modes (also chmod-only), and stamps restore time | test | — | 任意 |
 | 18 | 集成 | 05 验收 18: conflicts are asked one by one and only listed overwrites happen | test | — | 任意 |
 | 19 | 集成 | 05 验收 19: restore touches only the agent's paths, not ignored files or your in-round edits | test | — | 任意 |

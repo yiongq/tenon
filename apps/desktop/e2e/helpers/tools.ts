@@ -138,6 +138,11 @@ export function writeCall(id: string, filePath: string, content: string) {
   return { type: 'tool_use', id, name: 'Write', input: { file_path: filePath, content } } as const
 }
 
+/** A `Delete` call as the model asks for it: one file, not a shell command. */
+export function deleteCall(id: string, filePath: string) {
+  return { type: 'tool_use', id, name: 'Delete', input: { file_path: filePath } } as const
+}
+
 /** An `Edit` call as the model asks for it. */
 export function editCall(
   id: string,

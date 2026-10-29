@@ -1,3 +1,5 @@
+import { unfinishedRestore } from '@/lib/snapshots'
+import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 import { ThreadPrimitive, useThreadViewportStore } from '@assistant-ui/react'
 import { useEffect } from 'react'
 import type { JSX } from 'react'
@@ -64,6 +66,7 @@ function StopOnEscape(): null {
  */
 export function Thread(): JSX.Element {
   const { t } = useTranslation()
+  const { data } = useSnapshotRounds()
   return (
     <ThreadPrimitive.Root
       data-testid="thread"
@@ -84,6 +87,14 @@ export function Thread(): JSX.Element {
             running round hangs 8px under the message above it. */}
         <div className="mx-auto w-full max-w-[720px] [&>*+*]:mt-6 [&>[data-role=assistant]+[data-role=assistant]]:mt-2 [&>[data-role]+[data-testid=status-line]]:mt-2">
           <PendingApprovalBanner />
+          {unfinishedRestore(data) ? (
+            <output
+              data-testid="restore-unfinished"
+              className="font-sans text-ui-sm text-text-warning"
+            >
+              {t('snapshot.unfinished')}
+            </output>
+          ) : null}
           <ThreadPrimitive.Empty>
             <p
               data-testid="thread-empty"

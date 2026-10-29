@@ -50,6 +50,8 @@ export interface TreeRecord {
   entries: SavedFile[]
   directories: Record<string, number>
   excluded: string[]
+  /** Absent paths in older manifests are not proof of coverage. */
+  coverageComplete?: true
 }
 export interface SnapshotManifest {
   version: 1

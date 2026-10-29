@@ -28,6 +28,7 @@ export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null
 
 /** ④ First matching consequence: irreversible, online, then the remaining reversibilities. */
 export function undoKey(card: SentenceCard): string | null {
+  if (card.reversibility === 'revertible') return null
   if (card.reversibility === 'irreversible') return 'confirm.irreversible'
   if (card.kind === 'network') {
     if (

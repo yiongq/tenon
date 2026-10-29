@@ -229,7 +229,10 @@ test('presentation-r1 验收 7: a subtask’s Write is counted with the parent�
       await page.waitForTimeout(600)
       await card.getByTestId('approval-allow').click()
       await expect(page.getByTestId('assistant-text').last()).toHaveText('Parent finished.')
-      await expect(page.getByTestId('turn-summary')).toHaveText('读了 1 个文件 · 改了 1 个文件')
+      // 05 验收 33: the child's snapshotted Write makes the parent's round restorable.
+      await expect(page.getByTestId('turn-summary')).toHaveText(
+        '读了 1 个文件 · 改了 1 个文件 · 可还原',
+      )
       expect(readFileSync(output, 'utf8')).toBe('child note')
       expect(fake.unscripted).toBe(0)
     } finally {

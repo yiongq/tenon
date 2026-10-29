@@ -18,7 +18,8 @@ import type {
   SpawnSpec,
 } from './adapter.js'
 import { MemorySnapshots } from './memory-snapshots.js'
-import { absolutePath } from './path.js'
+import type { MemorySnapshotAccess, MemorySnapshotNode } from './memory-snapshots.js'
+import { absolutePath, isWithin } from './path.js'
 import { EMPTY_POLICY } from './policy.js'
 import type { PolicyState } from './policy.js'
 
@@ -70,7 +71,144 @@ const decoder = new TextDecoder()
  * dangling link is null, and realpath of a dangling link or a loop throws (spec 02 §内存宿主).
  * `.` and `..` apply to the directory actually reached, as they do in a kernel's path lookup.
  */
-class MemoryFs implements HostFs {
+const overlaps = (a: string, b: string): boolean =>
+  a === b ||
+  a.startsWith(b.endsWith('/') ? b : `${b}/`) ||
+  b.startsWith(a.endsWith('/') ? a : `${a}/`)
+
+class MemoryFs implements HostFs, MemorySnapshotAccess {
+  private readonly snapshotFolders = new Map<string, readonly AbsolutePath[]>()
+  setSnapshotFolders(sessionId: string, roots: readonly AbsolutePath[]): void {
+    this.snapshotFolders.set(sessionId, roots)
+  }
+
+  private readonly modes = new Map<string, number>()
+  private readonly exclusive = new Set<readonly AbsolutePath[]>()
+  private readonly writing = new Map<AbsolutePath, number>()
+  private readonly writeWaiters = new Set<() => void>()
+
+  snapshotLock(roots: readonly AbsolutePath[]): (() => void) | null {
+    if (
+      [...this.exclusive].some((held) => held.some((a) => roots.some((b) => overlaps(a, b)))) ||
+      [...this.writing.keys()].some((path) => roots.some((root) => overlaps(path, root)))
+    )
+      return null
+    this.exclusive.add(roots)
+    return () => {
+      this.exclusive.delete(roots)
+      for (const wake of this.writeWaiters) wake()
+      this.writeWaiters.clear()
+    }
+  }
+
+  snapshotFolder(path: AbsolutePath): AbsolutePath {
+    return absolutePath(this.lookup(normalize(path), true, true))
+  }
+
+  async snapshotShared(paths: readonly AbsolutePath[]): Promise<() => void> {
+    const roots = [
+      ...new Set([
+        ...paths,
+        ...[...this.snapshotFolders.values()]
+          .flat()
+          .filter((root) => paths.some((path) => isWithin(path, root))),
+      ]),
+    ]
+    while (
+      [...this.exclusive].some((held) => held.some((a) => roots.some((b) => overlaps(a, b))))
+    ) {
+      // oxlint-disable-next-line no-await-in-loop -- commands resume when the restore lease ends
+      await new Promise<void>((resolve) => this.writeWaiters.add(resolve))
+    }
+    return this.holdShared(roots)
+  }
+
+  private holdShared(roots: readonly AbsolutePath[]): () => void {
+    for (const root of roots) this.writing.set(root, (this.writing.get(root) ?? 0) + 1)
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      for (const root of roots) {
+        const left = (this.writing.get(root) ?? 1) - 1
+        if (left > 0) this.writing.set(root, left)
+        else this.writing.delete(root)
+      }
+    }
+  }
+
+  private async leased<T>(path: AbsolutePath, work: () => Promise<T>): Promise<T> {
+    const real = absolutePath(this.lookup(normalize(path), false, true))
+    const containing = [
+      ...new Set([...this.snapshotFolders.values()].flat().filter((root) => isWithin(real, root))),
+    ]
+    const roots = containing.length === 0 ? [real] : containing
+    while (
+      [...this.exclusive].some((held) => held.some((a) => roots.some((b) => overlaps(a, b))))
+    ) {
+      // oxlint-disable-next-line no-await-in-loop -- resume when restore releases its exclusive lease
+      await new Promise<void>((resolve) => this.writeWaiters.add(resolve))
+    }
+    const release = this.holdShared(roots)
+    try {
+      return await work()
+    } finally {
+      release()
+    }
+  }
+
+  snapshotEntries(): Map<AbsolutePath, MemorySnapshotNode> {
+    return new Map(
+      [...new Set([...this.files.keys(), ...this.links.keys(), ...this.dirs])].map((path) => [
+        absolutePath(path),
+        {
+          identity: this.identityOf(path)!,
+          ...(this.files.has(path) ? { data: this.files.get(path)!.slice() } : {}),
+          ...(this.links.has(path) ? { link: this.links.get(path)! } : {}),
+        },
+      ]),
+    )
+  }
+
+  restoreEntry(path: AbsolutePath, node: MemorySnapshotNode | undefined): void {
+    const parts = segmentsOf(normalize(path))
+    for (let i = 1; i < parts.length; i++) {
+      const parent = keyOf(parts.slice(0, i))
+      if (this.links.has(parent) || this.files.has(parent))
+        throw fsError('ENOTDIR', 'unsafe restore parent', path)
+      if (!this.dirs.has(parent)) {
+        this.dirs.add(parent)
+        this.mtimes.set(parent, this.clock.now())
+      }
+    }
+    if (
+      this.dirs.has(path) &&
+      node?.identity.kind !== 'dir' &&
+      [...this.dirs, ...this.files.keys(), ...this.links.keys()].some(
+        (entry) => entry !== path && entry.startsWith(`${path}/`),
+      )
+    )
+      throw fsError('ENOTEMPTY', 'directory not empty', path)
+    const prior = this.snapshotEntries().get(path)
+    this.files.delete(path)
+    this.links.delete(path)
+    this.dirs.delete(path)
+    this.modes.delete(path)
+    if (node !== undefined) {
+      if (node.identity.kind === 'dir') this.dirs.add(path)
+      else if (node.identity.kind === 'link') this.links.set(path, node.link!)
+      else if (node.identity.kind === 'file') this.files.set(path, node.data!.slice())
+      else throw new Error('Unsupported restore type')
+      this.modes.set(path, node.identity.mode)
+      const sameData =
+        prior?.data !== undefined &&
+        node.data !== undefined &&
+        prior.data.length === node.data.length &&
+        prior.data.every((value, i) => value === node.data![i])
+      if (!sameData) this.mtimes.set(path, this.clock.now())
+    } else this.mtimes.delete(path)
+  }
+
   readonly files = new Map<string, Uint8Array>()
   readonly mtimes = new Map<string, number>()
   readonly dirs = new Set<string>(['/'])
@@ -93,15 +231,17 @@ class MemoryFs implements HostFs {
   }
 
   async writeFile(path: AbsolutePath, data: Uint8Array | string): Promise<void> {
-    // lookup() has already required every directory on the way, so the parent exists.
-    const key = this.lookup(normalize(path), false)
-    if (this.links.has(key)) throw fsError('ELOOP', 'leaf is a symbolic link', path)
-    if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
-    const bytes = typeof data === 'string' ? encoder.encode(data) : data.slice()
-    for (const name of this.hardlinks.get(key) ?? [key]) {
-      this.files.set(name, bytes)
-      this.mtimes.set(name, this.clock.now())
-    }
+    return this.leased(path, async () => {
+      // lookup() has already required every directory on the way, so the parent exists.
+      const key = this.lookup(normalize(path), false)
+      if (this.links.has(key)) throw fsError('ELOOP', 'leaf is a symbolic link', path)
+      if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
+      const bytes = typeof data === 'string' ? encoder.encode(data) : data.slice()
+      for (const name of this.hardlinks.get(key) ?? [key]) {
+        this.files.set(name, bytes)
+        this.mtimes.set(name, this.clock.now())
+      }
+    })
   }
 
   /** Spec 05 §mtime 守卫: no await between reading content and its stamp. */
@@ -117,9 +257,11 @@ class MemoryFs implements HostFs {
       }
     },
     create: async (path, data) => {
-      const key = this.lookup(normalize(path), false)
-      if (this.identityOf(key) !== null) throw fsError('EEXIST', 'file exists', path)
-      await this.writeFile(absolutePath(key), data)
+      return this.leased(path, async () => {
+        const key = this.lookup(normalize(path), false)
+        if (this.identityOf(key) !== null) throw fsError('EEXIST', 'file exists', path)
+        await this.writeFile(absolutePath(key), data)
+      })
     },
   }
 
@@ -134,15 +276,17 @@ class MemoryFs implements HostFs {
 
   /** Spec 05 §Delete 工具: the leaf itself, never a directory or the link's target. */
   async remove(path: AbsolutePath): Promise<void> {
-    const key = this.lookup(normalize(path), false)
-    if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
-    if (this.identityOf(key) === null) throw notFound(path)
-    const names = this.hardlinks.get(key)
-    names?.delete(key)
-    this.hardlinks.delete(key)
-    this.files.delete(key)
-    this.links.delete(key)
-    this.mtimes.delete(key)
+    return this.leased(path, async () => {
+      const key = this.lookup(normalize(path), false)
+      if (this.dirs.has(key)) throw fsError('EISDIR', 'is a directory', path)
+      if (this.identityOf(key) === null) throw notFound(path)
+      const names = this.hardlinks.get(key)
+      names?.delete(key)
+      this.hardlinks.delete(key)
+      this.files.delete(key)
+      this.links.delete(key)
+      this.mtimes.delete(key)
+    })
   }
 
   private identityOf(key: string): FileIdentity | null {
@@ -161,7 +305,7 @@ class MemoryFs implements HostFs {
       size: data?.byteLength ?? (link === undefined ? 0 : encoder.encode(link).byteLength),
       nlink: kind === 'file' ? (this.hardlinks.get(key)?.size ?? 1) : kind === 'dir' ? 2 : 1,
       mtimeNs: BigInt(Math.trunc((this.mtimes.get(key) ?? 0) * 1_000_000)),
-      mode: kind === 'file' ? 0o644 : kind === 'dir' ? 0o755 : 0o777,
+      mode: this.modes.get(key) ?? (kind === 'file' ? 0o644 : kind === 'dir' ? 0o755 : 0o777),
       dev: 1n,
     }
   }
@@ -216,41 +360,43 @@ class MemoryFs implements HostFs {
   }
 
   async mkdirp(path: AbsolutePath): Promise<void> {
-    const pending = segmentsOf(normalize(path))
-    let current: string[] = []
-    let hops = 0
-    for (let segment = pending.shift(); segment !== undefined; segment = pending.shift()) {
-      if (segment === '..') {
-        current.pop()
-        continue
-      }
-      const candidate = keyOf([...current, segment])
-      const last = pending.length === 0
-      if (this.links.has(candidate)) {
-        // Like node's recursive mkdir, never create what a link points to: it must reach a directory.
-        hops += 1
-        if (hops > MAX_LINK_HOPS) throw fsError('ELOOP', 'too many symbolic links', path)
-        const reached = this.reach(candidate)
-        if (reached !== null && this.dirs.has(reached)) {
-          current = segmentsOf(reached)
+    return this.leased(path, async () => {
+      const pending = segmentsOf(normalize(path))
+      let current: string[] = []
+      let hops = 0
+      for (let segment = pending.shift(); segment !== undefined; segment = pending.shift()) {
+        if (segment === '..') {
+          current.pop()
           continue
         }
-        if (!last) throw fsError('ENOTDIR', 'not a directory', path)
-        throw reached !== null && this.files.has(reached)
-          ? fsError('EEXIST', 'file exists', path)
-          : notFound(path)
+        const candidate = keyOf([...current, segment])
+        const last = pending.length === 0
+        if (this.links.has(candidate)) {
+          // Like node's recursive mkdir, never create what a link points to: it must reach a directory.
+          hops += 1
+          if (hops > MAX_LINK_HOPS) throw fsError('ELOOP', 'too many symbolic links', path)
+          const reached = this.reach(candidate)
+          if (reached !== null && this.dirs.has(reached)) {
+            current = segmentsOf(reached)
+            continue
+          }
+          if (!last) throw fsError('ENOTDIR', 'not a directory', path)
+          throw reached !== null && this.files.has(reached)
+            ? fsError('EEXIST', 'file exists', path)
+            : notFound(path)
+        }
+        if (this.files.has(candidate)) {
+          throw last
+            ? fsError('EEXIST', 'file exists', path)
+            : fsError('ENOTDIR', 'not a directory', path)
+        }
+        if (!this.dirs.has(candidate)) {
+          this.dirs.add(candidate)
+          this.mtimes.set(candidate, this.clock.now())
+        }
+        current.push(segment)
       }
-      if (this.files.has(candidate)) {
-        throw last
-          ? fsError('EEXIST', 'file exists', path)
-          : fsError('ENOTDIR', 'not a directory', path)
-      }
-      if (!this.dirs.has(candidate)) {
-        this.dirs.add(candidate)
-        this.mtimes.set(candidate, this.clock.now())
-      }
-      current.push(segment)
-    }
+    })
   }
 
   async realpath(path: AbsolutePath): Promise<AbsolutePath | null> {
@@ -290,7 +436,7 @@ class MemoryFs implements HostFs {
    * need not exist. Throws ENOENT / ENOTDIR when a directory on the way is missing or is a file,
    * ELOOP after MAX_LINK_HOPS links.
    */
-  private lookup(path: string, followLast: boolean): string {
+  private lookup(path: string, followLast: boolean, allowMissingParents = false): string {
     const pending = segmentsOf(path)
     const current: string[] = []
     let hops = 0
@@ -309,7 +455,11 @@ class MemoryFs implements HostFs {
         pending.unshift(...segmentsOf(target))
         continue
       }
-      if (!last && !this.dirs.has(candidate)) {
+      if (
+        !last &&
+        !this.dirs.has(candidate) &&
+        (!allowMissingParents || this.files.has(candidate))
+      ) {
         throw this.files.has(candidate)
           ? fsError('ENOTDIR', 'not a directory', path)
           : notFound(path)
@@ -394,15 +544,75 @@ const noNetwork: HostNetwork = {
   },
 }
 
+interface MemoryCommandLease {
+  cleanup: () => Promise<void>
+  release: () => void
+  started: boolean
+  exited: boolean
+  cleaned: boolean
+}
+function finishMemoryCommand(lease: MemoryCommandLease): void {
+  if (lease.exited && lease.cleaned) lease.release()
+}
+
 class PassthroughSandbox implements HostSandbox {
   readonly log: string[] = []
-  async wrap(request: SandboxRequest): Promise<{ argv: string[]; env: Record<string, string> }> {
-    if (request.profile !== 'full-access') {
-      this.log.push(`sandbox: passthrough ${request.commandId} ${request.profile}`)
+  readonly process: HostProcess
+  private readonly commands = new Map<string, MemoryCommandLease>()
+  private readonly argv = new WeakMap<readonly string[], MemoryCommandLease>()
+  private readonly fs: MemoryFs
+
+  constructor(fs: MemoryFs, delegate: HostProcess) {
+    this.fs = fs
+    this.process = {
+      spawn: async (spec, signal) => {
+        const lease = this.argv.get(spec.argv)
+        if (lease?.cleaned) throw new Error('Command already cleaned before spawn')
+        if (lease !== undefined) lease.started = true
+        try {
+          const child = await delegate.spawn(spec, signal)
+          if (lease !== undefined)
+            void child.exited.then(() => {
+              lease.exited = true
+              finishMemoryCommand(lease)
+            })
+          return child
+        } catch (error) {
+          if (lease !== undefined) {
+            lease.exited = true
+            await lease.cleanup()
+            finishMemoryCommand(lease)
+          }
+          throw error
+        }
+      },
     }
-    return { argv: [...request.argv], env: { ...request.env } }
   }
-  async afterExit(_commandId: string): Promise<void> {}
+
+  async wrap(request: SandboxRequest): Promise<{ argv: string[]; env: Record<string, string> }> {
+    const roots = [request.cwd, ...request.workspace].map((root) => this.fs.snapshotFolder(root))
+    const lease: MemoryCommandLease = {
+      cleanup: () => this.afterExit(request.commandId),
+      release: await this.fs.snapshotShared(roots),
+      started: false,
+      exited: false,
+      cleaned: false,
+    }
+    const argv = [...request.argv]
+    this.commands.set(request.commandId, lease)
+    this.argv.set(argv, lease)
+    if (request.profile !== 'full-access')
+      this.log.push(`sandbox: passthrough ${request.commandId} ${request.profile}`)
+    return { argv, env: { ...request.env } }
+  }
+  async afterExit(commandId: string): Promise<void> {
+    const lease = this.commands.get(commandId)
+    if (lease === undefined) return
+    this.commands.delete(commandId)
+    lease.cleaned = true
+    if (!lease.started) lease.exited = true
+    finishMemoryCommand(lease)
+  }
   async violations(_commandId: string): Promise<SandboxViolation[]> {
     return []
   }
@@ -493,20 +703,20 @@ export function createMemoryHost(options: MemoryHostOptions = {}): MemoryHost {
   absolutePath(identity.profileDir)
   const clock = new ManualClock(options.now ?? 0)
   const fs = new MemoryFs(clock)
-  const sandbox = new PassthroughSandbox()
+  const sandbox = new PassthroughSandbox(fs, options.process ?? noProcess)
   const confirm = new RecordingConfirm()
   const policy = new MemoryPolicy(options.policy ?? PERSONAL_TENANT)
   return {
     identity,
     fs,
     secrets: new MemorySecrets(),
-    process: options.process ?? noProcess,
+    process: sandbox.process,
     sandbox,
     confirm,
     clock,
     network: options.network ?? noNetwork,
     policy,
-    snapshots: new MemorySnapshots(fs, clock),
+    snapshots: new MemorySnapshots(fs, clock, fs),
     files: fs.files,
     confirmRequests: confirm.requests,
     sandboxLog: sandbox.log,

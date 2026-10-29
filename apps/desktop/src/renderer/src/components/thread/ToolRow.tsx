@@ -1,14 +1,16 @@
+import { callSnapshot } from '@/lib/snapshots'
+import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
 import { invokeRoute, mcpLogin, sandboxRelease } from '@tenon-app/contracts'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, CircleX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
 import { PathText } from '@/components/ui/path-text'
 import { mcpAction, useMcp } from '@/runtime/mcp-store'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { needsProxyWarning } from '@/lib/sandbox-settings'
-import { toolRowEffect } from '@/lib/tool-row-effect'
+import { toolMarker, toolRowEffect } from '@/lib/tool-row-effect'
 import { useState } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,6 +56,9 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
   const input = (props.args ?? {}) as Readonly<Record<string, unknown>>
   const outcome = (props.result ?? null) as ToolOutcomeViewContract | null
   const effect = toolRowEffect(outcome, props.toolName)
+  const marker = toolMarker(outcome)
+  const rounds = useSnapshotRounds()
+  const saved = callSnapshot(rounds.data?.rounds ?? [], callKey)
   const pending =
     snapshot.pending?.waitKind === 'approval' && snapshot.pending.anchorCallKey === callKey
       ? snapshot.pending
@@ -109,11 +114,17 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         {effect?.marker ? (
           <Tooltip>
             <TooltipTrigger render={<span />} data-testid="tool-effect-marker" className="shrink-0">
-              <AlertTriangle aria-hidden className="inline size-3" />
-              <span className="sr-only">{t('tool.did.irreversible')}</span>
+              {marker === 'failed' ? (
+                <CircleX aria-hidden className="inline size-3" />
+              ) : (
+                <AlertTriangle aria-hidden className="inline size-3" />
+              )}
+              <span className="sr-only">
+                {t(marker === 'failed' ? 'tool.did.failed' : 'tool.did.irreversible')}
+              </span>
             </TooltipTrigger>
             <TooltipContent className="w-max max-w-none whitespace-nowrap [&>[data-slot=tooltip-arrow]]:hidden">
-              {t('tool.did.irreversible')}
+              {t(marker === 'failed' ? 'tool.did.failed' : 'tool.did.irreversible')}
             </TooltipContent>
           </Tooltip>
         ) : null}
@@ -206,6 +217,11 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
                 </p>
               )}
             </>
+          )}
+          {saved === null ? null : (
+            <p data-testid="tool-snapshot" className="text-micro text-text-muted">
+              {t('snapshot.number', { id: visible(saved.snapshotId) })}
+            </p>
           )}
           {effect?.didKey ? (
             <p data-testid="tool-side-effects" className="text-micro text-text-secondary">

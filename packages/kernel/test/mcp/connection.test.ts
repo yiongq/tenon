@@ -259,3 +259,21 @@ it('03 验收 39: every explicit tool listing requests cacheMode refresh from th
     [undefined, { cacheMode: 'refresh' }],
   ])
 })
+
+it('05 验收 53: N2 — stdio wrap preserves the marked argv object from the spawn spec', async () => {
+  const host = createMemoryHost({ process: createNodeProcess() })
+  const argv = [
+    process.execPath,
+    new URL('../support/fixtures/modern-server.mjs', import.meta.url).pathname,
+    'dual',
+  ]
+  const wrap = vi.spyOn(host.sandbox, 'wrap')
+  const connection = await connectStdioServer(host, {
+    name: 'identity-fixture',
+    spawn: { argv, cwd: absolutePath('/'), env: {}, stdio: 'pipe' },
+    sandbox: { profile: 'full-access', workspace: [] },
+    handshakeTimeoutMs: 1000,
+  })
+  connections.push(connection)
+  expect(wrap.mock.calls[0]?.[0].argv).toBe(argv)
+})

@@ -50,6 +50,7 @@ import type { IpcMainLike } from '@tenon-app/contracts'
 import { parseAst, transformWithEsbuild } from 'vite'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { registerApprovalRoutes } from '../src/main/approval-routes.js'
+import { registerSnapshotRoutes } from '../src/main/snapshot-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { DesktopLoop } from '../src/main/chat.js'
 import { SystemClock } from '../src/main/host/clock.js'
@@ -300,6 +301,7 @@ function rig(
   const routes = refuseWhileRemoving(ipc.ipcMain, (sessionId) => removal.removing(sessionId))
   registerChatRoutes({ send: () => {}, ipcMain: routes, sessions, loop, log: () => {} })
   registerApprovalRoutes({ ipcMain: routes, sessions })
+  registerSnapshotRoutes({ ipcMain: routes, sessions, canAccessSession: () => true })
   return {
     profileDir,
     store: opened.store,
@@ -477,6 +479,10 @@ function sendRequests(sessionId: string): Array<[string, unknown]> {
     ['chat.continue', { sessionId }],
     ['approval.respond', { kind: 'approval', sessionId, requestId: 'r-1', decision: 'allow' }],
     ['approval.resume', { sessionId }],
+    [
+      'snapshot.restore',
+      { sessionId, roundRunId: sessionId, previewKey: 'preview', overwrite: [] },
+    ],
   ]
 }
 

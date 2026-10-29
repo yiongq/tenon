@@ -1,3 +1,6 @@
+import { restoreNotes, roundForRun } from '@/lib/snapshots'
+import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
+import { RestoreLink } from './RestoreDialog'
 import { useAuiState } from '@assistant-ui/react'
 import { invokeRoute, providerList, sessionModelChoice } from '@tenon-app/contracts'
 import type { ProviderEntryContract, RunEndReasonContract } from '@tenon-app/contracts'
@@ -74,10 +77,27 @@ const VISUAL_CLASS: Readonly<Record<EndVisual, string>> = {
 export function RunEndCard(): JSX.Element | null {
   const custom = useAuiState((s) => s.message.metadata.custom) as unknown as TurnCustom | undefined
   const end = custom?.end
-  if (end === undefined) return null
+  const snapshot = useSessionSnapshot()
+  const { data } = useSnapshotRounds()
+  const round = roundForRun(data?.rounds ?? [], end?.runId ?? null)
+  const latest = snapshot.model.turns.findLast(
+    (turn) =>
+      turn.end !== undefined &&
+      turn.end.endReason?.code !== 'paused' &&
+      round?.runIds.includes(turn.end.runId ?? ''),
+  )
+  if (end === undefined) {
+    const historical = custom?.historicalSummary
+    return historical === undefined ? null : (
+      <SummaryLine summary={historical.summary} runId={historical.runId} />
+    )
+  }
   return (
     <>
-      {custom?.summary === undefined ? null : <SummaryLine summary={custom.summary} />}
+      {end.endReason?.code === 'paused' ||
+      (round !== undefined && latest?.end?.runId !== end.runId) ? null : (
+        <SummaryLine summary={custom?.summary ?? null} runId={end.runId} />
+      )}
       {end.endReason === null ? (
         end.errorCode === null ? null : (
           <MessageError code={end.errorCode} turnId={custom?.turnId ?? ''} />
@@ -166,15 +186,32 @@ function MessageError(props: {
 }
 
 export function SummaryLine(props: {
-  readonly summary: NonNullable<TurnCustom['summary']>
-}): JSX.Element {
+  readonly summary: NonNullable<TurnCustom['summary']> | null
+  readonly runId?: string | null
+}): JSX.Element | null {
   const { t } = useTranslation()
+  const { data } = useSnapshotRounds()
+  const round = roundForRun(data?.rounds ?? [], props.runId ?? null)
+  const notes = restoreNotes(round)
+  if (props.summary === null && notes.link === null && !notes.command) return null
   return (
     <p data-testid="turn-summary" className="font-sans text-micro text-text-muted">
-      {Object.entries(props.summary)
+      {Object.entries(props.summary ?? {})
         .filter(([, count]) => count > 0)
         .map(([kind, count]) => tx(t, `summary.${kind}`, { count }))
         .join(t('summary.separator'))}
+      {notes.link === null || round === undefined ? null : (
+        <>
+          {props.summary === null ? null : t('summary.separator')}
+          <RestoreLink roundRunId={round.roundRunId} label={t(notes.link)} />
+        </>
+      )}
+      {notes.command ? (
+        <>
+          {props.summary === null && notes.link === null ? null : t('summary.separator')}
+          {t('snapshot.command')}
+        </>
+      ) : null}
     </p>
   )
 }

@@ -482,6 +482,7 @@ function lastWritten(turns: readonly Turn[], index: number): number {
 export interface TurnSummary {
   readonly read: number
   readonly search: number
+  readonly delete: number
   readonly write: number
   readonly command: number
   readonly online: number
@@ -501,9 +502,18 @@ export function summaryBefore(
   if (round.some((turn) => turn.end !== undefined && turn.end.endReason?.code !== 'paused')) {
     return null
   }
-  const counts = { read: 0, search: 0, write: 0, command: 0, online: 0, connector: 0 }
+  return summarizeCalls(turns.slice(lastUser + 1, index + 1), childSessions)
+}
+
+/** The counting rules are shared by live settlement and D63's Tape-anchored history. */
+export function summarizeCalls(
+  turns: readonly Turn[],
+  childSessions: ReadonlyMap<string, readonly Turn[]> = new Map(),
+): TurnSummary | null {
+  const counts = { read: 0, search: 0, write: 0, delete: 0, command: 0, online: 0, connector: 0 }
   const readPaths = new Set<string>()
   const writePaths = new Set<string>()
+  const deletePaths = new Set<string>()
   const visited = new Set<string>()
   const count = (calls: readonly Turn[]): void => {
     for (const turn of calls) {
@@ -521,21 +531,28 @@ export function summaryBefore(
         }
         const category = toolCategory(part.name)
         if (category === null) continue
-        if (category === 'read' || category === 'search' || category === 'write') {
+        if (
+          category === 'read' ||
+          category === 'search' ||
+          category === 'write' ||
+          category === 'delete'
+        ) {
           if (outcome.state !== 'completed' || outcome.isError !== false) continue
           if (category !== 'write' && outcome.permission?.code === 'own-output-read') continue
           if (category === 'search') counts.search += 1
           else if (typeof part.input.file_path === 'string') {
-            const paths = category === 'read' ? readPaths : writePaths
+            const paths =
+              category === 'read' ? readPaths : category === 'delete' ? deletePaths : writePaths
             paths.add(part.input.file_path)
           }
         } else counts[category] += 1
       }
     }
   }
-  count(turns.slice(lastUser + 1, index + 1))
+  count(turns)
   counts.read = readPaths.size
   counts.write = writePaths.size
+  counts.delete = deletePaths.size
   return Object.values(counts).every((value) => value === 0) ? null : counts
 }
 

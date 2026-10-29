@@ -1,5 +1,6 @@
+import type { Round } from '../lib/snapshots'
 import type { ThreadMessageLike } from '@assistant-ui/react'
-import { retryable, summaryBefore } from './thread-model'
+import { retryable, summaryBefore, summarizeCalls } from './thread-model'
 import type { RunEnd, ThinkingPart, ThreadModel, Turn, TurnSummary } from './thread-model'
 
 /**
@@ -9,6 +10,7 @@ import type { RunEnd, ThinkingPart, ThreadModel, Turn, TurnSummary } from './thr
  */
 export interface TurnCustom {
   readonly turnId: string
+  readonly historicalSummary?: { readonly runId: string; readonly summary: TurnSummary | null }
   readonly end?: RunEnd
   readonly summary?: TurnSummary
   readonly retryable?: boolean
@@ -18,10 +20,41 @@ export interface TurnCustom {
   }>
 }
 
-export function toThreadMessages(model: ThreadModel): ThreadMessageLike[] {
+export function toThreadMessages(
+  model: ThreadModel,
+  rounds: readonly Round[] = [],
+  historicalModel: ThreadModel = model,
+): ThreadMessageLike[] {
   // A reply typed while a question waits is drawn only once it turns out to be a message.
   const turns = model.turns.filter((turn) => turn.answering !== true)
-  return turns.map((turn, index) => toMessage(turns, turn, index, model.childSessions))
+  return turns.map((turn, index) => {
+    const round =
+      turn.end === undefined && turn.role === 'assistant'
+        ? rounds.find((candidate) => candidate.endMessageId === turn.id)
+        : undefined
+    // Live ends own their line. A refresh must never add a second, historical settlement.
+    const history =
+      round === undefined ||
+      turns.some(
+        (candidate) =>
+          candidate.end !== undefined && round.runIds.includes(candidate.end.runId ?? ''),
+      )
+        ? undefined
+        : {
+            runId: round.runIds.at(-1) ?? round.roundRunId,
+            summary: summarizeCalls(
+              historicalModel.turns.map((candidate) => ({
+                ...candidate,
+                parts: candidate.parts.filter(
+                  (part) =>
+                    part.kind === 'tool' && round.runIds.includes(part.callKey.split(':')[0]!),
+                ),
+              })),
+              historicalModel.childSessions,
+            ),
+          }
+    return toMessage(turns, turn, index, model.childSessions, history)
+  })
 }
 
 function toMessage(
@@ -29,6 +62,7 @@ function toMessage(
   turn: Turn,
   index: number,
   childSessions: ThreadModel['childSessions'],
+  historicalSummary: TurnCustom['historicalSummary'],
 ): ThreadMessageLike {
   // One timing per reasoning part assistant-ui keeps: it drops a blank one (fromThreadMessageLike),
   // and ThinkingBlock finds its timing by its place among the kept ones.
@@ -37,6 +71,7 @@ function toMessage(
     .map((part) => ({ startedAt: part.startedAt, endedAt: part.endedAt }))
   const custom: TurnCustom = {
     turnId: turn.id,
+    ...(historicalSummary === undefined ? {} : { historicalSummary }),
     ...(turn.end === undefined ? {} : { end: turn.end }),
     ...(turn.end === undefined || turn.end.endReason?.code === 'paused'
       ? {}

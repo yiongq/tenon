@@ -1,7 +1,7 @@
 /** Spec 05 §快照怎么拍: ignored-file enumeration and independent (parentless) git trees. */
 import { access, lstat, readdir, readlink, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { absolutePath } from '@tenon-app/kernel'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { SnapshotGit } from './snapshot-git.js'
@@ -37,6 +37,7 @@ export async function scanTree(
 ): Promise<TreeScan> {
   const excluded: string[] = []
   const directories: Record<string, number> = {}
+  const onDisk = new Set<string>()
   const defaults: string[] = DEFAULT_EXCLUDES.map((name) => (name === '.git' ? '.git' : `${name}`))
   if (contains(folder, profile)) defaults.push(pattern(relative(folder, profile)))
   const discover = async (dir: string): Promise<void> => {
@@ -51,6 +52,7 @@ export async function scanTree(
       return
     }
     for (const child of children) {
+      onDisk.add(join(dir, child.name))
       if (
         !child.isDirectory() ||
         DEFAULT_EXCLUDES.includes(child.name as (typeof DEFAULT_EXCLUDES)[number])
@@ -75,7 +77,16 @@ export async function scanTree(
     await git.run(
       repo,
       folder,
-      ['ls-files', '--cached', '--others', '--exclude-standard', '--deduplicate', '-z'],
+      [
+        '-c',
+        'core.ignorecase=false',
+        'ls-files',
+        '--cached',
+        '--others',
+        '--exclude-standard',
+        '--deduplicate',
+        '-z',
+      ],
       signal,
     )
   )
@@ -91,6 +102,21 @@ export async function scanTree(
       )
     ).split('\0'),
   )
+  // Persist ignored names too: absence in a commit must never mean an ignored path was absent.
+  excluded.push(
+    ...(
+      await git.run(
+        repo,
+        folder,
+        ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
+        signal,
+      )
+    )
+      .split('\0')
+      .filter(Boolean)
+      .map((name) => name.replace(/\/$/, '')),
+  )
+  excluded.push(...[...ignored].filter(Boolean))
   const entries: SavedFile[] = []
   let bytes = 0
   let skipped = 0
@@ -104,7 +130,11 @@ export async function scanTree(
         const path = absolutePath(join(folder, name))
         if (!contains(folder, path)) throw new Error('Git listed a path outside the workspace')
         try {
+          // Cached names under a substituted link are absent; never stat through that link.
+          if (!onDisk.has(path) || !Object.hasOwn(directories, dirname(path)))
+            return { name, absent: true }
           const stats = await lstat(path, { bigint: true })
+          if (stats.isDirectory()) return { name, absent: true }
           if ((!stats.isFile() && !stats.isSymbolicLink()) || stats.size > BigInt(MAX_FILE_BYTES))
             return { name }
           if (stats.isFile()) await access(path, constants.R_OK)
@@ -198,5 +228,12 @@ export async function captureTree(
     await git.run(repo, folder, ['commit-tree', tree, '-m', 'Tenon snapshot'], signal)
   ).trim()
   await git.run(repo, folder, ['update-ref', `refs/tenon/${id}`, commit], signal)
-  return { folder, commit, entries, directories: scan.directories, excluded: scan.excluded }
+  return {
+    folder,
+    commit,
+    entries,
+    directories: scan.directories,
+    excluded: scan.excluded,
+    coverageComplete: true,
+  }
 }

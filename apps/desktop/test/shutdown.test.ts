@@ -38,6 +38,7 @@ import { registerApprovalRoutes } from '../src/main/approval-routes.js'
 import { createDesktopLoop, createRunRegistry, registerChatRoutes } from '../src/main/chat.js'
 import type { RunRegistry } from '../src/main/chat.js'
 import { registerModelRoutes } from '../src/main/model-routes.js'
+import { registerSnapshotRoutes } from '../src/main/snapshot-routes.js'
 import { registerSessionRoutes } from '../src/main/session.js'
 import { registerSandboxRoutes } from '../src/main/sandbox-routes.js'
 import {
@@ -977,6 +978,7 @@ function refusedRequests(sessionId: string): Array<[string, unknown]> {
     ['workspace.pick', { sessionId }],
     ['workspace.usePrefill', { sessionId }],
     ['workspace.remove', { sessionId, folder: '/tmp/x' }],
+    ['snapshot.restore', { sessionId, roundRunId: ROOT, previewKey: 'preview', overwrite: [] }],
     [
       'sandbox.release',
       { sessionId, callKey: 'opaque-call', action: 'rerun-unsandboxed', target: null },
@@ -1035,6 +1037,7 @@ describe('once the shutdown began, a route that opens a Run or writes a fact ans
     registerChatRoutes({ send: () => {}, ipcMain: routes, sessions, loop, log: () => {} })
     registerApprovalRoutes({ ipcMain: routes, sessions })
     registerSessionRoutes({ ipcMain: routes, sessions })
+    registerSnapshotRoutes({ ipcMain: routes, sessions, canAccessSession: () => true })
     registerWorkspaceRoutes({
       ipcMain: routes,
       sessions,

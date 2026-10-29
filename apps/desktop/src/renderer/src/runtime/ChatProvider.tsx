@@ -1,7 +1,15 @@
+import { useSnapshotRounds } from './SnapshotProvider'
 import { AssistantRuntimeProvider, useExternalStoreRuntime } from '@assistant-ui/react'
 import type { AppendMessage } from '@assistant-ui/react'
 import type { MessageRowContract } from '@tenon-app/contracts'
-import { createContext, useContext, useEffect, useMemo, useSyncExternalStore } from 'react'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { JSX, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { sessionTitle } from '@/lib/session-title'
@@ -9,6 +17,8 @@ import { ConversationContext } from './conversation'
 import { SessionStore } from './session-store'
 import type { SessionSnapshot } from './session-store'
 import { toThreadMessages } from './to-thread-messages'
+import { readHistoryModel } from '../lib/snapshots'
+import type { ThreadModel } from './thread-model'
 
 export interface ChatProviderProps {
   /** A new id remounts the provider: fresh thread in the UI, fresh session on the tape. */
@@ -92,7 +102,50 @@ export function ChatProvider({
   }, [hasMessages, onHasMessages])
   const title = sessionTitle(snapshot.model.turns, i18n.language)
   useEffect(() => onTitle?.(sessionId, title), [onTitle, sessionId, title])
-  const messages = useMemo(() => toThreadMessages(snapshot.model), [snapshot.model])
+  const { data: snapshotRounds } = useSnapshotRounds()
+  const historyKey = JSON.stringify(
+    snapshotRounds?.rounds
+      .filter(
+        (round) =>
+          round.endMessageId !== null &&
+          snapshot.model.turns.some(
+            (turn) => turn.id === round.endMessageId && turn.end === undefined,
+          ) &&
+          !snapshot.model.turns.some(
+            (turn) => turn.end !== undefined && round.runIds.includes(turn.end.runId ?? ''),
+          ),
+      )
+      .map((round) => round.endMessageId) ?? [],
+  )
+  const [history, setHistory] = useState<{ key: string; model: ThreadModel } | null>(null)
+  useEffect(() => {
+    if (historyKey === '[]') return
+    let current = true
+    const refresh = () => {
+      void readHistoryModel(window.tenon, sessionId)
+        .then((model) => {
+          if (current) setHistory({ key: historyKey, model })
+        })
+        .catch(() => {
+          /* Never show partial counts; focus retries a failed read. */
+        })
+    }
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      current = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [historyKey, sessionId])
+  const messages = useMemo(
+    () =>
+      toThreadMessages(
+        snapshot.model,
+        history?.key === historyKey ? snapshotRounds?.rounds : [],
+        history?.model,
+      ),
+    [snapshot.model, snapshotRounds, history, historyKey],
+  )
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage: (message) => message,

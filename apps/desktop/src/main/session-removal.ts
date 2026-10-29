@@ -6,6 +6,7 @@ import {
   chatQueueAct,
   chatSend,
   chatSendNow,
+  snapshotRestore,
 } from '@tenon-app/contracts'
 import type { IpcMainLike } from '@tenon-app/contracts'
 import { isCanonicalUuid, toolOutputDirFor } from '@tenon-app/kernel'
@@ -170,9 +171,8 @@ async function childOutputFolders(
 }
 
 /**
- * The routes that send into a session: a message, a stop-and-send, a queued item's send-now, 「继续」,
- * an answer and a resume — each opens a Run in it. A queued item's withdraw and edit open none, and
- * still answer.
+ * Routes that open a Run or restore files in a session: sends, a queued item's send-now, 「继续」,
+ * answers, resumes and snapshot restore. A queued item's withdraw and edit still answer.
  */
 export const REFUSED_WHILE_REMOVING: ReadonlySet<string> = new Set([
   chatSend.channel,
@@ -181,6 +181,7 @@ export const REFUSED_WHILE_REMOVING: ReadonlySet<string> = new Set([
   chatContinue.channel,
   approvalRespond.channel,
   approvalResume.channel,
+  snapshotRestore.channel,
 ])
 
 /** A diagnostic, never shown: the renderer maps `code` to copy (contracts' IpcError). */

@@ -223,12 +223,16 @@ it('03 验收 28 / 6 / 27 (desktop): enabled consented servers connect in parall
     expect(mcp.needsConsent('one')).toBe(false)
     await assertSecretFreeTape(host, mcp)
     await mcp.logs.close()
-    const files = [
-      join(root, 'config.json'),
-      ...(await readdir(join(root, 'mcp'))).map((f) => join(root, 'mcp', f)),
-      ...(await readdir(join(root, 'logs'))).map((f) => join(root, 'logs', f)),
-    ]
-    const text = (await Promise.all(files.map((f) => readFile(f, 'utf8')))).join('\n')
+    // A state file may be mid atomic write (temp file, then rename) while the directory is listed:
+    // scan again until every listed file can be read, so no file escapes the secret check.
+    const text = await vi.waitFor(async () => {
+      const files = [
+        join(root, 'config.json'),
+        ...(await readdir(join(root, 'mcp'))).map((f) => join(root, 'mcp', f)),
+        ...(await readdir(join(root, 'logs'))).map((f) => join(root, 'logs', f)),
+      ]
+      return (await Promise.all(files.map((f) => readFile(f, 'utf8')))).join('\n')
+    })
     expect(text).not.toContain('fake-credential-before')
     expect(text).not.toContain('fake-credential-after')
     expect(text).toContain('fixture credential ***')

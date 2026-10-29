@@ -1,3 +1,11 @@
+import { createSnapshotRestorer } from './restore.js'
+import type {
+  SnapshotRoundQuery,
+  SnapshotRestoreQuery,
+  SnapshotRoundsResult,
+  SnapshotPreviewResult,
+  SnapshotRestoreResult,
+} from './restore.js'
 import { fromParts, pathParts, isAbsolutePath } from '../host/path.js'
 import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import { releaseReceipt, sandboxDomainHosts } from '../permission/sandbox-release.js'
@@ -362,6 +370,9 @@ export interface SelectModelQuery {
 }
 
 export interface Loop {
+  snapshotRounds(q: { sessionId: string }): Promise<SnapshotRoundsResult>
+  snapshotPreview(q: SnapshotRoundQuery): Promise<SnapshotPreviewResult>
+  snapshotRestore(q: SnapshotRestoreQuery): Promise<SnapshotRestoreResult>
   bind(ports: LoopPorts): void
   /**
    * `session.selectModel` (§模型选择; 01 修补 6): the session's choice fact, or the draft's before it
@@ -425,6 +436,23 @@ export function createLoop(deps: LoopDeps): Loop {
   const drafts = createDraftStore()
   let bound: LoopPorts | null = null
   let lastSandboxSession: string | null = null
+
+  const snapshots = createSnapshotRestorer({
+    tape,
+    host: deps.host,
+    now,
+    activeRuns: () =>
+      [...boxes.values()].flatMap((box) =>
+        box.lease !== null && box.runId !== null ? [box.runId] : [],
+      ),
+    activeRoots: () =>
+      [...boxes.values()].filter((box) => box.lease !== null).map((box) => box.rootSessionId),
+  })
+  function snapshotTurn<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+    if (!isCanonicalUuid(sessionId))
+      return Promise.reject(new TypeError('Snapshot session id must be a canonical UUID'))
+    return post(mailboxOf(rootOf(sessionId)), 'command', null, work)
+  }
 
   // ----- the executor --------------------------------------------------------------------------
 
@@ -3306,6 +3334,9 @@ export function createLoop(deps: LoopDeps): Loop {
   }
 
   return {
+    snapshotRounds: (q) => snapshotTurn(q.sessionId, () => snapshots.rounds(q.sessionId)),
+    snapshotPreview: (q) => snapshotTurn(q.sessionId, () => snapshots.preview(q)),
+    snapshotRestore: (q) => snapshotTurn(q.sessionId, () => snapshots.restore(q)),
     bind(ports): void {
       if (bound !== null) throw new Error('bindLoop: the loop is already bound')
       bound = ports

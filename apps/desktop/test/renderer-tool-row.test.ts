@@ -28,9 +28,11 @@ it('03 验收 45: the expanded sentence uses tool names, only irreversible rows 
       expect(toolRowEffect(out, 'notes__echo')).toEqual({
         didKey: 'tool.did.connector',
         undoKey:
-          reversibility === 'irreversible'
-            ? 'confirm.irreversible'
-            : `confirm.undo.${reversibility}`,
+          reversibility === 'revertible'
+            ? null
+            : reversibility === 'irreversible'
+              ? 'confirm.irreversible'
+              : `confirm.undo.${reversibility}`,
         marker: reversibility === 'irreversible',
         loginServerId: null,
       })
@@ -522,7 +524,10 @@ it('presentation-r1 验收 6: the expanded line says what it did and whether it 
                   : reversibility === 'unknown' && did === 'write'
                     ? 'confirm.undo.unknownFile'
                     : `confirm.undo.${reversibility}`
-              expected = did === 'online' ? base : `${base} · ${i18n.t(undo as never)}`
+              expected =
+                did === 'online' || reversibility === 'revertible'
+                  ? base
+                  : `${base} · ${i18n.t(undo as never)}`
             }
             expect(didText(html), `${name}/${state}/${reversibility}`).toBe(expected)
             expect(strip(html)).not.toMatch(/副作用|Side effects/)
@@ -618,4 +623,51 @@ it('presentation-r1 验收 5 (sandbox): a call with a sandbox member never rende
   expect(markup).not.toContain('data-testid="blocked-notice"')
   expect(strip(markup)).not.toContain("Your organization doesn't allow this step.")
   expect(strip(markup)).toContain('Could not connect to example.com')
+})
+
+it('05 验收 47: the failure icon has failure screen-reader text, never irreversible text, and receipts suppress it', async () => {
+  context.expanded = false
+  const outcome: ToolOutcomeViewContract = {
+    effect: 'write',
+    state: 'completed',
+    source: null,
+    output: 'failed',
+    isError: true,
+    reversibility: 'irreversible',
+  }
+  const failed = await renderRow(null, 'Delete', { file_path: '/work/a' }, zh, false, outcome)
+  expect(failed).toContain('data-testid="tool-effect-marker"')
+  expect(failed).toContain('没做成')
+  expect(failed).not.toContain('撤不回')
+  const receipt = await renderRow(null, 'Delete', { file_path: '/work/a' }, zh, false, {
+    ...outcome,
+    sandbox: { violations: [], more: 0, anyProtected: false },
+  })
+  expect(receipt).not.toContain('data-testid="tool-effect-marker"')
+})
+
+it('05 验收 48: successful Delete renders the file and consequence in both locales; failures do not claim deletion', async () => {
+  context.expanded = true
+  const outcome: ToolOutcomeViewContract = {
+    effect: 'write',
+    state: 'completed',
+    source: null,
+    output: 'ok',
+    isError: false,
+    reversibility: 'snapshotted',
+  }
+  const zhRow = await renderRow(null, 'Delete', { file_path: '/work/a' }, zh, false, outcome)
+  expect(strip(zhRow)).toContain('/work/a')
+  expect(didText(zhRow)).toBe('删了这个文件 · 有快照，这一轮可以一键还原。')
+  expect(
+    didText(await renderRow(null, 'Delete', { file_path: '/work/a' }, en, false, outcome)),
+  ).toBe('Deleted this file · Snapshot taken first; you can undo this round.')
+  expect(
+    didText(
+      await renderRow(null, 'Delete', { file_path: '/work/a' }, en, false, {
+        ...outcome,
+        isError: true,
+      }),
+    ),
+  ).toBeNull()
 })

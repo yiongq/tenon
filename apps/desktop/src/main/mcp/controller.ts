@@ -1,3 +1,4 @@
+import { markConnectorCommand } from '../host/workspace-leases.js'
 import { createMcpPool } from '@tenon-app/kernel'
 import type { AbsolutePath, HostAdapter, McpPool, SchemaValidatorPort } from '@tenon-app/kernel'
 import type { Config } from '@tenon-app/contracts'
@@ -42,6 +43,7 @@ export function createDesktopMcp(q: {
   }
   pool = createMcpPool({
     host: q.host,
+    beforeStdioWrap: markConnectorCommand,
     ids: { uuid: q.uuid },
     baseEnv: q.baseEnv,
     homeDir: q.home,

@@ -1,3 +1,10 @@
+import type {
+  SnapshotRoundQuery,
+  SnapshotRestoreQuery,
+  SnapshotRoundsResult,
+  SnapshotPreviewResult,
+  SnapshotRestoreResult,
+} from '../loop/restore.js'
 import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 /**
@@ -200,6 +207,10 @@ export interface CreateSessionQuery {
 }
 
 export interface SessionService {
+  /** Spec 05: root rounds and unfinished restore evidence, ready for the later snapshot routes. */
+  snapshotRounds(q: { sessionId: string }): Promise<SnapshotRoundsResult>
+  snapshotPreview(q: SnapshotRoundQuery): Promise<SnapshotPreviewResult>
+  snapshotRestore(q: SnapshotRestoreQuery): Promise<SnapshotRestoreResult>
   /** Mints what the caller did not supply and writes `session/start` as the FIRST fact of it. */
   createSession(q?: CreateSessionQuery): Promise<SessionIncarnation>
   /**
@@ -457,6 +468,9 @@ export function constructSessionService(
       return withCalls(q.sessionId, await tape.listMessages(q))
     },
 
+    snapshotRounds: (q) => loop.snapshotRounds(q),
+    snapshotPreview: (q) => loop.snapshotPreview(q),
+    snapshotRestore: (q) => loop.snapshotRestore(q),
     sessionFacts: (q) => loop.sessionFacts(q),
     selectProfile: (q) => loop.selectProfile(q),
     selectModel: (q) => loop.selectModel(q),

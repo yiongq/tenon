@@ -1,3 +1,4 @@
+import { ThreadTitleMenu } from '../thread/ThreadTitleMenu'
 import { PanelLeftOpenIcon } from 'lucide-react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -45,13 +46,16 @@ export function TopBar({ collapsed, onExpand, title }: TopBarProps): JSX.Element
         </Tooltip>
       ) : null}
       {title === '' ? null : (
-        <h1
-          data-testid="app-title"
-          title={title}
-          className="truncate font-sans text-ui font-medium text-text-primary"
-        >
-          {title}
-        </h1>
+        <>
+          <h1
+            data-testid="app-title"
+            title={title}
+            className="truncate font-sans text-ui font-medium text-text-primary"
+          >
+            {title}
+          </h1>
+          <ThreadTitleMenu />
+        </>
       )}
     </header>
   )

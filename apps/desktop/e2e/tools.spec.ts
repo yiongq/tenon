@@ -439,7 +439,8 @@ test('presentation-r1 验收 6: an Edit that came back with an error does not sa
     // Exercises the real Write outcome, rather than injecting a local result. Spec 05: the host
     // snapshotted the workspace file before the write.
     await expect(written.getByTestId('tool-side-effects')).toHaveText(
-      'Changed this file · Tenon saved a copy before this change.',
+      // 05 验收 52: the expanded row repeats the round restore promise.
+      'Changed this file · Snapshot taken first; you can undo this round.',
     )
     await send(page, 'try the edit')
     // Edit has its own session grant, separate from Write's.

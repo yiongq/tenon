@@ -166,18 +166,40 @@ test('two writes in one reply: the second waits as a 「排队中」 row, then b
     await expect(page.getByTestId('tool-row')).toHaveCount(1)
 
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
+    // b's card must be clicked inside APPROVAL_CLICK_GUARD_MS of appearing. Playwright notices a
+    // new element by polling over animation frames, which sandbox-macos throttles past the whole
+    // guard, so the page clicks it itself, from a MutationObserver, the moment it is inserted.
+    await page.evaluate(() => {
+      const state = globalThis as unknown as { guardedClick: boolean }
+      state.guardedClick = false
+      new MutationObserver((_records, observer) => {
+        const allow = document
+          .querySelectorAll('[data-testid="tool-row"]')[1]
+          ?.querySelector<HTMLElement>(
+            '[data-testid="approval-card"] [data-testid="approval-allow"]',
+          )
+        if (allow === null || allow === undefined) return
+        observer.disconnect()
+        allow.click()
+        state.guardedClick = true
+      }).observe(document.body, { childList: true, subtree: true })
+    })
     await card.getByTestId('approval-allow').click()
-    // a is written; b's card comes up under its own row, a new requestId.
+    // a is written; b's card comes up under its own row, a new requestId, and the click it got on
+    // arrival is ignored.
     const rows = page.getByTestId('tool-row')
     const next = rows.nth(1).getByTestId('approval-card')
+    await expect(next).toHaveCount(1)
+    await expect
+      .poll(() =>
+        page.evaluate(() => (globalThis as unknown as { guardedClick: boolean }).guardedClick),
+      )
+      .toBe(true)
+    await page.waitForTimeout(150)
     await expect(next).toHaveCount(1)
     await expect(next).not.toHaveAttribute('data-request-id', first.card.requestId)
     expect(contentOf(a)).toBe('A\n')
     await expect(page.getByTestId('approval-queued-row')).toHaveCount(0)
-    // At once, inside APPROVAL_CLICK_GUARD_MS of it appearing: ignored.
-    await next.getByTestId('approval-allow').click()
-    await page.waitForTimeout(150)
-    await expect(next).toHaveCount(1)
     await expect(rows.nth(1).getByTestId('approval-answered')).toHaveCount(0)
     expect(contentOf(b)).toBeNull()
     expect(server.requests).toHaveLength(1)
@@ -263,7 +285,8 @@ test('presentation-r1 验收 3: a workspace Write card: the path, the change col
     await expect(card.getByTestId('approval-object')).toHaveText(file)
     await expect(card.getByTestId('approval-reason')).toHaveCount(0)
     // Spec 05 acceptance 1: a workspace file the host can snapshot is promised a copy.
-    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 保存了改动前的副本。')
+    // 05 验收 52: the approved snapshot promises restore for this round.
+    await expect(card.getByTestId('approval-undo')).toHaveText('有快照，这一轮可以一键还原。')
     await expect(card.getByTestId('reversibility-scale')).toHaveCount(0)
     await expect(card.getByTestId('approval-irreversible')).toHaveCount(0)
     // The allow button says this file, this session.
@@ -512,8 +535,9 @@ test('a round with a write allowed and reads after it shows one summary line, af
     await expect(page.getByTestId('assistant-text').last()).toHaveText('All done.')
     const summary = page.getByTestId('turn-summary')
     await expect(summary).toHaveCount(1)
-    // Three reads and the write, over both Runs, under the round's last reply.
-    await expect(summary).toHaveText('Read 3 files · Changed 1 file')
+    // Three reads and the write, over both Runs, under the round's last reply; 05 验收 33: the
+    // snapshotted write makes the round restorable.
+    await expect(summary).toHaveText('Read 3 files · Changed 1 file · Can be restored')
     await expect(
       page.getByTestId('assistant-message').last().getByTestId('turn-summary'),
     ).toHaveCount(1)
@@ -546,7 +570,7 @@ test('05 验收 25: a hard link in the workspace to a file outside it asks every
   })
   const server = fake
   const userData = makeUserDataDir('hard-link')
-  seedConfig(userData, { locale: 'en' })
+  seedConfig(userData, { locale: 'zh-CN' })
   const { app, page } = await launchTenon({ userData, env: providerEnv(server.baseURL) })
   try {
     await startTask(app, page, ws)
@@ -560,8 +584,11 @@ test('05 验收 25: a hard link in the workspace to a file outside it asks every
     expect(pending.card.target).toEqual({ type: 'path', path: linked })
     expect(pending.allowScope).toBe('once')
     await expect(card.getByTestId('approval-reason')).toHaveText(
-      'This file has other names. Changing it also changes it elsewhere.',
+      '这个文件还有别的名字，改它会连带改到别处。',
     )
+    // 05 验收 4、25: hard links never promise a snapshot.
+    await expect(card.getByTestId('approval-undo')).toHaveText('Tenon 没法替你撤回这次改动。')
+    await expect(card).not.toContainText('有快照，这一轮可以一键还原。')
     await page.waitForTimeout(PAST_CLICK_GUARD_MS)
     await card.getByTestId('approval-allow').click()
     await expect(page.getByTestId('assistant-text').last()).toHaveText('Written.')

@@ -200,3 +200,5 @@ export type { RunState } from './ipc/run.js'
 export * from './ipc/mcp.js'
 
 export * from './ipc/sandbox.js'
+
+export { snapshotRounds, snapshotPreview, snapshotRestore } from './ipc/snapshot.js'
