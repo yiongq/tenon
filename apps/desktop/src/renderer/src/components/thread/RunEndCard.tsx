@@ -216,8 +216,8 @@ export function SummaryLine(props: {
       </p>
     )
   }
-  // Keep the flow mounted even if a timer/focus refresh removes its link or fails (data=null).
-  // The dialog belongs to the open flow and remains visible until the user closes it.
+  // For the live row, keep the flow mounted if a timer/focus refresh removes its link or fails
+  // (data=null). Historical rows can still unmount here when their parent RunEndCard returns null.
   return (
     <RestoreLink
       roundRunId={round?.roundRunId ?? props.runId ?? ''}

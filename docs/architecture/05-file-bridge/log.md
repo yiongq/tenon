@@ -617,3 +617,12 @@
 - 全量（沙箱外，`--maxWorkers=2`）：5555 过、117 跳过、0 红。
 
 测试改动：apps/desktop/test/renderer-snapshot-views.test.ts · 05 验收 33: a settled round with snapshots offers restore even when every file call failed; retention removes it → 05 验收 33: a settled round follows kernel restore availability and coverage flags; paused rounds hide the link · 第 18 步复核 R6：名字仍是 D69 之前的口径，只改名不改断言
+
+## 实施 · 2026-10-30（第 18.5 步）
+
+- 用例（Codex 实现、lead 审，与本节同一笔提交）：`snapshot-restore-gaps.test.ts` 收「05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory」（读不到现在内容的跳过不入队时红）与「05 验收 19: an ignored origin rewritten with different bytes of the same size protects its copy」（只比大小时红）；`renderer-restore-components.test.ts` 的「05 验收 15: $result stays visible until closing…」加预览抛错、还原抛错、`stale` 重出后取消三种结果，各自去掉待刷新标记时红。`SummaryLine` 一句注释改成只保证现场那一行。流程不随数据重建那一条没补：仓库只有 Node 加 SSR，没有客户端 DOM 测试环境，为它加依赖不划算，靠 `refresh` 的 `useCallback([])` 撑着。
+- 文档（3839b02）：spec D70 一句与 §已知限制与代价 补「现在的内容读不到的跳过路径也算」；被排除的文件一条把「复制」改准；SECURITY.md 同改；plan 第 18.4、18.5 步、当前、交接与 Open 一条。
+- 全量（沙箱外，`--maxWorkers=2`）：5566 过、117 跳过、0 红。
+
+测试改动：apps/desktop/test/snapshot-restore-gaps.test.ts · 05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory · 新用例只在 macOS 跑（`skipIf(process.platform !== 'darwin')`）：它要靠大小写不敏感的卷让 `sub` 与 `SUB` 成别名，Linux 的默认卷大小写敏感、走不到这个跳过；CI 的 macOS runner 会跑
+测试改动：apps/desktop/test/renderer-restore-components.test.ts · 05 验收 15: $result stays visible until closing refreshes away the restore link · 加三种结果与「关闭后不再发请求」的断言，原有期望不变；`stale` 重出那种停在预览页，按钮是「取消」

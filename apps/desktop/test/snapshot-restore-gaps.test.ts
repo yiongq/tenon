@@ -513,3 +513,42 @@ it('05 验收 19: a hardlink skip protects its original bytes moved to a new fil
   expect(await readFile(path('moved'), 'utf8')).toBe('origin bytes')
   expect(await readFile(path('h'), 'utf8')).toBe('replacement bytes')
 })
+
+// The parent spellings alias on default macOS APFS; case-sensitive volumes do not exercise this skip.
+it.skipIf(process.platform !== 'darwin')(
+  '05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory',
+  async () => {
+    await mkdir(path('sub'))
+    await writeFile(path('sub/f'), outside)
+    const call = await recordedCall('move', async () => {
+      await rename(path('sub'), path('SUB'))
+      await rename(path('SUB/f'), path('other'))
+    })
+    const q = query([call])
+    const preview = await snapshots.preview(q)
+    expect(preview.skipped).toContainEqual({ path: path('sub/f'), reason: 'not-covered' })
+    expect(preview.remove).toContain(path('other'))
+    expect(preview.conflicts).toContain(path('other'))
+    expect((await restore(q)).done).toMatchObject({ kept: 1, failed: [] })
+    expect(await readFile(path('other'))).toEqual(outside)
+  },
+)
+
+it('05 验收 19: an ignored origin rewritten with different bytes of the same size protects its copy', async () => {
+  await writeFile(path('.gitignore'), 'build/\n')
+  await writeFile(path('c'), outside)
+  const replacement = Buffer.alloc(outside.length, 'X')
+  const call = await recordedCall('copy', async () => {
+    await copyFile(path('c'), path('d'))
+    await writeFile(path('c'), replacement)
+    await appendFile(path('.gitignore'), 'c\n')
+  })
+  const q = query([call])
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toContainEqual({ path: path('c'), reason: 'excluded' })
+  expect(preview.remove).toContain(path('d'))
+  expect(preview.conflicts).toEqual([path('d')])
+  expect((await restore(q)).done).toMatchObject({ kept: 1, failed: [] })
+  expect(await readFile(path('d'))).toEqual(outside)
+  expect(await readFile(path('c'))).toEqual(replacement)
+})

@@ -83,6 +83,20 @@ vi.mock('../src/renderer/src/components/ui/dropdown-menu', () => {
       createElement('button', { role: 'menuitem' }, children),
   }
 })
+const previewReply = (previewKey: string) => ({
+  ok: true,
+  data: {
+    ok: true,
+    preview: {
+      previewKey,
+      restore: ['/work/file'],
+      remove: [],
+      conflicts: [],
+      skipped: [],
+    },
+  },
+})
+
 const restoreComponent = '../src/renderer/src/components/thread/RestoreDialog.tsx'
 const titleComponent = '../src/renderer/src/components/thread/ThreadTitleMenu.tsx'
 afterEach(() => {
@@ -230,7 +244,9 @@ it('05 验收 34: ThreadTitleMenu renders only the record action and shows snaps
 })
 
 it.each(
-  (['success', 'preview gone'] as const).flatMap((result) =>
+  (
+    ['success', 'preview gone', 'preview throws', 'restore throws', 'stale then cancel'] as const
+  ).flatMap((result) =>
     (['none', 'unavailable', 'failed'] as const).map((background) => ({ result, background })),
   ),
 )(
@@ -255,35 +271,31 @@ it.each(
     }
     state.data = { ok: true, status: 'tree', incompleteRestores: [], rounds: [round] }
     const invoke = vi.fn<(channel: string, request: unknown) => Promise<unknown>>()
-    invoke.mockResolvedValueOnce(
-      result === 'preview gone'
-        ? { ok: true, data: { ok: false, code: 'gone' } }
-        : {
-            ok: true,
-            data: {
-              ok: true,
-              preview: {
-                previewKey: 'key',
-                restore: ['/work/file'],
-                remove: [],
-                conflicts: [],
-                skipped: [],
-              },
-            },
-          },
-    )
-    invoke.mockResolvedValueOnce({
-      ok: true,
-      data: {
+    if (result === 'preview throws') invoke.mockRejectedValueOnce(new Error('preview failed'))
+    else
+      invoke.mockResolvedValueOnce(
+        result === 'preview gone'
+          ? { ok: true, data: { ok: false, code: 'gone' } }
+          : previewReply('key'),
+      )
+    if (result === 'restore throws') invoke.mockRejectedValueOnce(new Error('restore failed'))
+    else if (result === 'stale then cancel')
+      invoke
+        .mockResolvedValueOnce({ ok: true, data: { ok: false, code: 'stale' } })
+        .mockResolvedValueOnce(previewReply('fresh-key'))
+    else
+      invoke.mockResolvedValueOnce({
         ok: true,
-        undoSnapshotId: 'undo',
-        restored: 1,
-        removed: 0,
-        kept: 0,
-        skipped: 0,
-        failed: [],
-      },
-    })
+        data: {
+          ok: true,
+          undoSnapshotId: 'undo',
+          restored: 1,
+          removed: 0,
+          kept: 0,
+          skipped: 0,
+          failed: [],
+        },
+      })
     // Model the provider refresh after the restore/retention change. The real controller drives
     // the real SummaryLine + RestoreLink; portal dismissal invokes their onOpenChange callback.
     const refresh = vi.fn<() => void>(() => {
@@ -309,17 +321,34 @@ it.each(
         ),
       )
     await flow.open(runId)
-    if (result === 'success') await flow.confirm()
+    if (result === 'success' || result === 'restore throws' || result === 'stale then cancel')
+      await flow.confirm()
+    expect(flow.getSnapshot()).toMatchObject(
+      result === 'stale then cancel'
+        ? { phase: 'preview', error: 'stale', preview: { previewKey: 'fresh-key' } }
+        : { phase: result === 'success' ? 'done' : 'error' },
+    )
+    expect(invoke.mock.calls.map(([channel]) => channel)).toEqual(
+      result === 'stale then cancel'
+        ? ['snapshot.preview', 'snapshot.restore', 'snapshot.preview']
+        : result === 'success' || result === 'restore throws'
+          ? ['snapshot.preview', 'snapshot.restore']
+          : ['snapshot.preview'],
+    )
     // Focus and timer refreshes may also observe the now-empty list while this dialog is open.
     if (background === 'unavailable')
       state.data = { ...state.data, rounds: [{ ...round, canRestore: false }] }
     else if (background === 'failed') state.data = null
     const html = render()
-    expect(html).toContain(result === 'success' ? '已还原 1 个' : i18n.t('snapshot.error.gone'))
-    expect(html).toContain('关闭')
+    const error =
+      result === 'preview gone' ? 'gone' : result === 'stale then cancel' ? 'stale' : 'failed'
+    expect(html).toContain(result === 'success' ? '已还原 1 个' : i18n.t(`snapshot.error.${error}`))
+    expect(html).toContain(result === 'stale then cancel' ? '取消' : '关闭')
     expect(refresh).not.toHaveBeenCalled()
     expect(state.dismiss).not.toBeNull()
+    const callsBeforeClose = invoke.mock.calls.length
     state.dismiss!()
+    expect(invoke).toHaveBeenCalledTimes(callsBeforeClose)
     expect(refresh).toHaveBeenCalledTimes(1)
     expect(state.data?.rounds[0]?.canRestore).toBe(false)
     expect(render()).not.toContain('可还原')
