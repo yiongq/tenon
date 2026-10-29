@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：第一、二段已合入（PR #72、#75）。第三段第 13–15 步做完，第 16 步 e2e 已写、等 CI 全绿，第 17 步在等第五轮复核（审 `a70c51e` 之后的改动）。都过了就勾 16、17，PR #77 交 owner 合。
+当前：第一、二段已合入（PR #72、#75）。第三段第 13–15 步做完，第 16 步 e2e 已写、等 CI 全绿，第 17 步在等第六轮复核（审 `dc88a58` 之后的改动）。都过了就勾 16、17，PR #77 交 owner 合。
 需要你：无
 
 ## 开工前读
@@ -69,7 +69,7 @@
 
 ## 交接
 
-2026-10-29：第三段第 13–15 步做完，第 16、17 步在收尾。lead 分支 `feat/05-file-bridge-seg3`，PR #77（改了 `ci.yml`，不开自动合并，owner 合）；Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5500 通过、117 跳过）后提交、摘过来。第 17 步：对照 spec、安全、突变三路评审之后，又复核了四轮；第四轮的 U1（历史写法连 `gap` 一起丢）、U2（改名跨两次调用丢 `gap`，owner 定 D66「改名也追着查」）已修（798e03d）。第五轮复核审 `a70c51e` 之后的改动，报告写到私有笔记 `reviews/recheck5-seg3.md`：通过就在 log 记「审过 <head>（复核）· 结论：通过」，spec-check 的拦截就清掉了；不通过就让 Codex 接着修。CI 在 a70c51e 上 ci、e2e、sandbox-macos 全绿（macOS 的旧 20 改用 `dispatchEvent` 后转绿）。owner 这一段定了 D62–D66。合入后做第 18–23 步；spec 已超 heavy 上限（警告，dev 上就超了），第 18 步一并看要不要拆。
+2026-10-29：第三段第 13–15 步做完，第 16、17 步在收尾。lead 分支 `feat/05-file-bridge-seg3`，PR #77（改了 `ci.yml`，不开自动合并，owner 合）；Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5513 通过、117 跳过）后提交、摘过来。第 17 步：对照 spec、安全、突变三路评审之后，又复核了四轮；第四轮的 U1、U2（owner 定 D66）已修（798e03d）；第五轮的 X1、X2（owner 定 D67「从你改了到它被动之间」）已修（7d07b5a）。第六轮复核审 `dc88a58` 之后的改动，报告写到私有笔记 `reviews/recheck6-seg3.md`：通过就在 log 记「审过 <head>（复核）· 结论：通过」，spec-check 的拦截就清掉了；不通过就让 Codex 接着修。CI 在 dc88a58 上 ci、e2e、sandbox-macos 全绿（macOS 的旧 20 改成页面里 `MutationObserver` 点击后转绿）。owner 这一段定了 D62–D67。合入后做第 18–23 步；spec 已超 heavy 上限（警告，dev 上就超了），第 18 步一并看要不要拆。
 
 ## Open
 
