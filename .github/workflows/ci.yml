@@ -116,8 +116,9 @@ jobs:
           if-no-files-found: ignore
 
   # The sandbox black box on macOS (spec 04, acceptance 34): only the sandbox suite and the stop
-  # cases; every other unit test already runs in `ci`. Spec 05 adds the restore unit suite (its
-  # case-insensitive rename case, acceptance 40, runs only here) and the restore end-to-end
+  # cases; every other unit test already runs in `ci`. Spec 05 adds the restore and preview unit
+  # suites (filters match every `snapshot-restore*` and `snapshot-preview*` file; their
+  # case-insensitive and Unicode-alias cases run only here) and the restore end-to-end
   # (acceptance 15); the rest of e2e runs on Linux only.
   sandbox-macos:
     name: sandbox-macos
@@ -135,7 +136,7 @@ jobs:
       # Spec 05 snapshots need git 2.43 or later; the image's default Xcode 16.4 ships 2.39.5 as
       # /usr/bin/git, so select a newer Xcode for the snapshot and restore tests.
       - run: sudo xcode-select -s /Applications/Xcode_26.3.app && /usr/bin/git --version
-      - run: pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest-macos.json apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts apps/desktop/test/snapshot-restore.test.ts
+      - run: pnpm vitest run --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=reports/vitest-macos.json apps/desktop/test/sandbox/escape.test.ts apps/desktop/test/stop-tree.test.ts apps/desktop/test/snapshot-restore apps/desktop/test/snapshot-preview
         env:
           TENON_SANDBOX_TESTS: required
       - name: Cache Electron binary
@@ -147,7 +148,11 @@ jobs:
             electron-${{ runner.os }}-${{ runner.arch }}-
       # The install above skips scripts, so fetch Electron's binary here.
       - run: pnpm --filter @tenon-app/desktop exec install-electron
+      # The runner's screen is smaller than the e2e window (1280x800); fit the window to it.
+      - run: system_profiler SPDisplaysDataType | grep -i resolution || true
       - run: pnpm --filter @tenon-app/desktop exec playwright test e2e/restore.spec.ts e2e/write-card.spec.ts
+        env:
+          TENON_E2E_FIT_SCREEN: '1'
 
       - if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7

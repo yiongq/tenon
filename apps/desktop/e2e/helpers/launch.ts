@@ -166,10 +166,20 @@ export async function launchTenon(options: LaunchOptions): Promise<LaunchedApp> 
   // page.setViewportSize() would NOT resize the window: it installs a CDP device-metrics
   // override that also forces devicePixelRatio from 2 to 1 and then ignores the real
   // window, so a later setContentSize does nothing. Size the BrowserWindow instead.
-  const size = options.contentSize ?? { width: 1280, height: 800 }
-  await app.evaluate(({ BrowserWindow }, target) => {
-    BrowserWindow.getAllWindows()[0]?.setContentSize(target.width, target.height)
-  }, size)
+  const requested = options.contentSize ?? { width: 1280, height: 800 }
+  // The macOS CI runner's screen is smaller than 1280x800 and the OS clamps the window to it; that
+  // job sets TENON_E2E_FIT_SCREEN and then waits for the size the window actually got. Every
+  // other run keeps the exact size, which the screenshot and text-fit specs rely on.
+  const fit = process.env['TENON_E2E_FIT_SCREEN'] === '1'
+  const size = await app.evaluate(
+    ({ BrowserWindow }, q) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      win?.setContentSize(q.target.width, q.target.height)
+      const [width, height] = win?.getContentSize() ?? [q.target.width, q.target.height]
+      return q.fit ? { width: width!, height: height! } : q.target
+    },
+    { target: requested, fit },
+  )
   await page.waitForFunction(
     (target) => globalThis.innerWidth === target.width && globalThis.innerHeight === target.height,
     size,
