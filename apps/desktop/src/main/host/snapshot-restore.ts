@@ -81,6 +81,52 @@ async function aliasKeys(paths: readonly string[]): Promise<Map<string, string>>
   }
   return keys
 }
+interface AliasLeaf {
+  path: AbsolutePath
+  startKind: SavedIdentity['kind'] | null
+  nowKind: SavedIdentity['kind'] | null
+  object: string | undefined
+  parentsExact: boolean
+}
+/** Only a two-name leaf rename may escape conservative alias skipping. */
+export function pairRestoreLeaves(
+  group: readonly AliasLeaf[],
+): readonly [AbsolutePath, AbsolutePath] | undefined {
+  if (group.length !== 2) return undefined
+  const origin = group.find((item) => item.startKind === 'file' || item.startKind === 'link')
+  const removal = group.find((item) => item.startKind === null)
+  if (
+    origin === undefined ||
+    removal === undefined ||
+    origin.path === removal.path ||
+    origin.nowKind !== null ||
+    (removal.nowKind !== 'file' && removal.nowKind !== 'link') ||
+    dirname(origin.path) !== dirname(removal.path) ||
+    !origin.parentsExact ||
+    !removal.parentsExact ||
+    origin.object === undefined ||
+    origin.object !== removal.object
+  )
+    return undefined
+  return [origin.path, removal.path]
+}
+async function leafRenamePair(
+  group: readonly RestoreItem[],
+): Promise<readonly [AbsolutePath, AbsolutePath] | undefined> {
+  if (group.length !== 2) return undefined
+  return pairRestoreLeaves(
+    await Promise.all(
+      group.map(async (item) => ({
+        path: item.path,
+        startKind: item.start.file.identity?.kind ?? null,
+        nowKind: item.now.file.identity?.kind ?? null,
+        // An absent-name folding fallback is insufficient proof for a destructive rename.
+        object: await objectKey(item.path).catch(() => undefined),
+        parentsExact: await parents(item.root, item.path, false).catch(() => false),
+      })),
+    ),
+  )
+}
 const depth = (path: string): number => path.split(sep).length
 const gitHash = (data: Uint8Array): string =>
   createHash('sha1').update(`blob ${data.byteLength}\0`).update(data).digest('hex')
@@ -372,9 +418,6 @@ export async function planRestore(
     group.push(path)
     groups.set(key, group)
   }
-  for (const group of groups.values()) {
-    if (group.length > 1) for (const path of group) aliases.add(foldRestorePath(path))
-  }
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -466,6 +509,14 @@ export async function planRestore(
       modes: change.modes,
     })
   }
+  const byPath = new Map(items.map((item) => [item.path, item]))
+  for (const group of groups.values()) {
+    if (group.length < 2) continue
+    const candidates = group.flatMap((path) => byPath.get(absolutePath(path)) ?? [])
+    if (candidates.length === group.length && (await leafRenamePair(candidates)) !== undefined)
+      continue
+    for (const path of group) aliases.add(foldRestorePath(path))
+  }
   // A skipped alias and its folded removal/ancestors refer to the same physical subtree.
   // Keep the whole affected pair: deleting the other spelling could delete its only copy.
   for (let index = items.length - 1; index >= 0; index--) {
@@ -554,18 +605,26 @@ export async function applyRestore(
       if (stats?.isDirectory()) directoryChecks.set(ancestor, saved(identity(stats)))
     }
   }
-  // Use the same physical-object grouping as planning, including normalized absent spellings.
-  const identities = await aliasKeys(selected.map((item) => item.path))
-  const paired = new Map<AbsolutePath, AbsolutePath>()
-  const removalByIdentity = new Map(
-    selected
-      .filter((item) => item.start.file.identity === null)
-      .map((item) => [identities.get(item.path), item.path]),
-  )
-  for (const item of selected.filter((candidate) => candidate.start.file.identity !== null)) {
-    const removal = removalByIdentity.get(identities.get(item.path))
-    if (removal !== undefined && removal !== item.path) paired.set(item.path, removal)
+  // Include skipped/kept names in the group: selecting two names cannot hide a third alias.
+  const identities = await aliasKeys([
+    ...plan.items.map((item) => item.path),
+    ...plan.preview.skipped.map((item) => item.path),
+  ])
+  const groups = new Map<string, AbsolutePath[]>()
+  for (const [path, key] of identities) {
+    const group = groups.get(key) ?? []
+    group.push(absolutePath(path))
+    groups.set(key, group)
   }
+  const byPath = new Map(selected.map((item) => [item.path, item]))
+  const paired = new Map<AbsolutePath, AbsolutePath>()
+  for (const group of groups.values()) {
+    const candidates = group.flatMap((path) => byPath.get(path) ?? [])
+    if (candidates.length !== group.length) continue
+    const pair = await leafRenamePair(candidates)
+    if (pair !== undefined) paired.set(...pair)
+  }
+  const origins = new Map([...paired].map(([origin, removal]) => [removal, origin]))
   const selectedPaths = new Set(selected.map((item) => item.path))
   const protectedPaths = new Set([
     ...plan.preview.skipped.map((skip) => skip.path),
@@ -630,11 +689,18 @@ export async function applyRestore(
         await checkSelected(ancestorItem)
       // oxlint-disable-next-line no-await-in-loop -- deletions precede every placement
       await parents(item.root, item.path, true, item.modes, createdDirs)
+      const origin = origins.get(item.path)
+      if (origin !== undefined) {
+        // Do not unlink the sole copy if its replacement is unavailable or the pair has changed.
+        if (failed.has(origin) || (await leafRenamePair([byPath.get(origin)!, item])) === undefined)
+          throw new Error('Restore rename changed')
+      }
       const deleting = await objectKey(item.path)
       const retained = deleting === undefined ? undefined : protectedObjects.get(deleting)
       if (
         unreadableProtected ||
-        (retained !== undefined && (retained.size > 1 || !retained.has(item.path)))
+        (retained !== undefined &&
+          [...retained].some((path) => path !== item.path && path !== origin))
       )
         throw new Error('Restore removal aliases a retained path')
       // Never recursive: an unlisted child must survive and make rmdir fail.
@@ -644,7 +710,7 @@ export async function applyRestore(
       else await unlink(item.path)
       await refreshAncestors(item.path)
       deleted.add(item.path)
-      if (start === null && ![...paired.values()].includes(item.path)) done.removed++
+      if (start === null && !origins.has(item.path)) done.removed++
     } catch {
       failed.add(item.path)
     }
