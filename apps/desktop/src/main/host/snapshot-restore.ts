@@ -396,9 +396,9 @@ export async function planRestore(
         !equal(start, end),
     )
     if (sources.length > 0) {
-      const from = Math.min(
-        ...sources.map(({ path }) => changes.get(path)!.gapSince ?? callIndex - 1),
-      )
+      let from = Infinity
+      for (const { path } of sources)
+        from = Math.min(from, changes.get(path)!.gapSince ?? callIndex - 1)
       for (let k = from + 1; k <= callIndex; k++) {
         for (const { path, start, end } of perCall[k] ?? []) {
           if (end === undefined || end.file.identity === null || equal(start, end)) continue
