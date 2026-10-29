@@ -803,7 +803,7 @@ async function execute(
       : fileMutationAttempted) &&
     completed &&
     !ctx.signal.aborted &&
-    (q.snapshot.before.ok || q.snapshot.request.path === undefined)
+    q.snapshot.before.ok
   ) {
     const request = { ...q.snapshot.request, moment: 'after-call' as const }
     const after = await takeSnapshot(ctx, request)

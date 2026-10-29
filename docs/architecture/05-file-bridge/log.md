@@ -500,3 +500,161 @@
 - [建议] Y3 · 停止或超时的命令之后，没人改过也会把后面窗口里的新建与改动逐个问；spec 允许，D67 写的代价没提 · 证据：N7；停止模式对照 117 个中 10 个多出冲突、共多 15 个路径 · 不修：不丢数据；第 18 步在 spec §已知限制与代价补一句。收窄是放宽，不提
 - [建议] Y4 · spec 写窗口「从它被别人改过之后」，代码从它上一次被记录之后开始（记录里看不出你什么时候改的），比字面多问 · 不修：只会多问；第 18 步改措辞（澄清）
 - [建议] Y5 · 一次调用里来源超过约 11 万个时 `Math.min(...)` 展开传参抛 RangeError，预览出不来 · 证据：Node 22.22.0 上 12 万起抛错 · 不修：不删不写、现实里很难碰到；第 18 步改成循环取最小
+
+## 实施 · 2026-10-29（第 18 步）
+
+- 文档同步（spec「## 文档同步」的「实现时」）：overview 的模块表（`HostAdapter` 十个成员、十一个内置工具含 Delete、宿主实现补快照与还原、renderer 补结算行与还原清单）、信任边界加「工作区里的文件与链接」、术语加「快照」「一键还原」；`docs/ux/components.md` 审批卡、工具行、结算行、会话标题菜单四行补记；总参考 §13 阶段 4「快照与一键还原」「任务小结」两条补记；SECURITY.md 新开「Snapshots, restore and Delete」一节，照 §已知限制与代价 逐条写，只略去快照耗时与基线评测花费两条（是成本，不是安全限制）。验收 38（人工）：四处都改了，`pairs` 不拦。
+- 第三段第六轮复核的建议：Y1、Y2 的四条用例收进 `snapshot-restore-gaps.test.ts`（复核探针 N8b、N11、N9、N10；Codex 逐个撤掉对应条件，各自唯一变红、其余 26 条照绿）；Y5 `planRestore` 的 `Math.min(...)` 改成循环取最小；Y3、Y4 改 spec（澄清）。
+- D68（owner 定）：`SnapshotCreatedPayload` 去掉从没填过的 `commits`、`files`，spec §接口同改；仓库里只有两处测试夹具构造过这两项。
+- spec 全文 27409 字符，超 heavy 上限 25000（警告）：不拆。05 只有一个子阶段（4b）、正在收尾，拆开要整份重审；超出的部分来自评审后补的澄清与已知限制。
+- 全量（沙箱外，`--maxWorkers=2`）：5515 过、117 跳过、2 红。`stop-tree` 旧 142 单独重跑通过（负载下的计时偶发）；MCP HTTP 的「03 验收 30 (HTTP): modern total deadline」在不含本步改动的 dev 代码上同样红，是 PR #76 要修的那条，与本步无关。提交 f782832、4c5d393、c0eaa8f（Codex 实现，lead 审）。
+
+测试改动：packages/kernel/src/testing/tape-conformance.ts · 05 验收 1、21: fs facts round-trip, deduplicate and replay without changing projections · 夹具去掉已删除的 `commits`、`files`（D68），断言不变
+测试改动：apps/desktop/test/tape/fs-dialects.test.ts · SQLite 精确载荷、Postgres 与 SQLite 一致性两条 · 共用夹具去掉已删除的两项（D68），断言不变
+
+## 评审 · 2026-10-29 · 审过 f335d6a
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `ac553b0..f335d6a`：导出副本里对取最小值的改写做 20 万组随机比对，逐个撤掉四条新用例守的条件，查删掉两个字段后的引用与重放，对照代码与 spec 逐句核对 overview、components、总参考 §13、SECURITY.md；报告与探针另记
+突变：Q2、Q3、Q6、Q12 各自只让对应的新用例变红（其余 26 条绿）；Q12c（只取第一个来源）仓库全绿，名字顺序反过来的探针 O1 红（Z5）；12 万个来源时旧写法抛 RangeError、新写法正常
+发现：
+- [建议] Z1 · spec 窗口起点的新写法仍比代码窄（中间调用的快照里它没变时，代码的起点不往后挪），修订记录说「与实现一致」不成立 · 证据：探针 W1、W1b、W2 · 已修 1ac5c78
+- [建议] Z2 · 新加的已知限制与 SECURITY.md 对应条只写「停止或超时」，实际只要命令缺调用后快照（退出、崩溃、拍不成）都会多问 · 证据：kernel `batch.ts` 的 `execute` 拍调用后快照的四个条件 · 已修 1ac5c78
+- [建议] Z3 · components 与总参考漏写结算行「不含被排除的文件」的「跑过命令」条件；审批卡那行对 Bash 说过头 · 证据：kernel `restore.ts` 的 `rounds`、spec 规矩 3 与验收 3 · 已修 1ac5c78
+- [建议] Z4 · overview 与总参考说过头：信任边界没带命令运行期间的例外、Delete 没快照时不比身份、命令不在 `tree` 时不拍、模块表 kernel 一侧没写还原 · 证据：`snapshot-guard.ts` 的 `snapshotGuard`、`delete.ts` 的 `deleteExecutor`、spec §快照怎么拍 · 已修 1ac5c78
+- [建议] Z5 · 「多个来源」用例分不出「只取第一个来源」 · 证据：Q12c 下仓库全绿、探针 O1 红 · 已修 8e73e39（两种名字顺序都跑）
+- [建议] Z6 · SECURITY.md 漏写选定文件夹后在后台整个复制进 profile 与保留多久，「Excluded files」「refreshes」与 Known limitations 开头的措辞外人读不懂；§文档同步 没写明成本两条不加 · 已修 1ac5c78（顺带把 spec「给你看的一页」的基线评测花费改成 ADR-005 的约 4 元）
+
+## 评审 · 2026-10-29 · 审过 a6952df（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `f335d6a..a6952df`：对照报告与代码逐条核对 Z1–Z6 的修法，重跑上一轮探针并补 W3b、N1–N3 等，导出副本里撤掉多来源用例守的条件；结论只算这三笔，另记两条第三段既有问题；报告与探针另记
+突变：多来源用例改成两种名字顺序后，「只取第一个来源」（`sources[0]`、`find` 两种写法）只红 z1/a2，「只取最后一个」只红 g1/g2，「取最大」两条都红，其余 26 条始终绿
+发现：
+- [建议] F1 · 新加的已知限制与 SECURITY.md 只说命令缺调用后那张会多问，被停止的文件工具同样会 · 证据：探针 N2 · 已修 3d5daa2（写成命令或文件工具；动文件前就被拒的已由 E2 的修法排除）
+- [建议] F2 · §一键还原 那句「或调用后那张没记成」没写宾语，开窗条件漏了「这次调用前那张没收它」 · 证据：探针 N3、N1c · 已修 3d5daa2
+- [建议] F3 · overview 信任边界缩成「两次调用之间被别处改过的」，漏了这一轮之后的改动 · 证据：`planRestore` 判冲突的 `!equal(last, now)`、验收 18 · 已修 3d5daa2
+- [建议] F4 · overview 术语与总参考说文件工具前后都拍整树、「能用 git」等于能拍整树 · 证据：`snapshots.ts` 的 `capture`、spec §快照怎么拍 · 已修 3d5daa2
+- [建议] F5 · SECURITY.md 写「at most 30 days」不对（会话最近一张满 30 天才全清），选文件夹即整份复制漏了例外，被排除的不能还原没限定是命令改的 · 证据：`snapshots.ts` 的 `expire` · 已修 3d5daa2
+- [major] E1（第三段既有）· 没有调用前快照的命令也拍了调用后那张，还原把整个工作区列进跳过、之前文件工具改的变冲突、标了有快照的 Write 被说成被排除（违反规矩 15） · 证据：探针 N1、N1b、N1c、N1d；kernel `batch.ts` 的 `execute` · 已修 6db3713（调用前那张拍成才拍调用后那张；拼还原请求时丢掉没有调用前快照的调用）
+- [major] E2（第三段既有）· 动文件前就被拒的 Write、Edit、Delete 被宿主当成调用后那张没记成，目标与其间新建的文件成冲突 · 证据：探针 N2、N2b；kernel `restore.ts` 的 `queryCall` 照传 `guardRefused` 调用 · 已修 6db3713（拼还原请求时跳过 `guardRefused` 的调用）
+
+## 实施 · 2026-10-29（第 18.1 步）
+
+- E1、E2 先写复现用例、在原代码上确认红，再改 kernel（Codex 实现，lead 审）：`batch.ts` 的 `execute` 只在调用前那张拍成时拍调用后那张，Bash 也一样；`restore.ts` 拼 `RestoreQuery` 时只收有调用前快照、且不是 `guardRefused` 的调用（旧 Tape 里已有的只有调用后那张的命令同样不进比对）。宿主不改。
+- 回归（`apps/desktop/test/snapshot-restore-mixed.test.ts`，kernel 加真宿主）：「05 验收 52: %s keeps a promised Write restorable and untouched files out of skips」（当前执行、旧 Tape 两种）；「05 验收 19: refused Edit after Write does not open a restore gap — %s」（没对上、没对上之后又写、外面改过三种，外面改过的仍保留你的内容）。撤掉 `batch.ts` 的修改：两条验收 9 与验收 52 当前执行一条红；撤掉 `restore.ts` 的修改：验收 52 旧 Tape、验收 19 两条没对上的红。
+- spec 同步写准（3d5daa2，澄清）：§快照怎么拍「调用前那张没拍成的，调用后也不拍」；§一键还原「动文件前就被拒的文件工具调用不算」。
+- 全量（沙箱外，`--maxWorkers=2`）：5523 过、117 跳过、0 红。提交 6db3713。
+
+测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash records an after-call tree when warming finishes during the command（改名为 Bash dispatched while warming takes no after-call snapshot when the tree becomes ready）· 调用前那张没拍成时调用后也不拍（第 18 步复核 E1，spec §快照怎么拍 同步写明）；验收 9 本身只要求命令照跑、小结带附注，那张调用后快照是第二段的实现选择
+测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash still runs if its before-call tree snapshot fails · 同上：期望改成没有快照事实，命令照跑、outcome 没有 snapshotId 不变
+
+## 评审 · 2026-10-30 · 审过 d7e15c0（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `a6952df..d7e15c0`：逐个读被拒结果的执行器确认在写之前返回，对抗探针 P1–P7，导出副本里撤掉 `batch.ts`、`restore.ts` 的修改与两种半截修法；把第六轮的随机扫描扩展到「被拒调用不进查询」「没快照的命令不进查询」两种形态（主扫描 600 个种子、停止模式 300 个种子：你的字节在还原前还在的 338 次、165 次里丢 0 次；新形态对照无冲突、无跳过，旧形态对照多数出冲突或跳过）；报告、探针与扫描另记
+突变：撤 `batch.ts`：验收 9 两条与验收 52 current 红；撤 `restore.ts`：验收 52 legacy 与验收 19 两条没对上红；只丢被拒的、只丢没快照的两种半截修法仓库都分得出；修前守卫因你拍照后改过而拒绝（SNAPSHOT_CHANGED）时选「覆盖」会盖掉你的字节，E2 修掉（P2）
+发现：
+- [建议] A · 「动文件前就被拒的不算」比代码宽：Delete 目标不存在、父目录或目标变了，Write 目标解到别处，Edit 文件太大仍被当成调用后那张没记成 · 证据：探针 P4 · 已修 013e90f（五种执行器自己的固定结果也认成被拒，修前红、修后绿、撤掉又红），spec 举例与 §快照怎么拍 同步 43968b7
+- [建议] B · 只有被拒调用的一轮不再出「可还原」，与 spec「这一轮有还在的快照时」、验收 33 不符（6db3713 带来） · 证据：探针 P1 · 已修 43968b7（owner 定 D69「不显示」，spec 与验收 33 改写）
+- [建议] C · overview 术语「快照」与 SECURITY.md 第一条列的能拍整树条件不全 · 证据：spec §快照怎么拍 · 已修 43968b7
+- [建议] D · log 里第一行「测试改动」说那张调用后快照是「第二段的实现选择」不准：a6952df 的 spec §快照怎么拍 字面要求过它 · 已修（下方更正行）
+- [建议] E · 没快照的命令改到这一轮 agent 改过的文件时清单说「可能被别处改过」、它新建的文件不进清单，§已知限制没写 · 证据：探针 P6a、扫描 · 已修 43968b7
+- [建议] G（第三段既有）· 你改过的内容被 agent 改名搬走、你又改了原名，默认还原删掉搬走的那份 · 证据：`rc2-twoedits.test.ts` · 已修 c924b6b（owner 定 D70「按内容跟着问」：还原要放回或删除的路径里，现在内容与某个冲突路径起点内容相同的也算冲突）
+
+更正（第 18.1 步第一行「测试改动」）：那张调用后快照在 a6952df 的 spec §快照怎么拍 里是字面要求（「每次调用做完再记一次……Bash 再拍一张整树」），不只是实现选择；改它的依据是 3d5daa2 对这一句的澄清（「调用前那张没拍成的，调用后也不拍」，见修订记录）。
+
+## 实施 · 2026-10-30（第 18.2 步）
+
+- A（013e90f，Codex 实现、lead 审）：kernel `restore.ts` 把 Delete 的不存在、父目录变了、目标变了，Write 的解到别处，Edit 的文件太大也认成动文件前就没做成，按工具名与执行器的固定模板匹配，执行器文字不改。回归「05 验收 19: %s before mutation leaves later writes conflict-free and new files removable」五种，修前全红、修后全绿、撤掉又红。
+- G（c924b6b，D70）：宿主 `planRestore` 在冲突算完后加一趟，还原要放回或删除的路径里，现在是非空普通文件、大小与内容（git blob 哈希）与某个冲突路径起点相同的，也记为冲突；只加不减，复用计划里已读的内容，预览与 `prepare` 一致。回归五条「05 验收 19」（搬成新文件、搬去盖掉已有文件，及没人改过、同大小不同内容、空文件三条对照）；撤掉这一趟时前两条红，对照照绿。
+- 文档（43968b7）：spec 记 D69、D70 与 A、E 的澄清，验收 33 改写；overview、SECURITY.md 按 C、E 改；decisions 记 D69、D70。
+- 全量（沙箱外，`--maxWorkers=2`）：5533 过、117 跳过、0 红。
+
+## 评审 · 2026-10-30 · 审过 df34222（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），审 `d7e15c0..df34222`：读执行器核对五种被拒结果，对抗探针 H1–H6、K1–K6，导出副本里 18 个突变（A0–A6、G0–G9）加候选修法 GF；把随机扫描扩展成两次改动（主 1000、密集 300、停止模式 200 个种子，每组都在 D70 关掉的副本上对照）；报告、探针与扫描另记
+突变：撤 A 时验收 19 五条全红、逐条去掉各自红；撤 G 时两条搬走的红、对照照绿；G6（只认 `last ≠ now`）与 A6（任何报错都认作被拒）仓库分不出；G5 等价；扫描新反例 0 个，对照 1429 个全部无冲突、回到起点，D70 多出的 29 个冲突全部装着某个冲突路径的起点内容
+发现：
+- [major] N1 · D70 只扫一遍：把「放回」路径 x 记成冲突、默认保留后，x 起点里你的改动若已被搬到新文件 y，y 不再被比对、照删，修前不丢（c924b6b 引入） · 证据：探针 H1；G0、G1 下转绿 · 已修 051fe84（做到不动点：新记成冲突的起点内容也进比对表）；decisions D70 记了更正
+- [建议] N2 · Write 父路径是文件、Write 与 Delete 目标是目录这几种动手前就没做成的结果仍不认 · 证据：K1b、K1c · 已修 628ad48；spec 举例 14aeb7f
+- [建议] N3 · 「有动过文件的调用」比代码窄：只跑了只读命令的一轮照出「可还原」、点开是空清单 · 证据：K2 · 已修 628ad48（按 D69 的原则改成清单为空就不出，复用已算的预览）、14aeb7f（spec、验收 33、decisions D69 写明实现口径）
+- [建议] N4 · D70 的代价没进 §已知限制与 SECURITY.md；components 结算行仍是旧口径；两处括注不全 · 证据：H2、H6、句子对照 · 已修 14aeb7f
+- [建议] N5 · 上一条评审记录里 D 的处置「已修（下方更正行）」没带提交号 · 已修：那行更正随 df34222 提交，处置应读作「已修 df34222」
+- [建议] N6 · 仓库分不出 G6、A6 两种写法 · 已修 051fe84（收 H4：只因缺口成冲突的起点）、628ad48（写到一半抛错的 Write 仍进比对）
+- [建议] X1（第三段既有）· 原名在还原时被跳过（`.gitignore` 新加了它）时搬走的那份照删 · 证据：H3、H3c · 已修 051fe84（跳过路径的起点内容也进比对表）；放回时才因别名失败的 H5 预览看不出，写进 §已知限制（14aeb7f）
+
+## 实施 · 2026-10-30（第 18.3 步）
+
+- N1、X1（051fe84，Codex 实现、lead 审）：宿主 `planRestore` 的 D70 一趟改成工作表做到不动点：冲突与「跳过」的非空普通文件起点进比对表，按「大小 + git blob 哈希」查要放回或删除的候选，新记成冲突的起点再入队；每个路径最多记一次、每个内容键最多入队一次，所以会停。回归：「content conflicts follow the whole move chain (outside edits: %s)」「a skipped origin protects its moved content (outside edit: %s)」「a gap-only conflict protects a copy of the edit made before the first touch」；撤掉不动点、撤掉跳过进比对表、只认 `last ≠ now` 时各自变红，对照照绿。
+- N2、N3、N6（628ad48）：kernel 再认 Write `notDirectory`（按父目录填模板）、Write 与 Delete `isDirectory`；`rounds` 的 `canRestore` 改成快照还在且清单（放回、删除、冲突）不为空，复用已算的预览；回归「notDirectory refusal %s adds no restorable change or conflict」「replay excludes %s isDirectory refusal from restore queries」「05 验收 33: %s is restorable only while its preview has changes, without extra previews」「a Write that changes bytes before throwing remains in the restore comparison」，撤掉各自的修改时变红。
+- 文档（14aeb7f）：spec D70 一句、被拒举例、结算行与验收 33、§已知限制 两处；components 结算行；SECURITY.md 三处；decisions D69 的实现口径与 D70 的更正。
+- 全量（沙箱外，`--maxWorkers=2`）：5545 过、117 跳过、0 红。
+
+测试改动：packages/kernel/test/loop/snapshot-restore.test.ts · 05 验收 9: %s command safety is derived from dispatch and before-call tree facts · 第 18 步复核 N3：清单为空时不出「可还原」（D69 的原则）；这条守的是命令的保护状态与附注，保留不改文件的假命令，`canRestore` 期望改成 false，其余断言不变
+
+## 评审 · 2026-10-30 · 审过 6549a1f（复核）
+
+结论：不通过    评审：新上下文的子 agent（Opus），审 `df34222..6549a1f`：重跑上一轮探针与三组扫描（2981 条），加 `.gitignore` 变体的扫描（主 600、密集 300 个种子，并与去掉跳过入队的副本对照）、对抗探针 F1–F12 与 S1–S4、渲染端 SSR 探针、不动点与整次预览的耗时；导出副本里 24 个突变（D0–D9、K0–K12）；报告、探针与扫描另记
+突变：撤 051fe84、628ad48 或逐项撤各自的修改，对应用例都红，log 的说法复现；D4（只收 `excluded` 一种跳过）与 K7（清单把跳过也算上）仓库分不出；D6a、D6b、K6 等价；扫描新反例 0 个，去掉跳过入队时 150 个对照里 5 个把起点内容删光，6549a1f 一个不丢
+发现：
+- [major] R1 · 还原全部成功后刷新回来的 `canRestore` 为 false，结算行收掉「可还原」，装着「已还原 n 个…」的对话框跟着卸掉；e2e 验收 15、29、33 都断言这句（628ad48 引入） · 证据：`RestoreFlow.confirm` 先设 done 再刷新；SSR 探针 · 已修 ac2a3c3（还原或报错之后等对话框关闭才刷新；对话框不随链接卸载）
+- [建议] R2 · D70 记成冲突、默认保留的「放回」路径不再放回它自己的起点；那份是你的改动又没有副本时，默认还原找不回 · 证据：F10、F11、F12 · 已修 92a56d6（写进 §已知限制与代价、SECURITY.md；decisions D70 再更正为「冲突只增」）
+- [建议] R3 · 跳过的路径起点内容还在原处时也进比对表，没人改过也多问，默认不放回被问路径的起点 · 证据：F5、F6b、F8，扫描 S30、S148 · 已修 f36f456（只在跳过路径现在的内容不是起点内容时入队）
+- [建议] R4 · 结算行的「可还原」按 Tape 版本缓存，工作区变了不跟着变，spec 没写 · 证据：S1、S2、S3 · 已修 92a56d6（spec 结算行与 components 写明清单按这一轮最近一次记下条目时算；空清单的对话框不另加文案，清单为空的轮本来不出入口）
+- [建议] R5 · 只有跳过的轮代码不出「可还原」，spec 字面「清单不为空」包含跳过 · 证据：S4 · 已修 92a56d6（spec 与验收 33 写成清单里有要放回或删除的路径）、e2643e7（用例守住）
+- [建议] R6 · §已知限制与 SECURITY.md 的 D70 条写窄两处；decisions 与修订记录对「收紧」「写准」的定性过头，修订记录引了 D69 卡上没有的原话；一条用例名是 D69 之前的口径 · 证据：问题 4 的句子对照 · 已修 92a56d6（文档）、e2643e7（用例改名）
+- [建议] R6b · D69 的实现口径比卡上问的多管了只跑了不改文件的命令、已经还原过、只有跳过的三种轮，改了写明的界面规则 · 证据：decisions D69 卡与补记 · 交 owner（第 23 步验收时点名问）
+- [建议] R7 · 上一条记录里 N5 的处置格式不对；plan 的「交接」没重写；D4、K7 仓库分不出 · 证据：spec-check 输出；plan；突变 D4、K7 · 已修 92a56d6（plan 交接重写）、f36f456（D4 用例）、e2643e7（K7 用例）；N5 那行之后照 `已修 <提交号>` 写，log 只往后追加、不回改
+- [建议] Y1（第三段既有）· 父路径被默认保留的文件占着时，下面的路径放回失败，它们被搬走的那份照删 · 证据：F3、F3c、F12 · 不修：本步只写进 §已知限制与代价与 SECURITY.md（92a56d6），按 D70 原则的修法记进 plan Open，第 20 步挪进总参考「以后再说」
+- [建议] Y2（第三段既有）· 被排除的文件被 agent 搬进不被排除的名字，默认还原删掉唯一一份 · 证据：F7，扫描 S93、S542、S175、S264、S293 · 不修：被排除的文件本来就不进快照，要保护得改快照记什么；写进 §已知限制与代价与 SECURITY.md（92a56d6）
+- [建议] Y3（第三段既有）· `.gitignore` 新加的裸名字匹配到下层路径时，第一次确认必回 `stale`，第二次按缩水的清单还原 · 证据：S375、S446，四个版本相同 · 不修：不丢数据，原因还没查清；记进 plan Open（92a56d6），第 20 步挪进总参考「以后再说」
+- [建议] Y4（第三段既有）· 预览逐个路径起一次 `git check-ignore`，2000 个路径预览约 20 秒，1 万个路径时 `prepare` 没成 · 证据：耗时表，三个版本相同 · 不修：性能与大改动的上限另做；记进 plan Open（92a56d6），第 20 步挪进总参考「以后再说」
+
+## 实施 · 2026-10-30（第 18.4 步）
+
+- R1（ac2a3c3，Codex 实现、lead 审）：`RestoreFlow` 在还原或报错之后只记「待刷新」，`cancel` 时刷新一次；`SummaryLine` 总是挂着 `RestoreLink`，链接没了对话框照留。回归「05 验收 15: $result stays visible until closing refreshes away the restore link (background refresh: $background)」六种组合；撤掉延迟刷新、撤掉常挂时各自变红。e2e 的 `restoreFile` 不依赖关闭前刷新，没改、没跑。
+- R3（f36f456）：`planRestore` 记下每个路径现在的内容键，跳过路径只在它与起点内容键不同（含读不到）时入队。回归「05 验收 19: an ignored original still in place does not protect its example copy」「ignored originals still in place let all backup copies and their directory be removed」修前红、修后绿，撤掉条件时变红；H3、H3c 两条照绿。D4 用例「a hardlink skip protects its original bytes moved to a new file」，只收 `excluded` 时变红。
+- R5（e2643e7）：「05 验收 33: a command with only hardlink skips does not offer restore」，把跳过算进清单时变红；生产代码不改。
+- 文档（92a56d6）：spec D70 一句、结算行、验收 33、§已知限制与代价两条、修订记录；SECURITY.md 两条；components 结算行；decisions D69 补记、D70 再更正；plan 第 18.4 步、交接、Open 三条、第 23 步的 owner 问题。
+- 全量（沙箱外，`--maxWorkers=2`）：5555 过、117 跳过、0 红。
+
+测试改动：apps/desktop/test/renderer-snapshot-views.test.ts · 05 验收 33: a settled round with snapshots offers restore even when every file call failed; retention removes it → 05 验收 33: a settled round follows kernel restore availability and coverage flags; paused rounds hide the link · 第 18 步复核 R6：名字仍是 D69 之前的口径，只改名不改断言
+
+## 实施 · 2026-10-30（第 18.5 步）
+
+- 用例（Codex 实现、lead 审，与本节同一笔提交）：`snapshot-restore-gaps.test.ts` 收「05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory」（读不到现在内容的跳过不入队时红）与「05 验收 19: an ignored origin rewritten with different bytes of the same size protects its copy」（只比大小时红）；`renderer-restore-components.test.ts` 的「05 验收 15: $result stays visible until closing…」加预览抛错、还原抛错、`stale` 重出后取消三种结果，各自去掉待刷新标记时红。`SummaryLine` 一句注释改成只保证现场那一行。流程不随数据重建那一条没补：仓库只有 Node 加 SSR，没有客户端 DOM 测试环境，为它加依赖不划算，靠 `refresh` 的 `useCallback([])` 撑着。
+- 文档（3839b02）：spec D70 一句与 §已知限制与代价 补「现在的内容读不到的跳过路径也算」；被排除的文件一条把「复制」改准；SECURITY.md 同改；plan 第 18.4、18.5 步、当前、交接与 Open 一条。
+- 全量（沙箱外，`--maxWorkers=2`）：5566 过、117 跳过、0 红。
+
+测试改动：apps/desktop/test/snapshot-restore-gaps.test.ts · 05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory · 新用例只在 macOS 跑（`skipIf(process.platform !== 'darwin')`）：它要靠大小写不敏感的卷让 `sub` 与 `SUB` 成别名，Linux 的默认卷大小写敏感、走不到这个跳过；CI 的 macOS runner 会跑
+测试改动：apps/desktop/test/renderer-restore-components.test.ts · 05 验收 15: $result stays visible until closing refreshes away the restore link · 加三种结果与「关闭后不再发请求」的断言，原有期望不变；`stale` 重出那种停在预览页，按钮是「取消」
+
+## 评审 · 2026-10-30 · 审过 53f1667（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `6549a1f..53f1667`：用真 `RestoreFlow` 走还原的各条结果路径，渲染端 SSR 探针，重跑上一轮探针与 `.gitignore` 变体扫描（主 600、密集 300 个种子），新探针 G1–G14；导出副本里 19 个突变（A0–A9、B0–B5、K7）；报告、探针与扫描另记
+突变：log 第 18.4 步说的「撤掉…时变红」都复现；上一轮去掉跳过入队时丢起点的 5 个对照全部救回，F5、F6b 与扫描里的 S17、S30、S148、S253、S523 不再多问，新反例 0 个；仓库分不出的：读不到的跳过当作在原处（B3，G13 会丢）、只比大小（B5，G14 会丢）、流程随数据重建（A9）、三条 catch 或 `stale` 路径不记待刷新（A6–A8）
+发现：
+- [建议] V1 · 重启后画的历史结算行上开着对话框时，一次后台刷新失败让 `RunEndCard` 返回 null，对话框连同流程卸掉；`SummaryLine` 的注释在这一支不成立 · 证据：RC5V 探针 · 不修：只在刷新出错时发生、不丢数据，修法要动 `ChatProvider` 或把流程提到 `SnapshotProvider`；注释改准（f7f3368），修法记进 plan Open（3839b02）
+- [建议] V2 · spec D70 一句、§已知限制与代价与 SECURITY.md 没写「现在的内容读不到的跳过也入队」，目录只改了大小写、没人改过也会多问 · 证据：F8、G9、G13 · 已修 3839b02
+- [建议] V3 · 被排除的文件被搬出一条把「复制」也写成原内容找不回，写宽了 · 证据：F7 与上一轮 Y2 的扫描 · 已修 3839b02
+- [建议] V4 · 四处保护只有探针在守 · 证据：突变 B3、B5、A6–A8 下仓库全绿 · 已修 f7f3368（G13、G14 与三种流程结果收进仓库）
+- [建议] V4b · 流程随数据重建（A9）仓库测不到 · 证据：突变 A9 · 不修：仓库只有 Node 加 SSR、没有客户端 DOM 测试环境，为一条用例加依赖不划算；现在靠 `refresh` 的 `useCallback([])` 撑着，评审时看
+- [建议] V5 · 92a56d6 让 spec、plan 用了没定义的代号；plan「当前」与 log 实施漏列 cd83788；R7 处置后接了一段 N5 的说明 · 证据：spec-check `codes` 两条 · 已修 3839b02（代号改成写节名出处，plan 当前列上 cd83788）；N5 那段之后单列，log 只往后追加、不回改
+
+## 评审 · 2026-10-30 · 审过 09ede44（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `53f1667..09ede44`：核生产代码只改了 `SummaryLine` 两行注释，导出副本里 8 个突变（B3、B3b、B5、B5g、A6–A9），核 3839b02 的句子与 `planRestore` 的入队条件、log 与 plan；报告与原始输出另记
+突变：B3、B3b 只让「unreadable parent aliases…」红；B5 只让「…same size protects its copy」红，B5g 红 4 条；A6、A7、A8 各只让「05 验收 15」新加的那种结果红 3 条；A9 照旧全绿，与 V4b 的「不修」一致；原有断言没改弱；macOS 专用那条的跳过理由站得住（大小写敏感的卷上走不到这个跳过，CI 的 `sandbox-macos` 会跑）
+发现：
+- [建议] W1 · plan「当前」同一句里既说「还没推」又说「已推送、开了草稿 PR #79」 · 证据：3839b02、09ede44 的 plan 改动 · 已修 86a0e94（「当前」与「交接」重写）
+- [建议] W2 · 「审过 53f1667」那条记录里有三处小错：V5 说「plan 当前列上 cd83788」，09ede44 重写「当前」时把它删了；V5 在「已修」后又接了一段说明；「19 个突变（A0–A9、B0–B5、K7）」括号里只有 17 个，19 是连两次基线数的 · 证据：log 那条记录、`repro-recheck5-step18/mutations-pass*.json` · 不修：log 只往后追加，更正写在本条下方
+- [建议] E1（92a56d6 起就有）· decisions D70「再更正」说跳过的路径「只在现在的内容已不是起点内容时」入队，漏了现在内容读不到的那一半，与改后的 spec、代码不一致 · 证据：decisions D70、`planRestore` 的入队条件 · 不修：本 PR 已复核完、不再动 decisions；记进 plan Open（86a0e94），第 20 步补一句，随最后一次评审复核
+
+更正（「审过 53f1667」那条）：cd83788 只把 SECURITY.md 一条过长的拆成两条，内容不变，plan 现在不再列它；那次复核打的是 17 个突变（A0–A9、B0–B5、K7），另跑了两次基线。
+
+e2e：PR #79 在 `53f1667` 上的 e2e 已过（12 分 39 秒，含验收 15、29、33 的还原对话框）；`ci`、`sandbox-macos` 同过，`spec-check` 那次红是因为当时最新一条评审是「不通过」。
+
+## 实施 · 2026-10-30（第 19 步，预算检查点）
+
+- 验收 55 条，阶段 3 的 1.5 倍是 79 条，没超。
+- 改动行数照 04 第 26 步的口径，只算本 spec 自己的实现 PR，不算 spec PR（#71 +1 412 / −7，04 同样从 spec PR #45 合入之后数起）与不属于 05 的 PR（#73 门禁、#74 评测基线列、#76 与 #78 两个 MCP 修复）：#72 第一段 +8 863 / −222、#75 第二段 +4 522 / −143、#77 第三段 +12 853 / −309、#79 第 18 步 +1 456 / −113（到 `10369c3`），合计 +27 694 / −787。在阶段 3 的 1.5 倍（27 720 行）之内，只差 26 行；算上 spec PR 是 +29 106，会超。
+- 阶段 4 合计：04 约 +25 600，加 05 +27 694，约 +53 300，在阶段 3 的 3 倍（约 55 440 行）之内；留给 06 与 task-mode-ui 的只剩约 2 100 行，06 一份就会超。
+- 结论（lead 定，已告知 owner）：按 04 用的口径两条线都没超，05 不砍。阶段 4 的余量基本用完：06 起草前要 owner 按总参考 §13 阶段 4 的砍法顺序（4d 挪阶段 6 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档）定砍不砍，记进 plan Open，第 20 步挪进总参考。

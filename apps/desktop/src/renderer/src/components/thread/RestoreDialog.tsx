@@ -1,4 +1,5 @@
 import { useMemo, useSyncExternalStore } from 'react'
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,20 +16,32 @@ import { tx } from '@/lib/tx'
 import { visible } from '@/lib/visible'
 import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 
-export function RestoreLink({ roundRunId, label }: { roundRunId: string; label: string }) {
+export function RestoreLink({
+  roundRunId,
+  label,
+  children,
+}: {
+  roundRunId: string
+  label: string | null
+  children?: (link: ReactNode) => ReactNode
+}) {
   const { t } = useTranslation()
   const { sessionId, refresh } = useSnapshotRounds()
   const flow = useMemo(
     () =>
-      new RestoreFlow(window.tenon, sessionId, () => {
-        void refresh()
-      }),
+      new RestoreFlow(
+        { invoke: (channel, request) => window.tenon.invoke(channel, request) },
+        sessionId,
+        () => {
+          void refresh()
+        },
+      ),
     [sessionId, refresh],
   )
   const state = useSyncExternalStore(flow.subscribe, flow.getSnapshot, flow.getSnapshot)
   const waiting = state.phase === 'loading' || state.phase === 'applying'
-  return (
-    <>
+  const link =
+    label === null ? null : (
       <button
         type="button"
         className="underline underline-offset-2"
@@ -36,6 +49,10 @@ export function RestoreLink({ roundRunId, label }: { roundRunId: string; label: 
       >
         {label}
       </button>
+    )
+  return (
+    <>
+      {children === undefined ? link : children(link)}
       <Dialog
         open={state.phase !== 'closed'}
         onOpenChange={(open) => {

@@ -56,8 +56,6 @@ async function entries() {
     ordinal: 3,
     moment: 'before-call',
     scope: 'tree',
-    commits: { '/work': 'a'.repeat(40) },
-    files: { '/work/a': 'b'.repeat(64) },
     roundRunId: RUN,
     skipped: 1,
     writer: { by: 'run', runId: RUN },

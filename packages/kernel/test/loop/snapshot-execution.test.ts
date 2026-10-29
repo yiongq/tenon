@@ -538,7 +538,7 @@ describe('05 execution snapshots', () => {
 
   it('05 验收 9: Bash still runs if its before-call tree snapshot fails', async () => {
     const h = await harness()
-    const { pending } = await pause(h, 'Bash')
+    const { pending, roundRunId } = await pause(h, 'Bash')
     h.memory.snapshots.failNextTake('error')
     await finish(h, pending)
     expect(h.spawn).toHaveBeenCalledOnce()
@@ -546,8 +546,12 @@ describe('05 execution snapshots', () => {
       (await h.entries())
         .filter((entry) => entry.name === 'fs/snapshot_created')
         .map((entry) => entry.payload['moment']),
-    ).toEqual(['after-call'])
+    ).toEqual([])
     expect(await outcome(h)).not.toHaveProperty('snapshotId')
+    expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+      ok: true,
+      rounds: [{ roundRunId, commandsWithoutSnapshot: true }],
+    })
   })
 
   it('05 验收 9: Bash still runs after its tree snapshot times out and the session degrades', async () => {
@@ -817,22 +821,26 @@ describe('05 execution snapshots', () => {
     },
   )
 
-  it('05 验收 9: Bash records an after-call tree when warming finishes during the command', async () => {
+  it('05 验收 9: Bash dispatched while warming takes no after-call snapshot when the tree becomes ready', async () => {
     const h = await harness({ status: 'warming' })
-    const { pending } = await pause(h, 'Bash')
+    const { pending, roundRunId } = await pause(h, 'Bash')
     const spawn = h.spawn.getMockImplementation()!
     h.spawn.mockImplementation(async (request) => {
       h.memory.snapshots.setStatus(SESSION, 'tree')
       return spawn(request)
     })
     await finish(h, pending)
-    expect(h.take.mock.calls.map(([request]) => request.moment)).toEqual(['after-call'])
+    expect(h.take).not.toHaveBeenCalled()
     expect(
       (await h.entries())
         .filter((entry) => entry.name === 'fs/snapshot_created')
         .map((entry) => entry.payload['moment']),
-    ).toEqual(['after-call'])
+    ).toEqual([])
     expect(await outcome(h)).not.toHaveProperty('snapshotId')
+    expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+      ok: true,
+      rounds: [{ roundRunId, commandsWithoutSnapshot: true }],
+    })
   })
 
   it.each(['Write', 'Bash'])(
