@@ -500,3 +500,14 @@
 - [建议] Y3 · 停止或超时的命令之后，没人改过也会把后面窗口里的新建与改动逐个问；spec 允许，D67 写的代价没提 · 证据：N7；停止模式对照 117 个中 10 个多出冲突、共多 15 个路径 · 不修：不丢数据；第 18 步在 spec §已知限制与代价补一句。收窄是放宽，不提
 - [建议] Y4 · spec 写窗口「从它被别人改过之后」，代码从它上一次被记录之后开始（记录里看不出你什么时候改的），比字面多问 · 不修：只会多问；第 18 步改措辞（澄清）
 - [建议] Y5 · 一次调用里来源超过约 11 万个时 `Math.min(...)` 展开传参抛 RangeError，预览出不来 · 证据：Node 22.22.0 上 12 万起抛错 · 不修：不删不写、现实里很难碰到；第 18 步改成循环取最小
+
+## 实施 · 2026-10-29（第 18 步）
+
+- 文档同步（spec「## 文档同步」的「实现时」）：overview 的模块表（`HostAdapter` 十个成员、十一个内置工具含 Delete、宿主实现补快照与还原、renderer 补结算行与还原清单）、信任边界加「工作区里的文件与链接」、术语加「快照」「一键还原」；`docs/ux/components.md` 审批卡、工具行、结算行、会话标题菜单四行补记；总参考 §13 阶段 4「快照与一键还原」「任务小结」两条补记；SECURITY.md 新开「Snapshots, restore and Delete」一节，照 §已知限制与代价 逐条写，只略去快照耗时与基线评测花费两条（是成本，不是安全限制）。验收 38（人工）：四处都改了，`pairs` 不拦。
+- 第三段第六轮复核的建议：Y1、Y2 的四条用例收进 `snapshot-restore-gaps.test.ts`（复核探针 N8b、N11、N9、N10；Codex 逐个撤掉对应条件，各自唯一变红、其余 26 条照绿）；Y5 `planRestore` 的 `Math.min(...)` 改成循环取最小；Y3、Y4 改 spec（澄清）。
+- D68（owner 定）：`SnapshotCreatedPayload` 去掉从没填过的 `commits`、`files`，spec §接口同改；仓库里只有两处测试夹具构造过这两项。
+- spec 全文 27409 字符，超 heavy 上限 25000（警告）：不拆。05 只有一个子阶段（4b）、正在收尾，拆开要整份重审；超出的部分来自评审后补的澄清与已知限制。
+- 全量（沙箱外，`--maxWorkers=2`）：5515 过、117 跳过、2 红。`stop-tree` 旧 142 单独重跑通过（负载下的计时偶发）；MCP HTTP 的「03 验收 30 (HTTP): modern total deadline」在不含本步改动的 dev 代码上同样红，是 PR #76 要修的那条，与本步无关。提交 f782832、4c5d393、c0eaa8f（Codex 实现，lead 审）。
+
+测试改动：packages/kernel/src/testing/tape-conformance.ts · 05 验收 1、21: fs facts round-trip, deduplicate and replay without changing projections · 夹具去掉已删除的 `commits`、`files`（D68），断言不变
+测试改动：apps/desktop/test/tape/fs-dialects.test.ts · SQLite 精确载荷、Postgres 与 SQLite 一致性两条 · 共用夹具去掉已删除的两项（D68），断言不变

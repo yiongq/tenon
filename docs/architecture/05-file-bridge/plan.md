@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：第一、二段已合入（PR #72、#75）。第三段第 13–17 步做完（第六轮复核审过 `cfc4dc1`、通过），PR #77 等 owner 合；合入后从第 18 步接着做。
-需要你：合 PR #77（改了门禁文件 `ci.yml`，不开自动合并，只能你合）
+当前：三段都已合入（PR #72、#75、#77）。第 18 步的改动已提交在分支 `feat/05-file-bridge-finish`（文档同步、Y1–Y5、D68），等新上下文复核；过了就勾 18、开 PR，接着做第 19 步。
+需要你：无
 
 ## 开工前读
 
@@ -69,12 +69,11 @@
 
 ## 交接
 
-2026-10-29：第三段第 13–17 步做完。lead 分支 `feat/05-file-bridge-seg3`，PR #77（改了 `ci.yml`，不开自动合并，owner 合）；Codex 在 `codex-render`（分支 `feat/05-seg3`）实现，lead 审、沙箱外跑全量（5513 通过、117 跳过）后提交、摘过来。第 17 步：对照 spec、安全、突变三路评审之后复核了六轮，owner 这一段定了 D62–D67；第六轮审过 `cfc4dc1`、结论通过（报告在私有笔记 `reviews/recheck6-seg3.md`；随机序列扫描 2509 条，默认还原一次没丢你的字节），剩下的 Y1–Y5 五条建议并进第 18 步。CI 在 cfc4dc1 上 ci、e2e、sandbox-macos 全绿，spec-check 等这条通过记录推上去后重跑。合入后从 dev 开新分支做第 18–23 步；spec 已超 heavy 上限（警告，dev 上就超了），第 18 步一并看要不要拆。
+2026-10-29：第三段已合入（PR #77，ac553b0）。第 18 步在 lead 分支 `feat/05-file-bridge-finish`（从 dev 开，还没推、没开 PR）：lead 写文档同步（overview、components、总参考 §13、SECURITY.md）与 spec 的 Y3、Y4、D68 改动；Codex 在 `codex-render` 的 `feat/05-finish` 补 Y1、Y2 的四条用例、Y5 改循环、D68 删字段，lead 审、沙箱外跑全量（5515 过，2 红与本步无关，见 log）后摘过来。下一步：派新上下文评审（改动 `ac553b0..HEAD`），通过后在 log 记评审、勾 18、推送开 PR（不碰门禁文件，可按规矩由评审后开自动合并）；之后第 19 步预算检查点。spec 超 heavy 上限，第 18 步已定不拆（理由见 log）。
 
 ## Open
 
 - 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
-- `SnapshotCreatedPayload` 的 `commits`、`files` 现在永远不填（`SnapshotTaken` 没有这两项）：第 13 步的还原没用上，第 18 步文档同步时从 §接口 拿掉。
 - 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
 - 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
 - Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。

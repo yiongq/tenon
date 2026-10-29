@@ -33,21 +33,21 @@
 
 | 模块 | 管什么 | 不管什么 | 代码在哪 |
 |---|---|---|---|
-| kernel · host | `HostAdapter` 九个成员的接口（identity、fs、secrets、process、sandbox、confirm、clock、network、policy）、`keyFor` 存储键、路径工具、测试用的内存宿主 | 任何真实实现 | `packages/kernel/src/host` |
+| kernel · host | `HostAdapter` 十个成员的接口（identity、fs、secrets、process、sandbox、confirm、clock、network、policy、snapshots）、`keyFor` 存储键、路径工具、测试用的内存宿主 | 任何真实实现 | `packages/kernel/src/host` |
 | kernel · session/loop | 会话服务（建、清空、删、读投影）；每个根会话一个 mailbox，判定发送、停止、继续、答复、恢复；Run 的每一轮、一批工具的执行、上限与守卫、上下文压缩、子 agent、启动恢复 | 窗口、IPC、正在跑的 Run 登记（宿主经端口给）；id 和时间由宿主给，自己不取 | `packages/kernel/src/session`、`packages/kernel/src/loop` |
 | kernel · provider | 厂商定义（Anthropic、智谱、Ollama、自定义厂商）、两条线协议（anthropic-messages、openai-chat）、归一化流事件、错误分类、思考档位 | 密钥在哪、选哪家（宿主的 RunConnector 定）；出网只经 `HostAdapter.network` | `packages/kernel/src/provider` |
-| kernel · tools | 十个内置工具（Read、Write、Edit、Glob、Grep、Bash、WebFetch、WebSearch、AskUserQuestion、Agent）、工具表（候选、命名、冻结）、参数校验、执行器、MCP 工具作候选 | 能不能执行（permission 判）；Bash 的 shell 与基础环境（宿主算好给） | `packages/kernel/src/tools` |
+| kernel · tools | 十一个内置工具（Read、Write、Edit、Delete、Glob、Grep、Bash、WebFetch、WebSearch、AskUserQuestion、Agent）、工具表（候选、命名、冻结）、参数校验、执行器、MCP 工具作候选 | 能不能执行（permission 判）；Bash 的 shell 与基础环境（宿主算好给） | `packages/kernel/src/tools` |
 | kernel · permission | 纯函数 `decide()` 的八层决策表、判决记录与摘要、会话授权、Inspector 接口与外带检查、WebFetch 地址黑名单、工作区内外判定 | 卡片投递（经 `HostAdapter.confirm`）；租户策略从哪来（经 `HostAdapter.policy` 只读） | `packages/kernel/src/permission` |
 | kernel · mcp | 连接池与状态机、stdio 与 Streamable HTTP 两种传输、OAuth 登录、令牌经 `HostAdapter.secrets` 存取 | 连接器配置读写与启动确认（main · MCP 管） | `packages/kernel/src/mcp` |
 | kernel · tape | Tape 条目模型、规范 JSON 与哈希链、命名空间与写入授权、`TapeStore` 端口、内存实现、投影与重放 | 落盘与 SQL（main · Tape 存储管）；`apps/*` 不直接调 `TapeStore.append`，只经 kernel 门面 | `packages/kernel/src/tape` |
 | kernel · prompts | 系统提示、语言提示、模型备注等发给模型的固定文本，和它们的版本哈希（哈希另覆盖各内置工具的描述，描述本身在 tools） | 界面文案（走 i18n） | `packages/kernel/src/prompts` |
 | contracts | IPC 全部通道：zod 定义的请求、响应、事件，`registerRoute` / `invokeRoute` 两端校验，通道登记表；桌面与服务端之间的桥帧骨架（纯函数，还没有使用方） | 业务逻辑；不 import electron | `packages/contracts/src` |
 | main · 装配与路由 | 启动、单实例、窗口与导航加固、注册全部 IPC 路由、RunConnector（选 provider 与模型、读密钥、构造 provider）、RunRegistry、发送队列、工作区文件夹、自定义厂商、启动恢复、退出 | 判定与循环（都在 kernel） | `apps/desktop/src/main` 顶层文件与 `custom-vendors/` |
-| main · 宿主实现 | `HostAdapter` 的桌面实现：文件、钥匙串、进程树、srt 沙箱与姿态自检、出网与不可信抓取、审批投递、命令 shell 的环境 | 判定（只执行 kernel 判过的调用） | `apps/desktop/src/main/host` |
+| main · 宿主实现 | `HostAdapter` 的桌面实现：文件、钥匙串、进程树、srt 沙箱与姿态自检、出网与不可信抓取、审批投递、命令 shell 的环境、改动前的快照（profile 里的影子 git 仓库与单文件副本）与一键还原 | 判定（只执行 kernel 判过的调用） | `apps/desktop/src/main/host` |
 | main · Tape 存储 | SQLite 版 `TapeStore` 与 DDL，和内存实现跑同一套一致性测试 | 写入规则（来自 kernel） | `apps/desktop/src/main/tape` |
 | main · MCP | 连接器配置读写、server 的启动确认、工具 schema 在 worker 线程里校验、日志、OAuth 回调与打开浏览器、MCP 路由 | 连接与调用（kernel · mcp） | `apps/desktop/src/main/mcp` |
 | preload | 给窗口一个 `window.tenon`：`invoke` / `on` 只放行 contracts 登记的通道，外加启动语言与平台 | 载荷校验（main、renderer 两端做） | `apps/desktop/src/preload` |
-| renderer | React 界面：对话流、工具行与拦截回执、审批卡、输入框与文件夹、设置（模型、连接器、沙箱）；中英两种语言 | Node、electron 与钥匙串（由 lint 禁）；任何特权操作 | `apps/desktop/src/renderer` |
+| renderer | React 界面：对话流、工具行与拦截回执、审批卡、结算行与还原清单、输入框与文件夹、设置（模型、连接器、沙箱）；中英两种语言 | Node、electron 与钥匙串（由 lint 禁）；任何特权操作 | `apps/desktop/src/renderer` |
 | server（占位） | 只放 Tape 的 Postgres 版表结构，供 `tape:check` 与 SQLite 版逐项对照，从不执行 | 任何运行代码 | `apps/server/sql` |
 
 ## 数据流
@@ -138,6 +138,7 @@
 - **MCP 工具的描述、注解与结果**：`readOnlyHint`、`destructiveHint` 永不放宽判定，只读 `requiresUserInteraction`（只会更严）；结果当不可信内容；输入 schema 在 worker 线程里校验。
 - **抓回来的网页和搜索结果**：WebFetch 经 `fetchUntrusted` 在主进程查 DNS 结果，拒回环、私网、链路本地与 CGNAT，并钉住查过的地址；会话碰过私有数据又读过不可信内容后，模型自己写出的网址要先问（外带检查）。
 - **沙箱里的命令**：Bash 经 srt 包装（只读、工作区可写两档），网络只放白名单（默认为空），profile 目录、`.ssh` 与凭据位置拒读拒写；沙箱起不来时以你的权限运行、每条都问，卡上写明。
+- **工作区里的文件与链接**：快照、一键还原与 Delete 是主进程里以你的权限运行、不进沙箱的写和删，所以工作区内容当不可信输入。影子仓库的 git 参数只由 Tenon 拼、不读你的 git 全局配置、不跑钩子；还原与 Delete 动手前逐路径比身份、叶子不跟随链接，Delete 不删目录；还原只动 agent 改过的路径，被别处改过的按冲突默认保留。
 - **MCP server 进程**：不进沙箱、以你的权限运行；每个 server 先经你确认，启动命令、参数、环境或地址一变就要重新确认。
 - **密钥**：只在主进程经 `HostAdapter.secrets` 读，不进日志，IPC 只回「是否已配置」。
 
@@ -151,7 +152,7 @@
 | mailbox | 每个根会话一个的串行点：发送、停止、答复等命令按到达顺序在这里判定，Run 的事实也经它写入 |
 | 批 | 模型一次回复里的全部工具调用，按顺序判定和执行；工作区内连续的只读调用可以并行 |
 | 收口 | 每次工具调用恰好有一个结果；被拒、停止、崩溃时由 kernel 补写 |
-| HostAdapter | kernel 碰文件、钥匙串、网络和进程的唯一接口，九个成员（另有 RunConnector、TapeStore 等端口，以及构造时传入的 id 来源）；桌面由主进程实现，测试用内存实现 |
+| HostAdapter | kernel 碰文件、钥匙串、网络和进程的唯一接口，十个成员（另有 RunConnector、TapeStore 等端口，以及构造时传入的 id 来源）；桌面由主进程实现，测试用内存实现 |
 | RunConnector | 宿主交给 kernel 的端口：决定 Run 用哪个 provider 和模型，并构造它 |
 | 会话形态 | 「对话」（`chat`）只有搜索、抓取、提问、读本会话落盘的输出，外加启用的连接器工具；「任务」（`cowork`）有工作区，能改文件、跑命令 |
 | 工作区 | 任务会话的文件夹列表；只经系统对话框或预填加入，没选时用专用文件夹 |
@@ -162,8 +163,11 @@
 | 回执（拦截回执） | 沙箱拦下操作后显示在工具行下的说明，带三种小范围放行：本任务内允许一个域名、允许写一个位置一次、不受限制地重跑一次（重跑前再问） |
 | MCP | Model Context Protocol：外部工具服务与 Tenon 之间的开放协议，Tenon 在其中是 host |
 | 连接器 | 界面上对 MCP server 的叫法 |
+| 快照（留底） | 会改动的调用前后给工作区拍下的样子：能用 git 时整个工作区进 profile 里的影子仓库，不能时只给目标文件留单文件副本 |
+| 一键还原 | 把一轮里 agent 改过的路径放回这一轮开始时的样子；先列清单，被别处改过的按冲突逐个问；动手前先给当时的样子再拍一张 |
 | tenantId | 租户 id，每个存储键都带它；本机固定是 `personal` |
 
 ## 修订
 
 - 2026-10-23 · 建立 · sdd 接入（ADR-004 A11）· bfde94e
+- 2026-10-29 · 05 实现时同步：模块表（`HostAdapter` 十个成员、Delete、快照与还原、结算行与还原清单）、信任边界「工作区里的文件与链接」、术语「快照」「一键还原」· 05 §文档同步
