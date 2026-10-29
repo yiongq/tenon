@@ -546,3 +546,24 @@
 
 测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash records an after-call tree when warming finishes during the command（改名为 Bash dispatched while warming takes no after-call snapshot when the tree becomes ready）· 调用前那张没拍成时调用后也不拍（第 18 步复核 E1，spec §快照怎么拍 同步写明）；验收 9 本身只要求命令照跑、小结带附注，那张调用后快照是第二段的实现选择
 测试改动：packages/kernel/test/loop/snapshot-execution.test.ts · 05 验收 9: Bash still runs if its before-call tree snapshot fails · 同上：期望改成没有快照事实，命令照跑、outcome 没有 snapshotId 不变
+
+## 评审 · 2026-10-30 · 审过 d7e15c0（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `a6952df..d7e15c0`：逐个读被拒结果的执行器确认在写之前返回，对抗探针 P1–P7，导出副本里撤掉 `batch.ts`、`restore.ts` 的修改与两种半截修法；把第六轮的随机扫描扩展到「被拒调用不进查询」「没快照的命令不进查询」两种形态（主扫描 600 个种子、停止模式 300 个种子：你的字节在还原前还在的 338 次、165 次里丢 0 次；新形态对照无冲突、无跳过，旧形态对照多数出冲突或跳过）；报告、探针与扫描另记
+突变：撤 `batch.ts`：验收 9 两条与验收 52 current 红；撤 `restore.ts`：验收 52 legacy 与验收 19 两条没对上红；只丢被拒的、只丢没快照的两种半截修法仓库都分得出；修前守卫因你拍照后改过而拒绝（SNAPSHOT_CHANGED）时选「覆盖」会盖掉你的字节，E2 修掉（P2）
+发现：
+- [建议] A · 「动文件前就被拒的不算」比代码宽：Delete 目标不存在、父目录或目标变了，Write 目标解到别处，Edit 文件太大仍被当成调用后那张没记成 · 证据：探针 P4 · 已修 013e90f（五种执行器自己的固定结果也认成被拒，修前红、修后绿、撤掉又红），spec 举例与 §快照怎么拍 同步 43968b7
+- [建议] B · 只有被拒调用的一轮不再出「可还原」，与 spec「这一轮有还在的快照时」、验收 33 不符（6db3713 带来） · 证据：探针 P1 · 已修 43968b7（owner 定 D69「不显示」，spec 与验收 33 改写）
+- [建议] C · overview 术语「快照」与 SECURITY.md 第一条列的能拍整树条件不全 · 证据：spec §快照怎么拍 · 已修 43968b7
+- [建议] D · log 里第一行「测试改动」说那张调用后快照是「第二段的实现选择」不准：a6952df 的 spec §快照怎么拍 字面要求过它 · 已修（下方更正行）
+- [建议] E · 没快照的命令改到这一轮 agent 改过的文件时清单说「可能被别处改过」、它新建的文件不进清单，§已知限制没写 · 证据：探针 P6a、扫描 · 已修 43968b7
+- [建议] G（第三段既有）· 你改过的内容被 agent 改名搬走、你又改了原名，默认还原删掉搬走的那份 · 证据：`rc2-twoedits.test.ts` · 已修 c924b6b（owner 定 D70「按内容跟着问」：还原要放回或删除的路径里，现在内容与某个冲突路径起点内容相同的也算冲突）
+
+更正（第 18.1 步第一行「测试改动」）：那张调用后快照在 a6952df 的 spec §快照怎么拍 里是字面要求（「每次调用做完再记一次……Bash 再拍一张整树」），不只是实现选择；改它的依据是 3d5daa2 对这一句的澄清（「调用前那张没拍成的，调用后也不拍」，见修订记录）。
+
+## 实施 · 2026-10-30（第 18.2 步）
+
+- A（013e90f，Codex 实现、lead 审）：kernel `restore.ts` 把 Delete 的不存在、父目录变了、目标变了，Write 的解到别处，Edit 的文件太大也认成动文件前就没做成，按工具名与执行器的固定模板匹配，执行器文字不改。回归「05 验收 19: %s before mutation leaves later writes conflict-free and new files removable」五种，修前全红、修后全绿、撤掉又红。
+- G（c924b6b，D70）：宿主 `planRestore` 在冲突算完后加一趟，还原要放回或删除的路径里，现在是非空普通文件、大小与内容（git blob 哈希）与某个冲突路径起点相同的，也记为冲突；只加不减，复用计划里已读的内容，预览与 `prepare` 一致。回归五条「05 验收 19」（搬成新文件、搬去盖掉已有文件，及没人改过、同大小不同内容、空文件三条对照）；撤掉这一趟时前两条红，对照照绿。
+- 文档（43968b7）：spec 记 D69、D70 与 A、E 的澄清，验收 33 改写；overview、SECURITY.md 按 C、E 改；decisions 记 D69、D70。
+- 全量（沙箱外，`--maxWorkers=2`）：5533 过、117 跳过、0 红。
