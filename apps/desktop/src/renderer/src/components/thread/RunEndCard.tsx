@@ -5,7 +5,7 @@ import { useAuiState } from '@assistant-ui/react'
 import { invokeRoute, providerList, sessionModelChoice } from '@tenon-app/contracts'
 import type { ProviderEntryContract, RunEndReasonContract } from '@tenon-app/contracts'
 import { useEffect, useState } from 'react'
-import type { JSX } from 'react'
+import type { JSX, ReactNode } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { SettingsModal } from '@/components/settings/SettingsModal'
@@ -193,26 +193,38 @@ export function SummaryLine(props: {
   const { data } = useSnapshotRounds()
   const round = roundForRun(data?.rounds ?? [], props.runId ?? null)
   const notes = restoreNotes(round)
-  if (props.summary === null && notes.link === null && !notes.command) return null
+  const renderSummary = (link: ReactNode) => {
+    if (props.summary === null && notes.link === null && !notes.command) return null
+    return (
+      <p data-testid="turn-summary" className="font-sans text-micro text-text-muted">
+        {Object.entries(props.summary ?? {})
+          .filter(([, count]) => count > 0)
+          .map(([kind, count]) => tx(t, `summary.${kind}`, { count }))
+          .join(t('summary.separator'))}
+        {notes.link === null || round === undefined ? null : (
+          <>
+            {props.summary === null ? null : t('summary.separator')}
+            {link}
+          </>
+        )}
+        {notes.command ? (
+          <>
+            {props.summary === null && notes.link === null ? null : t('summary.separator')}
+            {t('snapshot.command')}
+          </>
+        ) : null}
+      </p>
+    )
+  }
+  // Keep the flow mounted even if a timer/focus refresh removes its link or fails (data=null).
+  // The dialog belongs to the open flow and remains visible until the user closes it.
   return (
-    <p data-testid="turn-summary" className="font-sans text-micro text-text-muted">
-      {Object.entries(props.summary ?? {})
-        .filter(([, count]) => count > 0)
-        .map(([kind, count]) => tx(t, `summary.${kind}`, { count }))
-        .join(t('summary.separator'))}
-      {notes.link === null || round === undefined ? null : (
-        <>
-          {props.summary === null ? null : t('summary.separator')}
-          <RestoreLink roundRunId={round.roundRunId} label={t(notes.link)} />
-        </>
-      )}
-      {notes.command ? (
-        <>
-          {props.summary === null && notes.link === null ? null : t('summary.separator')}
-          {t('snapshot.command')}
-        </>
-      ) : null}
-    </p>
+    <RestoreLink
+      roundRunId={round?.roundRunId ?? props.runId ?? ''}
+      label={notes.link === null ? null : t(notes.link)}
+    >
+      {renderSummary}
+    </RestoreLink>
   )
 }
 
