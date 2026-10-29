@@ -34,7 +34,7 @@
 | 模块 | 管什么 | 不管什么 | 代码在哪 |
 |---|---|---|---|
 | kernel · host | `HostAdapter` 十个成员的接口（identity、fs、secrets、process、sandbox、confirm、clock、network、policy、snapshots）、`keyFor` 存储键、路径工具、测试用的内存宿主 | 任何真实实现 | `packages/kernel/src/host` |
-| kernel · session/loop | 会话服务（建、清空、删、读投影）；每个根会话一个 mailbox，判定发送、停止、继续、答复、恢复；Run 的每一轮、一批工具的执行、上限与守卫、上下文压缩、子 agent、启动恢复 | 窗口、IPC、正在跑的 Run 登记（宿主经端口给）；id 和时间由宿主给，自己不取 | `packages/kernel/src/session`、`packages/kernel/src/loop` |
+| kernel · session/loop | 会话服务（建、清空、删、读投影）；每个根会话一个 mailbox，判定发送、停止、继续、答复、恢复；Run 的每一轮、一批工具的执行、上限与守卫、上下文压缩、子 agent、启动恢复；一键还原的轮次、还原请求与 `fs/restore_started`、`fs/restored` 两段事实 | 窗口、IPC、正在跑的 Run 登记（宿主经端口给）；id 和时间由宿主给，自己不取 | `packages/kernel/src/session`、`packages/kernel/src/loop` |
 | kernel · provider | 厂商定义（Anthropic、智谱、Ollama、自定义厂商）、两条线协议（anthropic-messages、openai-chat）、归一化流事件、错误分类、思考档位 | 密钥在哪、选哪家（宿主的 RunConnector 定）；出网只经 `HostAdapter.network` | `packages/kernel/src/provider` |
 | kernel · tools | 十一个内置工具（Read、Write、Edit、Delete、Glob、Grep、Bash、WebFetch、WebSearch、AskUserQuestion、Agent）、工具表（候选、命名、冻结）、参数校验、执行器、MCP 工具作候选 | 能不能执行（permission 判）；Bash 的 shell 与基础环境（宿主算好给） | `packages/kernel/src/tools` |
 | kernel · permission | 纯函数 `decide()` 的八层决策表、判决记录与摘要、会话授权、Inspector 接口与外带检查、WebFetch 地址黑名单、工作区内外判定 | 卡片投递（经 `HostAdapter.confirm`）；租户策略从哪来（经 `HostAdapter.policy` 只读） | `packages/kernel/src/permission` |
@@ -93,7 +93,7 @@
                                                 +--每条事实--> [kernel · tape] 门面 --> TapeStore 端口
                                                 +--连接器工具--> [kernel · mcp] 连接池
 - - - HostAdapter（接口在 kernel · host）：kernel 碰文件、钥匙串、网络、进程的唯一出口 - - -
-[main · 宿主实现]  fs | secrets -> 钥匙串 | process | sandbox -> srt | network -> undici | confirm
+[main · 宿主实现]  fs | secrets -> 钥匙串 | process | sandbox -> srt | network -> undici | confirm | snapshots -> 影子仓库
 [main · Tape 存储] --> sessions.db              [main · MCP] 配置、启动确认、schema worker
           |                                                 |
 ========= 信任边界：srt 沙箱 =========        ========= 信任边界：MCP =========
@@ -138,7 +138,7 @@
 - **MCP 工具的描述、注解与结果**：`readOnlyHint`、`destructiveHint` 永不放宽判定，只读 `requiresUserInteraction`（只会更严）；结果当不可信内容；输入 schema 在 worker 线程里校验。
 - **抓回来的网页和搜索结果**：WebFetch 经 `fetchUntrusted` 在主进程查 DNS 结果，拒回环、私网、链路本地与 CGNAT，并钉住查过的地址；会话碰过私有数据又读过不可信内容后，模型自己写出的网址要先问（外带检查）。
 - **沙箱里的命令**：Bash 经 srt 包装（只读、工作区可写两档），网络只放白名单（默认为空），profile 目录、`.ssh` 与凭据位置拒读拒写；沙箱起不来时以你的权限运行、每条都问，卡上写明。
-- **工作区里的文件与链接**：快照、一键还原与 Delete 是主进程里以你的权限运行、不进沙箱的写和删，所以工作区内容当不可信输入。影子仓库的 git 参数只由 Tenon 拼、不读你的 git 全局配置、不跑钩子；还原与 Delete 动手前逐路径比身份、叶子不跟随链接，Delete 不删目录；还原只动 agent 改过的路径，被别处改过的按冲突默认保留。
+- **工作区里的文件与链接**：快照、一键还原与 Delete 是主进程里以你的权限运行、不进沙箱的写和删，所以工作区内容当不可信输入。影子仓库的 git 参数只由 Tenon 拼、不读你的 git 全局配置、不跑钩子；还原动手前逐路径比身份；Delete 拍了快照时比身份，否则复查父目录与类型；叶子都不跟随链接，Delete 不删目录。还原只动 agent 改过的路径，两次调用之间被别处改过的按冲突默认保留；命令运行期间你在同一文件夹改的分不出来，算进命令的改动。
 - **MCP server 进程**：不进沙箱、以你的权限运行；每个 server 先经你确认，启动命令、参数、环境或地址一变就要重新确认。
 - **密钥**：只在主进程经 `HostAdapter.secrets` 读，不进日志，IPC 只回「是否已配置」。
 
@@ -163,11 +163,11 @@
 | 回执（拦截回执） | 沙箱拦下操作后显示在工具行下的说明，带三种小范围放行：本任务内允许一个域名、允许写一个位置一次、不受限制地重跑一次（重跑前再问） |
 | MCP | Model Context Protocol：外部工具服务与 Tenon 之间的开放协议，Tenon 在其中是 host |
 | 连接器 | 界面上对 MCP server 的叫法 |
-| 快照（留底） | 会改动的调用前后给工作区拍下的样子：能用 git 时整个工作区进 profile 里的影子仓库，不能时只给目标文件留单文件副本 |
+| 快照（留底） | Write、Edit、Delete 前后给工作区拍下的样子：能用 git 时整个工作区进 profile 里的影子仓库，不能时只给目标文件留单文件副本；命令只在能整树时前后各拍一张，连接器工具不拍 |
 | 一键还原 | 把一轮里 agent 改过的路径放回这一轮开始时的样子；先列清单，被别处改过的按冲突逐个问；动手前先给当时的样子再拍一张 |
 | tenantId | 租户 id，每个存储键都带它；本机固定是 `personal` |
 
 ## 修订
 
 - 2026-10-23 · 建立 · sdd 接入（ADR-004 A11）· bfde94e
-- 2026-10-29 · 05 实现时同步：模块表（`HostAdapter` 十个成员、Delete、快照与还原、结算行与还原清单）、信任边界「工作区里的文件与链接」、术语「快照」「一键还原」· 05 §文档同步
+- 2026-10-29 · 05 实现时同步：模块表（`HostAdapter` 十个成员、Delete、快照与还原、结算行与还原清单）、信任边界「工作区里的文件与链接」、术语「快照」「一键还原」、结构图的 snapshots · 05 §文档同步
