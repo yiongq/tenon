@@ -440,6 +440,7 @@ export async function planRestore(
   const items: RestoreItem[] = []
   const stamps: unknown[] = []
   const aliases = new Set<string>()
+  const currentContents = new Map<AbsolutePath, string | undefined>()
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -527,6 +528,7 @@ export async function planRestore(
       now.content,
       reason,
     ])
+    currentContents.set(path, contentKey(now))
     if (reason !== undefined) {
       preview.skipped.push({
         path,
@@ -614,7 +616,12 @@ export async function planRestore(
       candidatesByContent.set(key, candidates)
     }
   }
-  for (const skipped of preview.skipped) enqueue(changes.get(skipped.path)?.start)
+  for (const skipped of preview.skipped) {
+    const origin = changes.get(skipped.path)?.start
+    // A skipped file still holding its origin needs no other copy protected. Unknown live
+    // content (including unreadable parent aliases) stays conservative and seeds the worklist.
+    if (contentKey(origin) !== currentContents.get(skipped.path)) enqueue(origin)
+  }
   for (let head = 0; head < pending.length; head++) {
     const key = pending[head]!
     for (const item of candidatesByContent.get(key) ?? []) {

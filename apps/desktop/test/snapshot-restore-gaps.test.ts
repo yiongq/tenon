@@ -2,6 +2,7 @@ import type { RestoreQuery } from '@tenon-app/kernel'
 import {
   appendFile,
   copyFile,
+  link,
   mkdir,
   readdir,
   readFile,
@@ -456,4 +457,59 @@ it('05 验收 19: a gap-only conflict protects a copy of the edit made before th
   expect((await restore(q)).done).toMatchObject({ kept: 2, failed: [] })
   expect(await readFile(path('c'), 'utf8')).toBe('your first edit')
   expect(await readFile(path('d'), 'utf8')).toBe('agent two')
+})
+
+it('05 验收 19: an ignored original still in place does not protect its example copy', async () => {
+  await writeFile(path('.gitignore'), 'build/\n')
+  await writeFile(path('settings.local.json'), '{"name":"local"}\n')
+  const call = await recordedCall('copy', async () => {
+    await copyFile(path('settings.local.json'), path('settings.example.json'))
+    await appendFile(path('.gitignore'), 'settings.local.json\n')
+  })
+  const q = query([call])
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toContainEqual({ path: path('settings.local.json'), reason: 'excluded' })
+  expect(preview.conflicts).toEqual([])
+  expect((await restore(q)).done).toMatchObject({ kept: 0, failed: [] })
+  expect(await readdir(folder)).toEqual(['.gitignore', 'settings.local.json'])
+  expect(await readFile(path('settings.local.json'), 'utf8')).toBe('{"name":"local"}\n')
+  expect(await readFile(path('.gitignore'), 'utf8')).toBe('build/\n')
+})
+
+it('05 验收 19: ignored originals still in place let all backup copies and their directory be removed', async () => {
+  await writeFile(path('.gitignore'), 'build/\n')
+  await mkdir(path('data'))
+  const names = ['a', 'b', 'c']
+  await Promise.all(names.map((name) => writeFile(path(`data/${name}`), `origin ${name}`)))
+  const call = await recordedCall('backup', async () => {
+    await mkdir(path('backup'))
+    await Promise.all(names.map((name) => copyFile(path(`data/${name}`), path(`backup/${name}`))))
+    await appendFile(path('.gitignore'), 'data/\n')
+  })
+  const q = query([call])
+  expect((await snapshots.preview(q)).conflicts).toEqual([])
+  expect((await restore(q)).done).toMatchObject({ kept: 0, failed: [] })
+  expect(await readdir(folder)).toEqual(['.gitignore', 'data'])
+  expect(await readdir(path('data'))).toEqual(names)
+  expect(await Promise.all(names.map((name) => readFile(path(`data/${name}`), 'utf8')))).toEqual(
+    names.map((name) => `origin ${name}`),
+  )
+  expect(await readFile(path('.gitignore'), 'utf8')).toBe('build/\n')
+})
+
+it('05 验收 19: a hardlink skip protects its original bytes moved to a new file', async () => {
+  await writeFile(path('h'), 'origin bytes')
+  const call = await recordedCall('move', async () => {
+    await rename(path('h'), path('moved'))
+    await writeFile(path('h'), 'replacement bytes')
+    await link(path('h'), path('second-name'))
+  })
+  const q = query([call])
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toContainEqual({ path: path('h'), reason: 'hardlink' })
+  expect(preview.remove).toContain(path('moved'))
+  expect(preview.conflicts).toEqual([path('moved')])
+  expect((await restore(q)).done).toMatchObject({ kept: 1, failed: [] })
+  expect(await readFile(path('moved'), 'utf8')).toBe('origin bytes')
+  expect(await readFile(path('h'), 'utf8')).toBe('replacement bytes')
 })
