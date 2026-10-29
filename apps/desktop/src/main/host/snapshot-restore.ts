@@ -120,6 +120,12 @@ async function leafRenamePair(
 const depth = (path: string): number => path.split(sep).length
 const gitHash = (data: Uint8Array): string =>
   createHash('sha1').update(`blob ${data.byteLength}\0`).update(data).digest('hex')
+function contentKey(p: Point | undefined): string | undefined {
+  const file = p?.file.identity
+  return p?.covered && file?.kind === 'file' && file.size > 0 && p.content !== undefined
+    ? `${file.size}:${p.content}`
+    : undefined
+}
 function equal(a: Point | undefined, b: Point | undefined, mode = true): boolean {
   if (a === undefined || b === undefined || !a.covered || !b.covered) return false
   return (
@@ -585,33 +591,39 @@ export async function planRestore(
       ...(changes.get(item.path)?.promised ? { promised: true as const } : {}),
     })
   }
-  // D70 only adds conflicts: protect current nonempty file content matching an existing
-  // conflict's origin. Compare size first, then the shared Git-blob hash (point normalizes
-  // file copies too). Reuse guarded live reads / captured undo content already in the plan;
-  // no extra workspace reads are needed, and unreadable paths are not actionable items.
-  const conflictOrigins = new Map<number, Set<string>>()
+  // D70: default-kept conflicts and skipped origins can each leave their only copy elsewhere.
+  // Reuse the guarded live/undo content hashes; compare nonempty regular files by size + Git blob
+  // hash. Index candidates once, then enqueue newly protected origins until a fixed point.
+  // Each item becomes a conflict at most once and each content key is queued once, so this stops.
+  const candidatesByContent = new Map<string, RestoreItem[]>()
+  const pending: string[] = []
+  const queued = new Set<string>()
+  const enqueue = (origin: Point | undefined) => {
+    const key = contentKey(origin)
+    if (key === undefined || queued.has(key)) return
+    queued.add(key)
+    pending.push(key)
+  }
   for (const item of items) {
-    const origin = item.start.file.identity
-    if (
-      !item.conflict ||
-      origin?.kind !== 'file' ||
-      origin.size === 0 ||
-      item.start.content === undefined
-    )
-      continue
-    const hashes = conflictOrigins.get(origin.size) ?? new Set<string>()
-    hashes.add(item.start.content)
-    conflictOrigins.set(origin.size, hashes)
-  }
-  if (conflictOrigins.size > 0) {
-    for (const item of items) {
-      const now = item.now.file.identity
-      if (item.conflict || now?.kind !== 'file' || now.size === 0 || item.now.content === undefined)
-        continue
-      if (conflictOrigins.get(now.size)?.has(item.now.content)) item.conflict = true
+    if (item.conflict) enqueue(item.start)
+    else {
+      const key = contentKey(item.now)
+      if (key === undefined) continue
+      const candidates = candidatesByContent.get(key) ?? []
+      candidates.push(item)
+      candidatesByContent.set(key, candidates)
     }
-    preview.conflicts = items.filter((item) => item.conflict).map((item) => item.path)
   }
+  for (const skipped of preview.skipped) enqueue(changes.get(skipped.path)?.start)
+  for (let head = 0; head < pending.length; head++) {
+    const key = pending[head]!
+    for (const item of candidatesByContent.get(key) ?? []) {
+      item.conflict = true
+      enqueue(item.start)
+    }
+    candidatesByContent.delete(key)
+  }
+  preview.conflicts = items.filter((item) => item.conflict).map((item) => item.path)
   preview.skipped.sort((a, b) => a.path.localeCompare(b.path))
   // Covers the displayed plan and every live candidate's identity/content, including kept conflicts
   // and skipped/already-restored paths. Only actionable paths use captured undo state in prepare;

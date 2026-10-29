@@ -384,3 +384,76 @@ it.each(['different bytes of the same size', 'empty bytes'] as const)(
     expect(await readFile(path('d'), 'utf8')).toBe('your second edit')
   },
 )
+
+it.each([true, false])(
+  '05 验收 19: content conflicts follow the whole move chain (outside edits: %s)',
+  async (edited) => {
+    await writeFile(path('d'), 'origin d')
+    await writeFile(path('x'), 'origin x')
+    const first = await recordedCall('c1', async () => {
+      await copyFile(path('d'), path('z'))
+      await writeFile(path('d'), 'agent')
+    })
+    if (edited) {
+      await writeFile(path('x'), 'your x')
+      await writeFile(path('d'), 'your d')
+    }
+    const second = await recordedCall('c2', async () => {
+      await rename(path('x'), path('y'))
+      await rename(path('z'), path('x'))
+    })
+    const q = query([first, second])
+    expect((await snapshots.preview(q)).conflicts.toSorted()).toEqual(
+      edited ? [path('d'), path('x'), path('y')] : [],
+    )
+    expect((await restore(q)).done).toMatchObject({ kept: edited ? 3 : 0, failed: [] })
+    expect(await readFile(path('d'), 'utf8')).toBe(edited ? 'your d' : 'origin d')
+    expect(await readFile(path('x'), 'utf8')).toBe(edited ? 'origin d' : 'origin x')
+    const moved = await readFile(path('y'), 'utf8').catch(() => null)
+    expect(moved).toBe(edited ? 'your x' : null)
+    const overwrite = (await snapshots.preview(q)).conflicts
+    expect((await restore(q, [...overwrite])).done.failed).toEqual([])
+    expect(await readdir(folder)).toEqual(['d', 'x'])
+    expect(await readFile(path('d'), 'utf8')).toBe('origin d')
+    expect(await readFile(path('x'), 'utf8')).toBe(edited ? 'your x' : 'origin x')
+  },
+)
+
+it.each([true, false])(
+  '05 验收 19: a skipped origin protects its moved content (outside edit: %s)',
+  async (edited) => {
+    await writeFile(path('a'), 'origin a')
+    await writeFile(path('d'), 'origin d')
+    await writeFile(path('.gitignore'), 'build/\n')
+    const first = await recordedCall('c1', () => appendFile(path('a'), ' agent'))
+    if (edited) await writeFile(path('d'), 'your d')
+    const second = await recordedCall('c2', async () => {
+      await rename(path('d'), path('c'))
+      await appendFile(path('.gitignore'), 'd\n')
+    })
+    const q = query([first, second])
+    const p = await snapshots.preview(q)
+    expect(p.skipped).toContainEqual({ path: path('d'), reason: 'excluded' })
+    expect(p.conflicts).toContain(path('c'))
+    expect((await restore(q)).done).toMatchObject({ kept: 1, failed: [] })
+    expect(await readFile(path('c'), 'utf8')).toBe(edited ? 'your d' : 'origin d')
+  },
+)
+
+it('05 验收 19: a gap-only conflict protects a copy of the edit made before the first touch', async () => {
+  await writeFile(path('a'), 'origin a')
+  await writeFile(path('d'), 'origin d')
+  const first = await recordedCall('c0', () => appendFile(path('a'), ' agent'))
+  await writeFile(path('d'), 'your first edit')
+  const second = await recordedCall('c1', async () => {
+    await copyFile(path('d'), path('c'))
+    await writeFile(path('d'), 'agent one')
+  })
+  await writeFile(path('d'), 'your second edit')
+  const third = await recordedCall('c2', () => writeFile(path('d'), 'agent two'))
+  const q = query([first, second, third])
+  expect((await snapshots.preview(q)).conflicts.toSorted()).toEqual([path('c'), path('d')])
+  expect((await restore(q)).done).toMatchObject({ kept: 2, failed: [] })
+  expect(await readFile(path('c'), 'utf8')).toBe('your first edit')
+  expect(await readFile(path('d'), 'utf8')).toBe('agent two')
+})
