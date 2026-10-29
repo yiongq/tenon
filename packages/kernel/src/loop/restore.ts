@@ -337,8 +337,10 @@ async function collectHistory(
   const all = flatten(rootNodes)
   const rounds = [...byRound].map(([roundRunId, runIds]): CollectedRound => {
     const nodes = all.filter((node) => node.roundRunId === roundRunId)
+    // Refused file calls did not mutate anything; legacy after-only snapshots have no baseline.
+    // Neither can describe an agent change or open a gap in the host's restore comparison.
     const calls = nodes
-      .filter((node) => node.before !== undefined || node.after !== undefined)
+      .filter((node) => node.before !== undefined && !node.guardRefused)
       .map(queryCall)
     return {
       roundRunId,
