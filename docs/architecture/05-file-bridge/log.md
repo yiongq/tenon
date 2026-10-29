@@ -626,3 +626,15 @@
 
 测试改动：apps/desktop/test/snapshot-restore-gaps.test.ts · 05 验收 19: unreadable parent aliases protect origin bytes moved out of the renamed directory · 新用例只在 macOS 跑（`skipIf(process.platform !== 'darwin')`）：它要靠大小写不敏感的卷让 `sub` 与 `SUB` 成别名，Linux 的默认卷大小写敏感、走不到这个跳过；CI 的 macOS runner 会跑
 测试改动：apps/desktop/test/renderer-restore-components.test.ts · 05 验收 15: $result stays visible until closing refreshes away the restore link · 加三种结果与「关闭后不再发请求」的断言，原有期望不变；`stale` 重出那种停在预览页，按钮是「取消」
+
+## 评审 · 2026-10-30 · 审过 53f1667（复核）
+
+结论：通过    评审：新上下文的子 agent（Opus），审 `6549a1f..53f1667`：用真 `RestoreFlow` 走还原的各条结果路径，渲染端 SSR 探针，重跑上一轮探针与 `.gitignore` 变体扫描（主 600、密集 300 个种子），新探针 G1–G14；导出副本里 19 个突变（A0–A9、B0–B5、K7）；报告、探针与扫描另记
+突变：log 第 18.4 步说的「撤掉…时变红」都复现；上一轮去掉跳过入队时丢起点的 5 个对照全部救回，F5、F6b 与扫描里的 S17、S30、S148、S253、S523 不再多问，新反例 0 个；仓库分不出的：读不到的跳过当作在原处（B3，G13 会丢）、只比大小（B5，G14 会丢）、流程随数据重建（A9）、三条 catch 或 `stale` 路径不记待刷新（A6–A8）
+发现：
+- [建议] V1 · 重启后画的历史结算行上开着对话框时，一次后台刷新失败让 `RunEndCard` 返回 null，对话框连同流程卸掉；`SummaryLine` 的注释在这一支不成立 · 证据：RC5V 探针 · 不修：只在刷新出错时发生、不丢数据，修法要动 `ChatProvider` 或把流程提到 `SnapshotProvider`；注释改准（f7f3368），修法记进 plan Open（3839b02）
+- [建议] V2 · spec D70 一句、§已知限制与代价与 SECURITY.md 没写「现在的内容读不到的跳过也入队」，目录只改了大小写、没人改过也会多问 · 证据：F8、G9、G13 · 已修 3839b02
+- [建议] V3 · 被排除的文件被搬出一条把「复制」也写成原内容找不回，写宽了 · 证据：F7 与上一轮 Y2 的扫描 · 已修 3839b02
+- [建议] V4 · 四处保护只有探针在守 · 证据：突变 B3、B5、A6–A8 下仓库全绿 · 已修 f7f3368（G13、G14 与三种流程结果收进仓库）
+- [建议] V4b · 流程随数据重建（A9）仓库测不到 · 证据：突变 A9 · 不修：仓库只有 Node 加 SSR、没有客户端 DOM 测试环境，为一条用例加依赖不划算；现在靠 `refresh` 的 `useCallback([])` 撑着，评审时看
+- [建议] V5 · 92a56d6 让 spec、plan 用了没定义的代号；plan「当前」与 log 实施漏列 cd83788；R7 处置后接了一段 N5 的说明 · 证据：spec-check `codes` 两条 · 已修 3839b02（代号改成写节名出处，plan 当前列上 cd83788）；N5 那段之后单列，log 只往后追加、不回改
