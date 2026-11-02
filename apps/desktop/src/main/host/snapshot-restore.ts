@@ -148,16 +148,18 @@ function directoryPoint(path: AbsolutePath, mode: number): Point {
     covered: true,
   }
 }
-function excluded(tree: TreeRecord, path: string): boolean {
-  return (
-    relative(tree.folder, path)
-      .split(sep)
-      .some((part) => DEFAULT_EXCLUDES.includes(part as (typeof DEFAULT_EXCLUDES)[number])) ||
-    tree.excluded.some((name) => contains(join(tree.folder, name), path))
-  )
+function excluded(tree: IndexedTree, path: string): boolean {
+  for (let name = path; contains(tree.folder, name); name = dirname(name)) {
+    if (tree.excludedPaths.has(name)) return true
+    if (name === tree.folder) break
+  }
+  return relative(tree.folder, path)
+    .split(sep)
+    .some((part) => DEFAULT_EXCLUDES.includes(part as (typeof DEFAULT_EXCLUDES)[number]))
 }
 interface IndexedTree extends TreeRecord {
   entriesByPath: ReadonlyMap<AbsolutePath, SavedFile>
+  excludedPaths: ReadonlySet<string>
 }
 interface IndexedManifest extends SnapshotManifest {
   filesByPath: ReadonlyMap<AbsolutePath, SavedFile>
@@ -170,6 +172,7 @@ function indexManifest(manifest: SnapshotManifest): IndexedManifest {
     trees: manifest.trees.map((tree) => ({
       ...tree,
       entriesByPath: new Map(tree.entries.map((entry) => [entry.path, entry])),
+      excludedPaths: new Set(tree.excluded.map((name) => join(tree.folder, name))),
     })),
   }
 }
@@ -320,6 +323,7 @@ export async function planRestore(
       .map((manifest) => [manifest.id, indexManifest(manifest)]),
   )
   const currentIndex = current === undefined ? undefined : indexManifest(current)
+  const excludedParents = new Set<string>()
   const changes = new Map<
     AbsolutePath,
     {
@@ -422,6 +426,14 @@ export async function planRestore(
       if (manifest === undefined) continue
       for (const tree of manifest.trees) {
         for (const name of tree.excluded) {
+          for (
+            let parent = dirname(join(tree.folder, name));
+            contains(tree.folder, parent);
+            parent = dirname(parent)
+          ) {
+            excludedParents.add(parent)
+            if (parent === tree.folder) break
+          }
           for (const path of changesBelow.get(join(tree.folder, name)) ?? []) {
             const change = changes.get(path)!
             if (change.treeCovered && !manifest.filesByPath.has(path)) change.excluded = true
@@ -499,6 +511,12 @@ export async function planRestore(
       [change.start, now].some((p) => p.file.identity?.kind === 'file' && p.file.identity.nlink > 1)
     )
       reason = 'hardlink'
+    if (
+      change.start.file.identity === null &&
+      now.file.identity?.kind === 'dir' &&
+      excludedParents.has(path)
+    )
+      reason ??= 'excluded'
     // Current gitignore/default/nested exclusions apply to Bash paths. Explicit file copies override them.
     if (
       reason === undefined &&

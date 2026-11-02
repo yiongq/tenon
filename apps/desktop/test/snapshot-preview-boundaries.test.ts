@@ -1,6 +1,7 @@
 import {
   appendFile,
   chmod,
+  lstat,
   copyFile,
   mkdir,
   readFile,
@@ -26,6 +27,53 @@ import {
   take,
   restore,
 } from './support/snapshot-boundaries.js'
+
+it.each([
+  ['logs', 'run.log', '*.log\n', false, false],
+  ['.pytest_cache', '.gitignore', '', false, false],
+  ['logs', 'run.log', '*.log\n', true, false],
+  ['logs', 'run.log', '*.log\n', true, true],
+] as const)(
+  '05 验收 41、33 复现: %s/%s retains ignored contents (%s, mixed %s, existing %s)',
+  async (dir, leaf, rule, mixed, existing) => {
+    await writeFile(path('.gitignore'), rule)
+    await writeFile(path('f'), 'origin')
+    if (existing) await mkdir(path(dir), { mode: 0o700 })
+    const before = await take()
+    if (existing) await rm(path(dir), { recursive: true })
+    await mkdir(path(dir), { mode: 0o755 })
+    await chmod(path(dir), 0o755)
+    await writeFile(path(`${dir}/${leaf}`), '*\n')
+    if (mixed) {
+      await writeFile(path('f'), 'agent')
+      await writeFile(path(`${dir}/ordinary`), 'agent')
+    }
+    const after = await take(undefined, 'after-call')
+    const q = query([{ callKey: 'bash', before, after }])
+    const preview = await snapshots.preview(q)
+    expect(preview.remove).not.toContain(path(dir))
+    expect(preview.restore.includes(path(dir))).toBe(existing)
+    expect(preview.skipped).toEqual(existing ? [] : [{ path: path(dir), reason: 'excluded' }])
+    const { done } = await restore(q)
+    expect(done.failed).toEqual([])
+    expect(await readFile(path(`${dir}/${leaf}`), 'utf8')).toBe('*\n')
+    expect(await readFile(path('f'), 'utf8')).toBe('origin')
+    expect((await lstat(path(dir))).mode & 0o777).toBe(existing ? 0o700 : 0o755)
+    const end = await snapshots.preview(q)
+    expect([...end.restore, ...end.remove, ...end.conflicts]).toEqual([])
+  },
+)
+
+it('05 验收 41: an unreadable root exclusion covers every candidate', async () => {
+  await writeFile(path('f'), 'origin')
+  const before = await take()
+  await writeFile(path('f'), 'agent')
+  const after = await take(undefined, 'after-call')
+  const manifest = snapshots['sessions'].get(sessionId)!.manifests.find((m) => m.id === before)!
+  manifest.trees[0]!.excluded.push('')
+  const preview = await snapshots.preview(query([{ callKey: 'bash', before, after }]))
+  expect(preview.skipped).toEqual([{ path: path('f'), reason: 'excluded' }])
+})
 
 it.each(['foo', ':foo'])(
   '05 验收 41 复现: literal colon names survive tree capture with ignore rule %s',
@@ -252,6 +300,9 @@ it('05 验收 21: the undo tree preserves the content from before restoration', 
   await writeFile(path('f'), 'agent')
   const after = await take(undefined, 'after-call')
   const first = await restore(query([{ callKey: 'bash', before, after }]))
+  expect(
+    snapshots['sessions'].get(sessionId)!.manifests.find((m) => m.id === first.undo)!.files,
+  ).toEqual([])
   expect(first.done).toMatchObject({ restored: 1, failed: [] })
   expect(await readFile(path('f'), 'utf8')).toBe('origin')
   const restored = await take(undefined, 'after-call')

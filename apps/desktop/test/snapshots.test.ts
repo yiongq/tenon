@@ -1092,6 +1092,14 @@ it.skipIf(process.platform !== 'darwin')(
       expect(await git([`--git-dir=${repo}`, 'show', `${data.trees[0]!.commit}:makefile`])).toBe(
         'lower',
       )
+      // A name that differs only in case from an indexed one is still a new file here.
+      await writeFile(join(other, 'MAKEFILE'), 'third')
+      const later = await manifest(
+        await snapshots.take({ ...request(), folders: [other] }, new AbortController().signal),
+      )
+      expect(await git([`--git-dir=${repo}`, 'show', `${later.trees[0]!.commit}:MAKEFILE`])).toBe(
+        'third',
+      )
       await snapshots.settled(SESSION)
     } finally {
       if (mounted) await diskCommand(['detach', mount])

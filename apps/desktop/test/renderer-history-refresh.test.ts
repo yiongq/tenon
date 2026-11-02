@@ -216,6 +216,7 @@ it('05 验收 18 复现: a historical settlement and its open restore dialog sur
     h.invoke.mockRejectedValueOnce(new Error('offline'))
     expect(await h.refresh.refresh()).toBeNull()
     expect(state.data).toBeNull()
+    await h.render()
     const failed = await h.render()
     expect(failed).toContain('turn-summary')
     expect(failed).toContain('role="dialog"')
