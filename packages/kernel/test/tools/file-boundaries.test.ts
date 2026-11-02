@@ -63,6 +63,18 @@ function query(
 }
 
 describe('05 file boundary failures', () => {
+  it.each(['Write', 'Edit'] as const)(
+    '05 验收 23: %s refuses a one-nanosecond change without snapshot coverage',
+    async (name) => {
+      const h = await host()
+      const stamp = (await h.fs.identity(FILE))!
+      vi.spyOn(h.fs, 'identity').mockResolvedValue({ ...stamp, mtimeNs: stamp.mtimeNs + 1n })
+      const fileStamp = { mtimeNs: stamp.mtimeNs.toString(), size: stamp.size }
+      expect(await EXECUTORS[name](query(h, name, { fileStamp }))).toEqual(failed(FILE_CHANGED))
+      expect(await h.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before')
+    },
+  )
+
   it.each(['parent', 'leaf'] as const)(
     '05 验收 30: Delete reports an execution-time %s lstat error as hostError without removing anything',
     async (where) => {

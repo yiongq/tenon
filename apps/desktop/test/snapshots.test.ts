@@ -48,7 +48,7 @@ import {
   SnapshotDiskUsage,
 } from '../src/main/host/snapshot-storage.js'
 import type { SnapshotManifest } from '../src/main/host/snapshot-storage.js'
-import { DesktopSnapshots } from '../src/main/host/snapshots.js'
+import { DesktopSnapshots, SNAPSHOT_LIMITS } from '../src/main/host/snapshots.js'
 import type { DesktopSnapshotsOptions } from '../src/main/host/snapshots.js'
 
 // Faults affect the real filesystem operations, while successful paths still use disk and real git.
@@ -287,6 +287,25 @@ describe.skipIf(process.platform === 'win32')(
       }
     }, 15_000)
 
+    it('05 验收 8: exactly 100 MB stays in the tree; one byte more is excluded', async () => {
+      const path = join(workspace, 'boundary')
+      await writeFile(path, 'small real bytes')
+      await warm()
+      let size = BigInt(MAX_FILE_BYTES)
+      // Inject only metadata; Git still stages real bytes without a 100 MB fixture.
+      vi.mocked(nativeFs.lstat).mockImplementation(async (...args) => {
+        const stat = await actualFs.lstat(...args)
+        if (String(args[0]) === path) Object.defineProperty(stat, 'size', { value: size })
+        return stat
+      })
+      const first = await manifest(await snapshots.take(request(), new AbortController().signal))
+      expect(first.trees[0]!.entries.map((entry) => entry.path)).toContain(path)
+      size++
+      const next = await manifest(await snapshots.take(request(), new AbortController().signal))
+      expect(next.trees[0]!.entries.map((entry) => entry.path)).not.toContain(path)
+      expect(next.trees[0]!.excluded).toContain('boundary')
+    })
+
     it('05 验收 44、49: volume traits and file/directory modes are captured on the workspace volume', async () => {
       await mkdir(join(workspace, 'readonly'))
       await writeFile(join(workspace, 'readonly', 'secret'), 'secret')
@@ -343,6 +362,10 @@ async function fileOnly(options: Partial<DesktopSnapshotsOptions> = {}): Promise
 }
 
 describe('05 snapshot budgets and availability', () => {
+  it('05 验收 10: default capture budgets match the documented thresholds', () => {
+    expect(SNAPSHOT_LIMITS).toMatchObject({ files: 100_000, firstMs: 120_000, takeMs: 5_000 })
+  })
+
   it.skipIf(process.platform === 'win32')(
     '05 验收 10: file-count budget permanently downgrades once and later calls use copies',
     async () => {
@@ -582,13 +605,14 @@ describe('05 retention and reservations', () => {
   }, 10_000)
 
   it.each([1, 2])(
-    '05 验收 14: thirty days clears all %i rounds even if latest or active',
+    '05 验收 14: exactly thirty days clears all %i rounds even if latest or active',
     async (count) => {
       const time = manualClock()
       const controller = await fileOnly({ clock: time.clock })
       const ids: string[] = []
       let lastRound = ''
       for (let i = 0; i < count; i++) {
+        time.advance(1)
         lastRound = randomUUID()
         // oxlint-disable-next-line no-await-in-loop -- distinct byte copies for each retained round
         await writeFile(join(workspace, 'a'), 'content ' + i)
@@ -601,7 +625,6 @@ describe('05 retention and reservations', () => {
           ),
         )
         ids.push(data.id)
-        time.advance(1)
       }
       controller.bindActiveRounds(() => [{ rootSessionId: SESSION, runId: lastRound }])
       time.advance(30 * 24 * 60 * 60 * 1000)
@@ -1284,9 +1307,9 @@ describe('05 publication and recovery regressions', () => {
   )
 })
 
-it.skipIf(process.platform === 'win32')(
-  '05 验收 31: a completed first tree cannot undo a disk-full degradation from a concurrent copy',
-  async () => {
+it.skipIf(process.platform === 'win32').each(['completed', 'failed'] as const)(
+  '05 验收 31: a %s first tree cannot undo a disk-full degradation from a concurrent copy',
+  async (result) => {
     const reached = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     const notices: string[] = []
@@ -1297,6 +1320,7 @@ it.skipIf(process.platform === 'win32')(
           if (spec.argv.includes('--version')) {
             reached.resolve()
             await release.promise
+            if (result === 'failed') throw new Error('injected ordinary Git failure')
           }
           return tracking.spawn(spec, signal)
         },

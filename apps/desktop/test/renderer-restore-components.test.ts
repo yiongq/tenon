@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   flow: null as RestoreState | null,
   controller: null as Snapshots.RestoreFlow | null,
   dismiss: null as (() => void) | null,
+  menuClick: null as (() => void) | null,
   thread: false,
   index: 0,
   open: false,
@@ -30,7 +31,8 @@ vi.mock('react', async (original) => {
     ...actual,
     useState: (initial: unknown) => {
       if (!state.thread || state.index >= 3) return actual.useState(initial)
-      return actual.useState([state.open, state.record, state.failed][state.index++])
+      const key = (['open', 'record', 'failed'] as const)[state.index++]!
+      return [state[key], (value: unknown) => Object.assign(state, { [key]: value })]
     },
   }
 })
@@ -79,8 +81,10 @@ vi.mock('../src/renderer/src/components/ui/dropdown-menu', () => {
     DropdownMenu: content,
     DropdownMenuContent: content,
     DropdownMenuTrigger: ({ render }: { render: ReactNode }) => render,
-    DropdownMenuItem: ({ children }: { children?: ReactNode }) =>
-      createElement('button', { role: 'menuitem' }, children),
+    DropdownMenuItem: ({ children, onClick }: { children?: ReactNode; onClick: () => void }) => {
+      state.menuClick = onClick
+      return createElement('button', { role: 'menuitem', onClick }, children)
+    },
   }
 })
 const previewReply = (previewKey: string) => ({
@@ -103,6 +107,7 @@ afterEach(() => {
   state.thread = false
   state.controller = null
   state.dismiss = null
+  state.menuClick = null
   vi.unstubAllGlobals()
 })
 
@@ -132,6 +137,12 @@ it('05 验收 16、18、52: RestoreDialog renders the full plan, promised skip r
       ),
     )
   const html = render()
+  expect(html).toContain('命令的副作用、联网请求和被排除的文件无法还原。')
+  await i18n.changeLanguage('en')
+  expect(render()).toContain(
+    'Command side effects, network requests and excluded files cannot be undone.',
+  )
+  await i18n.changeLanguage('zh-CN')
   for (const value of [
     '/work/changed',
     '/work/created',
@@ -169,7 +180,7 @@ it('05 验收 16、18、52: RestoreDialog renders the full plan, promised skip r
   expect(render()).not.toContain('确认还原')
 })
 
-it('05 验收 34: ThreadTitleMenu renders only the record action and shows snapshot availability from the current round', async () => {
+it('05 验收 34: clicking the title menu opens the record and shows current snapshot availability', async () => {
   const { ThreadTitleMenu } = await import(titleComponent)
   const i18n = await createI18n('zh-CN', () => {})
   state.thread = true
@@ -198,7 +209,10 @@ it('05 验收 34: ThreadTitleMenu renders only the record action and shows snaps
   expect(menu.match(/role="menuitem"/g)).toHaveLength(1)
   expect(menu).toContain('查看本次记录')
   expect(menu).toContain('thread-title-menu')
-  state.open = true
+  expect(state.menuClick).not.toBeNull()
+  state.menuClick!()
+  expect(state.open).toBe(true)
+  expect(render()).toContain(i18n.t('snapshot.loading'))
   state.record = {
     round,
     messages: [

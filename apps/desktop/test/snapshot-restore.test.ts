@@ -93,18 +93,31 @@ afterEach(async () => {
 
 it('05 验收 16: preview and cancel never change workspace bytes or stamps', async () => {
   await writeFile(path('f'), 'A')
-  const before = await take('f')
+  const before = await take()
   await writeFile(path('f'), 'B')
-  const after = await take('f', 'after-call')
-  const q = query([{ callKey: 'c', before, after, path: path('f') }])
-  const stamp = await lstat(path('f'), { bigint: true })
+  await writeFile(path('new'), 'created')
+  const after = await take(undefined, 'after-call')
+  const q = query([{ callKey: 'c', before, after }])
+  const observe = () =>
+    Promise.all(
+      ['f', 'new'].map(async (name) => [
+        await readFile(path(name)),
+        (await lstat(path(name), { bigint: true })).mtimeNs,
+      ]),
+    )
+  const unchanged = await observe()
   const preview = await snapshots.preview(q)
-  expect(preview).toMatchObject({ restore: [path('f')], remove: [], conflicts: [], skipped: [] })
+  expect(preview).toMatchObject({
+    restore: [path('f')],
+    remove: [path('new')],
+    conflicts: [],
+    skipped: [],
+  })
+  expect(await observe()).toEqual(unchanged)
   const prepared = await snapshots.prepare({ ...q, previewKey: preview.previewKey })
   if (!prepared.ok) throw new Error(prepared.reason)
   await snapshots.cancel({ sessionId, undoSnapshotId: prepared.undoSnapshotId })
-  expect(await readFile(path('f'), 'utf8')).toBe('B')
-  expect((await lstat(path('f'), { bigint: true })).mtimeNs).toBe(stamp.mtimeNs)
+  expect(await observe()).toEqual(unchanged)
   await expect(
     snapshots.apply({ sessionId, undoSnapshotId: prepared.undoSnapshotId, overwrite: [] }),
   ).rejects.toThrow('not prepared')
@@ -190,17 +203,30 @@ it('05 验收 19: only three agent paths change in a 2000-file tree; approval-ga
   )
   await writeFile(path('.gitignore'), 'ignored\n')
   await writeFile(path('ignored'), 'original ignored')
-  const untouched = await lstat(path('f1999'), { bigint: true })
+  const beforeCapture = await lstat(path('f1999'), { bigint: true })
   const before = await take()
   await Promise.all([0, 1, 2].map((i) => writeFile(path(`f${i}`), 'agent')))
   const after = await take(undefined, 'after-call')
   await writeFile(path('f1998'), 'owner in approval gap')
   await writeFile(path('ignored'), 'owner ignored')
+  const untouched = Array.from({ length: 1997 }, (_, i) => path(`f${i + 3}`)).concat([
+    path('.gitignore'),
+    path('ignored'),
+  ])
+  const observe = () =>
+    Promise.all(
+      untouched.map(async (file) => [
+        await readFile(file),
+        (await lstat(file, { bigint: true })).mtimeNs,
+      ]),
+    )
+  const beforeRestore = await observe()
   const { done } = await restore(query([{ callKey: 'bash', before, after }]))
   expect(done).toMatchObject({ restored: 3, removed: 0, failed: [] })
   for (const i of [0, 1, 2]) expect(await readFile(path(`f${i}`), 'utf8')).toBe(`original ${i}`)
+  expect(await observe()).toEqual(beforeRestore)
   expect(await readFile(path('f1999'), 'utf8')).toBe('original 1999')
-  expect((await lstat(path('f1999'), { bigint: true })).mtimeNs).toBe(untouched.mtimeNs)
+  expect((await lstat(path('f1999'), { bigint: true })).mtimeNs).toBe(beforeCapture.mtimeNs)
   expect(await readFile(path('f1998'), 'utf8')).toBe('owner in approval gap')
   expect(await readFile(path('ignored'), 'utf8')).toBe('owner ignored')
 }, 30_000)
@@ -293,6 +319,27 @@ it('05 验收 41: changed ignore rules and nested repositories are skipped rathe
   expect(preview.restore).not.toContain(path('f'))
   expect(preview.remove).not.toContain(path('nested/f'))
   expect(await readFile(path('f'), 'utf8')).toBe('B')
+})
+
+it('05 验收 41: a later call excludes an earlier tree-covered promise without changing its bytes', async () => {
+  await writeFile(path('f'), 'A')
+  const b1 = await take('f')
+  await writeFile(path('f'), 'B')
+  const a1 = await take('f', 'after-call')
+  await writeFile(path('.gitignore'), 'f\n')
+  const b2 = await take('g')
+  await writeFile(path('g'), 'new')
+  const a2 = await take('g', 'after-call')
+  const q = query([
+    { callKey: 'f', before: b1, after: a1, path: path('f') },
+    { callKey: 'g', before: b2, after: a2, path: path('g') },
+  ])
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toContainEqual({ path: path('f'), reason: 'excluded', promised: true })
+  expect(preview.restore).not.toContain(path('f'))
+  expect((await restore(q)).done.failed).toEqual([])
+  expect(await readFile(path('f'), 'utf8')).toBe('B')
+  await expect(lstat(path('g'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
 it.skipIf(process.platform === 'win32')(
