@@ -512,7 +512,7 @@ export async function planRestore(
     )
       reason = 'hardlink'
     if (
-      change.start.file.identity === null &&
+      change.start.file.identity?.kind !== 'dir' &&
       now.file.identity?.kind === 'dir' &&
       excludedParents.has(path)
     )

@@ -213,6 +213,21 @@ it('05 验收 21: SEC-4 删除不递归: a created directory that also holds an 
   await expect(lstat(path('newdir/a.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
+it('05 验收 21: SEC-4 a late ignored file prevents recursive directory deletion', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  const before = await take()
+  await mkdir(path('newdir'))
+  await writeFile(path('newdir/a.txt'), 'agent')
+  const after = await take(undefined, 'after-call')
+  await writeFile(path('newdir/keep.log'), 'user log')
+  const q = query([{ callKey: 'bash', before, after }])
+  expect((await snapshots.preview(q)).remove).toContain(path('newdir'))
+  const done = await apply(await prepare(q))
+  expect(done.failed).toEqual([path('newdir')])
+  expect(await readFile(path('newdir/keep.log'), 'utf8')).toBe('user log')
+  await expect(lstat(path('newdir/a.txt'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 it.skipIf(process.platform === 'win32')(
   '05 验收 49: SEC-5 目录权限位只设回重建或放回的目录: an existing parent the user chmod-ed later keeps its mode',
   async () => {

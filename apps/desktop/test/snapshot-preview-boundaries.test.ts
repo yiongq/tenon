@@ -2,6 +2,7 @@ import {
   appendFile,
   chmod,
   lstat,
+  symlink,
   copyFile,
   mkdir,
   readFile,
@@ -33,14 +34,21 @@ it.each([
   ['.pytest_cache', '.gitignore', '', false, false],
   ['logs', 'run.log', '*.log\n', true, false],
   ['logs', 'run.log', '*.log\n', true, true],
+  ['x', 'run.log', '*.log\n', false, 'file'],
+  ['cache', '.gitignore', '', false, 'file'],
+  ['x', 'run.log', '*.log\n', false, 'link'],
+  ['x', 'run.log', '*.log\n', false, 'moved'],
 ] as const)(
   '05 验收 41、33 复现: %s/%s retains ignored contents (%s, mixed %s, existing %s)',
   async (dir, leaf, rule, mixed, existing) => {
     await writeFile(path('.gitignore'), rule)
     await writeFile(path('f'), 'origin')
-    if (existing) await mkdir(path(dir), { mode: 0o700 })
+    if (existing === 'link') await symlink('f', path(dir))
+    else if (typeof existing === 'string') await writeFile(path(dir), 'unique origin')
+    else if (existing) await mkdir(path(dir), { mode: 0o700 })
     const before = await take()
-    if (existing) await rm(path(dir), { recursive: true })
+    if (existing === 'moved') await rename(path(dir), path('y'))
+    else if (existing) await rm(path(dir), { recursive: true })
     await mkdir(path(dir), { mode: 0o755 })
     await chmod(path(dir), 0o755)
     await writeFile(path(`${dir}/${leaf}`), '*\n')
@@ -52,17 +60,42 @@ it.each([
     const q = query([{ callKey: 'bash', before, after }])
     const preview = await snapshots.preview(q)
     expect(preview.remove).not.toContain(path(dir))
-    expect(preview.restore.includes(path(dir))).toBe(existing)
-    expect(preview.skipped).toEqual(existing ? [] : [{ path: path(dir), reason: 'excluded' }])
+    expect(preview.restore.includes(path(dir))).toBe(existing === true)
+    expect(preview.skipped).toEqual(
+      existing === true ? [] : [{ path: path(dir), reason: 'excluded' }],
+    )
     const { done } = await restore(q)
     expect(done.failed).toEqual([])
     expect(await readFile(path(`${dir}/${leaf}`), 'utf8')).toBe('*\n')
     expect(await readFile(path('f'), 'utf8')).toBe('origin')
-    expect((await lstat(path(dir))).mode & 0o777).toBe(existing ? 0o700 : 0o755)
+    expect(await readFile(path('y'), 'utf8').catch(() => null)).toBe(
+      existing === 'moved' ? 'unique origin' : null,
+    )
+    expect((await lstat(path(dir))).mode & 0o777).toBe(existing === true ? 0o700 : 0o755)
     const end = await snapshots.preview(q)
-    expect([...end.restore, ...end.remove, ...end.conflicts]).toEqual([])
+    const retained = existing === 'moved' ? [path('y')] : []
+    expect([end.restore, end.remove, end.conflicts]).toEqual([[], retained, retained])
   },
 )
+
+it.each(['d', 'd/e/f'])('05 验收 41 复现: excluded ancestry with current path %s', async (dir) => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  const before = await take()
+  await mkdir(path(dir), { recursive: true })
+  await writeFile(path(`${dir}/run.log`), 'ignored')
+  const recorded = await take(undefined, 'after-call')
+  const calls = [{ callKey: 'mkdir', before, after: recorded }]
+  if (dir === 'd') {
+    await rm(path(dir), { recursive: true })
+    await writeFile(path(dir), 'agent')
+    calls.push({ callKey: 'file', before: recorded, after: await take(undefined, 'after-call') })
+  }
+  const preview = await snapshots.preview(query(calls))
+  expect(preview.remove).toEqual(dir === 'd' ? [path('d')] : [])
+  expect(preview.skipped.map((s) => s.path)).toEqual(
+    dir === 'd' ? [] : ['d', 'd/e', 'd/e/f'].map(path),
+  )
+})
 
 it('05 验收 41: an unreadable root exclusion covers every candidate', async () => {
   await writeFile(path('f'), 'origin')
