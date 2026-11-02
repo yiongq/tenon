@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：三段都已合入（PR #72、#75、#77）。第 18 步到 19 步都做完：复核审过 `09ede44`、通过，预算检查点没超线（log 第 19 步）；分支 `feat/05-file-bridge-finish` 开着 PR #79 到 dev。下一步第 20 步（Open 挪进总参考「以后再说」），等 #79 合入后从 dev 另开分支做。
-需要你：PR #79 绿了之后合并（不碰门禁文件；作者不给自己的 PR 开自动合并）
+当前：第 20 到 22 步都做完（log 2026-11-03）：还原预览的两条与历史结算行已修，验收逐条核对完，矩阵的用例名与突变列补齐，Open 清空。分支 `feat/05-file-bridge-wrapup` 开着 PR 到 dev。只剩第 23 步。
+需要你：PR 绿了之后合并；合并后做第 23 步 owner 验收（步骤里写了要点名问的一句）。
 
 ## 开工前读
 
@@ -67,88 +67,75 @@
 - [x] 18.4 第 18.3 步复核（审过 `6549a1f`、不通过）：还原成功后结果对话框随链接卸掉（628ad48 引入）；跳过的路径内容还在原处时不进比对表；只有跳过的轮不出「可还原」、补用例；非 excluded 的跳过补用例；一条用例改名；被保留的路径不放回自己起点、「可还原」的滞后、父路径被占与被排除的文件被搬出写进 spec 与 SECURITY.md。先写失败测试；做完复核。
 - [x] 18.5 第 18.4 步复核（审过 `53f1667`、通过）留下的：读不到现在内容的跳过也入队、被排除的文件被复制两处写准；两种会丢起点内容的写法与还原流程的另几条路径补用例，`SummaryLine` 一句注释改准；历史结算行在刷新失败时卸掉对话框记进 Open。只补用例与措辞；做完复核。
 - [x] 19. 预算检查点（本项目补充第 6 条；阶段 4 的每一份都对照阶段 3）：数验收条数与 05 三个 PR 合计的 `git diff --shortstat`，对照阶段 3 的 1.5 倍（约 79 条、约 27 720 行）；再核阶段 4 合计不超过阶段 3 的 3 倍（约 55 440 行；04 已用约 25 600 行，05 之后留给 06 与 task-mode-ui 的余量一并写出）。任一超线先告诉 owner，再按总参考 §13 阶段 4 的砍法顺序（4d 挪阶段 6 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档）决定砍不砍；结果写 log。
-- [ ] 20. 未解决的开放问题、Open 与跟进挪进总参考「以后再说」，或写明已定；在派最后一次评审之前做完。
-- [ ] 21. 对照验收逐条核对：每条验收有点名它的测试或标了（人工）（live）；矩阵的「突变」列补齐；S 的 `trace` 不拦。
-- [ ] 22. 清理：临时探针与调试输出清掉；复现程序与原始输出只放私有笔记（另记），不进仓库。
+- [x] 20. 未解决的开放问题、Open 与跟进挪进总参考「以后再说」，或写明已定；在派最后一次评审之前做完。
+- [x] 21. 对照验收逐条核对：每条验收有点名它的测试或标了（人工）（live）；矩阵的「突变」列补齐；S 的 `trace` 不拦。
+- [x] 22. 清理：临时探针与调试输出清掉；复现程序与原始输出只放私有笔记（另记），不进仓库。
 - [ ] 23. owner 验收 → 改 Status。验收时点名问一句：「可还原」按「清单里有要放回或删除的路径」判，比 D69 卡多管了只跑了不改文件的命令、已经还原过、只有跳过的三种轮（decisions D69 补记）。
 
 ## 交接
 
-2026-10-30：第 18 步到 18.5 的改动都在 lead 分支 `feat/05-file-bridge-finish`，PR #79 到 dev（不碰门禁文件）。最后一轮复核审过 `09ede44`、通过，log 有记录；e2e 在 `53f1667` 上已过，之后只多了用例、措辞和 log。Codex 的工作区 `codex-render` 在从 lead 分支开的 `feat/05-finish-2` 上，以后的简报照这个分支写。下一步：PR #79 由 owner 合并；第 19 步数验收条数与三个 PR 加 #79 的合计行数，对照阶段 3，结果写 log。第 20 步把 Open 里还原相关的五条（第一次确认必回 `stale`、预览逐路径 `check-ignore`、父路径被占、历史结算行刷新失败、decisions D70 再更正那句）处理掉或挪进总参考「以后再说」，并在派最后一次评审之前做完。
+2026-11-03：PR #79、#76、#78 已合入 dev（头 8a31290）。第 20 到 22 步在 `feat/05-file-bridge-wrapup` 上，从 8a31290 开，开 PR 到 dev，由 owner 合并。下一步：第 23 步 owner 验收，带 owner 在真应用上走一遍「怎么算做完」与（人工）条目，点名问 D69 那一句；Status 由 owner 改。之后的 06 起草前，先请 owner 按总参考「以后再说」里的行数余量那一条定砍不砍。
 
 ## Open
 
-- 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：下次改提示层时换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记。
-- 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为（P8 未验证）：等有一台干净的 macOS 虚拟机时实测；在此之前照 D4、D54 的判定，失败就不碰；验收 11 只用注入的失败 `xcode-select`。
-- 文件属主不同的工作区（P2）：第 4 步的用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」2026-10-24 在两台 Lima 上以 root 跑过、通过；它要 root，CI 里跳过，以后改了 git 调用方式要再以 root 跑一次。
-- Linux 没有桌面环境时的回收站（P9）：随「以后再说」里回收站那一行，两平台实测后再定。
-- 矩阵门禁列用了 `test:e2e`、`test:macos`，它们只在 `.sdd/config.json` 的 `test_reports` 里、不在 `gates` 里（04 的矩阵同样这么写）：要不要登记进 `gates` 由 owner 定，那是门禁文件的改动、只在 owner 说了才合。
-- 收起行的状态词（运行中、待批、出错、被拒、被拦）要不要统一一套：06 碰同一行时定。
-- 还原清单里，D66、D67 传播出来的冲突目录与它下面的文件分开问：只覆盖目录、保留文件时目录记进 `failed`（不丢数据，第三段第五轮复核 X5）。下次碰还原清单时让目录的选项跟随子项，或在 `failed` 原因里写明「里面还有保留的文件」。
-- 还原预览逐个路径起一次 `git check-ignore`：2000 个路径预览约 20 秒、`prepare` 约 42 秒，1 万个路径时 `prepare` 没成（原因没查清）；结算行的「可还原」也要等这次预览。改成一次 `--stdin` 批量读回，并查清 1 万个路径为什么不成（第 18.3 步复核 Y4，第三段就有）。
-- `.gitignore` 里新加的裸名字匹配到要放回或删除的目录下面的路径时，第一次确认必回 `stale`，第二次按缩水的清单还原（第 18.3 步复核 Y3，第三段就有；探针 `repro-recheck4-step18/rc4-stale-probe.test.ts`）：查 `prepare` 拍还原前那张时改了哪项判排除的输入。
-- 父路径被默认保留的文件占着时，下面的路径放回失败、它们被搬走的那份照删（第 18.3 步复核 Y1，已写进 §已知限制与代价）：可以照 D70 的原则把这类路径算作「这次默认不放回起点」，起点进比对表。
-- 重启后画的历史结算行上开着还原对话框时，一次后台刷新失败会让整个结算行连同对话框卸掉，结果看不到（不丢数据，第 18.4 步复核 V1）：让 `ChatProvider` 在刷新失败时沿用上一次的轮次，或把开着的流程按轮提到 `SnapshotProvider`。
-- decisions D70 的「再更正」一条说跳过的路径「只在现在的内容已不是起点内容时」入队，漏了「现在的内容读不到的也入队」，与 spec、代码不一致（第 18.5 步复核 E1）：第 20 步补一句，随最后一次评审复核。
-- 阶段 4 的行数余量只剩约 2 100 行（第 19 步）：06 起草前请 owner 按总参考 §13 阶段 4 的砍法顺序定砍不砍。
-- 第三段第六轮复核在两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出：CI 上见到就先从 G1-leaf（大小写改名）和 S4 查。
+（无。还原的三条已修好，D70 那句已补，其余都挪进总参考「以后再说」，逐条见 log 第 20 步。）
 
 ## 验收矩阵
 
 | 验收号 | 层 | 测试用例名 | 门禁命令 | 突变 | 平台 |
 |---|---|---|---|---|---|
-| 1 | 集成 | 05 验收 1: before-call snapshot fact precedes the write and the outcome points to it | test | — | 任意 |
-| 2 | 集成 | 05 验收 2: a promised snapshot that fails leaves the file untouched | test | — | 任意 |
-| 3 | 单元 | 05 验收 3: Bash is never snapshotted on the card and is snapshotted before and after | test | — | 任意 |
-| 4 | 单元 | 05 验收 4: coverage none, error or timeout gives unknown for writes and irreversible for Delete | test | — | 任意 |
-| 5 | 集成 | 05 验收 5: shadow repo lives in the profile and leaves the workspace and its git status alone | test、test:macos | — | macOS、Linux |
-| 6 | 集成 | 05 验收 6: user global git config does not reach the shadow repo | test、test:macos | — | macOS、Linux |
-| 7 | 集成 | 05 验收 7: nested repos stay out of the tree, their files get single copies, a worktree root is snapshotted | test、test:macos | — | macOS、Linux |
-| 8 | 集成 | 05 验收 8: files over 100 MB and unreadable files stay out and count as skipped | test | — | 任意 |
-| 9 | 集成 | 05 验收 9: before the first tree snapshot, file tools keep single copies | test | — | 任意 |
-| 10 | 单元 | 05 验收 10: over budget the session drops to single copies and says so once | test | — | 任意 |
-| 11 | 单元 | 05 验收 11: a failing xcode-select, an old git or a failing init means single copies only | test | — | 任意 |
-| 12 | 单元 | 05 验收 12: home, its parent, Desktop, Documents and Downloads get no tree snapshot | test | — | 任意 |
-| 13 | 集成 | 05 验收 13: / or a volume root is refused through pick and prefill, home is warned | test | — | 任意 |
-| 14 | 集成 | 05 验收 14: retention keeps 20 rounds, 30 days and 3 GB after reclaim, protects live rounds | test | — | 任意 |
+| 1 | 集成 | 05 验收 1、9: $name records before and after snapshots in $status state before its outcome | test | 手跑 | 任意 |
+| 2 | 集成 | 05 验收 2: a promised snapshot failing with %s leaves the file untouched<br>05 验收 2: %s leaves every byte untouched if its promised snapshot fails | test | M1 | 任意 |
+| 3 | 单元 | 05 验收 3: Bash takes a tree snapshot immediately before and after dispatch<br>05 验收 3、4: reversibility is pure for coverage %s and Bash ignores it | test | 手跑 | 任意 |
+| 4 | 单元 | 05 验收 4: $name records none after coverage $failure<br>05 验收 4、25: coverage is read-only, bounded, and rejects hardlinks, git metadata and outside paths | test | 手跑 | 任意 |
+| 5 | 集成 | 05 验收 5: parentless snapshots stay under the tenant profile and leave user git status unchanged<br>05 验收 5: safe.directory permits a workspace owned by a different uid (requires root) | test、test:macos | 手跑 | macOS、Linux |
+| 6 | 集成 | 05 验收 6: global config, hooks, filters and attributes do not change stored bytes or run commands<br>05 验收 6: every snapshot child isolates the actual HOME and receives exactly the fixed environment | test、test:macos | 手跑 | macOS、Linux |
+| 7 | 集成 | 05 验收 7、46: nested git roots and ignored targets get byte-for-byte single copies<br>05 验收 7: a workspace that is itself a git worktree snapshots normally | test、test:macos | 手跑 | macOS、Linux |
+| 8 | 集成 | 05 验收 8: exactly 100 MB stays in the tree; one byte more is excluded<br>05 验收 8: a newly oversized or unreadable file is excluded and counted without failing the tree | test | 手跑 | 任意 |
+| 9 | 集成 | 05 验收 1、9: $name records before and after snapshots in $status state before its outcome<br>05 验收 9、43: Bash in %s records enough evidence to tell whether the command had a tree snapshot | test | 手跑 | 任意 |
+| 10 | 单元 | 05 验收 10: default capture budgets match the documented thresholds<br>05 验收 10: file-count budget permanently downgrades once and later calls use copies | test | 手跑 | 任意 |
+| 11 | 单元 | 05 验收 11: a failed xcode-select never launches git and retains single-file coverage<br>05 验收 11: %s git falls back to single-file copies | test | 手跑 | 任意 |
+| 12 | 单元 | 05 验收 12: %s gets copies without a shadow repository | test | 手跑 | 任意 |
+| 13 | 集成 | 05 验收 13: the kernel refuses %s folders before changing the workspace<br>05 验收 13: a link to the root is refused, while home and its parent carry the home warning | test | 手跑 | 任意 |
+| 14 | 集成 | 05 验收 14: exactly thirty days clears all %i rounds even if latest or active<br>05 验收 14: retention keeps all calls of the latest twenty rounds and no older round | test | 手跑 | 任意 |
 | 15 | e2e | 05 验收 15: write task, approve, summary, restore, content back and git status clean | test:e2e | — | macOS、Linux |
-| 16 | 集成 | 05 验收 16: preview and cancel never change workspace bytes or stamps | test | — | 任意 |
-| 17 | 集成 | 05 验收 17: restore removes new files, brings back deleted ones, links and 600 modes (also chmod-only), and stamps restore time | test | — | 任意 |
-| 18 | 集成 | 05 验收 18: conflicts are asked one by one and only listed overwrites happen | test | — | 任意 |
-| 19 | 集成 | 05 验收 19: restore touches only the agent's paths, not ignored files or your in-round edits | test | — | 任意 |
-| 20 | 集成 | 05 验收 20: restoring an earlier round undoes only that round | test | — | 任意 |
-| 21 | 集成 | 05 验收 21: the pre-restore snapshot brings files back to before the restore | test | — | 任意 |
-| 22 | 集成 | 05 验收 22: no card, busy across sessions, stale after preview, unfinished restore noticed | test | — | 任意 |
-| 23 | 单元 | 05 验收 23: a file changed since the last read, or read as B while the path is back at A, is not written | test | — | 任意 |
-| 24 | 集成 | 05 验收 24: the guard survives a restart from the Tape | test | — | 任意 |
-| 25 | 集成 | 05 验收 25: writing a file with two names asks every time despite a grant, reading it does not | test、test:macos | — | macOS、Linux |
-| 26 | 单元 | 05 验收 26: a private key under home asks as a credential and Grep skips it | test | — | 任意 |
-| 27 | 单元 | 05 验收 27: writing auto-run names and .git pointer files, new or old, asks every time, reading does not | test | — | 任意 |
-| 28 | 单元 | 05 验收 28: every shared sandbox deny name asks or blocks in the file tools | test | — | 任意 |
-| 29 | 集成 | 05 验收 29: Delete with a snapshot comes back on restore | test | — | 任意 |
-| 30 | 集成 | 05 验收 30: Delete refuses folders, removes only the link, blocks protected paths, rm still asks | test、test:macos | — | macOS、Linux |
-| 31 | 单元 | 05 验收 31: status answers four states and turns unavailable after a full disk | test | — | 任意 |
-| 32 | 集成 | 05 验收 32: a target swapped for a link after the decision is not touched | test、test:macos | — | macOS、Linux |
-| 33 | 单元 | 05 验收 33: summary line shows restorable and its two notes | test | — | 任意 |
-| 34 | 集成 | 05 验收 34: the session record lists tool, object, verdict, reversibility, snapshot and restorable | test | — | 任意 |
-| 35 | 单元 | 05 验收 35: locale has the snapshotted, sensitive-path, failure and Delete lines | test | — | 任意 |
-| 36 | live | 05 验收 36: prompt layer 12 baseline recorded with no task going from pass to fail | test | — | 任意 |
-| 37 | 集成 | 05 验收 37: a subagent's write is restored with the root round | test | — | 任意 |
+| 16 | 集成 | 05 验收 16: preview and cancel never change workspace bytes or stamps<br>05 验收 16、18、52: RestoreDialog renders the full plan, promised skip reason and default keep choices | test | 手跑 | 任意 |
+| 17 | 集成 | 05 验收 17: restore contents, deleted files, binary bytes, link text and modes; remove creations | test | 手跑 | 任意 |
+| 18 | 集成 | 05 验收 18、20、54: preserve external edits, reject forged overwrites, restore the first origin after approval<br>05 验收 16、18: preview groups retain all paths and reasons; only chosen conflict paths are sent | test | 手跑 | 任意 |
+| 19 | 集成 | 05 验收 19: only three agent paths change in a 2000-file tree; approval-gap and ignored edits survive<br>05 验收 19: a disappearing gap protects every changed or created path in that call | test | 手跑 | 任意 |
+| 20 | 集成 | 05 验收 18、20: restoring an earlier round keeps later edits unless the conflict is explicitly overwritten<br>05 验收 18、20、54: preserve external edits, reject forged overwrites, restore the first origin after approval | test | 手跑 | 任意 |
+| 21 | 集成 | 05 验收 21: the undo snapshot can return files to their pre-restore state<br>05 验收 17、21、22: restore_started is durable before apply; restored keeps the undo id and all counts | test | 手跑 | 任意 |
+| 22 | 集成 | 05 验收 22: a refused restore_started write cancels the prepared lease and never applies<br>05 验收 22、53: a live Run in %s is checked across session mailboxes | test | M2 | 任意 |
+| 23 | 单元 | 05 验收 23: %s refuses a one-nanosecond change without snapshot coverage<br>05 验收 23: guarded.read stamps the opened file even when its path is replaced | test | 手跑 | 任意 |
+| 24 | 集成 | 05 验收 24: a restarted session uses its Tape stamp at the same real path through an alias<br>05 验收 24: a legacy confirm.target still identifies the stamped path | test | 手跑 | 任意 |
+| 25 | 集成 | 05 验收 25: an explicitly approved preexisting hardlink can be written and asks again next time<br>05 验收 25: %s rechecks name counts at the final write boundary without snapshots | test、test:macos | 手跑 | macOS、Linux |
+| 26 | 单元 | 05 验收 26: traversal skips credentials without opening them and keeps automatic names and multiple names<br>05 验收 26: the desktop-supplied sensitivity reaches a live Read decision | test | 手跑 | 任意 |
+| 27 | 单元 | 05 验收 25、26、27: %s ignores own, inherited, task and auto grants and keeps the category<br>05 验收 27、28: %s recognizes every shared auto-run name at arbitrary depth and folded case | test | 手跑 | 任意 |
+| 28 | 单元 | 05 验收 26、28: every shared credential asks for reads even under a home workspace<br>05 验收 27、28: %s recognizes every shared auto-run name at arbitrary depth and folded case | test | 手跑 | 任意 |
+| 29 | 集成 | 05 验收 29: Delete captures before removing and links its completed outcome to that snapshot<br>05 验收 17、21: kernel %s undo uses the recorded snapshots and persists the matching counts | test | 手跑 | 任意 |
+| 30 | 集成 | 05 验收 29、30: Delete asks for $row with its specified reason and coverage<br>05 验收 30: remove unlinks only the leaf and refuses directories and missing paths | test、test:macos | 手跑 | macOS、Linux |
+| 31 | 单元 | 05 验收 31: a %s first tree cannot undo a disk-full degradation from a concurrent copy<br>05 验收 31: warming, tree, file-only and unavailable answer their actual state | test | 手跑 | 任意 |
+| 32 | 集成 | 05 验收 32: writeFile refuses a leaf swapped for a link before open<br>05 验收 30、32: Delete in %s refuses a regular leaf replaced by a link after judgment | test、test:macos | M3 | macOS、Linux |
+| 33 | 单元 | 05 验收 33: K18 — a round is restorable only while ALL its snapshots are alive<br>05 验收 33: %s is restorable only while its preview has changes, without extra previews | test | 手跑 | 任意 |
+| 34 | 集成 | 05 验收 34: clicking the title menu opens the record and shows current snapshot availability<br>05 验收 34: record derives all six columns from root messages and snapshot rounds, including reads without snapshots | test | 手跑 | 任意 |
+| 35 | 单元 | 05 验收 35: both locales pin snapshot, sensitive-path, failure and Delete copy; revertible is never rendered | test | 手跑 | 任意 |
+| 36 | live | 05 验收 36: hashes every file guard note, Delete description, parameter description and result template<br>05 验收 36: registers Delete specs, result templates and all four file guard notes | test | — | 任意 |
+| 37 | 集成 | 05 验收 37: a child writes snapshots on its own Tape into the root session and root round<br>05 验收 16、17、21: completed child sessions remain in their root round in causal order, including resumed Runs | test | 手跑 | 任意 |
 | 38 | 你用 | （人工） | — | — | 任意 |
-| 39 | 集成 | 05 验收 39: a folder swapped for an outside link is rebuilt in place and nothing is written outside | test、test:macos | — | macOS、Linux |
-| 40 | 集成 | 05 验收 40: a case-only rename is restored without losing the file | test:macos | — | macOS |
-| 41 | 集成 | 05 验收 41: paths whose exclusion changed in the round are skipped with a reason | test | — | 任意 |
-| 42 | 集成 | 05 验收 42: a target changed after the snapshot is not written | test | — | 任意 |
-| 43 | 集成 | 05 验收 43: stop during a snapshot writes nothing and a command waiting on it does not run | test | — | 任意 |
-| 44 | 集成 | 05 验收 44: case rules are probed on the workspace volume | test:macos | — | macOS |
-| 45 | 集成 | 05 验收 45: concurrent snapshot, restore, cleanup and a stale index.lock leave the repo sound | test | — | 任意 |
-| 46 | 集成 | 05 验收 46: targets outside the tree are restored byte for byte from single copies | test | — | 任意 |
-| 47 | 单元 | 05 验收 47: a failed collapsed tool row shows the failure mark and no irreversible mark | test | — | 任意 |
-| 48 | 单元 | 05 验收 48: summary counts deletions and the Delete row says it deleted the file | test | — | 任意 |
-| 49 | 集成 | 05 验收 49: a deleted folder tree, a 0555 folder among it, comes back with its modes and nothing failed | test、test:macos | — | macOS、Linux |
-| 50 | 集成 | 05 验收 50: read, delete, write is not blocked; a file appearing before the open is not overwritten | test | — | 任意 |
-| 51 | 集成 | 05 验收 51: after an interrupted restore, paths already at the start are left alone | test | — | 任意 |
-| 52 | 集成 | 05 验收 52: every snapshotted promise restores or is skipped with a stated reason; none is unlabelled | test | — | 任意 |
-| 53 | 集成 | 05 验收 53: a stopped host write keeps restore busy until it truly ends, also for a parent folder | test | — | 任意 |
-| 54 | 集成 | 05 验收 54: an edit of yours between two agent edits of one file makes it a kept conflict | test | — | 任意 |
-| 55 | 单元 | 05 验收 55: links at any level of a sensitive path ask for spelling and final target, despite grants | test | — | 任意 |
+| 39 | 集成 | 05 验收 39: remove a substituted link before rebuilding parents; a later substituted link fails safely<br>05 验收 39: A4 — a parent directory swapped for a link after prepare is never written through | test、test:macos | 手跑 | macOS、Linux |
+| 40 | 集成 | 05 验收 40: case-only rename is one restore and leaves only the origin spelling | test:macos | 手跑 | macOS |
+| 41 | 集成 | 05 验收 41: a later call excludes an earlier tree-covered promise without changing its bytes<br>05 验收 41: %s never authorizes an excluded path as an addition or deletion | test | 手跑 | 任意 |
+| 42 | 集成 | 05 验收 42: %s refuses a same-size rewrite changing only nanosecond mtime after capture<br>05 验收 42: a change only to $field after capture returns SNAPSHOT_CHANGED | test | 手跑 | 任意 |
+| 43 | 集成 | 05 验收 43、45: stopping after a new ref exists publishes nothing and restores the prior index<br>05 验收 43: stopping during %s capture writes neither snapshot facts nor the target or command | test | 手跑 | 任意 |
+| 44 | 集成 | 05 验收 44: Makefile and makefile remain distinct across automatically mounted APFS volumes (macOS hdiutil required)<br>05 验收 44、49: volume traits and file/directory modes are captured on the workspace volume | test:macos | 手跑 | macOS |
+| 45 | 集成 | 05 验收 45: restart drops partial manifests, orphan refs and index.lock and rebuilds the latest index<br>05 验收 45: concurrent captures and age cleanup keep live parentless trees sound | test | 手跑 | 任意 |
+| 46 | 集成 | 05 验收 7、46: nested git roots and ignored targets get byte-for-byte single copies<br>05 验收 46、52: an ignored file-tool target and a later Write both restore | test | 手跑 | 任意 |
+| 47 | 单元 | 05 验收 47: the failure icon has failure screen-reader text, never irreversible text, and receipts suppress it<br>05 验收 47: completed failures replace irreversible markers; sandbox receipts suppress both | test | 手跑 | 任意 |
+| 48 | 单元 | 05 验收 48: successful Delete renders the file and consequence in both locales; failures do not claim deletion<br>05 验收 48: Delete expands only on success and counts distinct successful paths | test | 手跑 | 任意 |
+| 49 | 集成 | 05 验收 49: rebuild deleted nested directories and finalize 0555 permissions after restoring children | test、test:macos | 手跑 | macOS、Linux |
+| 50 | 集成 | 05 验收 50: a removed target is exclusively recreated despite its older Read stamp<br>05 验收 50: a file appearing between the missing check and exclusive create is untouched | test | 手跑 | 任意 |
+| 51 | 集成 | 05 验收 21、22、51: an interrupted partial restore keeps the undo evidence and retries only paths not already at origin<br>05 验收 51: paths already at origin disappear from the plan and keep their mtime | test | 手跑 | 任意 |
+| 52 | 集成 | 05 验收 52: %s coverage restores every promised file target<br>05 验收 52: hardlinks and workspaces moved out of scope invalidate a promise with an explicit reason | test | 手跑 | 任意 |
+| 53 | 集成 | 05 验收 53: abandoned DesktopFs write in %s stays busy until it really finishes<br>05 验收 22、53: a Run that starts while prepare is in flight cancels the prepared restore | test | M4 | 任意 |
+| 54 | 集成 | 05 验收 18、20、54: preserve external edits, reject forged overwrites, restore the first origin after approval | test | M5 | 任意 |
+| 55 | 单元 | 05 验收 27、55: written .git pointers and intermediate auto-run links remain sensitive<br>05 验收 26、55: intermediate credential links protect direct targets and refresh after replacement | test | 手跑 | 任意 |

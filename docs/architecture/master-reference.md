@@ -1140,8 +1140,18 @@ Claude Desktop 的概念 → Tenon 的实现：
 - README 的截图：一次对话、审批卡打开，存为 docs/assets/approval-card.png，模型选择器不显示厂商模型名 · lead · 待定 · README.md
 - spec-check job 装 e2e 工具链，让 e2e 层与 macOS 专属的突变也能每个 PR 机器重跑 · lead · 待定 · ADR-004 A18
 - Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问；05 的快照在 Windows 上一律只留单文件副本、叶子不防换链接、主目录与卷根的认法未测） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
-- Delete 先移进系统回收站，不只靠快照 · lead · 待定，不挡；两平台实测后加 · 05 D7
+- Delete 先移进系统回收站，不只靠快照；Linux 没有桌面环境时的回收站（05 P9）一并实测 · lead · 待定，不挡；两平台实测后加 · 05 D7
 - 「撤销还原」的入口（05 已在还原前拍一张，编号在 fs/restored） · lead · 待定，不挡 · 05 D3、D34
 - 由 git 配置决定的钩子目录（如 `core.hooksPath` 指向的 `.husky/`）不在会被自动执行的名单里：auto 档位下写这里不出卡，用户下次在沙箱外 `git commit` 时会执行 · lead · 06 定自动档范围之前 · 05 第一段复核（log.md 2026-10-24）
 - 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
 - spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
+- 阶段 4 的行数余量只剩约 2 100 行，06 一份就会超：按 §13 阶段 4 的砍法顺序（4d 挪阶段 6 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档）定砍不砍 · owner · 挡 06 起草 · 05 plan 第 19 步（log.md 2026-10-30）
+- 父路径被默认保留的文件占着时，下面的路径放回失败、它们被搬走的那份照删（已写进 05 §已知限制与代价与 SECURITY.md）；可以照 D70 的原则把这类路径算作「这次默认不放回起点」，起点进比对表 · lead · 下次改还原清单的计算时；不挡 · 05 第 18.3 步复核 Y1
+- 还原清单里，05 D66、D67 传播出来的冲突目录与它下面的文件分开问：只覆盖目录、保留文件时目录记进 `failed`（不丢数据）；让目录的选项跟随子项，或在 `failed` 原因里写明「里面还有保留的文件」 · lead · 下次碰还原清单时 · 05 第三段第五轮复核 X5
+- 等审批时重启再批准的 Delete 会回 `targetChanged`（文件其实没变）：换成准确的一句（例如「批准前 Tenon 重启过，请重新发起删除」），同时清掉判决收口处没用上的歧义标记 · lead · 下次改提示层时 · 05 plan Open
+- 没装命令行工具的 macOS 上 `xcode-select -p` 与 `/usr/bin/git` 的行为没实测（05 P8）；在此之前失败就不碰，05 验收 11 只用注入的失败 `xcode-select` · lead · 有干净的 macOS 虚拟机时 · 05 D4、D54
+- 文件属主不同的工作区（05 P2）：用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」要 root，CI 里跳过，2026-10-24 在两台 Lima 上以 root 跑过 · lead · 改 git 调用方式时再以 root 跑一次 · 05 plan Open
+- 05 矩阵的门禁列用了 `test:e2e`、`test:macos`，它们只在 `.sdd/config.json` 的 `test_reports` 里、不在 `gates` 里（要不要登记是门禁文件的改动） · owner · 待定，不挡 · 05 plan Open
+- 收起行的状态词（运行中、待批、出错、被拒、被拦）要不要统一一套 · lead · 06 碰同一行时定 · 05 plan Open
+- 还原预览在 1 万个路径时仍要约 40 秒、`prepare` 约 85 秒（已不再失败），结算行的「可还原」也要等这次预览：逐路径的检查可以再批量 · lead · 大改动的还原慢到有人抱怨时；不挡 · 05 第 18.3 步复核 Y4（log.md 2026-11-03）
+- 两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出（观察） · lead · CI 上再红时先从 G1-leaf（大小写改名）和 S4 查 · 05 第三段第六轮复核
