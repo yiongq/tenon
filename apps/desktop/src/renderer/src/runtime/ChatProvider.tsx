@@ -102,7 +102,16 @@ export function ChatProvider({
   }, [hasMessages, onHasMessages])
   const title = sessionTitle(snapshot.model.turns, i18n.language)
   useEffect(() => onTitle?.(sessionId, title), [onTitle, sessionId, title])
-  const { data: snapshotRounds } = useSnapshotRounds()
+  const { data: refreshedRounds } = useSnapshotRounds()
+  const [lastRounds, setLastRounds] = useState({ sessionId, data: refreshedRounds })
+  if (
+    lastRounds.sessionId !== sessionId ||
+    (refreshedRounds !== null && refreshedRounds !== lastRounds.data)
+  )
+    setLastRounds({ sessionId, data: refreshedRounds })
+  // A failed refresh must not unmount a historical settlement's open restore flow.
+  const snapshotRounds =
+    refreshedRounds ?? (lastRounds.sessionId === sessionId ? lastRounds.data : null)
   const historyKey = JSON.stringify(
     snapshotRounds?.rounds
       .filter(
