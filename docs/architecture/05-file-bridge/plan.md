@@ -112,7 +112,7 @@
 | 26 | 单元 | 05 验收 26: traversal skips credentials without opening them and keeps automatic names and multiple names<br>05 验收 26: the desktop-supplied sensitivity reaches a live Read decision | test | 手跑 | 任意 |
 | 27 | 单元 | 05 验收 25、26、27: %s ignores own, inherited, task and auto grants and keeps the category<br>05 验收 27、28: %s recognizes every shared auto-run name at arbitrary depth and folded case | test | 手跑 | 任意 |
 | 28 | 单元 | 05 验收 26、28: every shared credential asks for reads even under a home workspace<br>05 验收 27、28: %s recognizes every shared auto-run name at arbitrary depth and folded case | test | 手跑 | 任意 |
-| 29 | 集成 | 05 验收 29: Delete captures before removing and links its completed outcome to that snapshot<br>05 验收 17、21: kernel %s undo uses the recorded snapshots and persists the matching counts | test | 手跑 | 任意 |
+| 29 | 集成 | 05 验收 29: Delete captures before removing and links its completed outcome to that snapshot | test | 手跑 | 任意 |
 | 30 | 集成 | 05 验收 29、30: Delete asks for $row with its specified reason and coverage<br>05 验收 30: remove unlinks only the leaf and refuses directories and missing paths | test、test:macos | 手跑 | macOS、Linux |
 | 31 | 单元 | 05 验收 31: a %s first tree cannot undo a disk-full degradation from a concurrent copy<br>05 验收 31: warming, tree, file-only and unavailable answer their actual state | test | 手跑 | 任意 |
 | 32 | 集成 | 05 验收 32: writeFile refuses a leaf swapped for a link before open<br>05 验收 30、32: Delete in %s refuses a regular leaf replaced by a link after judgment | test、test:macos | M3 | macOS、Linux |
@@ -120,7 +120,7 @@
 | 34 | 集成 | 05 验收 34: clicking the title menu opens the record and shows current snapshot availability<br>05 验收 34: record derives all six columns from root messages and snapshot rounds, including reads without snapshots | test | 手跑 | 任意 |
 | 35 | 单元 | 05 验收 35: both locales pin snapshot, sensitive-path, failure and Delete copy; revertible is never rendered | test | 手跑 | 任意 |
 | 36 | live | 05 验收 36: hashes every file guard note, Delete description, parameter description and result template<br>05 验收 36: registers Delete specs, result templates and all four file guard notes | test | — | 任意 |
-| 37 | 集成 | 05 验收 37: a child writes snapshots on its own Tape into the root session and root round<br>05 验收 16、17、21: completed child sessions remain in their root round in causal order, including resumed Runs | test | 手跑 | 任意 |
+| 37 | 集成 | 05 验收 37: a child writes snapshots on its own Tape into the root session and root round | test | 手跑 | 任意 |
 | 38 | 你用 | （人工） | — | — | 任意 |
 | 39 | 集成 | 05 验收 39: remove a substituted link before rebuilding parents; a later substituted link fails safely<br>05 验收 39: A4 — a parent directory swapped for a link after prepare is never written through | test、test:macos | 手跑 | macOS、Linux |
 | 40 | 集成 | 05 验收 40: case-only rename is one restore and leaves only the origin spelling | test:macos | 手跑 | macOS |
