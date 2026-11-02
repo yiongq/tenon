@@ -122,7 +122,11 @@ export async function startHttpFixture(initial: HttpFixtureOptions = {}) {
       }
       if (opts.era === undefined || opts.era === 'modern') {
         const response = await modern.fetch(
-          new Request(url, { method: 'POST', headers: req.headers as HeadersInit, body: raw }),
+          new Request(url, {
+            method: 'POST',
+            headers: req.headers as Record<string, string>,
+            body: raw,
+          }),
         )
         res.writeHead(response.status, Object.fromEntries(response.headers))
         if (response.body) {
