@@ -148,6 +148,7 @@ export class RestoreFlow {
   #state = CLOSED
   #epoch = 0
   #roundRunId = ''
+  #refreshPending = false
   #listeners = new Set<() => void>()
   private readonly bridge: Parameters<typeof invokeRoute>[0]
   private readonly sessionId: string
@@ -171,7 +172,12 @@ export class RestoreFlow {
   cancel = () => {
     if (this.#state.phase === 'applying') return
     this.#epoch++
+    const refresh = this.#refreshPending
+    this.#refreshPending = false
     this.#set(CLOSED)
+    // Refreshing can remove RestoreLink when canRestore becomes false, unmounting its dialog.
+    // Keep results/errors readable until the user closes this flow, then refresh once.
+    if (refresh) this.changed()
   }
   select = (path: string, overwrite: boolean) => {
     if (this.#state.phase !== 'preview' || !this.#state.preview?.conflicts.includes(path)) return
@@ -191,12 +197,12 @@ export class RestoreFlow {
       })
       if (epoch !== this.#epoch) return
       if (!result.ok || !result.data.ok) {
+        this.#refreshPending = true
         this.#set({
           ...CLOSED,
           phase: 'error',
           error: result.ok && !result.data.ok ? result.data.code : 'failed',
         })
-        this.changed()
       } else
         this.#set({
           ...CLOSED,
@@ -205,7 +211,10 @@ export class RestoreFlow {
           error: stale ? 'stale' : null,
         })
     } catch {
-      if (epoch === this.#epoch) this.#set({ ...CLOSED, phase: 'error', error: 'failed' })
+      if (epoch === this.#epoch) {
+        this.#refreshPending = true
+        this.#set({ ...CLOSED, phase: 'error', error: 'failed' })
+      }
     }
   }
   confirm = async () => {
@@ -221,6 +230,7 @@ export class RestoreFlow {
         overwrite: overwritePaths(preview, selected),
       })
       if (epoch !== this.#epoch) return
+      this.#refreshPending = true
       if (result.ok && !result.data.ok && result.data.code === 'stale') {
         await this.open(this.#roundRunId, true)
         return
@@ -233,8 +243,10 @@ export class RestoreFlow {
         })
       else this.#set({ ...CLOSED, phase: 'done', done: result.data })
     } catch {
-      if (epoch === this.#epoch) this.#set({ ...CLOSED, phase: 'error', error: 'failed' })
+      if (epoch === this.#epoch) {
+        this.#refreshPending = true
+        this.#set({ ...CLOSED, phase: 'error', error: 'failed' })
+      }
     }
-    this.changed()
   }
 }

@@ -526,8 +526,6 @@ export type SnapshotCreatedPayload = {
   moment: 'before-call' | 'after-call'
   scope: 'tree' | 'file'
   path?: AbsolutePath
-  commits?: Record<string, string>
-  files?: Record<string, string>
   roundRunId: string
   skipped: number
   writer: FactWriter

@@ -641,7 +641,7 @@ it.each(['tree', 'warming', 'file-only', 'unavailable'] as const)(
       rounds: [
         {
           roundRunId: q.roundRunId,
-          canRestore: status === 'tree',
+          canRestore: false,
           incompleteCoverage: true,
           commandsWithoutSnapshot: status !== 'tree',
         },
@@ -1882,5 +1882,44 @@ it.each([
     const rounds = await h.service.snapshotRounds({ sessionId: SESSION })
     if (!rounds.ok) throw new Error(rounds.code)
     expect(rounds.rounds[0]?.incompleteCoverage).toBe(false)
+  },
+)
+
+it.each(['Write', 'Delete'] as const)(
+  '05 验收 19: replay excludes %s isDirectory refusal from restore queries',
+  async (name) => {
+    const h = await harness()
+    await changed(h)
+    const read = h.store.readRange.bind(h.store)
+    // Replay a before-only invocation with the executor's exact pre-mutation refusal.
+    vi.spyOn(h.store, 'readRange').mockImplementation(async (q) => {
+      const rows = await read(q)
+      return {
+        ...rows,
+        entries: rows.entries
+          .filter(
+            (e) => !(e.name === 'fs/snapshot_created' && e.payload['moment'] === 'after-call'),
+          )
+          .map((e) => {
+            if (e.name === 'execution/dispatch_committed')
+              return Object.assign({}, e, { payload: { ...e.payload, name } })
+            if (e.name === 'tool/result')
+              return Object.assign({}, e, {
+                payload: {
+                  ...e.payload,
+                  isError: true,
+                  content: [{ type: 'text', text: `${FILE} is a folder, not a file.` }],
+                },
+              })
+            return e
+          }),
+      }
+    })
+    const hostPreview = vi.spyOn(h.host.snapshots, 'preview')
+    expect(await h.service.snapshotRounds({ sessionId: SESSION })).toMatchObject({
+      ok: true,
+      rounds: [{ canRestore: false, incompleteCoverage: false }],
+    })
+    expect(hostPreview).not.toHaveBeenCalled()
   },
 )

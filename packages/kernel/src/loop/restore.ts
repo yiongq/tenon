@@ -8,6 +8,9 @@ import type {
   SnapshotStatus,
 } from '../host/adapter.js'
 import { EDIT_TEXTS } from '../tools/builtin/edit.js'
+import { DELETE_TEXTS } from '../tools/builtin/delete.js'
+import { WRITE_TEXTS, parentOf } from '../tools/builtin/write.js'
+import { FILE_READ_MAX_BYTES } from '../tools/builtin/files.js'
 import { fill } from '../prompts/index.js'
 import { isWithin } from '../host/path.js'
 import {
@@ -79,11 +82,34 @@ export type SnapshotRestoreResult =
   | SnapshotRefusal
   | ({ readonly ok: true; readonly undoSnapshotId: string; readonly skipped: number } & RestoreDone)
 
-/** These Edit results return before guarded writes. Do not record outside edits as after-call
- * evidence merely because a refused invocation finished (§一键还原: only the agent's changes).
+/** These builtin results return before any write, remove or mkdirp. Do not record outside edits
+ * as after-call evidence just because a refused invocation finished (§一键还原: only agent changes).
  * Unknown failures can follow partial writes and must retain the coverage warning. */
-function editRefusedBeforeWrite(text: string | undefined, path: AbsolutePath | undefined): boolean {
+function fileRefusedBeforeWrite(
+  tool: string,
+  text: string | undefined,
+  path: AbsolutePath | undefined,
+): boolean {
   if (text === undefined || path === undefined) return false
+  // Delete resolves parent/leaf and checks the approved kind before remove. Write checks its
+  // resolved target before mkdirp; Edit rejects oversized files before even snapshotGuard.
+  if (tool === 'Delete')
+    return [
+      DELETE_TEXTS.notFound,
+      DELETE_TEXTS.parentChanged,
+      DELETE_TEXTS.targetChanged,
+      DELETE_TEXTS.isDirectory,
+    ].some((template) => fill(template, { path }) === text)
+  if (tool === 'Write') {
+    const parent = parentOf(path)
+    return (
+      [WRITE_TEXTS.resolvesElsewhere, WRITE_TEXTS.isDirectory].some(
+        (template) => fill(template, { path }) === text,
+      ) ||
+      (parent !== null && fill(WRITE_TEXTS.notDirectory, { path: parent }) === text)
+    )
+  }
+  if (tool !== 'Edit') return false
   if (
     [
       EDIT_TEXTS.noMatch,
@@ -95,14 +121,19 @@ function editRefusedBeforeWrite(text: string | undefined, path: AbsolutePath | u
     ].some((template) => fill(template, { path }) === text)
   )
     return true
-  const [prefix, suffix] = fill(EDIT_TEXTS.notUnique, { path, count: '\0' }).split('\0')
-  return (
-    prefix !== undefined &&
-    suffix !== undefined &&
-    text.startsWith(prefix) &&
-    text.endsWith(suffix) &&
-    /^[0-9]+$/.test(text.slice(prefix.length, text.length - suffix.length))
-  )
+  return [
+    fill(EDIT_TEXTS.notUnique, { path, count: '\0' }),
+    fill(EDIT_TEXTS.tooLarge, { path, bytes: '\0', max: String(FILE_READ_MAX_BYTES) }),
+  ].some((template) => {
+    const [prefix, suffix] = template.split('\0')
+    return (
+      prefix !== undefined &&
+      suffix !== undefined &&
+      text.startsWith(prefix) &&
+      text.endsWith(suffix) &&
+      /^[0-9]+$/.test(text.slice(prefix.length, text.length - suffix.length))
+    )
+  })
 }
 
 interface CallNode {
@@ -116,7 +147,7 @@ interface CallNode {
   promised: boolean
   command: boolean
   fileWrite: boolean
-  edit: boolean
+  tool: string
   guardRefused: boolean
 }
 interface CollectedRound {
@@ -253,7 +284,7 @@ async function collectHistory(
           promised: false,
           command: false,
           fileWrite: false,
-          edit: false,
+          tool: '',
           guardRefused: false,
         }
         calls.set(callKey, node)
@@ -270,12 +301,12 @@ async function collectHistory(
         const node = nodeOf(entry)
         node.dispatched = true
         node.command = entry.payload['name'] === 'Bash'
-        node.edit = entry.payload['name'] === 'Edit'
+        node.tool = String(entry.payload['name'])
         node.fileWrite = ['Write', 'Edit', 'Delete'].includes(String(entry.payload['name']))
       } else if (entry.name === 'tool/result') {
         const node = nodeOf(entry)
         const content = entry.payload['content'] as { type: string; text?: string }[]
-        // These exact builtin guard results precede file access. Unknown execution errors stay
+        // These exact builtin refusals precede file mutations. Unknown execution errors stay
         // conservative: they may follow partial writes. No new Tape field or model text is needed.
         node.guardRefused =
           node.fileWrite &&
@@ -285,7 +316,7 @@ async function collectHistory(
           ([FILE_CHANGED, HARDLINK_CHANGED, SNAPSHOT_CHANGED, SNAPSHOT_FAILED].some(
             (text) => text === content[0]?.text,
           ) ||
-            (node.edit && editRefusedBeforeWrite(content[0]?.text, node.before?.path)))
+            fileRefusedBeforeWrite(node.tool, content[0]?.text, node.before?.path))
       } else if (entry.name === 'execution/tool_outcome') {
         const snapshotId = entry.payload['snapshotId']
         if (typeof snapshotId === 'string') nodeOf(entry).snapshotId = snapshotId
@@ -337,8 +368,10 @@ async function collectHistory(
   const all = flatten(rootNodes)
   const rounds = [...byRound].map(([roundRunId, runIds]): CollectedRound => {
     const nodes = all.filter((node) => node.roundRunId === roundRunId)
+    // Refused file calls did not mutate anything; legacy after-only snapshots have no baseline.
+    // Neither can describe an agent change or open a gap in the host's restore comparison.
     const calls = nodes
-      .filter((node) => node.before !== undefined || node.after !== undefined)
+      .filter((node) => node.before !== undefined && !node.guardRefused)
       .map(queryCall)
     return {
       roundRunId,
@@ -437,36 +470,43 @@ function endMessageOf(
 }
 
 export function createSnapshotRestorer(deps: RestoreDeps) {
-  const previewSkips = new Map<string, { revision: string; alive: boolean; skipped: boolean }>()
+  const previewSummaries = new Map<
+    string,
+    { revision: string; alive: boolean; skipped: boolean; hasChanges: boolean }
+  >()
   return {
-    // Settlement coverage may lag workspace-only changes between Tape revisions; explicit preview always recomputes the authoritative list.
+    // Settlement availability and coverage may lag workspace-only changes between Tape revisions; explicit preview always recomputes the authoritative list.
     async rounds(sessionId: string): Promise<SnapshotRoundsResult> {
       const history = await collectHistory(deps, sessionId)
       if ('ok' in history) return history
       const rounds: SnapshotRound[] = []
       for (const round of history.rounds) {
         // oxlint-disable-next-line no-await-in-loop -- retention/liveness belongs to the host
-        const canRestore = await alive(deps, sessionId, round)
+        const snapshotsAlive = await alive(deps, sessionId, round)
         // Spec 05 §界面: a command may change excluded paths even when its tree capture succeeded.
         let incompleteCoverage =
           round.incomplete ||
           round.nodes.some((node) => node.dispatched && node.command) ||
-          (!canRestore && snapshotIds(round).length > 0)
+          (!snapshotsAlive && snapshotIds(round).length > 0)
         const cacheKey = JSON.stringify([
           history.entries[0]!.tenantId,
           sessionId,
           history.incarnationId,
           round.roundRunId,
         ])
-        let cached = previewSkips.get(cacheKey)
-        if (cached?.revision !== round.revision || cached.alive !== canRestore) {
+        let cached = previewSummaries.get(cacheKey)
+        if (cached?.revision !== round.revision || cached.alive !== snapshotsAlive) {
           let skipped = false
-          if (canRestore) {
+          let hasChanges = false
+          if (snapshotsAlive) {
             // oxlint-disable-next-line no-await-in-loop -- only changed rounds need the host's expensive preview
-            skipped = (await deps.host.snapshots.preview(round.query)).skipped.length > 0
+            const preview = await deps.host.snapshots.preview(round.query)
+            skipped = preview.skipped.length > 0
+            hasChanges =
+              preview.restore.length + preview.remove.length + preview.conflicts.length > 0
           }
-          cached = { revision: round.revision, alive: canRestore, skipped }
-          previewSkips.set(cacheKey, cached)
+          cached = { revision: round.revision, alive: snapshotsAlive, skipped, hasChanges }
+          previewSummaries.set(cacheKey, cached)
         }
         incompleteCoverage ||= cached.skipped
         const runIds = round.runIds
@@ -482,7 +522,7 @@ export function createSnapshotRestorer(deps: RestoreDeps) {
               : node.snapshotId
             return snapshotId === undefined ? [] : [{ callKey: node.callKey, snapshotId }]
           }),
-          canRestore,
+          canRestore: snapshotsAlive && cached.hasChanges,
           incompleteCoverage,
           commandsWithoutSnapshot: round.nodes.some(
             (node) => node.dispatched && node.command && node.before?.scope !== 'tree',

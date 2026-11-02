@@ -29,7 +29,7 @@ beforeAll(() => {
 afterAll(() => vi.unstubAllGlobals())
 const component = '../src/renderer/src/components/thread/RunEndCard.tsx'
 
-it('05 验收 33: a settled round with snapshots offers restore even when every file call failed; retention removes it', async () => {
+it('05 验收 33: a settled round follows kernel restore availability and coverage flags; paused rounds hide the link', async () => {
   const { RunEndCard } = await import(component)
   const i18n = await createI18n('zh-CN', () => {})
   state.custom = {
