@@ -20,6 +20,7 @@ import type { AbsolutePath, RestoreDone, RestorePreview, RestoreQuery } from '@t
 import { absolutePath } from '@tenon-app/kernel'
 import { repoPath } from './snapshot-git.js'
 import type { SnapshotGit } from './snapshot-git.js'
+import { checkIgnoredPaths } from './snapshot-tree.js'
 import {
   contains,
   DEFAULT_EXCLUDES,
@@ -441,6 +442,8 @@ export async function planRestore(
   const stamps: unknown[] = []
   const aliases = new Set<string>()
   const currentContents = new Map<AbsolutePath, string | undefined>()
+  const inspected = []
+  const ignorePaths = new Map<AbsolutePath, AbsolutePath[]>()
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -505,21 +508,30 @@ export async function planRestore(
       (current === undefined || !capturedPaths?.has(path)) &&
       (await parents(root, path, false))
     ) {
-      try {
-        const repo = repoPath(dir, root)
-        // oxlint-disable-next-line no-await-in-loop -- check-ignore does not mutate index or workspace
-        const ignored = await git.run(
-          repo,
-          root,
-          ['check-ignore', '--no-index', '-z', '--stdin'],
-          new AbortController().signal,
-          relative(root, path) + '\0',
-        )
-        if (ignored.length > 0) reason = 'excluded'
-      } catch (error) {
-        if ((error as { exitCode?: number }).exitCode !== 1) reason = 'not-covered'
-      }
+      const paths = ignorePaths.get(root) ?? []
+      paths.push(path)
+      ignorePaths.set(root, paths)
     }
+    inspected.push({ path, change, root, now, reason })
+  }
+  const ignoreReasons = new Map<AbsolutePath, Reason>()
+  for (const [root, paths] of ignorePaths) {
+    try {
+      const ignored = await checkIgnoredPaths(
+        git,
+        repoPath(dir, root),
+        root,
+        paths.map((path) => relative(root, path)),
+        new AbortController().signal,
+      )
+      for (const path of paths)
+        if (ignored.has(relative(root, path))) ignoreReasons.set(path, 'excluded')
+    } catch {
+      for (const path of paths) ignoreReasons.set(path, 'not-covered')
+    }
+  }
+  for (const { path, change, root, now, reason: inspectedReason } of inspected) {
+    const reason = inspectedReason ?? ignoreReasons.get(path)
     stamps.push([
       path,
       now.file.identity?.kind === 'dir'
