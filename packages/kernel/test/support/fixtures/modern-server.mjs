@@ -16,7 +16,11 @@ export function createFixtureTools() {
     }),
   )
 }
-export function createFixtureServer(tools = createFixtureTools(), instructions = INSTRUCTIONS) {
+export function createFixtureServer(
+  tools = createFixtureTools(),
+  instructions = INSTRUCTIONS,
+  onSlowSleep,
+) {
   const server = new Server(
     { name: 'modern-fixture', version: '1' },
     {
@@ -50,7 +54,10 @@ export function createFixtureServer(tools = createFixtureTools(), instructions =
           throw ctx.mcpReq.signal.reason
         }
         // oxlint-disable-next-line no-await-in-loop
-        await new Promise((resolve) => setTimeout(resolve, Math.min(100, ms)))
+        await new Promise((resolve) => {
+          setTimeout(resolve, Math.min(100, ms))
+          onSlowSleep?.()
+        })
         if (ctx.mcpReq['_meta']?.progressToken !== undefined)
           // oxlint-disable-next-line no-await-in-loop
           await ctx.mcpReq.notify({

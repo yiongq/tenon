@@ -9,4 +9,6 @@ export function createFixtureTools(): {
 export function createFixtureServer(
   tools?: ReturnType<typeof createFixtureTools>,
   instructions?: string,
+  /** Called each time the `slow` tool has armed its sleep timer. */
+  onSlowSleep?: () => void,
 ): Server
