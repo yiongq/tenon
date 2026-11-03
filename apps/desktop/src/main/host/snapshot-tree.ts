@@ -27,6 +27,50 @@ function pattern(path: string): string {
   return `/${path.replace(/[\\*?[\]#!]/g, '\\$&')}`
 }
 
+/** Half of SnapshotGit's output limit: check-ignore only echoes names it was given. */
+const CHECK_IGNORE_BATCH_BYTES = 32_000_000
+
+/** Relative names that match an ignore rule; the ./ stops Git reading them as pathspec magic. */
+export async function checkIgnoredPaths(
+  git: SnapshotGit,
+  repo: string,
+  folder: AbsolutePath,
+  paths: readonly string[],
+  signal: AbortSignal,
+): Promise<Set<string>> {
+  const found = new Set<string>()
+  const ask = async (input: string): Promise<void> => {
+    try {
+      const output = await git.run(
+        repo,
+        folder,
+        ['check-ignore', '--no-index', '-z', '--stdin'],
+        signal,
+        input,
+      )
+      for (const name of output.split('\0')) if (name !== '') found.add(name.slice(2))
+    } catch (error) {
+      if ((error as { exitCode?: number }).exitCode !== 1) throw error
+    }
+  }
+  let batch = ''
+  let bytes = 0
+  for (const path of paths) {
+    const name = `./${path}\0`
+    const size = Buffer.byteLength(name)
+    if (bytes + size > CHECK_IGNORE_BATCH_BYTES) {
+      // oxlint-disable-next-line no-await-in-loop -- batches share one shadow repository
+      await ask(batch)
+      batch = ''
+      bytes = 0
+    }
+    batch += name
+    bytes += size
+  }
+  if (batch !== '') await ask(batch)
+  return found
+}
+
 export async function scanTree(
   git: SnapshotGit,
   repo: string,
@@ -102,21 +146,23 @@ export async function scanTree(
       )
     ).split('\0'),
   )
-  // Persist ignored names too: absence in a commit must never mean an ignored path was absent.
-  excluded.push(
-    ...(
-      await git.run(
-        repo,
-        folder,
-        ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'],
-        signal,
-      )
-    )
-      .split('\0')
-      .filter(Boolean)
-      .map((name) => name.replace(/\/$/, '')),
+  // Check discovered names directly: ls-files --directory can collapse eligible parents
+  // whose children are all ignored. Default/nested exclusions were pruned by discover.
+  const ignoredNames = await checkIgnoredPaths(
+    git,
+    repo,
+    folder,
+    [...onDisk].map((path) => relative(folder, path)),
+    signal,
   )
-  excluded.push(...[...ignored].filter(Boolean))
+  for (const name of ignored) if (name !== '') ignoredNames.add(name)
+  for (const name of excluded) ignoredNames.add(name)
+  excluded.length = 0
+  for (const name of ignoredNames) {
+    let ancestor = dirname(name)
+    while (ancestor !== '.' && !ignoredNames.has(ancestor)) ancestor = dirname(ancestor)
+    if (ancestor === '.') excluded.push(name)
+  }
   const entries: SavedFile[] = []
   let bytes = 0
   let skipped = 0
@@ -162,10 +208,7 @@ export async function scanTree(
         throw new SnapshotBudgetError('Snapshot file-count budget exceeded', 'files')
     }
   }
-  await writeFile(
-    join(repo, 'info', 'exclude'),
-    `${[...base, ...excluded.map(pattern)].join('\n')}\n`,
-  )
+  // Scan-only exclusions belong in the manifest, not in subsequent live ignore queries.
   return { entries, directories, excluded, skipped, bytes }
 }
 

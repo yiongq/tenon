@@ -86,7 +86,7 @@ export class SnapshotGit {
       GIT_CONFIG_GLOBAL: join(home, 'empty'),
       GIT_ATTR_NOSYSTEM: '1',
       GIT_TERMINAL_PROMPT: '0',
-      GIT_LITERAL_PATHSPECS: argv.includes('check-ignore') ? '0' : '1',
+      GIT_LITERAL_PATHSPECS: '1',
       LC_ALL: 'C',
       GIT_AUTHOR_NAME: 'Tenon',
       GIT_AUTHOR_EMAIL: 'snapshot@localhost',
@@ -269,6 +269,8 @@ export class SnapshotGit {
     return this.command(
       [
         this.git,
+        // check-ignore reads literal names on stdin but rejects literal pathspec mode.
+        ...(args[0] === 'check-ignore' ? ['--no-literal-pathspecs'] : []),
         '-c',
         `safe.directory=${folder}`,
         `--git-dir=${repo}`,

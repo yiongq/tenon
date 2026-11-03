@@ -20,6 +20,7 @@ import type { AbsolutePath, RestoreDone, RestorePreview, RestoreQuery } from '@t
 import { absolutePath } from '@tenon-app/kernel'
 import { repoPath } from './snapshot-git.js'
 import type { SnapshotGit } from './snapshot-git.js'
+import { checkIgnoredPaths } from './snapshot-tree.js'
 import {
   contains,
   DEFAULT_EXCLUDES,
@@ -147,16 +148,18 @@ function directoryPoint(path: AbsolutePath, mode: number): Point {
     covered: true,
   }
 }
-function excluded(tree: TreeRecord, path: string): boolean {
-  return (
-    relative(tree.folder, path)
-      .split(sep)
-      .some((part) => DEFAULT_EXCLUDES.includes(part as (typeof DEFAULT_EXCLUDES)[number])) ||
-    tree.excluded.some((name) => contains(join(tree.folder, name), path))
-  )
+function excluded(tree: IndexedTree, path: string): boolean {
+  for (let name = path; contains(tree.folder, name); name = dirname(name)) {
+    if (tree.excludedPaths.has(name)) return true
+    if (name === tree.folder) break
+  }
+  return relative(tree.folder, path)
+    .split(sep)
+    .some((part) => DEFAULT_EXCLUDES.includes(part as (typeof DEFAULT_EXCLUDES)[number]))
 }
 interface IndexedTree extends TreeRecord {
   entriesByPath: ReadonlyMap<AbsolutePath, SavedFile>
+  excludedPaths: ReadonlySet<string>
 }
 interface IndexedManifest extends SnapshotManifest {
   filesByPath: ReadonlyMap<AbsolutePath, SavedFile>
@@ -169,6 +172,7 @@ function indexManifest(manifest: SnapshotManifest): IndexedManifest {
     trees: manifest.trees.map((tree) => ({
       ...tree,
       entriesByPath: new Map(tree.entries.map((entry) => [entry.path, entry])),
+      excludedPaths: new Set(tree.excluded.map((name) => join(tree.folder, name))),
     })),
   }
 }
@@ -441,6 +445,8 @@ export async function planRestore(
   const stamps: unknown[] = []
   const aliases = new Set<string>()
   const currentContents = new Map<AbsolutePath, string | undefined>()
+  const inspected = []
+  const ignorePaths = new Map<AbsolutePath, AbsolutePath[]>()
   for (const [path, change] of [...changes].toSorted(([a], [b]) => a.localeCompare(b))) {
     const root = roots
       .filter((candidate) => contains(candidate, path))
@@ -483,6 +489,8 @@ export async function planRestore(
         }
       }
     } else reason = 'outside-folders'
+    // A selected folder itself is never planned: removing it would strand the session.
+    if (path === root) reason ??= 'not-covered'
     if (
       !change.start.covered ||
       (change.last !== undefined && !change.last.covered) ||
@@ -505,21 +513,63 @@ export async function planRestore(
       (current === undefined || !capturedPaths?.has(path)) &&
       (await parents(root, path, false))
     ) {
-      try {
-        const repo = repoPath(dir, root)
-        // oxlint-disable-next-line no-await-in-loop -- check-ignore does not mutate index or workspace
-        const ignored = await git.run(
-          repo,
-          root,
-          ['check-ignore', '--no-index', '-z', '--stdin'],
-          new AbortController().signal,
-          relative(root, path) + '\0',
-        )
-        if (ignored.length > 0) reason = 'excluded'
-      } catch (error) {
-        if ((error as { exitCode?: number }).exitCode !== 1) reason = 'not-covered'
-      }
+      const paths = ignorePaths.get(root) ?? []
+      paths.push(path)
+      ignorePaths.set(root, paths)
     }
+    inspected.push({ path, change, root, now, reason })
+  }
+  const ignoreReasons = new Map<AbsolutePath, Reason>()
+  for (const [root, paths] of ignorePaths) {
+    try {
+      const ignored = await checkIgnoredPaths(
+        git,
+        repoPath(dir, root),
+        root,
+        paths.map((path) => relative(root, path)),
+        new AbortController().signal,
+      )
+      for (const path of paths)
+        if (ignored.has(relative(root, path))) ignoreReasons.set(path, 'excluded')
+    } catch {
+      for (const path of paths) ignoreReasons.set(path, 'not-covered')
+    }
+  }
+  for (const item of inspected) item.reason ??= ignoreReasons.get(item.path)
+  // What this restore deletes. Anything else in a directory outlives rmdir, so neither putting
+  // the origin back nor removing the directory can happen. Deepest first: a directory that stays
+  // keeps its parents too.
+  const leaving = new Set<string>(
+    inspected
+      .filter(({ change, reason }) => reason === undefined && change.start.file.identity === null)
+      .map(({ path }) => path),
+  )
+  // Paths this restore puts back need their directories to stay directories.
+  const filling = new Set<string>()
+  for (const { path, change, reason, root } of inspected) {
+    if (reason !== undefined || change.start.file.identity === null || root === undefined) continue
+    for (
+      let parent = dirname(path);
+      parent !== root && contains(root, parent);
+      parent = dirname(parent)
+    )
+      filling.add(parent)
+  }
+  for (const item of inspected.toSorted((a, b) => depth(b.path) - depth(a.path))) {
+    if (
+      item.reason !== undefined ||
+      item.change.start.file.identity?.kind === 'dir' ||
+      item.now.file.identity?.kind !== 'dir'
+    )
+      continue
+    // An unreadable directory proves nothing, so it stays.
+    const children = await readdir(item.path).catch(() => undefined)
+    if (!filling.has(item.path) && children?.every((name) => leaving.has(join(item.path, name))))
+      continue
+    item.reason = 'excluded'
+    leaving.delete(item.path)
+  }
+  for (const { path, change, root, now, reason } of inspected) {
     stamps.push([
       path,
       now.file.identity?.kind === 'dir'

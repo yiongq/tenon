@@ -216,8 +216,8 @@ export function SummaryLine(props: {
       </p>
     )
   }
-  // For the live row, keep the flow mounted if a timer/focus refresh removes its link or fails
-  // (data=null). Historical rows can still unmount here when their parent RunEndCard returns null.
+  // Keep the flow mounted if a timer/focus refresh removes its link or fails (data=null).
+  // ChatProvider retains historical settlement anchors across failed refreshes too.
   return (
     <RestoreLink
       roundRunId={round?.roundRunId ?? props.runId ?? ''}

@@ -2,7 +2,7 @@ vi.mock('../src/main/host/snapshot-restore.js', async (original) => ({
   ...(await original<typeof restoreModule>()),
 }))
 import * as restoreModule from '../src/main/host/snapshot-restore.js'
-import { chmod, mkdir, readFile, writeFile, utimes } from 'node:fs/promises'
+import { chmod, mkdir, readFile, writeFile, utimes, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
@@ -138,7 +138,8 @@ it('05 验收 18: B13 — the preview key ignores directory timestamp churn but 
   const after = await take(undefined, 'after-call')
   const q = query([{ callKey: 'bash', before, after }])
   const k1 = (await snapshots.preview(q)).previewKey
-  await writeFile(path('d/unrelated'), 'x') // changes the directory mtime only
+  await writeFile(path('d/unrelated'), 'x')
+  await rm(path('d/unrelated')) // changes the directory mtime only
   await utimes(path('d'), new Date(1_000_000), new Date(1_000_000))
   expect((await snapshots.preview(q)).previewKey).toBe(k1)
   await chmod(path('d'), 0o700)

@@ -743,7 +743,12 @@ export class DesktopSnapshots implements HostSnapshots {
             .toSorted((a, b) => b.length - a.length)[0]!
           manifest.directories = await parentModes(path, folder)
         }
+        const treePaths = new Set(
+          manifest.trees.flatMap((tree) => tree.entries.map((entry) => entry.path)),
+        )
         for (const path of extraPaths) {
+          // The final captured-plan comparison validates tree stamps and hashes too.
+          if (treePaths.has(path)) continue
           const folder = session.folders
             .filter((root) => contains(root, path))
             .toSorted((a, b) => b.length - a.length)[0]!
