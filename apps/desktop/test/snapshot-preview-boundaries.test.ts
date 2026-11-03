@@ -29,6 +29,121 @@ import {
   restore,
 } from './support/snapshot-boundaries.js'
 
+const recordFileChange = async (name: string, act: () => Promise<void>, callKey: string) => {
+  const before = await take(name)
+  await act()
+  return { callKey, path: path(name), before, after: await take(name, 'after-call') }
+}
+
+it.each([false, true])(
+  '05 验收 52: restoring an ignored child keeps its parent directory (write first %s)',
+  async (writeFirst) => {
+    await writeFile(path('.gitignore'), '*.log\n')
+    await writeFile(path('b'), 'origin')
+    const before = await take()
+    await rm(path('b'))
+    await mkdir(path('b'))
+    await writeFile(path('b/run.log'), 'ignored')
+    const changes: RestoreQuery['calls'][number][] = [
+      { callKey: 'bash', before, after: await take(undefined, 'after-call') },
+    ]
+    if (writeFirst)
+      changes.push(
+        await recordFileChange('b/run.log', () => writeFile(path('b/run.log'), 'edited'), 'write'),
+      )
+    changes.push(await recordFileChange('b/run.log', () => rm(path('b/run.log')), 'delete'))
+    const q = query(changes)
+    const { done } = await restore(q)
+    expect(done.failed).toEqual([])
+    expect(await readFile(path('b/run.log'), 'utf8')).toBe('ignored')
+    const end = await snapshots.preview(q)
+    expect([end.restore, end.remove, end.conflicts]).toEqual([[], [], []])
+  },
+)
+
+it('05 验收 52: a promised file now held by a directory the restore cannot clear is skipped', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(path('x'), 'origin')
+  const edited = await recordFileChange('x', () => writeFile(path('x'), 'edit'), 'edit')
+  const before = await take()
+  await rm(path('x'))
+  await mkdir(path('x'))
+  await writeFile(path('x/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  const q = query([edited, { callKey: 'bash', before, after }])
+  expect((await snapshots.preview(q)).skipped).toEqual([
+    expect.objectContaining({ path: path('x'), reason: 'excluded', promised: true }),
+  ])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('x/run.log'), 'utf8')).toBe('ignored')
+})
+
+it('05 验收 41: restoring a child two directories deep keeps both ancestors', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(path('x'), 'origin')
+  const before = await take()
+  await rm(path('x'))
+  await mkdir(path('x/e'), { recursive: true })
+  await writeFile(path('x/e/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  const deleted = await recordFileChange('x/e/run.log', () => rm(path('x/e/run.log')), 'delete')
+  const q = query([{ callKey: 'bash', before, after }, deleted])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('x/e/run.log'), 'utf8')).toBe('ignored')
+  const end = await snapshots.preview(q)
+  expect([end.restore, end.remove, end.conflicts]).toEqual([[], [], []])
+})
+
+it('05 验收 41: a newly selected workspace folder survives restoration', async () => {
+  const selected = path('sub')
+  const before = await take()
+  await mkdir(selected)
+  await writeFile(path('sub/a'), 'agent')
+  const after = await take(undefined, 'after-call')
+  await rooted([selected])
+  const { done } = await restore(query([{ callKey: 'bash', before, after }]))
+  expect(done.failed).toEqual([])
+  expect((await lstat(selected)).isDirectory()).toBe(true)
+  await take()
+})
+
+it('05 验收 41: restoring a user file keeps the newly created directory', async () => {
+  const before = await take()
+  await mkdir(path('d'))
+  const after = await take(undefined, 'after-call')
+  await writeFile(path('d/mine'), 'mine')
+  const written = await recordFileChange(
+    'd/mine',
+    () => writeFile(path('d/mine'), 'agent'),
+    'write',
+  )
+  const q = query([{ callKey: 'bash', before, after }, written])
+  expect((await snapshots.preview(q)).remove).not.toContain(path('d'))
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect((await lstat(path('d'))).isDirectory()).toBe(true)
+  expect(await readFile(path('d/mine'), 'utf8')).toBe('mine')
+})
+
+it('05 验收 41: a promised new ignored file leaves with its directory', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  const before = await take()
+  await mkdir(path('d'))
+  const after = await take(undefined, 'after-call')
+  const written = await recordFileChange(
+    'd/run.log',
+    () => writeFile(path('d/run.log'), 'agent'),
+    'write',
+  )
+  const q = query([{ callKey: 'bash', before, after }, written])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  await expect(lstat(path('d'))).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(lstat(path('d/run.log'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
 it.each([
   ['logs', 'run.log', '*.log\n', false, false],
   ['.pytest_cache', '.gitignore', '', false, false],
@@ -84,7 +199,7 @@ const rooted = async (roots: ReturnType<typeof inner>[]) => {
   await snapshots.settled(sessionId)
 }
 
-it('05 验收 41 复现: nested folders, the rule lives only in the outer folder: new directory is skipped', async () => {
+it('05 验收 41: nested folders, the rule lives only in the outer folder: new directory is skipped', async () => {
   await writeFile(path('.gitignore'), '*.log\n')
   await mkdir(inner())
   await rooted([folder, inner()])
@@ -138,7 +253,7 @@ it.each([
   },
 )
 
-it('05 验收 41 复现: the rule goes away in a later call, new directory stays skipped', async () => {
+it('05 验收 41: the rule goes away in a later call, new directory stays skipped', async () => {
   await writeFile(path('.gitignore'), '*.log\n')
   const t0 = await take()
   await mkdir(path('d'))
@@ -156,7 +271,7 @@ it('05 验收 41 复现: the rule goes away in a later call, new directory stays
   expect(done.failed).toEqual([])
 })
 
-it('05 验收 41 复现: the rule goes away in a later call, the moved origin stays in the workspace', async () => {
+it('05 验收 41: the rule goes away in a later call, the moved origin stays in the workspace', async () => {
   await writeFile(path('.gitignore'), '*.log\n')
   await writeFile(path('x'), 'unique origin')
   const t0 = await take()
@@ -190,7 +305,7 @@ it('05 验收 41 复现: a path that stopped being a directory after the last sn
   expect(preview.conflicts).toEqual([path('d')])
 })
 
-it('05 验收 41 复现: a later single-file call leaves the directory skipped', async () => {
+it('05 验收 41: a later single-file call leaves the directory skipped', async () => {
   await writeFile(path('.gitignore'), '*.log\n')
   await writeFile(path('x'), 'origin')
   const t0 = await take()
@@ -211,7 +326,7 @@ it('05 验收 41 复现: a later single-file call leaves the directory skipped',
   expect(done.failed).toEqual([])
 })
 
-it('05 验收 41 复现: new directories in two folders are each skipped', async () => {
+it('05 验收 41: new directories in two folders are each skipped', async () => {
   const other = absolutePath(join(temp, 'workspace-b'))
   await mkdir(other)
   await writeFile(path('.gitignore'), '*.log\n')
@@ -232,7 +347,7 @@ it('05 验收 41 复现: new directories in two folders are each skipped', async
   )
 })
 
-it('05 验收 41 复现: ignored child removed after the last snapshot restores its origin', async () => {
+it('05 验收 41: ignored child removed after the last snapshot restores its origin', async () => {
   await writeFile(path('.gitignore'), '*.log\n')
   await writeFile(path('b'), 'origin')
   const before = await take()

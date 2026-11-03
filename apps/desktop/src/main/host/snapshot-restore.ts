@@ -489,6 +489,8 @@ export async function planRestore(
         }
       }
     } else reason = 'outside-folders'
+    // A selected folder itself is never planned: removing it would strand the session.
+    if (path === root) reason ??= 'not-covered'
     if (
       !change.start.covered ||
       (change.last !== undefined && !change.last.covered) ||
@@ -542,6 +544,17 @@ export async function planRestore(
       .filter(({ change, reason }) => reason === undefined && change.start.file.identity === null)
       .map(({ path }) => path),
   )
+  // Paths this restore puts back need their directories to stay directories.
+  const filling = new Set<string>()
+  for (const { path, change, reason, root } of inspected) {
+    if (reason !== undefined || change.start.file.identity === null || root === undefined) continue
+    for (
+      let parent = dirname(path);
+      parent !== root && contains(root, parent);
+      parent = dirname(parent)
+    )
+      filling.add(parent)
+  }
   for (const item of inspected.toSorted((a, b) => depth(b.path) - depth(a.path))) {
     if (
       item.reason !== undefined ||
@@ -551,7 +564,8 @@ export async function planRestore(
       continue
     // An unreadable directory proves nothing, so it stays.
     const children = await readdir(item.path).catch(() => undefined)
-    if (children?.every((name) => leaving.has(join(item.path, name)))) continue
+    if (!filling.has(item.path) && children?.every((name) => leaving.has(join(item.path, name))))
+      continue
     item.reason = 'excluded'
     leaving.delete(item.path)
   }
