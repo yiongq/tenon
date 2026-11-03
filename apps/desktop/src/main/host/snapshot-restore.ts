@@ -323,7 +323,7 @@ export async function planRestore(
       .map((manifest) => [manifest.id, indexManifest(manifest)]),
   )
   const currentIndex = current === undefined ? undefined : indexManifest(current)
-  const excludedParents = new Set<string>()
+  const excludedParents = new Map<string, Set<string>>()
   const changes = new Map<
     AbsolutePath,
     {
@@ -425,13 +425,15 @@ export async function planRestore(
     for (const manifest of [before, after]) {
       if (manifest === undefined) continue
       for (const tree of manifest.trees) {
+        const treeParents = new Set<string>()
+        excludedParents.set(tree.folder, treeParents)
         for (const name of tree.excluded) {
           for (
             let parent = dirname(join(tree.folder, name));
             contains(tree.folder, parent);
             parent = dirname(parent)
           ) {
-            excludedParents.add(parent)
+            treeParents.add(parent)
             if (parent === tree.folder) break
           }
           for (const path of changesBelow.get(join(tree.folder, name)) ?? []) {
@@ -514,7 +516,7 @@ export async function planRestore(
     if (
       change.start.file.identity?.kind !== 'dir' &&
       now.file.identity?.kind === 'dir' &&
-      excludedParents.has(path)
+      excludedParents.get(root ?? '')?.has(path)
     )
       reason ??= 'excluded'
     // Current gitignore/default/nested exclusions apply to Bash paths. Explicit file copies override them.

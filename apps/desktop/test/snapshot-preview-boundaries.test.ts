@@ -78,6 +78,31 @@ it.each([
   },
 )
 
+it.each([true, false])('05 验收 41 复现: S8240 file %s', async (existed) => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  if (existed) await writeFile(path('b'), 'origin')
+  const before = await take()
+  if (existed) await rm(path('b'))
+  await mkdir(path('b'))
+  await writeFile(path('b/run.log'), 'ignored')
+  const middle = await take(undefined, 'after-call')
+  await rm(path('b/run.log'))
+  const after = await take(undefined, 'after-call')
+  const q = query([
+    { callKey: 'replace', before, after: middle },
+    { callKey: 'empty', before: middle, after },
+  ])
+  const preview = await snapshots.preview(q)
+  expect([preview.restore, preview.remove, preview.skipped]).toEqual(
+    existed ? [[path('b')], [], []] : [[], [path('b')], []],
+  )
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('b'), 'utf8').catch(() => null)).toBe(existed ? 'origin' : null)
+  const stat = await lstat(path('b')).catch(() => null)
+  expect(stat?.isFile() ?? null).toBe(existed ? true : null)
+})
+
 it.each(['d', 'd/e/f'])('05 验收 41 复现: excluded ancestry with current path %s', async (dir) => {
   await writeFile(path('.gitignore'), '*.log\n')
   const before = await take()
