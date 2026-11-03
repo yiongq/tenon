@@ -78,6 +78,229 @@ it.each([
   },
 )
 
+const inner = () => absolutePath(join(temp, 'workspace', 'sub'))
+const rooted = async (roots: ReturnType<typeof inner>[]) => {
+  await snapshots.setWorkspace(sessionId, roots)
+  await snapshots.settled(sessionId)
+}
+
+it('05 验收 41 复现: nested folders, the rule lives only in the outer folder: new directory is skipped', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await mkdir(inner())
+  await rooted([folder, inner()])
+  const before = await take()
+  await mkdir(join(inner(), 'd'))
+  await writeFile(join(inner(), 'd/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  const q = query([{ callKey: 'bash', before, after }])
+  const preview = await snapshots.preview(q)
+  expect(preview.remove).toEqual([])
+  expect(preview.skipped.map((s) => s.path)).toContain(join(inner(), 'd'))
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect((await snapshots.preview(q)).remove).toEqual([])
+})
+
+it('05 验收 41 复现: nested folders: mv x y; mkdir x; write x/run.log keeps the origin in the workspace', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await mkdir(inner())
+  await writeFile(join(inner(), 'x'), 'unique origin')
+  await rooted([folder, inner()])
+  const before = await take()
+  await rename(join(inner(), 'x'), join(inner(), 'y'))
+  await mkdir(join(inner(), 'x'))
+  await writeFile(join(inner(), 'x/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  const q = query([{ callKey: 'bash', before, after }])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(join(inner(), 'y'), 'utf8')).toBe('unique origin')
+})
+
+it.each([
+  ['added', () => [folder, inner()]],
+  ['narrowed', () => [inner()]],
+] as const)(
+  '05 验收 41 复现: a folder %s after the round: the directory is still skipped',
+  async (_, roots) => {
+    await mkdir(inner())
+    await writeFile(join(inner(), '.gitignore'), '*.log\n')
+    const before = await take()
+    await mkdir(join(inner(), 'd'))
+    await writeFile(join(inner(), 'd/run.log'), 'ignored')
+    const after = await take(undefined, 'after-call')
+    await rooted(roots())
+    const q = query([{ callKey: 'bash', before, after }])
+    const preview = await snapshots.preview(q)
+    expect(preview.remove).toEqual([])
+    const { done } = await restore(q)
+    expect(done.failed).toEqual([])
+  },
+)
+
+it('05 验收 41 复现: the rule goes away in a later call, new directory stays skipped', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  const t0 = await take()
+  await mkdir(path('d'))
+  await writeFile(path('d/run.log'), 'ignored')
+  const t1 = await take(undefined, 'after-call')
+  const t2 = await take()
+  await writeFile(path('.gitignore'), '# nothing\n')
+  const t3 = await take(undefined, 'after-call')
+  const q = query([
+    { callKey: 'one', before: t0, after: t1 },
+    { callKey: 'two', before: t2, after: t3 },
+  ])
+  expect((await snapshots.preview(q)).remove).toEqual([])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+})
+
+it('05 验收 41 复现: the rule goes away in a later call, the moved origin stays in the workspace', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(path('x'), 'unique origin')
+  const t0 = await take()
+  await rename(path('x'), path('y'))
+  await mkdir(path('x'))
+  await writeFile(path('x/run.log'), 'ignored')
+  const t1 = await take(undefined, 'after-call')
+  const t2 = await take()
+  await writeFile(path('.gitignore'), '# nothing\n')
+  const t3 = await take(undefined, 'after-call')
+  const q = query([
+    { callKey: 'one', before: t0, after: t1 },
+    { callKey: 'two', before: t2, after: t3 },
+  ])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('y'), 'utf8')).toBe('unique origin')
+})
+
+it('05 验收 41 复现: a path that stopped being a directory after the last snapshot is not skipped', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  const before = await take()
+  await mkdir(path('d'))
+  await writeFile(path('d/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  await rm(path('d'), { recursive: true })
+  await writeFile(path('d'), 'yours')
+  const preview = await snapshots.preview(query([{ callKey: 'mkdir', before, after }]))
+  expect(preview.skipped).toEqual([])
+  expect(preview.remove).toEqual([path('d')])
+  expect(preview.conflicts).toEqual([path('d')])
+})
+
+it('05 验收 41 复现: a later single-file call leaves the directory skipped', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(path('x'), 'origin')
+  const t0 = await take()
+  await rm(path('x'))
+  await mkdir(path('x'))
+  await writeFile(path('x/run.log'), 'ignored')
+  const t1 = await take(undefined, 'after-call')
+  const t2 = await take('other')
+  await writeFile(path('other'), 'w')
+  const t3 = await take('other', 'after-call')
+  const q = query([
+    { callKey: 'one', before: t0, after: t1 },
+    { callKey: 'w', path: path('other'), before: t2, after: t3 },
+  ])
+  const preview = await snapshots.preview(q)
+  expect(preview.skipped).toEqual([{ path: path('x'), reason: 'excluded' }])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+})
+
+it('05 验收 41 复现: new directories in two folders are each skipped', async () => {
+  const other = absolutePath(join(temp, 'workspace-b'))
+  await mkdir(other)
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(join(other, '.gitignore'), '*.log\n')
+  await snapshots.setWorkspace(sessionId, [folder, other])
+  await snapshots.settled(sessionId)
+  const before = await take()
+  await mkdir(path('a'))
+  await writeFile(path('a/run.log'), 'x')
+  await mkdir(join(other, 'b'))
+  await writeFile(join(other, 'b/run.log'), 'x')
+  const after = await take(undefined, 'after-call')
+  const q = query([{ callKey: 'one', before, after }])
+  const preview = await snapshots.preview(q)
+  expect(preview.remove).toEqual([])
+  expect(preview.skipped.map((s) => s.path).toSorted()).toEqual(
+    [join(other, 'b'), path('a')].toSorted(),
+  )
+})
+
+it('05 验收 41 复现: ignored child removed after the last snapshot restores its origin', async () => {
+  await writeFile(path('.gitignore'), '*.log\n')
+  await writeFile(path('b'), 'origin')
+  const before = await take()
+  await rm(path('b'))
+  await mkdir(path('b'))
+  await writeFile(path('b/run.log'), 'ignored')
+  const after = await take(undefined, 'after-call')
+  await rm(path('b/run.log'))
+  const q = query([{ callKey: 'bash', before, after }])
+  const preview = await snapshots.preview(q)
+  expect(preview.restore).toEqual([path('b')])
+  expect(preview.skipped).toEqual([])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect((await lstat(path('b'))).isFile()).toBe(true)
+  expect(await readFile(path('b'), 'utf8')).toBe('origin')
+})
+
+it('05 验收 41 复现: a user file added after the last snapshot keeps its directory', async () => {
+  const before = await take()
+  await mkdir(path('d'))
+  await writeFile(path('d/a'), 'agent')
+  const after = await take(undefined, 'after-call')
+  await writeFile(path('d/mine.txt'), 'mine')
+  const q = query([{ callKey: 'bash', before, after }])
+  const preview = await snapshots.preview(q)
+  expect(preview.remove).toEqual([path('d/a')])
+  expect(preview.skipped).toEqual([{ path: path('d'), reason: 'excluded' }])
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('d/mine.txt'), 'utf8')).toBe('mine')
+  await expect(lstat(path('d/a'))).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('05 验收 41 复现: a skipped changed child keeps its directory', async () => {
+  const before = await take()
+  await mkdir(path('d'))
+  await writeFile(path('d/a'), 'agent')
+  const after = await take(undefined, 'after-call')
+  await writeFile(path('.gitignore'), 'a\n')
+  const q = query([{ callKey: 'bash', before, after }])
+  const preview = await snapshots.preview(q)
+  expect(preview.remove).toEqual([])
+  expect(preview.skipped).toEqual(
+    ['d', 'd/a'].map((name) => ({ path: path(name), reason: 'excluded' })),
+  )
+  const { done } = await restore(q)
+  expect(done.failed).toEqual([])
+  expect(await readFile(path('d/a'), 'utf8')).toBe('agent')
+})
+
+it.skipIf(process.platform === 'win32')(
+  '05 验收 41 复现: an unreadable directory stays skipped',
+  async () => {
+    const before = await take()
+    await mkdir(path('d'))
+    const after = await take(undefined, 'after-call')
+    await chmod(path('d'), 0o000)
+    try {
+      const preview = await snapshots.preview(query([{ callKey: 'mkdir', before, after }]))
+      expect(preview.remove).toEqual([])
+      expect(preview.skipped).toEqual([{ path: path('d'), reason: 'excluded' }])
+    } finally {
+      await chmod(path('d'), 0o755)
+    }
+  },
+)
+
 it.each([true, false])('05 验收 41 复现: S8240 file %s', async (existed) => {
   await writeFile(path('.gitignore'), '*.log\n')
   if (existed) await writeFile(path('b'), 'origin')

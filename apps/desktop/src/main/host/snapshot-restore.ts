@@ -323,7 +323,6 @@ export async function planRestore(
       .map((manifest) => [manifest.id, indexManifest(manifest)]),
   )
   const currentIndex = current === undefined ? undefined : indexManifest(current)
-  const excludedParents = new Map<string, Set<string>>()
   const changes = new Map<
     AbsolutePath,
     {
@@ -425,17 +424,7 @@ export async function planRestore(
     for (const manifest of [before, after]) {
       if (manifest === undefined) continue
       for (const tree of manifest.trees) {
-        const treeParents = new Set<string>()
-        excludedParents.set(tree.folder, treeParents)
         for (const name of tree.excluded) {
-          for (
-            let parent = dirname(join(tree.folder, name));
-            contains(tree.folder, parent);
-            parent = dirname(parent)
-          ) {
-            treeParents.add(parent)
-            if (parent === tree.folder) break
-          }
           for (const path of changesBelow.get(join(tree.folder, name)) ?? []) {
             const change = changes.get(path)!
             if (change.treeCovered && !manifest.filesByPath.has(path)) change.excluded = true
@@ -513,12 +502,6 @@ export async function planRestore(
       [change.start, now].some((p) => p.file.identity?.kind === 'file' && p.file.identity.nlink > 1)
     )
       reason = 'hardlink'
-    if (
-      change.start.file.identity?.kind !== 'dir' &&
-      now.file.identity?.kind === 'dir' &&
-      excludedParents.get(root ?? '')?.has(path)
-    )
-      reason ??= 'excluded'
     // Current gitignore/default/nested exclusions apply to Bash paths. Explicit file copies override them.
     if (
       reason === undefined &&
@@ -550,8 +533,29 @@ export async function planRestore(
       for (const path of paths) ignoreReasons.set(path, 'not-covered')
     }
   }
-  for (const { path, change, root, now, reason: inspectedReason } of inspected) {
-    const reason = inspectedReason ?? ignoreReasons.get(path)
+  for (const item of inspected) item.reason ??= ignoreReasons.get(item.path)
+  // What this restore deletes. Anything else in a directory outlives rmdir, so neither putting
+  // the origin back nor removing the directory can happen. Deepest first: a directory that stays
+  // keeps its parents too.
+  const leaving = new Set<string>(
+    inspected
+      .filter(({ change, reason }) => reason === undefined && change.start.file.identity === null)
+      .map(({ path }) => path),
+  )
+  for (const item of inspected.toSorted((a, b) => depth(b.path) - depth(a.path))) {
+    if (
+      item.reason !== undefined ||
+      item.change.start.file.identity?.kind === 'dir' ||
+      item.now.file.identity?.kind !== 'dir'
+    )
+      continue
+    // An unreadable directory proves nothing, so it stays.
+    const children = await readdir(item.path).catch(() => undefined)
+    if (children?.every((name) => leaving.has(join(item.path, name)))) continue
+    item.reason = 'excluded'
+    leaving.delete(item.path)
+  }
+  for (const { path, change, root, now, reason } of inspected) {
     stamps.push([
       path,
       now.file.identity?.kind === 'dir'
