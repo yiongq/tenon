@@ -1100,7 +1100,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 2 | [02-agent-loop](02-agent-loop/spec.md) | Agent 循环、权限和提示层 | implemented | 八层权限与每次调用收口 |
 | 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
 | 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
-| 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | ready | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
+| 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | implemented | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
 | 4c | `06-approval-modes`（待起草） | 审批档位 | 规划中 | 随快照与规则 inspector 开放，另行验收 |
 | 4d | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 按 4a → 4b → 4c → 4d 顺序交付 |
 | 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
@@ -1146,6 +1146,8 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
 - spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
 - 阶段 4 的行数余量只剩约 1 000 行（第 19 步算到约 2 100 行，05 收尾的 PR 又用掉约 1 100 行），06 一份就会超：按 §13 阶段 4 的砍法顺序（4d 挪阶段 6 → 快照只管文件工具 → macOS 那半本机跑 → 阶段 4 不开自动档）定砍不砍 · owner · 挡 06 起草 · 05 plan 第 19 步（log.md 2026-10-30）
+- Delete 的审批卡标题是「修改这个文件？」（与 Write、Edit 共用 `file` 一类卡），工具行写的是「删除」 · lead · 下次改审批卡文案时 · 05 第 23 步验收（2026-11-06）
+- 还原清单的「将还原 N 个」把默认保留的冲突也算进去（列了 6 个，实际还原 5 个、保留 1 个） · lead · 下次改还原清单时 · 05 第 23 步验收（2026-11-06）
 - 父路径被默认保留的文件占着时，下面的路径放回失败、它们被搬走的那份照删（已写进 05 §已知限制与代价与 SECURITY.md）；可以照 D70 的原则把这类路径算作「这次默认不放回起点」，起点进比对表 · lead · 下次改还原清单的计算时；不挡 · 05 第 18.3 步复核 Y1（第 20 步第四轮复核补：`mv x y; mkdir x; 写 x/a` 后你又改了 `x/a`，默认还原也是这一类，`y` 照删、`x` 放不回，起点只剩快照）
 - 还原清单里，05 D66、D67 传播出来的冲突目录与它下面的文件分开问：只覆盖目录、保留文件时目录记进 `failed`（起点没被搬走时不丢数据，搬走的见上一行）；让目录的选项跟随子项，或在 `failed` 原因里写明「里面还有保留的文件」 · lead · 下次碰还原清单时 · 05 第三段第五轮复核 X5
 - 还原清单里读不了的新目录：预览已进跳过，第一次确认却回 `stale`（拍还原前那张时把它下面的子项写成排除，previewKey 变了），第二次才成；8a31290 上预览列成删除加冲突，第一次确认同样回 `stale` · lead · 下次改还原清单的计算时；不挡 · 05 第 20 步第四轮复核
