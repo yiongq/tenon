@@ -382,6 +382,8 @@ export interface SandboxLab {
   /** `<profile>/tool-output/<sessionId>/`. */
   readonly toolOutputDir: string
   readonly sandbox: DesktopSandbox
+  /** Discovery ports can fail independently of the real repository in hardening tests. */
+  readonly fs: ReturnType<typeof desktopSandboxFs>
   /** Your choices under 「权限与网络」, read at every wrap. */
   settings: SandboxSettings
   /** A fresh directory under the lab. */
@@ -408,6 +410,7 @@ function newLab(q: {
   const toolOutputDir = makeDir(join(profileDir, 'tool-output', sessionId))
   const lastIds: string[] = []
   const srt = desktopSrtSandbox()
+  const fs = desktopSandboxFs()
   const recordingSrt: SrtSandbox = {
     ...srt,
     wrapWithSandboxArgv: (command, binShell, customConfig, abortSignal, cwd, options) => {
@@ -420,7 +423,7 @@ function newLab(q: {
     paths: hostPaths({ home, profileDir, cacheDir, srtPackageDir: q.helpers.packageDir }),
     settings: () => lab.settings,
     sessionFolders: async () => lab.folders.map(abs),
-    fs: desktopSandboxFs(),
+    fs,
     processes: desktopProcessTable(),
     // The test process keeps its own signal handling: no `app.quit` here.
     onSignal: () => {},
@@ -435,6 +438,7 @@ function newLab(q: {
     settings: { profile: 'workspace-write', packageManagers: false },
     folders: [],
     sandbox,
+    fs,
     dir: (name) => makeDir(join(q.root, name)),
     requestEnv: (extra = {}) => ({
       PATH: COMMAND_PATH,
