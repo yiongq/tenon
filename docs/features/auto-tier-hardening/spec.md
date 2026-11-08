@@ -83,7 +83,8 @@ export function discoverGitProtection(
 3. Linux 上，规矩 1 的 **git 转向条目**只对「wrap 时已存在」的生效（给不存在的转向叶子加 deny 会让 srt 用 `--ro-bind /dev/null` 占位、破坏正常 git，E2、P2）：绝不给普通仓库里不存在的 commondir、config.worktree、子目录 `.git` 加 deny。这几样在 Linux 上拦不住，是已知限制（D5）。这条例外只限 git 转向条目，不适用于钩子位置（规矩 7）。「已存在」按逐级解开链接后的实际目标判（与 srt 解析后再决定绑定还是占位一致），悬空链接按不存在算。
 4. 外带 inspector 的出口工具是 builtin 的 WebFetch，或任一连接器调用（`call.tool.source === 'mcp'`；设其来源 S，WebFetch 记 'builtin'）。当会话里存在不可信内容（任一来源，含 S），且存在来源 ≠ S 的私密数据，且（WebFetch 时）URL 不在豁免里，就出「问人」意见（`category: 'exfiltration'`）；任何审批档、会话授权、「总是允许」都免不掉，放行只管这一次（D6=出口含读类连接器）。
 5. 连接器调用的结果按来源 `mcp:<serverId>` 既算不可信内容、也算私密数据，对话与任务两种形态都算（D7）。本地私密读仍只在任务形态记 'local'。来源判定不扫内容，按 §对 02 的增补「来源怎么取」；取不到来源时从严，按连接器算（不可信 + 私密 + 出口）。
-6. 文件工具（Write、Edit、Delete）写以下位置时判 `sensitive: 'auto-run'`、每次问、只放行这一次、卡上写「这个位置的文件会被自动执行」：某个工作区 git 仓库 `core.hooksPath` 解出的目录；工作区任意深度的 `.husky/`、lefthook 配置与脚本目录（`lefthook.yml`、`.lefthook.yml`、`lefthook.yaml`、`.lefthook.yaml`、`lefthook.toml`、`lefthook.json`，及逐个把 `lefthook` 换成 `lefthook-local` 的六个本地配置名、`.lefthook/`、`.lefthook-local/`）、`.pre-commit-config.yaml`；发现时已存在的 include 配置来源（§对 05 的增补「配置来源」）。读与查找不因此出卡。
+6. 文件工具（Write、Edit、Delete）写以下位置时判 `sensitive: 'auto-run'`、每次问、只放行这一次、卡上写「这个位置的文件会被自动执行」：某个工作区 git 仓库 `core.hooksPath` 解出的目录；工作区任意深度的 `.husky/`、lefthook 配置与脚本目录（`lefthook.yml`、`.lefthook.yml`、`lefthook.yaml`、`.lefthook.yaml`、`lefthook.toml`、`lefthook.json`，及逐个把 `lefthook` 换成 `lefthook-local` 的六个本地配置名、`.lefthook/`、`.lefthook-local/`）、`.pre-commit-config.yaml`。读与查找不因此出卡。
+   已发现的既有转向条目（`redirectExisting`）也按同一规则纳入 `auto-run`，不覆盖已有凭据类别：包括根下 `.git` 指针本身、其 gitdir 与 commondir（分别为实际 git 目录与公共 git 目录）中的 `config`、`config.worktree`、`commondir`、`hooks`，枚举到的子模块/worktree 同类条目，以及已存在的 include 配置来源（§对 05 的增补「配置来源」）。
 7. 沙箱里的命令写钩子位置被拒，已存在与尚不存在的都拦（owner 卡 3）。沙箱兑现的范围：两平台都拦每个工作区根下的钩子名单（规矩 6 的名字）与解析出的 `hookDirs`（精确路径）；macOS 另用 glob 拦子目录里的同名位置。Linux 上 srt 丢弃通配写规则（E7），子目录里同名的钩子位置拦不住，记已知限制（与 D5 同属「Linux 做不到」一类）。Linux 上根下尚不存在的钩子位置由 srt 用空占位挡住（P4）。文件工具一侧照规矩 6 任意深度匹配，不受此限。
 8. 规矩 4–7 的改动都不放宽任何已有放行：给 `decide()` 的输入多一条「问人」意见，判决只会从放行变问、从问变拒，不会变宽（02 §Inspector 接口与合议）。
 
@@ -155,7 +156,9 @@ Linux 上「在子目录新建 `.git`、在普通仓库新建 commondir/config.w
 - **两条调用链**：① 文件工具：`sensitive-paths.ts` 在会话开始、工作区变化、每张快照列文件时调同一个函数，把 `hookDirs`（真实路径）与 `hookNames` 并进 `PathScope.sensitive`；不完整时照 05 链接扫描的做法记 `incomplete` 与诊断，名字类保护照常。② 沙箱：见 §对 04 的增补「调用链」。两边共用解析实现与输出契约，不共用跨刷新周期的缓存。
 - **匹配在 kernel**（`workspace.ts` 的 `sensitiveName`，纯函数）：只按传入的名单与 `hookDirs` 比对，不读磁盘、不读 git 配置。
 
-§已知限制与代价 增补：`core.hooksPath` 在配置读不出时解不出的目录，文件工具与沙箱都认不到（沙箱侧以 `fallbackDeny` 兜住 git 元数据本身）。一个位置同时属于「会被自动执行」与别的类别时，卡只说第一类（`sensitive-path` 的 facts 只有一个 category，原有限制）。
+§已知限制与代价 增补：05 原有的「`.git` 指针所指、在 `.git/` 以外的 git 目录不在自动执行名单」这一条收窄：根下指针所指 gitdir 与 commondir 中已发现且存在的 `config`、`config.worktree`、`commondir`、`hooks` 已按规矩 6 纳入敏感表；这些 git 目录里的其他文件，以及未另选为会话文件夹根的子目录 `.git` 指针所指的外部 git 目录，仍不在这项发现保护范围内。
+
+`core.hooksPath` 在配置读不出时解不出的目录，文件工具与沙箱都认不到（沙箱侧以 `fallbackDeny` 兜住 git 元数据本身）。一个位置同时属于「会被自动执行」与别的类别时，卡只说第一类（`sensitive-path` 的 facts 只有一个 category，原有限制）。
 
 实现位置：packages/kernel/src/permission/workspace.ts → sensitiveName；apps/desktop/src/main/host/git-protection.ts → discoverGitProtection
 
@@ -188,7 +191,8 @@ Linux 上「在子目录新建 `.git`、在普通仓库新建 commondir/config.w
 - 2026-11-08 · 按第三轮 Codex 复核（review-codex-r3.md）修订：指针目标不再按工作区根过滤（规矩 1、E6）；Linux「只拦已存在」只限 git 转向条目，钩子位置照卡 3 无条件拦，代价按 P4 实测写进已知限制（规矩 3、7、§对 04、验收 12）；正常 git 保证加「发现完整」前提，新增回退验收 15；「已存在」按解开链接后的实际目标判。
 - 2026-11-08 · 按第四轮 Codex 复核（review-codex-r4.md）修订：回退统一为「该根整个 `.git` 拒写」（规矩 2、§对 05、验收 15）；写清沙箱对钩子名的兑现范围，Linux 子目录同名位置拦不住记已知限制（规矩 7、§对 04、§给 06 的约束、验收 12、E7）；占位清理时机加并发与崩溃条件；验收 1 的跨根与默认可写目录夹具改用普通目录。
 - 2026-11-08 · 按第五轮 Codex 复核（review-codex-r5.md）修订：回退里「整个 `.git`」按仓库形态分三种——目录型整个 `.git`；指针型且指针解析得出，拒写指针文件加实际 gitdir 与 commondir；指针解析不出，只拒写指针本身、提交失败不作保证并写进已知限制（§接口、规矩 2、§对 04、§对 05、验收 15）。
-- 2026-11-09 · 按 owner 2026-11-08「也拦 (Recommended)」（picks.md §C 段安全评审建议 3）与 C 段复核，补明已存在的 include 配置来源在沙箱拒写、文件工具每次问；保留各链接拼法与实际目标、部分发现结果及已有凭据类别，缺失 include 不新增占位（规矩 6、§接口、§对 05 的增补；只收紧与澄清）。
-- 2026-11-09 · 对齐 C 段固定钩子名单：逐项写清六个 lefthook 本地配置名与 `.lefthook/`、`.lefthook-local/` 脚本目录（规矩 6；实现细化，依据 evidence.md E3）。
-- 2026-11-09 · 按 C-security.md、C-security-r2.md 的最终修法澄清 hooksPath 空值、普通文件/FIFO/socket/缺失目标、精确 `/dev/null` 与可替换别名；include `/dev/null` 视为空配置，单个坏 hooksPath 不阻断后续条目；补同一行键值、config.worktree 与启动 XDG 配置读法（§对 05 的增补、§接口）。
-- 2026-11-09 · 按 A 段安全复核补明含 `..` 的拒绝条目先解开其前面的链接，再把所得拼法交给 srt；适用于 denyRead 与 denyWrite 的全部条目，未放宽实际目标或途经链接的保护（§对 04 的增补「链接写法细化」）。
+- 2026-11-09 · 按 owner 2026-11-08「也拦 (Recommended)」（picks.md §C 段安全评审建议 3）与 C 段复核，补明已存在的 include 配置来源在沙箱拒写、文件工具每次问；保留各链接拼法与实际目标、部分发现结果及已有凭据类别，缺失 include 不新增占位（规矩 6、§接口、§对 05 的增补；只收紧与澄清） · PR #86（0729ebb、fa89884）。
+- 2026-11-09 · 对齐 C 段固定钩子名单：逐项写清六个 lefthook 本地配置名与 `.lefthook/`、`.lefthook-local/` 脚本目录（规矩 6；实现细化，依据 evidence.md E3） · PR #86（8e9c73f）。
+- 2026-11-09 · 按 C-security.md、C-security-r2.md 的最终修法澄清 hooksPath 空值、普通文件/FIFO/socket/缺失目标、精确 `/dev/null` 与可替换别名；include `/dev/null` 视为空配置，单个坏 hooksPath 不阻断后续条目；补同一行键值、config.worktree 与启动 XDG 配置读法；写明 `SandboxHostPaths.xdgConfigHome` 改必填，值取 startupEnv 的 `XDG_CONFIG_HOME`、未设为 null（§对 05 的增补、§接口） · PR #86（8e9c73f、fa89884）。
+- 2026-11-09 · 按 A 段安全复核补明含 `..` 的拒绝条目先解开其前面的链接，再把所得拼法交给 srt；适用于 denyRead 与 denyWrite 的全部条目，未放宽实际目标或途经链接的保护（§对 04 的增补「链接写法细化」） · PR #84（2c086f4）。
+- 2026-11-09 · 规矩 6、§对 05 的增补「已知限制与代价」 · 按 D-review.md 建议 1 写清文件工具对已发现既有转向条目的收紧，并将 05 的指针目标限制限定为未发现的子目录指针与 git 目录中的其他文件；不改旧 spec 正文或实现 · PR #86（fa89884）、03bd512。

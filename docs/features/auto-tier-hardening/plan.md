@@ -1,8 +1,8 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：A/B/C 段已合入 dev（PR #84、#85、#86），D 段步骤 5–8 已完成：文档同步、验收核对与新上下文复核通过；工作区仅保留本段文档差异，按 brief 不提交。下一步仅 owner 验收，Status 保持 ready。
-需要你：owner 验收本 spec，确认后由 owner 决定是否改 Status；本次不代改状态。
+当前：A/B/C 段已合入 dev（PR #84、#85、#86），D 段文档已提交于 03bd512，lead 的正式文档评审通过。步骤 5–8 已完成，本轮已落实 D-review.md 五条文档建议，检查及独立复核通过，修订不提交；Status 保持 ready。改 implemented 前仍需 lead 补齐 M1–M11 的实际重跑证据，再交 owner 验收。
+需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
 ## 开工前读
@@ -55,7 +55,7 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 - [x] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
 - [x] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
 - [x] 7. 对照验收逐条核对（每条验收对上点名它的测试；沙箱与平台条由 lead 在两平台确认，记 log.md）。
-- [x] 8. 清理：撤掉所有临时探针，确认仅本段预期文档差异、无调试打印（按 brief 不提交）。
+- [x] 8. 清理：撤掉所有临时探针，确认工作区干净、无调试打印。
 - [ ] 9. owner 验收 → 改 Status。
 
 ## 验收矩阵
@@ -82,9 +82,10 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 文件名对应：沙箱用例在 `apps/desktop/test/sandbox/`，sensitive-paths.test.ts 在 `apps/desktop/test/`，session-view.test.ts 与验收 7、13 的 exfiltration.test.ts 在 `packages/kernel/test/permission/`，mcp-exfiltration.test.ts 在 `packages/kernel/test/loop/`；验收 6、14 未写文件名的用例均在 mcp-exfiltration.test.ts，验收 11 在 sensitive-paths.test.ts。escape.test.ts 的用例均为真沙箱黑盒，平台证据见 log.md 的 A/C 段正式评审；本次 D 段只核对已有证据，不重跑平台沙箱。
 
 ## 交接
-2026-11-09：D 段已完成，未提交。SECURITY、spec 四项修订、总参考观察记录、验收矩阵与突变编号已同步；02/03/04/05 冻结正文未改。构建、format/lint/typecheck 与相关 8 文件 287 条测试通过；新上下文独立快照评审及两处措辞复核通过，证据见 log.md「D 段独立文档复核」。入口页已按最终 plan 重生成，spec-check 拦 0；工作区只留本段 Markdown 差异，无探针或调试打印。下一步 owner 验收 → owner 决定 Status；不重做已完成步骤，Open 留给注明的后续代码改动。
+2026-11-09：D 段基线已提交于 03bd512，本轮开始时工作区干净；lead 的正式评审审过该提交，结论通过，五条建议已逐条落实到文档（log.md「D 段正式评审及建议处置」）。步骤 5 的汇总评审以该正式评审为准，步骤 8 恢复原文，基线清理结论不等于本轮没有未提交差异。本轮仅留下预期文档修订，不提交、不改代码、门禁或 Status；format/lint/typecheck、相关 287 条测试及新上下文独立复核通过；入口页已重生成，spec-check 拦 0，结果见同节补记。下一步 lead 在 CI 或本地实际重跑 M1–M11 并记录结果，再由 owner 验收并决定是否改 Status；不可把静态登记当作实跑通过。
 
 ## Open
+- 改 implemented 前必须完成：M1–M11 目前仅静态登记，lead 须在 CI 或本地针对包含 A/B/C 段实现的代码范围逐项实际重跑，并将结果及存活项处置追加到 log.md，再交 owner 验收。文档差异导致的跳过不算通过；本轮只改文档，不执行突变。
 - 后续代码改动时处理（本 D 段仅文档，不改代码）：文件工具的 hooksPath 目录本身为链接时，Delete 链接未必每次问；两步操作之间还需赶在敏感表刷新之前，评审未确定性复现后续写入。lead 下次改钩子发现时登记末级不解开的拼法并补 Delete 回归（原文 C-security-r3.md 的唯一建议；沙箱侧仍按平台规则保护或事后比对）。
 - 后续测试跟进：`/dev/null` 的可替换链接别名仍受生产代码保护，但把它误豁免的突变尚无用例杀死；lead 下次改 hooksPath 时补沙箱与文件工具夹具（原文 C-tests-r3.md）。
 - 后续评审复核：把顶层 git 配置也登记的偏严突变，spec 未定、不据此改范围；文件工具登记配置来源时覆盖已有凭据类别的突变，边界几乎不可达。维持现实现，lead 下次改配置来源时复核（原文 C-tests-r3.md 的另两个存活突变）。

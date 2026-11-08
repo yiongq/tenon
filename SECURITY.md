@@ -67,8 +67,9 @@ The receipt does not offer the last button when any recorded violation is marked
 - On Linux, writing inside an existing read-denied directory, such as `~/.ssh`, `~/.kube` or `~/.config/gh`, can look successful. The write goes into a temporary empty tmpfs covering the directory, disappears at command exit and never changes your real files. The observer still reports a protected violation. Force-killing Tenon can also leave an empty, owner-only (`0700`) `claude-empty-*` directory in `/tmp`. Tenon cannot safely identify its owner from that generated name, so it leaves it for system temporary-file cleanup, usually at reboot.
 - `.git/config` and `.git/hooks` are protected at workspace roots, so `git remote add` and hook
   installation fail. Protection also covers discovered `.git` pointer files and their targets'
-  configuration and hooks, submodule/worktree configuration and hooks, and existing included
-  configuration sources. On macOS, subdirectory globs also apply, and creating a repository with
+  `config`, `config.worktree`, `commondir` and `hooks`, the same entries in discovered
+  submodule/worktree git directories, and existing included configuration sources. On macOS,
+  subdirectory globs also apply, and creating a repository with
   `git init` at the workspace root or cloning into a subdirectory fails. Both operations succeeded
   on Linux. A missing `.claude/` at a macOS workspace root cannot be created either; create it
   outside the sandbox. With complete discovery and no fallback, root `git status`, `add`, `commit`,
@@ -99,6 +100,10 @@ The receipt does not offer the last button when any recorded violation is marked
   be read, unresolved hook paths cannot be recognized by either route; command isolation falls back
   to protecting the git metadata itself. See the [file-tool
   additions](docs/features/auto-tier-hardening/spec.md#对-05-的增补).
+- File tools also ask on every write to discovered existing redirect entries, including existing
+  included configuration sources. These entries join the automatically executed path checks,
+  preserving any existing credential classification; recognizing their resolved targets does not
+  make the entire git directory sensitive.
 - On Linux, nonexistent root hook locations such as `lefthook.yml`, `.pre-commit-config.yaml`,
   `.husky` and a configured hook directory appear on the host as empty `0444` files while a command
   runs. The probes covered direct children of the root: even intended directories became files and
@@ -111,9 +116,6 @@ The receipt does not offer the last button when any recorded violation is marked
   wrap removes them. On both tested Lima VMs, host commits using `.lefthook.yml` succeeded during
   the placeholder interval, but whether lefthook ran that configuration's commands was not verified;
   pre-commit was not installed and was not tested.
-- Denied paths containing `..` are passed to the runtime using the spelling obtained after resolving
-  links before that parent traversal. This applies to both read and write denials; actual targets
-  and traversed links retain their existing platform-specific protections.
 - Workspace-write commands can change scripts that you later execute outside the sandbox, including
   `package.json` scripts and Makefiles. This also applies when you use **“Allow this command to run
   without restrictions once next time”**: approval binds the command and working directory, not the
@@ -132,9 +134,10 @@ The receipt does not offer the last button when any recorded violation is marked
 - The [constraint for phase 06](docs/features/auto-tier-hardening/spec.md#给-06-的约束) requires Linux's
   future automatic tier to keep asking for sandboxed commands, with the reason shown on the approval
   card, until creation of redirect files and matching subdirectory hook names can be blocked safely.
+  This requirement to keep asking for sandboxed commands does not apply to macOS.
   It may relax only ordinary file-tool operations that otherwise qualify for automatic approval;
-  sensitive locations such as `.git/**`, hooks and credentials still require approval every time.
-  This constraint does not apply to macOS.
+  on both platforms, sensitive locations such as `.git/**`, hooks and credentials still require
+  approval every time.
 
 ### Credentials, environment and package managers
 
@@ -163,6 +166,11 @@ These come from the [file bridge specification](docs/architecture/05-file-bridge
 - A file kept this way is not put back to its own original content; if that content was your change and no other copy exists, choose overwrite to get it back. If putting a file back fails only during restore (for example because a name differing only in case now occupies it, or a kept file occupies its parent path), the moved copy is still deleted.
 - Files excluded from snapshots were never copied: if the agent moves one to a name that is not excluded (or copies it there and the original is later changed or deleted), restore deletes that copy as a new file and the original content cannot be recovered.
 - A git snapshot cannot tell your changes to the same folder while a command runs from the command's own changes. They count as the command's and are undone on restore without asking. Only changes made after the command ends, such as while an approval is pending, are protected.
+- File tools classify discovered existing redirect entries as automatically executed locations,
+  including `config`, `config.worktree`, `commondir` and `hooks` in the gitdir and commondir resolved
+  from a workspace root's `.git` pointer. Other files in those git directories are not covered by
+  that classification. Git directories outside `.git/` referred to by subdirectory pointers are
+  still outside this discovery scope unless that subdirectory is itself a selected workspace root.
 - When a location belongs to both the automatically executed category and another protected
   category, its approval card displays only the first category; the existing `sensitive-path` facts
   carry a single category.

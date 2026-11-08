@@ -701,3 +701,30 @@ C 段原 Open 核对：验收 8 的冻结表四格跟进、内部错误的路径
 收尾：步骤 5–8 已勾，步骤 9 留 owner；当前与交接已重写。依 brief 不提交，不改 ready 状态。最终入口页、format 与 spec-check 结果见下方补记。
 
 最终补记：最终 plan 更新后已重新执行 `python3 .sdd/spec-check.py --index`；`pnpm format:check`、`git diff --check` 通过；`python3 .sdd/spec-check.py` 退出 0，拦 0 条、警 11 条（既有索引关系、其他 feature 的 notes、缺少 CI 报告及已解释的 overview 提醒）。工作区仅六个预期 Markdown 文件，无未跟踪探针，02–05 与 HEAD 逐字相同；未提交、未改门禁或 Status。
+
+## 评审 · 2026-11-09 · 审过 03bd512（D 段正式文档评审）
+
+方式：记录 lead 提供的 D-review.md 正式评审结论，原文留在私有笔记 `2026-11-08-auto-tier-hardening/impl-reviews/D-review.md`。评审只读对照 origin/dev 与 03bd512 的差异、spec 及冻结文档，结论通过，无 blocker 或 major，提出五条建议。本条绑定被审提交，不将此前的未提交快照复核替代这份正式评审；本轮建议修订尚未提交。
+
+结论：通过。五条建议的处置见下节。
+
+突变：静态核对 M1–M11 的原文均唯一匹配，替换不同于原文；没有执行突变。改 implemented 前以 CI 或本地实际重跑及存活项处置记录为准，不以静态登记或 doc-only 跳过代替。
+
+## 2026-11-09 · D 段正式评审及建议处置
+
+范围：基线 03bd512，本轮开始时工作区干净；按 owner 本次指令仅修改文档，不提交，不改代码、门禁、Status 或 Approved。旧日志保留为各次会话当时的记录，本节澄清此前“未提交”描述对应的是 03bd512 提交前的状态。
+
+1. 指针目标限制：规矩 6 写清文件工具对已发现的全部 redirectExisting 条目纳入 auto-run，保留已有凭据类别；§对 05 的增补把旧限制收窄为 gitdir/commondir 中其他文件及未另选为根的子目录指针所指外部目录；SECURITY 保留对应的收窄后限制，并新增一行修订记录，来源 PR #86 的 fa89884。不改 05 冻结正文。
+2. macOS 例外：SECURITY 将例外限定到“沙箱命令继续出卡”，同段明确敏感文件位置在两个平台都每次问；不扩大到文件工具审批。
+3. 安全文案：配置及钩子保护逐项列出 config、config.worktree、commondir、hooks；另写文件工具对已发现的 include 配置来源每次问；删去 Known limitations 中的 `..` 路径实现细化，spec 中的不放宽说明保持。
+4. 修订出处：原四行修订补齐 PR #86 或 PR #84 及相关实现提交；XDG 那行明确 SandboxHostPaths.xdgConfigHome 改必填、取启动环境值，不改接口或实现。
+5. 进度真实性：步骤 5 以 lead 审过 03bd512 的正式评审为准保持勾选；步骤 8 恢复“确认工作区干净”原文，当前与交接区分已提交基线和本轮未提交修订；Open 新增改 implemented 前实际重跑 M1–M11 并记录结果的前提，本轮不执行突变。
+
+下一步：本轮检查及新上下文复核后，只交接文档差异；lead 在 CI 或本地补突变实跑证据，再交 owner 验收。overview 不需同步：这轮只澄清既有敏感路径保护范围和修订出处，接口类型、模块边界与数据流均未变化。
+
+### 本轮检查与独立复核
+
+- `NPM_CONFIG_USERCONFIG=/dev/null pnpm format:check`、同环境下 `pnpm lint` 与 `pnpm typecheck` 全部退出 0。沿用上文「D 段检查」列出的 8 个相关测试文件，以 `TENON_SANDBOX_TESTS=skip pnpm vitest run --maxWorkers=2` 运行：8 个文件、287 条通过，0 失败。没有运行 Electron、真沙箱或突变。
+- 新上下文子 agent 在独立临时快照只读对照 D-review.md 五条建议和本轮差异，逐条确认已落实，结论通过、无剩余发现；绑定 review.diff SHA-256 `415ae84bb71ff0d2250243d01d3b0660659f156525ea6b0332beceb98c20b37a`，这是本轮未提交文档修订的复核，与 lead 审过 03bd512 的正式基线评审分别记录。overview 不需改：没有变更接口类型、模块边界或数据流。
+- `python3 .sdd/spec-check.py --index` 后 `python3 .sdd/spec-check.py` 退出 0，拦 0 条、警 11 条；警告为既有索引关系、notes、缺少 CI 报告及已解释的 overview 提醒。`git diff --check` 通过。
+- 脚本核对差异仅五个预期 Markdown 文件，log 相对 03bd512 只追加；02–05 冻结正文、Status 与 Approved 均未改，五行本日期修订均有 PR 出处，无未跟踪探针。plan 当前与交接已更新，M1–M11 的实际重跑仍交 lead 在改 implemented 前完成；本轮未提交。
