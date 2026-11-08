@@ -424,6 +424,7 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
         ...darwinWrite,
         ...darwinRoot.map((n) => `/Users/u/code/app/${n}`),
         ...darwinRoot.map((n) => `glob /Users/u/code/app/**/${n}`),
+        'glob /Users/u/code/app/*/**/.git',
       ]),
     )
 
@@ -465,7 +466,8 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       // A root whose spelling holds `*?[]` gets no glob (darwin's other roots do).
       const patterns = wrap.filesystem.denyWrite.filter((e) => typeof e === 'string')
       expect(patterns.filter((e) => e.startsWith('/Users/u/code/[WIP]'))).toEqual([])
-      expect(patterns.length).toBe(platform === 'darwin' ? 23 : 0)
+      expect(patterns.length).toBe(platform === 'darwin' ? 24 : 0)
+      expect(patterns.includes('/Users/u/code/app/*/**/.git')).toBe(platform === 'darwin')
       expect(patterns.includes('/Users/u/code/app/**/.envrc')).toBe(platform === 'darwin')
       // Every other entry anywhere is literal.
       for (const list of [wrap.filesystem.denyRead, wrap.filesystem.allowRead ?? []]) {
@@ -503,9 +505,13 @@ describe('04 sandbox config (spec 04 §档位到 srt 配置)', () => {
       ).filesystem
       expect(allowWrite).toEqual([literal(real)])
       const patterns = denyWrite.filter((e) => typeof e === 'string')
-      // One glob per name (23), all off the spelling without `*?[]`.
-      expect(patterns.length).toBe(23)
-      expect(patterns.every((e) => e.startsWith(`${anchor}/**/`))).toBe(true)
+      // The original 23 patterns plus the nested-only git rule, off the unambiguous spelling.
+      expect(patterns.toSorted()).toEqual(
+        [
+          ...[...ROOT_TENON, ...ROOT_SRT, ...ROOT_GIT].map((name) => `${anchor}/**/${name}`),
+          `${anchor}/*/**/.git`,
+        ].toSorted(),
+      )
       expect(patterns).toContain(`${anchor}/**/.envrc`)
       // Both spellings' names stay as literal entries.
       expect(denyWrite).toContainEqual(literal(`${written}/.envrc`))
@@ -1222,3 +1228,32 @@ function linkedInput(platform: SandboxPlatform): WrapFilesystemInput {
     packageManagers: false,
   }
 }
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 3: %s selects existing redirects and platform-specific absent entries',
+  (platform) => {
+    const git = {
+      redirectExisting: [p('/repo/meta/config'), p('/repo/.git')],
+      redirectAbsent: [p('/repo/meta/commondir'), p('/repo/meta/config.worktree')],
+      hookDirs: [],
+      hookNames: [],
+      fallbackDeny: [p('/repo/common')],
+      incomplete: true,
+    }
+    const filesystem = wrapFilesystem(
+      wrapInput(platform, {
+        workspace: [{ path: p('/repo'), directory: true, gitDirectory: false, git }],
+      }),
+      PLAIN,
+    ).filesystem
+    const write = spelled(filesystem.denyWrite)
+    expect(write).toEqual(
+      expect.arrayContaining(['/repo/meta/config', '/repo/.git', '/repo/common']),
+    )
+    expect(write.includes('/repo/meta/commondir')).toBe(platform === 'darwin')
+    expect(write.includes('/repo/meta/config.worktree')).toBe(platform === 'darwin')
+    expect(write.includes('glob /repo/*/**/.git')).toBe(platform === 'darwin')
+    expect(write).not.toContain('glob /repo/**/.git')
+    expect(write).not.toContain('/repo/meta')
+  },
+)

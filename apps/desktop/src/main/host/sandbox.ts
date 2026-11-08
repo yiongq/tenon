@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { open, readdir } from 'node:fs/promises'
 import {
+  constants,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -20,7 +22,13 @@ import type {
   SandboxViolation,
 } from '@tenon-app/kernel'
 import { toolOutputDirFor } from '@tenon-app/kernel'
-import { MAX_LINK_HOPS, presetRows, wrapConfig, wrapFilesystem } from './sandbox-config.js'
+import {
+  MAX_LINK_HOPS,
+  presetRows,
+  walkLinks,
+  wrapConfig,
+  wrapFilesystem,
+} from './sandbox-config.js'
 import type {
   FilesystemTables,
   RestrictedProfile,
@@ -28,6 +36,7 @@ import type {
   WorkspaceRoot,
 } from './sandbox-config.js'
 import { classify, offersPathRelease } from './sandbox-violations.js'
+import { discoverGitProtection } from './git-protection.js'
 import type { SandboxPathEntry, ViolationContext } from './sandbox-violations.js'
 
 export type SandboxLogger = (line: string) => void
@@ -182,6 +191,8 @@ export interface SandboxFs {
   readFile(path: string): string | undefined
   /** Replaces the file whole (write and rename). */
   writeFile(path: string, text: string): void
+  readdir(path: string): Promise<readonly string[]>
+  readText(path: string, maxBytes: number): Promise<string | null>
 }
 
 export interface SandboxFileStat {
@@ -369,10 +380,54 @@ export class DesktopSandbox implements HostSandbox {
     const sessionId = this.sessions.get(request.commandId) ?? null
     const folders = sessionId === null ? [] : await this.deps.sessionFolders(sessionId)
     const settings = this.deps.settings()
-    const workspace: WorkspaceRoot[] = request.workspace.map((path) => {
-      const directory = folders.includes(path)
-      return { path, directory, gitDirectory: directory && this.isDirectory(`${path}/.git`) }
-    })
+    const workspace: WorkspaceRoot[] = await Promise.all(
+      request.workspace.map(async (path) => {
+        const directory = folders.includes(path)
+        if (!directory) return { path, directory, gitDirectory: false }
+        const git = await discoverGitProtection(
+          {
+            root: path,
+            home: paths.home,
+            xdgConfigHome: paths.xdgConfigHome ?? null,
+            platform: this.platform,
+          },
+          {
+            lstat: async (file) => {
+              const stat = this.deps.fs.lstat(file)
+              if (stat === undefined) return null
+              const kind = stat.isSymbolicLink()
+                ? 'link'
+                : stat.isDirectory()
+                  ? 'dir'
+                  : (stat.mode & 0o170000) === 0o100000
+                    ? 'file'
+                    : 'other'
+              return { kind }
+            },
+            readdir: (file) => this.deps.fs.readdir(file),
+            readText: (file, maxBytes) => this.deps.fs.readText(file, maxBytes),
+            realpath: async (file) => {
+              // Node realpathSync folds `..` before resolving links; git's paths need the
+              // component-by-component walk, like the deny rules themselves.
+              const resolved = walkLinks(file, this.deps.fs).real
+              if (resolved === undefined) throw new Error('git metadata path cannot be resolved')
+              try {
+                return this.deps.fs.realpath(resolved)
+              } catch (error) {
+                if (isMissing(error)) return null
+                throw error
+              }
+            },
+          },
+        )
+        if (git.incomplete) {
+          this.deps.log(
+            `sandbox: git discovery incomplete for ${path}: metadata unreadable, unresolved or over budget; fallback deny: ${git.fallbackDeny.join(', ') || 'none (no resolved git metadata)'}`,
+          )
+        }
+        return { path, directory, gitDirectory: this.isDirectory(`${path}/.git`), git }
+      }),
+    )
     const plan = wrapFilesystem(
       {
         ...paths,
@@ -1025,6 +1080,38 @@ function noop(): void {}
 /** `SandboxFs` on the real disk. */
 export function desktopSandboxFs(): SandboxFs {
   return {
+    readdir: async (path) => {
+      try {
+        return await readdir(path)
+      } catch (error) {
+        if (isMissing(error)) return []
+        throw error
+      }
+    },
+    readText: async (path, maxBytes) => {
+      let file
+      try {
+        file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK)
+      } catch (error) {
+        if (isMissing(error)) return null
+        throw error
+      }
+      try {
+        if (!(await file.stat()).isFile()) throw new Error('git metadata is not a regular file')
+        const buffer = Buffer.alloc(maxBytes + 1)
+        let size = 0
+        while (size < buffer.length) {
+          // oxlint-disable-next-line no-await-in-loop -- bounded read, including short reads
+          const { bytesRead } = await file.read(buffer, size, buffer.length - size, null)
+          if (bytesRead === 0) break
+          size += bytesRead
+        }
+        if (size > maxBytes) throw new Error('git metadata exceeds read limit')
+        return buffer.toString('utf8', 0, size)
+      } finally {
+        await file.close()
+      }
+    },
     lstat: (path) => lstatSync(path, { throwIfNoEntry: false }),
     stat: (path) => statSync(path, { throwIfNoEntry: false }),
     realpath: (path) => realpathSync(path),
@@ -1046,6 +1133,11 @@ export function desktopSandboxFs(): SandboxFs {
       renameSync(temporary, path)
     },
   }
+}
+
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'ENOENT' || code === 'ENOTDIR'
 }
 
 /** The process table through `/bin/ps` (§执行与收口; P6). */

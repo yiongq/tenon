@@ -34,6 +34,8 @@ export function wiringFixture(
     mkdirPrivate: vi.fn(),
     readFile: () => undefined,
     writeFile: vi.fn(),
+    readdir: async () => [],
+    readText: async () => null,
   }
   const paths: SandboxRuntimeOptions['paths'] = {
     platform: 'darwin',
