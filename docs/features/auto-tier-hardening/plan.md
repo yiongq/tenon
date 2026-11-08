@@ -3,6 +3,7 @@
 ## 当前 / 需要你
 当前：spec 已 ready 并合入 dev（PR #82，962dfb3）。A 段（沙箱 .git 转向文件保护）已实现，分支 `feat/auto-tier-hardening-a`：b5593bb 实现、2c086f4 按评审修订、f41ddc9 并入 dev；两平台真沙箱与两路新上下文复核通过（log.md「评审 · 2026-11-08 · 审过 f41ddc9」）。下一步：A 段 PR 合入后做 B 段（连接器外带）。
 需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
+授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
 ## 开工前读
 - 本 spec 与 decisions.md、evidence.md。
