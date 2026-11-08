@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath } from '../../src/index.js'
-import type { TapeEntry } from '../../src/index.js'
+import type { TapeEntry, ToolOrigin } from '../../src/index.js'
 import {
   RECENT_USER_TEXTS,
   buildSessionView,
@@ -49,10 +49,14 @@ function dispatched(
   input: Record<string, unknown>,
   reversibility: string,
   ordinal = 0,
+  origin: ToolOrigin = { source: 'builtin', serverId: 'builtin', originalName: name },
 ): TapeEntry[] {
   const runId = `run-${String(nextId++)}`
   const decisionKey = `tool:v1:decision:${runId}:1:${String(ordinal)}`
+  const tableKey = `table:${runId}`
   return [
+    entry('view/tool_table', { tools: [{ name, ...origin }] }, { key: tableKey }),
+    entry('view/assembled', { tools: { tableKey, sent: true } }, { sourceId: runId, sourceSeq: 1 }),
     entry(
       'tool/call',
       { ordinal, providerToolCallId: 'c', messageId: 'a', name, input, argsHash: 'h' },
@@ -96,6 +100,65 @@ function call(name: string, args: Record<string, unknown> = {}): InspectedCall {
 }
 
 describe('buildSessionView', () => {
+  it.each(['chat', 'cowork'] as const)(
+    'auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重',
+    (profile) => {
+      const connector = (name: string, serverId: string) =>
+        dispatched(name, {}, 'read-only', 0, { source: 'mcp', serverId, originalName: 'read' })
+      const first = connector('mapped', 'A')
+      const second = connector('mapped', 'B')
+      // Same run, different request: mapping must use both runId and requestSeq.
+      const firstDispatch = first.find((e) => e.name === 'execution/dispatch_committed')!
+      for (const fact of second) {
+        if (fact.sourceId !== null) {
+          fact.sourceId = firstDispatch.sourceId
+          fact.sourceSeq = 2
+        }
+      }
+      const view = buildSessionView(
+        [
+          ...first,
+          ...second,
+          ...connector('another_mapping', 'A'),
+          ...connector('WebFetch', 'C'),
+          ...dispatched('WebSearch', {}, 'unknown'),
+          ...dispatched('WebFetch', {}, 'unknown'),
+          ...dispatched('Read', { file_path: '/work/private' }, 'read-only'),
+        ],
+        { call: call('Read'), profile, ownSpillDir: SPILL },
+      )
+      expect(view.untrustedSources).toEqual(['mcp:A', 'mcp:B', 'mcp:C', 'WebSearch', 'WebFetch'])
+      expect(view.privateSources).toEqual(
+        profile === 'chat' ? ['mcp:A', 'mcp:B', 'mcp:C'] : ['mcp:A', 'mcp:B', 'mcp:C', 'local'],
+      )
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
+  it.each(['assembled', 'table', 'null-tools', 'name', 'run', 'request', 'wrong-fact'])(
+    'auto-tier-hardening 验收 8: 来源关联失败 %s 时从严',
+    (missing) => {
+      let entries = dispatched('Read', {}, 'read-only')
+      const assembled = entries.find((e) => e.name === 'view/assembled')!
+      const table = entries.find((e) => e.name === 'view/tool_table')!
+      if (missing === 'assembled') entries = entries.filter((e) => e !== assembled)
+      if (missing === 'table') entries = entries.filter((e) => e !== table)
+      if (missing === 'null-tools') assembled.payload['tools'] = null
+      if (missing === 'name') table.payload['tools'] = []
+      if (missing === 'run') assembled.sourceId = 'other-run'
+      if (missing === 'request') assembled.sourceSeq = 2
+      if (missing === 'wrong-fact') table.name = 'view/content'
+      const view = buildSessionView(entries, {
+        call: call('WebFetch'),
+        profile: 'chat',
+        ownSpillDir: SPILL,
+      })
+      expect(view.untrustedSources).toEqual(['unresolved:Read'])
+      expect(view.privateSources).toEqual(['unresolved:Read'])
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
   it('keeps the first human message and the latest eight, and leaves the notes out', () => {
     const messages = Array.from({ length: 10 }, (_, i) => user(`question ${String(i)}`))
     const entries = [
@@ -258,7 +321,7 @@ describe('exfiltration evidence boundaries', () => {
   }
   it('uses exactly the dispatched decision, retaining its protected step even if the verdict asked', () => {
     const entries = dispatched('Read', { file_path: '/workspace/link' }, 'read-only')
-    const decision = entries[1]!
+    const decision = entries.find((e) => e.name === 'tool/permission_decided')!
     decision.payload['record'] = {
       verdict: 'ask',
       decidedBy: 'inspector',
@@ -278,7 +341,7 @@ describe('exfiltration evidence boundaries', () => {
   })
   it('excludes a DNS blocked dispatch without removing previous untrusted sources or in-flight ones', () => {
     const fetch = dispatched('WebFetch', { url: 'https://a.test' }, 'unknown')
-    const dispatch = fetch[2]!
+    const dispatch = fetch.find((e) => e.name === 'execution/dispatch_committed')!
     const outcome = entry(
       'execution/tool_outcome',
       { ordinal: 0, state: 'not-run', source: 'protected', effect: 'blocked' },

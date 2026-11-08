@@ -117,3 +117,68 @@
 结论：通过
 
 突变：第一轮 40 个、存活 13 个，其中实质 6 个（真端口三处、深度上限、`config.worktree`、lstat 的 other），修订后复核全部被杀；复核轮在新改动上另做 26 个、存活 7 个：两个预算单项互相兜底、两个等价写法，其余三个是上面记入 plan Open 的用例缺口。
+
+
+## 2026-11-08 · B 段实现
+
+范围：仅 plan B 段（验收 5–8、13、14），基线 `6d934d7`，分支 `feat/auto-tier-hardening-b`。A 段保持原样；不改 spec.md、plan.md、decisions.md、evidence.md 与门禁文件。按 brief-hardB 留工作区差异，不提交、不 push、不开 PR，不读密钥或钥匙串，不调真实模型、不启动 Electron。brief 明确不改 plan，本节承担本次交接。
+
+`session-view.ts` 的 `originOf` 按派发的 (runId, requestSeq) 找 `view/assembled`，再按 tableKey 找 `view/tool_table`、按映射后的 name 找 ToolOrigin。连接器两种形态都记入不可信与私密来源，来源为 `mcp:<serverId>`；关联不上时记 `unresolved:<name>`，同样计入两个集合。本地私密读仍只在任务形态记 local；WebSearch / WebFetch 的来源名、DNS 拒绝、落盘目录与 URL 豁免规则保留。
+
+`exfiltration.ts` 把任一连接器调用作为出口，判据为任一不可信来源 + 存在不同于出口 S 的私密来源；WebFetch 继续用原 URL 豁免。`batch.ts` 的 `judgeCall` 合并自身、父会话及交接子会话的 privateSources，并由合并集合计算 touchedPrivateData。未使用 MCP 注解放宽判定，未改 Tape 载荷与 IPC。
+
+测试从 `ebdd69b` 只取 `packages/kernel/test/loop/mcp-exfiltration.test.ts`，验收 5 按两种形态拆成单行 it，两个标题整行均 67 显示列。回环验证“总是允许”仍出 flagged / exfiltration 卡、答复前没有外发、允许后只派发一次、相同调用下次仍问且 grant.scope 为 once。验收 13 另经真实循环验证标注 readOnlyHint 的只读连接器同样是出口。验收 14 观察 inspector 实际收到的两个合并来源集合、布尔值与交接事实，并确认父会话出卡。
+
+测试改动：packages/kernel/test/permission/session-view.test.ts · dispatched 夹具及引用 decision / dispatch 的原有用例 · 补齐冻结工具表与 assembled 事实，按名字取事实，保留原有私密读、DNS、压缩与 URL 断言；无新增跳过或删除断言。
+
+测试改动：packages/kernel/test/permission/exfiltration.test.ts · 原 MCP WebFetch 名称对照及单条件对照 · 按已批准的任一连接器出口规则，将跨源 MCP 的 none 改为 ask；无私密条件同时清空 privateSources，保持字段一致；保留 WebFetch URL 豁免断言。
+
+测试改动：packages/kernel/test/permission/inspector.test.ts · INPUT 夹具 · 为新增必填字段补空 privateSources，原断言不变。
+
+### 验收落点
+
+| 验收 | 文件 | 用例标题 |
+|---|---|---|
+| 5 | packages/kernel/test/loop/mcp-exfiltration.test.ts | auto-tier-hardening 验收 5 复现：任务跨源出卡；auto-tier-hardening 验收 5 复现：对话跨源出卡 |
+| 6 | packages/kernel/test/loop/mcp-exfiltration.test.ts | auto-tier-hardening 验收 6: $label 未读连接器时直接派发（cowork 形态、对话形态） |
+| 7 | packages/kernel/test/permission/exfiltration.test.ts | auto-tier-hardening 验收 7: 同源读写不出卡 |
+| 8 | packages/kernel/test/permission/session-view.test.ts | auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重（chat、cowork）；auto-tier-hardening 验收 8: 来源关联失败 %s 时从严（assembled、table、null-tools、name、run、request、wrong-fact） |
+| 13 | packages/kernel/test/permission/exfiltration.test.ts | auto-tier-hardening 验收 13: 只有 S 的不可信加本地私密读也出卡 |
+| 13 | packages/kernel/test/loop/mcp-exfiltration.test.ts | auto-tier-hardening 验收 13: 本地私密读后同源只读连接器也出卡 |
+| 14 | packages/kernel/test/loop/mcp-exfiltration.test.ts | auto-tier-hardening 验收 14: 子读 A 交接后父调 B 合并来源并出卡 |
+
+既有 packages/kernel/test/loop/subagent-security.test.ts 未改；保留其中父子外带的全部用例，包括 `child private reads and untrusted fetches tighten the parent after handoff` 与 `a later child inherits exfiltration evidence returned by an earlier child`。
+
+### 旧红新绿与突变证据
+
+所有 pnpm 命令设置 `NPM_CONFIG_USERCONFIG=/dev/null`，避免读取本环境禁止访问的用户配置。新工作区先跑 install / build：install 首次因无 TTY 退出，设置 CI=true 后依赖安装完成，prepare 更新主仓库 hooks 被沙箱拒绝（operation not permitted），退出 1；未绕过 hooks。随后 `pnpm build` 成功，之后才运行 typecheck。
+
+旧红新绿：三个生产文件逐字备份到 `/private/tmp/hardB-final-production-kn1rzf0b`，用 `git show HEAD:<path>` 临时还原生产代码，finally 恢复，未用 stash / checkout。命令：`pnpm vitest run --maxWorkers=2 packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 5 复现'`。基线 `2 failed | 4 skipped`，两条均为 `AssertionError: expected [ { …(2) }, { …(2) } ] to deeply equal []`（外发已发生）；恢复后 `2 passed | 4 skipped`。输出为 `/private/tmp/hardB-red-base.log`、`/private/tmp/hardB-green-restored.log`，三个生产文件已逐字比对恢复。
+
+突变逐个临时修改、每次 finally 恢复，公共前缀为 `pnpm vitest run --maxWorkers=2`：
+
+| 突变 | 选择命令（接公共前缀） | 关键输出 |
+|---|---|---|
+| 私密来源 ≠ S 恒真 | packages/kernel/test/permission/exfiltration.test.ts -t 'auto-tier-hardening 验收 7' | 1 failed；AssertionError: expected ask to deeply equal none |
+| 私密来源 ≠ S 恒假 | packages/kernel/test/permission/exfiltration.test.ts -t 'auto-tier-hardening 验收 13' | 1 failed；AssertionError: expected none to match ask / exfiltration |
+| originOf 返回空时当内置 | packages/kernel/test/permission/session-view.test.ts -t 'auto-tier-hardening 验收 8' | 7 failed、2 passed；AssertionError: expected [] to deeply equal ['unresolved:Read'] |
+| judgeCall 漏合并 related.privateSources | packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 14' | 1 failed；AssertionError: expected completed to deeply equal paused / approval |
+
+输出依次为 `/private/tmp/hardB-mut-true.log`、`/private/tmp/hardB-mut-false.log`、`/private/tmp/hardB-mut-builtin.log`、`/private/tmp/hardB-mut-merge.log`。共 4 个突变、杀死 4 个、存活 0 个。撤销后相关三文件 `34 passed`（`/private/tmp/hardB-green-mutations-restored.log`）；随后只调整注释、复现的 fail-fast 断言与 lint 要求，没有改生产逻辑。
+
+
+### 最终门禁与交接
+
+用例名校正：上文“既有 subagent-security.test.ts 未改”中的第二条，实际完整标题为 `a later child inherits the private-data condition already handed back by an earlier child`，以此为准；该文件已逐字比对 HEAD，未改动。
+
+- `pnpm format:check && pnpm lint && pnpm typecheck`：全部退出 0。首次 lint 指出两个委托给 helper 的测试没有本地 expect、两处观察器参数遮蔽 call；已为测试增加返回值断言并改参数名，再跑上述完整命令通过。没有屏蔽 lint 规则。
+- `pnpm vitest run --maxWorkers=2 packages/kernel`：115 files passed、2572 tests passed，25.54 秒（`/private/tmp/hardB-kernel.log`）。包括原有 WebFetch 与 subagent-security 回归。
+- `pnpm vitest run --maxWorkers=2`：283 files passed / 2 failed / 3 skipped；5680 tests passed / 5 failed / 129 skipped，138.62 秒（`/private/tmp/hardB-full.log`）。stop-tree.test.ts 四条在 ps 调用处 `Error: spawn EPERM`；snapshot-git.test.ts 的 `05 验收 45: startup recovery ends a real leftover git launched through /usr/bin/git` 等待旧进程退出超时（`AssertionError: expected true to be false`），其 recoverProcess 在 macOS 依赖 `/bin/ps`。与 A 段日志记录的五条环境限制一致，未改这两个文件。真沙箱黑盒按本环境未设置 TENON_SANDBOX_TESTS 跳过；本段不启动真沙箱或 Electron。
+- `python3 .sdd/spec-check.py`：退出 1，拦 7 条、警 19 条。七条阻断均为 A 段 `审过 f41ddc9` 之后 B 段七个源码/测试文件的改动尚未有新正式评审绑定。本次 brief 明确评审由 lead 另做、不得新增“## 评审”标题，故如实保留阻断，不伪造评审、不改门禁。其他警告包括 C 段验收 9–12 尚未实现与缺 CI 报告。
+- `git diff --check` 通过；spec / plan / decisions / evidence 与 subagent-security.test.ts 均逐字等于 HEAD，log 只追加。最终生产文件与最后一次旧红新绿的备份逐字一致；突变均已撤销，无调试打印或临时探针。
+
+当前：B 段实现、验收映射、旧红新绿及四项突变已完成，工作区只有本段三份生产文件、四份测试文件和本日志；没有提交。实现者静态自查已核对规矩 4、5、8、来源回退、URL 豁免与父子继承；不作为新上下文独立评审记录。
+
+下一步交 lead：在独立上下文正式评审 B 段及提交绑定，按仓库流程更新 plan；在沙箱外复跑五条依赖进程枚举的测试或全量门禁。本次未做的正式评审按 brief 由 lead 承担，C、D 段未开始。
+
+需要确认的问题：无。

@@ -6,12 +6,18 @@
  * the view. Its fields only ever grow.
  *
  * Everything is read by SOURCE, never by scanning content (F10, F5): a result counts as untrusted
- * because WebSearch or WebFetch produced it; a call counts because it was dispatched (it has an
- * `execution/dispatch_committed`), not because it was asked for. The range is the current
+ * because WebSearch, WebFetch or a connector produced it; a call counts because it was dispatched
+ * (it has an `execution/dispatch_committed`), not because it was asked for. The range is the current
  * incarnation from `session/start` on, compaction anchors ignored and retracted calls counted.
  */
 import type { AbsolutePath, Reversibility } from '../host/adapter.js'
-import type { PermissionDecidedPayload, TapeEntry } from '../tape/entry.js'
+import type {
+  PermissionDecidedPayload,
+  TapeEntry,
+  ToolOrigin,
+  ToolTablePayload,
+  ViewAssembledPayload,
+} from '../tape/entry.js'
 import type { ToolTableItem } from '../tools/registry.js'
 
 export interface InspectedCall {
@@ -32,8 +38,9 @@ export interface SessionView {
     readonly toolName: string
     readonly reversibility: Reversibility
   }[] // 已派发、可逆性不是 read-only 的调用
-  readonly untrustedSources: readonly string[] // 结果来自不可信来源的工具名，去重；02 里只可能是 WebSearch、WebFetch
-  readonly touchedPrivateData: boolean // 定义见 §外带检查
+  readonly untrustedSources: readonly string[] // WebSearch / WebFetch、mcp:<serverId>、unresolved:<name>，去重
+  readonly privateSources: readonly string[] // local、mcp:<serverId>、unresolved:<name>，去重
+  readonly touchedPrivateData: boolean // = privateSources 非空
   readonly fetchUrlVouched?: boolean // 只在 WebFetch 调用时有：URL 出现在本会话真人 message/user 里，或在本会话 WebSearch 结果的 searchHitUrls 里；子会话只算父、子两边的 searchHitUrls
 }
 
@@ -72,21 +79,30 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
   )
   const nonReadOnlyCalls: { toolName: string; reversibility: Reversibility }[] = []
   const untrusted = new Set<string>()
-  let touchedPrivateData = false
+  const privateSources = new Set<string>()
   for (const dispatch of entries.filter((entry) => entry.name === 'execution/dispatch_committed')) {
     const name = String(dispatch.payload['name'] ?? '')
     const decision = byKey.get(String(dispatch.payload['decisionKey'] ?? ''))
     const reversibility = (decision?.payload['reversibility'] ?? 'unknown') as Reversibility
     if (reversibility !== 'read-only') nonReadOnlyCalls.push({ toolName: name, reversibility })
+    const origin = originOf(entries, dispatch)
+    if (origin === null || origin.source === 'mcp') {
+      const source = origin === null ? `unresolved:${name}` : `mcp:${origin.serverId}`
+      untrusted.add(source)
+      privateSources.add(source)
+      continue
+    }
     const outcome = outcomes.get(callKey(dispatch))
     // DNS refusal is recorded after dispatch, but is still a protected, not-run call (F5).
     const dnsBlocked =
-      name === 'WebFetch' &&
+      origin.originalName === 'WebFetch' &&
       outcome?.payload['state'] === 'not-run' &&
       outcome.payload['source'] === 'protected'
-    if ((name === 'WebSearch' || name === 'WebFetch') && !dnsBlocked) untrusted.add(name)
-    if (q.profile === 'cowork' && privateRead(name, decision)) {
-      touchedPrivateData = true
+    if (['WebSearch', 'WebFetch'].includes(origin.originalName) && !dnsBlocked) {
+      untrusted.add(origin.originalName)
+    }
+    if (q.profile === 'cowork' && privateRead(origin.originalName, decision)) {
+      privateSources.add('local')
     }
   }
   const view: SessionView = {
@@ -94,13 +110,34 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
     recentUserTexts: q.child === true ? [] : texts.slice(-RECENT_USER_TEXTS),
     nonReadOnlyCalls,
     untrustedSources: [...untrusted],
-    touchedPrivateData,
+    privateSources: [...privateSources],
+    touchedPrivateData: privateSources.size > 0,
   }
   if (q.call.tool.source !== 'builtin' || q.call.tool.originalName !== 'WebFetch') return view
   return {
     ...view,
     fetchUrlVouched: vouched(q.call.args['url'], q.child === true ? [] : texts, entries),
   }
+}
+
+/** Resolve a dispatch through its request's frozen tool table, never through its name alone. */
+function originOf(entries: readonly TapeEntry[], dispatch: TapeEntry): ToolOrigin | null {
+  const assembled = entries.find(
+    (entry) =>
+      entry.name === 'view/assembled' &&
+      entry.sourceId === dispatch.sourceId &&
+      entry.sourceSeq === dispatch.sourceSeq,
+  )
+  const tools = (assembled?.payload as ViewAssembledPayload | undefined)?.tools
+  if (tools == null) return null
+  const table = entries.find(
+    (entry) => entry.name === 'view/tool_table' && entry.provenanceKey === tools.tableKey,
+  )
+  return (
+    (table?.payload as ToolTablePayload | undefined)?.tools.find(
+      (tool) => tool.name === dispatch.payload['name'],
+    ) ?? null
+  )
 }
 
 /**
