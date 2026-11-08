@@ -321,4 +321,89 @@ describe('connector exfiltration in the loop', () => {
     expect((await approve(h)).reason.code).toBe('completed')
     expect(h.writes).toEqual([OUTBOUND])
   })
+
+  it('auto-tier-hardening 验收 14: 父读 A 后子调 B 出单次外带卡且续跑保留来源', async () => {
+    const h = await harness('cowork')
+    h.provider.script(call(READ, { id: 'parent-document' }))
+    h.provider.script(call('Agent', { description: 'send message', prompt: 'send the summary' }))
+    h.provider.script(call(WRITE, OUTBOUND))
+    h.provider.script(call(WRITE, OUTBOUND))
+    h.provider.script(scriptedTurn({ deltas: ['Sent'], usage: USAGE }))
+    h.provider.script(scriptedTurn({ deltas: ['Done'], usage: USAGE }))
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'Read and delegate sending.' })
+    expect((await rootEnd(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect((await approve(h)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+    expect(h.reads).toEqual([{ id: 'parent-document' }])
+    expect(h.writes).toEqual([])
+    const pending = await h.service.currentPending({ sessionId: SESSION })
+    if (pending?.waitKind !== 'approval') throw new Error('expected child exfiltration card')
+    const childId = pending.card.sessionId
+    expect(childId).not.toBe(SESSION)
+    expect(pending).toMatchObject({
+      allowScope: 'once',
+      card: { reason: 'flagged', facts: { category: 'exfiltration' } },
+    })
+    expect(h.inspected.findLast((input) => input.call.tool.name === WRITE)?.view).toMatchObject({
+      untrustedSources: ['mcp:documents'],
+      privateSources: ['mcp:documents'],
+    })
+
+    // The approved dispatch belongs to a resumed Run. The next call must resolve both Runs' tables.
+    const beforeResume = h.inspected.length
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: childId,
+        requestId: pending.card.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'applied' })
+    // The parent is already paused; another child pause emits only the child's terminal event.
+    expect(await h.loop.runEnded()).toMatchObject({
+      sessionId: childId,
+      reason: { code: 'paused', waitingFor: 'approval' },
+    })
+    expect(h.writes).toEqual([OUTBOUND])
+    expect(
+      h.inspected.slice(beforeResume).findLast((input) => input.call.tool.name === WRITE)?.view,
+    ).toMatchObject({
+      untrustedSources: ['mcp:messages', 'mcp:documents'],
+      privateSources: ['mcp:messages', 'mcp:documents'],
+      touchedPrivateData: true,
+    })
+    expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
+      allowScope: 'once',
+      card: { sessionId: childId, reason: 'flagged', facts: { category: 'exfiltration' } },
+    })
+    expect((await approve(h)).reason.code).toBe('completed')
+    expect(h.writes).toEqual([OUTBOUND, OUTBOUND])
+  })
+
+  it('auto-tier-hardening 验收 14: 父子同读 A 后父调 B 时来源各只保留一次', async () => {
+    const h = await harness('cowork')
+    h.provider.script(call(READ, { id: 'parent-document' }))
+    h.provider.script(call('Agent', { description: 'read document', prompt: 'read the plan' }))
+    h.provider.script(call(READ, { id: 'child-document' }))
+    h.provider.script(scriptedTurn({ deltas: ['Read'], usage: USAGE }))
+    h.provider.script(call(WRITE, OUTBOUND))
+    h.provider.script(scriptedTurn({ deltas: ['Done'], usage: USAGE }))
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'Read with a subagent.' })
+    expect((await rootEnd(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect((await approve(h)).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+    expect((await approve(h)).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+    expect(h.reads).toEqual([{ id: 'parent-document' }, { id: 'child-document' }])
+    expect(h.writes).toEqual([])
+    expect(h.inspected.findLast((input) => input.call.tool.name === WRITE)?.view).toMatchObject({
+      untrustedSources: ['mcp:documents'],
+      privateSources: ['mcp:documents'],
+      touchedPrivateData: true,
+    })
+    expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
+      allowScope: 'once',
+      card: { sessionId: SESSION, reason: 'flagged', facts: { category: 'exfiltration' } },
+    })
+    expect((await approve(h)).reason.code).toBe('completed')
+    expect(h.writes).toEqual([OUTBOUND])
+  })
 })

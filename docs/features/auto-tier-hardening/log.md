@@ -182,3 +182,59 @@
 下一步交 lead：在独立上下文正式评审 B 段及提交绑定，按仓库流程更新 plan；在沙箱外复跑五条依赖进程枚举的测试或全量门禁。本次未做的正式评审按 brief 由 lead 承担，C、D 段未开始。
 
 需要确认的问题：无。
+
+
+## 2026-11-08 · B 段按评审补充
+
+基线：lead 已提交的 `8f7c76e`，工作区开工时干净。owner 本轮消息告知基线沙箱外全量 0 失败、两路新上下文评审均通过，本节不将其当作修订后的测试结果。范围仅 B 段，按要求不提交、不改 spec / plan / decisions / evidence / 门禁文件，不启动 Electron、不调真实模型、不读取钥匙串。
+
+性能：`packages/kernel/src/permission/session-view.ts` 的 `buildSessionView` 在派发循环之前遍历 entries，一次建好 assembledByRequest（键 sourceId:sourceSeq）及 toolTables（键 provenanceKey）两张 Map；`originOf` 通过 Map 关联请求与冻结工具表。索引保留首条匹配，与原 find 读法一致。连接器分类、不可信和私密来源、七种关联失败的 unresolved 回退均不变，没有新增持久缓存或依赖。
+
+回环补充在 `packages/kernel/test/loop/mcp-exfiltration.test.ts`：
+- `auto-tier-hardening 验收 14: 父读 A 后子调 B 出单次外带卡且续跑保留来源`：父读 documents 并获批后，子调总是允许的 messages，外发前 writes 为空、卡属于子会话、category 为 exfiltration、allowScope 为 once；允许后仅一次外发，再次派发前的判定视图精确为 mcp:messages 与 mcp:documents，不含 unresolved，且子会话再次出单次卡。
+- `auto-tier-hardening 验收 14: 父子同读 A 后父调 B 时来源各只保留一次`：确认父、子两次 documents 读取都执行，父调 messages 前两个来源数组精确各为一个 mcp:documents，且外带卡阻止派发。
+
+单元补充：`session-view.test.ts` 把 connector 辅助函数提到文件级，并允许传 originalName；`auto-tier-hardening 验收 8: 连接器原名 %s 不按内置工具分类` 分别取 Read / Bash / WebFetch / WebSearch，在 cowork 形态断言两个数组仅含 mcp:S。`exfiltration.test.ts` 新增 `auto-tier-hardening 验收 13: 连接器名为 WebFetch 也不享受 URL 豁免`，验证 mcp / WebFetch / fetchUrlVouched=true 仍然 ask。
+
+测试改动：packages/kernel/test/permission/session-view.test.ts · connector 夹具 · 提到文件级并增加 originalName 默认参数，原用例与断言保持，未删除或放宽已有断言、未增加跳过。
+
+新回环第一版等待重复子会话暂停时误用 rootEnd，导致超时；已对照 mailbox.ts 的 endOwnChild 改为等待该子会话的 runEnded（父会话仍暂停，不再发新终止事件），没有修改生产循环、提高超时或跳过用例。修正后相关三文件 `41 passed`。
+
+### 计时对照
+
+命令：`node --experimental-strip-types /private/tmp/hardB-r2-benchmark/compare.mjs`，Node v22.22.0。脚本在临时目录分别保存 `git show 8f7c76e:packages/kernel/src/permission/session-view.ts` 与本次实现；两者使用同一份 4000 次派发 / 20000 条记录（每次各含 tool_table、assembled、tool/call、permission_decided、dispatch），fixture 构建不计时。先断言两份完整视图 deepStrictEqual，再各预热 3 次、交替顺序采样 9 次，每次建立一份视图。
+
+| 实现 | 单份视图耗时中位数 | 最小–最大 |
+|---|---|---|
+| 8f7c76e 的逐次 find | 103.87 ms | 101.26–106.62 ms |
+| 本次 Map 索引 | 2.97 ms | 2.04–3.62 ms |
+
+本机约快 35 倍；这只是同一 fixture 的本地计时，不作为 CI 阈值。输出在 `/private/tmp/hardB-r2-benchmark.log`，脚本和两份输入源码都只留临时目录，不进入仓库。
+
+### 六项突变证据
+
+每项都先备份生产文件、只修改该项，再运行对应新测试；要求返回 1 且包含 AssertionError，排除超时。每次 finally 逐字恢复，未使用 stash / checkout。公共命令前缀为 `pnpm vitest run --maxWorkers=2`，所有 pnpm 命令设置 NPM_CONFIG_USERCONFIG=/dev/null。
+
+| 突变 | 接公共前缀的命令 | 输出 |
+|---|---|---|
+| privateSources 合并不去重 | packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 14: 父子同读' | 1 failed；AssertionError，privateSources 的 mcp:documents 重复 |
+| untrustedSources 合并不去重 | packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 14: 父子同读' | 1 failed；AssertionError，untrustedSources 的 mcp:documents 重复 |
+| WebFetch 只凭原名识别 | packages/kernel/test/permission/exfiltration.test.ts -t 'auto-tier-hardening 验收 13: 连接器名为' | 1 failed；AssertionError: expected none to match ask |
+| 连接器分支去掉 continue | packages/kernel/test/permission/session-view.test.ts -t 'auto-tier-hardening 验收 8: 连接器原名' | 4 failed；AssertionError，分别多出 local、local、WebFetch、WebSearch |
+| related.privateSources 过滤 mcp: | packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 14: 父读 A' | 1 failed；AssertionError: expected completed to deeply equal paused / subagent |
+| related.untrustedSources 过滤 mcp: | packages/kernel/test/loop/mcp-exfiltration.test.ts -t 'auto-tier-hardening 验收 14: 父读 A' | 1 failed；AssertionError: expected 非空 writes to deeply equal [] |
+
+输出依次为 `/private/tmp/hardB-r2-mut-private-dedup.log`、`/private/tmp/hardB-r2-mut-untrusted-dedup.log`、`/private/tmp/hardB-r2-mut-webfetch-name.log`、`/private/tmp/hardB-r2-mut-no-continue.log`、`/private/tmp/hardB-r2-mut-private-filter.log`、`/private/tmp/hardB-r2-mut-untrusted-filter.log`。6 个突变，全部杀死，无存活。生产备份在 `/private/tmp/hardB-r2-production-36oq6u9e`，已确认恢复。
+
+
+### 门禁与交接
+
+- `pnpm vitest run --maxWorkers=2 packages/kernel/test/permission/session-view.test.ts packages/kernel/test/permission/exfiltration.test.ts packages/kernel/test/loop/mcp-exfiltration.test.ts`：3 files / 41 tests passed（`/private/tmp/hardB-r2-targeted.log`）；包含两份指定测试文件的全部原有用例、原有七种 unresolved 关联失败以及本轮新增用例。
+- `pnpm format:check && pnpm lint && pnpm typecheck`：全部退出 0。
+- `pnpm vitest run --maxWorkers=2 packages/kernel`：115 files / 2579 tests passed，26.27 秒（`/private/tmp/hardB-r2-kernel.log`）；这是全部突变恢复后的运行结果。
+- `python3 .sdd/spec-check.py`：退出 1，拦 11 条、警 19 条。原因是仓库最后一条正式评审仍绑定 A 段 f41ddc9，脚本列出其后 8f7c76e 的七个文件与本次工作区四个文件；owner 告知的两路通过尚未在此记录为新评审绑定。本轮按要求不新增以“## 评审”开头的标题、不改门禁，正式记录留 lead。
+- `git diff --check` 通过；临时计时脚本、突变与调试输出未进入工作区，prod 的 batch.ts / exfiltration.ts 已逐字等于 HEAD；唯一生产差异为 session-view.ts 的 Map 索引。
+
+当前：本轮三项建议已补齐，四个源码/测试文件及本日志留在工作区，不提交。spec / plan / decisions / evidence / 门禁文件保持原样；brief 明确不改 plan，因此本节记录当前与交接。没有降低断言、增加跳过或放宽生产权限规则。
+
+交接：lead 复核本次性能与新增测试、正式记录 B 段评审及相应提交绑定；C、D 段未开始。需要确认的问题：无。

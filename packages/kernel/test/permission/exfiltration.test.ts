@@ -94,4 +94,18 @@ describe('the ask-only local exfiltration rule', () => {
       kind: 'none',
     })
   })
+
+  it('auto-tier-hardening 验收 13: 连接器名为 WebFetch 也不享受 URL 豁免', () => {
+    const q = input()
+    expect(
+      exfiltrationOpinion({
+        ...q,
+        call: {
+          ...q.call,
+          tool: { name: 'S__WebFetch', originalName: 'WebFetch', source: 'mcp', serverId: 'S' },
+        },
+        view: { ...q.view, fetchUrlVouched: true },
+      }),
+    ).toMatchObject({ kind: 'ask', category: 'exfiltration' })
+  })
 })

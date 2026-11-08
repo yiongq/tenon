@@ -99,12 +99,14 @@ function call(name: string, args: Record<string, unknown> = {}): InspectedCall {
   }
 }
 
+function connector(name: string, serverId: string, originalName = 'read'): TapeEntry[] {
+  return dispatched(name, {}, 'read-only', 0, { source: 'mcp', serverId, originalName })
+}
+
 describe('buildSessionView', () => {
   it.each(['chat', 'cowork'] as const)(
     'auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重',
     (profile) => {
-      const connector = (name: string, serverId: string) =>
-        dispatched(name, {}, 'read-only', 0, { source: 'mcp', serverId, originalName: 'read' })
       const first = connector('mapped', 'A')
       const second = connector('mapped', 'B')
       // Same run, different request: mapping must use both runId and requestSeq.
@@ -131,6 +133,20 @@ describe('buildSessionView', () => {
       expect(view.privateSources).toEqual(
         profile === 'chat' ? ['mcp:A', 'mcp:B', 'mcp:C'] : ['mcp:A', 'mcp:B', 'mcp:C', 'local'],
       )
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
+  it.each(['Read', 'Bash', 'WebFetch', 'WebSearch'])(
+    'auto-tier-hardening 验收 8: 连接器原名 %s 不按内置工具分类',
+    (originalName) => {
+      const view = buildSessionView(connector(`S__${originalName}`, 'S', originalName), {
+        call: call('Read'),
+        profile: 'cowork',
+        ownSpillDir: SPILL,
+      })
+      expect(view.untrustedSources).toEqual(['mcp:S'])
+      expect(view.privateSources).toEqual(['mcp:S'])
       expect(view.touchedPrivateData).toBe(true)
     },
   )

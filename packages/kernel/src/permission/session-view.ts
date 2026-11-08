@@ -77,6 +77,17 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
       .filter((entry) => entry.name === 'execution/tool_outcome')
       .map((entry) => [callKey(entry), entry]),
   )
+  const assembledByRequest = new Map<string, TapeEntry>()
+  const toolTables = new Map<string, TapeEntry>()
+  for (const entry of entries) {
+    // Retain the first matching fact, just as the former per-dispatch find did.
+    if (entry.name === 'view/assembled') {
+      const key = `${entry.sourceId}:${entry.sourceSeq}`
+      if (!assembledByRequest.has(key)) assembledByRequest.set(key, entry)
+    } else if (entry.name === 'view/tool_table' && !toolTables.has(entry.provenanceKey)) {
+      toolTables.set(entry.provenanceKey, entry)
+    }
+  }
   const nonReadOnlyCalls: { toolName: string; reversibility: Reversibility }[] = []
   const untrusted = new Set<string>()
   const privateSources = new Set<string>()
@@ -85,7 +96,7 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
     const decision = byKey.get(String(dispatch.payload['decisionKey'] ?? ''))
     const reversibility = (decision?.payload['reversibility'] ?? 'unknown') as Reversibility
     if (reversibility !== 'read-only') nonReadOnlyCalls.push({ toolName: name, reversibility })
-    const origin = originOf(entries, dispatch)
+    const origin = originOf(assembledByRequest, toolTables, dispatch)
     if (origin === null || origin.source === 'mcp') {
       const source = origin === null ? `unresolved:${name}` : `mcp:${origin.serverId}`
       untrusted.add(source)
@@ -121,18 +132,15 @@ export function buildSessionView(entries: readonly TapeEntry[], q: SessionViewQu
 }
 
 /** Resolve a dispatch through its request's frozen tool table, never through its name alone. */
-function originOf(entries: readonly TapeEntry[], dispatch: TapeEntry): ToolOrigin | null {
-  const assembled = entries.find(
-    (entry) =>
-      entry.name === 'view/assembled' &&
-      entry.sourceId === dispatch.sourceId &&
-      entry.sourceSeq === dispatch.sourceSeq,
-  )
+function originOf(
+  assembledByRequest: ReadonlyMap<string, TapeEntry>,
+  toolTables: ReadonlyMap<string, TapeEntry>,
+  dispatch: TapeEntry,
+): ToolOrigin | null {
+  const assembled = assembledByRequest.get(`${dispatch.sourceId}:${dispatch.sourceSeq}`)
   const tools = (assembled?.payload as ViewAssembledPayload | undefined)?.tools
   if (tools == null) return null
-  const table = entries.find(
-    (entry) => entry.name === 'view/tool_table' && entry.provenanceKey === tools.tableKey,
-  )
+  const table = toolTables.get(tools.tableKey)
   return (
     (table?.payload as ToolTablePayload | undefined)?.tools.find(
       (tool) => tool.name === dispatch.payload['name'],
