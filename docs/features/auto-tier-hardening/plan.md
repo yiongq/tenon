@@ -1,7 +1,7 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：spec 已 ready 并合入 dev（PR #82，962dfb3）。A 段（沙箱 .git 转向文件保护）已实现，分支 `feat/auto-tier-hardening-a`：b5593bb 实现、2c086f4 按评审修订、f41ddc9 并入 dev；两平台真沙箱与两路新上下文复核通过（log.md「评审 · 2026-11-08 · 审过 f41ddc9」）。下一步：A 段 PR 合入后做 B 段（连接器外带）。
+当前：spec 已 ready 并合入 dev（PR #82，962dfb3）。A 段在 PR #84（分支 `feat/auto-tier-hardening-a`，自动合并已开）。B 段（外带检查认连接器）已实现，分支 `feat/auto-tier-hardening-b`（叠在 A 段上）：8f7c76e 实现、baaedb8 按评审补测试与查表提速；两路新上下文评审与复核通过（log.md「评审 · 2026-11-08 · 审过 baaedb8」）。下一步：C 段（钩子位置）。
 需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
 授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
@@ -50,7 +50,7 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 ## 步骤
 - [x] 1. owner 批 ready → 草稿入库 `docs/features/auto-tier-hardening/`，按 headers.md 给 02/03/04/05 加 `Changed by`、总参考三行换链接、重生成入口页。
 - [x] 2. A 段：沙箱转向文件保护 + 验收 1–4、15 的三层测试；dev 与本段提交上各跑一次沙箱黑盒（macOS + 两台 Lima），旧红新绿记 log.md；三视角评审 + 汇总评审。
-- [ ] 3. B 段：连接器外带（含 `batch.ts` 父子合并）+ 验收 5–8、13、14；`red-on-base` 核验验收 5 的复现；三视角评审 + 汇总评审。
+- [x] 3. B 段：连接器外带（含 `batch.ts` 父子合并）+ 验收 5–8、13、14；`red-on-base` 核验验收 5 的复现；三视角评审 + 汇总评审。
 - [ ] 4. C 段：钩子位置 + 验收 9–12；沙箱黑盒旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [ ] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
 - [ ] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
@@ -65,16 +65,16 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 | 2 | 单元 | macOS | auto-tier-hardening 验收 2 复现：darwin 的拒写含不存在的转向文件与子目录 .git；黑盒 auto-tier-hardening 验收 2: 写 commondir/子目录 .git 被拒 | test | （待评审补） |
 | 3 | 集成 | macOS、Linux | auto-tier-hardening 验收 3: 发现完整时根 git 与子模块提交照常、Linux 无占位 | test | （待评审补） |
 | 4 | 集成 | Linux | auto-tier-hardening 验收 4: Linux 新建转向文件未被拦（表征） | test | — |
-| 5 | 集成 | — | auto-tier-hardening 验收 5 复现：跨源时总是允许的连接器出外带卡 | test | （待评审补） |
-| 6 | 集成 | — | auto-tier-hardening 验收 6: 没读连接器时总是允许的写入直接派发 | test | — |
+| 5 | 集成 | — | auto-tier-hardening 验收 5 复现：任务跨源出卡；…对话跨源出卡 | test | （待评审补） |
+| 6 | 集成 | — | auto-tier-hardening 验收 6: $label 未读连接器时直接派发 | test | — |
 | 7 | 单元 | — | auto-tier-hardening 验收 7: 同源读写不出卡 | test | （待评审补） |
-| 8 | 单元 | — | auto-tier-hardening 验收 8: 会话视图从工具表取来源、取不到从严 | test | （待评审补） |
+| 8 | 单元 | — | auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重；…来源关联失败 %s 时从严；…连接器原名 Read/Bash/WebFetch/WebSearch 不按内置工具分类 | test | （待评审补） |
 | 9 | 单元 | macOS、Linux | auto-tier-hardening 验收 9 复现：自定义 hooksPath 目录里的钩子判自动执行 | test | （待评审补） |
 | 10 | 单元 | macOS、Linux | auto-tier-hardening 验收 10 复现：.husky、lefthook、pre-commit 判自动执行 | test | （待评审补） |
 | 11 | 单元 | macOS、Linux | auto-tier-hardening 验收 11: 配了 hooksPath 才认自定义目录 | test | — |
 | 12 | 单元 | macOS、Linux | auto-tier-hardening 验收 12 复现：wrap 的拒写含根下钩子位置与 hookDirs；黑盒 auto-tier-hardening 验收 12: 沙箱里写已有与新建的钩子位置都被拒（macOS 含子目录） | test | （待评审补） |
 | 13 | 单元 | — | auto-tier-hardening 验收 13: 只有 S 的不可信加本地私密读也出卡 | test | （待评审补） |
-| 14 | 集成 | — | auto-tier-hardening 验收 14: 子会话读 A、父会话调 B 时合并来源并出卡 | test | （待评审补） |
+| 14 | 集成 | — | auto-tier-hardening 验收 14: 子读 A 交接后父调 B 合并来源并出卡；…父读 A 后子调 B 出单次外带卡且续跑保留来源；…父子同读 A 后父调 B 时来源各只保留一次 | test | （待评审补） |
 | 15 | 单元 | macOS、Linux | auto-tier-hardening 验收 15: 发现不完整时目录型拒写整个 .git、指针型拒写指针加 gitdir 与 commondir，并留诊断；黑盒 auto-tier-hardening 验收 15: 两种夹具只注入发现故障时 git 写照预期失败、关掉注入则成功、Linux 不新增占位 | test | （待评审补） |
 
 （「层」写最低一层：复现与对照都在 `test` 门禁里跑；用例名里标「黑盒」的由 CI 的 `ci`、`sandbox-macos` 作业以 `TENON_SANDBOX_TESTS=required` 跑，`test` 门禁与 `red-on-base` 跳过它们（E5），两平台旧红新绿记 log.md。CI 机器重跑的突变只登记 `test` 门禁（本项目补充 5）。）
@@ -83,6 +83,8 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 2026-11-08：A 段由 Codex 实现、lead 提交，两路新上下文评审（对照 spec 与安全、测试与突变）各一轮不通过、修订后复核通过；macOS 真沙箱与 Lima u2404 真沙箱全绿，旧红新绿记 log.md（u2604 冷启动后 AppArmor 自带配置使沙箱不可用，未改它，Linux 另由 CI `ci` 作业覆盖）。B 段从 `packages/kernel/src/permission/session-view.ts` 接，照 plan B 段与「测试分层」。下面 Open 里的五条随 C、D 段处理。
 
 ## Open
+- C 段一并补测试：`originOf` 查表改写后，「同键多条保留首条」（assembled、tool_table 各一）、「引用的表缺失但 tape 里还有别的表时仍记 unresolved」、「键拼法不串（run-1/seq 11 与 run-11/seq 1）」；生产里不可达，B 段测试复核建议，标题带验收 8。
+- 05 验收 45「concurrent captures and age cleanup keep live parentless trees sound」在 PR #84 的 CI `ci` 上偶发红一次（ENOTEMPTY rmdir），本地连跑 5 次全过、与本 spec 无关；并入总参考 §以后再说 那条「两个 worker 都满载时……偶发红」的观察记录（D 段做）。
 - C 段一并做：发现失败中不经端口的那几类（指针解析不了、预算或深度耗尽、目标不是目录、commondir 内容非法）日志只有一句总述，要带上路径与原因（A 段安全复核建议）。
 - C 段一并补测试：`.git/modules/<名>` 本身是链接时的拒写与 Linux 事后比对；含 `..` 的写法最后一级是链接、`..` 写法解不完；目录型 `.git` 本身是指向目录的链接配回退（A 段测试复核建议）。
 - C 段：`SandboxHostPaths.xdgConfigHome` 接线（从 startupEnv 读 `XDG_CONFIG_HOME`，改必填），解析全局 git 配置要用。
