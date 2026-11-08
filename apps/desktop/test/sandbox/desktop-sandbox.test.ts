@@ -1856,6 +1856,83 @@ function gitDenyPaths(h: Harness): string[] {
   )
 }
 
+it.each(['', 'disabled-hooks', '/dev/null'])(
+  'auto-tier-hardening 验收 12: disabled hooksPath %s does not deny ordinary locations',
+  async (value) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      h.disk.dir(`${h.at.ws}/.git`)
+      h.disk.file(`${h.at.ws}/.git/config`, `[core]\n hooksPath = ${value}\n`)
+      h.disk.file(`${h.at.ws}/disabled-hooks`, 'ordinary file')
+      h.disk.dir('/dev')
+      h.disk.nodes.set('/dev/null', { kind: 'other', uid: SELF[platform], mode: 0o666 })
+      await h.run()
+      expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/`)
+      expect(gitDenyPaths(h)).not.toContain(h.at.ws)
+      expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/disabled-hooks`)
+      expect(gitDenyPaths(h)).not.toContain('/dev/null')
+      expect(h.logs).toEqual([])
+    })
+  },
+)
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 12: %s denies existing include spellings and targets',
+  async (platform) => {
+    const h = harness(platform)
+    const root = h.at.ws
+    h.disk.dir(`${root}/.git`)
+    h.disk.file(
+      `${root}/.git/config`,
+      '[include]\n path = ../shared.gitconfig\n' +
+        '[includeIf "gitdir:unmatched"]\n path = ../alias/../linked.gitconfig\n' +
+        ' path = ../missing.gitconfig\n',
+    )
+    h.disk.file(`${root}/shared.gitconfig`, '[include]\n path = nested.gitconfig\n')
+    h.disk.file(`${root}/nested.gitconfig`, '[core]\n hooksPath = my-hooks\n')
+    h.disk.dir(`${root}/storage/deep`)
+    h.disk.file(`${root}/storage/real.gitconfig`, '[core]\n')
+    h.disk.link(`${root}/alias`, `${root}/storage/deep`)
+    h.disk.link(`${root}/storage/linked.gitconfig`, `${root}/storage/real.gitconfig`)
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([
+        `${root}/shared.gitconfig`,
+        `${root}/nested.gitconfig`,
+        `${root}/storage/linked.gitconfig`,
+        `${root}/storage/real.gitconfig`,
+      ]),
+    )
+    expect(gitDenyPaths(h)).not.toContain(`${root}/missing.gitconfig`)
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+    expect(h.logs).toEqual([])
+    h.disk.link(`${root}/storage/linked.gitconfig`, `${root}/shared.gitconfig`)
+    await h.sandbox.afterExit(TOOL_USE)
+    expect(
+      (await h.sandbox.violations(TOOL_USE)).some(
+        (v) => v.target === `${root}/storage/linked.gitconfig` && v.protected,
+      ),
+    ).toBe(platform === 'linux')
+  },
+)
+
+it('auto-tier-hardening 验收 15: an existing unreadable include target remains denied', async () => {
+  const h = harness('linux')
+  h.disk.dir(`${h.at.ws}/.git`)
+  h.disk.file(`${h.at.ws}/.git/config`, '[include]\n path = ../shared.gitconfig\n')
+  const included = `${h.at.ws}/shared.gitconfig`
+  h.disk.file(included, '[core]\n')
+  const read = h.disk.readText.bind(h.disk)
+  vi.spyOn(h.disk, 'readText').mockImplementation(async (path, max) => {
+    if (posix.normalize(path) === included) throw errno('EACCES', path)
+    return read(path, max)
+  })
+  await h.run()
+  expect(gitDenyPaths(h)).toContain(included)
+  expect(gitDenyPaths(h)).toContain(`${h.at.ws}/.git`)
+  expect(h.logs.join('\n')).toContain('EACCES')
+})
+
 it('auto-tier-hardening 验收 12 复现：钩子拒写', async () => {
   await onBoth(async (platform) => {
     const h = harness(platform)

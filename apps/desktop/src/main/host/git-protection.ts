@@ -117,6 +117,8 @@ export async function discoverGitProtection(
     if (depth > MAX_DEPTH || --configRemaining < 0)
       throw new DiscoveryError(path, 'git config include budget/depth exceeded')
     const real = await ports.realpath(path)
+    // Includes are git configuration sources too; preserve each existing spelling for deny rules.
+    if (depth > 0 && real !== null) existing.add(path as AbsolutePath)
     if (real !== null && configSeen.has(real)) return
     const text = await ports.readText(path, MAX_TEXT_BYTES)
     if (text === null) return
@@ -131,7 +133,12 @@ export async function discoverGitProtection(
     for (const entry of entries) {
       // Keep all configured paths, including conditional includes whose condition is false now.
       if (entry.section === 'core' && entry.key === 'hookspath') {
+        if (entry.value === '') continue
         const target = configPath(q.root, entry.value, path) as AbsolutePath
+        // A missing directory stays protected, but files/devices (notably /dev/null) run no hooks.
+        // oxlint-disable-next-line no-await-in-loop -- resolve each configured hook directory once
+        const found = await actual(target)
+        if (found !== null && found.kind !== 'dir') continue
         hookDirs.add(target)
         if (target.replace(/\/+$/, '').endsWith('/.husky/_'))
           hookDirs.add(posix.dirname(target) as AbsolutePath)
@@ -296,17 +303,15 @@ function configEntries(text: string): { section: string; key: string; value: str
       continue
     }
     pending = ''
-    const trimmed = line.trim()
+    let trimmed = line.trim()
     if (trimmed === '' || /^[#;]/.test(trimmed)) continue
     if (trimmed.startsWith('[')) {
-      const header = /^\[([\w-]+)(?:\s+"(?:[^"\\]|\\.)*"|\.[^\]]+)?\]\s*(?:[#;].*)?$/.exec(trimmed)
+      const header = /^\[([\w-]+)(\s+"(?:[^"\\]|\\.)*"|\.[^\]]+)?\](.*)$/.exec(trimmed)
       if (header === null) throw new Error('invalid git section')
       const name = header[1]!.toLowerCase()
-      section =
-        name === 'includeif' || /^\[[\w-]+\]\s*(?:[#;].*)?$/.test(trimmed)
-          ? name
-          : `${name}.subsection`
-      continue
+      section = name === 'includeif' || header[2] === undefined ? name : `${name}.subsection`
+      trimmed = header[3]!.trim()
+      if (trimmed === '') continue
     }
     const pair = /^([a-z][a-z0-9-]*)(?:\s*=\s*(.*)|\s*(?:[#;].*)?)$/i.exec(trimmed)
     if (pair === null || section === '') throw new Error('invalid git variable')

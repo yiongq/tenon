@@ -1239,9 +1239,13 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
           `then echo ${shq(`unexpected write: ${target}`)}; exit 1; fi`
         )
       })
-      const ran = await lab.run([...attempts, 'true'].join('; '), { workspace: [ws] })
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
       // lab.run awaits afterExit; tests are serial, so no other wrap holds Linux's placeholders.
       expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
       const observed = targets.map((target) =>
         state === 'existing' ? readFileSync(join(ws, target), 'utf8') : hostKind(join(ws, target)),
       )
@@ -1287,12 +1291,31 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
           `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
           `then echo unexpected; exit 1; fi`,
       )
-      const ran = await lab.run([...attempts, 'true'].join('; '), { workspace: [ws] })
+      const control = join(ws, 'one/two/ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
       expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
       const observed = targets.map((path) =>
         state === 'existing' ? readFileSync(path, 'utf8') : hostKind(path),
       )
       expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    'auto-tier-hardening 验收 12: disabling hooks with dev null preserves shell redirection',
+    async () => {
+      const { lab, ws } = workspaceLab()
+      writeHostFile(join(lab.home, '.gitconfig'), '[core]\n hooksPath = /dev/null\n')
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run(`printf x > /dev/null && printf ordinary > ${shq(control)}`, {
+        workspace: [ws],
+      })
+      expect(ran.code).toBe(0)
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
     },
     CASE_MS,
   )

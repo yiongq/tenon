@@ -37,10 +37,17 @@ async function scope(): Promise<PathScope> {
     profileDir: p(join(root, 'profile')),
     ownSpillDir: p(join(root, 'profile/tool-output/session')),
     protectedFiles: protectedShellFiles(home, p(join(root, 'zdot'))),
-    sensitive: await desktopSensitivePaths(home, [home, workspace], p(join(root, 'zdot'))),
+    sensitive: await desktopSensitivePaths(
+      home,
+      [home, workspace],
+      p(join(root, 'zdot')),
+      undefined,
+      { xdgConfigHome: null },
+    ),
   }
 }
 beforeEach(async () => {
+  vi.stubEnv('XDG_CONFIG_HOME', undefined)
   vi.mocked(nativeFs.lstat).mockReset()
   vi.mocked(nativeFs.readdir).mockReset()
   vi.mocked(nativeFs.readlink).mockReset()
@@ -52,6 +59,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   await rm(root, { recursive: true, force: true })
 })
 
@@ -680,6 +688,73 @@ async function hookRepository(config: string, global = false) {
   await writeFile(join(global ? home : workspace, global ? '.gitconfig' : '.git/config'), config)
 }
 
+it.each(['', 'disabled-hooks', '/dev/null'])(
+  'auto-tier-hardening 验收 11: disabled hooksPath %s does not mark ordinary writes',
+  async (value) => {
+    await writeFile(join(workspace, 'disabled-hooks'), 'not a directory')
+    await hookRepository(`[core]\n hooksPath = ${value}\n`)
+    const current = await scope()
+    expect(current.sensitive).toMatchObject({ incomplete: false, hookDirs: [] })
+    expect(await locatePath(fs, p(join(workspace, 'src/app.ts')), current, 'Write')).toMatchObject({
+      place: 'workspace',
+    })
+  },
+)
+
+it.each(['core', 'include', 'includeIf'])(
+  'auto-tier-hardening 验收 9: section %s accepts a key on the same line',
+  async (section) => {
+    const config =
+      section === 'core'
+        ? '[core] hooksPath = my hooks\n'
+        : `[${section}${section === 'includeIf' ? ' "gitdir:unmatched"' : ''}] path = ../extra\n`
+    await hookRepository(config)
+    await writeFile(join(workspace, 'extra'), '[core] hooksPath = my hooks\n')
+    const current = await scope()
+    expect(current.sensitive).toMatchObject({ incomplete: false })
+    expect(
+      await locatePath(fs, p(join(workspace, 'my hooks/pre-commit')), current, 'Write'),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  },
+)
+
+it('auto-tier-hardening 验收 9: test scope ignores the ambient XDG git config', async () => {
+  const xdg = join(home, 'ambient-xdg')
+  await mkdir(join(xdg, 'git'), { recursive: true })
+  await writeFile(join(xdg, 'git/config'), '[core]\n hooksPath = ambient-hooks\n')
+  vi.stubEnv('XDG_CONFIG_HOME', xdg)
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false, hookDirs: [] })
+})
+
+it('auto-tier-hardening 验收 15: unreadable git config marks the sensitive table incomplete', async () => {
+  await hookRepository('[core]\n hooksPath = my-hooks\n')
+  const broken = join(workspace, '.git/config')
+  vi.spyOn(nativeFs, 'open').mockImplementation(async (...args) => {
+    if (String(args[0]) === broken)
+      throw Object.assign(new Error('config read denied'), { code: 'EACCES' })
+    return actualFs.open(...args)
+  })
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({
+    incomplete: true,
+    diagnostic: expect.stringContaining('Git discovery incomplete:'),
+  })
+  expect(
+    await locatePath(fs, p(join(workspace, '.husky/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
+it('auto-tier-hardening 验收 9: config.worktree hooksPath is parsed independently', async () => {
+  await hookRepository('[core]\n')
+  await writeFile(join(workspace, '.git/config.worktree'), '[core]\n hooksPath = worktree-hooks\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  expect(
+    await locatePath(fs, p(join(workspace, 'worktree-hooks/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
 it('auto-tier-hardening 验收 9 复现：仓库钩子目录', async () => {
   await hookRepository('[core]\n hooksPath = my-hooks\n')
   const current = await scope()
@@ -811,6 +886,7 @@ it('auto-tier-hardening 验收 9: includes, quotes, continuations and husky pare
   )
   await writeFile(join(workspace, 'config/conditional'), '[core]\n hooksPath = .husky/_\n')
   const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
   for (const name of ['my hooks/pre-commit', '.husky/pre-commit']) {
     // oxlint-disable-next-line no-await-in-loop -- includes and husky parent are both protected
     expect(await locatePath(fs, p(join(workspace, name)), current, 'Edit')).toMatchObject({
