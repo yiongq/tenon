@@ -393,3 +393,71 @@
 当前：代码与测试已完成，突变全部恢复，改动留在工作区，不提交；未改 spec、plan、decisions、evidence、门禁或 B 段代码。交接：lead 复核本次差异，运行增强后的验收 12 黑盒及 /dev/null 用例，补 spec 修订记录和正式提交绑定评审。需要确认的问题：无。
 
 最终复跑确认：追加本节后的 format:check 通过；spec-check 退出 1，仍为缺少本次正式提交绑定评审记录这一条阻断、17 条警告。最终 diff --check 通过，HEAD 仍为 5d2275a，六个改动文件均留在工作区。
+
+## 2026-11-08 · C 段按复核修订
+
+起点为 lead 提交 0729ebb。通读 C-security-r2.md 与 C-tests-r2.md 原文后，按本轮指令只改 C 段源码、测试及本日志，不提交；当前与交接记在本节，不改 plan。
+
+### 按条处理
+
+- C-security-r2.md「这轮带进的新问题」第 1 条（major）：git-protection.ts 的 readConfig 恢复将普通文件、FIFO、socket 和缺失目标纳入 hookDirs；不再按“非目录”整体排除。空 hooksPath 继续跳过；设备例外只保留路径规范化及真实路径均为 /dev/null 的情形，避免放掉普通工作区或可替换链接。配置层两平台覆盖四类目标，文件工具覆盖普通文件位置下的 Write/Edit/Delete 自动执行分类。
+- 第 1 条的黑盒：escape.test.ts 新增「auto-tier-hardening 验收 12: a hooks file cannot become a directory before host commit」。同一次沙箱命令尝试将普通文件换成目录并写 pre-commit，另写普通文件成功对照；宿主确认原文件保持不变，随后 commit 不产生钩子标记。最后由宿主实际换成目录、运行同一钩子并断言标记出现，验证夹具有效。本 agent 只做 lint/typecheck，真实执行与相应突变由 lead 在沙箱外跑。
+- C-security-r2.md「这轮带进的新问题」第 2 条（建议）：include /dev/null 在登记来源、读取正文之前当作空配置返回，不进拒写名单，不报发现不完整；同文件后面的 hooksPath 仍解析。新增配置层两平台及文件工具发现用例。
+- C-security-r2.md「这轮带进的新问题」第 3 条（建议）：每个 hooksPath 的解析单独包在 attempt 中，单条失败只记 incomplete，继续解析后续 hooksPath 与 include；保留 .git 回退及具体路径诊断。
+- 第 3 条的文件工具部分：按本轮“两条建议照改”的要求，采用评审推荐的收紧方向，把已经发现的 redirectExisting 来源并入自动执行敏感表。保留末级链接本身（Delete）与实际目标（Write/Edit），发现不完整也不丢弃已找到的来源；不覆盖已有凭据分类。新增 Write/Edit/Delete 每次询问、自动档及 always-allow 仍询问、Read/Glob/Grep 正常、直接访问实际目标和部分发现用例。没有改变 GitProtection 字段或顶层配置登记条件。
+- C-tests-r2.md「三、发现」第 1 条（I5）：在「auto-tier-hardening 验收 12: %s denies existing include spellings and targets」中，同一 shared.gitconfig 先用普通拼法 include，再经 storage/shared-link.gitconfig 链接 include。断言两个拼法都拒写；替换链接后一次读取 violations，分别验证两个链接的 Linux 事后比对。原有嵌套 include、条件 include、缺失目标和另一条末级链接断言保留。
+- C-tests-r2.md「三、发现」第 2 条（I2）：按本轮要求不处理，不增加顶层配置文件登记，也不补 spec 未规定的取舍断言。
+
+### 先红后绿、范围比较及独立复核
+
+修生产代码前，新增回归在 0729ebb 上为 9 failed、3 passed，均为断言失败；文件工具 include 用例先为 2 failed。针对 major，用 git show 5d2275a 的原始字节临时覆盖 git-protection.ts，保留本轮测试，运行 replaceable hooksPath：5 passed；恢复本轮生产版本，连同上一轮空值及 /dev/null 边界运行：9 passed。备份与恢复不用 stash 或 checkout。
+
+新上下文只读审查独立临时快照，发现最初采用的 /dev/ 前缀例外过宽，会排除 /dev/shm 中的普通工作区。新增「auto-tier-hardening 验收 12: dev shm %s hooks and ordinary include keep protection」三格配置层回归先为 3 failed；将例外收窄至 /dev/null 后为 3 passed，两平台均检查目录/普通文件/其他节点钩子及 include 来源和其中解析出的钩子。最终快照复核通过，无剩余具体发现；未运行真实沙箱，不代替 lead 的正式提交绑定评审。
+
+### 突变证据
+
+每次只撤掉或改变一项保护，运行对应新用例，然后在 finally 中恢复。全部失败均为 AssertionError，不是导入、类型或启动错误。命令均使用 pnpm vitest run --maxWorkers=2；配置层在 desktop-sandbox.test.ts，文件工具层在 sensitive-paths.test.ts。关键输出如下：
+
+| 对应条目 | 突变 | 输出 |
+|---|---|---|
+| 安全发现 1 | 恢复 found.kind 非目录跳过 | exit 1；4 failed、1 passed |
+| 安全发现 1，保留边界 | 去掉空 hooksPath 跳过 | exit 1；2 failed |
+| 安全发现 1，保留边界 | 去掉 /dev/null hooksPath 例外 | exit 1；2 failed |
+| 安全发现 1，范围比较 | 把精确 /dev/null 例外扩大为 /dev/ 前缀 | exit 1；3 failed |
+| 安全发现 2 | 去掉 include /dev/null 空配置处理 | exit 1；3 failed |
+| 安全发现 3 | 去掉 hooksPath 条目级 attempt | exit 1；2 failed |
+| 安全发现 3，文件工具 | 不消费已发现配置来源 | exit 1；3 failed |
+| 安全发现 3，文件工具 | 链接条目解析改为跟随末级链接 | exit 1；1 failed |
+| 安全发现 3，文件工具 | 不登记配置来源实际目标 | exit 1；1 failed |
+| 安全发现 3，文件工具 | incomplete 时丢弃已发现来源 | exit 1；1 failed |
+| 测试发现 1（I5） | existing.add 移到 configSeen 去重之后 | exit 1；2 failed |
+| 测试发现 1，Linux 事后比对 | 不跟踪新增 shared-link 链接 | exit 1；1 failed、1 passed |
+
+~~~text
+5d2275a-range exit 0
+Tests 5 passed
+current-range-and-boundaries exit 0
+Tests 9 passed
+restored exit 0
+Tests 16 passed
+RESTORED exit 0
+Test Files 1 passed
+Tests 107 passed
+~~~
+
+12 项门禁层突变全部被杀且已恢复。关键原始输出留在 /tmp/hardc-r3-proof-final-summary.log 与 /tmp/hardc-r3-file-mutation-summary.log；各突变完整输出为 /tmp/hardc-r3-<突变名>.log。新黑盒的执行和撤掉保护后的失败验证仍由 lead 在沙箱外完成，不以本轮静态检查代替。
+
+### 测试改动与最终检查
+
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts · disabled hooksPath 与 replaceable hooksPath · 将旧 disabled-hooks 普通文件的“不拒写”预期改由正向拒写用例覆盖，纠正复核指出的保护回退；保留空值和 /dev/null 原边界，并增加 FIFO/socket/缺失目标。
+测试改动：apps/desktop/test/sensitive-paths.test.ts · disabled hooksPath 与 replaceable hooksPath · 同样纠正普通文件预期，验证文件工具分类；空值和 /dev/null 对照保持。
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts · denies existing include spellings and targets · 增加同一真实目标的第二种链接拼法及独立事后比对，violations 只取一次，避免消费结果后误判。
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts 与 apps/desktop/test/sensitive-paths.test.ts · 验收 9/12/15 的设备、解析失败及来源敏感用例 · 钉住空配置边界、条目隔离、部分发现保留和文件工具每次询问。
+测试改动：apps/desktop/test/sandbox/escape.test.ts · a hooks file cannot become a directory before host commit · 增加普通文件替换拒写黑盒、普通写入成功对照及宿主钩子确实执行的正向对照；未给已有用例增加跳过。
+
+- pnpm format:check && pnpm lint && pnpm typecheck：最终版本通过。首轮 lint 指出新增夹具拼接纯字面量，已合并字符串并重新通过整条门禁。
+- pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/ apps/desktop/test/sensitive-paths.test.ts packages/kernel：exit 0；125 个文件通过，3062 passed、119 skipped；真沙箱按既有条件跳过。完整输出为 /tmp/hardc-r3-final-tests.log。
+- python3 .sdd/spec-check.py：exit 1；1 条 review 阻断、17 条警告。阻断仍为本次未提交改动没有新增正式提交绑定评审标题；遵守本次不提交及上轮禁止“## 评审”标题的要求，不伪造登记或修改门禁。其余警告包括已有文档关系、测试报告缺失、plan 未更新及测试改动提醒。
+- git diff --check：通过。新上下文静态复核通过；所有突变恢复，工作区不含临时探针、调试打印。
+
+当前：两份复核原文要求的本轮代码与配置层/文件工具测试均已补齐，改动只在工作区，HEAD 仍为 0729ebb；未改 spec、plan、decisions、evidence 或门禁文件。交接：lead 在 macOS 与 Linux/Lima 沙箱外执行新增验收 12 黑盒及对应突变，核对最终差异，完成正式评审登记与提交绑定。需要确认的问题：无。

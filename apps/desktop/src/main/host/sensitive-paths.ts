@@ -27,7 +27,7 @@ interface SensitivePathScanOptions {
 function targetResolver(check: () => void) {
   const stats = new Map<string, Awaited<ReturnType<typeof lstat>> | undefined>()
   const links = new Map<string, string>()
-  return async (path: string): Promise<AbsolutePath | undefined> => {
+  return async (path: string, followLast = true): Promise<AbsolutePath | undefined> => {
     const ports: Pick<PathPorts, 'lstat' | 'readlink'> = {
       lstat: (node) => {
         if (!stats.has(node)) throw node
@@ -43,13 +43,17 @@ function targetResolver(check: () => void) {
     for (let count = 0; count < 4096; count++) {
       check()
       let needed: string | undefined
-      const walk = walkLinks(path, {
-        lstat: (node) => {
-          if (!stats.has(node)) needed = node
-          return ports.lstat(node)
+      const walk = walkLinks(
+        path,
+        {
+          lstat: (node) => {
+            if (!stats.has(node)) needed = node
+            return ports.lstat(node)
+          },
+          readlink: ports.readlink,
         },
-        readlink: ports.readlink,
-      })
+        followLast,
+      )
       if (needed === undefined) return walk.real === undefined ? undefined : absolutePath(walk.real)
       try {
         // oxlint-disable-next-line no-await-in-loop -- walkLinks requests one unknown path level at a time
@@ -209,6 +213,22 @@ export async function desktopSensitivePaths(
         const real = resolved === undefined ? undefined : await canonical(resolved)
         if (real !== undefined) hookDirs.add(real)
         else gitFailure ??= `Git hook directory cannot be resolved: ${dir}`
+      }
+      // Configuration sources share the automatic-execution category. Preserve a final link's
+      // entry for Delete as well as its real target for Write/Edit, including on partial discovery.
+      for (const path of git.redirectExisting) {
+        // oxlint-disable-next-line no-await-in-loop -- name each discovered source without following its leaf
+        const spelling = await resolve(path, false)
+        if (spelling !== undefined) {
+          // oxlint-disable-next-line no-await-in-loop -- canonicalize the parent, retaining the link entry
+          const parent = await canonical(posix.dirname(spelling))
+          if (parent !== undefined) {
+            const entry = absolutePath(posix.join(parent, posix.basename(spelling)))
+            if (!credentials.has(entry)) credentials.set(entry, 'auto-run')
+          }
+        }
+        // oxlint-disable-next-line no-await-in-loop -- canonical targets protect direct access to the same source
+        await add(credentials, path, 'auto-run')
       }
       if (git.incomplete) gitFailure ??= `Git discovery incomplete: ${root}`
     }

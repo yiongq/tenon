@@ -117,6 +117,8 @@ export async function discoverGitProtection(
     if (depth > MAX_DEPTH || --configRemaining < 0)
       throw new DiscoveryError(path, 'git config include budget/depth exceeded')
     const real = await ports.realpath(path)
+    // Git accepts /dev/null as empty configuration; do not read or deny that include.
+    if (depth > 0 && real !== null && deviceLocation(path, real)) return
     // Includes are git configuration sources too; preserve each existing spelling for deny rules.
     if (depth > 0 && real !== null) existing.add(path as AbsolutePath)
     if (real !== null && configSeen.has(real)) return
@@ -134,14 +136,16 @@ export async function discoverGitProtection(
       // Keep all configured paths, including conditional includes whose condition is false now.
       if (entry.section === 'core' && entry.key === 'hookspath') {
         if (entry.value === '') continue
-        const target = configPath(q.root, entry.value, path) as AbsolutePath
-        // A missing directory stays protected, but files/devices (notably /dev/null) run no hooks.
-        // oxlint-disable-next-line no-await-in-loop -- resolve each configured hook directory once
-        const found = await actual(target)
-        if (found !== null && found.kind !== 'dir') continue
-        hookDirs.add(target)
-        if (target.replace(/\/+$/, '').endsWith('/.husky/_'))
-          hookDirs.add(posix.dirname(target) as AbsolutePath)
+        // oxlint-disable-next-line no-await-in-loop -- a bad hook entry must not hide later config sources
+        await attempt(async () => {
+          const target = configPath(q.root, entry.value, path) as AbsolutePath
+          const found = await actual(target)
+          // Files, FIFOs and sockets can become hook directories; only the null device is exempt.
+          if (found !== null && deviceLocation(target, found.real)) return
+          hookDirs.add(target)
+          if (target.replace(/\/+$/, '').endsWith('/.husky/_'))
+            hookDirs.add(posix.dirname(target) as AbsolutePath)
+        })
       } else if (['include', 'includeif'].includes(entry.section) && entry.key === 'path') {
         // oxlint-disable-next-line no-await-in-loop -- bounded include traversal in config order
         await attempt(() =>
@@ -279,6 +283,11 @@ function stripLineEndings(text: string): string {
 /** Keep `..` for realpath: folding it before following a link can select a different directory. */
 function relativeTo(base: string, path: string): string {
   return posix.isAbsolute(path) ? path : `${base}/${path}`
+}
+
+/** Only the empty null device is exempt; /dev/shm entries and replaceable aliases stay protected. */
+function deviceLocation(path: string, real: string): boolean {
+  return posix.normalize(path) === '/dev/null' && real === '/dev/null'
 }
 
 /** Git's quoted values, comments and continuations; never evaluate conditions or shell text. */

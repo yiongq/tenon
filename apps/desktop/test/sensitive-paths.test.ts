@@ -688,7 +688,7 @@ async function hookRepository(config: string, global = false) {
   await writeFile(join(global ? home : workspace, global ? '.gitconfig' : '.git/config'), config)
 }
 
-it.each(['', 'disabled-hooks', '/dev/null'])(
+it.each(['', '/dev/null'])(
   'auto-tier-hardening 验收 11: disabled hooksPath %s does not mark ordinary writes',
   async (value) => {
     await writeFile(join(workspace, 'disabled-hooks'), 'not a directory')
@@ -700,6 +700,97 @@ it.each(['', 'disabled-hooks', '/dev/null'])(
     })
   },
 )
+
+it('auto-tier-hardening 验收 9: replaceable hooksPath retains 5d2275a protection', async () => {
+  await writeFile(join(workspace, 'hooks-file'), 'ordinary file')
+  await hookRepository('[core]\n hooksPath = hooks-file\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  expect(current.sensitive?.hookDirs).toContain(join(workspace, 'hooks-file'))
+  for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop -- retain protection before any file-to-directory replacement
+      await locatePath(fs, p(join(workspace, 'hooks-file/pre-commit')), current, tool),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  }
+})
+
+it('auto-tier-hardening 验收 9: device include acts as empty configuration', async () => {
+  await hookRepository('[include]\n path = /dev/null\n[core]\n hooksPath = my-hooks\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false, diagnostic: null })
+  expect(current.sensitive?.hookDirs).toContain(join(workspace, 'my-hooks'))
+})
+
+it('auto-tier-hardening 验收 12: include targets and their aliases ask for every write tool', async () => {
+  await hookRepository('[include]\n path = ../shared.gitconfig\n path = ../linked.gitconfig\n')
+  const shared = p(join(workspace, 'shared.gitconfig'))
+  const alias = p(join(workspace, 'linked.gitconfig'))
+  await writeFile(shared, '[core]\n')
+  await symlink('shared.gitconfig', alias)
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  for (const path of [shared, alias]) {
+    for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- deleting the alias must protect its entry too
+      const located = await locatePath(fs, path, current, tool)
+      expect(located).toMatchObject({ place: 'outside', sensitive: 'auto-run' })
+      const permission = decide({
+        call: {
+          tool: { name: tool, originalName: tool, serverId: 'builtin', source: 'builtin' },
+          args: { file_path: path },
+          reversibility: 'unknown',
+        },
+        callReason: { reason: 'sensitive-path', facts: { path, category: 'auto-run' } },
+        inspectors: [],
+        layers: {
+          policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+          place: located.place,
+          ...(located.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+          reversibility: { value: 'unknown', source: 'host' },
+          requiresUserInteraction: false,
+          sessionGrant: null,
+          approvalMode: 'auto',
+          userSetting: 'always-allow',
+        },
+      })
+      expect(permission.record.verdict).toBe('ask')
+      expect(permission.confirm).toMatchObject({
+        reason: 'sensitive-path',
+        facts: { category: 'auto-run' },
+      })
+    }
+    for (const tool of ['Read', 'Glob', 'Grep'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- automatic execution classification is write-only
+      expect(await locatePath(fs, path, current, tool)).toMatchObject({ place: 'workspace' })
+    }
+  }
+})
+
+it('auto-tier-hardening 验收 15: include stays sensitive after another hooksPath fails', async () => {
+  await symlink('cycle', join(workspace, 'cycle'))
+  await hookRepository('[core]\n hooksPath = cycle/x\n[include]\n path = ../shared.gitconfig\n')
+  const shared = p(join(workspace, 'shared.gitconfig'))
+  await writeFile(shared, '[core]\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: true })
+  expect(await locatePath(fs, shared, current, 'Write')).toMatchObject({
+    place: 'outside',
+    sensitive: 'auto-run',
+  })
+})
+
+it('auto-tier-hardening 验收 12: direct writes to an included alias target stay sensitive', async () => {
+  await hookRepository('[include]\n path = ../linked.gitconfig\n')
+  const target = p(join(workspace, 'config-source'))
+  await writeFile(target, '[core]\n')
+  await symlink('config-source', join(workspace, 'linked.gitconfig'))
+  const current = await scope()
+  expect(await locatePath(fs, target, current, 'Write')).toMatchObject({
+    place: 'outside',
+    sensitive: 'auto-run',
+  })
+})
 
 it.each(['core', 'include', 'includeIf'])(
   'auto-tier-hardening 验收 9: section %s accepts a key on the same line',

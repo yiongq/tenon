@@ -1305,6 +1305,54 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     CASE_MS,
   )
 
+  it(
+    'auto-tier-hardening 验收 12: a hooks file cannot become a directory before host commit',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'commondir')
+      const hooks = join(ws, 'hooks-file')
+      const marker = join(ws, 'hook-ran')
+      const control = join(ws, 'ok.txt')
+      fixture.git(ws, 'config', 'core.hooksPath', 'hooks-file')
+      writeHostFile(hooks, 'ordinary file\n')
+      const hook = `#!/bin/sh\nprintf ran > ${shq(marker)}\n`
+      const replace =
+        `rm ${shq(hooks)} && mkdir ${shq(hooks)} && ` +
+        `printf %s ${shq(hook)} > ${shq(join(hooks, 'pre-commit'))} && ` +
+        `chmod 700 ${shq(join(hooks, 'pre-commit'))}`
+      const ran = await lab.run(
+        `if (${replace}) 2>/dev/null; then echo unexpected; exit 1; fi; ` +
+          `printf ordinary > ${shq(control)}`,
+        { workspace: [ws], env: fixture.env },
+      )
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      expect(readFileSync(hooks, 'utf8')).toBe('ordinary file\n')
+      const commit = (message: string) =>
+        fixture.git(
+          ws,
+          '-c',
+          'user.name=Tenon',
+          '-c',
+          'user.email=tenon@example.test',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          message,
+        )
+      commit('after-sandbox')
+      expect(hostKind(marker)).toBe('missing')
+      // Host control: the same configured location executes a hook once it really is a directory.
+      rmSync(hooks)
+      makeDir(hooks)
+      writeHostFile(join(hooks, 'pre-commit'), hook, 0o700)
+      commit('host-control')
+      expect(readFileSync(marker, 'utf8')).toBe('ran')
+    },
+    CASE_MS,
+  )
+
   it.skipIf(!DARWIN)(
     'auto-tier-hardening 验收 12: disabling hooks with dev null preserves shell redirection',
     async () => {
