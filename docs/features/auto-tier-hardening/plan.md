@@ -1,8 +1,8 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：草稿写在仓库外 `../tenon-notes/2026-11-08-auto-tier-hardening/draft/`，未入库；owner 已定 D1–D7（picks.md），开放问题清空；已过五轮 Codex 复核（r1–r5，原文在笔记目录），第六轮按 r5 改了回退的指针型处理与本页交接，没有未决项。
-需要你：把 spec 改 ready（回一句点名「auto-tier-hardening」或「开自动档前的加固」的批准话）。不改任何门禁文件（`.sdd/`、`.github/workflows/`、lefthook.yml）：每个缺口都有能被 `test` 门禁执行的断言型复现（见「测试分层」），不需要门禁改动。
+当前：spec 已入库（PR #82），2026-11-08 owner「开自动档前的加固改 ready」，Status 改 ready。下一步：A 段（沙箱 .git 转向文件保护）交 Codex 实现，lead 审；第 0 步之前的准备照「开工前读」。
+需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
 
 ## 开工前读
 - 本 spec 与 decisions.md、evidence.md。
