@@ -728,3 +728,16 @@ C 段原 Open 核对：验收 8 的冻结表四格跟进、内部错误的路径
 - 新上下文子 agent 在独立临时快照只读对照 D-review.md 五条建议和本轮差异，逐条确认已落实，结论通过、无剩余发现；绑定 review.diff SHA-256 `415ae84bb71ff0d2250243d01d3b0660659f156525ea6b0332beceb98c20b37a`，这是本轮未提交文档修订的复核，与 lead 审过 03bd512 的正式基线评审分别记录。overview 不需改：没有变更接口类型、模块边界或数据流。
 - `python3 .sdd/spec-check.py --index` 后 `python3 .sdd/spec-check.py` 退出 0，拦 0 条、警 11 条；警告为既有索引关系、notes、缺少 CI 报告及已解释的 overview 提醒。`git diff --check` 通过。
 - 脚本核对差异仅五个预期 Markdown 文件，log 相对 03bd512 只追加；02–05 冻结正文、Status 与 Approved 均未改，五行本日期修订均有 PR 出处，无未跟踪探针。plan 当前与交接已更新，M1–M11 的实际重跑仍交 lead 在改 implemented 前完成；本轮未提交。
+
+## 评审 · 2026-11-09 · 审过 ad02f3a
+
+方式：D 段只改文档（SECURITY.md、spec 修订记录与澄清、plan、总参考、入口页），由 Codex（gpt-6.1-sol）照 plan 写成；新上下文评审由 Claude 做，核对三件事：SECURITY.md 是否照 spec 原文、spec 正文改动是否只收紧或澄清且都记了修订记录、plan 是否越界。第一轮对准 03bd512 通过、留 5 条建议；Codex 照改为 ad02f3a，复核通过。评审原文在私有笔记 `impl-reviews/D-review.md`、`D-review-r2.md`。
+
+发现：
+- [建议] 第一轮的 5 条文档建议中的 4 条（原文 D-review.md） · 已修 ad02f3a
+- [建议] 第一轮建议 5 只修了一部分（原文 D-review-r2.md） · 不修：记 plan Open，后续文档修订时补齐
+- [建议] 复核新提的 2 条小建议（原文 D-review-r2.md） · 不修：记 plan Open，后续文档修订时处理
+
+结论：通过
+
+突变：本段只改文档，没有可做突变的生产代码；spec-check 本地 0 拦截。
