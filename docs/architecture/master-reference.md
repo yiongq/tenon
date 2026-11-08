@@ -1158,4 +1158,4 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 文件属主不同的工作区（05 P2）：用例「05 验收 5: safe.directory permits a workspace owned by a different uid (requires root)」要 root，CI 里跳过，2026-10-24 在两台 Lima 上以 root 跑过 · lead · 改 git 调用方式时再以 root 跑一次 · 05 plan Open
 - 05 矩阵的门禁列用了 `test:e2e`、`test:macos`，它们只在 `.sdd/config.json` 的 `test_reports` 里、不在 `gates` 里（要不要登记是门禁文件的改动） · owner · 待定，不挡 · 05 plan Open
 - 收起行的状态词（运行中、待批、出错、被拒、被拦）要不要统一一套 · lead · 06 碰同一行时定 · 05 plan Open
-- 两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出（观察） · lead · CI 上再红时先从 G1-leaf（大小写改名）和 S4 查 · 05 第三段第六轮复核
+- 两个 worker 都满载时见过几条与改动无关的偶发红（G1-leaf、S4、RC-3、MCP 两条、RC-8、RC-1），单独复跑不红、没留原始输出（观察）；另在 PR #84 的 CI `ci` 作业见过 05 验收 45「concurrent captures and age cleanup keep live parentless trees sound」一次 `ENOTEMPTY rmdir`，本地连跑 5 次全过，尚未定因（观察，auto-tier-hardening plan 的 D 段跟进） · lead · CI 上再红时先从 G1-leaf（大小写改名）和 S4 查，并留该清理用例的原始输出 · 05 第三段第六轮复核；PR #84

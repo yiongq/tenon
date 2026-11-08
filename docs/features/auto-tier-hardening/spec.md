@@ -54,7 +54,7 @@ export interface GitDiscoveryPorts {
   readonly realpath: (p: string) => Promise<string | null>
 }
 export interface GitProtection {
-  readonly redirectExisting: readonly AbsolutePath[] // 发现时已存在的转向文件、指针目标的 config/hooks、子模块/worktree 的 config、config.worktree、commondir、hooks
+  readonly redirectExisting: readonly AbsolutePath[] // 发现时已存在的转向文件、指针目标的 config/hooks、子模块/worktree 的 config、config.worktree、commondir、hooks，以及已存在的 include 配置来源
   readonly redirectAbsent: readonly AbsolutePath[]   // 尚不存在、仅 macOS 也拒写的写法（Linux 不用，规矩 3）
   readonly hookDirs: readonly AbsolutePath[]          // core.hooksPath 解出的目录；husky 的 `.husky/_` 另带父目录 `.husky/`
   readonly hookNames: readonly string[]               // 无条件算的钩子名
@@ -66,7 +66,7 @@ export function discoverGitProtection(
   ports: GitDiscoveryPorts,
 ): Promise<GitProtection>
 
-// apps/desktop/src/main/host/sandbox-config.ts —— WorkspaceRoot 只增可选 git?: GitProtection；SandboxHostPaths 只增 xdgConfigHome
+// apps/desktop/src/main/host/sandbox-config.ts —— WorkspaceRoot 只增可选 git?: GitProtection；SandboxHostPaths 只增必填 xdgConfigHome: string | null（从 startupEnv 的 XDG_CONFIG_HOME 取，未设为 null）
 // apps/desktop/src/main/host/sandbox.ts —— SandboxFs 只增 readdir、readText（供 DesktopSandbox.wrap 拼 GitDiscoveryPorts）
 // packages/kernel/src/permission/workspace.ts —— PathScope.sensitive 只增 hookDirs?: readonly AbsolutePath[]；autoRunNames 只增钩子名
 ```
@@ -83,7 +83,7 @@ export function discoverGitProtection(
 3. Linux 上，规矩 1 的 **git 转向条目**只对「wrap 时已存在」的生效（给不存在的转向叶子加 deny 会让 srt 用 `--ro-bind /dev/null` 占位、破坏正常 git，E2、P2）：绝不给普通仓库里不存在的 commondir、config.worktree、子目录 `.git` 加 deny。这几样在 Linux 上拦不住，是已知限制（D5）。这条例外只限 git 转向条目，不适用于钩子位置（规矩 7）。「已存在」按逐级解开链接后的实际目标判（与 srt 解析后再决定绑定还是占位一致），悬空链接按不存在算。
 4. 外带 inspector 的出口工具是 builtin 的 WebFetch，或任一连接器调用（`call.tool.source === 'mcp'`；设其来源 S，WebFetch 记 'builtin'）。当会话里存在不可信内容（任一来源，含 S），且存在来源 ≠ S 的私密数据，且（WebFetch 时）URL 不在豁免里，就出「问人」意见（`category: 'exfiltration'`）；任何审批档、会话授权、「总是允许」都免不掉，放行只管这一次（D6=出口含读类连接器）。
 5. 连接器调用的结果按来源 `mcp:<serverId>` 既算不可信内容、也算私密数据，对话与任务两种形态都算（D7）。本地私密读仍只在任务形态记 'local'。来源判定不扫内容，按 §对 02 的增补「来源怎么取」；取不到来源时从严，按连接器算（不可信 + 私密 + 出口）。
-6. 文件工具（Write、Edit、Delete）写以下位置时判 `sensitive: 'auto-run'`、每次问、只放行这一次、卡上写「这个位置的文件会被自动执行」：某个工作区 git 仓库 `core.hooksPath` 解出的目录；工作区任意深度的 `.husky/`、lefthook 配置与脚本目录（`lefthook.yml`、`.lefthook.yml`、`lefthook.yaml`、`.lefthook.yaml`、`lefthook.toml`、`lefthook.json`、`lefthook-local.*` 同族、`.lefthook/`、`.lefthook-local/`）、`.pre-commit-config.yaml`。读与查找不因此出卡。
+6. 文件工具（Write、Edit、Delete）写以下位置时判 `sensitive: 'auto-run'`、每次问、只放行这一次、卡上写「这个位置的文件会被自动执行」：某个工作区 git 仓库 `core.hooksPath` 解出的目录；工作区任意深度的 `.husky/`、lefthook 配置与脚本目录（`lefthook.yml`、`.lefthook.yml`、`lefthook.yaml`、`.lefthook.yaml`、`lefthook.toml`、`lefthook.json`，及逐个把 `lefthook` 换成 `lefthook-local` 的六个本地配置名、`.lefthook/`、`.lefthook-local/`）、`.pre-commit-config.yaml`；发现时已存在的 include 配置来源（§对 05 的增补「配置来源」）。读与查找不因此出卡。
 7. 沙箱里的命令写钩子位置被拒，已存在与尚不存在的都拦（owner 卡 3）。沙箱兑现的范围：两平台都拦每个工作区根下的钩子名单（规矩 6 的名字）与解析出的 `hookDirs`（精确路径）；macOS 另用 glob 拦子目录里的同名位置。Linux 上 srt 丢弃通配写规则（E7），子目录里同名的钩子位置拦不住，记已知限制（与 D5 同属「Linux 做不到」一类）。Linux 上根下尚不存在的钩子位置由 srt 用空占位挡住（P4）。文件工具一侧照规矩 6 任意深度匹配，不受此限。
 8. 规矩 4–7 的改动都不放宽任何已有放行：给 `decide()` 的输入多一条「问人」意见，判决只会从放行变问、从问变拒，不会变宽（02 §Inspector 接口与合议）。
 
@@ -120,6 +120,8 @@ export function discoverGitProtection(
 - **从严补拒写**：`fallbackDeny`（发现不完整时）。
 - **平台取舍**（E1、E2、P1、P2）：macOS 用 Seatbelt 按解析后路径比，既拦已存在也拦尚不存在，并照 04 原有做法对子目录同名项加 glob；子目录新冒出的 `.git` 用 `<根>/*/**/.git`（至少隔一层，避开 `<根>/**/.git` 连根下 `.git` 一起拦，E1）。Linux 上转向文件组只拦已存在的条目（规矩 3）；钩子位置组两平台都拦每个根下的 `hookNames` 与精确的 `hookDirs`，不论在不在（规矩 7），尚不存在的由 srt 的空占位挡住（P4）；macOS 另对 `hookNames` 加子目录 glob，Linux 不收 glob（E7）；`fallbackDeny` 的条目本来都已存在。
 
+**链接写法细化**：04 §档位到 srt 配置「链接」里，含 `..` 的条目改交解开 `..` 之前链接后的拼法；适用于 denyRead 与 denyWrite 的全部条目，实际目标及途经链接的保护仍照原规则。
+
 **调用链**：`DesktopSandbox.wrap` 每次包装前，对每个是会话文件夹的根先 `await discoverGitProtection(...)`（端口由 `SandboxFs` 拼出），把结果放进 `WorkspaceRoot.git`，再交给同步的 `wrapFilesystem` 拼配置。每次 wrap 现算，不复用文件工具一侧的结果或缓存。
 
 §已知限制 增补（按平台分，区分实测与推断）：
@@ -142,6 +144,9 @@ Linux 上「在子目录新建 `.git`、在普通仓库新建 commondir/config.w
 
 - **发现**：`discoverGitProtection`（`git-protection.ts`）只读文件、不起 git 子进程，所以本机有没有 git 都一样。
   它读工作区的 `.git/config`、指针目标与公共目录的 config、用户全局 git 配置（`$XDG_CONFIG_HOME/git/config` 或 `~/.config/git/config`、`~/.gitconfig`）取 `core.hooksPath`（相对 worktree 解析；husky 的 `.husky/_` 另带父目录 `.husky/`，E3），`include.path` 与 `includeIf.*.path` 一律跟进（不判条件、取并集，深度与文件数有上限）；枚举已存在的子模块/worktree git 目录与转向文件；解析 `.git` 指针的 `gitdir:` 与 commondir（解出的目标不按工作区根过滤，规矩 1）。每个条目「在不在」都按逐级解开链接后的实际目标判，不以链接本身 `lstat` 成功为准，悬空链接算不存在。`.husky/`、lefthook 一族与脚本目录、`.pre-commit-config.yaml` 按名字无条件进 `hookNames`。
+- **配置来源**：发现时已经解析出且存在的 include 目标并入 `redirectExisting`，沙箱拒写；在读正文与真实路径去重之前登记每一种拼法，读取失败或同一目标经另一链接引入也不丢弃。缺失 include 不加入 `redirectAbsent`，Linux 上不为它新增占位。文件工具把已发现的 `redirectExisting` 来源按 `auto-run` 并入敏感表，同时登记末级链接不解开的拼法（供 Delete）与实际目标（供 Write、Edit），发现不完整也保留；不覆盖已有的凭据类别。
+- **hooksPath 取值**：空值不生成钩子目录；只有写法规范化后与真实位置都为 `/dev/null` 时，才不登记该设备本身。普通文件、FIFO（命名管道）、socket（套接字）、缺失目标，以及可替换的 `/dev/null` 链接别名都仍保护，防止它们被换成钩子目录。include 精确指向 `/dev/null` 时视为空配置，不读、不拒写、不触发不完整；不扩大到整个 `/dev/`。一条 hooksPath 解不开只记不完整，继续解析后续 hooksPath 与 include。
+- **配置读法**：配置节头后的同一行键值照常解析；`config.worktree` 中的 hooksPath 也独立解析。XDG 配置根取启动时环境，不随之后进程环境变化。
 - **根下没有 `.git`**：转向文件组为空；`hookNames` 照加；全局配置里的 `core.hooksPath` 照解析（相对路径按根解）。
 - **不完整时**（偏严）：任一应读的配置读不出或超长、include 超上限、指针解析不了、目录枚举失败或超预算，置 `incomplete`、记日志，并把该根的 git 元数据整个放进 `fallbackDeny`，不按失败的那一级细分：
   ① 目录型 `.git`：解开链接后实际存在的整个 `.git`。② 指针型 `.git`，`gitdir:`（及其中的 commondir）解析成功：指针文件本身，加解析出的实际 gitdir 目录与 commondir 目录，照平台存在性规则处理（都是已存在的目录，Linux 上是只读绑定、不产生占位）。③ 指针型 `.git`，连指针都解析不出：只拒写指针文件本身，记诊断与已知限制。
@@ -183,3 +188,7 @@ Linux 上「在子目录新建 `.git`、在普通仓库新建 commondir/config.w
 - 2026-11-08 · 按第三轮 Codex 复核（review-codex-r3.md）修订：指针目标不再按工作区根过滤（规矩 1、E6）；Linux「只拦已存在」只限 git 转向条目，钩子位置照卡 3 无条件拦，代价按 P4 实测写进已知限制（规矩 3、7、§对 04、验收 12）；正常 git 保证加「发现完整」前提，新增回退验收 15；「已存在」按解开链接后的实际目标判。
 - 2026-11-08 · 按第四轮 Codex 复核（review-codex-r4.md）修订：回退统一为「该根整个 `.git` 拒写」（规矩 2、§对 05、验收 15）；写清沙箱对钩子名的兑现范围，Linux 子目录同名位置拦不住记已知限制（规矩 7、§对 04、§给 06 的约束、验收 12、E7）；占位清理时机加并发与崩溃条件；验收 1 的跨根与默认可写目录夹具改用普通目录。
 - 2026-11-08 · 按第五轮 Codex 复核（review-codex-r5.md）修订：回退里「整个 `.git`」按仓库形态分三种——目录型整个 `.git`；指针型且指针解析得出，拒写指针文件加实际 gitdir 与 commondir；指针解析不出，只拒写指针本身、提交失败不作保证并写进已知限制（§接口、规矩 2、§对 04、§对 05、验收 15）。
+- 2026-11-09 · 按 owner 2026-11-08「也拦 (Recommended)」（picks.md §C 段安全评审建议 3）与 C 段复核，补明已存在的 include 配置来源在沙箱拒写、文件工具每次问；保留各链接拼法与实际目标、部分发现结果及已有凭据类别，缺失 include 不新增占位（规矩 6、§接口、§对 05 的增补；只收紧与澄清）。
+- 2026-11-09 · 对齐 C 段固定钩子名单：逐项写清六个 lefthook 本地配置名与 `.lefthook/`、`.lefthook-local/` 脚本目录（规矩 6；实现细化，依据 evidence.md E3）。
+- 2026-11-09 · 按 C-security.md、C-security-r2.md 的最终修法澄清 hooksPath 空值、普通文件/FIFO/socket/缺失目标、精确 `/dev/null` 与可替换别名；include `/dev/null` 视为空配置，单个坏 hooksPath 不阻断后续条目；补同一行键值、config.worktree 与启动 XDG 配置读法（§对 05 的增补、§接口）。
+- 2026-11-09 · 按 A 段安全复核补明含 `..` 的拒绝条目先解开其前面的链接，再把所得拼法交给 srt；适用于 denyRead 与 denyWrite 的全部条目，未放宽实际目标或途经链接的保护（§对 04 的增补「链接写法细化」）。

@@ -485,3 +485,219 @@ Tests 107 passed
 结论：通过
 
 突变：第一轮新做 28 个、重放 A/B 段 7 个，存活 8 个（实质 4 个，0729ebb 补测试后全杀）；第一次复核 15 个、存活 2 个（fa89884 补后杀 1 个，另 1 个偏严、spec 未定）；第二次复核 13 个、存活 3 个，记入 plan Open。保护范围对照（同一批夹具在 5d2275a 与 fa89884 的生产代码上各跑一遍）：除三处有意的豁免外不小于 5d2275a。
+
+
+## 2026-11-09 · D 段文档同步与收口
+
+范围：接自 dev `6661dfb`，按 brief-hardD 只改文档，不提交、不改 Status 或门禁。02/03/04/05 的 Changed by 与总参考接手三行已在步骤 1 合入，本次逐条核对，冻结正文未改。SECURITY.md 同步本 spec §对 04 的增补「已知限制」、§给 06 的约束与 §对 05 的增补，移除把受保护钩子和已发现指针配置描述为未保护的旧说法。
+
+spec 正文与修订记录按 plan Open 分项记清：owner「也拦」的已存在 include 来源（沙箱与文件工具）、lefthook 本地配置和脚本目录、hooksPath 最终取值与设备边界、含 `..` 的拒绝路径拼法。修订只澄清或收紧已实现规则，不修改冻结的旧 spec 正文。05 验收 45 的 CI 清理偶发红并入总参考 §以后再说，保留“观察、未定因”，未把它写成已修复。
+
+C 段原 Open 核对：验收 8 的冻结表四格跟进、内部错误的路径与原因、模块/末级链接及目录型 .git 回退、startupEnv 的 XDG_CONFIG_HOME 接线，均已在 C 段实现与正式评审记录中有对应证据，故移出待办。C 段第二次复核遗留的一条链接删除建议、三个存活突变及 root 下 chmod 用例保留为后续事项；本段不改代码、不新增测试。
+
+### 验收逐条核对
+
+测试的完整标题与路径见 plan §验收矩阵；下表核对要求、断言和既有平台证据。新工作区仅重跑不进 OS 沙箱的相关套件，真实平台结论引用 A/C 段正式评审，未把本次跳过当通过。
+
+| 验收 | 核对的断言与证据 |
+|---|---|
+| 1 | 已有指针、实际目标与子模块 config/hooks 拒写；跨根、srt 默认可写目录均有配置测试；A 段正式评审记录 macOS/Linux 黑盒通过及 fsmonitor 对照。 |
+| 2 | macOS 不存在的 commondir/config.worktree 与子目录 .git 进入拒写，黑盒检查目标不变及 fsmonitor 未执行；A 段正式评审通过。 |
+| 3 | 完整发现不触发回退，平台配置对照保留正常根 git 与子模块提交、Linux 无转向占位；A 段两平台黑盒通过。 |
+| 4 | Linux 配置不收缺失转向条目或子目录 git glob，黑盒明确断言两类新建成功；这是限制的表征，A 段 Linux 已跑。 |
+| 5 | 任务/对话两条回环：总是允许的跨源调用先暂停，答复前不外发、批准后仅本次派发、后次再问；B 段正式评审通过。 |
+| 6 | 任务/对话未读连接器时直接派发无审批；B 段正式评审确认旧实现也绿，正常对照成立。 |
+| 7 | 同源私密来源集合不含别处时不出外带卡；单元断言及 B 段恒真突变证据对应。 |
+| 8 | 两形态冻结表来源去重、关联失败 unresolved、连接器不跌入内置分类；C 段补同键首条/缺引用表/组合键四格回归。 |
+| 9 | 仓库与全局 hooksPath 写入判 auto-run，决策仍 ask/once，原因显示自动执行；含 include、XDG、设备和部分发现的边界测试。 |
+| 10 | 任意深度固定钩子名，Write/Edit/Delete 每次问、读查找正常；固定 .husky 的突变已由 C 段杀死。 |
+| 11 | my-hooks 未配置为 workspace，配置后 auto-run；空值与精确 /dev/null 不把普通文件误判敏感，core 子节不误认。 |
+| 12 | 配置测试覆盖根名字、精确目录、macOS 子目录 glob；已有/新建黑盒含普通写成功对照，Linux afterExit 后无占位；C 段正式评审记录 macOS 120/Linux 49 条全套通过。 |
+| 13 | 仅目标连接器的不可信来源加 local 私密仍出卡；同源只读连接器回环及连接器原名 WebFetch 的 URL 对照防止注解或名字放宽。 |
+| 14 | 子读交接父、父读传子、父子同读三条回环核对来源并集去重与单次卡；已有跨会话外带两条保留。 |
+| 15 | 目录型/指针型故障注入核对整个 .git 或指针+gitdir+commondir 回退、日志路径与原因；宿主成功、仅注入期间沙箱提交失败、关掉注入恢复、Linux 无新增占位；A 段两平台正式评审有证。 |
+
+### 突变登记说明
+
+下面把 A/B/C 段已有突变的行为与本次静态核对的边界规范化为机器可重放片段，补齐 plan 的编号。原文均与当前实现逐字核对、只出现一次，门禁只登记 `test`；不登记只在真沙箱或 macOS 能观察的突变。本次 D 段没有修改生产代码或执行新突变；各块的“依据”区分已有失败证据与待机器重跑的静态登记，不把候选片段冒充本轮实跑结果。
+
+### 突变 M1 · auto-tier-hardening 验收 1 · 门禁 test
+
+依据：撤掉已有指针本身的拒写；A 段实现「检查证据」记录验收 1 复现断言失败。
+
+文件：apps/desktop/src/main/host/sandbox-config.ts
+原文：
+```
+          ...root.git.redirectExisting,
+```
+改成：
+```
+          ...root.git.redirectExisting.filter((path) => !path.endsWith('/.git')),
+```
+
+### 突变 M2 · auto-tier-hardening 验收 2 · 门禁 test
+
+依据：撤掉 macOS 尚不存在的转向条目；验收 2 复现核对 commondir/config.worktree 拒写。
+
+文件：apps/desktop/src/main/host/sandbox-config.ts
+原文：
+```
+        if (darwin) writeDenied.push(...root.git.redirectAbsent)
+```
+改成：
+```
+
+```
+
+### 突变 M3 · auto-tier-hardening 验收 3 · 门禁 test
+
+依据：把 macOS 的缺失条目错误地传给 Linux；验收 3 的平台分支对照核对 Linux 不收缺失转向文件。
+
+文件：apps/desktop/src/main/host/sandbox-config.ts
+原文：
+```
+        if (darwin) writeDenied.push(...root.git.redirectAbsent)
+```
+改成：
+```
+        writeDenied.push(...root.git.redirectAbsent)
+```
+
+### 突变 M4 · auto-tier-hardening 验收 7 · 门禁 test
+
+依据：跨源私密条件恒真；B 段「旧红新绿与突变证据」记录验收 7 断言失败。
+
+文件：packages/kernel/src/permission/exfiltration.ts
+原文：
+```
+    view.privateSources.some((privateSource) => privateSource !== source) &&
+```
+改成：
+```
+    true &&
+```
+
+### 突变 M5 · auto-tier-hardening 验收 5、13 · 门禁 test
+
+依据：跨源私密条件恒假；B 段「旧红新绿与突变证据」记录验收 13 断言失败，验收 5 同样要求跨源出卡。
+
+文件：packages/kernel/src/permission/exfiltration.ts
+原文：
+```
+    view.privateSources.some((privateSource) => privateSource !== source) &&
+```
+改成：
+```
+    false &&
+```
+
+### 突变 M6 · auto-tier-hardening 验收 8 · 门禁 test
+
+依据：来源关联不上时丢弃污点；B 段「旧红新绿与突变证据」记录同类从严判定突变使验收 8 的七个分支失败。
+
+文件：packages/kernel/src/permission/session-view.ts
+原文：
+```
+    if (origin === null || origin.source === 'mcp') {
+```
+改成：
+```
+    if (origin === null) continue
+    if (origin.source === 'mcp') {
+```
+
+### 突变 M7 · auto-tier-hardening 验收 14 · 门禁 test
+
+依据：漏合并父子私密来源；B 段「旧红新绿与突变证据」记录验收 14 断言失败。
+
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+  const privateSources = [...new Set([...ownView.privateSources, ...related.privateSources])]
+```
+改成：
+```
+  const privateSources = [...ownView.privateSources]
+```
+
+### 突变 M8 · auto-tier-hardening 验收 9 · 门禁 test
+
+依据：撤掉文件工具的自定义钩子目录匹配；C 段「旧红新绿与突变证据」记录验收 9 两条失败。
+
+文件：packages/kernel/src/permission/workspace.ts
+原文：
+```
+  if (paths.some((path) => list.hookDirs?.some((dir) => within(path, dir)))) return 'auto-run'
+```
+改成：
+```
+  if (false) return 'auto-run'
+```
+
+### 突变 M9 · auto-tier-hardening 验收 10 · 门禁 test
+
+依据：从固定名单去掉 .husky；C 段「旧红新绿与突变证据」记录验收 10 失败。
+
+文件：apps/desktop/src/main/host/git-protection.ts
+原文：
+```
+  '.husky',
+```
+改成：
+```
+
+```
+
+### 突变 M10 · auto-tier-hardening 验收 12 · 门禁 test
+
+依据：撤掉沙箱精确钩子目录的拒写；C 段「旧红新绿与突变证据」记录撤掉钩子消费时验收 12 复现失败。
+
+文件：apps/desktop/src/main/host/sandbox-config.ts
+原文：
+```
+          ...root.git.hookDirs,
+```
+改成：
+```
+
+```
+
+### 突变 M11 · auto-tier-hardening 验收 15 · 门禁 test
+
+依据：撤掉不完整发现的从严拒写；验收 15 的目录型与指针型配置测试核对回退范围。
+
+文件：apps/desktop/src/main/host/sandbox-config.ts
+原文：
+```
+          ...root.git.fallbackDeny,
+```
+改成：
+```
+
+```
+
+### D 段检查
+
+- 新工作区先运行 `pnpm install --frozen-lockfile`：无 TTY 首次退出，设置 CI=true 后依赖安装完成，但 prepare 的 lefthook install 替换主仓库 `.git/hooks/pre-commit` 被沙箱拒绝，退出 1；没有跳过或改动 hooks。随后单独 `pnpm build` 成功，之后才运行 typecheck。所有 pnpm 命令设置 `NPM_CONFIG_USERCONFIG=/dev/null`。
+- `pnpm format:check`、`pnpm lint`、`pnpm typecheck` 全部退出 0。
+- `TENON_SANDBOX_TESTS=skip pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/config.test.ts apps/desktop/test/sandbox/desktop-sandbox.test.ts apps/desktop/test/sandbox/desktop-sandbox-fs.test.ts apps/desktop/test/sensitive-paths.test.ts packages/kernel/test/permission/session-view.test.ts packages/kernel/test/permission/exfiltration.test.ts packages/kernel/test/loop/mcp-exfiltration.test.ts packages/kernel/test/loop/subagent-security.test.ts`：8 个文件、287 条通过，0 失败。没有启动 Electron、真实沙箱、VM 或模型调用。
+- `python3 .sdd/spec-check.py --index` 已执行；首轮 `python3 .sdd/spec-check.py` 拦 0。自身新增的 SECURITY.md 长行警告已拆行，最终结果在收尾时补记。
+- overview 不需同步：接口处只补齐已实现的字段说明与来源注释，未改变模块边界、契约类型、数据流或技术栈；02/03/04/05 冻结正文保持原样。
+
+## 2026-11-09 · D 段独立文档复核
+
+方式：按 AGENTS.md 核心第 8 条，在新上下文子 agent 的独立临时快照中只读审查，不与原工作区并行开发。对照 brief、spec、plan、既有实施日志、源码与测试，覆盖文档要求、安全边界与验收/突变映射。未提交，故绑定文档差异 SHA-256 `1cee4602bea12f0c17d2f205c712d03c102d38b30a716034ee89b2554688e79a`，不冒充某个实现提交的正式评审。
+
+发现与处置：
+- SECURITY 的“文件工具每次写都问”可能被读成包括尚未识别的 hooksPath 链接拼法；已明确为 recognized hook locations，保留 plan Open 的末级链接 Delete 建议。新上下文在更新后的同一快照中实际复核通过。
+- 矩阵旧说明按“用例名标黑盒”区分运行层，与实际标题不符；已改为 escape.test.ts 的真沙箱用例，并经同一上下文只读复核。
+
+核对结论：安全文档覆盖 §对 04 的增补六条限制、§给 06 的约束与 §对 05 的限制，保留平台差异和未实测范围；四行修订覆盖原 Open 全部 D 段事项；矩阵标题均在测试中存在，突变原文各唯一匹配、替换静态对应所称验收；冻结的 02–05 没有差异；总参考保留偶发红的观察性质。overview 无需同步：只有已实现字段与配置来源的说明细化，未改变模块边界、接口类型、数据流或技术栈。
+
+结论：通过，无剩余阻塞。
+
+突变：D 段只登记 11 个可重放片段，未执行新突变、未改生产代码；既有失败证据与静态登记已分别注明。C 段遗留三个存活突变及一条链接删除建议继续留在 plan Open，未宣称解决。
+
+收尾：步骤 5–8 已勾，步骤 9 留 owner；当前与交接已重写。依 brief 不提交，不改 ready 状态。最终入口页、format 与 spec-check 结果见下方补记。
+
+最终补记：最终 plan 更新后已重新执行 `python3 .sdd/spec-check.py --index`；`pnpm format:check`、`git diff --check` 通过；`python3 .sdd/spec-check.py` 退出 0，拦 0 条、警 11 条（既有索引关系、其他 feature 的 notes、缺少 CI 报告及已解释的 overview 提醒）。工作区仅六个预期 Markdown 文件，无未跟踪探针，02–05 与 HEAD 逐字相同；未提交、未改门禁或 Status。
