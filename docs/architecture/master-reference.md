@@ -1114,10 +1114,10 @@ Claude Desktop 的概念 → Tenon 的实现：
 
 2026-10-23 按 owner 的选择写入，原话「以后再说按推荐 R 收」（R 是私有笔记里那份 29 条推荐清单的名字；98 条候选也在那里）。格式：什么事 · 谁做 · 什么时候做或挡着什么 · 出处。
 
-- 沙箱对仓库元数据只护了 `.git/hooks` 与 `.git/config`，其余能让之后在沙箱外运行的 git 执行代码的位置没挡 · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
+- [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：沙箱补拦 .git 转向文件（§对 04 的增补）
 - 命令的「撤不回」模式表不认覆盖写类：`git reset --hard`、`git checkout --`、`truncate`、`>` 重定向、`dd of=` 仍判「未知」；按 02 §可逆性 的定义它们本来就是「未知」，收进来要改定义，随 06 另写 spec（发布类与删除类已由 PR #65 补上） · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
 - [05-file-bridge](05-file-bridge/spec.md)：文件工具认沙箱的凭据清单与会被自动执行的位置（原「文件工具不认沙箱的凭据清单」一行）
-- 外带检查认不出连接器：连接器的结果不算不可信来源、读取不算私密数据、非只读调用不算外发出口 · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
+- [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：外带检查认连接器为来源与出口（§对 02 的增补）
 - 渲染层没有错误边界，一处异常整窗白屏，打包版里没法恢复，冷启动又回到同一个会话 · lead · 待定 · 2026-10-22 外部调研（另记）
 - [05-file-bridge](05-file-bridge/spec.md)：收起的工具行给完成但出错的调用加失败标记（原「执行失败的工具调用收起后和成功的长得一样」一行，05 D38）
 - 重试与长时间等待对用户不可见，半截回复消失后只剩「思考中…」，没有原因也没有计时 · lead · 待定 · 2026-10-22 外部调研（另记）
@@ -1144,7 +1144,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - Windows 桌面的未验证与未做（进程树、钥匙串、目录联接与盘符、cmd 包装与 Job Object、基础环境白名单与 npx / uvx 本地连接器、无 OS 级沙箱时每条命令都问；05 的快照在 Windows 上一律只留单文件副本、叶子不防换链接、主目录与卷根的认法未测） · lead · Windows 进验收的那一阶段 · 00 plan Open；03 开放问题 4；04 §非目标
 - Delete 先移进系统回收站，不只靠快照；Linux 没有桌面环境时的回收站（05 P9）一并实测 · lead · 待定，不挡；两平台实测后加 · 05 D7
 - 「撤销还原」的入口（05 已在还原前拍一张，编号在 fs/restored） · lead · 待定，不挡 · 05 D3、D34
-- 由 git 配置决定的钩子目录（如 `core.hooksPath` 指向的 `.husky/`）不在会被自动执行的名单里：auto 档位下写这里不出卡，用户下次在沙箱外 `git commit` 时会执行 · lead · 06 定自动档范围之前 · 05 第一段复核（log.md 2026-10-24）
+- [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：core.hooksPath 与常见钩子工具进自动执行名单（§对 05 的增补）
 - 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
 - spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
 - Delete 的审批卡标题是「修改这个文件？」（与 Write、Edit 共用 `file` 一类卡），工具行写的是「删除」 · lead · 下次改审批卡文案时 · 05 第 23 步验收（2026-11-06）
