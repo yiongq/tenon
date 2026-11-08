@@ -1257,3 +1257,32 @@ it.each(['darwin', 'linux'] as const)(
     expect(write).not.toContain('/repo/meta')
   },
 )
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 15: %s resolves redirect and fallback parents before passing literals',
+  (platform) => {
+    const disk = fakeDisk(['/repo/storage/deep', '/repo/storage/meta/config'], {
+      '/repo/alias': '/repo/storage/deep',
+    })
+    const git = {
+      redirectExisting: [p('/repo/alias/../meta/config')],
+      redirectAbsent: [],
+      hookDirs: [],
+      hookNames: [],
+      fallbackDeny: [p('/repo/alias/../meta')],
+      incomplete: true,
+    }
+    const result = wrapFilesystem(
+      wrapInput(platform, {
+        workspace: [{ path: p('/repo'), directory: true, gitDirectory: false, git }],
+      }),
+      disk,
+    )
+    const write = spelled(result.filesystem.denyWrite)
+    expect(write).toContain('/repo/storage/meta/config')
+    expect(write).toContain('/repo/storage/meta')
+    expect(write.includes('/repo/alias')).toBe(platform === 'darwin')
+    expect(write.some((path) => path.split('/').includes('..'))).toBe(false)
+    expect(result.links).toContain('/repo/alias')
+  },
+)

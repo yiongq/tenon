@@ -51,7 +51,7 @@ afterEach(() => {
 // A fake disk
 
 interface Node {
-  readonly kind: 'dir' | 'file' | 'link'
+  readonly kind: 'dir' | 'file' | 'link' | 'other'
   readonly uid: number
   readonly mode: number
   readonly target?: string
@@ -206,7 +206,15 @@ function statOf(node: Node): SandboxFileStat {
     isDirectory: () => node.kind === 'dir',
     isSymbolicLink: () => node.kind === 'link',
     uid: node.uid,
-    mode: node.mode | (node.kind === 'file' ? 0o100000 : node.kind === 'dir' ? 0o040000 : 0o120000),
+    mode:
+      node.mode |
+      (node.kind === 'file'
+        ? 0o100000
+        : node.kind === 'dir'
+          ? 0o040000
+          : node.kind === 'link'
+            ? 0o120000
+            : 0o010000),
   }
 }
 
@@ -1895,7 +1903,7 @@ it.each(['second-root', 'srt-default'] as const)(
   },
 )
 
-it.each(['config', 'modules'] as const)(
+it.each(['config', 'config.worktree', 'modules'] as const)(
   'auto-tier-hardening 验收 15: unreadable %s denies the entire directory git root',
   async (failure) => {
     await onBoth(async (platform) => {
@@ -1903,12 +1911,25 @@ it.each(['config', 'modules'] as const)(
       const git = `${h.at.ws}/.git`
       h.disk.dir(`${git}/modules`)
       h.disk.file(`${git}/config`, '[core]\n')
-      if (failure === 'config') vi.spyOn(h.disk, 'readText').mockRejectedValue(errno('EACCES', git))
-      else vi.spyOn(h.disk, 'readdir').mockRejectedValue(errno('EACCES', git))
+      const broken = `${git}/${failure}`
+      if (failure === 'modules') {
+        const readdir = h.disk.readdir.bind(h.disk)
+        vi.spyOn(h.disk, 'readdir').mockImplementation(async (path) => {
+          if (path === broken) throw errno('EACCES', path)
+          return readdir(path)
+        })
+      } else {
+        const readText = h.disk.readText.bind(h.disk)
+        vi.spyOn(h.disk, 'readText').mockImplementation(async (path, max) => {
+          if (path === broken) throw errno('EACCES', path)
+          return readText(path, max)
+        })
+      }
       await h.run()
       expect(gitDenyPaths(h)).toContain(git)
       expect(h.logs.join('\n')).toContain('git discovery incomplete')
       expect(h.logs.join('\n')).toContain(h.at.ws)
+      expect(h.logs.join('\n')).toContain(`${JSON.stringify(broken)} failed: EACCES`)
     })
   },
 )
@@ -1963,7 +1984,7 @@ it('auto-tier-hardening 验收 3: Linux ignores dangling leaves and discovers an
   expect(gitDenyPaths(h)).toContain(`${h.at.ws}/absent-config`)
 })
 
-it.each(['oversize config', 'enumeration budget', 'malformed pointer'] as const)(
+it.each(['oversize config', 'malformed pointer'] as const)(
   'auto-tier-hardening 验收 15: %s reports incomplete discovery and falls back',
   async (failure) => {
     await onBoth(async (platform) => {
@@ -1971,11 +1992,7 @@ it.each(['oversize config', 'enumeration budget', 'malformed pointer'] as const)
       const git = `${h.at.ws}/.git`
       h.disk.dir(`${git}/modules`)
       if (failure === 'oversize config') h.disk.file(`${git}/config`, 'x'.repeat(1024 * 1024 + 1))
-      else if (failure === 'enumeration budget') {
-        vi.spyOn(h.disk, 'readdir').mockResolvedValue(
-          Array.from({ length: 4097 }, (_, i) => `module-${i}`),
-        )
-      } else {
+      else {
         h.disk.remove(git)
         h.disk.file(git, 'not a gitdir pointer\n')
       }
@@ -2008,3 +2025,173 @@ it('auto-tier-hardening 验收 1: pointer paths resolve links before parent comp
     expect(h.logs).toEqual([])
   })
 })
+
+it('auto-tier-hardening 验收 1 复现：转向路径链接', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const meta = `${h.at.ws}/storage/git-meta`
+    const alias = `${h.at.ws}/alias`
+    h.disk.dir(`${h.at.ws}/storage/deep`)
+    h.disk.dir(`${meta}/hooks`)
+    h.disk.file(`${meta}/config`, '[core]\n')
+    h.disk.link(alias, `${h.at.ws}/storage/deep`)
+    h.disk.file(`${h.at.ws}/.git`, 'gitdir: alias/../git-meta\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(`${meta}/config`)
+    expect(gitDenyPaths(h).includes(alias)).toBe(platform === 'darwin')
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+    h.disk.link(alias, `${h.at.ws}/storage`)
+    await h.sandbox.afterExit(TOOL_USE)
+    const violations = await h.sandbox.violations(TOOL_USE)
+    expect(violations.some((entry) => entry.target === alias && entry.protected)).toBe(
+      platform === 'linux',
+    )
+  })
+})
+
+it('auto-tier-hardening 验收 15 复现：回退保留链接', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const meta = `${h.at.ws}/metadata`
+    const common = `${h.at.ws}/common`
+    const link = `${h.at.ws}/common-link`
+    h.disk.dir(meta)
+    h.disk.dir(`${common}/deep`)
+    h.disk.file(`${common}/config`, '[core]\n')
+    h.disk.file(`${meta}/commondir`, '../common-link/..\n')
+    h.disk.link(link, `${common}/deep`)
+    h.disk.file(`${h.at.ws}/.git`, 'gitdir: metadata\n')
+    const read = h.disk.readText.bind(h.disk)
+    vi.spyOn(h.disk, 'readText').mockImplementation(async (path, max) => {
+      if (path.endsWith('/config')) throw errno('EACCES', path)
+      return read(path, max)
+    })
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(expect.arrayContaining([`${h.at.ws}/.git`, meta, common]))
+    expect(gitDenyPaths(h).includes(link)).toBe(platform === 'darwin')
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+    h.disk.link(link, meta)
+    await h.sandbox.afterExit(TOOL_USE)
+    const violations = await h.sandbox.violations(TOOL_USE)
+    expect(violations.some((entry) => entry.target === link && entry.protected)).toBe(
+      platform === 'linux',
+    )
+  })
+})
+
+it('auto-tier-hardening 验收 1 复现：指针只去换行', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const target = `${h.at.ws}/meta \t`
+    h.disk.dir(`${target}/hooks`)
+    h.disk.file(`${target}/config`, '[core]\n')
+    h.disk.file(`${h.at.ws}/.git`, 'gitdir: meta \t\r\n\r\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(`${target}/config`)
+    expect(h.logs).toEqual([])
+  })
+})
+
+it('auto-tier-hardening 验收 1 复现：公共路径保留空白', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    h.disk.dir(`${h.at.ws}/.git`)
+    const target = `${h.at.ws}/common \t`
+    h.disk.dir(`${target}/hooks`)
+    h.disk.file(`${target}/config`, '[core]\n')
+    h.disk.file(`${h.at.ws}/.git/commondir`, '../common \t\r\n\r\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(`${target}/config`)
+    expect(h.logs).toEqual([])
+  })
+})
+
+it('auto-tier-hardening 验收 15: entry budget fails closed on a wide metadata container', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const git = `${h.at.ws}/.git`
+    h.disk.dir(`${git}/modules`)
+    h.disk.file(`${git}/config`, '[core]\n')
+    for (let i = 0; i < 4097; i++) h.disk.dir(`${git}/modules/module-${i}`)
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(git)
+    expect(h.logs.join('\n')).toContain('git discovery incomplete')
+  })
+})
+
+it('auto-tier-hardening 验收 15: depth budget fails closed on 40 non-git containers', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const git = `${h.at.ws}/.git`
+    h.disk.dir(`${git}/modules/${Array.from({ length: 40 }, () => 'container').join('/')}`)
+    h.disk.file(`${git}/config`, '[core]\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(git)
+    expect(h.logs.join('\n')).toContain('git discovery incomplete')
+  })
+})
+
+it('auto-tier-hardening 验收 15: a FIFO git entry is rejected without reading it', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const git = `${h.at.ws}/.git`
+    h.disk.nodes.set(git, { kind: 'other', uid: SELF[platform], mode: 0o600 })
+    const read = vi.spyOn(h.disk, 'readText')
+    await h.run()
+    expect(read).not.toHaveBeenCalled()
+    expect(gitDenyPaths(h)).toContain(git)
+    expect(h.logs.join('\n')).toContain('git discovery incomplete')
+  })
+})
+
+it('auto-tier-hardening 验收 4: Linux leaves new redirect files and nested git writable', async () => {
+  const h = harness('linux')
+  h.disk.dir(`${h.at.ws}/.git`)
+  h.disk.file(`${h.at.ws}/.git/config`, '[core]\n')
+  await h.run()
+  expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/.git/commondir`)
+  expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/.git/config.worktree`)
+  expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/*/**/.git`)
+  expect(h.logs).toEqual([])
+})
+
+it.each(['lstat', 'realpath', 'readdir', 'readText'] as const)(
+  'auto-tier-hardening 验收 15: %s diagnostics name the failed path and errno',
+  async (port) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      const git = `${h.at.ws}/.git`
+      h.disk.dir(`${git}/modules`)
+      h.disk.file(`${git}/config`, '[core]\n')
+      const broken = port === 'readdir' ? `${git}/modules` : `${git}/config`
+      if (port === 'readText') {
+        const original = h.disk.readText.bind(h.disk)
+        vi.spyOn(h.disk, port).mockImplementation(async (path, max) => {
+          if (path === broken) throw errno('EIO', path)
+          return original(path, max)
+        })
+      } else if (port === 'readdir') {
+        const original = h.disk.readdir.bind(h.disk)
+        vi.spyOn(h.disk, port).mockImplementation(async (path) => {
+          if (path === broken) throw errno('EIO', path)
+          return original(path)
+        })
+      } else if (port === 'lstat') {
+        const original = h.disk.lstat.bind(h.disk)
+        vi.spyOn(h.disk, port).mockImplementation((path) => {
+          if (path === broken) throw errno('EIO', path)
+          return original(path)
+        })
+      } else {
+        const original = h.disk.realpath.bind(h.disk)
+        vi.spyOn(h.disk, port).mockImplementation((path) => {
+          if (path === broken) throw errno('EIO', path)
+          return original(path)
+        })
+      }
+      await h.run()
+      expect(h.logs.join('\n')).toContain(`${port} ${JSON.stringify(broken)} failed: EIO`)
+      expect(gitDenyPaths(h)).toContain(git)
+    })
+  },
+)

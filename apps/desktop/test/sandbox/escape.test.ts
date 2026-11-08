@@ -361,7 +361,16 @@ function gitFsmonitorFixture(
   const status = () => git(statusDir, 'status', '--porcelain=v1')
   status()
   expect(hostKind(marker)).toBe('missing')
-  return { env, attack, marker, status, git }
+  const target =
+    vector === 'commondir'
+      ? join(ws, '.git/commondir')
+      : vector === 'submodule'
+        ? join(ws, '.git/modules/fixture/config')
+        : join(statusDir, '.git')
+  const targetState = () => (hostKind(target) === 'missing' ? null : readFileSync(target, 'utf8'))
+  // Linux nested creates a directory; only the denied file vectors use this snapshot.
+  const beforeTarget = targetState()
+  return { env, attack, marker, status, git, targetState, beforeTarget }
 }
 
 // These controls need only host git, so remain runnable when nested srt cannot start.
@@ -1285,65 +1294,77 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   ] as const)(
     'auto-tier-hardening 验收 15: $kind with unreadable $fault fails commit only during discovery fault',
     async ({ kind, fault }) => {
-      const { lab, ws, outside } = workspaceLab()
-      const fixture = gitFsmonitorFixture(
-        lab.home,
-        ws,
-        outside,
-        kind === 'pointer' ? 'pointer' : 'commondir',
-      )
-      const main = kind === 'pointer' ? join(outside, 'main') : ws
-      const common = join(main, '.git')
-      const workspace = kind === 'pointer' ? [ws, main] : [ws]
-      lab.folders = workspace
-      makeDir(join(common, 'modules'))
-      makeDir(join(common, 'hooks'))
-      fixture.status()
-      fixture.git(
-        ws,
-        '-c',
-        'user.name=Tenon',
-        '-c',
-        'user.email=tenon@example.test',
-        'commit',
-        '--quiet',
-        '--allow-empty',
-        '-m',
-        'host-control',
-      )
-      expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('host-control')
-      const before = readdirSync(common, { recursive: true }).toSorted()
-      const broken = join(common, fault)
-      const readText = lab.fs.readText.bind(lab.fs)
-      const readdir = lab.fs.readdir.bind(lab.fs)
-      const injected =
-        fault === 'config'
-          ? vi.spyOn(lab.fs, 'readText').mockImplementation(async (path, maxBytes) => {
-              if (path === broken) throw new Error('injected config read failure')
-              return readText(path, maxBytes)
-            })
-          : vi.spyOn(lab.fs, 'readdir').mockImplementation(async (path) => {
-              if (path === broken) throw new Error('injected modules enumeration failure')
-              return readdir(path)
-            })
-      const commit =
-        'git -c user.name=Tenon -c user.email=tenon@example.test commit --quiet --allow-empty -m sandbox-control'
+      const release = await holdTmpClaudeLock()
+      let defaultRoot: string | undefined
       try {
-        const refused = await lab.run(commit, { workspace, env: fixture.env })
-        expect(refused.code).not.toBe(0)
+        const { lab, ws, outside } = workspaceLab()
+        if (kind === 'pointer') {
+          const tmpClaude = makeDir(DARWIN ? '/private/tmp/claude' : '/tmp/claude')
+          defaultRoot = mkdtempSync(join(tmpClaude, 'tenon-hardening-'))
+        }
+        const metadataRoot = defaultRoot ?? outside
+        const fixture = gitFsmonitorFixture(
+          lab.home,
+          ws,
+          metadataRoot,
+          kind === 'pointer' ? 'pointer' : 'commondir',
+        )
+        const main = kind === 'pointer' ? join(metadataRoot, 'main') : ws
+        const common = join(main, '.git')
+        const workspace = [ws]
+        lab.folders = workspace
+        makeDir(join(common, 'modules'))
+        makeDir(join(common, 'hooks'))
+        fixture.status()
+        fixture.git(
+          ws,
+          '-c',
+          'user.name=Tenon',
+          '-c',
+          'user.email=tenon@example.test',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          'host-control',
+        )
         expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('host-control')
-        expect(
-          rig.logs.some((line) => line.includes(ws) && line.includes('git discovery incomplete')),
-        ).toBe(true)
-        expect(readdirSync(common, { recursive: true }).toSorted()).toEqual(before)
+        const before = readdirSync(common, { recursive: true }).toSorted()
+        const broken = join(common, fault)
+        const readText = lab.fs.readText.bind(lab.fs)
+        const readdir = lab.fs.readdir.bind(lab.fs)
+        const injected =
+          fault === 'config'
+            ? vi.spyOn(lab.fs, 'readText').mockImplementation(async (path, maxBytes) => {
+                if (path === broken) throw new Error('injected config read failure')
+                return readText(path, maxBytes)
+              })
+            : vi.spyOn(lab.fs, 'readdir').mockImplementation(async (path) => {
+                if (path === broken) throw new Error('injected modules enumeration failure')
+                return readdir(path)
+              })
+        const commit =
+          'git -c user.name=Tenon -c user.email=tenon@example.test commit --quiet --allow-empty -m sandbox-control'
+        try {
+          const refused = await lab.run(commit, { workspace, env: fixture.env })
+          expect(refused.code).not.toBe(0)
+          expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('host-control')
+          expect(
+            rig.logs.some((line) => line.includes(ws) && line.includes('git discovery incomplete')),
+          ).toBe(true)
+          expect(readdirSync(common, { recursive: true }).toSorted()).toEqual(before)
+        } finally {
+          injected.mockRestore()
+        }
+        const allowed = await lab.run(commit, { workspace, env: fixture.env })
+        expect(allowed).toMatchObject({ code: 0 })
+        expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('sandbox-control')
+        expect(hostKind(join(common, 'commondir'))).toBe('missing')
+        expect(hostKind(join(common, 'config.worktree'))).toBe('missing')
       } finally {
-        injected.mockRestore()
+        if (defaultRoot !== undefined) rmSync(defaultRoot, { recursive: true, force: true })
+        release()
       }
-      const allowed = await lab.run(commit, { workspace, env: fixture.env })
-      expect(allowed).toMatchObject({ code: 0 })
-      expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('sandbox-control')
-      expect(hostKind(join(common, 'commondir'))).toBe('missing')
-      expect(hostKind(join(common, 'config.worktree'))).toBe('missing')
     },
     CASE_MS,
   )
@@ -1421,9 +1442,10 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     async ({ kind }) => {
       const { lab, ws, outside } = workspaceLab()
       const fixture = gitFsmonitorFixture(lab.home, ws, outside, kind)
-      await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      const ran = await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      expect(ran.code).not.toBe(0)
+      expect(fixture.targetState()).toBe(fixture.beforeTarget)
       fixture.status()
-      // A fix may refuse any attack step; only the host-side execution outcome is prescribed.
       expect(hostKind(fixture.marker)).toBe('missing')
     },
     CASE_MS,
@@ -1436,7 +1458,9 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
     async ({ kind }) => {
       const { lab, ws, outside } = workspaceLab()
       const fixture = gitFsmonitorFixture(lab.home, ws, outside, kind)
-      await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      const ran = await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      expect(ran.code).not.toBe(0)
+      expect(fixture.targetState()).toBe(fixture.beforeTarget)
       fixture.status()
       expect(hostKind(fixture.marker)).toBe('missing')
     },

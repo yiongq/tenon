@@ -632,11 +632,16 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
   ] as const) {
     for (const written of entries) {
       const walk = walkLinks(written, ports)
+      // srt normalizes literals lexically. A parent component must be resolved after the
+      // links before it; preserve the final entry itself for the written spelling.
+      const spelling = written.split('/').includes('..')
+        ? walkLinks(written, ports, false).real
+        : written
       // darwin: an entry that is itself a link stays out of denyRead as written — there it refuses
       // every lookup through it, a write as a read — and joins it by where it leads; denyWrite still
       // holds it, so it cannot be removed or replaced. A walk that does not finish keeps it.
       if (!(darwin && list === denyRead && walk.real !== undefined && isLink(written, ports))) {
-        list.literal(written)
+        if (spelling !== undefined) list.literal(spelling)
       }
       list.literal(walk.real ?? realOf(written, ports))
       for (const link of walk.links) {

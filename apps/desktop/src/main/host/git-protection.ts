@@ -63,16 +63,13 @@ export async function discoverGitProtection(
   async function redirect(path: string): Promise<void> {
     const found = await actual(path)
     if (found === null) absent.add(path as AbsolutePath)
-    else {
-      existing.add(path as AbsolutePath)
-      existing.add(found.real)
-    }
+    else existing.add(path as AbsolutePath)
   }
 
   async function directory(path: string, rootMetadata: boolean): Promise<string> {
     const found = await actual(path)
     if (found?.kind !== 'dir') throw new Error('git directory does not resolve')
-    if (rootMetadata) fallback.add(found.real)
+    if (rootMetadata) fallback.add(path as AbsolutePath)
     return found.real
   }
 
@@ -81,15 +78,15 @@ export async function discoverGitProtection(
     if (entry === null) return null
     const found = await actual(git)
     if (found === null) throw new Error('git entry does not resolve')
-    fallback.add(found.real)
-    if (found.kind === 'dir') return { path: found.real, pointer: false }
+    fallback.add(git as AbsolutePath)
+    if (found.kind === 'dir') return { path: git, pointer: false }
     if (found.kind !== 'file') throw new Error('git entry is not a file or directory')
     existing.add(git as AbsolutePath)
-    existing.add(found.real)
     const text = await ports.readText(git, MAX_TEXT_BYTES)
-    const match = /^gitdir: ([^\r\n\0]+)\r?\n?$/.exec(text ?? '')
+    const match = /^gitdir: ([^\r\n\0]+)$/.exec(stripLineEndings(text ?? ''))
     if (match?.[1] === undefined) throw new Error('git pointer cannot be parsed')
-    const target = await directory(relativeTo(q.root, match[1]), true)
+    const target = relativeTo(q.root, match[1])
+    await directory(target, true)
     return { path: target, pointer: true }
   })
   if (root != null) {
@@ -104,12 +101,13 @@ export async function discoverGitProtection(
       if (--remaining < 0 || item.depth > MAX_DEPTH)
         throw new Error('git discovery budget exceeded')
       if (item.container && (await actual(item.path)) === null) return
-      const dir = await directory(item.path, item.rootMetadata)
-      const key = `${item.container}:${dir}`
+      const real = await directory(item.path, item.rootMetadata)
+      const dir = item.path
+      const key = `${item.container}:${real}`
       if (seen.has(key)) return
       seen.add(key)
       if (item.container) {
-        const names = await ports.readdir(dir)
+        const names = await ports.readdir(real)
         if (names.length > remaining) throw new Error('git directory enumeration budget exceeded')
         remaining -= names.length
         for (const name of names) {
@@ -129,11 +127,12 @@ export async function discoverGitProtection(
       await Promise.all(REDIRECT_NAMES.map((name) => attempt(() => redirect(`${dir}/${name}`))))
       // Resolve common metadata before reading config, so an unreadable config cannot hide it.
       await attempt(async () => {
-        const text = await ports.readText(`${dir}/commondir`, MAX_TEXT_BYTES)
+        const text = await ports.readText(`${real}/commondir`, MAX_TEXT_BYTES)
         if (text === null) return
-        const target = text.trimEnd()
+        const target = stripLineEndings(text)
         if (target.length === 0 || /[\r\n\0]/.test(target)) throw new Error('invalid commondir')
-        const path = await directory(relativeTo(dir, target), item.rootMetadata)
+        const path = relativeTo(dir, target)
+        await directory(path, item.rootMetadata)
         queue.push({
           path,
           container: false,
@@ -143,7 +142,7 @@ export async function discoverGitProtection(
       })
       await Promise.all(
         ['config', 'config.worktree'].map((name) =>
-          attempt(() => ports.readText(`${dir}/${name}`, MAX_TEXT_BYTES)),
+          attempt(() => ports.readText(`${real}/${name}`, MAX_TEXT_BYTES)),
         ),
       )
       for (const name of ['modules', 'worktrees']) {
@@ -165,6 +164,11 @@ export async function discoverGitProtection(
     fallbackDeny: incomplete ? [...fallback] : [],
     incomplete,
   }
+}
+
+/** Git strips trailing CR/LF, but spaces and tabs are part of a metadata path. */
+function stripLineEndings(text: string): string {
+  return text.replace(/[\r\n]+$/, '')
 }
 
 /** Keep `..` for realpath: folding it before following a link can select a different directory. */

@@ -380,6 +380,30 @@ export class DesktopSandbox implements HostSandbox {
     const sessionId = this.sessions.get(request.commandId) ?? null
     const folders = sessionId === null ? [] : await this.deps.sessionFolders(sessionId)
     const settings = this.deps.settings()
+    const failedGitRead = (port: string, file: string, error: unknown): void => {
+      const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN'
+      this.deps.log(`sandbox: git discovery ${port} ${JSON.stringify(file)} failed: ${code}`)
+    }
+    const readGitPort = async <T>(
+      port: string,
+      file: string,
+      read: () => T | Promise<T>,
+    ): Promise<T> => {
+      try {
+        return await read()
+      } catch (error) {
+        failedGitRead(port, file, error)
+        throw error
+      }
+    }
+    const walkGitPort = <T>(port: string, file: string, read: () => T): T => {
+      try {
+        return read()
+      } catch (error) {
+        failedGitRead(port, file, error)
+        throw error
+      }
+    }
     const workspace: WorkspaceRoot[] = await Promise.all(
       request.workspace.map(async (path) => {
         const directory = folders.includes(path)
@@ -392,32 +416,39 @@ export class DesktopSandbox implements HostSandbox {
             platform: this.platform,
           },
           {
-            lstat: async (file) => {
-              const stat = this.deps.fs.lstat(file)
-              if (stat === undefined) return null
-              const kind = stat.isSymbolicLink()
-                ? 'link'
-                : stat.isDirectory()
-                  ? 'dir'
-                  : (stat.mode & 0o170000) === 0o100000
-                    ? 'file'
-                    : 'other'
-              return { kind }
-            },
-            readdir: (file) => this.deps.fs.readdir(file),
-            readText: (file, maxBytes) => this.deps.fs.readText(file, maxBytes),
-            realpath: async (file) => {
-              // Node realpathSync folds `..` before resolving links; git's paths need the
-              // component-by-component walk, like the deny rules themselves.
-              const resolved = walkLinks(file, this.deps.fs).real
-              if (resolved === undefined) throw new Error('git metadata path cannot be resolved')
-              try {
-                return this.deps.fs.realpath(resolved)
-              } catch (error) {
-                if (isMissing(error)) return null
-                throw error
-              }
-            },
+            lstat: (file) =>
+              readGitPort('lstat', file, () => {
+                const stat = this.deps.fs.lstat(file)
+                if (stat === undefined) return null
+                const kind = stat.isSymbolicLink()
+                  ? 'link'
+                  : stat.isDirectory()
+                    ? 'dir'
+                    : (stat.mode & 0o170000) === 0o100000
+                      ? 'file'
+                      : 'other'
+                return { kind }
+              }),
+            readdir: (file) => readGitPort('readdir', file, () => this.deps.fs.readdir(file)),
+            readText: (file, maxBytes) =>
+              readGitPort('readText', file, () => this.deps.fs.readText(file, maxBytes)),
+            realpath: (file) =>
+              readGitPort('realpath', file, () => {
+                // Node realpathSync folds `..` before resolving links; git's paths need the
+                // component-by-component walk, like the deny rules themselves.
+                const resolved = walkLinks(file, {
+                  lstat: (part) => walkGitPort('lstat', part, () => this.deps.fs.lstat(part)),
+                  readlink: (part) =>
+                    walkGitPort('readlink', part, () => this.deps.fs.readlink(part)),
+                }).real
+                if (resolved === undefined) throw new Error('git metadata path cannot be resolved')
+                try {
+                  return this.deps.fs.realpath(resolved)
+                } catch (error) {
+                  if (isMissing(error)) return null
+                  throw error
+                }
+              }),
           },
         )
         if (git.incomplete) {
@@ -1097,7 +1128,9 @@ export function desktopSandboxFs(): SandboxFs {
         throw error
       }
       try {
-        if (!(await file.stat()).isFile()) throw new Error('git metadata is not a regular file')
+        if (!(await file.stat()).isFile()) {
+          throw Object.assign(new Error('git metadata is not a regular file'), { code: 'EINVAL' })
+        }
         const buffer = Buffer.alloc(maxBytes + 1)
         let size = 0
         while (size < buffer.length) {
@@ -1106,7 +1139,9 @@ export function desktopSandboxFs(): SandboxFs {
           if (bytesRead === 0) break
           size += bytesRead
         }
-        if (size > maxBytes) throw new Error('git metadata exceeds read limit')
+        if (size > maxBytes) {
+          throw Object.assign(new Error('git metadata exceeds read limit'), { code: 'EFBIG' })
+        }
         return buffer.toString('utf8', 0, size)
       } finally {
         await file.close()

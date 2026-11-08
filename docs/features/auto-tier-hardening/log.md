@@ -53,3 +53,38 @@
 - `python3 .sdd/spec-check.py`：拦 1 条、警 22 条。唯一阻断为评审未绑定实现提交号；本次按 brief 不提交，独立快照评审不能伪造提交绑定。平台跳过已有测试改动说明，不再阻断。
 - 逐字比较备份确认临时还原与突变后，三个生产文件均恢复为最终实现；工作区只有 A 段源代码、测试及本日志。
 - 剩余：协调者在沙箱外跑 macOS / Linux 黑盒及依赖进程检查的全量测试；提交后补评审提交绑定。没有需要 owner 澄清的规格问题。plan.md 依 brief 保持不动。
+
+## 2026-11-08 · A 段按评审修订
+
+基线：lead 已提交的 b5593bb。本轮仅修 A 段，改动留在同一工作区、不提交；不改 spec、plan、decisions、evidence 和门禁，不接 xdgConfigHome。lead 已报告基线在沙箱外全量测试、macOS / Linux u2404 验收 1–4、15 黑盒通过；这不是本轮修订后的运行结果。
+
+1. 真磁盘端口：新增 `apps/desktop/test/sandbox/desktop-sandbox-fs.test.ts`，直接调用 `desktopSandboxFs`，用真实临时目录测试 UTF-8 字节上限的等值与超一字节、ENOENT / ENOTDIR、正常枚举、目录、mkfifo 创建的 FIFO、chmod 000 文件。目录和 FIFO 用限时结果断言保证读取拒绝而非挂起，不启动 srt 或 Electron。五条展开用例全部归入普通 test 门禁，标题均点名验收 15。
+2. 链接与回退：`discoverGitProtection` 保留原路径拼法，`wrapFilesystem` 统一按 04 §档位到 srt 配置「链接」处理转向和回退条目：落点拒写、macOS 保护途经链接、Linux 登记链接供 afterExit 核对。含 `..` 的路径先按组件解链接，再输出不含父目录组件的 literal；不把原串直接交给 srt。两个平台都有配置测试，并通过 DesktopSandbox.wrap / afterExit 复现核验。`GitProtection` 字段和接口均未改变。
+3. Git 文本解析：指针和 commondir 都只剥离末尾连续 CR / LF，保留路径中的空格和制表符；各新增一条复现。
+4. 故障矩阵：条目预算改为单独的宽目录用例；深度限制单独使用 40 层非 git 容器；新增 config.worktree 读失败，以及 `.git` 为 FIFO 的假磁盘夹具，断言走 lstat 的 other 分支且不调用 readText。
+5. 验收 1、2 黑盒：保留宿主 fsmonitor 未执行断言，同时核验沙箱命令非零退出和目标文件内容（或原先不存在的状态）不变。
+6. 验收 15 指针型黑盒：main 放到 srt 默认可写的 `/tmp/claude/<唯一目录>/main`（macOS 使用真实路径 `/private/tmp/claude`），workspace 只有 ws；注入失败时提交失败、撤销注入后提交成功。沿用共享目录锁，仅清理本用例的唯一目录。
+7. 验收 4：新增 Linux 普通仓库配置测试，明确不存在的 commondir、config.worktree 和 `*/**/.git` 不进 denyWrite。
+8. 诊断：在 sandbox.ts 组装发现端口时逐个包装 lstat、readdir、readText、realpath，错误日志带端口、JSON 编码的路径、errno；walkLinks 内被吞掉的 lstat / readlink 错误也先记录。真实读取的非普通文件和超限错误分别带 EINVAL / EFBIG。四个发现端口各有故障注入日志断言；未给 GitProtection 增加诊断字段。
+9. 可选去重：移除重复的 existing.add(found.real)，由统一的路径配置层处理落点；其余入队校验和发现范围保留，避免扩大行为改动。
+
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts · 原验收 15 的 enumeration budget 参数行 · 改为独立的 4097 子目录预算测试，并另加 40 层深度测试；原故障回退断言保留且分开核验两项上限。
+
+本轮新增复现标题（均为单行 it，整行不超过 100 显示列）：
+
+- `auto-tier-hardening 验收 1 复现：转向路径链接`
+- `auto-tier-hardening 验收 15 复现：回退保留链接`
+- `auto-tier-hardening 验收 1 复现：指针只去换行`
+- `auto-tier-hardening 验收 1 复现：公共路径保留空白`
+
+旧红新绿：将 sandbox.ts、sandbox-config.ts、git-protection.ts 逐字备份，用 `git show b5593bb:<路径>` 临时还原三个生产文件，再运行 `pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/desktop-sandbox.test.ts -t 'auto-tier-hardening.*复现：(转向路径|回退保留|指针只去|公共路径)'`。基线四条全部 AssertionError（4 failed），恢复后 4 passed；没有导入错误、没有使用 stash / checkout。临时输出为 `/private/tmp/hardA-r2-red-base.log` 与 `/private/tmp/hardA-r2-green.log`。
+
+突变逐次运行、每次 finally 恢复生产文件：删 readText 大小上限 → 字节边界用例失败；删 isFile 检查 → FIFO 用例失败（读成功而非拒绝）；readdir 的缺失路径改抛错 → 缺失 / ENOTDIR 用例失败；发现时提前丢弃原路径 → 转向链接复现失败；取消 literal 的父目录组件解析 → macOS / Linux 两条配置用例失败。共五项，全部杀死。输出在 `/private/tmp/hardA-r2-mut-{size,isfile,readdir,provenance,literal}.log`；撤销后相关选择集 11 passed，见 `/private/tmp/hardA-r2-green-restored.log`。
+
+检查：`pnpm format:check && pnpm lint && pnpm typecheck` 全部退出 0；`pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/` 为 9 files passed、342 tests passed、113 skipped（见 `/private/tmp/hardA-r2-sandbox.log`）。所有 pnpm 命令继续设置 `NPM_CONFIG_USERCONFIG=/dev/null`。真实两平台沙箱本轮未运行，修订后的黑盒仍需 lead 在沙箱外复跑。
+
+新上下文只读检查使用独立临时快照 `/private/tmp/hardA-review-r2`，未发现阻塞问题；未运行真实沙箱，不作为 lead 的正式评审记录。`python3 .sdd/spec-check.py` 当前唯一阻断是「本次改动里没有新增评审记录」；按本轮要求不新建评审标题、不改 plan，正式记录留给 lead。
+
+最终全量：`pnpm vitest run --maxWorkers=2` 为 282 files passed / 2 failed / 3 skipped，5663 tests passed / 5 failed / 129 skipped，耗时 150.79 秒（`/private/tmp/hardA-r2-full.log`）。五条失败与前轮已确认的环境限制一致：stop-tree 的四条调用 ps 报 spawn EPERM；snapshot-git 的遗留进程恢复用例依赖被限制的进程枚举，等待退出超时。其余全绿，本轮未改这两个文件。
+
+收尾：三个生产文件与突变前备份逐字一致，四条新复现标题显示宽度依次为 65 / 66 / 65 / 69 列；追加日志后 format:check、git diff --check 通过。spec-check 为 1 条阻断、15 条警告；阻断仍仅为 lead 正式评审记录缺失。修订后两平台真沙箱黑盒留给 lead 复跑。需要确认的问题：无。
