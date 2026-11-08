@@ -1,8 +1,8 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：spec 已 ready 并合入 dev（PR #82）。A 段已合入（PR #84），B 段已合入（PR #85）。C 段（钩子位置）已实现，分支 `feat/auto-tier-hardening-c`：8e9c73f 实现、5d2275a 补正黑盒测试、0729ebb 与 fa89884 按两轮评审修订；两平台真沙箱与两路新上下文评审通过（log.md「评审 · 2026-11-08 · 审过 fa89884」）。下一步：D 段（文档同步与 spec 修订记录）。
-需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
+当前：A/B/C 段已合入 dev（PR #84、#85、#86），D 段文档已提交于 03bd512，lead 的正式文档评审通过。步骤 5–8 已完成，本轮已落实 D-review.md 五条文档建议，检查及独立复核通过，修订不提交；Status 保持 ready。改 implemented 前仍需 lead 补齐 M1–M11 的实际重跑证据，再交 owner 验收。
+需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
 ## 开工前读
@@ -52,43 +52,42 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 - [x] 2. A 段：沙箱转向文件保护 + 验收 1–4、15 的三层测试；dev 与本段提交上各跑一次沙箱黑盒（macOS + 两台 Lima），旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [x] 3. B 段：连接器外带（含 `batch.ts` 父子合并）+ 验收 5–8、13、14；`red-on-base` 核验验收 5 的复现；三视角评审 + 汇总评审。
 - [x] 4. C 段：钩子位置 + 验收 9–12；沙箱黑盒旧红新绿记 log.md；三视角评审 + 汇总评审。
-- [ ] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
-- [ ] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
-- [ ] 7. 对照验收逐条核对（每条验收对上点名它的测试；沙箱与平台条由 lead 在两平台确认，记 log.md）。
-- [ ] 8. 清理：撤掉所有临时探针，确认工作区干净、无调试打印。
+- [x] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
+- [x] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
+- [x] 7. 对照验收逐条核对（每条验收对上点名它的测试；沙箱与平台条由 lead 在两平台确认，记 log.md）。
+- [x] 8. 清理：撤掉所有临时探针，确认工作区干净、无调试打印。
 - [ ] 9. owner 验收 → 改 Status。
 
 ## 验收矩阵
 | 验收号 | 层 | 平台 | 测试用例名 | 门禁命令 | 突变 |
 |---|---|---|---|---|---|
-| 1 | 单元 | macOS、Linux | auto-tier-hardening 验收 1 复现：wrap 的拒写含已有指针、目标与子模块 config/hooks；黑盒 auto-tier-hardening 验收 1: 改已有 worktree/submodule 的转向文件被拒 | test | （待评审补） |
-| 2 | 单元 | macOS | auto-tier-hardening 验收 2 复现：darwin 的拒写含不存在的转向文件与子目录 .git；黑盒 auto-tier-hardening 验收 2: 写 commondir/子目录 .git 被拒 | test | （待评审补） |
-| 3 | 集成 | macOS、Linux | auto-tier-hardening 验收 3: 发现完整时根 git 与子模块提交照常、Linux 无占位 | test | （待评审补） |
-| 4 | 集成 | Linux | auto-tier-hardening 验收 4: Linux 新建转向文件未被拦（表征） | test | — |
-| 5 | 集成 | — | auto-tier-hardening 验收 5 复现：任务跨源出卡；…对话跨源出卡 | test | （待评审补） |
+| 1 | 单元 | macOS、Linux | desktop-sandbox.test.ts：auto-tier-hardening 验收 1 复现：已有转向文件；…验收 1: pointer target in %s has config and hooks denied；escape.test.ts：auto-tier-hardening 验收 1: 沙箱里 $name 被拒，宿主不执行 fsmonitor | test | M1 |
+| 2 | 单元 | macOS | desktop-sandbox.test.ts：auto-tier-hardening 验收 2 复现：macOS 新建转向文件；escape.test.ts：auto-tier-hardening 验收 2: 沙箱里 $name 被拒，宿主不执行 fsmonitor；…验收 2: macOS refuses a new config.worktree | test | M2 |
+| 3 | 单元 | macOS、Linux | config.test.ts：auto-tier-hardening 验收 3: %s selects existing redirects and platform-specific absent entries；desktop-sandbox.test.ts：auto-tier-hardening 验收 3: Linux ignores dangling leaves and discovers anew each wrap；escape.test.ts：auto-tier-hardening 验收 3: complete discovery preserves root git and submodule commits | test | M3 |
+| 4 | 单元 | Linux | desktop-sandbox.test.ts：auto-tier-hardening 验收 4: Linux leaves new redirect files and nested git writable；escape.test.ts：auto-tier-hardening 验收 4: Linux permits new nested git and absent redirect files | test | —（已知限制对照） |
+| 5 | 集成 | — | mcp-exfiltration.test.ts：auto-tier-hardening 验收 5 复现：任务跨源出卡；…验收 5 复现：对话跨源出卡 | test | M5 |
 | 6 | 集成 | — | auto-tier-hardening 验收 6: $label 未读连接器时直接派发 | test | — |
-| 7 | 单元 | — | auto-tier-hardening 验收 7: 同源读写不出卡 | test | （待评审补） |
-| 8 | 单元 | — | auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重；…来源关联失败 %s 时从严；…连接器原名 Read/Bash/WebFetch/WebSearch 不按内置工具分类 | test | （待评审补） |
-| 9 | 单元 | macOS、Linux | auto-tier-hardening 验收 9 复现：自定义 hooksPath 目录里的钩子判自动执行 | test | （待评审补） |
-| 10 | 单元 | macOS、Linux | auto-tier-hardening 验收 10 复现：.husky、lefthook、pre-commit 判自动执行 | test | （待评审补） |
+| 7 | 单元 | — | auto-tier-hardening 验收 7: 同源读写不出卡 | test | M4 |
+| 8 | 单元 | — | session-view.test.ts：auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重；…验收 8: 来源关联失败 %s 时从严；…验收 8: 连接器原名 %s 不按内置工具分类；…验收 8: 同键多条 %s 保留首条；…验收 8: 引用表缺失时不借别的表；…验收 8: run-1/11 与 run-11/1 不串键 | test | M6 |
+| 9 | 单元 | macOS、Linux | sensitive-paths.test.ts：auto-tier-hardening 验收 9 复现：仓库钩子目录；…验收 9 复现：全局钩子目录；…验收 9、10: hook writes always ask with the automatic execution category | test | M8 |
+| 10 | 单元 | macOS、Linux | sensitive-paths.test.ts：auto-tier-hardening 验收 10 复现：钩子名字；…验收 9、10: hook writes always ask with the automatic execution category | test | M9 |
 | 11 | 单元 | macOS、Linux | auto-tier-hardening 验收 11: 配了 hooksPath 才认自定义目录 | test | — |
-| 12 | 单元 | macOS、Linux | auto-tier-hardening 验收 12 复现：wrap 的拒写含根下钩子位置与 hookDirs；黑盒 auto-tier-hardening 验收 12: 沙箱里写已有与新建的钩子位置都被拒（macOS 含子目录） | test | （待评审补） |
-| 13 | 单元 | — | auto-tier-hardening 验收 13: 只有 S 的不可信加本地私密读也出卡 | test | （待评审补） |
-| 14 | 集成 | — | auto-tier-hardening 验收 14: 子读 A 交接后父调 B 合并来源并出卡；…父读 A 后子调 B 出单次外带卡且续跑保留来源；…父子同读 A 后父调 B 时来源各只保留一次 | test | （待评审补） |
-| 15 | 单元 | macOS、Linux | auto-tier-hardening 验收 15: 发现不完整时目录型拒写整个 .git、指针型拒写指针加 gitdir 与 commondir，并留诊断；黑盒 auto-tier-hardening 验收 15: 两种夹具只注入发现故障时 git 写照预期失败、关掉注入则成功、Linux 不新增占位 | test | （待评审补） |
+| 12 | 单元 | macOS、Linux | desktop-sandbox.test.ts：auto-tier-hardening 验收 12 复现：钩子拒写；escape.test.ts：auto-tier-hardening 验收 12: root hook locations refuse writes %s；…验收 12: macOS refuses nested hook names %s；…验收 12: a hooks file cannot become a directory before host commit；…验收 12: disabling hooks with dev null preserves shell redirection | test | M10 |
+| 13 | 单元 | — | auto-tier-hardening 验收 13: 只有 S 的不可信加本地私密读也出卡；mcp-exfiltration.test.ts：auto-tier-hardening 验收 13: 本地私密读后同源只读连接器也出卡 | test | M5 |
+| 14 | 集成 | — | auto-tier-hardening 验收 14: 子读 A 交接后父调 B 合并来源并出卡；…验收 14: 父读 A 后子调 B 出单次外带卡且续跑保留来源；…验收 14: 父子同读 A 后父调 B 时来源各只保留一次 | test | M7 |
+| 15 | 单元 | macOS、Linux | desktop-sandbox.test.ts：auto-tier-hardening 验收 15: unreadable %s denies the entire directory git root；…验收 15: pointer %s failure denies only resolved metadata；escape.test.ts：auto-tier-hardening 验收 15: $kind with unreadable $fault fails commit only during discovery fault | test | M11 |
 
-（「层」写最低一层：复现与对照都在 `test` 门禁里跑；用例名里标「黑盒」的由 CI 的 `ci`、`sandbox-macos` 作业以 `TENON_SANDBOX_TESTS=required` 跑，`test` 门禁与 `red-on-base` 跳过它们（E5），两平台旧红新绿记 log.md。CI 机器重跑的突变只登记 `test` 门禁（本项目补充 5）。）
+（「层」写最低一层：复现与对照都在 `test` 门禁里跑；escape.test.ts 的真沙箱用例由 CI 的 `ci`、`sandbox-macos` 作业以 `TENON_SANDBOX_TESTS=required` 跑，`test` 门禁与 `red-on-base` 跳过它们（E5），两平台旧红新绿记 log.md。CI 机器重跑的突变只登记 `test` 门禁（本项目补充 5）。）
+
+文件名对应：沙箱用例在 `apps/desktop/test/sandbox/`，sensitive-paths.test.ts 在 `apps/desktop/test/`，session-view.test.ts 与验收 7、13 的 exfiltration.test.ts 在 `packages/kernel/test/permission/`，mcp-exfiltration.test.ts 在 `packages/kernel/test/loop/`；验收 6、14 未写文件名的用例均在 mcp-exfiltration.test.ts，验收 11 在 sensitive-paths.test.ts。escape.test.ts 的用例均为真沙箱黑盒，平台证据见 log.md 的 A/C 段正式评审；本次 D 段只核对已有证据，不重跑平台沙箱。
 
 ## 交接
-2026-11-08：A 段由 Codex 实现、lead 提交，两路新上下文评审（对照 spec 与安全、测试与突变）各一轮不通过、修订后复核通过；macOS 真沙箱与 Lima u2404 真沙箱全绿，旧红新绿记 log.md（u2604 冷启动后 AppArmor 自带配置使沙箱不可用，未改它，Linux 另由 CI `ci` 作业覆盖）。B 段从 `packages/kernel/src/permission/session-view.ts` 接，照 plan B 段与「测试分层」。下面 Open 里的五条随 C、D 段处理。
+2026-11-09：D 段基线已提交于 03bd512，本轮开始时工作区干净；lead 的正式评审审过该提交，结论通过，五条建议已逐条落实到文档（log.md「D 段正式评审及建议处置」）。步骤 5 的汇总评审以该正式评审为准，步骤 8 恢复原文，基线清理结论不等于本轮没有未提交差异。本轮仅留下预期文档修订，不提交、不改代码、门禁或 Status；format/lint/typecheck、相关 287 条测试及新上下文独立复核通过；入口页已重生成，spec-check 拦 0，结果见同节补记。下一步 lead 在 CI 或本地实际重跑 M1–M11 并记录结果，再由 owner 验收并决定是否改 Status；不可把静态登记当作实跑通过。
 
 ## Open
-- D 段：spec 修订记录要补 C 段实现中的几处细化——owner「也拦」（已存在的 include 目标也拒写，picks.md）、钩子名单比规矩 6 多收的 lefthook 本地配置与目录、hooksPath 几种取值的处理（评审原文 C-security.md、C-security-r2.md）；只收紧或澄清，照核心第 4 条记一行。
-- C 段第二次复核留下的一条安全建议与三个存活突变（原文 C-security-r3.md、C-tests-r3.md），低影响，D 段或后续处理。
-- C 段一并补测试：`originOf` 查表改写后，「同键多条保留首条」（assembled、tool_table 各一）、「引用的表缺失但 tape 里还有别的表时仍记 unresolved」、「键拼法不串（run-1/seq 11 与 run-11/seq 1）」；生产里不可达，B 段测试复核建议，标题带验收 8。
-- 05 验收 45「concurrent captures and age cleanup keep live parentless trees sound」在 PR #84 的 CI `ci` 上偶发红一次（ENOTEMPTY rmdir），本地连跑 5 次全过、与本 spec 无关；并入总参考 §以后再说 那条「两个 worker 都满载时……偶发红」的观察记录（D 段做）。
-- C 段一并做：发现失败中不经端口的那几类（指针解析不了、预算或深度耗尽、目标不是目录、commondir 内容非法）日志只有一句总述，要带上路径与原因（A 段安全复核建议）。
-- C 段一并补测试：`.git/modules/<名>` 本身是链接时的拒写与 Linux 事后比对；含 `..` 的写法最后一级是链接、`..` 写法解不完；目录型 `.git` 本身是指向目录的链接配回退（A 段测试复核建议）。
-- C 段：`SandboxHostPaths.xdgConfigHome` 接线（从 startupEnv 读 `XDG_CONFIG_HOME`，改必填），解析全局 git 配置要用。
-- D 段：04 的增补里写一句「含 `..` 的条目改交解开 `..` 之前链接后的拼法」，这是 04「链接」规则的一处实现细化，影响 denyRead 与 denyWrite 的全部条目（A 段安全复核建议；已核不算放宽）。
+- D 段评审留下的 3 条文档小项（原文 impl-reviews/D-review-r2.md：建议 5 的余下部分与 2 条小建议），后续文档修订时处理，不挡验收。
+- 改 implemented 前必须完成：M1–M11 目前仅静态登记，lead 须在 CI 或本地针对包含 A/B/C 段实现的代码范围逐项实际重跑，并将结果及存活项处置追加到 log.md，再交 owner 验收。文档差异导致的跳过不算通过；本轮只改文档，不执行突变。
+- 后续代码改动时处理（本 D 段仅文档，不改代码）：文件工具的 hooksPath 目录本身为链接时，Delete 链接未必每次问；两步操作之间还需赶在敏感表刷新之前，评审未确定性复现后续写入。lead 下次改钩子发现时登记末级不解开的拼法并补 Delete 回归（原文 C-security-r3.md 的唯一建议；沙箱侧仍按平台规则保护或事后比对）。
+- 后续测试跟进：`/dev/null` 的可替换链接别名仍受生产代码保护，但把它误豁免的突变尚无用例杀死；lead 下次改 hooksPath 时补沙箱与文件工具夹具（原文 C-tests-r3.md）。
+- 后续评审复核：把顶层 git 配置也登记的偏严突变，spec 未定、不据此改范围；文件工具登记配置来源时覆盖已有凭据类别的突变，边界几乎不可达。维持现实现，lead 下次改配置来源时复核（原文 C-tests-r3.md 的另两个存活突变）。
 - `desktop-sandbox-fs.test.ts` 的 chmod 000 用例在 root 下会红：现有 CI 与 Lima 都不以 root 跑；以后要在 root 下跑时加 `skipIf(process.getuid?.() === 0)`。
