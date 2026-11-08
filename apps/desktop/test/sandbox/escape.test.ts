@@ -216,7 +216,10 @@ const ROOT_NAMES: readonly string[] = [
   '.claude',
 ]
 
-/** The names in ROOT_NAMES that are leaves while absent at a Linux root: P7's 17 empty 0444 files. */
+/**
+ * The names that are leaves while absent at a Linux root: P7's 17 empty 0444 files, plus the 16
+ * hook locations auto-tier-hardening 规矩 7 denies even when absent (P4).
+ */
 const ROOT_LEAVES: readonly string[] = [
   '.zshrc',
   '.zshenv',
@@ -235,6 +238,22 @@ const ROOT_LEAVES: readonly string[] = [
   '.mcp.json',
   '.vscode',
   '.idea',
+  '.husky',
+  '.lefthook',
+  '.lefthook-local',
+  'lefthook.yml',
+  '.lefthook.yml',
+  'lefthook.yaml',
+  '.lefthook.yaml',
+  'lefthook.toml',
+  'lefthook.json',
+  'lefthook-local.yml',
+  '.lefthook-local.yml',
+  'lefthook-local.yaml',
+  '.lefthook-local.yaml',
+  'lefthook-local.toml',
+  'lefthook-local.json',
+  '.pre-commit-config.yaml',
 ]
 
 /** What srt's stale mount point test reads of a host path (linux-sandbox-utils.js:418-428). */
@@ -1216,7 +1235,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
       const attempts = targets.map((target) => {
         const path = join(ws, target)
         return (
-          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}); ` +
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
           `then echo ${shq(`unexpected write: ${target}`)}; exit 1; fi`
         )
       })
@@ -1265,7 +1284,7 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         }
       const attempts = targets.map(
         (path) =>
-          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}); ` +
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
           `then echo unexpected; exit 1; fi`,
       )
       const ran = await lab.run([...attempts, 'true'].join('; '), { workspace: [ws] })

@@ -329,3 +329,8 @@
 交接：C 段源码、门禁复现、黑盒用例及 Open 标 C 的跟进已留在工作区；无提交、无 push、无 PR。未改 spec、plan、decisions、evidence、状态或门禁，未做 D 段，未启动 Electron、未读钥匙串/密钥、未调用真实模型。按本 brief 不改 plan，进度与剩余工作记在本节。下一步由 lead 在 macOS 与 Linux/Lima 跑验收 12 黑盒（含新建位置 afterExit 后无占位）、作正式两路评审与提交绑定，再更新 plan；全量测试的五条进程查询用例需在不受本 agent 沙箱限制的环境复核。需要确认的问题：无。
 
 最终复跑确认：python3 .sdd/spec-check.py 退出 1，仍为 16 条 review 阻断、18 条警告；与上述原因一致。追加本节后的 pnpm format:check 通过，源码最终 pnpm lint、pnpm typecheck 通过；无未恢复的突变、临时源码或调试打印。
+
+## 2026-11-08 · C 段真沙箱补正（lead）
+
+- 验收 12 两条黑盒在 macOS 与 Linux 真沙箱上都红，但写入其实都被拒了：`lab.run` 把 stderr 并进 stdout，被拒时 shell 打的报错被断言当成「意外输出」。把每次写入尝试的报错丢到 `/dev/null`，只认显式的 `unexpected write` 标记。改后 macOS 上 4/4 绿；换回 6254700 的生产代码时 4/4 红（报 `unexpected write: .husky/pre-commit`，写入真的成功了）。
+- 测试改动：apps/desktop/test/sandbox/escape.test.ts · 04 验收 9 (linux) 的 `ROOT_LEAVES` · C 段让 16 个钩子名字在 Linux 根下不存在时也成为只读占位（规矩 7，P4 已接受的代价），名单补上这 16 个；只增不删，原 17 个不动。Lima u2404 上用同样两处改动的副本跑过，验收 12 两条与 04 验收 9 (linux) 都绿，跑完宿主上没有占位残留。
