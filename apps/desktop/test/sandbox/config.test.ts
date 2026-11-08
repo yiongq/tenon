@@ -209,6 +209,7 @@ function hostPaths(platform: SandboxPlatform): SandboxHostPaths {
         noSeccomp: false,
         uid: 501,
         xdgRuntimeDir: null,
+        xdgConfigHome: null,
         sshAuthSock: null,
       }
     : {
@@ -223,6 +224,7 @@ function hostPaths(platform: SandboxPlatform): SandboxHostPaths {
         noSeccomp: false,
         uid: 1000,
         xdgRuntimeDir: null,
+        xdgConfigHome: null,
         sshAuthSock: null,
       }
 }
@@ -1220,6 +1222,7 @@ function linkedInput(platform: SandboxPlatform): WrapFilesystemInput {
     noSeccomp: false,
     uid: 501,
     xdgRuntimeDir: null,
+    xdgConfigHome: null,
     sshAuthSock: null,
     profile: 'workspace-write',
     chosen: 'workspace-write',
@@ -1284,5 +1287,39 @@ it.each(['darwin', 'linux'] as const)(
     expect(write.includes('/repo/alias')).toBe(platform === 'darwin')
     expect(write.some((path) => path.split('/').includes('..'))).toBe(false)
     expect(result.links).toContain('/repo/alias')
+  },
+)
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 15: %s preserves a fallback leaf link after parent traversal',
+  (platform) => {
+    const disk = fakeDisk(['/repo/storage/deep', '/repo/meta'], {
+      '/repo/alias': '/repo/storage/deep',
+      '/repo/storage/meta': '/repo/meta',
+    })
+    const result = wrapFilesystem(
+      wrapInput(platform, {
+        workspace: [
+          {
+            path: p('/repo'),
+            directory: true,
+            gitDirectory: false,
+            git: {
+              redirectExisting: [],
+              redirectAbsent: [],
+              hookDirs: [],
+              hookNames: [],
+              fallbackDeny: [p('/repo/alias/../meta')],
+              incomplete: true,
+            },
+          },
+        ],
+      }),
+      disk,
+    )
+    const write = spelled(result.filesystem.denyWrite)
+    expect(write).toEqual(expect.arrayContaining(['/repo/storage/meta', '/repo/meta']))
+    expect(write.some((path) => path.split('/').includes('..'))).toBe(false)
+    expect(result.links).toContain('/repo/storage/meta')
   },
 )

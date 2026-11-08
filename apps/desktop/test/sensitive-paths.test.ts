@@ -37,10 +37,17 @@ async function scope(): Promise<PathScope> {
     profileDir: p(join(root, 'profile')),
     ownSpillDir: p(join(root, 'profile/tool-output/session')),
     protectedFiles: protectedShellFiles(home, p(join(root, 'zdot'))),
-    sensitive: await desktopSensitivePaths(home, [home, workspace], p(join(root, 'zdot'))),
+    sensitive: await desktopSensitivePaths(
+      home,
+      [home, workspace],
+      p(join(root, 'zdot')),
+      undefined,
+      { xdgConfigHome: null },
+    ),
   }
 }
 beforeEach(async () => {
+  vi.stubEnv('XDG_CONFIG_HOME', undefined)
   vi.mocked(nativeFs.lstat).mockReset()
   vi.mocked(nativeFs.readdir).mockReset()
   vi.mocked(nativeFs.readlink).mockReset()
@@ -52,6 +59,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   await rm(root, { recursive: true, force: true })
 })
 
@@ -628,6 +636,7 @@ it('05 验收 26、55: the complete table contains exactly the shared names and 
   expect(await desktopSensitivePaths(home, [workspace])).toEqual({
     credential: [...list.credential, p(join(workspace, '.aws'))],
     autoRunNames: list.autoRunNames,
+    hookDirs: [],
     linkTargets: [...expected].map(([real, category]) => ({ real, category })),
     incomplete: false,
     diagnostic: null,
@@ -673,6 +682,374 @@ it('05 验收 26、55: all workspace credential aliases resolve before scanning 
   expect(table.linkTargets).toContainEqual({ real: keys, category: 'credential' })
   expect(vi.mocked(nativeFs.readdir).mock.calls.map(([path]) => String(path))).not.toContain(keys)
 })
+
+async function hookRepository(config: string, global = false) {
+  await mkdir(join(workspace, '.git'))
+  await writeFile(join(global ? home : workspace, global ? '.gitconfig' : '.git/config'), config)
+}
+
+it.each(['', '/dev/null'])(
+  'auto-tier-hardening 验收 11: disabled hooksPath %s does not mark ordinary writes',
+  async (value) => {
+    await writeFile(join(workspace, 'disabled-hooks'), 'not a directory')
+    await hookRepository(`[core]\n hooksPath = ${value}\n`)
+    const current = await scope()
+    expect(current.sensitive).toMatchObject({ incomplete: false, hookDirs: [] })
+    expect(await locatePath(fs, p(join(workspace, 'src/app.ts')), current, 'Write')).toMatchObject({
+      place: 'workspace',
+    })
+  },
+)
+
+it('auto-tier-hardening 验收 9: replaceable hooksPath retains 5d2275a protection', async () => {
+  await writeFile(join(workspace, 'hooks-file'), 'ordinary file')
+  await hookRepository('[core]\n hooksPath = hooks-file\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  expect(current.sensitive?.hookDirs).toContain(join(workspace, 'hooks-file'))
+  for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop -- retain protection before any file-to-directory replacement
+      await locatePath(fs, p(join(workspace, 'hooks-file/pre-commit')), current, tool),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  }
+})
+
+it('auto-tier-hardening 验收 9: device include acts as empty configuration', async () => {
+  await hookRepository('[include]\n path = /dev/null\n[core]\n hooksPath = my-hooks\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false, diagnostic: null })
+  expect(current.sensitive?.hookDirs).toContain(join(workspace, 'my-hooks'))
+})
+
+it('auto-tier-hardening 验收 12: include targets and their aliases ask for every write tool', async () => {
+  await hookRepository('[include]\n path = ../shared.gitconfig\n path = ../linked.gitconfig\n')
+  const shared = p(join(workspace, 'shared.gitconfig'))
+  const alias = p(join(workspace, 'linked.gitconfig'))
+  await writeFile(shared, '[core]\n')
+  await symlink('shared.gitconfig', alias)
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  for (const path of [shared, alias]) {
+    for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- deleting the alias must protect its entry too
+      const located = await locatePath(fs, path, current, tool)
+      expect(located).toMatchObject({ place: 'outside', sensitive: 'auto-run' })
+      const permission = decide({
+        call: {
+          tool: { name: tool, originalName: tool, serverId: 'builtin', source: 'builtin' },
+          args: { file_path: path },
+          reversibility: 'unknown',
+        },
+        callReason: { reason: 'sensitive-path', facts: { path, category: 'auto-run' } },
+        inspectors: [],
+        layers: {
+          policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+          place: located.place,
+          ...(located.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+          reversibility: { value: 'unknown', source: 'host' },
+          requiresUserInteraction: false,
+          sessionGrant: null,
+          approvalMode: 'auto',
+          userSetting: 'always-allow',
+        },
+      })
+      expect(permission.record.verdict).toBe('ask')
+      expect(permission.confirm).toMatchObject({
+        reason: 'sensitive-path',
+        facts: { category: 'auto-run' },
+      })
+    }
+    for (const tool of ['Read', 'Glob', 'Grep'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- automatic execution classification is write-only
+      expect(await locatePath(fs, path, current, tool)).toMatchObject({ place: 'workspace' })
+    }
+  }
+})
+
+it('auto-tier-hardening 验收 15: include stays sensitive after another hooksPath fails', async () => {
+  await symlink('cycle', join(workspace, 'cycle'))
+  await hookRepository('[core]\n hooksPath = cycle/x\n[include]\n path = ../shared.gitconfig\n')
+  const shared = p(join(workspace, 'shared.gitconfig'))
+  await writeFile(shared, '[core]\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: true })
+  expect(await locatePath(fs, shared, current, 'Write')).toMatchObject({
+    place: 'outside',
+    sensitive: 'auto-run',
+  })
+})
+
+it('auto-tier-hardening 验收 12: direct writes to an included alias target stay sensitive', async () => {
+  await hookRepository('[include]\n path = ../linked.gitconfig\n')
+  const target = p(join(workspace, 'config-source'))
+  await writeFile(target, '[core]\n')
+  await symlink('config-source', join(workspace, 'linked.gitconfig'))
+  const current = await scope()
+  expect(await locatePath(fs, target, current, 'Write')).toMatchObject({
+    place: 'outside',
+    sensitive: 'auto-run',
+  })
+})
+
+it.each(['core', 'include', 'includeIf'])(
+  'auto-tier-hardening 验收 9: section %s accepts a key on the same line',
+  async (section) => {
+    const config =
+      section === 'core'
+        ? '[core] hooksPath = my hooks\n'
+        : `[${section}${section === 'includeIf' ? ' "gitdir:unmatched"' : ''}] path = ../extra\n`
+    await hookRepository(config)
+    await writeFile(join(workspace, 'extra'), '[core] hooksPath = my hooks\n')
+    const current = await scope()
+    expect(current.sensitive).toMatchObject({ incomplete: false })
+    expect(
+      await locatePath(fs, p(join(workspace, 'my hooks/pre-commit')), current, 'Write'),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  },
+)
+
+it('auto-tier-hardening 验收 9: test scope ignores the ambient XDG git config', async () => {
+  const xdg = join(home, 'ambient-xdg')
+  await mkdir(join(xdg, 'git'), { recursive: true })
+  await writeFile(join(xdg, 'git/config'), '[core]\n hooksPath = ambient-hooks\n')
+  vi.stubEnv('XDG_CONFIG_HOME', xdg)
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false, hookDirs: [] })
+})
+
+it('auto-tier-hardening 验收 15: unreadable git config marks the sensitive table incomplete', async () => {
+  await hookRepository('[core]\n hooksPath = my-hooks\n')
+  const broken = join(workspace, '.git/config')
+  vi.spyOn(nativeFs, 'open').mockImplementation(async (...args) => {
+    if (String(args[0]) === broken)
+      throw Object.assign(new Error('config read denied'), { code: 'EACCES' })
+    return actualFs.open(...args)
+  })
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({
+    incomplete: true,
+    diagnostic: expect.stringContaining('Git discovery incomplete:'),
+  })
+  expect(
+    await locatePath(fs, p(join(workspace, '.husky/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
+it('auto-tier-hardening 验收 9: config.worktree hooksPath is parsed independently', async () => {
+  await hookRepository('[core]\n')
+  await writeFile(join(workspace, '.git/config.worktree'), '[core]\n hooksPath = worktree-hooks\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  expect(
+    await locatePath(fs, p(join(workspace, 'worktree-hooks/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
+it('auto-tier-hardening 验收 9 复现：仓库钩子目录', async () => {
+  await hookRepository('[core]\n hooksPath = my-hooks\n')
+  const current = await scope()
+  for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop -- each file tool must retain this boundary
+      await locatePath(fs, p(join(workspace, 'my-hooks/pre-commit')), current, tool),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  }
+})
+
+it('auto-tier-hardening 验收 9 复现：全局钩子目录', async () => {
+  await hookRepository('[core]\n hooksPath = my-hooks\n', true)
+  const current = await scope()
+  for (const tool of ['Write', 'Edit'] as const) {
+    expect(
+      // oxlint-disable-next-line no-await-in-loop -- both write tools use the same scope
+      await locatePath(fs, p(join(workspace, 'my-hooks/pre-commit')), current, tool),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  }
+})
+
+const HOOK_NAMES = [
+  '.husky',
+  '.lefthook',
+  '.lefthook-local',
+  '.pre-commit-config.yaml',
+  'lefthook.yml',
+  '.lefthook.yml',
+  'lefthook.yaml',
+  '.lefthook.yaml',
+  'lefthook.toml',
+  'lefthook.json',
+  'lefthook-local.yml',
+  '.lefthook-local.yml',
+  'lefthook-local.yaml',
+  '.lefthook-local.yaml',
+  'lefthook-local.toml',
+  'lefthook-local.json',
+]
+it('auto-tier-hardening 验收 10 复现：钩子名字', async () => {
+  const current = await scope()
+  for (const name of HOOK_NAMES) {
+    for (const tool of ['Write', 'Edit', 'Delete'] as const) {
+      const path = p(
+        join(
+          workspace,
+          'one/two',
+          name.toUpperCase(),
+          ['.husky', '.lefthook', '.lefthook-local'].includes(name) ? 'pre-commit' : '',
+        ),
+      )
+      // oxlint-disable-next-line no-await-in-loop -- arbitrary depth and case for every file tool
+      expect(await locatePath(fs, path, current, tool)).toMatchObject({ sensitive: 'auto-run' })
+    }
+  }
+})
+
+it('auto-tier-hardening 验收 9、10: hook writes always ask with the automatic execution category', async () => {
+  await hookRepository('[core]\n hooksPath = my-hooks\n')
+  const current = await scope()
+  for (const name of ['my-hooks/pre-commit', '.husky/pre-commit', 'lefthook.yml']) {
+    const path = p(join(workspace, name))
+    // oxlint-disable-next-line no-await-in-loop -- every protected class exercises the real verdict
+    const located = await locatePath(fs, path, current, 'Write')
+    for (let request = 0; request < 2; request++) {
+      const result = decide({
+        call: {
+          tool: { name: 'Write', originalName: 'Write', serverId: 'builtin', source: 'builtin' },
+          args: {},
+          reversibility: 'unknown',
+        },
+        callReason: { reason: 'sensitive-path', facts: { path, category: 'auto-run' } },
+        inspectors: [],
+        layers: {
+          policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+          place: located.place,
+          ...(located.sensitive === undefined ? {} : { sensitive: located.sensitive }),
+          reversibility: { value: 'unknown', source: 'host' },
+          requiresUserInteraction: false,
+          sessionGrant: null,
+          approvalMode: 'auto',
+          userSetting: 'always-allow',
+        },
+      })
+      expect(result.record.verdict).toBe('ask')
+      expect(result.confirm).toMatchObject({
+        reason: 'sensitive-path',
+        facts: { category: 'auto-run' },
+      })
+    }
+  }
+})
+
+it('auto-tier-hardening 验收 11: 配了 hooksPath 才认自定义目录', async () => {
+  const hook = p(join(workspace, 'my-hooks/pre-commit'))
+  expect(await locatePath(fs, hook, await scope(), 'Write')).toMatchObject({ place: 'workspace' })
+  await hookRepository('[core]\n hooksPath = my-hooks\n')
+  expect(await locatePath(fs, hook, await scope(), 'Write')).toMatchObject({
+    sensitive: 'auto-run',
+  })
+  for (const tool of ['Read', 'Glob', 'Grep'] as const) {
+    // oxlint-disable-next-line no-await-in-loop -- hook reads and searches stay ordinary
+    expect(await locatePath(fs, hook, await scope(), tool)).toMatchObject({ place: 'workspace' })
+  }
+})
+
+it.each(['[core "other"]', '[core.other]'])(
+  'auto-tier-hardening 验收 11: subsection %s is not core.hooksPath',
+  async (section) => {
+    await hookRepository(`${section}\n hooksPath = my-hooks\n`)
+    const current = await scope()
+    expect(current.sensitive).toMatchObject({ incomplete: false })
+    expect(
+      await locatePath(fs, p(join(workspace, 'my-hooks/pre-commit')), current, 'Write'),
+    ).toMatchObject({ place: 'workspace' })
+  },
+)
+
+it('auto-tier-hardening 验收 9: includes, quotes, continuations and husky parent use one parser', async () => {
+  await hookRepository(
+    '[include]\n path = ../config/first\n' +
+      '[includeIf "gitdir:never-matches"]\n path = ../config/conditional\n',
+  )
+  await mkdir(join(workspace, 'config'))
+  await writeFile(
+    join(workspace, 'config/first'),
+    '[CoRe]\n hooksPath = "my \\\nhooks" # comment\n[include]\n path = first\n',
+  )
+  await writeFile(join(workspace, 'config/conditional'), '[core]\n hooksPath = .husky/_\n')
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({ incomplete: false })
+  for (const name of ['my hooks/pre-commit', '.husky/pre-commit']) {
+    // oxlint-disable-next-line no-await-in-loop -- includes and husky parent are both protected
+    expect(await locatePath(fs, p(join(workspace, name)), current, 'Edit')).toMatchObject({
+      sensitive: 'auto-run',
+    })
+  }
+  expect(current.sensitive?.hookDirs).toEqual(
+    expect.arrayContaining([join(workspace, '.husky'), join(workspace, '.husky/_')]),
+  )
+})
+
+it('auto-tier-hardening 验收 9: XDG and home configs work without git and refresh has no stale dirs', async () => {
+  const xdg = join(home, 'custom-config')
+  await mkdir(join(xdg, 'git'), { recursive: true })
+  await writeFile(join(xdg, 'git/config'), '[include]\n path = ~/extra-config\n')
+  await writeFile(join(home, 'extra-config'), '[core]\n hooksPath = ~/global-hooks\n')
+  const provider = createSensitivePathProvider(home, null, { xdgConfigHome: xdg })
+  const first = { ...(await scope()), sensitive: await provider.refresh([workspace]) }
+  expect(
+    await locatePath(fs, p(join(home, 'global-hooks/pre-commit')), first, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+  await writeFile(join(home, 'extra-config'), '[core]\n hooksPath = new-hooks\n')
+  const second = { ...first, sensitive: await provider.refresh([workspace]) }
+  expect(
+    await locatePath(fs, p(join(home, 'global-hooks/pre-commit')), second, 'Write'),
+  ).toMatchObject({ place: 'workspace' })
+  expect(
+    await locatePath(fs, p(join(workspace, 'new-hooks/pre-commit')), second, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
+it('auto-tier-hardening 验收 9: hook directory aliases resolve before parent traversal', async () => {
+  await mkdir(join(workspace, 'storage/deep'), { recursive: true })
+  await mkdir(join(workspace, 'storage/real-hooks'))
+  await symlink('storage/deep', join(workspace, 'alias'))
+  await symlink('real-hooks', join(workspace, 'storage/hooks'))
+  await hookRepository('[core]\n hooksPath = alias/../hooks\n')
+  const current = await scope()
+  expect(
+    await locatePath(fs, p(join(workspace, 'storage/real-hooks/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+  expect(
+    await locatePath(fs, p(join(workspace, 'hooks/pre-commit')), current, 'Write'),
+  ).toMatchObject({ place: 'workspace' })
+})
+
+it('auto-tier-hardening 验收 9: include depth is bounded and incomplete tables retain hook names', async () => {
+  await hookRepository('[include]\n path = ../include-0\n')
+  for (let i = 0; i < 34; i++) {
+    // oxlint-disable-next-line no-await-in-loop -- finite include-depth fixture
+    await writeFile(join(workspace, `include-${i}`), `[include]\n path = include-${i + 1}\n`)
+  }
+  const current = await scope()
+  expect(current.sensitive).toMatchObject({
+    incomplete: true,
+    diagnostic: expect.stringMatching(/include.*budget\/depth/),
+  })
+  expect(
+    await locatePath(fs, p(join(workspace, '.husky/pre-commit')), current, 'Write'),
+  ).toMatchObject({ sensitive: 'auto-run' })
+})
+
+it.each(['# note', '; note', 'name = U # note'])(
+  'auto-tier-hardening 验收 9: comment %s ending in backslash does not consume the next section',
+  async (comment) => {
+    await hookRepository(`[user]\n ${comment} \\\n[core]\n hooksPath = my-hooks\n`)
+    const current = await scope()
+    expect(
+      await locatePath(fs, p(join(workspace, 'my-hooks/pre-commit')), current, 'Write'),
+    ).toMatchObject({ sensitive: 'auto-run' })
+  },
+)
 
 const FIXED_HOME_STARTUP = [
   'Library/LaunchAgents',

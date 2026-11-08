@@ -104,6 +104,70 @@ function connector(name: string, serverId: string, originalName = 'read'): TapeE
 }
 
 describe('buildSessionView', () => {
+  it.each(['assembled', 'tool_table'] as const)(
+    'auto-tier-hardening 验收 8: 同键多条 %s 保留首条',
+    (kind) => {
+      const entries = connector('mapped', 'first')
+      const original = entries.find((e) => e.name === `view/${kind}`)!
+      const otherTable = entry(
+        'view/tool_table',
+        {
+          tools: [{ name: 'mapped', source: 'mcp', serverId: 'later', originalName: 'read' }],
+        },
+        { key: kind === 'tool_table' ? original.provenanceKey : 'later-table' },
+      )
+      const duplicate =
+        kind === 'tool_table'
+          ? otherTable
+          : entry(
+              'view/assembled',
+              {
+                tools: { tableKey: 'later-table', sent: true },
+              },
+              { sourceId: original.sourceId!, sourceSeq: original.sourceSeq! },
+            )
+      const view = buildSessionView(
+        [...entries, duplicate, ...(kind === 'assembled' ? [otherTable] : [])],
+        {
+          call: call('Read'),
+          profile: 'chat',
+          ownSpillDir: SPILL,
+        },
+      )
+      expect(view.untrustedSources).toEqual(['mcp:first'])
+      expect(view.privateSources).toEqual(['mcp:first'])
+    },
+  )
+
+  it('auto-tier-hardening 验收 8: 引用表缺失时不借别的表', () => {
+    const entries = connector('mapped', 'first').filter((e) => e.name !== 'view/tool_table')
+    const other = connector('mapped', 'other').find((e) => e.name === 'view/tool_table')!
+    const view = buildSessionView([...entries, other], {
+      call: call('Read'),
+      profile: 'chat',
+      ownSpillDir: SPILL,
+    })
+    expect(view.untrustedSources).toEqual(['unresolved:mapped'])
+    expect(view.privateSources).toEqual(['unresolved:mapped'])
+  })
+
+  it('auto-tier-hardening 验收 8: run-1/11 与 run-11/1 不串键', () => {
+    const groups = [connector('mapped', 'first'), connector('mapped', 'second')]
+    groups.forEach((entries, i) => {
+      for (const fact of entries)
+        if (fact.sourceId !== null) {
+          fact.sourceId = i === 0 ? 'run-1' : 'run-11'
+          fact.sourceSeq = i === 0 ? 11 : 1
+        }
+    })
+    const view = buildSessionView(groups.flat(), {
+      call: call('Read'),
+      profile: 'chat',
+      ownSpillDir: SPILL,
+    })
+    expect(view.untrustedSources).toEqual(['mcp:first', 'mcp:second'])
+    expect(view.privateSources).toEqual(['mcp:first', 'mcp:second'])
+  })
   it.each(['chat', 'cowork'] as const)(
     'auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重',
     (profile) => {

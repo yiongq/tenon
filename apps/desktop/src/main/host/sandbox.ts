@@ -381,7 +381,9 @@ export class DesktopSandbox implements HostSandbox {
     const folders = sessionId === null ? [] : await this.deps.sessionFolders(sessionId)
     const settings = this.deps.settings()
     const failedGitRead = (port: string, file: string, error: unknown): void => {
-      const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN'
+      const code =
+        (error as NodeJS.ErrnoException).code ??
+        (error instanceof Error ? error.message : 'UNKNOWN')
       this.deps.log(`sandbox: git discovery ${port} ${JSON.stringify(file)} failed: ${code}`)
     }
     const readGitPort = async <T>(
@@ -412,7 +414,7 @@ export class DesktopSandbox implements HostSandbox {
           {
             root: path,
             home: paths.home,
-            xdgConfigHome: paths.xdgConfigHome ?? null,
+            xdgConfigHome: paths.xdgConfigHome,
             platform: this.platform,
           },
           {
@@ -450,6 +452,7 @@ export class DesktopSandbox implements HostSandbox {
                 }
               }),
           },
+          (message) => this.deps.log(`sandbox: git discovery ${message}`),
         )
         if (git.incomplete) {
           this.deps.log(

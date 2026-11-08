@@ -1,7 +1,7 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：spec 已 ready 并合入 dev（PR #82，962dfb3）。A 段在 PR #84（分支 `feat/auto-tier-hardening-a`，自动合并已开）。B 段（外带检查认连接器）已实现，分支 `feat/auto-tier-hardening-b`（叠在 A 段上）：8f7c76e 实现、baaedb8 按评审补测试与查表提速；两路新上下文评审与复核通过（log.md「评审 · 2026-11-08 · 审过 baaedb8」）。下一步：C 段（钩子位置）。
+当前：spec 已 ready 并合入 dev（PR #82）。A 段已合入（PR #84），B 段已合入（PR #85）。C 段（钩子位置）已实现，分支 `feat/auto-tier-hardening-c`：8e9c73f 实现、5d2275a 补正黑盒测试、0729ebb 与 fa89884 按两轮评审修订；两平台真沙箱与两路新上下文评审通过（log.md「评审 · 2026-11-08 · 审过 fa89884」）。下一步：D 段（文档同步与 spec 修订记录）。
 需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
 授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
@@ -51,7 +51,7 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 - [x] 1. owner 批 ready → 草稿入库 `docs/features/auto-tier-hardening/`，按 headers.md 给 02/03/04/05 加 `Changed by`、总参考三行换链接、重生成入口页。
 - [x] 2. A 段：沙箱转向文件保护 + 验收 1–4、15 的三层测试；dev 与本段提交上各跑一次沙箱黑盒（macOS + 两台 Lima），旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [x] 3. B 段：连接器外带（含 `batch.ts` 父子合并）+ 验收 5–8、13、14；`red-on-base` 核验验收 5 的复现；三视角评审 + 汇总评审。
-- [ ] 4. C 段：钩子位置 + 验收 9–12；沙箱黑盒旧红新绿记 log.md；三视角评审 + 汇总评审。
+- [x] 4. C 段：钩子位置 + 验收 9–12；沙箱黑盒旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [ ] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
 - [ ] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
 - [ ] 7. 对照验收逐条核对（每条验收对上点名它的测试；沙箱与平台条由 lead 在两平台确认，记 log.md）。
@@ -83,6 +83,8 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 2026-11-08：A 段由 Codex 实现、lead 提交，两路新上下文评审（对照 spec 与安全、测试与突变）各一轮不通过、修订后复核通过；macOS 真沙箱与 Lima u2404 真沙箱全绿，旧红新绿记 log.md（u2604 冷启动后 AppArmor 自带配置使沙箱不可用，未改它，Linux 另由 CI `ci` 作业覆盖）。B 段从 `packages/kernel/src/permission/session-view.ts` 接，照 plan B 段与「测试分层」。下面 Open 里的五条随 C、D 段处理。
 
 ## Open
+- D 段：spec 修订记录要补 C 段实现中的几处细化——owner「也拦」（已存在的 include 目标也拒写，picks.md）、钩子名单比规矩 6 多收的 lefthook 本地配置与目录、hooksPath 几种取值的处理（评审原文 C-security.md、C-security-r2.md）；只收紧或澄清，照核心第 4 条记一行。
+- C 段第二次复核留下的一条安全建议与三个存活突变（原文 C-security-r3.md、C-tests-r3.md），低影响，D 段或后续处理。
 - C 段一并补测试：`originOf` 查表改写后，「同键多条保留首条」（assembled、tool_table 各一）、「引用的表缺失但 tape 里还有别的表时仍记 unresolved」、「键拼法不串（run-1/seq 11 与 run-11/seq 1）」；生产里不可达，B 段测试复核建议，标题带验收 8。
 - 05 验收 45「concurrent captures and age cleanup keep live parentless trees sound」在 PR #84 的 CI `ci` 上偶发红一次（ENOTEMPTY rmdir），本地连跑 5 次全过、与本 spec 无关；并入总参考 §以后再说 那条「两个 worker 都满载时……偶发红」的观察记录（D 段做）。
 - C 段一并做：发现失败中不经端口的那几类（指针解析不了、预算或深度耗尽、目标不是目录、commondir 内容非法）日志只有一句总述，要带上路径与原因（A 段安全复核建议）。

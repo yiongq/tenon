@@ -216,7 +216,10 @@ const ROOT_NAMES: readonly string[] = [
   '.claude',
 ]
 
-/** The names in ROOT_NAMES that are leaves while absent at a Linux root: P7's 17 empty 0444 files. */
+/**
+ * The names that are leaves while absent at a Linux root: P7's 17 empty 0444 files, plus the 16
+ * hook locations auto-tier-hardening 规矩 7 denies even when absent (P4).
+ */
 const ROOT_LEAVES: readonly string[] = [
   '.zshrc',
   '.zshenv',
@@ -235,6 +238,22 @@ const ROOT_LEAVES: readonly string[] = [
   '.mcp.json',
   '.vscode',
   '.idea',
+  '.husky',
+  '.lefthook',
+  '.lefthook-local',
+  'lefthook.yml',
+  '.lefthook.yml',
+  'lefthook.yaml',
+  '.lefthook.yaml',
+  'lefthook.toml',
+  'lefthook.json',
+  'lefthook-local.yml',
+  '.lefthook-local.yml',
+  'lefthook-local.yaml',
+  '.lefthook-local.yaml',
+  'lefthook-local.toml',
+  'lefthook-local.json',
+  '.pre-commit-config.yaml',
 ]
 
 /** What srt's stale mount point test reads of a host path (linux-sandbox-utils.js:418-428). */
@@ -1184,6 +1203,170 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
 
   // -------------------------------------------------------------------------------------------
   // 验收 12
+
+  it.each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: root hook locations refuse writes %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      makeDir(join(ws, '.git'))
+      writeHostFile(join(ws, '.git/config'), '[core]\n hooksPath = my-hooks\n')
+      const dirs = ['.husky', '.lefthook', '.lefthook-local', 'my-hooks']
+      const files = [
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ]
+      const targets = [...dirs.map((dir) => `${dir}/pre-commit`), ...files]
+      if (state === 'existing')
+        for (const target of targets) {
+          makeDir(dirname(join(ws, target)))
+          writeHostFile(join(ws, target), 'original\n')
+        }
+      const attempts = targets.map((target) => {
+        const path = join(ws, target)
+        return (
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
+          `then echo ${shq(`unexpected write: ${target}`)}; exit 1; fi`
+        )
+      })
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
+      // lab.run awaits afterExit; tests are serial, so no other wrap holds Linux's placeholders.
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      const observed = targets.map((target) =>
+        state === 'existing' ? readFileSync(join(ws, target), 'utf8') : hostKind(join(ws, target)),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+      // Also check directory placeholders themselves, after all wraps and afterExit have settled.
+      const placeholders = state === 'new' ? [...dirs, ...files] : []
+      expect(placeholders.map((name) => hostKind(join(ws, name)))).toEqual(
+        placeholders.map(() => 'missing'),
+      )
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN).each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: macOS refuses nested hook names %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      const targets = [
+        '.husky/pre-commit',
+        '.lefthook/pre-commit',
+        '.lefthook-local/pre-commit',
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ].map((name) => join(ws, 'one/two', name))
+      if (state === 'existing')
+        for (const path of targets) {
+          makeDir(dirname(path))
+          writeHostFile(path, 'original\n')
+        }
+      const attempts = targets.map(
+        (path) =>
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
+          `then echo unexpected; exit 1; fi`,
+      )
+      const control = join(ws, 'one/two/ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      const observed = targets.map((path) =>
+        state === 'existing' ? readFileSync(path, 'utf8') : hostKind(path),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+    },
+    CASE_MS,
+  )
+
+  it(
+    'auto-tier-hardening 验收 12: a hooks file cannot become a directory before host commit',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'commondir')
+      const hooks = join(ws, 'hooks-file')
+      const marker = join(ws, 'hook-ran')
+      const control = join(ws, 'ok.txt')
+      fixture.git(ws, 'config', 'core.hooksPath', 'hooks-file')
+      writeHostFile(hooks, 'ordinary file\n')
+      const hook = `#!/bin/sh\nprintf ran > ${shq(marker)}\n`
+      const replace =
+        `rm ${shq(hooks)} && mkdir ${shq(hooks)} && ` +
+        `printf %s ${shq(hook)} > ${shq(join(hooks, 'pre-commit'))} && ` +
+        `chmod 700 ${shq(join(hooks, 'pre-commit'))}`
+      const ran = await lab.run(
+        `if (${replace}) 2>/dev/null; then echo unexpected; exit 1; fi; ` +
+          `printf ordinary > ${shq(control)}`,
+        { workspace: [ws], env: fixture.env },
+      )
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      expect(readFileSync(hooks, 'utf8')).toBe('ordinary file\n')
+      const commit = (message: string) =>
+        fixture.git(
+          ws,
+          '-c',
+          'user.name=Tenon',
+          '-c',
+          'user.email=tenon@example.test',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          message,
+        )
+      commit('after-sandbox')
+      expect(hostKind(marker)).toBe('missing')
+      // Host control: the same configured location executes a hook once it really is a directory.
+      rmSync(hooks)
+      makeDir(hooks)
+      writeHostFile(join(hooks, 'pre-commit'), hook, 0o700)
+      commit('host-control')
+      expect(readFileSync(marker, 'utf8')).toBe('ran')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    'auto-tier-hardening 验收 12: disabling hooks with dev null preserves shell redirection',
+    async () => {
+      const { lab, ws } = workspaceLab()
+      writeHostFile(join(lab.home, '.gitconfig'), '[core]\n hooksPath = /dev/null\n')
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run(`printf x > /dev/null && printf ordinary > ${shq(control)}`, {
+        workspace: [ws],
+      })
+      expect(ran.code).toBe(0)
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+    },
+    CASE_MS,
+  )
 
   it(
     'auto-tier-hardening 验收 3: complete discovery preserves root git and submodule commits',

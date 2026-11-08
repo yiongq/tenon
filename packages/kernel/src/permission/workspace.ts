@@ -38,6 +38,7 @@ export interface PathScope {
   readonly sensitive?: {
     readonly credential: readonly AbsolutePath[]
     readonly autoRunNames: readonly string[]
+    readonly hookDirs?: readonly AbsolutePath[]
     readonly linkTargets: readonly { real: AbsolutePath; category: 'credential' | 'auto-run' }[]
   }
   readonly roots: readonly AbsolutePath[] // 工作区根，选定时已解析；对话形态传 []
@@ -212,6 +213,7 @@ export function sensitiveName(
   )
     return 'credential'
   if (!writing) return undefined
+  if (paths.some((path) => list.hookDirs?.some((dir) => within(path, dir)))) return 'auto-run'
   if (
     paths.some((path) =>
       list.linkTargets.some((entry) => entry.category === 'auto-run' && within(path, entry.real)),

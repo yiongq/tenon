@@ -314,6 +314,7 @@ function layout(platform: SandboxPlatform) {
 }
 
 interface HarnessOptions {
+  readonly xdgConfigHome?: string
   /** The startup outcome `start` gets; `'none'` leaves it unstarted. */
   readonly startup?: Partial<SandboxStartup> | 'none'
   /** Whether `initialize` returned (default: it did); false leaves `initialized` pending. */
@@ -365,6 +366,7 @@ function harness(platform: SandboxPlatform, options: HarnessOptions = {}) {
     credentials: credentialPaths(platform, p(at.home)),
     uid,
     xdgRuntimeDir: null,
+    xdgConfigHome: options.xdgConfigHome ?? null,
     sshAuthSock: null,
   }
   const sandbox = new DesktopSandbox({
@@ -520,6 +522,22 @@ const ROOT_LEAVES: readonly string[] = [
   '.mcp.json',
   '.vscode',
   '.idea',
+  '.husky',
+  '.lefthook',
+  '.lefthook-local',
+  '.pre-commit-config.yaml',
+  'lefthook.yml',
+  'lefthook-local.yml',
+  '.lefthook.yml',
+  '.lefthook-local.yml',
+  'lefthook.yaml',
+  'lefthook-local.yaml',
+  '.lefthook.yaml',
+  '.lefthook-local.yaml',
+  'lefthook.toml',
+  'lefthook-local.toml',
+  'lefthook.json',
+  'lefthook-local.json',
 ]
 
 const leavesAt = (root: string): string[] => ROOT_LEAVES.map((name) => `${root}/${name}`)
@@ -1838,6 +1856,377 @@ function gitDenyPaths(h: Harness): string[] {
   )
 }
 
+it.each(['', '/dev/null'])(
+  'auto-tier-hardening 验收 12: disabled hooksPath %s does not deny ordinary locations',
+  async (value) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      h.disk.dir(`${h.at.ws}/.git`)
+      h.disk.file(`${h.at.ws}/.git/config`, `[core]\n hooksPath = ${value}\n`)
+      h.disk.file(`${h.at.ws}/disabled-hooks`, 'ordinary file')
+      h.disk.dir('/dev')
+      h.disk.nodes.set('/dev/null', { kind: 'other', uid: SELF[platform], mode: 0o666 })
+      await h.run()
+      expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/`)
+      expect(gitDenyPaths(h)).not.toContain(h.at.ws)
+      expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/disabled-hooks`)
+      expect(gitDenyPaths(h)).not.toContain('/dev/null')
+      expect(h.logs).toEqual([])
+    })
+  },
+)
+
+it.each(['file', 'fifo', 'socket', 'missing'] as const)(
+  'auto-tier-hardening 验收 12: replaceable hooksPath %s retains 5d2275a protection',
+  async (kind) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      const target = `${h.at.ws}/hooks-entry`
+      h.disk.dir(`${h.at.ws}/.git`)
+      h.disk.file(`${h.at.ws}/.git/config`, '[core]\n hooksPath = hooks-entry\n')
+      if (kind === 'file') h.disk.file(target, 'ordinary file')
+      else if (kind !== 'missing')
+        h.disk.nodes.set(target, {
+          kind: 'other',
+          uid: SELF[platform],
+          mode: kind === 'fifo' ? 0o010600 : 0o140600,
+        })
+      await h.run()
+      expect(gitDenyPaths(h)).toContain(target)
+      expect(gitDenyPaths(h)).not.toContain(h.at.ws)
+      expect(h.logs).toEqual([])
+    })
+  },
+)
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 12: %s ignores device includes without fallback',
+  async (platform) => {
+    const h = harness(platform)
+    h.disk.dir(`${h.at.ws}/.git`)
+    h.disk.file(
+      `${h.at.ws}/.git/config`,
+      '[include]\n path = /dev/null\n[core]\n hooksPath = my-hooks\n',
+    )
+    h.disk.dir('/dev')
+    h.disk.nodes.set('/dev/null', { kind: 'other', uid: SELF[platform], mode: 0o666 })
+    await h.run()
+    expect(gitDenyPaths(h)).not.toContain('/dev/null')
+    expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/.git`)
+    expect(gitDenyPaths(h)).toContain(`${h.at.ws}/my-hooks`)
+    expect(h.logs).toEqual([])
+  },
+)
+
+it.each(['dir', 'file', 'other'] as const)(
+  'auto-tier-hardening 验收 12: dev shm %s hooks and ordinary include keep protection',
+  async (kind) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      const root = '/dev/shm/workspace'
+      const hooks = `${root}/my-hooks`
+      h.disk.dir(`${root}/.git`)
+      h.disk.file(
+        `${root}/.git/config`,
+        '[core]\n hooksPath = my-hooks\n[include]\n path = ../shared.gitconfig\n',
+      )
+      h.disk.file(`${root}/shared.gitconfig`, '[core]\n hooksPath = included-hooks\n')
+      if (kind === 'dir') h.disk.dir(hooks)
+      else if (kind === 'file') h.disk.file(hooks, 'ordinary file')
+      else h.disk.nodes.set(hooks, { kind: 'other', uid: SELF[platform], mode: 0o600 })
+      h.folders.set(SESSION, [p(root)])
+      await h.run({ cwd: p(root), workspace: [p(root)] })
+      expect(gitDenyPaths(h)).toEqual(
+        expect.arrayContaining([hooks, `${root}/shared.gitconfig`, `${root}/included-hooks`]),
+      )
+      expect(h.logs).toEqual([])
+    })
+  },
+)
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 15: %s continues after an unresolved hooksPath entry',
+  async (platform) => {
+    const h = harness(platform)
+    const root = h.at.ws
+    h.disk.dir(`${root}/.git`)
+    h.disk.link(`${root}/cycle`, 'cycle')
+    h.disk.file(
+      `${root}/.git/config`,
+      '[core]\n hooksPath = cycle/x\n' +
+        ' hooksPath = valid-hooks\n[include]\n path = ../shared.gitconfig\n',
+    )
+    h.disk.file(`${root}/shared.gitconfig`, '[core]\n hooksPath = included-hooks\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([
+        `${root}/.git`,
+        `${root}/shared.gitconfig`,
+        `${root}/valid-hooks`,
+        `${root}/included-hooks`,
+      ]),
+    )
+    expect(h.logs.join('\n')).toContain('cycle/x')
+    expect(h.logs.join('\n')).toContain('git discovery incomplete')
+  },
+)
+
+it.each(['darwin', 'linux'] as const)(
+  'auto-tier-hardening 验收 12: %s denies existing include spellings and targets',
+  async (platform) => {
+    const h = harness(platform)
+    const root = h.at.ws
+    h.disk.dir(`${root}/.git`)
+    h.disk.file(
+      `${root}/.git/config`,
+      '[include]\n path = ../shared.gitconfig\n' +
+        ' path = ../storage/shared-link.gitconfig\n' +
+        '[includeIf "gitdir:unmatched"]\n path = ../alias/../linked.gitconfig\n' +
+        ' path = ../missing.gitconfig\n',
+    )
+    h.disk.file(`${root}/shared.gitconfig`, '[include]\n path = nested.gitconfig\n')
+    h.disk.file(`${root}/nested.gitconfig`, '[core]\n hooksPath = my-hooks\n')
+    h.disk.dir(`${root}/storage/deep`)
+    h.disk.file(`${root}/storage/real.gitconfig`, '[core]\n')
+    h.disk.link(`${root}/alias`, `${root}/storage/deep`)
+    h.disk.link(`${root}/storage/linked.gitconfig`, `${root}/storage/real.gitconfig`)
+    h.disk.link(`${root}/storage/shared-link.gitconfig`, `${root}/shared.gitconfig`)
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([
+        `${root}/shared.gitconfig`,
+        `${root}/storage/shared-link.gitconfig`,
+        `${root}/nested.gitconfig`,
+        `${root}/storage/linked.gitconfig`,
+        `${root}/storage/real.gitconfig`,
+      ]),
+    )
+    expect(gitDenyPaths(h)).not.toContain(`${root}/missing.gitconfig`)
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+    expect(h.logs).toEqual([])
+    h.disk.link(`${root}/storage/linked.gitconfig`, `${root}/shared.gitconfig`)
+    h.disk.link(`${root}/storage/shared-link.gitconfig`, `${root}/nested.gitconfig`)
+    await h.sandbox.afterExit(TOOL_USE)
+    const violations = await h.sandbox.violations(TOOL_USE)
+    expect(
+      violations.some((v) => v.target === `${root}/storage/shared-link.gitconfig` && v.protected),
+    ).toBe(platform === 'linux')
+    expect(
+      violations.some((v) => v.target === `${root}/storage/linked.gitconfig` && v.protected),
+    ).toBe(platform === 'linux')
+  },
+)
+
+it('auto-tier-hardening 验收 15: an existing unreadable include target remains denied', async () => {
+  const h = harness('linux')
+  h.disk.dir(`${h.at.ws}/.git`)
+  h.disk.file(`${h.at.ws}/.git/config`, '[include]\n path = ../shared.gitconfig\n')
+  const included = `${h.at.ws}/shared.gitconfig`
+  h.disk.file(included, '[core]\n')
+  const read = h.disk.readText.bind(h.disk)
+  vi.spyOn(h.disk, 'readText').mockImplementation(async (path, max) => {
+    if (posix.normalize(path) === included) throw errno('EACCES', path)
+    return read(path, max)
+  })
+  await h.run()
+  expect(gitDenyPaths(h)).toContain(included)
+  expect(gitDenyPaths(h)).toContain(`${h.at.ws}/.git`)
+  expect(h.logs.join('\n')).toContain('EACCES')
+})
+
+it('auto-tier-hardening 验收 12 复现：钩子拒写', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    h.disk.dir(`${h.at.ws}/.git`)
+    h.disk.file(`${h.at.ws}/.git/config`, '[core]\n hooksPath = my-hooks\n')
+    await h.run()
+    const names = [
+      '.husky',
+      '.lefthook',
+      '.lefthook-local',
+      '.pre-commit-config.yaml',
+      'lefthook.yml',
+      '.lefthook.yml',
+      'lefthook.yaml',
+      '.lefthook.yaml',
+      'lefthook.toml',
+      'lefthook.json',
+      'lefthook-local.yml',
+      '.lefthook-local.yml',
+      'lefthook-local.yaml',
+      '.lefthook-local.yaml',
+      'lefthook-local.toml',
+      'lefthook-local.json',
+    ]
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([...names.map((name) => `${h.at.ws}/${name}`), `${h.at.ws}/my-hooks`]),
+    )
+    for (const name of names)
+      expect(gitDenyPaths(h).includes(`${h.at.ws}/**/${name}`)).toBe(platform === 'darwin')
+  })
+})
+
+it('auto-tier-hardening 验收 9、12: XDG includes protect exact directories without git metadata', async () => {
+  await onBoth(async (platform) => {
+    const xdg = '/config/git-user'
+    const h = harness(platform, { xdgConfigHome: xdg })
+    h.disk.dir(`${xdg}/git`)
+    h.disk.file(`${xdg}/git/config`, '[includeIf "gitdir:unmatched"]\n path = extra\n')
+    h.disk.file(`${xdg}/git/extra`, '[core]\n hooksPath = ~/global-hooks\n')
+    h.disk.file(`${h.at.home}/.gitconfig`, '[core]\n hooksPath = .husky/_\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([
+        `${h.at.home}/global-hooks`,
+        `${h.at.ws}/.husky`,
+        `${h.at.ws}/.husky/_`,
+      ]),
+    )
+    expect(h.logs).toEqual([])
+    h.disk.file(`${xdg}/git/extra`, '[core]\n hooksPath = new-hooks\n')
+    h.calls.length = 0
+    await h.run({ commandId: 'toolu_refresh' })
+    expect(gitDenyPaths(h)).not.toContain(`${h.at.home}/global-hooks`)
+    expect(gitDenyPaths(h)).toContain(`${h.at.ws}/new-hooks`)
+  })
+})
+
+it('auto-tier-hardening 验收 9: pointer and common configs resolve hooks at the session root', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const { target, common } = gitLayout(h)
+    h.disk.file(`${target}/config`, '[core]\n hooksPath = target-hooks\n')
+    h.disk.file(`${common}/config`, '[core]\n hooksPath = common-hooks\n')
+    h.disk.dir(`${target}/modules/sub`)
+    h.disk.file(`${target}/modules/sub/config`, '[core]\n hooksPath = module-hooks\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(
+      expect.arrayContaining([
+        `${h.at.ws}/target-hooks`,
+        `${h.at.ws}/common-hooks`,
+        `${target}/modules/sub/config`,
+      ]),
+    )
+    // A module's config is enumerated for redirect protection, not attributed to this root.
+    expect(gitDenyPaths(h)).not.toContain(`${h.at.ws}/module-hooks`)
+    expect(h.logs).toEqual([])
+  })
+})
+
+it('auto-tier-hardening 验收 9、15: config file budget fails closed with a path and reason', async () => {
+  const h = harness('linux')
+  const git = `${h.at.ws}/.git`
+  h.disk.dir(git)
+  h.disk.file(
+    `${git}/config`,
+    '[include]\n' + Array.from({ length: 4097 }, (_, i) => ` path = missing-${i}\n`).join(''),
+  )
+  await h.run()
+  expect(gitDenyPaths(h)).toContain(git)
+  expect(h.logs.join('\n')).toContain(`${git}/missing-`)
+  expect(h.logs.join('\n')).toContain('git config include budget/depth exceeded')
+})
+
+it('auto-tier-hardening 验收 1: linked module directories deny targets and Linux detects swaps', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const git = `${h.at.ws}/.git`
+    const module = `${git}/modules/sub`
+    const target = `${h.at.ws}/module-meta`
+    h.disk.dir(`${git}/modules`)
+    h.disk.dir(`${target}/hooks`)
+    h.disk.file(`${target}/config`, '[core]\n')
+    h.disk.link(module, target)
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(expect.arrayContaining([`${target}/hooks`, `${target}/config`]))
+    expect(gitDenyPaths(h).includes(module)).toBe(platform === 'darwin')
+    h.disk.link(module, git)
+    await h.sandbox.afterExit(TOOL_USE)
+    expect(
+      (await h.sandbox.violations(TOOL_USE)).some((v) => v.target === module && v.protected),
+    ).toBe(platform === 'linux')
+  })
+})
+
+it('auto-tier-hardening 验收 1: parent traversal ending in a link preserves its final entry', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const meta = `${h.at.ws}/meta`
+    const leaf = `${h.at.ws}/storage/meta`
+    h.disk.dir(`${h.at.ws}/storage/deep`)
+    h.disk.dir(`${meta}/hooks`)
+    h.disk.file(`${meta}/config`, '[core]\n')
+    h.disk.link(`${h.at.ws}/alias`, `${h.at.ws}/storage/deep`)
+    h.disk.link(leaf, meta)
+    h.disk.file(`${h.at.ws}/.git`, 'gitdir: alias/../meta\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(`${meta}/config`)
+    expect(gitDenyPaths(h).includes(leaf)).toBe(platform === 'darwin')
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+  })
+})
+
+it('auto-tier-hardening 验收 15: unresolved parent traversal reports its path and reason', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    h.disk.link(`${h.at.ws}/cycle`, 'cycle')
+    h.disk.file(`${h.at.ws}/.git`, 'gitdir: cycle/../meta\n')
+    await h.run()
+    expect(gitDenyPaths(h)).toContain(`${h.at.ws}/.git`)
+    expect(gitDenyPaths(h).some((path) => path.split('/').includes('..'))).toBe(false)
+    expect(h.logs.join('\n')).toContain('cycle/../meta')
+    expect(h.logs.join('\n')).toContain('cannot be resolved')
+  })
+})
+
+it('auto-tier-hardening 验收 15: directory git alias fallback protects the real directory', async () => {
+  await onBoth(async (platform) => {
+    const h = harness(platform)
+    const meta = `${h.at.ws}/meta`
+    h.disk.dir(meta)
+    h.disk.file(`${meta}/config`, '[core]\n')
+    h.disk.link(`${h.at.ws}/.git`, meta)
+    const read = h.disk.readText.bind(h.disk)
+    vi.spyOn(h.disk, 'readText').mockImplementation(async (path, max) => {
+      if (path === `${meta}/config`) throw errno('EACCES', path)
+      return read(path, max)
+    })
+    await h.run()
+    expect(gitDenyPaths(h)).toEqual(expect.arrayContaining([`${h.at.ws}/.git`, meta]))
+    expect(h.logs.join('\n')).toContain(meta)
+    expect(h.logs.join('\n')).toContain('EACCES')
+  })
+})
+
+it.each([
+  ['pointer', 'git pointer cannot be parsed'],
+  ['target', 'git target is not a directory'],
+  ['commondir', 'invalid commondir'],
+  ['hooksPath', 'git config/hooksPath cannot be parsed'],
+])(
+  'auto-tier-hardening 验收 15: %s internal diagnostics name the path and reason',
+  async (kind, reason) => {
+    await onBoth(async (platform) => {
+      const h = harness(platform)
+      const git = `${h.at.ws}/.git`
+      let broken = git
+      if (kind === 'pointer') h.disk.file(git, 'invalid pointer')
+      else if (kind === 'target') {
+        h.disk.file(git, 'gitdir: not-a-directory\n')
+        broken = `${h.at.ws}/not-a-directory`
+        h.disk.file(broken, '')
+      } else {
+        h.disk.dir(git)
+        broken = `${git}/${kind === 'commondir' ? 'commondir' : 'config'}`
+        h.disk.file(broken, kind === 'commondir' ? '\n' : '[core]\n hooksPath = "unclosed\n')
+      }
+      await h.run()
+      expect(h.logs.join('\n')).toContain(JSON.stringify(broken))
+      expect(h.logs.join('\n')).toContain(reason)
+    })
+  },
+)
+
 it('auto-tier-hardening 验收 1 复现：已有转向文件', async () => {
   await onBoth(async (platform) => {
     const h = harness(platform)
@@ -2138,7 +2527,7 @@ it('auto-tier-hardening 验收 15: a FIFO git entry is rejected without reading 
     h.disk.nodes.set(git, { kind: 'other', uid: SELF[platform], mode: 0o600 })
     const read = vi.spyOn(h.disk, 'readText')
     await h.run()
-    expect(read).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalledWith(git, expect.anything())
     expect(gitDenyPaths(h)).toContain(git)
     expect(h.logs.join('\n')).toContain('git discovery incomplete')
   })
