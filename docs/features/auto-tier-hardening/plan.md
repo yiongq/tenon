@@ -1,7 +1,7 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：spec 已入库（PR #82），2026-11-08 owner「开自动档前的加固改 ready」，Status 改 ready。下一步：A 段（沙箱 .git 转向文件保护）交 Codex 实现，lead 审；第 0 步之前的准备照「开工前读」。
+当前：spec 已 ready 并合入 dev（PR #82，962dfb3）。A 段（沙箱 .git 转向文件保护）已实现，分支 `feat/auto-tier-hardening-a`：b5593bb 实现、2c086f4 按评审修订、f41ddc9 并入 dev；两平台真沙箱与两路新上下文复核通过（log.md「评审 · 2026-11-08 · 审过 f41ddc9」）。下一步：A 段 PR 合入后做 B 段（连接器外带）。
 需要你：无（实现时不改门禁文件：每个缺口都有能被 `test` 门禁执行的断言型复现，见「测试分层」）。
 
 ## 开工前读
@@ -47,8 +47,8 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 - **D 段 · 文档同步与收口**。按 headers.md 给 02、03、04、05 页头加 `Changed by`，正文不动；改总参考 §以后再说 三行；SECURITY.md 加 §已知限制 增补的各条与 §给 06 的约束；`docs/README.md` 重新生成（`python3 .sdd/spec-check.py --index`）。门禁：`spec-check` 的 `pairs`、`index`；文档改动 `red-on-base` 自动跳过。
 
 ## 步骤
-- [ ] 1. owner 批 ready → 草稿入库 `docs/features/auto-tier-hardening/`，按 headers.md 给 02/03/04/05 加 `Changed by`、总参考三行换链接、重生成入口页。
-- [ ] 2. A 段：沙箱转向文件保护 + 验收 1–4、15 的三层测试；dev 与本段提交上各跑一次沙箱黑盒（macOS + 两台 Lima），旧红新绿记 log.md；三视角评审 + 汇总评审。
+- [x] 1. owner 批 ready → 草稿入库 `docs/features/auto-tier-hardening/`，按 headers.md 给 02/03/04/05 加 `Changed by`、总参考三行换链接、重生成入口页。
+- [x] 2. A 段：沙箱转向文件保护 + 验收 1–4、15 的三层测试；dev 与本段提交上各跑一次沙箱黑盒（macOS + 两台 Lima），旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [ ] 3. B 段：连接器外带（含 `batch.ts` 父子合并）+ 验收 5–8、13、14；`red-on-base` 核验验收 5 的复现；三视角评审 + 汇总评审。
 - [ ] 4. C 段：钩子位置 + 验收 9–12；沙箱黑盒旧红新绿记 log.md；三视角评审 + 汇总评审。
 - [ ] 5. D 段：文档同步、SECURITY.md、入口页重生成；汇总评审（只改被改 spec 页头，正文不动）。
@@ -79,7 +79,11 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 （「层」写最低一层：复现与对照都在 `test` 门禁里跑；用例名里标「黑盒」的由 CI 的 `ci`、`sandbox-macos` 作业以 `TENON_SANDBOX_TESTS=required` 跑，`test` 门禁与 `red-on-base` 跳过它们（E5），两平台旧红新绿记 log.md。CI 机器重跑的突变只登记 `test` 门禁（本项目补充 5）。）
 
 ## 交接
-草稿五文件已写在 draft/，按 owner 的 D1–D7 与五轮 Codex 复核（r1–r5）修订过；第六轮只改了两处：回退按仓库形态分三种（目录型整个 `.git`；指针型且指针解析得出，拒写指针文件加实际 gitdir 与 commondir；指针解析不出，只拒写指针本身、提交失败不作保证并写进已知限制），以及本 plan 的当前与交接。兼容性实测结论在 evidence.md（P1 macOS、P2 Linux 两版 git、P4 Linux 钩子位置占位）。没有未决项，入库前只等 owner 批 ready。实现从步骤 1 接。
+2026-11-08：A 段由 Codex 实现、lead 提交，两路新上下文评审（对照 spec 与安全、测试与突变）各一轮不通过、修订后复核通过；macOS 真沙箱与 Lima u2404 真沙箱全绿，旧红新绿记 log.md（u2604 冷启动后 AppArmor 自带配置使沙箱不可用，未改它，Linux 另由 CI `ci` 作业覆盖）。B 段从 `packages/kernel/src/permission/session-view.ts` 接，照 plan B 段与「测试分层」。下面 Open 里的五条随 C、D 段处理。
 
 ## Open
-（无）
+- C 段一并做：发现失败中不经端口的那几类（指针解析不了、预算或深度耗尽、目标不是目录、commondir 内容非法）日志只有一句总述，要带上路径与原因（A 段安全复核建议）。
+- C 段一并补测试：`.git/modules/<名>` 本身是链接时的拒写与 Linux 事后比对；含 `..` 的写法最后一级是链接、`..` 写法解不完；目录型 `.git` 本身是指向目录的链接配回退（A 段测试复核建议）。
+- C 段：`SandboxHostPaths.xdgConfigHome` 接线（从 startupEnv 读 `XDG_CONFIG_HOME`，改必填），解析全局 git 配置要用。
+- D 段：04 的增补里写一句「含 `..` 的条目改交解开 `..` 之前链接后的拼法」，这是 04「链接」规则的一处实现细化，影响 denyRead 与 denyWrite 的全部条目（A 段安全复核建议；已核不算放宽）。
+- `desktop-sandbox-fs.test.ts` 的 chmod 000 用例在 root 下会红：现有 CI 与 Lima 都不以 root 跑；以后要在 root 下跑时加 `skipIf(process.getuid?.() === 0)`。

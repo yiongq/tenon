@@ -88,3 +88,32 @@
 最终全量：`pnpm vitest run --maxWorkers=2` 为 282 files passed / 2 failed / 3 skipped，5663 tests passed / 5 failed / 129 skipped，耗时 150.79 秒（`/private/tmp/hardA-r2-full.log`）。五条失败与前轮已确认的环境限制一致：stop-tree 的四条调用 ps 报 spawn EPERM；snapshot-git 的遗留进程恢复用例依赖被限制的进程枚举，等待退出超时。其余全绿，本轮未改这两个文件。
 
 收尾：三个生产文件与突变前备份逐字一致，四条新复现标题显示宽度依次为 65 / 66 / 65 / 69 列；追加日志后 format:check、git diff --check 通过。spec-check 为 1 条阻断、15 条警告；阻断仍仅为 lead 正式评审记录缺失。修订后两平台真沙箱黑盒留给 lead 复跑。需要确认的问题：无。
+
+## 评审 · 2026-11-08 · 审过 f41ddc9
+
+方式：实现者是 Codex；两路新上下文评审由 Claude 做（对照 spec 与安全一路，测试与突变一路），各在自建的临时 worktree 里取证。第一轮对准 b5593bb，两路各 1 条 major、判不通过；Codex 按发现修订为 2c086f4（f41ddc9 只是并入 dev，apps 与 packages 下无差异）后复核，两路都通过。
+
+平台证据（旧红新绿）：
+- macOS（sandbox-runtime 0.0.79）：dev c894922 上 ebdd69b 的四条复现 4/4 红；f41ddc9 上 escape.test.ts 114 通过、0 失败（auto-tier-hardening 验收 1、2、3、15 全过，验收 4 只在 Linux 跑）。
+- Linux（Lima tenon-u2404，git 2.43.0，bwrap 0.9.0）：ebdd69b 上四条复现 3 红 1 绿——写 commondir 那条在 Linux 沙箱里没修复也没有得逞，对应的验收 2 只在 macOS 跑，所以 Linux 上它没有红到绿可证；b5593bb 与 f41ddc9 上 escape.test.ts 都是 46 通过、0 失败，04 原有用例没有变红。tenon-u2604 冷启动后 Ubuntu 自带的 AppArmor 配置让沙箱不可用，没有结果，没改它；Linux 另由 CI 的 `ci` 作业覆盖。
+- 沙箱外全量 vitest：f41ddc9 上 284 个文件、5669 条通过、0 失败（Codex 沙箱里那 5 条失败是调不了 `ps`）。
+
+发现：
+- [major] 真磁盘端口 `desktopSandboxFs()` 的 `readText`、`readdir` 在 `test` 门禁里没有覆盖，上限与非普通文件的检查都只由测试自己的假磁盘撑着（测试评审第一轮） · 已修 2c086f4
+- [major] 发现交出的转向条目与回退条目没有照 04 §档位到 srt 配置「链接」一节处理（安全评审第一轮，附三条会失败的临时用例；复核时在新提交上重放全部通过） · 已修 2c086f4
+- [建议] 指针与 commondir 的解析口径照 git，只去掉末尾的 `\r`、`\n` · 已修 2c086f4
+- [建议] 条目预算、深度上限、`config.worktree` 读失败、`.git` 为 FIFO，各补单独用例 · 已修 2c086f4
+- [建议] 真沙箱验收 1、2 另断言命令失败、目标文件不变 · 已修 2c086f4
+- [建议] 验收 15 指针型黑盒把 main 移出 workspace，失败来源只剩 ws 自己的回退 · 已修 2c086f4
+- [建议] 验收 4 补配置层用例 · 已修 2c086f4
+- [建议] 端口出错的日志带端口名、路径与 errno · 已修 2c086f4
+- [建议] 不经端口的发现失败（指针解析不了、预算或深度耗尽等）日志仍只有一句总述 · 不修：留 C 段，记 plan Open
+- [建议] `xdgConfigHome` 没接线 · 不修：C 段解析全局 git 配置时接，记 plan Open
+- [建议] 子模块目录本身是链接、`..` 写法最后一级是链接、`..` 写法解不完、目录型 `.git` 本身是链接，各缺一条回归用例 · 不修：留 C 段，记 plan Open
+- [建议] `buildFilesystem` 对含 `..` 的条目改交解开 `..` 之前链接后的拼法，影响 denyRead 与 denyWrite 的全部条目（评审核过不算放宽，04 既有用例都过） · 不修：D 段在 04 的增补里写明，记 plan Open
+- [建议] `desktop-sandbox-fs.test.ts` 的 chmod 000 用例在 root 下会红 · 不修：现有 CI 与 Lima 都不以 root 跑，记 plan Open
+- [建议] 入队与出队重复登记 `rootMetadata` 等几处等价冗余 · 不修：不影响行为
+
+结论：通过
+
+突变：第一轮 40 个、存活 13 个，其中实质 6 个（真端口三处、深度上限、`config.worktree`、lstat 的 other），修订后复核全部被杀；复核轮在新改动上另做 26 个、存活 7 个：两个预算单项互相兜底、两个等价写法，其余三个是上面记入 plan Open 的用例缺口。
