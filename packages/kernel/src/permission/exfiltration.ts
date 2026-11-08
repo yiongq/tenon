@@ -3,11 +3,12 @@ import type { AskOpinion, InspectorRegistration } from './inspector.js'
 import type { BeforeCallInput } from './session-view.js'
 
 export function exfiltrationOpinion({ call, view }: BeforeCallInput): AskOpinion {
-  return call.tool.source === 'builtin' &&
-    call.tool.originalName === 'WebFetch' &&
-    view.touchedPrivateData &&
+  const webFetch = call.tool.source === 'builtin' && call.tool.originalName === 'WebFetch'
+  const source = call.tool.source === 'mcp' ? `mcp:${call.tool.serverId}` : 'builtin'
+  return (webFetch || call.tool.source === 'mcp') &&
     view.untrustedSources.length > 0 &&
-    view.fetchUrlVouched !== true
+    view.privateSources.some((privateSource) => privateSource !== source) &&
+    (!webFetch || view.fetchUrlVouched !== true)
     ? { kind: 'ask', category: 'exfiltration', findings: [{ code: 'lethal-trifecta' }] }
     : { kind: 'none' }
 }

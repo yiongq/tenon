@@ -32,6 +32,7 @@ const INPUT: BeforeCallInput = {
     recentUserTexts: [],
     nonReadOnlyCalls: [],
     untrustedSources: [],
+    privateSources: [],
     touchedPrivateData: false,
   },
 }

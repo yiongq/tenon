@@ -1380,11 +1380,13 @@ export async function judgeCall(
     ownSpillDir: paths.ownSpillDir,
     child: true,
   })
+  const privateSources = [...new Set([...ownView.privateSources, ...related.privateSources])]
   const view = {
     ...ownView,
     nonReadOnlyCalls: [...ownView.nonReadOnlyCalls, ...related.nonReadOnlyCalls],
     untrustedSources: [...new Set([...ownView.untrustedSources, ...related.untrustedSources])],
-    touchedPrivateData: ownView.touchedPrivateData || related.touchedPrivateData,
+    privateSources,
+    touchedPrivateData: privateSources.length > 0,
     ...(ownView.fetchUrlVouched === undefined
       ? {}
       : { fetchUrlVouched: ownView.fetchUrlVouched || parentView.fetchUrlVouched === true }),
