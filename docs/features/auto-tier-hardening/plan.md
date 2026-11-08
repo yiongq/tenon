@@ -1,7 +1,7 @@
 # 开自动档前的加固 · plan
 
 ## 当前 / 需要你
-当前：A/B/C 段已合入 dev（PR #84、#85、#86），D 段文档已提交于 03bd512，lead 的正式文档评审通过。步骤 5–8 已完成，本轮已落实 D-review.md 五条文档建议，检查及独立复核通过，修订不提交；Status 保持 ready。改 implemented 前仍需 lead 补齐 M1–M11 的实际重跑证据，再交 owner 验收。
+当前：已 implemented（2026-11-09 owner「开自动档前的加固改 implemented」）。A、B、C 段在 PR #84、#85、#86，D 段文档在 PR #87。§Open 里剩下的都是不挡验收的小项，随以后碰到同一处时处理。
 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 授权：本 spec 各段由 Codex 实现的 PR，lead 评审（两路新上下文）、CI 绿后由 lead 开自动合并；碰门禁文件、涉及花费或安全取舍、改 Status 时仍问 owner · 到本 spec `implemented` 为止 · 「一路推进」（2026-11-08 问题「加固 spec 各段 PR，我评审过且 CI 绿后由我开自动合并吗？」）
 
@@ -56,7 +56,7 @@ Codex 实现，lead（Claude Code）每段 PR 合并前审一次（heavy：对�
 - [x] 6. 补突变编号进 §验收矩阵「突变」列（汇总评审追加突变块后）。
 - [x] 7. 对照验收逐条核对（每条验收对上点名它的测试；沙箱与平台条由 lead 在两平台确认，记 log.md）。
 - [x] 8. 清理：撤掉所有临时探针，确认工作区干净、无调试打印。
-- [ ] 9. owner 验收 → 改 Status。
+- [x] 9. owner 验收 → 改 Status（2026-11-09 owner「开自动档前的加固改 implemented」）。
 
 ## 验收矩阵
 | 验收号 | 层 | 平台 | 测试用例名 | 门禁命令 | 突变 |
