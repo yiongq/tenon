@@ -48,6 +48,7 @@ export function wiringFixture(
     credentials: [],
     uid: 501,
     xdgRuntimeDir: null,
+    xdgConfigHome: null,
     sshAuthSock: null,
   }
   const session = sessionConfig(

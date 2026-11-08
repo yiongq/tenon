@@ -469,6 +469,7 @@ function harness(platform: NodeJS.Platform, options: HarnessOptions = {}) {
     credentials: credentialPaths(os, p(at.home)),
     uid,
     xdgRuntimeDir: null,
+    xdgConfigHome: null,
     sshAuthSock: null,
   }
   const env: Record<string, string | undefined> = {

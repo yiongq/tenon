@@ -261,3 +261,71 @@
 结论：通过
 
 突变：第一轮在 8f7c76e 上出 31 个、存活 6 个（合并不去重两个、WebFetch 只凭名字、连接器跌进内置分类、子会话漏父会话的连接器来源两个），baaedb8 补测试后全部被杀；复核轮针对查表改写新做 7 个、存活 4 个，都是生产里不可达的保留策略与键拼法，记入 plan Open。plan B 段列的四个突变（恒真、恒假、当内置、漏合并）重放全被杀。
+
+## 2026-11-08 · C 段实现
+
+实现三句：发现函数按会话根及其 gitdir/commondir 配置、用户全局配置解析钩子目录，文件工具与沙箱共用解析实现。文件工具写钩子位置沿用自动执行位置的每次询问，沙箱两平台拒写根下名字与精确目录，macOS 另拒写子目录同名位置。验收 9、10、12 四条复现已核旧红新绿，四项突变均触发断言失败且已恢复；真沙箱平台验收留 lead 执行。
+
+### 实现与范围
+
+- apps/desktop/src/main/host/git-protection.ts 的 discoverGitProtection 增加固定钩子名单、core.hooksPath 和 include/includeIf（不判条件、取并集）解析；每个配置文本上限 1 MiB，配置读取预算 4096、include 深度 32，无跨调用缓存。支持引号、转义、注释、值续行、HOME 路径、XDG 配置；.husky/_ 另带 .husky 父目录。根下没有 .git 也解析全局配置、返回固定名字。
+- 钩子配置来自该会话根的 gitdir/commondir 链及全局配置；子模块/worktree 元数据枚举仍做 A 段的转向保护与读失败回退，不把它们的相对 hooksPath 归到父根。子模块作为另一个会话根时独立发现。GitProtection 字段保持不变。
+- apps/desktop/src/main/host/sensitive-paths.ts 的 desktopSensitivePaths 每次刷新调用同一发现函数，把固定名字和真实钩子目录并进敏感表，保留不完整标记及诊断。kernel 的 sensitiveName 只匹配 hookDirs，不读磁盘；读与查找不因钩子分类出卡。
+- apps/desktop/src/main/host/sandbox-config.ts 的 buildFilesystem 把每个会话根下的 hookNames 与精确 hookDirs 加入拒写；macOS 另加子目录名字 glob，Linux 不加 glob，按 spec 保留其子目录限制和缺失位置占位代价。
+- SandboxHostPaths.xdgConfigHome 改必填；sandbox-runtime.ts 从 startupEnv 接入 XDG_CONFIG_HOME，main 的文件工具 provider 也接同一启动值。测试与 eval 宿主补齐该字段。
+- A 段 Open：内部发现错误记录路径和原因（指针解析、目标不是目录、commondir、预算/深度、配置/hooksPath）；端口没有 errno 的错误保留其原因。补模块目录链接与 Linux 事后比对、含 .. 的最后一级链接/无法解析、目录型 .git 链接回退。
+- B 段 Open：只补 originOf 查表回归，生产代码不变，覆盖两类同键保留首条、缺引用表但有别的表、run/request 键不串。
+
+### 验收落点
+
+- 验收 9：sensitive-paths.test.ts 的「auto-tier-hardening 验收 9 复现：仓库钩子目录」「auto-tier-hardening 验收 9 复现：全局钩子目录」。另有 includes/quotes/continuations/husky parent、XDG 无 git 与刷新、目录链接与父路径、include 深度的对照；desktop-sandbox.test.ts 覆盖 XDG include、指针/公共配置与文件数预算。
+- 验收 10：sensitive-paths.test.ts 的「auto-tier-hardening 验收 10 复现：钩子名字」，不配置 hooksPath，覆盖 Write/Edit/Delete、任意深度与折叠大小写；与验收 9 共用「auto-tier-hardening 验收 9、10: hook writes always ask with the automatic execution category」，覆盖 always-allow、自动档与重复询问。
+- 验收 11：sensitive-paths.test.ts 的「auto-tier-hardening 验收 11: 配了 hooksPath 才认自定义目录」，fixture 为 my-hooks，未配置判 workspace、配置后判 auto-run，Read/Glob/Grep 照常；另有 core 子节不误认的对照。
+- 验收 12：desktop-sandbox.test.ts 的「auto-tier-hardening 验收 12 复现：钩子拒写」，两平台检查根下钩子名字、精确目录与 macOS glob；escape.test.ts 的「auto-tier-hardening 验收 12: root hook locations refuse writes %s」「auto-tier-hardening 验收 12: macOS refuses nested hook names %s」分别覆盖已有/新建。lab.run 会等待 afterExit，测试串行；新建夹具在退出后检查包括目录位置本身的全部占位均不存在。黑盒未在本 agent 沙箱运行。
+- Open 跟进：desktop-sandbox.test.ts 中「auto-tier-hardening 验收 1: linked module directories deny targets and Linux detects swaps」「auto-tier-hardening 验收 1: parent traversal ending in a link preserves its final entry」「auto-tier-hardening 验收 15: unresolved parent traversal reports its path and reason」「auto-tier-hardening 验收 15: directory git alias fallback protects the real directory」，以及 internal diagnostics/config budget 的参数化用例。
+- 验收 8 跟进：session-view.test.ts 的「auto-tier-hardening 验收 8: 同键多条 %s 保留首条」（assembled、tool_table）、「auto-tier-hardening 验收 8: 引用表缺失时不借别的表」「auto-tier-hardening 验收 8: run-1/11 与 run-11/1 不串键」。
+
+四条新增复现的 it 标题均保持单行；显示列宽（中文按 2）为 65、65、62、62。
+
+### 旧红新绿与突变证据
+
+以本次起点 HEAD 6254700 为基线：把改过的生产文件备份到临时目录，用 git show HEAD:<path> 的原始字节覆盖生产文件，测试文件保留；跑完在 finally 恢复。未用 stash 或 checkout。命令为 pnpm vitest run --maxWorkers=2 apps/desktop/test/sensitive-paths.test.ts apps/desktop/test/sandbox/desktop-sandbox.test.ts -t "auto-tier-hardening 验收 (9|10|12) 复现"。
+
+~~~text
+基线：exit 1；Test Files 2 failed；Tests 4 failed
+  三条文件工具断言：AssertionError ... sensitive: 'auto-run'
+  一条 wrap 断言：AssertionError ... ArrayContaining
+恢复：exit 0；Test Files 2 passed；Tests 4 passed
+~~~
+
+四项手动突变，每次只改对应生产点，跑后恢复：
+
+~~~text
+去掉固定 .husky：验收 10，1 failed（AssertionError）
+关闭 hooksPath 解析：验收 9，2 failed（AssertionError）
+去掉 buildFilesystem 钩子名字/目录拒写：验收 12，1 failed（AssertionError）
+去掉 sensitiveName 的 hookDirs 匹配：验收 9，2 failed（AssertionError）
+全部恢复后：4 passed
+~~~
+
+### 新上下文快照复核与测试调整
+
+独立只读上下文在临时快照审查源码及测试，发现一项配置注释解析问题：以反斜线结尾的注释吞掉下一行 [core]。隔离的 git config --file ... --get core.hooksPath 返回 my-hooks，而新增回归先断言失败；修正为先去引号外注释、再判续行，三种注释回归与原有真实值续行对照通过。自查另发现 core 子节误认，新增两个对照先失败，修正后通过。最终快照静态复核通过，无剩余具体发现；该结论不代替 lead 的两路正式评审与提交绑定。
+
+测试改动：apps/desktop/test/sensitive-paths.test.ts · 完整敏感表精确比对 · 新契约增加 hookDirs 空数组，仍精确比对所有字段。
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts · Linux 占位记录/并发清理三条 · 精确名单增加 C 段的 16 个钩子名字，不移除原有条目或断言。
+测试改动：apps/desktop/test/sandbox/desktop-sandbox.test.ts · FIFO git entry is rejected without reading it · 全局 git 配置现在也要读，将“readText 完全不调用”收窄到“绝不读 FIFO .git 本身”，保留原来的安全边界，允许正常的全局配置读取。
+测试改动：apps/desktop/test/sandbox/escape.test.ts · C 段 macOS 子目录钩子黑盒 · 新增 macOS 平台条件，Linux 不支持这类 glob 是 spec 已定限制；已有测试未增加跳过。
+未带入 ebdd69b 中把未配置 .husky 判为普通目录的旧对照，按 plan 用 my-hooks 验收 11。
+
+### 最终门禁与交接
+
+- pnpm format:check、pnpm lint、pnpm typecheck：最终生产版本全部通过。git diff --check 无空白问题。
+- pnpm vitest run --maxWorkers=2 apps/desktop/test/sandbox/ apps/desktop/test/sensitive-paths.test.ts packages/kernel：125 个文件通过，3031 passed、117 skipped；黑盒因未设置 TENON_SANDBOX_TESTS 按原门禁跳过。
+- pnpm vitest run --maxWorkers=2：283 个文件通过、2 个失败、3 个跳过；5717 passed、5 failed、133 skipped。四条 stop-tree 失败直接报 spawn EPERM，位置在调用 ps 的 living；snapshot-git 的“startup recovery ends a real leftover git launched through /usr/bin/git”因进程身份查询同样依赖受限的 /bin/ps，恢复未杀掉夹具进程而超时。与 brief 预告的 agent 沙箱限制一致，未改这些测试或门禁。
+- python3 .sdd/spec-check.py：最近一轮退出 1，16 条 review 阻断，18 条警告；阻断均为旧 B 段“审过 baaedb8”之后的 C 段 16 个源码/测试文件尚未有新提交绑定评审。当前仅有未提交快照复核，brief 禁止提交及新增以“## 评审”开头的登记，不伪造绑定、不修改门禁；交接前会复跑一次。警告包括缺测试报告、已有文档关系/敏感词告警及测试改动提醒。
+- 新 worktree 已运行 pnpm install --frozen-lockfile，依赖下载完成，但 prepare 安装 hooks 时因不能写主仓库 .git/hooks/pre-commit 而失败；未绕过 hooks。随后 pnpm build 成功，再执行类型检查与测试。pnpm 使用 NPM_CONFIG_USERCONFIG=/dev/null，避免访问受限用户配置。
+
+交接：C 段源码、门禁复现、黑盒用例及 Open 标 C 的跟进已留在工作区；无提交、无 push、无 PR。未改 spec、plan、decisions、evidence、状态或门禁，未做 D 段，未启动 Electron、未读钥匙串/密钥、未调用真实模型。按本 brief 不改 plan，进度与剩余工作记在本节。下一步由 lead 在 macOS 与 Linux/Lima 跑验收 12 黑盒（含新建位置 afterExit 后无占位）、作正式两路评审与提交绑定，再更新 plan；全量测试的五条进程查询用例需在不受本 agent 沙箱限制的环境复核。需要确认的问题：无。
+
+最终复跑确认：python3 .sdd/spec-check.py 退出 1，仍为 16 条 review 阻断、18 条警告；与上述原因一致。追加本节后的 pnpm format:check 通过，源码最终 pnpm lint、pnpm typecheck 通过；无未恢复的突变、临时源码或调试打印。

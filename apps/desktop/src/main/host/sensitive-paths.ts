@@ -7,6 +7,8 @@ import type { AbsolutePath, PathScope } from '@tenon-app/kernel'
 import { credentialPaths, protectionList, walkLinks } from './sandbox-config.js'
 import type { PathPorts, SandboxPlatform } from './sandbox-config.js'
 import { DesktopFs } from './fs.js'
+import { discoverGitProtection } from './git-protection.js'
+import { desktopSandboxFs } from './sandbox.js'
 import { DEFAULT_EXCLUDES, errno } from './snapshot-storage.js'
 
 type Category = 'credential' | 'auto-run'
@@ -15,6 +17,7 @@ export type SensitiveTable = NonNullable<PathScope['sensitive']> & {
   readonly diagnostic: string | null
 }
 interface SensitivePathScanOptions {
+  readonly xdgConfigHome?: string | null
   readonly timeoutMs?: number
   readonly maxEntries?: number
   readonly signal?: AbortSignal
@@ -108,6 +111,7 @@ function baseTable(
       ...roots.map((root) => absolutePath(posix.join(root, '.aws'))),
     ],
     autoRunNames: list.autoRunNames,
+    hookDirs: [],
     linkTargets: [
       ...list.credential.map((real) => ({ real, category: 'credential' as const })),
       ...list.homeAutoRun.map((real) => ({ real, category: 'auto-run' as const })),
@@ -131,7 +135,9 @@ export async function desktopSensitivePaths(
     base.linkTargets.map(({ real, category }) => [real, category]),
   )
   const workspaceTargets = new Map<string, Category>()
+  const hookDirs = new Set<AbsolutePath>()
   let failure: string | null = null
+  let gitFailure: string | null = null
   let count = 0
   const deadline = Date.now() + (options.timeoutMs ?? 5000)
   const check = () => {
@@ -140,6 +146,73 @@ export async function desktopSensitivePaths(
       throw new Error('Sensitive link scan aborted or timed out')
   }
   const resolve = targetResolver(check)
+  const gitFs = desktopSandboxFs()
+  const discoverHooks = async () => {
+    for (const root of roots) {
+      check()
+      // oxlint-disable-next-line no-await-in-loop -- each refresh discovers every root independently
+      const git = await discoverGitProtection(
+        {
+          root,
+          home,
+          platform,
+          xdgConfigHome:
+            options.xdgConfigHome === undefined
+              ? (process.env['XDG_CONFIG_HOME'] ?? null)
+              : options.xdgConfigHome,
+        },
+        {
+          lstat: async (path) => {
+            check()
+            try {
+              const stat = await lstat(path)
+              return {
+                kind: stat.isSymbolicLink()
+                  ? 'link'
+                  : stat.isDirectory()
+                    ? 'dir'
+                    : stat.isFile()
+                      ? 'file'
+                      : 'other',
+              }
+            } catch (error) {
+              if (errno(error, 'ENOENT') || errno(error, 'ENOTDIR')) return null
+              throw error
+            }
+          },
+          readdir: async (path) => {
+            check()
+            return readdir(path).catch((error: unknown) => {
+              if (errno(error, 'ENOENT') || errno(error, 'ENOTDIR')) return []
+              throw error
+            })
+          },
+          readText: async (path, max) => {
+            check()
+            return gitFs.readText(path, max)
+          },
+          realpath: async (path) => {
+            check()
+            const resolved = await resolve(path)
+            if (resolved === undefined) throw new Error('Git path cannot be resolved')
+            return new DesktopFs().realpath(resolved)
+          },
+        },
+        (message) => {
+          gitFailure ??= message
+        },
+      )
+      for (const dir of git.hookDirs) {
+        // oxlint-disable-next-line no-await-in-loop -- retain real targets including future leaves
+        const resolved = await resolve(dir)
+        // oxlint-disable-next-line no-await-in-loop -- DesktopFs also canonicalizes macOS firmlinks
+        const real = resolved === undefined ? undefined : await canonical(resolved)
+        if (real !== undefined) hookDirs.add(real)
+        else gitFailure ??= `Git hook directory cannot be resolved: ${dir}`
+      }
+      if (git.incomplete) gitFailure ??= `Git discovery incomplete: ${root}`
+    }
+  }
   const add = async (map: Map<string, Category>, path: string, category: Category) => {
     check()
     const resolved = await resolve(path)
@@ -182,7 +255,7 @@ export async function desktopSensitivePaths(
       // oxlint-disable-next-line no-await-in-loop -- the same fixed home startup names as the sandbox
       await homePattern(posix.relative(home, path), 'auto-run')
     }
-    const patterns = list.autoRunNames.map((name) => ({
+    const patterns = base.autoRunNames.map((name) => ({
       parts: name.split('/').map(foldCase),
       category: 'auto-run' as Category,
     }))
@@ -258,6 +331,7 @@ export async function desktopSensitivePaths(
     await Promise.race([
       Promise.allSettled([
         scan(),
+        discoverHooks(),
         // Resolve the fixed names independently, so a stuck spelling lookup cannot prevent the
         // other fixed locations' available realpaths from being retained within the same deadline.
         Promise.all(
@@ -284,8 +358,10 @@ export async function desktopSensitivePaths(
   if (failure === null)
     for (const [real, category] of workspaceTargets)
       if (category === 'credential' || !targets.has(real)) targets.set(real, category)
+  failure ??= gitFailure
   return {
     ...base,
+    hookDirs: [...hookDirs],
     linkTargets: [...targets].map(([real, category]) => ({ real: absolutePath(real), category })),
     incomplete: failure !== null,
     diagnostic: failure,

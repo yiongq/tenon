@@ -216,6 +216,7 @@ async function main(): Promise<void> {
   const pathProtection = createSensitivePathProvider(
     home,
     startupEnv['ZDOTDIR']?.startsWith('/') ? absolutePath(startupEnv['ZDOTDIR']) : null,
+    { xdgConfigHome: startupEnv['XDG_CONFIG_HOME'] ?? null },
   )
   const refreshSensitive = (folders: readonly AbsolutePath[]): void => {
     void pathProtection

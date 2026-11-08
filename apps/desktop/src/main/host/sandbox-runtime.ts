@@ -306,6 +306,7 @@ export async function createDesktopSandboxRuntime(q: {
     credentials: credentialPaths(platform, home),
     uid: process.getuid?.() ?? 0,
     xdgRuntimeDir: q.startupEnv['XDG_RUNTIME_DIR'] ?? null,
+    xdgConfigHome: q.startupEnv['XDG_CONFIG_HOME'] ?? null,
     sshAuthSock: q.startupEnv['SSH_AUTH_SOCK'] ?? null,
   } as const
   const signalListeners: (() => void)[] = []

@@ -209,6 +209,7 @@ function hostPaths(platform: SandboxPlatform): SandboxHostPaths {
         noSeccomp: false,
         uid: 501,
         xdgRuntimeDir: null,
+        xdgConfigHome: null,
         sshAuthSock: null,
       }
     : {
@@ -223,6 +224,7 @@ function hostPaths(platform: SandboxPlatform): SandboxHostPaths {
         noSeccomp: false,
         uid: 1000,
         xdgRuntimeDir: null,
+        xdgConfigHome: null,
         sshAuthSock: null,
       }
 }
@@ -1220,6 +1222,7 @@ function linkedInput(platform: SandboxPlatform): WrapFilesystemInput {
     noSeccomp: false,
     uid: 501,
     xdgRuntimeDir: null,
+    xdgConfigHome: null,
     sshAuthSock: null,
     profile: 'workspace-write',
     chosen: 'workspace-write',

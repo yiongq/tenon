@@ -1185,6 +1185,99 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   // -------------------------------------------------------------------------------------------
   // 验收 12
 
+  it.each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: root hook locations refuse writes %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      makeDir(join(ws, '.git'))
+      writeHostFile(join(ws, '.git/config'), '[core]\n hooksPath = my-hooks\n')
+      const dirs = ['.husky', '.lefthook', '.lefthook-local', 'my-hooks']
+      const files = [
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ]
+      const targets = [...dirs.map((dir) => `${dir}/pre-commit`), ...files]
+      if (state === 'existing')
+        for (const target of targets) {
+          makeDir(dirname(join(ws, target)))
+          writeHostFile(join(ws, target), 'original\n')
+        }
+      const attempts = targets.map((target) => {
+        const path = join(ws, target)
+        return (
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}); ` +
+          `then echo ${shq(`unexpected write: ${target}`)}; exit 1; fi`
+        )
+      })
+      const ran = await lab.run([...attempts, 'true'].join('; '), { workspace: [ws] })
+      // lab.run awaits afterExit; tests are serial, so no other wrap holds Linux's placeholders.
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      const observed = targets.map((target) =>
+        state === 'existing' ? readFileSync(join(ws, target), 'utf8') : hostKind(join(ws, target)),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+      // Also check directory placeholders themselves, after all wraps and afterExit have settled.
+      const placeholders = state === 'new' ? [...dirs, ...files] : []
+      expect(placeholders.map((name) => hostKind(join(ws, name)))).toEqual(
+        placeholders.map(() => 'missing'),
+      )
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN).each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: macOS refuses nested hook names %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      const targets = [
+        '.husky/pre-commit',
+        '.lefthook/pre-commit',
+        '.lefthook-local/pre-commit',
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ].map((name) => join(ws, 'one/two', name))
+      if (state === 'existing')
+        for (const path of targets) {
+          makeDir(dirname(path))
+          writeHostFile(path, 'original\n')
+        }
+      const attempts = targets.map(
+        (path) =>
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}); ` +
+          `then echo unexpected; exit 1; fi`,
+      )
+      const ran = await lab.run([...attempts, 'true'].join('; '), { workspace: [ws] })
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      const observed = targets.map((path) =>
+        state === 'existing' ? readFileSync(path, 'utf8') : hostKind(path),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+    },
+    CASE_MS,
+  )
+
   it(
     'auto-tier-hardening 验收 3: complete discovery preserves root git and submodule commits',
     async () => {

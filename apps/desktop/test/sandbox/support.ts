@@ -334,6 +334,7 @@ function hostPaths(q: {
     credentials: credentialPaths(PLATFORM, abs(q.home)),
     uid: process.getuid?.() ?? 0,
     xdgRuntimeDir: process.env['XDG_RUNTIME_DIR'] ?? null,
+    xdgConfigHome: null,
     sshAuthSock: process.env['SSH_AUTH_SOCK'] ?? null,
   }
 }

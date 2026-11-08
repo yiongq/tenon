@@ -193,6 +193,7 @@ function pathsFor(
     credentials: credentialPaths(platform, home),
     uid: process.getuid?.() ?? 0,
     xdgRuntimeDir: process.env['XDG_RUNTIME_DIR'] ?? null,
+    xdgConfigHome: process.env['XDG_CONFIG_HOME'] ?? null,
     sshAuthSock: process.env['SSH_AUTH_SOCK'] ?? null,
   }
 }
