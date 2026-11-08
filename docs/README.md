@@ -10,7 +10,7 @@
 - [03](architecture/03-mcp-host/spec.md) · implemented · 03 · MCP host 完整版 · 需要你：—
 - [04](architecture/04-sandbox/spec.md) · implemented · 04 · 沙箱与出网（阶段 4a） · 需要你：—
 - [05](architecture/05-file-bridge/spec.md) · implemented · agent 改你的文件之前自动留底，一轮任务做完能一键还原；同时补上改文件时的几道保护。 · 需要你：无（2026-11-06 owner「4d 挪阶段 6」，06 单独算预算；下一份是 06 起草）。
-- [auto-tier-hardening](features/auto-tier-hardening/spec.md) · ready · 在开「自动档」（06）之前，给 Tenon 自己的沙箱和权限检查补三道保护，堵住三个会让别人借你的身份执行代码、或把你的数据外带出去的缺口。 · 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
+- [auto-tier-hardening](features/auto-tier-hardening/spec.md) · implemented · 在开「自动档」（06）之前，给 Tenon 自己的沙箱和权限检查补三道保护，堵住三个会让别人借你的身份执行代码、或把你的数据外带出去的缺口。 · 需要你：本轮无；lead 完成突变实跑核验后交 owner 验收，Status 只由 owner 决定。
 - [claude-5-5-models](features/claude-5-5-models/spec.md) · ready · Claude 5.5 两行与模型目录跟随最新 · 需要你：无
 - [custom-vendors](features/custom-vendors/spec.md) · implemented · 自定义厂商（M6） · 需要你：—
 - [model-display-names](features/model-display-names/spec.md) · implemented · 模型显示名 · 需要你：—
