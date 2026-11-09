@@ -1,0 +1,1565 @@
+[
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Write" } },
+      "confirm": { "reason": "default", "facts": { "toolName": "Write" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": {
+          "kind": "session",
+          "grantFrom": { "sessionId": "s", "approvalKey": "k" }
+        },
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "allow",
+        "decidedBy": "user-grant",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          {
+            "by": "user-grant",
+            "said": "allow",
+            "basis": { "grant": "session", "grantFrom": { "sessionId": "s", "approvalKey": "k" } },
+            "status": "ok"
+          },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "allow", "code": "session-allowed", "facts": { "toolName": "Write" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "deny", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "deny",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "deny", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "deny", "code": "org-policy", "facts": { "toolName": "Write" } },
+      "block": { "reason": "policy", "facts": { "toolName": "Write" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "ask", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "ask", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "org-policy", "facts": { "toolName": "Write" } },
+      "confirm": { "reason": "policy", "facts": { "toolName": "Write" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Write" }
+      },
+      "confirm": { "reason": "irreversible", "facts": { "toolName": "Write" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "sensitive-path",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace",
+        "sensitive": "credential"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Write" } },
+      "confirm": {
+        "reason": "sensitive-path",
+        "facts": { "path": "/work/a", "category": "credential" }
+      }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Write",
+          "originalName": "Write",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "outside-workspace",
+        "facts": {
+          "toolName": "Write",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "outside"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Write" } },
+      "confirm": {
+        "reason": "outside-workspace",
+        "facts": { "path": "/work/a", "workspace": "/work" }
+      }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Edit" } },
+      "confirm": { "reason": "default", "facts": { "toolName": "Edit" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": {
+          "kind": "session",
+          "grantFrom": { "sessionId": "s", "approvalKey": "k" }
+        },
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "allow",
+        "decidedBy": "user-grant",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          {
+            "by": "user-grant",
+            "said": "allow",
+            "basis": { "grant": "session", "grantFrom": { "sessionId": "s", "approvalKey": "k" } },
+            "status": "ok"
+          },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "allow", "code": "session-allowed", "facts": { "toolName": "Edit" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "deny", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "deny",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "deny", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "deny", "code": "org-policy", "facts": { "toolName": "Edit" } },
+      "block": { "reason": "policy", "facts": { "toolName": "Edit" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "ask", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "ask", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "org-policy", "facts": { "toolName": "Edit" } },
+      "confirm": { "reason": "policy", "facts": { "toolName": "Edit" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "irreversible-once", "facts": { "toolName": "Edit" } },
+      "confirm": { "reason": "irreversible", "facts": { "toolName": "Edit" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "sensitive-path",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace",
+        "sensitive": "credential"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Edit" } },
+      "confirm": {
+        "reason": "sensitive-path",
+        "facts": { "path": "/work/a", "category": "credential" }
+      }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Edit",
+          "originalName": "Edit",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "outside-workspace",
+        "facts": {
+          "toolName": "Edit",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "outside"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Edit" } },
+      "confirm": {
+        "reason": "outside-workspace",
+        "facts": { "path": "/work/a", "workspace": "/work" }
+      }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Bash" } },
+      "confirm": { "reason": "command", "facts": { "command": "echo stable", "cwd": "/work" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": {
+          "kind": "session",
+          "grantFrom": { "sessionId": "s", "approvalKey": "k" }
+        },
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "allow",
+        "decidedBy": "user-grant",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          {
+            "by": "user-grant",
+            "said": "allow",
+            "basis": { "grant": "session", "grantFrom": { "sessionId": "s", "approvalKey": "k" } },
+            "status": "ok"
+          },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "allow", "code": "session-allowed", "facts": { "toolName": "Bash" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "deny", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "deny",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "deny", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "deny", "code": "org-policy", "facts": { "toolName": "Bash" } },
+      "block": { "reason": "policy", "facts": { "toolName": "Bash" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "ask", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "ask", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "org-policy", "facts": { "toolName": "Bash" } },
+      "confirm": { "reason": "command", "facts": { "command": "echo stable", "cwd": "/work" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "irreversible-once", "facts": { "toolName": "Bash" } },
+      "confirm": { "reason": "command", "facts": { "command": "echo stable", "cwd": "/work" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace",
+        "sensitive": "credential"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Bash" } },
+      "confirm": { "reason": "command", "facts": { "command": "echo stable", "cwd": "/work" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Bash",
+          "originalName": "Bash",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "command": "echo stable" },
+        "reversibility": "unknown"
+      },
+      "callReason": {
+        "reason": "command",
+        "facts": {
+          "toolName": "Bash",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "unknown", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "outside"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "approval-mode",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "none", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "default-ask", "facts": { "toolName": "Bash" } },
+      "confirm": { "reason": "command", "facts": { "command": "echo stable", "cwd": "/work" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Delete" }
+      },
+      "confirm": { "reason": "irreversible", "facts": { "toolName": "Delete" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": {
+          "kind": "session",
+          "grantFrom": { "sessionId": "s", "approvalKey": "k" }
+        },
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          {
+            "by": "user-grant",
+            "said": "allow",
+            "basis": { "grant": "session", "grantFrom": { "sessionId": "s", "approvalKey": "k" } },
+            "status": "ok"
+          },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Delete" }
+      },
+      "confirm": { "reason": "irreversible", "facts": { "toolName": "Delete" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "deny", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "deny",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "deny", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "deny", "code": "org-policy", "facts": { "toolName": "Delete" } },
+      "block": { "reason": "policy", "facts": { "toolName": "Delete" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": {
+          "status": "current",
+          "version": "v",
+          "snapshot": { "tools": [{ "policyId": "p", "effect": "ask", "serverId": "builtin" }] }
+        },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "tenant-policy",
+        "steps": [
+          { "by": "tenant-policy", "said": "ask", "basis": { "policyId": "p" }, "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": { "verdict": "ask", "code": "org-policy", "facts": { "toolName": "Delete" } },
+      "confirm": { "reason": "policy", "facts": { "toolName": "Delete" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "default",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Delete" }
+      },
+      "confirm": { "reason": "irreversible", "facts": { "toolName": "Delete" } }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "sensitive-path",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "workspace",
+        "sensitive": "credential"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Delete" }
+      },
+      "confirm": {
+        "reason": "sensitive-path",
+        "facts": { "path": "/work/a", "category": "credential" }
+      }
+    }
+  },
+  {
+    "input": {
+      "call": {
+        "tool": {
+          "name": "Delete",
+          "originalName": "Delete",
+          "source": "builtin",
+          "serverId": "builtin"
+        },
+        "args": { "file_path": "/work/a" },
+        "reversibility": "irreversible"
+      },
+      "callReason": {
+        "reason": "outside-workspace",
+        "facts": {
+          "toolName": "Delete",
+          "command": "echo stable",
+          "cwd": "/work",
+          "path": "/work/a",
+          "workspace": "/work",
+          "category": "credential"
+        }
+      },
+      "layers": {
+        "policy": { "status": "current", "version": "v", "snapshot": { "tools": [] } },
+        "reversibility": { "value": "irreversible", "source": "host" },
+        "requiresUserInteraction": false,
+        "sessionGrant": null,
+        "approvalMode": "manual",
+        "place": "outside"
+      },
+      "inspectors": []
+    },
+    "expected": {
+      "record": {
+        "verdict": "ask",
+        "decidedBy": "irreversible",
+        "steps": [
+          { "by": "tenant-policy", "said": "none", "status": "ok" },
+          { "by": "protected", "said": "none", "status": "ok" },
+          { "by": "user-disabled", "said": "none", "status": "ok" },
+          { "by": "irreversible", "said": "ask", "status": "ok" },
+          { "by": "connector-confirm", "said": "none", "status": "ok" },
+          { "by": "user-grant", "said": "none", "status": "ok" },
+          { "by": "approval-mode", "said": "ask", "status": "ok" },
+          { "by": "default", "said": "none", "status": "ok" }
+        ]
+      },
+      "summary": {
+        "verdict": "ask",
+        "code": "irreversible-once",
+        "facts": { "toolName": "Delete" }
+      },
+      "confirm": {
+        "reason": "outside-workspace",
+        "facts": { "path": "/work/a", "workspace": "/work" }
+      }
+    }
+  }
+]

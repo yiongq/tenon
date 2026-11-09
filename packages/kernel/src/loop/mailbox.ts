@@ -77,6 +77,7 @@ import {
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import type {
+  SessionService,
   AnswerResult,
   ReleaseQuery,
   ReleaseResult,
@@ -156,6 +157,7 @@ import type { AnswerCommand } from './waiting.js'
 import { createDraftStore } from '../session/draft.js'
 import type { SessionDraft } from '../session/draft.js'
 import {
+  approvalModeEntry,
   creationEntries,
   modelChoiceEntry,
   readSessionFacts,
@@ -282,6 +284,7 @@ type Turn<T> =
   | { readonly kind: 'again'; readonly lease: RunLease }
 
 export interface LoopDeps {
+  readonly approvalModeDefault?: () => 'manual' | 'auto'
   readonly schemaValidator?: SchemaValidatorPort
   readonly tape: Tape
   readonly ids: IdSource
@@ -370,6 +373,7 @@ export interface SelectModelQuery {
 }
 
 export interface Loop {
+  setApprovalMode: SessionService['setApprovalMode']
   snapshotRounds(q: { sessionId: string }): Promise<SnapshotRoundsResult>
   snapshotPreview(q: SnapshotRoundQuery): Promise<SnapshotPreviewResult>
   snapshotRestore(q: SnapshotRestoreQuery): Promise<SnapshotRestoreResult>
@@ -941,7 +945,11 @@ export function createLoop(deps: LoopDeps): Loop {
     if (head === null) {
       entries.push(
         startEntry(sessionId, incarnationId),
-        ...creationEntries({ tape, sessionId, incarnationId, now }, pre.draft),
+        ...creationEntries(
+          { tape, sessionId, incarnationId, now },
+          pre.draft,
+          deps.approvalModeDefault?.(),
+        ),
       )
     }
     const written: Array<{ messageId: string; queuedId: string | null }> = []
@@ -1592,6 +1600,7 @@ export function createLoop(deps: LoopDeps): Loop {
       providerId: frozen.setup.selected.providerId,
       judge: {
         tape,
+        sandbox: ports.sandbox,
         host: deps.host,
         inspectors: deps.inspectors,
         sensitiveFallback: deps.sensitiveFallback,
@@ -2307,6 +2316,9 @@ export function createLoop(deps: LoopDeps): Loop {
             ? {}
             : {
                 sandbox: {
+                  ...(ports.sandbox.autoCommands === undefined
+                    ? {}
+                    : { autoCommands: () => ports.sandbox!.autoCommands!() }),
                   beforeWrap: (q) => {
                     lastSandboxSession = q.sessionId
                     ports.sandbox!.beforeWrap(q)
@@ -3334,6 +3346,64 @@ export function createLoop(deps: LoopDeps): Loop {
   }
 
   return {
+    setApprovalMode(q) {
+      const ports = bound
+      if (ports === null) return Promise.resolve({ status: 'refused' })
+      if (!isCanonicalUuid(q.sessionId)) {
+        return Promise.reject(new TypeError('setApprovalMode: invalid sessionId'))
+      }
+      const box = mailboxOf(rootOf(q.sessionId))
+      return post(box, 'command', null, async () => {
+        // Reuse a running root's lease; idle roots ask the host's shutdown gate.
+        const ownLease = box.lease === null
+        const lease =
+          box.lease ?? ports.leases.begin({ rootSessionId: box.rootSessionId, origin: null })
+        if ('refused' in lease) return { status: 'refused' as const }
+        try {
+          if (lease.signal.aborted) return { status: 'refused' as const }
+          const facts = await readSessionFacts(tape, q.sessionId)
+          const draft = facts.established ? null : drafts.get(q.sessionId)
+          if (!facts.established && draft === null) return { status: 'unknown-session' as const }
+          if (
+            facts.established
+              ? facts.profile !== 'cowork' || facts.subagentOf !== null
+              : draft?.profile !== 'cowork'
+          ) {
+            return { status: 'not-cowork' as const }
+          }
+          const policy = deps.host.policy.current()
+          if (
+            q.mode === 'auto' &&
+            policy.status !== 'unavailable' &&
+            policy.snapshot.disableAutoMode === true
+          ) {
+            return { status: 'policy' as const }
+          }
+          if (lease.signal.aborted) return { status: 'refused' as const }
+          if (draft?.profile === 'cowork')
+            drafts.set(q.sessionId, { ...draft, approvalMode: q.mode })
+          else {
+            const head = await tape.head(q.sessionId)
+            if (head === null) return { status: 'unknown-session' as const }
+            if (lease.signal.aborted) return { status: 'refused' as const }
+            await tape.appendEntries({
+              sessionId: q.sessionId,
+              incarnationId: head.incarnationId,
+              entries: [
+                approvalModeEntry(
+                  { tape, sessionId: q.sessionId, incarnationId: head.incarnationId, now },
+                  facts.approvalModeFacts,
+                  { mode: q.mode, by: 'user', writer: { by: 'resolver' } },
+                ),
+              ],
+            })
+          }
+          return { status: 'set' as const }
+        } finally {
+          if (ownLease) lease.finish()
+        }
+      })
+    },
     snapshotRounds: (q) => snapshotTurn(q.sessionId, () => snapshots.rounds(q.sessionId)),
     snapshotPreview: (q) => snapshotTurn(q.sessionId, () => snapshots.preview(q)),
     snapshotRestore: (q) => snapshotTurn(q.sessionId, () => snapshots.restore(q)),
@@ -3426,6 +3496,7 @@ export function createLoop(deps: LoopDeps): Loop {
     async recover(): Promise<RecoverResult> {
       if (bound === null) throw new Error('recover() before bindLoop()')
       const recovered = await recoverTape({
+        sandbox: bound.sandbox,
         searchTarget: deps.connector.searchTarget?.bind(deps.connector),
         tape,
         now,

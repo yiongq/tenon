@@ -53,6 +53,7 @@ import type { InspectorRegistration } from '../permission/inspector.js'
 import { runInspectors } from '../permission/inspector.js'
 import {
   FILE_TOOL_NAMES,
+  autoStillAsk,
   callReasonOf,
   hostOfUrl,
   reversibilityOf,
@@ -92,7 +93,13 @@ import type { CallSnapshot } from './snapshots.js'
 import { latestFileStamp } from './file-stamps.js'
 import type { CallRef } from './closure.js'
 import { closureContent, notRunFacts, repairFacts, resultFacts } from './closure.js'
-import { sessionFactsOf, workspaceOf } from '../session/facts.js'
+import {
+  approvalModeEntry,
+  readSessionFacts,
+  sessionFactsOf,
+  workspaceOf,
+} from '../session/facts.js'
+import { autoCommandEnvironment } from '../permission/command-environment.js'
 import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause, SandboxPorts } from './ports.js'
@@ -852,8 +859,16 @@ async function perform(
     )
     const decision = entries.find((e) => e.provenanceKey === dispatch?.payload['decisionKey'])
     const plan = decision?.payload['sandbox'] as SandboxPlan | undefined
+    const record = (decision?.payload as PermissionDecidedPayload | undefined)?.record
+    const autoCommand =
+      record?.decidedBy === 'approval-mode' &&
+      record.verdict === 'allow' &&
+      record.steps.some(
+        (step) => step.by === 'approval-mode' && step.basis?.modeRule === 'auto-sandboxed-command',
+      )
     command = {
       ...command,
+      env: autoCommand ? autoCommandEnvironment(command.env) : command.env,
       ...(plan === undefined ? {} : { plan }),
       beforeWrap: async () => {
         const hosts = await sandboxDomainHosts(
@@ -1253,7 +1268,8 @@ async function closeRest(
 
 /** What judging one call reads: the session's facts, the host's policy and each layer's input. */
 export interface JudgeContext {
-  readonly tape: Pick<Tape, 'readRange'>
+  readonly tape: Pick<Tape, 'readRange' | 'head' | 'writer' | 'appendEntries'>
+  readonly sandbox?: SandboxPorts | undefined
   readonly host: HostAdapter
   readonly sessionId: string
   readonly inspectors: readonly InspectorRegistration[]
@@ -1405,6 +1421,42 @@ export async function judgeCall(
       })
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
+  const rootId = snapshotSessionId(ctx.sessionId, entries)
+  const rootFacts = await readSessionFacts(ctx.tape, rootId)
+  if (ctx.signal.aborted) return { kind: 'stopped' }
+  let approvalMode = profile === 'cowork' ? rootFacts.approvalMode : 'manual'
+  if (
+    approvalMode === 'auto' &&
+    policy.status !== 'unavailable' &&
+    policy.snapshot.disableAutoMode === true
+  ) {
+    const head = await ctx.tape.head(rootId)
+    if (ctx.signal.aborted) return { kind: 'stopped' }
+    if (head !== null) {
+      await ctx.tape.appendEntries({
+        sessionId: rootId,
+        incarnationId: head.incarnationId,
+        entries: [
+          approvalModeEntry(
+            {
+              tape: ctx.tape,
+              sessionId: rootId,
+              incarnationId: head.incarnationId,
+              now: () => ctx.host.clock.now(),
+            },
+            rootFacts.approvalModeFacts,
+            {
+              mode: 'manual',
+              by: 'policy',
+              writer: { by: 'resolver' },
+            },
+          ),
+        ],
+      })
+    }
+    approvalMode = 'manual'
+  }
+  if (ctx.signal.aborted) return { kind: 'stopped' }
   const workspace = paths.roots[0] ?? null
   const sandbox =
     item.source === 'builtin' && item.originalName === 'Bash'
@@ -1416,6 +1468,36 @@ export async function judgeCall(
             : undefined,
         )
       : undefined
+  const ranged =
+    profile === 'cowork' &&
+    item.source === 'builtin' &&
+    ((FILE_TOOL_NAMES.has(item.originalName) &&
+      place === 'workspace' &&
+      located?.sensitive === undefined) ||
+      item.originalName === 'Bash')
+  const snapshotStatus = ranged ? ctx.host.snapshots.status(rootId) : undefined
+  const commandPlatform = ctx.sandbox?.autoCommands?.() ?? 'no'
+  const commandSandboxed =
+    sandbox !== undefined &&
+    sandbox.profile !== 'full-access' &&
+    ctx.host.sandbox.posture?.().state === 'active' &&
+    commandPlatform === 'yes'
+  const autoAsk =
+    approvalMode !== 'auto' ||
+    !ranged ||
+    (sandbox !== undefined && sandbox.profile === 'full-access')
+      ? undefined
+      : snapshotStatus === 'unavailable'
+        ? 'no-snapshot'
+        : sandbox === undefined
+          ? undefined
+          : commandPlatform === 'linux'
+            ? 'linux'
+            : commandPlatform === 'no'
+              ? 'platform'
+              : !commandSandboxed
+                ? 'sandbox'
+                : (autoStillAsk(String(call.input['command'] ?? '')) ?? undefined)
   const callReason = callReasonOf({
     tool: item,
     args: call.input,
@@ -1488,7 +1570,10 @@ export async function judgeCall(
               ...(grantDecision?.sandbox === undefined ? {} : { sandbox: grantDecision.sandbox }),
               ...(own === undefined && inherited !== undefined ? { inherited: true as const } : {}),
             },
-      approvalMode: 'manual',
+      approvalMode,
+      ...(snapshotStatus === undefined ? {} : { snapshotStatus }),
+      ...(commandSandboxed ? { commandSandboxed: true as const } : {}),
+      ...(autoAsk === undefined ? {} : { autoAsk }),
     },
     inspectors: inspection.outcomes,
   })

@@ -43,7 +43,7 @@ export interface DecisionStep {
     readonly inherited?: true // 授权继承自父会话（H5 ①）
     readonly grantFrom?: { readonly sessionId: string; readonly approvalKey: string } // 生效授权来自哪条 tool/approval_resolved
     readonly releasedBy?: 'tenant-policy' | 'always-allow' | 'task' // 第一步里撤掉「撤不回」的那种放开（D10）
-    readonly modeRule?: 'auto-range' | 'not-gated' // 第 7 层放行的依据：自动档范围内；AskUserQuestion、Agent 启动两档都不问
+    readonly modeRule?: 'auto-range' | 'auto-sandboxed-command' | 'not-gated'
     readonly category?: FlaggedCategory
     readonly findings?: readonly InspectorFinding[]
   }
@@ -144,7 +144,10 @@ export function summarize(record: DecisionRecord, call: InspectedCall): Decision
     case 'approval-mode': {
       if (record.verdict !== 'allow') return summary('default-ask')
       return summary(
-        at('approval-mode')?.basis?.modeRule === 'auto-range' ? 'auto-mode' : 'no-approval-needed',
+        at('approval-mode')?.basis?.modeRule === 'auto-range' ||
+          at('approval-mode')?.basis?.modeRule === 'auto-sandboxed-command'
+          ? 'auto-mode'
+          : 'no-approval-needed',
       )
     }
     default:

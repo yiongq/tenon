@@ -10,13 +10,19 @@
  */
 import type { ModelChoice } from '../loop/ports.js'
 import type {
+  ApprovalModeSetPayload,
   ModelChoiceSetPayload,
   NewEntry,
   ProfileSetPayload,
   TapeEntry,
   WorkspaceSetPayload,
 } from '../tape/entry.js'
-import { modelChoiceSetKey, profileSetKey, workspaceSetKey } from '../tape/provenance.js'
+import {
+  approvalModeSetKey,
+  modelChoiceSetKey,
+  profileSetKey,
+  workspaceSetKey,
+} from '../tape/provenance.js'
 import { MAX_READ_LIMIT } from '../tape/store.js'
 import type { Tape } from '../tape/tape.js'
 import type { SessionDraft } from './draft.js'
@@ -24,6 +30,9 @@ import type { SessionDraft } from './draft.js'
 export type Profile = ProfileSetPayload['profile']
 
 export interface SessionFacts {
+  readonly approvalMode: 'manual' | 'auto'
+  readonly approvalModeFact: ApprovalModeSetPayload | null
+  readonly approvalModeFacts: number
   /** Whether the session has a `session/start` at all. */
   readonly established: boolean
   /** Whether the profile was written (`session/profile_set`); phase 1's sessions have none. */
@@ -53,6 +62,9 @@ export interface SessionFacts {
 
 /** The facts of a session that does not exist: a chat with nothing chosen. */
 export const NO_SESSION_FACTS: SessionFacts = {
+  approvalMode: 'manual',
+  approvalModeFact: null,
+  approvalModeFacts: 0,
   established: false,
   profileWritten: false,
   profile: 'chat',
@@ -66,6 +78,8 @@ export const NO_SESSION_FACTS: SessionFacts = {
 
 /** Folds one incarnation's entries, in Tape order. */
 export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
+  let approvalModeFact: ApprovalModeSetPayload | null = null
+  let approvalModeFacts = 0
   let established = false
   let profileWritten = false
   let profile: Profile = 'chat'
@@ -76,7 +90,10 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
   let modelChoiceFacts = 0
   let lastSelected: SessionFacts['lastSelected'] = null
   for (const entry of entries) {
-    if (entry.name === 'session/start') established = true
+    if (entry.name === 'session/approval_mode_set') {
+      approvalModeFact = entry.payload as unknown as ApprovalModeSetPayload
+      approvalModeFacts += 1
+    } else if (entry.name === 'session/start') established = true
     else if (entry.name === 'session/profile_set') {
       const payload = entry.payload as unknown as ProfileSetPayload
       profileWritten = true
@@ -102,6 +119,9 @@ export function sessionFactsOf(entries: readonly TapeEntry[]): SessionFacts {
     }
   }
   return {
+    approvalMode: profile === 'cowork' ? (approvalModeFact?.mode ?? 'manual') : 'manual',
+    approvalModeFact,
+    approvalModeFacts,
     established,
     profileWritten,
     profile,
@@ -201,22 +221,50 @@ export function modelChoiceEntry(
   })
 }
 
-/**
- * What a new session's creating batch carries after `session/start` (§会话事实「建会话」): its profile,
- * its workspace in the cowork profile, and the draft's model choice as the 0th choice. No draft is a
- * chat with nothing chosen.
- */
-export function creationEntries(w: SessionFactWriter, draft: SessionDraft | null): NewEntry[] {
+/** Spec 06: one mode fact, ordered with the other session facts in the root mailbox. */
+export function approvalModeEntry(
+  w: SessionFactWriter,
+  n: number,
+  payload: ApprovalModeSetPayload,
+): NewEntry {
+  return w.tape.writer('session').entry('session/approval_mode_set', {
+    sourceType: 'session',
+    sourceId: w.sessionId,
+    sourceSeq: n,
+    provenanceKey: approvalModeSetKey(w.incarnationId, n),
+    payload,
+    createdAt: w.now(),
+  })
+}
+
+/** The creating batch carries profile, workspace, model choice and the task's chosen/default mode. */
+export function creationEntries(
+  w: SessionFactWriter,
+  draft: SessionDraft | null,
+  defaultMode: 'manual' | 'auto' = 'manual',
+): NewEntry[] {
   const profile = draft?.profile ?? 'chat'
   const entries = [profileEntry(w, { profile })]
   if (draft?.profile === 'cowork') entries.push(workspaceEntry(w, 0, draft.workspace))
   if (draft?.modelChoice != null) entries.push(modelChoiceEntry(w, 0, draft.modelChoice))
+  if (draft?.profile === 'cowork') {
+    const mode = draft.approvalMode ?? defaultMode
+    if (draft.approvalMode !== undefined || mode === 'auto') {
+      entries.push(
+        approvalModeEntry(w, 0, {
+          mode,
+          by: draft.approvalMode === undefined ? 'default' : 'user',
+          writer: { by: 'resolver' },
+        }),
+      )
+    }
+  }
   return entries
 }
 
 /**
  * What a cleared session carries into its new incarnation (§会话事实「清空会话」): its profile and its
- * latest workspace, rewritten in the same transaction as the new `session/start`; the model choice
+ * latest workspace and approval mode, rewritten with the new `session/start`; the model choice
  * falls back to the default (M5). A phase 1 session with no profile carries nothing.
  */
 export function carryEntries(w: SessionFactWriter, facts: SessionFacts): NewEntry[] {
@@ -228,5 +276,6 @@ export function carryEntries(w: SessionFactWriter, facts: SessionFacts): NewEntr
     }),
   ]
   if (facts.workspace !== null) entries.push(workspaceEntry(w, 0, facts.workspace))
+  if (facts.approvalModeFact !== null) entries.push(approvalModeEntry(w, 0, facts.approvalModeFact))
   return entries
 }

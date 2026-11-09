@@ -189,6 +189,11 @@ export function workspaceSetKey(incarnationId: string, n: number): string {
   return `session:v1:workspace:${uuidPart('incarnationId', incarnationId)}:${ordinalPart('n', n)}`
 }
 
+/** `session:v1:approval_mode:<incarnationId>:<n>`. */
+export function approvalModeSetKey(incarnationId: string, n: number): string {
+  return `session:v1:approval_mode:${uuidPart('incarnationId', incarnationId)}:${ordinalPart('n', n)}`
+}
+
 /** `session:v1:model_choice:<incarnationId>:<n>` — `<n>` is counted from the tape in the queue. */
 export function modelChoiceSetKey(incarnationId: string, n: number): string {
   return (

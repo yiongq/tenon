@@ -291,6 +291,13 @@ export type AttemptCompletedPayload<
 
 /** 事实挂在发起调用的 run 名下，实际由谁写记在这里（B1）。resolver 指 kernel 按根会话串行处理答复、停止、取代的那一处（F3） */
 export type FactWriter = { by: 'run'; runId: string } | { by: 'resolver' } | { by: 'recovery' }
+
+/** Spec 06: an incarnation's approval mode, independent of the current Run. */
+export type ApprovalModeSetPayload = {
+  mode: 'manual' | 'auto'
+  by: 'default' | 'user' | 'downgrade' | 'policy'
+  writer: FactWriter
+}
 type CallRef = { ordinal: number; providerToolCallId: string } // ordinal 就是键里的 <i>；配对键仍按 01
 
 // session/

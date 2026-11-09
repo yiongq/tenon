@@ -43,6 +43,7 @@ import type {
 } from '../provider/types.js'
 import { canonicalJson } from './canonical-json.js'
 import type {
+  ApprovalModeSetPayload,
   ApprovalResolvedPayload,
   AssistantMessagePayload,
   AttemptCompletedPayload,
@@ -151,6 +152,7 @@ export interface TapePayloadByName {
   'session/profile_set': ProfileSetPayload
   'session/workspace_set': WorkspaceSetPayload
   'session/model_choice_set': ModelChoiceSetPayload
+  'session/approval_mode_set': ApprovalModeSetPayload
   'session/parent_link': ParentLinkPayload
   'view/content': ViewContentPayload
   'view/tool_table': ToolTablePayload

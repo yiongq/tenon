@@ -190,6 +190,14 @@ const declarations = [
     sourceId: 'required',
     sourceSeq: 'ordinal',
   },
+  {
+    name: 'session/approval_mode_set',
+    kind: 'event',
+    slice: 'session',
+    sourceType: 'session',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
   // Reserved by 01; spec 02 gives it its triple and payload.
   {
     name: 'session/parent_link',
