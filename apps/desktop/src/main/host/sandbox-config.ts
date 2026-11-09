@@ -36,6 +36,8 @@ import type {
 } from '@anthropic-ai/sandbox-runtime'
 import type { AbsolutePath } from '@tenon-app/kernel'
 import type { SandboxView } from '@tenon-app/contracts'
+import type { GitProtection } from './git-protection.js'
+import { GIT_HOOK_NAMES } from './git-protection.js'
 export const PROTECTED_SHELL_FILES: readonly string[] = [
   '.zshrc',
   '.zshenv',
@@ -153,6 +155,7 @@ export interface SandboxHostPaths {
   /** For 读法 42: the user's uid and `XDG_RUNTIME_DIR` / `SSH_AUTH_SOCK` from main's environment. */
   readonly uid: number
   readonly xdgRuntimeDir: string | null
+  readonly xdgConfigHome: string | null
   readonly sshAuthSock: string | null
 }
 
@@ -163,6 +166,7 @@ export interface WorkspaceRoot {
   readonly directory: boolean
   /** `<path>/.git` is a directory: on Linux the `.git` pair is denied only then. */
   readonly gitDirectory: boolean
+  readonly git?: GitProtection
 }
 
 export interface WrapFilesystemInput extends SandboxHostPaths {
@@ -440,7 +444,7 @@ export function protectionList(input: Pick<SandboxHostPaths, 'home' | 'zdotdir' 
       (root) => PROTECTED_SHELL_FILES.map((name) => under(root, name)),
     ),
     homeAutoRun: HOME_AUTO_RUN.map((name) => under(input.home, name)),
-    autoRunNames: [...ROOT_PROTECTED, ...ROOT_SRT_MANDATORY, '.git'],
+    autoRunNames: [...ROOT_PROTECTED, ...ROOT_SRT_MANDATORY, '.git', ...GIT_HOOK_NAMES],
     workspaceProtected: ROOT_PROTECTED,
     workspaceMandatory: ROOT_SRT_MANDATORY,
     workspaceGit: ROOT_GIT,
@@ -603,13 +607,23 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
         ...protection.workspaceProtected,
         ...protection.workspaceMandatory,
         ...(darwin || root.gitDirectory ? protection.workspaceGit : []),
+        ...(root.git?.hookNames ?? []),
       ]
       writeDenied.push(...names.map((name) => under(root.path, name)))
+      if (root.git !== undefined) {
+        writeDenied.push(
+          ...root.git.redirectExisting,
+          ...root.git.fallbackDeny,
+          ...root.git.hookDirs,
+        )
+        if (darwin) writeDenied.push(...root.git.redirectAbsent)
+      }
       // Names deeper in the tree: darwin takes a glob, Linux's write rules take none (已知限制).
       if (darwin) {
         for (const anchor of new Set([root.path, realOf(root.path, ports)])) {
           if (hasGlobChars(anchor)) continue
           globs.push(...names.map((name) => `${anchor}/**/${name}`))
+          globs.push(`${anchor}/*/**/.git`)
         }
       }
     }
@@ -624,11 +638,16 @@ function buildFilesystem(input: WrapFilesystemInput, ports: PathPorts): WrapFile
   ] as const) {
     for (const written of entries) {
       const walk = walkLinks(written, ports)
+      // srt normalizes literals lexically. A parent component must be resolved after the
+      // links before it; preserve the final entry itself for the written spelling.
+      const spelling = written.split('/').includes('..')
+        ? walkLinks(written, ports, false).real
+        : written
       // darwin: an entry that is itself a link stays out of denyRead as written — there it refuses
       // every lookup through it, a write as a read — and joins it by where it leads; denyWrite still
       // holds it, so it cannot be removed or replaced. A walk that does not finish keeps it.
       if (!(darwin && list === denyRead && walk.real !== undefined && isLink(written, ports))) {
-        list.literal(written)
+        if (spelling !== undefined) list.literal(spelling)
       }
       list.literal(walk.real ?? realOf(written, ports))
       for (const link of walk.links) {

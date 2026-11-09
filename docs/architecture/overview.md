@@ -171,3 +171,4 @@
 
 - 2026-10-23 · 建立 · sdd 接入（ADR-004 A11）· bfde94e
 - 2026-10-29 · 05 实现时同步：模块表（`HostAdapter` 十个成员、Delete、快照与还原、结算行与还原清单）、信任边界「工作区里的文件与链接」、术语「快照」「一键还原」、结构图的 snapshots · 05 §文档同步
+- 2026-11-09 · auto-tier-hardening implemented 时同步：沙箱与文件工具另把 git 的转向文件与钩子位置算作受保护位置，外带检查把连接器算作来源与出口；细节见 [auto-tier-hardening](../features/auto-tier-hardening/spec.md)

@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { absolutePath } from '../../src/index.js'
-import type { TapeEntry } from '../../src/index.js'
+import type { TapeEntry, ToolOrigin } from '../../src/index.js'
 import {
   RECENT_USER_TEXTS,
   buildSessionView,
@@ -49,10 +49,14 @@ function dispatched(
   input: Record<string, unknown>,
   reversibility: string,
   ordinal = 0,
+  origin: ToolOrigin = { source: 'builtin', serverId: 'builtin', originalName: name },
 ): TapeEntry[] {
   const runId = `run-${String(nextId++)}`
   const decisionKey = `tool:v1:decision:${runId}:1:${String(ordinal)}`
+  const tableKey = `table:${runId}`
   return [
+    entry('view/tool_table', { tools: [{ name, ...origin }] }, { key: tableKey }),
+    entry('view/assembled', { tools: { tableKey, sent: true } }, { sourceId: runId, sourceSeq: 1 }),
     entry(
       'tool/call',
       { ordinal, providerToolCallId: 'c', messageId: 'a', name, input, argsHash: 'h' },
@@ -95,7 +99,146 @@ function call(name: string, args: Record<string, unknown> = {}): InspectedCall {
   }
 }
 
+function connector(name: string, serverId: string, originalName = 'read'): TapeEntry[] {
+  return dispatched(name, {}, 'read-only', 0, { source: 'mcp', serverId, originalName })
+}
+
 describe('buildSessionView', () => {
+  it.each(['assembled', 'tool_table'] as const)(
+    'auto-tier-hardening 验收 8: 同键多条 %s 保留首条',
+    (kind) => {
+      const entries = connector('mapped', 'first')
+      const original = entries.find((e) => e.name === `view/${kind}`)!
+      const otherTable = entry(
+        'view/tool_table',
+        {
+          tools: [{ name: 'mapped', source: 'mcp', serverId: 'later', originalName: 'read' }],
+        },
+        { key: kind === 'tool_table' ? original.provenanceKey : 'later-table' },
+      )
+      const duplicate =
+        kind === 'tool_table'
+          ? otherTable
+          : entry(
+              'view/assembled',
+              {
+                tools: { tableKey: 'later-table', sent: true },
+              },
+              { sourceId: original.sourceId!, sourceSeq: original.sourceSeq! },
+            )
+      const view = buildSessionView(
+        [...entries, duplicate, ...(kind === 'assembled' ? [otherTable] : [])],
+        {
+          call: call('Read'),
+          profile: 'chat',
+          ownSpillDir: SPILL,
+        },
+      )
+      expect(view.untrustedSources).toEqual(['mcp:first'])
+      expect(view.privateSources).toEqual(['mcp:first'])
+    },
+  )
+
+  it('auto-tier-hardening 验收 8: 引用表缺失时不借别的表', () => {
+    const entries = connector('mapped', 'first').filter((e) => e.name !== 'view/tool_table')
+    const other = connector('mapped', 'other').find((e) => e.name === 'view/tool_table')!
+    const view = buildSessionView([...entries, other], {
+      call: call('Read'),
+      profile: 'chat',
+      ownSpillDir: SPILL,
+    })
+    expect(view.untrustedSources).toEqual(['unresolved:mapped'])
+    expect(view.privateSources).toEqual(['unresolved:mapped'])
+  })
+
+  it('auto-tier-hardening 验收 8: run-1/11 与 run-11/1 不串键', () => {
+    const groups = [connector('mapped', 'first'), connector('mapped', 'second')]
+    groups.forEach((entries, i) => {
+      for (const fact of entries)
+        if (fact.sourceId !== null) {
+          fact.sourceId = i === 0 ? 'run-1' : 'run-11'
+          fact.sourceSeq = i === 0 ? 11 : 1
+        }
+    })
+    const view = buildSessionView(groups.flat(), {
+      call: call('Read'),
+      profile: 'chat',
+      ownSpillDir: SPILL,
+    })
+    expect(view.untrustedSources).toEqual(['mcp:first', 'mcp:second'])
+    expect(view.privateSources).toEqual(['mcp:first', 'mcp:second'])
+  })
+  it.each(['chat', 'cowork'] as const)(
+    'auto-tier-hardening 验收 8: %s 从冻结工具表取来源并去重',
+    (profile) => {
+      const first = connector('mapped', 'A')
+      const second = connector('mapped', 'B')
+      // Same run, different request: mapping must use both runId and requestSeq.
+      const firstDispatch = first.find((e) => e.name === 'execution/dispatch_committed')!
+      for (const fact of second) {
+        if (fact.sourceId !== null) {
+          fact.sourceId = firstDispatch.sourceId
+          fact.sourceSeq = 2
+        }
+      }
+      const view = buildSessionView(
+        [
+          ...first,
+          ...second,
+          ...connector('another_mapping', 'A'),
+          ...connector('WebFetch', 'C'),
+          ...dispatched('WebSearch', {}, 'unknown'),
+          ...dispatched('WebFetch', {}, 'unknown'),
+          ...dispatched('Read', { file_path: '/work/private' }, 'read-only'),
+        ],
+        { call: call('Read'), profile, ownSpillDir: SPILL },
+      )
+      expect(view.untrustedSources).toEqual(['mcp:A', 'mcp:B', 'mcp:C', 'WebSearch', 'WebFetch'])
+      expect(view.privateSources).toEqual(
+        profile === 'chat' ? ['mcp:A', 'mcp:B', 'mcp:C'] : ['mcp:A', 'mcp:B', 'mcp:C', 'local'],
+      )
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
+  it.each(['Read', 'Bash', 'WebFetch', 'WebSearch'])(
+    'auto-tier-hardening 验收 8: 连接器原名 %s 不按内置工具分类',
+    (originalName) => {
+      const view = buildSessionView(connector(`S__${originalName}`, 'S', originalName), {
+        call: call('Read'),
+        profile: 'cowork',
+        ownSpillDir: SPILL,
+      })
+      expect(view.untrustedSources).toEqual(['mcp:S'])
+      expect(view.privateSources).toEqual(['mcp:S'])
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
+  it.each(['assembled', 'table', 'null-tools', 'name', 'run', 'request', 'wrong-fact'])(
+    'auto-tier-hardening 验收 8: 来源关联失败 %s 时从严',
+    (missing) => {
+      let entries = dispatched('Read', {}, 'read-only')
+      const assembled = entries.find((e) => e.name === 'view/assembled')!
+      const table = entries.find((e) => e.name === 'view/tool_table')!
+      if (missing === 'assembled') entries = entries.filter((e) => e !== assembled)
+      if (missing === 'table') entries = entries.filter((e) => e !== table)
+      if (missing === 'null-tools') assembled.payload['tools'] = null
+      if (missing === 'name') table.payload['tools'] = []
+      if (missing === 'run') assembled.sourceId = 'other-run'
+      if (missing === 'request') assembled.sourceSeq = 2
+      if (missing === 'wrong-fact') table.name = 'view/content'
+      const view = buildSessionView(entries, {
+        call: call('WebFetch'),
+        profile: 'chat',
+        ownSpillDir: SPILL,
+      })
+      expect(view.untrustedSources).toEqual(['unresolved:Read'])
+      expect(view.privateSources).toEqual(['unresolved:Read'])
+      expect(view.touchedPrivateData).toBe(true)
+    },
+  )
+
   it('keeps the first human message and the latest eight, and leaves the notes out', () => {
     const messages = Array.from({ length: 10 }, (_, i) => user(`question ${String(i)}`))
     const entries = [
@@ -258,7 +401,7 @@ describe('exfiltration evidence boundaries', () => {
   }
   it('uses exactly the dispatched decision, retaining its protected step even if the verdict asked', () => {
     const entries = dispatched('Read', { file_path: '/workspace/link' }, 'read-only')
-    const decision = entries[1]!
+    const decision = entries.find((e) => e.name === 'tool/permission_decided')!
     decision.payload['record'] = {
       verdict: 'ask',
       decidedBy: 'inspector',
@@ -278,7 +421,7 @@ describe('exfiltration evidence boundaries', () => {
   })
   it('excludes a DNS blocked dispatch without removing previous untrusted sources or in-flight ones', () => {
     const fetch = dispatched('WebFetch', { url: 'https://a.test' }, 'unknown')
-    const dispatch = fetch[2]!
+    const dispatch = fetch.find((e) => e.name === 'execution/dispatch_committed')!
     const outcome = entry(
       'execution/tool_outcome',
       { ordinal: 0, state: 'not-run', source: 'protected', effect: 'blocked' },

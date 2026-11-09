@@ -34,6 +34,8 @@ export function wiringFixture(
     mkdirPrivate: vi.fn(),
     readFile: () => undefined,
     writeFile: vi.fn(),
+    readdir: async () => [],
+    readText: async () => null,
   }
   const paths: SandboxRuntimeOptions['paths'] = {
     platform: 'darwin',
@@ -46,6 +48,7 @@ export function wiringFixture(
     credentials: [],
     uid: 501,
     xdgRuntimeDir: null,
+    xdgConfigHome: null,
     sshAuthSock: null,
   }
   const session = sessionConfig(

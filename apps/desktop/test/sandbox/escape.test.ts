@@ -10,9 +10,12 @@
  * lists and violation shapes below are literals from the spec, never computed by the code under
  * test; paths the host logs are compared with `realpath` of the test's own directories.
  */
+import { execFileSync } from 'node:child_process'
 import {
   lstatSync,
+  mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -20,11 +23,13 @@ import {
   rmSync,
   symlinkSync,
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { tokenRegression } from './token-case.js'
 import {
+  COMMAND_PATH,
   DARWIN,
   SANDBOX_TESTS_VARIABLE,
   SHELL,
@@ -211,7 +216,10 @@ const ROOT_NAMES: readonly string[] = [
   '.claude',
 ]
 
-/** The names in ROOT_NAMES that are leaves while absent at a Linux root: P7's 17 empty 0444 files. */
+/**
+ * The names that are leaves while absent at a Linux root: P7's 17 empty 0444 files, plus the 16
+ * hook locations auto-tier-hardening 规矩 7 denies even when absent (P4).
+ */
 const ROOT_LEAVES: readonly string[] = [
   '.zshrc',
   '.zshenv',
@@ -230,6 +238,22 @@ const ROOT_LEAVES: readonly string[] = [
   '.mcp.json',
   '.vscode',
   '.idea',
+  '.husky',
+  '.lefthook',
+  '.lefthook-local',
+  'lefthook.yml',
+  '.lefthook.yml',
+  'lefthook.yaml',
+  '.lefthook.yaml',
+  'lefthook.toml',
+  'lefthook.json',
+  'lefthook-local.yml',
+  '.lefthook-local.yml',
+  'lefthook-local.yaml',
+  '.lefthook-local.yaml',
+  'lefthook-local.toml',
+  'lefthook-local.json',
+  '.pre-commit-config.yaml',
 ]
 
 /** What srt's stale mount point test reads of a host path (linux-sandbox-utils.js:418-428). */
@@ -247,6 +271,154 @@ const UNLISTED = 'tenon-unlisted.test'
 const WRITTEN = 'TENON_ESCAPE_WRITTEN'
 
 const real = (path: string): string => realpathSync(path)
+
+const GIT_FSMONITOR_VECTORS = [
+  { kind: 'commondir', name: '写 .git/commondir' },
+  { kind: 'submodule', name: '改子模块 .git/modules/fixture/config' },
+  { kind: 'pointer', name: '改写已有 linked worktree 的 .git 指针文件' },
+  {
+    kind: 'nested',
+    name: DARWIN ? '在子目录新建 .git 指针文件' : '在子目录 git init 并写 config',
+  },
+] as const
+type GitFsmonitorVector = (typeof GIT_FSMONITOR_VECTORS)[number]['kind']
+
+const writeGitPointer = (file: string, contents: string) =>
+  `printf '%s\n' ${shq(contents)} > ${shq(file)}`
+
+/** Same real-git setup for the sandbox attacks and their unsandboxed positive controls. */
+function gitFsmonitorFixture(
+  home: string,
+  ws: string,
+  outside: string,
+  vector: GitFsmonitorVector,
+) {
+  // Never inherit the agent's GIT_CONFIG_* overrides, user config or system config.
+  const env = { PATH: COMMAND_PATH, HOME: home, GIT_CONFIG_NOSYSTEM: '1' }
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: 'pipe', timeout: 10_000 })
+  const init = (repo: string) => {
+    makeDir(repo)
+    git(repo, 'init', '--quiet', '--template=', '--initial-branch=main')
+    writeHostFile(join(repo, 'tracked.txt'), 'fixture\n')
+    git(repo, 'add', 'tracked.txt')
+    git(
+      repo,
+      '-c',
+      'user.name=Tenon test',
+      '-c',
+      'user.email=tenon@example.test',
+      'commit',
+      '--quiet',
+      '-m',
+      'fixture',
+    )
+  }
+  let statusDir = ws
+  let copiedGit = join(ws, '.git')
+  if (vector === 'pointer') {
+    const main = join(outside, 'main')
+    init(main)
+    git(main, 'worktree', 'add', '--quiet', '--detach', ws)
+    copiedGit = join(main, '.git')
+  } else {
+    init(ws)
+    if (vector === 'submodule') {
+      const source = join(outside, 'source')
+      init(source)
+      git(
+        ws,
+        '-c',
+        'protocol.file.allow=always',
+        'submodule',
+        'add',
+        '--quiet',
+        '--name',
+        'fixture',
+        source,
+        'sub',
+      )
+      statusDir = join(ws, 'sub')
+    } else if (vector === 'nested') {
+      statusDir = makeDir(join(ws, 'child'))
+      writeHostFile(join(statusDir, 'tracked.txt'), 'fixture\n')
+    }
+  }
+  const marker = join(ws, 'fsmonitor-ran')
+  const monitor = writeHostFile(
+    join(ws, 'fsmonitor-fixture.sh'),
+    `#!/bin/sh\n/usr/bin/touch ${shq(marker)}\n`,
+    0o700,
+  )
+  // Quote twice: core.fsmonitor is itself a shell command, passed here as one git-config argument.
+  const configure = (config: string) =>
+    `git config --file ${shq(config)} core.fsmonitor ${shq(shq(monitor))}`
+  const fakeGit = join(ws, 'attacker-git')
+  const copyGit = `mkdir -p ${shq(fakeGit)} && cp -R ${shq(copiedGit + '/.')} ${shq(fakeGit)}`
+  let attack: string
+  if (vector === 'commondir') {
+    attack = [
+      copyGit,
+      configure(join(fakeGit, 'config')),
+      writeGitPointer(join(ws, '.git/commondir'), fakeGit),
+    ].join(' && ')
+  } else if (vector === 'submodule') {
+    attack = configure(join(ws, '.git/modules/fixture/config'))
+  } else if (vector === 'nested' && !DARWIN) {
+    attack = [
+      `git init --quiet --template= --initial-branch=main ${shq(statusDir)}`,
+      `git -C ${shq(statusDir)} add tracked.txt`,
+      configure(join(statusDir, '.git/config')),
+    ].join(' && ')
+  } else {
+    attack = [
+      copyGit,
+      configure(join(fakeGit, 'config')),
+      writeGitPointer(join(statusDir, '.git'), `gitdir: ${fakeGit}`),
+    ].join(' && ')
+  }
+  const status = () => git(statusDir, 'status', '--porcelain=v1')
+  status()
+  expect(hostKind(marker)).toBe('missing')
+  const target =
+    vector === 'commondir'
+      ? join(ws, '.git/commondir')
+      : vector === 'submodule'
+        ? join(ws, '.git/modules/fixture/config')
+        : join(statusDir, '.git')
+  const targetState = () => (hostKind(target) === 'missing' ? null : readFileSync(target, 'utf8'))
+  // Linux nested creates a directory; only the denied file vectors use this snapshot.
+  const beforeTarget = targetState()
+  return { env, attack, marker, status, git, targetState, beforeTarget }
+}
+
+// These controls need only host git, so remain runnable when nested srt cannot start.
+describe('git fsmonitor fixture controls', () => {
+  it.each(GIT_FSMONITOR_VECTORS)(
+    '宿主直接 $name 后，git status 确实会执行 fsmonitor',
+    ({ kind }) => {
+      const root = mkdtempSync(join(real(tmpdir()), 'tenon-git-control-'))
+      try {
+        const home = makeDir(join(root, 'home'))
+        const ws = makeDir(join(root, 'ws'))
+        const fixture = gitFsmonitorFixture(home, ws, makeDir(join(root, 'outside')), kind)
+        execFileSync(SHELL, ['-c', fixture.attack], {
+          cwd: ws,
+          env: fixture.env,
+          stdio: 'pipe',
+          timeout: 10_000,
+        })
+        // Configuring fsmonitor must not have run it; only the following host status triggers it.
+        expect(hostKind(fixture.marker)).toBe('missing')
+        fixture.status()
+        expect(hostKind(fixture.marker)).toBe('file')
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    CASE_MS,
+  )
+})
 
 /** curl forced through srt's proxy (§验收标准 14), the status on its own line. */
 function curlViaProxy(url: string, extra = ''): string {
@@ -1032,6 +1204,354 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
   // -------------------------------------------------------------------------------------------
   // 验收 12
 
+  it.each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: root hook locations refuse writes %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      makeDir(join(ws, '.git'))
+      writeHostFile(join(ws, '.git/config'), '[core]\n hooksPath = my-hooks\n')
+      const dirs = ['.husky', '.lefthook', '.lefthook-local', 'my-hooks']
+      const files = [
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ]
+      const targets = [...dirs.map((dir) => `${dir}/pre-commit`), ...files]
+      if (state === 'existing')
+        for (const target of targets) {
+          makeDir(dirname(join(ws, target)))
+          writeHostFile(join(ws, target), 'original\n')
+        }
+      const attempts = targets.map((target) => {
+        const path = join(ws, target)
+        return (
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
+          `then echo ${shq(`unexpected write: ${target}`)}; exit 1; fi`
+        )
+      })
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
+      // lab.run awaits afterExit; tests are serial, so no other wrap holds Linux's placeholders.
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      const observed = targets.map((target) =>
+        state === 'existing' ? readFileSync(join(ws, target), 'utf8') : hostKind(join(ws, target)),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+      // Also check directory placeholders themselves, after all wraps and afterExit have settled.
+      const placeholders = state === 'new' ? [...dirs, ...files] : []
+      expect(placeholders.map((name) => hostKind(join(ws, name)))).toEqual(
+        placeholders.map(() => 'missing'),
+      )
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN).each(['existing', 'new'] as const)(
+    'auto-tier-hardening 验收 12: macOS refuses nested hook names %s',
+    async (state) => {
+      const { lab, ws } = workspaceLab()
+      const targets = [
+        '.husky/pre-commit',
+        '.lefthook/pre-commit',
+        '.lefthook-local/pre-commit',
+        'lefthook.yml',
+        '.lefthook.yml',
+        'lefthook.yaml',
+        '.lefthook.yaml',
+        'lefthook.toml',
+        'lefthook.json',
+        'lefthook-local.yml',
+        '.lefthook-local.yml',
+        'lefthook-local.yaml',
+        '.lefthook-local.yaml',
+        'lefthook-local.toml',
+        'lefthook-local.json',
+        '.pre-commit-config.yaml',
+      ].map((name) => join(ws, 'one/two', name))
+      if (state === 'existing')
+        for (const path of targets) {
+          makeDir(dirname(path))
+          writeHostFile(path, 'original\n')
+        }
+      const attempts = targets.map(
+        (path) =>
+          `if (mkdir -p ${shq(dirname(path))} && printf changed > ${shq(path)}) 2>/dev/null; ` +
+          `then echo unexpected; exit 1; fi`,
+      )
+      const control = join(ws, 'one/two/ok.txt')
+      const ran = await lab.run([...attempts, `printf ordinary > ${shq(control)}`].join('; '), {
+        workspace: [ws],
+      })
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      const observed = targets.map((path) =>
+        state === 'existing' ? readFileSync(path, 'utf8') : hostKind(path),
+      )
+      expect(observed).toEqual(targets.map(() => (state === 'existing' ? 'original\n' : 'missing')))
+    },
+    CASE_MS,
+  )
+
+  it(
+    'auto-tier-hardening 验收 12: a hooks file cannot become a directory before host commit',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'commondir')
+      const hooks = join(ws, 'hooks-file')
+      const marker = join(ws, 'hook-ran')
+      const control = join(ws, 'ok.txt')
+      fixture.git(ws, 'config', 'core.hooksPath', 'hooks-file')
+      writeHostFile(hooks, 'ordinary file\n')
+      const hook = `#!/bin/sh\nprintf ran > ${shq(marker)}\n`
+      const replace =
+        `rm ${shq(hooks)} && mkdir ${shq(hooks)} && ` +
+        `printf %s ${shq(hook)} > ${shq(join(hooks, 'pre-commit'))} && ` +
+        `chmod 700 ${shq(join(hooks, 'pre-commit'))}`
+      const ran = await lab.run(
+        `if (${replace}) 2>/dev/null; then echo unexpected; exit 1; fi; ` +
+          `printf ordinary > ${shq(control)}`,
+        { workspace: [ws], env: fixture.env },
+      )
+      expect({ code: ran.code, unexpected: ran.stdout }).toEqual({ code: 0, unexpected: '' })
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+      expect(readFileSync(hooks, 'utf8')).toBe('ordinary file\n')
+      const commit = (message: string) =>
+        fixture.git(
+          ws,
+          '-c',
+          'user.name=Tenon',
+          '-c',
+          'user.email=tenon@example.test',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          message,
+        )
+      commit('after-sandbox')
+      expect(hostKind(marker)).toBe('missing')
+      // Host control: the same configured location executes a hook once it really is a directory.
+      rmSync(hooks)
+      makeDir(hooks)
+      writeHostFile(join(hooks, 'pre-commit'), hook, 0o700)
+      commit('host-control')
+      expect(readFileSync(marker, 'utf8')).toBe('ran')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    'auto-tier-hardening 验收 12: disabling hooks with dev null preserves shell redirection',
+    async () => {
+      const { lab, ws } = workspaceLab()
+      writeHostFile(join(lab.home, '.gitconfig'), '[core]\n hooksPath = /dev/null\n')
+      const control = join(ws, 'ok.txt')
+      const ran = await lab.run(`printf x > /dev/null && printf ordinary > ${shq(control)}`, {
+        workspace: [ws],
+      })
+      expect(ran.code).toBe(0)
+      expect(readFileSync(control, 'utf8')).toBe('ordinary')
+    },
+    CASE_MS,
+  )
+
+  it(
+    'auto-tier-hardening 验收 3: complete discovery preserves root git and submodule commits',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'submodule')
+      const { git, env } = fixture
+      const identity = '-c user.name=Tenon -c user.email=tenon@example.test'
+      // Keep the host checking this same repo while the real sandbox's mounts are active.
+      const started = join(ws, 'started')
+      const go = join(ws, 'go')
+      const running = lab.run(
+        [
+          'git status --porcelain=v1',
+          'printf "changed\\n" >> tracked.txt',
+          'git add tracked.txt',
+          `git ${identity} commit --quiet -m root-change`,
+          'git checkout -b hardening-check',
+          'git checkout main',
+          'printf "stash me\\n" >> tracked.txt',
+          'git stash push --quiet -- tracked.txt',
+          'git stash pop --quiet',
+          'git checkout -- tracked.txt',
+          'printf "sub change\\n" >> sub/tracked.txt',
+          'git -C sub add tracked.txt',
+          `git -C sub ${identity} commit --quiet -m sub-change`,
+          'touch started',
+          'i=0; while [ ! -e go ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i+1)); done',
+          'test -e go',
+        ].join(' && '),
+        { workspace: [ws], env },
+      )
+      let hostStatus: string | undefined
+      try {
+        const deadline = performance.now() + 10_000
+        while (hostKind(started) === 'missing' && performance.now() < deadline) {
+          // oxlint-disable-next-line no-await-in-loop -- wait for active sandbox before host control
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        expect(hostKind(started)).toBe('file')
+        hostStatus = git(ws, 'status', '--porcelain=v1')
+        expect(hostKind(join(ws, '.git/commondir'))).toBe('missing')
+        expect(hostKind(join(ws, '.git/config.worktree'))).toBe('missing')
+      } finally {
+        writeHostFile(go, '')
+        const ran = await running
+        expect(ran).toMatchObject({ code: 0 })
+      }
+      expect(hostStatus).toBeDefined()
+      expect(git(ws, 'log', '-1', '--format=%s').trim()).toBe('root-change')
+      expect(git(join(ws, 'sub'), 'log', '-1', '--format=%s').trim()).toBe('sub-change')
+      expect(git(ws, 'stash', 'list').trim()).toBe('')
+      expect(hostKind(join(ws, '.git/commondir'))).toBe('missing')
+      expect(hostKind(join(ws, '.git/config.worktree'))).toBe('missing')
+      expect(
+        rig.logs.filter((line) => line.includes(ws) && line.includes('git discovery incomplete')),
+      ).toEqual([])
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(DARWIN)(
+    'auto-tier-hardening 验收 4: Linux permits new nested git and absent redirect files',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'nested')
+      const ran = await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      expect(ran).toMatchObject({ code: 0 })
+      fixture.status()
+      expect(hostKind(fixture.marker)).toBe('file')
+      expect(hostKind(join(ws, 'child/.git'))).toBe('dir')
+      const written = await lab.run(
+        [
+          `printf '%s\\n' '.' > .git/commondir`,
+          `printf '%s\\n' '[core]' > .git/config.worktree`,
+        ].join(' && '),
+        { workspace: [ws], env: fixture.env },
+      )
+      expect(written).toMatchObject({ code: 0 })
+      expect(readFileSync(join(ws, '.git/commondir'), 'utf8')).toBe('.\n')
+      expect(readFileSync(join(ws, '.git/config.worktree'), 'utf8')).toBe('[core]\n')
+    },
+    CASE_MS,
+  )
+
+  it.skipIf(!DARWIN)(
+    'auto-tier-hardening 验收 2: macOS refuses a new config.worktree',
+    async () => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, 'commondir')
+      const ran = await lab.run(`printf '%s\\n' '[core]' > .git/config.worktree`, {
+        workspace: [ws],
+        env: fixture.env,
+      })
+      expect(ran.code).not.toBe(0)
+      expect(hostKind(join(ws, '.git/config.worktree'))).toBe('missing')
+      fixture.status()
+      expect(hostKind(fixture.marker)).toBe('missing')
+    },
+    CASE_MS,
+  )
+
+  it.each([
+    { kind: 'directory', fault: 'config' },
+    { kind: 'directory', fault: 'modules' },
+    { kind: 'pointer', fault: 'config' },
+    { kind: 'pointer', fault: 'modules' },
+  ] as const)(
+    'auto-tier-hardening 验收 15: $kind with unreadable $fault fails commit only during discovery fault',
+    async ({ kind, fault }) => {
+      const release = await holdTmpClaudeLock()
+      let defaultRoot: string | undefined
+      try {
+        const { lab, ws, outside } = workspaceLab()
+        if (kind === 'pointer') {
+          const tmpClaude = makeDir(DARWIN ? '/private/tmp/claude' : '/tmp/claude')
+          defaultRoot = mkdtempSync(join(tmpClaude, 'tenon-hardening-'))
+        }
+        const metadataRoot = defaultRoot ?? outside
+        const fixture = gitFsmonitorFixture(
+          lab.home,
+          ws,
+          metadataRoot,
+          kind === 'pointer' ? 'pointer' : 'commondir',
+        )
+        const main = kind === 'pointer' ? join(metadataRoot, 'main') : ws
+        const common = join(main, '.git')
+        const workspace = [ws]
+        lab.folders = workspace
+        makeDir(join(common, 'modules'))
+        makeDir(join(common, 'hooks'))
+        fixture.status()
+        fixture.git(
+          ws,
+          '-c',
+          'user.name=Tenon',
+          '-c',
+          'user.email=tenon@example.test',
+          'commit',
+          '--quiet',
+          '--allow-empty',
+          '-m',
+          'host-control',
+        )
+        expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('host-control')
+        const before = readdirSync(common, { recursive: true }).toSorted()
+        const broken = join(common, fault)
+        const readText = lab.fs.readText.bind(lab.fs)
+        const readdir = lab.fs.readdir.bind(lab.fs)
+        const injected =
+          fault === 'config'
+            ? vi.spyOn(lab.fs, 'readText').mockImplementation(async (path, maxBytes) => {
+                if (path === broken) throw new Error('injected config read failure')
+                return readText(path, maxBytes)
+              })
+            : vi.spyOn(lab.fs, 'readdir').mockImplementation(async (path) => {
+                if (path === broken) throw new Error('injected modules enumeration failure')
+                return readdir(path)
+              })
+        const commit =
+          'git -c user.name=Tenon -c user.email=tenon@example.test commit --quiet --allow-empty -m sandbox-control'
+        try {
+          const refused = await lab.run(commit, { workspace, env: fixture.env })
+          expect(refused.code).not.toBe(0)
+          expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('host-control')
+          expect(
+            rig.logs.some((line) => line.includes(ws) && line.includes('git discovery incomplete')),
+          ).toBe(true)
+          expect(readdirSync(common, { recursive: true }).toSorted()).toEqual(before)
+        } finally {
+          injected.mockRestore()
+        }
+        const allowed = await lab.run(commit, { workspace, env: fixture.env })
+        expect(allowed).toMatchObject({ code: 0 })
+        expect(fixture.git(ws, 'log', '-1', '--format=%s').trim()).toBe('sandbox-control')
+        expect(hostKind(join(common, 'commondir'))).toBe('missing')
+        expect(hostKind(join(common, 'config.worktree'))).toBe('missing')
+      } finally {
+        if (defaultRoot !== undefined) rmSync(defaultRoot, { recursive: true, force: true })
+        release()
+      }
+    },
+    CASE_MS,
+  )
+
   it(
     '04 验收 12: reads of the test home’s .ssh, .aws, .gnupg and of the test profile are refused; this session’s tool-output is readable',
     async () => {
@@ -1096,6 +1616,36 @@ describe.skipIf(!gate.run)('04 sandbox black box (sandbox-runtime 0.0.79, real p
         expect(hostKind(join(ws, name))).toBe(name === '.zshrc' ? 'file' : 'missing')
       }
       expect(readFileSync(join(ws, '.zshrc'), 'utf8')).toBe('ORIGINAL_ZSHRC\n')
+    },
+    CASE_MS,
+  )
+
+  it.each(GIT_FSMONITOR_VECTORS.filter(({ kind }) => kind === 'pointer' || kind === 'submodule'))(
+    'auto-tier-hardening 验收 1: 沙箱里 $name 被拒，宿主不执行 fsmonitor',
+    async ({ kind }) => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, kind)
+      const ran = await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      expect(ran.code).not.toBe(0)
+      expect(fixture.targetState()).toBe(fixture.beforeTarget)
+      fixture.status()
+      expect(hostKind(fixture.marker)).toBe('missing')
+    },
+    CASE_MS,
+  )
+
+  it
+    .skipIf(!DARWIN)
+    .each(GIT_FSMONITOR_VECTORS.filter(({ kind }) => kind === 'commondir' || kind === 'nested'))(
+    'auto-tier-hardening 验收 2: 沙箱里 $name 被拒，宿主不执行 fsmonitor',
+    async ({ kind }) => {
+      const { lab, ws, outside } = workspaceLab()
+      const fixture = gitFsmonitorFixture(lab.home, ws, outside, kind)
+      const ran = await lab.run(fixture.attack, { workspace: [ws], env: fixture.env })
+      expect(ran.code).not.toBe(0)
+      expect(fixture.targetState()).toBe(fixture.beforeTarget)
+      fixture.status()
+      expect(hostKind(fixture.marker)).toBe('missing')
     },
     CASE_MS,
   )
