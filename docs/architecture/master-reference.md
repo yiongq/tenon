@@ -926,7 +926,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 文件桥：路径归属校验（symlink / `..` 归一化）、宿主↔沙箱双向映射、**mtime 守卫**（2026-10-09 补，见 [04](04-sandbox/spec.md) Q2 A：宿主↔沙箱双向映射挪阶段 6b，其余随 05）
 - 读/写/删/执行拆成独立可授予单位；删除运行期单独申请
 - **任务模式成型**（2026-09-17 补；2026-10-09 改，见 [04](04-sandbox/spec.md) T37、Q2：原写「对齐 Cowork 本地模式」；Pro / Max 的新 Cowork 任务自 2026-10-06 起在云端运行，已进合并体验的账号任务只在云端（[15811196](https://support.claude.com/en/articles/15811196-what-to-expect-with-claude-cowork-in-the-cloud)），Team / Enterprise 仍有本地 VM 会话（2026-10-15 照公开文档改准，[15520349](https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile)、[13455879](https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans)），执行与隔离改为对照 Claude Desktop 的 Code 会话与 Claude Code；原写的「右面板 进度 / 产物 / 上下文」挪阶段 5，与 §8.5 和 components.md 一致）：任务会话 = 工作文件夹 + 沙箱 `workspace-write` 档 + 内联审批卡；主栏折叠头 + 活动时间线；界面以 UX 画布 v18 与 `docs/ux/parity-audit-2026-09-12.md` 为准，随 4d（`docs/features/task-mode-ui`）。定时任务与 Projects 页仍在阶段 6
-- **4d 挪到阶段 6**（2026-11-06 owner「4d 挪阶段 6」）：上一条整体挪到阶段 6。这是下面预算检查点砍法的第一项：05 实现后阶段 4 余量约 1 000 行，不够 06；lead 推荐时写明 06 单独算预算，owner 选了这一项，06 的规模在起草时单独定
+- **4d 挪到阶段 6**（2026-11-06 owner「4d 挪阶段 6」）：上一条整体挪到阶段 6。这是下面预算检查点砍法的第一项：05 实现后阶段 4 余量约 1 000 行，不够 06；lead 推荐时写明 06 单独算预算，owner 选了这一项，06 的规模在起草时单独定（2026-11-08 补：06 的规模单独算，检查点设在它第二段末，上限约一个阶段 3（18 500 行、53 条），超了的砍法见 06 D11。）
 - **快照与一键还原**（Tenon 自有）：每次写入 / 删除前对受影响文件留快照，按 `runId` 归组，放 profile 目录（带 `tenantId`）；审批卡与任务小结显示「可还原」；还原是一次操作，冲突（文件在还原前又被改过）时逐文件提示（2026-10-23 补，见 05：命令前后也拍整树、拍不了时留单文件副本；还原以一轮为单位，只动 agent 改过的路径）（2026-10-29 补：已由 [05](05-file-bridge/spec.md) 实现：Write、Edit、Delete 动文件前拍、做完再记目标的新内容（能拍整树时整个工作区进 profile 里的影子仓库，否则只给目标留单文件副本），命令只在能拍整树时前后各拍一张，连接器不拍；保留 20 轮、30 天、3 GB；还原先出清单，被别处改过的按冲突逐个问、默认保留，动手前再拍一张；另有 mtime 守卫与 Delete 工具）
 - **任务小结**（Tenon 自有）：任务结束一行「读了 n · 写了 n · 发出 n · 可还原」，由 Tape 投影得出，不另存；「查看本次记录」按需打开（2026-10-23 补：一轮一行、六类计数已由 presentation-r1 取代「读了 n · 写了 n · 发出 n」；05 加 Delete 一类与「可还原」）（2026-10-29 补：已由 [05](05-file-bridge/spec.md) 实现：结算行加「删了 N 个文件」与「 · 可还原」，点开还原清单，跑过命令或有改动没进快照时写「可还原（不含被排除的文件）」，命令派发前没拍成整树时再加「 · 命令的改动可能无法还原」；任务会话的历史也画结算行；「查看本次记录」从会话标题菜单打开）
 - **读**：[sandbox-runtime-mechanisms](../reference/sandbox-runtime-mechanisms.md) §三、DeepChat `src/main/tool/agentTools/agentFileSystemHandler.ts`（`validatePath` / `resolveValidatedCreatePath`）与 `src/main/agent/acp/runtime/acpPathGuard.ts`（2026-10-09 改，见 [04](04-sandbox/spec.md) T3；原为「`src/main/file/`（adapters / validation.ts / mime）、`src/main/workspace/directoryReader.ts`」，validation.ts 管的是文件类型、不是路径）
@@ -1103,7 +1103,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
 | 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
 | 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | implemented | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
-| 4c | `06-approval-modes`（待起草） | 审批档位 | 规划中 | 随快照与规则 inspector 开放，另行验收 |
+| 4c | [06-approval-modes](06-approval-modes/spec.md) | 审批档位 | ready | 自动档免问能还原的改动与沙箱里的命令，撤不回与按规则拦的照问（06 D1–D10） |
 | 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
 | 6 | 待起草 | 聊天体验、记忆、知识库和 Research | 规划中 | Research 有单次预算上限 |
 | 6（原 4d） | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 2026-11-06 owner「4d 挪阶段 6」，在 06 之后起草 |
@@ -1115,7 +1115,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 2026-10-23 按 owner 的选择写入，原话「以后再说按推荐 R 收」（R 是私有笔记里那份 29 条推荐清单的名字；98 条候选也在那里）。格式：什么事 · 谁做 · 什么时候做或挡着什么 · 出处。
 
 - [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：沙箱补拦 .git 转向文件（§对 04 的增补）
-- 命令的「撤不回」模式表不认覆盖写类：`git reset --hard`、`git checkout --`、`truncate`、`>` 重定向、`dd of=` 仍判「未知」；按 02 §可逆性 的定义它们本来就是「未知」，收进来要改定义，随 06 另写 spec（发布类与删除类已由 PR #65 补上） · lead · 挡 06 开自动档 · 2026-10-22 外部调研（另记）
+- [06-approval-modes](06-approval-modes/spec.md)：覆盖写类命令进「撤不回」模式表、`>` 重定向在自动档里照问（原「命令的『撤不回』模式表不认覆盖写类」一行，06 D2、D3）
 - [05-file-bridge](05-file-bridge/spec.md)：文件工具认沙箱的凭据清单与会被自动执行的位置（原「文件工具不认沙箱的凭据清单」一行）
 - [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：外带检查认连接器为来源与出口（§对 02 的增补）
 - 渲染层没有错误边界，一处异常整窗白屏，打包版里没法恢复，冷启动又回到同一个会话 · lead · 待定 · 2026-10-22 外部调研（另记）
@@ -1147,7 +1147,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - [auto-tier-hardening](../features/auto-tier-hardening/spec.md)：core.hooksPath 与常见钩子工具进自动执行名单（§对 05 的增补）
 - 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
 - spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
-- Delete 的审批卡标题是「修改这个文件？」（与 Write、Edit 共用 `file` 一类卡），工具行写的是「删除」 · lead · 下次改审批卡文案时 · 05 第 23 步验收（2026-11-06）
+- [06-approval-modes](06-approval-modes/spec.md)：Delete 的审批卡标题改成「删除这个文件？」（原「Delete 的审批卡标题」一行）
 - 还原清单的「将还原 N 个」把默认保留的冲突也算进去（列了 6 个，实际还原 5 个、保留 1 个） · lead · 下次改还原清单时 · 05 第 23 步验收（2026-11-06）
 - 父路径被默认保留的文件占着时，下面的路径放回失败、它们被搬走的那份照删（已写进 05 §已知限制与代价与 SECURITY.md）；可以照 D70 的原则把这类路径算作「这次默认不放回起点」，起点进比对表 · lead · 下次改还原清单的计算时；不挡 · 05 第 18.3 步复核 Y1（第 20 步第四轮复核补：`mv x y; mkdir x; 写 x/a` 后你又改了 `x/a`，默认还原也是这一类，`y` 照删、`x` 放不回，起点只剩快照）
 - 还原清单里，05 D66、D67 传播出来的冲突目录与它下面的文件分开问：只覆盖目录、保留文件时目录记进 `failed`（起点没被搬走时不丢数据，搬走的见上一行）；让目录的选项跟随子项，或在 `failed` 原因里写明「里面还有保留的文件」 · lead · 下次碰还原清单时 · 05 第三段第五轮复核 X5
