@@ -261,6 +261,7 @@ export function decide(input: DecisionInput): Decision {
   const autoMode =
     layers.approvalMode === 'auto' &&
     !(layers.policy.status !== 'unavailable' && layers.policy.snapshot.disableAutoMode === true)
+  const snapshotAvailable = ['tree', 'warming', 'file-only'].includes(layers.snapshotStatus ?? '')
   let modeSaid: Said = 'none'
   let modeRule: NonNullable<DecisionStep['basis']>['modeRule']
   if (builtin && NOT_GATED.has(name)) {
@@ -271,16 +272,14 @@ export function decide(input: DecisionInput): Decision {
     builtin &&
     AUTO_FILE_TOOLS.has(name) &&
     layers.place === 'workspace' &&
-    layers.snapshotStatus !== undefined &&
-    layers.snapshotStatus !== 'unavailable'
+    snapshotAvailable
   ) {
     modeSaid = 'allow'
     modeRule = 'auto-range'
   } else if (
     autoMode &&
     command &&
-    layers.snapshotStatus !== undefined &&
-    layers.snapshotStatus !== 'unavailable' &&
+    snapshotAvailable &&
     layers.commandSandboxed === true &&
     layers.autoAsk === undefined
   ) {

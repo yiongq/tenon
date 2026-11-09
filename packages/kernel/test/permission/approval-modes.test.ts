@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   absolutePath,
   createMemoryHost,
@@ -59,7 +59,11 @@ const grant = {
   grantFrom: { sessionId: SESSION, approvalKey: 'allowed' },
 } as const
 
-function decision(name: string, over: Partial<LayerInputs> = {}, command = 'echo ok') {
+function decision(
+  name: string,
+  over: { [K in keyof LayerInputs]?: LayerInputs[K] | undefined } = {},
+  command = 'echo ok',
+) {
   const reversibility =
     name === 'Bash' ? commandReversibility(command) : name === 'Delete' ? 'snapshotted' : 'unknown'
   return decide({
@@ -82,7 +86,7 @@ function decision(name: string, over: Partial<LayerInputs> = {}, command = 'echo
       snapshotStatus: 'tree',
       commandSandboxed: true,
       ...over,
-    },
+    } as LayerInputs,
     inspectors: [],
   })
 }
@@ -299,7 +303,11 @@ describe('06 approval range', () => {
   })
 
   it.each([
-    ['git reset --hard', ['git reset --hard HEAD~1'], ['git reset --soft HEAD~1']],
+    [
+      'git reset --hard',
+      ['git reset --hard HEAD~1'],
+      ['git reset --soft HEAD~1', 'git reset --harder'],
+    ],
     [
       'git checkout -- or dot',
       ['git checkout -- a', 'git checkout .'],
@@ -307,18 +315,40 @@ describe('06 approval range', () => {
     ],
     [
       'git checkout force',
-      ['git checkout -f main', 'git checkout --force main'],
-      ['git checkout main'],
+      ['git checkout -f main', 'git checkout --force main', 'git checkout -qf main'],
+      ['git checkout main', 'git checkout --forceful main'],
     ],
     [
       'git restore',
-      ['git restore x', 'git restore --staged --worktree x', 'git restore -S -W x'],
-      ['git restore --staged x', 'git restore -S x'],
+      [
+        'git restore x',
+        'GIT RESTORE x',
+        'git restore --staged --worktree x',
+        'git restore -S -W x',
+        'git restore -SW x',
+        'git restore -qW x',
+        'git restore --staged a; git restore b',
+        'git restore --staged a && git restore b',
+        'git restore a; echo --staged',
+        'git restore --staged a | git restore b',
+        'git restore --staged a\ngit restore b',
+      ],
+      [
+        'git restore --staged x',
+        'git restore -S x',
+        'git restore -qS x',
+        'git restore -S x; git status',
+      ],
     ],
     [
       'git switch',
-      ['git switch --discard-changes main', 'git switch -f main', 'git switch --force main'],
-      ['git switch main'],
+      [
+        'git switch --discard-changes main',
+        'git switch -f main',
+        'git switch --force main',
+        'git switch -qf main',
+      ],
+      ['git switch main', 'git switch --forceful main'],
     ],
     ['truncate', ['truncate -s 0 x'], ['echo truncated']],
     ['dd of=', ['dd if=/dev/zero of=x'], ['dd if=x']],
@@ -365,7 +395,12 @@ describe('06 approval range', () => {
     for (const mode of ['auto', 'manual'] as const) {
       // oxlint-disable-next-line no-await-in-loop -- the two modes use separate Tape histories
       const h = await modeJudgeFixture(
-        { snapshotStatus: 'unavailable', platform: 'yes', posture: 'active', ...query },
+        {
+          snapshotStatus: query.sensitive || query.inspector ? 'tree' : 'unavailable',
+          platform: 'yes',
+          posture: 'active',
+          ...query,
+        },
         mode,
       )
       // oxlint-disable-next-line no-await-in-loop -- compare the two real judgements
@@ -393,7 +428,11 @@ describe('06 approval range', () => {
     (kind) => {
       expect(() =>
         patterns.assertCommandPatterns([
-          { row: 'broken', test: () => kind === 'miss', hits: ['hit'], misses: ['miss'] },
+          {
+            row: 'broken',
+            test: (sample) => sample === 'good',
+            ...(kind === 'hit' ? { hits: ['good', 'bad'] } : { misses: ['bad', 'good'] }),
+          },
         ]),
       ).toThrow('command pattern self-test failed: broken')
     },
@@ -419,6 +458,8 @@ describe('06 approval range', () => {
   })
 
   it('06 验收 9: auto changes only manual approval-mode asks to allows across the same fixtures', async () => {
+    let changed = 0
+    let commandsChanged = 0
     for (const { query } of baseline.judgeCases) {
       // oxlint-disable-next-line no-await-in-loop -- both modes judge one unchanged fixture
       const h = await modeJudgeFixture(query as ManualFixture, 'manual')
@@ -434,6 +475,8 @@ describe('06 approval range', () => {
         manual.record.decidedBy === 'approval-mode' &&
         auto.record.verdict === 'allow'
       ) {
+        changed++
+        if (query.name === 'Bash') commandsChanged++
         // oxlint-disable-next-line vitest/no-conditional-expect -- this is the sole permitted relation
         expect(auto.record.decidedBy).toBe('approval-mode')
         // oxlint-disable-next-line vitest/no-conditional-expect -- excluded scopes cannot use this relation
@@ -455,6 +498,8 @@ describe('06 approval range', () => {
         expect(normalize(auto)).toEqual(normalize(manual))
       }
     }
+    expect(changed).toBeGreaterThanOrEqual(17)
+    expect(commandsChanged).toBeGreaterThanOrEqual(3)
     for (const name of ['Read', 'Glob', 'Grep']) {
       // oxlint-disable-next-line no-await-in-loop -- independently verify the three unchanged read tools
       const h = await modeJudgeFixture({
@@ -469,4 +514,132 @@ describe('06 approval range', () => {
       expect(d.record.steps.find((step) => step.by === 'approval-mode')?.said).toBe('none')
     }
   })
+  it.each(['Write', 'Bash'])(
+    '06 验收 5: an MCP tool named %s never gains autoAsk',
+    async (name) => {
+      const h = await modeJudgeFixture({
+        name,
+        source: 'mcp',
+        snapshotStatus: 'unavailable',
+        platform: 'yes',
+        posture: 'active',
+      })
+      const result = await h.judge()
+      expect(result.decision.record.verdict).toBe('ask')
+      expect(result.decision.confirm?.facts).not.toHaveProperty('autoAsk')
+    },
+  )
+
+  it.each(['Write', 'Bash'])(
+    '06 验收 1: unknown snapshot state fails closed for %s',
+    async (name) => {
+      const h = await modeJudgeFixture({
+        name,
+        snapshotStatus: 'tree',
+        platform: 'yes',
+        posture: 'active',
+      })
+      vi.spyOn(h.host.snapshots, 'status').mockReturnValue('future-state' as never)
+      const result = await h.judge()
+      expect(result.decision.record.verdict).toBe('ask')
+      expect(result.decision.confirm?.facts['autoAsk']).toBe('no-snapshot')
+      expect(decision(name, { snapshotStatus: 'future-state' as never }).record.verdict).toBe('ask')
+    },
+  )
+
+  it.each(['Write', 'Bash'])(
+    '06 验收 1: decide requires snapshot and command evidence for %s',
+    (name) => {
+      for (const snapshotStatus of [undefined, 'unavailable'] as const)
+        expect(decision(name, { snapshotStatus }).record.verdict).toBe('ask')
+      expect(decision(name, { snapshotStatus: 'tree' }).record.verdict).toBe('allow')
+      expect(decision('Write', { place: 'outside', snapshotStatus: 'tree' }).record.verdict).toBe(
+        'ask',
+      )
+      expect(decision('Bash', { commandSandboxed: undefined }).record.verdict).toBe('ask')
+      expect(decision(name, { policy: { status: 'unavailable' } as never }).record.verdict).toBe(
+        'deny',
+      )
+    },
+  )
+
+  it('06 验收 7: loading always runs command pattern self-tests', async () => {
+    vi.resetModules()
+    const some = Array.prototype.some
+    const every = vi.spyOn(Array.prototype, 'some').mockImplementation(function (
+      this: unknown[],
+      callback,
+      thisArg,
+    ) {
+      return this[0] === 'git reset --hard' ? true : some.call(this, callback, thisArg)
+    })
+    try {
+      await expect(import('../../src/permission/reversibility.js')).rejects.toThrow(
+        'command pattern self-test failed',
+      )
+    } finally {
+      every.mockRestore()
+      vi.resetModules()
+    }
+  })
+
+  it.each(['facts', 'head', 'append'] as const)(
+    '06 验收 15: a stop after policy %s prevents further judgement',
+    async (stage) => {
+      const h = await modeJudgeFixture({
+        name: 'Write',
+        snapshotStatus: 'tree',
+        platform: 'yes',
+        posture: 'active',
+        policy: 'disable-auto',
+      })
+      const abort = new AbortController()
+      let armed = false
+      let heads = 0
+      let writes = 0
+      const tape = {
+        writer: h.tape.writer.bind(h.tape),
+        readRange: async (q: Parameters<typeof h.tape.readRange>[0]) => {
+          const page = await h.tape.readRange(q)
+          if (armed && stage === 'facts') abort.abort('user-stop')
+          return page
+        },
+        head: async (id: string) => {
+          heads++
+          const head = await h.tape.head(id)
+          if (stage === 'head') abort.abort('user-stop')
+          return head
+        },
+        appendEntries: async (q: Parameters<typeof h.tape.appendEntries>[0]) => {
+          writes++
+          const receipts = await h.tape.appendEntries(q)
+          if (stage === 'append') abort.abort('user-stop')
+          return receipts
+        },
+      }
+      const result = await judgeCall(
+        {
+          ...h.ctx,
+          tape,
+          signal: abort.signal,
+          inspectors: [
+            {
+              id: 'arm-stop',
+              kind: 'local-rule',
+              ceiling: 'ask',
+              beforeCall: async () => {
+                armed = true
+                return { kind: 'none' }
+              },
+            },
+          ],
+        },
+        h.item,
+        { input: h.input },
+      )
+      expect(result).toEqual({ kind: 'stopped' })
+      expect(heads).toBe(stage === 'facts' ? 0 : 1)
+      expect(writes).toBe(stage === 'append' ? 1 : 0)
+    },
+  )
 })

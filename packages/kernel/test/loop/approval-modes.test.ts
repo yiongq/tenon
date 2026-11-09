@@ -13,8 +13,9 @@ import type {
 } from '../../src/index.js'
 import { frozenBatchOf, rejudgeWaiting, waitingOf } from '../../src/loop/answer.js'
 import type { JudgeContext } from '../../src/loop/batch.js'
+import * as judgeModule from '../../src/loop/batch.js'
 import { judgeCall } from '../../src/loop/batch.js'
-import { readSessionFacts } from '../../src/session/facts.js'
+import { approvalModeEntry, readSessionFacts } from '../../src/session/facts.js'
 import { profileSetKey, sessionStartKey } from '../../src/tape/provenance.js'
 import {
   createCounterIds,
@@ -91,6 +92,10 @@ async function harness(
   const store = createMemoryTapeStore({ identity: host.identity })
   const batches: string[][] = []
   const recorded = proxyStore(store, {
+    resetSession: async (q) => {
+      batches.push([q.start.name, ...(q.carry ?? []).map((e) => e.name)])
+      return store.resetSession(q)
+    },
     append: async (q, ...rest) => {
       batches.push(q.entries.map((e) => e.name))
       return store.append(q, ...rest)
@@ -104,7 +109,8 @@ async function harness(
     grantsChanged: () => {},
     autoCommands: () => platform,
   }
-  const make = () => {
+  const inspectors: Array<Parameters<typeof createTestSessionService>[0]['inspectors'][number]> = []
+  const make = (bind = true) => {
     const ports = createTestLoopPorts({
       connector: { provider, model: MODEL },
       commandShell: { path: absolutePath('/bin/sh'), env: async () => env },
@@ -115,16 +121,17 @@ async function harness(
         tape: recorded,
         ids,
         connector: ports.connector,
-        inspectors: [],
+        inspectors,
         protectedFiles: [],
         approvalModeDefault: defaultMode,
       },
       { tools: { Write: 'real', Edit: 'real', Delete: 'real', Bash: 'real' } },
     )
-    service.bindLoop({
-      ...ports,
-      sandbox: sandboxPorts,
-    })
+    if (bind)
+      service.bindLoop({
+        ...ports,
+        sandbox: sandboxPorts,
+      })
     return { service, ports }
   }
   const { service, ports } = make()
@@ -151,6 +158,8 @@ async function harness(
     decisions,
     batches,
     sandboxPorts,
+    recorded,
+    inspectors,
   }
 }
 type H = Awaited<ReturnType<typeof harness>>
@@ -190,6 +199,8 @@ describe('06 session mode and dispatch', () => {
     'npm test >& 2',
     'npm test >& -',
     'npm test > /dev/null',
+    'bash -c "npm test 2>&1"',
+    "sh -c 'make 2>&1'",
     'x => x',
     'a -> b',
     'a >= b',
@@ -221,18 +232,26 @@ describe('06 session mode and dispatch', () => {
     expect((await h.entries()).filter((e) => e.name === 'tool/approval_resolved')).toHaveLength(1)
   })
 
-  it.each(['npm test >&out.log', 'npm test >& out.log', 'npm test >&2.log', 'npm test >&-notes'])(
-    '06 验收 8: filename redirect %s asks and accepts a real answer',
-    async (command) => {
-      const h = await harness(() => 'auto')
-      expect((await send(h, 'Bash', { command })).reason.code).toBe('paused')
-      expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
-        card: { facts: { autoAsk: 'redirect' } },
-      })
-      await allow(h)
-      expect((await send(h, 'Bash', { command })).reason.code).toBe('completed')
-    },
-  )
+  it.each([
+    'npm test >&out.log',
+    'npm test >& out.log',
+    'npm test >&2.log',
+    'npm test >&-notes',
+    'npm test > /dev/null.log',
+    'npm test >/dev/nullx',
+    'npm test > /dev/null/x',
+    'npm test >| out.log',
+    'npm test &> out.log',
+    'npm test 2> err.log',
+  ])('06 验收 8: filename redirect %s asks and accepts a real answer', async (command) => {
+    const h = await harness(() => 'auto')
+    expect((await send(h, 'Bash', { command })).reason.code).toBe('paused')
+    expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
+      card: { facts: { autoAsk: 'redirect' } },
+    })
+    await allow(h)
+    expect((await send(h, 'Bash', { command })).reason.code).toBe('completed')
+  })
 
   it('06 验收 3: twenty-five snapshotted Deletes in auto raise no card and are restorable', async () => {
     const h = await harness()
@@ -405,6 +424,14 @@ describe('06 session mode and dispatch', () => {
     expect(await snapshotPending).toMatchObject({
       decision: { record: { verdict: 'ask' }, confirm: { facts: { autoAsk: 'no-snapshot' } } },
     })
+    h.memory.setPolicy({
+      status: 'current',
+      version: 'disabled',
+      snapshot: { tools: [], disableAutoMode: true },
+    })
+    expect(await judge()).toMatchObject({ decision: { record: { verdict: 'ask' } } })
+    expect((await h.entries(OTHER)).some((e) => e.name === 'session/approval_mode_set')).toBe(false)
+    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
   })
 
   it('06 验收 12: the mode fact survives a restart and new tasks start at the default', async () => {
@@ -455,7 +482,7 @@ describe('06 session mode and dispatch', () => {
     expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('auto')
     expect(
       (await h.entries()).findLast((e) => e.name === 'session/approval_mode_set')?.payload,
-    ).toMatchObject({ mode: 'auto', by: 'user' })
+    ).toMatchObject({ mode: 'auto', by: 'user', writer: { by: 'resolver' } })
     mode = 'auto'
     await restarted.service.selectProfile({ sessionId: OTHER, profile: 'cowork', dedicated: WORK })
     h.provider.script(done())
@@ -464,7 +491,17 @@ describe('06 session mode and dispatch', () => {
     await restarted.ports.runEnded({ runId: sent.runId })
     expect(
       (await h.entries(OTHER)).find((e) => e.name === 'session/approval_mode_set')?.payload,
-    ).toMatchObject({ mode: 'auto', by: 'default' })
+    ).toMatchObject({ mode: 'auto', by: 'default', writer: { by: 'resolver' } })
+    expect(
+      h.batches.some((batch) =>
+        [
+          'session/start',
+          'session/profile_set',
+          'session/workspace_set',
+          'session/approval_mode_set',
+        ].every((name) => batch.includes(name)),
+      ),
+    ).toBe(true)
     await restarted.service.createSession({ sessionId: '44444444-4444-4444-8444-444444444444' })
     expect(
       await restarted.service.setApprovalMode({
@@ -526,7 +563,7 @@ describe('06 session mode and dispatch', () => {
       expect((await h.decisions())[0]?.record.verdict).toBe(choice === 'auto' ? 'allow' : 'ask')
       expect(
         (await h.entries()).find((e) => e.name === 'session/approval_mode_set')?.payload,
-      ).toMatchObject({ mode: choice, by: 'user' })
+      ).toMatchObject({ mode: choice, by: 'user', writer: { by: 'resolver' } })
       expect(
         h.batches.some((batch) =>
           [
@@ -607,6 +644,7 @@ describe('06 session mode and dispatch', () => {
     if (sent.status !== 'started') throw new Error('not started')
     await vi.waitFor(() => expect(active.spawned).toHaveBeenCalledOnce())
     await active.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+    expect(active.ports.liveLease(SESSION)).not.toBeNull()
     expect(child.kills).toEqual([])
     child.exit(0)
     expect((await active.ports.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
@@ -661,27 +699,38 @@ describe('06 session mode and dispatch', () => {
         .map((e) => e.payload),
     ).toMatchObject([
       { mode: 'auto', by: 'default' },
-      { mode: 'manual', by: 'policy' },
+      { mode: 'manual', by: 'policy', writer: { by: 'run', runId: expect.any(String) } },
     ])
     expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
   })
 
-  it('06 验收 16: clearing a session carries its approval mode', async () => {
-    const h = await harness(() => 'auto')
-    await send(h)
-    const before = (await h.entries()).find((e) => e.name === 'session/approval_mode_set')!
-    const reset = await h.service.resetSession(SESSION)
-    const after = await h.entries()
-    expect(after.map((e) => e.name)).toEqual([
-      'session/start',
-      'session/profile_set',
-      'session/workspace_set',
-      'session/approval_mode_set',
-    ])
-    expect(after.at(-1)?.payload).toEqual(before.payload)
-    expect(after.at(-1)?.provenanceKey).toBe(`session:v1:approval_mode:${reset.incarnationId}:0`)
-    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('auto')
-  })
+  it.each(['auto', 'manual'] as const)(
+    '06 验收 16: clearing a session carries its %s approval mode',
+    async (mode) => {
+      const h = await harness(() => 'auto')
+      await send(h)
+      if (mode === 'manual') await h.service.setApprovalMode({ sessionId: SESSION, mode })
+      const before = (await h.entries()).findLast((e) => e.name === 'session/approval_mode_set')!
+      h.batches.length = 0
+      const reset = await h.service.resetSession(SESSION)
+      const after = await h.entries()
+      expect(after.map((e) => e.name)).toEqual([
+        'session/start',
+        'session/profile_set',
+        'session/workspace_set',
+        'session/approval_mode_set',
+      ])
+      expect(after.at(-1)?.payload).toEqual(before.payload)
+      expect(after.at(-1)?.provenanceKey).toBe(`session:v1:approval_mode:${reset.incarnationId}:0`)
+      expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe(mode)
+      expect(h.batches).toContainEqual([
+        'session/start',
+        'session/profile_set',
+        'session/workspace_set',
+        'session/approval_mode_set',
+      ])
+    },
+  )
 
   it.each([
     'GH_TOKEN',
@@ -717,6 +766,11 @@ describe('06 session mode and dispatch', () => {
       TOKENIZERS_PARALLELISM: 'false',
       GH_TOKEN_PATH: '/tmp/token',
       MY_API_KEY_FILE: '/tmp/key',
+      AUTHTOKEN: 'fixture',
+      MYPASSWORD: 'fixture',
+      WEBSECRET: 'fixture',
+      MYAPI_KEY: 'fixture',
+      MYACCESS_KEY: 'fixture',
     }
     const env: Record<string, string> = {
       ...ordinary,
@@ -738,4 +792,272 @@ describe('06 session mode and dispatch', () => {
     await allow(h)
     expect(h.wrapped.at(-1)?.env).toEqual(env)
   })
+  it('06 验收 14: other card facts still invalidate an old answer', async () => {
+    const h = await harness()
+    await send(h, 'Bash', { command: 'echo old card' })
+    const before = pendingCard(await h.service.currentPending({ sessionId: SESSION }))!
+    vi.spyOn(h.host.sandbox, 'posture').mockReturnValue({
+      state: 'unavailable',
+      profile: 'workspace-write',
+    } as never)
+    const waiting = (await waitingOf(h.tape, SESSION))!
+    const { item } = await frozenBatchOf(h.tape, waiting)
+    expect(
+      await rejudgeWaiting({
+        judge: {
+          tape: h.tape,
+          host: h.host,
+          sandbox: h.sandboxPorts,
+          inspectors: [],
+          protectedFiles: [],
+          userSetting: () => null,
+          signal: new AbortController().signal,
+        },
+        waiting,
+        item,
+        testTools: { Bash: 'real' },
+      }),
+    ).toMatchObject({
+      kind: 'changed',
+      judged: { decision: { confirm: { facts: { sandbox: 'unavailable' } } } },
+    })
+    expect(
+      await h.service.answer({
+        kind: 'approval',
+        sessionId: SESSION,
+        requestId: before.card.requestId,
+        decision: 'allow',
+        origin: null,
+      }),
+    ).toEqual({ status: 'stale' })
+    expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
+      card: { facts: { sandbox: 'unavailable' } },
+    })
+    expect(h.spawned).not.toHaveBeenCalled()
+  })
+
+  it('06 验收 8: every judgement entry retains the same redirect explanation', async () => {
+    const h = await harness(() => 'auto')
+    const spy = vi.spyOn(judgeModule, 'judgeCall')
+    try {
+      await send(h, 'Bash', { command: 'npm test > out.log' })
+      expect((await h.decisions()).at(-1)?.confirm?.facts['autoAsk']).toBe('redirect')
+      spy.mockClear()
+      const restarted = h.make()
+      await restarted.service.recover()
+      expect(spy).toHaveBeenCalledOnce()
+      expect(await spy.mock.results[0]!.value).toMatchObject({
+        decision: { confirm: { facts: { autoAsk: 'redirect' } } },
+      })
+      expect(spy.mock.calls[0]![0].sandbox).toBe(h.sandboxPorts)
+      spy.mockClear()
+      await allow(restarted)
+      expect(await spy.mock.results[0]!.value).toMatchObject({
+        decision: { confirm: { facts: { autoAsk: 'redirect' } } },
+      })
+      expect(spy.mock.calls[0]![0].sandbox).toBe(h.sandboxPorts)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('06 验收 12: chat stays manual even with a stray mode fact', async () => {
+    const h = await harness()
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'chat' })
+    await send(h)
+    const head = (await h.tape.head(SESSION))!
+    await h.tape.appendEntries({
+      sessionId: SESSION,
+      incarnationId: head.incarnationId,
+      entries: [
+        approvalModeEntry(
+          { tape: h.tape, sessionId: SESSION, incarnationId: head.incarnationId, now: () => 0 },
+          0,
+          { mode: 'auto', by: 'user', writer: { by: 'resolver' } },
+        ),
+      ],
+    })
+    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
+  })
+
+  it('06 验收 15: unavailable policy denies calls but never throws on a mode choice', async () => {
+    const h = await harness(() => 'auto')
+    await send(h)
+    h.memory.setPolicy({ status: 'unavailable' } as never)
+    expect((await send(h, 'Write')).reason.code).not.toBe('error')
+    expect((await h.decisions()).at(-1)?.record.verdict).toBe('deny')
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })).toEqual({
+      status: 'set',
+    })
+  })
+
+  it('06 验收 15: policy never prevents choosing manual', async () => {
+    const h = await harness(() => 'auto')
+    await send(h)
+    h.memory.setPolicy({
+      status: 'current',
+      version: 'disabled',
+      snapshot: { tools: [], disableAutoMode: true },
+    })
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })).toEqual({
+      status: 'set',
+    })
+    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
+  })
+
+  it.each(['answer', 'recovery'] as const)(
+    '06 验收 15: a policy fold records its %s writer',
+    async (entry) => {
+      const h = await harness()
+      await send(h, 'Bash', { command: 'echo pending' })
+      await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+      h.memory.setPolicy({
+        status: 'current',
+        version: 'disabled',
+        snapshot: { tools: [], disableAutoMode: true },
+      })
+      if (entry === 'answer') await allow(h)
+      else await h.make().service.recover()
+      expect(
+        (await h.entries()).findLast((e) => e.name === 'session/approval_mode_set')?.payload,
+      ).toMatchObject({
+        mode: 'manual',
+        by: 'policy',
+        writer: { by: entry === 'answer' ? 'resolver' : 'recovery' },
+      })
+    },
+  )
+
+  it('06 验收 15: a Run policy fold and user choice share the root mailbox', async () => {
+    const h = await harness(() => 'auto')
+    await send(h)
+    h.memory.setPolicy({
+      status: 'current',
+      version: 'disabled',
+      snapshot: { tools: [], disableAutoMode: true },
+    })
+    let armed = false
+    const held = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    h.inspectors.push(
+      createFakeInspector({
+        id: 'arm-head',
+        ceiling: 'ask',
+        answer: () => {
+          armed = true
+          return { kind: 'none' }
+        },
+      }).registration,
+    )
+    const head = h.store.head.bind(h.store)
+    vi.spyOn(h.store, 'head').mockImplementation(async (id) => {
+      if (armed) {
+        armed = false
+        held.resolve()
+        await release.promise
+      }
+      return head(id)
+    })
+    const running = send(h, 'Write')
+    await held.promise
+    const choosing = h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+    // Let the competing command reach its mailbox turn while the policy head read is held.
+    for (let n = 0; n < 30; n++) {
+      // oxlint-disable-next-line no-await-in-loop -- let the competing mailbox command advance
+      await Promise.resolve()
+    }
+    release.resolve()
+    const [ended, selected] = await Promise.all([running, choosing])
+    expect(ended.reason.code).toBe('paused')
+    expect(selected).toEqual({ status: 'set' })
+    const modes = (await h.entries()).filter((e) => e.name === 'session/approval_mode_set')
+    expect(modes.map((e) => e.sourceSeq)).toEqual([0, 1, 2])
+    expect(modes.map((e) => e.payload['by'])).toEqual(['default', 'policy', 'user'])
+  })
+
+  it('06 验收 14: a user stop still permits a choice while the Run closes', async () => {
+    const h = await harness(() => 'auto')
+    const child = fakeChild(() => 0, 'hangs')
+    h.spawned.mockResolvedValue(child.child)
+    h.provider.script(call('Bash', { command: 'echo held' }))
+    const sent = await h.service.send({ sessionId: SESSION, text: 'start', origin: null })
+    if (sent.status !== 'started') throw new Error('not started')
+    await vi.waitFor(() => expect(h.spawned).toHaveBeenCalledOnce())
+    const lease = h.ports.liveLease(SESSION)!
+    expect(await h.service.stop({ rootSessionId: SESSION })).toEqual({ stopped: true })
+    expect(lease.signal.aborted).toBe(true)
+    expect(h.ports.liveLease(SESSION)).toBe(lease)
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })).toEqual({
+      status: 'set',
+    })
+    expect(h.ports.liveLease(SESSION)).toBe(lease)
+    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
+    h.ports.beginShutdown()
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })).toEqual({
+      status: 'refused',
+    })
+    await vi.waitFor(() => expect(child.kills.some((k) => k.signal === 'SIGTERM')).toBe(true))
+    h.memory.advance(1000)
+    child.exit(0)
+    await h.ports.runEnded({ runId: sent.runId })
+  })
+
+  it('06 验收 12: mode choices validate binding, ids and a missing head', async () => {
+    const h = await harness()
+    expect(
+      await h.make(false).service.setApprovalMode({ sessionId: SESSION, mode: 'auto' }),
+    ).toEqual({ status: 'refused' })
+    await expect(h.service.setApprovalMode({ sessionId: 'invalid', mode: 'auto' })).rejects.toThrow(
+      TypeError,
+    )
+    await send(h)
+    vi.spyOn(h.store, 'head').mockResolvedValue(null)
+    const count = (await h.entries()).length
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })).toEqual({
+      status: 'unknown-session',
+    })
+    expect(await h.entries()).toHaveLength(count)
+  })
+
+  it.each(['begin', 'facts', 'head'] as const)(
+    '06 验收 12: shutdown at the %s boundary refuses a choice without later IO',
+    async (stage) => {
+      const h = await harness()
+      await send(h)
+      const modes = (await h.entries()).filter((e) => e.name === 'session/approval_mode_set')
+      let reads = 0
+      let heads = 0
+      const read = h.store.readRange.bind(h.store)
+      const head = h.store.head.bind(h.store)
+      const begin = h.ports.leases.begin.bind(h.ports.leases)
+      vi.spyOn(h.ports.leases, 'begin').mockImplementation((q) => {
+        const lease = begin(q)
+        if (stage === 'begin') h.ports.beginShutdown()
+        return lease
+      })
+      vi.spyOn(h.store, 'readRange').mockImplementation(async (q) => {
+        reads++
+        const page = await read(q)
+        if (stage === 'facts') h.ports.beginShutdown()
+        return page
+      })
+      vi.spyOn(h.store, 'head').mockImplementation(async (id) => {
+        heads++
+        const result = await head(id)
+        if (stage === 'head') h.ports.beginShutdown()
+        return result
+      })
+      const policy = vi.spyOn(h.host.policy, 'current')
+      expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })).toEqual({
+        status: 'refused',
+      })
+      expect(reads).toBe(stage === 'begin' ? 0 : 1)
+      expect(heads).toBe(stage === 'head' ? 1 : 0)
+      expect(policy).toHaveBeenCalledTimes(stage === 'head' ? 1 : 0)
+      expect((await h.entries()).filter((e) => e.name === 'session/approval_mode_set')).toEqual(
+        modes,
+      )
+      expect(h.ports.liveLease(SESSION)).toBeNull()
+    },
+  )
 })

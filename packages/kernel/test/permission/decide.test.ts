@@ -306,7 +306,7 @@ describe('step 2: the first tier that holds', () => {
   })
 
   it('names the first allower in table order: protected > user-grant > approval-mode', () => {
-    // A workspace Read in the auto mode: the folder (layer 6) and the auto range (layer 7) both allow.
+    // A workspace Read in either mode is allowed by the folder grant (layer 6).
     const read = run(builtin('Read'), {
       place: 'workspace',
       reversibility: READ_ONLY,

@@ -59,9 +59,13 @@ describe('RunRegistry', () => {
     const first = lease(registry.begin({ rootSessionId: ROOT, origin: null }))
     // The kernel never asks twice; if it did, that is its bug and it must be loud.
     expect(() => registry.begin({ rootSessionId: ROOT, origin: null })).toThrow(/live lease/)
+    first.abort('user-stop')
+    expect(first.signal.aborted).toBe(true)
+    expect(registry.isShuttingDown()).toBe(false)
     first.finish()
     lease(registry.begin({ rootSessionId: ROOT, origin: null })).finish()
     registry.beginShutdown()
+    expect(registry.isShuttingDown()).toBe(true)
     expect(registry.begin({ rootSessionId: ROOT, origin: null })).toEqual({
       refused: 'shutting-down',
     })

@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。ff1760c、15a2333 后的第一段 r2 补充已实现；验收 1–17 共 102 个参数化用例通过，十二个突变已检测并还原，format / lint / typecheck 通过。全量 5852 通过，仍有五个已知环境失败；spec-check 只拦缺独立评审记录。
-需要你：协调者审本轮补充并完成第 6 步独立评审、StrykerJS，在沙箱外复验本轮差异与真沙箱；m5 的 desktop 平台映射测试留第三段第 15 步接线时完成。
+当前：ready。e67773b 后三路独立评审的第一段处置已实现；39 个矩阵标题、134 个参数化验收用例通过，49 个突变检测并逐个还原，16 个正式突变已登记。format / lint / typecheck 通过；全量 5884 通过，仍有相同五个环境失败；spec-check 只拦缺独立评审记录。
+需要你：协调者复核本轮改动、追加真实评审记录；提交后在沙箱外复验全量、真沙箱与 --mutants。C 已提供 StrykerJS 报告，本轮未重跑；前轮 m5 的 desktop 平台映射测试仍留第三段第 15 步。
 
 ## 开工前读
 
@@ -45,8 +45,8 @@
     - [x] 1.4.1 owner 答第三版的开放问题（2026-11-08，D32 选 A：容忍，即对改 02 contracts 读取端校验的点名批准）；spec 已加规矩 14、§点名 (j) 与验收 44，实现在第 15、18 步。
   - [x] 1.5 放进仓库（同一个 PR，162c16a）：spec、plan、decisions、evidence 进 `docs/architecture/06-approval-modes/`；照 headers.md 改 01、02、04、05、presentation-r1 的页头与总参考的四处；入口页重新生成；跑 S，`pairs`、`line-refs` 不拦。
   - [x] 1.6 owner 读「给你看的一页」，回一句带编号的话；页头加 `Approved:`，Status 改 ready，阶段表 4c 同改。
-- [x] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。自动档测试显式设置根快照状态；重启后的正向夹具重设 tree 并断言重判实际会放行。默认档与草稿在发送预建开始时一起采样。
-- [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。验收 1、5、6 从 judgeCall 进入，不手填 commandSandboxed/autoAsk；验收 9 的固定表由 62fed4d 的旧实现录制，覆盖工具、路径、coverage、授权、姿态、快照状态与 autoCommands 的两两组合和边界；比较完整 Decision，另做自动档的变形关系检查。旧 decide 测试只补 snapshotStatus: tree，不改期望。
+- [x] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。自动档测试显式设置根快照状态；重启后的正向夹具重设 tree 并断言重判实际会放行。默认档与草稿在发送预建开始时一起采样。Run 的策略折叠写入排进根 mailbox，与用户切档同队，writer 按入口填写；关闸拒绝，用户停止后的收尾期间仍可切档。
+- [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。验收 1、5、6 从 judgeCall 进入，不手填 commandSandboxed/autoAsk；验收 9 的固定表由 62fed4d 的旧实现录制，覆盖工具、路径、coverage、授权、姿态、快照状态与 autoCommands 的两两组合和边界；比较完整 Decision，另做自动档的变形关系检查。快照可用只认 tree / warming / file-only。固定表共 28 个 decide、67 个 judgeCall 判决；变形关系要求至少 17 次问变放行、其中 Bash 至少 3 次。旧 decide 与 sensitive 测试只补 snapshotStatus: tree，不改期望。
 - [x] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
 - [x] 5. 免问命令的环境：`perform` 按派发的判决过滤 `CommandRun.env`，名单与规则是常量。测试点名验收 17。
 - [ ] 6. 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent），StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。要出的突变至少有：
@@ -61,6 +61,9 @@
   - `carryEntries` 不带档位（验收 16 应红）；
   - 免问时写一条会话授权（验收 10 应红）；
   - `rejudgeWaiting` 把更宽的判决当真（验收 14 应红；tree 下同一调用重判实际为 allow，仍须保留原待批卡）。
+  - 比较卡时不排除 `autoAsk`，或把全部 facts 都排除（验收 14 应红）；
+  - 运行中切档总是结束借用的租约（验收 14 应红）；
+  - Run 的策略折叠绕过根 mailbox（验收 15 的可暂停并发例应红）。
 - [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash；命令卡 facts 的 `category`。测试点名验收 18、29、30。
 - [ ] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
 - [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；告诉模型的检查点。测试点名验收 21、22。
@@ -103,12 +106,14 @@
 
 2026-11-09 · 第一段 r2 补充交接：已处理测试视角 M1–M11、m1–m7、m11 与规则视角的第一段条目；m5 平台映射单测留第三段。102 个验收用例、十二个突变与 G 通过；T 仍有相同五项环境失败，S 只拦独立评审。逐条处置与红绿证据见 log「2026-11-09 · 第一段补充：r2 处置与交接」。本轮未提交，第 6 步保持未勾；下一步由协调者评审、StrykerJS 与沙箱外复验，Open 未改。
 
+2026-11-09 · 第一段三路评审处置交接：Run 的策略事实已与用户切档排根队，实际 writer、停止与关闸、白名单及命令边界已修；134 个验收与 49 个突变还原验证通过。正式突变 M1–M16 的原文各出现一次，详见 log「2026-11-09 · 第一段独立评审处置（e67773b 后）」。本轮不提交，第 6 步待协调者复核并在沙箱外跑正式 --mutants；五项全量环境失败与唯一 review 拦截保留，spec 与协调者 Open 未改。
+
 ## Open
 
-- 挑刺评审 r2（2026-11-09，原文在私有笔记 `review-opus-r2-{tests,rules}.md`）第一段的条目已改进 spec 或交第一段实现；下面是第二、三段开工前要处理的：
-  - 要问 owner：规则视角 M1（D25 当时依据的现状写错了，重问）；规则视角 M2（外带检查的口径照 auto-tier-hardening 对齐，「给你看的一页」那句跟着改）。
-  - lead 定、第二段开工前改 spec：规则视角 M4、minor 1(c)、4、5、6、14、15；测试视角 M12、m8、m10。
-  - 第三段开工前：规则视角 minor 9、10、12；测试视角 M13、M14、m9、m12。
+- 挑刺评审 r2（2026-11-09，原文在私有笔记）第一段的条目已改进 spec 或交第一段实现；第二、三段开工前还要处理：
+  - 要问 owner：看不见的字符在卡上用哪种写法（D25 当时依据的界面现状写错了，要按现状重问）；外带检查对命令的口径与 auto-tier-hardening 对齐，「给你看的一页」那句跟着改。
+  - 第二段开工前 lead 定、改 spec：子会话的机器拦截算不算进根会话这一轮的累计；命令卡同时带 `category` 与 `autoAsk` 时显示哪一句；「继续」开的 Run 算不算回执作废的下一轮；inspector 放行与 04 一次性放行同在时怎么绑；第 20 条在重判时写下时由谁结束本轮、降档与结束同一次写入；验收 19、21、24 补齐情形；检查期间白名单变化的复核补验收；验收 18 的只读档一例放到 desktop 测；矩阵第 28 行拆成确定性与 live 两条；验收 24 的夹具排到突变咬得住。
+  - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 20、33 各在哪层测。
 - spec 全文超过 heavy 档上限约 700 字符（警告）；第 21 步文档同步时一并压缩。
 
 ## 验收矩阵
@@ -120,12 +125,12 @@
 | 3 | 集成 | 06 验收 3: twenty-five snapshotted Deletes in auto raise no card and are restorable | test | — | 任意 |
 | 4 | 集成 | 06 验收 4: a sandboxed command runs unasked in auto under %s | test | — | 任意 |
 | 5 | 集成 | 06 验收 5: auto still asks for a command when %s, with autoAsk %s | test | 放宽姿态 / 平台缺省 → 验收 5 | 任意 |
-| 5 | 集成 | 06 验收 5: %s never adds autoAsk in either mode | test | 姿态条件、平台缺省 → 验收 5 | 任意 |
+| 5 | 集成 | 06 验收 5: %s never adds autoAsk in either mode | test | autoAsk 不外溢 → 验收 5 | 任意 |
 | 6 | 集成 | 06 验收 6: an allow-path bound command is unasked in auto and asked in manual | test | — | 任意 |
 | 7 | 单元 | 06 验收 7: %s is irreversible in both modes; the misses stay unknown | test | 删除 reset / 放宽 restore 例外 → 验收 7 | 任意 |
-| 7 | 单元 | 06 验收 7: pattern self-tests reject invalid %s samples | test | reset 行、restore staged 例外 → 验收 7 | 任意 |
+| 7 | 单元 | 06 验收 7: pattern self-tests reject invalid %s samples | test | 自测 some 改 every → 验收 7 | 任意 |
 | 8 | 集成 | 06 验收 8: a redirect asks once in auto with a session answer; %s does not | test | 不排除 /dev/null → 加载自测拦截 | 任意 |
-| 8 | 集成 | 06 验收 8: filename redirect %s asks and accepts a real answer | test | /dev/null 例外 → 验收 8 | 任意 |
+| 8 | 集成 | 06 验收 8: filename redirect %s asks and accepts a real answer | test | 无条件排除 >& / /dev/null 近似路径 / 强制重定向 → 验收 8 | 任意 |
 | 9 | 集成 | 06 验收 9: the manual mode decides every fixture as before 06 | test | — | 任意 |
 | 9 | 集成 | 06 验收 9: auto changes only manual approval-mode asks to allows across the same fixtures | test | — | 任意 |
 | 10 | 集成 | 06 验收 10: an unasked call writes no grant; manual grants still allow in auto | test | 免问写授权 → 验收 10 | 任意 |
@@ -135,10 +140,25 @@
 | 13 | 集成 | 06 验收 13: the %s draft choice overrides the %s default on the first call | test | 默认值盖草稿 → 验收 13 | 任意 |
 | 13 | 集成 | 06 验收 13: the %s default is captured when send starts | test | 默认值盖草稿 → 验收 13 | 任意 |
 | 14 | 集成 | 06 验收 14: switching to auto never releases a waiting card, even after a restart | test | 更宽重判当真 → 验收 14 | 任意 |
-| 14 | 集成 | 06 验收 14: changing only autoAsk never stales an answer for %s | test | 更宽重判当真 → 验收 14 | 任意 |
+| 14 | 集成 | 06 验收 14: changing only autoAsk never stales an answer for %s | test | 比较卡时不排除 autoAsk → 验收 14 | 任意 |
 | 15 | 集成 | 06 验收 15: disableAutoMode folds auto to manual and records a policy fact | test | — | 任意 |
-| 16 | 集成 | 06 验收 16: clearing a session carries its approval mode | test | 清空不携带 → 验收 16 | 任意 |
+| 16 | 集成 | 06 验收 16: clearing a session carries its %s approval mode | test | 清空不携带 → 验收 16 | 任意 |
 | 17 | 集成 | 06 验收 17: an unasked command never receives %s; manual commands keep it | test | 不认环境后缀 → 验收 17 | 任意 |
+| 5 | 集成 | 06 验收 5: an MCP tool named %s never gains autoAsk | test | 去掉内置工具守卫 → 验收 5 | 任意 |
+| 1 | 集成 | 06 验收 1: unknown snapshot state fails closed for %s | test | 取消快照白名单 → 验收 1 | 任意 |
+| 1 | 单元 | 06 验收 1: decide requires snapshot and command evidence for %s | test | 去掉快照 / 命令证据条件 → 验收 1 | 任意 |
+| 7 | 单元 | 06 验收 7: loading always runs command pattern self-tests | test | 删除加载自测调用 → 验收 7 | 任意 |
+| 15 | 集成 | 06 验收 15: a stop after policy %s prevents further judgement | test | 删除停止窗口检查 → 验收 15 | 任意 |
+| 14 | 集成 | 06 验收 14: other card facts still invalidate an old answer | test | 丢弃全部 facts → 验收 14 | 任意 |
+| 8 | 集成 | 06 验收 8: every judgement entry retains the same redirect explanation | test | 丢端口转发 → 验收 8 | 任意 |
+| 12 | 集成 | 06 验收 12: chat stays manual even with a stray mode fact | test | 去掉任务形态守卫 → 验收 12 | 任意 |
+| 15 | 集成 | 06 验收 15: unavailable policy denies calls but never throws on a mode choice | test | 不可用策略仍直接读 snapshot → 验收 15 | 任意 |
+| 15 | 集成 | 06 验收 15: policy never prevents choosing manual | test | 策略拒绝不区分切档目标 → 验收 15 | 任意 |
+| 15 | 集成 | 06 验收 15: a policy fold records its %s writer | test | 写错实际 writer → 验收 15 | 任意 |
+| 15 | 集成 | 06 验收 15: a Run policy fold and user choice share the root mailbox | test | Run 绕过 mailbox → 验收 15 | 任意 |
+| 14 | 集成 | 06 验收 14: a user stop still permits a choice while the Run closes | test | 错误拒绝用户停止后的切档 → 验收 14 | 任意 |
+| 12 | 集成 | 06 验收 12: mode choices validate binding, ids and a missing head | test | 去掉入口守卫 → 验收 12 | 任意 |
+| 12 | 集成 | 06 验收 12: shutdown at the %s boundary refuses a choice without later IO | test | 删除关机窗口检查 → 验收 12 | 任意 |
 | 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
 | 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
 | 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |

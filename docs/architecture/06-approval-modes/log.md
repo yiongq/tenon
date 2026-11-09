@@ -123,3 +123,326 @@
 - 全量失败与上一轮相同：`apps/desktop/test/stop-tree.test.ts` 四项在 ps 调用处 spawn EPERM；`apps/desktop/test/snapshot-git.test.ts` 的真实残留 git 启动恢复一项等待退出超时。后者实现依赖读取 ps，当前沙箱读不到时保守不杀。没有改弱测试、绕过权限或反复重跑；原始输出与 JSON 在 `/private/tmp/06s1-r2-full.*`，交协调者沙箱外复验本轮。真沙箱黑盒按原任务跳过，没有启动 Electron 或读取密钥。
 - `python3 .sdd/spec-check.py --index` 已更新入口页；S 的唯一拦截仍是没有独立评审记录。按任务要求，第 6 步独立评审与 StrykerJS 由协调者做，实现者不添加假评审；trace 18–44、后段文档同步及既有警告留原阶段。第 2–5 步保持已勾，第 6 步未勾，Status 保持 ready。
 - 最终交接：矩阵第一段 24 个标题与测试逐项匹配；plan 的 Open 与 15a2333 完全一致。所有临时突变已还原、旧版捕获源码已移除；本轮改动留工作区，未提交、未 push。无需要 owner 另定的条文问题。协调者接着审查逐条处置、补独立评审与 StrykerJS，复验本轮平台用例；m5 的 desktop 平台映射测试在第三段第 15 步接线时完成。
+
+## 2026-11-09 · 第一段独立评审处置（e67773b 后）
+
+- 输入：三份只读独立评审（对照 spec、保护、突变），原文在私有笔记 `impl-reviews/seg1-{spec,protection,mutants}.md`。只处理第一段第 6 步发现；协调者工作区中的 spec 已知限制与 plan Open 均保留，不改 decisions / evidence，不提交。下面是实施处置，不冒充新一轮独立评审。
+- 并发修正：Run 的档位读取、计数与策略折叠写入作为一个根 mailbox 任务，和用户切档排队；答复本就在 resolver 任务内，不再排队造成自锁；启动恢复的档位写入也排根队。策略事实按实际入口记 run（含本次 runId）、resolver、recovery。没有吞掉 TapeProvenanceConflictError 或重用过期序号。
+- 停止与关机：切档复用运行中租约，但用户停止的 signal 不再充当关机闸。LoopPorts 的 leases 增加可选只读 isShuttingDown 查询，desktop 既有 RunRegistry 与测试宿主都答实际关闸状态；这只是读取既有闸，不开放档位路由或配置。旧宿主没有查询时保留 quit / close-window 中止的保守兜底。切档只结束自己临时取得的租约，借用的 Run 租约不结束。
+- 判定边界：快照可用在 decide、judgeCall 两处都改成 tree / warming / file-only 白名单；未知状态照问 no-snapshot。重定向描述符边界补引号；checkout / switch / restore 认合写短选项；restore 的 staged 例外仅看当前 restore 到下一个分号、管道、& 或换行之间，继续扫描后续 restore，不让别段的 staged 覆盖它。
+
+逐条处置（A 为对照 spec、B 为保护、C 为突变视角）：
+
+| 条目 | 处置 |
+|---|---|
+| A M1 / B m2 / C M2 | 已做。可暂停的真实 Run 测试在策略折叠读 head 时插入用户手动选择；要求两者成功、ordinal 连续且 policy / user 都保存。原实现为 provider-error，修复后通过；另用绕过 mailbox 的突变验证回归保护。 |
+| A M2 | 已做。05 敏感路径旧测试补 tree；验收 5 的 sensitive / inspector 文件与命令用 tree；固定基线和变形关系补 tree 下 sensitive、inspector ask、protected；改 decide 的 Read 归属注释。下列「测试改动」逐项记录。 |
+| A m1 | 已做。描述符后的引号视为边界，真实答复路径补 bash -c 双引号、sh -c 单引号样例。 |
+| A m2 / B m3 | 已做。短选项支持 qf、qS、qW、SW；restore 的长短 staged + worktree 与多段复合命令同时进入模块自测和独立字面量测试。 |
+| A m3 | 已做。验收 12 断言 default 与创建事实在同次 append；验收 16 观察 reset 事务的 start + carry，并参数化显式 manual / auto，均断言同批。 |
+| A m4 | 已做。停止后 Run 尚在收尾时选择 manual 成功、活租约仍是原对象；随后关闸，同一个尚未结束的 Run 下切档回 refused。 |
+| A m5 | 已做。策略折叠测试分别断言 Run、答复、恢复三种 writer；创建与用户选择继续断言 resolver。 |
+| A m6 | 已做。矩阵的 5b、7b、8b、14b 改成实际守住的突变；比较卡不排除 autoAsk 登记为 M14。 |
+| A m7 | 协调者已处理。保留其 Open 内容，不代改。 |
+| B m1 | 已做。两处白名单及 Write / Bash 的未知状态反例；直接 decide 也验证未知值照问。 |
+| C M1 | 已做。姿态转 unavailable 只改变卡 facts 时，直接重判必须 changed，旧答复 stale，新卡带 sandbox: unavailable，且不启动进程；O109 被此例检测，登记为 M15。 |
+| C M3 | 已做。验收 14 运行中切档后断言 liveLease 非空；停止收尾例另断言对象身份不变。R02 被检测，登记为 M16。 |
+| C m1 | 已做。不可用策略下自动档调用拒绝而不抛错，切档仍 set；策略禁止自动时允许选择 manual。 |
+| C m2 | 已做。名叫 Write / Bash 的 MCP 工具都照问且无 autoAsk。 |
+| C m3 | 已做。新增 /dev/null 近似路径、>\|、&>、2>、harder / forceful 边界、大写 restore、短选项和多段命令；自测负例每组放好坏各一条，区分 some / every。加载自测通过 resetModules 后仅对该模式样例的 Array.some 注入错误并重导入，删除加载调用会红。 |
+| C m4 | 已做。手动档事实清空同样照抄；对话混入 auto 事实仍手动；创建、用户和三种策略入口 writer 受断言；子会话策略折叠只写根 Tape。 |
+| C m5 | 已做。自动免问环境保留 AUTHTOKEN、MYPASSWORD、WEBSECRET、MYAPI_KEY、MYACCESS_KEY，继续过滤带下划线的后缀。 |
+| C m6 | 已做。对策略折叠的读事实 / head / append 后三个停止窗口，以及切档 begin / 读事实 / head 后三个关闸窗口逐项控制，断言 stopped / refused 与后续 IO / 事实边界；按新语义重打六个对应突变。 |
+| C m7 | 已做。保留三处 sandbox 转发；直接观察真实答复前、启动重判的 judgeCall 返回值，均与运行事实一样为 redirect，且使用同一个 SandboxPorts 对象，不靠 cardChanged。原历史实现记录的措辞按本轮要求更正。 |
+| C m8 | 已做。直接 decide 对文件 / 命令的缺省、unavailable、未知状态、工作区外和缺 commandSandboxed 逐项判问；另测不可用策略拒绝。 |
+| C m9 | 已做。从 62fed4d 旧实现新增录制 10 个 judgeCall 判决（现在共 67 个，decide 仍 28 个），含 Bash tree / warming / file-only、Linux、缺快照、重定向，以及 tree 下 sensitive / protected / inspector；放行关系至少 17 次、其中 Bash 至少 3 次，防止 if 分支测空。 |
+| C m10 | 已做。未绑定、非法 id、读到事实但 head 为 null，分别断言 refused、TypeError、unknown-session 且不写事实。 |
+
+- 测试改动：`packages/kernel/test/permission/sensitive.test.ts` · 05 验收 25、26、27 · 06 把缺快照状态收紧后，原 auto 维度被动变弱；补 snapshotStatus: tree，原敏感类别、once 与必须问的断言不变。
+- 测试改动：`packages/kernel/test/permission/approval-modes.test.ts` · 验收 5 的 sensitive / inspector 反例 · 改用 tree，确保后面的自动分支本可放行而必须被前层压住。
+- 测试改动：`packages/kernel/test/permission/approval-modes.test.ts` 与固定基线 · 验收 9 · 新增旧版真实录制的判决及放行分支最低计数，不从当前实现推期望。
+- 测试改动：`packages/kernel/test/permission/decide.test.ts` · names the first allower in table order · 只修注释，Read 由第 6 层授权，断言不变。
+- 测试改动：`packages/kernel/test/loop/approval-modes.test.ts` · 验收 12 / 16 · 增同批事务断言，16 的标题增加 %s 并覆盖两档，矩阵同步。
+- 失败测试与夹具修正：首次新增回归 16 failed / 112 passed，其中实际实现缺陷涉及短选项 / 复合命令、未知状态、引号描述符、Run 与恢复 writer、写入竞争、用户停止。其余失败包括待补旧 Bash 基线计数，以及三个夹具观测错误（reset 事务未记录、内部函数无法被外部 spy 捕获、全局 some 模拟影响模块解析）；分别改用 reset 事务观测、运行持久化判决 + 外部重判返回值、只匹配模式样例的模拟。停止收尾测试还补真实内存时钟推进以完成既有 SIGTERM 宽限；没有放宽产品期望。
+- 基线录制最初用了不存在的根 esbuild 路径，未得到输出；没有用新实现填空或降低计数。改用 kernel 既有 esbuild 实际运行旧源，新增 10 条记录成功后再验。临时旧源码、捕获入口和 bundle 已删除，输出在工作区外 `/private/tmp/06s1-r3-old-decisions.json`。
+
+- 突变首轮 P29 存活：新增 writer 断言只落在创建，尚未落到已建立会话的用户切档；补验收 12 的 resolver writer 后重打，已红，还原绿。下表列最终结果，不隐藏这次首轮存活。
+- desktop 既有 RunRegistry 用例另断言：user-stop 的租约已中止但闸仍开，beginShutdown 后查询为真；避免主进程把两个状态混用。
+
+突变自证最终 49/49 检测、每个还原后两份验收测试通过；其中 C §2.2 的 25 个全部已检测（六个停止窗口按 mailbox / 关闸新实现调整原文，语义对应原缺口）。额外重打 C 的 N01–N13、比较卡的 autoAsk、三处端口、some/every、restore 大小写与扫描起点、两处白名单与绕过根队的突变；C §2.3 判等价的其余突变未改。命令均为 `pnpm vitest run --maxWorkers=2 packages/kernel/test/permission/approval-modes.test.ts packages/kernel/test/loop/approval-modes.test.ts`。
+
+| 临时突变 | 变红的证据 | 还原后 |
+|---|---|---|
+| N01 | 06 验收 1: auto allows workspace Write, Edit and covered Delete while snapshots are tree, and asks safely when unavailable 8ms | 两文件 134 passed，退出码 0 |
+| N02 | 06 验收 5: auto still asks for a command when pending, with autoAsk sandbox 3ms | 两文件 134 passed，退出码 0 |
+| N03 | 06 验收 5: auto still asks for a command when missing platform query, with autoAsk platform 3ms | 两文件 134 passed，退出码 0 |
+| N04 | 06 验收 5: auto still asks for a command when another platform, with autoAsk platform 3ms | 两文件 134 passed，退出码 0 |
+| N05 | 06 验收 7: git reset --hard is irreversible in both modes; the misses stay unknown 6ms | 两文件 134 passed，退出码 0 |
+| N06 | Error: command pattern self-test failed: git restore worktree | 两文件 134 passed，退出码 0 |
+| N07 | Error: redirect self-test failed: npm test > /dev/null | 两文件 134 passed，退出码 0 |
+| N08 | 06 验收 17: an unasked command never receives custom_TOKEN; manual commands keep it 7ms | 两文件 134 passed，退出码 0 |
+| N09 | 06 验收 11: a child follows the root's current mode 6ms | 两文件 134 passed，退出码 0 |
+| N10 | 06 验收 2: a Write with no coverage is allowed in auto; a Delete with none asks irreversible 4ms | 两文件 134 passed，退出码 0 |
+| N11 | 06 验收 16: clearing a session carries its auto approval mode 6ms | 两文件 134 passed，退出码 0 |
+| N12 | 06 验收 8: a redirect asks once in auto with a session answer; npm test >> out.log does not 41ms | 两文件 134 passed，退出码 0 |
+| N13 | 06 验收 14: switching to auto never releases a waiting card, even after a restart 6ms | 两文件 134 passed，退出码 0 |
+| O22 | 06 验收 5: an MCP tool named Bash never gains autoAsk 3ms | 两文件 134 passed，退出码 0 |
+| O51 | 06 验收 17: an unasked command never receives GH_TOKEN; manual commands keep it 6ms | 两文件 134 passed，退出码 0 |
+| O71 | 06 验收 8: filename redirect npm test > /dev/null.log asks and accepts a real answer 6ms | 两文件 134 passed，退出码 0 |
+| P33 | 06 验收 8: filename redirect npm test >\| out.log asks and accepts a real answer 5ms | 两文件 134 passed，退出码 0 |
+| O78 | 06 验收 7: loading always runs command pattern self-tests 4ms | 两文件 134 passed，退出码 0 |
+| O79 | 06 验收 12: chat stays manual even with a stray mode fact 6ms | 两文件 134 passed，退出码 0 |
+| O87 | 06 验收 16: clearing a session carries its manual approval mode 5ms | 两文件 134 passed，退出码 0 |
+| O109 | 06 验收 14: other card facts still invalidate an old answer 6ms | 两文件 134 passed，退出码 0 |
+| P03 | 06 验收 11: a child follows the root's current mode 6ms | 两文件 134 passed，退出码 0 |
+| P28 | 06 验收 15: disableAutoMode folds auto to manual and records a policy fact 7ms | 两文件 134 passed，退出码 0 |
+| P29 | 06 验收 12: the mode fact survives a restart and new tasks start at the default 9ms | 两文件 134 passed，退出码 0 |
+| P30 | 06 验收 12: the mode fact survives a restart and new tasks start at the default 11ms | 两文件 134 passed，退出码 0 |
+| Q01 | 06 验收 15: unavailable policy denies calls but never throws on a mode choice 5ms | 两文件 134 passed，退出码 0 |
+| Q02 | 06 验收 1: decide requires snapshot and command evidence for Write 2ms | 两文件 134 passed，退出码 0 |
+| Q03 | 06 验收 15: unavailable policy denies calls but never throws on a mode choice 7ms | 两文件 134 passed，退出码 0 |
+| R01 | 06 验收 15: policy never prevents choosing manual 5ms | 两文件 134 passed，退出码 0 |
+| R02 | 06 验收 14: switching to auto never releases a waiting card, even after a restart 64ms | 两文件 134 passed，退出码 0 |
+| R03 | 06 验收 12: mode choices validate binding, ids and a missing head 4ms | 两文件 134 passed，退出码 0 |
+| R04 | 06 验收 12: mode choices validate binding, ids and a missing head 5ms | 两文件 134 passed，退出码 0 |
+| O34 | 06 验收 15: a stop after policy facts prevents further judgement 3ms | 两文件 134 passed，退出码 0 |
+| O35 | 06 验收 15: a stop after policy head prevents further judgement 3ms | 两文件 134 passed，退出码 0 |
+| O36 | 06 验收 15: a stop after policy append prevents further judgement 4ms | 两文件 134 passed，退出码 0 |
+| O97 | 06 验收 12: shutdown at the begin boundary refuses a choice without later IO 5ms | 两文件 134 passed，退出码 0 |
+| O98 | 06 验收 12: shutdown at the facts boundary refuses a choice without later IO 5ms | 两文件 134 passed，退出码 0 |
+| O99 | 06 验收 12: shutdown at the head boundary refuses a choice without later IO 5ms | 两文件 134 passed，退出码 0 |
+| AUTOASK | 06 验收 14: changing only autoAsk never stales an answer for Write 6ms | 两文件 134 passed，退出码 0 |
+| O104 | 06 验收 8: every judgement entry retains the same redirect explanation 9ms | 两文件 134 passed，退出码 0 |
+| O105 | 06 验收 8: every judgement entry retains the same redirect explanation 7ms | 两文件 134 passed，退出码 0 |
+| O106 | 06 验收 8: every judgement entry retains the same redirect explanation 7ms | 两文件 134 passed，退出码 0 |
+| SOME-HIT | 06 验收 7: pattern self-tests reject invalid hit samples 4ms | 两文件 134 passed，退出码 0 |
+| SOME-MISS | 06 验收 7: pattern self-tests reject invalid miss samples 3ms | 两文件 134 passed，退出码 0 |
+| RESTORE-CASE | Error: command pattern self-test failed: git restore worktree | 两文件 134 passed，退出码 0 |
+| RESTORE-TAIL | Error: command pattern self-test failed: git restore worktree | 两文件 134 passed，退出码 0 |
+| WHITE-DECIDE | 06 验收 1: unknown snapshot state fails closed for Write 3ms | 两文件 134 passed，退出码 0 |
+| WHITE-JUDGE | 06 验收 1: unknown snapshot state fails closed for Write 3ms | 两文件 134 passed，退出码 0 |
+| MODE-TURN | 06 验收 15: a Run policy fold and user choice share the root mailbox 5ms | 两文件 134 passed，退出码 0 |
+
+- 原始红绿输出与最终 JSON 在工作区外 `/private/tmp/06s1-r3-mut-*`、`/private/tmp/06s1-r3-mutants-final.json`。N06 / N07 及 restore 大小写 / 扫描起点等改坏生产样例的变体，会由模块加载自测提前拦，表中按实际输出记，不冒称进入测试体；O78 则由重导入的专用测试检测。
+- 正式登记使用下列 M1–M16，对应 N01–N13、autoAsk 比较、O109 与 R02；门禁均为 test，登记时原文片段各在目标文件中恰好出现一次。脚本 --mutants 在 HEAD 建临时 worktree，本轮按要求不提交且沙箱外全量门禁尚待协调者复验，因此不声称正式 test 门禁已跑过；协调者提交后在沙箱外补跑 --mutants。
+
+### 突变 M1 · N01 · decide 自动文件分支去掉快照状态条件 -> 验收 1 · 门禁 test
+文件：packages/kernel/src/permission/decide.ts
+原文：
+```
+    layers.place === 'workspace' &&
+    snapshotAvailable
+```
+改成：
+```
+    layers.place === 'workspace'
+```
+
+### 突变 M2 · N02 · commandSandboxed 改成 posture.state !== 'unavailable' -> 验收 5 · 门禁 test
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+ctx.host.sandbox.posture?.().state === 'active' &&
+```
+改成：
+```
+ctx.host.sandbox.posture?.().state !== 'unavailable' &&
+```
+
+### 突变 M3 · N03 · autoCommands 缺省读作 'yes' -> 验收 5 · 门禁 test
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+const commandPlatform = ctx.sandbox?.autoCommands?.() ?? 'no'
+```
+改成：
+```
+const commandPlatform = ctx.sandbox?.autoCommands?.() ?? 'yes'
+```
+
+### 突变 M4 · N04 · 'no' 也给 linux（autoAsk 把 platform 写成 linux）-> 验收 5 · 门禁 test
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+            : commandPlatform === 'no'
+              ? 'platform'
+```
+改成：
+```
+            : commandPlatform === 'no'
+              ? 'linux'
+```
+
+### 突变 M5 · N05 · 删掉 git reset --hard 一行 -> 验收 7 · 门禁 test
+文件：packages/kernel/src/permission/reversibility.ts
+原文：
+```
+  {
+    row: 'git reset --hard',
+    test: inOrder(GIT, word('reset'), option('--hard(?![\\w-])')),
+    hits: ['git reset --hard', 'git reset --hard=HEAD~1'],
+    misses: ['git reset --soft HEAD~1', 'git reset --harder'],
+  },
+```
+改成：
+```
+
+```
+
+### 突变 M6 · N06 · git restore 的 --staged 例外放宽到带 --worktree 也不命中 -> 验收 7 · 门禁 test
+文件：packages/kernel/src/permission/reversibility.ts
+原文：
+```
+        if (!staged || worktree) return true
+```
+改成：
+```
+        if (!staged) return true
+```
+
+### 突变 M7 · N07 · autoStillAsk 不排除 /dev/null -> 验收 8 · 门禁 test
+文件：packages/kernel/src/permission/reversibility.ts
+原文：
+```
+|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g
+```
+改成：
+```
+|=>|->|>=/g
+```
+
+### 突变 M8 · N08 · 环境过滤只认名单、不认后缀规则 -> 验收 17 · 门禁 test
+文件：packages/kernel/src/permission/command-environment.ts
+原文：
+```
+!TOKEN_NAMES.has(name) && !name.startsWith('OP_SESSION_') && !TOKEN_SUFFIX.test(name),
+```
+改成：
+```
+!TOKEN_NAMES.has(name) && !name.startsWith('OP_SESSION_'),
+```
+
+### 突变 M9 · N09 · 子会话读自己的档位 -> 验收 11 · 门禁 test
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+const rootFacts = await readSessionFacts(ctx.tape, rootId)
+```
+改成：
+```
+const rootFacts = await readSessionFacts(ctx.tape, ctx.sessionId)
+```
+
+### 突变 M10 · N10 · 建会话时默认值盖过草稿里的选择 -> 验收 13 · 门禁 test
+文件：packages/kernel/src/session/facts.ts
+原文：
+```
+const mode = draft.approvalMode ?? defaultMode
+```
+改成：
+```
+const mode = defaultMode
+```
+
+### 突变 M11 · N11 · carryEntries 不带档位 -> 验收 16 · 门禁 test
+文件：packages/kernel/src/session/facts.ts
+原文：
+```
+  if (facts.approvalModeFact !== null) entries.push(approvalModeEntry(w, 0, facts.approvalModeFact))
+```
+改成：
+```
+
+```
+
+### 突变 M12 · N12 · 免问时写一条会话授权（approval_resolved + session grant）-> 验收 10 · 门禁 test
+文件：packages/kernel/src/loop/batch.ts
+原文：
+```
+      const dispatchFacts = [decided, ...beforeSnapshotEntries(ctx, snapshot), dispatch]
+```
+改成：
+```
+      const dispatchFacts = [
+        decided,
+        ...beforeSnapshotEntries(ctx, snapshot),
+        dispatch,
+        ...(decision.record.decidedBy === 'approval-mode'
+          ? [
+              ctx.tape.writer('tool').entry('tool/approval_resolved', {
+                sourceType: 'runtime_event',
+                sourceId: ctx.runId,
+                sourceSeq: ctx.requestSeq,
+                provenanceKey: `tool:v1:approval:${ctx.runId}:${ctx.requestSeq}:${call.ordinal}`,
+                createdAt: ctx.now(),
+                payload: {
+                  ordinal: call.ordinal,
+                  providerToolCallId: call.providerToolCallId,
+                  decisionKey,
+                  outcome: 'allowed',
+                  via: 'card',
+                  grant: {
+                    scope: 'session',
+                    key: grantKey(
+                      item.serverId,
+                      item.originalName,
+                      judged.grantObject ?? { kind: 'call', argsHash: call.argsHash },
+                    ),
+                  },
+                  writer: { by: 'run', runId: ctx.runId },
+                },
+              } as never),
+            ]
+          : []),
+      ]
+```
+
+### 突变 M13 · N13 · rejudgeWaiting 把更宽的判决当真（allow 读成 changed）-> 验收 14 · 门禁 test
+文件：packages/kernel/src/loop/answer.ts
+原文：
+```
+  if (verdict === 'ask' && cardChanged(waiting.decision, judged)) return { kind: 'changed', judged }
+```
+改成：
+```
+  if (verdict === 'allow') return { kind: 'changed', judged }
+  if (verdict === 'ask' && cardChanged(waiting.decision, judged)) return { kind: 'changed', judged }
+```
+
+### 突变 M14 · AUTOASK · 比较卡时不排除 autoAsk · 门禁 test
+文件：packages/kernel/src/loop/answer.ts
+原文：
+```
+filter(([key]) => key !== 'autoAsk')
+```
+改成：
+```
+filter(() => true)
+```
+
+### 突变 M15 · O109 · cardChanged 排除全部 facts · 门禁 test
+文件：packages/kernel/src/loop/answer.ts
+原文：
+```
+Object.entries(confirm.facts).filter(([key]) => key !== 'autoAsk'),
+```
+改成：
+```
+[],
+```
+
+### 突变 M16 · R02 · [Stryker mailbox.ts:3363] setApprovalMode 总是结束租约（连借用运行中根的租约也结束） · 门禁 test
+文件：packages/kernel/src/loop/mailbox.ts
+原文：
+```
+const ownLease = box.lease === null
+```
+改成：
+```
+const ownLease = true
+```
+
+- 最终门禁：`pnpm format:check`、`pnpm lint`（含 i18n / colors / copy / tape）、`pnpm typecheck` 全通过；`git diff --check` 无输出。全量 `pnpm vitest run --maxWorkers=2 --reporter=json --outputFile=/private/tmp/06s1-r3-full.json` 为 288 files passed / 2 failed，5884 tests passed / 5 failed / 135 skipped / 8 pending。本段 permission 55 + loop 79 = 134 passed；desktop 的 RunRegistry / loop 23 passed，05 敏感路径原用例也全通过。
+- 环境失败仍为相同五项：stop-tree 四项在 ps 处 spawn EPERM；snapshot-git 的真实残留 git 回收一项等待退出超时，其恢复实现读不到 ps 时保守不杀。不改测试、不重复跑这五项；原始输出在 `/private/tmp/06s1-r3-full.*`。真沙箱按原任务跳过，交协调者沙箱外复验本轮差异；没有启动 Electron 或读密钥。
+- 文档门禁：spec-check 唯一拦截仍为缺新增独立评审记录，实施者按原任务不写「## 评审」或冒用三份外部评审作为本轮复核通过。协调者追加真实评审后再跑；第 6 步继续未勾，Status 仍 ready。StrykerJS 已由 C 给报告，本轮只补测试与手工突变，没有再跑一小时的同一批扫描。
+- 更正（「第一段实现与交接」节的调试记录）：那句「先扩充验收 14，复现 redirect 被改成 platform 的失败」只在当时成立，靠的是待批卡比较间接验证。r2 把 autoAsk 排除出卡比较后，那条间接断言不再守住输入一致性；本轮补了直接观察真实答复前与启动重判返回值的测试，均仍为 redirect。逐条处置和新自证只追加。39 个矩阵标题逐字匹配，正式 16 个原文各恰好匹配一次；spec 与协调者 Open 对开工快照无变化。临时旧源码和 bundle 已清理，所有突变已还原，改动留工作区、不提交。无需要 owner 另定的问题。

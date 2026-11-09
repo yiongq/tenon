@@ -137,6 +137,7 @@ export type AgentDispatchResult =
     }
 
 export interface BatchContext {
+  readonly modeTurn?: JudgeContext['modeTurn']
   readonly sandbox?: SandboxPorts
   readonly budgetExceeded?: () => number | null
   readonly agent?: (q: AgentDispatch) => Promise<AgentDispatchResult>
@@ -1268,6 +1269,14 @@ async function closeRest(
 
 /** What judging one call reads: the session's facts, the host's policy and each layer's input. */
 export interface JudgeContext {
+  /** Run fact reads and writes join the root mailbox; resolver turns are already inside it. */
+  readonly modeTurn?:
+    | ((
+        rootId: string,
+        work: () => Promise<'manual' | 'auto' | null>,
+      ) => Promise<'manual' | 'auto' | null>)
+    | undefined
+  readonly writer?: FactWriter | undefined
   readonly tape: Pick<Tape, 'readRange' | 'head' | 'writer' | 'appendEntries'>
   readonly sandbox?: SandboxPorts | undefined
   readonly host: HostAdapter
@@ -1422,41 +1431,48 @@ export async function judgeCall(
   if (inspection.stopped) return { kind: 'stopped' }
   const policy = ctx.host.policy.current()
   const rootId = snapshotSessionId(ctx.sessionId, entries)
-  const rootFacts = await readSessionFacts(ctx.tape, rootId)
-  if (ctx.signal.aborted) return { kind: 'stopped' }
-  let approvalMode = profile === 'cowork' ? rootFacts.approvalMode : 'manual'
-  if (
-    approvalMode === 'auto' &&
-    policy.status !== 'unavailable' &&
-    policy.snapshot.disableAutoMode === true
-  ) {
-    const head = await ctx.tape.head(rootId)
-    if (ctx.signal.aborted) return { kind: 'stopped' }
-    if (head !== null) {
-      await ctx.tape.appendEntries({
-        sessionId: rootId,
-        incarnationId: head.incarnationId,
-        entries: [
-          approvalModeEntry(
-            {
-              tape: ctx.tape,
-              sessionId: rootId,
-              incarnationId: head.incarnationId,
-              now: () => ctx.host.clock.now(),
-            },
-            rootFacts.approvalModeFacts,
-            {
-              mode: 'manual',
-              by: 'policy',
-              writer: { by: 'resolver' },
-            },
-          ),
-        ],
-      })
+  const readMode = async (): Promise<'manual' | 'auto' | null> => {
+    const rootFacts = await readSessionFacts(ctx.tape, rootId)
+    if (ctx.signal.aborted) return null
+    let approvalMode = profile === 'cowork' ? rootFacts.approvalMode : 'manual'
+    if (
+      approvalMode === 'auto' &&
+      policy.status !== 'unavailable' &&
+      policy.snapshot.disableAutoMode === true
+    ) {
+      const head = await ctx.tape.head(rootId)
+      if (ctx.signal.aborted) return null
+      if (head !== null) {
+        await ctx.tape.appendEntries({
+          sessionId: rootId,
+          incarnationId: head.incarnationId,
+          entries: [
+            approvalModeEntry(
+              {
+                tape: ctx.tape,
+                sessionId: rootId,
+                incarnationId: head.incarnationId,
+                now: () => ctx.host.clock.now(),
+              },
+              rootFacts.approvalModeFacts,
+              {
+                mode: 'manual',
+                by: 'policy',
+                writer: ctx.writer ?? { by: 'resolver' },
+              },
+            ),
+          ],
+        })
+      }
+      approvalMode = 'manual'
     }
-    approvalMode = 'manual'
+    if (ctx.signal.aborted) return null
+    return approvalMode
   }
-  if (ctx.signal.aborted) return { kind: 'stopped' }
+  const approvalMode = await (ctx.modeTurn === undefined
+    ? readMode()
+    : ctx.modeTurn(rootId, readMode))
+  if (approvalMode === null) return { kind: 'stopped' }
   const workspace = paths.roots[0] ?? null
   const sandbox =
     item.source === 'builtin' && item.originalName === 'Bash'
@@ -1476,6 +1492,7 @@ export async function judgeCall(
       located?.sensitive === undefined) ||
       item.originalName === 'Bash')
   const snapshotStatus = ranged ? ctx.host.snapshots.status(rootId) : undefined
+  const snapshotAvailable = ['tree', 'warming', 'file-only'].includes(snapshotStatus ?? '')
   const commandPlatform = ctx.sandbox?.autoCommands?.() ?? 'no'
   const commandSandboxed =
     sandbox !== undefined &&
@@ -1487,7 +1504,7 @@ export async function judgeCall(
     !ranged ||
     (sandbox !== undefined && sandbox.profile === 'full-access')
       ? undefined
-      : snapshotStatus === 'unavailable'
+      : !snapshotAvailable
         ? 'no-snapshot'
         : sandbox === undefined
           ? undefined

@@ -103,7 +103,14 @@ import { rebuildToolTable, specHash, toolTableFacts } from '../tools/table.js'
 import type { FrozenToolTable, ToolKey } from '../tools/table.js'
 import { createArgumentValidator } from '../tools/validate.js'
 import type { PolicyState } from '../host/policy.js'
-import type { ApprovedCall, BatchContext, BatchResult, CompleteCall, Written } from './batch.js'
+import type {
+  ApprovedCall,
+  BatchContext,
+  BatchResult,
+  CompleteCall,
+  JudgeContext,
+  Written,
+} from './batch.js'
 import {
   RunWriteRefusedError,
   closedView,
@@ -184,6 +191,7 @@ export interface RunDriverContext {
    * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
    * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
    */
+  readonly modeTurn?: JudgeContext['modeTurn']
   readonly write: (entries: readonly NewEntry[]) => Promise<Written>
   /** A call in the context with no result: throw (tests, development) or repair and log (§兜底). */
   readonly onUnansweredCall: 'throw' | 'repair'
@@ -338,6 +346,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       sessionId: ctx.sessionId,
       ...q,
       writer: { by: 'run', runId },
+      modeTurn: ctx.modeTurn,
       ...(ctx.agent === undefined
         ? {}
         : {

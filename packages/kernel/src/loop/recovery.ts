@@ -46,7 +46,7 @@ import {
   tightenedFacts,
   waitingOf,
 } from './answer.js'
-import type { CompleteCall } from './batch.js'
+import type { CompleteCall, JudgeContext } from './batch.js'
 import { effectOf, readSessionEntries } from './batch.js'
 import type { CallRef, ExecutionState } from './closure.js'
 import { closureContent, repairFacts, resultFacts } from './closure.js'
@@ -59,6 +59,7 @@ import { spillChecked } from './spill.js'
 import type { RunConnector, SandboxPorts } from './ports.js'
 
 export interface RecoveryDeps {
+  readonly modeTurn?: JudgeContext['modeTurn']
   readonly sandbox?: SandboxPorts | undefined
   readonly searchTarget?: RunConnector['searchTarget']
   readonly tape: Tape
@@ -544,6 +545,8 @@ async function rejudgeAtStartup(
     judge: {
       tape: deps.tape,
       sandbox: deps.sandbox,
+      modeTurn: deps.modeTurn,
+      writer: RECOVERY,
       host: deps.host,
       inspectors: deps.inspectors,
       sensitiveFallback: deps.sensitiveFallback,

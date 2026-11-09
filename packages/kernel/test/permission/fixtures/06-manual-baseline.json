@@ -697,6 +697,108 @@
           "status": "ok"
         }
       ]
+    },
+    {
+      "verdict": "deny",
+      "decidedBy": "protected",
+      "steps": [
+        {
+          "by": "tenant-policy",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "protected",
+          "said": "deny",
+          "status": "ok"
+        },
+        {
+          "by": "user-disabled",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "irreversible",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "connector-confirm",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "user-grant",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "approval-mode",
+          "said": "ask",
+          "status": "ok"
+        },
+        {
+          "by": "default",
+          "said": "none",
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "verdict": "ask",
+      "decidedBy": "inspector",
+      "steps": [
+        {
+          "by": "tenant-policy",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "protected",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "user-disabled",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "irreversible",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "connector-confirm",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "inspector",
+          "inspectorId": "ask",
+          "said": "ask",
+          "basis": {
+            "category": "exfiltration",
+            "findings": []
+          },
+          "status": "ok"
+        },
+        {
+          "by": "user-grant",
+          "said": "none",
+          "status": "ok"
+        },
+        {
+          "by": "approval-mode",
+          "said": "ask",
+          "status": "ok"
+        },
+        {
+          "by": "default",
+          "said": "none",
+          "status": "ok"
+        }
+      ]
     }
   ],
   "summaries": [
@@ -902,6 +1004,27 @@
       "facts": {
         "toolName": "lookup"
       }
+    },
+    {
+      "verdict": "deny",
+      "code": "protected",
+      "facts": {
+        "toolName": "Write"
+      }
+    },
+    {
+      "verdict": "ask",
+      "code": "exfiltration-recheck",
+      "facts": {
+        "toolName": "Write"
+      }
+    },
+    {
+      "verdict": "ask",
+      "code": "exfiltration-recheck",
+      "facts": {
+        "toolName": "Bash"
+      }
     }
   ],
   "confirms": [
@@ -1021,6 +1144,20 @@
       "facts": {
         "toolName": "lookup"
       }
+    },
+    {
+      "reason": "command",
+      "facts": {
+        "command": "echo stable > out.log",
+        "cwd": "/work"
+      }
+    },
+    {
+      "reason": "flagged",
+      "facts": {
+        "toolName": "Write",
+        "category": "exfiltration"
+      }
     }
   ],
   "blocks": [
@@ -1046,6 +1183,13 @@
       "reason": "policy",
       "facts": {
         "toolName": "Delete"
+      }
+    },
+    {
+      "reason": "protected",
+      "facts": {
+        "toolName": "Write",
+        "target": "/work/a"
       }
     }
   ],
@@ -2847,6 +2991,57 @@
         "confirm": 17
       },
       "reversibility": "unknown"
+    },
+    {
+      "decision": {
+        "record": 0,
+        "summary": 10,
+        "confirm": 18
+      },
+      "reversibility": "unknown",
+      "sandbox": {
+        "profile": "workspace-write",
+        "chosen": "workspace-write"
+      }
+    },
+    {
+      "decision": {
+        "record": 0,
+        "summary": 0,
+        "confirm": 3
+      },
+      "reversibility": "snapshotted",
+      "place": "outside"
+    },
+    {
+      "decision": {
+        "record": 14,
+        "summary": 29,
+        "block": 4
+      },
+      "reversibility": "snapshotted",
+      "place": "protected"
+    },
+    {
+      "decision": {
+        "record": 15,
+        "summary": 30,
+        "confirm": 19
+      },
+      "reversibility": "snapshotted",
+      "place": "workspace"
+    },
+    {
+      "decision": {
+        "record": 15,
+        "summary": 31,
+        "confirm": 8
+      },
+      "reversibility": "unknown",
+      "sandbox": {
+        "profile": "workspace-write",
+        "chosen": "workspace-write"
+      }
     }
   ],
   "judgeCases": [
@@ -3480,6 +3675,106 @@
         "source": "mcp"
       },
       "expectedIndex": 34
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable"
+      },
+      "expectedIndex": 7
+    },
+    {
+      "query": {
+        "snapshotStatus": "warming",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable"
+      },
+      "expectedIndex": 7
+    },
+    {
+      "query": {
+        "snapshotStatus": "file-only",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable"
+      },
+      "expectedIndex": 7
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "linux",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable"
+      },
+      "expectedIndex": 7
+    },
+    {
+      "query": {
+        "snapshotStatus": "unavailable",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable"
+      },
+      "expectedIndex": 7
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "command": "echo stable > out.log"
+      },
+      "expectedIndex": 35
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Write",
+        "sensitive": true
+      },
+      "expectedIndex": 36
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Write",
+        "protected": true
+      },
+      "expectedIndex": 37
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Write",
+        "inspector": true
+      },
+      "expectedIndex": 38
+    },
+    {
+      "query": {
+        "snapshotStatus": "tree",
+        "platform": "yes",
+        "posture": "active",
+        "name": "Bash",
+        "inspector": true
+      },
+      "expectedIndex": 39
     }
   ]
 }

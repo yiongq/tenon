@@ -162,30 +162,54 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
   },
   {
     row: 'git checkout force',
-    test: inOrder(GIT, word('checkout'), option('(?:-f|--force)(?![\\w-])')),
-    hits: ['git checkout -f main', 'git checkout --force main'],
+    test: inOrder(GIT, word('checkout'), option('(?:-[A-Za-z]*f[A-Za-z]*|--force)(?![\\w-])')),
+    hits: ['git checkout -f main', 'git checkout --force main', 'git checkout -qf main'],
     misses: ['git checkout main', 'git checkout --forceful main'],
   },
   {
     row: 'git restore worktree',
     test: (command) => {
-      const match = new RegExp(`${GIT.source}[\\s\\S]*?${word('restore').source}`, 'i').exec(
-        command,
-      )
-      if (match === null) return false
-      const tail = command.slice(match.index + match[0].length)
-      return (
-        !option('(?:--staged|-S)(?![\\w-])').test(tail) ||
-        option('(?:--worktree|-W)(?![\\w-])').test(tail)
-      )
+      const restores = new RegExp(`${GIT.source}[\\s\\S]*?${word('restore').source}`, 'gi')
+      for (const match of command.matchAll(restores)) {
+        // A staged exception belongs only to this restore, never to another command fragment.
+        const tail = command.slice(match.index + match[0].length).split(/[;&|\n]/, 1)[0] ?? ''
+        const staged = option('(?:--staged|-[A-Za-z]*S[A-Za-z]*)(?![\\w-])').test(tail)
+        const worktree = option('(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?![\\w-])').test(tail)
+        if (!staged || worktree) return true
+      }
+      return false
     },
-    hits: ['git restore x', 'git restore --staged --worktree x', 'git restore -S -W x'],
-    misses: ['git restore --staged x', 'git restore -S x', 'git status'],
+    hits: [
+      'git restore x',
+      'GIT RESTORE x',
+      'git restore --staged --worktree x',
+      'git restore -S -W x',
+      'git restore -SW x',
+      'git restore --staged a; git restore b',
+      'git restore --staged a && git restore b',
+      'git restore a; echo --staged',
+    ],
+    misses: [
+      'git restore --staged x',
+      'git restore -S x',
+      'git restore -qS x',
+      'git restore -S x; git status',
+      'git status',
+    ],
   },
   {
     row: 'git switch discard changes',
-    test: inOrder(GIT, word('switch'), option('(?:--discard-changes|-f|--force)(?![\\w-])')),
-    hits: ['git switch --discard-changes main', 'git switch -f main', 'git switch --force main'],
+    test: inOrder(
+      GIT,
+      word('switch'),
+      option('(?:--discard-changes|-[A-Za-z]*f[A-Za-z]*|--force)(?![\\w-])'),
+    ),
+    hits: [
+      'git switch --discard-changes main',
+      'git switch -f main',
+      'git switch --force main',
+      'git switch -qf main',
+    ],
     misses: ['git switch main', 'git switch --forceful main'],
   },
   {
@@ -205,7 +229,7 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
 /** D3 uses the original text, including quoted text; it is deliberately not a shell parser. */
 export function autoStillAsk(command: string): 'redirect' | null {
   const rest = command.replace(
-    />>|>&(?=\s*(?:\d+|-)(?=\s|$|[;&|)]))|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g,
+    />>|>&(?=\s*(?:\d+|-)(?=\s|$|[;&|)'"]))|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g,
     '',
   )
   return rest.includes('>') ? 'redirect' : null

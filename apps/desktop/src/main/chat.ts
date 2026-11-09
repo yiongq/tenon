@@ -101,6 +101,7 @@ export interface RunRegistry {
   settledRoot(rootSessionId: string): Promise<void>
   /** From now on `begin` refuses. */
   beginShutdown(): void
+  isShuttingDown(): boolean
   /** Desktop-internal: the lease's first Run, whichever session of the tree it ran in. */
   noteRunStarted(rootSessionId: string, runId: string): void
   /** Desktop-internal: every live lease, aborted ones included, with its Run. */
@@ -261,6 +262,7 @@ export function createRunRegistry(
     settledRoot(rootSessionId) {
       return live.get(rootSessionId)?.finished.promise ?? Promise.resolve()
     },
+    isShuttingDown: () => shuttingDown,
     beginShutdown() {
       shuttingDown = true
     },

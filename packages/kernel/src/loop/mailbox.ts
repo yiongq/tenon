@@ -1605,6 +1605,7 @@ export function createLoop(deps: LoopDeps): Loop {
       judge: {
         tape,
         sandbox: ports.sandbox,
+        writer: resolver,
         host: deps.host,
         inspectors: deps.inspectors,
         sensitiveFallback: deps.sensitiveFallback,
@@ -2424,6 +2425,7 @@ export function createLoop(deps: LoopDeps): Loop {
           // A write task that finds its lease aborted writes no decision, no dispatch and no closure
           // of a call found unusable (§主进程与 kernel 的循环接口「mailbox」): the batch closes the
           // call as stopped instead.
+          modeTurn: (rootId, work) => post(mailboxOf(rootId), 'run', null, work),
           write: (entries) =>
             post(box, 'run', null, async () => {
               if (lease.signal.aborted && entries.some(isRefusedAfterStop)) {
@@ -3364,9 +3366,13 @@ export function createLoop(deps: LoopDeps): Loop {
         const lease =
           box.lease ?? ports.leases.begin({ rootSessionId: box.rootSessionId, origin: null })
         if ('refused' in lease) return { status: 'refused' as const }
+        const closed = () =>
+          ports.leases.isShuttingDown?.() ??
+          (lease.signal.aborted && lease.signal.reason !== 'user-stop')
         try {
-          if (lease.signal.aborted) return { status: 'refused' as const }
+          if (closed()) return { status: 'refused' as const }
           const facts = await readSessionFacts(tape, q.sessionId)
+          if (closed()) return { status: 'refused' as const }
           const draft = facts.established ? null : drafts.get(q.sessionId)
           if (!facts.established && draft === null) return { status: 'unknown-session' as const }
           if (
@@ -3384,13 +3390,12 @@ export function createLoop(deps: LoopDeps): Loop {
           ) {
             return { status: 'policy' as const }
           }
-          if (lease.signal.aborted) return { status: 'refused' as const }
           if (draft?.profile === 'cowork')
             drafts.set(q.sessionId, { ...draft, approvalMode: q.mode })
           else {
             const head = await tape.head(q.sessionId)
             if (head === null) return { status: 'unknown-session' as const }
-            if (lease.signal.aborted) return { status: 'refused' as const }
+            if (closed()) return { status: 'refused' as const }
             await tape.appendEntries({
               sessionId: q.sessionId,
               incarnationId: head.incarnationId,
@@ -3502,6 +3507,7 @@ export function createLoop(deps: LoopDeps): Loop {
       if (bound === null) throw new Error('recover() before bindLoop()')
       const recovered = await recoverTape({
         sandbox: bound.sandbox,
+        modeTurn: (rootId, work) => post(mailboxOf(rootId), 'command', null, work),
         searchTarget: deps.connector.searchTarget?.bind(deps.connector),
         tape,
         now,

@@ -27,6 +27,8 @@ export interface ManualFixture {
   source?: 'builtin' | 'mcp'
   path?: string
   sensitive?: boolean
+  protected?: boolean
+  inspector?: boolean
   coverage?: SnapshotCoverage
   grant?: boolean
   posture?: SandboxPosture['state']
@@ -203,8 +205,17 @@ export async function modeJudgeFixture(query: ManualFixture, mode: 'manual' | 'a
     host,
     tape,
     sessionId: MODE_SESSION,
-    inspectors: [],
-    protectedFiles: [],
+    inspectors: query.inspector
+      ? [
+          {
+            id: 'ask',
+            kind: 'local-rule',
+            ceiling: 'ask',
+            beforeCall: async () => ({ kind: 'ask', category: 'exfiltration', findings: [] }),
+          },
+        ]
+      : [],
+    protectedFiles: query.protected ? [path] : [],
     userSetting: () => null,
     searchHost: 'search.example.com',
     signal: new AbortController().signal,
@@ -226,5 +237,5 @@ export async function modeJudgeFixture(query: ManualFixture, mode: 'manual' | 'a
     if (result.kind !== 'judged') throw new Error('fixture judgement stopped')
     return result
   }
-  return { memory, host, tape, ctx, judge, setMode }
+  return { memory, host, tape, ctx, judge, setMode, item, input }
 }
