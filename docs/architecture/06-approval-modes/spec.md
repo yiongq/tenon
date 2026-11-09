@@ -1,6 +1,7 @@
 # 06 · 审批档位：自动档（阶段 4c）
 
-Status: draft
+Status: ready
+Approved: ready · 2026-11-09 · 「06 改 ready」 · 对话
 Tier: heavy — 改权限决策表的第 4、5、7 层与回执放行、Tape（会话档位与 inspector 放行两个新事实）与提示层，并让命令不问就在你的电脑上运行
 Phase: 4（4c）
 Related: auto-tier-hardening（开自动档前的加固：`.git` 元数据、连接器外带、`core.hooksPath`；本 spec 不写这三件；它挡第三段：第三段开工前它要已 implemented，D22）

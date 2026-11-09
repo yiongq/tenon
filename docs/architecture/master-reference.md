@@ -1103,7 +1103,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 | 3 | [03-mcp-host](03-mcp-host/spec.md) | MCP host 与 OAuth | implemented | 注解不放宽权限，机密进钥匙串 |
 | 4（4a） | [04-sandbox](04-sandbox/spec.md) | 沙箱与出网 | implemented | 沙箱默认工作区可写，网络默认关闭 |
 | 4b | [05-file-bridge](05-file-bridge/spec.md) | 文件桥、快照和任务小结 | implemented | 改前留底、一轮一键还原、mtime 守卫与 Delete（05 D1–D7、D38–D43） |
-| 4c | [06-approval-modes](06-approval-modes/spec.md) | 审批档位 | draft | 自动档免问能还原的改动与沙箱里的命令，撤不回与按规则拦的照问（06 D1–D10） |
+| 4c | [06-approval-modes](06-approval-modes/spec.md) | 审批档位 | ready | 自动档免问能还原的改动与沙箱里的命令，撤不回与按规则拦的照问（06 D1–D10） |
 | 5 | `07`（目录待起草） | 扩展层、MCP Apps 和 Artifacts | 规划中 | Skills、Plugins 和 Connectors 复用已有权限与 OAuth |
 | 6 | 待起草 | 聊天体验、记忆、知识库和 Research | 规划中 | Research 有单次预算上限 |
 | 6（原 4d） | `docs/features/task-mode-ui`（待起草） | 任务模式界面 | 规划中 | 2026-11-06 owner「4d 挪阶段 6」，在 06 之后起草 |

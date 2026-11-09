@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：草稿第四版（draft）。Codex 交叉评审 r1、复核 r2、r3 的发现都已照改；P1 已满足，P2 跑完：能打开，只有一点回不去（`inspector-flagged`）；第三版的开放问题 owner 已定（D32）。第 1 步还剩第二轮挑刺评审、放进仓库与改 ready。
-需要你：无。挑刺评审 r2 做完、草稿放进仓库后，请你读「给你看的一页」，回一句带编号的话，比如「06 改 ready」。
+当前：ready（2026-11-09）。第一段（第 2–6 步）由 Codex 实现；第 1.3 步挑刺评审 r2 与第一段并行补跑。
+需要你：无。
 
 ## 开工前读
 
@@ -40,11 +40,11 @@
 - [ ] 1. 改 ready 之前
   - [x] 1.1 挑刺评审 r1（Codex 交叉评审，2026-11-08）：1 blocker、4 major、2 minor；草稿第二版已逐条照改（D11 补记、D16、D27–D29、E20 更正、验收重排）。同日 Codex 复核 r2：r1 六条已修、一条部分修，另有 1 major、2 minor；第三版照改（D30、E25 重写、P1 补证 dist、编号刷新）。同日 Codex 复核 r3：r2 两条已修、一条部分修，另有 1 major、2 minor；第四版照改（回不去的点分三种情况、D31 改准、D32 兜底按 verdict、headers 与已知限制、验收 29、30 的夹具）。同日最后一次复核 r4：无 blocker、无 major，3 个 minor（验收 44 与 38 的工具行范围、E36 的类别校验范围、第 14.1 步的条数算法）已改。放进仓库时把两轮结论与逐条处置记进 log「## 挑刺评审 · 日期 · 审过 <提交号>」，原文留私有笔记。
   - [x] 1.2 P1 与 P2（2026-11-08）：P1 满足，依赖写 npm 精确版本 0.7.0；P2 能打开，回不去的一点（`inspector-flagged`）写进 spec「迁移与回退」与第 24 步的验收清单，引出第三版的开放问题，owner 已定为 D32。结果在 evidence。
-  - [ ] 1.3 挑刺评审 r2：新上下文、Opus，两个视角：规则与安全（先读 overview §信任边界）、测试（验收测不测得了、会不会测空）。档位切换、草稿落盘、待批卡、重启重判、回执作废这几处先后有关，配一段能跑的小程序进私有笔记的 `research/`。
+  - [ ] 1.3 挑刺评审 r2（改 ready 时还没跑，改为与第一段并行补跑；发现照常处置，动到「给你看的一页」的先问 owner）：新上下文、Opus，两个视角：规则与安全（先读 overview §信任边界）、测试（验收测不测得了、会不会测空）。档位切换、草稿落盘、待批卡、重启重判、回执作废这几处先后有关，配一段能跑的小程序进私有笔记的 `research/`。
   - [x] 1.4 owner 答第一版的开放问题（2026-11-08，D23–D26；D22 lead 按推荐定）。
     - [x] 1.4.1 owner 答第三版的开放问题（2026-11-08，D32 选 A：容忍，即对改 02 contracts 读取端校验的点名批准）；spec 已加规矩 14、§点名 (j) 与验收 44，实现在第 15、18 步。
-  - [ ] 1.5 放进仓库（同一个 PR）：spec、plan、decisions、evidence 进 `docs/architecture/06-approval-modes/`；照 headers.md 改 01、02、04、05、presentation-r1 的页头与总参考的四处；入口页重新生成；跑 S，`pairs`、`line-refs` 不拦。
-  - [ ] 1.6 owner 读「给你看的一页」，回一句带编号的话；页头加 `Approved:`，Status 改 ready，阶段表 4c 同改。
+  - [x] 1.5 放进仓库（同一个 PR，162c16a）：spec、plan、decisions、evidence 进 `docs/architecture/06-approval-modes/`；照 headers.md 改 01、02、04、05、presentation-r1 的页头与总参考的四处；入口页重新生成；跑 S，`pairs`、`line-refs` 不拦。
+  - [x] 1.6 owner 读「给你看的一页」，回一句带编号的话；页头加 `Approved:`，Status 改 ready，阶段表 4c 同改。
 - [ ] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。
 - [ ] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。
 - [ ] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
@@ -93,6 +93,8 @@
 - [ ] 24. owner 验收 → 改 Status。验收清单里点名告诉 owner 回退限制（P2 与 spec「回不去的点」）：06 写过 `inspector-flagged` 的会话，回到 06 之前的版本后消息列表加载失败（实测）；回退时正等着的看不见字符的卡，只有旧版重判仍放行的那种（如工作区里的 Read）投递不出，重判出新卡的与命令卡照常投递（按代码与源码探针）；新卡投递得出也不等于消息列表恢复。
 
 ## 交接
+
+2026-11-09：owner「06 改 ready」，页头与阶段表已改。auto-tier-hardening 已 implemented（#88，f222db5），第三段的前置依赖解除。第一段分支 `feat/06-seg1` 从本分支切出。
 
 2026-11-08：草稿第三版在私有笔记 `2026-11-08-06-approval-modes/draft/`，照 owner 对两轮开放问题的选择、Codex 交叉评审 r1、复核 r2、r3 与 P1、P2 的结果改过；在 dev `c894922` 的临时 worktree 里照 headers.md 改好页头后跑过 S：拦 0 条，与 06 有关的警告只剩 `trace`（还没有测试）与 `docs-sync`（overview 留到实现时改）。下一步：第 1.3 步挑刺评审 r2，然后第 1.5 步放进仓库。
 
