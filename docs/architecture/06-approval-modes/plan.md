@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。3b78178 后两路复核的第一段条目已处理；139 个验收用例通过，40 个矩阵标题匹配，本轮 17 个补充突变检测并还原，正式突变登记到 M17。format / lint / typecheck 通过；全量 5889 通过，仍有相同五项环境失败；spec-check 只拦缺新增独立评审记录。
-需要你：协调者复核本轮并追加真实评审记录；提交后在沙箱外复验全量、真沙箱和正式 --mutants。前轮 m5 的 desktop 平台映射测试仍留第三段第 15 步。
+当前：ready。第一段（第 2–6 步）做完，评审通过（log 2026-11-09，审过 316af4c），等开 PR 合进 dev。
+需要你：第二段开工前回两个问题（Open 第一条的「要问 owner」）。
 
 ## 开工前读
 
@@ -49,7 +49,7 @@
 - [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。验收 1、5、6 从 judgeCall 进入，不手填 commandSandboxed/autoAsk；验收 9 的固定表由 62fed4d 的旧实现录制，覆盖工具、路径、coverage、授权、姿态、快照状态与 autoCommands 的两两组合和边界；比较完整 Decision，另做自动档的变形关系检查。快照可用只认 tree / warming / file-only。固定表共 28 个 decide、67 个 judgeCall 判决；变形关系要求至少 17 次问变放行、其中 Bash 至少 3 次。旧 decide 与 sensitive 测试只补 snapshotStatus: tree，不改期望。
 - [x] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
 - [x] 5. 免问命令的环境：`perform` 按派发的判决过滤 `CommandRun.env`，名单与规则是常量。测试点名验收 17。
-- [ ] 6. 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent），StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。要出的突变至少有：
+- [x] 6. 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent），StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。要出的突变至少有：
   - `decide` 自动分支去掉快照状态条件（验收 1 的 `unavailable` 一例应红）；
   - `commandSandboxed` 改成「state 不是 `unavailable`」（验收 5 的 `pending`、`degraded` 应红）；
   - `autoCommands` 缺省读作 `'yes'`，或 `'no'` 也给 `linux`（验收 5 应红）；
@@ -118,6 +118,8 @@
   - 第二段开工前 lead 定、改 spec：子会话的机器拦截算不算进根会话这一轮的累计；命令卡同时带 `category` 与 `autoAsk` 时显示哪一句；「继续」开的 Run 算不算回执作废的下一轮；inspector 放行与 04 一次性放行同在时怎么绑；第 20 条在重判时写下时由谁结束本轮、降档与结束同一次写入；验收 19、21、24 补齐情形；检查期间白名单变化的复核补验收；验收 18 的只读档一例放到 desktop 测；矩阵第 28 行拆成确定性与 live 两条；验收 24 的夹具排到突变咬得住。
   - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 20、33 各在哪层测。
 - spec 全文超过 heavy 档上限约 700 字符（警告）；第 21 步文档同步时一并压缩。
+- 第 21 步写进 spec 已知限制或收紧：`git restore` 的 `--staged` 例外照原文认字，`--worktree` 看整条命令的后面，所以 `git restore --staged x; echo --worktree` 会多问；反过来 `--no-staged`、`--work` 缩写、`#` 注释或重定向后面的 `--staged` 也算只改暂存区，自动档可能不问，靠 tree 快照还原（02 只许往撤不回加）。
+- 第 21 步一并同步 overview.md：`LoopPorts.leases` 新增 `isShuttingDown()`。
 
 ## 验收矩阵
 
