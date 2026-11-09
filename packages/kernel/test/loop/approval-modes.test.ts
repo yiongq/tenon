@@ -193,6 +193,10 @@ describe('06 session mode and dispatch', () => {
   it.each([
     'npm test >> out.log',
     'npm test 2>&1',
+    '(npm test 2>&1)',
+    'npm test 2>&1;echo done',
+    'npm test 2>&1&echo done',
+    'npm test 2>&1|tee out',
     'npm test >&2',
     'npm test >&-',
     'npm test 2>&-',
@@ -363,6 +367,7 @@ describe('06 session mode and dispatch', () => {
     const judge = (over: Partial<JudgeContext> = {}) =>
       judgeCall(
         {
+          writer: { by: 'resolver' as const },
           host: h.host,
           tape: h.tape,
           sessionId: OTHER,
@@ -452,6 +457,7 @@ describe('06 session mode and dispatch', () => {
     const legacyFrozen = await frozenBatchOf(legacy.tape, legacyWaiting)
     const legacyJudgement = await rejudgeWaiting({
       judge: {
+        writer: { by: 'resolver' as const },
         tape: legacy.tape,
         host: legacy.host,
         sandbox: legacy.sandboxPorts,
@@ -597,6 +603,7 @@ describe('06 session mode and dispatch', () => {
     const { item } = await frozenBatchOf(h.tape, waiting)
     const rejudged = await rejudgeWaiting({
       judge: {
+        writer: { by: 'resolver' as const },
         tape: h.tape,
         host: h.host,
         sandbox: h.sandboxPorts,
@@ -805,6 +812,7 @@ describe('06 session mode and dispatch', () => {
     expect(
       await rejudgeWaiting({
         judge: {
+          writer: { by: 'resolver' as const },
           tape: h.tape,
           host: h.host,
           sandbox: h.sandboxPorts,
@@ -1060,4 +1068,51 @@ describe('06 session mode and dispatch', () => {
       expect(h.ports.liveLease(SESSION)).toBeNull()
     },
   )
+  it('06 验收 15: startup recovery and user choice share the root mailbox', async () => {
+    const h = await harness()
+    await send(h, 'Bash', { command: 'echo pending' })
+    await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+    h.memory.setPolicy({
+      status: 'current',
+      version: 'disabled',
+      snapshot: { tools: [], disableAutoMode: true },
+    })
+    const restarted = h.make()
+    let armed = true
+    const held = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const append = h.store.append.bind(h.store)
+    const spy = vi.spyOn(h.store, 'append').mockImplementation(async (q, ...rest) => {
+      if (armed && q.entries.some((e) => e.name === 'session/approval_mode_set')) {
+        armed = false
+        held.resolve()
+        await release.promise
+      }
+      return append(q, ...rest)
+    })
+    try {
+      const recovering = restarted.service.recover()
+      await held.promise
+      const choosing = restarted.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+      for (let n = 0; n < 30; n++) {
+        // oxlint-disable-next-line no-await-in-loop -- let a competing mailbox command advance
+        await Promise.resolve()
+      }
+      release.resolve()
+      const [recovered, selected] = await Promise.all([recovering, choosing])
+      expect(recovered.errors).toEqual([])
+      expect(selected).toEqual({ status: 'set' })
+      const modes = (await h.entries()).filter((e) => e.name === 'session/approval_mode_set')
+      expect(modes.map((e) => e.sourceSeq)).toEqual([0, 1, 2])
+      expect(modes.map((e) => e.payload['by'])).toEqual(['user', 'policy', 'user'])
+      expect(modes.map((e) => e.payload['writer'])).toEqual([
+        { by: 'resolver' },
+        { by: 'recovery' },
+        { by: 'resolver' },
+      ])
+    } finally {
+      release.resolve()
+      spy.mockRestore()
+    }
+  })
 })

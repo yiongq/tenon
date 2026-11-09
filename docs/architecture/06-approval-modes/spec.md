@@ -71,6 +71,7 @@ readonly canReachNetwork?: boolean // 只在 Bash：计划为 full-access，或 
 // packages/kernel/src/loop/ports.ts —— SandboxPorts 只增两个同步、不抛的可选查询（D28、D29）
 canReach?(q: { sessionId: string; hosts: readonly string[] }): boolean // 照命令网络白名单的实际合并规则答；缺省读作 true
 autoCommands?(): 'yes' | 'linux' | 'no' // desktop：macOS 'yes'，Linux 'linux'，其余 'no'；缺省读作 'no'
+// LoopPorts.leases 只增 isShuttingDown(): boolean —— 「关机中拒」读的就是它；用户点停止不算关机
 
 // packages/kernel/src/session/draft.ts —— SessionDraft 的 cowork 一支只增（D27）
 approvalMode?: 'manual' | 'auto' // 建会话之前你在菜单里选的
@@ -307,3 +308,4 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 
 - 2026-11-09 · ready 之后 · 照挑刺评审 r2（测试视角）定四处，都只收紧或说清：不带 `autoAsk` 的两条例外压过先后；拍不了的 Delete 不带；缺快照状态读作 `unavailable`；比较卡时不算 `autoAsk`。验收 1、5 相应改写。
 - 2026-11-09 · ready 之后 · 照挑刺评审 r2（规则视角）的第一段条目，都只收紧或说清：档位与快照状态在检查之后读；第 5 层说问的卡不带 `autoAsk`；默认档只对任务形态写、点发送时读；七行逐行列出；`>&` 只排除后跟数字或 `-` 的；工作区内的 Read、Glob、Grep 仍归第 6 层。验收 9、11 相应补写。
+- 2026-11-09 · ready 之后 · 第一段实现评审后补登记接口：`LoopPorts.leases` 增 `isShuttingDown()`，供切档的「关机中拒」使用；规则不变。

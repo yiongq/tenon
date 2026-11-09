@@ -151,6 +151,7 @@ async function harness(profile: 'read-only' | 'workspace-write' = 'workspace-wri
       during = fn
     },
     judge: {
+      writer: { by: 'resolver' as const },
       tape,
       host,
       inspectors: [],

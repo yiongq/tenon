@@ -132,7 +132,7 @@ export interface LoopPorts {
   /** 同步；拒绝码只增 */
   readonly leases: {
     /** The gate is independent of a running lease's user-stop signal. */
-    isShuttingDown?(): boolean
+    isShuttingDown(): boolean
     begin(q: {
       rootSessionId: string
       origin: RunOrigin | null

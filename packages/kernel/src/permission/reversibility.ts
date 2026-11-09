@@ -163,7 +163,12 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
   {
     row: 'git checkout force',
     test: inOrder(GIT, word('checkout'), option('(?:-[A-Za-z]*f[A-Za-z]*|--force)(?![\\w-])')),
-    hits: ['git checkout -f main', 'git checkout --force main', 'git checkout -qf main'],
+    hits: [
+      'git checkout -f main',
+      'git checkout --force main',
+      'git checkout -qf main',
+      'git checkout -fq main',
+    ],
     misses: ['git checkout main', 'git checkout --forceful main'],
   },
   {
@@ -172,8 +177,10 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
       const restores = new RegExp(`${GIT.source}[\\s\\S]*?${word('restore').source}`, 'gi')
       for (const match of command.matchAll(restores)) {
         // A staged exception belongs only to this restore, never to another command fragment.
-        const tail = command.slice(match.index + match[0].length).split(/[;&|\n]/, 1)[0] ?? ''
-        const staged = option('(?:--staged|-[A-Za-z]*S[A-Za-z]*)(?![\\w-])').test(tail)
+        const tail = command.slice(match.index + match[0].length)
+        const segment = tail.split(/[;&|\n]/, 1)[0] ?? ''
+        const staged = option('(?:--staged|-[A-Za-rt-z]*S[A-Za-z]*)(?![\\w-])').test(segment)
+        // Worktree evidence only tightens, including flags after quoted or continued separators.
         const worktree = option('(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?![\\w-])').test(tail)
         if (!staged || worktree) return true
       }
@@ -185,6 +192,15 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
       'git restore --staged --worktree x',
       'git restore -S -W x',
       'git restore -SW x',
+      'git restore -sStaging x',
+      'git restore -S -Wq x',
+      'git restore a && echo --staged',
+      'git restore a | grep --staged',
+      'git restore a\necho --staged',
+      "git restore --staged 'R&D/plan.md' --worktree",
+      "git restore --staged 'a;b' --worktree",
+      'git restore --staged a 2>&1 --worktree x',
+      'git restore --staged x \\\n --worktree y',
       'git restore --staged a; git restore b',
       'git restore --staged a && git restore b',
       'git restore a; echo --staged',
@@ -193,6 +209,7 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
       'git restore --staged x',
       'git restore -S x',
       'git restore -qS x',
+      'git restore -Sq x',
       'git restore -S x; git status',
       'git status',
     ],
@@ -209,6 +226,7 @@ const COMMAND_PATTERNS: readonly CommandPattern[] = [
       'git switch -f main',
       'git switch --force main',
       'git switch -qf main',
+      'git switch -fq main',
     ],
     misses: ['git switch main', 'git switch --forceful main'],
   },
@@ -251,6 +269,10 @@ for (const [sample, expected] of [
   ['npm test > out.log', 'redirect'],
   ['npm test >> out.log', null],
   ['npm test 2>&1', null],
+  ['(npm test 2>&1)', null],
+  ['npm test 2>&1;echo done', null],
+  ['npm test 2>&1&echo done', null],
+  ['npm test 2>&1|tee out', null],
   ['npm test >&2', null],
   ['npm test >&-', null],
   ['npm test >&out.log', 'redirect'],

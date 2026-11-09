@@ -360,6 +360,7 @@ it('03 验收 38 (legacy): a frozen item without definitionHash asks rather than
   const candidate = (await mcpCandidates([source()]))[0]!
   const { definitionHash: _hash, ...old } = candidate
   const ctx = {
+    writer: { by: 'resolver' as const },
     tape: createTape(h.tape),
     host: h.host,
     sessionId: SESSION,

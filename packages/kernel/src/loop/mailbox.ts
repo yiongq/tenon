@@ -3366,9 +3366,7 @@ export function createLoop(deps: LoopDeps): Loop {
         const lease =
           box.lease ?? ports.leases.begin({ rootSessionId: box.rootSessionId, origin: null })
         if ('refused' in lease) return { status: 'refused' as const }
-        const closed = () =>
-          ports.leases.isShuttingDown?.() ??
-          (lease.signal.aborted && lease.signal.reason !== 'user-stop')
+        const closed = () => ports.leases.isShuttingDown()
         try {
           if (closed()) return { status: 'refused' as const }
           const facts = await readSessionFacts(tape, q.sessionId)

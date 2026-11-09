@@ -446,3 +446,114 @@ const ownLease = true
 - 环境失败仍为相同五项：stop-tree 四项在 ps 处 spawn EPERM；snapshot-git 的真实残留 git 回收一项等待退出超时，其恢复实现读不到 ps 时保守不杀。不改测试、不重复跑这五项；原始输出在 `/private/tmp/06s1-r3-full.*`。真沙箱按原任务跳过，交协调者沙箱外复验本轮差异；没有启动 Electron 或读密钥。
 - 文档门禁：spec-check 唯一拦截仍为缺新增独立评审记录，实施者按原任务不写「## 评审」或冒用三份外部评审作为本轮复核通过。协调者追加真实评审后再跑；第 6 步继续未勾，Status 仍 ready。StrykerJS 已由 C 给报告，本轮只补测试与手工突变，没有再跑一小时的同一批扫描。
 - 更正（「第一段实现与交接」节的调试记录）：那句「先扩充验收 14，复现 redirect 被改成 platform 的失败」只在当时成立，靠的是待批卡比较间接验证。r2 把 autoAsk 排除出卡比较后，那条间接断言不再守住输入一致性；本轮补了直接观察真实答复前与启动重判返回值的测试，均仍为 redirect。逐条处置和新自证只追加。39 个矩阵标题逐字匹配，正式 16 个原文各恰好匹配一次；spec 与协调者 Open 对开工快照无变化。临时旧源码和 bundle 已清理，所有突变已还原，改动留工作区、不提交。无需要 owner 另定的问题。
+
+
+## 2026-11-09 · 第一段复核处置（3b78178 后）
+
+- 输入：对照 spec 的复核与测试 / 突变复核（下称 D、E），原文为私有笔记 `impl-reviews/seg1-recheck-spec.md`、`seg1-recheck-mutants.md`，只读。承接 3b78178，只处理第一段。本节及后续内容仅追加，不更改任何旧行。
+- 取舍按协调者定法：关机闸查询与判定 writer 均改必填，删除两个缺省路径；生产的 Run / 答复 / 恢复已经明确提供实际身份。合写 staged 短选项在大写 S 前排除小写 s，避免把 source 的分支名当选项；staged 例外只看本段，worktree 看完整尾巴，后者只会收紧。
+
+| 规则与处置 | 复核出处 |
+|---|---|
+| 已修。S 前不许小写 s，分支源参数 `git restore -sStaging x` 必须命中；行内 hits 和验收 7 字面量都补齐。 | D m1 |
+| 已做。启动恢复暂停在策略折叠 append 时插入用户切档，要求恢复无错误、序号 0/1/2、user/policy/user 与 resolver/recovery/resolver 身份完整；恢复入口去掉排队回调会红，登记为正式突变 M17。 | D m2 / E m1 |
+| 已做。LoopPorts.leases.isShuttingDown 必填，closed 仅调用它；删除中止原因兜底。测试中的关窗包装也转发同一查询。 | D m3 / E m2 |
+| 已做。spec 只按协调者逐字插入接口注释与一条修订记录，其余字节不动。 | D m4 与本轮指令 |
+| 已做。旧日志零删除、零替换；本节末追加代号说明，逐个定义历史表格里的临时代号；新记录先写规则，代号只作出处。 | D m5 |
+| 已做。checkout / switch 的 fq、restore 的 Wq / Sq、带 & / 管道 / 换行的别段 staged，均进入行内 hits/misses 与验收 7 的独立字面量。 | E m3 |
+| 已做。描述符后接右括号、分号、&、管道的四条样例，同时进入加载自测与验收 8 的不问参数表。 | E m4 |
+| 已修。staged 只读本段，worktree 读整个尾巴；四条夹着引号 &、引号分号、描述符重定向、反斜杠续行的命令都在行内 hits 与验收 7，恢复判 irreversible。 | E m5 |
+| 已做。modeTurn 移到 write 的 JSDoc 之前且有自己的说明；JudgeContext.writer 必填，折叠事实直接使用 ctx.writer；直接判定夹具显式填 resolver。 | E m6 |
+
+- 测试改动：`packages/kernel/test/permission/approval-modes.test.ts` · 验收 7 / 2 · 增加独立边界字面量；验收 2 的直接判定上下文补必填 writer，原期望不变。
+- 测试改动：`packages/kernel/test/loop/approval-modes.test.ts` · 验收 8 / 15 与直接判定夹具 · 增加四种描述符边界、可暂停的恢复并发例；四个既有直接上下文显式填 writer，原断言不变。
+- 测试改动：`packages/kernel/test/loop/mcp-run.test.ts` · 直接 judgeCall 的 ctx · 补 resolver 输入，原判决与定义变化断言不变。
+- 测试改动：`packages/kernel/test/loop/sandbox-bash.test.ts` · harness 的 judge · 补 resolver 输入，原重判和计划断言不变。
+- 测试改动：`packages/kernel/test/loop/snapshot-coverage.test.ts` · harness 的 ctx · 补 resolver 输入，原覆盖与停止断言不变。
+- 测试改动：`packages/kernel/test/session/receipt-override.test.ts` · harness 的 judge · 补 resolver 输入，原绑定、重判和恢复断言不变。
+- 测试改动：`packages/kernel/test/support/approval-mode-judge.ts` · modeJudgeFixture 的 ctx · 显式提供 resolver，固定旧手动档判决的期望不改。
+- 测试改动：`packages/kernel/test/loop/support.ts` · closedWindows · 必填的关闸查询继续转发到底层 ports，关窗行为与原用例期望不变。
+- 先红后绿：新增边界在修正前使验收 7 的 restore 行红（1 failed / 138 passed）；修正正则并补齐必填 writer 的夹具后，两文件 139 passed。必填化中途暴露直接夹具缺 writer，导致四项写事实时无法序列化；这是输入夹具遗漏，已补输入，没有保留缺省或修改期望。
+- 自证命令：`pnpm vitest run --maxWorkers=2 packages/kernel/test/permission/approval-modes.test.ts packages/kernel/test/loop/approval-modes.test.ts -t '06 验收 N:'`。新增 17 个临时突变均非零退出，还原后同命令为 0；其中四个恢复接线变体由测试体检测，十三个命令边界变体由新增加载自测样例拦下，未冒称进入测试体。原始输出与 JSON 在工作区外 `/private/tmp/06s1-r4-mut-*`、`/private/tmp/06s1-r4-mutants-results.json`。
+
+| 临时改坏的规则 | 变红证据 | 还原后 |
+|---|---|---|
+| 恢复入口不转发根队任务 | 06 验收 15: startup recovery and user choice share the root mailbox 7ms | 验收 15 通过，退出 0 |
+| 恢复任务直接执行 | 06 验收 15: startup recovery and user choice share the root mailbox 7ms | 验收 15 通过，退出 0 |
+| 恢复任务排错根队 | 06 验收 15: startup recovery and user choice share the root mailbox 7ms | 验收 15 通过，退出 0 |
+| 恢复重判不带队列 | 06 验收 15: startup recovery and user choice share the root mailbox 7ms | 验收 15 通过，退出 0 |
+| source分支名误当staged | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| worktree只看本段 | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| checkout漏后置短选项 | Error: command pattern self-test failed: git checkout force | 验收 7 通过，退出 0 |
+| switch漏后置短选项 | Error: command pattern self-test failed: git switch discard changes | 验收 7 通过，退出 0 |
+| staged漏后置短选项 | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| worktree漏后置短选项 | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| staged漏命令边界& | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| staged漏命令边界\| | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| staged漏命令边界换行 | Error: command pattern self-test failed: git restore worktree | 验收 7 通过，退出 0 |
+| 描述符漏后续边界) | Error: redirect self-test failed: (npm test 2>&1) | 验收 8 通过，退出 0 |
+| 描述符漏后续边界; | Error: redirect self-test failed: npm test 2>&1;echo done | 验收 8 通过，退出 0 |
+| 描述符漏后续边界& | Error: redirect self-test failed: npm test 2>&1&echo done | 验收 8 通过，退出 0 |
+| 描述符漏后续边界\| | Error: redirect self-test failed: npm test 2>&1\|tee out | 验收 8 通过，退出 0 |
+
+### 突变 M17 · 启动恢复档位读写绕过根会话排队 · 门禁 test
+文件：packages/kernel/src/loop/mailbox.ts
+原文：
+```
+      const recovered = await recoverTape({
+        sandbox: bound.sandbox,
+        modeTurn: (rootId, work) => post(mailboxOf(rootId), 'command', null, work),
+```
+改成：
+```
+      const recovered = await recoverTape({
+        sandbox: bound.sandbox,
+```
+
+- 最终门禁：`pnpm format:check && pnpm lint && pnpm typecheck` 全部通过；`git diff --check` 无输出。全量 `pnpm vitest run --maxWorkers=2 --reporter=json --outputFile=/private/tmp/06s1-r4-full.json` 为 288 files passed / 2 failed，5889 tests passed / 5 failed / 135 skipped / 8 pending；本段 permission 55 + loop 84 = 139 passed。
+- 五项失败与上一轮相同：stop-tree 四项在 ps 处 spawn EPERM，snapshot-git 的真实残留启动恢复一项等待退出超时，其实现读不到 ps 时保守不杀。没有改弱测试或反复重跑这五项；原始报告在 `/private/tmp/06s1-r4-full.*`。真沙箱按原任务跳过，留协调者沙箱外复验，没有启动 Electron 或读取密钥。
+- 文档检查：spec 只有协调者指定的两行新增；log 的开工版本仍是当前文件的完整字节前缀，旧行零改动；Open 不变。40 个第一段矩阵标题逐字匹配；M1–M17 的原文各在对应文件恰好出现一次。spec-check 唯一拦截仍是缺新增独立评审记录，实施者不冒充本轮独立复核通过；协调者追加真实记录后再跑。
+- 交接：本轮不提交，Status 仍 ready，第 6 步未勾。M17 的手工点名自证已做，正式 --mutants 的 test 门禁在当前沙箱仍因相同五项失败无法从绿基线起跑，且脚本按 HEAD 建副本；协调者提交本轮后在沙箱外跑。无需要 owner 另定的问题。代号说明只作历史记录索引，后续正文先写规则再附代号。
+
+### 代号说明
+
+以下只解释本段历史记录中的临时评审 / 突变代号，规则以前文和 spec 为准。N01–N13 已在正式突变 M1–M13 的标题与代码块定义；M14–M17 同样在各自登记块定义。
+
+- P1：railguard 的 npm 依赖与接口核验，详见 evidence 的 P1 证据。
+- O22：名叫 Write / Bash 的 MCP 工具不带 autoAsk。
+- O34：根档位事实读完后遇停止，不再读 head。
+- O35：策略折叠读 head 后遇停止，不再追加事实。
+- O36：策略折叠追加完成后遇停止，不再形成判决。
+- O51：令牌后缀必须带下划线，近似变量名应保留。
+- O71：/dev/null 的近似文件名仍算重定向。
+- O78：模块加载必须调用命令模式自测。
+- O79：对话形态即使混入档位事实也恒为手动。
+- O87：清空同样携带显式手动档事实。
+- O97：切档开始时已关闸，不读事实。
+- O98：切档读事实后关闸，不继续后续判定或写入。
+- O99：切档读 head 后关闸，不追加事实。
+- O104：答复前重判转发同一份 SandboxPorts。
+- O105：mailbox 启动恢复转发 SandboxPorts。
+- O106：恢复重判向 judgeCall 转发 SandboxPorts。
+- O109：卡比较仅剔除 autoAsk，其余 facts 仍须比较。
+- P03：子会话判定触发的策略折叠只写根会话。
+- P28：策略折叠的 writer 按实际 Run / 答复 / 恢复入口记录。
+- P29：已建立会话的用户切档记录 resolver writer。
+- P30：创建批次中的档位事实记录 resolver writer。
+- P33：强制覆盖的重定向仍应出卡。
+- Q01：judgeCall 遇不可用策略时不直接读 snapshot。
+- Q02：decide 遇不可用策略时拒绝而不抛异常。
+- Q03：切档遇不可用策略时不直接读 snapshot。
+- R01：策略禁止自动不妨碍用户切回手动。
+- R02：运行中切档不能结束借用的 Run 租约。
+- R03：切档入口拒绝非法会话 id。
+- R04：切档入口在 bindLoop 之前回 refused。
+- K2：对照 spec 复核中删除启动恢复根队回调的变体，对应本轮正式突变 M17。
+- AUTOASK：比较卡时不算解释字段 autoAsk，对应正式突变 M14。
+- SOME-HIT：自测命中样例只要有一条不命中就必须报错。
+- SOME-MISS：自测不命中样例只要有一条命中就必须报错。
+- RESTORE-CASE：restore 命令词按不分大小写识别。
+- RESTORE-TAIL：staged 例外从当前 restore 后开始扫描。
+- WHITE-DECIDE：纯判定只认可三种可用快照状态。
+- WHITE-JUDGE：宿主判定只认可三种可用快照状态。
+- MODE-TURN：Run 的策略档位读写排进根 mailbox。

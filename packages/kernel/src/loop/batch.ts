@@ -1276,7 +1276,7 @@ export interface JudgeContext {
         work: () => Promise<'manual' | 'auto' | null>,
       ) => Promise<'manual' | 'auto' | null>)
     | undefined
-  readonly writer?: FactWriter | undefined
+  readonly writer: FactWriter
   readonly tape: Pick<Tape, 'readRange' | 'head' | 'writer' | 'appendEntries'>
   readonly sandbox?: SandboxPorts | undefined
   readonly host: HostAdapter
@@ -1458,7 +1458,7 @@ export async function judgeCall(
               {
                 mode: 'manual',
                 by: 'policy',
-                writer: ctx.writer ?? { by: 'resolver' },
+                writer: ctx.writer,
               },
             ),
           ],

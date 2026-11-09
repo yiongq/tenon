@@ -187,11 +187,12 @@ export interface RunDriverContext {
     generation: number
     reason: 'first-use' | 'after-compaction'
   }) => Promise<{ table: FrozenToolTable; policy: PolicyState; facts?: readonly NewEntry[] }>
+  /** Serializes approval-mode reads and writes with root session commands. */
+  readonly modeTurn?: JudgeContext['modeTurn']
   /**
    * Commits facts through the mailbox; the answer is what was written, with its receipts. A result
    * for a call that already has one is dropped there (先写者算数), so it can be less than was given.
    */
-  readonly modeTurn?: JudgeContext['modeTurn']
   readonly write: (entries: readonly NewEntry[]) => Promise<Written>
   /** A call in the context with no result: throw (tests, development) or repair and log (§兜底). */
   readonly onUnansweredCall: 'throw' | 'repair'

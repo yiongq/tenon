@@ -106,6 +106,7 @@ export function closedWindows(loop: LoopPorts, closed: readonly RunOrigin[]): Lo
   return {
     ...loop,
     leases: {
+      isShuttingDown: () => loop.leases.isShuttingDown(),
       begin: (q) => {
         const begun = loop.leases.begin(q)
         if (!('refused' in begun) && q.origin !== null && closed.includes(q.origin)) {

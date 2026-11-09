@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。e67773b 后三路独立评审的第一段处置已实现；39 个矩阵标题、134 个参数化验收用例通过，49 个突变检测并逐个还原，16 个正式突变已登记。format / lint / typecheck 通过；全量 5884 通过，仍有相同五个环境失败；spec-check 只拦缺独立评审记录。
-需要你：协调者复核本轮改动、追加真实评审记录；提交后在沙箱外复验全量、真沙箱与 --mutants。C 已提供 StrykerJS 报告，本轮未重跑；前轮 m5 的 desktop 平台映射测试仍留第三段第 15 步。
+当前：ready。3b78178 后两路复核的第一段条目已处理；139 个验收用例通过，40 个矩阵标题匹配，本轮 17 个补充突变检测并还原，正式突变登记到 M17。format / lint / typecheck 通过；全量 5889 通过，仍有相同五项环境失败；spec-check 只拦缺新增独立评审记录。
+需要你：协调者复核本轮并追加真实评审记录；提交后在沙箱外复验全量、真沙箱和正式 --mutants。前轮 m5 的 desktop 平台映射测试仍留第三段第 15 步。
 
 ## 开工前读
 
@@ -64,6 +64,7 @@
   - 比较卡时不排除 `autoAsk`，或把全部 facts 都排除（验收 14 应红）；
   - 运行中切档总是结束借用的租约（验收 14 应红）；
   - Run 的策略折叠绕过根 mailbox（验收 15 的可暂停并发例应红）。
+  - 启动恢复的策略折叠绕过根 mailbox（验收 15 的恢复并发例应红；正式突变 M17）。
 - [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash；命令卡 facts 的 `category`。测试点名验收 18、29、30。
 - [ ] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
 - [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；告诉模型的检查点。测试点名验收 21、22。
@@ -107,6 +108,8 @@
 2026-11-09 · 第一段 r2 补充交接：已处理测试视角 M1–M11、m1–m7、m11 与规则视角的第一段条目；m5 平台映射单测留第三段。102 个验收用例、十二个突变与 G 通过；T 仍有相同五项环境失败，S 只拦独立评审。逐条处置与红绿证据见 log「2026-11-09 · 第一段补充：r2 处置与交接」。本轮未提交，第 6 步保持未勾；下一步由协调者评审、StrykerJS 与沙箱外复验，Open 未改。
 
 2026-11-09 · 第一段三路评审处置交接：Run 的策略事实已与用户切档排根队，实际 writer、停止与关闸、白名单及命令边界已修；134 个验收与 49 个突变还原验证通过。正式突变 M1–M16 的原文各出现一次，详见 log「2026-11-09 · 第一段独立评审处置（e67773b 后）」。本轮不提交，第 6 步待协调者复核并在沙箱外跑正式 --mutants；五项全量环境失败与唯一 review 拦截保留，spec 与协调者 Open 未改。
+
+2026-11-09 · 第一段两路复核处置交接：restore 的 source / staged 与整尾 worktree 边界已修；恢复读写排根队新增可暂停测试与正式突变 M17。关机闸、判定 writer 均必填；139 个验收与本轮 17 个补充突变通过还原验证，日志只追加，代号逐项说明。spec 仅增加协调者指定两行，Open 未改。本轮未提交；第 6 步由协调者复核并在沙箱外跑正式门禁，五项环境失败与唯一 review 拦截保留。
 
 ## Open
 
@@ -159,6 +162,7 @@
 | 14 | 集成 | 06 验收 14: a user stop still permits a choice while the Run closes | test | 错误拒绝用户停止后的切档 → 验收 14 | 任意 |
 | 12 | 集成 | 06 验收 12: mode choices validate binding, ids and a missing head | test | 去掉入口守卫 → 验收 12 | 任意 |
 | 12 | 集成 | 06 验收 12: shutdown at the %s boundary refuses a choice without later IO | test | 删除关机窗口检查 → 验收 12 | 任意 |
+| 15 | 集成 | 06 验收 15: startup recovery and user choice share the root mailbox | test | 启动恢复绕过根队 → 验收 15 | 任意 |
 | 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
 | 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
 | 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |

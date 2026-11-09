@@ -202,6 +202,7 @@ export async function modeJudgeFixture(query: ManualFixture, mode: 'manual' | 'a
             : {}),
         }
   const ctx: JudgeContext = {
+    writer: { by: 'resolver' as const },
     host,
     tape,
     sessionId: MODE_SESSION,

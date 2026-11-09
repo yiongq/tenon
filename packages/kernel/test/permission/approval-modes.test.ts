@@ -190,6 +190,7 @@ describe('06 approval range', () => {
         // oxlint-disable-next-line no-await-in-loop -- every case samples the currently selected host status
         const judged = await judgeCall(
           {
+            writer: { by: 'resolver' as const },
             tape,
             host: memory,
             sessionId: SESSION,
@@ -315,7 +316,12 @@ describe('06 approval range', () => {
     ],
     [
       'git checkout force',
-      ['git checkout -f main', 'git checkout --force main', 'git checkout -qf main'],
+      [
+        'git checkout -f main',
+        'git checkout --force main',
+        'git checkout -qf main',
+        'git checkout -fq main',
+      ],
       ['git checkout main', 'git checkout --forceful main'],
     ],
     [
@@ -327,6 +333,15 @@ describe('06 approval range', () => {
         'git restore -S -W x',
         'git restore -SW x',
         'git restore -qW x',
+        'git restore -sStaging x',
+        'git restore -S -Wq x',
+        'git restore a && echo --staged',
+        'git restore a | grep --staged',
+        'git restore a\necho --staged',
+        "git restore --staged 'R&D/plan.md' --worktree",
+        "git restore --staged 'a;b' --worktree",
+        'git restore --staged a 2>&1 --worktree x',
+        'git restore --staged x \\\n --worktree y',
         'git restore --staged a; git restore b',
         'git restore --staged a && git restore b',
         'git restore a; echo --staged',
@@ -337,6 +352,7 @@ describe('06 approval range', () => {
         'git restore --staged x',
         'git restore -S x',
         'git restore -qS x',
+        'git restore -Sq x',
         'git restore -S x; git status',
       ],
     ],
@@ -347,6 +363,7 @@ describe('06 approval range', () => {
         'git switch -f main',
         'git switch --force main',
         'git switch -qf main',
+        'git switch -fq main',
       ],
       ['git switch main', 'git switch --forceful main'],
     ],
