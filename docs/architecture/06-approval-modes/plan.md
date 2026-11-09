@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready（2026-11-09）。第一段（第 2–6 步）由 Codex 实现；第 1.3 步挑刺评审 r2 与第一段并行补跑。
-需要你：无。
+当前：ready。第一段第 2–5 步已实现，验收 1–17 的 67 个参数化用例通过；十个突变逐个变红、还原后通过。format/lint/typecheck 已通过；全仓仅五项 ps 环境失败，spec-check 仅缺独立评审记录。改动留在工作区，第 6 步的独立评审、StrykerJS 与平台补跑交给协调者。
+需要你：协调者执行第 6 步独立评审并追加真实评审记录；当前 spec-check 的 review 检查因此拦 1 条。全仓测试中依赖 ps 的五项环境失败需在沙箱外补跑。
 
 ## 开工前读
 
@@ -45,10 +45,10 @@
     - [x] 1.4.1 owner 答第三版的开放问题（2026-11-08，D32 选 A：容忍，即对改 02 contracts 读取端校验的点名批准）；spec 已加规矩 14、§点名 (j) 与验收 44，实现在第 15、18 步。
   - [x] 1.5 放进仓库（同一个 PR，162c16a）：spec、plan、decisions、evidence 进 `docs/architecture/06-approval-modes/`；照 headers.md 改 01、02、04、05、presentation-r1 的页头与总参考的四处；入口页重新生成；跑 S，`pairs`、`line-refs` 不拦。
   - [x] 1.6 owner 读「给你看的一页」，回一句带编号的话；页头加 `Approved:`，Status 改 ready，阶段表 4c 同改。
-- [ ] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。
-- [ ] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。
-- [ ] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
-- [ ] 5. 免问命令的环境：`perform` 按派发的判决过滤 `CommandRun.env`，名单与规则是常量。测试点名验收 17。
+- [x] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。
+- [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。
+- [x] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
+- [x] 5. 免问命令的环境：`perform` 按派发的判决过滤 `CommandRun.env`，名单与规则是常量。测试点名验收 17。
 - [ ] 6. 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent），StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。要出的突变至少有：
   - `decide` 自动分支去掉快照状态条件（验收 1 的 `unavailable` 一例应红）；
   - `commandSandboxed` 改成「state 不是 `unavailable`」（验收 5 的 `pending`、`degraded` 应红）；
@@ -98,9 +98,15 @@
 
 2026-11-08：草稿第三版在私有笔记 `2026-11-08-06-approval-modes/draft/`，照 owner 对两轮开放问题的选择、Codex 交叉评审 r1、复核 r2、r3 与 P1、P2 的结果改过；在 dev `c894922` 的临时 worktree 里照 headers.md 改好页头后跑过 S：拦 0 条，与 06 有关的警告只剩 `trace`（还没有测试）与 `docs-sync`（overview 留到实现时改）。下一步：第 1.3 步挑刺评审 r2，然后第 1.5 步放进仓库。
 
+2026-11-09 · 第一段实现交接：第 2–5 步已完成，十个突变已验证并还原，细节见 log「2026-11-09 · 第一段实现与交接」。未提交；下一步由协调者做第 6 步独立评审、StrykerJS 与沙箱外补跑。
+
 ## Open
 
-（无）
+- 挑刺评审 r2（2026-11-09，原文在私有笔记 `review-opus-r2-{tests,rules}.md`）第一段的条目已改进 spec 或交第一段实现；下面是第二、三段开工前要处理的：
+  - 要问 owner：规则视角 M1（D25 当时依据的现状写错了，重问）；规则视角 M2（外带检查的口径照 auto-tier-hardening 对齐，「给你看的一页」那句跟着改）。
+  - lead 定、第二段开工前改 spec：规则视角 M4、minor 1(c)、4、5、6、14、15；测试视角 M12、m8、m10。
+  - 第三段开工前：规则视角 minor 9、10、12；测试视角 M13、M14、m9、m12。
+- spec 全文超过 heavy 档上限约 700 字符（警告）；第 21 步文档同步时一并压缩。
 
 ## 验收矩阵
 
