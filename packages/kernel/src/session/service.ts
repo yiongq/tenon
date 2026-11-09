@@ -80,6 +80,7 @@ import { carryEntries, readSessionFacts } from './facts.js'
 const LATEST_SESSION_SCAN = 20
 
 export interface SessionServiceOptions {
+  readonly approvalModeDefault?: () => 'manual' | 'auto'
   readonly schemaValidator?: SchemaValidatorPort
   readonly userSetting?: (key: ToolKey) => UserToolSetting | null
   /** Development-only host seam; packaged hosts must not supply this override. */
@@ -207,6 +208,9 @@ export interface CreateSessionQuery {
 }
 
 export interface SessionService {
+  setApprovalMode(q: { sessionId: string; mode: 'manual' | 'auto' }): Promise<{
+    status: 'set' | 'not-cowork' | 'unknown-session' | 'policy' | 'refused'
+  }>
   /** Spec 05: root rounds and unfinished restore evidence, ready for the later snapshot routes. */
   snapshotRounds(q: { sessionId: string }): Promise<SnapshotRoundsResult>
   snapshotPreview(q: SnapshotRoundQuery): Promise<SnapshotPreviewResult>
@@ -340,6 +344,9 @@ export function constructSessionService(
     tokenLimit: extras.tokenLimit ?? null,
     compactionThreshold: options.compactionThreshold ?? null,
     onUnansweredCall: options.onUnansweredCall ?? 'throw',
+    ...(options.approvalModeDefault === undefined
+      ? {}
+      : { approvalModeDefault: options.approvalModeDefault }),
   })
 
   /**
@@ -472,6 +479,7 @@ export function constructSessionService(
     snapshotPreview: (q) => loop.snapshotPreview(q),
     snapshotRestore: (q) => loop.snapshotRestore(q),
     sessionFacts: (q) => loop.sessionFacts(q),
+    setApprovalMode: (q) => loop.setApprovalMode(q),
     selectProfile: (q) => loop.selectProfile(q),
     selectModel: (q) => loop.selectModel(q),
     effectiveModelChoice: (q) => loop.effectiveModelChoice(q),

@@ -39,6 +39,7 @@ import { customVendorDefinition } from '../provider/definitions/custom.js'
 import type { ContentBlock, ModelInfo, ToolSpec, Usage } from '../provider/types.js'
 import { canonicalHash, systemHash } from '../provider/wire/shared.js'
 import { createSessionService } from '../session/service.js'
+import { approvalModeEntry, readSessionFacts } from '../session/facts.js'
 import type { SessionService } from '../session/service.js'
 import type {
   ApprovalResolvedPayload,
@@ -3481,6 +3482,89 @@ export function tapeConformanceCases(
   )
 
   // ----- M6 验收 1: a custom instance's id inside a tool table key ---------------------------------
+
+  add(
+    '06 approval mode facts round-trip, deduplicate, replay and rebuild in tenant isolation',
+    async (open) => {
+      const fixture = await open()
+      const tape = createTape(fixture.store)
+      const writer = {
+        tape,
+        sessionId: fixture.sessionId,
+        incarnationId: fixture.incarnationId,
+        now: fixture.at,
+      }
+      const auto = approvalModeEntry(writer, 0, {
+        mode: 'auto',
+        by: 'user',
+        writer: { by: 'resolver' },
+      })
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        profileFact(fixture, fixture.incarnationId),
+        auto,
+      ])
+      assertEqual(
+        (await readSessionFacts(tape, fixture.sessionId)).approvalMode,
+        'auto',
+        'reads auto from the persisted fact',
+      )
+      assertEqual((await appendAll(fixture, [auto]))[0]?.created, false, 'same fact deduplicates')
+      const before = await fixture.store.listSessions({ limit: 10 })
+      const context = await rebuildProviderContext(fixture.store, {
+        sessionId: fixture.sessionId,
+        target: SCRIPT_MODEL,
+      })
+      const manual = approvalModeEntry(writer, 1, {
+        mode: 'manual',
+        by: 'policy',
+        writer: { by: 'resolver' },
+      })
+      await appendAll(fixture, [manual])
+      const all = await readAll(fixture.store, fixture.sessionId)
+      const modes = all.filter((entry) => entry.name === 'session/approval_mode_set')
+      assertEqual(
+        modes.map((entry) => [entry.sourceSeq, entry.payload['mode'], entry.provenanceKey]),
+        [
+          [0, 'auto', `session:v1:approval_mode:${fixture.incarnationId}:0`],
+          [1, 'manual', `session:v1:approval_mode:${fixture.incarnationId}:1`],
+        ],
+        'both modes and their ordinal keys survive storage',
+      )
+      for (const entry of modes) assertEqual(project(entry), [], 'mode has no display projection')
+      assertEqual(
+        (await readSessionFacts(tape, fixture.sessionId)).approvalMode,
+        'manual',
+        'latest mode wins',
+      )
+      await fixture.store.rebuildProjections(fixture.sessionId)
+      assertEqual(
+        await fixture.store.listSessions({ limit: 10 }),
+        before,
+        'mode leaves session projection unchanged',
+      )
+      assertEqual(
+        await rebuildProviderContext(fixture.store, {
+          sessionId: fixture.sessionId,
+          target: SCRIPT_MODEL,
+        }),
+        context,
+        'mode never enters model context',
+      )
+      assertEqual(
+        (await fixture.store.verifyChain({ sessionId: fixture.sessionId, limit: 10 }))
+          .firstBadEntryId,
+        null,
+        'chain remains valid',
+      )
+      const other = await open({ tenantId: 'mode-other-tenant', shareWith: fixture })
+      assertEqual(
+        (await other.store.readRange({ sessionId: fixture.sessionId, limit: 10 })).entries,
+        [],
+        'same backing never exposes another tenant mode',
+      )
+    },
+  )
 
   add(
     'M6 不变量 1: a table opened on a custom instance is keyed by its id and kept as written',

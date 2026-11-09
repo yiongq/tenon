@@ -102,6 +102,8 @@ export interface McpToolSource {
 }
 
 export interface SandboxPorts {
+  /** Synchronous and non-throwing. Missing means this host cannot auto-approve commands. */
+  autoCommands?(): 'yes' | 'linux' | 'no'
   /** Called synchronously before Bash wraps a command with this session's inherited domain grants. */
   beforeWrap(q: { commandId: string; sessionId: string; hosts: readonly string[] }): void
   /** A domain grant changed for the session most recently passed to beforeWrap. */
@@ -129,6 +131,8 @@ export interface LoopPorts {
   }
   /** 同步；拒绝码只增 */
   readonly leases: {
+    /** The gate is independent of a running lease's user-stop signal. */
+    isShuttingDown(): boolean
     begin(q: {
       rootSessionId: string
       origin: RunOrigin | null

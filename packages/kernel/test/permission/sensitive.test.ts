@@ -54,6 +54,7 @@ describe('05 sensitive permission boundaries', () => {
             },
             taskGrant: true,
             approvalMode: 'auto',
+            snapshotStatus: 'tree',
             userSetting: 'always-allow',
           },
         })

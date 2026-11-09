@@ -115,6 +115,7 @@ async function harness(
     dedicated: DEDICATED,
   })
   const judge = {
+    writer: { by: 'resolver' as const },
     tape,
     host,
     inspectors: [],

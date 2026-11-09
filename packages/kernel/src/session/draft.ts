@@ -18,6 +18,7 @@ export type SessionDraft =
   | { profile: 'chat'; modelChoice: ModelChoiceSetPayload | null }
   | {
       profile: 'cowork'
+      approvalMode?: 'manual' | 'auto'
       workspace: WorkspaceSetPayload
       modelChoice: ModelChoiceSetPayload | null
     }

@@ -251,7 +251,7 @@ export function createTestLoopPorts(options: TestLoopPortsOptions = {}): TestLoo
         return Promise.resolve()
       },
     },
-    leases: { begin },
+    leases: { begin, isShuttingDown: () => shuttingDown },
     events: record,
     locale: () => locale,
     localDate: () => localDate,

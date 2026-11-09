@@ -54,7 +54,7 @@ Changes: 01 §desktop 接线（增补：config.json 只增三个键）；02 §�
 
 ```ts
 // packages/kernel/src/permission/decide.ts —— LayerInputs 只增第 7 层的三项（D1、D3、D14、D29）
-readonly snapshotStatus?: SnapshotStatus  // 根会话 snapshots.status 的判定时取值；只给任务形态的文件工具与 Bash
+readonly snapshotStatus?: SnapshotStatus  // 根会话 snapshots.status 的判定时取值；只给任务形态的文件工具与 Bash；缺省读作 unavailable
 readonly commandSandboxed?: true          // Bash：posture() 存在且 state === 'active'、计划不是 full-access、autoCommands() 为 'yes'
 readonly autoAsk?: 'no-snapshot' | 'linux' | 'platform' | 'sandbox' | 'redirect' // 自动档里本来会免问、因此照问的原因（§自动档的范围）
 // DecisionStep.basis.modeRule 只增 'auto-sandboxed-command'；basis 只增 override?: string（绑定的 inspector 放行键）
@@ -71,6 +71,7 @@ readonly canReachNetwork?: boolean // 只在 Bash：计划为 full-access，或 
 // packages/kernel/src/loop/ports.ts —— SandboxPorts 只增两个同步、不抛的可选查询（D28、D29）
 canReach?(q: { sessionId: string; hosts: readonly string[] }): boolean // 照命令网络白名单的实际合并规则答；缺省读作 true
 autoCommands?(): 'yes' | 'linux' | 'no' // desktop：macOS 'yes'，Linux 'linux'，其余 'no'；缺省读作 'no'
+// LoopPorts.leases 只增 isShuttingDown(): boolean —— 「关机中拒」读的就是它；用户点停止不算关机
 
 // packages/kernel/src/session/draft.ts —— SessionDraft 的 cowork 一支只增（D27）
 approvalMode?: 'manual' | 'auto' // 建会话之前你在菜单里选的
@@ -142,31 +143,31 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ## 自动档的范围
 
 - **快照可用**：快照状态为 `tree`、`warming`、`file-only` 都算可用，`unavailable` 不算；不看这一次拍没拍成。这是 owner 2026-11-08 对 05 D23「前提是本会话快照可用」的读法：`warming` 照 `file-only` 读，`file-only` 也算可用（D1；对 05 §给 06 的接口 的增补）。
-- **文件工具**：Read、Glob、Grep、Write、Edit、Delete，路径在工作区内，快照可用，就由第 7 层放行，`modeRule: 'auto-range'`。判定时答 `tree`、`file` 的照 05 规矩 1：派发时拍不成就不写。拍不了的照 05 判可逆性：Write、Edit 是 `unknown`，自动档照样免问；Delete 是 `irreversible`，第 4 层每次问。带 `sensitive` 的照 05 每次问。
+- **文件工具**：Write、Edit、Delete，路径在工作区内，快照可用，就由第 7 层放行（工作区内的 Read、Glob、Grep 照 02 由第 6 层放行，不变），`modeRule: 'auto-range'`。判定时答 `tree`、`file` 的照 05 规矩 1：派发时拍不成就不写。拍不了的照 05 判可逆性：Write、Edit 是 `unknown`，自动档照样免问；Delete 是 `irreversible`，第 4 层每次问。带 `sensitive` 的照 05 每次问。
 - **命令**：Bash 满足规矩 5 就由第 7 层放行，`modeRule: 'auto-sandboxed-command'`，摘要码 `auto-mode`。命中模式表的照第 4 层每次问。快照照 05：只在 `tree` 时命令前后各拍一张；派发前整树没拍成（超时、出错）照跑，结算行照 05 写「命令的改动可能无法还原」；会话因此改成 `file-only` 后，命令照样免问（D1、D13）。
 - **沙箱生效**只认判定时 `posture()` 存在且为 `active`：`pending`、`degraded`、`unavailable`、宿主没有 `posture` 都照问（04 读法 1）。快照不可用只挡文件与命令的免问，沙箱不可用只挡命令的免问（D13）。
 - **平台**：`autoCommands()` 只有答 `'yes'` 时命令才可能免问。答 `'linux'` 时命令照问，原因写 Linux 那一句：Linux 的沙箱只护得住命令开始时已经存在的几个 git 文件（auto-tier-hardening 的已知限制）；答 `'no'` 或宿主没有这个查询时照问，原因写通用的那一句，不说 Linux。文件工具不受平台影响（D14、D29）。
 - 绑定了「仅此路径」的命令在自动档照样免问；绑定了「在沙箱外重跑」的照 04 一定出卡（D13）。
-- **照问的原因**：自动档里本来会免问、因上面某一条照问的卡，facts 带 `autoAsk`，卡上说一句为什么（D24）。几条同时成立取第一条：`no-snapshot`（快照不可用，文件卡与命令卡都有）→ `linux` → `platform` → `sandbox`（姿态不是 `active` 或没有 `posture`）→ `redirect`（D3 名单）。计划因沙箱不可用而为 `full-access` 的卡已有 04 那一句，不另带；绑定重跑的卡不带。命令卡的原因仍是 `command`，第 5 层说问时另带 `category`（D15）。
+- **照问的原因**：自动档里本来会免问、因上面某一条照问的卡，facts 带 `autoAsk`，卡上说一句为什么（D24）。几条同时成立取第一条：`no-snapshot`（快照不可用，文件卡与命令卡都有）→ `linux` → `platform` → `sandbox`（姿态不是 `active` 或没有 `posture`）→ `redirect`（D3 名单）。计划因沙箱不可用而为 `full-access` 的卡已有 04 那一句，不另带；绑定重跑的卡不带；第 5 层说问的卡不带；这几条压过上面的先后。拍不了的 Delete 本来就要问，不带。`autoAsk` 只是解释，比较卡变没变时不算它。命令卡的原因仍是 `command`，第 5 层说问时另带 `category`（D15）。
 
 ## 档位怎么存、怎么切
 
 - 新任务的默认档存 config.json 的 `approvalMode`，只在设置里改，经 `approvalModeDefault` 交给 kernel（D8）。
-- 会话建立之前（首页、发第一条消息之前），菜单里的选择写进 kernel 的草稿 `SessionDraft.approvalMode`，你的选择优先于默认；草稿改成对话形态时丢掉这一项。首条消息开 Run、建会话时，`session/approval_mode_set` 与 `session/profile_set`、`session/workspace_set` 同一批写：草稿里有你的选择就写它、`by: 'user'`；没有而默认为自动就写自动、`by: 'default'`；默认为手动不写（D17、D27）。
+- 会话建立之前（首页、发第一条消息之前），菜单里的选择写进 kernel 的草稿 `SessionDraft.approvalMode`，你的选择优先于默认；草稿改成对话形态时丢掉这一项。首条消息开 Run、建会话时，`session/approval_mode_set` 与 `session/profile_set`、`session/workspace_set` 同一批写：草稿里有你的选择就写它、`by: 'user'`；没有而默认为自动就写自动、`by: 'default'`；默认为手动不写；只对任务形态写，默认在点发送时与草稿一起读（D17、D27）。
 - 会话建立之后切档写 `by: 'user'`。会话的档位取当前 incarnation 最后一条，没有就是手动；重启照旧。清空会话时，最后一条照抄进新 incarnation，与 profile、workspace 同一批（D26）。
-- `judgeCall`（`packages/kernel/src/loop/batch.ts`）每次判定读根会话当前档位，交给 `LayerInputs.approvalMode`；对话形态恒为手动。
+- `judgeCall`（`packages/kernel/src/loop/batch.ts`）每次判定读根会话当前档位，交给 `LayerInputs.approvalMode`；对话形态恒为手动。档位与快照状态都在最后一次检查之后、调 `decide` 之前读（与 D30 一致）。
 - 策略的 `disableAutoMode` 照 02 由 `decide` 折回手动；在自动档的会话，kernel 在下一次判定时写一条 `by: 'policy'` 的手动；切到自动回 `policy`（D13）。
 - 生效时点：从下一次判定起。切回手动时正在跑的调用照跑完。
 
 ## 撤不回：丢掉已有内容
 
 - 02 §可逆性 的 `irreversible` 加一类「丢掉已有内容」：盖掉或清空已有文件、丢掉没提交的改动（D2）。
-- 模式表加七行，照现有写法按原文找、不拆段，两档都每次问、⏎ 是拒绝、答复只管这一次：`git reset --hard`；`git checkout` 带单独的 `--`、单独的 `.`、`-f` 或 `--force`；`git restore`，带 `--staged`（或 `-S`）而不带 `--worktree`（或 `-W`）的除外；`git switch` 带 `--discard-changes`、`-f` 或 `--force`；`truncate`；`dd` 带 `of=`（D2、D18）。
+- 模式表加七行，照现有写法按原文找、不拆段，两档都每次问、⏎ 是拒绝、答复只管这一次：`git reset --hard`；`git checkout` 带单独的 `--` 或单独的 `.`；`git checkout` 带 `-f` 或 `--force`；`git restore`，带 `--staged`（或 `-S`）而不带 `--worktree`（或 `-W`）的除外；`git switch` 带 `--discard-changes`、`-f` 或 `--force`；`truncate`；`dd` 带 `of=`（D2、D18）。
 - 每行配命中与不命中的样例，模块加载时自测：`git restore --staged x`、`git checkout main`、`git checkout -b x`、`git switch main` 都不命中（D13）。
 
 ## 自动档仍问的写法
 
-- `autoStillAsk` 认 `>` 重定向：去掉 `>>`、`>&`（含 `2>&1`）、`=>`、`->`、`>=` 与 `>` 后面（可隔空白）紧跟 `/dev/null` 的写法后，还剩一个 `>` 就命中（D3）。
+- `autoStillAsk` 认 `>` 重定向：去掉 `>>`、后跟数字或 `-` 的 `>&`（含 `2>&1`）、`=>`、`->`、`>=` 与 `>` 后面（可隔空白）紧跟 `/dev/null` 的写法后，还剩一个 `>` 就命中（D3）。
 - 只在自动档、只对本来会免问的命令起作用：出命令卡，`autoAsk: 'redirect'`，⏎ 是允许，答复照 02 是本会话这一条命令。手动档不变；不算撤不回。
 
 ## 两条新的机器检查
@@ -240,7 +241,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ## 已知限制与代价
 
 - 命令的改动只在 `tree` 时进快照：`file-only`、`warming` 的会话里自动档照样免问命令，它改坏的文件还原不了（D1）。拍不了快照的 Write、Edit（单个文件超过 100 MB 这类）自动档也不问，写坏了救不回。
-- 被 `.gitignore` 排除的文件、嵌套仓库、发到网上的，快照本来就救不回（05）；D2 只认七类具名命令，D3 只认 `>`：`sed -i`、`cp`/`mv` 盖掉文件、脚本里写文件、不带 `--` 的 `git checkout <路径>` 都认不出，自动档照样免问。引号里的 `>`（`node -e "a > b"`）也会问。
+- 被 `.gitignore` 排除的文件、嵌套仓库、发到网上的，快照本来就救不回（05）；D2 只认七类具名命令，D3 只认 `>`：`sed -i`、`cp`/`mv` 盖掉文件、脚本里写文件、不带 `--` 的 `git checkout <路径>`、D3 去掉的 `=>`、`->`、`>=` 写法都认不出，自动档照样免问。引号里的 `>`（`node -e "a > b"`）也会问。
 - Linux 上自动档只免问文件工具，命令照问，直到 auto-tier-hardening 的那条限制有办法补上（D14）。
 - 外带检查只看来源不看内容：读过网页之后，每条能联网的命令问一次；勾了预设就是每条都问，只读档也一样；手动档里本会话允许过的也再问（D4、D12）。不可信来源只算网页与搜索：工作区里的文件自己带着指令时，这条检查不认，没读过网页的会话里，免问的命令照样能连白名单里的网站。
 - input-hygiene 只看命令原文与路径，不看写入的内容和脚本文件；它出错时两档的命令与文件工具都被拦，要从回执放行。
@@ -252,17 +253,17 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 
 ## 验收标准
 
-1. 自动档、快照状态为 `tree`、`warming`、`file-only`（参数化）：工作区内 Write、Edit、有快照的 Delete 不出卡，判决 `decidedBy: 'approval-mode'`、`modeRule: 'auto-range'`、摘要 `auto-mode`；`unavailable` 时同样的调用出卡、facts 带 `autoAsk: 'no-snapshot'`。
+1. 自动档、快照状态为 `tree`、`warming`、`file-only`（参数化）：工作区内 Write、Edit、有快照的 Delete 不出卡，判决 `decidedBy: 'approval-mode'`、`modeRule: 'auto-range'`、摘要 `auto-mode`；`unavailable` 时同样的 Write、Edit 出卡、facts 带 `autoAsk: 'no-snapshot'`，拍不了的 Delete 照验收 2 每次问、不带；没给快照状态的 Write 也照问。
 2. 自动档、`tree` 与 `file-only`：`coverage` 答 `none` 的 Write 不出卡；`coverage` 答 `none` 的 Delete 每次问、卡上「撤不回」、⏎ 是拒绝。
 3. 自动档里一轮连着 25 次有快照的 Delete 都不出卡，结算行写「删了 25 个文件 · 可还原」。
 4. 自动档、`autoCommands` 答 `'yes'`、`posture` 为 `active`、快照可用（参数化三种）：普通 Bash 不出卡，`modeRule: 'auto-sandboxed-command'`、摘要 `auto-mode`；`file-only` 时、以及 `tree` 下这一次派发前整树没拍成时，命令照跑、不出卡，这一轮结算行带「命令的改动可能无法还原」。
-5. 自动档里下列命令出卡，facts 的 `autoAsk` 如括号（参数化）：快照 `unavailable`（`no-snapshot`）；`autoCommands` 答 `'linux'`（`linux`）；答 `'no'` 或宿主没有这个查询（`platform`，不是 `linux`）；`posture` 为 `pending`、`degraded` 或宿主没有 `posture`（`sandbox`）；`posture` 为 `unavailable`（不带 `autoAsk`，带 04 的 `sandbox: 'unavailable'`）；绑定了「在沙箱外重跑」（不带）；几条同时成立时取 §自动档的范围 写的第一条。
+5. 自动档里下列命令出卡，facts 的 `autoAsk` 如括号（参数化）：快照 `unavailable`（`no-snapshot`）；`autoCommands` 答 `'linux'`（`linux`）；答 `'no'` 或宿主没有这个查询（`platform`，不是 `linux`）；`posture` 为 `pending`、`degraded` 或宿主没有 `posture`（`sandbox`）；`posture` 为 `unavailable`（不带 `autoAsk`，带 04 的 `sandbox: 'unavailable'`）；绑定了「在沙箱外重跑」（不带）；几条同时成立时取 §自动档的范围 写的第一条，两条不带的例外压过先后。
 6. 绑定了「仅此路径」的命令自动档不出卡、手动档出卡。
 7. 七类覆盖写命令（参数化）两档都出卡：可逆性 `irreversible`、默认焦点在拒绝、答复 `once`；06 之前留下的同一条命令的本会话授权不再免卡；不命中的样例（`git restore --staged x`、`git checkout main`、`git checkout -b x`、`git switch main`）可逆性仍是 `unknown`；加载时自测通过。
 8. 自动档里 `npm test > out.log` 出命令卡、facts 带 `autoAsk: 'redirect'`，允许后同一条本会话不再问；`>>`、`2>&1`、`>&2`、`> /dev/null`、`=>`、`->`、`>=` 的样例不出卡；手动档的同一条照旧（会话授权放行）。
-9. 手动档的行为不变：同一批 Write、Edit、Bash、Delete 的判决与 06 之前逐项相同（只有覆盖写七类与两条新检查的情形例外）。
+9. 手动档的行为不变：同一批 Write、Edit、Bash、Delete 的判决与 06 之前逐项相同（只有覆盖写七类与两条新检查的情形例外）；自动档对同一批调用（含工作区外、联网、连接器与策略要求问或拒的）的判决只可能与手动档相同，或把手动档第 7 层的问换成放行。
 10. 自动档免问之后切回手动，同一 Write 出卡；手动档给的会话授权在自动档照样放行（摘要仍是 `session-allowed`）。
-11. 子会话里的调用按根会话当前档位判；根会话切回手动后，子会话下一次判定起出卡。
+11. 子会话里的调用按根会话当前档位判；根会话切回手动后，子会话下一次判定起出卡；检查暂停期间切回手动，这一次调用出卡。
 12. 已建立的会话切到自动档写 `session/approval_mode_set`（`by: 'user'`），重启后仍是自动；`approvalModeDefault` 答自动时，没选过档位的新任务建会话同批写 `by: 'default'`，答手动时不写；对话会话切档回 `not-cowork`。
 13. 发第一条消息之前在任务草稿里切到自动档（默认是手动）：建会话那一批写 `by: 'user'` 的自动，第一条调用就按自动档判、不出卡；草稿改成对话形态再改回任务，档位回到默认。
 14. 卡正在等你时切到自动档，卡不放行，重启后重新判定也不放行；切回手动时正在跑的命令照跑完。
@@ -304,3 +305,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ## 修订记录
 
 （draft 期间直接改原文，不记）
+
+- 2026-11-09 · ready 之后 · 照挑刺评审 r2（测试视角）定四处，都只收紧或说清：不带 `autoAsk` 的两条例外压过先后；拍不了的 Delete 不带；缺快照状态读作 `unavailable`；比较卡时不算 `autoAsk`。验收 1、5 相应改写。
+- 2026-11-09 · ready 之后 · 照挑刺评审 r2（规则视角）的第一段条目，都只收紧或说清：档位与快照状态在检查之后读；第 5 层说问的卡不带 `autoAsk`；默认档只对任务形态写、点发送时读；七行逐行列出；`>&` 只排除后跟数字或 `-` 的；工作区内的 Read、Glob、Grep 仍归第 6 层。验收 9、11 相应补写。
+- 2026-11-09 · ready 之后 · 第一段实现评审后补登记接口：`LoopPorts.leases` 增 `isShuttingDown()`，供切档的「关机中拒」使用；规则不变。

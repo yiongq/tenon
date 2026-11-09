@@ -64,6 +64,7 @@ async function harness() {
   })
   const coverage = vi.spyOn(host.snapshots, 'coverage')
   const ctx = {
+    writer: { by: 'resolver' as const },
     host,
     tape,
     sessionId: SESSION,

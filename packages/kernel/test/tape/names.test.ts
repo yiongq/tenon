@@ -201,6 +201,7 @@ describe('the reserved namespace table', () => {
         'message/retracted',
         'provider/attempt_completed',
         ...PHASE_2_NAMES.map(([name]) => name),
+        'session/approval_mode_set',
         'fs/snapshot_created',
         'fs/restore_started',
         'fs/restored',

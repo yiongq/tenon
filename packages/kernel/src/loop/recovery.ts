@@ -46,7 +46,7 @@ import {
   tightenedFacts,
   waitingOf,
 } from './answer.js'
-import type { CompleteCall } from './batch.js'
+import type { CompleteCall, JudgeContext } from './batch.js'
 import { effectOf, readSessionEntries } from './batch.js'
 import type { CallRef, ExecutionState } from './closure.js'
 import { closureContent, repairFacts, resultFacts } from './closure.js'
@@ -56,9 +56,11 @@ import type { RunEndReason } from './terminal.js'
 import { sessionFactsOf } from '../session/facts.js'
 import { buildSubagentHandoff, handoffText, storedHandoff } from './subagent.js'
 import { spillChecked } from './spill.js'
-import type { RunConnector } from './ports.js'
+import type { RunConnector, SandboxPorts } from './ports.js'
 
 export interface RecoveryDeps {
+  readonly modeTurn?: JudgeContext['modeTurn']
+  readonly sandbox?: SandboxPorts | undefined
   readonly searchTarget?: RunConnector['searchTarget']
   readonly tape: Tape
   readonly now: () => number
@@ -542,6 +544,9 @@ async function rejudgeAtStartup(
     providerId: setup.selected.providerId,
     judge: {
       tape: deps.tape,
+      sandbox: deps.sandbox,
+      modeTurn: deps.modeTurn,
+      writer: RECOVERY,
       host: deps.host,
       inspectors: deps.inspectors,
       sensitiveFallback: deps.sensitiveFallback,

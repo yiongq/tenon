@@ -19,7 +19,7 @@
  * are one reading.
  */
 import type { SandboxPlan } from '../tape/entry.js'
-import type { ConfirmReason, Reversibility } from '../host/adapter.js'
+import type { ConfirmReason, Reversibility, SnapshotStatus } from '../host/adapter.js'
 import { CONFIRM_FACT_KEYS } from '../host/adapter.js'
 import type { PolicyState, ToolPolicyRule } from '../host/policy.js'
 import type { BlockReason } from '../loop/closure.js'
@@ -79,7 +79,10 @@ export interface LayerInputs {
   }
   readonly taskGrant?: true // 阶段 6 才有产生方；02 只由测试注入
   // 第 7 层
-  readonly approvalMode: 'manual' | 'auto' // 02 的产品恒为 'manual'；'auto' 只由测试注入（D7）
+  readonly approvalMode: 'manual' | 'auto' // Spec 06: the root's current mode; chat stays manual.
+  readonly snapshotStatus?: SnapshotStatus
+  readonly commandSandboxed?: true
+  readonly autoAsk?: 'no-snapshot' | 'linux' | 'platform' | 'sandbox' | 'redirect'
 }
 
 /** A layer-5 opinion as the kernel folded it: a timeout or an error keeps its status (F1). */
@@ -130,6 +133,8 @@ export function userDisablesTool(setting: UserToolSetting | null): boolean {
 
 /** The tools whose calls are file operations: the ones layer 2's protected list and the auto mode read. */
 const FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Delete', 'Glob', 'Grep'])
+/** Workspace reads retain layer 6's folder authorization in both modes. */
+const AUTO_FILE_TOOLS: ReadonlySet<string> = new Set(['Write', 'Edit', 'Delete'])
 /** Launching these is never gated by the approval mode (E4, H6); what an Agent does is judged per call. */
 const NOT_GATED: ReadonlySet<string> = new Set(['AskUserQuestion', 'Agent'])
 
@@ -256,14 +261,30 @@ export function decide(input: DecisionInput): Decision {
   const autoMode =
     layers.approvalMode === 'auto' &&
     !(layers.policy.status !== 'unavailable' && layers.policy.snapshot.disableAutoMode === true)
+  const snapshotAvailable = ['tree', 'warming', 'file-only'].includes(layers.snapshotStatus ?? '')
   let modeSaid: Said = 'none'
-  let modeRule: 'auto-range' | 'not-gated' | undefined
+  let modeRule: NonNullable<DecisionStep['basis']>['modeRule']
   if (builtin && NOT_GATED.has(name)) {
     modeSaid = 'allow'
     modeRule = 'not-gated'
-  } else if (autoMode && builtin && FILE_TOOLS.has(name) && layers.place === 'workspace') {
+  } else if (
+    autoMode &&
+    builtin &&
+    AUTO_FILE_TOOLS.has(name) &&
+    layers.place === 'workspace' &&
+    snapshotAvailable
+  ) {
     modeSaid = 'allow'
     modeRule = 'auto-range'
+  } else if (
+    autoMode &&
+    command &&
+    snapshotAvailable &&
+    layers.commandSandboxed === true &&
+    layers.autoAsk === undefined
+  ) {
+    modeSaid = 'allow'
+    modeRule = 'auto-sandboxed-command'
   } else if (!readOnly) {
     // 「会改动」 (owner-confirmed): anything not read-only is asked in the manual mode — and outside
     // the auto mode's range.
@@ -347,6 +368,8 @@ export function decide(input: DecisionInput): Decision {
     if (reason === 'command' && callReason.facts['sandbox'] === 'unavailable') {
       facts['sandbox'] = 'unavailable'
     }
+    if (autoMode && decidedBy === 'approval-mode' && layers.autoAsk !== undefined)
+      facts['autoAsk'] = layers.autoAsk
     return { record, summary, confirm: { reason, facts } }
   }
   return { record, summary }

@@ -15,6 +15,12 @@ function judged(command: string): string {
 
 /** The rows the spec names (E1, E4), then the plan's extras a pattern can tell without `stat`. */
 const IRREVERSIBLE: readonly string[] = [
+  // Spec 06: dropping existing contents is irreversible.
+  'git reset --hard',
+  'git checkout -- file.txt',
+  'git restore file.txt',
+  'truncate -s 0 file.txt',
+  'dd if=/dev/zero of=file.txt',
   // rm, wherever it stands — even quoted (「`echo "rm x"` 同样命中」)
   'rm existing.txt',
   'rm -rf build',
@@ -146,13 +152,8 @@ const UNKNOWN: readonly string[] = [
   'curl --request GET https://example.com',
   'curl -X DELETEALL https://example.com',
   'curl --request=DELETE-ME https://example.com',
-  // Overwrites remain out of scope, including shred without removal.
-  'git reset --hard',
-  'git checkout -- file.txt',
-  'git restore file.txt',
-  'truncate -s 0 file.txt',
+  // Redirects and shred without removal remain unknown.
   'echo text > file.txt',
-  'dd if=/dev/zero of=file.txt',
   'shred file.txt',
 ]
 

@@ -82,10 +82,14 @@ const GIT = word('git')
  * bundled (`-sSd`); a flag after the command word counts wherever it stands. Command words are
  * case-insensitive, but options keep their case (`git branch -D` is not `git branch -d`).
  */
-const COMMAND_PATTERNS: ReadonlyArray<{
+interface CommandPattern {
   readonly row: string
+  readonly hits?: readonly string[]
+  readonly misses?: readonly string[]
   readonly test: (c: string) => boolean
-}> = [
+}
+
+const COMMAND_PATTERNS: readonly CommandPattern[] = [
   { row: 'rm', test: inOrder(word('rm')) },
   { row: 'rmdir', test: inOrder(word('rmdir')) },
   { row: 'find -delete', test: inOrder(word('find'), option('-delete(?![\\w-])')) },
@@ -144,7 +148,142 @@ const COMMAND_PATTERNS: ReadonlyArray<{
       option('-[A-Za-z]*X\\s*[\'"]?DELETE(?![\\w-])|--request(?:\\s+|=)[\'"]?DELETE(?![\\w-])'),
     ),
   },
+  {
+    row: 'git reset --hard',
+    test: inOrder(GIT, word('reset'), option('--hard(?![\\w-])')),
+    hits: ['git reset --hard', 'git reset --hard=HEAD~1'],
+    misses: ['git reset --soft HEAD~1', 'git reset --harder'],
+  },
+  {
+    row: 'git checkout -- or dot',
+    test: inOrder(GIT, word('checkout'), option('(?:--|\\.)(?=\\s|$|[\'"])')),
+    hits: ['git checkout -- x', 'git checkout .'],
+    misses: ['git checkout main', 'git checkout -b x', 'git checkout ./x'],
+  },
+  {
+    row: 'git checkout force',
+    test: inOrder(GIT, word('checkout'), option('(?:-[A-Za-z]*f[A-Za-z]*|--force)(?![\\w-])')),
+    hits: [
+      'git checkout -f main',
+      'git checkout --force main',
+      'git checkout -qf main',
+      'git checkout -fq main',
+    ],
+    misses: ['git checkout main', 'git checkout --forceful main'],
+  },
+  {
+    row: 'git restore worktree',
+    test: (command) => {
+      const restores = new RegExp(`${GIT.source}[\\s\\S]*?${word('restore').source}`, 'gi')
+      for (const match of command.matchAll(restores)) {
+        // A staged exception belongs only to this restore, never to another command fragment.
+        const tail = command.slice(match.index + match[0].length)
+        const segment = tail.split(/[;&|\n]/, 1)[0] ?? ''
+        const staged = option('(?:--staged|-[A-Za-rt-z]*S[A-Za-z]*)(?![\\w-])').test(segment)
+        // Worktree evidence only tightens, including flags after quoted or continued separators.
+        const worktree = option('(?:--worktree|-[A-Za-z]*W[A-Za-z]*)(?![\\w-])').test(tail)
+        if (!staged || worktree) return true
+      }
+      return false
+    },
+    hits: [
+      'git restore x',
+      'GIT RESTORE x',
+      'git restore --staged --worktree x',
+      'git restore -S -W x',
+      'git restore -SW x',
+      'git restore -sStaging x',
+      'git restore -S -Wq x',
+      'git restore a && echo --staged',
+      'git restore a | grep --staged',
+      'git restore a\necho --staged',
+      "git restore --staged 'R&D/plan.md' --worktree",
+      "git restore --staged 'a;b' --worktree",
+      'git restore --staged a 2>&1 --worktree x',
+      'git restore --staged x \\\n --worktree y',
+      'git restore --staged a; git restore b',
+      'git restore --staged a && git restore b',
+      'git restore a; echo --staged',
+    ],
+    misses: [
+      'git restore --staged x',
+      'git restore -S x',
+      'git restore -qS x',
+      'git restore -Sq x',
+      'git restore -S x; git status',
+      'git status',
+    ],
+  },
+  {
+    row: 'git switch discard changes',
+    test: inOrder(
+      GIT,
+      word('switch'),
+      option('(?:--discard-changes|-[A-Za-z]*f[A-Za-z]*|--force)(?![\\w-])'),
+    ),
+    hits: [
+      'git switch --discard-changes main',
+      'git switch -f main',
+      'git switch --force main',
+      'git switch -qf main',
+      'git switch -fq main',
+    ],
+    misses: ['git switch main', 'git switch --forceful main'],
+  },
+  {
+    row: 'truncate',
+    test: inOrder(word('truncate')),
+    hits: ['truncate -s 0 x', '/usr/bin/truncate -s 1 x'],
+    misses: ['echo truncated', 'cat truncate.txt'],
+  },
+  {
+    row: 'dd of=',
+    test: inOrder(word('dd'), option('of=')),
+    hits: ['dd if=/dev/zero of=x', 'dd of=x'],
+    misses: ['dd if=x', 'echo odd of=x'],
+  },
 ]
+
+/** D3 uses the original text, including quoted text; it is deliberately not a shell parser. */
+export function autoStillAsk(command: string): 'redirect' | null {
+  const rest = command.replace(
+    />>|>&(?=\s*(?:\d+|-)(?=\s|$|[;&|)'"]))|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g,
+    '',
+  )
+  return rest.includes('>') ? 'redirect' : null
+}
+
+// A broken pattern must fail at load, before any call can rely on it.
+export function assertCommandPatterns(rows: readonly CommandPattern[] = COMMAND_PATTERNS): void {
+  for (const row of rows) {
+    if (
+      row.hits?.some((sample) => !row.test(sample)) ||
+      row.misses?.some((sample) => row.test(sample))
+    ) {
+      throw new Error(`command pattern self-test failed: ${row.row}`)
+    }
+  }
+}
+assertCommandPatterns()
+for (const [sample, expected] of [
+  ['npm test > out.log', 'redirect'],
+  ['npm test >> out.log', null],
+  ['npm test 2>&1', null],
+  ['(npm test 2>&1)', null],
+  ['npm test 2>&1;echo done', null],
+  ['npm test 2>&1&echo done', null],
+  ['npm test 2>&1|tee out', null],
+  ['npm test >&2', null],
+  ['npm test >&-', null],
+  ['npm test >&out.log', 'redirect'],
+  ['npm test >& out.log', 'redirect'],
+  ['npm test > /dev/null', null],
+  ['x => x', null],
+  ['a -> b', null],
+  ['a >= b', null],
+] as const) {
+  if (autoStillAsk(sample) !== expected) throw new Error(`redirect self-test failed: ${sample}`)
+}
 
 /** The file tools: the ones a path decides for (§「在不在工作区里」). */
 export const FILE_TOOL_NAMES: ReadonlySet<string> = new Set([

@@ -412,6 +412,7 @@ export type {
   DecisionSummaryCode,
 } from './permission/record.js'
 export type {
+  ApprovalModeSetPayload,
   ApprovalResolvedPayload,
   CompactionAnchorPayload,
   AskAnswerRecord,
@@ -449,6 +450,7 @@ export type {
 export { createMemoryTapeBacking } from './tape/memory-store.js'
 export type { MemoryTapeBacking } from './tape/memory-store.js'
 export {
+  approvalModeSetKey,
   approvalResolvedKey,
   assembledKey,
   compactionAnchorKey,

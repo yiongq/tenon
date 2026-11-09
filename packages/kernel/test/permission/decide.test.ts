@@ -306,7 +306,7 @@ describe('step 2: the first tier that holds', () => {
   })
 
   it('names the first allower in table order: protected > user-grant > approval-mode', () => {
-    // A workspace Read in the auto mode: the folder (layer 6) and the auto range (layer 7) both allow.
+    // A workspace Read in either mode is allowed by the folder grant (layer 6).
     const read = run(builtin('Read'), {
       place: 'workspace',
       reversibility: READ_ONLY,
@@ -560,6 +560,7 @@ describe('F9 and the auto mode', () => {
       const decision = run(builtin(name), {
         place: 'workspace',
         approvalMode: 'auto',
+        snapshotStatus: 'tree',
         reversibility: { value: 'snapshotted', source: 'host' },
       })
       expect(verdictOf(decision)).toEqual(['allow', 'approval-mode'])
@@ -588,7 +589,11 @@ describe('F9 and the auto mode', () => {
   })
 
   it('allows a Write in the workspace in the auto mode only, and not when the policy turns it off (旧 155)', () => {
-    const inWorkspace = { place: 'workspace' as const, approvalMode: 'auto' as const }
+    const inWorkspace = {
+      place: 'workspace' as const,
+      approvalMode: 'auto' as const,
+      snapshotStatus: 'tree' as const,
+    }
     const auto = run(builtin('Write'), inWorkspace)
     expect(verdictOf(auto)).toEqual(['allow', 'approval-mode'])
     expect(auto.summary.code).toBe('auto-mode')
