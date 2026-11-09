@@ -53,3 +53,73 @@
 
 - 最后一轮验证：尝试用仓库根路径的 --exclude 排除上述两个环境文件；参数没有作用于子项目，实际仍执行全仓，JSON 报告仍为 5817 passed / 5 failed / 135 skipped，失败恰为相同五项。没有把这次结果说成通过，不再反复跑这五项；报告与命令原始输出保留在工作区外临时目录，交协调者在沙箱外补跑。
 - 最终交接检查：`pnpm format:check`、`pnpm lint`、`pnpm typecheck` 均通过；`python3 .sdd/spec-check.py --index` 已生成入口页；`python3 .sdd/spec-check.py` 为拦 1 / 警 26，唯一拦截是缺独立评审。`git diff --check` 无输出；spec、decisions、evidence 与提示层未改，无临时源码与调试打印。
+
+## 2026-11-09 · 第一段补充：r2 处置与交接
+
+- 基础：第一轮实现已由协调者提交为 ff1760c，条文澄清为 15a2333。本轮读取私有笔记中的 `review-opus-r2-tests.md` 与 `review-opus-r2-rules.md`，只处理第一段；spec、decisions、evidence 与 plan 的 Open 不改。协调者报告上一轮在沙箱外全量 Vitest 5823 通过、macOS 真沙箱 120 通过，这两项不充当本轮差异的验证结果。
+- 实现修正：卡比较排除唯一的解释字段 autoAsk，其余内容照比；默认档在发送预建开始、第一次 await 前与草稿一起采样；Read、Glob、Grep 保留第 6 层的 folder 授权；`>&` 只排除数字描述符或 `-`，文件名重定向仍问；模式自测函数可注入故意错误的样例，模块加载仍强制调用。没有新增路由、界面、config、提示层或外部服务调用。
+
+测试视角逐条处置：
+
+| 条目 | 处置与证据 |
+|---|---|
+| M1 | 已做。验收 1、5、6 走真实 judgeCall，宿主状态由内存 host / SandboxPorts 提供；不在测试里预填 commandSandboxed 或 autoAsk。矩阵层改为集成，并点名入口。 |
+| M2 | 已做。验收 5 的反例参数化在两档分别核对工作区外、敏感路径、coverage none 的 Delete、策略关闭自动、七行覆盖写、文件与命令的 inspector ask，共 13 行；均不带 autoAsk。 |
+| M3 | 已做。验收 5 点名 unavailable 快照 + unavailable 姿态、linux + unavailable 姿态、unavailable 快照 + 绑定重跑，三者均不带 autoAsk；例外优先于五种原因。 |
+| M4 | 已做。验收 1 的 unavailable 用真实宿主 coverage none：Write / Edit 为 no-snapshot；Delete 为 irreversible、once，不带 autoAsk。没有伪造 unavailable + 有覆盖的 Delete。 |
+| M5 | 已做。验收 1 另断言缺 snapshotStatus 的自动档 Write 照问；旧 decide 用例只保留 ff1760c 已补的 tree 输入，期望不变，分项记在下方。 |
+| M6 | 已做。验收 7 自带七行字面量，不读取生产样例；含 checkout 两行与 restore 长短参数的 staged + worktree 命中。删除 reset 行与放宽 restore 例外均已突变自证。 |
+| M7 | 已做，选 ①。用 git show 取 62fed4d 的完整旧 kernel 源码到忽略目录，实际运行旧 decide / judgeCall，重新录下 28 个 decide、57 个 judgeCall 的固定完整判决。覆盖七个维度的两两组合、四种可逆性、策略 / 敏感 / 工作区外 / 网络 / 连接器边界；夹具写明完整提交号。测试只查固定数据字典，不用当前实现重算期望。录制程序通过后删除临时源码与捕获测试，只留正式 JSON。 |
+| M8 | 已做。验收 13 参数化「默认手动、草稿自动」与反向，断言同批建立事实为 user、档位正确、第一条 Write 分别放行 / 出卡。 |
+| M9 | 已做。验收 12 在改默认和重启后验证无事实的旧任务仍手动；显式自动的任务重启时默认手动仍自动。另验证默认自动时建对话不写档位事实。 |
+| M10 | 已做。验收 14 显式设 tree，直接核对重判本会 allow 而结果 unchanged，原卡在答复前与启动恢复后保留；同样的新 Write 真正免问完成为正对照。新增更宽重判突变已被该验收检测。 |
+| M11 ① | 已做。验收 8 经 SessionService 发送、启动恢复、真实答复，要求 applied，并核对本会话授权与重复命令；自动免问的对照也实际执行。运行、答复、启动与直接 judgeCall 使用同一份稳定的 SandboxPorts。 |
+| M11 ② | 已做。比较卡不比 autoAsk；验收 14 分别用 Write / Bash、双向切档、启动恢复与真实 applied 答复验证。 |
+| m1 | 已做。矩阵附文点名 kernel 的原因 / 可逆性 / 恢复 / round 数据，以及既有 renderer 测试负责的文字、焦点、Enter 与删除计数；warming 命令显式断言 commandsWithoutSnapshot 为 true。相关 renderer 三文件也运行通过。 |
+| m2 | 已做。assertCommandPatterns 在模块加载时调用；验收 7 注入错误 hit / miss 两种样例，各要求抛错。 |
+| m3 | 已做。验收 17 增加小写与混写后缀，以及 TOKENIZERS_PARALLELISM、GH_TOKEN_PATH、MY_API_KEY_FILE 等应保留的近似名字；继续验证手动档给的本会话授权在自动档命中第 6 层时原样透传，及必须问后获准的命令透传。 |
+| m4 | 已做。同 M11 ①，验收 8 改走真实答复与授权路径。 |
+| m5 | 部分完成。kernel 的「无 SandboxPorts」「有端口但无 autoCommands」两种缺省都覆盖且应问 platform。desktop 平台映射单测留第三段第 15 步：第一段尚无该生产接线，不为单测添加提前开放的 desktop 实现或测试专用映射。 |
+| m6 | 已做。验收 11 / 12 覆盖对子会话、未知会话、对话和关机中切档的拒绝，不写档位事实。 |
+| m7 | 已做。验收 1 的标题与矩阵收窄到 Write、Edit、covered Delete。 |
+| m11 | 已做。正向自动档夹具显式设置根快照状态，重启后重新设 tree；应问 no-snapshot 的夹具才保留 unavailable，验收 14 另有实际放行正对照。 |
+
+规则视角第一段逐条处置：
+
+- M3：已做。验收 11 用可暂停的 fake inspector，在检查等待期间切回手动，当前这次 Write 即出卡；再在检查期间把快照改 unavailable，当前这次出 no-snapshot 卡。档位与状态均取最后一次检查之后的值。
+- minor 1(a)(b)：已做。与测试视角 M2–M4 合并，例外压过先后、第 5 层 ask 卡不带解释；同批反例在手动档也不带。
+- minor 2：已做。验收 7 七行逐行字面量，checkout 分两行。
+- minor 3：已做。验收 8 真答复覆盖 `>&out.log`、`>& out.log`、`>&2.log`、`>&-notes` 命中；`2>&1`、`>&2`、`>&-`、带空白的数字 / 关闭描述符不命中。
+- minor 7：已做。同 M11 ②，只排除 autoAsk 的比较。
+- minor 8(a)(c)：已做。验收 13 在连接器预建暂停时更改默认值，证明默认与草稿在发送开始时采样；验收 12 证明对话形态不写默认档事实。
+- minor 11：已做。decide 的第 7 层集合仅含 Write / Edit / Delete；验收 9 对 Read / Glob / Grep 明确断言第 7 层 none，第 6 层 user-grant 放行，完整记录保持旧值。
+- minor 13：已做。验收 9 对同一份固定输入分别跑手动 / 自动，仅允许原第 7 层的问变放行，其他判决保持；还显式限制工作区外、网络、连接器、敏感与策略的调用不能借此放宽。只忽略第 7 层自身记录与 autoAsk 解释，不忽略前六层和判决来源。
+
+- 测试改动：`packages/kernel/test/permission/decide.test.ts` · 05 验收 29 · ff1760c 已补 snapshotStatus: tree，本轮保留该输入及原期望，缺省 unavailable 不能充当有快照前提。
+- 测试改动：`packages/kernel/test/permission/decide.test.ts` · 02 旧 155 · ff1760c 已补 snapshotStatus: tree，本轮保留该输入及原期望，自动档放行的前提显式给出。
+- 测试改动：`packages/kernel/test/permission/approval-modes.test.ts` · 验收 1、6、9 · 用真实 judgeCall 与旧版固定完整判决替换手填条件的循环断言；unavailable Delete 按澄清改核 irreversible，无 autoAsk。
+- 测试改动：`packages/kernel/test/loop/approval-modes.test.ts` · 验收 8、12–14、17 · 答复要求 applied，新增双向选择、发送采样、快照正对照、重启与环境边界，不放宽原有期望。
+- 先红后绿：源代码修正前，新回归运行 9 failed / 89 passed，失败涉及文件名重定向、默认采样、解释导致旧卡 stale、自测入口与读工具第 7 层记录；修正后 98 passed。随后新增四个描述符 / 文件名边界参数，最终结果见下方门禁。相关 10 文件套件在这四项加入前为 331 passed / 0 failed。
+
+突变自证本轮重跑全部原十项，另加两项。每项逐个改、跑点名验收非零、还原、同命令返回 0；运行命令仍为 `pnpm vitest run --maxWorkers=2 packages/kernel/test/permission/approval-modes.test.ts packages/kernel/test/loop/approval-modes.test.ts -t '06 验收 N:'`。
+
+| 临时突变 | 红的证据 | 还原后 |
+|---|---|---|
+| 自动文件分支去掉快照条件 | 验收 1 三种状态的 unavailable 断言失败 | 验收 1 三例通过 |
+| commandSandboxed 只排除 unavailable | 验收 5 的 pending / degraded / 缺姿态 / sandbox 优先级四例失败 | 验收 5 二十九例通过 |
+| autoCommands 缺省改 yes | 验收 5 的缺查询与缺整个端口两例失败 | 验收 5 二十九例通过 |
+| 删除 git reset --hard 行 | 验收 7 的 reset 行失败 | 验收 7 九例通过 |
+| autoStillAsk 不排除 /dev/null | 模块加载时 redirect self-test failed，未进入测试体 | 验收 8 七例通过 |
+| 环境过滤不认后缀 | 验收 17 七个大小写后缀参数失败 | 验收 17 二十四例通过 |
+| 子会话读自身档位 | 验收 11 的首次调用不跟根自动档，失败 | 验收 11 通过 |
+| 默认值盖过草稿 | 验收 13 的两个相反选择均失败 | 验收 13 四例通过 |
+| carryEntries 不携带档位 | 验收 16 的携带事实缺失，失败 | 验收 16 通过 |
+| 免问 Write 写会话授权 | 验收 10 的 approval_resolved 应为空断言失败 | 验收 10 通过 |
+| rejudgeWaiting 把更宽判决当真 | 验收 14 的 waiting 卡断言失败（tree 下重判实际 allow） | 验收 14 三例通过 |
+| restore 的 staged 例外放宽到 worktree | 模块加载时 command pattern self-test failed: git restore worktree，未进入测试体 | 验收 7 九例通过 |
+
+- 结果：12/12 检测且还原；10 项由测试体检测、2 项由强制加载自测提前阻止。没有把两项加载失败说成测试体断言失败。临时驱动、红绿输出在工作区外 `/private/tmp/06s1-r2-mutants*`，没有加入 CI 正式突变登记。
+- 本轮门禁：`pnpm format:check && pnpm lint && pnpm typecheck` 全部通过。全量 `pnpm vitest run --maxWorkers=2 --reporter=json --outputFile=/private/tmp/06s1-r2-full.json` 为 288 files passed / 2 failed，5852 tests passed / 5 failed / 135 skipped / 8 pending；本段两文件 102 passed，连同 recovery、sandbox-bash、receipt-override、workspace、model-choice 与 renderer 三文件共 10 文件 / 335 passed。
+- 全量失败与上一轮相同：`apps/desktop/test/stop-tree.test.ts` 四项在 ps 调用处 spawn EPERM；`apps/desktop/test/snapshot-git.test.ts` 的真实残留 git 启动恢复一项等待退出超时。后者实现依赖读取 ps，当前沙箱读不到时保守不杀。没有改弱测试、绕过权限或反复重跑；原始输出与 JSON 在 `/private/tmp/06s1-r2-full.*`，交协调者沙箱外复验本轮。真沙箱黑盒按原任务跳过，没有启动 Electron 或读取密钥。
+- `python3 .sdd/spec-check.py --index` 已更新入口页；S 的唯一拦截仍是没有独立评审记录。按任务要求，第 6 步独立评审与 StrykerJS 由协调者做，实现者不添加假评审；trace 18–44、后段文档同步及既有警告留原阶段。第 2–5 步保持已勾，第 6 步未勾，Status 保持 ready。
+- 最终交接：矩阵第一段 24 个标题与测试逐项匹配；plan 的 Open 与 15a2333 完全一致。所有临时突变已还原、旧版捕获源码已移除；本轮改动留工作区，未提交、未 push。无需要 owner 另定的条文问题。协调者接着审查逐条处置、补独立评审与 StrykerJS，复验本轮平台用例；m5 的 desktop 平台映射测试在第三段第 15 步接线时完成。

@@ -212,6 +212,8 @@ type Prebuild =
        * (model1: the batch equals the draft the prebuild read). Null for an established session.
        */
       readonly draft: SessionDraft | null
+      /** Captured with the draft before prebuild waits on the connector. */
+      readonly approvalModeDefault: 'manual' | 'auto'
     }
   | {
       readonly kind: 'config'
@@ -585,6 +587,7 @@ export function createLoop(deps: LoopDeps): Loop {
     // Taken before the first await, while this lease's holder lets nothing else run: a choice that
     // arrives later waits for the Run to open and lands after the session exists (model1).
     const draft = drafts.get(sessionId)
+    const approvalModeDefault = deps.approvalModeDefault?.() ?? 'manual'
     const work = (async (): Promise<Prebuild> => {
       const facts = await readSessionFacts(tape, sessionId)
       const profile = facts.established ? facts.profile : (draft?.profile ?? 'chat')
@@ -616,6 +619,7 @@ export function createLoop(deps: LoopDeps): Loop {
         provider: assembly.provider(),
         profile,
         draft: facts.established ? null : draft,
+        approvalModeDefault,
       }
     })().catch((error: unknown): Prebuild => {
       const problem = configProblem(error, providerId)
@@ -948,7 +952,7 @@ export function createLoop(deps: LoopDeps): Loop {
         ...creationEntries(
           { tape, sessionId, incarnationId, now },
           pre.draft,
-          deps.approvalModeDefault?.(),
+          pre.approvalModeDefault,
         ),
       )
     }
@@ -2152,6 +2156,7 @@ export function createLoop(deps: LoopDeps): Loop {
         provider: built.provider(),
         profile: 'cowork',
         draft: null,
+        approvalModeDefault: 'manual', // A child has no mode fact; judgement reads its root.
       }
       const opening = [
         startEntry(childId, incarnationId),

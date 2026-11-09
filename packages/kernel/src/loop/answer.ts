@@ -645,6 +645,17 @@ export async function rejudgeWaiting(q: {
   return { kind: 'unchanged', judged }
 }
 
+/** Display-only autoAsk never invalidates an approval; all other card fields still compare. */
+const comparableConfirm = (confirm: PermissionDecidedPayload['confirm'] | null) =>
+  confirm == null
+    ? null
+    : {
+        ...confirm,
+        facts: Object.fromEntries(
+          Object.entries(confirm.facts).filter(([key]) => key !== 'autoAsk'),
+        ),
+      }
+
 /** Whether a re-judgement's card differs from the one waiting: verdict, summary or card (F3). */
 function cardChanged(
   before: PermissionDecidedPayload,
@@ -654,15 +665,16 @@ function cardChanged(
   const after = {
     verdict: decision.record.verdict,
     summary: decision.summary,
-    confirm:
+    confirm: comparableConfirm(
       decision.confirm === undefined || judged.card === undefined
         ? null
         : { ...decision.confirm, ...judged.card },
+    ),
   }
   const was = {
     verdict: before.record.verdict,
     summary: before.summary,
-    confirm: before.confirm ?? null,
+    confirm: comparableConfirm(before.confirm),
   }
   return canonicalJson(after) !== canonicalJson(was)
 }

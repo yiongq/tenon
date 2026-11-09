@@ -7,13 +7,49 @@ import {
   EMPTY_POLICY,
 } from '../../src/index.js'
 import { judgeCall } from '../../src/loop/batch.js'
-import type { LayerInputs } from '../../src/permission/decide.js'
+import type { Decision, LayerInputs } from '../../src/permission/decide.js'
 import { decide } from '../../src/permission/decide.js'
 import { answerScope } from '../../src/permission/grants.js'
-import { autoStillAsk, commandReversibility } from '../../src/permission/reversibility.js'
+import { commandReversibility } from '../../src/permission/reversibility.js'
 import { creationEntries } from '../../src/session/facts.js'
 import { sessionStartKey } from '../../src/tape/provenance.js'
+import * as patterns from '../../src/permission/reversibility.js'
+import { modeJudgeFixture, MODE_SESSION } from '../support/approval-mode-judge.js'
+import type { ManualFixture } from '../support/approval-mode-judge.js'
 import baseline from './fixtures/06-manual-baseline.json' with { type: 'json' }
+
+// Fixed pre-06 data references share identical records; no expected behavior is recomputed.
+function baselineDecision(ref: {
+  record: number
+  summary: number
+  confirm?: number
+  block?: number
+}) {
+  return {
+    record: baseline.records[ref.record],
+    summary: baseline.summaries[ref.summary],
+    ...(ref.confirm === undefined ? {} : { confirm: baseline.confirms[ref.confirm] }),
+    ...(ref.block === undefined ? {} : { block: baseline.blocks[ref.block] }),
+  }
+}
+
+const normalize = (d: Decision) => ({
+  ...d,
+  record: {
+    ...d.record,
+    steps: d.record.steps.filter((step) => step.by !== 'approval-mode'),
+  },
+  ...(d.confirm === undefined
+    ? {}
+    : {
+        confirm: {
+          ...d.confirm,
+          facts: Object.fromEntries(
+            Object.entries(d.confirm.facts).filter(([key]) => key !== 'autoAsk'),
+          ),
+        },
+      }),
+})
 
 const SESSION = '11111111-1111-4111-8111-111111111111'
 const INC = '22222222-2222-4222-8222-222222222222'
@@ -83,10 +119,18 @@ async function harness() {
 
 describe('06 approval range', () => {
   it.each(['tree', 'warming', 'file-only'] as const)(
-    '06 验收 1: auto allows workspace file tools while snapshots are %s, and asks with no-snapshot when unavailable',
-    (snapshotStatus) => {
+    '06 验收 1: auto allows workspace Write, Edit and covered Delete while snapshots are %s, and asks safely when unavailable',
+    async (snapshotStatus) => {
       for (const name of ['Write', 'Edit', 'Delete']) {
-        expect(decision(name, { snapshotStatus })).toMatchObject({
+        // oxlint-disable-next-line no-await-in-loop -- each tool reads independently configured host evidence
+        const h = await modeJudgeFixture({
+          name,
+          snapshotStatus,
+          posture: 'active',
+          platform: 'yes',
+        })
+        // oxlint-disable-next-line no-await-in-loop -- judgement must observe this host's snapshot state
+        expect((await h.judge()).decision).toMatchObject({
           record: {
             verdict: 'allow',
             decidedBy: 'approval-mode',
@@ -101,20 +145,35 @@ describe('06 approval range', () => {
           },
           summary: { code: 'auto-mode' },
         })
-        const unavailable = decision(name, {
-          snapshotStatus: 'unavailable',
-          autoAsk: 'no-snapshot',
-        })
-        expect(unavailable).toMatchObject({
-          record: { verdict: 'ask' },
-          confirm: { facts: { autoAsk: 'no-snapshot' } },
-        })
+        h.memory.snapshots.setStatus(MODE_SESSION, 'unavailable')
+        // oxlint-disable-next-line no-await-in-loop -- sample again after the host changes state
+        const unavailable = await h.judge()
+        expect(unavailable.decision.record.verdict).toBe('ask')
+        expect(unavailable.decision.confirm?.facts['autoAsk']).toBe(
+          name === 'Delete' ? undefined : 'no-snapshot',
+        )
+        expect(unavailable.decision.record.decidedBy).toBe(
+          name === 'Delete' ? 'irreversible' : 'approval-mode',
+        )
       }
-      for (const name of ['WebSearch', 'WebFetch'])
-        expect(decision(name).record.verdict).toBe('ask')
-      expect(decision('Write', { place: 'outside' }).record.verdict).toBe('ask')
-      expect(decision('Write', { sensitive: 'credential' }).record.verdict).toBe('ask')
-      expect(decision('Write', { policy: { status: 'unavailable' } }).record.verdict).toBe('deny')
+      const missing = decide({
+        call: {
+          tool: { name: 'Write', originalName: 'Write', source: 'builtin', serverId: 'builtin' },
+          args: {},
+          reversibility: 'unknown',
+        },
+        callReason: { reason: 'default', facts: { toolName: 'Write' } },
+        layers: {
+          policy: { status: 'current', version: 'empty', snapshot: EMPTY_POLICY },
+          approvalMode: 'auto',
+          place: 'workspace',
+          reversibility: { value: 'unknown', source: 'host' },
+          requiresUserInteraction: false,
+          sessionGrant: null,
+        },
+        inspectors: [],
+      })
+      expect(missing.record.verdict).toBe('ask')
     },
   )
 
@@ -168,6 +227,15 @@ describe('06 approval range', () => {
     ['Linux', 'linux', 'tree', 'active', 'linux'],
     ['another platform', 'platform', 'tree', 'active', 'no'],
     ['missing platform query', 'platform', 'tree', 'active', undefined],
+    ['missing SandboxPorts', 'platform', 'tree', 'active', undefined],
+    [
+      'unavailable snapshots and unavailable posture',
+      undefined,
+      'unavailable',
+      'unavailable',
+      'yes',
+    ],
+    ['linux and unavailable posture', undefined, 'tree', 'unavailable', 'linux'],
     ['pending', 'sandbox', 'tree', 'pending', 'yes'],
     ['degraded', 'sandbox', 'tree', 'degraded', 'yes'],
     ['missing posture', 'sandbox', 'tree', undefined, 'yes'],
@@ -180,53 +248,24 @@ describe('06 approval range', () => {
   ] as const)(
     '06 验收 5: auto still asks for a command when %s, with autoAsk %s',
     async (label, autoAsk, status, state, platform) => {
-      const { memory, tape } = await harness()
-      memory.snapshots.setStatus(SESSION, status)
-      const host = {
-        ...memory,
-        sandbox: {
-          ...memory.sandbox,
-          ...(state === undefined
-            ? {}
-            : { posture: () => ({ state, profile: 'workspace-write' as const }) }),
-        },
-      }
-      const result = await judgeCall(
-        {
-          host,
-          tape,
-          sessionId: SESSION,
-          inspectors: [],
-          protectedFiles: [],
-          userSetting: () => null,
-          searchHost: null,
-          signal: new AbortController().signal,
-          sandbox: {
-            beforeWrap: () => {},
-            grantsChanged: () => {},
-            ...(platform === undefined ? {} : { autoCommands: () => platform }),
-          },
-          ...(label === 'bound rerun'
-            ? {
-                previousSandbox: {
-                  profile: 'full-access' as const,
-                  chosen: 'workspace-write' as const,
-                  override: { key: 'rerun', action: 'rerun-unsandboxed' as const },
-                },
-              }
-            : {}),
-        },
-        {
-          name: 'Bash',
-          originalName: 'Bash',
-          source: 'builtin',
-          serverId: 'builtin',
-          requiresUserInteraction: false,
-          spec: { name: 'Bash', description: '', inputSchema: {} },
-        },
-        { input: { command: 'npm test > out.log' } },
+      const h = await modeJudgeFixture({
+        name: 'Bash',
+        command: 'npm test > out.log',
+        snapshotStatus: status,
+        ...(state === undefined ? {} : { posture: state }),
+        platform: label === 'missing SandboxPorts' ? 'missing-port' : (platform ?? 'missing-query'),
+      })
+      const result = await h.judge(
+        label === 'bound rerun'
+          ? {
+              previousSandbox: {
+                profile: 'full-access',
+                chosen: 'workspace-write',
+                override: { key: 'rerun', action: 'rerun-unsandboxed' },
+              },
+            }
+          : {},
       )
-      if (result.kind !== 'judged') throw new Error('stopped')
       expect(result.decision.record.verdict).toBe('ask')
       expect(result.decision.confirm?.facts['autoAsk']).toBe(autoAsk)
       expect(result.decision.confirm?.facts['sandbox']).toBe(
@@ -236,14 +275,27 @@ describe('06 approval range', () => {
     },
   )
 
-  it('06 验收 6: an allow-path bound command is unasked in auto and asked in manual', () => {
-    const sandbox = {
+  it('06 验收 6: an allow-path bound command is unasked in auto and asked in manual', async () => {
+    const h = await modeJudgeFixture({
+      name: 'Bash',
+      snapshotStatus: 'tree',
+      platform: 'yes',
+      posture: 'active',
+      profile: 'read-only',
+    })
+    const previousSandbox = {
       profile: 'workspace-write',
       chosen: 'read-only',
-      override: { action: 'allow-path', key: 'receipt', target: '/other/a' },
+      override: { action: 'allow-path', key: 'receipt', path: absolutePath('/other/a') },
     } as const
-    expect(decision('Bash', { sandbox }).record.verdict).toBe('allow')
-    expect(decision('Bash', { sandbox, approvalMode: 'manual' }).record.verdict).toBe('ask')
+    expect(await h.judge({ previousSandbox })).toMatchObject({
+      sandbox: { profile: 'workspace-write' },
+      decision: { record: { verdict: 'allow', decidedBy: 'approval-mode' } },
+    })
+    await h.setMode('manual')
+    expect(await h.judge({ previousSandbox })).toMatchObject({
+      decision: { record: { verdict: 'ask' } },
+    })
   })
 
   it.each([
@@ -293,71 +345,128 @@ describe('06 approval range', () => {
   )
 
   it.each([
-    'npm test >> out.log',
-    'npm test 2>&1',
-    'npm test >&2',
-    'npm test > /dev/null',
-    'x => x',
-    'a -> b',
-    'a >= b',
-  ])('06 验收 8: a redirect asks once in auto with a session answer; %s does not', async (miss) => {
-    const { memory, tape } = await harness()
-    memory.snapshots.setStatus(SESSION, 'tree')
-    const commandResult = await judgeCall(
-      {
-        tape,
-        host: {
-          ...memory,
-          sandbox: {
-            ...memory.sandbox,
-            posture: () => ({ state: 'active', profile: 'workspace-write' }),
-          },
-        },
-        sessionId: SESSION,
-        inspectors: [],
-        protectedFiles: [],
-        userSetting: () => null,
-        searchHost: null,
-        signal: new AbortController().signal,
-        sandbox: { beforeWrap: () => {}, grantsChanged: () => {}, autoCommands: () => 'yes' },
-      },
-      {
-        name: 'Bash',
-        originalName: 'Bash',
-        source: 'builtin',
-        serverId: 'builtin',
-        requiresUserInteraction: false,
-        spec: { name: 'Bash', description: '', inputSchema: {} },
-      },
-      { input: { command: 'npm test > out.log' } },
-    )
-    expect(commandResult).toMatchObject({
-      decision: { record: { verdict: 'ask' }, confirm: { facts: { autoAsk: 'redirect' } } },
-    })
-    expect(autoStillAsk(miss)).toBeNull()
-    expect(
-      decision('Bash', autoStillAsk(miss) === null ? {} : { autoAsk: 'redirect' }, miss).record
-        .verdict,
-    ).toBe('allow')
-    const command = 'npm test > out.log'
-    expect(autoStillAsk(command)).toBe('redirect')
-    const d = decision('Bash', { autoAsk: 'redirect' }, command)
-    expect(d).toMatchObject({
-      record: { verdict: 'ask' },
-      confirm: { reason: 'command', facts: { autoAsk: 'redirect' } },
-    })
-    expect(
-      answerScope({ decision: d, reversibility: 'unknown', source: 'builtin', toolName: 'Bash' }),
-    ).toBe('session')
-    for (const approvalMode of ['auto', 'manual'] as const)
-      expect(
-        decision('Bash', { autoAsk: 'redirect', approvalMode, sessionGrant: grant }, command)
-          .summary.code,
-      ).toBe('session-allowed')
+    ['outside Write', { name: 'Write', path: '/outside/a' }],
+    ['sensitive Write', { name: 'Write', sensitive: true }],
+    ['uncovered Delete', { name: 'Delete', coverage: 'none' }],
+    ['policy disables auto', { name: 'Write', policy: 'disable-auto' }],
+    ...[
+      'git reset --hard',
+      'git checkout -- a',
+      'git checkout -f main',
+      'git restore a',
+      'git switch --discard-changes main',
+      'truncate -s 0 a',
+      'dd if=/dev/zero of=a',
+    ].map((command) => [command, { name: 'Bash', command }] as const),
+    ['inspector asks about a command', { name: 'Bash', inspector: true }],
+    ['inspector asks about a file', { name: 'Write', inspector: true }],
+  ] as const)('06 验收 5: %s never adds autoAsk in either mode', async (_label, row) => {
+    const query = row as Partial<ManualFixture> & { name: string; inspector?: boolean }
+    for (const mode of ['auto', 'manual'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- the two modes use separate Tape histories
+      const h = await modeJudgeFixture(
+        { snapshotStatus: 'unavailable', platform: 'yes', posture: 'active', ...query },
+        mode,
+      )
+      // oxlint-disable-next-line no-await-in-loop -- compare the two real judgements
+      const result = await h.judge(
+        query.inspector
+          ? {
+              inspectors: [
+                {
+                  id: 'ask',
+                  kind: 'local-rule',
+                  ceiling: 'ask',
+                  beforeCall: async () => ({ kind: 'ask', category: 'exfiltration', findings: [] }),
+                },
+              ],
+            }
+          : {},
+      )
+      expect(result.decision.record.verdict).toBe('ask')
+      expect(result.decision.confirm?.facts).not.toHaveProperty('autoAsk')
+    }
   })
 
-  it('06 验收 9: the manual mode decides every fixture as before 06', () => {
-    for (const { input, expected } of baseline)
-      expect(decide(input as Parameters<typeof decide>[0])).toEqual(expected)
+  it.each(['hit', 'miss'] as const)(
+    '06 验收 7: pattern self-tests reject invalid %s samples',
+    (kind) => {
+      expect(() =>
+        patterns.assertCommandPatterns([
+          { row: 'broken', test: () => kind === 'miss', hits: ['hit'], misses: ['miss'] },
+        ]),
+      ).toThrow('command pattern self-test failed: broken')
+    },
+  )
+
+  it('06 验收 9: the manual mode decides every fixture as before 06', async () => {
+    expect(baseline.source.commit).toBe('62fed4d25440309484ea1e5b4b313b89de21dd30')
+    for (const { input, expected } of baseline.decideCases)
+      expect(decide(input as Parameters<typeof decide>[0])).toEqual(baselineDecision(expected))
+    for (const { query, expectedIndex } of baseline.judgeCases) {
+      // oxlint-disable-next-line no-await-in-loop -- each fixture has an isolated host and history
+      const h = await modeJudgeFixture(query as ManualFixture, 'manual')
+      // oxlint-disable-next-line no-await-in-loop -- record all decision fields, not just the verdict
+      const { decision: actualDecision, reversibility, sandbox, place } = await h.judge()
+      const expected = baseline.judgeDecisions[expectedIndex]!
+      expect(
+        JSON.parse(JSON.stringify({ decision: actualDecision, reversibility, sandbox, place })),
+      ).toEqual({
+        ...expected,
+        decision: baselineDecision(expected.decision),
+      })
+    }
+  })
+
+  it('06 验收 9: auto changes only manual approval-mode asks to allows across the same fixtures', async () => {
+    for (const { query } of baseline.judgeCases) {
+      // oxlint-disable-next-line no-await-in-loop -- both modes judge one unchanged fixture
+      const h = await modeJudgeFixture(query as ManualFixture, 'manual')
+      // oxlint-disable-next-line no-await-in-loop -- before switching the mode
+      const manual = (await h.judge()).decision
+      // oxlint-disable-next-line no-await-in-loop -- only the mode fact changes
+      await h.setMode('auto')
+      // oxlint-disable-next-line no-await-in-loop -- the host inputs are unchanged
+      const auto = (await h.judge()).decision
+
+      if (
+        manual.record.verdict === 'ask' &&
+        manual.record.decidedBy === 'approval-mode' &&
+        auto.record.verdict === 'allow'
+      ) {
+        // oxlint-disable-next-line vitest/no-conditional-expect -- this is the sole permitted relation
+        expect(auto.record.decidedBy).toBe('approval-mode')
+        // oxlint-disable-next-line vitest/no-conditional-expect -- excluded scopes cannot use this relation
+        expect(
+          (query.source ?? 'builtin') === 'builtin' &&
+            ['Write', 'Edit', 'Delete', 'Bash'].includes(query.name) &&
+            !(query.name !== 'Bash' && 'path' in query && query.path?.startsWith('/outside')) &&
+            !('sensitive' in query && query.sensitive) &&
+            !('policy' in query),
+        ).toBe(true)
+        // oxlint-disable-next-line vitest/no-conditional-expect -- automatic allows have the documented summary
+        expect(auto.summary.code).toBe('auto-mode')
+        // oxlint-disable-next-line vitest/no-conditional-expect -- an allowed call has neither card nor block
+        expect([auto.confirm, auto.block]).toEqual([undefined, undefined])
+        // oxlint-disable-next-line vitest/no-conditional-expect -- the preceding layers cannot loosen
+        expect(normalize(auto).record.steps).toEqual(normalize(manual).record.steps)
+      } else {
+        // oxlint-disable-next-line vitest/no-conditional-expect -- every other outcome must be identical
+        expect(normalize(auto)).toEqual(normalize(manual))
+      }
+    }
+    for (const name of ['Read', 'Glob', 'Grep']) {
+      // oxlint-disable-next-line no-await-in-loop -- independently verify the three unchanged read tools
+      const h = await modeJudgeFixture({
+        name,
+        snapshotStatus: 'tree',
+        platform: 'yes',
+        posture: 'active',
+      })
+      // oxlint-disable-next-line no-await-in-loop -- inspect the actual layer record
+      const d = (await h.judge()).decision
+      expect(d.summary.code).toBe('workspace-read')
+      expect(d.record.steps.find((step) => step.by === 'approval-mode')?.said).toBe('none')
+    }
   })
 })

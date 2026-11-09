@@ -133,6 +133,8 @@ export function userDisablesTool(setting: UserToolSetting | null): boolean {
 
 /** The tools whose calls are file operations: the ones layer 2's protected list and the auto mode read. */
 const FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'Delete', 'Glob', 'Grep'])
+/** Workspace reads retain layer 6's folder authorization in both modes. */
+const AUTO_FILE_TOOLS: ReadonlySet<string> = new Set(['Write', 'Edit', 'Delete'])
 /** Launching these is never gated by the approval mode (E4, H6); what an Agent does is judged per call. */
 const NOT_GATED: ReadonlySet<string> = new Set(['AskUserQuestion', 'Agent'])
 
@@ -267,7 +269,7 @@ export function decide(input: DecisionInput): Decision {
   } else if (
     autoMode &&
     builtin &&
-    FILE_TOOLS.has(name) &&
+    AUTO_FILE_TOOLS.has(name) &&
     layers.place === 'workspace' &&
     layers.snapshotStatus !== undefined &&
     layers.snapshotStatus !== 'unavailable'

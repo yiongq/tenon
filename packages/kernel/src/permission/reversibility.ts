@@ -82,12 +82,14 @@ const GIT = word('git')
  * bundled (`-sSd`); a flag after the command word counts wherever it stands. Command words are
  * case-insensitive, but options keep their case (`git branch -D` is not `git branch -d`).
  */
-const COMMAND_PATTERNS: ReadonlyArray<{
+interface CommandPattern {
   readonly row: string
   readonly hits?: readonly string[]
   readonly misses?: readonly string[]
   readonly test: (c: string) => boolean
-}> = [
+}
+
+const COMMAND_PATTERNS: readonly CommandPattern[] = [
   { row: 'rm', test: inOrder(word('rm')) },
   { row: 'rmdir', test: inOrder(word('rmdir')) },
   { row: 'find -delete', test: inOrder(word('find'), option('-delete(?![\\w-])')) },
@@ -202,24 +204,33 @@ const COMMAND_PATTERNS: ReadonlyArray<{
 
 /** D3 uses the original text, including quoted text; it is deliberately not a shell parser. */
 export function autoStillAsk(command: string): 'redirect' | null {
-  const rest = command.replace(/>>|>&|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g, '')
+  const rest = command.replace(
+    />>|>&(?=\s*(?:\d+|-)(?=\s|$|[;&|)]))|=>|->|>=|>\s*\/dev\/null(?![\w/.-])/g,
+    '',
+  )
   return rest.includes('>') ? 'redirect' : null
 }
 
 // A broken pattern must fail at load, before any call can rely on it.
-for (const row of COMMAND_PATTERNS) {
-  if (
-    row.hits?.some((sample) => !row.test(sample)) ||
-    row.misses?.some((sample) => row.test(sample))
-  ) {
-    throw new Error(`command pattern self-test failed: ${row.row}`)
+export function assertCommandPatterns(rows: readonly CommandPattern[] = COMMAND_PATTERNS): void {
+  for (const row of rows) {
+    if (
+      row.hits?.some((sample) => !row.test(sample)) ||
+      row.misses?.some((sample) => row.test(sample))
+    ) {
+      throw new Error(`command pattern self-test failed: ${row.row}`)
+    }
   }
 }
+assertCommandPatterns()
 for (const [sample, expected] of [
   ['npm test > out.log', 'redirect'],
   ['npm test >> out.log', null],
   ['npm test 2>&1', null],
   ['npm test >&2', null],
+  ['npm test >&-', null],
+  ['npm test >&out.log', 'redirect'],
+  ['npm test >& out.log', 'redirect'],
   ['npm test > /dev/null', null],
   ['x => x', null],
   ['a -> b', null],

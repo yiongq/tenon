@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。第一段第 2–5 步已实现，验收 1–17 的 67 个参数化用例通过；十个突变逐个变红、还原后通过。format/lint/typecheck 已通过；全仓仅五项 ps 环境失败，spec-check 仅缺独立评审记录。改动留在工作区，第 6 步的独立评审、StrykerJS 与平台补跑交给协调者。
-需要你：协调者执行第 6 步独立评审并追加真实评审记录；当前 spec-check 的 review 检查因此拦 1 条。全仓测试中依赖 ps 的五项环境失败需在沙箱外补跑。
+当前：ready。ff1760c、15a2333 后的第一段 r2 补充已实现；验收 1–17 共 102 个参数化用例通过，十二个突变已检测并还原，format / lint / typecheck 通过。全量 5852 通过，仍有五个已知环境失败；spec-check 只拦缺独立评审记录。
+需要你：协调者审本轮补充并完成第 6 步独立评审、StrykerJS，在沙箱外复验本轮差异与真沙箱；m5 的 desktop 平台映射测试留第三段第 15 步接线时完成。
 
 ## 开工前读
 
@@ -45,8 +45,8 @@
     - [x] 1.4.1 owner 答第三版的开放问题（2026-11-08，D32 选 A：容忍，即对改 02 contracts 读取端校验的点名批准）；spec 已加规矩 14、§点名 (j) 与验收 44，实现在第 15、18 步。
   - [x] 1.5 放进仓库（同一个 PR，162c16a）：spec、plan、decisions、evidence 进 `docs/architecture/06-approval-modes/`；照 headers.md 改 01、02、04、05、presentation-r1 的页头与总参考的四处；入口页重新生成；跑 S，`pairs`、`line-refs` 不拦。
   - [x] 1.6 owner 读「给你看的一页」，回一句带编号的话；页头加 `Approved:`，Status 改 ready，阶段表 4c 同改。
-- [x] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。
-- [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。
+- [x] 2. 档位事实、草稿与读档（kernel）：`session/approval_mode_set` 的名字、载荷、键、投影与两种存储的一致性测试；`SessionDraft.approvalMode`；`setApprovalMode`（建立前写草稿、建立后写事实，经根会话 mailbox，关机中拒，对话会话拒，策略关掉时拒）；`approvalModeDefault`；`creationEntries` 同批写、`carryEntries` 清空时照抄；`judgeCall` 读根会话当前档位（对话恒为手动，子会话跟根会话）；策略关掉时写 `by: 'policy'`。测试点名验收 11、12、13、14、15、16。自动档测试显式设置根快照状态；重启后的正向夹具重设 tree 并断言重判实际会放行。默认档与草稿在发送预建开始时一起采样。
+- [x] 3. 自动档范围：`LayerInputs` 只增三项；`judgeCall` 读 `snapshots.status`、`posture()`、`SandboxPorts.autoCommands`；`decide` 第 7 层两类放行；`autoAsk` 的五种原因与先后；`modeRule` 与 `summarize` 的 `auto-mode`。测试点名验收 1、2、3、4、5、6、9、10。验收 1、5、6 从 judgeCall 进入，不手填 commandSandboxed/autoAsk；验收 9 的固定表由 62fed4d 的旧实现录制，覆盖工具、路径、coverage、授权、姿态、快照状态与 autoCommands 的两两组合和边界；比较完整 Decision，另做自动档的变形关系检查。旧 decide 测试只补 snapshotStatus: tree，不改期望。
 - [x] 4. 覆盖写七行与 `autoStillAsk`：每行的命中与不命中样例，模块加载时自测。测试点名验收 7、8。
 - [x] 5. 免问命令的环境：`perform` 按派发的判决过滤 `CommandRun.env`，名单与规则是常量。测试点名验收 17。
 - [ ] 6. 第一段核对：G、T、S；多视角评审（对照 spec、安全、突变，各一个新子 agent），StrykerJS 只对改动过的文件跑、只出报告；汇总评审写 log。要出的突变至少有：
@@ -59,7 +59,8 @@
   - 子会话读自己的档位（验收 11 应红）；
   - 建会话时默认值盖过草稿里的选择（验收 13 应红）；
   - `carryEntries` 不带档位（验收 16 应红）；
-  - 免问时写一条会话授权（验收 10 应红）。
+  - 免问时写一条会话授权（验收 10 应红）；
+  - `rejudgeWaiting` 把更宽的判决当真（验收 14 应红；tree 下同一调用重判实际为 allow，仍须保留原待批卡）。
 - [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash；命令卡 facts 的 `category`。测试点名验收 18、29、30。
 - [ ] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
 - [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；告诉模型的检查点。测试点名验收 21、22。
@@ -100,6 +101,8 @@
 
 2026-11-09 · 第一段实现交接：第 2–5 步已完成，十个突变已验证并还原，细节见 log「2026-11-09 · 第一段实现与交接」。未提交；下一步由协调者做第 6 步独立评审、StrykerJS 与沙箱外补跑。
 
+2026-11-09 · 第一段 r2 补充交接：已处理测试视角 M1–M11、m1–m7、m11 与规则视角的第一段条目；m5 平台映射单测留第三段。102 个验收用例、十二个突变与 G 通过；T 仍有相同五项环境失败，S 只拦独立评审。逐条处置与红绿证据见 log「2026-11-09 · 第一段补充：r2 处置与交接」。本轮未提交，第 6 步保持未勾；下一步由协调者评审、StrykerJS 与沙箱外复验，Open 未改。
+
 ## Open
 
 - 挑刺评审 r2（2026-11-09，原文在私有笔记 `review-opus-r2-{tests,rules}.md`）第一段的条目已改进 spec 或交第一段实现；下面是第二、三段开工前要处理的：
@@ -112,23 +115,30 @@
 
 | 验收号 | 层 | 测试用例名 | 门禁命令 | 突变 | 平台 |
 |---|---|---|---|---|---|
-| 1 | 单元 | 06 验收 1: auto allows workspace file tools while snapshots are %s, and asks with no-snapshot when unavailable | test | 待补 | 任意 |
-| 2 | 单元 | 06 验收 2: a Write with no coverage is allowed in auto; a Delete with none asks irreversible | test | 待补 | 任意 |
-| 3 | 集成 | 06 验收 3: twenty-five snapshotted Deletes in auto raise no card and are restorable | test | 待补 | 任意 |
-| 4 | 集成 | 06 验收 4: a sandboxed command runs unasked in auto under %s | test | 待补 | 任意 |
-| 5 | 单元 | 06 验收 5: auto still asks for a command when %s, with autoAsk %s | test | 待补 | 任意 |
-| 6 | 单元 | 06 验收 6: an allow-path bound command is unasked in auto and asked in manual | test | 待补 | 任意 |
-| 7 | 单元 | 06 验收 7: %s is irreversible in both modes; the misses stay unknown | test | 待补 | 任意 |
-| 8 | 单元 | 06 验收 8: a redirect asks once in auto with a session answer; %s does not | test | 待补 | 任意 |
-| 9 | 单元 | 06 验收 9: the manual mode decides every fixture as before 06 | test | 待补 | 任意 |
-| 10 | 集成 | 06 验收 10: an unasked call writes no grant; manual grants still allow in auto | test | 待补 | 任意 |
-| 11 | 集成 | 06 验收 11: a child follows the root's current mode | test | 待补 | 任意 |
-| 12 | 集成 | 06 验收 12: the mode fact survives a restart and new tasks start at the default | test | 待补 | 任意 |
-| 13 | 集成 | 06 验收 13: auto chosen in the draft judges the first call in auto | test | 待补 | 任意 |
-| 14 | 集成 | 06 验收 14: switching to auto never releases a waiting card, even after a restart | test | 待补 | 任意 |
-| 15 | 集成 | 06 验收 15: disableAutoMode folds auto to manual and records a policy fact | test | 待补 | 任意 |
-| 16 | 集成 | 06 验收 16: clearing a session carries its approval mode | test | 待补 | 任意 |
-| 17 | 集成 | 06 验收 17: an unasked command never receives %s; manual commands keep it | test | 待补 | 任意 |
+| 1 | 集成 | 06 验收 1: auto allows workspace Write, Edit and covered Delete while snapshots are %s, and asks safely when unavailable | test | 去掉快照条件 → 验收 1 | 任意 |
+| 2 | 集成 | 06 验收 2: a Write with no coverage is allowed in auto; a Delete with none asks irreversible | test | — | 任意 |
+| 3 | 集成 | 06 验收 3: twenty-five snapshotted Deletes in auto raise no card and are restorable | test | — | 任意 |
+| 4 | 集成 | 06 验收 4: a sandboxed command runs unasked in auto under %s | test | — | 任意 |
+| 5 | 集成 | 06 验收 5: auto still asks for a command when %s, with autoAsk %s | test | 放宽姿态 / 平台缺省 → 验收 5 | 任意 |
+| 5 | 集成 | 06 验收 5: %s never adds autoAsk in either mode | test | 姿态条件、平台缺省 → 验收 5 | 任意 |
+| 6 | 集成 | 06 验收 6: an allow-path bound command is unasked in auto and asked in manual | test | — | 任意 |
+| 7 | 单元 | 06 验收 7: %s is irreversible in both modes; the misses stay unknown | test | 删除 reset / 放宽 restore 例外 → 验收 7 | 任意 |
+| 7 | 单元 | 06 验收 7: pattern self-tests reject invalid %s samples | test | reset 行、restore staged 例外 → 验收 7 | 任意 |
+| 8 | 集成 | 06 验收 8: a redirect asks once in auto with a session answer; %s does not | test | 不排除 /dev/null → 加载自测拦截 | 任意 |
+| 8 | 集成 | 06 验收 8: filename redirect %s asks and accepts a real answer | test | /dev/null 例外 → 验收 8 | 任意 |
+| 9 | 集成 | 06 验收 9: the manual mode decides every fixture as before 06 | test | — | 任意 |
+| 9 | 集成 | 06 验收 9: auto changes only manual approval-mode asks to allows across the same fixtures | test | — | 任意 |
+| 10 | 集成 | 06 验收 10: an unasked call writes no grant; manual grants still allow in auto | test | 免问写授权 → 验收 10 | 任意 |
+| 11 | 集成 | 06 验收 11: a child follows the root's current mode | test | 子会话读自身 → 验收 11 | 任意 |
+| 12 | 集成 | 06 验收 12: the mode fact survives a restart and new tasks start at the default | test | — | 任意 |
+| 12 | 集成 | 06 验收 12: an auto default never writes a mode fact for chat | test | — | 任意 |
+| 13 | 集成 | 06 验收 13: the %s draft choice overrides the %s default on the first call | test | 默认值盖草稿 → 验收 13 | 任意 |
+| 13 | 集成 | 06 验收 13: the %s default is captured when send starts | test | 默认值盖草稿 → 验收 13 | 任意 |
+| 14 | 集成 | 06 验收 14: switching to auto never releases a waiting card, even after a restart | test | 更宽重判当真 → 验收 14 | 任意 |
+| 14 | 集成 | 06 验收 14: changing only autoAsk never stales an answer for %s | test | 更宽重判当真 → 验收 14 | 任意 |
+| 15 | 集成 | 06 验收 15: disableAutoMode folds auto to manual and records a policy fact | test | — | 任意 |
+| 16 | 集成 | 06 验收 16: clearing a session carries its approval mode | test | 清空不携带 → 验收 16 | 任意 |
+| 17 | 集成 | 06 验收 17: an unasked command never receives %s; manual commands keep it | test | 不认环境后缀 → 验收 17 | 任意 |
 | 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
 | 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
 | 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |
@@ -156,3 +166,9 @@
 | 42 | 你用 | （人工） | — | — | 任意 |
 | 43 | 单元 | 06 验收 43: unknown autoAsk values and command-card categories deliver with a generic sentence; unknown flagged categories do not | test | 待补 | 任意 |
 | 44 | 集成 | 06 验收 44: an unknown summary code under %s verdict reads as unknown and the record shows that verdict's neutral sentence | test | 待补 | 任意 |
+
+第一段的入口与界面断言归属：
+
+- 验收 1、2、5、6 直接走 `packages/kernel/src/loop/batch.ts` 的 judgeCall；验收 8 走 SessionService 的发送、启动恢复与真实答复，并要求 applied。验收 9 同时比较旧 decide 表与 judgeCall 的完整判决；变形关系只忽略第 7 层自身的记录和解释字段 autoAsk，不忽略前六层或判决来源。
+- 验收 2、7 的 kernel 断言为不可逆性、原因和 once；「撤不回」文字与 Enter / 默认焦点由 `apps/desktop/test/renderer-approval-card.test.ts` 的「⏎ denies wherever the focus is, 「允许」 included; Space is left to the button it is on」「presentation-r1 不变量 1: focus coming in lands on 「拒绝」, which carries ⏎ and Esc; 「允许」 carries no hint」及「presentation-r1 验收 1: an irreversible card has no why line (开放问题 15 A)」守。
+- 验收 3 的 kernel 断言为 25 次成功删除、25 个可还原调用及完整恢复；计数由 `apps/desktop/test/renderer-snapshots.test.ts` 的「05 验收 48: Delete expands only on success and counts distinct successful paths」守。验收 3、4 的可还原 / 命令警示文字由 `apps/desktop/test/renderer-snapshot-views.test.ts` 的「05 验收 33: a settled round follows kernel restore availability and coverage flags; paused rounds hide the link」守；warming、file-only 与拍前失败的命令均断言 commandsWithoutSnapshot: true。

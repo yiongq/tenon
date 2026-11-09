@@ -11,11 +11,14 @@ import type {
   SandboxRequest,
   StreamEvent,
 } from '../../src/index.js'
+import { frozenBatchOf, rejudgeWaiting, waitingOf } from '../../src/loop/answer.js'
+import type { JudgeContext } from '../../src/loop/batch.js'
 import { judgeCall } from '../../src/loop/batch.js'
 import { readSessionFacts } from '../../src/session/facts.js'
 import { profileSetKey, sessionStartKey } from '../../src/tape/provenance.js'
 import {
   createCounterIds,
+  createFakeInspector,
   createScriptedProvider,
   createTestLoopPorts,
   createTestSessionService,
@@ -61,6 +64,7 @@ function call(name: string, input: Record<string, unknown>, id = 'call'): Stream
 async function harness(
   defaultMode: () => 'manual' | 'auto' = () => 'manual',
   env: Record<string, string> = {},
+  platform: 'yes' | 'linux' | 'no' = 'yes',
 ) {
   const memory = createMemoryHost()
   await memory.fs.mkdirp(WORK)
@@ -95,6 +99,11 @@ async function harness(
   const tape = createTape(recorded)
   const ids = createCounterIds()
   const provider = createScriptedProvider({ models: [MODEL] })
+  const sandboxPorts = {
+    beforeWrap: () => {},
+    grantsChanged: () => {},
+    autoCommands: () => platform,
+  }
   const make = () => {
     const ports = createTestLoopPorts({
       connector: { provider, model: MODEL },
@@ -114,7 +123,7 @@ async function harness(
     )
     service.bindLoop({
       ...ports,
-      sandbox: { beforeWrap: () => {}, grantsChanged: () => {}, autoCommands: () => 'yes' },
+      sandbox: sandboxPorts,
     })
     return { service, ports }
   }
@@ -141,6 +150,7 @@ async function harness(
     entries,
     decisions,
     batches,
+    sandboxPorts,
   }
 }
 type H = Awaited<ReturnType<typeof harness>>
@@ -158,17 +168,72 @@ async function send(
 async function allow(h: Pick<H, 'service' | 'ports'>) {
   const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
   if (pending === null) throw new Error('missing card')
-  await h.service.answer({
+  const answered = await h.service.answer({
     kind: 'approval',
     sessionId: SESSION,
     requestId: pending.card.requestId,
     decision: 'allow',
     origin: null,
   })
+  expect(answered.status).toBe('applied')
   await h.ports.runEnded()
+  return answered
 }
 
 describe('06 session mode and dispatch', () => {
+  it.each([
+    'npm test >> out.log',
+    'npm test 2>&1',
+    'npm test >&2',
+    'npm test >&-',
+    'npm test 2>&-',
+    'npm test >& 2',
+    'npm test >& -',
+    'npm test > /dev/null',
+    'x => x',
+    'a -> b',
+    'a >= b',
+  ])('06 验收 8: a redirect asks once in auto with a session answer; %s does not', async (miss) => {
+    const h = await harness(() => 'auto')
+    const command = 'npm test > out.log'
+    expect((await send(h, 'Bash', { command })).reason.code).toBe('paused')
+    const pending = pendingCard(await h.service.currentPending({ sessionId: SESSION }))
+    expect(pending).toMatchObject({
+      allowScope: 'session',
+      card: { reason: 'command', facts: { autoAsk: 'redirect' } },
+    })
+    const restarted = h.make()
+    h.memory.snapshots.setStatus(SESSION, 'tree')
+    await restarted.service.recover()
+    expect(await restarted.service.currentPending({ sessionId: SESSION })).toEqual(pending)
+    await allow(restarted)
+    const active = { ...h, ...restarted }
+    expect((await send(active, 'Bash', { command })).reason.code).toBe('completed')
+    expect((await h.decisions()).at(-1)?.summary.code).toBe('session-allowed')
+    expect((await send(active, 'Bash', { command: miss })).reason.code).toBe('completed')
+    expect(
+      (await h.decisions()).at(-1)?.record.steps.find((s) => s.by === 'approval-mode')?.basis
+        ?.modeRule,
+    ).toBe('auto-sandboxed-command')
+    await active.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+    expect((await send(active, 'Bash', { command })).reason.code).toBe('completed')
+    expect((await h.decisions()).at(-1)?.summary.code).toBe('session-allowed')
+    expect((await h.entries()).filter((e) => e.name === 'tool/approval_resolved')).toHaveLength(1)
+  })
+
+  it.each(['npm test >&out.log', 'npm test >& out.log', 'npm test >&2.log', 'npm test >&-notes'])(
+    '06 验收 8: filename redirect %s asks and accepts a real answer',
+    async (command) => {
+      const h = await harness(() => 'auto')
+      expect((await send(h, 'Bash', { command })).reason.code).toBe('paused')
+      expect(await h.service.currentPending({ sessionId: SESSION })).toMatchObject({
+        card: { facts: { autoAsk: 'redirect' } },
+      })
+      await allow(h)
+      expect((await send(h, 'Bash', { command })).reason.code).toBe('completed')
+    },
+  )
+
   it('06 验收 3: twenty-five snapshotted Deletes in auto raise no card and are restorable', async () => {
     const h = await harness()
     await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
@@ -276,7 +341,7 @@ describe('06 session mode and dispatch', () => {
         }),
       ],
     })
-    const judge = () =>
+    const judge = (over: Partial<JudgeContext> = {}) =>
       judgeCall(
         {
           host: h.host,
@@ -287,6 +352,8 @@ describe('06 session mode and dispatch', () => {
           userSetting: () => null,
           searchHost: null,
           signal: new AbortController().signal,
+          sandbox: h.sandboxPorts,
+          ...over,
         },
         {
           name: 'Write',
@@ -302,9 +369,78 @@ describe('06 session mode and dispatch', () => {
     await h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
     expect(await judge()).toMatchObject({ decision: { record: { verdict: 'ask' } } })
     expect((await h.entries(OTHER)).some((e) => e.name === 'session/approval_mode_set')).toBe(false)
+    expect(await h.service.setApprovalMode({ sessionId: OTHER, mode: 'auto' })).toEqual({
+      status: 'not-cowork',
+    })
+    await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const inspector = createFakeInspector({
+      id: 'paused',
+      ceiling: 'ask',
+      answer: async () => {
+        entered.resolve()
+        await release.promise
+        return { kind: 'none' }
+      },
+    })
+    const pending = judge({ inspectors: [inspector.registration] })
+    await entered.promise
+    await h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+    release.resolve()
+    expect(await pending).toMatchObject({ decision: { record: { verdict: 'ask' } } })
+    expect(inspector.calls).toHaveLength(1)
+    await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+    const enteredSnapshot = Promise.withResolvers<void>()
+    const releaseSnapshot = Promise.withResolvers<void>()
+    inspector.answer(async () => {
+      enteredSnapshot.resolve()
+      await releaseSnapshot.promise
+      return { kind: 'none' }
+    })
+    const snapshotPending = judge({ inspectors: [inspector.registration] })
+    await enteredSnapshot.promise
+    h.memory.snapshots.setStatus(SESSION, 'unavailable')
+    releaseSnapshot.resolve()
+    expect(await snapshotPending).toMatchObject({
+      decision: { record: { verdict: 'ask' }, confirm: { facts: { autoAsk: 'no-snapshot' } } },
+    })
   })
 
   it('06 验收 12: the mode fact survives a restart and new tasks start at the default', async () => {
+    let legacyDefault: 'manual' | 'auto' = 'manual'
+    const legacy = await harness(() => legacyDefault)
+    await send(legacy)
+    legacyDefault = 'auto'
+    expect((await send(legacy, 'Write')).reason.code).toBe('paused')
+    const legacyRestart = legacy.make()
+    legacy.memory.snapshots.setStatus(SESSION, 'tree')
+    await legacyRestart.service.recover()
+    expect((await readSessionFacts(legacy.tape, SESSION)).approvalMode).toBe('manual')
+    expect((await legacy.entries()).filter((e) => e.name === 'session/approval_mode_set')).toEqual(
+      [],
+    )
+    const legacyWaiting = await waitingOf(legacy.tape, SESSION)
+    if (legacyWaiting === null) throw new Error('legacy card missing')
+    const legacyFrozen = await frozenBatchOf(legacy.tape, legacyWaiting)
+    const legacyJudgement = await rejudgeWaiting({
+      judge: {
+        tape: legacy.tape,
+        host: legacy.host,
+        sandbox: legacy.sandboxPorts,
+        inspectors: [],
+        protectedFiles: [],
+        userSetting: () => null,
+        signal: new AbortController().signal,
+      },
+      waiting: legacyWaiting,
+      item: legacyFrozen.item,
+      testTools: { Write: 'real' },
+    })
+    expect(legacyJudgement).toMatchObject({
+      kind: 'unchanged',
+      judged: { decision: { record: { verdict: 'ask' } } },
+    })
     let mode: 'manual' | 'auto' = 'manual'
     const h = await harness(() => mode)
     await send(h)
@@ -314,6 +450,7 @@ describe('06 session mode and dispatch', () => {
       status: 'set',
     })
     const restarted = h.make()
+    h.memory.snapshots.setStatus(SESSION, 'tree')
     await restarted.service.recover()
     expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('auto')
     expect(
@@ -347,33 +484,70 @@ describe('06 session mode and dispatch', () => {
     )
   })
 
-  it('06 验收 13: auto chosen in the draft judges the first call in auto', async () => {
-    const h = await harness()
-    await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
-    await send(h, 'Write')
-    expect((await h.decisions())[0]?.record.verdict).toBe('allow')
-    expect(
-      (await h.entries()).find((e) => e.name === 'session/approval_mode_set')?.payload,
-    ).toMatchObject({ mode: 'auto', by: 'user' })
-    expect(
-      h.batches.some((batch) =>
-        [
-          'session/start',
-          'session/profile_set',
-          'session/workspace_set',
-          'session/approval_mode_set',
-        ].every((name) => batch.includes(name)),
-      ),
-    ).toBe(true)
-    const another = await harness()
-    await another.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
-    await another.service.selectProfile({ sessionId: SESSION, profile: 'chat' })
-    await another.service.selectProfile({ sessionId: SESSION, profile: 'cowork', dedicated: WORK })
-    expect((await send(another, 'Write')).reason.code).toBe('paused')
-    const explicitManual = await harness(() => 'auto')
-    await explicitManual.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
-    expect((await send(explicitManual, 'Write')).reason.code).toBe('paused')
+  it('06 验收 12: an auto default never writes a mode fact for chat', async () => {
+    const h = await harness(() => 'auto')
+    await h.service.selectProfile({ sessionId: SESSION, profile: 'chat' })
+    expect(await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })).toEqual({
+      status: 'not-cowork',
+    })
+    await send(h)
+    expect((await h.entries()).filter((e) => e.name === 'session/approval_mode_set')).toEqual([])
+    expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
   })
+
+  it.each(['manual', 'auto'] as const)(
+    '06 验收 13: the %s default is captured when send starts',
+    async (initial) => {
+      let mode = initial
+      const h = await harness(() => mode)
+      const held = h.ports.connector.holdAssemble()
+      h.provider.script(done())
+      const sending = h.service.send({ sessionId: SESSION, text: 'start', origin: null })
+      await held.reached
+      mode = initial === 'auto' ? 'manual' : 'auto'
+      held.release()
+      const sent = await sending
+      if (sent.status !== 'started') throw new Error('not started')
+      await h.ports.runEnded({ runId: sent.runId })
+      expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe(initial)
+      const modes = (await h.entries()).filter((e) => e.name === 'session/approval_mode_set')
+      expect(modes.map((e) => e.payload['by'])).toEqual(initial === 'auto' ? ['default'] : [])
+    },
+  )
+  it.each([
+    ['auto', 'manual'],
+    ['manual', 'auto'],
+  ] as const)(
+    '06 验收 13: the %s draft choice overrides the %s default on the first call',
+    async (choice, defaultMode) => {
+      const h = await harness(() => defaultMode)
+      await h.service.setApprovalMode({ sessionId: SESSION, mode: choice })
+      expect((await send(h, 'Write')).reason.code).toBe(choice === 'auto' ? 'completed' : 'paused')
+      expect((await h.decisions())[0]?.record.verdict).toBe(choice === 'auto' ? 'allow' : 'ask')
+      expect(
+        (await h.entries()).find((e) => e.name === 'session/approval_mode_set')?.payload,
+      ).toMatchObject({ mode: choice, by: 'user' })
+      expect(
+        h.batches.some((batch) =>
+          [
+            'session/start',
+            'session/profile_set',
+            'session/workspace_set',
+            'session/approval_mode_set',
+          ].every((name) => batch.includes(name)),
+        ),
+      ).toBe(true)
+      const another = await harness()
+      await another.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+      await another.service.selectProfile({ sessionId: SESSION, profile: 'chat' })
+      await another.service.selectProfile({
+        sessionId: SESSION,
+        profile: 'cowork',
+        dedicated: WORK,
+      })
+      expect((await send(another, 'Write')).reason.code).toBe('paused')
+    },
+  )
 
   it('06 验收 14: switching to auto never releases a waiting card, even after a restart', async () => {
     const h = await harness()
@@ -381,12 +555,40 @@ describe('06 session mode and dispatch', () => {
     const before = await h.service.currentPending({ sessionId: SESSION })
     await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
     expect(await h.service.currentPending({ sessionId: SESSION })).toEqual(before)
+    const waiting = await waitingOf(h.tape, SESSION)
+    if (waiting === null) throw new Error('missing waiting Write')
+    const { item } = await frozenBatchOf(h.tape, waiting)
+    const rejudged = await rejudgeWaiting({
+      judge: {
+        tape: h.tape,
+        host: h.host,
+        sandbox: h.sandboxPorts,
+        inspectors: [],
+        protectedFiles: [],
+        userSetting: () => null,
+        signal: new AbortController().signal,
+      },
+      waiting,
+      item,
+      testTools: { Write: 'real' },
+    })
+    expect(rejudged).toMatchObject({
+      kind: 'unchanged',
+      judged: { decision: { record: { verdict: 'allow' } } },
+    })
+    const control = await harness(() => 'auto')
+    expect((await send(control, 'Write')).reason.code).toBe('completed')
+    expect(await control.service.currentPending({ sessionId: SESSION })).toBeNull()
+
     expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before')
     const restarted = h.make()
+    h.memory.snapshots.setStatus(SESSION, 'tree')
     await restarted.service.recover()
     await restarted.service.resume({ rootSessionId: SESSION, origin: null })
     expect(await restarted.service.currentPending({ sessionId: SESSION })).toEqual(before)
     expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('before')
+    await allow(restarted)
+    expect(await h.memory.fs.readFile(FILE, { encoding: 'utf8' })).toBe('after')
     const redirect = await harness(() => 'auto')
     await send(redirect, 'Bash', { command: 'npm test > out.log' })
     const redirectBefore = await redirect.service.currentPending({ sessionId: SESSION })
@@ -409,6 +611,37 @@ describe('06 session mode and dispatch', () => {
     child.exit(0)
     expect((await active.ports.runEnded({ runId: sent.runId })).reason.code).toBe('completed')
   })
+
+  it.each(['Write', 'Bash'])(
+    '06 验收 14: changing only autoAsk never stales an answer for %s',
+    async (name) => {
+      const h = await harness(() => 'manual', {}, 'linux')
+      h.memory.snapshots.setStatus(SESSION, 'unavailable')
+      await send(
+        h,
+        name,
+        name === 'Bash' ? { command: 'echo old card' } : { file_path: FILE, content: 'after' },
+      )
+      const before = await h.service.currentPending({ sessionId: SESSION })
+      await h.service.setApprovalMode({ sessionId: SESSION, mode: 'auto' })
+      const restarted = h.make()
+      await restarted.service.recover()
+      expect(await restarted.service.currentPending({ sessionId: SESSION })).toEqual(before)
+      await allow(restarted)
+      const active = { ...h, ...restarted }
+      await send(
+        active,
+        name,
+        name === 'Bash'
+          ? { command: 'echo auto card' }
+          : { file_path: absolutePath('/work/other'), content: 'other' },
+      )
+      const autoCard = await active.service.currentPending({ sessionId: SESSION })
+      expect(autoCard).toMatchObject({ card: { facts: { autoAsk: 'no-snapshot' } } })
+      await active.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
+      await allow(active)
+    },
+  )
 
   it('06 验收 15: disableAutoMode folds auto to manual and records a policy fact', async () => {
     const h = await harness(() => 'auto')
@@ -472,23 +705,26 @@ describe('06 session mode and dispatch', () => {
     'custom_secret',
     'Custom_Password',
     'custom_API_KEY',
+    'my_api_key',
+    'MiXeD_aCcEsS_kEy',
     'custom_ACCESS_KEY',
   ])('06 验收 17: an unasked command never receives %s; manual commands keep it', async (key) => {
-    const env = {
-      [key]: 'fixture',
+    const ordinary = {
       PATH: '/bin',
       HOME: '/home/test',
       JAVA_HOME: '/java',
       NODE_OPTIONS: '--trace-warnings',
+      TOKENIZERS_PARALLELISM: 'false',
+      GH_TOKEN_PATH: '/tmp/token',
+      MY_API_KEY_FILE: '/tmp/key',
+    }
+    const env: Record<string, string> = {
+      ...ordinary,
+      [key]: 'fixture',
     }
     const h = await harness(() => 'auto', env)
     await send(h, 'Bash', { command: 'echo environment' })
-    expect(h.wrapped[0]?.env).toEqual({
-      PATH: '/bin',
-      HOME: '/home/test',
-      JAVA_HOME: '/java',
-      NODE_OPTIONS: '--trace-warnings',
-    })
+    expect(h.wrapped[0]?.env).toEqual(ordinary)
     expect(env[key]).toBe('fixture')
     await h.service.setApprovalMode({ sessionId: SESSION, mode: 'manual' })
     await send(h, 'Bash', { command: 'echo approved' })
