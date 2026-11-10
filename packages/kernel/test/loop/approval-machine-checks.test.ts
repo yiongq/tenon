@@ -487,6 +487,25 @@ it('06 验收 24: twenty machine denials in a round end it and downgrade auto', 
       'blocked-repeatedly',
       'blocked-repeatedly',
     ])
+    expect(
+      entries
+        .filter((entry) => entry.name === 'tool/result')
+        .slice(-2)
+        .map((entry) => entry.payload['content']),
+    ).toEqual([
+      [
+        {
+          type: 'text',
+          text: 'The task reached its limit for blocked calls in this round, so it stopped and this call was not run.',
+        },
+      ],
+      [
+        {
+          type: 'text',
+          text: 'The task reached its limit for blocked calls in this round, so it stopped and this call was not run.',
+        },
+      ],
+    ])
     expect(entries.filter((e) => e.name === 'tool/permission_decided')).toHaveLength(39)
     expect(h.provider.starts).toBe(1)
     expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
@@ -507,6 +526,14 @@ it('06 验收 24: twenty machine denials in a round end it and downgrade auto', 
       code: 'blocked-repeatedly',
       count: 3,
     })
+    expect(
+      (await h.entries()).findLast((entry) => entry.name === 'tool/result')?.payload['content'],
+    ).toEqual([
+      {
+        type: 'text',
+        text: 'Several calls in a row were blocked, so the task stopped and this call was not run.',
+      },
+    ])
     expect((await h.entries()).filter((e) => e.payload['by'] === 'downgrade')).toHaveLength(
       mode === 'auto' ? 1 : 0,
     )

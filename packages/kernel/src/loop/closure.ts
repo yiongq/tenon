@@ -159,7 +159,7 @@ export function closureContent(q: {
   readonly facts?: Readonly<Record<string, string>>
   readonly inspectorStatus?: 'timeout' | 'error'
   readonly detail?: string
-  /** 06 step 12 replaces the round branch's fixed note without changing control flow. */
+  /** Selects the cumulative round limit's note rather than the consecutive limit's note. */
   readonly denialScope?: 'round'
 }): ResultContent {
   const cell =
@@ -176,9 +176,9 @@ export function closureContent(q: {
   return blocks
 }
 
-/** Prompt-layer selection point for 06 step 12; keep version 12's text until that step. */
+/** Only not-run calls have a note for the cumulative round limit (spec 06 §熔断). */
 function roundDenialNote(state: ExecutionState): string | undefined {
-  return MODEL_NOTES.closure['blocked-repeatedly'][state]
+  return state === 'not-run' ? MODEL_NOTES.roundDenial : undefined
 }
 
 /** A closure that never ran the call: not-run, blocked, kernel-authored — the common case. */

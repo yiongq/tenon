@@ -74,7 +74,7 @@ export function sandboxReleaseEntry(q: {
   })
 }
 
-/** 06 step 12 supplies the inspector template here; keep existing prompt text/version until then.
+/** Inspector releases name the exact call and checks, with JSON-encoded slots (spec 06).
  * Slots: toolName (JSON string), argsHash (JSON string), inspectorIds (JSON array).
  */
 function inspectorReleaseNote(release: InspectorOverridePayload): string {
@@ -83,6 +83,5 @@ function inspectorReleaseNote(release: InspectorOverridePayload): string {
     argsHash: JSON.stringify(release.argsHash),
     inspectorIds: JSON.stringify(release.inspectorIds),
   }
-  // The existing outer release wrapper carries structured slots until step 12 adds the sentence.
-  return JSON.stringify(slots)
+  return fill(MODEL_NOTES.sandbox.release.inspector, slots)
 }

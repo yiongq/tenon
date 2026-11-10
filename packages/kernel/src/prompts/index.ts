@@ -51,6 +51,8 @@ export interface ModelNotes {
   >
   /** A denying inspector that timed out or failed (§Inspector 接口与合议); the source is `inspector`. */
   readonly inspectorFailed: Readonly<Record<'timeout' | 'error', string>>
+  /** A not-run call after the round's cumulative machine-denial limit (spec 06 §熔断). */
+  readonly roundDenial: string
   /**
    * AskUserQuestion's three answers (§提问工具 AskUserQuestion; H6; plan step 26): `result` has
    * `{answers}` — one `ANSWER_LINE` of the tool's module per question — `noPreference` is the value a
@@ -110,6 +112,8 @@ export interface ModelNotes {
       readonly domain: string
       readonly path: string
       readonly rerun: string
+      /** JSON strings for toolName and argsHash; a JSON array for inspectorIds (spec 06). */
+      readonly inspector: string
     }
   }
 }
@@ -225,6 +229,8 @@ export const MODEL_NOTES: ModelNotes = {
     'step-limit':
       'The task reached its step limit and the user asked you to continue. Carry on with the task from where you stopped.',
   },
+  roundDenial:
+    'The task reached its limit for blocked calls in this round, so it stopped and this call was not run.',
   file: {
     changed:
       'The file changed since it was last read or written. Nothing was written. Read the file again with Read before retrying.',
@@ -243,6 +249,8 @@ export const MODEL_NOTES: ModelNotes = {
       path: 'The next call with the same command and working directory may also write to {path}, once, for command {command}.',
       rerun:
         'The next call with the same command and working directory may run outside the sandbox, once, after user confirmation, for command {command}.',
+      inspector:
+        'The next call to {toolName} with the same arguments (hash {argsHash}) may run once despite blocks from permission checks {inspectorIds}; all other permission checks and any required user confirmation still apply.',
     },
   },
   // The spec's own sentences (§Inspector 接口与合议).
@@ -366,7 +374,7 @@ export function systemPrompt(profile: PromptProfile, locale: 'zh-CN' | 'en'): st
  * The prompt layer's version (§版本闸): an integer that only goes up, by one whenever any text of the
  * layer changes — together with `PROMPT_LAYER_HASH`, which test/prompts/version.test.ts recomputes.
  */
-export const PROMPT_LAYER_VERSION = 12
+export const PROMPT_LAYER_VERSION = 13
 
 /** `promptLayerHash()` (prompts/layer.ts) of this version. */
-export const PROMPT_LAYER_HASH = 'a37b8c0d7be352c28ea5c2b3d4e7f1fadd36a6dea85c42c0524b40eadeb91589'
+export const PROMPT_LAYER_HASH = 'f490205c9b2775394092ad78fc239e8eb3c663583bf89aff0c077ab1f4f2d56c'

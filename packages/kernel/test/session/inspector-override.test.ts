@@ -490,8 +490,9 @@ it('06 验收 22: an unannounced inspector override reaches the model at the nex
   expect(notes).toHaveLength(1)
   expect(notes[0]?.payload['overrides']).toEqual([release.provenanceKey])
   const request = JSON.stringify(h.provider.requests.at(-1))
-  expect(request).toContain('hygiene')
-  expect(JSON.stringify(notes[0]?.payload['content'])).toContain('Bash')
+  const text = `<sandbox_release>\nThe user granted the following permissions:\nThe next call to "Bash" with the same arguments (hash ${JSON.stringify(release.payload['argsHash'])}) may run once despite blocks from permission checks ["hygiene"]; all other permission checks and any required user confirmation still apply.\n</sandbox_release>`
+  expect(notes[0]?.payload['content']).toEqual([{ type: 'text', text }])
+  expect(request).toContain(JSON.stringify(text).slice(1, -1))
   // A completed reply expires this unbound release, even if its old note leaves context.
   const entries = await h.entries()
   const note = sandboxReleaseEntry({
@@ -547,7 +548,9 @@ it('06 验收 22: an unannounced inspector override reaches the model at the nex
       },
     },
   })
-  expect((await makeNote())?.payload['overrides']).toEqual([release.provenanceKey])
+  const announcedAgain = await makeNote()
+  expect(announcedAgain?.payload['overrides']).toEqual([release.provenanceKey])
+  expect(announcedAgain?.payload['content']).toEqual(note.payload['content'])
 })
 
 it('06 验收 21: an inspector override binds the next identical call once and expires', async () => {
