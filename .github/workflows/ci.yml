@@ -150,7 +150,7 @@ jobs:
       - run: pnpm --filter @tenon-app/desktop exec install-electron
       # The runner's screen is smaller than the e2e window (1280x800); fit the window to it.
       - run: system_profiler SPDisplaysDataType | grep -i resolution || true
-      - run: pnpm --filter @tenon-app/desktop exec playwright test e2e/restore.spec.ts e2e/write-card.spec.ts
+      - run: pnpm --filter @tenon-app/desktop exec playwright test e2e/restore.spec.ts e2e/write-card.spec.ts e2e/inspector-release.spec.ts
         env:
           TENON_E2E_FIT_SCREEN: '1'
 
