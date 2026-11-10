@@ -215,7 +215,12 @@ describe('the approval card copy', () => {
     expect(REASONS).toHaveLength(10)
     expect(REASONS.toSorted()).toEqual([...confirmReasonSchema.options].toSorted())
     expect(KINDS).toHaveLength(4)
-    expect(CATEGORIES).toEqual(['exfiltration', 'inspector-failed'])
+    expect(CATEGORIES).toEqual([
+      'exfiltration',
+      'hidden-characters',
+      'control-characters',
+      'inspector-failed',
+    ])
   })
 
   it('has the 「为什么停」 sentence of the all ten reasons under every kind', () => {
@@ -254,9 +259,9 @@ describe('the approval card copy', () => {
         }
       }
     }
-    // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 2).
-    expect(expected).toHaveLength(56)
-    expect(new Set(expected.map(({ key }) => key)).size).toBe(17)
+    // 4 kinds × (6 plain reasons + network × 2 targets + irreversible + flagged × 4).
+    expect(expected).toHaveLength(64)
+    expect(new Set(expected.map(({ key }) => key)).size).toBe(19)
     expect(
       problems(expected.map(({ key, args, what }) => ({ key, args, what, subset: true }))),
     ).toEqual([])
@@ -384,7 +389,7 @@ describe('the tool row copy', () => {
       subset: true,
       what: 'chat Read',
     })
-    expect(expected).toHaveLength(9)
+    expect(expected).toHaveLength(11)
     expect(problems(expected)).toEqual([])
     // Kept for 04, but no longer rendered by the four-code notice.
     expect(problems([{ key: 'blocked.told', args: [], what: 'retained for 04' }])).toEqual([])
@@ -1021,6 +1026,11 @@ it('04 验收 33: receipt and elevated-card copy names no mechanism', () => {
     { key: 'receipt.error.not-found', args: [], what: 'missing call' },
     { key: 'receipt.error.refused', args: [], what: 'refused release' },
     { key: 'receipt.error.failed', args: [], what: 'bridge error' },
+    // 06 §从回执允许一次: a check's block, released for one identical step.
+    { key: 'receipt.action.allow-once', args: [], what: 'allow-once action' },
+    { key: 'receipt.note.allow-once', args: [], what: 'allow-once scope' },
+    { key: 'receipt.error.step-stale', args: [], what: 'stale step release' },
+    { key: 'receipt.error.step-not-found', args: [], what: 'missing step' },
     { key: 'blocked.sandbox', args: ['toolName'], what: 'block code' },
     { key: 'closure.sandbox', args: [], what: 'closure code' },
     { key: 'confirm.reason.elevated', args: ['command'], what: 'elevated card' },

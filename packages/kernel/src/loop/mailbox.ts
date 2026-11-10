@@ -1,3 +1,4 @@
+import { releaseInspectorReceipt } from '../permission/inspector-release.js'
 import { createSnapshotRestorer } from './restore.js'
 import type {
   SnapshotRoundQuery,
@@ -80,6 +81,7 @@ import type {
   SessionService,
   AnswerResult,
   ReleaseQuery,
+  InspectorReleaseQuery,
   ReleaseResult,
   ContinueRunResult,
   RecoverResult,
@@ -419,6 +421,7 @@ export interface Loop {
   send(q: SendQuery): Promise<SendResult>
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
+  releaseInspector(q: InspectorReleaseQuery): Promise<ReleaseResult>
   release(q: ReleaseQuery): Promise<ReleaseResult>
   /** What `approval.current` shows for a root (it and its sub-agents): the one card, or null. */
   currentPending(q: { sessionId: string }): Promise<PendingCard | null>
@@ -3695,6 +3698,21 @@ export function createLoop(deps: LoopDeps): Loop {
         (lease, pre) => continueTurn(ports, box, q, lease, pre),
         () => ({ status: 'refused' }),
       )
+    },
+
+    releaseInspector(q): Promise<ReleaseResult> {
+      const ports = bound
+      if (ports === null || ports.leases.isShuttingDown())
+        return Promise.resolve({ status: 'refused' })
+      return post(mailboxOf(rootOf(q.sessionId)), 'command', null, async () => {
+        if (ports.leases.isShuttingDown()) return { status: 'refused' }
+        return releaseInspectorReceipt(q, {
+          tape,
+          now,
+          refused: () => ports.leases.isShuttingDown(),
+          entries: await readSessionEntries(tape, q.sessionId),
+        })
+      })
     },
 
     release(q): Promise<ReleaseResult> {

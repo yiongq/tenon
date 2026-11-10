@@ -1,3 +1,5 @@
+import { unboundInspectorOverride } from '../permission/inspector-release.js'
+import { canonicalHash } from '../provider/wire/shared.js'
 import type { SubagentHandoff } from './subagent.js'
 import { machineDenialsInHandoff } from './subagent.js'
 /**
@@ -1310,6 +1312,8 @@ export interface JudgeContext {
   readonly searchHost: string | null
   readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
   /** A re-judgement retains a bound override, and unavailable while posture is pending. */
+  readonly rejudging?: true
+  readonly previousInspectorOverride?: PermissionDecidedPayload['inspectorOverride']
   readonly previousSandbox?: SandboxPlan
   readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
@@ -1325,6 +1329,7 @@ export type Judgement =
       readonly definitionChanged?: true
       readonly decision: Decision
       readonly sandbox?: SandboxPlan
+      readonly inspectorOverride?: PermissionDecidedPayload['inspectorOverride']
       readonly reversibility: Reversibility
       readonly place?: PathPlace
       /** Where a file tool acts, when it runs: the real path the decision placed; null otherwise. */
@@ -1364,7 +1369,7 @@ async function coverageOf(ctx: JudgeContext, path: AbsolutePath): Promise<Snapsh
 export async function judgeCall(
   ctx: JudgeContext,
   item: ToolTableItem,
-  call: Pick<CompleteCall, 'input'>,
+  call: Pick<CompleteCall, 'input'> & Partial<Pick<CompleteCall, 'argsHash'>>,
   given?: CallFacts,
 ): Promise<Judgement> {
   const facts = given ?? (await callFactsOf(ctx))
@@ -1402,6 +1407,20 @@ export async function judgeCall(
       : undefined
   const reversibility = reversibilityOf(item, call.input, coverage)
   const place = located === undefined ? undefined : placeFor(profile, located)
+  const inspectorOverride =
+    ctx.rejudging === true
+      ? ctx.previousInspectorOverride
+      : unboundInspectorOverride(
+          entries,
+          item.name,
+          call.argsHash ?? canonicalHash(call.input, 'the input of the inspected call'),
+        )
+  const overridden =
+    inspectorOverride === undefined
+      ? undefined
+      : (entries.find((entry) => entry.provenanceKey === inspectorOverride.key)?.payload[
+          'inspectorIds'
+        ] as readonly string[] | undefined)
   const inspected = inspectedOf(item, call.input, reversibility)
   const ownView = buildSessionView(entries, {
     call: inspected,
@@ -1650,11 +1669,16 @@ export async function judgeCall(
       ...(commandSandboxed ? { commandSandboxed: true as const } : {}),
       ...(autoAsk === undefined ? {} : { autoAsk }),
     },
-    inspectors: inspection.outcomes,
+    inspectors: inspection.outcomes.map((outcome) =>
+      inspectorOverride !== undefined && overridden?.includes(outcome.inspectorId)
+        ? Object.assign({}, outcome, { override: inspectorOverride.key })
+        : outcome,
+    ),
   })
   const failed = decision.record.decidedBy === 'inspector' ? failedStatusOf(decision) : undefined
   return {
     kind: 'judged',
+    ...(inspectorOverride === undefined ? {} : { inspectorOverride }),
     ...(item.definitionHash === undefined || setting?.definitionChanged !== true
       ? {}
       : { definitionChanged: true as const }),
@@ -1769,6 +1793,9 @@ export function decisionEntry(q: {
     ...(q.judged.coverage === undefined ? {} : { coverage: q.judged.coverage }),
     ...(q.judged.fileTarget === undefined ? {} : { fileTarget: q.judged.fileTarget }),
     ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
+    ...(q.judged.inspectorOverride === undefined
+      ? {}
+      : { inspectorOverride: q.judged.inspectorOverride }),
     ...(q.judged.definitionChanged === undefined
       ? {}
       : { definitionChanged: q.judged.definitionChanged }),

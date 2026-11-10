@@ -15,8 +15,13 @@ type SentenceCard = Pick<
   'reason' | 'kind' | 'facts' | 'target' | 'reversibility'
 >
 
-/** ③ Routine questions and irreversible reasons need no second explanation (presentation-r1). */
+/**
+ * ③ Routine questions and irreversible reasons need no second explanation (presentation-r1). A
+ * command card a check asked about says what the check found, by category (06 D36).
+ */
 export function whyKey(card: Omit<SentenceCard, 'reversibility'>): string | null {
+  if (card.reason === 'command' && typeof card.facts['category'] === 'string')
+    return `confirm.reason.flagged.${categoryOf(card.facts)}`
   if (['default', 'command', 'irreversible'].includes(card.reason)) return null
   if (card.reason === 'network') {
     return card.kind === 'network' && card.target.type === 'search'

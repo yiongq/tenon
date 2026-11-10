@@ -270,6 +270,11 @@ export function approvalResolvedKey(runId: string, requestSeq: number, ordinal: 
   return `tool:v1:approval:${callPart(runId, requestSeq, ordinal)}`
 }
 
+/** `tool:v1:inspector_override:<runId>:<requestSeq>:<i>`. */
+export function inspectorOverrideKey(runId: string, requestSeq: number, ordinal: number): string {
+  return `tool:v1:inspector_override:${callPart(runId, requestSeq, ordinal)}`
+}
+
 /** `tool:v1:override:<runId>:<requestSeq>:<i>:<action>:<violation>`. */
 export function receiptOverrideKey(
   runId: string,

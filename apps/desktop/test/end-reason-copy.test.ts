@@ -43,6 +43,11 @@ const SLOTS: { readonly [C in Code]: readonly SlotOf<C>[] } = {
 
 const CODES = Object.keys(SLOTS) as Code[]
 
+/** Sentences a code has besides its own: a round's cumulative blocks (06 §熔断, `scope: 'round'`). */
+const VARIANTS: Readonly<Record<string, readonly string[]>> = {
+  'blocked-repeatedly-round': ['count'],
+}
+
 /** The ICU arguments a message names, at any depth. */
 function argumentsOf(message: string): string[] {
   return [
@@ -73,8 +78,27 @@ describe('the end-code copy', () => {
   it('has a sentence for each of the 18 codes in both locales, and no other', () => {
     expect(CODES).toHaveLength(18)
     for (const table of Object.values(locales)) {
-      expect(Object.keys(table).toSorted()).toEqual([...CODES].toSorted())
+      expect(Object.keys(table).toSorted()).toEqual([...CODES, ...Object.keys(VARIANTS)].toSorted())
     }
+  })
+
+  it('names exactly the slots each variant reads, and renders it without an ICU error', async () => {
+    for (const table of Object.values(locales))
+      for (const [variant, slots] of Object.entries(VARIANTS))
+        expect([
+          variant,
+          argumentsOf((table as unknown as Record<string, string>)[variant]!),
+        ]).toEqual([variant, [...slots].toSorted()])
+    const errors: string[] = []
+    for (const locale of ['en', 'zh-CN'] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one instance per locale
+      const i18n = await createI18n(locale, (line) => errors.push(line))
+      for (const variant of Object.keys(VARIANTS)) {
+        const text = String(i18n.t(`runEnd.${variant}` as never, SAMPLE as never))
+        expect(text, `${locale} ${variant}`).not.toMatch(/i18n-error|\{/)
+      }
+    }
+    expect(errors).toEqual([])
   })
 
   it('names exactly the slots its sentence reads, in both locales', () => {

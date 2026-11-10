@@ -135,7 +135,12 @@ describe('reasonKey (§最小审批卡 ③)', () => {
 
 describe('categoryOf (§最小审批卡 ③, §界面范围 BlockedNotice)', () => {
   it('reads a flagged category the contract knows', () => {
-    expect(flaggedCategorySchema.options.toSorted()).toEqual(['exfiltration', 'inspector-failed'])
+    expect(flaggedCategorySchema.options.toSorted()).toEqual([
+      'control-characters',
+      'exfiltration',
+      'hidden-characters',
+      'inspector-failed',
+    ])
     for (const category of flaggedCategorySchema.options) {
       expect(categoryOf({ category, toolName: 'x' })).toBe(category)
     }

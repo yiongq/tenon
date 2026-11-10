@@ -51,6 +51,7 @@ import type {
   ContinuationPayload,
   EnvironmentPayload,
   ReceiptOverridePayload,
+  InspectorOverridePayload,
   RestoredPayload,
   RestoreStartedPayload,
   SnapshotCreatedPayload,
@@ -162,6 +163,7 @@ export interface TapePayloadByName {
   'message/environment': EnvironmentPayload
   'message/sandbox_release': SandboxReleasePayload
   'tool/receipt_override': ReceiptOverridePayload
+  'tool/inspector_override': InspectorOverridePayload
   'message/server_instructions': ServerInstructionsPayload
   'tool/call': ToolCallPayload
   'tool/permission_decided': PermissionDecidedPayload

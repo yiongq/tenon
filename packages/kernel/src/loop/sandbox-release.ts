@@ -1,8 +1,10 @@
+import { isInspectorRelease, validInspectorReleases } from '../permission/inspector-release.js'
 /** Release notes join only at the environment checkpoints (04 §告诉模型, reading 17). */
 import { isSandboxRelease, validSandboxReleases } from '../permission/sandbox-release.js'
 import { MODEL_NOTES, fill } from '../prompts/index.js'
 import type {
   NewEntry,
+  InspectorOverridePayload,
   ReceiptOverridePayload,
   SandboxReleasePayload,
   TapeEntry,
@@ -26,10 +28,14 @@ export function sandboxReleaseEntry(q: {
       if (entry.entryId >= (keepFrom ?? 0)) inContext.add(key)
     }
   }
-  const valid = new Set(validSandboxReleases(q.entries).map((entry) => entry.provenanceKey))
+  const valid = new Set(
+    [...validSandboxReleases(q.entries), ...validInspectorReleases(q.entries)].map(
+      (entry) => entry.provenanceKey,
+    ),
+  )
   const releases = q.entries.filter(
     (entry) =>
-      isSandboxRelease(entry) &&
+      (isSandboxRelease(entry) || isInspectorRelease(entry)) &&
       entry.provenanceKey !== null &&
       valid.has(entry.provenanceKey) &&
       !inContext.has(entry.provenanceKey),
@@ -37,6 +43,8 @@ export function sandboxReleaseEntry(q: {
   if (releases.length === 0) return null
   const notes = MODEL_NOTES.sandbox.release
   const lines = releases.map((entry) => {
+    if (isInspectorRelease(entry))
+      return inspectorReleaseNote(entry.payload as InspectorOverridePayload)
     const release = entry.payload as ReceiptOverridePayload
     return release.action === 'allow-domain'
       ? fill(notes.domain, { host: JSON.stringify(release.target) })
@@ -64,4 +72,17 @@ export function sandboxReleaseEntry(q: {
     payload,
     createdAt: q.now(),
   })
+}
+
+/** 06 step 12 supplies the inspector template here; keep existing prompt text/version until then.
+ * Slots: toolName (JSON string), argsHash (JSON string), inspectorIds (JSON array).
+ */
+function inspectorReleaseNote(release: InspectorOverridePayload): string {
+  const slots = {
+    toolName: JSON.stringify(release.toolName),
+    argsHash: JSON.stringify(release.argsHash),
+    inspectorIds: JSON.stringify(release.inspectorIds),
+  }
+  // The existing outer release wrapper carries structured slots until step 12 adds the sentence.
+  return JSON.stringify(slots)
 }

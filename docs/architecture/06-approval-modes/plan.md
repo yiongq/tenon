@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready。第一段（第 2–6 步）已合入 dev（#89）。第二段开工前的规则已定（2026-11-10：D25 重问与 D33 是你选的，D34–D38 lead 定），下一步第 7 步。
+当前：ready。第二段第 7–11 步已实现（分路与门禁见 log 2026-11-10「第二段实现」）；下一步第 12 步提示层，真跑基线评测前先问你。
 需要你：无。第二段的 PR 会改 `ci.yml`（验收 27 的 macOS e2e），到时由你合；第 12.1 步真跑基线评测前另问你。
 
 ## 开工前读
@@ -65,11 +65,11 @@
   - 运行中切档总是结束借用的租约（验收 14 应红）；
   - Run 的策略折叠绕过根 mailbox（验收 15 的可暂停并发例应红）。
   - 启动恢复的策略折叠绕过根 mailbox（验收 15 的恢复并发例应红；正式突变 M17）。
-- [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash（来源 'builtin'，不可信与私密照加固的口径，D33）；命令卡 facts 的 `category`。测试点名验收 18（kernel 与 desktop 两层）、29、30。
-- [ ] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
-- [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；与 04 的放行各自绑、比 `argsHash`、「继续」也算一轮（D37）；告诉模型的检查点。测试点名验收 21、22。
-- [ ] 10. 回执放行（路由与界面）与第二段文案：contracts 的 `inspector.release`、主进程接线（关机中拒）；回执的「允许这一次」与说明、「已放行」；`hidden-characters` 与命令卡 `category` 的句子、命令卡 ③ 的先后（D36）；对象行沿用 02 ②′，不新写（D25）；累计结束的结束文案；两份 locale 与文案覆盖。文案定稿写在这一步的交接里。测试点名验收 20 的按钮一半、26。
-- [ ] 11. 累计熔断与降档：`MACHINE_DENIAL_ROUND_CAP`、`chainCounters` 另数累计、执行循环到 20 结束、`scope: 'round'`、自动档写 `by: 'downgrade'`；子会话从根会话这一轮的累计接着数、父会话按交接补上（D34）；续跑的 Run 开头先数，降档与结束同一次追加、与切档同队（D35）。测试点名验收 24。
+- [x] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash（来源 'builtin'，不可信与私密照加固的口径，D33）；命令卡 facts 的 `category`。测试点名验收 18（kernel 与 desktop 两层）、29、30。
+- [x] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
+- [x] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；与 04 的放行各自绑、比 `argsHash`、「继续」也算一轮（D37）；告诉模型的检查点。测试点名验收 21、22。
+- [x] 10. 回执放行（路由与界面）与第二段文案：contracts 的 `inspector.release`、主进程接线（关机中拒）；回执的「允许这一次」与说明、「已放行」；`hidden-characters` 与命令卡 `category` 的句子、命令卡 ③ 的先后（D36）；对象行沿用 02 ②′，不新写（D25）；累计结束的结束文案；两份 locale 与文案覆盖。文案定稿写在这一步的交接里。测试点名验收 20 的按钮一半、26。
+- [x] 11. 累计熔断与降档：`MACHINE_DENIAL_ROUND_CAP`、`chainCounters` 另数累计、执行循环到 20 结束、`scope: 'round'`、自动档写 `by: 'downgrade'`；子会话从根会话这一轮的累计接着数、父会话按交接补上（D34）；续跑的 Run 开头先数，降档与结束同一次追加、与切档同队（D35）。测试点名验收 24。
 - [ ] 12. 提示层：inspector 放行的告知行、Bash 描述那一句、累计到上限的 not-run 句；`PROMPT_LAYER_VERSION` 12 → 13、更新哈希。从这一步起 CI 的 `evals:gate` 红，到 12.1 为止；之后再改提示层文本回到这一步改哈希，不再加版本。
   - [ ] 12.1 基线评测（live）：真跑前先问 owner，说清跑什么、花多少（基线列 glm-5.3-flash 全集每题 3 次约 5 元；ADR-005 要的 02 题在 glm-5.3 上 3 次约 2 元，一并问）；在沙箱生效的 macOS 上跑；记录与改动同一 PR；lead 逐题对照第 12 版，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 28。
 - [ ] 13. e2e：验收 27（拦下 → 允许这一次 → 同一条命令照常运行），macOS 与 Linux 两个 CI runner；新 e2e 文件加进 `ci.yml` 的 macOS e2e 列表（门禁文件，第二段的 PR 由 owner 合，D38）；走 CI 草稿 PR，一次推送攒齐。
