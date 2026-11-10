@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。第一段（第 2–6 步）做完，评审通过（log 2026-11-09，审过 316af4c），等开 PR 合进 dev。
-需要你：第二段开工前回两个问题（Open 第一条的「要问 owner」）。
+当前：ready。第一段（第 2–6 步）已合入 dev（#89）。第二段开工前的规则已定（2026-11-10：D25 重问与 D33 是你选的，D34–D38 lead 定），下一步第 7 步。
+需要你：无。第二段的 PR 会改 `ci.yml`（验收 27 的 macOS e2e），到时由你合；第 12.1 步真跑基线评测前另问你。
 
 ## 开工前读
 
@@ -65,16 +65,16 @@
   - 运行中切档总是结束借用的租约（验收 14 应红）；
   - Run 的策略折叠绕过根 mailbox（验收 15 的可暂停并发例应红）。
   - 启动恢复的策略折叠绕过根 mailbox（验收 15 的恢复并发例应红；正式突变 M17）。
-- [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash；命令卡 facts 的 `category`。测试点名验收 18、29、30。
+- [ ] 7. 外带检查扩到命令：`judgeCall` 照现有顺序，检查前采样 `canReachNetwork` 与 `commandSandboxed`、检查后按最终计划复核、有变就重跑，最多三次、第三次偏严（D30）；`SandboxPorts.canReach`（desktop 照 `updateAllowlist` 的合并规则答）；`InspectedCall.canReachNetwork`；`exfiltrationOpinion` 认 Bash（来源 'builtin'，不可信与私密照加固的口径，D33）；命令卡 facts 的 `category`。测试点名验收 18（kernel 与 desktop 两层）、29、30。
 - [ ] 8. railguard 适配器（按 P1 的结果钉依赖）：`InspectorCategory` 与 contracts 的类别只增两个；适配器只用 `inputHygiene`、查 D21 的参数；`summarize` 的 `inspector-flagged`；desktop 注册表加适配器。改 `inspectors.test.ts` 那条 02 不变量 17 用例与「`receipt-override` 字面量的写入方」用例的提交必须同时带上第 9、10 步。测试点名验收 19、20、23、25。
-- [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；告诉模型的检查点。测试点名验收 21、22。
-- [ ] 10. 回执放行（路由与界面）与第二段文案：contracts 的 `inspector.release`、主进程接线（关机中拒）；回执的「允许这一次」与说明、「已放行」；`hidden-characters` 与命令卡 `category` 的句子；对象行的可见记号；累计结束的结束文案；两份 locale 与文案覆盖。文案定稿写在这一步的交接里。测试点名验收 26。
-- [ ] 11. 累计熔断与降档：`MACHINE_DENIAL_ROUND_CAP`、`chainCounters` 另数累计、执行循环到 20 结束、`scope: 'round'`、自动档写 `by: 'downgrade'`。测试点名验收 24。
+- [ ] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；与 04 的放行各自绑、比 `argsHash`、「继续」也算一轮（D37）；告诉模型的检查点。测试点名验收 21、22。
+- [ ] 10. 回执放行（路由与界面）与第二段文案：contracts 的 `inspector.release`、主进程接线（关机中拒）；回执的「允许这一次」与说明、「已放行」；`hidden-characters` 与命令卡 `category` 的句子、命令卡 ③ 的先后（D36）；对象行沿用 02 ②′，不新写（D25）；累计结束的结束文案；两份 locale 与文案覆盖。文案定稿写在这一步的交接里。测试点名验收 20 的按钮一半、26。
+- [ ] 11. 累计熔断与降档：`MACHINE_DENIAL_ROUND_CAP`、`chainCounters` 另数累计、执行循环到 20 结束、`scope: 'round'`、自动档写 `by: 'downgrade'`；子会话从根会话这一轮的累计接着数、父会话按交接补上（D34）；续跑的 Run 开头先数，降档与结束同一次追加、与切档同队（D35）。测试点名验收 24。
 - [ ] 12. 提示层：inspector 放行的告知行、Bash 描述那一句、累计到上限的 not-run 句；`PROMPT_LAYER_VERSION` 12 → 13、更新哈希。从这一步起 CI 的 `evals:gate` 红，到 12.1 为止；之后再改提示层文本回到这一步改哈希，不再加版本。
   - [ ] 12.1 基线评测（live）：真跑前先问 owner，说清跑什么、花多少（基线列 glm-5.3-flash 全集每题 3 次约 5 元；ADR-005 要的 02 题在 glm-5.3 上 3 次约 2 元，一并问）；在沙箱生效的 macOS 上跑；记录与改动同一 PR；lead 逐题对照第 12 版，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 28。
-- [ ] 13. e2e：验收 27（拦下 → 允许这一次 → 同一条命令照常运行），macOS 与 Linux 两个 CI runner；走 CI 草稿 PR，一次推送攒齐。
+- [ ] 13. e2e：验收 27（拦下 → 允许这一次 → 同一条命令照常运行），macOS 与 Linux 两个 CI runner；新 e2e 文件加进 `ci.yml` 的 macOS e2e 列表（门禁文件，第二段的 PR 由 owner 合，D38）；走 CI 草稿 PR，一次推送攒齐。
 - [ ] 14. 第二段核对：P；E；多视角评审与 StrykerJS 同第 6 步；汇总评审写 log。要出的突变至少有：
-  - `canReachNetwork` 恒为 false，或 `canReach` 按「预设生效」算（验收 18 的只读档一例应红）；
+  - `canReachNetwork` 恒为 false（验收 18 的 kernel 例应红）；desktop 的 `canReach` 按「预设生效」算（验收 18 的 desktop 只读档一例应红）；外带只认网页与搜索（验收 18 的连接器例应红）；
   - 适配器把 `modified` 读成没意见（验收 19 应红）；
   - 适配器声明 `ceiling: 'ask'`（验收 20、23 应红）；
   - 绑定只比工具名、不比 `argsHash`（验收 21 应红）；
@@ -82,6 +82,8 @@
   - `releaseInspector` 写成 `tool/receipt_override`（验收 21 应红）；
   - `summarize` 把 `inspector-failed` 的问给 `inspector-flagged`（验收 25 应红）；
   - 累计时把只带 `observed` 的也算进去，或上限写成 21（验收 24 应红）；
+  - 子会话的拦截不计进根会话这一轮，或续跑的 Run 开头不数（验收 24 应红）；
+  - inspector 放行与 04 的放行只绑一条（验收 21 应红）；
   - 回执按钮在 `policy` 的拦截上也出（验收 26 应红）；
   - 复核发现变化也不重跑检查，或第三次不按 `canReachNetwork: true` 跑（验收 30 应红）；
   - 判决改用检查前采样的那份计划（验收 29 应红）。
@@ -99,25 +101,13 @@
 
 ## 交接
 
-2026-11-09：owner「06 改 ready」，页头与阶段表已改。auto-tier-hardening 已 implemented（#88，f222db5），第三段的前置依赖解除。第一段分支 `feat/06-seg1` 从本分支切出。
-
-2026-11-08：草稿第三版在私有笔记 `2026-11-08-06-approval-modes/draft/`，照 owner 对两轮开放问题的选择、Codex 交叉评审 r1、复核 r2、r3 与 P1、P2 的结果改过；在 dev `c894922` 的临时 worktree 里照 headers.md 改好页头后跑过 S：拦 0 条，与 06 有关的警告只剩 `trace`（还没有测试）与 `docs-sync`（overview 留到实现时改）。下一步：第 1.3 步挑刺评审 r2，然后第 1.5 步放进仓库。
-
-2026-11-09 · 第一段实现交接：第 2–5 步已完成，十个突变已验证并还原，细节见 log「2026-11-09 · 第一段实现与交接」。未提交；下一步由协调者做第 6 步独立评审、StrykerJS 与沙箱外补跑。
-
-2026-11-09 · 第一段 r2 补充交接：已处理测试视角 M1–M11、m1–m7、m11 与规则视角的第一段条目；m5 平台映射单测留第三段。102 个验收用例、十二个突变与 G 通过；T 仍有相同五项环境失败，S 只拦独立评审。逐条处置与红绿证据见 log「2026-11-09 · 第一段补充：r2 处置与交接」。本轮未提交，第 6 步保持未勾；下一步由协调者评审、StrykerJS 与沙箱外复验，Open 未改。
-
-2026-11-09 · 第一段三路评审处置交接：Run 的策略事实已与用户切档排根队，实际 writer、停止与关闸、白名单及命令边界已修；134 个验收与 49 个突变还原验证通过。正式突变 M1–M16 的原文各出现一次，详见 log「2026-11-09 · 第一段独立评审处置（e67773b 后）」。本轮不提交，第 6 步待协调者复核并在沙箱外跑正式 --mutants；五项全量环境失败与唯一 review 拦截保留，spec 与协调者 Open 未改。
-
-2026-11-09 · 第一段两路复核处置交接：restore 的 source / staged 与整尾 worktree 边界已修；恢复读写排根队新增可暂停测试与正式突变 M17。关机闸、判定 writer 均必填；139 个验收与本轮 17 个补充突变通过还原验证，日志只追加，代号逐项说明。spec 仅增加协调者指定两行，Open 未改。本轮未提交；第 6 步由协调者复核并在沙箱外跑正式门禁，五项环境失败与唯一 review 拦截保留。
+2026-11-10：第一段已合入 dev（#89）。按 owner 当日两张卡与挑刺评审 r2 归第二段的条目，改了 spec（修订记录同日一行）、decisions（D25 重写，新增 D33–D38）、evidence（E14、E23 按 `ecb82a7` 重核）与本 plan 的第 7–14 步、Open 与矩阵；只改文档，没碰代码与测试。下一步：第 7 步开第二段（分支 `feat/06-seg2`）。
 
 ## Open
 
-- 挑刺评审 r2（2026-11-09，原文在私有笔记）第一段的条目已改进 spec 或交第一段实现；第二、三段开工前还要处理：
-  - 要问 owner：看不见的字符在卡上用哪种写法（D25 当时依据的界面现状写错了，要按现状重问）；外带检查对命令的口径与 auto-tier-hardening 对齐，「给你看的一页」那句跟着改。
-  - 第二段开工前 lead 定、改 spec：子会话的机器拦截算不算进根会话这一轮的累计；命令卡同时带 `category` 与 `autoAsk` 时显示哪一句；「继续」开的 Run 算不算回执作废的下一轮；inspector 放行与 04 一次性放行同在时怎么绑；第 20 条在重判时写下时由谁结束本轮、降档与结束同一次写入；验收 19、21、24 补齐情形；检查期间白名单变化的复核补验收；验收 18 的只读档一例放到 desktop 测；矩阵第 28 行拆成确定性与 live 两条；验收 24 的夹具排到突变咬得住。
-  - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 20、33 各在哪层测。
-- spec 全文超过 heavy 档上限约 700 字符（警告）；第 21 步文档同步时一并压缩。
+- 挑刺评审 r2（2026-11-09，原文在私有笔记）第一、二段的条目已改进 spec 或交第一段实现（第二段的见 D25、D33–D38）；第三段开工前还要处理：
+  - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 33 在哪层测（验收 20 已随第二段定，D38）。
+- spec 全文超过 heavy 档上限约 2 300 字符（警告）；第 21 步文档同步时一并压缩。
 - 第 21 步写进 spec 已知限制或收紧：`git restore` 的 `--staged` 例外照原文认字，`--worktree` 看整条命令的后面，所以 `git restore --staged x; echo --worktree` 会多问；反过来 `--no-staged`、`--work` 缩写、`#` 注释或重定向后面的 `--staged` 也算只改暂存区，自动档可能不问，靠 tree 快照还原（02 只许往撤不回加）。
 - 第 21 步一并同步 overview.md：`LoopPorts.leases` 新增 `isShuttingDown()`。
 
@@ -166,16 +156,19 @@
 | 12 | 集成 | 06 验收 12: shutdown at the %s boundary refuses a choice without later IO | test | 删除关机窗口检查 → 验收 12 | 任意 |
 | 15 | 集成 | 06 验收 15: startup recovery and user choice share the root mailbox | test | 启动恢复绕过根队 → 验收 15 | 任意 |
 | 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
+| 18 | 单元 | 06 验收 18: desktop canReach answers %s | test | 待补 | 任意 |
 | 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
 | 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |
+| 20 | 单元 | 06 验收 20: an inspector-failed receipt offers allow once | test | 待补 | 任意 |
 | 21 | 集成 | 06 验收 21: an inspector override binds the next identical call once and expires | test | 待补 | 任意 |
 | 22 | 集成 | 06 验收 22: an unannounced inspector override reaches the model at the next checkpoint | test | 待补 | 任意 |
 | 23 | 单元 | 06 验收 23: desktop registers exfiltration (ask) and hygiene (deny) only | test | 待补 | 任意 |
 | 24 | 集成 | 06 验收 24: twenty machine denials in a round end it and downgrade auto | test | 待补 | 任意 |
 | 25 | 单元 | 06 验收 25: summarize maps inspector-flagged, check-incomplete and auto-sandboxed-command | test | 待补 | 任意 |
 | 26 | 单元 | 06 验收 26: second-segment cards and receipts carry their sentences, marks and allow once | test | 待补 | 任意 |
-| 27 | e2e | 06 验收 27: a blocked command is allowed once from its receipt and then runs | test:e2e | — | macOS、Linux |
-| 28 | live | 06 验收 28: the prompt layer is version 13 and its hash gate passes | test | — | 任意 |
+| 27 | e2e | 06 验收 27: a blocked command is allowed once from its receipt and then runs | test:e2e（Linux）；ci.yml 的 macOS e2e 列表（macOS） | — | macOS、Linux |
+| 28 | 单元 | 06 验收 28: the prompt layer is version 13 and its hash gate passes | test | — | 任意 |
+| 28 | live | （live）基线列全集每题 3 次，逐题对照第 12 版，记录进 log | evals:gate | — | 任意 |
 | 29 | 集成 | 06 验收 29: a profile switch during inspection keeps the post-inspection plan and runs the checks once | test | 待补 | 任意 |
 | 30 | 集成 | 06 验收 30: pending to unavailable during inspection reruns the checks, and the third run is strict | test | 待补 | 任意 |
 | 31 | 单元 | 06 验收 31: the mode menu shows two modes in task sessions only | test | 待补 | 任意 |

@@ -15,14 +15,14 @@ Changes: 01 §desktop 接线（增补：config.json 只增三个键）；02 §�
 - 任务会话的输入框下多一个档位菜单：手动、自动。新任务默认手动，设置里能改默认；发第一条消息之前就能选；切档只管这个会话，清空会话后照旧。
 - 自动档时输入框上方常驻一行「自动档：能还原的改动不再问你 · 切回手动」，点它回到手动；第一次切到自动档时另出一条说明，点「知道了」以后不再出。
 - 自动档里改工作区里的文件、在沙箱里跑命令不出卡（macOS）。Linux 上命令照问；照问的卡都写一句为什么。
-- 两档都要问、答复只管这一次：撤不回的命令，新加 `git reset --hard`、`git checkout -- …` 这类会丢掉已有内容的；读过网页、碰过你的文件之后能联网的命令；路径或命令里有看不见字符的（卡上把它们画出来）。
+- 两档都要问、答复只管这一次：撤不回的命令，新加 `git reset --hard`、`git checkout -- …` 这类会丢掉已有内容的；读过网页、搜索或连接器的内容，又碰过你的数据之后能联网的命令；路径或命令里有看不见字符的（卡上把它们画出来）。
 - 自动档里带 `>` 的命令问一次，点「允许」后这条命令本会话不再问。
 - 被规则拦下的调用，回执上可以「允许这一次」。一轮里被拦 20 次就停下，自动档同时切回手动。
 - 展开工具行能看到为什么没问你。选新文件夹时问「允许访问这个文件夹」，可以「以后都允许」，设置里能撤销。
 
 ```
 一次调用 ─► 拒（组织策略、保护名单、你关掉的、规则拦下）──► 回执；规则拦下的可「允许这一次」
-        ─► 必须问（撤不回、凭据与自动执行的位置、读过网页后能联网的命令……）──► 卡
+        ─► 必须问（撤不回、凭据与自动执行的位置、读过网页或连接器后能联网的命令……）──► 卡
         ─► 自动档：工作区里的文件工具，本会话能留底 ──► 不问
                   沙箱里的命令，macOS、沙箱生效、本会话能留底、不带 > ──► 不问，去掉令牌变量
         ─► 其余照手动档问，卡上说为什么自动档没放
@@ -30,9 +30,9 @@ Changes: 01 §desktop 接线（增补：config.json 只增三个键）；02 §�
 
 不做：`.git` 元数据、连接器外带、`core.hooksPath`（见 auto-tier-hardening）；LLM 判官（06 之后另立）；跳过档；按任务授权（阶段 6）；连接器卡的「本会话允许」；批量删除的闸；按文件夹记住档位。
 
-代价和已知限制：命令的改动只在整个文件夹的快照可用时能还原，「文稿」「桌面」这类文件夹里、首张快照没拍完时，自动档里命令改坏的文件救不回（结算行写「命令的改动可能无法还原」）；拍不了快照的单个文件（超过 100 MB）改动自动档也不问；命令里别的覆盖写法（`sed -i`、`cp` 盖文件、脚本写文件）认不出；读过网页之后每条能联网的命令都问一次，手动档也是；令牌变量按名字认，会误伤也会漏；装了 06、出现过「看不见的字符」那类判决的会话，退回 06 之前的版本后打不开消息列表；第二段要跑一次基线评测，约 5 元。
+代价和已知限制：命令的改动只在整个文件夹的快照可用时能还原，「文稿」「桌面」这类文件夹里、首张快照没拍完时，自动档里命令改坏的文件救不回（结算行写「命令的改动可能无法还原」）；拍不了快照的单个文件（超过 100 MB）改动自动档也不问；命令里别的覆盖写法（`sed -i`、`cp` 盖文件、脚本写文件）认不出；读过网页、搜索或用过连接器之后每条能联网的命令都问一次，手动档也是；令牌变量按名字认，会误伤也会漏；装了 06、出现过「看不见的字符」那类判决的会话，退回 06 之前的版本后打不开消息列表；第二段要跑一次基线评测，约 5 元。
 
-要你定的：32 张卡都标了推荐。D1–D14、D23–D26、D32 是你定的（D1 你选的不是推荐项；D32 是对改 02 已合入接口校验的点名批准）；D22 是 lead 按推荐定的；D15–D21、D27–D31 是实现取舍、lead 定。难退 0 张，中等 1 张（D2）。没有开放问题。
+要你定的：38 张卡都标了推荐。D1–D14、D23–D26、D32、D33 是你定的（D1 你选的不是推荐项；D25 按正确的现状重问过；D32 是对改 02 已合入接口校验的点名批准）；D22 是 lead 按推荐定的；D15–D21、D27–D31、D34–D38 是实现取舍、lead 定。难退 0 张，中等 1 张（D2）。没有开放问题。
 
 怎么算做完：
 - 自动档里能还原的文件改动、沙箱里的命令不出卡，照问的几种照问并说原因（验收 1、2、4、5）。
@@ -132,7 +132,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 | (a) | 02 §决策表与各层输入 第 7 层「自动：只在写明的范围内（工作区内的文件读写）放宽」与「02 不加这个键……恒为 `'manual'`」 | 范围照 §自动档的范围；档位存 config.json、草稿与 Tape | (i) | 02 写「随阶段 4 的档位菜单一起加」；D1 |
 | (b) | 02 §决策表与各层输入「自动档的范围 = 文件工具且 `place === 'workspace'`」 | 文件工具另要快照状态不是 `unavailable`；加沙箱里的命令一类 | (i) | 02 §内置工具的默认档位「阶段 4 解除」；D1 |
 | (c) | 02 §可逆性 `irreversible` 一行「删除已有文件；带内容的对外发送」 | 加「丢掉已有内容」 | (ii) | 02 自己写「只许加往 irreversible 判的模式」；D2 |
-| (d) | 02 §外带检查「只管 WebFetch（……命令……都不触发）」 | 能联网的命令也触发 | (ii) | D4 |
+| (d) | 02 §外带检查「只管 WebFetch（……命令……都不触发）」 | 能联网的命令也触发 | (ii) | D4、D33 |
 | (e) | 02 §Inspector 接口与合议「阶段 2 的产品只注册外带检查」与 §权限 不变量 17 | 另注册 railguard 适配器，`ceiling: 'deny'`，与回执放行同一段交付 | (i) | 02 F1、F9 推迟到阶段 4；D4 |
 | (f) | 02 §合并：两步「02 只保留答复来源字面量……没有写入方」 | `tool/inspector_override` 是 inspector 回执的写入方 | (i) | 02 F9；04 读法 13 |
 | (g) | 02 §上限、守卫与用量「连续 `MACHINE_DENIAL_CAP` 次」 | 另加一轮累计 20 次 | (i)+(ii) | 02 F2 推迟「自动档下连拦到上限」；D5 |
@@ -178,23 +178,25 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
   2. 检查跑完，照现有顺序再算最终计划（`sandboxPlanOf`），按最终计划与此刻的状态复核这两项。
   3. 两项都没变，就用这次检查的结果与最终计划形成判决；有一项变了，按复核时的值重跑检查，再回到第 2 步。
   4. 检查最多跑三次：第三次的输入取偏严的值（`canReachNetwork: true`），判决里不给 `commandSandboxed`（照手动档判：本会话授权照常有效，没有就问，原因照 §自动档的范围 取，没有别的就是 `sandbox`），跑完不再复核。判决用的计划永远是最后一次检查之后算的那份，与 06 之前相同；会话视图只放 Tape 推得出的历史（D28、D30）。
-- **外带检查扩到命令**：碰过私有数据、读进过不可信内容、`call.canReachNetwork` 为真，三样都成立就问，`category: 'exfiltration'`，只这一次，会话授权免不掉；规则仍是 `packages/kernel/src/permission/exfiltration.ts` 的 `exfiltrationOpinion`（D4、D13）。
+- **外带检查扩到命令**：出口加上 `call.canReachNetwork` 为真的 Bash，来源记 'builtin'，所以没有同源豁免、任何私密来源都算；不可信内容与私密数据照 auto-tier-hardening §对 02 的增补（网页、搜索、连接器结果、认不出来源的派发都算不可信），两样都有就问，`category: 'exfiltration'`，只这一次，会话授权免不掉；规则仍是 `packages/kernel/src/permission/exfiltration.ts` 的 `exfiltrationOpinion`（D4、D13、D33）。
 - **`canReach` 照命令网络白名单的实际合并规则答**：用户白名单 ∪ 勾上的「包管理器」预设的域名 ∪ 传入的本会话域名授权，不空为真。预设的域名只看勾没勾、不看档位；预设的可写目录与环境变量照 04「预设生效」（勾上且档位为 workspace-write）才有，两件分开（D28）。
 - **input-hygiene**：适配器 `apps/desktop/src/main/inspectors/railguard.ts`，只用 `inputHygiene`，`ceiling: 'deny'`、`kind: 'local-rule'`，依赖写 npm 精确版本 `@yiong/railguard` 0.7.0（与 `939027d` 那份规则相同，P1）。检查 Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path`。`blocked` → 拒，`category: 'control-characters'`；`modified` → 问，`category: 'hidden-characters'`，丢掉改写；规则出错照 02 §railguard 映射 按拒处理（D4、D21）。
 - **判决摘要**：`packages/kernel/src/permission/record.ts` 的 `summarize` 照旧先认检查失败：类别是 `inspector-failed` 的问与拒都给 `check-incomplete`；正常检查说问、类别是 `hidden-characters` 的给新码 `inspector-flagged`；`exfiltration` 的问照旧 `exfiltration-recheck`，说拒的照旧 `inspector-blocked`。
 
 ## 从回执允许一次
 
-- 这一节整个与 input-hygiene 在第二段一起上线：kernel、`inspector.release` 路由与主进程接线、回执按钮与说明文案、端到端放行（规矩 8，02 §权限 不变量 17）。
+- 这一节整个与 input-hygiene 同一段上线（规矩 8，02 §权限 不变量 17）。
 - 第 5 层的拒（含 `inspector-failed`）的回执多一个按钮「允许这一次」；第 1–3 层的拒没有。
 - 点它 → `inspector.release` → `releaseInspector` 在根会话 mailbox 里核对：调用在本会话当前 incarnation 里、判决是第 5 层拒；写一条 `tool/inspector_override`，同键已在回 `already-released`，不成立回 `stale`，调用不在回 `not-found`，没绑循环回 `refused`（D16）。
-- 绑定：同一会话里下一次工具名与 `argsHash` 都相等的首次判定绑上它（重新判定沿用已绑的，同 04），写进那条判决的 `inspectorOverride`，绑定即用掉；那几个检查的拒按没意见记，`basis.override` 指它；其余各层照判：在自动档范围内不出卡，手动档照问。没绑定的到点击之后开始的下一轮回复结束作废，清空会话也作废，子会话与父会话互不绑定；作废与绑定的算法与 04 §放行怎么生效 的一次性放行共用一份（D13、D16）。
+- 绑定：同一会话里下一次工具名与 `argsHash`（整份参数的哈希：Bash 的 `description`、`timeout` 在内，cwd 不在内）都相等的首次判定绑上它（重新判定沿用已绑的，同 04），写进那条判决的 `inspectorOverride`，绑定即用掉，这次判定被别的检查或第 1–3 层拒掉也不退回；那几个检查的拒按没意见记，`basis.override` 指它；其余各层照判：在自动档范围内不出卡，手动档照问。它与 04 的一次性放行各自绑（04 那边仍只绑一条、重跑优先）。没绑定的到点击之后开始的下一轮回复（「继续」开的也算）结束作废，清空会话也作废，子会话与父会话互不绑定；作废算法与 04 §放行怎么生效 的一次性放行共用一份（D13、D16、D37）。
 - 告诉模型：照 04 §告诉模型 的检查点，`message/sandbox_release` 多一种行：这个工具、这组参数的下一次调用可以运行一次；`overrides` 记 `tool/inspector_override` 的键。
 
 ## 熔断
 
 - 一轮（02 的计数链：从一条消息或「继续」开的 Run 起，含审批暂停后续跑的）里机器拦截累计 `MACHINE_DENIAL_ROUND_CAP` 次，写完第 20 条就结束本轮，同批其余记 not-run / `blocked-repeatedly`，结束原因带 `scope: 'round'` 与次数；连续 3 次照旧（D5）。
-- 自动档到上限（连续的或累计的）同时降回手动，写 `by: 'downgrade'`；手动档只结束本轮。
+- 自动档里任一会话到上限（连续的或累计的）都降回手动，写 `by: 'downgrade'`；手动档不降档。降档写在根会话、与切档同队：本轮因上限结束时与那条 `run_terminal` 同一次追加；子会话连续 3 次而本轮没结束时，与那次 Agent 调用的收口同一次追加（D35）。
+- 子会话没有自己的一轮：根会话这一轮的累计还加上链上各 Agent 调用交接 `calls` 里来源为拦截的条数；子会话从这个数接着数，到 20 以 `scope: 'round'` 结束，父会话收交接后随即结束本轮。连续 3 次照 02 各会话各数（D34）。
+- 第 20 条由答复前或启动时的重判写下时，续跑的 Run 开头先数，不判同批其余调用、不再请求模型就结束本轮（D35）。
 - 只带 `observed` 的违规不计（04 读法 53 复核结论：维持）。
 
 ## 免问命令的环境
@@ -207,7 +209,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ## 界面
 
 第二段（随第一个会拒的检查上线，手动档里就会出现）：
-- **审批卡**（对 presentation-r1 §审批卡 的增补）：③ 加两句：`flagged`、`hidden-characters`「路径或命令里有看不见的字符，已经标出来，先给你看一眼。」；命令卡带 `category` 时出那个类别的 `flagged` 句。所有卡的对象行把零宽字符与 Unicode 标签块字符画成「⟨U+200B⟩」这样的可见记号，原文照存、照原样执行（D25）。
+- **审批卡**（对 presentation-r1 §审批卡 的增补）：③ 加一句：`flagged`、`hidden-characters`「路径或命令里有看不见的字符，已经标出来，先给你看一眼。」。命令卡的 ③：带 `category` 出那个类别的 `flagged` 句，否则按 `autoAsk` 出一句，都没有不出；两者不会同在（第 5 层说问的卡不带 `autoAsk`），04 的沙箱不可用那句照旧另起（D36）。对象行沿用 02 §最小审批卡 ②′ 的 `\u{XXXX}` 写法，06 不另加写法（D25）。
 - **拦截回执**（对 presentation-r1 §拦截回执 的增补）：`inspector`、`control-characters`「路径或命令里有控制字符，已拦下。」；第 5 层拒的回执有「允许这一次」，下面一行「在这个任务里再发出完全相同的这一步时生效一次；到下一轮回复结束还没用上就作废」；点过的变成「已放行」。
 - **结束文案**：`blocked-repeatedly` 带 `scope: 'round'` 时写「这一轮被拦了 {count} 次，任务已结束。」。
 
@@ -243,9 +245,9 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 命令的改动只在 `tree` 时进快照：`file-only`、`warming` 的会话里自动档照样免问命令，它改坏的文件还原不了（D1）。拍不了快照的 Write、Edit（单个文件超过 100 MB 这类）自动档也不问，写坏了救不回。
 - 被 `.gitignore` 排除的文件、嵌套仓库、发到网上的，快照本来就救不回（05）；D2 只认七类具名命令，D3 只认 `>`：`sed -i`、`cp`/`mv` 盖掉文件、脚本里写文件、不带 `--` 的 `git checkout <路径>`、D3 去掉的 `=>`、`->`、`>=` 写法都认不出，自动档照样免问。引号里的 `>`（`node -e "a > b"`）也会问。
 - Linux 上自动档只免问文件工具，命令照问，直到 auto-tier-hardening 的那条限制有办法补上（D14）。
-- 外带检查只看来源不看内容：读过网页之后，每条能联网的命令问一次；勾了预设就是每条都问，只读档也一样；手动档里本会话允许过的也再问（D4、D12）。不可信来源只算网页与搜索：工作区里的文件自己带着指令时，这条检查不认，没读过网页的会话里，免问的命令照样能连白名单里的网站。
-- input-hygiene 只看命令原文与路径，不看写入的内容和脚本文件；它出错时两档的命令与文件工具都被拦，要从回执放行。
-- 检查跑的时候沙箱的状态或设置变了，而且这变化影响到 `canReachNetwork` 或 `commandSandboxed` 时，这次 Bash 的判定才会多跑一到两次检查（每次至多 2 秒）；每次检查期间都这样变，就照手动档判（D30）。
+- 外带检查只看来源不看内容：读过网页、搜索或用过连接器之后，每条能联网的命令问一次；勾了预设就是每条都问，只读档也一样；手动档里本会话允许过的也再问（D4、D12、D33）。工作区里的文件自己带着指令时这条检查不认：没碰过网页、搜索与连接器的会话里，免问的命令照样能连白名单里的网站。
+- input-hygiene 只看命令原文与路径，不看写入的内容和脚本文件；它出错时两档的命令与文件工具都被拦，要从回执放行；同一条命令上 04 的一次性放行在算计划时就绑上，这次被拦也算用掉（04 不变，D37）。
+- 检查跑的时候沙箱的状态或设置变了，而且这变化影响到 `canReachNetwork` 或 `commandSandboxed` 时，这次 Bash 的判定才会多跑一到两次检查（每次至多 2 秒）；每次检查期间都这样变，就照手动档判（D30）。判定之后、包装之前（可能在等整树快照）改的白名单不再复核，这条命令照新白名单连得出去。
 - 一轮里正常但不顺的长任务（装依赖反复被拦）到 20 次也会停（D5）。
 - 有快照的 Delete 不设闸：误删一批要事后还原，快照清掉之后找不回（D6）。
 - 令牌变量按名字认：碰巧这样结尾的普通变量会被去掉，靠环境变量登录的工具在免问的命令里登不上；不按这些规则起名的令牌照传；按本会话授权放行的命令也照传（D7）。
@@ -270,19 +272,19 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 15. 策略 `disableAutoMode`：自动档的会话下一次判定按手动并写一条 `by: 'policy'`；`setApprovalMode` 切到自动回 `policy`。
 16. 自动档的会话清空后，新 incarnation 里仍是自动，档位事实与 profile、workspace 同一批写。
 17. 自动档免问的命令拿到的环境里没有名单与规则里的每一个名字（测试逐个写字面量），`PATH`、`HOME`、`JAVA_HOME`、`NODE_OPTIONS` 还在；手动档批过的、自动档里因撤不回批过的命令照传；`wrap` 收到的就是过滤后的环境。
-18. 本会话 Read 过一个文件、WebFetch 过一个网页之后（参数化）：用户白名单不空、只勾了预设且档位为只读、有本会话域名授权、计划为 `full-access` 的 Bash 两档都出卡、`category: 'exfiltration'`、答复 `once`，本会话授权免不掉；三样都空、在沙箱里的不出这张卡；缺一个条件也不出；检查拿到的 `InspectedCall` 带 `canReachNetwork`，会话视图里没有这一项。
-19. 命令或文件路径里有裸控制字符：两档都拦下、出回执；有零宽字符或 Unicode 标签：两档都出卡、`category: 'hidden-characters'`、答复 `once`；只有制表、换行、回车的照常。
+18. 本会话 Read 过一个文件，又 WebFetch 过一个网页或调过一次连接器之后（参数化）：`canReach` 答真、或计划为 `full-access` 的 Bash 两档都出卡、`category: 'exfiltration'`、答复 `once`，本会话授权免不掉；`canReach` 答假、在沙箱里的不出这张卡；缺一个条件也不出；`canReach` 收到本会话的域名授权；检查拿到的 `InspectedCall` 带 `canReachNetwork`，会话视图里没有这一项。desktop 的 `canReach`：用户白名单不空、只勾了预设且档位为只读、有本会话域名授权各答真，三样都空答假。
+19. Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path` 里（逐个参数化）有裸控制字符：两档都拦下、出回执；有零宽字符或 Unicode 标签：两档都出卡、`category: 'hidden-characters'`、答复 `once`；只有制表、换行、回车的照常。
 20. 让适配器抛错或超时：调用被拦下、`category: 'inspector-failed'`，回执上有「允许这一次」。
-21. 回执放行：`releaseInspector` 写一条 `tool/inspector_override`，不写 `tool/receipt_override`；下一次工具名与参数一字不差的调用绑上它，在自动档范围内不出卡、手动档出卡；参数差一个字不绑；到下一轮回复结束没用上就作废；再点回 `already-released`；第 1–3 层的拒回 `stale`；绑上之后再来一次照拦；04 的三种沙箱放行照旧。
+21. 回执放行：`releaseInspector` 写一条 `tool/inspector_override`，不写 `tool/receipt_override`；下一次工具名与参数一字不差的调用绑上它，在自动档范围内不出卡、手动档出卡；参数差一个字（含 Bash 的 `description`）不绑；到下一轮回复结束没用上就作废，「继续」开的一轮也算；与 04 的「仅此路径」放行同在时两条都绑；再点回 `already-released`；第 1–3 层的拒回 `stale`，不在本会话当前 incarnation 的回 `not-found`，没绑循环回 `refused`；绑上之后再来一次照拦；04 的三种沙箱放行照旧。
 22. 有没宣告的 inspector 放行时，下一个检查点写一条 `message/sandbox_release`，含那一行，`overrides` 有它的键。
 23. desktop 注册的检查恰为外带检查（`ask`）与 railguard 适配器（`deny`），都没有结果后挂点；参数里只有提示注入关键词、或超长时，适配器没意见。
-24. 一轮里放行与机器拦截交替，累计到 20 次时本轮结束，`blocked-repeatedly` 带 `scope: 'round'`、次数 20；自动档同时写 `by: 'downgrade'`，手动档只结束本轮；只带 `observed` 的不计；连续 3 次照旧；「继续」重新计数。
+24. 一轮里放行与机器拦截交替，累计到 20 次时本轮结束，`blocked-repeatedly` 带 `scope: 'round'`、次数 20；自动档同时写 `by: 'downgrade'`（与 `run_terminal` 同一次追加），手动档只结束本轮；19 次拦截加 1 次只带 `observed` 的不结束；连续 3 次照旧，自动档也降档；父 12 次、子 8 次时子会话在第 20 次结束、父会话随后结束本轮；自动档里子会话连续 3 次，根会话降档、本轮接着跑；第 20 条由答复前重判写下时，续跑的 Run 一开始就结束；「继续」重新计数。
 25. `summarize` 对每个可达组合都给码：`hidden-characters` 的问给 `inspector-flagged`；`ask` 型与 `deny` 型检查失败（`inspector-failed`）的问与拒都给 `check-incomplete`；`exfiltration` 的问给 `exfiltration-recheck`；`auto-sandboxed-command` 给 `auto-mode`。
-26. 第二段的卡与回执：`hidden-characters` 一句、命令卡的 `category` 句、对象行里看不见的字符画成可见记号（执行的仍是原文）、`control-characters` 一句与「允许这一次」及其说明、点过后「已放行」、`policy`、`protected`、`user-disabled` 的回执没有按钮、累计结束的那句结束文案；两份 locale 都有这些键，文案覆盖测试穷举，中英文不含「模型」「沙箱」「inspector」/ model、sandbox、inspector。
+26. 第二段的卡与回执：`hidden-characters` 一句，这类卡的对象行照 02 ②′ 把零宽与标签字符写成 `\u{200B}` 这样；命令卡带 `category` 时 ③ 只出类别句；`control-characters` 一句与「允许这一次」及其说明、点过后「已放行」、`policy`、`protected`、`user-disabled` 的回执没有按钮、累计结束的那句结束文案；两份 locale 都有这些键，文案覆盖测试穷举，中英文不含「模型」「沙箱」「inspector」/ model、sandbox、inspector。
 27. 端到端：手动档里一条含控制字符的命令被拦，回执上点「允许这一次」，再发同一条命令照常出命令卡、批准后运行；按钮变成「已放行」（平台：macOS、Linux）。
 28. `PROMPT_LAYER_VERSION` 为 13、哈希闸通过；基线列全集每题 3 次的记录与改动在同一 PR，逐题对照第 12 版没有从过变不过的题，有就停下交 owner（live）。
 29. 测试用一个可以手动放开的 Promise 暂停检查器、改完 fake host 的状态再放开，不靠真实延时。检查暂停时命令档位从「工作区可写」改成「只读」：最终计划是 `read-only`，与 06 之前在检查之后算的相同；`canReachNetwork` 与 `commandSandboxed` 都没变，检查只跑一次。
-30. 夹具同验收 29，白名单、预设与本会话域名授权都设成空。检查暂停时姿态从 `pending` 变成 `unavailable`：最终计划是带 `unavailable` 的 `full-access`；`canReachNetwork` 由假变真，检查按真重跑一次，外带三个条件成立时出 `exfiltration` 卡，命令不按自动档免问。每次检查期间姿态都在变时，检查跑满三次，第三次按 `canReachNetwork: true` 跑、命令照手动档判（本会话授权照常有效），之后不再重跑；中途点停止，调用照 02 记 not-run、不写判决。
+30. 夹具同验收 29，白名单、预设与本会话域名授权都设成空。检查暂停时姿态从 `pending` 变成 `unavailable`：最终计划是带 `unavailable` 的 `full-access`；`canReachNetwork` 由假变真，检查按真重跑一次，外带三个条件成立时出 `exfiltration` 卡，命令不按自动档免问。姿态不变、检查暂停时白名单由空改成一条：`canReachNetwork` 由假变真，检查按真重跑一次、出 `exfiltration` 卡。每次检查期间姿态都在变时，检查跑满三次，第三次按 `canReachNetwork: true` 跑、命令照手动档判（本会话授权照常有效），之后不再重跑；中途点停止，调用照 02 记 not-run、不写判决。
 31. 档位菜单只在任务会话出现（发第一条消息之前也有），两项文案如上，当前项打勾，默认手动；快照 `unavailable` 时自动项可选、带那句说明；策略关掉自动档时没有自动项。
 32. 自动档时横幅常驻、没有关闭钮；点它回到手动、横幅消失，下一次 Write 出卡。
 33. 第一次切到自动档出说明条，「设置」打开「权限与网络」，「知道了」之后再切换（含重启后）不再出。
@@ -309,3 +311,4 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 2026-11-09 · ready 之后 · 照挑刺评审 r2（测试视角）定四处，都只收紧或说清：不带 `autoAsk` 的两条例外压过先后；拍不了的 Delete 不带；缺快照状态读作 `unavailable`；比较卡时不算 `autoAsk`。验收 1、5 相应改写。
 - 2026-11-09 · ready 之后 · 照挑刺评审 r2（规则视角）的第一段条目，都只收紧或说清：档位与快照状态在检查之后读；第 5 层说问的卡不带 `autoAsk`；默认档只对任务形态写、点发送时读；七行逐行列出；`>&` 只排除后跟数字或 `-` 的；工作区内的 Read、Glob、Grep 仍归第 6 层。验收 9、11 相应补写。
 - 2026-11-09 · ready 之后 · 第一段实现评审后补登记接口：`LoopPorts.leases` 增 `isShuttingDown()`，供切档的「关机中拒」使用；规则不变。
+- 2026-11-10 · ready 之后 · 第二段开工前定规则，都只收紧或说清（两项是 owner 当日所选）：卡上沿用 02 ②′ 的写法；外带的不可信与私密照 auto-tier-hardening；子会话的拦截计进根会话这一轮；重判写下的第 20 条与降档怎么结束；命令卡 ③ 的先后；inspector 放行的绑定口径；已知限制补两句；补验收 18、19、21、24、26、30（D25、D33–D38）· PR #89 之后。
