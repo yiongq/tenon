@@ -159,17 +159,26 @@ export function closureContent(q: {
   readonly facts?: Readonly<Record<string, string>>
   readonly inspectorStatus?: 'timeout' | 'error'
   readonly detail?: string
+  /** 06 step 12 replaces the round branch's fixed note without changing control flow. */
+  readonly denialScope?: 'round'
 }): ResultContent {
   const cell =
     q.source === 'inspector' && q.inspectorStatus !== undefined
       ? MODEL_NOTES.inspectorFailed[q.inspectorStatus]
-      : MODEL_NOTES.closure[q.source]?.[q.state]
+      : q.source === 'blocked-repeatedly' && q.denialScope === 'round'
+        ? roundDenialNote(q.state)
+        : MODEL_NOTES.closure[q.source]?.[q.state]
   if (cell === undefined) {
     throw new Error(`closure: no note for ${q.source} / ${q.state} yet (MODEL_NOTES.closure)`)
   }
   const blocks: ResultContent = [{ type: 'text', text: fill(cell, q.facts ?? {}) }]
   if (q.detail !== undefined && q.detail !== '') blocks.push({ type: 'text', text: q.detail })
   return blocks
+}
+
+/** Prompt-layer selection point for 06 step 12; keep version 12's text until that step. */
+function roundDenialNote(state: ExecutionState): string | undefined {
+  return MODEL_NOTES.closure['blocked-repeatedly'][state]
 }
 
 /** A closure that never ran the call: not-run, blocked, kernel-authored — the common case. */
@@ -181,6 +190,7 @@ export function notRunFacts(q: {
   readonly facts?: Readonly<Record<string, string>>
   readonly inspectorStatus?: 'timeout' | 'error'
   readonly detail?: string
+  readonly denialScope?: 'round'
   readonly reversibility?: Reversibility
   readonly writer: FactWriter
 }): NewEntry[] {
@@ -194,6 +204,7 @@ export function notRunFacts(q: {
       ...(q.facts === undefined ? {} : { facts: q.facts }),
       ...(q.inspectorStatus === undefined ? {} : { inspectorStatus: q.inspectorStatus }),
       ...(q.detail === undefined ? {} : { detail: q.detail }),
+      ...(q.denialScope === undefined ? {} : { denialScope: q.denialScope }),
     }),
     isError: true,
     kernelAuthored: true,

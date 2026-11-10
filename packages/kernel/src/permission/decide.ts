@@ -365,6 +365,7 @@ export function decide(input: DecisionInput): Decision {
           : layerFiveCategory(inspectorSteps, 'ask'),
     }
     const facts = pick(pool, CONFIRM_FACT_KEYS[reason])
+    if (reason === 'command' && inspectorAsk) facts['category'] = pool['category']!
     if (reason === 'command' && callReason.facts['sandbox'] === 'unavailable') {
       facts['sandbox'] = 'unavailable'
     }

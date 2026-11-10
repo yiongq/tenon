@@ -19,6 +19,7 @@ import type {
 } from '../tape/entry.js'
 import { effectiveMessages } from '../tape/replay.js'
 import type { ClosureSource, ExecutionState } from './closure.js'
+import { isBlockReason } from './closure.js'
 import { factText } from './spill.js'
 import type { SpillMark } from './spill.js'
 import type { RunEndReason } from './terminal.js'
@@ -38,6 +39,11 @@ export interface HandoffCall {
   readonly target: string // 与审批卡的「对象」用同一算法（E4）
   readonly state: ExecutionState
   readonly source: ClosureSource | null // 没正常执行完的才有，例如 user-rejected（F2）
+}
+
+/** Only actual machine blocks count; observed violations and limit closures do not. */
+export function machineDenialsInHandoff(handoff: SubagentHandoff): number {
+  return handoff.calls.filter((call) => isBlockReason(call.source)).length
 }
 
 /** Waiting between Runs is absent from these intervals, including across restart. */

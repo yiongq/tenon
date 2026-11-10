@@ -1,3 +1,4 @@
+import { machineDenialsInHandoff } from './subagent.js'
 import type { PathScope as SensitivePathScope } from '../permission/workspace.js'
 import type { SchemaValidatorPort } from '../tools/validate.js'
 import type { SubagentHandoff } from './subagent.js'
@@ -122,7 +123,7 @@ import type { CallRef, ClosureSource } from './closure.js'
 import { isBlockReason, notRunFacts, repairFacts } from './closure.js'
 import type { ToolOutcomeView } from './events.js'
 import { resultErrorView } from './events.js'
-import { NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
+import { MACHINE_DENIAL_ROUND_CAP, NO_PROGRESS_REPEATS, RETRY_CAP, STEP_LIMIT } from './limits.js'
 import type { McpToolSource, RunAbortCause, RunAssembly, RunLease } from './ports.js'
 import type { RunEndReason } from './terminal.js'
 import {
@@ -270,6 +271,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   let overflowCompactions = 0
   const boundaryRun = isBoundaryRun(await readSessionEntries(tape, ctx.sessionId), runId)
   let denials = chain.denials
+  let roundDenials = chain.roundDenials
   const batches = [...chain.batches]
   let lastStop: StopReason | null = null
   let errorCode: ProviderErrorCode | null = null
@@ -321,7 +323,16 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
   ): RunFinish =>
     finish(reason, {
       withTerminal: refs.flatMap((ref) =>
-        notRunFacts({ tape, now: ctx.now, call: ref, source, writer: { by: 'run', runId } }),
+        notRunFacts({
+          tape,
+          now: ctx.now,
+          call: ref,
+          source,
+          writer: { by: 'run', runId },
+          ...(reason.code === 'blocked-repeatedly' && reason.scope === 'round'
+            ? { denialScope: 'round' as const }
+            : {}),
+        }),
       ),
       waiting: refs,
     })
@@ -392,6 +403,7 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       commandShell: ctx.commandShell,
       ...(ctx.sandbox === undefined ? {} : { sandbox: ctx.sandbox }),
       denials,
+      roundDenials,
       budgetExceeded: () =>
         ctx.tokenLimit !== null && counted > ctx.tokenLimit ? ctx.tokenLimit : null,
       strict: ctx.onUnansweredCall === 'throw',
@@ -645,13 +657,32 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     }
     if (result.kind === 'blocked-repeatedly') {
       return endClosing(
-        { code: 'blocked-repeatedly', count: result.count },
+        {
+          code: 'blocked-repeatedly',
+          count: result.count,
+          ...(result.scope === undefined ? {} : { scope: result.scope }),
+        },
         result.rest,
         'blocked-repeatedly',
       )
     }
     if (result.kind === 'stopped') return aborted()
     return null
+  }
+
+  // A resolver/recovery rejudge may have written the twentieth denial before this Run opened.
+  if (roundDenials >= MACHINE_DENIAL_ROUND_CAP) {
+    if (signal.aborted) return aborted()
+    return endClosing(
+      { code: 'blocked-repeatedly', scope: 'round', count: roundDenials },
+      (ctx.resume?.calls ?? []).map((call) => ({
+        runId: ctx.resume!.runId,
+        requestSeq: ctx.resume!.requestSeq,
+        ordinal: call.ordinal,
+        providerToolCallId: call.providerToolCallId,
+      })),
+      'blocked-repeatedly',
+    )
   }
 
   if (ctx.resume !== undefined) {
@@ -680,7 +711,10 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
     })
     const ended = batchEnd(result)
     if (ended !== null) return ended
-    if (result.kind === 'done') denials = result.denials
+    if (result.kind === 'done') {
+      denials = result.denials
+      roundDenials = result.roundDenials
+    }
     atBoundary = true
   }
 
@@ -995,7 +1029,10 @@ export async function driveRun(ctx: RunDriverContext): Promise<RunFinish> {
       batches.push(signature)
       const ended = batchEnd(result)
       if (ended !== null) return ended
-      if (result.kind === 'done') denials = result.denials
+      if (result.kind === 'done') {
+        denials = result.denials
+        roundDenials = result.roundDenials
+      }
       atBoundary = true
       break
     }
@@ -1462,11 +1499,11 @@ function wait(host: HostAdapter, ms: number, signal: AbortSignal): Promise<boole
  * `run_terminal.steps`; the batches are their calls' (name, argsHash) lists in request order; the
  * machine denials are the trailing blocked closures, reset by a call that ran or a card that asked.
  */
-async function chainCounters(
+export async function chainCounters(
   tape: Tape,
   sessionId: string,
   runId: string,
-): Promise<{ steps: number; batches: string[]; denials: number }> {
+): Promise<{ steps: number; batches: string[]; denials: number; roundDenials: number }> {
   const entries = await readSessionEntries(tape, sessionId)
   const started = new Map<string, TapeEntry>()
   for (const entry of entries)
@@ -1481,13 +1518,15 @@ async function chainCounters(
     if (current !== runId) chain.unshift(current)
     current = cause?.kind === 'resume' ? cause.pausedRunId : undefined
   }
-  const inChain = new Set(chain)
+  const inChain = new Set([...chain, runId])
   let steps = 0
   const calls = new Map<string, Array<[string, string]>>()
   let denials = 0
+  let roundDenials = 0
   for (const entry of entries) {
     if (entry.sourceId === null || !inChain.has(entry.sourceId)) continue
-    if (entry.name === 'execution/run_terminal') steps += Number(entry.payload['steps'] ?? 0)
+    if (entry.name === 'execution/run_terminal' && entry.sourceId !== runId)
+      steps += Number(entry.payload['steps'] ?? 0)
     else if (entry.name === 'tool/call') {
       const key = `${entry.sourceId}:${String(entry.sourceSeq)}`
       const list = calls.get(key) ?? []
@@ -1495,12 +1534,28 @@ async function chainCounters(
       calls.set(key, list)
     } else if (entry.name === 'execution/tool_outcome') {
       const source = (entry.payload['source'] ?? null) as Parameters<typeof isBlockReason>[0]
-      if (isBlockReason(source)) denials += 1
-      else if (source === null) denials = 0
+      if (isBlockReason(source)) {
+        denials += 1
+        roundDenials += 1
+      } else if (source === null) denials = 0
+    } else if (entry.name === 'tool/result' && entry.payload['handoff'] !== undefined) {
+      roundDenials += machineDenialsInHandoff(entry.payload['handoff'] as SubagentHandoff)
     } else if (entry.name === 'tool/permission_decided' && entry.payload['awaits'] !== undefined)
       denials = 0
   }
-  return { steps, batches: [...calls.values()].map((list) => JSON.stringify(list)), denials }
+  const parent = (await readSessionFacts(tape, sessionId)).subagentOf
+  if (parent !== null) {
+    const root = await readSessionEntries(tape, parent.sessionId)
+    const activeRun = root.findLast((entry) => entry.name === 'execution/run_started')?.sourceId
+    if (activeRun !== null && activeRun !== undefined)
+      roundDenials += (await chainCounters(tape, parent.sessionId, activeRun)).roundDenials
+  }
+  return {
+    steps,
+    batches: [...calls.values()].map((list) => JSON.stringify(list)),
+    denials,
+    roundDenials,
+  }
 }
 
 // ----- small pieces -------------------------------------------------------------------------------

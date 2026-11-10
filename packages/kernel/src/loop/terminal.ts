@@ -13,7 +13,7 @@ export type RunEndReason =
   | { code: 'user-stopped' } // 你停下（含「立即发送」打断）
   | { code: 'paused'; waitingFor: 'approval' | 'question' | 'subagent' } // 暂停等你（F3）
   | { code: 'user-rejected'; toolName: string } // 你拒绝了（F2）
-  | { code: 'blocked-repeatedly'; count: number } // 连续被拦截（F2）
+  | { code: 'blocked-repeatedly'; count: number; scope?: 'round' | undefined } // 连续被拦截（F2）
   | { code: 'step-limit'; limit: number } // 达到步数上限 · 可继续（H11）
   | { code: 'no-progress'; repeats: number } // 原地打转
   | { code: 'usage-limit'; tokenLimit: number } // 超出用量上限（H11）
