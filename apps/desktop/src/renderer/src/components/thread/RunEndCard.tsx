@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { PathText } from '@/components/ui/path-text'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { customVendorGone, isInstanceId } from '@/lib/custom-vendor'
-import { aggregateDone, cardOf, effectLineOf, providerErrorKey } from '@/lib/end-card'
+import { aggregateDone, cardOf, effectLineOf, runEndKey } from '@/lib/end-card'
 import type { DoneGroup, EndVisual } from '@/lib/end-card'
 import { toolSentence } from '@/lib/tool-sentence'
 import { tx } from '@/lib/tx'
@@ -345,13 +345,7 @@ function FailureCard(props: {
       <p data-testid="failure-what" data-custom-vendor-gone={gone}>
         {gone
           ? t('error.customVendorGone')
-          : tx(
-              t,
-              props.reason.code === 'provider-error'
-                ? providerErrorKey(props.reason.errorCode)
-                : `runEnd.${props.reason.code}`,
-              slotsOf(props.reason, i18n.language, t, providers),
-            )}
+          : tx(t, runEndKey(props.reason), slotsOf(props.reason, i18n.language, t, providers))}
         {!gone && props.reason.code === 'provider-error' && props.reason.attempts > 1
           ? t('failure.attempts', { count: props.reason.attempts })
           : null}

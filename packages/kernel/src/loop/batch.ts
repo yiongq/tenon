@@ -1,4 +1,7 @@
+import { unboundInspectorOverride } from '../permission/inspector-release.js'
+import { canonicalHash } from '../provider/wire/shared.js'
 import type { SubagentHandoff } from './subagent.js'
+import { machineDenialsInHandoff } from './subagent.js'
 /**
  * One batch of tool calls (spec 02 §一批工具怎么执行, §权限决策顺序, §原因码表; plan steps 13, 24).
  *
@@ -100,7 +103,7 @@ import {
   workspaceOf,
 } from '../session/facts.js'
 import { autoCommandEnvironment } from '../permission/command-environment.js'
-import { MACHINE_DENIAL_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
+import { MACHINE_DENIAL_CAP, MACHINE_DENIAL_ROUND_CAP, STOP_WRITE_WAIT_MS } from './limits.js'
 import { spillChecked } from './spill.js'
 import type { McpToolSource, RunAbortCause, SandboxPorts } from './ports.js'
 import { handoffView, resultErrorView } from './events.js'
@@ -172,6 +175,7 @@ export interface BatchContext {
   readonly commandShell: CommandShell
   /** Machine denials in a row before this batch, counted from the Tape (F2, F3). */
   readonly denials: number
+  readonly roundDenials?: number
   readonly signal: AbortSignal
   /**
    * Why `signal` was aborted (§进行中、暂停与 RunRegistry「中止原因」), read when a dispatched call
@@ -235,7 +239,7 @@ export class RunWriteRefusedError extends Error {
 }
 
 export type BatchResult =
-  | { readonly kind: 'done'; readonly denials: number }
+  | { readonly kind: 'done'; readonly denials: number; readonly roundDenials: number }
   /**
    * A decision asks, or an AskUserQuestion is allowed: it is written with the Run's `paused` terminal,
    * in one batch, which says what the Run waits for.
@@ -254,6 +258,7 @@ export type BatchResult =
   | {
       readonly kind: 'blocked-repeatedly'
       readonly count: number
+      readonly scope?: 'round'
       readonly rest: readonly CallRef[]
     }
   | { readonly kind: 'usage-limit'; readonly tokenLimit: number; readonly rest: readonly CallRef[] }
@@ -266,6 +271,22 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
     prepareSearch: ctx.search?.prepareQuery,
   }
   let denials = ctx.denials
+  let roundDenials = ctx.roundDenials ?? 0
+  const capped = (after: number): Extract<BatchResult, { kind: 'blocked-repeatedly' }> | null => {
+    const reason =
+      roundDenials >= MACHINE_DENIAL_ROUND_CAP
+        ? { count: roundDenials, scope: 'round' as const }
+        : denials >= MACHINE_DENIAL_CAP
+          ? { count: denials }
+          : null
+    return reason === null
+      ? null
+      : {
+          kind: 'blocked-repeatedly',
+          ...reason,
+          rest: ctx.calls.slice(after).map((later) => refOf(ctx, later)),
+        }
+  }
   const group = await runGroup(ctx, judge)
   if (group.stopped) {
     // Stopped while judging a call: no decision fact for it, it and the rest not-run (B1).
@@ -390,6 +411,10 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
             }
           // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
           await closeHandoff(ctx, call, child, ctx.approved.summary)
+          roundDenials += machineDenialsInHandoff(child.handoff)
+          denials = 0
+          const limit = capped(k + 1)
+          if (limit !== null) return limit
           const budget = ctx.budgetExceeded?.() ?? null
           if (budget !== null)
             return {
@@ -397,7 +422,6 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
               tokenLimit: budget,
               rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
             }
-          denials = 0
           continue
         }
         // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
@@ -410,13 +434,9 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           ...(snapshot === undefined ? {} : { snapshot }),
         })
         denials = blocked ? denials + 1 : 0
-        if (denials >= MACHINE_DENIAL_CAP) {
-          return {
-            kind: 'blocked-repeatedly',
-            count: denials,
-            rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
-          }
-        }
+        if (blocked) roundDenials += 1
+        const limit = capped(k + 1)
+        if (limit !== null) return limit
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- the view reads what the calls before this one wrote
@@ -442,10 +462,9 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         // oxlint-disable-next-line no-await-in-loop -- one call at a time, in the model's order
         await close(ctx, call, [decided, ...blockFacts(ctx, ref, judged)])
         denials += 1
-        if (denials >= MACHINE_DENIAL_CAP) {
-          const rest = ctx.calls.slice(k + 1).map((later) => refOf(ctx, later))
-          return { kind: 'blocked-repeatedly', count: denials, rest }
-        }
+        roundDenials += 1
+        const limit = capped(k + 1)
+        if (limit !== null) return limit
         continue
       }
       if (decision.record.verdict === 'ask') {
@@ -511,6 +530,10 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
           }
         // oxlint-disable-next-line no-await-in-loop -- handoff becomes the original Agent result
         await closeHandoff(ctx, call, child, decision.summary)
+        roundDenials += machineDenialsInHandoff(child.handoff)
+        denials = 0
+        const limit = capped(k + 1)
+        if (limit !== null) return limit
         const budget = ctx.budgetExceeded?.() ?? null
         if (budget !== null)
           return {
@@ -518,7 +541,6 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
             tokenLimit: budget,
             rest: ctx.calls.slice(k + 1).map((c) => refOf(ctx, c)),
           }
-        denials = 0
         continue
       }
       // oxlint-disable-next-line no-await-in-loop -- serial calls preserve model order
@@ -531,13 +553,9 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
         ...(snapshot === undefined ? {} : { snapshot }),
       })
       denials = blocked ? denials + 1 : 0
-      if (denials >= MACHINE_DENIAL_CAP) {
-        return {
-          kind: 'blocked-repeatedly',
-          count: denials,
-          rest: ctx.calls.slice(k + 1).map((later) => refOf(ctx, later)),
-        }
-      }
+      if (blocked) roundDenials += 1
+      const limit = capped(k + 1)
+      if (limit !== null) return limit
     } catch (error) {
       if (!(error instanceof RunWriteRefusedError)) throw error
       // A stop reached the decision's or the dispatch's write first: neither is written, and the
@@ -547,7 +565,7 @@ export async function runBatch(ctx: BatchContext): Promise<BatchResult> {
       return { kind: 'stopped' }
     }
   }
-  return { kind: 'done', denials }
+  return { kind: 'done', denials, roundDenials }
 }
 
 type Judged = Extract<Judgement, { kind: 'judged' }>
@@ -1294,6 +1312,8 @@ export interface JudgeContext {
   readonly searchHost: string | null
   readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
   /** A re-judgement retains a bound override, and unavailable while posture is pending. */
+  readonly rejudging?: true
+  readonly previousInspectorOverride?: PermissionDecidedPayload['inspectorOverride']
   readonly previousSandbox?: SandboxPlan
   readonly ignoreSearchGrant?: boolean
   readonly signal: AbortSignal
@@ -1309,6 +1329,7 @@ export type Judgement =
       readonly definitionChanged?: true
       readonly decision: Decision
       readonly sandbox?: SandboxPlan
+      readonly inspectorOverride?: PermissionDecidedPayload['inspectorOverride']
       readonly reversibility: Reversibility
       readonly place?: PathPlace
       /** Where a file tool acts, when it runs: the real path the decision placed; null otherwise. */
@@ -1348,7 +1369,7 @@ async function coverageOf(ctx: JudgeContext, path: AbsolutePath): Promise<Snapsh
 export async function judgeCall(
   ctx: JudgeContext,
   item: ToolTableItem,
-  call: Pick<CompleteCall, 'input'>,
+  call: Pick<CompleteCall, 'input'> & Partial<Pick<CompleteCall, 'argsHash'>>,
   given?: CallFacts,
 ): Promise<Judgement> {
   const facts = given ?? (await callFactsOf(ctx))
@@ -1386,6 +1407,20 @@ export async function judgeCall(
       : undefined
   const reversibility = reversibilityOf(item, call.input, coverage)
   const place = located === undefined ? undefined : placeFor(profile, located)
+  const inspectorOverride =
+    ctx.rejudging === true
+      ? ctx.previousInspectorOverride
+      : unboundInspectorOverride(
+          entries,
+          item.name,
+          call.argsHash ?? canonicalHash(call.input, 'the input of the inspected call'),
+        )
+  const overridden =
+    inspectorOverride === undefined
+      ? undefined
+      : (entries.find((entry) => entry.provenanceKey === inspectorOverride.key)?.payload[
+          'inspectorIds'
+        ] as readonly string[] | undefined)
   const inspected = inspectedOf(item, call.input, reversibility)
   const ownView = buildSessionView(entries, {
     call: inspected,
@@ -1420,15 +1455,72 @@ export async function judgeCall(
     item.source === 'builtin' &&
     item.originalName === 'WebFetch' &&
     isBlockedFetchUrl(String(call.input['url'] ?? ''))
-  const inspection = urlBlocked
-    ? { stopped: false, outcomes: [] }
-    : await runInspectors({
-        inspectors: ctx.inspectors,
-        input: { call: inspected, view },
-        setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
-        signal: ctx.signal,
-      })
-  if (inspection.stopped) return { kind: 'stopped' }
+  const workspace = paths.roots[0] ?? null
+  const isCommand = item.source === 'builtin' && item.originalName === 'Bash'
+  const plan = () =>
+    isCommand
+      ? sandboxPlanOf(
+          ctx.host,
+          ctx.previousSandbox,
+          ctx.previousSandbox === undefined && workspace !== null
+            ? unboundSandboxOverride(entries, String(call.input['command'] ?? ''), workspace)
+            : undefined,
+        )
+      : undefined
+  const sample = async (sandbox: SandboxPlan | undefined) => ({
+    canReachNetwork:
+      sandbox !== undefined &&
+      (sandbox.profile === 'full-access' ||
+        (ctx.sandbox?.canReach?.({
+          sessionId: ctx.sessionId,
+          hosts: await sandboxDomainHosts((id) => readSessionEntries(ctx.tape, id), ctx.sessionId),
+        }) ??
+          true)),
+    commandSandboxed:
+      sandbox !== undefined &&
+      sandbox.profile !== 'full-access' &&
+      ctx.host.sandbox.posture?.().state === 'active' &&
+      (ctx.sandbox?.autoCommands?.() ?? 'no') === 'yes',
+  })
+  let sandbox: SandboxPlan | undefined
+  let strictInspection = false
+  let sampled = isCommand
+    ? await sample(plan())
+    : { canReachNetwork: false, commandSandboxed: false }
+  let inspection: Awaited<ReturnType<typeof runInspectors>>
+  for (let pass = 1; ; pass += 1) {
+    // D30: bound oscillation without allowing the automatic command exemption on the last pass.
+    if (isCommand && pass === 3) {
+      strictInspection = true
+      sampled = { canReachNetwork: true, commandSandboxed: false }
+    }
+    const inspectedCall = isCommand
+      ? { ...inspected, canReachNetwork: sampled.canReachNetwork }
+      : inspected
+    // oxlint-disable-next-line no-await-in-loop -- only a changed live sample reruns the checks
+    inspection = urlBlocked
+      ? { stopped: false, outcomes: [] }
+      : // oxlint-disable-next-line no-await-in-loop -- rerun after a changed live sample
+        await runInspectors({
+          inspectors: ctx.inspectors,
+          input: { call: inspectedCall, view },
+          setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
+          signal: ctx.signal,
+        })
+    if (inspection.stopped || ctx.signal.aborted) return { kind: 'stopped' }
+    // The persisted plan is always calculated AFTER the last inspection, even on the strict pass.
+    sandbox = plan()
+    if (!isCommand || pass === 3) break
+    // oxlint-disable-next-line no-await-in-loop -- compare against the state after this inspection
+    const final = await sample(sandbox)
+    if (ctx.signal.aborted) return { kind: 'stopped' }
+    if (
+      sampled.canReachNetwork === final.canReachNetwork &&
+      sampled.commandSandboxed === final.commandSandboxed
+    )
+      break
+    sampled = final
+  }
   const policy = ctx.host.policy.current()
   const rootId = snapshotSessionId(ctx.sessionId, entries)
   const readMode = async (): Promise<'manual' | 'auto' | null> => {
@@ -1473,17 +1565,6 @@ export async function judgeCall(
     ? readMode()
     : ctx.modeTurn(rootId, readMode))
   if (approvalMode === null) return { kind: 'stopped' }
-  const workspace = paths.roots[0] ?? null
-  const sandbox =
-    item.source === 'builtin' && item.originalName === 'Bash'
-      ? sandboxPlanOf(
-          ctx.host,
-          ctx.previousSandbox,
-          ctx.previousSandbox === undefined && workspace !== null
-            ? unboundSandboxOverride(entries, String(call.input['command'] ?? ''), workspace)
-            : undefined,
-        )
-      : undefined
   const ranged =
     profile === 'cowork' &&
     item.source === 'builtin' &&
@@ -1494,15 +1575,11 @@ export async function judgeCall(
   const snapshotStatus = ranged ? ctx.host.snapshots.status(rootId) : undefined
   const snapshotAvailable = ['tree', 'warming', 'file-only'].includes(snapshotStatus ?? '')
   const commandPlatform = ctx.sandbox?.autoCommands?.() ?? 'no'
-  const commandSandboxed =
-    sandbox !== undefined &&
-    sandbox.profile !== 'full-access' &&
-    ctx.host.sandbox.posture?.().state === 'active' &&
-    commandPlatform === 'yes'
+  const commandSandboxed = sampled.commandSandboxed
   const autoAsk =
     approvalMode !== 'auto' ||
     !ranged ||
-    (sandbox !== undefined && sandbox.profile === 'full-access')
+    (sandbox !== undefined && sandbox.profile === 'full-access' && !strictInspection)
       ? undefined
       : !snapshotAvailable
         ? 'no-snapshot'
@@ -1592,11 +1669,16 @@ export async function judgeCall(
       ...(commandSandboxed ? { commandSandboxed: true as const } : {}),
       ...(autoAsk === undefined ? {} : { autoAsk }),
     },
-    inspectors: inspection.outcomes,
+    inspectors: inspection.outcomes.map((outcome) =>
+      inspectorOverride !== undefined && overridden?.includes(outcome.inspectorId)
+        ? Object.assign({}, outcome, { override: inspectorOverride.key })
+        : outcome,
+    ),
   })
   const failed = decision.record.decidedBy === 'inspector' ? failedStatusOf(decision) : undefined
   return {
     kind: 'judged',
+    ...(inspectorOverride === undefined ? {} : { inspectorOverride }),
     ...(item.definitionHash === undefined || setting?.definitionChanged !== true
       ? {}
       : { definitionChanged: true as const }),
@@ -1711,6 +1793,9 @@ export function decisionEntry(q: {
     ...(q.judged.coverage === undefined ? {} : { coverage: q.judged.coverage }),
     ...(q.judged.fileTarget === undefined ? {} : { fileTarget: q.judged.fileTarget }),
     ...(q.judged.sandbox === undefined ? {} : { sandbox: q.judged.sandbox }),
+    ...(q.judged.inspectorOverride === undefined
+      ? {}
+      : { inspectorOverride: q.judged.inspectorOverride }),
     ...(q.judged.definitionChanged === undefined
       ? {}
       : { definitionChanged: q.judged.definitionChanged }),

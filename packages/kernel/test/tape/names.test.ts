@@ -202,6 +202,7 @@ describe('the reserved namespace table', () => {
         'provider/attempt_completed',
         ...PHASE_2_NAMES.map(([name]) => name),
         'session/approval_mode_set',
+        'tool/inspector_override',
         'fs/snapshot_created',
         'fs/restore_started',
         'fs/restored',

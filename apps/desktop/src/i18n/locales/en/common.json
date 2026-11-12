@@ -155,7 +155,8 @@
     "output-truncated": "The reply was cut off at the output limit of {maxTokens} tokens.",
     "shutdown-aborted": "{trigger, select, quit {The task stopped because Tenon quit.} other {The task stopped because the window closed.}}",
     "recovered": "Tenon closed unexpectedly while this task was running.",
-    "time-limit": "The subtask reached its time limit ({limitMs} ms)."
+    "time-limit": "The subtask reached its time limit ({limitMs} ms).",
+    "blocked-repeatedly-round": "Calls were blocked {count} times in this round, so the task ended."
   },
   "model": {
     "name": {
@@ -498,7 +499,9 @@
     },
     "inspector": {
       "exfiltration": "This step might take your data elsewhere, so it was stopped.",
-      "inspector-failed": "Tenon couldn't check that this step is safe, so it was stopped."
+      "inspector-failed": "Tenon couldn't check that this step is safe, so it was stopped.",
+      "hidden-characters": "This path or command contains invisible characters, so it was stopped.",
+      "control-characters": "This path or command contains control characters, so it was stopped."
     },
     "chatReadScope": "In a chat, only files Tenon saved for this chat can be opened.",
     "told": "The model was told."
@@ -538,7 +541,9 @@
       "policy": "Your organization asks for your OK on this step.",
       "flagged": {
         "exfiltration": "This request might take your data elsewhere.",
-        "inspector-failed": "Tenon couldn't check that this step is safe."
+        "inspector-failed": "Tenon couldn't check that this step is safe.",
+        "hidden-characters": "This path or command contains invisible characters. They are marked so you can check it first.",
+        "control-characters": "This path or command contains control characters. They are marked so you can check it first."
       },
       "command": "Running a command needs your OK.",
       "interaction-required": "This connector wants you to confirm it yourself."
@@ -929,12 +934,14 @@
     "action": {
       "allow-domain": "Allow connections to {target} in this task",
       "allow-path": "Allow writing to this location only: {target}",
-      "rerun-unsandboxed": "Allow this command to run without restrictions once next time"
+      "rerun-unsandboxed": "Allow this command to run without restrictions once next time",
+      "allow-once": "Allow once"
     },
     "note": {
       "allow-domain": "From now on, commands in this task can connect and upload to it. This lasts for this task only; it is not saved to the list in Settings.",
       "allow-path": "Applies once when this exact command runs again in this task, adding only this location. Unused permission expires at the end of the next reply; it is not remembered.",
-      "rerun-unsandboxed": "Applies when this exact command runs again in this task: it can read and write every file you can access and connect to any site. You will be asked again before it runs. Unused permission expires at the end of the next reply; it is not remembered."
+      "rerun-unsandboxed": "Applies when this exact command runs again in this task: it can read and write every file you can access and connect to any site. You will be asked again before it runs. Unused permission expires at the end of the next reply; it is not remembered.",
+      "allow-once": "Applies once when this exact step is sent again in this task. Unused permission expires at the end of the next reply."
     },
     "released": "Allowed",
     "protected": "Access to these files cannot be allowed here.",
@@ -942,7 +949,9 @@
       "stale": "This call can no longer be allowed. Request the command again.",
       "not-found": "This call was not found. Request the command again.",
       "refused": "Permission cannot be granted now. Try again later.",
-      "failed": "Permission could not be granted. Try again."
+      "failed": "Permission could not be granted. Try again.",
+      "step-stale": "This step can no longer be allowed. If you still need it, have it done again.",
+      "step-not-found": "This step was not found. If you still need it, have it done again."
     }
   },
   "snapshot": {
@@ -1022,6 +1031,7 @@
       "connector-requires-confirm": "This connector action needs confirmation",
       "check-incomplete": "Checks could not finish; confirmation is needed",
       "inspector-blocked": "Checks found a risk and blocked the action",
+      "inspector-flagged": "Checks found invisible characters; confirmation is needed",
       "own-output-read": "Reading content produced in this session",
       "no-approval-needed": "This action does not need confirmation",
       "auto-mode": "Allowed by the automatic mode settings",

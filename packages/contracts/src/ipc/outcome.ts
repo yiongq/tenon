@@ -24,6 +24,7 @@ export const decisionSummaryCodeSchema = z.enum([
   'user-disabled',
   'irreversible-once',
   'exfiltration-recheck',
+  'inspector-flagged',
   'default-ask',
   'workspace-read',
   'protected',

@@ -39,7 +39,7 @@ import {
 import type { ScriptedProvider, TestConnector } from '@tenon-app/kernel/testing'
 import { chatEventSchema, chatQueueEvent, chatSend, chatSendNow } from '@tenon-app/contracts'
 import type { ChatEvent, IpcMainLike } from '@tenon-app/contracts'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDesktopLoop, registerChatRoutes } from '../src/main/chat.js'
 import { writeConfig } from '../src/main/host/profile.js'
 import { createRunConnector } from '../src/main/run-assembly.js'
@@ -48,6 +48,7 @@ import { startFakeAnthropic } from './support/fake-anthropic.js'
 import type { FakeAnthropic } from './support/fake-anthropic.js'
 import { startFakeOpenAI } from './support/fake-openai.js'
 import { ANTHROPIC_ORIGIN, ZHIPU_ORIGIN, seamNetwork } from './support/seam-network.js'
+import { wiringFixture } from './sandbox/wiring-support.js'
 
 /** These cases run no Bash: the shell is a stand-in. */
 const NO_SHELL: CommandShell = { path: absolutePath('/bin/sh'), env: () => Promise.resolve({}) }
@@ -220,6 +221,22 @@ function said(row: MessageRow): string {
 function withKey(baseURL: string): { env: Record<string, string>; upstream: string } {
   return { env: { ANTHROPIC_API_KEY: 'test-key' }, upstream: baseURL }
 }
+
+it('06 验收 18: desktop loop forwards canReach to the runtime', () => {
+  const h = wiringFixture()
+  const canReach = vi.spyOn(h.runtime, 'canReach')
+  const query = { sessionId: randomUUID(), hosts: ['grant.example.org'] }
+  const port = h.loop.ports.sandbox?.canReach
+  expect(port).toBeTypeOf('function')
+  expect(port!(query)).toBe(true)
+  expect(canReach).toHaveBeenLastCalledWith(query)
+  expect(port!(query)).toBe(h.runtime.canReach(query))
+  const empty = { sessionId: query.sessionId, hosts: [] }
+  expect(port!(empty)).toBe(false)
+  h.setSettings({ allowedDomains: ['user.example.org'] })
+  expect(port!(empty)).toBe(true)
+  expect(port!(empty)).toBe(h.runtime.canReach(empty))
+})
 
 describe('chat routes', () => {
   let fake: FakeAnthropic

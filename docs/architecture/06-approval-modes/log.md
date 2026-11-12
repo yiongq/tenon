@@ -591,3 +591,27 @@ const ownLease = true
 撤销突变 M14：CI 时限，316af4c 上已验证变红，验收 14 的用例守
 撤销突变 M16：CI 时限，316af4c 上已验证变红，验收 14 的用例守
 撤销突变 M17：CI 时限，316af4c 上已验证变红，验收 15 的恢复并发用例守
+
+## 2026-11-10 · 第二段实现（第 7–11 步）与交接
+
+- 分路：第二段按文件分三路并行，A 路（Codex，kernel、contracts、主进程路由与 railguard 适配器）分两轮，B 路（Codex，desktop 的 `canReach`），界面与文案由 lead 做；第 12 步提示层最后单独做。几路都不写本 log 与 plan，由 lead 汇总。
+- 第 7 步（A 路第一轮 527c593、B 路 5eab3eb）：Bash 的 `judgeCall` 在检查前采样能否联网与是否免问、检查后按最终计划复核，有变就重跑，最多三次、第三次偏严；外带检查把能联网的 Bash 算作出口，来源记 'builtin'，没有同源豁免，连接器与 WebFetch 的判法原样保留（D33）；命令卡 facts 带检查的 `category`。desktop 的 `canReach` 与真正下发的白名单共用一份合并逻辑，读设置出错时答真；kernel 缺这个查询时也读作真。
+- 第 11 步（A 路第一轮 527c593）：累计与连续 3 次并排计数，子会话交接回来时把它被拦的条数加进根会话这一轮；到 20 优先按本轮结束，`blocked-repeatedly` 带 `scope: 'round'`；重判写下第 20 条时续跑的 Run 开头先数；自动档的降档写在根会话，与 `run_terminal` 或那次 Agent 调用的收口同一次追加（D34、D35）。累计结束给模型看的句子留在 `closure.ts` 的 `roundDenialNote`，第 12 步接。
+- 第 8–10 步（A 路第二轮，与界面同一个提交）：railguard 0.7.0 适配器只用 `inputHygiene`，`deny` / `local-rule`，参数照 D21；两个新类别与 `inspector-flagged`；`tool/inspector_override` 的事实、键、投影与两种存储的共享一致性用例；`releaseInspector` 在根会话 mailbox 里核对、五种状态、关机中拒；只撤掉回执点名的那几个检查的拒，重判沿用已绑的；与 04 一次性放行共用作废算法，04 的三种放行行为不变（D37）；`inspector.release` 路由等启动恢复、关机中拒。告诉模型的检查点只做了机制，句子留在 `loop/sandbox-release.ts` 的 `inspectorReleaseNote`，第 12 步填 `toolName`、`argsHash`、`inspectorIds` 三个槽。
+- 界面（lead）：检查给出的拦截回执下出「允许这一次」与说明一行，点过变「已放行」，重开后再点回 `already-released` 照样显示「已放行」（同 04）；「已不能放行」「找不到这一步」两句不说「命令」，因为被拦的也可能是文件路径；组织策略、保护名单、你关掉的回执没有按钮。命令卡带 `category` 时 ③ 出类别句（D36）；对象行沿用 02 ②′ 的 `\u{XXXX}`（D25）；本轮累计结束的那句结束文案；`inspector-flagged` 在「查看本次记录」里的一句。
+- 突变自证：A 路第一轮 11 个、第二轮 7 个、B 路 1 个，都是临时打上、点名的验收变红、再改回（结果在各路的交接里，原始输出不进仓库）；界面一侧：去掉回执按钮、按钮出现在策略拦截上、结束文案不分 `scope`，各让验收 20 或 26 变红。
+- 门禁：每一路做完都在沙箱外补跑。A 路第一轮加 B 路合在一起：全量 5 918 条通过；再加 A 路第二轮与界面：全量 5 965 条通过，逃逸测试 120 条通过，format、lint、typecheck 通过；spec-check 只拦缺评审记录（第 14 步写）。
+- 中途碰到的环境问题：命令的当前目录短暂落在 locales 目录时，Claude Code 在那里建了一个空的 `.claude/.cc-writes`，i18n:check 把它当成第三种语言报错；删掉这个空目录即可，不进仓库。
+
+测试改动：packages/kernel/test/permission/approval-modes.test.ts · 06 验收 9: the manual mode decides every fixture as before 06 · 命令卡新增 `category`，只补这个字段的期望，其余照旧完整比较
+测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17 与 receipt-override 写入方两条 · plan 第 8 步要求，精确检查两个注册项与两个专用写入方，与第 9、10 步同一个提交
+测试改动：apps/desktop/test/shutdown.test.ts · 写入请求集合 · 加入 `inspector.release` 及其注册
+测试改动：apps/desktop/test/tape/conformance.test.ts · 共享套件数量 · 新增共享用例，46 改为 47
+测试改动：packages/contracts/test/approval.test.ts · 摘要码数量 · 新增 `inspector-flagged`，18 改为 19
+测试改动：packages/contracts/test/confirm.test.ts · 类别清单 · 增加两个类别，并补成功校验
+测试改动：packages/contracts/test/registry.test.ts · 路由清单 · 加入 `inspector.release`
+测试改动：packages/kernel/test/tape/names.test.ts · 事实清单 · 加入 `tool/inspector_override`
+测试改动：apps/desktop/test/copy-coverage.test.ts · 类别、「为什么停」与拦截文案的计数，04 验收 33 的回执清单 · 四个类别让计数变成 64、19、11；回执清单加入「允许这一次」那四个键
+测试改动：apps/desktop/test/renderer-approval-keys.test.ts · reads a flagged category the contract knows · 类别清单变成四个
+测试改动：apps/desktop/test/end-reason-copy.test.ts · has a sentence for each of the 18 codes · `runEnd` 多了本轮累计这一个变体，另加一条用例核对它的槽与渲染
+测试改动：apps/desktop/test/renderer-approval-card.test.ts · presentation-r1 验收 1 / presentation-r1 不变量 3 · 夹具给每张卡都带了 `category`；D36 起命令卡带 `category` 时 ③ 出类别句，期望照改

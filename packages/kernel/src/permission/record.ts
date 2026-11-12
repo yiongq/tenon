@@ -45,6 +45,7 @@ export interface DecisionStep {
     readonly releasedBy?: 'tenant-policy' | 'always-allow' | 'task' // 第一步里撤掉「撤不回」的那种放开（D10）
     readonly modeRule?: 'auto-range' | 'auto-sandboxed-command' | 'not-gated'
     readonly category?: FlaggedCategory
+    readonly override?: string // The bound inspector receipt release, recorded even for a failed check.
     readonly findings?: readonly InspectorFinding[]
   }
   readonly status: 'ok' | 'timeout' | 'error' // 02 里只有 inspector 的步骤可能不是 ok
@@ -64,6 +65,7 @@ export type DecisionSummaryCode = // 只增
   | 'org-policy'
   | 'user-disabled' // 你设的规则（连接器工具的总是允许）/ 组织策略 / 用户禁用
   | 'irreversible-once'
+  | 'inspector-flagged'
   | 'exfiltration-recheck'
   | 'default-ask' // 撤不回只认这一次 / 外带检查要求再问一次 / 默认要问
   // 以下由本 spec 补齐：F8 的清单写的是「例如」，不补这些，表里的判决映射不出代码（owner 已确认）
@@ -118,7 +120,10 @@ export function summarize(record: DecisionRecord, call: InspectedCall): Decision
         deciding.find((step) => step.status === 'ok' && step.basis?.category !== undefined)?.basis
           ?.category ?? 'inspector-failed'
       if (category === 'inspector-failed') return summary('check-incomplete')
-      return summary(record.verdict === 'deny' ? 'inspector-blocked' : 'exfiltration-recheck')
+      if (record.verdict === 'deny') return summary('inspector-blocked')
+      return summary(
+        category === 'hidden-characters' ? 'inspector-flagged' : 'exfiltration-recheck',
+      )
     }
     case 'user-grant': {
       const basis = at('user-grant')?.basis

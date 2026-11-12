@@ -337,15 +337,19 @@ it('presentation-r1 验收 1 / presentation-r1 不变量 3: no scale; why and un
               reversibility,
               facts: { category, host: 'xn--pple-43d.com', command: 'unique-command' },
             }
-            const expectedWhy = ['default', 'command', 'irreversible'].includes(reason)
-              ? null
-              : reason === 'network'
-                ? `confirm.reason.network.${target.type === 'search' ? 'search' : 'url'}`
-                : reason === 'flagged'
-                  ? `confirm.reason.flagged.${category}`
-                  : reason === 'sensitive-path'
-                    ? `confirm.reason.sensitive-path.${category}`
-                    : `confirm.reason.${reason}`
+            // 06 D36: a command card a check asked about (it carries `category`) says the category.
+            const expectedWhy =
+              reason === 'command'
+                ? `confirm.reason.flagged.${category}`
+                : ['default', 'irreversible'].includes(reason)
+                  ? null
+                  : reason === 'network'
+                    ? `confirm.reason.network.${target.type === 'search' ? 'search' : 'url'}`
+                    : reason === 'flagged'
+                      ? `confirm.reason.flagged.${category}`
+                      : reason === 'sensitive-path'
+                        ? `confirm.reason.sensitive-path.${category}`
+                        : `confirm.reason.${reason}`
             const expectedUndo =
               reversibility === 'revertible'
                 ? null

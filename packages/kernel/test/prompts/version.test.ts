@@ -59,12 +59,20 @@ const LAYER_HISTORY: Readonly<Record<number, string>> = {
   11: '077e477e149a2452302eecdad857192953a765b8b49eca56a5b37c5f6b247a95',
   // Spec 05: file guard notes and Delete's spec, result templates and errors.
   12: 'a37b8c0d7be352c28ea5c2b3d4e7f1fadd36a6dea85c42c0524b40eadeb91589',
+  // Spec 06: inspector releases, auto-command environment and cumulative round denial notes.
+  13: 'f490205c9b2775394092ad78fc239e8eb3c663583bf89aff0c077ab1f4f2d56c',
 }
 
 describe('the version gate', () => {
-  it('04 验收 24 (version): PROMPT_LAYER_VERSION is 12 and the hash matches', () => {
-    expect(PROMPT_LAYER_VERSION).toBe(12)
+  it('04 验收 24 (version): PROMPT_LAYER_VERSION is 13 and the hash matches', () => {
+    expect(PROMPT_LAYER_VERSION).toBe(13)
     expect(promptLayerHash()).toBe(PROMPT_LAYER_HASH)
+  })
+
+  it('06 验收 28: the prompt layer is version 13 and its hash gate passes', () => {
+    expect(PROMPT_LAYER_VERSION).toBe(13)
+    expect(promptLayerHash()).toBe(PROMPT_LAYER_HASH)
+    expect(LAYER_HISTORY[13]).toBe(PROMPT_LAYER_HASH)
   })
 
   it('holds the hash of the layer this build has', () => {
@@ -120,6 +128,20 @@ describe('the version gate', () => {
         MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorFailed: 'changed {message}' },
       },
       { ...layer, MODEL_NOTES: { ...(layer.MODEL_NOTES as object), connectorEmpty: '(none)' } },
+      { ...layer, MODEL_NOTES: { ...MODEL_NOTES, roundDenial: `${MODEL_NOTES.roundDenial}!` } },
+      {
+        ...layer,
+        MODEL_NOTES: {
+          ...MODEL_NOTES,
+          sandbox: {
+            ...MODEL_NOTES.sandbox,
+            release: {
+              ...MODEL_NOTES.sandbox.release,
+              inspector: `${MODEL_NOTES.sandbox.release.inspector}!`,
+            },
+          },
+        },
+      },
       // The spill notes (plan step 24).
       {
         ...layer,
@@ -157,6 +179,13 @@ describe('the version gate', () => {
         texts: { ...t.texts, sameStrings: `${edit.texts['sameStrings'] ?? ''}!` },
       })),
       // A command's result heading (plan step 22).
+      withTool('Bash', (t) => ({
+        ...t,
+        variants: t.variants.map((v) => ({
+          ...v,
+          spec: { ...(v.spec as object), description: 'changed Bash description' },
+        })),
+      })),
       withTool('Bash', (t) => ({
         ...t,
         texts: { ...t.texts, exitCode: `${bash.texts['exitCode'] ?? ''}.` },
@@ -211,7 +240,7 @@ describe('the sandbox prompt layer (04 修补 9; 读法 30、52)', () => {
     )
   })
 
-  it('keeps five English notes and fills release slots with JSON strings', () => {
+  it('keeps six English notes and fills release slots with JSON strings', () => {
     expect(MODEL_NOTES.sandbox.violations).toBe(
       'The sandbox reported the following operations after this command; each line is a JSON string, and observations alone do not mean the operation was blocked.',
     )
@@ -236,7 +265,21 @@ describe('the sandbox prompt layer (04 修补 9; 读法 30、52)', () => {
     for (const text of [MODEL_NOTES.sandbox.violations, ...Object.values(release)]) {
       expect(text).toMatch(/^[ -~\n]+$/u)
     }
-    expect(Object.keys(release).toSorted()).toEqual(['domain', 'path', 'rerun', 'wrap'])
+    expect(Object.keys(release).toSorted()).toEqual([
+      'domain',
+      'inspector',
+      'path',
+      'rerun',
+      'wrap',
+    ])
+  })
+})
+
+describe('the approval mode prompt layer', () => {
+  it('06 验收 28: Bash explains the environment of commands that run without approval', () => {
+    expect(BASH_TOOL.spec({ domainFilter: false }).description).toContain(
+      'In auto mode, commands that run without asking for approval do not receive token-like environment variables.',
+    )
   })
 })
 

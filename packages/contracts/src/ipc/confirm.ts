@@ -29,6 +29,8 @@ export const confirmReasonSchema = z.enum([
  */
 export const flaggedCategorySchema = z.enum([
   'exfiltration',
+  'hidden-characters',
+  'control-characters',
   'inspector-failed',
 ]) satisfies z.ZodType<FlaggedCategory>
 

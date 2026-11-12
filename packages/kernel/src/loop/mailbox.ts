@@ -1,3 +1,4 @@
+import { releaseInspectorReceipt } from '../permission/inspector-release.js'
 import { createSnapshotRestorer } from './restore.js'
 import type {
   SnapshotRoundQuery,
@@ -80,6 +81,7 @@ import type {
   SessionService,
   AnswerResult,
   ReleaseQuery,
+  InspectorReleaseQuery,
   ReleaseResult,
   ContinueRunResult,
   RecoverResult,
@@ -133,7 +135,13 @@ import {
   storedHandoff,
   subagentElapsedFromTape,
 } from './subagent.js'
-import { SUBAGENT_STEP_LIMIT, SUBAGENT_TOKEN_LIMIT, SUBAGENT_DEADLINE_MS } from './limits.js'
+import {
+  MACHINE_DENIAL_CAP,
+  MACHINE_DENIAL_ROUND_CAP,
+  SUBAGENT_STEP_LIMIT,
+  SUBAGENT_TOKEN_LIMIT,
+  SUBAGENT_DEADLINE_MS,
+} from './limits.js'
 import { notRunFacts, resultFacts } from './closure.js'
 import { spillChecked } from './spill.js'
 import { typedReply } from '../tools/builtin/ask-user-question.js'
@@ -148,6 +156,7 @@ import {
   abortCauseOf,
   abortedEndReason,
   callKeyOf,
+  chainCounters,
   driveRun,
   readViewState,
   userTextContent,
@@ -412,6 +421,7 @@ export interface Loop {
   send(q: SendQuery): Promise<SendResult>
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
+  releaseInspector(q: InspectorReleaseQuery): Promise<ReleaseResult>
   release(q: ReleaseQuery): Promise<ReleaseResult>
   /** What `approval.current` shows for a root (it and its sub-agents): the one card, or null. */
   currentPending(q: { sessionId: string }): Promise<PendingCard | null>
@@ -2325,6 +2335,9 @@ export function createLoop(deps: LoopDeps): Loop {
                   ...(ports.sandbox.autoCommands === undefined
                     ? {}
                     : { autoCommands: () => ports.sandbox!.autoCommands!() }),
+                  ...(ports.sandbox.canReach === undefined
+                    ? {}
+                    : { canReach: (q) => ports.sandbox!.canReach!(q) }),
                   beforeWrap: (q) => {
                     lastSandboxSession = q.sessionId
                     ports.sandbox!.beforeWrap(q)
@@ -2456,7 +2469,7 @@ export function createLoop(deps: LoopDeps): Loop {
         if (borrowed !== undefined) {
           if (finished !== null) {
             const end = terminalOf(finished, lease, runId)
-            await tape.appendEntries({ sessionId, incarnationId, entries: end.entries })
+            await appendWithDowngrade({ sessionId, incarnationId, entries: end.entries })
             emitClosures(ports, box, sessionId, end.entries)
             runEnded(ports, box, sessionId, {
               runId,
@@ -2497,7 +2510,7 @@ export function createLoop(deps: LoopDeps): Loop {
         const end = terminalOf(finished, lease, runId)
         let recorded = false
         try {
-          await tape.appendEntries({ sessionId, incarnationId, entries: end.entries })
+          await appendWithDowngrade({ sessionId, incarnationId, entries: end.entries })
           recorded = true
         } catch (error) {
           log(`[loop] run ${runId} of ${sessionId} did not record its end: ${describe(error)}`)
@@ -2765,6 +2778,77 @@ export function createLoop(deps: LoopDeps): Loop {
     }
   }
 
+  /** D35: read the root mode and append the downgrade inside the SAME mailbox task and batch. */
+  async function appendWithDowngrade(q: Parameters<Tape['appendEntries']>[0]) {
+    let trigger: NewEntry | undefined
+    if (rootOf(q.sessionId) === q.sessionId) {
+      trigger = q.entries.find(
+        (entry) =>
+          entry.name === 'execution/run_terminal' &&
+          (entry.payload as RunTerminalPayload).reason.code === 'blocked-repeatedly',
+      )
+      if (trigger === undefined) {
+        const recovered = q.entries.find(
+          (entry) =>
+            entry.name === 'execution/run_terminal' &&
+            (entry.payload as RunTerminalPayload).reason.code === 'recovered',
+        )
+        if (recovered?.sourceId !== undefined && recovered?.sourceId !== null) {
+          const counts = await chainCounters(tape, q.sessionId, recovered.sourceId)
+          if (
+            counts.roundDenials >= MACHINE_DENIAL_ROUND_CAP ||
+            counts.denials >= MACHINE_DENIAL_CAP
+          )
+            trigger = recovered
+        }
+      }
+      if (trigger === undefined) {
+        for (const entry of q.entries) {
+          const handoff = entry.payload['handoff'] as SubagentHandoff | undefined
+          if (entry.name !== 'tool/result' || handoff?.childEndReason !== 'blocked-repeatedly')
+            continue
+          // A child reaching the round cap ends the root next; its root terminal owns the downgrade.
+          // oxlint-disable-next-line no-await-in-loop -- at most one Agent handoff per batch
+          const child = await readSessionEntries(tape, handoff.childSessionId)
+          const end = child.findLast((fact) => fact.name === 'execution/run_terminal')?.payload as
+            | RunTerminalPayload
+            | undefined
+          if (end?.reason.code === 'blocked-repeatedly' && end.reason.scope !== 'round')
+            trigger = entry
+          else if (
+            end?.reason.code === 'blocked-repeatedly' &&
+            (entry.payload['writer'] as FactWriter).by === 'recovery'
+          ) {
+            // A parent already paused for its child's card gets no recovered terminal. Its
+            // recovered Agent closure is the durable boundary available for the downgrade.
+            // oxlint-disable-next-line no-await-in-loop -- at most one linked handoff per append
+            const parent = await readSessionEntries(tape, q.sessionId)
+            const started = parent.findLast((fact) => fact.name === 'execution/run_started')
+            if (
+              parent.some(
+                (fact) =>
+                  fact.name === 'execution/run_terminal' && fact.sourceId === started?.sourceId,
+              )
+            )
+              trigger = entry
+          }
+        }
+      }
+    }
+    if (trigger !== undefined) {
+      const facts = await readSessionFacts(tape, q.sessionId)
+      if (facts.approvalMode === 'auto') {
+        const downgrade = approvalModeEntry(
+          { tape, sessionId: q.sessionId, incarnationId: q.incarnationId, now },
+          facts.approvalModeFacts,
+          { mode: 'manual', by: 'downgrade', writer: trigger.payload['writer'] as FactWriter },
+        )
+        return tape.appendEntries({ ...q, entries: [...q.entries, downgrade] })
+      }
+    }
+    return tape.appendEntries(q)
+  }
+
   /** Appends one mailbox task's batch to a session, in its current incarnation. */
   async function appendTo(
     sessionId: string,
@@ -2772,7 +2856,7 @@ export function createLoop(deps: LoopDeps): Loop {
   ): Promise<readonly AppendResult[]> {
     const head = await tape.head(sessionId)
     if (head === null) throw new Error(`append: session ${sessionId} has no head`)
-    return tape.appendEntries({ sessionId, incarnationId: head.incarnationId, entries })
+    return appendWithDowngrade({ sessionId, incarnationId: head.incarnationId, entries })
   }
 
   /**
@@ -2827,7 +2911,7 @@ export function createLoop(deps: LoopDeps): Loop {
     }
     const deferred = deferredTo === undefined ? {} : { deferredTo }
     if (kept.length === 0) return { entries: [], receipts: [], ...deferred }
-    const receipts = await tape.appendEntries({ sessionId, incarnationId, entries: kept })
+    const receipts = await appendWithDowngrade({ sessionId, incarnationId, entries: kept })
     return { entries: kept, receipts, ...deferred }
   }
 
@@ -3505,6 +3589,8 @@ export function createLoop(deps: LoopDeps): Loop {
       if (bound === null) throw new Error('recover() before bindLoop()')
       const recovered = await recoverTape({
         sandbox: bound.sandbox,
+        appendEntries: (q) =>
+          post(mailboxOf(rootOf(q.sessionId)), 'command', null, () => appendWithDowngrade(q)),
         modeTurn: (rootId, work) => post(mailboxOf(rootId), 'command', null, work),
         searchTarget: deps.connector.searchTarget?.bind(deps.connector),
         tape,
@@ -3612,6 +3698,21 @@ export function createLoop(deps: LoopDeps): Loop {
         (lease, pre) => continueTurn(ports, box, q, lease, pre),
         () => ({ status: 'refused' }),
       )
+    },
+
+    releaseInspector(q): Promise<ReleaseResult> {
+      const ports = bound
+      if (ports === null || ports.leases.isShuttingDown())
+        return Promise.resolve({ status: 'refused' })
+      return post(mailboxOf(rootOf(q.sessionId)), 'command', null, async () => {
+        if (ports.leases.isShuttingDown()) return { status: 'refused' }
+        return releaseInspectorReceipt(q, {
+          tape,
+          now,
+          refused: () => ports.leases.isShuttingDown(),
+          entries: await readSessionEntries(tape, q.sessionId),
+        })
+      })
     },
 
     release(q): Promise<ReleaseResult> {

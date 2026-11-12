@@ -130,6 +130,13 @@ describe('chatEventSchema', () => {
 })
 
 describe('chat.continue', () => {
+  it('preserves a round denial scope and accepts the original consecutive reason', () => {
+    const round = { code: 'blocked-repeatedly', count: 20, scope: 'round' }
+    expect(runEndReasonSchema.parse(round)).toEqual(round)
+    const consecutive = { code: 'blocked-repeatedly', count: 3 }
+    expect(runEndReasonSchema.parse(consecutive)).toEqual(consecutive)
+    expect(runEndReasonSchema.safeParse({ ...round, scope: 'session' }).success).toBe(false)
+  })
   it('is registered, and answers one of four statuses', () => {
     expect(Object.values(ipcRoutes)).toContain(chatContinue)
     expect(chatContinue.channel).toBe('chat.continue')

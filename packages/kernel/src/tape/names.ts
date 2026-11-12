@@ -297,6 +297,14 @@ const declarations = [
     sourceSeq: 'ordinal',
   },
   {
+    name: 'tool/inspector_override',
+    kind: 'event',
+    slice: 'tool',
+    sourceType: 'runtime_event',
+    sourceId: 'required',
+    sourceSeq: 'ordinal',
+  },
+  {
     name: 'tool/receipt_override',
     kind: 'event',
     slice: 'tool',

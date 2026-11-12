@@ -4,8 +4,12 @@ import type { BeforeCallInput } from './session-view.js'
 
 export function exfiltrationOpinion({ call, view }: BeforeCallInput): AskOpinion {
   const webFetch = call.tool.source === 'builtin' && call.tool.originalName === 'WebFetch'
+  const command =
+    call.tool.source === 'builtin' &&
+    call.tool.originalName === 'Bash' &&
+    call.canReachNetwork === true
   const source = call.tool.source === 'mcp' ? `mcp:${call.tool.serverId}` : 'builtin'
-  return (webFetch || call.tool.source === 'mcp') &&
+  return (webFetch || command || call.tool.source === 'mcp') &&
     view.untrustedSources.length > 0 &&
     view.privateSources.some((privateSource) => privateSource !== source) &&
     (!webFetch || view.fetchUrlVouched !== true)

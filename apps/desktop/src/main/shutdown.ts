@@ -7,6 +7,7 @@ import {
   chatSendNow,
   chatStop,
   sandboxRelease,
+  inspectorRelease,
   sessionSelectModel,
   sessionSelectProfile,
   snapshotRestore,
@@ -86,6 +87,7 @@ export const REFUSED_WHILE_SHUTTING_DOWN: ReadonlySet<string> = new Set([
   workspaceUsePrefill.channel,
   workspaceRemove.channel,
   sandboxRelease.channel,
+  inspectorRelease.channel,
   snapshotRestore.channel,
 ])
 
