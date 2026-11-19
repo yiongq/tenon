@@ -615,3 +615,4 @@ const ownLease = true
 测试改动：apps/desktop/test/renderer-approval-keys.test.ts · reads a flagged category the contract knows · 类别清单变成四个
 测试改动：apps/desktop/test/end-reason-copy.test.ts · has a sentence for each of the 18 codes · `runEnd` 多了本轮累计这一个变体，另加一条用例核对它的槽与渲染
 测试改动：apps/desktop/test/renderer-approval-card.test.ts · presentation-r1 验收 1 / presentation-r1 不变量 3 · 夹具给每张卡都带了 `category`；D36 起命令卡带 `category` 时 ③ 出类别句，期望照改
+测试改动：apps/desktop/e2e/approval.spec.ts · presentation-r1 验收 2: the card escapes its object path without repeating it in the reason (②′, E4) · 06 起 input-hygiene 在两档都对路径里的零宽字符出卡，③ 改出「看不见的字符」那句（验收 19、D36）；对象行转义与「不重复路径」的断言不变。PR #90 的 CI 上它红过一次，其余 275 条 e2e 与新写的验收 27 都过
