@@ -180,7 +180,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
   4. 检查最多跑三次：第三次的输入取偏严的值（`canReachNetwork: true`），判决里不给 `commandSandboxed`（照手动档判：本会话授权照常有效，没有就问，原因照 §自动档的范围 取，没有别的就是 `sandbox`），跑完不再复核。判决用的计划永远是最后一次检查之后算的那份，与 06 之前相同；会话视图只放 Tape 推得出的历史（D28、D30）。
 - **外带检查扩到命令**：出口加上 `call.canReachNetwork` 为真的 Bash，来源记 'builtin'，所以没有同源豁免、任何私密来源都算；不可信内容与私密数据照 auto-tier-hardening §对 02 的增补（网页、搜索、连接器结果、认不出来源的派发都算不可信），两样都有就问，`category: 'exfiltration'`，只这一次，会话授权免不掉；规则仍是 `packages/kernel/src/permission/exfiltration.ts` 的 `exfiltrationOpinion`（D4、D13、D33）。
 - **`canReach` 照命令网络白名单的实际合并规则答**：用户白名单 ∪ 勾上的「包管理器」预设的域名 ∪ 传入的本会话域名授权，不空为真。预设的域名只看勾没勾、不看档位；预设的可写目录与环境变量照 04「预设生效」（勾上且档位为 workspace-write）才有，两件分开（D28）。
-- **input-hygiene**：适配器 `apps/desktop/src/main/inspectors/railguard.ts`，只用 `inputHygiene`，`ceiling: 'deny'`、`kind: 'local-rule'`，依赖写 npm 精确版本 `@yiong/railguard` 0.7.0（与 `939027d` 那份规则相同，P1）。检查 Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path`。`blocked` → 拒，`category: 'control-characters'`；`modified` → 问，`category: 'hidden-characters'`，丢掉改写；规则出错照 02 §railguard 映射 按拒处理（D4、D21）。
+- **input-hygiene**：适配器 `apps/desktop/src/main/inspectors/railguard.ts`，用 `inputHygiene`，另加两条只收紧的判断：文字方向控制符（Unicode 的 Bidi_Control，如 U+202E）按 `hidden-characters` 问，C1 控制字符（U+0080–U+009F）按 `control-characters` 拒（D39）；`ceiling: 'deny'`、`kind: 'local-rule'`，依赖写 npm 精确版本 `@yiong/railguard` 0.7.0（与 `939027d` 那份规则相同，P1）。检查 Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path`。`blocked` → 拒，`category: 'control-characters'`；`modified` → 问，`category: 'hidden-characters'`，丢掉改写；规则出错照 02 §railguard 映射 按拒处理（D4、D21）。
 - **判决摘要**：`packages/kernel/src/permission/record.ts` 的 `summarize` 照旧先认检查失败：类别是 `inspector-failed` 的问与拒都给 `check-incomplete`；正常检查说问、类别是 `hidden-characters` 的给新码 `inspector-flagged`；`exfiltration` 的问照旧 `exfiltration-recheck`，说拒的照旧 `inspector-blocked`。
 
 ## 从回执允许一次
@@ -246,7 +246,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 被 `.gitignore` 排除的文件、嵌套仓库、发到网上的，快照本来就救不回（05）；D2 只认七类具名命令，D3 只认 `>`：`sed -i`、`cp`/`mv` 盖掉文件、脚本里写文件、不带 `--` 的 `git checkout <路径>`、D3 去掉的 `=>`、`->`、`>=` 写法都认不出，自动档照样免问。引号里的 `>`（`node -e "a > b"`）也会问。
 - Linux 上自动档只免问文件工具，命令照问，直到 auto-tier-hardening 的那条限制有办法补上（D14）。
 - 外带检查只看来源不看内容：读过网页、搜索或用过连接器之后，每条能联网的命令问一次；勾了预设就是每条都问，只读档也一样；手动档里本会话允许过的也再问（D4、D12、D33）。工作区里的文件自己带着指令时这条检查不认：没碰过网页、搜索与连接器的会话里，免问的命令照样能连白名单里的网站。
-- input-hygiene 只看命令原文与路径，不看写入的内容和脚本文件；它出错时两档的命令与文件工具都被拦，要从回执放行；同一条命令上 04 的一次性放行在算计划时就绑上，这次被拦也算用掉（04 不变，D37）。
+- input-hygiene 只看命令原文与路径，不看写入的内容和脚本文件；它出错时两档的命令与文件工具都被拦，要从回执放行；卡上照 02 ②′ 画成 `\u{XXXX}` 的其余格式字符与默认可忽略字符（软连字符、emoji 用的变体选择符、韩文填充符、不可见运算符等）它不认，自动档里含这些字符的命令照样免问（D39）；同一条命令上 04 的一次性放行在算计划时就绑上，这次被拦也算用掉（04 不变，D37）。
 - 检查跑的时候沙箱的状态或设置变了，而且这变化影响到 `canReachNetwork` 或 `commandSandboxed` 时，这次 Bash 的判定才会多跑一到两次检查（每次至多 2 秒）；每次检查期间都这样变，就照手动档判（D30）。判定之后、包装之前（可能在等整树快照）改的白名单不再复核，这条命令照新白名单连得出去。
 - 一轮里正常但不顺的长任务（装依赖反复被拦）到 20 次也会停（D5）。
 - 有快照的 Delete 不设闸：误删一批要事后还原，快照清掉之后找不回（D6）。
@@ -273,7 +273,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 16. 自动档的会话清空后，新 incarnation 里仍是自动，档位事实与 profile、workspace 同一批写。
 17. 自动档免问的命令拿到的环境里没有名单与规则里的每一个名字（测试逐个写字面量），`PATH`、`HOME`、`JAVA_HOME`、`NODE_OPTIONS` 还在；手动档批过的、自动档里因撤不回批过的命令照传；`wrap` 收到的就是过滤后的环境。
 18. 本会话 Read 过一个文件，又 WebFetch 过一个网页或调过一次连接器之后（参数化）：`canReach` 答真、或计划为 `full-access` 的 Bash 两档都出卡、`category: 'exfiltration'`、答复 `once`，本会话授权免不掉；`canReach` 答假、在沙箱里的不出这张卡；缺一个条件也不出；`canReach` 收到本会话的域名授权；检查拿到的 `InspectedCall` 带 `canReachNetwork`，会话视图里没有这一项。desktop 的 `canReach`：用户白名单不空、只勾了预设且档位为只读、有本会话域名授权各答真，三样都空答假。
-19. Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path` 里（逐个参数化）有裸控制字符：两档都拦下、出回执；有零宽字符或 Unicode 标签：两档都出卡、`category: 'hidden-characters'`、答复 `once`；只有制表、换行、回车的照常。
+19. Bash 的 `command`，Read、Write、Edit、Delete 的 `file_path`，Glob、Grep 的 `path` 里（逐个参数化）有裸控制字符：两档都拦下、出回执；有 C1 控制字符的同样拦下；有零宽字符、Unicode 标签或文字方向控制符：两档都出卡、`category: 'hidden-characters'`、答复 `once`；只有制表、换行、回车的照常。
 20. 让适配器抛错或超时：调用被拦下、`category: 'inspector-failed'`，回执上有「允许这一次」。
 21. 回执放行：`releaseInspector` 写一条 `tool/inspector_override`，不写 `tool/receipt_override`；下一次工具名与参数一字不差的调用绑上它，在自动档范围内不出卡、手动档出卡；参数差一个字（含 Bash 的 `description`）不绑；到下一轮回复结束没用上就作废，「继续」开的一轮也算；与 04 的「仅此路径」放行同在时两条都绑；再点回 `already-released`；第 1–3 层的拒回 `stale`，不在本会话当前 incarnation 的回 `not-found`，没绑循环回 `refused`；绑上之后再来一次照拦；04 的三种沙箱放行照旧。
 22. 有没宣告的 inspector 放行时，下一个检查点写一条 `message/sandbox_release`，含那一行，`overrides` 有它的键。
@@ -312,3 +312,4 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 2026-11-09 · ready 之后 · 照挑刺评审 r2（规则视角）的第一段条目，都只收紧或说清：档位与快照状态在检查之后读；第 5 层说问的卡不带 `autoAsk`；默认档只对任务形态写、点发送时读；七行逐行列出；`>&` 只排除后跟数字或 `-` 的；工作区内的 Read、Glob、Grep 仍归第 6 层。验收 9、11 相应补写。
 - 2026-11-09 · ready 之后 · 第一段实现评审后补登记接口：`LoopPorts.leases` 增 `isShuttingDown()`，供切档的「关机中拒」使用；规则不变。
 - 2026-11-10 · ready 之后 · 第二段开工前定规则，都只收紧或说清（两项是 owner 当日所选）：卡上沿用 02 ②′ 的写法；外带的不可信与私密照 auto-tier-hardening；子会话的拦截计进根会话这一轮；重判写下的第 20 条与降档怎么结束；命令卡 ③ 的先后；inspector 放行的绑定口径；已知限制补两句；补验收 18、19、21、24、26、30（D25、D33–D38）· PR #89 之后。
+- 2026-11-20 · ready 之后 · owner 选 D39，只收紧：input-hygiene 另认文字方向控制符（问）与 C1 控制字符（拒）；其余格式字符写进已知限制。验收 19 相应补写。

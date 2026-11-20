@@ -3,7 +3,7 @@
 ## 当前 / 需要你
 
 当前：ready。第二段第 7–13 步已实现，在 PR #90（草稿）；第 14 步三路评审已出，测试缺口与几条只收紧的修正在做；第 12.1 步基线评测等你。
-需要你：① 第 12.1 步基线评测（约 5 元加约 2 元），不跑 `evals:gate` 一直红、#90 合不进；② input-hygiene 认的「看不见的字符」比卡片认的窄（Open 第一条），补不补；③ #90 改了 `ci.yml`，由你合。
+需要你：① 第 12.1 步基线评测（约 5 元加约 2 元），不跑 `evals:gate` 一直红、#90 合不进；② #90 改了 `ci.yml`，由你合。
 
 ## 开工前读
 
@@ -105,7 +105,6 @@
 
 ## Open
 
-- 要问 owner：input-hygiene（railguard 0.7.0 的 `inputHygiene`）只认 C0 控制字符、五个零宽字符与标签块；卡片的写法（02 §最小审批卡 ②′）另外还把文字方向控制符、C1 控制字符、emoji 用的连接符与变体选择符画成 `\u{XXXX}`。这几类在自动档里命令照样免问。lead 推荐只补文字方向控制符（问）与 C1（拦），emoji 那两类写进已知限制；也可以全补（带 emoji 的命令每次都问）或只写已知限制。
 - 挑刺评审 r2（2026-11-09，原文在私有笔记）第一、二段的条目已改进 spec 或交第一段实现（第二段的见 D25、D33–D38）；第三段开工前还要处理：
   - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 33 在哪层测（验收 20 已随第二段定，D38）。
 - spec 全文超过 heavy 档上限约 2 300 字符（警告）；第 21 步文档同步时一并压缩。
@@ -159,6 +158,7 @@
 | 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
 | 18 | 单元 | 06 验收 18: desktop canReach answers %s | test | 待补 | 任意 |
 | 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
+| 19 | 单元 | 06 验收 19: the adapter also asks on bidi controls and blocks C1 controls | test | 不认方向控制符或 C1 → 验收 19 | 任意 |
 | 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |
 | 20 | 单元 | 06 验收 20: an inspector-failed receipt offers allow once | test | 待补 | 任意 |
 | 21 | 集成 | 06 验收 21: an inspector override binds the next identical call once and expires | test | 待补 | 任意 |
