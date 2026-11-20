@@ -648,3 +648,9 @@ const ownLease = true
 
 测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17: only release writes receipt overrides… · 去掉对 `packages/kernel/src/testing/` 目录的排除，改为把 `tape-conformance.ts` 里那 4 行精确列进期望（比排除更严）
 - 更正（「第 14 步段末评审之后的修正」一节的「不修、记下」）：「审批过的 Agent 分支里的累计」不是排队问题，是那条分支里清零与累加没有测试守着（复核时突变 C02b、C03b 存活，实现读代码是对的），改为补测；另把 ToolRow 的 `key={callKey}` 静态渲染测不到（U09）记进不修：换一个调用时状态不串，靠组件按 key 重挂，只有真实渲染能测，e2e 的验收 27 走过这条路。
+
+## 2026-11-20 · 复核 d074ba2 之后的修正
+
+- 复核 d074ba2（报告在私有笔记，另记）不通过：每条根会话结束都按计数判降档之后，`chainCounters` 只在 `source` 为空时把连续计数清零，执行循环却在每条派发过、没被拦下的调用上清零（Bash 超时、派发后连接器不可用或未授权都算），正常结束的自动档任务可能被降回手动。
+- 修正（6a5f683，子 agent）：`chainCounters` 按 `execution/dispatch_committed` 记下派发过的调用，派发过的收口照执行循环清零，被拦下的照旧计数；没派发的收口不动连续计数。回归用例照复核的探针写（拒、拒、Bash 超时、拒，正常结束仍是自动档），另有五种派发后收口的逐个用例，都在 d074ba2 上红。补测：等档位期间只换沙箱档位、C1 与零宽字符同时出现。
+- 更正（上一节的更正）：「审批过的 Agent 分支」走不到，不是缺测试：会出卡的 Agent 调用被批准后，`rejudgeWaiting` 重判时找不到 Agent 的执行器，判成不可用，`tightenedFacts` 直接把它收口成 `tool-unavailable`，批处理进不了那条分支；那里的清零也已被 `awaits` 清过，等价。眼下 Agent 不出卡（`NOT_GATED`），碰不到；记进 plan Open。
