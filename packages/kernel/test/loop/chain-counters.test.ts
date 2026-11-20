@@ -18,6 +18,9 @@ const MESSAGE = '44444444-4444-4444-8444-444444444444'
 interface Closure {
   readonly source: string | null
   readonly dispatched: boolean
+  /** The request (model response) and position in it; default: request 0, its index. */
+  readonly seq?: number
+  readonly ordinal?: number
 }
 /** One Run whose calls close in this order; `dispatched` closures have their dispatch fact first. */
 async function countsAfter(closures: readonly Closure[]) {
@@ -42,15 +45,16 @@ async function countsAfter(closures: readonly Closure[]) {
         provenanceKey: runStartedKey(RUN),
         payload: { cause: { kind: 'user-message', messageId: MESSAGE } },
       }),
-      ...closures.flatMap(({ source, dispatched }, ordinal) => {
-        const ref = { ordinal, providerToolCallId: `call-${ordinal}` }
+      ...closures.flatMap(({ source, dispatched, seq = 0, ordinal: at }, index) => {
+        const ordinal = at ?? index
+        const ref = { ordinal, providerToolCallId: `call-${seq}-${ordinal}` }
         return [
           ...(dispatched
             ? [
                 tape.writer('execution').entry('execution/dispatch_committed', {
                   ...base,
-                  sourceSeq: 0,
-                  provenanceKey: dispatchCommittedKey(RUN, 0, ordinal),
+                  sourceSeq: seq,
+                  provenanceKey: dispatchCommittedKey(RUN, seq, ordinal),
                   payload: {
                     ...ref,
                     name: 'Bash',
@@ -63,8 +67,8 @@ async function countsAfter(closures: readonly Closure[]) {
             : []),
           tape.writer('execution').entry('execution/tool_outcome', {
             ...base,
-            sourceSeq: 0,
-            provenanceKey: toolOutcomeKey(RUN, 0, ordinal),
+            sourceSeq: seq,
+            provenanceKey: toolOutcomeKey(RUN, seq, ordinal),
             payload: {
               ...ref,
               state: source === null ? 'completed' : 'not-run',
@@ -83,7 +87,7 @@ async function countsAfter(closures: readonly Closure[]) {
 }
 const denied: Closure = { source: 'inspector', dispatched: false }
 
-it.each(['timed-out', 'tool-unavailable', 'connector-unauthorized', 'crashed', 'repair'])(
+it.each(['timed-out', 'tool-unavailable', 'connector-unauthorized', 'crashed'])(
   '06 验收 24: a dispatched call closed as %s resets the consecutive count like the loop does',
   async (source) => {
     expect(await countsAfter([denied, denied, { source, dispatched: true }])).toEqual({
@@ -118,4 +122,35 @@ it('06 验收 24: a call that completed with no source resets the count', async 
     denials: 1,
     roundDenials: 3,
   })
+})
+
+it('06 验收 24: a repaired call resets the consecutive count, as 02 resets on an allow', async () => {
+  // The loop leaves its count alone on a repair; the Tape side follows 02 §上限: the repaired call
+  // was allowed, and an allow in between resets. A repair only exists in a packaged build.
+  expect(await countsAfter([denied, denied, { source: 'repair', dispatched: true }])).toEqual({
+    denials: 0,
+    roundDenials: 2,
+  })
+})
+
+it('06 验收 24: only the same call’s dispatch makes a closure count as run', async () => {
+  const ran: Closure = { source: null, dispatched: true, seq: 0, ordinal: 0 }
+  // Another call of the same request that never ran keeps the count.
+  expect(
+    await countsAfter([
+      ran,
+      { ...denied, ordinal: 1 },
+      { ...denied, ordinal: 2 },
+      { source: 'invalid-input', dispatched: false, ordinal: 3 },
+    ]),
+  ).toEqual({ denials: 2, roundDenials: 2 })
+  // The same position in a later request is another call.
+  expect(
+    await countsAfter([
+      ran,
+      { ...denied, seq: 1, ordinal: 1 },
+      { ...denied, seq: 1, ordinal: 2 },
+      { source: 'invalid-input', dispatched: false, seq: 1, ordinal: 0 },
+    ]),
+  ).toEqual({ denials: 2, roundDenials: 2 })
 })
