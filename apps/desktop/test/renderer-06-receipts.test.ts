@@ -239,6 +239,12 @@ describe('06 第二段的卡与回执', () => {
       'Calls were blocked 20 times in this round, so the task ended.',
     )
 
+    // The summary code in 「查看本次记录」 (06 §判决摘要).
+    expect(zh.t('snapshot.decision.inspector-flagged')).toBe('检查发现看不见的字符，需要确认')
+    expect(en.t('snapshot.decision.inspector-flagged')).toBe(
+      'Checks found invisible characters; confirmation is needed',
+    )
+
     // Both catalogues have every new key, and none of them names the model, the sandbox or a check's
     // internal name.
     const keys = [
