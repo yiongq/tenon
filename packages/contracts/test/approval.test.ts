@@ -81,8 +81,8 @@ describe('decisionSummarySchema', () => {
     expect(decisionSummarySchema.safeParse({ ...summary, code: 'made-up' }).success).toBe(false)
   })
 
-  it('knows all eighteen codes', () => {
-    expect(decisionSummaryCodeSchema.options).toHaveLength(18)
+  it('knows all nineteen codes', () => {
+    expect(decisionSummaryCodeSchema.options).toHaveLength(19)
   })
 })
 

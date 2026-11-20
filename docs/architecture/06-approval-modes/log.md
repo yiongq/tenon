@@ -591,3 +591,91 @@ const ownLease = true
 撤销突变 M14：CI 时限，316af4c 上已验证变红，验收 14 的用例守
 撤销突变 M16：CI 时限，316af4c 上已验证变红，验收 14 的用例守
 撤销突变 M17：CI 时限，316af4c 上已验证变红，验收 15 的恢复并发用例守
+
+## 2026-11-10 · 第二段实现（第 7–11 步）与交接
+
+- 分路：第二段按文件分三路并行，A 路（Codex，kernel、contracts、主进程路由与 railguard 适配器）分两轮，B 路（Codex，desktop 的 `canReach`），界面与文案由 lead 做；第 12 步提示层最后单独做。几路都不写本 log 与 plan，由 lead 汇总。
+- 第 7 步（A 路第一轮 527c593、B 路 5eab3eb）：Bash 的 `judgeCall` 在检查前采样能否联网与是否免问、检查后按最终计划复核，有变就重跑，最多三次、第三次偏严；外带检查把能联网的 Bash 算作出口，来源记 'builtin'，没有同源豁免，连接器与 WebFetch 的判法原样保留（D33）；命令卡 facts 带检查的 `category`。desktop 的 `canReach` 与真正下发的白名单共用一份合并逻辑，读设置出错时答真；kernel 缺这个查询时也读作真。
+- 第 11 步（A 路第一轮 527c593）：累计与连续 3 次并排计数，子会话交接回来时把它被拦的条数加进根会话这一轮；到 20 优先按本轮结束，`blocked-repeatedly` 带 `scope: 'round'`；重判写下第 20 条时续跑的 Run 开头先数；自动档的降档写在根会话，与 `run_terminal` 或那次 Agent 调用的收口同一次追加（D34、D35）。累计结束给模型看的句子留在 `closure.ts` 的 `roundDenialNote`，第 12 步接。
+- 第 8–10 步（A 路第二轮，与界面同一个提交）：railguard 0.7.0 适配器只用 `inputHygiene`，`deny` / `local-rule`，参数照 D21；两个新类别与 `inspector-flagged`；`tool/inspector_override` 的事实、键、投影与两种存储的共享一致性用例；`releaseInspector` 在根会话 mailbox 里核对、五种状态、关机中拒；只撤掉回执点名的那几个检查的拒，重判沿用已绑的；与 04 一次性放行共用作废算法，04 的三种放行行为不变（D37）；`inspector.release` 路由等启动恢复、关机中拒。告诉模型的检查点只做了机制，句子留在 `loop/sandbox-release.ts` 的 `inspectorReleaseNote`，第 12 步填 `toolName`、`argsHash`、`inspectorIds` 三个槽。
+- 界面（lead）：检查给出的拦截回执下出「允许这一次」与说明一行，点过变「已放行」，重开后再点回 `already-released` 照样显示「已放行」（同 04）；「已不能放行」「找不到这一步」两句不说「命令」，因为被拦的也可能是文件路径；组织策略、保护名单、你关掉的回执没有按钮。命令卡带 `category` 时 ③ 出类别句（D36）；对象行沿用 02 ②′ 的 `\u{XXXX}`（D25）；本轮累计结束的那句结束文案；`inspector-flagged` 在「查看本次记录」里的一句。
+- 突变自证：A 路第一轮 11 个、第二轮 7 个、B 路 1 个，都是临时打上、点名的验收变红、再改回（结果在各路的交接里，原始输出不进仓库）；界面一侧：去掉回执按钮、按钮出现在策略拦截上、结束文案不分 `scope`，各让验收 20 或 26 变红。
+- 门禁：每一路做完都在沙箱外补跑。A 路第一轮加 B 路合在一起：全量 5 918 条通过；再加 A 路第二轮与界面：全量 5 965 条通过，逃逸测试 120 条通过，format、lint、typecheck 通过；spec-check 只拦缺评审记录（第 14 步写）。
+- 中途碰到的环境问题：命令的当前目录短暂落在 locales 目录时，Claude Code 在那里建了一个空的 `.claude/.cc-writes`，i18n:check 把它当成第三种语言报错；删掉这个空目录即可，不进仓库。
+
+测试改动：packages/kernel/test/permission/approval-modes.test.ts · 06 验收 9: the manual mode decides every fixture as before 06 · 命令卡新增 `category`，只补这个字段的期望，其余照旧完整比较
+测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17 与 receipt-override 写入方两条 · plan 第 8 步要求，精确检查两个注册项与两个专用写入方，与第 9、10 步同一个提交
+测试改动：apps/desktop/test/shutdown.test.ts · 写入请求集合 · 加入 `inspector.release` 及其注册
+测试改动：apps/desktop/test/tape/conformance.test.ts · 共享套件数量 · 新增共享用例，46 改为 47
+测试改动：packages/contracts/test/approval.test.ts · 摘要码数量 · 新增 `inspector-flagged`，18 改为 19
+测试改动：packages/contracts/test/confirm.test.ts · 类别清单 · 增加两个类别，并补成功校验
+测试改动：packages/contracts/test/registry.test.ts · 路由清单 · 加入 `inspector.release`
+测试改动：packages/kernel/test/tape/names.test.ts · 事实清单 · 加入 `tool/inspector_override`
+测试改动：apps/desktop/test/copy-coverage.test.ts · 类别、「为什么停」与拦截文案的计数，04 验收 33 的回执清单 · 四个类别让计数变成 64、19、11；回执清单加入「允许这一次」那四个键
+测试改动：apps/desktop/test/renderer-approval-keys.test.ts · reads a flagged category the contract knows · 类别清单变成四个
+测试改动：apps/desktop/test/end-reason-copy.test.ts · has a sentence for each of the 18 codes · `runEnd` 多了本轮累计这一个变体，另加一条用例核对它的槽与渲染
+测试改动：apps/desktop/test/renderer-approval-card.test.ts · presentation-r1 验收 1 / presentation-r1 不变量 3 · 夹具给每张卡都带了 `category`；D36 起命令卡带 `category` 时 ③ 出类别句，期望照改
+测试改动：apps/desktop/e2e/approval.spec.ts · presentation-r1 验收 2: the card escapes its object path without repeating it in the reason (②′, E4) · 06 起 input-hygiene 在两档都对路径里的零宽字符出卡，③ 改出「看不见的字符」那句（验收 19、D36）；对象行转义与「不重复路径」的断言不变。PR #90 的 CI 上它红过一次，其余 275 条 e2e 与新写的验收 27 都过
+
+## 2026-11-20 · 第二段第 12、13 步与文案定稿
+
+- 第 12 步（C 路 fdaa4b0）：三处给模型看的文本都由实现者按 spec 的意思自拟、lead 审过：放行告知行接在 `<sandbox_release>` 的「The user granted the following permissions」下，与 04 的几句同一种写法——"The next call to {toolName} with the same arguments (hash {argsHash}) may run once despite blocks from permission checks {inspectorIds}; all other permission checks and any required user confirmation still apply."；Bash 描述加 "In auto mode, commands that run without asking for approval do not receive token-like environment variables."；累计到上限的 not-run 句 "The task reached its limit for blocked calls in this round, so it stopped and this call was not run."（不写 in a row）。`PROMPT_LAYER_VERSION` 12 → 13，哈希 `f490205c…`；第 12 版的历史记录不动。`evals:gate` 因第 13 版没有基线而红，是 plan 写明的预期；第 12.1 步基线评测 owner 2026-11-12 说「先不跑」，仍开着。
+- 第 13 步（E 路 b7f7a2c）：`apps/desktop/e2e/inspector-release.spec.ts`，流程照验收 27：手动档里脚本化回复发出含 BEL 的 `printf` 命令 → 回执 → 点「允许这一次」→「已放行」、不自动重发 → 同一条命令再来照常出命令卡 → 批准后输出文件逐字节正确、只派发了重试那一次。`ci.yml` 的 macOS e2e 列表加了这一个文件（门禁文件，#90 由 owner 合）。PR #90 的 CI（run 44508410897）上 e2e（Linux，含这一条）与 sandbox-macos（含 macOS 这一半）都过。推送改 `ci.yml` 的提交要 gh 凭据带 `workflow` 权限，owner 2026-11-12 补过。
+- 第 10 步的文案定稿（两份 locale，lead 定）：
+  - 卡 ③：`confirm.reason.flagged.hidden-characters`「路径或命令里有看不见的字符，已经标出来，先给你看一眼。」/ "This path or command contains invisible characters. They are marked so you can check it first."；`control-characters` 同句式（「有控制字符」/ "contains control characters"），按 D36 命令卡带 `category` 时也出这一句。
+  - 回执：`blocked.inspector.control-characters`「路径或命令里有控制字符，已拦下。」/ "This path or command contains control characters, so it was stopped."；`hidden-characters` 同句式。按钮 `receipt.action.allow-once`「允许这一次」/ "Allow once"，说明 `receipt.note.allow-once`「在这个任务里再发出完全相同的这一步时生效一次；到下一轮回复结束还没用上就作废」/ "Applies once when this exact step is sent again in this task. Unused permission expires at the end of the next reply."；点过沿用 04 的「已放行」/ "Allowed"；`receipt.error.step-stale`「这一步已不能放行；还需要的话，让它重新做一次。」与 `step-not-found`「找不到这一步；还需要的话，让它重新做一次。」——04 那两句说「重新发起命令」，被拦的可能是文件路径，所以另写；`refused`、`failed` 沿用 04。
+  - 结束：`runEnd.blocked-repeatedly-round`「这一轮被拦了 {count} 次，任务已结束。」/ "Calls were blocked {count} times in this round, so the task ended."
+  - 「查看本次记录」：`snapshot.decision.inspector-flagged`「检查发现看不见的字符，需要确认」/ "Checks found invisible characters; confirmation is needed"。
+- 补测（lead）：结束卡按 `scope` 出累计那句的渲染级用例，与 `inspector-flagged` 的句子；把结束卡的累计分支去掉，前者变红。
+- Codex 本机这两天跑不起来：ChatGPT 账号不支持配置里的模型（`gpt-6.1-sol`、`gpt-6.2-sol` 都报 not supported），CLI 是 0.169.1、最新 0.171.0。第 14 步的修正改由子 agent 做。
+
+测试改动：packages/kernel/test/prompts/version.test.ts · 版本、哈希与 LAYER_HISTORY · 版本 12 改 13、追加第 13 版的历史、提示层条目由五条改六条；第 12 版的记录不动
+测试改动：packages/kernel/test/prompts/fill.test.ts · 新模板槽位 · 只新增用例
+测试改动：packages/contracts/test/chat-event.test.ts · runEndReason · 新增 `scope: 'round'` 与旧原因兼容的用例
+测试改动：apps/desktop/test/sandbox/allowlist.test.ts · canReach · 只新增用例
+
+## 2026-11-20 · 第 14 步段末评审之后的修正
+
+- 三路评审审的是 `ba293c6`：对照 spec 通过（0/0/7）、保护通过（0/0/4）、测试与突变不通过（0/3/9；突变 163 个、存活 43，其中 23 个有「原实现绿、变异体红」的探针，生产代码对全部探针按 spec 表现）。报告原文在私有笔记（另记）。
+- 修正在一个子 agent 的隔离 worktree 里做（48594d9，Codex 这两天跑不起来），源码只动 `loop/batch.ts`、`loop/mailbox.ts`、`loop/run.ts`，都只收紧：
+  - `judgeCall` 的顺序改为「检查 → 经根会话 mailbox 读档位 → 最终计划 → 复核采样，不一致就回去重跑」，等待期间姿态或白名单变了会被这一次判定读到（第一段之前就是在读档位之后算计划）。
+  - 偏严的第三次检查里，计划为 full-access 的卡也不带 `autoAsk`，与 §自动档的范围 的例外一致。
+  - `appendWithDowngrade` 对根会话的每条 `run_terminal` 都按计数判：到上限时不论这一轮是怎么结束的（含点停止、启动恢复），自动档都降回手动；`chainCounters` 并入同批待写的事实，续跑的 Run 一开头就停也数得到。
+  - WebFetch 跟随重定向的那次判定不读、也不消耗未绑定的 inspector 放行。
+- 补测（每条都给了「原实现或点名的突变体上红、修后绿」的证据）：同一轮回复里两条一字不差的调用只放第一条；放行只撤掉说拒的那几个检查、被放行的检查改说问时卡仍在；执行期沙箱拦截、跨模型响应、答复后续跑都计进本轮累计，连续第 3 与累计第 20 同时到达时按本轮结束；callKey 的第四段、前导零、撤回消息、非 Bash 工具；绑定重跑的命令在自动档不记免问规则；只有 Bash 带 `canReachNetwork`；适配器的 findings 只带固定码、认不出的结论按拦处理；desktop 缺 `canReach` 查询时读作能联网。
+- D39（owner 同日选「只补两类高风险的」，2ea6cac）：适配器另认文字方向控制符（问）与 C1 控制字符（拒）；新用例在改动前的适配器上红。
+- 不修、记下的：竞态与接线类没建探针的几处（releaseInspector 排队的会话、启动恢复降档写入排队、审批过的 Agent 分支里的累计、`main/index.ts` 的路由注册只有 e2e 守）——前三处按代码看排在根会话 mailbox，复核时再看；同号用例太多、矩阵与用例名的小出入留给第 22 步；命令卡上认不出的 `category` 出通用句属于第三段第 18 步。
+
+测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17: only release writes receipt overrides… · 去掉对 `packages/kernel/src/testing/` 目录的排除，改为把 `tape-conformance.ts` 里那 4 行精确列进期望（比排除更严）
+- 更正（「第 14 步段末评审之后的修正」一节的「不修、记下」）：「审批过的 Agent 分支里的累计」不是排队问题，是那条分支里清零与累加没有测试守着（复核时突变 C02b、C03b 存活，实现读代码是对的），改为补测；另把 ToolRow 的 `key={callKey}` 静态渲染测不到（U09）记进不修：换一个调用时状态不串，靠组件按 key 重挂，只有真实渲染能测，e2e 的验收 27 走过这条路。
+
+## 2026-11-20 · 复核 d074ba2 之后的修正
+
+- 复核 d074ba2（报告在私有笔记，另记）不通过：每条根会话结束都按计数判降档之后，`chainCounters` 只在 `source` 为空时把连续计数清零，执行循环却在每条派发过、没被拦下的调用上清零（Bash 超时、派发后连接器不可用或未授权都算），正常结束的自动档任务可能被降回手动。
+- 修正（6a5f683，子 agent）：`chainCounters` 按 `execution/dispatch_committed` 记下派发过的调用，派发过的收口照执行循环清零，被拦下的照旧计数；没派发的收口不动连续计数。回归用例照复核的探针写（拒、拒、Bash 超时、拒，正常结束仍是自动档），另有五种派发后收口的逐个用例，都在 d074ba2 上红。补测：等档位期间只换沙箱档位、C1 与零宽字符同时出现。
+- 更正（上一节的更正）：「审批过的 Agent 分支」走不到，不是缺测试：会出卡的 Agent 调用被批准后，`rejudgeWaiting` 重判时找不到 Agent 的执行器，判成不可用，`tightenedFacts` 直接把它收口成 `tool-unavailable`，批处理进不了那条分支；那里的清零也已被 `awaits` 清过，等价。眼下 Agent 不出卡（`NOT_GATED`），碰不到；记进 plan Open。
+
+## 2026-11-20 · 复核 57e4276 之后
+
+- 复核 57e4276（报告在私有笔记，另记）通过（0/0/4）：新的清零口径与执行循环在各种收口来源上逐项一致，没找到「该降档却不降」的路径；产品构建里「审批过的 Agent 分支」确实走不到。
+- 四条 minor 当场修掉（lead）：补「只有同一个调用的派发才算」的两例（同一请求里另一个没派发的调用、下一次请求里同位置的调用），复核存活的两个突变都被杀；repair 单列成一例，用例名与说法改成「按 02 放行即清零」——执行循环在 repair 后不动计数，Tape 一侧照 02 §上限 清零，只有打包构建里才会有 repair；spec 说清国旗不问、只有子区旗、彩虹旗与 emoji 组合两档都问；plan 的交接改到最新，Open 里超出篇幅上限改为约 2 900 字符。
+- 更正（「复核 d074ba2 之后的修正」一节）：「派发过的收口照执行循环清零」对 repair 不准，见上一条。
+
+## 评审 · 2026-11-20 · 审过 57f7333
+
+结论：通过    评审：第 14 步分四轮，每路都是新上下文的子 agent、只读，报告原文在私有笔记（另记）。第一轮审 ba293c6，三路：对照 spec（通过，0 blocker / 0 major / 7 minor）、保护（通过，0/0/4）、测试与突变（不通过，0/3/9）；修在 48594d9（经 fadd64e 合入），另有 owner 当日选的 D39（2ea6cac）。第二轮审 d074ba2（不通过，0/1/6）：修降档时带进一处偏严，修在 6a5f683（经 34570e1 合入）。第三轮审 57e4276（通过，0/0/4），四条当场修在 57f7333。第四轮审 57f7333（通过，0/0/3），只多了测试与文档、没改生产代码。lead 在沙箱外跑了：57e4276 上全量 6 010 条通过，`TENON_SANDBOX_TESTS=required` 的逃逸测试 120 条通过（本机 `/private/tmp/claude` 被建成 0755 时这组整批失败、dev 上也一样，改回 0700 后通过），format、lint、typecheck 通过；57f7333 上 kernel 全量 2 803 条通过；spec-check 只拦本条记录。PR #90 的 CI 上 e2e（Linux，含验收 27）与 sandbox-macos（含它的 macOS 一半）都过；`ci` 只红在 `evals:gate`：第 13 版没有基线，P 等 owner 的第 12.1 步。14.1 预算检查点：验收 44 条（上限 53）；代码第一段 7 178 行、第二段到这里 4 984 行（`git diff --shortstat`），加第三段估计 4 000–5 500 行，合计约 16 200–17 700 行（上限约 18 500），不用砍，但余量不大，第三段开工前再量一次
+突变：第一轮 plan 第 14 步点名的 15 个（含拆出的「绑定后不作废」一半）14 个被杀；另设 148 个，存活 43：有探针证明是缺口 23、等价或不可达 13、竞态与接线类没建探针 7；缺口在 48594d9 补上用例，第二轮重打全红。StrykerJS 只出报告：kernel 765 个变异体 79.74%，desktop 与 contracts 190 个 56.32%（ToolRow 的 0% 是 vitest-runner 跑不起 renderer-06-receipts 的度量失真，剔除后 80.5%）。第二轮 38 个存活 8（新代码缺口 2、等价 2、上一轮已记 4）；第三轮 12 个存活 2（`callOf` 去掉 ordinal、去掉 sourceSeq），57f7333 补测后都被杀；第四轮另打的 `callOf` 去掉 Run id 存活，见发现。CI 登记的突变仍是第一段留下的 M1、M2、M3、M12、M15
+发现：
+- [major] 一次放行「绑上就用掉」没有测试守：同一轮回复里两条一字不差的调用，第二条本该再拒 · 证据：`receipt-releases.ts` 的已用集合去掉放行键，全量不红 · 已修 48594d9
+- [major] 累计熔断只测了判决当场拒一类来源：执行期沙箱拦截、跨模型响应、续跑、连续第 3 与累计第 20 同时到达都没有用例 · 证据：对应的六个突变存活 · 已修 48594d9
+- [major] 回执放行「只放被点名的检查、只放拒」缺两个检查的用例 · 证据：放宽 `said === 'deny'` 的两个突变存活 · 已修 48594d9
+- [major] 修降档时改宽：每条根会话结束都按计数判，而 `chainCounters` 的清零规则与执行循环不一致，正常结束的自动档任务可能被降回手动 · 证据：探针（拒、拒、Bash 超时、拒，正常结束后写了降档） · 已修 6a5f683
+- [建议] 第一轮其余 minor：偏严的第三次检查里 full-access 的卡多带 autoAsk、只撤拒不撤问没测、写入方检查按目录排除、跟随重定向读未绑定放行、点停止后不降档、最终计划与采样定在等档位之前，以及 callKey 校验、适配器 findings 与失败即拦、只有 Bash 带能否联网等补测 · 证据：各条的突变或探针 · 已修 48594d9
+- [建议] input-hygiene 认的看不见字符比卡片的写法窄，文字方向控制符与 C1 控制字符在自动档里免问 · 证据：保护一路的探针 · 已修 2ea6cac
+- [建议] 第二轮其余 minor：等档位期间只换沙箱档位、C1 与零宽同时出现两处补测，以及 plan、spec、decisions 的计数与说法 · 证据：两个突变存活与文档对照 · 已修 6a5f683
+- [建议] 第三轮四条：只有同一个调用的派发才算、repair 的说法、plan 交接、旗帜的说法 · 证据：两个突变存活与 railguard 0.7.0 实测 · 已修 57f7333
+- [建议] `chainCounters` 认「同一个调用」的三项里 Run id 那一项没有用例，续跑链上前后两个 Run 同一位置的调用会撞键 · 证据：第四轮突变存活 · 不修：行为是对的、缺的是用例，记进 plan Open，第 22 步补
+- [建议] plan 的「当前」与交接对不上、Open 的超长字数按旧版算 · 证据：第四轮复核 · 已修 39eeccb
+- [建议] repair 那例的注释与上一节 log 说「只有打包构建里才会有 repair」不准，评测程序也开着 · 证据：`apps/desktop/evals/runner.ts` 的 `onUnansweredCall` · 不修：本节末尾追加更正，测试注释记进 plan Open 第 22 步
+- [建议] 竞态与接线类没建探针的几处：releaseInspector 排的队、启动恢复降档写入的队、`main/index.ts` 的路由注册与启动恢复 gate、ToolRow 按 callKey 重挂 · 证据：复核读代码确认前两处排在根会话 mailbox，后两处有 e2e 走过 · 不修：只有并发或真实渲染才看得见，记下
+- 更正（「复核 57e4276 之后」一节）：评测程序也开着 repair（`apps/desktop/evals/runner.ts`），不只是打包构建。

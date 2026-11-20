@@ -63,6 +63,7 @@ const DESCRIPTION = [
   `It is stopped after ${String(BASH_DEFAULT_TIMEOUT_MS)} ms unless timeout says otherwise (at most ${String(BASH_MAX_TIMEOUT_MS)} ms).`,
   'There is no background mode.',
   'When the sandbox is active, commands can write only to workspace folders and connect only to domains the user has allowed; blocked operations are listed in <sandbox_violations> after the output.',
+  'In auto mode, commands that run without asking for approval do not receive token-like environment variables.',
   'In the Linux sandbox, empty placeholders such as `.envrc`, `.bashrc` and `.vscode` may appear at workspace roots; they are not user files, so do not stage or commit them, and use `git add <path>` rather than `git add -A`.',
   'Use Read, Glob and Grep rather than cat, find or grep, and Edit or Write rather than editing files from the shell.',
 ].join(' ')

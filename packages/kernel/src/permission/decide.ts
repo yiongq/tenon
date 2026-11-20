@@ -88,6 +88,7 @@ export interface LayerInputs {
 /** A layer-5 opinion as the kernel folded it: a timeout or an error keeps its status (F1). */
 export type InspectorOutcome = {
   readonly inspectorId: string
+  readonly override?: string
   readonly ceiling: 'ask' | 'deny'
 } & (
   | { readonly status: 'ok'; readonly opinion: DenyOpinion }
@@ -227,7 +228,15 @@ export function decide(input: DecisionInput): Decision {
   })
 
   // ----- layer 5: the inspectors, in registration order ------------------------------------------
-  const inspectorSteps = inspectors.map(inspectorStep)
+  const inspectorSteps = inspectors.map((outcome) => {
+    const step = inspectorStep(outcome)
+    return outcome.override !== undefined && step.said === 'deny'
+      ? Object.assign({}, step, {
+          said: 'none' as const,
+          basis: Object.assign({}, step.basis, { override: outcome.override }),
+        })
+      : step
+  })
   steps.push(...inspectorSteps)
   const inspectorDeny = inspectorSteps.some((step) => step.said === 'deny')
   const inspectorAsk = inspectorSteps.some((step) => step.said === 'ask')
@@ -365,6 +374,7 @@ export function decide(input: DecisionInput): Decision {
           : layerFiveCategory(inspectorSteps, 'ask'),
     }
     const facts = pick(pool, CONFIRM_FACT_KEYS[reason])
+    if (reason === 'command' && inspectorAsk) facts['category'] = pool['category']!
     if (reason === 'command' && callReason.facts['sandbox'] === 'unavailable') {
       facts['sandbox'] = 'unavailable'
     }

@@ -13,7 +13,7 @@ import type { HostClock } from '../host/adapter.js'
 import type { InspectorOutcome } from './decide.js'
 import type { AfterResultInput, BeforeCallInput, ResultMarker } from './session-view.js'
 
-export type InspectorCategory = 'exfiltration' // what an inspector may report; only ever added to
+export type InspectorCategory = 'exfiltration' | 'hidden-characters' | 'control-characters' // what an inspector may report; only ever added to
 /** The second value is produced by the kernel alone; shared by `flagged` cards and `inspector` blocks. */
 export type FlaggedCategory = InspectorCategory | 'inspector-failed'
 
@@ -144,7 +144,11 @@ async function inspectOne(
 
 function noop(): void {}
 
-const CATEGORIES: ReadonlySet<string> = new Set<InspectorCategory>(['exfiltration'])
+const CATEGORIES: ReadonlySet<string> = new Set<InspectorCategory>([
+  'exfiltration',
+  'hidden-characters',
+  'control-characters',
+])
 
 /** The keys an opinion of each kind may carry, and a finding. */
 const NONE_KEYS: ReadonlySet<string> = new Set(['kind', 'findings'])

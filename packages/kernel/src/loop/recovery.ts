@@ -63,6 +63,8 @@ export interface RecoveryDeps {
   readonly sandbox?: SandboxPorts | undefined
   readonly searchTarget?: RunConnector['searchTarget']
   readonly tape: Tape
+  /** Host loop: append cap-related facts in the root mailbox, including startup handoffs. */
+  readonly appendEntries?: Tape['appendEntries']
   readonly now: () => number
   readonly log: (line: string) => void
   readonly host: HostAdapter
@@ -148,6 +150,11 @@ export async function recoverTape(deps: RecoveryDeps): Promise<Recovered> {
   return { resumable, errors, cards, roots }
 }
 
+/** Standalone recovery uses the Tape directly; the bound loop supplies its root mailbox writer. */
+function appendRecovery(deps: RecoveryDeps, q: Parameters<Tape['appendEntries']>[0]) {
+  return deps.appendEntries?.(q) ?? deps.tape.appendEntries(q)
+}
+
 async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise<void> {
   const entries = await readSessionEntries(deps.tape, sessionId)
   const head = await deps.tape.head(sessionId)
@@ -228,7 +235,7 @@ async function recoverChildLinks(deps: RecoveryDeps, sessionId: string): Promise
         ),
       )
     // oxlint-disable-next-line no-await-in-loop -- each child-to-parent gap is closed once, after child facts
-    await deps.tape.appendEntries({
+    await appendRecovery(deps, {
       sessionId,
       incarnationId: head.incarnationId,
       entries: closures,
@@ -420,7 +427,7 @@ async function closeUnfinishedRuns(
       }),
     )
     // oxlint-disable-next-line no-await-in-loop -- one append per Run, in Tape order
-    await tape.appendEntries({ sessionId, incarnationId: head.incarnationId, entries: closures })
+    await appendRecovery(deps, { sessionId, incarnationId: head.incarnationId, entries: closures })
   }
 }
 
@@ -562,7 +569,7 @@ async function rejudgeAtStartup(
   const head = await deps.tape.head(sessionId)
   if (head === null) return null
   const append = (entries: NewEntry[]): Promise<unknown> =>
-    deps.tape.appendEntries({ sessionId, incarnationId: head.incarnationId, entries })
+    appendRecovery(deps, { sessionId, incarnationId: head.incarnationId, entries })
   switch (rejudged.kind) {
     case 'unavailable':
     case 'denied':

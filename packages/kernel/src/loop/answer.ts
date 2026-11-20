@@ -631,6 +631,10 @@ export async function rejudgeWaiting(q: {
       searchHost: current?.host ?? null,
       ...(current == null ? {} : { prepareSearch: () => current }),
       ignoreSearchGrant: changed,
+      rejudging: true,
+      ...(waiting.decision.inspectorOverride === undefined
+        ? {}
+        : { previousInspectorOverride: waiting.decision.inspectorOverride }),
       ...(waiting.decision.sandbox === undefined
         ? {}
         : { previousSandbox: waiting.decision.sandbox }),

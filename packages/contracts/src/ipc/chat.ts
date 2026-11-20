@@ -32,7 +32,11 @@ export const runEndReasonSchema = z.discriminatedUnion('code', [
     waitingFor: z.enum(['approval', 'question', 'subagent']),
   }),
   z.object({ code: z.literal('user-rejected'), toolName: z.string() }),
-  z.object({ code: z.literal('blocked-repeatedly'), count: z.number().int() }),
+  z.object({
+    code: z.literal('blocked-repeatedly'),
+    count: z.number().int(),
+    scope: z.literal('round').optional(),
+  }),
   z.object({ code: z.literal('step-limit'), limit: z.number().int() }),
   z.object({ code: z.literal('no-progress'), repeats: z.number().int() }),
   z.object({ code: z.literal('usage-limit'), tokenLimit: z.number() }),

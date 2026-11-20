@@ -2,7 +2,7 @@ import { callSnapshot } from '@/lib/snapshots'
 import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
 import type { ToolOutcomeViewContract } from '@tenon-app/contracts'
-import { invokeRoute, mcpLogin, sandboxRelease } from '@tenon-app/contracts'
+import { inspectorRelease, invokeRoute, mcpLogin, sandboxRelease } from '@tenon-app/contracts'
 import { AlertTriangle, CircleX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ClampedPre } from '@/components/ui/clamped-pre'
@@ -169,6 +169,8 @@ export function ToolRow(props: ToolCallMessagePartProps): JSX.Element | null {
         />
       ) : blocked && outcome !== null ? (
         <BlockedNotice
+          key={callKey}
+          callKey={callKey}
           outcome={outcome}
           toolName={props.toolName}
           profile={snapshot.facts?.profile ?? 'chat'}
@@ -437,8 +439,14 @@ export function SandboxNotice(props: {
   )
 }
 
-/** The four block codes each say why, without repeating the object or the tool name. */
-function BlockedNotice(props: {
+const BLOCKED_BOX = 'rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning'
+
+/**
+ * The four block codes each say why, without repeating the object or the tool name. A check's block
+ * also offers 「允许这一次」 (06 §从回执允许一次); policy, protected and user-disabled never do.
+ */
+export function BlockedNotice(props: {
+  readonly callKey: string
   readonly outcome: ToolOutcomeViewContract
   readonly toolName: string
   readonly profile: 'chat' | 'cowork'
@@ -459,13 +467,65 @@ function BlockedNotice(props: {
               ? 'blocked.protected.write'
               : 'blocked.protected.read'
           : `blocked.${String(props.outcome.source)}`
+  if (props.outcome.source !== 'inspector')
+    return (
+      <div data-testid="blocked-notice" data-source={props.outcome.source} className={BLOCKED_BOX}>
+        <p>{tx(t, key)}</p>
+      </div>
+    )
   return (
-    <div
-      data-testid="blocked-notice"
-      data-source={props.outcome.source}
-      className="rounded-sm border border-border-subtle px-2 py-1 text-micro text-text-warning"
-    >
-      <p>{tx(t, key)}</p>
+    <div data-testid="blocked-receipt" className={`flex min-w-0 flex-col gap-2 ${BLOCKED_BOX}`}>
+      <div data-testid="blocked-notice" data-source={props.outcome.source}>
+        <p>{tx(t, key)}</p>
+      </div>
+      <InspectorRelease callKey={props.callKey} />
+    </div>
+  )
+}
+
+/** 「允许这一次」 under a check's block: one identical call later, then the button reads 「已放行」. */
+export function InspectorRelease(props: { readonly callKey: string }): JSX.Element {
+  const { t } = useTranslation()
+  const store = useSessionStore()
+  const [state, setState] = useState<ReleaseState | undefined>(undefined)
+
+  async function release() {
+    setState('busy')
+    let next: ReleaseState
+    try {
+      const result = await invokeRoute(window.tenon, inspectorRelease, {
+        sessionId: store.sessionId,
+        callKey: props.callKey,
+      })
+      next = !result.ok
+        ? 'failed'
+        : result.data.status === 'already-released'
+          ? 'released'
+          : result.data.status
+    } catch {
+      next = 'failed'
+    }
+    setState(next)
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-1" data-testid="receipt-action">
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="receipt-allow-once"
+        disabled={state === 'busy' || state === 'released'}
+        className="max-w-full h-auto min-h-(--t-h-control-compact) whitespace-normal text-left"
+        onClick={() => release()}
+      >
+        {state === 'released' ? t('receipt.released') : t('receipt.action.allow-once')}
+      </Button>
+      <p data-testid="receipt-action-note">{t('receipt.note.allow-once')}</p>
+      {state === 'stale' || state === 'not-found' ? (
+        <p role="alert">{tx(t, `receipt.error.step-${state}`)}</p>
+      ) : state === 'refused' || state === 'failed' ? (
+        <p role="alert">{tx(t, `receipt.error.${state}`)}</p>
+      ) : null}
     </div>
   )
 }

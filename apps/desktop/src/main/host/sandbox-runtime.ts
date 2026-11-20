@@ -129,6 +129,15 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
       : this.real!.posture()
   }
 
+  canReach(q: { sessionId: string; hosts: readonly string[] }): boolean {
+    try {
+      return this.allowedDomains(q.hosts).length > 0
+    } catch {
+      // An unreadable setting must not exempt a command from the exfiltration check.
+      return true
+    }
+  }
+
   view(): SandboxView {
     const platform = this.options.platform
     return {
@@ -240,14 +249,18 @@ export class DesktopSandboxRuntime implements HostSandbox, SandboxPorts {
     return this.real?.dispose() ?? Promise.resolve()
   }
 
-  private updateAllowlist(hosts: readonly string[]): void {
-    const session = this.session
-    if (session === null) return
+  private allowedDomains(hosts: readonly string[]): string[] {
     const settings = this.options.settings()
     const preset = settings.packageManagers
       ? sandboxPreset(this.options.paths.platform, this.options.paths.cacheDir).domains
       : []
-    const domains = [...new Set([...settings.allowedDomains, ...preset, ...hosts])]
+    return [...new Set([...settings.allowedDomains, ...preset, ...hosts])]
+  }
+
+  private updateAllowlist(hosts: readonly string[]): void {
+    const session = this.session
+    if (session === null) return
+    const domains = this.allowedDomains(hosts)
     const before = session.network.allowedDomains
     if (domains.length === before.length && domains.every((host) => before.includes(host))) return
     const next = { ...session, network: { ...session.network, allowedDomains: domains } }

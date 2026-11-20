@@ -199,8 +199,12 @@ describe('the reasons spec 02 adds', () => {
     expect(issuePaths(flagged('exfil'))).toEqual(['facts.category'])
     expect(issuePaths(flagged('exfiltration'))).toEqual([])
     expect(issuePaths(flagged('inspector-failed'))).toEqual([])
+    expect(issuePaths(flagged('hidden-characters'))).toEqual([])
+    expect(issuePaths(flagged('control-characters'))).toEqual([])
     expect([...flaggedCategorySchema.options].toSorted()).toEqual([
+      'control-characters',
       'exfiltration',
+      'hidden-characters',
       'inspector-failed',
     ])
     // Another reason may carry a `category` fact; only flagged checks it.

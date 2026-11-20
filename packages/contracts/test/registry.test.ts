@@ -35,6 +35,7 @@ describe('ipc registry', () => {
       'customVendor.list',
       'customVendor.probe',
       'customVendor.update',
+      'inspector.release',
       'mcp.cancelLogin',
       'mcp.connect',
       'mcp.delete',

@@ -593,8 +593,12 @@ export type {
   SandboxPlan,
   SandboxOutcome,
   ReceiptOverridePayload,
+  InspectorOverridePayload,
   SandboxReleasePayload,
 } from './tape/entry.js'
 export type { SandboxPorts } from './loop/ports.js'
 export type { ReleaseQuery, ReleaseResult } from './session/service.js'
 export { receiptOverrideKey } from './tape/provenance.js'
+
+export { inspectorOverrideKey } from './tape/provenance.js'
+export type { InspectorReleaseQuery } from './session/service.js'

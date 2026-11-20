@@ -163,6 +163,11 @@ export interface AnswerResult {
   readonly status: 'applied' | 'already-resolved' | 'stale' | 'not-found' | 'invalid' | 'refused'
 }
 
+export interface InspectorReleaseQuery {
+  readonly sessionId: string
+  readonly callKey: string
+}
+
 export interface ReleaseQuery {
   readonly sessionId: string
   readonly callKey: string
@@ -274,6 +279,7 @@ export interface SessionService {
   /** 「继续」 after a truncated or limited Run (plan step 13). */
   continueRun(q: { sessionId: string; origin: RunOrigin | null }): Promise<ContinueRunResult>
   /** A receipt release, serialized with commands of its root session. */
+  releaseInspector(q: InspectorReleaseQuery): Promise<ReleaseResult>
   release(q: ReleaseQuery): Promise<ReleaseResult>
   /** An answer to an approval card or a question (plan steps 15 and 26). */
   answer(q: AnswerCommand & { origin: RunOrigin | null }): Promise<AnswerResult>
@@ -494,6 +500,7 @@ export function constructSessionService(
     continueRun: (q) => loop.continueRun(q),
     answer: (q) => loop.answer(q),
     release: (q) => loop.release(q),
+    releaseInspector: (q) => loop.releaseInspector(q),
     currentPending: (q) => loop.currentPending(q),
     listPendingRoots: (q) => loop.listPendingRoots(q),
     stop: (q) => loop.stop(q),

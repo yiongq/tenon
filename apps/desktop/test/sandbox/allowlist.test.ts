@@ -4,6 +4,7 @@ import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SandboxRuntimeConfigSchema } from '@anthropic-ai/sandbox-runtime'
 import { sandboxAllowedDomainsSchema } from '@tenon-app/contracts'
+import type { SandboxSettings } from '@tenon-app/contracts'
 import { absolutePath, createMemoryHost } from '@tenon-app/kernel'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readConfig, watchConfig, writeConfig } from '../../src/main/host/profile.js'
@@ -21,6 +22,28 @@ const SESSION = '6f1c2a4e-3b5d-4c7e-9f80-1a2b3c4d5e6f'
 const CHILD = '11111111-1111-4111-8111-111111111111'
 
 afterEach(() => vi.useRealTimers())
+
+it.each<[string, Partial<SandboxSettings>, string[], boolean]>([
+  ['true for a user allowlist', { allowedDomains: ['user.example.org'] }, [], true],
+  ['true for the preset in read-only', { packageManagers: true, profile: 'read-only' }, [], true],
+  ['true for session grants', {}, ['grant.example.org'], true],
+  ['false when all sources are empty', {}, [], false],
+])('06 验收 18: desktop canReach answers %s', (_label, settings, hosts, expected) => {
+  const h = wiringFixture()
+  h.setSettings(settings)
+  expect(h.runtime.canReach({ sessionId: SESSION, hosts })).toBe(expected)
+  // Sampling does not start the sandbox or change the process-wide allowlist.
+  expect(h.options.startPosture).not.toHaveBeenCalled()
+  expect(h.srt.updateConfig).not.toHaveBeenCalled()
+})
+
+it('06 验收 18: desktop canReach remains conservative when settings cannot be read', () => {
+  const h = wiringFixture()
+  vi.spyOn(h.options, 'settings').mockImplementation(() => {
+    throw new Error('settings unavailable')
+  })
+  expect(h.runtime.canReach({ sessionId: SESSION, hosts: [] })).toBe(true)
+})
 
 describe('04 desktop sandbox wiring', () => {
   it('04 不变量 19: the installed host never adds provider, gateway, MCP or telemetry endpoints', async () => {
