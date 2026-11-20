@@ -647,3 +647,4 @@ const ownLease = true
 - 不修、记下的：竞态与接线类没建探针的几处（releaseInspector 排队的会话、启动恢复降档写入排队、审批过的 Agent 分支里的累计、`main/index.ts` 的路由注册只有 e2e 守）——前三处按代码看排在根会话 mailbox，复核时再看；同号用例太多、矩阵与用例名的小出入留给第 22 步；命令卡上认不出的 `category` 出通用句属于第三段第 18 步。
 
 测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17: only release writes receipt overrides… · 去掉对 `packages/kernel/src/testing/` 目录的排除，改为把 `tape-conformance.ts` 里那 4 行精确列进期望（比排除更严）
+- 更正（「第 14 步段末评审之后的修正」一节的「不修、记下」）：「审批过的 Agent 分支里的累计」不是排队问题，是那条分支里清零与累加没有测试守着（复核时突变 C02b、C03b 存活，实现读代码是对的），改为补测；另把 ToolRow 的 `key={callKey}` 静态渲染测不到（U09）记进不修：换一个调用时状态不串，靠组件按 key 重挂，只有真实渲染能测，e2e 的验收 27 走过这条路。
