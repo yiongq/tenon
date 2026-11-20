@@ -12,6 +12,25 @@ const PARAMETERS: Readonly<Record<string, string>> = {
   Grep: 'path',
 }
 
+/**
+ * Two classes railguard 0.7.0 does not report, checked here and only ever tightening (06 D39): C1
+ * control characters block like C0 ones, and bidirectional controls, which can turn a name around
+ * on screen, ask like zero-width ones. Other format characters stay a known limit.
+ */
+const C1_CONTROL = /[\u0080-\u009F]/u
+const BIDI_CONTROL = /\p{Bidi_Control}/u
+
+const CONTROL = {
+  kind: 'deny',
+  category: 'control-characters',
+  findings: [{ code: 'control-characters' }],
+} as const
+const HIDDEN = {
+  kind: 'ask',
+  category: 'hidden-characters',
+  findings: [{ code: 'hidden-characters' }],
+} as const
+
 export function railguardInspector(): InspectorRegistration {
   const hygiene = inputHygiene('beforeToolCall')
   return {
@@ -31,20 +50,14 @@ export function railguardInspector(): InspectorRegistration {
       })
       if (outcome.status !== 'ok') throw new Error('input hygiene did not complete')
       switch (outcome.verdict) {
-        case 'pass':
-          return { kind: 'none' }
         case 'blocked':
-          return {
-            kind: 'deny',
-            category: 'control-characters',
-            findings: [{ code: 'control-characters' }],
-          }
+          return CONTROL
+        case 'pass':
         case 'modified':
-          return {
-            kind: 'ask',
-            category: 'hidden-characters',
-            findings: [{ code: 'hidden-characters' }],
-          }
+          if (C1_CONTROL.test(value)) return CONTROL
+          return outcome.verdict === 'modified' || BIDI_CONTROL.test(value)
+            ? HIDDEN
+            : { kind: 'none' }
         default:
           throw new Error('unexpected input hygiene verdict')
       }
