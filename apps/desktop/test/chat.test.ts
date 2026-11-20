@@ -238,6 +238,19 @@ it('06 验收 18: desktop loop forwards canReach to the runtime', () => {
   expect(port!(empty)).toBe(h.runtime.canReach(empty))
 })
 
+it('06 验收 18: a sandbox with no canReach query reads as reachable, so the exfiltration check still runs', () => {
+  const loop = createDesktopLoop({
+    clock: createMemoryHost().clock,
+    send: () => {},
+    locale: () => 'en',
+    commandShell: NO_SHELL,
+    sandbox: { beforeWrap: () => {}, grantsChanged: () => {} },
+  })
+  const port = loop.ports.sandbox?.canReach
+  expect(port).toBeTypeOf('function')
+  expect(port!({ sessionId: randomUUID(), hosts: [] })).toBe(true)
+})
+
 describe('chat routes', () => {
   let fake: FakeAnthropic
 

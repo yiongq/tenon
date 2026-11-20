@@ -19,6 +19,7 @@ import type {
   StreamEvent,
 } from '../../src/index.js'
 import { judgeCall } from '../../src/loop/batch.js'
+import type { JudgeContext } from '../../src/loop/batch.js'
 import { receiptOverrideKey } from '../../src/tape/provenance.js'
 import { grantKey } from '../../src/permission/grants.js'
 import { readSessionFacts } from '../../src/session/facts.js'
@@ -165,7 +166,10 @@ async function harness(mode: 'manual' | 'auto' = 'auto', realBash = false, token
     ).toBe('applied')
     return rootEnd()
   }
-  const judge = (signal = new AbortController().signal) =>
+  const judge = (
+    signal = new AbortController().signal,
+    extra: Pick<JudgeContext, 'modeTurn'> = {},
+  ) =>
     judgeCall(
       {
         tape,
@@ -178,6 +182,7 @@ async function harness(mode: 'manual' | 'auto' = 'auto', realBash = false, token
         userSetting: () => null,
         searchHost: null,
         signal,
+        ...extra,
       },
       {
         name: 'Bash',
@@ -811,4 +816,299 @@ it('06 验收 24: twenty machine denials in a round end it and downgrade auto', 
         (entry.payload['handoff'] as { outcome: string } | undefined)?.outcome === 'uncertain',
     ),
   ).toBe(true)
+})
+
+// ----- review follow-ups: autoAsk on the strict pass, the root-mailbox wait, canReachNetwork scope ---
+/** Three passes whose posture ends `unavailable`: the last (strict) pass has a full-access plan. */
+async function strictUnavailable(h: H) {
+  await h.send([read()])
+  const gates: Array<ReturnType<typeof Promise.withResolvers<void>>> = []
+  let reached = Promise.withResolvers<void>()
+  h.inspectors.push({
+    id: 'oscillating',
+    kind: 'local-rule',
+    ceiling: 'ask',
+    beforeCall: async () => {
+      const released = Promise.withResolvers<void>()
+      gates.push(released)
+      reached.resolve()
+      await released.promise
+      return { kind: 'none' }
+    },
+  })
+  const pending = h.judge()
+  for (const [state, profile] of [
+    ['pending', 'workspace-write'],
+    ['active', 'workspace-write'],
+    ['unavailable', 'workspace-write'],
+  ] as const) {
+    await reached.promise
+    reached = Promise.withResolvers<void>()
+    h.setPosture({ state, profile })
+    gates.at(-1)!.resolve()
+  }
+  const result = await pending
+  if (result.kind !== 'judged') throw new Error('not judged')
+  return result
+}
+it('06 验收 30: a strict third pass whose final plan is the unavailable full-access one carries no autoAsk', async () => {
+  const h = await harness('auto')
+  const result = await strictUnavailable(h)
+  expect(result).toMatchObject({
+    sandbox: { profile: 'full-access', unavailable: true },
+    decision: { record: { verdict: 'ask' } },
+  })
+  expect(result.decision.confirm?.facts).toMatchObject({ sandbox: 'unavailable' })
+  expect(result.decision.confirm?.facts).not.toHaveProperty('autoAsk')
+})
+
+/** A judgement that waits on the root mailbox while the test changes the host. */
+function mailboxWait() {
+  const entered = Promise.withResolvers<void>()
+  const gate = Promise.withResolvers<void>()
+  const modeTurn: NonNullable<JudgeContext['modeTurn']> = async (_root, work) => {
+    entered.resolve()
+    await gate.promise
+    return work()
+  }
+  return { entered, gate, modeTurn }
+}
+function recordedInspector() {
+  const inputs: BeforeCallInput[] = []
+  const inspector: InspectorRegistration = {
+    id: 'recorded',
+    kind: 'local-rule',
+    ceiling: 'ask',
+    beforeCall: async (input) => {
+      inputs.push(input)
+      return { kind: 'none' }
+    },
+  }
+  return { inputs, inspector }
+}
+it('06 验收 29: a posture change while the judgement waits for the root mailbox reaches the final plan and the exemption', async () => {
+  const h = await harness()
+  await h.send([read()])
+  const seen = recordedInspector()
+  h.inspectors.push(seen.inspector)
+  const wait = mailboxWait()
+  const pending = h.judge(undefined, { modeTurn: wait.modeTurn })
+  await wait.entered.promise
+  h.setPosture({ state: 'degraded', profile: 'workspace-write' })
+  wait.gate.resolve()
+  const result = await pending
+  if (result.kind !== 'judged') throw new Error('not judged')
+  // Auto exempts a command only while the posture is active at the judgement.
+  expect(result).toMatchObject({
+    sandbox: { profile: 'workspace-write' },
+    decision: { record: { verdict: 'ask' } },
+  })
+  expect(result.decision.confirm?.facts).toMatchObject({ autoAsk: 'sandbox' })
+  // The change after the first run of the checks reruns them once, like one during the checks.
+  expect(seen.inputs).toHaveLength(2)
+})
+it('06 验收 30: an allowlist added while the judgement waits for the root mailbox reruns the checks and asks for exfiltration', async () => {
+  const h = await harness()
+  await history(h, 'web')
+  const seen = recordedInspector()
+  h.inspectors.push(seen.inspector, exfiltrationInspector)
+  const wait = mailboxWait()
+  const pending = h.judge(undefined, { modeTurn: wait.modeTurn })
+  await wait.entered.promise
+  h.setReachable(true)
+  wait.gate.resolve()
+  const result = await pending
+  if (result.kind !== 'judged') throw new Error('not judged')
+  expect(seen.inputs.map((input) => input.call.canReachNetwork)).toEqual([false, true])
+  expect(result).toMatchObject({ decision: { record: { verdict: 'ask' } } })
+  expect(result.decision.confirm?.facts).toMatchObject({ category: 'exfiltration' })
+})
+it('06 验收 30: a stop during the root-mailbox wait records no decision', async () => {
+  const h = await harness()
+  await h.send([read()])
+  const controller = new AbortController()
+  const wait = mailboxWait()
+  const pending = h.judge(controller.signal, { modeTurn: wait.modeTurn })
+  await wait.entered.promise
+  controller.abort()
+  wait.gate.resolve()
+  expect(await pending).toEqual({ kind: 'stopped' })
+})
+
+it('06 验收 18: only Bash calls carry canReachNetwork to the checks', async () => {
+  const h = await harness()
+  const seen = recordedInspector()
+  h.inspectors.push(seen.inspector)
+  await h.send([read()])
+  expect(seen.inputs.at(-1)?.call.tool.originalName).toBe('Read')
+  expect(seen.inputs.at(-1)?.call).not.toHaveProperty('canReachNetwork')
+  await h.send([bash])
+  expect(seen.inputs.at(-1)?.call.tool.originalName).toBe('Bash')
+  expect(seen.inputs.at(-1)?.call).toHaveProperty('canReachNetwork', false)
+})
+
+// ----- review follow-ups: what the round count includes ---------------------------------------------
+const sandboxBlocked = (h: H) => {
+  h.host.sandbox.violations = async () => [
+    { kind: 'network', line: 'sandbox: network denied', target: 'blocked.example' },
+  ]
+}
+it('06 验收 24: commands the sandbox blocked at run time count toward the round cap', async () => {
+  // Regular branch: twenty blocked commands, each followed by a call that ran, never three in a row.
+  const h = await harness('auto', true)
+  sandboxBlocked(h)
+  const end = await h.send(Array.from({ length: 20 }, (_, i) => [bash, read(i + 1)]).flat())
+  expect(end.reason).toEqual({ code: 'blocked-repeatedly', scope: 'round', count: 20 })
+  // Approved branch: nineteen denials, then a card whose command the sandbox blocks on its way.
+  const approved = await harness('manual', true)
+  approved.inspectors.push(denialInspector())
+  sandboxBlocked(approved)
+  approved.provider.script(calls([...alternating(19), bash]))
+  approved.provider.script(done())
+  await approved.service.send({ sessionId: SESSION, origin: null, text: 'nineteen then a card' })
+  expect((await approved.rootEnd()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+  expect((await approved.allow()).reason).toEqual({
+    code: 'blocked-repeatedly',
+    scope: 'round',
+    count: 20,
+  })
+})
+it('06 验收 24: the round count carries from one model response to the next in one Run', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.provider.script(calls(alternating(10)))
+  h.provider.script(calls(alternating(10)))
+  h.provider.script(done())
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'two responses' })
+  expect((await h.rootEnd()).reason).toEqual({
+    code: 'blocked-repeatedly',
+    scope: 'round',
+    count: 20,
+  })
+})
+it('06 验收 24: the round count carries from the batch that resumed after a card into the next response', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.setPosture({ state: 'pending', profile: 'workspace-write' })
+  // Five denials, a card, five more denials in the rest of the same batch.
+  h.provider.script(calls([...alternating(5), bash, ...alternating(5)]))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'a card in the middle' })
+  expect((await h.rootEnd()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+  h.provider.script(calls(alternating(10)))
+  h.provider.script(done())
+  expect((await h.allow()).reason).toEqual({
+    code: 'blocked-repeatedly',
+    scope: 'round',
+    count: 20,
+  })
+})
+it('06 验收 24: when the third consecutive and the twentieth round denial arrive together, the round ends', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  const end = await h.send([...alternating(17), read(), read(), read(), read(10)])
+  expect(end.reason).toEqual({ code: 'blocked-repeatedly', scope: 'round', count: 20 })
+})
+it('06 验收 24: an observed-only sandbox line stays out of the count when the Run resumes after a card', async () => {
+  const h = await harness('auto', true)
+  h.inspectors.push(denialInspector())
+  h.host.sandbox.violations = async () => [
+    { kind: 'network', line: 'observer line', target: 'observed.example', observed: true },
+  ]
+  h.provider.script(
+    calls([
+      ...alternating(19),
+      bash,
+      { name: 'WebFetch', input: { url: 'https://example.com/page' } },
+    ]),
+  )
+  h.provider.script(done())
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'nineteen, one observed, a card' })
+  expect((await h.rootEnd()).reason).toEqual({ code: 'paused', waitingFor: 'approval' })
+  expect((await h.allow()).reason).toEqual({ code: 'completed' })
+})
+it('06 验收 24: a finished Agent call restarts the parent consecutive denial count', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.provider.script(calls([read(), read(), agent, read()]))
+  h.provider.script(done()) // the child's only response
+  h.provider.script(done()) // the parent's final answer
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'two denials, a child, one' })
+  expect((await h.rootEnd()).reason).toEqual({ code: 'completed' })
+})
+
+// ----- review follow-ups: the downgrade follows the counters, not the end reason ------------------
+const deniesBash: InspectorRegistration = {
+  id: 'deny-command',
+  kind: 'local-rule',
+  ceiling: 'deny',
+  beforeCall: async ({ call }) =>
+    call.tool.originalName === 'Bash'
+      ? { kind: 'deny', category: 'exfiltration', findings: [] }
+      : { kind: 'none' },
+}
+function restarted(h: H) {
+  const loop = createTestLoopPorts({ connector: { provider: h.provider, model: MODEL } })
+  const service = createTestSessionService(
+    {
+      host: h.host,
+      tape: h.recorded,
+      ids: createCounterIds({ start: 1000 }),
+      connector: loop.connector,
+      inspectors: h.inspectors,
+      protectedFiles: [],
+    },
+    { tools: { Agent: 'real' } },
+  )
+  service.bindLoop({ ...loop, sandbox: h.sandbox })
+  return { loop, service }
+}
+it('06 验收 24: a stop after a startup rejudgement wrote the twentieth denial still downgrades auto', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.provider.script(calls([...alternating(19), bash, read(100)]))
+  h.setPosture({ state: 'pending', profile: 'workspace-write' })
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'pause at nineteen' })
+  expect((await h.rootEnd()).reason.code).toBe('paused')
+  // After a restart the waiting command is judged again and now denied: the twentieth denial.
+  h.inspectors.push(deniesBash)
+  const { loop, service } = restarted(h)
+  expect((await service.recover()).errors).toEqual([])
+  expect(
+    (await h.entries()).filter(
+      (e) => e.name === 'execution/tool_outcome' && e.payload['source'] === 'inspector',
+    ),
+  ).toHaveLength(20)
+  await service.stop({ rootSessionId: SESSION })
+  let end = await loop.runEnded()
+  while (end.sessionId !== SESSION) end = await loop.runEnded()
+  expect(end.reason.code).toBe('user-stopped')
+  expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
+  const downgrade = h.appends.filter((batch) =>
+    batch.entries.some((entry) => entry.payload['by'] === 'downgrade'),
+  )
+  expect(downgrade).toHaveLength(1)
+  expect(downgrade[0]!.entries.some((entry) => entry.name === 'execution/run_terminal')).toBe(true)
+})
+it('06 验收 24: a Run that crashed after its third consecutive denial is recovered and downgrades auto', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.interceptAppend(async (entries) => {
+    if (entries.some((e) => e.name === 'execution/run_terminal'))
+      throw new Error('crash before the terminal')
+  })
+  h.provider.script(calls([read(), read(), read()]))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'crash after three' })
+  expect((await h.rootEnd()).recorded).toBe(false)
+  h.interceptAppend(undefined)
+  const { service } = restarted(h)
+  expect((await service.recover()).errors).toEqual([])
+  expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('manual')
+  const recovery = h.appends.find((batch) =>
+    batch.entries.some(
+      (entry) =>
+        entry.payload['by'] === 'downgrade' &&
+        (entry.payload['writer'] as { by: string }).by === 'recovery',
+    ),
+  )
+  expect(recovery?.entries.some((entry) => entry.name === 'execution/run_terminal')).toBe(true)
 })

@@ -26,6 +26,7 @@ import {
 } from '../../src/testing/index.js'
 import {
   inspectorOverrideKey,
+  messageRetractedKey,
   permissionDecidedKey,
   toolCallKey,
   toolOutcomeKey,
@@ -74,13 +75,17 @@ async function harness(mode: 'manual' | 'auto' = 'auto') {
   const ids = createCounterIds()
   const provider = createScriptedProvider({ models: [MODEL] })
   let opinion: DenyOpinion = { kind: 'deny', category: 'control-characters', findings: [] }
+  let failing = false
   const inspectors: InspectorRegistration[] = [
     {
       id: 'hygiene',
       ceiling: 'deny',
       kind: 'local-rule',
-      beforeCall: async ({ call }) =>
-        call.tool.originalName === 'Agent' ? { kind: 'none' } : opinion,
+      beforeCall: async ({ call }) => {
+        if (call.tool.originalName === 'Agent') return { kind: 'none' }
+        if (failing) throw new Error('the check crashed')
+        return opinion
+      },
     },
   ]
   let disabled = false
@@ -178,6 +183,9 @@ async function harness(mode: 'manual' | 'auto' = 'auto') {
     inspectors,
     setOpinion: (next: DenyOpinion) => {
       opinion = next
+    },
+    setFailing: (next: boolean) => {
+      failing = next
     },
     disable: () => {
       disabled = true
@@ -612,4 +620,170 @@ it('06 验收 21: an inspector override binds the next identical call once and e
   expect(after.inspectorOverride?.key).toBeDefined()
   expect(after.argsHash).toBe(before.argsHash)
   expect(after.target).toMatchObject({ type: 'command', cwd: '/outside' })
+})
+
+const twice = (): StreamEvent[] => [
+  { type: 'tool-call-start', index: 0, id: 'call-a', name: 'Bash' },
+  { type: 'tool-call-end', index: 0, id: 'call-a', name: 'Bash', input: COMMAND },
+  { type: 'tool-call-start', index: 1, id: 'call-b', name: 'Bash' },
+  { type: 'tool-call-end', index: 1, id: 'call-b', name: 'Bash', input: COMMAND },
+  stopEvent('tool-use', 'tool_use'),
+]
+const lastOverride = async (h: H) =>
+  (await h.entries()).findLast((entry) => entry.name === 'tool/inspector_override')
+
+it('06 验收 21: one release is used up by the first of two identical calls in one response', async () => {
+  const h = await harness('auto')
+  await h.send()
+  await h.release()
+  h.provider.script(twice())
+  h.provider.script(done())
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'twice' })
+  await h.rootEnd()
+  const [first, second] = (await h.decisions()).slice(-2)
+  expect(first!.inspectorOverride).toBeDefined()
+  expect(second!.inspectorOverride).toBeUndefined()
+  expect(second!.record).toMatchObject({ verdict: 'deny', decidedBy: 'inspector' })
+})
+
+it('06 验收 21: one release is used up by the first of two identical calls in two responses of one reply', async () => {
+  const h = await harness('auto')
+  await h.send()
+  await h.release()
+  h.provider.script(tool())
+  h.provider.script(tool())
+  h.provider.script(done())
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'again' })
+  await h.rootEnd()
+  const [first, second] = (await h.decisions()).slice(-2)
+  expect(first!.inspectorOverride).toBeDefined()
+  expect(second!.inspectorOverride).toBeUndefined()
+  expect(second!.record).toMatchObject({ verdict: 'deny', decidedBy: 'inspector' })
+})
+
+it.each(['manual', 'auto'] as const)(
+  '06 验收 21: a release names only the checks that denied, and the others keep their say (%s)',
+  async (mode) => {
+    const h = await harness(mode)
+    h.inspectors.push(
+      {
+        id: 'bystander',
+        kind: 'local-rule',
+        ceiling: 'ask',
+        beforeCall: async () => ({ kind: 'none' }),
+      },
+      {
+        id: 'asker',
+        kind: 'local-rule',
+        ceiling: 'ask',
+        beforeCall: async () => ({ kind: 'ask', category: 'exfiltration', findings: [] }),
+      },
+    )
+    await h.send()
+    expect(await h.release()).toEqual({ status: 'released' })
+    expect((await lastOverride(h))!.payload['inspectorIds']).toEqual(['hygiene'])
+    // The check that only asked is not released: its card is still there for the same call.
+    expect((await h.send()).reason.code).toBe('paused')
+    const decision = (await h.decisions()).at(-1)!
+    expect(decision.record.verdict).toBe('ask')
+    expect(decision.record.steps.find((step) => step.inspectorId === 'hygiene')).toMatchObject({
+      said: 'none',
+      basis: { override: decision.inspectorOverride?.key },
+    })
+    expect(decision.record.steps.find((step) => step.inspectorId === 'asker')).toMatchObject({
+      said: 'ask',
+    })
+  },
+)
+
+it.each(['deny', 'failed'] as const)(
+  '06 验收 21: a release lifts only a deny; when the released check now asks, its card stays (%s)',
+  async (first) => {
+    for (const mode of ['manual', 'auto'] as const) {
+      const h = await harness(mode)
+      if (first === 'failed') h.setFailing(true)
+      await h.send()
+      expect((await h.decisions()).at(-1)!.record.steps).toContainEqual(
+        expect.objectContaining(
+          first === 'failed'
+            ? { inspectorId: 'hygiene', said: 'deny', status: 'error' }
+            : { inspectorId: 'hygiene', said: 'deny', status: 'ok' },
+        ),
+      )
+      expect(await h.release()).toEqual({ status: 'released' })
+      h.setFailing(false)
+      h.setOpinion({ kind: 'ask', category: 'hidden-characters', findings: [] })
+      const end = await h.send()
+      expect(end.reason.code).toBe('paused')
+      const decision = (await h.decisions()).at(-1)!
+      expect(decision.record.verdict).toBe('ask')
+      expect(decision.record.steps.find((step) => step.inspectorId === 'hygiene')).toMatchObject({
+        said: 'ask',
+      })
+    }
+  },
+)
+
+it('06 验收 21: a callKey with a fourth segment is not-found', async () => {
+  const h = await harness('auto')
+  await h.send()
+  const { callKey } = await h.lastCall()
+  expect(await h.service.releaseInspector({ sessionId: SESSION, callKey: `${callKey}:0` })).toEqual(
+    { status: 'not-found' },
+  )
+  expect(await lastOverride(h)).toBeUndefined()
+})
+
+it('06 验收 21: callKey numbers with leading zeros are not-found', async () => {
+  const h = await harness('auto')
+  await h.send()
+  const [run, seq, ordinal] = (await h.lastCall()).callKey.split(':')
+  for (const callKey of [
+    `${run}:0${seq}:${ordinal}`,
+    `${run}:${seq}:0${ordinal}`,
+    `${run}:00:${ordinal}`,
+  ])
+    expect(await h.service.releaseInspector({ sessionId: SESSION, callKey })).toEqual({
+      status: 'not-found',
+    })
+  expect(await lastOverride(h)).toBeUndefined()
+})
+
+it('06 验收 21: a call of a retracted message is not-found', async () => {
+  const h = await harness('auto')
+  await h.send()
+  const { call, callKey } = await h.lastCall()
+  const messageId = String(call.payload['messageId'])
+  const head = (await h.tape.head(SESSION))!
+  await h.tape.writer('message').write({
+    sessionId: SESSION,
+    incarnationId: head.incarnationId,
+    fact: {
+      name: 'message/retracted',
+      fields: {
+        sourceType: 'message',
+        sourceId: messageId,
+        provenanceKey: messageRetractedKey(messageId),
+        payload: { messageId },
+        createdAt: 2,
+      },
+    },
+  })
+  expect(await h.service.releaseInspector({ sessionId: SESSION, callKey })).toEqual({
+    status: 'not-found',
+  })
+  expect(await lastOverride(h)).toBeUndefined()
+})
+
+it('06 验收 21: a release for a Write names Write and binds the next identical Write', async () => {
+  const h = await harness('auto')
+  const input = { file_path: '/work/b', content: 'x' }
+  await h.send('Write', input)
+  expect(await h.release()).toEqual({ status: 'released' })
+  expect((await lastOverride(h))!.payload).toMatchObject({
+    toolName: 'Write',
+    inspectorIds: ['hygiene'],
+  })
+  await h.send('Write', input)
+  expect((await h.decisions()).at(-1)?.inspectorOverride).toBeDefined()
 })

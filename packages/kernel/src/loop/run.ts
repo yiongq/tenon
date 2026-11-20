@@ -1499,13 +1499,28 @@ function wait(host: HostAdapter, ms: number, signal: AbortSignal): Promise<boole
  * `run_terminal.steps`; the batches are their calls' (name, argsHash) lists in request order; the
  * machine denials are the trailing blocked closures, reset by a call that ran or a card that asked.
  */
+type ChainFact = Pick<TapeEntry, 'name' | 'sourceId' | 'sourceSeq' | 'payload'>
 export async function chainCounters(
   tape: Tape,
   sessionId: string,
   runId: string,
+  /** Entries about to be appended in the same batch, e.g. a terminal that opens its own Run. */
+  pending: readonly NewEntry[] = [],
 ): Promise<{ steps: number; batches: string[]; denials: number; roundDenials: number }> {
-  const entries = await readSessionEntries(tape, sessionId)
-  const started = new Map<string, TapeEntry>()
+  const stored = await readSessionEntries(tape, sessionId)
+  const keys = new Set(stored.map((entry) => entry.provenanceKey))
+  const entries: ChainFact[] = [
+    ...stored,
+    ...pending
+      .filter((entry) => !keys.has(entry.provenanceKey))
+      .map((entry) => ({
+        name: entry.name,
+        sourceId: entry.sourceId ?? null,
+        sourceSeq: entry.sourceSeq ?? null,
+        payload: entry.payload,
+      })),
+  ]
+  const started = new Map<string, ChainFact>()
   for (const entry of entries)
     if (entry.name === 'execution/run_started' && entry.sourceId !== null)
       started.set(entry.sourceId, entry)

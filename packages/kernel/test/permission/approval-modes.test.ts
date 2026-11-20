@@ -280,6 +280,27 @@ describe('06 approval range', () => {
     },
   )
 
+  it('06 验收 5: a command bound to run outside the sandbox records no automatic-command rule in auto', async () => {
+    const h = await modeJudgeFixture({
+      name: 'Bash',
+      snapshotStatus: 'tree',
+      platform: 'yes',
+      posture: 'active',
+    })
+    const result = await h.judge({
+      previousSandbox: {
+        profile: 'full-access',
+        chosen: 'workspace-write',
+        override: { key: 'rerun', action: 'rerun-unsandboxed' },
+      },
+    })
+    const step = result.decision.record.steps.find((s) => s.by === 'approval-mode')
+    expect(result.decision.record.verdict).toBe('ask')
+    expect(step).toMatchObject({ said: 'ask' })
+    expect(step?.basis?.modeRule).toBeUndefined()
+    expect(result.decision.summary.code).not.toBe('auto-mode')
+  })
+
   it('06 验收 6: an allow-path bound command is unasked in auto and asked in manual', async () => {
     const h = await modeJudgeFixture({
       name: 'Bash',

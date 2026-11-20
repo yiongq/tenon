@@ -262,6 +262,48 @@ describe('WebFetch in the agent loop', () => {
     expect(h.provider.starts).toBe(5)
   })
 
+  it('06 验收 21: a redirect recheck neither reads nor uses an unbound inspector release', async () => {
+    // A check denies /next; the user released that blocked call. The release stays unbound, so a
+    // later redirect to the same address is still a denied hop, not the one run the release grants.
+    const blocksNext = createFakeInspector({
+      id: 'hygiene',
+      ceiling: 'deny',
+      answer: (input) =>
+        String(input.call.args['url']).endsWith('/next')
+          ? { kind: 'deny', category: 'control-characters', findings: [] }
+          : { kind: 'none' },
+    })
+    const h = harness(
+      [{ kind: 'text', body: '', status: 302, headers: { location: '/next' } }, page()],
+      [blocksNext.registration],
+    )
+    h.provider.script(calls('https://a.example/next'))
+    h.provider.script(done())
+    await h.service.send({ sessionId: SESSION, origin: null, text: 'Fetch the blocked page' })
+    await h.loop.runEnded()
+    const blocked = (await all(h)).findLast((e) => e.name === 'tool/call')!
+    expect(
+      await h.service.releaseInspector({
+        sessionId: SESSION,
+        callKey: `${blocked.sourceId}:${blocked.sourceSeq}:${blocked.payload['ordinal']}`,
+      }),
+    ).toEqual({ status: 'released' })
+    expect(await start(h, 'https://a.example/start')).toMatchObject({
+      reason: { code: 'paused', waitingFor: 'approval' },
+    })
+    h.provider.script(done())
+    expect((await allow(h)).reason).toEqual({ code: 'completed' })
+    expect(h.net.untrustedRequests).toHaveLength(1)
+    expect(
+      JSON.stringify((await all(h)).findLast((e) => e.name === 'tool/result')?.payload),
+    ).toContain('https://a.example/next')
+    expect(
+      (await all(h)).filter(
+        (e) => e.name === 'tool/permission_decided' && e.payload['inspectorOverride'],
+      ),
+    ).toEqual([])
+  })
+
   it('spills long pages and leaves only a preview, path and size in the replayed result', async () => {
     const body = 'long page\n'.repeat(SPILL_THRESHOLD_CHARS)
     const h = harness([page(body)])
