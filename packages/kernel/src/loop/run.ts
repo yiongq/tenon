@@ -1500,6 +1500,8 @@ function wait(host: HostAdapter, ms: number, signal: AbortSignal): Promise<boole
  * machine denials are the trailing blocked closures, reset by a call that ran or a card that asked.
  */
 type ChainFact = Pick<TapeEntry, 'name' | 'sourceId' | 'sourceSeq' | 'payload'>
+const callOf = (entry: ChainFact): string =>
+  `${String(entry.sourceId)}:${String(entry.sourceSeq)}:${String(entry.payload['ordinal'])}`
 export async function chainCounters(
   tape: Tape,
   sessionId: string,
@@ -1538,10 +1540,15 @@ export async function chainCounters(
   const calls = new Map<string, Array<[string, string]>>()
   let denials = 0
   let roundDenials = 0
+  // The execution loop resets the consecutive count on every call it dispatched that was not blocked
+  // (a timeout, an unavailable or unauthorized connector included), so a closure counts as run by
+  // having been dispatched, not by having no `source`.
+  const dispatched = new Set<string>()
   for (const entry of entries) {
     if (entry.sourceId === null || !inChain.has(entry.sourceId)) continue
     if (entry.name === 'execution/run_terminal' && entry.sourceId !== runId)
       steps += Number(entry.payload['steps'] ?? 0)
+    else if (entry.name === 'execution/dispatch_committed') dispatched.add(callOf(entry))
     else if (entry.name === 'tool/call') {
       const key = `${entry.sourceId}:${String(entry.sourceSeq)}`
       const list = calls.get(key) ?? []
@@ -1552,7 +1559,7 @@ export async function chainCounters(
       if (isBlockReason(source)) {
         denials += 1
         roundDenials += 1
-      } else if (source === null) denials = 0
+      } else if (source === null || dispatched.has(callOf(entry))) denials = 0
     } else if (entry.name === 'tool/result' && entry.payload['handoff'] !== undefined) {
       roundDenials += machineDenialsInHandoff(entry.payload['handoff'] as SubagentHandoff)
     } else if (entry.name === 'tool/permission_decided' && entry.payload['awaits'] !== undefined)

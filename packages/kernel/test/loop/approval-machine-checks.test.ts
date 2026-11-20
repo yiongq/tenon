@@ -19,6 +19,7 @@ import type {
   StreamEvent,
 } from '../../src/index.js'
 import { judgeCall } from '../../src/loop/batch.js'
+import { STOP_TERM_GRACE_MS } from '../../src/loop/limits.js'
 import type { JudgeContext } from '../../src/loop/batch.js'
 import { receiptOverrideKey } from '../../src/tape/provenance.js'
 import { grantKey } from '../../src/permission/grants.js'
@@ -1111,4 +1112,92 @@ it('06 验收 24: a Run that crashed after its third consecutive denial is recov
     ),
   )
   expect(recovery?.entries.some((entry) => entry.name === 'execution/run_terminal')).toBe(true)
+})
+
+// ----- re-check follow-ups: the Tape counts and the downgrade agree with the execution loop -------
+/** Lets every promise the Run has in flight settle. */
+const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+it('06 验收 24: a command that ran to its timeout resets the consecutive count as the loop does, so a normal end keeps auto', async () => {
+  const h = await harness('auto', true)
+  h.inspectors.push(denialInspector())
+  const spawned = Promise.withResolvers<void>()
+  const hung = fakeChild(() => h.memory.clock.now(), 'dies')
+  h.spawned.mockImplementationOnce(async () => {
+    spawned.resolve()
+    return hung.child
+  })
+  // The loop counts 1, 2, then 0 at the command that ran, then 1: never near the cap of three.
+  h.provider.script(
+    calls([
+      read(),
+      read(),
+      { name: 'Bash', input: { command: 'echo stable', timeout: 1000 } },
+      read(),
+    ]),
+  )
+  h.provider.script(done())
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'two, a timeout, one' })
+  await spawned.promise
+  await settle()
+  h.memory.advance(1000)
+  await settle()
+  h.memory.advance(STOP_TERM_GRACE_MS)
+  expect((await h.rootEnd()).reason).toEqual({ code: 'completed' })
+  expect(
+    (await h.entries()).some(
+      (e) => e.name === 'execution/tool_outcome' && e.payload['source'] === 'timed-out',
+    ),
+  ).toBe(true)
+  expect((await readSessionFacts(h.tape, SESSION)).approvalMode).toBe('auto')
+  expect(h.appends.filter((b) => b.entries.some((e) => e.payload['by'] === 'downgrade'))).toEqual(
+    [],
+  )
+})
+
+it('06 验收 24: after a child that needed a card ends, the parent consecutive denial count restarts', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.setPosture({ state: 'pending', profile: 'workspace-write' })
+  h.provider.script(calls([read(), read(), agent, read()]))
+  h.provider.script(calls([bash]))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'child approval' })
+  expect((await h.rootEnd()).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  h.provider.script(done())
+  h.provider.script(done())
+  expect((await h.allow()).reason).toEqual({ code: 'completed' })
+})
+it('06 验收 24: after a child that needed a card ends, its blocked calls count toward the parent round', async () => {
+  const h = await harness()
+  h.inspectors.push(denialInspector())
+  h.setPosture({ state: 'pending', profile: 'workspace-write' })
+  h.provider.script(calls([...alternating(12), agent, read(100)]))
+  h.provider.script(calls([bash]))
+  await h.service.send({ sessionId: SESSION, origin: null, text: 'child approval' })
+  expect((await h.rootEnd()).reason).toEqual({ code: 'paused', waitingFor: 'subagent' })
+  h.provider.script(calls([...alternating(8), read(100)]))
+  h.provider.script(done())
+  expect((await h.allow()).reason).toEqual({
+    code: 'blocked-repeatedly',
+    scope: 'round',
+    count: 20,
+  })
+})
+
+it('06 验收 29: a profile switch while the judgement waits for the root mailbox reaches the final plan and runs the checks once', async () => {
+  const h = await harness()
+  await h.send([read()])
+  const seen = recordedInspector()
+  h.inspectors.push(seen.inspector)
+  const wait = mailboxWait()
+  const pending = h.judge(undefined, { modeTurn: wait.modeTurn })
+  await wait.entered.promise
+  h.setPosture({ state: 'active', profile: 'read-only' })
+  wait.gate.resolve()
+  const result = await pending
+  expect(result).toMatchObject({
+    kind: 'judged',
+    sandbox: { profile: 'read-only', chosen: 'read-only' },
+    decision: { record: { verdict: 'allow' } },
+  })
+  expect(seen.inputs).toHaveLength(1)
 })
