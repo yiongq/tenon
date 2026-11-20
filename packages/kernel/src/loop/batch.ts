@@ -956,7 +956,11 @@ async function perform(
                     fetch: ctx.host.network.fetchUntrusted,
                     canFollow: async (url: string) => {
                       const judged = await judgeCall(
-                        { ...ctx, searchHost: ctx.search?.host ?? null },
+                        {
+                          ...ctx,
+                          searchHost: ctx.search?.host ?? null,
+                          ignoreUnboundReleases: true,
+                        },
                         item,
                         { input: { url } },
                       )
@@ -1313,6 +1317,8 @@ export interface JudgeContext {
   readonly prepareSearch?: ((query: string) => { query: string; truncated: boolean }) | undefined
   /** A re-judgement retains a bound override, and unavailable while posture is pending. */
   readonly rejudging?: true
+  /** A recheck that is no call of its own (a redirect hop) neither reads nor uses an unbound release. */
+  readonly ignoreUnboundReleases?: true
   readonly previousInspectorOverride?: PermissionDecidedPayload['inspectorOverride']
   readonly previousSandbox?: SandboxPlan
   readonly ignoreSearchGrant?: boolean
@@ -1410,11 +1416,13 @@ export async function judgeCall(
   const inspectorOverride =
     ctx.rejudging === true
       ? ctx.previousInspectorOverride
-      : unboundInspectorOverride(
-          entries,
-          item.name,
-          call.argsHash ?? canonicalHash(call.input, 'the input of the inspected call'),
-        )
+      : ctx.ignoreUnboundReleases === true
+        ? undefined
+        : unboundInspectorOverride(
+            entries,
+            item.name,
+            call.argsHash ?? canonicalHash(call.input, 'the input of the inspected call'),
+          )
   const overridden =
     inspectorOverride === undefined
       ? undefined
@@ -1482,48 +1490,10 @@ export async function judgeCall(
       ctx.host.sandbox.posture?.().state === 'active' &&
       (ctx.sandbox?.autoCommands?.() ?? 'no') === 'yes',
   })
-  let sandbox: SandboxPlan | undefined
-  let strictInspection = false
-  let sampled = isCommand
-    ? await sample(plan())
-    : { canReachNetwork: false, commandSandboxed: false }
-  let inspection: Awaited<ReturnType<typeof runInspectors>>
-  for (let pass = 1; ; pass += 1) {
-    // D30: bound oscillation without allowing the automatic command exemption on the last pass.
-    if (isCommand && pass === 3) {
-      strictInspection = true
-      sampled = { canReachNetwork: true, commandSandboxed: false }
-    }
-    const inspectedCall = isCommand
-      ? { ...inspected, canReachNetwork: sampled.canReachNetwork }
-      : inspected
-    // oxlint-disable-next-line no-await-in-loop -- only a changed live sample reruns the checks
-    inspection = urlBlocked
-      ? { stopped: false, outcomes: [] }
-      : // oxlint-disable-next-line no-await-in-loop -- rerun after a changed live sample
-        await runInspectors({
-          inspectors: ctx.inspectors,
-          input: { call: inspectedCall, view },
-          setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
-          signal: ctx.signal,
-        })
-    if (inspection.stopped || ctx.signal.aborted) return { kind: 'stopped' }
-    // The persisted plan is always calculated AFTER the last inspection, even on the strict pass.
-    sandbox = plan()
-    if (!isCommand || pass === 3) break
-    // oxlint-disable-next-line no-await-in-loop -- compare against the state after this inspection
-    const final = await sample(sandbox)
-    if (ctx.signal.aborted) return { kind: 'stopped' }
-    if (
-      sampled.canReachNetwork === final.canReachNetwork &&
-      sampled.commandSandboxed === final.commandSandboxed
-    )
-      break
-    sampled = final
-  }
-  const policy = ctx.host.policy.current()
   const rootId = snapshotSessionId(ctx.sessionId, entries)
-  const readMode = async (): Promise<'manual' | 'auto' | null> => {
+  const readMode = async (
+    policy: ReturnType<HostAdapter['policy']['current']>,
+  ): Promise<'manual' | 'auto' | null> => {
     const rootFacts = await readSessionFacts(ctx.tape, rootId)
     if (ctx.signal.aborted) return null
     let approvalMode = profile === 'cowork' ? rootFacts.approvalMode : 'manual'
@@ -1561,10 +1531,54 @@ export async function judgeCall(
     if (ctx.signal.aborted) return null
     return approvalMode
   }
-  const approvalMode = await (ctx.modeTurn === undefined
-    ? readMode()
-    : ctx.modeTurn(rootId, readMode))
-  if (approvalMode === null) return { kind: 'stopped' }
+  let sandbox: SandboxPlan | undefined
+  let policy: ReturnType<HostAdapter['policy']['current']>
+  let approvalMode: 'manual' | 'auto'
+  let sampled = isCommand
+    ? await sample(plan())
+    : { canReachNetwork: false, commandSandboxed: false }
+  let inspection: Awaited<ReturnType<typeof runInspectors>>
+  for (let pass = 1; ; pass += 1) {
+    // D30: bound oscillation without allowing the automatic command exemption on the last pass.
+    if (isCommand && pass === 3) sampled = { canReachNetwork: true, commandSandboxed: false }
+    const inspectedCall = isCommand
+      ? { ...inspected, canReachNetwork: sampled.canReachNetwork }
+      : inspected
+    // oxlint-disable-next-line no-await-in-loop -- only a changed live sample reruns the checks
+    inspection = urlBlocked
+      ? { stopped: false, outcomes: [] }
+      : // oxlint-disable-next-line no-await-in-loop -- rerun after a changed live sample
+        await runInspectors({
+          inspectors: ctx.inspectors,
+          input: { call: inspectedCall, view },
+          setTimeout: (fn, ms) => ctx.host.clock.setTimeout(fn, ms),
+          signal: ctx.signal,
+        })
+    if (inspection.stopped || ctx.signal.aborted) return { kind: 'stopped' }
+    // The mode turn waits on the root mailbox, so it comes before the final plan: whatever changes
+    // while it waits is read by the plan and the recheck below, as the plan was read after it before 06.
+    const current = ctx.host.policy.current()
+    policy = current
+    // oxlint-disable-next-line no-await-in-loop -- the wait is part of each pass
+    const mode = await (ctx.modeTurn === undefined
+      ? readMode(current)
+      : ctx.modeTurn(rootId, () => readMode(current)))
+    if (mode === null) return { kind: 'stopped' }
+    approvalMode = mode
+    // The persisted plan is always calculated AFTER the last inspection and mode turn, even on the
+    // strict pass.
+    sandbox = plan()
+    if (!isCommand || pass === 3) break
+    // oxlint-disable-next-line no-await-in-loop -- compare against the state after this inspection
+    const final = await sample(sandbox)
+    if (ctx.signal.aborted) return { kind: 'stopped' }
+    if (
+      sampled.canReachNetwork === final.canReachNetwork &&
+      sampled.commandSandboxed === final.commandSandboxed
+    )
+      break
+    sampled = final
+  }
   const ranged =
     profile === 'cowork' &&
     item.source === 'builtin' &&
@@ -1579,7 +1593,7 @@ export async function judgeCall(
   const autoAsk =
     approvalMode !== 'auto' ||
     !ranged ||
-    (sandbox !== undefined && sandbox.profile === 'full-access' && !strictInspection)
+    (sandbox !== undefined && sandbox.profile === 'full-access')
       ? undefined
       : !snapshotAvailable
         ? 'no-snapshot'

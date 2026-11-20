@@ -2782,25 +2782,17 @@ export function createLoop(deps: LoopDeps): Loop {
   async function appendWithDowngrade(q: Parameters<Tape['appendEntries']>[0]) {
     let trigger: NewEntry | undefined
     if (rootOf(q.sessionId) === q.sessionId) {
-      trigger = q.entries.find(
-        (entry) =>
-          entry.name === 'execution/run_terminal' &&
-          (entry.payload as RunTerminalPayload).reason.code === 'blocked-repeatedly',
+      const terminal = q.entries.find((entry) => entry.name === 'execution/run_terminal')
+      if (
+        (terminal?.payload as RunTerminalPayload | undefined)?.reason.code === 'blocked-repeatedly'
       )
-      if (trigger === undefined) {
-        const recovered = q.entries.find(
-          (entry) =>
-            entry.name === 'execution/run_terminal' &&
-            (entry.payload as RunTerminalPayload).reason.code === 'recovered',
-        )
-        if (recovered?.sourceId !== undefined && recovered?.sourceId !== null) {
-          const counts = await chainCounters(tape, q.sessionId, recovered.sourceId)
-          if (
-            counts.roundDenials >= MACHINE_DENIAL_ROUND_CAP ||
-            counts.denials >= MACHINE_DENIAL_CAP
-          )
-            trigger = recovered
-        }
+        trigger = terminal
+      else if (terminal?.sourceId !== undefined && terminal.sourceId !== null) {
+        // Whatever ended the Run (a stop, a recovery), the counters decide: a cap already reached
+        // downgrades, as when the loop itself ended on it.
+        const counts = await chainCounters(tape, q.sessionId, terminal.sourceId, q.entries)
+        if (counts.roundDenials >= MACHINE_DENIAL_ROUND_CAP || counts.denials >= MACHINE_DENIAL_CAP)
+          trigger = terminal
       }
       if (trigger === undefined) {
         for (const entry of q.entries) {

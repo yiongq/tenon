@@ -69,6 +69,40 @@ it.each(PARAMETERS)(
   },
 )
 
+it('06 验收 19: a finding carries only its fixed code, never the offending text', async () => {
+  const inspector = railguardInspector()
+  expect(
+    await inspector.beforeCall(
+      input('Bash', { command: 'a\u0000b' }),
+      new AbortController().signal,
+    ),
+  ).toEqual({
+    kind: 'deny',
+    category: 'control-characters',
+    findings: [{ code: 'control-characters' }],
+  })
+  expect(
+    await inspector.beforeCall(input('Bash', { command: 'a​b' }), new AbortController().signal),
+  ).toEqual({
+    kind: 'ask',
+    category: 'hidden-characters',
+    findings: [{ code: 'hidden-characters' }],
+  })
+})
+
+it('06 验收 20: a hygiene verdict the adapter does not know fails closed instead of passing', async () => {
+  vi.mocked(rules.inputHygiene).mockReturnValueOnce({
+    ...rules.inputHygiene(),
+    check: async () => ({ status: 'ok', verdict: 'weird' }),
+  } as never)
+  await expect(
+    railguardInspector().beforeCall(
+      input('Bash', { command: 'echo ok' }),
+      new AbortController().signal,
+    ),
+  ).rejects.toThrow('unexpected input hygiene verdict')
+})
+
 it('06 验收 23: desktop registers exfiltration (ask) and hygiene (deny) only', async () => {
   const inspector = railguardInspector()
   for (const [name, parameter] of PARAMETERS) {

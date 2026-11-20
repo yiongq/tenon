@@ -35,19 +35,18 @@ describe('the desktop’s inspectors', () => {
     // Spec 04 §放行的记法 and 点名 (g): the `via` member of `ApprovalResolvedPayload` keeps no
     // writer, and only the receipt release implementation may write the new fact.
     const mentions = (literal: string): string[] =>
-      [...sources('packages/kernel/src'), ...sources('apps/desktop/src')]
-        .filter((file) => !file.startsWith('packages/kernel/src/testing/'))
-        .flatMap((file) =>
-          readFileSync(join(REPO, file), 'utf8')
-            .split('\n')
-            .flatMap((line) => (line.includes(literal) ? [`${file}: ${line.trim()}`] : [])),
-        )
+      [...sources('packages/kernel/src'), ...sources('apps/desktop/src')].flatMap((file) =>
+        readFileSync(join(REPO, file), 'utf8')
+          .split('\n')
+          .flatMap((line) => (line.includes(literal) ? [`${file}: ${line.trim()}`] : [])),
+      )
     expect(mentions("'receipt-override'")).toEqual([
       "packages/kernel/src/permission/inspector-release.ts: via: 'receipt-override',",
       "packages/kernel/src/permission/sandbox-release.ts: via: 'receipt-override',",
       "packages/kernel/src/tape/entry.ts: via: 'receipt-override'",
       "packages/kernel/src/tape/entry.ts: via: 'receipt-override'",
       "packages/kernel/src/tape/entry.ts: via: 'card' | 'stop' | 'new-message' | 'rejudge' | 'receipt-override' // 'receipt-override' 在 02 没有写入方（F9、F1）",
+      "packages/kernel/src/testing/tape-conformance.ts: via: 'receipt-override',",
     ])
     expect(mentions("'tool/receipt_override'")).toEqual([
       "packages/kernel/src/permission/sandbox-release.ts: const RECEIPT_OVERRIDE = 'tool/receipt_override'",
@@ -58,6 +57,10 @@ describe('the desktop’s inspectors', () => {
       "packages/kernel/src/permission/inspector-release.ts: const INSPECTOR_OVERRIDE = 'tool/inspector_override'",
       "packages/kernel/src/tape/names.ts: name: 'tool/inspector_override',",
       "packages/kernel/src/tape/projection.ts: 'tool/inspector_override': InspectorOverridePayload",
+      // The store conformance suite writes and reads the fact; it is test support, not a writer.
+      "packages/kernel/src/testing/tape-conformance.ts: const release = tape.writer('tool').entry('tool/inspector_override', {",
+      "packages/kernel/src/testing/tape-conformance.ts: const kept = entries.find((entry) => entry.name === 'tool/inspector_override')!",
+      "packages/kernel/src/testing/tape-conformance.ts: 'tool/inspector_override',",
     ])
   })
 })
