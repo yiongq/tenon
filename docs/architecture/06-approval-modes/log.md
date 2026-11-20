@@ -616,3 +616,20 @@ const ownLease = true
 测试改动：apps/desktop/test/end-reason-copy.test.ts · has a sentence for each of the 18 codes · `runEnd` 多了本轮累计这一个变体，另加一条用例核对它的槽与渲染
 测试改动：apps/desktop/test/renderer-approval-card.test.ts · presentation-r1 验收 1 / presentation-r1 不变量 3 · 夹具给每张卡都带了 `category`；D36 起命令卡带 `category` 时 ③ 出类别句，期望照改
 测试改动：apps/desktop/e2e/approval.spec.ts · presentation-r1 验收 2: the card escapes its object path without repeating it in the reason (②′, E4) · 06 起 input-hygiene 在两档都对路径里的零宽字符出卡，③ 改出「看不见的字符」那句（验收 19、D36）；对象行转义与「不重复路径」的断言不变。PR #90 的 CI 上它红过一次，其余 275 条 e2e 与新写的验收 27 都过
+
+## 2026-11-20 · 第二段第 12、13 步与文案定稿
+
+- 第 12 步（C 路 fdaa4b0）：三处给模型看的文本都由实现者按 spec 的意思自拟、lead 审过：放行告知行接在 `<sandbox_release>` 的「The user granted the following permissions」下，与 04 的几句同一种写法——"The next call to {toolName} with the same arguments (hash {argsHash}) may run once despite blocks from permission checks {inspectorIds}; all other permission checks and any required user confirmation still apply."；Bash 描述加 "In auto mode, commands that run without asking for approval do not receive token-like environment variables."；累计到上限的 not-run 句 "The task reached its limit for blocked calls in this round, so it stopped and this call was not run."（不写 in a row）。`PROMPT_LAYER_VERSION` 12 → 13，哈希 `f490205c…`；第 12 版的历史记录不动。`evals:gate` 因第 13 版没有基线而红，是 plan 写明的预期；第 12.1 步基线评测 owner 2026-11-12 说「先不跑」，仍开着。
+- 第 13 步（E 路 b7f7a2c）：`apps/desktop/e2e/inspector-release.spec.ts`，流程照验收 27：手动档里脚本化回复发出含 BEL 的 `printf` 命令 → 回执 → 点「允许这一次」→「已放行」、不自动重发 → 同一条命令再来照常出命令卡 → 批准后输出文件逐字节正确、只派发了重试那一次。`ci.yml` 的 macOS e2e 列表加了这一个文件（门禁文件，#90 由 owner 合）。PR #90 的 CI（run 44508410897）上 e2e（Linux，含这一条）与 sandbox-macos（含 macOS 这一半）都过。推送改 `ci.yml` 的提交要 gh 凭据带 `workflow` 权限，owner 2026-11-12 补过。
+- 第 10 步的文案定稿（两份 locale，lead 定）：
+  - 卡 ③：`confirm.reason.flagged.hidden-characters`「路径或命令里有看不见的字符，已经标出来，先给你看一眼。」/ "This path or command contains invisible characters. They are marked so you can check it first."；`control-characters` 同句式（「有控制字符」/ "contains control characters"），按 D36 命令卡带 `category` 时也出这一句。
+  - 回执：`blocked.inspector.control-characters`「路径或命令里有控制字符，已拦下。」/ "This path or command contains control characters, so it was stopped."；`hidden-characters` 同句式。按钮 `receipt.action.allow-once`「允许这一次」/ "Allow once"，说明 `receipt.note.allow-once`「在这个任务里再发出完全相同的这一步时生效一次；到下一轮回复结束还没用上就作废」/ "Applies once when this exact step is sent again in this task. Unused permission expires at the end of the next reply."；点过沿用 04 的「已放行」/ "Allowed"；`receipt.error.step-stale`「这一步已不能放行；还需要的话，让它重新做一次。」与 `step-not-found`「找不到这一步；还需要的话，让它重新做一次。」——04 那两句说「重新发起命令」，被拦的可能是文件路径，所以另写；`refused`、`failed` 沿用 04。
+  - 结束：`runEnd.blocked-repeatedly-round`「这一轮被拦了 {count} 次，任务已结束。」/ "Calls were blocked {count} times in this round, so the task ended."
+  - 「查看本次记录」：`snapshot.decision.inspector-flagged`「检查发现看不见的字符，需要确认」/ "Checks found invisible characters; confirmation is needed"。
+- 补测（lead）：结束卡按 `scope` 出累计那句的渲染级用例，与 `inspector-flagged` 的句子；把结束卡的累计分支去掉，前者变红。
+- Codex 本机这两天跑不起来：ChatGPT 账号不支持配置里的模型（`gpt-6.1-sol`、`gpt-6.2-sol` 都报 not supported），CLI 是 0.169.1、最新 0.171.0。第 14 步的修正改由子 agent 做。
+
+测试改动：packages/kernel/test/prompts/version.test.ts · 版本、哈希与 LAYER_HISTORY · 版本 12 改 13、追加第 13 版的历史、提示层条目由五条改六条；第 12 版的记录不动
+测试改动：packages/kernel/test/prompts/fill.test.ts · 新模板槽位 · 只新增用例
+测试改动：packages/contracts/test/chat-event.test.ts · runEndReason · 新增 `scope: 'round'` 与旧原因兼容的用例
+测试改动：apps/desktop/test/sandbox/allowlist.test.ts · canReach · 只新增用例

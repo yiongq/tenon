@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：ready。第二段第 7–11 步已实现（分路与门禁见 log 2026-11-10「第二段实现」）；下一步第 12 步提示层，真跑基线评测前先问你。
-需要你：无。第二段的 PR 会改 `ci.yml`（验收 27 的 macOS e2e），到时由你合；第 12.1 步真跑基线评测前另问你。
+当前：ready。第二段第 7–13 步已实现，在 PR #90（草稿）；第 14 步三路评审已出，测试缺口与几条只收紧的修正在做；第 12.1 步基线评测等你。
+需要你：① 第 12.1 步基线评测（约 5 元加约 2 元），不跑 `evals:gate` 一直红、#90 合不进；② input-hygiene 认的「看不见的字符」比卡片认的窄（Open 第一条），补不补；③ #90 改了 `ci.yml`，由你合。
 
 ## 开工前读
 
@@ -70,9 +70,9 @@
 - [x] 9. 回执放行（kernel）：`tool/inspector_override` 的名字、载荷、键、投影与一致性测试；`releaseInspector` 的核对；绑定与 `inspectorOverride`、`basis.override`；与 04 一次性放行共用的作废算法（04 的三种放行行为不变）；与 04 的放行各自绑、比 `argsHash`、「继续」也算一轮（D37）；告诉模型的检查点。测试点名验收 21、22。
 - [x] 10. 回执放行（路由与界面）与第二段文案：contracts 的 `inspector.release`、主进程接线（关机中拒）；回执的「允许这一次」与说明、「已放行」；`hidden-characters` 与命令卡 `category` 的句子、命令卡 ③ 的先后（D36）；对象行沿用 02 ②′，不新写（D25）；累计结束的结束文案；两份 locale 与文案覆盖。文案定稿写在这一步的交接里。测试点名验收 20 的按钮一半、26。
 - [x] 11. 累计熔断与降档：`MACHINE_DENIAL_ROUND_CAP`、`chainCounters` 另数累计、执行循环到 20 结束、`scope: 'round'`、自动档写 `by: 'downgrade'`；子会话从根会话这一轮的累计接着数、父会话按交接补上（D34）；续跑的 Run 开头先数，降档与结束同一次追加、与切档同队（D35）。测试点名验收 24。
-- [ ] 12. 提示层：inspector 放行的告知行、Bash 描述那一句、累计到上限的 not-run 句；`PROMPT_LAYER_VERSION` 12 → 13、更新哈希。从这一步起 CI 的 `evals:gate` 红，到 12.1 为止；之后再改提示层文本回到这一步改哈希，不再加版本。
+- [x] 12. 提示层：inspector 放行的告知行、Bash 描述那一句、累计到上限的 not-run 句；`PROMPT_LAYER_VERSION` 12 → 13、更新哈希。从这一步起 CI 的 `evals:gate` 红，到 12.1 为止；之后再改提示层文本回到这一步改哈希，不再加版本。
   - [ ] 12.1 基线评测（live）：真跑前先问 owner，说清跑什么、花多少（基线列 glm-5.3-flash 全集每题 3 次约 5 元；ADR-005 要的 02 题在 glm-5.3 上 3 次约 2 元，一并问）；在沙箱生效的 macOS 上跑；记录与改动同一 PR；lead 逐题对照第 12 版，对照表写进 log；有题从过变不过就停下交 owner；花费记 log。点名验收 28。
-- [ ] 13. e2e：验收 27（拦下 → 允许这一次 → 同一条命令照常运行），macOS 与 Linux 两个 CI runner；新 e2e 文件加进 `ci.yml` 的 macOS e2e 列表（门禁文件，第二段的 PR 由 owner 合，D38）；走 CI 草稿 PR，一次推送攒齐。
+- [x] 13. e2e：验收 27（拦下 → 允许这一次 → 同一条命令照常运行），macOS 与 Linux 两个 CI runner；新 e2e 文件加进 `ci.yml` 的 macOS e2e 列表（门禁文件，第二段的 PR 由 owner 合，D38）；走 CI 草稿 PR，一次推送攒齐。
 - [ ] 14. 第二段核对：P；E；多视角评审与 StrykerJS 同第 6 步；汇总评审写 log。要出的突变至少有：
   - `canReachNetwork` 恒为 false（验收 18 的 kernel 例应红）；desktop 的 `canReach` 按「预设生效」算（验收 18 的 desktop 只读档一例应红）；外带只认网页与搜索（验收 18 的连接器例应红）；
   - 适配器把 `modified` 读成没意见（验收 19 应红）；
@@ -101,10 +101,11 @@
 
 ## 交接
 
-2026-11-10：第一段已合入 dev（#89）。按 owner 当日两张卡与挑刺评审 r2 归第二段的条目，改了 spec（修订记录同日一行）、decisions（D25 重写，新增 D33–D38）、evidence（E14、E23 按 `ecb82a7` 重核）与本 plan 的第 7–14 步、Open 与矩阵；只改文档，没碰代码与测试。下一步：第 7 步开第二段（分支 `feat/06-seg2`）。
+2026-11-20：第二段第 7–13 步在 `feat/06-seg2`（PR #90，草稿），分 A、B、C、E 四路做，界面与文案由 lead 做；CI 上 e2e（含验收 27，两个平台）与 sandbox-macos 都过，`ci` 只红在 `evals:gate`（第 13 版没有基线，等 owner），spec-check 只拦缺评审记录。第 14 步三路评审的报告在私有笔记（另记）：对照 spec 与保护两路通过、测试与突变一路不通过（3 个 major 都是测试缺口）；修正在一个隔离 worktree 里做（`feat/06-seg2-fix2`），做完合进 `feat/06-seg2`，再复核、写评审记录。Codex 本机这两天跑不起来（ChatGPT 账号不支持配置里的模型，CLI 0.169.1 旧了），这一轮改由子 agent 做。第 10 步的文案定稿记在 log 2026-11-20 一节。
 
 ## Open
 
+- 要问 owner：input-hygiene（railguard 0.7.0 的 `inputHygiene`）只认 C0 控制字符、五个零宽字符与标签块；卡片的写法（02 §最小审批卡 ②′）另外还把文字方向控制符、C1 控制字符、emoji 用的连接符与变体选择符画成 `\u{XXXX}`。这几类在自动档里命令照样免问。lead 推荐只补文字方向控制符（问）与 C1（拦），emoji 那两类写进已知限制；也可以全补（带 emoji 的命令每次都问）或只写已知限制。
 - 挑刺评审 r2（2026-11-09，原文在私有笔记）第一、二段的条目已改进 spec 或交第一段实现（第二段的见 D25、D33–D38）；第三段开工前还要处理：
   - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 33 在哪层测（验收 20 已随第二段定，D38）。
 - spec 全文超过 heavy 档上限约 2 300 字符（警告）；第 21 步文档同步时一并压缩。
@@ -166,6 +167,7 @@
 | 24 | 集成 | 06 验收 24: twenty machine denials in a round end it and downgrade auto | test | 待补 | 任意 |
 | 25 | 单元 | 06 验收 25: summarize maps inspector-flagged, check-incomplete and auto-sandboxed-command | test | 待补 | 任意 |
 | 26 | 单元 | 06 验收 26: second-segment cards and receipts carry their sentences, marks and allow once | test | 待补 | 任意 |
+| 26 | 单元 | 06 验收 26: the run-end card says a round’s cumulative blocks apart from a run of three | test | 结束卡不分 `scope` → 验收 26 | 任意 |
 | 27 | e2e | 06 验收 27: a blocked command is allowed once from its receipt and then runs | test:e2e（Linux）；ci.yml 的 macOS e2e 列表（macOS） | — | macOS、Linux |
 | 28 | 单元 | 06 验收 28: the prompt layer is version 13 and its hash gate passes | test | — | 任意 |
 | 28 | live | （live）基线列全集每题 3 次，逐题对照第 12 版，记录进 log | evals:gate | — | 任意 |
