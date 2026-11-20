@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready。第二段第 7–13 步已实现，在 PR #90（草稿）；第 14 步评审后的两轮修正与 D39 都已合入（最新 6a5f683），等再复核一次、写评审记录；第 12.1 步基线评测等你。
+当前：ready。第二段第 7–13 步已实现，在 PR #90（草稿）；第 14 步的评审已写进 log（审过 57f7333），只差 P：第 12.1 步基线评测等你，跑完 `evals:gate` 才绿。
 需要你：① 第 12.1 步基线评测（约 5 元加约 2 元），不跑 `evals:gate` 一直红、#90 合不进；② #90 改了 `ci.yml`，由你合。
 
 ## 开工前读
@@ -87,7 +87,7 @@
   - 回执按钮在 `policy` 的拦截上也出（验收 26 应红）；
   - 复核发现变化也不重跑检查，或第三次不按 `canReachNetwork: true` 跑（验收 30 应红）；
   - 判决改用检查前采样的那份计划（验收 29 应红）。
-  - 14.1 预算检查点（本项目补充第 6 条，06 单独算，D11）：代码行数取第一、二段 PR 合计的实际 `git diff --shortstat` 加第三段的估计；验收条数取届时的全篇总数，现在是 44 条（17 + 13 + 14），不再另加第三段的条数；行数超过约 18 500 或条数超过 53，先告诉 owner，再按 ① 持久文件夹授权拆成 feature spec、② D10 挪阶段 6、③ 说明条不做、④ D4 只做 ② 的顺序定砍不砍；结果写 log。
+  - [x] 14.1 预算检查点（本项目补充第 6 条，06 单独算，D11）：代码行数取第一、二段 PR 合计的实际 `git diff --shortstat` 加第三段的估计；验收条数取届时的全篇总数，现在是 44 条（17 + 13 + 14），不再另加第三段的条数；行数超过约 18 500 或条数超过 53，先告诉 owner，再按 ① 持久文件夹授权拆成 feature spec、② D10 挪阶段 6、③ 说明条不做、④ D4 只做 ② 的顺序定砍不砍；结果写 log。
 - [ ] 15. 切档路由与 config：`session.setApprovalMode`（建立前写草稿）、`session.facts` 的档位、config.json 三个键与 `approvalModeDefault` 的接线、`workspace.pick` 与 `usePrefill` 的 `pendingGrant`、`workspace.grant`、`workspace.access`、`workspace.revokeAccess`，都经 contracts 登记、两端校验。contracts 读取端对认不出的摘要码读作 `unknown`、保留 verdict，类型断言改为单向（D32）。测试点名验收 12、13、15、36 的路由一半与 44 的读取一半。
 - [ ] 16. 档位界面：`ApprovalModeMenu`（含发第一条消息之前、快照不可用时的说明）、`ComposerBanner`、说明条、降档提示、设置「权限与网络」的审批档段与次序。测试点名验收 31、32、33、34、35。
 - [ ] 17. 文件夹授权：`GrantDialog` 的文件夹版、`FolderChip` 的授权与撤销入口、设置里的文件夹访问列表。测试点名验收 36、37。
@@ -105,10 +105,11 @@
 
 ## Open
 
+- 第 22 步补的测试（第二段评审留下的）：`chainCounters` 认「同一个调用」的三项里，Run id 那一项还没有用例（续跑链上前后两个 Run 同一位置的调用会撞键）；repair 那例的注释改成「只有打包构建和评测里才会有 repair」；文件头半句补上 repair 是按 02 清零的例外；国旗放行、子区旗与零宽连接组合要问，在 `railguard-extra-classes.test.ts` 补四个样例，免得升级 railguard 时措辞悄悄失真。
 - 以后让 Agent 也能出卡（例如策略给它加问的规则）之前要先改：现在会出卡的 Agent 调用被批准后，重判找不到它的执行器，会被收口成 `tool-unavailable`，等于问了又拒（第二段复核时查到，见 log 2026-11-20）。
 - 挑刺评审 r2（2026-11-09，原文在私有笔记）第一、二段的条目已改进 spec 或交第一段实现（第二段的见 D25、D33–D38）；第三段开工前还要处理：
   - 第三段开工前：策略关掉后 `session.facts` 报手动；contracts 怎么映射 kernel 的 `refused`；文件夹授权 token 的生命周期；e2e 两个平台的门禁与等沙箱 active；「以后都允许」落盘的突变咬得住；验收 33 在哪层测（验收 20 已随第二段定，D38）。
-- spec 全文超过 heavy 档上限约 2 900 字符（警告）；第 21 步文档同步时一并压缩。
+- spec 全文超过 heavy 档上限约 3 000 字符（警告）；第 21 步文档同步时一并压缩。
 - 第 21 步写进 spec 已知限制或收紧：`git restore` 的 `--staged` 例外照原文认字，`--worktree` 看整条命令的后面，所以 `git restore --staged x; echo --worktree` 会多问；反过来 `--no-staged`、`--work` 缩写、`#` 注释或重定向后面的 `--staged` 也算只改暂存区，自动档可能不问，靠 tree 快照还原（02 只许往撤不回加）。
 - 第 21 步一并同步 overview.md：`LoopPorts.leases` 新增 `isShuttingDown()`。
 
