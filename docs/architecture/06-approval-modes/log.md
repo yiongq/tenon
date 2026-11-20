@@ -633,3 +633,17 @@ const ownLease = true
 测试改动：packages/kernel/test/prompts/fill.test.ts · 新模板槽位 · 只新增用例
 测试改动：packages/contracts/test/chat-event.test.ts · runEndReason · 新增 `scope: 'round'` 与旧原因兼容的用例
 测试改动：apps/desktop/test/sandbox/allowlist.test.ts · canReach · 只新增用例
+
+## 2026-11-20 · 第 14 步段末评审之后的修正
+
+- 三路评审审的是 `ba293c6`：对照 spec 通过（0/0/7）、保护通过（0/0/4）、测试与突变不通过（0/3/9；突变 163 个、存活 43，其中 23 个有「原实现绿、变异体红」的探针，生产代码对全部探针按 spec 表现）。报告原文在私有笔记（另记）。
+- 修正在一个子 agent 的隔离 worktree 里做（48594d9，Codex 这两天跑不起来），源码只动 `loop/batch.ts`、`loop/mailbox.ts`、`loop/run.ts`，都只收紧：
+  - `judgeCall` 的顺序改为「检查 → 经根会话 mailbox 读档位 → 最终计划 → 复核采样，不一致就回去重跑」，等待期间姿态或白名单变了会被这一次判定读到（第一段之前就是在读档位之后算计划）。
+  - 偏严的第三次检查里，计划为 full-access 的卡也不带 `autoAsk`，与 §自动档的范围 的例外一致。
+  - `appendWithDowngrade` 对根会话的每条 `run_terminal` 都按计数判：到上限时不论这一轮是怎么结束的（含点停止、启动恢复），自动档都降回手动；`chainCounters` 并入同批待写的事实，续跑的 Run 一开头就停也数得到。
+  - WebFetch 跟随重定向的那次判定不读、也不消耗未绑定的 inspector 放行。
+- 补测（每条都给了「原实现或点名的突变体上红、修后绿」的证据）：同一轮回复里两条一字不差的调用只放第一条；放行只撤掉说拒的那几个检查、被放行的检查改说问时卡仍在；执行期沙箱拦截、跨模型响应、答复后续跑都计进本轮累计，连续第 3 与累计第 20 同时到达时按本轮结束；callKey 的第四段、前导零、撤回消息、非 Bash 工具；绑定重跑的命令在自动档不记免问规则；只有 Bash 带 `canReachNetwork`；适配器的 findings 只带固定码、认不出的结论按拦处理；desktop 缺 `canReach` 查询时读作能联网。
+- D39（owner 同日选「只补两类高风险的」，2ea6cac）：适配器另认文字方向控制符（问）与 C1 控制字符（拒）；新用例在改动前的适配器上红。
+- 不修、记下的：竞态与接线类没建探针的几处（releaseInspector 排队的会话、启动恢复降档写入排队、审批过的 Agent 分支里的累计、`main/index.ts` 的路由注册只有 e2e 守）——前三处按代码看排在根会话 mailbox，复核时再看；同号用例太多、矩阵与用例名的小出入留给第 22 步；命令卡上认不出的 `category` 出通用句属于第三段第 18 步。
+
+测试改动：apps/desktop/test/inspectors.test.ts · 02 不变量 17: only release writes receipt overrides… · 去掉对 `packages/kernel/src/testing/` 目录的排除，改为把 `tape-conformance.ts` 里那 4 行精确列进期望（比排除更严）
