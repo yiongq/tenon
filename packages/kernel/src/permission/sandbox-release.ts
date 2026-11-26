@@ -1,3 +1,4 @@
+import { validReceiptReleases } from './receipt-releases.js'
 /** Receipt releases are Tape facts, never approvals or model-supplied capabilities (04 §放行). */
 import type { AbsolutePath, HostAdapter } from '../host/adapter.js'
 import { fromParts, isAbsolutePath, isWithin, normalizePath, pathParts } from '../host/path.js'
@@ -6,8 +7,6 @@ import { sessionFactsOf, workspaceOf } from '../session/facts.js'
 import type { ReleaseQuery, ReleaseResult } from '../session/service.js'
 import type {
   ReceiptOverridePayload,
-  RunStartedPayload,
-  RunTerminalPayload,
   SandboxOutcome,
   SandboxPlan,
   TapeEntry,
@@ -38,37 +37,7 @@ export async function sandboxDomainHosts(
 
 /** Session domains persist; one-off releases expire on binding or when the next reply ends. */
 export function validSandboxReleases(entries: readonly TapeEntry[]): TapeEntry[] {
-  const used = new Set(
-    entries
-      .filter((e) => e.name === 'tool/permission_decided')
-      .map((e) => (e.payload['sandbox'] as SandboxPlan | undefined)?.override?.key),
-  )
-  return entries.filter((entry, at) => {
-    if (!isSandboxRelease(entry) || used.has(entry.provenanceKey ?? '')) return false
-    const release = entry.payload as ReceiptOverridePayload
-    if (release.action === 'allow-domain') return true
-    // The current reply may bind it too. It expires when the next reply started after the click
-    // ends: a card's pause ends a Run but not the reply, whose answer resumes it in a new Run
-    // (owner 2026-10-22: the receipt says 「到下一轮回复结束」).
-    const after = entries.slice(at + 1)
-    const reply = new Set<string>()
-    for (const e of after) {
-      if (e.name !== 'execution/run_started' || e.sourceId === null) continue
-      const cause = (e.payload as RunStartedPayload).cause
-      if (
-        reply.size === 0
-          ? cause.kind !== 'resume'
-          : cause.kind === 'resume' && reply.has(cause.pausedRunId)
-      )
-        reply.add(e.sourceId)
-    }
-    return !after.some(
-      (e) =>
-        e.name === 'execution/run_terminal' &&
-        reply.has(e.sourceId ?? '') &&
-        (e.payload as RunTerminalPayload).reason.code !== 'paused',
-    )
-  })
+  return validReceiptReleases(entries, isSandboxRelease)
 }
 
 /** Only an initial decision can acquire a release. Every decision binding consumes it permanently. */

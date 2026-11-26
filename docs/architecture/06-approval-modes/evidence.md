@@ -1,6 +1,6 @@
 # 06 · 先核实
 
-外部事实与 spec 里关于现有代码的每条断言（E1–E35），附一手来源；探针（P）写目的、事先定的「结果是 X 就改什么」与实际结果。代码一律按 dev `c894922` 核（核对用的工作副本是 dev 加三个测试文件，测试文件不影响下列断言），写文件路径加函数名或类型名，不写行号。原始材料在私有笔记（另记）。
+外部事实与 spec 里关于现有代码的每条断言（E1–E35），附一手来源；探针（P）写目的、事先定的「结果是 X 就改什么」与实际结果。代码一律按 dev `c894922` 核（核对用的工作副本是 dev 加三个测试文件，测试文件不影响下列断言；E14、E23 在 2026-11-10 按 dev `ecb82a7` 重核），写文件路径加函数名或类型名，不写行号。原始材料在私有笔记（另记）。
 
 ## 外部事实
 
@@ -85,10 +85,12 @@
 - 06 用到的地方：§两条新的机器检查、§接口。
 - 什么时候重核：第二段第 8 步开工前。
 
-### E14 · 外带检查只管 WebFetch
+### E14 · 外带检查的出口与来源
 
-- 事实：`packages/kernel/src/permission/exfiltration.ts` → `exfiltrationOpinion`：只有内置 WebFetch、`touchedPrivateData`、`untrustedSources` 不空、`fetchUrlVouched` 不为真时问；注册为 `ceiling: 'ask'`、`kind: 'local-rule'`。`packages/kernel/src/permission/session-view.ts` → `buildSessionView`：任何已派发的 Bash 都算碰过私有数据（`privateRead`）；WebSearch、WebFetch 已派发就算读进过不可信内容。
-- 06 用到的地方：§点名 (d)、验收 18。
+- 事实（dev `ecb82a7`）：`packages/kernel/src/permission/exfiltration.ts` → `exfiltrationOpinion`：出口是内置 WebFetch 与任一连接器调用，来源 S 分别记 'builtin'、`mcp:<serverId>`；`untrustedSources` 不空、`privateSources` 里有不等于 S 的、WebFetch 时 `fetchUrlVouched` 不为真，就问；注册为 `ceiling: 'ask'`、`kind: 'local-rule'`。
+- 事实（同上）：`packages/kernel/src/permission/session-view.ts` → `buildSessionView`：WebSearch、WebFetch 已派发记工具名进 `untrustedSources`；连接器调用与关联不上来源的派发记 `mcp:<serverId>`、`unresolved:<name>`，同时进 `untrustedSources` 与 `privateSources`；任务形态里任何已派发的 Bash、不落在本会话落盘目录的 Read 与 Grep 记 'local' 进 `privateSources`（`privateRead`）。这是 auto-tier-hardening 规矩 4、5 的实现（8f7c76e）。
+- 更正：起草时按 `c894922` 写的「只有 WebFetch 是出口、只认 WebSearch 与 WebFetch 为不可信」已过时，挑刺评审 r2 指出；spec 照 D33 改。
+- 06 用到的地方：§点名 (d)、§两条新的机器检查 的外带一条、D33、验收 18。Bash 作出口时 S 记 'builtin'，`privateSources` 里的任何来源都不等于它。
 - 什么时候重核：第二段第 7 步开工前。
 
 ### E15 · desktop 只注册一个只会问的检查
@@ -142,8 +144,9 @@
 
 ### E23 · 界面现状
 
-- 事实：`apps/desktop/src/renderer/src/components/` 下没有 `ApprovalModeMenu`、`ComposerBanner`；`components/settings/GrantDialog.tsx` 是连接器的授权框；`components/settings/SandboxPane.tsx` 的标题键 `sandbox.title` 中文是「权限与网络」；`components/thread/ToolRow.tsx` → `BlockedNotice` 对 `inspector` 来源按类别出一行 `blocked.inspector.<类别>`，没有按钮；审批卡标题 `confirm.title.file.write` 中文是「修改这个文件？」，Delete 也用它。
-- 06 用到的地方：§界面、验收 26、31 至 39。
+- 事实：`apps/desktop/src/renderer/src/components/` 下没有 `ApprovalModeMenu`、`ComposerBanner`；`components/settings/GrantDialog.tsx` 是连接器的授权框；`components/settings/SandboxPane.tsx` 的标题键 `sandbox.title` 中文是「权限与网络」；`components/thread/ToolRow.tsx` → `BlockedNotice` 对 `inspector` 来源按类别出一行 `blocked.inspector.<类别>`，没有按钮；审批卡标题 `confirm.title.file.write` 中文是「修改这个文件？」，Delete 也用它。`apps/desktop/src/renderer/src/lib/visible.ts` → `visible` 照 02 §最小审批卡 ②′ 把控制字符、格式字符（含零宽与标签块）与其余默认可忽略码位写成可见的 `\u{XXXX}`，`ApprovalCard.tsx`、`ToolRow.tsx` 都用它，`apps/desktop/test/renderer-visible.test.ts` 钉住。
+- 更正（2026-11-10 按 `ecb82a7` 重核，前几句仍成立）：起草时漏了 `visible`，D25 第一次的题面因此把现状写成「照原样显示」，挑刺评审 r2 指出。
+- 06 用到的地方：§界面、D25、验收 26、31 至 39。
 - 什么时候重核：第二段第 10 步与第三段第 16 步开工前。
 
 ### E24 · Tape 名字与键

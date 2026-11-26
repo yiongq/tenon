@@ -590,7 +590,11 @@ test('presentation-r1 验收 2: the card escapes its object path without repeati
     const card = page.getByTestId('approval-card')
     await expect(card).toHaveCount(1)
     await expect(card.getByTestId('approval-object')).toHaveText(shown)
-    await expect(card.getByTestId('approval-reason')).toHaveText(COPY.en.reason)
+    // Since 06 the input-hygiene check asks about the hidden characters in both tiers, so ③ says
+    // that, not where the file is; it still does not repeat the path (06 验收 19, D36).
+    await expect(card.getByTestId('approval-reason')).toHaveText(
+      'This path or command contains invisible characters. They are marked so you can check it first.',
+    )
     // The row above it reads the same (toolSentence escapes its slot).
     await expect(page.getByTestId('tool-row-line')).toHaveText(COPY.en.read(shown))
   } finally {

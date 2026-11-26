@@ -12,6 +12,7 @@ export const SUBAGENT_TOKEN_LIMIT = 500_000
 export const SUBAGENT_DEADLINE_MS = 300_000
 export const NO_PROGRESS_REPEATS = 4 // master-reference.md:900
 export const MACHINE_DENIAL_CAP = 3 // F2
+export const MACHINE_DENIAL_ROUND_CAP = 20 // 06 §熔断
 export const RETRY_CAP = 2 // 02 全局重试上限，待校准（H12）
 export const STOP_TERM_GRACE_MS = 500 // SIGTERM 之后等多久发 SIGKILL（停止与 Bash 超时同用），待校准（2026-09-27 macOS 26.3 本机实测够用：两个 fork 夹具停止后约 502 ms 进程树清空；Linux 以 CI 上 stop-tree.test.ts 为准，第 34 步定稿）
 export const STOP_EXIT_CONFIRM_MS = 500 // SIGKILL 之后等 exited 的确认窗口，待校准（同上：exited 在 SIGKILL 后 1 ms 内到达）；与上一项之和 ≤ 1000（§13 的 1 秒）

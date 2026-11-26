@@ -280,6 +280,27 @@ describe('06 approval range', () => {
     },
   )
 
+  it('06 验收 5: a command bound to run outside the sandbox records no automatic-command rule in auto', async () => {
+    const h = await modeJudgeFixture({
+      name: 'Bash',
+      snapshotStatus: 'tree',
+      platform: 'yes',
+      posture: 'active',
+    })
+    const result = await h.judge({
+      previousSandbox: {
+        profile: 'full-access',
+        chosen: 'workspace-write',
+        override: { key: 'rerun', action: 'rerun-unsandboxed' },
+      },
+    })
+    const step = result.decision.record.steps.find((s) => s.by === 'approval-mode')
+    expect(result.decision.record.verdict).toBe('ask')
+    expect(step).toMatchObject({ said: 'ask' })
+    expect(step?.basis?.modeRule).toBeUndefined()
+    expect(result.decision.summary.code).not.toBe('auto-mode')
+  })
+
   it('06 验收 6: an allow-path bound command is unasked in auto and asked in manual', async () => {
     const h = await modeJudgeFixture({
       name: 'Bash',
@@ -465,11 +486,23 @@ describe('06 approval range', () => {
       // oxlint-disable-next-line no-await-in-loop -- record all decision fields, not just the verdict
       const { decision: actualDecision, reversibility, sandbox, place } = await h.judge()
       const expected = baseline.judgeDecisions[expectedIndex]!
+      const original = baselineDecision(expected.decision)
+      // Step 7 intentionally adds the machine category to command cards; all old fields stay exact.
+      const expectedDecision =
+        query.name === 'Bash' && query.inspector && original.confirm?.reason === 'command'
+          ? {
+              ...original,
+              confirm: {
+                ...original.confirm,
+                facts: { ...original.confirm.facts, category: 'exfiltration' },
+              },
+            }
+          : original
       expect(
         JSON.parse(JSON.stringify({ decision: actualDecision, reversibility, sandbox, place })),
       ).toEqual({
         ...expected,
-        decision: baselineDecision(expected.decision),
+        decision: expectedDecision,
       })
     }
   })

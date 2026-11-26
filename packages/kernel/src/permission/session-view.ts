@@ -21,6 +21,7 @@ import type {
 import type { ToolTableItem } from '../tools/registry.js'
 
 export interface InspectedCall {
+  readonly canReachNetwork?: boolean // Bash only; sampled live, never part of SessionView
   readonly tool: Pick<ToolTableItem, 'name' | 'source' | 'serverId' | 'originalName'> // §内置工具与工具来源；serverId 供第 1 层按 (serverId, originalName) 匹配规则
   readonly args: Readonly<Record<string, unknown>>
   readonly reversibility: Reversibility // host 判定（E1）

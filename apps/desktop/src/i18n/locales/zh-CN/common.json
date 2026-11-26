@@ -155,7 +155,8 @@
     "output-truncated": "回复在 {maxTokens} tokens 的输出上限处被截断。",
     "shutdown-aborted": "{trigger, select, quit {Tenon 退出，任务已中止。} other {窗口关闭，任务已中止。}}",
     "recovered": "任务运行时 Tenon 意外关闭。",
-    "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。"
+    "time-limit": "子任务达到了时间上限（{limitMs} 毫秒）。",
+    "blocked-repeatedly-round": "这一轮被拦了 {count} 次，任务已结束。"
   },
   "model": {
     "name": {
@@ -498,7 +499,9 @@
     },
     "inspector": {
       "exfiltration": "这一步可能把你的数据带到别处，已拦下。",
-      "inspector-failed": "Tenon 没能确认这一步是否安全，已拦下。"
+      "inspector-failed": "Tenon 没能确认这一步是否安全，已拦下。",
+      "hidden-characters": "路径或命令里有看不见的字符，已拦下。",
+      "control-characters": "路径或命令里有控制字符，已拦下。"
     },
     "chatReadScope": "对话里只能打开 Tenon 为这个对话保存的文件。",
     "told": "已告诉模型。"
@@ -538,7 +541,9 @@
       "policy": "你的组织要求这一步先经你同意。",
       "flagged": {
         "exfiltration": "这次请求可能把你的数据带到别处。",
-        "inspector-failed": "Tenon 没能确认这一步是否安全。"
+        "inspector-failed": "Tenon 没能确认这一步是否安全。",
+        "hidden-characters": "路径或命令里有看不见的字符，已经标出来，先给你看一眼。",
+        "control-characters": "路径或命令里有控制字符，已经标出来，先给你看一眼。"
       },
       "command": "运行命令前要你同意。",
       "interaction-required": "这个连接器要求你亲自确认。"
@@ -929,12 +934,14 @@
     "action": {
       "allow-domain": "在这个任务里允许连接 {target}",
       "allow-path": "允许写入这一个位置 {target}",
-      "rerun-unsandboxed": "允许这条命令下次不受限制地运行一次"
+      "rerun-unsandboxed": "允许这条命令下次不受限制地运行一次",
+      "allow-once": "允许这一次"
     },
     "note": {
       "allow-domain": "现在起这个任务里的命令可以连它，也能往上面传东西；只在这个任务里有效，不会加进设置里的列表",
       "allow-path": "在这个任务里再运行完全相同的这条命令时生效一次，只多给这一个位置；到下一轮回复结束还没用上就作废，不会记住",
-      "rerun-unsandboxed": "在这个任务里再运行完全相同的这条命令时生效：那一次它能读写你能访问的所有文件、连任何网站；运行前还会再问你一次；到下一轮回复结束还没用上就作废，不会记住"
+      "rerun-unsandboxed": "在这个任务里再运行完全相同的这条命令时生效：那一次它能读写你能访问的所有文件、连任何网站；运行前还会再问你一次；到下一轮回复结束还没用上就作废，不会记住",
+      "allow-once": "在这个任务里再发出完全相同的这一步时生效一次；到下一轮回复结束还没用上就作废"
     },
     "released": "已放行",
     "protected": "这类文件不能从这里允许",
@@ -942,7 +949,9 @@
       "stale": "这次调用已不能放行，请重新发起命令。",
       "not-found": "找不到这次调用，请重新发起命令。",
       "refused": "当前不能放行，请稍后重试。",
-      "failed": "没有放行成功，请重试。"
+      "failed": "没有放行成功，请重试。",
+      "step-stale": "这一步已不能放行；还需要的话，让它重新做一次。",
+      "step-not-found": "找不到这一步；还需要的话，让它重新做一次。"
     }
   },
   "snapshot": {
@@ -1022,6 +1031,7 @@
       "connector-requires-confirm": "连接器操作需要确认",
       "check-incomplete": "检查没能完成，需要确认",
       "inspector-blocked": "检查发现风险，已拦下",
+      "inspector-flagged": "检查发现看不见的字符，需要确认",
       "own-output-read": "读取本会话生成的内容",
       "no-approval-needed": "这项操作无需确认",
       "auto-mode": "按自动模式的设置允许",

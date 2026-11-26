@@ -85,6 +85,14 @@ export function providerErrorKey(
   return `runEnd.provider-error.${errorCode ?? 'unknown'}`
 }
 
+/** 「为什么停」 of a run end: a round's cumulative blocks have their own sentence (06 §熔断). */
+export function runEndKey(reason: RunEndReasonContract): string {
+  if (reason.code === 'provider-error') return providerErrorKey(reason.errorCode)
+  if (reason.code === 'blocked-repeatedly' && reason.scope === 'round')
+    return 'runEnd.blocked-repeatedly-round'
+  return `runEnd.${reason.code}`
+}
+
 export interface DoneGroup {
   readonly part: ToolPart
   readonly object: string

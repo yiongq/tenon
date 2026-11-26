@@ -43,6 +43,7 @@ import { approvalModeEntry, readSessionFacts } from '../session/facts.js'
 import type { SessionService } from '../session/service.js'
 import type {
   ApprovalResolvedPayload,
+  InspectorOverridePayload,
   AppendResult,
   DispatchCommittedPayload,
   FactWriter,
@@ -83,6 +84,7 @@ import type { TestLoopPorts } from './loop-ports.js'
 import {
   TapeProvenanceSyntaxError,
   approvalResolvedKey,
+  inspectorOverrideKey,
   assembledKey,
   attemptCompletedKey,
   dispatchCommittedKey,
@@ -3482,6 +3484,115 @@ export function tapeConformanceCases(
   )
 
   // ----- M6 验收 1: a custom instance's id inside a tool table key ---------------------------------
+
+  add(
+    '06 inspector override facts preserve binding, deduplicate, replay and rebuild in tenant isolation',
+    async (open) => {
+      const fixture = await open()
+      const tape = createTape(fixture.store)
+      await appendAll(fixture, [
+        startEntry(fixture, fixture.incarnationId),
+        profileFact(fixture, fixture.incarnationId),
+      ])
+      const before = await fixture.store.listSessions({ limit: 10 })
+      const context = await rebuildProviderContext(fixture.store, {
+        sessionId: fixture.sessionId,
+        target: SCRIPT_MODEL,
+      })
+      const runId = fixture.ids.uuid()
+      const key = inspectorOverrideKey(runId, 0, 0)
+      const payload: InspectorOverridePayload = {
+        ordinal: 0,
+        providerToolCallId: 'blocked',
+        toolName: 'Bash',
+        argsHash: ARGS_HASH,
+        inspectorIds: ['input-hygiene', 'other-denial'],
+        via: 'receipt-override',
+        writer: { by: 'resolver' },
+      }
+      const release = tape.writer('tool').entry('tool/inspector_override', {
+        sourceType: 'runtime_event',
+        sourceId: runId,
+        sourceSeq: 0,
+        provenanceKey: key,
+        payload,
+        createdAt: fixture.at(),
+      })
+      const call = { runId, requestSeq: 1, ordinal: 0 }
+      const original = decisionFact(fixture, call)
+      const decision = {
+        ...original,
+        payload: {
+          ...original.payload,
+          inspectorOverride: { key },
+          record: {
+            verdict: 'allow',
+            decidedBy: 'approval-mode',
+            steps: [
+              {
+                by: 'inspector',
+                inspectorId: 'input-hygiene',
+                said: 'none',
+                status: 'ok',
+                basis: { override: key, category: 'control-characters' },
+              },
+            ],
+          },
+        },
+      }
+      await appendAll(fixture, [release, decision])
+      assertEqual((await appendAll(fixture, [release]))[0]?.created, false, 'release deduplicates')
+      const entries = await readAll(fixture.store, fixture.sessionId)
+      const kept = entries.find((entry) => entry.name === 'tool/inspector_override')!
+      assertEqual(kept.payload, payload, 'complete payload survives storage')
+      assertEqual(
+        [kept.kind, kept.name, kept.sourceType, kept.sourceId, kept.sourceSeq, kept.provenanceKey],
+        [
+          'event',
+          'tool/inspector_override',
+          'runtime_event',
+          runId,
+          0,
+          `tool:v1:inspector_override:${runId}:0:0`,
+        ],
+        'declared name, identity and key survive storage',
+      )
+      assertEqual(project(kept), [], 'inspector release has no display projection')
+      const bound = entries.find((entry) => entry.provenanceKey === original.provenanceKey)!
+      assertEqual(bound.payload['inspectorOverride'], { key }, 'binding survives storage')
+      assertEqual(
+        (bound.payload as PermissionDecidedPayload).record.steps[0]?.basis?.override,
+        key,
+        'skipped check retains the causal release key',
+      )
+      await fixture.store.rebuildProjections(fixture.sessionId)
+      assertEqual(
+        await fixture.store.listSessions({ limit: 10 }),
+        before,
+        'rebuild leaves the session projection unchanged',
+      )
+      assertEqual(
+        await rebuildProviderContext(fixture.store, {
+          sessionId: fixture.sessionId,
+          target: SCRIPT_MODEL,
+        }),
+        context,
+        'release fact and decision metadata do not enter the model context',
+      )
+      assertEqual(
+        (await fixture.store.verifyChain({ sessionId: fixture.sessionId, limit: 100 }))
+          .firstBadEntryId,
+        null,
+        'hash chain remains valid',
+      )
+      const other = await open({ tenantId: 'inspector-other-tenant', shareWith: fixture })
+      assertEqual(
+        (await other.store.readRange({ sessionId: fixture.sessionId, limit: 100 })).entries,
+        [],
+        'same backing never exposes another tenant release or binding',
+      )
+    },
+  )
 
   add(
     '06 approval mode facts round-trip, deduplicate, replay and rebuild in tenant isolation',

@@ -1,3 +1,4 @@
+import { inspectorRelease } from './ipc/inspector.js'
 import {
   mcpList,
   mcpPreview,
@@ -101,6 +102,7 @@ export const ipcRoutes = {
   providerSelect,
   sandboxGet,
   sandboxRelease,
+  inspectorRelease,
   sandboxSetSettings,
   snapshotRounds,
   snapshotPreview,

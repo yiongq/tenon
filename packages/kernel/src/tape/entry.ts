@@ -410,6 +410,14 @@ export interface SandboxOutcome {
 }
 
 // tool/
+export type InspectorOverridePayload = CallRef & {
+  toolName: string
+  argsHash: string
+  inspectorIds: readonly string[]
+  via: 'receipt-override'
+  writer: FactWriter
+}
+
 export type ReceiptOverridePayload = CallRef & {
   action: 'allow-domain' | 'allow-path' | 'rerun-unsandboxed'
   target: string | null
@@ -431,6 +439,7 @@ export type PermissionDecidedPayload = CallRef & {
   fileTarget?: Pick<FileIdentity, 'kind' | 'nlink'> | null
   coverage?: SnapshotCoverage
   sandbox?: SandboxPlan
+  inspectorOverride?: { key: string }
   definitionChanged?: true
   target?: ConfirmTarget // 判决当时的卡片对象；旧事实没有时交接使用纯fallback
   argsHash: string

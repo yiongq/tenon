@@ -60,6 +60,7 @@ import tokensCss from '../styles/tokens.css?raw'
 import { registerModelRoutes } from './model-routes.js'
 import { createShutdown, refuseWhileShuttingDown, registerSandboxSignals } from './shutdown.js'
 import { startSingleInstance } from './single-instance.js'
+import { registerInspectorRoutes } from './inspector-routes.js'
 import { registerSandboxRoutes } from './sandbox-routes.js'
 import { registerSnapshotRoutes, snapshotWindowCanAccess } from './snapshot-routes.js'
 import {
@@ -390,6 +391,7 @@ async function main(): Promise<void> {
     canAccessSession: (event) =>
       snapshotWindowCanAccess(event, BrowserWindow.getAllWindows(), appUrl()),
   })
+  registerInspectorRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerApprovalRoutes({ ipcMain: routes, sessions, gate: recovery.ready })
   registerWorkspaceRoutes({
     ipcMain: routes,

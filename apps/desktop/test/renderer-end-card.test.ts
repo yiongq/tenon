@@ -341,3 +341,17 @@ it('presentation-r1 验收 8: aggregates 100 reads of a.txt into one line ×100;
     expect(aggregateDone([{ ...hundred[0]!, name, input }]).visible[0]?.object).toBe(object)
   }
 })
+
+it('06 验收 26: the run-end card says a round’s cumulative blocks apart from a run of three', () => {
+  const what = (html: string) =>
+    textOf(html.match(/<p data-testid="failure-what"[^>]*>(.*?)<\/p>/s)?.[1] ?? '')
+  const round: RunEndReasonContract = { code: 'blocked-repeatedly', count: 20, scope: 'round' }
+  expect(what(renderEnd(round, [], zh))).toBe('这一轮被拦了 20 次，任务已结束。')
+  expect(what(renderEnd(round, [], en))).toBe(
+    'Calls were blocked 20 times in this round, so the task ended.',
+  )
+  // Without `scope` it is still 02's run of three in a row.
+  expect(what(renderEnd({ code: 'blocked-repeatedly', count: 3 }, [], zh))).toBe(
+    zh.t('runEnd.blocked-repeatedly', { count: 3 }),
+  )
+})
