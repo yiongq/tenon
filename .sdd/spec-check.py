@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# sdd:spec-check v=2.0.2 hash=fa9c7f0c8aaf
+# sdd:spec-check v=2.2.1 hash=e84c5706eb71
 """sdd spec-check：规格驱动开发（sdd）的检查脚本。
 
 单文件，只用 Python 标准库（兼容 3.9），调子进程和 git，不联网。
@@ -20,6 +20,7 @@ import difflib
 import hashlib
 import json
 import os
+import posixpath
 import re
 import select
 import shutil
@@ -31,7 +32,7 @@ import time
 import traceback
 import unicodedata
 
-VERSION = "2.0.2"
+VERSION = "2.2.1"
 TIERS = ("lite", "standard", "heavy")
 TIER_RANK = {"lite": 0, "standard": 1, "heavy": 2}
 BLOCK = "block"
@@ -59,7 +60,7 @@ LEVEL_TABLE = {
     "tamper": (None, BLOCK, BLOCK),
     "special-case": (None, WARN, WARN),
     "review": (None, BLOCK, BLOCK),
-    "red-on-base": (None, None, BLOCK),
+    "red-on-base": (None, None, WARN),
     "mutants": (None, None, BLOCK),
     "rerun": (None, WARN, WARN),
 }
@@ -475,6 +476,10 @@ class Git(object):
         o = self.out("ls-files", "-z")
         return [p for p in (o or "").split("\0") if p]
 
+    def ls_tree(self, rev):
+        o = self.out("ls-tree", "-r", "-z", "--name-only", rev)
+        return [p for p in (o or "").split("\0") if p]
+
     def ls_untracked(self):
         o = self.out("ls-files", "--others", "--exclude-standard", "-z")
         return [p for p in (o or "").split("\0") if p]
@@ -796,8 +801,7 @@ class Scope(object):
         if self.after == "index":
             return self.git.ls_files()
         if self.after == "head":
-            o = self.git.out("ls-tree", "-r", "-z", "--name-only", "HEAD")
-            return [p for p in (o or "").split("\0") if p]
+            return self.git.ls_tree("HEAD")
         files = self.git.ls_files() + self.git.ls_untracked()
         return sorted(set(f for f in files if os.path.exists(os.path.join(self.ctx.root, f))))
 
@@ -1414,12 +1418,13 @@ class SpecSet(object):
         return None
 
 
-def discover_specs(ctx, scope):
+def discover_specs(ctx, scope, before=False):
     regs = [glob_to_re(p) for p in ctx.spec_roots()]
     specs = []
-    for p in scope.tracked_files():
+    files = scope.git.ls_tree(scope.base) if before else scope.tracked_files()
+    for p in files:
         if any(r.match(p) for r in regs):
-            text = scope.read_state(p)
+            text = scope.git.show(scope.base, p) if before else scope.read_state(p)
             if text is None:
                 continue
             specs.append(Spec(ctx, p, text))
@@ -1662,14 +1667,77 @@ def canon_of_line(line, aliases):
     return aliases.get(key, BASE_KEYS.get(key, (None, None)))[0]
 
 
+# 来源：biz-agent-kit · .sdd/spec-check.py · 8037c74
+def retarget_changed_by(pj, baseline, previous, frozen, removed_indexes, added_headers, changes):
+    def has_change(target, link):
+        return any(change["target"] is not None and change["target"].path == frozen.path
+                   and sec_compat(link["section"], change["section"])
+                   for change in changes.get(target.path, []))
+
+    def section_of(link):
+        return frozen.find_section(link["section"]) if link["section"] else None
+
+    renames = {fc.old: path for path, fc in pj.scope.changes.items() if fc.status == "R"}
+    remaining = []
+    for header in added_headers:
+        for text in split_entries(header.value):
+            link = parse_ref_entry(text, header.default_kind)
+            remaining.append((link, pj.specs.resolve(link["ref"], frozen.path), section_of(link)))
+
+    used = set()
+    removed = []
+    # 多条引用可能同在一行。先认出保留的引用，以免把它们当成新回链。
+    for header in previous.values("changed by"):
+        dropped = header.lineno - 1 in removed_indexes
+        texts = split_entries(header.value)
+        if dropped and not texts:
+            return False
+        for text in texts:
+            old = parse_ref_entry(text, header.default_kind)
+            original = baseline.resolve(old["ref"], previous.path)
+            target = pj.specs.by_path.get(renames.get(original.path, original.path)) if original else None
+            section = section_of(old)
+            if target is not None:
+                used.add((target.path, section))
+            if not dropped:
+                continue
+            for i, (link, other, other_section) in enumerate(remaining):
+                same_link = (target is not None and other is target
+                             and ((section is not None and section == other_section)
+                                  or (old["section"] is None and link["section"] is None)))
+                same_prose = original is None and other is None and link["raw"] == old["raw"]
+                if link["kind"] == old["kind"] and (same_link or same_prose):
+                    remaining.pop(i)
+                    break
+            else:
+                removed.append((old, target, section))
+
+    for old, target, section in removed:
+        if (section is None or target is None or target.status not in ("draft", "ready")
+                or has_change(target, old)):
+            return False
+        for link, replacement, replacement_section in remaining:
+            if (replacement is not None and replacement is not target
+                    and replacement_section == section and (replacement.path, section) not in used
+                    and has_change(replacement, link)):
+                used.add((replacement.path, section))
+                break
+        else:
+            return False
+    return bool(removed)
+
+
 def chk_frozen(ctx, pj):
     sc = pj.scope
     aliases = header_alias_map(ctx.cfg)
+    changes = None
+    baseline = None
     for path, fc in sc.changes.items():
         if not path.endswith("spec.md") or fc.status == "A":
             continue
         bt = sc.read_before(path)
-        if bt is None or Spec(ctx, fc.old, bt).status != "implemented":
+        previous = Spec(ctx, fc.old, bt) if bt is not None else None
+        if previous is None or previous.status != "implemented":
             continue
         if fc.status == "D":
             ctx.block("frozen", fc.old, "implemented 的 spec 被删除了；要改就新写一份 spec")
@@ -1685,18 +1753,36 @@ def chk_frozen(ctx, pj):
             added, removed = diff_texts("\n".join(bb), "\n".join(ab))
             ctx.block("frozen", path, "implemented 的 spec 正文被改动（加 %d 行、删 %d 行）；要改就新写一份 spec，用 Changes / Changed by 连起来" % (len(added), len(removed)))
             continue
-        # 页头：只许新增 Changed by 行，或把 Status 改成 superseded by
         left = {}
         for l in bh:
             left[l] = left.get(l, 0) + 1
         ah2 = []
-        for l in ah:
+        added_indexes = set()
+        for index, l in enumerate(ah):
             if left.get(l, 0) > 0:
                 left[l] -= 1
                 ah2.append(l)
             elif canon_of_line(l, aliases) != "changed by":
                 ah2.append(l)
+            else:
+                added_indexes.add(index)
         bh2 = list(bh)
+        if added_indexes:
+            removed_indexes = set()
+            for header in previous.values("changed by"):
+                line = bh[header.lineno - 1]
+                if left[line] > 0:
+                    left[line] -= 1
+                    removed_indexes.add(header.lineno - 1)
+            if removed_indexes:
+                current = Spec(ctx, path, at)
+                added_headers = [header for header in current.values("changed by")
+                                 if header.lineno - 1 in added_indexes]
+                if baseline is None:
+                    baseline = discover_specs(ctx, sc, before=True)
+                    changes, _ = collect_links(pj)
+                if retarget_changed_by(pj, baseline, previous, current, removed_indexes, added_headers, changes):
+                    bh2 = [line for index, line in enumerate(bh) if index not in removed_indexes]
         for i, l in enumerate(ah2):
             if canon_of_line(l, aliases) == "status" and parse_status_value(HEADER_LINE_RE.match(l).group(2))[0] == "superseded":
                 ah2[i] = "<STATUS>"
@@ -1704,7 +1790,7 @@ def chk_frozen(ctx, pj):
                     if canon_of_line(bl, aliases) == "status":
                         bh2[j] = "<STATUS>"
         if ah2 != bh2:
-            ctx.block("frozen", path, "implemented 的 spec 页头被改动（只许新增 Changed by 行，或把 Status 改成 superseded by）")
+            ctx.block("frozen", path, "implemented 的 spec 页头被改动（只许新增 Changed by、同节迁移未实施且已撤去 Changes 的回链，或把 Status 改成 superseded by）")
 
 
 LINE_REF_DOC_RE = re.compile(r"^docs/(architecture|features)/[^/]+/(spec|plan|decisions)\.md$")
@@ -1849,7 +1935,9 @@ def chk_shape(ctx, pj):
             if lim and len(s.text) > lim:
                 ctx.warn("shape", s.path, "spec 全文 %d 字符，超过 %s 档的上限 %d（超了按子阶段拆）" % (len(s.text), tier, lim))
             if TIER_RANK[tier] >= 1:
-                shape_intro(ctx, pj, s)
+                # 没有 baseline_commit 的项目是 init 起步的，所有 spec 都按 v2 写，照新 spec 查
+                is_new = s.path in pj.new_paths or sc.mode == "all" or not ctx.cfg.get("baseline_commit")
+                shape_intro(ctx, pj, s, is_new)
         ppath = s.dir + "/plan.md"
         if ppath in sc.changes and sc.status(ppath) != "D":
             ptext = sc.read_after(ppath) or ""
@@ -1895,7 +1983,7 @@ def chk_shape(ctx, pj):
                      (len(longs), limit, "、".join(str(n) for n in longs[:5])))
 
 
-def shape_intro(ctx, pj, s):
+def shape_intro(ctx, pj, s, is_new=True):
     lines = s.lines
     fenced = fence_lines(lines)
     first = None
@@ -1909,7 +1997,10 @@ def shape_intro(ctx, pj, s):
     if first is None:
         return
     if not heading_matches("给你看的一页", first[1]):
-        ctx.warn("shape", s.path, "第一节应该是「给你看的一页」，现在是「%s」" % short(first[1], 20))
+        # 只对新写的 spec 报（2.2）：接入前的老 spec 没有这一节，每改一次就报一次、没法修（Tenon 重放 13 次）。
+        # 已经有这一节的 spec，下面的行数、代号、验收号照旧查
+        if is_new:
+            ctx.warn("shape", s.path, "第一节应该是「给你看的一页」，现在是「%s」" % short(first[1], 20))
         return
     end = len(lines)
     for j in range(first[0] + 1, len(lines)):
@@ -2058,7 +2149,11 @@ def build_index(ctx, pj):
         if k[1] != "整份":
             span = y.section_span(k[1])
             if span is None:
-                warns.append((xs[0].path, "Changes 指的节「%s」在 %s 里不存在" % (k[1], y.id)))
+                # 记在本次动过的那一份名下（写 Changes 的任一份，或被指的旧 spec 改了节名），都没动才记在最早那份：
+                # chk_index 按「这个文件本次动过」决定报不报（2.2）
+                involved = [x.path for x in xs] + [y.path]
+                at = next((p for p in involved if p in pj.scope.changes), xs[0].path)
+                warns.append((at, "Changes 指的节「%s」在 %s 里不存在" % (k[1], y.id)))
             else:
                 for path, name in impl_locations(y, span[0], span[1]):
                     out.append("  实现位置：%s → %s" % (path, name))
@@ -2074,7 +2169,12 @@ def chk_index(ctx, pj):
     if not ctx.has_module("index"):
         return
     text, warns = build_index(ctx, pj)
+    sc = pj.scope
     for f, msg in warns:
+        # 「指的节不存在」只在写 Changes 的那份 spec 本次动过时报（--all 照报）：那份 spec 冻结之后改不了，
+        # 每个 PR 都报一遍只会教人无视警告（2.2，Tenon 实测每个 PR 都报 4–6 条没人修）
+        if msg.startswith("Changes 指的节") and sc.mode != "all" and f not in sc.changes:
+            continue
         ctx.warn("index", f, msg)
     cur = pj.scope.read_state(INDEX_PATH) if INDEX_PATH in pj.files else None
     if cur is None:
@@ -2112,7 +2212,11 @@ def chk_notes(ctx, pj):
         if not os.path.exists(os.path.join(full, ".git")):
             ctx.warn("notes", d, "笔记目录不是 git 仓库（笔记没有历史记录）；在那里 git init")
     for p in scan:
-        t = sc.read_state(p)
+        if sc.mode == "all":
+            t = sc.read_state(p)
+        else:
+            # 只看这次新增的行（2.2）：老文档里已有的词每个 PR 都报一遍，Tenon 29 个 PR 里 21 个是同一条
+            t = "\n".join(l for _, l in sc.added(p))
         if not t:
             continue
         low = t.lower()
@@ -2120,6 +2224,89 @@ def chk_notes(ctx, pj):
             if w.lower() in low:
                 ctx.warn("notes", p, "公开文档里出现了敏感词「%s」；商业内容放私有笔记仓库" % w)
                 break
+
+
+# 目标仓库里给人或给工具看的规则文件。前三个在仓库根到 delivery_path 的每一层都找，其余只在仓库根找。
+DELIVERY_RULE_NAMES = ("AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md")
+DELIVERY_ROOT_RULES = (".cursorrules", ".cursor/rules", ".claude/rules", ".github/copilot-instructions.md",
+                       ".github/CONTRIBUTING.md", ".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md")
+
+
+def exists_exact(repo, rel):
+    """rel 在 repo 下存在，而且每一段的大小写都和磁盘上的一样。
+    大小写不敏感的文件系统上，os.path.exists 对两种大小写都返回真，会把一个文件认成两个。"""
+    cur = repo
+    for part in rel.split("/"):
+        try:
+            if part not in os.listdir(cur):
+                return False
+        except OSError:
+            return False
+        cur = os.path.join(cur, part)
+    return True
+
+
+def delivery_levels(sub):
+    """从目标仓库根到 sub（代码要放的目录）的每一层，根写成 ""。sub 先规整（去掉 . 和中间的 ..）。
+    绝对路径只留根。规整后还带 .. 的（跑出仓库）不用另外拦：exists_exact 逐段对着目录列表找，找不到 ..。"""
+    norm = posixpath.normpath((sub or "").strip().replace("\\", "/")) if (sub or "").strip() else ""
+    if not norm or norm.startswith("/"):
+        return [""]
+    parts = norm.split("/")
+    return [""] + ["/".join(parts[:i + 1]) for i in range(len(parts))]
+
+
+def delivery_rule_files(repo, sub):
+    """目标仓库里找得到的规则文件（相对 repo 的路径，按层级排好）。sub 是代码要放的目录，相对 repo。"""
+    out = []
+    for lv in delivery_levels(sub):
+        for name in DELIVERY_RULE_NAMES:
+            rel = (lv + "/" + name) if lv else name
+            full = os.path.join(repo, rel)
+            if not exists_exact(repo, rel) or not os.path.isfile(full):
+                continue
+            if name == "CLAUDE.md":
+                body = (read_file(full, 4096) or "").strip()
+                if re.match(r"^@\S+$", body):  # 只有一行导入（比如 @AGENTS.md）：规则在被导入的那个文件里
+                    continue
+            out.append(rel)
+    for rel in DELIVERY_ROOT_RULES:
+        if exists_exact(repo, rel):
+            out.append(rel)
+    return out
+
+
+def delivery_mentioned(text, repo_name, rel):
+    """「外部依据」里提没提到这个规则文件：要写成「目标仓库目录名/路径」。只写文件名不算，项目自己也有同名文件。
+    前面可以接 ./ 或 ../；前面接别的目录名的不算（那是另一个地方的同名目录），也不能是另一个名字的后半截。反斜杠当斜杠看。"""
+    return bool(re.search(r"(?:(?<![A-Za-z0-9_.\-/])|(?<=\./))" + re.escape(repo_name + "/" + rel), text.replace("\\", "/")))
+
+
+def chk_delivery(ctx, pj):
+    """代码要交到别的仓库时（config 的 delivery_repo）：本次动过的、还没冻结的 spec，「外部依据」要提到那边的规则文件。只报警。"""
+    repo = ctx.cfg.get("delivery_repo")
+    if not isinstance(repo, str) or not repo.strip():
+        return
+    sc = pj.scope
+    specs = [s for s in pj.specs.list if s.path in sc.changes and s.status in (None, "draft", "ready")]
+    if not specs:
+        return
+    full = os.path.normpath(os.path.join(ctx.root, os.path.expanduser(repo.strip())))
+    if not os.path.isdir(full):
+        if not ctx.is_ci:  # CI 里通常没有检出目标仓库，不报
+            ctx.warn("delivery", ".sdd/config.json", "delivery_repo 指的目录不存在：%s" % repo)
+        return
+    sub = ctx.cfg.get("delivery_path")
+    rules = delivery_rule_files(full, sub if isinstance(sub, str) else "")
+    if not rules:
+        return
+    name = os.path.basename(full)
+    for s in specs:
+        text = "\n".join(section_lines_of(s.text, "外部依据") or [])
+        miss = [name + "/" + rel for rel in rules if not delivery_mentioned(text, name, rel)]
+        if miss:
+            ctx.warn("delivery", s.path, "目标仓库的规则文件没有出现在「外部依据」里：%s。读完它们，把硬规则抄进 spec，"
+                     "路径照这里的写法写进「外部依据」" % "、".join(miss))
 
 
 def handoff_messages(ctx, pj):
@@ -2135,6 +2322,10 @@ def handoff_messages(ctx, pj):
 
 
 def chk_handoff(ctx, pj):
+    # CI 里不报（2.2）：这条是提醒停下前的会话重写 plan，CI 里没人能照做；Tenon 29 个 PR 里 8 个响过、没人理。
+    # 本地照报（lite 项目没有 Stop 钩子，靠说做完前跑的这一次提醒），Stop 钩子走 --handoff
+    if ctx.is_ci:
+        return
     for m in handoff_messages(ctx, pj):
         ctx.warn("handoff", "plan.md", m)
 
@@ -2959,6 +3150,8 @@ def chk_review(ctx, pj):
         if not recs:
             ctx.add("review", logp, "本次改动里没有新增评审记录（log.md 里要有「## 评审 · 日期 · 审过 <提交号>」）", tier=tier)
             continue
+        if len(recs) > 3:
+            ctx.warn("review", logp, "这次改动里新增了 %d 条评审记录，超过三轮：停下来交 owner 定，不要接着改（临时加的评审也算轮数）" % len(recs))
         rec = recs[-1]
         bad = []
         full = None
@@ -3703,6 +3896,7 @@ def run_checks(ctx, pj, mode):
     chk_shape(ctx, pj)
     chk_codes(ctx, pj)
     chk_notes(ctx, pj)
+    chk_delivery(ctx, pj)
     if mode != "staged":
         chk_index(ctx, pj)
     if mode == "range":
@@ -3885,10 +4079,12 @@ def mode_red_on_base(ctx, args):
             if c.status == "failed" and c not in imp:
                 ok = True
             elif c.status == "passed":
-                ctx.add("red-on-base", p, "「%s」在旧代码上是绿的，说明它没有复现 bug" % short(name, 40), tier="heavy")
+                # 只报警（2.2）：同一个 PR 里先引入、后修好的 bug，旧代码上本来就复现不出来；硬拦会逼人补凑数的用例
+                ctx.warn("red-on-base", p, "「%s」在旧代码上是绿的，说明它没有复现目标分支上的 bug；"
+                         "要是这个 PR 自己引入后又修好的，在评审记录里说明" % short(name, 40))
                 continue
         if not ok:
-            ctx.add("red-on-base", p, "「%s」在旧代码上不是断言失败的红（导入失败、被跳过或没跑出结果）" % short(name, 40), tier="heavy")
+            ctx.warn("red-on-base", p, "「%s」在旧代码上不是断言失败的红（导入失败、被跳过或没跑出结果）" % short(name, 40))
     if not red:
         if imp:
             ctx.warn("red-on-base", tests[0], "新测试在旧代码上全是导入失败（新功能的测试多半如此），不算断言失败的红")

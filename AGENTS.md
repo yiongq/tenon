@@ -2,31 +2,24 @@
 
 Tenon is a desktop agent workbench (Electron + TypeScript) with a host-independent agent kernel. Read this file first; it is the single source of rules for any coding agent (Claude Code reads it via `CLAUDE.md`, Codex reads it directly).
 
-<!-- sdd:core v=2.0.2 tier=standard hash=1e4f89c5d746 -->
+<!-- sdd:core v=2.2.1 tier=standard hash=3abb7c1d2050 -->
 ## 规格驱动开发（sdd 核心）
-1. 两个文件：每个目标一个文件夹。spec.md 写做什么、怎样算做完；plan.md 是唯一的进度表；
-   有记录时才建 log.md，只往后追加。不建 tasks.md、TODO.md。
-2. 开工与交接：说「继续」「开工」或没有指令时，找 Status: ready、plan 里还有没勾步骤的 spec。
-   只有一份就接着做，多于一份就问 owner；开了路线图时先挑 architecture 下编号最小的，没有再看 features。
-   动手前说清挑了哪份、哪一步。停下前重写 plan 的「当前」和「交接」。
-   plan 只剩「owner 验收」时，停下等，不自己改 Status。
+1. 两个文件：每个目标一个文件夹。spec.md 写做什么、怎样算做完；plan.md 是唯一的进度表；有记录时才建 log.md，只往后追加。
+2. 开工与交接：说「继续」「开工」或没有指令时，按 python3 .sdd/spec-check.py --status 选中的 spec 和步骤做，选中多份就问 owner；
+   动手前说清挑了哪份、哪一步。停下前重写 plan 的「当前」和「交接」。plan 只剩「owner 验收」时，停下等，不自己改 Status。
 3. 状态与批准：draft → ready → implemented，或 superseded。改成 ready、implemented 只由 owner 定，
-   并在页头记 Approved: 状态 · 日期 · 「逐字原话」· 出处。
-   原话只有「继续」「开工」「好」「都按推荐」，或者没点名这份 spec，都不算批准。
+   并在页头记 Approved: 状态 · 日期 · 「逐字原话」· 出处；原话要点名这份 spec，泛泛的同意不算（approval 检查会拦）。
 4. 改动两条路：implemented 之前直接改原文，从 ready 起每次在「修订记录」记一行；
-   实现中只收紧或澄清的可以改，放宽要求或改已合入的接口先要 owner 点名批准。
+   实现中只收紧或澄清的可以改，放宽要求、新增机制或改已合入的接口先要 owner 点名批准。
    implemented 之后正文不动，新写一份 spec，用 Changes / Changed by 页头连起来。
-5. 写法：引用文档写节名，引用代码写「路径 + 函数名或类型名」，不写行号。
-   代号必须在本仓库有定义，正文先写规则本身，代号只放句末当出处。
-   术语第一次出现时解释（项目有 overview 的术语表，写「见 overview §术语」也算）；一段一件事；决策历史放 decisions.md 或附录。
-6. plan 只放：步骤、「当前 / 需要你」、最新一条交接、Open。最后一步是「owner 验收 → 改 Status」。
-   不列「开 PR」「合并 PR」这类步骤。实施、验收、评审记录写进 log.md。
+5. 写法：引用文档写节名，引用代码写「路径 + 函数名或类型名」，不写行号；代号只放句末当出处。
+6. plan 只放：步骤、「当前 / 需要你」、最新一条交接、Open；最后一步是「owner 验收 → 改 Status」。实施、验收、评审记录写进 log.md。
 7. 做完前过检查：每条验收有测试，或标（人工）/（live）；修 bug 先写复现它的失败测试；
    改弱已有测试，写一行「测试改动：文件 · 用例 · 为什么」。
    说做完之前，跑项目的检查（至少测试）和 python3 .sdd/spec-check.py。
    实现时：测试如果有错，直接说；不为某个用例写死结果；同一处反复跑红，就停下报告。
-8. 独立评审：说做完或合并之前，在新上下文里评审一遍，带证据的问题修掉。
-细则：docs/spec-driven-dev.md（standard 起）；没有时见 skill 的 references/。
+8. 独立评审：说做完或合并之前，在新上下文里评审一遍，带证据的问题按细则分类处置。
+细则：docs/spec-driven-dev.md（standard 起）；没有时见 skill 的 references/core.md。
 <!-- /sdd:core -->
 
 ## How we work
