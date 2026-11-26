@@ -690,3 +690,14 @@ const ownLease = true
 - owner 2026-11-27 回「收下，写进 log」（对话）：第 13 版的基线照这次结果收下，flash 列以 53/60 作为第 13 版的起点。`pnpm evals:gate` 本地通过。
 - 更正（上一条第一行）：worktree 里那个指向 `.env.local` 的软链当时没有删掉——lead 在沙箱里用 `test -L` 核对，沙箱看不见 `.env.local`，报成「不在」。2026-11-27 复核指出后在沙箱外核实是指向主仓库 `.env.local` 的软链，只删了软链本身，主仓库那份没动；它被 `.gitignore` 忽略，没进过仓库。plan「开工前读」改写了 key 的来源，与 docs/evals/README 一致。
 - 更正（上一条的失败描述）：03 题删的是模型自己导出的 `full_log.txt`，不是脚本（11、19 删的才是脚本）；撤不回的 Delete 卡在 flash 列第 11、12、13 版分别出现 0/60、1/60、5/60 次，下一版对照时留意。02 的两次失败是同一批里并行发出 3 个 Edit，模型还没看到第一次拦截就连拦 3 次结束，与第 11 版的两次失败同形，不是看到拦截后还在重试。
+
+## 评审 · 2026-11-27 · 审过 5e1547e
+
+结论：通过    评审：新上下文的子 agent，只读，审 `73c697e..5e1547e`（两份基线结果、log 的「第 12.1 步基线评测」一节、plan 的勾与「当前 / 需要你」）；报告原文在私有笔记（另记）。核实：两份结果是在 73c697e 上真跑的（flash 60 条、glm-5.3 3 条，`prompt.version` 13、`prompt.hash` 等于 `PROMPT_LAYER_HASH`，任务题的 `toolDefinitionsHash` 换成新值、`systemHash` 与第 12 版相同，正对上第 13 版只在 Bash 描述加了一句；`clientVersion` 73c697e、没有 dirty；`sandbox` 全为 active/workspace-write）；格式检查 3/3；记录里扫过各种密钥形态都没有命中；log 的对照数与花费（¥4.468 + ¥0.406）与数据一致；副本上 `pnpm evals:gate` 通过，拿掉新的 flash 文件就变红；只动了这四个文件，log 只追加。lead 在本机另跑 `pnpm evals:gate` 通过（30 条），没有再花钱
+突变：这一段只加了结果与文档，没有生产代码，不打突变；评测门禁那条用例用「拿掉新结果文件就红」核过咬得住
+发现：
+- [major] log 写「软链跑完删掉」，worktree 里那个指向 `.env.local` 的软链实际还在 · 证据：复核在该 worktree 根目录列出了这个软链；lead 当初在沙箱里核对，沙箱看不见 `.env.local` · 已修 1e7da61
+- [建议] 03 题删的是 `full_log.txt` 不是脚本；撤不回的 Delete 卡在第 11、12、13 版出现 0、1、5 次，值得记下 · 证据：各条记录的 note · 已修 1e7da61
+- [建议] 02 的失败是同一批并行发出 3 个 Edit，不是看到拦截后还在重试 · 证据：两条记录的 note 写「0 call(s) in requests after the first block」 · 已修 1e7da61
+- [建议] plan「当前」与第 14 步的勾、交接过期 · 证据：复核对照 plan · 已修 1e7da61
+- [建议] 入口页没有重新生成 · 证据：spec-check 报入口页过期 · 已修 1e7da61
