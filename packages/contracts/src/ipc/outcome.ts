@@ -6,7 +6,6 @@
  */
 import type {
   ClosureSource,
-  DecisionSummary,
   DecisionSummaryCode,
   ExecutionState,
   SpillMark,
@@ -14,7 +13,7 @@ import type {
 import { z } from 'zod'
 import { confirmTargetSchema, reversibilitySchema } from './confirm.js'
 
-/** The summary codes, only ever added to (§判决记录与摘要). */
+/** The summary codes this build knows, only ever added to (§判决记录与摘要). */
 export const decisionSummaryCodeSchema = z.enum([
   'session-allowed',
   'session-allowed-search',
@@ -38,16 +37,29 @@ export const decisionSummaryCodeSchema = z.enum([
 ]) satisfies z.ZodType<DecisionSummaryCode>
 
 /**
+ * The code as the interface reads it (spec 06 rule 14, §点名 (j), D32): a code this build does not
+ * know — one a later build stored — reads as `'unknown'`, the verdict beside it as written. A value
+ * that is not a string still fails. Only the display is eased: the kernel's code table, the decision
+ * and what the Tape stores are untouched, and the code the kernel writes is always one of the known.
+ */
+export const decisionSummaryReadCodeSchema = z.union([
+  decisionSummaryCodeSchema,
+  z.string().transform((): 'unknown' => 'unknown'),
+])
+
+/**
  * A decision as the interface reads it: a verdict, a code and its slots. Strict: a summary that
- * carried steps, the deciding layer or its basis would fail parse rather than cross.
+ * carried steps, the deciding layer or its basis would fail parse rather than cross. One way with the
+ * kernel's `DecisionSummary`: every kernel summary is accepted, and the read code has the one extra
+ * `'unknown'` (D32).
  */
 export const decisionSummarySchema = z
   .object({
     verdict: z.enum(['allow', 'ask', 'deny']),
-    code: decisionSummaryCodeSchema,
+    code: decisionSummaryReadCodeSchema,
     facts: z.record(z.string(), z.string()), // 必填键一律为 toolName；session-allowed-domain 另加 host
   })
-  .strict() satisfies z.ZodType<DecisionSummary>
+  .strict()
 
 export type DecisionSummaryContract = z.infer<typeof decisionSummarySchema>
 

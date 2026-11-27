@@ -11,7 +11,11 @@ import { confirmRequestEventPayloadSchema } from './confirm.js'
 import { SESSION_READ_LIMIT_MAX, canonicalSessionIdSchema } from './session.js'
 
 // The summary schemas live in outcome.ts with the outcome view that carries them; restated here.
-export { decisionSummaryCodeSchema, decisionSummarySchema } from './outcome.js'
+export {
+  decisionSummaryCodeSchema,
+  decisionSummaryReadCodeSchema,
+  decisionSummarySchema,
+} from './outcome.js'
 export type { DecisionSummaryContract } from './outcome.js'
 
 /** The decision a card shows, by its provenance key: what the pending row points to (§答复与投递). */

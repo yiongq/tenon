@@ -199,6 +199,7 @@ export {
   approvalResume,
   pendingRootSchema,
   decisionSummaryCodeSchema,
+  decisionSummaryReadCodeSchema,
   decisionSummarySchema,
 } from './ipc/approval.js'
 export type { DecisionSummaryContract } from './ipc/approval.js'
