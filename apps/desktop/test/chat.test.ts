@@ -222,6 +222,19 @@ function withKey(baseURL: string): { env: Record<string, string>; upstream: stri
   return { env: { ANTHROPIC_API_KEY: 'test-key' }, upstream: baseURL }
 }
 
+it.each([
+  ['darwin', 'yes'],
+  ['linux', 'linux'],
+  ['win32', 'no'],
+  ['freebsd', 'no'],
+] as const)('06 验收 40: on %s the desktop loop answers autoCommands %s', (platform, answer) => {
+  const h = wiringFixture(undefined, false, 'off', platform)
+  const port = h.loop.ports.sandbox?.autoCommands
+  expect(port).toBeTypeOf('function')
+  expect(port!()).toBe(answer)
+  expect(h.runtime.autoCommands()).toBe(answer)
+})
+
 it('06 验收 18: desktop loop forwards canReach to the runtime', () => {
   const h = wiringFixture()
   const canReach = vi.spyOn(h.runtime, 'canReach')

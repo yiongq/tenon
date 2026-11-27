@@ -17,6 +17,7 @@ export function wiringFixture(
   mode?: 'off' | 'fake',
   packaged = false,
   dev: string | undefined = 'off',
+  platform: NodeJS.Platform = 'darwin',
 ) {
   let settings: SandboxSettings = {
     profile: 'workspace-write',
@@ -87,7 +88,7 @@ export function wiringFixture(
     },
     log: vi.fn(),
     srt,
-    platform: 'darwin',
+    platform,
     isPackaged: packaged,
     startupEnv: snapshotEnv({
       TENON_DEV_ENV: dev === 'missing' ? undefined : dev,
