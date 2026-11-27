@@ -90,7 +90,7 @@
   - [x] 14.1 预算检查点（本项目补充第 6 条，06 单独算，D11）：代码行数取第一、二段 PR 合计的实际 `git diff --shortstat` 加第三段的估计；验收条数取届时的全篇总数，现在是 44 条（17 + 13 + 14），不再另加第三段的条数；行数超过约 18 500 或条数超过 53，先告诉 owner，再按 ① 持久文件夹授权拆成 feature spec、② D10 挪阶段 6、③ 说明条不做、④ D4 只做 ② 的顺序定砍不砍；结果写 log。
 - [x] 15. 切档路由与 config：`session.setApprovalMode`（建立前写草稿）、`session.facts` 的档位、config.json 三个键与 `approvalModeDefault` 的接线、`workspace.pick` 与 `usePrefill` 的 `pendingGrant`、`workspace.grant`、`workspace.access`、`workspace.revokeAccess`，都经 contracts 登记、两端校验。contracts 读取端对认不出的摘要码读作 `unknown`、保留 verdict，类型断言改为单向（D32）。测试点名验收 12、13、15、36 的路由一半与 44 的读取一半。
 - [x] 16. 档位界面：`ApprovalModeMenu`（含发第一条消息之前、快照不可用时的说明）、`ComposerBanner`、说明条、降档提示、设置「权限与网络」的审批档段与次序。测试点名验收 31、32、33、34、35。
-- [x] 17. 文件夹授权：`GrantDialog` 的文件夹版、`FolderChip` 的授权与撤销入口、设置里的文件夹访问列表。测试点名验收 36、37。
+- [x] 17. 文件夹授权：`GrantDialog` 的文件夹版、`FolderChip` 的授权与撤销入口、设置里的文件夹访问列表。测试点名验收 36、37。文案定稿：框的标题一个文件夹时「允许访问这个文件夹」，几个时「允许访问这 {count} 个文件夹」（D42 一次授权几个）；浮层底部的撤销入口「管理文件夹访问」；其余见两份 locale 的 `folder.grant.*`、`folder.access.*`。
 - [x] 18. 第三段文案：五种 `autoAsk` 的句子与认不出时的通用一句、命令卡上认不出的 `category` 的通用一句、未知摘要码按 verdict 的三句中性说明、Delete 卡标题、展开工具行的原因一行、`summary.auto-mode` 改成「自动档放行」；两份 locale；文案覆盖测试。测试点名验收 38、39、42、43、44。
 - [ ] 19. e2e：验收 40，macOS 与 Linux 两个 CI runner；走 CI 草稿 PR，一次推送攒齐。
 - [ ] 20. 第三段核对：P；E；多视角评审与 StrykerJS 同第 6 步；汇总评审写 log。要出的突变至少有：横幅点击不切档（验收 32）、说明条不写 `autoModeNoticeSeen`（验收 33）、「以后都允许」不落盘（验收 36）、原因一行在问过的调用上也出（验收 38）、策略关掉时菜单仍有自动项（验收 31）、`platform` 出了 Linux 那句（验收 39）、认不出的 `autoAsk` 让卡投递失败（验收 43）、未知摘要码让 `session.messages` 校验失败或一律显示「需要确认」（验收 44）。
@@ -105,6 +105,7 @@
 
 ## Open
 
+- 第三段复审留下的建议（都只算建议，不挡）：验收 12 原文仍写「关机中回 `refused`」，desktop 实际是路由表先拒，§接口已说清；`workspace.grant` 复核里 `!real.resolved` 那一支没有用例，注释「folder gone」也不准（删掉的文件夹解析出的仍是原路径）；设置列表的 `visible()` 没有用例；`keepAccess` 的 `inSession` 过滤只在两步之间恰好被改时才起作用。
 - spec 全文超过 heavy 档上限（警告，约 29 000 / 25 000 字符）：第 21 步决定不压缩。ready 之后再改写规则正文有改出偏差的风险，超出的部分是第三段补的验收与已知限制；这条警告留着。
 
 ## 验收矩阵
