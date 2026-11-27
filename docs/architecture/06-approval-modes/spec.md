@@ -319,4 +319,5 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 2026-11-20 · ready 之后 · 说清：国旗不问，只有子区旗、彩虹旗与 emoji 组合两档都问（复核实测 railguard 0.7.0）；规则不变。
 - 2026-11-27 · ready 之后 · 第三段开工前照挑刺评审 r2 定四处，都只收紧或说清：策略关掉自动档时 `session.facts` 报手动并带 `autoModeDisabled`；`setApprovalMode` 补 `refused`、子会话回 `not-cowork`；文件夹授权的 token 只在主进程、绑会话、用一次；验收 12、31、33、36、40 相应补写（D40–D43）· PR #91 之后。
 - 2026-11-27 · ready 之后 · 第 21 步文档同步：已知限制补上 `git restore --staged` 例外按原文认字的两种偏差；规则不变。
+- 2026-11-27 · ready 之后 · 第三段评审之后说清文件夹授权（D42）：框里显示、token 里存的都是选那一刻的真实路径，同一个文件夹只列一次；答复时再解析一遍，哪一个解析到别处就回 `stale`、一个都不加；主进程解析不出的直接回 `root-folder`，不交给 kernel；只收紧，没加状态、接口或配置项。
 - 2026-11-27 · ready 之后 · 第三段评审之后说清两处：关机中切档由主进程路由表先拒、kernel 一层回 `refused`（D41）；回退会丢 config.json 的三个新键；规则不变。

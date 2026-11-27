@@ -380,8 +380,8 @@ it('06 验收 36: a folder swapped for a link while the dialog is open voids the
     const fs = new DesktopFs()
     const identity = { ...IDENTITY, profileDir: join(root, 'profile') }
     const host = { ...createMemoryHost({ identity }), fs }
-    for (const folder of ['profile', 'work/a', 'secret'])
-      // oxlint-disable-next-line no-await-in-loop -- three folders
+    for (const folder of ['profile', 'work/a', 'work/c', 'work/d', 'secret'])
+      // oxlint-disable-next-line no-await-in-loop -- a handful of folders
       await mkdir(join(root, folder), { recursive: true })
     const loop = createTestLoopPorts({
       commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME }) },
@@ -396,7 +396,7 @@ it('06 验收 36: a folder swapped for a link while the dialog is open voids the
     })
     sessions.bindLoop(loop)
     const handlers = new Map<string, Handler>()
-    const picks: string[][] = [[join(root, 'work/a')]]
+    const picks: string[][] = [[join(root, 'work/a')], [join(root, 'work/c'), join(root, 'work/d')]]
     registerWorkspaceRoutes({
       ipcMain: { handle: (channel, listener) => handlers.set(channel, listener as Handler) },
       sessions,
@@ -416,6 +416,19 @@ it('06 验收 36: a folder swapped for a link while the dialog is open voids the
     ).toEqual(STALE)
     expect((await sessions.sessionFacts({ sessionId: S1 })).workspace?.folders).toEqual([
       dedicatedFolderFor(absolutePath(root), identity, S1),
+    ])
+    expect((await readConfig(fs, identity)).folderAccess).toEqual([])
+    // Two folders in one answer: one of them swapped is enough to void it, for both.
+    await task(call, S2)
+    const pair = asked(await call('workspace.pick', { sessionId: S2 }))
+    expect(pair.folders).toEqual([join(root, 'work/c'), join(root, 'work/d')])
+    await rename(join(root, 'work/d'), join(root, 'work/d-moved'))
+    await symlink(join(root, 'secret'), join(root, 'work/d'))
+    expect(
+      await call('workspace.grant', { sessionId: S2, token: pair.token, choice: 'always' }),
+    ).toEqual(STALE)
+    expect((await sessions.sessionFacts({ sessionId: S2 })).workspace?.folders).toEqual([
+      dedicatedFolderFor(absolutePath(root), identity, S2),
     ])
     expect((await readConfig(fs, identity)).folderAccess).toEqual([])
   } finally {

@@ -235,6 +235,22 @@ it.each([
   expect(h.runtime.autoCommands()).toBe(answer)
 })
 
+it('06 验收 40: a sandbox port that does not answer autoCommands reads as no', () => {
+  // SandboxPorts.autoCommands is optional; the kernel's default for a host without it is 'no' (§接口).
+  const memory = createMemoryHost()
+  const loop = createDesktopLoop({
+    clock: memory.clock,
+    send: () => {},
+    locale: () => 'en',
+    commandShell: { path: absolutePath('/bin/sh'), env: async () => ({}) },
+    sandbox: {
+      beforeWrap: async () => ({ kind: 'none' }) as never,
+      grantsChanged: () => {},
+    } as never,
+  })
+  expect(loop.ports.sandbox?.autoCommands?.()).toBe('no')
+})
+
 it('06 验收 18: desktop loop forwards canReach to the runtime', () => {
   const h = wiringFixture()
   const canReach = vi.spyOn(h.runtime, 'canReach')

@@ -722,3 +722,13 @@ const ownLease = true
 测试改动：apps/desktop/test/shutdown.test.ts · 写入请求集合两条 · 加入 `workspace.grant`、`session.setApprovalMode` 及其注册
 测试改动：apps/desktop/test/profile.test.ts · 读旧 config、04 验收 27、坏字段只丢自己三条 · 期望对象补 config 的三个新默认键
 测试改动：apps/desktop/e2e/helpers/tools.ts、tools.spec.ts、ux-craft.spec.ts · startTask 与选文件夹、用预填的几处 · 多一步应答授权框（D42），之后的断言不变
+
+## 2026-11-27 · 第三段评审之后的修正
+
+- 三个视角审 7df81fd，发现与作者处置在私有笔记（另记）。修在 e88d679（菜单选完就关、工具行可换行）、10926dc（授权 token 存真实路径并在答复时复核；工具行与记录的渲染测试；预填作废、草稿折手动的用例；授权框路径经 `visible()`；spec 说清 D41 与回退）、af87151（desktop 补上 `autoCommands`：之前从没实现，产品里的自动档对命令一律照问，是 CI 上验收 40 的 e2e 抓到的）、f7d9e41（策略不可用时 facts 照常可读、降档提示的两处时序、设置与默认档的 e2e）。
+- 复审（三个视角审 64ca307）之后再修：4c258a3（主进程解析不出的文件夹直接回 `root-folder`，不再交给 kernel，关掉一处不弹框就加进会话的竞态；已授权直接加入时把核过的真实路径交给 kernel）；本条所在提交补了默认档为自动的草稿在策略关掉时报手动、两个文件夹只换其一也回 `stale`、宿主不答 `autoCommands` 时读作 `'no'` 三条用例。
+- 交 owner 的一条：答复复核之后、kernel 解析之前的窗口，见 plan「需要你」①。
+- 新突变不登记，手跑：CI 的 spec-check 只登记 5 个时已跑 18–23 分钟，上限 30 分钟（owner 2026-11-10「只留 5 个，其余撤销」）。
+
+测试改动：apps/desktop/test/workspace-grants.test.ts · 06 验收 36: a selection with one ungranted folder asks for all of it, and always keeps only the ungranted real paths · 框里的列表从原样路径 `['/work/a', '/link', '/work/b']` 改成真实路径去重后的 `['/work/a', '/work/b']`：原断言把「框里显示原样路径」写成了期望值，正是安全视角报的问题；仍是精确相等
+测试改动：apps/desktop/test/approval-mode-routes.test.ts · 06 验收 15: with the policy turning auto off… · 草稿改成在策略生效前自己选自动，另加一个默认为自动、自己没选的草稿；加严

@@ -1148,6 +1148,7 @@ Claude Desktop 的概念 → Tenon 的实现：
 - 一个文件同时属于几类保护（如既是会被自动执行的位置、又有别的名字）时，审批卡只说第一类 · lead · 改审批卡格式的那一次（`sensitive-path` 的 facts 只有一个 category） · 05 第二段安全评审（log.md 2026-10-25）
 - spec-check 的 `--red-on-base`、`--mutants` 跑目标分支时跳过 04 的两组沙箱测试（`TENON_SANDBOX_TESTS=skip`），以后改沙箱的 heavy PR 在这两步上看不到沙箱用例的红 · owner（要 workflow 权限）· 让 CI 的 spec-check 一项也能起沙箱时 · PR #73 评审
 - [06-approval-modes](06-approval-modes/spec.md)：Delete 的审批卡标题改成「删除这个文件？」（原「Delete 的审批卡标题」一行）
+- 加「清空会话」入口时，用它的 e2e 守住 `index.ts` 把 `onRemoval` 接到文件夹授权的作废（现在产品里没有清空入口，这条接线走不到，单测守的是 `createSessionRemoval` 本身） · lead · 加清空入口的那份 spec · 06 第三段评审（2026-11-27，突变 e16）
 - 让 Agent 调用也能出卡（例如策略给它加问的规则）之前，先让答复后的重判找得到 Agent 的执行器：现在出了卡又被批准的 Agent 调用会收口成 `tool-unavailable`，等于问了又拒 · lead · 让 Agent 出卡的那份 spec 之前 · 06 plan Open（2026-11-20 第二段复核）
 - 还原清单的「将还原 N 个」把默认保留的冲突也算进去（列了 6 个，实际还原 5 个、保留 1 个） · lead · 下次改还原清单时 · 05 第 23 步验收（2026-11-06）
 - 父路径被默认保留的文件占着时，下面的路径放回失败、它们被搬走的那份照删（已写进 05 §已知限制与代价与 SECURITY.md）；可以照 D70 的原则把这类路径算作「这次默认不放回起点」，起点进比对表 · lead · 下次改还原清单的计算时；不挡 · 05 第 18.3 步复核 Y1（第 20 步第四轮复核补：`mv x y; mkdir x; 写 x/a` 后你又改了 `x/a`，默认还原也是这一类，`y` 照删、`x` 放不回，起点只剩快照）
