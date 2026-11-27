@@ -14,6 +14,7 @@ import { PathText } from '@/components/ui/path-text'
 import { readRecordMessages, recordRows } from '@/lib/snapshots'
 import type { Round } from '@/lib/snapshots'
 import { tx } from '@/lib/tx'
+import { decisionKey } from '@/lib/decision-copy'
 import { visible } from '@/lib/visible'
 import { useSnapshotRounds } from '@/runtime/SnapshotProvider'
 
@@ -109,7 +110,7 @@ export function ThreadTitleMenu() {
                         <>
                           {tx(t, `snapshot.verdict.${row.decision.verdict}`)}
                           {t('summary.separator')}
-                          {tx(t, `snapshot.decision.${row.decision.code}`, row.decision.facts)}
+                          {tx(t, decisionKey(row.decision), row.decision.facts)}
                         </>
                       )}
                     </dd>

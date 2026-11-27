@@ -492,7 +492,8 @@
       "failed": "Didn't go through",
       "delete": "Deleted this file"
     },
-    "Delete": "Delete {path}"
+    "Delete": "Delete {path}",
+    "whyUnasked": "Why it wasn’t asked"
   },
   "closure": {
     "user-rejected": "You declined this.",
@@ -543,7 +544,8 @@
     "title": {
       "file": {
         "read": "Read this file?",
-        "write": "Change this file?"
+        "write": "Change this file?",
+        "delete": "Delete this file?"
       },
       "command": "Run this command?",
       "network": {
@@ -576,10 +578,19 @@
         "exfiltration": "This request might take your data elsewhere.",
         "inspector-failed": "Tenon couldn't check that this step is safe.",
         "hidden-characters": "This path or command contains invisible characters. They are marked so you can check it first.",
-        "control-characters": "This path or command contains control characters. They are marked so you can check it first."
+        "control-characters": "This path or command contains control characters. They are marked so you can check it first.",
+        "unknown": "Tenon’s checks want you to look at this step again."
       },
       "command": "Running a command needs your OK.",
-      "interaction-required": "This connector wants you to confirm it yourself."
+      "interaction-required": "This connector wants you to confirm it yourself.",
+      "autoAsk": {
+        "no-snapshot": "This task can’t keep snapshots, so auto mode asks you first too.",
+        "linux": "On Linux, auto mode still asks before commands: repository files a command creates can’t be protected here.",
+        "platform": "On this computer, auto mode still asks before commands.",
+        "sandbox": "Command isolation isn’t ready or only partly working, so auto mode asks you first.",
+        "redirect": "This command writes its output into a file and replaces what was there, so auto mode asks you first too.",
+        "unknown": "Auto mode asks you about this step too."
+      }
     },
     "irreversible": "This can’t be undone.",
     "allow": "Allow",
@@ -1085,8 +1096,13 @@
       "inspector-flagged": "Checks found invisible characters; confirmation is needed",
       "own-output-read": "Reading content produced in this session",
       "no-approval-needed": "This action does not need confirmation",
-      "auto-mode": "Allowed by the automatic mode settings",
-      "task-grant": "You allowed this for the task"
+      "auto-mode": "Allowed by auto mode",
+      "task-grant": "You allowed this for the task",
+      "unknown": {
+        "allow": "This step was allowed.",
+        "ask": "This step needs your OK.",
+        "deny": "This step was stopped."
+      }
     },
     "promisedSkip": {
       "excluded": "The card said a snapshot was taken; this path is skipped because it is now excluded.",
