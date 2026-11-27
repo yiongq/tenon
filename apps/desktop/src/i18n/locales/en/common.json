@@ -108,6 +108,39 @@
     "switchModel": "Switch to {provider} {model}",
     "settings": "Open settings"
   },
+  "approvalMode": {
+    "trigger": "Approval mode: {mode}",
+    "manual": {
+      "name": "Manual",
+      "description": "Asks you before anything that makes changes."
+    },
+    "auto": {
+      "name": "Auto",
+      "description": "Stops asking for workspace changes that can be restored and for commands in the sandbox; still asks for what can’t be undone, what reaches outside the folder, and what the rules stop.",
+      "noSnapshot": "This task can’t keep snapshots, so changes are still asked."
+    },
+    "banner": {
+      "text": "Auto: no asking for changes that can be restored",
+      "back": "Back to manual"
+    },
+    "notice": {
+      "title": "Auto mode is on",
+      "unasked": "Workspace changes that can be restored and commands in the sandbox are no longer asked one by one.",
+      "asked": "Anything that can’t be undone, reaches outside the folder, or is stopped by the rules is still asked first.",
+      "restore": "If something goes wrong, click “Can be restored” on this round’s summary line to go back in one step.",
+      "settings": "Settings",
+      "dismiss": "Got it"
+    },
+    "downgrade": {
+      "consecutive": "Blocked {count} times in a row. Stopped and switched back to manual.",
+      "round": "Blocked {count} times this round. Stopped and switched back to manual.",
+      "close": "Close"
+    },
+    "settings": {
+      "title": "Approval mode",
+      "hint": "New tasks start in this mode; tasks already open keep theirs."
+    }
+  },
   "thread": {
     "empty": "Start a conversation",
     "you": "You",
@@ -842,7 +875,7 @@
   },
   "sandbox": {
     "title": "Permissions & network",
-    "description": "Choose which sites commands can reach and which files they can change.",
+    "description": "The approval mode for new tasks, folder access, and which sites commands can reach.",
     "loading": "Loading settings…",
     "allowlist": "Network allowlist",
     "siteScope": "Access is per site, not per action: commands can connect to listed sites and upload content to them.",

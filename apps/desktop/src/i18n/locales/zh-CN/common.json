@@ -108,6 +108,39 @@
     "switchModel": "改用 {provider} {model}",
     "settings": "去设置"
   },
+  "approvalMode": {
+    "trigger": "审批档：{mode}",
+    "manual": {
+      "name": "手动",
+      "description": "会改动的都先问你。"
+    },
+    "auto": {
+      "name": "自动",
+      "description": "工作区里能还原的改动和沙箱里的命令不再问你；撤不回的、越出文件夹的、按规则拦下的照样问。",
+      "noSnapshot": "这个任务没法留底，改动照样问你"
+    },
+    "banner": {
+      "text": "自动档：能还原的改动不再问你",
+      "back": "切回手动"
+    },
+    "notice": {
+      "title": "自动档已打开",
+      "unasked": "工作区里能还原的改动、沙箱里的命令，不再一条条问你。",
+      "asked": "撤不回的、越出文件夹的、按规则拦下的，照样先问你。",
+      "restore": "改错了，点这一轮结算行上的「可还原」，一步回到之前。",
+      "settings": "设置",
+      "dismiss": "知道了"
+    },
+    "downgrade": {
+      "consecutive": "连着被拦了 {count} 次，已停下并切回手动档",
+      "round": "这一轮被拦了 {count} 次，已停下并切回手动档",
+      "close": "关闭"
+    },
+    "settings": {
+      "title": "审批档",
+      "hint": "新任务默认用这一档；正在用的任务不变。"
+    }
+  },
   "thread": {
     "empty": "开始对话",
     "you": "你",
@@ -842,7 +875,7 @@
   },
   "sandbox": {
     "title": "权限与网络",
-    "description": "管理命令能连接的网站与文件访问范围。",
+    "description": "新任务的审批档、文件夹访问，以及命令能连接的网站。",
     "loading": "正在读取设置…",
     "allowlist": "网络白名单",
     "siteScope": "按网站放行，不按操作：列在这里的网站，命令可以连接，也可以向它上传内容。",

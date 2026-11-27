@@ -5,6 +5,7 @@ import { useMcp } from '@/runtime/mcp-store'
 import { composerSlot } from '@/lib/composer-slots'
 import { ConnectorStatusNotice } from './ConnectorStatusNotice'
 import { AskWidget } from './AskWidget'
+import { ComposerBanner } from './ComposerBanner'
 
 /**
  * The one host above the composer (spec 02 §阶段 2 做的组件 `ComposerSlots`; components.md:84): in
@@ -12,7 +13,17 @@ import { AskWidget } from './AskWidget'
  * The questions are read from the waiting call's own `tool-request` block (`approval.current`'s
  * question variant names it by `callKey`), live or redrawn.
  */
-export function ComposerSlots(): JSX.Element | null {
+export function ComposerSlots(): JSX.Element {
+  return (
+    <>
+      <SlotContent />
+      <ComposerBanner />
+    </>
+  )
+}
+
+/** The question widget or the connecting line; the approval mode's strips sit under it (06). */
+function SlotContent(): JSX.Element | null {
   const store = useSessionStore()
   const snapshot = useSessionSnapshot()
   const pending = snapshot.pending
