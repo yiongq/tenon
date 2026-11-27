@@ -61,7 +61,12 @@ export function dedicatedFolderFor(
 const UNKNOWN_SESSION: WorkspaceResult = { ok: false, code: 'unknown-session' }
 const NOT_COWORK: WorkspaceResult = { ok: false, code: 'not-cowork' }
 /** With no store there is no session: an unknown one reads as a chat with nothing chosen. */
-const NO_FACTS: SessionFactsResponse = { established: false, profile: 'chat', workspace: null }
+const NO_FACTS: SessionFactsResponse = {
+  established: false,
+  profile: 'chat',
+  workspace: null,
+  approvalMode: 'manual',
+}
 
 export interface WorkspaceRoutesDeps {
   readonly ipcMain: IpcMainLike
@@ -198,5 +203,7 @@ function factsOf(view: SessionFactsView): SessionFactsResponse {
         : { folders: [...view.workspace.folders], origin: view.workspace.origin },
     ...(lastEndpoint === null ? {} : { lastEndpoint }),
     ...(view.chosen === null ? {} : { chosen: { providerId: view.chosen.providerId } }),
+    approvalMode: view.approvalMode,
+    ...(view.autoModeDisabled ? { autoModeDisabled: true as const } : {}),
   }
 }

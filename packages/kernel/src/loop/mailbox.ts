@@ -347,6 +347,13 @@ export interface SessionFactsView {
    * 「数据去向」; rrE-1).
    */
   readonly chosen: { readonly providerId: ProviderId } | null
+  /**
+   * Spec 06 §档位怎么存、怎么切: the Tape's mode once established, the draft's choice or the default
+   * before; manual for a chat, and manual while the policy turns auto off (D40).
+   */
+  readonly approvalMode: 'manual' | 'auto'
+  /** The policy turns auto off — the same condition `setApprovalMode` answers `policy` on (D40). */
+  readonly autoModeDisabled: boolean
 }
 
 export type SelectProfileQuery =
@@ -3272,6 +3279,10 @@ export function createLoop(deps: LoopDeps): Loop {
   /** A session's profile and workspace as a route shows them: the Tape's, or the draft's. */
   async function factsView(sessionId: string): Promise<SessionFactsView> {
     const facts = await readSessionFacts(tape, sessionId)
+    const policy = deps.host.policy.current()
+    const autoModeDisabled =
+      policy.status !== 'unavailable' && policy.snapshot.disableAutoMode === true
+    const shown = (mode: 'manual' | 'auto') => (autoModeDisabled ? 'manual' : mode)
     if (facts.established) {
       return {
         established: true,
@@ -3280,6 +3291,8 @@ export function createLoop(deps: LoopDeps): Loop {
         workspace: facts.workspace,
         lastEndpointOrigin: previousOriginOf(facts),
         chosen: chosenOf(facts.modelChoice),
+        approvalMode: shown(facts.approvalMode),
+        autoModeDisabled,
       }
     }
     const draft = drafts.get(sessionId)
@@ -3290,6 +3303,11 @@ export function createLoop(deps: LoopDeps): Loop {
       workspace: draft?.profile === 'cowork' ? draft.workspace : null,
       lastEndpointOrigin: null,
       chosen: chosenOf(draft?.modelChoice ?? null),
+      approvalMode:
+        draft?.profile === 'cowork'
+          ? shown(draft.approvalMode ?? deps.approvalModeDefault?.() ?? 'manual')
+          : 'manual',
+      autoModeDisabled,
     }
   }
 

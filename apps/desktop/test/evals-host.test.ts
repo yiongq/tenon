@@ -222,6 +222,8 @@ it('04 读法 26: each record carries the posture', async () => {
         workspace: { folders: [host.workspaceDir], origin: 'picked' },
         lastEndpointOrigin: null,
         chosen: null,
+        approvalMode: 'manual',
+        autoModeDisabled: false,
       })
       host.sandbox?.bindSessions({ sessionFacts } as never)
       host.sandbox?.ports.beforeWrap({

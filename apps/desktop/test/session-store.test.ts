@@ -138,6 +138,7 @@ function fakeBridge(): FakeBridge {
     established: true,
     profile: 'chat' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   fake.handle(chatSend, () => ({ accepted: true as const }))
   fake.handle(chatSendNow, () => ({ accepted: true as const }))
@@ -1051,7 +1052,12 @@ describe('the session’s facts (§界面范围 ModeSwitch)', () => {
     // The mode can be switched until the first message; from then on it only shows.
     const fake = fakeBridge()
     let established = false
-    fake.handle(sessionFacts, () => ({ established, profile: 'chat' as const, workspace: null }))
+    fake.handle(sessionFacts, () => ({
+      established,
+      profile: 'chat' as const,
+      workspace: null,
+      approvalMode: 'manual' as const,
+    }))
     const store = new SessionStore(SESSION, fake.bridge, [])
     const detach = store.attach()
     await store.open({ resume: false })
@@ -1086,6 +1092,7 @@ describe('the session’s facts (§界面范围 ModeSwitch)', () => {
       established: false,
       profile: 'cowork' as const,
       workspace: null,
+      approvalMode: 'manual' as const,
     }))
     const store = new SessionStore(SESSION, fake.bridge, [])
     const detach = store.attach()
@@ -1120,10 +1127,16 @@ describe('reads that answer out of order', () => {
       established: boolean
       profile: 'chat'
       workspace: null
+      approvalMode: 'manual'
     }>()
     const facts = [
       slowFacts.promise,
-      { established: true, profile: 'chat' as const, workspace: null },
+      {
+        established: true,
+        profile: 'chat' as const,
+        workspace: null,
+        approvalMode: 'manual' as const,
+      },
     ]
     fake.handle(sessionFacts, () => facts.shift() ?? slowFacts.promise)
     const slowList = Promise.withResolvers<Array<{ sessionId: string; waitKind: 'resume' }>>()
@@ -1134,7 +1147,12 @@ describe('reads that answer out of order', () => {
     const firstList = store.refreshResumable()
     await store.refreshFacts()
     await store.refreshResumable()
-    slowFacts.resolve({ established: false, profile: 'chat', workspace: null })
+    slowFacts.resolve({
+      established: false,
+      profile: 'chat',
+      workspace: null,
+      approvalMode: 'manual',
+    })
     slowList.resolve([{ sessionId: SESSION, waitKind: 'resume' }])
     await Promise.all([firstFacts, firstList])
     expect(store.getSnapshot().facts?.established).toBe(true)
@@ -2314,6 +2332,7 @@ it('presentation-r1 验收 11: refreshed choices and profiles share the task too
     established: false,
     profile: 'cowork' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   const store = new SessionStore(SESSION, fake.bridge, [])
   await store.refreshFacts()
@@ -2333,6 +2352,7 @@ it('presentation-r1 验收 11: refreshed choices and profiles share the task too
     established: false,
     profile: 'chat' as const,
     workspace: null,
+    approvalMode: 'manual' as const,
   }))
   await store.refreshFacts()
   expect(store.sendBlock()).toBeNull()

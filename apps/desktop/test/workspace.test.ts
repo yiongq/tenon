@@ -136,6 +136,7 @@ describe('workspace routes (旧 182)', () => {
       data: {
         ok: true,
         established: false,
+        approvalMode: 'manual',
         profile: 'cowork',
         workspace: { folders: [DEDICATED], origin: 'dedicated' },
       },
@@ -209,6 +210,7 @@ describe('workspace routes (旧 182)', () => {
       ok: true,
       data: {
         established: false,
+        approvalMode: 'manual',
         profile: 'cowork',
         workspace: { folders: [DEDICATED], origin: 'dedicated' },
       },

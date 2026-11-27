@@ -47,6 +47,9 @@ export function App(): JSX.Element {
     lastWorkspaceFolders: [],
     customVendors: [],
     mcpServers: [],
+    approvalMode: 'manual',
+    autoModeNoticeSeen: false,
+    folderAccess: [],
   })
   /** Until `session.latest` answers, nothing can be sent (spec 02 §启动恢复与发送防护, B15). */
   const [restoring, setRestoring] = useState(() => !window.tenon.startsNewChat)
