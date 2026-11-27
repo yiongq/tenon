@@ -13,6 +13,7 @@ import {
 } from '@/lib/sandbox-settings'
 import type { SandboxSettingsError } from '@/lib/sandbox-settings'
 import { ApprovalDefaultSection } from './ApprovalDefaultSection'
+import { FolderAccessSection } from './FolderAccessSection'
 import { PaneFrame } from './PaneFrame'
 
 export function SandboxPane() {
@@ -57,6 +58,7 @@ export function SandboxPane() {
     >
       {/* Spec 06 §界面「设置」: approval mode, folder access, then the allowlist and 「高级」 (04). */}
       <ApprovalDefaultSection />
+      <FolderAccessSection />
       {view ? (
         <SandboxFields
           view={view}

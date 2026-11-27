@@ -693,7 +693,25 @@
     "prefillPending": "Used before, not yet added",
     "prefillUse": "{count, plural, one {Use this folder} other {Use these # folders}}",
     "rootRefused": "Choose a folder inside the disk instead of its root.",
-    "homeWarning": "This is your home folder or its parent. It may contain private files."
+    "homeWarning": "This is your home folder or its parent. It may contain private files.",
+    "grant": {
+      "title": "Allow access to this folder",
+      "titleMany": "Allow access to these {count} folders",
+      "description": "Once allowed, this task can read and search the files in it; changes are still asked as the approval mode says.",
+      "alwaysNote": "With “Always allow”, picking it again won’t show this; new tasks don’t get it on their own.",
+      "cancel": "Cancel",
+      "always": "Always allow",
+      "session": "Allow",
+      "stale": "That choice has expired. Pick the folder again."
+    },
+    "access": {
+      "manage": "Manage folder access",
+      "title": "Folder access",
+      "hint": "Folders you chose “Always allow” for are listed here, and picking them won’t ask again. Revoking affects later picks only; tasks already using one keep it.",
+      "empty": "None yet.",
+      "revoke": "Revoke",
+      "revokeLabel": "Revoke {path}"
+    }
   },
   "mcp": {
     "settings": "Settings",

@@ -4,10 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { i18n as I18n } from 'i18next'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { configSchema } from '@tenon-app/contracts'
-import type { SessionFactsResponse } from '@tenon-app/contracts'
+import type { SandboxView, SessionFactsResponse } from '@tenon-app/contracts'
 import { createI18n } from '../src/i18n/create-instance.js'
 import { modeMenuItems, showsAutoBanner } from '../src/renderer/src/lib/approval-mode.js'
 import type { Downgrade } from '../src/renderer/src/lib/approval-mode.js'
+import { answerFolderGrant, pendingGrantOf } from '../src/renderer/src/lib/folder-grant.js'
 
 // 06 第三段的档位界面（§界面「档位菜单」「横幅」「说明条」「降档提示」「设置」）。组件在一次真实的
 // 渲染里当函数调用，拿到它返回的元素树，再直接点树上的 handler；store 那一半在 session-store 的测试里。
@@ -47,6 +48,10 @@ vi.mock('../src/renderer/src/runtime/SnapshotProvider', () => ({
 const menuPath = '../src/renderer/src/components/composer/ApprovalModeMenu.tsx'
 const bannerPath = '../src/renderer/src/components/composer/ComposerBanner.tsx'
 const sectionPath = '../src/renderer/src/components/settings/ApprovalDefaultSection.tsx'
+const grantPath = '../src/renderer/src/components/settings/GrantDialog.tsx'
+const chipPath = '../src/renderer/src/components/composer/FolderChip.tsx'
+const panePath = '../src/renderer/src/components/settings/SandboxPane.tsx'
+const accessPath = '../src/renderer/src/components/settings/FolderAccessSection.tsx'
 
 function fail(message: string): never {
   throw new Error(message)
@@ -293,5 +298,130 @@ describe('06 验收 35: the permissions pane lists mode, folder access, allowlis
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(invoked).toEqual([{ channel: 'config.set', input: { approvalMode: 'auto' } }])
     vi.unstubAllGlobals()
+  })
+})
+
+describe('06 验收 36: folder grants ask once, persist on always, and revoke for later picks', () => {
+  const GRANT = { token: 'token-1', folders: ['/work/a', '/work/b'] }
+
+  it('opens the dialog only for a pick that added nothing yet', () => {
+    const ok = { ok: true as const, folders: ['/dedicated/s'], origin: 'dedicated' as const }
+    expect(pendingGrantOf({ ok: true, data: { ...ok, pendingGrant: GRANT } })).toEqual(GRANT)
+    expect(pendingGrantOf({ ok: true, data: ok })).toBeNull()
+    expect(pendingGrantOf({ ok: true, data: { ok: false, code: 'root-folder' } })).toBeNull()
+    expect(
+      pendingGrantOf({ ok: false, error: { code: 'handler-failed', message: 'x' } }),
+    ).toBeNull()
+  })
+
+  it('answers with the token alone; 「取消」 calls nothing', async () => {
+    const invoked: Array<{ channel: string; input: unknown }> = []
+    const bridge = {
+      invoke: async (channel: string, input: unknown) => {
+        invoked.push({ channel, input })
+        return { ok: true, data: { ok: true, folders: ['/work/a', '/work/b'], origin: 'picked' } }
+      },
+    }
+    expect(answerFolderGrant(bridge, 'session-1', GRANT, 'cancel')).toBeNull()
+    await answerFolderGrant(bridge, 'session-1', GRANT, 'session')
+    await answerFolderGrant(bridge, 'session-1', GRANT, 'always')
+    expect(invoked).toEqual([
+      {
+        channel: 'workspace.grant',
+        input: { sessionId: 'session-1', token: 'token-1', choice: 'session' },
+      },
+      {
+        channel: 'workspace.grant',
+        input: { sessionId: 'session-1', token: 'token-1', choice: 'always' },
+      },
+    ])
+  })
+
+  it('names the folders and offers 取消 / 以后都允许 / 允许, focus on 取消', async () => {
+    const { FolderGrantDialog } = await import(grantPath)
+    const onChoose = vi.fn<(choice: string) => void>()
+    const one = treeOf(() => FolderGrantDialog({ folders: ['/work/a'], onChoose }))
+    expect(textOf(one)).toContain('允许访问这个文件夹')
+    const two = treeOf(() => FolderGrantDialog({ folders: GRANT.folders, onChoose }))
+    expect(textOf(two)).toContain('允许访问这 2 个文件夹')
+    const paths: unknown[] = []
+    walk(byTestId(two, 'folder-grant-paths'), (element) => {
+      if (typeof element.props.text === 'string') paths.push(element.props.text)
+    })
+    expect(paths).toEqual(GRANT.folders)
+    const buttons: Element[] = []
+    walk(two, (element) => {
+      if (
+        String(element.props['data-testid'] ?? '').startsWith('folder-grant-') &&
+        element.props.onClick
+      )
+        buttons.push(element)
+    })
+    expect(buttons.map((button) => button.props['data-testid'])).toEqual([
+      'folder-grant-cancel',
+      'folder-grant-always',
+      'folder-grant-session',
+    ])
+    expect(buttons.map((button) => textOf(button))).toEqual(['取消', '以后都允许', '允许'])
+    let content: Element | undefined
+    walk(two, (element) => {
+      if (element.props['data-testid'] === 'folder-grant') content = element
+    })
+    expect(content?.props.initialFocus).toBe(buttons[0]?.props.ref)
+    for (const button of buttons) (button.props.onClick as () => void)()
+    expect(onChoose.mock.calls.map(([choice]) => choice)).toEqual(['cancel', 'always', 'session'])
+  })
+
+  it('puts a way to the kept list in the folder popover, and lists it in settings for revoking', async () => {
+    const { FolderChip } = await import(chipPath)
+    const { FolderAccessSection } = await import(accessPath)
+    context.facts = task('manual', {
+      workspace: { folders: ['/work/a'], origin: 'picked' },
+    })
+    const link = byTestId(
+      treeOf(() => FolderChip({})),
+      'folder-access-settings',
+    )[0]
+    expect(link?.props.href).toBe('#settings/permissions')
+    const markup = renderToStaticMarkup(createElement(FolderAccessSection))
+    expect(markup).toContain('文件夹访问')
+    expect(markup).toContain('撤销只影响以后的选择，正在用的任务照用。')
+  })
+})
+
+describe('06 验收 35: the permissions pane lists mode, folder access, allowlist, advanced', () => {
+  it('stacks approval mode, folder access, then the allowlist and 「高级」', async () => {
+    const { SandboxPane, SandboxFields } = await import(panePath)
+    const { ApprovalDefaultSection } = await import(sectionPath)
+    const { FolderAccessSection } = await import(accessPath)
+    vi.stubGlobal('window', { tenon: { invoke: async () => ({ ok: false }), on: () => () => {} } })
+    const pane = treeOf(SandboxPane)!
+    const children = ([] as ReactNode[])
+      .concat((pane.props as { children?: ReactNode }).children)
+      .filter(isValidElement)
+    expect(children[0]?.type).toBe(ApprovalDefaultSection)
+    expect(children[1]?.type).toBe(FolderAccessSection)
+    vi.unstubAllGlobals()
+    const view: SandboxView = {
+      posture: { state: 'active', profile: 'workspace-write' },
+      platform: 'linux',
+      reasons: [],
+      settings: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+      preset: { domains: [], writable: [] },
+    }
+    const markup = renderToStaticMarkup(
+      createElement(SandboxFields, {
+        view,
+        error: null,
+        draft: '',
+        busy: false,
+        onDraft: () => {},
+        onSave: async () => {},
+      }),
+    )
+    expect(markup.indexOf('sandbox-allowlist-title')).toBeGreaterThan(-1)
+    expect(markup.indexOf('sandbox-allowlist-title')).toBeLessThan(
+      markup.indexOf('data-testid="sandbox-advanced"'),
+    )
   })
 })

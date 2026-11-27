@@ -693,3 +693,78 @@ describe('06 approval range', () => {
     },
   )
 })
+
+describe('06 folder grants (§界面「文件夹授权」)', () => {
+  it('06 验收 37: a granted folder frees reads but a manual Write still asks', async () => {
+    const memory = createMemoryHost()
+    const granted = absolutePath('/granted')
+    await memory.fs.mkdirp(WORK)
+    await memory.fs.mkdirp(granted)
+    await memory.fs.writeFile(absolutePath('/granted/a.txt'), new TextEncoder().encode('a'))
+    const tape = createTape(createMemoryTapeStore({ identity: memory.identity }))
+    // A grant adds the folder to the task's list, nothing more (D42): the session is manual.
+    await tape.appendEntries({
+      sessionId: SESSION,
+      incarnationId: INC,
+      entries: [
+        tape.writer('session').entry('session/start', {
+          sourceType: 'session',
+          sourceId: SESSION,
+          sourceSeq: 0,
+          provenanceKey: sessionStartKey(INC),
+          payload: { incarnationId: INC },
+          createdAt: 0,
+        }),
+        ...creationEntries(
+          { tape, sessionId: SESSION, incarnationId: INC, now: () => 0 },
+          {
+            profile: 'cowork',
+            workspace: { folders: [WORK, granted], origin: 'picked' },
+            modelChoice: null,
+          },
+          'manual',
+        ),
+      ],
+    })
+    memory.snapshots.setStatus(SESSION, 'tree')
+    const judge = async (name: string, input: Record<string, unknown>) => {
+      const judged = await judgeCall(
+        {
+          writer: { by: 'resolver' as const },
+          tape,
+          host: memory,
+          sessionId: SESSION,
+          inspectors: [],
+          protectedFiles: [],
+          userSetting: () => null,
+          searchHost: null,
+          signal: new AbortController().signal,
+        },
+        {
+          name,
+          originalName: name,
+          source: 'builtin',
+          serverId: 'builtin',
+          requiresUserInteraction: false,
+          spec: { name, description: '', inputSchema: { type: 'object' } },
+        },
+        { input },
+      )
+      if (judged.kind !== 'judged') throw new Error('stopped')
+      return judged.decision
+    }
+    for (const [name, input] of [
+      ['Read', { file_path: '/granted/a.txt' }],
+      ['Glob', { pattern: '*.txt', path: '/granted' }],
+      ['Grep', { pattern: 'a', path: '/granted' }],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one judgement per tool, in order
+      const read = await judge(name, input)
+      expect(read.record.verdict).toBe('allow')
+      expect(read.summary.code).toBe('workspace-read')
+    }
+    const write = await judge('Write', { file_path: '/granted/a.txt', content: 'b' })
+    expect(write.record.verdict).toBe('ask')
+    expect(write.record.decidedBy).toBe('approval-mode')
+  })
+})
