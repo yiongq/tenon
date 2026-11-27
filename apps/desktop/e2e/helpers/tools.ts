@@ -84,6 +84,20 @@ export async function stubFolderDialog(
 }
 
 /**
+ * Spec 06 §界面「文件夹授权」: a folder never 「以后都允许」 waits on the grant dialog. Answer it — 「允许」
+ * unless told otherwise — and the folder popover comes back with the list.
+ */
+export async function grantFolder(
+  page: Page,
+  choice: 'session' | 'always' | 'cancel' = 'session',
+): Promise<void> {
+  const dialog = page.getByTestId('folder-grant')
+  await expect(dialog).toBeVisible()
+  await dialog.getByTestId(`folder-grant-${choice}`).click()
+  await expect(dialog).toHaveCount(0)
+}
+
+/**
  * The session on screen becomes a task (FolderToggle) whose one folder is `folder`, picked through the
  * FolderChip — main's dialog, stubbed. Before the first message, as the switch requires.
  */
@@ -117,6 +131,7 @@ export async function startTask(
   await expect(popup).toHaveAttribute('data-open', '')
   await stubFolderDialog(app, [folder])
   await popup.getByTestId('folder-add').click()
+  await grantFolder(page)
   await expect(page.getByTestId('folder-item')).toHaveCount(1)
   await expect(page.getByTestId('folder-item')).toHaveAttribute('title', realpathSync(folder))
   await page.keyboard.press('Escape')

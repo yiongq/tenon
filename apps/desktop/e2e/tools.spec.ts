@@ -14,6 +14,7 @@ import {
   readCall,
   send,
   startTask,
+  grantFolder,
   stubFolderDialog,
   textReply,
   waitingApproval,
@@ -157,6 +158,7 @@ test('presentation-r1 验收 10: a task’s folders are picked and removed in th
     await expect(page.getByTestId('folder-remove')).toHaveCount(0)
     await stubFolderDialog(app, [one, two])
     await page.getByTestId('folder-add').click()
+    await grantFolder(page)
     await expect(items).toHaveCount(2)
     await expect(chip).toHaveText('one+1')
     await expect(chip).toHaveAttribute('title', `${one}\n${two}`)
@@ -177,6 +179,7 @@ test('presentation-r1 验收 10: a task’s folders are picked and removed in th
     await expect(prefill).toHaveText('Use these 2 folders')
     await expect(chip).toHaveText('Session folder')
     await prefill.click()
+    await grantFolder(page)
     await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toHaveAttribute('title', one)
     await expect(items.nth(1)).toHaveAttribute('title', two)
@@ -232,6 +235,7 @@ test('presentation-r1 验收 10: turning the toggle on opens the popover with ea
     expect(await routeCalls(app, 'workspace.usePrefill')).toBe(0)
     await expect(page.getByTestId('folder-item')).toHaveCount(1)
     await page.getByTestId('folder-prefill').click()
+    await grantFolder(page)
     await expect(page.getByTestId('folder-item')).toHaveCount(2)
     await expect(page.getByTestId('folder-path')).toHaveText(paths)
     await expect(page.getByTestId('folder-prefill')).toHaveCount(0)

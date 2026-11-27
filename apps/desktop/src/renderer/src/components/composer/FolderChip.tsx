@@ -88,11 +88,13 @@ export function FolderChip({
     }
     await settled(result)
   }
+  // The dialog was opened from the popover: whatever the answer, the list comes back into view.
   const answer = async (choice: FolderGrantChoice): Promise<void> => {
     if (grant === null) return
     const answering = answerFolderGrant(window.tenon, store.sessionId, grant, choice)
     if (answering === null) {
       setGrant(null)
+      setOpen(true)
       return
     }
     setGranting(true)
@@ -100,6 +102,7 @@ export function FolderChip({
     setGranting(false)
     setGrant(null)
     await settled(result)
+    setOpen(true)
   }
   const picked = workspace.origin === 'picked'
   const unconfirmed = prefill.filter((folder) => !workspace.folders.includes(folder))
