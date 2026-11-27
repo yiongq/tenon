@@ -74,6 +74,8 @@ export function ApprovalModeMenu(): JSX.Element | null {
         <DropdownMenuRadioGroup
           value={mode}
           onValueChange={(value: ApprovalMode) => {
+            // Closed on a choice: the banner and the one-time notice it brings must be reachable.
+            setOpen(false)
             if (value !== mode) void store.setApprovalMode(value)
           }}
         >
@@ -81,6 +83,7 @@ export function ApprovalModeMenu(): JSX.Element | null {
             <DropdownMenuRadioItem
               key={item}
               value={item}
+              closeOnClick
               data-testid={`approval-mode-${item}`}
               className="items-start py-2 pl-2"
             >

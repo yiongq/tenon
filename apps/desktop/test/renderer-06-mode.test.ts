@@ -194,6 +194,11 @@ describe('06 验收 31: the mode menu shows two modes in task sessions only', ()
     expect(store.setApprovalMode).not.toHaveBeenCalled()
     choose('auto')
     expect(store.setApprovalMode).toHaveBeenCalledWith('auto')
+    // A choice closes the menu, so its backdrop never covers the notice the switch brings.
+    for (const item of ['manual', 'auto'])
+      expect(
+        byTestId(treeOf(ApprovalModeMenu), `approval-mode-${item}`)[0]?.props.closeOnClick,
+      ).toBe(true)
   })
 
   it('has no auto item, and no banner, while the policy turns auto off (D40)', async () => {
