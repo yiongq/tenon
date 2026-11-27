@@ -96,8 +96,8 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ```
 
 - Tape 两个新名字，登记进 `DECLARED_TAPE_NAMES`、投影、重放与 SQLite、Postgres 一致性测试：`session/approval_mode_set`，event，slice `session`，身份 `session`、sessionId、`<n>`，键 `session:v1:approval_mode:<incarnationId>:<n>`；`tool/inspector_override`，event，slice `tool`，身份 `runtime_event`、runId、requestSeq，键 `tool:v1:inspector_override:<runId>:<requestSeq>:<i>`。
-- contracts 只增：`session.setApprovalMode`（`{ sessionId, mode }` → `{ ok: true, mode } | { ok: false, code: 'not-cowork' | 'unknown-session' | 'policy' }`，经根会话 mailbox，关机中拒）；`session.facts` 响应只增 `approvalMode`（会话建立前取草稿里的选择，没有就取默认）；`inspector.release`（`{ sessionId, callKey }` → 04 的五种状态）。
-- contracts 的文件夹授权只增：`workspace.pick`、`workspace.usePrefill` 成功响应只增可选的 `pendingGrant: { token, folders }`，有它时这几个文件夹还没加进会话；新路由 `workspace.grant`（`{ sessionId, token, choice: 'session' | 'always' }`）、`workspace.access`（列表）、`workspace.revokeAccess`（`{ folder }`）。
+- contracts 只增：`session.setApprovalMode`（`{ sessionId, mode }` → `{ ok: true, mode } | { ok: false, code: 'not-cowork' | 'unknown-session' | 'policy' | 'refused' }`，经根会话 mailbox，关机中回 `refused`，子会话的 id 回 `not-cowork`，D41）；`session.facts` 响应只增 `approvalMode`（会话建立前取草稿里的选择，没有就取默认；策略关掉自动档时报手动）与可选的 `autoModeDisabled: true`（策略关掉自动档，D40）；`inspector.release`（`{ sessionId, callKey }` → 04 的五种状态）。
+- contracts 的文件夹授权只增：`workspace.pick`、`workspace.usePrefill` 成功响应只增可选的 `pendingGrant: { token, folders }`，有它时这几个文件夹还没加进会话；新路由 `workspace.grant`（`{ sessionId, token, choice: 'session' | 'always' }` → 与 `workspace.pick` 同样的结果，另多一个失败码 `stale`）、`workspace.access`（列表）、`workspace.revokeAccess`（`{ folder }`）。token 只在主进程内存里、绑定发出它的会话、只能用一次，文件夹取主进程记下的那份（D42）。
 - contracts 的卡与摘要只增：确认卡的 `category` 枚举只增两个值；判决摘要码只增 `inspector-flagged`；卡的 facts 只增可选的 `category`、`autoAsk`。`sandbox.release` 不动。
 - config.json 只增（对 01 §desktop 接线 的增补）：`approvalMode`（`'manual' | 'auto'`，缺省 `'manual'`，只由设置写）、`autoModeNoticeSeen`（布尔，缺省 false）、`folderAccess`（真实路径的数组，缺省空，只由主进程写，`config.set` 不收）。config.json 在每个 tenant 的 profile 目录里，所以键就是 tenantId 加真实路径。
 - 迁移：只增，不改表结构，04 的载荷与动作不变。没有档位事实的会话读作手动。
@@ -156,7 +156,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 会话建立之前（首页、发第一条消息之前），菜单里的选择写进 kernel 的草稿 `SessionDraft.approvalMode`，你的选择优先于默认；草稿改成对话形态时丢掉这一项。首条消息开 Run、建会话时，`session/approval_mode_set` 与 `session/profile_set`、`session/workspace_set` 同一批写：草稿里有你的选择就写它、`by: 'user'`；没有而默认为自动就写自动、`by: 'default'`；默认为手动不写；只对任务形态写，默认在点发送时与草稿一起读（D17、D27）。
 - 会话建立之后切档写 `by: 'user'`。会话的档位取当前 incarnation 最后一条，没有就是手动；重启照旧。清空会话时，最后一条照抄进新 incarnation，与 profile、workspace 同一批（D26）。
 - `judgeCall`（`packages/kernel/src/loop/batch.ts`）每次判定读根会话当前档位，交给 `LayerInputs.approvalMode`；对话形态恒为手动。档位与快照状态都在最后一次检查之后、调 `decide` 之前读（与 D30 一致）。
-- 策略的 `disableAutoMode` 照 02 由 `decide` 折回手动；在自动档的会话，kernel 在下一次判定时写一条 `by: 'policy'` 的手动；切到自动回 `policy`（D13）。
+- 策略的 `disableAutoMode` 照 02 由 `decide` 折回手动；在自动档的会话，kernel 在下一次判定时写一条 `by: 'policy'` 的手动；切到自动回 `policy`（D13）。在那之前 `session.facts` 已经报手动、带 `autoModeDisabled`，横幅不出（D40）。
 - 生效时点：从下一次判定起。切回手动时正在跑的调用照跑完。
 
 ## 撤不回：丢掉已有内容
@@ -219,7 +219,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - **说明条**：第一次切到自动档时出一次：放行什么、仍问什么、出错怎么一键还原，「设置」链到「权限与网络」，「知道了」写 `autoModeNoticeSeen`，之后不再出（D9、D13）。
 - **降档提示**：输入框上方一行，可关：连续的「连着被拦了 N 次，已停下并切回手动档」，累计的「这一轮被拦了 N 次，已停下并切回手动档」；这时横幅已消失（D13）。
 - **设置「权限与网络」**从上到下：审批档（新任务默认，两档各一句）→ 文件夹访问（「以后都允许」过的列表，逐条撤销）→ 网络白名单（04）→「高级」（04）（D13）。
-- **文件夹授权**：在系统目录框里选了、或确认预填的、一个没「以后都允许」过的文件夹时，弹 `GrantDialog` 的文件夹版「允许访问这个文件夹」：「取消」不加；「允许」只加进这个会话；「以后都允许」另存进 `folderAccess`，以后再选不弹，不自动加进新会话。专用文件夹不弹。撤销只删那一条，正在用的会话照用。授权只给访问，手动档写入照问（D13）。
+- **文件夹授权**：在系统目录框里选了、或确认预填的、一个没「以后都允许」过的文件夹时，弹 `GrantDialog` 的文件夹版「允许访问这个文件夹」：「取消」不加；「允许」只加进这个会话；「以后都允许」另存进 `folderAccess`，以后再选不弹，不自动加进新会话。专用文件夹不弹。撤销只删那一条，正在用的会话照用。授权只给访问，手动档写入照问（D13）。一次选了几个、其中有没授权过的，框里点「允许」才一起加进会话；再选一次、再用预填、清空会话或重启，前一个框就作废（D42）。
 - **照问的原因**（对 presentation-r1 §审批卡 的增补，③ 按 `autoAsk` 一句）：`no-snapshot`「这个任务没法留底，自动档里也先问你。」`linux`「在 Linux 上，自动档里的命令照样先问你：这里护不住命令新建的仓库文件。」`platform`「在这台电脑上，自动档里的命令照样先问你。」`sandbox`「命令的隔离还没准备好或只部分生效，自动档里先问你。」`redirect`「这条命令会把输出写进文件、盖掉原来的内容，自动档里也先问你。」（D24）。
 - 不认识的 `autoAsk` 值（以后的版本加的）出通用的一句「这一步在自动档里也先问你。」；命令卡上不认识的 `category` 出「Tenon 的检查要你再看一眼这一步。」（规矩 13）。
 - 不认识的判决摘要码（以后的版本加的）在「查看本次记录」里，与展开的工具行本来就出原因一行的调用上（显示条件照下面「工具行」一条，不扩大），按 verdict 出一句中性说明：放行「这一步已放行。」/ "This step was allowed."；问「这一步要你确认。」/ "This step needs your OK."；拒「这一步已被拦下。」/ "This step was stopped."（规矩 14）。
@@ -266,7 +266,7 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 9. 手动档的行为不变：同一批 Write、Edit、Bash、Delete 的判决与 06 之前逐项相同（只有覆盖写七类与两条新检查的情形例外）；自动档对同一批调用（含工作区外、联网、连接器与策略要求问或拒的）的判决只可能与手动档相同，或把手动档第 7 层的问换成放行。
 10. 自动档免问之后切回手动，同一 Write 出卡；手动档给的会话授权在自动档照样放行（摘要仍是 `session-allowed`）。
 11. 子会话里的调用按根会话当前档位判；根会话切回手动后，子会话下一次判定起出卡；检查暂停期间切回手动，这一次调用出卡。
-12. 已建立的会话切到自动档写 `session/approval_mode_set`（`by: 'user'`），重启后仍是自动；`approvalModeDefault` 答自动时，没选过档位的新任务建会话同批写 `by: 'default'`，答手动时不写；对话会话切档回 `not-cowork`。
+12. 已建立的会话切到自动档写 `session/approval_mode_set`（`by: 'user'`），重启后仍是自动；`approvalModeDefault` 答自动时，没选过档位的新任务建会话同批写 `by: 'default'`，答手动时不写；对话会话与子会话的 id 切档回 `not-cowork`，关机中回 `refused`（D41）。
 13. 发第一条消息之前在任务草稿里切到自动档（默认是手动）：建会话那一批写 `by: 'user'` 的自动，第一条调用就按自动档判、不出卡；草稿改成对话形态再改回任务，档位回到默认。
 14. 卡正在等你时切到自动档，卡不放行，重启后重新判定也不放行；切回手动时正在跑的命令照跑完。
 15. 策略 `disableAutoMode`：自动档的会话下一次判定按手动并写一条 `by: 'policy'`；`setApprovalMode` 切到自动回 `policy`。
@@ -285,16 +285,16 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 28. `PROMPT_LAYER_VERSION` 为 13、哈希闸通过；基线列全集每题 3 次的记录与改动在同一 PR，逐题对照第 12 版没有从过变不过的题，有就停下交 owner（live）。
 29. 测试用一个可以手动放开的 Promise 暂停检查器、改完 fake host 的状态再放开，不靠真实延时。检查暂停时命令档位从「工作区可写」改成「只读」：最终计划是 `read-only`，与 06 之前在检查之后算的相同；`canReachNetwork` 与 `commandSandboxed` 都没变，检查只跑一次。
 30. 夹具同验收 29，白名单、预设与本会话域名授权都设成空。检查暂停时姿态从 `pending` 变成 `unavailable`：最终计划是带 `unavailable` 的 `full-access`；`canReachNetwork` 由假变真，检查按真重跑一次，外带三个条件成立时出 `exfiltration` 卡，命令不按自动档免问。姿态不变、检查暂停时白名单由空改成一条：`canReachNetwork` 由假变真，检查按真重跑一次、出 `exfiltration` 卡。每次检查期间姿态都在变时，检查跑满三次，第三次按 `canReachNetwork: true` 跑、命令照手动档判（本会话授权照常有效），之后不再重跑；中途点停止，调用照 02 记 not-run、不写判决。
-31. 档位菜单只在任务会话出现（发第一条消息之前也有），两项文案如上，当前项打勾，默认手动；快照 `unavailable` 时自动项可选、带那句说明；策略关掉自动档时没有自动项。
+31. 档位菜单只在任务会话出现（发第一条消息之前也有），两项文案如上，当前项打勾，默认手动；快照 `unavailable` 时自动项可选、带那句说明；策略关掉自动档时没有自动项、横幅不出，`session.facts` 报手动并带 `autoModeDisabled`（D40）。
 32. 自动档时横幅常驻、没有关闭钮；点它回到手动、横幅消失，下一次 Write 出卡。
-33. 第一次切到自动档出说明条，「设置」打开「权限与网络」，「知道了」之后再切换（含重启后）不再出。
+33. 第一次切到自动档出说明条，「设置」打开「权限与网络」，「知道了」之后再切换（含重新挂载、从 `config.get` 读回之后）不再出。
 34. 降档后输入框上方出那一行（连续与累计两种说法），可关，横幅不在。
 35. 设置「权限与网络」从上到下是审批档、文件夹访问、网络白名单、高级；改审批档只改新任务的默认，正在用的会话不变。
-36. 选一个没「以后都允许」过的文件夹弹文件夹授权框：「取消」不加；「允许」只加进这个会话；「以后都允许」之后再选不弹、新会话不自动带上；设置里撤销后再选又弹，正在用的会话照用；专用文件夹不弹。
+36. 选一个没「以后都允许」过的文件夹弹文件夹授权框：「取消」不加；「允许」只加进这个会话；「以后都允许」之后再选不弹、新会话不自动带上；从磁盘重读 config.json 之后再选也不弹，`folderAccess` 里有这条真实路径；设置里撤销后再选又弹，正在用的会话照用；专用文件夹不弹；拿别的会话的、用过的或已作废的 token 调 `workspace.grant` 回 `stale`、不加文件夹（D42）。
 37. 手动档里授权过的文件夹，读与查找不问，Write 照问。
 38. 展开的工具行：放行的调用多一行原因（自动档放行、本会话允许过等），出过卡的与收起的不变。
 39. 第三段的卡：五种 `autoAsk` 各出各的句子，`platform` 不出 Linux 那句；Delete 的卡标题是「删除这个文件？」；两份 locale 都有这些键，文案覆盖测试穷举，不含机制词。
-40. 端到端：任务会话切到自动档，横幅出现；写一个文件不出卡，结算行「可还原」，还原回来；点横幅回到手动，再写出卡。macOS 上跑一条命令不出卡，Linux 上出卡并带 Linux 那句（平台：macOS、Linux）。
+40. 端到端：任务会话切到自动档，横幅出现；写一个文件不出卡，结算行「可还原」，还原回来；点横幅回到手动，再写出卡。macOS 上等设置里的沙箱状态变成生效之后跑一条命令不出卡，Linux 上出卡并带 Linux 那句（平台：macOS、Linux）。
 41. 文档同步一节列的每一处都改了，`python3 .sdd/spec-check.py` 的 `pairs` 不拦（人工）。
 42. 菜单、说明条与设置里的自动档说明只说「按规则拦」，不出现「看起来不安全才停下来问」这类说法（人工）。
 43. 卡的 facts 带一个本版不认识的 `autoAsk` 值，或命令卡带一个不认识的 `category`：卡照常投递、③ 出通用的那一句；`reason` 为 `flagged`、带不认识 `category` 的卡照旧不投递、那次调用不执行。
@@ -315,3 +315,4 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 2026-11-20 · ready 之后 · owner 选 D39，只收紧：input-hygiene 另认文字方向控制符（问）与 C1 控制字符（拒）；其余格式字符写进已知限制。验收 19 相应补写。
 - 2026-11-20 · ready 之后 · 说清 D39 的代价：给你看的一页与已知限制补上 emoji 组合与旗帜两档都问、乱码文件名会被拦下；规则不变。
 - 2026-11-20 · ready 之后 · 说清：国旗不问，只有子区旗、彩虹旗与 emoji 组合两档都问（复核实测 railguard 0.7.0）；规则不变。
+- 2026-11-27 · ready 之后 · 第三段开工前照挑刺评审 r2 定四处，都只收紧或说清：策略关掉自动档时 `session.facts` 报手动并带 `autoModeDisabled`；`setApprovalMode` 补 `refused`、子会话回 `not-cowork`；文件夹授权的 token 只在主进程、绑会话、用一次；验收 12、31、33、36、40 相应补写（D40–D43）· PR #91 之后。
