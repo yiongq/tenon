@@ -10,7 +10,9 @@ import {
   inspectorRelease,
   sessionSelectModel,
   sessionSelectProfile,
+  sessionSetApprovalMode,
   snapshotRestore,
+  workspaceGrant,
   workspacePick,
   workspaceRemove,
   workspaceUsePrefill,
@@ -69,9 +71,11 @@ export const SHUTDOWN_SETTLE_MS = STOP_TERM_GRACE_MS + STOP_WRITE_WAIT_MS
 /**
  * The routes that open a Run or write a fact (step 3): the sends, the queued item's actions, the stop
  * (it writes `cancelled-by-stop` in a paused session, and a quit cancels no card, B4), 「继续」, the
- * answers, the resume, the model and profile choices, workspace writers and snapshot restore. The reads —
- * `session.latest`, `session.messages`, `session.facts`, `session.modelChoice`, `approval.current`,
- * `approval.list` — still answer; the config and provider writers write no fact.
+ * answers, the resume, the model, profile and approval-mode choices, workspace writers (a pick, the
+ * prefill, a grant, a removal) and snapshot restore. The reads — `session.latest`,
+ * `session.messages`, `session.facts`, `session.modelChoice`, `approval.current`, `approval.list`,
+ * `workspace.access` — still answer; the config and provider writers, and
+ * `workspace.revokeAccess` (config.json only), write no fact.
  */
 export const REFUSED_WHILE_SHUTTING_DOWN: ReadonlySet<string> = new Set([
   chatSend.channel,
@@ -83,8 +87,10 @@ export const REFUSED_WHILE_SHUTTING_DOWN: ReadonlySet<string> = new Set([
   approvalResume.channel,
   sessionSelectModel.channel,
   sessionSelectProfile.channel,
+  sessionSetApprovalMode.channel,
   workspacePick.channel,
   workspaceUsePrefill.channel,
+  workspaceGrant.channel,
   workspaceRemove.channel,
   sandboxRelease.channel,
   inspectorRelease.channel,

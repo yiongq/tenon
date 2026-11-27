@@ -35,11 +35,20 @@ interface Harness {
   call(channel: string, payload: unknown): Promise<unknown>
 }
 
+/**
+ * The folders these cases pick are already 「以后都允许」ed (spec 06 D42), so a pick adds them as
+ * before: the cases below test the kernel's list, its refusals and the prefill, not the grant, which
+ * workspace-grants.test.ts covers.
+ */
+const GRANTED = ['/work/a', '/work/b', '/', '/Users/someone']
+
 async function harness(
   options: Pick<WorkspaceRoutesDeps, 'onWorkspaceChanged' | 'log'> = {},
+  granted: readonly string[] = GRANTED,
 ): Promise<Harness> {
   const host = createMemoryHost({ identity: IDENTITY })
   await host.fs.mkdirp(absolutePath(IDENTITY.profileDir))
+  await writeConfig(host.fs, IDENTITY, { folderAccess: [...granted] })
   await Promise.all(['/work/a', '/work/b'].map((folder) => host.fs.mkdirp(absolutePath(folder))))
   const loop = createTestLoopPorts({
     commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME }) },

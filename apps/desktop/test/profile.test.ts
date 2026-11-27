@@ -109,6 +109,9 @@ describe('desktop profiles', () => {
       customVendors: [],
       mcpServers: [],
       sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+      approvalMode: 'manual',
+      autoModeNoticeSeen: false,
+      folderAccess: [],
     })
     expect(lines).toEqual([])
   })
@@ -131,6 +134,9 @@ describe('desktop profiles', () => {
     expect(await readConfig(fs, identity, (line) => lines.push(line))).toEqual({
       ...before,
       sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+      approvalMode: 'manual',
+      autoModeNoticeSeen: false,
+      folderAccess: [],
     })
     expect(lines).toEqual([])
   })
@@ -327,6 +333,9 @@ describe('desktop profiles', () => {
       customVendors: [],
       mcpServers: [],
       sandbox: { profile: 'workspace-write', allowedDomains: [], packageManagers: false },
+      approvalMode: 'manual',
+      autoModeNoticeSeen: false,
+      folderAccess: [],
     })
     // And a save from that state keeps what survived.
     await writeConfig(fs, identity, { sidebarCollapsed: false })
