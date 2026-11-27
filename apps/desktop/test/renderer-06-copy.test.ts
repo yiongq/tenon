@@ -170,7 +170,7 @@ describe('06 验收 38: an expanded allowed row shows why it was not asked', () 
   })
 })
 
-describe('06 验收 44: an unknown summary code under %s verdict reads as unknown and the record shows that verdict’s neutral sentence', () => {
+describe('06 验收 44: unknown summary codes read as unknown with one neutral sentence per verdict', () => {
   it.each([
     ['allow', '这一步已放行。', 'This step was allowed.'],
     ['ask', '这一步要你确认。', 'This step needs your OK.'],

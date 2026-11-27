@@ -96,11 +96,12 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 ```
 
 - Tape 两个新名字，登记进 `DECLARED_TAPE_NAMES`、投影、重放与 SQLite、Postgres 一致性测试：`session/approval_mode_set`，event，slice `session`，身份 `session`、sessionId、`<n>`，键 `session:v1:approval_mode:<incarnationId>:<n>`；`tool/inspector_override`，event，slice `tool`，身份 `runtime_event`、runId、requestSeq，键 `tool:v1:inspector_override:<runId>:<requestSeq>:<i>`。
-- contracts 只增：`session.setApprovalMode`（`{ sessionId, mode }` → `{ ok: true, mode } | { ok: false, code: 'not-cowork' | 'unknown-session' | 'policy' | 'refused' }`，经根会话 mailbox，关机中回 `refused`，子会话的 id 回 `not-cowork`，D41）；`session.facts` 响应只增 `approvalMode`（会话建立前取草稿里的选择，没有就取默认；策略关掉自动档时报手动）与可选的 `autoModeDisabled: true`（策略关掉自动档，D40）；`inspector.release`（`{ sessionId, callKey }` → 04 的五种状态）。
+- contracts 只增：`session.setApprovalMode`（`{ sessionId, mode }` → `{ ok: true, mode } | { ok: false, code: 'not-cowork' | 'unknown-session' | 'policy' | 'refused' }`，经根会话 mailbox；关机中主进程的路由表先拒（渲染端收到 IPC 失败），没经路由表的调用由 kernel 回 `refused`；子会话的 id 回 `not-cowork`，D41）；`session.facts` 响应只增 `approvalMode`（会话建立前取草稿里的选择，没有就取默认；策略关掉自动档时报手动）与可选的 `autoModeDisabled: true`（策略关掉自动档，D40）；`inspector.release`（`{ sessionId, callKey }` → 04 的五种状态）。
 - contracts 的文件夹授权只增：`workspace.pick`、`workspace.usePrefill` 成功响应只增可选的 `pendingGrant: { token, folders }`，有它时这几个文件夹还没加进会话；新路由 `workspace.grant`（`{ sessionId, token, choice: 'session' | 'always' }` → 与 `workspace.pick` 同样的结果，另多一个失败码 `stale`）、`workspace.access`（列表）、`workspace.revokeAccess`（`{ folder }`）。token 只在主进程内存里、绑定发出它的会话、只能用一次，文件夹取主进程记下的那份（D42）。
 - contracts 的卡与摘要只增：确认卡的 `category` 枚举只增两个值；判决摘要码只增 `inspector-flagged`；卡的 facts 只增可选的 `category`、`autoAsk`。`sandbox.release` 不动。
 - config.json 只增（对 01 §desktop 接线 的增补）：`approvalMode`（`'manual' | 'auto'`，缺省 `'manual'`，只由设置写）、`autoModeNoticeSeen`（布尔，缺省 false）、`folderAccess`（真实路径的数组，缺省空，只由主进程写，`config.set` 不收）。config.json 在每个 tenant 的 profile 目录里，所以键就是 tenantId 加真实路径。
 - 迁移：只增，不改表结构，04 的载荷与动作不变。没有档位事实的会话读作手动。
+- 回退时的 config.json：06 之前的版本下次写盘会丢掉 `approvalMode`、`autoModeNoticeSeen`、`folderAccess` 三个键，于是新任务默认回到手动、「以后都允许」过的文件夹再选又弹框，再升回 06 时说明条会再出一次；都只往严的方向变。
 - 回退（P2 实测）：06 之前的版本照常打开写过两个新事实与新键的会话：全部读回、哈希链、attempt 复核、投影重建、恢复续跑、重放都通过；它按手动档运行，`tool/inspector_override` 在它那里不授予任何放行、不生成告知。
 - 回不去的点（P2 实测）：会话里只要有判决摘要码 `inspector-flagged`，06 之前的版本加载这个会话的消息列表失败（`session.messages`、`session.latest` 回 `invalid-response`）：摘要在判定时就存进判决、读取时不重算，旧版的摘要码是封闭的枚举。
 - 回退时正有一张看不见字符的卡在等（按代码与源码探针，未整套实测），旧版启动时重判分三种：① 重判仍放行（如工作区里的 Read）：读作没变、留着旧的 `flagged` 卡，`checkFlaggedCategory` 认不出 `hidden-characters`，卡投递不出、调用一直等着；② 重判是问、卡不同（如普通 Write、Bash）：写新判决、投递新卡；③ 命令卡原因是 `command`，`checkFlaggedCategory` 只管 `flagged` 卡，照常投递。新卡投递得出，不等于消息列表恢复：有 `inspector-flagged` 时照旧加载失败。
@@ -318,3 +319,4 @@ export type InspectorOverridePayload = CallRef & { // 写进 tool/inspector_over
 - 2026-11-20 · ready 之后 · 说清：国旗不问，只有子区旗、彩虹旗与 emoji 组合两档都问（复核实测 railguard 0.7.0）；规则不变。
 - 2026-11-27 · ready 之后 · 第三段开工前照挑刺评审 r2 定四处，都只收紧或说清：策略关掉自动档时 `session.facts` 报手动并带 `autoModeDisabled`；`setApprovalMode` 补 `refused`、子会话回 `not-cowork`；文件夹授权的 token 只在主进程、绑会话、用一次；验收 12、31、33、36、40 相应补写（D40–D43）· PR #91 之后。
 - 2026-11-27 · ready 之后 · 第 21 步文档同步：已知限制补上 `git restore --staged` 例外按原文认字的两种偏差；规则不变。
+- 2026-11-27 · ready 之后 · 第三段评审之后说清两处：关机中切档由主进程路由表先拒、kernel 一层回 `refused`（D41）；回退会丢 config.json 的三个新键；规则不变。

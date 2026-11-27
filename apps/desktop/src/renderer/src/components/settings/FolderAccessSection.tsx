@@ -4,6 +4,7 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { PathText } from '@/components/ui/path-text'
+import { visible } from '@/lib/visible'
 
 /**
  * 「权限与网络」's second block (spec 06 §界面「设置」「文件夹授权」): the folders 「以后都允许」 kept,
@@ -48,7 +49,7 @@ export function FolderAccessSection(): JSX.Element {
           {folders.map((folder) => (
             <li key={folder} data-testid="folder-access-item" className="flex items-start gap-2">
               <p className="min-w-0 flex-1 font-mono">
-                <PathText text={folder} />
+                <PathText text={visible(folder)} />
               </p>
               <Button
                 variant="ghost"

@@ -371,6 +371,10 @@ it('06 验收 15: with the policy turning auto off, the route refuses auto, stil
   expect(await app.setMode(TASK, 'auto')).toEqual(OK('auto'))
   expect(await app.facts(TASK)).toMatchObject({ approvalMode: 'auto' })
   expect(await app.facts(TASK)).not.toHaveProperty('autoModeDisabled')
+  // A draft that chose auto itself, before the policy came.
+  await app.task(OTHER_TASK)
+  expect(await app.setMode(OTHER_TASK, 'auto')).toEqual(OK('auto'))
+  expect(await app.facts(OTHER_TASK)).toMatchObject({ established: false, approvalMode: 'auto' })
 
   r.memory.setPolicy({
     status: 'current',
@@ -387,8 +391,7 @@ it('06 验收 15: with the policy turning auto off, the route refuses auto, stil
   })
   expect(await app.setMode(TASK, 'auto')).toEqual(REFUSED('policy'))
   expect(await modeFacts(r, TASK)).toHaveLength(1)
-  // A draft is told the same, whatever the default or its own choice was.
-  await app.task(OTHER_TASK)
+  // The draft is told the same, though its own choice was auto.
   expect(await app.facts(OTHER_TASK)).toMatchObject({
     established: false,
     approvalMode: 'manual',

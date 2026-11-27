@@ -12,7 +12,11 @@ import {
   createSessionService,
 } from '@tenon-app/kernel'
 import { createCounterIds, createTestLoopPorts } from '@tenon-app/kernel/testing'
+import { mkdir, mkdtemp, realpath, rename, rm, symlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, it } from 'vitest'
+import { DesktopFs } from '../src/main/host/fs.js'
 import { createFolderGrants } from '../src/main/folder-grants.js'
 import { readConfig, writeConfig } from '../src/main/host/profile.js'
 import { createSessionRemoval } from '../src/main/session-removal.js'
@@ -238,9 +242,10 @@ it('06 验收 36: a selection with one ungranted folder asks for all of it, and 
   expect((await r.config()).folderAccess).toEqual(['/work/a'])
   await task(r.call, S2)
   const answer = await r.pick(r.call, S2, ['/work/a', '/link', '/work/b'])
-  // Nothing of it is added, though /work/a is granted: the list comes back as it was.
+  // Nothing of it is added, though /work/a is granted: the list comes back as it was. The dialog
+  // names real paths, the link as the folder it reaches, once.
   expect(await r.folders(S2)).toEqual([dedicatedFolderFor(HOME, IDENTITY, S2)])
-  expect(asked(answer).folders).toEqual(['/work/a', '/link', '/work/b'])
+  expect(asked(answer).folders).toEqual(['/work/a', '/work/b'])
   const added = await r.call('workspace.grant', {
     sessionId: S2,
     token: asked(answer).token,
@@ -326,4 +331,93 @@ it('06 验收 36: a folder whose real path cannot be named is the add’s own re
   const answer = await r.pick(r.call, S1, ['/work/a', '/dangling'])
   expect(answer).toEqual({ ok: true, data: { ok: false, code: 'root-folder' } })
   expect(await r.folders(S1)).toEqual([dedicatedFolderFor(HOME, IDENTITY, S1)])
+})
+
+it('06 验收 36: a prefill that adds directly still voids the grant a pick left', async () => {
+  const r = await rig()
+  await task(r.call, S1)
+  const picked = await r.pick(r.call, S1, ['/work/a'])
+  // The prefill names a folder already kept: it adds with no dialog of its own.
+  await writeConfig(r.host.fs, r.host.identity, {
+    folderAccess: ['/work/b'],
+    lastWorkspaceFolders: ['/work/b'],
+  })
+  const prefilled = (await r.call('workspace.usePrefill', { sessionId: S1 })) as PendingAnswer
+  expect(prefilled.data.pendingGrant).toBeUndefined()
+  expect(await r.folders(S1)).toEqual(['/work/b'])
+  // The dialog the pick opened is gone with it: its token adds nothing now.
+  expect(
+    await r.call('workspace.grant', {
+      sessionId: S1,
+      token: asked(picked).token,
+      choice: 'session',
+    }),
+  ).toEqual(STALE)
+  expect(await r.folders(S1)).toEqual(['/work/b'])
+})
+
+it('06 验收 36: the dialog keeps real paths, so a link pointed elsewhere while it is open changes nothing', async () => {
+  const r = await rig()
+  await r.host.fs.mkdirp(absolutePath('/secret/a'))
+  r.host.symlink(absolutePath('/proj'), '/work')
+  await task(r.call, S1)
+  const answer = asked(await r.pick(r.call, S1, ['/proj/a']))
+  // The dialog names the folder the link reaches now.
+  expect(answer.folders).toEqual(['/work/a'])
+  await r.host.fs.remove(absolutePath('/proj'))
+  r.host.symlink(absolutePath('/proj'), '/secret')
+  // The answer adds what the user saw, not the link's new target, and keeps only that.
+  expect(
+    await r.call('workspace.grant', { sessionId: S1, token: answer.token, choice: 'always' }),
+  ).toEqual({ ok: true, data: { ok: true, folders: ['/work/a'], origin: 'picked' } })
+  expect((await r.config()).folderAccess).toEqual(['/work/a'])
+})
+
+it('06 验收 36: a folder swapped for a link while the dialog is open voids the answer (real disk)', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'tenon-grant-')))
+  try {
+    const fs = new DesktopFs()
+    const identity = { ...IDENTITY, profileDir: join(root, 'profile') }
+    const host = { ...createMemoryHost({ identity }), fs }
+    for (const folder of ['profile', 'work/a', 'secret'])
+      // oxlint-disable-next-line no-await-in-loop -- three folders
+      await mkdir(join(root, folder), { recursive: true })
+    const loop = createTestLoopPorts({
+      commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME }) },
+    })
+    const sessions = createSessionService({
+      host,
+      tape: createMemoryTapeStore({ identity }),
+      ids: createCounterIds(),
+      inspectors: [],
+      connector: loop.connector,
+      protectedFiles: [],
+    })
+    sessions.bindLoop(loop)
+    const handlers = new Map<string, Handler>()
+    const picks: string[][] = [[join(root, 'work/a')]]
+    registerWorkspaceRoutes({
+      ipcMain: { handle: (channel, listener) => handlers.set(channel, listener as Handler) },
+      sessions,
+      host,
+      home: absolutePath(root),
+      pickFolders: () => Promise.resolve(picks.shift() ?? null),
+    })
+    const call: Call = async (channel, payload) => handlers.get(channel)!({}, payload)
+    await task(call, S1)
+    const answer = asked(await call('workspace.pick', { sessionId: S1 }))
+    expect(answer.folders).toEqual([join(root, 'work/a')])
+    // While the dialog is open the folder becomes a link to somewhere the user never picked.
+    await rename(join(root, 'work/a'), join(root, 'work/moved'))
+    await symlink(join(root, 'secret'), join(root, 'work/a'))
+    expect(
+      await call('workspace.grant', { sessionId: S1, token: answer.token, choice: 'always' }),
+    ).toEqual(STALE)
+    expect((await sessions.sessionFacts({ sessionId: S1 })).workspace?.folders).toEqual([
+      dedicatedFolderFor(absolutePath(root), identity, S1),
+    ])
+    expect((await readConfig(fs, identity)).folderAccess).toEqual([])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 })

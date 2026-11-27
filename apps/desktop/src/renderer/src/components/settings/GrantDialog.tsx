@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { PathText } from '@/components/ui/path-text'
 import type { FolderGrantChoice } from '@/lib/folder-grant'
+import { visible } from '@/lib/visible'
 import {
   GRANT_BUTTONS,
   GRANT_DEFAULT,
@@ -187,7 +188,8 @@ export function FolderGrantDialog(props: {
         <ul data-testid="folder-grant-paths" className="flex min-w-0 flex-col gap-1">
           {props.folders.map((folder) => (
             <li key={folder} className="font-mono text-ui-sm">
-              <PathText text={folder} />
+              {/* Escaped like a card's object (02 ②′): a hidden or direction character is shown. */}
+              <PathText text={visible(folder)} />
             </li>
           ))}
         </ul>

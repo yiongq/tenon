@@ -354,6 +354,15 @@ describe('06 验收 36: folder grants ask once, persist on always, and revoke fo
       if (typeof element.props.text === 'string') paths.push(element.props.text)
     })
     expect(paths).toEqual(GRANT.folders)
+    // A direction control in a folder name is drawn, not obeyed (02 ②′).
+    const tricky: string[] = []
+    walk(
+      treeOf(() => FolderGrantDialog({ folders: ['/work/\u202Eexe.txt'], onChoose })),
+      (element) => {
+        if (typeof element.props.text === 'string') tricky.push(element.props.text)
+      },
+    )
+    expect(tricky).toEqual(['/work/\\u{202E}exe.txt'])
     const buttons: Element[] = []
     walk(two, (element) => {
       if (

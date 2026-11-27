@@ -161,6 +161,9 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
    * `folderAccess` (or none chosen) is today's add; otherwise nothing is added, and the list as it is
    * comes back with `pendingGrant`. A folder whose real path cannot be named is no grant to ask for:
    * the kernel refuses a list with one in it (`root-folder`), and that answer is the add's own.
+   *
+   * The grant keeps — and the dialog shows — the real paths, resolved now: what the user answers is
+   * what gets added, even if a link on the way is pointed elsewhere while the dialog is open.
    */
   const select = async (sessionId: string, chosen: AbsolutePath[]): Promise<WorkspaceResult> => {
     if (sessions === null) return UNKNOWN_SESSION
@@ -178,7 +181,10 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
       ok: true,
       folders: [...facts.workspace.folders],
       origin: facts.workspace.origin,
-      pendingGrant: grants.mint(sessionId, chosen),
+      pendingGrant: grants.mint(
+        sessionId,
+        reals.map((real) => real.path),
+      ),
     }
   }
 
@@ -213,19 +219,17 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
   })
 
   /**
-   * 「以后都允许」: the real paths of the grant's folders that the kernel just put in the session and
-   * that were not kept before. Resolved again here and compared with the session's list, so only what
-   * the kernel accepted is kept, never a path main alone resolved.
+   * 「以后都允许」: the grant's real paths that the kernel just put in the session and that were not
+   * kept before — only what the kernel accepted, never a path main alone resolved.
    */
   const keepAccess = async (
-    chosen: readonly AbsolutePath[],
+    kept: readonly AbsolutePath[],
     inSession: readonly string[],
   ): Promise<void> => {
-    const reals = await Promise.all(chosen.map((folder) => resolvePath(deps.host.fs, folder)))
-    const accepted = reals.filter((real) => real.resolved && inSession.includes(real.path))
+    const accepted = kept.filter((folder) => inSession.includes(folder))
     await withConfigLock(deps.host.identity, async () => {
       const { folderAccess } = await readConfig(deps.host.fs, deps.host.identity)
-      const next = [...new Set([...folderAccess, ...accepted.map((real) => real.path)])]
+      const next = [...new Set([...folderAccess, ...accepted])]
       if (next.length > folderAccess.length) {
         await writeConfigHeld(deps.host.fs, deps.host.identity, { folderAccess: next })
       }
@@ -237,6 +241,10 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
     // Used in this synchronous stretch: another session's token, a used or a voided one adds nothing.
     const folders = grants.take(sessionId, token)
     if (folders === null) return STALE
+    // The real paths the dialog showed must still be themselves: a link on the way pointed elsewhere
+    // since, or a folder gone, voids the answer rather than adding what the user never saw.
+    const now = await Promise.all(folders.map((folder) => resolvePath(deps.host.fs, folder)))
+    if (now.some((real, at) => !real.resolved || real.path !== folders[at])) return STALE
     const result = await change(sessionId, { kind: 'add', folders: [...folders] })
     if (result.ok && choice === 'always') await keepAccess(folders, result.folders)
     return result
