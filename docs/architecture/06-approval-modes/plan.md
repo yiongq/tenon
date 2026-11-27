@@ -2,7 +2,7 @@
 
 ## 当前 / 需要你
 
-当前：ready。第三段在 `feat/06-seg3`（草稿 PR #92）：第 15–19、21 步做完，第 20 步段末评审进行中。
+当前：ready。第三段在 `feat/06-seg3`（草稿 PR #92）：第 15–19、21–23 步做完；第 20 步段末评审三个视角已回，发现都已处置，等复审写记录。
 需要你：#92 改了 `ci.yml`，评审过后由你点名合并。
 
 ## 开工前读
@@ -95,13 +95,13 @@
 - [ ] 19. e2e：验收 40，macOS 与 Linux 两个 CI runner；走 CI 草稿 PR，一次推送攒齐。
 - [ ] 20. 第三段核对：P；E；多视角评审与 StrykerJS 同第 6 步；汇总评审写 log。要出的突变至少有：横幅点击不切档（验收 32）、说明条不写 `autoModeNoticeSeen`（验收 33）、「以后都允许」不落盘（验收 36）、原因一行在问过的调用上也出（验收 38）、策略关掉时菜单仍有自动项（验收 31）、`platform` 出了 Linux 那句（验收 39）、认不出的 `autoAsk` 让卡投递失败（验收 43）、未知摘要码让 `session.messages` 校验失败或一律显示「需要确认」（验收 44）。
 - [x] 21. 文档同步：spec §文档同步「实现时」各处；未解决的 Open 与跟进挪进总参考「以后再说」或写明已定，在派最后一次评审之前做完。点名验收 41。
-- [ ] 22. 对照验收逐条核对：每条验收有点名它的测试或标了（人工）（live）；矩阵的「突变」列补齐；S 的 `trace` 不拦。
-- [ ] 23. 清理：临时探针与调试输出清掉；复现程序与原始输出只放私有笔记（另记）。
+- [x] 22. 对照验收逐条核对：每条验收有点名它的测试或标了（人工）（live）；矩阵的「突变」列补齐；S 的 `trace` 不拦。
+- [x] 23. 清理：临时探针与调试输出清掉；复现程序与原始输出只放私有笔记（另记）。
 - [ ] 24. owner 验收 → 改 Status。验收清单里点名告诉 owner 回退限制（P2 与 spec「回不去的点」）：06 写过 `inspector-flagged` 的会话，回到 06 之前的版本后消息列表加载失败（实测）；回退时正等着的看不见字符的卡，只有旧版重判仍放行的那种（如工作区里的 Read）投递不出，重判出新卡的与命令卡照常投递（按代码与源码探针）；新卡投递得出也不等于消息列表恢复。
 
 ## 交接
 
-2026-11-27：第三段在 `feat/06-seg3`（从 fedc419 开）：第 15–18 步做完（第 15 步其余部分由 Sonnet 子 agent 做，拣进 e157b58、c2c319c），第 19 步的 e2e 写好（6f12c1c，`ci.yml` 的 macOS 列表加了新文件），实现记录在 log「第三段实现（第 15–19 步）」。沙箱外全量 6 066 条通过。下一步：推分支、开草稿 PR 让 CI 跑 e2e（macOS 与 Linux），绿了再做第 20 步段末评审（多视角、新上下文）；第 21 步文档同步、第 22 步逐条核对。改动到这里约 3 400 行，预算还有余量。PR 改了 `ci.yml`，由 owner 点名合。
+2026-11-27：第三段第 15–23 步的活都做了，只差第 20 步的评审记录。三个视角（对照 spec、安全 Opus，突变 Sonnet）审 7df81fd，报告与作者处置清单在私有笔记 `impl-reviews/seg3-*.md`；发现都已修或写明不修的理由，修在 e88d679、10926dc、af87151、f7d9e41。CI 第三轮（af87151）e2e 与 sandbox-macos 两个平台都过，只有 spec-check 等评审记录。新突变一律手跑、不登记（CI 时限，见处置清单「突变登记」）。下一步：派一个新上下文的复审核对处置并写 log 记录；通过后 PR 转正式，`ci.yml` 改动由 owner 点名合；合入后第 24 步 owner 验收。
 
 ## Open
 
@@ -151,38 +151,51 @@
 | 12 | 集成 | 06 验收 12: mode choices validate binding, ids and a missing head | test | 去掉入口守卫 → 验收 12 | 任意 |
 | 12 | 集成 | 06 验收 12: shutdown at the %s boundary refuses a choice without later IO | test | 删除关机窗口检查 → 验收 12 | 任意 |
 | 15 | 集成 | 06 验收 15: startup recovery and user choice share the root mailbox | test | 启动恢复绕过根队 → 验收 15 | 任意 |
-| 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | 待补 | 任意 |
-| 18 | 单元 | 06 验收 18: desktop canReach answers %s | test | 待补 | 任意 |
-| 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 待补 | 任意 |
+| 18 | 集成 | 06 验收 18: after private data and untrusted content a command that can reach out via %s asks once | test | `canReachNetwork` 恒为 false / 外带只认网页与搜索 → 验收 18 | 任意 |
+| 18 | 单元 | 06 验收 18: desktop canReach answers %s | test | `canReach` 按预设生效算 → 验收 18 | 任意 |
+| 19 | 单元 | 06 验收 19: control characters deny and invisible characters ask in %s | test | 适配器把 `modified` 读成没意见 → 验收 19 | 任意 |
 | 19 | 单元 | 06 验收 19: the adapter also asks on bidi controls and blocks C1 controls | test | 不认方向控制符或 C1 → 验收 19 | 任意 |
-| 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 待补 | 任意 |
-| 20 | 单元 | 06 验收 20: an inspector-failed receipt offers allow once | test | 待补 | 任意 |
-| 21 | 集成 | 06 验收 21: an inspector override binds the next identical call once and expires | test | 待补 | 任意 |
-| 22 | 集成 | 06 验收 22: an unannounced inspector override reaches the model at the next checkpoint | test | 待补 | 任意 |
-| 23 | 单元 | 06 验收 23: desktop registers exfiltration (ask) and hygiene (deny) only | test | 待补 | 任意 |
-| 24 | 集成 | 06 验收 24: twenty machine denials in a round end it and downgrade auto | test | 待补 | 任意 |
-| 25 | 单元 | 06 验收 25: summarize maps inspector-flagged, check-incomplete and auto-sandboxed-command | test | 待补 | 任意 |
-| 26 | 单元 | 06 验收 26: second-segment cards and receipts carry their sentences, marks and allow once | test | 待补 | 任意 |
+| 20 | 单元 | 06 验收 20: a failing hygiene adapter denies with inspector-failed and a release | test | 适配器 `ceiling: 'ask'` → 验收 20 | 任意 |
+| 20 | 单元 | 06 验收 20: an inspector-failed receipt offers allow once | test | 去掉回执按钮 → 验收 20 | 任意 |
+| 21 | 集成 | 06 验收 21: an inspector override binds the next identical call once and expires | test | 只比工具名 / 永不作废 / 写成 `tool/receipt_override` / 与 04 放行只绑一条 → 验收 21 | 任意 |
+| 22 | 集成 | 06 验收 22: an unannounced inspector override reaches the model at the next checkpoint | test | — | 任意 |
+| 23 | 单元 | 06 验收 23: desktop registers exfiltration (ask) and hygiene (deny) only | test | 适配器 `ceiling: 'ask'` → 验收 23 | 任意 |
+| 24 | 集成 | 06 验收 24: twenty machine denials in a round end it and downgrade auto | test | 算进只带 `observed` 的 / 上限写成 21 / 子会话不计 / 续跑开头不数 → 验收 24 | 任意 |
+| 25 | 单元 | 06 验收 25: summarize maps inspector-flagged, check-incomplete and auto-sandboxed-command | test | `inspector-failed` 的问给 `inspector-flagged` → 验收 25 | 任意 |
+| 26 | 单元 | 06 验收 26: second-segment cards and receipts carry their sentences, marks and allow once | test | 回执按钮在 `policy` 拦截上也出 → 验收 26 | 任意 |
 | 26 | 单元 | 06 验收 26: the run-end card says a round’s cumulative blocks apart from a run of three | test | 结束卡不分 `scope` → 验收 26 | 任意 |
 | 27 | e2e | 06 验收 27: a blocked command is allowed once from its receipt and then runs | test:e2e（Linux）；ci.yml 的 macOS e2e 列表（macOS） | — | macOS、Linux |
 | 28 | 单元 | 06 验收 28: the prompt layer is version 13 and its hash gate passes | test | — | 任意 |
 | 28 | live | （live）基线列全集每题 3 次，逐题对照第 12 版，记录进 log | evals:gate | — | 任意 |
-| 29 | 集成 | 06 验收 29: a profile switch during inspection keeps the post-inspection plan and runs the checks once | test | 待补 | 任意 |
-| 30 | 集成 | 06 验收 30: pending to unavailable during inspection reruns the checks, and the third run is strict | test | 待补 | 任意 |
-| 31 | 单元 | 06 验收 31: the mode menu shows two modes in task sessions only | test | 待补 | 任意 |
-| 32 | 单元 | 06 验收 32: the auto banner stays and clicking it returns to manual | test | 待补 | 任意 |
-| 33 | 单元 | 06 验收 33: the auto notice shows once and links to the permissions pane | test | 待补 | 任意 |
-| 34 | 单元 | 06 验收 34: the downgrade line says consecutive or round, can close, without the banner | test | 待补 | 任意 |
-| 35 | 单元 | 06 验收 35: the permissions pane lists mode, folder access, allowlist, advanced | test | 待补 | 任意 |
-| 36 | 集成 | 06 验收 36: folder grants ask once, persist on always, and revoke for later picks | test | 待补 | 任意 |
-| 37 | 单元 | 06 验收 37: a granted folder frees reads but a manual Write still asks | test | 待补 | 任意 |
-| 38 | 单元 | 06 验收 38: an expanded allowed row shows why it was not asked | test | 待补 | 任意 |
-| 39 | 单元 | 06 验收 39: each autoAsk reason has its sentence; Delete has its title | test | 待补 | 任意 |
+| 29 | 集成 | 06 验收 29: a profile switch during inspection keeps the post-inspection plan and runs the checks once | test | 判决改用检查前的计划 → 验收 29 | 任意 |
+| 30 | 集成 | 06 验收 30: pending to unavailable during inspection reruns the checks, and the third run is strict | test | 复核有变不重跑 / 第三次不按 `canReachNetwork: true` → 验收 30 | 任意 |
+| 31 | 单元 | 06 验收 31: the mode menu shows two modes in task sessions only | test | 策略关掉时菜单仍有自动项 / 对话也出菜单 / 「没法留底」不限自动项 → 验收 31 | 任意 |
+| 32 | 单元 | 06 验收 32: the auto banner stays and clicking it returns to manual | test | 横幅点击不切档 → 验收 32 | 任意 |
+| 33 | 单元 | 06 验收 33: the auto notice shows once and links to the permissions pane | test | 说明条不写 `autoModeNoticeSeen` / 不看已读 → 验收 33 | 任意 |
+| 34 | 单元 | 06 验收 34: the downgrade line says consecutive or round, can close, without the banner | test | 总用连续句 / 切到自动不清降档 / 不比 `#modeChoices` → 验收 34 | 任意 |
+| 35 | 单元 | 06 验收 35: the permissions pane lists mode, folder access, allowlist, advanced | test | 改默认档时也碰正在用的会话 → 验收 35 | 任意 |
+| 36 | 集成 | 06 验收 36: folder grants ask once, persist on always, and revoke for later picks | test | 「以后都允许」不落盘 / 「允许」也落盘 / 预填不作废 token / token 存原样路径 / 不绑会话 → 验收 36 | 任意 |
+| 37 | 单元 | 06 验收 37: a granted folder frees reads but a manual Write still asks | test | — | 任意 |
+| 38 | 单元 | 06 验收 38: an expanded allowed row shows why it was not asked | test | 原因一行在问过的调用上也出 / ToolRow 不渲染原因行 → 验收 38 | 任意 |
+| 39 | 单元 | 06 验收 39: each autoAsk reason has its sentence; Delete has its title | test | `platform` 出了 Linux 那句 / Delete 卡标题不特殊 → 验收 39 | 任意 |
 | 40 | e2e | 06 验收 40: auto mode writes and restores unasked, the banner returns to manual | test:e2e | — | macOS、Linux |
+| 12 | 集成 | 06 验收 12: the route sets an established task’s mode, it survives a restart, and chat, child and unknown ids are refused | test | 路由状态映射错 → 验收 12 | 任意 |
+| 12 | 集成 | 06 验收 12: a shutdown refuses a choice: the kernel answers refused, and the route table refuses it before the kernel | test | 关机拒绝集合去掉 `session.setApprovalMode` → 验收 12 | 任意 |
+| 13 | 集成 | 06 验收 13: the default is read from config.json when send starts, and a draft’s choice overrides it | test | `trackApprovalModeDefault` 不跟 config 写入 → 验收 13 | 任意 |
+| 15 | 集成 | 06 验收 15: with the policy turning auto off, the route refuses auto, still sets manual, and the facts report manual with autoModeDisabled | test | 草稿不折手动 / 已建立会话不折手动 → 验收 15、31 | 任意 |
+| 31 | 集成 | 06 验收 31: an unavailable policy leaves the facts readable and names no policy fold | test | 不判策略不可用 → 验收 31 | 任意 |
+| 36 | 集成 | 06 验收 36: a folder swapped for a link while the dialog is open voids the answer (real disk) | test | 答复时不再解析 → 验收 36 | 任意 |
+| 36 | 集成 | 06 验收 36: a prefill that adds directly still voids the grant a pick left | test | 预填不作废 token → 验收 36 | 任意 |
+| 35 | e2e | 06 验收 35: a kept default and kept folder show in settings, and revoking brings the dialog back | test:e2e | 默认档初始值不读 config / 撤销钮空函数 / `index.ts` 不传 `approvalModeDefault` → 验收 35（手跑） | macOS、Linux |
+| 40 | 单元 | 06 验收 40: on %s the desktop loop answers autoCommands %s | test | — | 任意 |
+| 24 | 集成 | 06 验收 24: the same position in a resumed Run is another call | test | `callOf` 不认 Run → 验收 24 | 任意 |
+| 19 | 单元 | 06 验收 19: national flags pass, while subdivision flags and joined emoji ask (spec §已知限制) | test | — | 任意 |
 | 41 | 你用 | （人工） | — | — | 任意 |
 | 42 | 你用 | （人工） | — | — | 任意 |
-| 43 | 单元 | 06 验收 43: unknown autoAsk values and command-card categories deliver with a generic sentence; unknown flagged categories do not | test | 待补 | 任意 |
-| 44 | 集成 | 06 验收 44: an unknown summary code under %s verdict reads as unknown and the record shows that verdict's neutral sentence | test | 待补 | 任意 |
+| 43 | 单元 | 06 验收 43: unknown autoAsk values and command-card categories deliver with a generic sentence; unknown flagged categories do not | test | 认不出的 `autoAsk` 或类别让卡投递失败 / 不走通用句 → 验收 43 | 任意 |
+| 44 | 集成 | 06 验收 44: an unknown summary code under %s verdict reads as unknown in messages, latest and tool events | test | 读取端对未知码抛错 / union 顺序反了 → 验收 44 | 任意 |
+| 44 | 单元 | 06 验收 44: the record shows an unknown summary code under %s verdict with that verdict’s neutral sentence | test | 记录不用 `decisionKey` / 一律「需要确认」 → 验收 44 | 任意 |
+| 44 | 单元 | 06 验收 44: an unknown summary code under %s verdict changes the expanded row only where it already shows a reason | test | — | 任意 |
 
 第一段的入口与界面断言归属：
 
