@@ -173,6 +173,11 @@ describe('06 验收 31: the mode menu shows two modes in task sessions only', ()
     const tree = treeOf(ApprovalModeMenu)
     const line = byTestId(byTestId(tree, 'approval-mode-auto'), 'approval-mode-no-snapshot')
     expect(textOf(line)).toBe('这个任务没法留底，改动照样问你')
+    // Only under auto: manual asks for changes anyway.
+    expect(byTestId(byTestId(tree, 'approval-mode-manual'), 'approval-mode-no-snapshot')).toEqual(
+      [],
+    )
+    expect(byTestId(tree, 'approval-mode-no-snapshot')).toHaveLength(1)
     expect(byTestId(tree, 'approval-mode-auto')[0]?.props.disabled).toBeUndefined()
     let opened: ((open: boolean) => void) | undefined
     walk(tree, (element) => {

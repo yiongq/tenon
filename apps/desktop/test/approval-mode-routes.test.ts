@@ -363,6 +363,22 @@ it('06 验收 13: config.set persists approvalMode and autoModeNoticeSeen and ta
   expect((await readConfig(r.memory.fs, r.memory.identity)).approvalMode).toBe('manual')
 })
 
+it('06 验收 31: an unavailable policy leaves the facts readable and names no policy fold', async () => {
+  // 02 fails closed without a policy (every call is denied); the facts still answer, so the folder
+  // controls and the mode menu stay on screen.
+  const r = await rig()
+  const app = await r.boot()
+  await app.task(TASK)
+  await app.send(TASK)
+  expect(await app.setMode(TASK, 'auto')).toEqual(OK('auto'))
+  r.memory.setPolicy({ status: 'unavailable' })
+  const facts = await app.facts(TASK)
+  expect(facts).toMatchObject({ established: true, profile: 'cowork', approvalMode: 'auto' })
+  expect(facts).not.toHaveProperty('autoModeDisabled')
+  await app.task(OTHER_TASK)
+  expect(await app.facts(OTHER_TASK)).toMatchObject({ established: false, approvalMode: 'manual' })
+})
+
 it('06 验收 15: with the policy turning auto off, the route refuses auto, still sets manual, and the facts report manual with autoModeDisabled', async () => {
   const r = await rig()
   const app = await r.boot()

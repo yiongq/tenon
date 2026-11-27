@@ -1,20 +1,22 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ipcResultSchema, sandboxGet } from '@tenon-app/contracts'
 import type { Page } from '@playwright/test'
 import { startFakeAnthropic } from '../test/support/fake-anthropic.js'
 import type { FakeAnthropic } from '../test/support/fake-anthropic.js'
-import { launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
+import { configPathIn, launchTenon, makeUserDataDir, seedConfig } from './helpers/launch.js'
 import { allowCard } from './helpers/navigation.js'
 import { named, tapeFacts } from './helpers/tape.js'
 import { expect, test } from './helpers/test.js'
 import {
   bashCall,
   callsReply,
+  grantFolder,
   makeFolderTree,
   providerEnv,
   send,
   startTask,
+  stubFolderDialog,
   textReply,
   writeCall,
 } from './helpers/tools.js'
@@ -35,6 +37,11 @@ const WRITTEN = '文件修改完成。'
 const RAN = '命令完成。'
 const WRITTEN_AGAIN = '又改了一次。'
 const LINUX_SENTENCE = '在 Linux 上，自动档里的命令照样先问你：这里护不住命令新建的仓库文件。'
+
+/** What main last wrote to config.json (only main writes it). */
+function savedConfig(userData: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(configPathIn(userData), 'utf8')) as Record<string, unknown>
+}
 
 async function sandboxState(page: Page): Promise<string | null> {
   const result = ipcResultSchema(sandboxGet.response).parse(
@@ -74,6 +81,8 @@ test('06 验收 40: auto mode writes and restores unasked, the banner returns to
   })
   try {
     await startTask(app, page, workspace)
+    // 「允许」 adds the folder to this task only: nothing is kept for later picks (D42).
+    expect(savedConfig(userData)['folderAccess'] ?? []).toEqual([])
     // The task draft has the menu, in manual by default; auto brings the banner and, once, the notice.
     const trigger = page.getByTestId('approval-mode-trigger')
     await expect(trigger).toHaveAttribute('data-mode', 'manual')
@@ -140,6 +149,57 @@ test('06 验收 40: auto mode writes and restores unasked, the banner returns to
     ])
     expect(server.requests).toHaveLength(6)
     expect(server.unscripted).toBe(0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('06 验收 35: a kept default and kept folder show in settings, and revoking brings the dialog back', async () => {
+  const folders = makeFolderTree('approval-settings', { 'kept/a.txt': 'a\n' })
+  tree = folders
+  const kept = join(folders.real, 'kept')
+  const userData = makeUserDataDir('approval-settings')
+  seedConfig(userData, { locale: 'zh-CN' })
+  writeFileSync(
+    configPathIn(userData),
+    JSON.stringify({ locale: 'zh-CN', approvalMode: 'auto', folderAccess: [kept] }),
+  )
+  const { app, page } = await launchTenon({ userData })
+  try {
+    // A new task starts in the default config.json holds, through main's own wiring.
+    await page.getByTestId('folder-toggle').click()
+    const trigger = page.getByTestId('approval-mode-trigger')
+    await expect(trigger).toHaveAttribute('data-mode', 'auto')
+    // The kept folder is added with no dialog.
+    const chip = page.getByTestId('folder-chip')
+    await chip.click()
+    const popup = page.getByTestId('folder-popover')
+    await expect(popup).toHaveAttribute('data-open', '')
+    await stubFolderDialog(app, [kept])
+    await popup.getByTestId('folder-add').click()
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await expect(page.getByTestId('folder-grant')).toHaveCount(0)
+    // The popover's link opens 「权限与网络」: the default and the kept folder are there.
+    await popup.getByTestId('folder-access-settings').click()
+    const settings = page.getByTestId('provider-settings')
+    await expect(settings).toBeVisible()
+    await expect(settings.getByTestId('approval-default-auto')).toBeChecked()
+    await expect(settings.getByTestId('folder-access-item')).toHaveCount(1)
+    await expect(settings.getByTestId('folder-access-item')).toContainText('kept')
+    await settings.getByTestId('folder-access-revoke').click()
+    await expect(settings.getByTestId('folder-access-empty')).toBeVisible()
+    expect(savedConfig(userData)['folderAccess']).toEqual([])
+    await page.keyboard.press('Escape')
+    await expect(settings).toHaveCount(0)
+    // This task keeps the folder; a later pick of it asks again, and 「取消」 adds nothing.
+    await chip.click()
+    await expect(popup).toHaveAttribute('data-open', '')
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    await stubFolderDialog(app, [kept])
+    await popup.getByTestId('folder-add').click()
+    await grantFolder(page, 'cancel')
+    await expect(page.getByTestId('folder-item')).toHaveCount(1)
+    expect(savedConfig(userData)['folderAccess']).toEqual([])
   } finally {
     await app.close()
   }

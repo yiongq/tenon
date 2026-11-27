@@ -2577,6 +2577,64 @@ describe('06 approval mode (§界面「说明条」「降档提示」)', () => {
     detach()
   })
 
+  it('06 验收 34: going back to auto clears the downgrade line, which does not come back', async () => {
+    const h = modeBridge(true)
+    h.state.mode = 'auto'
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    const detach = store.attach()
+    await store.refreshFacts()
+    h.state.mode = 'manual'
+    h.fake.emit(chatEvent, {
+      type: 'done',
+      sessionId: SESSION,
+      stopReason: 'end-turn',
+      endReason: { code: 'blocked-repeatedly', count: 3 },
+    })
+    await settle()
+    expect(store.getSnapshot().downgrade).toEqual({ scope: 'consecutive', count: 3 })
+    await store.setApprovalMode('auto')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    await store.setApprovalMode('manual')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    detach()
+  })
+
+  it('06 验收 34: a switch the user makes while the Run’s end is read is not a downgrade', async () => {
+    const h = modeBridge(true)
+    h.state.mode = 'auto'
+    const store = new SessionStore(SESSION, h.fake.bridge, [])
+    const detach = store.attach()
+    await store.refreshFacts()
+    // The read the Run's end starts is held; meanwhile the user goes back to manual.
+    const held = Promise.withResolvers<void>()
+    let first = true
+    const facts = () => ({
+      established: true,
+      profile: 'cowork' as const,
+      workspace: { folders: ['/work/a'], origin: 'picked' as const },
+      approvalMode: h.state.mode,
+    })
+    h.fake.handle(sessionFacts, async () => {
+      if (!first) return facts()
+      first = false
+      await held.promise
+      return facts()
+    })
+    h.fake.emit(chatEvent, {
+      type: 'done',
+      sessionId: SESSION,
+      stopReason: 'end-turn',
+      endReason: { code: 'blocked-repeatedly', count: 3 },
+    })
+    await settle()
+    await store.setApprovalMode('manual')
+    held.resolve()
+    await settle()
+    expect(store.getSnapshot().facts?.approvalMode).toBe('manual')
+    expect(store.getSnapshot().downgrade).toBeNull()
+    detach()
+  })
+
   it('06 验收 34: the consecutive count the renderer restates is the kernel’s', () => {
     expect(CONSECUTIVE_BLOCK_CAP).toBe(MACHINE_DENIAL_CAP)
   })
