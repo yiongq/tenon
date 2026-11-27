@@ -1,6 +1,7 @@
 # 命令改动能不能还原的说法
 
-Status: draft
+Status: ready
+Approved: ready · 2026-11-28 · 「command-undo-copy 改 ready」 · 对话
 Tier: standard — 换审批卡与工具行上说后果的那一句（属权限语义的文字，但判定、按键、期限与契约都不变），并逐条替换已 implemented 的 presentation-r1 条款
 Changes: presentation-r1 §审批卡（替换：④ 表里「`unknown`，其余」一行）；presentation-r1 §工具行（替换：接 ④ 的那一句）
 Related: [05-file-bridge](../../architecture/05-file-bridge/spec.md)（命令改动只在整树快照里、命令的卡不出「有快照」那句）；[06-approval-modes](../../architecture/06-approval-modes/spec.md)（第 24 步实机验收时发现两句打架，log.md 2026-11-28）

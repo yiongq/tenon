@@ -2,8 +2,8 @@
 
 ## 当前 / 需要你
 
-当前：spec 还是 draft，等 owner 批。
-需要你：读 spec 的「给你看的一页」；页头写的是 `Tier: standard`，不同意就说；同意就回一句点名这份的话，比如「command-undo-copy 改 ready」。decisions.md「agent 自定」的 5 项不推翻就算一并认了。
+当前：ready（2026-11-28 owner「command-undo-copy 改 ready」，Tier 与 agent 自定 5 项一并认了）。在做第 1 步。
+需要你：无。第 6 步真窗口验收要在你的 Mac 上起应用，到时先问你。
 
 ## 步骤
 
