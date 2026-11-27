@@ -701,3 +701,24 @@ const ownLease = true
 - [建议] 02 的失败是同一批并行发出 3 个 Edit，不是看到拦截后还在重试 · 证据：两条记录的 note 写「0 call(s) in requests after the first block」 · 已修 1e7da61
 - [建议] plan「当前」与第 14 步的勾、交接过期 · 证据：复核对照 plan · 已修 1e7da61
 - [建议] 入口页没有重新生成 · 证据：spec-check 报入口页过期 · 已修 1e7da61
+
+## 2026-11-27 · 第三段实现（第 15–19 步）
+
+- 开工前照挑刺评审 r2 留下的六条定了 D40–D43（c20e12d），写进 spec 的修订记录；第 1 步与 1.3 补勾（1.3 在 11-09 已跑，只是没勾）。预算再量一次：第一段 7 178 行、第二段 5 094 行，第三段估 4 000–5 500 行，合计没超约 18 500。
+- 分路：contracts 的形状由 lead 先定（fe1b4b5：`session.setApprovalMode`、`session.facts` 的 `approvalMode` 与 `autoModeDisabled`、`pendingGrant`、`workspace.grant` / `access` / `revokeAccess`、config 的三个键；kernel 的 facts 视图在策略关掉自动档时报手动）；第 15 步其余部分交 Sonnet 子 agent 在独立 worktree 里做（Codex 本机仍跑不起来），lead 同时做第 16–19 步的界面、文案与 e2e。子 agent 的两个提交拣进本分支（e157b58、c2c319c）。
+- 第 15 步：主进程的切档路由，关机中由路由表先拒（渲染端收到 IPC 失败，菜单不变），kernel 这一层回 `refused`，两条路径都有用例；子会话 id 回 `not-cowork`（D41）。`approvalModeDefault` 跟着 config.json 的每次写入。文件夹授权照 D42：选中的全部已在 `folderAccess` 才直接加，否则一个都不加、回 `pendingGrant`；token 只在主进程内存、每会话一张、只能用一次，再选、再用预填、清空会话都作废它（清空走 `createSessionRemoval` 新加的 `onRemoval`）；「以后都允许」只记 kernel 真正加进会话的真实路径。D32 读取端：认不出的摘要码读作 `unknown`、保留 verdict 与 facts，非字符串仍校验失败；kernel 码表与 Tape 不变。
+- 第 15 步留下的两点小代价，记在这里不改：真实路径解析不出的文件夹照旧走直接加、由 kernel 回 `root-folder`；没授权过的磁盘根目录现在先弹授权框，点「允许」后才被 kernel 拒（以前选了就拒），提前拦要在 desktop 复制 kernel 的校验。
+- 第 16 步（645b2e0）：`ApprovalModeMenu` 在任务的工具行、文件夹之后，向上弹，两项各一句，当前项打勾；快照 `unavailable` 时自动项下加一句，状态取结算行用的那份、打开菜单时刷新；策略关掉时只有手动。横幅常驻、整条是回手动的按钮；说明条只在第一次切到自动档时出、「设置」用 `#settings/permissions` 打开「权限与网络」、「知道了」写 `autoModeNoticeSeen`；降档提示由根会话这一轮的 `blocked-repeatedly` 结束原因给出种类与次数，子会话连续 3 次而本轮没结束的，按档位由自动变手动、又不是你切的也不是策略关的认出来，次数用 02 的 `MACHINE_DENIAL_CAP`（渲染端重述这个常量，有用例核对两边相等）。设置「权限与网络」最上面是审批档。
+- 第 17 步（016bac7）：`FolderGrantDialog` 三钮「取消 / 以后都允许 / 允许」、焦点在「取消」，写明授权只给读取与查找、改动照样按档位问；框关掉后文件夹浮层重新打开，看得到结果；浮层底部「管理文件夹访问」链到设置；设置里「文件夹访问」逐条撤销。
+- 第 18 步（fff231d）：③ 按 `autoAsk` 出五句之一，认不出的出通用一句；命令卡上认不出的 `category` 出「Tenon 的检查要你再看一眼这一步。」（原来会退成外带那一句）；Delete 卡标题「删除这个文件？」；认不出的摘要码在「查看本次记录」与展开的工具行按 verdict 出中性一句；展开的工具行在放行、没出过卡的调用上多一行「为什么没问」；`auto-mode` 改成「自动档放行」。
+- 第 19 步（6f12c1c）：验收 40 的 e2e，macOS 上等设置里的沙箱状态变成生效再跑命令；Linux 的 e2e 没装 bubblewrap，用测试接缝的生效姿态，命令照问是因为在 Linux，不是因为姿态；新文件加进 `ci.yml` 的 macOS 列表（门禁文件，第三段的 PR 由 owner 合，D43）。所有选文件夹的 e2e 都多一步应答授权框（`grantFolder`）。
+- 门禁：沙箱外全量 6 066 条通过，format、lint、typecheck 通过；spec-check 只拦缺评审记录（第 20 步写）。e2e 只在 CI 跑。
+
+测试改动：packages/contracts/test/approval.test.ts · 类型断言 `ContractSummaryIsKernelSummary` · D32 起关系改为单向，删去这一向，另加 `ReadCodeOnlyAddsUnknown`
+测试改动：packages/contracts/test/approval.test.ts · 02 不变量 19: has exactly verdict, code and facts, and refuses anything else · 认不出的码从「解析失败」改为读作 `unknown`、verdict 与 facts 保留，非字符串仍失败（D32，owner 2026-11-08 点名批准）
+测试改动：packages/contracts/test/outcome.test.ts · 类型断言 `SummaryBothWays` · 同上，改为单向的 `KernelSummaryCrosses`
+测试改动：apps/desktop/test/workspace.test.ts · 各例的 harness · 预先把用到的文件夹写进 `folderAccess`：这些例子测 kernel 的列表、拒绝与预填，不测授权；授权由 workspace-grants.test.ts 覆盖
+测试改动：apps/desktop/test/snapshots.test.ts · 05 验收 10: accepted workspace notifications start the first tree in the background · 选文件夹之后多一步 `workspace.grant`（D42）
+测试改动：apps/desktop/test/shutdown.test.ts · 写入请求集合两条 · 加入 `workspace.grant`、`session.setApprovalMode` 及其注册
+测试改动：apps/desktop/test/profile.test.ts · 读旧 config、04 验收 27、坏字段只丢自己三条 · 期望对象补 config 的三个新默认键
+测试改动：apps/desktop/e2e/helpers/tools.ts、tools.spec.ts、ux-craft.spec.ts · startTask 与选文件夹、用预填的几处 · 多一步应答授权框（D42），之后的断言不变
