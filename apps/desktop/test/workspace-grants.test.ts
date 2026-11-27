@@ -6,6 +6,7 @@
  */
 import type { IpcMainLike } from '@tenon-app/contracts'
 import {
+  UnresolvableAliasError,
   absolutePath,
   createMemoryHost,
   createMemoryTapeStore,
@@ -420,4 +421,54 @@ it('06 验收 36: a folder swapped for a link while the dialog is open voids the
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+})
+
+it('06 验收 36: a folder main cannot name at the pick is refused there, never added by the kernel’s later look', async () => {
+  // The kernel's own resolve, a moment later, would succeed (a link swapped back in between): main
+  // refuses what it could not check rather than hand the spelling on with no dialog.
+  const host = createMemoryHost({ identity: IDENTITY })
+  await host.fs.mkdirp(absolutePath(IDENTITY.profileDir))
+  await host.fs.mkdirp(absolutePath('/work/a'))
+  const loop = createTestLoopPorts({
+    commandShell: { path: absolutePath('/bin/sh'), env: async () => ({ HOME }) },
+  })
+  const sessions = createSessionService({
+    host,
+    tape: createMemoryTapeStore({ identity: IDENTITY }),
+    ids: createCounterIds(),
+    inspectors: [],
+    connector: loop.connector,
+    protectedFiles: [],
+  })
+  sessions.bindLoop(loop)
+  const fs = new Proxy(host.fs, {
+    get(target, key) {
+      if (key === 'realpath')
+        return async (path: string) => {
+          if (path === '/work/a') throw new UnresolvableAliasError(absolutePath(path))
+          return target.realpath(absolutePath(path))
+        }
+      const value = Reflect.get(target, key, target) as unknown
+      return typeof value === 'function'
+        ? (value as (...a: unknown[]) => unknown).bind(target)
+        : value
+    },
+  })
+  const handlers = new Map<string, Handler>()
+  registerWorkspaceRoutes({
+    ipcMain: { handle: (channel, listener) => handlers.set(channel, listener as Handler) },
+    sessions,
+    host: { ...host, fs },
+    home: HOME,
+    pickFolders: () => Promise.resolve(['/work/a']),
+  })
+  const call: Call = async (channel, payload) => handlers.get(channel)!({}, payload)
+  await task(call, S1)
+  expect(await call('workspace.pick', { sessionId: S1 })).toEqual({
+    ok: true,
+    data: { ok: false, code: 'root-folder' },
+  })
+  expect((await sessions.sessionFacts({ sessionId: S1 })).workspace?.folders).toEqual([
+    dedicatedFolderFor(HOME, IDENTITY, S1),
+  ])
 })

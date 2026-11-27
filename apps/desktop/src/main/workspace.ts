@@ -77,6 +77,7 @@ export function dedicatedFolderFor(
 const UNKNOWN_SESSION: WorkspaceResult = { ok: false, code: 'unknown-session' }
 const NOT_COWORK: WorkspaceResult = { ok: false, code: 'not-cowork' }
 const STALE: WorkspaceGrantResult = { ok: false, code: 'stale' }
+const ROOT_FOLDER: WorkspaceResult = { ok: false, code: 'root-folder' }
 /** What a change answers: a grant's answer without `stale`, which only a token can be. */
 type Changed =
   | Extract<WorkspaceGrantResult, { ok: true }>
@@ -169,9 +170,12 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
     if (sessions === null) return UNKNOWN_SESSION
     const access = new Set((await readConfig(deps.host.fs, deps.host.identity)).folderAccess)
     const reals = await Promise.all(chosen.map((folder) => resolvePath(deps.host.fs, folder)))
-    const granted = reals.every((real) => access.has(real.path))
-    if (reals.some((real) => !real.resolved) || granted) {
-      return change(sessionId, { kind: 'add', folders: chosen })
+    // A folder main cannot name now is refused here, never handed on: the kernel resolving it a
+    // moment later could reach a folder no dialog showed and nobody granted.
+    if (reals.some((real) => !real.resolved)) return ROOT_FOLDER
+    if (reals.every((real) => access.has(real.path))) {
+      // The kept folders by the real paths just checked, not the spelling the dialog returned.
+      return change(sessionId, { kind: 'add', folders: reals.map((real) => real.path) })
     }
     // Read again, here: the dialog was open, and the session may have gone or changed shape.
     const facts = await sessions.sessionFacts({ sessionId })
@@ -241,8 +245,9 @@ export function registerWorkspaceRoutes(deps: WorkspaceRoutesDeps): void {
     // Used in this synchronous stretch: another session's token, a used or a voided one adds nothing.
     const folders = grants.take(sessionId, token)
     if (folders === null) return STALE
-    // The real paths the dialog showed must still be themselves: a link on the way pointed elsewhere
-    // since, or a folder gone, voids the answer rather than adding what the user never saw.
+    // The real paths the dialog showed must still be themselves: one that resolves elsewhere now (a
+    // folder on the way swapped for a link) voids the answer rather than adding what the user never
+    // saw. A folder deleted since still names itself; the kernel then refuses it.
     const now = await Promise.all(folders.map((folder) => resolvePath(deps.host.fs, folder)))
     if (now.some((real, at) => !real.resolved || real.path !== folders[at])) return STALE
     const result = await change(sessionId, { kind: 'add', folders: [...folders] })
